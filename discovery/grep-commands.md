@@ -1,0 +1,516 @@
+# Grep & Terminal Commands Reference
+
+> Consolidated command library for the AUDITOR skill.  
+> Every command uses tools available inside the VS Code agent (grep_search, run_in_terminal).  
+> Commands are grouped by **what they detect**.
+
+---
+
+## Quick Reference — Command Categories
+
+| Category | Detects |
+|---|---|
+| [Type Safety](#type-safety) | `any`, `@ts-ignore`, wrong imports |
+| [Account Safety](#account-safety-rust) | `AccountInfo`, missing CHECK, init_if_needed |
+| [Arithmetic Safety](#arithmetic-safety-rust) | Bare operators, truncation, missing checked_* |
+| [CPI & PDA](#cpi--pda-rust) | CPI targets, invoke vs invoke_signed, seeds |
+| [Access Control](#access-control-rust) | Signer mapping, has_one, key checks |
+| [State Machine](#state-machine-rust) | Status transitions, events, account closures |
+| [Secrets & Keys](#secrets--keys) | Hardcoded keys, env leaks, committed secrets |
+| [Backend Security](#backend-security) | Auth gaps, CORS, MongoDB injection, rate limiting |
+| [Frontend Security](#frontend-security) | XSS, exposed secrets, unsafe DOM |
+| [Supply Chain](#supply-chain) | Compromised packages, audit, publish dates |
+| [Infrastructure](#infrastructure) | Build, deploy, upgrade authority |
+| [Formal Verification & Testing](#formal-verification--testing-checklist-16) | Fuzz testing, coverage, static analysis, invariants |
+| [Logging & Monitoring](#logging-monitoring--incident-response-checklist-17) | Events, logging, monitoring, emergency, DR |
+| [Privacy & Compliance](#privacy-compliance--change-management-checklist-18) | PII, GDPR, AI/ML, change management |
+
+---
+
+## Type Safety
+
+### Ban `any` (entire TS codebase)
+```
+grep_search: ": any"          includePattern: "**/*.ts"
+grep_search: "as any"         includePattern: "**/*.ts"
+grep_search: ": any"          includePattern: "**/*.tsx"
+grep_search: "as any"         includePattern: "**/*.tsx"
+```
+
+### Ban wrong package
+```
+grep_search: "@coral-xyz/anchor"   includePattern: "**/*.ts"
+```
+
+### Find ts-ignore / ts-nocheck
+```
+grep_search: "@ts-ignore|@ts-nocheck"   isRegexp: true   includePattern: "**/*.ts"
+```
+
+### Find eval / Function constructor
+```
+grep_search: "eval(|new Function("   isRegexp: true   includePattern: "**/*.ts"
+```
+
+### Find require() (should be import)
+```
+grep_search: "require("   includePattern: "**/*.ts"
+```
+
+---
+
+## Account Safety (Rust)
+
+### Deprecated AccountInfo
+```
+grep_search: "AccountInfo<"   includePattern: "programs/**/*.rs"
+```
+
+### CHECK comments (must exist for every UncheckedAccount)
+```
+grep_search: "UncheckedAccount"   includePattern: "programs/**/*.rs"
+grep_search: "/// CHECK:"         includePattern: "programs/**/*.rs"
+```
+> Cross-reference: every UncheckedAccount MUST have a CHECK comment on the preceding line.
+
+### Reinitialization risk
+```
+grep_search: "init_if_needed"   includePattern: "programs/**/*.rs"
+```
+
+### remaining_accounts usage
+```
+grep_search: "remaining_accounts"   includePattern: "programs/**/*.rs"
+```
+
+### Account close targets
+```
+grep_search: "close ="   includePattern: "programs/**/*.rs"
+```
+
+### init with space calculation
+```
+grep_search: "#[account(init"   includePattern: "programs/**/*.rs"
+```
+
+---
+
+## Arithmetic Safety (Rust)
+
+### Bare operators on financial values
+```bash
+# Terminal: Find bare +, -, *, / in instruction files (manual review needed)
+grep -n '[^_]+ [0-9]\|[0-9] +[^_]' programs/*/src/instructions/*.rs
+grep -n '\* [0-9]\|[0-9] \*' programs/*/src/instructions/*.rs
+grep -n '/ [0-9]\|[0-9] /' programs/*/src/instructions/*.rs
+grep -n '- [0-9]\|[0-9] -' programs/*/src/instructions/*.rs
+```
+
+### Verify checked_* usage
+```
+grep_search: "checked_add|checked_sub|checked_mul|checked_div"   isRegexp: true   includePattern: "programs/**/*.rs"
+```
+
+### Dangerous saturating on financial paths
+```
+grep_search: "saturating_"   includePattern: "programs/**/*.rs"
+```
+
+### Truncation casts
+```
+grep_search: "as u64|as u32|as u16|as u8"   isRegexp: true   includePattern: "programs/**/*.rs"
+```
+
+### MathOverflow error usage
+```
+grep_search: "MathOverflow"   includePattern: "programs/**/*.rs"
+```
+
+### Division before multiplication
+```bash
+# Terminal: Find potential div-before-mul patterns (manual review)
+grep -n '\.checked_div.*\.checked_mul\|/ .*\*' programs/*/src/instructions/*.rs
+```
+
+---
+
+## CPI & PDA (Rust)
+
+### All CPI calls
+```
+grep_search: "CpiContext::new"   includePattern: "programs/**/*.rs"
+```
+
+### invoke vs invoke_signed
+```
+grep_search: "invoke("           includePattern: "programs/**/*.rs"
+grep_search: "invoke_signed("    includePattern: "programs/**/*.rs"
+```
+> Any `invoke(` from a PDA authority is a bug — should be `invoke_signed`.
+
+### Token operations
+```
+grep_search: "token::transfer|token::mint_to|token::burn|token::close_account"   isRegexp: true   includePattern: "programs/**/*.rs"
+```
+
+### PDA seeds
+```
+grep_search: "seeds ="   includePattern: "programs/**/*.rs"
+```
+
+### Bump storage
+```
+grep_search: "bump ="   includePattern: "programs/**/*.rs"
+grep_search: "bump"     includePattern: "programs/*/src/state/*.rs"
+```
+
+---
+
+## Access Control (Rust)
+
+### Signer mapping
+```
+grep_search: "Signer<'info>"   includePattern: "programs/**/*.rs"
+```
+
+### has_one constraints
+```
+grep_search: "has_one ="   includePattern: "programs/**/*.rs"
+```
+
+### Runtime key checks
+```
+grep_search: "require_keys_eq!"   includePattern: "programs/**/*.rs"
+```
+
+### Hardcoded pubkeys (backdoor risk)
+```
+grep_search: "Pubkey::new_from_array"   includePattern: "programs/**/*.rs"
+```
+
+---
+
+## State Machine (Rust)
+
+### Status enums and transitions
+```
+# Adapt the enum names below to match your program's actual status types
+grep_search: "Status::"             includePattern: "programs/**/*.rs"
+grep_search: "status ="             includePattern: "programs/**/*.rs"
+```
+
+### Events
+```
+grep_search: "#[event]"   includePattern: "programs/**/*.rs"
+grep_search: "emit!"      includePattern: "programs/**/*.rs"
+```
+
+### Account closure
+```
+grep_search: "close ="   includePattern: "programs/**/*.rs"
+```
+
+---
+
+## Secrets & Keys
+
+### Hardcoded secrets in code
+```
+grep_search: "private_key|secret_key|mnemonic|seed_phrase"   isRegexp: true   includePattern: "**/*.ts"
+grep_search: "-----BEGIN"   includePattern: "**/*"
+```
+
+### API keys in code
+```
+grep_search: "api_key|apiKey|api-key"   isRegexp: true   includePattern: "**/*.ts"
+```
+
+### Env var usage
+```
+grep_search: "process.env"   includePattern: "**/*.ts"
+```
+
+### NEXT_PUBLIC_ exposure
+```
+grep_search: "NEXT_PUBLIC_"   includePattern: "apps/web/**/*.ts"
+grep_search: "NEXT_PUBLIC_"   includePattern: "apps/web/**/*.tsx"
+```
+
+### Committed env/key files
+```bash
+# Terminal:
+git ls-files | grep -iE "\.env|keypair|delegate\.json|\.pem|\.key"
+find . -name "*.env*" -not -path "./node_modules/*" -not -path "./.git/*"
+find . -name "*keypair*" -not -path "./node_modules/*" -not -path "./.git/*"
+```
+
+### Git history secrets
+```bash
+# Terminal:
+git log --all -S "private" --oneline | head -20
+git log --all -S "secret" --oneline | head -20
+git log --all -S "BEGIN RSA" --oneline | head -20
+```
+
+---
+
+## Backend Security
+
+### Mutation endpoints without auth
+```
+grep_search: "router.post|router.put|router.delete|router.patch"   isRegexp: true   includePattern: "apps/backend/src/routes/*.ts"
+```
+> Cross-reference each with auth middleware.
+
+### Input validation (must have zod)
+```
+grep_search: "req.body"   includePattern: "apps/backend/src/routes/*.ts"
+grep_search: "z.object"   includePattern: "apps/backend/src/routes/*.ts"
+```
+
+### MongoDB injection risk
+```
+grep_search: ".find(|.findOne(|.updateOne(|.deleteOne("   isRegexp: true   includePattern: "apps/backend/**/*.ts"
+```
+
+### CORS configuration
+```
+grep_search: "origin:"   includePattern: "apps/backend/src/index.ts"
+grep_search: "cors("     includePattern: "apps/backend/src/index.ts"
+```
+
+### Rate limiting
+```
+grep_search: "rateLimit|rateLimiter|limiter"   isRegexp: true   includePattern: "apps/backend/**/*.ts"
+```
+
+### Security headers
+```
+grep_search: "helmet"   includePattern: "apps/backend/**/*.ts"
+```
+
+---
+
+## Frontend Security
+
+### XSS vectors
+```
+grep_search: "dangerouslySetInnerHTML"   includePattern: "apps/web/**/*.tsx"
+grep_search: "document.write"            includePattern: "apps/web/**/*.ts"
+```
+
+### Console logging in production
+```
+grep_search: "console.log|console.warn|console.error"   isRegexp: true   includePattern: "apps/web/src/**/*.ts"
+```
+
+### Sensitive data in localStorage
+```
+grep_search: "localStorage|sessionStorage"   isRegexp: true   includePattern: "apps/web/**/*.ts"
+```
+
+### Missing rel=noopener
+```
+grep_search: "target=\"_blank\""   includePattern: "apps/web/**/*.tsx"
+```
+
+---
+
+## Supply Chain
+
+### Check for compromised packages
+```bash
+# Terminal:
+grep -E "axios.*1\.14\.1|axios.*0\.30\.4" package-lock.json
+npm audit
+```
+
+### Package publish dates (14-day quarantine)
+```bash
+# Terminal: Check publish date for critical packages
+npm info @anchor-lang/core time --json | tail -5
+npm info express time --json | tail -5
+npm info next time --json | tail -5
+```
+
+### Outdated packages
+```bash
+# Terminal:
+npm outdated
+cargo outdated  # if cargo-outdated installed
+```
+
+### License check
+```bash
+# Terminal:
+npx license-checker --summary
+```
+
+---
+
+## Infrastructure
+
+### Program upgrade authority
+```bash
+# Terminal:
+solana program show <PROGRAM_ID> --url mainnet-beta
+```
+
+### Anchor build verification
+```bash
+# Terminal:
+anchor build 2>&1 | tail -20
+```
+
+### Test suite
+```bash
+# Terminal:
+anchor test --validator legacy 2>&1 | tail -30
+```
+
+### Binary hash verification
+```bash
+# Terminal:
+anchor verify <PROGRAM_ID> --provider-url mainnet-beta
+```
+
+---
+
+## Using These Commands
+
+### From SKILL.md / Agent Invocation
+The auditor agent should use `grep_search` tool calls with these patterns.  
+For terminal commands, use `run_in_terminal`.
+
+### Manual Execution
+Copy-paste terminal commands into a system terminal.
+
+### Batch Execution
+When running a FULL audit (see FULL-AUDIT.md), execute commands per phase:
+- Phase 1 (On-chain): Account Safety + Arithmetic + CPI/PDA + Access Control + State Machine
+- Phase 2 (Off-chain): Type Safety + Backend Security + Frontend Security
+- Phase 3 (DevOps): Secrets + Supply Chain + Infrastructure
+- Phase 4 (Verification/Monitoring/Compliance): Formal Verification + Logging + Privacy
+
+---
+
+## Formal Verification & Testing (Checklist 16)
+
+### Property-based / Fuzz testing
+```
+grep_search: "proptest|quickcheck|fast-check|hypothesis|fuzzing|fuzz_target"   isRegexp: true   includePattern: "**/*"
+```
+
+### Static analysis config
+```
+grep_search: "clippy|eslint|semgrep|slither|mythril"   isRegexp: true   includePattern: "**/*"
+```
+
+### Coverage tooling
+```
+grep_search: "coverage|lcov|tarpaulin|istanbul|c8|nyc"   isRegexp: true   includePattern: "**/*"
+```
+
+### Test quality indicators
+```
+grep_search: "describe\(|it\(|test\(|#\[test\]|#\[tokio::test\]"   isRegexp: true   includePattern: "**/*test*"
+```
+
+### Panic-prone code (Rust)
+```
+grep_search: ".unwrap()"   includePattern: "programs/**/*.rs"
+grep_search: ".expect("    includePattern: "programs/**/*.rs"
+```
+
+### Suppressed type checking
+```
+grep_search: "@ts-ignore|@ts-nocheck|#\\[allow\\(clippy"   isRegexp: true   includePattern: "**/*"
+```
+
+### Swallowed errors
+```
+grep_search: "catch {}|catch(e) {}|catch (_) {}"   isRegexp: true   includePattern: "**/*.ts"
+```
+
+### Documented invariants
+```
+grep_search: "INVARIANT|invariant|conservation|SAFETY:"   isRegexp: true   includePattern: "**/*"
+```
+
+---
+
+## Logging, Monitoring & Incident Response (Checklist 17)
+
+### On-chain event emission
+```
+grep_search: "emit!|emit_cpi|#\\[event\\]"   isRegexp: true   includePattern: "programs/**/*.rs"
+grep_search: "msg!"   includePattern: "programs/**/*.rs"
+```
+
+### Backend logging
+```
+grep_search: "logger\.|winston|pino|console.log|console.error"   isRegexp: true   includePattern: "apps/backend/**/*.ts"
+```
+
+### Monitoring services
+```
+grep_search: "sentry|datadog|grafana|prometheus|newrelic"   isRegexp: true   includePattern: "**/*"
+```
+
+### Secrets in logs (vulnerability)
+```
+grep_search: "log.*password|log.*secret|log.*private|log.*mnemonic"   isRegexp: true   includePattern: "**/*.ts"
+```
+
+### Emergency mechanisms
+```
+grep_search: "pause|freeze|emergency|circuit.?breaker"   isRegexp: true   includePattern: "programs/**/*.rs"
+grep_search: "pause|freeze|emergency|circuit.?breaker"   isRegexp: true   includePattern: "apps/backend/**/*.ts"
+```
+
+### Backup & disaster recovery
+```
+grep_search: "backup|snapshot|restore|recovery"   isRegexp: true   includePattern: "**/*"
+```
+
+### Health check endpoints
+```
+grep_search: "health|readiness|liveness"   isRegexp: true   includePattern: "apps/backend/**/*.ts"
+```
+
+---
+
+## Privacy, Compliance & Change Management (Checklist 18)
+
+### PII fields
+```
+grep_search: "email|phone|ssn|dob|passport|kyc|firstName|lastName|address"   isRegexp: true   includePattern: "apps/**/*.ts"
+```
+
+### Encryption of data at rest
+```
+grep_search: "encrypt|decrypt|cipher|bcrypt|argon|scrypt"   isRegexp: true   includePattern: "apps/**/*.ts"
+```
+
+### Privacy / GDPR implementation
+```
+grep_search: "gdpr|privacy|consent|retention|deletion|anonymize"   isRegexp: true   includePattern: "**/*"
+```
+
+### AI/ML integration
+```
+grep_search: "openai|anthropic|llm|gpt|completion|embedding|prompt"   isRegexp: true   includePattern: "**/*.ts"
+```
+
+### Change management controls
+```bash
+# Terminal: Check branch protection
+git remote -v
+# Terminal: Check for PR templates
+find .github -name "*pull_request*" -o -name "CODEOWNERS" 2>/dev/null
+```
+
+### Deployment approval gates
+```
+grep_search: "approval|deploy.*gate|manual.*trigger"   isRegexp: true   includePattern: ".github/workflows/*.yml"
+```

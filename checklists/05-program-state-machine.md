@@ -1,0 +1,88 @@
+# 05 — State Machine & Lifecycle Checklist
+
+> Domain: On-chain Solana Program  
+> Severity if missed: HIGH to MEDIUM  
+> References: QEDGen SM properties, Withdrawal lifecycle, Fund lifecycle
+
+Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{severity}]`, `[PARTIAL]`, or `[N/A]`.
+
+---
+
+## 5.1 — State Enum Completeness
+
+- [ ] **SM-001**: List every state enum in the program (e.g., status enums for withdrawals, funds, positions, etc.)
+- [ ] **SM-002**: For each enum, list ALL variants
+- [ ] **SM-003**: For each enum variant, verify there is at least ONE instruction that transitions INTO that variant
+- [ ] **SM-004**: For each enum variant, verify there is at least ONE instruction that transitions OUT of that variant (unless it's a terminal state)
+- [ ] **SM-005**: Identify dead variants — enum values that are never set by any instruction. Flag as LOW (dead code)
+- [ ] **SM-006**: Dead variants cannot be set via manual data manipulation (Anchor discriminator prevents external writes)
+- [ ] **SM-007**: Terminal states are clearly identified (e.g., "Completed" after withdrawal finalization)
+- [ ] **SM-008**: Terminal state accounts are closed (freed/rent returned) — not left as zombie accounts
+
+## 5.2 — Withdrawal Lifecycle
+
+> Adapt instruction names below to your program's actual withdrawal flow (e.g., `initiate_withdrawal`, `finalize_withdrawal`, etc.)
+
+- [ ] **SM-009**: Withdrawal initiation instruction — sets status to `Initiated` from no-state (account creation)
+- [ ] **SM-010**: Withdrawal initiation — requires investor signer and position with sufficient shares
+- [ ] **SM-011**: Withdrawal swap/conversion instruction — is it restricted to `Initiated` status only? Or also allows later states?
+- [ ] **SM-012**: If swap/conversion allows multiple statuses — is that intentional and safe?
+- [ ] **SM-013**: Intermediate readiness instruction — transitions from `Initiated` to `ReadyToFinalize` (or equivalent). Does this instruction exist?
+- [ ] **SM-014**: If readiness instruction is MISSING — flag as CRITICAL (broken withdrawal flow)
+- [ ] **SM-015**: Withdrawal finalization — requires intermediate status (not `Initiated`)
+- [ ] **SM-016**: Withdrawal finalization — closes the withdrawal account (returns rent to investor)
+- [ ] **SM-017**: Withdrawal finalization — burns shares, transfers tokens/SOL to investor
+- [ ] **SM-018**: Withdrawal cancellation — only valid from `Initiated` status (not `ReadyToFinalize`)
+- [ ] **SM-019**: Withdrawal cancellation — restores investor's shares / position correctly
+- [ ] **SM-020**: Withdrawal cancellation — closes the withdrawal account
+- [ ] **SM-021**: Can an investor have multiple active withdrawals simultaneously? If no, verify uniqueness enforcement
+- [ ] **SM-022**: Withdrawal timeout: is there a deadline after which a withdrawal can be cancelled/expired?
+- [ ] **SM-023**: Can a withdrawal be stuck forever if admin/manager never advances it? (Griefing vector)
+- [ ] **SM-024**: Partial withdrawal: can investor withdraw some shares and keep others?
+
+## 5.3 — Fund Lifecycle
+
+- [ ] **SM-025**: `initialize_fund` — creates fund with all required fields initialized
+- [ ] **SM-026**: `initialize_fund` — sets manager, fee, name, vault, shares_mint correctly
+- [ ] **SM-027**: Fund cannot be re-initialized after creation (reinitialization protection)
+- [ ] **SM-028**: Fund closure: is there an instruction to close a fund? If yes, what are the preconditions?
+- [ ] **SM-029**: Fund closure: all investor positions must be settled before fund can close
+- [ ] **SM-030**: Fund closure: all pending withdrawals must be finalized or cancelled
+- [ ] **SM-031**: If no fund closure instruction exists — flag as INFO (funds live forever, rent locked)
+- [ ] **SM-032**: Fund name uniqueness: can two funds by the same manager have the same name? (PDA collision)
+- [ ] **SM-033**: Fund deposit lifecycle: deposit → position created/updated → shares minted
+- [ ] **SM-034**: Fund deposit: position.shares increases by correct amount after deposit
+
+## 5.4 — Investor Position Lifecycle
+
+- [ ] **SM-035**: Position creation: when is a position first created? On first deposit?
+- [ ] **SM-036**: Position tracking: does position correctly track `total_deposited`, `total_withdrawn`, `shares`?
+- [ ] **SM-037**: Position closure: when all shares are withdrawn, is the position account closed?
+- [ ] **SM-038**: Position cannot go negative: `shares` field cannot underflow below 0
+- [ ] **SM-039**: Position `total_deposited` and `total_withdrawn` are updated atomically with share changes
+- [ ] **SM-040**: Can a position exist with 0 shares? What happens if further operations are attempted on it?
+
+## 5.5 — Transition Guard Consistency
+
+- [ ] **SM-041**: Every state transition checks the CURRENT status before transitioning (pre-condition)
+- [ ] **SM-042**: No transition allows skipping states (e.g., Initiated → Completed without ReadyToFinalize)
+- [ ] **SM-043**: State transitions are atomic — no partial state where transition started but didn't complete
+- [ ] **SM-044**: If a transaction fails mid-execution, no account is left in an inconsistent state
+- [ ] **SM-045**: Replay protection: can the same state transition be triggered twice? (e.g., finalize called twice on same withdrawal)
+- [ ] **SM-046**: After `close`, the PDA's seeds can be reused for a new account — is this safe? No stale associations?
+
+## 5.6 — Event Emission
+
+- [ ] **SM-047**: Every financial state transition emits an event (`emit!` macro) — deposit, withdrawal, swap, fee
+- [ ] **SM-048**: Events contain all relevant data: amounts, parties, timestamps, account addresses
+- [ ] **SM-049**: Events cannot be spoofed (they're emitted by program execution, not user input)
+- [ ] **SM-050**: Off-chain indexers rely on events — verify events are complete for accurate off-chain state reconstruction
+
+## 5.7 — Invariant Checks
+
+- [ ] **SM-051**: `fund.total_shares == shares_mint.supply` — this invariant holds after every instruction
+- [ ] **SM-052**: `fund.total_shares == Σ(all investor_position.shares)` — verify no shares are lost or created
+- [ ] **SM-053**: Fund vault balance is consistent with total_assets tracking (if tracked on-chain)
+- [ ] **SM-054**: After every deposit: `fund.total_shares` increased, `fund.total_assets` increased
+- [ ] **SM-055**: After every withdrawal: `fund.total_shares` decreased, `fund.total_assets` decreased
+- [ ] **SM-056**: After every swap: `fund.total_shares` unchanged, token balances changed but NAV approximately same
