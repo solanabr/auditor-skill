@@ -67,6 +67,29 @@ If building a service, send the AUDITOR files as system context and the target r
 
 ## Before Running an Audit
 
+### Security Warning — Run in an Isolated Environment
+
+This skill instructs the AI agent to execute build and test commands against
+the target repository (`anchor build`, `anchor test`, `npm audit`,
+`cargo audit`, etc.). These commands execute arbitrary code shipped by the
+target:
+
+- `cargo build` / `anchor build` runs every `build.rs` from every (transitive)
+  Rust dependency. `build.rs` is regular Rust with full process privileges.
+- `npm install` / `npm audit` runs `preinstall`, `postinstall`, and `prepare`
+  scripts from every package in the dependency tree.
+- `anchor test` compiles and executes test code from the target.
+
+**Auditing an untrusted repository is equivalent to executing it.** Run
+audits in a disposable sandbox — ephemeral container (Docker, gVisor, Kata),
+ephemeral VM, GitHub Actions ephemeral runner, or `firejail` — with no
+access to your wallet keypairs, SSH keys, cloud credentials, or
+`~/.config`. Treat the audit host as compromised.
+
+If you only want pattern-based checks (the bulk of the skill's value),
+restrict the agent to `Read`/`Grep`/`Glob` and skip the steps below that
+require running build/audit tooling — they are clearly marked.
+
 ### Mandatory Intake Rule (Do Not Skip)
 
 Before any audit output is produced, the agent MUST recursively read all markdown files under `AUDITOR/`, including:

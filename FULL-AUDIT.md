@@ -11,6 +11,23 @@
 
 ## PRE-FLIGHT
 
+### Sandbox requirement (read before running anything in this document)
+
+Several phases below instruct the agent to execute build, test, and audit
+commands inside the target repository (`anchor build`, `anchor test`,
+`npm audit`, `cargo audit`, `npm info`). These commands run arbitrary code
+shipped by the target — Rust `build.rs`, npm `preinstall`/`postinstall`
+scripts, and test entry points all execute with the agent's full
+privileges. Running this skill against an untrusted repository on a host
+that holds wallet keypairs, SSH keys, or cloud credentials is unsafe.
+
+Operate inside a disposable sandbox (ephemeral container or VM with no
+secrets mounted). If you are running grep-only / pattern-only checks, the
+build/audit commands are **optional** — skip the steps marked
+`(REQUIRES BUILD EXECUTION — sandbox only)` below.
+
+### Phase preflight
+
 Before starting any phase:
 1. Read [OUTPUT-RULES.md](OUTPUT-RULES.md) — the output format is non-negotiable
 2. Load every AUDITOR markdown file recursively (Rule 0 in OUTPUT-RULES.md)
@@ -327,11 +344,13 @@ RECORD: governance configuration + findings
 ```
 ACTIONS:
 
-  # Check for compromised packages
+  # Check for compromised packages (READ-ONLY)
   grep "axios" apps/backend/package.json apps/web/package.json
   # → verify NOT 1.14.1 or 0.30.4
 
-  # Run npm audit
+  # (REQUIRES BUILD EXECUTION — sandbox only)
+  # `npm audit` requires a resolved lockfile and may trigger `npm install`,
+  # which runs preinstall/postinstall scripts. Skip on untrusted repos.
   cd apps/backend && npm audit
   cd apps/web && npm audit
 
@@ -339,10 +358,12 @@ ACTIONS:
   cat apps/backend/package.json | grep -E '[\^~]' # should be minimal
   cat apps/web/package.json | grep -E '[\^~]'
 
-  # Cargo audit
+  # (REQUIRES BUILD EXECUTION — sandbox only)
+  # `cargo audit` may resolve and fetch deps; downstream `cargo build`
+  # would execute every transitive `build.rs`.
   cargo audit 2>/dev/null || echo "cargo-audit not installed"
 
-  # Check quarantine (14-day rule) for newest deps
+  # Check quarantine (14-day rule) for newest deps (network read-only)
   npm info @anchor-lang/core time | tail -5
 
 RECORD: dependency audit results
@@ -378,11 +399,14 @@ RECORD: any secret exposure
 ```
 ACTIONS:
 
-  # Verify build
+  # (REQUIRES BUILD EXECUTION — sandbox only)
+  # `anchor build` runs every transitive Rust `build.rs` with full process
+  # privileges. Do NOT run on untrusted repos outside a disposable sandbox.
   anchor build 2>&1 | tail -20
   # Check for warnings, errors
 
-  # Verify tests pass
+  # (REQUIRES BUILD EXECUTION — sandbox only)
+  # `anchor test` compiles and executes test code from the target.
   anchor test --skip-local-validator 2>&1 | tail -30
 
   # Check deployment config (render.yaml, fly.toml, docker-compose.yml, etc.)
