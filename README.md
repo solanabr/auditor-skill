@@ -36,10 +36,10 @@ AUDITOR is a **skill file** (a structured prompt + checklists) that turns any LL
 
 ```bash
 # From your project root
-git clone https://github.com/YOUR_ORG/AUDITOR.git .github/skills/AUDITOR
+git clone https://github.com/solanabr/Auditor.git .github/skills/AUDITOR
 
 # Or copy the folder manually
-cp -r /path/to/AUDITOR .github/skills/AUDITOR
+cp -r /path/to/Auditor .github/skills/AUDITOR
 ```
 
 Then in your AI agent (Copilot, Cursor, etc.):
@@ -53,7 +53,7 @@ If your code is in a public repo, you can clone AUDITOR separately and point the
 
 ```bash
 # Clone AUDITOR
-git clone https://github.com/YOUR_ORG/AUDITOR.git
+git clone https://github.com/solanabr/Auditor.git
 
 # Open your target project in your IDE
 # Copy AUDITOR into it, or configure as a skill
