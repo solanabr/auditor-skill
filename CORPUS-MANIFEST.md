@@ -2,14 +2,23 @@
 
 Generated from full recursive read of all markdown files in this folder.
 
+To regenerate after any edit:
+```bash
+./scripts/regenerate-manifest.sh
+```
+
+The self-row for `./CORPUS-MANIFEST.md` cannot be verified by recomputing its
+own hash (circular). For external integrity verification, rely on signed git
+tags (`git tag -v <tag>`) rather than this manifest alone.
+
 | File | Lines | SHA256 | ID | Title |
 |---|---:|---|---:|---|
-| ./CORPUS-MANIFEST.md | 6 | ab8259cd63f15cd7092fd142fabae167a718cb7ede43f137d1b235b8bd67de29 |  |  |
+| ./CORPUS-MANIFEST.md | 146 | 0000000000000000000000000000000000000000000000000000000000000000 |  |  |
 | ./COSTS.md | 152 | d07741590832c289d918e0bc05d05605b32a67a2a4fcee6643cea65fcf85b6d9 |  |  |
-| ./FULL-AUDIT.md | 593 | 28a4311495b96bf2b23242dad119a6f2efbb28d522153280fc91af244780db6b |  |  |
+| ./FULL-AUDIT.md | 637 | 2a80fdbce3945b8006797c3523b1b625fb247e02997ee67a8027f8de6f9aa8ad |  |  |
 | ./OUTPUT-RULES.md | 394 | 21ca3feaaa8327f67bfd1806e85f5476f8cd33935869dd6125177d9a8f52e26a |  |  |
-| ./QUESTIONS.md | 424 | 2a60aa397e20b5da82fa36a75b9ac9eb39b4f0e642c7e8825f00c45776e68e99 |  |  |
-| ./README.md | 279 | 0ecdb4f53a6e50549c4719cef7bf78f6fa5e0e9c2481bdd3c2414c30739c6b7e | NNN | Your Attack Name |
+| ./QUESTIONS.md | 424 | e37ac3395cf61385e3e43713d9e5bfd8e9f43b5803bc1538acaa328a038b18ba |  |  |
+| ./README.md | 305 | 800292b885c139def20708aa35021e87fd860e11f0e65307914a312a9086b33f |  |  |
 | ./SKILL.md | 279 | 22453b217f7f25d640790ccd2fc3dd6cd8fe033c96c7e6dc63fcdad7bc958dcd |  |  |
 | ./TOP-100-HACKS.md | 23 | 38a2ac022980fe1262d37cb7dc776e3efacdd58dc0f4cbc711c1e17279ea088f |  |  |
 | ./checklists/01-program-account-validation.md | 87 | 5ef49272ce2a53603f0c607054733f94ff143cea860ee035f1c879928c1bdbbf |  |  |
@@ -30,8 +39,8 @@ Generated from full recursive read of all markdown files in this folder.
 | ./checklists/16-formal-verification-testing.md | 100 | 7c3cd50e56b025024d4f13c7cc0ca7391a042a292c0474388e7c3ca44f52ea12 |  |  |
 | ./checklists/17-logging-monitoring-incident-response.md | 112 | 6ea4e83551017fc63d06d265bfa45c1795ef920e442245fc1914a5b0fab11b59 |  |  |
 | ./checklists/18-privacy-compliance-change-management.md | 110 | 9f72cc39e7cdcab592c2f517e7d84d8a94f85d0c853fa3624e500edaf3b0b9e2 |  |  |
-| ./discovery/file-map.md | 476 | 656180b46bfdd359d6f272412c155b6e9ad11e0fdcd32d8dc5ef56dd2a1377af |  |  |
-| ./discovery/grep-commands.md | 516 | 135eff3b37c5c802b3bd63d7ff5ee96d158da2383bf11e10aae0cb68e6ced347 |  |  |
+| ./discovery/file-map.md | 467 | 0e4bd0520cea91a26caa929ebd5b6aca354366679193f6548dc3f7bea1918e17 |  |  |
+| ./discovery/grep-commands.md | 516 | 8748ceded8afa021cc89d0d04fe3f5e57e31101406f6c0d41e5aaca9db867474 |  |  |
 | ./known-vectors/001-private-key-leak.md | 96 | d41ecd3d26377a352fbb3a5100d9fb967f62f8ae97196a5db06f228847775682 | 1 | Private Key Leak |
 | ./known-vectors/002-flash-loan-price-manipulation.md | 60 | ff10ca7e8bb1384d90c61bacd06e0214a987a939a3765f89b7dac3c0ea3ef191 | 2 | Flash Loan Price Manipulation |
 | ./known-vectors/003-reentrancy-cpi.md | 53 | 9d1da00f23fbbba7c72895b64e095d66865dbcc6d0b20b3b13c90c3d6a0f11d8 | 3 | Reentrancy (CPI) |
@@ -113,7 +122,7 @@ Generated from full recursive read of all markdown files in this folder.
 | ./known-vectors/079-env-file-committed-to-repo.md | 53 | 86ac7d4802bcd8942b27027ff658c8cc7b12b92fc85b6d0242a712728d3fdc95 | 79 | .env File Committed to Repo |
 | ./known-vectors/080-ci-cd-pipeline-injection.md | 63 | 8cfcc55d7237fb00e14f08915efbd1f48c833fb223a7f3191ac5d7668c1cf3a6 | 80 | CI/CD Pipeline Injection |
 | ./known-vectors/081-insecure-docker-configuration.md | 55 | 00c425a950d95338c564272fde4b9be0f71d26d9d0d7adde196deb81b4df9516 | 81 | Insecure Docker Configuration |
-| ./known-vectors/082-exposed-admin-debug-endpoints-in-production.md | 46 | 0c51e37b4a1cb6814153cc53cc914649b765c68eec8599c86e47229e1f00539d | 82 | Exposed Admin / Debug Endpoints in Production |
+| ./known-vectors/082-exposed-admin-debug-endpoints-in-production.md | 47 | 8940eac7200df2ecbe691193a8f4e2dcfeb3b1454c48a4c8ff90843a680339c1 | 82 | Exposed Admin / Debug Endpoints in Production |
 | ./known-vectors/083-missing-rate-limiting-on-critical-endpoints.md | 61 | 00ce95d0ebc25793b39d9584c003991b1c2536559818584d4b57aa15c48bdd91 | 83 | Missing Rate Limiting on Critical Endpoints |
 | ./known-vectors/084-prototype-pollution.md | 46 | 459edd0f5747bc1e87e3799a44e9d1286a99200d2ab226270453aca1806a210e | 84 | Prototype Pollution |
 | ./known-vectors/085-server-side-request-forgery-ssrf.md | 56 | 1bf683a3e8b5c72c42b4f76afc242bf1e38c1f537683a4de9b0d3ab296b19b03 | 85 | Server-Side Request Forgery (SSRF) |
@@ -121,7 +130,7 @@ Generated from full recursive read of all markdown files in this folder.
 | ./known-vectors/087-insufficient-logging-monitoring.md | 60 | fe123f6ed18dc1d839b656b1a81b30371765b09e886c8ee39a838a9c3bc1a1ed | 87 | Insufficient Logging & Monitoring |
 | ./known-vectors/088-insecure-cors-configuration.md | 55 | b32cddb750954d673e1e8879f2b32ef8bdf261070ec9b4a0a238baf52f1e7411 | 88 | Insecure CORS Configuration |
 | ./known-vectors/089-unpatched-server-dependencies.md | 56 | 1571dd827c2519b656fec559b0dca25a903b766396a5541eb2a456d3003d7bba | 89 | Unpatched Server Dependencies |
-| ./known-vectors/090-missing-https-tls-misconfiguration.md | 53 | c382776faff73b9c2331a9222b0edd3c26651fbfdc1bf5399ac88d2c7b8ee5d0 | 90 | Missing HTTPS / TLS Misconfiguration |
+| ./known-vectors/090-missing-https-tls-misconfiguration.md | 54 | 75560a1eee9d79c39bd5883d3d4fb7f56d48e982c971aac532e04102c8ff073a | 90 | Missing HTTPS / TLS Misconfiguration |
 | ./known-vectors/091-upgrade-authority-not-secured.md | 50 | eb339ccb5f083f3cf5625792fcc2f75412fba83600e54e546d7deaef2f36824d | 91 | Upgrade Authority Not Secured |
 | ./known-vectors/092-dns-hijacking-domain-takeover.md | 57 | 2800b95bd4704d53d711733f3d1123eb0af925656749749fd1a38de4e63683af | 92 | DNS Hijacking / Domain Takeover |
 | ./known-vectors/093-improper-error-handling-error-leak.md | 53 | 50f3d7b3df0cc65fda7f7bee4536c169b67ddf4082d3d2a2f0dbcde87266d9f7 | 93 | Improper Error Handling (Error Leak) |
