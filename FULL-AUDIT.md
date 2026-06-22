@@ -37,7 +37,7 @@ ACTION:
 
   4. Verify known vectors complete load:
      - known-vectors/INDEX.md
-     - known-vectors/001-*.md through known-vectors/100-*.md
+     - known-vectors/001-*.md through known-vectors/109-*.md
 
 HARD STOP:
   If any AUDITOR file is not loaded, output
@@ -490,13 +490,13 @@ ACTIONS:
 RECORD: privacy, compliance & change management findings
 ```
 
-### Step 4.4 — Known Attack Vectors (100/100 mandatory)
+### Step 4.4 — Known Attack Vectors (109/109 mandatory)
 
 ```
 ACTIONS:
 
   1. Read known-vectors/INDEX.md
-  2. Read every file known-vectors/001-*.md through known-vectors/100-*.md
+  2. Read every file known-vectors/001-*.md through known-vectors/109-*.md
   3. For each vector, record one verdict:
        [PASS] / [FAIL-{1-10}] / [PARTIAL] / [N/A]
   4. Add evidence line(s): file:line or command output reference
@@ -505,7 +505,7 @@ RECORD format:
   - KV-001: [PASS] ...
   - KV-002: [PARTIAL] ...
   ...
-  - KV-100: [FAIL-7] ...
+  - KV-109: [FAIL-7] ...
 
 HARD RULE:
   Missing verdict for any KV item invalidates the FULL audit.
@@ -533,7 +533,7 @@ Fill in:
   - Each finding with: ID, severity, location, description, exploit scenario, fix recommendation
   - Checklist summary table
   - Detailed per-item results
-  - Known vector results (KV-001 through KV-100, each with verdict)
+  - Known vector results (KV-001 through KV-109, each with verdict)
 
 Save report to: audit_{N}/REPORT.md (where N is the next audit number)
 ```

@@ -94,7 +94,7 @@
 
 | # | Checklist | Items | Pass | Fail | Partial | N/A | Pass Rate |
 |---|---|---|---|---|---|---|---|
-| 01 | Account Validation | 57 | | | | | % |
+| 01 | Account Validation | 84 | | | | | % |
 | 02 | Access Control | 50 | | | | | % |
 | 03 | Arithmetic Safety | 61 | | | | | % |
 | 04 | CPI & PDA | 63 | | | | | % |
@@ -112,7 +112,7 @@
 | 16 | Formal Verification & Testing | 58 | | | | | % |
 | 17 | Logging, Monitoring & IR | 62 | | | | | % |
 | 18 | Privacy, Compliance & Change Mgmt | 60 | | | | | % |
-| | **Total** | **1182** | | | | | **%** |
+| | **Total** | **1209** | | | | | **%** |
 
 > Note: Only applicable checklists are counted in totals. Non-applicable checklists are excluded entirely.
 
@@ -317,7 +317,7 @@
 ...through PC-060
 ```
 
-### Known Vectors Results (KV-001..KV-100)
+### Known Vectors Results (KV-001..KV-109)
 
 ```
 [PASS]      KV-001: {reason}
@@ -325,7 +325,7 @@
               File: {path:line}
               Impact: {what can go wrong}
               Fix: {what to change}
-...through KV-100
+...through KV-109
 ```
 
 ---
@@ -347,7 +347,7 @@
 
 | Metric | Value |
 |--------|-------|
-| Total known vectors | 100 |
+| Total known vectors | 109 |
 | PASS | <!-- N --> |
 | FAIL | <!-- N --> |
 | PARTIAL | <!-- N --> |
