@@ -219,7 +219,7 @@ Every single checklist item and every known attack vector MUST appear in the rep
 
 ### Ordering
 
-Items listed in **checklist order** (AV-001, AV-002, ..., DEP-077, PY-001, ..., PC-060), followed by known vectors in order (KV-001 through KV-100). Never reorder or group by verdict.
+Items listed in **checklist order** (AV-001, AV-002, ..., DEP-077, PY-001, ..., PC-060), followed by known vectors in order (KV-001 through KV-109). Never reorder or group by verdict.
 
 ---
 
@@ -272,7 +272,7 @@ Every full audit report follows this exact section order:
 3. Scope & Methodology        (languages, files, LOC, checklists applied)
 4. Findings                   (severity ≥ 4, full blocks, grouped by severity descending)
 5. Detailed Item Results      (ALL checklist items, item-by-item verdicts)
-6. Known Vector Results       (KV-001 through KV-100, each with verdict)
+6. Known Vector Results       (KV-001 through KV-109, each with verdict)
 7. Instruction Matrix         (on-chain only — if applicable)
 8. State Model Verification   (on-chain only — if applicable)
 9. Remediation Roadmap        (prioritized by severity)
@@ -342,7 +342,7 @@ The report MUST include computed metrics at the end of the Item Results section.
 
 | Metric | Value |
 |--------|-------|
-| Total known vectors | 100 |
+| Total known vectors | 109 |
 | PASS | {N} |
 | FAIL | {N} |
 | PARTIAL | {N} |
@@ -353,7 +353,7 @@ The report MUST include computed metrics at the end of the Item Results section.
 
 | # | Checklist | Items | Pass | Fail | Partial | N/A | Pass Rate |
 |---|-----------|-------|------|------|---------|-----|-----------|
-| 01 | Account Validation | 57 | | | | | % |
+| 01 | Account Validation | 84 | | | | | % |
 | ... | ... | ... | ... | ... | ... | ... | ... |
 | **Total** | | **{N}** | | | | | **{%}** |
 ```

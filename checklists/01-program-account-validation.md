@@ -83,5 +83,43 @@ Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{seve
 - [ ] **AV-053**: No instruction can re-initialize an already-initialized account (check `init` vs `init_if_needed`)
 - [ ] **AV-054**: If manual initialization is used (not Anchor `init`), an `is_initialized` flag is checked
 - [ ] **AV-055**: After account closure, the same PDA seeds cannot be re-derived to create a new account with stale associations
-- [ ] **AV-056**: Revival attack: after `close`, can an attacker send lamports to the closed account address to prevent garbage collection and re-use stale data?
+- [ ] **AV-056**: Revival attack: after `close`, can an attacker send lamports to the closed account address to prevent garbage collection and re-use stale data? (see KV-106)
 - [ ] **AV-057**: If an account is closed mid-transaction, subsequent instructions in the same transaction cannot access stale data from that account
+
+## 1.8 — SPL Token & Token-2022 Extension Safety
+
+- [ ] **AV-058**: Token program is identified correctly per account — classic `Token` vs `Token-2022` (`token_program` is constrained, not assumed); `InterfaceAccount`/`token_interface` used when both must be supported
+- [ ] **AV-059**: Associated Token Accounts are enforced via Anchor `associated_token::mint`, `associated_token::authority` (+ `associated_token::token_program`) — not a bare `Account<TokenAccount>` where the canonical ATA is assumed (see KV-107)
+- [ ] **AV-060**: Token transfers use `transfer_checked` / `mint_to_checked` / `burn_checked` (decimals + mint bound at runtime), not the unchecked legacy variants
+- [ ] **AV-061**: Token `decimals` are read from the mint account, never hardcoded; cross-mint amounts are normalized before being added or compared (see KV-108)
+- [ ] **AV-062**: Credited amounts are computed from vault balance deltas (after − before), so transfer-fee / fee-on-transfer tokens cannot over- or under-credit (see KV-018, KV-105)
+- [ ] **AV-063**: If arbitrary mints are accepted, the program inspects Token-2022 mint extensions and rejects (or explicitly handles) `PermanentDelegate`, `DefaultAccountState::Frozen`, `MintCloseAuthority`, transfer-hook, confidential-transfer, and interest-bearing configs (see KV-105, KV-023)
+- [ ] **AV-064**: Custodied/vault token balances are not exposed to clawback or freeze by an untrusted mint authority (permanent delegate / freeze authority risk is checked or the mint is allowlisted)
+- [ ] **AV-065**: Mint `freeze_authority` and `mint_authority` status is considered for accepted tokens — frozen accounts cannot deadlock withdrawals (see AV-050, KV-019)
+- [ ] **AV-066**: A mint allowlist (or explicit per-mint vetting) exists wherever the protocol cannot safely handle every possible mint/extension combination
+- [ ] **AV-067**: Token account `close_authority`/`delegate` fields are validated — no unexpected delegate can move vault funds, and close authority cannot be weaponized
+
+## 1.9 — Sysvar & Precompile Account Safety
+
+- [ ] **AV-068**: Clock/Rent/epoch data is obtained via syscalls (`Clock::get()`, `Rent::get()`) — not read from a passed-in account whose contents an attacker controls (see KV-101)
+- [ ] **AV-069**: Any sysvar passed as an account is typed `Sysvar<'info, T>` (or its address is asserted equal to the canonical sysvar ID) — never an unchecked `AccountInfo`/`UncheckedAccount`
+- [ ] **AV-070**: Time-gated logic (cooldowns, vesting, auctions, oracle staleness windows) cannot be bypassed by a forged Clock account
+- [ ] **AV-071**: If signatures are verified via Instructions-sysvar introspection, the precompile program ID (`ed25519_program` / `secp256k1_program`) is asserted (see KV-102)
+- [ ] **AV-072**: Introspection-based signature checks bind the exact pubkey, full message, and signature offsets to the current action — not merely "a precompile instruction exists"
+- [ ] **AV-073**: Introspected signed messages include a nonce/expiry/slot tied to state so they cannot be replayed across transactions or accounts
+- [ ] **AV-074**: Instruction index used in introspection is computed safely (relative or validated) — no fixed-index assumption an attacker can shift by inserting instructions
+- [ ] **AV-075**: Privileged accounts (treasury/authority/config) are bound via `has_one` / `seeds` / `address` / `require_keys_eq!` and never trusted by transaction position or ALT-resolved order (see KV-103)
+- [ ] **AV-076**: PDA bumps are canonical (`find_program_address` / Anchor canonical bump), stored in state, and reused — no user-supplied bump is fed to `create_program_address` (see KV-104)
+
+## 1.10 — Native / Pinocchio (No-Anchor) Program Safety
+
+> Applies to native, zero-copy, or **Pinocchio**-based programs (incl. **p-token**). Anchor provides owner/discriminator/signer/mut checks automatically; native programs do NOT — each must be verified by hand. (see KV-109)
+
+- [ ] **AV-077**: Detect the framework — if the program is native/Pinocchio (`entrypoint!`, `no_std`, `pinocchio*` deps) rather than Anchor, every guarantee below is manual and must be individually confirmed
+- [ ] **AV-078**: Every account that is deserialized or trusted has its `owner` explicitly verified against the expected program ID (no Anchor `Account<T>` auto-check exists here)
+- [ ] **AV-079**: Signer authority is asserted via an explicit `is_signer` check on every value-moving / privileged account; mutated accounts assert `is_writable`
+- [ ] **AV-080**: The number of passed accounts is validated, and every zero-copy byte-slice read is bounds-checked (`data.len() >= N`) before indexing — no fixed-index access or unchecked slice that can panic / read out of bounds
+- [ ] **AV-081**: All `unsafe` blocks (raw pointer arithmetic, `from_raw_parts`, `get_unchecked`) are preceded by an explicit length/alignment guard — no undefined behavior on malformed input
+- [ ] **AV-082**: Account type is disambiguated by owner + length + explicit tag — single-byte (or absent) discriminators cannot be confused with another account of similar layout (type cosplay)
+- [ ] **AV-083**: If the Pinocchio `unsafe-account-resize` feature is used, the program itself validates the new size stays within permitted bounds (the framework does not)
+- [ ] **AV-084**: For p-token / reimplemented SPL Token logic: behavior matches canonical SPL Token on edge cases (zero-amount, frozen account, multisig M-of-N parsing, `transfer_checked` decimals, immutable owner, exact error codes) — no CU optimization dropped a required check (ideally differential-tested against `spl-token`)

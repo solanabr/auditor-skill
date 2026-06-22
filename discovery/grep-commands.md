@@ -514,3 +514,68 @@ find .github -name "*pull_request*" -o -name "CODEOWNERS" 2>/dev/null
 ```
 grep_search: "approval|deploy.*gate|manual.*trigger"   isRegexp: true   includePattern: ".github/workflows/*.yml"
 ```
+
+---
+
+## Token, Sysvar & Modern On-Chain (v4.4 — KV-101..108)
+
+### SPL Token & Token-2022 extensions (KV-105, KV-107, KV-108)
+```
+grep_search: "token_2022|spl_token_2022|token_interface|TokenInterface|InterfaceAccount"   isRegexp: true   includePattern: "programs/**/*.rs"
+grep_search: "permanent_delegate|default_account_state|transfer_fee|confidential|interest_bearing|close_authority|get_extension"   isRegexp: true   includePattern: "programs/**/*.rs"
+grep_search: "transfer_checked|mint_to_checked|burn_checked"   isRegexp: true   includePattern: "programs/**/*.rs"
+```
+> Flag plain `token::transfer` where `transfer_checked` should bind decimals/mint. Flag arbitrary-mint acceptance without extension inspection.
+
+### Associated Token Account assumptions (KV-107)
+```
+grep_search: "associated_token|get_associated_token_address|getAssociatedTokenAddress"   isRegexp: true   includePattern: "programs/**/*.rs"
+grep_search: "getOrCreateAssociatedTokenAccount|createAssociatedTokenAccount"   isRegexp: true   includePattern: "apps/**/*.ts"
+```
+> Verify `associated_token::mint`/`authority`/`token_program` constraints — not a bare `Account<TokenAccount>` where the canonical ATA is assumed.
+
+### Token decimals / cross-mint amount confusion (KV-108)
+```
+grep_search: "decimals|10u64\\.pow|10\\.pow|1_000_000|1e6|1e9"   isRegexp: true   includePattern: "programs/**/*.rs"
+```
+> Flag hardcoded decimals constants and raw cross-mint amount math.
+
+### Sysvar spoofing (KV-101)
+```
+grep_search: "Clock::get|Rent::get"   isRegexp: true   includePattern: "programs/**/*.rs"
+grep_search: "UncheckedAccount.*[Cc]lock|AccountInfo.*[Cc]lock|Sysvar<'info,"   isRegexp: true   includePattern: "programs/**/*.rs"
+```
+> Time/rent must come from syscalls or `Sysvar<'info, T>` — never an unchecked passed account.
+
+### Precompile signature introspection (KV-102)
+```
+grep_search: "load_instruction_at|get_instruction_relative|instructions_sysvar|ed25519_program|secp256k1_program|load_current_index"   isRegexp: true   includePattern: "programs/**/*.rs"
+```
+> Verify program-ID check + message/pubkey/offset binding + replay protection.
+
+### Address Lookup Table & positional trust (KV-103)
+```
+grep_search: "remaining_accounts|accounts\\[[0-9]+\\]"   isRegexp: true   includePattern: "programs/**/*.rs"
+grep_search: "lookupTable|AddressLookupTable|compileToV0Message"   isRegexp: true   includePattern: "apps/**/*.ts"
+```
+
+### PDA bump canonicalization (KV-104)
+```
+grep_search: "create_program_address|find_program_address"   isRegexp: true   includePattern: "programs/**/*.rs"
+```
+> Any user-supplied bump fed to `create_program_address` is a finding. Bumps must be canonical, stored, and reused.
+
+### Account revival after close (KV-106)
+```
+grep_search: "close = |CLOSED_ACCOUNT_DISCRIMINATOR|try_borrow_mut_lamports|\\*\\*lamports|init_if_needed"   isRegexp: true   includePattern: "programs/**/*.rs"
+```
+> Manual closes must zero the discriminator AND drain all lamports; guard `init_if_needed` against revival with stale state.
+
+### Native / Pinocchio / p-token (KV-109)
+```
+grep_search: "pinocchio|p-token|p_token|no_std"   isRegexp: true   includePattern: "**/Cargo.toml"
+grep_search: "entrypoint!|program_entrypoint!|fn process_instruction"   isRegexp: true   includePattern: "programs/**/*.rs"
+grep_search: "is_signer|is_writable|\\.owner\\(\\)|owner =="   isRegexp: true   includePattern: "programs/**/*.rs"
+grep_search: "unsafe|get_unchecked|from_raw_parts|\\.add\\(|unsafe-account-resize"   isRegexp: true   includePattern: "programs/**/*.rs"
+```
+> No Anchor safety net: every owner/signer/mut/length/discriminator check is manual. Bounds-check zero-copy reads; validate `unsafe-account-resize` size; for p-token, diff against canonical `spl-token` edge cases.

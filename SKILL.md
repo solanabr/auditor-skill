@@ -1,12 +1,12 @@
 ---
 name: AUDITOR
-description: "**AUDIT SKILL** — Comprehensive on-chain Solana program auditor and full-stack security review for ANY programming language. USE FOR: auditing Solana/Anchor programs, reviewing smart contract security, checking for vulnerabilities (missing signers, unchecked accounts, arithmetic overflow, CPI attacks, PDA confusion, type cosplay, reinitialization, flash loan exploits, MEV, governance backdoors, timelock bypass), auditing TypeScript/Python/Go/Java/Ruby/PHP/any language, backend/frontend code review, supply chain safety, operational security (multisig, upgrade authority, deploy process), formal verification and testing quality, logging/monitoring/incident response, data privacy/GDPR/SOC2 compliance, change management, penetration testing methodology, AI/ML security, generating audit reports, running full repository audits. Severity 1-10 scale, 18 micro-checklist domains with 1182 individual verification items, plus 100 known attack vectors, chunked file-by-file execution, item-by-item verdicts. Benchmarked against CertiK (crypto) and EY/SOC2/COBIT (traditional) audit standards. DO NOT USE FOR: writing new features, general coding, non-security reviews."
+description: "**AUDIT SKILL** — Comprehensive on-chain Solana program auditor and full-stack security review for ANY programming language. USE FOR: auditing Solana/Anchor programs, reviewing smart contract security, checking for vulnerabilities (missing signers, unchecked accounts, arithmetic overflow, CPI attacks, PDA confusion, type cosplay, reinitialization, flash loan exploits, MEV, governance backdoors, timelock bypass), auditing TypeScript/Python/Go/Java/Ruby/PHP/any language, backend/frontend code review, supply chain safety, operational security (multisig, upgrade authority, deploy process), formal verification and testing quality, logging/monitoring/incident response, data privacy/GDPR/SOC2 compliance, change management, penetration testing methodology, AI/ML security, generating audit reports, running full repository audits. Severity 1-10 scale, 18 micro-checklist domains with 1209 individual verification items, plus 109 known attack vectors, chunked file-by-file execution, item-by-item verdicts. Benchmarked against CertiK (crypto) and EY/SOC2/COBIT (traditional) audit standards. DO NOT USE FOR: writing new features, general coding, non-security reviews."
 ---
 
 # AUDITOR — Multi-Language Security Audit Skill
 
-> **Version:** 4.3  
-> **Items:** 1,182 across 18 checklists (+ 100 known vectors)  
+> **Version:** 4.4  
+> **Items:** 1,209 across 18 checklists (+ 109 known vectors)  
 > **Languages:** Rust, TypeScript, Python, Go, Java, Ruby, PHP, + any via general checklist  
 > **Severity:** 1–10 numeric scale  
 > **Benchmarked against:** CertiK (crypto audit), EY/SOC 2/COBIT (traditional IT audit), OWASP Top 10:2025  
@@ -24,14 +24,14 @@ Mandatory load set:
 2. Discovery docs: all files under `discovery/`.
 3. Templates: all files under `templates/`.
 4. Checklists: all files under `checklists/`.
-5. Known vectors: `known-vectors/INDEX.md` and every vector file `known-vectors/001-*.md` through `known-vectors/100-*.md`.
+5. Known vectors: `known-vectors/INDEX.md` and every vector file `known-vectors/001-*.md` through `known-vectors/109-*.md`.
 
 Hard rules:
 
 - If any AUDITOR markdown file is unread, the audit is INVALID and must be reported as `[INCOMPLETE — missing auditor corpus file load]`.
 - Output must include:
     - every checklist item verdict (all 18 checklists),
-    - every known-vector verdict (all 100 vectors),
+    - every known-vector verdict (all 109 vectors),
     - corpus coverage evidence table listing all AUDITOR files and load status.
 - No "summary-only" audit is valid under this skill.
 
@@ -53,11 +53,11 @@ AUDITOR/
 │   ├── INDEX.md                           One-line index of all vectors
 │   ├── 001-private-key-leak.md            Severity 10 — crypto
 │   ├── 002-flash-loan-price-manipulation.md
-│   ├── ...                                (100 individual vector files)
+│   ├── ...                                (109 individual vector files)
 │   └── 100-insufficient-backup-disaster-recovery.md
 │
 ├── checklists/                       ← 18 micro-checklists (the core verification items)
-│   ├── 01-program-account-validation.md   (57 items)  — Solana/Anchor
+│   ├── 01-program-account-validation.md   (84 items)  — Solana/Anchor
 │   ├── 02-program-access-control.md       (50 items)  — Solana/Anchor
 │   ├── 03-program-arithmetic-safety.md    (61 items)  — Solana/Anchor
 │   ├── 04-program-cpi-pda.md             (63 items)  — Solana/Anchor
@@ -112,7 +112,7 @@ Full severity decision guide: see [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 1.
 Repositories can be 10 files or 10,000 files. The auditor reads files **one at a time**, never guesses, and saves checkpoints between chunks. See [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 3.
 
 ### 2. Every Item Gets a Verdict
-All 1,182 checklist items and all 100 known vectors appear in the report with explicit verdicts. Nothing is silently skipped. See [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 4.
+All 1,209 checklist items and all 109 known vectors appear in the report with explicit verdicts. Nothing is silently skipped. See [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 4.
 
 ### 3. Executive Summary First
 Every report starts with a plain-language summary: what was audited, what was found, whether it's safe to deploy. See [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 2.
@@ -182,7 +182,7 @@ If context was lost, a file was too large, or a pattern is unfamiliar — say so
 
 | # | Checklist | Items | Domain | File |
 |---|-----------|-------|--------|------|
-| 01 | Account Validation | 57 | On-chain | [01-program-account-validation.md](checklists/01-program-account-validation.md) |
+| 01 | Account Validation | 84 | On-chain | [01-program-account-validation.md](checklists/01-program-account-validation.md) |
 | 02 | Access Control | 50 | On-chain | [02-program-access-control.md](checklists/02-program-access-control.md) |
 | 03 | Arithmetic Safety | 61 | On-chain | [03-program-arithmetic-safety.md](checklists/03-program-arithmetic-safety.md) |
 | 04 | CPI & PDA Safety | 63 | On-chain | [04-program-cpi-pda.md](checklists/04-program-cpi-pda.md) |
@@ -200,7 +200,7 @@ If context was lost, a file was too large, or a pattern is unfamiliar — say so
 | 16 | Formal Verification & Testing | 58 | Universal | [16-formal-verification-testing.md](checklists/16-formal-verification-testing.md) |
 | 17 | Logging, Monitoring & IR | 62 | Universal | [17-logging-monitoring-incident-response.md](checklists/17-logging-monitoring-incident-response.md) |
 | 18 | Privacy, Compliance & Change Mgmt | 60 | Universal | [18-privacy-compliance-change-management.md](checklists/18-privacy-compliance-change-management.md) |
-| | **Total** | **1,182** | | |
+| | **Total** | **1,209** | | |
 
 ---
 

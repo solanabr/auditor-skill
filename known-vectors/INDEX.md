@@ -129,8 +129,45 @@ One line per vector. Click to see the full multi-step verification procedure.
 | 99 | [Insecure WebSocket Connections](099-insecure-websocket-connections.md) | 6 |
 | 100 | [Insufficient Backup / Disaster Recovery](100-insufficient-backup-disaster-recovery.md) | 7 |
 
+### On-Chain — Modern Surface (101-109)
+
+> Added in v4.4. Focus: sysvars, precompiles, lookup tables, PDA bump canonicalization, Token-2022 extensions, account revival, ATA assumptions, token decimals, and native/Pinocchio (p-token) programs.
+
+| # | Vector | Severity |
+|---|--------|----------|
+| 101 | [Sysvar Spoofing & Instructions-Sysvar Introspection](101-sysvar-spoofing-instructions-introspection.md) | 8 |
+| 102 | [Precompile Signature Verification Bypass (Ed25519/Secp256k1)](102-precompile-signature-verification-bypass.md) | 9 |
+| 103 | [Address Lookup Table (ALT) Manipulation](103-address-lookup-table-manipulation.md) | 7 |
+| 104 | [Non-Canonical Bump / PDA Derivation Confusion](104-non-canonical-bump-pda-derivation-confusion.md) | 7 |
+| 105 | [Token-2022 Extension Abuse (permanent delegate / frozen-default / fee / confidential / mint-close)](105-token-2022-extension-abuse.md) | 8 |
+| 106 | [Account Revival / Zombie After Close](106-account-revival-zombie-after-close.md) | 8 |
+| 107 | [Fake / Non-Canonical Associated Token Account (ATA)](107-fake-non-canonical-associated-token-account.md) | 8 |
+| 108 | [Token Decimals & Cross-Mint Amount Confusion](108-token-decimals-cross-mint-amount-confusion.md) | 7 |
+| 109 | [Pinocchio / p-token — Missing Manual Validation in Zero-Copy Native Programs](109-pinocchio-ptoken-missing-manual-validation.md) | 8 |
+
 ---
 
-**Total vectors:** 100
+## Known Duplicates & Consolidation Map
+
+The off-chain set (1-100) contains six near-duplicate pairs (same root cause catalogued under two
+categories). They are intentionally retained so both the "Backend" and "DevOps" reading paths stay
+complete, but an auditor should **evaluate each pair once and cross-reference the verdict** — do not
+double-count them as independent coverage. Severities are aligned to the higher of the pair.
+
+| Canonical | Duplicate of | Topic | Aligned Severity |
+|-----------|--------------|-------|------------------|
+| 036 | 085 | SSRF | 8 |
+| 037 | 088 | CORS misconfiguration | 7 |
+| 043 | 084 | Prototype pollution | 7 |
+| 055 | 082 | Exposed admin/debug endpoints | 8 |
+| 039 | 083 | Rate limiting (bypass / missing) | 7 |
+| 047 | 099 | WebSocket security | 7 |
+
+**Distinct concepts:** 103 (109 files − 6 duplicate pairs).
+
+---
+
+**Total vector files:** 109 (100 original + 9 added in v4.4)
+**Distinct concepts:** 103 (after consolidating 6 duplicate pairs)
 **Categories:** 4 (crypto, backend, frontend, devops)
 **Severity range:** 3-10
