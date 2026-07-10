@@ -80,3 +80,7 @@ Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{seve
 - [ ] **SEC-050**: After key rotation — all services updated atomically (no partial deployment with mixed keys)
 - [ ] **SEC-051**: Revoked/rotated keys are actually deactivated (not just removed from source but still valid)
 - [ ] **SEC-052**: Key rotation doesn't break dependent services (graceful transition)
+
+## 12.8 — Signing-Key Generation & Signing-Service Integrity
+
+- [ ] **SEC-053**: Signing keys are generated with a CSPRNG (never predictable or derived from transaction material / timestamps / counters); any custom signing service is reviewed for ECDSA/EdDSA nonce reuse and side-channels, or replaced with a vetted HSM/MPC signer (Upbit $36.8M — private key back-calculated from on-chain signature material)

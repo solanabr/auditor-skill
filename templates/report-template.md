@@ -101,27 +101,27 @@
 
 | # | Checklist | Items | Pass | Fail | Partial | N/A | Pass Rate |
 |---|---|---|---|---|---|---|---|
-| 01 | Account Validation | 84 | | | | | % |
+| 01 | Account Validation | 86 | | | | | % |
 | 02 | Access Control | 50 | | | | | % |
 | 03 | Arithmetic Safety | 61 | | | | | % |
 | 04 | CPI & PDA | 68 | | | | | % |
-| 05 | State Machine | 67 | | | | | % |
-| 06 | Economic & Logic | 71 | | | | | % |
-| 07 | OpSec & Governance | 77 | | | | | % |
+| 05 | State Machine | 69 | | | | | % |
+| 06 | Economic & Logic | 84 | | | | | % |
+| 07 | OpSec & Governance | 81 | | | | | % |
 | 08 | TypeScript Safety | 60 | | | | | % |
-| 09 | Backend Security | 100 | | | | | % |
+| 09 | Backend Security | 103 | | | | | % |
 | 10 | Frontend Security | 76 | | | | | % |
 | 11 | Supply Chain | 46 | | | | | % |
-| 12 | Secrets & OpSec | 52 | | | | | % |
+| 12 | Secrets & OpSec | 53 | | | | | % |
 | 13 | Deployment & Infra | 79 | | | | | % |
 | 14 | Python Safety | 82 | | | | | % |
 | 15 | General Language | 88 | | | | | % |
-| 16 | Formal Verification & Testing | 70 | | | | | % |
-| 17 | Logging, Monitoring & IR | 62 | | | | | % |
+| 16 | Formal Verification & Testing | 71 | | | | | % |
+| 17 | Logging, Monitoring & IR | 63 | | | | | % |
 | 18 | Privacy, Compliance & Change Mgmt | 60 | | | | | % |
 | 19 | AI Agent Security | 31 | | | | | % |
 | 20 | Rust Off-Chain Services | 17 | | | | | % |
-| | **Total** | **1301** | | | | | **%** |
+| | **Total** | **1328** | | | | | **%** |
 
 > Note: Only applicable checklists are counted in totals. Non-applicable checklists are excluded entirely.
 
@@ -204,7 +204,7 @@
               Impact: {what can go wrong}
               Fix: {what to change}
 [N/A]       AV-004: {why not applicable}
-...through AV-057
+...through AV-086
 ```
 
 ### Checklist 02 — Access Control
@@ -232,21 +232,21 @@
 
 ```
 [PASS]      SM-001: {reason}
-...through SM-067
+...through SM-069
 ```
 
 ### Checklist 06 — Economic & Logic
 
 ```
 [PASS]      ECON-001: {reason}
-...through ECON-071
+...through ECON-084
 ```
 
 ### Checklist 07 — OpSec & Governance
 
 ```
 [PASS]      OPS-001: {reason}
-...through OPS-077
+...through OPS-081
 ```
 
 ### Checklist 08 — TypeScript Safety
@@ -260,7 +260,7 @@
 
 ```
 [PASS]      BE-001: {reason}
-...through BE-100
+...through BE-103
 ```
 
 ### Checklist 10 — Frontend Security
@@ -281,7 +281,7 @@
 
 ```
 [PASS]      SEC-001: {reason}
-...through SEC-052
+...through SEC-053
 ```
 
 ### Checklist 13 — Deployment & Infra
@@ -309,14 +309,14 @@
 
 ```
 [PASS]      FV-001: {reason}
-...through FV-070
+...through FV-071
 ```
 
 ### Checklist 17 — Logging, Monitoring & Incident Response
 
 ```
 [PASS]      LM-001: {reason}
-...through LM-062
+...through LM-063
 ```
 
 ### Checklist 18 — Privacy, Compliance & Change Management
@@ -326,7 +326,7 @@
 ...through PC-060
 ```
 
-### Known Vectors Results (KV-001..KV-120)
+### Known Vectors Results (KV-001..KV-126)
 
 ```
 [PASS]      KV-001: {reason}
@@ -334,7 +334,7 @@
               File: {path:line}
               Impact: {what can go wrong}
               Fix: {what to change}
-...through KV-120
+...through KV-126
 ```
 
 ---
@@ -356,7 +356,7 @@
 
 | Metric | Value |
 |--------|-------|
-| Total known vectors | 120 |
+| Total known vectors | 126 |
 | PASS | <!-- N --> |
 | FAIL | <!-- N --> |
 | PARTIAL | <!-- N --> |

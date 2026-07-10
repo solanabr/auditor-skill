@@ -111,3 +111,10 @@ Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{seve
 
 - [ ] **OPS-076**: Stake-account **Staker** AND **Withdrawer** authority changes are monitored and allowlisted with **equal severity** — a Staker-only `Authorize` (Withdrawer untouched) must not slip past withdrawal-focused monitoring, and batched authorize instructions are inspected (cross-ref KV-118)
 - [ ] **OPS-077**: Admin/governance instructions must NOT be reachable via durable-nonce pre-signed transactions that outlive the authorizing context — privileged paths are recent-blockhash-only (or version/epoch-guarded so a multisig migration invalidates stale pre-signed txs), plus a timelock and an aggregate-outflow circuit breaker (cross-ref KV-119)
+
+## 7.10 — Authority Rotation, Treasury & Config Hardening
+
+- [ ] **OPS-078**: Admin authority is rotatable via a two-step `propose_admin`/`accept_admin` handshake backed by a `pending_admin: Option<Pubkey>` field (a single immutable admin is a SPOF), and Critical rotation/action paths are gated by a timelock (SSB §24.2)
+- [ ] **OPS-079**: Fee/treasury account is validated at config-time for token-receiving capability (ATA compatibility) AND has a valid access-controlled sweep path — funds are recoverable via an authorized route, not merely pinned to an immutable address with no way out (SSB §31.4)
+- [ ] **OPS-080**: Config-update APIs use a tri-state `Patch<T> { Unchanged, Set, Clear }` rather than an `Option<T>` that conflates "not provided" with "clear to zero"; every config write-path validates new values against each other atomically; permissionless init decouples the creator identity from privileged authority and requires explicit authority acceptance (namespace-capture, SSB §29)
+- [ ] **OPS-081**: Verify the LIVE on-chain multisig threshold by fetching the account — confirm the actual configured threshold is ≥ ceil(N/2)+1, not just that a threshold field exists in the schema (Saga DAO 1-of-12 misconfig, $60K)

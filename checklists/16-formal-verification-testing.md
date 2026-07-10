@@ -1,6 +1,6 @@
 # Checklist 16 — Formal Verification & Testing Quality
 
-> **Items:** 58  |  **IDs:** FV-001 → FV-058  
+> **Items:** 71  |  **IDs:** FV-001 → FV-071  
 > **Applies to:** All languages, all repository types  
 > **Sources:** CertiK formal verification methodology, EY QA/processing integrity, OWASP A06 (Insecure Design), OWASP A10 (Mishandling of Exceptional Conditions)
 
@@ -120,3 +120,13 @@
 | FV-068 | `expire_blockhash()` (or equivalent blockhash advance) is called after each send in multi-transaction tests — no reliance on a stale blockhash | 4 |
 | FV-069 | Failure-path tests do NOT `unwrap()` the send result; they assert `result.is_err()` (and, where relevant, the specific `InstructionError`) | 5 |
 | FV-070 | PDA derivations in tests use the same seeds as on-chain (documented in comments), and devnet/mainnet account replay is used only for fixtures — never for security-critical assertions | 4 |
+
+---
+
+## 16.7 Solana-Native Verification Tooling — Is the Suite Appropriate to the Risk? (FV-071)
+
+> **Source:** Solana verification/fuzzing ecosystem. Turns "does a fuzz/FV suite even exist, and is it the right one?" into an actionable check. Verify the suite uses **at least one** tool appropriate to the protocol's risk profile — high-value DeFi math warrants equivalence/invariant proving, not just a unit-test smoke pass.
+
+| ID | Check | Severity |
+|----|-------|----------|
+| FV-071 | The project uses at least one Solana-appropriate verification/fuzzing tool matched to its risk: **Trident** (stateful/guided fuzzing of instruction sequences), **Crucible** (sBPF invariant fuzzing, no source needed), **Riverguard** (mainnet-transaction mutation replay), **Certora CVL** (equivalence + invariant induction — expected for high-value DeFi math), **Kani** (bounded model-checking proofs), or **Mollusk/LiteSVM** (fast in-process harness). A high-value protocol whose only "verification" is a handful of happy-path unit tests fails this item. | 6 |

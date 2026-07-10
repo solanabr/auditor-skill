@@ -215,7 +215,7 @@ Every single checklist item and every known attack vector MUST appear in the rep
 
 ### Ordering
 
-Items listed in **checklist order** (AV-001, AV-002, ..., PC-060, AI-001, ..., RS-017), followed by known vectors in order (KV-001 through KV-120). Never reorder or group by verdict.
+Items listed in **checklist order** (AV-001, AV-002, ..., PC-060, AI-001, ..., RS-017), followed by known vectors in order (KV-001 through KV-126). Never reorder or group by verdict.
 
 ---
 
@@ -384,7 +384,7 @@ The report MUST include computed metrics at the end of the Item Results section.
 
 | Metric | Value |
 |--------|-------|
-| Total known vectors | 109 |
+| Total known vectors | 126 |
 | PASS | {N} |
 | FAIL | {N} |
 | PARTIAL | {N} |
@@ -395,7 +395,7 @@ The report MUST include computed metrics at the end of the Item Results section.
 
 | # | Checklist | Items | Pass | Fail | Partial | N/A | Pass Rate |
 |---|-----------|-------|------|------|---------|-----|-----------|
-| 01 | Account Validation | 84 | | | | | % |
+| 01 | Account Validation | 86 | | | | | % |
 | ... | ... | ... | ... | ... | ... | ... | ... |
 | **Total** | | **{N}** | | | | | **{%}** |
 ```

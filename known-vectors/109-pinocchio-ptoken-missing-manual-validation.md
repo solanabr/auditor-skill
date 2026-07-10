@@ -72,6 +72,11 @@ grep -rn -E "unsafe-account-resize|resize|realloc|set_data_length" programs/ Car
 - ✅ PASS: A CU optimization never removed a check the canonical program enforces; behavior matches on edge cases (differential-tested against `spl-token`)
 - ❌ FAIL: A check (e.g., frozen-state, decimals, signer threshold) was dropped or diverges to save CU
 
+**Step 7b: Batch / deferred-validation instructions — validate at each step, not just final state** (p-token deferred-validation class, 2026)
+- p-token / zero-copy **batch** instructions may mutate an account, then **reverse** the change before the instruction returns, so that the *final* account state passes the runtime's post-instruction owner/state check even though an **intermediate** state was invalid (or an account it had no right to touch was transiently written). Validating only the end state — or relying on the runtime's deferred owner check — misses the transient violation.
+- ✅ PASS: Every sub-operation in a batch validates owner/signer/bounds **before it acts**, so no intermediate step touches an account it hasn't authorized; correctness does not depend on a later reversal restoring valid final state
+- ❌ FAIL: A batch modifies then reverses account data such that only the final state is checked (by the program or the runtime's deferred owner check) — an intermediate invalid write slips through
+
 **Overall verdict:**
 - ✅: All owner/signer/bounds/discriminator checks present and explicit; unsafe code guarded; token semantics match canonical
 - ⚠️: Mostly validated but some reads lack explicit bounds checks or rely on layout assumptions

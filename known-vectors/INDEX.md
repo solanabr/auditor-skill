@@ -166,6 +166,17 @@ One line per vector. Click to see the full multi-step verification procedure.
 | 119 | [Durable-Nonce Pre-Signed Governance Abuse](119-durable-nonce-pre-signed-governance-abuse.md) | 9 |
 | 120 | [On-Chain Randomness Predictability & VRF Misbinding](120-onchain-randomness-predictability.md) | 7 |
 
+### Modern On-Chain, Custody & Off-Chain Consumers (121-126)
+
+| # | Vector | Severity |
+|---|--------|----------|
+| 121 | [cNFT / Account-Compression Merkle Proof Abuse](121-cnft-account-compression-merkle-proof.md) | 7 |
+| 122 | [Inner-Instruction / Event-Log Spoofing](122-inner-instruction-event-log-spoofing.md) | 7 |
+| 123 | [Lamport-Donation Account Bricking (King-of-the-SOL)](123-lamport-donation-account-bricking.md) | 6 |
+| 124 | [Custodial Cleartext Key Export / Recoverable Signing Material](124-wallet-cleartext-key-export.md) | 8 |
+| 125 | [Bonding-Curve Launchpad Graduation & Migration Abuse](125-bonding-curve-launchpad-graduation-abuse.md) | 7 |
+| 126 | [Session Token as Custody](126-session-token-as-custody.md) | 7 |
+
 ---
 
 ## Known Duplicates & Consolidation Map
@@ -184,11 +195,11 @@ double-count them as independent coverage. Severities are aligned to the higher 
 | 039 | 083 | Rate limiting (bypass / missing) | 7 |
 | 047 | 099 | WebSocket security | 7 |
 
-**Distinct concepts:** 114 (120 files − 6 duplicate pairs).
+**Distinct concepts:** 120 (126 files − 6 duplicate pairs).
 
 ---
 
-**Total vector files:** 120 (100 original + 9 in v4.4 + 8 in v5.0 + 3 in v5.1)
-**Distinct concepts:** 114 (after consolidating 6 duplicate pairs)
+**Total vector files:** 126 (100 original + 9 in v4.4 + 8 in v5.0 + 3 in v5.1 + 6 in v6.0)
+**Distinct concepts:** 120 (after consolidating 6 duplicate pairs)
 **Categories:** 6 (crypto, backend, frontend, devops, ai-agent, off-chain-rust)
 **Severity range:** 3-10
