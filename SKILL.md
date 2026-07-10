@@ -53,6 +53,8 @@ Checklists outside this set are **never read** — a Rust-only repo never loads 
 | `references/vuln-classes/zk-and-compression.md` | `groth16` · `spl-account-compression` · `bubblegum` · `merkle` · `nullifier` · `ConfidentialTransfer` |
 | `references/false-positives.md` | triaging any finding before reporting severity ≥ 6 |
 | `references/orchestration/boundary-map.md` | delegating to vendored Trail of Bits tooling |
+| `references/audit-lifecycle/methodology.md` | running `/audit-cycle` or `/audit-assist` (our method) |
+| `references/audit-lifecycle/firm-coverage.md` | choosing methodology / understanding firm practice |
 
 ---
 
@@ -197,6 +199,18 @@ If context was lost, a file was too large, or a pattern is unfamiliar — say so
 1. Extract a requirement list (Spec-IR) from the spec.
 2. Phase 0 setup + Phase 0.5; map each instruction / state field to the spec's stated behavior.
 3. Compliance Matrix: each requirement → `[MET]` / `[VIOLATED-N]` / `[UNIMPLEMENTED]` / `[UNDOCUMENTED-BEHAVIOR]`, cited to code `L#`. Any `[VIOLATED-N≥6]` passes the Rule 5b gate; `[UNDOCUMENTED-BEHAVIOR]` (code does something the spec never authorizes) is itself a finding. *(Pattern credit: Trail of Bits `spec-to-code-compliance`.)*
+
+---
+
+## Audit Flows (full engagement lifecycle)
+
+Two flows run the traditional audit-company lifecycle over the skill's **existing** mechanisms (scope-gating → Phase 0.5 context → manual review → Rule 5b verification → Phase 4.5 maturity → report). Method: [references/audit-lifecycle/methodology.md](references/audit-lifecycle/methodology.md); how real firms work: [references/audit-lifecycle/firm-coverage.md](references/audit-lifecycle/firm-coverage.md).
+
+- **`/auditor:audit-cycle`** — *fully automated audit team.* Runs the whole lifecycle autonomously: domain-partitioned `vuln-hunter` + `economic-analyst` (each self-triaging via Rule 5b + `false-positives.md` at the leaf) → independent `peer-reviewer` reconciliation on top-severity findings → `audit-reporter` synthesis → a client-facing report ([templates/audit-report.md](templates/audit-report.md)) at `audit_<n>/REPORT.md` (+ optional PDF via `scripts/report-to-pdf.sh`, pandoc-gated — MD is always the deliverable).
+- **`/auditor:audit-assist`** — *AI-assisted, human-in-the-loop.* Same lifecycle, pausing at checkpoints to surface confirmed findings + next-focus + the questions only a human can answer (business context, trust model, severity calls); iterates until the audit document converges.
+- **`/auditor:re-audit`** — *fix-review.* Diffs against a prior report: per-finding `FIXED` / `STILL-OPEN` / `REGRESSED`, plus a sibling-patch-propagation sweep (grep the codebase for the same anti-pattern the fix closed).
+
+Honestly scoped: this is audit-shaped automation / a rigorous first pass, not a substitute for a human firm audit. The client report follows firm convention — maturity narrative + trust-model caveats + disclaimer — and does **not** issue a "safe to deploy" guarantee. *(Precedents: Neodyme independent dual-review, Trail of Bits weekly progress reports + code-maturity, Sec3 shift-left, Zellic importance-ordering, Zenith delta review.)*
 
 ---
 

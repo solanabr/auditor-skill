@@ -158,6 +158,21 @@ auditor-skill/
 
 ---
 
+## Audit Flows
+
+Beyond one-shot `/audit`, two flows run a full audit-company lifecycle end-to-end:
+
+- **`/auditor:audit-cycle`** — a **fully automated** audit-agent team (scope → context reconstruction → tool-assisted pass → parallel manual review with leaf-level false-positive gating → independent peer reconciliation → synthesis) that produces a professional client report at `audit_<n>/REPORT.md`. Optional PDF (needs [pandoc](https://pandoc.org/)):
+  ```bash
+  scripts/report-to-pdf.sh audit_1/REPORT.md   # writes REPORT.pdf if pandoc is installed; MD is always the deliverable
+  ```
+- **`/auditor:audit-assist`** — an **AI-assisted, human-in-the-loop** flow: it pauses at checkpoints to surface findings and ask the questions only you can answer (business context, trust model, severity calls), iterating until the audit document converges.
+- **`/auditor:re-audit`** — **fix-review**: diffs against a prior report (`FIXED` / `STILL-OPEN` / `REGRESSED`) and sweeps for un-patched siblings of each fixed bug.
+
+The client report follows professional firm convention — executive summary, commit-pinned scope, findings with PoC/reachability, a code-maturity assessment, disclaimers. Like real firms, it does **not** issue a "safe to deploy" guarantee. Method + firm coverage: [references/audit-lifecycle/](references/audit-lifecycle/).
+
+---
+
 ## Output Format
 
 The audit produces a structured markdown report with:
