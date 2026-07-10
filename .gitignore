@@ -3,7 +3,6 @@
 .claude/skills/ext/
 
 # >>> solana-ai-kit config — gitignored by default; run /commit-claude-config to version it >>>
-.gitmodules
 .claude/
 CLAUDE.md
 .mcp.json
