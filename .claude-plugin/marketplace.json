@@ -6,7 +6,7 @@
   },
   "metadata": {
     "version": "6.0.0",
-    "description": "AUDITOR — Solana + full-stack security audit skill"
+    "description": "auditor-skill — Solana + full-stack security audit skill"
   },
   "plugins": [
     {

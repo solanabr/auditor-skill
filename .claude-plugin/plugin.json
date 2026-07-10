@@ -1,7 +1,7 @@
 {
   "name": "auditor",
   "version": "6.0.0",
-  "description": "Solana + full-stack security auditor: 18 checklists / 1,209+ items / 110+ known-vectors, severity 1-10, per-item verdicts, scope-gated loading. Native rigor gates (context reconstruction, false-positive validation, maturity scorecard) plus orchestrated Trail of Bits execution tooling (SAST, fuzzing, coverage, mutation).",
+  "description": "Solana + full-stack security auditor: 20 checklists / 1,328 items / 126 known-vectors, severity 1-10, per-item verdicts, scope-gated loading. Native rigor gates (context reconstruction, false-positive validation, maturity scorecard) plus orchestrated Trail of Bits execution tooling (SAST, fuzzing, coverage, mutation).",
   "author": {
     "name": "solanabr",
     "url": "https://github.com/solanabr"
