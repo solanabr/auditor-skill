@@ -104,9 +104,9 @@
 | 01 | Account Validation | 84 | | | | | % |
 | 02 | Access Control | 50 | | | | | % |
 | 03 | Arithmetic Safety | 61 | | | | | % |
-| 04 | CPI & PDA | 63 | | | | | % |
-| 05 | State Machine | 56 | | | | | % |
-| 06 | Economic & Logic | 62 | | | | | % |
+| 04 | CPI & PDA | 66 | | | | | % |
+| 05 | State Machine | 67 | | | | | % |
+| 06 | Economic & Logic | 70 | | | | | % |
 | 07 | OpSec & Governance | 75 | | | | | % |
 | 08 | TypeScript Safety | 60 | | | | | % |
 | 09 | Backend Security | 100 | | | | | % |
@@ -116,10 +116,12 @@
 | 13 | Deployment & Infra | 77 | | | | | % |
 | 14 | Python Safety | 82 | | | | | % |
 | 15 | General Language | 88 | | | | | % |
-| 16 | Formal Verification & Testing | 58 | | | | | % |
+| 16 | Formal Verification & Testing | 70 | | | | | % |
 | 17 | Logging, Monitoring & IR | 62 | | | | | % |
 | 18 | Privacy, Compliance & Change Mgmt | 60 | | | | | % |
-| | **Total** | **1209** | | | | | **%** |
+| 19 | AI Agent Security | 31 | | | | | % |
+| 20 | Rust Off-Chain Services | 17 | | | | | % |
+| | **Total** | **1291** | | | | | **%** |
 
 > Note: Only applicable checklists are counted in totals. Non-applicable checklists are excluded entirely.
 
@@ -230,14 +232,14 @@
 
 ```
 [PASS]      SM-001: {reason}
-...through SM-056
+...through SM-067
 ```
 
 ### Checklist 06 — Economic & Logic
 
 ```
 [PASS]      ECON-001: {reason}
-...through ECON-062
+...through ECON-070
 ```
 
 ### Checklist 07 — OpSec & Governance
@@ -307,7 +309,7 @@
 
 ```
 [PASS]      FV-001: {reason}
-...through FV-058
+...through FV-070
 ```
 
 ### Checklist 17 — Logging, Monitoring & Incident Response
@@ -324,7 +326,7 @@
 ...through PC-060
 ```
 
-### Known Vectors Results (KV-001..KV-109)
+### Known Vectors Results (KV-001..KV-117)
 
 ```
 [PASS]      KV-001: {reason}
@@ -332,7 +334,7 @@
               File: {path:line}
               Impact: {what can go wrong}
               Fix: {what to change}
-...through KV-109
+...through KV-117
 ```
 
 ---
@@ -354,7 +356,7 @@
 
 | Metric | Value |
 |--------|-------|
-| Total known vectors | 109 |
+| Total known vectors | 117 |
 | PASS | <!-- N --> |
 | FAIL | <!-- N --> |
 | PARTIAL | <!-- N --> |

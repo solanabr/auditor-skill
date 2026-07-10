@@ -450,6 +450,54 @@ GREP PATTERNS:
   "approve\|review\|merge.*protect"    → Change management controls
 ```
 
+### 19 — AI Agent Security
+```
+PRIMARY (MCP & tool wiring):
+  .mcp.json                            # MCP server allowlist (tool-access surface)
+  **/mcp*.{ts,js,py}                   # MCP client/server setup
+  **/agent*.{ts,js,py}                 # Agent SDK entrypoints / orchestration loops
+  **/tools/*.{ts,js,py}                # Tool/function definitions exposed to the LLM
+
+PRIMARY (Signing & guardrails):
+  **/signer*.{ts,js,py,rs}             # Where the agent's key signs transactions
+  **/*allowlist* / **/*policy*         # Program/target allowlists, spend caps, budgets
+
+PRIMARY (CI with deploy keys):
+  .github/workflows/*.yml              # Workflows holding deploy/mainnet keys or agent creds
+
+GREP PATTERNS:
+  "mcpServers"           → MCP servers granted to the agent (trust each one)
+  "allowlist\|allowedPrograms\|whitelist" → CPI/target allowlist for autonomous signing
+  "spend.?cap\|spendLimit\|maxLamports\|budget" → Spend caps on agent-signed txns
+  "signAllTransactions\|signTransaction" → Blind-signing surface (inspect before sign)
+  "openai\|anthropic\|prompt\|systemPrompt" → Prompt-injection surface
+  "api_key\|apiKey\|SECRET"            → Secrets embedded in .mcp.json / agent config
+```
+
+### 20 — Rust Off-Chain Services
+```
+PRIMARY (all .rs OUTSIDE programs/):
+  **/*.rs  EXCLUDING programs/**       # Off-chain infra: different threat model
+  services/**/*.rs / crates/**/*.rs    # Standalone service crates
+  bin/**/*.rs / src/bin/*.rs           # Binary entrypoints (bots, daemons)
+
+TARGET SERVICE TYPES:
+  geyser plugins        → "geyser\|GeyserPlugin\|yellowstone\|carbon"
+  indexers              → "indexer\|substreams\|getProgramAccounts\|onLogs\|onAccountChange"
+  keeper / liquidator bots → "keeper\|liquidator\|crank\|bot\|loop"
+  signer services       → "Keypair\|sign_transaction\|signing_key"
+
+TERMINAL COMMANDS:
+  find . -name "*.rs" -not -path "./programs/*" -not -path "./target/*"  # Enumerate off-chain Rust
+
+GREP PATTERNS:
+  ".unwrap()\|.expect("  → Panic on network/RPC/deserialized input (remote DoS)
+  "zeroize\|Zeroizing\|ZeroizeOnDrop" → Secret scrubbing on long-lived keys
+  "reqwest\|tokio_tungstenite\|PubsubClient\|RpcClient" → Network/RPC trust boundaries
+  "from_slice\|deserialize\|serde_json::from" → Untrusted-input parsing (needs bounds/error handling)
+  "std::env\|dotenv\|Keypair::read" → Where long-lived signing keys are loaded
+```
+
 ---
 
 ## Porting to New Repository

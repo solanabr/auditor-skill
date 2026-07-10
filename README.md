@@ -69,17 +69,16 @@ If building a service, send the AUDITOR files as system context and the target r
 
 ## Before Running an Audit
 
-### Mandatory Intake Rule (Do Not Skip)
+### Scope-Gated Intake (v5.0)
 
-Before any audit output is produced, the agent MUST recursively read all markdown files under `AUDITOR/`, including:
+AUDITOR does not bulk-read its whole corpus. It discovers the repo, declares an audit scope ([OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 0), and loads only the in-scope checklists and vectors on demand:
 
-- root docs,
-- all `checklists/*.md`,
-- all `discovery/*.md`,
-- all `templates/*.md`,
-- `known-vectors/INDEX.md` and every file in `known-vectors/001..117`.
+- root docs + `OUTPUT-RULES.md` (always),
+- only the `checklists/*.md` the detected languages require (e.g. `14-python-safety.md` only if `.py` is present),
+- a `known-vectors/*.md` file only when its phase + language trigger reaches it,
+- `discovery/*.md` and `templates/*.md` lazily, at the phase that uses them.
 
-If any file is not loaded, the audit is invalid and must be marked incomplete.
+The audit is complete when every **in-scope** item has an explicit verdict; out-of-scope items render `[N/A — out of scope]` from the gate.
 
 1. **Fill out the questionnaire:** Copy [QUESTIONS.md](QUESTIONS.md) and answer all questions. This tells the auditor what checklists to apply, what severity calibration to use, and what compliance frameworks matter.
 
@@ -116,13 +115,13 @@ AUDITOR/
 │   ├── ...
 │   └── 100-insufficient-backup-disaster-recovery.md
 │
-├── checklists/              ← 18 micro-checklists (the core verification items)
+├── checklists/              ← 20 micro-checklists (the core verification items)
 │   ├── 01-program-account-validation.md    (84 items)
 │   ├── 02-program-access-control.md        (50 items)
 │   ├── 03-program-arithmetic-safety.md     (61 items)
-│   ├── 04-program-cpi-pda.md              (63 items)
-│   ├── 05-program-state-machine.md         (56 items)
-│   ├── 06-program-economic-logic.md        (62 items)
+│   ├── 04-program-cpi-pda.md              (66 items)
+│   ├── 05-program-state-machine.md         (67 items)
+│   ├── 06-program-economic-logic.md        (70 items)
 │   ├── 07-program-opsec-governance.md      (75 items)
 │   ├── 08-typescript-safety.md             (60 items)
 │   ├── 09-backend-security.md             (100 items)
@@ -132,16 +131,18 @@ AUDITOR/
 │   ├── 13-deployment-infrastructure.md     (77 items)
 │   ├── 14-python-safety.md                 (82 items)
 │   ├── 15-general-language-safety.md       (88 items)
-│   ├── 16-formal-verification-testing.md   (58 items)
+│   ├── 16-formal-verification-testing.md   (70 items)
 │   ├── 17-logging-monitoring-incident-response.md (62 items)
-│   └── 18-privacy-compliance-change-management.md (60 items)
+│   ├── 18-privacy-compliance-change-management.md (60 items)
+│   ├── 19-ai-agent-security.md (31 items) — AI agents on Solana
+│   └── 20-rust-offchain-services.md (17 items) — Off-chain Rust (geyser/indexers/keepers)
 │
 ├── discovery/               ← File patterns and search commands
 │   ├── file-map.md          ← Maps checklists → target file patterns
 │   └── grep-commands.md     ← All grep/terminal commands by category
 │
 └── templates/               ← Output templates
-    ├── report-template.md   ← Full audit report structure (9 sections)
+    ├── report-template.md   ← Full audit report structure (11 sections)
     └── instruction-worksheet.md  ← Per-instruction deep-review form
 ```
 

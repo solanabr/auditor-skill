@@ -517,7 +517,7 @@ RECORD: privacy, compliance & change management findings
 ACTIONS:
 
   1. Read known-vectors/INDEX.md
-  2. Read every file known-vectors/001-*.md through known-vectors/109-*.md
+  2. Read every file known-vectors/001-*.md through known-vectors/117-*.md
   3. For each vector, record one verdict:
        [PASS] / [FAIL-{1-10}] / [PARTIAL] / [N/A]
   4. Add evidence line(s): file:line or command output reference
@@ -526,7 +526,7 @@ RECORD format:
   - KV-001: [PASS] ...
   - KV-002: [PARTIAL] ...
   ...
-  - KV-109: [FAIL-7] ...
+  - KV-117: [FAIL-7] ...
 
 HARD RULE:
   Every in-scope KV item must have a verdict. Out-of-scope vectors render
