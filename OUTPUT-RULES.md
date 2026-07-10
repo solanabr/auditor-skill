@@ -1,4 +1,4 @@
-# Output Rules — AUDITOR Skill
+# Output Rules — auditor-skill
 
 > This document defines the **mandatory output format** for all audit reports.  
 > Every audit — full, targeted, or single-instruction — MUST follow these rules.  
@@ -6,25 +6,21 @@
 
 ---
 
-## Rule 0: Mandatory AUDITOR Corpus Load
+## Rule 0: Scope Declaration & Scope-Gated Corpus Load
 
-Before auditing project code, the agent MUST recursively read every markdown file in the AUDITOR folder.
+auditor-skill does **not** read its whole corpus up front. It discovers the repo, declares a scope, loads only what that scope needs, and guarantees a verdict for every in-scope item.
 
-Required coverage:
+1. **Discover** (cheap, always): enumerate file extensions and markers (`Anchor.toml`, `Cargo.toml`, `package.json`, `*.py`, `.github/`). No checklists or vectors loaded yet.
+2. **Declare scope**: from detected languages + any `--scope` flag, compute the IN-SCOPE checklist set (see [SKILL.md](SKILL.md) → Scope-Gated Loading). Load this file (`OUTPUT-RULES.md`) once — it is always in scope.
+3. **Load on demand**: load an in-scope checklist when its phase begins; load a known-vector only when its phase + language/domain trigger reaches it. Out-of-scope checklists and vectors are **never read**.
 
-- Root docs: `README.md`, `SKILL.md`, `OUTPUT-RULES.md`, `FULL-AUDIT.md`, `QUESTIONS.md`, `COSTS.md`, `TOP-100-HACKS.md` (if present)
-- Discovery: all files under `discovery/`
-- Templates: all files under `templates/`
-- Checklists: all files under `checklists/`
-- Known vectors: `known-vectors/INDEX.md` plus all `known-vectors/001...100`
+Completeness is measured **output-side**, not input-side:
 
-If ANY AUDITOR file is not loaded, report:
+- The audit is COMPLETE iff every IN-SCOPE checklist item and every phase-triggered vector has an explicit verdict.
+- If any in-scope item lacks a verdict, report `[INCOMPLETE — in-scope item without verdict]` and finish it before concluding.
+- Out-of-scope items render as `[N/A — out of scope: <reason>]`, generated from the scope gate (not from reading the file).
 
-`[INCOMPLETE — missing auditor corpus file load]`
-
-and stop. Do not produce a "complete" audit.
-
-Every full report MUST include a **Corpus Coverage** table listing each AUDITOR file and load status.
+Every full report MUST include a **Scope Coverage** table: for each of the checklists and each vector group, `IN-SCOPE` (with items evaluated / total) or `OUT-OF-SCOPE (reason)`.
 
 ---
 
@@ -219,7 +215,7 @@ Every single checklist item and every known attack vector MUST appear in the rep
 
 ### Ordering
 
-Items listed in **checklist order** (AV-001, AV-002, ..., DEP-077, PY-001, ..., PC-060), followed by known vectors in order (KV-001 through KV-109). Never reorder or group by verdict.
+Items listed in **checklist order** (AV-001, AV-002, ..., PC-060, AI-001, ..., RS-017), followed by known vectors in order (KV-001 through KV-126). Never reorder or group by verdict.
 
 ---
 
@@ -262,21 +258,67 @@ Every finding (any item that is `[FAIL-N]` with severity ≥ 4) gets a **full fi
 
 ---
 
+## Rule 5b: High-Severity Findings Must Survive the Validation Gate
+
+Over-reporting is the primary failure mode of an AI auditor. Any `[FAIL-N]` with **N ≥ 6** is *provisional* until it carries a filled **Reachability** block and a **Math / State-Bounds** block. Any `[FAIL-N]` with **N ≥ 7** additionally requires a filled **Attacker-Model** block.
+
+If the gate blocks cannot be completed with cited evidence (`file:line`), the finding MUST be downgraded — never left as a bare `[FAIL-N]`:
+
+- `[PARTIAL]` — a real defense-in-depth gap, but the exploit path is unproven; or
+- `[UNCONFIRMED]` — suspected but unreachable / unbounded as written; reported for manual follow-up, not counted as a confirmed FAIL in metrics.
+
+The gate blocks are reproduced in the finding's full block (Rule 5) and summarized in one line at the item verdict (Rule 4). *(Validation-gate pattern credit: Trail of Bits `fp-check` / `second-opinion`.)*
+
+**Reachability** (required if N ≥ 6):
+
+```
+- Entry point: {instruction/endpoint} @ {file:line}
+- Signer / authority required: {permissionless | user | manager | admin}
+- Preconditions to reach the vulnerable line: {state/account conditions, each cited}
+- Guard analysis: {constraints / require!s that could block it, and why they don't} @ {file:line}
+- Verdict: REACHABLE | GUARDED (-> downgrade) | UNREACHABLE (-> downgrade)
+```
+
+**Math / State-Bounds** (required if N ≥ 6):
+
+```
+- Vulnerable expression / transition: {code} @ {file:line}
+- Input domain: {ranges / types that reach it}
+- Boundary that breaks: {overflow point | div-by-zero input | rounding direction | insolvent state}
+- Worked case: {concrete numbers showing the break, or the state sequence}
+- Net effect: {funds moved | state corrupted | DoS — quantified}
+```
+
+**Attacker-Model** (required if N ≥ 7):
+
+```
+- Capability: {permissionless caller | one deposit | flash-loanable capital | co-signer | compromised admin}
+- Capital / setup cost: {approx}
+- Profit / damage: {approx, or "griefing — no direct profit"}
+- Atomicity: {single-tx | multi-tx | multi-slot}
+- Net: profitable | griefing-only | requires-privilege (privilege caps severity per Rule 1)
+```
+
+A *rejected* finding looks like this: "input ≥ 16 and header = 8 ⟹ input − header ≥ 8, so the subtraction cannot underflow. Downgraded `[FAIL-7]` → `[UNCONFIRMED]`."
+
+---
+
 ## Rule 6: Report Sections Order
 
 Every full audit report follows this exact section order:
 
 ```
 1. Executive Summary          (Rule 2 — always first)
-2. Corpus Coverage            (proof every AUDITOR file was loaded)
+2. Scope Coverage             (in-scope checklists / vector groups, items evaluated / total)
 3. Scope & Methodology        (languages, files, LOC, checklists applied)
 4. Findings                   (severity ≥ 4, full blocks, grouped by severity descending)
-5. Detailed Item Results      (ALL checklist items, item-by-item verdicts)
-6. Known Vector Results       (KV-001 through KV-109, each with verdict)
+5. Detailed Item Results      (all in-scope checklist items, item-by-item verdicts)
+6. Known Vector Results       (each in-scope KV, with verdict)
 7. Instruction Matrix         (on-chain only — if applicable)
 8. State Model Verification   (on-chain only — if applicable)
-9. Remediation Roadmap        (prioritized by severity)
-10. Appendices                (tool versions, environment, disclaimer)
+9. Code Maturity Scorecard    (Phase 4.5 — 9 categories, 0-4)
+10. Remediation Roadmap       (by severity; maturity categories scoring <= 1 first)
+11. Appendices                (tool versions, environment, disclaimer)
 ```
 
 ---
@@ -342,7 +384,7 @@ The report MUST include computed metrics at the end of the Item Results section.
 
 | Metric | Value |
 |--------|-------|
-| Total known vectors | 109 |
+| Total known vectors | 126 |
 | PASS | {N} |
 | FAIL | {N} |
 | PARTIAL | {N} |
@@ -353,7 +395,7 @@ The report MUST include computed metrics at the end of the Item Results section.
 
 | # | Checklist | Items | Pass | Fail | Partial | N/A | Pass Rate |
 |---|-----------|-------|------|------|---------|-----|-----------|
-| 01 | Account Validation | 84 | | | | | % |
+| 01 | Account Validation | 86 | | | | | % |
 | ... | ... | ... | ... | ... | ... | ... | ... |
 | **Total** | | **{N}** | | | | | **{%}** |
 ```
@@ -392,3 +434,7 @@ For any item where the auditor is less than fully certain:
 ```
 
 The `*` suffix + confidence note signals that manual double-checking may be warranted.
+
+### `[UNCONFIRMED]` — failed the validation gate
+
+A finding that could not complete the Rule 5b Reachability or Math/State-Bounds gate is recorded as `[UNCONFIRMED]` (suspected, but unreachable / unbounded as written) — reported for manual follow-up, and NOT counted as a confirmed FAIL in the severity metrics.

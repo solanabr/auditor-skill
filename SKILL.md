@@ -1,12 +1,12 @@
 ---
-name: AUDITOR
-description: "**AUDIT SKILL** — Comprehensive on-chain Solana program auditor and full-stack security review for ANY programming language. USE FOR: auditing Solana/Anchor programs, reviewing smart contract security, checking for vulnerabilities (missing signers, unchecked accounts, arithmetic overflow, CPI attacks, PDA confusion, type cosplay, reinitialization, flash loan exploits, MEV, governance backdoors, timelock bypass), auditing TypeScript/Python/Go/Java/Ruby/PHP/any language, backend/frontend code review, supply chain safety, operational security (multisig, upgrade authority, deploy process), formal verification and testing quality, logging/monitoring/incident response, data privacy/GDPR/SOC2 compliance, change management, penetration testing methodology, AI/ML security, generating audit reports, running full repository audits. Severity 1-10 scale, 18 micro-checklist domains with 1209 individual verification items, plus 109 known attack vectors, chunked file-by-file execution, item-by-item verdicts. Benchmarked against CertiK (crypto) and EY/SOC2/COBIT (traditional) audit standards. DO NOT USE FOR: writing new features, general coding, non-security reviews."
+name: auditor-skill
+description: "**AUDIT SKILL** — Comprehensive on-chain Solana program auditor and full-stack security review for ANY programming language. USE FOR: auditing Solana/Anchor programs, reviewing smart contract security, checking for vulnerabilities (missing signers, unchecked accounts, arithmetic overflow, CPI attacks, PDA confusion, type cosplay, reinitialization, flash loan exploits, MEV, governance backdoors, timelock bypass), auditing TypeScript/Python/Go/Java/Ruby/PHP/any language, backend/frontend code review, supply chain safety, operational security (multisig, upgrade authority, deploy process), formal verification and testing quality, logging/monitoring/incident response, data privacy/GDPR/SOC2 compliance, change management, penetration testing methodology, AI/ML security, generating audit reports, running full repository audits. Severity 1-10 scale, 20 micro-checklist domains with 1328 individual verification items, plus 126 known attack vectors, chunked file-by-file execution, item-by-item verdicts. Benchmarked against CertiK (crypto) and EY/SOC2/COBIT (traditional) audit standards. DO NOT USE FOR: writing new features, general coding, non-security reviews."
 ---
 
-# AUDITOR — Multi-Language Security Audit Skill
+# auditor-skill — Multi-Language Security Audit Skill
 
-> **Version:** 4.4  
-> **Items:** 1,209 across 18 checklists (+ 109 known vectors)  
+> **Version:** 6.0  
+> **Items:** 1,328 across 20 checklists (+ 126 known vectors)  
 > **Languages:** Rust, TypeScript, Python, Go, Java, Ruby, PHP, + any via general checklist  
 > **Severity:** 1–10 numeric scale  
 > **Benchmarked against:** CertiK (crypto audit), EY/SOC 2/COBIT (traditional IT audit), OWASP Top 10:2025  
@@ -14,74 +14,94 @@ description: "**AUDIT SKILL** — Comprehensive on-chain Solana program auditor 
 
 ---
 
-## BLOCKING REQUIREMENT — FULL AUDITOR CORPUS INTAKE
+## SCOPE-GATED LOADING — Load What The Repo Needs
 
-Before any audit begins, the agent MUST recursively read every markdown file in this folder.
+auditor-skill does not read its whole corpus up front. It discovers the repo, declares a scope, loads only what that scope requires, then guarantees a verdict for every in-scope item.
 
-Mandatory load set:
+**Step 1 — Discover (cheap, always).** Enumerate file extensions and markers (`Anchor.toml`, `Cargo.toml`, `package.json`, `*.py`, `.github/`). No checklists or vectors loaded yet.
 
-1. Root docs: `README.md`, `SKILL.md`, `OUTPUT-RULES.md`, `FULL-AUDIT.md`, `QUESTIONS.md`, `COSTS.md`, `TOP-100-HACKS.md` (if present).
-2. Discovery docs: all files under `discovery/`.
-3. Templates: all files under `templates/`.
-4. Checklists: all files under `checklists/`.
-5. Known vectors: `known-vectors/INDEX.md` and every vector file `known-vectors/001-*.md` through `known-vectors/109-*.md`.
+**Step 2 — Declare scope.** Map detected languages (+ any `--scope`) to the in-scope checklist set:
 
-Hard rules:
+| Detected | Load checklists |
+|----------|-----------------|
+| `.rs` / `Anchor.toml` | 01–07 (+ 20 for `.rs` outside `programs/`) |
+| `.ts` / `.tsx` | 08 (+ 09 if backend, + 10 if web) |
+| `.py` | 14 |
+| `.go` / `.java` / `.rb` / `.php` / other | 15 |
+| AI / agent components (`.mcp.json`, agent SDKs) | 19 |
+| **any repo** | 11, 12, 13, 16, 17, 18 |
 
-- If any AUDITOR markdown file is unread, the audit is INVALID and must be reported as `[INCOMPLETE — missing auditor corpus file load]`.
-- Output must include:
-    - every checklist item verdict (all 18 checklists),
-    - every known-vector verdict (all 109 vectors),
-    - corpus coverage evidence table listing all AUDITOR files and load status.
-- No "summary-only" audit is valid under this skill.
+Checklists outside this set are **never read** — a Rust-only repo never loads 14 or the TS/web vectors.
+
+**Step 3 — Load on demand.** Load an in-scope checklist when its phase begins; load a known-vector only when its phase + language/domain trigger reaches it (`known-vectors/INDEX.md` groups vectors by `{phase, language, trigger}`).
+
+**Completeness is output-side.** The audit is COMPLETE iff every in-scope item + phase-triggered vector has a verdict. Out-of-scope items render `[N/A — out of scope: <reason>]` from the gate. Every full report includes a **Scope Coverage** table. Full rule: see [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 0.
+
+**Step 4 — Reference layer (progressive disclosure).** Beyond the checklists, load a `references/` file only when its trigger fires — deep coverage at zero cost when irrelevant:
+
+| Reference | Load when (grep markers) |
+|-----------|--------------------------|
+| `references/framework-idioms/{anchor,native,pinocchio}.md` | that framework is detected |
+| `references/framework-idioms/build-and-tooling.md` | build/CI/toolchain errors or PoC-harness setup |
+| `references/methodologies/amm-clmm.md` | `tick` · `sqrt_price` · `liquidity_net` · `fee_growth` · `bin_array` |
+| `references/methodologies/lending.md` | `obligation` · `reserve` · `liquidation_threshold` · `borrow_index` · `ltv` |
+| `references/methodologies/perps.md` | `funding_rate` · `mark_price` · `open_interest` · `maintenance_margin` · `vamm` |
+| `references/methodologies/oracles.md` | `pyth` · `switchboard` · `PriceUpdateV2` · `PullFeed` · `confidence` |
+| `references/methodologies/stablecoin.md` | `collateral_ratio` · `psm` · `cdp` · `debt_ceiling` · `redeem` · `peg` |
+| `references/methodologies/liquid-staking.md` | `stake_pool` · `validator_list` · `exchange_rate` · `staker` · `withdrawer` · `restak` |
+| `references/methodologies/governance.md` | `spl-governance` · `realm` · `proposal` · `vote_record` · `voter_weight` · `vsr` |
+| `references/vuln-classes/zk-and-compression.md` | `groth16` · `spl-account-compression` · `bubblegum` · `merkle` · `nullifier` · `ConfidentialTransfer` |
+| `references/false-positives.md` | triaging any finding before reporting severity ≥ 6 |
+| `references/orchestration/boundary-map.md` | delegating to vendored Trail of Bits tooling |
 
 ---
 
 ## Folder Structure
 
 ```
-AUDITOR/
+auditor-skill/
 ├── README.md                         ← Start here — setup, usage, contributing guide
 ├── SKILL.md                          ← YOU ARE HERE (orchestrator — AI agent reads this first)
 ├── OUTPUT-RULES.md                   ← MANDATORY output format, severity scale, chunked execution
 ├── FULL-AUDIT.md                     ← Master execution plan for complete repo audits
 ├── QUESTIONS.md                      ← Pre-audit questionnaire (user fills before running)
 ├── COSTS.md                          ← Estimated token/dollar costs by model and repo size
-├── TOP-100-HACKS.md                  ← Compatibility pointer (canonical source is known-vectors/)
 │
 ├── known-vectors/                    ← Individual attack vector files (open-source friendly)
 │   ├── INDEX.md                           One-line index of all vectors
 │   ├── 001-private-key-leak.md            Severity 10 — crypto
 │   ├── 002-flash-loan-price-manipulation.md
-│   ├── ...                                (109 individual vector files)
+│   ├── ...                                (126 individual vector files)
 │   └── 100-insufficient-backup-disaster-recovery.md
 │
-├── checklists/                       ← 18 micro-checklists (the core verification items)
-│   ├── 01-program-account-validation.md   (84 items)  — Solana/Anchor
+├── checklists/                       ← 20 micro-checklists (the core verification items)
+│   ├── 01-program-account-validation.md   (86 items)  — Solana/Anchor
 │   ├── 02-program-access-control.md       (50 items)  — Solana/Anchor
 │   ├── 03-program-arithmetic-safety.md    (61 items)  — Solana/Anchor
-│   ├── 04-program-cpi-pda.md             (63 items)  — Solana/Anchor
-│   ├── 05-program-state-machine.md        (56 items)  — Solana/Anchor
-│   ├── 06-program-economic-logic.md       (62 items)  — Solana/Anchor
-│   ├── 07-program-opsec-governance.md     (75 items)  — Operations
+│   ├── 04-program-cpi-pda.md             (68 items)  — Solana/Anchor
+│   ├── 05-program-state-machine.md        (69 items)  — Solana/Anchor
+│   ├── 06-program-economic-logic.md       (84 items)  — Solana/Anchor
+│   ├── 07-program-opsec-governance.md     (81 items)  — Operations
 │   ├── 08-typescript-safety.md            (60 items)  — TypeScript
-│   ├── 09-backend-security.md            (100 items)  — Express/Node
+│   ├── 09-backend-security.md            (103 items)  — Express/Node
 │   ├── 10-frontend-security.md            (76 items)  — React/Next.js
-│   ├── 11-supply-chain.md                 (43 items)  — All languages
-│   ├── 12-secrets-opsec.md                (52 items)  — All languages
-│   ├── 13-deployment-infrastructure.md    (77 items)  — All languages
+│   ├── 11-supply-chain.md                 (46 items)  — All languages
+│   ├── 12-secrets-opsec.md                (53 items)  — All languages
+│   ├── 13-deployment-infrastructure.md    (79 items)  — All languages
 │   ├── 14-python-safety.md                (82 items)  — Python
 │   ├── 15-general-language-safety.md      (88 items)  — Go/Java/Ruby/PHP/any
-│   ├── 16-formal-verification-testing.md  (58 items)  — All languages (CertiK FV + OWASP A10)
-│   ├── 17-logging-monitoring-incident-response.md (62 items) — All languages (Skynet + SOC 2 + OWASP A09)
-│   └── 18-privacy-compliance-change-management.md (60 items) — All languages (SOC 2 + EY + GDPR + AI/ML)
+│   ├── 16-formal-verification-testing.md  (71 items)  — All languages (CertiK FV + OWASP A10)
+│   ├── 17-logging-monitoring-incident-response.md (63 items) — All languages (Skynet + SOC 2 + OWASP A09)
+│   ├── 18-privacy-compliance-change-management.md (60 items) — All languages (SOC 2 + EY + GDPR + AI/ML)
+│   ├── 19-ai-agent-security.md            (31 items)  — AI agents on Solana (ToB agentic vectors ported)
+│   └── 20-rust-offchain-services.md       (17 items)  — Off-chain Rust (geyser/indexers/keeper bots)
 │
 ├── discovery/                        ← File patterns and search commands
 │   ├── file-map.md                        Maps checklists → target files/globs
 │   └── grep-commands.md                   All grep/terminal commands by category
 │
 └── templates/                        ← Output templates
-    ├── report-template.md                 Full audit report structure (9 sections)
+    ├── report-template.md                 Full audit report structure (11 sections)
     └── instruction-worksheet.md           Per-instruction deep-review form
 ```
 
@@ -112,7 +132,7 @@ Full severity decision guide: see [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 1.
 Repositories can be 10 files or 10,000 files. The auditor reads files **one at a time**, never guesses, and saves checkpoints between chunks. See [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 3.
 
 ### 2. Every Item Gets a Verdict
-All 1,209 checklist items and all 109 known vectors appear in the report with explicit verdicts. Nothing is silently skipped. See [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 4.
+All in-scope checklist items (up to 1,328) and all in-scope known vectors (up to 126) appear in the report with explicit verdicts. Nothing is silently skipped. See [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 4.
 
 ### 3. Executive Summary First
 Every report starts with a plain-language summary: what was audited, what was found, whether it's safe to deploy. See [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 2.
@@ -158,6 +178,48 @@ If context was lost, a file was too large, or a pattern is unfamiliar — say so
 2. Fill out [templates/instruction-worksheet.md](templates/instruction-worksheet.md)
 3. Cross-reference with related code that shares state
 
+### Mode 4: Differential / PR-Scoped Audit
+
+**When to use:** A PR, commit range, or branch — not the whole tree. Command: `/auditor:diff-audit`.
+
+**Execution:**
+1. Changed set: `git diff --name-only <base>..<head>` (default `main..HEAD`).
+2. Phase 0.5 context reconstruction on changed functions + 1-hop callers/callees.
+3. Risk-classify changed files (auth / crypto / value-transfer / validation-removal = HIGH); git-blame removed security code — a deletion in a "fix"/"CVE" commit is a CRITICAL regression.
+4. Run only the checklist items + known-vectors matching the changed files' language/domain, through the Rule 5b gate.
+5. Abbreviated report (`audit_<n>/PR-REPORT.md`) — changed-surface verdicts only. Reuses the methodology corpus; skips whole-repo discovery. *(Pattern credit: Trail of Bits `differential-review`.)*
+
+### Mode 5: Spec-Compliance Audit
+
+**When to use:** A spec / whitepaper / RFC is supplied and you need code-vs-spec conformance. Command: `/auditor:spec-audit`.
+
+**Execution:**
+1. Extract a requirement list (Spec-IR) from the spec.
+2. Phase 0 setup + Phase 0.5; map each instruction / state field to the spec's stated behavior.
+3. Compliance Matrix: each requirement → `[MET]` / `[VIOLATED-N]` / `[UNIMPLEMENTED]` / `[UNDOCUMENTED-BEHAVIOR]`, cited to code `L#`. Any `[VIOLATED-N≥6]` passes the Rule 5b gate; `[UNDOCUMENTED-BEHAVIOR]` (code does something the spec never authorizes) is itself a finding. *(Pattern credit: Trail of Bits `spec-to-code-compliance`.)*
+
+---
+
+## Rationalizations to Reject
+
+An auditor talks itself out of real findings with lines like these. Treat each as a RED FLAG that demands the Rule 5b gate — not a reason to skip:
+
+- "It's only devnet / a test program." → Audit as if mainnet; devnet code ships.
+- "The math can't overflow because values are always small." → Prove the bound (Rule 5b Math/State-Bounds) or report it.
+- "`init_if_needed` is fine here." → It permits reinitialization; prove the guard or flag it.
+- "Only the admin can call this." → Confirm the signer/authority check exists in code; "should be" is not "is".
+- "The client validates it." → On-chain must not trust off-chain validation.
+- "This `unwrap()` can't fail." → On user/RPC input it can — that is a DoS (checklist 20).
+- "It's the same as a well-known program." → Verify line-by-line; forks drift.
+
+*(Scaffolding pattern credit: Trail of Bits `skill-improver`.)*
+
+## When NOT to Use
+
+- Writing new features or general (non-security) code — this skill only audits.
+- As the sole gate for a mainnet launch — it is a thorough first pass; pair it with a human audit for business-logic, economic-model, and legal-compliance review.
+- As formal proof of correctness — it flags where proofs/harnesses are missing (and can orchestrate them via `vendor/trailofbits`), but does not itself constitute a machine-checked proof.
+
 ---
 
 ## Language → Checklist Mapping
@@ -174,6 +236,8 @@ If context was lost, a file was too large, or a pattern is unfamiliar — say so
 | Ruby | `.rb` | 15 (Ruby section) |
 | PHP | `.php` | 15 (PHP section) |
 | Other | any | 15 (sections 15.1–15.8) |
+| Rust (off-chain services) | `.rs` outside `programs/` | 20 |
+| AI / agent components | `.mcp.json`, agent SDKs, `Keypair` in agent code | 19 |
 | **Always applied** | any repo | 11, 12, 13, 16, 17, 18 |
 
 ---
@@ -182,25 +246,27 @@ If context was lost, a file was too large, or a pattern is unfamiliar — say so
 
 | # | Checklist | Items | Domain | File |
 |---|-----------|-------|--------|------|
-| 01 | Account Validation | 84 | On-chain | [01-program-account-validation.md](checklists/01-program-account-validation.md) |
+| 01 | Account Validation | 86 | On-chain | [01-program-account-validation.md](checklists/01-program-account-validation.md) |
 | 02 | Access Control | 50 | On-chain | [02-program-access-control.md](checklists/02-program-access-control.md) |
 | 03 | Arithmetic Safety | 61 | On-chain | [03-program-arithmetic-safety.md](checklists/03-program-arithmetic-safety.md) |
-| 04 | CPI & PDA Safety | 63 | On-chain | [04-program-cpi-pda.md](checklists/04-program-cpi-pda.md) |
-| 05 | State Machine & Lifecycle | 56 | On-chain | [05-program-state-machine.md](checklists/05-program-state-machine.md) |
-| 06 | Economic & Logic Attacks | 62 | On-chain | [06-program-economic-logic.md](checklists/06-program-economic-logic.md) |
-| 07 | OpSec & Governance | 75 | Operations | [07-program-opsec-governance.md](checklists/07-program-opsec-governance.md) |
+| 04 | CPI & PDA Safety | 68 | On-chain | [04-program-cpi-pda.md](checklists/04-program-cpi-pda.md) |
+| 05 | State Machine & Lifecycle | 69 | On-chain | [05-program-state-machine.md](checklists/05-program-state-machine.md) |
+| 06 | Economic & Logic Attacks | 84 | On-chain | [06-program-economic-logic.md](checklists/06-program-economic-logic.md) |
+| 07 | OpSec & Governance | 81 | Operations | [07-program-opsec-governance.md](checklists/07-program-opsec-governance.md) |
 | 08 | TypeScript Safety | 60 | Off-chain | [08-typescript-safety.md](checklists/08-typescript-safety.md) |
-| 09 | Backend Security | 100 | Off-chain | [09-backend-security.md](checklists/09-backend-security.md) |
+| 09 | Backend Security | 103 | Off-chain | [09-backend-security.md](checklists/09-backend-security.md) |
 | 10 | Frontend Security | 76 | Off-chain | [10-frontend-security.md](checklists/10-frontend-security.md) |
-| 11 | Supply Chain & Dependencies | 43 | DevOps | [11-supply-chain.md](checklists/11-supply-chain.md) |
-| 12 | Secrets & Key Management | 52 | DevOps | [12-secrets-opsec.md](checklists/12-secrets-opsec.md) |
-| 13 | Deployment & Infrastructure | 77 | DevOps | [13-deployment-infrastructure.md](checklists/13-deployment-infrastructure.md) |
+| 11 | Supply Chain & Dependencies | 46 | DevOps | [11-supply-chain.md](checklists/11-supply-chain.md) |
+| 12 | Secrets & Key Management | 53 | DevOps | [12-secrets-opsec.md](checklists/12-secrets-opsec.md) |
+| 13 | Deployment & Infrastructure | 79 | DevOps | [13-deployment-infrastructure.md](checklists/13-deployment-infrastructure.md) |
 | 14 | Python Safety | 82 | Off-chain | [14-python-safety.md](checklists/14-python-safety.md) |
 | 15 | General Language Safety | 88 | Universal | [15-general-language-safety.md](checklists/15-general-language-safety.md) |
-| 16 | Formal Verification & Testing | 58 | Universal | [16-formal-verification-testing.md](checklists/16-formal-verification-testing.md) |
-| 17 | Logging, Monitoring & IR | 62 | Universal | [17-logging-monitoring-incident-response.md](checklists/17-logging-monitoring-incident-response.md) |
+| 16 | Formal Verification & Testing | 71 | Universal | [16-formal-verification-testing.md](checklists/16-formal-verification-testing.md) |
+| 17 | Logging, Monitoring & IR | 63 | Universal | [17-logging-monitoring-incident-response.md](checklists/17-logging-monitoring-incident-response.md) |
 | 18 | Privacy, Compliance & Change Mgmt | 60 | Universal | [18-privacy-compliance-change-management.md](checklists/18-privacy-compliance-change-management.md) |
-| | **Total** | **1,209** | | |
+| 19 | AI Agent Security (Solana × AI) | 31 | AI / Agent | [19-ai-agent-security.md](checklists/19-ai-agent-security.md) |
+| 20 | Rust Off-Chain Services | 17 | Off-chain | [20-rust-offchain-services.md](checklists/20-rust-offchain-services.md) |
+| | **Total** | **1,328** | | |
 
 ---
 
@@ -208,32 +274,32 @@ If context was lost, a file was too large, or a pattern is unfamiliar — say so
 
 ### Full repository audit
 ```
-Audit the entire repository using the AUDITOR skill with FULL scope
+Audit the entire repository using the auditor-skill with FULL scope
 ```
 
 ### Program-only audit
 ```
-Audit the Solana program in programs/<your_program>/ using the AUDITOR skill with PROGRAM scope
+Audit the Solana program in programs/<your_program>/ using the auditor-skill with PROGRAM scope
 ```
 
 ### Specific checklist
 ```
-Run AUDITOR checklist 03 (Arithmetic Safety) on programs/<your_program>/
+Run auditor-skill checklist 03 (Arithmetic Safety) on programs/<your_program>/
 ```
 
 ### Backend audit
 ```
-Run AUDITOR with BACKEND scope on apps/backend/
+Run auditor-skill with BACKEND scope on apps/backend/
 ```
 
 ### Python project audit
 ```
-Audit the Python code using AUDITOR checklist 14
+Audit the Python code using auditor-skill checklist 14
 ```
 
 ### Any language
 ```
-Run AUDITOR on this Go/Java/Ruby/PHP project — it will auto-detect and apply the right checklists
+Run auditor-skill on this Go/Java/Ruby/PHP project — it will auto-detect and apply the right checklists
 ```
 
 ---
@@ -252,9 +318,9 @@ Full format rules: see [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 4.
 
 ## Porting to Another Repository
 
-This entire `AUDITOR/` folder is self-contained and portable:
+This entire `auditor-skill/` folder is self-contained and portable:
 
-1. Copy the full `AUDITOR/` directory into the target repository
+1. Copy the full `auditor-skill/` directory into the target repository
 2. Update `discovery/file-map.md` with the target's folder structure
 3. Checklists 01-07: any Solana/Anchor program
 4. Checklists 08-10: any TypeScript/Express/Next.js project

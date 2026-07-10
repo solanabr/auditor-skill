@@ -49,6 +49,16 @@ grep -rn -E "get_unchecked|unsafe|from_raw_parts|as_ptr|\.add\(|borrow_data|try_
 - ✅ PASS: Account type is disambiguated by owner + length + explicit tag; cannot be confused with another account of similar layout
 - ❌ FAIL: Type inferred from a single byte without owner/length validation — cosplay
 
+**Step 5b: Zero-copy layout — padding/alignment UB and `wincode` deserialization validation**
+Pinocchio's CU win comes from zero-copy casts (`bytemuck::from_bytes`, `wincode` in-place). A cast is only *sound* if the layout is fully defined — otherwise it is undefined behaviour, not merely a logic bug.
+```
+grep -rn -E "repr\(C\)|repr\(C, *packed\)|Pod|Zeroable|from_bytes|from_bytes_mut|_padding|_pad" programs/
+grep -rn -E "wincode::deserialize|ZeroCopy::deserialize|SchemaRead|SchemaWrite" programs/
+```
+- ✅ PASS: every zero-copy struct is `#[repr(C)]`, fields ordered largest→smallest with an **explicit `_padding` field** filling every gap to natural (typically 8-byte) alignment, and `_padding` is **zeroed on construction**. No `&` reference is taken to a field of a `#[repr(C, packed)]` struct. `wincode` zero-copy structs are additionally **tuple-free** (Rust does not guarantee tuple layout).
+- ❌ FAIL: a `bytemuck`/zero-copy struct lacking `#[repr(C)]`, or with **implicit padding** (small-before-large field order and no `_padding`) — casting over uninitialized gap bytes is **UB and can leak stale memory** across instructions; `_padding` declared but never zeroed (same leak); an unaligned reference into a `packed` struct.
+- ❌ FAIL: `wincode::deserialize(...).unwrap()` inside a handler, or decoded values used without range checks (`wincode` guarantees byte layout, **not** business logic — amounts, deadlines, and enum variants must be validated after decode); dynamic-`Vec` max-size limit raised without a documented upper bound (allocation-exhaustion DoS). Errors must map to `ProgramError::InvalidInstructionData`, never a silent default.
+
 **Step 6: Unsafe account resize bounds**
 ```
 grep -rn -E "unsafe-account-resize|resize|realloc|set_data_length" programs/ Cargo.toml */Cargo.toml
@@ -61,6 +71,11 @@ grep -rn -E "unsafe-account-resize|resize|realloc|set_data_length" programs/ Car
 - The gold-standard method (used by Neodyme for p-token) is **differential testing**: replay the same instructions/transactions against both the reimplementation and canonical `spl-token` and assert identical state + return data + error codes.
 - ✅ PASS: A CU optimization never removed a check the canonical program enforces; behavior matches on edge cases (differential-tested against `spl-token`)
 - ❌ FAIL: A check (e.g., frozen-state, decimals, signer threshold) was dropped or diverges to save CU
+
+**Step 7b: Batch / deferred-validation instructions — validate at each step, not just final state** (p-token deferred-validation class, 2026)
+- p-token / zero-copy **batch** instructions may mutate an account, then **reverse** the change before the instruction returns, so that the *final* account state passes the runtime's post-instruction owner/state check even though an **intermediate** state was invalid (or an account it had no right to touch was transiently written). Validating only the end state — or relying on the runtime's deferred owner check — misses the transient violation.
+- ✅ PASS: Every sub-operation in a batch validates owner/signer/bounds **before it acts**, so no intermediate step touches an account it hasn't authorized; correctness does not depend on a later reversal restoring valid final state
+- ❌ FAIL: A batch modifies then reverses account data such that only the final state is checked (by the program or the runtime's deferred owner check) — an intermediate invalid write slips through
 
 **Overall verdict:**
 - ✅: All owner/signer/bounds/discriminator checks present and explicit; unsafe code guarded; token semantics match canonical

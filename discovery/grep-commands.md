@@ -1,6 +1,6 @@
 # Grep & Terminal Commands Reference
 
-> Consolidated command library for the AUDITOR skill.  
+> Consolidated command library for the auditor-skill.  
 > Every command uses tools available inside the VS Code agent (grep_search, run_in_terminal).  
 > Commands are grouped by **what they detect**.
 
@@ -579,3 +579,49 @@ grep_search: "is_signer|is_writable|\\.owner\\(\\)|owner =="   isRegexp: true   
 grep_search: "unsafe|get_unchecked|from_raw_parts|\\.add\\(|unsafe-account-resize"   isRegexp: true   includePattern: "programs/**/*.rs"
 ```
 > No Anchor safety net: every owner/signer/mut/length/discriminator check is manual. Bounds-check zero-copy reads; validate `unsafe-account-resize` size; for p-token, diff against canonical `spl-token` edge cases.
+
+---
+
+## v5.0 — Solana × AI + Off-Chain Rust (KV-110..117, checklists 19-20)
+
+### MCP server configuration (KV-110)
+```
+grep_search: "mcpServers|command|args|transport|stdio|sse"   isRegexp: true   includePattern: "**/.mcp.json"
+grep_search: "mcpServers|@modelcontextprotocol|StdioServerTransport|SSEServerTransport"   isRegexp: true   includePattern: "**/*.{json,ts,js,py}"
+```
+> Every MCP server grants tool access to the agent. Verify each server is trusted, pinned, and scoped — an untrusted server = arbitrary tool execution + prompt-injection surface. Flag secrets embedded in `.mcp.json` (keys belong in `.env`).
+
+### Agent signer allowlists & spend caps (KV-111, KV-112)
+```
+grep_search: "allowlist|allowList|whitelist|allowedPrograms|allowedTargets|allowedMints"   isRegexp: true   includePattern: "**/*.{ts,js,py,rs}"
+grep_search: "spend.?cap|spendLimit|maxSpend|maxLamports|daily.?limit|per.?tx.?limit|budget"   isRegexp: true   includePattern: "**/*.{ts,js,py,rs}"
+```
+> Autonomous agents that sign transactions MUST enforce a program/target allowlist AND a spend cap. Missing either = an LLM-controlled key with unbounded on-chain authority.
+
+### Secret zeroization on key material (KV-113)
+```
+grep_search: "zeroize|Zeroizing|ZeroizeOnDrop|secrecy::Secret|SecretString"   isRegexp: true   includePattern: "**/*.rs"
+grep_search: "Keypair|private_key|secret_key|seed|mnemonic|signing_key"   isRegexp: true   includePattern: "**/*.rs"
+```
+> Secret-bearing types (keypairs, seeds, mnemonics) held in long-running off-chain services must be wrapped in `Zeroizing`/`zeroize` so they are scrubbed on drop — not left in freed heap for memory-dump exfiltration.
+
+### Off-chain Rust services outside programs/ (KV-114, KV-115)
+```bash
+# Terminal: locate off-chain Rust (geyser plugins, indexers, keeper/liquidator bots, signer services)
+find . -name "*.rs" -not -path "./programs/*" -not -path "./target/*" -not -path "*/node_modules/*"
+grep -rnE "geyser|GeyserPlugin|yellowstone|carbon|substreams|indexer|keeper|liquidator|crank|bot" --include="*.rs" -l . | grep -v "/programs/"
+```
+> Any `.rs` outside `programs/` is off-chain infra with a different threat model (network input, RPC trust, long-lived keys). Route it through checklist 20, not the on-chain checklists.
+
+### Panic on network / untrusted input (KV-115)
+```
+grep_search: "\\.unwrap\\(\\)|\\.expect\\("   isRegexp: true   includePattern: "**/*.rs"
+```
+> In off-chain services, `unwrap()`/`expect()` on RPC responses, websocket frames, or deserialized network payloads is a remote DoS — a malformed message crashes the indexer/keeper. Cross-reference hits against `.rs` files outside `programs/`.
+
+### Blind bulk transaction signing (KV-116, KV-117)
+```
+grep_search: "signAllTransactions|signAll|sign_all|partialSign|signMessage"   isRegexp: true   includePattern: "**/*.{ts,js}"
+grep_search: "signTransaction|sign_transaction|sign\\("   isRegexp: true   includePattern: "**/*.{ts,js,py,rs}"
+```
+> Verify each transaction is inspected (program IDs, instructions, amounts) BEFORE `signAllTransactions`. An agent or backend that blind-signs a batch handed to it by an untrusted caller can be drained via a smuggled instruction.

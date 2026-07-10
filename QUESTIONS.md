@@ -380,8 +380,8 @@ Commit hash (optional): _______________
 
 **Option B: Clone into auditor's workspace (recommended for private repos)**
 ```
-Clone the AUDITOR folder into your repo:
-  cp -r AUDITOR/ your-repo/.github/skills/AUDITOR/
+Clone the auditor-skill folder into your repo:
+  cp -r auditor-skill/ your-repo/.github/skills/auditor-skill/
 Then invoke the audit from your IDE's AI agent.
 ```
 

@@ -59,21 +59,28 @@
 
 ---
 
-## 2. Corpus Coverage
+## 2. Scope Coverage
 
-> Mandatory proof that every AUDITOR file was loaded before auditing project code.
+> Which checklists and vector groups were in scope, and how many items were evaluated. Out-of-scope items render `[N/A — out of scope]` from the scope gate (Rule 0), not from reading each file.
 
-| File | Loaded | Notes |
-|---|---|---|
-| <!-- AUDITOR root/doc file path --> | Yes/No | <!-- if no, report is invalid --> |
+| Checklist / vector group | In scope? | Items evaluated / total | Trigger / reason |
+|---|---|---|---|
+| 01–07 on-chain | Yes/No | N / N | `.rs` / `Anchor.toml` |
+| 08–10 off-chain (TS/web) | Yes/No | N / N | `.ts` / `.tsx` |
+| 14 python | Yes/No | N / N | `.py` |
+| 15 general language | Yes/No | N / N | `.go`/`.java`/`.rb`/`.php` |
+| 19 AI-agent | Yes/No | N / N | `.mcp.json` / agent SDK |
+| 20 off-chain Rust | Yes/No | N / N | `.rs` outside `programs/` |
+| 11–13, 16–18 universal | Yes | N / N | any repo |
 
-### Corpus Metrics
+### Scope Metrics
 
 | Metric | Count |
 |---|---:|
-| AUDITOR markdown files discovered | <!-- N --> |
-| AUDITOR markdown files loaded | <!-- N --> |
-| Completion | <!-- % --> |
+| In-scope checklist items | <!-- N --> |
+| Items with a verdict | <!-- N --> |
+| In-scope known-vectors | <!-- N --> |
+| Completion (in-scope) | <!-- % --> |
 
 ---
 
@@ -94,25 +101,27 @@
 
 | # | Checklist | Items | Pass | Fail | Partial | N/A | Pass Rate |
 |---|---|---|---|---|---|---|---|
-| 01 | Account Validation | 84 | | | | | % |
+| 01 | Account Validation | 86 | | | | | % |
 | 02 | Access Control | 50 | | | | | % |
 | 03 | Arithmetic Safety | 61 | | | | | % |
-| 04 | CPI & PDA | 63 | | | | | % |
-| 05 | State Machine | 56 | | | | | % |
-| 06 | Economic & Logic | 62 | | | | | % |
-| 07 | OpSec & Governance | 75 | | | | | % |
+| 04 | CPI & PDA | 68 | | | | | % |
+| 05 | State Machine | 69 | | | | | % |
+| 06 | Economic & Logic | 84 | | | | | % |
+| 07 | OpSec & Governance | 81 | | | | | % |
 | 08 | TypeScript Safety | 60 | | | | | % |
-| 09 | Backend Security | 100 | | | | | % |
+| 09 | Backend Security | 103 | | | | | % |
 | 10 | Frontend Security | 76 | | | | | % |
-| 11 | Supply Chain | 43 | | | | | % |
-| 12 | Secrets & OpSec | 52 | | | | | % |
-| 13 | Deployment & Infra | 77 | | | | | % |
+| 11 | Supply Chain | 46 | | | | | % |
+| 12 | Secrets & OpSec | 53 | | | | | % |
+| 13 | Deployment & Infra | 79 | | | | | % |
 | 14 | Python Safety | 82 | | | | | % |
 | 15 | General Language | 88 | | | | | % |
-| 16 | Formal Verification & Testing | 58 | | | | | % |
-| 17 | Logging, Monitoring & IR | 62 | | | | | % |
+| 16 | Formal Verification & Testing | 71 | | | | | % |
+| 17 | Logging, Monitoring & IR | 63 | | | | | % |
 | 18 | Privacy, Compliance & Change Mgmt | 60 | | | | | % |
-| | **Total** | **1209** | | | | | **%** |
+| 19 | AI Agent Security | 31 | | | | | % |
+| 20 | Rust Off-Chain Services | 17 | | | | | % |
+| | **Total** | **1328** | | | | | **%** |
 
 > Note: Only applicable checklists are counted in totals. Non-applicable checklists are excluded entirely.
 
@@ -195,7 +204,7 @@
               Impact: {what can go wrong}
               Fix: {what to change}
 [N/A]       AV-004: {why not applicable}
-...through AV-057
+...through AV-086
 ```
 
 ### Checklist 02 — Access Control
@@ -216,28 +225,28 @@
 
 ```
 [PASS]      CPI-001: {reason}
-...through RE-005
+...through RE-007
 ```
 
 ### Checklist 05 — State Machine
 
 ```
 [PASS]      SM-001: {reason}
-...through SM-056
+...through SM-069
 ```
 
 ### Checklist 06 — Economic & Logic
 
 ```
 [PASS]      ECON-001: {reason}
-...through ECON-062
+...through ECON-084
 ```
 
 ### Checklist 07 — OpSec & Governance
 
 ```
 [PASS]      OPS-001: {reason}
-...through OPS-075
+...through OPS-081
 ```
 
 ### Checklist 08 — TypeScript Safety
@@ -251,7 +260,7 @@
 
 ```
 [PASS]      BE-001: {reason}
-...through BE-100
+...through BE-103
 ```
 
 ### Checklist 10 — Frontend Security
@@ -265,21 +274,21 @@
 
 ```
 [PASS]      SC-001: {reason}
-...through SC-043
+...through SC-046
 ```
 
 ### Checklist 12 — Secrets & OpSec
 
 ```
 [PASS]      SEC-001: {reason}
-...through SEC-052
+...through SEC-053
 ```
 
 ### Checklist 13 — Deployment & Infra
 
 ```
 [PASS]      DEP-001: {reason}
-...through DEP-077
+...through DEP-079
 ```
 
 ### Checklist 14 — Python Safety (if applicable)
@@ -300,14 +309,14 @@
 
 ```
 [PASS]      FV-001: {reason}
-...through FV-058
+...through FV-071
 ```
 
 ### Checklist 17 — Logging, Monitoring & Incident Response
 
 ```
 [PASS]      LM-001: {reason}
-...through LM-062
+...through LM-063
 ```
 
 ### Checklist 18 — Privacy, Compliance & Change Management
@@ -317,7 +326,7 @@
 ...through PC-060
 ```
 
-### Known Vectors Results (KV-001..KV-109)
+### Known Vectors Results (KV-001..KV-126)
 
 ```
 [PASS]      KV-001: {reason}
@@ -325,7 +334,7 @@
               File: {path:line}
               Impact: {what can go wrong}
               Fix: {what to change}
-...through KV-109
+...through KV-126
 ```
 
 ---
@@ -347,7 +356,7 @@
 
 | Metric | Value |
 |--------|-------|
-| Total known vectors | 109 |
+| Total known vectors | 126 |
 | PASS | <!-- N --> |
 | FAIL | <!-- N --> |
 | PARTIAL | <!-- N --> |
@@ -388,7 +397,28 @@
 
 ---
 
-## 8. Remediation Roadmap
+## 8. Code Maturity Scorecard
+
+> Engineering-quality gate (Phase 4.5), orthogonal to the risk score. 0 absent · 1 ad-hoc · 2 partial · 3 good · 4 strong (weakest-link).
+
+| # | Category | Score (0-4) | Evidence (file:line / artifact) | Gap to next level |
+|---|----------|:-----------:|---------------------------------|-------------------|
+| 1 | Access Controls | | | |
+| 2 | Arithmetic | | | |
+| 3 | Account & Type Safety | | | |
+| 4 | Input Validation | | | |
+| 5 | Testing | | | |
+| 6 | Fuzzing & Property Tests | | | |
+| 7 | Error Handling & DoS Resilience | | | |
+| 8 | Upgradeability & Governance | | | |
+| 9 | Monitoring & Incident Response | | | |
+| **Weighted Maturity** | | **X.X / 4.0** | | |
+
+Categories scoring ≤ 1 are prioritized in the Remediation Roadmap regardless of individual finding severity.
+
+---
+
+## 9. Remediation Roadmap
 
 ### Immediate — Severity 9-10 (Block Deploy)
 
@@ -422,7 +452,7 @@
 
 ---
 
-## 9. Re-Audit Checklist
+## 10. Re-Audit Checklist
 
 - [ ] All Critical findings fixed and verified
 - [ ] All High findings fixed and verified
@@ -433,7 +463,7 @@
 
 ---
 
-## 10. Appendices
+## 11. Appendices
 
 ### A. Tool Versions
 

@@ -81,6 +81,17 @@ Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{seve
 - [ ] **EXT-010**: Protocol CPI — whitelist is owned by the program and linked to the fund
 - [ ] **EXT-011**: No CPI allows the called program to callback into this program with escalated privileges
 
+### Token-2022 / Extensions
+
+> Grep hints:
+> ```
+> grep -rn --include="*.rs" -iE "transfer_hook|TransferHook|permanent_delegate|PermanentDelegate|freeze_authority|FreezeAuthority|close_authority|MintCloseAuthority|get_extension|transfer_checked|remaining_accounts" programs/
+> ```
+
+- [ ] **EXT-012**: If a custodied mint carries a `TransferHook` extension — is the hook program checked against an allowlist AND are its required `remaining_accounts` resolved and forwarded on every `transfer_checked` CPI? (PASS: hook program allowlisted + extra accounts resolved via `spl_transfer_hook_interface` and appended to the CPI; FAIL: hook program unvalidated (arbitrary CPI target) or `remaining_accounts` omitted so the transfer reverts / silently fails. (adapted from safe-solana-builder shared-base §23.1))
+- [ ] **EXT-013**: Are custodied mints inspected for `PermanentDelegate`, uncontrolled `FreezeAuthority`, and `MintCloseAuthority`, and rejected unless the mint is on a trusted allowlist? (PASS: `get_extension::<...>()` read at init/registration; `PermanentDelegate` (vault clawback), external `FreezeAuthority` (withdrawal DoS), and `MintCloseAuthority` (address recycle) all rejected or the mint is explicitly trusted; FAIL: extensions never read — a hostile mint authority can seize, freeze, or recycle the vault. (adapted from safe-solana-builder shared-base §23.1))
+- [ ] **EXT-014**: Does ALL token movement use `transfer_checked` (mint + decimals supplied) and credit accounting via a balance delta (`vault.amount` AFTER `reload()` − BEFORE) rather than the declared `amount`? (PASS: `transfer_checked` + delta-based credit with checked_sub, so transfer-fee mints are accounted correctly; FAIL: legacy `token::transfer` (breaks on Token-2022) or credits the requested `amount` ignoring the fee. (adapted from safe-solana-builder shared-base §21.6 / §23.1))
+
 ## 4.6 — CPI Reentrancy & Composability
 
 - [ ] **RE-001**: State mutations happen BEFORE external CPIs (checks-effects-interactions pattern)
@@ -88,3 +99,5 @@ Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{seve
 - [ ] **RE-003**: Account reload after CPI uses `.reload()` which re-validates owner (Anchor 1.0)
 - [ ] **RE-004**: No CPI grants approval to an external program that could re-enter
 - [ ] **RE-005**: Flash loan resistance: could an attacker borrow tokens, deposit, inflate NAV, and withdraw in one transaction?
+- [ ] **RE-006**: CPI callee SOL-spend guard — Solana has no `msg.value`, so a callee can spend SOL from ANY signing account passed into a CPI (not just an explicit "amount" argument). Before an `invoke`/`invoke_signed` to a composed or user-supplied program, the caller records `signer.lamports()` and bounds the post-call drain. (PASS: pre-CPI lamports snapshot taken and a `checked_sub` post-CPI asserts the drain is within an expected bound; FAIL: a signing account is handed to an external CPI with no lamport accounting — the callee can siphon its full balance. (adapted from safe-solana-builder shared-base §5.4))
+- [ ] **RE-007**: Post-CPI ownership re-verification — an attacker-controlled callee can invoke System `assign` mid-CPI to steal an account's owner. After any CPI touching a relied-upon account, the caller re-asserts `account.owner == expected`. (PASS: owner re-checked after the CPI — Anchor `.reload()` covers ONLY accounts Anchor itself reloads, so native/Pinocchio/raw-`invoke` paths re-check the owner manually; FAIL: account owner trusted from before the CPI, or `.reload()` assumed to cover a raw-invoke account it never touched. (adapted from safe-solana-builder shared-base §5.5))

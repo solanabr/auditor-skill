@@ -13,37 +13,36 @@
 
 Before starting any phase:
 1. Read [OUTPUT-RULES.md](OUTPUT-RULES.md) — the output format is non-negotiable
-2. Load every AUDITOR markdown file recursively (Rule 0 in OUTPUT-RULES.md)
-3. Build a corpus coverage manifest (file path + loaded status)
+2. Run discovery and declare the audit SCOPE (Rule 0 in OUTPUT-RULES.md) — do NOT bulk-read the corpus
+3. Load only the in-scope checklists/vectors, on demand as each phase reaches them
 4. Detect languages in the repo (Rule 7 in OUTPUT-RULES.md) — this determines which checklists to apply
 5. Create a session checkpoint file to track progress across chunks (Rule 3 in OUTPUT-RULES.md)
 6. Remember: **walk the code file by file — never one-shot** (Rule 3)
 
 ---
 
-## PHASE -1: AUDITOR CORPUS INTAKE (MANDATORY)
+## PHASE -1: SCOPE DECLARATION
 
-```
-ACTION:
-  1. Enumerate all markdown files in AUDITOR/
-  2. Read each file fully
-  3. Record coverage table:
+Do NOT bulk-read the corpus. Discover the repo, declare scope, load on demand.
 
-| File | Loaded | Notes |
-|------|--------|-------|
-| SKILL.md | Yes | |
-| OUTPUT-RULES.md | Yes | |
-| ... | ... | ... |
+**ACTION:**
+1. Discover: enumerate extensions + markers (`Anchor.toml`, `Cargo.toml`, `package.json`, `*.py`, `.github/`).
+2. Declare the IN-SCOPE checklist set from detected languages + `--scope` (see [SKILL.md](SKILL.md) → Scope-Gated Loading).
+3. Record a **Scope Coverage** table:
 
-  4. Verify known vectors complete load:
-     - known-vectors/INDEX.md
-     - known-vectors/001-*.md through known-vectors/109-*.md
+| Checklist / vector group | In scope? | Trigger |
+|--------------------------|-----------|---------|
+| 01–07 on-chain | yes/no | `.rs` / `Anchor.toml` |
+| 08–10 off-chain (TS/web) | yes/no | `.ts` / `.tsx` |
+| 14 python | yes/no | `.py` |
+| 15 general language | yes/no | `.go`/`.java`/`.rb`/`.php` |
+| 19 AI-agent | yes/no | `.mcp.json` / agent SDK |
+| 20 off-chain Rust | yes/no | `.rs` outside `programs/` |
+| 11–13, 16–18 universal | yes | any repo |
 
-HARD STOP:
-  If any AUDITOR file is not loaded, output
-  [INCOMPLETE — missing auditor corpus file load]
-  and stop the audit.
-```
+4. Load `OUTPUT-RULES.md` once (always in scope). Load checklists/vectors on demand as each phase reaches them.
+
+**COMPLETENESS (output-side):** the audit is complete iff every in-scope item + phase-triggered vector has a verdict. Out-of-scope items render `[N/A — out of scope: <reason>]` from the gate, not from reading the file.
 
 ---
 
@@ -111,6 +110,28 @@ ACTION: Read every file in state/ directory. For each account struct, record:
 Map relationships: which accounts reference which.
 Identify all enums and their variants.
 ```
+
+---
+
+## PHASE 0.5: CONTEXT RECONSTRUCTION (before any verdict)
+
+Build understanding before judgment. No checklist item may be marked `[FAIL-N≥6]` against a function that has not first been reconstructed here. *(Pattern credit: Trail of Bits `audit-context-building`.)*
+
+For every non-trivial function (any instruction handler, any value-moving or state-mutating fn, any fn with a CPI or arithmetic), fill `templates/context-worksheet.md`:
+
+- **Purpose** — what the function is supposed to do, from the code (not the docs).
+- **Signature** — inputs (args), accounts (+ constraints), state written, each `@ L#`.
+- **Block-by-block** — what each block does, what it reads / writes, why it is there.
+- **≥ 3 invariants** it must preserve · **≥ 5 assumptions** about inputs / accounts / caller · **≥ 3 external-interaction risks** (CPIs, sysvars, `remaining_accounts`, oracle reads).
+- **Cross-function dependencies** — shared state, ordering assumptions.
+
+Anti-hallucination rules (mandatory):
+
+- Every claim cites a line (`L#`).
+- The words "probably", "might", "seems", "should" are banned. If you cannot state it from the code, write `UNKNOWN — needs manual review`.
+- Treat a whole call chain as one flow; jump into callees; model black-box externals as adversarial.
+
+Output worksheets to `audit_<n>/worksheets/context/{fn}.md`. These feed the Rule 5b validation gate.
 
 ---
 
@@ -490,13 +511,13 @@ ACTIONS:
 RECORD: privacy, compliance & change management findings
 ```
 
-### Step 4.4 — Known Attack Vectors (109/109 mandatory)
+### Step 4.4 — Known Attack Vectors (all in-scope, KV-001..126)
 
 ```
 ACTIONS:
 
   1. Read known-vectors/INDEX.md
-  2. Read every file known-vectors/001-*.md through known-vectors/109-*.md
+  2. Read every file known-vectors/001-*.md through known-vectors/126-*.md
   3. For each vector, record one verdict:
        [PASS] / [FAIL-{1-10}] / [PARTIAL] / [N/A]
   4. Add evidence line(s): file:line or command output reference
@@ -505,11 +526,32 @@ RECORD format:
   - KV-001: [PASS] ...
   - KV-002: [PARTIAL] ...
   ...
-  - KV-109: [FAIL-7] ...
+  - KV-126: [FAIL-7] ...
 
 HARD RULE:
-  Missing verdict for any KV item invalidates the FULL audit.
+  Every in-scope KV item must have a verdict. Out-of-scope vectors render
+  [N/A — out of scope: <reason>] from the scope gate (Rule 0).
 ```
+
+---
+
+## PHASE 4.5: MATURITY ASSESSMENT
+
+Orthogonal to the risk score: the risk score is the *deploy gate*; this scorecard is the *engineering-quality gate*. Rate each category 0-4 (0 absent · 1 ad-hoc · 2 partial · 3 good · 4 strong), weakest-link. *(Pattern credit: Trail of Bits `code-maturity-assessor`.)*
+
+| # | Category | Scored on |
+|---|----------|-----------|
+| 1 | Access Controls | signer/authority coverage, role separation, admin-key custody |
+| 2 | Arithmetic | checked math, u128 intermediates, rounding discipline |
+| 3 | Account & Type Safety | typed accounts, discriminator/owner checks, PDA canonicalization |
+| 4 | Input Validation | bounds, allowlists, `remaining_accounts` validation |
+| 5 | Testing | unit/integration coverage, LiteSVM/Mollusk, edge cases |
+| 6 | Fuzzing & Property Tests | cargo-fuzz/proptest presence, documented invariants |
+| 7 | Error Handling & DoS Resilience | no `unwrap()`/panic on user input, compute/stack bounds |
+| 8 | Upgradeability & Governance | upgrade authority, timelock, multisig, emergency pause |
+| 9 | Monitoring & Incident Response | event emission coverage, runbooks, alerting |
+
+Emit the scorecard as a dedicated report section (see `templates/report-template.md`). Categories scoring ≤ 1 are prioritized in the Remediation Roadmap regardless of individual finding severity.
 
 ---
 
@@ -528,12 +570,12 @@ De-duplicate (same root cause appearing in multiple checklists)
 ```
 Use the template in templates/report-template.md
 Fill in:
-  - Corpus coverage section (all AUDITOR files)
+  - Corpus coverage section (all auditor-skill files)
   - Executive summary with counts
   - Each finding with: ID, severity, location, description, exploit scenario, fix recommendation
   - Checklist summary table
   - Detailed per-item results
-  - Known vector results (KV-001 through KV-109, each with verdict)
+  - Known vector results (KV-001 through KV-126, each in-scope one with verdict)
 
 Save report to: audit_{N}/REPORT.md (where N is the next audit number)
 ```

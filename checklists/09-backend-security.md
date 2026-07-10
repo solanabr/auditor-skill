@@ -146,3 +146,9 @@ Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{seve
 - [ ] **BE-098**: Session tokens regenerated after authentication (session fixation prevention)
 - [ ] **BE-099**: Login/signup responses don't reveal whether an account exists (consistent timing and messages for enumeration prevention)
 - [ ] **BE-100**: No `JSON.parse` on user input used to construct objects with `__proto__` or `constructor` (prototype pollution via deserialization)
+
+## 9.14 — Custody, Fund-Moving Auth & Off-Chain/On-Chain Consistency
+
+- [ ] **BE-101**: Balance/inventory mutations on a shared resource use an atomic conditional update / row-lock (optimistic version or compare-and-set), never a read-modify-write split across an `await` boundary where two concurrent requests both read the old value (Aurory $830K TOCTOU)
+- [ ] **BE-102**: Fund-moving endpoints require step-up authorization (fresh signature / 2FA / withdrawal-address allowlist) beyond a valid bearer session token — a leaked session cookie alone must NOT authorize a withdrawal (Thunder Terminal $240K, Banana Gun $3M: leaked session == custody)
+- [ ] **BE-103**: Backends that sign an on-chain action after an off-chain check pair the atomic DB claim WITH an on-chain replay/nonce guard as defense-in-depth — a single logical claim cannot execute twice even if the DB row and the chain disagree (cross-ref VC-35; games/airdrops double-claim)

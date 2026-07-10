@@ -1,6 +1,6 @@
 # Checklist 16 — Formal Verification & Testing Quality
 
-> **Items:** 58  |  **IDs:** FV-001 → FV-058  
+> **Items:** 71  |  **IDs:** FV-001 → FV-071  
 > **Applies to:** All languages, all repository types  
 > **Sources:** CertiK formal verification methodology, EY QA/processing integrity, OWASP A06 (Insecure Design), OWASP A10 (Mishandling of Exceptional Conditions)
 
@@ -98,3 +98,35 @@
 | FV-056 | Error types are exhaustive — match/switch on error kinds covers all variants | 4 |
 | FV-057 | Circuit breakers or fallbacks exist for critical external dependencies | 5 |
 | FV-058 | Exceptional conditions in financial math (divide-by-zero, negative balances) are blocked, not wrapped | 8 |
+
+---
+
+## 16.6 On-Chain Test-Suite Verification — LiteSVM / Mollusk (FV-059 → FV-070)
+
+> **Source:** LiteSVM / Mollusk in-process SVM testing methodology *(adapted from safe-solana-builder `references/litesvm.md`)*
+> **Applies to:** Solana programs (Anchor / native / Pinocchio). Verify the **test suite itself** exercises these paths — a passing suite that never tests the failure side proves nothing.
+
+| ID | Check | Severity |
+|----|-------|----------|
+| FV-059 | An in-process SVM suite (LiteSVM or Mollusk) exists and loads the actual compiled `.so` (built via `cargo build-sbf`), not a mock | 6 |
+| FV-060 | Every time-locked / deadline instruction is tested on **both** sides: a before-deadline path that must fail AND an after-deadline path that must succeed | 8 |
+| FV-061 | Time-dependent logic is tested via sysvar/clock control (`set_sysvar(Clock)` / `warp_to_slot`), not by real wall-clock waiting | 6 |
+| FV-062 | Account-closure is verified on all three fields after close: `lamports == 0`, `data.len() == 0`, and `owner == system_program` (not just lamports) | 7 |
+| FV-063 | Re-initialization is tested: double-initializing an existing account must fail (reinit-guard / `init` semantics proven) | 7 |
+| FV-064 | Authorization negatives are tested: a wrong / missing signer causes the transaction to fail | 7 |
+| FV-065 | Arithmetic edge cases are tested through the SVM: zero-amount, over-limit, and near-overflow inputs are rejected | 6 |
+| FV-066 | Token balances are asserted with explicit `assert_eq!` after every transfer path (not merely "tx succeeded") | 5 |
+| FV-067 | CU consumption is profiled and recorded for at least the initialize, primary action, and close instructions (regression baseline) | 4 |
+| FV-068 | `expire_blockhash()` (or equivalent blockhash advance) is called after each send in multi-transaction tests — no reliance on a stale blockhash | 4 |
+| FV-069 | Failure-path tests do NOT `unwrap()` the send result; they assert `result.is_err()` (and, where relevant, the specific `InstructionError`) | 5 |
+| FV-070 | PDA derivations in tests use the same seeds as on-chain (documented in comments), and devnet/mainnet account replay is used only for fixtures — never for security-critical assertions | 4 |
+
+---
+
+## 16.7 Solana-Native Verification Tooling — Is the Suite Appropriate to the Risk? (FV-071)
+
+> **Source:** Solana verification/fuzzing ecosystem. Turns "does a fuzz/FV suite even exist, and is it the right one?" into an actionable check. Verify the suite uses **at least one** tool appropriate to the protocol's risk profile — high-value DeFi math warrants equivalence/invariant proving, not just a unit-test smoke pass.
+
+| ID | Check | Severity |
+|----|-------|----------|
+| FV-071 | The project uses at least one Solana-appropriate verification/fuzzing tool matched to its risk: **Trident** (stateful/guided fuzzing of instruction sequences), **Crucible** (sBPF invariant fuzzing, no source needed), **Riverguard** (mainnet-transaction mutation replay), **Certora CVL** (equivalence + invariant induction — expected for high-value DeFi math), **Kani** (bounded model-checking proofs), or **Mollusk/LiteSVM** (fast in-process harness). A high-value protocol whose only "verification" is a handful of happy-path unit tests fails this item. | 6 |

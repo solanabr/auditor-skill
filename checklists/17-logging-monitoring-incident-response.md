@@ -1,6 +1,6 @@
 # Checklist 17 — Logging, Monitoring & Incident Response
 
-> **Items:** 62  |  **IDs:** LM-001 → LM-062  
+> **Items:** 63  |  **IDs:** LM-001 → LM-063  
 > **Applies to:** All languages, all repository types  
 > **Sources:** CertiK Skynet (on-chain monitoring), SOC 2 Availability + Security criteria, OWASP A09:2025 (Security Logging and Alerting Failures), EY IT Audit (disaster recovery, BCM, change management)
 
@@ -26,6 +26,7 @@
 | LM-012 | Log entries are structured (JSON) not free-text — parseable by automated systems | 3 |
 | LM-013 | Events are not emitted for operations that did NOT actually change state (no misleading events) | 4 |
 | LM-014 | On-chain events use indexed fields for efficient querying (e.g. fund address, manager) | 3 |
+| LM-063 | Off-chain consumers of on-chain data (indexers, bridges, relayers, oracles) verify against **finalized on-chain state** and bind to transaction **success** — they do NOT trust emitted program logs / `emit!` events / inner-instruction data as authoritative (forgeable via self-CPI or reverting-tx log emission) (see KV-122) | 7 |
 
 ---
 

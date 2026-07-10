@@ -123,3 +123,10 @@ Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{seve
 - [ ] **AV-082**: Account type is disambiguated by owner + length + explicit tag — single-byte (or absent) discriminators cannot be confused with another account of similar layout (type cosplay)
 - [ ] **AV-083**: If the Pinocchio `unsafe-account-resize` feature is used, the program itself validates the new size stays within permitted bounds (the framework does not)
 - [ ] **AV-084**: For p-token / reimplemented SPL Token logic: behavior matches canonical SPL Token on edge cases (zero-amount, frozen account, multisig M-of-N parsing, `transfer_checked` decimals, immutable owner, exact error codes) — no CU optimization dropped a required check (ideally differential-tested against `spl-token`)
+
+## 1.11 — Lamport Donation & Runtime-Level Account Safety
+
+> Lamports can be transferred into any account permissionlessly, and feature-gate activations can demote a writable builtin/sysvar to read-only. Instructions must not assume they control an account's exact balance or writability. (see KV-123)
+
+- [ ] **AV-085**: No instruction assumes an **exact** lamport balance on any account an attacker can donate into (use `>=` sufficiency checks, not `==`) — a donated balance must not force a runtime-rejected RentState transition that permanently bricks the instruction (rent-state bricking / "king-of-the-SOL", see KV-123)
+- [ ] **AV-086**: No instruction requires **write access** to a builtin/sysvar/precompile account (or any account it does not actually modify) that a feature-gate may demote to read-only — an unnecessary `#[account(mut)]` on such an account breaks the instruction on demotion (see KV-123)
