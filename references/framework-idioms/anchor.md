@@ -182,6 +182,32 @@ grep -rn -E "unwrap\(\)|expect\(|panic!" programs/*/src
 
 ---
 
+## 7. Signer privilege de-escalation into CPIs
+
+Signer privileges **propagate into CPIs**: any account that signed the outer transaction is
+still a signer when your program forwards it to another program. If you pass a broadly-scoped
+signer (a user wallet, or worse an admin authority) into an *external* CPI, the callee can use
+that signature to authorize operations you never intended — moving the caller's tokens,
+draining their SOL (§RE-006), or invoking further programs on their behalf.
+
+**Auditor check**
+- ✅ PASS: before an external CPI, the handler iterates the accounts it forwards and confirms
+  `!acct.is_signer` for every account that is not *required* to sign that specific CPI; the
+  signing authority is a narrowly-scoped **per-user PDA** (limiting blast radius to that
+  user's funds) rather than a shared/global signer.
+- ❌ FAIL: a user wallet or global admin signer is forwarded wholesale into an external CPI
+  without checking which accounts actually need to sign — privilege escalation via the
+  borrowed signature.
+
+```
+grep -rn -E "::invoke|invoke_signed|CpiContext" programs/
+grep -rn -E "is_signer" programs/     # is there a de-escalation check before external CPIs?
+```
+
+*(adapted from safe-solana-builder shared-base §5.3 / §5.7)*
+
+---
+
 ## Anchor idiom checklist (fast pass)
 
 - [ ] No `AccountInfo`/`UncheckedAccount` for typed data without a real `/// CHECK:` + manual check (§1)
@@ -192,3 +218,4 @@ grep -rn -E "unwrap\(\)|expect\(|panic!" programs/*/src
 - [ ] `close` / `realloc` use the safe forms; close destination is trusted (§5)
 - [ ] No duplicate-mutable-account aliasing (§5)
 - [ ] Descriptive `#[error_code]`; no `unwrap()`/`expect()`/`panic!` in handlers (§6)
+- [ ] Signers de-escalated before external CPIs (`!is_signer` on forwarded non-signing accounts); per-user PDA authority limits blast radius (§7)

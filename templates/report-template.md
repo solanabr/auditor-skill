@@ -104,16 +104,16 @@
 | 01 | Account Validation | 84 | | | | | % |
 | 02 | Access Control | 50 | | | | | % |
 | 03 | Arithmetic Safety | 61 | | | | | % |
-| 04 | CPI & PDA | 66 | | | | | % |
+| 04 | CPI & PDA | 68 | | | | | % |
 | 05 | State Machine | 67 | | | | | % |
-| 06 | Economic & Logic | 70 | | | | | % |
-| 07 | OpSec & Governance | 75 | | | | | % |
+| 06 | Economic & Logic | 71 | | | | | % |
+| 07 | OpSec & Governance | 77 | | | | | % |
 | 08 | TypeScript Safety | 60 | | | | | % |
 | 09 | Backend Security | 100 | | | | | % |
 | 10 | Frontend Security | 76 | | | | | % |
-| 11 | Supply Chain | 43 | | | | | % |
+| 11 | Supply Chain | 46 | | | | | % |
 | 12 | Secrets & OpSec | 52 | | | | | % |
-| 13 | Deployment & Infra | 77 | | | | | % |
+| 13 | Deployment & Infra | 79 | | | | | % |
 | 14 | Python Safety | 82 | | | | | % |
 | 15 | General Language | 88 | | | | | % |
 | 16 | Formal Verification & Testing | 70 | | | | | % |
@@ -121,7 +121,7 @@
 | 18 | Privacy, Compliance & Change Mgmt | 60 | | | | | % |
 | 19 | AI Agent Security | 31 | | | | | % |
 | 20 | Rust Off-Chain Services | 17 | | | | | % |
-| | **Total** | **1291** | | | | | **%** |
+| | **Total** | **1301** | | | | | **%** |
 
 > Note: Only applicable checklists are counted in totals. Non-applicable checklists are excluded entirely.
 
@@ -225,7 +225,7 @@
 
 ```
 [PASS]      CPI-001: {reason}
-...through RE-005
+...through RE-007
 ```
 
 ### Checklist 05 — State Machine
@@ -239,14 +239,14 @@
 
 ```
 [PASS]      ECON-001: {reason}
-...through ECON-070
+...through ECON-071
 ```
 
 ### Checklist 07 — OpSec & Governance
 
 ```
 [PASS]      OPS-001: {reason}
-...through OPS-075
+...through OPS-077
 ```
 
 ### Checklist 08 — TypeScript Safety
@@ -274,7 +274,7 @@
 
 ```
 [PASS]      SC-001: {reason}
-...through SC-043
+...through SC-046
 ```
 
 ### Checklist 12 — Secrets & OpSec
@@ -288,7 +288,7 @@
 
 ```
 [PASS]      DEP-001: {reason}
-...through DEP-077
+...through DEP-079
 ```
 
 ### Checklist 14 — Python Safety (if applicable)
@@ -326,7 +326,7 @@
 ...through PC-060
 ```
 
-### Known Vectors Results (KV-001..KV-117)
+### Known Vectors Results (KV-001..KV-120)
 
 ```
 [PASS]      KV-001: {reason}
@@ -334,7 +334,7 @@
               File: {path:line}
               Impact: {what can go wrong}
               Fix: {what to change}
-...through KV-117
+...through KV-120
 ```
 
 ---
@@ -356,7 +356,7 @@
 
 | Metric | Value |
 |--------|-------|
-| Total known vectors | 117 |
+| Total known vectors | 120 |
 | PASS | <!-- N --> |
 | FAIL | <!-- N --> |
 | PARTIAL | <!-- N --> |

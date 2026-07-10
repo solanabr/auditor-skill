@@ -106,3 +106,8 @@ Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{seve
 - [ ] **OPS-073**: Are there branch protection rules? (No direct push to main, required reviews)
 - [ ] **OPS-074**: Is the CI/CD pipeline itself secured? (No PR can modify CI to skip checks)
 - [ ] **OPS-075**: Dependencies are version-pinned (no `^` or `~` in Cargo.toml for critical deps)
+
+## 7.9 — Stake & Pre-Signed Governance Safety
+
+- [ ] **OPS-076**: Stake-account **Staker** AND **Withdrawer** authority changes are monitored and allowlisted with **equal severity** — a Staker-only `Authorize` (Withdrawer untouched) must not slip past withdrawal-focused monitoring, and batched authorize instructions are inspected (cross-ref KV-118)
+- [ ] **OPS-077**: Admin/governance instructions must NOT be reachable via durable-nonce pre-signed transactions that outlive the authorizing context — privileged paths are recent-blockhash-only (or version/epoch-guarded so a multisig migration invalidates stale pre-signed txs), plus a timelock and an aggregate-outflow circuit breaker (cross-ref KV-119)

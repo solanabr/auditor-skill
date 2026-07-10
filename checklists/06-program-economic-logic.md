@@ -96,6 +96,7 @@ Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{seve
 - [ ] **ECON-060**: Can oracle be manipulated by the same party who benefits from the manipulation?
 - [ ] **ECON-061**: Multi-oracle: does the program use fallback oracles if primary is stale?
 - [ ] **ECON-062**: If no oracle is used (manager-attested NAV) — document the trust assumption and flag
+- [ ] **ECON-071**: On-chain randomness / lottery / reward-selection uses a request-bound VRF (Switchboard/ORAO, with staleness + one-time consume) or a penalized commit-reveal — NEVER raw slot/blockhash/Clock entropy or user-supplied seeds (attacker submits only on favorable outcomes, or re-grinds across a reorg). Cross-ref KV-120.
 
 ## 6.10 — Staking / Reward Accounting
 

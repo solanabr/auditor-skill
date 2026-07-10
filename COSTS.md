@@ -13,8 +13,8 @@ Every audit consumes tokens in two categories:
 | Component | Tokens | Notes |
 |-----------|--------|-------|
 | AUDITOR skill files (SKILL.md, OUTPUT-RULES.md, FULL-AUDIT.md) | ~15K | Read once at start |
-| Checklists (20 files, 1,291 items) | ~60K | Loaded per phase |
-| Known vectors (117 procedures) | ~34K | Loaded per phase/language trigger |
+| Checklists (20 files, 1,301 items) | ~60K | Loaded per phase |
+| Known vectors (120 procedures) | ~34K | Loaded per phase/language trigger |
 | Templates + discovery files | ~5K | |
 | **Fixed total** | **~110K** | Same regardless of repo size |
 
@@ -30,8 +30,8 @@ Every audit consumes tokens in two categories:
 ### Output Tokens (scales with findings)
 | Component | Tokens | Notes |
 |-----------|--------|-------|
-| Per-item verdicts (1,291 items × ~100 tok) | ~120K | 2-4 lines per item |
-| Known vectors results (117 × ~800 tok) | ~94K | Evidence per hack |
+| Per-item verdicts (1,301 items × ~100 tok) | ~120K | 2-4 lines per item |
+| Known vectors results (120 × ~800 tok) | ~94K | Evidence per hack |
 | Findings + recommendations | ~30K | Depends on issues found |
 | Executive summary + tables | ~10K | |
 | **Output total** | **~240K** | Relatively stable across repos |

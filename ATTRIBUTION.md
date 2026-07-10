@@ -39,6 +39,7 @@ to audit-time and re-expressed in our own words — into native AUDITOR content:
 | `anchor.md` / `native-rust.md` / `pinocchio.md` idioms | `references/framework-idioms/*` |
 | `litesvm.md` (test patterns) | `checklists/16` (test-suite verification) |
 | `shared-base.md §25` (BPF stack frame) | `known-vectors/111` |
+| `shared-base.md §5.3–5.5` (CPI trust boundary) | `checklists/04` RE-006/007 + `references/framework-idioms/anchor.md` |
 
 ## Knowledge sources
 

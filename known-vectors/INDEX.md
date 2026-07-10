@@ -158,6 +158,14 @@ One line per vector. Click to see the full multi-step verification procedure.
 | 116 | [AI Coding Agent in CI Holds Deploy / Upgrade Keys](116-ai-coding-agent-ci-deploy-key.md) | 9 |
 | 117 | [Agent Delegation Scope Creep](117-agent-delegation-scope-creep.md) | 7 |
 
+### On-Chain — Governance & Randomness (118-120)
+
+| # | Vector | Severity |
+|---|--------|----------|
+| 118 | [Stake Account Authority Hijack](118-stake-account-authority-hijack.md) | 8 |
+| 119 | [Durable-Nonce Pre-Signed Governance Abuse](119-durable-nonce-pre-signed-governance-abuse.md) | 9 |
+| 120 | [On-Chain Randomness Predictability & VRF Misbinding](120-onchain-randomness-predictability.md) | 7 |
+
 ---
 
 ## Known Duplicates & Consolidation Map
@@ -176,11 +184,11 @@ double-count them as independent coverage. Severities are aligned to the higher 
 | 039 | 083 | Rate limiting (bypass / missing) | 7 |
 | 047 | 099 | WebSocket security | 7 |
 
-**Distinct concepts:** 111 (117 files − 6 duplicate pairs).
+**Distinct concepts:** 114 (120 files − 6 duplicate pairs).
 
 ---
 
-**Total vector files:** 117 (100 original + 9 in v4.4 + 8 in v5.0)
-**Distinct concepts:** 111 (after consolidating 6 duplicate pairs)
+**Total vector files:** 120 (100 original + 9 in v4.4 + 8 in v5.0 + 3 in v5.1)
+**Distinct concepts:** 114 (after consolidating 6 duplicate pairs)
 **Categories:** 6 (crypto, backend, frontend, devops, ai-agent, off-chain-rust)
 **Severity range:** 3-10
