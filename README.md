@@ -65,6 +65,16 @@ git clone https://github.com/YOUR_ORG/auditor-skill.git
 
 If building a service, send the auditor-skill files as system context and the target repo files as user content to any LLM API.
 
+### Enable tool execution (recommended)
+
+auditor-skill vendors **Trail of Bits** as a git submodule (`vendor/trailofbits`) for real tool execution — SAST, fuzzing, coverage, mutation. After cloning, initialize it:
+
+```bash
+git submodule update --init --recursive
+```
+
+The native corpus works fully **without** it (it falls back to grep-based checks and notes where deeper tooling would run). With the submodule initialized, the auditor delegates to the vendored tools per [`references/orchestration/boundary-map.md`](references/orchestration/boundary-map.md).
+
 ---
 
 ## Before Running an Audit
