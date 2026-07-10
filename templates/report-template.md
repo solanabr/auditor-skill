@@ -101,13 +101,13 @@
 
 | # | Checklist | Items | Pass | Fail | Partial | N/A | Pass Rate |
 |---|---|---|---|---|---|---|---|
-| 01 | Account Validation | 86 | | | | | % |
+| 01 | Account Validation | 88 | | | | | % |
 | 02 | Access Control | 50 | | | | | % |
-| 03 | Arithmetic Safety | 61 | | | | | % |
-| 04 | CPI & PDA | 68 | | | | | % |
-| 05 | State Machine | 69 | | | | | % |
-| 06 | Economic & Logic | 84 | | | | | % |
-| 07 | OpSec & Governance | 81 | | | | | % |
+| 03 | Arithmetic Safety | 63 | | | | | % |
+| 04 | CPI & PDA | 69 | | | | | % |
+| 05 | State Machine | 72 | | | | | % |
+| 06 | Economic & Logic | 88 | | | | | % |
+| 07 | OpSec & Governance | 84 | | | | | % |
 | 08 | TypeScript Safety | 60 | | | | | % |
 | 09 | Backend Security | 103 | | | | | % |
 | 10 | Frontend Security | 76 | | | | | % |
@@ -121,7 +121,7 @@
 | 18 | Privacy, Compliance & Change Mgmt | 60 | | | | | % |
 | 19 | AI Agent Security | 31 | | | | | % |
 | 20 | Rust Off-Chain Services | 17 | | | | | % |
-| | **Total** | **1328** | | | | | **%** |
+| | **Total** | **1343** | | | | | **%** |
 
 > Note: Only applicable checklists are counted in totals. Non-applicable checklists are excluded entirely.
 
@@ -204,7 +204,7 @@
               Impact: {what can go wrong}
               Fix: {what to change}
 [N/A]       AV-004: {why not applicable}
-...through AV-086
+...through AV-088
 ```
 
 ### Checklist 02 — Access Control
@@ -218,7 +218,7 @@
 
 ```
 [PASS]      AR-001: {reason}
-...through AR-061
+...through AR-063
 ```
 
 ### Checklist 04 — CPI & PDA
@@ -232,21 +232,21 @@
 
 ```
 [PASS]      SM-001: {reason}
-...through SM-069
+...through SM-072
 ```
 
 ### Checklist 06 — Economic & Logic
 
 ```
 [PASS]      ECON-001: {reason}
-...through ECON-084
+...through ECON-088
 ```
 
 ### Checklist 07 — OpSec & Governance
 
 ```
 [PASS]      OPS-001: {reason}
-...through OPS-081
+...through OPS-084
 ```
 
 ### Checklist 08 — TypeScript Safety
@@ -326,7 +326,7 @@
 ...through PC-060
 ```
 
-### Known Vectors Results (KV-001..KV-126)
+### Known Vectors Results (KV-001..KV-129)
 
 ```
 [PASS]      KV-001: {reason}
@@ -334,7 +334,7 @@
               File: {path:line}
               Impact: {what can go wrong}
               Fix: {what to change}
-...through KV-126
+...through KV-129
 ```
 
 ---
@@ -356,7 +356,7 @@
 
 | Metric | Value |
 |--------|-------|
-| Total known vectors | 126 |
+| Total known vectors | 129 |
 | PASS | <!-- N --> |
 | FAIL | <!-- N --> |
 | PARTIAL | <!-- N --> |

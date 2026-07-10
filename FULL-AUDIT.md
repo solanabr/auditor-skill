@@ -511,13 +511,13 @@ ACTIONS:
 RECORD: privacy, compliance & change management findings
 ```
 
-### Step 4.4 — Known Attack Vectors (all in-scope, KV-001..126)
+### Step 4.4 — Known Attack Vectors (all in-scope, KV-001..129)
 
 ```
 ACTIONS:
 
   1. Read known-vectors/INDEX.md
-  2. Read every file known-vectors/001-*.md through known-vectors/126-*.md
+  2. Read every file known-vectors/001-*.md through known-vectors/129-*.md
   3. For each vector, record one verdict:
        [PASS] / [FAIL-{1-10}] / [PARTIAL] / [N/A]
   4. Add evidence line(s): file:line or command output reference
@@ -526,7 +526,7 @@ RECORD format:
   - KV-001: [PASS] ...
   - KV-002: [PARTIAL] ...
   ...
-  - KV-126: [FAIL-7] ...
+  - KV-129: [FAIL-7] ...
 
 HARD RULE:
   Every in-scope KV item must have a verdict. Out-of-scope vectors render
@@ -575,7 +575,7 @@ Fill in:
   - Each finding with: ID, severity, location, description, exploit scenario, fix recommendation
   - Checklist summary table
   - Detailed per-item results
-  - Known vector results (KV-001 through KV-126, each in-scope one with verdict)
+  - Known vector results (KV-001 through KV-129, each in-scope one with verdict)
 
 Save report to: audit_{N}/REPORT.md (where N is the next audit number)
 ```

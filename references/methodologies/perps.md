@@ -363,6 +363,61 @@ grep -rn -E "remaining_accounts|for .* in|while|loop" programs/    # unbounded t
 
 ---
 
+## 12. Keeper request→execute lifecycle (two-step order flow)
+
+Pool-vs-trader and RFQ perps (Jupiter Perps, GMX-Solana, Adrena) split an order into **two
+transactions**: the user submits a *request* (open/increase/decrease/close), then a **keeper/crank**
+executes it against a price fetched at execution time. That gap between submit and execute is a rich
+surface — the user can react to price *after* requesting, and the keeper is a privileged actor who
+chooses ordering, timing, and (if under-validated) which program/callback to hit. Public reports:
+Zenith (GMX-Solana — keeper reordering for MEV, claimable-close rent theft), OtterSec (Jupiter Perps
+— front-running position execution, malicious-keeper wrong-program-id), Neodyme (Drift keeper paths).
+
+- **Request parameters locked at submission.** Everything that determines value — size, leverage,
+  collateral delta, direction, `min_out`/acceptable-price bound — is **frozen into the request PDA at
+  submit time** and cannot be mutated before the keeper executes. If a user can edit the pending
+  request (or submit-then-amend) after observing a price move, they get a free option: submit at
+  T0, watch the oracle, cancel/mutate the ones that went against them, let the favorable ones execute.
+  (Front-running position execution — OtterSec Jupiter.)
+- **Price bound to the request's slot/context.** The keeper must execute against a price that is fresh
+  **and** consistent with the request — an `acceptable_price`/slippage bound the user committed to at
+  submit, and an oracle read gated to the request's slot window (staleness §1). A keeper that can pick
+  a stale or out-of-window price, or ignore the user's committed bound, prices the fill adversarially.
+- **Close / claimable-close requires no pending request.** Any path that settles, closes, or claims a
+  position (or reclaims its rent / claimable balance) must assert the position has **no in-flight
+  request** against it. Closing while a request is pending lets the keeper (or user) double-spend the
+  position or steal the rent/claimable of an order that should still be live. (Claimable-close rent
+  theft — Zenith GMX-Solana.)
+- **Keeper cannot reorder/omit callbacks for MEV, or misdirect them.** Where execution invokes a
+  callback (into the perp program or a listener), the keeper must not be able to (a) reorder or drop
+  pending requests to extract MEV — e.g. execute a large open just before a favorable move and defer
+  the rest, or (b) point the callback at an **attacker-chosen program id**. The callback target
+  program must be pinned/validated (not taken from keeper input), and execution ordering must not be a
+  keeper-chosen value lever (FIFO / price-time, or economically neutral). (Keeper reordering MEV —
+  Zenith; malicious keeper wrong-program-id — OtterSec.)
+
+**Auditor check**
+- ✅ PASS: request PDA freezes size/leverage/collateral/direction/price-bound at submit and is
+  immutable until executed; the keeper executes against an oracle read gated to the request slot and
+  honors the user's committed `acceptable_price`; every close/settle/claim path asserts
+  `no_pending_request`; the callback target program id is pinned (not keeper-supplied) and the keeper
+  cannot reorder/omit requests to extract value.
+- ❌ FAIL: a pending request's parameters are user-mutable after submission (free option on price); the
+  keeper can execute at a stale/out-of-window price or ignore the committed bound; close/claim runs
+  with an in-flight request (double-spend / rent theft); callback program id comes from keeper input,
+  or request ordering is a keeper-controlled MEV lever.
+- Beyond §1 (oracle staleness) / §6 (liquidation) / §9 (admin durable-nonce): the two-step-order
+  additions are **submit-time parameter lock**, **price-bound-to-request-slot**, the
+  **no-pending-request assertion on close**, and **keeper callback/ordering integrity**. Cross-ref
+  KV-129.
+
+```
+grep -rn -E "request|pending|execute_(order|request|position)|keeper|crank|callback|acceptable_price" programs/
+grep -rn -E "close|claimable|settle|cancel" programs/ | grep -iE "pending|request|no_pending"   # close gated on no in-flight request?
+```
+
+---
+
 ## Perps checklist (fast pass)
 
 - [ ] Mark gated by staleness+confidence+TWAP-agreement+independent sources; mark-vs-index divergence bounded (§1)
@@ -376,9 +431,11 @@ grep -rn -E "remaining_accounts|for .* in|while|loop" programs/    # unbounded t
 - [ ] Admin tx carry `valid_until_slot`; fast-track hold-up > 0; oracle pubkeys config-pinned (council+timelock+event); residual admin keys revoked (§9)
 - [ ] Orderbook/RFQ/options specifics honored (crank-reward-from-fills, RFQ nonce+freshness, IV/expiry timing) (§10)
 - [ ] Worst-case adversarial CU bounded & tested; unbounded traversals capped/resumable (§11)
+- [ ] Two-step orders: request params locked at submit; price bound to request slot; close asserts no pending request; keeper callback/ordering can't be gamed (§12)
 
-*Public exploits referenced: Mango Markets (2022, $115M — oracle composition + no position cap +
-unrealized-PnL-as-collateral), Cypher (2023, $1M — sub-account isolation), Cypher insider (2024 —
-residual admin key), Drift (2026 — governance whitelist + durable-nonce), Offside/RateX (funding
-settlement ordering), Jupiter Perps (RFQ single-sided pricing). Funding-rate, margin, and mark/index
-mechanics are public derivatives math.*
+*Public exploits & reports referenced: Mango Markets (2022, $115M — oracle composition + no position
+cap + unrealized-PnL-as-collateral), Cypher (2023, $1M — sub-account isolation), Cypher insider (2024
+— residual admin key), Drift (2026 — governance whitelist + durable-nonce), Offside/RateX (funding
+settlement ordering), Jupiter Perps (RFQ single-sided pricing; OtterSec — execution front-running,
+malicious-keeper wrong-program-id), GMX-Solana (Zenith — keeper reordering MEV, claimable-close rent
+theft). Funding-rate, margin, and mark/index mechanics are public derivatives math.*

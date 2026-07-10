@@ -23,12 +23,14 @@ introduces a new phase number — Phase 0.5, Phase 4.5, and Rule 5b stay exactly
 | **Scoping / Intake** | `QUESTIONS.md` (project/trust-model/scope intake) + **Rule 0** scope-gating (`OUTPUT-RULES.md`) + **FULL-AUDIT Phase -1 / Phase 0** — the exact **commit is pinned at Phase 0.1** (records program ID, versions, git branch + commit hash) |
 | **Context** | **FULL-AUDIT Phase 0.5** context reconstruction, driven by the **`context-builder`** subagent — invariants/assumptions/external-risks per function, every claim cited to `L#`; no verdict may precede it |
 | **Tool-assisted pass** | `references/orchestration/boundary-map.md` — when `vendor/trailofbits` is present, ToB **`static-analysis`** emits SARIF that **directs manual attention** to the risky surface; **grep fallback** via `discovery/grep-commands.md` when the submodule is absent |
-| **Manual review (PRIMARY)** | Checklists **01–20** walked item-by-item by **`vuln-hunter`**, plus **`economic-analyst`** for checklist 06 + economic vectors, guided by `references/methodologies/*` (AMM, lending, perps, oracles, stablecoin, liquid-staking, governance). **Each finding is self-triaged at the leaf**: it must pass **Rule 5b** and clear `references/false-positives.md` before it counts |
-| **Independent reconciliation** | **NEW `peer-reviewer`** subagent — an independent second pass over the **top-severity survivors** only; delegates to vendored ToB **`second-opinion`** / **`fp-check`** when present. This is Neodyme's dual-review pattern, scoped to keep cost bounded |
+| **Manual review (PRIMARY)** | Checklists **01–20** are the **coverage floor**, not the method — they guarantee nothing gets skipped. The **primary reasoning mode** (per ToB/Neodyme, who frame themselves as *not* checklist auditors) is **invariant reconstruction + attacker-goal reasoning**: `context-builder`'s per-function invariants/assumptions (Phase 0.5) name what must always hold, and **`economic-analyst`** reasons about how an attacker would break the value flow to violate them. The checklists are then walked item-by-item by **`vuln-hunter`** (+ `economic-analyst` for checklist 06 + economic vectors), guided by `references/methodologies/*` (AMM, lending, perps, oracles, stablecoin, liquid-staking, governance), so the invariant-driven hunt is backed by exhaustive floor coverage. **Each finding is self-triaged at the leaf**: it must pass **Rule 5b** and clear `references/false-positives.md` before it counts |
+| **Independent reconciliation** | **NEW `peer-reviewer`** subagent — a **bounded-cost adaptation** of Neodyme's two-full-independent-audits pattern. Neodyme runs *two complete* parallel audits and reconciles; we do **not** claim that. We re-derive only the **top-severity survivors** independently from the code (not a full second audit), delegating to vendored ToB **`second-opinion`** / **`fp-check`** when present. The honest framing: independent re-derivation of the findings that matter most, sized to the budget — not a second full pass |
 | **Verification** | The **Rule 5b** gate (Reachability + Math/State-Bounds + Attacker-Model) backed by a real **PoC / harness** — ToB property/fuzz harnesses per `boundary-map.md`, and **Surfpool mainnet-fork** simulation for economic findings (`economic-analyst`) |
 | **Synthesis** | **`audit-reporter`** — dedup by **root cause**, classify by **severity**, and order by **importance** (business impact first, per Zellic) |
 | **Maturity** | **FULL-AUDIT Phase 4.5** — the 9-category, 0–4 weakest-link code-maturity scorecard |
-| **Reporting** | **`templates/audit-report.md`** (client-facing) — follows firm convention: **maturity narrative + trust-model caveats + disclaimers, NO deploy-guarantee**. The internal **`templates/report-template.md`** keeps the numeric **Repository Risk Score** for the team's own gating |
+| **Assumptions & Simplifications** | **Mandatory report output** (Certora's "General Assumptions and Simplifications" precedent). A named section listing what the review took as given and what it abstracted away — populated from `context-builder`'s per-function **assumptions/external-risks** (Phase 0.5) plus any **`/audit-assist` human answers** (which admin is trusted, which oracle is assumed honest, upgrade-authority custody). Makes the review's envelope explicit so "no finding here" is read against the stated assumption, not as a blanket clearance |
+| **Harness-as-deliverable** | For **FV / fuzz** engagements, the harness is itself a **named output**, not scaffolding thrown away. ToB property/fuzz harnesses (`boundary-map.md`) are saved to **`audit_<n>/harnesses/`** with a **coverage-gaps appendix** — which properties are asserted, which inputs are exercised, and what is *not* yet covered — so the client can rerun and extend it (Ackee/ToB treat the harness as a reusable artifact) |
+| **Reporting** | **`templates/audit-report.md`** (client-facing) — follows firm convention: **maturity narrative + trust-model caveats + disclaimers, NO deploy-guarantee**, plus the **engagement envelope** (named agents/effort, pinned commit range) and an explicit **out-of-scope list** and **LOC-vs-budget** note so depth is weighed honestly against scope. The internal **`templates/report-template.md`** keeps the numeric **Repository Risk Score** for the team's own gating |
 | **Fix-review / re-audit** | **NEW `/re-audit`** — re-checks each prior finding as **FIXED / STILL-OPEN / REGRESSED**, plus a **sibling-patch-propagation sweep** (did the fix leave an unpatched twin elsewhere?). This is the Halborn commit-diff / Zenith delta pattern |
 
 **Two reports, two audiences (do not conflate).** `audit-report.md` is what a client receives —
@@ -50,20 +52,28 @@ human in the loop.
    commit and declares the in-scope checklist set.
 2. **Context** — `context-builder` reconstructs every non-trivial function (Phase 0.5). No
    verdict is allowed before this exists for the target function.
-3. **Tool-directed fan-out** — the fan-out is **domain-partitioned, NOT N identical clones**.
-   `vuln-hunter` instances take partitioned checklist/domain slices (account-validation,
-   arithmetic, CPI/PDA, state-machine…) and `economic-analyst` takes value-flow / checklist 06;
-   ToB `static-analysis` SARIF (or grep) points each at its risky surface first. **Each agent
+3. **Tool-assisted, invariant-led fan-out** — the fan-out is **domain-partitioned, NOT N
+   identical clones**. `vuln-hunter` instances take partitioned checklist/domain slices
+   (account-validation, arithmetic, CPI/PDA, state-machine…) and `economic-analyst` takes
+   value-flow / checklist 06; ToB `static-analysis` SARIF (or grep) runs up-front to clear the
+   mechanical surface and point each reviewer at its risky lines. **The checklists are the
+   coverage floor; the driving question is the invariant** — "what must always hold here, and how
+   would an attacker break it" — using `context-builder`'s per-function invariants. **Each agent
    self-triages at the leaf** — a candidate finding only survives if it passes **Rule 5b** and
    is not a `false-positives.md` entry.
 4. **Reconciliation** — `peer-reviewer` independently re-reviews the **top-severity survivors**
    (delegating to ToB `second-opinion` / `fp-check` when present) and reconciles disputes —
    the Neodyme dual-review step, cost-scoped to the findings that matter.
 5. **Report** — `audit-reporter` dedups by root cause, orders by importance, fills Phase 4.5
-   maturity, and writes the audit document → **Markdown**, with **optional PDF** export.
+   maturity, writes the **Assumptions & Simplifications** section (from `context-builder`
+   assumptions), records the **engagement envelope + out-of-scope + LOC-vs-budget**, and — when
+   FV/fuzz harnesses were generated — saves them to **`audit_<n>/harnesses/`** with a
+   coverage-gaps note. Output → **Markdown**, with **optional PDF** export.
 
-**Firm precedent:** tool-first attention (**Sec3** shift-left), independent second pass
-(**Neodyme** dual-review), importance-ordered synthesis (**Zellic**).
+**Firm precedent:** tools up-front to clear the mechanical surface (**Trail of Bits**
+Clippy/`cargo-audit`), independent re-derivation of top findings (**Neodyme** two-full-audit
+pattern, cost-scoped here), importance-ordered synthesis (**Zellic**), an explicit assumptions
+section (**Certora**).
 
 ---
 
@@ -81,7 +91,9 @@ proposes, the human steers, and the two converge on the audit document.
    custody?) — the context on-chain code cannot answer by itself.
 3. **Human steers** — confirms/deprioritizes findings, answers the trust-model questions,
    redirects scope. Their answers refine severity (per `QUESTIONS.md` → severity calibration)
-   and prune false positives before the next phase.
+   and prune false positives before the next phase — **and each trust-model answer is logged as
+   an entry in the report's Assumptions & Simplifications section** (Certora precedent), so a
+   human-supplied "this admin is trusted" becomes a stated assumption, not an invisible one.
 4. **Converge** — iterate until the audit document is complete.
 5. **Delta re-review** — subsequent changes go through **`/re-audit`** (FIXED / STILL-OPEN /
    REGRESSED + sibling-propagation sweep), not a full re-run.
@@ -101,8 +113,12 @@ Both flows are the **firm spine**, so both inherit its discipline and its limits
 - **Every finding is verified** — Rule 5b + `false-positives.md` at the leaf; unproven
   high-severity claims are downgraded to `[PARTIAL]` / `[UNCONFIRMED]`, never shipped bare.
 - **The deliverable matches firm output** — findings + maturity narrative + trust-model caveats
-  + disclaimers. The client-facing `audit-report.md` issues **no "safe to deploy" guarantee**;
-  the deployment decision is the client's (`firm-coverage.md` §4).
+  + disclaimers, plus a mandatory **Assumptions & Simplifications** section (Certora precedent),
+  the **engagement envelope** (agents/effort, pinned commit range), an explicit **out-of-scope
+  list**, and an honest **LOC-vs-budget** note. The client-facing `audit-report.md` issues **no
+  "safe to deploy" guarantee**; the deployment decision is the client's (`firm-coverage.md` §4).
+- **FV/fuzz harnesses ship as named deliverables** — saved to `audit_<n>/harnesses/` with a
+  coverage-gaps appendix, not discarded scaffolding.
 - **The audit is point-in-time, scoped, and non-exhaustive** — it is a thorough first pass,
   pairable with (not a replacement for) a human firm engagement, exactly as `SKILL.md` →
   *When NOT to Use* states.
@@ -113,9 +129,13 @@ Both flows are the **firm spine**, so both inherit its discipline and its limits
 
 - [ ] Commit pinned + scope declared (`QUESTIONS.md` + Rule 0 + Phase 0.1) before any reading (§1)
 - [ ] Context reconstructed (`context-builder`, Phase 0.5) before any `[FAIL-N≥6]` (§1)
-- [ ] Tooling ran **first to direct attention**, manual walk stayed primary (§1, §4)
+- [ ] Tooling ran **up-front to clear the mechanical surface**; manual walk stayed primary and **invariant-led** (§1, §2, §4)
+- [ ] Checklists treated as the **coverage floor**; reasoning led with **invariants + attacker goals** (§1)
 - [ ] Fan-out was **domain-partitioned**, not identical clones; each leaf self-triaged via Rule 5b (§2)
-- [ ] Top-severity survivors passed **`peer-reviewer`** independent reconciliation (§1, §2)
+- [ ] Top-severity survivors passed **`peer-reviewer`** re-derivation (bounded-cost Neodyme pattern, not a full second audit) (§1, §2)
 - [ ] Report dedup'd by root cause, **importance-ordered**, with Phase 4.5 maturity (§1)
+- [ ] **Assumptions & Simplifications** section written (context-builder assumptions + `/audit-assist` answers) (§1, §3)
+- [ ] **Engagement envelope + out-of-scope + LOC-vs-budget** recorded in the report (§1, §4)
+- [ ] FV/fuzz **harnesses saved to `audit_<n>/harnesses/`** with a coverage-gaps note (§1, §4)
 - [ ] Client-facing `audit-report.md` used (maturity + caveats, **no deploy guarantee**); risk-score stayed internal (§1)
 - [ ] Changes re-reviewed via **`/re-audit`** (FIXED/STILL-OPEN/REGRESSED + sibling sweep), not a full re-run (§1, §3)

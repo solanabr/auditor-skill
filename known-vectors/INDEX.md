@@ -177,6 +177,14 @@ One line per vector. Click to see the full multi-step verification procedure.
 | 125 | [Bonding-Curve Launchpad Graduation & Migration Abuse](125-bonding-curve-launchpad-graduation-abuse.md) | 7 |
 | 126 | [Session Token as Custody](126-session-token-as-custody.md) | 7 |
 
+### DoS, Float Math & Keeper Lifecycle (127-129)
+
+| # | Vector | Severity |
+|---|--------|----------|
+| 127 | [ATA / Account Pre-Creation DoS (Init Front-Running)](127-ata-account-precreation-dos.md) | 6 |
+| 128 | [On-Chain Floating-Point Financial Math](128-onchain-floating-point-math.md) | 5 |
+| 129 | [Keeper Request→Execute Front-Running & Reordering](129-keeper-request-execute-frontrunning.md) | 7 |
+
 ---
 
 ## Known Duplicates & Consolidation Map
@@ -195,11 +203,11 @@ double-count them as independent coverage. Severities are aligned to the higher 
 | 039 | 083 | Rate limiting (bypass / missing) | 7 |
 | 047 | 099 | WebSocket security | 7 |
 
-**Distinct concepts:** 120 (126 files − 6 duplicate pairs).
+**Distinct concepts:** 123 (129 files − 6 duplicate pairs).
 
 ---
 
-**Total vector files:** 126 (100 original + 9 in v4.4 + 8 in v5.0 + 3 in v5.1 + 6 in v6.0)
-**Distinct concepts:** 120 (after consolidating 6 duplicate pairs)
+**Total vector files:** 129 (100 original + 9 in v4.4 + 8 in v5.0 + 3 in v5.1 + 6 in v6.0 + 3 in v6.1)
+**Distinct concepts:** 123 (after consolidating 6 duplicate pairs)
 **Categories:** 6 (crypto, backend, frontend, devops, ai-agent, off-chain-rust)
 **Severity range:** 3-10

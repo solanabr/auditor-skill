@@ -351,6 +351,54 @@ grep -rn -E "freeze_authority|mint_authority|set_authority" programs/    # resid
 
 ---
 
+## 11. TWAP / oracle-accumulator hardening (pool maintains its own price feed)
+
+Many Solana AMMs publish an **on-chain TWAP** other programs consume as an oracle — a running
+`Σ(price · Δt)` accumulator plus a last-update timestamp, or a ring of observations. Because the pool
+*is* the price source, the accumulator's own arithmetic is a distinct attack surface from the swap
+math above. Four failure modes recur across public reports (re-authored here; original findings by
+Zenith, Neodyme, Sec3):
+
+- **Wraparound not tracked.** The cumulative sum is expected to overflow and wrap; consumers must take
+  the interval as a **wrapping** difference (`now_acc.wrapping_sub(prev_acc)`) over a `u128`(+) type.
+  A checked/naive subtraction panics or yields a garbage (or negative) average exactly when the
+  accumulator wraps — an attacker times a read across the wrap to force a mispriced TWAP.
+- **Saturation over long gaps.** When the pool is idle for a long span, the next update's
+  `price · elapsed` term can overflow the step or inject an outsized weight. Use checked/saturating
+  math on the step and clamp `elapsed` (or cap the per-update contribution) so a single stale update
+  can't spike the average for the next reader.
+- **Pre-start-delay / early read.** A freshly-initialized accumulator holds no meaningful history.
+  Every consumer must gate on a **minimum elapsed span / minimum observation count** (or an explicit
+  `initialized` flag) and return "not ready" rather than a number — never divide by a zero span, and
+  never extrapolate a price from an all-zero seed or a single just-written sample.
+- **Accrual after the window/proposal ends.** If the TWAP backs a bounded epoch (a governance
+  proposal, an auction/TWAP window), updates must **stop contributing once that window closes**; a
+  `finalize`/`end_ts` gate freezes the settled value. Otherwise a late interaction re-prices an
+  already-decided outcome.
+
+**Auditor check**
+- ✅ PASS: accumulator is `u128`+ and consumers use `wrapping_sub` for the interval; the per-step
+  `price · elapsed` is checked/saturating with a clamped `elapsed`; every TWAP read is gated on a
+  minimum-elapsed / minimum-observation guard (pre-start returns "not ready"); accrual is bounded to
+  the measurement window and the finalized value is frozen.
+- ❌ FAIL: narrow accumulator or checked/naive interval subtraction (panics/garbage on wrap);
+  unbounded `price · elapsed` on a long gap; a TWAP consumed right after init (zero span / div-by-zero
+  / single-sample price); observations that keep moving the accumulator after the window/proposal has
+  ended.
+- Beyond §5 (fee-growth monotonicity is a different accumulator) and `ECON-085`–`ECON-088` (the
+  generic internal-accumulator checklist): the AMM angle is that **the pool's published TWAP is itself
+  an oracle** — every downstream borrow/settle/mint that trusts it inherits these bugs.
+
+```
+grep -rn -E "twap|observation|cumulative|price_x|oracle_index|last_update.*ts|time_weighted" programs/
+grep -rn -E "wrapping_sub|checked_sub|checked_mul" programs/ | grep -iE "twap|cumulative|acc|observation|elapsed"
+```
+
+*Public reports (re-authored): Zenith (MetaDAO — TWAP accumulator wraparound), Neodyme (MetaDAO AMM —
+TWAP accrual after a proposal ended), Sec3 (Raydium — observation-window / early-read handling).*
+
+---
+
 ## AMM/CLMM/DLMM checklist (fast pass)
 
 - [ ] Sqrt-price / price·liquidity math uses a 256-bit-equivalent intermediate + checked downcast (§1)
@@ -367,6 +415,7 @@ grep -rn -E "freeze_authority|mint_authority|set_authority" programs/    # resid
 - [ ] `close_position` settles residual fees → decrements liquidity → zeroes state → returns rent, in order (§9)
 - [ ] First CP deposit cannot be inflated by a pre-mint vault donation (§9)
 - [ ] Launchpad: locked/real bucket conserved; no residual mint/freeze authority; migration atomic & non-front-runnable (§10)
+- [ ] Published TWAP: `u128` accumulator + wrapping interval diff; gap saturation clamped; early-read gated; no accrual after window/proposal end (§11)
 
 *Public exploit referenced: Crema Finance (2022) — $8.8M, missing tick-account owner check in the
 fee-claim path. Invariants above are public protocol mechanics (Uniswap v3 sqrt-price/tick math,

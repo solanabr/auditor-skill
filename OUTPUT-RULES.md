@@ -64,6 +64,19 @@ Is it a hardening suggestion with no vulnerability?
   YES, cosmetic → 1
 ```
 
+### Impact × Likelihood — and principled downgrades
+
+The number above is the **impact** score. A high-impact mechanism with a **low-likelihood** trigger lands lower, and the finding MUST state which axis drove it (e.g. "impact 8, but the exploit needs a compromised admin → reported at 6"). Never downgrade on vibes — cite a named lever with a worked justification:
+
+- **Self-sacrifice / no incentive** — the attacker must burn their own funds, or a cheaper path reaches the same outcome.
+- **Economic infeasibility (with numbers)** — show the bound: e.g. "the token would need to be worth ~1000× to profit; max gain is ≤ 1 lamport at normal state."
+- **Recoverable / self-healing** — the harmful state reverses at bounded cost (merge stake accounts, next epoch clears it).
+- **Bounded blast radius** — worst case is a small, contained loss (misdirected rent, one account), not a drain.
+- **Defense-in-depth exceeds norms** — a redundant guard makes the gap non-exploitable in practice.
+- **Privilege required** — a role-gated path caps severity (Rule 5b Attacker-Model); a permissionless variant would score higher.
+
+There is no separate "Suggestion" tier — hardening ideas live at severity 1-2 (Informational), not as a distinct class.
+
 ### Overall Repository Risk Score
 
 After all items are checked, compute the **Repository Risk Score**:
@@ -215,7 +228,7 @@ Every single checklist item and every known attack vector MUST appear in the rep
 
 ### Ordering
 
-Items listed in **checklist order** (AV-001, AV-002, ..., PC-060, AI-001, ..., RS-017), followed by known vectors in order (KV-001 through KV-126). Never reorder or group by verdict.
+Items listed in **checklist order** (AV-001, AV-002, ..., PC-060, AI-001, ..., RS-017), followed by known vectors in order (KV-001 through KV-129). Never reorder or group by verdict.
 
 ---
 
@@ -301,6 +314,12 @@ The gate blocks are reproduced in the finding's full block (Rule 5) and summariz
 
 A *rejected* finding looks like this: "input ≥ 16 and header = 8 ⟹ input − header ≥ 8, so the subtraction cannot underflow. Downgraded `[FAIL-7]` → `[UNCONFIRMED]`."
 
+**Two honest outcomes when you cannot fully prove it:**
+- `[UNCONFIRMED]` — the gate failed on **reachability or bounds** (unreachable / unbounded as written). Reported for manual follow-up; not a confirmed FAIL.
+- `[UNDETERMINED]` — the path **is reachable** but its full impact could not be quantified within scope. Carry the line "extent not determined within this assessment" and report it at its likely severity band, flagged. Reachable-but-unquantified ≠ unreachable.
+
+**Accepted PoC forms.** A runnable exploit is ideal but not the only proof. For access-control / logic findings a **structured attacker-narrative** is a first-class PoC: *actor → capability → numbered steps → guard bypassed → quantified outcome* (e.g. Alice deposits; Eve substitutes her key at `L88`; drains ~$X). And when the **missing check is provable at `file:line`** but the full exploit math can't be confirmed in the engagement window, you MAY still report at severity **provided** the finding carries explicit uncertainty phrasing and states exactly what remains unproven — do not mechanically bury a real syntactic gap as `[UNCONFIRMED]`.
+
 ---
 
 ## Rule 6: Report Sections Order
@@ -384,7 +403,7 @@ The report MUST include computed metrics at the end of the Item Results section.
 
 | Metric | Value |
 |--------|-------|
-| Total known vectors | 126 |
+| Total known vectors | 129 |
 | PASS | {N} |
 | FAIL | {N} |
 | PARTIAL | {N} |
@@ -395,7 +414,7 @@ The report MUST include computed metrics at the end of the Item Results section.
 
 | # | Checklist | Items | Pass | Fail | Partial | N/A | Pass Rate |
 |---|-----------|-------|------|------|---------|-----|-----------|
-| 01 | Account Validation | 86 | | | | | % |
+| 01 | Account Validation | 88 | | | | | % |
 | ... | ... | ... | ... | ... | ... | ... | ... |
 | **Total** | | **{N}** | | | | | **{%}** |
 ```
@@ -435,6 +454,8 @@ For any item where the auditor is less than fully certain:
 
 The `*` suffix + confidence note signals that manual double-checking may be warranted.
 
-### `[UNCONFIRMED]` — failed the validation gate
+### `[UNCONFIRMED]` / `[UNDETERMINED]` — validation-gate outcomes
 
 A finding that could not complete the Rule 5b Reachability or Math/State-Bounds gate is recorded as `[UNCONFIRMED]` (suspected, but unreachable / unbounded as written) — reported for manual follow-up, and NOT counted as a confirmed FAIL in the severity metrics.
+
+`[UNDETERMINED]` is distinct: the path **is** reachable but its full impact could not be quantified within scope. Report it at its likely severity band with "extent not determined within this assessment" — a real, flagged finding, not a suppressed one.
