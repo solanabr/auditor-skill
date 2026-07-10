@@ -26,7 +26,10 @@ If absent (submodule not initialized), run the native fallback and note in the r
 | Secret zeroization (IR-level) | `zeroize-audit` | verify KV-112 / RS-015 at the IR level | grep `zeroize`/`Zeroizing` on secret-bearing types |
 | Constant-time (custom crypto) | `constant-time-analysis` | check secret-dependent branches when custom crypto is present | note "manual constant-time review needed" |
 | Entry-point enumeration | `entry-point-analyzer` | seed the Phase 0 instruction matrix (has native Solana support) | manual `#[instruction]` enumeration |
-| Supply-chain metadata | `supply-chain-risk-auditor` | enrich checklist 11 | `npm audit` / `cargo audit` + grep |
+| Supply-chain metadata | `supply-chain-risk-auditor` | enrich checklist 11 (SC-044..046) | `npm audit` / `cargo audit` + grep |
+| Dimensional / unit analysis | `dimensional-analysis` | annotate + propagate units through DeFi value paths (checklist 03/06) — catches mixed-decimals / wrong-scale bugs | manual per-quantity unit tracking |
+| Insecure-default trace | `insecure-defaults` | fail-open vs fail-secure path trace for suspected weak defaults (checklist 12/13) | grep fallback-secret patterns |
+| API misuse / footguns | `sharp-edges` | misuse-resistance review of a program's own public/CPI interface + config schema | `references/framework-idioms/*` footgun catalog |
 
 ## Rule
 
