@@ -113,6 +113,28 @@ Identify all enums and their variants.
 
 ---
 
+## PHASE 0.5: CONTEXT RECONSTRUCTION (before any verdict)
+
+Build understanding before judgment. No checklist item may be marked `[FAIL-N≥6]` against a function that has not first been reconstructed here. *(Pattern credit: Trail of Bits `audit-context-building`.)*
+
+For every non-trivial function (any instruction handler, any value-moving or state-mutating fn, any fn with a CPI or arithmetic), fill `templates/context-worksheet.md`:
+
+- **Purpose** — what the function is supposed to do, from the code (not the docs).
+- **Signature** — inputs (args), accounts (+ constraints), state written, each `@ L#`.
+- **Block-by-block** — what each block does, what it reads / writes, why it is there.
+- **≥ 3 invariants** it must preserve · **≥ 5 assumptions** about inputs / accounts / caller · **≥ 3 external-interaction risks** (CPIs, sysvars, `remaining_accounts`, oracle reads).
+- **Cross-function dependencies** — shared state, ordering assumptions.
+
+Anti-hallucination rules (mandatory):
+
+- Every claim cites a line (`L#`).
+- The words "probably", "might", "seems", "should" are banned. If you cannot state it from the code, write `UNKNOWN — needs manual review`.
+- Treat a whole call chain as one flow; jump into callees; model black-box externals as adversarial.
+
+Output worksheets to `audit_<n>/worksheets/context/{fn}.md`. These feed the Rule 5b validation gate.
+
+---
+
 ## PHASE 1: ON-CHAIN PROGRAM AUDIT (Checklists 01-06)
 
 ### Execution Strategy
@@ -507,8 +529,29 @@ RECORD format:
   - KV-109: [FAIL-7] ...
 
 HARD RULE:
-  Missing verdict for any KV item invalidates the FULL audit.
+  Every in-scope KV item must have a verdict. Out-of-scope vectors render
+  [N/A — out of scope: <reason>] from the scope gate (Rule 0).
 ```
+
+---
+
+## PHASE 4.5: MATURITY ASSESSMENT
+
+Orthogonal to the risk score: the risk score is the *deploy gate*; this scorecard is the *engineering-quality gate*. Rate each category 0-4 (0 absent · 1 ad-hoc · 2 partial · 3 good · 4 strong), weakest-link. *(Pattern credit: Trail of Bits `code-maturity-assessor`.)*
+
+| # | Category | Scored on |
+|---|----------|-----------|
+| 1 | Access Controls | signer/authority coverage, role separation, admin-key custody |
+| 2 | Arithmetic | checked math, u128 intermediates, rounding discipline |
+| 3 | Account & Type Safety | typed accounts, discriminator/owner checks, PDA canonicalization |
+| 4 | Input Validation | bounds, allowlists, `remaining_accounts` validation |
+| 5 | Testing | unit/integration coverage, LiteSVM/Mollusk, edge cases |
+| 6 | Fuzzing & Property Tests | cargo-fuzz/proptest presence, documented invariants |
+| 7 | Error Handling & DoS Resilience | no `unwrap()`/panic on user input, compute/stack bounds |
+| 8 | Upgradeability & Governance | upgrade authority, timelock, multisig, emergency pause |
+| 9 | Monitoring & Incident Response | event emission coverage, runbooks, alerting |
+
+Emit the scorecard as a dedicated report section (see `templates/report-template.md`). Categories scoring ≤ 1 are prioritized in the Remediation Roadmap regardless of individual finding severity.
 
 ---
 

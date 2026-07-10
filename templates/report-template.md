@@ -59,21 +59,28 @@
 
 ---
 
-## 2. Corpus Coverage
+## 2. Scope Coverage
 
-> Mandatory proof that every AUDITOR file was loaded before auditing project code.
+> Which checklists and vector groups were in scope, and how many items were evaluated. Out-of-scope items render `[N/A — out of scope]` from the scope gate (Rule 0), not from reading each file.
 
-| File | Loaded | Notes |
-|---|---|---|
-| <!-- AUDITOR root/doc file path --> | Yes/No | <!-- if no, report is invalid --> |
+| Checklist / vector group | In scope? | Items evaluated / total | Trigger / reason |
+|---|---|---|---|
+| 01–07 on-chain | Yes/No | N / N | `.rs` / `Anchor.toml` |
+| 08–10 off-chain (TS/web) | Yes/No | N / N | `.ts` / `.tsx` |
+| 14 python | Yes/No | N / N | `.py` |
+| 15 general language | Yes/No | N / N | `.go`/`.java`/`.rb`/`.php` |
+| 19 AI-agent | Yes/No | N / N | `.mcp.json` / agent SDK |
+| 20 off-chain Rust | Yes/No | N / N | `.rs` outside `programs/` |
+| 11–13, 16–18 universal | Yes | N / N | any repo |
 
-### Corpus Metrics
+### Scope Metrics
 
 | Metric | Count |
 |---|---:|
-| AUDITOR markdown files discovered | <!-- N --> |
-| AUDITOR markdown files loaded | <!-- N --> |
-| Completion | <!-- % --> |
+| In-scope checklist items | <!-- N --> |
+| Items with a verdict | <!-- N --> |
+| In-scope known-vectors | <!-- N --> |
+| Completion (in-scope) | <!-- % --> |
 
 ---
 
@@ -388,7 +395,28 @@
 
 ---
 
-## 8. Remediation Roadmap
+## 8. Code Maturity Scorecard
+
+> Engineering-quality gate (Phase 4.5), orthogonal to the risk score. 0 absent · 1 ad-hoc · 2 partial · 3 good · 4 strong (weakest-link).
+
+| # | Category | Score (0-4) | Evidence (file:line / artifact) | Gap to next level |
+|---|----------|:-----------:|---------------------------------|-------------------|
+| 1 | Access Controls | | | |
+| 2 | Arithmetic | | | |
+| 3 | Account & Type Safety | | | |
+| 4 | Input Validation | | | |
+| 5 | Testing | | | |
+| 6 | Fuzzing & Property Tests | | | |
+| 7 | Error Handling & DoS Resilience | | | |
+| 8 | Upgradeability & Governance | | | |
+| 9 | Monitoring & Incident Response | | | |
+| **Weighted Maturity** | | **X.X / 4.0** | | |
+
+Categories scoring ≤ 1 are prioritized in the Remediation Roadmap regardless of individual finding severity.
+
+---
+
+## 9. Remediation Roadmap
 
 ### Immediate — Severity 9-10 (Block Deploy)
 
@@ -422,7 +450,7 @@
 
 ---
 
-## 9. Re-Audit Checklist
+## 10. Re-Audit Checklist
 
 - [ ] All Critical findings fixed and verified
 - [ ] All High findings fixed and verified
@@ -433,7 +461,7 @@
 
 ---
 
-## 10. Appendices
+## 11. Appendices
 
 ### A. Tool Versions
 
