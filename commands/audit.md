@@ -5,11 +5,11 @@ argument-hint: "[path] [--scope full|program|backend|frontend]"
 allowed-tools: Read, Grep, Glob, Bash, Task
 ---
 
-# AUDITOR — Full Audit
+# auditor-skill — Full Audit
 
 **Arguments:** $ARGUMENTS
 
-Run the AUDITOR skill end-to-end:
+Run the auditor-skill end-to-end:
 
 1. Read `OUTPUT-RULES.md` (mandatory output format, severity 1-10, the Rule 5b validation gate).
 2. Follow `FULL-AUDIT.md` top to bottom, honoring **scope-gated loading** (Rule 0): discover the repo, declare scope, load only in-scope checklists/vectors on demand.

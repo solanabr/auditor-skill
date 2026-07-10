@@ -5,7 +5,7 @@ argument-hint: "[audit-dir]"
 allowed-tools: Read, Glob, Bash
 ---
 
-# AUDITOR — Report
+# auditor-skill — Report
 
 **Arguments:** $ARGUMENTS
 

@@ -1,6 +1,6 @@
 # Grep & Terminal Commands Reference
 
-> Consolidated command library for the AUDITOR skill.  
+> Consolidated command library for the auditor-skill.  
 > Every command uses tools available inside the VS Code agent (grep_search, run_in_terminal).  
 > Commands are grouped by **what they detect**.
 

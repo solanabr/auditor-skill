@@ -12,7 +12,7 @@ Every audit consumes tokens in two categories:
 ### Fixed Cost (same for every repo)
 | Component | Tokens | Notes |
 |-----------|--------|-------|
-| AUDITOR skill files (SKILL.md, OUTPUT-RULES.md, FULL-AUDIT.md) | ~15K | Read once at start |
+| auditor-skill files (SKILL.md, OUTPUT-RULES.md, FULL-AUDIT.md) | ~15K | Read once at start |
 | Checklists (20 files, 1,328 items) | ~60K | Loaded per phase |
 | Known vectors (126 procedures) | ~34K | Loaded per phase/language trigger |
 | Templates + discovery files | ~5K | |

@@ -4,7 +4,7 @@ description: Fast security triage — discovery + static analysis + the highest-
 allowed-tools: Read, Grep, Glob, Bash, Task
 ---
 
-# AUDITOR — Quick Scan
+# auditor-skill — Quick Scan
 
 **Arguments:** $ARGUMENTS
 

@@ -504,7 +504,7 @@ GREP PATTERNS:
 
 When auditing a different repository:
 
-1. **Copy** the entire `.github/skills/AUDITOR/` folder
+1. **Copy** the entire `.github/skills/auditor-skill/` folder
 2. **Update** this file's "Repository Layout Assumptions" to match the target
 3. **Update** the glob patterns above if directories differ
 4. The checklists themselves are **generic** — they work for any Solana/Anchor program

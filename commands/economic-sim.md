@@ -5,7 +5,7 @@ argument-hint: "<finding-or-instruction>"
 allowed-tools: Read, Grep, Glob, Bash, Task
 ---
 
-# AUDITOR — Economic Simulation
+# auditor-skill — Economic Simulation
 
 **Arguments:** $ARGUMENTS
 

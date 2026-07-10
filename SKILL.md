@@ -1,11 +1,11 @@
 ---
-name: AUDITOR
+name: auditor-skill
 description: "**AUDIT SKILL** — Comprehensive on-chain Solana program auditor and full-stack security review for ANY programming language. USE FOR: auditing Solana/Anchor programs, reviewing smart contract security, checking for vulnerabilities (missing signers, unchecked accounts, arithmetic overflow, CPI attacks, PDA confusion, type cosplay, reinitialization, flash loan exploits, MEV, governance backdoors, timelock bypass), auditing TypeScript/Python/Go/Java/Ruby/PHP/any language, backend/frontend code review, supply chain safety, operational security (multisig, upgrade authority, deploy process), formal verification and testing quality, logging/monitoring/incident response, data privacy/GDPR/SOC2 compliance, change management, penetration testing methodology, AI/ML security, generating audit reports, running full repository audits. Severity 1-10 scale, 20 micro-checklist domains with 1328 individual verification items, plus 126 known attack vectors, chunked file-by-file execution, item-by-item verdicts. Benchmarked against CertiK (crypto) and EY/SOC2/COBIT (traditional) audit standards. DO NOT USE FOR: writing new features, general coding, non-security reviews."
 ---
 
-# AUDITOR — Multi-Language Security Audit Skill
+# auditor-skill — Multi-Language Security Audit Skill
 
-> **Version:** 4.4  
+> **Version:** 6.0  
 > **Items:** 1,328 across 20 checklists (+ 126 known vectors)  
 > **Languages:** Rust, TypeScript, Python, Go, Java, Ruby, PHP, + any via general checklist  
 > **Severity:** 1–10 numeric scale  
@@ -16,7 +16,7 @@ description: "**AUDIT SKILL** — Comprehensive on-chain Solana program auditor 
 
 ## SCOPE-GATED LOADING — Load What The Repo Needs
 
-AUDITOR does not read its whole corpus up front. It discovers the repo, declares a scope, loads only what that scope requires, then guarantees a verdict for every in-scope item.
+auditor-skill does not read its whole corpus up front. It discovers the repo, declares a scope, loads only what that scope requires, then guarantees a verdict for every in-scope item.
 
 **Step 1 — Discover (cheap, always).** Enumerate file extensions and markers (`Anchor.toml`, `Cargo.toml`, `package.json`, `*.py`, `.github/`). No checklists or vectors loaded yet.
 
@@ -59,7 +59,7 @@ Checklists outside this set are **never read** — a Rust-only repo never loads 
 ## Folder Structure
 
 ```
-AUDITOR/
+auditor-skill/
 ├── README.md                         ← Start here — setup, usage, contributing guide
 ├── SKILL.md                          ← YOU ARE HERE (orchestrator — AI agent reads this first)
 ├── OUTPUT-RULES.md                   ← MANDATORY output format, severity scale, chunked execution
@@ -274,32 +274,32 @@ An auditor talks itself out of real findings with lines like these. Treat each a
 
 ### Full repository audit
 ```
-Audit the entire repository using the AUDITOR skill with FULL scope
+Audit the entire repository using the auditor-skill with FULL scope
 ```
 
 ### Program-only audit
 ```
-Audit the Solana program in programs/<your_program>/ using the AUDITOR skill with PROGRAM scope
+Audit the Solana program in programs/<your_program>/ using the auditor-skill with PROGRAM scope
 ```
 
 ### Specific checklist
 ```
-Run AUDITOR checklist 03 (Arithmetic Safety) on programs/<your_program>/
+Run auditor-skill checklist 03 (Arithmetic Safety) on programs/<your_program>/
 ```
 
 ### Backend audit
 ```
-Run AUDITOR with BACKEND scope on apps/backend/
+Run auditor-skill with BACKEND scope on apps/backend/
 ```
 
 ### Python project audit
 ```
-Audit the Python code using AUDITOR checklist 14
+Audit the Python code using auditor-skill checklist 14
 ```
 
 ### Any language
 ```
-Run AUDITOR on this Go/Java/Ruby/PHP project — it will auto-detect and apply the right checklists
+Run auditor-skill on this Go/Java/Ruby/PHP project — it will auto-detect and apply the right checklists
 ```
 
 ---
@@ -318,9 +318,9 @@ Full format rules: see [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 4.
 
 ## Porting to Another Repository
 
-This entire `AUDITOR/` folder is self-contained and portable:
+This entire `auditor-skill/` folder is self-contained and portable:
 
-1. Copy the full `AUDITOR/` directory into the target repository
+1. Copy the full `auditor-skill/` directory into the target repository
 2. Update `discovery/file-map.md` with the target's folder structure
 3. Checklists 01-07: any Solana/Anchor program
 4. Checklists 08-10: any TypeScript/Express/Next.js project

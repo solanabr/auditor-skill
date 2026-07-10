@@ -1,4 +1,4 @@
-# Output Rules — AUDITOR Skill
+# Output Rules — auditor-skill
 
 > This document defines the **mandatory output format** for all audit reports.  
 > Every audit — full, targeted, or single-instruction — MUST follow these rules.  
@@ -8,7 +8,7 @@
 
 ## Rule 0: Scope Declaration & Scope-Gated Corpus Load
 
-AUDITOR does **not** read its whole corpus up front. It discovers the repo, declares a scope, loads only what that scope needs, and guarantees a verdict for every in-scope item.
+auditor-skill does **not** read its whole corpus up front. It discovers the repo, declares a scope, loads only what that scope needs, and guarantees a verdict for every in-scope item.
 
 1. **Discover** (cheap, always): enumerate file extensions and markers (`Anchor.toml`, `Cargo.toml`, `package.json`, `*.py`, `.github/`). No checklists or vectors loaded yet.
 2. **Declare scope**: from detected languages + any `--scope` flag, compute the IN-SCOPE checklist set (see [SKILL.md](SKILL.md) → Scope-Gated Loading). Load this file (`OUTPUT-RULES.md`) once — it is always in scope.

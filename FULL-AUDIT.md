@@ -570,7 +570,7 @@ De-duplicate (same root cause appearing in multiple checklists)
 ```
 Use the template in templates/report-template.md
 Fill in:
-  - Corpus coverage section (all AUDITOR files)
+  - Corpus coverage section (all auditor-skill files)
   - Executive summary with counts
   - Each finding with: ID, severity, location, description, exploit scenario, fix recommendation
   - Checklist summary table

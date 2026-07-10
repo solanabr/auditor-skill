@@ -5,7 +5,7 @@ argument-hint: "<file> [function|instruction]"
 allowed-tools: Read, Grep, Glob, Bash, Task
 ---
 
-# AUDITOR — Deep Review
+# auditor-skill — Deep Review
 
 **Arguments:** $ARGUMENTS
 

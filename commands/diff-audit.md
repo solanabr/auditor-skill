@@ -5,7 +5,7 @@ argument-hint: "[base..head | PR number]"
 allowed-tools: Read, Grep, Glob, Bash, Task
 ---
 
-# AUDITOR — Differential Audit (Mode 4)
+# auditor-skill — Differential Audit (Mode 4)
 
 **Arguments:** $ARGUMENTS
 

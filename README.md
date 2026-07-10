@@ -1,4 +1,4 @@
-# AUDITOR — Open-Source AI Security Audit Skill
+# auditor-skill — Open-Source AI Security Audit Skill
 
 > Production-grade security audit for any codebase, powered by AI agents.
 > 20 checklists · 1,328 verification items · 126 known attack vectors · Benchmarked against CertiK, SOC 2, OWASP Top 10:2025
@@ -8,7 +8,7 @@
 
 ## What Is This?
 
-AUDITOR is a **skill file** (a structured prompt + checklists) that turns any LLM agent (Copilot, Cursor, Windsurf, Claude Code, Codex, etc.) into a professional-grade security auditor. It reads your code file by file, checks 1,328 items across 20 security domains, tests against 126 real-world attack vectors, and produces a structured report with severity scores.
+auditor-skill is a **skill file** (a structured prompt + checklists) that turns any LLM agent (Copilot, Cursor, Windsurf, Claude Code, Codex, etc.) into a professional-grade security auditor. It reads your code file by file, checks 1,328 items across 20 security domains, tests against 126 real-world attack vectors, and produces a structured report with severity scores.
 
 **It is not a SaaS product.** It's a folder of markdown files you clone into your repo or give to an AI agent.
 
@@ -38,32 +38,32 @@ AUDITOR is a **skill file** (a structured prompt + checklists) that turns any LL
 
 ```bash
 # From your project root
-git clone https://github.com/YOUR_ORG/AUDITOR.git .github/skills/AUDITOR
+git clone https://github.com/YOUR_ORG/auditor-skill.git .github/skills/auditor-skill
 
 # Or copy the folder manually
-cp -r /path/to/AUDITOR .github/skills/AUDITOR
+cp -r /path/to/auditor-skill .github/skills/auditor-skill
 ```
 
 Then in your AI agent (Copilot, Cursor, etc.):
 ```
-Audit the entire repository using the AUDITOR skill with FULL scope
+Audit the entire repository using the auditor-skill with FULL scope
 ```
 
 ### Option 2: Point to the repo (recommended for open source)
 
-If your code is in a public repo, you can clone AUDITOR separately and point the agent at your code:
+If your code is in a public repo, you can clone auditor-skill separately and point the agent at your code:
 
 ```bash
-# Clone AUDITOR
-git clone https://github.com/YOUR_ORG/AUDITOR.git
+# Clone auditor-skill
+git clone https://github.com/YOUR_ORG/auditor-skill.git
 
 # Open your target project in your IDE
-# Copy AUDITOR into it, or configure as a skill
+# Copy auditor-skill into it, or configure as a skill
 ```
 
 ### Option 3: Feed files to the API directly
 
-If building a service, send the AUDITOR files as system context and the target repo files as user content to any LLM API.
+If building a service, send the auditor-skill files as system context and the target repo files as user content to any LLM API.
 
 ---
 
@@ -71,7 +71,7 @@ If building a service, send the AUDITOR files as system context and the target r
 
 ### Scope-Gated Intake (v5.0)
 
-AUDITOR does not bulk-read its whole corpus. It discovers the repo, declares an audit scope ([OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 0), and loads only the in-scope checklists and vectors on demand:
+auditor-skill does not bulk-read its whole corpus. It discovers the repo, declares an audit scope ([OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 0), and loads only the in-scope checklists and vectors on demand:
 
 - root docs + `OUTPUT-RULES.md` (always),
 - only the `checklists/*.md` the detected languages require (e.g. `14-python-safety.md` only if `.py` is present),
@@ -100,7 +100,7 @@ The audit is complete when every **in-scope** item has an explicit verdict; out-
 ## Folder Structure
 
 ```
-AUDITOR/
+auditor-skill/
 ├── README.md                ← YOU ARE HERE
 ├── SKILL.md                 ← Orchestrator — the AI agent reads this first
 ├── OUTPUT-RULES.md          ← Mandatory output format, severity scale
@@ -170,17 +170,17 @@ See [OUTPUT-RULES.md](OUTPUT-RULES.md) for the complete specification.
 
 ### VS Code / GitHub Copilot
 ```
-@workspace Audit the entire repository using the AUDITOR skill
+@workspace Audit the entire repository using the auditor-skill
 ```
 
 ### Cursor / Windsurf
 ```
-Read .github/skills/AUDITOR/SKILL.md then audit this repository following the FULL-AUDIT.md execution plan
+Read .github/skills/auditor-skill/SKILL.md then audit this repository following the FULL-AUDIT.md execution plan
 ```
 
 ### Claude Code (CLI)
 ```
-Read the AUDITOR skill files in .github/skills/AUDITOR/ and perform a full security audit of this repository
+Read the auditor-skill files in .github/skills/auditor-skill/ and perform a full security audit of this repository
 ```
 
 ### API (programmatic)

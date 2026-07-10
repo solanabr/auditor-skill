@@ -5,7 +5,7 @@ argument-hint: "<spec-file> [program-path]"
 allowed-tools: Read, Grep, Glob, Bash, Task
 ---
 
-# AUDITOR — Spec Compliance (Mode 5)
+# auditor-skill — Spec Compliance (Mode 5)
 
 **Arguments:** $ARGUMENTS
 

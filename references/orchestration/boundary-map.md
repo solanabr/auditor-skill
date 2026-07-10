@@ -1,8 +1,8 @@
-# Orchestration Boundary — AUDITOR × Trail of Bits
+# Orchestration Boundary — auditor-skill × Trail of Bits
 
-AUDITOR's native corpus is the **knowledge** layer (checklists, vectors, severity, gates).
+auditor-skill's native corpus is the **knowledge** layer (checklists, vectors, severity, gates).
 Trail of Bits (vendored at `vendor/trailofbits`) is the **execution** layer — real tools that
-AUDITOR's prose + grep cannot run. Subagents delegate to it when present, and fall back to
+auditor-skill's prose + grep cannot run. Subagents delegate to it when present, and fall back to
 native grep checks when a clone has not initialized the submodule.
 
 ## Detection
@@ -18,7 +18,7 @@ If absent (submodule not initialized), run the native fallback and note in the r
 
 ## Capability → plugin map
 
-| Capability | ToB plugin (`vendor/trailofbits/plugins/…`) | AUDITOR use | Native fallback |
+| Capability | ToB plugin (`vendor/trailofbits/plugins/…`) | auditor-skill use | Native fallback |
 |------------|---------------------------------------------|-------------|-----------------|
 | Interprocedural SAST (taint) | `static-analysis`, `semgrep-rule-creator`, `variant-analysis` | `vuln-hunter` runs SAST over in-scope languages; fold SARIF into verdicts | `discovery/grep-commands.md` scanners |
 | Property / fuzz harnesses | `testing-handbook-skills`, `property-based-testing` | generate + run a harness for any ≥High arithmetic/economic finding (the Rule 5b PoC) | checklist 16 "does the suite exist" prose checks |
@@ -34,4 +34,4 @@ If absent (submodule not initialized), run the native fallback and note in the r
 ## Rule
 
 Delegation **augments**, never replaces, the native verdict. Every finding still carries an
-AUDITOR verdict and (if N ≥ 6) a filled Rule 5b gate. Tool output is *evidence*, not a verdict.
+auditor-skill verdict and (if N ≥ 6) a filled Rule 5b gate. Tool output is *evidence*, not a verdict.
