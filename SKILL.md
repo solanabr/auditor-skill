@@ -37,6 +37,23 @@ Checklists outside this set are **never read** — a Rust-only repo never loads 
 
 **Completeness is output-side.** The audit is COMPLETE iff every in-scope item + phase-triggered vector has a verdict. Out-of-scope items render `[N/A — out of scope: <reason>]` from the gate. Every full report includes a **Scope Coverage** table. Full rule: see [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 0.
 
+**Step 4 — Reference layer (progressive disclosure).** Beyond the checklists, load a `references/` file only when its trigger fires — deep coverage at zero cost when irrelevant:
+
+| Reference | Load when (grep markers) |
+|-----------|--------------------------|
+| `references/framework-idioms/{anchor,native,pinocchio}.md` | that framework is detected |
+| `references/framework-idioms/build-and-tooling.md` | build/CI/toolchain errors or PoC-harness setup |
+| `references/methodologies/amm-clmm.md` | `tick` · `sqrt_price` · `liquidity_net` · `fee_growth` · `bin_array` |
+| `references/methodologies/lending.md` | `obligation` · `reserve` · `liquidation_threshold` · `borrow_index` · `ltv` |
+| `references/methodologies/perps.md` | `funding_rate` · `mark_price` · `open_interest` · `maintenance_margin` · `vamm` |
+| `references/methodologies/oracles.md` | `pyth` · `switchboard` · `PriceUpdateV2` · `PullFeed` · `confidence` |
+| `references/methodologies/stablecoin.md` | `collateral_ratio` · `psm` · `cdp` · `debt_ceiling` · `redeem` · `peg` |
+| `references/methodologies/liquid-staking.md` | `stake_pool` · `validator_list` · `exchange_rate` · `staker` · `withdrawer` · `restak` |
+| `references/methodologies/governance.md` | `spl-governance` · `realm` · `proposal` · `vote_record` · `voter_weight` · `vsr` |
+| `references/vuln-classes/zk-and-compression.md` | `groth16` · `spl-account-compression` · `bubblegum` · `merkle` · `nullifier` · `ConfidentialTransfer` |
+| `references/false-positives.md` | triaging any finding before reporting severity ≥ 6 |
+| `references/orchestration/boundary-map.md` | delegating to vendored Trail of Bits tooling |
+
 ---
 
 ## Folder Structure
