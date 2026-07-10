@@ -161,6 +161,48 @@ If context was lost, a file was too large, or a pattern is unfamiliar — say so
 2. Fill out [templates/instruction-worksheet.md](templates/instruction-worksheet.md)
 3. Cross-reference with related code that shares state
 
+### Mode 4: Differential / PR-Scoped Audit
+
+**When to use:** A PR, commit range, or branch — not the whole tree. Command: `/auditor:diff-audit`.
+
+**Execution:**
+1. Changed set: `git diff --name-only <base>..<head>` (default `main..HEAD`).
+2. Phase 0.5 context reconstruction on changed functions + 1-hop callers/callees.
+3. Risk-classify changed files (auth / crypto / value-transfer / validation-removal = HIGH); git-blame removed security code — a deletion in a "fix"/"CVE" commit is a CRITICAL regression.
+4. Run only the checklist items + known-vectors matching the changed files' language/domain, through the Rule 5b gate.
+5. Abbreviated report (`audit_<n>/PR-REPORT.md`) — changed-surface verdicts only. Reuses the methodology corpus; skips whole-repo discovery. *(Pattern credit: Trail of Bits `differential-review`.)*
+
+### Mode 5: Spec-Compliance Audit
+
+**When to use:** A spec / whitepaper / RFC is supplied and you need code-vs-spec conformance. Command: `/auditor:spec-audit`.
+
+**Execution:**
+1. Extract a requirement list (Spec-IR) from the spec.
+2. Phase 0 setup + Phase 0.5; map each instruction / state field to the spec's stated behavior.
+3. Compliance Matrix: each requirement → `[MET]` / `[VIOLATED-N]` / `[UNIMPLEMENTED]` / `[UNDOCUMENTED-BEHAVIOR]`, cited to code `L#`. Any `[VIOLATED-N≥6]` passes the Rule 5b gate; `[UNDOCUMENTED-BEHAVIOR]` (code does something the spec never authorizes) is itself a finding. *(Pattern credit: Trail of Bits `spec-to-code-compliance`.)*
+
+---
+
+## Rationalizations to Reject
+
+An auditor talks itself out of real findings with lines like these. Treat each as a RED FLAG that demands the Rule 5b gate — not a reason to skip:
+
+- "It's only devnet / a test program." → Audit as if mainnet; devnet code ships.
+- "The math can't overflow because values are always small." → Prove the bound (Rule 5b Math/State-Bounds) or report it.
+- "`init_if_needed` is fine here." → It permits reinitialization; prove the guard or flag it.
+- "Only the admin can call this." → Confirm the signer/authority check exists in code; "should be" is not "is".
+- "The client validates it." → On-chain must not trust off-chain validation.
+- "This `unwrap()` can't fail." → On user/RPC input it can — that is a DoS (checklist 20).
+- "It's the same as a well-known program." → Verify line-by-line; forks drift.
+
+*(Scaffolding pattern credit: Trail of Bits `skill-improver`.)*
+
+## When NOT to Use
+
+- Writing new features or general (non-security) code — this skill only audits.
+- As the sole gate for a mainnet launch — it is a thorough first pass; pair it with a human audit for business-logic, economic-model, and legal-compliance review.
+- As formal proof of correctness — it flags where proofs/harnesses are missing (and can orchestrate them via `vendor/trailofbits`), but does not itself constitute a machine-checked proof.
+
 ---
 
 ## Language → Checklist Mapping
