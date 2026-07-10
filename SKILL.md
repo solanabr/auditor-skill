@@ -14,26 +14,28 @@ description: "**AUDIT SKILL** — Comprehensive on-chain Solana program auditor 
 
 ---
 
-## BLOCKING REQUIREMENT — FULL AUDITOR CORPUS INTAKE
+## SCOPE-GATED LOADING — Load What The Repo Needs
 
-Before any audit begins, the agent MUST recursively read every markdown file in this folder.
+AUDITOR does not read its whole corpus up front. It discovers the repo, declares a scope, loads only what that scope requires, then guarantees a verdict for every in-scope item.
 
-Mandatory load set:
+**Step 1 — Discover (cheap, always).** Enumerate file extensions and markers (`Anchor.toml`, `Cargo.toml`, `package.json`, `*.py`, `.github/`). No checklists or vectors loaded yet.
 
-1. Root docs: `README.md`, `SKILL.md`, `OUTPUT-RULES.md`, `FULL-AUDIT.md`, `QUESTIONS.md`, `COSTS.md`, `TOP-100-HACKS.md` (if present).
-2. Discovery docs: all files under `discovery/`.
-3. Templates: all files under `templates/`.
-4. Checklists: all files under `checklists/`.
-5. Known vectors: `known-vectors/INDEX.md` and every vector file `known-vectors/001-*.md` through `known-vectors/109-*.md`.
+**Step 2 — Declare scope.** Map detected languages (+ any `--scope`) to the in-scope checklist set:
 
-Hard rules:
+| Detected | Load checklists |
+|----------|-----------------|
+| `.rs` / `Anchor.toml` | 01–07 (+ 20 for `.rs` outside `programs/`) |
+| `.ts` / `.tsx` | 08 (+ 09 if backend, + 10 if web) |
+| `.py` | 14 |
+| `.go` / `.java` / `.rb` / `.php` / other | 15 |
+| AI / agent components (`.mcp.json`, agent SDKs) | 19 |
+| **any repo** | 11, 12, 13, 16, 17, 18 |
 
-- If any AUDITOR markdown file is unread, the audit is INVALID and must be reported as `[INCOMPLETE — missing auditor corpus file load]`.
-- Output must include:
-    - every checklist item verdict (all 18 checklists),
-    - every known-vector verdict (all 109 vectors),
-    - corpus coverage evidence table listing all AUDITOR files and load status.
-- No "summary-only" audit is valid under this skill.
+Checklists outside this set are **never read** — a Rust-only repo never loads 14 or the TS/web vectors.
+
+**Step 3 — Load on demand.** Load an in-scope checklist when its phase begins; load a known-vector only when its phase + language/domain trigger reaches it (`known-vectors/INDEX.md` groups vectors by `{phase, language, trigger}`).
+
+**Completeness is output-side.** The audit is COMPLETE iff every in-scope item + phase-triggered vector has a verdict. Out-of-scope items render `[N/A — out of scope: <reason>]` from the gate. Every full report includes a **Scope Coverage** table. Full rule: see [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 0.
 
 ---
 
@@ -47,7 +49,6 @@ AUDITOR/
 ├── FULL-AUDIT.md                     ← Master execution plan for complete repo audits
 ├── QUESTIONS.md                      ← Pre-audit questionnaire (user fills before running)
 ├── COSTS.md                          ← Estimated token/dollar costs by model and repo size
-├── TOP-100-HACKS.md                  ← Compatibility pointer (canonical source is known-vectors/)
 │
 ├── known-vectors/                    ← Individual attack vector files (open-source friendly)
 │   ├── INDEX.md                           One-line index of all vectors

@@ -13,37 +13,36 @@
 
 Before starting any phase:
 1. Read [OUTPUT-RULES.md](OUTPUT-RULES.md) — the output format is non-negotiable
-2. Load every AUDITOR markdown file recursively (Rule 0 in OUTPUT-RULES.md)
-3. Build a corpus coverage manifest (file path + loaded status)
+2. Run discovery and declare the audit SCOPE (Rule 0 in OUTPUT-RULES.md) — do NOT bulk-read the corpus
+3. Load only the in-scope checklists/vectors, on demand as each phase reaches them
 4. Detect languages in the repo (Rule 7 in OUTPUT-RULES.md) — this determines which checklists to apply
 5. Create a session checkpoint file to track progress across chunks (Rule 3 in OUTPUT-RULES.md)
 6. Remember: **walk the code file by file — never one-shot** (Rule 3)
 
 ---
 
-## PHASE -1: AUDITOR CORPUS INTAKE (MANDATORY)
+## PHASE -1: SCOPE DECLARATION
 
-```
-ACTION:
-  1. Enumerate all markdown files in AUDITOR/
-  2. Read each file fully
-  3. Record coverage table:
+Do NOT bulk-read the corpus. Discover the repo, declare scope, load on demand.
 
-| File | Loaded | Notes |
-|------|--------|-------|
-| SKILL.md | Yes | |
-| OUTPUT-RULES.md | Yes | |
-| ... | ... | ... |
+**ACTION:**
+1. Discover: enumerate extensions + markers (`Anchor.toml`, `Cargo.toml`, `package.json`, `*.py`, `.github/`).
+2. Declare the IN-SCOPE checklist set from detected languages + `--scope` (see [SKILL.md](SKILL.md) → Scope-Gated Loading).
+3. Record a **Scope Coverage** table:
 
-  4. Verify known vectors complete load:
-     - known-vectors/INDEX.md
-     - known-vectors/001-*.md through known-vectors/109-*.md
+| Checklist / vector group | In scope? | Trigger |
+|--------------------------|-----------|---------|
+| 01–07 on-chain | yes/no | `.rs` / `Anchor.toml` |
+| 08–10 off-chain (TS/web) | yes/no | `.ts` / `.tsx` |
+| 14 python | yes/no | `.py` |
+| 15 general language | yes/no | `.go`/`.java`/`.rb`/`.php` |
+| 19 AI-agent | yes/no | `.mcp.json` / agent SDK |
+| 20 off-chain Rust | yes/no | `.rs` outside `programs/` |
+| 11–13, 16–18 universal | yes | any repo |
 
-HARD STOP:
-  If any AUDITOR file is not loaded, output
-  [INCOMPLETE — missing auditor corpus file load]
-  and stop the audit.
-```
+4. Load `OUTPUT-RULES.md` once (always in scope). Load checklists/vectors on demand as each phase reaches them.
+
+**COMPLETENESS (output-side):** the audit is complete iff every in-scope item + phase-triggered vector has a verdict. Out-of-scope items render `[N/A — out of scope: <reason>]` from the gate, not from reading the file.
 
 ---
 

@@ -106,7 +106,6 @@ AUDITOR/
 ├── FULL-AUDIT.md            ← Step-by-step execution plan for complete audits
 ├── QUESTIONS.md             ← Pre-audit questionnaire (fill before running)
 ├── COSTS.md                 ← Estimated costs by model and repo size
-├── TOP-100-HACKS.md         ← Compatibility pointer (canonical source is known-vectors/)
 │
 ├── known-vectors/           ← Individual attack vector files (for contributors)
 │   ├── INDEX.md             ← One-line index of all vectors

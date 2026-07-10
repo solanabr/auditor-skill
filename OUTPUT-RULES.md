@@ -6,25 +6,21 @@
 
 ---
 
-## Rule 0: Mandatory AUDITOR Corpus Load
+## Rule 0: Scope Declaration & Scope-Gated Corpus Load
 
-Before auditing project code, the agent MUST recursively read every markdown file in the AUDITOR folder.
+AUDITOR does **not** read its whole corpus up front. It discovers the repo, declares a scope, loads only what that scope needs, and guarantees a verdict for every in-scope item.
 
-Required coverage:
+1. **Discover** (cheap, always): enumerate file extensions and markers (`Anchor.toml`, `Cargo.toml`, `package.json`, `*.py`, `.github/`). No checklists or vectors loaded yet.
+2. **Declare scope**: from detected languages + any `--scope` flag, compute the IN-SCOPE checklist set (see [SKILL.md](SKILL.md) → Scope-Gated Loading). Load this file (`OUTPUT-RULES.md`) once — it is always in scope.
+3. **Load on demand**: load an in-scope checklist when its phase begins; load a known-vector only when its phase + language/domain trigger reaches it. Out-of-scope checklists and vectors are **never read**.
 
-- Root docs: `README.md`, `SKILL.md`, `OUTPUT-RULES.md`, `FULL-AUDIT.md`, `QUESTIONS.md`, `COSTS.md`, `TOP-100-HACKS.md` (if present)
-- Discovery: all files under `discovery/`
-- Templates: all files under `templates/`
-- Checklists: all files under `checklists/`
-- Known vectors: `known-vectors/INDEX.md` plus all `known-vectors/001...100`
+Completeness is measured **output-side**, not input-side:
 
-If ANY AUDITOR file is not loaded, report:
+- The audit is COMPLETE iff every IN-SCOPE checklist item and every phase-triggered vector has an explicit verdict.
+- If any in-scope item lacks a verdict, report `[INCOMPLETE — in-scope item without verdict]` and finish it before concluding.
+- Out-of-scope items render as `[N/A — out of scope: <reason>]`, generated from the scope gate (not from reading the file).
 
-`[INCOMPLETE — missing auditor corpus file load]`
-
-and stop. Do not produce a "complete" audit.
-
-Every full report MUST include a **Corpus Coverage** table listing each AUDITOR file and load status.
+Every full report MUST include a **Scope Coverage** table: for each of the checklists and each vector group, `IN-SCOPE` (with items evaluated / total) or `OUT-OF-SCOPE (reason)`.
 
 ---
 
