@@ -81,6 +81,17 @@ Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{seve
 - [ ] **EXT-010**: Protocol CPI — whitelist is owned by the program and linked to the fund
 - [ ] **EXT-011**: No CPI allows the called program to callback into this program with escalated privileges
 
+### Token-2022 / Extensions
+
+> Grep hints:
+> ```
+> grep -rn --include="*.rs" -iE "transfer_hook|TransferHook|permanent_delegate|PermanentDelegate|freeze_authority|FreezeAuthority|close_authority|MintCloseAuthority|get_extension|transfer_checked|remaining_accounts" programs/
+> ```
+
+- [ ] **EXT-012**: If a custodied mint carries a `TransferHook` extension — is the hook program checked against an allowlist AND are its required `remaining_accounts` resolved and forwarded on every `transfer_checked` CPI? (PASS: hook program allowlisted + extra accounts resolved via `spl_transfer_hook_interface` and appended to the CPI; FAIL: hook program unvalidated (arbitrary CPI target) or `remaining_accounts` omitted so the transfer reverts / silently fails. (adapted from safe-solana-builder shared-base §23.1))
+- [ ] **EXT-013**: Are custodied mints inspected for `PermanentDelegate`, uncontrolled `FreezeAuthority`, and `MintCloseAuthority`, and rejected unless the mint is on a trusted allowlist? (PASS: `get_extension::<...>()` read at init/registration; `PermanentDelegate` (vault clawback), external `FreezeAuthority` (withdrawal DoS), and `MintCloseAuthority` (address recycle) all rejected or the mint is explicitly trusted; FAIL: extensions never read — a hostile mint authority can seize, freeze, or recycle the vault. (adapted from safe-solana-builder shared-base §23.1))
+- [ ] **EXT-014**: Does ALL token movement use `transfer_checked` (mint + decimals supplied) and credit accounting via a balance delta (`vault.amount` AFTER `reload()` − BEFORE) rather than the declared `amount`? (PASS: `transfer_checked` + delta-based credit with checked_sub, so transfer-fee mints are accounted correctly; FAIL: legacy `token::transfer` (breaks on Token-2022) or credits the requested `amount` ignoring the fee. (adapted from safe-solana-builder shared-base §21.6 / §23.1))
+
 ## 4.6 — CPI Reentrancy & Composability
 
 - [ ] **RE-001**: State mutations happen BEFORE external CPIs (checks-effects-interactions pattern)

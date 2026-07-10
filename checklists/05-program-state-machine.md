@@ -86,3 +86,19 @@ Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{seve
 - [ ] **SM-054**: After every deposit: `fund.total_shares` increased, `fund.total_assets` increased
 - [ ] **SM-055**: After every withdrawal: `fund.total_shares` decreased, `fund.total_assets` decreased
 - [ ] **SM-056**: After every swap: `fund.total_shares` unchanged, token balances changed but NAV approximately same
+
+## 5.8 — Lifecycle Hardening Patterns
+
+> Adapted from safe-solana-builder shared-base §26 (state machine & lifecycle integrity). These target subtle lifecycle foot-guns that pass happy-path tests but invert permissions, trap funds, or allow illegal rewrites.
+
+- [ ] **SM-057**: Sentinel-timestamp safety — no timestamp field uses `0` (or an epoch-era value) as a "special" sentinel while also feeding time arithmetic. `expiry_ts = 0` then `require!(now < expiry_ts + grace)` anchors the window to 1970 and expires instantly. For immediate expiry, store `clock.unix_timestamp` (now), not `0`
+- [ ] **SM-058**: If a timestamp sentinel is genuinely required, it is handled by an explicit branch/flag that bypasses the arithmetic path — the magic value never reaches a comparison like `sentinel + grace_period`
+- [ ] **SM-059**: Terminal-state cleanup is centralized — every instruction path that reaches the same terminal state (`Failed`, `Closed`, `Settled`) calls ONE shared helper (e.g. `on_terminate()`) that applies identical side effects (drain, zero accounting, close). No terminal path re-implements cleanup inline
+- [ ] **SM-060**: List each terminal state and enumerate every transition INTO it; confirm all of them invoke the shared cleanup — a single path that skips it (missing lamport drain, un-zeroed reserve) can trap funds or leave phantom liquidity
+- [ ] **SM-061**: Draining assets and zeroing the matching accounting fields happen in the same transaction, with a post-drain backing-invariant check (`actual_balance == expected`) before finalizing — status flags alone never gate a priced/redeemed/paid action against tracked reserves
+- [ ] **SM-062**: Paired time-gates share ONE canonical `deadline_ts` — when a single timestamp controls two opposite permissions ("allowed until deadline" vs "cleanup allowed after deadline"), both are derived from the same computed value. Time-gate math is not duplicated inline across handlers
+- [ ] **SM-063**: The two inequalities of a paired gate are exact complements (`now <= deadline` / `now > deadline`) — no off-by-one or divergent direction that creates a gap (both false) or overlap (both true) inverting intended permissions
+- [ ] **SM-064**: State transitions are validated against an explicit allowlist matrix — `is_allowed_transition(current, next)` is checked before any side effect. Exclusion-style guards (`status != Initial`) are NOT used; they silently permit terminal states
+- [ ] **SM-065**: Terminal states are absorbing — once entered they cannot transition back to a non-terminal state by default. Any intentional recovery path is modeled as a distinct, strictly-precondition'd transition with its own audit event, not an implicit escape
+- [ ] **SM-066**: Access control is not treated as a substitute for transition validation — confirm an authorized actor (admin/manager) still cannot perform an illegal lifecycle rewrite (e.g. `Settled → Active`) because the transition matrix rejects it independently of who signed
+- [ ] **SM-067**: Sub-state (secondary status / lifecycle locks) is preserved across primary-state transitions, not blindly reset — a primary transition that hardcodes `secondary_status = Open` can clear a migration-readiness or lockup flag; restore from persisted state or retain conditionally

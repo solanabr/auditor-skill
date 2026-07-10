@@ -145,6 +145,19 @@ One line per vector. Click to see the full multi-step verification procedure.
 | 108 | [Token Decimals & Cross-Mint Amount Confusion](108-token-decimals-cross-mint-amount-confusion.md) | 7 |
 | 109 | [Pinocchio / p-token — Missing Manual Validation in Zero-Copy Native Programs](109-pinocchio-ptoken-missing-manual-validation.md) | 8 |
 
+### Solana × AI + Off-Chain Rust (110-117)
+
+| # | Vector | Severity |
+|---|--------|----------|
+| 110 | [Agent Wallet Key Custody & Missing Spend Caps](110-agent-wallet-key-custody-spend-caps.md) | 9 |
+| 111 | [BPF Stack Frame Overflow DoS](111-bpf-stack-frame-overflow-dos.md) | 6 |
+| 112 | [In-Memory Secret Non-Zeroization (Off-Chain Rust)](112-in-memory-secret-non-zeroization.md) | 6 |
+| 113 | [Autonomous Agent Blind Signing](113-autonomous-agent-blind-signing.md) | 8 |
+| 114 | [MCP Tool Poisoning](114-mcp-tool-poisoning.md) | 8 |
+| 115 | [On-Chain Data Prompt Injection](115-onchain-data-prompt-injection.md) | 8 |
+| 116 | [AI Coding Agent in CI Holds Deploy / Upgrade Keys](116-ai-coding-agent-ci-deploy-key.md) | 9 |
+| 117 | [Agent Delegation Scope Creep](117-agent-delegation-scope-creep.md) | 7 |
+
 ---
 
 ## Known Duplicates & Consolidation Map
@@ -163,11 +176,11 @@ double-count them as independent coverage. Severities are aligned to the higher 
 | 039 | 083 | Rate limiting (bypass / missing) | 7 |
 | 047 | 099 | WebSocket security | 7 |
 
-**Distinct concepts:** 103 (109 files − 6 duplicate pairs).
+**Distinct concepts:** 111 (117 files − 6 duplicate pairs).
 
 ---
 
-**Total vector files:** 109 (100 original + 9 added in v4.4)
-**Distinct concepts:** 103 (after consolidating 6 duplicate pairs)
-**Categories:** 4 (crypto, backend, frontend, devops)
+**Total vector files:** 117 (100 original + 9 in v4.4 + 8 in v5.0)
+**Distinct concepts:** 111 (after consolidating 6 duplicate pairs)
+**Categories:** 6 (crypto, backend, frontend, devops, ai-agent, off-chain-rust)
 **Severity range:** 3-10

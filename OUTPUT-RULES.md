@@ -215,7 +215,7 @@ Every single checklist item and every known attack vector MUST appear in the rep
 
 ### Ordering
 
-Items listed in **checklist order** (AV-001, AV-002, ..., DEP-077, PY-001, ..., PC-060), followed by known vectors in order (KV-001 through KV-109). Never reorder or group by verdict.
+Items listed in **checklist order** (AV-001, AV-002, ..., PC-060, AI-001, ..., RS-017), followed by known vectors in order (KV-001 through KV-117). Never reorder or group by verdict.
 
 ---
 

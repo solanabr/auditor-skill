@@ -49,6 +49,16 @@ grep -rn -E "get_unchecked|unsafe|from_raw_parts|as_ptr|\.add\(|borrow_data|try_
 - ✅ PASS: Account type is disambiguated by owner + length + explicit tag; cannot be confused with another account of similar layout
 - ❌ FAIL: Type inferred from a single byte without owner/length validation — cosplay
 
+**Step 5b: Zero-copy layout — padding/alignment UB and `wincode` deserialization validation**
+Pinocchio's CU win comes from zero-copy casts (`bytemuck::from_bytes`, `wincode` in-place). A cast is only *sound* if the layout is fully defined — otherwise it is undefined behaviour, not merely a logic bug.
+```
+grep -rn -E "repr\(C\)|repr\(C, *packed\)|Pod|Zeroable|from_bytes|from_bytes_mut|_padding|_pad" programs/
+grep -rn -E "wincode::deserialize|ZeroCopy::deserialize|SchemaRead|SchemaWrite" programs/
+```
+- ✅ PASS: every zero-copy struct is `#[repr(C)]`, fields ordered largest→smallest with an **explicit `_padding` field** filling every gap to natural (typically 8-byte) alignment, and `_padding` is **zeroed on construction**. No `&` reference is taken to a field of a `#[repr(C, packed)]` struct. `wincode` zero-copy structs are additionally **tuple-free** (Rust does not guarantee tuple layout).
+- ❌ FAIL: a `bytemuck`/zero-copy struct lacking `#[repr(C)]`, or with **implicit padding** (small-before-large field order and no `_padding`) — casting over uninitialized gap bytes is **UB and can leak stale memory** across instructions; `_padding` declared but never zeroed (same leak); an unaligned reference into a `packed` struct.
+- ❌ FAIL: `wincode::deserialize(...).unwrap()` inside a handler, or decoded values used without range checks (`wincode` guarantees byte layout, **not** business logic — amounts, deadlines, and enum variants must be validated after decode); dynamic-`Vec` max-size limit raised without a documented upper bound (allocation-exhaustion DoS). Errors must map to `ProgramError::InvalidInstructionData`, never a silent default.
+
 **Step 6: Unsafe account resize bounds**
 ```
 grep -rn -E "unsafe-account-resize|resize|realloc|set_data_length" programs/ Cargo.toml */Cargo.toml
