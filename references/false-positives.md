@@ -16,6 +16,19 @@
 > A bare High-severity claim that matches an entry here, with no cited escape, must be
 > downgraded to `[PARTIAL]` or `[UNCONFIRMED]`.
 >
+> **Quantify the barrier (symmetric discipline for *rejections*).** The same Rule 5b
+> Math/State-Bounds rigor that a *finding* must survive also binds a **downgrade**. When you
+> reject or downgrade a candidate on **economic infeasibility** ("not profitable") or a
+> **precondition that cannot be met** ("not reachable / not exploitable"), you must show the
+> **worked bound** that justifies it — the concrete numbers (capital required vs. maximum
+> extractable, cost > gain by how much), or the **specific precondition** and *why* an attacker
+> cannot satisfy it (which guard, which state, cited to `file:line`). A bare "not profitable" /
+> "not exploitable" / "attacker gains nothing" with no worked math or named blocking precondition
+> is **not a valid rejection** — it is exactly the corner AI auditors cut. Treat an
+> unquantified dismissal like an unquantified High: it does not clear the gate, so the finding
+> stays open (`[PARTIAL]` / `[UNCONFIRMED]`) until the barrier is actually computed. This mirrors
+> the Rule 5b worked-case rejection example ("input ≥ 16 and header = 8 ⟹ … cannot underflow").
+>
 > *(Credit: public Solana security research and publicly disclosed audit findings.
 > Re-expressed in our own words; no third-party text copied.)*
 
@@ -177,3 +190,6 @@ double-credit. On default modern Anchor with no `dup`, it is **not** a finding.
       Pinocchio, pre-0.31, or explicit `dup` (FP-6).
 - [ ] For any survivor: the **Rule 5b gate shows the specific escape**, cited to `file:line`.
       No escape → downgrade to `[PARTIAL]` / `[UNCONFIRMED]`.
+- [ ] For any **downgrade on "not profitable / not exploitable": the barrier is quantified** —
+      worked numbers (cost vs. gain) or the named blocking precondition @ `file:line`. A bare
+      dismissal fails the gate; the finding stays open until the bound is computed.

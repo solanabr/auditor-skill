@@ -13,8 +13,8 @@ Every audit consumes tokens in two categories:
 | Component | Tokens | Notes |
 |-----------|--------|-------|
 | auditor-skill files (SKILL.md, OUTPUT-RULES.md, FULL-AUDIT.md) | ~15K | Read once at start |
-| Checklists (20 files, 1,328 items) | ~60K | Loaded per phase |
-| Known vectors (126 procedures) | ~34K | Loaded per phase/language trigger |
+| Checklists (20 files, 1,346 items) | ~60K | Loaded per phase |
+| Known vectors (131 procedures) | ~34K | Loaded per phase/language trigger |
 | Templates + discovery files | ~5K | |
 | **Fixed total** | **~110K** | Same regardless of repo size |
 
@@ -27,11 +27,15 @@ Every audit consumes tokens in two categories:
 | Checkpoint saves/reads | ~0.1× code tokens | Session memory between chunks |
 | **Variable multiplier** | **~1.6× code tokens** | |
 
+### Optional: deterministic pre-scan (`audit-scan`)
+
+Running `tools/auditor-tools/audit-scan` first emits the instruction matrix, account-constraint table, PDA-seed catalog, and arithmetic/panic census as one JSON — **deterministically, at ~$0 LLM cost**. The auditor then reasons over that map instead of re-deriving it by reading every file, and can skip full reads of files the scan shows are clean. This collapses the three mechanical multipliers above (checklist cross-ref ~0.3×, discovery scanning ~0.2×, checkpoint re-reads ~0.1×) toward ~0.1× total: on a 50K-line program that removes roughly **200–300K input tokens** (variable multiplier ~1.6× → ~1.0×), e.g. Opus ≈ $32 → ~$20. The tool is optional — without it the auditor falls back to the grep-based walk at the costs above.
+
 ### Output Tokens (scales with findings)
 | Component | Tokens | Notes |
 |-----------|--------|-------|
-| Per-item verdicts (1,328 items × ~100 tok) | ~120K | 2-4 lines per item |
-| Known vectors results (126 × ~800 tok) | ~94K | Evidence per hack |
+| Per-item verdicts (1,346 items × ~100 tok) | ~120K | 2-4 lines per item |
+| Known vectors results (131 × ~800 tok) | ~94K | Evidence per hack |
 | Findings + recommendations | ~30K | Depends on issues found |
 | Executive summary + tables | ~10K | |
 | **Output total** | **~240K** | Relatively stable across repos |

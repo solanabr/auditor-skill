@@ -130,3 +130,10 @@ Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{seve
 
 - [ ] **AV-085**: No instruction assumes an **exact** lamport balance on any account an attacker can donate into (use `>=` sufficiency checks, not `==`) — a donated balance must not force a runtime-rejected RentState transition that permanently bricks the instruction (rent-state bricking / "king-of-the-SOL", see KV-123)
 - [ ] **AV-086**: No instruction requires **write access** to a builtin/sysvar/precompile account (or any account it does not actually modify) that a feature-gate may demote to read-only — an unnecessary `#[account(mut)]` on such an account breaks the instruction on demotion (see KV-123)
+
+## 1.12 — Account Pre-Creation DoS & Unsafe Deserialization
+
+> Two distinct integrity gaps observed repeatedly in real reports: (a) an honest `init` that an attacker can front-run by pre-creating the target account, and (b) `unsafe` deserialization that reads uninitialized or out-of-bounds memory. Both differ from the reinitialization angle in AV-023/024 — here the account either already exists (griefing) or its bytes were never fully initialized/validated.
+
+- [ ] **AV-087**: Any instruction that `init`s a user-derivable account (especially an ATA) tolerates the account already existing — via `init_if_needed` plus explicit state validation, or by handling the pre-existing case — so an attacker cannot front-run the account's creation and permanently revert the honest instruction (permissionless pre-creation DoS, distinct from reinit; see KV-127)
+- [ ] **AV-088**: `unsafe` deserialization on-chain (`Vec::set_len`, `MaybeUninit::assume_init`, manual/zero-copy flat-slab or `memmove`-based decoders) fully initializes and bounds-checks every byte before it is read — no read-past-initialized memory, no under-length `memmove`, no state corruption from malformed input (cross-ref checklist 20 §20.2)

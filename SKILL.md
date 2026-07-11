@@ -1,12 +1,12 @@
 ---
 name: auditor-skill
-description: "**AUDIT SKILL** — Comprehensive on-chain Solana program auditor and full-stack security review for ANY programming language. USE FOR: auditing Solana/Anchor programs, reviewing smart contract security, checking for vulnerabilities (missing signers, unchecked accounts, arithmetic overflow, CPI attacks, PDA confusion, type cosplay, reinitialization, flash loan exploits, MEV, governance backdoors, timelock bypass), auditing TypeScript/Python/Go/Java/Ruby/PHP/any language, backend/frontend code review, supply chain safety, operational security (multisig, upgrade authority, deploy process), formal verification and testing quality, logging/monitoring/incident response, data privacy/GDPR/SOC2 compliance, change management, penetration testing methodology, AI/ML security, generating audit reports, running full repository audits. Severity 1-10 scale, 20 micro-checklist domains with 1328 individual verification items, plus 126 known attack vectors, chunked file-by-file execution, item-by-item verdicts. Benchmarked against CertiK (crypto) and EY/SOC2/COBIT (traditional) audit standards. DO NOT USE FOR: writing new features, general coding, non-security reviews."
+description: "**AUDIT SKILL** — Comprehensive on-chain Solana program auditor and full-stack security review for ANY programming language. USE FOR: auditing Solana/Anchor programs, reviewing smart contract security, checking for vulnerabilities (missing signers, unchecked accounts, arithmetic overflow, CPI attacks, PDA confusion, type cosplay, reinitialization, flash loan exploits, MEV, governance backdoors, timelock bypass), auditing TypeScript/Python/Go/Java/Ruby/PHP/any language, backend/frontend code review, supply chain safety, operational security (multisig, upgrade authority, deploy process), formal verification and testing quality, logging/monitoring/incident response, data privacy/GDPR/SOC2 compliance, change management, penetration testing methodology, AI/ML security, generating audit reports, running full repository audits. Severity 1-10 scale, 20 micro-checklist domains with 1346 individual verification items, plus 131 known attack vectors, chunked file-by-file execution, item-by-item verdicts. Benchmarked against CertiK (crypto) and EY/SOC2/COBIT (traditional) audit standards. DO NOT USE FOR: writing new features, general coding, non-security reviews."
 ---
 
 # auditor-skill — Multi-Language Security Audit Skill
 
-> **Version:** 6.0  
-> **Items:** 1,328 across 20 checklists (+ 126 known vectors)  
+> **Version:** 7.0  
+> **Items:** 1,346 across 20 checklists (+ 131 known vectors)  
 > **Languages:** Rust, TypeScript, Python, Go, Java, Ruby, PHP, + any via general checklist  
 > **Severity:** 1–10 numeric scale  
 > **Benchmarked against:** CertiK (crypto audit), EY/SOC 2/COBIT (traditional IT audit), OWASP Top 10:2025  
@@ -50,9 +50,19 @@ Checklists outside this set are **never read** — a Rust-only repo never loads 
 | `references/methodologies/stablecoin.md` | `collateral_ratio` · `psm` · `cdp` · `debt_ceiling` · `redeem` · `peg` |
 | `references/methodologies/liquid-staking.md` | `stake_pool` · `validator_list` · `exchange_rate` · `staker` · `withdrawer` · `restak` |
 | `references/methodologies/governance.md` | `spl-governance` · `realm` · `proposal` · `vote_record` · `voter_weight` · `vsr` |
+| `references/methodologies/bridges.md` | `guardian` · `vaa` · `post_vaa` · `verify_signatures` · `emitter` · `sequence` · `lz_receive` · `ism` · `attestation` |
+| `references/methodologies/wallets-multisig-custody.md` | `threshold` · `multisig` · `member` · `propose` · `approve` · `execute_transaction` · `vault` · `guardian` · `recovery` · `spending_limit` |
+| `references/methodologies/token-2022.md` | `token_2022` · `TokenInterface` · `transfer_hook` · `TransferFee` · `PermanentDelegate` · `ConfidentialTransfer` · `get_extension` · `spl_token_2022` |
+| `references/methodologies/nft-marketplaces.md` | `metadata` · `listing` · `escrow` · `royalty` · `merkle` · `MplCore` · `auth_rules` · `collection` |
+| `references/methodologies/launchpads.md` | `bonding_curve` · `reserve` · `graduate` · `virtual_reserves` · `route` · `swap` · `curve` |
+| `references/invariant-catalog.md` | building an FV/fuzz harness or reconstructing per-function invariants (Phase 0.5) — reusable invariant menus per protocol class |
 | `references/vuln-classes/zk-and-compression.md` | `groth16` · `spl-account-compression` · `bubblegum` · `merkle` · `nullifier` · `ConfidentialTransfer` |
 | `references/false-positives.md` | triaging any finding before reporting severity ≥ 6 |
 | `references/orchestration/boundary-map.md` | delegating to vendored Trail of Bits tooling |
+| `references/orchestration/pre-scan.md` | running the deterministic Rust pre-scanner (`audit-scan`) or the cross-audit memory store (`audit-mem`) |
+| `references/orchestration/poc-harness.md` | building an executable PoC or fix patch (`/auditor:poc`, `/auditor:patch`) — harness-framework selection or recording a `[PoC-*]` / `[FIX-*]` evidence tier |
+| `references/audit-lifecycle/methodology.md` | running `/audit-cycle` or `/audit-assist` (our method) |
+| `references/audit-lifecycle/firm-coverage.md` | choosing methodology / understanding firm practice |
 
 ---
 
@@ -71,17 +81,17 @@ auditor-skill/
 │   ├── INDEX.md                           One-line index of all vectors
 │   ├── 001-private-key-leak.md            Severity 10 — crypto
 │   ├── 002-flash-loan-price-manipulation.md
-│   ├── ...                                (126 individual vector files)
+│   ├── ...                                (131 individual vector files)
 │   └── 100-insufficient-backup-disaster-recovery.md
 │
 ├── checklists/                       ← 20 micro-checklists (the core verification items)
-│   ├── 01-program-account-validation.md   (86 items)  — Solana/Anchor
+│   ├── 01-program-account-validation.md   (88 items)  — Solana/Anchor
 │   ├── 02-program-access-control.md       (50 items)  — Solana/Anchor
-│   ├── 03-program-arithmetic-safety.md    (61 items)  — Solana/Anchor
-│   ├── 04-program-cpi-pda.md             (68 items)  — Solana/Anchor
-│   ├── 05-program-state-machine.md        (69 items)  — Solana/Anchor
-│   ├── 06-program-economic-logic.md       (84 items)  — Solana/Anchor
-│   ├── 07-program-opsec-governance.md     (81 items)  — Operations
+│   ├── 03-program-arithmetic-safety.md    (63 items)  — Solana/Anchor
+│   ├── 04-program-cpi-pda.md             (70 items)  — Solana/Anchor
+│   ├── 05-program-state-machine.md        (72 items)  — Solana/Anchor
+│   ├── 06-program-economic-logic.md       (89 items)  — Solana/Anchor
+│   ├── 07-program-opsec-governance.md     (85 items)  — Operations
 │   ├── 08-typescript-safety.md            (60 items)  — TypeScript
 │   ├── 09-backend-security.md            (103 items)  — Express/Node
 │   ├── 10-frontend-security.md            (76 items)  — React/Next.js
@@ -132,7 +142,7 @@ Full severity decision guide: see [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 1.
 Repositories can be 10 files or 10,000 files. The auditor reads files **one at a time**, never guesses, and saves checkpoints between chunks. See [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 3.
 
 ### 2. Every Item Gets a Verdict
-All in-scope checklist items (up to 1,328) and all in-scope known vectors (up to 126) appear in the report with explicit verdicts. Nothing is silently skipped. See [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 4.
+All in-scope checklist items (up to 1,346) and all in-scope known vectors (up to 131) appear in the report with explicit verdicts. Nothing is silently skipped. See [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 4.
 
 ### 3. Executive Summary First
 Every report starts with a plain-language summary: what was audited, what was found, whether it's safe to deploy. See [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 2.
@@ -200,6 +210,18 @@ If context was lost, a file was too large, or a pattern is unfamiliar — say so
 
 ---
 
+## Audit Flows (full engagement lifecycle)
+
+Two flows run the traditional audit-company lifecycle over the skill's **existing** mechanisms (scope-gating → Phase 0.5 context → manual review → Rule 5b verification → Phase 4.5 maturity → report). Method: [references/audit-lifecycle/methodology.md](references/audit-lifecycle/methodology.md); how real firms work: [references/audit-lifecycle/firm-coverage.md](references/audit-lifecycle/firm-coverage.md).
+
+- **`/auditor:audit-cycle`** — *fully automated audit team.* Runs the whole lifecycle autonomously: domain-partitioned `vuln-hunter` + `economic-analyst` (each self-triaging via Rule 5b + `false-positives.md` at the leaf) → independent `peer-reviewer` reconciliation on top-severity findings → `audit-reporter` synthesis → a client-facing report ([templates/audit-report.md](templates/audit-report.md)) at `audit_<n>/REPORT.md` (+ optional PDF via `scripts/report-to-pdf.sh`, pandoc-gated — MD is always the deliverable).
+- **`/auditor:audit-assist`** — *AI-assisted, human-in-the-loop.* Same lifecycle, pausing at checkpoints to surface confirmed findings + next-focus + the questions only a human can answer (business context, trust model, severity calls); iterates until the audit document converges.
+- **`/auditor:re-audit`** — *fix-review.* Diffs against a prior report: per-finding `FIXED` / `STILL-OPEN` / `REGRESSED`, plus a sibling-patch-propagation sweep (grep the codebase for the same anti-pattern the fix closed).
+
+Honestly scoped: this is audit-shaped automation / a rigorous first pass, not a substitute for a human firm audit. The client report follows firm convention — maturity narrative + trust-model caveats + disclaimer — and does **not** issue a "safe to deploy" guarantee. *(Precedents: Neodyme independent dual-review, Trail of Bits weekly progress reports + code-maturity, Sec3 shift-left, Zellic importance-ordering, Zenith delta review.)*
+
+---
+
 ## Rationalizations to Reject
 
 An auditor talks itself out of real findings with lines like these. Treat each as a RED FLAG that demands the Rule 5b gate — not a reason to skip:
@@ -246,13 +268,13 @@ An auditor talks itself out of real findings with lines like these. Treat each a
 
 | # | Checklist | Items | Domain | File |
 |---|-----------|-------|--------|------|
-| 01 | Account Validation | 86 | On-chain | [01-program-account-validation.md](checklists/01-program-account-validation.md) |
+| 01 | Account Validation | 88 | On-chain | [01-program-account-validation.md](checklists/01-program-account-validation.md) |
 | 02 | Access Control | 50 | On-chain | [02-program-access-control.md](checklists/02-program-access-control.md) |
-| 03 | Arithmetic Safety | 61 | On-chain | [03-program-arithmetic-safety.md](checklists/03-program-arithmetic-safety.md) |
-| 04 | CPI & PDA Safety | 68 | On-chain | [04-program-cpi-pda.md](checklists/04-program-cpi-pda.md) |
-| 05 | State Machine & Lifecycle | 69 | On-chain | [05-program-state-machine.md](checklists/05-program-state-machine.md) |
-| 06 | Economic & Logic Attacks | 84 | On-chain | [06-program-economic-logic.md](checklists/06-program-economic-logic.md) |
-| 07 | OpSec & Governance | 81 | Operations | [07-program-opsec-governance.md](checklists/07-program-opsec-governance.md) |
+| 03 | Arithmetic Safety | 63 | On-chain | [03-program-arithmetic-safety.md](checklists/03-program-arithmetic-safety.md) |
+| 04 | CPI & PDA Safety | 70 | On-chain | [04-program-cpi-pda.md](checklists/04-program-cpi-pda.md) |
+| 05 | State Machine & Lifecycle | 72 | On-chain | [05-program-state-machine.md](checklists/05-program-state-machine.md) |
+| 06 | Economic & Logic Attacks | 89 | On-chain | [06-program-economic-logic.md](checklists/06-program-economic-logic.md) |
+| 07 | OpSec & Governance | 85 | Operations | [07-program-opsec-governance.md](checklists/07-program-opsec-governance.md) |
 | 08 | TypeScript Safety | 60 | Off-chain | [08-typescript-safety.md](checklists/08-typescript-safety.md) |
 | 09 | Backend Security | 103 | Off-chain | [09-backend-security.md](checklists/09-backend-security.md) |
 | 10 | Frontend Security | 76 | Off-chain | [10-frontend-security.md](checklists/10-frontend-security.md) |
@@ -266,7 +288,7 @@ An auditor talks itself out of real findings with lines like these. Treat each a
 | 18 | Privacy, Compliance & Change Mgmt | 60 | Universal | [18-privacy-compliance-change-management.md](checklists/18-privacy-compliance-change-management.md) |
 | 19 | AI Agent Security (Solana × AI) | 31 | AI / Agent | [19-ai-agent-security.md](checklists/19-ai-agent-security.md) |
 | 20 | Rust Off-Chain Services | 17 | Off-chain | [20-rust-offchain-services.md](checklists/20-rust-offchain-services.md) |
-| | **Total** | **1,328** | | |
+| | **Total** | **1,346** | | |
 
 ---
 

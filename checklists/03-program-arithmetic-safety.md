@@ -65,6 +65,7 @@ Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{seve
 - [ ] **AR-041**: Fee calculation order: fees extracted before or after share calculation? Verify consistency
 - [ ] **AR-042**: Compound fee attack: can fees be charged on fees? (fee on withdrawal that includes previous fees)
 - [ ] **AR-043**: Zero-value edge case: what happens when fee calculation yields 0? Is 0-amount transfer safe?
+- [ ] **AR-062**: When multiple fee/rate components apply to the same operation simultaneously (e.g., trade + platform + creator-share + referral), their **sum** is validated ≤ denominator / 100% at config-set time — not merely each component individually ≤ 100% (independently-valid components can still sum past the total and underflow the residual; see KV-128)
 
 ## 3.6 — NAV (Net Asset Value) Safety
 
@@ -92,3 +93,9 @@ Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{seve
 - [ ] **AR-059**: What happens when fund has exactly 1 share remaining? Edge case in proportional math
 - [ ] **AR-060**: What happens when fund has maximum number of investors all withdrawing simultaneously?
 - [ ] **AR-061**: Timestamp arithmetic (if used): `Clock::get()?.unix_timestamp` is i64 — check for negative/overflow issues
+
+## 3.9 — Floating-Point in On-Chain Financial Math
+
+> Floating point has no place in on-chain value computation: rounding is non-deterministic across builds/targets, precision is silently lost at scale, `powf`/`sqrt` blow up CU, and `f64 → u64` casts truncate or saturate. Every value/price/fee/interest/exchange-rate path must use fixed-point + checked integer math instead.
+
+- [ ] **AR-063**: No `f64`/`f32` (nor `powf`, `powi`, `sqrt`, `ln`, `exp`, or `as f64`/`as f32` casts) appears in any on-chain value, price, fee, interest, or exchange-rate computation — fixed-point representation with checked integer arithmetic is used instead; any `f64 ↔ u64` boundary cast in a value path is treated as a finding (see KV-128)

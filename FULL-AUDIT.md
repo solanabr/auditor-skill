@@ -87,6 +87,8 @@ RECORD:
 
 ### 0.3 — Build Instruction Matrix
 
+> **Optional deterministic pre-pass.** If `tools/auditor-tools/` is built, run `audit-scan <program-path> --out audit_<n>/prescan.json` first — it emits this instruction matrix (plus the account-constraint, PDA-seed, arithmetic, and CPI tables) deterministically at ~$0, so Phase 0.2–0.4 collapse to *reading the JSON* and files with zero scan hits get a spot-check instead of a full read. Also run `audit-mem warm <program-id>` to load prior invariants + open false-positive rulings. Treat all pre-scan output as a *map to verify*, never as verdicts. See [references/orchestration/pre-scan.md](references/orchestration/pre-scan.md). Absent the toolchain, build the matrix by hand below.
+
 ```
 ACTION: Read lib.rs → list every #[instruction] or pub fn handler.
 For EACH instruction, read the instruction file and record:
@@ -511,13 +513,13 @@ ACTIONS:
 RECORD: privacy, compliance & change management findings
 ```
 
-### Step 4.4 — Known Attack Vectors (all in-scope, KV-001..126)
+### Step 4.4 — Known Attack Vectors (all in-scope, KV-001..131)
 
 ```
 ACTIONS:
 
   1. Read known-vectors/INDEX.md
-  2. Read every file known-vectors/001-*.md through known-vectors/126-*.md
+  2. Read every file known-vectors/001-*.md through known-vectors/131-*.md
   3. For each vector, record one verdict:
        [PASS] / [FAIL-{1-10}] / [PARTIAL] / [N/A]
   4. Add evidence line(s): file:line or command output reference
@@ -526,7 +528,7 @@ RECORD format:
   - KV-001: [PASS] ...
   - KV-002: [PARTIAL] ...
   ...
-  - KV-126: [FAIL-7] ...
+  - KV-131: [FAIL-7] ...
 
 HARD RULE:
   Every in-scope KV item must have a verdict. Out-of-scope vectors render
@@ -575,7 +577,7 @@ Fill in:
   - Each finding with: ID, severity, location, description, exploit scenario, fix recommendation
   - Checklist summary table
   - Detailed per-item results
-  - Known vector results (KV-001 through KV-126, each in-scope one with verdict)
+  - Known vector results (KV-001 through KV-131, each in-scope one with verdict)
 
 Save report to: audit_{N}/REPORT.md (where N is the next audit number)
 ```

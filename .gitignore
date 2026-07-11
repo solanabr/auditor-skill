@@ -19,3 +19,9 @@ solana-security-kb/
 
 # Audit run outputs
 audit_*/
+
+# Cross-audit memory store (per-project state, never committed by default)
+.audit-memory/
+
+# Rust tool build artifacts
+tools/auditor-tools/target/

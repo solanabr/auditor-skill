@@ -1,18 +1,43 @@
 # auditor-skill — Open-Source AI Security Audit Skill
 
 > Production-grade security audit for any codebase, powered by AI agents.
-> 20 checklists · 1,328 verification items · 126 known attack vectors · Benchmarked against CertiK, SOC 2, OWASP Top 10:2025
+> 20 checklists · 1,346 verification items · 131 known attack vectors · executable PoCs + fix patches
+> A full audit-firm lifecycle (automated + interactive) · Benchmarked against CertiK, SOC 2, OWASP Top 10:2025
 > Verify COSTS.md as a referecence - Running this audit can burn a lot of credits.
 
 ---
 
 ## What Is This?
 
-auditor-skill is a **skill file** (a structured prompt + checklists) that turns any LLM agent (Copilot, Cursor, Windsurf, Claude Code, Codex, etc.) into a professional-grade security auditor. It reads your code file by file, checks 1,328 items across 20 security domains, tests against 126 real-world attack vectors, and produces a structured report with severity scores.
+auditor-skill is a **skill file** (a structured prompt + checklists) that turns any LLM agent (Copilot, Cursor, Windsurf, Claude Code, Codex, etc.) into a professional-grade security auditor. It reads your code file by file, checks 1,346 items across 20 security domains, tests against 131 real-world attack vectors, and produces a structured report with severity scores.
 
 **It is not a SaaS product.** It's a folder of markdown files you clone into your repo or give to an AI agent.
 
-> **Adaptation required before use.** This skill was originally developed for a specific Solana/Anchor DeFi project and then generalized. Before running it on your project you must update `discovery/file-map.md` with your actual folder structure, file names, and state variable names. The questionnaire in `QUESTIONS.md` is a blank template — fill it out for your project before invoking the auditor. Everything else (checklists, known vectors, output rules) is fully portable as-is.
+> **Adaptation required before use.** This skill was originally developed for a specific Solana/Anchor DeFi project and then generalized. Before running it on your project you must update `discovery/file-map.md` with your actual folder structure, file names, and state variable names. The questionnaire in `QUESTIONS.md` is a blank template — fill it out (or run `/auditor:intake`) for your project before invoking the auditor. Everything else (checklists, known vectors, output rules) is fully portable as-is.
+
+---
+
+## What It Does (v7.0)
+
+- **A full audit-firm lifecycle, two ways.** `/auditor:audit-cycle` runs the whole engagement autonomously (intake → context → threat model → tool-assisted pass → domain-partitioned review → triage → independent peer review → synthesis) and hands back a professional client report. `/auditor:audit-assist` runs the same pipeline **interactively**, pausing at checkpoints for the calls only you can make.
+- **Executable proofs, not just prose.** For High/Critical findings, `/auditor:poc` builds a runnable exploit (Mollusk / LiteSVM / Surfpool-fork / fuzz) that *asserts* the vulnerability, and `/auditor:patch` drafts a minimal fix and **proves it reverts the exploit**. Evidence is tiered (`[PoC-REPRODUCED]` … `[PoC-PROSE]`); prose is never dropped when a harness can't be built.
+- **Token-efficient by construction.** An optional Rust pre-scanner (`audit-scan`) enumerates the risky surface deterministically (~$0), cutting ~30-40% of input tokens on large programs. A cross-audit memory store (`audit-mem`) gives exact dedup, regression detection, and false-positive suppression across runs.
+- **15 commands, 8 specialized agents.** Scoping, threat modeling, deep review, economic simulation, differential/PR audits, spec compliance, triage, fix-review — each a first-class command; the automated flow chains eight purpose-built agents.
+- **Deep Solana coverage.** 12 protocol methodologies (AMM/CLMM, lending, perps, oracles, stablecoins, liquid staking, governance, bridges, multisig/custody, Token-2022, NFT marketplaces, launchpads), framework idioms (Anchor/Native/Pinocchio), and a reusable invariant catalog — loaded only when the code triggers them.
+- **Rigor gates against AI over-reporting.** A validation gate (reachability + math/state-bounds + attacker-model) every high-severity finding must survive, Impact×Likelihood severity with principled downgrades, and a Notes & Nitpicks tier that keeps the findings table honest.
+- **Real tooling, vendored.** Trail of Bits execution plugins (SAST, fuzzing, coverage, mutation) ship as a submodule; the native corpus works fully without them.
+
+### Documentation
+
+| Guide | What's inside |
+|-------|---------------|
+| [docs/getting-started.md](docs/getting-started.md) | Install, submodule init, build the Rust tools, run your first audit |
+| [docs/audit-flows.md](docs/audit-flows.md) | The lifecycle and when to use each flow (`/audit`, `/audit-cycle`, `/audit-assist`, `/re-audit`) |
+| [docs/commands.md](docs/commands.md) | Reference for all 15 commands |
+| [docs/agents.md](docs/agents.md) | The 8-agent roster and how they chain |
+| [docs/power-tools.md](docs/power-tools.md) | `audit-scan`, `audit-mem`, Trail of Bits, Surfpool, PoC/patch harnesses |
+| [docs/poc-and-patches.md](docs/poc-and-patches.md) | Executable exploit + fix-patch delivery |
+| [docs/output-and-rigor.md](docs/output-and-rigor.md) | Severity, the Rule 5b gate, scope-gated loading, report format |
 
 ---
 
@@ -20,15 +45,15 @@ auditor-skill is a **skill file** (a structured prompt + checklists) that turns 
 
 | Language | Checklists | Items |
 |----------|-----------|-------|
-| Rust (Solana/Anchor) | 01-07 | 465 |
+| Rust (Solana/Anchor) | 01-07 | 517 |
 | Rust (off-chain services) | 20 | 17 |
 | TypeScript / Node.js | 08-09 | 163 |
-| React / Next.js | 08, 10 | 122 |
+| React / Next.js | 08, 10 | 136 |
 | Python | 14 | 82 |
 | Go / Java / Ruby / PHP | 15 | 88 |
 | AI / agent components | 19 | 31 |
-| **Always applied** (any repo) | 11-13, 16-18 | 438 |
-| **Total** | **20** | **1,328** |
+| **Always applied** (any repo) | 11-13, 16-18 | 372 |
+| **Total** | **20** | **1,346** |
 
 ---
 
@@ -65,6 +90,16 @@ git clone https://github.com/YOUR_ORG/auditor-skill.git
 
 If building a service, send the auditor-skill files as system context and the target repo files as user content to any LLM API.
 
+### Enable tool execution (recommended)
+
+auditor-skill vendors **Trail of Bits** as a git submodule (`vendor/trailofbits`) for real tool execution — SAST, fuzzing, coverage, mutation. After cloning, initialize it:
+
+```bash
+git submodule update --init --recursive
+```
+
+The native corpus works fully **without** it (it falls back to grep-based checks and notes where deeper tooling would run). With the submodule initialized, the auditor delegates to the vendored tools per [`references/orchestration/boundary-map.md`](references/orchestration/boundary-map.md).
+
 ---
 
 ## Before Running an Audit
@@ -88,7 +123,7 @@ The audit is complete when every **in-scope** item has an explicit verdict; out-
 
 | Scope | What It Covers | Estimated Time (50K lines) |
 |-------|---------------|---------------------------|
-| FULL | Everything — all 20 checklists + 126 vectors | 60-90 min |
+| FULL | Everything — all 20 checklists + 131 vectors | 60-90 min |
 | PROGRAM | Smart contract only (checklists 01-07) | 20-35 min |
 | BACKEND | Backend API (checklists 08-09) | 15-25 min |
 | FRONTEND | Frontend (checklists 08, 10) | 15-25 min |
@@ -116,13 +151,13 @@ auditor-skill/
 │   └── 100-insufficient-backup-disaster-recovery.md
 │
 ├── checklists/              ← 20 micro-checklists (the core verification items)
-│   ├── 01-program-account-validation.md    (86 items)
+│   ├── 01-program-account-validation.md    (88 items)
 │   ├── 02-program-access-control.md        (50 items)
-│   ├── 03-program-arithmetic-safety.md     (61 items)
-│   ├── 04-program-cpi-pda.md              (68 items)
-│   ├── 05-program-state-machine.md         (69 items)
-│   ├── 06-program-economic-logic.md        (84 items)
-│   ├── 07-program-opsec-governance.md      (81 items)
+│   ├── 03-program-arithmetic-safety.md     (63 items)
+│   ├── 04-program-cpi-pda.md              (70 items)
+│   ├── 05-program-state-machine.md         (72 items)
+│   ├── 06-program-economic-logic.md        (89 items)
+│   ├── 07-program-opsec-governance.md      (85 items)
 │   ├── 08-typescript-safety.md             (60 items)
 │   ├── 09-backend-security.md             (103 items)
 │   ├── 10-frontend-security.md             (76 items)
@@ -141,10 +176,60 @@ auditor-skill/
 │   ├── file-map.md          ← Maps checklists → target file patterns
 │   └── grep-commands.md     ← All grep/terminal commands by category
 │
-└── templates/               ← Output templates
-    ├── report-template.md   ← Full audit report structure (11 sections)
-    └── instruction-worksheet.md  ← Per-instruction deep-review form
+├── references/              ← Progressive-disclosure deep coverage (loaded on trigger)
+│   ├── methodologies/       ← 12 protocol playbooks (amm-clmm, lending, perps, oracles,
+│   │                          stablecoin, liquid-staking, governance, bridges,
+│   │                          wallets-multisig-custody, token-2022, nft-marketplaces, launchpads)
+│   ├── framework-idioms/    ← Anchor / Native / Pinocchio validation-order footguns
+│   ├── vuln-classes/        ← zk-and-compression
+│   ├── invariant-catalog.md ← Reusable harness-ready invariant menus per protocol class
+│   ├── false-positives.md   ← Over-reporting triage rules
+│   ├── audit-lifecycle/     ← methodology + firm-coverage (how firms actually work)
+│   └── orchestration/       ← boundary-map (Trail of Bits) · pre-scan · poc-harness
+│
+├── commands/                ← 15 slash-commands (/auditor:<name>)
+│   ├── audit · quick-scan · deep-review · diff-audit · spec-audit · economic-sim · audit-report
+│   ├── audit-cycle · audit-assist · re-audit            ← lifecycle flows
+│   ├── intake · threat-model · triage                   ← perimeter
+│   └── poc · patch                                      ← executable PoC + fix patches
+│
+├── agents/                  ← 8 specialized subagents
+│   ├── context-builder · threat-modeler · vuln-hunter · economic-analyst
+│   └── peer-reviewer · audit-reporter · poc-engineer · patch-engineer
+│
+├── tools/auditor-tools/     ← Rust CLIs (cargo build --release)
+│   ├── audit-scan           ← deterministic pre-scan → JSON risky-surface map (~$0)
+│   └── audit-mem            ← SQLite cross-audit memory (dedup · regression · FP-suppression)
+│
+├── templates/               ← Output + deliverable templates
+│   ├── report-template.md   ← Internal item-by-item verdict report
+│   ├── audit-report.md      ← Client-facing findings report (no deploy guarantee)
+│   ├── context-worksheet.md · instruction-worksheet.md · intake.md · threat-model.md
+│   ├── poc/                 ← exploit-harness crate skeleton + shared-test-utils
+│   └── patch/               ← patch + VERIFICATION templates
+│
+├── docs/                    ← Usage guides (start at docs/README.md)
+├── scripts/                 ← report-to-pdf.sh + the no-attribution commit hook
+├── AGENTS.md                ← Agent-orchestration overview
+└── vendor/trailofbits/      ← Trail of Bits execution plugins (git submodule)
 ```
+
+---
+
+## Audit Flows
+
+Beyond one-shot `/audit`, two flows run a full audit-company lifecycle end-to-end:
+
+- **`/auditor:audit-cycle`** — a **fully automated** audit-agent team (scope → context reconstruction → tool-assisted pass → parallel manual review with leaf-level false-positive gating → independent peer reconciliation → synthesis) that produces a professional client report at `audit_<n>/REPORT.md`. Optional PDF (needs [pandoc](https://pandoc.org/)):
+  ```bash
+  scripts/report-to-pdf.sh audit_1/REPORT.md   # writes REPORT.pdf if pandoc is installed; MD is always the deliverable
+  ```
+- **`/auditor:audit-assist`** — an **AI-assisted, human-in-the-loop** flow: it pauses at checkpoints to surface findings and ask the questions only you can answer (business context, trust model, severity calls), iterating until the audit document converges.
+- **`/auditor:re-audit`** — **fix-review**: diffs against a prior report (`FIXED` / `STILL-OPEN` / `REGRESSED`) and sweeps for un-patched siblings of each fixed bug.
+
+Every intermediary step is also addressable on its own: `/auditor:intake` (persisted scoping), `/auditor:threat-model` (asset/actor/trust-boundary artifact), `/auditor:triage` (dedup + false-positive calibration), and `/auditor:poc` / `/auditor:patch` (executable exploit + verified fix). Full command reference: [docs/commands.md](docs/commands.md).
+
+The client report follows professional firm convention — executive summary, commit-pinned scope, findings with PoC/reachability, a code-maturity assessment, disclaimers. Like real firms, it does **not** issue a "safe to deploy" guarantee. Method + firm coverage: [references/audit-lifecycle/](references/audit-lifecycle/).
 
 ---
 
@@ -155,12 +240,14 @@ The audit produces a structured markdown report with:
 1. **Executive Summary** — risk score (1-10), deploy/no-deploy verdict, severity distribution
 2. **Instruction Matrix** — every smart contract instruction mapped
 3. **State Model** — account structs, PDA seeds, relationships
-4. **Per-Item Verdicts** — every in-scope checklist item (up to 1,328) with `[PASS]`, `[FAIL-N]`, `[PARTIAL]`, or `[N/A]`
-5. **Known Vectors Results** — each in-scope attack vector (up to 126) with explicit verdict and evidence
+4. **Per-Item Verdicts** — every in-scope checklist item (up to 1,346) with `[PASS]`, `[FAIL-N]`, `[PARTIAL]`, or `[N/A]`
+5. **Known Vectors Results** — each in-scope attack vector (up to 131) with explicit verdict and evidence
 6. **Findings** — deduplicated, severity-sorted
 7. **Attack Scenarios** — narrative exploitable paths
 8. **Aggregate Score** — PASS/PARTIAL/FAIL percentages
 9. **Recommendations** — prioritized fix list
+
+For High/Critical findings, an optional `audit_<n>/poc/` (runnable exploits that assert the bug) and `audit_<n>/patches/` (minimal fixes proven to revert the exploit) accompany the report — see [docs/poc-and-patches.md](docs/poc-and-patches.md).
 
 See [OUTPUT-RULES.md](OUTPUT-RULES.md) for the complete specification.
 
@@ -269,7 +356,7 @@ MIT — use it, fork it, improve it, sell services built on it. Attribution appr
 ## FAQ
 
 **Q: Does this replace a professional audit?**
-A: It covers more items than most paid audits (1,328 plus 126 known-vector checks vs typical 50-200), but an AI auditor cannot do everything a human can (social engineering assessment, business logic review requiring domain expertise, legal compliance opinions). Use this as a first pass, then hire humans for what it flags.
+A: It covers more items than most paid audits (1,346 plus 131 known-vector checks vs typical 50-200), but an AI auditor cannot do everything a human can (social engineering assessment, business logic review requiring domain expertise, legal compliance opinions). Use this as a first pass, then hire humans for what it flags.
 
 **Q: Which AI model should I use?**
 A: See [COSTS.md](COSTS.md). For maximum depth, use Opus 4 or o3. For best value, use Sonnet 4 or GPT-4.1. For CI/CD integration (fast, cheap), use Haiku or o4-mini.
