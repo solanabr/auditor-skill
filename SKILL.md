@@ -33,7 +33,7 @@ auditor-skill does not read its whole corpus up front. It discovers the repo, de
 
 Checklists outside this set are **never read** — a Rust-only repo never loads 14 or the TS/web vectors.
 
-**Step 3 — Load on demand.** Load an in-scope checklist when its phase begins; load a known-vector only when its phase + language/domain trigger reaches it (`known-vectors/INDEX.md` groups vectors by `{phase, language, trigger}`).
+**Step 3 — Load on demand.** Load an in-scope checklist when its phase begins; load a known-vector only when its phase + language/domain trigger reaches it (`known-vectors/INDEX.md` groups vectors by `{phase, language, trigger}`). Beyond the phase+language gate, vectors and feature-specific checklist sections also load on **feature presence** via the INDEX **"Load when (markers)"** column and the prescan advisory manifest (`references/orchestration/pre-scan.md`): a vector/section whose feature markers are *provably absent* (empty prescan array or zero grep hits) is skip-deferred and renders `[N/A — feature absent]`. This is advisory only — it reopens on demand the instant a manual read surfaces the feature, and every in-scope item still gets a verdict (Rule 0).
 
 **Completeness is output-side.** The audit is COMPLETE iff every in-scope item + phase-triggered vector has a verdict. Out-of-scope items render `[N/A — out of scope: <reason>]` from the gate. Every full report includes a **Scope Coverage** table. Full rule: see [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 0.
 

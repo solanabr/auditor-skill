@@ -37,6 +37,29 @@ It parses every `*.rs` (skipping `target/`, `.git/`, `node_modules/`) with a rea
 
 ---
 
+## Evidence-driven load gating (advisory)
+
+The prescan is also a **relevance map**: when a signal is a *provably-empty* set, the corpus that only exists to catch that feature can be **deprioritized / skip-deferred** — its checklist items and vectors render `[N/A — feature absent: <marker>]` from the gate instead of consuming a full read. This is a token-efficiency layer over the same completeness guarantee (OUTPUT-RULES Rule 0). It maps 1:1 to the `known-vectors/INDEX.md` "Load when (markers)" column and to the feature-gated checklist notes.
+
+| Prescan signal (provably empty) | Deprioritized / skip-deferred corpus | Re-open trigger (fires on the MANUAL READ, not just the prescan) |
+|---------------------------------|--------------------------------------|-----------------------------------------------------------------|
+| `cpi_sites: []` | checklist 04 CPI sections (§4.1–4.2, CPI-target/reentrancy items) + KV CPI cluster (003 reentrancy, 009 unchecked CPI target) | eyes hit `invoke` / `invoke_signed` / `CpiContext` / any cross-program call in source |
+| `pdas: []` | PDA-confusion vectors (010 type-cosplay, 026 seed-collision, 104 non-canonical bump) + checklist 04 §4.3–4.4 (PDA derivation) | eyes hit `seeds =` / `find_program_address` / `create_program_address` |
+| no `token_2022` / `transfer_hook` / `TransferFee` / `get_extension` (grep + no `token::*` T22 hits) | token-2022 methodology (`references/methodologies/token-2022.md`) + KV 018 (fee-on-transfer), 023 (transfer-hook), 105 (extension abuse) + checklist 01 §1.8 | eyes hit `spl_token_2022` / `get_extension` / `InterfaceAccount` over a T22 mint / any extension type |
+| no `pyth` / `switchboard` (grep, incl. `PriceUpdate` / `PullFeed` / `get_price`) | oracles methodology (`references/methodologies/oracles.md`) + KV 005 (oracle manipulation) + checklist 06 §6.9 (oracle) | eyes hit `pyth` / `switchboard` / any oracle account read or price feed |
+| no `realm` / `proposal` / `spl-governance` (grep, incl. `vote_record` / `voter_weight`) | governance methodology (`references/methodologies/governance.md`) + KV 021 (vote buying), 119 (durable-nonce governance) | eyes hit `spl-governance` / `realm` / `proposal` / vote-weight logic |
+| no `guardian` / `vaa` / `emitter` (grep, incl. `verify_signatures` / `attestation`) | bridges methodology (`references/methodologies/bridges.md`) + KV 022 (fake-proof bridge) | eyes hit `guardian` / `vaa` / `emitter` / cross-chain message verification |
+| `unsafe_blocks: []` **and** Anchor detected | checklist 01 §1.10 (native/Pinocchio no-Anchor safety) + KV 109 (Pinocchio/p-token manual validation) | eyes hit `unsafe` / `pinocchio` / `p-token` / manual zero-copy account casting |
+| `panic_sites: []` | checklist 03 DoS spot-check (unwrap/expect/index items) + KV 025 (compute-budget DoS), 111 (BPF stack overflow DoS) | eyes hit `unwrap()` / `expect()` / indexing / `panic!` / unbounded loop over user input |
+
+**Two hard safety properties — do not weaken either:**
+
+**(a) Gate on PROVABLE ABSENCE only.** An empty array means *the scanner found zero sites of that kind* — that, plus a confirming grep over the in-scope tree, is the only thing that justifies a skip-defer. Never skip-defer because a surface "looks low-risk" or "is probably fine"; low-likelihood is a Rule 5b judgment on an OPENED item, not a reason to skip loading it.
+
+**(b) The prescan under-reports, so the re-open trigger fires on the MANUAL READ.** By its own honesty rule the scan misses macro-generated handlers and trait-dispatched CPIs. Therefore a skip-defer is **provisional**: the moment the auditor's eyes land on a marker the scan missed (a `CpiContext` behind a macro, a `get_extension` behind a helper), the corresponding cluster loads immediately and every item in it gets a verdict. The gate can only ever *defer* a read to the point of first evidence — it can never make a bug unreachable.
+
+---
+
 ## `audit-mem` — cross-audit memory (dedup · regression · FP suppression · warm re-audits)
 
 A local SQLite store (default `.audit-memory/audit.db`, gitignored). Findings are **content-addressed**: `finding_id = sha256(program_id ‖ code_signature ‖ root_cause)`, so the *same* bug keeps its identity across commits and line drift (the same normalized signature `/re-audit` uses for its sibling sweep).

@@ -506,24 +506,40 @@ RECORD: privacy, compliance & change management findings
 
 ### Step 4.4 — Known Attack Vectors (all in-scope, KV-001..131)
 
+Do NOT bulk-read all 131 vector files — that nullifies the scope gate. Load each in-scope vector **only when its `known-vectors/INDEX.md` trigger fires** (phase + language + the vector's feature markers), driven by the prescan advisory manifest.
+
 ```
 ACTIONS:
 
-  1. Read known-vectors/INDEX.md
-  2. Read every file known-vectors/001-*.md through known-vectors/131-*.md
-  3. For each vector, record one verdict:
+  1. Read known-vectors/INDEX.md — use its "Load when (markers)" column as the trigger table.
+  2. For EACH in-scope vector (per Phase -1 scope):
+       a. If the vector's markers are `always (<phase>)` → OPEN the vector file and evaluate it.
+       b. Else check its feature markers against evidence:
+            - the audit-scan prescan array (references/orchestration/pre-scan.md), and
+            - a grep over the in-scope tree.
+          If EVERY marker is PROVABLY ABSENT (empty prescan array OR zero grep hits) →
+            record  [N/A — feature absent: <marker>]  from the gate (an evidence-backed verdict).
+          Otherwise → OPEN the vector file and evaluate it.
+  3. For each opened vector, record one verdict:
        [PASS] / [FAIL-{1-10}] / [PARTIAL] / [N/A]
-  4. Add evidence line(s): file:line or command output reference
+  4. Add evidence line(s): file:line, prescan field, or command output reference.
 
 RECORD format:
-  - KV-001: [PASS] ...
-  - KV-002: [PARTIAL] ...
+  - KV-001: [PASS] ...                             (always-load, evaluated)
+  - KV-005: [N/A — feature absent: pyth/switchboard/oracle]   (skip-deferred from gate)
   ...
   - KV-131: [FAIL-7] ...
 
-HARD RULE:
-  Every in-scope KV item must have a verdict. Out-of-scope vectors render
-  [N/A — out of scope: <reason>] from the scope gate (Rule 0).
+HARD RULE (completeness — OUTPUT-RULES Rule 0):
+  Every in-scope KV item still has a verdict. A skip-deferred `[N/A — feature absent]` is an
+  evidence-backed verdict, NOT a silent skip — and it REOPENS on demand: because the prescan
+  under-reports (macros / trait dispatch, per its honesty rule), the instant a manual file read
+  surfaces the missing feature (e.g. a `CpiContext` the scan missed), OPEN and evaluate that
+  vector. No bug becomes unreachable. Out-of-scope vectors render
+  [N/A — out of scope: <reason>] from the scope gate.
+
+See: known-vectors/INDEX.md (Load-when trigger column) · references/orchestration/pre-scan.md
+     (Evidence-driven load gating manifest).
 ```
 
 ---
