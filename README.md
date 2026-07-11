@@ -1,7 +1,8 @@
 # auditor-skill — Open-Source AI Security Audit Skill
 
 > Production-grade security audit for any codebase, powered by AI agents.
-> 20 checklists · 1,346 verification items · 131 known attack vectors · Benchmarked against CertiK, SOC 2, OWASP Top 10:2025
+> 20 checklists · 1,346 verification items · 131 known attack vectors · executable PoCs + fix patches
+> A full audit-firm lifecycle (automated + interactive) · Benchmarked against CertiK, SOC 2, OWASP Top 10:2025
 > Verify COSTS.md as a referecence - Running this audit can burn a lot of credits.
 
 ---
@@ -12,7 +13,31 @@ auditor-skill is a **skill file** (a structured prompt + checklists) that turns 
 
 **It is not a SaaS product.** It's a folder of markdown files you clone into your repo or give to an AI agent.
 
-> **Adaptation required before use.** This skill was originally developed for a specific Solana/Anchor DeFi project and then generalized. Before running it on your project you must update `discovery/file-map.md` with your actual folder structure, file names, and state variable names. The questionnaire in `QUESTIONS.md` is a blank template — fill it out for your project before invoking the auditor. Everything else (checklists, known vectors, output rules) is fully portable as-is.
+> **Adaptation required before use.** This skill was originally developed for a specific Solana/Anchor DeFi project and then generalized. Before running it on your project you must update `discovery/file-map.md` with your actual folder structure, file names, and state variable names. The questionnaire in `QUESTIONS.md` is a blank template — fill it out (or run `/auditor:intake`) for your project before invoking the auditor. Everything else (checklists, known vectors, output rules) is fully portable as-is.
+
+---
+
+## What It Does (v7.0)
+
+- **A full audit-firm lifecycle, two ways.** `/auditor:audit-cycle` runs the whole engagement autonomously (intake → context → threat model → tool-assisted pass → domain-partitioned review → triage → independent peer review → synthesis) and hands back a professional client report. `/auditor:audit-assist` runs the same pipeline **interactively**, pausing at checkpoints for the calls only you can make.
+- **Executable proofs, not just prose.** For High/Critical findings, `/auditor:poc` builds a runnable exploit (Mollusk / LiteSVM / Surfpool-fork / fuzz) that *asserts* the vulnerability, and `/auditor:patch` drafts a minimal fix and **proves it reverts the exploit**. Evidence is tiered (`[PoC-REPRODUCED]` … `[PoC-PROSE]`); prose is never dropped when a harness can't be built.
+- **Token-efficient by construction.** An optional Rust pre-scanner (`audit-scan`) enumerates the risky surface deterministically (~$0), cutting ~30-40% of input tokens on large programs. A cross-audit memory store (`audit-mem`) gives exact dedup, regression detection, and false-positive suppression across runs.
+- **15 commands, 8 specialized agents.** Scoping, threat modeling, deep review, economic simulation, differential/PR audits, spec compliance, triage, fix-review — each a first-class command; the automated flow chains eight purpose-built agents.
+- **Deep Solana coverage.** 12 protocol methodologies (AMM/CLMM, lending, perps, oracles, stablecoins, liquid staking, governance, bridges, multisig/custody, Token-2022, NFT marketplaces, launchpads), framework idioms (Anchor/Native/Pinocchio), and a reusable invariant catalog — loaded only when the code triggers them.
+- **Rigor gates against AI over-reporting.** A validation gate (reachability + math/state-bounds + attacker-model) every high-severity finding must survive, Impact×Likelihood severity with principled downgrades, and a Notes & Nitpicks tier that keeps the findings table honest.
+- **Real tooling, vendored.** Trail of Bits execution plugins (SAST, fuzzing, coverage, mutation) ship as a submodule; the native corpus works fully without them.
+
+### Documentation
+
+| Guide | What's inside |
+|-------|---------------|
+| [docs/getting-started.md](docs/getting-started.md) | Install, submodule init, build the Rust tools, run your first audit |
+| [docs/audit-flows.md](docs/audit-flows.md) | The lifecycle and when to use each flow (`/audit`, `/audit-cycle`, `/audit-assist`, `/re-audit`) |
+| [docs/commands.md](docs/commands.md) | Reference for all 15 commands |
+| [docs/agents.md](docs/agents.md) | The 8-agent roster and how they chain |
+| [docs/power-tools.md](docs/power-tools.md) | `audit-scan`, `audit-mem`, Trail of Bits, Surfpool, PoC/patch harnesses |
+| [docs/poc-and-patches.md](docs/poc-and-patches.md) | Executable exploit + fix-patch delivery |
+| [docs/output-and-rigor.md](docs/output-and-rigor.md) | Severity, the Rule 5b gate, scope-gated loading, report format |
 
 ---
 
@@ -151,9 +176,42 @@ auditor-skill/
 │   ├── file-map.md          ← Maps checklists → target file patterns
 │   └── grep-commands.md     ← All grep/terminal commands by category
 │
-└── templates/               ← Output templates
-    ├── report-template.md   ← Full audit report structure (11 sections)
-    └── instruction-worksheet.md  ← Per-instruction deep-review form
+├── references/              ← Progressive-disclosure deep coverage (loaded on trigger)
+│   ├── methodologies/       ← 12 protocol playbooks (amm-clmm, lending, perps, oracles,
+│   │                          stablecoin, liquid-staking, governance, bridges,
+│   │                          wallets-multisig-custody, token-2022, nft-marketplaces, launchpads)
+│   ├── framework-idioms/    ← Anchor / Native / Pinocchio validation-order footguns
+│   ├── vuln-classes/        ← zk-and-compression
+│   ├── invariant-catalog.md ← Reusable harness-ready invariant menus per protocol class
+│   ├── false-positives.md   ← Over-reporting triage rules
+│   ├── audit-lifecycle/     ← methodology + firm-coverage (how firms actually work)
+│   └── orchestration/       ← boundary-map (Trail of Bits) · pre-scan · poc-harness
+│
+├── commands/                ← 15 slash-commands (/auditor:<name>)
+│   ├── audit · quick-scan · deep-review · diff-audit · spec-audit · economic-sim · audit-report
+│   ├── audit-cycle · audit-assist · re-audit            ← lifecycle flows
+│   ├── intake · threat-model · triage                   ← perimeter
+│   └── poc · patch                                      ← executable PoC + fix patches
+│
+├── agents/                  ← 8 specialized subagents
+│   ├── context-builder · threat-modeler · vuln-hunter · economic-analyst
+│   └── peer-reviewer · audit-reporter · poc-engineer · patch-engineer
+│
+├── tools/auditor-tools/     ← Rust CLIs (cargo build --release)
+│   ├── audit-scan           ← deterministic pre-scan → JSON risky-surface map (~$0)
+│   └── audit-mem            ← SQLite cross-audit memory (dedup · regression · FP-suppression)
+│
+├── templates/               ← Output + deliverable templates
+│   ├── report-template.md   ← Internal item-by-item verdict report
+│   ├── audit-report.md      ← Client-facing findings report (no deploy guarantee)
+│   ├── context-worksheet.md · instruction-worksheet.md · intake.md · threat-model.md
+│   ├── poc/                 ← exploit-harness crate skeleton + shared-test-utils
+│   └── patch/               ← patch + VERIFICATION templates
+│
+├── docs/                    ← Usage guides (start at docs/README.md)
+├── scripts/                 ← report-to-pdf.sh + the no-attribution commit hook
+├── AGENTS.md                ← Agent-orchestration overview
+└── vendor/trailofbits/      ← Trail of Bits execution plugins (git submodule)
 ```
 
 ---
@@ -168,6 +226,8 @@ Beyond one-shot `/audit`, two flows run a full audit-company lifecycle end-to-en
   ```
 - **`/auditor:audit-assist`** — an **AI-assisted, human-in-the-loop** flow: it pauses at checkpoints to surface findings and ask the questions only you can answer (business context, trust model, severity calls), iterating until the audit document converges.
 - **`/auditor:re-audit`** — **fix-review**: diffs against a prior report (`FIXED` / `STILL-OPEN` / `REGRESSED`) and sweeps for un-patched siblings of each fixed bug.
+
+Every intermediary step is also addressable on its own: `/auditor:intake` (persisted scoping), `/auditor:threat-model` (asset/actor/trust-boundary artifact), `/auditor:triage` (dedup + false-positive calibration), and `/auditor:poc` / `/auditor:patch` (executable exploit + verified fix). Full command reference: [docs/commands.md](docs/commands.md).
 
 The client report follows professional firm convention — executive summary, commit-pinned scope, findings with PoC/reachability, a code-maturity assessment, disclaimers. Like real firms, it does **not** issue a "safe to deploy" guarantee. Method + firm coverage: [references/audit-lifecycle/](references/audit-lifecycle/).
 
@@ -186,6 +246,8 @@ The audit produces a structured markdown report with:
 7. **Attack Scenarios** — narrative exploitable paths
 8. **Aggregate Score** — PASS/PARTIAL/FAIL percentages
 9. **Recommendations** — prioritized fix list
+
+For High/Critical findings, an optional `audit_<n>/poc/` (runnable exploits that assert the bug) and `audit_<n>/patches/` (minimal fixes proven to revert the exploit) accompany the report — see [docs/poc-and-patches.md](docs/poc-and-patches.md).
 
 See [OUTPUT-RULES.md](OUTPUT-RULES.md) for the complete specification.
 
