@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/banner.png" alt="auditor-skill — the best all-in-one security audit skill for Solana programs and applications" width="100%">
+</p>
+
 # auditor-skill — Open-Source AI Security Audit Skill
 
 > Production-grade security audit for any codebase, powered by AI agents.
