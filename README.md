@@ -61,48 +61,60 @@ auditor-skill is a **skill file** (a structured prompt + checklists) that turns 
 
 ---
 
-## Quick Start
+## Installation
 
-### Option 1: Clone into your repo (recommended for private repos)
+### Option 1: Claude Code plugin marketplace (recommended)
 
-```bash
-# From your project root
-git clone https://github.com/YOUR_ORG/auditor-skill.git .github/skills/auditor-skill
-
-# Or copy the folder manually
-cp -r /path/to/auditor-skill .github/skills/auditor-skill
+```
+/plugin marketplace add solanabr/auditor-skill
+/plugin install auditor
 ```
 
-Then in your AI agent (Copilot, Cursor, etc.):
-```
-Audit the entire repository using the auditor-skill with FULL scope
-```
-
-### Option 2: Point to the repo (recommended for open source)
-
-If your code is in a public repo, you can clone auditor-skill separately and point the agent at your code:
-
-```bash
-# Clone auditor-skill
-git clone https://github.com/YOUR_ORG/auditor-skill.git
-
-# Open your target project in your IDE
-# Copy auditor-skill into it, or configure as a skill
-```
-
-### Option 3: Feed files to the API directly
-
-If building a service, send the auditor-skill files as system context and the target repo files as user content to any LLM API.
-
-### Enable tool execution (recommended)
-
-auditor-skill vendors **Trail of Bits** as a git submodule (`vendor/trailofbits`) for real tool execution — SAST, fuzzing, coverage, mutation. After cloning, initialize it:
+Registers the marketplace and installs the `auditor` plugin — all 15 `/auditor:*` commands and 8 agents. Then initialize the Trail of Bits execution tooling once (optional but recommended):
 
 ```bash
 git submodule update --init --recursive
 ```
 
-The native corpus works fully **without** it (it falls back to grep-based checks and notes where deeper tooling would run). With the submodule initialized, the auditor delegates to the vendored tools per [`references/orchestration/boundary-map.md`](references/orchestration/boundary-map.md).
+### Option 2: Install script (any project)
+
+Drops the skill into your project's `.claude/skills/` and inits the tooling:
+
+```bash
+# from your project root — read it first (it's a security tool, after all):
+git clone https://github.com/solanabr/auditor-skill.git
+./auditor-skill/install.sh                                   # → ./.claude/skills/auditor-skill
+./auditor-skill/install.sh ~/.claude/skills/auditor-skill    # or install globally
+
+# one-liner (convenience):
+curl -fsSL https://raw.githubusercontent.com/solanabr/auditor-skill/main/install.sh | bash
+```
+
+### Option 3: Clone into your project manually
+
+```bash
+git clone https://github.com/solanabr/auditor-skill.git .claude/skills/auditor-skill
+```
+
+Claude Code auto-discovers skills under `.claude/skills/`; invoke by asking your agent to "audit this repo using the auditor-skill" (use **Option 1** for the `/auditor:*` slash commands). For other agents (Cursor, Windsurf, Copilot, Codex), copy the folder anywhere the agent reads and point it at `SKILL.md`.
+
+### Option 4: Feed files to the API directly
+
+If you're building a service, send `SKILL.md` + `OUTPUT-RULES.md` + `FULL-AUDIT.md` as system context and the target repo files as user content to any LLM API.
+
+### Tool execution (Trail of Bits) + optional Rust tools
+
+auditor-skill vendors **Trail of Bits** as a git submodule (`vendor/trailofbits`) for real tool execution — SAST, fuzzing, coverage, mutation. Options 1 and 2 init it for you; to do it manually:
+
+```bash
+git submodule update --init --recursive
+```
+
+The native corpus works fully **without** it (it falls back to grep-based checks and notes where deeper tooling would run). With the submodule initialized, the auditor delegates to the vendored tools per [`references/orchestration/boundary-map.md`](references/orchestration/boundary-map.md). For the optional token-efficiency tools (`audit-scan` pre-scanner + `audit-mem` memory), build the Rust CLIs:
+
+```bash
+cd tools/auditor-tools && cargo build --release
+```
 
 ---
 
@@ -266,12 +278,12 @@ See [OUTPUT-RULES.md](OUTPUT-RULES.md) for the complete specification.
 
 ### Cursor / Windsurf
 ```
-Read .github/skills/auditor-skill/SKILL.md then audit this repository following the FULL-AUDIT.md execution plan
+Read .claude/skills/auditor-skill/SKILL.md then audit this repository following the FULL-AUDIT.md execution plan
 ```
 
 ### Claude Code (CLI)
 ```
-Read the auditor-skill files in .github/skills/auditor-skill/ and perform a full security audit of this repository
+Read the auditor-skill files in .claude/skills/auditor-skill/ and perform a full security audit of this repository
 ```
 
 ### API (programmatic)
