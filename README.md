@@ -385,3 +385,14 @@ A: Yes — run the QUICK scope (known vectors grep scan) on every PR, and FULL s
 
 **Q: Can I use this for non-Solana projects?**
 A: Yes — checklists 08-18 are language-agnostic or cover Python/Go/Java/Ruby/PHP. Checklists 01-07 are Solana-specific.
+
+---
+
+## Acknowledgments
+
+auditor-skill stands on the shoulders of two open-source security projects — credited in full in [ATTRIBUTION.md](ATTRIBUTION.md):
+
+- **[Frank Castle](https://github.com/Frankcastleauditor) — [safe-solana-builder](https://github.com/Frankcastleauditor/safe-solana-builder)** (MIT): Solana security depth — reward/staking accounting, Token-2022 extension abuse, framework validation idioms, zero-copy footguns — adapted natively and re-authored audit-side.
+- **[Trail of Bits](https://github.com/trailofbits) — [skills](https://github.com/trailofbits/skills)** (CC-BY-SA 4.0): tool-execution methodology (SAST, fuzzing, coverage, mutation, IR analysis), vendored as a git submodule at `vendor/trailofbits` and orchestrated for real execution; methodology patterns re-implemented natively are credited by reference.
+
+All third-party methodology is used by *reference* — no third-party text is copied into this repository.
