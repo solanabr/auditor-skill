@@ -13,9 +13,11 @@ Run the full audit-firm lifecycle autonomously, from intake to a deliverable rep
 
 ## Lifecycle
 
-1. **Scope / intake (Rule 0 + commit-pin).** Discover the repo, declare scope (`SKILL.md` → SCOPE-GATED LOADING), and honor `--scope`. Pin the audited commit (`git rev-parse HEAD`) so the report names exactly what was reviewed. If no human is present to answer intake, apply `QUESTIONS.md` defaults and list every assumed answer under "Scope & Assumptions".
+1. **Scope / intake (Rule 0 + commit-pin).** Discover the repo, declare scope (`SKILL.md` → SCOPE-GATED LOADING), and honor `--scope`. Pin the audited commit (`git rev-parse HEAD`) so the report names exactly what was reviewed. If no human is present to answer intake, apply `QUESTIONS.md` defaults and list every assumed answer under "Scope & Assumptions". Persist the intake as `audit_<n>/intake.md` (the `/intake` artifact) so every later phase and the report read one source of truth.
 
 2. **Context reconstruction (Phase 0.5).** Spawn `context-builder` (sonnet). It produces the instruction matrix, state model, and per-function worksheets in `audit_<n>/worksheets/context/`. No verdicts yet — understanding only. These worksheets are the shared substrate every later phase reuses (avoids re-reconstruction cost).
+
+2b. **Threat model.** Spawn `threat-modeler` (opus) → `audit_<n>/threat-model.md`: asset inventory, an actor×capability table (what each actor must NOT be able to do), and the trust boundaries, built from the context worksheets + `intake.md`. This seeds report §4.4/§4.6/§4.7 and hands the reviewers concrete attacker goals to test — not verdicts.
 
 3. **Tool-assisted first pass (tools up-front).** If `vendor/trailofbits/plugins` is present (`test -d vendor/trailofbits/plugins`), run ToB `static-analysis` (SAST) over the in-scope languages and fold the SARIF **as evidence that clears the mechanical surface and directs manual attention** — not as verdicts (`references/orchestration/boundary-map.md`). This follows Trail of Bits' precedent of running the toolset (Clippy pedantic, `cargo-audit`, `cargo-outdated`) at engagement start so linter/advisory noise is dispatched before the deep human read. If absent, run the `discovery/grep-commands.md` native scanners and note the tooling gap. Load in-scope `references/methodologies/*` per their protocol markers (`SKILL.md` reference table) so domain review has the right playbook.
 
@@ -24,6 +26,8 @@ Run the full audit-firm lifecycle autonomously, from intake to a deliverable rep
    - `economic-analyst` (opus) — checklist 06 + economic known-vectors + the loaded `references/methodologies/*` over the value-flow surface.
    
    **Anti-false-positive gate at the leaf.** Each reviewer triages every candidate finding through **Rule 5b** + `references/false-positives.md` **before emitting it**. A finding that cannot complete the Rule 5b Reachability + Math/State-Bounds block (Attacker-Model for N≥7) is downgraded to `[PARTIAL]` / `[UNCONFIRMED]` — no bare high-severity claims cross the boundary.
+
+4b. **Triage.** Run `/triage` over the candidate set before reconciliation: dedup by root-cause (when `tools/auditor-tools` is built, `audit-mem check` auto-suppresses prior-ruled false positives and flags regressions), re-apply the Rule 5b gate (downgrade to `[UNCONFIRMED]`/`[UNDETERMINED]` with a quantified barrier per `references/false-positives.md`), and split real findings (severity 1–10) from the **Notes & Nitpicks** list (Rule 1). Emit a suppression appendix — what was withheld and why.
 
 5. **Independent reconciliation.** Spawn `peer-reviewer` (opus) on the **top-severity survivors**: every confirmed finding at **N≥8**, plus any **N≥7** the primary could not PoC. It re-derives each finding **from the code** (reusing `audit_<n>/worksheets/context/*`), not from the primary's write-up. Reconcile: a `DISPUTE` forces the finding back through Rule 5b or to `[UNCONFIRMED]`; a `DOWNGRADE` re-rates it; disagreement forces re-examination before anything ships.
 

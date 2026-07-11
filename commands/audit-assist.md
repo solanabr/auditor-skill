@@ -22,13 +22,15 @@ Fold the human's answers back in, re-synthesize, and continue.
 
 ## Lifecycle with checkpoints
 
-1. **Scope / intake.** Discover the repo, declare scope (Rule 0), pin the commit. **⏸ Checkpoint 1 — after scope:** confirm the scope boundary, the pinned commit, and any `QUESTIONS.md` answers the human wants to override before a single file is judged.
+1. **Scope / intake.** Discover the repo, declare scope (Rule 0), pin the commit. **⏸ Checkpoint 1 — after scope:** confirm the scope boundary, the pinned commit, and any `QUESTIONS.md` answers the human wants to override before a single file is judged. Persist the confirmed answers to `audit_<n>/intake.md` (`/intake`) so both flows and the report read one source of truth.
 
-2. **Context reconstruction (Phase 0.5).** Spawn `context-builder`; it writes worksheets to `audit_<n>/worksheets/context/`. **⏸ Checkpoint 2 — after context:** present the instruction matrix + state model and the reconstructed invariants/assumptions. Ask the human to correct any `UNKNOWN — needs manual review` items and confirm the trust model. Their corrections seed every later phase.
+2. **Context reconstruction (Phase 0.5).** Spawn `context-builder`; it writes worksheets to `audit_<n>/worksheets/context/`. **⏸ Checkpoint 2 — after context:** present the instruction matrix + state model and the reconstructed invariants/assumptions. Ask the human to correct any `UNKNOWN — needs manual review` items and confirm the trust model. Their corrections seed every later phase. With the trust model confirmed, build `audit_<n>/threat-model.md` (`/threat-model`) — asset inventory + actor×capability + trust boundaries — which feeds report §4.4/§4.6/§4.7 and the review's attacker goals.
 
 3. **Tool-assisted first pass.** If `vendor/trailofbits/plugins` is present, run ToB `static-analysis` and fold SARIF as attention-directing evidence (`references/orchestration/boundary-map.md`); else native `discovery/grep-commands.md` and note the gap. Load in-scope `references/methodologies/*` per protocol markers.
 
 4. **Domain-partitioned manual review.** Run `vuln-hunter` (checklists + vectors) and `economic-analyst` (checklist 06 + economic vectors + methodology refs) over their **disjoint** surfaces — partitioned, not cloned. Each candidate finding passes Rule 5b + `references/false-positives.md` **at the leaf** before it is emitted. **⏸ Checkpoint 3 — after each review phase:** surface (a)/(b)/(c). This is where the human resolves "is this intended?" and re-scopes the next phase.
+
+4b. **Triage (`/triage`).** Before reconciliation, dedup by root-cause (`audit-mem` suppression/regression when `tools/auditor-tools` is built), re-apply Rule 5b with quantified downgrades, and split real findings from the Notes & Nitpicks list. **⏸ Checkpoint 3b — after triage:** show the human what was deduped/suppressed and why.
 
 5. **Independent reconciliation.** Spawn `peer-reviewer` on the top-severity survivors (N≥8, plus any N≥7 the primary could not PoC); it re-derives from code, reusing the context worksheets. Reconcile CONFIRM / DISPUTE / DOWNGRADE. **⏸ Checkpoint 4 — after reconciliation:** present the reconciled set and any primary-vs-peer disagreements for the human to adjudicate.
 
