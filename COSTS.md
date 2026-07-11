@@ -27,6 +27,10 @@ Every audit consumes tokens in two categories:
 | Checkpoint saves/reads | ~0.1× code tokens | Session memory between chunks |
 | **Variable multiplier** | **~1.6× code tokens** | |
 
+### Optional: deterministic pre-scan (`audit-scan`)
+
+Running `tools/auditor-tools/audit-scan` first emits the instruction matrix, account-constraint table, PDA-seed catalog, and arithmetic/panic census as one JSON — **deterministically, at ~$0 LLM cost**. The auditor then reasons over that map instead of re-deriving it by reading every file, and can skip full reads of files the scan shows are clean. This collapses the three mechanical multipliers above (checklist cross-ref ~0.3×, discovery scanning ~0.2×, checkpoint re-reads ~0.1×) toward ~0.1× total: on a 50K-line program that removes roughly **200–300K input tokens** (variable multiplier ~1.6× → ~1.0×), e.g. Opus ≈ $32 → ~$20. The tool is optional — without it the auditor falls back to the grep-based walk at the costs above.
+
 ### Output Tokens (scales with findings)
 | Component | Tokens | Notes |
 |-----------|--------|-------|

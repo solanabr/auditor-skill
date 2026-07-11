@@ -5,6 +5,7 @@ orchestrates Trail of Bits execution tooling vendored at `vendor/trailofbits`.
 
 ## Flow (full audit)
 
+0. **Pre-scan (optional, deterministic).** If `tools/auditor-tools/` is built, `audit-scan` emits the instruction/constraint/PDA/arithmetic map at ~$0 and `audit-mem warm <program-id>` loads prior invariants + open false-positive rulings — seeding `context-builder` with a map instead of a blank repo, and letting `vuln-hunter` auto-suppress findings that carry a prior `FALSE_POSITIVE` ruling (`audit-mem check`). Falls back to the grep walk if the toolchain is absent. See [references/orchestration/pre-scan.md](references/orchestration/pre-scan.md).
 1. **`context-builder`** (sonnet) — Phase 0 setup + Phase 0.5 context reconstruction. No verdicts; understanding only.
 2. **`vuln-hunter`** (opus) — item-by-item walk against in-scope checklists + phase-triggered vectors. Every finding with N ≥ 6 must pass the Rule 5b gate. Delegates SAST / harnesses to Trail of Bits when present (see `references/orchestration/boundary-map.md`).
 3. **`economic-analyst`** (opus) — checklist 06 + economic vectors; drives `/economic-sim` (Surfpool mainnet-fork) to quantify profitability for High/Critical economic findings.

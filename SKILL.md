@@ -59,6 +59,7 @@ Checklists outside this set are **never read** — a Rust-only repo never loads 
 | `references/vuln-classes/zk-and-compression.md` | `groth16` · `spl-account-compression` · `bubblegum` · `merkle` · `nullifier` · `ConfidentialTransfer` |
 | `references/false-positives.md` | triaging any finding before reporting severity ≥ 6 |
 | `references/orchestration/boundary-map.md` | delegating to vendored Trail of Bits tooling |
+| `references/orchestration/pre-scan.md` | running the deterministic Rust pre-scanner (`audit-scan`) or the cross-audit memory store (`audit-mem`) |
 | `references/audit-lifecycle/methodology.md` | running `/audit-cycle` or `/audit-assist` (our method) |
 | `references/audit-lifecycle/firm-coverage.md` | choosing methodology / understanding firm practice |
 
