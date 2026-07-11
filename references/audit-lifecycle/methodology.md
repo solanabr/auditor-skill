@@ -125,6 +125,96 @@ Both flows are the **firm spine**, so both inherit its discipline and its limits
 
 ---
 
+## 5. Design-level pass BEFORE the line-by-line pass
+
+The item-by-item checklist walk (`vuln-hunter` over checklists 01–20) is an **implementation-level**
+pass — it finds reentrancy, ownership, arithmetic, and constraint bugs. It is *not* the first pass.
+Before any line-by-line reading, run a named **design-level pass** that reasons about the protocol as
+an economic machine, because the highest-severity findings are usually architectural (a broken
+incentive, a manipulable oracle path, an unsound state machine) and are invisible to a per-line walk.
+
+**Order of the two passes:**
+
+1. **Design pass (first).** Owned by `economic-analyst` + `context-builder`, using
+   `references/methodologies/*` and the invariant menus in `references/invariant-catalog.md`. Review,
+   in this order:
+   - **Economic architecture / incentives** — where does value enter and leave, who is paid to do
+     what, and what does a rational attacker maximize? (checklist 06 + ECON vectors, but as *design
+     reasoning*, not line items yet.)
+   - **Oracle & price-manipulation surface** — every price input, its manipulation cost, and whether
+     a flash-loan-sized move breaks an invariant (`references/methodologies/oracles.md`).
+   - **State machines** — enumerate valid transitions per instruction; look for a transition that
+     skips a guard, an unreachable-but-assumed state, or a state that lets value out early.
+   The output is the **per-function invariant set** (Phase 0.5) plus a ranked list of design-level
+   risks — this *directs* where the implementation pass spends its budget.
+2. **Implementation pass (second).** The checklist walk (`vuln-hunter`) — reentrancy / `.reload()`,
+   ownership & signer, arithmetic & rounding, PDA/CPI, account validation — now aimed at the surfaces
+   the design pass flagged as load-bearing.
+
+**Rule:** a `[FAIL-N≥6]` on implementation grounds is not the ceiling — if the design pass surfaces a
+sound-implementation-but-broken-incentive risk (correct code, exploitable mechanism), that is a
+finding in its own right and outranks most line-level bugs. Never let a clean checklist pass stand in
+for a design review that was skipped.
+
+---
+
+## 6. Tiered FV / harness escalation ladder
+
+Formal methods are a **cost-vs-assurance ladder**, not a binary. Climb only as high as the
+value-at-risk and the shape of the property justify. Each rung is chosen by three criteria:
+**value-at-risk** (how catastrophic is one counterexample), **logic self-containedness** (is the
+property decided by this program's own math, or by foreign code), and **invariant crispness** (can
+the property be stated as a clean declarative assertion).
+
+| Rung | Technique | Choose when | Assurance |
+|------|-----------|-------------|-----------|
+| **0. Manual** | Invariant reconstruction + attacker-goal reasoning (§4, §5) | Always — the floor under every engagement | Reasoned, unproven |
+| **1. proptest on pure fns** | Property-based testing of extracted pure functions (curve math, fee math, health math, `vested_amount`, rounding) | The logic is a self-contained pure function and the property is crisp; cheap first probe | Broad, no proof |
+| **2. Trident stateful sequences (PRIMARY bug-finder)** | Coverage-guided **multi-instruction stateful** fuzzing over the real SVM — random instruction sequences with invariant post-conditions | The bug lives in **cross-instruction state** (the common case): ordering, accumulation, stale-state, multi-user interleaving. **This is the default primary harness** — most real Solana logic bugs are stateful and only appear across instruction sequences | Deep over time, no proof |
+| **3. Certora / Kani** | Deductive FV (Certora SCP, SBF-level) or bounded model checking (Kani, MIR) | Reserve for the **3–10 invariants where a single counterexample equals a catastrophe** — supply conservation, no-unauthorized-mint, a core curve/health invariant | Sound (relative to spec / up to bound) |
+| **4. MIRAI / Clippy** | Abstract interpretation + lints — taint, some UB, mechanical footguns | Cross-cutting mechanical sweep; up-front to clear the trivial surface and again as a backstop | Advisory, false-positive-prone |
+
+**Decision rule:** *fuzz everything (rungs 1–2); formally prove (rung 3) only the handful of invariants
+whose violation is a catastrophe.* Rung 2 (Trident stateful) is the **primary** practical bug-finder
+and should be the default harness for any non-trivial program — do not jump straight to rung 3 for a
+property that a stateful fuzzer would surface in minutes.
+
+**Explicit skip rule — skip FV if the target is dominated by untrusted CPI.** Deductive/BMC proof
+(rung 3) proves behavior of code you *have*. When the instruction's outcome is decided mainly by a
+**cross-program invocation into untrusted/foreign code** (an aggregator swap, an arbitrary callee, an
+external program whose post-state you cannot model), FV cannot conclude anything useful — the callee
+is a hole in the proof. In that case **do not spend the FV budget**: fall back to Trident sequences
+that mock the CPI boundary adversarially, plus manual CPI-trust review (`references/framework-idioms/anchor.md`
+per-CPI checklist). Reserve rung 3 for the self-contained math, not the CPI-dominated glue.
+
+---
+
+## 7. Standard harness deliverable shape
+
+When an engagement produces an FV/fuzz harness, the harness is a **named deliverable**, not thrown-away
+scaffolding (§1, Harness-as-deliverable row). Its standard shape has two parts, both saved to
+`audit_<n>/harnesses/`:
+
+1. **Multi-instruction stateful attack-sequence fuzzing.** A Trident (or equivalent) harness that
+   drives *sequences* of instructions with adversarial inputs and asserts the kept invariants
+   (`references/invariant-catalog.md`) as post-conditions after each step — the rung-2 primary
+   bug-finder, preserved so the client can rerun and extend it.
+2. **An invariant-property table (report appendix).** A table making the coverage envelope explicit,
+   one row per invariant the harness targets:
+
+   | Property (invariant) | Asserted? | Inputs exercised | Not yet covered |
+   |----------------------|-----------|------------------|-----------------|
+   | e.g. Σ balances == supply | yes | mint/burn/transfer sequences, ≤N holders | Token-2022 fee mints |
+   | e.g. k non-decreasing | yes | both-direction swaps, full size range | multi-hop CPI path |
+   | e.g. health ≥ 1 for solvent | partial | single-obligation ops | cross-obligation, mid-CPI |
+
+   The **"Not yet covered"** column is mandatory and honest — it is what turns the harness from a
+   green checkmark into a usable statement of what was *and was not* verified, and it feeds the report's
+   **Assumptions & Simplifications** section. An asserted-but-shallow property is marked `partial`, not
+   `yes`.
+
+---
+
 ## Methodology fast pass
 
 - [ ] Commit pinned + scope declared (`QUESTIONS.md` + Rule 0 + Phase 0.1) before any reading (§1)
@@ -139,3 +229,7 @@ Both flows are the **firm spine**, so both inherit its discipline and its limits
 - [ ] FV/fuzz **harnesses saved to `audit_<n>/harnesses/`** with a coverage-gaps note (§1, §4)
 - [ ] Client-facing `audit-report.md` used (maturity + caveats, **no deploy guarantee**); risk-score stayed internal (§1)
 - [ ] Changes re-reviewed via **`/re-audit`** (FIXED/STILL-OPEN/REGRESSED + sibling sweep), not a full re-run (§1, §3)
+- [ ] **Design pass ran FIRST** (economic architecture / oracle-manipulation / state machines) before the line-by-line implementation walk; a broken-incentive-but-clean-code risk was treated as a finding (§5)
+- [ ] FV/harness effort chose the right **ladder rung** (manual → proptest → **Trident stateful (primary)** → Certora/Kani for the 3–10 catastrophic invariants → MIRAI/Clippy), by value-at-risk / self-containedness / invariant crispness (§6)
+- [ ] **FV skipped where the target is CPI-dominated** (untrusted foreign callee) — fell back to mocked-boundary Trident + manual CPI-trust review instead of burning the FV budget (§6)
+- [ ] Harness shipped in the standard shape — **multi-instruction stateful attack-sequence fuzzing** + an **invariant-property table** appendix (property → asserted? → inputs exercised → not-yet-covered) (§7)

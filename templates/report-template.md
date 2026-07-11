@@ -104,10 +104,10 @@
 | 01 | Account Validation | 88 | | | | | % |
 | 02 | Access Control | 50 | | | | | % |
 | 03 | Arithmetic Safety | 63 | | | | | % |
-| 04 | CPI & PDA | 69 | | | | | % |
+| 04 | CPI & PDA | 70 | | | | | % |
 | 05 | State Machine | 72 | | | | | % |
-| 06 | Economic & Logic | 88 | | | | | % |
-| 07 | OpSec & Governance | 84 | | | | | % |
+| 06 | Economic & Logic | 89 | | | | | % |
+| 07 | OpSec & Governance | 85 | | | | | % |
 | 08 | TypeScript Safety | 60 | | | | | % |
 | 09 | Backend Security | 103 | | | | | % |
 | 10 | Frontend Security | 76 | | | | | % |
@@ -121,7 +121,7 @@
 | 18 | Privacy, Compliance & Change Mgmt | 60 | | | | | % |
 | 19 | AI Agent Security | 31 | | | | | % |
 | 20 | Rust Off-Chain Services | 17 | | | | | % |
-| | **Total** | **1343** | | | | | **%** |
+| | **Total** | **1346** | | | | | **%** |
 
 > Note: Only applicable checklists are counted in totals. Non-applicable checklists are excluded entirely.
 
@@ -239,14 +239,14 @@
 
 ```
 [PASS]      ECON-001: {reason}
-...through ECON-088
+...through ECON-089
 ```
 
 ### Checklist 07 — OpSec & Governance
 
 ```
 [PASS]      OPS-001: {reason}
-...through OPS-084
+...through OPS-085
 ```
 
 ### Checklist 08 — TypeScript Safety
@@ -326,7 +326,7 @@
 ...through PC-060
 ```
 
-### Known Vectors Results (KV-001..KV-129)
+### Known Vectors Results (KV-001..KV-131)
 
 ```
 [PASS]      KV-001: {reason}
@@ -334,7 +334,7 @@
               File: {path:line}
               Impact: {what can go wrong}
               Fix: {what to change}
-...through KV-129
+...through KV-131
 ```
 
 ---
@@ -356,7 +356,7 @@
 
 | Metric | Value |
 |--------|-------|
-| Total known vectors | 129 |
+| Total known vectors | 131 |
 | PASS | <!-- N --> |
 | FAIL | <!-- N --> |
 | PARTIAL | <!-- N --> |

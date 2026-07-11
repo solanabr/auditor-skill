@@ -208,6 +208,47 @@ grep -rn -E "is_signer" programs/     # is there a de-escalation check before ex
 
 ---
 
+## 8. Per-CPI-call-site checklist — run at EVERY CPI site
+
+Most CPI findings are one of a small, fixed set of omissions. Rather than re-deriving them per site,
+walk this list at **every** `invoke` / `invoke_signed` / `CpiContext` in the program. Each row points
+at the detailed treatment — this is the consolidated gate, not a re-explanation.
+
+- [ ] **Program-ID validated.** The invoked program account is a typed `Program<'info, T>` or checked
+  with `require_keys_eq!` against a hardcoded/known ID — never a bare `AccountInfo`/`UncheckedAccount`
+  as the CPI target, and still validated when forwarded from `remaining_accounts`. (§1 wrappers;
+  checklist 04 CPI-001..010.)
+- [ ] **`.reload()` after the CPI** on any account whose data is read again downstream — Anchor's
+  cached copy is stale post-CPI. (§4; checklist 04 RE-002/RE-003. Native/raw-`invoke` paths
+  additionally re-assert `owner` manually — RE-007.)
+- [ ] **PDA signer-seed correctness.** `invoke_signed` / `CpiContext::new_with_signer` seeds match the
+  PDA derivation exactly (same components, same order) and use the **stored canonical bump**, not a
+  re-derived or user-supplied one. (§5 bump/seeds row; checklist 04 PDA-014..018.)
+- [ ] **Recursive-CPI / reentrancy exposure considered.** Treat the callee as able to call back into
+  this program (or into a shared account) mid-CPI — state mutations happen *before* the CPI
+  (checks-effects-interactions), and any post-CPI decision re-reads state. (checklist 04 RE-001/RE-004;
+  flash-loan/NAV dual RE-005.)
+- [ ] **Callee trust classified — immutable vs upgradeable.** Is the target program immutable (safe to
+  treat as fixed) or **upgradeable** (its code — and thus its behavior — can change under you)? An
+  upgradeable external callee is an ongoing trust assumption: pin the ID, prefer immutable/known
+  targets, and record the dependency in the report's Assumptions & Simplifications. For an
+  attacker-*chosen* callee, no trust is possible — bound the blast radius (per-user PDA authority,
+  de-escalated signers per §7, lamport-drain guard RE-006).
+
+**Auditor check**
+- ✅ PASS: every CPI site clears all five rows — program ID pinned, reload/owner re-checked where
+  reused, signer seeds + stored bump correct, reentrancy accounted for, and the callee's
+  mutability/trust is explicit.
+- ❌ FAIL: any CPI site missing one — an unvalidated target, a stale post-CPI read, a mismatched/
+  user-supplied bump, an unguarded reentrancy path, or an upgradeable/attacker-chosen callee trusted
+  without pinning or blast-radius limits.
+
+```
+grep -rn -E "::invoke|invoke_signed|CpiContext" programs/    # enumerate every CPI site, walk the five rows at each
+```
+
+---
+
 ## Anchor idiom checklist (fast pass)
 
 - [ ] No `AccountInfo`/`UncheckedAccount` for typed data without a real `/// CHECK:` + manual check (§1)
@@ -219,3 +260,4 @@ grep -rn -E "is_signer" programs/     # is there a de-escalation check before ex
 - [ ] No duplicate-mutable-account aliasing (§5)
 - [ ] Descriptive `#[error_code]`; no `unwrap()`/`expect()`/`panic!` in handlers (§6)
 - [ ] Signers de-escalated before external CPIs (`!is_signer` on forwarded non-signing accounts); per-user PDA authority limits blast radius (§7)
+- [ ] Every CPI site cleared the **per-CPI checklist** — program-ID validated, `.reload()`/owner re-checked, signer seeds + stored bump correct, reentrancy considered, callee trust (immutable vs upgradeable) classified (§8)

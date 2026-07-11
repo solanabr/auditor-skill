@@ -77,6 +77,10 @@ The number above is the **impact** score. A high-impact mechanism with a **low-l
 
 There is no separate "Suggestion" tier — hardening ideas live at severity 1-2 (Informational), not as a distinct class.
 
+### Notes & Nitpicks (below severity 1)
+
+Not every observation is a finding. Issues with **no security impact** — style, naming, redundant code, micro-optimizations, documentation gaps — are NOT scored on the 1–10 scale. Collect them in a separate **Notes & Nitpicks** list in the report (mirrors Ackee's *Warning* and Neodyme's *nit-pick* tiers): a bulleted `file:line — observation` list, no severity, no remediation-tracking obligation. This keeps the findings table reserved for genuine security issues and prevents nit-inflation from diluting the severity signal. A note graduates to a severity-1 Informational finding only if it carries a concrete (if minor) security implication.
+
 ### Overall Repository Risk Score
 
 After all items are checked, compute the **Repository Risk Score**:
@@ -228,7 +232,7 @@ Every single checklist item and every known attack vector MUST appear in the rep
 
 ### Ordering
 
-Items listed in **checklist order** (AV-001, AV-002, ..., PC-060, AI-001, ..., RS-017), followed by known vectors in order (KV-001 through KV-129). Never reorder or group by verdict.
+Items listed in **checklist order** (AV-001, AV-002, ..., PC-060, AI-001, ..., RS-017), followed by known vectors in order (KV-001 through KV-131). Never reorder or group by verdict.
 
 ---
 
@@ -403,7 +407,7 @@ The report MUST include computed metrics at the end of the Item Results section.
 
 | Metric | Value |
 |--------|-------|
-| Total known vectors | 129 |
+| Total known vectors | 131 |
 | PASS | {N} |
 | FAIL | {N} |
 | PARTIAL | {N} |
