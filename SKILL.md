@@ -63,76 +63,22 @@ Checklists outside this set are **never read** — a Rust-only repo never loads 
 | `references/orchestration/poc-harness.md` | building an executable PoC or fix patch (`/auditor:poc`, `/auditor:patch`) — harness-framework selection or recording a `[PoC-*]` / `[FIX-*]` evidence tier |
 | `references/audit-lifecycle/methodology.md` | running `/audit-cycle` or `/audit-assist` (our method) |
 | `references/audit-lifecycle/firm-coverage.md` | choosing methodology / understanding firm practice |
+| `references/report-format.md` | assembling the final report (Phase 5 / audit-reporter) |
 
 ---
 
-## Folder Structure
-
-```
-auditor-skill/
-├── README.md                         ← Start here — setup, usage, contributing guide
-├── SKILL.md                          ← YOU ARE HERE (orchestrator — AI agent reads this first)
-├── OUTPUT-RULES.md                   ← MANDATORY output format, severity scale, chunked execution
-├── FULL-AUDIT.md                     ← Master execution plan for complete repo audits
-├── QUESTIONS.md                      ← Pre-audit questionnaire (user fills before running)
-├── COSTS.md                          ← Estimated token/dollar costs by model and repo size
-│
-├── known-vectors/                    ← Individual attack vector files (open-source friendly)
-│   ├── INDEX.md                           One-line index of all vectors
-│   ├── 001-private-key-leak.md            Severity 10 — crypto
-│   ├── 002-flash-loan-price-manipulation.md
-│   ├── ...                                (131 individual vector files)
-│   └── 100-insufficient-backup-disaster-recovery.md
-│
-├── checklists/                       ← 20 micro-checklists (the core verification items)
-│   ├── 01-program-account-validation.md   (88 items)  — Solana/Anchor
-│   ├── 02-program-access-control.md       (50 items)  — Solana/Anchor
-│   ├── 03-program-arithmetic-safety.md    (63 items)  — Solana/Anchor
-│   ├── 04-program-cpi-pda.md             (70 items)  — Solana/Anchor
-│   ├── 05-program-state-machine.md        (72 items)  — Solana/Anchor
-│   ├── 06-program-economic-logic.md       (89 items)  — Solana/Anchor
-│   ├── 07-program-opsec-governance.md     (85 items)  — Operations
-│   ├── 08-typescript-safety.md            (60 items)  — TypeScript
-│   ├── 09-backend-security.md            (103 items)  — Express/Node
-│   ├── 10-frontend-security.md            (76 items)  — React/Next.js
-│   ├── 11-supply-chain.md                 (46 items)  — All languages
-│   ├── 12-secrets-opsec.md                (53 items)  — All languages
-│   ├── 13-deployment-infrastructure.md    (79 items)  — All languages
-│   ├── 14-python-safety.md                (82 items)  — Python
-│   ├── 15-general-language-safety.md      (88 items)  — Go/Java/Ruby/PHP/any
-│   ├── 16-formal-verification-testing.md  (71 items)  — All languages (CertiK FV + OWASP A10)
-│   ├── 17-logging-monitoring-incident-response.md (63 items) — All languages (Skynet + SOC 2 + OWASP A09)
-│   ├── 18-privacy-compliance-change-management.md (60 items) — All languages (SOC 2 + EY + GDPR + AI/ML)
-│   ├── 19-ai-agent-security.md            (31 items)  — AI agents on Solana (ToB agentic vectors ported)
-│   └── 20-rust-offchain-services.md       (17 items)  — Off-chain Rust (geyser/indexers/keeper bots)
-│
-├── discovery/                        ← File patterns and search commands
-│   ├── file-map.md                        Maps checklists → target files/globs
-│   └── grep-commands.md                   All grep/terminal commands by category
-│
-└── templates/                        ← Output templates
-    ├── report-template.md                 Full audit report structure (11 sections)
-    └── instruction-worksheet.md           Per-instruction deep-review form
-```
+Full repository layout → [README.md](README.md#folder-structure).
 
 ---
 
 ## Severity Scale (1–10)
 
-| Score | Label | Action |
-|-------|-------|--------|
-| **10** | 🔴 CRITICAL | Permissionless fund drain — **block deploy** |
-| **9** | 🔴 CRITICAL | Fund loss, minimal preconditions — **block deploy** |
-| **8** | 🟠 HIGH | Partial drain, specific preconditions — **fix before release** |
-| **7** | 🟠 HIGH | Significant damage, privilege escalation — **fix before release** |
-| **6** | 🟡 MEDIUM | State corruption, DoS, limited economic damage — **fix within 2 weeks** |
-| **5** | 🟡 MEDIUM | Logic bugs, moderate info leak — **fix within 2 weeks** |
-| **4** | 🔵 LOW | Minor info leak, security-relevant code quality — **next sprint** |
-| **3** | 🔵 LOW | Missing best practice, theoretical risk — **next sprint** |
-| **2** | ⚪ INFO | Hardening suggestion — **backlog** |
-| **1** | ⚪ INFO | Cosmetic, no security impact — **optional** |
+- **10–9 🔴 CRITICAL** — fund drain / fund loss → **block deploy**
+- **8–7 🟠 HIGH** — partial drain, privilege escalation, significant damage → **fix before release**
+- **6–5 🟡 MEDIUM** — state corruption, DoS, logic bugs, moderate info leak → **fix soon**
+- **4–1 🔵 LOW / ⚪ INFO** — minor leak, missing best practice, hardening, cosmetic → **next sprint / backlog**
 
-Full severity decision guide: see [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 1.
+Full severity table + decision guide: see [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 1.
 
 ---
 
@@ -157,56 +103,11 @@ If context was lost, a file was too large, or a pattern is unfamiliar — say so
 
 ## Audit Modes
 
-### Mode 1: FULL Repository Audit
-
-**When to use:** Complete security review of the entire codebase.
-
-**Execution:**
-1. Read [OUTPUT-RULES.md](OUTPUT-RULES.md) — the output format is mandatory
-2. Read [FULL-AUDIT.md](FULL-AUDIT.md) — follow it from top to bottom
-3. Use [discovery/file-map.md](discovery/file-map.md) to locate target files
-4. Use [discovery/grep-commands.md](discovery/grep-commands.md) for automated scanning
-5. For on-chain instructions, fill [templates/instruction-worksheet.md](templates/instruction-worksheet.md) per instruction
-6. Generate the report using [templates/report-template.md](templates/report-template.md)
-
-### Mode 2: Targeted Checklist Audit
-
-**When to use:** Review a specific domain or subset of files.
-
-**Execution:**
-1. Read [OUTPUT-RULES.md](OUTPUT-RULES.md)
-2. Read the relevant checklist(s) from `checklists/`
-3. Walk through target files one at a time
-4. Record every item verdict, report findings inline
-
-### Mode 3: Single Instruction / Function Review
-
-**When to use:** Deep-dive into one handler, endpoint, or function.
-
-**Execution:**
-1. Read the source file completely
-2. Fill out [templates/instruction-worksheet.md](templates/instruction-worksheet.md)
-3. Cross-reference with related code that shares state
-
-### Mode 4: Differential / PR-Scoped Audit
-
-**When to use:** A PR, commit range, or branch — not the whole tree. Command: `/auditor:diff-audit`.
-
-**Execution:**
-1. Changed set: `git diff --name-only <base>..<head>` (default `main..HEAD`).
-2. Phase 0.5 context reconstruction on changed functions + 1-hop callers/callees.
-3. Risk-classify changed files (auth / crypto / value-transfer / validation-removal = HIGH); git-blame removed security code — a deletion in a "fix"/"CVE" commit is a CRITICAL regression.
-4. Run only the checklist items + known-vectors matching the changed files' language/domain, through the Rule 5b gate.
-5. Abbreviated report (`audit_<n>/PR-REPORT.md`) — changed-surface verdicts only. Reuses the methodology corpus; skips whole-repo discovery. *(Pattern credit: Trail of Bits `differential-review`.)*
-
-### Mode 5: Spec-Compliance Audit
-
-**When to use:** A spec / whitepaper / RFC is supplied and you need code-vs-spec conformance. Command: `/auditor:spec-audit`.
-
-**Execution:**
-1. Extract a requirement list (Spec-IR) from the spec.
-2. Phase 0 setup + Phase 0.5; map each instruction / state field to the spec's stated behavior.
-3. Compliance Matrix: each requirement → `[MET]` / `[VIOLATED-N]` / `[UNIMPLEMENTED]` / `[UNDOCUMENTED-BEHAVIOR]`, cited to code `L#`. Any `[VIOLATED-N≥6]` passes the Rule 5b gate; `[UNDOCUMENTED-BEHAVIOR]` (code does something the spec never authorizes) is itself a finding. *(Pattern credit: Trail of Bits `spec-to-code-compliance`.)*
+- **Mode 1 — FULL Repository Audit.** Complete security review of the entire codebase. → Read [OUTPUT-RULES.md](OUTPUT-RULES.md), then follow [FULL-AUDIT.md](FULL-AUDIT.md) top to bottom (discovery, per-instruction review, report via [templates/report-template.md](templates/report-template.md)).
+- **Mode 2 — Targeted Checklist Audit.** Review a specific domain or subset of files. → Read [OUTPUT-RULES.md](OUTPUT-RULES.md) + the relevant `checklists/` file, walk target files one at a time, record every verdict inline.
+- **Mode 3 — Single Instruction / Function Review.** Deep-dive into one handler, endpoint, or function. → Read the source completely, fill [templates/instruction-worksheet.md](templates/instruction-worksheet.md), cross-reference shared-state code.
+- **Mode 4 — Differential / PR-Scoped Audit.** A PR, commit range, or branch — not the whole tree. → Command `/auditor:diff-audit` (changed-set → Phase 0.5 on changed fns + 1-hop → risk-classify + git-blame removed guards → in-scope items through Rule 5b → `audit_<n>/PR-REPORT.md`).
+- **Mode 5 — Spec-Compliance Audit.** A spec / whitepaper / RFC is supplied and you need code-vs-spec conformance. → Command `/auditor:spec-audit` (Spec-IR requirement list → map each instruction/state field → Compliance Matrix through the Rule 5b gate).
 
 ---
 
@@ -246,21 +147,7 @@ An auditor talks itself out of real findings with lines like these. Treat each a
 
 ## Language → Checklist Mapping
 
-| Language | File Extensions | Checklists |
-|----------|----------------|------------|
-| Rust (Solana/Anchor) | `.rs` | 01–07 |
-| TypeScript | `.ts` | 08 |
-| TypeScript (backend) | `.ts` (in backend/) | 08 + 09 |
-| React/Next.js | `.tsx` | 08 + 10 |
-| Python | `.py` | 14 |
-| Go | `.go` | 15 (Go section) |
-| Java/Kotlin | `.java`, `.kt` | 15 (Java section) |
-| Ruby | `.rb` | 15 (Ruby section) |
-| PHP | `.php` | 15 (PHP section) |
-| Other | any | 15 (sections 15.1–15.8) |
-| Rust (off-chain services) | `.rs` outside `programs/` | 20 |
-| AI / agent components | `.mcp.json`, agent SDKs, `Keypair` in agent code | 19 |
-| **Always applied** | any repo | 11, 12, 13, 16, 17, 18 |
+Authoritative mapping → **Scope-Gated Loading, Step 2** (scope table) above. Detected extension/marker → in-scope checklist set; always-applied (any repo): 11, 12, 13, 16, 17, 18.
 
 ---
 
@@ -328,13 +215,9 @@ Run auditor-skill on this Go/Java/Ruby/PHP project — it will auto-detect and a
 
 ## Recording Format
 
-For every checklist item, record one of:
-- `[PASS]` — verified secure, must cite file that proves it
-- `[FAIL-N]` — vulnerability found, N = severity 1-10, must include file:line + impact + fix
-- `[PARTIAL]` — partially implemented, must describe what's missing
-- `[N/A]` — not applicable, must include reason why
+For every checklist item, record one of: `[PASS]` · `[FAIL-N]` · `[PARTIAL]` · `[N/A]`.
 
-Full format rules: see [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 4.
+Full verdict-format rules (what each token must cite): see [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 4.
 
 ---
 

@@ -9,16 +9,28 @@
 
 Every audit consumes tokens in two categories:
 
-### Fixed Cost (same for every repo)
+> Token figures below use the **~4 chars/token** rule of thumb (measured against the on-disk corpus). "Fixed" means *always loaded, every audit regardless of repo*. Scope-gating and trigger-gating (Rule 0 + SKILL Scope-Gated Loading) moved the checklists, known-vectors, and references out of the fixed floor: only the in-scope subset is ever read.
+
+### Fixed Cost (always-loaded core — same for every repo)
 | Component | Tokens | Notes |
 |-----------|--------|-------|
-| auditor-skill files (SKILL.md, OUTPUT-RULES.md, FULL-AUDIT.md) | ~15K | Read once at start |
-| Checklists (20 files, 1,346 items) | ~60K | Loaded per phase |
-| Known vectors (131 procedures) | ~34K | Loaded per phase/language trigger |
-| Templates + discovery files | ~5K | |
-| **Fixed total** | **~110K** | Same regardless of repo size |
+| SKILL.md (orchestrator) | ~5K | Read once at start |
+| OUTPUT-RULES.md (review-time rules; report-time format lazy-split to `references/report-format.md`) | ~5K | Read once at start |
+| FULL-AUDIT.md (execution plan) | ~6K | Read once at start |
+| **Fixed total** | **~14–15K** | Same regardless of repo size |
 
-### Variable Cost (scales with repo)
+### Variable Cost (scales with repo — only the in-scope subset loads)
+
+**Corpus loaded on demand.** Scope-gated / trigger-gated — a Rust-only repo never loads the Python or TS checklists; a vector loads only when its phase + language/domain trigger fires; a `references/` file loads only when its grep marker matches. The figures are full-corpus upper bounds; a typical single-language audit reads a fraction.
+
+| Component | Tokens (full corpus, upper bound) | Loaded when |
+|-----------|-----------------------------------|-------------|
+| Checklists (20 files, 1,346 items) | ~50K | per detected language / phase — in-scope only |
+| Known vectors (131 procedures) | ~90K | per phase + language/domain trigger — in-scope only |
+| References (framework idioms, methodologies, orchestration, report-format) | ~100K | per grep marker — only the matched file |
+| Templates + discovery files | ~32K | when a template/discovery step is reached |
+
+**Code + scanning (scales with LOC):**
 | Component | Formula | Notes |
 |-----------|---------|-------|
 | Code reading | ~10 tokens per line of code | Each file read completely |

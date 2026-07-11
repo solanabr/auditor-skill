@@ -23,12 +23,7 @@ Before starting any phase:
 
 ## PHASE -1: SCOPE DECLARATION
 
-Do NOT bulk-read the corpus. Discover the repo, declare scope, load on demand.
-
-**ACTION:**
-1. Discover: enumerate extensions + markers (`Anchor.toml`, `Cargo.toml`, `package.json`, `*.py`, `.github/`).
-2. Declare the IN-SCOPE checklist set from detected languages + `--scope` (see [SKILL.md](SKILL.md) → Scope-Gated Loading).
-3. Record a **Scope Coverage** table:
+Declare scope per OUTPUT-RULES Rule 0 + SKILL Scope-Gated Loading; record the Scope Coverage table below (per checklist/vector group: in-scope yes/no + trigger).
 
 | Checklist / vector group | In scope? | Trigger |
 |--------------------------|-----------|---------|
@@ -39,10 +34,6 @@ Do NOT bulk-read the corpus. Discover the repo, declare scope, load on demand.
 | 19 AI-agent | yes/no | `.mcp.json` / agent SDK |
 | 20 off-chain Rust | yes/no | `.rs` outside `programs/` |
 | 11–13, 16–18 universal | yes | any repo |
-
-4. Load `OUTPUT-RULES.md` once (always in scope). Load checklists/vectors on demand as each phase reaches them.
-
-**COMPLETENESS (output-side):** the audit is complete iff every in-scope item + phase-triggered vector has a verdict. Out-of-scope items render `[N/A — out of scope: <reason>]` from the gate, not from reading the file.
 
 ---
 
@@ -601,40 +592,7 @@ Save to: audit_{N}/roadmap.md
 
 ### Walk The Code — Never One-Shot
 
-Repositories vary from 10 files to 10,000 files. The auditor MUST NOT attempt to process everything at once.
-
-**Chunked Execution:**
-1. **1 instruction file per chunk** (on-chain) — read it fully, run checklists 01-04, record findings
-2. **1 route file + its service per chunk** (backend) — read both, run checklist 09
-3. **2-3 components per chunk** (frontend) — read them, run checklist 10
-4. After EACH chunk, **save a checkpoint** to session memory
-
-**Checkpoint Protocol:**
-```markdown
-## Audit Checkpoint — {timestamp}
-
-### Progress
-- Phase: {0/1/2/3/4/5}
-- Step: {X.Y}
-- Files reviewed: {list}
-- Files remaining: {list}
-- Current checklist: {number}
-- Last item checked: {ID}
-
-### Findings So Far
-- F-001: [severity 8] {title} @ {file:line}
-- F-002: [severity 5] {title} @ {file:line}
-
-### Item Verdicts So Far
-- [PASS] AV-001: {reason}
-- [FAIL-8] AV-015: {reason}
-...
-
-### Next Action
-- Read {next file} and continue checklist {XX} from item {YYY}
-```
-
-**If context is lost:** Read the checkpoint from session memory and resume from `Next Action`.
+Chunking (chunk sizes per surface: 1 instruction file / 1 route + service / 2-3 components) + checkpoint format → OUTPUT-RULES.md Rule 3. Save a checkpoint after each chunk; if context is lost, resume from the checkpoint's `Next Action`.
 
 ### Parallelization
 - Steps 2.1, 2.2, 2.3 are independent — can run grep commands in parallel
@@ -649,9 +607,4 @@ Repositories vary from 10 files to 10,000 files. The auditor MUST NOT attempt to
 - `DEVOPS`: Checklists 07, 11-13, 16-18 (opsec + supply chain + secrets + deployment + verification + monitoring + compliance)
 
 ### Language Auto-Detection
-See OUTPUT-RULES.md Rule 7. The auditor scans file extensions and applies the correct checklists:
-- `.rs` → 01-07
-- `.ts`/`.tsx` → 08-10
-- `.py` → 14
-- `.go`/`.java`/`.rb`/`.php`/other → 15
-- Always: 11, 12, 13, 16, 17, 18
+Language → checklist mapping is authoritative in [SKILL.md](SKILL.md) → Scope-Gated Loading, Step 2 (scope table); see also OUTPUT-RULES.md Rule 7. The auditor scans file extensions/markers and applies the correct checklists.
