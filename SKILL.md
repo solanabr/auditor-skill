@@ -60,6 +60,7 @@ Checklists outside this set are **never read** — a Rust-only repo never loads 
 | `references/false-positives.md` | triaging any finding before reporting severity ≥ 6 |
 | `references/orchestration/boundary-map.md` | delegating to vendored Trail of Bits tooling |
 | `references/orchestration/pre-scan.md` | running the deterministic Rust pre-scanner (`audit-scan`) or the cross-audit memory store (`audit-mem`) |
+| `references/orchestration/poc-harness.md` | building an executable PoC or fix patch (`/auditor:poc`, `/auditor:patch`) — harness-framework selection or recording a `[PoC-*]` / `[FIX-*]` evidence tier |
 | `references/audit-lifecycle/methodology.md` | running `/audit-cycle` or `/audit-assist` (our method) |
 | `references/audit-lifecycle/firm-coverage.md` | choosing methodology / understanding firm practice |
 

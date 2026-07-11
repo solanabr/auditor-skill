@@ -324,6 +324,18 @@ A *rejected* finding looks like this: "input ≥ 16 and header = 8 ⟹ input −
 
 **Accepted PoC forms.** A runnable exploit is ideal but not the only proof. For access-control / logic findings a **structured attacker-narrative** is a first-class PoC: *actor → capability → numbered steps → guard bypassed → quantified outcome* (e.g. Alice deposits; Eve substitutes her key at `L88`; drains ~$X). And when the **missing check is provable at `file:line`** but the full exploit math can't be confirmed in the engagement window, you MAY still report at severity **provided** the finding carries explicit uncertainty phrasing and states exactly what remains unproven — do not mechanically bury a real syntactic gap as `[UNCONFIRMED]`.
 
+**PoC-evidence tier (tag the proof, orthogonal to severity).** When an executable PoC is built (via `/auditor:poc` → [references/orchestration/poc-harness.md](references/orchestration/poc-harness.md)), tag the finding with the strongest tier achieved. Executable **outranks** prose, but prose is **never removed** — an unbuildable target still yields a full finding:
+
+| Tier | Meaning |
+|------|---------|
+| `[PoC-REPRODUCED]` | Executable harness in `poc/F-xxx/` runs (Mollusk/LiteSVM): exploit **succeeds on the `vulnerable` arm and is rejected on `fixed`**. Gold standard. |
+| `[PoC-SIM-REPRODUCED]` | Reproduced on a Surfpool mainnet-fork with a **quantified net P/L** (economic/oracle/MEV). |
+| `[PoC-FUZZ-REPRODUCED]` | A fuzzer (Trident/cargo-fuzz) produced a committed **crash/invariant-breaking artifact** that deterministically triggers it. |
+| `[PoC-ATTEMPTED]` | Harness generated but could not confirm (toolchain absent, could not minimize, fork state unavailable). Blocker named; **prose PoC retained**; severity unchanged. |
+| `[PoC-PROSE]` | Structured attacker-narrative only — the accepted default for access-control/logic findings and whenever a harness is impractical. |
+
+**Fix-evidence tier (the patch side).** When `/auditor:patch` proposes a remediation diff, tag its verification (feeds the report's **Auditor Verification** field): `[FIX-VERIFIED]` (patch applied to a scratch worktree; the finding's PoC now reverts — optionally a mutant on the patched line is caught) > `[FIX-INSUFFICIENT]` (residual path still reproduces → mirrors `/re-audit` PARTIALLY-FIXED) > `[FIX-PROPOSED]` (diff is idiomatic and closes the cited bound, but no executable PoC was available to run the revert). Never claim `[FIX-VERIFIED]` without an executed revert.
+
 ---
 
 ## Rule 6: Report Sections Order

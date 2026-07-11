@@ -21,8 +21,8 @@ If absent (submodule not initialized), run the native fallback and note in the r
 | Capability | ToB plugin (`vendor/trailofbits/plugins/…`) | auditor-skill use | Native fallback |
 |------------|---------------------------------------------|-------------|-----------------|
 | Interprocedural SAST (taint) | `static-analysis`, `semgrep-rule-creator`, `variant-analysis` | `vuln-hunter` runs SAST over in-scope languages; fold SARIF into verdicts | `discovery/grep-commands.md` scanners |
-| Property / fuzz harnesses | `testing-handbook-skills`, `property-based-testing` | generate + run a harness for any ≥High arithmetic/economic finding (the Rule 5b PoC) | checklist 16 "does the suite exist" prose checks |
-| Coverage & mutation | `testing-handbook-skills`, `mutation-testing` | evidence-back FV coverage items; an uncaught mutant downgrades the corresponding checklist PASS | FV items marked `[PARTIAL — not machine-verified]` |
+| Property / fuzz harnesses | `testing-handbook-skills`, `property-based-testing` | generate + run a harness for any ≥High arithmetic/economic finding (the Rule 5b PoC); `/auditor:poc` orchestrates this | checklist 16 "does the suite exist" prose checks |
+| Coverage & mutation | `testing-handbook-skills`, `mutation-testing` | evidence-back FV coverage items; an uncaught mutant downgrades the corresponding checklist PASS; `/auditor:patch --verify-with-mutation` uses a caught mutant on the patched line as fix evidence | FV items marked `[PARTIAL — not machine-verified]` |
 | Secret zeroization (IR-level) | `zeroize-audit` | verify KV-112 / RS-015 at the IR level | grep `zeroize`/`Zeroizing` on secret-bearing types |
 | Constant-time (custom crypto) | `constant-time-analysis` | check secret-dependent branches when custom crypto is present | note "manual constant-time review needed" |
 | Entry-point enumeration | `entry-point-analyzer` | seed the Phase 0 instruction matrix (has native Solana support) | manual `#[instruction]` enumeration |
