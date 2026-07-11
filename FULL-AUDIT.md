@@ -23,12 +23,7 @@ Before starting any phase:
 
 ## PHASE -1: SCOPE DECLARATION
 
-Do NOT bulk-read the corpus. Discover the repo, declare scope, load on demand.
-
-**ACTION:**
-1. Discover: enumerate extensions + markers (`Anchor.toml`, `Cargo.toml`, `package.json`, `*.py`, `.github/`).
-2. Declare the IN-SCOPE checklist set from detected languages + `--scope` (see [SKILL.md](SKILL.md) → Scope-Gated Loading).
-3. Record a **Scope Coverage** table:
+Declare scope per OUTPUT-RULES Rule 0 + SKILL Scope-Gated Loading; record the Scope Coverage table below (per checklist/vector group: in-scope yes/no + trigger).
 
 | Checklist / vector group | In scope? | Trigger |
 |--------------------------|-----------|---------|
@@ -39,10 +34,6 @@ Do NOT bulk-read the corpus. Discover the repo, declare scope, load on demand.
 | 19 AI-agent | yes/no | `.mcp.json` / agent SDK |
 | 20 off-chain Rust | yes/no | `.rs` outside `programs/` |
 | 11–13, 16–18 universal | yes | any repo |
-
-4. Load `OUTPUT-RULES.md` once (always in scope). Load checklists/vectors on demand as each phase reaches them.
-
-**COMPLETENESS (output-side):** the audit is complete iff every in-scope item + phase-triggered vector has a verdict. Out-of-scope items render `[N/A — out of scope: <reason>]` from the gate, not from reading the file.
 
 ---
 
@@ -515,24 +506,40 @@ RECORD: privacy, compliance & change management findings
 
 ### Step 4.4 — Known Attack Vectors (all in-scope, KV-001..131)
 
+Do NOT bulk-read all 131 vector files — that nullifies the scope gate. Load each in-scope vector **only when its `known-vectors/INDEX.md` trigger fires** (phase + language + the vector's feature markers), driven by the prescan advisory manifest.
+
 ```
 ACTIONS:
 
-  1. Read known-vectors/INDEX.md
-  2. Read every file known-vectors/001-*.md through known-vectors/131-*.md
-  3. For each vector, record one verdict:
+  1. Read known-vectors/INDEX.md — use its "Load when (markers)" column as the trigger table.
+  2. For EACH in-scope vector (per Phase -1 scope):
+       a. If the vector's markers are `always (<phase>)` → OPEN the vector file and evaluate it.
+       b. Else check its feature markers against evidence:
+            - the audit-scan prescan array (references/orchestration/pre-scan.md), and
+            - a grep over the in-scope tree.
+          If EVERY marker is PROVABLY ABSENT (empty prescan array OR zero grep hits) →
+            record  [N/A — feature absent: <marker>]  from the gate (an evidence-backed verdict).
+          Otherwise → OPEN the vector file and evaluate it.
+  3. For each opened vector, record one verdict:
        [PASS] / [FAIL-{1-10}] / [PARTIAL] / [N/A]
-  4. Add evidence line(s): file:line or command output reference
+  4. Add evidence line(s): file:line, prescan field, or command output reference.
 
 RECORD format:
-  - KV-001: [PASS] ...
-  - KV-002: [PARTIAL] ...
+  - KV-001: [PASS] ...                             (always-load, evaluated)
+  - KV-005: [N/A — feature absent: pyth/switchboard/oracle]   (skip-deferred from gate)
   ...
   - KV-131: [FAIL-7] ...
 
-HARD RULE:
-  Every in-scope KV item must have a verdict. Out-of-scope vectors render
-  [N/A — out of scope: <reason>] from the scope gate (Rule 0).
+HARD RULE (completeness — OUTPUT-RULES Rule 0):
+  Every in-scope KV item still has a verdict. A skip-deferred `[N/A — feature absent]` is an
+  evidence-backed verdict, NOT a silent skip — and it REOPENS on demand: because the prescan
+  under-reports (macros / trait dispatch, per its honesty rule), the instant a manual file read
+  surfaces the missing feature (e.g. a `CpiContext` the scan missed), OPEN and evaluate that
+  vector. No bug becomes unreachable. Out-of-scope vectors render
+  [N/A — out of scope: <reason>] from the scope gate.
+
+See: known-vectors/INDEX.md (Load-when trigger column) · references/orchestration/pre-scan.md
+     (Evidence-driven load gating manifest).
 ```
 
 ---
@@ -601,40 +608,7 @@ Save to: audit_{N}/roadmap.md
 
 ### Walk The Code — Never One-Shot
 
-Repositories vary from 10 files to 10,000 files. The auditor MUST NOT attempt to process everything at once.
-
-**Chunked Execution:**
-1. **1 instruction file per chunk** (on-chain) — read it fully, run checklists 01-04, record findings
-2. **1 route file + its service per chunk** (backend) — read both, run checklist 09
-3. **2-3 components per chunk** (frontend) — read them, run checklist 10
-4. After EACH chunk, **save a checkpoint** to session memory
-
-**Checkpoint Protocol:**
-```markdown
-## Audit Checkpoint — {timestamp}
-
-### Progress
-- Phase: {0/1/2/3/4/5}
-- Step: {X.Y}
-- Files reviewed: {list}
-- Files remaining: {list}
-- Current checklist: {number}
-- Last item checked: {ID}
-
-### Findings So Far
-- F-001: [severity 8] {title} @ {file:line}
-- F-002: [severity 5] {title} @ {file:line}
-
-### Item Verdicts So Far
-- [PASS] AV-001: {reason}
-- [FAIL-8] AV-015: {reason}
-...
-
-### Next Action
-- Read {next file} and continue checklist {XX} from item {YYY}
-```
-
-**If context is lost:** Read the checkpoint from session memory and resume from `Next Action`.
+Chunking (chunk sizes per surface: 1 instruction file / 1 route + service / 2-3 components) + checkpoint format → OUTPUT-RULES.md Rule 3. Save a checkpoint after each chunk; if context is lost, resume from the checkpoint's `Next Action`.
 
 ### Parallelization
 - Steps 2.1, 2.2, 2.3 are independent — can run grep commands in parallel
@@ -649,9 +623,4 @@ Repositories vary from 10 files to 10,000 files. The auditor MUST NOT attempt to
 - `DEVOPS`: Checklists 07, 11-13, 16-18 (opsec + supply chain + secrets + deployment + verification + monitoring + compliance)
 
 ### Language Auto-Detection
-See OUTPUT-RULES.md Rule 7. The auditor scans file extensions and applies the correct checklists:
-- `.rs` → 01-07
-- `.ts`/`.tsx` → 08-10
-- `.py` → 14
-- `.go`/`.java`/`.rb`/`.php`/other → 15
-- Always: 11, 12, 13, 16, 17, 18
+Language → checklist mapping is authoritative in [SKILL.md](SKILL.md) → Scope-Gated Loading, Step 2 (scope table); see also OUTPUT-RULES.md Rule 7. The auditor scans file extensions/markers and applies the correct checklists.

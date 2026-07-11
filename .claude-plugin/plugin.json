@@ -1,6 +1,6 @@
 {
   "name": "auditor",
-  "version": "7.0.0",
+  "version": "7.1.0",
   "description": "Solana + full-stack security auditor: 20 checklists / 1,346 items / 131 known-vectors, severity 1-10, scope-gated loading. A full audit-firm lifecycle (automated + interactive), executable PoC + fix-patch delivery, a Rust pre-scanner + cross-audit memory for token efficiency, native rigor gates (context reconstruction, false-positive validation, maturity scorecard), and orchestrated Trail of Bits execution tooling (SAST, fuzzing, coverage, mutation).",
   "author": {
     "name": "solanabr",

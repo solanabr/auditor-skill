@@ -6,6 +6,17 @@
 
 Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{severity}]`, `[PARTIAL]`, or `[N/A]`.
 
+> **Feature-gated sections (advisory load).** Several sections here are feature-specific: if the feature is *provably absent* (empty prescan array or zero grep hits — see `references/orchestration/pre-scan.md`), you may spot-defer the section and render its items `[N/A — feature absent: <marker>]`. This is a token-efficiency layer only — **every item still gets a verdict per Rule 0**, and the section reopens the instant a manual read surfaces the feature.
+>
+> | Section | Feature | Markers |
+> |---------|---------|---------|
+> | §6.1 Flash Loan Attacks | flash-loan / atomic deposit-withdraw | `flash` · `flashloan` · atomic deposit→withdraw · oracle-priced shares |
+> | §6.9 Oracle Manipulation | price oracle | `pyth` · `switchboard` · `oracle` · `get_price` · `PriceUpdate` |
+> | §6.13 Bonding-Curve / AMM Integrity | bonding curve / AMM | `bonding_curve` · `virtual_reserves` · `curve` · `swap` · `reserve` |
+> | §6.15 TWAP / Internal Accumulator Hardening | TWAP accumulator | `twap` · `cumulative` · `observation` · `time_weighted` · `last_update` |
+>
+> Sections without a feature gate (fees, NAV, first-depositor, DoS, staking, slippage, vault) are evaluated for any value-moving program.
+
 ---
 
 ## 6.1 — Flash Loan Attacks

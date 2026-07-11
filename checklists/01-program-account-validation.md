@@ -6,6 +6,16 @@
 
 Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{severity}]`, `[PARTIAL]`, or `[N/A]`.
 
+> **Feature-gated sections (advisory load).** The three sub-sections below are feature-specific: if the feature is *provably absent* (empty prescan array or zero grep hits — see `references/orchestration/pre-scan.md`), you may spot-defer the section and render its items `[N/A — feature absent: <marker>]`. Token-efficiency layer only — **every item still gets a verdict per Rule 0**, and the section reopens the instant a manual read surfaces the feature.
+>
+> | Section | Feature | Markers |
+> |---------|---------|---------|
+> | §1.8 SPL Token & Token-2022 Extension Safety | Token-2022 extensions | `token_2022` · `spl_token_2022` · `transfer_hook` · `TransferFee` · `get_extension` · `PermanentDelegate` |
+> | §1.9 Sysvar & Precompile Account Safety | sysvar / precompile use | `sysvar` · `instructions_sysvar` · `ed25519` · `secp256k1` · `load_instruction_at` |
+> | §1.10 Native / Pinocchio (No-Anchor) Program Safety | native / Pinocchio program | `pinocchio` · `p-token` · `no_std` · manual `AccountInfo` validation (absent when Anchor detected) |
+>
+> §1.1–1.7 and §1.11–1.12 are baseline account safety — evaluated for every on-chain program.
+
 ---
 
 ## 1.1 — Account Ownership Checks

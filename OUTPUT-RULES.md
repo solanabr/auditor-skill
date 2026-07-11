@@ -97,50 +97,7 @@ If highest finding ≤ 2: REPO SCORE = max(finding) (MINIMAL — clean)
 
 ## Rule 2: Executive Summary First
 
-Every audit output — regardless of size — MUST start with an **Executive Summary** block. This goes at the very top of the report.
-
-```markdown
-## Executive Summary
-
-**Repository:** {org/repo}
-**Commit:** {short SHA}
-**Date:** {YYYY-MM-DD}
-**Scope:** {FULL / PROGRAM / BACKEND / FRONTEND / DEVOPS}
-**Repository Risk Score:** {1-10} — {CRITICAL/HIGH/MEDIUM/LOW/MINIMAL}
-
-### What We Found
-
-{2-4 sentences in plain language. What was audited. What is the overall security posture.
-Highlight the most important finding(s) if any critical/high exist.
-State whether the code is safe to deploy or not.}
-
-### Severity Distribution
-
-| Score | Label | Count |
-|-------|-------|-------|
-| 10 | 🔴 CRITICAL | 0 |
-| 9 | 🔴 CRITICAL | 0 |
-| 8 | 🟠 HIGH | 0 |
-| 7 | 🟠 HIGH | 0 |
-| 6 | 🟡 MEDIUM | 0 |
-| 5 | 🟡 MEDIUM | 0 |
-| 4 | 🔵 LOW | 0 |
-| 3 | 🔵 LOW | 0 |
-| 2 | ⚪ INFO | 0 |
-| 1 | ⚪ INFO | 0 |
-| **Total Findings** | | **0** |
-
-### Items Verified
-
-| Metric | Count |
-|--------|-------|
-| Total checklist items | {N} |
-| PASS | {N} |
-| FAIL | {N} |
-| PARTIAL | {N} |
-| N/A | {N} |
-| Completion | {%} |
-```
+→ Report-assembly format moved to [references/report-format.md](references/report-format.md) § Rule 2 — Executive Summary (template + Severity Distribution + Items Verified tables); loaded at report time.
 
 ---
 
@@ -340,53 +297,17 @@ A *rejected* finding looks like this: "input ≥ 16 and header = 8 ⟹ input −
 
 ## Rule 6: Report Sections Order
 
-Every full audit report follows this exact section order:
-
-```
-1. Executive Summary          (Rule 2 — always first)
-2. Scope Coverage             (in-scope checklists / vector groups, items evaluated / total)
-3. Scope & Methodology        (languages, files, LOC, checklists applied)
-4. Findings                   (severity ≥ 4, full blocks, grouped by severity descending)
-5. Detailed Item Results      (all in-scope checklist items, item-by-item verdicts)
-6. Known Vector Results       (each in-scope KV, with verdict)
-7. Instruction Matrix         (on-chain only — if applicable)
-8. State Model Verification   (on-chain only — if applicable)
-9. Code Maturity Scorecard    (Phase 4.5 — 9 categories, 0-4)
-10. Remediation Roadmap       (by severity; maturity categories scoring <= 1 first)
-11. Appendices                (tool versions, environment, disclaimer)
-```
+→ Report-assembly format moved to [references/report-format.md](references/report-format.md) § Rule 6 — Report Sections Order; loaded at report time.
 
 ---
 
 ## Rule 7: Language Detection Is Automatic
 
-The auditor MUST auto-detect all languages present in the repository and apply the correct checklists.
+The auditor MUST auto-detect all languages present in the repository and apply the correct checklists. Record all detected languages in the report header.
 
 ### Detection Method
 
-```
-Step 1: Scan file extensions in the repo:
-  .rs          → Checklists 01-07 (Solana/Rust)
-  .ts / .tsx   → Checklist 08 (TypeScript Safety)
-  .ts (backend)→ Checklist 09 (Backend Security)  
-  .tsx (web)   → Checklist 10 (Frontend Security)
-  .py          → Checklist 14 (Python Safety)
-  .go          → Checklist 15, section 15.9 Go
-  .java / .kt  → Checklist 15, section 15.9 Java/Kotlin
-  .rb          → Checklist 15, section 15.9 Ruby
-  .php         → Checklist 15, section 15.9 PHP
-  Other        → Checklist 15, sections 15.1-15.8 (universal)
-
-Step 2: Always apply:
-  Checklist 11 (Supply Chain)
-  Checklist 12 (Secrets)
-  Checklist 13 (Deployment)
-
-Step 3: If Anchor.toml exists:
-  Apply Checklists 01-07 (Solana program)
-  
-Step 4: Record all detected languages in the report header
-```
+Language → checklist mapping is authoritative in [SKILL.md](SKILL.md) → Scope-Gated Loading, Step 2 (scope table). Apply it verbatim.
 
 ### Unsupported Language Handling
 
@@ -399,54 +320,13 @@ If a language has no dedicated checklist (e.g., Swift, Dart, Elixir):
 
 ## Rule 8: Metric Computation
 
-The report MUST include computed metrics at the end of the Item Results section.
-
-```markdown
-### Audit Metrics
-
-| Metric | Value |
-|--------|-------|
-| Total items evaluated | {N} |
-| PASS | {N} ({%}) |
-| FAIL | {N} ({%}) |
-| PARTIAL | {N} ({%}) |
-| N/A | {N} ({%}) |
-| **Pass rate** (excl. N/A) | **{%}** |
-| Highest severity found | {1-10} |
-| Repository Risk Score | **{1-10}** |
-
-### Known Vector Metrics
-
-| Metric | Value |
-|--------|-------|
-| Total known vectors | 131 |
-| PASS | {N} |
-| FAIL | {N} |
-| PARTIAL | {N} |
-| N/A | {N} |
-| Completion | {%} |
-
-### Per-Checklist Summary
-
-| # | Checklist | Items | Pass | Fail | Partial | N/A | Pass Rate |
-|---|-----------|-------|------|------|---------|-----|-----------|
-| 01 | Account Validation | 88 | | | | | % |
-| ... | ... | ... | ... | ... | ... | ... | ... |
-| **Total** | | **{N}** | | | | | **{%}** |
-```
+→ Report-assembly format moved to [references/report-format.md](references/report-format.md) § Rule 8 — Metric Computation (Audit Metrics / Known Vector Metrics / Per-Checklist Summary tables); loaded at report time.
 
 ---
 
 ## Rule 9: File Naming
 
-| Output | Filename |
-|--------|----------|
-| Full audit report | `audit_{N}/REPORT.md` |
-| Remediation roadmap | `audit_{N}/roadmap.md` |
-| Per-instruction worksheets | `audit_{N}/worksheets/{instruction_name}.md` |
-| Checkpoint (session) | session memory: `audit-checkpoint.md` |
-
-Where `{N}` is the next audit number (count existing `audit_*/` directories + 1).
+→ Report-assembly format moved to [references/report-format.md](references/report-format.md) § Rule 9 — File Naming; loaded at report time.
 
 ---
 
@@ -472,6 +352,4 @@ The `*` suffix + confidence note signals that manual double-checking may be warr
 
 ### `[UNCONFIRMED]` / `[UNDETERMINED]` — validation-gate outcomes
 
-A finding that could not complete the Rule 5b Reachability or Math/State-Bounds gate is recorded as `[UNCONFIRMED]` (suspected, but unreachable / unbounded as written) — reported for manual follow-up, and NOT counted as a confirmed FAIL in the severity metrics.
-
-`[UNDETERMINED]` is distinct: the path **is** reachable but its full impact could not be quantified within scope. Report it at its likely severity band with "extent not determined within this assessment" — a real, flagged finding, not a suppressed one.
+Both tokens are defined in Rule 5b. Recap: `[UNCONFIRMED]` = the gate failed on reachability or bounds — suspected but unreachable / unbounded as written; reported for manual follow-up, NOT counted as a confirmed FAIL. `[UNDETERMINED]` = reachable but full impact unquantified within scope; reported at its likely severity band, flagged.
