@@ -56,9 +56,9 @@ Files that fail to parse are skipped (best-effort).
   "accounts_structs": [
     { "name": "string", "file": "string", "line": 0,
       "fields": [
-        { "name": "string", "ty": "string",
+        { "name": "string", "ty": "string", "unchecked": false,
           "constraints": {
-            "init": false, "mut": false, "signer": false,
+            "init": false, "init_if_needed": false, "mut": false, "signer": false,
             "has_one": ["string"],       // each `has_one = X`
             "seeds": ["string"],         // each element of `seeds = [ ... ]`
             "bump": false,
@@ -98,6 +98,11 @@ Files that fail to parse are skipped (best-effort).
   "cpi_sites": [
     { "file": "string", "line": 0, "kind": "invoke|invoke_signed|CpiContext",
       "snippet": "string" }
+  ],
+
+  // field access on `remaining_accounts` (e.g. ctx.remaining_accounts.get(..)).
+  "remaining_accounts_sites": [
+    { "file": "string", "line": 0, "snippet": "string" }
   ],
 
   // every `ItemFn` and `ImplItemFn`.

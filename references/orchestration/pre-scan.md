@@ -24,11 +24,12 @@ It parses every `*.rs` (skipping `target/`, `.git/`, `node_modules/`) with a rea
 | Key | What it gives the auditor |
 |-----|---------------------------|
 | `instructions[]` | every `#[program]` handler + its typed args → **seeds Phase 0.3 instruction matrix** |
-| `accounts_structs[]` | every `#[derive(Accounts)]` struct, per-field parsed `#[account(...)]` constraints (`init`/`mut`/`signer`/`has_one`/`seeds`/`bump`/`close`/`owner`/`token::*`/`realloc`) + raw text → **seeds checklists 01/04** |
+| `accounts_structs[]` | every `#[derive(Accounts)]` struct, per-field parsed `#[account(...)]` constraints (`init`/`init_if_needed`/`mut`/`signer`/`has_one`/`seeds`/`bump`/`close`/`owner`/`token::*`/`realloc`) + `unchecked` flag for `UncheckedAccount` fields + raw text → **seeds checklists 01/04** |
 | `pdas[]` | every `seeds = [...]` catalog → **seeds checklist 04 PDA review** |
 | `arithmetic_sites[]` | every RAW `+ - * /` / `+= -= *= /=` with `file:line` → **the checklist-03 worklist** (LLM judges reachability; the tool does not) |
 | `panic_sites[]` | `unwrap`/`expect`/index/`panic!` sites → **checklist 03 / DoS review** |
 | `cpi_sites[]` | `invoke`/`invoke_signed`/`CpiContext` → **checklist 04 CPI review** |
+| `remaining_accounts_sites[]` | `.remaining_accounts` field access → **checklist 01 remaining-accounts review** |
 | `unsafe_blocks[]`, `functions[]` | `unsafe` surface + call-graph seed |
 
 **How the auditor consumes it.** Load `prescan.json` at Phase 0. Treat it as a *map of where to look*, not a set of findings — it has **no verdicts**. Every reported site still goes through the normal checklist + Rule 5b reasoning. The win is twofold: (1) the instruction/constraint/PDA/arithmetic tables are already built, so Phase 0.2–0.4 cost near-zero; (2) a file with **zero** scan hits gets a spot-check instead of a full read. A raw arithmetic or panic site the scan surfaces is a *candidate*, never a confirmed bug — never report a `arithmetic_sites` entry as a finding without the checklist-03 reachability + bounds analysis.
@@ -51,6 +52,8 @@ The prescan is also a **relevance map**: when a signal is a *provably-empty* set
 | no `guardian` / `vaa` / `emitter` (grep, incl. `verify_signatures` / `attestation`) | bridges methodology (`references/methodologies/bridges.md`) + KV 022 (fake-proof bridge) | eyes hit `guardian` / `vaa` / `emitter` / cross-chain message verification |
 | `unsafe_blocks: []` **and** Anchor detected | checklist 01 §1.10 (native/Pinocchio no-Anchor safety) + KV 109 (Pinocchio/p-token manual validation) | eyes hit `unsafe` / `pinocchio` / `p-token` / manual zero-copy account casting |
 | `panic_sites: []` | checklist 03 DoS spot-check (unwrap/expect/index items) + KV 025 (compute-budget DoS), 111 (BPF stack overflow DoS) | eyes hit `unwrap()` / `expect()` / indexing / `panic!` / unbounded loop over user input |
+| no `init_if_needed` in any `accounts_structs[].fields[].constraints` | KV 014 (account reinitialization), KV 127 (init front-running) + checklist 01 AV-023/AV-024 | eyes hit `init_if_needed` in any `#[account(...)]` |
+| `remaining_accounts_sites: []` **and** no `unchecked: true` fields | checklist 01 remaining-accounts / manual-validation items + KV 027 (missing discriminator) | eyes hit `.remaining_accounts` or `UncheckedAccount` / bare `AccountInfo` |
 
 **Two hard safety properties — do not weaken either:**
 

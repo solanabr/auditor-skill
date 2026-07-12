@@ -4,7 +4,8 @@
 //!
 //! * [`scan`] — parse a codebase and emit the risky surface (instructions,
 //!   `#[derive(Accounts)]` structs and their constraints, PDAs, raw arithmetic,
-//!   panic sites, unsafe blocks, CPIs, and every function) as one JSON object.
+//!   panic sites, unsafe blocks, CPIs, remaining-accounts access, and every
+//!   function) as one JSON object.
 //! * [`mem`] — a SQLite findings store for cross-audit memory: exact dedup,
 //!   regression detection, false-positive suppression, and warm re-audits.
 //!
