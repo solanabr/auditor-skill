@@ -21,8 +21,9 @@ auditor-skill is a **skill file** (a structured prompt + checklists) that turns 
 
 ---
 
-## What It Does (v7.0)
+## What It Does (v7.2)
 
+- **Token registries & permissioned tokens (v7.2).** A registry / risk-signal methodology (canonical-asset resolution, primary-variant ranking, score farming — grounded in the open-sourced tokens.xyz stack), Token ACL (SRFC-37) gate-program coverage inside the Token-2022 playbook, and web-stack items for hosted auth, API-key issuance, external data providers, Next.js 16, Bun / Turborepo and GCP / Terraform.
 - **A full audit-firm lifecycle, two ways.** `/auditor:audit-cycle` runs the whole engagement autonomously (intake → context → threat model → tool-assisted pass → domain-partitioned review → triage → independent peer review → synthesis) and hands back a professional client report. `/auditor:audit-assist` runs the same pipeline **interactively**, pausing at checkpoints for the calls only you can make.
 - **Executable proofs, not just prose.** For High/Critical findings, `/auditor:poc` builds a runnable exploit (Mollusk / LiteSVM / Surfpool-fork / fuzz) that *asserts* the vulnerability, and `/auditor:patch` drafts a minimal fix and **proves it reverts the exploit**. Evidence is tiered (`[PoC-REPRODUCED]` … `[PoC-PROSE]`); prose is never dropped when a harness can't be built.
 - **Token-efficient by construction.** An optional Rust pre-scanner (`audit-scan`) enumerates the risky surface deterministically (~$0), cutting ~30-40% of input tokens on large programs. A cross-audit memory store (`audit-mem`) gives exact dedup, regression detection, and false-positive suppression across runs.
@@ -158,6 +159,8 @@ auditor-skill/
 ├── FULL-AUDIT.md            ← Step-by-step execution plan for complete audits
 ├── QUESTIONS.md             ← Pre-audit questionnaire (fill before running)
 ├── COSTS.md                 ← Estimated costs by model and repo size
+├── CONTRIBUTING.md          ← Branch / PR flow, corpus-count rules, no AI-attribution policy
+├── SECURITY.md              ← Private vulnerability reporting for the skill and its tooling
 │
 ├── known-vectors/           ← Individual attack vector files (for contributors)
 │   ├── INDEX.md             ← One-line index of all vectors
@@ -297,6 +300,8 @@ Read the auditor-skill files in .claude/skills/auditor-skill/ and perform a full
 ---
 
 ## Contributing
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) first — branch + PR flow (nothing lands on `main` directly), the corpus-count consistency rule enforced by `scripts/check-corpus.sh` in CI, and the no-AI-attribution commit policy (enable the hook with `git config core.hooksPath scripts/hooks`).
 
 ### Adding a New Attack Vector
 
