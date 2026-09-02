@@ -1,6 +1,6 @@
 # 09 — Backend Security Checklist
 
-> Domain: Express.js backend (apps/backend/)  
+> Domain: Express.js / Next.js route-handler backends (apps/backend/, apps/api/)  
 > Severity if missed: HIGH to MEDIUM  
 > References: OWASP Top 10, project backend-security instructions
 
@@ -85,7 +85,7 @@ Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{seve
 - [ ] **BE-055**: CORS `methods` restricted to necessary HTTP methods
 - [ ] **BE-056**: CORS `allowedHeaders` restricted to necessary headers
 
-## 9.8 — Database Security (MongoDB)
+## 9.8 — Database Security (MongoDB / Postgres / ClickHouse)
 
 - [ ] **BE-057**: Database connection string does NOT contain credentials in code (uses env var)
 - [ ] **BE-058**: Database uses authentication (not anonymous access)
@@ -95,6 +95,9 @@ Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{seve
 - [ ] **BE-062**: Database indexes exist for frequently queried fields (performance + DoS prevention)
 - [ ] **BE-063**: No raw string concatenation in MongoDB queries — use parameterized queries
 - [ ] **BE-064**: Document size limits enforced (prevent stored DoS via huge documents)
+- [ ] **BE-124**: SQL / ClickHouse queries use parameter binding (`$1` in pg, `{name:Type}` in ClickHouse, prepared statements) — no string interpolation of user input into `query()` / `command()`; `ORDER BY` / column names taken from input go through an allowlist
+- [ ] **BE-125**: Analytics and reporting paths (ClickHouse, read replicas) use a *read-only* database role; the public API's runtime role has no DDL and cannot reach admin / ingest tables
+- [ ] **BE-126**: Schema migrations are versioned, forward-only, reviewed in PR, and applied by the deploy pipeline with a dedicated migration role — the application runtime user cannot run migrations
 
 ## 9.9 — Environment & Configuration
 
@@ -152,3 +155,32 @@ Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{seve
 - [ ] **BE-101**: Balance/inventory mutations on a shared resource use an atomic conditional update / row-lock (optimistic version or compare-and-set), never a read-modify-write split across an `await` boundary where two concurrent requests both read the old value (Aurory $830K TOCTOU)
 - [ ] **BE-102**: Fund-moving endpoints require step-up authorization (fresh signature / 2FA / withdrawal-address allowlist) beyond a valid bearer session token — a leaked session cookie alone must NOT authorize a withdrawal (Thunder Terminal $240K, Banana Gun $3M: leaked session == custody)
 - [ ] **BE-103**: Backends that sign an on-chain action after an off-chain check pair the atomic DB claim WITH an on-chain replay/nonce guard as defense-in-depth — a single logical claim cannot execute twice even if the DB row and the chain disagree (cross-ref VC-35; games/airdrops double-claim)
+
+## 9.15 — Hosted Auth Providers (Clerk / Auth0 / WorkOS / NextAuth)
+
+- [ ] **BE-104**: Routes distinguish credential *type*, not just validity — a Clerk / Auth0 session token and a machine / API-key token are checked for the expected `tokenType` / audience before access is granted; a route meant for browser sessions rejects API keys and vice-versa (a valid credential of the wrong kind is a 401, not a pass)
+- [ ] **BE-105**: Issuer, audience and `authorizedParties` (Clerk) / allowed origins are pinned in server config — the provider SDK does not accept a session minted for another app, another instance (dev vs prod), or an arbitrary origin
+- [ ] **BE-106**: Route protection is deny-by-default — the middleware / proxy matcher covers every API path and the *public-route allowlist* is an explicit, minimal list; each allowlisted prefix is reviewed for over-matching (a public `/api/v1/assets` prefix must not also expose `/api/v1/assets/admin`, trailing-slash or case variants)
+- [ ] **BE-107**: Provider webhooks (`user.created`, `session.ended`, org membership changes) verify the delivery signature (Svix / HMAC + timestamp) before any user-sync write; sync scripts (`sync-*-profiles`) never ingest unsigned payloads
+- [ ] **BE-108**: Roles / org membership / custom claims are re-read from the provider (or a short-TTL cache) on each privileged request — a role revoked in the provider dashboard cannot keep working for the life of a long session; session lifetime and revocation propagation are documented
+- [ ] **BE-109**: Provider *secret* key (`CLERK_SECRET_KEY`, `AUTH0_CLIENT_SECRET`, `WORKOS_API_KEY`) is server-only and per-environment; only the publishable key reaches the client; development-instance keys are rejected by production config validation
+
+## 9.16 — API-Key Issuance (When You Are the Provider)
+
+- [ ] **BE-110**: Issued keys are stored as a strong hash (SHA-256 / HMAC, or Argon2 for low-entropy keys) plus a non-secret prefix for lookup — never in plaintext; the raw key is shown to the owner once at creation
+- [ ] **BE-111**: If a "reveal again" feature stores the raw key encrypted, the encryption key lives in a KMS / Secret Manager with access separate from the database, ciphertexts carry a key version for rotation, and every reveal is authenticated, rate-limited and written to an audit log
+- [ ] **BE-112**: Key lookup is prefix → constant-time hash compare; the hash is never used as a query filter on user-supplied input in a way that leaks timing or key existence
+- [ ] **BE-113**: Scopes are enforced per route *in code* — each handler declares the scope it requires (e.g. `assets:read` vs `assets:risk:read`) and returns 403 on a missing scope; no handler falls back to "any valid key is enough"
+- [ ] **BE-114**: Revocation is honored immediately — `revoked_at` (or equivalent) is checked on every request, and any key-lookup cache has a short TTL or explicit invalidation on revoke
+- [ ] **BE-115**: Keys are bound to a project / owner; regeneration atomically deactivates the previous key (or the overlap grace window is explicit and documented); keys are revoked when the owning project or user is deleted
+- [ ] **BE-116**: Rate limits and quotas are enforced server-side per key / project (429 + `Retry-After`), `last_used_at` is recorded for stale-key review, and per-key usage is metered separately from anonymous traffic
+- [ ] **BE-117**: Keys never appear in logs, traces, error payloads or analytics — request logging redacts `x-api-key` / `Authorization`; a request id (`x-request-id`) is echoed instead for support correlation
+
+## 9.17 — External Data Providers & Market-Data Integrity
+
+- [ ] **BE-118**: Every upstream response (price, OHLCV, risk score, token metadata, news) is parsed through a schema (zod / valibot / Effect Schema) before use — an unexpected shape is an error, never passed through to clients or persisted
+- [ ] **BE-119**: Security-relevant signals fail *closed* — when a risk / price / holder-analysis provider is down or rate-limited the API returns "unknown / unavailable", never a default of "safe", score 0, or a cached "clean"; clients can distinguish *unavailable* from *no issues found*
+- [ ] **BE-120**: Upstream provider credentials (Birdeye, CoinGecko, Webacy, Helius, Jupiter, …) are server-side, one per service / environment, rotatable, and not shared between the public API and internal jobs (a leak from one surface must not burn the other)
+- [ ] **BE-121**: Market data is sanitized before storage or serving — non-finite, negative, out-of-order or future-timestamped candles / prices are rejected, outlier bounds are applied, and data age is surfaced (`stale` flag or `as_of` timestamp) rather than silently served
+- [ ] **BE-122**: Provider-supplied URLs (logo, website, socials, metadata `uri`) are validated (`https:` only, host allowlist, or an image proxy that sniffs content-type and strips SVG scripts) — token metadata is attacker-controlled and is both an SSRF and a stored-XSS vector
+- [ ] **BE-123**: Response caches (Redis / ISR / `revalidate`) are keyed on *normalized* input — user-controlled key parts (query strings, headers) cannot poison a shared entry; stale-while-revalidate windows for financial data are documented and bounded

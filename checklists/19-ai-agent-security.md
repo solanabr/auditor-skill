@@ -6,7 +6,7 @@
 
 Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{severity}]`, `[PARTIAL]`, or `[N/A]`.
 
-This checklist is NET-NEW: it covers the seam where an AI agent (autonomous trading bot, MCP-driven assistant, or AI coding agent in CI) is given the ability to act on Solana. An agent is *any* non-human actor that can select and submit instructions on behalf of a principal. If the codebase has no such actor, mark the whole checklist `[N/A]`.
+This checklist is NET-NEW: it covers the seam where an AI agent (autonomous trading bot, MCP-driven assistant, or AI coding agent in CI) is given the ability to act on Solana. An agent is *any* non-human actor that can select and submit instructions on behalf of a principal. If the codebase has no such actor, mark §19.1–19.5 `[N/A]`; §19.6 (tracked AI-tooling artifacts) applies to any repository that commits assistant configuration, agent or not.
 
 ---
 
@@ -57,3 +57,8 @@ This checklist is NET-NEW: it covers the seam where an AI agent (autonomous trad
 - [ ] **AI-029**: (ToB G — Eval of AI Output) The agent's output is not consumed by a later step via `eval`/`exec`/unquoted `$()` — especially any step that then builds or submits a Solana transaction or deploy command
 - [ ] **AI-030**: (ToB H — Dangerous Sandbox) No `danger-full-access`, `--allowedTools Bash(*)`, `--yolo`/`--approval-mode=yolo`, or `safety-strategy: unsafe` on the AI action — these turn prompt injection into RCE on a runner that may hold deploy keys
 - [ ] **AI-031**: (ToB I — Wildcard Allowlists) No wildcard trigger allowlist (`allowed_non_write_users: "*"`, `allow-users: "*"`) letting any external user invoke the agent
+
+## 19.6 — AI Tooling Artifacts in the Repository
+
+- [ ] **AI-032**: Tracked AI-assistant configuration (`.claude/`, `.cursor/`, `.agents/`, `CLAUDE.md`, `AGENTS.md`, `.mcp.json`) contains no secrets, API keys, internal hostnames or absolute local paths; per-user files (`settings.local.json`, session transcripts) are gitignored, and a repo-hygiene check in CI rejects assistant artifacts that were not intentionally published
+- [ ] **AI-033**: Tool-permission allowlists in tracked agent config (`permissions.allow`, `allowedTools`, MCP server lists) do not grant unrestricted shell / network / deploy capability to every contributor's agent by default; commands that change production (`terraform apply`, `solana program deploy`, `gh secret`, `kubectl apply`) are explicitly denied

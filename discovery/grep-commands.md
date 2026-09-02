@@ -289,6 +289,34 @@ grep_search: "rateLimit|rateLimiter|limiter"   isRegexp: true   includePattern: 
 grep_search: "helmet"   includePattern: "apps/backend/**/*.ts"
 ```
 
+### Hosted auth & API-key gating (BE-104..BE-117)
+```
+grep_search: "clerkMiddleware|createRouteMatcher|isPublicRoute|authorizedParties|tokenType"   isRegexp: true   includePattern: "apps/**/*.ts"
+grep_search: "x-api-key|key_hash|keyPrefix|key_prefix|scopes"   isRegexp: true   includePattern: "apps/**/*.ts"
+```
+> Every non-public route must resolve to a credential-type check AND a scope check; list the public-route allowlist verbatim in the report.
+
+### Next.js proxy / server actions (FE-077..FE-082)
+```
+grep_search: "use server"   includePattern: "apps/**/*.{ts,tsx}"
+grep_search: "matcher:"   includePattern: "apps/**/{middleware,proxy}.ts"
+grep_search: "remotePatterns|hostname: '\*\*'"   isRegexp: true   includePattern: "**/next.config.*"
+```
+
+### External data providers (BE-118..BE-123)
+```
+grep_search: "coingecko|birdeye|webacy|helius|jup\.ag"   isRegexp: true   includePattern: "apps/**/*.ts"
+grep_search: "safeParse|\.parse\(|Schema\.decode"   isRegexp: true   includePattern: "apps/**/lib/**/*.ts"
+```
+> Pair each provider client with its schema; a client with no schema hit is a BE-118 finding.
+
+### Terraform / IaC hygiene (DEP-080..DEP-086)
+```
+# Terminal:
+git ls-files | grep -E "\.tfstate|tfplan|\.terraform/"
+grep -rn -E "allUsers|allAuthenticatedUsers|0\.0\.0\.0/0|roles/(editor|owner)|ingress.*all" terraform/
+```
+
 ---
 
 ## Frontend Security

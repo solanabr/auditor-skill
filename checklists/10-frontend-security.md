@@ -38,7 +38,7 @@ Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{seve
 - [ ] **FE-020**: Proxy responses: `text()` then `try { JSON.parse(text) }` — never bare `.json()`
 - [ ] **FE-021**: Error status codes: 400 validation, 401 auth, 502 backend proxy failure (NOT 500)
 - [ ] **FE-022**: No internal error messages leaked to client
-- [ ] **FE-023**: CORS headers set in `middleware.ts` for API routes
+- [ ] **FE-023**: CORS headers set in `middleware.ts` (`proxy.ts` on Next.js 16+) for API routes
 - [ ] **FE-024**: Rate limiting on API routes (at minimum, forwarded from backend)
 
 ## 10.4 — Client-Side Data Handling
@@ -113,3 +113,12 @@ Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{seve
 - [ ] **FE-074**: No sensitive tokens, session IDs, or secrets in URL query parameters (visible in referrer headers, browser history, server logs)
 - [ ] **FE-075**: CSS does not accept/interpolate user input — no `style={{ background: userInput }}` without sanitization (CSS exfiltration prevention)
 - [ ] **FE-076**: Client-side route guards (e.g., `if (!user) redirect('/login')`) are backed by server-side auth checks on every API call — never trust client-only auth
+
+## 10.11 — Next.js Middleware / Proxy, Server Actions & RSC
+
+- [ ] **FE-077**: Next.js is at or above the patched release for CVE-2025-29927 (the `x-middleware-subrequest` header let requests skip middleware; fixed in 15.2.3 / 14.2.25 / 13.5.9) — and middleware is *not* the only auth check: every protected route handler and server action re-verifies the session itself
+- [ ] **FE-078**: The `middleware.ts` / `proxy.ts` (Next.js 16+) `matcher` covers every protected path — no negative-lookahead or prefix matcher that lets a trailing slash, encoded segment, `_next/data` variant or a newly added route ship unprotected
+- [ ] **FE-079**: Server Actions (`'use server'`) treat their arguments as untrusted network input — they validate with a schema and check authorization *inside* the action (they are public POST endpoints); no action trusts a client-supplied user id, price, or role
+- [ ] **FE-080**: Server Components do not pass secrets, full database rows or other users' data into Client Component props (props are serialized into the HTML / RSC payload); secret-bearing modules import `server-only`
+- [ ] **FE-081**: Route handlers and pages that return per-user or authenticated data declare dynamic rendering (`dynamic = 'force-dynamic'`, no `revalidate`) — no ISR / `force-static` caching of authenticated responses, and their `Cache-Control` is `private, no-store`
+- [ ] **FE-082**: `next.config` `images.remotePatterns` restricts remote image hosts to known origins — no wildcard `hostname: '**'` (the image optimizer becomes an open proxy for SSRF, abuse and cost amplification)
