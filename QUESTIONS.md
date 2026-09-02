@@ -86,7 +86,7 @@ If on-chain code exists, what framework is used?
 - [ ] Render
 - [ ] Vercel
 - [ ] AWS (EC2, ECS, Lambda)
-- [ ] GCP
+- [ ] GCP (Cloud Run, Cloud SQL, Terraform-managed)
 - [ ] Heroku
 - [ ] Self-hosted VPS
 - [ ] Other: _______________
@@ -124,7 +124,9 @@ How much value does the protocol currently manage?
 - [ ] Wallet signature (Solana/Ethereum wallet)
 - [ ] JWT tokens
 - [ ] OAuth (Google, GitHub, etc.)
-- [ ] API keys
+- [ ] Hosted auth provider (Clerk, Auth0, WorkOS, Supabase Auth)
+- [ ] API keys (consumed from a third party)
+- [ ] API keys (issued by this project to its own customers)
 - [ ] Session cookies
 - [ ] No authentication
 - [ ] Multiple: _______________

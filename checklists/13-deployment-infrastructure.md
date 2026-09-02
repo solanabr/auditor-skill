@@ -2,7 +2,7 @@
 
 > Domain: Build process, deploy pipeline, monitoring, verifiable builds  
 > Severity if missed: HIGH (unverifiable binary) to LOW (missing monitoring)  
-> References: Anchor verifiable builds, Solana deploy process, Render/Vercel config
+> References: Anchor verifiable builds, Solana deploy process, Render/Vercel config, GCP Cloud Run / Terraform IaC
 
 Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{severity}]`, `[PARTIAL]`, or `[N/A]`.
 
@@ -116,3 +116,13 @@ Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{seve
 - [ ] **DEP-075**: Docker containers run as non-root user with minimal capabilities and read-only filesystem where possible
 - [ ] **DEP-076**: Default credentials changed on ALL services before production deployment (databases, admin panels, queues, caches)
 - [ ] **DEP-077**: Subdomain DNS records point to active services — dangling CNAMEs removed to prevent subdomain takeover
+
+## 13.11 — Cloud IaC (GCP / AWS) & Terraform
+
+- [ ] **DEP-080**: Internal services (Cloud Run / Lambda / ECS) are NOT invokable by `allUsers` / anonymous principals — ingress is `internal-and-cloud-load-balancing` (or a VPC-only endpoint), the public API sits behind a load balancer / WAF, and the internal hop is authenticated (IAM invoker role or signed service-to-service tokens)
+- [ ] **DEP-081**: Managed databases (Cloud SQL / RDS) have no public IP; access is via private VPC, Auth Proxy or IAM database auth; no `0.0.0.0/0` authorized network
+- [ ] **DEP-082**: Runtime secrets are injected from Secret Manager / Parameter Store at deploy or start — not baked into container images, `Dockerfile` `ENV`, or Terraform variables (which end up in state)
+- [ ] **DEP-083**: Terraform state is remote (GCS / S3 backend) with encryption and locking; `*.tfstate`, `tfplan*`, `.terraform/` and any binary under `terraform/` are gitignored *and* rejected by a repo-hygiene check — state contains secrets and the full resource inventory
+- [ ] **DEP-084**: `terraform apply` runs only from the protected default branch via OIDC / workload-identity federation (no long-lived cloud JSON keys in CI secrets); fork PRs get at most a read-only `plan` and cannot reach cloud credentials
+- [ ] **DEP-085**: One service account per service with least privilege — nothing runs as the default compute service account, and no service account holds `roles/editor` / `roles/owner`
+- [ ] **DEP-086**: Deploys pin image digests (`@sha256:` not `:latest`), and a rollback workflow (previous-revision traffic split) exists and has been exercised at least once

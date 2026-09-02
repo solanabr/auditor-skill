@@ -1,6 +1,6 @@
 # 11 — Supply Chain & Dependencies Checklist
 
-> Domain: Package management, npm/cargo dependencies  
+> Domain: Package management, npm/cargo dependencies, Bun/pnpm/Turborepo monorepos  
 > Severity if missed: CRITICAL (compromised package) to LOW (outdated)  
 > References: Project supply chain safety rules, npm advisory database
 
@@ -84,3 +84,12 @@ Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{seve
 - [ ] **SC-044**: Lockfile provenance — no `package-lock.json`/`yarn.lock` entry resolves a dependency to a non-registry URL (e.g. a GitHub-Release tarball). A non-registry `resolved`/`resolution` URL bypasses `npm audit`, deprecation, and takedown, and is how the pump.fun-bot `crypto-layout-utils` campaign (2025) shipped malware after the registry pulled the package. (KB VC-26)
 - [ ] **SC-045**: Install-hook secret harvesting — review every `postinstall`/`preinstall` script and Python `__init__.py`/`setup.py` for reads of `~/.config/solana/id.json` or other wallet/keypair paths and any outbound exfil (HTTP POST, DNS, webhook). This is the exact behavior of the FakeFix campaign (20 npm + 4 PyPI packages, 2025) that drained Solana keypairs on install. (KB VC-26)
 - [ ] **SC-046**: Publish-credential integrity — package publishing enforces FIDO2/hardware-key 2FA or OIDC/trusted-publishing (NOT phishable TOTP), and releases are diffed post-publish against the built artifact. Publisher-credential compromise drove the web3.js $190K incident and the Trust Wallet browser-extension $7M loss. (KB VC-26)
+
+## 11.9 — Monorepos & Alternative Package Managers (Bun / pnpm / Turborepo)
+
+- [ ] **SC-047**: CI and Docker builds install with `bun install --frozen-lockfile` / `pnpm install --frozen-lockfile` / `npm ci`; the lockfile (`bun.lock`, `pnpm-lock.yaml`) is committed in its text format and a lockfile diff is reviewed like code
+- [ ] **SC-048**: Lifecycle scripts are opt-in and reviewed — Bun `trustedDependencies` / pnpm `onlyBuiltDependencies` list only packages with a documented reason; no blanket enabling of `postinstall` across the workspace
+- [ ] **SC-049**: Internal workspace packages (`@org/*`) are `"private": true` and the scope is claimed on the public registry (or pinned to a private feed in `.npmrc` / `bunfig.toml`) — otherwise an attacker publishes the same name publicly and wins resolution (dependency confusion, cross-ref KV-076)
+- [ ] **SC-050**: Turborepo / Nx remote cache is signed (`TURBO_REMOTE_CACHE_SIGNATURE_KEY`) or self-hosted and access-controlled; the cache token is not exposed to fork PRs (a poisoned cache artifact is a build-output supply-chain compromise)
+- [ ] **SC-051**: Dependency audit (`bun audit` / `pnpm audit` / `npm audit` / `cargo audit`) runs on a schedule (weekly) in addition to PRs — new advisories against already-pinned versions are caught without waiting for a code change
+- [ ] **SC-052**: Workspace-wide `overrides` / `resolutions` / pnpm `catalog:` entries are reviewed — one override pins a version for every app, so a stale override silently holds back a security patch across the monorepo

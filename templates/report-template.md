@@ -121,7 +121,7 @@
 | 18 | Privacy, Compliance & Change Mgmt | 60 | | | | | % |
 | 19 | AI Agent Security | 31 | | | | | % |
 | 20 | Rust Off-Chain Services | 17 | | | | | % |
-| | **Total** | **1346** | | | | | **%** |
+| | **Total** | **1390** | | | | | **%** |
 
 > Note: Only applicable checklists are counted in totals. Non-applicable checklists are excluded entirely.
 
@@ -260,21 +260,21 @@
 
 ```
 [PASS]      BE-001: {reason}
-...through BE-103
+...through BE-126
 ```
 
 ### Checklist 10 — Frontend Security
 
 ```
 [PASS]      FE-001: {reason}
-...through FE-076
+...through FE-082
 ```
 
 ### Checklist 11 — Supply Chain
 
 ```
 [PASS]      SC-001: {reason}
-...through SC-046
+...through SC-052
 ```
 
 ### Checklist 12 — Secrets & OpSec
@@ -288,7 +288,7 @@
 
 ```
 [PASS]      DEP-001: {reason}
-...through DEP-079
+...through DEP-086
 ```
 
 ### Checklist 14 — Python Safety (if applicable)
