@@ -165,6 +165,7 @@ How much value does the protocol currently manage?
 - [ ] SOL + specific SPL tokens (list): _______________
 - [ ] Any SPL token
 - [ ] Token-2022 (token extensions) supported
+- [ ] Supported-token set is resolved from a third-party registry / token list at runtime (tokens.xyz, Jupiter list, CoinGecko): _______________
 - [ ] ERC-20 tokens
 - [ ] Not applicable
 
@@ -201,6 +202,7 @@ How much value does the protocol currently manage?
 - [ ] Helius (RPC, webhooks)
 - [ ] Birdeye (token prices)
 - [ ] CoinGecko / CoinMarketCap
+- [ ] Token registry / risk API (tokens.xyz, RugCheck, Webacy, GoPlus) — used for: display / listing / collateral / routing: _______________
 - [ ] Chainlink / Pyth (oracles)
 - [ ] Stripe / payment processor
 - [ ] Analytics (Mixpanel, Amplitude, etc.)
@@ -419,6 +421,7 @@ _______________
 | Q10 > $1M | Doubles the weight of critical findings in risk score |
 | Q11 = Single wallet | Auto-flags as Severity 8+ finding |
 | Q17 = Yes | Requires full economic review (checklist 06) |
+| Q18 / Q22 = token registry or risk API | Loads `references/methodologies/token-registry-risk.md` + KV-132 / KV-133 (identity spoofing, score farming) |
 | Q25 = First audit | Triggers more thorough analysis, no assumptions about prior fixes |
 | Q32 = No tests | Auto-flags testing gaps, enables checklist 16 recommendations |
 | Q35 = MiCA/GDPR | Enables compliance checklist (18) |

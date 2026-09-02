@@ -194,6 +194,13 @@ Every row carries a **Load when (markers)** cell: the grep/prescan markers that 
 | 130 | [CLMM/DLMM Tick-Boundary & Liquidity Math](130-clmm-tick-boundary-liquidity-math.md) | 7 | `tick` · `sqrt_price` · `liquidity_net` · `bin_array` · `fee_growth` |
 | 131 | [Write-Lock Account Contention DoS (Hot Shared Writable)](131-write-lock-account-contention-dos.md) | 6 | shared writable account · global `mut` state · single hot PDA · `#[account(mut)]` global |
 
+### Token Registries & Risk Signals (132-133)
+
+| # | Vector | Severity | Load when (markers) |
+|---|--------|----------|---------------------|
+| 132 | [Canonical-Asset / Token-List Spoofing & Primary-Variant Hijack](132-canonical-asset-token-list-spoofing.md) | 8 | `tokenlist` · `token list` · `assetId` · `canonical` · `getTokenBySymbol` · `coingeckoId` · `tokens.xyz` · `primaryVariant` · strict / verified list |
+| 133 | [Token Risk-Score / Trust-Tier Metric Farming](133-token-risk-score-metric-farming.md) | 6 | `riskScore` · `risk_score` · `grade` · `trustTier` · `liquidityTier` · `isVerified` · `rugcheck` · `webacy` · `goplus` |
+
 ---
 
 ## Known Duplicates & Consolidation Map
@@ -212,11 +219,11 @@ double-count them as independent coverage. Severities are aligned to the higher 
 | 039 | 083 | Rate limiting (bypass / missing) | 7 |
 | 047 | 099 | WebSocket security | 7 |
 
-**Distinct concepts:** 125 (131 files − 6 duplicate pairs).
+**Distinct concepts:** 127 (133 files − 6 duplicate pairs).
 
 ---
 
-**Total vector files:** 131 (100 original + 9 in v4.4 + 8 in v5.0 + 3 in v5.1 + 6 in v6.0 + 3 in v6.1 + 2 in v6.2)
-**Distinct concepts:** 125 (after consolidating 6 duplicate pairs)
+**Total vector files:** 133 (100 original + 9 in v4.4 + 8 in v5.0 + 3 in v5.1 + 6 in v6.0 + 3 in v6.1 + 2 in v6.2 + 2 in v7.2)
+**Distinct concepts:** 127 (after consolidating 6 duplicate pairs)
 **Categories:** 6 (crypto, backend, frontend, devops, ai-agent, off-chain-rust)
 **Severity range:** 3-10

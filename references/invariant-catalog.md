@@ -136,6 +136,27 @@ Any protocol that reads a price must refuse to act on data that is stale or too 
 
 ---
 
+## 7. Token-Registry / Listing Consumer
+
+A registry (token list, canonical-asset mapping, risk score) is an off-chain identity oracle. The invariants below are for the *consumer* protocol or backend; the operator-side ranking / scoring invariants R1–R10 live in `references/methodologies/token-registry-risk.md`.
+
+- **Value paths are mint-pinned.**
+  - *Statement:* for every swap / transfer / payment / collateral path, the mint the transaction touches equals a mint present in the pinned config or on-chain allowlist at the time the path was entered — never a mint freshly resolved from a symbol, name or registry `assetId`.
+  - *Ranges over:* every value-moving instruction / endpoint, across any registry response (including a hostile "primary variant" for the same symbol).
+  - *Assert:* property test — fuzz the registry stub to return arbitrary mints for the same symbol / assetId and `assert!(tx.mint ∈ pinned_set)`; Trident post-condition on an on-chain allowlist program: an accepted mint set changes only through the admin / governance instruction.
+
+- **Score never authorizes.**
+  - *Statement:* the set of mints a listing / collateral / routing path accepts is invariant under the registry risk score, grade, tier or `verified` flag — flipping the score for a mint never changes acceptance without the on-chain checks (mint / freeze authority, permanent delegate, extension set, metadata mutability) also passing.
+  - *Ranges over:* every acceptance decision, across all score values including `unavailable` / `insufficient data`.
+  - *Assert:* differential test — same mint, score ∈ {A, C, unavailable, error}; `assert_eq!(accepted(mint, score_i), accepted(mint, score_j))` for every pair when on-chain facts are held constant; and `assert!(!accepted)` for a mint with a live freeze authority regardless of score.
+
+- **Registry outage fails closed.**
+  - *Statement:* when the registry / risk provider is unreachable, stale beyond the bound, or returns an unknown mint, no path yields a *verified* / *safe* / *listed* outcome.
+  - *Ranges over:* every consumer path, across provider states {timeout, 5xx, 429, malformed, stale, unknown mint}.
+  - *Assert:* stub each provider state and assert every outcome is in `{unverified, unavailable, rejected}`; UI snapshot test that *unavailable* renders distinctly from *clean*.
+
+---
+
 ## Instantiation checklist (fast pass)
 
 - [ ] Identify the protocol class(es) — pull the matching menu(s); a blend pulls from several (§1–§6)

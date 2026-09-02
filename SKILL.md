@@ -1,12 +1,12 @@
 ---
 name: auditor-skill
-description: "**AUDIT SKILL** — Comprehensive on-chain Solana program auditor and full-stack security review for ANY programming language. USE FOR: auditing Solana/Anchor programs, reviewing smart contract security, checking for vulnerabilities (missing signers, unchecked accounts, arithmetic overflow, CPI attacks, PDA confusion, type cosplay, reinitialization, flash loan exploits, MEV, governance backdoors, timelock bypass), auditing TypeScript/Python/Go/Java/Ruby/PHP/any language, backend/frontend code review, supply chain safety, operational security (multisig, upgrade authority, deploy process), formal verification and testing quality, logging/monitoring/incident response, data privacy/GDPR/SOC2 compliance, change management, penetration testing methodology, AI/ML security, generating audit reports, running full repository audits. Severity 1-10 scale, 20 micro-checklist domains with 1390 individual verification items, plus 131 known attack vectors, chunked file-by-file execution, item-by-item verdicts. Benchmarked against CertiK (crypto) and EY/SOC2/COBIT (traditional) audit standards. DO NOT USE FOR: writing new features, general coding, non-security reviews."
+description: "**AUDIT SKILL** — Comprehensive on-chain Solana program auditor and full-stack security review for ANY programming language. USE FOR: auditing Solana/Anchor programs, reviewing smart contract security, checking for vulnerabilities (missing signers, unchecked accounts, arithmetic overflow, CPI attacks, PDA confusion, type cosplay, reinitialization, flash loan exploits, MEV, governance backdoors, timelock bypass), auditing TypeScript/Python/Go/Java/Ruby/PHP/any language, backend/frontend code review, supply chain safety, operational security (multisig, upgrade authority, deploy process), formal verification and testing quality, logging/monitoring/incident response, data privacy/GDPR/SOC2 compliance, change management, penetration testing methodology, AI/ML security, generating audit reports, running full repository audits. Severity 1-10 scale, 20 micro-checklist domains with 1390 individual verification items, plus 133 known attack vectors, chunked file-by-file execution, item-by-item verdicts. Benchmarked against CertiK (crypto) and EY/SOC2/COBIT (traditional) audit standards. DO NOT USE FOR: writing new features, general coding, non-security reviews."
 ---
 
 # auditor-skill — Multi-Language Security Audit Skill
 
 > **Version:** 7.1  
-> **Items:** 1,390 across 20 checklists (+ 131 known vectors)  
+> **Items:** 1,390 across 20 checklists (+ 133 known vectors)  
 > **Languages:** Rust, TypeScript, Python, Go, Java, Ruby, PHP, + any via general checklist  
 > **Severity:** 1–10 numeric scale  
 > **Benchmarked against:** CertiK (crypto audit), EY/SOC 2/COBIT (traditional IT audit), OWASP Top 10:2025  
@@ -55,6 +55,7 @@ Checklists outside this set are **never read** — a Rust-only repo never loads 
 | `references/methodologies/token-2022.md` | `token_2022` · `TokenInterface` · `transfer_hook` · `TransferFee` · `PermanentDelegate` · `ConfidentialTransfer` · `get_extension` · `spl_token_2022` |
 | `references/methodologies/nft-marketplaces.md` | `metadata` · `listing` · `escrow` · `royalty` · `merkle` · `MplCore` · `auth_rules` · `collection` |
 | `references/methodologies/launchpads.md` | `bonding_curve` · `reserve` · `graduate` · `virtual_reserves` · `route` · `swap` · `curve` |
+| `references/methodologies/token-registry-risk.md` | `tokens.xyz` · `tokenlist` · `assetId` · `canonical` · `getTokenBySymbol` · `coingeckoId` · `trustTier` · `riskScore` · `rugcheck` · `webacy` · `goplus` · `isVerified` |
 | `references/invariant-catalog.md` | building an FV/fuzz harness or reconstructing per-function invariants (Phase 0.5) — reusable invariant menus per protocol class |
 | `references/vuln-classes/zk-and-compression.md` | `groth16` · `spl-account-compression` · `bubblegum` · `merkle` · `nullifier` · `ConfidentialTransfer` |
 | `references/false-positives.md` | triaging any finding before reporting severity ≥ 6 |
@@ -88,7 +89,7 @@ Full severity table + decision guide: see [OUTPUT-RULES.md](OUTPUT-RULES.md) Rul
 Repositories can be 10 files or 10,000 files. The auditor reads files **one at a time**, never guesses, and saves checkpoints between chunks. See [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 3.
 
 ### 2. Every Item Gets a Verdict
-All in-scope checklist items (up to 1,390) and all in-scope known vectors (up to 131) appear in the report with explicit verdicts. Nothing is silently skipped. See [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 4.
+All in-scope checklist items (up to 1,390) and all in-scope known vectors (up to 133) appear in the report with explicit verdicts. Nothing is silently skipped. See [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 4.
 
 ### 3. Executive Summary First
 Every report starts with a plain-language summary: what was audited, what was found, whether it's safe to deploy. See [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 2.
