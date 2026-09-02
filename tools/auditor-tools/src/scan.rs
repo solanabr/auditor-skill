@@ -27,6 +27,7 @@ pub struct ScanReport {
     pub panic_sites: Vec<PanicSite>,
     pub unsafe_blocks: Vec<UnsafeBlock>,
     pub cpi_sites: Vec<CpiSite>,
+    pub remaining_accounts_sites: Vec<RemainingAccountsSite>,
     pub functions: Vec<FunctionDef>,
 }
 
@@ -56,12 +57,15 @@ pub struct AccountsStruct {
 pub struct AccountField {
     pub name: String,
     pub ty: String,
+    /// True when the field type is Anchor's `UncheckedAccount` (manual validation required).
+    pub unchecked: bool,
     pub constraints: AccountConstraints,
 }
 
 #[derive(Debug, Serialize)]
 pub struct AccountConstraints {
     pub init: bool,
+    pub init_if_needed: bool,
     #[serde(rename = "mut")]
     pub is_mut: bool,
     pub signer: bool,
@@ -117,6 +121,13 @@ pub struct CpiSite {
 }
 
 #[derive(Debug, Serialize)]
+pub struct RemainingAccountsSite {
+    pub file: String,
+    pub line: usize,
+    pub snippet: String,
+}
+
+#[derive(Debug, Serialize)]
 pub struct FunctionDef {
     pub name: String,
     pub file: String,
@@ -140,6 +151,7 @@ pub fn scan_path(root: &Path) -> ScanReport {
         panic_sites: Vec::new(),
         unsafe_blocks: Vec::new(),
         cpi_sites: Vec::new(),
+        remaining_accounts_sites: Vec::new(),
         functions: Vec::new(),
     };
 
@@ -188,6 +200,7 @@ pub fn scan_source(file_label: &str, source: &str) -> Option<ScanReport> {
         panic_sites: Vec::new(),
         unsafe_blocks: Vec::new(),
         cpi_sites: Vec::new(),
+        remaining_accounts_sites: Vec::new(),
         functions: Vec::new(),
     };
     let mut visitor = FileVisitor::new(file_label);
@@ -231,6 +244,7 @@ struct FileVisitor {
     panic_sites: Vec<PanicSite>,
     unsafe_blocks: Vec<UnsafeBlock>,
     cpi_sites: Vec<CpiSite>,
+    remaining_accounts_sites: Vec<RemainingAccountsSite>,
     functions: Vec<FunctionDef>,
 }
 
@@ -246,6 +260,7 @@ impl FileVisitor {
             panic_sites: Vec::new(),
             unsafe_blocks: Vec::new(),
             cpi_sites: Vec::new(),
+            remaining_accounts_sites: Vec::new(),
             functions: Vec::new(),
         }
     }
@@ -258,6 +273,9 @@ impl FileVisitor {
         report.panic_sites.extend(self.panic_sites);
         report.unsafe_blocks.extend(self.unsafe_blocks);
         report.cpi_sites.extend(self.cpi_sites);
+        report
+            .remaining_accounts_sites
+            .extend(self.remaining_accounts_sites);
         report.functions.extend(self.functions);
     }
 
@@ -299,7 +317,8 @@ impl FileVisitor {
 
                 fields.push(AccountField {
                     name: field_name,
-                    ty,
+                    ty: ty.clone(),
+                    unchecked: is_unchecked_account_ty(&ty),
                     constraints,
                 });
             }
@@ -439,6 +458,19 @@ impl<'ast> Visit<'ast> for FileVisitor {
         syn::visit::visit_expr_unsafe(self, node);
     }
 
+    fn visit_expr_field(&mut self, node: &'ast syn::ExprField) {
+        if let syn::Member::Named(ident) = &node.member {
+            if ident == "remaining_accounts" {
+                self.remaining_accounts_sites.push(RemainingAccountsSite {
+                    file: self.file.clone(),
+                    line: ident.span().start().line,
+                    snippet: truncate_snippet(&tokens_string(node)),
+                });
+            }
+        }
+        syn::visit::visit_expr_field(self, node);
+    }
+
     fn visit_expr_call(&mut self, node: &'ast syn::ExprCall) {
         if let syn::Expr::Path(path_expr) = node.func.as_ref() {
             if let Some(seg) = path_expr.path.segments.last() {
@@ -502,6 +534,11 @@ fn collect_instruction_args(sig: &syn::Signature) -> Vec<Arg> {
     args
 }
 
+/// True when an Accounts field type is Anchor's `UncheckedAccount` (any path qualification).
+fn is_unchecked_account_ty(ty_str: &str) -> bool {
+    ty_str.contains("UncheckedAccount")
+}
+
 /// True if the type is Anchor's `Context<..>` (possibly path-qualified).
 fn is_context_ty(ty: &syn::Type) -> bool {
     if let syn::Type::Path(type_path) = ty {
@@ -544,6 +581,7 @@ fn derive_contains(attrs: &[syn::Attribute], trait_name: &str) -> bool {
 fn parse_account_attr(attrs: &[syn::Attribute]) -> (AccountConstraints, Vec<String>) {
     let mut constraints = AccountConstraints {
         init: false,
+        init_if_needed: false,
         is_mut: false,
         signer: false,
         has_one: Vec::new(),
@@ -669,7 +707,8 @@ fn split_top_level_metas(tokens: proc_macro2::TokenStream) -> Vec<MetaFragment> 
 fn apply_meta(meta: &MetaFragment, c: &mut AccountConstraints) {
     let key = meta.key.as_str();
     match key {
-        "init" | "init_if_needed" => c.init = true,
+        "init" => c.init = true,
+        "init_if_needed" => c.init_if_needed = true,
         "mut" => c.is_mut = true,
         "signer" => c.signer = true,
         "bump" => c.bump = true,
@@ -686,12 +725,22 @@ fn apply_meta(meta: &MetaFragment, c: &mut AccountConstraints) {
         }
         "close" => {
             if let Some(v) = &meta.value {
-                c.close = Some(v.to_string().split_whitespace().collect::<Vec<_>>().join(" "));
+                c.close = Some(
+                    v.to_string()
+                        .split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                );
             }
         }
         "owner" => {
             if let Some(v) = &meta.value {
-                c.owner = Some(v.to_string().split_whitespace().collect::<Vec<_>>().join(" "));
+                c.owner = Some(
+                    v.to_string()
+                        .split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                );
             }
         }
         "seeds" => {
