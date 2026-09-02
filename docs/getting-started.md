@@ -85,7 +85,7 @@ The report lands at `audit_<n>/REPORT.md` (`{n}` = count of existing `audit_*/` 
 
 | Scope | Covers | Checklists |
 |-------|--------|-----------|
-| `full` | everything | all 20 + 131 vectors |
+| `full` | everything | all 20 + 133 vectors |
 | `program` | Solana program only | 01-07 |
 | `backend` | backend API | 08-09 |
 | `frontend` | frontend | 08, 10 |

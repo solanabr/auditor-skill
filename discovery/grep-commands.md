@@ -310,6 +310,13 @@ grep_search: "safeParse|\.parse\(|Schema\.decode"   isRegexp: true   includePatt
 ```
 > Pair each provider client with its schema; a client with no schema hit is a BE-118 finding.
 
+### Token registry & risk-signal consumers (KV-132 / KV-133)
+```
+grep_search: "getTokenBySymbol|bySymbol|tokenlist|token_list|assetId|canonical|primaryVariant|coingeckoId|tokens\.xyz"   isRegexp: true   includePattern: "**/*.{ts,tsx,rs,py}"
+grep_search: "riskScore|risk_score|trustTier|liquidityTier|isVerified|rugcheck|webacy|goplus"   isRegexp: true   includePattern: "**/*.{ts,tsx,rs,py}"
+```
+> Any hit that reaches a swap / send / collateral / listing decision loads `references/methodologies/token-registry-risk.md`.
+
 ### Terraform / IaC hygiene (DEP-080..DEP-086)
 ```
 # Terminal:
