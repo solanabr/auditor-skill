@@ -4,7 +4,8 @@
 > `token_2022` · `TokenInterface` · `transfer_hook` · `TransferFee` · `PermanentDelegate` · `ConfidentialTransfer` · `get_extension` · `spl_token_2022`
 > (also: `token_interface`, `InterfaceAccount`, `Interface<'info, TokenInterface>`, `transfer_checked`,
 > `StateWithExtensions`, `ExtensionType`, `TransferHook`, `ExtraAccountMetaList`, `DefaultAccountState`,
-> `InterestBearing`, `ScaledUiAmount`, `MintCloseAuthority`, `CpiGuard`).
+> `InterestBearing`, `ScaledUiAmount`, `MintCloseAuthority`, `CpiGuard`; **Token ACL / SRFC-37:** `token_acl`,
+> `TACLkU6`, `MINT_CFG`, `gating_program`, `thaw_permissionless`, `can_thaw_permissionless`).
 >
 > **Purpose:** protocol-specific checks for **downstream integrators** — a DeFi protocol, vault, AMM,
 > lending market, perp, bridge, wallet, staking system, or indexer that handles tokens issued under the
@@ -64,7 +65,7 @@ core of the methodology; the invariants (§2), coexistence matrix (§3), and all
 | **TransferFee** | withholds a bps fee on every transfer; receiver gets `amount − fee`, fee accrues on the destination | **fee-blind accounting** — vault credits the *sent* `amount`, double-counting the fee; fees-on-fees geometric decay through wrapper hops | **read post-transfer balance delta** on the destination (`after − before`); credit the delta, never the `amount` arg. `transfer_checked_with_fee` only as a sanity assert, not a replacement (T1) |
 | **TransferHook** | invokes a protocol-defined program on every transfer, with `ExtraAccountMetaList`-resolved extra accounts, **inside the transfer CPI** | arbitrary CPI + **remaining-accounts injection** + **reentrancy** (hook calls back into the caller holding unflushed state); recursion (hook re-transfers same mint) hard-errors mid-tx; griefing (hook always reverts → mint untransferable) | **pin the hook program id against an allowlist** at mint registration; validate `ExtraAccountMetaList` derivation; treat the hook as **untrusted CPI**; flush caller state before the transfer; assume the hook reads everything its extra accounts grant (T2) |
 | **PermanentDelegate** | mint authority designates an account that can transfer/burn from **any** account of this mint with no holder signature | **third party can seize custodied tokens** — the delegate drains the vault; the protocol's own access control is bypassed entirely | **reject at custody time** — parse `permanent_delegate`; if non-default and not the protocol itself, refuse in the **allowlist**, not the deposit ix (T4) |
-| **FreezeAuthority / DefaultAccountState** | new accounts open in a chosen state (usually `Frozen`); freeze authority can freeze any account any time | **freeze DoS** — the vault account itself is frozen mid-flight, halting deposits/withdrawals/liquidations; deposits fail until thaw | prefer null freeze authority on critical paths; else **surface the freeze error clearly** (never swallow-and-retry into a stuck loop); document the trust assumption (T5) |
+| **FreezeAuthority / DefaultAccountState** | new accounts open in a chosen state (usually `Frozen`); freeze authority can freeze any account any time | **freeze DoS** — the vault account itself is frozen mid-flight, halting deposits/withdrawals/liquidations; deposits fail until thaw | prefer null freeze authority on critical paths; else **surface the freeze error clearly** (never swallow-and-retry into a stuck loop); document the trust assumption (T5); if the mint is SRFC-37 / Token ACL-gated (freeze authority delegated to a gate program) apply §9 |
 | **ConfidentialTransfer / ConfidentialMintBurn / ConfidentialBalances** | ElGamal-encrypted balances/amounts; transfers carry ZK proofs verified by the ZK ElGamal Proof Program | **opaque amounts break plaintext accounting**; **ZK soundness** is the trust root (Fiat-Shamir gaps were forgeable, 2025); a non-zero `auditor_pubkey` is a **decrypt backdoor** | treat the confidential balance as **opaque** (no plaintext shadow ledger); pin the **post-patch** ZK ElGamal Proof Program id; inspect + disclose `auditor_pubkey`, refuse non-zero unless explicitly accepted; escalate to ZK specialists (T8; cross-ref `references/vuln-classes/zk-and-compression.md`) |
 | **InterestBearing / ScaledUiAmount** | UI/display amount = `raw × multiplier` (Scaled) or `raw × (1+r)^t` (Interest); **raw `amount` is unchanged**; multiplier/rate is **mutable** by an authority | **display-vs-raw drift** — protocol quotes/settles in UI units at one boundary and raw at another → double- or under-count; cached multiplier goes stale on update | pick **one accounting layer (raw, internally)**; convert to UI only at the display boundary via the official helpers; **never cache** the multiplier/rate; treat any update as state-invalidating (T9) |
 | **MetadataPointer / MintCloseAuthority** | metadata pointer references a (possibly self / external) metadata account, authority can update it; close authority can close the mint account | **spoofing** — stale/attacker-controlled `(name, symbol, uri)`; embedded-metadata re-borrow hazard; **mint revival** — a closed mint account's address can be recreated, and code caching "mint X exists / decimals = d" is fooled | resolve the pointer + validate its owner program at **use-time**; use `spl_token_metadata_interface` to bounds-check embedded metadata; treat a mint with a live close authority as unstable — re-read mint state, don't cache existence/decimals across the close boundary (T7) |
@@ -93,6 +94,7 @@ For every protocol that integrates Token-2022, the following must hold. Evidence
 | **T9** | **A single accounting layer is chosen (raw internally)** — the protocol never quotes in UI units at one boundary and settles in raw at another | Double-count / under-count of interest/scaling |
 | **T10** | **Authority diversity of every accepted mint is audited** — one key holding mint + freeze + pause + permanent-delegate authority is a total-control vector; group membership is gated on `(group_id, group_authority)` | Single-key total control; transitive-trust injection |
 | **T11** | **Mint extension parsing uses the official accessor** — `StateWithExtensions` / `get_extension`, not hand-rolled TLV walking that can skip an unknown extension without honoring its length and mis-parse the rest | Extension mis-parse → wrong code path |
+| **T12** | **Permissioned (Token ACL / SRFC-37) semantics are enforced by a verified gate, not assumed** — the gate `can_thaw` / `can_freeze` decisions key on the token account real owner and mint, verify the Token ACL flag context, validate extra-account PDAs, are exact inverses of each other, and protocol-owned accounts have a proven thaw path (§9) | Permissionless freeze griefing / unauthorized thaw / protocol vault DoS |
 
 ---
 
@@ -317,6 +319,100 @@ mainnet to exercise **real** Token-2022 mints with their actual extension sets.
 
 ---
 
+## 9. Permissioned tokens — Token ACL (SRFC-37) and gate programs
+
+> **Load when (additional markers):** `token_acl` · `token-acl` · `TACLkU6CiCdkQN2MjoyDkVg2yAH9zkxiHDsiztQ52TP` ·
+> `MINT_CFG` · `gating_program` · `thaw_permissionless` / `freeze_permissionless` (+ `_idempotent`) ·
+> `can_thaw_permissionless` / `can_freeze_permissionless` · `thaw-extra-account-metas` · `srfc37` / `srfc-37`.
+
+**What it is.** SRFC-37 (solana-foundation/token-acl, program `TACLkU6…`) makes a Token-2022 mint *permissioned*
+without a transfer hook. The mint sets **`DefaultAccountState = Frozen`** (every new token account starts frozen)
+and **delegates its freeze authority to the Token ACL program**. `create_config` writes a `MintConfig` PDA
+(`[b"MINT_CFG", mint]`) holding `authority`, `gating_program`, `enable_permissionless_thaw`,
+`enable_permissionless_freeze`. Anyone may then call `thaw_permissionless` / `freeze_permissionless` (and the
+`_idempotent` variants): Token ACL CPIs into the configured **gate program** (`can_thaw_permissionless` /
+`can_freeze_permissionless`, 8-byte discriminators derived from
+`efficient-allow-block-list-standard:can-…-permissionless`) with
+`[caller, token_account, mint, token_account_owner, flag_account, extra_account_metas]` plus the extra accounts
+resolved from `[b"thaw-extra-account-metas", mint]` / `[b"freeze-extra-account-metas", mint]`. Gate **success ⇒**
+Token ACL thaws / freezes with its delegated authority; gate **error ⇒** blocked. The issuer keeps authority-signed
+`thaw` / `freeze`, `set_authority`, `set_gating_program`, `forfeit_freeze_authority`. A **flag account**
+(0 lamports, data `[1]`, owned by Token ACL) is passed so the gate can prove it is being invoked *by Token ACL in
+a permissionless context*, and Token ACL **de-escalates** the CPI (no signer / writable privilege of the caller
+is forwarded) so a hostile gate cannot use the call for anything else.
+
+**Why it matters downstream.** Composability changes shape: a transfer to any *fresh* token account fails until
+that account is thawed, the gate — not the mint — decides *who may hold*, and whoever controls the gate (or
+`set_gating_program`) holds the equivalent of the freeze authority. Three audit roles apply: the **gate author**,
+the **issuer** who configures the mint, and the **downstream integrator** (vault / AMM / lending / wallet).
+
+### 9.1 Gate program (author) — safe shape
+
+| # | Check | Failure mode |
+|---|-------|--------------|
+| **G1** | The gate asserts `flag_account.owner == TOKEN_ACL_PROGRAM_ID`, `data == [1]` (and 0 lamports) before trusting the context. A gate with *any* side effect (one-time allowance consumed, counter, fee, event an indexer trusts) must only apply it under a verified flag. | Anyone calls `can_thaw_permissionless` directly with a forged flag and burns allowances / spoofs events |
+| **G2** | Thaw and freeze semantics are **consistent and inverse**: allow-list ⇒ `can_thaw` passes only allowlisted owners **and** `can_freeze` passes only *non*-allowlisted; block-list ⇒ `can_thaw` fails blocklisted **and** `can_freeze` passes only blocklisted. | Inverted / missing freeze rule ⇒ **anyone freezes any legitimate holder permissionlessly** (griefing DoS) or a blocklisted owner keeps a thawed account |
+| **G3** | Identity is **re-derived from the token account**: `token_account.owner == token_account_owner` and `token_account.mint == mint` are checked by the gate itself (unpack with `StateWithExtensions<Account>`), not trusted from the passed pubkey. | Attacker passes an allowlisted pubkey as `token_account_owner` for a token account they own ⇒ unauthorized thaw |
+| **G4** | Extra accounts (allowlist / blocklist entry PDAs, config) are validated as **canonical PDAs** — seeds from `(mint, owner)` under the gate program, owner program checked, discriminator checked (cross-ref T2, KV-010, KV-026). The extra-account-metas PDA is populated by the author (SRFC-37 ships no interface instruction for it) and is itself authority-gated. | Forged "allowlist entry" account passed in `remaining_accounts` ⇒ thaw for anyone |
+| **G5** | `can_*` handlers are **read-only / idempotent** and demand no signer or writable privilege from `caller` (Token ACL de-escalates; a gate that requires them fails for everyone). | Spam through Token ACL mutates gate state; or the gate is unusable |
+| **G6** | Gate list-admin authority and gate **upgrade authority** are treated as freeze-authority-equivalent — multisig / timelocked, enumerated in the mint authority-diversity review (T10). | One key un-permissions or bricks the token |
+
+### 9.2 Issuer configuration — safe shape
+
+- **I1** The mint really is ACL-gated: `DefaultAccountState = Frozen` **and** the mint's freeze authority is the
+  Token ACL PDA — an ACL `MintConfig` next to a freeze authority held elsewhere is decorative.
+- **I2** `gating_program` is non-default and matches the audited gate; the tuple
+  (`gating_program == default`, `enable_permissionless_thaw == true`) is understood — with no gate the token is
+  effectively *permissionless* for thaw.
+- **I3** `set_gating_program`, `set_authority`, `forfeit_freeze_authority` are governance-gated and **monitored**:
+  swapping the gate to an `always-allow` implementation silently removes the permission layer; `forfeit`
+  returns raw freeze authority to the issuer key.
+- **I4** Enforcement liveness for block-lists: a thawed account stays thawed until someone calls
+  `freeze_permissionless` — the issuer runs (or relies on a public) keeper that freezes newly blocklisted
+  holders; otherwise the list is advisory.
+
+### 9.3 Downstream integrator — safe shape
+
+- **D1** Every **protocol-owned** account of an ACL mint (vault, escrow, fee, LP-side ATA) starts *frozen*. The
+  initialization / first-deposit path thaws it (`thaw_permissionless_idempotent`) **or** the protocol PDA is on
+  the issuer's allowlist — and that allowlist status is a tracked config item with a monitor. A protocol PDA the
+  gate refuses is a permanent deposit failure (T5).
+- **D2** Paths that create a **recipient** token account in the same transaction (swap output ATA, liquidation
+  payout, claim, airdrop) include an idempotent thaw for it, and surface a clean error when the recipient is not
+  permitted — a liquidator or claimant who cannot be thawed must not wedge the protocol (bad-debt liveness,
+  cross-ref `lending.md`).
+- **D3** **Re-freeze mid-flight is reachable by anyone** once the gate says an owner should be frozen — including
+  the protocol's own vault if the protocol PDA is blocklisted. Handle as T5 (surface, never retry-loop) and
+  treat the issuer's gate policy as a trust assumption in the mint allowlist (§4 tier decision).
+- **D4** `MintConfig` changes (gate swap, authority change, forfeit) are **mint-authority-level events** for the
+  integrator's monitor; the integrator never hardcodes assumptions about the gate's policy.
+- **D5** When the integrator CPIs Token ACL, the program id is pinned (`TACLkU6…`) and `MintConfig` is derived
+  `[b"MINT_CFG", mint]` under it (KV-009 / KV-010).
+
+```
+grep -rn -E "token_acl|token-acl|TACLkU6|MINT_CFG|gating_program|thaw_permissionless|freeze_permissionless|can_thaw_permissionless|can_freeze_permissionless|extra-account-metas" programs/ apps/ packages/
+grep -rn -E "DefaultAccountState|default_account_state|AccountState::Frozen" programs/
+```
+
+### 9.4 Test strategy
+
+- **Gate semantics.** Allow-list: non-allowlisted thaw → fails; allowlisted → succeeds; stranger freezes an
+  allowlisted holder → **fails**; freeze after removal → succeeds. Block-list: the inverse. Both directions
+  tested, not just thaw (G2).
+- **Context spoof.** Call `can_thaw_permissionless` directly with a fake flag account → rejected / no side
+  effect (G1). Pass an allowlisted pubkey with a token account owned by someone else → rejected (G3). Pass a
+  forged allowlist-entry account → rejected (G4).
+- **Integrator liveness.** First deposit into a fresh vault; swap that creates the output ATA; liquidation to a
+  non-allowlisted liquidator — each either succeeds via idempotent thaw or surfaces a clean, non-wedging error
+  (D1 / D2). Blocklist the protocol PDA on a fork and confirm the failure is surfaced, not looped (D3).
+- **Governance drills.** `set_gating_program` → `always-allow` and `forfeit_freeze_authority` on a fork; the
+  monitor alerts and the integrator's allowlist review re-opens (I3 / D4).
+
+Use **Surfpool** with the mainnet Token ACL program and the reference `token-acl-gate` for realistic fixtures;
+**LiteSVM / Mollusk** for gate unit tests with hand-built flag / extra-meta accounts.
+
+---
+
 ## Token-2022 integration checklist (fast pass)
 
 - [ ] Extension set parsed with the official `StateWithExtensions` accessor; branching is on the full tuple, not one flag (T11)
@@ -332,6 +428,8 @@ mainnet to exercise **real** Token-2022 mints with their actual extension sets.
 - [ ] Authority diversity audited per accepted mint; group membership gated on `(group_id, group_authority)` (T10)
 - [ ] Mint-allowlist tier chosen (0 reject … 3 full) and on-chain enforced; governance approval + change-monitor wired (§4)
 - [ ] Extension-combination fuzz + differential fee tests + hook smoke (no-op/logging/reverting/recursive) pass (§8)
+- [ ] Token ACL (SRFC-37) mints: `DefaultAccountState=Frozen` + freeze authority held by the Token ACL PDA; `gating_program` non-default; `set_gating_program` / `set_authority` / `forfeit` governance-gated and monitored (§9 I1–I4)
+- [ ] Gate program verifies the flag account, re-derives owner / mint from the token account, validates extra-account-meta PDAs, is side-effect-free, and implements thaw / freeze as exact inverses; protocol-owned accounts have a proven thaw path and swap / liquidation / claim paths thaw idempotently (§9 G1–G5, D1–D3, T12)
 
 *Public incidents referenced: ZK ElGamal Proof Program soundness disclosures (2025, whitehat — Fiat-Shamir
 transcripts omitting public values, enabling forged proofs on the confidential-transfer path). Token-2022
@@ -341,4 +439,5 @@ from mint), `AV-062` (credit from vault delta), `AV-063`/`AV-064`/`AV-066` (exte
 freeze rejection, mint allowlist), `CPI-009` (validate pass-through CPI program id), `KV-105` (Token-2022
 extension footguns), `references/vuln-classes/zk-and-compression.md` (confidential-transfer ZK soundness),
 `references/methodologies/bridges.md` (B8 wrap/unwrap fee accounting), `references/methodologies/governance.md`
-(mint-allowlist approval).*
+(mint-allowlist approval), `KV-134` (Token ACL gate bypass / permissionless-freeze griefing; SRFC-37 spec and
+reference gates in solana-foundation/token-acl).*
