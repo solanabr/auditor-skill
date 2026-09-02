@@ -194,12 +194,13 @@ Every row carries a **Load when (markers)** cell: the grep/prescan markers that 
 | 130 | [CLMM/DLMM Tick-Boundary & Liquidity Math](130-clmm-tick-boundary-liquidity-math.md) | 7 | `tick` · `sqrt_price` · `liquidity_net` · `bin_array` · `fee_growth` |
 | 131 | [Write-Lock Account Contention DoS (Hot Shared Writable)](131-write-lock-account-contention-dos.md) | 6 | shared writable account · global `mut` state · single hot PDA · `#[account(mut)]` global |
 
-### Token Registries & Risk Signals (132-133)
+### Token Registries, Risk Signals & Permissioned Tokens (132-134)
 
 | # | Vector | Severity | Load when (markers) |
 |---|--------|----------|---------------------|
 | 132 | [Canonical-Asset / Token-List Spoofing & Primary-Variant Hijack](132-canonical-asset-token-list-spoofing.md) | 8 | `tokenlist` · `token list` · `assetId` · `canonical` · `getTokenBySymbol` · `coingeckoId` · `tokens.xyz` · `primaryVariant` · strict / verified list |
 | 133 | [Token Risk-Score / Trust-Tier Metric Farming](133-token-risk-score-metric-farming.md) | 6 | `riskScore` · `risk_score` · `grade` · `trustTier` · `liquidityTier` · `isVerified` · `rugcheck` · `webacy` · `goplus` |
+| 134 | [Token ACL (SRFC-37) Gate-Program Bypass & Permissionless-Freeze Griefing](134-token-acl-gate-program-bypass.md) | 7 | `token_acl` · `TACLkU6` · `MINT_CFG` · `gating_program` · `thaw_permissionless` · `can_thaw_permissionless` · `DefaultAccountState` + delegated freeze authority |
 
 ---
 
@@ -219,11 +220,11 @@ double-count them as independent coverage. Severities are aligned to the higher 
 | 039 | 083 | Rate limiting (bypass / missing) | 7 |
 | 047 | 099 | WebSocket security | 7 |
 
-**Distinct concepts:** 127 (133 files − 6 duplicate pairs).
+**Distinct concepts:** 128 (134 files − 6 duplicate pairs).
 
 ---
 
-**Total vector files:** 133 (100 original + 9 in v4.4 + 8 in v5.0 + 3 in v5.1 + 6 in v6.0 + 3 in v6.1 + 2 in v6.2 + 2 in v7.2)
-**Distinct concepts:** 127 (after consolidating 6 duplicate pairs)
+**Total vector files:** 134 (100 original + 9 in v4.4 + 8 in v5.0 + 3 in v5.1 + 6 in v6.0 + 3 in v6.1 + 2 in v6.2 + 3 in v7.2)
+**Distinct concepts:** 128 (after consolidating 6 duplicate pairs)
 **Categories:** 6 (crypto, backend, frontend, devops, ai-agent, off-chain-rust)
 **Severity range:** 3-10

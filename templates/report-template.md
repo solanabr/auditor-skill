@@ -326,7 +326,7 @@
 ...through PC-060
 ```
 
-### Known Vectors Results (KV-001..KV-133)
+### Known Vectors Results (KV-001..KV-134)
 
 ```
 [PASS]      KV-001: {reason}
@@ -334,7 +334,7 @@
               File: {path:line}
               Impact: {what can go wrong}
               Fix: {what to change}
-...through KV-133
+...through KV-134
 ```
 
 ---
@@ -356,7 +356,7 @@
 
 | Metric | Value |
 |--------|-------|
-| Total known vectors | 133 |
+| Total known vectors | 134 |
 | PASS | <!-- N --> |
 | FAIL | <!-- N --> |
 | PARTIAL | <!-- N --> |
