@@ -75,3 +75,13 @@ Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{seve
 - [ ] **AC-048**: CPI called programs — can they callback into the calling program with elevated privileges?
 - [ ] **AC-049**: Re-entrancy: does the program guard against re-entrant calls? (Solana's runtime prevents direct re-entrancy but CPI callbacks can simulate it)
 - [ ] **AC-050**: If program uses `invoke_signed`, verify the seeds cannot be guessed/replicated by another program
+
+## 2.7 — Off-Chain-Signed Authority Grants & Admin-Set Mutation
+
+> Real-world: Rain white-label card contract, Aug 2026 — a crafted `AddCollateralAdmin` signature bundle against an outdated deployment granted the attacker admin over 1,100+ user collateral accounts (~$1.1M drained across Avici, Tria and other tenants). Cross-ref KV-137, KV-101/102.
+
+- [ ] **AC-051**: Enumerate every instruction that grants, extends or transfers a privilege (add admin / operator / delegate / collateral-admin, set authority, grant role). Each one requires an existing **higher on-chain authority as `Signer`** — flag any privilege grant reachable with only an off-chain-signed message or "signature bundle"
+- [ ] **AC-052**: Where signed-message authorization is used (ed25519/secp256k1 precompile + instructions-sysvar introspection), the signed payload binds ALL of: program ID, instruction discriminator, target account keys, an expiry, and a single-use nonce that is consumed on-chain — a signature missing any binding can be replayed or redirected to other accounts
+- [ ] **AC-053**: Batch / bundle admin operations: every element of the bundle is individually validated against the signed payload — one valid signature must never authorize N unverified mutations appended to the same bundle
+- [ ] **AC-054**: Membership of every admin/operator set is bounded, revocable, and every addition emits an event that feeds monitoring/alerting — an unexpected admin addition is detected in minutes, not at drain time
+- [ ] **AC-055**: Blast-radius check: no single granted credential controls ALL user sub-accounts (collateral accounts, card balances, positions). Admin scopes are per-account, per-market or per-cohort, so one compromised grant bounds the loss

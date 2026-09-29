@@ -121,7 +121,7 @@
 | 18 | Privacy, Compliance & Change Mgmt | 60 | | | | | % |
 | 19 | AI Agent Security | 31 | | | | | % |
 | 20 | Rust Off-Chain Services | 17 | | | | | % |
-| | **Total** | **1413** | | | | | **%** |
+| | **Total** | **1424** | | | | | **%** |
 
 > Note: Only applicable checklists are counted in totals. Non-applicable checklists are excluded entirely.
 
@@ -211,7 +211,7 @@
 
 ```
 [PASS]      AC-001: {reason}
-...through AC-050
+...through AC-055
 ```
 
 ### Checklist 03 — Arithmetic Safety
@@ -274,7 +274,7 @@
 
 ```
 [PASS]      SC-001: {reason}
-...through SC-052
+...through SC-058
 ```
 
 ### Checklist 12 — Secrets & OpSec
@@ -326,7 +326,7 @@
 ...through PC-060
 ```
 
-### Known Vectors Results (KV-001..KV-136)
+### Known Vectors Results (KV-001..KV-137)
 
 ```
 [PASS]      KV-001: {reason}
@@ -334,7 +334,7 @@
               File: {path:line}
               Impact: {what can go wrong}
               Fix: {what to change}
-...through KV-136
+...through KV-137
 ```
 
 ---
@@ -356,7 +356,7 @@
 
 | Metric | Value |
 |--------|-------|
-| Total known vectors | 136 |
+| Total known vectors | 137 |
 | PASS | <!-- N --> |
 | FAIL | <!-- N --> |
 | PARTIAL | <!-- N --> |

@@ -6,7 +6,7 @@ This is the PROFESSIONAL, findings-focused deliverable handed to the client —
 structured the way public Solana security reports are (Trail of Bits, OtterSec,
 Neodyme, Zellic, Zenith, Halborn, Certora). It is DISTINCT from
 templates/report-template.md, which is the INTERNAL item-by-item verdict report
-(1413-item checklist grid + 1-10 risk score). Use THIS file when producing the
+(1424-item checklist grid + 1-10 risk score). Use THIS file when producing the
 report the client reads.
 
 HOW TO USE:
@@ -36,7 +36,7 @@ the proprietary knowledge base, and re-author all conventions in original wordin
 
 |                       |                                                        |
 | --------------------- | ------------------------------------------------------ |
-| **Auditor**           | auditor-skill v7.3                                     |
+| **Auditor**           | auditor-skill v7.4                                     |
 | **Client**            | {client / organization}                                |
 | **Protocol**          | {protocol / product name}                              |
 | **Report Title**      | {e.g. "Vault Program Security Assessment"}             |
