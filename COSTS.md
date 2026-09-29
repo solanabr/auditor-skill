@@ -25,8 +25,8 @@ Every audit consumes tokens in two categories:
 
 | Component | Tokens (full corpus, upper bound) | Loaded when |
 |-----------|-----------------------------------|-------------|
-| Checklists (20 files, 1,413 items) | ~50K | per detected language / phase — in-scope only |
-| Known vectors (136 procedures) | ~90K | per phase + language/domain trigger — in-scope only |
+| Checklists (20 files, 1,424 items) | ~50K | per detected language / phase — in-scope only |
+| Known vectors (137 procedures) | ~90K | per phase + language/domain trigger — in-scope only |
 | References (framework idioms, methodologies, orchestration, report-format) | ~100K | per grep marker — only the matched file |
 | Templates + discovery files | ~32K | when a template/discovery step is reached |
 
@@ -46,8 +46,8 @@ Running `tools/auditor-tools/audit-scan` first emits the instruction matrix, acc
 ### Output Tokens (scales with findings)
 | Component | Tokens | Notes |
 |-----------|--------|-------|
-| Per-item verdicts (1,413 items × ~100 tok) | ~120K | 2-4 lines per item |
-| Known vectors results (136 × ~800 tok) | ~94K | Evidence per hack |
+| Per-item verdicts (1,424 items × ~100 tok) | ~120K | 2-4 lines per item |
+| Known vectors results (137 × ~800 tok) | ~94K | Evidence per hack |
 | Findings + recommendations | ~30K | Depends on issues found |
 | Executive summary + tables | ~10K | |
 | **Output total** | **~240K** | Relatively stable across repos |
