@@ -74,11 +74,7 @@ auditor-skill is a **skill file** (a structured prompt + checklists) that turns 
 /plugin install auditor
 ```
 
-Registers the marketplace and installs the `auditor` plugin — all 15 `/auditor:*` commands and 8 agents. Then initialize the Trail of Bits execution tooling once (optional but recommended):
-
-```bash
-git submodule update --init --recursive
-```
+Registers the marketplace and installs the `auditor` plugin — all 15 `/auditor:*` commands and 8 agents. Claude Code clones the plugin together with its submodules, so this also fetches the vendored Trail of Bits tooling at the pinned commit (see [Tool execution](#tool-execution-trail-of-bits--optional-rust-tools)); there is no manual step.
 
 ### Option 2: Install script (any project)
 
@@ -108,11 +104,13 @@ If you're building a service, send `SKILL.md` + `OUTPUT-RULES.md` + `FULL-AUDIT.
 
 ### Tool execution (Trail of Bits) + optional Rust tools
 
-auditor-skill vendors **Trail of Bits** as a git submodule (`vendor/trailofbits`) for real tool execution — SAST, fuzzing, coverage, mutation. Options 1 and 2 init it for you; to do it manually:
+auditor-skill vendors **Trail of Bits** ([trailofbits/skills](https://github.com/trailofbits/skills), CC-BY-SA 4.0) as a git submodule (`vendor/trailofbits`) for real tool execution — SAST, fuzzing, coverage, mutation. Options 1 and 2 both fetch it. For Option 3, or any other clone, run this from the auditor-skill directory (not your project root):
 
 ```bash
-git submodule update --init --recursive
+git submodule update --init --depth 1 -- vendor/trailofbits
 ```
+
+**Pinned at** [`82fe822`](https://github.com/trailofbits/skills/tree/82fe8226252622fa807643bdca1710901198553a) — trailofbits/skills `main` of 2026-09-28. Upstream publishes no tags or releases, so the pin is a commit, and it moves only after a reviewed bump ([CONTRIBUTING.md §5](CONTRIBUTING.md#5-tooling-changes)); CI fails if this line and the submodule disagree, and plugin installs receive a new pin with the next release. To read the pin of any checkout without initializing the submodule: `git ls-tree HEAD vendor/trailofbits`.
 
 The native corpus works fully **without** it (it falls back to grep-based checks and notes where deeper tooling would run). With the submodule initialized, the auditor delegates to the vendored tools per [`references/orchestration/boundary-map.md`](references/orchestration/boundary-map.md). For the optional token-efficiency tools (`audit-scan` pre-scanner + `audit-mem` memory), build the Rust CLIs:
 

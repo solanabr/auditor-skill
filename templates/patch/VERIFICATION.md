@@ -11,6 +11,11 @@ discard it.
 
 ## 1. Apply (scratch worktree — never the client checkout)
 
+The rebuild runs target-controlled code (build scripts, proc-macros, toolchain files), so it follows the
+execution mode recorded at intake — `OUTPUT-RULES.md` Rule 11a (isolated recommended; native allowed and
+stated in the report). If it cannot run in that mode, stop at `[FIX-PROPOSED]`. Create the worktree from a
+clone you made yourself; for a checkout the client supplied, follow Rule 11c first.
+
 ```bash
 git worktree add /tmp/fix-{FINDING_ID} {COMMIT}      # the audited commit the patch targets
 cd /tmp/fix-{FINDING_ID}
@@ -29,6 +34,11 @@ previously succeeded must now fail.
 ```bash
 {PATH_TO}/poc/{FINDING_ID}/run.sh
 ```
+
+**Re-detonated against:** {patched target build (`VULNERABLE_SO` / `FIXED_SO` overrides — `templates/poc/run.sh`) | minimized model}
+— a *patched target build* runs `run.sh` against the unpatched and patched builds of the target itself
+(set both overrides or neither); the *minimized model* is the PoC crate's own `vulnerable` / `fixed` arms
+with the patch transplanted.
 
 - **Pre-fix (recorded when the PoC was built):** `tests/exploit.rs` SUCCEEDED on the
   `vulnerable` arm — the attack went through. → `[PoC-REPRODUCED]`
@@ -52,15 +62,21 @@ exploit earns `[FIX-VERIFIED]`. If there is no executable PoC to run, stop at
   overstate the verification.
 
   ```bash
-  mewt --in-place-on {FILE}:{LINE}   # conceptual — invoke per the plugin's interface
+  mewt init                                      # once per crate: writes mewt.toml + mewt.sqlite
+  mewt mutate {FILE}                             # optional: generate mutants without testing them
+  mewt run {FILE}                                # generate the mutants and run the tests
+  mewt results --target '{FILE}' --line {LINE}   # uncaught mutants on the patched line
   ```
+  Interface as documented by the vendored `mutation-testing` skill (mewt 4.x); `mewt --help`
+  is authoritative. A mutation run executes the target's tests, so it follows Rule 11a too.
   - [ ] No surviving mutant on the patched line(s) — or the survivor is recorded and
         the verdict is not overstated.
 
 - **Blast-radius** — run a `differential-review` check (Trail of Bits): confirm the
   diff closes the exploit path and leaves **every other path unchanged**. A fix that
   breaks an adjacent instruction is `[FIX-INSUFFICIENT]`, however well it closes the
-  cited bound.
+  cited bound. Without the vendored tooling, use the differential execution of
+  `/auditor:re-audit` step 4b.
   - [ ] No adjacent path regressed.
 
 ## 4. Verdict → report's Auditor Verification field

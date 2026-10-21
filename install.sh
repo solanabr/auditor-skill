@@ -21,8 +21,10 @@ else
   git clone --depth 1 "$REPO" "$DEST"
 fi
 
-echo "→ Initializing Trail of Bits execution tooling (optional)"
-git -C "$DEST" submodule update --init --recursive \
+# Shallow, and only our own submodule: a fetch-by-SHA at depth 1 works when the pin is not upstream's tip,
+# and not recursing keeps any submodule Trail of Bits might add from arriving at a commit nobody reviewed.
+echo "→ Initializing Trail of Bits execution tooling (optional, shallow, at the pinned commit)"
+git -C "$DEST" submodule update --init --depth 1 -- vendor/trailofbits \
   || echo "  (skipped — the native corpus works without it)"
 
 cat <<EOF

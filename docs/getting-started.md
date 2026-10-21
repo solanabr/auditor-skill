@@ -19,11 +19,14 @@ git clone https://github.com/solanabr/auditor-skill.git .github/skills/auditor-s
 
 ## 2. Initialize the Trail of Bits submodule (recommended)
 
-The vendored Trail of Bits toolkit (`vendor/trailofbits`) provides real tool execution — SAST, fuzzing, coverage, mutation — that prose and grep cannot do. Pull it:
+The vendored Trail of Bits toolkit (`vendor/trailofbits`) provides real tool execution — SAST, fuzzing, coverage, mutation — that prose and grep cannot do. The plugin install and `install.sh` already fetch it. For a manual clone, pull it from the auditor-skill directory (not your project root):
 
 ```bash
-git submodule update --init --recursive
+cd .github/skills/auditor-skill    # wherever you cloned it
+git submodule update --init --depth 1 -- vendor/trailofbits
 ```
+
+It is pinned to a reviewed upstream commit; the [README](../README.md#tool-execution-trail-of-bits--optional-rust-tools) names it, and `git ls-tree HEAD vendor/trailofbits` prints it.
 
 The corpus works **fully without it**: agents fall back to `discovery/grep-commands.md` scanners and note the tooling gap in the report. With it initialized, they delegate per [`references/orchestration/boundary-map.md`](../references/orchestration/boundary-map.md). See [power-tools.md](power-tools.md#trail-of-bits-plugins).
 
