@@ -1,13 +1,17 @@
 # Orchestration — Deterministic Pre-Scan & Cross-Audit Memory
 
-> **Load when:** running `tools/auditor-tools/audit-scan` (deterministic enumeration) or `audit-mem` (cross-audit memory). Both are **optional token-efficiency layers** — the skill works fully without them, falling back to the grep-based walk. Their job is to spend $0 of deterministic compute on the mechanical work so the LLM spends its tokens on *judgment*.
+> **Load when:** running `audit-scan` (deterministic enumeration) or `audit-mem` (cross-audit memory). Both are **optional token-efficiency layers** — the skill works fully without them, falling back to the grep-based walk. Their job is to spend $0 of deterministic compute on the mechanical work so the LLM spends its tokens on *judgment*.
 
-The tools live in `tools/auditor-tools/` (one Rust crate, two binaries). Build once:
+The tools live in `<auditor-skill root>/tools/auditor-tools/` (one Rust crate, two binaries). `<auditor-skill root>` is the absolute installation path the invoking command or skill gave you, never the working directory, which is usually the audited repo (`OUTPUT-RULES.md` Rule 11e). Build once, from the auditor-skill directory:
 
 ```bash
 cd tools/auditor-tools && cargo build --release
-# binaries: target/release/audit-scan  and  target/release/audit-mem
+# binaries: <auditor-skill root>/tools/auditor-tools/target/release/audit-scan  and  …/audit-mem
 ```
+
+If auditor-skill sits inside the repository under audit (the `install.sh` default, `.claude/skills/auditor-skill`), that build runs inside the target tree, where cargo and rustup read the target's `.cargo/config*` and `rust-toolchain*` from every parent directory. Build there only in Rule 11a isolated mode, or install auditor-skill outside that repository (for example `~/.claude/skills/auditor-skill`) and build it there.
+
+In the commands below, `audit-scan` and `audit-mem` stand for those absolute binary paths. Never run them as a relative `tools/…` path.
 
 If `cargo` is absent, skip both and note it — the audit proceeds on the native grep walk (`discovery/grep-commands.md`).
 

@@ -22,7 +22,7 @@ Turn the passive `QUESTIONS.md` questionnaire into a **persisted** `audit_<n>/in
 
 2. **Pin the commit.** `git rev-parse HEAD`. Record the full 40-char SHA and branch so the report names exactly what was reviewed.
 
-3. **Warm from prior audits (if available).** If `tools/auditor-tools` is built, run `mkdir -p .audit-memory && printf '*\n' > .audit-memory/.gitignore` (`OUTPUT-RULES.md` Rule 11d — `audit-mem` creates the directory itself), then `audit-mem warm --program-id <id>` injects the prior protocol profile and open false-positive rulings — pre-fill from it and confirm rather than re-ask. If absent, skip.
+3. **Warm from prior audits (if available).** If the bundled tools are built (`test -x "${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release/audit-mem"`), run `mkdir -p .audit-memory && printf '*\n' > .audit-memory/.gitignore` (`OUTPUT-RULES.md` Rule 11d — `audit-mem` creates the directory itself), then `"${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release/audit-mem" warm --program-id <id>` (by that absolute path, never a relative `tools/` one) injects the prior protocol profile and open false-positive rulings — pre-fill from it and confirm rather than re-ask. If absent, skip.
 
 4. **Walk QUESTIONS.md → intake.md.** Fill every section of `templates/intake.md`:
    - **Scope & commit pin** — in/out of scope (honor `Q44` excludes), `--scope` boundary.

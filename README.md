@@ -118,11 +118,13 @@ git submodule update --init --depth 1 -- vendor/trailofbits
 
 **Pinned at** [`82fe822`](https://github.com/trailofbits/skills/tree/82fe8226252622fa807643bdca1710901198553a) — trailofbits/skills `main` of 2026-09-28. Upstream publishes no tags or releases, so the pin is a commit, and it moves only after a reviewed bump ([CONTRIBUTING.md §5](CONTRIBUTING.md#5-tooling-changes)); CI fails if this line and the submodule disagree, and plugin installs receive a new pin with the next release. To read the pin of any checkout without initializing the submodule: `git ls-tree HEAD vendor/trailofbits`.
 
-The native corpus works fully **without** it (it falls back to grep-based checks and notes where deeper tooling would run). With the submodule initialized, the auditor delegates to the vendored tools per [`references/orchestration/boundary-map.md`](references/orchestration/boundary-map.md). For the optional token-efficiency tools (`audit-scan` pre-scanner + `audit-mem` memory), build the Rust CLIs:
+The native corpus works fully **without** it (it falls back to grep-based checks and notes where deeper tooling would run). With the submodule initialized, the auditor delegates to the vendored tools per [`references/orchestration/boundary-map.md`](references/orchestration/boundary-map.md). For the optional token-efficiency tools (`audit-scan` pre-scanner + `audit-mem` memory), build the Rust CLIs from the auditor-skill directory:
 
 ```bash
 cd tools/auditor-tools && cargo build --release
 ```
+
+The auditor runs them, the scripts and the Trail of Bits plugins by absolute path from the installation, never by a path relative to the project it audits ([OUTPUT-RULES.md Rule 11e](OUTPUT-RULES.md#11e--bundled-paths)). If auditor-skill sits inside the repository under audit (the `install.sh` default, `.claude/skills/auditor-skill`), the build runs inside that tree, where cargo and rustup read its `.cargo/config*` and `rust-toolchain*` from every parent directory: build there only in [Rule 11a](OUTPUT-RULES.md#rule-11-operating-safety) isolated mode, or install auditor-skill outside the repository (Option 2 with a path such as `~/.claude/skills/auditor-skill`) and build it there.
 
 ---
 
@@ -255,7 +257,8 @@ Beyond one-shot `/audit`, two flows run a full audit-company lifecycle end-to-en
 
 - **`/auditor:audit-cycle`** — a **fully automated** audit-agent team (scope → context reconstruction → tool-assisted pass → parallel manual review with leaf-level false-positive gating → independent peer reconciliation → synthesis) that produces a professional client report at `audit_<n>/REPORT.md`. Optional PDF (needs [pandoc](https://pandoc.org/)):
   ```bash
-  scripts/report-to-pdf.sh audit_1/REPORT.md   # writes REPORT.pdf if pandoc is installed; MD is always the deliverable
+  # from your project; <auditor-skill root> is where auditor-skill is installed
+  "<auditor-skill root>/scripts/report-to-pdf.sh" audit_1/REPORT.md   # writes REPORT.pdf if pandoc is installed; MD is always the deliverable
   ```
 - **`/auditor:audit-assist`** — an **AI-assisted, human-in-the-loop** flow: it pauses at checkpoints to surface findings and ask the questions only you can answer (business context, trust model, severity calls), iterating until the audit document converges.
 - **`/auditor:re-audit`** — **fix-review**: diffs against a prior report (`FIXED` / `STILL-OPEN` / `REGRESSED`) and sweeps for un-patched siblings of each fixed bug.

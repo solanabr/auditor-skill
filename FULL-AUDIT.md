@@ -19,6 +19,7 @@ Before starting any phase:
 5. Create a session checkpoint file to track progress across chunks (Rule 3 in OUTPUT-RULES.md)
 6. Remember: **walk the code file by file — never one-shot** (Rule 3)
 7. Apply **Operating Safety** ([OUTPUT-RULES.md Rule 11](OUTPUT-RULES.md#rule-11-operating-safety)) before anything runs: take the execution mode recorded at intake (11a — isolated recommended, native allowed with a report caveat), list every outside service a tool contacts (11b), treat a `.git/` you did not clone yourself as untrusted (11c), and make `.gitignore` containing `*` the first file in `audit_<n>/` (11d)
+8. Resolve every bundled path in this file (`tools/`, `templates/`, `scripts/`, `vendor/trailofbits/`, the corpus) from the auditor-skill root, never the working directory, which is the audited repo ([Rule 11e](OUTPUT-RULES.md#11e--bundled-paths)). The root is the absolute path the skill (`${CLAUDE_SKILL_DIR}`) or command (`${CLAUDE_PLUGIN_ROOT}`) gave you; nothing is filled in here, so it is written `<auditor-skill root>` below. The executables this plan runs: `"<auditor-skill root>/tools/auditor-tools/target/release/audit-scan"`, `"<auditor-skill root>/tools/auditor-tools/target/release/audit-mem"`, and the Trail of Bits plugins when `test -d "<auditor-skill root>/vendor/trailofbits/plugins"` succeeds
 
 ---
 
@@ -79,7 +80,7 @@ RECORD:
 
 ### 0.3 — Build Instruction Matrix
 
-> **Optional deterministic pre-pass.** If `tools/auditor-tools/` is built, run `audit-scan <program-path> --out audit_<n>/prescan.json` first — it emits this instruction matrix (plus the account-constraint, PDA-seed, arithmetic, and CPI tables) deterministically at ~$0, so Phase 0.2–0.4 collapse to *reading the JSON* and files with zero scan hits get a spot-check instead of a full read. Also run `audit-mem warm --program-id <id>` to load prior invariants + open false-positive rulings (first `mkdir -p .audit-memory && printf '*\n' > .audit-memory/.gitignore` — Rule 11d). Treat all pre-scan output as a *map to verify*, never as verdicts. See [references/orchestration/pre-scan.md](references/orchestration/pre-scan.md). Absent the toolchain, build the matrix by hand below.
+> **Optional deterministic pre-pass.** If the bundled tools are built (`test -x "<auditor-skill root>/tools/auditor-tools/target/release/audit-scan"`, PRE-FLIGHT 8), run `"<auditor-skill root>/tools/auditor-tools/target/release/audit-scan" <program-path> --out audit_<n>/prescan.json` first — it emits this instruction matrix (plus the account-constraint, PDA-seed, arithmetic, and CPI tables) deterministically at ~$0, so Phase 0.2–0.4 collapse to *reading the JSON* and files with zero scan hits get a spot-check instead of a full read. Also run `"<auditor-skill root>/tools/auditor-tools/target/release/audit-mem" warm --program-id <id>` to load prior invariants + open false-positive rulings (first `mkdir -p .audit-memory && printf '*\n' > .audit-memory/.gitignore` — Rule 11d). Treat all pre-scan output as a *map to verify*, never as verdicts. See [references/orchestration/pre-scan.md](references/orchestration/pre-scan.md). Absent the toolchain, build the matrix by hand below.
 
 ```
 ACTION: Read lib.rs → list every #[instruction] or pub fn handler.

@@ -7,9 +7,13 @@ finding — Rule 5b (`OUTPUT-RULES.md`) must already have confirmed the finding 
 filled Reachability + Math/State-Bounds block (Attacker-Model for N ≥ 7). This
 reference decides *which* harness reproduces it and *what tier* the result earns.
 
-**Templates:** the crate the `poc-engineer` fills lives at `templates/poc/`
-(feature-gated `vulnerable`/`fixed` arms, `tests/exploit.rs` + `tests/fixed_blocked.rs`,
-`shared-test-utils`, `run.sh`). The patch templates live at `templates/patch/`.
+**Templates:** the crate the `poc-engineer` fills lives at
+`<auditor-skill root>/templates/poc/` (feature-gated `vulnerable`/`fixed` arms,
+`tests/exploit.rs` + `tests/fixed_blocked.rs`, `shared-test-utils`, `run.sh`). The patch
+templates live at `<auditor-skill root>/templates/patch/`. `<auditor-skill root>` is the
+absolute installation path the invoking command or skill gave you, never the working
+directory, which is usually the audited repo (`OUTPUT-RULES.md` Rule 11e): copy the
+scaffold from there, never from a relative `templates/` path.
 
 **One rule above all:** *executable evidence outranks prose, but prose is never
 removed.* An unbuildable or un-forkable target still yields a complete finding — you
@@ -151,8 +155,8 @@ back the diff plus this verification record for the client to apply and re-test.
 ## 5. Where this sits in the flow
 
 1. Rule 5b confirms the finding (`OUTPUT-RULES.md`).
-2. `/auditor:poc` → detect gates (§1) → pick framework (§2) → `poc-engineer` fills
-   `templates/poc/` → `run.sh` → award the highest tier reached (§3).
+2. `/auditor:poc` → detect gates (§1) → pick framework (§2) → `poc-engineer` fills a
+   copy of `<auditor-skill root>/templates/poc/` → `run.sh` → award the highest tier reached (§3).
 3. `/auditor:patch` → `patch-engineer` writes `templates/patch/` diff → apply to a
    scratch worktree → re-run the PoC → award a fix tier (§4).
 4. `audit-cycle` / `re-audit` fold both tiers back into the finding block; the report's

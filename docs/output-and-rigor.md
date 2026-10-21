@@ -110,6 +110,7 @@ Like a real firm, the **client-facing report issues no "safe to deploy" guarante
 - **Outside services (11b).** No consent gate. The report lists each tool, the service it contacted, and what it sent.
 - **Untrusted git checkouts (11c).** In a `.git/` the auditor did not clone, git runs as `git --no-pager -c core.fsmonitor=false -c log.showSignature=false`; `--no-textconv` goes on `git log -p` / `show` / `diff` / `blame` and `--no-ext-diff` on diffs; no `--show-signature` or `%G` placeholders; only committed revisions are read (blame names a revision; no `git status` or working-tree diffs); nothing is checked out, merged, committed, fetched, pulled, pushed or `ls-remote`d there. Better: audit a `git clone --no-local` copy made with git 2.45.1+ (or the matching maintenance release).
 - **Output hygiene (11d).** Each output directory's first file is a `.gitignore` containing `*` (for `.audit-memory/`, before the first `audit-mem` call); CI on a public repo posts pass/fail only, never counts or findings.
+- **Bundled paths (11e).** Scripts, the Rust tools, templates, the Trail of Bits plugins and corpus files resolve from the auditor-skill installation root, never the working directory (usually the audited repo): commands and agents write it `${CLAUDE_PLUGIN_ROOT}`, the skill body `${CLAUDE_SKILL_DIR}`, other files the absolute root the command or skill gave.
 
 ## Report file naming
 

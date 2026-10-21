@@ -20,10 +20,14 @@ A deterministic Rust AST pass (`syn` with `span-locations`, so every hit carries
 
 ### Run it
 
+Build once from the auditor-skill directory, then run the binary by its absolute path from the repository under audit. `<auditor-skill root>` is the directory auditor-skill is installed in, never a path relative to your project ([`OUTPUT-RULES.md` Rule 11e](../OUTPUT-RULES.md#11e--bundled-paths)):
+
 ```bash
-cd tools/auditor-tools && cargo build --release        # once
-target/release/audit-scan ./programs/my-program/src --pretty --out audit_1/prescan.json
+cd tools/auditor-tools && cargo build --release        # once, from the auditor-skill directory
+"<auditor-skill root>/tools/auditor-tools/target/release/audit-scan" ./programs/my-program/src --pretty --out audit_1/prescan.json
 ```
+
+If auditor-skill sits inside the repository under audit (the `install.sh` default, `.claude/skills/auditor-skill`), the build runs inside the target tree, where cargo and rustup read the target's `.cargo/config*` and `rust-toolchain*` from every parent directory. Build there only in [Rule 11a](../OUTPUT-RULES.md#rule-11-operating-safety) isolated mode, or install auditor-skill outside that repository and build it there.
 
 Recursively walks `*.rs` (skipping `target/`, `.git/`, `node_modules/`), parses each with `syn::parse_file`, prints one JSON object to stdout or `--out FILE`. Files that fail to parse are skipped (best-effort).
 
@@ -75,6 +79,8 @@ The same bug keeps its identity across commits and line drift — the same norma
 
 ### Lifecycle example
 
+Run from the repository under audit; `audit-mem` stands for `"<auditor-skill root>/tools/auditor-tools/target/release/audit-mem"`.
+
 ```bash
 audit-mem --db .audit-memory/audit.db init
 
@@ -118,7 +124,7 @@ auditor-skill's corpus is the **knowledge** layer; Trail of Bits (vendored at `v
 
 ```bash
 git submodule update --init --depth 1 -- vendor/trailofbits
-test -d vendor/trailofbits/plugins && echo present    # the detection agents use
+test -d vendor/trailofbits/plugins && echo present    # agents run this test on the absolute install root
 git ls-tree HEAD vendor/trailofbits                   # the pinned commit, initialized or not
 ```
 

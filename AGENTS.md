@@ -3,6 +3,8 @@
 This skill audits with a small team of subagents (see `agents/`) and, when available,
 orchestrates Trail of Bits execution tooling vendored at `vendor/trailofbits`.
 
+**Bundled paths.** Every bundled path — scripts, tools, templates, `vendor/trailofbits`, corpus files — is relative to the auditor-skill installation root, never to the working directory, which is usually the audited repository. Command and agent text writes that root as `${CLAUDE_PLUGIN_ROOT}`, the skill body as `${CLAUDE_SKILL_DIR}`; in a file read later, use the absolute root you were given (`OUTPUT-RULES.md` Rule 11e).
+
 ## Flow (full audit)
 
 0. **Pre-scan (optional, deterministic).** If `tools/auditor-tools/` is built, `audit-scan` emits the instruction/constraint/PDA/arithmetic map at ~$0 and `audit-mem warm --program-id <id>` (after `mkdir -p .audit-memory && printf '*\n' > .audit-memory/.gitignore`, Rule 11d) loads prior invariants + open false-positive rulings — seeding `context-builder` with a map instead of a blank repo, and letting `vuln-hunter` auto-suppress findings that carry a prior `FALSE_POSITIVE` ruling (`audit-mem check`). Falls back to the grep walk if the toolchain is absent. See [references/orchestration/pre-scan.md](references/orchestration/pre-scan.md).

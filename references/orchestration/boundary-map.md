@@ -12,10 +12,12 @@ outside service is listed in the report — tool, service, what was sent (Rule 1
 
 ## Detection
 
-Before delegating, confirm the submodule is present:
+Before delegating, confirm the submodule is present in the installation; its plugins are read and run
+from there too. `<auditor-skill root>` is the absolute installation path the invoking command or skill
+gave you, never the working directory, which is usually the audited repo (`OUTPUT-RULES.md` Rule 11e):
 
 ```
-test -d vendor/trailofbits/plugins && echo present
+test -d "<auditor-skill root>/vendor/trailofbits/plugins" && echo present
 ```
 
 If absent (submodule not initialized), run the native fallback and note in the report:
@@ -24,7 +26,7 @@ auditor-skill directory (plugin and install.sh installs already include it)".
 
 ## Capability → plugin map
 
-| Capability | ToB plugin (`vendor/trailofbits/plugins/…`) | auditor-skill use | Native fallback |
+| Capability | ToB plugin (`<auditor-skill root>/vendor/trailofbits/plugins/…`) | auditor-skill use | Native fallback |
 |------------|---------------------------------------------|-------------|-----------------|
 | Interprocedural SAST (taint) | `static-analysis`, `semgrep-rule-creator`, `variant-analysis` | `vuln-hunter` runs SAST over in-scope languages; fold SARIF into verdicts. A CodeQL database build compiles the target (Rule 11a) | `discovery/grep-commands.md` scanners |
 | Property / fuzz harnesses | `testing-handbook-skills`, `property-based-testing` | generate + run a harness for any ≥High arithmetic/economic finding (the Rule 5b PoC); `/auditor:poc` orchestrates this. Harnesses on target code follow Rule 11a | checklist 16 "does the suite exist" prose checks |

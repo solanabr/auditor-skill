@@ -17,4 +17,4 @@ Run the auditor-skill end-to-end:
 4. Every in-scope checklist item and phase-triggered vector gets an explicit verdict (`[PASS]` / `[FAIL-N]` / `[PARTIAL]` / `[N/A]`). Findings with N≥6 must pass the Rule 5b validation gate or be downgraded to `[PARTIAL]` / `[UNCONFIRMED]`.
 5. Emit `audit_<n>/REPORT.md`: executive summary (safe-to-deploy verdict), Scope Coverage table, findings, Phase 4.5 maturity scorecard, remediation roadmap.
 
-If Trail of Bits tooling is present at `vendor/trailofbits`, use it for SAST / harnesses / coverage per `references/orchestration/boundary-map.md`; otherwise fall back to the native `discovery/grep-commands.md` scanners and note the tooling gap.
+If the bundled Trail of Bits tooling is present (`test -d "${CLAUDE_PLUGIN_ROOT}/vendor/trailofbits/plugins"` — the installation's copy, never a relative `vendor/` path, which would resolve inside the audited repo), use it for SAST / harnesses / coverage per `references/orchestration/boundary-map.md`; otherwise fall back to the native `discovery/grep-commands.md` scanners and note the tooling gap.

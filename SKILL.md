@@ -70,6 +70,8 @@ Checklists outside this set are **never read** — a Rust-only repo never loads 
 | `references/audit-lifecycle/threat-model-bootstrap.md` | `/auditor:threat-model --bootstrap` or `--vulns` / `--seed` / `--parent`; or a trigger: intake §7 prior audit / incident · `fork of` · `forked from` · `white-label` (README/docs) · `security_txt!` `source_code` not among the remotes · prior `audit_*/REPORT.md` · audit / post-mortem / incident file in the tree · `incident_*/INCIDENTS.json` |
 | `references/report-format.md` | assembling the final report (Phase 5 / audit-reporter) |
 
+**Bundled paths.** Every path this skill names for something it ships — `scripts/`, `tools/`, `templates/`, `vendor/trailofbits/` and the corpus files above — is relative to the auditor-skill root, `${CLAUDE_SKILL_DIR}`, never to the working directory, which is usually the repository under audit. Commands and agents write the same root as `${CLAUDE_PLUGIN_ROOT}`; in a file you open later, where neither variable is filled in, use the absolute root you were given ([OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 11e).
+
 ---
 
 Full repository layout → [README.md](README.md#folder-structure).
@@ -125,7 +127,7 @@ Target-controlled code runs only in the execution mode chosen at intake (isolate
 
 Two flows run the traditional audit-company lifecycle over the skill's **existing** mechanisms (scope-gating → Phase 0.5 context → manual review → Rule 5b verification → Phase 4.5 maturity → report). Method: [references/audit-lifecycle/methodology.md](references/audit-lifecycle/methodology.md); how real firms work: [references/audit-lifecycle/firm-coverage.md](references/audit-lifecycle/firm-coverage.md). When a prior audit, an incident or a fork parent is detected, both flows also seed the threat model from history, offline ([references/audit-lifecycle/threat-model-bootstrap.md](references/audit-lifecycle/threat-model-bootstrap.md)).
 
-- **`/auditor:audit-cycle`** — *fully automated audit team.* Runs the whole lifecycle autonomously: domain-partitioned `vuln-hunter` + `economic-analyst` (each self-triaging via Rule 5b + `false-positives.md` at the leaf) → independent `peer-reviewer` reconciliation on top-severity findings → `audit-reporter` synthesis → a client-facing report ([templates/audit-report.md](templates/audit-report.md)) at `audit_<n>/REPORT.md` (+ optional PDF via `scripts/report-to-pdf.sh`, pandoc-gated — MD is always the deliverable).
+- **`/auditor:audit-cycle`** — *fully automated audit team.* Runs the whole lifecycle autonomously: domain-partitioned `vuln-hunter` + `economic-analyst` (each self-triaging via Rule 5b + `false-positives.md` at the leaf) → independent `peer-reviewer` reconciliation on top-severity findings → `audit-reporter` synthesis → a client-facing report ([templates/audit-report.md](templates/audit-report.md)) at `audit_<n>/REPORT.md` (+ optional PDF via `"${CLAUDE_SKILL_DIR}/scripts/report-to-pdf.sh"`, pandoc-gated — MD is always the deliverable).
 - **`/auditor:audit-assist`** — *AI-assisted, human-in-the-loop.* Same lifecycle, pausing at checkpoints to surface confirmed findings + next-focus + the questions only a human can answer (business context, trust model, severity calls); iterates until the audit document converges.
 - **`/auditor:re-audit`** — *fix-review.* Diffs against a prior report: per-finding `FIXED` / `STILL-OPEN` / `REGRESSED`, plus a sibling-patch-propagation sweep (grep the codebase for the same anti-pattern the fix closed).
 

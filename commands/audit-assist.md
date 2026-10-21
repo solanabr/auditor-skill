@@ -11,7 +11,7 @@ allowed-tools: Read, Grep, Glob, Bash, Task
 
 Run the same lifecycle as `/auditor:audit-cycle`, but **stop at checkpoints** and let the human steer. Read `OUTPUT-RULES.md` first (format, severity 1-10, **Rule 5b** gate) and `references/audit-lifecycle/methodology.md` (the firm-spine → skill-mechanism mapping). This is the collaborative mode: the agent does the mechanical review; the human resolves the judgment calls a tool cannot (business intent, trust boundaries, severity of a business-logic gap). Think ToB weekly progress report + Zellic client discussion.
 
-Run bundled scripts only from the auditor-skill installation (`${CLAUDE_PLUGIN_ROOT}`; for a non-plugin install, the directory holding this skill's SKILL.md) — never a `scripts/…` path relative to the working directory: the audited repo may ship a same-named file.
+Run bundled scripts, tools and Trail of Bits plugins only from the auditor-skill installation (`${CLAUDE_PLUGIN_ROOT}`; for a non-plugin install, the directory holding this skill's SKILL.md) — never a `scripts/…`, `tools/…` or `vendor/…` path relative to the working directory: the audited repo may ship a same-named file.
 
 ## Checkpoint protocol
 
@@ -32,11 +32,11 @@ Fold the human's answers back in, re-synthesize, and continue.
    - **At this checkpoint:** ask whether a member of the protocol team is on hand to answer design questions. Offer an explicit fork parent (`--parent <https-url>`) or report URLs (`--vulns`) for the human to confirm; only a confirmed URL is fetched.
    - **Bootstrap → interview.** Walk the draft's §5 open items with them (`references/audit-lifecycle/threat-model-bootstrap.md` §5).
 
-3. **Tool-assisted first pass.** If `vendor/trailofbits/plugins` is present, run ToB `static-analysis` and fold SARIF as attention-directing evidence (`references/orchestration/boundary-map.md`); else native `discovery/grep-commands.md` and note the gap. Load in-scope `references/methodologies/*` per protocol markers.
+3. **Tool-assisted first pass.** If the bundled Trail of Bits plugins are present (`test -d "${CLAUDE_PLUGIN_ROOT}/vendor/trailofbits/plugins"`), run ToB `static-analysis` and fold SARIF as attention-directing evidence (`references/orchestration/boundary-map.md`); else native `discovery/grep-commands.md` and note the gap. Load in-scope `references/methodologies/*` per protocol markers.
 
 4. **Domain-partitioned manual review.** Run `vuln-hunter` (checklists + vectors) and `economic-analyst` (checklist 06 + economic vectors + methodology refs) over their **disjoint** surfaces — partitioned, not cloned. Each starts from `audit_<n>/threat-model.md` §4: the goals mapped to its partition, their Evidence, and the Leads. Each candidate finding passes Rule 5b + `references/false-positives.md` **at the leaf** before it is emitted. **⏸ Checkpoint 3 — after each review phase:** surface (a)/(b)/(c). This is where the human resolves "is this intended?" and re-scopes the next phase.
 
-4b. **Triage (`/triage`).** Before reconciliation, dedup by root-cause (`audit-mem` suppression/regression when `tools/auditor-tools` is built), re-apply Rule 5b with quantified downgrades, and split real findings from the Notes & Nitpicks list. **⏸ Checkpoint 3b — after triage:** show the human what was deduped/suppressed and why.
+4b. **Triage (`/triage`).** Before reconciliation, dedup by root-cause (`audit-mem` suppression/regression when `"${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release/audit-mem"` is built), re-apply Rule 5b with quantified downgrades, and split real findings from the Notes & Nitpicks list. **⏸ Checkpoint 3b — after triage:** show the human what was deduped/suppressed and why.
 
 5. **Independent reconciliation.** Spawn `peer-reviewer` on the top-severity survivors (N≥8, plus any N≥7 the primary could not PoC); it re-derives from code, reusing the context worksheets. Reconcile CONFIRM / DISPUTE / DOWNGRADE. **⏸ Checkpoint 4 — after reconciliation:** present the reconciled set and any primary-vs-peer disagreements for the human to adjudicate.
 

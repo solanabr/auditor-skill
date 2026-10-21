@@ -32,13 +32,15 @@ The corpus works **fully without it**: agents fall back to `discovery/grep-comma
 
 ## 3. Build the Rust tools (optional, high value)
 
-Two binaries cut audit cost and add cross-audit memory. Build once:
+Two binaries cut audit cost and add cross-audit memory. Build once, from the auditor-skill directory:
 
 ```bash
 cd tools/auditor-tools && cargo build --release
 # binaries: target/release/audit-scan  and  target/release/audit-mem
 cargo test   # optional: scan_fixture + mem_roundtrip
 ```
+
+The agents run them by absolute path from the installation, never from your project ([`OUTPUT-RULES.md` Rule 11e](../OUTPUT-RULES.md#11e--bundled-paths)). If auditor-skill sits inside the repository you will audit (the `install.sh` default, `.claude/skills/auditor-skill`), this build runs inside that tree, where cargo and rustup read its `.cargo/config*` and `rust-toolchain*` from every parent directory: build there only in [Rule 11a](../OUTPUT-RULES.md#rule-11-operating-safety) isolated mode, or install auditor-skill outside the repository and build it there.
 
 - **`audit-scan`** — deterministic AST pass that emits the risky surface (instructions, account constraints, PDAs, arithmetic, panics, CPIs) as one JSON, at ~$0 LLM cost. On a 50K-line program this removes roughly 200-300K input tokens (~30-40% of the variable cost). It is a *map to verify*, not a set of verdicts.
 - **`audit-mem`** — SQLite store for exact de-dup, FIXED→REGRESSED detection, false-positive suppression, and warm re-audits.

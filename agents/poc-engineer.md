@@ -11,7 +11,7 @@ You turn a *confirmed* finding into an executable exploit — the runnable Rule 
 
 ## Mandate
 
-Given the finding block, its `audit_<n>/worksheets/context/*` worksheet, the pinned audited commit, and the detected toolchain, produce the **smallest self-contained crate** that reproduces the flaw. Copy the matching harness from `templates/poc/` (Mollusk single-instruction / LiteSVM stateful / Surfpool fork / Trident-cargo-fuzz) and fill it:
+Given the finding block, its `audit_<n>/worksheets/context/*` worksheet, the pinned audited commit, and the detected toolchain, produce the **smallest self-contained crate** that reproduces the flaw. Copy the matching harness (Mollusk single-instruction / LiteSVM stateful / Surfpool fork / Trident-cargo-fuzz) from the installation's `"${CLAUDE_PLUGIN_ROOT}/templates/poc/"` — never a relative `templates/` path, which would resolve inside the audited repo — and fill it:
 
 - **Feature-gated arms.** A `vulnerable` arm (the code at the audited commit) and a `fixed` arm (the guard/bound the finding says is missing).
 - **Assert, don't merely run.** `assert_exploit_succeeds!` on the `vulnerable` arm and `assert_exploit_rejected!` on the `fixed` arm (our own `shared-test-utils`). Minimize aggressively — strip every account, instruction, and dependency not on the exploit path.
@@ -56,7 +56,7 @@ against the program's **real bytes**:
 
 ## Tool delegation
 
-When `vendor/trailofbits` is present (`test -d vendor/trailofbits/plugins`), delegate PoC-construction discipline to Trail of Bits **`fp-check`** — the exploitability-verifier confirms the crate actually demonstrates the flaw rather than an artifact of the harness. Fold its result in as evidence, never as the verdict. When absent, do the construction manually and note the tooling gap.
+When the bundled Trail of Bits plugins are present (`test -d "${CLAUDE_PLUGIN_ROOT}/vendor/trailofbits/plugins"`), delegate PoC-construction discipline to Trail of Bits **`fp-check`** — the exploitability-verifier confirms the crate actually demonstrates the flaw rather than an artifact of the harness. Fold its result in as evidence, never as the verdict. When absent, do the construction manually and note the tooling gap.
 
 ## Output — emit exactly one tier
 

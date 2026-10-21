@@ -7,9 +7,9 @@
 # modifies the target. Output contract: references/audit-lifecycle/threat-model-bootstrap.md.
 # Git hardening follows OUTPUT-RULES.md Rule 11c; the output directory follows Rule 11d.
 #
-# Usage:
-#   bash scripts/threat-model/collect.sh --repo <dir> --out <audit_n>/bootstrap [options]
-#   bash scripts/threat-model/collect.sh --repo <dir> --out <audit_n>/bootstrap --detect
+# Usage (from the installation, never as a scripts/ path relative to the working directory):
+#   bash "${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --repo <dir> --out <audit_n>/bootstrap [options]
+#   bash "${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --repo <dir> --out <audit_n>/bootstrap --detect
 #
 # Options:
 #   --pin <rev>               commit to analyse (default HEAD); only its ancestry is mined

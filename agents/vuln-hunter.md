@@ -13,4 +13,4 @@ You may only mark `[FAIL-N≥6]` against a function that `context-builder` has a
 
 **Rule 5b gate (mandatory).** Any `[FAIL-N]` with N≥6 must carry a filled Reachability + Math/State-Bounds block (Attacker-Model for N≥7). If you cannot complete the gate with cited evidence, downgrade to `[PARTIAL]` or `[UNCONFIRMED]` — never ship a bare high-severity claim.
 
-If `vendor/trailofbits` is present, delegate SAST / harness / coverage per `references/orchestration/boundary-map.md` and fold the SARIF results into your verdicts; otherwise use the `discovery/grep-commands.md` scanners and note the tooling gap.
+If the bundled Trail of Bits plugins are present (`test -d "${CLAUDE_PLUGIN_ROOT}/vendor/trailofbits/plugins"`), delegate SAST / harness / coverage per `references/orchestration/boundary-map.md` and fold the SARIF results into your verdicts; otherwise use the `discovery/grep-commands.md` scanners and note the tooling gap.

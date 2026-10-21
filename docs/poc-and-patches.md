@@ -31,7 +31,7 @@ audit_<n>/
     └── VERIFICATION.md           the executed-revert record + fix tier
 ```
 
-The crate the `poc-engineer` fills is copied from `templates/poc/`; the patch templates from `templates/patch/`. `run.sh` builds each arm to SBF and runs its test (both arms compile to the same `.so`, so they can't coexist — it builds, tests, overwrites), and exits non-zero if the exploit doesn't reproduce on `vulnerable` or isn't blocked on `fixed`. It never builds inside the audited repo: a self-contained crate is copied to a scratch directory outside the target tree (the path is printed) and built with the toolchain pinned, so the target's `.cargo/config*` and `rust-toolchain*` never apply; a crate that `path`- or `git`-depends on target crates builds in place only with `AUDITOR_EXEC_MODE` set to the run's recorded mode ([Rule 11a](../OUTPUT-RULES.md#rule-11-operating-safety)), and otherwise exits 3 → `[PoC-ATTEMPTED]`.
+The crate the `poc-engineer` fills is copied from `<auditor-skill root>/templates/poc/`, the patch templates from `<auditor-skill root>/templates/patch/` — the installation's copies, never a `templates/` path relative to the audited repo ([Rule 11e](../OUTPUT-RULES.md#11e--bundled-paths)). `run.sh` builds each arm to SBF and runs its test (both arms compile to the same `.so`, so they can't coexist — it builds, tests, overwrites), and exits non-zero if the exploit doesn't reproduce on `vulnerable` or isn't blocked on `fixed`. It never builds inside the audited repo: a self-contained crate is copied to a scratch directory outside the target tree (the path is printed) and built with the toolchain pinned, so the target's `.cargo/config*` and `rust-toolchain*` never apply; a crate that `path`- or `git`-depends on target crates builds in place only with `AUDITOR_EXEC_MODE` set to the run's recorded mode ([Rule 11a](../OUTPUT-RULES.md#rule-11-operating-safety)), and otherwise exits 3 → `[PoC-ATTEMPTED]`.
 
 ## `--with-poc` vs on-demand
 
@@ -94,6 +94,6 @@ The patch is a **proposal, not an application** — the auditor stays read-only 
 ## Where it sits in the flow
 
 1. Rule 5b confirms the finding ([output-and-rigor.md](output-and-rigor.md#the-rule-5b-validation-gate)).
-2. `/auditor:poc` → detect gates → pick framework → `poc-engineer` fills `templates/poc/` → `run.sh` → award the highest tier reached.
+2. `/auditor:poc` → detect gates → pick framework → `poc-engineer` fills a copy of `<auditor-skill root>/templates/poc/` → `run.sh` → award the highest tier reached.
 3. `/auditor:patch` → `patch-engineer` writes the `templates/patch/` diff → apply to a scratch worktree → re-run the PoC → award a fix tier.
 4. `/auditor:audit-cycle` / `/auditor:re-audit` fold both tiers back into the finding block; the report's **Auditor Verification** line carries the fix verdict.

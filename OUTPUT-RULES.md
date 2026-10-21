@@ -360,7 +360,7 @@ Both tokens are defined in Rule 5b. Recap: `[UNCONFIRMED]` = the gate failed on 
 
 ## Rule 11: Operating Safety
 
-An audit handles hostile material: code that may get built or run, git metadata that may carry commands, and findings that must not leak before they are fixed. These four rules bind every command and agent; other files point here instead of restating them.
+An audit handles hostile material: code that may get built or run, git metadata that may carry commands, and findings that must not leak before they are fixed. These five rules bind every command and agent; other files point here instead of restating them.
 
 ### 11a — Execution mode
 
@@ -403,3 +403,11 @@ A `.git/` directory the auditor did not create itself — a client archive, a co
 
 - The first file written into `audit_<n>/`, `.audit-memory/` or `incident_<n>/` is a `.gitignore` containing `*`. From then on git skips everything in that directory, the `.gitignore` itself included, without any change to the repository's own `.gitignore` or config. `audit-mem` creates `.audit-memory/` on its own, and the intake warm-up may be its first call, so run `mkdir -p .audit-memory && printf '*\n' > .audit-memory/.gitignore` before any `audit-mem` command.
 - In CI on a public repository, publish pass/fail only — no finding counts, total or per severity. Treat workflow logs and uploaded artifacts as public: anyone signed in to GitHub can read them. Deliver details privately (GitHub private vulnerability reporting, a draft security advisory, or a private repository); when no private channel is available, fail the job. Never fall back to printing findings in the log.
+
+### 11e — Bundled paths
+
+Everything auditor-skill ships — `scripts/`, `tools/auditor-tools/`, `templates/`, `vendor/trailofbits/` and the corpus files — is addressed from the auditor-skill installation root, never from the working directory. During an audit the working directory is usually the target repository, which can hold files at the same relative paths, so a relative path may reach the target's copy instead of ours.
+
+- Command and agent text writes the root as `${CLAUDE_PLUGIN_ROOT}`, and the skill body as `${CLAUDE_SKILL_DIR}`; Claude Code substitutes both in that text. In a file opened later (this one, `references/`, `docs/`) nothing is substituted and the shell sets neither variable, so use the absolute root the invoking command or skill gave you, written `<auditor-skill root>` in those files.
+- Run bundled executables only by that absolute path: `"<auditor-skill root>/tools/auditor-tools/target/release/audit-scan"` and `…/audit-mem` (built when `test -x` on that path succeeds), the Trail of Bits plugins (present when `test -d "<auditor-skill root>/vendor/trailofbits/plugins"` succeeds), the PoC scaffold copied from `<auditor-skill root>/templates/poc/`, and every bundled script.
+- A variable left unfilled turns the path into one that starts at `/` and fails. Report the tool as unavailable; never retry with the relative path.
