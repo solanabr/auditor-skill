@@ -28,12 +28,15 @@ A PoC that path- or git-depends on target crates, that builds the target (for ex
 `cargo build-sbf` / `anchor build` on the client tree to get its `.so`), or that is
 built anywhere inside the target tree runs target-controlled code: cargo reads
 `.cargo/config*` and rustup reads `rust-toolchain*` from every parent directory, so a
-crate under `audit_<n>/poc/` picks up the target's rustc wrapper, runner, linker,
-`[env]` and toolchain. Such a PoC runs in the execution mode recorded at intake;
-`templates/poc/run.sh` takes it from `AUDITOR_EXEC_MODE=native|isolated` and exits 3
-when it is unset. The only exemption is a self-contained crate (no path or git
-dependency on target crates, does not build the target) that `run.sh` copies to a
-scratch directory outside the target tree and builds there with an explicit toolchain.
+crate under `audit_<n>/poc/` or `incident_<n>/poc/` picks up the target's rustc
+wrapper, runner, linker, `[env]` and toolchain. Such a PoC runs in the execution mode
+recorded at intake (for an incident, the mode the command recorded):
+`templates/poc/run.sh` needs `AUDITOR_EXEC_MODE` set to it — `isolated` inside the
+isolated runner, or `native` — and otherwise refuses with exit 3, which makes the PoC
+`[PoC-ATTEMPTED]`. The only exemption is a self-contained `templates/poc` crate whose
+program runs inside Mollusk or LiteSVM — no `git` dependency, no `path` / `workspace`
+reference leaving the crate directory, no build of the target — which `run.sh` copies
+to a scratch directory outside the target tree and builds with a pinned toolchain.
 If the recorded mode cannot run the PoC, record `[PoC-ATTEMPTED]` with the blocker
 "no isolated runner" and keep the prose PoC.
 
