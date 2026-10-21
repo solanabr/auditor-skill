@@ -79,7 +79,7 @@ RECORD:
 
 ### 0.3 — Build Instruction Matrix
 
-> **Optional deterministic pre-pass.** If `tools/auditor-tools/` is built, run `audit-scan <program-path> --out audit_<n>/prescan.json` first — it emits this instruction matrix (plus the account-constraint, PDA-seed, arithmetic, and CPI tables) deterministically at ~$0, so Phase 0.2–0.4 collapse to *reading the JSON* and files with zero scan hits get a spot-check instead of a full read. Also run `audit-mem warm --program-id <id>` to load prior invariants + open false-positive rulings. Treat all pre-scan output as a *map to verify*, never as verdicts. See [references/orchestration/pre-scan.md](references/orchestration/pre-scan.md). Absent the toolchain, build the matrix by hand below.
+> **Optional deterministic pre-pass.** If `tools/auditor-tools/` is built, run `audit-scan <program-path> --out audit_<n>/prescan.json` first — it emits this instruction matrix (plus the account-constraint, PDA-seed, arithmetic, and CPI tables) deterministically at ~$0, so Phase 0.2–0.4 collapse to *reading the JSON* and files with zero scan hits get a spot-check instead of a full read. Also run `audit-mem warm --program-id <id>` to load prior invariants + open false-positive rulings (first `mkdir -p .audit-memory && printf '*\n' > .audit-memory/.gitignore` — Rule 11d). Treat all pre-scan output as a *map to verify*, never as verdicts. See [references/orchestration/pre-scan.md](references/orchestration/pre-scan.md). Absent the toolchain, build the matrix by hand below.
 
 ```
 ACTION: Read lib.rs → list every #[instruction] or pub fn handler.
@@ -345,10 +345,13 @@ ACTIONS:
   # Check for compromised packages
   grep "axios" apps/backend/package.json apps/web/package.json
   # → verify NOT 1.14.1 or 0.30.4
-  grep -rnE 'web3\.js.{0,40}1\.95\.(6|7)|/web3\.js/-/web3\.js-1\.95\.(6|7)' \
-    --include='package.json' --include='package-lock.json' --include='pnpm-lock.yaml' \
-    --include='yarn.lock' --include='bun.lock' . | grep -v node_modules
-  # → hijacked @solana/web3.js releases (KV-077 Step 2, SC-005) — any hit is CRITICAL
+  W3='web3\.js@(npm:)?1\.95\.(6|7)([^0-9]|$)|/web3\.js/-/web3\.js-1\.95\.(6|7)\.tgz|"@solana/web3\.js"[[:space:]]*:[[:space:]]*"=?1\.95\.(6|7)"'
+  grep -rnE "$W3" --exclude-dir=node_modules --include='package.json' --include='package-lock.json' \
+    --include='pnpm-lock.yaml' --include='yarn.lock' --include='bun.lock' .
+  git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+    log --all --oneline --no-textconv -G"$W3" -- '*lock*' '*package.json'
+  # → hijacked @solana/web3.js releases (KV-077 Step 2, SC-005). A hit now is CRITICAL;
+  #   a hit in history means rotate every key a build from that window loaded
 
   # Audits and registry queries run from a scratch dir OUTSIDE the target, on copies
   # of the manifest + lockfile, so the target's .npmrc / .cargo/config.toml /
@@ -375,8 +378,9 @@ ACTIONS:
 
   # Dependency changes since the baseline (last audited ref; first audit: last
   # release tag) → checklist 11 §11.11: review the published artifacts' code delta
-  git -c core.fsmonitor=false diff --no-textconv --no-ext-diff --stat <baseline>..HEAD \
-    -- '*.lock' '*-lock.json' '*-lock.yaml' '**/Cargo.toml' '**/package.json'   # Rule 11c flags
+  git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+    diff --no-textconv --no-ext-diff --stat <baseline>..HEAD \
+    -- '*.lock' '*-lock.json' '*-lock.yaml' '*Cargo.toml' '*package.json'   # Rule 11c flags
 
 RECORD: dependency audit results
 ```

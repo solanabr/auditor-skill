@@ -24,13 +24,17 @@ cat package.json apps/backend/package.json apps/web/package.json | grep -E "\"@|
 ```
 # Check against known-bad list:
 grep -iE "axios@1\.14\.1|axios@0\.30\.4" package.json apps/*/package.json package-lock.json
-# Hijacked @solana/web3.js releases (package-lock / pnpm / yarn v1 + berry / bun / exact pins):
-grep -rnE 'web3\.js.{0,40}1\.95\.(6|7)|/web3\.js/-/web3\.js-1\.95\.(6|7)' \
-  --include='package.json' --include='package-lock.json' --include='pnpm-lock.yaml' \
-  --include='yarn.lock' --include='bun.lock' . 2>/dev/null | grep -v node_modules
+# Hijacked @solana/web3.js releases — exact pins and resolved versions in package-lock /
+# pnpm / yarn v1 + berry / bun; ranges such as "^1.95.7" do not match on their own:
+W3='web3\.js@(npm:)?1\.95\.(6|7)([^0-9]|$)|/web3\.js/-/web3\.js-1\.95\.(6|7)\.tgz|"@solana/web3\.js"[[:space:]]*:[[:space:]]*"=?1\.95\.(6|7)"'
+grep -rnE "$W3" --exclude-dir=node_modules --include='package.json' --include='package-lock.json' \
+  --include='pnpm-lock.yaml' --include='yarn.lock' --include='bun.lock' .
+# ...and anywhere in history (OUTPUT-RULES Rule 11c flags):
+git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  log --all --oneline --no-textconv -G"$W3" -- '*lock*' '*package.json'
 ```
-- ✅ PASS: Zero matches — no known compromised versions
-- ❌ FAIL: Compromised package version found — CRITICAL. For `@solana/web3.js` 1.95.6 / 1.95.7, also treat every key that a build containing it loaded as exposed, and rotate it
+- ✅ PASS: Zero matches in the tree, and either zero matches in history or evidence that every key a build from that window loaded was rotated
+- ❌ FAIL: Compromised package version in the tree — CRITICAL; or a `@solana/web3.js` 1.95.6 / 1.95.7 hit in history with no evidence of rotation — every key a build containing it loaded is exposed: rotate it
 
 **Step 3: Run npm audit**
 ```

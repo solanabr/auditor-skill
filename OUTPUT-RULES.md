@@ -383,7 +383,7 @@ Interactive runs ask once per audit — at intake, or at the first step that nee
 
 Some tools send audit material to services outside the auditor's machine. There is no consent gate, but nothing goes out silently: the report lists each tool, the service it contacted, and what it sent. Typical entries:
 
-- Trail of Bits `second-opinion` → OpenAI (Codex CLI) or Google (Gemini CLI): code and diffs under review.
+- Trail of Bits `second-opinion` → OpenAI (Codex CLI) or Google (Antigravity / Gemini CLI): code and diffs under review.
 - Trail of Bits `supply-chain-risk-auditor` → package registries and repository-host APIs: dependency names.
 - RPC providers → program IDs and account addresses.
 - Registry queries (`npm view`, the crates.io / PyPI APIs) → package names and versions.
@@ -391,14 +391,15 @@ Some tools send audit material to services outside the auditor's machine. There 
 
 ### 11c — Untrusted git checkouts
 
-A `.git/` directory the auditor did not create itself — a client archive, a copied working tree — can make git run commands through its repo-local config: an fsmonitor hook, diff and textconv drivers, smudge and clean filters, hooks. Inside such a checkout:
+A `.git/` directory the auditor did not create itself — a client archive, a copied working tree — carries repo-local config that git obeys, and several of its settings name commands for git to run: an fsmonitor hook, the signature-verification program, diff and textconv drivers, smudge and clean filters, remote transport helpers, hooks. Inside such a checkout:
 
-- pass `-c core.fsmonitor=false` to every git command (and `--no-pager`, since `core.pager` is also a command);
-- add `--no-textconv --no-ext-diff` to `git log -p`, `git show` and `git diff`, and compare revisions rather than the working tree;
-- never check out, switch, merge, commit, or run anything else that applies filters there — a smudge filter executes on checkout;
-- prefer to audit a fresh `git clone` of it (without `--recurse-submodules`): a clone does not copy repo-local config, hooks or filter definitions.
+- run every git command as `git --no-pager -c core.fsmonitor=false -c log.showSignature=false …` (a repo-local `core.pager` is a command too);
+- add `--no-textconv` to `git log -p`, `git show`, `git diff` and `git blame`, and `--no-ext-diff` to anything that prints a diff; never use `--show-signature` or a `%G` format placeholder, which run the configured signature program;
+- read committed revisions only: give `git blame` an explicit revision (`git blame --no-textconv <rev> -- <path>`), compare `<rev>..<rev>`, and skip `git status`, working-tree diffs, `git add` and `git stash` — those run clean filters over the working tree;
+- never check out, switch, merge, commit, fetch, pull, push or `ls-remote` there: checkout runs smudge filters and hooks, and every remote operation runs the transport commands the repo config names (`remote.<name>.uploadpack` / `receivepack`);
+- better still, audit a copy: `git clone --no-local <checkout> <copy>`, without `--recurse-submodules`, using a git that has the May-2024 clone fixes (2.45.1 or later, or the matching maintenance release — CVE-2024-32004, CVE-2024-32465). A clone does not copy repo-local config, hooks or filter definitions.
 
 ### 11d — Output hygiene
 
-- The first file written into `audit_<n>/`, `.audit-memory/` or `incident_<n>/` is a `.gitignore` containing `*`. From then on git skips everything in that directory, the `.gitignore` itself included, without any change to the repository's own `.gitignore` or config.
-- In CI on a public repository, publish pass/fail and finding counts only. Treat workflow logs and uploaded artifacts as public — anyone signed in to GitHub can read them. When no private channel is available, fail the job with the count; never fall back to printing findings in the log. Deliver details privately: GitHub private vulnerability reporting, a draft security advisory, or a private repository.
+- The first file written into `audit_<n>/`, `.audit-memory/` or `incident_<n>/` is a `.gitignore` containing `*`. From then on git skips everything in that directory, the `.gitignore` itself included, without any change to the repository's own `.gitignore` or config. `audit-mem` creates `.audit-memory/` on its own, and the intake warm-up may be its first call, so run `mkdir -p .audit-memory && printf '*\n' > .audit-memory/.gitignore` before any `audit-mem` command.
+- In CI on a public repository, publish pass/fail only — no finding counts, total or per severity. Treat workflow logs and uploaded artifacts as public: anyone signed in to GitHub can read them. Deliver details privately (GitHub private vulnerability reporting, a draft security advisory, or a private repository); when no private channel is available, fail the job. Never fall back to printing findings in the log.

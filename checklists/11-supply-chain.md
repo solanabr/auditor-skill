@@ -112,7 +112,7 @@ Run the registry-facing commands these items call for (`npm audit`, `cargo audit
 > The checklist already watches dependency *changes* in several places — SC-007..010 (quarantine), SC-021 (ownership transfer), SC-046 (publisher credentials), SC-047 (lockfile diff reviewed like code) — and `/auditor:diff-audit` runs this checklist whenever a lockfile changes. None of them reads the **code delta of the published artifact**: what the new release actually ships compared with the one it replaces. A lockfile review of the Dec-2024 `@solana/web3.js` compromise saw only `1.95.5 → 1.95.6`; the releases themselves, pushed with a maintainer's phished npm credentials, leaked private keys from the keypair functions (Anza RCA: https://www.anza.xyz/blog/web3-js-exploit-root-cause-analysis).
 >
 > **Procedure** (the items below are verdicted on its output):
-> 1. **Baseline.** Re-audit: the range since the last audited ref. First audit: since the last release tag — or mark the section `[N/A — <reason>]` (no lockfile in history, no release tag, no dependency change in range).
+> 1. **Baseline.** Re-audit: the range since the last audited ref. First audit: since the last release tag — or mark the section `[N/A — <reason>]` (no lockfile in history, no release tag, no dependency change in range). SC-062's auto-merge configuration check still applies.
 > 2. **Enumerate the delta.** Tabulate every lockfile entry whose version, `source`/`resolved` or checksum/integrity changed, old → new — direct and transitive, added and removed.
 > 3. **Coverage budget.** Diff the published artifacts of: SC-062's key-handling packages, every newly added package, every package whose install or build hooks changed (npm `scripts` in the registry metadata; a new `build.rs` or proc-macro target in a crate), and every publisher or source change (SC-061). Metadata-check the rest (publish date, publisher, source). The verdict states how many changed packages were left without an artifact diff.
 > 4. **Fetch without executing.** Download each artifact from the registry and check its digest — crates.io `GET /api/v1/crates/<crate>/<ver>` (`checksum`, `dl_path`), npm `dist.tarball` + `dist.integrity`, PyPI `GET /pypi/<pkg>/<ver>/json` (`urls[].digests.sha256`) — then unpack with `tar`/`unzip` and compare with `diff -ruN old/ new/`. Never `npm install`, `cargo build` or `pip download` an sdist to obtain code: pip reads an sdist's metadata by running its `setup.py` / build backend, build isolation or not. Run registry queries (`npm view`, the crates.io / PyPI APIs) from a scratch directory outside the target (OUTPUT-RULES Rule 11a).
@@ -121,7 +121,7 @@ Run the registry-facing commands these items call for (`npm audit`, `cargo audit
 >
 > Grep hints (in a checkout you did not clone yourself, add the OUTPUT-RULES Rule 11c flags):
 > ```
-> git diff --stat <base>..<head> -- '*.lock' '*-lock.json' '*-lock.yaml' 'go.sum' '**/Cargo.toml' '**/package.json' 'pyproject.toml' 'requirements*.txt'
+> git diff --stat <base>..<head> -- '*.lock' '*-lock.json' '*-lock.yaml' '*go.sum' '*Cargo.toml' '*package.json' '*pyproject.toml' '*requirements*.txt'
 > git diff <base>..<head> -- Cargo.lock | grep -E '^[-+](name|version|source|checksum) = '
 > git diff <base>..<head> -- package-lock.json pnpm-lock.yaml yarn.lock bun.lock | grep -E '^[-+].*("version"|"resolved"|"integrity"|version:|resolution:)'
 > ```
