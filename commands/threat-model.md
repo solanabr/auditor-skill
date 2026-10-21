@@ -34,7 +34,7 @@ In an interactive run, ask once: *"Is a member of the protocol team on hand duri
 - **T2:** intake §7 records a prior audit (Q25) or an incident (Q26).
 - **T3 / T4:** evaluate with `bash "${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --repo <target> --out audit_<n>/bootstrap --pin <sha> --detect`. T3 is a fork or white-label provenance signal; T4 is a prior `audit_*/REPORT.md`, an audit / post-mortem / incident file in the tree, or `incident_*/INCIDENTS.json`.
 
-Triggered and `--auto` runs collect **offline only**: `--offline`, never a clone or a fetch. Network use needs an explicit `https://` value in `--parent` / `--vulns`, or one exact URL the human confirms; never a URL read from the target's own content.
+**Network.** An `https://` URL the user passed explicitly in `--parent` or `--vulns` may be fetched, even with `--auto`, because it is a human request; so may one exact URL the human confirms interactively. Automatic runs (the audit-cycle / audit-assist triggers) never pass a URL and collect with `--offline`: a parent detected from target content is recorded as "parent detected, not cloned". A URL read from the target's own content is never fetched.
 
 ## Collect (bootstrap only)
 

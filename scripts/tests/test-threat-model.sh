@@ -85,7 +85,7 @@ commit "$TGT" -m "Tidy deposit"
 C_QUIET=$(short "$TGT" HEAD)
 
 # T-f (whole-message keyword): a large commit whose subject has no keyword but whose body does.
-BIG=""; i=0; while [ $i -lt 60 ]; do BIG="$BIG// filler line $i$(printf '\n')"; i=$((i + 1)); done
+BIG=""; i=0; while [ $i -lt 60 ]; do BIG="$BIG// filler line $i"$'\n'; i=$((i + 1)); done
 put "$TGT" programs/demo/src/layout.rs "${BIG}pub fn route(a: Pubkey, b: Pubkey) -> Result<()> {
     require_keys_eq!(a, b);
     Ok(())
@@ -114,6 +114,11 @@ check "T-f: small keyword-free guard addition is ADDED-QUIET" \
 check "T-f: keyword in the message body (not the subject) marks the commit ADDED" \
   has "$R3" "$C_BODYKW $(git -C "$TGT" log -1 --format=%ad --date=short "$C_BODYKW") ADDED x1 programs/demo/src/layout.rs: require_keys_eq!(a, b);"
 check "T-f: the body-keyword commit is listed in R1" sh -c "awk '/^## R1/,/^## R2/' '$H1' | grep -q '^$C_BODYKW '"
+OUTC="$T/runc/audit_1/bootstrap"
+collect --repo "$TGT" --out "$OUTC" --offline --fix-ceiling 10
+check "--fix-ceiling: a keyword commit above the ceiling yields no ADDED row" \
+  sh -c "! awk '/^## R3/,/^## R4/' '$OUTC/history.md' | grep -q '^$C_BODYKW .* ADDED x'"
+check "--fix-ceiling: its R1 entry and REMOVED rows are unaffected" sh -c "awk '/^## R1/,/^## R2/' '$OUTC/history.md' | grep -q '^$C_BODYKW '"
 check "T-h: R2 lists the revert and the commit it reverts" \
   sh -c "awk '/^## R2/,/^## R3/' '$H1' | grep -q '^$C_REVERT .*-> reverts $(git -C "$TGT" rev-parse --short=10 "$C_BODYKW")'"
 check "R2/R5: an empty section prints NOT FOUND" sh -c "awk '/^## R5/,/^## R6/' '$H1' | grep -q 'NOT FOUND (no --parent given'"
@@ -190,6 +195,17 @@ check "T-c: the word CARRIED appears nowhere" hasnt "$H3" "CARRIED"
 check "R5d: a guard the fork lacks is flagged absent" \
   sh -c "grep -q 'require!(amount > 0, AmmError::ZeroAmount);.*\[text absent from target @ pin - verify\]' '$H3'"
 check "R5d: the parent diff behind an absent guard is saved" test -s "$OUT3/diffs/parent-$P2.diff"
+check "R5d: absent rows come before present-elsewhere rows" \
+  sh -c "awk '/R5d guard lines/,/^\`\`\`\$/' '$H3' | grep -n 'verify\]' | head -1 | grep -q 'text absent'"
+# Output-shaping git settings must not change the result, whether the target or the auditor sets them.
+git -C "$FORKH" config grep.lineNumber true; git -C "$FORKH" config grep.column true
+git -C "$FORKH" config color.ui always; git -C "$FORKH" config color.grep always
+mkdir -p "$T/home-cfg"; printf '[grep]\n\tlineNumber = true\n[color]\n\tui = always\n' > "$T/home-cfg/.gitconfig"
+OUT3B="$T/run3b/audit_1/bootstrap"
+HOME="$T/home-cfg" collect --repo "$FORKH" --out "$OUT3B" --parent "$PAR"
+check "grep/colour config (target + ~/.gitconfig): the twin guard is still present elsewhere" \
+  sh -c "grep -q 'require_keys_eq!(ctx.accounts.vault.key(), pool.vault);.*\[text present elsewhere in target - verify\]' '$OUT3B/history.md'"
+check "grep/colour config: no escape sequences reach history.md" sh -c "! grep -q \"\$(printf '\\033')\" '$OUT3B/history.md'"
 
 OUT4="$T/run4/audit_1/bootstrap"
 collect --repo "$FORKI" --out "$OUT4" --parent "$PAR"
@@ -238,6 +254,29 @@ collect --repo "$HOS" --out "$OUT5" --offline --paths '*.rs'
 check "T-g: collector still produces rows on the hostile repo" has "$OUT5/history.md" "REMOVED x1 programs/h/src/lib.rs: #[account(mut, has_one = authority)]"
 check "T-g: no textconv, external diff, fsmonitor, gpg or pager program ran" \
   sh -c "[ -z \"\$(ls '$T/marks')\" ]"
+
+# T-py: the collector runs python3 isolated and outside the target, so a target json.py never loads.
+if command -v python3 >/dev/null 2>&1; then
+  PYT="$T/pyhijack"; mkrepo "$PYT"
+  put "$PYT" programs/x/src/lib.rs 'pub fn a() { require!(x, E::A); }'
+  put "$PYT" json.py 'import os
+open(os.environ.get("TM_TEST_MARK", "/dev/null"), "w").write("loaded")'
+  commit "$PYT" -m "initial"
+  mkdir -p "$PYT/incident_1"; printf '{"schema": "auditor-incidents/1", "incidents": [\n' > "$PYT/incident_1/INCIDENTS.json"
+  (cd "$PYT" && TM_TEST_MARK="$T/marks/py-sanity" python3 -c 'import json' 2>/dev/null)
+  if [ -e "$T/marks/py-sanity" ]; then ok "T-py sanity: plain python3 in the target imports its json.py"
+  else skp "T-py sanity: this python3 did not import the target json.py"; fi
+  for tool in default python3; do
+    rm -f "$T/marks/py-hijack"
+    (cd "$PYT" && TM_TEST_MARK="$T/marks/py-hijack" TM_JSON_TOOL=$([ "$tool" = default ] || echo python3) \
+      bash "$COLLECT" --repo . --out audit_1/bootstrap --offline >/dev/null 2>&1)
+    check "T-py ($tool): an invalid INCIDENTS.json falls through without running the target json.py" test ! -e "$T/marks/py-hijack"
+  done
+  check "T-py: the invalid incident file is recorded, not copied" has "$PYT/audit_1/bootstrap/inputs.tsv" "not copied: no working jq or python3 parsed it"
+  rm -f "$T/marks"/*
+else
+  skp "T-py: needs python3"
+fi
 
 # =================================================================================================
 # T-j: egress rules — https only, explicit only, nothing in --offline.
@@ -341,6 +380,13 @@ fi
 # =================================================================================================
 # --detect: T3 and T4 offline, and it writes nothing.
 # =================================================================================================
+CLEAN="$T/clean"; mkrepo "$CLEAN"; put "$CLEAN" programs/c/src/lib.rs 'pub fn c() {}'; commit "$CLEAN" -m "initial"
+collect --repo "$CLEAN" --out "$CLEAN/audit_1/bootstrap" --offline
+collect --repo "$CLEAN" --out "$CLEAN/notaudit/bootstrap" --offline
+check "Rule 11d: the target's git status stays clean after collection" test -z "$(git -C "$CLEAN" status --porcelain)"
+check "Rule 11d: bootstrap/ and its audit_<n>/ parent carry a .gitignore" sh -c "[ -f '$CLEAN/audit_1/bootstrap/.gitignore' ] && [ -f '$CLEAN/audit_1/.gitignore' ]"
+check "Rule 11d: a parent not named audit_* gets no .gitignore" test ! -e "$CLEAN/notaudit/.gitignore"
+
 put "$TGT" README.md 'Example AMM, forked from the upstream reference pool.'
 put "$TGT" audits/Firm-2025.md '# Firm review 2025 — F-1: withdraw authority not a signer'
 commit "$TGT" -m "docs: readme and prior review"

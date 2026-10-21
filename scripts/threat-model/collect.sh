@@ -27,6 +27,7 @@
 #   --detect                  only evaluate triggers T3 and T4, print them and exit (writes nothing)
 #   --cap <n>                 rows per section before TRUNCATED (default 60)
 #   --small <n>               changed-line ceiling for a quiet-fix candidate commit (default 40)
+#   --fix-ceiling <n>         changed-line ceiling for a keyword commit's ADDED rows (default 300)
 #
 # Exit status: 0 done (sections may print NOT FOUND), 2 usage error or rejected input,
 #              3 target is not a git repository or the pin does not resolve.
@@ -43,7 +44,7 @@ die() { echo "collect.sh: $*" >&2; exit 2; }
 
 # ---- arguments ------------------------------------------------------------------------------------
 REPO="" OUT="" PIN="HEAD" PARENT="" IMPORT="" PROGRAM_ID="" AUDIT_MEM_DB="" EXTRA_KW=""
-OFFLINE=0 DETECT=0 CAP=60 SMALL=40
+OFFLINE=0 DETECT=0 CAP=60 SMALL=40 FIX_CEILING=300
 TPATHS_NL="" PPATHS_NL="" VULNS_NL=""
 nl=$'\n'
 
@@ -65,7 +66,8 @@ while [ $# -gt 0 ]; do
     --detect)        DETECT=1; shift ;;
     --cap)           need "$@"; CAP=$2; shift 2 ;;
     --small)         need "$@"; SMALL=$2; shift 2 ;;
-    -h|--help)       sed -n '2,32p' "$0"; exit 0 ;;
+    --fix-ceiling)   need "$@"; FIX_CEILING=$2; shift 2 ;;
+    -h|--help)       sed -n '2,33p' "$0"; exit 0 ;;
     *)               die "unknown argument: $1 (see --help)" ;;
   esac
 done
@@ -73,6 +75,7 @@ done
 [ -n "$OUT" ]  || die "--out is required"
 case "$CAP" in ''|*[!0-9]*) die "--cap must be a number" ;; esac
 case "$SMALL" in ''|*[!0-9]*) die "--small must be a number" ;; esac
+case "$FIX_CEILING" in ''|*[!0-9]*) die "--fix-ceiling must be a number" ;; esac
 
 # Only https URLs are ever fetched, and only when the user passed them explicitly. Any other scheme,
 # and scp-style "host:path", is rejected. Anything else is a local file or repository path.
@@ -91,21 +94,40 @@ while IFS= read -r v; do
   [ -z "$v" ] && continue
   [ "$(classify_source "$v")" = rejected ] && die "--vulns accepts a file or an https:// URL, not: $(redact "$v")"
 done <<< "$VULNS_NL"
+# Every caller-supplied path becomes absolute here: the collector later leaves the caller's working
+# directory (usually the audited repository) so no tool can pick up a module or config file from it.
+abspath() { case "$1" in /*) printf '%s' "$1" ;; *) printf '%s/%s' "$PWD" "$1" ;; esac; }
+OUT=$(abspath "$OUT")
+[ -n "$AUDIT_MEM_DB" ] && AUDIT_MEM_DB=$(abspath "$AUDIT_MEM_DB")
+[ -n "$PARENT" ] && [ "$(classify_source "$PARENT")" = path ] && PARENT=$(abspath "$PARENT")
+abs_vulns=""
+while IFS= read -r v; do
+  [ -z "$v" ] && continue
+  if [ "$(classify_source "$v")" = path ]; then v=$(abspath "$v"); fi
+  abs_vulns="$abs_vulns$v$nl"
+done <<< "$VULNS_NL"
+VULNS_NL=$abs_vulns
 
 # ---- hardened git (OUTPUT-RULES.md Rule 11c) --------------------------------------------------------
 # The target's .git/config, attributes and hooks are attacker-controlled: never page, never run
 # fsmonitor or signature helpers, and give every log/show --no-textconv --no-ext-diff with fixed diff
-# prefixes. Nothing is ever checked out, so no smudge or clean filter can run.
+# prefixes. Nothing is ever checked out, so no smudge or clean filter can run. Output-shaping settings
+# (grep line numbers and columns, colour, path quoting, log encoding) are pinned as well, from the
+# target's config and from the auditor's own ~/.gitconfig alike, so the parsers below see plain text.
 G() {
   local d=$1; shift
   git --no-pager -C "$d" -c core.fsmonitor=false -c core.pager=cat -c log.showSignature=false \
-      -c gpg.program=false -c gpg.ssh.program=false "$@"
+      -c gpg.program=false -c gpg.ssh.program=false \
+      -c grep.lineNumber=false -c grep.column=false -c grep.patternType=basic -c grep.extendedRegexp=false \
+      -c color.ui=never -c color.grep=never -c color.diff=never -c core.quotePath=false \
+      -c i18n.logOutputEncoding=UTF-8 "$@"
 }
 DIFFSAFE=(--no-textconv --no-ext-diff --no-color --src-prefix=a/ --dst-prefix=b/)
 
 G "$REPO" rev-parse --git-dir >/dev/null 2>&1 || { echo "collect.sh: not a git repository: $REPO" >&2; exit 3; }
 PIN_SHA=$(G "$REPO" rev-parse --verify --quiet "$PIN^{commit}") || { echo "collect.sh: pin does not resolve: $PIN" >&2; exit 3; }
 REPO_ABS=$(cd "$REPO" && pwd)
+REPO=$REPO_ABS
 
 # Default pathspec: an Anchor-style programs/ tree when the commit has one, else every Rust file.
 default_paths() { # default_paths <repo> <commit>
@@ -117,6 +139,7 @@ while IFS= read -r p; do [ -n "$p" ] && TPATHS+=("$p"); done <<< "$TPATHS_NL"
 
 TMPD=$(mktemp -d "${TMPDIR:-/tmp}/tm-collect.XXXXXX") || die "cannot create a temp dir"
 trap 'rm -rf "$TMPD"' EXIT
+cd "$TMPD" || die "cannot enter the temp dir"
 
 # ---- vocabulary -----------------------------------------------------------------------------------
 # Base set (cve-, security, vuln, fix, exploit) plus Solana-stack terms, matched on the WHOLE message.
@@ -153,10 +176,11 @@ sha256_of() {
 # guard_rows <repo> <rev-range> <pathspec...>
 # One row per net guard-line change per file per commit:
 #   "<short> <date> <TAG> x<count> <file>: <text>    # <subject>"
-# REMOVED always prints. ADDED prints for commits whose whole message matches a keyword; ADDED-QUIET
-# for keyword-free commits that change <= SMALL lines in the pathspec. Only identical text (after
-# trimming) removed and re-added in the same file of the same commit cancels out; an edited guard
-# prints both its old text (REMOVED) and, when the commit qualifies, its new text.
+# REMOVED always prints. ADDED prints for commits whose whole message matches a keyword and that change
+# <= FIX_CEILING lines in the pathspec; ADDED-QUIET for keyword-free commits of <= SMALL lines. Only
+# identical text (after trimming) removed and re-added in the same file of the same commit cancels out;
+# an edited guard prints both its old text (REMOVED) and, when the commit qualifies, its new text.
+# With GR_SIZE=1 each row starts with the commit's changed-line count (a sort key for R5d).
 guard_rows() {
   local repo=$1 range=$2 kwfile churnfile; shift 2
   kwfile="$TMPD/kw.$RANDOM"; churnfile="$TMPD/churn.$RANDOM"
@@ -166,7 +190,7 @@ guard_rows() {
          END { for (c in n) print c, n[c] }' > "$churnfile"
   G "$repo" log "${DIFFSAFE[@]}" --min-parents=1 -p -U0 --no-renames -G"$GUARD_G" \
       --format='__C__ %H %h %ad %s' --date=short "$range" -- "$@" 2>/dev/null |
-  awk -v small="$SMALL" -v kwfile="$kwfile" -v churnfile="$churnfile" '
+  awk -v small="$SMALL" -v ceil="$FIX_CEILING" -v kwfile="$kwfile" -v churnfile="$churnfile" '
     BEGIN { always = ENVIRON["TM_ALWAYS_RE"]; attr = ENVIRON["TM_ATTR_RE"]
             while ((getline l < kwfile) > 0) kw[l] = 1
             while ((getline l < churnfile) > 0) { split(l, a, " "); size[a[1]] = a[2] } }
@@ -174,14 +198,15 @@ guard_rows() {
       if (s ~ always) return 1
       if (s ~ attr && s !~ /(^|[^A-Za-z0-9_])let[ \t]/ && s !~ /;[ \t]*$/) return 1
       return 0 }
-    function flush(   k, n, tag) {
+    function flush(   k, n) {
       if (full == "") return
       for (k in net) {
         n = net[k]
-        if (n < 0) printf "%06d %s %s REMOVED x%d %s: %s    # %s\n", ci, short, date, -n, fileof[k], textof[k], subj
-        else if (n > 0 && ((full in kw) || size[full] + 0 <= small)) {
-          tag = (full in kw) ? "ADDED" : "ADDED-QUIET"
-          printf "%06d %s %s %s x%d %s: %s    # %s\n", ci, short, date, tag, n, fileof[k], textof[k], subj }
+        if (n < 0) printf "%06d %d %s %s REMOVED x%d %s: %s    # %s\n", ci, size[full], short, date, -n, fileof[k], textof[k], subj
+        else if (n > 0 && (full in kw) && size[full] + 0 <= ceil + 0)
+          printf "%06d %d %s %s ADDED x%d %s: %s    # %s\n", ci, size[full], short, date, n, fileof[k], textof[k], subj
+        else if (n > 0 && !(full in kw) && size[full] + 0 <= small + 0)
+          printf "%06d %d %s %s ADDED-QUIET x%d %s: %s    # %s\n", ci, size[full], short, date, n, fileof[k], textof[k], subj
       }
       delete net; delete fileof; delete textof }
     /^__C__ / { flush(); ci++; full = $2; short = $3; date = $4
@@ -198,7 +223,7 @@ guard_rows() {
               k = file SUBSEP t
               net[k] += (substr($0, 1, 1) == "+") ? 1 : -1
               fileof[k] = file; textof[k] = t }
-    END { flush() }' | sort -k1,1n -k4 | cut -d' ' -f2-
+    END { flush() }' | sort -k1,1n -k5 | cut -d' ' -f"$([ "${GR_SIZE:-0}" = 1 ] && echo 2- || echo 3-)"
 }
 
 # ---- triggers T3 (provenance) and T4 (prior reports, incidents) ---------------------------------------
@@ -233,6 +258,13 @@ if [ "$DETECT" -eq 1 ]; then eval_triggers; exit 0; fi
 
 # ---- output dir (OUTPUT-RULES.md Rule 11d) -----------------------------------------------------------
 mkdir -p "$OUT" || die "cannot create $OUT"
+# Working material never lands in the client's git status: the output dir ignores itself, and so does
+# its audit_<n>/ parent when it has no .gitignore of its own (only for a dir named audit_*).
+[ -e "$OUT/.gitignore" ] || printf '*\n' > "$OUT/.gitignore"
+AUD_DIR=$(dirname "$OUT")
+case "$(basename "$AUD_DIR")" in
+  audit_*) [ -e "$AUD_DIR/.gitignore" ] || printf '*\n' > "$AUD_DIR/.gitignore" ;;
+esac
 if [ -f "$OUT/inputs.tsv" ]; then rm -rf "$OUT/inputs" "$OUT/diffs"; fi
 rm -f "$OUT/history.md" "$OUT/inputs.tsv" "$OUT/audit-mem-warm.json"
 mkdir -p "$OUT/inputs" "$OUT/diffs"
@@ -245,8 +277,8 @@ if [ -n "$PARENT" ]; then
   if [ "$(classify_source "$PARENT")" = url ]; then
     if [ "$OFFLINE" -eq 1 ]; then
       PARENT_STATUS="given, not cloned (offline)"
-    elif GIT_TERMINAL_PROMPT=0 git -c protocol.allow=never -c protocol.https.allow=always \
-           -c protocol.file.allow=never -c credential.helper= -c http.extraHeader= -c core.fsmonitor=false \
+    elif GIT_ASKPASS= SSH_ASKPASS= GIT_TERMINAL_PROMPT=0 git -c protocol.allow=never -c protocol.https.allow=always \
+           -c protocol.file.allow=never -c credential.helper= -c http.extraHeader= -c core.askPass= -c core.fsmonitor=false \
            clone --quiet --bare --no-recurse-submodules -- "$PARENT" "$TMPD/parent.git" >/dev/null 2>&1; then
       PDIR="$TMPD/parent.git"; PARENT_STATUS="cloned (bare, temp dir, deleted on exit)"
     else
@@ -277,10 +309,10 @@ while IFS= read -r p; do [ -n "$p" ] && PPATHS+=("$p"); done <<< "$PPATHS_NL"
   if [ -n "$PARENT" ]; then echo "| Parent | $(redact "$PARENT") — $PARENT_STATUS${PHEAD:+ @ \`$PHEAD\`} |"; else echo "| Parent | none |"; fi
   echo "| Parent paths | \`${PPATHS[*]}\` |"
   echo "| Network | $([ "$OFFLINE" -eq 1 ] && echo 'offline' || echo 'explicit https URLs only') |"
-  echo "| Collector | scripts/threat-model/collect.sh v$COLLECTOR_VERSION, cap $CAP rows, quiet-fix ceiling $SMALL lines |"
+  echo "| Collector | scripts/threat-model/collect.sh v$COLLECTOR_VERSION, cap $CAP rows, quiet-fix ceiling $SMALL lines, fix ceiling $FIX_CEILING lines |"
   echo
   echo "Leads, not findings: every row points at history to re-derive from the code at the pinned commit."
-  echo "Git ran without pager, fsmonitor, signature helpers, textconv or external diff (OUTPUT-RULES.md Rule 11c)."
+  echo "Git ran without pager, fsmonitor, signature helpers, textconv, external diff or output-shaping config (OUTPUT-RULES.md Rule 11c)."
   echo "An empty section prints NOT FOUND; a capped one prints TRUNCATED (+n)."
 } > "$H"
 
@@ -313,7 +345,7 @@ grep -E ' REMOVED x' "$TMPD/r3" > "$TMPD/r3a"
 grep -E ' ADDED-QUIET x' "$TMPD/r3" > "$TMPD/r3b"
 grep -E ' ADDED x' "$TMPD/r3" > "$TMPD/r3c"
 { section "R3 Account-guard lines removed or added" \
-"Guard text that left a file (REMOVED), appeared in a keyword-free commit changing <= $SMALL lines (ADDED-QUIET), or appeared in a commit whose message matches a keyword (ADDED). An edited guard prints its old text as REMOVED. Blind spots: flipped comparisons, changed inputs to an unchanged guard, plain \`if ... { return Err(...) }\` checks, merge resolutions."
+"Guard text that left a file (REMOVED), appeared in a keyword-free commit changing <= $SMALL lines (ADDED-QUIET), or appeared in a commit of <= $FIX_CEILING lines whose message matches a keyword (ADDED). An edited guard prints its old text as REMOVED. Blind spots: flipped comparisons, changed inputs to an unchanged guard, plain \`if ... { return Err(...) }\` checks, merge resolutions."
   echo "--- R3a REMOVED ---"
   emit_capped "$TMPD/r3a" "no guard text removed in the pin ancestry"
   echo "--- R3b ADDED-QUIET (quiet-fix candidates) ---"
@@ -343,7 +375,7 @@ G "$REPO" -c core.attributesFile="$TMPD/rs.attributes" log "${DIFFSAFE[@]}" -p -
 
 # ---- R5 fork parent --------------------------------------------------------------------------------
 {
-  section "R5 Fork parent" "Hints only: a fork point and the parent's later guard additions. Neither proves a fix was or was not carried."
+  section "R5 Fork parent" "Hints only: a fork point and the parent's later guard additions (absent rows and smaller commits first). Neither proves a fix was or was not carried."
   if [ -z "$PARENT" ]; then
     echo "NOT FOUND (no --parent given; a URL found in target content is never fetched)"
   elif [ -z "$PDIR" ] || [ -z "$PHEAD" ]; then
@@ -386,11 +418,15 @@ G "$REPO" -c core.attributesFile="$TMPD/rs.attributes" log "${DIFFSAFE[@]}" -p -
       echo "--- R5d guard lines the parent added after the fork point, looked up in the target @ pin ---"
       G "$REPO" grep -h -I -e '' "$PIN_SHA" -- "${TPATHS[@]}" 2>/dev/null | awk '{ gsub(/[ \t]/, ""); print }' > "$TMPD/target.lines"
       echo "__no_line_matches_this__" >> "$TMPD/target.lines"   # keeps the join below two-file even for an empty tree
-      guard_rows "$PDIR" "$FORK..$PHEAD" "${PPATHS[@]}" | grep -E ' ADDED(-QUIET)? x' |
+      # Absent rows first, then smaller commits, then commit order: a real fix should not fall past
+      # the cap behind feature releases.
+      GR_SIZE=1 guard_rows "$PDIR" "$FORK..$PHEAD" "${PPATHS[@]}" | grep -E ' ADDED(-QUIET)? x' |
         awk 'NR == FNR { have[$0] = 1; next }
-             { t = $0; sub(/^[^:]*: /, "", t); sub(/    # .*$/, "", t); gsub(/[ \t]/, "", t)
-               print $0 ((t in have) ? "  [text present elsewhere in target - verify]" : "  [text absent from target @ pin - verify]") }' \
-        "$TMPD/target.lines" - > "$TMPD/r5d"
+             { size = $1; row = $0; sub(/^[^ ]+ /, "", row)
+               t = row; sub(/^[^:]*: /, "", t); sub(/    # .*$/, "", t); gsub(/[ \t]/, "", t)
+               if (t in have) printf "1 %d %06d %s  [text present elsewhere in target - verify]\n", size, NR, row
+               else           printf "0 %d %06d %s  [text absent from target @ pin - verify]\n", size, NR, row }' \
+        "$TMPD/target.lines" - | sort -k1,1n -k2,2n -k3,3n | cut -d' ' -f4- > "$TMPD/r5d"
       emit_capped "$TMPD/r5d" "the parent added no guard line after the fork point"
       awk '/text absent from target/ && !s[$1]++ { print $1 }' "$TMPD/r5d" | head -n 20 |
       while read -r c; do
@@ -449,7 +485,7 @@ json_schema() {
   for tool in $JSON_TOOLS; do
     case "$tool" in
       jq) out=$(jq -r 'if type == "object" and (.schema | type) == "string" then .schema else empty end' "$1" 2>/dev/null) || continue ;;
-      python3) out=$(python3 - "$1" 2>/dev/null <<'PY'
+      python3) out=$(python3 -I - "$1" 2>/dev/null <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1], encoding="utf-8"))
 if isinstance(d, dict) and isinstance(d.get("schema"), str):
@@ -481,7 +517,7 @@ extract_incidents() { # extract_incidents <in> <out>
            keep(["id", "verdict", "outcome", "root_cause_class"])
            + {vuln: (.vuln | keep(["program", "instruction", "file", "function", "line", "mechanism", "kv", "checklist"]))}
            + {poc: (.poc | keep(["tier"]))} ]}' "$1" > "$2" 2>/dev/null || continue ;;
-      python3) python3 - "$1" "$2" 2>/dev/null <<'PY' || continue
+      python3) python3 -I - "$1" "$2" 2>/dev/null <<'PY' || continue
 import json, sys
 def t(v):
     if isinstance(v, str): return v[:500]
@@ -548,7 +584,7 @@ while IFS= read -r v; do
     if ! command -v curl >/dev/null 2>&1; then record "$v" url "-" "-" "not fetched: curl unavailable"; continue; fi
     name=$(safe_name "$(printf '%s' "${v%%[?#]*}" | sed 's#.*/##')")
     [ -n "$name" ] || name=download
-    if curl --proto '=https' --proto-redir '=https' -fsSL --max-time 60 --max-filesize 52428800 \
+    if curl -q --proto '=https' --proto-redir '=https' -fsSL --max-time 60 --max-filesize 52428800 \
          -A 'auditor-skill-threat-model' -o "$TMPD/fetch-$vi-$name" "$v" 2>/dev/null; then
       ingest "$v" "$TMPD/fetch-$vi-$name" "v$vi-$name"
     else
