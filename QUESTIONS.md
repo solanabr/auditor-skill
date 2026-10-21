@@ -443,5 +443,5 @@ Building, testing or installing the project runs code the project controls — b
 | Q35 = MiCA/GDPR | Enables compliance checklist (18) |
 | Q39 = Specific scope | Skips irrelevant checklists, reduces cost/time |
 | Q41 = Quick scan | Uses grep + known vectors only, skips semantic analysis |
-| Q46 = Isolated | Builds, tests, installs and target-building PoCs run in a container / VM / sandbox (`OUTPUT-RULES.md` Rule 11a); a step that cannot run there keeps its source-level verdict, and a PoC records `[PoC-ATTEMPTED]` |
+| Q46 = Isolated | Builds, tests, installs, and PoCs that depend on target crates, build the target or are built inside its tree, run in a container / VM / sandbox (`OUTPUT-RULES.md` Rule 11a); a step that cannot run there keeps its source-level verdict, and a PoC records `[PoC-ATTEMPTED]` |
 | Q46 = Native, or unanswered | Target-controlled code runs on the auditor's machine; the report's Coverage & Limitations states it |

@@ -38,7 +38,7 @@ git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
 
 **Step 3: Run npm audit**
 ```
-# from a scratch dir holding copies of package.json + the lockfile (OUTPUT-RULES Rule 11a)
+# from a scratch dir OUTSIDE the target tree holding copies of package.json + the lockfile (OUTPUT-RULES Rule 11a)
 npm audit --omit=dev 2>/dev/null | tail -20
 ```
 - ✅ PASS: Zero vulnerabilities, or only low/informational
@@ -47,7 +47,7 @@ npm audit --omit=dev 2>/dev/null | tail -20
 
 **Step 4: Check package publish dates (14-day quarantine)**
 ```
-# For recently added packages, verify they're not brand-new (run outside the target, Rule 11a):
+# For recently added packages, verify they're not brand-new (run outside the target tree, Rule 11a):
 npm info @anchor-lang/core time --json 2>/dev/null | tail -5
 ```
 - ✅ PASS: All packages' installed versions are >14 days old

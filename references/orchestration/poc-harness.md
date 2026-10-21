@@ -24,12 +24,18 @@ Probe what is actually installed before choosing a framework. A missing tool is 
 *blocker to name in the report*, not a reason to skip the finding or fake a result.
 
 **Execution gate ([`OUTPUT-RULES.md` Rule 11a](../../OUTPUT-RULES.md#rule-11-operating-safety)).**
-A PoC that path- or git-depends on target crates, or that builds the target (for
-example `cargo build-sbf` / `anchor build` on the client tree to get its `.so`), runs
-target-controlled code: run it in the execution mode recorded at intake. A
-self-contained `templates/poc` crate whose program runs inside Mollusk or LiteSVM, with
-no dependency on target crates, is exempt. If the recorded mode cannot run the PoC,
-record `[PoC-ATTEMPTED]` with the blocker "no isolated runner" and keep the prose PoC.
+A PoC that path- or git-depends on target crates, that builds the target (for example
+`cargo build-sbf` / `anchor build` on the client tree to get its `.so`), or that is
+built anywhere inside the target tree runs target-controlled code: cargo reads
+`.cargo/config*` and rustup reads `rust-toolchain*` from every parent directory, so a
+crate under `audit_<n>/poc/` picks up the target's rustc wrapper, runner, linker,
+`[env]` and toolchain. Such a PoC runs in the execution mode recorded at intake;
+`templates/poc/run.sh` takes it from `AUDITOR_EXEC_MODE=native|isolated` and exits 3
+when it is unset. The only exemption is a self-contained crate (no path or git
+dependency on target crates, does not build the target) that `run.sh` copies to a
+scratch directory outside the target tree and builds there with an explicit toolchain.
+If the recorded mode cannot run the PoC, record `[PoC-ATTEMPTED]` with the blocker
+"no isolated runner" and keep the prose PoC.
 
 | Gate | Detect | Enables | If absent |
 |------|--------|---------|-----------|

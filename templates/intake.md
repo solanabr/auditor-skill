@@ -170,7 +170,8 @@ text for report §4.6.}
 
 <!--
 Q46. OUTPUT-RULES Rule 11a: where target-controlled code (builds, tests, installs,
-Anchor.toml [scripts], PoCs that build the target) may run. Asked once per audit;
+Anchor.toml [scripts], and PoCs that depend on target crates, build the target or
+are built inside its tree) may run. Asked once per audit;
 every later step that executes target code uses this answer. In the auto flow an
 unanswered Q46 is "native" and goes in §9 with its basis. Outside services are not
 gated — they are listed in the report (Rule 11b).

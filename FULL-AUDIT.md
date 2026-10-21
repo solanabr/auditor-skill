@@ -353,10 +353,11 @@ ACTIONS:
   # → hijacked @solana/web3.js releases (KV-077 Step 2, SC-005). A hit now is CRITICAL;
   #   a hit in history means rotate every key a build from that window loaded
 
-  # Audits and registry queries run from a scratch dir OUTSIDE the target, on copies
-  # of the manifest + lockfile, so the target's .npmrc / .cargo/config.toml /
-  # rust-toolchain.toml cannot steer them (OUTPUT-RULES Rule 11a)
-  SCRATCH=$(mktemp -d)   # outside the target
+  # Audits and registry queries run from a scratch dir OUTSIDE the target tree, on
+  # copies of the manifest + lockfile, so the target's .npmrc / .cargo/config* /
+  # rust-toolchain* cannot steer them — cargo and rustup read those from every
+  # parent directory, so audit_<n>/ inside the tree is not far enough (Rule 11a)
+  SCRATCH=$(mktemp -d)   # outside the target tree
   mkdir -p "$SCRATCH/backend" "$SCRATCH/web" "$SCRATCH/rust"
   cp apps/backend/package.json apps/backend/package-lock.json "$SCRATCH/backend/"
   cp apps/web/package.json apps/web/package-lock.json "$SCRATCH/web/"
