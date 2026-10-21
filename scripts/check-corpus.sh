@@ -8,6 +8,7 @@
 #   2. the item total, vector total and methodology count everywhere they are quoted
 #   3. every known-vectors/NNN-*.md has an INDEX.md link and a matching frontmatter id
 #   4. the version in SKILL.md agrees with plugin.json, marketplace.json, audit-report.md and README.md
+#   5. every submodule gitlink is the commit README.md names (one https://github.com/<org>/<repo>/tree/<sha>)
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
@@ -100,6 +101,56 @@ if [[ -z "$v" ]]; then err "SKILL.md: could not read the Version line"; else
   expect README.md "## What It Does (v$v)"
   n=$(grep -c "\"version\": \"$v\." .claude-plugin/marketplace.json || true)
   [[ "$n" == "2" ]] || err ".claude-plugin/marketplace.json: expected 2 version references to $v.x, found $n"
+fi
+
+# ---- 5. vendored submodule pins ------------------------------------------------------------------
+# Each submodule gitlink must be named in README.md by exactly one
+# https://github.com/<org>/<repo>/tree/<40-hex> URL equal to the gitlink; a short SHA on that line must be
+# its first 7 characters, and no other tree URL may name a different commit of that repo. Gitlinks and
+# .gitmodules are read from the index, so this works with submodules uninitialized (CI checks out with
+# submodules: false) and in worktrees. A gitlink-only bump (Dependabot) fails here until a human updates
+# the pin line (CONTRIBUTING.md §5).
+gm() { # .gitmodules from the index, else from the working tree
+  git config --blob :.gitmodules "$@" 2>/dev/null || { [[ -f .gitmodules ]] && git config -f .gitmodules "$@"; }
+}
+if [[ "$(git rev-parse --is-inside-work-tree 2>/dev/null)" == "true" ]]; then
+  nmod=0
+  while IFS= read -r -d '' entry; do
+    key=${entry%%$'\n'*}; path=${entry#*$'\n'}
+    name=${key#submodule.}; name=${name%.path}
+    nmod=$((nmod + 1))
+    sha=$(git --literal-pathspecs ls-files -s -- "$path" | awk '$1 == "160000" {print $2}')
+    if [[ -z "$sha" ]]; then err ".gitmodules declares '$path' but the index has no gitlink for it"; continue; fi
+    url=$(gm --get "submodule.$name.url" | sed -E -e 's#^(ssh://)?git@github\.com[:/]#https://github.com/#' \
+      -e 's#^https?://(www\.)?github\.com/#https://github.com/#' -e 's#/+$##' -e 's#\.git$##')
+    if [[ ! "$url" =~ ^https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
+      err "$path: submodule URL '$url' is not a github.com repository (extend check 5)"; continue
+    fi
+    base="$url/tree/"
+    any_re="https?://(www\.)?$(printf '%s' "${url#https://}" | sed 's/\./\\./g')/tree/[0-9a-f]{7,40}"
+    refs=$(grep -ioE "$any_re" README.md | sed 's#.*/tree/##' | tr 'A-F' 'a-f')
+    exact=$(grep -oF "$base$sha" README.md | wc -l | tr -d ' ')
+    same=$(printf '%s\n' "$refs" | grep -cx "$sha" || true)
+    if [[ "$exact" -eq 1 && "$same" -eq 1 ]]; then ok "README.md pins $path at ${sha:0:12}"
+    else err "README.md must name $base$sha exactly once (found $exact; $same counting other spellings)"; fi
+    for r in $refs; do
+      [[ "$sha" == "$r"* ]] || err "README.md names $base$r, which is not the pinned commit ${sha:0:7}"
+    done
+    line=$(grep -F "$base$sha" README.md | head -1 | sed -E 's#https?://[^ )>]*##g')
+    for s in $(printf '%s\n' "$line" | grep -ioE '(^|[^0-9a-z])[0-9a-f]{7,40}([^0-9a-z]|$)' | grep -ioE '[0-9a-f]{7,40}' | tr 'A-F' 'a-f'); do
+      [[ "$s" == "${sha:0:7}" || "$s" == "$sha" ]] || err "README.md pin line shows '$s', but $path is pinned at ${sha:0:7}"
+    done
+    d=$(printf '%s\n' "$line" | grep -oE '20[0-9]{2}-[0-9]{2}-[0-9]{2}' | head -1)
+    if [[ -n "$d" && -e "$path/.git" ]] && git -C "$path" cat-file -e "$sha^{commit}" 2>/dev/null; then
+      cdate=$(git -C "$path" log -1 --format=%cs "$sha")
+      [[ "$d" == "$cdate" ]] || err "README.md pin line says $d, but $path@${sha:0:7} is dated $cdate"
+    fi
+  done < <(gm -z --get-regexp '^submodule\..*\.path$')
+  nlinks=$(git ls-files -s | awk '$1 == "160000"' | wc -l | tr -d ' ')
+  if [[ "$nlinks" -eq "$nmod" ]]; then ok "every gitlink is declared in .gitmodules ($nlinks)"
+  else err "the index has $nlinks gitlink(s) but .gitmodules declares $nmod"; fi
+else
+  ok "submodule pin check skipped (not a git checkout)"
 fi
 
 if [[ $fail -ne 0 ]]; then echo "corpus check FAILED" >&2; exit 1; fi
