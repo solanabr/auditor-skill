@@ -259,14 +259,17 @@ check "T-j: --offline records a --vulns URL without fetching" has "$OUT6/inputs.
 mkdir -p "$TGT/incident_1"
 cat > "$TGT/incident_1/INCIDENTS.json" <<'EOF'
 {"schema": "auditor-incidents/1",
- "incidents": [{"id": "INC-1", "root_cause_class": "access_control", "outcome": "confirmed_exploited",
-   "urgency": "SEV-1-PRIVATE",
+ "incidents": [{"id": "INC-1.1", "verdict": "suspected", "outcome": "failed", "root_cause_class": "code_flaw",
+   "urgency": "immediate-PRIVATE",
    "vuln": {"program": "Demo1111", "instruction": "withdraw", "file": "programs/demo/src/lib.rs",
-            "function": "withdraw", "line": 3, "mechanism": "has_one retargeted", "kv": "KV-004",
-            "checklist": "AC-001", "operator_notes": "DROP-ME-NOTES"},
-   "poc": {"tier": "PoC-REPRODUCED", "path": "incident_1/poc/DROP-ME-PATH"},
+            "function": "withdraw", "line": 3, "mechanism": "has_one retargeted", "severity": 9,
+            "kv": ["KV-004", {"note": "DROP-ME-NESTED"}], "checklist": ["AC-001"], "operator_notes": "DROP-ME-NOTES"},
+   "poc": {"tier": "PoC-REPRODUCED", "path": "incident_1/poc/DROP-ME-PATH", "verified": true},
    "attacker": {"address": "ATTACKER-PII-ADDR"}, "transactions": ["TX-PII-SIG"],
-   "blast_radius": {"victims": ["VICTIM-PII"]}}]}
+   "blast_radius": {"victims": ["VICTIM-PII"]}, "timeline": ["TIMELINE-PII"],
+   "evidence": {"logs": "EVIDENCE-PII"}, "binary_provenance": "BINPROV-PII",
+   "collection_gaps": ["GAPS-PII"], "response_plan": "RESPONSE-PII.md"}],
+ "ruled_out": [{"subject": "RULED-OUT-PII", "verdict": "benign"}]}
 EOF
 printf '{"schema": "something-else/2", "rows": []}\n' > "$T/other.json"
 printf 'id,title,component,description\nF-1,Missing signer,withdraw,authority not a signer\n' > "$T/findings.csv"
@@ -276,8 +279,10 @@ for tool in jq python3; do
   TM_JSON_TOOL=$tool collect --repo "$TGT" --out "$OUT7" --offline --vulns "$T/other.json" --vulns "$T/findings.csv"
   EX="$OUT7/inputs/incident1-INCIDENTS.json"
   check "T-k ($tool): INCIDENTS.json is extracted to inputs/" test -s "$EX"
-  check "T-k ($tool): allowlisted fields survive" sh -c "grep -q 'INC-1' '$EX' && grep -q 'KV-004' '$EX' && grep -q 'PoC-REPRODUCED' '$EX' && grep -q 'confirmed_exploited' '$EX'"
-  for bad in ATTACKER-PII-ADDR TX-PII-SIG VICTIM-PII DROP-ME-NOTES DROP-ME-PATH SEV-1-PRIVATE; do
+  check "T-k ($tool): the stable read surface survives" \
+    sh -c "grep -q 'INC-1.1' '$EX' && grep -q 'suspected' '$EX' && grep -q 'failed' '$EX' && grep -q 'code_flaw' '$EX' && grep -q 'KV-004' '$EX' && grep -q 'AC-001' '$EX' && grep -q 'PoC-REPRODUCED' '$EX'"
+  for bad in ATTACKER-PII-ADDR TX-PII-SIG VICTIM-PII TIMELINE-PII EVIDENCE-PII BINPROV-PII GAPS-PII RESPONSE-PII \
+             RULED-OUT-PII DROP-ME-NESTED DROP-ME-NOTES DROP-ME-PATH immediate-PRIVATE '"severity"' '"verified"'; do
     check "T-k ($tool): $bad is not copied" hasnt "$EX" "$bad"
   done
   check "T-k ($tool): another schema is recorded, not silently dropped" has "$OUT7/inputs.tsv" 'skipped: schema "something-else/2"'

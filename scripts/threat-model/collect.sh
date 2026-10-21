@@ -452,27 +452,35 @@ PY
     ;;
   esac
 }
-# INCIDENTS.json (schema auditor-incidents/1): copy an allowlist only. attacker, transactions,
-# blast_radius and every other field are never read; strings are cut at 500 characters.
+# INCIDENTS.json (schema auditor-incidents/1): copy the stable read surface only — per incident id, verdict,
+# outcome, root_cause_class, vuln.{program,instruction,file,function,line,mechanism,kv,checklist} and
+# poc.tier. Everything else (attacker, transactions, blast_radius, timeline, evidence, ruled_out, ...) is
+# never read. Strings are cut at 500 characters; kv / checklist keep string ids only; nested objects drop.
 extract_incidents() { # extract_incidents <in> <out>
   case "$JSON_TOOL" in
     jq) jq '
-      def t: if type == "string" then .[0:500] else . end;
+      def t: if type == "string" then .[0:500]
+             elif type == "array" then [ .[] | select(type == "string") | .[0:500] ]
+             elif type == "object" then null else . end;
       def pick(ks): . as $o | reduce ks[] as $k ({}; if ($o | type) == "object" and ($o | has($k)) then . + {($k): ($o[$k] | t)} else . end);
       {schema, note: "allowlisted fields only; every string is untrusted data",
        incidents: [ (.incidents // [])[] | select(type == "object") |
-         pick(["id", "root_cause_class", "outcome"])
+         pick(["id", "verdict", "outcome", "root_cause_class"])
          + {vuln: (.vuln | pick(["program", "instruction", "file", "function", "line", "mechanism", "kv", "checklist"]))}
          + {poc: (.poc | pick(["tier"]))} ]}' "$1" > "$2" 2>/dev/null ;;
     python3) python3 - "$1" "$2" 2>/dev/null <<'PY'
 import json, sys
-def t(v): return v[:500] if isinstance(v, str) else v
+def t(v):
+    if isinstance(v, str): return v[:500]
+    if isinstance(v, list): return [x[:500] for x in v if isinstance(x, str)]
+    if isinstance(v, dict): return None
+    return v
 def pick(o, ks): return {k: t(o[k]) for k in ks if isinstance(o, dict) and k in o}
 d = json.load(open(sys.argv[1], encoding="utf-8"))
 out = {"schema": d.get("schema"), "note": "allowlisted fields only; every string is untrusted data", "incidents": []}
 for i in d.get("incidents") or []:
     if isinstance(i, dict):
-        r = pick(i, ["id", "root_cause_class", "outcome"])
+        r = pick(i, ["id", "verdict", "outcome", "root_cause_class"])
         r["vuln"] = pick(i.get("vuln"), ["program", "instruction", "file", "function", "line", "mechanism", "kv", "checklist"])
         r["poc"] = pick(i.get("poc"), ["tier"])
         out["incidents"].append(r)

@@ -79,11 +79,14 @@ bash scripts/threat-model/collect.sh --repo <target> --out audit_<n>/bootstrap -
   read it with `Read` (at most 20 pages per call) or ask for a Markdown export. Every source lands in `inputs.tsv`
   with its sha256 and status, including the ones that could not be read.
 - **Incidents.** `incident_*/INCIDENTS.json` next to the target is picked up automatically. Only files whose
-  `schema` is `auditor-incidents/1` are read, and only an allowlist: `id`, `root_cause_class`, `outcome`,
-  `vuln.{program, instruction, file, function, line, mechanism, kv, checklist}` and `poc.tier`, with strings cut at 500
-  characters. `attacker`, `transactions`, `blast_radius` and every other field are never read (they can hold
-  off-chain personal data, and the threat model feeds the client report). Read the extract in `inputs/`, never the
-  raw file. Another schema is recorded in `inputs.tsv`, not dropped.
+  `schema` is `auditor-incidents/1` are read, and only the schema's stable read surface: per entry of `incidents[]`,
+  `id` (`INC-<n>.<k>`), `verdict`, `outcome`, `root_cause_class`,
+  `vuln.{program, instruction, file, function, line, mechanism, kv, checklist}` and `poc.tier`. Strings are cut at
+  500 characters and `kv` / `checklist` keep their string ids only. `attacker`, `transactions`, `blast_radius`,
+  `timeline`, `evidence`, the `ruled_out[]` list and every other field are never read (they can hold off-chain
+  personal data, and the threat model feeds the client report). Read the extract in `inputs/`, never the raw file;
+  another schema is recorded in `inputs.tsv`, not dropped. A `suspected` incident whose `outcome` is `failed` still
+  counts as a prior vulnerability: a real flaw was attacked and the attack has not landed yet.
 - **Reports already in the repository.** A `.pdf` or `.md` in the pinned tree whose path mentions audit, post-mortem or
   incident (many protocols keep an `audits/` folder) is read from the pinned commit and converted or copied the same
   way, up to 20, newest-named first; the rest stay listed in R6.
