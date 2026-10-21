@@ -22,6 +22,11 @@ edition = "2021"
 publish = false
 license = "MIT"
 
+# Its own workspace root. `run.sh` builds a self-contained PoC in a scratch copy, but
+# a target-dependent one builds in place inside the audited repo, whose own
+# `[workspace]` would otherwise claim this crate and refuse to build it.
+[workspace]
+
 # `cdylib` so `cargo build-sbf` can emit the loadable `.so` Mollusk runs;
 # `lib`   so the `tests/` can import this crate's types (state structs, ids).
 [lib]

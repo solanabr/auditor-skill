@@ -77,7 +77,10 @@ module from the working directory or `PYTHONPATH` can stand in for the stdlib.
    a hash-matched build), in an in-process SVM or a local surfnet, signing only with
    harness keys, and assert the effect seen on-chain — not just that the call was
    accepted. This is Leg 3. If it can't run on real bytes, the ceiling is
-   `suspected` — stated, not hidden.
+   `suspected` — stated, not hidden. Building target code (the incident commit, or
+   a PoC that depends on target crates) needs the Rule 11a mode: ask once (a
+   non-interactive run is native, and the report says so), record it in the ledger
+   header, and pass it on as `AUDITOR_EXEC_MODE`.
 
 7. **Emit.** Write `incident_<n>/INCIDENTS.json` (`incidents-schema.md`) and
    `INCIDENT_REPORT.md` (`templates/incident-report.md`): executive summary,

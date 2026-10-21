@@ -32,10 +32,16 @@ Fill every field. This is the prose the executable proves — it must map 1:1 on
 ```
 
 Builds both arms with `cargo build-sbf` (platform-tools >= v1.54) and runs both
-tests with `SBF_OUT_DIR` wired. Exit `0` means the exploit reproduced on
-`vulnerable` **and** was blocked on `fixed`. Non-zero means the PoC is not valid —
-see the failing arm's message. (`run.sh` exit `3` = no SBF toolchain here; the
-finding's prose PoC still stands.)
+tests with `SBF_OUT_DIR` wired — never inside the audited repo. A self-contained
+crate is copied to a scratch directory under `$TMPDIR` (printed; `KEEP_POC_BUILD=1`
+keeps it) and built there with the toolchain pinned, so the target's
+`.cargo/config*` and `rust-toolchain*` never apply. A crate that depends on target
+crates builds in place only with `AUDITOR_EXEC_MODE=isolated|native`, the run's
+recorded mode (`OUTPUT-RULES.md` Rule 11a). Exit `0` means the exploit reproduced on
+`vulnerable` **and** was blocked on `fixed`; `1` / `2` mean the PoC is not valid —
+see the failing arm's message; `3` is a named blocker (no SBF toolchain, bad
+inputs, or no execution mode for a target-dependent crate), and the finding's prose
+PoC still stands.
 
 ## Contract
 

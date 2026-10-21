@@ -20,7 +20,7 @@ Turn a *confirmed* finding into a runnable exploit. Read `OUTPUT-RULES.md` first
 
 2. **Severity gate.** By default only **High/Critical (N≥7)** findings earn an executable PoC — a runnable exploit is the Rule 5b PoC those severities demand, and spending the harness budget on low-severity items is waste. `--force` overrides the gate for a deliberately-requested lower-severity demonstration. A finding still at `[UNCONFIRMED]` / `[PARTIAL]` is **not** eligible — confirm it through Rule 5b first. **An `INC-<n>.<k>` target bypasses the severity gate**: for an incident the executed PoC *is* the `confirmed_exploited` leg, so it runs regardless of the band.
 
-3. **Detect the toolchain (never assume).** Probe what is actually installed:
+3. **Detect the toolchain (never assume).** Probe what is actually installed, from a directory outside the target tree (`cd "${TMPDIR:-/tmp}"` first): inside it, the target's `.cargo/config*` can alias `build-sbf` to its own code and its `rust-toolchain*` can swap in its own `cargo`.
    - `cargo build-sbf --version` (SBF program build),
    - surfpool MCP reachable (mainnet-fork execution),
    - `trident --version` / `cargo fuzz --version` on PATH (coverage-guided fuzzing).
@@ -39,7 +39,7 @@ Turn a *confirmed* finding into a runnable exploit. Read `OUTPUT-RULES.md` first
 
 6. **Emit outputs** under `audit_<n>/poc/F-xxx/` (or `incident_<n>/poc/INC-<n>.<k>/`):
    - the filled harness crate (from `templates/poc/`),
-   - a one-command **`run.sh`** (`cargo test` / `trident fuzz` / the surfpool scenario) that reproduces the result from a clean checkout,
+   - a one-command **`run.sh`** (`cargo test` / `trident fuzz` / the surfpool scenario) that reproduces the result from a clean checkout. It never builds inside the target tree: a self-contained crate is copied to a scratch directory outside it (printed) with the toolchain pinned; a crate that `path`/`git`-depends on target crates builds in place only with `AUDITOR_EXEC_MODE` set to the run's recorded mode (`OUTPUT-RULES.md` Rule 11a), and otherwise exits 3 → `[PoC-ATTEMPTED]`,
    - the earned **`[PoC-*]` evidence tier** recorded against the finding (see vocabulary below), which `audit-cycle` / `re-audit` fold back into the report's finding block.
 
 ## Evidence tiers (emit exactly one)

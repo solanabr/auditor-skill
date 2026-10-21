@@ -69,8 +69,11 @@ module from the working directory or `PYTHONPATH` can stand in for the stdlib.
    handler in the source deployed at the incident slot, then `poc-engineer` in
    incident mode to reproduce on the bytes from step 1 (Leg 3) — in-process SVM or
    a local surfnet, harness keys only, asserting the observed effect. No usable
-   bytes → the ceiling is `suspected`. `key_compromise` stays at `suspected` unless
-   a person records a custodian attestation word for word (README).
+   bytes → the ceiling is `suspected`. Building target code needs the Rule 11a
+   mode: ask once (a non-interactive run is native, and the report says so),
+   record it in the ledger header, pass it on as `AUDITOR_EXEC_MODE`.
+   `key_compromise` stays at `suspected` unless a person records a custodian
+   attestation word for word (README).
 
 6. **The plan (Phase 4).** Write `incident_<n>/RESPONSE-INC-<n>.<k>.md` from
    `templates/response-plan.md`; a plan written for another lead is never

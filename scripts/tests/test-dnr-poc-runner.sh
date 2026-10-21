@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# test-dnr-poc-runner.sh — self-test for templates/poc/run.sh's incident (prebuilt)
-# mode: the VULNERABLE_SO / FIXED_SO preconditions and the zero-trimmed hash, which
-# is computed with `python3 -I` so a hashlib.py in the working directory never loads.
+# test-dnr-poc-runner.sh — self-test for templates/poc/run.sh: the incident (prebuilt)
+# mode's VULNERABLE_SO / FIXED_SO preconditions, the zero-trimmed hash (computed with
+# `python3 -I`, so a hashlib.py in the working directory never loads), and where the
+# crate builds: a self-contained crate in a scratch copy outside the target tree with
+# a pinned toolchain, a target-dependent one only under AUDITOR_EXEC_MODE.
 #
 # No Solana toolchain and no network needed: a temp copy of the template runs with a
 # `cargo` shim (always exits 0) or with a PATH that has no cargo at all. bash >= 3.2;
@@ -47,9 +49,27 @@ open(f"{d}/with-header.bin", "wb").write((3).to_bytes(4, "little") + b"\x00" * 4
 open(f"{d}/text.so", "w").write("not an elf\n")
 PY
 
-# cargo shim + a PATH with the shim first.
+# cargo shim + a PATH with the shim first. Besides exiting 0, the shim logs the two
+# lookups that make an in-tree build dangerous, the way cargo and rustup do them: a
+# .cargo/config.toml in the working directory or any parent (the user's CARGO_HOME
+# excepted), and a rust-toolchain.toml there when RUSTUP_TOOLCHAIN is not pinned.
 mkdir -p "$T/shim"
-printf '#!/bin/sh\necho "[shim cargo $*]"; exit 0\n' > "$T/shim/cargo"; chmod +x "$T/shim/cargo"
+cat > "$T/shim/cargo" <<'SH'
+#!/bin/sh
+d="$PWD"
+while :; do
+  if [ -f "$d/.cargo/config.toml" ] && [ "$d/.cargo" != "${CARGO_HOME:-$HOME/.cargo}" ]; then
+    echo "config $d" >> "${SHIM_LOG:-/dev/null}"
+  fi
+  if [ -z "${RUSTUP_TOOLCHAIN:-}" ] && [ -f "$d/rust-toolchain.toml" ]; then
+    echo "toolchain $d" >> "${SHIM_LOG:-/dev/null}"
+  fi
+  [ "$d" = / ] && break
+  d="$(dirname "$d")"
+done
+echo "[shim cargo $*]"; exit 0
+SH
+chmod +x "$T/shim/cargo"
 
 # A PATH with the tools run.sh needs but NO cargo.
 mkdir -p "$T/nocargo"
@@ -109,6 +129,109 @@ if [ "$code" = 0 ] && grep -q "vulnerable sha256 (zero-trimmed): $want" "$T/out"
   ok "hash under a planted hashlib.py (cwd + PYTHONPATH) is correct and the module never ran"
 else
   bad "planted hashlib.py: exit $code, marker $( [ -e "$MARK" ] && echo present || echo absent )"; cat "$T/out" >&2
+fi
+
+# ---------------------------------------------------------------------------
+# Where the crate builds. A hostile target tree: its .cargo/config.toml names a
+# rustc-wrapper and its rust-toolchain.toml a `path` toolchain, each of which leaves
+# a marker if it runs. The PoC crate sits inside it, as audit_<n>/ and incident_<n>/
+# crates do.
+# ---------------------------------------------------------------------------
+R="$T/repo"; MK="$T/hostile.marker"; LOG="$T/shim.log"
+mkdir -p "$R/.cargo" "$T/faketc/bin"
+printf '#!/bin/sh\necho wrapper >> "%s"\nexec "$@"\n' "$MK" > "$T/wrap.sh"; chmod +x "$T/wrap.sh"
+for b in cargo rustc; do printf '#!/bin/sh\necho toolchain >> "%s"\nexit 0\n' "$MK" > "$T/faketc/bin/$b"; chmod +x "$T/faketc/bin/$b"; done
+printf '[build]\nrustc-wrapper = "%s"\n' "$T/wrap.sh" > "$R/.cargo/config.toml"
+printf '[toolchain]\npath = "%s"\n' "$T/faketc" > "$R/rust-toolchain.toml"
+build_dir() { sed -n 's/^>> build dir: \([^ ]*\).*/\1/p' "$T/out" | head -n 1; }
+
+# Shim: the control shows the shim sees the hostile files in place; run.sh must not.
+mk_crate "$R/incident_1/poc/INC-1.1" incident
+( cd "$R/incident_1/poc/INC-1.1" && SHIM_LOG="$LOG" RUSTUP_TOOLCHAIN= "$T/shim/cargo" test >/dev/null )
+if grep -q '^config ' "$LOG" && grep -q '^toolchain ' "$LOG"; then ok "control: in place, cargo would read the target's .cargo/config.toml and rust-toolchain.toml"; else bad "control: the shim did not see the hostile tree"; fi
+rm -f "$LOG"
+code="$(run "$R/incident_1/poc/INC-1.1" "$SP" VULNERABLE_SO="$T/vuln.so" FIXED_SO="$T/fixed.so" SHIM_LOG="$LOG")"
+bd="$(build_dir)"
+case "$bd" in
+  "$R"/*|"") bad "self-contained crate: build dir '$bd' is not a scratch copy outside the target tree" ;;
+  *) [ "$code" = 0 ] && ok "self-contained crate builds in a scratch copy outside the target tree ($bd)" || bad "self-contained crate: exit $code" ;;
+esac
+if [ -s "$LOG" ]; then bad "run.sh let cargo/rustup see the target's config: $(tr '\n' ' ' < "$LOG")"; else ok "neither the target's .cargo/config.toml nor its rust-toolchain.toml was in reach of cargo"; fi
+[ -n "$bd" ] && [ ! -e "$bd" ] && ok "scratch build dir removed on exit" || bad "scratch build dir '$bd' left behind"
+if command -v rustup >/dev/null 2>&1; then
+  tc="$(rustup default 2>/dev/null | sed -n 's/ (default)$//p')"
+  grep -q "^>> build dir: .*toolchain ${tc};" "$T/out" && ok "toolchain pinned to rustup's default (${tc}), not left to a rust-toolchain file" || bad "toolchain not pinned (want ${tc})"
+fi
+rm -f "$LOG"
+code="$(run "$R/incident_1/poc/INC-1.1" "$SP" VULNERABLE_SO="$T/vuln.so" FIXED_SO="$T/fixed.so" KEEP_POC_BUILD=1)"
+bd="$(build_dir)"
+if [ "$code" = 0 ] && [ -d "$bd" ]; then ok "KEEP_POC_BUILD=1 keeps the scratch build dir"; rm -rf "$bd"; else bad "KEEP_POC_BUILD=1: exit $code, dir '$bd'"; fi
+mkdir -p "$R/tmp"
+code="$(run "$R/incident_1/poc/INC-1.1" "$SP" VULNERABLE_SO="$T/vuln.so" FIXED_SO="$T/fixed.so" TMPDIR="$R/tmp")"
+[ "$code" = 3 ] && grep -q 'would inherit' "$T/out" && ok "a scratch dir that would inherit the target's config (TMPDIR inside the tree) -> exit 3" || bad "TMPDIR inside the target tree: exit $code"
+
+# Relative .so paths still resolve once the build moves to the scratch copy.
+code="$(run "$T/inc" "$SP" VULNERABLE_SO=../vuln.so FIXED_SO=../fixed.so)"
+[ "$code" = 0 ] && grep -q "vulnerable sha256 (zero-trimmed): $want" "$T/out" && ok "relative VULNERABLE_SO/FIXED_SO resolve from the caller's directory" || bad "relative .so paths: exit $code"
+
+# Target-dependency detection: a path, git or workspace-inherited dependency, or a
+# symlink, makes the crate target-dependent; comments and in-crate paths do not.
+mk_dep() {  # mk_dep <dir> <Cargo.toml dependency line>
+  mk_crate "$1" incident
+  printf '[package]\nname = "p"\nversion = "0.1.0"\n\n[dependencies]\n%s\n' "$2" > "$1/Cargo.toml"
+}
+mk_dep "$T/d-path" 'vault = { path = "../../../programs/vault" }'
+code="$(run "$T/d-path" "$SP" VULNERABLE_SO="$T/vuln.so" FIXED_SO="$T/fixed.so")"
+[ "$code" = 3 ] && grep -q 'AUDITOR_EXEC_MODE' "$T/out" && grep -q 'Rule 11a' "$T/out" && ! grep -q '^>> build dir' "$T/out" && ok "path dependency outside the crate, no execution mode -> exit 3 pointing to Rule 11a" || bad "path dependency: exit $code"
+code="$(run "$T/d-path" "$SP" VULNERABLE_SO="$T/vuln.so" FIXED_SO="$T/fixed.so" AUDITOR_EXEC_MODE=native)"
+[ "$code" = 0 ] && grep -q 'building in place under AUDITOR_EXEC_MODE=native' "$T/out" && ok "path dependency with AUDITOR_EXEC_MODE=native -> builds in place, with a notice" || bad "path dependency + native: exit $code"
+code="$(run "$T/d-path" "$SP" VULNERABLE_SO="$T/vuln.so" FIXED_SO="$T/fixed.so" AUDITOR_EXEC_MODE=yes)"
+[ "$code" = 3 ] && ok "an unknown AUDITOR_EXEC_MODE value -> exit 3" || bad "AUDITOR_EXEC_MODE=yes: exit $code"
+mk_dep "$T/d-git" 'vault = { git = "https://example.invalid/vault.git" }'
+code="$(run "$T/d-git" "$SP" VULNERABLE_SO="$T/vuln.so" FIXED_SO="$T/fixed.so")"
+[ "$code" = 3 ] && grep -q 'git dependency' "$T/out" && ok "git dependency -> exit 3" || bad "git dependency: exit $code"
+mk_dep "$T/d-ws" 'anchor-lang = { workspace = true }'
+code="$(run "$T/d-ws" "$SP" VULNERABLE_SO="$T/vuln.so" FIXED_SO="$T/fixed.so")"
+[ "$code" = 3 ] && grep -q 'workspace-inherited' "$T/out" && ok "workspace-inherited dependency -> exit 3" || bad "workspace = true: exit $code"
+mk_crate "$T/d-link" incident; ln -s "$R" "$T/d-link/target-src"
+code="$(run "$T/d-link" "$SP" VULNERABLE_SO="$T/vuln.so" FIXED_SO="$T/fixed.so")"
+[ "$code" = 3 ] && grep -q 'symlink' "$T/out" && ok "a symlink inside the crate -> exit 3" || bad "symlink: exit $code"
+mk_dep "$T/d-comment" '# old = { git = "https://example.invalid/x.git", path = "../../x" }'
+code="$(run "$T/d-comment" "$SP" VULNERABLE_SO="$T/vuln.so" FIXED_SO="$T/fixed.so")"
+[ "$code" = 0 ] && grep -q '^>> build dir: .*scratch copy' "$T/out" && ok "a commented-out dependency does not count" || bad "commented dependency: exit $code"
+# The shipped template itself (in-crate path dependency on shared-test-utils) is
+# self-contained, so it is relocated rather than refused.
+mk_crate "$T/tmpl" incident
+cp "$TEMPLATE/Cargo.toml" "$T/tmpl/Cargo.toml"; mkdir -p "$T/tmpl/shared-test-utils"
+cp "$TEMPLATE/shared-test-utils/Cargo.toml" "$T/tmpl/shared-test-utils/Cargo.toml"
+code="$(run "$T/tmpl" "$SP" VULNERABLE_SO="$T/vuln.so" FIXED_SO="$T/fixed.so")"
+[ "$code" = 0 ] && grep -q '^>> build dir: .*scratch copy' "$T/out" && ok "the template's own manifests are self-contained (relocated, not refused)" || bad "template manifests: exit $code"
+
+# Real cargo and rustup, when present: the same hostile tree, a crate that really
+# compiles (no dependencies, so no network), prebuilt bytes so no SBF toolchain.
+if command -v cargo >/dev/null 2>&1 && command -v rustup >/dev/null 2>&1; then
+  RC="$R/incident_1/poc/INC-1.2"; mk_crate "$RC" incident; mkdir -p "$RC/src"
+  printf '[package]\nname = "dnr_runner_real"\nversion = "0.1.0"\nedition = "2021"\npublish = false\n\n[workspace]\n\n[features]\ndefault = []\nvulnerable = []\nfixed = []\n' > "$RC/Cargo.toml"
+  : > "$RC/src/lib.rs"
+  printf 'struct Outcome;\nimpl Outcome { fn get_account(&self, _pk: &u8) -> Option<u8> { Some(1) } }\n#[test]\nfn exploit() {\n    let outcome = Outcome;\n    let state_pk = 0u8;\n    assert_eq!(outcome.get_account(&state_pk), Some(1));\n}\n' > "$RC/tests/exploit.rs"
+  printf 'macro_rules! assert_exploit_rejected_with { ($o:expr, $p:pat, $w:expr) => { let _ = &$o; let _ = $w; }; }\n#[test]\nfn fixed_blocked() {\n    let outcome = 0u8;\n    assert_exploit_rejected_with!(outcome, _, "guard");\n}\n' > "$RC/tests/fixed_blocked.rs"
+  tc="$(rustup default 2>/dev/null | sed -n 's/ (default)$//p')"
+  rm -f "$MK"
+  ( cd "$RC" && RUSTUP_TOOLCHAIN="$tc" CARGO_TARGET_DIR="$T/ctl-target" cargo build -q --offline >/dev/null 2>&1 ) || true
+  if grep -q wrapper "$MK" 2>/dev/null; then ok "control (real cargo): in place, the target's rustc-wrapper runs"; else bad "control (real cargo): the rustc-wrapper did not run in place, so the next check proves nothing"; fi
+  rm -f "$MK"
+  ( cd "$RC" && env -u RUSTUP_TOOLCHAIN cargo --version >/dev/null 2>&1 ) || true
+  if grep -q toolchain "$MK" 2>/dev/null; then ok "control (real rustup): in place, the target's path toolchain runs"; else echo "note: this rustup does not honour a path toolchain in rust-toolchain.toml; that control is skipped"; fi
+  rm -f "$MK"
+  code="$(run "$RC" "$PATH" VULNERABLE_SO="$T/vuln.so" FIXED_SO="$T/fixed.so")"
+  if [ "$code" = 0 ] && [ ! -e "$MK" ]; then
+    ok "real cargo: tests pass from the scratch copy and neither the wrapper nor the path toolchain ran"
+  else
+    bad "real cargo: exit $code, marker: $(tr '\n' ' ' < "$MK" 2>/dev/null)"; cat "$T/out" >&2
+  fi
+  [ -f "$RC/Cargo.lock" ] && ok "real cargo: the resolved Cargo.lock is kept with the crate" || bad "real cargo: Cargo.lock not copied back"
+else
+  echo "note: cargo or rustup not on PATH; the real-toolchain checks are skipped (the shim checks above still ran)"
 fi
 
 if [ "$fails" -ne 0 ]; then
