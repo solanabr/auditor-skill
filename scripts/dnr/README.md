@@ -11,7 +11,8 @@ Full method and the verdict rules these feed: `references/detection-response/`.
 
 | File | What it does |
 |------|--------------|
-| `collect.sh` | The one networked, **gated** collector: pages signature history and fetches transactions into a local JSONL corpus. Refuses without `--confirmed`; read-only RPC only; capped. |
+| `snapshot-program.sh` | Step 1 of every run: read-only `solana program show` + `dump` of each implicated program into `incident_<n>/bin/`, printing the last-deployed slot and the zero-trimmed sha256 for the ledger — before a hotfix can overwrite the incident binary. |
+| `collect.sh` | The gated collector: pages signature history (failed transactions included — they are attempt evidence) and fetches transactions into a local JSONL corpus. Refuses without `--confirmed`; read-only RPC only; capped; reports when the page cap stops short of the window. |
 | `profile.sh` | Baseline a `transactions.jsonl`: outcome / version histograms, time window, fee-payer, signer and top-level-program inventories — all from structural fields, never from log text. |
 | `frames.py` | Attribute each `Program log:` / `Program data:` line to the program frame that emitted it, as JSONL. Walks the log array one element at a time with anchored regexes. |
 | `deltas.py` | `lamports` or `tokens`: per-account / per-(owner,mint) balance movement, computed in Python integers, successful transactions only. |

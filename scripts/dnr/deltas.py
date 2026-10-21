@@ -11,9 +11,12 @@ Two modes:
                                   so the row reflects movement, not the fee.
   deltas.py tokens   [files...]   per (signature, owner, mint) raw-unit token delta.
 
-Output: TSV. Because signatures, owners and mints are base58 / hex and deltas are
-decimal integers, TSV is unambiguous here; aggregate it further in Python, never
-in jq.
+Output: TSV. Signatures, owners and mints are base58 in real RPC data and deltas
+are decimal integers; any tab, newline, carriage return or backslash in a string
+field is escaped (`\\t`, `\\n`, `\\r`, `\\\\`), so a crafted corpus cannot forge a
+row. Token deltas are net per (owner, mint), summed across every token account the
+owner holds of that mint. Aggregate further in Python ints — never in jq or awk,
+whose numbers are doubles.
 
 Why Python ints, not jq: a u64 token amount or a lamport balance can exceed 2^53,
 and jq numbers are IEEE doubles. Over the adversarial fixture
@@ -59,6 +62,14 @@ def _ok(tx: dict) -> bool:
     return (tx.get("meta") or {}).get("err") is None
 
 
+def _clean(s) -> str:
+    """Escape the bytes that could break a TSV row. Real RPC data carries base58
+    here, but a corpus can come from an untrusted export, so a key or mint holding a
+    tab or newline must not be able to forge an extra row or column."""
+    return (str(s).replace("\\", "\\\\").replace("\t", "\\t")
+            .replace("\n", "\\n").replace("\r", "\\r"))
+
+
 def _lamports(txs, out):
     for tx in txs:
         if not _ok(tx):
@@ -72,7 +83,7 @@ def _lamports(txs, out):
         for i in range(min(len(pre), len(post), len(keys))):
             d = int(post[i]) - int(pre[i]) + (fee if i == 0 else 0)
             if d != 0:
-                out.write(f"{sig}\t{keys[i]}\t{d}\n")
+                out.write(f"{_clean(sig)}\t{_clean(keys[i])}\t{d}\n")
 
 
 def _tokens(txs, out):
@@ -90,14 +101,20 @@ def _tokens(txs, out):
                 amt = (b.get("uiTokenAmount") or {}).get("amount")
                 # amount is a decimal STRING of the raw u64/u128; int() is exact.
                 val = int(amt) if amt is not None else 0
-                acc.setdefault((owner, mint), [0, 0])[slot] = val
+                # SUM, never assign: one owner can hold several token accounts of
+                # the same mint (a vault split across ATAs, a PDA with two
+                # accounts). Assigning would keep only the last account's balance —
+                # an internal move between them would read as a phantom drain, and a
+                # two-account drain would be undercounted. Fixtures:
+                # same-owner-move.jsonl (true net 0), same-owner-drain.jsonl (-140).
+                acc.setdefault((owner, mint), [0, 0])[slot] += val
 
         fold(meta.get("preTokenBalances"), 0)
         fold(meta.get("postTokenBalances"), 1)
         for (owner, mint), (p, q) in acc.items():
             d = q - p
             if d != 0:
-                out.write(f"{sig}\t{owner}\t{mint}\t{d}\n")
+                out.write(f"{_clean(sig)}\t{_clean(owner)}\t{_clean(mint)}\t{d}\n")
 
 
 def _iter_tx(argv):
