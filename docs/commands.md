@@ -1,6 +1,6 @@
 # Command Reference
 
-All 15 commands, grouped by phase. Namespace is `auditor` → invoke as `/auditor:<name>`. Back to the [docs index](README.md).
+All 17 commands, grouped by phase. Namespace is `auditor` → invoke as `/auditor:<name>`. Back to the [docs index](README.md).
 
 Each entry lists the argument hint from the command's own frontmatter, when to reach for it, and what it emits. For how they compose into a full engagement, see [audit-flows.md](audit-flows.md).
 
@@ -11,6 +11,7 @@ Each entry lists the argument hint from the command's own frontmatter, when to r
 | Validation | [`triage`](#auditortriage) · [`economic-sim`](#auditoreconomic-sim) · [`poc`](#auditorpoc) · [`patch`](#auditorpatch) |
 | Reporting | [`audit-report`](#auditoraudit-report) |
 | Fix-review | [`re-audit`](#auditorre-audit) |
+| Detection & response | [`hunt`](#auditorhunt) · [`respond`](#auditorrespond) |
 
 ---
 
@@ -20,13 +21,13 @@ Each entry lists the argument hint from the command's own frontmatter, when to r
 Alias `/scope`. **Arg:** `[path] [--auto]`
 Turns the passive `QUESTIONS.md` questionnaire into a persisted `audit_<n>/intake.md` — the durable intake artifact both `/auditor:audit-cycle` and `/auditor:audit-assist` read (fixes intake living only in conversation state). Pins the commit (`git rev-parse HEAD`), pre-fills languages/framework/monorepo shape from what the code shows, warms from prior audits via `audit-mem warm` if the tools are built, and captures scope, protocol class, compliance, severity calibration, and the trust-model inputs (who holds admin / upgrade authority / oracle / keeper / LP, and what the review trusts them NOT to do).
 **When:** before any serious audit. **Emits:** `audit_<n>/intake.md`.
-`--auto` records the applied default for every unanswered question (no-human pipelines); interactive mode asks sharp, answerable questions and skips what the repo already answers.
+`--auto` records the applied default for every unanswered question (no-human pipelines); interactive mode asks sharp, answerable questions and skips what the repo already answers. It also asks once for the **execution mode** (`Q46`: isolated recommended / native — `OUTPUT-RULES.md` Rule 11a); `--auto` records native as an assumed default, and the report states it.
 
 ### `/auditor:threat-model`
-**Arg:** `[path] [--auto]`
-Builds the pre-review threat model *before* verdicts (analogous to how context reconstruction precedes verdicts): an **asset inventory** (crown-jewel funds/authority/data and where they live), an **actor × capability table** (each actor → what it can do → what it must NOT be able to do — the load-bearing column), and a **trust-boundary map** (every CPI, caller-supplied account, instruction arg, `remaining_accounts`, sysvar that crosses into higher trust, with whether it is validated). Ends with **attacker goals to test**, mapped to the checklists/vectors that hunt them.
-**When:** after intake + context, before the manual review. **Emits:** `audit_<n>/threat-model.md` (seeds report §4.4/§4.6/§4.7).
-No verdicts, no severities — target enumeration only. `--auto` drives the `threat-modeler` agent; interactive asks the human. Every claim cites `file:line`; banned words → `UNKNOWN — needs manual review`.
+**Arg:** `[path] [--auto] [--bootstrap] [--vulns <file|https-url>] [--seed <threat-model.md>] [--design-doc <file>] [--parent <https-url|path>]`
+Builds the pre-review threat model *before* verdicts (analogous to how context reconstruction precedes verdicts): an **asset inventory** (crown-jewel funds/authority/data and where they live), an **actor × capability table** (each actor → what it can do → what it must NOT be able to do — the load-bearing column), and a **trust-boundary map** (every CPI, caller-supplied account, instruction arg, `remaining_accounts`, sysvar that crosses into higher trust, with whether it is validated). Ends with **attacker goals to test** (`AG-n`, each with an Evidence cell), mapped to the checklists/vectors that hunt them.
+**When:** after intake + context, before the manual review. **Emits:** `audit_<n>/threat-model.md` (seeds report §4.4/§4.6/§4.7), plus `audit_<n>/bootstrap/` in bootstrap mode.
+No verdicts, no severities — target enumeration only. `--auto` drives the `threat-modeler` agent; interactive asks the human. **`--bootstrap`** (also implied by `--vulns` / `--seed` / `--parent`, and auto-selected offline when intake records a prior audit or incident, a fork is detected, or prior audits / incidents sit next to the target) runs `scripts/threat-model/collect.sh` first: keyword commits, reverts, removed and quietly added account guards, churn, an optional fork-parent comparison, and prior audit reports (PDF/MD), post-mortems, lists and `INCIDENTS.json`. Network only for an explicit `https://` `--parent` / `--vulns`. Interactively it drafts first, then interviews the team. Method: [threat-model-bootstrap.md](../references/audit-lifecycle/threat-model-bootstrap.md). Every claim cites `file:line` or its evidence; banned words → `UNKNOWN — needs manual review`.
 
 ---
 
@@ -41,7 +42,7 @@ Uses ToB tooling if present, else the grep scanners (noting the gap).
 ### `/auditor:quick-scan`
 **Arg:** (none)
 Fast triage: discovery + scope + static analysis (ToB `static-analysis` if present, else `discovery/grep-commands.md`) + only CRITICAL/HIGH known-vectors for the detected domains — not the full set.
-**When:** first look, CI gate. **Emits:** findings with severity + `file:line`; explicitly states it is a triage pass and points to `/auditor:audit`.
+**When:** first look, CI gate (on a public repo: pass/fail + counts only — Rule 11d). **Emits:** findings with severity + `file:line`; explicitly states it is a triage pass and points to `/auditor:audit`.
 
 ### `/auditor:deep-review`
 **Arg:** `<file> [function|instruction]`
@@ -50,7 +51,7 @@ Deep single-unit review: read the file, run Phase 0.5 context reconstruction on 
 
 ### `/auditor:diff-audit`
 **Arg:** `[base..head | PR number]`
-Differential audit (Mode 4). Changed set via `git diff --name-only base..head` (default `main..HEAD`); Phase 0.5 on changed functions + 1-hop callers/callees; risk-classify (auth/crypto/value-transfer/validation-removal = HIGH); git-blame removed security code (deletion in a "fix"/"CVE" commit = CRITICAL regression); run only the matching checklist items + vectors through Rule 5b.
+Differential audit (Mode 4). Changed set via `git diff --name-only base..head` (default `main..HEAD`); Phase 0.5 on changed functions + 1-hop callers/callees; risk-classify (auth/crypto/value-transfer/validation-removal = HIGH); git-blame removed security code (deletion in a "fix"/"CVE" commit = CRITICAL regression); run only the matching checklist items + vectors through Rule 5b. When a manifest or lockfile changed, a **dependency lane** runs checklist 11 §11.11 (the published artifact's code delta, SC-059..062) and adds a Dependency delta section.
 **When:** a PR / commit range, not the whole tree. **Emits:** `audit_<n>/PR-REPORT.md` — changed-surface verdicts only; skips whole-repo discovery.
 
 ### `/auditor:spec-audit`
@@ -107,6 +108,22 @@ Aggregates the session's checkpoints and findings into the final report: de-dup 
 
 ### `/auditor:re-audit`
 **Arg:** `[prior-report] [base..head]`
-Fix-review / re-audit against a prior `audit_<n>/REPORT.md` (arg 1) and the current tree (delta `base..head`, default `main..HEAD`). Classifies every prior finding **FIXED / PARTIALLY-FIXED / STILL-OPEN / REGRESSED / ACKNOWLEDGED / DISPUTED** — each non-open status citing the **remediation commit/PR hash**, and re-running Rule 5b on the fix (a cosmetic/incomplete patch is not FIXED). Then audits the changed surface for NEW findings (diff-audit path) and runs a **sibling-patch-propagation sweep** for un-patched twins of every fixed anti-pattern (the sweep always emits a result — "no siblings found" is a first-class output).
+Fix-review / re-audit against a prior `audit_<n>/REPORT.md` (arg 1) and the current tree (delta `base..head`, default `main..HEAD`). Classifies every prior finding **FIXED / PARTIALLY-FIXED / STILL-OPEN / REGRESSED / ACKNOWLEDGED / DISPUTED** — each non-open status citing the **remediation commit/PR hash**, and re-running Rule 5b on the fix (a cosmetic/incomplete patch is not FIXED). Then audits the changed surface for NEW findings (diff-audit path) and runs a **sibling-patch-propagation sweep** for un-patched twins of every fixed anti-pattern (the sweep always emits a result — "no siblings found" is a first-class output). Its diff-audit pass includes the dependency lane, and differential execution (step 4b) runs in the intake execution mode (Rule 11a).
 **When:** the team responded to findings and you verify. **Emits:** `audit_<n+1>/RE-AUDIT.md` — finding-diff table + new findings + sibling sweep + updated deploy verdict.
 Verification-verb discipline: use "we re-tested and confirmed" only when *you* verified against the current tree; a client's "we fixed it" stays "client states fixed (unverified)" and is not FIXED until independently confirmed.
+
+---
+
+## Detection & response
+
+Post-incident only — never part of an audit. Both commands are propose-only: they never sign, send, simulate against a public cluster, pause or freeze anything. Contract: [`references/detection-response/README.md`](../references/detection-response/README.md); orientation: [detection-response.md](detection-response.md).
+
+### `/auditor:hunt`
+**Arg:** `[<address> ...] [--logs <dir>] [--repo <path>] [--window <fromUnix>..<toUnix>] [--collect] [--fresh]`
+Threat hunt with **no alert in hand**: profiles a Solana transaction corpus (your own `--logs` export first; otherwise a gated, capped RPC collection that runs only after you confirm the addresses, window and call budget — `--collect` in non-interactive runs), works a written hypothesis → query → pivot ledger, confirms suspects in the deployed source via `context-builder`, and reproduces them locally on the program's real bytes via `poc-engineer`. Driven by the `incident-responder` agent.
+**When:** you suspect an attack but have no specific lead. **Emits:** `incident_<n>/LEDGER.md`, `INCIDENTS.json` and `INCIDENT_REPORT.md` (the run directory's first file is a `.gitignore` of `*`). `confirmed_exploited` needs all three legs (on-chain effect, flaw in deployed source, local PoC on the real bytes); otherwise `suspected`.
+
+### `/auditor:respond`
+**Arg:** `<INC-n.k | signature | address | 'alert json' | 'free text'> [--logs <dir>] [--repo <path>] [--collect] [--fresh]`
+Works **one lead** — a signature, an address, an alert line, an IOC or a hunt's `INC-<n>.<k>`: scopes it one ring out, decides whether the attack succeeded, quantifies the blast radius per mint, confirms the root cause in the deployed source with a local PoC, and drafts a containment / remediation / recovery plan.
+**When:** an alert fired or funds are known to be gone — after the pause/freeze runbook and a SEAL 911 ticket, never instead of them. **Emits:** the enriched `incident_<n>/INCIDENTS.json` and `RESPONSE-INC-<n>.<k>.md` — a **proposed** plan; nothing in it has been executed.

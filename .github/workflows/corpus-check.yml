@@ -20,8 +20,11 @@ jobs:
           submodules: false
           persist-credentials: false
 
-      - name: Corpus counts, index links and version agreement
+      - name: Corpus counts, index links, version agreement and submodule pins
         run: bash scripts/check-corpus.sh
+
+      - name: Script self-tests
+        run: for t in scripts/tests/*.sh; do echo "== $t"; bash "$t" || exit 1; done
 
       - name: Repository hygiene (no env / state / local assistant files tracked)
         run: bash scripts/check-hygiene.sh

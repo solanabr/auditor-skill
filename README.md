@@ -5,7 +5,7 @@
 # auditor-skill — Open-Source AI Security Audit Skill
 
 > Production-grade security audit for any codebase, powered by AI agents.
-> 20 checklists · 1,433 verification items · 138 known attack vectors · executable PoCs + fix patches
+> 20 checklists · 1,446 verification items · 140 known attack vectors · executable PoCs + fix patches
 > A full audit-firm lifecycle (automated + interactive) · Benchmarked against CertiK, SOC 2, OWASP Top 10:2025
 > Verify COSTS.md as a referecence - Running this audit can burn a lot of credits.
 
@@ -13,7 +13,7 @@
 
 ## What Is This?
 
-auditor-skill is a **skill file** (a structured prompt + checklists) that turns any LLM agent (Copilot, Cursor, Windsurf, Claude Code, Codex, etc.) into a professional-grade security auditor. It reads your code file by file, checks 1,433 items across 20 security domains, tests against 138 real-world attack vectors, and produces a structured report with severity scores.
+auditor-skill is a **skill file** (a structured prompt + checklists) that turns any LLM agent (Copilot, Cursor, Windsurf, Claude Code, Codex, etc.) into a professional-grade security auditor. It reads your code file by file, checks 1,446 items across 20 security domains, tests against 140 real-world attack vectors, and produces a structured report with severity scores.
 
 **It is not a SaaS product.** It's a folder of markdown files you clone into your repo or give to an AI agent.
 
@@ -23,6 +23,11 @@ auditor-skill is a **skill file** (a structured prompt + checklists) that turns 
 
 ## What It Does (v7.5)
 
+- **Detection & response, post-incident (v7.6).** `/auditor:hunt` sweeps transaction history, program logs and Geyser/indexer exports with a written hypothesis ledger; `/auditor:respond` takes a signature, address or alert and answers did-it-succeed / blast radius / root cause. Confirmed exploitation needs an on-chain effect + the flaw in deployed source + a local PoC on the real bytes; the response plan is proposed, never executed. Ported Solana-native from Anthropic's defending-code-reference-harness.
+- **History-seeded threat models (v7.6).** `/auditor:threat-model --bootstrap` starts the threat model from what already went wrong: removed or quietly added account guards, reverts and fix commits in the target's history, a fork's distance from its parent, prior audit reports, post-mortems and incident records. One read-only, hardened collector (`scripts/threat-model/collect.sh`) gathers it; autonomous runs stay offline, and every goal cites its evidence.
+- **GitHub Actions trigger trust (v7.6).** A CI playbook (`references/vuln-classes/github-actions.md`) for the shapes an outside account uses to reach a privileged job — comment-triggered commands without per-event author gating, expression and env-file injection, `pull_request_target` / `workflow_run` pwn requests with artifact and cache poisoning, and AI coding agents in CI — with KV-139/140, checklist 13 §13.13 (DEP-090..096), AI-034..035, read-only rules of engagement, and zsh-safe locator recipes backed by a fixture self-test.
+- **Operating safety & dependency-update review (v7.6).** A new OUTPUT-RULES Rule 11 covers four things. Target code runs in the execution mode chosen at intake (isolated recommended; native allowed, with a report caveat). Outside-service use is disclosed. Untrusted `.git/` checkouts are read without letting git run their config. Audit output never reaches git or a public CI log. Checklist 11 §11.11 (SC-059..062) reviews what a dependency bump's *published code* actually changed, wired into `/auditor:diff-audit` and `/auditor:re-audit`. KV-077 and SC-005 now catch the hijacked `@solana/web3.js` 1.95.6 / 1.95.7 releases.
+- **Trail of Bits pin, reviewed and visible (v7.6).** `vendor/trailofbits` moves from `cfe5d7b` (2026-06-30) to `82fe822` (2026-09-28) after a full delta review; upstream had since fixed a semgrep path that silently dropped two third-party rulesets and SARIF parsing that read CodeQL severities as zero errors. The pin is shown under Installation, fetched shallow, checked by CI against the gitlink, and moved by a monthly Dependabot PR that a maintainer reviews with `scripts/tob-delta-review.sh`; plugin users receive it with this release.
 - **Slot-as-clock coverage (v7.5).** SIMD-0525 halved mainnet slot time to 200 ms (Oct 9, 2026) and Alpenglow (Oct 21, 2026) made `Clock.unix_timestamp` a leader-set value, so every timelock, vesting cliff, cooldown, oracle window, rate limit and interest constant denominated in slots now elapses in half the wall-clock time. KV-138 covers the class (the EVM learned it at the Merge with Compound's `blocksPerYear`; deployed lending programs still carrying `SLOTS_PER_YEAR = 63,072,000`, whether from an old-SDK build of SPL token-lending, the Save fork's literal or Kamino's legacy basis, now accrue 2.5x the configured APR), with SM-073..074, ECON-090..092, OPS-086..087, BE-132 and FV-073 as the per-domain checks.
 - **Vendored-program provenance (v7.4).** Coverage for the newest exploited class on Solana — the Rain white-label card-contract exploit (Aug 2026, ~$1.1M across Avici, Tria and other tenants): KV-137 (deployed-program version drift, fleet blast radius, inherited admin surface), off-chain-signed authority-grant checks (AC-051..055 — the `AddCollateralAdmin` signature-bundle failure) and deployed-program provenance checks (SC-053..058) — the layer `cargo audit` / `npm audit` can't see, because the vulnerable artifact is your own deployed program.
 - **Transaction v1 readiness (v7.3).** A vuln-class playbook for SIMD-0385 / SIMD-0296 (4,096-byte transactions, message-level compute config, no ComputeBudget instructions, no lookup tables): who breaks and how, per-role worksheets for RPC readers, indexers / Geyser consumers, fee sponsors / co-signers, introspecting programs, senders and wallets; KV-135 (sponsor cap bypass, disabled ComputeBudget gates) and KV-136 (reader wedge, zero-budget indexing); 23 checklist items across on-chain, TypeScript, backend, frontend, deployment, testing, monitoring and off-chain Rust.
@@ -30,7 +35,7 @@ auditor-skill is a **skill file** (a structured prompt + checklists) that turns 
 - **A full audit-firm lifecycle, two ways.** `/auditor:audit-cycle` runs the whole engagement autonomously (intake → context → threat model → tool-assisted pass → domain-partitioned review → triage → independent peer review → synthesis) and hands back a professional client report. `/auditor:audit-assist` runs the same pipeline **interactively**, pausing at checkpoints for the calls only you can make.
 - **Executable proofs, not just prose.** For High/Critical findings, `/auditor:poc` builds a runnable exploit (Mollusk / LiteSVM / Surfpool-fork / fuzz) that *asserts* the vulnerability, and `/auditor:patch` drafts a minimal fix and **proves it reverts the exploit**. Evidence is tiered (`[PoC-REPRODUCED]` … `[PoC-PROSE]`); prose is never dropped when a harness can't be built.
 - **Token-efficient by construction.** An optional Rust pre-scanner (`audit-scan`) enumerates the risky surface deterministically (~$0), cutting ~30-40% of input tokens on large programs. A cross-audit memory store (`audit-mem`) gives exact dedup, regression detection, and false-positive suppression across runs.
-- **15 commands, 8 specialized agents.** Scoping, threat modeling, deep review, economic simulation, differential/PR audits, spec compliance, triage, fix-review — each a first-class command; the automated flow chains eight purpose-built agents.
+- **17 commands, 9 specialized agents.** Scoping, threat modeling, deep review, economic simulation, differential/PR audits, spec compliance, triage, fix-review — each a first-class command, plus a post-incident detection & response track (hunt + respond over transaction history). The automated audit flow chains eight purpose-built agents; a ninth, incident-responder, drives the post-incident track.
 - **Deep Solana coverage.** 13 protocol methodologies (AMM/CLMM, lending, perps, oracles, stablecoins, liquid staking, governance, bridges, multisig/custody, Token-2022, NFT marketplaces, launchpads, token registries & risk signals), framework idioms (Anchor/Native/Pinocchio), and a reusable invariant catalog — loaded only when the code triggers them.
 - **Rigor gates against AI over-reporting.** A validation gate (reachability + math/state-bounds + attacker-model) every high-severity finding must survive, Impact×Likelihood severity with principled downgrades, and a Notes & Nitpicks tier that keeps the findings table honest.
 - **Real tooling, vendored.** Trail of Bits execution plugins (SAST, fuzzing, coverage, mutation) ship as a submodule; the native corpus works fully without them.
@@ -41,11 +46,12 @@ auditor-skill is a **skill file** (a structured prompt + checklists) that turns 
 |-------|---------------|
 | [docs/getting-started.md](docs/getting-started.md) | Install, submodule init, build the Rust tools, run your first audit |
 | [docs/audit-flows.md](docs/audit-flows.md) | The lifecycle and when to use each flow (`/audit`, `/audit-cycle`, `/audit-assist`, `/re-audit`) |
-| [docs/commands.md](docs/commands.md) | Reference for all 15 commands |
-| [docs/agents.md](docs/agents.md) | The 8-agent roster and how they chain |
+| [docs/commands.md](docs/commands.md) | Reference for all 17 commands |
+| [docs/agents.md](docs/agents.md) | The 9-agent roster and how they chain |
 | [docs/power-tools.md](docs/power-tools.md) | `audit-scan`, `audit-mem`, Trail of Bits, Surfpool, PoC/patch harnesses |
 | [docs/poc-and-patches.md](docs/poc-and-patches.md) | Executable exploit + fix-patch delivery |
 | [docs/output-and-rigor.md](docs/output-and-rigor.md) | Severity, the Rule 5b gate, scope-gated loading, report format |
+| [docs/detection-response.md](docs/detection-response.md) | Post-incident hunting + incident workup (`/auditor:hunt`, `/auditor:respond`) |
 
 ---
 
@@ -59,9 +65,9 @@ auditor-skill is a **skill file** (a structured prompt + checklists) that turns 
 | React / Next.js | 08, 10 | 148 |
 | Python | 14 | 82 |
 | Go / Java / Ruby / PHP | 15 | 88 |
-| AI / agent components | 19 | 33 |
-| **Always applied** (any repo) | 11-13, 16-18 | 398 |
-| **Total** | **20** | **1,433** |
+| AI / agent components | 19 | 35 |
+| **Always applied** (any repo) | 11-13, 16-18 | 409 |
+| **Total** | **20** | **1,446** |
 
 ---
 
@@ -74,7 +80,7 @@ auditor-skill is a **skill file** (a structured prompt + checklists) that turns 
 /plugin install auditor
 ```
 
-Registers the marketplace and installs the `auditor` plugin — all 15 `/auditor:*` commands and 8 agents. Claude Code clones the plugin together with its submodules, so this also fetches the vendored Trail of Bits tooling at the pinned commit (see [Tool execution](#tool-execution-trail-of-bits--optional-rust-tools)); there is no manual step.
+Registers the marketplace and installs the `auditor` plugin — all 17 `/auditor:*` commands and 9 agents. Claude Code clones the plugin together with its submodules, so this also fetches the vendored Trail of Bits tooling at the pinned commit (see [Tool execution](#tool-execution-trail-of-bits--optional-rust-tools)); there is no manual step.
 
 ### Option 2: Install script (any project)
 
@@ -141,7 +147,7 @@ The audit is complete when every **in-scope** item has an explicit verdict; out-
 
 | Scope | What It Covers | Estimated Time (50K lines) |
 |-------|---------------|---------------------------|
-| FULL | Everything — all 20 checklists + 138 vectors | 60-90 min |
+| FULL | Everything — all 20 checklists + 140 vectors | 60-90 min |
 | PROGRAM | Smart contract only (checklists 01-07) | 20-35 min |
 | BACKEND | Backend API (checklists 08-09) | 15-25 min |
 | FRONTEND | Frontend (checklists 08, 10) | 15-25 min |
@@ -181,15 +187,15 @@ auditor-skill/
 │   ├── 08-typescript-safety.md             (64 items)
 │   ├── 09-backend-security.md             (132 items)
 │   ├── 10-frontend-security.md             (84 items)
-│   ├── 11-supply-chain.md                  (58 items)
+│   ├── 11-supply-chain.md                  (62 items)
 │   ├── 12-secrets-opsec.md                 (53 items)
-│   ├── 13-deployment-infrastructure.md     (89 items)
+│   ├── 13-deployment-infrastructure.md     (96 items)
 │   ├── 14-python-safety.md                 (82 items)
 │   ├── 15-general-language-safety.md       (88 items)
 │   ├── 16-formal-verification-testing.md   (73 items)
 │   ├── 17-logging-monitoring-incident-response.md (65 items)
 │   ├── 18-privacy-compliance-change-management.md (60 items)
-│   ├── 19-ai-agent-security.md (33 items) — AI agents on Solana
+│   ├── 19-ai-agent-security.md (35 items) — AI agents on Solana
 │   └── 20-rust-offchain-services.md (21 items) — Off-chain Rust (geyser/indexers/keepers)
 │
 ├── discovery/               ← File patterns and search commands
@@ -202,21 +208,23 @@ auditor-skill/
 │   │                          wallets-multisig-custody, token-2022, nft-marketplaces, launchpads,
 │   │                          token-registry-risk)
 │   ├── framework-idioms/    ← Anchor / Native / Pinocchio validation-order footguns
-│   ├── vuln-classes/        ← zk-and-compression · transaction-v1 (SIMD-0385 migration)
+│   ├── vuln-classes/        ← zk-and-compression · transaction-v1 (SIMD-0385 migration) · github-actions (CI trigger trust)
 │   ├── invariant-catalog.md ← Reusable harness-ready invariant menus per protocol class
 │   ├── false-positives.md   ← Over-reporting triage rules
-│   ├── audit-lifecycle/     ← methodology + firm-coverage (how firms actually work)
+│   ├── audit-lifecycle/     ← methodology + firm-coverage (how firms work) + threat-model-bootstrap
+│   ├── detection-response/  ← post-incident track: rules + verdict ladder, Solana log sources, containment, INCIDENTS.json schema
 │   └── orchestration/       ← boundary-map (Trail of Bits) · pre-scan · poc-harness
 │
-├── commands/                ← 15 slash-commands (/auditor:<name>)
+├── commands/                ← 17 slash-commands (/auditor:<name>)
 │   ├── audit · quick-scan · deep-review · diff-audit · spec-audit · economic-sim · audit-report
 │   ├── audit-cycle · audit-assist · re-audit            ← lifecycle flows
 │   ├── intake · threat-model · triage                   ← perimeter
-│   └── poc · patch                                      ← executable PoC + fix patches
+│   ├── poc · patch                                      ← executable PoC + fix patches
+│   └── hunt · respond                                   ← post-incident detection & response
 │
-├── agents/                  ← 8 specialized subagents
+├── agents/                  ← 9 specialized subagents
 │   ├── context-builder · threat-modeler · vuln-hunter · economic-analyst
-│   └── peer-reviewer · audit-reporter · poc-engineer · patch-engineer
+│   └── peer-reviewer · audit-reporter · poc-engineer · patch-engineer · incident-responder
 │
 ├── tools/auditor-tools/     ← Rust CLIs (cargo build --release)
 │   ├── audit-scan           ← deterministic pre-scan → JSON risky-surface map (~$0)
@@ -226,13 +234,17 @@ auditor-skill/
 │   ├── report-template.md   ← Internal item-by-item verdict report
 │   ├── audit-report.md      ← Client-facing findings report (no deploy guarantee)
 │   ├── context-worksheet.md · instruction-worksheet.md · intake.md · threat-model.md
+│   ├── incident-report.md · response-plan.md · hunt-ledger.md
 │   ├── poc/                 ← exploit-harness crate skeleton + shared-test-utils
 │   └── patch/               ← patch + VERIFICATION templates
 │
 ├── docs/                    ← Usage guides (start at docs/README.md)
-├── scripts/                 ← report-to-pdf.sh + the no-attribution commit hook
+├── scripts/                 ← report-to-pdf.sh, check-corpus.sh, tob-delta-review.sh + the no-attribution commit hook
+│   ├── dnr/                 ← detection & response recipes (gated RPC collector, corpus profile, log frames, balance deltas)
+│   ├── threat-model/        ← collect.sh — the read-only threat-model bootstrap collector
+│   └── tests/               ← script self-tests (+ fixtures/gha/, workflows that are never executed)
 ├── AGENTS.md                ← Agent-orchestration overview
-└── vendor/trailofbits/      ← Trail of Bits execution plugins (git submodule)
+└── vendor/trailofbits/      ← Trail of Bits execution plugins (git submodule, pinned — see Installation)
 ```
 
 ---
@@ -248,7 +260,7 @@ Beyond one-shot `/audit`, two flows run a full audit-company lifecycle end-to-en
 - **`/auditor:audit-assist`** — an **AI-assisted, human-in-the-loop** flow: it pauses at checkpoints to surface findings and ask the questions only you can answer (business context, trust model, severity calls), iterating until the audit document converges.
 - **`/auditor:re-audit`** — **fix-review**: diffs against a prior report (`FIXED` / `STILL-OPEN` / `REGRESSED`) and sweeps for un-patched siblings of each fixed bug.
 
-Every intermediary step is also addressable on its own: `/auditor:intake` (persisted scoping), `/auditor:threat-model` (asset/actor/trust-boundary artifact), `/auditor:triage` (dedup + false-positive calibration), and `/auditor:poc` / `/auditor:patch` (executable exploit + verified fix). Full command reference: [docs/commands.md](docs/commands.md).
+Every intermediary step is also addressable on its own: `/auditor:intake` (persisted scoping), `/auditor:threat-model` (asset/actor/trust-boundary artifact; `--bootstrap` seeds it from git history, a fork parent, prior audits and incidents), `/auditor:triage` (dedup + false-positive calibration), and `/auditor:poc` / `/auditor:patch` (executable exploit + verified fix). Full command reference: [docs/commands.md](docs/commands.md).
 
 The client report follows professional firm convention — executive summary, commit-pinned scope, findings with PoC/reachability, a code-maturity assessment, disclaimers. Like real firms, it does **not** issue a "safe to deploy" guarantee. Method + firm coverage: [references/audit-lifecycle/](references/audit-lifecycle/).
 
@@ -261,8 +273,8 @@ The audit produces a structured markdown report with:
 1. **Executive Summary** — risk score (1-10), deploy/no-deploy verdict, severity distribution
 2. **Instruction Matrix** — every smart contract instruction mapped
 3. **State Model** — account structs, PDA seeds, relationships
-4. **Per-Item Verdicts** — every in-scope checklist item (up to 1,433) with `[PASS]`, `[FAIL-N]`, `[PARTIAL]`, or `[N/A]`
-5. **Known Vectors Results** — each in-scope attack vector (up to 138) with explicit verdict and evidence
+4. **Per-Item Verdicts** — every in-scope checklist item (up to 1,446) with `[PASS]`, `[FAIL-N]`, `[PARTIAL]`, or `[N/A]`
+5. **Known Vectors Results** — each in-scope attack vector (up to 140) with explicit verdict and evidence
 6. **Findings** — deduplicated, severity-sorted
 7. **Attack Scenarios** — narrative exploitable paths
 8. **Aggregate Score** — PASS/PARTIAL/FAIL percentages
@@ -379,7 +391,7 @@ MIT — use it, fork it, improve it, sell services built on it. Attribution appr
 ## FAQ
 
 **Q: Does this replace a professional audit?**
-A: It covers more items than most paid audits (1,433 plus 138 known-vector checks vs typical 50-200), but an AI auditor cannot do everything a human can (social engineering assessment, business logic review requiring domain expertise, legal compliance opinions). Use this as a first pass, then hire humans for what it flags.
+A: It covers more items than most paid audits (1,446 plus 140 known-vector checks vs typical 50-200), but an AI auditor cannot do everything a human can (social engineering assessment, business logic review requiring domain expertise, legal compliance opinions). Use this as a first pass, then hire humans for what it flags.
 
 **Q: Which AI model should I use?**
 A: See [COSTS.md](COSTS.md). For maximum depth, use Opus 4 or o3. For best value, use Sonnet 4 or GPT-4.1. For CI/CD integration (fast, cheap), use Haiku or o4-mini.
@@ -388,7 +400,7 @@ A: See [COSTS.md](COSTS.md). For maximum depth, use Opus 4 or o3. For best value
 A: Depends on repo size and model. A 50K-line repo takes 60-90 minutes with Opus 4. See [COSTS.md](COSTS.md) for full estimates.
 
 **Q: Can I use this in CI/CD?**
-A: Yes — run the QUICK scope (known vectors grep scan) on every PR, and FULL scope on release branches.
+A: Yes — run the QUICK scope (known vectors grep scan) on every PR, and FULL scope on release branches. On a public repository the job posts pass/fail and counts only: logs and uploaded artifacts are readable by any signed-in GitHub user, so finding details go to a private channel (OUTPUT-RULES Rule 11d).
 
 **Q: Can I use this for non-Solana projects?**
 A: Yes — checklists 08-18 are language-agnostic or cover Python/Go/Java/Ruby/PHP. Checklists 01-07 are Solana-specific.
@@ -397,9 +409,11 @@ A: Yes — checklists 08-18 are language-agnostic or cover Python/Go/Java/Ruby/P
 
 ## Acknowledgments
 
-auditor-skill stands on the shoulders of two open-source security projects — credited in full in [ATTRIBUTION.md](ATTRIBUTION.md):
+auditor-skill stands on the shoulders of these open-source security projects — credited in full in [ATTRIBUTION.md](ATTRIBUTION.md):
 
 - **[Frank Castle](https://github.com/Frankcastleauditor) — [safe-solana-builder](https://github.com/Frankcastleauditor/safe-solana-builder)** (MIT): Solana security depth — reward/staking accounting, Token-2022 extension abuse, framework validation idioms, zero-copy footguns — adapted natively and re-authored audit-side.
 - **[Trail of Bits](https://github.com/trailofbits) — [skills](https://github.com/trailofbits/skills)** (CC-BY-SA 4.0): tool-execution methodology (SAST, fuzzing, coverage, mutation, IR analysis), vendored as a git submodule at `vendor/trailofbits` and orchestrated for real execution; methodology patterns re-implemented natively are credited by reference.
+- **[Anthropic](https://github.com/anthropics) — [defending-code-reference-harness](https://github.com/anthropics/defending-code-reference-harness)** (Apache-2.0): the detection & response method (hypothesis ledger, three-leg verdict ladder, propose-never-execute response plans), re-expressed Solana-native in `/auditor:hunt` and `/auditor:respond`; the threat-model bootstrap / bootstrap-then-interview pattern, re-expressed for Solana in `/auditor:threat-model --bootstrap`.
+- **[Sentry](https://github.com/getsentry) — [gha-security-review](https://github.com/getsentry/skills/tree/main/skills/gha-security-review)** (Apache-2.0, in [getsentry/skills](https://github.com/getsentry/skills)): the GitHub Actions vector inventory behind `references/vuln-classes/github-actions.md`, re-written natively (no text copied).
 
 All third-party methodology is used by *reference* — no third-party text is copied into this repository.

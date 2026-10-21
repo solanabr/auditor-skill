@@ -438,6 +438,7 @@ Building, testing or installing the project runs code the project controls — b
 | Q18 / Q22 = token registry or risk API | Loads `references/methodologies/token-registry-risk.md` + KV-132 / KV-133 (identity spoofing, score farming) |
 | Q22 = Geyser stream / indexer or fee sponsorship | Loads `references/vuln-classes/transaction-v1.md` + KV-135 / KV-136 (transaction v1: sponsor cap bypass, reader wedge, zero-budget indexing) + checklist 20 §20.6, 09 §9.18 |
 | Q25 = First audit | Triggers more thorough analysis, no assumptions about prior fixes |
+| Q31 = GitHub Actions | Loads `references/vuln-classes/github-actions.md` + KV-139 / KV-140 + checklist 13 §13.13 (DEP-090..096); add KV-116 and AI-034..035 when an AI agent runs in CI |
 | Q32 = No tests | Auto-flags testing gaps, enables checklist 16 recommendations |
 | Q35 = MiCA/GDPR | Enables compliance checklist (18) |
 | Q39 = Specific scope | Skips irrelevant checklists, reduces cost/time |

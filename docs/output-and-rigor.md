@@ -104,6 +104,13 @@ The client report follows firm convention: a **maturity narrative** (9-category,
 
 Like a real firm, the **client-facing report issues no "safe to deploy" guarantee** — the deployment decision is the client's. The internal template retains the numeric risk score for the team's own gating, but that number is never surfaced to a client as a green light. The honest framing throughout: this is **audit-shaped automation — a rigorous, reproducible first pass**, not a substitute for a human firm audit; pair it with human business-logic, economic-model, and legal-compliance review before mainnet ([SKILL.md → When NOT to Use](../SKILL.md)).
 
+## Operating safety (Rule 11)
+
+- **Execution mode (11a).** Builds, tests, installs and target-building PoCs run in the mode chosen at intake (`Q46`): **isolated** (recommended; container / VM / sandbox, no keys mounted) or **native** (allowed; the report says target code ran on the auditor's machine). A step that cannot run in the chosen mode falls back to `[PoC-ATTEMPTED]` / `[FIX-PROPOSED]` / a source-level verdict with a confidence note.
+- **Outside services (11b).** No consent gate. The report lists each tool, the service it contacted, and what it sent.
+- **Untrusted git checkouts (11c).** In a `.git/` the auditor did not clone, git runs with `-c core.fsmonitor=false` and diffs with `--no-textconv --no-ext-diff`; nothing is checked out there.
+- **Output hygiene (11d).** Each output directory's first file is a `.gitignore` containing `*`; CI on a public repo posts pass/fail and counts only.
+
 ## Report file naming
 
 | Output | File |
@@ -112,7 +119,10 @@ Like a real firm, the **client-facing report issues no "safe to deploy" guarante
 | PR / diff report | `audit_<n>/PR-REPORT.md` |
 | Re-audit finding-diff | `audit_<n+1>/RE-AUDIT.md` |
 | Intake / threat model | `audit_<n>/intake.md` · `audit_<n>/threat-model.md` |
+| Threat-model bootstrap evidence | `audit_<n>/bootstrap/` (`history.md` · `inputs.tsv` · `inputs/` · `diffs/`) |
 | Remediation roadmap | `audit_<n>/roadmap.md` |
 | Per-instruction worksheets | `audit_<n>/worksheets/{instruction}.md` |
+| Incident (hunt/respond) | `incident_<n>/INCIDENTS.json` · `INCIDENT_REPORT.md` · `RESPONSE-INC-<n>.<k>.md` · `LEDGER.md` |
+| Incident PoC / patch | `incident_<n>/poc/INC-<n>.<k>/` · `incident_<n>/patches/INC-<n>.<k>.patch` |
 
-Where `<n>` = count of existing `audit_*/` directories + 1.
+Where `<n>` = count of existing `audit_*/` directories + 1. Each directory's first file is a `.gitignore` containing `*` (Rule 11d). For incidents, `<n>` = count of existing `incident_*/` directories + 1 (mirrors `audit_<n>`).

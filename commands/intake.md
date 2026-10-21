@@ -13,7 +13,7 @@ Turn the passive `QUESTIONS.md` questionnaire into a **persisted** `audit_<n>/in
 
 ## Mode
 
-- **Interactive (default)** — walk the human through the questions. Ask sharp, answerable questions; do not dump all 45 at once. Group by section, skip questions the repo already answers (detected language, framework), confirm rather than re-ask.
+- **Interactive (default)** — walk the human through the questions. Ask sharp, answerable questions; do not dump all 46 at once. Group by section, skip questions the repo already answers (detected language, framework), confirm rather than re-ask.
 - **`--auto`** — no human present (the `audit-cycle` path). Apply the `QUESTIONS.md` default for every unanswered question and record each under **Assumed Defaults (Unanswered)** with the exact default applied. Never leave a field blank; never assume silently.
 
 ## Steps

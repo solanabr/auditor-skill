@@ -58,6 +58,9 @@ Version bumps are their own `chore(release)` PR (or the last commit of a release
 counts but leave the version alone, so several content PRs can be open at once without conflicting on the
 version line.
 
+A release PR also re-checks every row of ATTRIBUTION.md's "Assessed, not vendored" table against its
+re-check trigger and updates the assessed commit.
+
 ---
 
 ## 4. Adding corpus content

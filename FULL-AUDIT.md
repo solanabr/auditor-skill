@@ -529,9 +529,9 @@ ACTIONS:
 RECORD: privacy, compliance & change management findings
 ```
 
-### Step 4.4 — Known Attack Vectors (all in-scope, KV-001..138)
+### Step 4.4 — Known Attack Vectors (all in-scope, KV-001..140)
 
-Do NOT bulk-read all 138 vector files — that nullifies the scope gate. Load each in-scope vector **only when its `known-vectors/INDEX.md` trigger fires** (phase + language + the vector's feature markers), driven by the prescan advisory manifest.
+Do NOT bulk-read all 140 vector files — that nullifies the scope gate. Load each in-scope vector **only when its `known-vectors/INDEX.md` trigger fires** (phase + language + the vector's feature markers), driven by the prescan advisory manifest.
 
 ```
 ACTIONS:
@@ -609,7 +609,7 @@ Fill in:
   - Each finding with: ID, severity, location, description, exploit scenario, fix recommendation
   - Checklist summary table
   - Detailed per-item results
-  - Known vector results (KV-001 through KV-138, each in-scope one with verdict)
+  - Known vector results (KV-001 through KV-140, each in-scope one with verdict)
 
 Save report to: audit_{N}/REPORT.md (where N is the next audit number)
 ```

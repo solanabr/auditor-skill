@@ -51,7 +51,7 @@ If `cargo` is absent, skip both — the audit proceeds on the grep walk. Full de
 
 1. **`discovery/file-map.md`** — update it with your actual folder structure, file names, and state-variable names. It maps each checklist to the globs it scans; the defaults assume `programs/{name}/src/`, `apps/backend/src/`, `apps/web/src/`. Wrong globs mean the walk looks in the wrong place.
 2. **Intake** — the questionnaire drives scope, severity calibration, and which compliance checklists apply. Either:
-   - fill a copy of [`QUESTIONS.md`](../QUESTIONS.md) (45 questions) by hand, or
+   - fill a copy of [`QUESTIONS.md`](../QUESTIONS.md) (46 questions) by hand, or
    - run `/auditor:intake` (alias `/scope`) to walk the questions interactively and persist the answers to `audit_<n>/intake.md` — the durable artifact both `/auditor:audit-cycle` and `/auditor:audit-assist` read. Use `/auditor:intake --auto` for no-human pipelines (it records the applied default for every unanswered question).
 
 Everything else — checklists, known vectors, output rules — is portable as-is.
@@ -88,7 +88,7 @@ The report lands at `audit_<n>/REPORT.md` (`{n}` = count of existing `audit_*/` 
 
 | Scope | Covers | Checklists |
 |-------|--------|-----------|
-| `full` | everything | all 20 + 138 vectors |
+| `full` | everything | all 20 + 140 vectors |
 | `program` | Solana program only | 01-07 |
 | `backend` | backend API | 08-09 |
 | `frontend` | frontend | 08, 10 |

@@ -101,27 +101,27 @@
 
 | # | Checklist | Items | Pass | Fail | Partial | N/A | Pass Rate |
 |---|---|---|---|---|---|---|---|
-| 01 | Account Validation | 88 | | | | | % |
-| 02 | Access Control | 50 | | | | | % |
+| 01 | Account Validation | 90 | | | | | % |
+| 02 | Access Control | 55 | | | | | % |
 | 03 | Arithmetic Safety | 63 | | | | | % |
 | 04 | CPI & PDA | 70 | | | | | % |
-| 05 | State Machine | 72 | | | | | % |
-| 06 | Economic & Logic | 89 | | | | | % |
-| 07 | OpSec & Governance | 85 | | | | | % |
-| 08 | TypeScript Safety | 60 | | | | | % |
-| 09 | Backend Security | 103 | | | | | % |
-| 10 | Frontend Security | 76 | | | | | % |
-| 11 | Supply Chain | 46 | | | | | % |
+| 05 | State Machine | 74 | | | | | % |
+| 06 | Economic & Logic | 92 | | | | | % |
+| 07 | OpSec & Governance | 87 | | | | | % |
+| 08 | TypeScript Safety | 64 | | | | | % |
+| 09 | Backend Security | 132 | | | | | % |
+| 10 | Frontend Security | 84 | | | | | % |
+| 11 | Supply Chain | 62 | | | | | % |
 | 12 | Secrets & OpSec | 53 | | | | | % |
-| 13 | Deployment & Infra | 79 | | | | | % |
+| 13 | Deployment & Infra | 96 | | | | | % |
 | 14 | Python Safety | 82 | | | | | % |
 | 15 | General Language | 88 | | | | | % |
-| 16 | Formal Verification & Testing | 71 | | | | | % |
-| 17 | Logging, Monitoring & IR | 63 | | | | | % |
+| 16 | Formal Verification & Testing | 73 | | | | | % |
+| 17 | Logging, Monitoring & IR | 65 | | | | | % |
 | 18 | Privacy, Compliance & Change Mgmt | 60 | | | | | % |
-| 19 | AI Agent Security | 31 | | | | | % |
-| 20 | Rust Off-Chain Services | 17 | | | | | % |
-| | **Total** | **1433** | | | | | **%** |
+| 19 | AI Agent Security | 35 | | | | | % |
+| 20 | Rust Off-Chain Services | 21 | | | | | % |
+| | **Total** | **1446** | | | | | **%** |
 
 > Note: Only applicable checklists are counted in totals. Non-applicable checklists are excluded entirely.
 
@@ -274,7 +274,7 @@
 
 ```
 [PASS]      SC-001: {reason}
-...through SC-058
+...through SC-062
 ```
 
 ### Checklist 12 — Secrets & OpSec
@@ -288,7 +288,7 @@
 
 ```
 [PASS]      DEP-001: {reason}
-...through DEP-089
+...through DEP-096
 ```
 
 ### Checklist 14 — Python Safety (if applicable)
@@ -326,7 +326,7 @@
 ...through PC-060
 ```
 
-### Known Vectors Results (KV-001..KV-138)
+### Known Vectors Results (KV-001..KV-140)
 
 ```
 [PASS]      KV-001: {reason}
@@ -334,7 +334,7 @@
               File: {path:line}
               Impact: {what can go wrong}
               Fix: {what to change}
-...through KV-138
+...through KV-140
 ```
 
 ---
@@ -356,7 +356,7 @@
 
 | Metric | Value |
 |--------|-------|
-| Total known vectors | 138 |
+| Total known vectors | 140 |
 | PASS | <!-- N --> |
 | FAIL | <!-- N --> |
 | PARTIAL | <!-- N --> |
@@ -482,6 +482,8 @@ cargo:
 OS: 
 Cluster tested: devnet / mainnet-beta
 RPC Provider: 
+Execution mode: isolated (<how>) / native   (OUTPUT-RULES Rule 11a)
+Outside services: <tool → service → data sent> / none   (Rule 11b)
 ```
 
 ### C. Disclaimer

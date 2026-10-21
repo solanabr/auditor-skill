@@ -25,8 +25,8 @@ Every audit consumes tokens in two categories:
 
 | Component | Tokens (full corpus, upper bound) | Loaded when |
 |-----------|-----------------------------------|-------------|
-| Checklists (20 files, 1,433 items) | ~50K | per detected language / phase — in-scope only |
-| Known vectors (138 procedures) | ~90K | per phase + language/domain trigger — in-scope only |
+| Checklists (20 files, 1,446 items) | ~50K | per detected language / phase — in-scope only |
+| Known vectors (140 procedures) | ~90K | per phase + language/domain trigger — in-scope only |
 | References (framework idioms, methodologies, orchestration, report-format) | ~100K | per grep marker — only the matched file |
 | Templates + discovery files | ~32K | when a template/discovery step is reached |
 
@@ -43,11 +43,19 @@ Every audit consumes tokens in two categories:
 
 Running `tools/auditor-tools/audit-scan` first emits the instruction matrix, account-constraint table, PDA-seed catalog, and arithmetic/panic census as one JSON — **deterministically, at ~$0 LLM cost**. The auditor then reasons over that map instead of re-deriving it by reading every file, and can skip full reads of files the scan shows are clean. This collapses the three mechanical multipliers above (checklist cross-ref ~0.3×, discovery scanning ~0.2×, checkpoint re-reads ~0.1×) toward ~0.1× total: on a 50K-line program that removes roughly **200–300K input tokens** (variable multiplier ~1.6× → ~1.0×), e.g. Opus ≈ $32 → ~$20. The tool is optional — without it the auditor falls back to the grep-based walk at the costs above.
 
+### Optional: threat-model bootstrap (`scripts/threat-model/collect.sh`)
+
+Runs only on an explicit `--bootstrap` or when a trigger fires (prior audit or incident in intake, fork provenance, prior audits or incident files next to the target); autonomous runs collect offline. The collector itself costs $0 in LLM tokens (under 5 s on raydium-cp-swap, 51 commits, and orca whirlpools, 962 commits). At the default caps `history.md` adds **~8K input tokens**; the saved diffs (≤20 files of ≤400 lines, ~40K tokens if all were read) are opened only for rows cited as evidence.
+
+### Detection & response (`/auditor:hunt`, `/auditor:respond`)
+
+Incident runs are not yet benchmarked; cost scales with ledger rounds × opus, plus the one gated RPC-collection pass (capped).
+
 ### Output Tokens (scales with findings)
 | Component | Tokens | Notes |
 |-----------|--------|-------|
-| Per-item verdicts (1,433 items × ~100 tok) | ~120K | 2-4 lines per item |
-| Known vectors results (138 × ~800 tok) | ~94K | Evidence per hack |
+| Per-item verdicts (1,446 items × ~100 tok) | ~120K | 2-4 lines per item |
+| Known vectors results (140 × ~800 tok) | ~94K | Evidence per hack |
 | Findings + recommendations | ~30K | Depends on issues found |
 | Executive summary + tables | ~10K | |
 | **Output total** | **~240K** | Relatively stable across repos |
