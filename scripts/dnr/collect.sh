@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
 # collect.sh — the ONE gated collector for the detection & response track. Pages
 # signature history for one or more addresses and fetches each transaction, into a
-# local JSONL corpus. It is the only recipe in the track that touches the network.
+# local JSONL corpus. Besides snapshot-program.sh (one program account, via the
+# solana CLI), it is the only recipe in the track that touches the network.
 #
-#   RPC_URL=https://<provider>/... \
-#     collect.sh --out <dir> --confirmed [--since <unix>] [--until <unix>] \
-#                [--before <signature>] [--max-pages N] [--max-tx N] \
-#                -- <address> [<address> ...]
+#   bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/collect.sh" --out <dir> --confirmed \
+#        [--since <unix>] [--until <unix>] [--before <signature>] \
+#        [--max-pages N] [--max-tx N] -- <address> [<address> ...]
+#
+# $RPC_URL must already be exported; never type the URL on the command line. Run it
+# from the installation, never as a relative scripts/ path: the audited repo may
+# ship a same-named file.
 #
 # GATING (do not relax — this is how "plans only, no actions" stays true for the
-# one networked step):
+# corpus collection):
 #   * REFUSES unless --confirmed is passed. `/auditor:hunt` and `/auditor:respond`
 #     pass it only AFTER showing the human the addresses, the window, the caps and
 #     the estimated call count, and getting a yes. Without it the script exits 2

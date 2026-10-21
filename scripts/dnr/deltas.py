@@ -34,6 +34,11 @@ lookup-table-loaded addresses, so it lines up 1:1 with pre/postBalances. With
 `encoding: json`, append `meta.loadedAddresses.writable` then `.readonly` to the
 static keys before indexing; this script handles both.
 
+Run it as `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/deltas.py" tokens|lamports
+<corpus.jsonl>`. Isolated mode keeps the working directory (usually the audited
+repo) and PYTHONPATH off sys.path, so it imports nothing beyond the stdlib — keep
+it that way: no sibling modules.
+
 No network. python3 stdlib only.
 """
 

@@ -26,9 +26,10 @@ Classify every datum by how much it can be trusted, because the verdict legs
 
 ## Collecting from RPC (gated)
 
-The user's own corpus comes first. When there is none, `scripts/dnr/collect.sh`
-is the only path, and it is gated (README rule 3; the command confirms addresses,
-window, caps and estimated call count with the human first):
+The user's own corpus comes first. When there is none,
+`bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/collect.sh"` is the only path, and it is
+gated (README rule 3; the command confirms addresses, window, caps and estimated
+call count with the human first):
 
 - **Signatures:** `getSignaturesForAddress`, newest→oldest, 1–1000 per page,
   paged with the `before` cursor until the window start or a page cap. Only this
@@ -78,7 +79,12 @@ window, caps and estimated call count with the human first):
 - **CSV / JSONL indexer exports:** confirm the decimals column; a `uiAmount` is
   lossy — prefer the raw integer amount.
 
-## Recipes (`scripts/dnr/`)
+## Recipes (bundled `scripts/dnr/`)
+
+Run them from the installation, never as a `scripts/…` path relative to the
+working directory, and run the python ones as `python3 -I` (README rule 8). In
+this file `${CLAUDE_PLUGIN_ROOT}` is not expanded for you and is not set in the
+Bash environment: put the installation's absolute path in its place.
 
 The analysis recipes run offline over a `transactions.jsonl`; `collect.sh` and
 `snapshot-program.sh` are the two networked, read-only steps. All of them are
@@ -92,21 +98,21 @@ with no network.
 ```bash
 # baseline (no log parsing): outcome / version histograms, window, signer &
 # program inventories
-bash scripts/dnr/profile.sh incident_<n>/corpus/transactions.jsonl
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh" incident_<n>/corpus/transactions.jsonl
 
 # program-log attribution, as JSONL (one record per emitted line, by frame)
-python3 scripts/dnr/frames.py incident_<n>/corpus/transactions.jsonl > incident_<n>/frames.jsonl
+python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/frames.py" incident_<n>/corpus/transactions.jsonl > incident_<n>/frames.jsonl
 
 # balance movements, exact, successful transactions only
-python3 scripts/dnr/deltas.py tokens   incident_<n>/corpus/transactions.jsonl
-python3 scripts/dnr/deltas.py lamports incident_<n>/corpus/transactions.jsonl
+python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/deltas.py" tokens   incident_<n>/corpus/transactions.jsonl
+python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/deltas.py" lamports incident_<n>/corpus/transactions.jsonl
 ```
 
-Aggregate `deltas.py` output further in Python ints. `awk` and `jq` are fine for
-grouping and counting keys, but **never for summing amounts**: both store numbers
-as doubles, so a u64 total above 2^53 silently loses precision. For a corpus too
-large for these passes, the same queries become DuckDB SQL over the JSONL; DuckDB
-is optional.
+Aggregate `deltas.py` output further in Python ints (`python3 -I`). `awk` and
+`jq` are fine for grouping and counting keys, but **never for summing amounts**:
+both store numbers as doubles, so a u64 total above 2^53 silently loses precision.
+For a corpus too large for these passes, the same queries become DuckDB SQL over
+the JSONL; DuckDB is optional.
 
 ## Answering the three questions
 

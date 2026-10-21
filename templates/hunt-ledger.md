@@ -10,7 +10,7 @@
 **Corpus:** {files + line counts} · **Window:** slots {from}–{to} ({from blockTime}–{to blockTime}, est)
 **Collection gaps:** {retention limits, a missing v1 opt-in, `Log truncated` tails — never a URL}
 
-## Baseline (from `scripts/dnr/profile.sh`)
+## Baseline (from the bundled `profile.sh`)
 
 - Transactions: {n} ({ok} ok / {failed} failed) · versions: {legacy/v0/v1}
 - Fee payers (top): {…} · Signers (top): {…}

@@ -11,8 +11,11 @@
 # (`2> >(...)`) is not used anywhere in this track: it needs /dev/fd, which some
 # sandboxes deny.
 #
-#     err="$(mktemp)"; some-cmd 2>"$err"; scripts/dnr/redact.sh <"$err" >&2; rm -f "$err"
-#     some-cmd 2>&1 | scripts/dnr/redact.sh
+#     err="$(mktemp)"; some-cmd 2>"$err"; bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/redact.sh" <"$err" >&2; rm -f "$err"
+#     some-cmd 2>&1 | bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/redact.sh"
+#
+# Always the installation's copy, never a relative scripts/ path: the audited repo
+# may ship a same-named file.
 #
 # What it does to a URL: keeps the scheme and host, replaces userinfo with
 # REDACTED@, and replaces everything after the host (path and query) with

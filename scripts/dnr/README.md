@@ -19,6 +19,22 @@ Full method and the verdict rules these feed: `references/detection-response/`.
 | `redact.sh` | A stderr/stdout filter that strips provider credentials (e.g. `?api-key=…`) before text reaches the transcript, the ledger, or a report. |
 | `fixtures/` | Committed adversarial corpora the self-test and the docs cite. |
 
+## Running them
+
+Always from the auditor-skill installation, by absolute path — the commands
+write it as `${CLAUDE_PLUGIN_ROOT}/scripts/dnr/…` — and never as a `scripts/…`
+path relative to the working directory, which during an incident is usually the
+audited repo and may ship a same-named file. The python recipes run as
+`python3 -I` (isolated: neither the working directory nor `PYTHONPATH` reaches
+`sys.path`), so they import only the stdlib and never a sibling module.
+`snapshot-program.sh` hashes with `python3 -I` for the same reason.
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh" <corpus.jsonl>
+python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/frames.py" <corpus.jsonl>
+python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/deltas.py" tokens|lamports <corpus.jsonl>
+```
+
 ## Two hazards these encode, and why
 
 - **A program log can forge a frame.** `Program log:` text is attacker-chosen and
@@ -33,7 +49,9 @@ Full method and the verdict rules these feed: `references/detection-response/`.
   one row and as 2 for another. `deltas.py` does every total in Python integers,
   reading amounts from their JSON-string form, so the arithmetic is exact.
 
-Both properties are pinned by `scripts/tests/test-dnr.sh`.
+Both properties are pinned by `scripts/tests/test-dnr.sh`, which also plants a
+`json.py` / `re.py` / `hashlib.py` in the working directory and on `PYTHONPATH`
+and checks that none of them loads.
 
 ## What a log line proves
 
@@ -56,6 +74,6 @@ run mode (`OUTPUT-RULES.md` Rule 11a).
 
 ## Local tooling
 
-`jq`, `python3` (3.8+, stdlib only) and `curl`. For a corpus too large for `grep`
-passes, the same queries translate to DuckDB SQL over the JSONL; DuckDB is
-optional and not required by anything here.
+`jq`, `python3` (3.8+, stdlib only, run with `-I`) and `curl`. For a corpus too
+large for `grep` passes, the same queries translate to DuckDB SQL over the JSONL;
+DuckDB is optional and not required by anything here.

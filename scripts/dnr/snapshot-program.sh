@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # snapshot-program.sh — preserve the deployed program bytes BEFORE anything else.
 #
-#   RPC_URL=https://<provider>/... snapshot-program.sh <program_id> <incident_dir>
+#   bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/snapshot-program.sh" <program_id> <incident_dir>
+#
+# $RPC_URL must already be exported (never typed on the command line). Run it from
+# the installation, never as a relative scripts/ path: the audited repo may ship a
+# same-named file.
 #
 # Why first: a hotfix upgrade overwrites the on-chain ELF. If the team ships a fix
 # while the hunt is running, the incident binary is gone, and Leg 3 of
@@ -30,7 +34,9 @@
 # included, in its errors). Nothing written to <incident_dir> contains the URL.
 #
 # Exit: 0 ok · 2 usage / no $RPC_URL · 3 named blocker (no solana CLI, CLI error,
-# loader-v4, dump without ELF magic). bash >= 3.2, python3 for the hash.
+# loader-v4, dump without ELF magic). bash >= 3.2, python3 for the hash, run as
+# `python3 -I` because the working directory is usually the audited repo: without
+# -I, a hashlib.py there would be imported in place of the stdlib module.
 
 set -uo pipefail
 
@@ -86,7 +92,7 @@ if [ "$magic" != "7f454c46" ]; then
   exit 3
 fi
 
-stats="$(python3 - "$so" <<'PY'
+stats="$(python3 -I - "$so" <<'PY'
 import hashlib, sys
 raw = open(sys.argv[1], "rb").read()
 trimmed = raw.rstrip(b"\x00")

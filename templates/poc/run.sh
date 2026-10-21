@@ -99,10 +99,12 @@ fi
 # Print the .so path and a solana-verify-style hash: trailing zero padding (the
 # loader pads a program account well past the ELF — a live JUP6 dump carried
 # ~892 KB of it) is trimmed before hashing, so the digest matches `solana-verify`.
+# python3 runs isolated (-I): `python3 -` would otherwise import a hashlib.py from
+# the caller's working directory, or from PYTHONPATH, in place of the stdlib.
 elf_hash() {
   local path="$1"
   if command -v python3 >/dev/null 2>&1; then
-    python3 - "$path" <<'PY'
+    python3 -I - "$path" <<'PY'
 import hashlib, sys
 b = open(sys.argv[1], "rb").read().rstrip(b"\x00")
 print(hashlib.sha256(b).hexdigest())

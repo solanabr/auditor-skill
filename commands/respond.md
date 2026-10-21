@@ -1,8 +1,8 @@
 ---
 name: auditor:respond
-description: Investigate one incident lead (a transaction signature, an address, an alert, an indicator of compromise, or an INC id from /auditor:hunt) through Solana transaction history — work out whether the attack landed and how far it reached, pin the root cause in the deployed code and reproduce it locally, then draft containment, remediation and recovery steps for humans to carry out. This command changes nothing on-chain.
+description: "Investigate one incident lead (a transaction signature, an address, an alert, an indicator of compromise, or an INC id from /auditor:hunt) through Solana transaction history — work out whether the attack landed and how far it reached, pin the root cause in the deployed code and reproduce it locally, then draft containment, remediation and recovery steps for humans to carry out. This command changes nothing on-chain."
 argument-hint: "<INC-n.k | signature | address | 'alert json' | 'free text'> [--logs <dir>] [--repo <path>] [--collect] [--fresh]"
-allowed-tools: Read, Grep, Glob, Task, Edit(incident_*/**), Bash(jq *), Bash(bash scripts/dnr/profile.sh *), Bash(python3 scripts/dnr/frames.py *), Bash(python3 scripts/dnr/deltas.py *), Bash(bash scripts/dnr/redact.sh *)
+allowed-tools: Read, Grep, Glob, Task, Edit(incident_*/**), Bash(jq *), Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh *), Bash(python3 -I ${CLAUDE_PLUGIN_ROOT}/scripts/dnr/frames.py *), Bash(python3 -I ${CLAUDE_PLUGIN_ROOT}/scripts/dnr/deltas.py *), Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/dnr/redact.sh *)
 ---
 
 # auditor-skill — Incident Response (lead in hand)
@@ -25,6 +25,10 @@ bytes, and a plan for humans. This command carries out none of that plan.
 > are not a sandbox (README); the collector, the snapshot step and anything that
 > executes code still ask for approval.
 
+Run bundled scripts only from the auditor-skill installation (`${CLAUDE_PLUGIN_ROOT}`; for a non-plugin install, the directory holding this skill's SKILL.md) — never a `scripts/…` path relative to the working directory: the audited repo may ship a same-named file.
+Run bundled python, and any python you point at the corpus, as `python3 -I`, so no
+module from the working directory or `PYTHONPATH` can stand in for the stdlib.
+
 ## Steps
 
 1. **Run directory, then the program bytes — before anything else.**
@@ -33,8 +37,8 @@ bytes, and a plan for humans. This command carries out none of that plan.
      For any other lead, create `incident_<n>/` (its first file is a `.gitignore`
      holding `*`, Rule 11d) or reuse the newest one unless `--fresh`.
    - **Snapshot every implicated program now:**
-     `scripts/dnr/snapshot-program.sh <program_id> incident_<n>` — read-only
-     `solana program show` + `solana program dump` into `incident_<n>/bin/`, with
+     `bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/snapshot-program.sh" <program_id> incident_<n>`
+     — read-only `solana program show` + `solana program dump` into `incident_<n>/bin/`, with
      the CLI's error text passed through `redact.sh`. Copy the line it prints
      (last-deployed slot, zero-trimmed sha256) into `LEDGER.md`. A hotfix shipped
      mid-investigation overwrites the on-chain binary; this copy is what Leg 3 runs

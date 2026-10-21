@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # test-dnr-poc-runner.sh — self-test for templates/poc/run.sh's incident (prebuilt)
-# mode: the VULNERABLE_SO / FIXED_SO preconditions and the zero-trimmed hash.
+# mode: the VULNERABLE_SO / FIXED_SO preconditions and the zero-trimmed hash, which
+# is computed with `python3 -I` so a hashlib.py in the working directory never loads.
 #
 # No Solana toolchain and no network needed: a temp copy of the template runs with a
 # `cargo` shim (always exits 0) or with a PATH that has no cargo at all. bash >= 3.2;
@@ -36,7 +37,7 @@ mk_crate "$T/aud" audit
 # Program-byte fixtures: an ELF with 4 KiB of trailing zero padding, a file that is
 # a loader-v3 ProgramData account WITH its 45-byte header (wrong for run.sh — the
 # magic is not at offset 0), and a non-binary.
-python3 - "$T" <<'PY'
+python3 -I - "$T" <<'PY'
 import sys
 d = sys.argv[1]
 elf = b"\x7fELF" + bytes(range(1, 60))
@@ -88,11 +89,26 @@ code="$(run "$T/inc" "$T/nocargo" VULNERABLE_SO="$T/vuln.so" FIXED_SO="$T/fixed.
 [ "$code" = 3 ] && grep -q 'cargo not on PATH' "$T/out" && ok "no cargo on PATH -> exit 3" || bad "no cargo: exit $code"
 
 code="$(run "$T/inc" "$SP" VULNERABLE_SO="$T/vuln.so" FIXED_SO="$T/fixed.so")"
-want="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read().rstrip(b"\x00")).hexdigest())' "$T/vuln.so")"
+want="$(python3 -I -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read().rstrip(b"\x00")).hexdigest())' "$T/vuln.so")"
 if [ "$code" = 0 ] && grep -q "vulnerable sha256 (zero-trimmed): $want" "$T/out"; then
   ok "prebuilt happy path (cargo shim) -> exit 0, zero-trimmed hash printed"
 else
   bad "happy path: exit $code (want hash $want)"; cat "$T/out" >&2
+fi
+
+# The hash runs with the crate dir as its working directory. A hashlib.py planted
+# there (and on PYTHONPATH) must not load; the control shows it would without -I.
+mk_crate "$T/hostile" incident
+MARK="$T/shadow.marker"
+printf 'open(%s, "a").write("hashlib\\n")\n' "'$MARK'" > "$T/hostile/hashlib.py"
+( cd "$T/hostile" && printf 'import hashlib\n' | python3 - >/dev/null 2>&1 )
+[ -s "$MARK" ] && ok "isolation control: without -I, the crate dir's hashlib.py replaces the stdlib" || bad "isolation control: planted hashlib.py did not load, so the next check proves nothing"
+rm -f "$MARK"
+code="$(run "$T/hostile" "$SP" VULNERABLE_SO="$T/vuln.so" FIXED_SO="$T/fixed.so" PYTHONPATH="$T/hostile")"
+if [ "$code" = 0 ] && grep -q "vulnerable sha256 (zero-trimmed): $want" "$T/out" && [ ! -e "$MARK" ]; then
+  ok "hash under a planted hashlib.py (cwd + PYTHONPATH) is correct and the module never ran"
+else
+  bad "planted hashlib.py: exit $code, marker $( [ -e "$MARK" ] && echo present || echo absent )"; cat "$T/out" >&2
 fi
 
 if [ "$fails" -ne 0 ]; then

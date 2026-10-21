@@ -27,7 +27,12 @@ Design rules, each forced by a real failure mode:
   * Output is JSONL with the raw text in a JSON string, so tabs/newlines inside a
     payload are escaped by the encoder and can never break a column.
 
-No network. bash/python3 only. stdlib only.
+Run it as `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/frames.py" <corpus.jsonl>`.
+Isolated mode keeps the working directory (usually the audited repo) and
+PYTHONPATH off sys.path, so it imports nothing beyond the stdlib — keep it that
+way: no sibling modules.
+
+No network. stdlib only.
 """
 
 from __future__ import annotations

@@ -27,7 +27,7 @@ done
 #    newline. The newline-injection fixture carries a forged "invoke [1]" inside
 #    a Program log: payload.
 # ---------------------------------------------------------------------------
-logs="$(python3 "$DNR/frames.py" "$FIX/log-newline-injection.jsonl")"
+logs="$(python3 -I "$DNR/frames.py" "$FIX/log-newline-injection.jsonl")"
 n_log="$(printf '%s\n' "$logs" | jq -c 'select(.kind=="log")' | grep -c . || true)"
 eq "frames: exactly the 2 real Program-log lines survive" "$n_log" "2"
 n_forged="$(printf '%s\n' "$logs" | jq -rc 'select(.program|test("Fake"))' | grep -c . || true)"
@@ -42,7 +42,7 @@ eq "frames: naive flatten would forge an extra invoke (hazard present in fixture
 # ---------------------------------------------------------------------------
 # 2. deltas.py tokens is exact above 2^53, where jq doubles are not.
 # ---------------------------------------------------------------------------
-tok="$(python3 "$DNR/deltas.py" tokens "$FIX/token-amount-over-2-53.jsonl")"
+tok="$(python3 -I "$DNR/deltas.py" tokens "$FIX/token-amount-over-2-53.jsonl")"
 d1="$(printf '%s\n' "$tok" | awk -F'\t' '$2 ~ /^OwnerOne/ {print $4}')"
 d2="$(printf '%s\n' "$tok" | awk -F'\t' '$2 ~ /^OwnerTwo/ {print $4}')"
 eq "deltas tokens: true delta 1 preserved (jq doubles drop it to 0)" "$d1" "1"
@@ -60,7 +60,7 @@ esac
 # ---------------------------------------------------------------------------
 # 3. deltas.py skips failed transactions (atomic revert, FP-4).
 # ---------------------------------------------------------------------------
-lam="$(python3 "$DNR/deltas.py" lamports "$FIX/clean-mixed.jsonl")"
+lam="$(python3 -I "$DNR/deltas.py" lamports "$FIX/clean-mixed.jsonl")"
 n_failrows="$(printf '%s\n' "$lam" | grep -c 'SigCleanFail' || true)"
 eq "deltas lamports: no rows from the failed tx" "$n_failrows" "0"
 n_okrows="$(printf '%s\n' "$lam" | grep -c 'SigCleanOkV0' || true)"
@@ -110,14 +110,14 @@ fi
 # 7. deltas.py sums one owner's token accounts per mint (no overwrite), and keeps
 #    lamport math exact above 2^53.
 # ---------------------------------------------------------------------------
-mv="$(python3 "$DNR/deltas.py" tokens "$FIX/same-owner-move.jsonl" | grep -c . || true)"
+mv="$(python3 -I "$DNR/deltas.py" tokens "$FIX/same-owner-move.jsonl" | grep -c . || true)"
 eq "deltas tokens: internal move between one owner's accounts nets to zero (no row)" "$mv" "0"
-dr="$(python3 "$DNR/deltas.py" tokens "$FIX/same-owner-drain.jsonl")"
+dr="$(python3 -I "$DNR/deltas.py" tokens "$FIX/same-owner-drain.jsonl")"
 eq "deltas tokens: two-account drain is the sum (-140), not the last account" \
   "$(printf '%s\n' "$dr" | awk -F'\t' '$2=="VaultPDA"{print $4}')" "-140"
 eq "deltas tokens: attacker receives +140" \
   "$(printf '%s\n' "$dr" | awk -F'\t' '$2=="Attacker"{print $4}')" "140"
-bl="$(python3 "$DNR/deltas.py" lamports "$FIX/lamports-over-2-53.jsonl")"
+bl="$(python3 -I "$DNR/deltas.py" lamports "$FIX/lamports-over-2-53.jsonl")"
 eq "deltas lamports: +1 above 2^53 is exact (BigOne)" "$(printf '%s\n' "$bl" | awk -F'\t' '$2=="BigOne"{print $3}')" "1"
 eq "deltas lamports: +1 above 2^53 is exact (BigTwo)" "$(printf '%s\n' "$bl" | awk -F'\t' '$2=="BigTwo"{print $3}')" "1"
 
@@ -125,9 +125,9 @@ eq "deltas lamports: +1 above 2^53 is exact (BigTwo)" "$(printf '%s\n' "$bl" | a
 # 8. frames.py: a tab-separated forged record plus a newline-forged invoke inside
 #    Program log payloads yields valid JSONL, attributed to the real invoker only.
 # ---------------------------------------------------------------------------
-tabrows="$(python3 "$DNR/frames.py" "$FIX/log-tab-injection.jsonl")"
+tabrows="$(python3 -I "$DNR/frames.py" "$FIX/log-tab-injection.jsonl")"
 eq "frames: tab/newline payloads stay 2 records" "$(printf '%s\n' "$tabrows" | grep -c . || true)" "2"
-bad_json="$(printf '%s\n' "$tabrows" | python3 -c 'import sys,json
+bad_json="$(printf '%s\n' "$tabrows" | python3 -I -c 'import sys,json
 n=0
 for l in sys.stdin:
     try: json.loads(l)
@@ -198,8 +198,8 @@ if grep -q 'provider: rpc.example.test ' "$TT/c.out"; then ok "collect: provider
 #     ledger line (owner, last-deployed slot, zero-trimmed hash, padding), redacts a
 #     CLI error, and stops with a blocker for loader-v4.
 # ---------------------------------------------------------------------------
-cat > "$TT/bin/solana" <<'PY'
-#!/usr/bin/env python3
+printf '#!/bin/sh\nexec python3 -I "$0.py" "$@"\n' > "$TT/bin/solana"
+cat > "$TT/bin/solana.py" <<'PY'
 import os, sys
 a = sys.argv[1:]
 url = a[a.index("--url") + 1] if "--url" in a else ""
@@ -218,7 +218,7 @@ chmod +x "$TT/bin/solana"
 snap="$(PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/v2/LEAKME42" bash "$DNR/snapshot-program.sh" Prog111 "$TT/inc" 2>&1)"
 code=$?
 eq "snapshot: exits 0 with the fake CLI" "$code" "0"
-want="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read().rstrip(b"\x00")).hexdigest())' "$TT/inc/bin/Prog111.so" 2>/dev/null)"
+want="$(python3 -I -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read().rstrip(b"\x00")).hexdigest())' "$TT/inc/bin/Prog111.so" 2>/dev/null)"
 case "$snap" in
   *"last_deployed_slot=12345"*"sha256_zero_trimmed=$want"*"padding_bytes=500"*) ok "snapshot: ledger line carries slot, zero-trimmed hash and padding" ;;
   *) bad "snapshot: unexpected ledger line ($snap)" ;;
@@ -229,6 +229,34 @@ eq "snapshot: CLI failure -> exit 3" "$code" "3"
 case "$snapfail" in *LEAKME42*) bad "snapshot: key leaked from the CLI error" ;; *REDACTED*) ok "snapshot: CLI error redacted" ;; *) bad "snapshot: error text not shown ($snapfail)" ;; esac
 PATH="$TT/bin:$PATH" FAKE_SOLANA_V4=1 RPC_URL="https://rpc.example.test/" bash "$DNR/snapshot-program.sh" Prog111 "$TT/inc3" >/dev/null 2>&1
 eq "snapshot: loader-v4 program stops with a named blocker (exit 3)" "$?" "3"
+
+# ---------------------------------------------------------------------------
+# 12. Bundled python runs isolated (`python3 -I`). A json.py / re.py / hashlib.py
+#     that an audited repo ships in the working directory, or puts on PYTHONPATH,
+#     must never load — not in frames.py / deltas.py, and not in the hash that
+#     snapshot-program.sh computes with `python3 -I -`. The two controls show the
+#     planted modules DO load once -I is left out, so the checks are not vacuous.
+# ---------------------------------------------------------------------------
+EVIL="$TT/evil"; MARK="$TT/shadow.marker"; mkdir -p "$EVIL"
+for m in json re hashlib; do
+  printf 'open(%s, "a").write("%s\\n")\n' "'$MARK'" "$m" > "$EVIL/$m.py"
+done
+( cd "$EVIL" && printf 'import json\n' | python3 - >/dev/null 2>&1 )
+if grep -q json "$MARK" 2>/dev/null; then ok "isolation control: without -I, a json.py in the working directory replaces the stdlib (python3 -)"; else bad "isolation control: the planted json.py did not load, so the checks below prove nothing"; fi
+rm -f "$MARK"
+( cd "$EVIL" && PYTHONPATH="$EVIL" python3 "$DNR/deltas.py" tokens "$FIX/same-owner-drain.jsonl" >/dev/null 2>&1 )
+if grep -q json "$MARK" 2>/dev/null; then ok "isolation control: without -I, PYTHONPATH loads a planted json.py even for a script file"; else bad "isolation control: PYTHONPATH did not load the planted json.py"; fi
+rm -f "$MARK"
+iso="$(cd "$EVIL" && PYTHONPATH="$EVIL" python3 -I "$DNR/frames.py" "$FIX/log-newline-injection.jsonl" 2>&1)"
+if [[ "$iso" == "$logs" ]]; then ok "isolation: frames.py output unchanged from a hostile cwd + PYTHONPATH"; else bad "isolation: frames.py output changed under a hostile cwd + PYTHONPATH"; fi
+iso="$(cd "$EVIL" && PYTHONPATH="$EVIL" python3 -I "$DNR/deltas.py" tokens "$FIX/same-owner-drain.jsonl" 2>&1)"
+if [[ "$iso" == "$dr" ]]; then ok "isolation: deltas.py output unchanged from a hostile cwd + PYTHONPATH"; else bad "isolation: deltas.py output changed under a hostile cwd + PYTHONPATH"; fi
+iso="$(cd "$EVIL" && PATH="$TT/bin:$PATH" PYTHONPATH="$EVIL" RPC_URL="https://rpc.example.test/" bash "$DNR/snapshot-program.sh" Prog111 "$TT/inc4" 2>&1)"
+case "$iso" in
+  *"sha256_zero_trimmed=$want "*) ok "isolation: snapshot-program.sh hashes correctly from a hostile cwd + PYTHONPATH" ;;
+  *) bad "isolation: snapshot hash wrong or missing ($iso)" ;;
+esac
+if [[ -e "$MARK" ]]; then bad "isolation: a planted module ran ($(tr '\n' ' ' < "$MARK"))"; else ok "isolation: no planted json.py / re.py / hashlib.py ran"; fi
 
 if [[ "$fails" -ne 0 ]]; then
   echo "test-dnr: $fails assertion(s) FAILED" >&2

@@ -3,7 +3,7 @@
 # context window. Prints a handful of small aggregates: the numbers you quote in
 # the ledger, each the output of one query over the corpus.
 #
-#   profile.sh <corpus.jsonl>
+#   bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh" <corpus.jsonl>
 #
 # What it reports (all from structural fields, never from log text):
 #   - transaction count and the finalized/failed split (meta.err)
