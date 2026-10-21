@@ -22,6 +22,11 @@ use {PROGRAM_NAME}::State;
 
 #[test]
 fn same_attack_rejected_on_fixed() {
+    // {PROGRAM_ID}: a fresh key for an audit-time PoC. In INCIDENT mode
+    // (references/detection-response/) set this to the REAL deployed program id —
+    // the `fixed` arm runs the real/patched bytes, and an Anchor program whose
+    // declare_id! does not match its own id rejects every instruction, which would
+    // masquerade as a "fix".
     let program_id = random_pubkey();
     let mollusk = mollusk_for(program_id, "{PROGRAM_NAME}");
 
@@ -59,14 +64,18 @@ fn same_attack_rejected_on_fixed() {
     );
 
     // The contract: on the fixed build, the restored guard turns the attack away.
+    // AUDIT mode: any error proves the hole is closed.
     assert_exploit_rejected!(outcome, "{WHICH_GUARD_BLOCKS_IT}");
 
-    // Optional: to pin the EXACT rejection code, replace the macro above with a
-    // direct match, e.g.:
-    //   match outcome.program_result {
-    //       mollusk_svm::result::ProgramResult::Failure(
-    //           solana_sdk::program_error::ProgramError::MissingRequiredSignature,
-    //       ) => {}
-    //       other => panic!("expected MissingRequiredSignature, got {:?}", other),
-    //   }
+    // INCIDENT mode (references/detection-response/, Leg 3): the any-error form
+    // above is NOT enough — pin the guard's SPECIFIC error, so a rejection for an
+    // unrelated reason can't certify the fix. Replace the line above with:
+    //
+    //   use mollusk_svm::result::ProgramResult;
+    //   use solana_sdk::program_error::ProgramError;
+    //   assert_exploit_rejected_with!(
+    //       outcome,
+    //       ProgramResult::Failure(ProgramError::MissingRequiredSignature), // the guard's error
+    //       "{WHICH_GUARD_BLOCKS_IT}"
+    //   );
 }

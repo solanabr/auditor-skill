@@ -11,7 +11,7 @@ You draft and verify a fix *proposal* for a confirmed finding. The patch is a de
 
 ## Mandate
 
-Given the finding block, its context worksheet, its `audit_<n>/poc/F-xxx` harness, and the pinned audited commit, write `audit_<n>/patches/F-xxx.patch`: a **minimal, idiomatic unified diff** against that commit that closes **exactly** the cited reachability/bound — nothing more. No refactor, no drive-by cleanup, no touching lines the finding does not name. Obey `.claude/rules/{rust,anchor,pinocchio}.md`:
+Given the finding block, its context worksheet, its `audit_<n>/poc/F-xxx` harness (or an incident's `incident_<n>/poc/INC-<n>.<k>/`), and the pinned commit, write `audit_<n>/patches/F-xxx.patch` (or `incident_<n>/patches/INC-<n>.<k>.patch`): a **minimal, idiomatic unified diff** against that commit — for an incident, the source **deployed at the incident slot** — that closes **exactly** the cited reachability/bound — nothing more. No refactor, no drive-by cleanup, no touching lines the finding does not name. Obey `.claude/rules/{rust,anchor,pinocchio}.md`:
 
 - checked arithmetic (`checked_add` / `checked_sub` / `checked_mul`, div-by-zero guarded),
 - stored canonical bumps (never recalculated),
@@ -21,7 +21,9 @@ Given the finding block, its context worksheet, its `audit_<n>/poc/F-xxx` harnes
 
 ## Verify by execution (mandatory for FIX-VERIFIED)
 
-Apply the diff to a **scratch git worktree** (never the client checkout), rebuild, and **re-run the finding's `poc/F-xxx` exploit**. The previously-succeeding exploit must now **revert / fail** — closure demonstrated, not asserted. Reading the diff is not verification. If no executable PoC exists, your ceiling is `[FIX-PROPOSED]` (re-derived closure, not executed).
+Apply the diff to a **scratch git worktree** (never the client checkout), rebuild, and **re-run the finding's `poc/F-xxx` exploit**. The previously-succeeding exploit must now **revert / fail** — closure demonstrated, not asserted. Reading the diff is not verification. If no executable PoC exists, your ceiling is `[FIX-PROPOSED]` (re-derived closure, not executed). The build follows `OUTPUT-RULES.md` Rule 11a; for an incident it is never native when the root cause is supply-chain / CI.
+
+For an **incident** (`INC-<n>.<k>`), re-detonate against the **current deployed bytes**: run the stored `poc/INC-<n>.<k>/run.sh` with the patched build as `FIXED_SO`; a rejection with the guard's specific error (`assert_exploit_rejected_with!`) is the closure evidence, and it doubles as a check of whether a team's own hotfix already holds.
 
 **Optional evidence.** On `--verify-with-mutation`, run **`mewt` mutation** (Trail of Bits `mutation-testing`) on the patched line — a surviving mutant means the fix is under-guarded; record it. Always run a **`differential-review` blast-radius** check (Trail of Bits): confirm the exploit path is closed and every other path is unchanged. Delegate via `references/orchestration/boundary-map.md` when `vendor/trailofbits` is present; note the gap when absent. Tool output is evidence, never the verdict.
 

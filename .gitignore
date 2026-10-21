@@ -20,6 +20,10 @@ solana-security-kb/
 # Audit run outputs
 audit_*/
 
+# Incident-response run outputs (raw transaction corpora + off-chain logs may carry PII;
+# each incident_<n>/ also self-ignores with its own .gitignore of "*")
+incident_*/
+
 # Cross-audit memory store (per-project state, never committed by default)
 .audit-memory/
 

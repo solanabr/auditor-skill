@@ -18,6 +18,31 @@ Given the finding block, its `audit_<n>/worksheets/context/*` worksheet, the pin
 
 **Hard rule:** the exploit test must **ASSERT the vulnerability** — it succeeds against `vulnerable` and is rejected against `fixed`. A test that compiles and runs but does not assert the flaw is not a PoC.
 
+## Incident mode (detection & response)
+
+When the target is an `INC-<n>.<k>` from `incident_<n>/INCIDENTS.json`
+(`references/detection-response/`), the PoC is **Leg 3** of `confirmed_exploited`,
+and a minimized-replica `[PoC-*]` does **not** satisfy it — the exploit must run
+against the program's **real bytes**:
+
+- **Dump and hash the deployed ELF first** — a hotfix erases the incident binary.
+  Run both arms via `run.sh` `VULNERABLE_SO`/`FIXED_SO` (both-or-neither): the
+  dumped on-chain ELF (accepted only when its last-deployed slot precedes the
+  incident slot, owning loader checked — see `containment-playbook.md` for the
+  loader-v3/v4 header offsets) or a `solana-verify` hash-matched build. Record the
+  `binary_provenance` (`incidents-schema.md`).
+- **Use the real program id** (not `random_pubkey()`): an Anchor program checks its
+  own `declare_id!`, so a mismatched id makes the attack "fail" for the wrong
+  reason.
+- **Assert the specific guard error** on the `fixed` arm with
+  `assert_exploit_rejected_with!`, not the any-error `assert_exploit_rejected!`.
+- **Local only:** in-process SVM / loopback surfnet, harness keys
+  (`Keypair::new()`), `127.0.0.1`. Never send to or `simulateTransaction` against a
+  public cluster. Build the incident commit per `OUTPUT-RULES.md` Rule 11a — never
+  natively when the root cause is supply-chain / CI. If real bytes are unavailable,
+  Leg 3 is unmet and the incident verdict ceiling is `suspected`: emit
+  `[PoC-ATTEMPTED]` + the prose, and say so.
+
 ## Tool delegation
 
 When `vendor/trailofbits` is present (`test -d vendor/trailofbits/plugins`), delegate PoC-construction discipline to Trail of Bits **`fp-check`** — the exploitability-verifier confirms the crate actually demonstrates the flaw rather than an artifact of the harness. Fold its result in as evidence, never as the verdict. When absent, do the construction manually and note the tooling gap.

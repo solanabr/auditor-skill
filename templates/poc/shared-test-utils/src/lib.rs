@@ -129,10 +129,14 @@ macro_rules! assert_exploit_succeeds {
 /// Assert the fix held: the program rejected the same crafted instruction.
 ///
 /// The mirror of `assert_exploit_succeeds!`. Run the identical attack against the
-/// `fixed` build and require an error — any error, because closing the hole is the
-/// contract, not returning one specific code. When a PoC must pin the exact error
-/// (e.g. `MissingRequiredSignature`), match `outcome.program_result` directly in
-/// the test instead of using this macro.
+/// `fixed` build and require an error — any error. This any-error form is fine for
+/// an audit-time PoC, where the pair (succeeds on `vulnerable`, rejected on
+/// `fixed`) is the whole contract.
+///
+/// For a **detection & response incident** (`references/detection-response/`), the
+/// any-error form is NOT enough — use `assert_exploit_rejected_with!` to pin the
+/// specific guard error, so a rejection for an unrelated reason can't masquerade
+/// as a fix.
 ///
 /// ```ignore
 /// let outcome = mollusk.process_instruction(&ix, &accounts);
@@ -146,6 +150,43 @@ macro_rules! assert_exploit_rejected {
             outcome.program_result.is_err(),
             "attack was expected to be REJECTED ({}), but the program accepted it",
             $why,
+        );
+    }};
+}
+
+/// Assert the fix held AND turned the attack away with the SPECIFIC error the
+/// guard raises — mandatory for incident-mode PoCs.
+///
+/// `$pat` is a pattern the test supplies with its own imports, so this macro names
+/// no crate path of its own and stays correct across mollusk / solana versions.
+/// The usual pattern is `ProgramResult::Failure(ProgramError::<Variant>)` or
+/// `ProgramResult::Failure(ProgramError::Custom(<code>))`.
+///
+/// Why specific: `assert_exploit_rejected!` accepts *any* `Err`, so a `fixed` arm
+/// that fails for an unrelated reason — a wrong account count, a panic, the wrong
+/// discriminator — would still "pass" and wrongly certify the fix. Pinning the
+/// error proves the restored guard is what turned the attack away.
+///
+/// ```ignore
+/// use mollusk_svm::result::ProgramResult;
+/// use solana_sdk::program_error::ProgramError;
+/// let outcome = mollusk.process_instruction(&ix, &accounts);
+/// assert_exploit_rejected_with!(
+///     outcome,
+///     ProgramResult::Failure(ProgramError::MissingRequiredSignature),
+///     "the restored is_signer check rejected the unsigned authority"
+/// );
+/// ```
+#[macro_export]
+macro_rules! assert_exploit_rejected_with {
+    ($outcome:expr, $pat:pat, $why:expr) => {{
+        let outcome = &$outcome;
+        assert!(
+            ::core::matches!(&outcome.program_result, $pat),
+            "attack was expected to be REJECTED with {} ({}), but got: {:?}",
+            ::core::stringify!($pat),
+            $why,
+            outcome.program_result,
         );
     }};
 }

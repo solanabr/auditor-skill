@@ -1,7 +1,7 @@
 ---
 name: auditor:poc
 description: Generate an executable proof-of-concept exploit for a confirmed High/Critical finding — detect the toolchain, pick the harness framework by finding type, spawn poc-engineer, and emit a one-command runnable crate plus the earned [PoC-*] evidence tier. Never hard-fails: on toolchain absence it downgrades to [PoC-ATTEMPTED] and keeps the existing prose PoC.
-argument-hint: "<finding-id | file:line> [--fork] [--fuzz] [--force]"
+argument-hint: "<finding-id | INC-n.k | file:line> [--fork] [--fuzz] [--force]"
 allowed-tools: Read, Grep, Glob, Bash, Task
 ---
 
@@ -13,9 +13,12 @@ Turn a *confirmed* finding into a runnable exploit. Read `OUTPUT-RULES.md` first
 
 ## Steps
 
-1. **Resolve the finding.** Locate the target: a finding id (`F-xxx`) resolved from the latest `audit_<n>/REPORT.md`, or a raw `file:line`. Read its full finding block **and** its context worksheet under `audit_<n>/worksheets/context/*` (the reconstructed instruction/state model the PoC will drive). Pin the audited commit the report names — the harness reproduces *that* commit, not `HEAD`.
+1. **Resolve the finding.** Locate the target:
+   - a finding id (`F-xxx`) resolved from the latest `audit_<n>/REPORT.md`, or a raw `file:line` — read its full finding block **and** its context worksheet under `audit_<n>/worksheets/context/*`; or
+   - a run-qualified incident id **`INC-<n>.<k>`** resolved from `incident_<n>/INCIDENTS.json` (`references/detection-response/`). Its `vuln` entry is the finding (a Rule 5b block filled with the observed values), and outputs go to `incident_<n>/poc/INC-<n>.<k>/`.
+   Pin the commit the report / incident names — the harness reproduces *that* commit (or the deployed bytes, below), never `HEAD`.
 
-2. **Severity gate.** By default only **High/Critical (N≥7)** findings earn an executable PoC — a runnable exploit is the Rule 5b PoC those severities demand, and spending the harness budget on low-severity items is waste. `--force` overrides the gate for a deliberately-requested lower-severity demonstration. A finding still at `[UNCONFIRMED]` / `[PARTIAL]` is **not** eligible — confirm it through Rule 5b first.
+2. **Severity gate.** By default only **High/Critical (N≥7)** findings earn an executable PoC — a runnable exploit is the Rule 5b PoC those severities demand, and spending the harness budget on low-severity items is waste. `--force` overrides the gate for a deliberately-requested lower-severity demonstration. A finding still at `[UNCONFIRMED]` / `[PARTIAL]` is **not** eligible — confirm it through Rule 5b first. **An `INC-<n>.<k>` target bypasses the severity gate**: for an incident the executed PoC *is* the `confirmed_exploited` leg, so it runs regardless of the band.
 
 3. **Detect the toolchain (never assume).** Probe what is actually installed:
    - `cargo build-sbf --version` (SBF program build),
@@ -32,7 +35,9 @@ Turn a *confirmed* finding into a runnable exploit. Read `OUTPUT-RULES.md` first
 
 5. **Spawn `poc-engineer`.** Hand it the finding block, the context worksheet, the pinned commit, the chosen framework, and the detected toolchain. It copies the matching crate from `templates/poc/` and fills it: a feature-gated `vulnerable` arm the exploit **succeeds** against and a `fixed` arm it is **rejected** against (`assert_exploit_succeeds!` / `assert_exploit_rejected!` from our `shared-test-utils`). The exploit test must **assert** the vulnerability, not merely run.
 
-6. **Emit outputs** under `audit_<n>/poc/F-xxx/`:
+   **Incident mode (`INC-<n>.<k>`).** Leg 3 of `confirmed_exploited` requires the program's **real bytes**, so a minimized-replica `[PoC-*]` does not satisfy it. `poc-engineer` runs both arms against real bytes via `run.sh` `VULNERABLE_SO`/`FIXED_SO` (both-or-neither) — the dumped on-chain ELF (accepted only when its last-deployed slot precedes the incident slot, owning loader checked) or a `solana-verify` hash-matched build; it uses the **real program id** and asserts the **specific** guard error on the `fixed` arm (`assert_exploit_rejected_with!`). Dump and hash the deployed ELF first — a hotfix erases the incident binary. Build the incident commit only per `OUTPUT-RULES.md` Rule 11a, and never natively when the root cause is supply-chain / CI.
+
+6. **Emit outputs** under `audit_<n>/poc/F-xxx/` (or `incident_<n>/poc/INC-<n>.<k>/`):
    - the filled harness crate (from `templates/poc/`),
    - a one-command **`run.sh`** (`cargo test` / `trident fuzz` / the surfpool scenario) that reproduces the result from a clean checkout,
    - the earned **`[PoC-*]` evidence tier** recorded against the finding (see vocabulary below), which `audit-cycle` / `re-audit` fold back into the report's finding block.

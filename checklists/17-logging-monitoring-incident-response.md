@@ -80,6 +80,8 @@
 
 > **Source:** SOC 2 Availability, EY IT Audit, CertiK best practices
 
+> **Working an actual incident, not auditing readiness?** These items check whether a team is *prepared*. To investigate a live or past compromise from transaction history and program logs, use the detection & response track — `/auditor:hunt` (no alert in hand) and `/auditor:respond` (a signature, address, or alert), contract in [references/detection-response/README.md](../references/detection-response/README.md). It is propose-only, and its detection-engineering output maps back to LM-030, LM-037, LM-038, LM-063 and LM-065.
+
 | ID | Check | Severity |
 |----|-------|----------|
 | LM-041 | Incident response plan exists and is documented | 6 |

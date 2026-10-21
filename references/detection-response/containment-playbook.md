@@ -1,0 +1,98 @@
+# Containment playbook — proposed, never executed
+
+*Method credited to anthropics/defending-code-reference-harness (dnr-respond); see ATTRIBUTION.md.*
+
+> **Load when:** writing the containment / recovery / detection sections of a
+> `/auditor:respond` plan (`templates/response-plan.md`). Read
+> `references/detection-response/README.md` first.
+
+Every action here is a **proposal a human executes**. The track names the action,
+the evidence that justifies it, who must sign it, whether it is reversible, and
+what breaks if the call is wrong — and then stops. It never performs the action.
+
+## Rules of engagement (propose-only, made concrete)
+
+- **No signing, sending, or simulating against a public cluster.** No `solana`
+  write subcommand of any kind — not even with `--url localhost`, because the CLI
+  signs with `~/.config/solana/id.json` and one wrong `--url` lands the signed
+  transaction on mainnet. No remote `simulateTransaction`: the exploit payload
+  would become visible to the RPC provider, which is a copycat risk.
+- **No serialized transactions and no multisig proposals.** The plan describes the
+  instruction (program, accounts, args) in prose; it never emits transaction
+  bytes, a Squads proposal, or anything a human could blind-sign.
+- **No outbound communication.** No mail, chat, posts, issues, PRs, or webhooks,
+  even when a connected tool could send them. Coordination is **drafts only**
+  (below).
+- **Read-only CLI only**, and each piped through `scripts/dnr/redact.sh` so a key
+  in an error never reaches the transcript: `solana program show`,
+  `solana program dump`, `solana account`, `solana confirm -v <sig>`,
+  `getAccountInfo` / `getTransaction` / `getSignaturesForAddress`. No Helius or
+  other MCP write tool, no webhook/subscription setup — those are out of the
+  agent's `tools:` allowlist by construction (README).
+- Building a candidate commit to reproduce follows the run's execution mode
+  (`OUTPUT-RULES.md` Rule 11a); a `supply_chain_or_ci` / `off_chain` root cause is
+  **never** built natively.
+
+## The action menu (every row is a proposal)
+
+| Proposed action | When it applies | Who signs | Reversible | Risk if wrong |
+|-----------------|-----------------|-----------|-----------|---------------|
+| Trigger the program's **pause / emergency-stop** instruction | the program has one (LM-043/044) | the pause authority / multisig | yes (resume) | halts legitimate users; prefer it to an upgrade when it exists |
+| **Multisig hotfix upgrade** to the patched build | code flaw, upgradeable program, fix verified (`/auditor:patch`) | upgrade-authority multisig | yes (re-upgrade) | a rushed upgrade can widen the hole; ship the verified diff, not a guess |
+| **Freeze** attacker/mule token accounts | the mint has a freeze authority held by the client | freeze authority | yes (thaw) | freezing a wrong account strands an innocent holder; cite the exact accounts |
+| **Pausable (Token-2022) pause** of the mint | the mint carries the Pausable extension | pause authority | yes (resume) | halts all holders of that mint, not just the attacker |
+| **Rotate the upgrade / mint / config authority** to a fresh multisig | authority may be compromised (`key_compromise`) | current authority | partially | if the current key is already the attacker's, rotation may fail or tip them off; sequence with the pause |
+| Propose **market / oracle circuit-breaker or deposit cap** changes | economic / oracle root cause | protocol governance | yes | over-tight limits can cascade liquidations; state the bound |
+| Pause the **keeper / relayer / indexer** that acts on program output | off-chain actor is acting on forged events (KV-122) | ops owner | yes | stops legitimate automation; pair with the code fix |
+| Rotate a leaked **deploy key / CI secret**, revoke the CI token | `supply_chain_or_ci` / `off_chain` (link #16's `references/vuln-classes/github-actions.md`) | ops / platform owner | partially | breaks running deploys; necessary when a key may be out |
+
+### Do not
+
+- **Never `solana program close`**, and never set the upgrade authority to
+  `--final`: both are irreversible, the id cannot be reused after a close, and a
+  close strands any program-owned funds. These are not containment.
+- Never widen anyone's privileges, and never move funds "to safety" — moving funds
+  is a signed transaction, which the track does not do.
+
+## Reading the deploy timeline (read-only)
+
+To place an upgrade or authority change on the incident timeline, read the
+program's loader record (no write):
+
+- **Loader-v3 (`BPFLoaderUpgradeab1e…`):** the ProgramData account's 45-byte
+  header holds the u32 variant tag, then the last-deployed **slot** at bytes
+  `[4..12]`, then an `Option<Pubkey>` upgrade authority at byte `12`. `solana
+  program show <id>` prints "Last Deployed In Slot" and the authority directly.
+- **Loader-v4 (`LoaderV411…`):** `LoaderV4State` is a 0x30-byte header — slot at
+  `[0..8]`, authority-or-next-version pubkey at `[8..40]`, status at `[40..48]` —
+  followed by the ELF.
+
+A last-deployed slot **after** the incident slot means the incident binary is
+gone (a hotfix overwrote it); dump and hash the current bytes immediately anyway,
+and note the provenance gap (`incidents-schema.md` → `binary_provenance`).
+
+## Coordination (drafts only)
+
+The plan may include **draft** outreach text for a human to send; the agent sends
+nothing. Candidates, with the caveat that attribution of an address to a person is
+never asserted and any exchange/bridge label must be cited:
+
+- **SEAL 911** via its official Telegram bot (`@seal_911_bot`). Source of truth:
+  `github.com/security-alliance/seal-911`. If a purported member reaches out
+  first, verify them through the bot using the repo's keyword step —
+  impersonators specifically target live incidents.
+- The token issuer / stablecoin desk (for a freeze), affected protocols, and —
+  with a cited rationale — exchanges and bridges on the fund-flow path.
+
+## Recovery and detection engineering
+
+- **Recovery (proposed):** exactly which credentials to rotate (the queried list,
+  not "all users"), which customers to notify (the distinct-victim list from the
+  blast-radius query — internal), and what to watch to confirm the attacker is
+  out.
+- **Detection engineering (proposed):** turn the discriminating queries that found
+  this into standing alerts, mapped to checklist 17 — anomalous withdrawals and
+  rapid calls (LM-030), upgrade-authority changes (LM-037), unexpected mint-authority
+  use (LM-038), off-chain consumers that trust logs over finalized state (LM-063),
+  and stream/reader liveness (LM-065). Note which existing alerts fired and which
+  were noise.

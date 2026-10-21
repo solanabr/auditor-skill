@@ -1,7 +1,7 @@
 ---
 name: auditor:patch
 description: Draft and verify a fix for a confirmed finding — a MINIMAL idiomatic unified diff against the pinned audited commit, applied to a scratch worktree and proven by re-running the finding's PoC (it must now revert). Proposal only; the auditor stays read-only on the client tree. Optional mutation + blast-radius evidence. Emits [FIX-VERIFIED] / [FIX-INSUFFICIENT] / [FIX-PROPOSED].
-argument-hint: "<finding-id> [--verify-with-mutation]"
+argument-hint: "<finding-id | INC-n.k> [--verify-with-mutation]"
 allowed-tools: Read, Grep, Glob, Bash, Task
 ---
 
@@ -14,6 +14,8 @@ Produce a *verified fix proposal* for a confirmed finding. Read `OUTPUT-RULES.md
 ## Steps
 
 1. **Resolve the finding.** Read the finding block from `audit_<n>/REPORT.md`, its context worksheet under `worksheets/context/*`, and its `poc/F-xxx` crate if `/auditor:poc` already ran. Pin the audited commit — the diff must apply against **that** commit, not `HEAD`.
+
+   For a run-qualified incident id **`INC-<n>.<k>`** (`references/detection-response/`), read the `vuln` entry and its `poc/INC-<n>.<k>/` crate from `incident_<n>/INCIDENTS.json`; write `incident_<n>/patches/INC-<n>.<k>.patch` + `VERIFICATION.md`. The diff applies against the source **deployed at the incident slot**. Verify it the detection & response way: **re-detonate** the stored PoC against the current deployed bytes (`run.sh` with the patched build as `FIXED_SO`) — a rejection with the guard's specific error means the fix holds. The build follows `OUTPUT-RULES.md` Rule 11a, never native when the root cause is supply-chain / CI.
 
 2. **Spawn `patch-engineer`.** It writes `audit_<n>/patches/F-xxx.patch`: a **minimal, idiomatic unified diff** that closes *exactly* the cited reachability/bound — no refactor, no drive-by cleanup, nothing beyond the one guard/bound the finding names. It obeys `.claude/rules/{rust,anchor,pinocchio}.md`: checked arithmetic (`checked_add`/`checked_sub`/…), stored canonical bumps (never recalculated), `transfer_checked` (not deprecated `transfer`), no `unwrap()`/`expect()` in program code, validated CPI targets. A cosmetic edit that does not move the Rule 5b bound is **not** a fix.
 
