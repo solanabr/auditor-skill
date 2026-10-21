@@ -1,6 +1,6 @@
 ---
 name: auditor:intake
-description: Interactive engagement intake (alias /scope). Walks QUESTIONS.md and persists the answers to audit_<n>/intake.md — the durable intake artifact both audit-cycle and audit-assist read, instead of answers living only in conversation state. Captures scope + commit pin, languages/frameworks, protocol class, compliance, severity calibration, and the trust-model inputs that feed the report's Trust Model and Assumptions sections. Interactive mode asks; automated mode records the applied default.
+description: Interactive engagement intake (alias /scope). Walks QUESTIONS.md and persists the answers to audit_<n>/intake.md — the durable intake artifact both audit-cycle and audit-assist read, instead of answers living only in conversation state. Captures scope + commit pin, languages/frameworks, protocol class, compliance, severity calibration, the trust-model inputs that feed the report's Trust Model and Assumptions sections, and the execution mode for target-controlled code (OUTPUT-RULES Rule 11a). Interactive mode asks; automated mode records the applied default.
 argument-hint: "[path] [--auto]"
 allowed-tools: Read, Write, Glob, Grep
 ---
@@ -22,7 +22,7 @@ Turn the passive `QUESTIONS.md` questionnaire into a **persisted** `audit_<n>/in
 
 2. **Pin the commit.** `git rev-parse HEAD`. Record the full 40-char SHA and branch so the report names exactly what was reviewed.
 
-3. **Warm from prior audits (if available).** If `tools/auditor-tools` is built, `audit-mem warm <program-id>` injects the prior protocol profile and open false-positive rulings — pre-fill from it and confirm rather than re-ask. If absent, skip.
+3. **Warm from prior audits (if available).** If `tools/auditor-tools` is built, `audit-mem warm --program-id <id>` injects the prior protocol profile and open false-positive rulings — pre-fill from it and confirm rather than re-ask. If absent, skip.
 
 4. **Walk QUESTIONS.md → intake.md.** Fill every section of `templates/intake.md`:
    - **Scope & commit pin** — in/out of scope (honor `Q44` excludes), `--scope` boundary.
@@ -33,9 +33,11 @@ Turn the passive `QUESTIONS.md` questionnaire into a **persisted** `audit_<n>/in
    - **Trust-model inputs (critical)** (`Q11`, `Q14`–`Q16`, `Q23`) — for each of admin / upgrade authority / oracle / keeper / LP / permissionless user, record who holds it, what they can do, and what the review trusts them **NOT** to do. "Untrusted / permissionless" is a valid, important answer. This seeds report §4.4 and §4.6, and is the actor list `/auditor:threat-model` expands.
    - **Security history** (`Q25`–`Q28`).
 
-5. **Record assumed defaults.** In `--auto`, every unanswered question goes in the **Assumed Defaults (Unanswered)** table with the default applied and its basis. Each entry is carried into the report's **§4.6 Assumptions & Simplifications** as an explicit assumption — so "no finding here" reads against a stated default, not a blanket clearance. In interactive mode this table should be empty (everything was asked); if non-empty, it lists only what the human explicitly deferred.
+5. **Execution mode (`Q46`).** Ask once per audit where target-controlled code may run — **isolated** (recommended: container, VM, or Claude Code sandbox with no keys or credentials mounted) or **native** (the auditor's own machine) — per `OUTPUT-RULES.md` Rule 11a. Record the mode and the isolation used in §8 of `intake.md`; every later step that builds, tests or installs the target uses it. Also tell the human that tools which send code, dependency names or addresses to outside services are listed in the report rather than gated (Rule 11b). In `--auto`, an unanswered `Q46` is recorded as **native** in **Assumed Defaults** with the basis "Rule 11a default when no mode is recorded" — and the report then states that target code ran on the auditor's machine.
 
-6. **Write `audit_<n>/intake.md`.** `{n}` = count of existing `audit_*/` dirs + 1 (`OUTPUT-RULES.md` Rule 9). This file is the intake of record.
+6. **Record assumed defaults.** In `--auto`, every unanswered question goes in the **Assumed Defaults (Unanswered)** table with the default applied and its basis. Each entry is carried into the report's **§4.6 Assumptions & Simplifications** as an explicit assumption — so "no finding here" reads against a stated default, not a blanket clearance. In interactive mode this table should be empty (everything was asked); if non-empty, it lists only what the human explicitly deferred.
+
+7. **Write `audit_<n>/intake.md`.** `{n}` = count of existing `audit_*/` dirs + 1 (`OUTPUT-RULES.md` Rule 9). Create the directory with a `.gitignore` containing `*` as its first file (Rule 11d). This file is the intake of record.
 
 ## Output
 

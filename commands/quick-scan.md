@@ -9,6 +9,7 @@ allowed-tools: Read, Grep, Glob, Bash, Task
 **Arguments:** $ARGUMENTS
 
 1. Discover the repo and declare scope (`OUTPUT-RULES.md` Rule 0).
-2. If `vendor/trailofbits` is present, run `static-analysis` (SAST) over in-scope languages; otherwise run the `discovery/grep-commands.md` scanners.
+2. If `vendor/trailofbits` is present, run `static-analysis` (SAST) over in-scope languages; otherwise run the `discovery/grep-commands.md` scanners. Any analyzer that builds the target runs in the execution mode recorded at intake (`OUTPUT-RULES.md` Rule 11a).
 3. Evaluate only CRITICAL / HIGH known-vectors for the detected domains — not the full set.
 4. Report findings with severity + `file:line`. State clearly this is a triage pass, not a complete audit, and point to `/auditor:audit` for full coverage.
+5. **As a CI gate on a public repository** (`OUTPUT-RULES.md` Rule 11d): post pass/fail and finding counts only — in PR comments, check annotations, the job log and uploaded artifacts alike, since anyone signed in to GitHub can read all of them. Send finding details through a private channel (private vulnerability reporting, a draft security advisory, or a private repository). If that channel is unavailable, fail the job with the count; never fall back to printing findings in the log.

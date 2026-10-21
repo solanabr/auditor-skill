@@ -413,6 +413,18 @@ _______________
 
 ---
 
+## Section 11: Audit Execution
+
+### Q46. Where may the auditor run the project's own code?
+Building, testing or installing the project runs code the project controls — build scripts, proc-macros, test suites, `Anchor.toml` scripts, package install hooks. Asked once per audit; see `OUTPUT-RULES.md` Rule 11a.
+- [ ] **Isolated** (recommended) — a container, VM, or Claude Code sandbox, with no keys or credentials mounted
+- [ ] **Native** — on the auditor's own machine (the report says so)
+- [ ] No preference — recorded as **native** (also the default when automated runs leave Q46 unanswered), and the report carries that caveat
+
+> Tools that send code, dependency names or addresses to outside services (an RPC provider, a second-opinion LLM, package registries) are not gated by this answer; the report lists each one (Rule 11b).
+
+---
+
 ## How Answers Affect the Audit
 
 | Answer | Effect |
@@ -430,3 +442,5 @@ _______________
 | Q35 = MiCA/GDPR | Enables compliance checklist (18) |
 | Q39 = Specific scope | Skips irrelevant checklists, reduces cost/time |
 | Q41 = Quick scan | Uses grep + known vectors only, skips semantic analysis |
+| Q46 = Isolated | Builds, tests, installs and target-building PoCs run in a container / VM / sandbox (`OUTPUT-RULES.md` Rule 11a); a step that cannot run there keeps its source-level verdict, and a PoC records `[PoC-ATTEMPTED]` |
+| Q46 = Native, or unanswered | Target-controlled code runs on the auditor's machine; the report's Coverage & Limitations states it |

@@ -328,6 +328,8 @@ If a language has no dedicated checklist (e.g., Swift, Dart, Elixir):
 
 → Report-assembly format moved to [references/report-format.md](references/report-format.md) § Rule 9 — File Naming; loaded at report time.
 
+The directories these files live in (`audit_<n>/`, `.audit-memory/`, `incident_<n>/`) follow [Rule 11d](#11d--output-hygiene).
+
 ---
 
 ## Rule 10: Honesty & Limitations
@@ -353,3 +355,50 @@ The `*` suffix + confidence note signals that manual double-checking may be warr
 ### `[UNCONFIRMED]` / `[UNDETERMINED]` — validation-gate outcomes
 
 Both tokens are defined in Rule 5b. Recap: `[UNCONFIRMED]` = the gate failed on reachability or bounds — suspected but unreachable / unbounded as written; reported for manual follow-up, NOT counted as a confirmed FAIL. `[UNDETERMINED]` = reachable but full impact unquantified within scope; reported at its likely severity band, flagged.
+
+---
+
+## Rule 11: Operating Safety
+
+An audit handles hostile material: code that may get built or run, git metadata that may carry commands, and findings that must not leak before they are fixed. These four rules bind every command and agent; other files point here instead of restating them.
+
+### 11a — Execution mode
+
+**What counts as target-controlled code.** Anything the audited repository can make execute: build scripts (`build.rs`), proc-macros, test suites, `Makefile`s, npm / yarn / pnpm / bun lifecycle scripts, and the `[scripts]` entries of `Anchor.toml` (which `anchor test` runs). A package-manager command run *inside* the target counts too, because the target's config steers it: `.npmrc` can redirect the registry and expand `${ENV}` variables into auth headers, `.cargo/config.toml` can set `build.rustc-wrapper` or a `runner`, and `rust-toolchain.toml` chooses the toolchain that runs. Run `npm audit` / `cargo audit` against a copy of the manifest and lockfile in a scratch directory outside the target.
+
+**Two modes.** The mode is chosen once per audit, at intake (`QUESTIONS.md` Q46, recorded in `audit_<n>/intake.md` §8):
+
+| Mode | What it means | The report says |
+|---|---|---|
+| **isolated** (recommended) | Target-controlled code runs in a container or VM with no keys or credentials mounted (`~/.config/solana`, cloud credentials, `~/.ssh`), or under Claude Code's sandbox with read-deny rules on key and credential paths plus an egress allowlist. A read-only source mount and CPU / memory / time limits are recommended. | Which isolation was used. |
+| **native** | Target-controlled code runs on the auditor's own machine. Allowed. | In Coverage & Limitations: target code ran on the auditor's host, and which steps ran it. |
+
+Interactive runs ask once per audit — at intake, or at the first step that needs to execute target code if intake was skipped. Autonomous runs (`/auditor:intake --auto`, `/auditor:audit-cycle`) use the recorded mode; when none was recorded, the run is native and the report carries that caveat.
+
+**Where it applies.** FULL-AUDIT Step 3.4 (`anchor build`, `anchor test`) and Step 3.2 (`npm audit`, `cargo audit`); SC-012's `npm ci` (add `--ignore-scripts`); the scratch-worktree rebuild in `/auditor:patch`; `/auditor:re-audit` step 4b (the target's test suite); mutation runs; Trail of Bits harnesses that build target code; and any PoC that path- or git-depends on target crates or builds the target. **Exempt:** a self-contained `templates/poc` crate whose program runs inside Mollusk or LiteSVM, as long as it neither depends on target crates nor builds the target.
+
+**When a step cannot run in the chosen mode.** Never switch modes silently. A PoC records `[PoC-ATTEMPTED]` with the blocker "no isolated runner" (Rule 5b tiers); a patch records `[FIX-PROPOSED]`; a checklist item keeps its source-level verdict with a Rule 10 confidence note (e.g. `[PASS*] … *confidence: medium — test suite not executed, no isolated runner`).
+
+### 11b — Outside-service disclosure
+
+Some tools send audit material to services outside the auditor's machine. There is no consent gate, but nothing goes out silently: the report lists each tool, the service it contacted, and what it sent. Typical entries:
+
+- Trail of Bits `second-opinion` → OpenAI (Codex CLI) or Google (Gemini CLI): code and diffs under review.
+- Trail of Bits `supply-chain-risk-auditor` → package registries and repository-host APIs: dependency names.
+- RPC providers → program IDs and account addresses.
+- Registry queries (`npm view`, the crates.io / PyPI APIs) → package names and versions.
+- Any MCP server or API that receives client code, dependency names, or addresses.
+
+### 11c — Untrusted git checkouts
+
+A `.git/` directory the auditor did not create itself — a client archive, a copied working tree — can make git run commands through its repo-local config: an fsmonitor hook, diff and textconv drivers, smudge and clean filters, hooks. Inside such a checkout:
+
+- pass `-c core.fsmonitor=false` to every git command (and `--no-pager`, since `core.pager` is also a command);
+- add `--no-textconv --no-ext-diff` to `git log -p`, `git show` and `git diff`, and compare revisions rather than the working tree;
+- never check out, switch, merge, commit, or run anything else that applies filters there — a smudge filter executes on checkout;
+- prefer to audit a fresh `git clone` of it (without `--recurse-submodules`): a clone does not copy repo-local config, hooks or filter definitions.
+
+### 11d — Output hygiene
+
+- The first file written into `audit_<n>/`, `.audit-memory/` or `incident_<n>/` is a `.gitignore` containing `*`. From then on git skips everything in that directory, the `.gitignore` itself included, without any change to the repository's own `.gitignore` or config.
+- In CI on a public repository, publish pass/fail and finding counts only. Treat workflow logs and uploaded artifacts as public — anyone signed in to GitHub can read them. When no private channel is available, fail the job with the count; never fall back to printing findings in the log. Deliver details privately: GitHub private vulnerability reporting, a draft security advisory, or a private repository.

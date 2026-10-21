@@ -18,6 +18,7 @@ Before starting any phase:
 4. Detect languages in the repo (Rule 7 in OUTPUT-RULES.md) — this determines which checklists to apply
 5. Create a session checkpoint file to track progress across chunks (Rule 3 in OUTPUT-RULES.md)
 6. Remember: **walk the code file by file — never one-shot** (Rule 3)
+7. Apply **Operating Safety** ([OUTPUT-RULES.md Rule 11](OUTPUT-RULES.md#rule-11-operating-safety)) before anything runs: take the execution mode recorded at intake (11a — isolated recommended, native allowed with a report caveat), list every outside service a tool contacts (11b), treat a `.git/` you did not clone yourself as untrusted (11c), and make `.gitignore` containing `*` the first file in `audit_<n>/` (11d)
 
 ---
 
@@ -78,7 +79,7 @@ RECORD:
 
 ### 0.3 — Build Instruction Matrix
 
-> **Optional deterministic pre-pass.** If `tools/auditor-tools/` is built, run `audit-scan <program-path> --out audit_<n>/prescan.json` first — it emits this instruction matrix (plus the account-constraint, PDA-seed, arithmetic, and CPI tables) deterministically at ~$0, so Phase 0.2–0.4 collapse to *reading the JSON* and files with zero scan hits get a spot-check instead of a full read. Also run `audit-mem warm <program-id>` to load prior invariants + open false-positive rulings. Treat all pre-scan output as a *map to verify*, never as verdicts. See [references/orchestration/pre-scan.md](references/orchestration/pre-scan.md). Absent the toolchain, build the matrix by hand below.
+> **Optional deterministic pre-pass.** If `tools/auditor-tools/` is built, run `audit-scan <program-path> --out audit_<n>/prescan.json` first — it emits this instruction matrix (plus the account-constraint, PDA-seed, arithmetic, and CPI tables) deterministically at ~$0, so Phase 0.2–0.4 collapse to *reading the JSON* and files with zero scan hits get a spot-check instead of a full read. Also run `audit-mem warm --program-id <id>` to load prior invariants + open false-positive rulings. Treat all pre-scan output as a *map to verify*, never as verdicts. See [references/orchestration/pre-scan.md](references/orchestration/pre-scan.md). Absent the toolchain, build the matrix by hand below.
 
 ```
 ACTION: Read lib.rs → list every #[instruction] or pub fn handler.
@@ -344,20 +345,38 @@ ACTIONS:
   # Check for compromised packages
   grep "axios" apps/backend/package.json apps/web/package.json
   # → verify NOT 1.14.1 or 0.30.4
+  grep -rnE 'web3\.js.{0,40}1\.95\.(6|7)|/web3\.js/-/web3\.js-1\.95\.(6|7)' \
+    --include='package.json' --include='package-lock.json' --include='pnpm-lock.yaml' \
+    --include='yarn.lock' --include='bun.lock' . | grep -v node_modules
+  # → hijacked @solana/web3.js releases (KV-077 Step 2, SC-005) — any hit is CRITICAL
+
+  # Audits and registry queries run from a scratch dir OUTSIDE the target, on copies
+  # of the manifest + lockfile, so the target's .npmrc / .cargo/config.toml /
+  # rust-toolchain.toml cannot steer them (OUTPUT-RULES Rule 11a)
+  SCRATCH=$(mktemp -d)   # outside the target
+  mkdir -p "$SCRATCH/backend" "$SCRATCH/web" "$SCRATCH/rust"
+  cp apps/backend/package.json apps/backend/package-lock.json "$SCRATCH/backend/"
+  cp apps/web/package.json apps/web/package-lock.json "$SCRATCH/web/"
+  cp Cargo.lock "$SCRATCH/rust/"
 
   # Run npm audit
-  cd apps/backend && npm audit
-  cd apps/web && npm audit
+  (cd "$SCRATCH/backend" && npm audit)
+  (cd "$SCRATCH/web" && npm audit)
 
   # Check version pinning
   cat apps/backend/package.json | grep -E '[\^~]' # should be minimal
   cat apps/web/package.json | grep -E '[\^~]'
 
   # Cargo audit
-  cargo audit 2>/dev/null || echo "cargo-audit not installed"
+  (cd "$SCRATCH/rust" && cargo audit) 2>/dev/null || echo "cargo-audit not installed"
 
   # Check quarantine (14-day rule) for newest deps
-  npm info @anchor-lang/core time | tail -5
+  (cd "$SCRATCH" && npm info @anchor-lang/core time | tail -5)
+
+  # Dependency changes since the baseline (last audited ref; first audit: last
+  # release tag) → checklist 11 §11.11: review the published artifacts' code delta
+  git -c core.fsmonitor=false diff --no-textconv --no-ext-diff --stat <baseline>..HEAD \
+    -- '*.lock' '*-lock.json' '*-lock.yaml' '**/Cargo.toml' '**/package.json'   # Rule 11c flags
 
 RECORD: dependency audit results
 ```
@@ -391,6 +410,12 @@ RECORD: any secret exposure
 
 ```
 ACTIONS:
+
+  # Both commands below run target-controlled code (build.rs, proc-macros, and
+  # Anchor.toml [scripts], which `anchor test` executes). Run them in the execution
+  # mode recorded at intake — OUTPUT-RULES Rule 11a (isolated recommended; native
+  # allowed, with the report caveat). If they cannot run in that mode, keep the
+  # source-level verdicts and add a Rule 10 confidence note.
 
   # Verify build
   anchor build 2>&1 | tail -20

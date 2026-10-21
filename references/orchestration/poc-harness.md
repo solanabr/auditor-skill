@@ -23,6 +23,14 @@ prose PoC intact is honest; a fabricated green test is not.
 Probe what is actually installed before choosing a framework. A missing tool is a
 *blocker to name in the report*, not a reason to skip the finding or fake a result.
 
+**Execution gate ([`OUTPUT-RULES.md` Rule 11a](../../OUTPUT-RULES.md#rule-11-operating-safety)).**
+A PoC that path- or git-depends on target crates, or that builds the target (for
+example `cargo build-sbf` / `anchor build` on the client tree to get its `.so`), runs
+target-controlled code: run it in the execution mode recorded at intake. A
+self-contained `templates/poc` crate whose program runs inside Mollusk or LiteSVM, with
+no dependency on target crates, is exempt. If the recorded mode cannot run the PoC,
+record `[PoC-ATTEMPTED]` with the blocker "no isolated runner" and keep the prose PoC.
+
 | Gate | Detect | Enables | If absent |
 |------|--------|---------|-----------|
 | **`cargo build-sbf`** (platform-tools ≥ **v1.54** / cargo ≥ **1.85**) | `cargo build-sbf --version`; check the bundled cargo ≥ 1.85 (default bundle is v1.51/cargo 1.84 and **cannot** parse the edition2024 manifests in the modern `mollusk-svm`/`litesvm` dep tree — pass `--tools-version v1.54`) | Mollusk **and** LiteSVM PoCs (both load a compiled `.so`) | No on-chain executable PoC → `[PoC-ATTEMPTED]`, keep prose. Name it: "install Agave platform-tools ≥ v1.54". |
@@ -76,9 +84,11 @@ rung down is a real, reportable finding — the ladder degrades gracefully to pr
         │              invariant-breaking input; the corpus/crash artifact is saved.
         │
 [PoC-ATTEMPTED]        A required tool was absent (no cargo build-sbf, surfpool
-        │              unreachable, fork state unavailable) OR the flaw could not be
-        │              minimized into a self-contained crate. Name the exact blocker,
-        │              KEEP the prose PoC, record what a maintainer must install/provide.
+        │              unreachable, fork state unavailable), the recorded execution
+        │              mode could not run it (no isolated runner — Rule 11a), OR the
+        │              flaw could not be minimized into a self-contained crate. Name
+        │              the exact blocker, KEEP the prose PoC, record what a maintainer
+        │              must install/provide.
         │
 [PoC-PROSE]            No executable attempt applicable/possible; the structured
    (weakest, still      attacker-narrative PoC (actor → capability → steps → guard
@@ -115,6 +125,9 @@ re-running that PoC. The verdict maps to the report's **Auditor Verification** f
 
 A cosmetic patch ≠ FIXED. `[FIX-VERIFIED]` requires an *executed* revert of the
 finding's own exploit — a diff that merely reads plausibly is `[FIX-PROPOSED]` at most.
+The scratch-worktree rebuild runs target-controlled code (Rule 11a): it uses the
+execution mode recorded at intake, and when that mode cannot run it the patch stays
+`[FIX-PROPOSED]`.
 The patch is a **proposal**: the auditor stays read-only on the client tree and hands
 back the diff plus this verification record for the client to apply and re-test.
 
