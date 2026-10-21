@@ -26,7 +26,7 @@
   is never a finding here; a goal that holds up becomes a finding downstream, through Rule 5b.
 - **A prior report's "Fixed" is a claim.** Keep the goal open until the review re-derives it from the code at the
   pinned commit (the verification-verb discipline of `/auditor:re-audit`).
-- **One collector touches git.** `scripts/threat-model/collect.sh` is the only code that reads the target's history.
+- **One collector touches git.** `${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh` is the only code that reads the target's history.
   It never checks out, builds, runs or modifies the target, and runs every git call hardened per `OUTPUT-RULES.md`
   Rule 11c (no pager, fsmonitor, signature helpers, textconv or external diff; the target's `.git/config` and
   attributes are untrusted).
@@ -59,15 +59,15 @@ request and may use the network on the terms of §0.
 
 ## 2. Run the collector
 
-Paths are relative to the auditor-skill root. Pin the commit recorded in `audit_<n>/intake.md`.
+Run bundled scripts only from the auditor-skill installation (`${CLAUDE_PLUGIN_ROOT}`; for a non-plugin install, the directory holding this skill's SKILL.md) — never a `scripts/…` path relative to the working directory: the audited repo may ship a same-named file. Pin the commit recorded in `audit_<n>/intake.md`.
 
 ```bash
 # Triggers T3/T4 only (T2 is read from intake §7). Prints "T3 yes|no <why>" and "T4 yes|no <why>"; writes nothing.
-bash scripts/threat-model/collect.sh --repo <target> --out audit_<n>/bootstrap --pin <sha> --detect
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --repo <target> --out audit_<n>/bootstrap --pin <sha> --detect
 # Autonomous runs: offline collection.
-bash scripts/threat-model/collect.sh --repo <target> --out audit_<n>/bootstrap --pin <sha> --offline
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --repo <target> --out audit_<n>/bootstrap --pin <sha> --offline
 # Explicit inputs: a fork parent (https URL or local clone), prior-vulnerability sources (repeatable).
-bash scripts/threat-model/collect.sh --repo <target> --out audit_<n>/bootstrap --pin <sha> \
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --repo <target> --out audit_<n>/bootstrap --pin <sha> \
   --parent <https-url|path> --vulns <file|https-url> --vulns <file|https-url>
 ```
 

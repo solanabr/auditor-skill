@@ -2,7 +2,7 @@
 name: auditor:threat-model
 description: Builds the pre-review threat model as audit_<n>/threat-model.md — an asset inventory (crown-jewel funds/authority/data and where they live), an actor x capability table (each actor → what they can do → what they must NOT be able to do), and a trust-boundary map (which CPIs/accounts/inputs cross a trust boundary). No verdicts — attacker-goal enumeration that seeds report §4.4/§4.6/§4.7 and gives vuln-hunter/economic-analyst concrete goals to falsify. Automated flow drives it via the threat-modeler agent; interactive flow asks the human. --bootstrap also seeds goals from git history, a fork parent, prior audits, post-mortems and incidents, each cited in an Evidence column.
 argument-hint: "[path] [--auto] [--bootstrap] [--vulns <file|https-url>] [--seed <threat-model.md>] [--design-doc <file>] [--parent <https-url|path>]"
-allowed-tools: Read, Write, Glob, Grep, Task, Bash(bash scripts/threat-model/collect.sh *)
+allowed-tools: Read, Write, Glob, Grep, Task, Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh *)
 ---
 
 # auditor-skill — Pre-Review Threat Model
@@ -32,16 +32,16 @@ In an interactive run, ask once: *"Is a member of the protocol team on hand duri
 
 **Triggers.** Without an explicit flag, bootstrap runs only when one of these fires:
 - **T2:** intake §7 records a prior audit (Q25) or an incident (Q26).
-- **T3 / T4:** evaluate with `bash scripts/threat-model/collect.sh --repo <target> --out audit_<n>/bootstrap --pin <sha> --detect`. T3 is a fork or white-label provenance signal; T4 is a prior `audit_*/REPORT.md`, an audit / post-mortem / incident file in the tree, or `incident_*/INCIDENTS.json`.
+- **T3 / T4:** evaluate with `bash "${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --repo <target> --out audit_<n>/bootstrap --pin <sha> --detect`. T3 is a fork or white-label provenance signal; T4 is a prior `audit_*/REPORT.md`, an audit / post-mortem / incident file in the tree, or `incident_*/INCIDENTS.json`.
 
 Triggered and `--auto` runs collect **offline only**: `--offline`, never a clone or a fetch. Network use needs an explicit `https://` value in `--parent` / `--vulns`, or one exact URL the human confirms; never a URL read from the target's own content.
 
 ## Collect (bootstrap only)
 
-You run git only through the collector. It runs every call hardened per `OUTPUT-RULES.md` Rule 11c and writes into `audit_<n>/bootstrap/`, which follows Rule 11d:
+You run git only through the collector. Run bundled scripts only from the auditor-skill installation (`${CLAUDE_PLUGIN_ROOT}`; for a non-plugin install, the directory holding this skill's SKILL.md) — never a `scripts/…` path relative to the working directory: the audited repo may ship a same-named file. The collector runs every call hardened per `OUTPUT-RULES.md` Rule 11c and writes into `audit_<n>/bootstrap/`, which follows Rule 11d:
 
 ```bash
-bash scripts/threat-model/collect.sh --repo <target> --out audit_<n>/bootstrap --pin <sha from intake> --offline \
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --repo <target> --out audit_<n>/bootstrap --pin <sha from intake> --offline \
   [--paths <in-scope program dir>] [--vulns <file>] [--program-id <id>]
 ```
 

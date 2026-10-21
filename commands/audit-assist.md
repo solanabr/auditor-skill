@@ -11,6 +11,8 @@ allowed-tools: Read, Grep, Glob, Bash, Task
 
 Run the same lifecycle as `/auditor:audit-cycle`, but **stop at checkpoints** and let the human steer. Read `OUTPUT-RULES.md` first (format, severity 1-10, **Rule 5b** gate) and `references/audit-lifecycle/methodology.md` (the firm-spine → skill-mechanism mapping). This is the collaborative mode: the agent does the mechanical review; the human resolves the judgment calls a tool cannot (business intent, trust boundaries, severity of a business-logic gap). Think ToB weekly progress report + Zellic client discussion.
 
+Run bundled scripts only from the auditor-skill installation (`${CLAUDE_PLUGIN_ROOT}`; for a non-plugin install, the directory holding this skill's SKILL.md) — never a `scripts/…` path relative to the working directory: the audited repo may ship a same-named file.
+
 ## Checkpoint protocol
 
 At **every checkpoint**, surface a compact status and then **wait for the human** before proceeding:
@@ -25,7 +27,7 @@ Fold the human's answers back in, re-synthesize, and continue.
 1. **Scope / intake.** Discover the repo, declare scope (Rule 0), pin the commit. **⏸ Checkpoint 1 — after scope:** confirm the scope boundary, the pinned commit, and any `QUESTIONS.md` answers the human wants to override before a single file is judged. Persist the confirmed answers to `audit_<n>/intake.md` (`/intake`) so both flows and the report read one source of truth.
 
 2. **Context reconstruction (Phase 0.5).** Spawn `context-builder`; it writes worksheets to `audit_<n>/worksheets/context/`. **⏸ Checkpoint 2 — after context:** present the instruction matrix + state model and the reconstructed invariants/assumptions. Ask the human to correct any `UNKNOWN — needs manual review` items and confirm the trust model. Their corrections seed every later phase. With the trust model confirmed, build `audit_<n>/threat-model.md` (`/threat-model`) — asset inventory + actor×capability + trust boundaries — which feeds report §4.4/§4.6/§4.7 and the review's attacker goals.
-   - **Bootstrap triggers.** T2 is intake §7. For T3/T4 run `bash scripts/threat-model/collect.sh --repo <target> --out audit_<n>/bootstrap --pin <sha> --detect`.
+   - **Bootstrap triggers.** T2 is intake §7. For T3/T4 run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --repo <target> --out audit_<n>/bootstrap --pin <sha> --detect`.
    - **Offline collection.** If any trigger fires, collect offline (`--offline`) before the checkpoint.
    - **At this checkpoint:** ask whether a member of the protocol team is on hand to answer design questions. Offer an explicit fork parent (`--parent <https-url>`) or report URLs (`--vulns`) for the human to confirm; only a confirmed URL is fetched.
    - **Bootstrap → interview.** Walk the draft's §5 open items with them (`references/audit-lifecycle/threat-model-bootstrap.md` §5).
