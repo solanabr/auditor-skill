@@ -289,6 +289,23 @@ for tool in jq python3; do
   check "T-k ($tool): a CSV findings list is copied" has "$OUT7/inputs.tsv" "copied (list)"
   check "T-k ($tool): incidents count as trigger T4" has "$OUT7/history.md" "T4 yes incidents-json"
 done
+# An old or broken jq (jq < 1.7 lacks builtins newer programs use) must hand over to python3, and with
+# no working JSON tool nothing is copied at all.
+mkdir -p "$T/oldjq"
+printf '#!/bin/sh\necho "jq: error: simulated old jq" >&2\nexit 3\n' > "$T/oldjq/jq"; chmod +x "$T/oldjq/jq"
+if command -v python3 >/dev/null 2>&1; then
+  OUTJ="$T/run-oldjq/audit_1/bootstrap"
+  PATH="$T/oldjq:$PATH" collect --repo "$TGT" --out "$OUTJ" --offline
+  check "T-k (failing jq): python3 takes over the incident extraction" has "$OUTJ/inputs.tsv" "allowlisted fields extracted (python3)"
+  check "T-k (failing jq): the extract still holds the verdict" has "$OUTJ/inputs/incident1-INCIDENTS.json" "suspected"
+  check "T-k (failing jq): and still drops the attacker" hasnt "$OUTJ/inputs/incident1-INCIDENTS.json" "ATTACKER-PII-ADDR"
+else
+  skp "T-k (failing jq): needs python3"
+fi
+OUTN="$T/run-nojson/audit_1/bootstrap"
+TM_JSON_TOOL=none collect --repo "$TGT" --out "$OUTN" --offline --vulns "$T/other.json"
+check "T-k (no JSON tool): INCIDENTS.json is recorded, not copied" sh -c "! ls '$OUTN/inputs/' | grep -q INCIDENTS"
+check "T-k (no JSON tool): other JSON is not copied either" has "$OUTN/inputs.tsv" "not copied: no working jq or python3 parsed it"
 rm -rf "$TGT/incident_1"
 
 # =================================================================================================

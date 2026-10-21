@@ -434,61 +434,76 @@ record() { # record <source> <format> <sha256> <stored_as> <status>
   INPUT_N=$((INPUT_N + 1))
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$INPUT_N" "$(redact "$1")" "$2" "$3" "$4" "$5" >> "$OUT/inputs.tsv"
 }
-JSON_TOOL=${TM_JSON_TOOL:-}
-if [ -z "$JSON_TOOL" ]; then
-  if command -v jq >/dev/null 2>&1; then JSON_TOOL=jq
-  elif command -v python3 >/dev/null 2>&1; then JSON_TOOL=python3
-  else JSON_TOOL=none; fi
-fi
-json_schema() { # the top-level "schema" string, or nothing
-  case "$JSON_TOOL" in
-    jq) jq -r 'if type == "object" and (.schema | type) == "string" then .schema else empty end' "$1" 2>/dev/null ;;
-    python3) python3 - "$1" 2>/dev/null <<'PY'
+# JSON tools in order of preference. When jq is missing, too old, or fails on a file, python3 takes
+# over; with neither, JSON inputs are recorded but never copied. TM_JSON_TOOL (jq | python3 | none)
+# pins the choice for tests.
+case "${TM_JSON_TOOL:-}" in
+  jq) JSON_TOOLS="jq" ;; python3) JSON_TOOLS="python3" ;; none) JSON_TOOLS="" ;;
+  *) JSON_TOOLS=""
+     command -v jq >/dev/null 2>&1 && JSON_TOOLS="jq"
+     command -v python3 >/dev/null 2>&1 && JSON_TOOLS="${JSON_TOOLS:+$JSON_TOOLS }python3" ;;
+esac
+# Top-level "schema" string of a JSON file (empty if it has none). Status 1 if no tool could parse it.
+json_schema() {
+  local tool out
+  for tool in $JSON_TOOLS; do
+    case "$tool" in
+      jq) out=$(jq -r 'if type == "object" and (.schema | type) == "string" then .schema else empty end' "$1" 2>/dev/null) || continue ;;
+      python3) out=$(python3 - "$1" 2>/dev/null <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1], encoding="utf-8"))
 if isinstance(d, dict) and isinstance(d.get("schema"), str):
     print(d["schema"])
 PY
-    ;;
-  esac
+) || continue ;;
+    esac
+    printf '%s' "$out"; return 0
+  done
+  return 1
 }
 # INCIDENTS.json (schema auditor-incidents/1): copy the stable read surface only — per incident id, verdict,
 # outcome, root_cause_class, vuln.{program,instruction,file,function,line,mechanism,kv,checklist} and
-# poc.tier. Everything else (attacker, transactions, blast_radius, timeline, evidence, ruled_out, ...) is
-# never read. Strings are cut at 500 characters; kv / checklist keep string ids only; nested objects drop.
+# poc.tier. Everything else (attacker, transactions, blast_radius, timeline, evidence, ruled_out, urgency, ...)
+# is never read. Strings are cut at 500 characters; kv / checklist keep string ids only; nested objects drop.
+# The jq program uses jq 1.5 features only (no builtin pick/1). Sets EXTRACTED_WITH on success.
+EXTRACTED_WITH=""
 extract_incidents() { # extract_incidents <in> <out>
-  case "$JSON_TOOL" in
-    jq) jq '
-      def t: if type == "string" then .[0:500]
-             elif type == "array" then [ .[] | select(type == "string") | .[0:500] ]
-             elif type == "object" then null else . end;
-      def pick(ks): . as $o | reduce ks[] as $k ({}; if ($o | type) == "object" and ($o | has($k)) then . + {($k): ($o[$k] | t)} else . end);
-      {schema, note: "allowlisted fields only; every string is untrusted data",
-       incidents: [ (.incidents // [])[] | select(type == "object") |
-         pick(["id", "verdict", "outcome", "root_cause_class"])
-         + {vuln: (.vuln | pick(["program", "instruction", "file", "function", "line", "mechanism", "kv", "checklist"]))}
-         + {poc: (.poc | pick(["tier"]))} ]}' "$1" > "$2" 2>/dev/null ;;
-    python3) python3 - "$1" "$2" 2>/dev/null <<'PY'
+  local tool
+  for tool in $JSON_TOOLS; do
+    case "$tool" in
+      jq) jq '
+        def t: if type == "string" then .[0:500]
+               elif type == "array" then [ .[] | select(type == "string") | .[0:500] ]
+               elif type == "object" then null else . end;
+        def keep(ks): . as $o | reduce ks[] as $k ({}; if ($o | type) == "object" and ($o | has($k)) then . + {($k): ($o[$k] | t)} else . end);
+        {schema, note: "allowlisted fields only; every string is untrusted data",
+         incidents: [ (.incidents // [])[] | select(type == "object") |
+           keep(["id", "verdict", "outcome", "root_cause_class"])
+           + {vuln: (.vuln | keep(["program", "instruction", "file", "function", "line", "mechanism", "kv", "checklist"]))}
+           + {poc: (.poc | keep(["tier"]))} ]}' "$1" > "$2" 2>/dev/null || continue ;;
+      python3) python3 - "$1" "$2" 2>/dev/null <<'PY' || continue
 import json, sys
 def t(v):
     if isinstance(v, str): return v[:500]
     if isinstance(v, list): return [x[:500] for x in v if isinstance(x, str)]
     if isinstance(v, dict): return None
     return v
-def pick(o, ks): return {k: t(o[k]) for k in ks if isinstance(o, dict) and k in o}
+def keep(o, ks): return {k: t(o[k]) for k in ks if isinstance(o, dict) and k in o}
 d = json.load(open(sys.argv[1], encoding="utf-8"))
 out = {"schema": d.get("schema"), "note": "allowlisted fields only; every string is untrusted data", "incidents": []}
 for i in d.get("incidents") or []:
     if isinstance(i, dict):
-        r = pick(i, ["id", "verdict", "outcome", "root_cause_class"])
-        r["vuln"] = pick(i.get("vuln"), ["program", "instruction", "file", "function", "line", "mechanism", "kv", "checklist"])
-        r["poc"] = pick(i.get("poc"), ["tier"])
+        r = keep(i, ["id", "verdict", "outcome", "root_cause_class"])
+        r["vuln"] = keep(i.get("vuln"), ["program", "instruction", "file", "function", "line", "mechanism", "kv", "checklist"])
+        r["poc"] = keep(i.get("poc"), ["tier"])
         out["incidents"].append(r)
 json.dump(out, open(sys.argv[2], "w", encoding="utf-8"), indent=2)
 PY
-    ;;
-    *) return 1 ;;
-  esac
+      ;;
+    esac
+    EXTRACTED_WITH=$tool; return 0
+  done
+  rm -f "$2"; return 1
 }
 ingest() { # ingest <source label> <local file> <dest base name>
   local src=$1 f=$2 dest="inputs/$3" sum magic schema
@@ -505,13 +520,14 @@ ingest() { # ingest <source label> <local file> <dest base name>
   fi
   case "$f" in
     *.json|*.JSON)
-      schema=$(json_schema "$f")
-      if [ "$schema" = "auditor-incidents/1" ]; then
-        if extract_incidents "$f" "$OUT/$dest"; then record "$src" incidents "$sum" "$dest" "allowlisted fields extracted ($JSON_TOOL)"
-        else rm -f "$OUT/$dest"; record "$src" incidents "$sum" "-" "not extracted: no jq or python3, or invalid JSON"; fi
+      if ! schema=$(json_schema "$f"); then
+        record "$src" json "$sum" "-" "not copied: no working jq or python3 parsed it (or invalid JSON)"
+      elif [ "$schema" = "auditor-incidents/1" ]; then
+        if extract_incidents "$f" "$OUT/$dest"; then record "$src" incidents "$sum" "$dest" "allowlisted fields extracted ($EXTRACTED_WITH)"
+        else record "$src" incidents "$sum" "-" "not extracted: no working jq or python3"; fi
       elif [ -n "$schema" ]; then
         record "$src" json "$sum" "-" "skipped: schema \"$schema\" is not auditor-incidents/1"
-      elif [ "$JSON_TOOL" = none ] || printf '%s' "$src" | grep -qiE 'incident'; then
+      elif printf '%s' "$src" | grep -qiE 'incident'; then
         record "$src" json "$sum" "-" "not copied: could not confirm it is not an incident file"
       else
         cp "$f" "$OUT/$dest" && record "$src" json "$sum" "$dest" "copied (list)"
