@@ -287,6 +287,12 @@ check "T-j: --parent scp-style host:path is rejected" test "$(rc --repo "$TGT" -
 check "T-j: --parent ssh:// is rejected" test "$(rc --repo "$TGT" --out "$T/x/b" --parent ssh://example.invalid/p.git)" = 2
 check "T-j: --vulns file:// is rejected" test "$(rc --repo "$TGT" --out "$T/x/b" --vulns file:///etc/hosts)" = 2
 check "T-j: a non-repository target exits 3" test "$(rc --repo "$T/home" --out "$T/x/b")" = 3
+# Large input: classify_source used to pipe the argument into grep -q, whose early exit under pipefail
+# could turn "rejected" into "path". A long multi-line scp-style value must still be rejected.
+LONG=$(i=0; while [ $i -lt 3000 ]; do printf 'padding-line-%s\n' "$i"; i=$((i + 1)); done)
+check "large input: a long multi-line scp-style --parent is still rejected (exit 2)" \
+  test "$(rc --repo "$TGT" --out "$T/x/b" --parent "git@example.invalid:o/p.git
+$LONG")" = 2
 OUT6="$T/run6/audit_1/bootstrap"
 collect --repo "$TGT" --out "$OUT6" --offline --parent https://example.invalid/parent.git --vulns https://example.invalid/report.pdf
 check "T-j: --offline records the parent URL without cloning" has "$OUT6/history.md" "given, not cloned (offline)"
@@ -345,6 +351,15 @@ OUTN="$T/run-nojson/audit_1/bootstrap"
 TM_JSON_TOOL=none collect --repo "$TGT" --out "$OUTN" --offline --vulns "$T/other.json"
 check "T-k (no JSON tool): INCIDENTS.json is recorded, not copied" sh -c "! ls '$OUTN/inputs/' | grep -q INCIDENTS"
 check "T-k (no JSON tool): other JSON is not copied either" has "$OUTN/inputs.tsv" "not copied: no working jq or python3 parsed it"
+if command -v jq >/dev/null 2>&1 || command -v python3 >/dev/null 2>&1; then
+  printf '[{"id": "F-1", "description": "authority not a signer"}]\n' > "$T/Incidents-Export.json"
+  OUTI="$T/runi/audit_1/bootstrap"
+  collect --repo "$TGT" --out "$OUTI" --offline --vulns "$T/Incidents-Export.json"
+  check "a schema-less JSON whose name mentions incidents is not copied" \
+    has "$OUTI/inputs.tsv" "not copied: could not confirm it is not an incident file"
+else
+  skp "incident-named JSON: needs jq or python3"
+fi
 rm -rf "$TGT/incident_1"
 
 # =================================================================================================
@@ -401,6 +416,30 @@ collect --repo "$TGT" --out "$OUT9" --offline
 check "an in-tree report is ingested from the pinned tree" has "$OUT9/inputs.tsv" "pinned tree: audits/Firm-2025.md"
 D2=$(bash "$COLLECT" --repo "$TGT" --out "$TGT/audit_1/bootstrap" --detect 2>/dev/null)
 check "--detect: the current audit dir is not a prior audit" sh -c "printf '%s\n' '$D2' | grep -q '^T4 yes in-tree-report$'"
+
+# =================================================================================================
+# Large inputs: under pipefail an early-exit reader (grep -q) can report the writer's SIGPIPE instead of
+# the match. Every detection whose status matters must survive trees and configs far above a pipe buffer.
+# =================================================================================================
+BIGT="$T/bigtree"; mkrepo "$BIGT"; mkdir -p "$BIGT/docs"
+i=0; while [ $i -lt 1500 ]; do
+  printf '# page %s\n' "$i" > "$BIGT/docs/a-reasonably-long-documentation-page-name-number-$i.md"; i=$((i + 1))
+done
+git -C "$BIGT" add -- docs
+put "$BIGT" audits/2025-firm-audit.md '# Firm review 2025 — F-1: withdraw authority not a signer'
+put "$BIGT" programs/b/src/lib.rs 'pub fn b() {}'
+commit "$BIGT" -m "docs and prior review"
+DB=$(bash "$COLLECT" --repo "$BIGT" --out "$T/bigrun/audit_1/bootstrap" --detect 2>/dev/null)
+check "large tree (1,500 Markdown files): T4 still finds the one report" sh -c "printf '%s\n' '$DB' | grep -q '^T4 yes in-tree-report'"
+MR="$T/manyremotes"; mkrepo "$MR"
+put "$MR" programs/m/src/lib.rs 'security_txt! { source_code: "https://github.com/example/own-repo" }'
+commit "$MR" -m "initial"
+{ printf '[remote "origin"]\n\turl = https://github.com/example/own-repo.git\n'
+  i=0; while [ $i -lt 2000 ]; do
+    printf '[remote "mirror%s"]\n\turl = https://mirror%s.example.invalid/some/long/path/to/repository-%s.git\n' "$i" "$i" "$i"; i=$((i + 1))
+  done; } >> "$MR/.git/config"
+DM=$(bash "$COLLECT" --repo "$MR" --out "$T/mrrun/audit_1/bootstrap" --detect 2>/dev/null)
+check "2,000 remotes: a source_code matching the first remote does not fire T3" sh -c "printf '%s\n' '$DM' | grep -q '^T3 no none'"
 
 echo
 echo "threat-model collector tests: $pass passed, $fail failed, $skip skipped"

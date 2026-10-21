@@ -78,12 +78,13 @@ case "$SMALL" in ''|*[!0-9]*) die "--small must be a number" ;; esac
 case "$FIX_CEILING" in ''|*[!0-9]*) die "--fix-ceiling must be a number" ;; esac
 
 # Only https URLs are ever fetched, and only when the user passed them explicitly. Any other scheme,
-# and scp-style "host:path", is rejected. Anything else is a local file or repository path.
+# and scp-style "host:path" (a colon before the first slash), is rejected. Anything else is a local
+# file or repository path. Pure parameter expansion: no pipeline whose early exit could flip the answer.
 classify_source() {
   case "$1" in
     https://*) echo url ;;
     *://*)     echo rejected ;;
-    *)         if printf '%s' "$1" | grep -qE '^[^/]*:'; then echo rejected; else echo path; fi ;;
+    *)         case "${1%%/*}" in *:*) echo rejected ;; *) echo path ;; esac ;;
   esac
 }
 redact() { printf '%s' "$1" | sed -E 's#^(https://)[^/@]*@#\1***@#'; }
@@ -231,14 +232,16 @@ guard_rows() {
 FORK_PHRASES='fork(ed)? (of|from)|white[- ]?label'
 REPORT_RE='audit|post-?mortem|incident'   # in any path component of a .pdf / .md file
 norm_url() { tr 'A-Z' 'a-z' | sed -E 's#^[a-z+]+://##; s#^git@##; s#:#/#; s#\.git$##; s#/$##'; }
+# Under pipefail a pipeline that ends in an early-exit reader (grep -q, head) can report the writer's
+# SIGPIPE instead of the match, so every check whose status matters here counts, or reads a string.
 eval_triggers() {
-  local t3="" t4="" cur="" src remotes s d
+  local t3="" t4="" cur="" src remotes s d n
   G "$REPO" grep -I -i -q -E "$FORK_PHRASES" "$PIN_SHA" -- 'README*' '*/README*' 'docs/*' 2>/dev/null && t3="readme-phrase"
   src=$(G "$REPO" grep -h -I -E 'source_code[[:space:]]*:' "$PIN_SHA" -- '*.rs' 2>/dev/null |
         sed -nE 's/.*source_code[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' | head -n 3)
   remotes=$(G "$REPO" config --get-regexp '^remote\..*\.url$' 2>/dev/null | awk '{print $2}' | norm_url)
   for s in $src; do
-    printf '%s\n' "$remotes" | grep -qxF -- "$(printf '%s' "$s" | norm_url)" || { t3="${t3:+$t3,}security_txt-source_code"; break; }
+    grep -qxF -- "$(printf '%s' "$s" | norm_url)" <<< "$remotes" || { t3="${t3:+$t3,}security_txt-source_code"; break; }
   done
   [ -d "$(dirname "$OUT")" ] && cur=$(cd "$(dirname "$OUT")" && pwd)
   for d in "$REPO_ABS"/audit_*/; do
@@ -246,9 +249,8 @@ eval_triggers() {
     [ "$(cd "$d" && pwd)" = "$cur" ] && continue
     t4="prior-audit-dir"; break
   done
-  if G "$REPO" ls-tree -r --name-only "$PIN_SHA" 2>/dev/null | grep -iE '\.(pdf|md)$' | grep -qiE "$REPORT_RE"; then
-    t4="${t4:+$t4,}in-tree-report"
-  fi
+  n=$(G "$REPO" ls-tree -r --name-only "$PIN_SHA" 2>/dev/null | grep -iE '\.(pdf|md)$' | grep -ciE "$REPORT_RE")
+  if [ "${n:-0}" -gt 0 ]; then t4="${t4:+$t4,}in-tree-report"; fi
   if ls "$REPO_ABS"/incident_*/INCIDENTS.json >/dev/null 2>&1; then t4="${t4:+$t4,}incidents-json"; fi
   echo "T3 $([ -n "$t3" ] && echo yes || echo no) ${t3:-none}"
   echo "T4 $([ -n "$t4" ] && echo yes || echo no) ${t4:-none}"
@@ -542,7 +544,7 @@ PY
   rm -f "$2"; return 1
 }
 ingest() { # ingest <source label> <local file> <dest base name>
-  local src=$1 f=$2 dest="inputs/$3" sum magic schema
+  local src=$1 f=$2 dest="inputs/$3" sum magic schema lsrc
   if [ ! -f "$f" ] || [ ! -r "$f" ]; then record "$src" "-" "-" "-" "missing or unreadable"; return 0; fi
   sum=$(sha256_of "$f")
   magic=$(head -c 5 "$f" 2>/dev/null | tr -d '\000')
@@ -563,7 +565,7 @@ ingest() { # ingest <source label> <local file> <dest base name>
         else record "$src" incidents "$sum" "-" "not extracted: no working jq or python3"; fi
       elif [ -n "$schema" ]; then
         record "$src" json "$sum" "-" "skipped: schema \"$schema\" is not auditor-incidents/1"
-      elif printf '%s' "$src" | grep -qiE 'incident'; then
+      elif lsrc=$(printf '%s' "$src" | tr 'A-Z' 'a-z'); [ "${lsrc#*incident}" != "$lsrc" ]; then
         record "$src" json "$sum" "-" "not copied: could not confirm it is not an incident file"
       else
         cp "$f" "$OUT/$dest" && record "$src" json "$sum" "$dest" "copied (list)"
