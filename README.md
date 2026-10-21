@@ -21,7 +21,7 @@ auditor-skill is a **skill file** (a structured prompt + checklists) that turns 
 
 ---
 
-## What It Does (v7.5)
+## What It Does (v7.6)
 
 - **Detection & response, post-incident (v7.6).** `/auditor:hunt` sweeps transaction history, program logs and Geyser/indexer exports with a written hypothesis ledger; `/auditor:respond` takes a signature, address or alert and answers did-it-succeed / blast radius / root cause. Confirmed exploitation needs an on-chain effect + the flaw in deployed source + a local PoC on the real bytes; the response plan is proposed, never executed. Ported Solana-native from Anthropic's defending-code-reference-harness.
 - **History-seeded threat models (v7.6).** `/auditor:threat-model --bootstrap` starts the threat model from what already went wrong: removed or quietly added account guards, reverts and fix commits in the target's history, a fork's distance from its parent, prior audit reports, post-mortems and incident records. One read-only, hardened collector (`scripts/threat-model/collect.sh`) gathers it; autonomous runs stay offline, and every goal cites its evidence.

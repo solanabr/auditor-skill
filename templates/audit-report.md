@@ -36,7 +36,7 @@ the proprietary knowledge base, and re-author all conventions in original wordin
 
 |                       |                                                        |
 | --------------------- | ------------------------------------------------------ |
-| **Auditor**           | auditor-skill v7.5                                     |
+| **Auditor**           | auditor-skill v7.6                                     |
 | **Client**            | {client / organization}                                |
 | **Protocol**          | {protocol / product name}                              |
 | **Report Title**      | {e.g. "Vault Program Security Assessment"}             |

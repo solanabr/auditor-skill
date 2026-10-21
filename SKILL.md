@@ -5,7 +5,7 @@ description: "**AUDIT SKILL** — Comprehensive on-chain Solana program auditor 
 
 # auditor-skill — Multi-Language Security Audit Skill
 
-> **Version:** 7.5  
+> **Version:** 7.6\
 > **Items:** 1,446 across 20 checklists (+ 140 known vectors)\
 > **Languages:** Rust, TypeScript, Python, Go, Java, Ruby, PHP, + any via general checklist  
 > **Severity:** 1–10 numeric scale  
