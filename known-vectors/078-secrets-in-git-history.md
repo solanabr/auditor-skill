@@ -44,21 +44,21 @@ git log --all --diff-filter=A --name-only --pretty=format: | sort -u | grep -iE 
 
 **Step 5: Search actual git history content for leaked secrets**
 ```
-# Search for private key patterns in ALL historical content:
-git log --all -p -S "BEGIN RSA" --diff-filter=ACMR -- . 2>/dev/null | head -20
-git log --all -p -S "sk_live" --diff-filter=ACMR -- . 2>/dev/null | head -20
-git log --all -p -S "PRIVATE_KEY" --diff-filter=ACMR -- . 2>/dev/null | head -20
-git log --all -p -S "mnemonic" --diff-filter=ACMR -- . 2>/dev/null | head -20
+# Search for private key patterns in ALL historical content (--no-textconv: OUTPUT-RULES Rule 11c):
+git log --all -p --no-textconv -S "BEGIN RSA" --diff-filter=ACMR -- . 2>/dev/null | head -20
+git log --all -p --no-textconv -S "sk_live" --diff-filter=ACMR -- . 2>/dev/null | head -20
+git log --all -p --no-textconv -S "PRIVATE_KEY" --diff-filter=ACMR -- . 2>/dev/null | head -20
+git log --all -p --no-textconv -S "mnemonic" --diff-filter=ACMR -- . 2>/dev/null | head -20
 ```
 - ✅ PASS: Zero matches in entire git history
 - ❌ FAIL: Any secret found in historical commits — MUST rotate the credential AND consider `git filter-repo` to rewrite history (force push required)
 
 **Step 6: Search git history for Solana keypair arrays**
 ```
-git log --all -p --diff-filter=ACMR -- '*.json' '*.ts' '*.js' 2>/dev/null | grep -E "\[([0-9]{1,3},){20,}" | head -10
+git log --all -p --no-textconv --diff-filter=ACMR -- '*.json' '*.ts' '*.js' 2>/dev/null | grep -E "\[([0-9]{1,3},){20,}" | head -10
 ```
 - ✅ PASS: No keypair-like arrays in history
-- ❌ FAIL: Possible keypair in git history — identify commit: `git log --all -p -S '[123,45,67' -- .`
+- ❌ FAIL: Possible keypair in git history — identify commit: `git log --all -p --no-textconv -S '[123,45,67' -- .`
 
 **Step 7: Check for .env files ever tracked**
 ```

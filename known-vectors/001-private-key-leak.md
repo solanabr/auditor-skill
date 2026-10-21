@@ -43,10 +43,10 @@ git log --all --diff-filter=A --name-only --pretty=format:"%H %s" -- "*.env" "*.
 
 **Step 5: Deep git history search for key content**
 ```
-# Search git history for actual secret values (not just filenames)
-git log --all -p -S "BEGIN RSA PRIVATE" --oneline -- "*.ts" "*.json" "*.pem" | head -40
-git log --all -p -S "BEGIN EC PRIVATE" --oneline | head -20
-git log --all -p -S "mnemonic" --oneline -- "*.ts" "*.json" "*.env" | head -20
+# Search git history for actual secret values (not just filenames); --no-textconv: OUTPUT-RULES Rule 11c
+git log --all -p --no-textconv -S "BEGIN RSA PRIVATE" --oneline -- "*.ts" "*.json" "*.pem" | head -40
+git log --all -p --no-textconv -S "BEGIN EC PRIVATE" --oneline | head -20
+git log --all -p --no-textconv -S "mnemonic" --oneline -- "*.ts" "*.json" "*.env" | head -20
 ```
 - ✅ PASS: Zero matches across all three
 - ❌ FAIL: Any match → key was in history. MUST rotate immediately, even if commit was reverted

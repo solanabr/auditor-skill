@@ -4,13 +4,12 @@ Get from a clone to a first audit. Back to the [docs index](README.md).
 
 ## 1. Install
 
-auditor-skill is a folder of markdown + two small Rust tools — not a SaaS. Clone it, or drop it in as a skill.
+auditor-skill is a folder of markdown + two small Rust tools — not a SaaS. Clone it, or drop it in as a skill. Keep it **outside any repository you audit** ([`OUTPUT-RULES.md` Rule 11e](../OUTPUT-RULES.md#11e--bundled-paths)): a copy inside the target resolves its paths from a tree the target controls.
 
-**Clone into your repo:**
+**Clone it as a user-level skill:**
 
 ```bash
-# from your project root
-git clone https://github.com/solanabr/auditor-skill.git .github/skills/auditor-skill
+git clone https://github.com/solanabr/auditor-skill.git ~/.claude/skills/auditor-skill
 ```
 
 **Or install it as a plugin** (the `.claude-plugin/` manifest ships with the repo; plugin name is `auditor`). Once installed, commands are available as `/auditor:audit`, `/auditor:audit-cycle`, and so on.
@@ -22,7 +21,7 @@ git clone https://github.com/solanabr/auditor-skill.git .github/skills/auditor-s
 The vendored Trail of Bits toolkit (`vendor/trailofbits`) provides real tool execution — SAST, fuzzing, coverage, mutation — that prose and grep cannot do. The plugin install and `install.sh` already fetch it. For a manual clone, pull it from the auditor-skill directory (not your project root):
 
 ```bash
-cd .github/skills/auditor-skill    # wherever you cloned it
+cd ~/.claude/skills/auditor-skill    # wherever you cloned it
 git submodule update --init --depth 1 -- vendor/trailofbits
 ```
 
@@ -32,15 +31,15 @@ The corpus works **fully without it**: agents fall back to `discovery/grep-comma
 
 ## 3. Build the Rust tools (optional, high value)
 
-Two binaries cut audit cost and add cross-audit memory. Build once, from the auditor-skill directory:
+Two binaries cut audit cost and add cross-audit memory. Build once (`<auditor-skill root>` is where you installed it, e.g. `~/.claude/skills/auditor-skill`):
 
 ```bash
-cd tools/auditor-tools && cargo build --release
+cd "<auditor-skill root>/tools/auditor-tools" && cargo build --release
 # binaries: target/release/audit-scan  and  target/release/audit-mem
 cargo test   # optional: scan_fixture + mem_roundtrip
 ```
 
-The agents run them by absolute path from the installation, never from your project ([`OUTPUT-RULES.md` Rule 11e](../OUTPUT-RULES.md#11e--bundled-paths)). If auditor-skill sits inside the repository you will audit (the `install.sh` default, `.claude/skills/auditor-skill`), this build runs inside that tree, where cargo and rustup read its `.cargo/config*` and `rust-toolchain*` from every parent directory: build there only in [Rule 11a](../OUTPUT-RULES.md#rule-11-operating-safety) isolated mode, or install auditor-skill outside the repository and build it there.
+The agents run them by absolute path from the installation, never from your project ([`OUTPUT-RULES.md` Rule 11e](../OUTPUT-RULES.md#11e--bundled-paths)). If auditor-skill sits inside the repository you will audit anyway (the `install.sh` default, `.claude/skills/auditor-skill`), this build runs inside that tree, where cargo and rustup read its `.cargo/config*` and `rust-toolchain*` from every parent directory: build there only in [Rule 11a](../OUTPUT-RULES.md#rule-11-operating-safety) isolated mode, or move the installation out of the repository and build it there.
 
 - **`audit-scan`** — deterministic AST pass that emits the risky surface (instructions, account constraints, PDAs, arithmetic, panics, CPIs) as one JSON, at ~$0 LLM cost. On a 50K-line program this removes roughly 200-300K input tokens (~30-40% of the variable cost). It is a *map to verify*, not a set of verdicts.
 - **`audit-mem`** — SQLite store for exact de-dup, FIXED→REGRESSED detection, false-positive suppression, and warm re-audits.

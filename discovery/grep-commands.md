@@ -247,10 +247,11 @@ find . -name "*keypair*" -not -path "./node_modules/*" -not -path "./.git/*"
 
 ### Git history secrets
 ```bash
-# Terminal:
-git log --all -S "private" --oneline | head -20
-git log --all -S "secret" --oneline | head -20
-git log --all -S "BEGIN RSA" --oneline | head -20
+# Terminal (a pickaxe search runs the repo's textconv drivers unless --no-textconv is given; in a
+# checkout you did not clone yourself, add the other OUTPUT-RULES Rule 11c flags too):
+git log --all --no-textconv -S "private" --oneline | head -20
+git log --all --no-textconv -S "secret" --oneline | head -20
+git log --all --no-textconv -S "BEGIN RSA" --oneline | head -20
 ```
 
 ---
@@ -364,10 +365,13 @@ grep_search: "target=\"_blank\""   includePattern: "apps/web/**/*.tsx"
 
 ## Supply Chain
 
+> Every package-manager or cargo command in this section reads the target's `.npmrc`, `.cargo/config*` and `rust-toolchain*` when started inside its tree. Run them from a scratch dir OUTSIDE the target tree, on copies of the manifest + lockfile with the toolchain pinned (OUTPUT-RULES Rule 11a; FULL-AUDIT Step 3.2).
+
 ### Check for compromised packages
 ```bash
 # Terminal:
 grep -E "axios.*1\.14\.1|axios.*0\.30\.4" package-lock.json
+# from a scratch dir OUTSIDE the target tree holding copies of package.json + the lockfile (OUTPUT-RULES Rule 11a)
 npm audit
 ```
 
@@ -460,19 +464,19 @@ solana program show <PROGRAM_ID> --url mainnet-beta
 
 ### Anchor build verification
 ```bash
-# Terminal:
+# Terminal — builds the target (build.rs, proc-macros): only in the OUTPUT-RULES Rule 11a mode recorded at intake
 anchor build 2>&1 | tail -20
 ```
 
 ### Test suite
 ```bash
-# Terminal:
+# Terminal — runs the target's tests and Anchor.toml [scripts]: only in the OUTPUT-RULES Rule 11a mode recorded at intake
 anchor test --validator legacy 2>&1 | tail -30
 ```
 
 ### Binary hash verification
 ```bash
-# Terminal:
+# Terminal — rebuilds the target from source: only in the OUTPUT-RULES Rule 11a mode recorded at intake
 anchor verify <PROGRAM_ID> --provider-url mainnet-beta
 ```
 

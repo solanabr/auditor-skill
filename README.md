@@ -15,7 +15,7 @@
 
 auditor-skill is a **skill file** (a structured prompt + checklists) that turns any LLM agent (Copilot, Cursor, Windsurf, Claude Code, Codex, etc.) into a professional-grade security auditor. It reads your code file by file, checks 1,446 items across 20 security domains, tests against 140 real-world attack vectors, and produces a structured report with severity scores.
 
-**It is not a SaaS product.** It's a folder of markdown files you clone into your repo or give to an AI agent.
+**It is not a SaaS product.** It's a folder of markdown files you install for your AI agent — outside any repository you audit — or send to an LLM API.
 
 > **Adaptation required before use.** This skill was originally developed for a specific Solana/Anchor DeFi project and then generalized. Before running it on your project you must update `discovery/file-map.md` with your actual folder structure, file names, and state variable names. The questionnaire in `QUESTIONS.md` is a blank template — fill it out (or run `/auditor:intake`) for your project before invoking the auditor. Everything else (checklists, known vectors, output rules) is fully portable as-is.
 
@@ -73,6 +73,8 @@ auditor-skill is a **skill file** (a structured prompt + checklists) that turns 
 
 ## Installation
 
+Install auditor-skill **outside any repository you audit**: the plugin (Option 1), or a user-level skill such as `install.sh ~/.claude/skills/auditor-skill`. A copy inside the audited repository resolves its scripts, tools and corpus from a tree that repository controls, and that repository's own `.claude/`, `.mcp.json` and `CLAUDE.md` are target-controlled too ([OUTPUT-RULES.md Rule 11e](OUTPUT-RULES.md#11e--bundled-paths)).
+
 ### Option 1: Claude Code plugin marketplace (recommended)
 
 ```
@@ -82,27 +84,26 @@ auditor-skill is a **skill file** (a structured prompt + checklists) that turns 
 
 Registers the marketplace and installs the `auditor` plugin — all 17 `/auditor:*` commands and 9 agents. Claude Code clones the plugin together with its submodules, so this also fetches the vendored Trail of Bits tooling at the pinned commit (see [Tool execution](#tool-execution-trail-of-bits--optional-rust-tools)); there is no manual step.
 
-### Option 2: Install script (any project)
+### Option 2: Install script
 
-Drops the skill into your project's `.claude/skills/` and inits the tooling:
+Installs the skill and inits the tooling. Pass a path outside the repositories you audit; with no argument it installs into the current directory's `.claude/skills/auditor-skill`, so never run it bare inside a repository you are about to audit:
 
 ```bash
-# from your project root — read it first (it's a security tool, after all):
+# read it first (it's a security tool, after all):
 git clone https://github.com/solanabr/auditor-skill.git
-./auditor-skill/install.sh                                   # → ./.claude/skills/auditor-skill
-./auditor-skill/install.sh ~/.claude/skills/auditor-skill    # or install globally
+./auditor-skill/install.sh ~/.claude/skills/auditor-skill    # user-level, outside any audited repository
 
-# one-liner (convenience):
-curl -fsSL https://raw.githubusercontent.com/solanabr/auditor-skill/main/install.sh | bash
+# one-liner (convenience), same target:
+curl -fsSL https://raw.githubusercontent.com/solanabr/auditor-skill/main/install.sh | bash -s -- ~/.claude/skills/auditor-skill
 ```
 
-### Option 3: Clone into your project manually
+### Option 3: Clone manually
 
 ```bash
-git clone https://github.com/solanabr/auditor-skill.git .claude/skills/auditor-skill
+git clone https://github.com/solanabr/auditor-skill.git ~/.claude/skills/auditor-skill
 ```
 
-Claude Code auto-discovers skills under `.claude/skills/`; invoke by asking your agent to "audit this repo using the auditor-skill" (use **Option 1** for the `/auditor:*` slash commands). For other agents (Cursor, Windsurf, Copilot, Codex), copy the folder anywhere the agent reads and point it at `SKILL.md`.
+Claude Code auto-discovers user-level skills under `~/.claude/skills/`; invoke by asking your agent to "audit this repo using the auditor-skill" (use **Option 1** for the `/auditor:*` slash commands). For other agents (Cursor, Windsurf, Copilot, Codex), copy the folder anywhere the agent reads outside the repository you audit, and point it at its `SKILL.md`.
 
 ### Option 4: Feed files to the API directly
 
@@ -118,13 +119,13 @@ git submodule update --init --depth 1 -- vendor/trailofbits
 
 **Pinned at** [`82fe822`](https://github.com/trailofbits/skills/tree/82fe8226252622fa807643bdca1710901198553a) — trailofbits/skills `main` of 2026-09-28. Upstream publishes no tags or releases, so the pin is a commit, and it moves only after a reviewed bump ([CONTRIBUTING.md §5](CONTRIBUTING.md#5-tooling-changes)); CI fails if this line and the submodule disagree, and plugin installs receive a new pin with the next release. To read the pin of any checkout without initializing the submodule: `git ls-tree HEAD vendor/trailofbits`.
 
-The native corpus works fully **without** it (it falls back to grep-based checks and notes where deeper tooling would run). With the submodule initialized, the auditor delegates to the vendored tools per [`references/orchestration/boundary-map.md`](references/orchestration/boundary-map.md). For the optional token-efficiency tools (`audit-scan` pre-scanner + `audit-mem` memory), build the Rust CLIs from the auditor-skill directory:
+The native corpus works fully **without** it (it falls back to grep-based checks and notes where deeper tooling would run). With the submodule initialized, the auditor delegates to the vendored tools per [`references/orchestration/boundary-map.md`](references/orchestration/boundary-map.md). For the optional token-efficiency tools (`audit-scan` pre-scanner + `audit-mem` memory), build the Rust CLIs (`<auditor-skill root>` is where you installed auditor-skill):
 
 ```bash
-cd tools/auditor-tools && cargo build --release
+cd "<auditor-skill root>/tools/auditor-tools" && cargo build --release
 ```
 
-The auditor runs them, the scripts and the Trail of Bits plugins by absolute path from the installation, never by a path relative to the project it audits ([OUTPUT-RULES.md Rule 11e](OUTPUT-RULES.md#11e--bundled-paths)). If auditor-skill sits inside the repository under audit (the `install.sh` default, `.claude/skills/auditor-skill`), the build runs inside that tree, where cargo and rustup read its `.cargo/config*` and `rust-toolchain*` from every parent directory: build there only in [Rule 11a](OUTPUT-RULES.md#rule-11-operating-safety) isolated mode, or install auditor-skill outside the repository (Option 2 with a path such as `~/.claude/skills/auditor-skill`) and build it there.
+The auditor runs them, the scripts and the Trail of Bits plugins by absolute path from the installation, never by a path relative to the project it audits ([OUTPUT-RULES.md Rule 11e](OUTPUT-RULES.md#11e--bundled-paths)). If the installation sits inside the repository under audit anyway (the `install.sh` default, `.claude/skills/auditor-skill`), the build runs inside that tree, where cargo and rustup read its `.cargo/config*` and `rust-toolchain*` from every parent directory: build there only in [Rule 11a](OUTPUT-RULES.md#rule-11-operating-safety) isolated mode, or move the installation out (Option 2 with a path such as `~/.claude/skills/auditor-skill`) and build it there.
 
 ---
 
@@ -298,12 +299,12 @@ See [OUTPUT-RULES.md](OUTPUT-RULES.md) for the complete specification.
 
 ### Cursor / Windsurf
 ```
-Read .claude/skills/auditor-skill/SKILL.md then audit this repository following the FULL-AUDIT.md execution plan
+Read ~/.claude/skills/auditor-skill/SKILL.md then audit this repository following that installation's FULL-AUDIT.md execution plan
 ```
 
 ### Claude Code (CLI)
 ```
-Read the auditor-skill files in .claude/skills/auditor-skill/ and perform a full security audit of this repository
+Read the auditor-skill files in ~/.claude/skills/auditor-skill/ and perform a full security audit of this repository
 ```
 
 ### API (programmatic)

@@ -20,6 +20,15 @@ gave you, never the working directory, which is usually the audited repo (`OUTPU
 test -d "<auditor-skill root>/vendor/trailofbits/plugins" && echo present
 ```
 
+**Paths inside a vendored skill.** Read straight from the vendored tree, a Trail of Bits skill has nothing
+that defines its `{baseDir}` placeholder or anchors its relative paths (`scripts/…`, `references/…`,
+`workflows/…`, `tools/…`) — the semgrep skill, for one, runs `{baseDir}/scripts/run-scans.sh`. Both
+point into that plugin's own directory, `<auditor-skill root>/vendor/trailofbits/plugins/<plugin>/`:
+for a skill file, normally `skills/<skill>/`; some plugins keep a tool at the plugin root (e.g.
+`constant-time-analysis/ct_analyzer/`), and plugin-level agents count from the plugin root. Substitute
+that absolute directory before running or reading anything, and never resolve such a path against the
+working directory (`OUTPUT-RULES.md` Rule 11e).
+
 If absent (submodule not initialized), run the native fallback and note in the report:
 "deeper tooling available via `git submodule update --init --depth 1 -- vendor/trailofbits`, run in the
 auditor-skill directory (plugin and install.sh installs already include it)".
