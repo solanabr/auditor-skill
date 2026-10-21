@@ -39,7 +39,7 @@ recorded at intake (for an incident, the mode the command recorded):
 isolated runner, or `native` — and otherwise refuses with exit 3, which makes the PoC
 `[PoC-ATTEMPTED]`. The only exemption is a self-contained `templates/poc` crate whose
 program runs inside Mollusk or LiteSVM — no `git` dependency, no `path` / `workspace`
-reference leaving the crate directory, no build of the target — which `run.sh` copies
+reference leaving the crate directory, no build of the target, and only dependencies on the framework allowlist `run.sh` checks (crates.io `solana-*`, `anchor-*`, `spl-*`, `mollusk-*`, `litesvm*`, `borsh*`, `bytemuck*`, `pinocchio*`, `sha2`, `thiserror`) — which `run.sh` copies
 to a scratch directory outside the target tree and builds with a pinned toolchain.
 If the recorded mode cannot run the PoC, record `[PoC-ATTEMPTED]` with the blocker
 "no isolated runner" and keep the prose PoC.
