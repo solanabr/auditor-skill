@@ -24,10 +24,17 @@ simulates against a public cluster, pauses, freezes, or contacts anyone.
 
 ## Steps
 
-1. **Open the run directory.** `incident_<n>/` where `<n>` = existing `incident_*/`
-   + 1 (`--fresh` forces a new one). The **first** write is `incident_<n>/.gitignore`
-   containing a single `*` (Rule 11d): raw corpora and off-chain logs carry PII and
-   are never committed. Start `LEDGER.md` from `templates/hunt-ledger.md`.
+1. **Run directory, then the program bytes — before anything else.**
+   - Create `incident_<n>/` where `<n>` = existing `incident_*/` + 1 (`--fresh`
+     forces a new one). Its **first** file is `incident_<n>/.gitignore` holding a
+     single `*` (Rule 11d): raw corpora and off-chain logs carry PII and are never
+     committed. Start `LEDGER.md` from `templates/hunt-ledger.md`.
+   - **Snapshot each program in scope now:**
+     `scripts/dnr/snapshot-program.sh <program_id> incident_<n>` — read-only
+     `solana program show` + `solana program dump` into `incident_<n>/bin/`, CLI
+     error text passed through `redact.sh`. Paste the line it prints (last-deployed
+     slot, zero-trimmed sha256) into `LEDGER.md`. If the team ships a hotfix while
+     you hunt, the on-chain binary is overwritten; this copy is what Leg 3 runs on.
 
 2. **Get the corpus.** The user's own corpus comes first: `--logs <dir>` (a
    `transactions.jsonl`, Geyser/indexer export, or service logs). Otherwise collect
@@ -56,14 +63,15 @@ simulates against a public cluster, pauses, freezes, or contacts anyone.
 
 5. **Source confirmation (Phase 3).** For each suspect, spawn `context-builder` on
    the implicated handler in the source **deployed at the incident slot** (`--repo`;
-   check the deploy slot per `containment-playbook.md`). Name the flaw or the
-   defense at `file:function`. A confirmed defense makes the suspect
-   `attempted_not_vulnerable`, written down with its `file:function`.
+   compare the deploy slot from step 1 with the incident slot). Pin the flaw — or
+   the guard that stopped it — to `file:function`. A guard that held turns the
+   suspect into `attempted_not_vulnerable`, recorded with that location.
 
 6. **Reproduce (Phase 4).** For a source-confirmed flaw, spawn `poc-engineer` in
-   **incident mode**: reproduce on the program's **real bytes** (dumped ELF or a
-   hash-matched build), in an in-process SVM or a local surfnet, signing only with
-   harness keys. This is Leg 3. If it can't run on real bytes, the ceiling is
+   **incident mode**: reproduce on the program's **real bytes** (the step-1 dump, or
+   a hash-matched build), in an in-process SVM or a local surfnet, signing only with
+   harness keys, and assert the effect seen on-chain — not just that the call was
+   accepted. This is Leg 3. If it can't run on real bytes, the ceiling is
    `suspected` — stated, not hidden.
 
 7. **Emit.** Write `incident_<n>/INCIDENTS.json` (`incidents-schema.md`) and

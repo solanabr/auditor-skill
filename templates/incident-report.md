@@ -58,10 +58,10 @@ from queries. Victim lists stay in INCIDENTS.json, not here.}
 
 ## Appendix — hypothesis ledger
 
-{The full LEDGER.md, including refuted rows. This is the audit trail that makes
-the hunt reviewable.}
+{The full LEDGER.md, refuted rows included — this is what lets someone else check
+the hunt step by step.}
 
 ## Next steps
 
-- `/auditor:respond INC-{N}.{k}` — scope, blast radius, and a proposed response plan.
+- `/auditor:respond INC-{N}.{k}` — widen the scope, size the damage, and draft the plan.
 - `/auditor:poc INC-{N}.{k}` / `/auditor:patch INC-{N}.{k}` — Leg-3 PoC and a verified fix.

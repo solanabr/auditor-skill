@@ -6,8 +6,8 @@
 > `/auditor:respond`. Read `references/detection-response/README.md` first — the
 > hard rules and the verdict ladder live there.
 
-The question a drained protocol asks — *did it succeed, how far did it reach,
-what is the root cause* — is answered from transaction history, not from web logs.
+What a team needs after a drain — whether the attack worked, how much it touched,
+and why it was possible — comes out of transaction history, not web server logs.
 This file is the source matrix, the collection mechanics, the pitfalls, and the
 seed sweeps.
 
@@ -37,7 +37,7 @@ window, caps and estimated call count with the human first):
 - **Transactions:** `getTransaction`, `encoding: jsonParsed`, `commitment:
   finalized`, **`maxSupportedTransactionVersion: 1`**. The opt-in is mandatory: v1
   transactions are live on mainnet, and fetching one with the option set to `0` or
-  omitted returns RPC error `-32015` (verified against mainnet 2026-10-21). On
+  omitted returns RPC error `-32015` (verified against mainnet 2026-10-09). On
   `getBlock` the same miss errors the whole block; on `blockSubscribe` it yields
   `block: null` and stalls.
 - **Seed addresses:** the program id(s) (`declare_id!` / `Anchor.toml`), plus vault
@@ -78,12 +78,16 @@ window, caps and estimated call count with the human first):
 - **CSV / JSONL indexer exports:** confirm the decimals column; a `uiAmount` is
   lossy — prefer the raw integer amount.
 
-## Recipes (validated; `scripts/dnr/`)
+## Recipes (`scripts/dnr/`)
 
-All run offline over a `transactions.jsonl`. Each is checked by
-`scripts/tests/test-dnr.sh` against the committed adversarial fixtures
-(`scripts/dnr/fixtures/log-newline-injection.jsonl`,
-`token-amount-over-2-53.jsonl`, `clean-mixed.jsonl`).
+The analysis recipes run offline over a `transactions.jsonl`; `collect.sh` and
+`snapshot-program.sh` are the two networked, read-only steps. All of them are
+exercised by `scripts/tests/test-dnr.sh` — the offline ones against the committed
+fixtures in `scripts/dnr/fixtures/` (`log-newline-injection.jsonl`,
+`log-tab-injection.jsonl`, `token-amount-over-2-53.jsonl`,
+`lamports-over-2-53.jsonl`, `same-owner-move.jsonl`, `same-owner-drain.jsonl`,
+`clean-mixed.jsonl`), the networked ones against fake `curl` / `solana` binaries,
+with no network.
 
 ```bash
 # baseline (no log parsing): outcome / version histograms, window, signer &
@@ -98,9 +102,11 @@ python3 scripts/dnr/deltas.py tokens   incident_<n>/corpus/transactions.jsonl
 python3 scripts/dnr/deltas.py lamports incident_<n>/corpus/transactions.jsonl
 ```
 
-Aggregate `deltas.py` output further in Python (or `awk` for grouping keys), never
-by summing in `jq`. For a corpus too large for these passes, the same queries
-become DuckDB SQL over the JSONL; DuckDB is optional.
+Aggregate `deltas.py` output further in Python ints. `awk` and `jq` are fine for
+grouping and counting keys, but **never for summing amounts**: both store numbers
+as doubles, so a u64 total above 2^53 silently loses precision. For a corpus too
+large for these passes, the same queries become DuckDB SQL over the JSONL; DuckDB
+is optional.
 
 ## Answering the three questions
 

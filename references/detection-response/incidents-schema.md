@@ -18,7 +18,7 @@ bumps the `schema` string to `auditor-incidents/2`.
   "incidents": [
     {
       "id": "INC-1.1",
-      "title": "<one line: what happened>",
+      "title": "<short summary of the incident>",
       "verdict": "confirmed_exploited | suspected",
       "outcome": "succeeded | failed | partial | undetermined",
       "urgency": "immediate | urgent | routine",
@@ -64,8 +64,8 @@ bumps the `schema` string to `auditor-incidents/2`.
     }
   ],
   "ruled_out": [
-    {"subject": "...", "verdict": "attempted_not_vulnerable | benign",
-     "reason": "<the defense at file:function, or the benign explanation>"}
+    {"verdict": "attempted_not_vulnerable | benign", "subject": "...",
+     "reason": "<guard location as file:function, or why the activity is legitimate>"}
   ]
 }
 ```
@@ -74,8 +74,9 @@ bumps the `schema` string to `auditor-incidents/2`.
 
 - **`id`** is run-qualified `INC-<n>.<k>` (README). `/auditor:poc` and
   `/auditor:patch` resolve this exact string against this run's file.
-- **Routing.** `incidents[]` holds `confirmed_exploited` and `suspected` only.
-  `attempted_not_vulnerable` and `benign` go to `ruled_out[]`. The one subtlety:
+- **Where entries go.** Only `confirmed_exploited` and `suspected` belong in
+  `incidents[]`; `attempted_not_vulnerable` and `benign` are filed in
+  `ruled_out[]`. The one subtlety:
   `suspected` + `outcome: failed` + `poc.verified: true` ("a real flaw was
   attacked and has not landed yet") stays in `incidents[]` — it is a live
   exposure, not a non-event.

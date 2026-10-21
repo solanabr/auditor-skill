@@ -34,28 +34,29 @@ not the thing standing between the treasury and the exit.
 
 1. **A log line is not a state change.** Program logs, `emit!` / `emit_cpi!`
    events and inner-instruction records are things a program *said*; a compromised
-   or malicious program can say anything, and the lines are emitted even by a
-   transaction that fails later in the same slot (KV-122). Evidence is a runtime
-   effect — `meta.err`, a balance delta, an account's current value — read at
-   `finalized`, never the log text.
+   or malicious program can say anything, and the lines still appear when a later
+   instruction in the same transaction fails and the whole transaction reverts
+   (KV-122). Evidence is a runtime effect — `meta.err`, a balance delta, an
+   account's current value — read at `finalized`, never the log text.
 2. **Query the corpus; do not pour it into the conversation.** A real history is
    larger than any context window (~20 KB per transaction, gigabytes for a serious
    corpus). Profile it with the shipped recipes (`scripts/dnr/`), interrogate it
-   with `jq` / `python3`, and bring back only the small results. Do not read or
-   `cat` a multi-megabyte corpus file into context. Small files — an alert line, a
-   short error log, a single `getTransaction` — are fine to read whole.
-3. **Propose; never execute.** The track produces a written plan. It never signs,
-   sends, pauses, freezes, upgrades, rotates, or rate-limits anything, and never
-   communicates with an outside party (no mail, chat, posts, issues, or webhooks),
-   even when a tool that could is connected. Humans execute the plan; see
+   with `jq` / `python3`, and bring back only the small results. Do not open a
+   multi-megabyte corpus file in context. Small inputs — an alert line, a short
+   error log, a single `getTransaction` — can be opened in full.
+3. **Plans only — no actions.** The track's output is a written plan. It never
+   signs, sends, pauses, freezes, upgrades, rotates, or rate-limits anything, and
+   never contacts an outside party (no mail, chat, posts, issues, or webhooks), even
+   when a connected tool could. People carry the plan out; see
    `containment-playbook.md`.
 4. **Reproduce locally, against program bytes you control.** A proof of concept
    runs in an in-process SVM (Mollusk / LiteSVM) or a local loopback surfnet, signs
    only with harness-generated keys (`Keypair::new()`), and targets `127.0.0.1`.
    Never send to, or `simulateTransaction` against, a public cluster.
-5. **Every number comes from a query you ran.** Record counts, record totals,
-   distinct-victim counts, windows and dollar figures are each the output of a
-   pipeline run this session and quoted in the ledger. Never estimate from memory.
+5. **Numbers are measured, not remembered.** Counts, totals, distinct-victim
+   figures, windows and any dollar amount must each come from a query executed in
+   this run and logged as a ledger row; nothing is estimated. Sum u64 values in
+   Python ints — `jq` and `awk` both use doubles.
 6. **Secrets stay out of everything you write.** The RPC endpoint is read from
    `$RPC_URL` and never echoed; pipe any command that might print it through
    `scripts/dnr/redact.sh`. Record the literal string `$RPC_URL` and the provider
@@ -74,14 +75,15 @@ building target code — use an isolated run mode (`OUTPUT-RULES.md` Rule 11a).
 
 ## The verdict ladder (the one normative copy)
 
-Each finding gets exactly one verdict. The routing is strict: `incidents[]` holds
-`confirmed_exploited` and `suspected`; everything else is `ruled_out[]`.
+Each finding gets exactly one verdict, and where it is filed follows from that
+verdict: only `confirmed_exploited` and `suspected` land in `incidents[]`; every
+other outcome is filed under `ruled_out[]`.
 
 | Verdict | Requires | Routes to |
 |---------|----------|-----------|
 | `confirmed_exploited` | all three legs below | `incidents[]` |
 | `suspected` | on-chain evidence of an attempt, at least one leg short of confirmed | `incidents[]` |
-| `attempted_not_vulnerable` | attack traffic seen, but the source shows the defense and a local PoC against it is rejected | `ruled_out[]` |
+| `attempted_not_vulnerable` | attack attempts observed, yet the deployed code has the guard and a local PoC against it is turned away | `ruled_out[]` |
 | `benign` | explained by legitimate behavior, with the evidence | `ruled_out[]` |
 
 **The three legs of `confirmed_exploited`** (all required):
@@ -101,10 +103,15 @@ Each finding gets exactly one verdict. The routing is strict: `incidents[]` hold
   today's `HEAD` and not a look-alike. Record `binary_provenance` (below).
 - **Leg 3 — a local PoC on the real bytes.** A `[PoC-REPRODUCED]` or
   `[PoC-SIM-REPRODUCED]` (`references/orchestration/poc-harness.md`) fired this
-  session against the program's **real bytes** — the dumped on-chain ELF or a build
-  whose hash matches the deployed program. A PoC built only from a minimized
-  replica crate does **not** satisfy Leg 3 for an incident. See `incidents-schema.md`
-  → `binary_provenance` and `poc-engineer`'s incident mode.
+  session against the program's **real bytes** — the ELF snapshotted in step 1 of
+  the command (`scripts/dnr/snapshot-program.sh`, before any hotfix can overwrite
+  it) or a build whose hash matches the deployed program. The exploit must assert
+  the **observed Leg-1 effect** (read back with `outcome.get_account(&pk)`), not
+  merely that the call returned `Ok`, and the fixed arm must reject with the guard's
+  **specific** error (`assert_exploit_rejected_with!`); `templates/poc/run.sh`
+  refuses prebuilt mode otherwise. A PoC built only from a minimized replica crate
+  does **not** satisfy Leg 3 for an incident. See `incidents-schema.md` →
+  `binary_provenance` and `poc-engineer`'s incident mode.
 
 **Key compromise is capped at `suspected`.** When the root cause is a stolen or
 misused signer (`root_cause_class: key_compromise`), on-chain data cannot tell a
@@ -150,6 +157,7 @@ also ignores `incident_*/` as a backstop.
 incident_<n>/
 ├── .gitignore                 # "*" — nothing here is ever committed
 ├── LEDGER.md                  # the hypothesis ledger (templates/hunt-ledger.md)
+├── bin/                       # step-1 program snapshots: <id>.so + <id>.show.txt
 ├── corpus/                    # collected or user-supplied logs — may contain PII
 │   ├── signatures.jsonl
 │   └── transactions.jsonl
@@ -167,13 +175,14 @@ Incident ids are **run-qualified**: `INC-<n>.<k>`, where `<n>` is this run and
 
 ## The hypothesis ledger
 
-Both commands keep a ledger (`templates/hunt-ledger.md`) with one row per query:
-`# · Hypothesis · Query · Result · Verdict · Next pivot`, verdicts
-`supported` / `refuted` / `needs-pivot`. The contract: no query without a
-hypothesis, no hypothesis without a row. A refuted row stays — ruling a lead out,
-with the query that did it, is half the work, and it is what makes a "we checked,
-it's clean" durable. The hunt loop stops after two rounds that surface no new
-entity; the ledger is the appendix of the incident report.
+Both commands keep a ledger (`templates/hunt-ledger.md`), one row per query. Each
+row records the hypothesis, the exact query, what it returned, a verdict —
+`supported`, `refuted` or `needs-pivot` — and where to look next. The rule is
+simple: you don't run a query until you've written the hypothesis it tests, and
+every hypothesis gets a row. A refuted row is kept: ruling a lead out, together
+with the query that did it, is half the job, and it is the only thing that makes
+"we looked and it's clean" hold up later. The hunt loop ends after two rounds that
+turn up no new entity; the ledger becomes the appendix of the incident report.
 
 ## Flow and hand-offs
 

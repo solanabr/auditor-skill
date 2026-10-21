@@ -15,8 +15,9 @@
 
 ## 1. Verdict & summary
 
-{Three sentences: what happened, did it succeed, how far it reached. State the
-verdict and the discriminating evidence (at `finalized`).}
+{At most three sentences: the event, whether the attacker achieved it, and the
+extent. Name the verdict and the single piece of evidence that decides it (read at
+`finalized`).}
 
 ## 2. Timeline
 
@@ -24,9 +25,9 @@ verdict and the discriminating evidence (at `finalized`).}
 
 ## 3. Containment (proposed)
 
-Each row: the evidence line that justifies it, who signs, whether it reverses, and
-what breaks if the call is wrong. See `containment-playbook.md` for the menu and
-the "do not" list (never `program close`, never `--final`).
+Every row carries the query result behind it, the signer it needs, whether it can
+be undone, and the cost if the proposal is mistaken. See `containment-playbook.md`
+for the menu and the "do not" list (never `program close`, never `--final`).
 
 | Action | Why (evidence) | Who signs | Reversible | Risk if wrong |
 |--------|----------------|-----------|-----------|---------------|
@@ -35,10 +36,15 @@ the "do not" list (never `program close`, never `--final`).
 ## 4. Eradication & remediation (proposed)
 
 - **Code fix:** {file:function; the guard to restore}. Hand off as a
-  `/auditor:patch INC-{N}.{k}` vuln entry; verify by re-detonating the stored PoC
-  against the current deployed bytes (a rejection means the fix holds).
-- **Interim mitigation** if the fix will take time: {the containment row that
-  holds the line until then}.
+  `/auditor:patch INC-{N}.{k}` vuln entry. The stored PoC keeps the incident-time
+  bytes as `VULNERABLE_SO`; `FIXED_SO` is **our proposed patch build**. The fix holds
+  only on a rejection with the guard's specific error.
+- **The team's own hotfix** (if one is already deployed) is a separate check:
+  re-run the same PoC with `FIXED_SO` set to a fresh dump of the **current
+  on-chain** bytes. Report the two results apart — ours proves the proposal, theirs
+  proves what is live.
+- **Stop-gap while the code fix is pending:** {the containment row that holds the
+  line until then}.
 
 ## 5. Recovery (proposed)
 
@@ -62,6 +68,7 @@ Note which existing alerts fired and which were noise.
 
 ## 8. Open questions
 
-{What this corpus cannot settle: stolen vs. authorized key use (chain data can't
-tell — this is why `key_compromise` caps at `suspected`), earlier history beyond
-retention, whether stolen data was used elsewhere.}
+{Questions the collected data can't resolve: theft vs. authorized use of a key
+(chain data can't tell them apart — the reason `key_compromise` caps at
+`suspected`), history older than the provider retains, and whether anything taken
+was reused on other platforms.}

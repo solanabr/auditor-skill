@@ -6,9 +6,10 @@
 > `/auditor:respond` plan (`templates/response-plan.md`). Read
 > `references/detection-response/README.md` first.
 
-Every action here is a **proposal a human executes**. The track names the action,
-the evidence that justifies it, who must sign it, whether it is reversible, and
-what breaks if the call is wrong — and then stops. It never performs the action.
+Every action here is a **proposal a human executes**. For each one the track
+writes down the action, the query result that supports it, whose signature it
+needs, whether it can be undone, and the damage if the proposal turns out to be
+mistaken — and then it stops. Carrying it out is never the track's job.
 
 ## Rules of engagement (propose-only, made concrete)
 
@@ -86,12 +87,12 @@ never asserted and any exchange/bridge label must be cited:
 
 ## Recovery and detection engineering
 
-- **Recovery (proposed):** exactly which credentials to rotate (the queried list,
-  not "all users"), which customers to notify (the distinct-victim list from the
-  blast-radius query — internal), and what to watch to confirm the attacker is
-  out.
-- **Detection engineering (proposed):** turn the discriminating queries that found
-  this into standing alerts, mapped to checklist 17 — anomalous withdrawals and
+- **Recovery (proposed):** the specific credentials to rotate — the list your
+  queries produced, never a blanket reset — the specific customers to contact (the
+  distinct-victim set from the damage query, kept internal), and the signal that
+  will show the attacker no longer has a foothold.
+- **Detection engineering (proposed):** turn the queries that separated attack from
+  noise into standing alerts, mapped to checklist 17 — anomalous withdrawals and
   rapid calls (LM-030), upgrade-authority changes (LM-037), unexpected mint-authority
   use (LM-038), off-chain consumers that trust logs over finalized state (LM-063),
   and stream/reader liveness (LM-065). Note which existing alerts fired and which

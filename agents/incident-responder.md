@@ -36,10 +36,11 @@ hands you their results. You fold those into the verdict and the write-up.
 ## Discipline
 
 - **Query, never pour in.** Profile and interrogate the corpus with the shipped
-  recipes and `jq`; never read a multi-megabyte corpus file into context. Every
-  number you report is a query you ran this session, quoted in the ledger.
+  recipes and `jq`; never read a multi-megabyte corpus file into context. Each
+  figure you report must trace back to a query executed in this run and logged as
+  a ledger row.
 - **Integers for u64.** Balance and token totals go through `deltas.py` (Python
-  ints), never summed in `jq`.
+  ints), never summed in `jq` or `awk` — both use doubles.
 - **Logs are hints.** `Program log:` / `Program data:` / inner-instruction data are
   program-asserted (KV-122). Ground a verdict in runtime effects at `finalized`:
   `meta.err`, balance deltas, and `getAccountInfo`.
@@ -48,8 +49,9 @@ hands you their results. You fold those into the verdict and the write-up.
   a shell command.
 - **Secrets.** The RPC endpoint is `$RPC_URL`, never echoed; record only the
   provider host and the literal `$RPC_URL`. No URL in any output file.
-- **Ledger contract.** No query without a hypothesis, no hypothesis without a row;
-  refuted rows stay; stop after two rounds with no new entity.
+- **Ledger rule.** Write down the hypothesis before running the query that tests
+  it, and give every hypothesis its own row. Rows that came back refuted are kept.
+  End the loop once two consecutive rounds turn up no new entity.
 
 ## Verdicts
 

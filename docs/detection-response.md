@@ -50,40 +50,36 @@ Everything lands in a per-run `incident_<n>/` directory whose first file is a
 `.gitignore` of `*` — raw corpora and off-chain logs carry PII and are never
 committed:
 
+- `bin/` — the step-1 snapshot of each implicated program (`<id>.so` plus its
+  `solana program show` output), taken before anything else so a mid-investigation
+  hotfix can't erase the incident binary.
 - `INCIDENTS.json` — the structured result ([schema](../references/detection-response/incidents-schema.md)).
 - `INCIDENT_REPORT.md` — executive summary, timeline, per-incident evidence, and
-  the hypothesis ledger as the audit trail.
+  the full ledger so a reviewer can retrace every step.
 - `RESPONSE-INC-<n>.<k>.md` — the proposed containment / remediation / recovery
-  plan. **Nothing in it has been executed.**
+  plan. Every action in it is a proposal awaiting a person.
 
 ## What "confirmed" means
 
-A finding is `confirmed_exploited` only with all three of:
-
-1. **on-chain effect** — a finalized, successful transaction whose runtime-recorded
-   balance or account-state change shows the effect (a program-log line never
-   counts on its own — it is something a program *said*, KV-122);
-2. **the flaw in source** — at `file:function`, in the code deployed at the incident
-   slot;
-3. **a local PoC on the real bytes** — fired this session against the dumped on-chain
-   program or a hash-matched build, in an in-process SVM or a local surfnet.
-
-Short of that it is `suspected`. A stolen-key incident caps at `suspected`, because
-chain data cannot tell theft from authorized use. Everything explained away is
-`ruled_out`, with the evidence — triaging the noise is half the job.
+`confirmed_exploited` requires three independent legs — an on-chain effect, the
+flaw in the deployed source, and a local PoC on the real program bytes — and
+anything short of all three is `suspected`. The ladder, the exact leg definitions
+and the stolen-key cap are kept in one place only:
+[the verdict ladder](../references/detection-response/README.md#the-verdict-ladder-the-one-normative-copy).
 
 ## The method is only as good as your telemetry
 
-Open-ended log hunting is genuinely hard, and a clean run is not proof of safety.
-Calibrate before you trust it on an unknown: stand up a disposable copy of a
-service, plant a known weakness, run a scripted exploit against it, capture the
-transaction history, and confirm `/auditor:hunt` finds the chain from the telemetry
-alone. A seeded Solana exercise that packages this is a planned follow-up; until
-then, the loop is the same on your own captured incidents.
+Hunting through raw history with no alert to start from is hard, and a quiet run
+does not prove nothing happened. Before trusting it on an unknown, test it on a
+known: in a throwaway environment, deploy a deliberately flawed program, attack it
+with a script, record the resulting history, and check that `/auditor:hunt`
+reconstructs the attack from that history alone. A packaged Solana exercise for
+this is a planned follow-up; until then, run the same check on incidents you have
+already captured.
 
 ## Safety and limits
 
-- **Propose, never execute.** No signing, sending, pausing, freezing, rotating, or
+- **Plans only, no actions.** No signing, sending, pausing, freezing, rotating, or
   contacting anyone — the plan is for a human to run
   ([containment playbook](../references/detection-response/containment-playbook.md)).
 - **Local reproduction only.** PoCs run against `127.0.0.1`; the track never sends

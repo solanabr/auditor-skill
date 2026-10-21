@@ -1,6 +1,6 @@
 ---
 name: auditor:respond
-description: Work one incident lead — a signature, an address, an alert line, an IOC, or a /auditor:hunt INC id — across Solana transaction history: scope it, verdict whether it succeeded, quantify blast radius, confirm root cause in the deployed source with a local PoC, and write a proposed (never executed) containment / remediation / recovery plan. Never signs, sends, or acts on-chain.
+description: Investigate one incident lead (a transaction signature, an address, an alert, an indicator of compromise, or an INC id from /auditor:hunt) through Solana transaction history — work out whether the attack landed and how far it reached, pin the root cause in the deployed code and reproduce it locally, then draft containment, remediation and recovery steps for humans to carry out. This command changes nothing on-chain.
 argument-hint: "<INC-n.k | signature | address | 'alert json' | 'free text'> [--logs <dir>] [--repo <path>] [--collect] [--fresh]"
 allowed-tools: Read, Grep, Glob, Task, Edit(incident_*/**), Bash(jq *), Bash(bash scripts/dnr/profile.sh *), Bash(python3 scripts/dnr/frames.py *), Bash(python3 scripts/dnr/deltas.py *), Bash(bash scripts/dnr/redact.sh *)
 ---
@@ -11,57 +11,72 @@ allowed-tools: Read, Grep, Glob, Task, Edit(incident_*/**), Bash(jq *), Bash(bas
 
 **Arguments:** $ARGUMENTS
 
-Take one concrete starting point and answer, in order: what happened, did it
-succeed, how far did it reach, and what should the team do. Read
-`references/detection-response/README.md` first (hard rules, verdict ladder,
-layout). The output is a verdict, a quantified blast radius, a root cause proven on
-the real bytes, and a plan that is **proposed, never executed**.
+Start from a single lead and work outward from it. Four questions drive the run,
+in this order: what took place, whether the attacker got what they were after, how
+wide the damage spread, and what the team should do next. Read
+`references/detection-response/README.md` first — the hard rules, the verdict
+ladder and the run-directory layout live there. You come out with a verdict, damage
+figures that each trace to a query, a root cause reproduced on the real program
+bytes, and a plan for humans. This command carries out none of that plan.
 
-> The first thing this command outputs is a line: **if funds are moving now, run
-> the pause/freeze runbook and open a SEAL 911 ticket (`@seal_911_bot`) first — this
-> workup is not emergency response.** The `allowed-tools` above are not a sandbox
-> (README); the networked collector and anything that executes code still prompt.
+> Open every run with this line: **if funds are moving right now, run the
+> pause/freeze runbook and open a SEAL 911 ticket (`@seal_911_bot`) first — this
+> workup comes after, it is not the emergency response.** The `allowed-tools` above
+> are not a sandbox (README); the collector, the snapshot step and anything that
+> executes code still ask for approval.
 
 ## Steps
 
-1. **Open / adopt the run directory.** For an `INC-<n>.<k>` lead, adopt the
-   `incident_<n>/` it names and work into that `INCIDENTS.json` (do not mint a new
-   dir — it would strand the incident). For any other lead, open a new `incident_<n>/`
-   (first write: `.gitignore` = `*`, Rule 11d) or adopt the newest when `--fresh` is
-   absent. Start / append `LEDGER.md`.
+1. **Run directory, then the program bytes — before anything else.**
+   - For an `INC-<n>.<k>` lead, adopt the `incident_<n>/` it names and work into
+     that `INCIDENTS.json`; minting a fresh directory would orphan the incident.
+     For any other lead, create `incident_<n>/` (its first file is a `.gitignore`
+     holding `*`, Rule 11d) or reuse the newest one unless `--fresh`.
+   - **Snapshot every implicated program now:**
+     `scripts/dnr/snapshot-program.sh <program_id> incident_<n>` — read-only
+     `solana program show` + `solana program dump` into `incident_<n>/bin/`, with
+     the CLI's error text passed through `redact.sh`. Copy the line it prints
+     (last-deployed slot, zero-trimmed sha256) into `LEDGER.md`. A hotfix shipped
+     mid-investigation overwrites the on-chain binary; this copy is what Leg 3 runs
+     on.
 
-2. **Parse the lead → seed entities** and state the working question in one
-   sentence. `INC-<n>.<k>` → that incident's entities. A signature → its signers,
-   programs, accounts. An address / IOC → itself. An alert line → its fields. Free
-   text → the observables you can extract.
+2. **Turn the lead into seed entities**, and write the question this run must
+   answer as a single sentence in the ledger. An `INC-<n>.<k>` contributes that
+   incident's entities; a signature, its signers, programs and accounts; an address
+   or indicator, itself; an alert, its fields; free text, whatever observables it
+   names.
 
-3. **Scope (Phase 1).** Pull everything the seed entities touched and expand one
-   ring (the account a signer used, a second signer on the same program, the
-   instruction a session pivoted to). Corpus: `--logs`, else gated collection as in
-   `/auditor:hunt` step 2 (disclose the RPC provider host under Rule 11b; never
-   write a keyed URL anywhere). Merge into one `(slot, transactionIndex)` timeline.
+3. **Scope (Phase 1).** Gather everything the seed entities touched, then widen by
+   exactly one ring — the account a signer used, another signer on the same
+   program, the instruction a session moved to next. Corpus: `--logs`, or the gated
+   collection described in `/auditor:hunt` step 2 (name the RPC provider host under
+   Rule 11b; a keyed URL is never written anywhere). Merge everything into one
+   timeline ordered by `(slot, transactionIndex)`.
 
-4. **Verdict & blast radius (Phase 2).** Did it succeed? Status alone doesn't say
-   — confirm with Leg 1 (a balance delta, or the four-part account-data check for a
-   takeover), at `finalized`. Quantify blast radius from queries: distinct victims,
-   raw units out per mint (Python ints), window. Check whether the activity is still
-   ongoing (this one read may use `confirmed`, labelled as such). A failed attempt
-   still gets written up — say what they were trying and why it failed.
+4. **Outcome and damage (Phase 2).** A status code can't tell you whether it
+   worked — Leg 1 can: a balance movement, or for a takeover the four-part
+   account-data check, read at `finalized`. Size the damage from queries: distinct
+   victims, raw units out per mint (Python ints), the window. Check whether
+   activity is still under way; that one read may use `confirmed` if it says so.
+   An attempt that failed is still documented: what it went after and what stopped
+   it.
 
 5. **Root cause & PoC (Phase 3).** Spawn `context-builder` on the implicated
    handler in the source deployed at the incident slot, then `poc-engineer` in
-   incident mode to reproduce on the real bytes (Leg 3) — in-process SVM / local
-   surfnet, harness keys only. No runnable bytes → ceiling `suspected`.
-   `key_compromise` is capped at `suspected` unless a human records a custodian
-   attestation verbatim (README).
+   incident mode to reproduce on the bytes from step 1 (Leg 3) — in-process SVM or
+   a local surfnet, harness keys only, asserting the observed effect. No usable
+   bytes → the ceiling is `suspected`. `key_compromise` stays at `suspected` unless
+   a person records a custodian attestation word for word (README).
 
-6. **Plan (Phase 4) — proposed, never executed.** Write
-   `incident_<n>/RESPONSE-INC-<n>.<k>.md` from `templates/response-plan.md`
-   (never overwrite another lead's plan): verdict & summary, timeline, containment,
-   eradication & remediation (hand off as `/auditor:patch INC-<n>.<k>`), recovery,
-   coordination **drafts**, detection-engineering rules, open questions. Each action
-   carries what / why / risk-if-wrong / who-signs / reversible. Use the menu and the
-   "do not" list in `containment-playbook.md`. Then enrich `INCIDENTS.json`.
+6. **The plan (Phase 4).** Write `incident_<n>/RESPONSE-INC-<n>.<k>.md` from
+   `templates/response-plan.md`; a plan written for another lead is never
+   overwritten. It covers the verdict, the timeline, containment, the code fix
+   (handed off as `/auditor:patch INC-<n>.<k>`), recovery, coordination drafts,
+   alerting proposals and the unanswered questions. Each action states what it is, the query
+   result behind it, who has to sign, whether it can be undone, and the cost if
+   it turns out to be wrong — pick from the menu and respect the "do not" list in
+   `containment-playbook.md`. Then update `INCIDENTS.json`.
 
-A human reviews and executes or rejects each item; nothing in the plan has been
-done. Onward: `/auditor:patch INC-<n>.<k>` for the fix; a human runs the plan.
+Each item waits for a person to approve, change or drop it; this command performs
+none of them. Next: `/auditor:patch INC-<n>.<k>` for the fix, while people decide
+on the plan.
