@@ -25,17 +25,25 @@ When the target is an `INC-<n>.<k>` from `incident_<n>/INCIDENTS.json`
 and a minimized-replica `[PoC-*]` does **not** satisfy it — the exploit must run
 against the program's **real bytes**:
 
-- **Dump and hash the deployed ELF first** — a hotfix erases the incident binary.
-  Run both arms via `run.sh` `VULNERABLE_SO`/`FIXED_SO` (both-or-neither): the
-  dumped on-chain ELF (accepted only when its last-deployed slot precedes the
-  incident slot, owning loader checked — see `containment-playbook.md` for the
-  loader-v3/v4 header offsets) or a `solana-verify` hash-matched build. Record the
-  `binary_provenance` (`incidents-schema.md`).
+- **Use the step-1 snapshot.** `/auditor:hunt` and `/auditor:respond` dump and hash
+  every implicated program into `incident_<n>/bin/` before anything else
+  (`scripts/dnr/snapshot-program.sh`), because a hotfix erases the incident binary.
+  Use that `bin/<id>.so` as `VULNERABLE_SO` when its last-deployed slot precedes the
+  incident slot (owning loader checked — `containment-playbook.md` has the
+  loader-v3/v4 header offsets); otherwise a `solana-verify` hash-matched build. If
+  there is no snapshot, dump now and record that a hotfix may already have replaced
+  the bytes. Run both arms via `run.sh` `VULNERABLE_SO`/`FIXED_SO`
+  (both-or-neither) and record the `binary_provenance` (`incidents-schema.md`).
 - **Use the real program id** (not `random_pubkey()`): an Anchor program checks its
   own `declare_id!`, so a mismatched id makes the attack "fail" for the wrong
   reason.
+- **Assert the observed effect, not just `Ok`.** On real bytes the program may
+  accept the call without doing harm. On the `vulnerable` arm, read the changed
+  account back with `outcome.get_account(&pk)` (mollusk-svm-result 0.13.x) and
+  assert the Leg-1 effect seen on-chain — the new authority, the drained balance.
 - **Assert the specific guard error** on the `fixed` arm with
   `assert_exploit_rejected_with!`, not the any-error `assert_exploit_rejected!`.
+  `run.sh` refuses prebuilt mode unless both of these assertions are live code.
 - **Local only:** in-process SVM / loopback surfnet, harness keys
   (`Keypair::new()`), `127.0.0.1`. Never send to or `simulateTransaction` against a
   public cluster. Build the incident commit per `OUTPUT-RULES.md` Rule 11a — never

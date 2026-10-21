@@ -25,6 +25,9 @@
 #   * both-or-neither: setting only one exits 3.
 #   * a bad path, a file without the ELF magic, or a missing `cargo` all exit 3
 #     (a named precondition failure, never a bare `cp` error).
+#   * the tests must be in incident form, or it exits 3: tests/exploit.rs asserts
+#     the observed effect via `outcome.get_account(&pk)`, and tests/fixed_blocked.rs
+#     pins the guard's error with `assert_exploit_rejected_with!`.
 #   * the incident commit is built natively ONLY when its root cause is not supply
 #     chain / CI; otherwise supply the dumped ELF here (OUTPUT-RULES.md Rule 11a).
 
@@ -62,6 +65,23 @@ if [[ -n "${VULNERABLE_SO}" || -n "${FIXED_SO}" ]]; then
       exit 3
     fi
   done
+  # On real bytes, `Ok` / "any Err" prove nothing about the incident. Incident mode
+  # therefore requires, in live (non-comment) code:
+  #   * tests/exploit.rs asserts the observed Leg-1 effect through
+  #     `outcome.get_account(&pk)` — the account the attack changed, as seen on-chain;
+  #   * tests/fixed_blocked.rs pins the guard's error with
+  #     `assert_exploit_rejected_with!`, not the any-error form.
+  live() {  # live <file> <regex> : a match on a line that is not a // comment
+    grep -E "$2" "$1" 2>/dev/null | grep -Ev '^[[:space:]]*//' | grep -q .
+  }
+  if ! live "${HERE}/tests/exploit.rs" 'get_account[[:space:]]*\('; then
+    echo "[PoC-ATTEMPTED] blocker: prebuilt (incident) mode needs tests/exploit.rs to assert the observed effect via outcome.get_account(&pk) — Ok alone proves nothing on real bytes." >&2
+    exit 3
+  fi
+  if ! live "${HERE}/tests/fixed_blocked.rs" 'assert_exploit_rejected_with!'; then
+    echo "[PoC-ATTEMPTED] blocker: prebuilt (incident) mode needs tests/fixed_blocked.rs to pin the guard's error with assert_exploit_rejected_with! — any Err is not a fix." >&2
+    exit 3
+  fi
   PREBUILT=1
 fi
 
