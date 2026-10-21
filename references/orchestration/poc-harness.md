@@ -44,18 +44,18 @@ to a scratch directory outside the target tree and builds with a pinned toolchai
 If the recorded mode cannot run the PoC, record `[PoC-ATTEMPTED]` with the blocker
 "no isolated runner" and keep the prose PoC.
 
-**Run the probes below from a directory outside the target tree** (e.g.
-`cd "${TMPDIR:-/tmp}"`). Inside it, the target's `.cargo/config*` can define an
-`[alias]` named `build-sbf` or `fuzz` that shadows the real subcommand (cargo only
-warns), and a parent `rust-toolchain*` that names a `path` toolchain runs even on a
-bare `cargo --version`.
+**Run the probes below from `${TMPDIR:-/tmp}`, never from inside the target tree**
+(`cd "${TMPDIR:-/tmp}"` first, with `RUSTUP_TOOLCHAIN` pinned — Rule 11a). Inside it,
+the target's `.cargo/config*` can define an `[alias]` named `build-sbf` or `fuzz` that
+shadows the real subcommand (cargo only warns), and a parent `rust-toolchain*` that
+names a `path` toolchain runs even on a bare `cargo --version`.
 
 | Gate | Detect | Enables | If absent |
 |------|--------|---------|-----------|
-| **`cargo build-sbf`** (platform-tools ≥ **v1.54** / cargo ≥ **1.85**) | `cargo build-sbf --version`, run outside the target tree; check the bundled cargo ≥ 1.85 (default bundle is v1.51/cargo 1.84 and **cannot** parse the edition2024 manifests in the modern `mollusk-svm`/`litesvm` dep tree — pass `--tools-version v1.54`) | Mollusk **and** LiteSVM PoCs (both load a compiled `.so`) | No on-chain executable PoC → `[PoC-ATTEMPTED]`, keep prose. Name it: "install Agave platform-tools ≥ v1.54". |
+| **`cargo build-sbf`** (platform-tools ≥ **v1.54** / cargo ≥ **1.85**) | `cargo build-sbf --version`, run from `${TMPDIR:-/tmp}`; check the bundled cargo ≥ 1.85 (default bundle is v1.51/cargo 1.84 and **cannot** parse the edition2024 manifests in the modern `mollusk-svm`/`litesvm` dep tree — pass `--tools-version v1.54`) | Mollusk **and** LiteSVM PoCs (both load a compiled `.so`) | No on-chain executable PoC → `[PoC-ATTEMPTED]`, keep prose. Name it: "install Agave platform-tools ≥ v1.54". |
 | **Surfpool** (CLI + MCP) | `surfpool --version` on PATH; the surfpool MCP reachable | mainnet-fork economic/oracle/MEV reproduction with a real P/L | No fork simulation → fall back to Mollusk/LiteSVM if the logic is modelable, else `[PoC-ATTEMPTED]`. Name it: "surfpool CLI + MCP unreachable / fork state unavailable". |
 | **Trident** (stateful SVM fuzzer) | `trident --version` on PATH | coverage-guided multi-instruction fuzzing → crash/invariant artifact | Try `cargo fuzz` (below); if neither, keep the prose invariant argument → `[PoC-ATTEMPTED]`. |
-| **cargo-fuzz** (libFuzzer unit fuzz) | `cargo fuzz --version` on PATH, run outside the target tree | fuzzing a single pure function (parse/deser/math) → crashing input | If absent, a hand-written failing unit test on the boundary value is the fallback; else `[PoC-ATTEMPTED]`. |
+| **cargo-fuzz** (libFuzzer unit fuzz) | `cargo fuzz --version` on PATH, run from `${TMPDIR:-/tmp}` | fuzzing a single pure function (parse/deser/math) → crashing input | If absent, a hand-written failing unit test on the boundary value is the fallback; else `[PoC-ATTEMPTED]`. |
 
 Record which gates passed in the finding's PoC block. `run.sh` in `templates/poc/`
 self-detects `cargo-build-sbf` and exits `3` with a named blocker when it is missing —

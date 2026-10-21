@@ -6,7 +6,7 @@
 
 Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{severity}]`, `[PARTIAL]`, or `[N/A]`.
 
-Run the registry-facing commands these items call for (`npm audit`, `cargo audit`, `npm info`, `npm outdated`) from a scratch directory outside the target tree holding copies of the manifest and lockfile — never inside the tree, `audit_<n>/` included: cargo and rustup read `.cargo/config*` / `rust-toolchain*` from every parent directory, and the target's `.npmrc` would steer npm (OUTPUT-RULES Rule 11a).
+Run the registry-facing commands these items call for (`npm audit`, `cargo audit`, `npm info`, `npm outdated`) from a scratch directory outside the target tree holding copies of the manifest and lockfile, with `RUSTUP_TOOLCHAIN` pinned to your own toolchain — never inside the tree, `audit_<n>/` included: cargo and rustup read `.cargo/config*` / `rust-toolchain*` from every parent directory, so any `cargo` command started there (`cargo audit` and `cargo tree` too) can run binaries the target picked, and the target's `.npmrc` would steer npm (OUTPUT-RULES Rule 11a).
 
 ---
 

@@ -354,11 +354,13 @@ ACTIONS:
   # → hijacked @solana/web3.js releases (KV-077 Step 2, SC-005). A hit now is CRITICAL;
   #   a hit in history means rotate every key a build from that window loaded
 
-  # Audits and registry queries run from a scratch dir OUTSIDE the target tree, on
-  # copies of the manifest + lockfile, so the target's .npmrc / .cargo/config* /
-  # rust-toolchain* cannot steer them — cargo and rustup read those from every
-  # parent directory, so audit_<n>/ inside the tree is not far enough (Rule 11a)
+  # Audits, registry queries and any cargo / rustc command (even --version) run from
+  # a scratch dir OUTSIDE the target tree, on copies of the manifest + lockfile, with
+  # the toolchain pinned, so the target's .npmrc / .cargo/config* / rust-toolchain*
+  # cannot steer them — cargo and rustup read those from every parent directory, so
+  # audit_<n>/ inside the tree is not far enough (Rule 11a)
   SCRATCH=$(mktemp -d)   # outside the target tree
+  TC=$(cd "$SCRATCH" && rustup default | cut -d' ' -f1)   # your own toolchain, never the target's
   mkdir -p "$SCRATCH/backend" "$SCRATCH/web" "$SCRATCH/rust"
   cp apps/backend/package.json apps/backend/package-lock.json "$SCRATCH/backend/"
   cp apps/web/package.json apps/web/package-lock.json "$SCRATCH/web/"
@@ -373,7 +375,7 @@ ACTIONS:
   cat apps/web/package.json | grep -E '[\^~]'
 
   # Cargo audit
-  (cd "$SCRATCH/rust" && cargo audit) 2>/dev/null || echo "cargo-audit not installed"
+  (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit) 2>/dev/null || echo "cargo-audit not installed"
 
   # Check quarantine (14-day rule) for newest deps
   (cd "$SCRATCH" && npm info @anchor-lang/core time | tail -5)
