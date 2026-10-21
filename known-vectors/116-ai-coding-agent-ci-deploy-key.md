@@ -13,19 +13,24 @@ Solana programs are mutable by their upgrade authority. If an AI agent runs in C
 
 This vector fuses two conditions that must BOTH be false: (a) the agent can reach deploy/upgrade keys, and (b) attacker input can reach the agent. The nine ToB CI vectors below are the concrete injection paths.
 
+> Cross-ref: checklist 19 §19.5 (AI-021..031 the ToB vectors, AI-034 agent authority, AI-035 configuration restore); checklist 13 §13.13 (DEP-090..091 who may trigger the agent job, DEP-093 privileged triggers, DEP-096 caches); KV-139 (comment-triggered gating); KV-140 (`workflow_run` / `pull_request_target` pwn request); KV-080; `references/vuln-classes/github-actions.md` §6; recipe R8 in `discovery/grep-commands.md`.
+
 #### Verification Procedure
 
 **Step 1: Inventory workflows and locate AI agent steps**
 ```
 ls -la .github/workflows/ 2>/dev/null
-grep -rn -iE "anthropics/claude-code-action|run-gemini-cli|gemini-cli-action|openai/codex-action|actions/ai-inference" .github/workflows/
+grep -rn -iE "anthropics/claude-code-action|run-gemini-cli|gemini-cli-action|openai/codex-action|actions/ai-inference|claude -p|@anthropic-ai/claude-code|codex exec|gemini -p" .github/workflows/
 ```
-- Record: each workflow, its `on:` triggers, and every AI-agent step
+- Record: each workflow, its `on:` triggers, and every AI-agent step, including agent CLIs started from a `run:` step (they have no built-in actor check)
 
 **Step 2: Does an AI-agent step reach deploy / upgrade key material?**
 ```
 grep -rn -iE "PROGRAM_DEPLOY|UPGRADE_AUTHORITY|DEPLOY_KEY|id\.json|keypair|ANCHOR_WALLET|SOLANA_KEYPAIR|secrets\." .github/workflows/
 ```
+- Secrets cross file boundaries in two opposite ways, and neither shows up by searching the resolved file for `secrets.`:
+  - **Composite actions** have no `secrets` context. A `${{ secrets.X }}` inside one resolves to nothing; a secret that does reach it arrives through `inputs.*`, so read the caller's `with:` block.
+  - **Reusable workflows.** A reusable workflow called with `secrets: inherit` holds every secret of its caller without declaring any, so an empty `on.workflow_call.secrets` is not evidence that it has none. Inheritance stops at the directly called workflow.
 - ✅ PASS: The AI-agent job/step has NO deploy/upgrade keypair in its `env`/`secrets`/checked-out files; deploy secrets live only in a separate job the agent cannot influence
 - ❌ FAIL: A deploy/upgrade key or `id.json` is available in the same job/step as the AI agent
 
@@ -37,11 +42,17 @@ grep -rn -iE "solana program deploy|anchor deploy|anchor upgrade|solana program 
 - ❌ FAIL: An AI-agent step (or a step eval-ing its output) can trigger deploy/upgrade
 
 **Step 4: Nine ToB CI injection vectors (Solana port of Trail of Bits agentic-actions-auditor)**
+
+claude-code-action renamed its inputs at v1: `direct_prompt` / `override_prompt` became `prompt`, `custom_instructions` became `--append-system-prompt` in `claude_args`, and `allowed_tools` / `disallowed_tools` became `--allowedTools` / `--disallowedTools`. Files pinned to `@v1` or a SHA still carry the old names, so match the input names present in the file, not the ref. The old tool lists are comma-separated and the new ones space-separated.
 - **A. Env-var intermediary** — `github.event.*.body/title/head_ref` or commit message flows through an `env:` var into the agent prompt (prompt has no `${{ }}`, still tainted).
   ```
   grep -rn -iE "env:" .github/workflows/ ; grep -rn -iE "github.event.*(body|title|head_ref|message)" .github/workflows/
   ```
-- **B. Direct expression injection** — `${{ github.event.* }}` interpolated directly into the agent `prompt`/`system-prompt`.
+- **B. Direct expression injection** — `${{ github.event.* }}` interpolated directly into an agent prompt field (`prompt`, pre-v1 `direct_prompt` / `override_prompt`, `custom_instructions` / `--append-system-prompt`, Codex `prompt-file`, AI Inference `system-prompt`).
+  ```
+  grep -rn -iE -A 8 '^[[:space:]]*(prompt|direct_prompt|override_prompt|custom_instructions|system-prompt|prompt-file):' .github/workflows/ | grep -E '\$\{\{ *github\.event'
+  ```
+  (`-A 8` reaches into `prompt: |` block scalars; also read `claude_args` for `--append-system-prompt`.)
 - **C. CLI data fetch** — prompt runs `gh issue view` / `gh pr view` / `gh api` (or `curl`) to pull attacker content at runtime.
   ```
   grep -rn -iE "gh (issue|pr) view|gh api|curl " .github/workflows/
@@ -56,13 +67,13 @@ grep -rn -iE "solana program deploy|anchor deploy|anchor upgrade|solana program 
   ```
   grep -rn -iE "eval |exec |\$\(.*outputs" .github/workflows/
   ```
-- **H. Dangerous sandbox** — `danger-full-access`, `--allowedTools Bash(*)`, `--yolo`/`--approval-mode=yolo`, `safety-strategy: unsafe`.
+- **H. Dangerous sandbox** — `danger-full-access`, `--allowedTools Bash(*)` (pre-v1: `allowed_tools: "Bash(*)"`), `--yolo`/`--approval-mode=yolo`, `safety-strategy: unsafe`.
   ```
-  grep -rn -iE "danger-full-access|Bash\(\*\)|--yolo|approval-mode=yolo|safety-strategy:\s*unsafe" .github/workflows/
+  grep -rn -iE "danger-full-access|Bash\(\*\)|--yolo|approval-mode=yolo|safety-strategy:\s*unsafe|allowed_tools:|disallowed_tools:" .github/workflows/
   ```
-- **I. Wildcard allowlist** — `allowed_non_write_users: "*"` / `allow-users: "*"` lets any external user invoke the agent.
+- **I. Wildcard allowlist** — `allowed_non_write_users: "*"` / `allowed_bots: "*"` / `allow-users: "*"` / `allow-bots: true` lets any external user or App invoke the agent.
   ```
-  grep -rn -iE "allowed_non_write_users:\s*[\"']?\*|allow-users:\s*[\"']?\*" .github/workflows/
+  grep -rn -iE "allowed_non_write_users:\s*[\"']?\*|allowed_bots:\s*[\"']?\*|allow-users:\s*[\"']?\*|allow-bots:\s*true" .github/workflows/
   ```
 - ✅ PASS: None of A–I present on any AI-agent step that shares a job with deploy/upgrade capability
 - ❌ FAIL: Any of A–I provides an injection path into an agent that can reach the deploy pipeline
@@ -71,9 +82,20 @@ grep -rn -iE "solana program deploy|anchor deploy|anchor upgrade|solana program 
 - ✅ PASS: Agent job declares minimal `permissions:` (`contents: read`), no `id-token`/write scopes it doesn't need, and cannot escalate to deploy
 - ❌ FAIL: Default/broad permissions on a job that also holds deploy secrets
 
+**Step 6: Who can start the agent, what it holds, what it reads on startup**
+```
+grep -rnE --include='*.yml' --include='*.yaml' 'author_association|allowed_non_write_users|allowed_bots|include_comments_by_actor|github_token:|additional_permissions|show_full_output|plugins:|plugin_marketplaces:|add-dir' .github/
+```
+- **Gate.** The job-level `if:` gates on the triggering object's own `author_association`, paired per event (DEP-090..091, KV-139). The action's built-in write check runs only after the job has started, and an agent CLI started from `run:` has none.
+- **Token.** claude-code-action's default GitHub App token requests `contents`, `pull_requests` and `issues` write regardless of the job's `permissions:` block. A bounded setup passes `github_token: ${{ secrets.GITHUB_TOKEN }}` under minimal permissions and never a personal access token (AI-034).
+- **Configuration restore.** With a PR checkout as the working directory, the action must be at v1.0.89 or later, which restores `.claude/`, `.mcp.json`, `.claude.json`, `.gitmodules`, `.ripgreprc`, `CLAUDE.md`, `CLAUDE.local.md` and `.husky` from the base branch. v1.0.74–v1.0.88 restore only the first five. Skills come in through `plugins` / `plugin_marketplaces`, not copies into `.claude/` (AI-035).
+- ✅ PASS: gated per event, bounded token, configuration restored (or no PR checkout as the working directory), no shared cache or artifact with release jobs
+- ⚠️ PARTIAL: action between v1.0.74 and v1.0.88 on a PR checkout, or a hosted setting (OIDC trust policy, environment reviewers) the source does not show
+- ❌ FAIL: mention-only gate, wildcard allowlist, PAT, or an agent CLI / pre-v1.0.74 action started inside an untrusted PR checkout
+
 **Overall verdict:**
-- ✅: Agent job has no deploy/upgrade key, deploy is human-gated, no A–I injection path reaches it, least-privilege permissions
-- ⚠️: Deploy is separated but a co-located injection vector (one of A–I) exists on a lower-privilege agent step
+- ✅: Agent job has no deploy/upgrade key, deploy is human-gated, no A–I injection path reaches it, least-privilege permissions, author-gated trigger and restored configuration
+- ⚠️: Deploy is separated but a co-located injection vector (one of A–I) exists on a lower-privilege agent step, or the configuration restore is partial
 - ❌: AI agent shares a job with deploy/upgrade authority AND an A–I path lets attacker input reach it — prompt-injected malicious program upgrade
 
-*(Vectors A–I credited to the Trail of Bits agentic-actions-auditor plugin; phrased here for a Solana program deploy/upgrade pipeline.)*
+*(Vectors A–I credited to the Trail of Bits agentic-actions-auditor plugin, its "Analyze for Attack Vectors" step; the pre-v1 input names and the composite / `secrets: inherit` boundary follow that skill's 2026-08 revision of its foundations and cross-file-resolution references. Phrased here for a Solana program deploy/upgrade pipeline.)*

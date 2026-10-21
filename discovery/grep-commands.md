@@ -20,6 +20,7 @@
 | [Backend Security](#backend-security) | Auth gaps, CORS, MongoDB injection, rate limiting |
 | [Frontend Security](#frontend-security) | XSS, exposed secrets, unsafe DOM |
 | [Supply Chain](#supply-chain) | Compromised packages, audit, publish dates |
+| [GitHub Actions](#github-actions-ci-trigger-trust) | Comment-trigger gating, expression / env-file injection, `pull_request_target` / `workflow_run` checkouts, artifacts, AI agents in CI |
 | [Infrastructure](#infrastructure) | Build, deploy, upgrade authority |
 | [Formal Verification & Testing](#formal-verification--testing-checklist-16) | Fuzz testing, coverage, static analysis, invariants |
 | [Logging & Monitoring](#logging-monitoring--incident-response-checklist-17) | Events, logging, monitoring, emergency, DR |
@@ -390,6 +391,62 @@ cargo outdated  # if cargo-outdated installed
 # Terminal:
 npx license-checker --summary
 ```
+
+---
+
+## GitHub Actions (CI trigger trust)
+
+> Locators for `references/vuln-classes/github-actions.md`, KV-080, KV-116, KV-139, KV-140, DEP-067..071 / DEP-090..096 and AI-021..035. A hit is a place to read, not a finding: open the whole workflow, then trace trigger → actor → payload → sink → privilege. Every recipe is recursive with `--include` and fully single-quoted where it contains `$` or `!`, so it runs unchanged in bash and zsh and never trips on an unmatched glob. Point the same commands at any `action.yml` / `action.yaml` outside `.github/` (composite actions at the repo root). `scripts/tests/test-gha-recipes.sh` runs R1–R8 exactly as written here against `scripts/tests/fixtures/gha/`.
+
+```bash
+# R1 — files with a comment / review / issue / discussion trigger that never mention author_association
+grep -rlE --include='*.yml' --include='*.yaml' '^[[:space:]]*-?[[:space:]]*(issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues):?[[:space:]]*(#.*)?$|^[[:space:]]*(issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues):[[:space:]]*\{|^on:.*(issue_comment|pull_request_review|discussion|issues)' .github/ | xargs -r grep -L 'author_association'
+```
+> Works per file: a file that gates one job and leaves another open is not listed, so read every job's `if:` (DEP-090, KV-139). A job id named like an event can show up as noise.
+
+```bash
+# R2 — association read from the opener object (correct only on that object's own event branch)
+grep -rnE --include='*.yml' --include='*.yaml' 'github\.event\.(issue|pull_request|discussion)\.author_association' .github/
+```
+> On a comment or review branch these fields describe whoever opened the issue, PR or discussion, not the commenter. A hit is fine only inside the `issues`, `pull_request_target` or `discussion` branch (DEP-090).
+
+```bash
+# R3 — unsound gate comparisons: string contains(), deny-lists, untrusted association values, app/<slug> strings, actor gates
+grep -rnE --include='*.yml' --include='*.yaml' -e "contains\([[:space:]]*'[^']*(OWNER|MEMBER|COLLABORATOR)" -e 'author_association[[:space:]]*!=' -e '!contains\(fromJSON' -e 'github\.(actor|triggering_actor)[[:space:]]*[!=]=' -e "'(CONTRIBUTOR|FIRST_TIMER|FIRST_TIME_CONTRIBUTOR|MANNEQUIN)'" -e "app/[A-Za-z0-9_-]+'" .github/
+```
+> An actor comparison is a sound allowlist on `issue_comment` (the actor is the commenter) and unsound on PR-family and `workflow_run` events (DEP-091).
+
+```bash
+# R4 — workflow_run consumers: head fields and artifact downloads
+grep -rnE --include='*.yml' --include='*.yaml' 'workflow_run\.(head_branch|head_sha|head_commit|head_repository|display_title|pull_requests)|download-artifact|run-id:' .github/
+```
+> DEP-094, KV-140.
+
+```bash
+# R5 — env-file and PATH writes, including tee -a and the github-script core helpers
+grep -rnE --include='*.yml' --include='*.yaml' '(>>|tee[[:space:]]+(-a|--append))[[:space:]]*"?\$\{?GITHUB_(ENV|PATH|OUTPUT)|core\.(exportVariable|addPath)' .github/
+```
+> DEP-095. For each hit, find where the written value comes from.
+
+```bash
+# R6 — attacker-controlled expressions (confirm the sink: run:, script:, an agent prompt field, an env file)
+grep -rnE --include='*.yml' --include='*.yaml' '\$\{\{.*(github\.event\.[a-z_.]*(body|default_branch|email|head_ref|label|message|name|page_name|ref|title|head_branch|display_title)|github\.head_ref|github\.event\.(commits|pages)\[|toJSON\(github\.event)' .github/
+```
+> Matches inside `env:` are the safe shell pattern but still taint agent prompts and env files (DEP-069, AI-023/024).
+
+```bash
+# R7 — checkouts and fetches of PR or run heads, and the checkout-guard opt-out
+grep -rnE --include='*.yml' --include='*.yaml' 'ref:[[:space:]]*\$\{\{[[:space:]]*(github\.event\.(pull_request\.(head\.(sha|ref)|merge_commit_sha)|workflow_run\.head_(sha|branch))|github\.head_ref)|repository:[[:space:]]*\$\{\{[[:space:]]*github\.event\.pull_request\.head\.repo\.full_name|refs/pull/|gh pr checkout|git (fetch|pull|checkout)[^#]*(pull/|head_ref|head\.ref|head\.sha)|allow-unsafe-pr-checkout' .github/
+```
+> DEP-092 (the commit that was approved) and DEP-093 (privileged triggers).
+
+```bash
+# R8 — AI agents in CI, their gates, and pre-v1 claude-code-action input names
+grep -rnE --include='*.yml' --include='*.yaml' 'anthropics/claude-code-action|run-gemini-cli|gemini-cli-action|openai/codex-action|actions/ai-inference|claude -p|@anthropic-ai/claude-code|codex exec|gemini -p|allowed_non_write_users|allowed_bots|allow-users|allow-bots|include_comments_by_actor|direct_prompt|override_prompt|custom_instructions|allowed_tools|disallowed_tools|allowedTools|show_full_output|additional_permissions' .github/
+```
+> AI-023..031, AI-034..035, KV-116. Pre-v1 names (`direct_prompt`, `override_prompt`, `custom_instructions`, `allowed_tools`, `disallowed_tools`) still appear in files pinned to `@v1` or a SHA; read the names in the file, not the ref.
+
+**Tool cross-check (optional, static).** `zizmor --offline --persona=auditor .github/workflows/` and CodeQL's `actions` language cover template injection, env-file writes, dangerous triggers and bot conditions. Neither replaces R1–R3, R7 or R8: on `scripts/tests/fixtures/gha/`, zizmor 1.30.1 did not flag a mention-only gate, the cross-object OR, a deny-list, event text in an agent prompt input, `allowed_non_write_users: "*"` or `allow-unsafe-pr-checkout: true` (details in `references/vuln-classes/github-actions.md` §9).
 
 ---
 
