@@ -30,8 +30,10 @@
 #
 # --before <sig> starts paging just older than that signature (resume a capped run,
 # or skip activity newer than the incident). When the page cap stops paging before
-# --since was reached, the script says so ("window not reached") — the corpus is
-# then incomplete for that address, a collection gap to record in the ledger.
+# --since was reached — or, with only --until set, while still above --until — the
+# script says so ("window not reached"): the corpus is then incomplete for that
+# address, a collection gap to record in the ledger. Signatures are fetched newest
+# first (by slot, across all addresses), so --max-tx drops the oldest.
 #
 # SECRETS: the endpoint comes from $RPC_URL and is NEVER echoed. curl's stderr is
 # captured to a temp file and passed through redact.sh. Output files and the
@@ -86,7 +88,7 @@ trap 'rm -f "$errf" "$todo"' EXIT
 
 # Host only, for disclosure under OUTPUT-RULES.md Rule 11b. Strip scheme, path and
 # any userinfo.
-provider="$(printf '%s' "$RPC_URL" | sed -E 's#^[a-zA-Z]+://##; s#[/?].*$##; s#^[^@]*@##')"
+provider="$(printf '%s' "$RPC_URL" | sed -E 's#^[A-Za-z][A-Za-z0-9+.-]*://##; s#[/?].*$##; s#^[^@]*@##')"
 echo "provider: $provider   (Rule 11b: this host received the queried addresses)"
 echo "addresses: ${#addrs[@]}   window: since=$since until=$until before=${before_start:-<newest>}   caps: max_pages=$max_pages max_tx=$max_tx"
 
@@ -119,17 +121,20 @@ for addr in "${addrs[@]}"; do
   done
   if [ "$reached" -eq 0 ] && [ "$since" -gt 0 ]; then
     echo "  ! window not reached for $addr (oldest=$oldest, since=$since): page cap hit — resume with --before $before, or raise --max-pages; record as a collection gap" >&2
+  elif [ "$reached" -eq 0 ] && [ "$until" -gt 0 ] && [ "$oldest" -gt "$until" ]; then
+    echo "  ! window not reached for $addr (oldest=$oldest, until=$until): the page cap stopped paging above --until, so nothing inside the window was collected — resume with --before $before, or raise --max-pages; record as a collection gap" >&2
   fi
 done
 echo "signatures collected: $collected -> $sig_file"
 
-# 2. unique signatures within [since, until] — failed ones included — capped, then
-#    fetched as transactions. Dedup with sort -u; read from a file (not a pipe) so
-#    the counter survives the loop.
+# 2. unique signatures within [since, until] — failed ones included — newest first
+#    across every address (slot, descending), so a --max-tx cap keeps the most recent
+#    activity; a signature seen under two addresses is kept once, at its first place.
+#    Read from a file (not a pipe) so the counter survives the loop.
 jq -r --argjson s "$since" --argjson u "$until" '
   select(($s == 0) or ((.blockTime // 0) >= $s))
   | select(($u == 0) or ((.blockTime // 0) <= $u))
-  | .signature' "$sig_file" | sort -u > "$todo"
+  | "\(.slot // 0) \(.signature)"' "$sig_file" | sort -k1,1nr | awk '!seen[$2]++ { print $2 }' > "$todo"
 
 fetched=0
 while IFS= read -r sig; do

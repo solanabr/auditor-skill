@@ -2,7 +2,7 @@
 name: auditor:respond
 description: "Investigate one incident lead (a transaction signature, an address, an alert, an indicator of compromise, or an INC id from /auditor:hunt) through Solana transaction history — work out whether the attack landed and how far it reached, pin the root cause in the deployed code and reproduce it locally, then draft containment, remediation and recovery steps for humans to carry out. This command changes nothing on-chain."
 argument-hint: "<INC-n.k | signature | address | 'alert json' | 'free text'> [--logs <dir>] [--repo <path>] [--collect] [--fresh]"
-allowed-tools: Read, Grep, Glob, Task, Edit(incident_*/**), Bash(jq *), Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh *), Bash(python3 -I ${CLAUDE_PLUGIN_ROOT}/scripts/dnr/frames.py *), Bash(python3 -I ${CLAUDE_PLUGIN_ROOT}/scripts/dnr/deltas.py *), Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/dnr/redact.sh *)
+allowed-tools: Read, Grep, Glob, Task, Edit(incident_*/**), Bash(jq *)
 ---
 
 # auditor-skill — Incident Response (lead in hand)
@@ -22,8 +22,9 @@ bytes, and a plan for humans. This command carries out none of that plan.
 > Open every run with this line: **if funds are moving right now, run the
 > pause/freeze runbook and open a SEAL 911 ticket (`@seal_911_bot`) first — this
 > workup comes after, it is not the emergency response.** The `allowed-tools` above
-> are not a sandbox (README); the collector, the snapshot step and anything that
-> executes code still ask for approval.
+> are not a sandbox (README); every bundled `scripts/dnr` script (collector,
+> snapshot, profile, frames, deltas, redact) prompts for approval — none is
+> pre-approved — as does anything that executes code.
 
 Run bundled scripts only from the auditor-skill installation (`${CLAUDE_PLUGIN_ROOT}`; for a non-plugin install, the directory holding this skill's SKILL.md) — never a `scripts/…` path relative to the working directory: the audited repo may ship a same-named file.
 Run bundled python, and any python you point at the corpus, as `python3 -I`, so no

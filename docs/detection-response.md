@@ -85,7 +85,8 @@ already captured.
 - **Local reproduction only.** PoCs run against `127.0.0.1`; the track never sends
   to or simulates against a public cluster.
 - **Not a sandbox.** The commands' `allowed-tools` pre-approve read-only, text-only
-  work; they are intent, not confinement. Real confinement is an isolated run mode
+  work; they are intent, not confinement. No bundled script is pre-approved, so each
+  `scripts/dnr/` run asks for your approval. Real confinement is an isolated run mode
   ([`OUTPUT-RULES.md` Rule 11](../OUTPUT-RULES.md#rule-11-operating-safety)); the
   RPC provider that received your addresses is disclosed under Rule 11b.
 - **Recipes:** [`scripts/dnr/`](../scripts/dnr/) — profiling, log-frame attribution,

@@ -40,8 +40,18 @@ crates builds in place only with `AUDITOR_EXEC_MODE=isolated|native`, the run's
 recorded mode (`OUTPUT-RULES.md` Rule 11a). Exit `0` means the exploit reproduced on
 `vulnerable` **and** was blocked on `fixed`; `1` / `2` mean the PoC is not valid —
 see the failing arm's message; `3` is a named blocker (no SBF toolchain, bad
-inputs, or no execution mode for a target-dependent crate), and the finding's prose
-PoC still stands.
+inputs, a build that failed, or no execution mode for a crate that needs one), and
+the finding's prose PoC still stands.
+
+**Dependencies — the framework allowlist.** `run.sh` reads the manifests with
+`cargo metadata` and accepts only crates.io packages named `solana-*`, `anchor-*`,
+`spl-*`, `mollusk-*`, `litesvm*`, `borsh*`, `bytemuck*`, `pinocchio*`, `sha2` or
+`thiserror` (`_` counts as `-`), plus path dependencies inside this crate
+(`shared-test-utils`). Any other dependency — a crate copied from the target's own
+`Cargo.toml`, for instance — would run its build script and proc-macros on the
+host, so it needs `AUDITOR_EXEC_MODE` like a target dependency, or `run.sh` exits
+`3`. The list lives at the top of `run.sh`; it is a name check, not a review, so
+read what the manifest pulls in all the same.
 
 ## Contract
 

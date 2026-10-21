@@ -66,10 +66,10 @@ account's current value — at `finalized`, not in log text. See
 ## Not a sandbox
 
 These scripts run on the auditor's machine and read whatever corpus they are
-pointed at; `collect.sh` makes outbound RPC calls. The command `allowed-tools`
-lists and these recipes are not a security boundary — they pre-approve the
-expected calls and shape intent (see `references/detection-response/README.md`
-§ "allowed-tools is not a sandbox"). Confinement, when you need it, is an isolated
+pointed at; `collect.sh` makes outbound RPC calls. None of them is pre-approved by
+the commands' `allowed-tools`, so each run asks for approval; those lists, and these
+recipes, shape intent and are not a security boundary (see
+`references/detection-response/README.md` § "allowed-tools is not a sandbox"). Confinement, when you need it, is an isolated
 run mode (`OUTPUT-RULES.md` Rule 11a).
 
 ## Local tooling

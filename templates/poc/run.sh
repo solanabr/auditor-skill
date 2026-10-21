@@ -6,8 +6,9 @@
 #   2. builds the `fixed`      arm to SBF, runs tests/fixed_blocked.rs → same attack must be REJECTED
 # Exit 0: the exploit reproduces on `vulnerable` and is blocked on `fixed` — the
 # evidence that earns [PoC-REPRODUCED]. Exit 1: the exploit did not reproduce. Exit 2:
-# the fixed arm did not block it. Exit 3: a named blocker (toolchain, inputs, or the
-# execution mode below) — record [PoC-ATTEMPTED] and keep the prose PoC.
+# the fixed arm did not block it. Exit 3: a named blocker (toolchain, inputs, a build
+# that failed, or the execution mode below) — record [PoC-ATTEMPTED] and keep the
+# prose PoC.
 #
 # Why two build+test passes and not one: both arms compile to the SAME `.so`
 # filename ({PROGRAM_NAME}.so), so they cannot coexist in SBF_OUT_DIR. Build an arm,
@@ -26,8 +27,9 @@
 # (which can name a `path` toolchain, i.e. any binaries) — target-controlled code at
 # build time, even for a crate that depends on nothing of the target's. So:
 #   * a self-contained crate — no git dependency, no manifest path that leaves this
-#     directory, no `workspace = true`, no symlink, no .cargo/ or rust-toolchain* of
-#     its own — is copied (without target/) into a fresh scratch directory,
+#     directory, no escaped or multi-line TOML string (they cannot be vetted as
+#     text), no `workspace = true`, no symlink, no .cargo/ or rust-toolchain* of its
+#     own — is copied (without target/) into a fresh scratch directory,
 #     `mktemp -d "${TMPDIR:-/tmp}/auditor-poc.XXXXXX"`, and built and tested there
 #     with RUSTUP_TOOLCHAIN pinned to the caller's value, else rustup's default. The
 #     directory is printed, and removed on exit unless KEEP_POC_BUILD=1; the resolved
@@ -37,6 +39,12 @@
 #     It builds in place only when the caller passes the execution mode recorded for
 #     the run, AUDITOR_EXEC_MODE=isolated|native (OUTPUT-RULES.md Rule 11a);
 #     otherwise it exits 3.
+#   * a relocated crate must also keep to the dependency allowlist below, checked
+#     with `cargo metadata` in the scratch copy: crates.io packages of the Solana
+#     frameworks, plus path dependencies inside the crate (shared-test-utils). Any
+#     other dependency — a crate copied from the target's own manifest, say — runs
+#     its build script and proc-macros on this host, so it needs AUDITOR_EXEC_MODE
+#     too (the build stays in the scratch copy); otherwise exit 3.
 #
 # INCIDENT MODE (detection & response, references/detection-response/): Leg 3 of
 # `confirmed_exploited` requires the REAL program bytes, not a minimized replica.
@@ -56,6 +64,12 @@ set -euo pipefail
 
 # ── Fill in ─────────────────────────────────────────────────────────────────────
 CRATE="{PROGRAM_NAME}"          # package name == compiled .so base name
+# ────────────────────────────────────────────────────────────────────────────────
+
+# ── Dependency allowlist (see WHERE IT BUILDS) ──────────────────────────────────
+# crates.io package names, `_` read as `-`: prefixes, then exact names.
+ALLOW_PREFIXES="solana- anchor- spl- mollusk- litesvm borsh bytemuck pinocchio"
+ALLOW_EXACT="sha2 thiserror"
 # ────────────────────────────────────────────────────────────────────────────────
 
 TOOLS_VERSION="${TOOLS_VERSION:-v1.54}"
@@ -130,13 +144,35 @@ fi
 # working directory (it does under a sandbox that denies /tmp), where a listing of
 # the crate would pick them up.
 
+# A TOML comment starts at a '#' outside a string. Cutting at every '#' instead would
+# hide the rest of a value such as path = "x#/../../programs/vault".
+strip_toml_comments() {
+  awk '{
+    out = ""; q = ""; n = length($0)
+    for (i = 1; i <= n; i++) {
+      c = substr($0, i, 1)
+      if (q == "") {
+        if (c == "#") break
+        if (c == "\"" || c == "\047") q = c
+      } else if (q == "\"" && c == "\\") {
+        out = out c; i++; c = substr($0, i, 1)
+      } else if (c == q) {
+        q = ""
+      }
+      out = out c
+    }
+    print out
+  }' "$1"
+}
+
 # Prints why the crate reaches outside its own directory; prints nothing when it is
 # self-contained. Comments are stripped first; a false positive only asks for the
 # execution mode.
 target_dependency() {
   local found list m body IFS=$'\n'
   local re_git='(^|[^[:alnum:]_-])git[[:space:]]*='
-  local re_out="=[[:space:]]*[\"'](/|([^\"']*/)?\\.\\.(/|[\"']))"
+  local re_out="[\"'](/|([^\"']*/)?\\.\\.(/|[\"']))"
+  local re_esc="'''|\"\"\"|[\\\\][uU][0-9A-Fa-f]{4}"
   local re_ws='workspace[[:space:]]*=[[:space:]]*true'
   found="$(cd "${HERE}" && find . \( -name target -type d \) -prune -o \( -type l -o -name .cargo -o -name 'rust-toolchain*' \) -print)"
   if [[ -n "${found}" ]]; then
@@ -146,7 +182,8 @@ target_dependency() {
   list="$(cd "${HERE}" && find . \( -name target -type d \) -prune -o -name Cargo.toml -type f -print)"
   set -f
   for m in ${list}; do
-    body="$(sed 's/#.*//' "${HERE}/${m}")"
+    body="$(strip_toml_comments "${HERE}/${m}")"
+    if [[ "${body}" =~ ${re_esc} ]]; then echo "escaped or multi-line TOML string in ${m#./} (cannot vet)"; break; fi
     if [[ "${body}" =~ ${re_git} ]]; then echo "a git dependency in ${m#./}"; break; fi
     if [[ "${body}" =~ ${re_out} ]]; then echo "a path that leaves the crate in ${m#./}"; break; fi
     if [[ "${body}" =~ ${re_ws} ]]; then echo "a workspace-inherited dependency in ${m#./}"; break; fi
@@ -180,6 +217,59 @@ copy_crate() {  # copy_crate <dest> : the crate's files, never target/, .cargo/ 
     fi
   done
   set +f
+  return 0
+}
+
+# Names every dependency outside the allowlist, as cargo itself reads the manifest
+# (renames, target tables and dotted keys included); prints nothing when all pass.
+# Runs in the scratch copy, after the toolchain pin. Path dependencies must stay
+# inside the crate; registry dependencies must come from crates.io and match
+# ALLOW_PREFIXES / ALLOW_EXACT; every build target's source must be inside the crate.
+DEP_CHECK_PY='
+import json, os, sys
+root = os.path.realpath(sys.argv[1])
+prefixes = tuple(sys.argv[2].split())
+exact = set(sys.argv[3].split())
+crates_io = ("registry+https://github.com/rust-lang/crates.io-index", "sparse+https://index.crates.io/")
+def inside(p):
+    p = os.path.realpath(p)
+    return p == root or p.startswith(root + os.sep)
+try:
+    meta = json.load(sys.stdin)
+except ValueError:
+    print("cargo metadata could not read the manifest")
+    sys.exit(0)
+found = []
+for pkg in meta.get("packages", []):
+    for dep in pkg.get("dependencies", []):
+        name = dep.get("name") or "?"
+        if dep.get("path"):
+            if not inside(dep["path"]):
+                found.append(name + " (path outside the crate)")
+            continue
+        source = dep.get("source") or ""
+        if dep.get("registry") or (source and not source.startswith(crates_io)):
+            found.append(name + " (not from crates.io)")
+            continue
+        norm = name.replace("_", "-")
+        if norm in exact or norm.startswith(prefixes):
+            continue
+        found.append(name)
+    for tgt in pkg.get("targets", []):
+        if not inside(tgt.get("src_path", "")):
+            found.append("target " + (tgt.get("name") or "?") + " (source outside the crate)")
+print(", ".join(sorted(set(found))))
+'
+dependency_check() {
+  local meta
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "python3 is not on PATH to vet the dependency list"; return 0
+  fi
+  if ! meta="$(cargo metadata --no-deps --offline --format-version 1 --manifest-path "${BUILD_DIR}/Cargo.toml" 2>/dev/null)"; then
+    echo "cargo metadata could not read the manifest"; return 0
+  fi
+  printf '%s' "${meta}" | python3 -I -c "${DEP_CHECK_PY}" "${BUILD_DIR}" "${ALLOW_PREFIXES}" "${ALLOW_EXACT}" \
+    || echo "the dependency list could not be vetted"
   return 0
 }
 
@@ -231,9 +321,25 @@ else
     esac
   fi
 fi
-cd "${BUILD_DIR}"
 export SBF_OUT_DIR="${BUILD_DIR}/target/deploy"
-mkdir -p "${SBF_OUT_DIR}"
+if ! { cd "${BUILD_DIR}" && mkdir -p "${SBF_OUT_DIR}"; }; then
+  echo "[PoC-ATTEMPTED] blocker: cannot prepare ${SBF_OUT_DIR}." >&2
+  exit 3
+fi
+if [[ "${BUILD_DIR}" != "${HERE}" ]]; then
+  outside="$(dependency_check)"
+  if [[ -n "${outside}" ]]; then
+    case "${AUDITOR_EXEC_MODE:-}" in
+      isolated|native)
+        echo ">> dependencies outside the framework allowlist (${outside}): building the scratch copy under AUDITOR_EXEC_MODE=${AUDITOR_EXEC_MODE} (OUTPUT-RULES.md Rule 11a)."
+        ;;
+      *)
+        echo "[PoC-ATTEMPTED] blocker: this PoC crate pulls dependencies outside the framework allowlist (${outside}); their build scripts and proc-macros would run on this host. Run it in the execution mode recorded for this run — AUDITOR_EXEC_MODE=isolated inside the isolated runner, or AUDITOR_EXEC_MODE=native (the report then states that code the target chose ran on this host). OUTPUT-RULES.md Rule 11a." >&2
+        exit 3
+        ;;
+    esac
+  fi
+fi
 if [[ "${BUILD_DIR}" == "${HERE}" ]]; then
   echo ">> build dir: ${BUILD_DIR} (in place)"
 else
@@ -243,16 +349,12 @@ fi
 # Print the .so path and a solana-verify-style hash: trailing zero padding (the
 # loader pads a program account well past the ELF — a live JUP6 dump carried
 # ~892 KB of it) is trimmed before hashing, so the digest matches `solana-verify`.
-# python3 runs isolated (-I): `python3 -` would otherwise import a hashlib.py from
+# python3 runs isolated (-I): `python3 -c` would otherwise import a hashlib.py from
 # the caller's working directory, or from PYTHONPATH, in place of the stdlib.
 elf_hash() {
   local path="$1"
   if command -v python3 >/dev/null 2>&1; then
-    python3 -I - "$path" <<'PY'
-import hashlib, sys
-b = open(sys.argv[1], "rb").read().rstrip(b"\x00")
-print(hashlib.sha256(b).hexdigest())
-PY
+    python3 -I -c 'import hashlib, sys; b = open(sys.argv[1], "rb").read().rstrip(b"\0"); print(hashlib.sha256(b).hexdigest())' "$path"
   else
     echo "(hash unavailable: python3 not found)"
   fi
@@ -262,22 +364,37 @@ place_arm() {  # place_arm <arm> : put {CRATE}.so in SBF_OUT_DIR for this arm
   local arm="$1" so="${SBF_OUT_DIR}/${CRATE}.so"
   if [[ "${PREBUILT}" -eq 1 ]]; then
     local src; [[ "${arm}" == "vulnerable" ]] && src="${VULNERABLE_SO}" || src="${FIXED_SO}"
-    cp -f "${src}" "${so}"
+    if ! cp -f "${src}" "${so}"; then
+      echo "[PoC-ATTEMPTED] blocker: could not place the ${arm} .so from ${src}." >&2
+      exit 3
+    fi
     echo ">> ${arm} arm: prebuilt ${src}"
   else
     echo ">> building '${arm}' arm to SBF (${CRATE}.so)"
-    cargo build-sbf \
+    if ! cargo build-sbf \
       --tools-version "${TOOLS_VERSION}" \
       --manifest-path "${BUILD_DIR}/Cargo.toml" \
       --no-default-features --features "${arm}" \
-      --sbf-out-dir "${SBF_OUT_DIR}"
+      --sbf-out-dir "${SBF_OUT_DIR}"; then
+      echo "[PoC-ATTEMPTED] blocker: SBF build failed for the ${arm} arm — see the cargo output above." >&2
+      exit 3
+    fi
   fi
   echo "   ${arm} .so: ${so}"
   echo "   ${arm} sha256 (zero-trimmed): $(elf_hash "${so}")"
 }
 
+build_tests() {  # build_tests <arm> <test>: a test binary that does not compile is a blocker, not a verdict
+  if ! cargo test --manifest-path "${BUILD_DIR}/Cargo.toml" \
+        --no-default-features --features "$1" --test "$2" --no-run; then
+    echo "[PoC-ATTEMPTED] blocker: tests/$2.rs failed to build for the $1 arm — see the cargo output above." >&2
+    exit 3
+  fi
+}
+
 # 1. vulnerable arm — the exploit must land.
 place_arm vulnerable
+build_tests vulnerable exploit
 echo ">> running exploit against 'vulnerable' (expect: SUCCEEDS)"
 if ! cargo test --manifest-path "${BUILD_DIR}/Cargo.toml" \
       --no-default-features --features vulnerable \
@@ -288,6 +405,7 @@ fi
 
 # 2. fixed arm — the same attack must be turned away.
 place_arm fixed
+build_tests fixed fixed_blocked
 echo ">> running same attack against 'fixed' (expect: REJECTED)"
 if ! cargo test --manifest-path "${BUILD_DIR}/Cargo.toml" \
       --no-default-features --features fixed \

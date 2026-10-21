@@ -2,7 +2,7 @@
 name: auditor:hunt
 description: Post-incident threat hunt over Solana transaction history and program logs with NO alert in hand — profile the corpus, run a written hypothesis ledger, confirm suspects in the deployed source, reproduce locally on the real program bytes, and emit incident_<n>/INCIDENTS.json + INCIDENT_REPORT.md. Proposes; never signs, sends, or acts on-chain.
 argument-hint: "[<address> ...] [--logs <dir>] [--repo <path>] [--window <fromUnix>..<toUnix>] [--collect] [--fresh]"
-allowed-tools: Read, Grep, Glob, Task, Edit(incident_*/**), Bash(jq *), Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh *), Bash(python3 -I ${CLAUDE_PLUGIN_ROOT}/scripts/dnr/frames.py *), Bash(python3 -I ${CLAUDE_PLUGIN_ROOT}/scripts/dnr/deltas.py *), Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/dnr/redact.sh *)
+allowed-tools: Read, Grep, Glob, Task, Edit(incident_*/**), Bash(jq *)
 ---
 
 # auditor-skill — Threat Hunt (no alert in hand)
@@ -19,8 +19,9 @@ simulates against a public cluster, pauses, freezes, or contacts anyone.
 
 > The `allowed-tools` above pre-approve only read-only, text-only work; they are
 > **not a sandbox** (README § "allowed-tools is not a sandbox"). `solana`, `curl`,
-> `cargo`, `surfpool` and a bare `python3` still prompt. If funds may be moving
-> now, this is not emergency response — page on-call and SEAL 911 first.
+> `cargo`, `surfpool` and a bare `python3` still prompt, and so does every bundled
+> `scripts/dnr` script — none is pre-approved. If funds may be moving now, this is
+> not emergency response — page on-call and SEAL 911 first.
 
 Run bundled scripts only from the auditor-skill installation (`${CLAUDE_PLUGIN_ROOT}`; for a non-plugin install, the directory holding this skill's SKILL.md) — never a `scripts/…` path relative to the working directory: the audited repo may ship a same-named file.
 Run bundled python, and any python you point at the corpus, as `python3 -I`, so no

@@ -90,6 +90,12 @@ r5="$(red 'header api-key=BAREKEY99&x=1 rejected')"
 eq "redact: bare api-key=value removed" "$r5" "header api-key=REDACTED&x=1 rejected"
 r6="$(red 'plain text, no url')"
 eq "redact: text without a URL is unchanged" "$r6" "plain text, no url"
+r7="$(red 'HTTPS://user:SECRETPW@Host.Example.com/v2/KEYUP done')"
+eq "redact: upper-case scheme, userinfo and path key removed" "$r7" "HTTPS://REDACTED@Host.Example.com/REDACTED done"
+r8="$(red 'wss://rpc.example.com/ws?api-key=WSKEY1 closed')"
+eq "redact: a websocket URL is redacted like https" "$r8" "wss://rpc.example.com/REDACTED closed"
+r9="$(red 'Api-Key=UPPERKEY9 and ACCESS_TOKEN=T0K3N&x=1')"
+eq "redact: key names in any letter case" "$r9" "Api-Key=REDACTED and ACCESS_TOKEN=REDACTED&x=1"
 
 # ---------------------------------------------------------------------------
 # 6. collect.sh is gated: it refuses without --confirmed, and without $RPC_URL,
@@ -163,7 +169,13 @@ req = json.loads(body)
 with open(os.environ["FAKE_CURL_LOG"], "a") as log:
     log.write(json.dumps(req) + "\n")
 m, p = req["method"], req["params"]
-if m == "getSignaturesForAddress":
+if m == "getSignaturesForAddress" and p[0] == "AddrB":
+    res = [
+        {"signature": "SigZnewest", "slot": 9, "err": None, "blockTime": 1700000900},
+        {"signature": "SigAoldest", "slot": 0, "err": None, "blockTime": 1700000100},
+    ]
+    print(json.dumps({"jsonrpc": "2.0", "id": 1, "result": res}))
+elif m == "getSignaturesForAddress":
     res = [] if "before" in p[1] and p[1]["before"] == "SigFail" else [
         {"signature": "SigOK", "slot": 2, "err": None, "blockTime": 1700000500},
         {"signature": "SigFail", "slot": 1, "err": {"InstructionError": [0, {"Custom": 1}]}, "blockTime": 1700000400},
@@ -192,6 +204,16 @@ else
   ok "collect: key absent from stdout/stderr and corpus files"
 fi
 if grep -q 'provider: rpc.example.test ' "$TT/c.out"; then ok "collect: provider disclosed as host only"; else bad "collect: provider line wrong"; fi
+# --max-tx keeps the newest signatures across addresses (by slot), not the first
+# address's or the alphabetically first ones.
+( PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
+    bash "$DNR/collect.sh" --out "$TT/c2" --confirmed --max-pages 1 --max-tx 2 -- AddrA AddrB ) > "$TT/c2.out" 2>&1
+got="$(jq -r '.transaction.signatures[0]' "$TT/c2/transactions.jsonl" 2>/dev/null | tr '\n' ' ')"
+eq "collect: --max-tx 2 fetches the two newest signatures across both addresses" "$got" "SigZnewest SigOK "
+# With only --until set, a page cap that stops above it collected nothing inside the window.
+( PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
+    bash "$DNR/collect.sh" --out "$TT/c3" --confirmed --until 100 --max-pages 1 -- AddrA ) > "$TT/c3.out" 2>&1
+if grep -q 'stopped paging above --until' "$TT/c3.out"; then ok "collect: warns when paging stops above --until"; else bad "collect: no warning for a window above --until"; fi
 
 # ---------------------------------------------------------------------------
 # 11. snapshot-program.sh against a fake `solana`: writes bin/<id>.so, prints the
@@ -215,20 +237,27 @@ else:
     sys.stderr.write("fake solana: refusing unexpected subcommand\n"); sys.exit(9)
 PY
 chmod +x "$TT/bin/solana"
-snap="$(PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/v2/LEAKME42" bash "$DNR/snapshot-program.sh" Prog111 "$TT/inc" 2>&1)"
+PID="ProgTest1111111111111111111111111111111111"   # 42 base58 characters
+snap="$(PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/v2/LEAKME42" bash "$DNR/snapshot-program.sh" "$PID" "$TT/inc" 2>&1)"
 code=$?
 eq "snapshot: exits 0 with the fake CLI" "$code" "0"
-want="$(python3 -I -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read().rstrip(b"\x00")).hexdigest())' "$TT/inc/bin/Prog111.so" 2>/dev/null)"
+want="$(python3 -I -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read().rstrip(b"\x00")).hexdigest())' "$TT/inc/bin/$PID.so" 2>/dev/null)"
 case "$snap" in
   *"last_deployed_slot=12345"*"sha256_zero_trimmed=$want"*"padding_bytes=500"*) ok "snapshot: ledger line carries slot, zero-trimmed hash and padding" ;;
   *) bad "snapshot: unexpected ledger line ($snap)" ;;
 esac
-snapfail="$(PATH="$TT/bin:$PATH" FAKE_SOLANA_FAIL=1 RPC_URL="https://rpc.example.test/v2/LEAKME42" bash "$DNR/snapshot-program.sh" Prog111 "$TT/inc2" 2>&1)"
+snapfail="$(PATH="$TT/bin:$PATH" FAKE_SOLANA_FAIL=1 RPC_URL="https://rpc.example.test/v2/LEAKME42" bash "$DNR/snapshot-program.sh" "$PID" "$TT/inc2" 2>&1)"
 code=$?
 eq "snapshot: CLI failure -> exit 3" "$code" "3"
 case "$snapfail" in *LEAKME42*) bad "snapshot: key leaked from the CLI error" ;; *REDACTED*) ok "snapshot: CLI error redacted" ;; *) bad "snapshot: error text not shown ($snapfail)" ;; esac
-PATH="$TT/bin:$PATH" FAKE_SOLANA_V4=1 RPC_URL="https://rpc.example.test/" bash "$DNR/snapshot-program.sh" Prog111 "$TT/inc3" >/dev/null 2>&1
+PATH="$TT/bin:$PATH" FAKE_SOLANA_V4=1 RPC_URL="https://rpc.example.test/" bash "$DNR/snapshot-program.sh" "$PID" "$TT/inc3" >/dev/null 2>&1
 eq "snapshot: loader-v4 program stops with a named blocker (exit 3)" "$?" "3"
+# The id is used in file names: anything but a base58 key is refused before any write.
+for badid in '../../escape' 'Prog111' 'ProgTest111111111111111111111111111111111/x' 'Prog0OIl1111111111111111111111111111111111'; do
+  PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" bash "$DNR/snapshot-program.sh" "$badid" "$TT/inc5" >/dev/null 2>&1
+  code=$?
+  if [[ "$code" == 2 && ! -e "$TT/inc5" ]]; then ok "snapshot: refuses the id '$badid' (exit 2, nothing written)"; else bad "snapshot: id '$badid' -> exit $code"; fi
+done
 
 # ---------------------------------------------------------------------------
 # 12. Bundled python runs isolated (`python3 -I`). A json.py / re.py / hashlib.py
@@ -251,7 +280,7 @@ iso="$(cd "$EVIL" && PYTHONPATH="$EVIL" python3 -I "$DNR/frames.py" "$FIX/log-ne
 if [[ "$iso" == "$logs" ]]; then ok "isolation: frames.py output unchanged from a hostile cwd + PYTHONPATH"; else bad "isolation: frames.py output changed under a hostile cwd + PYTHONPATH"; fi
 iso="$(cd "$EVIL" && PYTHONPATH="$EVIL" python3 -I "$DNR/deltas.py" tokens "$FIX/same-owner-drain.jsonl" 2>&1)"
 if [[ "$iso" == "$dr" ]]; then ok "isolation: deltas.py output unchanged from a hostile cwd + PYTHONPATH"; else bad "isolation: deltas.py output changed under a hostile cwd + PYTHONPATH"; fi
-iso="$(cd "$EVIL" && PATH="$TT/bin:$PATH" PYTHONPATH="$EVIL" RPC_URL="https://rpc.example.test/" bash "$DNR/snapshot-program.sh" Prog111 "$TT/inc4" 2>&1)"
+iso="$(cd "$EVIL" && PATH="$TT/bin:$PATH" PYTHONPATH="$EVIL" RPC_URL="https://rpc.example.test/" bash "$DNR/snapshot-program.sh" "$PID" "$TT/inc4" 2>&1)"
 case "$iso" in
   *"sha256_zero_trimmed=$want "*) ok "isolation: snapshot-program.sh hashes correctly from a hostile cwd + PYTHONPATH" ;;
   *) bad "isolation: snapshot hash wrong or missing ($iso)" ;;

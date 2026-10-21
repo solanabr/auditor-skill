@@ -212,15 +212,14 @@ read past incidents as prior vulnerabilities from `INCIDENTS.json`
 
 A command's `allowed-tools` list **pre-approves** calls for the turn that runs it;
 it does not restrict what is callable, and it is not a security boundary. We use it
-to pre-approve only read-only, text-only work (`Read`, `Grep`, `Glob`, `Task`,
-writes confined to `incident_*/`, `jq`, and four bundled recipes by absolute path
-under `${CLAUDE_PLUGIN_ROOT}/scripts/dnr/` — `profile.sh`, `redact.sh`, and
-`frames.py` / `deltas.py` behind `python3 -I`). A pattern relative to the working
-directory would pre-approve whatever same-named file the audited repo ships, so
-none is used (rule 8). Everything that touches the chain or executes code —
-`solana`, `curl`, `cargo`, `surfpool`, a bare `python3`, `sqlite3`, `awk`, and the
-networked `collect.sh` / `snapshot-program.sh` — is left to prompt, on
-purpose. The structural barrier against a write-capable tool acting on its own is
+to pre-approve only read-only, text-only work: `Read`, `Grep`, `Glob`, `Task`,
+writes confined to `incident_*/`, and `jq`. No bundled script is pre-approved.
+Claude Code fills in `${CLAUDE_PLUGIN_ROOT}` only in a command's Markdown body, not
+in its frontmatter, so an absolute pattern there would never match; and a pattern
+relative to the working directory would pre-approve whatever same-named file the
+audited repo ships (rule 8). Every `scripts/dnr` run therefore prompts, as does
+everything that touches the chain or executes code — `solana`, `curl`, `cargo`,
+`surfpool`, a bare `python3`, `sqlite3`, `awk` — on purpose. The structural barrier against a write-capable tool acting on its own is
 the **agent's** `tools:` allowlist (`incident-responder` gets no MCP and no
 sub-agent spawning), plus the human confirmation the command runs before it
 collects a corpus. Real confinement is an isolated run mode (Rule 11a).

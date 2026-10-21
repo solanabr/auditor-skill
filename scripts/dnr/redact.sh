@@ -17,10 +17,11 @@
 # Always the installation's copy, never a relative scripts/ path: the audited repo
 # may ship a same-named file.
 #
-# What it does to a URL: keeps the scheme and host, replaces userinfo with
-# REDACTED@, and replaces everything after the host (path and query) with
-# /REDACTED. A trailing ')' or quote that merely ends the URL in prose is kept.
-# A bare `api-key=VALUE` outside a URL is also redacted.
+# What it does to a URL, whatever its scheme (https, HTTPS, wss, ...): keeps the
+# scheme and host, replaces userinfo with REDACTED@, and replaces everything after
+# the host (path and query) with /REDACTED. A trailing ')' or quote that merely ends
+# the URL in prose is kept. A bare `api-key=VALUE` (or token / secret / auth, in any
+# letter case) outside a URL is also redacted.
 #
 # It is a convenience, not a guarantee (a novel key format can slip through), so the
 # rule still holds: never put an RPC URL in INCIDENTS.json, LEDGER.md, or any
@@ -28,7 +29,8 @@
 #
 # Portability: POSIX ERE via `sed -E` only — bracket classes, `?`/`+`/`*`, groups and
 # `\1` backreferences, the `g` flag. No GNU-only extensions and no case-insensitive
-# flag, so BSD and GNU sed read these expressions the same way. bash >= 3.2.
+# flag (letter case is spelled out in bracket classes instead), so BSD and GNU sed
+# read these expressions the same way. bash >= 3.2.
 
 set -uo pipefail
 
@@ -37,7 +39,12 @@ q="'"
 # backtick, closing paren.
 end="[:space:]\"${q}\`)"
 
+# Any URL scheme (RFC 3986: a letter, then letters, digits, + . -).
+scheme='[A-Za-z][A-Za-z0-9+.-]*://'
+# api-key / apikey / api_key, access-token, token, secret, auth — any letter case.
+key='[Aa][Pp][Ii][-_]?[Kk][Ee][Yy]|[Aa][Cc][Cc][Ee][Ss][Ss][-_]?[Tt][Oo][Kk][Ee][Nn]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Aa][Uu][Tt][Hh]'
+
 sed -E \
-  -e "s#(https?://)[^@/?${end}]*@#\\1REDACTED@#g" \
-  -e "s#(https?://[^/?${end}]+)[/?][^${end}]*#\\1/REDACTED#g" \
-  -e "s/((api[-_]?key|apikey|access[-_]?token|token|secret|auth)=)[^&${end}]+/\\1REDACTED/g"
+  -e "s#(${scheme})[^@/?${end}]*@#\\1REDACTED@#g" \
+  -e "s#(${scheme}[^/?${end}]+)[/?][^${end}]*#\\1/REDACTED#g" \
+  -e "s/((${key})=)[^&${end}]+/\\1REDACTED/g"

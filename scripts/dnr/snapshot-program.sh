@@ -33,10 +33,10 @@
 # to a temp file and passed through redact.sh (the CLI echoes the full URL, key
 # included, in its errors). Nothing written to <incident_dir> contains the URL.
 #
-# Exit: 0 ok · 2 usage / no $RPC_URL · 3 named blocker (no solana CLI, CLI error,
-# loader-v4, dump without ELF magic). bash >= 3.2, python3 for the hash, run as
-# `python3 -I` because the working directory is usually the audited repo: without
-# -I, a hashlib.py there would be imported in place of the stdlib module.
+# Exit: 0 ok · 2 usage / not a base58 id / no $RPC_URL · 3 named blocker (no solana
+# CLI, CLI error, loader-v4, dump without ELF magic). bash >= 3.2, python3 for the
+# hash, run as `python3 -I` because the working directory is usually the audited
+# repo: without -I, a hashlib.py there would be imported in place of the stdlib.
 
 set -uo pipefail
 
@@ -46,6 +46,12 @@ REDACT="$HERE/redact.sh"
 pid="${1:-}"; dir="${2:-}"
 if [ -z "$pid" ] || [ -z "$dir" ]; then
   echo "usage: snapshot-program.sh <program_id> <incident_dir>" >&2
+  exit 2
+fi
+# The id becomes part of file names under <incident_dir>/bin/: accept only a base58
+# public key (32-44 characters of the Bitcoin alphabet), so it cannot carry a path.
+if ! [[ "$pid" =~ ^[1-9A-HJ-NP-Za-km-z]{32,44}$ ]]; then
+  echo "snapshot-program.sh: '$pid' is not a base58 program id (32-44 characters of [1-9A-HJ-NP-Za-km-z])." >&2
   exit 2
 fi
 if [ -z "${RPC_URL:-}" ]; then
@@ -92,12 +98,9 @@ if [ "$magic" != "7f454c46" ]; then
   exit 3
 fi
 
-stats="$(python3 -I - "$so" <<'PY'
-import hashlib, sys
+stats="$(python3 -I -c 'import hashlib, sys
 raw = open(sys.argv[1], "rb").read()
-trimmed = raw.rstrip(b"\x00")
-print(hashlib.sha256(trimmed).hexdigest(), len(trimmed), len(raw) - len(trimmed))
-PY
-)"
+trimmed = raw.rstrip(b"\0")
+print(hashlib.sha256(trimmed).hexdigest(), len(trimmed), len(raw) - len(trimmed))' "$so")"
 set -- $stats
 echo "program=$pid owner=${owner:-unknown} last_deployed_slot=${slot:-unknown} authority=${auth:-none} sha256_zero_trimmed=$1 elf_bytes=$2 padding_bytes=$3 file=bin/$pid.so"
