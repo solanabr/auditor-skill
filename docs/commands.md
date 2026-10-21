@@ -27,7 +27,7 @@ Turns the passive `QUESTIONS.md` questionnaire into a persisted `audit_<n>/intak
 **Arg:** `[path] [--auto] [--bootstrap] [--vulns <file|https-url>] [--seed <threat-model.md>] [--design-doc <file>] [--parent <https-url|path>]`
 Builds the pre-review threat model *before* verdicts (analogous to how context reconstruction precedes verdicts): an **asset inventory** (crown-jewel funds/authority/data and where they live), an **actor × capability table** (each actor → what it can do → what it must NOT be able to do — the load-bearing column), and a **trust-boundary map** (every CPI, caller-supplied account, instruction arg, `remaining_accounts`, sysvar that crosses into higher trust, with whether it is validated). Ends with **attacker goals to test** (`AG-n`, each with an Evidence cell), mapped to the checklists/vectors that hunt them.
 **When:** after intake + context, before the manual review. **Emits:** `audit_<n>/threat-model.md` (seeds report §4.4/§4.6/§4.7), plus `audit_<n>/bootstrap/` in bootstrap mode.
-No verdicts, no severities — target enumeration only. `--auto` drives the `threat-modeler` agent; interactive asks the human. **`--bootstrap`** (also implied by `--vulns` / `--seed` / `--parent`, and auto-selected offline when intake records a prior audit or incident, a fork is detected, or prior audits / incidents sit next to the target) runs `scripts/threat-model/collect.sh` first: keyword commits, reverts, removed and quietly added account guards, churn, an optional fork-parent comparison, and prior audit reports (PDF/MD), post-mortems, lists and `INCIDENTS.json`. Network only for an explicit `https://` `--parent` / `--vulns`. Interactively it drafts first, then interviews the team. Method: [threat-model-bootstrap.md](../references/audit-lifecycle/threat-model-bootstrap.md). Every claim cites `file:line` or its evidence; banned words → `UNKNOWN — needs manual review`.
+No verdicts, no severities — target enumeration only. `--auto` drives the `threat-modeler` agent; interactive asks the human. **`--bootstrap`** (also implied by `--vulns` / `--seed` / `--parent`, and auto-selected offline when intake records a prior audit or incident, a fork is detected, or prior audits / incidents sit next to the target) runs the bundled `${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh` first (never a `scripts/` path relative to the audited repo): keyword commits, reverts, removed and quietly added account guards, churn, an optional fork-parent comparison, and prior audit reports (PDF/MD), post-mortems, lists and `INCIDENTS.json`. Network only for an `https://` URL the user passes in `--parent` / `--vulns`, even with `--auto`; automatic trigger runs stay offline and record a detected parent as not cloned. Interactively it drafts first, then interviews the team. Method: [threat-model-bootstrap.md](../references/audit-lifecycle/threat-model-bootstrap.md). Every claim cites `file:line` or its evidence; banned words → `UNKNOWN — needs manual review`.
 
 ---
 
@@ -42,7 +42,7 @@ Uses ToB tooling if present, else the grep scanners (noting the gap).
 ### `/auditor:quick-scan`
 **Arg:** (none)
 Fast triage: discovery + scope + static analysis (ToB `static-analysis` if present, else `discovery/grep-commands.md`) + only CRITICAL/HIGH known-vectors for the detected domains — not the full set.
-**When:** first look, CI gate (on a public repo: pass/fail + counts only — Rule 11d). **Emits:** findings with severity + `file:line`; explicitly states it is a triage pass and points to `/auditor:audit`.
+**When:** first look, CI gate (on a public repo: pass/fail only, no counts — Rule 11d). **Emits:** findings with severity + `file:line`; explicitly states it is a triage pass and points to `/auditor:audit`.
 
 ### `/auditor:deep-review`
 **Arg:** `<file> [function|instruction]`
@@ -62,12 +62,12 @@ Spec-compliance (Mode 5). Extract a requirement list (Spec-IR) from the spec; Ph
 ### `/auditor:audit-cycle`
 **Arg:** `[path] [--scope full|program|backend|frontend]` (+ `--with-poc`)
 **Flow A — fully automated audit team.** Runs the whole lifecycle autonomously (scope → context → threat model → tool-assisted pass → domain-partitioned review → triage → independent reconciliation → synthesis) with no human; applies `QUESTIONS.md` defaults and records each assumption.
-**When:** hands-off engagement → deliverable. **Emits:** the **client-facing** `audit_<n>/REPORT.md` (maturity narrative + trust-model caveats + disclaimers, **no deploy guarantee**), optional PDF, `harnesses/` if any were generated, and — with `--with-poc` — `poc/` + `patches/` for confirmed N≥7. Full detail: [audit-flows.md](audit-flows.md#flow-a--audit-cycle-automated).
+**When:** hands-off engagement → deliverable. **Emits:** the **client-facing** `audit_<n>/REPORT.md` (maturity narrative + trust-model caveats + disclaimers, **no deploy guarantee**), optional PDF, `harnesses/` if any were generated, and — with `--with-poc` — `poc/` + `patches/` for confirmed N≥7. Full detail: [audit-flows.md](audit-flows.md#flow-a--auditoraudit-cycle-automated).
 
 ### `/auditor:audit-assist`
 **Arg:** `[path] [--scope full|program|backend|frontend]`
 **Flow B — human-in-the-loop.** Same lifecycle as `audit-cycle`, but pauses at checkpoints (after scope, context, each review phase, triage, reconciliation) to surface (a) confirmed findings, (b) next-focus plan, (c) the targeted questions only a human can answer, then folds answers back in.
-**When:** business-logic / trust-model judgment matters. **Emits:** the same client-facing report, converged iteratively. Detail: [audit-flows.md](audit-flows.md#flow-b--audit-assist-interactive).
+**When:** business-logic / trust-model judgment matters. **Emits:** the same client-facing report, converged iteratively. Detail: [audit-flows.md](audit-flows.md#flow-b--auditoraudit-assist-interactive).
 
 ---
 
@@ -120,10 +120,10 @@ Post-incident only — never part of an audit. Both commands are propose-only: t
 
 ### `/auditor:hunt`
 **Arg:** `[<address> ...] [--logs <dir>] [--repo <path>] [--window <fromUnix>..<toUnix>] [--collect] [--fresh]`
-Threat hunt with **no alert in hand**: profiles a Solana transaction corpus (your own `--logs` export first; otherwise a gated, capped RPC collection that runs only after you confirm the addresses, window and call budget — `--collect` in non-interactive runs), works a written hypothesis → query → pivot ledger, confirms suspects in the deployed source via `context-builder`, and reproduces them locally on the program's real bytes via `poc-engineer`. Driven by the `incident-responder` agent.
-**When:** you suspect an attack but have no specific lead. **Emits:** `incident_<n>/LEDGER.md`, `INCIDENTS.json` and `INCIDENT_REPORT.md` (the run directory's first file is a `.gitignore` of `*`). `confirmed_exploited` needs all three legs (on-chain effect, flaw in deployed source, local PoC on the real bytes); otherwise `suspected`.
+Threat hunt with **no alert to start from**: snapshots the deployed programs first, then baselines a Solana transaction corpus (your own `--logs` export first; otherwise a gated, capped RPC collection that runs only after you confirm the addresses, window and call budget — `--collect` in non-interactive runs), tests hypotheses one query at a time in a written ledger, confirms suspects in the deployed source via `context-builder`, and reproduces them on the program's real bytes via `poc-engineer`. Driven by the `incident-responder` agent.
+**When:** you suspect an attack but have no specific lead. **Emits:** `incident_<n>/LEDGER.md`, `INCIDENTS.json`, `INCIDENT_REPORT.md` and the program snapshot under `bin/` (the run directory's first file is a `.gitignore` of `*`). Verdicts follow the [one normative ladder](../references/detection-response/README.md#the-verdict-ladder-the-one-normative-copy).
 
 ### `/auditor:respond`
 **Arg:** `<INC-n.k | signature | address | 'alert json' | 'free text'> [--logs <dir>] [--repo <path>] [--collect] [--fresh]`
-Works **one lead** — a signature, an address, an alert line, an IOC or a hunt's `INC-<n>.<k>`: scopes it one ring out, decides whether the attack succeeded, quantifies the blast radius per mint, confirms the root cause in the deployed source with a local PoC, and drafts a containment / remediation / recovery plan.
-**When:** an alert fired or funds are known to be gone — after the pause/freeze runbook and a SEAL 911 ticket, never instead of them. **Emits:** the enriched `incident_<n>/INCIDENTS.json` and `RESPONSE-INC-<n>.<k>.md` — a **proposed** plan; nothing in it has been executed.
+Takes **one lead** — a transaction signature, an address, an alert, an indicator of compromise, or an `INC-<n>.<k>` from a hunt — and widens it by one ring of related accounts and signers; it then settles whether the attack landed, sizes the damage per mint, pins the root cause in the deployed source, reproduces it locally on the real bytes, and drafts containment, remediation and recovery steps for people to carry out.
+**When:** an alert fired or funds are known to be gone — after the pause/freeze runbook and a SEAL 911 ticket, never instead of them. **Emits:** the enriched `incident_<n>/INCIDENTS.json` and `RESPONSE-INC-<n>.<k>.md` — a **proposed** plan that people approve and carry out; the command performs none of it.

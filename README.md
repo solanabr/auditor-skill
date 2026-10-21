@@ -23,7 +23,7 @@ auditor-skill is a **skill file** (a structured prompt + checklists) that turns 
 
 ## What It Does (v7.6)
 
-- **Detection & response, post-incident (v7.6).** `/auditor:hunt` sweeps transaction history, program logs and Geyser/indexer exports with a written hypothesis ledger; `/auditor:respond` takes a signature, address or alert and answers did-it-succeed / blast radius / root cause. Confirmed exploitation needs an on-chain effect + the flaw in deployed source + a local PoC on the real bytes; the response plan is proposed, never executed. Ported Solana-native from Anthropic's defending-code-reference-harness.
+- **Detection & response, post-incident (v7.6).** `/auditor:hunt` works through transaction history, program logs and Geyser/indexer exports with a written hypothesis ledger; `/auditor:respond` starts from a signature, address or alert and establishes whether the attack landed, how far it reached, and why. Verdicts follow a single [ladder](references/detection-response/README.md#the-verdict-ladder-the-one-normative-copy); the response plan is for humans to carry out — the track acts on nothing. Ported Solana-native from Anthropic's defending-code-reference-harness.
 - **History-seeded threat models (v7.6).** `/auditor:threat-model --bootstrap` starts the threat model from what already went wrong: removed or quietly added account guards, reverts and fix commits in the target's history, a fork's distance from its parent, prior audit reports, post-mortems and incident records. One read-only, hardened collector (`scripts/threat-model/collect.sh`) gathers it; autonomous runs stay offline, and every goal cites its evidence.
 - **GitHub Actions trigger trust (v7.6).** A CI playbook (`references/vuln-classes/github-actions.md`) for the shapes an outside account uses to reach a privileged job — comment-triggered commands without per-event author gating, expression and env-file injection, `pull_request_target` / `workflow_run` pwn requests with artifact and cache poisoning, and AI coding agents in CI — with KV-139/140, checklist 13 §13.13 (DEP-090..096), AI-034..035, read-only rules of engagement, and zsh-safe locator recipes backed by a fixture self-test.
 - **Operating safety & dependency-update review (v7.6).** A new OUTPUT-RULES Rule 11 covers four things. Target code runs in the execution mode chosen at intake (isolated recommended; native allowed, with a report caveat). Outside-service use is disclosed. Untrusted `.git/` checkouts are read without letting git run their config. Audit output never reaches git or a public CI log. Checklist 11 §11.11 (SC-059..062) reviews what a dependency bump's *published code* actually changed, wired into `/auditor:diff-audit` and `/auditor:re-audit`. KV-077 and SC-005 now catch the hijacked `@solana/web3.js` 1.95.6 / 1.95.7 releases.
@@ -240,7 +240,7 @@ auditor-skill/
 │
 ├── docs/                    ← Usage guides (start at docs/README.md)
 ├── scripts/                 ← report-to-pdf.sh, check-corpus.sh, tob-delta-review.sh + the no-attribution commit hook
-│   ├── dnr/                 ← detection & response recipes (gated RPC collector, corpus profile, log frames, balance deltas)
+│   ├── dnr/                 ← detection & response recipes (gated RPC collector, program snapshot, corpus profile, log frames, balance deltas)
 │   ├── threat-model/        ← collect.sh — the read-only threat-model bootstrap collector
 │   └── tests/               ← script self-tests (+ fixtures/gha/, workflows that are never executed)
 ├── AGENTS.md                ← Agent-orchestration overview
@@ -400,7 +400,7 @@ A: See [COSTS.md](COSTS.md). For maximum depth, use Opus 4 or o3. For best value
 A: Depends on repo size and model. A 50K-line repo takes 60-90 minutes with Opus 4. See [COSTS.md](COSTS.md) for full estimates.
 
 **Q: Can I use this in CI/CD?**
-A: Yes — run the QUICK scope (known vectors grep scan) on every PR, and FULL scope on release branches. On a public repository the job posts pass/fail and counts only: logs and uploaded artifacts are readable by any signed-in GitHub user, so finding details go to a private channel (OUTPUT-RULES Rule 11d).
+A: Yes — run the QUICK scope (known vectors grep scan) on every PR, and FULL scope on release branches. On a public repository the job posts pass/fail only — no finding counts: logs and uploaded artifacts are readable by any signed-in GitHub user, so finding details go to a private channel (OUTPUT-RULES Rule 11d).
 
 **Q: Can I use this for non-Solana projects?**
 A: Yes — checklists 08-18 are language-agnostic or cover Python/Go/Java/Ruby/PHP. Checklists 01-07 are Solana-specific.
@@ -413,7 +413,7 @@ auditor-skill stands on the shoulders of these open-source security projects —
 
 - **[Frank Castle](https://github.com/Frankcastleauditor) — [safe-solana-builder](https://github.com/Frankcastleauditor/safe-solana-builder)** (MIT): Solana security depth — reward/staking accounting, Token-2022 extension abuse, framework validation idioms, zero-copy footguns — adapted natively and re-authored audit-side.
 - **[Trail of Bits](https://github.com/trailofbits) — [skills](https://github.com/trailofbits/skills)** (CC-BY-SA 4.0): tool-execution methodology (SAST, fuzzing, coverage, mutation, IR analysis), vendored as a git submodule at `vendor/trailofbits` and orchestrated for real execution; methodology patterns re-implemented natively are credited by reference.
-- **[Anthropic](https://github.com/anthropics) — [defending-code-reference-harness](https://github.com/anthropics/defending-code-reference-harness)** (Apache-2.0): the detection & response method (hypothesis ledger, three-leg verdict ladder, propose-never-execute response plans), re-expressed Solana-native in `/auditor:hunt` and `/auditor:respond`; the threat-model bootstrap / bootstrap-then-interview pattern, re-expressed for Solana in `/auditor:threat-model --bootstrap`.
+- **[Anthropic](https://github.com/anthropics) — [defending-code-reference-harness](https://github.com/anthropics/defending-code-reference-harness)** (Apache-2.0): the detection & response method (a written hypothesis ledger, a three-leg verdict ladder, response plans that people carry out), re-expressed Solana-native in `/auditor:hunt` and `/auditor:respond`; the threat-model bootstrap / bootstrap-then-interview pattern, re-expressed for Solana in `/auditor:threat-model --bootstrap`.
 - **[Sentry](https://github.com/getsentry) — [gha-security-review](https://github.com/getsentry/skills/tree/main/skills/gha-security-review)** (Apache-2.0, in [getsentry/skills](https://github.com/getsentry/skills)): the GitHub Actions vector inventory behind `references/vuln-classes/github-actions.md`, re-written natively (no text copied).
 
 All third-party methodology is used by *reference* — no third-party text is copied into this repository.

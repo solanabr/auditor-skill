@@ -12,8 +12,8 @@ auditor-skill offers a spectrum from a 5-minute grep triage to a full automated 
 | Only a PR / commit range changed | [`/auditor:diff-audit`](#cheap-lanes) | scales with the diff |
 | One handler / endpoint needs a deep look | [`/auditor:deep-review`](#one-shot-audit) | one unit |
 | Whole repo, one pass, you drive triage | [`/auditor:audit`](#one-shot-audit) | full walk |
-| Full engagement, no human, deliver a report | [`/auditor:audit-cycle`](#flow-a--audit-cycle-automated) | highest |
-| Full engagement, human resolves judgment calls | [`/auditor:audit-assist`](#flow-b--audit-assist-interactive) | high, iterative |
+| Full engagement, no human, deliver a report | [`/auditor:audit-cycle`](#flow-a--auditoraudit-cycle-automated) | highest |
+| Full engagement, human resolves judgment calls | [`/auditor:audit-assist`](#flow-b--auditoraudit-assist-interactive) | high, iterative |
 | Team fixed the findings; verify the fixes | [`/auditor:re-audit`](#fix-review--re-audit) | delta only |
 | A protocol may already have been attacked | [`/auditor:hunt` · `/auditor:respond`](detection-response.md) | scales with ledger rounds |
 
@@ -28,7 +28,7 @@ intake / scope     → declare scope (Rule 0), pin the commit, persist audit_<n>
    ↓
 context (Phase 0.5)→ context-builder reconstructs invariants/assumptions per function (no verdicts)
    ↓
-threat model       → threat-modeler emits assets · actor×capability · trust boundaries · AG-n goals (no verdicts); history-seeded via collect.sh when a trigger fires
+threat model       → threat-modeler emits assets · actor×capability · trust boundaries · AG-n goals (no verdicts); history-seeded by the bundled collector when a trigger fires
    ↓
 tool-assisted pass → ToB static-analysis (SARIF) up-front to clear the mechanical surface; else grep
    ↓
@@ -126,7 +126,7 @@ These skip the full item-by-item walk.
 
 ### `/auditor:quick-scan`
 
-Discovery + static analysis (ToB `static-analysis` if present, else grep scanners) + only the CRITICAL/HIGH known-vectors for the detected domains. Reports findings with severity + `file:line`, and states plainly it is a triage pass. Good for a first look or a CI gate; points to `/auditor:audit` for full coverage. As a CI gate on a public repository it publishes pass/fail and counts only — in comments, logs and artifacts — and sends details through a private channel, never falling back to printing them (`OUTPUT-RULES.md` Rule 11d).
+Discovery + static analysis (ToB `static-analysis` if present, else grep scanners) + only the CRITICAL/HIGH known-vectors for the detected domains. Reports findings with severity + `file:line`, and states plainly it is a triage pass. Good for a first look or a CI gate; points to `/auditor:audit` for full coverage. As a CI gate on a public repository it publishes pass/fail only — no finding counts — in comments, logs and artifacts, and sends details through a private channel, failing the job when none is available and never falling back to printing them (`OUTPUT-RULES.md` Rule 11d).
 
 ### `/auditor:diff-audit`
 

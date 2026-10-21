@@ -95,7 +95,7 @@ Audit-method principles and CI attack classes, re-expressed natively in our own 
 
 | Cloudflare idea | auditor-skill implementation |
 |-----------------|------------------------------|
-| Code the audited repository controls is executed under an explicit, recorded execution policy | `OUTPUT-RULES.md` Rule 11a — Execution mode |
+| Code the audited repository controls runs only inside a sandbox that holds no credentials — otherwise it does not run | `OUTPUT-RULES.md` Rule 11a (our isolated mode; native allowed with a caveat) |
 | Keep audit output out of version control and public CI | `OUTPUT-RULES.md` Rule 11d — Output hygiene |
 | CI and automation classes, universal moves (`skills/security-audit/SUPPLY-CHAIN-AND-RELEASE.md`) | `references/vuln-classes/github-actions.md` §0 (hosted settings graded PARTIAL), §3.5 (resource-selecting inputs), §4.2 (matrix values and artifact names as taint), §5.5 (persisted-channel map) — paraphrased |
 
@@ -106,7 +106,7 @@ External security skill packs reviewed for anything to absorb. Re-checked at eac
 | Source | Licence | Assessed commit | Verdict | What we took → where | Re-check trigger |
 |--------|---------|-----------------|---------|----------------------|------------------|
 | [anza-xyz/claude-skills](https://github.com/anza-xyz/claude-skills) (2★ at assessment) | none (all rights reserved) | `0ec828e` (tag v1.1.0; 3 commits: 2 on main + PR head `5e9b2be`) | Watch; idea re-implemented independently, no text used | Review of a dependency bump's published code delta → `checklists/11` §11.11, `/auditor:diff-audit` dependency lane; findings kept out of public CI → Rule 11d | It gains a LICENSE, or adds skill/command content |
-| [cloudflare/security-audit-skill](https://github.com/cloudflare/security-audit-skill) | MIT | `c1c8a8c` | Absorb principles only; not vendored (109 of its 162 attack classes are already covered or partly covered here) | Execution-mode and output-hygiene principles → `OUTPUT-RULES.md` Rule 11a / 11d; CI-trigger principles → `references/vuln-classes/github-actions.md` (see the Cloudflare section above) | Each release PR |
+| [cloudflare/security-audit-skill](https://github.com/cloudflare/security-audit-skill) | MIT | `c1c8a8c` | Absorb principles only; not vendored (109 of its 162 attack classes are already covered or partly covered here) | Execution isolation → `OUTPUT-RULES.md` Rule 11a (our isolated mode; native allowed with a caveat); output hygiene → Rule 11d; CI-trigger principles → `references/vuln-classes/github-actions.md` (see the Cloudflare section above) | Each release PR |
 
 ## Knowledge sources
 

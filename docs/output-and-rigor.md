@@ -106,10 +106,10 @@ Like a real firm, the **client-facing report issues no "safe to deploy" guarante
 
 ## Operating safety (Rule 11)
 
-- **Execution mode (11a).** Builds, tests, installs and target-building PoCs run in the mode chosen at intake (`Q46`): **isolated** (recommended; container / VM / sandbox, no keys mounted) or **native** (allowed; the report says target code ran on the auditor's machine). A step that cannot run in the chosen mode falls back to `[PoC-ATTEMPTED]` / `[FIX-PROPOSED]` / a source-level verdict with a confidence note.
+- **Execution mode (11a).** Builds, tests, installs, and PoCs that depend on target crates, build the target or are built inside its tree run in the mode chosen at intake (`Q46`) — cargo and rustup read config from every parent directory, so the only exempt PoC is a self-contained crate that `templates/poc/run.sh` builds from a copy outside the tree with a pinned toolchain: **isolated** (recommended; container / VM / sandbox, no keys mounted) or **native** (allowed; the report says target code ran on the auditor's machine). A step that cannot run in the chosen mode falls back to `[PoC-ATTEMPTED]` / `[FIX-PROPOSED]` / a source-level verdict with a confidence note.
 - **Outside services (11b).** No consent gate. The report lists each tool, the service it contacted, and what it sent.
-- **Untrusted git checkouts (11c).** In a `.git/` the auditor did not clone, git runs with `-c core.fsmonitor=false` and diffs with `--no-textconv --no-ext-diff`; nothing is checked out there.
-- **Output hygiene (11d).** Each output directory's first file is a `.gitignore` containing `*`; CI on a public repo posts pass/fail and counts only.
+- **Untrusted git checkouts (11c).** In a `.git/` the auditor did not clone, git runs as `git --no-pager -c core.fsmonitor=false -c log.showSignature=false`; `--no-textconv` goes on `git log -p` / `show` / `diff` / `blame` and `--no-ext-diff` on diffs; no `--show-signature` or `%G` placeholders; only committed revisions are read (blame names a revision; no `git status` or working-tree diffs); nothing is checked out, merged, committed, fetched, pulled, pushed or `ls-remote`d there. Better: audit a `git clone --no-local` copy made with git 2.45.1+ (or the matching maintenance release).
+- **Output hygiene (11d).** Each output directory's first file is a `.gitignore` containing `*` (for `.audit-memory/`, before the first `audit-mem` call); CI on a public repo posts pass/fail only, never counts or findings.
 
 ## Report file naming
 

@@ -55,7 +55,7 @@ The fan-out is **domain-partitioned, not N identical clones** — naive N-way fa
 ### threat-modeler
 **Role:** enumerate what an attacker would *want* and *where they could push*, before any bug is judged. No severities, no verdicts.
 **Produces:** `audit_<n>/threat-model.md` — asset inventory, actor × capability table (the "must NOT" column is the security property later phases test), trust-boundary map (each crossing marked validated or `✗`), and **attacker goals to test** mapped to checklists/vectors.
-**Inputs:** the code, the context worksheets, `intake.md` §6 (the trust-model actor list), `audit-mem warm` if built, and in bootstrap mode the collector's `audit_<n>/bootstrap/` output (git history, fork-parent hints, prior audits, post-mortems, allowlisted incident fields). It stays `Read, Grep, Glob`: `scripts/threat-model/collect.sh` runs the git.
+**Inputs:** the code, the context worksheets, `intake.md` §6 (the trust-model actor list), `audit-mem warm` if built, and in bootstrap mode the collector's `audit_<n>/bootstrap/` output (git history, fork-parent hints, prior audits, post-mortems, allowlisted incident fields). It stays `Read, Grep, Glob`: the bundled `${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh` runs the git.
 **Downstream:** seeds report §4.4/§4.6/§4.7 and hands the reviewers concrete goals to falsify. A goal that turns out reachable becomes a finding downstream — through the Rule 5b gate, not here.
 
 ### vuln-hunter
@@ -93,7 +93,7 @@ It assembles; it does not re-judge — de-dup and severity classification only.
 ### incident-responder
 **Role:** drives the post-incident detection & response track behind `/auditor:hunt` and `/auditor:respond` — profiles a Solana transaction corpus, keeps the hypothesis ledger, scopes a lead, decides whether an attack succeeded and quantifies its blast radius. Never part of an audit.
 **Produces:** `incident_<n>/LEDGER.md` and `INCIDENTS.json`, plus `INCIDENT_REPORT.md` (hunt) or a proposed `RESPONSE-INC-<n>.<k>.md` (respond). The command spawns `context-builder` for source confirmation and `poc-engineer` for the local PoC on the program's real bytes, and hands their results to this agent.
-**Hard rules:** query the corpus with the shipped `scripts/dnr/` recipes and `jq` — never read it into context; program logs are hints, never proof of a state change; `confirmed_exploited` needs all three legs (finalized on-chain effect, the flaw in the source deployed at the incident slot, a local `[PoC-*]` on the real bytes), otherwise `suspected`; it proposes containment and never performs it. Contract: [`references/detection-response/README.md`](../references/detection-response/README.md).
+**Hard rules:** query the corpus with the bundled recipes and `jq` — never read it into context; the recipes run from the installation (`"${CLAUDE_PLUGIN_ROOT}/scripts/dnr/…"`, python as `python3 -I`), never as a `scripts/` path relative to the audited repo; program logs are hints, never proof of a state change; verdicts follow the [one normative ladder](../references/detection-response/README.md#the-verdict-ladder-the-one-normative-copy); it proposes containment and never performs it. Contract: [`references/detection-response/README.md`](../references/detection-response/README.md).
 **Tools:** `Read, Grep, Glob, Bash, Write` — no MCP tools and no `Task`, so it cannot reach a write-capable chain tool or spawn sub-agents.
 
 ## Graceful degradation

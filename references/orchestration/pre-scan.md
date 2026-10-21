@@ -81,6 +81,8 @@ audit-mem regressions --program-id <id>                    # findings that went 
 audit-mem warm --program-id <id>                           # {profile, invariants[], open_fp_rulings[]}
 ```
 
+Before the first `audit-mem` call of a run, write `.audit-memory/.gitignore` containing `*` — `mkdir -p .audit-memory && printf '*\n' > .audit-memory/.gitignore` (`OUTPUT-RULES.md` Rule 11d). The tool creates the directory itself, and the intake warm-up is often its first call.
+
 Where each phase uses it:
 
 - **Intake / Phase 0** — `audit-mem warm --program-id <id>` injects the prior protocol profile, known invariants, and open false-positive rulings. A re-audit starts **warm** instead of from zero.

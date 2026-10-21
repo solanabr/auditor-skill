@@ -17,8 +17,8 @@ Commands are namespaced `auditor`, so you invoke them as `/auditor:audit`, `/aud
 | Audit only a PR / commit range | `/auditor:diff-audit [base..head]` | [commands.md](commands.md#auditordiff-audit) |
 | Deep-dive one instruction / function | `/auditor:deep-review <file> [fn]` | [commands.md](commands.md#auditordeep-review) |
 | Code-vs-spec conformance | `/auditor:spec-audit <spec> [path]` | [commands.md](commands.md#auditorspec-audit) |
-| Full automated engagement → client report | `/auditor:audit-cycle` | [audit-flows.md](audit-flows.md#flow-a--audit-cycle-automated) |
-| Human-in-the-loop engagement | `/auditor:audit-assist` | [audit-flows.md](audit-flows.md#flow-b--audit-assist-interactive) |
+| Full automated engagement → client report | `/auditor:audit-cycle` | [audit-flows.md](audit-flows.md#flow-a--auditoraudit-cycle-automated) |
+| Human-in-the-loop engagement | `/auditor:audit-assist` | [audit-flows.md](audit-flows.md#flow-b--auditoraudit-assist-interactive) |
 | Review a fix round against a prior report | `/auditor:re-audit [prior] [base..head]` | [commands.md](commands.md#auditorre-audit) |
 | Set up scope + trust model before auditing | `/auditor:intake` (alias `/scope`) | [commands.md](commands.md#auditorintake) |
 | Enumerate assets / actors / trust boundaries | `/auditor:threat-model` | [commands.md](commands.md#auditorthreat-model) |
@@ -29,7 +29,7 @@ Commands are namespaced `auditor`, so you invoke them as `/auditor:audit`, `/aud
 | Draft + verify a fix patch | `/auditor:patch <finding-id>` | [poc-and-patches.md](poc-and-patches.md) |
 | Assemble a report from checkpoints | `/auditor:audit-report [dir]` | [commands.md](commands.md#auditoraudit-report) |
 | Find out whether we were attacked (no alert) | `/auditor:hunt [address…]` | [detection-response.md](detection-response.md) |
-| Work an alert or a drained protocol: did it succeed, how far, what now | `/auditor:respond <signature / address / INC-n.k>` | [detection-response.md](detection-response.md) |
+| Work an alert or a drained protocol: outcome, damage, next steps | `/auditor:respond <signature / address / INC-n.k>` | [detection-response.md](detection-response.md) |
 | Cut audit token cost ~30-40% | build `audit-scan` | [power-tools.md](power-tools.md#audit-scan) |
 | Remember findings across audits | build `audit-mem` | [power-tools.md](power-tools.md#audit-mem) |
 

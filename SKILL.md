@@ -137,10 +137,10 @@ Honestly scoped: this is audit-shaped automation / a rigorous first pass, not a 
 
 Everything above is pre-deployment. When a protocol may already have been attacked:
 
-- **`/auditor:hunt`** — no alert in hand: profile the corpus (finalized `getTransaction` history, program logs, Geyser/indexer exports), run hypothesis → query → pivot with a written ledger, confirm suspects in the deployed source, reproduce locally → `incident_<n>/INCIDENTS.json` + `INCIDENT_REPORT.md`.
-- **`/auditor:respond <lead>`** — a signature, address, alert, or `INC-<n>.<k>`: did it succeed, blast radius per mint, root cause, and a containment / remediation / recovery plan that is **proposed, never executed** → `RESPONSE-INC-<n>.<k>.md`.
+- **`/auditor:hunt`** — no alert to start from: snapshot the deployed programs, baseline the transaction history (finalized `getTransaction`, program logs, Geyser/indexer exports), test hypotheses one query at a time in a written ledger, confirm suspects in the deployed source, reproduce on the real bytes → `incident_<n>/INCIDENTS.json` + `INCIDENT_REPORT.md`.
+- **`/auditor:respond <lead>`** — a signature, address, alert, or `INC-<n>.<k>`: whether the attack landed, the damage per mint, the root cause, and a containment / remediation / recovery plan written for humans to carry out → `RESPONSE-INC-<n>.<k>.md`.
 
-`confirmed_exploited` needs all three: a finalized on-chain effect (log text never counts); the flaw in the source deployed at the incident slot; and a local `[PoC-REPRODUCED]`/`[PoC-SIM-REPRODUCED]` fired this session on the program's real bytes. Otherwise `suspected`. The track never signs, sends, or simulates against a public cluster. Contract: [references/detection-response/README.md](references/detection-response/README.md).
+Verdicts follow the single normative ladder in [references/detection-response/README.md](references/detection-response/README.md#the-verdict-ladder-the-one-normative-copy). The track never signs, sends, or simulates against a public cluster.
 
 ---
 

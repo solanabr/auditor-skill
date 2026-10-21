@@ -31,7 +31,7 @@ audit_<n>/
     └── VERIFICATION.md           the executed-revert record + fix tier
 ```
 
-The crate the `poc-engineer` fills is copied from `templates/poc/`; the patch templates from `templates/patch/`. `run.sh` builds each arm to SBF and runs its test (both arms compile to the same `.so`, so they can't coexist — it builds, tests, overwrites), and exits non-zero if the exploit doesn't reproduce on `vulnerable` or isn't blocked on `fixed`.
+The crate the `poc-engineer` fills is copied from `templates/poc/`; the patch templates from `templates/patch/`. `run.sh` builds each arm to SBF and runs its test (both arms compile to the same `.so`, so they can't coexist — it builds, tests, overwrites), and exits non-zero if the exploit doesn't reproduce on `vulnerable` or isn't blocked on `fixed`. It never builds inside the audited repo: a self-contained crate is copied to a scratch directory outside the target tree (the path is printed) and built with the toolchain pinned, so the target's `.cargo/config*` and `rust-toolchain*` never apply; a crate that `path`- or `git`-depends on target crates builds in place only with `AUDITOR_EXEC_MODE` set to the run's recorded mode ([Rule 11a](../OUTPUT-RULES.md#rule-11-operating-safety)), and otherwise exits 3 → `[PoC-ATTEMPTED]`.
 
 ## `--with-poc` vs on-demand
 
@@ -63,7 +63,7 @@ By default only **High/Critical (N≥7)** findings earn an executable PoC (a run
 | **Trident** | `trident --version` | coverage-guided multi-instruction fuzzing | try `cargo fuzz`; else prose → `[PoC-ATTEMPTED]` |
 | **cargo-fuzz** | `cargo fuzz --version` | fuzz a single pure function | hand-written failing unit test on the boundary; else `[PoC-ATTEMPTED]` |
 
-> The default `cargo-build-sbf` bundle is platform-tools **v1.51 / cargo 1.84**, which **cannot** parse the `edition2024` manifests in the modern `mollusk-svm`/`litesvm` dep tree. `run.sh` pins `--tools-version v1.54` (cargo ≥ 1.85) to build the graph with no dependency edits; override via `TOOLS_VERSION=...`. Build/toolchain failures are troubleshooting, not findings — resolve via [`references/framework-idioms/build-and-tooling.md`](../references/framework-idioms/build-and-tooling.md).
+> The default `cargo-build-sbf` bundle is platform-tools **v1.51 / cargo 1.84**, which **cannot** parse the `edition2024` manifests in the modern `mollusk-svm`/`litesvm` dep tree. `run.sh` pins `--tools-version v1.54` (cargo ≥ 1.85) to build the graph with no dependency edits; override via `TOOLS_VERSION=...`. Build/toolchain failures are troubleshooting, not findings — resolve via [`references/framework-idioms/build-and-tooling.md`](../references/framework-idioms/build-and-tooling.md). Run these probes from a directory outside the target tree: inside it, the target's `.cargo/config*` can alias `build-sbf` to its own code and its `rust-toolchain*` can swap in its own `cargo`.
 
 ## Evidence tiers (PoC)
 
