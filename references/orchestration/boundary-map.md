@@ -20,7 +20,7 @@ test -d vendor/trailofbits/plugins && echo present
 
 If absent (submodule not initialized), run the native fallback and note in the report:
 "deeper tooling available via `git submodule update --init --depth 1 -- vendor/trailofbits`, run in the
-auditor-skill directory".
+auditor-skill directory (plugin and install.sh installs already include it)".
 
 ## Capability → plugin map
 

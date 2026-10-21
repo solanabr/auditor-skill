@@ -105,15 +105,17 @@ fi
 
 # ---- 5. vendored submodule pins ------------------------------------------------------------------
 # Each submodule gitlink must be named in README.md by exactly one
-# https://github.com/<org>/<repo>/tree/<40-hex> URL equal to the gitlink; a short SHA on that line must be
-# its first 7 characters, and no other tree URL may name a different commit of that repo. Gitlinks and
-# .gitmodules are read from the index, so this works with submodules uninitialized (CI checks out with
-# submodules: false) and in worktrees. A gitlink-only bump (Dependabot) fails here until a human updates
-# the pin line (CONTRIBUTING.md §5).
+# https://github.com/<org>/<repo>/tree/<40-hex> URL equal to the gitlink (deep links below it are fine); a
+# short SHA on that line must be its first 7 characters, and no tree / commit / blob URL may name a
+# different commit of that repo. Gitlinks and .gitmodules are read from the index, so this works with
+# submodules uninitialized (CI checks out with submodules: false) and in worktrees. It runs only when this
+# directory is the top of its own checkout, so a copy inside another repo never reads the parent's pins.
+# A gitlink-only bump (Dependabot) fails here until a human updates the pin line (CONTRIBUTING.md §5).
 gm() { # .gitmodules from the index, else from the working tree
   git config --blob :.gitmodules "$@" 2>/dev/null || { [[ -f .gitmodules ]] && git config -f .gitmodules "$@"; }
 }
-if [[ "$(git rev-parse --is-inside-work-tree 2>/dev/null)" == "true" ]]; then
+top=$(git rev-parse --show-toplevel 2>/dev/null || true)
+if [[ -n "$top" && "$top" == "$(pwd -P)" ]]; then
   nmod=0
   while IFS= read -r -d '' entry; do
     key=${entry%%$'\n'*}; path=${entry#*$'\n'}
@@ -127,16 +129,19 @@ if [[ "$(git rev-parse --is-inside-work-tree 2>/dev/null)" == "true" ]]; then
       err "$path: submodule URL '$url' is not a github.com repository (extend check 5)"; continue
     fi
     base="$url/tree/"
-    any_re="https?://(www\.)?$(printf '%s' "${url#https://}" | sed 's/\./\\./g')/tree/[0-9a-f]{7,40}"
-    refs=$(grep -ioE "$any_re" README.md | sed 's#.*/tree/##' | tr 'A-F' 'a-f')
-    exact=$(grep -oF "$base$sha" README.md | wc -l | tr -d ' ')
-    same=$(printf '%s\n' "$refs" | grep -cx "$sha" || true)
+    base_re=$(printf '%s' "$base" | sed 's/\./\\./g')
+    repo_re="https?://(www\.)?$(printf '%s' "${url#https://}" | sed 's/\./\\./g')"
+    # every tree / commit / blob link to this repo, in any spelling (a deep link keeps its SHA)
+    refs=$(grep -ioE "$repo_re/(tree|commit|blob)/[0-9a-f]{7,40}" README.md | sed -E 's#.*/(tree|commit|blob)/##' | tr 'A-F' 'a-f')
+    # the pin URL itself, not a deep link below it: canonically, and in any spelling
+    exact=$(grep -oE "$base_re$sha/?" README.md | grep -vc '/$' || true)
+    same=$(grep -ioE "$repo_re/tree/$sha/?" README.md | grep -vc '/$' || true)
     if [[ "$exact" -eq 1 && "$same" -eq 1 ]]; then ok "README.md pins $path at ${sha:0:12}"
     else err "README.md must name $base$sha exactly once (found $exact; $same counting other spellings)"; fi
     for r in $refs; do
-      [[ "$sha" == "$r"* ]] || err "README.md names $base$r, which is not the pinned commit ${sha:0:7}"
+      [[ "$sha" == "$r"* ]] || err "README.md links $url at $r, which is not the pinned commit ${sha:0:7}"
     done
-    line=$(grep -F "$base$sha" README.md | head -1 | sed -E 's#https?://[^ )>]*##g')
+    line=$(grep -E "$base_re$sha([^/]|$)" README.md | head -1 | sed -E 's#https?://[^ )>]*##g')
     for s in $(printf '%s\n' "$line" | grep -ioE '(^|[^0-9a-z])[0-9a-f]{7,40}([^0-9a-z]|$)' | grep -ioE '[0-9a-f]{7,40}' | tr 'A-F' 'a-f'); do
       [[ "$s" == "${sha:0:7}" || "$s" == "$sha" ]] || err "README.md pin line shows '$s', but $path is pinned at ${sha:0:7}"
     done
@@ -150,7 +155,7 @@ if [[ "$(git rev-parse --is-inside-work-tree 2>/dev/null)" == "true" ]]; then
   if [[ "$nlinks" -eq "$nmod" ]]; then ok "every gitlink is declared in .gitmodules ($nlinks)"
   else err "the index has $nlinks gitlink(s) but .gitmodules declares $nmod"; fi
 else
-  ok "submodule pin check skipped (not a git checkout)"
+  ok "submodule pin check skipped (not the top of a git checkout)"
 fi
 
 if [[ $fail -ne 0 ]]; then echo "corpus check FAILED" >&2; exit 1; fi

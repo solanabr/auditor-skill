@@ -62,11 +62,28 @@ grep -E '\.claude-plugin/' "$tmp/ns" | grep -vE '^M' > "$tmp/man" || true
 show "$tmp/man"
 echo "($(grep -cE '^M.*\.claude-plugin/' "$tmp/ns") modified — version and description bumps; inline declarations below)"
 
-section "Manifests that declare hooks, MCP or LSP servers inline (at NEW)"
-awk -F'\t' '$2 ~ /\.claude-plugin\/plugin\.json$/ {print $2}' "$tmp/new" | while IFS= read -r f; do
+section "Manifests (plugin.json, marketplace.json) that declare hooks, MCP or LSP servers inline (at NEW)"
+awk -F'\t' '$2 ~ /(^|\/)\.claude-plugin\/(plugin|marketplace)\.json$/ {print $2}' "$tmp/new" | while IFS= read -r f; do
   if g show "$new:$f" | grep -E '"(hooks|mcpServers|lspServers)"' >/dev/null; then echo "$f"; fi
 done > "$tmp/inline"
 show "$tmp/inline"
+
+section "Skills and commands per plugin, OLD -> NEW (changed only)"
+# "<plugin>\t<SKILL.md count>\t<command count>" for plugins/<p>/skills/<s>/SKILL.md and plugins/<p>/commands/*.md
+counts() { awk -F'\t' '{ n = split($2, p, "/") }
+  p[1] == "plugins" && n >= 2 { seen[p[2]] = 1 }
+  p[1] == "plugins" && n == 5 && p[3] == "skills" && p[5] == "SKILL.md" { s[p[2]]++ }
+  p[1] == "plugins" && n == 4 && p[3] == "commands" && p[4] ~ /\.md$/ { c[p[2]]++ }
+  END { for (k in seen) printf "%s\t%d\t%d\n", k, s[k], c[k] }' "$1" | sort; }
+counts "$tmp/old" > "$tmp/c_old"
+counts "$tmp/new" > "$tmp/c_new"
+awk -F'\t' 'FILENAME == ARGV[1] { os[$1] = $2; oc[$1] = $3; seen[$1] = 1; next }
+  { ns[$1] = $2; nc[$1] = $3; seen[$1] = 1 }
+  END { for (k in seen) if (os[k] + 0 != ns[k] + 0 || oc[k] + 0 != nc[k] + 0)
+          printf "- %s: skills %d -> %d, commands %d -> %d\n", k, os[k], ns[k], oc[k], nc[k] }' \
+  "$tmp/c_old" "$tmp/c_new" | sort > "$tmp/sc"
+show "$tmp/sc"
+cnt() { awk -F'\t' -v p="$2" -v f="$3" '$1 == p { print $f }' "$1"; } # cnt FILE PLUGIN FIELD
 
 section "New executables (mode 100755)"
 awk -F'\t' '$1 == "100755" {print $2}' "$tmp/old" | sort > "$tmp/x_old"
@@ -103,7 +120,11 @@ section "Plugins this repo names (boundary-map.md, power-tools.md): present at N
 while IFS= read -r p; do
   if g cat-file -e "$new:plugins/$p" 2>/dev/null; then
     st=$(g diff --shortstat "$old" "$new" -- "plugins/$p" | sed 's/^ //')
-    printf -- '- %s: present (%s)\n' "$p" "${st:-unchanged}"
+    so=$(cnt "$tmp/c_old" "$p" 2); sn=$(cnt "$tmp/c_new" "$p" 2)
+    co=$(cnt "$tmp/c_old" "$p" 3); cn=$(cnt "$tmp/c_new" "$p" 3)
+    note=""; [ "${so:-0}" -gt 0 ] && [ "${sn:-0}" -eq 0 ] && note=" — **no SKILL.md at NEW**"
+    printf -- '- %s: present (skills %s -> %s, commands %s -> %s; %s)%s\n' \
+      "$p" "${so:-0}" "${sn:-0}" "${co:-0}" "${cn:-0}" "${st:-unchanged}" "$note"
   else
     printf -- '- %s: **MISSING at NEW** — update the rows that name it\n' "$p"
   fi
