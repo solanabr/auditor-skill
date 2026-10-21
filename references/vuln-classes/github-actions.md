@@ -178,7 +178,7 @@ branch name at run time executes the new commit. Bind per event:
     PR: ${{ github.event.issue.number }}
     GH_TOKEN: ${{ github.token }}
   run: |
-    want=$(printf '%s\n' "$BODY" | sed -nE 's#^/test ([0-9a-f]{40})$#\1#p' | head -n 1)
+    want=$(printf '%s\n' "$BODY" | tr -d '\r' | sed -nE 's#^/test ([0-9a-f]{40})$#\1#p' | head -n 1)
     head=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq .head.sha)
     if [ -z "$want" ] || [ "$want" != "$head" ]; then echo "SHA missing or no longer the PR head"; exit 1; fi
     echo "sha=$want" >> "$GITHUB_OUTPUT"
@@ -229,7 +229,8 @@ generate a random delimiter per run, or keep the value in a file and pass the pa
 
 **4.5 Argument and file-name injection.** Quoting stops word splitting but not option injection: a branch or file name
 that starts with `-` becomes a flag to `git`, `xargs` or a linter, and a file name holding `$(…)` executes when a loop
-expands it unquoted (the HackerBot Claw campaign reached DataDog's scanner this way, §8).
+expands it unquoted (the HackerBot Claw campaign tried this against DataDog's scanner; StepSecurity rates the
+execution as likely rather than confirmed, §8).
 
 **4.6 Check.** Recipes R5 and R6. PASS: no tainted value reaches a shell, a script, an agent prompt or an env file in
 an externally triggerable workflow; otherwise FAIL, with the expansion line and the token scope.
@@ -243,9 +244,9 @@ classic pwn request checks out the PR head and then runs anything from it. A gua
 unless the step opts out with `allow-unsafe-pr-checkout: true`, which should be read as a confession. The guard does
 not cover `git fetch origin pull/<n>/head`, `gh pr checkout`, `git pull origin ${{ github.head_ref }}`, checking out
 the fork through `repository: ${{ github.event.pull_request.head.repo.full_name }}`, pins older than the guard, or
-`issue_comment` jobs that fetch PR code. A labeler or commenter that checks out only the base ref and executes
-nothing from the PR passes; a pre-guard pin in a job that does check out the PR is `[PARTIAL]` even when no exploit is
-traced.
+`issue_comment` jobs that fetch PR code. Grading (DEP-093): a job that checks out only the base ref passes, and is
+`[PARTIAL]` if it pins `actions/checkout` below the guard; a privileged job that checks out or executes PR code
+FAILs.
 
 **5.2 Code that runs during a build of a PR checkout.** "We only build it" is execution:
 - `npm` / `yarn` / `pnpm install` lifecycle scripts (SC-045, SC-048);
@@ -302,10 +303,10 @@ identity the attacker cannot reuse (a digest, a SHA, a run id plus a producer ch
 producer; a crossing that has neither is the finding.
 
 **5.6 What the job can reach.**
-- **Composite actions** have no `secrets` context, so a secret reaches one only as an input: read the caller's `with:`
-  rather than searching the composite file for `secrets.`.
-- **`secrets: inherit`** hands every caller secret to the directly called reusable workflow, which need not declare
-  them; it does not pass them further down the chain.
+- **Composite actions** cannot read `secrets.*`; any secret one uses was handed in as an input value. Trace it from the
+  `with:` block of the calling step, because the action's own file never names the secret.
+- **`secrets: inherit`** gives the called reusable workflow every secret its caller holds, with no declaration needed
+  on the callee's side. A workflow that the callee calls in turn receives them only if the callee passes them on.
 - **Environments.** Environment branch rules now evaluate the default branch for `pull_request_target`, so deploy,
   publish and upgrade-authority secrets belong in an environment with **required reviewers**; a branch filter alone is
   not enough.
@@ -331,8 +332,10 @@ started from `run:` check nothing. The workflow-level gate of §3 is therefore a
 inputs are AI-031.
 
 **6.3 What the agent holds.** On its default GitHub App path, claude-code-action exchanges an OIDC token for an App
-token that requests `contents`, `pull_requests` and `issues` write plus any `additional_permissions`
-(`src/github/token.ts`), independently of the job's `permissions:` block. To bound it, pass
+token and, unless `additional_permissions` is set, sends no permission list with that request (`src/github/token.ts`).
+The token therefore carries whatever the Claude App's installation grants on the repository (the action's security
+notes list read-write on contents, pull requests and issues), and the job's `permissions:` block does not narrow it.
+To bound it, pass
 `github_token: ${{ secrets.GITHUB_TOKEN }}` under minimal job permissions, and never a personal access token: a static
 token can be recovered piece by piece through repeated injection. The App path needs `id-token: write`, and any step in
 that job can request OIDC tokens for any audience, so no cloud trust policy may accept that job's subject (§5.6). Keep
@@ -371,9 +374,10 @@ with release or deploy jobs (AI-035, DEP-096).
 
 **6.9 Pre-v1 claude-code-action inputs.** v1 renamed `direct_prompt` and `override_prompt` to `prompt`, moved
 `custom_instructions` to `--append-system-prompt` in `claude_args`, and replaced `allowed_tools` / `disallowed_tools`
-with `--allowedTools` / `--disallowedTools`. Workflows pinned to `@v1` or a SHA still carry the old names, so match the
-input names present in the file, not the ref; the old tool lists are comma-separated and the new ones space-separated
-(from the upstream ToB skill's 2026-08 revision).
+with `--allowedTools` / `--disallowedTools`. A workflow can keep the old keys after its `uses:` line moves to `@v1` or a
+SHA, so judge a step by the input keys it actually sets, never by the version after `@`. The tool lists also use
+different separators: commas in the old input, spaces inside `claude_args` (from the upstream ToB skill's 2026-08
+revision).
 
 **6.10 Solana rule.** The agent proposes and a human or a multisig disposes (AI-021, AI-022). An agent job never holds a
 deploy keypair, an upgrade authority, a Squads member key, or an SDK's npm or crates.io publish token.
@@ -408,7 +412,7 @@ deploy keypair, an upgrade authority, a Squads member key, or an SDK's npm or cr
 | Sep 2025 | GhostAction (327 accounts, 817 repositories) | compromised maintainer accounts pushed workflows that sent repository secrets to an attacker endpoint (3,325 secrets) | GitGuardian disclosure, 2025-09-05 |
 | Feb 2026 | Cline ("Clinejection") | `issues`-triggered claude-code-action triage open to any user (`allowed_non_write_users: "*"`), shell tools, issue title in the prompt → `npm install` of an attacker commit → cache flooded and re-poisoned → nightly publish job held the marketplace and npm tokens; an unauthorized `cline@2.3.0` followed on 2026-02-17 | Adnan Khan disclosure, 2026-02-09 |
 | Feb 21 – Mar 2, 2026 | HackerBot Claw (awesome-go, project-akri, trivy and others) | automated campaign: `pull_request_target` checkouts running Go `init()`, an unauthenticated `/version` comment command running a PR-modified script (akri), PAT theft and repository takeover (trivy); an AI reviewer refused a poisoned `CLAUDE.md` | StepSecurity analysis, 2026-03-01 |
-| Mar 2026 | aquasecurity/trivy | the rotation after the February compromise was not atomic, so a still-valid token kept access → malicious v0.69.4 release, 76 of 77 trivy-action tags and every setup-trivy tag repointed | GHSA-69fq-xp46-6x23 (CVE-2026-33634) |
+| Mar 2026 | aquasecurity/trivy | the rotation after the February compromise was not atomic, which the advisory says could have let a still-valid token keep access → malicious v0.69.4 release, 76 of 77 trivy-action tags and every setup-trivy tag repointed | GHSA-69fq-xp46-6x23 (CVE-2026-33634) |
 
 ---
 

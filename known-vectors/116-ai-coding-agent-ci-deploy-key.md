@@ -28,9 +28,9 @@ grep -rn -iE "anthropics/claude-code-action|run-gemini-cli|gemini-cli-action|ope
 ```
 grep -rn -iE "PROGRAM_DEPLOY|UPGRADE_AUTHORITY|DEPLOY_KEY|id\.json|keypair|ANCHOR_WALLET|SOLANA_KEYPAIR|secrets\." .github/workflows/
 ```
-- Secrets cross file boundaries in two opposite ways, and neither shows up by searching the resolved file for `secrets.`:
-  - **Composite actions** have no `secrets` context. A `${{ secrets.X }}` inside one resolves to nothing; a secret that does reach it arrives through `inputs.*`, so read the caller's `with:` block.
-  - **Reusable workflows.** A reusable workflow called with `secrets: inherit` holds every secret of its caller without declaring any, so an empty `on.workflow_call.secrets` is not evidence that it has none. Inheritance stops at the directly called workflow.
+- Work out how secrets reach called code, because the called file on its own does not show it:
+  - **Composite action:** `secrets.*` is not readable inside one, so a secret it really uses arrives as an input value (`inputs.*`). Trace it from the calling step's `with:` block.
+  - **Reusable workflow:** under `secrets: inherit` the callee receives every secret its caller holds without listing any, so an empty `on.workflow_call.secrets` proves nothing. A workflow the callee calls in turn gets them only if the callee passes them on.
 - ✅ PASS: The AI-agent job/step has NO deploy/upgrade keypair in its `env`/`secrets`/checked-out files; deploy secrets live only in a separate job the agent cannot influence
 - ❌ FAIL: A deploy/upgrade key or `id.json` is available in the same job/step as the AI agent
 
@@ -43,7 +43,7 @@ grep -rn -iE "solana program deploy|anchor deploy|anchor upgrade|solana program 
 
 **Step 4: Nine ToB CI injection vectors (Solana port of Trail of Bits agentic-actions-auditor)**
 
-claude-code-action renamed its inputs at v1: `direct_prompt` / `override_prompt` became `prompt`, `custom_instructions` became `--append-system-prompt` in `claude_args`, and `allowed_tools` / `disallowed_tools` became `--allowedTools` / `--disallowedTools`. Files pinned to `@v1` or a SHA still carry the old names, so match the input names present in the file, not the ref. The old tool lists are comma-separated and the new ones space-separated.
+claude-code-action renamed its inputs at v1: `direct_prompt` / `override_prompt` became `prompt`, `custom_instructions` became `--append-system-prompt` in `claude_args`, and `allowed_tools` / `disallowed_tools` became `--allowedTools` / `--disallowedTools`. A workflow can keep the old keys after its `uses:` line moves to `@v1` or a SHA, so judge each step by the input keys it actually sets, never by the version after `@`. The tool lists use different separators: commas in the old input, spaces inside `claude_args`.
 - **A. Env-var intermediary** — `github.event.*.body/title/head_ref` or commit message flows through an `env:` var into the agent prompt (prompt has no `${{ }}`, still tainted).
   ```
   grep -rn -iE "env:" .github/workflows/ ; grep -rn -iE "github.event.*(body|title|head_ref|message)" .github/workflows/
@@ -87,7 +87,7 @@ claude-code-action renamed its inputs at v1: `direct_prompt` / `override_prompt`
 grep -rnE --include='*.yml' --include='*.yaml' 'author_association|allowed_non_write_users|allowed_bots|include_comments_by_actor|github_token:|additional_permissions|show_full_output|plugins:|plugin_marketplaces:|add-dir' .github/
 ```
 - **Gate.** The job-level `if:` gates on the triggering object's own `author_association`, paired per event (DEP-090..091, KV-139). The action's built-in write check runs only after the job has started, and an agent CLI started from `run:` has none.
-- **Token.** claude-code-action's default GitHub App token requests `contents`, `pull_requests` and `issues` write regardless of the job's `permissions:` block. A bounded setup passes `github_token: ${{ secrets.GITHUB_TOKEN }}` under minimal permissions and never a personal access token (AI-034).
+- **Token.** On its default GitHub App path claude-code-action requests no explicit permissions (only `additional_permissions` adds a list), so the App token carries whatever the Claude App installation grants and the job's `permissions:` block does not limit it. A bounded setup passes `github_token: ${{ secrets.GITHUB_TOKEN }}` under minimal permissions and never a personal access token (AI-034).
 - **Configuration restore.** With a PR checkout as the working directory, the action must be at v1.0.89 or later, which restores `.claude/`, `.mcp.json`, `.claude.json`, `.gitmodules`, `.ripgreprc`, `CLAUDE.md`, `CLAUDE.local.md` and `.husky` from the base branch. v1.0.74–v1.0.88 restore only the first five. Skills come in through `plugins` / `plugin_marketplaces`, not copies into `.claude/` (AI-035).
 - ✅ PASS: gated per event, bounded token, configuration restored (or no PR checkout as the working directory), no shared cache or artifact with release jobs
 - ⚠️ PARTIAL: action between v1.0.74 and v1.0.88 on a PR checkout, or a hosted setting (OIDC trust policy, environment reviewers) the source does not show

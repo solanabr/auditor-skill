@@ -7,11 +7,7 @@ category: devops
 
 ### 140 — workflow_run / pull_request_target Pwn Request — Privileged Job Trusts Fork Code, Artifacts or Cache
 
-**Severity: 9** | **Real:**
-- **Ultralytics, Dec 2024.** A branch name expanded inside a `pull_request_target` workflow's composite action led to runner secrets and a poisoned Actions cache. The poisoned cache shipped 8.3.41 and 8.3.42 through Trusted Publishing (PyPI post-mortem).
-- **spotbugs / tj-actions, Dec 2024 – Mar 2025.** spotbugs' `pull_request_target` workflow leaked a maintainer token. That started the chain that repointed the tj-actions/changed-files tags (CVE-2025-30066, Unit 42).
-- **Nx "s1ngularity", Aug 2025.** A PR title expanded in a `pull_request_target` workflow gave a write-scoped token. The token dispatched the publish workflow on an attacker branch, which yielded the npm token (Nx post-mortem).
-- **HackerBot Claw, Feb 2026.** A `pull_request_target` checkout of `head.sha` followed by `go run` in avelino/awesome-go led to token exfiltration. A PAT stolen from aquasecurity/trivy led to repository takeover and, after a non-atomic rotation, to the March malicious release (CVE-2026-33634).
+**Severity: 9** | **Real: Ultralytics, Dec 2024 — a branch name expanded inside a `pull_request_target` workflow's composite action gave runner secrets and a poisoned Actions cache, which shipped 8.3.41/8.3.42 through Trusted Publishing (PyPI post-mortem). spotbugs → tj-actions, Dec 2024 – Mar 2025 — spotbugs' `pull_request_target` workflow leaked a maintainer token, the first link of the chain that repointed the tj-actions/changed-files tags (CVE-2025-30066; Unit 42). Nx "s1ngularity", Aug 2025 — a PR title expanded in a `pull_request_target` workflow gave a write-scoped token that dispatched the publish workflow on an attacker branch and yielded the npm token (Nx post-mortem). HackerBot Claw, Feb 2026 — a `pull_request_target` checkout of `head.sha` followed by `go run` in avelino/awesome-go exfiltrated a token, and a PAT stolen from aquasecurity/trivy led to repository takeover; the advisory for the March malicious release (CVE-2026-33634) says the non-atomic rotation that followed could have let the attacker keep access.**
 
 `pull_request_target` and `workflow_run` run in the base repository with its secrets and a write-capable token, and since Dec 8, 2025 `pull_request_target` always runs the default branch's copy of the workflow. `workflow_run` holds that privilege whatever the upstream run had. The upstream is usually a `pull_request` run, which executes the PR's own copy of the upstream workflow, so its artifacts, outputs and branch name belong to the PR author.
 
@@ -87,7 +83,7 @@ grep -rnE --include='*.yml' --include='*.yaml' 'actions/cache|[[:space:]]cache:[
 - ❌ FAIL: a release job restores a cache key that such a job also saves. The 10 GB eviction lets the writer replace existing entries (Ultralytics, Clinejection).
 
 **Step 7: What the privileged job can reach**
-- Secrets reach a composite action only through `inputs.*`, so read the caller's `with:`. A reusable workflow called with `secrets: inherit` holds every caller secret without declaring any; inheritance stops at the directly called workflow.
+- A composite action cannot read `secrets.*`, so any secret it uses arrives as an input value: trace it from the calling step's `with:`. Under `secrets: inherit` the called reusable workflow receives every caller secret without listing any; a workflow it calls in turn gets them only if it passes them on.
 - ✅ PASS:
   - deploy, upgrade-authority and publish secrets sit in an `environment:` with required reviewers (since 2025-12-08 branch rules alone do not fence `pull_request_target`);
   - any cloud OIDC trust policy for this repository binds `environment`, `event_name` or `job_workflow_ref`, not `repo:<org>/<repo>:ref:refs/heads/<default>` alone, which comment-, issue- and `workflow_run`-triggered jobs also mint.
