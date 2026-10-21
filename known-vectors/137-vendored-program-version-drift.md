@@ -17,7 +17,7 @@ Many Solana protocols do not write the program they deploy: they run a **white-l
 
 The class is invisible to dependency scanners: `cargo audit` / `npm audit` see library crates, not *deployed program provenance*. Checklist 11's package checks (SC-001..052) do not fire because the vulnerable artifact is the tenant's own on-chain program.
 
-> Cross-ref: checklist 11 §11.10 (SC-053..058 — vendored-program inventory, drift diff, advisory SLA, fleet monitoring); checklist 02 §2.7 (AC-051..055 — off-chain-signed authority grants); KV-020 / KV-091 (upgrade authority — who can patch, and who can hijack, the deployment); KV-102 (precompile signature-verification bypass); KV-004 (missing access control on the inherited admin surface); KV-089 (unpatched server dependencies — the off-chain ancestor of this vector).
+> Cross-ref: checklist 11 §11.10 (SC-053..058 — vendored-program inventory, drift diff, advisory SLA, fleet monitoring); checklist 02 §2.7 (AC-051..055 — off-chain-signed authority grants); KV-020 / KV-091 (upgrade authority — who can patch, and who can hijack, the deployment); KV-102 (precompile signature-verification bypass); KV-004 (missing access control on the inherited admin surface); KV-089 (unpatched server dependencies — the off-chain ancestor of this vector); `references/audit-lifecycle/threat-model-bootstrap.md` (its collector finds the fork point and lists guard lines the upstream added afterwards — leads for Step 2, not a verdict).
 
 #### Verification Procedure
 

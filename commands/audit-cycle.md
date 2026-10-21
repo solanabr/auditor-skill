@@ -18,12 +18,16 @@ Run the full audit-firm lifecycle autonomously, from intake to a deliverable rep
 2. **Context reconstruction (Phase 0.5).** Spawn `context-builder` (sonnet). It produces the instruction matrix, state model, and per-function worksheets in `audit_<n>/worksheets/context/`. No verdicts yet — understanding only. These worksheets are the shared substrate every later phase reuses (avoids re-reconstruction cost).
 
 2b. **Threat model.** Spawn `threat-modeler` (opus) → `audit_<n>/threat-model.md`: asset inventory, an actor×capability table (what each actor must NOT be able to do), and the trust boundaries, built from the context worksheets + `intake.md`. This seeds report §4.4/§4.6/§4.7 and hands the reviewers concrete attacker goals to test — not verdicts.
+   - **Bootstrap triggers.** Before spawning, check them: T2 is a prior audit or incident recorded in intake §7. For T3/T4 run `bash scripts/threat-model/collect.sh --repo <target> --out audit_<n>/bootstrap --pin <sha> --detect`.
+   - **Offline collection.** If any trigger fires, run the same command with `--offline` instead of `--detect` and pass `audit_<n>/bootstrap/` to the agent (`references/audit-lifecycle/threat-model-bootstrap.md`). This flow never clones or fetches.
 
 3. **Tool-assisted first pass (tools up-front).** If `vendor/trailofbits/plugins` is present (`test -d vendor/trailofbits/plugins`), run ToB `static-analysis` (SAST) over the in-scope languages and fold the SARIF **as evidence that clears the mechanical surface and directs manual attention** — not as verdicts (`references/orchestration/boundary-map.md`). This follows Trail of Bits' precedent of running the toolset (Clippy pedantic, `cargo-audit`, `cargo-outdated`) at engagement start so linter/advisory noise is dispatched before the deep human read. If absent, run the `discovery/grep-commands.md` native scanners and note the tooling gap. Load in-scope `references/methodologies/*` per their protocol markers (`SKILL.md` reference table) so domain review has the right playbook.
 
 4. **Domain-partitioned manual review (NOT N identical clones).** Partition the surface by domain and run reviewers **in parallel over disjoint surfaces** — naive N-way fan-out of the same prompt produces ~87% false positives, so each reviewer owns a distinct partition:
    - `vuln-hunter` (opus) — in-scope checklists + phase-triggered known-vectors over the program / language surface.
    - `economic-analyst` (opus) — checklist 06 + economic known-vectors + the loaded `references/methodologies/*` over the value-flow surface.
+
+   Each reviewer first reads `audit_<n>/threat-model.md` §4 — the goals mapped to its partition, their Evidence, and the Leads — and tests those before the rest of its walk.
    
    **Anti-false-positive gate at the leaf.** Each reviewer triages every candidate finding through **Rule 5b** + `references/false-positives.md` **before emitting it**. A finding that cannot complete the Rule 5b Reachability + Math/State-Bounds block (Attacker-Model for N≥7) is downgraded to `[PARTIAL]` / `[UNCONFIRMED]` — no bare high-severity claims cross the boundary.
 
