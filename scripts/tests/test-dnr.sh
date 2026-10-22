@@ -244,6 +244,14 @@ if m == "getSignaturesForAddress" and hist:
     res = [{"signature": hsig(k), "slot": k, "err": None, "blockTime": 1700000000 + k}
            for k in range(top, max(top - p[1]["limit"], 0), -1)]
     print(json.dumps({"jsonrpc": "2.0", "id": 1, "result": res})); sys.exit(0)
+# FAKE_CURL_SAMESLOT=1: two signatures in one slot, which the C and en_US
+# collations would order differently.
+if m == "getSignaturesForAddress" and os.environ.get("FAKE_CURL_SAMESLOT"):
+    res = [] if "before" in p[1] else [
+        {"signature": "SigbSameSlot111111111111111111111111111111", "slot": 5, "err": None, "blockTime": 1700000500},
+        {"signature": "SigBSameSlot111111111111111111111111111111", "slot": 5, "err": None, "blockTime": 1700000500},
+    ]
+    print(json.dumps({"jsonrpc": "2.0", "id": 1, "result": res})); sys.exit(0)
 if m == "getSignaturesForAddress" and p[0].startswith("AddrB"):
     res = [
         {"signature": "SigZnewest", "slot": 9, "err": None, "blockTime": 1700000900},
@@ -329,6 +337,22 @@ eq "collect: a refused \$RPC_URL made no RPC call" "$(grep -c . "$FAKE_CURL_LOG"
     bash "$DNR/collect.sh" --out "$TT/c2" --confirmed --max-pages 1 --max-tx 2 -- "$A_ADDR" "$B_ADDR" ) > "$TT/c2.out" 2>&1
 got="$(jq -r '.transaction.signatures[0]' "$TT/c2/transactions.jsonl" 2>/dev/null | tr '\n' ' ')"
 eq "collect: --max-tx 2 fetches the two newest signatures across both addresses" "$got" "SigZnewest SigOK "
+# Within one slot the RPC's own newest-first order decides what --max-tx keeps, in
+# any locale: the sort is stable, on the slot only, under LC_ALL=C.
+for loc in C en_US.UTF-8; do
+  ( PATH="$TT/bin:$PATH" LC_ALL="$loc" FAKE_CURL_SAMESLOT=1 RPC_URL="https://rpc.example.test/" \
+      bash "$DNR/collect.sh" --out "$TT/loc-$loc" --confirmed --max-tx 1 -- "$A_ADDR" ) > /dev/null 2>&1
+done
+eq "collect: the same-slot signature kept by --max-tx 1 is the RPC's first, under C and en_US.UTF-8" \
+  "$(jq -r '.transaction.signatures[0]' "$TT/loc-C/transactions.jsonl")/$(jq -r '.transaction.signatures[0]' "$TT/loc-en_US.UTF-8/transactions.jsonl")" \
+  "SigbSameSlot111111111111111111111111111111/SigbSameSlot111111111111111111111111111111"
+ctl_c="$(printf '5 SigbX\n5 SigBX\n' | LC_ALL=C sort -k1,1nr 2>/dev/null | sed -n 1p)"
+ctl_u="$(printf '5 SigbX\n5 SigBX\n' | LC_ALL=en_US.UTF-8 sort -k1,1nr 2>/dev/null | sed -n 1p)"
+if [[ "$ctl_c" != "$ctl_u" ]]; then
+  ok "collect: control, a plain sort -k1,1nr breaks same-slot ties by locale ('$ctl_c' vs '$ctl_u')"
+else
+  ok "collect: control not exercised here (no en_US.UTF-8 collation)"
+fi
 eq "collect: the --max-tx cap is one gap row naming the first signature not fetched" \
   "$(cut -f1 "$TT/c2/collection-gaps.tsv")|$(grep -c 'collection gaps: 1 ' "$TT/c2.out")" "SigFail|1"
 # Paging stops at the end of history (a page shorter than 1000), when --since is

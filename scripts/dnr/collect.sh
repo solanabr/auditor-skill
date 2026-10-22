@@ -42,20 +42,20 @@
 # already holds any of this script's output files is refused, so a resume or a
 # second collection never erases an earlier one. Every address and --before value
 # must be base58, and every number a plain integer, before anything is written or
-# sent. Paging an address ends when its history does
-# (a page shorter than 1000) or once --since is crossed; when --max-pages stops it
-# first, with a full last page, the history is truncated and the script says so
-# ("truncated by --max-pages", with the --before cursor that resumes it): a
-# collection gap to record in the ledger. Signatures are fetched newest first (by
-# slot, across all addresses), so --max-tx drops the oldest.
+# sent. Paging an address ends when its history does (a page shorter than 1000) or
+# once --since is crossed; when --max-pages stops it first, with a full last page,
+# the history is truncated and the script says so ("truncated by --max-pages", with
+# the --before cursor that resumes it): a collection gap to record in the ledger.
+# Signatures are fetched newest first (by slot, across all addresses; within a slot
+# in the RPC's own order, whatever the locale), so --max-tx drops the oldest.
 #
 # COLLECTION GAPS: every gap is also a row of <dir>/collection-gaps.tsv,
 # `<signature or address><TAB><reason>`: a getTransaction that failed (transport
 # error, RPC error or null result), a signature page that failed, a history truncated
 # by --max-pages, the --max-tx cap, and a stop after consecutive failures. The run
-# ends with
-# "collection gaps: N (see <dir>/collection-gaps.tsv)". Gaps leave the exit status
-# at 0; copy each row into LEDGER.md and INCIDENTS.json `collection_gaps`.
+# ends with "collection gaps: N (see <dir>/collection-gaps.tsv)". Gaps leave the
+# exit status at 0; copy each row into LEDGER.md and INCIDENTS.json
+# `collection_gaps`.
 #
 # SECRETS: the endpoint comes from $RPC_URL and is NEVER echoed. curl runs with -q
 # (no ~/.curlrc) and reads the URL from a config on stdin (-K -), so the key stays
@@ -298,11 +298,13 @@ echo "signatures collected: $collected -> $sig_file"
 # 2. unique signatures within [since, until] — failed ones included — newest first
 #    across every address (slot, descending), so a --max-tx cap keeps the most recent
 #    activity; a signature seen under two addresses is kept once, at its first place.
-#    Read from a file (not a pipe) so the counter survives the loop.
+#    The sort is stable and on the slot only, in the C locale, so within a slot the
+#    RPC's own newest-first order stands whatever the user's locale.
+#    Read from a file (not a pipe) so the counters survive the loop.
 jq -r --argjson s "$since" --argjson u "$until" '
   select(($s == 0) or ((.blockTime // 0) >= $s))
   | select(($u == 0) or ((.blockTime // 0) <= $u))
-  | "\(.slot // 0) \(.signature)"' "$sig_file" | sort -k1,1nr | awk '!seen[$2]++ { print $2 }' > "$todo"
+  | "\(.slot // 0) \(.signature)"' "$sig_file" | LC_ALL=C sort -s -k1,1nr | awk '!seen[$2]++ { print $2 }' > "$todo"
 
 # 3. one getTransaction call per signature. --max-tx counts calls, failed ones
 #    included; MAX_FAILS calls failing in a row (a rate limit or an outage) stop the
