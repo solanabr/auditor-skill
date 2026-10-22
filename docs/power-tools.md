@@ -199,12 +199,31 @@ The recipes behind `/auditor:hunt` and `/auditor:respond` ([detection-response.m
 bash "<auditor-skill root>/scripts/dnr/snapshot-program.sh" <program_id> <incident_dir>
 ```
 
-Step 1 of every hunt and response: it keeps the deployed program bytes before a hotfix can replace them. It runs `solana program show` and `solana program dump`, checks the ELF header, hashes the dump the way `solana-verify` does (trailing zero padding trimmed, then sha256), and prints one ledger line: `program=… owner=… last_deployed_slot=… authority=… sha256_zero_trimmed=… elf_bytes=… padding_bytes=… file=bin/…`.
+Step 1 of every hunt and response: it keeps the deployed program bytes before a hotfix can replace them. It runs `solana program show` and `solana program dump`, or `solana program-v4 show` and `download` for a loader-v4 program. It reads the program again after the dump and dumps once more if the last-deployed slot moved. It checks the ELF header, hashes the dump the way `solana-verify` does (trailing zero padding trimmed, then sha256), and prints a ledger line: `program=… owner=… last_deployed_slot=… authority=… sha256_zero_trimmed=… elf_bytes=… padding_bytes=… file=bin/<id>[@<slot>].so`. A program on an immutable loader shows `last_deployed_slot=n/a (immutable loader)` and `authority=none`.
 
-- **Arguments:** a base58 program id and the incident directory. No flags.
-- **Exit:** 0 done · 2 refused before any network call: a usage error, an id that is not base58, no `$RPC_URL` or one that holds a quote, a backslash, whitespace or a control character, or a run directory that is a symbolic link, contains one, or is tracked by git · 3 a named blocker, such as no `solana` CLI, a CLI that did not load the keyless config, a CLI error, or a dump without the ELF magic.
-- **Network:** two read-only `solana` CLI calls to `$RPC_URL`, which reaches the CLI through a temporary `-C` config with no usable keypair path; it signs nothing. CLI errors pass through `redact.sh`.
-- **Writes:** the `solana program show` text and the dumped `.so` under `<incident_dir>/bin/`, named after the program id. An `incident_*` directory without a `.gitignore` gets one containing `*` (Rule 11d).
+- **Arguments:** a base58 program id (32 bytes) and the incident directory. No flags.
+- **Exit:**
+  - 0: a new snapshot, or `unchanged`.
+  - 2, refused before any CLI call:
+    - a usage error;
+    - an id that is not base58 or not 32 bytes;
+    - no `$RPC_URL`, or one that holds a quote, a backslash, whitespace or a control character;
+    - a run directory that is a symbolic link, contains one, or is tracked by git.
+  - 3, a named blocker:
+    - no `solana` CLI or `python3`;
+    - the CLI did not take the keyless config;
+    - a CLI error, or no program under any loader;
+    - a dump without the ELF magic;
+    - a slot that moved during both dumps;
+    - a hash that could not be computed;
+    - a snapshot name already taken, or a lone `bin/<id>.show.txt`.
+- **Network:** read-only `solana` CLI calls to `$RPC_URL`, which reaches the CLI through a temporary `-C` config with no usable keypair path; it signs nothing. CLI errors pass through `redact.sh`.
+- **Writes:** in `<incident_dir>/bin/`:
+  - The first snapshot is `<id>.so` with `<id>.show.txt`.
+  - If the slot and zero-trimmed sha256 match a kept snapshot, a later run prints `unchanged: …` with that snapshot's line and writes nothing.
+  - After a redeploy it keeps the new bytes as `<id>@<slot>.so` with its `.show.txt` and prints the first snapshot's line and the new one.
+  - A kept file is never replaced.
+  - An `incident_*` directory without a `.gitignore` gets one containing `*` (Rule 11d).
 
 #### `collect.sh`
 
@@ -217,17 +236,35 @@ The one gated collector: it pages each address's signature history, failed trans
 
 | Flag | Meaning |
 |------|---------|
-| `--out <dir>` | corpus directory (required); one that already holds collector output is refused, so a resume goes into a new directory |
+| `--out <dir>` | corpus directory (required). One that holds `signatures.jsonl`, `transactions.jsonl` or `collection-gaps.tsv`, even an empty one, is refused, so a resume goes into a new directory |
 | `--confirmed` | required; the commands pass it only after a person has approved the addresses, the window, the caps and the estimated call count |
 | `--since <unix>`, `--until <unix>` | the window, on `blockTime`; `0` (the default) leaves that end open |
-| `--before <signature>` | start paging just older than this signature: resume a capped run, or skip activity after the incident |
-| `--max-pages N` | pages of 1,000 signatures per address (default 20) |
-| `--max-tx N` | transactions fetched in total (default 2000); the oldest are left out first |
+| `--before <signature>` | start paging just older than this signature: resume a capped or truncated run, or skip activity after the incident |
+| `--max-pages N` | pages of 1,000 signatures per address (default 20); a page of fewer than 1,000 ends that address's history |
+| `--max-tx N` | `getTransaction` calls in total, failures included (default 2000); the oldest signatures are left out first. After 10 failed calls in a row the run stops |
 | `-- <address> ...` | the base58 addresses to page |
 
-- **Exit:** 0 done, collection gaps included · 2 refused before anything is written or sent: no `--confirmed`; a usage error or an unknown argument; no `$RPC_URL`, or one that holds a quote, a backslash, whitespace or a control character; an address or `--before` value that is not base58; a number that is not a plain integer; an `--out`, or the nearest `incident_*` directory at or above it, that is a symbolic link, contains one, or is tracked by git (in any letter case); or an `--out` that already holds collector output.
-- **Network:** read-only JSON-RPC to `$RPC_URL` (`getSignaturesForAddress`, then `getTransaction` at `finalized` with `maxSupportedTransactionVersion: 1`), and only with `--confirmed`. The URL reaches curl through a config on stdin (`curl -q -K -`), never as an argument. The `provider:` line it prints names the provider's domain (the host's last two labels) for the Rule 11b disclosure; curl errors pass through `redact.sh`.
-- **Writes:** `<dir>/signatures.jsonl`, `<dir>/transactions.jsonl` and `<dir>/collection-gaps.tsv`, one `<signature or address><TAB><reason>` row per gap: a failed `getTransaction` or signature page, a window the page cap did not reach, or the `--max-tx` cap. The run ends with the gap count. An `incident_*` directory (`<dir>` or its parent) without a `.gitignore` gets one containing `*`.
+- **Exit:**
+  - 0: done, collection gaps included.
+  - 2, refused before anything is written or sent:
+    - no `--confirmed`;
+    - a usage error or an unknown argument;
+    - no `$RPC_URL`, or one that holds a quote, a backslash, whitespace or a control character;
+    - an address or `--before` value that is not base58;
+    - a number that is not a plain integer;
+    - an `--out`, or the nearest `incident_*` directory at or above it, that is a symbolic link, contains one, or is tracked by git (in any letter case);
+    - an `--out` that already holds a corpus file.
+  - 3, a named blocker:
+    - no curl or jq;
+    - a jq that rounds large integers and no working `python3`;
+    - no private temp directory.
+- **Network:** read-only JSON-RPC to `$RPC_URL` (`getSignaturesForAddress`, then `getTransaction` at `finalized` with `maxSupportedTransactionVersion: 1`), and only with `--confirmed`. The URL reaches curl through a config on stdin (`curl -q -K -`), never as an argument. The `provider:` line names the provider's domain (the host's last two labels) for the Rule 11b disclosure; curl errors pass through `redact.sh`.
+- **Writes:** `<dir>/signatures.jsonl`, `<dir>/transactions.jsonl` and `<dir>/collection-gaps.tsv`.
+  - `transactions.jsonl` is written by jq only when jq keeps 64-bit integers exact; otherwise it is written by `python3 -I`.
+  - `collection-gaps.tsv` has one `<signature or address><TAB><reason>` row per gap: a failed `getTransaction`, a failed signature page (older history not collected), a history truncated at `--max-pages` (with the `--before` to resume from), the `--max-tx` cap, or the stop after 10 failed calls in a row.
+  - stdout ends with `collection gaps: N (see …)`. Notices go to stderr and start with `  ! `.
+  - An `incident_*` directory (`<dir>` or its parent) without a `.gitignore` gets one containing `*`.
+- **Needs:** curl and jq; `python3` too when jq rounds large integers (before jq 1.7).
 
 #### `profile.sh`
 
