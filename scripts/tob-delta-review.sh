@@ -6,13 +6,13 @@
 #   <tob-clone>  a full (non-shallow) clone of https://github.com/trailofbits/skills
 #   --fetch      run `git fetch origin` in <tob-clone> first — the only network access, off by default
 #
-# Read-only: it reads <tob-clone> with git and this repo's boundary-map / power-tools tables, and
-# writes nothing but a temp dir it removes on exit. Git runs without a pager or signature display, and
-# every diff, log and show without colour, external diff or textconv, so those settings in the
-# maintainer's ~/.gitconfig or the clone's config never reach the parsers below. Upstream's own
-# .gitattributes cannot hide a changed file from the scans either: they diff with --text, and read
-# attributes from the empty tree where git supports it (2.40+). The report informs a human reviewer; it
-# is not a verdict. Works with bash 3.2.
+# Read-only: it reads <tob-clone> with git and this repo's boundary-map / power-tools tables, and writes
+# nothing but a temp dir it removes on exit. Git runs without a pager or signature display, and every diff,
+# log and show without colour, external diff or textconv and with rename detection set on the command
+# line, so those settings in the maintainer's ~/.gitconfig or the clone's config never reach the parsers
+# below. Upstream's own .gitattributes cannot hide a changed file from the scans either: they diff with
+# --text, and read attributes from the empty tree where git supports it (2.40+). The report informs a
+# human reviewer; it is not a verdict. Works with bash 3.2.
 set -uo pipefail
 
 fetch=0
@@ -27,8 +27,8 @@ cd "$(dirname "$0")/.."
 
 ATTR=()
 g() { git --no-pager -c log.showSignature=false -C "$repo" ${ATTR[@]+"${ATTR[@]}"} "$@"; }
-# on every diff, log and show: plain text with fixed a/ b/ prefixes for the parsers below
-DIFFSAFE=(--no-color --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/)
+# on every diff, log and show: plain text with fixed a/ b/ prefixes and no rename or copy detection
+DIFFSAFE=(--no-color --no-ext-diff --no-textconv --no-renames --src-prefix=a/ --dst-prefix=b/)
 SCAN=("${DIFFSAFE[@]}" --text)   # on every call whose output a scan reads: no file counts as binary
 if [ "$fetch" -eq 1 ]; then g fetch --quiet origin || { echo "fetch failed" >&2; exit 2; }; fi
 for c in "$old" "$new"; do
