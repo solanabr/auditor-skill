@@ -7,7 +7,9 @@
 #
 # Give it every corpus of an incident at once (incident_<n>/corpus*/transactions.jsonl):
 # each transaction is counted once, at the first line that carries its signature, and
-# the number of later copies skipped is reported at the end.
+# the number of later copies skipped is reported at the end. A line that is not a
+# getTransaction-shaped JSON object (invalid JSON, or meta / transaction / message
+# that is not an object) is skipped and counted too, instead of stopping the profile.
 #
 # What it reports (all from structural fields, never from log text):
 #   - transaction count and the finalized/failed split (meta.err)
@@ -40,21 +42,36 @@ usage() { echo "usage: profile.sh <corpus.jsonl> [<corpus.jsonl> ...]" >&2; exit
 for f in "$@"; do [[ -f "$f" ]] || usage; done
 
 # One pass keeps the first line of each signature, across every file given, in a
-# private temp file that the queries below read; it prints how many it skipped.
+# private temp file that the queries below read, leaving out malformed lines; it
+# prints how many copies and how many malformed lines it skipped.
 tmpd="$(mktemp -d "${TMPDIR:-/tmp}/dnr_profile.XXXXXX")"
 trap 'rm -rf "$tmpd"' EXIT
 corpus="$tmpd/corpus.jsonl"
-dupes="$(python3 -I -c 'import json, sys
-seen, dupes = set(), 0
+counts="$(python3 -I -c 'import json, sys
+def shaped(tx):  # every object the queries index into is an object, or absent
+    if not isinstance(tx, dict):
+        return False
+    t = tx.get("transaction")
+    m = t.get("message") if isinstance(t, dict) else None
+    return (all(isinstance(v, (dict, type(None))) for v in (tx.get("meta"), t, m))
+            and (m is None or (isinstance(m.get("accountKeys"), (list, type(None)))
+                               and isinstance(m.get("instructions"), (list, type(None)))
+                               and isinstance(m.get("header"), (dict, type(None))))))
+seen, dupes, bad = set(), 0, 0
 with open(sys.argv[1], "wb") as out:
     for path in sys.argv[2:]:
         with open(path, "rb") as fh:
             for line in fh:
+                if not line.strip():
+                    continue
                 try:
                     tx = json.loads(line)
                 except ValueError:
                     tx = None
-                t = tx.get("transaction") if isinstance(tx, dict) else None
+                if not shaped(tx):
+                    bad += 1
+                    continue
+                t = tx.get("transaction")
                 sigs = t.get("signatures") if isinstance(t, dict) else None
                 sig = sigs[0] if isinstance(sigs, list) and sigs and isinstance(sigs[0], str) else None
                 if sig is not None:
@@ -63,7 +80,8 @@ with open(sys.argv[1], "wb") as out:
                         continue
                     seen.add(sig)
                 out.write(line if line.endswith(b"\n") else line + b"\n")
-print(dupes)' "$corpus" "$@")"
+print(dupes, bad)' "$corpus" "$@")"
+dupes="${counts% *}"; bad="${counts#* }"
 
 echo "== corpus: $*"
 echo "-- transactions / outcome"
@@ -105,4 +123,7 @@ jq -r "$KEYDEF"'
   | sort | uniq -c | sort -rn | sed -n '1,20p'
 if [ "$dupes" -gt 0 ]; then
   echo "-- skipped: $dupes transaction(s) already read under the same signature"
+fi
+if [ "$bad" -gt 0 ]; then
+  echo "-- skipped: $bad malformed line(s) (not a getTransaction JSON object)"
 fi

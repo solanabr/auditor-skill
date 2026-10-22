@@ -888,6 +888,23 @@ else
   bad "dedupe: profile did not report skipped copies"
 fi
 
+# ---------------------------------------------------------------------------
+# 18. profile.sh skips and counts malformed lines instead of stopping: a corpus
+#     with invalid JSON and a wrongly shaped object in the middle still profiles
+#     its three good transactions, exits 0, and reports the two lines it skipped.
+# ---------------------------------------------------------------------------
+{ sed -n 1p "$FIX/clean-mixed.jsonl"; echo 'not json {'; echo '{"transaction": "not an object"}'; sed -n '2,$p' "$FIX/clean-mixed.jsonl"; } > "$TT/malformed.jsonl"
+bash "$DNR/profile.sh" "$TT/malformed.jsonl" > "$TT/malformed.out" 2>&1
+eq "profile: a corpus with malformed lines still completes" "$?" "0"
+eq "profile: the good transactions are all counted" \
+  "$(sed -n '/^-- transactions/,/^-- version/p' "$TT/malformed.out" | tr -s ' ' | tr '\n' '|')" \
+  "$(bash "$DNR/profile.sh" "$FIX/clean-mixed.jsonl" | sed -n '/^-- transactions/,/^-- version/p' | tr -s ' ' | tr '\n' '|')"
+if grep -q '^-- skipped: 2 malformed line(s)' "$TT/malformed.out" && grep -q '^-- top-level programs' "$TT/malformed.out"; then
+  ok "profile: the two malformed lines are counted at the end, and every section printed"
+else
+  bad "profile: malformed lines not reported ($(tail -n 2 "$TT/malformed.out" | tr '\n' ' '))"
+fi
+
 if [[ "$fails" -ne 0 ]]; then
   echo "test-dnr: $fails assertion(s) FAILED" >&2
   exit 1
