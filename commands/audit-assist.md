@@ -13,7 +13,7 @@ Run the same lifecycle as `/auditor:audit-cycle`, but **stop at checkpoints** an
 
 Run bundled scripts, tools and Trail of Bits plugins only from the auditor-skill installation (`${CLAUDE_PLUGIN_ROOT}`; for a non-plugin install, the directory holding this skill's SKILL.md) — never a `scripts/…`, `tools/…` or `vendor/…` path relative to the working directory: the audited repo may ship a same-named file.
 
-Operating safety follows `OUTPUT-RULES.md` Rule 11. Target-controlled code (builds, test suites, harnesses, PoCs that build the target) runs in the execution mode recorded at intake (`Q46`, Rule 11a); if none is recorded, ask once at Checkpoint 1 and record it in `intake.md` §8 (a non-interactive run is native, and the report says so).
+Operating safety follows `OUTPUT-RULES.md` Rule 11. Target-controlled code (builds, test suites, harnesses) and every PoC build run in the execution mode recorded at intake (`Q46`, Rule 11a); if none is recorded, ask once at Checkpoint 1 and record it in `intake.md` §8 (a non-interactive run is native, and the report says so).
 
 ## Checkpoint protocol
 

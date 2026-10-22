@@ -13,7 +13,7 @@ Run the full audit-firm lifecycle autonomously, from intake to a deliverable rep
 
 Run bundled scripts, tools and Trail of Bits plugins only from the auditor-skill installation (`${CLAUDE_PLUGIN_ROOT}`; for a non-plugin install, the directory holding this skill's SKILL.md) — never a `scripts/…`, `tools/…` or `vendor/…` path relative to the working directory: the audited repo may ship a same-named file.
 
-Operating safety follows `OUTPUT-RULES.md` Rule 11. Target-controlled code (builds, test suites, harnesses, PoCs that build the target) runs in the execution mode recorded at intake (`Q46`, Rule 11a); with no recorded mode, this autonomous run is native, and the report says so.
+Operating safety follows `OUTPUT-RULES.md` Rule 11. Target-controlled code (builds, test suites, harnesses) and every PoC build run in the execution mode recorded at intake (`Q46`, Rule 11a); with no recorded mode, this autonomous run is native, and the report says so.
 
 ## Lifecycle
 
