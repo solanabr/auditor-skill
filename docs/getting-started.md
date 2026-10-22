@@ -83,7 +83,7 @@ Audit the Solana program in programs/my-program/ using the auditor-skill with PR
 /auditor:audit-cycle --scope full
 ```
 
-The report lands at `audit_<n>/REPORT.md` (`{n}` = count of existing `audit_*/` dirs + 1). Review [COSTS.md](../COSTS.md) first — a full Opus run on a large repo can burn real credits.
+The report lands at `audit_<n>/REPORT.md`. `<n>` is the highest existing `audit_*` number + 1, and the directory is created with `mkdir` (not `-p`), stopping if it already exists. An existing `audit_<n>/` is reused only when git does not track it and it holds no symbolic links, after you confirm which one; nothing is written into a tracked run directory ([Rule 11d](../OUTPUT-RULES.md#11d--output-hygiene)). Review [COSTS.md](../COSTS.md) first — a full Opus run on a large repo can burn real credits.
 
 ## Scopes at a glance
 
