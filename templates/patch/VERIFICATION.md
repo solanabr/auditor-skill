@@ -17,10 +17,11 @@ stated in the report). If it cannot run in that mode, stop at `[FIX-PROPOSED]`. 
 clone you made yourself; for a checkout the client supplied, follow Rule 11c first.
 
 ```bash
-git worktree add /tmp/fix-{FINDING_ID} {COMMIT}      # the audited commit the patch targets
-cd /tmp/fix-{FINDING_ID}
-git apply {PATH_TO}/{FINDING_ID}.patch               # or: git am < ... for format-patch
-cargo build-sbf --tools-version v1.54                 # rebuild the patched program
+WT="$(mktemp -d "${TMPDIR:-/tmp}/fix-{FINDING_ID}.XXXXXX")" &&   # a fresh directory at an unpredictable path
+  git worktree add "$WT" {COMMIT} &&                  # the audited commit the patch targets
+  cd "$WT" &&
+  git apply {PATH_TO}/{FINDING_ID}.patch &&           # or: git am < ... for format-patch
+  cargo build-sbf --tools-version v1.54               # rebuild the patched program
 ```
 
 - [ ] Patch applied cleanly against `{COMMIT}` (no fuzz, no reject `.rej` files).
