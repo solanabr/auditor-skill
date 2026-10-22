@@ -83,12 +83,17 @@ directory.
    it.
 
 5. **Root cause & PoC (Phase 3).** Spawn `context-builder` on the implicated
-   handler in the source deployed at the incident slot, then `poc-engineer` in
-   incident mode to reproduce on the bytes from step 1 (Leg 3) — in-process SVM or
-   a local surfnet, harness keys only, asserting the observed effect. No usable
-   bytes → the ceiling is `suspected`. Building target code needs the Rule 11a
-   mode: ask once (a non-interactive run is native, and the report says so),
-   record it in the ledger header, pass it on as `AUDITOR_EXEC_MODE`.
+   handler in the source deployed at the incident slot. Read that revision without
+   checking it out: from a `git clone --no-local` copy outside the client's
+   checkout, use
+   `git --no-pager -c core.fsmonitor=false -c log.showSignature=false show --no-textconv <rev>:<path>`
+   (Rule 11c). Never `checkout`, `switch` or `worktree add` in `--repo`. Then spawn
+   `poc-engineer` in incident mode to reproduce on the bytes from step 1 (Leg 3) —
+   in-process SVM or a local surfnet, harness keys only, asserting the observed
+   effect. No usable bytes → the ceiling is `suspected`. Building target code
+   needs the Rule 11a mode: ask once (a non-interactive run is native, and the
+   report says so), record it in the ledger header, pass it on as
+   `AUDITOR_EXEC_MODE`.
    `key_compromise` stays at `suspected` unless a person records a custodian
    attestation word for word (README).
 

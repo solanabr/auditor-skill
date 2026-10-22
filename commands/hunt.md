@@ -88,9 +88,13 @@ directory.
 
 5. **Source confirmation (Phase 3).** For each suspect, spawn `context-builder` on
    the implicated handler in the source **deployed at the incident slot** (`--repo`;
-   compare the deploy slot from step 1 with the incident slot). Pin the flaw — or
-   the guard that stopped it — to `file:function`. A guard that held turns the
-   suspect into `attempted_not_vulnerable`, recorded with that location.
+   compare the deploy slot from step 1 with the incident slot). Read that revision
+   without checking it out: from a `git clone --no-local` copy outside the client's
+   checkout, use
+   `git --no-pager -c core.fsmonitor=false -c log.showSignature=false show --no-textconv <rev>:<path>`
+   (Rule 11c). Never `checkout`, `switch` or `worktree add` in `--repo`. Pin the
+   flaw — or the guard that stopped it — to `file:function`. A guard that held
+   turns the suspect into `attempted_not_vulnerable`, recorded with that location.
 
 6. **Reproduce (Phase 4).** For a source-confirmed flaw, spawn `poc-engineer` in
    **incident mode**: reproduce on the program's **real bytes** (the step-1 dump, or

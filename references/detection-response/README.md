@@ -79,6 +79,12 @@ not the thing standing between the treasury and the exit.
    `.py` recipes and any one-off over the corpus — is `python3 -I`: without it, a
    `json.py` in the working directory (for `python3 -` / `-c`) or on `PYTHONPATH`
    replaces the stdlib module and runs as you.
+9. **Read the incident-slot source without checking it out** (`OUTPUT-RULES.md`
+   Rule 11c). `--repo` is usually the client's own checkout, and checking out runs
+   its hooks and filters and changes its tree: never `checkout`, `switch` or
+   `worktree add` there. Clone it with `git clone --no-local` to a directory
+   outside it, and read the revision deployed at the incident slot from that copy
+   with `git --no-pager -c core.fsmonitor=false -c log.showSignature=false show --no-textconv <rev>:<path>`.
 
 These rules, and the `allowed-tools` lists on the commands, are **not a sandbox**
 (see the end of this file). When confinement actually matters — above all when
