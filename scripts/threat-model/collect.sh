@@ -3,8 +3,9 @@
 #
 # Gathers history-derived leads for /auditor:threat-model: security-keyword commits, reverts, removed
 # or quietly added account guards, churn, an optional fork-parent comparison, provenance signals,
-# prior-vulnerability inputs and the audit-mem warm block. It never checks out, builds, runs or
-# modifies the target. Output contract: references/audit-lifecycle/threat-model-bootstrap.md.
+# prior-vulnerability inputs and the audit-mem warm block. It never checks out, builds, runs, fetches
+# into or modifies the target: lazy fetching and transport protocols are off, and a partial clone is
+# refused. Output contract: references/audit-lifecycle/threat-model-bootstrap.md.
 # Git hardening follows OUTPUT-RULES.md Rule 11c; the output directory follows Rule 11d.
 #
 # Usage (from the installation, never as a scripts/ path relative to the working directory):
@@ -15,13 +16,17 @@
 #   --pin <rev>               commit to analyse (default HEAD); only its ancestry is mined
 #   --paths <pathspec>        target pathspec, repeatable (default 'programs/*.rs' when the commit has
 #                             a programs/ dir, else '*.rs'); pass the in-scope program dirs
-#   --parent <https-url|dir>  fork parent: https URL (bare clone into a temp dir) or a local repository
+#   --parent <https-url|dir>  fork parent: https URL (bare clone into a temp dir) or the top level of a
+#                             local repository
 #   --parent-paths <spec>     parent pathspec, repeatable (default: the same rule, applied to the parent)
-#   --import <rev>            target commit that imported the parent code (default: the root commit)
+#   --import <rev>            target commit that imported the parent code (default: the root commit);
+#                             pass it when the code arrived after the root commit, or R5 finds no match
 #   --vulns <file|https-url>  prior-vulnerability input, repeatable: PDF, Markdown, text, CSV, JSON,
 #                             or INCIDENTS.json (schema auditor-incidents/1; allowlisted fields only)
-#   --program-id <id>         save `audit-mem warm --program-id <id>` (needs the built tool and a DB)
-#   --audit-mem-db <path>     audit-mem database (default <repo>/.audit-memory/audit.db, skipped if tracked)
+#   --program-id <id>         save `audit-mem warm --program-id <id>` from the --audit-mem-db store
+#                             (needs the built tool)
+#   --audit-mem-db <path>     audit-mem store that --program-id reads; nothing is read without it (the
+#                             collector never looks for a store in the target tree)
 #   --keywords <ere>          extra commit-message keywords, an ERE alternation such as 'drain|bypass'
 #   --offline                 never use the network; --parent / --vulns URLs are recorded, not fetched
 #   --detect                  only evaluate triggers T3 and T4, print them and exit (writes nothing)
@@ -29,12 +34,17 @@
 #   --small <n>               changed-line ceiling for a quiet-fix candidate commit (default 40)
 #   --fix-ceiling <n>         changed-line ceiling for a keyword commit's ADDED rows (default 300)
 #
-# Exit status: 0 done (sections may print NOT FOUND), 2 usage error or rejected input,
-#              3 target is not a git repository or the pin does not resolve.
+# Exit status: 0 done (sections may print NOT FOUND), 2 usage error or rejected input (including an
+#              --import that is not a commit, and a run directory that is or holds a symbolic link,
+#              that git tracks, or that git or find cannot check),
+#              3 --repo is not the top level of a git repository (or a bare repository), the pin
+#              does not resolve, or the target is a partial clone (reading it could fetch from its
+#              promisor remote) or git cannot read its config.
 
 set -uo pipefail
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
-export LC_ALL=C
+# No git call may fetch a missing object from a promisor remote (partial clones are refused below too).
+export GIT_NO_LAZY_FETCH=1 LC_ALL=C
 
 SELF_DIR=$(cd "$(dirname "$0")" && pwd)
 SKILL_ROOT=$(cd "$SELF_DIR/../.." && pwd)
@@ -67,12 +77,17 @@ while [ $# -gt 0 ]; do
     --cap)           need "$@"; CAP=$2; shift 2 ;;
     --small)         need "$@"; SMALL=$2; shift 2 ;;
     --fix-ceiling)   need "$@"; FIX_CEILING=$2; shift 2 ;;
-    -h|--help)       sed -n '2,33p' "$0"; exit 0 ;;
+    -h|--help)       sed -n '2,/^$/p' "$0"; exit 0 ;;
     *)               die "unknown argument: $1 (see --help)" ;;
   esac
 done
 [ -n "$REPO" ] || die "--repo is required"
 [ -n "$OUT" ]  || die "--out is required"
+# The run directory and its audit_<n> parent are checked by name below, so --out is a plain path: no "."
+# or ".." component (a leading "./" aside) and no trailing slash, which would resolve a final link.
+OUT=${OUT#./}
+case "/$OUT/" in */./*|*/../*) die "--out takes a plain path without . or .. components: $OUT" ;; esac
+while [ "${OUT%/}" != "$OUT" ] && [ "$OUT" != / ]; do OUT=${OUT%/}; done
 case "$CAP" in ''|*[!0-9]*) die "--cap must be a number" ;; esac
 case "$SMALL" in ''|*[!0-9]*) die "--small must be a number" ;; esac
 case "$FIX_CEILING" in ''|*[!0-9]*) die "--fix-ceiling must be a number" ;; esac
@@ -87,7 +102,15 @@ classify_source() {
     *)         case "${1%%/*}" in *:*) echo rejected ;; *) echo path ;; esac ;;
   esac
 }
-redact() { printf '%s' "$1" | sed -E 's#^(https://)[^/@]*@#\1***@#'; }
+# URLs are written to history.md, inputs.tsv and stderr without the parts that carry credentials or
+# signed tokens: the userinfo, the query string and the fragment of a URL become ***. redact_urls
+# filters text (any URL at the start of a line or after a space); redact does one value.
+redact_urls() {
+  sed -E -e 's%(^|[[:space:]])([A-Za-z][A-Za-z0-9+.-]*://)[^/@?#[:space:]]*@%\1\2***@%g' \
+         -e 's%(^|[[:space:]])([A-Za-z][A-Za-z0-9+.-]*://[^?#[:space:]]*)[?][^#[:space:]]*%\1\2?***%g' \
+         -e 's%(^|[[:space:]])([A-Za-z][A-Za-z0-9+.-]*://[^#[:space:]]*)[#][^[:space:]]*%\1\2#***%g'
+}
+redact() { printf '%s\n' "$1" | redact_urls | awk 'NR > 1 { printf "\n" } { printf "%s", $0 }'; }
 if [ -n "$PARENT" ] && [ "$(classify_source "$PARENT")" = rejected ]; then
   die "--parent accepts an https:// URL or a local path, not: $(redact "$PARENT")"
 fi
@@ -112,23 +135,69 @@ VULNS_NL=$abs_vulns
 # ---- hardened git (OUTPUT-RULES.md Rule 11c) --------------------------------------------------------
 # The target's .git/config, attributes and hooks are attacker-controlled: never page, never run
 # fsmonitor or signature helpers, and give every log/show --no-textconv --no-ext-diff with fixed diff
-# prefixes. Nothing is ever checked out, so no smudge or clean filter can run. Output-shaping settings
-# (grep line numbers and columns, colour, path quoting, log encoding) are pinned as well, from the
-# target's config and from the auditor's own ~/.gitconfig alike, so the parsers below see plain text.
+# prefixes. Nothing is ever checked out, so no smudge or clean filter can run, and no transport
+# protocol is allowed, so no remote the target configures is ever contacted (the one https clone of a
+# user-given --parent URL below allows https for that call only). Output-shaping settings
+# (grep line numbers and columns, colour, path quoting, log encoding, the big-file threshold, hunk
+# fusing, root-commit diffs) are pinned as well, from the target's config and from the auditor's own
+# ~/.gitconfig alike, so the parsers below see plain text. Every diff runs with --text and every
+# git grep with -a, so neither an attribute (-diff, diff=<driver> with binary set) nor a size
+# threshold turns a change into "Binary files differ" or hides a file from a search.
 G() {
   local d=$1; shift
   git --no-pager -C "$d" -c core.fsmonitor=false -c core.pager=cat -c log.showSignature=false \
-      -c gpg.program=false -c gpg.ssh.program=false \
+      -c gpg.program=false -c gpg.ssh.program=false -c protocol.allow=never \
       -c grep.lineNumber=false -c grep.column=false -c grep.patternType=basic -c grep.extendedRegexp=false \
       -c color.ui=never -c color.grep=never -c color.diff=never -c core.quotePath=false \
-      -c i18n.logOutputEncoding=UTF-8 "$@"
+      -c i18n.logOutputEncoding=UTF-8 -c core.bigFileThreshold=512m -c diff.interHunkContext=0 \
+      -c log.showRoot=true "$@"
 }
-DIFFSAFE=(--no-textconv --no-ext-diff --no-color --src-prefix=a/ --dst-prefix=b/)
+DIFFSAFE=(--text --no-textconv --no-ext-diff --no-color --src-prefix=a/ --dst-prefix=b/)
 
-G "$REPO" rev-parse --git-dir >/dev/null 2>&1 || { echo "collect.sh: not a git repository: $REPO" >&2; exit 3; }
+# repo_top <dir>: status 0 when <dir> is the top level of its own repository (or a bare repository
+# itself), compared with symbolic links resolved on both sides. A plain directory inside another
+# repository fails, so that outer repository is never mined in its place.
+repo_top() {
+  local top
+  if [ "$(G "$1" rev-parse --is-bare-repository 2>/dev/null)" = true ]; then
+    top=$(G "$1" rev-parse --absolute-git-dir 2>/dev/null) || return 1
+  else
+    top=$(G "$1" rev-parse --show-toplevel 2>/dev/null) || return 1
+  fi
+  [ -n "$top" ] && [ "$(cd "$top" 2>/dev/null && pwd -P)" = "$(cd "$1" 2>/dev/null && pwd -P)" ]
+}
+repo_top "$REPO" || { echo "collect.sh: not a git repository (or not its top level): $REPO" >&2; exit 3; }
+# partial_clone <dir>: status 0 for a partial clone (extensions.partialClone, or a remote.<name>.promisor
+# key), where reading a missing object would fetch it from the promisor remote; 1 for none; 2 when git
+# cannot read the config (git config exits 1 only for "no match"). Reading config runs nothing.
+partial_clone() {
+  local keys rc
+  keys=$(G "$1" config --get-regexp '^(extensions\.partialclone|remote\..*\.promisor)$' 2>/dev/null); rc=$?
+  if [ "$rc" -eq 0 ] && [ -n "$keys" ]; then return 0; fi
+  if [ "$rc" -le 1 ]; then return 1; fi
+  return 2
+}
+partial_clone "$REPO"
+case $? in
+  0) echo "collect.sh: the target is a partial clone: reading missing objects would fetch from its promisor remote. Make a full copy you control first (OUTPUT-RULES Rule 11c)." >&2
+     exit 3 ;;
+  2) echo "collect.sh: git cannot read the target's config, so a partial clone cannot be ruled out: $REPO" >&2
+     exit 3 ;;
+esac
 PIN_SHA=$(G "$REPO" rev-parse --verify --quiet "$PIN^{commit}") || { echo "collect.sh: pin does not resolve: $PIN" >&2; exit 3; }
+# --import reaches git only as the full commit id it resolves to, never as the string given.
+if [ -n "$IMPORT" ]; then
+  IMPORT_SHA=$(G "$REPO" rev-parse --verify --quiet "$IMPORT^{commit}") || die "--import does not resolve to a commit: $IMPORT"
+  IMPORT=$IMPORT_SHA
+fi
 REPO_ABS=$(cd "$REPO" && pwd)
 REPO=$REPO_ABS
+SHALLOW=$(G "$REPO" rev-parse --is-shallow-repository 2>/dev/null)
+EMPTY_TREE=$(G "$REPO" hash-object -t tree /dev/null)
+# Where this git has --attr-source, R4 reads gitattributes from the empty tree instead of the target's
+# .gitattributes; an older git has no such option and keeps reading them.
+ATTR_SRC=""
+G "$REPO" --attr-source="$EMPTY_TREE" check-attr diff -- probe.rs >/dev/null 2>&1 && ATTR_SRC=$EMPTY_TREE
 
 # Default pathspec: an Anchor-style programs/ tree when the commit has one, else every Rust file.
 default_paths() { # default_paths <repo> <commit>
@@ -154,13 +223,30 @@ export TM_ALWAYS_RE="require(_keys)?(_eq|_neq|_gt|_gte)?!|has_one|constraint[ $T
 # address/seeds/bump/close/owner count only in attribute position: at line start or after "(" or ",",
 # never on a `let` line or a line ending in ";" (variable names, not constraints).
 export TM_ATTR_RE="(^|[(,])[ $TAB]*(address|seeds|bump|close|owner)[ $TAB]*=[^=]"
+# git's built-in rust hunk-header pattern, passed to git for R4 so the target's config cannot redefine it.
+RUST_FUNC="^[$TAB ]*((pub(\\([^\\)]+\\))?[$TAB ]+)?((async|const|unsafe|extern([$TAB ]+\"[^\"]+\"))[$TAB ]+)?(struct|enum|union|mod|trait|fn|impl|macro_rules!)[< $TAB]+[^;]*)\$"
+
+# Target text reaches inputs.tsv and history.md as one value per cell and one row per line: TAB, LF and
+# CR are shown as \t, \n and \r, every other control character (C0 and DEL) as ?, and a value longer
+# than 500 characters is cut, ending in "...".
+CLEAN_AWK='
+  BEGIN { for (i = 1; i < 32; i++) esc[sprintf("%c", i)] = "?"
+          esc["\t"] = "\\t"; esc["\n"] = "\\n"; esc["\r"] = "\\r"; esc[sprintf("%c", 127)] = "?" }
+  function clean(s,   out, i, n, c) {
+    n = length(s); if (n > 600) n = 600
+    out = ""
+    for (i = 1; i <= n; i++) { c = substr(s, i, 1); out = out ((c in esc) ? esc[c] : c) }
+    if (length(out) > 500 || length(s) > 600) out = substr(out, 1, 500) "..."
+    return out }'
+clean()       { CLEAN_IN=$1 awk "$CLEAN_AWK"' BEGIN { printf "%s", clean(ENVIRON["CLEAN_IN"]) }'; }
+clean_lines() { awk "$CLEAN_AWK"' { print clean($0) }'; }
 
 # An empty section prints NOT FOUND and a capped one TRUNCATED, so "no rows" never reads as "clean".
 emit_capped() { # emit_capped <file> <what was searched>
   local f=$1 what=$2 n
   n=$(wc -l < "$f" | tr -d ' ')
   if [ "$n" -eq 0 ]; then echo "NOT FOUND ($what)"; return 0; fi
-  head -n "$CAP" "$f"
+  head -n "$CAP" "$f" | clean_lines
   if [ "$n" -gt "$CAP" ]; then echo "TRUNCATED (+$((n - CAP)) more rows; raise --cap)"; fi
   return 0
 }
@@ -175,56 +261,103 @@ sha256_of() {
 }
 
 # guard_rows <repo> <rev-range> <pathspec...>
-# One row per net guard-line change per file per commit:
-#   "<short> <date> <TAG> x<count> <file>: <text>    # <subject>"
+# One row per net guard-text change per commit:
+#   "<short> <date> <TAG> x<count> <file[,file...]>: <text>    # <subject>"
 # REMOVED always prints. ADDED prints for commits whose whole message matches a keyword and that change
-# <= FIX_CEILING lines in the pathspec; ADDED-QUIET for keyword-free commits of <= SMALL lines. Only
-# identical text (after trimming) removed and re-added in the same file of the same commit cancels out;
-# an edited guard prints both its old text (REMOVED) and, when the commit qualifies, its new text.
-# With GR_SIZE=1 each row starts with the commit's changed-line count (a sort key for R5d).
+# <= FIX_CEILING lines in the pathspec; ADDED-QUIET for keyword-free commits of <= SMALL lines. Within a
+# commit, identical guard text (after trimming) is netted across all its files, and renames are detected
+# (-M), so a guard moved unchanged (a git mv, a file split, a directory rename) prints nothing. An edited
+# guard prints its old text as REMOVED, with the files it left, and its new text, with the files it
+# entered, when the commit qualifies. Identical text removed in one file and added in another also nets
+# out, even where the two guard different things.
+# A commit's changed-line count comes from its own patch, which --pickaxe-all prints for every file in
+# the pathspec (a --numstat count would be zero for a file git treats as binary).
+# Each row starts with the commit's full id (for git; rows show the short one); with GR_SIZE=1 the
+# commit's changed-line count follows it (a sort key for R5d). With GR_FILES=<file>, "<full id><TAB><path>"
+# is appended there for every file a printed row names, so a saved diff can be limited to those files.
 guard_rows() {
-  local repo=$1 range=$2 kwfile churnfile; shift 2
-  kwfile="$TMPD/kw.$RANDOM"; churnfile="$TMPD/churn.$RANDOM"
+  local repo=$1 range=$2 kwfile; shift 2
+  kwfile="$TMPD/kw.$RANDOM"
   G "$repo" log "${DIFFSAFE[@]}" -i -E --grep="$KW" --format=%H "$range" -- "$@" > "$kwfile" 2>/dev/null
-  G "$repo" log "${DIFFSAFE[@]}" --no-renames --numstat --format='__C__ %H' "$range" -- "$@" 2>/dev/null |
-    awk '/^__C__ / { c = $2; n[c] = 0; next } NF >= 3 && $1 ~ /^[0-9]+$/ { n[c] += $1 + $2 }
-         END { for (c in n) print c, n[c] }' > "$churnfile"
-  G "$repo" log "${DIFFSAFE[@]}" --min-parents=1 -p -U0 --no-renames -G"$GUARD_G" \
+  G "$repo" log "${DIFFSAFE[@]}" --min-parents=1 -p -U0 -M --pickaxe-all -G"$GUARD_G" \
       --format='__C__ %H %h %ad %s' --date=short "$range" -- "$@" 2>/dev/null |
-  awk -v small="$SMALL" -v ceil="$FIX_CEILING" -v kwfile="$kwfile" -v churnfile="$churnfile" '
+  awk -v small="$SMALL" -v ceil="$FIX_CEILING" -v kwfile="$kwfile" -v filesout="${GR_FILES:-/dev/null}" '
     BEGIN { always = ENVIRON["TM_ALWAYS_RE"]; attr = ENVIRON["TM_ATTR_RE"]
-            while ((getline l < kwfile) > 0) kw[l] = 1
-            while ((getline l < churnfile) > 0) { split(l, a, " "); size[a[1]] = a[2] } }
+            while ((getline l < kwfile) > 0) kw[l] = 1 }
     function isguard(s) {
       if (s ~ always) return 1
       if (s ~ attr && s !~ /(^|[^A-Za-z0-9_])let[ \t]/ && s !~ /;[ \t]*$/) return 1
       return 0 }
-    function flush(   k, n) {
+    function note(side, t, f,   had) {   # the files a guard text left ("-") or entered ("+") in this commit
+      if (f == "" || ((side, t, f) in seen)) return
+      seen[side, t, f] = 1
+      had = ((side, t) in files)
+      files[side, t] = had ? files[side, t] "," f : f
+      path[side, t, ++npath[side, t]] = f }
+    function paths(side, t,   k) { for (k = 1; k <= npath[side, t]; k++) print full "\t" path[side, t, k] > filesout }
+    function flush(   t, n) {
       if (full == "") return
-      for (k in net) {
-        n = net[k]
-        if (n < 0) printf "%06d %d %s %s REMOVED x%d %s: %s    # %s\n", ci, size[full], short, date, -n, fileof[k], textof[k], subj
-        else if (n > 0 && (full in kw) && size[full] + 0 <= ceil + 0)
-          printf "%06d %d %s %s ADDED x%d %s: %s    # %s\n", ci, size[full], short, date, n, fileof[k], textof[k], subj
-        else if (n > 0 && !(full in kw) && size[full] + 0 <= small + 0)
-          printf "%06d %d %s %s ADDED-QUIET x%d %s: %s    # %s\n", ci, size[full], short, date, n, fileof[k], textof[k], subj
+      for (t in net) {
+        n = net[t]
+        if (n < 0) {
+          printf "%06d %s %d %s %s REMOVED x%d %s: %s    # %s\n", ci, full, size, short, date, -n, files["-", t], t, subj
+          paths("-", t)
+        } else if (n > 0 && (full in kw) && size <= ceil + 0) {
+          printf "%06d %s %d %s %s ADDED x%d %s: %s    # %s\n", ci, full, size, short, date, n, files["+", t], t, subj
+          paths("+", t)
+        } else if (n > 0 && !(full in kw) && size <= small + 0) {
+          printf "%06d %s %d %s %s ADDED-QUIET x%d %s: %s    # %s\n", ci, full, size, short, date, n, files["+", t], t, subj
+          paths("+", t)
+        }
       }
-      delete net; delete fileof; delete textof }
-    /^__C__ / { flush(); ci++; full = $2; short = $3; date = $4
+      delete net; delete files; delete seen; delete path; delete npath }
+    /^__C__ / { flush(); ci++; full = $2; short = $3; date = $4; size = 0
                 subj = $0; sub(/^__C__ [^ ]+ [^ ]+ [^ ]+ ?/, "", subj); inhdr = 0; next }
-    /^diff --git / { inhdr = 1; oldp = ""; file = ""; next }
+    /^diff --git / { inhdr = 1; oldp = ""; newp = ""; next }
     inhdr && /^--- a\// { oldp = substr($0, 7); next }
-    inhdr && /^\+\+\+ b\// { file = substr($0, 7); next }
-    inhdr && /^\+\+\+ \/dev\/null/ { file = oldp; next }
+    inhdr && /^\+\+\+ b\// { newp = substr($0, 7); next }
     /^@@/ { inhdr = 0; next }
     inhdr { next }
-    /^[-+]/ { s = substr($0, 2)
+    /^[-+]/ { size++; s = substr($0, 2)
               if (!isguard(s)) next
               t = s; gsub(/^[ \t]+|[ \t]+$/, "", t)
-              k = file SUBSEP t
-              net[k] += (substr($0, 1, 1) == "+") ? 1 : -1
-              fileof[k] = file; textof[k] = t }
-    END { flush() }' | sort -k1,1n -k5 | cut -d' ' -f"$([ "${GR_SIZE:-0}" = 1 ] && echo 2- || echo 3-)"
+              if (substr($0, 1, 1) == "+") { net[t]++; note("+", t, newp) } else { net[t]--; note("-", t, oldp) } }
+    END { flush() }' | sort -k1,1n -k6 | cut -d' ' -f"$([ "${GR_SIZE:-0}" = 1 ] && echo 2- || echo 2,4-)"
+}
+
+# save_diff <repo> <full id> <out file> <path list> <fallback pathspec...>
+# Writes the commit's id, date, subject and at most 20 body lines, then its diff limited to the paths in
+# <path list> (one per line; the fallback pathspec when it is empty), at most 400 lines. Each cut ends in a
+# TRUNCATED line that names the git show call for the rest.
+save_diff() {
+  local repo=$1 c=$2 out=$3 plist=$4 p n shown="" specs nspec=0; shift 4
+  specs=()
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    specs+=(":(literal)$p"); shown="${shown:+$shown }$p"; nspec=$((nspec + 1))
+  done < "$plist"
+  if [ "$nspec" -eq 0 ]; then specs=("$@"); shown="$*"; fi
+  {
+    G "$repo" log -1 --format='commit %H%n%ad%n%n%s' --date=short "$c" 2>/dev/null
+    G "$repo" log -1 --format=%b "$c" 2>/dev/null | sed -e '$!b' -e '/^$/d' > "$TMPD/save.body"
+    n=$(wc -l < "$TMPD/save.body" | tr -d ' ')
+    if [ "$n" -gt 0 ]; then echo; head -n 20 "$TMPD/save.body"; fi
+    if [ "$n" -gt 20 ]; then echo "TRUNCATED ($((n - 20)) more message lines; run git show $c)"; fi
+    echo
+    G "$repo" show "${DIFFSAFE[@]}" --format= "$c" -- "${specs[@]}" 2>/dev/null | sed '/./,$!d' > "$TMPD/save.diff"
+    n=$(wc -l < "$TMPD/save.diff" | tr -d ' ')
+    head -n 400 "$TMPD/save.diff"
+    if [ "$n" -gt 400 ]; then echo "TRUNCATED ($((n - 400)) more lines; run git show $c -- $shown)"; fi
+  } > "$out"
+}
+
+# remote_urls: one "remote.<name>.url <value>" line per configured remote URL. Config is read NUL-separated,
+# so a newline inside a value stays on its line, shown as \n.
+remote_urls() {
+  G "$REPO" config -z --get-regexp '^remote\..*\.url$' 2>/dev/null | tr '\n\000' '\001\n' |
+    awk '{ i = index($0, "\001"); if (i) $0 = substr($0, 1, i - 1) " " substr($0, i + 1)
+           out = ""; while ((i = index($0, "\001")) > 0) { out = out substr($0, 1, i - 1) "\\n"; $0 = substr($0, i + 1) }
+           print out $0 }'
 }
 
 # ---- triggers T3 (provenance) and T4 (prior reports, incidents) ---------------------------------------
@@ -236,13 +369,15 @@ norm_url() { tr 'A-Z' 'a-z' | sed -E 's#^[a-z+]+://##; s#^git@##; s#:#/#; s#\.gi
 # SIGPIPE instead of the match, so every check whose status matters here counts, or reads a string.
 eval_triggers() {
   local t3="" t4="" cur="" src remotes s d n
-  G "$REPO" grep -I -i -q -E "$FORK_PHRASES" "$PIN_SHA" -- 'README*' '*/README*' 'docs/*' 2>/dev/null && t3="readme-phrase"
-  src=$(G "$REPO" grep -h -I -E 'source_code[[:space:]]*:' "$PIN_SHA" -- '*.rs' 2>/dev/null |
+  G "$REPO" grep -a -i -q -E "$FORK_PHRASES" "$PIN_SHA" -- 'README*' '*/README*' 'docs/*' 2>/dev/null && t3="readme-phrase"
+  src=$(G "$REPO" grep -h -a -E 'source_code[[:space:]]*:' "$PIN_SHA" -- '*.rs' 2>/dev/null |
         sed -nE 's/.*source_code[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' | head -n 3)
-  remotes=$(G "$REPO" config --get-regexp '^remote\..*\.url$' 2>/dev/null | awk '{print $2}' | norm_url)
-  for s in $src; do
+  remotes=$(remote_urls | awk '{print $2}' | norm_url)
+  # One string per line, read as written: target strings are never word-split or glob-expanded.
+  while IFS= read -r s; do
+    [ -n "$s" ] || continue
     grep -qxF -- "$(printf '%s' "$s" | norm_url)" <<< "$remotes" || { t3="${t3:+$t3,}security_txt-source_code"; break; }
-  done
+  done <<< "$src"
   [ -d "$(dirname "$OUT")" ] && cur=$(cd "$(dirname "$OUT")" && pwd)
   for d in "$REPO_ABS"/audit_*/; do
     [ -f "$d/REPORT.md" ] || continue
@@ -259,11 +394,37 @@ eval_triggers() {
 if [ "$DETECT" -eq 1 ]; then eval_triggers; exit 0; fi
 
 # ---- output dir (OUTPUT-RULES.md Rule 11d) -----------------------------------------------------------
+# Only a run directory this audit made is written to: never one that is or holds a symbolic link, and
+# never one git tracks, where the output would become changes to tracked files. Checked before the first
+# write or removal, for the output dir and its audit_<n>/ parent. The check fails closed: a directory
+# find cannot fully read, or one git cannot answer for (another owner, an unreadable config), is refused.
+# The only git error that passes is "not a git repository" from discovery: the directory is outside
+# every repository, so nothing there can be tracked.
+check_run_dir() { # check_run_dir <dir>
+  local d=$1 up links inside listed
+  [ -L "$d" ] && die "refusing a run directory that is a symbolic link: $d (use a new audit_<n>)"
+  if [ -d "$d" ]; then
+    links=$(find "$d" -type l -print 2>/dev/null) || die "refusing a run directory that cannot be fully read: $d (use a new audit_<n>)"
+    [ -z "$links" ] || die "refusing a run directory that holds symbolic links: $d (use a new audit_<n>)"
+  fi
+  up=$(dirname "$d")
+  [ -d "$up" ] || return 0
+  if ! inside=$(G "$up" rev-parse --is-inside-work-tree 2>"$TMPD/run-dir.err"); then
+    grep -qi 'not a git repository (or any' "$TMPD/run-dir.err" && return 0
+    die "refusing a run directory that git cannot check: $d (use a new audit_<n>)"
+  fi
+  [ "$inside" = true ] || return 0
+  listed=$(G "$up" --icase-pathspecs ls-files -- "$(basename "$d")" 2>/dev/null) ||
+    die "refusing a run directory that git cannot check: $d (use a new audit_<n>)"
+  [ -z "$listed" ] || die "refusing a run directory that git tracks: $d (use a new audit_<n>)"
+}
+AUD_DIR=$(dirname "$OUT")
+case "$(basename "$AUD_DIR")" in audit_*) check_run_dir "$AUD_DIR" ;; esac
+check_run_dir "$OUT"
 mkdir -p "$OUT" || die "cannot create $OUT"
 # Working material never lands in the client's git status: the output dir ignores itself, and so does
 # its audit_<n>/ parent when it has no .gitignore of its own (only for a dir named audit_*).
 [ -e "$OUT/.gitignore" ] || printf '*\n' > "$OUT/.gitignore"
-AUD_DIR=$(dirname "$OUT")
 case "$(basename "$AUD_DIR")" in
   audit_*) [ -e "$AUD_DIR/.gitignore" ] || printf '*\n' > "$AUD_DIR/.gitignore" ;;
 esac
@@ -286,10 +447,15 @@ if [ -n "$PARENT" ]; then
     else
       PARENT_STATUS="clone failed"
     fi
-  elif G "$PARENT" rev-parse --git-dir >/dev/null 2>&1; then
-    PDIR="$PARENT"; PARENT_STATUS="local repository"
+  elif ! repo_top "$PARENT"; then
+    PARENT_STATUS="not a git repository (or not its top level)"
   else
-    PARENT_STATUS="not a git repository"
+    partial_clone "$PARENT"
+    case $? in
+      0) PARENT_STATUS="the parent is a partial clone, not used (reading it could fetch from its promisor remote)" ;;
+      2) PARENT_STATUS="git cannot read the parent's config, not used" ;;
+      *) PDIR="$PARENT"; PARENT_STATUS="local repository" ;;
+    esac
   fi
   if [ -n "$PDIR" ]; then PHEAD=$(G "$PDIR" rev-parse --verify --quiet 'HEAD^{commit}'); fi
 fi
@@ -305,23 +471,32 @@ while IFS= read -r p; do [ -n "$p" ] && PPATHS+=("$p"); done <<< "$PPATHS_NL"
   echo
   echo "| | |"
   echo "|---|---|"
-  echo "| Target | \`$REPO_ABS\` |"
+  echo "| Target | \`$(clean "$REPO_ABS")\` |"
   echo "| Pinned commit | \`$PIN_SHA\` |"
-  echo "| Target paths | \`${TPATHS[*]}\` |"
-  if [ -n "$PARENT" ]; then echo "| Parent | $(redact "$PARENT") — $PARENT_STATUS${PHEAD:+ @ \`$PHEAD\`} |"; else echo "| Parent | none |"; fi
-  echo "| Parent paths | \`${PPATHS[*]}\` |"
+  echo "| Target paths | \`$(clean "${TPATHS[*]}")\` |"
+  if [ -n "$PARENT" ]; then echo "| Parent | $(clean "$(redact "$PARENT")") — $PARENT_STATUS${PHEAD:+ @ \`$PHEAD\`} |"; else echo "| Parent | none |"; fi
+  echo "| Parent paths | \`$(clean "${PPATHS[*]}")\` |"
   echo "| Network | $([ "$OFFLINE" -eq 1 ] && echo 'offline' || echo 'explicit https URLs only') |"
   echo "| Collector | scripts/threat-model/collect.sh v$COLLECTOR_VERSION, cap $CAP rows, quiet-fix ceiling $SMALL lines, fix ceiling $FIX_CEILING lines |"
   echo
   echo "Leads, not findings: every row points at history to re-derive from the code at the pinned commit."
-  echo "Git ran without pager, fsmonitor, signature helpers, textconv, external diff or output-shaping config (OUTPUT-RULES.md Rule 11c)."
+  echo "Git ran without pager, fsmonitor, signature helpers, textconv or external diff (OUTPUT-RULES.md Rule 11c), with lazy fetching and every transport protocol off (a partial clone is refused), and with its grep, colour, path-quoting, log-encoding, big-file, hunk-fusing and root-commit settings pinned."
+  if [ "$SHALLOW" = true ]; then
+    echo "Shallow clone: history before the shallow boundary is missing, so a NOT FOUND or a short list below may only mean that history is cut."
+  fi
+  echo "Every diff and search runs as text, so no attribute (committed or in .git/info/attributes) or setting of the target makes git skip a file as binary; a matching line from a binary file is shown escaped and cut like all target text."
+  if [ -n "$ATTR_SRC" ]; then
+    echo "R4 function names use git's rust hunk-header pattern, pinned. The target's .gitattributes are ignored there (--attr-source); its .git/info/attributes still apply, and R4 counts the .rs files they send to another diff driver."
+  else
+    echo "R4 function names use git's rust hunk-header pattern, pinned. This git has no --attr-source, so the target's .gitattributes and .git/info/attributes still apply there; R4 counts the .rs files they send to another diff driver."
+  fi
   echo "An empty section prints NOT FOUND; a capped one prints TRUNCATED (+n)."
 } > "$H"
 
 # ---- R0 preflight ---------------------------------------------------------------------------------
 {
   section "R0 Preflight" "Shallow clones hide history. T3/T4 are the triggers this script can evaluate offline."
-  echo "shallow: $(G "$REPO" rev-parse --is-shallow-repository 2>/dev/null)"
+  echo "shallow: $SHALLOW"
   echo "commits in the pin ancestry touching the target paths: $(G "$REPO" rev-list --count "$PIN_SHA" -- "${TPATHS[@]}" 2>/dev/null)"
   eval_triggers
   endsec
@@ -329,7 +504,7 @@ while IFS= read -r p; do [ -n "$p" ] && PPATHS+=("$p"); done <<< "$PPATHS_NL"
 
 # ---- R1 keyword commits (whole message) --------------------------------------------------------------
 G "$REPO" log "${DIFFSAFE[@]}" -i -E --grep="$KW" --format='%h %ad %s' --date=short "$PIN_SHA" -- "${TPATHS[@]}" > "$TMPD/r1" 2>/dev/null
-{ section "R1 Commits whose message matches security keywords" "Case-insensitive, whole commit message: \`$KW\`"
+{ section "R1 Commits whose message matches security keywords" "Case-insensitive, whole commit message: \`$(clean "$KW")\`"
   emit_capped "$TMPD/r1" "no commit message in the pin ancestry matches"; endsec; } >> "$H"
 
 # ---- R2 reverts ------------------------------------------------------------------------------------
@@ -342,12 +517,13 @@ done > "$TMPD/r2"
   emit_capped "$TMPD/r2" "no revert commit in the pin ancestry"; endsec; } >> "$H"
 
 # ---- R3 guard lines removed / added ------------------------------------------------------------------
-guard_rows "$REPO" "$PIN_SHA" "${TPATHS[@]}" > "$TMPD/r3"
+GR_FILES="$TMPD/r3.paths" guard_rows "$REPO" "$PIN_SHA" "${TPATHS[@]}" > "$TMPD/r3ids"
+cut -d' ' -f2- "$TMPD/r3ids" > "$TMPD/r3"
 grep -E ' REMOVED x' "$TMPD/r3" > "$TMPD/r3a"
 grep -E ' ADDED-QUIET x' "$TMPD/r3" > "$TMPD/r3b"
 grep -E ' ADDED x' "$TMPD/r3" > "$TMPD/r3c"
 { section "R3 Account-guard lines removed or added" \
-"Guard text that left a file (REMOVED), appeared in a keyword-free commit changing <= $SMALL lines (ADDED-QUIET), or appeared in a commit of <= $FIX_CEILING lines whose message matches a keyword (ADDED). An edited guard prints its old text as REMOVED. Blind spots: flipped comparisons, changed inputs to an unchanged guard, plain \`if ... { return Err(...) }\` checks, merge resolutions."
+"Guard text a commit removed from the target paths (REMOVED), or added in a keyword-free commit changing <= $SMALL lines (ADDED-QUIET) or in a commit of <= $FIX_CEILING lines whose message matches a keyword (ADDED). Each commit nets identical guard text across its files: a guard moved unchanged prints nothing, an edited one prints its old text as REMOVED. Blind spots: flipped comparisons, changed inputs to an unchanged guard, plain \`if ... { return Err(...) }\` checks, merge resolutions, identical text removed in one file and added in another by the same commit."
   echo "--- R3a REMOVED ---"
   emit_capped "$TMPD/r3a" "no guard text removed in the pin ancestry"
   echo "--- R3b ADDED-QUIET (quiet-fix candidates) ---"
@@ -355,24 +531,36 @@ grep -E ' ADDED x' "$TMPD/r3" > "$TMPD/r3c"
   echo "--- R3c ADDED in keyword commits ---"
   emit_capped "$TMPD/r3c" "no guard text added by a keyword commit"
   endsec; } >> "$H"
-grep -E ' (REMOVED|ADDED-QUIET) x' "$TMPD/r3" | awk '!s[$1]++ { print $1 }' | head -n 20 |
-while read -r c; do
-  G "$REPO" show "${DIFFSAFE[@]}" --format='commit %H%n%ad%n%n%B' --date=short "$c" -- "${TPATHS[@]}" 2>/dev/null | head -n 400 > "$OUT/diffs/target-$c.diff"
+# Saved diffs name the commit by its full id (a short id could also be the name of a ref) and hold only
+# the files the commit's rows name.
+grep -E ' (REMOVED|ADDED-QUIET) x' "$TMPD/r3ids" | awk '!s[$1]++ { print $1, $2 }' | head -n 20 |
+while read -r full c; do
+  awk -F '\t' -v c="$full" '$1 == c && !s[$2]++ { print $2 }' "$TMPD/r3.paths" > "$TMPD/save.paths"
+  save_diff "$REPO" "$full" "$OUT/diffs/target-$c.diff" "$TMPD/save.paths" "${TPATHS[@]}"
 done
 
 # ---- R4 churn --------------------------------------------------------------------------------------
 G "$REPO" log "${DIFFSAFE[@]}" --no-renames --format= --name-only "$PIN_SHA" -- "${TPATHS[@]}" 2>/dev/null | sed '/^$/d' | sort | uniq -c | sort -k1,1nr -k2 > "$TMPD/r4a"
+# Function names come from hunk headers: *.rs maps to the rust driver, whose pattern is passed on the
+# command line, and with ATTR_SRC the target's .gitattributes are not read. Its .git/info/attributes
+# still are; the .rs files they send to another driver are counted in a note.
 printf '*.rs diff=rust\n' > "$TMPD/rs.attributes"
-G "$REPO" -c core.attributesFile="$TMPD/rs.attributes" log "${DIFFSAFE[@]}" -p -U0 --no-renames \
+R4_GIT=(${ATTR_SRC:+"--attr-source=$ATTR_SRC"} -c core.attributesFile="$TMPD/rs.attributes" -c diff.rust.xfuncname="$RUST_FUNC")
+G "$REPO" "${R4_GIT[@]}" log "${DIFFSAFE[@]}" -p -U0 --no-renames \
     --format='__C__ %h' "$PIN_SHA" -- "${TPATHS[@]}" 2>/dev/null | awk '
   /^__C__ / { c = $2; next }
   /^@@ / { s = $0; sub(/^@@ [^@]*@@ ?/, "", s)
            if (match(s, /fn [A-Za-z0-9_]+/)) { f = substr(s, RSTART + 3, RLENGTH - 3)
              if (!seen[c SUBSEP f]++) cnt[f]++ } }
   END { for (f in cnt) printf "%4d %s\n", cnt[f], f }' | sort -k1,1nr -k2 > "$TMPD/r4b"
-{ section "R4 Churn" "Files, then functions (hunk headers from git's built-in rust driver), by number of commits touching them."
+R4_OTHER=$(sed -E 's/^ *[0-9]+ //' "$TMPD/r4a" | grep -E '\.rs"?$' |
+  G "$REPO" "${R4_GIT[@]}" check-attr --stdin diff 2>/dev/null | grep -vc ': diff: rust$')
+{ section "R4 Churn" "Files, then functions (hunk headers from git's rust pattern, pinned), by number of commits touching them."
   emit_capped "$TMPD/r4a" "no file in the target paths changed"
   echo "--- functions ---"
+  if [ "${R4_OTHER:-0}" -gt 0 ]; then
+    echo "note: the target's attributes send $R4_OTHER .rs file(s) above to another diff driver; their hunks may name no function, or one that driver chose"
+  fi
   emit_capped "$TMPD/r4b" "no rust function header in the diffs"; endsec; } >> "$H"
 
 # ---- R5 fork parent --------------------------------------------------------------------------------
@@ -381,19 +569,27 @@ G "$REPO" -c core.attributesFile="$TMPD/rs.attributes" log "${DIFFSAFE[@]}" -p -
   if [ -z "$PARENT" ]; then
     echo "NOT FOUND (no --parent given; a URL found in target content is never fetched)"
   elif [ -z "$PDIR" ] || [ -z "$PHEAD" ]; then
-    echo "NOT FOUND (parent $(redact "$PARENT"): $PARENT_STATUS)"
+    echo "NOT FOUND (parent $(clean "$(redact "$PARENT")"): $PARENT_STATUS)"
   else
     G "$PDIR" rev-list --all > "$TMPD/parent.revs" 2>/dev/null
-    G "$REPO" rev-list "$PIN_SHA" > "$TMPD/target.revs" 2>/dev/null
-    FORK="" METHOD="shared history"
+    # The fork point is looked for on the target's first-parent line first: a parent commit reached only
+    # through a merge (one made with -s ours records the parent's history without its code) must not
+    # move the fork point past fixes the target never applied. R5d then tags each later parent guard
+    # present or absent at the pin. Without a shared commit on that line, the whole ancestry is searched.
+    FORK="" METHOD="shared history, first-parent line"
     if [ -s "$TMPD/parent.revs" ]; then
+      G "$REPO" rev-list --first-parent "$PIN_SHA" > "$TMPD/target.revs" 2>/dev/null
       FORK=$(awk 'NR == FNR { p[$1] = 1; next } ($1 in p) { print; exit }' "$TMPD/parent.revs" "$TMPD/target.revs")
+      if [ -z "$FORK" ]; then
+        METHOD="shared history"
+        G "$REPO" rev-list "$PIN_SHA" > "$TMPD/target.revs" 2>/dev/null
+        FORK=$(awk 'NR == FNR { p[$1] = 1; next } ($1 in p) { print; exit }' "$TMPD/parent.revs" "$TMPD/target.revs")
+      fi
     fi
     if [ -z "$FORK" ]; then
       METHOD="blob identity"
       [ -n "$IMPORT" ] || IMPORT=$(G "$REPO" rev-list --max-parents=0 "$PIN_SHA" | tail -n 1)
       # ls-tree takes literal paths, not globs; a diff from the empty tree honours the pathspec.
-      EMPTY_TREE=$(G "$REPO" hash-object -t tree /dev/null)
       G "$REPO" diff-tree "${DIFFSAFE[@]}" -r --no-renames "$EMPTY_TREE" "$IMPORT" -- "${TPATHS[@]}" 2>/dev/null |
         awk '/^:/ { print $4 }' | sort -u | head -n 2000 > "$TMPD/import.blobs"
       if [ -s "$TMPD/import.blobs" ]; then
@@ -410,29 +606,34 @@ G "$REPO" -c core.attributesFile="$TMPD/rs.attributes" log "${DIFFSAFE[@]}" -p -
     if [ -z "$FORK" ]; then
       echo "NOT FOUND (no shared commit and no identical file content between the target import and the parent)"
     else
-      echo "fork point: $(G "$PDIR" log "${DIFFSAFE[@]}" -1 --format='%h %ad %s' --date=short "$FORK") — $METHOD"
-      echo "parent head: $(G "$PDIR" log "${DIFFSAFE[@]}" -1 --format='%h %ad %s' --date=short "$PHEAD")"
+      echo "fork point: $(clean "$(G "$PDIR" log "${DIFFSAFE[@]}" -1 --format='%h %ad %s' --date=short "$FORK")") — $METHOD"
+      echo "parent head: $(clean "$(G "$PDIR" log "${DIFFSAFE[@]}" -1 --format='%h %ad %s' --date=short "$PHEAD")")"
+      if [ "$(G "$PDIR" rev-parse --is-shallow-repository 2>/dev/null)" = true ]; then
+        echo "note: the parent is a shallow clone; its history before the shallow boundary is missing"
+      fi
       echo
       echo "--- R5c parent commits after the fork point whose whole message matches a keyword ---"
       G "$PDIR" log "${DIFFSAFE[@]}" -i -E --grep="$KW" --format='%h %ad %s' --date=short "$FORK..$PHEAD" -- "${PPATHS[@]}" > "$TMPD/r5c" 2>/dev/null
       emit_capped "$TMPD/r5c" "no keyword commit in the parent after the fork point"
       echo
       echo "--- R5d guard lines the parent added after the fork point, looked up in the target @ pin ---"
-      G "$REPO" grep -h -I -e '' "$PIN_SHA" -- "${TPATHS[@]}" 2>/dev/null | awk '{ gsub(/[ \t]/, ""); print }' > "$TMPD/target.lines"
+      G "$REPO" grep -h -a -e '' "$PIN_SHA" -- "${TPATHS[@]}" 2>/dev/null | awk '{ gsub(/[ \t]/, ""); print }' > "$TMPD/target.lines"
       echo "__no_line_matches_this__" >> "$TMPD/target.lines"   # keeps the join below two-file even for an empty tree
       # Absent rows first, then smaller commits, then commit order: a real fix should not fall past
       # the cap behind feature releases.
-      GR_SIZE=1 guard_rows "$PDIR" "$FORK..$PHEAD" "${PPATHS[@]}" | grep -E ' ADDED(-QUIET)? x' |
+      GR_FILES="$TMPD/r5.paths" GR_SIZE=1 guard_rows "$PDIR" "$FORK..$PHEAD" "${PPATHS[@]}" | grep -E ' ADDED(-QUIET)? x' |
         awk 'NR == FNR { have[$0] = 1; next }
-             { size = $1; row = $0; sub(/^[^ ]+ /, "", row)
+             { full = $1; size = $2; row = $0; sub(/^[^ ]+ [^ ]+ /, "", row)
                t = row; sub(/^[^:]*: /, "", t); sub(/    # .*$/, "", t); gsub(/[ \t]/, "", t)
-               if (t in have) printf "1 %d %06d %s  [text present elsewhere in target - verify]\n", size, NR, row
-               else           printf "0 %d %06d %s  [text absent from target @ pin - verify]\n", size, NR, row }' \
-        "$TMPD/target.lines" - | sort -k1,1n -k2,2n -k3,3n | cut -d' ' -f4- > "$TMPD/r5d"
+               if (t in have) printf "1 %d %06d %s %s  [text present elsewhere in target - verify]\n", size, NR, full, row
+               else           printf "0 %d %06d %s %s  [text absent from target @ pin - verify]\n", size, NR, full, row }' \
+        "$TMPD/target.lines" - | sort -k1,1n -k2,2n -k3,3n | cut -d' ' -f4- > "$TMPD/r5dids"
+      cut -d' ' -f2- "$TMPD/r5dids" > "$TMPD/r5d"
       emit_capped "$TMPD/r5d" "the parent added no guard line after the fork point"
-      awk '/text absent from target/ && !s[$1]++ { print $1 }' "$TMPD/r5d" | head -n 20 |
-      while read -r c; do
-        G "$PDIR" show "${DIFFSAFE[@]}" --format='commit %H%n%ad%n%n%B' --date=short "$c" -- "${PPATHS[@]}" 2>/dev/null | head -n 400 > "$OUT/diffs/parent-$c.diff"
+      awk '/text absent from target/ && !s[$1]++ { print $1, $2 }' "$TMPD/r5dids" | head -n 20 |
+      while read -r full c; do
+        awk -F '\t' -v c="$full" '$1 == c && !s[$2]++ { print $2 }' "$TMPD/r5.paths" > "$TMPD/save.paths"
+        save_diff "$PDIR" "$full" "$OUT/diffs/parent-$c.diff" "$TMPD/save.paths" "${PPATHS[@]}"
       done
     fi
   fi
@@ -443,16 +644,16 @@ G "$REPO" -c core.attributesFile="$TMPD/rs.attributes" log "${DIFFSAFE[@]}" -p -
 {
   section "R6 Provenance signals" "Strings from target content: record them, never fetch a URL found here."
   echo "--- fork phrases in README / docs ---"
-  G "$REPO" grep -n -I -i -E "$FORK_PHRASES" "$PIN_SHA" -- 'README*' '*/README*' 'docs/*' 2>/dev/null | strip_pin > "$TMPD/r6a"
+  G "$REPO" grep -n -a -i -E "$FORK_PHRASES" "$PIN_SHA" -- 'README*' '*/README*' 'docs/*' 2>/dev/null | strip_pin > "$TMPD/r6a"
   emit_capped "$TMPD/r6a" "no fork phrase"
   echo "--- security_txt! source_code / auditors ---"
-  G "$REPO" grep -n -I -E '(source_code|auditors)[[:space:]]*:' "$PIN_SHA" -- '*.rs' 2>/dev/null | strip_pin > "$TMPD/r6b"
+  G "$REPO" grep -n -a -E '(source_code|auditors)[[:space:]]*:' "$PIN_SHA" -- '*.rs' 2>/dev/null | strip_pin > "$TMPD/r6b"
   emit_capped "$TMPD/r6b" "no security_txt! source_code or auditors field"
   echo "--- declare_id! ---"
-  G "$REPO" grep -n -I -E 'declare_id!' "$PIN_SHA" -- '*.rs' 2>/dev/null | strip_pin > "$TMPD/r6c"
+  G "$REPO" grep -n -a -E 'declare_id!' "$PIN_SHA" -- '*.rs' 2>/dev/null | strip_pin > "$TMPD/r6c"
   emit_capped "$TMPD/r6c" "no declare_id!"
   echo "--- configured remotes (strings from .git/config) ---"
-  G "$REPO" config --get-regexp '^remote\..*\.url$' 2>/dev/null | sed -E 's#(https://)[^/@ ]*@#\1***@#' > "$TMPD/r6d"
+  remote_urls | redact_urls > "$TMPD/r6d"
   emit_capped "$TMPD/r6d" "no remote configured"
   echo "--- first commits ---"
   G "$REPO" log "${DIFFSAFE[@]}" --reverse --format='%h %ad %s' --date=short "$PIN_SHA" 2>/dev/null | head -n 3 > "$TMPD/r6e"
@@ -461,7 +662,9 @@ G "$REPO" -c core.attributesFile="$TMPD/rs.attributes" log "${DIFFSAFE[@]}" -p -
   G "$REPO" ls-tree -r --name-only "$PIN_SHA" 2>/dev/null | grep -iE '\.(pdf|md)$' | grep -iE "$REPORT_RE" > "$TMPD/r6f"
   emit_capped "$TMPD/r6f" "no audit, post-mortem or incident file"
   echo "--- auditor-skill outputs next to the target ---"
-  ls -d "$REPO_ABS"/audit_*/ "$REPO_ABS"/incident_*/INCIDENTS.json 2>/dev/null > "$TMPD/r6g"
+  for d in "$REPO_ABS"/audit_*/ "$REPO_ABS"/incident_*/INCIDENTS.json; do
+    if [ -e "$d" ] || [ -L "$d" ]; then clean "$d"; echo; fi
+  done > "$TMPD/r6g"
   emit_capped "$TMPD/r6g" "no audit_*/ or incident_*/INCIDENTS.json"
   endsec
 } >> "$H"
@@ -470,7 +673,7 @@ G "$REPO" -c core.attributesFile="$TMPD/rs.attributes" log "${DIFFSAFE[@]}" -p -
 INPUT_N=0
 record() { # record <source> <format> <sha256> <stored_as> <status>
   INPUT_N=$((INPUT_N + 1))
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$INPUT_N" "$(redact "$1")" "$2" "$3" "$4" "$5" >> "$OUT/inputs.tsv"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$INPUT_N" "$(clean "$(redact "$1")")" "$2" "$3" "$4" "$(clean "$5")" >> "$OUT/inputs.tsv"
 }
 # JSON tools in order of preference. When jq is missing, too old, or fails on a file, python3 takes
 # over; with neither, JSON inputs are recorded but never copied. TM_JSON_TOOL (jq | python3 | none)
@@ -503,8 +706,10 @@ PY
 # outcome, root_cause_class, vuln.{program,instruction,file,function,line,mechanism,kv,checklist} and
 # poc.tier. Everything else (attacker, transactions, blast_radius, timeline, evidence, ruled_out, urgency, ...)
 # is never read. Strings are cut at 500 characters; kv / checklist keep string ids only; nested objects drop.
-# The jq program uses jq 1.5 features only (no builtin pick/1). Sets EXTRACTED_WITH on success.
-EXTRACTED_WITH=""
+# An "incidents" value that is not an array is malformed: both tools write an empty list for it.
+# The jq program uses jq 1.5 features only (no builtin pick/1). Sets EXTRACTED_WITH on success, and
+# INCIDENTS_TYPE to the JSON type of "incidents" (array, object, string, number, boolean or null).
+EXTRACTED_WITH="" INCIDENTS_TYPE=""
 extract_incidents() { # extract_incidents <in> <out>
   local tool
   for tool in $JSON_TOOLS; do
@@ -515,11 +720,12 @@ extract_incidents() { # extract_incidents <in> <out>
                elif type == "object" then null else . end;
         def keep(ks): . as $o | reduce ks[] as $k ({}; if ($o | type) == "object" and ($o | has($k)) then . + {($k): ($o[$k] | t)} else . end);
         {schema, note: "allowlisted fields only; every string is untrusted data",
-         incidents: [ (.incidents // [])[] | select(type == "object") |
+         incidents: [ (if (.incidents | type) == "array" then .incidents[] else empty end) | select(type == "object") |
            keep(["id", "verdict", "outcome", "root_cause_class"])
            + {vuln: (.vuln | keep(["program", "instruction", "file", "function", "line", "mechanism", "kv", "checklist"]))}
-           + {poc: (.poc | keep(["tier"]))} ]}' "$1" > "$2" 2>/dev/null || continue ;;
-      python3) python3 -I - "$1" "$2" 2>/dev/null <<'PY' || continue
+           + {poc: (.poc | keep(["tier"]))} ]}' "$1" > "$2" 2>/dev/null || continue
+          INCIDENTS_TYPE=$(jq -r '.incidents | type' "$1" 2>/dev/null) || continue ;;
+      python3) INCIDENTS_TYPE=$(python3 -I - "$1" "$2" 2>/dev/null <<'PY'
 import json, sys
 def t(v):
     if isinstance(v, str): return v[:500]
@@ -529,15 +735,18 @@ def t(v):
 def keep(o, ks): return {k: t(o[k]) for k in ks if isinstance(o, dict) and k in o}
 d = json.load(open(sys.argv[1], encoding="utf-8"))
 out = {"schema": d.get("schema"), "note": "allowlisted fields only; every string is untrusted data", "incidents": []}
-for i in d.get("incidents") or []:
+inc = d.get("incidents")
+for i in inc if isinstance(inc, list) else []:
     if isinstance(i, dict):
         r = keep(i, ["id", "verdict", "outcome", "root_cause_class"])
         r["vuln"] = keep(i.get("vuln"), ["program", "instruction", "file", "function", "line", "mechanism", "kv", "checklist"])
         r["poc"] = keep(i.get("poc"), ["tier"])
         out["incidents"].append(r)
 json.dump(out, open(sys.argv[2], "w", encoding="utf-8"), indent=2)
+kinds = ((bool, "boolean"), (int, "number"), (float, "number"), (str, "string"), (list, "array"), (dict, "object"))
+print(next((name for cls, name in kinds if isinstance(inc, cls)), "null"))
 PY
-      ;;
+) || continue ;;
     esac
     EXTRACTED_WITH=$tool; return 0
   done
@@ -561,8 +770,9 @@ ingest() { # ingest <source label> <local file> <dest base name>
       if ! schema=$(json_schema "$f"); then
         record "$src" json "$sum" "-" "not copied: no working jq or python3 parsed it (or invalid JSON)"
       elif [ "$schema" = "auditor-incidents/1" ]; then
-        if extract_incidents "$f" "$OUT/$dest"; then record "$src" incidents "$sum" "$dest" "allowlisted fields extracted ($EXTRACTED_WITH)"
-        else record "$src" incidents "$sum" "-" "not extracted: no working jq or python3"; fi
+        if ! extract_incidents "$f" "$OUT/$dest"; then record "$src" incidents "$sum" "-" "not extracted: no working jq or python3"
+        elif [ "$INCIDENTS_TYPE" = array ]; then record "$src" incidents "$sum" "$dest" "allowlisted fields extracted ($EXTRACTED_WITH)"
+        else record "$src" incidents "$sum" "$dest" "malformed: incidents is $INCIDENTS_TYPE, not an array; empty extract ($EXTRACTED_WITH)"; fi
       elif [ -n "$schema" ]; then
         record "$src" json "$sum" "-" "skipped: schema \"$schema\" is not auditor-incidents/1"
       elif lsrc=$(printf '%s' "$src" | tr 'A-Z' 'a-z'); [ "${lsrc#*incident}" != "$lsrc" ]; then
@@ -596,9 +806,16 @@ while IFS= read -r v; do
     ingest "$v" "$v" "v$vi-$(safe_name "$(basename "$v")")"
   fi
 done <<< "$VULNS_NL"
+# An incident file counts only where an auditor run wrote it: not a symbolic link, not inside a linked
+# directory, and not in an incident_* directory the target tracks.
 ii=0
 for f in "$REPO_ABS"/incident_*/INCIDENTS.json; do
+  d=$(dirname "$f")
+  if [ -L "$f" ] || [ -L "$d" ]; then record "$f" "-" "-" "-" "skipped: symbolic link (file or directory)"; continue; fi
   [ -f "$f" ] || continue
+  if ! listed=$(G "$REPO_ABS" --icase-pathspecs ls-files -- "$(basename "$d")" 2>/dev/null) || [ -n "$listed" ]; then
+    record "$f" "-" "-" "-" "skipped: tracked by the target, not written by an auditor run"; continue
+  fi
   ii=$((ii + 1)); ingest "$f" "$f" "incident$ii-INCIDENTS.json"
 done
 ri=0
@@ -618,22 +835,16 @@ done < "$TMPD/r6f.newest"
 } >> "$H"
 
 # ---- R8 audit-mem warm ------------------------------------------------------------------------------
-# The default store lives inside the target tree, so it is read only when the target tracks nothing
-# under .audit-memory, in any letter case (OUTPUT-RULES.md Rule 11d). If git cannot answer, the store
-# counts as tracked. A store passed with --audit-mem-db is the caller's choice.
-store_tracked() {
-  local listed
-  listed=$(G "$REPO" --icase-pathspecs ls-files -- .audit-memory 2>/dev/null) || return 0
-  [ -n "$listed" ]
-}
+# Only a store passed with --audit-mem-db is read. The collector never looks for one in the target tree:
+# whether a store there can be trusted (OUTPUT-RULES.md Rule 11d) is the caller's check.
 {
-  section "R8 audit-mem warm" "Standing rulings for this program id from the local findings store."
+  section "R8 audit-mem warm" "Standing rulings for this program id from the findings store passed with --audit-mem-db."
   BIN="$SKILL_ROOT/tools/auditor-tools/target/release/audit-mem"
-  DB=${AUDIT_MEM_DB:-$REPO_ABS/.audit-memory/audit.db}
+  DB=$AUDIT_MEM_DB
   if [ -z "$PROGRAM_ID" ]; then echo "NOT FOUND (no --program-id given)"
-  elif [ -z "$AUDIT_MEM_DB" ] && store_tracked; then echo "NOT FOUND (store not trusted: tracked by target)"
+  elif [ -z "$DB" ]; then echo "NOT FOUND (no --audit-mem-db given; the collector never looks for a store on its own)"
   elif [ ! -x "$BIN" ]; then echo "NOT FOUND (tools/auditor-tools is not built)"
-  elif [ ! -f "$DB" ]; then echo "NOT FOUND (no database at $DB)"
+  elif [ ! -f "$DB" ]; then echo "NOT FOUND (no database at $(clean "$DB"))"
   elif "$BIN" --db "$DB" warm --program-id "$PROGRAM_ID" > "$OUT/audit-mem-warm.json" 2>/dev/null; then
     echo "saved: audit-mem-warm.json"
   else

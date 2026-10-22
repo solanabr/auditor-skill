@@ -72,7 +72,7 @@ The prescan is also a **relevance map**: when a signal is a *provably-empty* set
 
 ## `audit-mem` — cross-audit memory (dedup · regression · FP suppression · warm re-audits)
 
-A local SQLite store (default `.audit-memory/audit.db`, gitignored; `--db <path>` selects another). Findings are **content-addressed**: `finding_id = sha256(program_id ‖ code_signature ‖ root_cause)`, so the *same* bug keeps its identity across commits and line drift (the same normalized signature `/re-audit` uses for its sibling sweep).
+A local SQLite store (default `.audit-memory/audit.db`, self-ignored per Rule 11d; `--db <path>` selects another). Findings are **content-addressed**: `finding_id = sha256(program_id ‖ code_signature ‖ root_cause)`, so the *same* bug keeps its identity across commits and line drift (the same normalized signature `/re-audit` uses for its sibling sweep).
 
 ```bash
 audit-mem init
@@ -85,7 +85,7 @@ audit-mem regressions --program-id <id>                    # findings that went 
 audit-mem warm --program-id <id>                           # {profile, invariants[], open_fp_rulings[]}
 ```
 
-**Use only a store you created.** The default store sits under the working directory, which during an audit is the target repository, so a store found there is not necessarily yours. Before using `.audit-memory/`, confirm that the audited repository does not track it (`git ls-files .audit-memory` prints nothing; in a checkout you did not clone, add the Rule 11c flags) and that you created it, in this run or an earlier audit. Otherwise do not read it: start a fresh store outside the target tree by passing `--db <path outside the tree>` to every `audit-mem` call, and never overwrite a tracked `.audit-memory/.gitignore` (`OUTPUT-RULES.md` Rule 11d).
+**Use only a store you created.** The default store sits under the working directory, which during an audit is the target repository, so a store found there is not necessarily yours. Before using `.audit-memory/`, run `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false --icase-pathspecs ls-files -- .audit-memory` in the audited repository: it must print nothing and exit 0, and the store must be one you created, in this run or an earlier audit. Run it before creating `.audit-memory/.gitignore` and again before every `audit-mem` use, since a later pull can change the answer. Any output, in any letter case, or any error means: do not read it; start a fresh store outside the target tree by passing `--db <path outside the tree>` to every `audit-mem` call, and never overwrite a tracked `.audit-memory/.gitignore` (`OUTPUT-RULES.md` Rule 11d).
 
 Once the store passes that check, write `.audit-memory/.gitignore` containing `*` before the first `audit-mem` call of a run — `mkdir -p .audit-memory && printf '*\n' > .audit-memory/.gitignore` (Rule 11d). The tool creates the directory itself, and the intake warm-up is often its first call.
 
