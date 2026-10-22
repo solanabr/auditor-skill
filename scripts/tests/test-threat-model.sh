@@ -243,6 +243,12 @@ put "$HOS" programs/h/src/lib.rs '#[account(mut, has_one = authority)]'
 commit "$HOS" -m "initial"
 put "$HOS" programs/h/src/lib.rs '#[account(mut)]'
 commit "$HOS" -m "fix: drop has_one"
+# Re-create HEAD as a signed commit (a gpgsig header, written with hash-object; no real gpg needed), so
+# that log.showSignature below has a signature to verify with the configured gpg.program.
+SIGNED=$(git -C "$HOS" cat-file commit HEAD | awk '{ print } /^committer / && !done {
+  print "gpgsig -----BEGIN PGP SIGNATURE-----"; print " "; print " iQEzBAABCAAdFiEEZml4dHVyZS1zaWduYXR1cmUtbm90LXJlYWw="
+  print " -----END PGP SIGNATURE-----"; done = 1 }' | git -C "$HOS" hash-object -t commit -w --stdin)
+git -C "$HOS" update-ref refs/heads/main "$SIGNED"
 cat >> "$HOS/.git/config" <<EOF
 [core]
 	fsmonitor = $T/bin/mark-fsmonitor
@@ -266,6 +272,8 @@ else skp "T-g sanity: this git did not run the configured diff program"; fi
 git -C "$HOS" status >/dev/null 2>&1
 if [ -e "$T/marks/fsmonitor" ]; then ok "T-g sanity: plain 'git status' runs core.fsmonitor"
 else skp "T-g sanity: this git did not run core.fsmonitor"; fi
+if [ -e "$T/marks/gpg" ]; then ok "T-g sanity: plain 'git log' runs gpg.program for the signed commit"
+else skp "T-g sanity: this git did not run gpg.program"; fi
 rm -f "$T/marks"/*
 OUT5="$T/run5/audit_1/bootstrap"
 collect --repo "$HOS" --out "$OUT5" --offline --paths '*.rs'
