@@ -144,12 +144,13 @@ if [[ -n "$top" && "$top" == "$(pwd -P)" ]]; then
       [[ "$sha" == "$r"* ]] || err "README.md links $url at $r, which is not the pinned commit ${sha:0:7}"
     done
     line=$(grep -E "$base_re$sha([^/]|$)" README.md | head -1 | sed -E 's#https?://[^ )>]*##g')
-    for s in $(printf '%s\n' "$line" | grep -ioE '(^|[^0-9a-z])[0-9a-f]{7,40}([^0-9a-z]|$)' | grep -ioE '[0-9a-f]{7,40}' | tr 'A-F' 'a-f'); do
+    # each run of letters and digits on its own line, so SHAs one character apart are all read
+    for s in $(printf '%s\n' "$line" | tr -c '0-9A-Za-z' '\n' | grep -ixE '[0-9a-f]{7,40}' | tr 'A-F' 'a-f'); do
       [[ "$s" == "${sha:0:7}" || "$s" == "$sha" ]] || err "README.md pin line shows '$s', but $path is pinned at ${sha:0:7}"
     done
     d=$(printf '%s\n' "$line" | grep -oE '20[0-9]{2}-[0-9]{2}-[0-9]{2}' | head -1)
     if [[ -n "$d" && -e "$path/.git" ]] && git -C "$path" cat-file -e "$sha^{commit}" 2>/dev/null; then
-      cdate=$(git -C "$path" log -1 --format=%cs "$sha")
+      cdate=$(git -C "$path" -c log.showSignature=false log -1 --format=%cs "$sha")
       [[ "$d" == "$cdate" ]] || err "README.md pin line says $d, but $path@${sha:0:7} is dated $cdate"
     fi
   done < <(gm -z --get-regexp '^submodule\..*\.path$')

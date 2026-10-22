@@ -50,6 +50,8 @@ Again: $URL/tree/$PIN";                                                    expec
 mk "$T/shortold" vendor/trailofbits "$URL.git" "$GOOD
 See $URL/tree/cfe5d7b for the old tree.";                                  expect_rc "stale short tree URL fails" 1 "$T/shortold"
 mk "$T/text" vendor/trailofbits "$URL.git" "${GOOD/\`82fe822\`/\`cfe5d7b\`}"; expect_rc "stale link text fails" 1 "$T/text"
+mk "$T/adjacent" vendor/trailofbits "$URL.git" "${GOOD/\`82fe822\`/\`82fe822 cfe5d7b\`}"
+expect_rc "stale short SHA one character after the pin fails" 1 "$T/adjacent"
 mk "$T/upper" vendor/trailofbits "$URL.git" "$GOOD
 Old: HTTP://GitHub.com/TrailOfBits/Skills/tree/$(echo $OLD | tr a-f A-F)";   expect_rc "stale URL in other spelling fails" 1 "$T/upper"
 mk "$T/none" vendor/trailofbits "$URL.git" "No pin documented here.";     expect_rc "missing pin line fails" 1 "$T/none"
@@ -102,6 +104,21 @@ for case in date-ok date-stale; do
 done
 expect_rc "date matches initialized submodule passes" 0 "$T/date-ok"
 expect_rc "stale date fails when submodule is initialized" 1 "$T/date-stale"
+# a signed pinned commit, read under a git config with log.showSignature=true: the date is still compared
+d="$T/date-sig"; v="$d/vendor/trailofbits"; mkdir -p "$v" && git -C "$d" init -q && git -C "$v" init -q
+echo x > "$v/f" && git -C "$v" add f \
+  && GIT_COMMITTER_DATE="2026-09-28T14:06:37-0400" GIT_AUTHOR_DATE="2026-09-28T14:06:37-0400" git -C "$v" commit -q -m up
+SIGSHA=$(git -C "$v" cat-file commit HEAD | awk '{ print } /^committer / {
+  print "gpgsig -----BEGIN PGP SIGNATURE-----"; print " "; print " AAAA"; print " -----END PGP SIGNATURE-----" }' \
+  | git -C "$v" hash-object -t commit -w --stdin) && git -C "$v" update-ref HEAD "$SIGSHA"
+printf '[submodule "vendor/trailofbits"]\n\tpath = vendor/trailofbits\n\turl = %s.git\n' "$URL" > "$d/.gitmodules"
+printf '**Pinned at** [`%s`](%s/tree/%s) — `main` of 2026-09-28.\n' "${SIGSHA:0:7}" "$URL" "$SIGSHA" > "$d/README.md"
+git -C "$d" add .gitmodules README.md && git -C "$d" update-index --add --cacheinfo "160000,$SIGSHA,vendor/trailofbits"
+printf '#!/bin/sh\necho "gpg: signature check output" >&2\nexit 1\n' > "$T/gpg-stub" && chmod +x "$T/gpg-stub"
+printf '[log]\n\tshowSignature = true\n[gpg]\n\tprogram = %s\n' "$T/gpg-stub" > "$T/showsig.gitconfig"
+GIT_CONFIG_GLOBAL="$T/showsig.gitconfig"
+expect_rc "date check of a signed commit passes under log.showSignature=true" 0 "$T/date-sig"
+GIT_CONFIG_GLOBAL=/dev/null
 
 # tob-delta-review.sh smoke test: a fixture "upstream" with one risky change of each kind
 fx="$T/fx"; skill="$fx/plugins/insecure-defaults/skills/insecure-defaults"
