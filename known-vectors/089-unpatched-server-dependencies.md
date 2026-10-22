@@ -15,28 +15,41 @@ Known vulnerability in production dependency → attacker uses public exploit to
 **Step 1: Run npm audit**
 ```
 # Audits and registry queries run from a scratch dir OUTSIDE the target tree, on copies of
-# the manifest + lockfile, so the target's .npmrc cannot steer them (OUTPUT-RULES Rule 11a)
-SCRATCH=$(mktemp -d)   # outside the target tree
-mkdir -p "$SCRATCH/backend" "$SCRATCH/web"
-cp apps/backend/package.json apps/backend/package-lock.json "$SCRATCH/backend/"
-cp apps/web/package.json apps/web/package-lock.json "$SCRATCH/web/"
-(cd "$SCRATCH/backend" && npm audit --omit=dev)
-(cd "$SCRATCH/web" && npm audit --omit=dev)
+# the manifest + lockfile, so the target's .npmrc cannot steer them (OUTPUT-RULES Rule 11a).
+# $SCRATCH lasts only as long as its shell: run Steps 1, 2 and 5 in one shell. Each step
+# runs nothing unless $SCRATCH names a directory, since `cd "$SCRATCH"` with it empty
+# would stay in the target tree
+SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/auditor-scratch.XXXXXX")   # outside the target tree
+if [ -z "$SCRATCH" ] || [ ! -d "$SCRATCH" ]; then
+  echo "OUTCOME: no scratch copy (mktemp failed)"
+else
+  mkdir -p "$SCRATCH/backend" "$SCRATCH/web"
+  cp apps/backend/package.json apps/backend/package-lock.json "$SCRATCH/backend/"
+  cp apps/web/package.json apps/web/package-lock.json "$SCRATCH/web/"
+  (cd "$SCRATCH/backend" && npm audit --omit=dev)
+  (cd "$SCRATCH/web" && npm audit --omit=dev)
+fi
 ```
 - ✅ PASS: Zero high/critical vulnerabilities
 - ⚠️ PARTIAL: Only moderate or low vulnerabilities
 - ❌ FAIL: High/critical vulnerabilities in production dependencies
+- ⚠️ Not run, never a PASS: `OUTCOME: no scratch copy (mktemp failed)` — no scratch dir was created; fix the temp dir (`TMPDIR`) and run the step again
 
 **Step 2: Check for outdated packages**
 ```
 # On the Step 1 copies. They have no node_modules, so Current reads MISSING:
 # compare Wanted / Latest with the version the lockfile pins
-(cd "$SCRATCH/backend" && npm outdated)
-(cd "$SCRATCH/web" && npm outdated)
+if [ -z "${SCRATCH:-}" ] || [ ! -d "$SCRATCH" ]; then
+  echo "OUTCOME: no scratch copy (run Step 1 first)"
+else
+  (cd "$SCRATCH/backend" && npm outdated)
+  (cd "$SCRATCH/web" && npm outdated)
+fi
 ```
 - ✅ PASS: All packages within 1-2 minor versions of latest
 - ⚠️ PARTIAL: Some packages several versions behind
 - ❌ FAIL: Major version behind with known security fixes in newer versions
+- ⚠️ Not run, never a PASS: `OUTCOME: no scratch copy (run Step 1 first)` — run Step 1 and this step in one shell
 
 **Step 3: Check Node.js version**
 ```
@@ -57,19 +70,23 @@ grep -E "\"[~^]" apps/backend/package.json apps/web/package.json | head -20
 # A copy of Cargo.lock in the Step 1 scratch dir, toolchain pinned (OUTPUT-RULES Rule 11a), stderr
 # kept. cargo-audit exits 1 both for advisories and for an advisory database it cannot fetch or
 # load, so the OUTCOME line decides (the FULL-AUDIT Step 3.2 recipe)
-mkdir -p "$SCRATCH/rust" && cp Cargo.lock "$SCRATCH/rust/"
-TC=$(cd "$SCRATCH" && rustup default | cut -d' ' -f1)   # your own toolchain, never the target's
-if (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit --version) >/dev/null 2>&1; then
-  (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit --color never) 2>&1 | tee "$SCRATCH/cargo-audit.txt"
-  grep -qE '^error: [0-9]+ vulnerabilit(y|ies) found' "$SCRATCH/cargo-audit.txt" && echo "OUTCOME: vulnerabilities found"
-  grep -qE '^error: .*advisory database' "$SCRATCH/cargo-audit.txt" && echo "OUTCOME: advisory DB unavailable"
+if [ -z "${SCRATCH:-}" ] || [ ! -d "$SCRATCH" ]; then
+  echo "OUTCOME: no scratch copy (run Step 1 first)"
 else
-  echo "OUTCOME: not installed"
+  mkdir -p "$SCRATCH/rust" && cp Cargo.lock "$SCRATCH/rust/"
+  TC=$(cd "$SCRATCH" && rustup default | cut -d' ' -f1)   # your own toolchain, never the target's
+  if (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit --version) >/dev/null 2>&1; then
+    (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit --color never) 2>&1 | tee "$SCRATCH/cargo-audit.txt"
+    grep -qE '^error: [0-9]+ vulnerabilit(y|ies) found' "$SCRATCH/cargo-audit.txt" && echo "OUTCOME: vulnerabilities found"
+    grep -qE '^error: .*advisory database' "$SCRATCH/cargo-audit.txt" && echo "OUTCOME: advisory DB unavailable"
+  else
+    echo "OUTCOME: not installed"
+  fi
 fi
 ```
 - ✅ PASS: no OUTCOME line and no `error:` line — zero vulnerabilities in Rust dependencies
 - ❌ FAIL: `OUTCOME: vulnerabilities found` — known CVEs in Rust dependencies
-- ⚠️ Not run, never a PASS: `OUTCOME: advisory DB unavailable` (Coverage & Limitations records "advisory DB unavailable", or rerun with `--no-fetch` against a local DB if one exists) or `OUTCOME: not installed` (N/A, and Coverage & Limitations says so)
+- ⚠️ Not run, never a PASS: `OUTCOME: advisory DB unavailable` (Coverage & Limitations records "advisory DB unavailable", or rerun with `--no-fetch` against a local DB if one exists), `OUTCOME: not installed` (N/A, and Coverage & Limitations says so) or `OUTCOME: no scratch copy (run Step 1 first)` (run Step 1 and this step in one shell)
 
 **Overall verdict:**
 - ✅: No audit vulnerabilities, packages up to date, LTS Node, pinned versions

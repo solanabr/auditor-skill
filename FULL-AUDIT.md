@@ -372,45 +372,54 @@ ACTIONS:
   #   a hit in history means rotate every key a build from that window loaded; a `fatal:` /
   #   `lazy fetching disabled` line means a partial clone: the history part is INCONCLUSIVE
 
-  # Audits, registry queries and any cargo / rustc command (even --version) run from
-  # a scratch dir OUTSIDE the target tree, on copies of the manifest + lockfile, with
-  # the toolchain pinned, so the target's .npmrc / .cargo/config* / rust-toolchain*
-  # cannot steer them — cargo and rustup read those from every parent directory, so
-  # audit_<n>/ inside the tree is not far enough (Rule 11a)
-  SCRATCH=$(mktemp -d)   # outside the target tree
-  TC=$(cd "$SCRATCH" && rustup default | cut -d' ' -f1)   # your own toolchain, never the target's
-  mkdir -p "$SCRATCH/backend" "$SCRATCH/web" "$SCRATCH/rust"
-  cp apps/backend/package.json apps/backend/package-lock.json "$SCRATCH/backend/"
-  cp apps/web/package.json apps/web/package-lock.json "$SCRATCH/web/"
-  cp Cargo.lock "$SCRATCH/rust/"
-
-  # Run npm audit
-  (cd "$SCRATCH/backend" && npm audit)
-  (cd "$SCRATCH/web" && npm audit)
-
   # Check version pinning
   cat apps/backend/package.json | grep -E '[\^~]' # should be minimal
   cat apps/web/package.json | grep -E '[\^~]'
 
-  # Cargo audit (SC-004), stderr kept. It exits 1 both for advisories and for an advisory
-  # database it cannot fetch or load (offline, or github.com outside an isolated run's
-  # egress), so the output decides:
-  #   OUTCOME: vulnerabilities found   → findings, SC-004 FAIL
-  #   OUTCOME: advisory DB unavailable → say so in Coverage & Limitations ("advisory DB
-  #                                      unavailable"), or rerun with --no-fetch against
-  #                                      a local DB if one exists
-  #   OUTCOME: not installed           → SC-004 N/A, and Coverage & Limitations says so
-  #   no OUTCOME line and no "error:"  → SC-004 PASS
-  if (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit --version) >/dev/null 2>&1; then
-    (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit --color never) 2>&1 | tee "$SCRATCH/cargo-audit.txt"
-    grep -qE '^error: [0-9]+ vulnerabilit(y|ies) found' "$SCRATCH/cargo-audit.txt" && echo "OUTCOME: vulnerabilities found"
-    grep -qE '^error: .*advisory database' "$SCRATCH/cargo-audit.txt" && echo "OUTCOME: advisory DB unavailable"
+  # Audits, registry queries and any cargo / rustc command (even --version) run from
+  # a scratch dir OUTSIDE the target tree, on copies of the manifest + lockfile, with
+  # the toolchain pinned, so the target's .npmrc / .cargo/config* / rust-toolchain*
+  # cannot steer them — cargo and rustup read those from every parent directory, so
+  # audit_<n>/ inside the tree is not far enough (Rule 11a). Run the block below as
+  # one command: $SCRATCH lasts only as long as its shell, and with it empty
+  # `cd "$SCRATCH"` would stay in the target tree. So the block checks it first:
+  #   OUTCOME: no scratch copy → nothing below ran (npm audit, cargo audit, the
+  #                              quarantine check): never a PASS. Fix the temp dir if
+  #                              mktemp failed, then run the whole block again
+  SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/auditor-scratch.XXXXXX")   # outside the target tree
+  if [ -z "$SCRATCH" ] || [ ! -d "$SCRATCH" ]; then
+    echo "OUTCOME: no scratch copy (create it first)"
   else
-    echo "OUTCOME: not installed"
-  fi
+    TC=$(cd "$SCRATCH" && rustup default | cut -d' ' -f1)   # your own toolchain, never the target's
+    mkdir -p "$SCRATCH/backend" "$SCRATCH/web" "$SCRATCH/rust"
+    cp apps/backend/package.json apps/backend/package-lock.json "$SCRATCH/backend/"
+    cp apps/web/package.json apps/web/package-lock.json "$SCRATCH/web/"
+    cp Cargo.lock "$SCRATCH/rust/"
 
-  # Check quarantine (14-day rule) for newest deps
-  (cd "$SCRATCH" && npm info @anchor-lang/core time | tail -5)
+    # Run npm audit
+    (cd "$SCRATCH/backend" && npm audit)
+    (cd "$SCRATCH/web" && npm audit)
+
+    # Cargo audit (SC-004), stderr kept. It exits 1 both for advisories and for an advisory
+    # database it cannot fetch or load (offline, or github.com outside an isolated run's
+    # egress), so the output decides:
+    #   OUTCOME: vulnerabilities found   → findings, SC-004 FAIL
+    #   OUTCOME: advisory DB unavailable → say so in Coverage & Limitations ("advisory DB
+    #                                      unavailable"), or rerun with --no-fetch against
+    #                                      a local DB if one exists
+    #   OUTCOME: not installed           → SC-004 N/A, and Coverage & Limitations says so
+    #   no OUTCOME line and no "error:"  → SC-004 PASS
+    if (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit --version) >/dev/null 2>&1; then
+      (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit --color never) 2>&1 | tee "$SCRATCH/cargo-audit.txt"
+      grep -qE '^error: [0-9]+ vulnerabilit(y|ies) found' "$SCRATCH/cargo-audit.txt" && echo "OUTCOME: vulnerabilities found"
+      grep -qE '^error: .*advisory database' "$SCRATCH/cargo-audit.txt" && echo "OUTCOME: advisory DB unavailable"
+    else
+      echo "OUTCOME: not installed"
+    fi
+
+    # Check quarantine (14-day rule) for newest deps
+    (cd "$SCRATCH" && npm info @anchor-lang/core time | tail -5)
+  fi
 
   # Dependency changes since the baseline (last audited ref; first audit: last
   # release tag) → checklist 11 §11.11: review the published artifacts' code delta
