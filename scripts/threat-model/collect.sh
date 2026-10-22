@@ -257,14 +257,15 @@ sha256_of() {
 # A commit's changed-line count comes from its own patch, which --pickaxe-all prints for every file in
 # the pathspec (a --numstat count would be zero for a file git treats as binary).
 # Each row starts with the commit's full id (for git; rows show the short one); with GR_SIZE=1 the
-# commit's changed-line count follows it (a sort key for R5d).
+# commit's changed-line count follows it (a sort key for R5d). With GR_FILES=<file>, "<full id><TAB><path>"
+# is appended there for every file a printed row names, so a saved diff can be limited to those files.
 guard_rows() {
   local repo=$1 range=$2 kwfile; shift 2
   kwfile="$TMPD/kw.$RANDOM"
   G "$repo" log "${DIFFSAFE[@]}" -i -E --grep="$KW" --format=%H "$range" -- "$@" > "$kwfile" 2>/dev/null
   G "$repo" log "${DIFFSAFE[@]}" --min-parents=1 -p -U0 -M --pickaxe-all -G"$GUARD_G" \
       --format='__C__ %H %h %ad %s' --date=short "$range" -- "$@" 2>/dev/null |
-  awk -v small="$SMALL" -v ceil="$FIX_CEILING" -v kwfile="$kwfile" '
+  awk -v small="$SMALL" -v ceil="$FIX_CEILING" -v kwfile="$kwfile" -v filesout="${GR_FILES:-/dev/null}" '
     BEGIN { always = ENVIRON["TM_ALWAYS_RE"]; attr = ENVIRON["TM_ATTR_RE"]
             while ((getline l < kwfile) > 0) kw[l] = 1 }
     function isguard(s) {
@@ -275,18 +276,25 @@ guard_rows() {
       if (f == "" || ((side, t, f) in seen)) return
       seen[side, t, f] = 1
       had = ((side, t) in files)
-      files[side, t] = had ? files[side, t] "," f : f }
+      files[side, t] = had ? files[side, t] "," f : f
+      path[side, t, ++npath[side, t]] = f }
+    function paths(side, t,   k) { for (k = 1; k <= npath[side, t]; k++) print full "\t" path[side, t, k] > filesout }
     function flush(   t, n) {
       if (full == "") return
       for (t in net) {
         n = net[t]
-        if (n < 0) printf "%06d %s %d %s %s REMOVED x%d %s: %s    # %s\n", ci, full, size, short, date, -n, files["-", t], t, subj
-        else if (n > 0 && (full in kw) && size <= ceil + 0)
+        if (n < 0) {
+          printf "%06d %s %d %s %s REMOVED x%d %s: %s    # %s\n", ci, full, size, short, date, -n, files["-", t], t, subj
+          paths("-", t)
+        } else if (n > 0 && (full in kw) && size <= ceil + 0) {
           printf "%06d %s %d %s %s ADDED x%d %s: %s    # %s\n", ci, full, size, short, date, n, files["+", t], t, subj
-        else if (n > 0 && !(full in kw) && size <= small + 0)
+          paths("+", t)
+        } else if (n > 0 && !(full in kw) && size <= small + 0) {
           printf "%06d %s %d %s %s ADDED-QUIET x%d %s: %s    # %s\n", ci, full, size, short, date, n, files["+", t], t, subj
+          paths("+", t)
+        }
       }
-      delete net; delete files; delete seen }
+      delete net; delete files; delete seen; delete path; delete npath }
     /^__C__ / { flush(); ci++; full = $2; short = $3; date = $4; size = 0
                 subj = $0; sub(/^__C__ [^ ]+ [^ ]+ [^ ]+ ?/, "", subj); inhdr = 0; next }
     /^diff --git / { inhdr = 1; oldp = ""; newp = ""; next }
@@ -299,6 +307,32 @@ guard_rows() {
               t = s; gsub(/^[ \t]+|[ \t]+$/, "", t)
               if (substr($0, 1, 1) == "+") { net[t]++; note("+", t, newp) } else { net[t]--; note("-", t, oldp) } }
     END { flush() }' | sort -k1,1n -k6 | cut -d' ' -f"$([ "${GR_SIZE:-0}" = 1 ] && echo 2- || echo 2,4-)"
+}
+
+# save_diff <repo> <full id> <out file> <path list> <fallback pathspec...>
+# Writes the commit's id, date, subject and at most 20 body lines, then its diff limited to the paths in
+# <path list> (one per line; the fallback pathspec when it is empty), at most 400 lines. Each cut ends in a
+# TRUNCATED line that names the git show call for the rest.
+save_diff() {
+  local repo=$1 c=$2 out=$3 plist=$4 p n shown="" specs nspec=0; shift 4
+  specs=()
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    specs+=(":(literal)$p"); shown="${shown:+$shown }$p"; nspec=$((nspec + 1))
+  done < "$plist"
+  if [ "$nspec" -eq 0 ]; then specs=("$@"); shown="$*"; fi
+  {
+    G "$repo" log -1 --format='commit %H%n%ad%n%n%s' --date=short "$c" 2>/dev/null
+    G "$repo" log -1 --format=%b "$c" 2>/dev/null | sed -e '$!b' -e '/^$/d' > "$TMPD/save.body"
+    n=$(wc -l < "$TMPD/save.body" | tr -d ' ')
+    if [ "$n" -gt 0 ]; then echo; head -n 20 "$TMPD/save.body"; fi
+    if [ "$n" -gt 20 ]; then echo "TRUNCATED ($((n - 20)) more message lines; run git show $c)"; fi
+    echo
+    G "$repo" show "${DIFFSAFE[@]}" --format= "$c" -- "${specs[@]}" 2>/dev/null | sed '/./,$!d' > "$TMPD/save.diff"
+    n=$(wc -l < "$TMPD/save.diff" | tr -d ' ')
+    head -n 400 "$TMPD/save.diff"
+    if [ "$n" -gt 400 ]; then echo "TRUNCATED ($((n - 400)) more lines; run git show $c -- $shown)"; fi
+  } > "$out"
 }
 
 # remote_urls: one "remote.<name>.url <value>" line per configured remote URL. Config is read NUL-separated,
@@ -455,7 +489,7 @@ done > "$TMPD/r2"
   emit_capped "$TMPD/r2" "no revert commit in the pin ancestry"; endsec; } >> "$H"
 
 # ---- R3 guard lines removed / added ------------------------------------------------------------------
-guard_rows "$REPO" "$PIN_SHA" "${TPATHS[@]}" > "$TMPD/r3ids"
+GR_FILES="$TMPD/r3.paths" guard_rows "$REPO" "$PIN_SHA" "${TPATHS[@]}" > "$TMPD/r3ids"
 cut -d' ' -f2- "$TMPD/r3ids" > "$TMPD/r3"
 grep -E ' REMOVED x' "$TMPD/r3" > "$TMPD/r3a"
 grep -E ' ADDED-QUIET x' "$TMPD/r3" > "$TMPD/r3b"
@@ -469,10 +503,12 @@ grep -E ' ADDED x' "$TMPD/r3" > "$TMPD/r3c"
   echo "--- R3c ADDED in keyword commits ---"
   emit_capped "$TMPD/r3c" "no guard text added by a keyword commit"
   endsec; } >> "$H"
-# Saved diffs name the commit by its full id: a short id could also be the name of a ref.
+# Saved diffs name the commit by its full id (a short id could also be the name of a ref) and hold only
+# the files the commit's rows name.
 grep -E ' (REMOVED|ADDED-QUIET) x' "$TMPD/r3ids" | awk '!s[$1]++ { print $1, $2 }' | head -n 20 |
 while read -r full c; do
-  G "$REPO" show "${DIFFSAFE[@]}" --format='commit %H%n%ad%n%n%B' --date=short "$full" -- "${TPATHS[@]}" 2>/dev/null | head -n 400 > "$OUT/diffs/target-$c.diff"
+  awk -F '\t' -v c="$full" '$1 == c && !s[$2]++ { print $2 }' "$TMPD/r3.paths" > "$TMPD/save.paths"
+  save_diff "$REPO" "$full" "$OUT/diffs/target-$c.diff" "$TMPD/save.paths" "${TPATHS[@]}"
 done
 
 # ---- R4 churn --------------------------------------------------------------------------------------
@@ -548,7 +584,7 @@ R4_OTHER=$(sed -E 's/^ *[0-9]+ //' "$TMPD/r4a" | grep -E '\.rs"?$' |
       echo "__no_line_matches_this__" >> "$TMPD/target.lines"   # keeps the join below two-file even for an empty tree
       # Absent rows first, then smaller commits, then commit order: a real fix should not fall past
       # the cap behind feature releases.
-      GR_SIZE=1 guard_rows "$PDIR" "$FORK..$PHEAD" "${PPATHS[@]}" | grep -E ' ADDED(-QUIET)? x' |
+      GR_FILES="$TMPD/r5.paths" GR_SIZE=1 guard_rows "$PDIR" "$FORK..$PHEAD" "${PPATHS[@]}" | grep -E ' ADDED(-QUIET)? x' |
         awk 'NR == FNR { have[$0] = 1; next }
              { full = $1; size = $2; row = $0; sub(/^[^ ]+ [^ ]+ /, "", row)
                t = row; sub(/^[^:]*: /, "", t); sub(/    # .*$/, "", t); gsub(/[ \t]/, "", t)
@@ -559,7 +595,8 @@ R4_OTHER=$(sed -E 's/^ *[0-9]+ //' "$TMPD/r4a" | grep -E '\.rs"?$' |
       emit_capped "$TMPD/r5d" "the parent added no guard line after the fork point"
       awk '/text absent from target/ && !s[$1]++ { print $1, $2 }' "$TMPD/r5dids" | head -n 20 |
       while read -r full c; do
-        G "$PDIR" show "${DIFFSAFE[@]}" --format='commit %H%n%ad%n%n%B' --date=short "$full" -- "${PPATHS[@]}" 2>/dev/null | head -n 400 > "$OUT/diffs/parent-$c.diff"
+        awk -F '\t' -v c="$full" '$1 == c && !s[$2]++ { print $2 }' "$TMPD/r5.paths" > "$TMPD/save.paths"
+        save_diff "$PDIR" "$full" "$OUT/diffs/parent-$c.diff" "$TMPD/save.paths" "${PPATHS[@]}"
       done
     fi
   fi

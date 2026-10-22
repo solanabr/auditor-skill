@@ -830,7 +830,8 @@ check "T-r: after a directory rename of 70 guards, an older real removal still a
 check "T-r: ... and R3 is not truncated by the rename" sh -c "! awk '/^## R3/,/^## R4/' '$OUTDR/history.md' | grep -q '^TRUNCATED'"
 
 # =================================================================================================
-# T-s: saved diffs. Each holds the commit its row cites, by full id, never a same-named ref.
+# T-s: saved diffs. Each holds the commit its row cites (by full id, never a same-named ref), only the
+# files its rows name, and a visible TRUNCATED marker wherever it is cut.
 # =================================================================================================
 SD="$T/saved"; mkrepo "$SD"
 put "$SD" programs/s/src/guard.rs '#[account(mut, has_one = authority)]'
@@ -861,6 +862,14 @@ OUTSD="$T/saved-run/audit_1/bootstrap"
 collect --repo "$SD" --out "$OUTSD" --offline
 check "T-s: a ref named like the row's short id does not change the saved diff" \
   sh -c "head -n 1 '$OUTSD/diffs/target-$C_SD.diff' | grep -qx 'commit $F_SD' && ! grep -q 'decoy commit' '$OUTSD/diffs/target-$C_SD.diff'"
+check "T-s: a large migration commit's saved diff still holds the row's hunk" \
+  grep -qF -- '-#[account(mut, has_one = owner)]' "$OUTSD/diffs/target-$C_BIG.diff"
+check "T-s: ... it holds only the files the rows name" sh -c "! grep -q 'other.rs' '$OUTSD/diffs/target-$C_BIG.diff'"
+check "T-s: ... and its long message is cut with a visible marker" \
+  grep -q '^TRUNCATED ([0-9]* more message lines; run git show [0-9a-f]\{40\})' "$OUTSD/diffs/target-$C_BIG.diff"
+check "T-s: a cut diff ends in a TRUNCATED marker naming the full id and path" \
+  grep -q "^TRUNCATED ([0-9]* more lines; run git show [0-9a-f]\{40\} -- programs/s/src/huge.rs)" "$OUTSD/diffs/target-$C_HUGE.diff"
+
 echo
 echo "threat-model collector tests: $pass passed, $fail failed, $skip skipped"
 [ "$fail" -eq 0 ]

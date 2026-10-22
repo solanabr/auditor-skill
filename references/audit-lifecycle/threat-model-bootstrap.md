@@ -153,7 +153,7 @@ partial clone.
 | `history.md` | the sections below; the header records target, pinned commit, paths, parent and network mode |
 | `inputs.tsv` | one row per input: source, format, sha256, stored file, status |
 | `inputs/` | converted or copied inputs and the allowlisted incident extracts |
-| `diffs/` | `target-<sha>.diff` behind REMOVED / ADDED-QUIET rows; `parent-<sha>.diff` behind absent parent guards (capped) |
+| `diffs/` | `target-<sha>.diff` behind REMOVED / ADDED-QUIET rows; `parent-<sha>.diff` behind absent parent guards (20 commits each). Each holds the commit's full id, date, subject and up to 20 body lines, then its diff limited to the files its rows name, up to 400 lines; every cut ends in `TRUNCATED (… run git show <full id> -- <path>)` |
 | `audit-mem-warm.json` | standing rulings for the program id, when available |
 
 | Section | What it lists | Read it as |
