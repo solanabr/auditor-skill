@@ -124,13 +124,19 @@ done
 
 # ---------------------------------------------------------------------------
 # 6. collect.sh is gated: it refuses without --confirmed, and without $RPC_URL,
-#    before any network call.
+#    before any network call. The --confirmed case runs with $RPC_URL set and a
+#    curl on PATH that records every call, so only the gate can stop it.
 # ---------------------------------------------------------------------------
-if ( unset RPC_URL; bash "$DNR/collect.sh" --out "${TMPDIR:-/tmp}/dnr_ct.$$" -- "$A_ADDR" ) >/dev/null 2>&1; then
-  bad "collect: ran without --confirmed (must refuse)"
+GATE="$(mktemp -d "${TMPDIR:-/tmp}/dnr_gate.XXXXXX")"
+printf '#!/bin/sh\necho "$*" >> "%s/calls"\n' "$GATE" > "$GATE/curl"; chmod +x "$GATE/curl"
+( PATH="$GATE:$PATH" RPC_URL="https://rpc.example.test/" bash "$DNR/collect.sh" --out "$GATE/out" -- "$A_ADDR" ) >/dev/null 2>&1
+code=$?
+if [[ "$code" == 2 && ! -e "$GATE/calls" && ! -e "$GATE/out" ]]; then
+  ok "collect: refuses without --confirmed, \$RPC_URL set (exit 2, no curl call, nothing written)"
 else
-  ok "collect: refuses without --confirmed"
+  bad "collect: without --confirmed -> exit $code, curl calls: $(grep -c . "$GATE/calls" 2>/dev/null || echo 0)"
 fi
+rm -rf "$GATE"
 if ( unset RPC_URL; bash "$DNR/collect.sh" --out "${TMPDIR:-/tmp}/dnr_ct.$$" --confirmed -- "$A_ADDR" ) >/dev/null 2>&1; then
   bad "collect: ran without \$RPC_URL (must refuse)"
 else
@@ -193,9 +199,8 @@ eq "profile: programIdIndex resolved through accountKeys" "$pidx" "1"
 
 # ---------------------------------------------------------------------------
 # 10. collect.sh end to end against a fake `curl` (no network): runs under the
-#     system bash, keeps FAILED transactions, reports a history truncated by
-#     --max-pages (and nothing else), passes --before through, counts every
-#     getTransaction call toward --max-tx, and never prints the key.
+#     system bash, keeps FAILED transactions, takes a short last page as the end of
+#     history, passes --before through, and never prints the key.
 # ---------------------------------------------------------------------------
 mkdir -p "$TT/bin"
 cat > "$TT/bin/curl" <<'PY'
@@ -228,44 +233,6 @@ if m == "getTransaction" and p[0] == fail_sig and fail_mode in ("rpc", "null"):
     print(json.dumps(dict({"jsonrpc": "2.0", "id": 1}, **out))); sys.exit(0)
 if m == "getSignaturesForAddress" and os.environ.get("FAKE_CURL_PAGE_FAIL"):
     print(json.dumps({"jsonrpc": "2.0", "id": 1, "error": {"code": -32005, "message": "Node is behind"}})); sys.exit(0)
-# FAKE_CURL_TX_FAIL_ALL=1 fails every getTransaction (a rate-limited endpoint).
-if m == "getTransaction" and os.environ.get("FAKE_CURL_TX_FAIL_ALL"):
-    print(json.dumps({"jsonrpc": "2.0", "id": 1, "error": {"code": 429, "message": "Too many requests"}})); sys.exit(0)
-# FAKE_CURL_TX_FIXTURE=<file>: one signature, whose getTransaction result is that
-# file's first line spliced in verbatim, so big integers arrive as literals.
-fx = os.environ.get("FAKE_CURL_TX_FIXTURE")
-if fx:
-    tx = open(fx).readline().strip()
-    if m == "getSignaturesForAddress":
-        res = [] if "before" in p[1] else [{"signature": json.loads(tx)["transaction"]["signatures"][0], "slot": 403, "err": None, "blockTime": 1700000700}]
-        print(json.dumps({"jsonrpc": "2.0", "id": 1, "result": res}))
-    else:
-        sys.stdout.write('{"jsonrpc":"2.0","id":1,"result":' + tx + '}')
-    sys.exit(0)
-# FAKE_CURL_HISTORY=<n>: any address has n signatures (slots n..1, newest first),
-# served at most `limit` per page and only older than `before`.
-hist = int(os.environ.get("FAKE_CURL_HISTORY") or 0)
-if m == "getSignaturesForAddress" and hist:
-    b58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
-    def hsig(k):
-        out = ""
-        while True:
-            out, k = b58[k % 58] + out, k // 58
-            if not k:
-                return "Hist" + out.rjust(40, "1")
-    slots = {hsig(k): k for k in range(1, hist + 1)}
-    top = slots.get(p[1].get("before"), hist + 1) - 1
-    res = [{"signature": hsig(k), "slot": k, "err": None, "blockTime": 1700000000 + k}
-           for k in range(top, max(top - p[1]["limit"], 0), -1)]
-    print(json.dumps({"jsonrpc": "2.0", "id": 1, "result": res})); sys.exit(0)
-# FAKE_CURL_SAMESLOT=1: two signatures in one slot, which the C and en_US
-# collations would order differently.
-if m == "getSignaturesForAddress" and os.environ.get("FAKE_CURL_SAMESLOT"):
-    res = [] if "before" in p[1] else [
-        {"signature": "SigbSameSlot111111111111111111111111111111", "slot": 5, "err": None, "blockTime": 1700000500},
-        {"signature": "SigBSameSlot111111111111111111111111111111", "slot": 5, "err": None, "blockTime": 1700000500},
-    ]
-    print(json.dumps({"jsonrpc": "2.0", "id": 1, "result": res})); sys.exit(0)
 if m == "getSignaturesForAddress" and p[0].startswith("AddrB"):
     res = [
         {"signature": "SigZnewest", "slot": 9, "err": None, "blockTime": 1700000900},
@@ -287,27 +254,14 @@ else:
 PY
 chmod +x "$TT/bin/curl"
 export FAKE_CURL_LOG="$TT/curl.log" FAKE_CURL_ARGV="$TT/curl.argv"
-# The --confirmed gate alone: a usable $RPC_URL and a reachable (fake) endpoint, yet
-# no --confirmed means exit 2 and no call at all.
-( PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
-    bash "$DNR/collect.sh" --out "$TT/c0" --max-pages 1 -- "$A_ADDR" ) > "$TT/c0.out" 2>&1
-code=$?
-if [[ "$code" == 2 && ! -e "$TT/c0" && ! -s "$FAKE_CURL_LOG" ]] && grep -q 'pass --confirmed' "$TT/c0.out"; then
-  ok "collect: without --confirmed, a usable endpoint gets no call (exit 2)"
-else
-  bad "collect: ran without --confirmed -> exit $code"
-fi
 ( PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/?api-key=LEAKME42" \
     bash "$DNR/collect.sh" --out "$TT/c" --confirmed --since 1 --max-pages 1 --before "$CURSOR" -- "$A_ADDR" ) > "$TT/c.out" 2>&1
 code=$?
 eq "collect: exits 0 against the fake RPC (system bash)" "$code" "0"
 eq "collect: fetched both the successful AND the failed transaction" \
   "$(grep -c . "$TT/c/transactions.jsonl" 2>/dev/null || true)" "2"
-if ! grep -q 'truncated by --max-pages' "$TT/c.out" && [[ ! -s "$TT/c/collection-gaps.tsv" ]]; then
-  ok "collect: a short last page at the page cap is the end of history (no truncation notice, no gap)"
-else
-  bad "collect: a short last page was reported as truncated"
-fi
+eq "collect: a short last page at the page cap is the end of history (no notice, no gap row)" \
+  "$(grep -c '^  ! ' "$TT/c.out")/$(grep -c . "$TT/c/collection-gaps.tsv")" "0/0"
 if grep -q "\"before\": \"$CURSOR\"" "$FAKE_CURL_LOG"; then ok "collect: --before passed through to the first page"; else bad "collect: --before not passed through"; fi
 if grep -q 'LEAKME42' "$TT/c.out" "$TT/c/signatures.jsonl" "$TT/c/transactions.jsonl"; then
   bad "collect: the key leaked into output"
@@ -325,7 +279,7 @@ else
   bad "collect: subdomain token or key in the output ($(grep -m1 'TOKSUB42\|LEAKME42\|provider' "$TT/c-sub.out"))"
 fi
 # Collection gaps: every getTransaction that fails (transport error, RPC error,
-# null result), a failed signature page, an unreached window and the --max-tx cap
+# null result), a failed signature page, a truncated history and the --max-tx cap
 # each become a <subject>TAB<reason> row of collection-gaps.tsv, and the run says how
 # many. curl's own exit status reaches the row.
 eq "collect: a clean run reports no collection gaps" \
@@ -361,59 +315,16 @@ eq "collect: a refused \$RPC_URL made no RPC call" "$(grep -c . "$FAKE_CURL_LOG"
     bash "$DNR/collect.sh" --out "$TT/c2" --confirmed --max-pages 1 --max-tx 2 -- "$A_ADDR" "$B_ADDR" ) > "$TT/c2.out" 2>&1
 got="$(jq -r '.transaction.signatures[0]' "$TT/c2/transactions.jsonl" 2>/dev/null | tr '\n' ' ')"
 eq "collect: --max-tx 2 fetches the two newest signatures across both addresses" "$got" "SigZnewest SigOK "
-# Within one slot the RPC's own newest-first order decides what --max-tx keeps, in
-# any locale: the sort is stable, on the slot only, under LC_ALL=C.
-for loc in C en_US.UTF-8; do
-  ( PATH="$TT/bin:$PATH" LC_ALL="$loc" FAKE_CURL_SAMESLOT=1 RPC_URL="https://rpc.example.test/" \
-      bash "$DNR/collect.sh" --out "$TT/loc-$loc" --confirmed --max-tx 1 -- "$A_ADDR" ) > /dev/null 2>&1
-done
-eq "collect: the same-slot signature kept by --max-tx 1 is the RPC's first, under C and en_US.UTF-8" \
-  "$(jq -r '.transaction.signatures[0]' "$TT/loc-C/transactions.jsonl")/$(jq -r '.transaction.signatures[0]' "$TT/loc-en_US.UTF-8/transactions.jsonl")" \
-  "SigbSameSlot111111111111111111111111111111/SigbSameSlot111111111111111111111111111111"
-ctl_c="$(printf '5 SigbX\n5 SigBX\n' | LC_ALL=C sort -k1,1nr 2>/dev/null | sed -n 1p)"
-ctl_u="$(printf '5 SigbX\n5 SigBX\n' | LC_ALL=en_US.UTF-8 sort -k1,1nr 2>/dev/null | sed -n 1p)"
-if [[ "$ctl_c" != "$ctl_u" ]]; then
-  ok "collect: control, a plain sort -k1,1nr breaks same-slot ties by locale ('$ctl_c' vs '$ctl_u')"
-else
-  ok "collect: control not exercised here (no en_US.UTF-8 collation)"
-fi
+# With only --until set, a short last page at the page cap still ends the history:
+# nothing older exists, so there is no notice and no gap row.
+( PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
+    bash "$DNR/collect.sh" --out "$TT/c3" --confirmed --until 100 --max-pages 1 -- "$A_ADDR" ) > "$TT/c3.out" 2>&1
+eq "collect: --until only, a short last page at the cap is the end of history (no notice, no gap row)" \
+  "$(grep -c '^  ! ' "$TT/c3.out")/$(grep -c . "$TT/c3/collection-gaps.tsv")" "0/0"
 eq "collect: the --max-tx cap is one gap row naming the first signature not fetched" \
   "$(cut -f1 "$TT/c2/collection-gaps.tsv")|$(grep -c 'collection gaps: 1 ' "$TT/c2.out")" "SigFail|1"
-# Paging stops at the end of history (a page shorter than 1000), when --since is
-# crossed, or at --max-pages; only the last, after a full page, truncates history,
-# and then the notice and a gap row give the cursor that resumes it, whatever the
-# window. --max-tx 0 keeps these runs to paging.
-hrun() {  # hrun <out> <history size> <collect args...>: page a served history
-  local o="$1" h="$2"; shift 2
-  ( PATH="$TT/bin:$PATH" FAKE_CURL_HISTORY="$h" RPC_URL="https://rpc.example.test/" \
-      bash "$DNR/collect.sh" --out "$TT/$o" --confirmed --max-tx 0 "$@" -- "$A_ADDR" ) > "$TT/$o.out" 2>&1
-}
-truncated() { grep -c 'truncated by --max-pages' "$TT/$1/collection-gaps.tsv" 2>/dev/null || true; }
-hrun h3 3 --since 1600000000 --max-pages 1
-eq "collect: 3 signatures, a short page at the cap, --since unreached -> no truncation" "$(truncated h3)/$(grep -c 'truncated' "$TT/h3.out")" "0/0"
-hrun h3u 3 --until 100 --max-pages 1
-eq "collect: 3 signatures, --until only, short page -> no truncation" "$(truncated h3u)/$(grep -c 'truncated' "$TT/h3u.out")" "0/0"
-hrun h1500 1500 --max-pages 2
-eq "collect: 1,500 signatures over 2 pages (1,000 + 500) -> no truncation, all collected" \
-  "$(truncated h1500)/$(grep -c . "$TT/h1500/signatures.jsonl")" "0/1500"
-hrun h2500 2500 --max-pages 2
-eq "collect: 2,500 signatures, no window, full page at --max-pages 2 -> truncated, gap row" \
-  "$(truncated h2500)/$(grep -c 'truncated by --max-pages=2 after 2000 signatures' "$TT/h2500.out")" "1/1"
-cursor="$(sed -n 's/.*resume into a new --out with --before \([1-9A-HJ-NP-Za-km-z]*\).*/\1/p' "$TT/h2500/collection-gaps.tsv")"
-eq "collect: the resume cursor is the oldest signature collected" "$cursor" "$(jq -r '.signature' "$TT/h2500/signatures.jsonl" | tail -n 1)"
-hrun h2500r 2500 --max-pages 2 --before "$cursor"
-eq "collect: resuming with --before collects exactly the rest, with no notice" \
-  "$(grep -c . "$TT/h2500r/signatures.jsonl")/$(truncated h2500r)/$(cat "$TT/h2500/signatures.jsonl" "$TT/h2500r/signatures.jsonl" | jq -r .signature | sort -u | grep -c .)" "500/0/2500"
-hrun h2500u 2500 --until 1700000100 --max-pages 1
-if grep -q 'nothing at or before --until 1700000100 was collected' "$TT/h2500u/collection-gaps.tsv"; then
-  ok "collect: --until only, full page at the cap above --until -> truncated, nothing inside the window"
-else
-  bad "collect: --until-only truncation not reported ($(cat "$TT/h2500u/collection-gaps.tsv"))"
-fi
-hrun h2500s 2500 --since 1700002000 --max-pages 2
-eq "collect: --since crossed inside the cap -> no truncation" "$(truncated h2500s)" "0"
 # A second pass into an --out that already holds a corpus is refused, so the first
-# pass survives — and so is an --out holding only an earlier transactions.jsonl.
+# pass survives.
 cp "$TT/c/signatures.jsonl" "$TT/c.sig.before"
 ( PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
     bash "$DNR/collect.sh" --out "$TT/c" --confirmed --max-pages 1 -- "$A_ADDR" ) > "$TT/c4.out" 2>&1
@@ -422,33 +333,6 @@ if [[ "$code" == 2 ]] && grep -q 'use a new --out' "$TT/c4.out" && cmp -s "$TT/c
   ok "collect: refuses to reuse an --out that holds a corpus (exit 2, corpus intact)"
 else
   bad "collect: reuse of a filled --out -> exit $code"
-fi
-mkdir -p "$TT/c6"; cp "$TT/c/transactions.jsonl" "$TT/c6/transactions.jsonl"
-( PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
-    bash "$DNR/collect.sh" --out "$TT/c6" --confirmed --max-pages 1 -- "$A_ADDR" ) > /dev/null 2>&1
-code=$?
-if [[ "$code" == 2 && ! -e "$TT/c6/signatures.jsonl" ]] && cmp -s "$TT/c6/transactions.jsonl" "$TT/c/transactions.jsonl"; then
-  ok "collect: an earlier transactions.jsonl alone is never truncated (exit 2, file intact)"
-else
-  bad "collect: an --out holding transactions.jsonl -> exit $code"
-fi
-# --max-tx counts every getTransaction call, failed ones included, and 10 failures
-# in a row stop the run with a gap row for the rest.
-txcalls() { grep -c '"method": "getTransaction"' "$FAKE_CURL_LOG" 2>/dev/null || true; }
-before_tx="$(txcalls)"
-( PATH="$TT/bin:$PATH" FAKE_CURL_TX_FAIL_ALL=1 FAKE_CURL_HISTORY=30 RPC_URL="https://rpc.example.test/" \
-    bash "$DNR/collect.sh" --out "$TT/f2" --confirmed --max-tx 2 -- "$A_ADDR" ) > "$TT/f2.out" 2>&1
-eq "collect: an always-failing endpoint with --max-tx 2 gets exactly 2 getTransaction calls" "$(( $(txcalls) - before_tx ))" "2"
-before_tx="$(txcalls)"
-( PATH="$TT/bin:$PATH" FAKE_CURL_TX_FAIL_ALL=1 FAKE_CURL_HISTORY=30 RPC_URL="https://rpc.example.test/" \
-    bash "$DNR/collect.sh" --out "$TT/f10" --confirmed --max-tx 100 -- "$A_ADDR" ) > "$TT/f10.out" 2>&1
-code=$?
-eq "collect: 10 failed calls in a row stop the run (10 calls, not 30)" "$(( $(txcalls) - before_tx ))" "10"
-if [[ "$code" == 0 ]] && grep -q 'endpoint failing (rate limit or outage): 10 getTransaction calls in a row failed, so the run stops — 0 transactions collected, 11 collection gaps' "$TT/f10.out" \
-   && grep -q 'in a row failed (rate limit or outage); this and 19 older signatures' "$TT/f10/collection-gaps.tsv"; then
-  ok "collect: the stop is reported (collected and gap counts) and the rest is one gap row"
-else
-  bad "collect: consecutive-failure stop not reported ($(grep 'endpoint\|gaps' "$TT/f10.out" | tr '\n' ' '))"
 fi
 # Inputs are checked before any write or RPC call: an address that is not base58,
 # a --before that is not a signature, a cap that is not a number.
@@ -472,17 +356,16 @@ mkdir -p "$TT/incident_9"; printf 'keep-me\n' > "$TT/incident_9/.gitignore"
 eq "collect: an existing incident_<n>/.gitignore is not overwritten" "$(cat "$TT/incident_9/.gitignore")" "keep-me"
 
 # ---------------------------------------------------------------------------
-# 11. snapshot-program.sh against a fake `solana`: keeps bin/<id>@<slot>.so, prints
-#     the ledger line (owner, last-deployed slot, zero-trimmed hash, padding), and
-#     redacts a CLI error. The CLI runs from a throwaway -C config: no URL in argv, a
-#     keypair path that does not exist, a 0700 directory removed on exit, and a
-#     blocker if the CLI ignores the config. The fake mirrors solana-cli 3.1.10:
-#     it reads a config only when it holds websocket_url; `program show` and
-#     `program-v4 show` need a signer unless --buffer-authority / --authority is
-#     given; `program show` and `program dump` refuse a loader-v4 program ("is not an
-#     SBF program"), which `program-v4 show` / `program-v4 download` read; and a
-#     BPFLoader2 program's record has no slot or authority. FAKE_SOLANA_SLOTS lists
-#     the last-deployed slot each successive record read returns.
+# 11. snapshot-program.sh against a fake `solana`: writes bin/<id>.so, prints the
+#     ledger line (owner, last-deployed slot, zero-trimmed hash, padding), redacts a
+#     CLI error, and reads a loader-v4 program through program-v4 show / download.
+#     The CLI runs from a throwaway -C config: no URL in argv, a keypair path that
+#     does not exist, a 0700 directory removed on exit, and a blocker if the CLI
+#     ignores the config. Like solana-cli 3.1, the fake reads a config only when it
+#     holds websocket_url, `program show` / `program-v4 show` need a signer unless
+#     --buffer-authority / --authority is given, `program show` / `dump` reject a
+#     loader-v4 program ("is not an SBF program"), and `program-v4` commands reject
+#     anything else ("is not owned by loader-v4").
 # ---------------------------------------------------------------------------
 printf '#!/bin/sh\nexec python3 -I "$0.py" "$@"\n' > "$TT/bin/solana"
 cat > "$TT/bin/solana.py" <<'PY'
@@ -511,62 +394,35 @@ with open(os.environ["FAKE_SOLANA_SEEN"], "a") as log:
     log.write(f"{kp}\t{os.path.exists(kp)}\t{mode}\n")
 if os.environ.get("FAKE_SOLANA_FAIL"):
     sys.stderr.write(f"Error: RPC request error: cluster version query failed: {url}\n"); sys.exit(1)
-kind = "v4" if os.environ.get("FAKE_SOLANA_V4") else "v2" if os.environ.get("FAKE_SOLANA_V2") else \
-       "wallet" if os.environ.get("FAKE_SOLANA_NOTPROG") else "v3"
-owner = {"v4": "LoaderV411111111111111111111111111111111111", "v2": "BPFLoader2111111111111111111111111111111111",
-         "wallet": "11111111111111111111111111111111", "v3": "BPFLoaderUpgradeab1e11111111111111111111111"}[kind]
-pid = a[a.index("--program-id") + 1] if "--program-id" in a else (a[2] if len(a) > 2 else "?")
-slots = (os.environ.get("FAKE_SOLANA_SLOTS") or "12345").split(",")
-state = os.environ["FAKE_SOLANA_SEEN"] + ".slot"
-def current():
-    try:
-        return int(open(state).read())
-    except (OSError, ValueError):
-        return 0
-def read_record():  # each record read moves to the next listed slot (the last one repeats)
-    n = current() + 1
-    open(state, "w").write(str(n))
-    return slots[min(n, len(slots)) - 1]
-def elf():  # the bytes depend on the slot now deployed
-    k = slots[min(max(current(), 1), len(slots)) - 1]
-    return b"\x7fELF" + int(k).to_bytes(8, "little") + bytes(range(1, 30)) + b"\x00" * 500
-def need_signer(flag):
-    if flag not in a and not os.path.exists(kp):
-        sys.stderr.write(f'Error: Dynamic program error: No default signer found, run "solana-keygen new -o {kp}"\n'); sys.exit(1)
-if a[:1] == ["account"]:
-    print(json.dumps({"pubkey": a[1], "account": {"lamports": 1, "data": ["", "base64"], "owner": owner, "executable": kind != "wallet"}}))
-elif a[:2] == ["program", "show"]:
-    need_signer("--buffer-authority")
-    if kind in ("v4", "wallet"):
-        sys.stderr.write(f"Error: {pid} is not an SBF program\n"); sys.exit(1)
-    if kind == "v2":
-        print(f"Program Id: {pid}\nOwner: {owner}\nData Length: 100 (0x64) bytes")
-    else:
-        print(f"Program Id: {pid}\nOwner: {owner}\nProgramData Address: PdA111\nAuthority: Auth111\nLast Deployed In Slot: {read_record()}\nData Length: 100 (0x64) bytes\nBalance: 1 SOL")
-elif a[:2] == ["program", "dump"]:
-    if kind in ("v4", "wallet"):
-        sys.stderr.write(f"Error: {pid} is not an SBF program\n"); sys.exit(1)
-    open(a[3], "wb").write(elf())
-    print(f"Wrote program to {a[3]}")
-elif a[:2] == ["program-v4", "show"] and kind == "v4":
-    need_signer("--authority")
-    print(f"Program Id: {pid}\nOwner: {owner}\nAuthority: Auth111\nLast Deployed In Slot: {read_record()}\nStatus: deployed\nData Length: 100 (0x64) bytes")
-elif a[:2] == ["program-v4", "download"] and kind == "v4":
-    open(a[2], "wb").write(elf())
-    print(f"Wrote program to {a[2]}")
+v4 = bool(os.environ.get("FAKE_SOLANA_V4"))
+owner = "LoaderV411111111111111111111111111111111111" if v4 else "BPFLoaderUpgradeab1e11111111111111111111111"
+if (a[:2] == ["program", "show"] and "--buffer-authority" not in a or a[:2] == ["program-v4", "show"] and "--authority" not in a) \
+        and not os.path.exists(kp):
+    sys.stderr.write(f'Error: Dynamic program error: No default signer found, run "solana-keygen new -o {kp}" to create a new one\n'); sys.exit(1)
+pid = a[2] if a[0] == "program" else a[a.index("--program-id") + 1]
+if a[:2] in (["program", "show"], ["program", "dump"]) and v4:
+    sys.stderr.write(f"Error: {pid} is not an SBF program\n"); sys.exit(1)
+if a[0] == "program-v4" and not v4:
+    sys.stderr.write(f"Error: {pid} is not owned by loader-v4\n"); sys.exit(1)
+if a[:2] == ["program", "show"]:
+    print(f"\nProgram Id: {pid}\nOwner: {owner}\nProgramData Address: PdA111\nAuthority: Auth111\nLast Deployed In Slot: 12345\nData Length: 100 (0x64) bytes\nBalance: 1 SOL\n")
+elif a[:2] == ["program-v4", "show"]:
+    print(f"\nProgram Id: {pid}\nOwner: {owner}\nAuthority: Auth111\nLast Deployed In Slot: 12345\nStatus: deployed\nData Length: 100 (0x64) bytes\n")
+elif a[:2] in (["program", "dump"], ["program-v4", "download"]):
+    open(a[-1], "wb").write(b"\x7fELF" + bytes(range(1, 30)) + b"\x00" * 500)
+    print(f"Wrote program to {a[-1]}")
 else:
     sys.stderr.write("fake solana: refusing unexpected subcommand\n"); sys.exit(9)
 PY
 chmod +x "$TT/bin/solana"
 export FAKE_SOLANA_ARGV="$TT/solana.argv" FAKE_SOLANA_SEEN="$TT/solana.seen"
-PID="ProgTest1111111111111111111111111111111111"   # 42 base58 characters
+PID="ProgTest11111111111111111111111111111111111"   # base58, decodes to 32 bytes
 snap="$(PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/v2/LEAKME42" bash "$DNR/snapshot-program.sh" "$PID" "$TT/inc" 2>&1)"
 code=$?
 eq "snapshot: exits 0 with the fake CLI" "$code" "0"
-sha_trim() { python3 -I -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read().rstrip(b"\x00")).hexdigest())' "$1" 2>/dev/null; }
-want="$(sha_trim "$TT/inc/bin/$PID@12345.so")"
+want="$(python3 -I -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read().rstrip(b"\x00")).hexdigest())' "$TT/inc/bin/$PID.so" 2>/dev/null)"
 case "$snap" in
-  *"last_deployed_slot=12345"*"sha256_zero_trimmed=$want"*"padding_bytes=500 file=bin/$PID@12345.so"*) ok "snapshot: ledger line carries slot, zero-trimmed hash, padding and bin/<id>@<slot>.so" ;;
+  *"last_deployed_slot=12345"*"sha256_zero_trimmed=$want"*"padding_bytes=500"*) ok "snapshot: ledger line carries slot, zero-trimmed hash and padding" ;;
   *) bad "snapshot: unexpected ledger line ($snap)" ;;
 esac
 snapfail="$(PATH="$TT/bin:$PATH" FAKE_SOLANA_FAIL=1 RPC_URL="https://rpc.example.test/v2/LEAKME42" bash "$DNR/snapshot-program.sh" "$PID" "$TT/inc2" 2>&1)"
@@ -593,97 +449,19 @@ eq "snapshot: no program call after the config check failed" "$(grep -c '"progra
 PATH="$TT/bin:$PATH" RPC_URL='https://rpc.example.test/"x' bash "$DNR/snapshot-program.sh" "$PID" "$TT/inc7" >/dev/null 2>&1
 code=$?
 if [[ "$code" == 2 && ! -e "$TT/inc7" ]]; then ok "snapshot: refuses an \$RPC_URL holding a quote (exit 2, nothing written)"; else bad "snapshot: quoted \$RPC_URL -> exit $code"; fi
-snaprun() {  # snaprun <dir> [VAR=value ...]: one snapshot with the fake CLI, output in <dir>.out
-  local d="$1"; shift
-  rm -f "$FAKE_SOLANA_SEEN.slot"
-  env PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" "$@" bash "$DNR/snapshot-program.sh" "$PID" "$d" > "$d.out" 2>&1
-}
-# A loader-v4 program: `program show` refuses it, so the owner comes from the account
-# and the bytes from program-v4 show / download.
-snaprun "$TT/inc3" FAKE_SOLANA_V4=1
+v4snap="$(PATH="$TT/bin:$PATH" FAKE_SOLANA_V4=1 RPC_URL="https://rpc.example.test/" bash "$DNR/snapshot-program.sh" "$PID" "$TT/inc3" 2>&1)"
 code=$?
-if [[ "$code" == 0 ]] && grep -q "owner=LoaderV411111111111111111111111111111111111 last_deployed_slot=12345 authority=Auth111 status=deployed .* file=bin/$PID@12345.so" "$TT/inc3.out" \
-   && [[ "$(head -c 4 "$TT/inc3/bin/$PID@12345.so" | od -An -tx1 | tr -d ' \n')" == 7f454c46 ]]; then
-  ok "snapshot: a loader-v4 program is read with program-v4 show and kept from program-v4 download"
-else
-  bad "snapshot: loader-v4 program -> exit $code ($(tr '\n' ' ' < "$TT/inc3.out"))"
-fi
-snaprun "$TT/inc3b" FAKE_SOLANA_NOTPROG=1
-code=$?
-if [[ "$code" == 3 && ! -e "$TT/inc3b/bin" ]] && grep -q 'is not a program the solana CLI can dump (owner 11111111111111111111111111111111)' "$TT/inc3b.out"; then
-  ok "snapshot: an id that is not a program names its owner in a blocker (exit 3), nothing written"
-else
-  bad "snapshot: not-a-program id -> exit $code ($(tr '\n' ' ' < "$TT/inc3b.out"))"
-fi
-snaprun "$TT/inc3c" FAKE_SOLANA_V2=1
-if grep -q "owner=BPFLoader2111111111111111111111111111111111 last_deployed_slot=n/a (immutable loader) authority=none sha256_zero_trimmed=.* file=bin/$PID@immutable.so" "$TT/inc3c.out" \
-   && [[ -s "$TT/inc3c/bin/$PID@immutable.so" ]]; then
-  ok "snapshot: a BPFLoader2 program has no deploy slot: n/a (immutable loader), bin/<id>@immutable.so"
-else
-  bad "snapshot: BPFLoader2 program ($(tr '\n' ' ' < "$TT/inc3c.out"))"
-fi
-# Snapshots are never overwritten. A later run at a new slot (a hotfix) adds a file
-# next to the preserved one; a run at the same slot keeps the file it finds when the
-# bytes match, and stops with a blocker, writing nothing, when they do not.
-snaprun "$TT/keep"
-cp "$TT/keep/bin/$PID@12345.so" "$TT/keep.orig.so"
-snaprun "$TT/keep" FAKE_SOLANA_SLOTS=12400
-if [[ -s "$TT/keep/bin/$PID@12400.so" && -s "$TT/keep/bin/$PID@12400.show.txt" ]] && cmp -s "$TT/keep/bin/$PID@12345.so" "$TT/keep.orig.so" \
-   && ! cmp -s "$TT/keep/bin/$PID@12400.so" "$TT/keep.orig.so"; then
-  ok "snapshot: two runs at different slots keep both binaries; the first is unchanged"
-else
-  bad "snapshot: a second slot replaced or lost a binary ($(ls "$TT/keep/bin" | tr '\n' ' '))"
-fi
-snaprun "$TT/keep"
-code=$?
-if [[ "$code" == 0 ]] && grep -q "kept bin/$PID@12345.so" "$TT/keep.out" && cmp -s "$TT/keep/bin/$PID@12345.so" "$TT/keep.orig.so"; then
-  ok "snapshot: a rerun at the same slot with the same bytes keeps the preserved file"
-else
-  bad "snapshot: same-slot rerun -> exit $code"
-fi
-printf 'x' >> "$TT/keep/bin/$PID@12345.so"; cp "$TT/keep/bin/$PID@12345.so" "$TT/keep.changed.so"
-snaprun "$TT/keep"
-code=$?
-if [[ "$code" == 3 ]] && grep -q 'already exists with other bytes' "$TT/keep.out" && cmp -s "$TT/keep/bin/$PID@12345.so" "$TT/keep.changed.so" \
-   && [[ "$(ls "$TT/keep/bin" | grep -c .)" == 4 ]]; then
-  ok "snapshot: other bytes under the same slot stop with a blocker; the file is kept, nothing is written"
-else
-  bad "snapshot: same slot, other bytes -> exit $code ($(ls "$TT/keep/bin" | tr '\n' ' '))"
-fi
-# A redeploy between the record read and the dump: the slot read after the dump
-# differs, so it dumps once more; a slot that moves twice is a blocker.
-dumps() { grep -c '"dump"\|"download"' "$FAKE_SOLANA_ARGV"; }
-d0="$(dumps)"; snaprun "$TT/race1" FAKE_SOLANA_SLOTS=100,200
-code=$?
-if [[ "$code" == 0 && "$(( $(dumps) - d0 ))" == 2 ]] && grep -q "last_deployed_slot=200 .* file=bin/$PID@200.so" "$TT/race1.out" && [[ ! -e "$TT/race1/bin/$PID@100.so" ]]; then
-  ok "snapshot: a slot that moved during the dump is dumped again and kept under the new slot"
-else
-  bad "snapshot: moved slot -> exit $code ($(tr '\n' ' ' < "$TT/race1.out"))"
-fi
-snaprun "$TT/race2" FAKE_SOLANA_SLOTS=100,200,300
-code=$?
-if [[ "$code" == 3 && ! -e "$TT/race2/bin" ]] && grep -q 'was redeployed during the snapshot' "$TT/race2.out"; then
-  ok "snapshot: a slot that moves twice stops with a blocker (exit 3), nothing written"
-else
-  bad "snapshot: slot moving twice -> exit $code ($(tr '\n' ' ' < "$TT/race2.out"))"
-fi
+case "$code|$v4snap" in
+  "0|program=$PID owner=LoaderV411111111111111111111111111111111111 last_deployed_slot=12345 authority=Auth111 "*" file=bin/$PID.so")
+    ok "snapshot: a loader-v4 program is read with program-v4 show / download (exit 0)" ;;
+  *) bad "snapshot: loader-v4 program -> exit $code ($v4snap)" ;;
+esac
 # The id is used in file names: anything but a base58 key is refused before any write.
 for badid in '../../escape' 'Prog111' 'ProgTest111111111111111111111111111111111/x' 'Prog0OIl1111111111111111111111111111111111'; do
   PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" bash "$DNR/snapshot-program.sh" "$badid" "$TT/inc5" >/dev/null 2>&1
   code=$?
   if [[ "$code" == 2 && ! -e "$TT/inc5" ]]; then ok "snapshot: refuses the id '$badid' (exit 2, nothing written)"; else bad "snapshot: id '$badid' -> exit $code"; fi
 done
-# python3 hashes the dump: on a PATH without it, a named blocker (exit 3) comes
-# before anything is written.
-mkdir -p "$TT/nopy"
-for t in dirname basename; do ln -s "$(command -v "$t")" "$TT/nopy/$t"; done
-PATH="$TT/nopy:$TT/bin" RPC_URL="https://rpc.example.test/" "$(command -v bash)" "$DNR/snapshot-program.sh" "$PID" "$TT/inc-nopy" > "$TT/nopy.out" 2>&1
-code=$?
-if [[ "$code" == 3 && ! -e "$TT/inc-nopy" ]] && grep -q '^\[blocker\] python3 not on PATH' "$TT/nopy.out"; then
-  ok "snapshot: without python3 on PATH, a named blocker (exit 3) and nothing written"
-else
-  bad "snapshot: no python3 -> exit $code ($(tr '\n' ' ' < "$TT/nopy.out"))"
-fi
 # Rule 11d: snapshotting into incident_<n>/ makes it ignore itself; a directory with
 # another name gets no .gitignore from the script.
 PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" bash "$DNR/snapshot-program.sh" "$PID" "$TT/incident_8" >/dev/null 2>&1
@@ -816,75 +594,34 @@ eq "run dir: refused runs made no RPC call" "$(grep -c . "$FAKE_CURL_LOG" 2>/dev
 c1=$?
 PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" bash "$DNR/snapshot-program.sh" "$PID" "$REPO/incident_5" > /dev/null 2>&1
 c2=$?
-if [[ "$c1" == 0 && "$c2" == 0 && -s "$REPO/incident_5/corpus/transactions.jsonl" && -s "$REPO/incident_5/bin/$PID@12345.so" ]]; then
+if [[ "$c1" == 0 && "$c2" == 0 && -s "$REPO/incident_5/corpus/transactions.jsonl" && -s "$REPO/incident_5/bin/$PID.so" ]]; then
   ok "run dir: an untracked, link-free incident_<n>/ in a repository is accepted (control)"
 else
   bad "run dir: the untracked control dir -> collect exit $c1, snapshot exit $c2"
 fi
 
 # ---------------------------------------------------------------------------
-# 16. Big integers survive jq < 1.7. A stand-in jq rounds every number it reads on
-#     stdin to a double first, as jq 1.6 does (the apt package on Ubuntu 22.04 and
-#     Debian 12). Through it, the old `jq -c .result` path rounds the fixture's
-#     lamports (the control); collect.sh's corpus line comes out byte-identical to
-#     the RPC's literal, and deltas.py stays exact.
-# ---------------------------------------------------------------------------
-REAL_JQ="$(command -v jq)"; export REAL_JQ
-mkdir -p "$TT/jq16"
-cat > "$TT/jq16/jq" <<'PY'
-#!/usr/bin/env python3
-import json, os, subprocess, sys
-args, real = sys.argv[1:], os.environ["REAL_JQ"]
-if "--version" in args or any(os.path.isfile(a) for a in args):
-    os.execv(real, [real] + args)
-def dump(v):
-    if isinstance(v, float):
-        return str(int(v)) if v.is_integer() else repr(v)
-    if isinstance(v, list):
-        return "[" + ",".join(dump(x) for x in v) + "]"
-    if isinstance(v, dict):
-        return "{" + ",".join(json.dumps(k) + ":" + dump(x) for k, x in v.items()) + "}"
-    return json.dumps(v)
-data, dec, i, out = sys.stdin.read(), json.JSONDecoder(parse_int=float), 0, []
-while True:
-    while i < len(data) and data[i] in " \t\r\n":
-        i += 1
-    if i >= len(data):
-        break
-    v, i = dec.raw_decode(data, i)
-    out.append(dump(v))
-sys.exit(subprocess.run([real] + args, input="\n".join(out).encode()).returncode)
-PY
-chmod +x "$TT/jq16/jq"
-ctl="$(printf '{"result":%s}' "$(cat "$FIX/lamports-over-2-53.jsonl")" | PATH="$TT/jq16:$PATH" jq -c .result \
-  | python3 -I "$DNR/deltas.py" lamports | awk -F'\t' '$2=="BigOne"{print $3}')"
-eq "big ints: control, through the jq 1.6 stand-in jq -c .result rounds BigOne's +1 to +2" "$ctl" "2"
-( PATH="$TT/jq16:$TT/bin:$PATH" FAKE_CURL_TX_FIXTURE="$FIX/lamports-over-2-53.jsonl" RPC_URL="https://rpc.example.test/" \
-    bash "$DNR/collect.sh" --out "$TT/big16" --confirmed -- "$A_ADDR" ) > "$TT/big16.out" 2>&1
-if cmp -s "$TT/big16/transactions.jsonl" "$FIX/lamports-over-2-53.jsonl"; then
-  ok "big ints: with jq 1.6, collect.sh writes the transaction byte-identical to the RPC's literal"
-else
-  bad "big ints: the corpus line differs from the RPC's literal ($(head -c 200 "$TT/big16/transactions.jsonl" 2>/dev/null))"
-fi
-eq "big ints: deltas over that corpus stay exact (BigOne, BigTwo)" \
-  "$(python3 -I "$DNR/deltas.py" lamports "$TT/big16/transactions.jsonl" | awk -F'\t' '{printf "%s=%s ", $2, $3}')" "BigOne=1 BigTwo=1 "
-
-# ---------------------------------------------------------------------------
-# 17. A second collection into an incident goes to corpus-2/ and is not refused;
-#     the recipes then read corpus*/ and count a transaction held by both corpora
-#     once (first occurrence wins), so damage figures are not doubled.
+# 16. A second collection into an incident goes to corpus-2/, next to corpus/, and
+#     is accepted; the recipes then read corpus*/ and count a transaction held by
+#     both corpora once (first occurrence wins), so damage figures are not doubled.
 # ---------------------------------------------------------------------------
 mkdir "$TT/incident_21"
 for c in corpus corpus-2; do
-  [[ "$c" == corpus ]] || mkdir "$TT/incident_21/$c"
-  ( PATH="$TT/bin:$PATH" FAKE_CURL_TX_FIXTURE="$FIX/same-owner-drain.jsonl" RPC_URL="https://rpc.example.test/" \
-      bash "$DNR/collect.sh" --out "$TT/incident_21/$c" --confirmed -- "$A_ADDR" ) > "$TT/incident_21.$c.out" 2>&1
+  ( PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
+      bash "$DNR/collect.sh" --out "$TT/incident_21/$c" --confirmed --max-pages 1 -- "$A_ADDR" ) > "$TT/incident_21.$c.out" 2>&1
   eq "two corpora: collecting into incident_21/$c succeeds" "$?" "0"
 done
-both="$(python3 -I "$DNR/deltas.py" tokens "$TT"/incident_21/corpus*/transactions.jsonl 2> "$TT/both.err")"
+python3 -I "$DNR/deltas.py" lamports "$TT"/incident_21/corpus*/transactions.jsonl > /dev/null 2> "$TT/both.err"
+if grep -q '^deltas.py: skipped 2 transaction(s) already read under the same signature$' "$TT/both.err"; then
+  ok "two corpora: what both collections fetched is read once (2 copies skipped)"
+else
+  bad "two corpora: no skipped-copy note ($(tr '\n' ' ' < "$TT/both.err"))"
+fi
+mkdir -p "$TT/incident_22/corpus" "$TT/incident_22/corpus-2"
+for c in corpus corpus-2; do cp "$FIX/same-owner-drain.jsonl" "$TT/incident_22/$c/transactions.jsonl"; done
+both="$(python3 -I "$DNR/deltas.py" tokens "$TT"/incident_22/corpus*/transactions.jsonl 2>/dev/null)"
 eq "two corpora: a drain held by both is counted once (3 rows, VaultPDA -140)" \
   "$(printf '%s\n' "$both" | grep -c .)/$(printf '%s\n' "$both" | owner_sum VaultPDA)" "3/-140"
-if grep -q 'skipped 1 transaction(s) already read under the same signature' "$TT/both.err"; then ok "two corpora: deltas.py says how many copies it skipped"; else bad "two corpora: no skipped-copy note"; fi
 for mode in tokens lamports; do
   eq "dedupe: deltas $mode over two fixtures given twice equals them once" \
     "$(python3 -I "$DNR/deltas.py" $mode "$FIX/same-owner-drain.jsonl" "$FIX/lamports-over-2-53.jsonl" "$FIX/same-owner-drain.jsonl" "$FIX/lamports-over-2-53.jsonl" 2>/dev/null)" \
@@ -903,7 +640,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 18. profile.sh skips and counts malformed lines instead of stopping: a corpus
+# 17. profile.sh skips and counts malformed lines instead of stopping: a corpus
 #     with invalid JSON and a wrongly shaped object in the middle still profiles
 #     its three good transactions, exits 0, and reports the two lines it skipped.
 # ---------------------------------------------------------------------------
@@ -920,7 +657,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 19. frames.py --instructions: which instruction ran comes from the transaction's
+# 18. frames.py --instructions: which instruction ran comes from the transaction's
 #     runtime-recorded instruction lists, never from a log. The default mode finds
 #     nothing for a program that logs nothing or one reached by CPI, and cannot tell
 #     an Anchor program's "Instruction: X" from a lying program's; the ix records

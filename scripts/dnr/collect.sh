@@ -20,12 +20,13 @@
 #     before any network call.
 #   * READ-ONLY RPC only: getSignaturesForAddress and getTransaction. Never a send,
 #     a simulate, or a write method.
-#   * CAPPED: --max-pages (default 20; a page is one getSignaturesForAddress call of
-#     up to 1000 signatures, per address) and --max-tx (default 2000 getTransaction
-#     CALLS, failed ones included) bound the work and the spend, so a run makes at
-#     most addresses x max-pages + max-tx calls. After 10 getTransaction calls in a
-#     row fail (a rate limit or an outage), the run stops fetching and says so.
-#     Raise the caps deliberately.
+#   * CAPPED: --max-pages (default 20 → up to 20000 signatures per address) and
+#     --max-tx (default 2000) bound the work and the spend. Raise them deliberately.
+#     --max-tx counts getTransaction calls, failed ones included, so a run makes at
+#     most addresses × max-pages + max-tx calls.
+#   * STOPS ON A FAILING ENDPOINT: after 10 getTransaction calls in a row fail
+#     (rate limit, outage, or history the endpoint does not serve), it fetches
+#     nothing more and records the stop as a collection gap.
 #
 # WHAT IS KEPT: every signature in the window, FAILED ones included. A failed
 # transaction moves no state, but it is evidence of an attempt — probing before a
@@ -39,23 +40,27 @@
 #
 # --before <sig> starts paging just older than that signature (resume a capped run,
 # or skip activity newer than the incident) — always into a new --out: an --out that
-# already holds any of this script's output files is refused, so a resume or a
-# second collection never erases an earlier one. Every address and --before value
-# must be base58, and every number a plain integer, before anything is written or
-# sent. Paging an address ends when its history does (a page shorter than 1000) or
-# once --since is crossed; when --max-pages stops it first, with a full last page,
-# the history is truncated and the script says so ("truncated by --max-pages", with
-# the --before cursor that resumes it): a collection gap to record in the ledger.
-# Signatures are fetched newest first (by slot, across all addresses; within a slot
-# in the RPC's own order, whatever the locale), so --max-tx drops the oldest.
+# already holds signatures.jsonl, transactions.jsonl or collection-gaps.tsv, even an
+# empty one, is refused, and the script creates its files with noclobber (`set -C`),
+# so a resume never erases the first pass. Every address and --before value must be
+# base58, and every number a plain integer, before anything is written or sent.
+#
+# A page shorter than the 1000 signatures asked for is the end of the address's
+# history. When the page cap stops paging on a full page before --since was crossed,
+# whatever --since and --until are, the script says so ("history truncated") with
+# the --before to resume from: the corpus is then incomplete for that address, a
+# collection gap to record in the ledger. Signatures are fetched newest first (by
+# slot, across all addresses; within a slot, in the order the RPC returned them), so
+# --max-tx drops the oldest. The script runs under LC_ALL=C, so neither that order
+# nor any character range depends on the caller's locale.
 #
 # COLLECTION GAPS: every gap is also a row of <dir>/collection-gaps.tsv,
 # `<signature or address><TAB><reason>`: a getTransaction that failed (transport
-# error, RPC error or null result), a signature page that failed, a history truncated
-# by --max-pages, the --max-tx cap, and a stop after consecutive failures. The run
-# ends with "collection gaps: N (see <dir>/collection-gaps.tsv)". Gaps leave the
-# exit status at 0; copy each row into LEDGER.md and INCIDENTS.json
-# `collection_gaps`.
+# error, RPC error or null result), a signature page that failed, history the page
+# cap truncated, the --max-tx cap, and the stop on a failing endpoint (the
+# last two name the first signature not fetched). The run ends with
+# "collection gaps: N (see <dir>/collection-gaps.tsv)". Gaps leave the exit status
+# at 0; copy each row into LEDGER.md and INCIDENTS.json `collection_gaps`.
 #
 # SECRETS: the endpoint comes from $RPC_URL and is NEVER echoed. curl runs with -q
 # (no ~/.curlrc) and reads the URL from a config on stdin (-K -), so the key stays
@@ -67,15 +72,23 @@
 #
 # Transactions are fetched jsonParsed, commitment finalized, with
 # maxSupportedTransactionVersion:1 — mandatory, since v1 transactions are live on
-# mainnet and a v1 fetch without the opt-in returns RPC error -32015. Each one is
-# written to the corpus by `python3 -I`, never re-encoded by jq: jq before 1.7 turns
-# every number into a double, which rounds lamport balances and other u64 fields
-# above 2^53.
+# mainnet and a v1 fetch without the opt-in returns RPC error -32015.
 #
-# bash >= 3.2, curl, jq, python3. Output: <dir>/signatures.jsonl,
+# EXACT INTEGERS: lamport balances and jsonParsed amounts pass 2^53, and jq < 1.7
+# re-encodes every number as a double. jq writes transactions.jsonl only when it
+# keeps a 2^64-1 literal exact; otherwise `python3 -I` does (its json module keeps
+# integers exact), one compact JSON object per line either way. Signature pages
+# carry only slots, block times and small error codes, and jq writes them.
+#
+# Exit: 0 done (collection gaps included) · 2 usage, a refused input, $RPC_URL, run
+# directory or --out · 3 named blocker (no curl or jq; a jq that rounds large
+# integers and no working python3).
+# bash >= 3.2, curl, jq (and python3 with jq < 1.7). Output: <dir>/signatures.jsonl,
 # <dir>/transactions.jsonl, <dir>/collection-gaps.tsv.
 
-set -uo pipefail
+# -C (noclobber): no redirection in this script replaces an existing file.
+set -Cuo pipefail
+export LC_ALL=C
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REDACT="$HERE/redact.sh"
@@ -132,14 +145,11 @@ for n in "$since" "$until" "$max_pages" "$max_tx"; do
     exit 2
   fi
 done
-for tool in curl jq python3; do
-  command -v "$tool" >/dev/null 2>&1 || { echo "collect.sh: $tool is not on PATH." >&2; exit 2; }
-done
 case "$out" in */) out="${out%"${out##*[!/]}"}"; [ -n "$out" ] || out=/ ;; esac
 
 # refuse_planted <dir>: exit 2 unless <dir> is safe to write into — not a symbolic
-# link, holding none, and not tracked by git. The git calls carry the Rule 11c flags
-# and GIT_NO_LAZY_FETCH=1, because the tree is usually the audited one. Outside a work tree nothing is tracked;
+# link, holding none, and not tracked by git. The git calls carry the Rule 11c flags,
+# because the tree is usually the audited one. Outside a work tree nothing is tracked;
 # inside one, a path git cannot classify is refused.
 refuse_planted() {
   local listed
@@ -150,9 +160,9 @@ refuse_planted() {
     echo "${0##*/}: refusing $1: it contains a symbolic link — use a new run directory." >&2; exit 2
   fi
   [ -d "$(dirname "$1")" ] || return 0
-  [ "$(GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -C "$(dirname "$1")" \
+  [ "$(git --no-pager -c core.fsmonitor=false -c log.showSignature=false -C "$(dirname "$1")" \
         rev-parse --is-inside-work-tree 2>/dev/null)" = true ] || return 0
-  if ! listed="$(GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -C "$(dirname "$1")" \
+  if ! listed="$(git --no-pager -c core.fsmonitor=false -c log.showSignature=false -C "$(dirname "$1")" \
         ls-files -- ":(literal,icase)$(basename "$1")" 2>/dev/null)"; then
     echo "${0##*/}: refusing $1: git cannot tell whether it is tracked." >&2; exit 2
   fi
@@ -169,14 +179,40 @@ while :; do
   case "$run_dir" in .|/) break ;; esac
   run_dir="$(dirname "$run_dir")"
 done
-# Never write over an earlier run's output: a resume or a second collection goes
-# into a new --out (for an incident, the next incident_<n>/corpus-<k>/).
+# A second pass into the same --out would mix into, or truncate, the first one's corpus.
 for f in signatures.jsonl transactions.jsonl collection-gaps.tsv; do
   if [ -e "$out/$f" ] || [ -L "$out/$f" ]; then
-    echo "collect.sh: $out already holds $f from an earlier run — use a new --out (resume there with --before)." >&2
+    echo "collect.sh: $out already holds a collected corpus ($f) — use a new --out (resume there with --before)." >&2
     exit 2
   fi
 done
+
+for tool in curl jq; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "[blocker] $tool is not on PATH; collect.sh needs curl and jq." >&2
+    exit 3
+  fi
+done
+# result_line: the JSON-RPC response on stdin -> its .result object as one compact
+# line, every integer exact (EXACT INTEGERS above).
+probe='{"result":{"n":[18446744073709551615,-9007199254740993]}}'
+want='{"n":[18446744073709551615,-9007199254740993]}'
+if [ "$(printf '%s' "$probe" | jq -c '.result' 2>/dev/null)" = "$want" ]; then
+  result_line() { jq -c '.result'; }
+else
+  result_line() {
+    python3 -I -c 'import json, sys
+r = json.loads(sys.stdin.buffer.read().decode("utf-8", "replace"))["result"]
+if not isinstance(r, dict):
+    sys.exit(1)
+out = json.dumps(r, ensure_ascii=False, separators=(",", ":"))
+sys.stdout.buffer.write(out.encode("utf-8", "backslashreplace") + b"\n")' 2>/dev/null
+  }
+  if [ "$(printf '%s' "$probe" | result_line)" != "$want" ]; then
+    echo "[blocker] this jq rounds integers above 2^53 (jq < 1.7) and python3 -I is not available to write the corpus instead; install jq >= 1.7 or python3." >&2
+    exit 3
+  fi
+fi
 
 mkdir -p "$out" || exit 2
 # Rule 11d: an incident_<n>/ directory (the --out itself or its parent) ignores itself
@@ -186,13 +222,17 @@ for d in "$out" "$(dirname "$out")"; do
     incident_*) [ -e "$d/.gitignore" ] || printf '*\n' > "$d/.gitignore" ;;
   esac
 done
+# mktemp -d creates the directory with mode 0700; curl's stderr and the fetch list live there.
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/dnr_collect.XXXXXX")" || {
+  echo "[blocker] cannot create a private temp directory." >&2; exit 3; }
+trap 'rm -rf "$tmp"' EXIT
+errf="$tmp/stderr"; todo="$tmp/signatures.todo"
 sig_file="$out/signatures.jsonl"; tx_file="$out/transactions.jsonl"; gaps="$out/collection-gaps.tsv"
-# noclobber: creating an output file that appeared since the check above fails.
-( set -C; : > "$sig_file" && : > "$tx_file" && : > "$gaps" ) || exit 2
+if ! { : > "$sig_file" && : > "$tx_file" && : > "$gaps"; } 2>/dev/null; then
+  echo "collect.sh: $out already holds a collected corpus — use a new --out (resume there with --before)." >&2
+  exit 2
+fi
 ngaps=0
-tmpd="$(mktemp -d "${TMPDIR:-/tmp}/dnr_collect.XXXXXX")" || exit 2
-trap 'rm -rf "$tmpd"' EXIT
-errf="$tmpd/stderr"; todo="$tmpd/todo"
 
 # Provider domain, for disclosure under OUTPUT-RULES.md Rule 11b: strip the scheme,
 # any userinfo, path, query and fragment, then keep the host's last two DNS labels (an
@@ -204,7 +244,7 @@ echo "addresses: ${#addrs[@]}   window: since=$since until=$until before=${befor
 
 rpc() {  # rpc <method> <params-json> -> the whole JSON response on stdout; returns curl's status
   local rc
-  : > "$errf"
+  rm -f "$errf"
   # -q comes first so no ~/.curlrc is read; the URL arrives on stdin, the body (no
   # secret in it) as --data-raw.
   printf 'url = "%s"\n' "$RPC_URL" | curl -q -K - -sS -m 60 -A auditor-skill-research -X POST \
@@ -226,46 +266,19 @@ failure() {  # failure <curl status> <response> -> why the call returned no usab
     *) echo "unreadable response" ;;
   esac
 }
-# A getTransaction response goes to the corpus through python3 -I, whose json keeps
-# integers exact (jq before 1.7 rounds every number above 2^53). Exit 0: the result
-# object was appended to the file in argv[1] as one compact line. Exit 1: it printed
-# why the response holds no transaction.
-TX_PY='import json, sys
-try:
-    r = json.loads(sys.stdin.buffer.read())
-except ValueError:
-    r = None
-if not isinstance(r, dict):
-    print("unreadable response"); sys.exit(1)
-res = r.get("result")
-if isinstance(res, dict):
-    with open(sys.argv[1], "a", encoding="utf-8") as f:
-        f.write(json.dumps(res, separators=(",", ":")) + "\n")
-    sys.exit(0)
-if "error" in r:
-    e = r["error"]
-    c = e.get("code") if isinstance(e, dict) else None
-    print("RPC error %d" % c if type(c) is int else "RPC error")
-elif res is None:
-    print("null result")
-else:
-    print("unreadable response")
-sys.exit(1)'
 gap() {  # gap <signature or address> <reason>: one row per thing the corpus lacks
   printf '%s\t%s\n' "$1" "$(printf '%s' "$2" | tr '\t\r\n' '   ')" >> "$gaps"
   ngaps=$((ngaps + 1))
 }
 
-# 1. signature history, newest -> oldest, one page of up to $LIMIT per call. Paging an
-#    address ends with its history (a page shorter than $LIMIT), once --since is
-#    crossed, or on a failed page; --max-pages stopping it after a full page leaves
-#    older history uncollected, which is reported with the cursor that resumes it.
-LIMIT=1000
+# 1. signature history, newest -> oldest, bounded by --since and --max-pages. A page
+#    shorter than the 1000 asked for ends the address's history; a cap that stops
+#    paging on a full page, before --since was crossed, truncated it.
 collected=0
 for addr in "${addrs[@]}"; do
-  before="$before_start"; page=0; oldest=0; got=0; ended=0
+  before="$before_start"; page=0; oldest=0; ended=0
   while [ "$page" -lt "$max_pages" ]; do
-    cfg="{\"limit\":$LIMIT,\"commitment\":\"finalized\"${before:+,\"before\":\"$before\"}}"
+    cfg="{\"limit\":1000,\"commitment\":\"finalized\"${before:+,\"before\":\"$before\"}}"
     resp="$(rpc getSignaturesForAddress "[\"$addr\",$cfg]")"; rc=$?
     if [ "$rc" -ne 0 ] || ! printf '%s' "$resp" | jq -e '.result | arrays' >/dev/null 2>&1; then
       reason="$(failure "$rc" "$resp")"
@@ -279,18 +292,25 @@ for addr in "${addrs[@]}"; do
       printf '%s' "$resp" | jq -c --arg a "$addr" '.result[] | . + {queried_address:$a}' >> "$sig_file"
       before="$(printf '%s' "$resp" | jq -r '.result[-1].signature')"
       oldest="$(printf '%s' "$resp" | jq -r '.result[-1].blockTime // 0')"
-      got=$((got + n)); collected=$((collected + n))
+      collected=$((collected + n))
     fi
-    if [ "$n" -lt "$LIMIT" ]; then ended=1; break; fi
+    if [ "$n" -lt 1000 ]; then ended=1; break; fi
     if [ "$since" -gt 0 ] && [ "$oldest" -gt 0 ] && [ "$oldest" -lt "$since" ]; then ended=1; break; fi
   done
   if [ "$ended" -eq 0 ]; then
-    resume="resume into a new --out with --before $before"
-    [ -n "$before" ] || resume="raise --max-pages"
-    inside=""
-    if [ "$until" -gt 0 ] && [ "$oldest" -gt "$until" ]; then inside=", so nothing at or before --until $until was collected"; fi
-    echo "  ! history of $addr truncated by --max-pages=$max_pages after $got signatures (oldest blockTime $oldest)$inside — $resume; recorded as a collection gap" >&2
-    gap "$addr" "history truncated by --max-pages=$max_pages after $got signatures (oldest blockTime $oldest)$inside; $resume"
+    if [ "$page" -eq 0 ]; then
+      stop="--max-pages 0 fetched no page"
+    else
+      stop="the page cap (--max-pages $max_pages) stopped on a full page at blockTime $oldest"
+      if [ "$since" -gt 0 ]; then
+        stop="$stop, still after --since $since"
+      elif [ "$until" -gt 0 ] && [ "$oldest" -gt "$until" ]; then
+        stop="$stop, still after --until $until, so nothing inside the window was collected"
+      fi
+    fi
+    resume="${before:+resume into a new --out with --before $before, or }raise --max-pages"
+    echo "  ! history truncated for $addr: $stop — $resume; recorded as a collection gap" >&2
+    gap "$addr" "history truncated: $stop; $resume"
   fi
 done
 echo "signatures collected: $collected -> $sig_file"
@@ -298,42 +318,42 @@ echo "signatures collected: $collected -> $sig_file"
 # 2. unique signatures within [since, until] — failed ones included — newest first
 #    across every address (slot, descending), so a --max-tx cap keeps the most recent
 #    activity; a signature seen under two addresses is kept once, at its first place.
-#    The sort is stable and on the slot only, in the C locale, so within a slot the
-#    RPC's own newest-first order stands whatever the user's locale.
-#    Read from a file (not a pipe) so the counters survive the loop.
+#    The sort is stable: within a slot the RPC's own newest-first order stands.
+#    Read from a file (not a pipe) so the counter survives the loop.
 jq -r --argjson s "$since" --argjson u "$until" '
   select(($s == 0) or ((.blockTime // 0) >= $s))
   | select(($u == 0) or ((.blockTime // 0) <= $u))
-  | "\(.slot // 0) \(.signature)"' "$sig_file" | LC_ALL=C sort -s -k1,1nr | awk '!seen[$2]++ { print $2 }' > "$todo"
+  | "\(.slot // 0) \(.signature)"' "$sig_file" | sort -s -k1,1nr | awk '!seen[$2]++ { print $2 }' > "$todo"
 
-# 3. one getTransaction call per signature. --max-tx counts calls, failed ones
-#    included; MAX_FAILS calls failing in a row (a rate limit or an outage) stop the
-#    run, since every further call would fail the same way.
-MAX_FAILS=10
-calls=0; fetched=0; streak=0; total="$(grep -c . "$todo")"; i=0
+# 3. fetch. Every getTransaction call counts against --max-tx, and max_failed calls
+#    failing in a row stop the run: the endpoint is failing, and the rest would too.
+max_failed=10
+fetched=0; calls=0; failed=0; total="$(grep -c . "$todo")"; i=0
 while IFS= read -r sig; do
   [ -z "$sig" ] && continue
   i=$((i + 1))
+  if [ "$failed" -ge "$max_failed" ]; then
+    gap "$sig" "not fetched: stopped after $max_failed getTransaction calls in a row failed (last: $reason); this and $((total - i)) older signatures in signatures.jsonl were not fetched"
+    echo "  ! stopped: $max_failed getTransaction calls in a row failed (last: $reason) — the endpoint is failing (rate limit or outage, or it does not serve this history); collected $fetched, collection gaps $ngaps; $((total - i + 1)) signatures not fetched — recorded as a collection gap" >&2
+    break
+  fi
   if [ "$calls" -ge "$max_tx" ]; then
     echo "  ! reached --max-tx=$max_tx getTransaction calls; $((total - i + 1)) signatures not fetched — recorded as a collection gap" >&2
     gap "$sig" "not fetched: --max-tx=$max_tx calls reached; this and $((total - i)) older signatures in signatures.jsonl were not fetched"
     break
   fi
-  if [ "$streak" -ge "$MAX_FAILS" ]; then
-    gap "$sig" "not fetched: $MAX_FAILS getTransaction calls in a row failed (rate limit or outage); this and $((total - i)) older signatures in signatures.jsonl were not fetched"
-    echo "  ! endpoint failing (rate limit or outage): $MAX_FAILS getTransaction calls in a row failed, so the run stops — $fetched transactions collected, $ngaps collection gaps" >&2
-    break
-  fi
   calls=$((calls + 1))
   resp="$(rpc getTransaction "[\"$sig\",{\"encoding\":\"jsonParsed\",\"maxSupportedTransactionVersion\":1,\"commitment\":\"finalized\"}]")"; rc=$?
-  if [ "$rc" -ne 0 ]; then
-    reason="transport error (curl exit $rc)"
-  elif reason="$(printf '%s' "$resp" | python3 -I -c "$TX_PY" "$tx_file")"; then
-    fetched=$((fetched + 1)); streak=0; continue
+  if [ "$rc" -eq 0 ] && printf '%s' "$resp" | jq -e '.result | objects' >/dev/null 2>&1 \
+     && line="$(printf '%s' "$resp" | result_line)" && [ -n "$line" ]; then
+    printf '%s\n' "$line" >> "$tx_file"
+    fetched=$((fetched + 1)); failed=0
+  else
+    reason="$(failure "$rc" "$resp")"
+    echo "  ! getTransaction failed for a signature: $reason — recorded as a collection gap" >&2
+    gap "$sig" "getTransaction: $reason"
+    failed=$((failed + 1))
   fi
-  streak=$((streak + 1))
-  echo "  ! getTransaction failed for a signature: $reason — recorded as a collection gap" >&2
-  gap "$sig" "getTransaction: $reason"
 done < "$todo"
-echo "transactions fetched: $fetched of $calls calls -> $tx_file"
+echo "transactions fetched: $fetched -> $tx_file"
 echo "collection gaps: $ngaps (see $gaps)"
