@@ -39,7 +39,7 @@ Turn a *confirmed* finding into a runnable exploit. Read `OUTPUT-RULES.md` first
 
 6. **Emit outputs** under `audit_<n>/poc/F-xxx/` (or `incident_<n>/poc/INC-<n>.<k>/`):
    - the filled harness crate (copied from `"${CLAUDE_PLUGIN_ROOT}/templates/poc/"`),
-   - a one-command **`run.sh`** (`cargo test` / `trident fuzz` / the surfpool scenario) that reproduces the result from a clean checkout. Every run needs `AUDITOR_EXEC_MODE` set to the run's recorded mode (`OUTPUT-RULES.md` Rule 11a), and otherwise exits 3 → `[PoC-ATTEMPTED]` before it compiles anything. It never builds inside the target tree: it copies the crate to a scratch directory outside it (printed) with the toolchain pinned,
+   - a one-command **`run.sh`** that reproduces the result from a clean checkout: the template's own for its crate (`cargo test`), or one `poc-engineer` writes for a `trident fuzz` or `cargo fuzz` target or the surfpool scenario. Every runner needs `AUDITOR_EXEC_MODE` set to the run's recorded mode (`OUTPUT-RULES.md` Rule 11a) and otherwise exits 3 → `[PoC-ATTEMPTED]` before it copies or compiles anything; a runner `poc-engineer` writes starts with the template `run.sh`'s mode gate, verbatim (the lines are in `references/orchestration/poc-harness.md` §1). No runner builds inside the target tree: each copies the crate to a scratch directory outside it (printed) with the toolchain pinned,
    - the earned **`[PoC-*]` evidence tier** recorded against the finding (see vocabulary below), which `audit-cycle` / `re-audit` fold back into the report's finding block.
 
 ## Evidence tiers (emit exactly one)

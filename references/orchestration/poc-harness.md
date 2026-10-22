@@ -58,6 +58,29 @@ runs of one audit, create a directory outside any repository, e.g.
 trusts the build outputs it finds there. The `.so` files stay in the scratch copy
 (`SBF_OUT_DIR`).
 
+**Runners you write.** `templates/poc/run.sh` is the runner for the template's crate. A
+Trident or cargo-fuzz target or a Surfpool scenario has no template, so `poc-engineer`
+writes its `run.sh`, and that runner keeps both rules above. It starts with `run.sh`'s
+mode gate, these lines verbatim, so it exits 3 before it copies or builds anything:
+
+```bash
+case "${AUDITOR_EXEC_MODE:-}" in
+  isolated|native) ;;
+  *)
+    echo "[PoC-ATTEMPTED] blocker: AUDITOR_EXEC_MODE is '${AUDITOR_EXEC_MODE:-}', not isolated or native — nothing was copied or built." >&2
+    echo "Building this crate runs code (dependency build scripts and proc-macros, then the tests), so every run needs the execution mode recorded at intake (OUTPUT-RULES.md Rule 11a, QUESTIONS.md Q46): AUDITOR_EXEC_MODE=isolated inside the isolated runner, or AUDITOR_EXEC_MODE=native (the report then states that the PoC build ran on this host)." >&2
+    exit 3
+    ;;
+esac
+```
+
+Then it builds and runs from a scratch copy outside the target tree, as `run.sh` does:
+a directory from `mktemp -d "${TMPDIR:-/tmp}/auditor-poc.XXXXXX"`, the crate copied in
+without `target/`, refusing a symbolic link, a `.cargo/` directory or a
+`rust-toolchain*` file; `RUSTUP_TOOLCHAIN` pinned; every `cargo`, `trident` or
+`surfpool` command started from that copy; a `path` dependency on target crates
+absolute. A runner without both is not a PoC runner, and the tier is `[PoC-ATTEMPTED]`.
+
 **Run the probes below from `${TMPDIR:-/tmp}`, never from inside the target tree**
 (`cd "${TMPDIR:-/tmp}"` first, with `RUSTUP_TOOLCHAIN` pinned — Rule 11a). Inside it,
 the target's `.cargo/config*` can define an `[alias]` named `build-sbf` or `fuzz` that

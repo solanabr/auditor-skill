@@ -2,7 +2,8 @@
 # test-dnr-poc-runner.sh — self-test for templates/poc/run.sh and the PoC contract
 # assertions in templates/poc/shared-test-utils:
 #   * the execution mode every run needs (without AUDITOR_EXEC_MODE=isolated|native it
-#     exits 3 before anything is copied or compiled, whatever the crate holds);
+#     exits 3 before anything is copied or compiled, whatever the crate holds), and the
+#     same gate, shown verbatim in the docs, for the runners poc-engineer writes;
 #   * prebuilt bytes: VULNERABLE_SO alone runs the exploit arm, FIXED_SO adds the
 #     fixed arm and needs VULNERABLE_SO; an arm counts only on the marker its contract
 #     assertion leaves when it runs and holds; a fixed arm that fails on a harness
@@ -196,6 +197,28 @@ code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX")"
 bd="$(build_dir)"
 [ "$code" = 0 ] && from_scratch "$bd" && grep -q '^>> build dir: .*AUDITOR_EXEC_MODE=native;' "$T/out" \
   && ok "AUDITOR_EXEC_MODE=native -> builds and tests the scratch copy, and says which mode ran" || bad "native: exit $code, build dir '$bd'"
+
+# A runner poc-engineer writes (a Trident or cargo-fuzz target, a Surfpool scenario)
+# starts with run.sh's mode gate, copied from the docs: the lines poc-harness.md and
+# poc-engineer.md show are run.sh's own, and as a runner's first lines they stop a run
+# with no recorded mode.
+gate_lines() {  # gate_lines <file>: the mode gate, from its `case` line to its `esac`
+  awk 'index($0, "case \"${AUDITOR_EXEC_MODE:-}\" in") == 1 { on = 1 } on { print } on && $0 == "esac" { exit }' "$1"
+}
+want_gate="$(gate_lines "$TEMPLATE/run.sh")"
+for doc in references/orchestration/poc-harness.md agents/poc-engineer.md; do
+  if [ -n "$want_gate" ] && [ "$(gate_lines "$HERE/../../$doc")" = "$want_gate" ]; then
+    ok "$doc shows run.sh's mode gate verbatim for the runners poc-engineer writes"
+  else
+    bad "$doc: the mode gate for agent-written runners differs from run.sh's"
+  fi
+done
+printf '#!/usr/bin/env bash\nset -euo pipefail\n%s\necho "past the gate"\n' "$(gate_lines "$HERE/../../references/orchestration/poc-harness.md")" > "$T/runner.sh"
+code="$( (cd "$T" && env -i PATH="$PATH" bash ./runner.sh) >"$T/out" 2>&1; echo $?)"
+[ "$code" = 3 ] && grep -q 'nothing was copied or built' "$T/out" && ! grep -q 'past the gate' "$T/out" \
+  && ok "the documented gate as a runner's first lines: no AUDITOR_EXEC_MODE -> exit 3 before anything else" || bad "documented gate, no mode: exit $code"
+code="$( (cd "$T" && env -i PATH="$PATH" AUDITOR_EXEC_MODE=isolated bash ./runner.sh) >"$T/out" 2>&1; echo $?)"
+[ "$code" = 0 ] && grep -q 'past the gate' "$T/out" && ok "the documented gate lets a run with a recorded mode through" || bad "documented gate, isolated: exit $code"
 
 # ---------------------------------------------------------------------------
 # Prebuilt bytes, under the mode: inputs, the vulnerable-only run, the markers each

@@ -18,6 +18,21 @@ Given the finding block, its `audit_<n>/worksheets/context/*` worksheet, the pin
 - **Where it builds.** Every `run.sh` call needs `AUDITOR_EXEC_MODE` set to the run's recorded mode (`OUTPUT-RULES.md` Rule 11a — intake §8, or for an incident the ledger header); with none recorded, ask once (a non-interactive run is native, and the report says so). Without it `run.sh` exits 3 before compiling anything, and the tier is `[PoC-ATTEMPTED]`. `run.sh` copies the crate to a scratch directory outside the target tree and pins the toolchain, so the target's `.cargo/config*` and `rust-toolchain*` never apply; it refuses a crate holding a symbolic link, a `.cargo/` directory or a `rust-toolchain*` file, and a `path` dependency on target crates must be absolute. Keep to the template's framework crates: a crate copied from the target's manifest runs its build script in the recorded mode, so add one only when the PoC needs it. Probe toolchains (`cargo build-sbf --version`) from outside the target tree as well. Read target source at the audited or incident commit from a copy made with `GIT_NO_LAZY_FETCH=1 git clone --no-local <checkout> <scratch copy>`, never by checking out inside a client-supplied `.git/` (`OUTPUT-RULES.md` Rule 11c).
 - **Build cache.** Each `run.sh` call compiles from cold in a fresh scratch directory. To reuse compiled dependencies between runs of one audit, create a directory outside any repository, e.g. `${XDG_CACHE_HOME:-$HOME/.cache}/auditor-skill/poc-target/<repo-name>-audit_<n>`, pass it to each run as `CARGO_TARGET_DIR`, and delete it when the engagement ends. Never point it inside the target tree or at a directory you did not create: cargo trusts the build outputs it finds there.
 
+**Runners you write.** The template's `run.sh` drives the template's crate. A Trident or cargo-fuzz target or a Surfpool scenario has no template, so you write its `run.sh`, and it starts with the template `run.sh`'s mode gate, these lines verbatim (exit 3 before anything is copied or built):
+
+```bash
+case "${AUDITOR_EXEC_MODE:-}" in
+  isolated|native) ;;
+  *)
+    echo "[PoC-ATTEMPTED] blocker: AUDITOR_EXEC_MODE is '${AUDITOR_EXEC_MODE:-}', not isolated or native — nothing was copied or built." >&2
+    echo "Building this crate runs code (dependency build scripts and proc-macros, then the tests), so every run needs the execution mode recorded at intake (OUTPUT-RULES.md Rule 11a, QUESTIONS.md Q46): AUDITOR_EXEC_MODE=isolated inside the isolated runner, or AUDITOR_EXEC_MODE=native (the report then states that the PoC build ran on this host)." >&2
+    exit 3
+    ;;
+esac
+```
+
+After the gate, it builds and runs from a scratch copy outside the target tree, as the template's `run.sh` does: a directory from `mktemp -d "${TMPDIR:-/tmp}/auditor-poc.XXXXXX"`, the crate copied in without `target/` (refusing a symbolic link, a `.cargo/` directory or a `rust-toolchain*` file), `RUSTUP_TOOLCHAIN` pinned, every `cargo`, `trident` or `surfpool` command started from that copy, and a `path` dependency on target crates absolute. A runner without both is not a PoC runner, and the tier is `[PoC-ATTEMPTED]`.
+
 **Hard rule:** the exploit test must **ASSERT the vulnerability** — it succeeds against `vulnerable` and is rejected against `fixed`. A test that compiles and runs but does not assert the flaw is not a PoC.
 
 ## Incident mode (detection & response)
