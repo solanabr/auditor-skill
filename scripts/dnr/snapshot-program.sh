@@ -43,8 +43,12 @@
 # snapshot already in bin/:
 #   * the same last-deployed slot and zero-trimmed sha256 as one of them: it prints
 #     "unchanged" and that snapshot's line, writes nothing, and exits 0;
+#   * other bytes than a snapshot kept at the same or a later last-deployed slot:
+#     bin/ and the chain disagree, so it stops with a blocker and writes nothing;
 #   * otherwise it keeps the current bytes as bin/<id>@<slot>.so and
 #     bin/<id>@<slot>.show.txt, and prints the first snapshot's line and the new one.
+# Each kept .so must still be a regular file with the ELF magic, beside a regular
+# .show.txt; any other kept snapshot stops the script with a blocker.
 # Files are written with noclobber (`set -C`), each through the descriptor opened
 # when it was created: a name already taken stops the script with a blocker instead
 # of being replaced.
@@ -72,7 +76,8 @@
 # a refused run directory · 3 named blocker (no solana CLI or python3, config not
 # taken, CLI error or no program under any loader, dump without ELF magic, the
 # last-deployed slot moving during two dumps, hash not computed, a snapshot name
-# already taken).
+# already taken, a kept snapshot that is not a regular ELF file beside a regular
+# .show.txt, or one the chain's bytes disagree with at its slot or a later one).
 # bash >= 3.2, and python3 for the id check and the hash: checked before the CLI
 # runs, and run as `python3 -I` because the working directory is usually the audited
 # repo: without -I, a hashlib.py there would be imported in place of the stdlib.
@@ -287,7 +292,9 @@ while :; do
   slot="$now"
 done
 
-magic="$(head -c 4 "$dump" | od -An -tx1 | tr -d ' \n')"
+# elf_magic <file>: its first four bytes in hex (7f454c46 for an ELF).
+elf_magic() { head -c 4 "$1" | od -An -tx1 | tr -d ' \n'; }
+magic="$(elf_magic "$dump")"
 if [ "$magic" != "7f454c46" ]; then
   echo "[blocker] dump of $pid is not an ELF (magic=${magic:-empty}); not usable as program bytes." >&2
   exit 3
@@ -361,14 +368,28 @@ if [ ! -e "$first" ]; then
   echo "[blocker] bin/$pid.show.txt exists without bin/$pid.so (an earlier snapshot did not finish): move it aside and run again; it is never overwritten." >&2
   exit 3
 fi
-# A later run: the program on-chain may be a snapshot already kept.
+# A later run: the program on-chain may be a snapshot already kept. Each kept .so must
+# still be a regular file with the ELF magic, beside a regular .show.txt. Bytes on-chain
+# that differ from a snapshot recorded at the same or a later last-deployed slot are a
+# disagreement between the chain and bin/, never a new snapshot.
 for f in "$first" "$dir/bin/$pid"@*.so; do
-  [ -f "$f" ] || continue
-  if [ "$(slot_of "${f%.so}.show.txt")" = "$slot" ] \
-     && [ "$(hash_of "$f" | cut -d' ' -f1)" = "$sha" ]; then
+  [ -e "$f" ] || [ -L "$f" ] || continue
+  s="${f%.so}.show.txt"
+  if [ -L "$f" ] || [ ! -f "$f" ] || [ "$(elf_magic "$f")" != "7f454c46" ] || [ -L "$s" ] || [ ! -f "$s" ]; then
+    echo "[blocker] ${f#"$dir/"} is not a regular file with the ELF magic beside a regular ${s#"$dir/"}: a kept snapshot is no longer as it was written. Compare it with the ledger line it was kept with; nothing written." >&2
+    exit 3
+  fi
+  k="$(slot_of "$s")"
+  h="$(hashed "$f")" || exit 3
+  h="${h%% *}"
+  if [ "$k" = "$slot" ] && [ "$h" = "$sha" ]; then
     echo "unchanged: the program on-chain matches ${f#"$dir/"} (same last-deployed slot and zero-trimmed sha256); nothing written"
-    ledger_line "$f" "${f%.so}.show.txt"
+    ledger_line "$f" "$s"
     exit 0
+  fi
+  if [[ "$k" =~ ^[0-9]{1,18}$ && "$slot" =~ ^[0-9]{1,18}$ ]] && [ "$k" -ge "$slot" ]; then
+    echo "[blocker] ${f#"$dir/"} was kept at last-deployed slot $k, not older than the slot on-chain now ($slot), yet the program on-chain has other bytes: bin/ and the chain disagree. Compare that snapshot with its ledger line before trusting either; nothing written." >&2
+    exit 3
   fi
 done
 case "$slot" in

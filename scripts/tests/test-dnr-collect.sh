@@ -395,8 +395,9 @@ esac
 # is a comma list of last-deployed slots: each read of the program (show, dump,
 # download) takes the next one and the last one repeats, so a deploy can land
 # between two reads. The dumped ELF carries its slot, so each deploy hashes apart.
-# FAKE_SOL_PLANT=<link>|<target> makes the dump call also create <link>, a symbolic
-# link to <target>. Every call is appended to $FAKE_SOL_ARGV.
+# FAKE_SOL_SALT=<text> adds that text to the ELF, so the same slot can give other
+# bytes. FAKE_SOL_PLANT=<link>|<target> makes the dump call also create <link>, a
+# symbolic link to <target>. Every call is appended to $FAKE_SOL_ARGV.
 # ---------------------------------------------------------------------------
 mkdir -p "$TT/sol"
 printf '#!/bin/sh\nexec "%s" -I "$0.py" "$@"\n' "$PY" > "$TT/sol/solana"
@@ -436,7 +437,8 @@ def read_slot():
     open(path, "w").write(str(n + 1))
     return int(slots[min(n, len(slots) - 1)])
 def elf(slot):
-    return b"\x7fELF" + slot.to_bytes(8, "little") + bytes(range(1, 40)) + b"\0" * 300
+    salt = os.environ.get("FAKE_SOL_SALT", "").encode()
+    return b"\x7fELF" + slot.to_bytes(8, "little") + bytes(range(1, 40)) + salt + b"\0" * 300
 def length(data):
     return f"{len(data)} ({len(data):#x}) bytes"
 def no_signer():
@@ -536,15 +538,53 @@ eq "keep: the redeploy run prints the first snapshot's line, then the new one" \
   "$line1|last_deployed_slot=200 authority=p2Yicb86aZig616Eav2VWG9vuXR5mEqhtzshZYBxzsV elf_bytes=51 padding_bytes=300 file=bin/$PID@200.so"
 snap "$K" FAKE_SOL_SLOTS=200
 eq "keep: a run at slot 200 again matches bin/<id>@200.so" "$?|$(sed -n 1p "$K.out" | cut -d' ' -f1-6)" "0|unchanged: the program on-chain matches bin/$PID@200.so"
-printf 'other bytes\n' > "$K/bin/$PID@300.so"
+printf 'other bytes\n' > "$K/bin/$PID@300.show.txt"
 snap "$K" FAKE_SOL_SLOTS=300
 code=$?
-if [[ "$code" == 3 && "$(cat "$K/bin/$PID@300.so")" == "other bytes" && ! -e "$K/bin/$PID@300.show.txt" ]] \
-   && grep -q "blocker.*bin/$PID@300.so .*already exists.*never overwritten" "$K.out"; then
-  ok "keep: a taken bin/<id>@<slot>.so is a blocker (exit 3) and stays as it was"
+if [[ "$code" == 3 && "$(cat "$K/bin/$PID@300.show.txt")" == "other bytes" && ! -e "$K/bin/$PID@300.so" ]] \
+   && grep -q "blocker.*bin/$PID@300.so or bin/$PID@300.show.txt already exists.*never overwritten" "$K.out"; then
+  ok "keep: a taken bin/<id>@<slot>.show.txt is a blocker (exit 3) and stays as it was"
 else
   bad "keep: taken @300 name -> exit $code ($(tr '\n' ' ' < "$K.out"))"
 fi
+rm -f "$K/bin/$PID@300.show.txt"
+# A kept snapshot must still be what was written: a regular .so with the ELF magic,
+# beside a regular .show.txt. Bytes on-chain that differ from a snapshot kept at the
+# same or a later slot are a blocker, never "unchanged" and never a new snapshot.
+K3="$TT/keep3/incident_1"; mkdir -p "$TT/keep3"
+snap "$K3" FAKE_SOL_SLOTS=100
+cp -p "$K3/bin/$PID.so" "$TT/k3.so"
+for case in "same slot, other bytes|FAKE_SOL_SLOTS=100|FAKE_SOL_SALT=x" "an older slot than kept, other bytes|FAKE_SOL_SLOTS=90|FAKE_SOL_SALT="; do
+  label="${case%%|*}"; rest="${case#*|}"
+  snap "$K3" "${rest%%|*}" "${rest#*|}"
+  code=$?
+  if [[ "$code" == 3 && "$(names "$K3/bin")" == "$PID.show.txt $PID.so " ]] && cmp -s "$K3/bin/$PID.so" "$TT/k3.so" \
+     && ! grep -q '^unchanged' "$K3.out" && grep -q "blocker.*bin/$PID.so was kept at last-deployed slot 100, not older than the slot on-chain now" "$K3.out"; then
+    ok "kept snapshots: $label -> blocker (exit 3), not 'unchanged', nothing written"
+  else
+    bad "kept snapshots: $label -> exit $code, bin: $(names "$K3/bin") ($(tr '\n' ' ' < "$K3.out"))"
+  fi
+done
+snap "$K3" FAKE_SOL_SLOTS=100
+eq "kept snapshots: control, the same slot and bytes are still 'unchanged'" "$?|$(sed -n 1p "$K3.out" | cut -d' ' -f1)" "0|unchanged:"
+for case in "a .so without the ELF magic|so-text" "a .show.txt that is a directory|show-dir" "a .so that is a directory|so-dir"; do
+  label="${case%%|*}"; how="${case#*|}"
+  K4="$TT/keep4-$how/incident_1"; mkdir -p "$TT/keep4-$how"
+  snap "$K4" FAKE_SOL_SLOTS=100
+  case "$how" in
+    so-text) printf 'not an elf\n' > "$K4/bin/$PID.so.new"; mv "$K4/bin/$PID.so.new" "$K4/bin/$PID.so" ;;
+    show-dir) mv "$K4/bin/$PID.show.txt" "$TT/keep4.show.txt"; mkdir "$K4/bin/$PID.show.txt" ;;
+    so-dir) mkdir "$K4/bin/$PID@50.so"; cp "$K4/bin/$PID.show.txt" "$K4/bin/$PID@50.show.txt" ;;
+  esac
+  before_names="$(names "$K4/bin")"
+  snap "$K4" FAKE_SOL_SLOTS=200
+  code=$?
+  if [[ "$code" == 3 && "$(names "$K4/bin")" == "$before_names" ]] && grep -q 'blocker.*is not a regular file with the ELF magic beside a regular' "$K4.out"; then
+    ok "kept snapshots: $label -> blocker (exit 3), nothing written"
+  else
+    bad "kept snapshots: $label -> exit $code, bin: $(names "$K4/bin") ($(tr '\n' ' ' < "$K4.out"))"
+  fi
+done
 K2="$TT/keep2/incident_1"; mkdir -p "$K2/bin"; printf 'partial\n' > "$K2/bin/$PID.show.txt"
 snap "$K2" FAKE_SOL_SLOTS=100
 code=$?
