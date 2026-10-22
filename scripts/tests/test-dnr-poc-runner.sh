@@ -237,7 +237,7 @@ mk_crate "$T/tmpl" incident
 code="$(run "$T/tmpl" "$SP" VULNERABLE_SO="$T/vuln.so" FIXED_SO="$T/fixed.so" SHIM_REAL_CARGO="$REAL_CARGO")"
 [ "$code" = 0 ] && grep -q '^>> build dir: .*scratch copy' "$T/out" && ! grep -q 'allowlist' "$T/out" && ok "the template's own manifests pass every check (relocated, allowlist clean${REAL_CARGO:+, real cargo metadata})" || { bad "template manifests: exit $code"; cat "$T/out" >&2; }
 
-# adv-14: strings the old `= "..."` pattern missed — a multi-line literal string, an
+# strings the old `= "..."` pattern missed — a multi-line literal string, an
 # array value, a unicode escape, and a '#' inside a string that a naive comment cut
 # would truncate — each make the crate target-dependent.
 chk_dep() {  # chk_dep <dir> <expected message fragment> <label>
@@ -256,7 +256,7 @@ chk_dep "$T/d-uesc" 'escaped or multi-line TOML string' "unicode-escaped path"
 mk_dep "$T/d-hash" 'vault = { path = "x#/../../../programs/vault" }'
 chk_dep "$T/d-hash" 'a path that leaves the crate' "a '#' inside the path string"
 
-# adv-15: registry dependencies outside the framework allowlist (as `cargo metadata`
+# registry dependencies outside the framework allowlist (as `cargo metadata`
 # reports them) need the execution mode; framework crates, `_` spellings included, do not.
 md() { printf '{"packages":[{"name":"p","targets":%s,"dependencies":[%s]}]}\n' "$2" "$3" > "$T/$1.json"; }
 CIO='"source":"registry+https://github.com/rust-lang/crates.io-index","registry":null'
