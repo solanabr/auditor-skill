@@ -38,5 +38,7 @@ Next steps:
   • Or use it as a skill: ask your agent to "audit this repo using the auditor-skill".
   • Optional token-efficiency tools (Rust):
       cd "$DEST/tools/auditor-tools" && cargo build --release
+    Build them only from an install outside any repository you audit, or under
+    OUTPUT-RULES.md Rule 11a isolated mode: cargo reads config from every parent directory.
   • Review estimated costs before a full run: $DEST/COSTS.md
 EOF

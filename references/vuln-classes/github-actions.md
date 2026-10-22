@@ -336,8 +336,8 @@ token and, unless `additional_permissions` is set, sends no permission list with
 The token therefore carries whatever the Claude App's installation grants on the repository (the action's security
 notes list read-write on contents, pull requests and issues), and the job's `permissions:` block does not narrow it.
 To bound it, pass
-`github_token: ${{ secrets.GITHUB_TOKEN }}` under minimal job permissions, and never a personal access token: a static
-token can be recovered piece by piece through repeated injection. The App path needs `id-token: write`, and any step in
+`github_token: ${{ secrets.GITHUB_TOKEN }}` under minimal job permissions, and never a long-lived PAT, which repeated
+prompt injection can leak piece by piece. The App path needs `id-token: write`, and any step in
 that job can request OIDC tokens for any audience, so no cloud trust policy may accept that job's subject (§5.6). Keep
 publish, deploy and cloud secrets out of every `env:` the agent's shell tool can read (AI-034).
 

@@ -21,7 +21,7 @@ Given the finding block, its context worksheet, its `audit_<n>/poc/F-xxx` harnes
 
 ## Verify by execution (mandatory for FIX-VERIFIED)
 
-Apply the diff to a **scratch git worktree** (never the client checkout), rebuild, and **re-run the finding's `poc/F-xxx` exploit**. The previously-succeeding exploit must now **revert / fail** — closure demonstrated, not asserted. Reading the diff is not verification. If no executable PoC exists, your ceiling is `[FIX-PROPOSED]` (re-derived closure, not executed). The build follows `OUTPUT-RULES.md` Rule 11a; for an incident it is never native when the root cause is supply-chain / CI.
+Apply the diff to a **scratch git worktree** (never the client checkout), rebuild, and **re-run the finding's `poc/F-xxx` exploit**. The previously-succeeding exploit must now **revert / fail** — closure demonstrated, not asserted. Reading the diff is not verification. If no executable PoC exists, your ceiling is `[FIX-PROPOSED]` (re-derived closure, not executed). The build follows `OUTPUT-RULES.md` Rule 11a; for an incident it is never native when the root cause is supply-chain / CI. Create the worktree from a `git clone --no-local` copy you made, never inside a client-supplied `.git/` (Rule 11c).
 
 For an **incident** (`INC-<n>.<k>`), re-run the stored `poc/INC-<n>.<k>/run.sh` with the incident-time bytes (`incident_<n>/bin/`) as `VULNERABLE_SO` and **your patched build** as `FIXED_SO`; a rejection with the guard's specific error (`assert_exploit_rejected_with!`) is the closure evidence for the proposal. Checking a hotfix the team already deployed is a **separate** run with `FIXED_SO` = a fresh dump of the **current on-chain** bytes — report it apart from your own result, never as evidence for your patch.
 

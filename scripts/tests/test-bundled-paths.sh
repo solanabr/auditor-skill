@@ -8,7 +8,8 @@
 #      on it, a copy of templates/poc, or a code span / code line that starts with a relative script and
 #      passes it arguments. Prose that merely names a path ("a self-contained templates/poc crate", a
 #      markdown link) is allowed there;
-#   3. every site fixed so far keeps its rooted form (the PINS list);
+#   3. every site fixed so far keeps its rooted form, and the corpus-read and .audit-memory rules stay
+#      stated (the PINS list);
 #   4. every rooted path those files name exists in this checkout (binaries: declared in the crate);
 #   5. Rule 11e and its pointers in SKILL.md / AGENTS.md / FULL-AUDIT.md are in place; 11a–11e keep their
 #      headings.
@@ -149,7 +150,7 @@ scan strict $STRICT_FILES
 scan run $RUN_FILES
 
 # ---- 3. pinned sites ------------------------------------------------------------------------------------
-# file <TAB> text that must stay in it: each site fixed so far, in its rooted form.
+# file <TAB> text that must stay in it: each site fixed so far in its rooted form, plus the rule text.
 while IFS='	' read -r f want; do
   [ -n "$f" ] || continue
   if grep -qF -- "$want" "$f" 2>/dev/null; then ok "pin $f: $want"; else bad "pin $f lost its rooted form: $want"; fi
@@ -194,6 +195,10 @@ README.md	Read ~/.claude/skills/auditor-skill/SKILL.md
 README.md	Read the auditor-skill files in ~/.claude/skills/auditor-skill/
 OUTPUT-RULES.md	In a vendored Trail of Bits skill, `{baseDir}` and every relative path
 OUTPUT-RULES.md	The installation never sits inside the repository under audit
+OUTPUT-RULES.md	Corpus Markdown that command or agent text names by a relative path
+OUTPUT-RULES.md	confirm that the audited repository does not track it (`git ls-files .audit-memory` prints nothing
+docs/output-and-rigor.md	Corpus Markdown that command or agent text names by a relative path
+references/orchestration/pre-scan.md	confirm that the audited repository does not track it (`git ls-files .audit-memory` prints nothing
 scripts/threat-model/collect.sh	bash "${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --repo
 scripts/report-to-pdf.sh	"${CLAUDE_PLUGIN_ROOT}/scripts/report-to-pdf.sh" [path/to/REPORT.md]
 PINS

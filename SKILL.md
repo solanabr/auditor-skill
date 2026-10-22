@@ -70,7 +70,7 @@ Checklists outside this set are **never read** — a Rust-only repo never loads 
 | `references/audit-lifecycle/threat-model-bootstrap.md` | `/auditor:threat-model --bootstrap` or `--vulns` / `--seed` / `--parent`; or a trigger: intake §7 prior audit / incident · `fork of` · `forked from` · `white-label` (README/docs) · `security_txt!` `source_code` not among the remotes · prior `audit_*/REPORT.md` · audit / post-mortem / incident file in the tree · `incident_*/INCIDENTS.json` |
 | `references/report-format.md` | assembling the final report (Phase 5 / audit-reporter) |
 
-**Bundled paths.** Every path this skill names for something it ships — `scripts/`, `tools/`, `templates/`, `vendor/trailofbits/` and the corpus files above — is relative to the auditor-skill root, `${CLAUDE_SKILL_DIR}`, never to the working directory, which is usually the repository under audit. Commands and agents write the same root as `${CLAUDE_PLUGIN_ROOT}`; in a file you open later, where neither variable is filled in, use the absolute root you were given ([OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 11e).
+**Bundled paths.** Every path this skill names for something it ships — `scripts/`, `tools/`, `templates/`, `vendor/trailofbits/` and the corpus files above — is relative to the auditor-skill root, `${CLAUDE_SKILL_DIR}`, never to the working directory, which is usually the repository under audit. Commands and agents run bundled executables from the same root, written `${CLAUDE_PLUGIN_ROOT}`, and read the corpus files they name relatively from it as well; in a file you open later, where neither variable is filled in, use the absolute root you were given ([OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 11e).
 
 ---
 
@@ -139,7 +139,7 @@ Honestly scoped: this is audit-shaped automation / a rigorous first pass, not a 
 
 Everything above is pre-deployment. When a protocol may already have been attacked:
 
-- **`/auditor:hunt`** — no alert to start from: snapshot the deployed programs, baseline the transaction history (finalized `getTransaction`, program logs, Geyser/indexer exports), test hypotheses one query at a time in a written ledger, confirm suspects in the deployed source, reproduce on the real bytes → `incident_<n>/INCIDENTS.json` + `INCIDENT_REPORT.md`.
+- **`/auditor:hunt`** — no alert to start from: snapshot the deployed programs, baseline the transaction history (finalized `getTransaction`, program logs, Geyser/indexer exports), record each hypothesis and its query in a ledger, check each suspect against the source deployed at the incident slot, reproduce on the real bytes → `incident_<n>/INCIDENTS.json` + `INCIDENT_REPORT.md`.
 - **`/auditor:respond <lead>`** — a signature, address, alert, or `INC-<n>.<k>`: whether the attack landed, the damage per mint, the root cause, and a containment / remediation / recovery plan written for humans to carry out → `RESPONSE-INC-<n>.<k>.md`.
 
 Verdicts follow the single normative ladder in [references/detection-response/README.md](references/detection-response/README.md#the-verdict-ladder-the-one-normative-copy). The track never signs, sends, or simulates against a public cluster.
