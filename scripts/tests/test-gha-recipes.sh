@@ -2,6 +2,7 @@
 # test-gha-recipes.sh — run the GitHub Actions recipes exactly as written against the fixture workflows in
 # scripts/tests/fixtures/gha/, and check that each recipe flags exactly the expected fixtures:
 #   R1–R8    discovery/grep-commands.md, section "GitHub Actions (CI trigger trust)";
+#   K116-1   KV-116 Step 1 (AI-agent steps);
 #   K139-1   KV-139 Step 1 (externally triggerable workflows);
 #   K140-6   KV-140 Step 6 (Actions cache writers and restorers).
 # It also checks that every known-vector step that repeats an R recipe carries it byte for byte.
@@ -41,11 +42,13 @@ kv_step() { # kv_step <vector file> <step>
 }
 
 KV080=080-ci-cd-pipeline-injection.md
+KV116=116-ai-coding-agent-ci-deploy-key.md
 KV139=139-comment-triggered-workflow-author-gating.md
 KV140=140-workflow-run-pwn-request-artifact-cache-poisoning.md
 
 # Recipes that live only in a known vector (<id> <vector file> <step>): the step's first grep line.
-KV_RECIPES="K139-1 $KV139 1
+KV_RECIPES="K116-1 $KV116 1
+K139-1 $KV139 1
 K140-6 $KV140 6"
 
 # Known-vector steps that repeat an R recipe (<id> <vector file> <step>).
@@ -67,8 +70,9 @@ expected() {
     R5) echo "06 07 15" ;;
     R6) echo "05 07 08 14 15 16 20 31 32" ;;
     R7) echo "05 07 11 12 15 18 19 20 21 22 23 24" ;;
-    R8) echo "01 08 11 14" ;;
-    K139-1) echo "01 02 03 04 08 10 11 14 16 17 22 23 25 26" ;;
+    R8) echo "01 08 11 14 33 34" ;;
+    K116-1) echo "01 08 11 14 33 34" ;;
+    K139-1) echo "01 02 03 04 08 10 11 14 16 17 22 23 25 26 33" ;;
     K140-6) echo "" ;;
   esac
 }
@@ -112,7 +116,7 @@ while read -r id file step; do
 done <<< "$COPIES"
 
 # The negative control must stay silent for every recipe.
-for id in R1 R2 R3 R4 R5 R6 R7 R8 K139-1 K140-6; do
+for id in R1 R2 R3 R4 R5 R6 R7 R8 K116-1 K139-1 K140-6; do
   case " $(expected "$id") " in *" 09 "*) echo "FAIL $id: negative control 09 is expected"; fail=1 ;; esac
 done
 

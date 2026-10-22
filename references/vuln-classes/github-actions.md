@@ -3,7 +3,8 @@
 > **Load when:** the repository has `.github/workflows/*.yml|yaml` or an `action.yml|yaml`, and any of these appear:
 > `pull_request_target` · `workflow_run` · `issue_comment` · `pull_request_review_comment` · `pull_request_review` ·
 > `discussion_comment` · `issues` (as a trigger) · `allow-unsafe-pr-checkout` · `anthropics/claude-code-action` ·
-> `run-gemini-cli` · `openai/codex-action` · `actions/ai-inference` · `claude -p` · `codex exec`.
+> `anthropics/claude-code-base-action` · `run-gemini-cli` · `openai/codex-action` · `actions/ai-inference` · `claude -p` ·
+> `claude --print` · `codex exec`.
 >
 > **Purpose:** a workflow file decides who can make the repository run code, and with which credentials, so it is
 > access-control logic and gets audited the way an authorization check would be. This playbook covers the shapes
