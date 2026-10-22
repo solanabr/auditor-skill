@@ -239,19 +239,23 @@ grep_search: "NEXT_PUBLIC_"   includePattern: "apps/web/**/*.tsx"
 
 ### Committed env/key files
 ```bash
-# Terminal:
-git ls-files | grep -iE "\.env|keypair|delegate\.json|\.pem|\.key"
+# Terminal (OUTPUT-RULES Rule 11c flags):
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  ls-files | grep -iE "\.env|keypair|delegate\.json|\.pem|\.key"
 find . -name "*.env*" -not -path "./node_modules/*" -not -path "./.git/*"
 find . -name "*keypair*" -not -path "./node_modules/*" -not -path "./.git/*"
 ```
 
 ### Git history secrets
 ```bash
-# Terminal (a pickaxe search runs the repo's textconv drivers unless --no-textconv is given; in a
-# checkout you did not clone yourself, add the other OUTPUT-RULES Rule 11c flags too):
-git log --all --no-textconv -S "private" --oneline | head -20
-git log --all --no-textconv -S "secret" --oneline | head -20
-git log --all --no-textconv -S "BEGIN RSA" --oneline | head -20
+# Terminal (OUTPUT-RULES Rule 11c flags; a pickaxe search runs the repo's textconv drivers unless
+# --no-textconv is given):
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  log --all --no-textconv --no-ext-diff -S "private" --oneline | head -20
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  log --all --no-textconv --no-ext-diff -S "secret" --oneline | head -20
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  log --all --no-textconv --no-ext-diff -S "BEGIN RSA" --oneline | head -20
 ```
 
 ---
@@ -331,8 +335,9 @@ grep_search: "load_instruction_at|get_instruction_relative"   isRegexp: true   i
 
 ### Terraform / IaC hygiene (DEP-080..DEP-086)
 ```
-# Terminal:
-git ls-files | grep -E "\.tfstate|tfplan|\.terraform/"
+# Terminal (OUTPUT-RULES Rule 11c flags on git):
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  ls-files | grep -E "\.tfstate|tfplan|\.terraform/"
 grep -rn -E "allUsers|allAuthenticatedUsers|0\.0\.0\.0/0|roles/(editor|owner)|ingress.*all" terraform/
 ```
 
@@ -610,8 +615,8 @@ grep_search: "openai|anthropic|llm|gpt|completion|embedding|prompt"   isRegexp: 
 
 ### Change management controls
 ```bash
-# Terminal: Check branch protection
-git remote -v
+# Terminal: Check branch protection (OUTPUT-RULES Rule 11c flags)
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false remote -v
 # Terminal: Check for PR templates
 find .github -name "*pull_request*" -o -name "CODEOWNERS" 2>/dev/null
 ```
