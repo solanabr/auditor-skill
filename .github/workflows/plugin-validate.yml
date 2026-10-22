@@ -1,0 +1,39 @@
+name: plugin-validate
+
+# Weekly, and on demand: Claude Code's own validator over the repository directory (the marketplace, the
+# plugin and its commands, agents and skill), to notice when a Claude Code release reads them differently.
+# Advisory: not a required check. It needs no secret and no login.
+on:
+  schedule:
+    - cron: "23 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: claude plugin validate --strict (weekly, advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLAUDE_CODE_VERSION: 2.1.304   # exact npm version; bump it by hand after reading the release notes
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: false
+          persist-credentials: false
+
+      - name: Install Claude Code at the pinned version
+        run: npm install --global --no-audit --no-fund "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+
+      - name: Validate the repository directory (not .claude-plugin/marketplace.json alone)
+        env:
+          DISABLE_AUTOUPDATER: "1"
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+        run: |
+          export CLAUDE_CONFIG_DIR="$RUNNER_TEMP/claude-config"
+          mkdir -p "$CLAUDE_CONFIG_DIR"
+          claude --version
+          claude plugin validate --strict "$GITHUB_WORKSPACE"
