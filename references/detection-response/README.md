@@ -86,7 +86,7 @@ not the thing standing between the treasury and the exit.
    its hooks and filters and changes its tree: never `checkout`, `switch` or
    `worktree add` there. Copy it to a directory outside it with
    `GIT_NO_LAZY_FETCH=1 git clone --no-local <checkout> <scratch copy>`, and read the revision deployed at the incident slot from that copy with
-   `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false show <rev>:<path>`
+   `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false show --no-textconv <rev>:<path>`
    (`GIT_NO_LAZY_FETCH=1` keeps a partial clone from fetching missing objects
    through the checkout's own remote configuration).
 
