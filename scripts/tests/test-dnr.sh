@@ -643,6 +643,7 @@ fi
 # 17. profile.sh skips and counts malformed lines instead of stopping: a corpus
 #     with invalid JSON and a wrongly shaped object in the middle still profiles
 #     its three good transactions, exits 0, and reports the two lines it skipped.
+#     A missing python3 is a named blocker.
 # ---------------------------------------------------------------------------
 { sed -n 1p "$FIX/clean-mixed.jsonl"; echo 'not json {'; echo '{"transaction": "not an object"}'; sed -n '2,$p' "$FIX/clean-mixed.jsonl"; } > "$TT/malformed.jsonl"
 bash "$DNR/profile.sh" "$TT/malformed.jsonl" > "$TT/malformed.out" 2>&1
@@ -654,6 +655,22 @@ if grep -q '^-- skipped: 2 malformed line(s)' "$TT/malformed.out" && grep -q '^-
   ok "profile: the two malformed lines are counted at the end, and every section printed"
 else
   bad "profile: malformed lines not reported ($(tail -n 2 "$TT/malformed.out" | tr '\n' ' '))"
+fi
+# The first pass runs as python3 -I: on a PATH without python3, a named blocker
+# (exit 3) and no profile.
+mkdir -p "$TT/prof-nopy"
+for t in jq sed sort uniq awk tr cut mktemp rm cat; do
+  p="$(command -v "$t" 2>/dev/null)" && [[ "$p" == /* ]] && ln -s "$p" "$TT/prof-nopy/$t"
+done
+if PATH="$TT/prof-nopy" "$(command -v bash)" -c 'command -v python3' >/dev/null 2>&1; then
+  bad "profile: setup, python3 is still reachable through $TT/prof-nopy"
+fi
+PATH="$TT/prof-nopy" "$(command -v bash)" "$DNR/profile.sh" "$FIX/clean-mixed.jsonl" > "$TT/prof-nopy.out" 2> "$TT/prof-nopy.err"
+code=$?
+if [[ "$code" == 3 && ! -s "$TT/prof-nopy.out" ]] && grep -q '^\[blocker\] python3 is not on PATH' "$TT/prof-nopy.err"; then
+  ok "profile: without python3 on PATH, a named blocker (exit 3) and no profile"
+else
+  bad "profile: no python3 -> exit $code ($(tr '\n' ' ' < "$TT/prof-nopy.err"))"
 fi
 
 # ---------------------------------------------------------------------------

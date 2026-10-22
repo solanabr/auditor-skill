@@ -33,13 +33,17 @@
 # Uses jq per line. jq is fine for counting scalars and grouping base58 strings;
 # it is only unsafe for u64 ARITHMETIC (see deltas.py) and for flattening the log
 # array (see frames.py). The one-per-signature pass runs as `python3 -I` and keeps
-# each line byte for byte. bash >= 3.2, jq, python3, no network.
+# each line byte for byte. bash >= 3.2, jq, python3 (a missing one is a named
+# blocker, exit 3), no network.
 
 set -euo pipefail
 
 usage() { echo "usage: profile.sh <corpus.jsonl> [<corpus.jsonl> ...]" >&2; exit 2; }
 [ "$#" -gt 0 ] || usage
 for f in "$@"; do [[ -f "$f" ]] || usage; done
+for tool in jq python3; do
+  command -v "$tool" >/dev/null 2>&1 || { echo "[blocker] $tool is not on PATH; profile.sh needs jq and python3." >&2; exit 3; }
+done
 
 # One pass keeps the first line of each signature, across every file given, in a
 # private temp file that the queries below read, leaving out malformed lines; it
