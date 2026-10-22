@@ -63,7 +63,7 @@ R7 $KV140 2"
 # Fixtures each recipe must flag (two-digit prefixes, ascending). Anything else is a mismatch.
 expected() {
   case "$1" in
-    R1) echo "01 08 10 16" ;;
+    R1) echo "01 08 10 16 40" ;;
     R2) echo "02 04" ;;
     R3) echo "03 12 13 17 25 26 27 28" ;;
     R4) echo "05 06 21 29 30" ;;
@@ -72,7 +72,7 @@ expected() {
     R7) echo "05 07 11 12 15 18 19 20 21 22 23 24" ;;
     R8) echo "01 08 11 14 33 34" ;;
     K116-1) echo "01 08 11 14 33 34" ;;
-    K139-1) echo "01 02 03 04 08 10 11 14 16 17 22 23 25 26 33" ;;
+    K139-1) echo "01 02 03 04 08 10 11 14 16 17 22 23 25 26 33 40" ;;
     K140-6) echo "35 36 37 38 39" ;;
   esac
 }
