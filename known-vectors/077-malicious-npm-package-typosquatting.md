@@ -30,7 +30,7 @@ W3='web3\.js@(npm:)?1\.95\.(6|7)([^0-9]|$)|/web3\.js/-/web3\.js-1\.95\.(6|7)\.tg
 grep -rnE "$W3" --exclude-dir=node_modules --include='package.json' --include='package-lock.json' \
   --include='pnpm-lock.yaml' --include='yarn.lock' --include='bun.lock' .
 # ...and anywhere in history (OUTPUT-RULES Rule 11c flags):
-git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
   log --all --oneline --no-textconv -G"$W3" -- '*lock*' '*package.json'
 ```
 - ✅ PASS: Zero matches in the tree, and either zero matches in history or evidence that every key a build from that window loaded was rotated

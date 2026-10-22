@@ -36,7 +36,7 @@ grep -rn --include="*.ts" --include="*.tsx" --include="*.env*" -E "[1-9A-HJ-NP-Z
 **Step 4: Full git history scan for ever-committed secrets**
 ```
 # Check if ANY secret-looking file was ever added to git (OUTPUT-RULES Rule 11c flags)
-git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
   log --all --no-textconv --diff-filter=A --name-only --pretty=format:"%H %s" \
   -- "*.env" "*.env.*" "*.pem" "*-keypair.json" "*-delegate.json" "id.json" "*secret*" "*private*"
 ```
@@ -46,11 +46,11 @@ git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
 **Step 5: Deep git history search for key content**
 ```
 # Search git history for actual secret values, not just filenames (OUTPUT-RULES Rule 11c flags)
-git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
   log --all -p --no-textconv --no-ext-diff -S "BEGIN RSA PRIVATE" --oneline -- "*.ts" "*.json" "*.pem" | head -40
-git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
   log --all -p --no-textconv --no-ext-diff -S "BEGIN EC PRIVATE" --oneline | head -20
-git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
   log --all -p --no-textconv --no-ext-diff -S "mnemonic" --oneline -- "*.ts" "*.json" "*.env" | head -20
 ```
 - ✅ PASS: Zero matches across all three
@@ -58,7 +58,7 @@ git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
 
 **Step 6: Verify git-tracked files right now**
 ```
-git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
   ls-files | grep -iE "\.(env|pem)$|keypair|delegate|secret|private"   # Rule 11c flags
 ```
 - ✅ PASS: Zero results (no secret files are tracked by git)

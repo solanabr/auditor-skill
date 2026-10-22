@@ -349,7 +349,7 @@ ACTIONS:
   W3='web3\.js@(npm:)?1\.95\.(6|7)([^0-9]|$)|/web3\.js/-/web3\.js-1\.95\.(6|7)\.tgz|"@solana/web3\.js"[[:space:]]*:[[:space:]]*"=?1\.95\.(6|7)"'
   grep -rnE "$W3" --exclude-dir=node_modules --include='package.json' --include='package-lock.json' \
     --include='pnpm-lock.yaml' --include='yarn.lock' --include='bun.lock' .
-  git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
     log --all --oneline --no-textconv -G"$W3" -- '*lock*' '*package.json'
   # → hijacked @solana/web3.js releases (KV-077 Step 2, SC-005). A hit now is CRITICAL;
   #   a hit in history means rotate every key a build from that window loaded
@@ -387,7 +387,7 @@ ACTIONS:
 
   # Dependency changes since the baseline (last audited ref; first audit: last
   # release tag) → checklist 11 §11.11: review the published artifacts' code delta
-  git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
     diff --no-textconv --no-ext-diff --stat <baseline>..HEAD \
     -- '*.lock' '*-lock.json' '*-lock.yaml' '*Cargo.toml' '*package.json'   # Rule 11c flags
 
@@ -407,10 +407,10 @@ ACTIONS:
   find . -name "*keypair*.json" -o -name "*delegate*.json" -o -name "id.json" | grep -v node_modules
 
   # .env files committed (Rule 11c flags)
-  git --no-pager -c core.fsmonitor=false -c log.showSignature=false ls-files | grep -i ".env"
+  GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false ls-files | grep -i ".env"
 
   # Git history check (Rule 11c flags)
-  git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
     log --all --no-textconv --diff-filter=A --name-only -- "*.env" "*.pem" "*secret*"
 
   # NEXT_PUBLIC_ audit

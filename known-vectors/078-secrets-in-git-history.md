@@ -38,7 +38,7 @@ grep -rn --include="*.ts" --include="*.tsx" -E "[1-9A-HJ-NP-Za-km-z]{64,88}" . |
 **Step 4: Scan ALL committed files in git history for dangerous filenames**
 ```
 # Every file ever added (OUTPUT-RULES Rule 11c flags)
-git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
   log --all --no-textconv --diff-filter=A --name-only --pretty=format: \
   | sort -u | grep -iE "\.env$|\.pem$|id_rsa|keypair|wallet.*\.json|secret|credential|\.key$|delegate\.json"
 ```
@@ -48,13 +48,13 @@ git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
 **Step 5: Search actual git history content for leaked secrets**
 ```
 # Search for private key patterns in ALL historical content (OUTPUT-RULES Rule 11c flags):
-git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
   log --all -p --no-textconv --no-ext-diff -S "BEGIN RSA" --diff-filter=ACMR -- . 2>/dev/null | head -20
-git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
   log --all -p --no-textconv --no-ext-diff -S "sk_live" --diff-filter=ACMR -- . 2>/dev/null | head -20
-git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
   log --all -p --no-textconv --no-ext-diff -S "PRIVATE_KEY" --diff-filter=ACMR -- . 2>/dev/null | head -20
-git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
   log --all -p --no-textconv --no-ext-diff -S "mnemonic" --diff-filter=ACMR -- . 2>/dev/null | head -20
 ```
 - ✅ PASS: Zero matches in entire git history
@@ -62,16 +62,16 @@ git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
 
 **Step 6: Search git history for Solana keypair arrays**
 ```
-git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
   log --all -p --no-textconv --no-ext-diff --diff-filter=ACMR -- '*.json' '*.ts' '*.js' 2>/dev/null \
   | grep -E "\[([0-9]{1,3},){20,}" | head -10
 ```
 - ✅ PASS: No keypair-like arrays in history
-- ❌ FAIL: Possible keypair in git history — identify commit: `git --no-pager -c core.fsmonitor=false -c log.showSignature=false log --all -p --no-textconv --no-ext-diff -S '[123,45,67' -- .`
+- ❌ FAIL: Possible keypair in git history — identify commit: `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false log --all -p --no-textconv --no-ext-diff -S '[123,45,67' -- .`
 
 **Step 7: Check for .env files ever tracked**
 ```
-git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
   log --all --no-textconv --diff-filter=A --name-only --pretty=format: | grep -E "^\.env|/\.env"
 ```
 - ✅ PASS: No .env file ever committed
@@ -86,7 +86,7 @@ cat .gitignore | grep -E "\.env|keypair|\.pem|\.key|id_rsa|delegate\.json"
 
 **Step 9: Check for currently tracked files that should be ignored**
 ```
-git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
   ls-files | grep -iE "\.env|keypair|secret|credential|\.pem|\.key$|delegate\.json"   # Rule 11c flags
 ```
 - ✅ PASS: Zero results — no sensitive files currently tracked

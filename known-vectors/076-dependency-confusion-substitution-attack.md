@@ -44,7 +44,7 @@ grep -r "postinstall\|preinstall" node_modules/*/package.json 2>/dev/null | grep
 
 **Step 5: Check for package-lock.json in repo**
 ```
-git --no-pager -c core.fsmonitor=false -c log.showSignature=false ls-files package-lock.json   # Rule 11c flags
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false ls-files package-lock.json   # Rule 11c flags
 ```
 - ✅ PASS: Lockfile is committed (prevents resolution attacks)
 - ❌ FAIL: Lockfile not committed — every install resolves fresh
