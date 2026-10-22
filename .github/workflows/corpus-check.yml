@@ -10,8 +10,10 @@ permissions:
 
 jobs:
   corpus:
+    # Branch protection requires this job by its name; keep "counts, index, version, hygiene" as it is.
     name: counts, index, version, hygiene
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout (full history for the commit-message check)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -24,16 +26,104 @@ jobs:
         run: bash scripts/check-corpus.sh
 
       - name: Command, agent and skill frontmatter read as written
+        if: ${{ !cancelled() }}
         run: bash scripts/check-frontmatter.sh
 
-      - name: Script self-tests
-        run: for t in scripts/tests/*.sh; do echo "== $t"; bash "$t" || exit 1; done
+      - name: No pipe into a reader that stops early under pipefail
+        if: ${{ !cancelled() }}
+        run: bash scripts/check-pipefail.sh
+
+      - name: Script self-tests (every suite runs; the step fails at the end if any failed)
+        if: ${{ !cancelled() }}
+        env:
+          REQUIRE_TOOLCHAIN: "1"
+        run: |
+          failed=""
+          for t in scripts/tests/*.sh; do
+            echo "::group::$t"
+            bash "$t" || { echo "::error::$t failed"; failed="$failed $t"; }
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then echo "failed suites:$failed"; exit 1; fi
 
       - name: Repository hygiene (no env / state / local assistant files tracked)
+        if: ${{ !cancelled() }}
         run: bash scripts/check-hygiene.sh
 
       - name: No AI-attribution trailers in PR commits
-        if: github.event_name == 'pull_request'
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
         env:
           BASE_REF: ${{ github.base_ref }}
         run: bash scripts/check-attribution.sh "origin/${BASE_REF}..HEAD"
+
+  corpus-macos:
+    # Advisory: do not add this job to the required checks. It runs the same checks under macOS /bin/bash 3.2
+    # with BSD sed, grep and awk. Every step sets a stock macOS PATH plus ~/.cargo/bin, which the first step
+    # asserts, so no tool from the runner image's Homebrew stands in for the system one.
+    name: macOS, bash 3.2 and BSD tools (advisory)
+    runs-on: macos-26
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: /bin/bash --noprofile --norc -e {0}
+    env:
+      REQUIRE_TOOLCHAIN: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          submodules: false
+          persist-credentials: false
+
+      - name: Stock toolchain (bash 3.2, BSD sed / grep / awk, Apple git, python3, jq, cargo, rustup)
+        run: |
+          export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin"
+          bad=0
+          [ "$(command -v bash)" = /bin/bash ] && [ "$(bash -c 'echo "${BASH_VERSINFO[0]}"')" = 3 ] \
+            || { echo "::error::bash is $(command -v bash), not /bin/bash 3.2"; bad=1; }
+          for t in sed grep awk find xargs git python3 jq; do
+            [ "$(command -v "$t")" = "/usr/bin/$t" ] || { echo "::error::$t is '$(command -v "$t")', not /usr/bin/$t"; bad=1; }
+          done
+          if sed --version >/dev/null 2>&1; then echo "::error::sed is GNU sed"; bad=1; fi
+          for t in cargo rustup; do
+            command -v "$t" >/dev/null || { echo "::error::$t is not on PATH; the real-toolchain checks need it"; bad=1; }
+          done
+          for t in bash git python3 jq cargo rustup; do echo "$t: $("$t" --version 2>&1 | sed -n 1p)"; done
+          exit "$bad"
+
+      - name: Corpus counts, index links, version agreement and submodule pins
+        if: ${{ !cancelled() }}
+        run: |
+          export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin"
+          bash scripts/check-corpus.sh
+
+      - name: Command, agent and skill frontmatter read as written
+        if: ${{ !cancelled() }}
+        run: |
+          export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin"
+          bash scripts/check-frontmatter.sh
+
+      - name: No pipe into a reader that stops early under pipefail
+        if: ${{ !cancelled() }}
+        run: |
+          export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin"
+          bash scripts/check-pipefail.sh
+
+      - name: Script self-tests (every suite runs; the step fails at the end if any failed)
+        if: ${{ !cancelled() }}
+        run: |
+          export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin"
+          failed=""
+          for t in scripts/tests/*.sh; do
+            echo "::group::$t"
+            bash "$t" || { echo "::error::$t failed"; failed="$failed $t"; }
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then echo "failed suites:$failed"; exit 1; fi
+
+      - name: Repository hygiene (no env / state / local assistant files tracked)
+        if: ${{ !cancelled() }}
+        run: |
+          export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin"
+          bash scripts/check-hygiene.sh

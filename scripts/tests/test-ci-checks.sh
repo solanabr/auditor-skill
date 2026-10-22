@@ -6,7 +6,9 @@
 #      and fails each case below where Claude Code would read a field differently from what is written;
 #   3. scripts/check-pipefail.sh flags each pipe into a reader that can stop early in a script under
 #      pipefail, and leaves quoted text, here-documents, waived lines and scripts without pipefail alone.
-#      It runs over the scripts this suite's own checks live in; CI runs it over every tracked script.
+#      It runs over the scripts this suite's own checks live in; CI runs it over every tracked script;
+#   4. .github/workflows: the required job keeps its name, every workflow reads contents only, every job has
+#      timeout-minutes, every action is pinned by full SHA with its version, and no checkout keeps credentials.
 # Usage (from the repo root): bash scripts/tests/test-ci-checks.sh   (VERBOSE=1 shows each check's output)
 # Builds throwaway files and git repos under ${TMPDIR:-/tmp}; no network; bash >= 3.2.
 set -uo pipefail
@@ -194,6 +196,39 @@ expect "pipefail: the CI check scripts and their suites are clean" 0 bash "$ROOT
   "$ROOT/scripts/check-hygiene.sh" "$ROOT/scripts/check-pipefail.sh" "$ROOT/scripts/tob-delta-review.sh" \
   "$ROOT/scripts/tests/test-bundled-paths.sh" "$ROOT/scripts/tests/test-ci-checks.sh" \
   "$ROOT/scripts/tests/test-corpus-pins.sh" "$ROOT/scripts/tests/test-gha-recipes.sh"
+
+# ---- 4. workflows --------------------------------------------------------------------------------------
+wfcheck() { # wfcheck FILE -> one line per problem
+  awk -v f="$1" 'BEGIN { sha = "[0-9a-f]"; for (i = 1; i < 40; i++) sha = sha "[0-9a-f]" }
+    /^permissions:/ { perm = 1; next }
+    perm == 1 { if ($0 !~ /^  contents: read[ \t]*$/) print f ": permissions is not contents: read alone"; perm = 2 }
+    /^jobs:/ { injobs = 1; next }
+    injobs && /^  [A-Za-z0-9_-]+:[ \t]*$/ { if (job != "" && !to) print f ": job " job " has no timeout-minutes"
+      job = $1; sub(/:$/, "", job); to = 0; next }
+    injobs && /^    timeout-minutes:[ \t]*[1-9][0-9]*[ \t]*$/ { to = 1 }
+    /^[ \t-]*uses:/ { u++; if ($0 !~ ("uses:[ \t]*[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@" sha "[ \t]+#[ \t]*v[0-9]"))
+      print f ": action not pinned by full SHA with a version comment: " $0 }
+    /^[ \t-]*uses:[ \t]*actions\/checkout@/ { co++ }
+    /^[ \t]*persist-credentials:[ \t]*false[ \t]*$/ { pc++ }
+    END { if (job != "" && !to) print f ": job " job " has no timeout-minutes"
+      if (perm == 0) print f ": no top-level permissions"
+      if (co != pc) print f ": " co " checkout(s) but " pc + 0 " persist-credentials: false" }' "$1"
+}
+n=$(grep -c '^    name: counts, index, version, hygiene$' "$ROOT/.github/workflows/corpus-check.yml")
+if [ "$n" = 1 ]; then pass=$((pass + 1)); echo "PASS workflows: the required job is still named 'counts, index, version, hygiene'"
+else failn=$((failn + 1)); echo "FAIL workflows: corpus-check.yml has $n jobs named 'counts, index, version, hygiene', want 1"; fi
+for wf in "$ROOT"/.github/workflows/*.yml; do
+  probs=$(wfcheck "$wf")
+  if [ -z "$probs" ]; then pass=$((pass + 1)); echo "PASS workflows: ${wf##*/} reads contents only, times out, pins actions, drops credentials"
+  else failn=$((failn + 1)); echo "FAIL workflows: ${wf##*/}"; echo "$probs"; fi
+done
+# the checker itself: a job with no timeout, an action pinned by tag, and a checkout that keeps credentials
+printf 'name: x\non: push\npermissions:\n  contents: write\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n' \
+  > "$T/bad-workflow.yml"
+probs=$(wfcheck "$T/bad-workflow.yml")
+case "$probs" in *"permissions is not"*"pinned by full SHA"*"no timeout-minutes"*"1 checkout(s) but 0"*)
+    pass=$((pass + 1)); echo "PASS workflows: the checker flags a bad workflow on every count";;
+  *) failn=$((failn + 1)); echo "FAIL workflows: the checker missed problems in a bad workflow"; echo "$probs";; esac
 
 echo "---- $pass passed, $failn failed"
 [ "$failn" -eq 0 ]
