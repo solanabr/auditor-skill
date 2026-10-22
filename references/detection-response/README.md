@@ -58,8 +58,10 @@ not the thing standing between the treasury and the exit.
    this run and logged as a ledger row; nothing is estimated. Sum u64 values in
    Python ints — `jq` and `awk` both use doubles.
 6. **Secrets stay out of everything you write.** The RPC endpoint is read from
-   `$RPC_URL` and never echoed; pipe any command that might print it through
-   `bash "<auditor-skill root>/scripts/dnr/redact.sh"`. Record the literal string
+   `$RPC_URL` and never echoed; run any command that might print it as
+   `set -o pipefail; <cmd> 2>&1 | bash "<auditor-skill root>/scripts/dnr/redact.sh"`
+   on one command line — `set -o pipefail` keeps `<cmd>`'s failure as the exit
+   status, in bash and in zsh. Record the literal string
    `$RPC_URL` and the provider domain in the ledger — the host's last two DNS
    labels, as `collect.sh` prints it, because some providers put an endpoint
    token in a subdomain — never a URL with a key, and never a URL in

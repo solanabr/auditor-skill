@@ -43,7 +43,7 @@ hands you their results. You fold those into the verdict and the write-up.
   - `bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh" incident_<n>/corpus/transactions.jsonl`
   - `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/frames.py" incident_<n>/corpus/transactions.jsonl`
   - `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/deltas.py" tokens|lamports incident_<n>/corpus/transactions.jsonl`
-  - `<cmd> 2>&1 | bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/redact.sh"` for anything that might print `$RPC_URL`
+  - `set -o pipefail; <cmd> 2>&1 | bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/redact.sh"` for anything that might print `$RPC_URL`, on one command line: `set -o pipefail` keeps `<cmd>`'s failure as the exit status
 - **CLI reads are keyless.** Program bytes and `program show` come only from
   `snapshot-program.sh`, signature history and transactions only from
   `collect.sh`; any other `solana` read uses the throwaway-config recipe in the

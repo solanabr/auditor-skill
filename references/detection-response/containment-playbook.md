@@ -30,8 +30,8 @@ mistaken — and then it stops. Carrying it out is never the track's job.
   read — `solana account <address>` (`getAccountInfo`), `solana confirm -v <sig>` —
   uses the throwaway-config recipe in `log-sources.md`, never `--url`: no key in
   argv, no keypair to sign with, and its output piped through the installation's
-  `redact.sh` (never a relative `scripts/` path) so a key in an error never
-  reaches the transcript. No Helius or
+  `redact.sh` (never a relative `scripts/` path) after `set -o pipefail;`, so a
+  key in an error never reaches the transcript and a failed read still fails. No Helius or
   other MCP write tool, no webhook/subscription setup — those are out of the
   agent's `tools:` allowlist by construction (README).
 - Building a candidate commit to reproduce follows the run's execution mode
