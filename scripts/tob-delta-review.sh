@@ -74,7 +74,9 @@ echo "($(grep -cE '^M.*\.claude-plugin/' "$tmp/ns") modified — version and des
 
 section "Manifests (plugin.json, marketplace.json) that declare hooks, MCP or LSP servers inline (at NEW)"
 awk -F'\t' '$2 ~ /(^|\/)\.claude-plugin\/(plugin|marketplace)\.json$/ {print $2}' "$tmp/new" | while IFS= read -r f; do
-  if g show "${SCAN[@]}" "$new:$f" | grep -E '"(hooks|mcpServers|lspServers)"' >/dev/null; then echo "$f"; fi
+  # a count, so grep reads the whole manifest and the pipe never closes early
+  n=$(g show "${SCAN[@]}" "$new:$f" | grep -cE '"(hooks|mcpServers|lspServers)"')
+  if [ "${n:-0}" -gt 0 ]; then echo "$f"; fi
 done > "$tmp/inline"
 show "$tmp/inline"
 

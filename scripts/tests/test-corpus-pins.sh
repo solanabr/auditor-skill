@@ -148,6 +148,27 @@ inline=$(printf '%s\n' "$rep" | sed -n '/^### Manifests (plugin.json/,/^### Skil
 case "$inline" in *".claude-plugin/marketplace.json"*) pass=$((pass + 1)); echo "PASS delta review flags inline hooks in marketplace.json";;
   *) failn=$((failn + 1)); echo "FAIL delta review missed inline hooks in marketplace.json"; echo "$inline";; esac
 [ "$rc" -eq 0 ] && pass=$((pass + 1)) || { failn=$((failn + 1)); echo "FAIL delta review exit $rc"; }
+# a 1 MiB plugin.json that declares hooks on its second line: the inline-declaration scan reads it whole,
+# also under a grep that stops at the first match when its output is /dev/null, as some greps do
+realgrep=$(command -v grep); mkdir -p "$T/eager-grep"
+printf '#!/usr/bin/env bash\nif [ /dev/stdout -ef /dev/null ]; then exec "%s" -q "$@"; fi\nexec "%s" "$@"\n' "$realgrep" "$realgrep" \
+  > "$T/eager-grep/grep" && chmod +x "$T/eager-grep/grep"
+bg="$T/bg"; mkdir -p "$bg/plugins/big/.claude-plugin" && git -C "$bg" init -q \
+  && echo '{"name":"big"}' > "$bg/plugins/big/.claude-plugin/plugin.json" && git -C "$bg" add plugins \
+  && git -C "$bg" commit -q -m old; bgold=$(git -C "$bg" rev-parse HEAD)
+awk 'BEGIN { print "{"; print "  \"hooks\": {},"
+  for (i = 0; i < 17000; i++) printf "  \"k%05d\": \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\n", i
+  print "  \"name\": \"big\""; print "}" }' > "$bg/plugins/big/.claude-plugin/plugin.json"
+git -C "$bg" add plugins && git -C "$bg" commit -q -m new; bgnew=$(git -C "$bg" rev-parse HEAD)
+big=$(wc -c < "$bg/plugins/big/.claude-plugin/plugin.json" | tr -d ' ')
+for grepdir in "" "$T/eager-grep"; do
+  inl5=$(PATH="$grepdir${grepdir:+:}$PATH" bash "$ROOT/scripts/tob-delta-review.sh" "$bg" "$bgold" "$bgnew" 2>&1 \
+    | sed -n '/^### Manifests (plugin.json/,/^### Skills/p')
+  case "$inl5" in *"plugins/big/.claude-plugin/plugin.json"*) got=listed;; *) got=missed;; esac
+  how="a plugin.json of $big bytes${grepdir:+, under a grep that stops early}"
+  if [ "$big" -gt 1048576 ] && [ "$got" = listed ]; then pass=$((pass + 1)); echo "PASS delta review flags inline hooks in $how"
+  else failn=$((failn + 1)); echo "FAIL delta review $got inline hooks in $how"; echo "$inl5"; fi
+done
 bash "$ROOT/scripts/tob-delta-review.sh" "$fx" deadbeef "$fxnew" >/dev/null 2>&1
 [ $? -eq 2 ] && { pass=$((pass + 1)); echo "PASS delta review rejects an unknown commit"; } \
   || { failn=$((failn + 1)); echo "FAIL delta review accepted an unknown commit"; }
