@@ -14,8 +14,14 @@ Known vulnerability in production dependency → attacker uses public exploit to
 
 **Step 1: Run npm audit**
 ```
-cd apps/backend && npm audit --omit=dev 2>/dev/null; cd ../..
-cd apps/web && npm audit --omit=dev 2>/dev/null; cd ../..
+# Audits and registry queries run from a scratch dir OUTSIDE the target tree, on copies of
+# the manifest + lockfile, so the target's .npmrc cannot steer them (OUTPUT-RULES Rule 11a)
+SCRATCH=$(mktemp -d)   # outside the target tree
+mkdir -p "$SCRATCH/backend" "$SCRATCH/web"
+cp apps/backend/package.json apps/backend/package-lock.json "$SCRATCH/backend/"
+cp apps/web/package.json apps/web/package-lock.json "$SCRATCH/web/"
+(cd "$SCRATCH/backend" && npm audit --omit=dev)
+(cd "$SCRATCH/web" && npm audit --omit=dev)
 ```
 - ✅ PASS: Zero high/critical vulnerabilities
 - ⚠️ PARTIAL: Only moderate or low vulnerabilities
@@ -23,7 +29,10 @@ cd apps/web && npm audit --omit=dev 2>/dev/null; cd ../..
 
 **Step 2: Check for outdated packages**
 ```
-npm outdated 2>/dev/null | head -20
+# On the Step 1 copies. They have no node_modules, so Current reads MISSING:
+# compare Wanted / Latest with the version the lockfile pins
+(cd "$SCRATCH/backend" && npm outdated)
+(cd "$SCRATCH/web" && npm outdated)
 ```
 - ✅ PASS: All packages within 1-2 minor versions of latest
 - ⚠️ PARTIAL: Some packages several versions behind
@@ -45,7 +54,15 @@ grep -E "\"[~^]" apps/backend/package.json apps/web/package.json | head -20
 
 **Step 5: Check Cargo audit (Solana program)**
 ```
-cd programs/<your_program> && cargo audit 2>/dev/null | tail -20; cd ../..
+# A copy of Cargo.lock in the Step 1 scratch dir, toolchain pinned (OUTPUT-RULES Rule 11a)
+mkdir -p "$SCRATCH/rust" && cp Cargo.lock "$SCRATCH/rust/"
+TC=$(cd "$SCRATCH" && rustup default | cut -d' ' -f1)   # your own toolchain, never the target's
+# Check that the tool is installed first: cargo-audit exits 1 when it finds advisories
+if (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit --version) >/dev/null 2>&1; then
+  (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit)
+else
+  echo "cargo-audit not installed"
+fi
 ```
 - ✅ PASS: Zero vulnerabilities in Rust dependencies
 - ❌ FAIL: Known CVEs in Rust dependencies
