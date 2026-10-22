@@ -47,6 +47,18 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --repo <target> --o
 
 Drop `--offline` only when the user passed an `https://` `--parent` / `--vulns` value or confirmed the exact URL. Then hand `audit_<n>/bootstrap/` to `threat-modeler` together with the other inputs.
 
+Collector flags (`references/audit-lifecycle/threat-model-bootstrap.md` §2 has the table and exit statuses):
+- `--repo <dir>` (the target, at its repository's top level) and `--out audit_<n>/bootstrap`: required.
+- `--pin <rev>`: the commit to mine (default `HEAD`); pass the intake pin.
+- `--paths <pathspec>` / `--parent-paths <pathspec>`: target and parent pathspecs, repeatable.
+- `--parent <https-url|dir>`: the fork parent.
+- `--import <rev>`: the target commit that brought the parent's code in (default: the root commit). Pass it for a fork whose code arrived in a later commit than its root, e.g. a repository created with "Initialize with README" and the code copied in later; without it, R5 reports NOT FOUND.
+- `--vulns <file|https-url>`: prior-vulnerability input, repeatable.
+- `--keywords <ere>`: extra commit-message keywords, an ERE alternation such as `drain|bypass`.
+- `--program-id <id>` with `--audit-mem-db <path>`: R8's audit-mem warm-up, from that store only (see Inputs).
+- `--offline`: no network. `--detect`: T3/T4 only, writes nothing.
+- `--cap <n>` (default 60 rows), `--small <n>` (40 lines), `--fix-ceiling <n>` (300 lines): volume.
+
 `audit_<n>` is this audit's directory from intake. For a new one, `<n>` is the highest existing number + 1; create the dir with `mkdir` (not `-p`) and stop if it exists. Reuse an existing `audit_*` only if git does not track it and it holds no symbolic links. Never write into a tracked `audit_*`. The collector exits 2 on a run directory that is or holds a symbolic link, or that git tracks.
 
 The collector is not pre-approved for this command, so running it goes through the usual permission prompt; a pattern in this file's frontmatter would not have the installation path filled in.

@@ -29,9 +29,11 @@
 - **One collector touches git.** The bundled `scripts/threat-model/collect.sh`, run from the auditor-skill installation and
   never from the audited repo, is the only code that reads the target's history.
   It never checks out, builds, runs or modifies the target, and runs every git call hardened per `OUTPUT-RULES.md`
-  Rule 11c (no pager, fsmonitor, signature helpers, textconv or external diff, and fixed grep / colour output; the
-  target's `.git/config` and attributes are untrusted). It works from a temp directory, never from the target, and
-  its python3 helper runs isolated (`-I`), so no module or config file shipped in the target is loaded.
+  Rule 11c (no pager, fsmonitor, signature helpers, textconv or external diff; grep, colour, big-file, hunk and
+  root-commit settings pinned; diffs forced to text). The target's `.git/config` and attributes are untrusted;
+  `history.md` states which attributes can still shape R4's function names. It works from a temp directory, never
+  from the target, and its python3 helper runs isolated (`-I`), so no module or config file shipped in the target is
+  loaded.
 - **Network only on explicit request.** The collector fetches nothing unless the user passed an `https://` URL as
   `--parent` or `--vulns`, or confirmed one exact URL in an interactive run. Any other scheme is rejected. A URL
   read from target content (README, `security_txt!`, a `declare_id!` lookup) is recorded, never fetched: those
@@ -82,10 +84,40 @@ bash "$COLLECTOR" --repo <target> --out audit_<n>/bootstrap --pin <sha> \
   --parent <https-url|path> --vulns <file|https-url> --vulns <file|https-url>
 ```
 
-- **Scope.** `--paths` (repeatable) narrows the target to the in-scope program dirs; the default is `programs/*.rs`
-  when the commit has a `programs/` dir, else `*.rs`. `--parent-paths` sets the parent's own pathspec (a fork may
-  rename its program dir). `--cap` (default 60 rows per section), `--small` (default 40 lines) and `--fix-ceiling`
-  (default 300 lines) tune volume.
+**Flags.** The collector takes these flags (`--help` prints the same list):
+
+| Flag | Meaning |
+|------|---------|
+| `--repo <dir>` | required: the target, at the top level of its repository (or a bare repository) |
+| `--out <dir>` | required: the run directory `audit_<n>/bootstrap`, as a plain path without `.` or `..` components |
+| `--pin <rev>` | the commit to analyse (default `HEAD`); only its ancestry is mined. Pass the intake pin |
+| `--paths <pathspec>` | target pathspec, repeatable; default `programs/*.rs` when the commit has a `programs/` dir, else `*.rs` |
+| `--parent <https-url\|dir>` | fork parent: an `https://` URL (bare clone into a temp dir) or a local repository's top level |
+| `--parent-paths <pathspec>` | parent pathspec, repeatable; default: the same rule, applied to the parent |
+| `--import <rev>` | the target commit that brought the parent's code in, for R5's file-content match (default: the root commit) |
+| `--vulns <file\|https-url>` | prior-vulnerability input, repeatable (formats below) |
+| `--keywords <ere>` | extra commit-message keywords for R1, R3 and R5, an ERE alternation such as `drain\|bypass` |
+| `--program-id <id>` | program id for R8's `audit-mem warm` |
+| `--audit-mem-db <path>` | the audit-mem store R8 reads; without it, no store is read |
+| `--offline` | never use the network; `--parent` / `--vulns` URLs are recorded, not fetched |
+| `--detect` | evaluate T3 and T4 only, print them and exit; writes nothing |
+| `--cap <n>` | rows per section before `TRUNCATED` (default 60) |
+| `--small <n>` | changed-line ceiling for an ADDED-QUIET commit (default 40) |
+| `--fix-ceiling <n>` | changed-line ceiling for a keyword commit's ADDED rows (default 300) |
+| `-h`, `--help` | print the usage header and exit |
+
+**Exit status.** 0: done (sections may still print NOT FOUND). 2: usage error or rejected input, including an
+`--import` that is not a commit and a run directory that is or holds a symbolic link or that git tracks. 3: `--repo`
+is not the top level of a git repository (or a bare repository), or the pin does not resolve.
+
+- **Scope.** Pass the in-scope program dirs as `--paths`, and the parent's as `--parent-paths` when the fork renamed
+  them. `--cap`, `--small` and `--fix-ceiling` tune volume.
+- **`--import`.** Without shared history, R5 finds the fork point by matching the files of the target's import commit,
+  by default its root commit, against the parent. Pass `--import <sha>` for a fork whose code arrived in a later commit
+  than its root, e.g. a repository created with "Initialize with README" and the code copied in afterwards; without
+  it, R5 reports NOT FOUND.
+- **`--keywords`.** Add the protocol's own words for a fix or an incident (`drain|bypass|liquidat`); R1's heading in
+  `history.md` prints the full set.
 - **`--vulns` formats.** A GHSA/CVE id list or plain text, a Markdown report, a CSV `id,title,component,description`,
   a JSON list, an `INCIDENTS.json`, or a PDF. A PDF is converted with `pdftotext -layout` when installed; otherwise
   read it with `Read` (at most 20 pages per call) or ask for a Markdown export. Every source lands in `inputs.tsv`
@@ -98,7 +130,8 @@ bash "$COLLECTOR" --repo <target> --out audit_<n>/bootstrap --pin <sha> \
   500 characters and `kv` / `checklist` keep their string ids only. `attacker`, `transactions`, `blast_radius`,
   `timeline`, `evidence`, the `ruled_out[]` list and every other field are never read (they can hold off-chain
   personal data, and the threat model feeds the client report). Read the extract in `inputs/`, never the raw file;
-  another schema is recorded in `inputs.tsv`, not dropped. A `suspected` incident whose `outcome` is `failed` still
+  another schema is recorded in `inputs.tsv`, not dropped, and an `incidents` value that is not an array leaves an
+  empty extract with a "malformed" note. A `suspected` incident whose `outcome` is `failed` still
   counts as a prior vulnerability: a real flaw was attacked and the attack has not landed yet.
 - **Reports already in the repository.** A `.pdf` or `.md` in the pinned tree whose path mentions audit, post-mortem or
   incident (many protocols keep an `audits/` folder) is read from the pinned commit and converted or copied the same
@@ -128,7 +161,7 @@ bash "$COLLECTOR" --repo <target> --out audit_<n>/bootstrap --pin <sha> \
 | R3a REMOVED | guard text that left a file in a commit (`<sha> <date> REMOVED x<n> <file>: <text>    # <subject>`) | a check that may have been dropped or moved; open the diff |
 | R3b ADDED-QUIET | guard text added by a keyword-free commit of at most `--small` lines | a quiet fix: the surface was reachable before it |
 | R3c ADDED | guard text added by a keyword commit of at most `--fix-ceiling` lines | the fixed surface; look for twins left unfixed |
-| R4 | files and functions by number of commits touching them | where the churn concentrates |
+| R4 | files and functions by number of commits touching them; a `note:` line counts `.rs` files the target's attributes send to another diff driver | where the churn concentrates; after a note, function counts may be low |
 | R5 | fork point (shared history, else identical file content), the parent's keyword commits after it, and each guard line the parent added after it, tagged `text present elsewhere in target - verify` or `text absent from target @ pin - verify`, absent rows and smaller commits first | hints only: present may be a twin, absent may be reformatted code |
 | R6 | fork phrases, `security_txt!` source / auditors, `declare_id!`, remotes, first commits, report-like files | provenance strings, never URLs to visit |
 | R7 / R8 | inputs and audit-mem status | |
