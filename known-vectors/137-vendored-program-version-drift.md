@@ -36,8 +36,12 @@ grep -rn -E "declare_id!" programs/ | sort   # compare against known vendor/upst
 **Step 2: Diff the deployed version against upstream HEAD and its security history**
 ```
 solana-verify verify-from-repo -um --program-id <PROGRAM_ID> <UPSTREAM_REPO> 2>/dev/null   # or compare build hashes
-GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-  log --oneline --no-textconv <deployed_commit>..upstream/main -- programs/ | head -40
+# Upstream is fetched into the Rule 11c copy, never into the client checkout (OUTPUT-RULES Rule 11c).
+# <checkout>: the target's top level, as an absolute path; <UPSTREAM_REPO>: the upstream's https:// URL
+SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/auditor-upstream.XXXXXX") && ( cd "$SCRATCH" \
+  && GIT_NO_LAZY_FETCH=1 git clone --no-local <checkout> copy \
+  && git -C copy remote add upstream <UPSTREAM_REPO> && git -C copy fetch upstream main \
+  && git --no-pager -C copy log --oneline <deployed_commit>..upstream/main -- programs/ | head -40 )
 gh api repos/<upstream>/security-advisories 2>/dev/null; gh release list -R <upstream> | head -10
 ```
 - ✅ PASS: the deployed build corresponds to upstream HEAD or a maintained release branch, and no security-tagged commit / advisory / release note exists after the deployed commit
