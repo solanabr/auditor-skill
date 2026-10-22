@@ -8,6 +8,7 @@
 
 **Run:** incident_{N}/ · **Date:** {ISO} · **Mode:** hunt
 **Corpus:** {files + line counts} · **Window:** slots {from}–{to} · **RPC provider:** {host, or user-supplied}
+**Execution mode (Rule 11a):** {isolated — which isolation | native — target code ran on the auditor's host, and which steps ran it; copied from the ledger header}
 **Verdict legs met per incident:** on-chain effect / flaw in deployed source / local PoC on real bytes.
 
 ## Executive summary
