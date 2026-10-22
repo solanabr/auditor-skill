@@ -19,13 +19,25 @@
 #      `keypair_path` names a file that does not exist. `solana config get keypair`
 #      must report that path back, or the CLI fell back to its defaults and the
 #      script stops with a blocker.
-#   2. `solana -C <config> program show <id>` → <incident_dir>/bin/<id>.show.txt
-#      (with a fixed `--buffer-authority`, so the CLI never looks for a signer)
-#   3. `solana -C <config> program dump <id> <incident_dir>/bin/<id>.so`
+#   2. `solana -C <config> program show <id>` into the temp dir (with a fixed
+#      `--buffer-authority`, so the CLI never looks for a signer)
+#   3. `solana -C <config> program dump <id>` into the temp dir
 #   4. checks the ELF magic, hashes the dump the way solana-verify does (trailing
-#      zero padding trimmed, then sha256), and prints ONE ledger-ready line:
+#      zero padding trimmed, then sha256), keeps the dump and the show output in
+#      <incident_dir>/bin/, and prints ONE ledger-ready line:
 #        program=<id> owner=<loader> last_deployed_slot=<N> authority=<A>
 #        sha256_zero_trimmed=<hex> elf_bytes=<n> padding_bytes=<n> file=bin/<id>.so
+#
+# NEVER OVERWRITTEN: the first snapshot is bin/<id>.so + bin/<id>.show.txt, the
+# incident-time bytes that Leg 3 and the patch flow run on. A later run (respond
+# runs this again after the hunt) compares the program on-chain with every
+# snapshot already in bin/:
+#   * the same last-deployed slot and zero-trimmed sha256 as one of them: it prints
+#     "unchanged" and that snapshot's line, writes nothing, and exits 0;
+#   * otherwise it keeps the current bytes as bin/<id>@<slot>.so and
+#     bin/<id>@<slot>.show.txt, and prints the first snapshot's line and the new one.
+# Files are written with noclobber (`set -C`): a name already taken stops the
+# script with a blocker instead of being replaced.
 #
 # Compare `last_deployed_slot` to the incident slot: earlier → this dump IS the
 # incident binary (binary_provenance: dumped-unchanged); later → a newer upgrade
@@ -47,12 +59,14 @@
 #
 # Exit: 0 ok · 2 usage / not a base58 id / no or unusable $RPC_URL / a refused run
 # directory · 3 named blocker (no solana CLI or python3, config not taken, CLI error,
-# loader-v4, dump without ELF magic, hash not computed).
+# loader-v4, dump without ELF magic, hash not computed, a snapshot name already
+# taken).
 # bash >= 3.2, python3 for the hash, checked before the CLI runs, and run as
 # `python3 -I` because the working directory is usually the audited repo: without
 # -I, a hashlib.py there would be imported in place of the stdlib.
 
-set -uo pipefail
+# -C (noclobber): no redirection in this script replaces an existing file.
+set -Cuo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REDACT="$HERE/redact.sh"
@@ -136,15 +150,7 @@ case "$(solana -C "$cfg" config get keypair 2>/dev/null)" in
      exit 3 ;;
 esac
 
-mkdir -p "$dir/bin" || exit 2
-# Rule 11d: an incident_<n>/ directory ignores itself when it has no .gitignore of
-# its own, so the dumped program never shows in git status.
-case "$(basename "$dir")" in
-  incident_*) [ -e "$dir/.gitignore" ] || printf '*\n' > "$dir/.gitignore" ;;
-esac
-show="$dir/bin/$pid.show.txt"
-so="$dir/bin/$pid.so"
-
+show="$tmp/show.txt"; dump="$tmp/dump.so"
 # --buffer-authority only matters for --buffers / --programs listings; naming one
 # (the System Program id) stops `show` from resolving a default signer.
 if ! solana -C "$cfg" program show "$pid" --buffer-authority 11111111111111111111111111111111 >"$show" 2>"$err"; then
@@ -152,10 +158,9 @@ if ! solana -C "$cfg" program show "$pid" --buffer-authority 1111111111111111111
   "$REDACT" <"$err" >&2
   exit 3
 fi
-field() { awk -F': *' -v k="$1" '$1 == k {print $2; exit}' "$show"; }
-owner="$(field "Owner")"
-slot="$(field "Last Deployed In Slot")"
-auth="$(field "Authority")"
+field() { awk -F': *' -v k="$1" '$1 == k {print $2; exit}' "$2" 2>/dev/null; }
+owner="$(field "Owner" "$show")"
+slot="$(field "Last Deployed In Slot" "$show")"
 
 case "$owner" in
   LoaderV4*)
@@ -163,27 +168,98 @@ case "$owner" in
     exit 3 ;;
 esac
 
-: > "$err"
-if ! solana -C "$cfg" program dump "$pid" "$so" >/dev/null 2>"$err"; then
+rm -f "$err"
+if ! solana -C "$cfg" program dump "$pid" "$dump" >/dev/null 2>"$err"; then
   echo "[blocker] solana program dump failed for $pid:" >&2
   "$REDACT" <"$err" >&2
   exit 3
 fi
 
-magic="$(head -c 4 "$so" | od -An -tx1 | tr -d ' \n')"
+magic="$(head -c 4 "$dump" | od -An -tx1 | tr -d ' \n')"
 if [ "$magic" != "7f454c46" ]; then
   echo "[blocker] dump of $pid is not an ELF (magic=${magic:-empty}); not usable as program bytes." >&2
   exit 3
 fi
 
-stats="$(python3 -I -c 'import hashlib, sys
+# hash_of <file>: "<sha256 of the bytes without trailing zeros> <their length> <padding length>"
+hash_of() {
+  python3 -I -c 'import hashlib, sys
 raw = open(sys.argv[1], "rb").read()
 trimmed = raw.rstrip(b"\0")
-print(hashlib.sha256(trimmed).hexdigest(), len(trimmed), len(raw) - len(trimmed))' "$so")"
+print(hashlib.sha256(trimmed).hexdigest(), len(trimmed), len(raw) - len(trimmed))' "$1" 2>/dev/null
+}
 re='^[0-9a-f]{64} [0-9]+ [0-9]+$'
-if ! [[ "$stats" =~ $re ]]; then
-  echo "[blocker] python3 -I did not hash bin/$pid.so; hash it by hand (trailing zero bytes trimmed, then sha256)." >&2
+hashed() {  # hashed <file>: hash_of, or a blocker
+  local s
+  s="$(hash_of "$1")"
+  if ! [[ "$s" =~ $re ]]; then
+    echo "[blocker] python3 -I did not hash ${1#"$dir/"}; hash it by hand (trailing zero bytes trimmed, then sha256)." >&2
+    exit 3
+  fi
+  echo "$s"
+}
+sha="$(hashed "$dump")" || exit 3
+sha="${sha%% *}"
+# ledger_line <.so> <.show.txt>: the line for one snapshot kept in bin/.
+ledger_line() {
+  local s o l a
+  s="$(hashed "$1")" || exit 3
+  o="$(field "Owner" "$2")"; l="$(field "Last Deployed In Slot" "$2")"; a="$(field "Authority" "$2")"
+  # shellcheck disable=SC2086
+  set -- "${1#"$dir/"}" $s
+  echo "program=$pid owner=${o:-unknown} last_deployed_slot=${l:-unknown} authority=${a:-none} sha256_zero_trimmed=$2 elf_bytes=$3 padding_bytes=$4 file=$1"
+}
+# keep <temp file> <path in bin/>: copy under a name that must still be free. With
+# set -C the `: >` fails on a taken name, so a kept snapshot is never replaced.
+keep() {
+  if ! { : > "$2"; } 2>/dev/null; then
+    echo "[blocker] ${2#"$dir/"} already exists; a snapshot is never overwritten, and nothing replaced it." >&2
+    exit 3
+  fi
+  if ! cat "$1" >> "$2"; then
+    rm -f "$2"
+    echo "[blocker] could not write ${2#"$dir/"}." >&2
+    exit 3
+  fi
+}
+
+mkdir -p "$dir/bin" || exit 2
+# Rule 11d: an incident_<n>/ directory ignores itself when it has no .gitignore of
+# its own, so the dumped program never shows in git status.
+case "$(basename "$dir")" in
+  incident_*) [ -e "$dir/.gitignore" ] || printf '*\n' > "$dir/.gitignore" ;;
+esac
+first="$dir/bin/$pid.so"; first_show="$dir/bin/$pid.show.txt"
+if [ ! -e "$first" ] && [ ! -e "$first_show" ]; then
+  keep "$dump" "$first"; keep "$show" "$first_show"
+  ledger_line "$first" "$first_show"
+  exit 0
+fi
+if [ ! -e "$first" ]; then
+  echo "[blocker] bin/$pid.show.txt exists without bin/$pid.so (an earlier snapshot did not finish): move it aside and run again; it is never overwritten." >&2
   exit 3
 fi
-set -- $stats
-echo "program=$pid owner=${owner:-unknown} last_deployed_slot=${slot:-unknown} authority=${auth:-none} sha256_zero_trimmed=$1 elf_bytes=$2 padding_bytes=$3 file=bin/$pid.so"
+# A later run: the program on-chain may be a snapshot already kept.
+for f in "$first" "$dir/bin/$pid"@*.so; do
+  [ -f "$f" ] || continue
+  if [ "$(field "Last Deployed In Slot" "${f%.so}.show.txt")" = "$slot" ] \
+     && [ "$(hash_of "$f" | cut -d' ' -f1)" = "$sha" ]; then
+    echo "unchanged: the program on-chain matches ${f#"$dir/"} (same last-deployed slot and zero-trimmed sha256); nothing written"
+    ledger_line "$f" "${f%.so}.show.txt"
+    exit 0
+  fi
+done
+case "$slot" in
+  ''|*[!0-9]*)
+    echo "[blocker] the program on-chain differs from every snapshot in bin/, and its last-deployed slot ('$slot') cannot name a new one; nothing written." >&2
+    exit 3 ;;
+esac
+new="$dir/bin/$pid@$slot.so"; new_show="$dir/bin/$pid@$slot.show.txt"
+if [ -e "$new" ] || [ -e "$new_show" ]; then
+  echo "[blocker] bin/$pid@$slot.so or bin/$pid@$slot.show.txt already exists, with other bytes than the program on-chain; it is never overwritten, and nothing was written." >&2
+  exit 3
+fi
+keep "$dump" "$new"; keep "$show" "$new_show"
+echo "changed since bin/$pid.so: the current bytes are kept as bin/$pid@$slot.so; bin/$pid.so stays the first snapshot"
+ledger_line "$first" "$first_show"
+ledger_line "$new" "$new_show"

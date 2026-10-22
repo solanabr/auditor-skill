@@ -465,6 +465,62 @@ else
 fi
 eq "snapshot: no CLI call before the python3 check" "$(cli_calls)" "$before"
 
+# ---------------------------------------------------------------------------
+# 7. A snapshot is never overwritten. The first one is bin/<id>.so + .show.txt;
+#    a later run at the same slot and hash prints "unchanged" and rewrites
+#    nothing; a later run at another slot keeps bin/<id>@<slot>.so + .show.txt
+#    beside the first and prints both lines; a name already taken is a blocker.
+# ---------------------------------------------------------------------------
+K="$TT/keep/incident_1"; mkdir -p "$TT/keep"
+snap "$K" FAKE_SOL_SLOTS=100
+code=$?
+line1="$(cat "$K.out")"
+if [[ "$code" == 0 && -s "$K/bin/$PID.so" && -s "$K/bin/$PID.show.txt" ]] \
+   && [[ "$line1" == "program=$PID "*"last_deployed_slot=100 "*" file=bin/$PID.so" ]]; then
+  ok "keep: the first snapshot is bin/<id>.so + bin/<id>.show.txt, one ledger line"
+else
+  bad "keep: first snapshot -> exit $code ($line1)"
+fi
+cp "$K/bin/$PID.so" "$TT/first.so"; cp "$K/bin/$PID.show.txt" "$TT/first.show"
+touch -t 200001010000 "$K/bin/$PID.so" "$K/bin/$PID.show.txt"; touch -t 200101010000 "$TT/ref2001"
+snap "$K" FAKE_SOL_SLOTS=100
+code=$?
+eq "keep: same slot and hash -> exit 0, 'unchanged', then the first snapshot's line" \
+  "$code|$(sed -n 1p "$K.out")|$(sed -n 2p "$K.out")" \
+  "0|unchanged: the program on-chain matches bin/$PID.so (same last-deployed slot and zero-trimmed sha256); nothing written|$line1"
+eq "keep: an unchanged run rewrites nothing and adds nothing" \
+  "$(find "$K/bin" -type f -newer "$TT/ref2001" | wc -l | tr -d ' ')|$(ls "$K/bin" | tr '\n' ' ')" "0|$PID.show.txt $PID.so "
+snap "$K" FAKE_SOL_SLOTS=200
+code=$?
+if [[ "$code" == 0 ]] && cmp -s "$K/bin/$PID.so" "$TT/first.so" && cmp -s "$K/bin/$PID.show.txt" "$TT/first.show" \
+   && [[ -s "$K/bin/$PID@200.so" && -s "$K/bin/$PID@200.show.txt" ]] && ! cmp -s "$K/bin/$PID@200.so" "$TT/first.so"; then
+  ok "keep: a redeploy (slot 200) is kept as bin/<id>@200.so; bin/<id>.so and its .show.txt are untouched"
+else
+  bad "keep: redeploy -> exit $code, bin: $(ls "$K/bin" | tr '\n' ' ')"
+fi
+eq "keep: the redeploy run prints the first snapshot's line, then the new one" \
+  "$(sed -n 2p "$K.out")|$(sed -n 3p "$K.out" | grep -o 'last_deployed_slot=200 .* file=bin/.*$' | sed 's/sha256_zero_trimmed=[0-9a-f]* //')" \
+  "$line1|last_deployed_slot=200 authority=p2Yicb86aZig616Eav2VWG9vuXR5mEqhtzshZYBxzsV elf_bytes=51 padding_bytes=300 file=bin/$PID@200.so"
+snap "$K" FAKE_SOL_SLOTS=200
+eq "keep: a run at slot 200 again matches bin/<id>@200.so" "$?|$(sed -n 1p "$K.out" | cut -d' ' -f1-6)" "0|unchanged: the program on-chain matches bin/$PID@200.so"
+printf 'other bytes\n' > "$K/bin/$PID@300.so"
+snap "$K" FAKE_SOL_SLOTS=300
+code=$?
+if [[ "$code" == 3 && "$(cat "$K/bin/$PID@300.so")" == "other bytes" && ! -e "$K/bin/$PID@300.show.txt" ]] \
+   && grep -q "blocker.*bin/$PID@300.so .*already exists.*never overwritten" "$K.out"; then
+  ok "keep: a taken bin/<id>@<slot>.so is a blocker (exit 3) and stays as it was"
+else
+  bad "keep: taken @300 name -> exit $code ($(tr '\n' ' ' < "$K.out"))"
+fi
+K2="$TT/keep2/incident_1"; mkdir -p "$K2/bin"; printf 'partial\n' > "$K2/bin/$PID.show.txt"
+snap "$K2" FAKE_SOL_SLOTS=100
+code=$?
+if [[ "$code" == 3 && "$(cat "$K2/bin/$PID.show.txt")" == partial && ! -e "$K2/bin/$PID.so" ]]; then
+  ok "keep: a bin/<id>.show.txt without its .so is a blocker (exit 3), left as it was"
+else
+  bad "keep: lone show.txt -> exit $code, bin: $(ls "$K2/bin" | tr '\n' ' ')"
+fi
+
 if [[ "$fails" -ne 0 ]]; then
   echo "test-dnr-collect: $fails assertion(s) FAILED" >&2
   exit 1
