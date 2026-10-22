@@ -3,30 +3,28 @@
 # Install it outside any repository you audit (OUTPUT-RULES.md Rule 11e).
 #
 # Usage:
-#   ./install.sh ~/.claude/skills/auditor-skill    # user-level: every project, outside the repositories you audit
+#   ./install.sh                                   # → ~/.claude/skills/auditor-skill: user-level, every project
 #   ./install.sh <target-dir>                      # any other location outside the repositories you audit
-#   ./install.sh                                   # → ./.claude/skills/auditor-skill — only outside a repository you will audit
-#   curl -fsSL https://raw.githubusercontent.com/solanabr/auditor-skill/main/install.sh | bash -s -- ~/.claude/skills/auditor-skill
+#   curl -fsSL https://raw.githubusercontent.com/solanabr/auditor-skill/main/install.sh | bash
 #
-# Re-running with the same explicit path installs a fresh clone there and moves the earlier install aside to
+# Re-running installs a fresh clone at the same path and moves the earlier install aside to
 # <path>.old-<timestamp>. No git command ever runs inside an existing copy, and nothing from it is reused.
-# A run without a path never replaces anything: it stops when ./.claude/skills/auditor-skill already exists.
 set -euo pipefail
 
 REPO="https://github.com/solanabr/auditor-skill.git"
-DEST="${1:-.claude/skills/auditor-skill}"
+if [ -n "${1:-}" ]; then
+  DEST=$1
+else
+  # The default is a user-level skill path, so it does not depend on where the run starts.
+  case "${HOME:-}" in
+    /*) DEST="${HOME%/}/.claude/skills/auditor-skill" ;;
+    *) echo "error: HOME is not set to an absolute path; pass the install directory explicitly." >&2; exit 2 ;;
+  esac
+fi
 while [ "$DEST" != "/" ] && [ "${DEST%/}" != "$DEST" ]; do DEST="${DEST%/}"; done
 case "$DEST" in
   ''|/|.|..|*/.|*/..) echo "error: pass the install directory by name, not '$DEST'." >&2; exit 2 ;;
 esac
-
-# The default path can sit in a tree someone else shipped, .git/ included: a run without a path leaves an
-# existing copy there alone.
-if [ -z "${1:-}" ] && { [ -e "$DEST" ] || [ -L "$DEST" ]; }; then
-  echo "error: $DEST already exists, and a run without a path never replaces it." >&2
-  echo "  Pass the install path explicitly, e.g. ./install.sh ~/.claude/skills/auditor-skill" >&2
-  exit 2
-fi
 
 # An existing copy is never opened with git, since its repo config can name filters and commands for git to
 # run. An earlier install (a directory with .git/ and our SKILL.md) is moved aside once the fresh clone is
@@ -57,8 +55,7 @@ mkdir -p "$(dirname "$DEST")"
 if top=$(git --no-pager -c core.fsmonitor=false -C "$(dirname "$DEST")" rev-parse --show-toplevel 2>/dev/null); then
   {
     echo "warning: $DEST is inside the git work tree $top."
-    echo "  If you will audit that repository, install outside it instead, e.g. ./install.sh ~/.claude/skills/auditor-skill"
-    echo "  (OUTPUT-RULES.md Rule 11e)."
+    echo "  If you will audit that repository, install outside it instead (OUTPUT-RULES.md Rule 11e)."
   } >&2
 fi
 
