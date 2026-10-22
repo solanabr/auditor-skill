@@ -54,18 +54,22 @@ grep -E "\"[~^]" apps/backend/package.json apps/web/package.json | head -20
 
 **Step 5: Check Cargo audit (Solana program)**
 ```
-# A copy of Cargo.lock in the Step 1 scratch dir, toolchain pinned (OUTPUT-RULES Rule 11a)
+# A copy of Cargo.lock in the Step 1 scratch dir, toolchain pinned (OUTPUT-RULES Rule 11a), stderr
+# kept. cargo-audit exits 1 both for advisories and for an advisory database it cannot fetch or
+# load, so the OUTCOME line decides (the FULL-AUDIT Step 3.2 recipe)
 mkdir -p "$SCRATCH/rust" && cp Cargo.lock "$SCRATCH/rust/"
 TC=$(cd "$SCRATCH" && rustup default | cut -d' ' -f1)   # your own toolchain, never the target's
-# Check that the tool is installed first: cargo-audit exits 1 when it finds advisories
 if (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit --version) >/dev/null 2>&1; then
-  (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit)
+  (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit --color never) 2>&1 | tee "$SCRATCH/cargo-audit.txt"
+  grep -qE '^error: [0-9]+ vulnerabilit(y|ies) found' "$SCRATCH/cargo-audit.txt" && echo "OUTCOME: vulnerabilities found"
+  grep -qE '^error: .*advisory database' "$SCRATCH/cargo-audit.txt" && echo "OUTCOME: advisory DB unavailable"
 else
-  echo "cargo-audit not installed"
+  echo "OUTCOME: not installed"
 fi
 ```
-- ✅ PASS: Zero vulnerabilities in Rust dependencies
-- ❌ FAIL: Known CVEs in Rust dependencies
+- ✅ PASS: no OUTCOME line and no `error:` line — zero vulnerabilities in Rust dependencies
+- ❌ FAIL: `OUTCOME: vulnerabilities found` — known CVEs in Rust dependencies
+- ⚠️ Not run, never a PASS: `OUTCOME: advisory DB unavailable` (Coverage & Limitations records "advisory DB unavailable", or rerun with `--no-fetch` against a local DB if one exists) or `OUTCOME: not installed` (N/A, and Coverage & Limitations says so)
 
 **Overall verdict:**
 - ✅: No audit vulnerabilities, packages up to date, LTS Node, pinned versions

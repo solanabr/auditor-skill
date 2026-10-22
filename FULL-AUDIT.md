@@ -374,12 +374,21 @@ ACTIONS:
   cat apps/backend/package.json | grep -E '[\^~]' # should be minimal
   cat apps/web/package.json | grep -E '[\^~]'
 
-  # Cargo audit: check that the tool is installed first. cargo-audit exits 1 when it
-  # finds advisories and prints its summary on stderr; that exit is a finding
+  # Cargo audit (SC-004), stderr kept. It exits 1 both for advisories and for an advisory
+  # database it cannot fetch or load (offline, or github.com outside an isolated run's
+  # egress), so the output decides:
+  #   OUTCOME: vulnerabilities found   → findings, SC-004 FAIL
+  #   OUTCOME: advisory DB unavailable → say so in Coverage & Limitations ("advisory DB
+  #                                      unavailable"), or rerun with --no-fetch against
+  #                                      a local DB if one exists
+  #   OUTCOME: not installed           → SC-004 N/A, and Coverage & Limitations says so
+  #   no OUTCOME line and no "error:"  → SC-004 PASS
   if (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit --version) >/dev/null 2>&1; then
-    (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit)
+    (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit --color never) 2>&1 | tee "$SCRATCH/cargo-audit.txt"
+    grep -qE '^error: [0-9]+ vulnerabilit(y|ies) found' "$SCRATCH/cargo-audit.txt" && echo "OUTCOME: vulnerabilities found"
+    grep -qE '^error: .*advisory database' "$SCRATCH/cargo-audit.txt" && echo "OUTCOME: advisory DB unavailable"
   else
-    echo "cargo-audit not installed"
+    echo "OUTCOME: not installed"
   fi
 
   # Check quarantine (14-day rule) for newest deps
