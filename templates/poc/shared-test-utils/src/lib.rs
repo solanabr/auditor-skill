@@ -16,8 +16,9 @@
 //!        - `assert_exploit_effect!`: it went through AND left a concrete value in
 //!          the account it targets;
 //!        - `assert_exploit_rejected_with!`: it was rejected with this exact error;
-//!        - `assert_exploit_blocked!`: it failed, the account is unchanged and the
-//!          error is not a harness error (a deployed fix whose error is unknown);
+//!        - `assert_exploit_blocked!`: it failed and left the account unchanged,
+//!          while a legitimate call on the same bytes went through and changed it
+//!          (a deployed fix whose error is unknown);
 //!        - `assert_exploit_succeeds!` / `assert_exploit_rejected!`: any `Ok` / any
 //!          error, for an audit-time model only.
 //!
@@ -294,17 +295,32 @@ macro_rules! assert_exploit_rejected_with {
 }
 
 /// Assert a fix whose error is not known in advance (a hotfix the team deployed)
-/// stopped the attack: the instruction failed, `read` gives `account` the same value
-/// after the attack as before it, and the error is not a harness error. Pass the
-/// same `account` and `read` as the vulnerable arm's `assert_exploit_effect!`.
+/// stopped the attack, against a positive control on the same bytes:
 ///
-/// A harness error fails the test as inconclusive. If the fix's own guard returns
-/// one of those errors, pin it with `assert_exploit_rejected_with!` instead.
+/// - `control`: the result of a legitimate call — the instruction the finding
+///   concerns, with valid accounts and signers — through the same runner, and
+///   `control_before` the account list it was given. It must go through AND change
+///   what `read` gives for `account`: that shows the harness drives this program
+///   and that the read sees the effect the attack is after.
+/// - the attack (`outcome`, `before`) must then fail with an error that is not a
+///   harness error and leave what `read` gives for `account` unchanged.
+///
+/// Pass the same `account` and `read` as the vulnerable arm's
+/// `assert_exploit_effect!`. A control that fails or changes nothing, and a harness
+/// error on the attack, fail the test as inconclusive: without the control, a
+/// program that fails every call would pass for a fix. When no legitimate call can
+/// go through and change that account on these bytes (the fix turned the
+/// instruction off, say), pin the fix's error with `assert_exploit_rejected_with!`
+/// instead.
 ///
 /// ```ignore
+/// let control = mollusk.process_instruction(&legit_ix, &legit_accounts);
+/// let outcome = mollusk.process_instruction(&ix, &accounts);
 /// assert_exploit_blocked!(
 ///     outcome,
 ///     before: &accounts,
+///     control: control,
+///     control_before: &legit_accounts,
 ///     account: state_pk,
 ///     read: |a| a.data[0..32].to_vec(),
 ///     why: "the deployed hotfix keeps the authority",
@@ -312,9 +328,18 @@ macro_rules! assert_exploit_rejected_with {
 /// ```
 #[macro_export]
 macro_rules! assert_exploit_blocked {
-    ($outcome:expr, before: $before:expr, account: $account:expr, read: $read:expr,
+    ($outcome:expr, before: $before:expr, control: $control:expr,
+     control_before: $control_before:expr, account: $account:expr, read: $read:expr,
      why: $why:expr $(,)?) => {
-        $crate::__assert_blocked(&$outcome, $before, &$account, $read, $why)
+        $crate::__assert_blocked(
+            &$outcome,
+            $before,
+            &$control,
+            $control_before,
+            &$account,
+            $read,
+            $why,
+        )
     };
 }
 
@@ -393,6 +418,8 @@ pub fn __assert_rejected_with(outcome: &InstructionResult, expected: ProgramResu
 pub fn __assert_blocked<T, F>(
     outcome: &InstructionResult,
     before: &[(Pubkey, Account)],
+    control: &InstructionResult,
+    control_before: &[(Pubkey, Account)],
     account: &Pubkey,
     read: F,
     why: &str,
@@ -401,6 +428,18 @@ pub fn __assert_blocked<T, F>(
     F: Fn(&Account) -> T,
 {
     attempt("blocked", why);
+    let control_result = &control.program_result;
+    if control_result.is_err() {
+        inconclusive(&format!(
+            "the legitimate call failed on these bytes ({control_result:?}): the harness does not drive this program, or the fix turned the instruction off; pin the fix's error with assert_exploit_rejected_with! instead ({why})"
+        ));
+    }
+    let (control_was, control_now) = before_and_after(control, control_before, account, &read, why);
+    if control_was == control_now {
+        inconclusive(&format!(
+            "the legitimate call went through but left {account:?} at {control_was:?}, so this read cannot show whether the attack was stopped ({why})"
+        ));
+    }
     let result = &outcome.program_result;
     assert!(
         result.is_err(),
@@ -412,7 +451,9 @@ pub fn __assert_blocked<T, F>(
         now == was,
         "the attack failed with {result:?}, yet {account:?} changed: {was:?} -> {now:?} ({why})"
     );
-    let line = format!("{result:?}; {account:?} unchanged ({why})");
+    let line = format!(
+        "{result:?}; {account:?} unchanged, while the legitimate call changed it: {control_was:?} -> {control_now:?} ({why})"
+    );
     mark("blocked", &line);
     held("blocked", &line);
 }

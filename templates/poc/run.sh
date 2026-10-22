@@ -64,10 +64,11 @@
 #   * an arm counts only on a contract assertion that RAN AND HELD:
 #     assert_exploit_effect! on the vulnerable bytes; assert_exploit_rejected_with!
 #     (our fix: the guard's exact error) or assert_exploit_blocked! (a fix the team
-#     deployed) on the fixed bytes. Each leaves markers in AUDITOR_POC_MARKERS, which
-#     run.sh points at a fresh directory per arm; a passing test without its marker
-#     exits 3, and so does an arm the harness could not decide. The marker is a
-#     floor, not proof: read the assertion all the same.
+#     deployed, checked against a legitimate call on the same bytes) on the fixed
+#     bytes. Each leaves markers in AUDITOR_POC_MARKERS, which run.sh points at a
+#     fresh directory per arm; a passing test without its marker exits 3, and so
+#     does an arm the harness could not decide. The marker is a floor, not proof:
+#     read the assertion all the same.
 #   * the bytes that ran are the bytes run.sh placed: mollusk_for (shared-test-utils)
 #     records the path and zero-trimmed sha256 of every program it loads, and an arm
 #     counts only when each of those hashes is the placed file's and the placed file

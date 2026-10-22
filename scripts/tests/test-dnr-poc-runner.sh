@@ -14,6 +14,8 @@
 #     the setup panicked) or after every assertion held is inconclusive (exit 3);
 #   * the bytes that ran: an arm counts only when every program mollusk_for loaded is
 #     the .so run.sh placed, unchanged after the test, and the Leg 3 line names it;
+#   * the deployed-hotfix check holds only with its positive control: a legitimate
+#     call that goes through on the same bytes and changes the account;
 #   * where the crate builds (always a scratch copy outside the target tree with a
 #     pinned toolchain; a crate holding a symbolic link, .cargo/, rust-toolchain* or
 #     tests/fixtures/<crate>.so is refused; BPF_OUT_DIR is cleared; an inherited
@@ -61,7 +63,8 @@ open(f"{d}/fixed.so", "wb").write(elf[:-1] + b"\x99" + b"\x00" * 128)
 open(f"{d}/with-header.bin", "wb").write((3).to_bytes(4, "little") + b"\x00" * 41 + elf)
 open(f"{d}/text.so", "w").write("not an elf\n")
 for name in ["takeover", "noop", "reject:MissingRequiredSignature", "reject:Custom(6001)", "reject:Custom(4100)",
-             "dirty-reject", "unloadable"]:
+             "reject:InvalidInstructionData", "dirty-reject", "guard:Custom(6001)", "guard:Custom(4100)",
+             "dirty-guard", "unloadable"]:
     stem = name.replace(":", "-").replace("(", "").replace(")", "")
     open(f"{d}/sb-{stem}.so", "wb").write(b"\x7fELF" + name.encode() + b"\x00" * 64)
 PY
@@ -439,10 +442,12 @@ code="$(run "$T/inc" "$SP" "$NATIVE")"
 # built and run through run.sh against stand-in crates. The stand-in mollusk loads the
 # bytes it is given (Mollusk::new finds <crate>.so the way mollusk does: tests/fixtures,
 # BPF_OUT_DIR, SBF_OUT_DIR, the working directory) and acts out the text after the ELF
-# magic: "takeover" writes the first signer's key into the first writable account's
-# bytes 0..32, "dirty-reject" does that and fails with Custom(6001), "noop" accepts and
-# changes nothing, "reject:<error>" fails with that error, "unloadable" makes the loader
-# panic. The stand-in sha2 is a plain SHA-256.
+# magic: "takeover" writes the instruction's third account key into the first writable
+# account's bytes 0..32 (the authority hand-over of the template's example); "guard:<error>"
+# does that only when the second account signs and otherwise fails with <error>;
+# "dirty-reject" (always) and "dirty-guard" (unsigned) fail with Custom(6001) yet keep
+# the change; "noop" accepts and changes nothing; "reject:<error>" fails every call;
+# "unloadable" makes the loader panic. The stand-in sha2 is a plain SHA-256.
 # ---------------------------------------------------------------------------
 mk_standins() {  # mk_standins <dir>
   local S="$1"
@@ -561,30 +566,39 @@ impl Mollusk {
     pub fn process_instruction(&self, ix: &Instruction, accounts: &[(Pubkey, Account)]) -> InstructionResult {
         let mut out = accounts.to_vec();
         let take_over = |out: &mut Vec<(Pubkey, Account)>| {
-            let signer = ix.accounts.iter().find(|m| m.is_signer).expect("a signer").pubkey;
+            let next = ix.accounts.get(2).expect("a third account").pubkey;
             let target = ix.accounts.iter().find(|m| m.is_writable).expect("a writable account").pubkey;
             let acct = out.iter_mut().find(|(k, _)| *k == target).map(|(_, a)| a).expect("the target account");
-            acct.data[0..32].copy_from_slice(signer.as_ref());
+            acct.data[0..32].copy_from_slice(next.as_ref());
         };
-        let program_result = match self.behaviour.as_str() {
-            "takeover" => {
-                take_over(&mut out);
-                ProgramResult::Success
-            }
+        let signed = ix.accounts.get(1).map_or(false, |m| m.is_signer);
+        let b = self.behaviour.as_str();
+        let program_result = if b == "takeover" || (signed && (b == "dirty-guard" || b.starts_with("guard:"))) {
+            take_over(&mut out);
+            ProgramResult::Success
+        } else if b == "dirty-reject" || b == "dirty-guard" {
             // Fails, yet leaves the change in place, as a runtime that did not roll back would.
-            "dirty-reject" => {
-                take_over(&mut out);
-                return InstructionResult { program_result: ProgramResult::Failure(ProgramError::Custom(6001)), resulting_accounts: out };
-            }
-            "noop" => ProgramResult::Success,
-            "reject:MissingRequiredSignature" => ProgramResult::Failure(ProgramError::MissingRequiredSignature),
-            other => match other.strip_prefix("reject:Custom(").and_then(|s| s.strip_suffix(')')) {
-                Some(code) => ProgramResult::Failure(ProgramError::Custom(code.parse().expect("a code"))),
-                None => panic!("stand-in mollusk: unknown behaviour {other:?}"),
-            },
+            take_over(&mut out);
+            return InstructionResult { program_result: ProgramResult::Failure(ProgramError::Custom(6001)), resulting_accounts: out };
+        } else if b == "noop" {
+            ProgramResult::Success
+        } else if let Some(name) = b.strip_prefix("guard:").or_else(|| b.strip_prefix("reject:")) {
+            ProgramResult::Failure(error(name))
+        } else {
+            panic!("stand-in mollusk: unknown behaviour {b:?}");
         };
         if program_result.is_err() { out = accounts.to_vec(); }
         InstructionResult { program_result, resulting_accounts: out }
+    }
+}
+fn error(name: &str) -> ProgramError {
+    match name {
+        "MissingRequiredSignature" => ProgramError::MissingRequiredSignature,
+        "InvalidInstructionData" => ProgramError::InvalidInstructionData,
+        other => match other.strip_prefix("Custom(").and_then(|s| s.strip_suffix(')')) {
+            Some(code) => ProgramError::Custom(code.parse().expect("a code")),
+            None => panic!("stand-in mollusk: unknown error {other:?}"),
+        },
     }
 }
 RS
@@ -787,20 +801,36 @@ if command -v cargo >/dev/null 2>&1 && command -v rustup >/dev/null 2>&1; then
   [ "$code" = 3 ] && grep -q 'no program was loaded through mollusk_for' "$T/out" && ! grep -q "^$LEG3" "$T/out" \
     && ok "real cargo: a runner made with Mollusk::new, not mollusk_for -> exit 3, no Leg 3 line" || { bad "real cargo, Mollusk::new: exit $code"; cat "$T/out" >&2; }
 
-  # The deployed-hotfix check: the template's commented replacement, swapped in as written.
+  # The deployed-hotfix check: the template's commented replacement, swapped in as
+  # written. It counts only with its positive control: the legitimate call goes through
+  # on the same bytes and changes the account.
   mk_e2e "$T/e-hotfix"
   drop_block "$T/e-hotfix/tests/fixed_blocked.rs" '^    assert_exploit_rejected_with!\($'
-  swap "$T/e-hotfix/tests/fixed_blocked.rs" '/^    \/\/   shared_test_utils::assert_exploit_blocked!\($/ { on = 1 } on { line = $0; sub(/^    \/\/   /, "    ", line); print line; if ($0 ~ /^    \/\/   \);$/) on = 0; next } { print }'
-  if grep -q '^    shared_test_utils::assert_exploit_blocked!($' "$T/e-hotfix/tests/fixed_blocked.rs" && ! grep -q '^    assert_exploit_rejected_with!' "$T/e-hotfix/tests/fixed_blocked.rs"; then
-    code="$(e2e "$T/e-hotfix" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-reject-Custom6001.so")"
-    [ "$code" = 0 ] && grep -qx "${LEG3}$(zhash "$SB-takeover.so") fixed sha256=$(zhash "$SB-reject-Custom6001.so") (blocked: failed, account unchanged) → \[PoC-REPRODUCED\]" "$T/out" \
-      && ok "real cargo: the template's hotfix replacement compiles, and a hotfix with its own error (Custom(6001)) counts as blocked" || { bad "real cargo, hotfix Custom(6001): exit $code"; cat "$T/out" >&2; }
+  swap "$T/e-hotfix/tests/fixed_blocked.rs" 'index($0, "    //   // {LEGITIMATE_CALL}") == 1 { on = 1 } on { line = $0; sub(/^    \/\/   /, "    ", line); print line; if ($0 ~ /^    \/\/   \);$/) on = 0; next } { print }'
+  if grep -q '^    let control = mollusk.process_instruction(&legit_ix, &legit_accounts);$' "$T/e-hotfix/tests/fixed_blocked.rs" \
+     && grep -q '^    shared_test_utils::assert_exploit_blocked!($' "$T/e-hotfix/tests/fixed_blocked.rs" \
+     && ! grep -q '^    assert_exploit_rejected_with!' "$T/e-hotfix/tests/fixed_blocked.rs"; then
+    code="$(e2e "$T/e-hotfix" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-guard-Custom6001.so")"
+    [ "$code" = 0 ] && grep -qx "${LEG3}$(zhash "$SB-takeover.so") fixed sha256=$(zhash "$SB-guard-Custom6001.so") (blocked: failed, account unchanged) → \[PoC-REPRODUCED\]" "$T/out" \
+      && ok "real cargo: the template's hotfix replacement compiles, and a hotfix with its own error (Custom(6001)) whose legitimate call goes through counts as blocked" || { bad "real cargo, hotfix guard Custom(6001): exit $code"; cat "$T/out" >&2; }
+    code="$(e2e "$T/e-hotfix" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-reject-InvalidInstructionData.so" KEEP_POC_BUILD=1)"
+    bd="$(build_dir)"
+    if [ "$code" = 3 ] && grep -q 'inconclusive: the legitimate call failed on these bytes (Failure(InvalidInstructionData))' "$T/out" \
+       && [ -n "$bd" ] && [ -s "$bd/markers/fixed/attempted" ] && [ ! -e "$bd/markers/fixed/blocked" ] && ! grep -q "^$LEG3" "$T/out"; then
+      ok "real cargo: a fixed program that fails every call, the legitimate one too, is not blocked -> exit 3, no blocked marker"
+    else
+      bad "real cargo, hotfix failing every call: exit $code"; cat "$T/out" >&2
+    fi
+    [ -n "$bd" ] && rm -rf "$bd"
+    code="$(e2e "$T/e-hotfix" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-noop.so")"
+    [ "$code" = 3 ] && grep -q 'the legitimate call went through but left' "$T/out" \
+      && ok "real cargo: a hotfix check whose legitimate call changes nothing -> inconclusive, exit 3" || { bad "real cargo, hotfix no-op control: exit $code"; cat "$T/out" >&2; }
     code="$(e2e "$T/e-hotfix" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-takeover.so")"
-    [ "$code" = 2 ] && ok "real cargo: a hotfix that lets the attack through -> exit 2" || bad "real cargo, hotfix lets it through: exit $code"
-    code="$(e2e "$T/e-hotfix" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-dirty-reject.so")"
+    [ "$code" = 2 ] && grep -q 'expected to be BLOCKED' "$T/out" && ok "real cargo: a hotfix that lets the attack through -> exit 2" || bad "real cargo, hotfix lets it through: exit $code"
+    code="$(e2e "$T/e-hotfix" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-dirty-guard.so")"
     [ "$code" = 2 ] && grep -q 'yet .* changed' "$T/out" && ok "real cargo: a hotfix run that fails but still changes the account is not blocked -> exit 2" || bad "real cargo, hotfix fails with a change: exit $code"
-    code="$(e2e "$T/e-hotfix" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-reject-Custom4100.so")"
-    [ "$code" = 3 ] && grep -q 'inconclusive: a harness error, not a guard' "$T/out" && ok "real cargo: a hotfix check that fails on Custom(4100) -> inconclusive, exit 3" || bad "real cargo, hotfix 4100: exit $code"
+    code="$(e2e "$T/e-hotfix" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-guard-Custom4100.so")"
+    [ "$code" = 3 ] && grep -q 'inconclusive: a harness error, not a guard' "$T/out" && ok "real cargo: a hotfix check whose attack fails on Custom(4100) -> inconclusive, exit 3" || bad "real cargo, hotfix 4100: exit $code"
   else
     bad "real cargo: could not swap in the template's commented assert_exploit_blocked! replacement"
   fi

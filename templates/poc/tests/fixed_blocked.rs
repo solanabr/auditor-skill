@@ -74,13 +74,37 @@ fn same_attack_rejected_on_fixed() {
 
     // A hotfix the team already deployed (run.sh FIXED_SO = a fresh dump of the
     // current bytes) rejects with an error you cannot know in advance. For that check
-    // only, replace the assertion above with this one, keeping the account and read
-    // of tests/exploit.rs. run.sh then reports the fixed arm as "blocked", which
-    // never stands for our own fix:
+    // only, replace the assertion above with the lines below, keeping the account and
+    // read of tests/exploit.rs. They add a positive control: a legitimate call, on the
+    // same bytes and runner, must go through and change that account, or the run is
+    // inconclusive — without it, a program that fails every call would pass for a
+    // fix. run.sh then reports the fixed arm as "blocked", which never stands for our
+    // own fix. If no legitimate call can go through and change the account on these
+    // bytes, pin the hotfix's error with assert_exploit_rejected_with! instead.
     //
+    //   // {LEGITIMATE_CALL}: the same instruction as the attack, as its rightful
+    //   // caller makes it — here the real authority signs and hands over to a new key.
+    //   let next_authority = random_pubkey();
+    //   let legit_ix = Instruction {
+    //       program_id,
+    //       accounts: vec![
+    //           AccountMeta::new(state_pk, false),
+    //           AccountMeta::new_readonly(legit_authority, true), // signs
+    //           AccountMeta::new_readonly(next_authority, false),
+    //       ],
+    //       data: vec![],
+    //   };
+    //   let legit_accounts = vec![
+    //       accounts[0].clone(),
+    //       (legit_authority, system_account(1_000_000_000)),
+    //       (next_authority, system_account(0)),
+    //   ];
+    //   let control = mollusk.process_instruction(&legit_ix, &legit_accounts);
     //   shared_test_utils::assert_exploit_blocked!(
     //       outcome,
     //       before: &accounts,
+    //       control: control,
+    //       control_before: &legit_accounts,
     //       account: state_pk,
     //       read: |a| a.data[0..32].to_vec(),
     //       why: "{WHICH_GUARD_BLOCKS_IT}",
