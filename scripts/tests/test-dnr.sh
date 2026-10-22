@@ -751,6 +751,75 @@ eq "instructions: the lying program's data carries deposit's discriminator, what
 eq "instructions: no ix record carries a log-derived field" \
   "$(for f in ix-native-no-logs ix-cpi-victim ix-anchor-victim ix-lying-log; do ixr "$f"; done | jq -r 'select(.kind=="ix") | keys - ["sig","ok","kind","seq","top","inner","stack_height","program","data","data_status","accounts","program_name","parsed"] | length' | sort -u)" "0"
 
+# ---------------------------------------------------------------------------
+# 19. Run-directory paths. collect.sh and snapshot-program.sh take a plain path:
+#     a . or .. component is refused, and so is a path whose way passes through a
+#     symbolic link inside the working directory (the tree under audit), whether
+#     the path is relative or absolute, and even when an outside link leads into
+#     that directory. A link above the working directory is the operator's and is
+#     followed. When --out is itself an incident_* directory, collect.sh checks the
+#     incident_* directory above it too, since it writes a .gitignore there.
+#     Refusals exit 2 before any write or RPC / CLI call.
+# ---------------------------------------------------------------------------
+WD="$TT/wd19"; Y="$TT/elsewhere19"; OP="$TT/opdir19"
+mkdir -p "$WD/real" "$WD/incident_30" "$Y" "$OP"
+printf 'canary\n' > "$Y/canary"
+ln -s "$Y" "$WD/linked"                      # a link inside the working directory
+ln -s "$WD" "$TT/to-wd19"                    # an outside link into the working directory
+ln -s "$OP" "$TT/op-link19"                  # an outside link to an outside directory
+ln -s "$Y/canary" "$WD/incident_30/LEDGER.md"
+y_state() { find "$Y" "$WD" | LC_ALL=C sort; cat "$Y/canary"; }
+state_before="$(y_state)"
+calls_before="$(grep -c . "$FAKE_CURL_LOG" 2>/dev/null || true)"
+cli_before="$(grep -c . "$FAKE_SOLANA_ARGV" 2>/dev/null || true)"
+for case in \
+  "a .. component|real/../incident_31" \
+  "a . component|real/./incident_32" \
+  "a relative path through a link in the working directory|linked/incident_33" \
+  "an absolute path through a link in the working directory|$WD/linked/incident_34" \
+  "an outside link into the working directory, then a link in it|$TT/to-wd19/linked/incident_35"; do
+  label="${case%%|*}"; d="${case#*|}"
+  ( cd "$WD" && PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
+      bash "$DNR/collect.sh" --out "$d/corpus" --confirmed --max-pages 1 -- "$A_ADDR" ) > "$TT/p19.out" 2>&1
+  c1=$?
+  ( cd "$WD" && PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
+      bash "$DNR/snapshot-program.sh" "$PID" "$d" ) >> "$TT/p19.out" 2>&1
+  c2=$?
+  if [[ "$c1" == 2 && "$c2" == 2 ]]; then
+    ok "run-dir path: $label -> collect and snapshot refuse (exit 2)"
+  else
+    bad "run-dir path: $label -> collect exit $c1, snapshot exit $c2 ($(tr '\n' ' ' < "$TT/p19.out"))"
+  fi
+done
+( cd "$WD" && PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
+    bash "$DNR/collect.sh" --out incident_30/incident_36 --confirmed --max-pages 1 -- "$A_ADDR" ) > "$TT/p19.out" 2>&1
+code=$?
+if [[ "$code" == 2 ]] && grep -q 'refusing incident_30' "$TT/p19.out"; then
+  ok "run-dir path: an incident_* --out inside an incident_* directory that holds a link -> collect refuses (exit 2)"
+else
+  bad "run-dir path: incident_* in incident_* -> exit $code ($(tr '\n' ' ' < "$TT/p19.out"))"
+fi
+if [[ "$(y_state)" == "$state_before" ]]; then ok "run-dir path: refused runs wrote nothing, inside or outside"; else bad "run-dir path: a refused run changed the tree"; fi
+eq "run-dir path: refused runs made no RPC call" "$(grep -c . "$FAKE_CURL_LOG" 2>/dev/null || true)" "$calls_before"
+eq "run-dir path: refused runs made no CLI call" "$(grep -c . "$FAKE_SOLANA_ARGV" 2>/dev/null || true)" "$cli_before"
+for case in \
+  "a plain relative path|real/incident_37|$WD/real/incident_37" \
+  "a leading ./|./real/incident_38|$WD/real/incident_38" \
+  "an absolute path through the operator's link above the working directory|$TT/op-link19/incident_39|$OP/incident_39"; do
+  label="${case%%|*}"; rest="${case#*|}"; d="${rest%%|*}"; landed="${rest#*|}"
+  ( cd "$WD" && PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
+      bash "$DNR/collect.sh" --out "$d/corpus" --confirmed --max-pages 1 -- "$A_ADDR" ) > "$TT/p19.out" 2>&1
+  c1=$?
+  ( cd "$WD" && PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
+      bash "$DNR/snapshot-program.sh" "$PID" "$d" ) >> "$TT/p19.out" 2>&1
+  c2=$?
+  if [[ "$c1" == 0 && "$c2" == 0 && -s "$landed/corpus/transactions.jsonl" && -s "$landed/bin/$PID.so" ]]; then
+    ok "run-dir path: $label is accepted (control)"
+  else
+    bad "run-dir path: $label -> collect exit $c1, snapshot exit $c2 ($(tr '\n' ' ' < "$TT/p19.out"))"
+  fi
+done
+
 if [[ "$fails" -ne 0 ]]; then
   echo "test-dnr: $fails assertion(s) FAILED" >&2
   exit 1

@@ -33,10 +33,12 @@
 # success, or a `suspected` incident whose attack has not landed yet. Filtering
 # failures out would make those undetectable. Use `meta.err` downstream.
 #
-# RUN DIRECTORY: --out, and the nearest incident_* directory at or above it, must be
-# a directory this run may write into. Either one that is a symbolic link, holds a
-# symbolic link, is tracked by git, or that git or find cannot check is refused with
-# exit 2 before anything is written or sent.
+# RUN DIRECTORY: --out is a plain path, with no . or .. component, and no directory on
+# its way may be a symbolic link inside the working directory (a link above it, such
+# as /tmp on macOS, is the operator's). --out, and the nearest incident_* directory
+# above it, must be a directory this run may write into: either one that is a symbolic
+# link, holds a symbolic link, is tracked by git, or that git or find cannot check is
+# refused with exit 2 before anything is written or sent.
 #
 # --before <sig> starts paging just older than that signature (resume a capped run,
 # or skip activity newer than the incident) — always into a new --out: an --out that
@@ -151,6 +153,35 @@ for n in "$since" "$until" "$max_pages" "$max_tx"; do
   fi
 done
 case "$out" in */) out="${out%"${out##*[!/]}"}"; [ -n "$out" ] || out=/ ;; esac
+# The run directory is checked by name and component by component below, so --out is a
+# plain path: no "." or ".." component (a leading "./" aside).
+out="${out#./}"
+case "/$out/" in
+  */./*|*/../*) echo "collect.sh: --out takes a plain path without . or .. components: $out" >&2; exit 2 ;;
+esac
+
+# The working directory is usually the audited repository: a symbolic link below it
+# belongs to that tree. No cd below may search $CDPATH.
+unset CDPATH
+if ! here="$(pwd -P)"; then
+  echo "collect.sh: cannot resolve the working directory." >&2; exit 2
+fi
+# linked_on_way <path>: status 0 when a directory on the way to <path> is a symbolic
+# link inside the working directory, or one whose place cannot be resolved. A link
+# above the working directory (/tmp on macOS, say) is the operator's, and is followed.
+linked_on_way() {
+  local rest="$1" cur comp phys
+  case "$rest" in /*) cur=""; rest="${rest#/}" ;; *) cur="$here" ;; esac
+  while :; do
+    case "$rest" in */*) comp="${rest%%/*}"; rest="${rest#*/}" ;; *) return 1 ;; esac
+    [ -n "$comp" ] || continue
+    if [ -L "$cur/$comp" ]; then
+      phys="$(cd "${cur:-/}" 2>/dev/null && pwd -P)" || return 0
+      case "$phys/" in "${here%/}"/*) return 0 ;; esac
+    fi
+    cur="$cur/$comp"
+  done
+}
 
 # refuse_planted <dir>: exit 2 unless <dir> is safe to write into — not a symbolic
 # link, holding none, and not tracked by git. The git calls carry the Rule 11c flags,
@@ -180,11 +211,16 @@ refuse_planted() {
   fi
   return 0
 }
-# --out, and the nearest incident_* directory above it, checked as a whole.
+# Every directory on the way to --out; then --out, and the nearest incident_* directory
+# above it (where a .gitignore may be written too), each checked as a whole.
+if linked_on_way "$out"; then
+  echo "collect.sh: refusing $out: a directory on its way is a symbolic link inside the working directory — use a run directory reached without one." >&2
+  exit 2
+fi
 refuse_planted "$out"
-run_dir="$out"
+run_dir="$(dirname "$out")"
 while :; do
-  case "$(basename "$run_dir")" in incident_*) [ "$run_dir" = "$out" ] || refuse_planted "$run_dir"; break ;; esac
+  case "$(basename "$run_dir")" in incident_*) refuse_planted "$run_dir"; break ;; esac
   case "$run_dir" in .|/) break ;; esac
   run_dir="$(dirname "$run_dir")"
 done

@@ -53,10 +53,12 @@
 # replaced it (dumped-after-hotfix; the incident bytes need an archived binary or a
 # solana-verify hash-matched build).
 #
-# RUN DIRECTORY: <incident_dir>, and the nearest incident_* directory above it, must
-# not be a symbolic link, hold one, or be tracked by git, and git and find must be
-# able to check it; any other directory is refused with exit 2 before anything is
-# written or the CLI runs.
+# RUN DIRECTORY: <incident_dir> is a plain path, with no . or .. component, and no
+# directory on its way may be a symbolic link inside the working directory (a link
+# above it, such as /tmp on macOS, is the operator's). <incident_dir>, and the nearest
+# incident_* directory above it, must not be a symbolic link, hold one, or be tracked
+# by git, and git and find must be able to check it; any other directory is refused
+# with exit 2 before anything is written or the CLI runs.
 #
 # SECRETS: the CLI reads "$RPC_URL" from the temp config, never from argv; an
 # $RPC_URL holding a quote, a backslash, whitespace or a control character is refused.
@@ -102,6 +104,35 @@ case "$RPC_URL" in
     exit 2 ;;
 esac
 case "$dir" in */) dir="${dir%"${dir##*[!/]}"}"; [ -n "$dir" ] || dir=/ ;; esac
+# The run directory is checked by name and component by component below, so it is a
+# plain path: no "." or ".." component (a leading "./" aside).
+dir="${dir#./}"
+case "/$dir/" in
+  */./*|*/../*) echo "snapshot-program.sh: <incident_dir> takes a plain path without . or .. components: $dir" >&2; exit 2 ;;
+esac
+
+# The working directory is usually the audited repository: a symbolic link below it
+# belongs to that tree. No cd below may search $CDPATH.
+unset CDPATH
+if ! here="$(pwd -P)"; then
+  echo "snapshot-program.sh: cannot resolve the working directory." >&2; exit 2
+fi
+# linked_on_way <path>: status 0 when a directory on the way to <path> is a symbolic
+# link inside the working directory, or one whose place cannot be resolved. A link
+# above the working directory (/tmp on macOS, say) is the operator's, and is followed.
+linked_on_way() {
+  local rest="$1" cur comp phys
+  case "$rest" in /*) cur=""; rest="${rest#/}" ;; *) cur="$here" ;; esac
+  while :; do
+    case "$rest" in */*) comp="${rest%%/*}"; rest="${rest#*/}" ;; *) return 1 ;; esac
+    [ -n "$comp" ] || continue
+    if [ -L "$cur/$comp" ]; then
+      phys="$(cd "${cur:-/}" 2>/dev/null && pwd -P)" || return 0
+      case "$phys/" in "${here%/}"/*) return 0 ;; esac
+    fi
+    cur="$cur/$comp"
+  done
+}
 
 # refuse_planted <dir>: exit 2 unless <dir> is safe to write into — not a symbolic
 # link, holding none, and not tracked by git. The git calls carry the Rule 11c flags,
@@ -131,14 +162,24 @@ refuse_planted() {
   fi
   return 0
 }
-# <incident_dir>, and the nearest incident_* directory above it, checked as a whole.
-refuse_planted "$dir"
-run_dir="$dir"
-while :; do
-  case "$(basename "$run_dir")" in incident_*) [ "$run_dir" = "$dir" ] || refuse_planted "$run_dir"; break ;; esac
-  case "$run_dir" in .|/) break ;; esac
-  run_dir="$(dirname "$run_dir")"
-done
+# check_run_dir: every directory on the way to <incident_dir>; then <incident_dir>, and
+# the nearest incident_* directory above it, each checked as a whole. It runs before the
+# CLI, and again just before the first write.
+check_run_dir() {
+  local run_dir
+  if linked_on_way "$dir"; then
+    echo "snapshot-program.sh: refusing $dir: a directory on its way is a symbolic link inside the working directory — use a run directory reached without one." >&2
+    exit 2
+  fi
+  refuse_planted "$dir"
+  run_dir="$dir"
+  while :; do
+    case "$(basename "$run_dir")" in incident_*) [ "$run_dir" = "$dir" ] || refuse_planted "$run_dir"; break ;; esac
+    case "$run_dir" in .|/) break ;; esac
+    run_dir="$(dirname "$run_dir")"
+  done
+}
+check_run_dir
 
 if ! command -v solana >/dev/null 2>&1; then
   echo "[blocker] solana CLI not on PATH — install it, or dump the program another way and record its zero-trimmed sha256 and last-deployed slot in LEDGER.md by hand." >&2
