@@ -61,7 +61,8 @@ run "$T" "$T/outside/auditor-skill"
 ok2() { [ "$rc" -eq 0 ] && ! warned && head_is "$T/outside/auditor-skill" three; }
 check "explicit path outside any work tree is quiet and updates" ok2
 
-# 3. a run without a path over an existing copy (planted hooks and helpers) stops before any git command
+# 3. a run without a path over an existing copy whose repo config sets fsmonitor and a hook stops before any git
+#    command
 git init -q "$T/archive" && d3="$T/archive/.claude/skills/auditor-skill" && git clone -q "$T/up.git" "$d3" \
   && git -C "$d3" config core.fsmonitor "$T/canary.sh fsmonitor" \
   && printf '#!/bin/sh\ntouch "%s/fired-hook"\n' "$T" > "$d3/.git/hooks/post-merge" && chmod +x "$d3/.git/hooks/post-merge" \
