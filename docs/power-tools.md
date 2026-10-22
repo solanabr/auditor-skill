@@ -288,27 +288,27 @@ The read-only collector behind `/auditor:threat-model --bootstrap` ([method and 
 
 | Flag | Meaning |
 |------|---------|
-| `--repo <dir>` | the target repository (required) |
-| `--out <dir>` | the output directory (required), normally `audit_<n>/bootstrap` |
-| `--pin <rev>` | the commit to analyse (default `HEAD`); only its ancestry is mined |
+| `--repo <dir>` | the target (required): the top level of its own repository, or a bare repository; anything else exits 3 |
+| `--out <dir>` | the run directory (required), normally `audit_<n>/bootstrap`: a plain path without `.` or `..` components. If it, or its `audit_<n>` parent, is a symbolic link, holds one, or is tracked by git, the run exits 2 |
+| `--pin <rev>` | the commit to analyse (default `HEAD`); only its ancestry is mined. Exit 3 if it does not resolve |
 | `--paths <pathspec>` | target pathspec, repeatable (default `programs/*.rs` when the commit has a `programs/` directory, else `*.rs`) |
-| `--parent <https-url\|dir>` | the fork parent: an `https://` URL, cloned bare into a temp directory that is deleted on exit, or a local repository |
+| `--parent <https-url\|dir>` | the fork parent: an `https://` URL, cloned bare into a temp directory that is deleted on exit, or the top level of a local repository |
 | `--parent-paths <spec>` | parent pathspec, repeatable (default: the same rule, applied to the parent) |
-| `--import <rev>` | the target commit that imported the parent's code (default: the root commit) |
+| `--import <rev>` | the target commit that brought the parent's code in (default: the root commit). Pass it when the code arrived after the root commit (a README-only first commit, say), or R5 reports `NOT FOUND`. It must resolve to a commit, else the run exits 2 |
 | `--vulns <file\|https-url>` | a prior-vulnerability input, repeatable: PDF, Markdown, text, CSV, JSON, or an `INCIDENTS.json` (allowlisted fields only) |
-| `--program-id <id>` | save `audit-mem warm --program-id <id>` (needs the built tool and a database) |
-| `--audit-mem-db <path>` | the `audit-mem` database (default `<repo>/.audit-memory/audit.db`, skipped when the target tracks `.audit-memory` in any letter case, or git cannot tell) |
+| `--program-id <id>` | the program id for R8's `audit-mem warm` (needs the built tool and `--audit-mem-db`) |
+| `--audit-mem-db <path>` | the audit-mem store R8 reads. There is no default: without it no store is read, and the collector never looks in the target tree. Pass only a store that passes the Rule 11d check |
 | `--keywords <ere>` | extra commit-message keywords, as an ERE alternation such as `drain\|bypass` |
 | `--offline` | never use the network: `--parent` and `--vulns` URLs are recorded, not fetched |
 | `--detect` | evaluate triggers T3 and T4 only, print them and exit; writes nothing |
 | `--cap <n>` | rows per section before `TRUNCATED` (default 60) |
-| `--small <n>` | changed-line ceiling for a quiet-fix candidate commit (default 40) |
+| `--small <n>` | changed-line ceiling for an `ADDED-QUIET` (quiet-fix) commit (default 40) |
 | `--fix-ceiling <n>` | changed-line ceiling for the `ADDED` rows of a keyword commit (default 300) |
-| `-h`, `--help` | print the usage header |
+| `-h`, `--help` | print the usage header, flags and exit statuses included |
 
-- **Exit:** 0 done (a section may print `NOT FOUND`) · 2 usage error or rejected input · 3 the target is not a git repository, or the pin does not resolve.
+- **Exit:** 0 done (a section may print `NOT FOUND`) · 2 usage error or rejected input, including an `--out` with `.` or `..` components, a run directory that is a symbolic link, holds one, or is tracked by git, and an `--import` that is not a commit · 3 `--repo` is not the top level of a git repository (or a bare repository), or the pin does not resolve.
 - **Network:** only for an `https://` URL passed in `--parent` (a bare clone without submodules, credential helpers or other protocols) or in `--vulns` (curl, https only through redirects too, with 60-second and 50 MB limits). Never with `--offline` or `--detect`, and never for a URL found in target content.
-- **Writes:** in `<out>`: `history.md` (sections R0 to R8), `inputs.tsv` (the manifest of every input), `inputs/` (converted or copied inputs), `diffs/` (the diffs of commits it flags) and, with `--program-id`, `audit-mem-warm.json`. `<out>`, and an `audit_*` parent without a `.gitignore`, each get a `.gitignore` containing `*`. `--detect` prints `T3 yes|no <signals>` and `T4 yes|no <signals>` to stdout.
+- **Writes:** in `<out>`: `history.md` (sections R0 to R8), `inputs.tsv` (the manifest of every input), `inputs/` (converted or copied inputs), `diffs/` (the diffs of commits it flags) and, with `--program-id` and `--audit-mem-db`, `audit-mem-warm.json`. An `incident_*/INCIDENTS.json` that is a symbolic link, sits in a linked directory, or lies in a tracked `incident_*` directory is not read; `inputs.tsv` records it as skipped. `<out>`, and an `audit_*` parent without a `.gitignore`, each get a `.gitignore` containing `*`. `--detect` prints `T3 yes|no <signals>` and `T4 yes|no <signals>` to stdout.
 - **Needs:** git; `jq` or `python3` for JSON inputs, `pdftotext` to convert PDFs, `curl` for `--vulns` URLs. The environment variable `TM_JSON_TOOL=jq|python3|none` pins the JSON tool; the self-test uses it.
 
 ### Trail of Bits bump review
