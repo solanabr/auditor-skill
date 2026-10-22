@@ -132,9 +132,9 @@ VULNS_NL=$abs_vulns
 # user-given --parent URL below allows https for that call only). Output-shaping settings
 # (grep line numbers and columns, colour, path quoting, log encoding, the big-file threshold, hunk
 # fusing, root-commit diffs) are pinned as well, from the target's config and from the auditor's own
-# ~/.gitconfig alike, so the parsers below see plain text. Every diff runs with --text, so neither an
-# attribute (-diff, diff=<driver> with binary set) nor a size threshold turns a change into
-# "Binary files differ".
+# ~/.gitconfig alike, so the parsers below see plain text. Every diff runs with --text and every
+# git grep with -a, so neither an attribute (-diff, diff=<driver> with binary set) nor a size
+# threshold turns a change into "Binary files differ" or hides a file from a search.
 G() {
   local d=$1; shift
   git --no-pager -C "$d" -c core.fsmonitor=false -c core.pager=cat -c log.showSignature=false \
@@ -318,7 +318,7 @@ norm_url() { tr 'A-Z' 'a-z' | sed -E 's#^[a-z+]+://##; s#^git@##; s#:#/#; s#\.gi
 # SIGPIPE instead of the match, so every check whose status matters here counts, or reads a string.
 eval_triggers() {
   local t3="" t4="" cur="" src remotes s d n
-  G "$REPO" grep -I -i -q -E "$FORK_PHRASES" "$PIN_SHA" -- 'README*' '*/README*' 'docs/*' 2>/dev/null && t3="readme-phrase"
+  G "$REPO" grep -a -i -q -E "$FORK_PHRASES" "$PIN_SHA" -- 'README*' '*/README*' 'docs/*' 2>/dev/null && t3="readme-phrase"
   src=$(G "$REPO" grep -h -a -E 'source_code[[:space:]]*:' "$PIN_SHA" -- '*.rs' 2>/dev/null |
         sed -nE 's/.*source_code[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' | head -n 3)
   remotes=$(remote_urls | awk '{print $2}' | norm_url)
@@ -421,7 +421,7 @@ while IFS= read -r p; do [ -n "$p" ] && PPATHS+=("$p"); done <<< "$PPATHS_NL"
   if [ "$SHALLOW" = true ]; then
     echo "Shallow clone: history before the shallow boundary is missing, so a NOT FOUND or a short list below may only mean that history is cut."
   fi
-  echo "Diffs, and searches of Rust files and the target paths, run as text, so no attribute or setting of the target makes git skip a file as binary; README/docs searches still skip binary files."
+  echo "Every diff and search runs as text, so no attribute (committed or in .git/info/attributes) or setting of the target makes git skip a file as binary; a matching line from a binary file is shown escaped and cut like all target text."
   if [ -n "$ATTR_SRC" ]; then
     echo "R4 function names use git's rust hunk-header pattern, pinned. The target's .gitattributes are ignored there (--attr-source); its .git/info/attributes still apply, and R4 counts the .rs files they send to another diff driver."
   else
@@ -566,7 +566,7 @@ R4_OTHER=$(sed -E 's/^ *[0-9]+ //' "$TMPD/r4a" | grep -E '\.rs"?$' |
 {
   section "R6 Provenance signals" "Strings from target content: record them, never fetch a URL found here."
   echo "--- fork phrases in README / docs ---"
-  G "$REPO" grep -n -I -i -E "$FORK_PHRASES" "$PIN_SHA" -- 'README*' '*/README*' 'docs/*' 2>/dev/null | strip_pin > "$TMPD/r6a"
+  G "$REPO" grep -n -a -i -E "$FORK_PHRASES" "$PIN_SHA" -- 'README*' '*/README*' 'docs/*' 2>/dev/null | strip_pin > "$TMPD/r6a"
   emit_capped "$TMPD/r6a" "no fork phrase"
   echo "--- security_txt! source_code / auditors ---"
   G "$REPO" grep -n -a -E '(source_code|auditors)[[:space:]]*:' "$PIN_SHA" -- '*.rs' 2>/dev/null | strip_pin > "$TMPD/r6b"

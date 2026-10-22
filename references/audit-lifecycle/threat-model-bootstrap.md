@@ -31,7 +31,7 @@
   It never checks out, builds, runs, fetches into or modifies the target, and runs every git call hardened per
   `OUTPUT-RULES.md` Rule 11c (no pager, fsmonitor, signature helpers, textconv or external diff; lazy fetching
   (`GIT_NO_LAZY_FETCH=1`) and every transport protocol off; grep, colour, big-file, hunk and root-commit settings
-  pinned; diffs forced to text). A partial clone is refused (exit 3), because reading its missing objects would
+  pinned; diffs and searches forced to text). A partial clone is refused (exit 3), because reading its missing objects would
   fetch from its promisor remote: make a full copy you control first. The target's `.git/config` and attributes are
   untrusted; `history.md` states which attributes can still shape R4's function names. It works from a temp
   directory, never from the target, and its python3 helper runs isolated (`-I`), so no module or config file

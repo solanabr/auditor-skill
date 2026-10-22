@@ -355,6 +355,21 @@ check "T-o (grep): a Rust file the target marks binary is still searched (R6 dec
   has "$T/shape-run-grep/audit_1/bootstrap/history.md" 'declare_id!("Demo1111'
 check "T-o (grep): ... and still reaches the T3 source_code check" \
   has "$T/shape-run-grep/audit_1/bootstrap/history.md" "T3 yes security_txt-source_code"
+# Committed attributes that mark the Rust files and the README binary change neither --detect nor R6.
+GA="$T/shape-grep-attrs"; mkrepo "$GA"
+put "$GA" programs/g/src/lib.rs 'declare_id!("Demo1111111111111111111111111111111111111111");
+security_txt! { source_code: "https://example.invalid/not-a-remote" }'
+put "$GA" README.md 'Example pool, forked from the upstream reference pool.'
+put "$GA" .gitattributes '*.rs -diff
+README* -diff'
+commit "$GA" -m "initial"
+DGA=$(bash "$COLLECT" --repo "$GA" --out "$T/shape-run-ga/audit_1/bootstrap" --detect 2>/dev/null)
+check "T-o (grep): with *.rs and README* marked -diff, --detect still fires T3 on both signals" \
+  sh -c "printf '%s\n' '$DGA' | grep -q '^T3 yes readme-phrase,security_txt-source_code'"
+collect --repo "$GA" --out "$T/shape-run-ga/audit_1/bootstrap" --offline
+GAH="$T/shape-run-ga/audit_1/bootstrap/history.md"
+check "T-o (grep): ... and R6 still lists the fork phrase, source_code and declare_id!" \
+  sh -c "grep -q '^README.md:1:Example pool, forked from' '$GAH' && grep -q 'source_code: \"https://example.invalid/not-a-remote\"' '$GAH' && grep -q 'declare_id!(\"Demo1111' '$GAH'"
 
 # T-py: the collector runs python3 isolated and outside the target, so a target json.py never loads.
 if command -v python3 >/dev/null 2>&1; then
