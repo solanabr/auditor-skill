@@ -24,7 +24,8 @@ old=$2; new=$3
 cd "$(dirname "$0")/.."
 
 g() { git --no-pager -c log.showSignature=false -C "$repo" "$@"; }
-DIFFSAFE=(--no-color --no-ext-diff --no-textconv)   # on every diff, log and show: plain text for the parsers below
+# on every diff, log and show: plain text with fixed a/ b/ prefixes for the parsers below
+DIFFSAFE=(--no-color --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/)
 if [ "$fetch" -eq 1 ]; then g fetch --quiet origin || { echo "fetch failed" >&2; exit 2; }; fi
 for c in "$old" "$new"; do
   g cat-file -e "$c^{commit}" 2>/dev/null \
@@ -98,16 +99,37 @@ section "Symlinks (120000) and gitlinks (160000) at NEW"
 awk -F'\t' '$1 == "120000" || $1 == "160000" {print $1 " " $2}' "$tmp/new" > "$tmp/links"
 show "$tmp/links"
 
+hosts() { grep -E '^\+' | grep -oE 'https?://[A-Za-z0-9.-]+' | sort | uniq -c | sort -rn; }
+NOTESTS=(':(exclude)*/tests/*' ':(exclude)*/evals/*' ':(exclude)*/evals-extra/*' ':(exclude)*/fixtures/*')
+
 section "Hosts in added lines of scripts and config (excluding tests, evals, fixtures and lockfiles)"
 g diff "${DIFFSAFE[@]}" -U0 "$old" "$new" -- '*.sh' '*.bash' '*.py' '*.js' '*.mjs' '*.cjs' '*.ts' '*.json' '*.toml' '*.yml' '*.yaml' \
-  ':(exclude)*/tests/*' ':(exclude)*/evals/*' ':(exclude)*/evals-extra/*' ':(exclude)*/fixtures/*' \
-  ':(exclude)*.lock' ':(exclude)*package-lock.json' \
-  | grep -E '^\+' | grep -oE 'https?://[A-Za-z0-9.-]+' | sort | uniq -c | sort -rn > "$tmp/hosts" || true
+  "${NOTESTS[@]}" ':(exclude)*.lock' ':(exclude)*package-lock.json' | hosts > "$tmp/hosts" || true
 show "$tmp/hosts"
 
-section "Pipe-to-shell and remote-exec patterns in added lines"
-g diff "${DIFFSAFE[@]}" -U0 "$old" "$new" -- . ':(exclude)*.lock' | grep -E '^\+' \
-  | grep -E '(curl|wget)[^|]*\|[[:space:]]*(ba|z)?sh|uvx --from git\+|npx -y|pip install git\+|bash <\(curl' > "$tmp/rx" || true
+section "Hosts in added Markdown lines: skill and command text an agent may follow (excluding tests, evals and fixtures)"
+g diff "${DIFFSAFE[@]}" -U0 "$old" "$new" -- '*.md' "${NOTESTS[@]}" | hosts > "$tmp/mdhosts" || true
+show "$tmp/mdhosts"
+
+section "Remote-exec patterns in added lines, continuation lines joined (pipe to a shell or interpreter, sh -c \"\$(curl …)\", <(curl …), npx --yes, pip / uvx from a URL)"
+# "<path>: <added line>". An added line ending in a backslash, or in a pipe outside a Markdown table row, is
+# joined with the next added line, so a multi-line installer is scanned as one command.
+joined() { awk '
+  function flush() { if (buf != "") print file ": " buf; buf = "" }
+  /^\+\+\+ / { flush(); file = substr($0, 5); sub(/^b\//, "", file); next }
+  /^\+/ { s = substr($0, 2); if (buf != "") sub(/^[ \t]+/, "", s); buf = (buf == "") ? s : buf " " s
+          if (buf ~ /\\[ \t]*$/) { sub(/[ \t]*\\[ \t]*$/, "", buf); next }
+          if (buf ~ /[|][ \t]*$/ && s !~ /^[ \t]*[|]/) next
+          flush(); next }
+  { flush() }
+  END { flush() }'; }
+SHELLS='((ba|z|da|k)?sh|python[0-9.]*|node|perl|ruby)([[:space:];&|)]|$)'
+RX_PIPE="(curl|wget)[[:space:]].*[|][[:space:]]*(sudo([[:space:]]+-[A-Za-z]+([[:space:]]+[A-Za-z0-9_]+)?)*[[:space:]]+)?((/[^[:space:]|]*/)?env([[:space:]]+[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*)*[[:space:]]+)?(/[^[:space:]|]*/)?$SHELLS"
+RX_SUBST="((ba|z|da|k)?sh[[:space:]]+-c|eval)[[:space:]]+[\"']?[\$][(][[:space:]]*(curl|wget)[[:space:]]"
+RX_PROC='(source|[.]|(ba|z|da|k)?sh)[[:space:]]+<[(][[:space:]]*(curl|wget)[[:space:]]'
+RX_PKG='npx[[:space:]]+(-y|--yes)([[:space:]]|$)|pip[0-9.]*[[:space:]]+install[[:space:]]+([^|;&]*[[:space:]])?(git[+]|https?://)|uvx[[:space:]]+--from[[:space:]]+git[+]'
+g diff "${DIFFSAFE[@]}" -U0 "$old" "$new" -- . ':(exclude)*.lock' | joined \
+  | grep -E "$RX_PIPE|$RX_SUBST|$RX_PROC|$RX_PKG" > "$tmp/rx" || true
 show "$tmp/rx"
 
 section "LICENSE"
