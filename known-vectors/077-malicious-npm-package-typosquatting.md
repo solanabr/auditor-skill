@@ -32,7 +32,7 @@ grep -rnE "$W3" --exclude-dir=node_modules --include='package.json' --include='p
 # ...and anywhere in history (OUTPUT-RULES Rule 11c flags; --text because a committed .gitattributes can mark
 # lockfiles binary, which hides them from -G):
 GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c core.bigFileThreshold=512m \
-  log --all --oneline --text --no-textconv -G"$W3" -- '*lock*' '*package.json'
+  log --all --oneline --text --no-textconv --no-ext-diff -G"$W3" -- '*lock*' '*package.json'
 ```
 - ✅ PASS: Zero matches in the tree, and either zero matches in history or evidence that every key a build from that window loaded was rotated
 - ❌ FAIL: Compromised package version in the tree — CRITICAL; or a `@solana/web3.js` 1.95.6 / 1.95.7 hit in history with no evidence of rotation — every key a build containing it loaded is exposed: rotate it

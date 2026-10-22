@@ -352,7 +352,7 @@ ACTIONS:
   # history too; --text because a committed .gitattributes can mark lockfiles binary,
   # which hides them from -G
   GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c core.bigFileThreshold=512m \
-    log --all --oneline --text --no-textconv -G"$W3" -- '*lock*' '*package.json'
+    log --all --oneline --text --no-textconv --no-ext-diff -G"$W3" -- '*lock*' '*package.json'
   # → hijacked @solana/web3.js releases (KV-077 Step 2, SC-005). A hit now is CRITICAL;
   #   a hit in history means rotate every key a build from that window loaded; a `fatal:` /
   #   `lazy fetching disabled` line means a partial clone: the history part is INCONCLUSIVE
