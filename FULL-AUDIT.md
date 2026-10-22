@@ -63,7 +63,7 @@ RECORD:
 ### 0.2 — Map the Codebase
 
 ```
-ACTION: Use the file-map in discovery/file-map.md OR auto-discover:
+ACTION: Use the in-scope paths recorded at intake (audit_<n>/intake.md §1, Q39/Q44), else the defaults in discovery/file-map.md, OR auto-discover:
   1. List all .rs files under programs/
   2. List all .ts/.tsx files under apps/backend/src/
   3. List all .ts/.tsx files under apps/web/src/

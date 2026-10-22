@@ -1,7 +1,7 @@
 # File Discovery Patterns
 
 > Maps each audit checklist to the exact files/globs that must be scanned.  
-> When porting this auditor to a new repo, update these patterns to match the target project structure.
+> These are defaults. A target with another layout records its in-scope paths at intake (`QUESTIONS.md` Q39, exclusions under Q44, written to `audit_<n>/intake.md` §1) instead of editing this file, which a shared or plugin install overwrites on update.
 
 ---
 
