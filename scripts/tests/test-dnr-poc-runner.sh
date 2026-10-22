@@ -21,7 +21,9 @@
 #     pinned toolchain; a crate holding a symbolic link, .cargo/, rust-toolchain* or
 #     tests/fixtures/<crate>.so is refused; BPF_OUT_DIR is cleared; an inherited
 #     CARGO_TARGET_DIR is honoured), and the exit codes (a failed build is 3, a failed
-#     verdict 1/2).
+#     verdict 1/2);
+#   * the patch verification recipe (templates/patch/VERIFICATION.md §1): its worktree
+#     is made in a Rule 11c copy, and no git runs in the client checkout.
 #
 # No Solana toolchain and no network needed. A temp copy of run.sh runs with a `cargo`
 # shim, or with a PATH that has no cargo at all. When real cargo and rustup are
@@ -859,6 +861,51 @@ if command -v cargo >/dev/null 2>&1 && command -v rustup >/dev/null 2>&1; then
   fi
 else
   echo "note: cargo or rustup not on PATH; the real-toolchain checks are skipped (the shim checks above still ran)"
+fi
+
+# ---------------------------------------------------------------------------
+# The patch verification recipe (templates/patch/VERIFICATION.md §1), run from inside
+# a client checkout whose post-checkout hook leaves a marker: it makes its worktree in
+# a Rule 11c copy under its own scratch directory and runs no git in the checkout, so
+# the hook stays silent. The control shows the hook runs for a worktree made there.
+# ---------------------------------------------------------------------------
+if command -v git >/dev/null 2>&1; then
+  # git with no global or system config, so no hooksPath or signing setting of this
+  # machine changes what runs.
+  C="$T/client"; HK="$T/hook.marker"; GE=( env -i HOME="$T/home" PATH="$PATH" GIT_CONFIG_NOSYSTEM=1 )
+  G=( "${GE[@]}" git -c user.email=t@example.invalid -c user.name=t )
+  mkdir -p "$C" "$T/tmp-recipe" "$T/home"
+  "${G[@]}" -C "$C" init -q && printf 'v1\n' > "$C/lib.rs" && "${G[@]}" -C "$C" add lib.rs && "${G[@]}" -C "$C" commit -qm v1
+  commit="$("${G[@]}" -C "$C" rev-parse HEAD)"
+  printf '#!/bin/sh\necho hook >> "%s"\n' "$HK" > "$C/.git/hooks/post-checkout"; chmod +x "$C/.git/hooks/post-checkout"
+  printf -- '--- a/lib.rs\n+++ b/lib.rs\n@@ -1 +1 @@\n-v1\n+v2\n' > "$T/F-1.patch"
+  # The §1 block with its placeholders filled and the SBF build replaced by a check of
+  # the patched file in the worktree.
+  python3 -I - "$TEMPLATE/../patch/VERIFICATION.md" "$T/recipe.sh" "$C" "$commit" "$T" <<'PY2'
+import sys
+doc, out, checkout, commit, t = sys.argv[1:]
+block = open(doc, encoding="utf-8").read().split("## 1. Apply", 1)[1].split("```bash\n", 1)[1].split("```", 1)[0]
+build = "cargo build-sbf --tools-version v1.54"
+assert block.count(build) == 1, "the recipe's build step moved"
+block = (block.replace("{FINDING_ID}", "F-1").replace("{CHECKOUT}", checkout).replace("{COMMIT}", commit)
+         .replace("{PATH_TO}", t).replace(build, f'grep -qx v2 lib.rs && pwd -P > "{t}/recipe.pwd"'))
+assert "{" not in block.replace("${", ""), "a placeholder is left"
+open(out, "w", encoding="utf-8").write(block)
+PY2
+  rm -f "$HK" "$T/recipe.pwd"
+  ( cd "$C" && "${GE[@]}" TMPDIR="$T/tmp-recipe" bash "$T/recipe.sh" ) >"$T/out" 2>&1; code=$?
+  wt="$(cat "$T/recipe.pwd" 2>/dev/null)"
+  case "$wt" in "$T/tmp-recipe"/fix-F-1.*/fix) where=scratch ;; *) where="'$wt'" ;; esac
+  if [ "$code" = 0 ] && [ "$where" = scratch ] && [ ! -e "$HK" ] && [ "$("${G[@]}" -C "$C" worktree list | wc -l | tr -d ' ')" = 1 ] \
+     && [ "$(cat "$C/lib.rs")" = v1 ]; then
+    ok "VERIFICATION.md §1, run from inside the client checkout: the patched worktree is in a scratch copy, and no git ran in the checkout (its hook stayed silent)"
+  else
+    bad "VERIFICATION.md §1 recipe: exit $code, worktree $where, hook marker $( [ -e "$HK" ] && echo present || echo absent )"; cat "$T/out" >&2
+  fi
+  ( cd "$C" && "${G[@]}" worktree add -q "$T/ctl-wt" "$commit" ) >/dev/null 2>&1
+  [ -s "$HK" ] && ok "control: a worktree made in the client checkout runs its post-checkout hook" || bad "control: the client checkout's hook did not run, so the recipe check proves nothing"
+else
+  echo "note: git not on PATH; the patch verification recipe check is skipped"
 fi
 
 if [ "$fails" -ne 0 ]; then

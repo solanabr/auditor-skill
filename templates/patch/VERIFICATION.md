@@ -15,14 +15,17 @@ The rebuild runs target-controlled code (build scripts, proc-macros, toolchain f
 execution mode recorded at intake — `OUTPUT-RULES.md` Rule 11a (isolated recommended; native allowed and
 stated in the report). If it cannot run in that mode, stop at `[FIX-PROPOSED]`. Create the worktree in a
 copy you made yourself, `GIT_NO_LAZY_FETCH=1 git clone --no-local <checkout> <scratch copy>` (Rule 11c),
-never in a checkout the client supplied.
+never in a checkout the client supplied: every git command below runs from the scratch directory and on the
+copy (`git -C`), none in the client checkout. `{CHECKOUT}` and `{PATH_TO}` are absolute paths.
 
 ```bash
-WT="$(mktemp -d "${TMPDIR:-/tmp}/fix-{FINDING_ID}.XXXXXX")" &&   # a fresh directory at an unpredictable path
-  git worktree add "$WT" {COMMIT} &&                  # the audited commit the patch targets
-  cd "$WT" &&
-  git apply {PATH_TO}/{FINDING_ID}.patch &&           # or: git am < ... for format-patch
-  cargo build-sbf --tools-version v1.54               # rebuild the patched program
+SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/fix-{FINDING_ID}.XXXXXX")" &&  # a fresh directory at an unpredictable path
+  cd "$SCRATCH" &&                                                # out of the client checkout before any git
+  GIT_NO_LAZY_FETCH=1 git clone --no-local {CHECKOUT} "$SCRATCH/copy" &&  # the Rule 11c copy
+  git -C "$SCRATCH/copy" worktree add "$SCRATCH/fix" {COMMIT} &&  # the audited commit the patch targets
+  cd "$SCRATCH/fix" &&
+  git apply {PATH_TO}/{FINDING_ID}.patch &&                       # or: git am < ... for format-patch
+  cargo build-sbf --tools-version v1.54                           # rebuild the patched program
 ```
 
 - [ ] Patch applied cleanly against `{COMMIT}` (no fuzz, no reject `.rej` files).
