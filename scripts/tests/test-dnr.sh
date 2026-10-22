@@ -273,6 +273,16 @@ else:
 PY
 chmod +x "$TT/bin/curl"
 export FAKE_CURL_LOG="$TT/curl.log" FAKE_CURL_ARGV="$TT/curl.argv"
+# The --confirmed gate alone: a usable $RPC_URL and a reachable (fake) endpoint, yet
+# no --confirmed means exit 2 and no call at all.
+( PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
+    bash "$DNR/collect.sh" --out "$TT/c0" --max-pages 1 -- "$A_ADDR" ) > "$TT/c0.out" 2>&1
+code=$?
+if [[ "$code" == 2 && ! -e "$TT/c0" && ! -s "$FAKE_CURL_LOG" ]] && grep -q 'pass --confirmed' "$TT/c0.out"; then
+  ok "collect: without --confirmed, a usable endpoint gets no call (exit 2)"
+else
+  bad "collect: ran without --confirmed -> exit $code"
+fi
 ( PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/?api-key=LEAKME42" \
     bash "$DNR/collect.sh" --out "$TT/c" --confirmed --since 1 --max-pages 1 --before "$CURSOR" -- "$A_ADDR" ) > "$TT/c.out" 2>&1
 code=$?
