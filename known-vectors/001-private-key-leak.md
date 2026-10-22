@@ -58,7 +58,8 @@ git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
 
 **Step 6: Verify git-tracked files right now**
 ```
-git ls-files | grep -iE "\.(env|pem)$|keypair|delegate|secret|private"
+git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  ls-files | grep -iE "\.(env|pem)$|keypair|delegate|secret|private"   # Rule 11c flags
 ```
 - ✅ PASS: Zero results (no secret files are tracked by git)
 - ❌ FAIL: Any file listed → currently tracked. Remove, add to .gitignore, rotate the secret

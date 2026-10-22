@@ -14,7 +14,7 @@ category: devops
 
 **Step 1: Check if .env is currently tracked**
 ```
-git ls-files | grep -E "\.env"
+git --no-pager -c core.fsmonitor=false -c log.showSignature=false ls-files | grep -E "\.env"   # Rule 11c flags
 ```
 - ✅ PASS: No .env files tracked
 - ❌ FAIL: .env file is tracked — IMMEDIATE action: `git rm --cached .env` + rotate all secrets

@@ -26,7 +26,8 @@ The class is invisible to dependency scanners: `cargo audit` / `npm audit` see l
 grep -rn -iE "fork of|forked from|based on|powered by|white.?label|licensed from|upstream" README.md docs/ programs/ 2>/dev/null
 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
   log --oneline --reverse --no-textconv -- programs/ | head -5   # imported wholesale in one commit? (Rule 11c flags)
-git remote -v; git config --get-all remote.upstream.url 2>/dev/null
+git --no-pager -c core.fsmonitor=false -c log.showSignature=false remote -v
+git --no-pager -c core.fsmonitor=false -c log.showSignature=false config --get-all remote.upstream.url 2>/dev/null
 grep -rn -E "declare_id!" programs/ | sort   # compare against known vendor/upstream program IDs
 ```
 - Record for each program: upstream repo/vendor, the commit or release the deployment was built from, and who operates the upgrade authority (tenant or vendor). Also list vendor programs reached via CPI (cross-ref KV-009).

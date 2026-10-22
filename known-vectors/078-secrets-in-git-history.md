@@ -86,7 +86,8 @@ cat .gitignore | grep -E "\.env|keypair|\.pem|\.key|id_rsa|delegate\.json"
 
 **Step 9: Check for currently tracked files that should be ignored**
 ```
-git ls-files | grep -iE "\.env|keypair|secret|credential|\.pem|\.key$|delegate\.json"
+git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  ls-files | grep -iE "\.env|keypair|secret|credential|\.pem|\.key$|delegate\.json"   # Rule 11c flags
 ```
 - ✅ PASS: Zero results — no sensitive files currently tracked
 - ❌ FAIL: Sensitive file tracked — remove with `git rm --cached <file>` immediately

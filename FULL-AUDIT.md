@@ -80,7 +80,7 @@ RECORD:
 
 ### 0.3 — Build Instruction Matrix
 
-> **Optional deterministic pre-pass.** If the bundled tools are built (`test -x "<auditor-skill root>/tools/auditor-tools/target/release/audit-scan"`, PRE-FLIGHT 8), run `"<auditor-skill root>/tools/auditor-tools/target/release/audit-scan" <program-path> --out audit_<n>/prescan.json` first — it emits this instruction matrix (plus the account-constraint, PDA-seed, arithmetic, and CPI tables) deterministically at ~$0, so Phase 0.2–0.4 collapse to *reading the JSON* and files with zero scan hits get a spot-check instead of a full read. Also run `"<auditor-skill root>/tools/auditor-tools/target/release/audit-mem" warm --program-id <id>` to load prior invariants + open false-positive rulings, but only after the Rule 11d store check passes: use `.audit-memory/` only if the repository does not track it (`git ls-files .audit-memory` prints nothing) and you created it, writing `mkdir -p .audit-memory && printf '*\n' > .audit-memory/.gitignore` first; otherwise pass `--db <path outside the tree>` for a fresh store. Treat all pre-scan output as a *map to verify*, never as verdicts. See [references/orchestration/pre-scan.md](references/orchestration/pre-scan.md). Absent the toolchain, build the matrix by hand below.
+> **Optional deterministic pre-pass.** If the bundled tools are built (`test -x "<auditor-skill root>/tools/auditor-tools/target/release/audit-scan"`, PRE-FLIGHT 8), run `"<auditor-skill root>/tools/auditor-tools/target/release/audit-scan" <program-path> --out audit_<n>/prescan.json` first — it emits this instruction matrix (plus the account-constraint, PDA-seed, arithmetic, and CPI tables) deterministically at ~$0, so Phase 0.2–0.4 collapse to *reading the JSON* and files with zero scan hits get a spot-check instead of a full read. Also run `"<auditor-skill root>/tools/auditor-tools/target/release/audit-mem" warm --program-id <id>` to load prior invariants + open false-positive rulings, but only after the Rule 11d store check passes: use `.audit-memory/` only if the repository does not track it (`git ls-files .audit-memory` prints nothing; in a checkout you did not clone, run it with the Rule 11c flags) and you created it, writing `mkdir -p .audit-memory && printf '*\n' > .audit-memory/.gitignore` first; otherwise pass `--db <path outside the tree>` for a fresh store. Treat all pre-scan output as a *map to verify*, never as verdicts. See [references/orchestration/pre-scan.md](references/orchestration/pre-scan.md). Absent the toolchain, build the matrix by hand below.
 
 ```
 ACTION: Read lib.rs → list every #[instruction] or pub fn handler.
@@ -406,8 +406,8 @@ ACTIONS:
   # Keypair files in repo
   find . -name "*keypair*.json" -o -name "*delegate*.json" -o -name "id.json" | grep -v node_modules
 
-  # .env files committed
-  git ls-files | grep -i ".env"
+  # .env files committed (Rule 11c flags)
+  git --no-pager -c core.fsmonitor=false -c log.showSignature=false ls-files | grep -i ".env"
 
   # Git history check (Rule 11c flags)
   git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
