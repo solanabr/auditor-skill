@@ -42,11 +42,13 @@ tests with `SBF_OUT_DIR` wired — never inside the audited repo. The crate is c
 to a scratch directory under `$TMPDIR` (printed; `KEEP_POC_BUILD=1` keeps it) and
 built there with the toolchain pinned, so the target's `.cargo/config*` and
 `rust-toolchain*` never apply; a crate holding a symbolic link, a `.cargo/`
-directory or a `rust-toolchain*` file is refused. Exit `0` means the exploit
-reproduced on `vulnerable` **and** was blocked on `fixed`; `1` / `2` mean the PoC
-is not valid — see the failing arm's message; `3` is a named blocker (no execution
-mode, no SBF toolchain, bad inputs, or a build that failed), and the finding's
-prose PoC still stands.
+directory or a `rust-toolchain*` file is refused, and so is a
+`tests/fixtures/{PROGRAM_NAME}.so`, which mollusk would load in place of the arm.
+Exit `0` means the exploit reproduced on `vulnerable` **and**, when the fixed arm
+runs, was blocked on `fixed`; `1` / `2` mean the PoC is not valid — see the failing
+arm's message; `3` is a named blocker (no execution mode, no SBF toolchain, bad
+inputs, a build that failed, or an inconclusive fixed arm), and the finding's prose
+PoC still stands.
 
 **Dependencies.** Framework crates by default, as in the template. A crate copied
 from the target's manifest runs its build script in the recorded mode, so add one
@@ -66,11 +68,33 @@ create: cargo trusts the build outputs it finds there.
 
 | Arm | Test | Asserts | Meaning |
 |-----|------|---------|---------|
-| `vulnerable` | `tests/exploit.rs` | `assert_exploit_succeeds!` | the flaw is real — the attack goes through |
-| `fixed` | `tests/fixed_blocked.rs` | `assert_exploit_rejected!` | the fix closes it — the same attack is turned away |
+| `vulnerable` | `tests/exploit.rs` | `assert_exploit_effect!` | the flaw is real — the attack goes through and leaves a concrete value in the account it targets |
+| `fixed` | `tests/fixed_blocked.rs` | `assert_exploit_rejected_with!` | the fix closes it — the same attack is turned away with the guard's exact error |
 
 `src/fixed.rs` is `src/vulnerable.rs` with only the cited guard restored — it is the
 patch (`templates/patch/patch.md`) made runnable.
+
+The expected error is a value compared with `==`, never a pattern. To check a fix the
+team already deployed, whose error you cannot know in advance, swap in the commented
+`assert_exploit_blocked!` in `tests/fixed_blocked.rs`: it passes when the attack
+failed, the account is unchanged and the error is not a harness error (a wrong program
+id or account list). `assert_exploit_succeeds!` / `assert_exploit_rejected!` accept any
+`Ok` / any error and fit an audit-time model only.
+
+**Prebuilt bytes.** `VULNERABLE_SO=<.so>` runs the exploit arm alone on those bytes;
+adding `FIXED_SO=<.so>` runs the fixed arm on others. Each contract assertion leaves a
+marker when it runs and holds, and on prebuilt bytes `run.sh` accepts an arm only with
+its marker. A fixed arm that fails on a harness error exits `3` (inconclusive), not `2`.
+The marker is a floor, not proof: read the assertion all the same. Success prints the
+only line that can stand for Leg 3 of an incident:
+
+```
+OK: reproduced on prebuilt bytes — vulnerable sha256=<zero-trimmed sha256> → [PoC-REPRODUCED]
+```
+
+With `FIXED_SO`, the line also names `fixed sha256=<…>` and how the fixed arm held:
+`(rejected with the pinned error)` or `(blocked: failed, account unchanged)`. A run of
+this crate's own arms prints a different line: a model is never Leg 3.
 
 ## Evidence tier
 

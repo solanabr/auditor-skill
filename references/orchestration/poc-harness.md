@@ -133,6 +133,32 @@ rung down is a real, reportable finding — the ladder degrades gracefully to pr
 finding recorded as `[PoC-PROSE]`/`[PoC-ATTEMPTED]` is honest; a faked green test is
 not. Downgrading the tier never downgrades the finding's severity or removes its prose.
 
+**The contract assertions.** `tests/exploit.rs` asserts the effect with
+`assert_exploit_effect!` (the account the attack changes, how to read the field, and the
+concrete value the attack leaves there, which the account did not hold before), and
+`tests/fixed_blocked.rs` asserts the guard's exact error with
+`assert_exploit_rejected_with!` (a value compared with `==`, never a pattern). For a
+fix the team deployed, whose error is not known in advance, the fixed arm uses
+`assert_exploit_blocked!` instead: the attack failed, the same account reads the same,
+and the error is not a harness error. Each leaves a marker when it runs and holds; on
+prebuilt bytes `run.sh` accepts an arm only with its marker, and a fixed arm that fails
+on a harness error (`Custom(4100)`, a short account list) is inconclusive, exit 3. The
+marker is a floor, not proof: whoever reads the PoC still checks that the assertion
+states the finding's effect and the guard's error.
+
+**Leg 3 of an incident** (`references/detection-response/README.md`) is met only by a
+`run.sh` run on prebuilt bytes that ends with
+
+```
+OK: reproduced on prebuilt bytes — vulnerable sha256=<64 hex> → [PoC-REPRODUCED]
+```
+
+(with `FIXED_SO`, the same line also names `fixed sha256=<…>` and how the fixed arm
+held), where `<64 hex>` is the zero-trimmed sha256 recorded for the incident snapshot
+or the hash-matched build. `VULNERABLE_SO` alone is enough for Leg 3: no fix needs to
+exist yet. A run of the crate's own arms, a model, prints another line and never
+satisfies Leg 3, whatever its tier.
+
 ---
 
 ## 4. Fix tiers (the patch side)
@@ -166,14 +192,15 @@ back the diff plus this verification record for the client to apply and re-test.
 
 **Re-detonating against the target's own build.** The PoC proves the patch either on
 the minimized model (the patch transplanted onto the crate's `vulnerable` arm, as in
-`VERIFICATION.md` §2) or on the target itself: `run.sh` with `VULNERABLE_SO` set to the unpatched build and
-`FIXED_SO` to the patched one, both or neither. That is prebuilt mode, and `run.sh`
-exits 3 unless both files are ELF programs, `tests/exploit.rs` reads the changed
-account back with a live `outcome.get_account(&pk)` call, and
-`tests/fixed_blocked.rs` pins the guard's error with a live
-`assert_exploit_rejected_with!`. The PoC must also use the program's real id (an
-Anchor program checks its own `declare_id!`), which `run.sh` does not check, so
-convert audit-form tests first. The run needs `AUDITOR_EXEC_MODE` like any other.
+`VERIFICATION.md` §2) or on the target itself: `run.sh` with `VULNERABLE_SO` set to the
+unpatched build and `FIXED_SO` to the patched one. That is prebuilt mode: `run.sh`
+exits 3 unless both files are ELF programs and each arm's contract assertion ran and
+held, `assert_exploit_effect!` on the unpatched bytes and `assert_exploit_rejected_with!`
+on the patched ones. Our patch is shown only by a line ending in `(rejected with the
+pinned error) → [PoC-REPRODUCED]`; a `(blocked: …)` line comes from the check of a fix
+the team deployed and is reported apart, never as evidence for our patch. The PoC must
+also use the program's real id (an Anchor program checks its own `declare_id!`), which
+`run.sh` does not check. The run needs `AUDITOR_EXEC_MODE` like any other.
 `VERIFICATION.md` records which target the PoC re-ran against in its *Re-detonated
 against* field.
 

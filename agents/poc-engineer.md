@@ -14,7 +14,7 @@ You turn a *confirmed* finding into an executable exploit — the runnable Rule 
 Given the finding block, its `audit_<n>/worksheets/context/*` worksheet, the pinned audited commit, and the detected toolchain, produce the **smallest self-contained crate** that reproduces the flaw. Copy the matching harness (Mollusk single-instruction / LiteSVM stateful / Surfpool fork / Trident-cargo-fuzz) from the installation's `"${CLAUDE_PLUGIN_ROOT}/templates/poc/"` — never a relative `templates/` path, which would resolve inside the audited repo — and fill it:
 
 - **Feature-gated arms.** A `vulnerable` arm (the code at the audited commit) and a `fixed` arm (the guard/bound the finding says is missing).
-- **Assert, don't merely run.** `assert_exploit_succeeds!` on the `vulnerable` arm and `assert_exploit_rejected!` on the `fixed` arm (our own `shared-test-utils`). Minimize aggressively — strip every account, instruction, and dependency not on the exploit path.
+- **Assert, don't merely run.** `assert_exploit_effect!` on the `vulnerable` arm (the account the attack changes, how to read the field, and the concrete value it leaves there) and `assert_exploit_rejected_with!` on the `fixed` arm (the guard's exact error, a value compared with `==`, never a pattern), both from our own `shared-test-utils`. The any-result forms `assert_exploit_succeeds!` / `assert_exploit_rejected!` fit an audit-time model only. Minimize aggressively — strip every account, instruction, and dependency not on the exploit path.
 - **Where it builds.** Every `run.sh` call needs `AUDITOR_EXEC_MODE` set to the run's recorded mode (`OUTPUT-RULES.md` Rule 11a — intake §8, or for an incident the ledger header); with none recorded, ask once (a non-interactive run is native, and the report says so). Without it `run.sh` exits 3 before compiling anything, and the tier is `[PoC-ATTEMPTED]`. `run.sh` copies the crate to a scratch directory outside the target tree and pins the toolchain, so the target's `.cargo/config*` and `rust-toolchain*` never apply; it refuses a crate holding a symbolic link, a `.cargo/` directory or a `rust-toolchain*` file, and a `path` dependency on target crates must be absolute. Keep to the template's framework crates: a crate copied from the target's manifest runs its build script in the recorded mode, so add one only when the PoC needs it. Probe toolchains (`cargo build-sbf --version`) from outside the target tree as well.
 - **Build cache.** Each `run.sh` call compiles from cold in a fresh scratch directory. To reuse compiled dependencies between runs of one audit, create a directory outside any repository, e.g. `${XDG_CACHE_HOME:-$HOME/.cache}/auditor-skill/poc-target/<repo-name>-audit_<n>`, pass it to each run as `CARGO_TARGET_DIR`, and delete it when the engagement ends. Never point it inside the target tree or at a directory you did not create: cargo trusts the build outputs it finds there.
 
@@ -36,18 +36,34 @@ against the program's **real bytes**:
   incident slot (owning loader checked — `containment-playbook.md` has the
   loader-v3/v4 header offsets); otherwise a `solana-verify` hash-matched build. If
   there is no snapshot, dump now and record that a hotfix may already have replaced
-  the bytes. Run both arms via `run.sh` `VULNERABLE_SO`/`FIXED_SO`
-  (both-or-neither) and record the `binary_provenance` (`incidents-schema.md`).
+  the bytes. Run the exploit arm on it with `VULNERABLE_SO` alone: Leg 3 needs no
+  fix to exist yet. `FIXED_SO` (a patched build, or a fresh dump of a deployed
+  hotfix) adds the fixed arm and needs `VULNERABLE_SO`. Record the
+  `binary_provenance` (`incidents-schema.md`).
 - **Use the real program id** (not `random_pubkey()`): an Anchor program checks its
   own `declare_id!`, so a mismatched id makes the attack "fail" for the wrong
   reason.
 - **Assert the observed effect, not just `Ok`.** On real bytes the program may
-  accept the call without doing harm. On the `vulnerable` arm, read the changed
-  account back with `outcome.get_account(&pk)` (mollusk-svm-result 0.13.x) and
-  assert the Leg-1 effect seen on-chain — the new authority, the drained balance.
-- **Assert the specific guard error** on the `fixed` arm with
-  `assert_exploit_rejected_with!`, not the any-error `assert_exploit_rejected!`.
-  `run.sh` refuses prebuilt mode unless both of these assertions are live code.
+  accept the call without doing harm. On the `vulnerable` arm,
+  `assert_exploit_effect!` names the account the attack changed, reads the field,
+  and compares it with the Leg-1 value seen on-chain: the new authority, the
+  drained balance.
+- **Assert the guard's exact error** on the `fixed` arm with
+  `assert_exploit_rejected_with!` when `FIXED_SO` is our patched build. When it is a
+  fresh dump of a hotfix the team deployed, swap in the template's commented
+  `assert_exploit_blocked!`, in a copy of the crate: the attack failed, the account
+  is unchanged and the error is not a harness error. Report that check apart from
+  ours.
+- **Markers and the Leg 3 line.** Each of these assertions leaves a marker when it
+  runs and holds, and on prebuilt bytes `run.sh` accepts an arm only with its marker.
+  A fixed arm that fails on a harness error exits 3 as inconclusive. Leg 3 is met
+  only by `run.sh` ending with
+  `OK: reproduced on prebuilt bytes — vulnerable sha256=<hash> → [PoC-REPRODUCED]`
+  (with `FIXED_SO`, the line also names `fixed sha256=<…>` and how that arm held),
+  where `<hash>` is the snapshot's zero-trimmed sha256 in `LEDGER.md` or that of the
+  hash-matched build. A model-only PoC, built from the crate's own arms, never
+  satisfies Leg 3. The marker is a floor, not proof: check that the assertion states
+  the observed effect.
 - **Local only:** in-process SVM / loopback surfnet, harness keys
   (`Keypair::new()`), `127.0.0.1`. Never send to or `simulateTransaction` against a
   public cluster. Build the incident commit per `OUTPUT-RULES.md` Rule 11a — never
