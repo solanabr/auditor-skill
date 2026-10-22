@@ -116,7 +116,7 @@ directory.
    implicated handler in the source deployed at the incident slot. Read that
    revision without checking it out: make a copy outside the client's checkout with
    `GIT_NO_LAZY_FETCH=1 git clone --no-local <checkout> <scratch copy>`, and read from the copy with
-   `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false show --no-textconv <rev>:<path>`
+   `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false show --no-textconv --no-ext-diff <rev>:<path>`
    (Rule 11c). Never `checkout`, `switch` or `worktree add` in `--repo`. Then spawn
    `poc-engineer` in incident mode to reproduce on the bytes from step 1 (Leg 3)
    with `run.sh` `VULNERABLE_SO` alone — in-process SVM or a local surfnet, harness

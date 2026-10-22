@@ -134,7 +134,7 @@ directory.
    slot). Read that revision without checking it out: make a copy outside the
    client's checkout with
    `GIT_NO_LAZY_FETCH=1 git clone --no-local <checkout> <scratch copy>`, and read from the copy with
-   `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false show --no-textconv <rev>:<path>`
+   `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false show --no-textconv --no-ext-diff <rev>:<path>`
    (Rule 11c). Never `checkout`, `switch` or `worktree add` in `--repo`. Pin the
    flaw — or the guard that stopped it — to `file:function`. A guard that held
    turns the suspect into `attempted_not_vulnerable`, recorded with that location.
