@@ -23,6 +23,9 @@ jobs:
       - name: Corpus counts, index links, version agreement and submodule pins
         run: bash scripts/check-corpus.sh
 
+      - name: Command, agent and skill frontmatter read as written
+        run: bash scripts/check-frontmatter.sh
+
       - name: Script self-tests
         run: for t in scripts/tests/*.sh; do echo "== $t"; bash "$t" || exit 1; done
 
