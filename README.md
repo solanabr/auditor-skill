@@ -75,7 +75,7 @@ auditor-skill is a **skill file** (a structured prompt + checklists) that turns 
 
 Install auditor-skill **outside any repository you audit**: the plugin (Option 1), or a user-level skill such as `install.sh ~/.claude/skills/auditor-skill`. A copy inside the audited repository resolves its scripts, tools and corpus from a tree that repository controls, and that repository's own `.claude/`, `.mcp.json` and `CLAUDE.md` are target-controlled too ([OUTPUT-RULES.md Rule 11e](OUTPUT-RULES.md#11e--bundled-paths)).
 
-**Upgrading from 7.5 or earlier.** If your copy sits inside a repository (the `install.sh` default, `.claude/skills/auditor-skill`), move it out with `mv .claude/skills/auditor-skill ~/.claude/skills/auditor-skill`, update it there with Option 2 (given the path of an existing copy, `install.sh` updates it and fetches the new Trail of Bits pin), and rebuild the Rust tools if you use them. Or remove it and switch to the plugin (Option 1). Plugin users get 7.6.0, with the new pin, when they update the plugin.
+**Upgrading from 7.5 or earlier.** If your copy sits inside a repository (the `install.sh` default, `.claude/skills/auditor-skill`), delete it (`rm -rf .claude/skills/auditor-skill`) and install a fresh copy outside: the plugin (Option 1), or Option 2 with the path `~/.claude/skills/auditor-skill`. Never move or update a copy you find inside a repository: its git config may have come with that repository. Plugin users get 7.6.0, with the new Trail of Bits pin, when they update the plugin.
 
 ### Option 1: Claude Code plugin marketplace (recommended)
 
@@ -88,7 +88,7 @@ Registers the marketplace and installs the `auditor` plugin — all 17 `/auditor
 
 ### Option 2: Install script
 
-Installs the skill and inits the tooling. Pass a path outside the repositories you audit; with no argument it installs into the current directory's `.claude/skills/auditor-skill`, so never run it bare inside a repository you are about to audit. It warns on stderr when the install directory is inside a git work tree. Re-running it with the same path updates that copy; a run without a path never updates, and stops if `.claude/skills/auditor-skill` already exists:
+Installs the skill and inits the tooling. Pass a path outside the repositories you audit; with no argument it installs into the current directory's `.claude/skills/auditor-skill`, so never run it bare inside a repository you are about to audit. It warns on stderr when the install directory is inside a git work tree. Re-running it with the same path installs a fresh clone there and moves the earlier install aside to `<path>.old-<timestamp>`, without running git in it. A run without a path never replaces anything, and stops if `.claude/skills/auditor-skill` already exists:
 
 ```bash
 # read it first (it's a security tool, after all):

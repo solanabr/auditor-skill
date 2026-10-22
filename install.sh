@@ -8,19 +8,45 @@
 #   ./install.sh                                   # → ./.claude/skills/auditor-skill — only outside a repository you will audit
 #   curl -fsSL https://raw.githubusercontent.com/solanabr/auditor-skill/main/install.sh | bash -s -- ~/.claude/skills/auditor-skill
 #
-# Re-running with the same explicit path updates that copy. A run without a path never updates: it stops
-# when ./.claude/skills/auditor-skill already exists.
+# Re-running with the same explicit path installs a fresh clone there and moves the earlier install aside to
+# <path>.old-<timestamp>. No git command ever runs inside an existing copy, and nothing from it is reused.
+# A run without a path never replaces anything: it stops when ./.claude/skills/auditor-skill already exists.
 set -euo pipefail
 
 REPO="https://github.com/solanabr/auditor-skill.git"
 DEST="${1:-.claude/skills/auditor-skill}"
+while [ "$DEST" != "/" ] && [ "${DEST%/}" != "$DEST" ]; do DEST="${DEST%/}"; done
+case "$DEST" in
+  ''|/|.|..|*/.|*/..) echo "error: pass the install directory by name, not '$DEST'." >&2; exit 2 ;;
+esac
 
-# The default path can sit in a tree someone else shipped, .git/ included: a run without a path runs no git
-# in an existing copy there.
+# The default path can sit in a tree someone else shipped, .git/ included: a run without a path leaves an
+# existing copy there alone.
 if [ -z "${1:-}" ] && { [ -e "$DEST" ] || [ -L "$DEST" ]; }; then
-  echo "error: $DEST already exists, and a run without a path never updates it." >&2
+  echo "error: $DEST already exists, and a run without a path never replaces it." >&2
   echo "  Pass the install path explicitly, e.g. ./install.sh ~/.claude/skills/auditor-skill" >&2
   exit 2
+fi
+
+# An existing copy is never opened with git, since its repo config can name filters and commands for git to
+# run. An earlier install (a directory with .git/ and our SKILL.md) is moved aside once the fresh clone is
+# ready; anything else is left alone.
+old=""
+if [ -L "$DEST" ]; then
+  echo "error: $DEST is a symbolic link; pass the directory it points to." >&2
+  exit 2
+elif [ -d "$DEST" ] && [ -z "$(ls -A "$DEST")" ]; then
+  rmdir "$DEST"
+elif [ -e "$DEST" ]; then
+  if ! { [ -d "$DEST/.git" ] && [ -f "$DEST/SKILL.md" ] && grep -qxE 'name: (auditor-skill|AUDITOR)' "$DEST/SKILL.md"; }; then
+    echo "error: $DEST exists and is not an auditor-skill install; remove it or pass another path." >&2
+    exit 2
+  fi
+  old="$DEST.old-$(date +%Y%m%d-%H%M%S)"
+  if [ -e "$old" ] || [ -L "$old" ]; then
+    echo "error: $old already exists; run the installer again in a second." >&2
+    exit 2
+  fi
 fi
 
 echo "→ Installing auditor-skill into: $DEST"
@@ -36,26 +62,22 @@ if top=$(git --no-pager -c core.fsmonitor=false -C "$(dirname "$DEST")" rev-pars
   } >&2
 fi
 
-# Git in $DEST does not trust that copy's own repo config: no fsmonitor, hooks or credential helpers, and
-# no file:// or ext:: transport.
-gd() {
-  git -C "$DEST" -c core.fsmonitor=false -c core.hooksPath=/dev/null -c credential.helper= \
-    -c protocol.file.allow=never -c protocol.ext.allow=never "$@"
-}
-
-if [ -d "$DEST/.git" ]; then
-  echo "→ Already present — updating"
-  gd pull --ff-only
-else
-  git clone --depth 1 "$REPO" "$DEST"
-fi
+# Clone into a private directory next to DEST, on the same filesystem, and move it into place when it is complete.
+tmp=$(mktemp -d "$(dirname "$DEST")/.auditor-skill-install.XXXXXX")
+trap 'rm -rf "$tmp"' EXIT
+git clone --depth 1 "$REPO" "$tmp/auditor-skill"
 
 # Shallow, and only our own submodule: a fetch-by-SHA at depth 1 works when the pin is not upstream's tip,
 # and not recursing keeps any submodule Trail of Bits might add from arriving at a commit nobody reviewed.
-# --checkout ignores any submodule.<name>.update command in the repo config.
 echo "→ Initializing Trail of Bits execution tooling (optional, shallow, at the pinned commit)"
-gd submodule update --init --checkout --depth 1 -- vendor/trailofbits \
+git -C "$tmp/auditor-skill" submodule update --init --depth 1 -- vendor/trailofbits \
   || echo "  (skipped — the native corpus works without it)"
+
+if [ -n "$old" ]; then
+  mv "$DEST" "$old"
+  echo "→ The earlier install is now $old; nothing from it is reused. Delete it when you no longer need it."
+fi
+mv "$tmp/auditor-skill" "$DEST"
 
 cat <<EOF
 
