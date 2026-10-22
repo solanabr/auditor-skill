@@ -537,7 +537,7 @@ case "$code|$(cat "$L/v4.out")" in
 esac
 eq "loader-v4: the CLI calls, in order" \
   "$(jq -r 'map(select(. != "-C" and (test("cli.yml$") | not) and (test("dump.so$") | not))) | join(" ")' "$FAKE_SOL_ARGV" | grep -v '^config ' | tr '\n' '|')" \
-  "program show $PID --buffer-authority 11111111111111111111111111111111|program-v4 show --program-id $PID --authority 11111111111111111111111111111111|program-v4 download --program-id $PID|"
+  "program show $PID --buffer-authority 11111111111111111111111111111111|program-v4 show --program-id $PID --authority 11111111111111111111111111111111|program-v4 download --program-id $PID|program-v4 show --program-id $PID --authority 11111111111111111111111111111111|"
 snap "$L/v4" FAKE_SOL_LOADER=v4 FAKE_SOL_SLOTS=900
 eq "loader-v4: a redeploy is kept beside the first snapshot" "$?|$(ls "$L/v4/bin" | tr '\n' ' ')" \
   "0|$PID.show.txt $PID.so $PID@900.show.txt $PID@900.so "
@@ -569,6 +569,41 @@ else
   bad "id check: 31-byte id -> exit $code ($(tr '\n' ' ' < "$L/short.out"))"
 fi
 eq "id check: no CLI call for that id" "$(cli_calls)" "$before"
+
+# ---------------------------------------------------------------------------
+# 9. The slot and the bytes agree. The slot is read again after the dump; a
+#    deploy that lands in between means one more dump, and a slot that moves
+#    again is a blocker. The stand-in's ELF carries its slot at bytes 4..12, so
+#    the kept bytes can be checked against the reported slot.
+# ---------------------------------------------------------------------------
+elf_slot() { python3 -I -c 'import sys; print(int.from_bytes(open(sys.argv[1], "rb").read()[4:12], "little"))' "$1"; }
+R="$TT/race"; mkdir -p "$R"; rm -f "$FAKE_SOL_ARGV"
+snap "$R/still" FAKE_SOL_SLOTS=100
+eq "slot check: a program that does not move is shown, dumped and shown again (3 program calls, no retry)" \
+  "$?|$(grep -c '"program' "$FAKE_SOL_ARGV")|$(grep -c 'dumping again' "$R/still.out")" "0|3|0"
+snap "$R/once" FAKE_SOL_SLOTS=100,200
+code=$?
+if [[ "$code" == 0 ]] && grep -q "the last-deployed slot of $PID moved during the dump (100 -> 200); dumping again" "$R/once.out" \
+   && grep -q "^program=$PID .* last_deployed_slot=200 " "$R/once.out" && [[ "$(elf_slot "$R/once/bin/$PID.so")" == 200 ]]; then
+  ok "slot check: a deploy during the dump -> one more dump; the kept bytes are slot 200's, and the line says 200"
+else
+  bad "slot check: one deploy during the dump -> exit $code ($(tr '\n' ' ' < "$R/once.out"))"
+fi
+snap "$R/twice" FAKE_SOL_SLOTS=100,200,300,400,500
+code=$?
+if [[ "$code" == 3 && ! -e "$R/twice/bin" ]] && grep -q "blocker.*moved during both dumps (100 -> 300 -> 500)" "$R/twice.out"; then
+  ok "slot check: a slot that moves during both dumps is a blocker (exit 3), nothing written"
+else
+  bad "slot check: deploys during both dumps -> exit $code ($(tr '\n' ' ' < "$R/twice.out"))"
+fi
+snap "$R/v4" FAKE_SOL_LOADER=v4 FAKE_SOL_SLOTS=700,800
+code=$?
+if [[ "$code" == 0 ]] && grep -q "moved during the dump (700 -> 800); dumping again" "$R/v4.out" \
+   && grep -q "^program=$PID owner=LoaderV4.* last_deployed_slot=800 " "$R/v4.out" && [[ "$(elf_slot "$R/v4/bin/$PID.so")" == 800 ]]; then
+  ok "slot check: the loader-v4 path re-reads the slot and dumps again too"
+else
+  bad "slot check: loader-v4 deploy during the dump -> exit $code ($(tr '\n' ' ' < "$R/v4.out"))"
+fi
 
 if [[ "$fails" -ne 0 ]]; then
   echo "test-dnr-collect: $fails assertion(s) FAILED" >&2

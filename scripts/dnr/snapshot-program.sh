@@ -25,7 +25,10 @@
 #      `program-v4 show --program-id <id>` (a fixed `--authority`, for the same
 #      reason), and an account neither command reads stops with a blocker.
 #   3. `solana -C <config> program dump <id>` (loader-v4: `program-v4 download
-#      --program-id <id>`) into the temp dir
+#      --program-id <id>`) into the temp dir, then `show` again: the slot and the
+#      bytes come from separate reads, so a slot that moved means a deploy landed
+#      in between. The dump is then taken once more, and a slot that moves again
+#      stops the script with a blocker.
 #   4. checks the ELF magic, hashes the dump the way solana-verify does (trailing
 #      zero padding trimmed, then sha256), keeps the dump and the show output in
 #      <incident_dir>/bin/, and prints ONE ledger-ready line:
@@ -62,8 +65,9 @@
 #
 # Exit: 0 ok · 2 usage / not a base58 32-byte public key / no or unusable $RPC_URL /
 # a refused run directory · 3 named blocker (no solana CLI or python3, config not
-# taken, CLI error or no program under any loader, dump without ELF magic, hash not
-# computed, a snapshot name already taken).
+# taken, CLI error or no program under any loader, dump without ELF magic, the
+# last-deployed slot moving during two dumps, hash not computed, a snapshot name
+# already taken).
 # bash >= 3.2, python3 for the id check and the hash, checked before the CLI runs, and run as
 # `python3 -I` because the working directory is usually the audited repo: without
 # -I, a hashlib.py there would be imported in place of the stdlib.
@@ -209,13 +213,31 @@ if ! show_program "$show"; then
     exit 3
   fi
 fi
-slot="$(slot_of "$show")"
-
-if ! dump_program "$dump"; then
-  echo "[blocker] the solana CLI could not dump $pid:" >&2
-  "$REDACT" <"$err" >&2
-  exit 3
-fi
+slot="$(slot_of "$show")"; seen="$slot"; dumps=0
+# Read the slot again after each dump; a deploy in between means the bytes may be
+# the newer program's, so dump once more, and stop if the slot moves again.
+while :; do
+  if ! dump_program "$dump"; then
+    echo "[blocker] the solana CLI could not dump $pid:" >&2
+    "$REDACT" <"$err" >&2
+    exit 3
+  fi
+  dumps=$((dumps + 1))
+  if ! show_program "$show"; then
+    echo "[blocker] the solana CLI could not read $pid again after the dump:" >&2
+    "$REDACT" <"$err" >&2
+    exit 3
+  fi
+  now="$(slot_of "$show")"
+  [ "$now" = "$slot" ] && break
+  seen="$seen -> $now"
+  if [ "$dumps" -ge 2 ]; then
+    echo "[blocker] the last-deployed slot of $pid moved during both dumps ($seen): deploys are still landing. Run the snapshot again once they stop; nothing was written." >&2
+    exit 3
+  fi
+  echo "  ! the last-deployed slot of $pid moved during the dump ($seen); dumping again" >&2
+  slot="$now"
+done
 
 magic="$(head -c 4 "$dump" | od -An -tx1 | tr -d ' \n')"
 if [ "$magic" != "7f454c46" ]; then
