@@ -124,13 +124,19 @@ done
 
 # ---------------------------------------------------------------------------
 # 6. collect.sh is gated: it refuses without --confirmed, and without $RPC_URL,
-#    before any network call.
+#    before any network call. The --confirmed case runs with $RPC_URL set and a
+#    curl on PATH that records every call, so only the gate can stop it.
 # ---------------------------------------------------------------------------
-if ( unset RPC_URL; bash "$DNR/collect.sh" --out "${TMPDIR:-/tmp}/dnr_ct.$$" -- "$A_ADDR" ) >/dev/null 2>&1; then
-  bad "collect: ran without --confirmed (must refuse)"
+GATE="$(mktemp -d "${TMPDIR:-/tmp}/dnr_gate.XXXXXX")"
+printf '#!/bin/sh\necho "$*" >> "%s/calls"\n' "$GATE" > "$GATE/curl"; chmod +x "$GATE/curl"
+( PATH="$GATE:$PATH" RPC_URL="https://rpc.example.test/" bash "$DNR/collect.sh" --out "$GATE/out" -- "$A_ADDR" ) >/dev/null 2>&1
+code=$?
+if [[ "$code" == 2 && ! -e "$GATE/calls" && ! -e "$GATE/out" ]]; then
+  ok "collect: refuses without --confirmed, \$RPC_URL set (exit 2, no curl call, nothing written)"
 else
-  ok "collect: refuses without --confirmed"
+  bad "collect: without --confirmed -> exit $code, curl calls: $(grep -c . "$GATE/calls" 2>/dev/null || echo 0)"
 fi
+rm -rf "$GATE"
 if ( unset RPC_URL; bash "$DNR/collect.sh" --out "${TMPDIR:-/tmp}/dnr_ct.$$" --confirmed -- "$A_ADDR" ) >/dev/null 2>&1; then
   bad "collect: ran without \$RPC_URL (must refuse)"
 else
