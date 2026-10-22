@@ -256,7 +256,8 @@ sha256_of() {
 # out, even where the two guard different things.
 # A commit's changed-line count comes from its own patch, which --pickaxe-all prints for every file in
 # the pathspec (a --numstat count would be zero for a file git treats as binary).
-# With GR_SIZE=1 each row starts with the commit's changed-line count (a sort key for R5d).
+# Each row starts with the commit's full id (for git; rows show the short one); with GR_SIZE=1 the
+# commit's changed-line count follows it (a sort key for R5d).
 guard_rows() {
   local repo=$1 range=$2 kwfile; shift 2
   kwfile="$TMPD/kw.$RANDOM"
@@ -279,11 +280,11 @@ guard_rows() {
       if (full == "") return
       for (t in net) {
         n = net[t]
-        if (n < 0) printf "%06d %d %s %s REMOVED x%d %s: %s    # %s\n", ci, size, short, date, -n, files["-", t], t, subj
+        if (n < 0) printf "%06d %s %d %s %s REMOVED x%d %s: %s    # %s\n", ci, full, size, short, date, -n, files["-", t], t, subj
         else if (n > 0 && (full in kw) && size <= ceil + 0)
-          printf "%06d %d %s %s ADDED x%d %s: %s    # %s\n", ci, size, short, date, n, files["+", t], t, subj
+          printf "%06d %s %d %s %s ADDED x%d %s: %s    # %s\n", ci, full, size, short, date, n, files["+", t], t, subj
         else if (n > 0 && !(full in kw) && size <= small + 0)
-          printf "%06d %d %s %s ADDED-QUIET x%d %s: %s    # %s\n", ci, size, short, date, n, files["+", t], t, subj
+          printf "%06d %s %d %s %s ADDED-QUIET x%d %s: %s    # %s\n", ci, full, size, short, date, n, files["+", t], t, subj
       }
       delete net; delete files; delete seen }
     /^__C__ / { flush(); ci++; full = $2; short = $3; date = $4; size = 0
@@ -297,7 +298,7 @@ guard_rows() {
               if (!isguard(s)) next
               t = s; gsub(/^[ \t]+|[ \t]+$/, "", t)
               if (substr($0, 1, 1) == "+") { net[t]++; note("+", t, newp) } else { net[t]--; note("-", t, oldp) } }
-    END { flush() }' | sort -k1,1n -k5 | cut -d' ' -f"$([ "${GR_SIZE:-0}" = 1 ] && echo 2- || echo 3-)"
+    END { flush() }' | sort -k1,1n -k6 | cut -d' ' -f"$([ "${GR_SIZE:-0}" = 1 ] && echo 2- || echo 2,4-)"
 }
 
 # remote_urls: one "remote.<name>.url <value>" line per configured remote URL. Config is read NUL-separated,
@@ -454,7 +455,8 @@ done > "$TMPD/r2"
   emit_capped "$TMPD/r2" "no revert commit in the pin ancestry"; endsec; } >> "$H"
 
 # ---- R3 guard lines removed / added ------------------------------------------------------------------
-guard_rows "$REPO" "$PIN_SHA" "${TPATHS[@]}" > "$TMPD/r3"
+guard_rows "$REPO" "$PIN_SHA" "${TPATHS[@]}" > "$TMPD/r3ids"
+cut -d' ' -f2- "$TMPD/r3ids" > "$TMPD/r3"
 grep -E ' REMOVED x' "$TMPD/r3" > "$TMPD/r3a"
 grep -E ' ADDED-QUIET x' "$TMPD/r3" > "$TMPD/r3b"
 grep -E ' ADDED x' "$TMPD/r3" > "$TMPD/r3c"
@@ -467,9 +469,10 @@ grep -E ' ADDED x' "$TMPD/r3" > "$TMPD/r3c"
   echo "--- R3c ADDED in keyword commits ---"
   emit_capped "$TMPD/r3c" "no guard text added by a keyword commit"
   endsec; } >> "$H"
-grep -E ' (REMOVED|ADDED-QUIET) x' "$TMPD/r3" | awk '!s[$1]++ { print $1 }' | head -n 20 |
-while read -r c; do
-  G "$REPO" show "${DIFFSAFE[@]}" --format='commit %H%n%ad%n%n%B' --date=short "$c" -- "${TPATHS[@]}" 2>/dev/null | head -n 400 > "$OUT/diffs/target-$c.diff"
+# Saved diffs name the commit by its full id: a short id could also be the name of a ref.
+grep -E ' (REMOVED|ADDED-QUIET) x' "$TMPD/r3ids" | awk '!s[$1]++ { print $1, $2 }' | head -n 20 |
+while read -r full c; do
+  G "$REPO" show "${DIFFSAFE[@]}" --format='commit %H%n%ad%n%n%B' --date=short "$full" -- "${TPATHS[@]}" 2>/dev/null | head -n 400 > "$OUT/diffs/target-$c.diff"
 done
 
 # ---- R4 churn --------------------------------------------------------------------------------------
@@ -547,15 +550,16 @@ R4_OTHER=$(sed -E 's/^ *[0-9]+ //' "$TMPD/r4a" | grep -E '\.rs"?$' |
       # the cap behind feature releases.
       GR_SIZE=1 guard_rows "$PDIR" "$FORK..$PHEAD" "${PPATHS[@]}" | grep -E ' ADDED(-QUIET)? x' |
         awk 'NR == FNR { have[$0] = 1; next }
-             { size = $1; row = $0; sub(/^[^ ]+ /, "", row)
+             { full = $1; size = $2; row = $0; sub(/^[^ ]+ [^ ]+ /, "", row)
                t = row; sub(/^[^:]*: /, "", t); sub(/    # .*$/, "", t); gsub(/[ \t]/, "", t)
-               if (t in have) printf "1 %d %06d %s  [text present elsewhere in target - verify]\n", size, NR, row
-               else           printf "0 %d %06d %s  [text absent from target @ pin - verify]\n", size, NR, row }' \
-        "$TMPD/target.lines" - | sort -k1,1n -k2,2n -k3,3n | cut -d' ' -f4- > "$TMPD/r5d"
+               if (t in have) printf "1 %d %06d %s %s  [text present elsewhere in target - verify]\n", size, NR, full, row
+               else           printf "0 %d %06d %s %s  [text absent from target @ pin - verify]\n", size, NR, full, row }' \
+        "$TMPD/target.lines" - | sort -k1,1n -k2,2n -k3,3n | cut -d' ' -f4- > "$TMPD/r5dids"
+      cut -d' ' -f2- "$TMPD/r5dids" > "$TMPD/r5d"
       emit_capped "$TMPD/r5d" "the parent added no guard line after the fork point"
-      awk '/text absent from target/ && !s[$1]++ { print $1 }' "$TMPD/r5d" | head -n 20 |
-      while read -r c; do
-        G "$PDIR" show "${DIFFSAFE[@]}" --format='commit %H%n%ad%n%n%B' --date=short "$c" -- "${PPATHS[@]}" 2>/dev/null | head -n 400 > "$OUT/diffs/parent-$c.diff"
+      awk '/text absent from target/ && !s[$1]++ { print $1, $2 }' "$TMPD/r5dids" | head -n 20 |
+      while read -r full c; do
+        G "$PDIR" show "${DIFFSAFE[@]}" --format='commit %H%n%ad%n%n%B' --date=short "$full" -- "${PPATHS[@]}" 2>/dev/null | head -n 400 > "$OUT/diffs/parent-$c.diff"
       done
     fi
   fi

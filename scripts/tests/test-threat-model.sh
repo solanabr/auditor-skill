@@ -829,6 +829,38 @@ check "T-r: after a directory rename of 70 guards, an older real removal still a
   sh -c "awk '/^## R3/,/^## R4/' '$OUTDR/history.md' | grep -q '^$C_REAL .* REMOVED x1 programs/old/src/lib.rs: require!(payer.is_signer, E::Signer);'"
 check "T-r: ... and R3 is not truncated by the rename" sh -c "! awk '/^## R3/,/^## R4/' '$OUTDR/history.md' | grep -q '^TRUNCATED'"
 
+# =================================================================================================
+# T-s: saved diffs. Each holds the commit its row cites, by full id, never a same-named ref.
+# =================================================================================================
+SD="$T/saved"; mkrepo "$SD"
+put "$SD" programs/s/src/guard.rs '#[account(mut, has_one = authority)]'
+put "$SD" programs/s/src/other.rs '// other module'
+commit "$SD" -m "initial"
+put "$SD" programs/s/src/guard.rs '#[account(mut)]'
+commit "$SD" -m "Rework guard accounts"
+C_SD=$(short "$SD" HEAD); F_SD=$(git -C "$SD" rev-parse HEAD)
+DECOY=$(printf 'decoy commit\n' | git -C "$SD" commit-tree "$(git -C "$SD" rev-parse 'HEAD~1^{tree}')")
+git -C "$SD" update-ref "refs/$C_SD" "$DECOY"
+git -C "$SD" update-ref "refs/tags/$C_SD" "$DECOY"
+BIGMSG=$(i=0; while [ $i -lt 420 ]; do printf 'migration note line %s\n' "$i"; i=$((i + 1)); done)
+BIGOTHER=$(i=0; while [ $i -lt 600 ]; do printf '// migrated line %s\n' "$i"; i=$((i + 1)); done)
+put "$SD" programs/s/src/other.rs "$BIGOTHER"
+put "$SD" programs/s/src/vault.rs '#[account(mut, has_one = owner)]'
+commit "$SD" -m "Migrate modules" -m "$BIGMSG"
+put "$SD" programs/s/src/vault.rs '#[account(mut)]'
+put "$SD" programs/s/src/other.rs '// other module'
+commit "$SD" -m "Migrate modules back" -m "$BIGMSG"
+C_BIG=$(short "$SD" HEAD)
+BIGGUARD=$(i=0; while [ $i -lt 500 ]; do printf '// padding line %s\n' "$i"; i=$((i + 1)); done)
+put "$SD" programs/s/src/huge.rs "${BIGGUARD}#[account(mut, has_one = admin)]"
+commit "$SD" -m "Add admin module"
+put "$SD" programs/s/src/huge.rs '// emptied'
+commit "$SD" -m "Remove admin module"
+C_HUGE=$(short "$SD" HEAD)
+OUTSD="$T/saved-run/audit_1/bootstrap"
+collect --repo "$SD" --out "$OUTSD" --offline
+check "T-s: a ref named like the row's short id does not change the saved diff" \
+  sh -c "head -n 1 '$OUTSD/diffs/target-$C_SD.diff' | grep -qx 'commit $F_SD' && ! grep -q 'decoy commit' '$OUTSD/diffs/target-$C_SD.diff'"
 echo
 echo "threat-model collector tests: $pass passed, $fail failed, $skip skipped"
 [ "$fail" -eq 0 ]
