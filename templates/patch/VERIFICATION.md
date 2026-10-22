@@ -43,13 +43,15 @@ AUDITOR_EXEC_MODE={MODE} VULNERABLE_SO={UNPATCHED_SO} FIXED_SO={PATCHED_SO} \
 **Re-detonated against:** {patched target build (`VULNERABLE_SO` / `FIXED_SO` overrides — `templates/poc/run.sh`) | minimized model}
 — a *patched target build* runs `run.sh` with `VULNERABLE_SO` = the unpatched build and `FIXED_SO` = the
 patched build of the target itself. That is `run.sh`'s prebuilt mode: it exits 3 unless both files are ELF
-programs and each arm's contract assertion ran and held — `assert_exploit_effect!` in `tests/exploit.rs` on
-the unpatched bytes, `assert_exploit_rejected_with!` (the guard's exact error) in `tests/fixed_blocked.rs`
-on the patched ones. Only a final line ending in `(rejected with the pinned error) → [PoC-REPRODUCED]`
-verifies our patch. A PoC written with the any-result `assert_exploit_succeeds!` / `assert_exploit_rejected!`
-switches to these first. The PoC must also use the program's real id, since an Anchor program checks its
-own `declare_id!`; `run.sh` does not check that. The *minimized model* is the PoC crate's own
-`vulnerable` / `fixed` arms with the patch transplanted.
+programs and each arm's contract assertion ran and held on the bytes `run.sh` placed (loaded through
+`mollusk_for`) — `assert_exploit_effect!` in `tests/exploit.rs` on the unpatched bytes,
+`assert_exploit_rejected_with!` (the guard's exact error) in `tests/fixed_blocked.rs` on the patched ones.
+Only a final line ending in `(rejected with the pinned error) → [PoC-REPRODUCED]` verifies our patch; exit 2
+means it did not block the attack, and exit 3 decides nothing (no contract assertion ran, the harness could
+not decide, or other bytes ran). A PoC written with the any-result `assert_exploit_succeeds!` /
+`assert_exploit_rejected!` switches to these first. The PoC must also use the program's real id, since an
+Anchor program checks its own `declare_id!`; `run.sh` does not check that. The *minimized model* is the PoC
+crate's own `vulnerable` / `fixed` arms with the patch transplanted.
 
 - **Pre-fix (recorded when the PoC was built):** `tests/exploit.rs` SUCCEEDED on the
   `vulnerable` arm — the attack went through. → `[PoC-REPRODUCED]`
