@@ -9,8 +9,10 @@
 # Read-only: it reads <tob-clone> with git and this repo's boundary-map / power-tools tables, and
 # writes nothing but a temp dir it removes on exit. Git runs without a pager or signature display, and
 # every diff, log and show without colour, external diff or textconv, so those settings in the
-# maintainer's ~/.gitconfig or the clone's config never reach the parsers below. The report informs
-# a human reviewer; it is not a verdict. Works with bash 3.2.
+# maintainer's ~/.gitconfig or the clone's config never reach the parsers below. Upstream's own
+# .gitattributes cannot hide a changed file from the scans either: they diff with --text, and read
+# attributes from the empty tree where git supports it (2.40+). The report informs a human reviewer; it
+# is not a verdict. Works with bash 3.2.
 set -uo pipefail
 
 fetch=0
@@ -23,15 +25,19 @@ repo=$(cd "$1" 2>/dev/null && pwd) || { echo "no such directory: $1" >&2; exit 2
 old=$2; new=$3
 cd "$(dirname "$0")/.."
 
-g() { git --no-pager -c log.showSignature=false -C "$repo" "$@"; }
+ATTR=()
+g() { git --no-pager -c log.showSignature=false -C "$repo" ${ATTR[@]+"${ATTR[@]}"} "$@"; }
 # on every diff, log and show: plain text with fixed a/ b/ prefixes for the parsers below
 DIFFSAFE=(--no-color --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/)
+SCAN=("${DIFFSAFE[@]}" --text)   # on every call whose output a scan reads: no file counts as binary
 if [ "$fetch" -eq 1 ]; then g fetch --quiet origin || { echo "fetch failed" >&2; exit 2; }; fi
 for c in "$old" "$new"; do
   g cat-file -e "$c^{commit}" 2>/dev/null \
     || { echo "commit $c not found in $repo (shallow or stale clone? try --fetch)" >&2; exit 2; }
 done
 [ "$(g rev-parse --is-shallow-repository)" = "true" ] && echo "warning: $repo is shallow; counts may be incomplete" >&2
+empty=$(g hash-object -t tree --no-filters /dev/null)
+if g --attr-source="$empty" check-attr diff -- probe.sh >/dev/null 2>&1; then ATTR=(--attr-source="$empty"); fi
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/tob-delta.XXXXXX") || exit 2
 trap 'rm -rf "$tmp"' EXIT
@@ -43,7 +49,7 @@ entries() { g ls-tree -r --full-tree "$1" | awk -F'\t' '{ split($1, a, " "); pri
 
 entries "$old" > "$tmp/old"
 entries "$new" > "$tmp/new"
-g diff "${DIFFSAFE[@]}" --name-status -M "$old" "$new" > "$tmp/ns"
+g diff "${SCAN[@]}" --name-status -M "$old" "$new" > "$tmp/ns"
 
 echo "## trailofbits/skills $(g log "${DIFFSAFE[@]}" -1 --format='%h %cs' "$old") -> $(g log "${DIFFSAFE[@]}" -1 --format='%h %cs' "$new")"
 echo
@@ -68,7 +74,7 @@ echo "($(grep -cE '^M.*\.claude-plugin/' "$tmp/ns") modified — version and des
 
 section "Manifests (plugin.json, marketplace.json) that declare hooks, MCP or LSP servers inline (at NEW)"
 awk -F'\t' '$2 ~ /(^|\/)\.claude-plugin\/(plugin|marketplace)\.json$/ {print $2}' "$tmp/new" | while IFS= read -r f; do
-  if g show "${DIFFSAFE[@]}" "$new:$f" | grep -E '"(hooks|mcpServers|lspServers)"' >/dev/null; then echo "$f"; fi
+  if g show "${SCAN[@]}" "$new:$f" | grep -E '"(hooks|mcpServers|lspServers)"' >/dev/null; then echo "$f"; fi
 done > "$tmp/inline"
 show "$tmp/inline"
 
@@ -103,12 +109,12 @@ hosts() { grep -E '^\+' | grep -oE 'https?://[A-Za-z0-9.-]+' | sort | uniq -c | 
 NOTESTS=(':(exclude)*/tests/*' ':(exclude)*/evals/*' ':(exclude)*/evals-extra/*' ':(exclude)*/fixtures/*')
 
 section "Hosts in added lines of scripts and config (excluding tests, evals, fixtures and lockfiles)"
-g diff "${DIFFSAFE[@]}" -U0 "$old" "$new" -- '*.sh' '*.bash' '*.py' '*.js' '*.mjs' '*.cjs' '*.ts' '*.json' '*.toml' '*.yml' '*.yaml' \
+g diff "${SCAN[@]}" -U0 "$old" "$new" -- '*.sh' '*.bash' '*.py' '*.js' '*.mjs' '*.cjs' '*.ts' '*.json' '*.toml' '*.yml' '*.yaml' \
   "${NOTESTS[@]}" ':(exclude)*.lock' ':(exclude)*package-lock.json' | hosts > "$tmp/hosts" || true
 show "$tmp/hosts"
 
 section "Hosts in added Markdown lines: skill and command text an agent may follow (excluding tests, evals and fixtures)"
-g diff "${DIFFSAFE[@]}" -U0 "$old" "$new" -- '*.md' "${NOTESTS[@]}" | hosts > "$tmp/mdhosts" || true
+g diff "${SCAN[@]}" -U0 "$old" "$new" -- '*.md' "${NOTESTS[@]}" | hosts > "$tmp/mdhosts" || true
 show "$tmp/mdhosts"
 
 section "Remote-exec patterns in added lines, continuation lines joined (pipe to a shell or interpreter, sh -c \"\$(curl …)\", <(curl …), npx --yes, pip / uvx from a URL)"
@@ -128,7 +134,7 @@ RX_PIPE="(curl|wget)[[:space:]].*[|][[:space:]]*(sudo([[:space:]]+-[A-Za-z]+([[:
 RX_SUBST="((ba|z|da|k)?sh[[:space:]]+-c|eval)[[:space:]]+[\"']?[\$][(][[:space:]]*(curl|wget)[[:space:]]"
 RX_PROC='(source|[.]|(ba|z|da|k)?sh)[[:space:]]+<[(][[:space:]]*(curl|wget)[[:space:]]'
 RX_PKG='npx[[:space:]]+(-y|--yes)([[:space:]]|$)|pip[0-9.]*[[:space:]]+install[[:space:]]+([^|;&]*[[:space:]])?(git[+]|https?://)|uvx[[:space:]]+--from[[:space:]]+git[+]'
-g diff "${DIFFSAFE[@]}" -U0 "$old" "$new" -- . ':(exclude)*.lock' | joined \
+g diff "${SCAN[@]}" -U0 "$old" "$new" -- . ':(exclude)*.lock' | joined \
   | grep -E "$RX_PIPE|$RX_SUBST|$RX_PROC|$RX_PKG" > "$tmp/rx" || true
 show "$tmp/rx"
 
