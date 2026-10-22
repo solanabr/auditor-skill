@@ -31,10 +31,14 @@ audited repo and may ship a same-named file. The python recipes run as
 `snapshot-program.sh` hashes with `python3 -I` for the same reason.
 
 ```bash
-bash "<auditor-skill root>/scripts/dnr/profile.sh" <corpus.jsonl>
-python3 -I "<auditor-skill root>/scripts/dnr/frames.py" <corpus.jsonl>
-python3 -I "<auditor-skill root>/scripts/dnr/deltas.py" tokens|lamports <corpus.jsonl>
+bash "<auditor-skill root>/scripts/dnr/profile.sh" <corpus.jsonl>...
+python3 -I "<auditor-skill root>/scripts/dnr/frames.py" [--instructions] <corpus.jsonl>...
+python3 -I "<auditor-skill root>/scripts/dnr/deltas.py" tokens|lamports <corpus.jsonl>...
 ```
+
+Each takes every corpus of an incident at once
+(`incident_<n>/corpus*/transactions.jsonl`) and reads a transaction that more
+than one of them holds once, by signature, saying how many copies it skipped.
 
 ## Two hazards these encode, and why
 
