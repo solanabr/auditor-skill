@@ -21,7 +21,9 @@ Review **only the top-severity survivors**: every confirmed finding at **N≥8**
 
 ## Tool delegation
 
-When `vendor/trailofbits/plugins` is present (`test -d vendor/trailofbits/plugins`), delegate exploitability verification to ToB **`second-opinion`** / **`fp-check`** (the exploitability-verifier) per `references/orchestration/boundary-map.md`, and fold the result into your verdict as evidence. When absent, do the re-derivation manually and note the tooling gap. Tool output is evidence, never the verdict.
+When the bundled Trail of Bits plugins are present (`test -d "${CLAUDE_PLUGIN_ROOT}/vendor/trailofbits/plugins"`), delegate exploitability verification to ToB **`second-opinion`** / **`fp-check`** (the exploitability-verifier) per `references/orchestration/boundary-map.md`, and fold the result into your verdict as evidence. When absent, do the re-derivation manually and note the tooling gap. Tool output is evidence, never the verdict.
+
+`fp-check` runs locally. `second-opinion` sends the selected code to an external LLM CLI (OpenAI Codex, or Google Antigravity / Gemini): whenever you use it, record the tool, the service and what you sent, so the report's outside-service disclosure lists it (`OUTPUT-RULES.md` Rule 11b).
 
 ## Output — one verdict per reviewed finding
 

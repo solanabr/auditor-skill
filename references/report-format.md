@@ -62,7 +62,7 @@ Every full audit report follows this exact section order:
 ```
 1. Executive Summary          (Rule 2 — always first)
 2. Scope Coverage             (in-scope checklists / vector groups, items evaluated / total)
-3. Scope & Methodology        (languages, files, LOC, checklists applied)
+3. Scope & Methodology        (languages, files, LOC, checklists applied, execution mode + outside services — OUTPUT-RULES Rule 11a/11b)
 4. Findings                   (severity ≥ 4, full blocks, grouped by severity descending)
 5. Detailed Item Results      (all in-scope checklist items, item-by-item verdicts)
 6. Known Vector Results       (each in-scope KV, with verdict)
@@ -97,7 +97,7 @@ The report MUST include computed metrics at the end of the Item Results section.
 
 | Metric | Value |
 |--------|-------|
-| Total known vectors | 131 |
+| Total known vectors | 140 |
 | PASS | {N} |
 | FAIL | {N} |
 | PARTIAL | {N} |
@@ -108,7 +108,7 @@ The report MUST include computed metrics at the end of the Item Results section.
 
 | # | Checklist | Items | Pass | Fail | Partial | N/A | Pass Rate |
 |---|-----------|-------|------|------|---------|-----|-----------|
-| 01 | Account Validation | 88 | | | | | % |
+| 01 | Account Validation | 90 | | | | | % |
 | ... | ... | ... | ... | ... | ... | ... | ... |
 | **Total** | | **{N}** | | | | | **{%}** |
 ```
@@ -120,8 +120,11 @@ The report MUST include computed metrics at the end of the Item Results section.
 | Output | Filename |
 |--------|----------|
 | Full audit report | `audit_{N}/REPORT.md` |
+| Threat-model bootstrap evidence | `audit_{N}/bootstrap/` (working material, OUTPUT-RULES.md Rule 11d) |
 | Remediation roadmap | `audit_{N}/roadmap.md` |
 | Per-instruction worksheets | `audit_{N}/worksheets/{instruction_name}.md` |
+| Incident run | `incident_{N}/INCIDENTS.json` · `INCIDENT_REPORT.md` · `RESPONSE-INC-{N}.{k}.md` |
+| Incident PoC / patch | `incident_{N}/poc/INC-{N}.{k}/` · `incident_{N}/patches/INC-{N}.{k}.patch` |
 | Checkpoint (session) | session memory: `audit-checkpoint.md` |
 
-Where `{N}` is the next audit number (count existing `audit_*/` directories + 1).
+Where `{N}` is the highest existing `audit_*` number + 1; create the dir with `mkdir` (not `mkdir -p`) and stop if it exists. Reuse an existing `audit_*` only if git does not track it and it holds no symbolic links, after the human confirms which one. Never write into a tracked `audit_*`. The first file in each `audit_{N}/` is a `.gitignore` containing `*` (OUTPUT-RULES Rule 11d). For `incident_{N}/`, `{N}` is the highest existing number + 1 and the directory is created with `mkdir` (not `-p`); an existing one is reused only when git does not track it, it holds no symbolic links, and the human confirms it (`references/detection-response/README.md` § Run directory).

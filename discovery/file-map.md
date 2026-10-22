@@ -1,7 +1,7 @@
 # File Discovery Patterns
 
 > Maps each audit checklist to the exact files/globs that must be scanned.  
-> When porting this auditor to a new repo, update these patterns to match the target project structure.
+> These are defaults. A target with another layout records its in-scope paths at intake (`QUESTIONS.md` Q39, exclusions under Q44, written to `audit_<n>/intake.md` §1) instead of editing this file, which a shared or plugin install overwrites on update.
 
 ---
 
@@ -161,7 +161,7 @@ PRIMARY:
 
 TERMINAL COMMANDS:
   solana program show <PROGRAM_ID>     # Upgrade authority
-  anchor verify <PROGRAM_ID>           # Binary verification
+  anchor verify <PROGRAM_ID>           # Binary verification (rebuilds the target: Rule 11a mode only)
 
 GREP PATTERNS:
   "declare_id!"          → Program ID
@@ -238,7 +238,8 @@ PRIMARY:
   Cargo.toml                           # Rust workspace
   Cargo.lock                           # Rust lock file
 
-TERMINAL COMMANDS:
+TERMINAL COMMANDS (from a scratch dir OUTSIDE the target tree, on copies of the manifest +
+lockfile, toolchain pinned — OUTPUT-RULES Rule 11a, FULL-AUDIT Step 3.2):
   npm audit                            # Known vulnerabilities
   cargo audit                          # Rust vulnerabilities
   npm info <pkg> time                  # Publish date check
@@ -263,9 +264,11 @@ SCAN TARGETS (entire repo):
   **/*keypair*
   **/*delegate*
 
-TERMINAL COMMANDS:
-  git ls-files | grep -i ".env"        # Committed env files
-  git log --all -S "private" --oneline # Secrets in git history
+TERMINAL COMMANDS (git with the OUTPUT-RULES Rule 11c prefix):
+  GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+    ls-files | grep -i ".env"          # Committed env files
+  GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+    log --all --no-textconv --no-ext-diff -S "private" --oneline   # Secrets in git history
   find . -name "*keypair*.json"        # Key files in repo
 ```
 
@@ -280,7 +283,7 @@ PRIMARY:
   scripts/                             # Build/deploy scripts
   .github/workflows/                   # CI/CD (if exists)
 
-TERMINAL COMMANDS:
+TERMINAL COMMANDS (they run target code: only in the OUTPUT-RULES Rule 11a mode recorded at intake):
   anchor build 2>&1 | tail -20        # Build verification
   anchor test 2>&1 | tail -30         # Test run
 ```

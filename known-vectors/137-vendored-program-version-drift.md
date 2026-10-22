@@ -17,15 +17,17 @@ Many Solana protocols do not write the program they deploy: they run a **white-l
 
 The class is invisible to dependency scanners: `cargo audit` / `npm audit` see library crates, not *deployed program provenance*. Checklist 11's package checks (SC-001..052) do not fire because the vulnerable artifact is the tenant's own on-chain program.
 
-> Cross-ref: checklist 11 §11.10 (SC-053..058 — vendored-program inventory, drift diff, advisory SLA, fleet monitoring); checklist 02 §2.7 (AC-051..055 — off-chain-signed authority grants); KV-020 / KV-091 (upgrade authority — who can patch, and who can hijack, the deployment); KV-102 (precompile signature-verification bypass); KV-004 (missing access control on the inherited admin surface); KV-089 (unpatched server dependencies — the off-chain ancestor of this vector).
+> Cross-ref: checklist 11 §11.10 (SC-053..058 — vendored-program inventory, drift diff, advisory SLA, fleet monitoring); checklist 02 §2.7 (AC-051..055 — off-chain-signed authority grants); KV-020 / KV-091 (upgrade authority — who can patch, and who can hijack, the deployment); KV-102 (precompile signature-verification bypass); KV-004 (missing access control on the inherited admin surface); KV-089 (unpatched server dependencies — the off-chain ancestor of this vector); `references/audit-lifecycle/threat-model-bootstrap.md` (its collector finds the fork point and lists guard lines the upstream added afterwards — leads for Step 2, not a verdict).
 
 #### Verification Procedure
 
 **Step 1: Establish program provenance — is any in-scope program vendored, white-label or forked?**
 ```
 grep -rn -iE "fork of|forked from|based on|powered by|white.?label|licensed from|upstream" README.md docs/ programs/ 2>/dev/null
-git log --oneline --reverse -- programs/ | head -5   # imported wholesale in one commit?
-git remote -v; git config --get-all remote.upstream.url 2>/dev/null
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  log --oneline --reverse --no-textconv -- programs/ | head -5   # imported wholesale in one commit? (Rule 11c flags)
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false remote -v
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false config --get-all remote.upstream.url
 grep -rn -E "declare_id!" programs/ | sort   # compare against known vendor/upstream program IDs
 ```
 - Record for each program: upstream repo/vendor, the commit or release the deployment was built from, and who operates the upgrade authority (tenant or vendor). Also list vendor programs reached via CPI (cross-ref KV-009).
@@ -34,7 +36,8 @@ grep -rn -E "declare_id!" programs/ | sort   # compare against known vendor/upst
 **Step 2: Diff the deployed version against upstream HEAD and its security history**
 ```
 solana-verify verify-from-repo -um --program-id <PROGRAM_ID> <UPSTREAM_REPO> 2>/dev/null   # or compare build hashes
-git log --oneline <deployed_commit>..upstream/main -- programs/ | head -40
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  log --oneline --no-textconv <deployed_commit>..upstream/main -- programs/ | head -40
 gh api repos/<upstream>/security-advisories 2>/dev/null; gh release list -R <upstream> | head -10
 ```
 - ✅ PASS: the deployed build corresponds to upstream HEAD or a maintained release branch, and no security-tagged commit / advisory / release note exists after the deployed commit

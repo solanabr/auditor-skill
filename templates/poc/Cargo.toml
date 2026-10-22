@@ -22,6 +22,11 @@ edition = "2021"
 publish = false
 license = "MIT"
 
+# Its own workspace root, so cargo never looks for one in a parent directory: not
+# above the scratch copy `run.sh` builds from, and not in the audited repo this
+# crate sits in, whose own `[workspace]` would claim it and refuse to build it.
+[workspace]
+
 # `cdylib` so `cargo build-sbf` can emit the loadable `.so` Mollusk runs;
 # `lib`   so the `tests/` can import this crate's types (state structs, ids).
 [lib]
@@ -33,10 +38,10 @@ vulnerable = []
 fixed = []
 
 [dependencies]
-# Match these to the audited program's own on-chain deps (framework + version).
-# Native example shown; for an Anchor target swap in `anchor-lang`/`anchor-spl`,
-# for Pinocchio swap in `pinocchio`. The closer the PoC's deps track the target,
-# the more faithful the reproduction.
+# Framework crates by default, at the audited program's versions. Native example
+# shown; for an Anchor target swap in `anchor-lang`/`anchor-spl`, for Pinocchio swap
+# in `pinocchio`. A crate copied from the target's manifest runs its build script in
+# the recorded execution mode, so add one only when the PoC needs it.
 solana-program = "3"
 borsh = "1"
 

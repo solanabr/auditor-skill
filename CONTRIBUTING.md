@@ -34,8 +34,9 @@ git config core.hooksPath scripts/hooks      # enables the attribution-trailer c
 bash scripts/check-corpus.sh                 # should print "ok" lines and exit 0 on a clean tree
 ```
 
-Optional: `git submodule update --init --recursive` for the vendored Trail of Bits tooling and
-`cd tools/auditor-tools && cargo build --release` for the Rust CLIs. Neither is needed for corpus PRs.
+Optional: `git submodule update --init --depth 1 -- vendor/trailofbits` for the vendored Trail of Bits
+tooling and `cd tools/auditor-tools && cargo build --release` for the Rust CLIs. Neither is needed for
+corpus PRs.
 
 ---
 
@@ -56,6 +57,9 @@ Optional: `git submodule update --init --recursive` for the vendored Trail of Bi
 Version bumps are their own `chore(release)` PR (or the last commit of a release PR) — content PRs update
 counts but leave the version alone, so several content PRs can be open at once without conflicting on the
 version line.
+
+A release PR also re-checks every row of ATTRIBUTION.md's "Assessed, not vendored" table against its
+re-check trigger and updates the assessed commit.
 
 ---
 
@@ -115,6 +119,33 @@ version line.
 warning-free, add or extend a fixture under the tool's test directory for any parser change, and document
 new flags in `docs/power-tools.md`. Workflow files pin third-party actions to a full commit SHA with the
 version in a trailing comment.
+
+### Bumping `vendor/trailofbits`
+
+The Trail of Bits pin ships to every user: Claude Code clones the plugin with its submodules, and
+`install.sh` fetches it too. So it moves only after a human has read the upstream delta. Dependabot opens
+one `gitsubmodule` PR a month (`.github/dependabot.yml`, 7-day cooldown) and `scripts/check-corpus.sh`
+fails that PR until the README pin is updated on the same branch. Never auto-merge it.
+
+1. In a full clone of `https://github.com/trailofbits/skills`, run
+   `bash scripts/tob-delta-review.sh <clone> <old-sha> <new-sha>` (read-only; `--fetch` updates the clone
+   first). Read every section: plugins added or removed; load surfaces (nested `.claude/`, `.claude-plugin/`
+   manifests and any hooks / MCP / LSP servers they declare, `hooks/`, `.mcp.json` / `.lsp.json`, settings,
+   `CLAUDE.md` / `AGENTS.md`, `workflows/*.js`); new executables; symlinks (`120000`) and gitlinks
+   (`160000`); hosts in added script, config and Markdown lines (tests, evals, fixtures and lockfiles left
+   out); remote-exec patterns in added lines, with continuation lines joined (a download piped to a shell or
+   interpreter, `sh -c "$(curl …)"`, `<(curl …)`, `npx --yes`, `pip` or `uvx` from a URL); the `LICENSE`
+   (must be unchanged).
+2. The script ends by checking that every plugin named in `references/orchestration/boundary-map.md` and
+   `docs/power-tools.md` still exists. For each one that changed (`git diff <old> <new> -- plugins/<name>`),
+   update its rows when the entry point, behaviour, execution (`OUTPUT-RULES.md` Rule 11a) or outside
+   services it contacts (Rule 11b) changed.
+3. Update the README pin line — short SHA, full `…/tree/<sha>` URL, upstream commit date — on the bump
+   branch; `bash scripts/check-corpus.sh` must pass.
+4. After merge, cut a release (§3): the plugin cache is keyed by version, so plugin users receive a new
+   pin only with a release.
+5. Tell `solanabr/ai-kit` the new full SHA. Its `skill-registry.json` records our pin under `vendored`, and
+   its CI fails until that record moves too.
 
 ---
 

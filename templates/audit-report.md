@@ -6,7 +6,7 @@ This is the PROFESSIONAL, findings-focused deliverable handed to the client —
 structured the way public Solana security reports are (Trail of Bits, OtterSec,
 Neodyme, Zellic, Zenith, Halborn, Certora). It is DISTINCT from
 templates/report-template.md, which is the INTERNAL item-by-item verdict report
-(1433-item checklist grid + 1-10 risk score). Use THIS file when producing the
+(1446-item checklist grid + 1-10 risk score). Use THIS file when producing the
 report the client reads.
 
 HOW TO USE:
@@ -36,7 +36,7 @@ the proprietary knowledge base, and re-author all conventions in original wordin
 
 |                       |                                                        |
 | --------------------- | ------------------------------------------------------ |
-| **Auditor**           | auditor-skill v7.5                                     |
+| **Auditor**           | auditor-skill v7.6                                     |
 | **Client**            | {client / organization}                                |
 | **Protocol**          | {protocol / product name}                              |
 | **Report Title**      | {e.g. "Vault Program Security Assessment"}             |
@@ -379,6 +379,8 @@ scopes the assurance the client should take away. Cover:
   issue exists there.
 - **Blockers** — {Anything that constrained coverage: code delivered late,
   portions unbuildable, closed-source components, or the engagement time box.}
+- **Execution mode** — {isolated: <container / VM / sandbox> | native: target-controlled code (builds, tests, PoCs) ran on the auditor's machine — steps: …} (OUTPUT-RULES Rule 11a).
+- **Outside services** — {one line per tool → service → what was sent | none} (OUTPUT-RULES Rule 11b).
 
 ---
 

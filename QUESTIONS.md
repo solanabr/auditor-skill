@@ -384,11 +384,11 @@ Branch to audit: _______________
 Commit hash (optional): _______________
 ```
 
-**Option B: Clone into auditor's workspace (recommended for private repos)**
+**Option B: Local checkout in the auditor's workspace (recommended for private repos)**
 ```
-Clone the auditor-skill folder into your repo:
-  cp -r auditor-skill/ your-repo/.github/skills/auditor-skill/
-Then invoke the audit from your IDE's AI agent.
+Install auditor-skill outside your repository (the plugin, or a user-level skill
+such as ~/.claude/skills/auditor-skill; OUTPUT-RULES.md Rule 11e), then invoke
+the audit from your IDE's AI agent in the repository.
 ```
 
 **Option C: Upload files (for web-based service)**
@@ -413,6 +413,18 @@ _______________
 
 ---
 
+## Section 11: Audit Execution
+
+### Q46. Where may the auditor run the project's own code?
+Building, testing or installing the project runs code the project controls — build scripts, proc-macros, test suites, `Anchor.toml` scripts, package install hooks. Asked once per audit; see `OUTPUT-RULES.md` Rule 11a.
+- [ ] **Isolated** (recommended) — a container, VM, or Claude Code sandbox, with no keys or credentials mounted
+- [ ] **Native** — on the auditor's own machine (the report says so)
+- [ ] No preference — recorded as **native** (also the default when automated runs leave Q46 unanswered), and the report carries that caveat
+
+> Tools that send code, dependency names or addresses to outside services (an RPC provider, a second-opinion LLM, package registries) are not gated by this answer; the report lists each one (Rule 11b).
+
+---
+
 ## How Answers Affect the Audit
 
 | Answer | Effect |
@@ -426,7 +438,10 @@ _______________
 | Q18 / Q22 = token registry or risk API | Loads `references/methodologies/token-registry-risk.md` + KV-132 / KV-133 (identity spoofing, score farming) |
 | Q22 = Geyser stream / indexer or fee sponsorship | Loads `references/vuln-classes/transaction-v1.md` + KV-135 / KV-136 (transaction v1: sponsor cap bypass, reader wedge, zero-budget indexing) + checklist 20 §20.6, 09 §9.18 |
 | Q25 = First audit | Triggers more thorough analysis, no assumptions about prior fixes |
+| Q31 = GitHub Actions | Loads `references/vuln-classes/github-actions.md` + KV-139 / KV-140 + checklist 13 §13.13 (DEP-090..096); add KV-116 and AI-034..035 when an AI agent runs in CI |
 | Q32 = No tests | Auto-flags testing gaps, enables checklist 16 recommendations |
 | Q35 = MiCA/GDPR | Enables compliance checklist (18) |
 | Q39 = Specific scope | Skips irrelevant checklists, reduces cost/time |
 | Q41 = Quick scan | Uses grep + known vectors only, skips semantic analysis |
+| Q46 = Isolated | Builds, tests, installs and every PoC build run in a container / VM / sandbox (`OUTPUT-RULES.md` Rule 11a); a step that cannot run there keeps its source-level verdict, and a PoC records `[PoC-ATTEMPTED]` |
+| Q46 = Native, or unanswered | Target-controlled code runs on the auditor's machine; the report's Coverage & Limitations states it |

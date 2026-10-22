@@ -33,7 +33,7 @@ grep -rn --include="*.yaml" --include="*.yml" --include="*.ts" -iE "backup|mongo
 ```
 # Is the git repo the single source of truth?
 # Are there other critical configs not in version control?
-git remote -v 2>/dev/null
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false remote -v   # Rule 11c flags
 ```
 - ✅ PASS: All code in version control, infrastructure as code, multiple remotes
 - ❌ FAIL: Single point of failure (one GitHub repo, no mirrors)

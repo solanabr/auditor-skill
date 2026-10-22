@@ -12,9 +12,10 @@ auditor-skill offers a spectrum from a 5-minute grep triage to a full automated 
 | Only a PR / commit range changed | [`/auditor:diff-audit`](#cheap-lanes) | scales with the diff |
 | One handler / endpoint needs a deep look | [`/auditor:deep-review`](#one-shot-audit) | one unit |
 | Whole repo, one pass, you drive triage | [`/auditor:audit`](#one-shot-audit) | full walk |
-| Full engagement, no human, deliver a report | [`/auditor:audit-cycle`](#flow-a--audit-cycle-automated) | highest |
-| Full engagement, human resolves judgment calls | [`/auditor:audit-assist`](#flow-b--audit-assist-interactive) | high, iterative |
+| Full engagement, no human, deliver a report | [`/auditor:audit-cycle`](#flow-a--auditoraudit-cycle-automated) | highest |
+| Full engagement, human resolves judgment calls | [`/auditor:audit-assist`](#flow-b--auditoraudit-assist-interactive) | high, iterative |
 | Team fixed the findings; verify the fixes | [`/auditor:re-audit`](#fix-review--re-audit) | delta only |
+| A protocol may already have been attacked | [`/auditor:hunt` · `/auditor:respond`](detection-response.md) | scales with ledger rounds |
 
 All three heavyweight flows run the **same lifecycle** over the same corpus. The difference is autonomy: `audit-cycle` runs it to completion, `audit-assist` pauses for you, `re-audit` runs the delta subset.
 
@@ -27,7 +28,7 @@ intake / scope     → declare scope (Rule 0), pin the commit, persist audit_<n>
    ↓
 context (Phase 0.5)→ context-builder reconstructs invariants/assumptions per function (no verdicts)
    ↓
-threat model       → threat-modeler emits assets · actor×capability · trust boundaries (no verdicts)
+threat model       → threat-modeler emits assets · actor×capability · trust boundaries · AG-n goals (no verdicts); history-seeded by the bundled collector when a trigger fires
    ↓
 tool-assisted pass → ToB static-analysis (SARIF) up-front to clear the mechanical surface; else grep
    ↓
@@ -87,7 +88,7 @@ The fully automated audit team. Runs the whole lifecycle above with **no human i
 /auditor:audit-cycle --scope program --with-poc   # + executable PoCs & patches for confirmed N≥7
 ```
 
-Delivers the **client-facing** report (`templates/audit-report.md`): executive summary, commit-pinned scope, findings with PoC/reachability, a code-maturity narrative, trust-model caveats, disclaimers — and, like a real firm, **no "safe to deploy" guarantee**. Optional PDF via `scripts/report-to-pdf.sh` (pandoc-gated; Markdown is always the deliverable). Generated fuzz/FV harnesses ship to `audit_<n>/harnesses/` with a coverage-gaps note; with `--with-poc`, PoCs land in `audit_<n>/poc/` and patches in `audit_<n>/patches/`.
+Delivers the **client-facing** report (`templates/audit-report.md`): executive summary, commit-pinned scope, findings with PoC/reachability, a code-maturity narrative, trust-model caveats, disclaimers — and, like a real firm, **no "safe to deploy" guarantee**. Optional PDF via `<auditor-skill root>/scripts/report-to-pdf.sh` (pandoc-gated; Markdown is always the deliverable). Generated fuzz/FV harnesses ship to `audit_<n>/harnesses/` with a coverage-gaps note; with `--with-poc`, PoCs land in `audit_<n>/poc/` and patches in `audit_<n>/patches/`.
 
 Use it when you want a reproducible, hands-off first-pass audit and a deliverable document.
 
@@ -125,11 +126,11 @@ These skip the full item-by-item walk.
 
 ### `/auditor:quick-scan`
 
-Discovery + static analysis (ToB `static-analysis` if present, else grep scanners) + only the CRITICAL/HIGH known-vectors for the detected domains. Reports findings with severity + `file:line`, and states plainly it is a triage pass. Good for a first look or a CI gate; points to `/auditor:audit` for full coverage.
+Discovery + static analysis (ToB `static-analysis` if present, else grep scanners) + only the CRITICAL/HIGH known-vectors for the detected domains. Reports findings with severity + `file:line`, and states plainly it is a triage pass. Good for a first look or a CI gate; points to `/auditor:audit` for full coverage. As a CI gate on a public repository it publishes pass/fail only — no finding counts — in comments, logs and artifacts, and sends details through a private channel, failing the job when none is available and never falling back to printing them (`OUTPUT-RULES.md` Rule 11d).
 
 ### `/auditor:diff-audit`
 
-PR / commit-scoped. Computes the changed set (`git diff --name-only base..head`, default `main..HEAD`), runs Phase 0.5 on changed functions + 1-hop callers/callees, risk-classifies changed files (auth / crypto / value-transfer / validation-removal = HIGH), git-blames removed security code (a deletion in a "fix"/"CVE" commit is a CRITICAL regression), and runs only the matching checklist items + vectors through Rule 5b. Emits `audit_<n>/PR-REPORT.md`.
+PR / commit-scoped. Computes the changed set (`git diff --name-only base..head`, default `main..HEAD`), runs Phase 0.5 on changed functions + 1-hop callers/callees, risk-classifies changed files (auth / crypto / value-transfer / validation-removal = HIGH), git-blames removed security code (a deletion in a "fix"/"CVE" commit is a CRITICAL regression), runs only the matching checklist items + vectors through Rule 5b, and adds a dependency lane (checklist 11 §11.11 — the published code delta of each bumped package) when a manifest or lockfile changed. Emits `audit_<n>/PR-REPORT.md`.
 
 ```
 /auditor:diff-audit main..HEAD

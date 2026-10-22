@@ -17,6 +17,8 @@ Note: this is a **liveness/DoS** issue, not memory corruption — the VM aborts 
 
 **Step 1: Build and grep for the linker-stage stack warning**
 ```
+# builds the target (build.rs, proc-macros): only in the OUTPUT-RULES Rule 11a mode recorded at intake;
+# if that mode cannot run it, verdict from Step 2's source checks with a Rule 10 confidence note
 anchor build 2>&1 | grep -iE "exceeded max offset of 4096|stack offset of|access violation in stack frame"
 cargo build-sbf 2>&1 | grep -iE "exceeded max offset|stack frame"
 ```

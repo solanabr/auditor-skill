@@ -12,7 +12,7 @@ Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{seve
 
 - [ ] **BE-001**: Every POST/PUT/DELETE endpoint verifies wallet ownership via signature — not just trusting `walletAddress` from body
 - [ ] **BE-002**: Signature verification headers present: `x-wallet`, `x-signature`, `x-timestamp`
-- [ ] **BE-003**: Signature message format: `${method}:${path}:${timestamp}` — consistent across all endpoints
+- [ ] **BE-003**: Signed-message binding, one format across all endpoints: every message a wallet signs for this backend carries Sign-In-With-Solana-style fields — domain, cluster or chain ID, a single-use server-issued nonce, issued-at and expiry, plus the method and path for per-request signatures — and the server verifies each field and consumes the nonce before it accepts the signature (PASS: every field present and checked server-side; FAIL: a message without the domain, the cluster or a server nonce, e.g. `${method}:${path}:${timestamp}`, or a field the server does not check)
 - [ ] **BE-004**: Verification library: `tweetnacl` or `@noble/ed25519` — correct usage of `sign.detached.verify()`
 - [ ] **BE-005**: Replay protection: timestamp checked — reject if > 5 minutes old
 - [ ] **BE-006**: Timestamp is compared against server time, not client-supplied time

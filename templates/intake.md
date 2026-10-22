@@ -12,9 +12,11 @@ FEEDS THE REPORT:
   - Trust-model inputs                     -> §4.4 Trust Model & Actors, §4.6 Assumptions
   - Severity calibration                   -> §5 Severity Classification (deployment/TVL levers)
   - Assumed defaults (unanswered)          -> §4.6 Assumptions & Simplifications
+  - Execution mode + outside services      -> §3.5 Coverage & Limitations (OUTPUT-RULES Rule 11a / 11b)
 
 HOW TO USE:
-  1. Copy to audit_<n>/intake.md. Fill every {placeholder}.
+  1. Copy to audit_<n>/intake.md (create audit_<n>/ with a .gitignore containing
+     "*" as its first file — OUTPUT-RULES Rule 11d). Fill every {placeholder}.
   2. Interactive flow (/intake): ASK each unanswered question, record the answer.
   3. Auto flow (audit-cycle): apply the QUESTIONS.md default, and record it under
      "Assumed Defaults (Unanswered)" with the exact default applied — never leave
@@ -47,6 +49,7 @@ HOW TO USE:
 | **Scope**           | {FULL / PROGRAM / BACKEND / FRONTEND / DEVOPS}    |
 | **In scope**        | {paths / programs / dirs reviewed}                |
 | **Out of scope**    | {excluded paths + reason — Q44} |
+| **audit-mem store** | {path of the store that passed the Rule 11d check / none} |
 
 ---
 
@@ -164,7 +167,26 @@ text for report §4.6.}
 
 ---
 
-## 8. Assumed Defaults (Unanswered)
+## 8. Execution Mode & Outside Services
+
+<!--
+Q46. OUTPUT-RULES Rule 11a: where target-controlled code (builds, tests, installs,
+Anchor.toml [scripts], and every PoC build) may run. Asked once per audit;
+every later step that executes target code or builds a PoC uses this answer, and
+templates/poc/run.sh receives it as AUDITOR_EXEC_MODE. In the auto flow an
+unanswered Q46 is "native" and goes in §9 with its basis. Outside services are not
+gated — they are listed in the report (Rule 11b).
+-->
+
+| | |
+| ------------------------- | ------------------------------------------- |
+| **Execution mode**        | {isolated (recommended) / native} (Q46)     |
+| **Isolation used**        | {container / VM / Claude Code sandbox — no keys or credentials mounted / N/A (native)} |
+| **Outside services**      | {disclosed in the report per Rule 11b — e.g. RPC provider, second-opinion LLM, registry queries / none planned} |
+
+---
+
+## 9. Assumed Defaults (Unanswered)
 
 <!--
 MANDATORY when any question was not answered by a human (the norm for the auto
@@ -180,6 +202,7 @@ human explicitly deferred.
 | {Q10 TVL — unanswered} | {assumed "Unknown" → severity calibrated to pre-launch baseline} | QUESTIONS.md default |
 | {Q11 upgradeable — unanswered} | {assumed present; upgrade authority treated as trusted-but-single unless code shows otherwise} | QUESTIONS.md default |
 | {Q23 oracle — unanswered} | {assumed no oracle unless code shows a feed} | inferred from code |
+| {Q46 execution mode — unanswered} | {native — target-controlled code runs on the auditor's machine; the report states it} | OUTPUT-RULES Rule 11a default |
 | {…} | {…} | {…} |
 
 > Every default listed here is carried into the report's **§4.6 Assumptions &

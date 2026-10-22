@@ -14,8 +14,14 @@ Known vulnerability in production dependency → attacker uses public exploit to
 
 **Step 1: Run npm audit**
 ```
-cd apps/backend && npm audit --omit=dev 2>/dev/null; cd ../..
-cd apps/web && npm audit --omit=dev 2>/dev/null; cd ../..
+# Audits and registry queries run from a scratch dir OUTSIDE the target tree, on copies of
+# the manifest + lockfile, so the target's .npmrc cannot steer them (OUTPUT-RULES Rule 11a)
+SCRATCH=$(mktemp -d)   # outside the target tree
+mkdir -p "$SCRATCH/backend" "$SCRATCH/web"
+cp apps/backend/package.json apps/backend/package-lock.json "$SCRATCH/backend/"
+cp apps/web/package.json apps/web/package-lock.json "$SCRATCH/web/"
+(cd "$SCRATCH/backend" && npm audit --omit=dev)
+(cd "$SCRATCH/web" && npm audit --omit=dev)
 ```
 - ✅ PASS: Zero high/critical vulnerabilities
 - ⚠️ PARTIAL: Only moderate or low vulnerabilities
@@ -23,7 +29,10 @@ cd apps/web && npm audit --omit=dev 2>/dev/null; cd ../..
 
 **Step 2: Check for outdated packages**
 ```
-npm outdated 2>/dev/null | head -20
+# On the Step 1 copies. They have no node_modules, so Current reads MISSING:
+# compare Wanted / Latest with the version the lockfile pins
+(cd "$SCRATCH/backend" && npm outdated)
+(cd "$SCRATCH/web" && npm outdated)
 ```
 - ✅ PASS: All packages within 1-2 minor versions of latest
 - ⚠️ PARTIAL: Some packages several versions behind
@@ -45,10 +54,22 @@ grep -E "\"[~^]" apps/backend/package.json apps/web/package.json | head -20
 
 **Step 5: Check Cargo audit (Solana program)**
 ```
-cd programs/<your_program> && cargo audit 2>/dev/null | tail -20; cd ../..
+# A copy of Cargo.lock in the Step 1 scratch dir, toolchain pinned (OUTPUT-RULES Rule 11a), stderr
+# kept. cargo-audit exits 1 both for advisories and for an advisory database it cannot fetch or
+# load, so the OUTCOME line decides (the FULL-AUDIT Step 3.2 recipe)
+mkdir -p "$SCRATCH/rust" && cp Cargo.lock "$SCRATCH/rust/"
+TC=$(cd "$SCRATCH" && rustup default | cut -d' ' -f1)   # your own toolchain, never the target's
+if (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit --version) >/dev/null 2>&1; then
+  (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit --color never) 2>&1 | tee "$SCRATCH/cargo-audit.txt"
+  grep -qE '^error: [0-9]+ vulnerabilit(y|ies) found' "$SCRATCH/cargo-audit.txt" && echo "OUTCOME: vulnerabilities found"
+  grep -qE '^error: .*advisory database' "$SCRATCH/cargo-audit.txt" && echo "OUTCOME: advisory DB unavailable"
+else
+  echo "OUTCOME: not installed"
+fi
 ```
-- ✅ PASS: Zero vulnerabilities in Rust dependencies
-- ❌ FAIL: Known CVEs in Rust dependencies
+- ✅ PASS: no OUTCOME line and no `error:` line — zero vulnerabilities in Rust dependencies
+- ❌ FAIL: `OUTCOME: vulnerabilities found` — known CVEs in Rust dependencies
+- ⚠️ Not run, never a PASS: `OUTCOME: advisory DB unavailable` (Coverage & Limitations records "advisory DB unavailable", or rerun with `--no-fetch` against a local DB if one exists) or `OUTCOME: not installed` (N/A, and Coverage & Limitations says so)
 
 **Overall verdict:**
 - ✅: No audit vulnerabilities, packages up to date, LTS Node, pinned versions

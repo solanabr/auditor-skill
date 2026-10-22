@@ -6,8 +6,8 @@
 # clear message and exits 0 (success), so it can be wired into any pipeline
 # without ever breaking a build.
 #
-# Usage:
-#   ./scripts/report-to-pdf.sh [path/to/REPORT.md]
+# Usage (by the installation's absolute path, never one relative to the audited repo):
+#   "${CLAUDE_PLUGIN_ROOT}/scripts/report-to-pdf.sh" [path/to/REPORT.md]
 #
 # If no argument is given, it defaults to the newest audit_*/REPORT.md.
 # Output PDF is written next to the input, with the .md extension swapped for .pdf.

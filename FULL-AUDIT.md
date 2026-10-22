@@ -18,6 +18,8 @@ Before starting any phase:
 4. Detect languages in the repo (Rule 7 in OUTPUT-RULES.md) — this determines which checklists to apply
 5. Create a session checkpoint file to track progress across chunks (Rule 3 in OUTPUT-RULES.md)
 6. Remember: **walk the code file by file — never one-shot** (Rule 3)
+7. Apply **Operating Safety** ([OUTPUT-RULES.md Rule 11](OUTPUT-RULES.md#rule-11-operating-safety)) before anything runs: take the execution mode recorded at intake (11a — isolated recommended, native allowed with a report caveat), list every outside service a tool contacts (11b), treat a `.git/` you did not clone yourself as untrusted (11c), and make `.gitignore` containing `*` the first file in `audit_<n>/` (11d)
+8. Resolve every bundled path in this file (`tools/`, `templates/`, `scripts/`, `vendor/trailofbits/`, the corpus) from the auditor-skill root, never the working directory, which is the audited repo ([Rule 11e](OUTPUT-RULES.md#11e--bundled-paths)). The root is the absolute path the skill (`${CLAUDE_SKILL_DIR}`) or command (`${CLAUDE_PLUGIN_ROOT}`) gave you; nothing is filled in here, so it is written `<auditor-skill root>` below. The executables this plan runs: `"<auditor-skill root>/tools/auditor-tools/target/release/audit-scan"`, `"<auditor-skill root>/tools/auditor-tools/target/release/audit-mem"`, and the Trail of Bits plugins when `test -d "<auditor-skill root>/vendor/trailofbits/plugins"` succeeds
 
 ---
 
@@ -61,7 +63,7 @@ RECORD:
 ### 0.2 — Map the Codebase
 
 ```
-ACTION: Use the file-map in discovery/file-map.md OR auto-discover:
+ACTION: Use the in-scope paths recorded at intake (audit_<n>/intake.md §1, Q39/Q44), else the defaults in discovery/file-map.md, OR auto-discover:
   1. List all .rs files under programs/
   2. List all .ts/.tsx files under apps/backend/src/
   3. List all .ts/.tsx files under apps/web/src/
@@ -78,7 +80,7 @@ RECORD:
 
 ### 0.3 — Build Instruction Matrix
 
-> **Optional deterministic pre-pass.** If `tools/auditor-tools/` is built, run `audit-scan <program-path> --out audit_<n>/prescan.json` first — it emits this instruction matrix (plus the account-constraint, PDA-seed, arithmetic, and CPI tables) deterministically at ~$0, so Phase 0.2–0.4 collapse to *reading the JSON* and files with zero scan hits get a spot-check instead of a full read. Also run `audit-mem warm <program-id>` to load prior invariants + open false-positive rulings. Treat all pre-scan output as a *map to verify*, never as verdicts. See [references/orchestration/pre-scan.md](references/orchestration/pre-scan.md). Absent the toolchain, build the matrix by hand below.
+> **Optional deterministic pre-pass.** If the bundled tools are built (`test -x "<auditor-skill root>/tools/auditor-tools/target/release/audit-scan"`, PRE-FLIGHT 8), run `"<auditor-skill root>/tools/auditor-tools/target/release/audit-scan" <program-path> --out audit_<n>/prescan.json` first — it emits this instruction matrix (plus the account-constraint, PDA-seed, arithmetic, and CPI tables) deterministically at ~$0, so Phase 0.2–0.4 collapse to *reading the JSON* and files with zero scan hits get a spot-check instead of a full read. Also run `"<auditor-skill root>/tools/auditor-tools/target/release/audit-mem" warm --program-id <id>` to load prior invariants + open false-positive rulings, but only after the Rule 11d store check passes: use `.audit-memory/` only if the repository does not track it (`GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false --icase-pathspecs ls-files -- .audit-memory` prints nothing and exits 0; any output, in any letter case, or any error means: do not use that store) and you created it, writing `mkdir -p .audit-memory && printf '*\n' > .audit-memory/.gitignore` first; otherwise pass `--db <path outside the tree>` for a fresh store. Treat all pre-scan output as a *map to verify*, never as verdicts. See [references/orchestration/pre-scan.md](references/orchestration/pre-scan.md). Absent the toolchain, build the matrix by hand below.
 
 ```
 ACTION: Read lib.rs → list every #[instruction] or pub fn handler.
@@ -344,20 +346,62 @@ ACTIONS:
   # Check for compromised packages
   grep "axios" apps/backend/package.json apps/web/package.json
   # → verify NOT 1.14.1 or 0.30.4
+  W3='web3\.js@(npm:)?1\.95\.(6|7)([^0-9]|$)|/web3\.js/-/web3\.js-1\.95\.(6|7)\.tgz|"@solana/web3\.js"[[:space:]]*:[[:space:]]*"=?1\.95\.(6|7)"'
+  grep -rnE "$W3" --exclude-dir=node_modules --include='package.json' --include='package-lock.json' \
+    --include='pnpm-lock.yaml' --include='yarn.lock' --include='bun.lock' .
+  # history too; --text because a committed .gitattributes can mark lockfiles binary,
+  # which hides them from -G
+  GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c core.bigFileThreshold=512m \
+    log --all --oneline --text --no-textconv --no-ext-diff -G"$W3" -- '*lock*' '*package.json'
+  # → hijacked @solana/web3.js releases (KV-077 Step 2, SC-005). A hit now is CRITICAL;
+  #   a hit in history means rotate every key a build from that window loaded; a `fatal:` /
+  #   `lazy fetching disabled` line means a partial clone: the history part is INCONCLUSIVE
+
+  # Audits, registry queries and any cargo / rustc command (even --version) run from
+  # a scratch dir OUTSIDE the target tree, on copies of the manifest + lockfile, with
+  # the toolchain pinned, so the target's .npmrc / .cargo/config* / rust-toolchain*
+  # cannot steer them — cargo and rustup read those from every parent directory, so
+  # audit_<n>/ inside the tree is not far enough (Rule 11a)
+  SCRATCH=$(mktemp -d)   # outside the target tree
+  TC=$(cd "$SCRATCH" && rustup default | cut -d' ' -f1)   # your own toolchain, never the target's
+  mkdir -p "$SCRATCH/backend" "$SCRATCH/web" "$SCRATCH/rust"
+  cp apps/backend/package.json apps/backend/package-lock.json "$SCRATCH/backend/"
+  cp apps/web/package.json apps/web/package-lock.json "$SCRATCH/web/"
+  cp Cargo.lock "$SCRATCH/rust/"
 
   # Run npm audit
-  cd apps/backend && npm audit
-  cd apps/web && npm audit
+  (cd "$SCRATCH/backend" && npm audit)
+  (cd "$SCRATCH/web" && npm audit)
 
   # Check version pinning
   cat apps/backend/package.json | grep -E '[\^~]' # should be minimal
   cat apps/web/package.json | grep -E '[\^~]'
 
-  # Cargo audit
-  cargo audit 2>/dev/null || echo "cargo-audit not installed"
+  # Cargo audit (SC-004), stderr kept. It exits 1 both for advisories and for an advisory
+  # database it cannot fetch or load (offline, or github.com outside an isolated run's
+  # egress), so the output decides:
+  #   OUTCOME: vulnerabilities found   → findings, SC-004 FAIL
+  #   OUTCOME: advisory DB unavailable → say so in Coverage & Limitations ("advisory DB
+  #                                      unavailable"), or rerun with --no-fetch against
+  #                                      a local DB if one exists
+  #   OUTCOME: not installed           → SC-004 N/A, and Coverage & Limitations says so
+  #   no OUTCOME line and no "error:"  → SC-004 PASS
+  if (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit --version) >/dev/null 2>&1; then
+    (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit --color never) 2>&1 | tee "$SCRATCH/cargo-audit.txt"
+    grep -qE '^error: [0-9]+ vulnerabilit(y|ies) found' "$SCRATCH/cargo-audit.txt" && echo "OUTCOME: vulnerabilities found"
+    grep -qE '^error: .*advisory database' "$SCRATCH/cargo-audit.txt" && echo "OUTCOME: advisory DB unavailable"
+  else
+    echo "OUTCOME: not installed"
+  fi
 
   # Check quarantine (14-day rule) for newest deps
-  npm info @anchor-lang/core time | tail -5
+  (cd "$SCRATCH" && npm info @anchor-lang/core time | tail -5)
+
+  # Dependency changes since the baseline (last audited ref; first audit: last
+  # release tag) → checklist 11 §11.11: review the published artifacts' code delta
+  GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c core.bigFileThreshold=512m \
+    diff --text --no-textconv --no-ext-diff --stat <baseline>..HEAD \
+    -- '*.lock' '*-lock.json' '*-lock.yaml' '*Cargo.toml' '*package.json'   # Rule 11c flags
 
 RECORD: dependency audit results
 ```
@@ -374,11 +418,12 @@ ACTIONS:
   # Keypair files in repo
   find . -name "*keypair*.json" -o -name "*delegate*.json" -o -name "id.json" | grep -v node_modules
 
-  # .env files committed
-  git ls-files | grep -i ".env"
+  # .env files committed (Rule 11c flags)
+  GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false ls-files | grep -i ".env"
 
-  # Git history check
-  git log --all --diff-filter=A --name-only -- "*.env" "*.pem" "*secret*"
+  # Git history check (Rule 11c flags)
+  GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+    log --all --no-textconv --diff-filter=A --name-only -- "*.env" "*.pem" "*secret*"
 
   # NEXT_PUBLIC_ audit
   grep -rn "NEXT_PUBLIC_" apps/web/.env* 2>/dev/null
@@ -391,6 +436,12 @@ RECORD: any secret exposure
 
 ```
 ACTIONS:
+
+  # Both commands below run target-controlled code (build.rs, proc-macros, and
+  # Anchor.toml [scripts], which `anchor test` executes). Run them in the execution
+  # mode recorded at intake — OUTPUT-RULES Rule 11a (isolated recommended; native
+  # allowed, with the report caveat). If they cannot run in that mode, keep the
+  # source-level verdicts and add a Rule 10 confidence note.
 
   # Verify build
   anchor build 2>&1 | tail -20
@@ -504,9 +555,9 @@ ACTIONS:
 RECORD: privacy, compliance & change management findings
 ```
 
-### Step 4.4 — Known Attack Vectors (all in-scope, KV-001..138)
+### Step 4.4 — Known Attack Vectors (all in-scope, KV-001..140)
 
-Do NOT bulk-read all 138 vector files — that nullifies the scope gate. Load each in-scope vector **only when its `known-vectors/INDEX.md` trigger fires** (phase + language + the vector's feature markers), driven by the prescan advisory manifest.
+Do NOT bulk-read all 140 vector files — that nullifies the scope gate. Load each in-scope vector **only when its `known-vectors/INDEX.md` trigger fires** (phase + language + the vector's feature markers), driven by the prescan advisory manifest.
 
 ```
 ACTIONS:
@@ -584,7 +635,7 @@ Fill in:
   - Each finding with: ID, severity, location, description, exploit scenario, fix recommendation
   - Checklist summary table
   - Detailed per-item results
-  - Known vector results (KV-001 through KV-138, each in-scope one with verdict)
+  - Known vector results (KV-001 through KV-140, each in-scope one with verdict)
 
 Save report to: audit_{N}/REPORT.md (where N is the next audit number)
 ```

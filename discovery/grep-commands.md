@@ -20,6 +20,7 @@
 | [Backend Security](#backend-security) | Auth gaps, CORS, MongoDB injection, rate limiting |
 | [Frontend Security](#frontend-security) | XSS, exposed secrets, unsafe DOM |
 | [Supply Chain](#supply-chain) | Compromised packages, audit, publish dates |
+| [GitHub Actions](#github-actions-ci-trigger-trust) | Comment-trigger gating, expression / env-file injection, `pull_request_target` / `workflow_run` checkouts, artifacts, AI agents in CI |
 | [Infrastructure](#infrastructure) | Build, deploy, upgrade authority |
 | [Formal Verification & Testing](#formal-verification--testing-checklist-16) | Fuzz testing, coverage, static analysis, invariants |
 | [Logging & Monitoring](#logging-monitoring--incident-response-checklist-17) | Events, logging, monitoring, emergency, DR |
@@ -238,18 +239,24 @@ grep_search: "NEXT_PUBLIC_"   includePattern: "apps/web/**/*.tsx"
 
 ### Committed env/key files
 ```bash
-# Terminal:
-git ls-files | grep -iE "\.env|keypair|delegate\.json|\.pem|\.key"
+# Terminal (OUTPUT-RULES Rule 11c flags):
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  ls-files | grep -iE "\.env|keypair|delegate\.json|\.pem|\.key"
 find . -name "*.env*" -not -path "./node_modules/*" -not -path "./.git/*"
 find . -name "*keypair*" -not -path "./node_modules/*" -not -path "./.git/*"
 ```
 
 ### Git history secrets
 ```bash
-# Terminal:
-git log --all -S "private" --oneline | head -20
-git log --all -S "secret" --oneline | head -20
-git log --all -S "BEGIN RSA" --oneline | head -20
+# Terminal (OUTPUT-RULES Rule 11c flags; a pickaxe search runs the repo's textconv drivers unless
+# --no-textconv is given). -S also matches files a committed .gitattributes marks -diff or binary;
+# -G and patch output (-p) skip their content unless --text is given:
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  log --all --no-textconv --no-ext-diff -S "private" --oneline | head -20
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  log --all --no-textconv --no-ext-diff -S "secret" --oneline | head -20
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  log --all --no-textconv --no-ext-diff -S "BEGIN RSA" --oneline | head -20
 ```
 
 ---
@@ -329,8 +336,9 @@ grep_search: "load_instruction_at|get_instruction_relative"   isRegexp: true   i
 
 ### Terraform / IaC hygiene (DEP-080..DEP-086)
 ```
-# Terminal:
-git ls-files | grep -E "\.tfstate|tfplan|\.terraform/"
+# Terminal (OUTPUT-RULES Rule 11c flags on git):
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  ls-files | grep -E "\.tfstate|tfplan|\.terraform/"
 grep -rn -E "allUsers|allAuthenticatedUsers|0\.0\.0\.0/0|roles/(editor|owner)|ingress.*all" terraform/
 ```
 
@@ -363,10 +371,13 @@ grep_search: "target=\"_blank\""   includePattern: "apps/web/**/*.tsx"
 
 ## Supply Chain
 
+> Every package-manager or cargo command in this section reads the target's `.npmrc`, `.cargo/config*` and `rust-toolchain*` when started inside its tree. Run them from a scratch dir OUTSIDE the target tree, on copies of the manifest + lockfile with the toolchain pinned (OUTPUT-RULES Rule 11a; FULL-AUDIT Step 3.2).
+
 ### Check for compromised packages
 ```bash
 # Terminal:
 grep -E "axios.*1\.14\.1|axios.*0\.30\.4" package-lock.json
+# from a scratch dir OUTSIDE the target tree holding copies of package.json + the lockfile (OUTPUT-RULES Rule 11a)
 npm audit
 ```
 
@@ -393,6 +404,62 @@ npx license-checker --summary
 
 ---
 
+## GitHub Actions (CI trigger trust)
+
+> Locators for `references/vuln-classes/github-actions.md`, KV-080, KV-116, KV-139, KV-140, DEP-067..071 / DEP-090..096 and AI-021..035. A hit is a place to read, not a finding: open the whole workflow, then trace trigger → actor → payload → sink → privilege. Every recipe is recursive with `--include` and fully single-quoted where it contains `$` or `!`, so it runs unchanged in bash and zsh and never trips on an unmatched glob. Point the same commands at any `action.yml` / `action.yaml` outside `.github/` (composite actions at the repo root). `scripts/tests/test-gha-recipes.sh` runs R1–R8 exactly as written here, plus the KV-116 Step 1, KV-139 Step 1 and KV-140 Step 6 locators, against `scripts/tests/fixtures/gha/`, and fails if a known vector's copy of R1–R5 or R7 differs from this file by a byte.
+
+```bash
+# R1 — files with a comment / review / issue / discussion trigger that never mention author_association
+grep -rlE --include='*.yml' --include='*.yaml' '^[[:space:]]*-?[[:space:]]*(issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues):?[[:space:]]*(#.*)?$|^[[:space:]]*(issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues):[[:space:]]*\{|^on:.*(issue_comment|pull_request_review|discussion|issues)' .github/ | xargs -r grep -L 'author_association'
+```
+> Works per file: a file that gates one job and leaves another open is not listed, so read every job's `if:` (DEP-090, KV-139). A job id named like an event can show up as noise.
+
+```bash
+# R2 — association read from the opener object (correct only on that object's own event branch)
+grep -rnE --include='*.yml' --include='*.yaml' 'github\.event\.(issue|pull_request|discussion)\.author_association' .github/
+```
+> On a comment or review branch these fields describe whoever opened the issue, PR or discussion, not the commenter. A hit is fine only inside the `issues`, `pull_request_target` or `discussion` branch (DEP-090).
+
+```bash
+# R3 — unsound gate comparisons: string contains(), deny-lists, untrusted association values, app/<slug> strings, actor gates
+grep -rnE --include='*.yml' --include='*.yaml' -e "contains\([[:space:]]*'[^']*(OWNER|MEMBER|COLLABORATOR)" -e 'author_association[[:space:]]*!=' -e '![[:space:]]*contains\([[:space:]]*from(JSON|Json)' -e 'github\.(actor|triggering_actor)[[:space:]]*[!=]=' -e 'contains\(.*github\.(actor|triggering_actor)' -e "[\"'](CONTRIBUTOR|FIRST_TIMER|FIRST_TIME_CONTRIBUTOR|MANNEQUIN)[\"']" -e "app/[A-Za-z0-9_-]+'" .github/
+```
+> An actor comparison is a sound allowlist on `issue_comment` (the actor is the commenter) and unsound on PR-family and `workflow_run` events (DEP-091). `contains(github.actor, …)` is a substring test and unsound on every event. Function names are case-insensitive, so `fromJson` counts the same as `fromJSON`.
+
+```bash
+# R4 — workflow_run consumers: head fields and artifact downloads
+grep -rnE --include='*.yml' --include='*.yaml' 'workflow_run\.(head_branch|head_sha|head_commit|head_repository|display_title|pull_requests)|download-artifact|downloadArtifact|listWorkflowRunArtifacts|gh run download|run-id:' .github/
+```
+> DEP-094, KV-140.
+
+```bash
+# R5 — env-file and PATH writes, including tee -a and the github-script core helpers
+grep -rnE --include='*.yml' --include='*.yaml' '(>>|tee[[:space:]]+(-a|--append))[[:space:]]*"?\$\{?GITHUB_(ENV|PATH|OUTPUT)|core\.(exportVariable|addPath)' .github/
+```
+> DEP-095. For each hit, find where the written value comes from.
+
+```bash
+# R6 — attacker-controlled expressions (confirm the sink: run:, script:, an agent prompt field, an env file)
+grep -rnE --include='*.yml' --include='*.yaml' '\$\{\{.*(github\.event\.[a-z_.]*(body|default_branch|email|head_ref|label|message|name|page_name|ref|title|head_branch|display_title)|github\.head_ref|github\.event\.(commits|pages)\[|to(JSON|Json)\(github(\)|\.event[).]))' .github/
+```
+> Matches inside `env:` are the safe shell pattern but still taint agent prompts and env files (DEP-069, AI-023/024). Whole-context dumps count: `toJSON(github)` and `toJson(github.event…)` carry every attacker-controlled field.
+
+```bash
+# R7 — checkouts and fetches of PR or run heads, and the checkout-guard opt-out
+grep -rnE --include='*.yml' --include='*.yaml' 'ref:[[:space:]]*.?\$\{\{[[:space:]]*(github\.event\.(pull_request\.(head\.(sha|ref)|merge_commit_sha)|workflow_run\.head_(sha|branch))|github\.head_ref|steps\.[A-Za-z0-9_-]+\.outputs\.head_(sha|ref)|from(JSON|Json)\(steps\.[A-Za-z0-9_-]+\.outputs\.[A-Za-z0-9_]+\)\.head\.(sha|ref))|repository:[[:space:]]*.?\$\{\{[[:space:]]*github\.event\.pull_request\.head\.repo\.full_name|refs/pull/|gh pr checkout|git (fetch|pull|checkout)[^#]*(pull/|head_ref|head\.ref|head\.sha)|allow-unsafe-pr-checkout' .github/
+```
+> DEP-092 (the commit that was approved) and DEP-093 (privileged triggers). Quoted expressions match too, and so do checkouts of a step output: `steps.<id>.outputs.head_sha` / `head_ref` and `fromJSON(steps.<id>.outputs.result).head.sha`. For a `ref:` fed by any other step output, read the step that sets it.
+
+```bash
+# R8 — AI agents in CI, their gates, and pre-v1 claude-code-action input names
+grep -rnE --include='*.yml' --include='*.yaml' 'anthropics/claude-code-(base-)?action|run-gemini-cli|gemini-cli-action|openai/codex-action|actions/ai-inference|claude (-p|--print)|@anthropic-ai/claude-code|codex exec|gemini -p|allowed_non_write_users|allowed_bots|allow-users|allow-bots|include_comments_by_actor|direct_prompt|override_prompt|custom_instructions|allowed_tools|disallowed_tools|allowedTools|show_full_output|additional_permissions' .github/
+```
+> AI-023..031, AI-034..035, KV-116. Pre-v1 names (`direct_prompt`, `override_prompt`, `custom_instructions`, `allowed_tools`, `disallowed_tools`) can remain after a workflow's `uses:` line moves to `@v1` or a SHA, so judge each step by the keys it sets.
+
+**Tool cross-check (optional, static).** `zizmor --offline --persona=auditor .github/workflows/` and CodeQL's `actions` language cover template injection, env-file writes, dangerous triggers and bot conditions. Neither replaces R1–R3, R7 or R8: on fixtures 01–17 in `scripts/tests/fixtures/gha/`, zizmor 1.30.1 did not flag a mention-only gate, the cross-object OR, a deny-list, event text in an agent prompt input, `allowed_non_write_users: "*"` or `allow-unsafe-pr-checkout: true` (details in `references/vuln-classes/github-actions.md` §9).
+
+---
+
 ## Infrastructure
 
 ### Program upgrade authority
@@ -403,19 +470,19 @@ solana program show <PROGRAM_ID> --url mainnet-beta
 
 ### Anchor build verification
 ```bash
-# Terminal:
+# Terminal — builds the target (build.rs, proc-macros): only in the OUTPUT-RULES Rule 11a mode recorded at intake
 anchor build 2>&1 | tail -20
 ```
 
 ### Test suite
 ```bash
-# Terminal:
+# Terminal — runs the target's tests and Anchor.toml [scripts]: only in the OUTPUT-RULES Rule 11a mode recorded at intake
 anchor test --validator legacy 2>&1 | tail -30
 ```
 
 ### Binary hash verification
 ```bash
-# Terminal:
+# Terminal — rebuilds the target from source: only in the OUTPUT-RULES Rule 11a mode recorded at intake
 anchor verify <PROGRAM_ID> --provider-url mainnet-beta
 ```
 
@@ -549,8 +616,8 @@ grep_search: "openai|anthropic|llm|gpt|completion|embedding|prompt"   isRegexp: 
 
 ### Change management controls
 ```bash
-# Terminal: Check branch protection
-git remote -v
+# Terminal: Check branch protection (OUTPUT-RULES Rule 11c flags)
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false remote -v
 # Terminal: Check for PR templates
 find .github -name "*pull_request*" -o -name "CODEOWNERS" 2>/dev/null
 ```
@@ -629,28 +696,28 @@ grep_search: "unsafe|get_unchecked|from_raw_parts|\\.add\\(|unsafe-account-resiz
 
 ## v5.0 — Solana × AI + Off-Chain Rust (KV-110..117, checklists 19-20)
 
-### MCP server configuration (KV-110)
+### MCP server configuration (KV-114)
 ```
 grep_search: "mcpServers|command|args|transport|stdio|sse"   isRegexp: true   includePattern: "**/.mcp.json"
 grep_search: "mcpServers|@modelcontextprotocol|StdioServerTransport|SSEServerTransport"   isRegexp: true   includePattern: "**/*.{json,ts,js,py}"
 ```
 > Every MCP server grants tool access to the agent. Verify each server is trusted, pinned, and scoped — an untrusted server = arbitrary tool execution + prompt-injection surface. Flag secrets embedded in `.mcp.json` (keys belong in `.env`).
 
-### Agent signer allowlists & spend caps (KV-111, KV-112)
+### Agent signer allowlists & spend caps (KV-110, KV-113)
 ```
 grep_search: "allowlist|allowList|whitelist|allowedPrograms|allowedTargets|allowedMints"   isRegexp: true   includePattern: "**/*.{ts,js,py,rs}"
 grep_search: "spend.?cap|spendLimit|maxSpend|maxLamports|daily.?limit|per.?tx.?limit|budget"   isRegexp: true   includePattern: "**/*.{ts,js,py,rs}"
 ```
 > Autonomous agents that sign transactions MUST enforce a program/target allowlist AND a spend cap. Missing either = an LLM-controlled key with unbounded on-chain authority.
 
-### Secret zeroization on key material (KV-113)
+### Secret zeroization on key material (KV-112)
 ```
 grep_search: "zeroize|Zeroizing|ZeroizeOnDrop|secrecy::Secret|SecretString"   isRegexp: true   includePattern: "**/*.rs"
 grep_search: "Keypair|private_key|secret_key|seed|mnemonic|signing_key"   isRegexp: true   includePattern: "**/*.rs"
 ```
 > Secret-bearing types (keypairs, seeds, mnemonics) held in long-running off-chain services must be wrapped in `Zeroizing`/`zeroize` so they are scrubbed on drop — not left in freed heap for memory-dump exfiltration.
 
-### Off-chain Rust services outside programs/ (KV-114, KV-115)
+### Off-chain Rust services outside programs/ (checklist 20, KV-112)
 ```bash
 # Terminal: locate off-chain Rust (geyser plugins, indexers, keeper/liquidator bots, signer services)
 find . -name "*.rs" -not -path "./programs/*" -not -path "./target/*" -not -path "*/node_modules/*"
@@ -658,13 +725,13 @@ grep -rnE "geyser|GeyserPlugin|yellowstone|carbon|substreams|indexer|keeper|liqu
 ```
 > Any `.rs` outside `programs/` is off-chain infra with a different threat model (network input, RPC trust, long-lived keys). Route it through checklist 20, not the on-chain checklists.
 
-### Panic on network / untrusted input (KV-115)
+### Panic on network / untrusted input (RS-001..RS-005)
 ```
 grep_search: "\\.unwrap\\(\\)|\\.expect\\("   isRegexp: true   includePattern: "**/*.rs"
 ```
 > In off-chain services, `unwrap()`/`expect()` on RPC responses, websocket frames, or deserialized network payloads is a remote DoS — a malformed message crashes the indexer/keeper. Cross-reference hits against `.rs` files outside `programs/`.
 
-### Blind bulk transaction signing (KV-116, KV-117)
+### Blind bulk transaction signing (KV-113, AI-009)
 ```
 grep_search: "signAllTransactions|signAll|sign_all|partialSign|signMessage"   isRegexp: true   includePattern: "**/*.{ts,js}"
 grep_search: "signTransaction|sign_transaction|sign\\("   isRegexp: true   includePattern: "**/*.{ts,js,py,rs}"
