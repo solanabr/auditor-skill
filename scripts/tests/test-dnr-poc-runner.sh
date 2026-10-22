@@ -12,6 +12,8 @@
 #   * verdicts: a failed test is exit 1 / 2 only when a contract assertion ran and did
 #     not hold; one that failed before any assertion ran (the program did not load,
 #     the setup panicked) or after every assertion held is inconclusive (exit 3);
+#   * the bytes that ran: an arm counts only when every program mollusk_for loaded is
+#     the .so run.sh placed, unchanged after the test, and the Leg 3 line names it;
 #   * where the crate builds (always a scratch copy outside the target tree with a
 #     pinned toolchain; a crate holding a symbolic link, .cargo/, rust-toolchain* or
 #     tests/fixtures/<crate>.so is refused; BPF_OUT_DIR is cleared; an inherited
@@ -71,9 +73,11 @@ PY
 # also logs every call, tab-separated: working directory, CARGO_TARGET_DIR,
 # SBF_OUT_DIR, BPF_OUT_DIR, AUDITOR_POC_MARKERS, arguments. A test run (not --no-run)
 # leaves the markers SHIM_MARKERS names for its test (<test>:<kind>), as
-# shared-test-utils does: by default those of a PoC whose assertions all ran and
-# held, and none for SHIM_MARKERS=none. SHIM_FAIL makes one step fail with cargo's
-# own exit code, 101.
+# shared-test-utils does: by default those of a PoC whose assertions all ran and held
+# on the placed bytes, and none for SHIM_MARKERS=none. Kind `loaded` records the
+# zero-trimmed hash of the .so in SBF_OUT_DIR, as mollusk_for does; `loaded-other`
+# records other bytes; `tamper` changes the placed .so. SHIM_FAIL makes one step fail
+# with cargo's own exit code, 101.
 mkdir -p "$T/shim"
 cat > "$T/shim/cargo" <<'SH'
 #!/bin/sh
@@ -96,10 +100,19 @@ case " $* " in
   *" --no-run "*) ;;
   *" --test "*)
     t="$*"; t="${t##*--test }"; t="${t%% *}"
-    for m in ${SHIM_MARKERS-exploit:attempted exploit:held exploit:effect fixed_blocked:attempted fixed_blocked:held fixed_blocked:rejected_with}; do
-      if [ "${m%%:*}" = "$t" ] && [ -n "${AUDITOR_POC_MARKERS:-}" ]; then
-        echo "shim ${m#*:}" >> "$AUDITOR_POC_MARKERS/${m#*:}"
-      fi
+    for m in ${SHIM_MARKERS-exploit:attempted exploit:held exploit:effect exploit:loaded fixed_blocked:attempted fixed_blocked:held fixed_blocked:rejected_with fixed_blocked:loaded}; do
+      [ "${m%%:*}" = "$t" ] && [ -n "${AUDITOR_POC_MARKERS:-}" ] || continue
+      case "${m#*:}" in
+        loaded)
+          for so in "${SBF_OUT_DIR:-/nonexistent}"/*.so; do
+            [ -f "$so" ] || continue
+            h="$(python3 -I -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read().rstrip(b"\x00")).hexdigest())' "$so")"
+            echo "$h $so" >> "$AUDITOR_POC_MARKERS/loaded"
+          done ;;
+        loaded-other) printf '%064d %s\n' 0 /elsewhere/other.so >> "$AUDITOR_POC_MARKERS/loaded" ;;
+        tamper) for so in "${SBF_OUT_DIR:-/nonexistent}"/*.so; do [ -f "$so" ] && printf 'x' >> "$so"; done ;;
+        *) echo "shim ${m#*:}" >> "$AUDITOR_POC_MARKERS/${m#*:}" ;;
+      esac
     done ;;
 esac
 case "${SHIM_FAIL:-}" in
@@ -152,11 +165,11 @@ from_scratch() {
 }
 zhash() { python3 -I -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read().rstrip(b"\x00")).hexdigest())' "$1"; }
 LEG3='OK: reproduced on prebuilt bytes — vulnerable sha256='
-# Shim marker sets for one test whose contract assertion ran and held: the
-# exploit's effect, the fixed arm's pinned error, a deployed fix's block.
-EV="exploit:attempted exploit:held exploit:effect"
-FR="fixed_blocked:attempted fixed_blocked:held fixed_blocked:rejected_with"
-FB="fixed_blocked:attempted fixed_blocked:held fixed_blocked:blocked"
+# Shim marker sets for one test whose contract assertion ran and held on the placed
+# bytes: the exploit's effect, the fixed arm's pinned error, a deployed fix's block.
+EV="exploit:attempted exploit:held exploit:effect exploit:loaded"
+FR="fixed_blocked:attempted fixed_blocked:held fixed_blocked:rejected_with fixed_blocked:loaded"
+FB="fixed_blocked:attempted fixed_blocked:held fixed_blocked:blocked fixed_blocked:loaded"
 
 # ---------------------------------------------------------------------------
 # The execution mode. Without AUDITOR_EXEC_MODE=isolated|native, run.sh exits 3
@@ -228,16 +241,16 @@ else
   bad "marker directories"; cat "$T/calls" >&2
 fi
 
-code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" SHIM_MARKERS=none)"
+code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" SHIM_MARKERS=exploit:loaded)"
 [ "$code" = 3 ] && grep -q 'no assert_exploit_effect! ran and held' "$T/out" && ! grep -q 'running same attack' "$T/out" \
   && ok "exploit test passes but leaves no effect marker -> exit 3 before the fixed arm" || bad "no effect marker: exit $code"
-code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" SHIM_MARKERS="$EV")"
+code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" SHIM_MARKERS="$EV fixed_blocked:loaded")"
 [ "$code" = 3 ] && grep -q 'neither assert_exploit_rejected_with! nor assert_exploit_blocked! ran and held' "$T/out" \
   && ok "fixed test passes but leaves no rejection marker -> exit 3" || bad "no fixed marker: exit $code"
 code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" SHIM_MARKERS="$EV $FB")"
 [ "$code" = 0 ] && grep -qx "${LEG3}${want} fixed sha256=${wantf} (blocked: failed, account unchanged) → \[PoC-REPRODUCED\]" "$T/out" \
   && ok "a blocked marker (a deployed fix) -> exit 0, and the line says blocked, not pinned" || bad "blocked marker: exit $code"
-code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=fixed_blocked SHIM_MARKERS="$EV fixed_blocked:attempted fixed_blocked:inconclusive")"
+code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=fixed_blocked SHIM_MARKERS="$EV fixed_blocked:attempted fixed_blocked:loaded fixed_blocked:inconclusive")"
 [ "$code" = 3 ] && grep -q 'the fixed arm is inconclusive: shim inconclusive' "$T/out" && ! grep -q 'fix is incomplete' "$T/out" \
   && ok "a fixed arm whose assertion could not decide (an inconclusive marker) -> exit 3, not 2" || bad "inconclusive: exit $code"
 code="$(gate "$T/inc" "$NATIVE" SHIM_MARKERS=none)"
@@ -247,7 +260,7 @@ code="$(gate "$T/inc" "$NATIVE" SHIM_MARKERS=none)"
 # A failed test is a verdict (exit 1 / 2) only when a contract assertion ran and did
 # not hold. One that failed before any assertion ran (the program did not load, the
 # setup panicked), or after every assertion held, is inconclusive: exit 3.
-code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=fixed_blocked SHIM_MARKERS="$EV")"
+code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=fixed_blocked SHIM_MARKERS="$EV fixed_blocked:loaded")"
 [ "$code" = 3 ] && grep -q 'inconclusive: no contract assertion ran' "$T/out" && ! grep -q 'fix is incomplete' "$T/out" \
   && ok "a fixed-arm test that fails before any contract assertion ran -> exit 3 (inconclusive), not 2" || bad "fixed arm, no assertion ran: exit $code"
 code="$(gate "$T/inc" "$NATIVE" "$VULN" SHIM_FAIL=exploit SHIM_MARKERS=none)"
@@ -265,6 +278,24 @@ code="$(gate "$T/inc" "$NATIVE" "$VULN" SHIM_MARKERS="$EV exploit:attempted")"
 code="$(gate "$T/inc" "$NATIVE" "$VULN" SHIM_MARKERS="$EV exploit:inconclusive")"
 [ "$code" = 3 ] && grep -q 'the vulnerable arm is inconclusive: shim inconclusive' "$T/out" && ! grep -q "^$LEG3" "$T/out" \
   && ok "a passing test that left an inconclusive marker -> exit 3" || bad "pass with an inconclusive marker: exit $code"
+
+# The bytes that ran: every program mollusk_for loads must be the .so run.sh placed,
+# still unchanged after the test, or the arm decides nothing.
+code="$(gate "$T/inc" "$NATIVE" "$VULN" SHIM_MARKERS="exploit:attempted exploit:held exploit:effect")"
+[ "$code" = 3 ] && grep -q 'no program was loaded through mollusk_for' "$T/out" && ! grep -q "^$LEG3" "$T/out" \
+  && ok "no program loaded through mollusk_for -> exit 3, no Leg 3 line" || bad "no loaded marker: exit $code"
+code="$(gate "$T/inc" "$NATIVE" "$VULN" SHIM_MARKERS="$EV exploit:loaded-other")"
+[ "$code" = 3 ] && grep -q 'loaded bytes other than the ones run.sh placed' "$T/out" && ! grep -q "^$LEG3" "$T/out" \
+  && ok "an exploit test that also loads other bytes -> exit 3, no Leg 3 line" || bad "vulnerable arm, other bytes: exit $code"
+code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" SHIM_MARKERS="$EV $FR fixed_blocked:loaded-other")"
+[ "$code" = 3 ] && grep -q 'loaded bytes other than the ones run.sh placed' "$T/out" && ! grep -q "^$LEG3" "$T/out" \
+  && ok "a fixed-arm test that also loads other bytes -> exit 3, no Leg 3 line" || bad "fixed arm, other bytes: exit $code"
+code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=fixed_blocked SHIM_MARKERS="$EV fixed_blocked:attempted fixed_blocked:loaded-other")"
+[ "$code" = 3 ] && grep -q 'loaded bytes other than the ones run.sh placed' "$T/out" && ! grep -q 'fix is incomplete' "$T/out" \
+  && ok "a fixed-arm assertion that fails on other bytes -> exit 3, not 2" || bad "fixed arm fails on other bytes: exit $code"
+code="$(gate "$T/inc" "$NATIVE" "$VULN" SHIM_MARKERS="$EV exploit:tamper")"
+[ "$code" = 3 ] && grep -q 'the placed .so changed while the test ran' "$T/out" && ! grep -q "^$LEG3" "$T/out" \
+  && ok "a placed .so that changes while the test runs -> exit 3, no Leg 3 line" || bad "placed .so changed: exit $code"
 
 code="$(gate "$T/inc" "$NATIVE" "$VULN" BPF_OUT_DIR="$T")"
 [ "$code" = 0 ] && awk -F'\t' '$4 != "" { bad = 1 } END { exit bad }' "$T/calls" && ok "a caller's BPF_OUT_DIR never reaches cargo (mollusk would look there before SBF_OUT_DIR)" || bad "BPF_OUT_DIR: exit $code"
@@ -394,9 +425,9 @@ code="$(run "$T/inc" "$SP" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=no-run:exploit)"
 [ "$code" = 3 ] && grep -q 'tests/exploit.rs failed to build for the vulnerable arm' "$T/out" && ok "an exploit test that does not compile -> exit 3" || bad "exploit test build failure: exit $code"
 code="$(run "$T/inc" "$SP" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=no-run:fixed_blocked)"
 [ "$code" = 3 ] && grep -q 'tests/fixed_blocked.rs failed to build for the fixed arm' "$T/out" && ok "a fixed-arm test that does not compile -> exit 3" || bad "fixed test build failure: exit $code"
-code="$(run "$T/inc" "$SP" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=exploit SHIM_MARKERS=exploit:attempted)"
+code="$(run "$T/inc" "$SP" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=exploit SHIM_MARKERS="exploit:attempted exploit:loaded")"
 [ "$code" = 1 ] && grep -q 'did not reproduce' "$T/out" && ok "exploit test failing in its contract assertion -> exit 1" || bad "exploit failure: exit $code"
-code="$(run "$T/inc" "$SP" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=fixed_blocked SHIM_MARKERS="$EV fixed_blocked:attempted")"
+code="$(run "$T/inc" "$SP" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=fixed_blocked SHIM_MARKERS="$EV fixed_blocked:attempted fixed_blocked:loaded")"
 [ "$code" = 2 ] && grep -q 'fix is incomplete' "$T/out" && ok "fixed-arm test failing in its contract assertion -> exit 2" || bad "fixed-arm failure: exit $code"
 code="$(run "$T/inc" "$SP" "$NATIVE" SHIM_FAIL=fixed_blocked SHIM_MARKERS="$EV fixed_blocked:attempted")"
 [ "$code" = 2 ] && grep -q 'fix is incomplete' "$T/out" && ok "build mode: fixed-arm test failing in its contract assertion -> exit 2" || bad "build mode fixed-arm failure: exit $code"
@@ -405,12 +436,13 @@ code="$(run "$T/inc" "$SP" "$NATIVE")"
 
 # ---------------------------------------------------------------------------
 # Real cargo and rustup, when present: the template's own tests and shared-test-utils,
-# built and run through run.sh against stand-in crates. The stand-in mollusk finds
-# <crate>.so the way mollusk does (tests/fixtures, BPF_OUT_DIR, SBF_OUT_DIR, the
-# working directory) and acts out the text after the ELF magic: "takeover" writes the
-# first signer's key into the first writable account's bytes 0..32, "noop" accepts and
-# changes nothing, "reject:<error>" fails with that error, "unloadable" makes the
-# loader panic.
+# built and run through run.sh against stand-in crates. The stand-in mollusk loads the
+# bytes it is given (Mollusk::new finds <crate>.so the way mollusk does: tests/fixtures,
+# BPF_OUT_DIR, SBF_OUT_DIR, the working directory) and acts out the text after the ELF
+# magic: "takeover" writes the first signer's key into the first writable account's
+# bytes 0..32, "dirty-reject" does that and fails with Custom(6001), "noop" accepts and
+# changes nothing, "reject:<error>" fails with that error, "unloadable" makes the loader
+# panic. The stand-in sha2 is a plain SHA-256.
 # ---------------------------------------------------------------------------
 mk_standins() {  # mk_standins <dir>
   local S="$1"
@@ -495,14 +527,18 @@ pub mod result {
         }
     }
 }
+pub mod program {
+    pub mod loader_keys { pub const LOADER_V3: solana_pubkey::Pubkey = solana_pubkey::Pubkey([3; 32]); }
+}
 use result::{InstructionResult, ProgramResult};
 use solana_account::Account;
 use solana_instruction::Instruction;
 use solana_program_error::ProgramError;
 use solana_pubkey::Pubkey;
+#[derive(Default)]
 pub struct Mollusk { behaviour: String }
 impl Mollusk {
-    pub fn new(_program_id: &Pubkey, so_name: &str) -> Self {
+    pub fn new(program_id: &Pubkey, so_name: &str) -> Self {
         let file = format!("{so_name}.so");
         let mut dirs = vec![std::path::PathBuf::from("tests/fixtures")];
         for var in ["BPF_OUT_DIR", "SBF_OUT_DIR"] {
@@ -511,12 +547,16 @@ impl Mollusk {
         if let Ok(dir) = std::env::current_dir() { dirs.push(dir); }
         let path = dirs.iter().map(|d| d.join(&file)).find(|p| p.exists())
             .unwrap_or_else(|| panic!("stand-in mollusk: {file} not found"));
-        let bytes = std::fs::read(&path).expect("read the program");
-        let tag: Vec<u8> = bytes[4..].iter().copied().take_while(|b| *b != 0).collect();
+        let mut mollusk = Self::default();
+        let elf = std::fs::read(&path).expect("read the program");
+        mollusk.add_program_with_loader_and_elf(program_id, &program::loader_keys::LOADER_V3, &elf);
+        mollusk
+    }
+    pub fn add_program_with_loader_and_elf(&mut self, _program_id: &Pubkey, _loader_key: &Pubkey, elf: &[u8]) {
+        let tag: Vec<u8> = elf[4..].iter().copied().take_while(|b| *b != 0).collect();
         let behaviour = String::from_utf8(tag).expect("utf-8 behaviour");
-        // As mollusk's loader panics on bytes it cannot load.
         assert!(behaviour != "unloadable", "stand-in mollusk: the loader rejects these bytes");
-        Mollusk { behaviour }
+        self.behaviour = behaviour;
     }
     pub fn process_instruction(&self, ix: &Instruction, accounts: &[(Pubkey, Account)]) -> InstructionResult {
         let mut out = accounts.to_vec();
@@ -548,6 +588,57 @@ impl Mollusk {
     }
 }
 RS
+  sc sha2 sha2 0.10.0 '' <<'RS'
+pub trait Digest {
+    fn digest(data: impl AsRef<[u8]>) -> [u8; 32];
+}
+pub struct Sha256;
+impl Digest for Sha256 {
+    fn digest(data: impl AsRef<[u8]>) -> [u8; 32] {
+        const K: [u32; 64] = [
+            0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+            0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+            0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+            0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+            0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+            0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+            0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+            0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+        ];
+        let mut h: [u32; 8] = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+        let mut msg = data.as_ref().to_vec();
+        let bits = (msg.len() as u64) * 8;
+        msg.push(0x80);
+        while msg.len() % 64 != 56 { msg.push(0); }
+        msg.extend_from_slice(&bits.to_be_bytes());
+        for block in msg.chunks(64) {
+            let mut w = [0u32; 64];
+            for i in 0..64 {
+                w[i] = if i < 16 {
+                    u32::from_be_bytes([block[4 * i], block[4 * i + 1], block[4 * i + 2], block[4 * i + 3]])
+                } else {
+                    let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
+                    let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
+                    w[i - 16].wrapping_add(s0).wrapping_add(w[i - 7]).wrapping_add(s1)
+                };
+            }
+            let mut v = h;
+            for i in 0..64 {
+                let s1 = v[4].rotate_right(6) ^ v[4].rotate_right(11) ^ v[4].rotate_right(25);
+                let ch = (v[4] & v[5]) ^ (!v[4] & v[6]);
+                let t1 = v[7].wrapping_add(s1).wrapping_add(ch).wrapping_add(K[i]).wrapping_add(w[i]);
+                let s0 = v[0].rotate_right(2) ^ v[0].rotate_right(13) ^ v[0].rotate_right(22);
+                let maj = (v[0] & v[1]) ^ (v[0] & v[2]) ^ (v[1] & v[2]);
+                v = [t1.wrapping_add(s0.wrapping_add(maj)), v[0], v[1], v[2], v[3].wrapping_add(t1), v[4], v[5], v[6]];
+            }
+            for i in 0..8 { h[i] = h[i].wrapping_add(v[i]); }
+        }
+        let mut out = [0u8; 32];
+        for i in 0..8 { out[4 * i..4 * i + 4].copy_from_slice(&h[i].to_be_bytes()); }
+        out
+    }
+}
+RS
 }
 
 # mk_e2e <dir>: a PoC crate made of the template's tests, shared-test-utils and run.sh,
@@ -559,7 +650,7 @@ mk_e2e() {
   for f in exploit fixed_blocked; do sed 's/{PROGRAM_NAME}/poc_e2e/g' "$TEMPLATE/tests/$f.rs" > "$P/tests/$f.rs"; done
   cp "$TEMPLATE/shared-test-utils/src/lib.rs" "$P/shared-test-utils/src/lib.rs"
   printf '[package]\nname = "poc_e2e"\nversion = "0.1.0"\nedition = "2021"\npublish = false\n\n[workspace]\n\n[features]\ndefault = ["fixed"]\nvulnerable = []\nfixed = []\n\n[dependencies]\nborsh = { path = "%s/borsh" }\nsolana-pubkey = { path = "%s/pubkey" }\n\n[dev-dependencies]\nmollusk-svm = { path = "%s/mollusk" }\nsolana-sdk = { path = "%s/sdk" }\nshared-test-utils = { path = "shared-test-utils" }\n' "$S" "$S" "$S" "$S" > "$P/Cargo.toml"
-  printf '[package]\nname = "shared-test-utils"\nversion = "0.1.0"\nedition = "2021"\npublish = false\n\n[dependencies]\nmollusk-svm = { path = "%s/mollusk" }\nsolana-account = { path = "%s/account" }\nsolana-pubkey = { path = "%s/pubkey" }\nsolana-rent = { path = "%s/rent" }\nsolana-system-interface = { path = "%s/sysif" }\n' "$S" "$S" "$S" "$S" "$S" > "$P/shared-test-utils/Cargo.toml"
+  printf '[package]\nname = "shared-test-utils"\nversion = "0.1.0"\nedition = "2021"\npublish = false\n\n[dependencies]\nmollusk-svm = { path = "%s/mollusk" }\nsolana-account = { path = "%s/account" }\nsolana-pubkey = { path = "%s/pubkey" }\nsolana-rent = { path = "%s/rent" }\nsolana-system-interface = { path = "%s/sysif" }\nsha2 = { path = "%s/sha2" }\n' "$S" "$S" "$S" "$S" "$S" "$S" > "$P/shared-test-utils/Cargo.toml"
   printf 'use solana_pubkey::Pubkey;\npub struct State {\n    pub authority: Pubkey,\n}\nimpl State {\n    pub const LEN: usize = 32;\n}\nimpl borsh::BorshSerialize for State {\n    fn serialize<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {\n        writer.write_all(self.authority.as_ref())\n    }\n}\n' > "$P/src/lib.rs"
 }
 # swap <file> <awk program>: rewrite a test file in place
@@ -666,10 +757,10 @@ if command -v cargo >/dev/null 2>&1 && command -v rustup >/dev/null 2>&1; then
   # A program that does not load, or a test that fails before its contract assertion
   # ran, decides nothing: exit 3, never 1 or 2.
   code="$(e2e "$T/e-base" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-unloadable.so")"
-  [ "$code" = 3 ] && grep -q 'inconclusive: no contract assertion ran' "$T/out" && ! grep -q 'fix is incomplete' "$T/out" \
+  [ "$code" = 3 ] && grep -q 'did not load as a program' "$T/out" && ! grep -q 'fix is incomplete' "$T/out" \
     && ok "real cargo: fixed bytes the loader rejects -> inconclusive, exit 3, not 2" || { bad "real cargo, unloadable fixed bytes: exit $code"; cat "$T/out" >&2; }
   code="$(e2e "$T/e-base" VULNERABLE_SO="$SB-unloadable.so")"
-  [ "$code" = 3 ] && grep -q 'inconclusive: no contract assertion ran' "$T/out" && ! grep -q 'did not reproduce' "$T/out" \
+  [ "$code" = 3 ] && grep -q 'did not load as a program' "$T/out" && ! grep -q 'did not reproduce' "$T/out" \
     && ok "real cargo: vulnerable bytes the loader rejects -> inconclusive, exit 3, not 1" || { bad "real cargo, unloadable vulnerable bytes: exit $code"; cat "$T/out" >&2; }
   mk_e2e "$T/e-panic"
   subst "$T/e-panic/tests/fixed_blocked.rs" '    let outcome = mollusk.process_instruction(&ix, &accounts);' '    panic!("the setup failed");
@@ -677,6 +768,24 @@ if command -v cargo >/dev/null 2>&1 && command -v rustup >/dev/null 2>&1; then
   code="$(e2e "$T/e-panic" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-reject-MissingRequiredSignature.so")"
   [ "$code" = 3 ] && grep -q 'inconclusive: no contract assertion ran' "$T/out" && ! grep -q 'fix is incomplete' "$T/out" \
     && ok "real cargo: a fixed-arm test that panics before its contract assertion -> exit 3, not 2" || { bad "real cargo, panic before the assertion: exit $code"; cat "$T/out" >&2; }
+
+  # The Leg 3 line names the bytes that ran: a test that loads other bytes than the
+  # placed arm — another file, a path, a runner made without mollusk_for — gets none.
+  mk_e2e "$T/e-other"; cp "$SB-takeover.so" "$T/e-other/other.so"
+  subst "$T/e-other/tests/exploit.rs" 'mollusk_for(program_id, "poc_e2e")' 'mollusk_for(program_id, "other")'
+  code="$(e2e "$T/e-other" VULNERABLE_SO="$SB-noop.so")"
+  [ "$code" = 3 ] && grep -q 'loaded bytes other than the ones run.sh placed' "$T/out" && ! grep -q "^$LEG3" "$T/out" \
+    && ok "real cargo: an exploit run on another .so than the placed one -> exit 3, no Leg 3 line" || { bad "real cargo, other .so: exit $code"; cat "$T/out" >&2; }
+  mk_e2e "$T/e-abs"
+  subst "$T/e-abs/tests/exploit.rs" 'mollusk_for(program_id, "poc_e2e")' "mollusk_for(program_id, \"$SB-takeover\")"
+  code="$(e2e "$T/e-abs" VULNERABLE_SO="$SB-noop.so")"
+  [ "$code" = 3 ] && grep -q 'refuses the program name' "$T/out" && ! grep -q "^$LEG3" "$T/out" \
+    && ok "real cargo: mollusk_for refuses a program name holding '/' -> exit 3, no Leg 3 line" || { bad "real cargo, a path as the name: exit $code"; cat "$T/out" >&2; }
+  mk_e2e "$T/e-direct"
+  subst "$T/e-direct/tests/exploit.rs" 'mollusk_for(program_id, "poc_e2e")' "mollusk_svm::Mollusk::new(&program_id, \"$SB-takeover\")"
+  code="$(e2e "$T/e-direct" VULNERABLE_SO="$SB-noop.so")"
+  [ "$code" = 3 ] && grep -q 'no program was loaded through mollusk_for' "$T/out" && ! grep -q "^$LEG3" "$T/out" \
+    && ok "real cargo: a runner made with Mollusk::new, not mollusk_for -> exit 3, no Leg 3 line" || { bad "real cargo, Mollusk::new: exit $code"; cat "$T/out" >&2; }
 
   # The deployed-hotfix check: the template's commented replacement, swapped in as written.
   mk_e2e "$T/e-hotfix"

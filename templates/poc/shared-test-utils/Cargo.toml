@@ -31,3 +31,6 @@ solana-account = "3"
 solana-pubkey = "4"
 solana-rent = "3"
 solana-system-interface = "3"
+# The zero-trimmed sha256 of each program mollusk_for loads (its `loaded` marker).
+# Already in mollusk-svm's dependency tree.
+sha2 = "0.10"

@@ -9,8 +9,9 @@
 # did not reproduce. Exit 2: the fixed arm did not block it. Exits 1 and 2 need a
 # contract assertion (shared-test-utils) that ran and did not hold. Exit 3: a named
 # blocker (toolchain, inputs, a build that failed, the execution mode below) or an
-# inconclusive arm (no contract assertion ran, the test failed outside them, or the
-# harness could not decide) — record [PoC-ATTEMPTED] and keep the prose PoC.
+# inconclusive arm (no contract assertion ran, the test failed outside them, the
+# harness could not decide, or other bytes ran) — record [PoC-ATTEMPTED] and keep
+# the prose PoC.
 #
 # Why two build+test passes and not one: both arms compile to the SAME `.so`
 # filename ({PROGRAM_NAME}.so), so they cannot coexist in SBF_OUT_DIR. Build an arm,
@@ -67,8 +68,12 @@
 #     run.sh points at a fresh directory per arm; a passing test without its marker
 #     exits 3, and so does an arm the harness could not decide. The marker is a
 #     floor, not proof: read the assertion all the same.
-#   * success prints the one line that can stand for Leg 3, naming the zero-trimmed
-#     sha256 of the bytes that ran:
+#   * the bytes that ran are the bytes run.sh placed: mollusk_for (shared-test-utils)
+#     records the path and zero-trimmed sha256 of every program it loads, and an arm
+#     counts only when each of those hashes is the placed file's and the placed file
+#     is unchanged after the test (exit 3 otherwise). Load the program under test
+#     through mollusk_for; a runner built another way leaves no record.
+#   * success prints the one line that can stand for Leg 3, naming that hash:
 #       OK: reproduced on prebuilt bytes — vulnerable sha256=<64 hex> → [PoC-REPRODUCED]
 #     or, with FIXED_SO, "... vulnerable sha256=<…> fixed sha256=<…> (<how the
 #     fixed arm held>) → [PoC-REPRODUCED]". A build of this crate's own arms prints
@@ -256,7 +261,7 @@ elf_hash() {
   fi
 }
 
-place_arm() {  # place_arm <arm> : put {CRATE}.so in SBF_OUT_DIR for this arm
+place_arm() {  # place_arm <arm> : put {CRATE}.so in SBF_OUT_DIR for this arm; PLACED_HASH names its bytes
   local arm="$1" so="${SBF_OUT_DIR}/${CRATE}.so"
   if [[ "${PREBUILT}" -eq 1 ]]; then
     local src; [[ "${arm}" == "vulnerable" ]] && src="${VULNERABLE_SO}" || src="${FIXED_SO}"
@@ -276,8 +281,13 @@ place_arm() {  # place_arm <arm> : put {CRATE}.so in SBF_OUT_DIR for this arm
       exit 3
     fi
   fi
+  PLACED_HASH="$(elf_hash "${so}")" || PLACED_HASH=""
+  if [[ "${PREBUILT}" -eq 1 && ! "${PLACED_HASH}" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "[PoC-ATTEMPTED] blocker: could not hash the placed ${arm} .so ${so}." >&2
+    exit 3
+  fi
   echo "   ${arm} .so: ${so}"
-  echo "   ${arm} sha256 (zero-trimmed): $(elf_hash "${so}")"
+  echo "   ${arm} sha256 (zero-trimmed): ${PLACED_HASH}"
 }
 
 build_tests() {  # build_tests <arm> <test>: a test binary that does not compile is a blocker, not a verdict
@@ -315,9 +325,31 @@ inconclusive() {  # inconclusive <arm> <reason>: the arm decided nothing — a b
   exit 3
 }
 
+# ran_placed <arm>: the arm's test loaded program bytes through mollusk_for, every load
+# named the bytes place_arm put in SBF_OUT_DIR, and those bytes are still there.
+# Otherwise it sets WHY and fails.
+ran_placed() {
+  local file="${BUILD_DIR}/markers/$1/loaded" other
+  if [[ ! -s "${file}" ]]; then
+    WHY="no program was loaded through mollusk_for, so which bytes ran is unknown"
+    return 1
+  fi
+  other="$(awk -v want="${PLACED_HASH}" '$1 != want { print; exit }' "${file}")"
+  if [[ -n "${other}" ]]; then
+    WHY="the test loaded bytes other than the ones run.sh placed (sha256 and path: ${other})"
+    return 1
+  fi
+  if [[ "$(elf_hash "${SBF_OUT_DIR}/${CRATE}.so")" != "${PLACED_HASH}" ]]; then
+    WHY="the placed .so changed while the test ran"
+    return 1
+  fi
+  return 0
+}
+
 # settle <arm> <status>: the verdict on an arm from its test's exit status and the
 # markers it left. Returns 1 for a verdict against the arm — a contract assertion ran
-# and did not hold; returns 0 for a pass; exits 3 for everything else.
+# (on the placed bytes, for prebuilt bytes) and did not hold; returns 0 for a pass;
+# exits 3 for everything else.
 settle() {
   local arm="$1" status="$2" why attempted held
   if why="$(marker "${arm}" inconclusive)"; then inconclusive "${arm}" "${why}"; fi
@@ -327,6 +359,7 @@ settle() {
     if [[ "${attempted}" -eq 0 ]]; then
       inconclusive "${arm}" "no contract assertion ran; the test failed before one (did the program load?)"
     fi
+    if [[ "${PREBUILT}" -eq 1 ]] && ! ran_placed "${arm}"; then inconclusive "${arm}" "${WHY}"; fi
     if [[ "${attempted}" -le "${held}" ]]; then
       inconclusive "${arm}" "every contract assertion that ran held, so the test failed outside them"
     fi
@@ -336,12 +369,16 @@ settle() {
     if [[ "${attempted}" -ne "${held}" ]]; then
       inconclusive "${arm}" "a contract assertion ran and did not hold, yet the test passed"
     fi
+    if ! ran_placed "${arm}"; then inconclusive "${arm}" "${WHY}"; fi
   fi
   return 0
 }
 
+WHY=""
+
 # 1. vulnerable arm — the exploit must land.
 place_arm vulnerable
+VULNERABLE_HASH="${PLACED_HASH}"
 build_tests vulnerable exploit
 echo ">> running exploit against 'vulnerable' (expect: SUCCEEDS)"
 status=0
@@ -357,7 +394,7 @@ if [[ "${PREBUILT}" -eq 1 ]]; then
   fi
   echo "   effect: ${effect}"
   if [[ -z "${FIXED_SO}" ]]; then
-    echo "OK: reproduced on prebuilt bytes — vulnerable sha256=$(elf_hash "${VULNERABLE_SO}") → [PoC-REPRODUCED]"
+    echo "OK: reproduced on prebuilt bytes — vulnerable sha256=${VULNERABLE_HASH} → [PoC-REPRODUCED]"
     exit 0
   fi
 fi
@@ -385,4 +422,4 @@ else
   exit 3
 fi
 echo "   fixed arm: ${held}"
-echo "OK: reproduced on prebuilt bytes — vulnerable sha256=$(elf_hash "${VULNERABLE_SO}") fixed sha256=$(elf_hash "${FIXED_SO}") (${how}) → [PoC-REPRODUCED]"
+echo "OK: reproduced on prebuilt bytes — vulnerable sha256=${VULNERABLE_HASH} fixed sha256=${PLACED_HASH} (${how}) → [PoC-REPRODUCED]"

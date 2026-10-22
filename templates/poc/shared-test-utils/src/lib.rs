@@ -5,7 +5,8 @@
 //! whole surface in one sitting:
 //!
 //!   1. `mollusk_for` — stand up a Mollusk runner bound to a program id + compiled
-//!      `.so`, the one line of setup every Mollusk-based PoC needs.
+//!      `.so`, the one line of setup every Mollusk-based PoC needs. It records which
+//!      bytes it loaded.
 //!   2. account fixtures — `program_owned_account`, `system_account`,
 //!      `attacker_owned_account` — the three account shapes an access-control /
 //!      ownership / signer exploit almost always has to construct.
@@ -21,22 +22,27 @@
 //!          error, for an audit-time model only.
 //!
 //! Each assertion leaves markers (`mark`): `attempted` when it starts, `held` when
-//! it holds, and the first three a marker of their own kind. On prebuilt bytes
-//! `run.sh` accepts an arm only with its assertion's marker, so an assertion in a
-//! comment, a string or dead code — or one that never ran — does not count, and a
-//! test that fails before any assertion ran decides nothing. The markers are a
-//! floor, not proof: whoever reads the PoC still checks that the assertion states
-//! the finding's effect and the guard's error.
+//! it holds, and the first three a marker of their own kind; `mollusk_for` leaves a
+//! `loaded` marker naming the bytes it loaded. On prebuilt bytes `run.sh` accepts an
+//! arm only with its assertion's marker and only when every load names the bytes it
+//! placed, so an assertion in a comment, a string or dead code — or one that never
+//! ran — does not count, and a test that fails before any assertion ran decides
+//! nothing. The markers are a floor, not proof: whoever reads the PoC still checks
+//! that the assertion states the finding's effect and the guard's error, and that
+//! the program under test is loaded only through `mollusk_for`.
 //!
 //! This file is authored as reusable template source. It is not built when the
 //! skill ships; the user's Solana toolchain builds it at audit time once the PoC
 //! crate has been filled in (`cargo build-sbf`, then `cargo test`).
 
+use mollusk_svm::program::loader_keys::LOADER_V3;
 use mollusk_svm::result::{InstructionResult, ProgramResult};
 use mollusk_svm::Mollusk;
+use sha2::{Digest, Sha256};
 use solana_account::Account;
 use solana_pubkey::Pubkey;
 use solana_rent::Rent;
+use std::path::PathBuf;
 
 #[doc(hidden)]
 pub use mollusk_svm::result::ProgramResult as __ProgramResult;
@@ -53,20 +59,87 @@ pub const SYSTEM_PROGRAM_ID: Pubkey = solana_system_interface::program::ID;
 ///
 /// `program_id` is the id the instruction targets. `so_name` is the base name of
 /// the compiled shared object (no `.so` suffix, e.g. `"poc_program"`) that
-/// `cargo build-sbf` emitted into `SBF_OUT_DIR` / `target/deploy`. Mollusk loads
-/// that bytecode — it does NOT run the `#[test]` binary's own code — so the crate
-/// must be built for SBF before the test runs. `run.sh` wires this ordering.
+/// `cargo build-sbf` emitted into `SBF_OUT_DIR` / `target/deploy`. The file is
+/// looked up where Mollusk looks — `tests/fixtures`, `BPF_OUT_DIR`, `SBF_OUT_DIR`,
+/// then the working directory — and a name holding `/` is refused, so no other path
+/// can be named. Mollusk loads that bytecode — it does NOT run the `#[test]`
+/// binary's own code — so the crate must be built for SBF before the test runs.
+/// `run.sh` wires this ordering.
 ///
-/// Kept as a one-liner wrapper on purpose: the indirection means a future Mollusk
-/// API change is a single edit here rather than a change in every PoC crate.
+/// The file is read once, and those bytes are what Mollusk loads; their path and
+/// zero-trimmed sha256 go to the `loaded` marker, which `run.sh` compares with the
+/// arm it placed. A refused name, a missing file and bytes the loader rejects fail
+/// the test as inconclusive. Load the program under test only here, and never swap
+/// it afterwards: what `Mollusk::new` or `add_program` load leaves no marker.
 pub fn mollusk_for(program_id: Pubkey, so_name: &str) -> Mollusk {
-    Mollusk::new(&program_id, so_name)
+    let (path, elf) = program_elf(so_name);
+    let hash = zero_trimmed_sha256(&elf);
+    let mut mollusk = Mollusk::default();
+    let added = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        mollusk.add_program_with_loader_and_elf(&program_id, &LOADER_V3, &elf)
+    }));
+    if let Err(panic) = added {
+        let reason = format!(
+            "{} (sha256 {hash}) did not load as a program",
+            path.display()
+        );
+        mark("inconclusive", &reason);
+        std::panic::resume_unwind(panic);
+    }
+    mark("loaded", &format!("{hash} {}", path.display()));
+    mollusk
 }
 
 /// A fresh, unique public key for a fixture. Thin alias over `Pubkey::new_unique`
 /// so test bodies read as intent ("the attacker", "the vault") rather than API.
 pub fn random_pubkey() -> Pubkey {
     Pubkey::new_unique()
+}
+
+/// The `<so_name>.so` that `mollusk_for` loads, and its bytes.
+fn program_elf(so_name: &str) -> (PathBuf, Vec<u8>) {
+    if so_name.contains('/') {
+        inconclusive(&format!(
+            "mollusk_for refuses the program name {so_name:?}: a name holding '/' can reach a file outside the search directories"
+        ));
+    }
+    let file = format!("{so_name}.so");
+    let mut dirs = vec![PathBuf::from("tests/fixtures")];
+    for var in ["BPF_OUT_DIR", "SBF_OUT_DIR"] {
+        if let Some(dir) = std::env::var_os(var) {
+            dirs.push(dir.into());
+        }
+    }
+    if let Ok(dir) = std::env::current_dir() {
+        dirs.push(dir);
+    }
+    let found = dirs
+        .iter()
+        .map(|dir| dir.join(&file))
+        .find(|path| path.exists());
+    let Some(path) = found else {
+        inconclusive(&format!(
+            "no {file} in tests/fixtures, BPF_OUT_DIR, SBF_OUT_DIR or the working directory"
+        ));
+    };
+    let path = std::fs::canonicalize(&path).unwrap_or(path);
+    match std::fs::read(&path) {
+        Ok(elf) => (path, elf),
+        Err(err) => inconclusive(&format!("cannot read {}: {err}", path.display())),
+    }
+}
+
+/// The sha256 `run.sh` (and `solana-verify`) name a program by: trailing zero
+/// padding is trimmed first.
+fn zero_trimmed_sha256(elf: &[u8]) -> String {
+    let end = elf
+        .iter()
+        .rposition(|byte| *byte != 0)
+        .map_or(0, |last| last + 1);
+    Sha256::digest(&elf[..end])
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -427,9 +500,10 @@ fn held(kind: &str, line: &str) {
 
 /// Append a line to the `kind` marker: `attempted` and `held` for every contract
 /// assertion, `effect` / `rejected_with` / `blocked` for the three that count on
-/// prebuilt bytes, and `inconclusive` for why an assertion could not decide.
-/// `run.sh` points AUDITOR_POC_MARKERS at an empty directory per arm and reads it
-/// after the arm's test; nothing is written when it is unset.
+/// prebuilt bytes, `loaded` for each program `mollusk_for` loads, and
+/// `inconclusive` for why a load or an assertion could not decide. `run.sh` points
+/// AUDITOR_POC_MARKERS at an empty directory per arm and reads it after the arm's
+/// test; nothing is written when it is unset.
 fn mark(kind: &str, line: &str) {
     let Some(dir) = std::env::var_os("AUDITOR_POC_MARKERS").filter(|dir| !dir.is_empty()) else {
         return;
