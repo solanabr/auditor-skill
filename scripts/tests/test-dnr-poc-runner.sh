@@ -125,6 +125,15 @@ printf '    // assert_exploit_rejected_with!(outcome, ..., "g");\n    assert_exp
 code="$(run "$T/half" "$SP" VULNERABLE_SO="$T/vuln.so" FIXED_SO="$T/fixed.so")"
 [ "$code" = 3 ] && grep -q 'assert_exploit_rejected_with' "$T/out" && ok "specific-error macro only in a comment -> exit 3" || bad "commented macro: exit $code"
 
+# live() reads every line. Test files far past the pipe buffer, with the required
+# call on every line, still count as live: an early-exit `grep -q` would lose the
+# match to SIGPIPE under pipefail and refuse the crate.
+mk_crate "$T/big" incident
+python3 -I -c 'for _ in range(40000): print("    let post = outcome.get_account(&state_pk).expect(\"x\");")' > "$T/big/tests/exploit.rs"
+python3 -I -c 'for _ in range(40000): print("    assert_exploit_rejected_with!(outcome, ProgramResult::Failure(e), \"g\");")' > "$T/big/tests/fixed_blocked.rs"
+code="$(run "$T/big" "$SP" VULNERABLE_SO="$T/vuln.so" FIXED_SO="$T/fixed.so")"
+[ "$code" = 0 ] && ok "40,000-line test files still count as live (no SIGPIPE refusal) -> exit 0" || { bad "large test files: exit $code"; grep blocker "$T/out" >&2; }
+
 code="$(run "$T/inc" "$T/nocargo" VULNERABLE_SO="$T/vuln.so" FIXED_SO="$T/fixed.so")"
 [ "$code" = 3 ] && grep -q 'cargo not on PATH' "$T/out" && ok "no cargo on PATH -> exit 3" || bad "no cargo: exit $code"
 

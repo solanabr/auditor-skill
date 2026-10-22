@@ -115,7 +115,11 @@ if [[ -n "${VULNERABLE_SO}" || -n "${FIXED_SO}" ]]; then
   #   * tests/fixed_blocked.rs pins the guard's error with
   #     `assert_exploit_rejected_with!`, not the any-error form.
   live() {  # live <file> <regex> : a match on a line that is not a // comment
-    grep -E "$2" "$1" 2>/dev/null | grep -Ev '^[[:space:]]*//' | grep -q .
+    # Counted, not `grep -q`: an early-exit reader under pipefail would hand the
+    # grep before it a SIGPIPE on a large file and turn a live match into "absent".
+    local n
+    n="$(grep -E "$2" "$1" 2>/dev/null | grep -Evc '^[[:space:]]*//')" || true
+    [[ "${n:-0}" -gt 0 ]]
   }
   if ! live "${HERE}/tests/exploit.rs" 'get_account[[:space:]]*\('; then
     echo "[PoC-ATTEMPTED] blocker: prebuilt (incident) mode needs tests/exploit.rs to assert the observed effect via outcome.get_account(&pk) — Ok alone proves nothing on real bytes." >&2
