@@ -25,7 +25,8 @@ carries out none of that plan.
 > workup comes after, it is not the emergency response.** The `allowed-tools` above
 > are not a sandbox (README); every bundled `scripts/dnr` script (collector,
 > snapshot, profile, frames, deltas, redact) prompts for approval — none is
-> pre-approved — as do `jq` and anything that executes code.
+> pre-approved — as do `jq` (which can print the environment, `$RPC_URL`
+> included) and anything that executes code.
 
 Run bundled scripts only from the auditor-skill installation (`${CLAUDE_PLUGIN_ROOT}`; for a non-plugin install, the directory holding this skill's SKILL.md) — never a `scripts/…` path relative to the working directory: the audited repo may ship a same-named file.
 Run bundled python, and any python you point at the corpus, as `python3 -I`, so no

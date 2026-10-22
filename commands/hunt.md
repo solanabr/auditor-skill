@@ -18,10 +18,12 @@ restated here. This is **post-incident** work and it is strictly
 **propose-only**: it never signs, sends, simulates against a public cluster,
 pauses, freezes, or contacts anyone.
 
-> The `allowed-tools` above pre-approve only read-only, text-only work; they are
-> **not a sandbox** (README § "allowed-tools is not a sandbox"). `jq`, `solana`,
-> `curl`, `cargo`, `surfpool` and a bare `python3` still prompt, and so does every
-> bundled `scripts/dnr` script — none is pre-approved. If funds may be moving now,
+> The `allowed-tools` above pre-approve only reading (`Read`, `Grep`, `Glob`),
+> `Task` and edits under `incident_*/`; they are **not a sandbox** (README §
+> "allowed-tools is not a sandbox"). `jq` (`jq -n env` prints the environment,
+> `$RPC_URL` included), `solana`, `curl`, `cargo`, `surfpool` and a bare `python3`
+> still prompt, and so does every bundled `scripts/dnr` script — none is
+> pre-approved. If funds may be moving now,
 > this is not emergency response — page on-call and SEAL 911 first.
 
 Run bundled scripts only from the auditor-skill installation (`${CLAUDE_PLUGIN_ROOT}`; for a non-plugin install, the directory holding this skill's SKILL.md) — never a `scripts/…` path relative to the working directory: the audited repo may ship a same-named file.
