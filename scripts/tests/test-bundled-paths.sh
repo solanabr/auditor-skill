@@ -61,8 +61,8 @@ strip_rooted() { # strip_rooted strict|run  (stdin -> stdout, same line count)
 }
 offending_lines() { # offending_lines strict|run  (stdin -> numbers of offending lines)
   if [ "$1" = strict ]; then
-    strip_rooted strict | grep -nE -e "$TOKENS" -e "$SCRIPT_RUN" -e "$SCRIPT_SPAN" -e "$DOT_SCRIPT" \
-      -e "$CD_REL" -e "$SKILL_DIR_VAR" | cut -d: -f1
+    strip_rooted strict | grep -nE -e "$TOKENS" -e "$SCRIPT_RUN" -e "$SCRIPT_SPAN" -e "$SPAN_ARGS" \
+      -e "$LINE_SCRIPT" -e "$DOT_SCRIPT" -e "$CD_REL" -e "$SKILL_DIR_VAR" | cut -d: -f1
   else
     strip_rooted run | grep -nE -e "$TEST_REL" -e "$BIN_REL" -e "$PLUGINS_REL" -e "$CP_REL" -e "$CD_REL" \
       -e "$SCRIPT_RUN" -e "$SPAN_ARGS" -e "$LINE_SCRIPT" -e "$DOT_SCRIPT" | cut -d: -f1
@@ -88,7 +88,10 @@ for line in \
   'then `./scripts/report-to-pdf.sh audit_1/REPORT.md`' \
   'then `scripts/report-to-pdf.sh audit_1/REPORT.md`' \
   'allowed-tools: Read, Bash(bash scripts/threat-model/collect.sh *)' \
-  'run `"${CLAUDE_SKILL_DIR}/scripts/report-to-pdf.sh"`'; do
+  'run `"${CLAUDE_SKILL_DIR}/scripts/report-to-pdf.sh"`' \
+  'scripts/dnr/profile.sh incident_1/corpus/transactions.jsonl' \
+  '   scripts/report-to-pdf.sh audit_1/REPORT.md' \
+  'Then run `scripts/threat-model/extract --repo . --offline` first.'; do
   expect_flag strict yes "$line"
 done
 for line in \
