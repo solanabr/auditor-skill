@@ -755,10 +755,64 @@ if [ -s "$OUTQ/history.md" ]; then
   check "T-q: ... shown escaped" has "$OUTQ/history.md" 'https://example.invalid/m\n```\n## Forged heading'
   check "T-q: a CR in a commit subject is shown as \\r" has "$OUTQ/history.md" 'Tidy q\r```'
   check "T-q: an incident directory name in R6 is shown escaped" has "$OUTQ/history.md" 'incident_x\n77\tforged-dir/INCIDENTS.json'
-  check "T-q: a long subject is cut" sh -c "awk 'length(\$0) > 520 { bad = 1 } END { exit bad }' '$OUTQ/history.md'"
+  check "T-q: a row with a long subject is cut, ending in ..." \
+    sh -c "awk '/^## R3/,/^## R4/' '$OUTQ/history.md' | grep 'long-subject' | awk 'length(\$0) > 520 || !/[.][.][.]\$/ { bad = 1 } END { exit bad || NR != 1 }'"
 else
   skp "T-q history checks: needs jq or python3"
 fi
+
+# =================================================================================================
+# T-r: moves. Within one commit, identical guard text nets out across files and renames are detected,
+# so a pure move prints nothing; a guard edited as it moves still prints both sides.
+# =================================================================================================
+MV="$T/moves"; mkrepo "$MV"
+put "$MV" programs/m/src/vault.rs '#[account(mut, has_one = authority)]
+pub struct Vault {}'
+put "$MV" programs/m/src/lib.rs 'pub fn deposit(a: u64) -> Result<()> { require!(a > 0, E::Zero); Ok(()) }
+pub fn withdraw(a: u64) -> Result<()> { require!(a <= cap, E::Cap); Ok(()) }'
+put "$MV" programs/m/src/limits.rs 'pub fn f(a: u64) -> Result<()> { require!(a > 1, E::Min); Ok(()) }'
+commit "$MV" -m "initial"
+git -C "$MV" mv programs/m/src/vault.rs programs/m/src/vault_accounts.rs
+commit "$MV" -m "Rename vault module"
+C_GITMV=$(short "$MV" HEAD)
+put "$MV" programs/m/src/lib.rs 'pub fn deposit(a: u64) -> Result<()> { require!(a > 0, E::Zero); Ok(()) }'
+put "$MV" programs/m/src/withdraw.rs 'pub fn withdraw(a: u64) -> Result<()> { require!(a <= cap, E::Cap); Ok(()) }'
+commit "$MV" -m "Split withdraw into its own module"
+C_SPLIT=$(short "$MV" HEAD)
+git -C "$MV" rm -q programs/m/src/limits.rs
+put "$MV" programs/m/src/bounds.rs 'pub fn f(a: u64) -> Result<()> { require!(a > 2, E::Min); Ok(()) }'
+commit "$MV" -m "Move f"
+C_MOVEDIT=$(short "$MV" HEAD)
+OUTMV="$T/moves-run/audit_1/bootstrap"
+collect --repo "$MV" --out "$OUTMV" --offline
+RMV="$T/rmv.txt"; section_of "$OUTMV/history.md" "R3" > "$RMV"
+check "T-r: a git mv of a small file prints no row" sh -c "! grep -q '^$C_GITMV ' '$RMV'"
+check "T-r: a file split prints no ADDED-QUIET (or REMOVED) for the moved guard" sh -c "! grep -q '^$C_SPLIT ' '$RMV'"
+check "T-r: a guard edited as it moves prints its old text as REMOVED in the old file" \
+  has "$RMV" "$C_MOVEDIT $(git -C "$MV" log -1 --format=%ad --date=short "$C_MOVEDIT") REMOVED x1 programs/m/src/limits.rs: pub fn f(a: u64) -> Result<()> { require!(a > 1, E::Min); Ok(()) }"
+check "T-r: ... and its new text as ADDED-QUIET in the new file" \
+  has "$RMV" "ADDED-QUIET x1 programs/m/src/bounds.rs: pub fn f(a: u64) -> Result<()> { require!(a > 2, E::Min); Ok(()) }"
+DR="$T/dirmove"; mkrepo "$DR"
+DR_BODY=$(i=0; while [ $i -lt 70 ]; do printf '    require!(v%s > 0, E::V%s);\n' "$i" "$i"; i=$((i + 1)); done)
+put "$DR" programs/old/src/lib.rs "pub fn check() -> Result<()> {
+$DR_BODY
+    require!(payer.is_signer, E::Signer);
+    Ok(())
+}"
+commit "$DR" -m "initial"
+put "$DR" programs/old/src/lib.rs "pub fn check() -> Result<()> {
+$DR_BODY
+    Ok(())
+}"
+commit "$DR" -m "Simplify checks"
+C_REAL=$(short "$DR" HEAD)
+git -C "$DR" mv programs/old programs/new
+commit "$DR" -m "Rename program directory"
+OUTDR="$T/dirmove-run/audit_1/bootstrap"
+collect --repo "$DR" --out "$OUTDR" --offline
+check "T-r: after a directory rename of 70 guards, an older real removal still appears" \
+  sh -c "awk '/^## R3/,/^## R4/' '$OUTDR/history.md' | grep -q '^$C_REAL .* REMOVED x1 programs/old/src/lib.rs: require!(payer.is_signer, E::Signer);'"
+check "T-r: ... and R3 is not truncated by the rename" sh -c "! awk '/^## R3/,/^## R4/' '$OUTDR/history.md' | grep -q '^TRUNCATED'"
 
 echo
 echo "threat-model collector tests: $pass passed, $fail failed, $skip skipped"

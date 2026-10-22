@@ -161,7 +161,7 @@ partial clone.
 | R0 | shallow flag, commit count, T3/T4 | `shallow: true` (also noted in the header) means the history is cut; say so in §6 |
 | R1 | commits in the pin's ancestry whose whole message matches the keyword set | announced fixes and audit responses |
 | R2 | reverts, with the commit each one reverts | surfaces the team changed its mind about |
-| R3a REMOVED | guard text that left a file in a commit (`<sha> <date> REMOVED x<n> <file>: <text>    # <subject>`) | a check that may have been dropped or moved; open the diff |
+| R3a REMOVED | guard text a commit removed from the target paths, netted across its files (`<sha> <date> REMOVED x<n> <file>: <text>    # <subject>`; several files are comma-separated) | a check that was dropped, or edited as it moved; open the diff |
 | R3b ADDED-QUIET | guard text added by a keyword-free commit of at most `--small` lines | a quiet fix: the surface was reachable before it |
 | R3c ADDED | guard text added by a keyword commit of at most `--fix-ceiling` lines | the fixed surface; look for twins left unfixed |
 | R4 | files and functions by number of commits touching them; a `note:` line counts `.rs` files the target's attributes send to another diff driver | where the churn concentrates; after a note, function counts may be low |
@@ -170,15 +170,20 @@ partial clone.
 | R7 / R8 | inputs and audit-mem status | |
 
 - **Empty is not clean.** An empty section prints `NOT FOUND (<what was searched>)`. A capped one prints
-  `TRUNCATED (+n more rows; raise --cap)`.
+  `TRUNCATED (+n more rows; raise --cap)`: re-run the collector with a higher `--cap` before drafting from that
+  section, since the rows past the cap can include the oldest removals.
 - **Escaped text.** Target text (commit subjects, file contents and names, remote URLs, incident fields) appears in
   `history.md` and `inputs.tsv` with TAB, LF and CR shown as `\t`, `\n` and `\r`, any other control character as
   `?`, and values over 500 characters cut with `...`.
-- **Moves.** A guard moved unchanged inside one file of one commit cancels out. A guard that is edited, or moved to
-  another file, prints its old text as REMOVED.
+- **Moves.** Within one commit, identical guard text is netted across every file in the target paths, and renames
+  are detected: a guard moved unchanged (inside a file, by a `git mv`, a file split or a directory rename) prints
+  nothing. A guard edited as it moves prints both sides: its old text as REMOVED, with the files it left, and its
+  new text as ADDED or ADDED-QUIET, with the files it entered, when the commit qualifies. So an ADDED-QUIET row is
+  new guard text, never a moved one.
 - **Blind spots.** Flipped comparisons (`>` to `>=`), changed inputs to a guard whose text did not change, plain
-  `if … { return Err(…) }` checks without a listed token, macro-generated constraints, and merge resolutions do not
-  show up. History lists what someone touched, not what is missing; §4 keeps code-only goals for that reason.
+  `if … { return Err(…) }` checks without a listed token, macro-generated constraints, merge resolutions, and
+  identical guard text removed in one file and added in another by the same commit (netted as a move even when the
+  two guard different accounts) do not show up. History lists what someone touched, not what is missing; §4 keeps code-only goals for that reason.
 
 ## 4. From rows to attacker goals
 

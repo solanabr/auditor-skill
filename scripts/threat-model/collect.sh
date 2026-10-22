@@ -245,12 +245,15 @@ sha256_of() {
 }
 
 # guard_rows <repo> <rev-range> <pathspec...>
-# One row per net guard-line change per file per commit:
-#   "<short> <date> <TAG> x<count> <file>: <text>    # <subject>"
+# One row per net guard-text change per commit:
+#   "<short> <date> <TAG> x<count> <file[,file...]>: <text>    # <subject>"
 # REMOVED always prints. ADDED prints for commits whose whole message matches a keyword and that change
-# <= FIX_CEILING lines in the pathspec; ADDED-QUIET for keyword-free commits of <= SMALL lines. Only
-# identical text (after trimming) removed and re-added in the same file of the same commit cancels out;
-# an edited guard prints both its old text (REMOVED) and, when the commit qualifies, its new text.
+# <= FIX_CEILING lines in the pathspec; ADDED-QUIET for keyword-free commits of <= SMALL lines. Within a
+# commit, identical guard text (after trimming) is netted across all its files, and renames are detected
+# (-M), so a guard moved unchanged (a git mv, a file split, a directory rename) prints nothing. An edited
+# guard prints its old text as REMOVED, with the files it left, and its new text, with the files it
+# entered, when the commit qualifies. Identical text removed in one file and added in another also nets
+# out, even where the two guard different things.
 # A commit's changed-line count comes from its own patch, which --pickaxe-all prints for every file in
 # the pathspec (a --numstat count would be zero for a file git treats as binary).
 # With GR_SIZE=1 each row starts with the commit's changed-line count (a sort key for R5d).
@@ -258,7 +261,7 @@ guard_rows() {
   local repo=$1 range=$2 kwfile; shift 2
   kwfile="$TMPD/kw.$RANDOM"
   G "$repo" log "${DIFFSAFE[@]}" -i -E --grep="$KW" --format=%H "$range" -- "$@" > "$kwfile" 2>/dev/null
-  G "$repo" log "${DIFFSAFE[@]}" --min-parents=1 -p -U0 --no-renames --pickaxe-all -G"$GUARD_G" \
+  G "$repo" log "${DIFFSAFE[@]}" --min-parents=1 -p -U0 -M --pickaxe-all -G"$GUARD_G" \
       --format='__C__ %H %h %ad %s' --date=short "$range" -- "$@" 2>/dev/null |
   awk -v small="$SMALL" -v ceil="$FIX_CEILING" -v kwfile="$kwfile" '
     BEGIN { always = ENVIRON["TM_ALWAYS_RE"]; attr = ENVIRON["TM_ATTR_RE"]
@@ -267,31 +270,33 @@ guard_rows() {
       if (s ~ always) return 1
       if (s ~ attr && s !~ /(^|[^A-Za-z0-9_])let[ \t]/ && s !~ /;[ \t]*$/) return 1
       return 0 }
-    function flush(   k, n) {
+    function note(side, t, f,   had) {   # the files a guard text left ("-") or entered ("+") in this commit
+      if (f == "" || ((side, t, f) in seen)) return
+      seen[side, t, f] = 1
+      had = ((side, t) in files)
+      files[side, t] = had ? files[side, t] "," f : f }
+    function flush(   t, n) {
       if (full == "") return
-      for (k in net) {
-        n = net[k]
-        if (n < 0) printf "%06d %d %s %s REMOVED x%d %s: %s    # %s\n", ci, size, short, date, -n, fileof[k], textof[k], subj
+      for (t in net) {
+        n = net[t]
+        if (n < 0) printf "%06d %d %s %s REMOVED x%d %s: %s    # %s\n", ci, size, short, date, -n, files["-", t], t, subj
         else if (n > 0 && (full in kw) && size <= ceil + 0)
-          printf "%06d %d %s %s ADDED x%d %s: %s    # %s\n", ci, size, short, date, n, fileof[k], textof[k], subj
+          printf "%06d %d %s %s ADDED x%d %s: %s    # %s\n", ci, size, short, date, n, files["+", t], t, subj
         else if (n > 0 && !(full in kw) && size <= small + 0)
-          printf "%06d %d %s %s ADDED-QUIET x%d %s: %s    # %s\n", ci, size, short, date, n, fileof[k], textof[k], subj
+          printf "%06d %d %s %s ADDED-QUIET x%d %s: %s    # %s\n", ci, size, short, date, n, files["+", t], t, subj
       }
-      delete net; delete fileof; delete textof }
+      delete net; delete files; delete seen }
     /^__C__ / { flush(); ci++; full = $2; short = $3; date = $4; size = 0
                 subj = $0; sub(/^__C__ [^ ]+ [^ ]+ [^ ]+ ?/, "", subj); inhdr = 0; next }
-    /^diff --git / { inhdr = 1; oldp = ""; file = ""; next }
+    /^diff --git / { inhdr = 1; oldp = ""; newp = ""; next }
     inhdr && /^--- a\// { oldp = substr($0, 7); next }
-    inhdr && /^\+\+\+ b\// { file = substr($0, 7); next }
-    inhdr && /^\+\+\+ \/dev\/null/ { file = oldp; next }
+    inhdr && /^\+\+\+ b\// { newp = substr($0, 7); next }
     /^@@/ { inhdr = 0; next }
     inhdr { next }
     /^[-+]/ { size++; s = substr($0, 2)
               if (!isguard(s)) next
               t = s; gsub(/^[ \t]+|[ \t]+$/, "", t)
-              k = file SUBSEP t
-              net[k] += (substr($0, 1, 1) == "+") ? 1 : -1
-              fileof[k] = file; textof[k] = t }
+              if (substr($0, 1, 1) == "+") { net[t]++; note("+", t, newp) } else { net[t]--; note("-", t, oldp) } }
     END { flush() }' | sort -k1,1n -k5 | cut -d' ' -f"$([ "${GR_SIZE:-0}" = 1 ] && echo 2- || echo 3-)"
 }
 
@@ -454,7 +459,7 @@ grep -E ' REMOVED x' "$TMPD/r3" > "$TMPD/r3a"
 grep -E ' ADDED-QUIET x' "$TMPD/r3" > "$TMPD/r3b"
 grep -E ' ADDED x' "$TMPD/r3" > "$TMPD/r3c"
 { section "R3 Account-guard lines removed or added" \
-"Guard text that left a file (REMOVED), appeared in a keyword-free commit changing <= $SMALL lines (ADDED-QUIET), or appeared in a commit of <= $FIX_CEILING lines whose message matches a keyword (ADDED). An edited guard prints its old text as REMOVED. Blind spots: flipped comparisons, changed inputs to an unchanged guard, plain \`if ... { return Err(...) }\` checks, merge resolutions."
+"Guard text a commit removed from the target paths (REMOVED), or added in a keyword-free commit changing <= $SMALL lines (ADDED-QUIET) or in a commit of <= $FIX_CEILING lines whose message matches a keyword (ADDED). Each commit nets identical guard text across its files: a guard moved unchanged prints nothing, an edited one prints its old text as REMOVED. Blind spots: flipped comparisons, changed inputs to an unchanged guard, plain \`if ... { return Err(...) }\` checks, merge resolutions, identical text removed in one file and added in another by the same commit."
   echo "--- R3a REMOVED ---"
   emit_capped "$TMPD/r3a" "no guard text removed in the pin ancestry"
   echo "--- R3b ADDED-QUIET (quiet-fix candidates) ---"

@@ -45,7 +45,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --repo <target> --o
   [--paths <in-scope program dir>] [--vulns <file>] [--program-id <id> --audit-mem-db <store intake recorded>]
 ```
 
-Drop `--offline` only when the user passed an `https://` `--parent` / `--vulns` value or confirmed the exact URL. Then hand `audit_<n>/bootstrap/` to `threat-modeler` together with the other inputs.
+Drop `--offline` only when the user passed an `https://` `--parent` / `--vulns` value or confirmed the exact URL. If a section of `history.md` prints `TRUNCATED`, re-run with a higher `--cap` before using it. Then hand `audit_<n>/bootstrap/` to `threat-modeler` together with the other inputs.
 
 If the collector exits 3 because the target is a partial clone, collect from a full copy you control instead (`OUTPUT-RULES.md` Rule 11c): reading its missing objects would fetch from the promisor remote its config names.
 
