@@ -52,11 +52,14 @@ directory.
      one.
    - **Snapshot every implicated program now:**
      `bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/snapshot-program.sh" <program_id> incident_<n>`
-     — read-only `solana program show` + `solana program dump` into `incident_<n>/bin/`, with
-     the CLI's error text passed through `redact.sh`. Copy the line it prints
-     (last-deployed slot, zero-trimmed sha256) into `LEDGER.md`. A hotfix shipped
-     mid-investigation overwrites the on-chain binary; this copy is what Leg 3 runs
-     on.
+     — read-only (`program show` + `program dump`, or `program-v4 show` +
+     `program-v4 download` for a loader-v4 program), kept as
+     `incident_<n>/bin/<id>@<slot>.so` and never overwritten, with the CLI's error
+     text passed through `redact.sh`. Copy the line it prints (last-deployed slot,
+     zero-trimmed sha256, file) into `LEDGER.md`. A hotfix shipped
+     mid-investigation overwrites the on-chain binary; the copy taken before it is
+     what Leg 3 runs on, and this run's snapshot adds `bin/<id>@<new slot>.so` next
+     to it.
 
 2. **Turn the lead into seed entities**, and write the question this run must
    answer as a single sentence in the ledger. An `INC-<n>.<k>` contributes that

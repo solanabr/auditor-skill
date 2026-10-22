@@ -51,9 +51,10 @@ Everything lands in a per-run `incident_<n>/` directory whose first file is a
 committed. Each run makes a new one; an existing one is reused only when git does
 not track it, it holds no symbolic links, and you confirm it:
 
-- `bin/` — the step-1 snapshot of each implicated program (`<id>.so` plus its
-  `solana program show` output), taken before anything else so a mid-investigation
-  hotfix can't erase the incident binary.
+- `bin/` — the step-1 snapshot of each implicated program (`<id>@<slot>.so` plus
+  its `<id>@<slot>.show.txt` record), taken before anything else so a
+  mid-investigation hotfix can't erase the incident binary. A file there is never
+  overwritten: a snapshot after a hotfix adds one for the new slot.
 - `INCIDENTS.json` — the structured result ([schema](../references/detection-response/incidents-schema.md)).
 - `INCIDENT_REPORT.md` — executive summary, timeline, per-incident evidence, and
   the full ledger so a reviewer can retrace every step.

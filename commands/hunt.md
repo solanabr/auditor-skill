@@ -46,10 +46,13 @@ directory.
      `${CLAUDE_PLUGIN_ROOT}/templates/hunt-ledger.md`.
    - **Snapshot each program in scope now:**
      `bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/snapshot-program.sh" <program_id> incident_<n>`
-     — read-only `solana program show` + `solana program dump` into `incident_<n>/bin/`, CLI
-     error text passed through `redact.sh`. Paste the line it prints (last-deployed
-     slot, zero-trimmed sha256) into `LEDGER.md`. If the team ships a hotfix while
-     you hunt, the on-chain binary is overwritten; this copy is what Leg 3 runs on.
+     — read-only (`program show` + `program dump`, or `program-v4 show` +
+     `program-v4 download` for a loader-v4 program), kept as
+     `incident_<n>/bin/<id>@<slot>.so` and never overwritten, CLI error text passed
+     through `redact.sh`. Paste the line it prints (last-deployed slot, zero-trimmed
+     sha256, file) into `LEDGER.md`. If the team ships a hotfix while you hunt, the
+     on-chain binary is overwritten; this copy is what Leg 3 runs on, and a later
+     snapshot adds `bin/<id>@<new slot>.so` next to it.
 
 2. **Get the corpus.** The user's own corpus comes first: `--logs <dir>` (a
    `transactions.jsonl`, Geyser/indexer export, or service logs). Otherwise collect

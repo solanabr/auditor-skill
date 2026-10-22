@@ -458,14 +458,17 @@ mkdir -p "$TT/incident_9"; printf 'keep-me\n' > "$TT/incident_9/.gitignore"
 eq "collect: an existing incident_<n>/.gitignore is not overwritten" "$(cat "$TT/incident_9/.gitignore")" "keep-me"
 
 # ---------------------------------------------------------------------------
-# 11. snapshot-program.sh against a fake `solana`: writes bin/<id>.so, prints the
-#     ledger line (owner, last-deployed slot, zero-trimmed hash, padding), redacts a
-#     CLI error, and stops with a blocker for loader-v4. The CLI runs from a
-#     throwaway -C config: no URL in argv, a keypair path that does not exist, a
-#     0700 directory removed on exit, and a blocker if the CLI ignores the config.
-#     Like solana-cli 3.1, the fake reads a config only when it holds
-#     websocket_url, and `program show` needs a signer unless --buffer-authority
-#     is given.
+# 11. snapshot-program.sh against a fake `solana`: keeps bin/<id>@<slot>.so, prints
+#     the ledger line (owner, last-deployed slot, zero-trimmed hash, padding), and
+#     redacts a CLI error. The CLI runs from a throwaway -C config: no URL in argv, a
+#     keypair path that does not exist, a 0700 directory removed on exit, and a
+#     blocker if the CLI ignores the config. The fake mirrors solana-cli 3.1.10:
+#     it reads a config only when it holds websocket_url; `program show` and
+#     `program-v4 show` need a signer unless --buffer-authority / --authority is
+#     given; `program show` and `program dump` refuse a loader-v4 program ("is not an
+#     SBF program"), which `program-v4 show` / `program-v4 download` read; and a
+#     BPFLoader2 program's record has no slot or authority. FAKE_SOLANA_SLOTS lists
+#     the last-deployed slot each successive record read returns.
 # ---------------------------------------------------------------------------
 printf '#!/bin/sh\nexec python3 -I "$0.py" "$@"\n' > "$TT/bin/solana"
 cat > "$TT/bin/solana.py" <<'PY'
@@ -494,14 +497,49 @@ with open(os.environ["FAKE_SOLANA_SEEN"], "a") as log:
     log.write(f"{kp}\t{os.path.exists(kp)}\t{mode}\n")
 if os.environ.get("FAKE_SOLANA_FAIL"):
     sys.stderr.write(f"Error: RPC request error: cluster version query failed: {url}\n"); sys.exit(1)
-owner = "LoaderV411111111111111111111111111111111111" if os.environ.get("FAKE_SOLANA_V4") else "BPFLoaderUpgradeab1e11111111111111111111111"
-if a[:2] == ["program", "show"] and "--buffer-authority" not in a and not os.path.exists(kp):
-    sys.stderr.write(f'Error: Dynamic program error: No default signer found, run "solana-keygen new -o {kp}"\n'); sys.exit(1)
-if a[:2] == ["program", "show"]:
-    print(f"Program Id: {a[2]}\nOwner: {owner}\nProgramData Address: PdA111\nAuthority: Auth111\nLast Deployed In Slot: 12345\nData Length: 100 (0x64) bytes\nBalance: 1 SOL")
+kind = "v4" if os.environ.get("FAKE_SOLANA_V4") else "v2" if os.environ.get("FAKE_SOLANA_V2") else \
+       "wallet" if os.environ.get("FAKE_SOLANA_NOTPROG") else "v3"
+owner = {"v4": "LoaderV411111111111111111111111111111111111", "v2": "BPFLoader2111111111111111111111111111111111",
+         "wallet": "11111111111111111111111111111111", "v3": "BPFLoaderUpgradeab1e11111111111111111111111"}[kind]
+pid = a[a.index("--program-id") + 1] if "--program-id" in a else (a[2] if len(a) > 2 else "?")
+slots = (os.environ.get("FAKE_SOLANA_SLOTS") or "12345").split(",")
+state = os.environ["FAKE_SOLANA_SEEN"] + ".slot"
+def current():
+    try:
+        return int(open(state).read())
+    except (OSError, ValueError):
+        return 0
+def read_record():  # each record read moves to the next listed slot (the last one repeats)
+    n = current() + 1
+    open(state, "w").write(str(n))
+    return slots[min(n, len(slots)) - 1]
+def elf():  # the bytes depend on the slot now deployed
+    k = slots[min(max(current(), 1), len(slots)) - 1]
+    return b"\x7fELF" + int(k).to_bytes(8, "little") + bytes(range(1, 30)) + b"\x00" * 500
+def need_signer(flag):
+    if flag not in a and not os.path.exists(kp):
+        sys.stderr.write(f'Error: Dynamic program error: No default signer found, run "solana-keygen new -o {kp}"\n'); sys.exit(1)
+if a[:1] == ["account"]:
+    print(json.dumps({"pubkey": a[1], "account": {"lamports": 1, "data": ["", "base64"], "owner": owner, "executable": kind != "wallet"}}))
+elif a[:2] == ["program", "show"]:
+    need_signer("--buffer-authority")
+    if kind in ("v4", "wallet"):
+        sys.stderr.write(f"Error: {pid} is not an SBF program\n"); sys.exit(1)
+    if kind == "v2":
+        print(f"Program Id: {pid}\nOwner: {owner}\nData Length: 100 (0x64) bytes")
+    else:
+        print(f"Program Id: {pid}\nOwner: {owner}\nProgramData Address: PdA111\nAuthority: Auth111\nLast Deployed In Slot: {read_record()}\nData Length: 100 (0x64) bytes\nBalance: 1 SOL")
 elif a[:2] == ["program", "dump"]:
-    open(a[3], "wb").write(b"\x7fELF" + bytes(range(1, 30)) + b"\x00" * 500)
+    if kind in ("v4", "wallet"):
+        sys.stderr.write(f"Error: {pid} is not an SBF program\n"); sys.exit(1)
+    open(a[3], "wb").write(elf())
     print(f"Wrote program to {a[3]}")
+elif a[:2] == ["program-v4", "show"] and kind == "v4":
+    need_signer("--authority")
+    print(f"Program Id: {pid}\nOwner: {owner}\nAuthority: Auth111\nLast Deployed In Slot: {read_record()}\nStatus: deployed\nData Length: 100 (0x64) bytes")
+elif a[:2] == ["program-v4", "download"] and kind == "v4":
+    open(a[2], "wb").write(elf())
+    print(f"Wrote program to {a[2]}")
 else:
     sys.stderr.write("fake solana: refusing unexpected subcommand\n"); sys.exit(9)
 PY
@@ -511,9 +549,10 @@ PID="ProgTest1111111111111111111111111111111111"   # 42 base58 characters
 snap="$(PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/v2/LEAKME42" bash "$DNR/snapshot-program.sh" "$PID" "$TT/inc" 2>&1)"
 code=$?
 eq "snapshot: exits 0 with the fake CLI" "$code" "0"
-want="$(python3 -I -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read().rstrip(b"\x00")).hexdigest())' "$TT/inc/bin/$PID.so" 2>/dev/null)"
+sha_trim() { python3 -I -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read().rstrip(b"\x00")).hexdigest())' "$1" 2>/dev/null; }
+want="$(sha_trim "$TT/inc/bin/$PID@12345.so")"
 case "$snap" in
-  *"last_deployed_slot=12345"*"sha256_zero_trimmed=$want"*"padding_bytes=500"*) ok "snapshot: ledger line carries slot, zero-trimmed hash and padding" ;;
+  *"last_deployed_slot=12345"*"sha256_zero_trimmed=$want"*"padding_bytes=500 file=bin/$PID@12345.so"*) ok "snapshot: ledger line carries slot, zero-trimmed hash, padding and bin/<id>@<slot>.so" ;;
   *) bad "snapshot: unexpected ledger line ($snap)" ;;
 esac
 snapfail="$(PATH="$TT/bin:$PATH" FAKE_SOLANA_FAIL=1 RPC_URL="https://rpc.example.test/v2/LEAKME42" bash "$DNR/snapshot-program.sh" "$PID" "$TT/inc2" 2>&1)"
@@ -540,8 +579,80 @@ eq "snapshot: no program call after the config check failed" "$(grep -c '"progra
 PATH="$TT/bin:$PATH" RPC_URL='https://rpc.example.test/"x' bash "$DNR/snapshot-program.sh" "$PID" "$TT/inc7" >/dev/null 2>&1
 code=$?
 if [[ "$code" == 2 && ! -e "$TT/inc7" ]]; then ok "snapshot: refuses an \$RPC_URL holding a quote (exit 2, nothing written)"; else bad "snapshot: quoted \$RPC_URL -> exit $code"; fi
-PATH="$TT/bin:$PATH" FAKE_SOLANA_V4=1 RPC_URL="https://rpc.example.test/" bash "$DNR/snapshot-program.sh" "$PID" "$TT/inc3" >/dev/null 2>&1
-eq "snapshot: loader-v4 program stops with a named blocker (exit 3)" "$?" "3"
+snaprun() {  # snaprun <dir> [VAR=value ...]: one snapshot with the fake CLI, output in <dir>.out
+  local d="$1"; shift
+  rm -f "$FAKE_SOLANA_SEEN.slot"
+  env PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" "$@" bash "$DNR/snapshot-program.sh" "$PID" "$d" > "$d.out" 2>&1
+}
+# A loader-v4 program: `program show` refuses it, so the owner comes from the account
+# and the bytes from program-v4 show / download.
+snaprun "$TT/inc3" FAKE_SOLANA_V4=1
+code=$?
+if [[ "$code" == 0 ]] && grep -q "owner=LoaderV411111111111111111111111111111111111 last_deployed_slot=12345 authority=Auth111 status=deployed .* file=bin/$PID@12345.so" "$TT/inc3.out" \
+   && [[ "$(head -c 4 "$TT/inc3/bin/$PID@12345.so" | od -An -tx1 | tr -d ' \n')" == 7f454c46 ]]; then
+  ok "snapshot: a loader-v4 program is read with program-v4 show and kept from program-v4 download"
+else
+  bad "snapshot: loader-v4 program -> exit $code ($(tr '\n' ' ' < "$TT/inc3.out"))"
+fi
+snaprun "$TT/inc3b" FAKE_SOLANA_NOTPROG=1
+code=$?
+if [[ "$code" == 3 && ! -e "$TT/inc3b/bin" ]] && grep -q 'is not a program the solana CLI can dump (owner 11111111111111111111111111111111)' "$TT/inc3b.out"; then
+  ok "snapshot: an id that is not a program names its owner in a blocker (exit 3), nothing written"
+else
+  bad "snapshot: not-a-program id -> exit $code ($(tr '\n' ' ' < "$TT/inc3b.out"))"
+fi
+snaprun "$TT/inc3c" FAKE_SOLANA_V2=1
+if grep -q "owner=BPFLoader2111111111111111111111111111111111 last_deployed_slot=n/a (immutable loader) authority=none sha256_zero_trimmed=.* file=bin/$PID@immutable.so" "$TT/inc3c.out" \
+   && [[ -s "$TT/inc3c/bin/$PID@immutable.so" ]]; then
+  ok "snapshot: a BPFLoader2 program has no deploy slot: n/a (immutable loader), bin/<id>@immutable.so"
+else
+  bad "snapshot: BPFLoader2 program ($(tr '\n' ' ' < "$TT/inc3c.out"))"
+fi
+# Snapshots are never overwritten. A later run at a new slot (a hotfix) adds a file
+# next to the preserved one; a run at the same slot keeps the file it finds when the
+# bytes match, and stops with a blocker, writing nothing, when they do not.
+snaprun "$TT/keep"
+cp "$TT/keep/bin/$PID@12345.so" "$TT/keep.orig.so"
+snaprun "$TT/keep" FAKE_SOLANA_SLOTS=12400
+if [[ -s "$TT/keep/bin/$PID@12400.so" && -s "$TT/keep/bin/$PID@12400.show.txt" ]] && cmp -s "$TT/keep/bin/$PID@12345.so" "$TT/keep.orig.so" \
+   && ! cmp -s "$TT/keep/bin/$PID@12400.so" "$TT/keep.orig.so"; then
+  ok "snapshot: two runs at different slots keep both binaries; the first is unchanged"
+else
+  bad "snapshot: a second slot replaced or lost a binary ($(ls "$TT/keep/bin" | tr '\n' ' '))"
+fi
+snaprun "$TT/keep"
+code=$?
+if [[ "$code" == 0 ]] && grep -q "kept bin/$PID@12345.so" "$TT/keep.out" && cmp -s "$TT/keep/bin/$PID@12345.so" "$TT/keep.orig.so"; then
+  ok "snapshot: a rerun at the same slot with the same bytes keeps the preserved file"
+else
+  bad "snapshot: same-slot rerun -> exit $code"
+fi
+printf 'x' >> "$TT/keep/bin/$PID@12345.so"; cp "$TT/keep/bin/$PID@12345.so" "$TT/keep.changed.so"
+snaprun "$TT/keep"
+code=$?
+if [[ "$code" == 3 ]] && grep -q 'already exists with other bytes' "$TT/keep.out" && cmp -s "$TT/keep/bin/$PID@12345.so" "$TT/keep.changed.so" \
+   && [[ "$(ls "$TT/keep/bin" | grep -c .)" == 4 ]]; then
+  ok "snapshot: other bytes under the same slot stop with a blocker; the file is kept, nothing is written"
+else
+  bad "snapshot: same slot, other bytes -> exit $code ($(ls "$TT/keep/bin" | tr '\n' ' '))"
+fi
+# A redeploy between the record read and the dump: the slot read after the dump
+# differs, so it dumps once more; a slot that moves twice is a blocker.
+dumps() { grep -c '"dump"\|"download"' "$FAKE_SOLANA_ARGV"; }
+d0="$(dumps)"; snaprun "$TT/race1" FAKE_SOLANA_SLOTS=100,200
+code=$?
+if [[ "$code" == 0 && "$(( $(dumps) - d0 ))" == 2 ]] && grep -q "last_deployed_slot=200 .* file=bin/$PID@200.so" "$TT/race1.out" && [[ ! -e "$TT/race1/bin/$PID@100.so" ]]; then
+  ok "snapshot: a slot that moved during the dump is dumped again and kept under the new slot"
+else
+  bad "snapshot: moved slot -> exit $code ($(tr '\n' ' ' < "$TT/race1.out"))"
+fi
+snaprun "$TT/race2" FAKE_SOLANA_SLOTS=100,200,300
+code=$?
+if [[ "$code" == 3 && ! -e "$TT/race2/bin" ]] && grep -q 'was redeployed during the snapshot' "$TT/race2.out"; then
+  ok "snapshot: a slot that moves twice stops with a blocker (exit 3), nothing written"
+else
+  bad "snapshot: slot moving twice -> exit $code ($(tr '\n' ' ' < "$TT/race2.out"))"
+fi
 # The id is used in file names: anything but a base58 key is refused before any write.
 for badid in '../../escape' 'Prog111' 'ProgTest111111111111111111111111111111111/x' 'Prog0OIl1111111111111111111111111111111111'; do
   PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" bash "$DNR/snapshot-program.sh" "$badid" "$TT/inc5" >/dev/null 2>&1
@@ -691,7 +802,7 @@ eq "run dir: refused runs made no RPC call" "$(grep -c . "$FAKE_CURL_LOG" 2>/dev
 c1=$?
 PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" bash "$DNR/snapshot-program.sh" "$PID" "$REPO/incident_5" > /dev/null 2>&1
 c2=$?
-if [[ "$c1" == 0 && "$c2" == 0 && -s "$REPO/incident_5/corpus/transactions.jsonl" && -s "$REPO/incident_5/bin/$PID.so" ]]; then
+if [[ "$c1" == 0 && "$c2" == 0 && -s "$REPO/incident_5/corpus/transactions.jsonl" && -s "$REPO/incident_5/bin/$PID@12345.so" ]]; then
   ok "run dir: an untracked, link-free incident_<n>/ in a repository is accepted (control)"
 else
   bad "run dir: the untracked control dir -> collect exit $c1, snapshot exit $c2"

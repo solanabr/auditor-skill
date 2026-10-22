@@ -70,11 +70,17 @@ program's loader record (no write):
   program show <id>` prints "Last Deployed In Slot" and the authority directly.
 - **Loader-v4 (`LoaderV411…`):** `LoaderV4State` is a 0x30-byte header — slot at
   `[0..8]`, authority-or-next-version pubkey at `[8..40]`, status at `[40..48]` —
-  followed by the ELF.
+  followed by the ELF. `solana program show` refuses such a program ("is not an
+  SBF program"); `solana program-v4 show --program-id <id>` prints the same
+  "Last Deployed In Slot", authority and status. `snapshot-program.sh` handles
+  both loaders.
+- **BPFLoader2 / BPFLoader1:** immutable, with no deploy slot or authority; the
+  snapshot records `last_deployed_slot=n/a (immutable loader)`.
 
 A last-deployed slot **after** the incident slot means the incident binary is
-gone (a hotfix overwrote it); dump and hash the current bytes immediately anyway,
-and note the provenance gap (`incidents-schema.md` → `binary_provenance`).
+gone (a hotfix overwrote it); snapshot the current bytes immediately anyway (the
+earlier `bin/<id>@<slot>.so` is kept), and note the provenance gap
+(`incidents-schema.md` → `binary_provenance`).
 
 ## Coordination (drafts only)
 
