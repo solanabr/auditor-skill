@@ -427,7 +427,7 @@ grep -rnE --include='*.yml' --include='*.yaml' -e "contains\([[:space:]]*'[^']*(
 
 ```bash
 # R4 — workflow_run consumers: head fields and artifact downloads
-grep -rnE --include='*.yml' --include='*.yaml' 'workflow_run\.(head_branch|head_sha|head_commit|head_repository|display_title|pull_requests)|download-artifact|run-id:' .github/
+grep -rnE --include='*.yml' --include='*.yaml' 'workflow_run\.(head_branch|head_sha|head_commit|head_repository|display_title|pull_requests)|download-artifact|downloadArtifact|gh run download|run-id:' .github/
 ```
 > DEP-094, KV-140.
 
