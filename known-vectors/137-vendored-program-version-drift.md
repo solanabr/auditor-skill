@@ -24,7 +24,8 @@ The class is invisible to dependency scanners: `cargo audit` / `npm audit` see l
 **Step 1: Establish program provenance — is any in-scope program vendored, white-label or forked?**
 ```
 grep -rn -iE "fork of|forked from|based on|powered by|white.?label|licensed from|upstream" README.md docs/ programs/ 2>/dev/null
-git log --oneline --reverse -- programs/ | head -5   # imported wholesale in one commit?
+git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  log --oneline --reverse --no-textconv -- programs/ | head -5   # imported wholesale in one commit? (Rule 11c flags)
 git remote -v; git config --get-all remote.upstream.url 2>/dev/null
 grep -rn -E "declare_id!" programs/ | sort   # compare against known vendor/upstream program IDs
 ```
@@ -34,7 +35,8 @@ grep -rn -E "declare_id!" programs/ | sort   # compare against known vendor/upst
 **Step 2: Diff the deployed version against upstream HEAD and its security history**
 ```
 solana-verify verify-from-repo -um --program-id <PROGRAM_ID> <UPSTREAM_REPO> 2>/dev/null   # or compare build hashes
-git log --oneline <deployed_commit>..upstream/main -- programs/ | head -40
+git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  log --oneline --no-textconv <deployed_commit>..upstream/main -- programs/ | head -40
 gh api repos/<upstream>/security-advisories 2>/dev/null; gh release list -R <upstream> | head -10
 ```
 - ✅ PASS: the deployed build corresponds to upstream HEAD or a maintained release branch, and no security-tagged commit / advisory / release note exists after the deployed commit

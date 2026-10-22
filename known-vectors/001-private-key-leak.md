@@ -35,18 +35,23 @@ grep -rn --include="*.ts" --include="*.tsx" --include="*.env*" -E "[1-9A-HJ-NP-Z
 
 **Step 4: Full git history scan for ever-committed secrets**
 ```
-# Check if ANY secret-looking file was ever added to git
-git log --all --diff-filter=A --name-only --pretty=format:"%H %s" -- "*.env" "*.env.*" "*.pem" "*-keypair.json" "*-delegate.json" "id.json" "*secret*" "*private*"
+# Check if ANY secret-looking file was ever added to git (OUTPUT-RULES Rule 11c flags)
+git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  log --all --no-textconv --diff-filter=A --name-only --pretty=format:"%H %s" \
+  -- "*.env" "*.env.*" "*.pem" "*-keypair.json" "*-delegate.json" "id.json" "*secret*" "*private*"
 ```
 - ✅ PASS: Zero results
 - ❌ FAIL: Any file listed → secret was committed. Even if later deleted, **it's still in history**
 
 **Step 5: Deep git history search for key content**
 ```
-# Search git history for actual secret values (not just filenames); --no-textconv: OUTPUT-RULES Rule 11c
-git log --all -p --no-textconv -S "BEGIN RSA PRIVATE" --oneline -- "*.ts" "*.json" "*.pem" | head -40
-git log --all -p --no-textconv -S "BEGIN EC PRIVATE" --oneline | head -20
-git log --all -p --no-textconv -S "mnemonic" --oneline -- "*.ts" "*.json" "*.env" | head -20
+# Search git history for actual secret values, not just filenames (OUTPUT-RULES Rule 11c flags)
+git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  log --all -p --no-textconv --no-ext-diff -S "BEGIN RSA PRIVATE" --oneline -- "*.ts" "*.json" "*.pem" | head -40
+git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  log --all -p --no-textconv --no-ext-diff -S "BEGIN EC PRIVATE" --oneline | head -20
+git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  log --all -p --no-textconv --no-ext-diff -S "mnemonic" --oneline -- "*.ts" "*.json" "*.env" | head -20
 ```
 - ✅ PASS: Zero matches across all three
 - ❌ FAIL: Any match → key was in history. MUST rotate immediately, even if commit was reverted

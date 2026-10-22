@@ -409,8 +409,9 @@ ACTIONS:
   # .env files committed
   git ls-files | grep -i ".env"
 
-  # Git history check
-  git log --all --diff-filter=A --name-only -- "*.env" "*.pem" "*secret*"
+  # Git history check (Rule 11c flags)
+  git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+    log --all --no-textconv --diff-filter=A --name-only -- "*.env" "*.pem" "*secret*"
 
   # NEXT_PUBLIC_ audit
   grep -rn "NEXT_PUBLIC_" apps/web/.env* 2>/dev/null

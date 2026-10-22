@@ -28,7 +28,9 @@ grep -E "\.env" .gitignore
 
 **Step 3: Check if .env was EVER committed**
 ```
-git log --all --diff-filter=A --name-only --pretty=format: | grep -E "\.env"
+# OUTPUT-RULES Rule 11c flags
+git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  log --all --no-textconv --diff-filter=A --name-only --pretty=format: | grep -E "\.env"
 ```
 - ✅ PASS: .env was never committed
 - ❌ FAIL: .env was committed at some point — secrets are in history, rotate ALL variables in that file
