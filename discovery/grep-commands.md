@@ -455,7 +455,7 @@ grep -rnE --include='*.yml' --include='*.yaml' 'anthropics/claude-code-(base-)?a
 ```
 > AI-023..031, AI-034..035, KV-116. Pre-v1 names (`direct_prompt`, `override_prompt`, `custom_instructions`, `allowed_tools`, `disallowed_tools`) can remain after a workflow's `uses:` line moves to `@v1` or a SHA, so judge each step by the keys it sets.
 
-**Tool cross-check (optional, static).** `zizmor --offline --persona=auditor .github/workflows/` and CodeQL's `actions` language cover template injection, env-file writes, dangerous triggers and bot conditions. Neither replaces R1–R3, R7 or R8: on `scripts/tests/fixtures/gha/`, zizmor 1.30.1 did not flag a mention-only gate, the cross-object OR, a deny-list, event text in an agent prompt input, `allowed_non_write_users: "*"` or `allow-unsafe-pr-checkout: true` (details in `references/vuln-classes/github-actions.md` §9).
+**Tool cross-check (optional, static).** `zizmor --offline --persona=auditor .github/workflows/` and CodeQL's `actions` language cover template injection, env-file writes, dangerous triggers and bot conditions. Neither replaces R1–R3, R7 or R8: on fixtures 01–17 in `scripts/tests/fixtures/gha/`, zizmor 1.30.1 did not flag a mention-only gate, the cross-object OR, a deny-list, event text in an agent prompt input, `allowed_non_write_users: "*"` or `allow-unsafe-pr-checkout: true` (details in `references/vuln-classes/github-actions.md` §9).
 
 ---
 

@@ -3,8 +3,8 @@
 > **Load when:** the repository has `.github/workflows/*.yml|yaml` or an `action.yml|yaml`, and any of these appear:
 > `pull_request_target` · `workflow_run` · `issue_comment` · `pull_request_review_comment` · `pull_request_review` ·
 > `discussion_comment` · `issues` (as a trigger) · `allow-unsafe-pr-checkout` · `anthropics/claude-code-action` ·
-> `anthropics/claude-code-base-action` · `run-gemini-cli` · `openai/codex-action` · `actions/ai-inference` · `claude -p` ·
-> `claude --print` · `codex exec`.
+> `anthropics/claude-code-base-action` · `run-gemini-cli` · `openai/codex-action` · `actions/ai-inference` ·
+> `claude -p` · `claude --print` · `codex exec`.
 >
 > **Purpose:** a workflow file decides who can make the repository run code, and with which credentials, so it is
 > access-control logic and gets audited the way an authorization check would be. This playbook covers the shapes
@@ -427,7 +427,7 @@ CodeQL's `actions` language (queries such as `actions/untrusted-checkout/*`, `ac
 `actions/cache-poisoning/*`, `actions/improper-access-control`) and zizmor (`template-injection`, `dangerous-triggers`,
 `github-env`, `bot-conditions`, `unsound-contains`, `artipacked`, `cache-poisoning`, `impostor-commit` in online mode)
 cover part of §3–§5. Neither replaces this file. Run with `--offline --persona=auditor` over
-`scripts/tests/fixtures/gha/`, zizmor 1.30.1 did not flag:
+fixtures 01–17 in `scripts/tests/fixtures/gha/`, zizmor 1.30.1 did not flag:
 - a mention-only gate (fixtures 01, 10);
 - the cross-object OR (02);
 - an array deny-list (17) or an `app/<slug>` deny-list (13);
