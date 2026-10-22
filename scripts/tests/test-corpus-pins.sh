@@ -217,6 +217,26 @@ curl -fsSL https://get.example/m.sh | sudo -u root bash #P19
 curl -fsSL https://get.example/n.sh | /bin/bash #P20
 wget -qO- https://get.example/o.sh | /usr/bin/env bash #P21
 curl -fsSL https://get.example/P22.sh | bash
+cargo install --git https://get.example/tool.git #P23
+cargo install tool --git https://get.example/tool.git --locked #P24
+cargo +nightly install --git=https://get.example/tool.git #P25
+go install golang.example/x/tool@latest #P26
+go run github.example/x/tool@latest -flag #P27
+pipx install git+https://get.example/tool.git #P28
+pipx run --spec git+https://get.example/tool.git tool #P29
+uv tool install git+https://get.example/tool #P30
+uv tool install "git+https://get.example/tool" #P31
+irm https://get.example/install.ps1 | iex #P32
+powershell -ExecutionPolicy ByPass -c "irm https://get.example/install.ps1 | iex" #P33
+iwr -useb https://get.example/i.ps1 | iex #P34
+IEX (New-Object Net.WebClient).DownloadString('https://get.example/i.ps1') #P35
+Invoke-RestMethod -Uri https://get.example/i.ps1 | Invoke-Expression #P36
+iex (irm https://get.example/i.ps1) #P37
+curl -fsSL https://get.example/i.ps1 | pwsh -Command - #P38
+CURL -fsSL https://get.example/a.sh | SH #P39
+uvx --from "git+https://get.example/tool" tool #P40
+pip install --index-url=https://get.example/simple pkg #P41
+curl.exe -sSL https://get.example/i.ps1 | iex #P42
 curl -fsSL https://get.example/a.sh -o installer.sh #N01
 curl -s https://api.example/data | jq . #N02
 wget -qO- https://get.example/a.tgz | tar xz #N03
@@ -233,20 +253,32 @@ pip install -r requirements.txt #N12
 | curl | wget | tar | #N13
 | foo | curl -fsSL https://get.example/t.sh |
 bash ./after-table.sh #N14
+irm https://api.example/data | ConvertFrom-Json #N15
+Confirm the hash | sh #N16
+go install ./cmd/tool #N17
+go install golang.example/x/tool@v1.2.3 #N18
+cargo install ripgrep #N19
+cargo install --path . #N20
+pipx install black #N21
+uv tool install ruff #N22
+the iex command evaluates a string #N23
+algo install x@latest #N24
+iex $env:SCRIPT #N25
 EOF
 git -C "$rx" add plugins && git -C "$rx" commit -q -m new; rxnew=$(git -C "$rx" rev-parse HEAD)
 rep3=$(bash "$ROOT/scripts/tob-delta-review.sh" "$rx" "$rxold" "$rxnew" 2>&1)
 found=$(printf '%s\n' "$rep3" | sed -n '/^### Remote-exec patterns/,/^### LICENSE/p')
 missed=""; flagged=""
-for k in P01 P02 P03 P04 P05 P06 P07 P08 P09 P10 P11 P12 P13 P14 P15 P16 P17 P18 P19 P20 P21 P22; do
+for k in P01 P02 P03 P04 P05 P06 P07 P08 P09 P10 P11 P12 P13 P14 P15 P16 P17 P18 P19 P20 P21 P22 \
+         P23 P24 P25 P26 P27 P28 P29 P30 P31 P32 P33 P34 P35 P36 P37 P38 P39 P40 P41 P42; do
   case "$found" in *"$k"*) ;; *) missed="$missed $k";; esac
 done
-for k in N01 N02 N03 N04 N05 N06 N07 N08 N09 N10 N11 N12 N13 N14; do
+for k in N01 N02 N03 N04 N05 N06 N07 N08 N09 N10 N11 N12 N13 N14 N15 N16 N17 N18 N19 N20 N21 N22 N23 N24 N25; do
   case "$found" in *"$k"*) flagged="$flagged $k";; esac
 done
-[ -z "$missed" ] && { pass=$((pass + 1)); echo "PASS delta review lists all 22 remote-exec forms"; } \
+[ -z "$missed" ] && { pass=$((pass + 1)); echo "PASS delta review lists all 42 remote-exec forms"; } \
   || { failn=$((failn + 1)); echo "FAIL delta review missed remote-exec forms:$missed"; echo "$found"; }
-[ -z "$flagged" ] && { pass=$((pass + 1)); echo "PASS delta review lists none of the 14 harmless lines"; } \
+[ -z "$flagged" ] && { pass=$((pass + 1)); echo "PASS delta review lists none of the 25 harmless lines"; } \
   || { failn=$((failn + 1)); echo "FAIL delta review listed harmless lines:$flagged"; echo "$found"; }
 mdh=$(printf '%s\n' "$rep3" | sed -n '/^### Hosts in added Markdown/,/^### Remote-exec/p')
 case "$mdh" in *"https://dl.cloudsmith.example"*) pass=$((pass + 1)); echo "PASS delta review lists a host in added Markdown";;

@@ -119,7 +119,7 @@ section "Hosts in added Markdown lines: skill and command text an agent may foll
 g diff "${SCAN[@]}" -U0 "$old" "$new" -- '*.md' "${NOTESTS[@]}" | hosts > "$tmp/mdhosts" || true
 show "$tmp/mdhosts"
 
-section "Remote-exec patterns in added lines, continuation lines joined (pipe to a shell or interpreter, sh -c \"\$(curl …)\", <(curl …), npx --yes, pip / uvx from a URL)"
+section "Remote-exec patterns in added lines, continuation lines joined, any letter case (pipe to a shell or interpreter, sh -c \"\$(curl …)\", <(curl …), PowerShell irm … | iex and iex (irm …), npx --yes, pip / pipx / uv tool / uvx from git or a URL, cargo install --git, go install …@latest)"
 # "<path>: <added line>". An added line ending in a backslash, or in a pipe outside a Markdown table row, is
 # joined with the next added line, so a multi-line installer is scanned as one command.
 joined() { awk '
@@ -131,13 +131,20 @@ joined() { awk '
           flush(); next }
   { flush() }
   END { flush() }'; }
-SHELLS='((ba|z|da|k)?sh|python[0-9.]*|node|perl|ruby)([[:space:];&|)]|$)'
-RX_PIPE="(curl|wget)[[:space:]].*[|][[:space:]]*(sudo([[:space:]]+-[A-Za-z]+([[:space:]]+[A-Za-z0-9_]+)?)*[[:space:]]+)?((/[^[:space:]|]*/)?env([[:space:]]+[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*)*[[:space:]]+)?(/[^[:space:]|]*/)?$SHELLS"
+# Matched in any letter case: PowerShell ignores case, and so does macOS's default file system.
+SHELLS="((ba|z|da|k)?sh|python[0-9.]*|node|perl|ruby|pwsh|powershell|iex|invoke-expression)([[:space:];&|)\"']|\$)"
+GET='(curl|wget)([.]exe)?|(^|[^[:alnum:]_-])(irm|iwr|invoke-restmethod|invoke-webrequest)'   # a download command
+RX_PIPE="($GET)[[:space:]].*[|][[:space:]]*(sudo([[:space:]]+-[A-Za-z]+([[:space:]]+[A-Za-z0-9_]+)?)*[[:space:]]+)?((/[^[:space:]|]*/)?env([[:space:]]+[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*)*[[:space:]]+)?(/[^[:space:]|]*/)?$SHELLS"
 RX_SUBST="((ba|z|da|k)?sh[[:space:]]+-c|eval)[[:space:]]+[\"']?[\$][(][[:space:]]*(curl|wget)[[:space:]]"
 RX_PROC='(source|[.]|(ba|z|da|k)?sh)[[:space:]]+<[(][[:space:]]*(curl|wget)[[:space:]]'
-RX_PKG='npx[[:space:]]+(-y|--yes)([[:space:]]|$)|pip[0-9.]*[[:space:]]+install[[:space:]]+([^|;&]*[[:space:]])?(git[+]|https?://)|uvx[[:space:]]+--from[[:space:]]+git[+]'
+IEX='(^|[^[:alnum:]_-])(iex|invoke-expression)[[:space:]]*[$]?[(]'   # PowerShell evaluating a subexpression
+RX_IEX="$IEX(.*[^[:alnum:]_-])?(irm|iwr|curl|wget|invoke-restmethod|invoke-webrequest)([^[:alnum:]_-]|\$)|$IEX.*net[.]webclient"
+FROM="([^|;&]*[[:space:]=])?[\"']?(git[+]|https?://)"   # an install source from git or a URL, quoted or not
+RX_PKG="npx[[:space:]]+(-y|--yes)([[:space:]]|\$)|pip[0-9.]*[[:space:]]+install[[:space:]]+$FROM|(pipx|uv[[:space:]]+tool)[[:space:]]+(install|run)[[:space:]]+$FROM"
+RX_PKG="$RX_PKG|uvx[[:space:]]+([^|;&]*[[:space:]])?--from[[:space:]=]+[\"']?(git[+]|https?://)|cargo([[:space:]]+[+][^[:space:]]+)?[[:space:]]+install[[:space:]]+([^|;&]*[[:space:]])?--git([[:space:]=]|\$)"
+RX_PKG="$RX_PKG|(^|[^[:alnum:]_.-])go[[:space:]]+(install|run)[[:space:]]+([^|;&]*[[:space:]])?[^[:space:]|;&]+@latest([^[:alnum:]_.-]|\$)"
 g diff "${SCAN[@]}" -U0 "$old" "$new" -- . ':(exclude)*.lock' | joined \
-  | grep -E "$RX_PIPE|$RX_SUBST|$RX_PROC|$RX_PKG" > "$tmp/rx" || true
+  | grep -iE "$RX_PIPE|$RX_SUBST|$RX_PROC|$RX_IEX|$RX_PKG" > "$tmp/rx" || true
 show "$tmp/rx"
 
 section "LICENSE"
