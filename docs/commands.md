@@ -116,7 +116,7 @@ Verification-verb discipline: use "we re-tested and confirmed" only when *you* v
 
 ## Detection & response
 
-Post-incident only — never part of an audit. Both commands are propose-only: they never sign, send, simulate against a public cluster, pause or freeze anything. Contract: [`references/detection-response/README.md`](../references/detection-response/README.md); orientation: [detection-response.md](detection-response.md).
+Post-incident only — never part of an audit. Both commands are propose-only: they never sign, send, simulate against a public cluster, pause or freeze anything. They hand all reading and analysis of the incident corpus to the `incident-responder` agent, whose tool list has no MCP tools; the commands themselves run in your session, where every connected MCP server stays callable, and call no MCP tool. Before a live incident, disconnect or deny write-capable MCP servers (for example, tools that transfer or stake). Contract: [`references/detection-response/README.md`](../references/detection-response/README.md); orientation: [detection-response.md](detection-response.md).
 
 ### `/auditor:hunt`
 **Arg:** `[<address> ...] [--logs <dir>] [--repo <path>] [--window <fromUnix>..<toUnix>] [--collect] [--fresh]`

@@ -16,7 +16,7 @@ auditor-skill audits with a small team of subagents (spawned via the `Task` tool
 | [audit-reporter](#audit-reporter) | sonnet | synthesis | the assembled report |
 | [poc-engineer](#poc-engineer) | opus | on demand / `--with-poc` | executable PoC crate + `[PoC-*]` tier |
 | [patch-engineer](#patch-engineer) | opus | on demand / `--with-poc` | fix diff + `[FIX-*]` tier |
-| [incident-responder](#incident-responder) | opus | `/auditor:hunt`, `/auditor:respond` | hypothesis ledger, INCIDENTS.json, incident report or proposed response plan (nothing executed) |
+| [incident-responder](#incident-responder) | opus | `/auditor:hunt`, `/auditor:respond` (all reading and analysis of the incident corpus) | hypothesis ledger, INCIDENTS.json, incident report or a proposed response plan for people to carry out |
 
 Model tiers are deliberate: **opus** for the reasoning-heavy work (finding vulnerabilities, re-deriving, quantifying, building exploits), **sonnet** for the understanding and assembly work (context reconstruction, deterministic report assembly) — which keeps those cheap.
 
@@ -93,10 +93,10 @@ It assembles; it does not re-judge — de-dup and severity classification only.
 **Rule 11:** the rebuild runs in the run's execution mode, and never natively for an incident whose root cause is supply chain or CI ([11a](../OUTPUT-RULES.md#11a--execution-mode)); the scratch worktree comes from a `git clone --no-local` copy it made, never from a client-supplied `.git/` ([11c](../OUTPUT-RULES.md#11c--untrusted-git-checkouts)).
 
 ### incident-responder
-**Role:** drives the post-incident detection & response track behind `/auditor:hunt` and `/auditor:respond` — profiles a Solana transaction corpus, keeps the hypothesis ledger, scopes a lead, decides whether an attack succeeded and quantifies its blast radius. Never part of an audit.
+**Role:** drives the post-incident detection & response track: `/auditor:hunt` and `/auditor:respond` hand it all reading and analysis of the incident corpus. It profiles a Solana transaction corpus, keeps the hypothesis ledger, scopes a lead, decides whether an attack succeeded and quantifies its blast radius. Never part of an audit.
 **Produces:** `incident_<n>/LEDGER.md` and `INCIDENTS.json`, plus `INCIDENT_REPORT.md` (hunt) or a proposed `RESPONSE-INC-<n>.<k>.md` (respond). The command spawns `context-builder` for source confirmation and `poc-engineer` for the local PoC on the program's real bytes, and hands their results to this agent.
 **Hard rules:** query the corpus with the bundled recipes and `jq` — never read it into context; the recipes run from the installation (`"<auditor-skill root>/scripts/dnr/…"`, python as `python3 -I`), never as a `scripts/` path relative to the audited repo; program logs are hints, never proof of a state change; verdicts follow the [one normative ladder](../references/detection-response/README.md#the-verdict-ladder-the-one-normative-copy); it proposes containment and never performs it. Contract: [`references/detection-response/README.md`](../references/detection-response/README.md).
-**Tools:** `Read, Grep, Glob, Bash, Write` — no MCP tools and no `Task` keep connected write-capable integrations and sub-agents out of reach, but `Bash` can still run the `solana` CLI, which signs with the local default keypair, so it never runs a subcommand that signs or sends, and only Rule 11a isolated mode with no keypair mounted confines it.
+**Tools:** `Read, Grep, Glob, Bash, Write`. Its tool list has no MCP tools, so it cannot call a signing or transfer tool, and no `Task`, so it spawns no sub-agents. The commands themselves run in your session, where every connected MCP server stays callable; they call no MCP tool. Before a live incident, disconnect or deny write-capable MCP servers (for example, tools that transfer or stake). `Bash` can still run the `solana` CLI, which signs with the local default keypair, so the agent never runs a subcommand that signs or sends, and only Rule 11a isolated mode with no keypair mounted confines it.
 
 ## Graceful degradation
 
