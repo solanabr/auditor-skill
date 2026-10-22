@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # test-corpus-pins.sh — fixture tests for scripts/check-corpus.sh §5 (vendored submodule pins) and a smoke
 # test of scripts/tob-delta-review.sh: under a maintainer git config that colours and converts diffs too, and
-# over a table of remote-exec lines (multi-line installers included) and a host in added Markdown.
+# over a table of remote-exec lines (multi-line installers included), a host in added Markdown, a 1 MiB
+# manifest that declares hooks, and renamed files.
 # Run from the repo root: `bash scripts/tests/test-corpus-pins.sh`.
 # Builds throwaway git repos under ${TMPDIR:-/tmp}; no network; bash >= 3.2.
 set -uo pipefail
