@@ -13,8 +13,9 @@ discard it.
 
 The rebuild runs target-controlled code (build scripts, proc-macros, toolchain files), so it follows the
 execution mode recorded at intake — `OUTPUT-RULES.md` Rule 11a (isolated recommended; native allowed and
-stated in the report). If it cannot run in that mode, stop at `[FIX-PROPOSED]`. Create the worktree from a
-clone you made yourself; for a checkout the client supplied, follow Rule 11c first.
+stated in the report). If it cannot run in that mode, stop at `[FIX-PROPOSED]`. Create the worktree in a
+copy you made yourself, `GIT_NO_LAZY_FETCH=1 git clone --no-local <checkout> <scratch copy>` (Rule 11c),
+never in a checkout the client supplied.
 
 ```bash
 WT="$(mktemp -d "${TMPDIR:-/tmp}/fix-{FINDING_ID}.XXXXXX")" &&   # a fresh directory at an unpredictable path
