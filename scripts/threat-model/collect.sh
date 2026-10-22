@@ -325,29 +325,42 @@ guard_rows() {
     END { flush() }' | sort -k1,1n -k6 | cut -d' ' -f"$([ "${GR_SIZE:-0}" = 1 ] && echo 2- || echo 2,4-)"
 }
 
+# The command a TRUNCATED line names for the rest of a saved diff: Rule 11c's git, run in a scratch copy.
+SHOW_REST="GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false show --no-textconv --no-ext-diff"
+# shell_word <text>: the text as one shell word that runs nothing when pasted: escaped and cut like any
+# other target text, then single-quoted.
+shell_word() { printf "'%s'" "$(clean "$1" | sed "s/'/'\\\\''/g")"; }
+
 # save_diff <repo> <full id> <out file> <path list> <fallback pathspec...>
 # Writes the commit's id, date, subject and at most 20 body lines, then its diff limited to the paths in
 # <path list> (one per line; the fallback pathspec when it is empty), at most 400 lines. Each cut ends in a
-# TRUNCATED line that names the git show call for the rest.
+# TRUNCATED line that names the git show call for the rest, with every path as a quoted shell word.
 save_diff() {
   local repo=$1 c=$2 out=$3 plist=$4 p n shown="" specs nspec=0; shift 4
   specs=()
   while IFS= read -r p; do
     [ -n "$p" ] || continue
-    specs+=(":(literal)$p"); shown="${shown:+$shown }$p"; nspec=$((nspec + 1))
+    specs+=(":(literal)$p"); shown="$shown $(shell_word "$p")"; nspec=$((nspec + 1))
   done < "$plist"
-  if [ "$nspec" -eq 0 ]; then specs=("$@"); shown="$*"; fi
+  if [ "$nspec" -eq 0 ]; then
+    specs=("$@")
+    for p in "$@"; do shown="$shown $(shell_word "$p")"; done
+  fi
   {
     G "$repo" log -1 --format='commit %H%n%ad%n%n%s' --date=short "$c" 2>/dev/null
     G "$repo" log -1 --format=%b "$c" 2>/dev/null | sed -e '$!b' -e '/^$/d' > "$TMPD/save.body"
     n=$(wc -l < "$TMPD/save.body" | tr -d ' ')
     if [ "$n" -gt 0 ]; then echo; head -n 20 "$TMPD/save.body"; fi
-    if [ "$n" -gt 20 ]; then echo "TRUNCATED ($((n - 20)) more message lines; run git show $c)"; fi
+    if [ "$n" -gt 20 ]; then
+      echo "TRUNCATED ($((n - 20)) more message lines; the whole message, from a Rule 11c scratch copy: $SHOW_REST --no-patch $c)"
+    fi
     echo
     G "$repo" show "${DIFFSAFE[@]}" --format= "$c" -- "${specs[@]}" 2>/dev/null | sed '/./,$!d' > "$TMPD/save.diff"
     n=$(wc -l < "$TMPD/save.diff" | tr -d ' ')
     head -n 400 "$TMPD/save.diff"
-    if [ "$n" -gt 400 ]; then echo "TRUNCATED ($((n - 400)) more lines; run git show $c -- $shown)"; fi
+    if [ "$n" -gt 400 ]; then
+      echo "TRUNCATED ($((n - 400)) more lines; the rest, from a Rule 11c scratch copy: $SHOW_REST $c --$shown)"
+    fi
   } > "$out"
 }
 

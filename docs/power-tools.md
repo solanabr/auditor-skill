@@ -356,7 +356,7 @@ The read-only collector behind `/auditor:threat-model --bootstrap` ([method and 
   - `history.md`: sections R0 to R8; a "Shallow clone" line when the target is shallow; and which git settings are pinned.
   - `inputs.tsv`: the manifest of every input.
   - `inputs/`: converted or copied inputs.
-  - `diffs/`: `target-<sha>.diff` and `parent-<sha>.diff` for up to 20 flagged commits each. Each holds the full id, the date, the subject and up to 20 body lines, then the diff limited to the files its rows name, up to 400 lines. Every cut ends in a `TRUNCATED (… run git show <full id> …)` line.
+  - `diffs/`: `target-<sha>.diff` and `parent-<sha>.diff` for up to 20 flagged commits each. Each holds the full id, the date, the subject and up to 20 body lines, then the diff limited to the files its rows name, up to 400 lines. Every cut ends in a `TRUNCATED (…)` line naming the command for the rest, to run in a scratch copy ([Rule 11c](../OUTPUT-RULES.md#11c--untrusted-git-checkouts)): `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false show --no-textconv --no-ext-diff <full id> -- '<path>' …`, each path escaped like other target text and single-quoted (`--no-patch` and no path for a cut message).
   - With `--program-id` and `--audit-mem-db`, `audit-mem-warm.json`.
   - Target text in `history.md` and `inputs.tsv` shows TAB, LF and CR as `\t`, `\n` and `\r`, and other control characters as `?`. Values over 500 characters are cut with `...`.
   - An `incident_*/INCIDENTS.json` that is a symbolic link, sits in a linked directory, or lies in a tracked `incident_*` directory is not read; `inputs.tsv` records it as skipped. An `incidents` value that is not an array gives an empty extract and a "malformed" status.

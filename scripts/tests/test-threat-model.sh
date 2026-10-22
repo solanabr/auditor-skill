@@ -839,8 +839,12 @@ check "T-r: ... and R3 is not truncated by the rename" sh -c "! awk '/^## R3/,/^
 
 # =================================================================================================
 # T-s: saved diffs. Each holds the commit its row cites (by full id, never a same-named ref), only the
-# files its rows name, and a visible TRUNCATED marker wherever it is cut.
+# files its rows name, and a visible TRUNCATED marker wherever it is cut, naming Rule 11c's git show.
 # =================================================================================================
+SHOW_REST='GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false show --no-textconv --no-ext-diff'
+# rest_cmd / msg_cmd <diff file>: the command a cut diff's or a cut message's TRUNCATED line names
+rest_cmd() { sed -n 's/^TRUNCATED ([0-9]* more lines; the rest, from a Rule 11c scratch copy: \(.*\))$/\1/p' "$1"; }
+msg_cmd()  { sed -n 's/^TRUNCATED ([0-9]* more message lines; the whole message, from a Rule 11c scratch copy: \(.*\))$/\1/p' "$1"; }
 SD="$T/saved"; mkrepo "$SD"
 put "$SD" programs/s/src/guard.rs '#[account(mut, has_one = authority)]'
 put "$SD" programs/s/src/other.rs '// other module'
@@ -859,13 +863,13 @@ commit "$SD" -m "Migrate modules" -m "$BIGMSG"
 put "$SD" programs/s/src/vault.rs '#[account(mut)]'
 put "$SD" programs/s/src/other.rs '// other module'
 commit "$SD" -m "Migrate modules back" -m "$BIGMSG"
-C_BIG=$(short "$SD" HEAD)
+C_BIG=$(short "$SD" HEAD); F_BIG=$(git -C "$SD" rev-parse HEAD)
 BIGGUARD=$(i=0; while [ $i -lt 500 ]; do printf '// padding line %s\n' "$i"; i=$((i + 1)); done)
 put "$SD" programs/s/src/huge.rs "${BIGGUARD}#[account(mut, has_one = admin)]"
 commit "$SD" -m "Add admin module"
 put "$SD" programs/s/src/huge.rs '// emptied'
 commit "$SD" -m "Remove admin module"
-C_HUGE=$(short "$SD" HEAD)
+C_HUGE=$(short "$SD" HEAD); F_HUGE=$(git -C "$SD" rev-parse HEAD)
 OUTSD="$T/saved-run/audit_1/bootstrap"
 collect --repo "$SD" --out "$OUTSD" --offline
 check "T-s: a ref named like the row's short id does not change the saved diff" \
@@ -873,10 +877,12 @@ check "T-s: a ref named like the row's short id does not change the saved diff" 
 check "T-s: a large migration commit's saved diff still holds the row's hunk" \
   grep -qF -- '-#[account(mut, has_one = owner)]' "$OUTSD/diffs/target-$C_BIG.diff"
 check "T-s: ... it holds only the files the rows name" sh -c "! grep -q 'other.rs' '$OUTSD/diffs/target-$C_BIG.diff'"
-check "T-s: ... and its long message is cut with a visible marker" \
-  grep -q '^TRUNCATED ([0-9]* more message lines; run git show [0-9a-f]\{40\})' "$OUTSD/diffs/target-$C_BIG.diff"
-check "T-s: a cut diff ends in a TRUNCATED marker naming the full id and path" \
-  grep -q "^TRUNCATED ([0-9]* more lines; run git show [0-9a-f]\{40\} -- programs/s/src/huge.rs)" "$OUTSD/diffs/target-$C_HUGE.diff"
+check "T-s: ... and its long message is cut with a marker naming the hardened show of the full id" \
+  test "$(msg_cmd "$OUTSD/diffs/target-$C_BIG.diff")" = "$SHOW_REST --no-patch $F_BIG"
+check "T-s: a cut diff ends in a TRUNCATED marker naming the hardened show, the full id and the quoted path" \
+  test "$(rest_cmd "$OUTSD/diffs/target-$C_HUGE.diff")" = "$SHOW_REST $F_HUGE -- 'programs/s/src/huge.rs'"
+check "T-s: every TRUNCATED line in diffs/ names the hardened show" \
+  sh -c "! grep -h '^TRUNCATED' '$OUTSD'/diffs/* | grep -vqF '$SHOW_REST'"
 
 # =================================================================================================
 # T-t: URLs are written without credentials: userinfo, query string and fragment become *** in
@@ -957,6 +963,29 @@ check "T-v: ... and nothing is written through the link it hides" test -z "$(ls 
 check "T-v: when git cannot read the target's config, the partial-clone check refuses (exit 3)" \
   test "$(PATH="$T/gitwrap-config:$PATH" rc --repo "$FC" --out "$FC/audit_3/bootstrap" --offline)" = 3
 check "T-v: ... and nothing is written" test ! -e "$FC/audit_3"
+
+# =================================================================================================
+# T-w: a TRUNCATED line is inert text. Each path in the command it names is escaped like other target
+# text and single-quoted, so pasting the command runs git show on that path and nothing else.
+# =================================================================================================
+QP="$T/quoted"; mkrepo "$QP"
+QNAME="a b;\$(touch ran-subst)\`touch ran-tick\`|touch ran-pipe&'q'.rs"
+QPAD=$(i=0; while [ $i -lt 450 ]; do printf '// padding line %s\n' "$i"; i=$((i + 1)); done)
+put "$QP" "programs/q/src/$QNAME" "$QPAD
+#[account(mut, has_one = quoted_admin)]"
+commit "$QP" -m "Add quoted module"
+put "$QP" "programs/q/src/$QNAME" '// emptied'
+commit "$QP" -m "Empty quoted module"
+C_QP=$(short "$QP" HEAD); F_QP=$(git -C "$QP" rev-parse HEAD)
+OUTQP="$T/quoted-run/audit_1/bootstrap"
+collect --repo "$QP" --out "$OUTQP" --offline
+QHINT=$(rest_cmd "$OUTQP/diffs/target-$C_QP.diff")
+check "T-w: a path with spaces and shell metacharacters is one single-quoted word in the TRUNCATED line" \
+  test "$QHINT" = "$SHOW_REST $F_QP -- 'programs/q/src/a b;\$(touch ran-subst)\`touch ran-tick\`|touch ran-pipe&'\\''q'\\''.rs'"
+( cd "$QP" && bash -c "$QHINT" ) > "$T/quoted-hint.out" 2>&1
+check "T-w: run as pasted, the command runs nothing but git" \
+  sh -c "[ ! -e '$QP/ran-subst' ] && [ ! -e '$QP/ran-tick' ] && [ ! -e '$QP/ran-pipe' ]"
+check "T-w: ... and shows the rest of that file's diff" grep -qF -- '-#[account(mut, has_one = quoted_admin)]' "$T/quoted-hint.out"
 
 echo
 echo "threat-model collector tests: $pass passed, $fail failed, $skip skipped"
