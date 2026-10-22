@@ -23,7 +23,10 @@
 #      `--buffer-authority`, so the CLI never looks for a signer). It rejects a
 #      loader-v4 program as "not an SBF program"; that one is read with
 #      `program-v4 show --program-id <id>` (a fixed `--authority`, for the same
-#      reason), and an account neither command reads stops with a blocker.
+#      reason). The output must name <id> as its Program Id, or the script stops
+#      with a blocker. An account neither command reads stops with a blocker that
+#      names the account's owner, from one more read (`solana -C <config> account
+#      <id> --output-file <temp file>`, so no hex dump of its data is printed).
 #   3. `solana -C <config> program dump <id>` (loader-v4: `program-v4 download
 #      --program-id <id>`) into the temp dir, then `show` again: the slot and the
 #      bytes come from separate reads, so a slot that moved means a deploy landed
@@ -76,7 +79,8 @@
 #
 # Exit: 0 ok · 2 usage / not a base58 32-byte public key / no or unusable $RPC_URL /
 # a refused run directory · 3 named blocker (no solana CLI or python3, config not
-# taken, CLI error or no program under any loader, dump without ELF magic, the
+# taken, CLI error, no program under any loader (the blocker names the account's
+# owner), show output naming another Program Id, dump without ELF magic, the
 # last-deployed slot moving during two dumps, hash not computed, a snapshot name
 # already taken, a kept snapshot that is not a regular ELF file beside a regular
 # .show.txt, or one the chain's bytes disagree with at its slot or a later one).
@@ -256,6 +260,15 @@ slot_of() {
   esac
 }
 
+# named_pid <show output>: a blocker unless the output names the requested id as its
+# Program Id.
+named_pid() {
+  if [ "$(field "Program Id" "$1")" != "$pid" ]; then
+    echo "[blocker] the solana CLI's show output does not name $pid as its Program Id; nothing written." >&2
+    exit 3
+  fi
+}
+
 # `program show` reads upgradeable and immutable-loader programs and rejects a
 # loader-v4 one, which `program-v4 show` reads.
 if ! show_program "$show"; then
@@ -265,9 +278,20 @@ if ! show_program "$show"; then
     echo "[blocker] neither solana program show nor program-v4 show reads $pid as a program:" >&2
     "$REDACT" <"$tmp/stderr.show" >&2
     "$REDACT" <"$err" >&2
+    # One more read names the account's owner. The data goes to a file, so the CLI
+    # prints no hex dump of it.
+    rm -f "$err"
+    if solana -C "$cfg" account "$pid" --output-file "$tmp/account.data" >"$tmp/account.txt" 2>"$err" \
+       && owner="$(field "Owner" "$tmp/account.txt")" && [[ "$owner" =~ ^[1-9A-HJ-NP-Za-km-z]{32,44}$ ]]; then
+      echo "[blocker] $pid is not a program: its account is owned by $owner. Check the id; nothing written." >&2
+    else
+      echo "[blocker] $pid is not a program, and its account could not be read either:" >&2
+      "$REDACT" <"$err" >&2
+    fi
     exit 3
   fi
 fi
+named_pid "$show"
 slot="$(slot_of "$show")"; seen="$slot"; dumps=0
 # Read the slot again after each dump; a deploy in between means the bytes may be
 # the newer program's, so dump once more, and stop if the slot moves again.
@@ -283,6 +307,7 @@ while :; do
     "$REDACT" <"$err" >&2
     exit 3
   fi
+  named_pid "$show"
   now="$(slot_of "$show")"
   [ "$now" = "$slot" ] && break
   seen="$seen -> $now"

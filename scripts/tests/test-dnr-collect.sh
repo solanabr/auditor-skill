@@ -390,14 +390,19 @@ esac
 #   * `program show` / `program dump` reject a loader-v4 or non-program account
 #     ("is not an SBF program"); `program-v4 show` / `download` reject anything
 #     not owned by loader-v4 ("is not owned by loader-v4");
-#   * an immutable loader (BPFLoader2, BPFLoader) shows no authority and no slot.
-# FAKE_SOL_LOADER is v3 (upgradeable, default), v2, v1, v4 or none. FAKE_SOL_SLOTS
+#   * an immutable loader (BPFLoader2, BPFLoader) shows no authority and no slot;
+#   * `account` shows the owner, and with --output-file writes the data there instead
+#     of a hex dump; an address with no account is "AccountNotFound".
+# FAKE_SOL_LOADER is v3 (upgradeable, default), v2, v1, v4, none (an account owned by
+# the System Program) or missing (no account at all). FAKE_SOL_SLOTS
 # is a comma list of last-deployed slots: each read of the program (show, dump,
 # download) takes the next one and the last one repeats, so a deploy can land
 # between two reads. The dumped ELF carries its slot, so each deploy hashes apart.
 # FAKE_SOL_SALT=<text> adds that text to the ELF, so the same slot can give other
-# bytes. FAKE_SOL_PLANT=<link>|<target> makes the dump call also create <link>, a
-# symbolic link to <target>. Every call is appended to $FAKE_SOL_ARGV.
+# bytes. FAKE_SOL_SHOWN_ID=<id>[:<k>] makes a show name <id> as its Program Id once
+# k reads (default 0) have been made. FAKE_SOL_PLANT=<link>|<target> makes the dump
+# call also create <link>, a symbolic link to <target>. Every call is appended to
+# $FAKE_SOL_ARGV.
 # ---------------------------------------------------------------------------
 mkdir -p "$TT/sol"
 printf '#!/bin/sh\nexec "%s" -I "$0.py" "$@"\n' "$PY" > "$TT/sol/solana"
@@ -443,25 +448,45 @@ def length(data):
     return f"{len(data)} ({len(data):#x}) bytes"
 def no_signer():
     fail(f'Dynamic program error: No default signer found, run "solana-keygen new -o {kp}" to create a new one')
+def shown():
+    other, _, start = os.environ.get("FAKE_SOL_SHOWN_ID", "").partition(":")
+    path = os.environ["FAKE_SOL_READS"]
+    n = int(open(path).read()) if os.path.exists(path) else 0
+    return other if other and n >= int(start or 0) else pid
 cmd = a[:2]
 if cmd == ["program", "show"] or cmd == ["program-v4", "show"]:
     if opt("--buffer-authority" if cmd[0] == "program" else "--authority") is None and not os.path.exists(kp):
         no_signer()
-pid = a[2] if cmd[0] == "program" else opt("--program-id")
+pid = a[2] if cmd[0] == "program" else a[1] if cmd[0] == "account" else opt("--program-id")
+if cmd[0] in ("program", "program-v4") and loader == "missing":
+    fail(f"Unable to find the account {pid}")
 if cmd in (["program", "show"], ["program", "dump"]) and loader in ("v4", "none"):
     fail(f"{pid} is not an SBF program")
 if cmd[0] == "program-v4" and loader != "v4":
     fail(f"{pid} is not owned by loader-v4")
 if cmd == ["program", "show"] and loader == "v3":
+    shown_id = shown()
     slot = read_slot()
-    print(f"\nProgram Id: {pid}\nOwner: {OWNERS[loader]}\nProgramData Address: YMN9Qj5jPNp7j14VPcML1B6xGgcPWVZUGLFU3Mnyfaf\n"
+    print(f"\nProgram Id: {shown_id}\nOwner: {OWNERS[loader]}\nProgramData Address: YMN9Qj5jPNp7j14VPcML1B6xGgcPWVZUGLFU3Mnyfaf\n"
           f"Authority: {AUTH}\nLast Deployed In Slot: {slot}\nData Length: {length(elf(slot))}\nBalance: 0.00114144 SOL\n")
 elif cmd == ["program", "show"]:
-    print(f"\nProgram Id: {pid}\nOwner: {OWNERS[loader]}\nData Length: {length(elf(0))}\n")
+    print(f"\nProgram Id: {shown()}\nOwner: {OWNERS[loader]}\nData Length: {length(elf(0))}\n")
 elif cmd == ["program-v4", "show"]:
+    shown_id = shown()
     slot = read_slot()
-    print(f"\nProgram Id: {pid}\nOwner: {OWNERS[loader]}\nAuthority: {AUTH}\nLast Deployed In Slot: {slot}\n"
+    print(f"\nProgram Id: {shown_id}\nOwner: {OWNERS[loader]}\nAuthority: {AUTH}\nLast Deployed In Slot: {slot}\n"
           f"Status: deployed\nData Length: {length(elf(slot))}\n")
+elif cmd[0] == "account":
+    if loader == "missing":
+        fail(f"AccountNotFound: pubkey={pid}")
+    data = elf(0) if loader != "none" else b"\x01" * 165
+    print(f"\nPublic Key: {pid}\nBalance: 0.00203928 SOL\nOwner: {OWNERS[loader]}\n"
+          f"Executable: {str(loader != 'none').lower()}\nRent Epoch: 18446744073709551615")
+    if opt("--output-file"):
+        open(opt("--output-file"), "wb").write(data)
+        print(f"\nWrote account data to {opt('--output-file')}")
+    else:
+        print(f"Length: {length(data)}\n0000:   " + " ".join(f"{b:02x}" for b in data[:16]))
 elif cmd in (["program", "dump"], ["program-v4", "download"]):
     path = a[3] if cmd[0] == "program" else [x for x in a[2:] if not x.startswith("--") and x != pid][-1]
     open(path, "wb").write(elf(read_slot()))
@@ -633,6 +658,31 @@ if [[ "$code" == 3 && ! -e "$L/none/bin" ]] && grep -q 'neither solana program s
 else
   bad "no program: exit $code ($(tr '\n' ' ' < "$L/none.out"))"
 fi
+eq "no program: the blocker names the account's owner, read with one more call" \
+  "$(grep 'is not a program' "$L/none.out")|$(grep '"account"' "$FAKE_SOL_ARGV" | grep -c '"--output-file"')" \
+  "[blocker] $PID is not a program: its account is owned by 11111111111111111111111111111111. Check the id; nothing written.|1"
+snap "$L/missing" FAKE_SOL_LOADER=missing
+code=$?
+if [[ "$code" == 3 && ! -e "$L/missing/bin" ]] && grep -q "^\[blocker\] $PID is not a program, and its account could not be read either:$" "$L/missing.out" \
+   && grep -q "Error: AccountNotFound: pubkey=$PID" "$L/missing.out"; then
+  ok "no account: a blocker (exit 3) that says the account could not be read either, with the CLI's error"
+else
+  bad "no account: exit $code ($(tr '\n' ' ' < "$L/missing.out"))"
+fi
+# The show output must name the requested id as its Program Id, before the dump and
+# when the program is read again after it.
+for case in "the first show|0|0" "the show after the dump|2|1"; do
+  label="${case%%|*}"; rest="${case#*|}"; from="${rest%%|*}"; dumps="${rest#*|}"
+  rm -f "$FAKE_SOL_ARGV"
+  snap "$L/other-id-$from" FAKE_SOL_SHOWN_ID="OtherProg1111111111111111111111111111111111:$from"
+  code=$?
+  if [[ "$code" == 3 && ! -e "$L/other-id-$from/bin" && "$(grep -c '"dump"' "$FAKE_SOL_ARGV")" == "$dumps" ]] \
+     && grep -q "^\[blocker\] the solana CLI's show output does not name $PID as its Program Id; nothing written.$" "$L/other-id-$from.out"; then
+    ok "program id: another Program Id in $label -> blocker (exit 3), nothing written"
+  else
+    bad "program id: another Program Id in $label -> exit $code ($(tr '\n' ' ' < "$L/other-id-$from.out"))"
+  fi
+done
 before="$(cli_calls)"
 ( PATH="$TT/sol:$TT/bin:$PATH" bash "$DNR/snapshot-program.sh" "ProgTest1111111111111111111111111111111111" "$L/short" ) > "$L/short.out" 2>&1
 code=$?
