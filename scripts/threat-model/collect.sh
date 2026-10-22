@@ -21,7 +21,7 @@
 #   --vulns <file|https-url>  prior-vulnerability input, repeatable: PDF, Markdown, text, CSV, JSON,
 #                             or INCIDENTS.json (schema auditor-incidents/1; allowlisted fields only)
 #   --program-id <id>         save `audit-mem warm --program-id <id>` (needs the built tool and a DB)
-#   --audit-mem-db <path>     audit-mem database (default <repo>/.audit-memory/audit.db)
+#   --audit-mem-db <path>     audit-mem database (default <repo>/.audit-memory/audit.db, skipped if tracked)
 #   --keywords <ere>          extra commit-message keywords, an ERE alternation such as 'drain|bypass'
 #   --offline                 never use the network; --parent / --vulns URLs are recorded, not fetched
 #   --detect                  only evaluate triggers T3 and T4, print them and exit (writes nothing)
@@ -618,11 +618,20 @@ done < "$TMPD/r6f.newest"
 } >> "$H"
 
 # ---- R8 audit-mem warm ------------------------------------------------------------------------------
+# The default store lives inside the target tree, so it is read only when the target tracks nothing
+# under .audit-memory, in any letter case (OUTPUT-RULES.md Rule 11d). If git cannot answer, the store
+# counts as tracked. A store passed with --audit-mem-db is the caller's choice.
+store_tracked() {
+  local listed
+  listed=$(G "$REPO" --icase-pathspecs ls-files -- .audit-memory 2>/dev/null) || return 0
+  [ -n "$listed" ]
+}
 {
   section "R8 audit-mem warm" "Standing rulings for this program id from the local findings store."
   BIN="$SKILL_ROOT/tools/auditor-tools/target/release/audit-mem"
   DB=${AUDIT_MEM_DB:-$REPO_ABS/.audit-memory/audit.db}
   if [ -z "$PROGRAM_ID" ]; then echo "NOT FOUND (no --program-id given)"
+  elif [ -z "$AUDIT_MEM_DB" ] && store_tracked; then echo "NOT FOUND (store not trusted: tracked by target)"
   elif [ ! -x "$BIN" ]; then echo "NOT FOUND (tools/auditor-tools is not built)"
   elif [ ! -f "$DB" ]; then echo "NOT FOUND (no database at $DB)"
   elif "$BIN" --db "$DB" warm --program-id "$PROGRAM_ID" > "$OUT/audit-mem-warm.json" 2>/dev/null; then

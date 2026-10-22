@@ -441,6 +441,40 @@ commit "$MR" -m "initial"
 DM=$(bash "$COLLECT" --repo "$MR" --out "$T/mrrun/audit_1/bootstrap" --detect 2>/dev/null)
 check "2,000 remotes: a source_code matching the first remote does not fire T3" sh -c "printf '%s\n' '$DM' | grep -q '^T3 no none'"
 
+# =================================================================================================
+# T-m: the default in-tree audit-mem store is read only when the target does not track it (Rule 11d).
+# A copy of the collector under a stand-in installation root runs a fake audit-mem that leaves a mark,
+# so "not read" is observed directly whether or not the real tools are built.
+# =================================================================================================
+FAKE="$T/fakeskill"; FAKEBIN="$FAKE/tools/auditor-tools/target/release"
+mkdir -p "$FAKE/scripts/threat-model" "$FAKEBIN" "$T/marks"
+cp "$COLLECT" "$FAKE/scripts/threat-model/collect.sh"
+printf '#!/bin/sh\necho "$*" >> "%s/marks/audit-mem"\necho "{}"\n' "$T" > "$FAKEBIN/audit-mem"; chmod +x "$FAKEBIN/audit-mem"
+fake_collect() { rm -f "$T/marks/audit-mem"; bash "$FAKE/scripts/threat-model/collect.sh" "$@" --offline --program-id Demo1111 2>/dev/null; }
+MEMT="$T/memtgt"; mkrepo "$MEMT"
+put "$MEMT" programs/m/src/lib.rs 'pub fn a() {}'
+commit "$MEMT" -m "initial"
+mkdir -p "$MEMT/.audit-memory"; printf 'db\n' > "$MEMT/.audit-memory/audit.db"
+fake_collect --repo "$MEMT" --out "$T/mem1/audit_1/bootstrap"
+check "T-m control: an untracked default store is read" \
+  sh -c "[ -s '$T/marks/audit-mem' ] && [ -s '$T/mem1/audit_1/bootstrap/audit-mem-warm.json' ]"
+git -C "$MEMT" add -f -- .audit-memory/audit.db; commit "$MEMT" -m "add a findings store"
+fake_collect --repo "$MEMT" --out "$T/mem2/audit_1/bootstrap"
+check "T-m: a tracked .audit-memory/audit.db is not read" test ! -e "$T/marks/audit-mem"
+check "T-m: no audit-mem-warm.json is saved from it" test ! -e "$T/mem2/audit_1/bootstrap/audit-mem-warm.json"
+check "T-m: R8 records why" has "$T/mem2/audit_1/bootstrap/history.md" "NOT FOUND (store not trusted: tracked by target)"
+printf 'db\n' > "$T/outside.db"
+fake_collect --repo "$MEMT" --out "$T/mem3/audit_1/bootstrap" --audit-mem-db "$T/outside.db"
+check "T-m: an explicit --audit-mem-db outside the tree is still read" grep -qF -- "--db $T/outside.db" "$T/marks/audit-mem"
+MEMC="$T/memcase"; mkrepo "$MEMC"
+put "$MEMC" programs/m/src/lib.rs 'pub fn a() {}'
+put "$MEMC" .Audit-Memory/audit.db 'db'
+commit "$MEMC" -m "initial"
+fake_collect --repo "$MEMC" --out "$T/mem4/audit_1/bootstrap"
+check "T-m: a tracked store in another letter case is not trusted either" \
+  has "$T/mem4/audit_1/bootstrap/history.md" "NOT FOUND (store not trusted: tracked by target)"
+check "T-m: ... and not read" test ! -e "$T/marks/audit-mem"
+
 echo
 echo "threat-model collector tests: $pass passed, $fail failed, $skip skipped"
 [ "$fail" -eq 0 ]

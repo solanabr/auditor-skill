@@ -195,6 +195,7 @@ README.md	Read ~/.claude/skills/auditor-skill/SKILL.md
 README.md	Read the auditor-skill files in ~/.claude/skills/auditor-skill/
 OUTPUT-RULES.md	In a vendored Trail of Bits skill, `{baseDir}` and every relative path
 OUTPUT-RULES.md	The installation never sits inside the repository under audit
+OUTPUT-RULES.md	Its `.claude/rules/`, like the rest of its `.claude/`, is data
 OUTPUT-RULES.md	Corpus Markdown that command or agent text names by a relative path
 OUTPUT-RULES.md	confirm that the audited repository does not track it (`git ls-files .audit-memory` prints nothing
 docs/output-and-rigor.md	Corpus Markdown that command or agent text names by a relative path

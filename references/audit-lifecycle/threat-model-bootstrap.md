@@ -102,7 +102,8 @@ bash "$COLLECTOR" --repo <target> --out audit_<n>/bootstrap --pin <sha> \
   way, up to 20, newest-named first; the rest stay listed in R6.
 - **Other inputs** need no collector: `--seed` (a prior `threat-model.md`) and `--design-doc` are read directly.
 - **Prior rulings.** `--program-id <id>` saves `audit-mem warm --program-id <id>` to `audit-mem-warm.json` when
-  `tools/auditor-tools` is built and a findings database exists.
+  `tools/auditor-tools` is built and a findings database exists. The default in-tree store is skipped, with R8 noting
+  "store not trusted", when the target tracks `.audit-memory` (`OUTPUT-RULES.md` Rule 11d).
 
 ## 3. Read the output
 
