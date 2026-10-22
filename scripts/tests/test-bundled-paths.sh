@@ -20,7 +20,8 @@
 #      templates/, checklists/, discovery/, OUTPUT-RULES.md, …) from ${CLAUDE_PLUGIN_ROOT}: no relative corpus
 #      directory and no bare corpus file name. Run-directory outputs (audit_<n>/threat-model.md,
 #      INCIDENT_REPORT.md) are not corpus files.
-# Each detector is first run against known-good and known-bad lines, so a broken pattern fails the test.
+# Each detector is first run against known-good and known-bad lines and a file of 1 MiB, so a broken pattern
+# fails the test.
 # Usage (from the repo root): bash scripts/tests/test-bundled-paths.sh   (VERBOSE=1 lists every check)
 # Needs bash >= 3.2, grep, sed, awk, find. No network.
 set -uo pipefail
@@ -143,6 +144,11 @@ for line in \
   'each node in scripts/ is listed'; do
   expect_flag run no "$line"
 done
+
+# A file of 1 MiB is read whole: its one offending line, the last, is reported at its own line number.
+n=$(offending_lines strict < <(awk 'BEGIN { for (i = 0; i < 16000; i++) printf "Prose line %05d about the audit, padded out with words to fill it up.\n", i }'
+  echo 'then `bash scripts/dnr/profile.sh` corpus.jsonl'))
+if [ "$n" = 16001 ]; then ok "detector reads a 1 MiB file to its last line"; else bad "detector on a 1 MiB file: flagged lines [$n], want 16001"; fi
 
 # ---- 1 + 2. the corpus -------------------------------------------------------------------------------
 scan() { # scan strict|run FILES...
