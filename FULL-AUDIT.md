@@ -374,8 +374,13 @@ ACTIONS:
   cat apps/backend/package.json | grep -E '[\^~]' # should be minimal
   cat apps/web/package.json | grep -E '[\^~]'
 
-  # Cargo audit
-  (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit) 2>/dev/null || echo "cargo-audit not installed"
+  # Cargo audit: check that the tool is installed first. cargo-audit exits 1 when it
+  # finds advisories and prints its summary on stderr; that exit is a finding
+  if (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit --version) >/dev/null 2>&1; then
+    (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit)
+  else
+    echo "cargo-audit not installed"
+  fi
 
   # Check quarantine (14-day rule) for newest deps
   (cd "$SCRATCH" && npm info @anchor-lang/core time | tail -5)
