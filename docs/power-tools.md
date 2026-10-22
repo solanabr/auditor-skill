@@ -270,24 +270,25 @@ The one gated collector: it pages each address's signature history, failed trans
 #### `profile.sh`
 
 ```bash
-bash "<auditor-skill root>/scripts/dnr/profile.sh" <corpus.jsonl>
+bash "<auditor-skill root>/scripts/dnr/profile.sh" <corpus.jsonl> [<corpus.jsonl> ...]
 ```
 
-The baseline of a `getTransaction` JSONL corpus, from structural fields only, never from log text: the succeeded / failed split, the transaction-version histogram, the `blockTime` window, and the top 20 fee payers, signers and top-level programs.
+The baseline of one or more `getTransaction` JSONL corpora, such as every `incident_<n>/corpus*/transactions.jsonl`, counting each signature once. It reads structural fields only, never log text, and reports the succeeded / failed split, the transaction-version histogram, the `blockTime` window, and the top 20 fee payers, signers and top-level programs. Repeated signatures are skipped and reported in a closing `-- skipped` line; malformed lines are skipped and counted.
 
-- **Arguments:** the corpus file. No flags.
-- **Exit:** 0 done · 2 usage error or no such file · another non-zero status when `jq` cannot parse a line.
+- **Arguments:** one or more corpus files. No flags.
+- **Exit:** 0 done · 2 usage error or no such file.
 - **Network:** none. **Writes:** stdout only. Needs `jq`.
 
 #### `frames.py`
 
 ```bash
-python3 -I "<auditor-skill root>/scripts/dnr/frames.py" [<corpus.jsonl> ...]    # reads stdin when no file is named
+python3 -I "<auditor-skill root>/scripts/dnr/frames.py" [--instructions] [<corpus.jsonl> ...]    # reads stdin when no file is named
 ```
 
 Attributes each `Program log:`, `Program data:` and `Program return:` line to the program frame that emitted it. It walks the log array one element at a time with anchored patterns, so a newline inside a log payload cannot forge a frame. Output is JSONL on stdout, one `{sig, ok, depth, program, kind, text}` record per line, where `kind` is `log`, `data`, `return`, `truncated` or `unparsed`; an input line that is not JSON becomes a `parse_error` record. A log line is what the program asserted, never proof that state changed.
 
-- **Arguments:** corpus files, or none. No flags.
+- **Arguments:** corpus files (several corpora count each signature once; skipped copies are reported on stderr), or none for stdin.
+- **`--instructions`:** prints the instructions the runtime recorded instead: an `ix` record for each top-level and inner (CPI) instruction, with its data as given, and the `invoke` records joined to them.
 - **Exit:** 0 done · 1 a file that cannot be read.
 - **Network:** none. **Writes:** stdout only.
 
@@ -297,7 +298,12 @@ Attributes each `Program log:`, `Program data:` and `Program return:` line to th
 python3 -I "<auditor-skill root>/scripts/dnr/deltas.py" lamports|tokens [<corpus.jsonl> ...]    # reads stdin when no file is named
 ```
 
-Balance movements of successful transactions, computed in Python integers so that amounts above 2^53 stay exact. `lamports` prints `signature`, `account`, `delta` for each non-zero lamport change, with the fee added back for the fee payer. `tokens` prints `signature`, `owner`, `mint`, `delta` in raw units, net across every token account the owner holds of that mint. The output is TSV on stdout; tabs, newlines, carriage returns and backslashes inside a field are escaped.
+Balance movements of successful transactions, computed in Python integers so that amounts above 2^53 stay exact.
+
+- `lamports` prints `signature`, `account`, `delta` for each non-zero lamport change, with the fee added back for the fee payer.
+- `tokens` prints one row per token account: `signature`, `owner` (`?` when the corpus names none), `mint`, `delta` in raw units, and the token account. Sum the rows per owner and mint for an owner's net movement.
+
+The output is TSV on stdout; tabs, newlines, carriage returns and backslashes inside a field are escaped. Several corpora count each signature once; skipped copies are reported on stderr.
 
 - **Arguments:** the mode, then corpus files or none.
 - **Exit:** 0 done · 2 a missing or unknown mode · 1 a file that cannot be read, checked before any row is printed.
@@ -306,7 +312,7 @@ Balance movements of successful transactions, computed in Python integers so tha
 #### `redact.sh`
 
 ```bash
-some-command 2>&1 | bash "<auditor-skill root>/scripts/dnr/redact.sh"
+set -o pipefail; some-command 2>&1 | bash "<auditor-skill root>/scripts/dnr/redact.sh"    # pipefail keeps the command's exit status
 ```
 
 A filter from stdin to stdout that removes provider credentials. In a URL of any scheme it keeps the scheme and the host's last two DNS labels (`REDACTED.provider.example`; an IP address or a two-label host stays whole), replaces userinfo with `REDACTED@` and replaces the path and query with `/REDACTED`. On curl's own error and verbose lines it shortens bare host names the same way and redacts the request path. A bare `api-key=`, `token=`, `secret=`, `auth=` or `access-token=` value outside a URL is redacted too. It is a convenience, not a guarantee: no RPC URL goes into a ledger, `INCIDENTS.json` or a report in any case. Record the provider's domain, as `collect.sh` prints it, and the literal string `$RPC_URL` instead.
