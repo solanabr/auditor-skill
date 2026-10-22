@@ -381,6 +381,8 @@ Interactive runs ask once per audit — at intake, or at the first step that nee
 
 **When a step cannot run in the chosen mode.** Never switch modes silently. A PoC records `[PoC-ATTEMPTED]` with the blocker "no isolated runner" (Rule 5b tiers); a patch records `[FIX-PROPOSED]`; a checklist item keeps its source-level verdict with a Rule 10 confidence note (e.g. `[PASS*] … *confidence: medium — test suite not executed, no isolated runner`).
 
+**The one exception to native.** An incident whose `root_cause_class` is `supply_chain_or_ci` is never built natively, whatever the recorded mode: use the dumped program bytes (`references/detection-response/README.md`).
+
 ### 11b — Outside-service disclosure
 
 Some tools send audit material to services outside the auditor's machine. There is no consent gate, but nothing goes out silently: the report lists each tool, the service it contacted, and what it sent. Typical entries:
