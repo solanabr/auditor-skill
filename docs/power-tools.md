@@ -186,7 +186,7 @@ Full walkthrough — layout, framework matrix, tiers, the "executable outranks p
 
 ## Bundled scripts
 
-Shell and Python scripts that ship with auditor-skill; there is nothing to build. The commands run them by absolute path from the installation, never by a `scripts/` path relative to the audited repository ([Rule 11e](../OUTPUT-RULES.md#11e--bundled-paths)), and run the Python ones as `python3 -I`. Each runs under bash 3.2 or later. The blocks below give each script's arguments, exit codes, network use and outputs.
+Shell and Python scripts that ship with auditor-skill; there is nothing to build. The commands run them by absolute path from the installation, never by a `scripts/` path relative to the audited repository ([Rule 11e](../OUTPUT-RULES.md#11e--bundled-paths)), and run the Python ones as `python3 -I`. The shell scripts run under bash 3.2 or later. The blocks below give each script's arguments, exit codes, network use and outputs.
 
 ### Detection & response recipes (`scripts/dnr/`)
 
@@ -318,7 +318,7 @@ The read-only collector behind `/auditor:threat-model --bootstrap` ([method and 
 bash "<auditor-skill root>/scripts/tob-delta-review.sh" [--fetch] <tob-clone> <old-sha> <new-sha>
 ```
 
-The maintainer's report for moving the `vendor/trailofbits` pin ([CONTRIBUTING.md §5](../CONTRIBUTING.md#bumping-vendortrailofbits)). It prints markdown to stdout: the commit count and ancestry, plugins added or removed, load surfaces (nested `.claude/`, hooks, MCP and LSP servers, settings, `CLAUDE.md` / `AGENTS.md`, workflow scripts), plugin manifests and the ones that declare hooks or servers inline, skill and command counts per plugin, new executables, symbolic links and gitlinks, hosts and pipe-to-shell patterns in added lines, the `LICENSE`, and whether every plugin that `references/orchestration/boundary-map.md` and this page name still exists. The report informs a human reviewer; it is not a verdict.
+The maintainer's report for moving the `vendor/trailofbits` pin ([CONTRIBUTING.md §5](../CONTRIBUTING.md#bumping-vendortrailofbits)). It prints markdown to stdout: the commit count and ancestry, plugins added or removed, load surfaces (nested `.claude/`, hooks, MCP and LSP servers, settings, `CLAUDE.md` / `AGENTS.md`, workflow scripts), plugin manifests and the ones that declare hooks or servers inline, skill and command counts per plugin, new executables, symbolic links and gitlinks, hosts and pipe-to-shell patterns in added lines, the `LICENSE`, and whether every plugin that `references/orchestration/boundary-map.md` and this page name still exists. Git's colour, external-diff, textconv and signature settings are off for every call, so the maintainer's own config does not change the report. The report informs a human reviewer; it is not a verdict.
 
 - **Arguments:** `<tob-clone>` is a full, non-shallow clone of `https://github.com/trailofbits/skills` (a shallow one draws a warning); `<old-sha>` and `<new-sha>` are the current and proposed pins. `--fetch` runs `git fetch origin` in the clone first.
 - **Exit:** 0 report printed · 2 usage error, a missing clone directory, a failed fetch, or a commit the clone does not have.
