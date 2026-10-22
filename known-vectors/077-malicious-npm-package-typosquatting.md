@@ -24,15 +24,29 @@ cat package.json apps/backend/package.json apps/web/package.json | grep -E "\"@|
 ```
 # Check against known-bad list:
 grep -iE "axios@1\.14\.1|axios@0\.30\.4" package.json apps/*/package.json package-lock.json
-# Hijacked @solana/web3.js releases — exact pins and resolved versions in package-lock /
+# Hijacked @solana/web3.js releases — exact pins and resolved versions in package-lock / npm-shrinkwrap /
 # pnpm / yarn v1 + berry / bun; ranges such as "^1.95.7" do not match on their own:
 W3='web3\.js@(npm:)?1\.95\.(6|7)([^0-9]|$)|/web3\.js/-/web3\.js-1\.95\.(6|7)\.tgz|"@solana/web3\.js"[[:space:]]*:[[:space:]]*"=?1\.95\.(6|7)"'
 grep -rnE "$W3" --exclude-dir=node_modules --include='package.json' --include='package-lock.json' \
-  --include='pnpm-lock.yaml' --include='yarn.lock' --include='bun.lock' .
-# ...and anywhere in history (OUTPUT-RULES Rule 11c flags; --text because a committed .gitattributes can mark
-# lockfiles binary, which hides them from -G):
+  --include='npm-shrinkwrap.json' --include='pnpm-lock.yaml' --include='yarn.lock' --include='bun.lock' .
+# A package-lock.json or npm-shrinkwrap.json written without "resolved" fields names the package only on the
+# entry's key line (or its "name" line, for an alias), with the version on a line below it:
+grep -rnE -A2 --exclude-dir=node_modules --include='package-lock.json' --include='npm-shrinkwrap.json' \
+  '"([^"]*/)?@solana/web3\.js": [{]|"name": "@solana/web3\.js"' . | grep -E '"version": "1\.95\.(6|7)"'
+# ...and anywhere in history, every branch and the root commit included (OUTPUT-RULES Rule 11c flags; --text
+# because a committed .gitattributes can mark lockfiles binary, which hides them from -G):
 GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c core.bigFileThreshold=512m \
-  log --all --oneline --text --no-textconv --no-ext-diff -G"$W3" -- '*lock*' '*package.json'
+  log --all --full-history --root --oneline --text --no-textconv --no-ext-diff -G"$W3" \
+  -- '*lock*' '*package.json' '*npm-shrinkwrap.json'
+# ...and the key-line form in history: each commit that added or removed such an entry
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c core.bigFileThreshold=512m \
+  log --all --full-history --root -p -U3 --no-color --format='commit %h' --text --no-textconv --no-ext-diff \
+  -G'"([^"]*/)?@solana/web3\.js": [{]|"name": "@solana/web3\.js"|"version": "1\.95\.(6|7)"' \
+  -- '*package-lock.json' '*npm-shrinkwrap.json' \
+  | awk '/^commit /{c=$2} /^[+][+][+] /{f=substr($0, 5)} /^@@/{o=n=""}
+         /^[-+ ] *"[^"]*": [{]$/ || /^[-+ ] +"name": /{if (/^-/) o=$0; else if (/^[+]/) n=$0; else o=n=$0}
+         /^[-+ ] +"version": "1\.95\.(6|7)"/{w=(o ~ /@solana\/web3\.js"/); v=(n ~ /@solana\/web3\.js"/)
+           if ((/^-/ && w) || (/^[+]/ && v) || (/^ / && w != v)) print c, f, $0}'
 ```
 - ✅ PASS: Zero matches in the tree, and either zero matches in history or evidence that every key a build from that window loaded was rotated
 - ❌ FAIL: Compromised package version in the tree — CRITICAL; or a `@solana/web3.js` 1.95.6 / 1.95.7 hit in history with no evidence of rotation — every key a build containing it loaded is exposed: rotate it

@@ -348,11 +348,26 @@ ACTIONS:
   # → verify NOT 1.14.1 or 0.30.4
   W3='web3\.js@(npm:)?1\.95\.(6|7)([^0-9]|$)|/web3\.js/-/web3\.js-1\.95\.(6|7)\.tgz|"@solana/web3\.js"[[:space:]]*:[[:space:]]*"=?1\.95\.(6|7)"'
   grep -rnE "$W3" --exclude-dir=node_modules --include='package.json' --include='package-lock.json' \
-    --include='pnpm-lock.yaml' --include='yarn.lock' --include='bun.lock' .
-  # history too; --text because a committed .gitattributes can mark lockfiles binary,
-  # which hides them from -G
+    --include='npm-shrinkwrap.json' --include='pnpm-lock.yaml' --include='yarn.lock' --include='bun.lock' .
+  # a package-lock.json or npm-shrinkwrap.json written without "resolved" fields names the
+  # package only on the entry's key line (or its "name" line, for an alias), with the
+  # version on a line below it
+  grep -rnE -A2 --exclude-dir=node_modules --include='package-lock.json' --include='npm-shrinkwrap.json' \
+    '"([^"]*/)?@solana/web3\.js": [{]|"name": "@solana/web3\.js"' . | grep -E '"version": "1\.95\.(6|7)"'
+  # history too, every branch and the root commit included; --text because a committed
+  # .gitattributes can mark lockfiles binary, which hides them from -G
   GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c core.bigFileThreshold=512m \
-    log --all --oneline --text --no-textconv --no-ext-diff -G"$W3" -- '*lock*' '*package.json'
+    log --all --full-history --root --oneline --text --no-textconv --no-ext-diff -G"$W3" \
+    -- '*lock*' '*package.json' '*npm-shrinkwrap.json'
+  # ...and the key-line form in history: each commit that added or removed such an entry
+  GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c core.bigFileThreshold=512m \
+    log --all --full-history --root -p -U3 --no-color --format='commit %h' --text --no-textconv --no-ext-diff \
+    -G'"([^"]*/)?@solana/web3\.js": [{]|"name": "@solana/web3\.js"|"version": "1\.95\.(6|7)"' \
+    -- '*package-lock.json' '*npm-shrinkwrap.json' \
+    | awk '/^commit /{c=$2} /^[+][+][+] /{f=substr($0, 5)} /^@@/{o=n=""}
+           /^[-+ ] *"[^"]*": [{]$/ || /^[-+ ] +"name": /{if (/^-/) o=$0; else if (/^[+]/) n=$0; else o=n=$0}
+           /^[-+ ] +"version": "1\.95\.(6|7)"/{w=(o ~ /@solana\/web3\.js"/); v=(n ~ /@solana\/web3\.js"/)
+             if ((/^-/ && w) || (/^[+]/ && v) || (/^ / && w != v)) print c, f, $0}'
   # → hijacked @solana/web3.js releases (KV-077 Step 2, SC-005). A hit now is CRITICAL;
   #   a hit in history means rotate every key a build from that window loaded; a `fatal:` /
   #   `lazy fetching disabled` line means a partial clone: the history part is INCONCLUSIVE
@@ -401,7 +416,7 @@ ACTIONS:
   # release tag) → checklist 11 §11.11: review the published artifacts' code delta
   GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c core.bigFileThreshold=512m \
     diff --text --no-textconv --no-ext-diff --stat <baseline>..HEAD \
-    -- '*.lock' '*-lock.json' '*-lock.yaml' '*Cargo.toml' '*package.json'   # Rule 11c flags
+    -- '*.lock' '*-lock.json' '*npm-shrinkwrap.json' '*-lock.yaml' '*Cargo.toml' '*package.json'   # Rule 11c flags
 
 RECORD: dependency audit results
 ```
