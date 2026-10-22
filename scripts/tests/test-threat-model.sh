@@ -480,6 +480,24 @@ else
   skp "incident-named JSON: needs jq or python3"
 fi
 rm -rf "$TGT/incident_1"
+# jq and python3 agree on a malformed file: an incidents value that is not an array yields an empty
+# extract and a note, whichever tool runs.
+for tool in jq python3; do
+  if ! command -v "$tool" >/dev/null 2>&1; then skp "T-k ($tool): $tool not installed"; continue; fi
+  for kind in object string; do
+    case "$kind" in
+      object) body='{"a": {"id": "INC-NOT-ARRAY", "verdict": "suspected"}}' ;;
+      string) body='"INC-NOT-ARRAY"' ;;
+    esac
+    printf '{"schema": "auditor-incidents/1", "incidents": %s}\n' "$body" > "$T/incidents-$kind.json"
+    OUTK="$T/runk-$tool-$kind/audit_1/bootstrap"
+    TM_JSON_TOOL=$tool collect --repo "$TGT" --out "$OUTK" --offline --vulns "$T/incidents-$kind.json"
+    check "T-k ($tool): incidents given as $kind is recorded as malformed" \
+      has "$OUTK/inputs.tsv" "malformed: incidents is $kind, not an array"
+    check "T-k ($tool): ... with an empty extract" has "$OUTK/inputs/v1-incidents-$kind.json" '"incidents": []'
+    check "T-k ($tool): ... that holds nothing from it" hasnt "$OUTK/inputs/v1-incidents-$kind.json" "INC-NOT-ARRAY"
+  done
+done
 
 # =================================================================================================
 # PDF input (needs python3 to build the fixture and pdftotext to convert it).

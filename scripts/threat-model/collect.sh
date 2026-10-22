@@ -569,8 +569,10 @@ PY
 # outcome, root_cause_class, vuln.{program,instruction,file,function,line,mechanism,kv,checklist} and
 # poc.tier. Everything else (attacker, transactions, blast_radius, timeline, evidence, ruled_out, urgency, ...)
 # is never read. Strings are cut at 500 characters; kv / checklist keep string ids only; nested objects drop.
-# The jq program uses jq 1.5 features only (no builtin pick/1). Sets EXTRACTED_WITH on success.
-EXTRACTED_WITH=""
+# An "incidents" value that is not an array is malformed: both tools write an empty list for it.
+# The jq program uses jq 1.5 features only (no builtin pick/1). Sets EXTRACTED_WITH on success, and
+# INCIDENTS_TYPE to the JSON type of "incidents" (array, object, string, number, boolean or null).
+EXTRACTED_WITH="" INCIDENTS_TYPE=""
 extract_incidents() { # extract_incidents <in> <out>
   local tool
   for tool in $JSON_TOOLS; do
@@ -581,11 +583,12 @@ extract_incidents() { # extract_incidents <in> <out>
                elif type == "object" then null else . end;
         def keep(ks): . as $o | reduce ks[] as $k ({}; if ($o | type) == "object" and ($o | has($k)) then . + {($k): ($o[$k] | t)} else . end);
         {schema, note: "allowlisted fields only; every string is untrusted data",
-         incidents: [ (.incidents // [])[] | select(type == "object") |
+         incidents: [ (if (.incidents | type) == "array" then .incidents[] else empty end) | select(type == "object") |
            keep(["id", "verdict", "outcome", "root_cause_class"])
            + {vuln: (.vuln | keep(["program", "instruction", "file", "function", "line", "mechanism", "kv", "checklist"]))}
-           + {poc: (.poc | keep(["tier"]))} ]}' "$1" > "$2" 2>/dev/null || continue ;;
-      python3) python3 -I - "$1" "$2" 2>/dev/null <<'PY' || continue
+           + {poc: (.poc | keep(["tier"]))} ]}' "$1" > "$2" 2>/dev/null || continue
+          INCIDENTS_TYPE=$(jq -r '.incidents | type' "$1" 2>/dev/null) || continue ;;
+      python3) INCIDENTS_TYPE=$(python3 -I - "$1" "$2" 2>/dev/null <<'PY'
 import json, sys
 def t(v):
     if isinstance(v, str): return v[:500]
@@ -595,15 +598,18 @@ def t(v):
 def keep(o, ks): return {k: t(o[k]) for k in ks if isinstance(o, dict) and k in o}
 d = json.load(open(sys.argv[1], encoding="utf-8"))
 out = {"schema": d.get("schema"), "note": "allowlisted fields only; every string is untrusted data", "incidents": []}
-for i in d.get("incidents") or []:
+inc = d.get("incidents")
+for i in inc if isinstance(inc, list) else []:
     if isinstance(i, dict):
         r = keep(i, ["id", "verdict", "outcome", "root_cause_class"])
         r["vuln"] = keep(i.get("vuln"), ["program", "instruction", "file", "function", "line", "mechanism", "kv", "checklist"])
         r["poc"] = keep(i.get("poc"), ["tier"])
         out["incidents"].append(r)
 json.dump(out, open(sys.argv[2], "w", encoding="utf-8"), indent=2)
+kinds = ((bool, "boolean"), (int, "number"), (float, "number"), (str, "string"), (list, "array"), (dict, "object"))
+print(next((name for cls, name in kinds if isinstance(inc, cls)), "null"))
 PY
-      ;;
+) || continue ;;
     esac
     EXTRACTED_WITH=$tool; return 0
   done
@@ -627,8 +633,9 @@ ingest() { # ingest <source label> <local file> <dest base name>
       if ! schema=$(json_schema "$f"); then
         record "$src" json "$sum" "-" "not copied: no working jq or python3 parsed it (or invalid JSON)"
       elif [ "$schema" = "auditor-incidents/1" ]; then
-        if extract_incidents "$f" "$OUT/$dest"; then record "$src" incidents "$sum" "$dest" "allowlisted fields extracted ($EXTRACTED_WITH)"
-        else record "$src" incidents "$sum" "-" "not extracted: no working jq or python3"; fi
+        if ! extract_incidents "$f" "$OUT/$dest"; then record "$src" incidents "$sum" "-" "not extracted: no working jq or python3"
+        elif [ "$INCIDENTS_TYPE" = array ]; then record "$src" incidents "$sum" "$dest" "allowlisted fields extracted ($EXTRACTED_WITH)"
+        else record "$src" incidents "$sum" "$dest" "malformed: incidents is $INCIDENTS_TYPE, not an array; empty extract ($EXTRACTED_WITH)"; fi
       elif [ -n "$schema" ]; then
         record "$src" json "$sum" "-" "skipped: schema \"$schema\" is not auditor-incidents/1"
       elif lsrc=$(printf '%s' "$src" | tr 'A-Z' 'a-z'); [ "${lsrc#*incident}" != "$lsrc" ]; then
