@@ -15,12 +15,15 @@
 #   --pin <rev>               commit to analyse (default HEAD); only its ancestry is mined
 #   --paths <pathspec>        target pathspec, repeatable (default 'programs/*.rs' when the commit has
 #                             a programs/ dir, else '*.rs'); pass the in-scope program dirs
-#   --parent <https-url|dir>  fork parent: https URL (bare clone into a temp dir) or a local repository
+#   --parent <https-url|dir>  fork parent: https URL (bare clone into a temp dir) or the top level of a
+#                             local repository
 #   --parent-paths <spec>     parent pathspec, repeatable (default: the same rule, applied to the parent)
-#   --import <rev>            target commit that imported the parent code (default: the root commit)
+#   --import <rev>            target commit that imported the parent code (default: the root commit);
+#                             pass it when the code arrived after the root commit, or R5 finds no match
 #   --vulns <file|https-url>  prior-vulnerability input, repeatable: PDF, Markdown, text, CSV, JSON,
 #                             or INCIDENTS.json (schema auditor-incidents/1; allowlisted fields only)
-#   --program-id <id>         save `audit-mem warm --program-id <id>` (needs the built tool and a DB)
+#   --program-id <id>         save `audit-mem warm --program-id <id>` from the --audit-mem-db store
+#                             (needs the built tool)
 #   --audit-mem-db <path>     audit-mem store that --program-id reads; nothing is read without it (the
 #                             collector never looks for a store in the target tree)
 #   --keywords <ere>          extra commit-message keywords, an ERE alternation such as 'drain|bypass'
@@ -30,8 +33,9 @@
 #   --small <n>               changed-line ceiling for a quiet-fix candidate commit (default 40)
 #   --fix-ceiling <n>         changed-line ceiling for a keyword commit's ADDED rows (default 300)
 #
-# Exit status: 0 done (sections may print NOT FOUND), 2 usage error or rejected input (including a
-#              run directory that is or holds a symbolic link, or that git tracks),
+# Exit status: 0 done (sections may print NOT FOUND), 2 usage error or rejected input (including an
+#              --import that is not a commit, and a run directory that is or holds a symbolic link
+#              or that git tracks),
 #              3 --repo is not the top level of a git repository (or a bare repository), or the pin
 #              does not resolve.
 
