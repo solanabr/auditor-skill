@@ -20,31 +20,30 @@
 # --tools-version v1.54 (cargo >= 1.85) to build the graph with no dependency edits.
 # Override via TOOLS_VERSION=... if the target repo standardizes on a newer one.
 #
+# EXECUTION MODE. Building this crate runs code on the machine that builds it: the
+# build scripts and proc-macros of every dependency, then the tests. So every run
+# needs the execution mode recorded for the audit or incident (OUTPUT-RULES.md Rule
+# 11a, QUESTIONS.md Q46): AUDITOR_EXEC_MODE=isolated inside the isolated runner, or
+# AUDITOR_EXEC_MODE=native (the report then states that the PoC build ran on this
+# host). Without it, run.sh exits 3 before it copies or compiles anything.
+#
 # WHERE IT BUILDS. This crate normally sits inside the audited repo
 # (audit_<n>/poc/…, incident_<n>/poc/…). Built there, cargo would read the target's
 # .cargo/config* from every parent directory (rustc-wrapper, runner, linker,
 # rustflags, an alias that shadows `build-sbf`), and rustup its rust-toolchain*
-# (which can name a `path` toolchain, i.e. any binaries) — target-controlled code at
-# build time, even for a crate that depends on nothing of the target's. So:
-#   * a self-contained crate — no git dependency, no manifest path that leaves this
-#     directory, no escaped or multi-line TOML string (they cannot be vetted as
-#     text), no `workspace = true`, no symlink, no .cargo/ or rust-toolchain* of its
-#     own — is copied (without target/) into a fresh scratch directory,
+# (which can name a `path` toolchain, i.e. any binaries). So, in either mode:
+#   * a crate that holds a symbolic link, a .cargo/ directory or a rust-toolchain*
+#     file is refused (exit 3): the copy below never takes them.
+#   * the crate is copied (without target/) into a fresh scratch directory,
 #     `mktemp -d "${TMPDIR:-/tmp}/auditor-poc.XXXXXX"`, and built and tested there
 #     with RUSTUP_TOOLCHAIN pinned to the caller's value, else rustup's default. The
 #     directory is printed, and removed on exit unless KEEP_POC_BUILD=1; the resolved
-#     Cargo.lock is copied back next to this file. To reuse compiled dependencies
-#     across runs, export CARGO_TARGET_DIR to a cache directory outside any repository.
-#   * a crate that depends on target code is target-controlled however it is built.
-#     It builds in place only when the caller passes the execution mode recorded for
-#     the run, AUDITOR_EXEC_MODE=isolated|native (OUTPUT-RULES.md Rule 11a);
-#     otherwise it exits 3.
-#   * a relocated crate must also keep to the dependency allowlist below, checked
-#     with `cargo metadata` in the scratch copy: crates.io packages of the Solana
-#     frameworks, plus path dependencies inside the crate (shared-test-utils). Any
-#     other dependency — a crate copied from the target's own manifest, say — runs
-#     its build script and proc-macros on this host, so it needs AUDITOR_EXEC_MODE
-#     too (the build stays in the scratch copy); otherwise exit 3.
+#     Cargo.lock is copied back next to this file. A `path` dependency that leaves
+#     the crate must therefore be absolute.
+#   * to reuse compiled dependencies between runs of one audit, export
+#     CARGO_TARGET_DIR to a cache directory you created outside any repository —
+#     never one inside the target tree or one you did not create: cargo trusts the
+#     build outputs it finds there. SBF_OUT_DIR stays in the scratch copy either way.
 #
 # INCIDENT MODE (detection & response, references/detection-response/): Leg 3 of
 # `confirmed_exploited` requires the REAL program bytes, not a minimized replica.
@@ -66,14 +65,18 @@ set -euo pipefail
 CRATE="{PROGRAM_NAME}"          # package name == compiled .so base name
 # ────────────────────────────────────────────────────────────────────────────────
 
-# ── Dependency allowlist (see WHERE IT BUILDS) ──────────────────────────────────
-# crates.io package names, `_` read as `-`: prefixes, then exact names.
-ALLOW_PREFIXES="solana- anchor- spl- mollusk- litesvm borsh bytemuck pinocchio"
-ALLOW_EXACT="sha2 thiserror"
-# ────────────────────────────────────────────────────────────────────────────────
-
 TOOLS_VERSION="${TOOLS_VERSION:-v1.54}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+
+# ── Execution mode (see EXECUTION MODE above) ───────────────────────────────────
+case "${AUDITOR_EXEC_MODE:-}" in
+  isolated|native) ;;
+  *)
+    echo "[PoC-ATTEMPTED] blocker: AUDITOR_EXEC_MODE is '${AUDITOR_EXEC_MODE:-}', not isolated or native — nothing was copied or built." >&2
+    echo "Building this crate runs code (dependency build scripts and proc-macros, then the tests), so every run needs the execution mode recorded at intake (OUTPUT-RULES.md Rule 11a, QUESTIONS.md Q46): AUDITOR_EXEC_MODE=isolated inside the isolated runner, or AUDITOR_EXEC_MODE=native (the report then states that the PoC build ran on this host)." >&2
+    exit 3
+    ;;
+esac
 
 VULNERABLE_SO="${VULNERABLE_SO:-}"
 FIXED_SO="${FIXED_SO:-}"
@@ -98,7 +101,7 @@ if [[ -n "${VULNERABLE_SO}" || -n "${FIXED_SO}" ]]; then
       exit 3
     fi
   done
-  # The build may run from a scratch directory, so pin both paths absolute now.
+  # The build runs from a scratch directory, so pin both paths absolute now.
   abs_path() {
     local p="$1" d f
     case "${p}" in */*) d="${p%/*}"; f="${p##*/}" ;; *) d="."; f="${p}" ;; esac
@@ -148,51 +151,13 @@ fi
 # working directory (it does under a sandbox that denies /tmp), where a listing of
 # the crate would pick them up.
 
-# A TOML comment starts at a '#' outside a string. Cutting at every '#' instead would
-# hide the rest of a value such as path = "x#/../../programs/vault".
-strip_toml_comments() {
-  awk '{
-    out = ""; q = ""; n = length($0)
-    for (i = 1; i <= n; i++) {
-      c = substr($0, i, 1)
-      if (q == "") {
-        if (c == "#") break
-        if (c == "\"" || c == "\047") q = c
-      } else if (q == "\"" && c == "\\") {
-        out = out c; i++; c = substr($0, i, 1)
-      } else if (c == q) {
-        q = ""
-      }
-      out = out c
-    }
-    print out
-  }' "$1"
-}
-
-# Prints why the crate reaches outside its own directory; prints nothing when it is
-# self-contained. Comments are stripped first; a false positive only asks for the
-# execution mode.
-target_dependency() {
-  local found list m body IFS=$'\n'
-  local re_git='(^|[^[:alnum:]_-])git[[:space:]]*='
-  local re_out="[\"'](/|([^\"']*/)?\\.\\.(/|[\"']))"
-  local re_esc="'''|\"\"\"|[\\\\][uU][0-9A-Fa-f]{4}"
-  local re_ws='workspace[[:space:]]*=[[:space:]]*true'
+# The first symbolic link, .cargo/ or rust-toolchain* inside the crate; prints
+# nothing when there is none. copy_crate takes none of them, so a crate holding one
+# is refused rather than built in a shape it was not written in.
+crate_extra() {
+  local found
   found="$(cd "${HERE}" && find . \( -name target -type d \) -prune -o \( -type l -o -name .cargo -o -name 'rust-toolchain*' \) -print)"
-  if [[ -n "${found}" ]]; then
-    echo "${found%%$'\n'*} inside the crate (symlink, .cargo/ or rust-toolchain)"
-    return 0
-  fi
-  list="$(cd "${HERE}" && find . \( -name target -type d \) -prune -o -name Cargo.toml -type f -print)"
-  set -f
-  for m in ${list}; do
-    body="$(strip_toml_comments "${HERE}/${m}")"
-    if [[ "${body}" =~ ${re_esc} ]]; then echo "escaped or multi-line TOML string in ${m#./} (cannot vet)"; break; fi
-    if [[ "${body}" =~ ${re_git} ]]; then echo "a git dependency in ${m#./}"; break; fi
-    if [[ "${body}" =~ ${re_out} ]]; then echo "a path that leaves the crate in ${m#./}"; break; fi
-    if [[ "${body}" =~ ${re_ws} ]]; then echo "a workspace-inherited dependency in ${m#./}"; break; fi
-  done
-  set +f
+  if [[ -n "${found}" ]]; then echo "${found%%$'\n'*}"; fi
   return 0
 }
 
@@ -224,59 +189,6 @@ copy_crate() {  # copy_crate <dest> : the crate's files, never target/, .cargo/ 
   return 0
 }
 
-# Names every dependency outside the allowlist, as cargo itself reads the manifest
-# (renames, target tables and dotted keys included); prints nothing when all pass.
-# Runs in the scratch copy, after the toolchain pin. Path dependencies must stay
-# inside the crate; registry dependencies must come from crates.io and match
-# ALLOW_PREFIXES / ALLOW_EXACT; every build target's source must be inside the crate.
-DEP_CHECK_PY='
-import json, os, sys
-root = os.path.realpath(sys.argv[1])
-prefixes = tuple(sys.argv[2].split())
-exact = set(sys.argv[3].split())
-crates_io = ("registry+https://github.com/rust-lang/crates.io-index", "sparse+https://index.crates.io/")
-def inside(p):
-    p = os.path.realpath(p)
-    return p == root or p.startswith(root + os.sep)
-try:
-    meta = json.load(sys.stdin)
-except ValueError:
-    print("cargo metadata could not read the manifest")
-    sys.exit(0)
-found = []
-for pkg in meta.get("packages", []):
-    for dep in pkg.get("dependencies", []):
-        name = dep.get("name") or "?"
-        if dep.get("path"):
-            if not inside(dep["path"]):
-                found.append(name + " (path outside the crate)")
-            continue
-        source = dep.get("source") or ""
-        if dep.get("registry") or (source and not source.startswith(crates_io)):
-            found.append(name + " (not from crates.io)")
-            continue
-        norm = name.replace("_", "-")
-        if norm in exact or norm.startswith(prefixes):
-            continue
-        found.append(name)
-    for tgt in pkg.get("targets", []):
-        if not inside(tgt.get("src_path", "")):
-            found.append("target " + (tgt.get("name") or "?") + " (source outside the crate)")
-print(", ".join(sorted(set(found))))
-'
-dependency_check() {
-  local meta
-  if ! command -v python3 >/dev/null 2>&1; then
-    echo "python3 is not on PATH to vet the dependency list"; return 0
-  fi
-  if ! meta="$(cargo metadata --no-deps --offline --format-version 1 --manifest-path "${BUILD_DIR}/Cargo.toml" 2>/dev/null)"; then
-    echo "cargo metadata could not read the manifest"; return 0
-  fi
-  printf '%s' "${meta}" | python3 -I -c "${DEP_CHECK_PY}" "${BUILD_DIR}" "${ALLOW_PREFIXES}" "${ALLOW_EXACT}" \
-    || echo "the dependency list could not be vetted"
-  return 0
-}
-
 finish() {  # keep the resolved Cargo.lock with the crate; drop the scratch directory
   if [[ -f "${BUILD_DIR}/Cargo.lock" ]]; then
     cp -p "${BUILD_DIR}/Cargo.lock" "${HERE}/Cargo.lock" 2>/dev/null || true
@@ -287,68 +199,41 @@ finish() {  # keep the resolved Cargo.lock with the crate; drop the scratch dire
   return 0
 }
 
-dep_reason="$(target_dependency)"
-if [[ -n "${dep_reason}" ]]; then
-  case "${AUDITOR_EXEC_MODE:-}" in
-    isolated|native)
-      echo ">> target-dependent crate (${dep_reason}): building in place under AUDITOR_EXEC_MODE=${AUDITOR_EXEC_MODE} (OUTPUT-RULES.md Rule 11a); the target's .cargo/config and rust-toolchain apply."
-      BUILD_DIR="${HERE}"
-      ;;
-    *)
-      echo "[PoC-ATTEMPTED] blocker: this PoC crate depends on target code (${dep_reason}), so building it runs target-controlled code (build scripts, proc-macros, the target's .cargo/config and rust-toolchain). Run it in the execution mode recorded for this run — AUDITOR_EXEC_MODE=isolated inside the isolated runner, or AUDITOR_EXEC_MODE=native (the report then states that target code ran on this host). OUTPUT-RULES.md Rule 11a." >&2
-      exit 3
-      ;;
+extra="$(crate_extra)"
+if [[ -n "${extra}" ]]; then
+  echo "[PoC-ATTEMPTED] blocker: ${extra#./} inside the crate is a symbolic link, a .cargo/ directory or a rust-toolchain* file. run.sh builds a copy of the crate outside the target tree and never copies these; remove it (for a link, copy in the file itself)." >&2
+  exit 3
+fi
+if ! BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/auditor-poc.XXXXXX")"; then
+  echo "[PoC-ATTEMPTED] blocker: cannot create a scratch build directory under ${TMPDIR:-/tmp}." >&2
+  exit 3
+fi
+BUILD_DIR="$(cd "${BUILD_DIR}" && pwd -P)"
+trap finish EXIT
+inherited="$(inherited_config "${BUILD_DIR}")"
+if [[ -n "${inherited}" ]]; then
+  echo "[PoC-ATTEMPTED] blocker: the scratch build directory ${BUILD_DIR} would inherit ${inherited}; point TMPDIR outside any repository." >&2
+  exit 3
+fi
+if ! copy_crate "${BUILD_DIR}"; then
+  echo "[PoC-ATTEMPTED] blocker: could not copy the crate into ${BUILD_DIR}." >&2
+  exit 3
+fi
+# Pin the toolchain instead of letting rustup look for a rust-toolchain file.
+if [[ -z "${RUSTUP_TOOLCHAIN:-}" ]] && command -v rustup >/dev/null 2>&1; then
+  default_tc="$(cd "${BUILD_DIR}" && rustup default 2>/dev/null || true)"
+  case "${default_tc}" in
+    *"(default)"*) export RUSTUP_TOOLCHAIN="${default_tc%% *}" ;;
+    *) echo "[PoC-ATTEMPTED] blocker: no Rust toolchain to pin — set RUSTUP_TOOLCHAIN or a rustup default." >&2
+       exit 3 ;;
   esac
-else
-  if ! BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/auditor-poc.XXXXXX")"; then
-    echo "[PoC-ATTEMPTED] blocker: cannot create a scratch build directory under ${TMPDIR:-/tmp}." >&2
-    exit 3
-  fi
-  BUILD_DIR="$(cd "${BUILD_DIR}" && pwd -P)"
-  trap finish EXIT
-  inherited="$(inherited_config "${BUILD_DIR}")"
-  if [[ -n "${inherited}" ]]; then
-    echo "[PoC-ATTEMPTED] blocker: the scratch build directory ${BUILD_DIR} would inherit ${inherited}; point TMPDIR outside any repository." >&2
-    exit 3
-  fi
-  if ! copy_crate "${BUILD_DIR}"; then
-    echo "[PoC-ATTEMPTED] blocker: could not copy the crate into ${BUILD_DIR}." >&2
-    exit 3
-  fi
-  # Pin the toolchain instead of letting rustup look for a rust-toolchain file.
-  if [[ -z "${RUSTUP_TOOLCHAIN:-}" ]] && command -v rustup >/dev/null 2>&1; then
-    default_tc="$(cd "${BUILD_DIR}" && rustup default 2>/dev/null || true)"
-    case "${default_tc}" in
-      *"(default)"*) export RUSTUP_TOOLCHAIN="${default_tc%% *}" ;;
-      *) echo "[PoC-ATTEMPTED] blocker: no Rust toolchain to pin — set RUSTUP_TOOLCHAIN or a rustup default." >&2
-         exit 3 ;;
-    esac
-  fi
 fi
 export SBF_OUT_DIR="${BUILD_DIR}/target/deploy"
 if ! { cd "${BUILD_DIR}" && mkdir -p "${SBF_OUT_DIR}"; }; then
   echo "[PoC-ATTEMPTED] blocker: cannot prepare ${SBF_OUT_DIR}." >&2
   exit 3
 fi
-if [[ "${BUILD_DIR}" != "${HERE}" ]]; then
-  outside="$(dependency_check)"
-  if [[ -n "${outside}" ]]; then
-    case "${AUDITOR_EXEC_MODE:-}" in
-      isolated|native)
-        echo ">> dependencies outside the framework allowlist (${outside}): building the scratch copy under AUDITOR_EXEC_MODE=${AUDITOR_EXEC_MODE} (OUTPUT-RULES.md Rule 11a)."
-        ;;
-      *)
-        echo "[PoC-ATTEMPTED] blocker: this PoC crate pulls dependencies outside the framework allowlist (${outside}); their build scripts and proc-macros would run on this host. Run it in the execution mode recorded for this run — AUDITOR_EXEC_MODE=isolated inside the isolated runner, or AUDITOR_EXEC_MODE=native (the report then states that code the target chose ran on this host). OUTPUT-RULES.md Rule 11a." >&2
-        exit 3
-        ;;
-    esac
-  fi
-fi
-if [[ "${BUILD_DIR}" == "${HERE}" ]]; then
-  echo ">> build dir: ${BUILD_DIR} (in place)"
-else
-  echo ">> build dir: ${BUILD_DIR} (scratch copy outside the target tree; toolchain ${RUSTUP_TOOLCHAIN:-unpinned: no rustup}; $([[ "${KEEP_POC_BUILD:-0}" == 1 ]] && echo kept || echo removed on exit))"
-fi
+echo ">> build dir: ${BUILD_DIR} (scratch copy outside the target tree; AUDITOR_EXEC_MODE=${AUDITOR_EXEC_MODE}; toolchain ${RUSTUP_TOOLCHAIN:-unpinned: no rustup}; $([[ "${KEEP_POC_BUILD:-0}" == 1 ]] && echo kept || echo removed on exit))"
 
 # Print the .so path and a solana-verify-style hash: trailing zero padding (the
 # loader pads a program account well past the ELF — a live JUP6 dump carried
