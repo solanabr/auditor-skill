@@ -132,14 +132,19 @@ other outcome is filed under `ruled_out[]`.
 - **Leg 3 — a local PoC on the real bytes.** A `[PoC-REPRODUCED]` or
   `[PoC-SIM-REPRODUCED]` (`references/orchestration/poc-harness.md`) fired this
   session against the program's **real bytes** — the ELF snapshotted in step 1 of
-  the command (`<auditor-skill root>/scripts/dnr/snapshot-program.sh`, before any
-  hotfix can overwrite it) or a build whose hash matches the deployed program. The
-  exploit must assert the **observed Leg-1 effect** (read back with
-  `outcome.get_account(&pk)`), not merely that the call returned `Ok`, and the
-  fixed arm must reject with the guard's **specific** error
-  (`assert_exploit_rejected_with!`); `templates/poc/run.sh` refuses prebuilt mode
-  otherwise. A PoC built only from a minimized replica crate
-  does **not** satisfy Leg 3 for an incident. See `incidents-schema.md` →
+  the command (`<auditor-skill root>/scripts/dnr/snapshot-program.sh`, kept as
+  `bin/<id>@<slot>.so` before any hotfix can overwrite it) or a build whose hash
+  matches the deployed program — given to `templates/poc/run.sh` as
+  `VULNERABLE_SO`. The exploit must assert the **observed Leg-1 effect** (read back
+  with `outcome.get_account(&pk)`), not merely that the call returned `Ok`. Leg 3
+  is met only by run.sh's prebuilt-mode success line, which names the sha256 of
+  the bytes it ran; the ledger records that hash next to the snapshot line. A
+  model-only PoC, run without `VULNERABLE_SO`, never satisfies it, and neither
+  does a PoC built only from a minimized replica crate. A fixed arm (`FIXED_SO`) is
+  optional for Leg 3: our patch build is checked against the guard's specific
+  error (`assert_exploit_rejected_with!`), and the team's deployed hotfix as
+  blocked (the attack fails, the effect does not happen, and the error is not a
+  harness error), never against our exact error. See `incidents-schema.md` →
   `binary_provenance` and `poc-engineer`'s incident mode.
 
 **Key compromise is capped at `suspected`.** When the root cause is a stolen or

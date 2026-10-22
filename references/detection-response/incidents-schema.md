@@ -55,7 +55,7 @@ bumps the `schema` string to `auditor-incidents/2`.
       "poc": {
         "tier": "PoC-REPRODUCED | PoC-SIM-REPRODUCED | PoC-FUZZ-REPRODUCED | PoC-ATTEMPTED | PoC-PROSE | null",
         "path": "incident_<n>/poc/INC-1.1/",
-        "command": "./run.sh",
+        "command": "AUDITOR_EXEC_MODE=<isolated|native> VULNERABLE_SO=<incident .so> [FIXED_SO=<fixed .so>] ./run.sh",
         "verified": true,
         "negative": "the fixed arm rejected the same attack with <specific error>"
       },

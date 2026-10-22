@@ -120,10 +120,12 @@ directory.
    (Rule 11c). Never `checkout`, `switch` or `worktree add` in `--repo`. Then spawn
    `poc-engineer` in incident mode to reproduce on the bytes from step 1 (Leg 3) —
    in-process SVM or a local surfnet, harness keys only, asserting the observed
-   effect. No usable bytes → the ceiling is `suspected`. Every PoC run and any
-   build of target code needs the Rule 11a mode: ask once (a non-interactive run is
-   native, and the report says so), pass it to the agent for the ledger header, and
-   pass it on as `AUDITOR_EXEC_MODE`. `key_compromise` stays at `suspected` unless a person
+   effect. Leg 3 counts only with run.sh's prebuilt-mode success line, which names
+   the sha256 of the bytes it ran; that hash goes into the ledger. No usable bytes
+   → the ceiling is `suspected`. Every PoC run and any build of target code needs
+   the Rule 11a mode: ask once (a non-interactive run is native, and the report
+   says so), pass it to the agent for the ledger header, and pass it on as
+   `AUDITOR_EXEC_MODE`. `key_compromise` stays at `suspected` unless a person
    records a custodian attestation word for word (README).
 
 6. **The plan (Phase 4), in `incident-responder`.** Spawn the agent with the

@@ -40,9 +40,11 @@ for the menu and the "do not" list (never `program close`, never `--final`).
   bytes as `VULNERABLE_SO`; `FIXED_SO` is **our proposed patch build**. The fix holds
   only on a rejection with the guard's specific error.
 - **The team's own hotfix** (if one is already deployed) is a separate check:
-  re-run the same PoC with `FIXED_SO` set to a fresh dump of the **current
-  on-chain** bytes. Report the two results apart — ours proves the proposal, theirs
-  proves what is live.
+  re-run the same PoC with `FIXED_SO` set to a fresh snapshot of the **current
+  on-chain** bytes (`bin/<id>@<new slot>.so`). It passes as **blocked** — the
+  attack fails, the effect does not happen, and the error is not a harness error —
+  never against our exact expected error. Report the two results apart — ours
+  proves the proposal, theirs proves what is live.
 - **Stop-gap while the code fix is pending:** {the containment row that holds the
   line until then}.
 
