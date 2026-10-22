@@ -445,9 +445,9 @@ grep -rnE --include='*.yml' --include='*.yaml' '\$\{\{.*(github\.event\.[a-z_.]*
 
 ```bash
 # R7 — checkouts and fetches of PR or run heads, and the checkout-guard opt-out
-grep -rnE --include='*.yml' --include='*.yaml' 'ref:[[:space:]]*\$\{\{[[:space:]]*(github\.event\.(pull_request\.(head\.(sha|ref)|merge_commit_sha)|workflow_run\.head_(sha|branch))|github\.head_ref)|repository:[[:space:]]*\$\{\{[[:space:]]*github\.event\.pull_request\.head\.repo\.full_name|refs/pull/|gh pr checkout|git (fetch|pull|checkout)[^#]*(pull/|head_ref|head\.ref|head\.sha)|allow-unsafe-pr-checkout' .github/
+grep -rnE --include='*.yml' --include='*.yaml' 'ref:[[:space:]]*.?\$\{\{[[:space:]]*(github\.event\.(pull_request\.(head\.(sha|ref)|merge_commit_sha)|workflow_run\.head_(sha|branch))|github\.head_ref|steps\.[A-Za-z0-9_-]+\.outputs\.head_(sha|ref)|from(JSON|Json)\(steps\.[A-Za-z0-9_-]+\.outputs\.[A-Za-z0-9_]+\)\.head\.(sha|ref))|repository:[[:space:]]*.?\$\{\{[[:space:]]*github\.event\.pull_request\.head\.repo\.full_name|refs/pull/|gh pr checkout|git (fetch|pull|checkout)[^#]*(pull/|head_ref|head\.ref|head\.sha)|allow-unsafe-pr-checkout' .github/
 ```
-> DEP-092 (the commit that was approved) and DEP-093 (privileged triggers).
+> DEP-092 (the commit that was approved) and DEP-093 (privileged triggers). Quoted expressions match too, and so do checkouts of a step output: `steps.<id>.outputs.head_sha` / `head_ref` and `fromJSON(steps.<id>.outputs.result).head.sha`. For a `ref:` fed by any other step output, read the step that sets it.
 
 ```bash
 # R8 — AI agents in CI, their gates, and pre-v1 claude-code-action input names

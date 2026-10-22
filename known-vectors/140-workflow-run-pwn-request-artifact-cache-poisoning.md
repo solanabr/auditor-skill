@@ -41,7 +41,7 @@ grep -rnE --include='*.yml' --include='*.yaml' 'pull_request_target|workflow_run
 
 **Step 2: Is fork-controlled code checked out or fetched?** (recipe R7)
 ```
-grep -rnE --include='*.yml' --include='*.yaml' 'ref:[[:space:]]*\$\{\{[[:space:]]*(github\.event\.(pull_request\.(head\.(sha|ref)|merge_commit_sha)|workflow_run\.head_(sha|branch))|github\.head_ref)|repository:[[:space:]]*\$\{\{[[:space:]]*github\.event\.pull_request\.head\.repo\.full_name|refs/pull/|gh pr checkout|git (fetch|pull|checkout)[^#]*(pull/|head_ref|head\.ref|head\.sha)|allow-unsafe-pr-checkout' .github/
+grep -rnE --include='*.yml' --include='*.yaml' 'ref:[[:space:]]*.?\$\{\{[[:space:]]*(github\.event\.(pull_request\.(head\.(sha|ref)|merge_commit_sha)|workflow_run\.head_(sha|branch))|github\.head_ref|steps\.[A-Za-z0-9_-]+\.outputs\.head_(sha|ref)|from(JSON|Json)\(steps\.[A-Za-z0-9_-]+\.outputs\.[A-Za-z0-9_]+\)\.head\.(sha|ref))|repository:[[:space:]]*.?\$\{\{[[:space:]]*github\.event\.pull_request\.head\.repo\.full_name|refs/pull/|gh pr checkout|git (fetch|pull|checkout)[^#]*(pull/|head_ref|head\.ref|head\.sha)|allow-unsafe-pr-checkout' .github/
 ```
 - ✅ PASS: the job checks out only the base ref, or nothing, and its `actions/checkout` carries the fork-PR guard (v2.8.0 / v3.7.0 / v4.4.0 / v5.1.0 / v6.1.0 / v7.0.0 or later in that line).
 - ❌ FAIL: a privileged job checks out or fetches the PR head or merge commit, `workflow_run.head_branch` / `head_sha`, or the fork repository, or sets `allow-unsafe-pr-checkout: true`.
