@@ -332,11 +332,11 @@ The read-only collector behind `/auditor:threat-model --bootstrap` ([method and 
 
 | Flag | Meaning |
 |------|---------|
-| `--repo <dir>` | the target (required): the top level of its own repository, or a bare repository; anything else, or a partial clone, exits 3 |
-| `--out <dir>` | the run directory (required), normally `audit_<n>/bootstrap`: a plain path without `.` or `..` components. If it, or its `audit_<n>` parent, is a symbolic link, holds one, or is tracked by git, the run exits 2 |
+| `--repo <dir>` | the target (required): the top level of its own repository, or a bare repository. Anything else, a partial clone, or a target whose config git cannot read exits 3 |
+| `--out <dir>` | the run directory (required), normally `audit_<n>/bootstrap`: a plain path without `.` or `..` components. If it, or its `audit_<n>` parent, is a symbolic link, holds one, is tracked by git, or cannot be checked (find cannot read all of it, or git cannot answer, as for a repository git refuses as owned by another user), the run exits 2 |
 | `--pin <rev>` | the commit to analyse (default `HEAD`); only its ancestry is mined. Exit 3 if it does not resolve |
 | `--paths <pathspec>` | target pathspec, repeatable (default `programs/*.rs` when the commit has a `programs/` directory, else `*.rs`) |
-| `--parent <https-url\|dir>` | the fork parent: an `https://` URL, cloned bare into a temp directory that is deleted on exit, or the top level of a local repository. A local path that is not a top level, or a local partial clone, is recorded as not used, and R5 prints `NOT FOUND` |
+| `--parent <https-url\|dir>` | the fork parent: an `https://` URL, cloned bare into a temp directory that is deleted on exit, or the top level of a local repository. A local path that is not a top level, is a partial clone, or has a config git cannot read is recorded as not used, R5 prints `NOT FOUND`, and the run goes on |
 | `--parent-paths <spec>` | parent pathspec, repeatable (default: the same rule, applied to the parent) |
 | `--import <rev>` | the target commit that brought the parent's code in (default: the root commit). Pass it when the code arrived after the root commit (a README-only first commit, say), or R5 reports `NOT FOUND`. It must resolve to a commit, else the run exits 2 |
 | `--vulns <file\|https-url>` | a prior-vulnerability input, repeatable: PDF, Markdown, text, CSV, JSON, or an `INCIDENTS.json` (allowlisted fields only) |
@@ -350,7 +350,7 @@ The read-only collector behind `/auditor:threat-model --bootstrap` ([method and 
 | `--fix-ceiling <n>` | changed-line ceiling for the `ADDED` rows of a keyword commit (default 300) |
 | `-h`, `--help` | print the usage header, flags and exit statuses included |
 
-- **Exit:** 0 done (a section may print `NOT FOUND`) · 2 usage error or rejected input, including an `--out` with `.` or `..` components, a run directory that is a symbolic link, holds one, or is tracked by git, and an `--import` that is not a commit · 3 `--repo` is not the top level of a git repository (or a bare repository), the pin does not resolve, or the target is a partial clone (reading it could fetch from its promisor remote).
+- **Exit:** 0 done (a section may print `NOT FOUND`) · 2 usage error or rejected input, including an `--out` with `.` or `..` components, a run directory that is a symbolic link, holds one, is tracked by git, or cannot be checked by git or find (the check fails closed), and an `--import` that is not a commit · 3 `--repo` is not the top level of a git repository (or a bare repository), the pin does not resolve, the target is a partial clone (reading it could fetch from its promisor remote), or git cannot read its config.
 - **Network:** only for an `https://` URL passed in `--parent` (a bare clone without submodules, credential helpers or other protocols) or in `--vulns` (curl, https only through redirects too, with 60-second and 50 MB limits). Never with `--offline` or `--detect`, and never for a URL found in target content. Every git call runs with `GIT_NO_LAZY_FETCH=1` and `protocol.allow=never`, the parent's https clone allowing https for that call only, so no remote the target configures is contacted. URLs in `history.md`, `inputs.tsv` and stderr show userinfo, query string and fragment as `***`.
 - **Writes:** in `<out>`:
   - `history.md`: sections R0 to R8; a "Shallow clone" line when the target is shallow; and which git settings are pinned.
