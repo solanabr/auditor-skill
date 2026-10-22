@@ -7,7 +7,8 @@
      proposed response is RESPONSE-INC-<n>.<k>.md. -->
 
 **Run:** incident_{N}/ · **Date:** {ISO} · **Mode:** hunt
-**Corpus:** {files + line counts} · **Window:** slots {from}–{to} · **RPC provider:** {host, or user-supplied}
+**Corpus:** {files + line counts} · **Window:** slots {from}–{to} · **RPC provider:** {domain (the host's last two DNS labels), or user-supplied}
+**Execution mode (Rule 11a):** {isolated — which isolation | native — target code ran on the auditor's host, and which steps ran it; copied from the ledger header}
 **Verdict legs met per incident:** on-chain effect / flaw in deployed source / local PoC on real bytes.
 
 ## Executive summary
@@ -37,9 +38,11 @@ hint, never the proof.}
 **Source confirmation (Leg 2).** {file:function in the source deployed at the
 incident slot; the missing/wrong check; sibling instructions checked.}
 
-**PoC (Leg 3).** {tier + `poc/INC-{N}.{k}/run.sh`; the real-bytes provenance —
-dumped-unchanged / rebuilt-hash-match / …; the specific error the fixed arm
-raised. If Leg 3 unmet, say why and that the verdict ceiling is `suspected`.}
+**PoC (Leg 3).** {tier + `poc/INC-{N}.{k}/run.sh` and its final line, `OK: reproduced
+on prebuilt bytes — vulnerable sha256=<the snapshot's hash> …`; the real-bytes
+provenance — dumped-unchanged / rebuilt-hash-match / …; if a fixed arm ran, how it
+held (the pinned error for our patch; blocked for a deployed hotfix). If Leg 3 unmet,
+say why and that the verdict ceiling is `suspected`.}
 
 **Blast radius.** {records, distinct victims, raw units out per mint, window — all
 from queries. Victim lists stay in INCIDENTS.json, not here.}
@@ -53,8 +56,10 @@ from queries. Victim lists stay in INCIDENTS.json, not here.}
 
 ## Collection gaps
 
-{What this corpus cannot answer: provider retention, a missing v1 opt-in, a
-`Log truncated` tail, an un-fetched sibling address. Never a URL.}
+{What this corpus cannot answer: every row of `corpus*/collection-gaps.tsv` (a
+failed fetch, a truncated history, a cap, a stop after ten failed fetches in a
+row), provider retention, a missing v1 opt-in, a `Log truncated` tail, an
+un-fetched sibling address. Never a URL.}
 
 ## Appendix — hypothesis ledger
 

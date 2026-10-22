@@ -38,11 +38,20 @@ for the menu and the "do not" list (never `program close`, never `--final`).
 - **Code fix:** {file:function; the guard to restore}. Hand off as a
   `/auditor:patch INC-{N}.{k}` vuln entry. The stored PoC keeps the incident-time
   bytes as `VULNERABLE_SO`; `FIXED_SO` is **our proposed patch build**. The fix holds
-  only on a rejection with the guard's specific error.
-- **The team's own hotfix** (if one is already deployed) is a separate check:
-  re-run the same PoC with `FIXED_SO` set to a fresh dump of the **current
-  on-chain** bytes. Report the two results apart — ours proves the proposal, theirs
-  proves what is live.
+  only on a rejection with the guard's exact error (`assert_exploit_rejected_with!`):
+  `run.sh` ends with `… fixed sha256=<our build> (rejected with the pinned error) →
+  [PoC-REPRODUCED]`.
+- **The team's own hotfix** (if one is already deployed) is a separate check, in a
+  copy of the PoC crate whose `tests/fixed_blocked.rs` uses the template's commented
+  `assert_exploit_blocked!` and its positive control (their error is not known in
+  advance, so a legitimate call must go through on the same bytes and change the
+  account): re-run with `FIXED_SO` set to a fresh dump of the **current on-chain**
+  bytes. It holds when `run.sh` ends with `… fixed sha256=<that dump> (blocked:
+  failed, account unchanged) → [PoC-REPRODUCED]`; exit 3 (no assertion ran, a harness
+  error, a control that failed) is inconclusive, not a broken fix. When no legitimate
+  call can show the change on the live bytes, pin the hotfix's error with
+  `assert_exploit_rejected_with!` instead. Report the two results apart — ours
+  proves the proposal, theirs proves what is live.
 - **Stop-gap while the code fix is pending:** {the containment row that holds the
   line until then}.
 

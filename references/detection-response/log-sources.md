@@ -19,8 +19,9 @@ Classify every datum by how much it can be trusted, because the verdict legs
 | Datum | Where | Proves |
 |-------|-------|--------|
 | `meta.err`, `preBalances`/`postBalances`, `pre`/`postTokenBalances`, `meta.fee`, `computeUnitsConsumed` | `getTransaction` meta | **runtime-recorded** — the ledger's own account of the effect. Leg-1 evidence (at `finalized`). |
-| invoke / `success` / `failed` lines, CPI depth | `meta.logMessages` | **runtime-recorded** that a program *ran*; parse with `frames.py`. Shows invocation, never effect. |
-| `Program log:` / `Program data:` / `emit!` / `emit_cpi!` / inner-instruction data | logs + `meta.innerInstructions` | **program-asserted** — a hint, forgeable by a malicious/compromised program, emitted even on a later-reverted tx (KV-122). Never a verdict leg on its own. |
+| invoke / `success` / `failed` lines, CPI depth | `meta.logMessages` | **runtime-recorded** that a program *ran*; parse with `frames.py` (`--instructions` for `invoke` records). Shows invocation, never effect. |
+| instruction lists: top-level `transaction.message.instructions`, CPI `meta.innerInstructions` (program, accounts, data, stack height) | `getTransaction` | **runtime-recorded** — which instruction, with which data, ran; `frames.py --instructions` (`ix` records). Identifies the instruction for Leg 1 (decode the data against the discriminator or IDL); shows invocation, never effect. |
+| `Program log:` / `Program data:` / `emit!` lines, and the event payload an `emit_cpi!` self-CPI carries | logs, `meta.innerInstructions` | **program-asserted** — a hint, forgeable by a malicious/compromised program, emitted even on a later-reverted tx (KV-122). Never a verdict leg on its own; an `Instruction: X` log line never identifies the instruction. |
 | an account's live field (authority, config, oracle price) | `getAccountInfo` | **runtime** current state. The account-data half of Leg 1. |
 | `type`, `description`, parsed transfers | Helius Enhanced / webhooks | **provider-derived** interpretation. A lead, re-checked against raw meta. Webhooks fire at `confirmed` and can duplicate. |
 
@@ -32,8 +33,10 @@ gated (README rule 3; the command confirms addresses, window, caps and estimated
 call count with the human first):
 
 - **Signatures:** `getSignaturesForAddress`, newest→oldest, 1–1000 per page,
-  paged with the `before` cursor until the window start or a page cap. Only this
-  method is unaffected by transaction v1. `err` is per-signature, so failed
+  paged with the `before` cursor until the history ends (a page shorter than
+  1000), the window start, or the page cap; a page cap that cuts a full page
+  reports the history as truncated, with the `--before` cursor that resumes it.
+  Only this method is unaffected by transaction v1. `err` is per-signature, so failed
   attempts are visible here before you fetch anything.
 - **Transactions:** `getTransaction`, `encoding: jsonParsed`, `commitment:
   finalized`, **`maxSupportedTransactionVersion: 1`**. The opt-in is mandatory: v1
@@ -47,10 +50,26 @@ call count with the human first):
   usually come from target content, so the collector accepts only base58
   addresses (and a base58 `--before` signature) and refuses anything else before
   it writes a file or sends a request.
-- **Reruns go to a new `--out`.** After a page cap, resume with `--before` into a
-  fresh directory; an `--out` that already holds `signatures.jsonl` is refused
-  rather than overwritten. An `incident_<n>/` that the corpus lands in gets a
-  `.gitignore` of `*` if it has none (Rule 11d).
+- **Reruns go to a new `--out`.** The first collection of an incident lands in
+  `incident_<n>/corpus/`; a resume, or a later collection (respond's widened ring),
+  goes to the next `incident_<n>/corpus-<k>/` (`<k>` = highest existing + 1,
+  `corpus/` counting as 1, made with `mkdir`). The recipes read every one through
+  the glob `incident_<n>/corpus*/transactions.jsonl` and count each transaction
+  once, by signature. After a page cap, resume with `--before` into such a fresh
+  directory; an `--out` that already holds `signatures.jsonl`,
+  `transactions.jsonl` or `collection-gaps.tsv`, even an empty one, is refused
+  rather than overwritten, and so is one that — or whose `incident_*` directory —
+  is a symbolic link, holds one, or is tracked by git (README § Run directory). An
+  `incident_<n>/` that the corpus lands in gets a `.gitignore` of `*` if it has
+  none (Rule 11d).
+- **Gaps are written down.** A `getTransaction` that failed (transport error, RPC
+  error or null result), a signature page that failed, history the page cap
+  truncated (it stopped on a full page of 1,000; a shorter page ends the history),
+  the `--max-tx` cap, and a stop after ten failed `getTransaction` calls in a row
+  each add a `<signature or address><TAB><reason>` row to
+  `<out>/collection-gaps.tsv`, and the run ends with `collection gaps: N`.
+  `--max-tx` counts every `getTransaction` call, failed ones included. Every row
+  goes into LEDGER.md and INCIDENTS.json `collection_gaps`.
 - Verdict evidence is read at `finalized`. The one exception is the
   "is it still ongoing?" check, which may read `confirmed` as long as it says so.
 
@@ -95,24 +114,44 @@ gave you (`OUTPUT-RULES.md` Rule 11e).
 
 The analysis recipes run offline over a `transactions.jsonl`; `collect.sh` and
 `snapshot-program.sh` are the two networked, read-only steps. All of them are
-exercised by `scripts/tests/test-dnr.sh` — the offline ones against the committed
+exercised by `scripts/tests/test-dnr.sh` (the networked ones also by
+`scripts/tests/test-dnr-collect.sh`) — the offline ones against the committed
 fixtures in `scripts/dnr/fixtures/` (`log-newline-injection.jsonl`,
 `log-tab-injection.jsonl`, `token-amount-over-2-53.jsonl`,
 `lamports-over-2-53.jsonl`, `same-owner-move.jsonl`, `same-owner-drain.jsonl`,
-`clean-mixed.jsonl`), the networked ones against fake `curl` / `solana` binaries,
-with no network.
+`clean-mixed.jsonl`, and the instruction fixtures `ix-native-no-logs.jsonl`,
+`ix-cpi-victim.jsonl`, `ix-anchor-victim.jsonl`, `ix-lying-log.jsonl`), the
+networked ones against fake `curl` / `solana` binaries, with no network.
 
 ```bash
 # baseline (no log parsing): outcome / version histograms, window, signer &
 # program inventories
-bash "<auditor-skill root>/scripts/dnr/profile.sh" incident_<n>/corpus/transactions.jsonl
+bash "<auditor-skill root>/scripts/dnr/profile.sh" incident_<n>/corpus*/transactions.jsonl
 
 # program-log attribution, as JSONL (one record per emitted line, by frame)
-python3 -I "<auditor-skill root>/scripts/dnr/frames.py" incident_<n>/corpus/transactions.jsonl > incident_<n>/frames.jsonl
+python3 -I "<auditor-skill root>/scripts/dnr/frames.py" incident_<n>/corpus*/transactions.jsonl > incident_<n>/frames.jsonl
+
+# which instruction ran, from the runtime-recorded instruction lists (ix records,
+# top-level and CPI, data as given) joined to the runtime invoke lines
+python3 -I "<auditor-skill root>/scripts/dnr/frames.py" --instructions incident_<n>/corpus*/transactions.jsonl > incident_<n>/instructions.jsonl
 
 # balance movements, exact, successful transactions only
-python3 -I "<auditor-skill root>/scripts/dnr/deltas.py" tokens   incident_<n>/corpus/transactions.jsonl
-python3 -I "<auditor-skill root>/scripts/dnr/deltas.py" lamports incident_<n>/corpus/transactions.jsonl
+python3 -I "<auditor-skill root>/scripts/dnr/deltas.py" tokens   incident_<n>/corpus*/transactions.jsonl
+python3 -I "<auditor-skill root>/scripts/dnr/deltas.py" lamports incident_<n>/corpus*/transactions.jsonl
+```
+
+Program bytes and `solana program show` come only from `snapshot-program.sh`, and
+signature history and transactions only from `collect.sh`. Any other read — an
+account's current value (`getAccountInfo`, the account-data half of Leg 1) or one
+transaction (`solana confirm -v <signature>`) — runs the solana CLI on a throwaway
+config, in a single command line: the URL stays out of argv, the keypair path
+names a file that does not exist, the read runs only if the CLI loaded that config,
+the exit status survives the redaction, and the directory is removed afterwards.
+Never pass `--url`.
+
+```bash
+# swap "account <address> --output json" for "confirm -v <signature>" as needed
+set -o pipefail; d="$(mktemp -d "${TMPDIR:-/tmp}/dnr_cli.XXXXXX")" && printf 'json_rpc_url: "%s"\nwebsocket_url: ""\nkeypair_path: "%s/none.json"\n' "$RPC_URL" "$d" > "$d/cli.yml" && solana -C "$d/cli.yml" config get keypair | grep -F "$d/none.json" > /dev/null && solana -C "$d/cli.yml" account <address> --output json 2>&1 | bash "<auditor-skill root>/scripts/dnr/redact.sh"; s=$?; rm -rf "$d"; (exit $s)
 ```
 
 Aggregate `deltas.py` output further in Python ints (`python3 -I`). `awk` and
@@ -128,10 +167,12 @@ the JSONL; DuckDB is optional.
   says yes. Confirm with Leg 1 (README): a balance movement, or the four-part
   account-data check for takeovers.
 - **Blast radius.** Count it from queries: distinct victim owners and mints
-  (`deltas.py tokens` grouped), total raw units out per mint (Python ints),
+  (`deltas.py tokens` rows, one per token account, summed per owner), total raw
+  units out per mint (Python ints),
   record/account counts, and the `(slot, transactionIndex)` window. Victim-wallet
   lists are **internal only** and never leave `incident_<n>/`.
-- **Root cause.** `frames.py` + the instruction list point at the program and
+- **Root cause.** `frames.py --instructions` (the runtime-recorded instruction
+  lists, decoded against the discriminator or IDL) points at the program and
   instruction; confirm the flaw in the source deployed at the incident slot
   (Leg 2), then reproduce on the real bytes (Leg 3).
 
@@ -141,11 +182,13 @@ Round-1 hypotheses, each a ledger row; let hits spawn pivots:
 
 1. **Failed-then-succeeded clusters** from one signer/program: probing that found
    a hole (`err` history from `getSignaturesForAddress`, then the first success).
-2. **Outflow outliers per mint:** `deltas.py tokens` grouped by mint; a drain is a
-   large net negative from vault/treasury owners.
+2. **Outflow outliers per mint:** `deltas.py tokens` summed per owner and mint
+   (each row is one token account); a drain is a large net negative from
+   vault/treasury owners.
 3. **Privileged instructions whose signer is not in the authority set** — the
-   takeover tell: a set-authority / set-config / upgrade / withdraw whose signer
-   the threat model does not list as that role.
+   takeover tell: a set-authority / set-config / upgrade / withdraw (found in the
+   `ix` records of `frames.py --instructions`, by discriminator, top-level or CPI)
+   whose signer the threat model does not list as that role.
 4. **First-seen signers and attacker-deployed programs:** a signer or program id
    appearing for the first time just before the effect; a program deployed
    (loader `invoke`) shortly before it is used.

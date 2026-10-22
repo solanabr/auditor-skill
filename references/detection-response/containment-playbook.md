@@ -24,16 +24,24 @@ mistaken — and then it stops. Carrying it out is never the track's job.
 - **No outbound communication.** No mail, chat, posts, issues, PRs, or webhooks,
   even when a connected tool could send them. Coordination is **drafts only**
   (below).
-- **Read-only CLI only**, and each piped through the installation's
-  `<auditor-skill root>/scripts/dnr/redact.sh` (never a relative `scripts/` path)
-  so a key in an error never reaches the transcript: `solana program show`,
-  `solana program dump`, `solana account`, `solana confirm -v <sig>`,
-  `getAccountInfo` / `getTransaction` / `getSignaturesForAddress`. No Helius or
-  other MCP write tool, no webhook/subscription setup — those are out of the
-  agent's `tools:` allowlist by construction (README).
+- **Read-only, keyless reads only.** Program bytes and `solana program show` come
+  only from `<auditor-skill root>/scripts/dnr/snapshot-program.sh`, and
+  `getSignaturesForAddress` / `getTransaction` only from `collect.sh`. Any other
+  read — `solana account <address>` (`getAccountInfo`), `solana confirm -v <sig>` —
+  uses the throwaway-config recipe in `log-sources.md`, never `--url`: no key in
+  argv, no keypair to sign with, and its output piped through the installation's
+  `redact.sh` (never a relative `scripts/` path) after `set -o pipefail;`, so a
+  key in an error never reaches the transcript and a failed read still fails.
+- **No MCP write tool**, no webhook/subscription setup. The `incident-responder`
+  agent that does the corpus work has no MCP tools, so it cannot call a signing or
+  transfer tool; `/auditor:hunt` and `/auditor:respond` run in your session, where
+  every connected MCP server stays callable, and call none. Before a live
+  incident, disconnect or deny write-capable MCP servers (for example, tools that
+  transfer or stake) — README § "allowed-tools is not a sandbox".
 - Building a candidate commit to reproduce follows the run's execution mode
   (`OUTPUT-RULES.md` Rule 11a); a `supply_chain_or_ci` root cause is **never**
-  built natively.
+  built natively, and its PoC never builds or links the target's crates: it runs
+  on the dumped bytes alone.
 
 ## The action menu (every row is a proposal)
 
@@ -67,11 +75,18 @@ program's loader record (no write):
   program show <id>` prints "Last Deployed In Slot" and the authority directly.
 - **Loader-v4 (`LoaderV411…`):** `LoaderV4State` is a 0x30-byte header — slot at
   `[0..8]`, authority-or-next-version pubkey at `[8..40]`, status at `[40..48]` —
-  followed by the ELF.
+  followed by the ELF. `solana program show` refuses such a program ("is not an
+  SBF program"); `solana program-v4 show --program-id <id>` prints the same
+  "Last Deployed In Slot", authority and status. `snapshot-program.sh` handles
+  both loaders.
+- **BPFLoader2 / BPFLoader1:** immutable, with no deploy slot or authority; the
+  snapshot records `last_deployed_slot=n/a (immutable loader)`.
 
 A last-deployed slot **after** the incident slot means the incident binary is
-gone (a hotfix overwrote it); dump and hash the current bytes immediately anyway,
-and note the provenance gap (`incidents-schema.md` → `binary_provenance`).
+gone (a hotfix overwrote it); snapshot the current bytes immediately anyway (a
+snapshot never replaces an earlier one: `bin/<id>.so` stays the first, a later one
+is `bin/<id>@<slot>.so`), and note the provenance gap (`incidents-schema.md` →
+`binary_provenance`).
 
 ## Coordination (drafts only)
 

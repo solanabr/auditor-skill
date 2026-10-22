@@ -53,11 +53,11 @@ bumps the `schema` string to `auditor-incidents/2`.
       "binary_provenance": "dumped-unchanged | dumped-after-hotfix | rebuilt-hash-match | source-only | none",
       "evidence": ["<file>: <pipeline> -> <result>"],
       "poc": {
-        "tier": "PoC-REPRODUCED | PoC-SIM-REPRODUCED | PoC-ATTEMPTED | PoC-PROSE | null",
+        "tier": "PoC-REPRODUCED | PoC-SIM-REPRODUCED | PoC-FUZZ-REPRODUCED | PoC-ATTEMPTED | PoC-PROSE | null",
         "path": "incident_<n>/poc/INC-1.1/",
-        "command": "./run.sh",
+        "command": "AUDITOR_EXEC_MODE=<isolated|native> VULNERABLE_SO=<incident .so> [FIXED_SO=<fixed .so>] ./run.sh",
         "verified": true,
-        "negative": "the fixed arm rejected the same attack with <specific error>"
+        "negative": "null | rejected with the pinned error | blocked: failed, account unchanged"
       },
       "collection_gaps": ["<what the corpus could not answer — never a URL>"],
       "response_plan": "RESPONSE-INC-1.1.md"
@@ -91,8 +91,20 @@ bumps the `schema` string to `auditor-incidents/2`.
   `dumped-after-hotfix` (a later upgrade overwrote the incident binary — dump and
   hash anyway, provenance noted), `source-only` or `none` (Leg 3 unmet → ceiling
   `suspected`).
+- **`poc`** records the run as made. `command` carries `AUDITOR_EXEC_MODE` and
+  `VULNERABLE_SO`, plus `FIXED_SO` when a fixed arm ran. `verified` is true only
+  when `run.sh` ended with `OK: reproduced on prebuilt bytes — vulnerable
+  sha256=<hash>`, `<hash>` being the snapshot's. `negative` is how the fixed arm
+  held: `rejected with the pinned error` for our patch, `blocked: failed, account
+  unchanged` for a deployed hotfix, or null when no fixed arm ran.
 - **`evidence`** strings are `"<source file>: <pipeline> -> <result>"` — the query
   that produced each number (hard rule 5). Never a URL, never a secret.
+- **`collection_gaps`** holds every row of the collector's
+  `corpus*/collection-gaps.tsv`, as `"<signature or address>: <reason>"` (a fetch
+  that failed, history the page cap truncated, the `--max-tx` cap, a stop after
+  ten failed fetches in a row), plus the gaps the run found itself (provider
+  retention, a `Log truncated` tail, a sibling address not collected). The same
+  rows go into LEDGER.md.
 - **Secrets / PII.** No RPC URL anywhere, including `collection_gaps`. Victim and
   attacker wallet lists stay in this file inside `incident_<n>/`, which is
   git-ignored; they are not lifted into any shared report.

@@ -6,7 +6,9 @@ Everything else in auditor-skill is pre-deployment — find the flaw before an
 attacker does. This track is for the morning after: a protocol may already have
 been attacked, and the evidence is in the chain's transaction history. It ships
 two commands, `/auditor:hunt` and `/auditor:respond`, and one agent,
-`incident-responder`. Back to the [docs index](README.md).
+`incident-responder`: the commands keep you in the loop (arguments, approvals, the
+collector, results), and the agent does all reading and analysis of the corpus.
+Back to the [docs index](README.md).
 
 The normative contract — the hard rules, the verdict ladder, the `incident_<n>/`
 layout — is [`references/detection-response/README.md`](../references/detection-response/README.md).
@@ -48,11 +50,13 @@ Telegram bot (`@seal_911_bot`). These commands are the after-the-fact workup.
 
 Everything lands in a per-run `incident_<n>/` directory whose first file is a
 `.gitignore` of `*` — raw corpora and off-chain logs carry PII and are never
-committed:
+committed. Each run makes a new one; an existing one is reused only when git does
+not track it, it holds no symbolic links, and you confirm it:
 
 - `bin/` — the step-1 snapshot of each implicated program (`<id>.so` plus its
   `solana program show` output), taken before anything else so a mid-investigation
-  hotfix can't erase the incident binary.
+  hotfix can't erase the incident binary. A snapshot is never overwritten: a later
+  one of a redeployed program is `<id>@<slot>.so`.
 - `INCIDENTS.json` — the structured result ([schema](../references/detection-response/incidents-schema.md)).
 - `INCIDENT_REPORT.md` — executive summary, timeline, per-incident evidence, and
   the full ledger so a reviewer can retrace every step.
@@ -84,9 +88,17 @@ already captured.
   ([containment playbook](../references/detection-response/containment-playbook.md)).
 - **Local reproduction only.** PoCs run against `127.0.0.1`; the track never sends
   to or simulates against a public cluster.
-- **Not a sandbox.** The commands' `allowed-tools` pre-approve read-only, text-only
-  work; they are intent, not confinement. No bundled script is pre-approved, so each
-  `scripts/dnr/` run asks for your approval. Real confinement is an isolated run mode
+- **MCP servers stay callable in your session.** `/auditor:hunt` and
+  `/auditor:respond` hand all reading and analysis of the incident corpus to the
+  `incident-responder` agent, whose tool list has no MCP tools, so it cannot call
+  a signing or transfer tool. The commands themselves run in your session, where
+  every connected MCP server stays callable. They call no MCP tool. Before a live
+  incident, disconnect or deny write-capable MCP servers (for example, tools that
+  transfer or stake).
+- **Not a sandbox.** The commands' `allowed-tools` pre-approve only reading, `Task`
+  and edits under `incident_*/`; they are intent, not confinement. No bundled script
+  is pre-approved, and neither is `jq` (it can print the environment), so each
+  `scripts/dnr/` run and each `jq` query asks for your approval. Real confinement is an isolated run mode
   ([`OUTPUT-RULES.md` Rule 11](../OUTPUT-RULES.md#rule-11-operating-safety)); the
   RPC provider that received your addresses is disclosed under Rule 11b.
 - **Recipes:** [`scripts/dnr/`](../scripts/dnr/) — profiling, log-frame attribution,
