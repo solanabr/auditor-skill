@@ -197,8 +197,7 @@ committed; the repo `.gitignore` also ignores `incident_*/` as a backstop.
 incident_<n>/
 ├── .gitignore                 # "*" — nothing here is ever committed
 ├── LEDGER.md                  # the hypothesis ledger (templates/hunt-ledger.md)
-├── bin/                       # step-1 program snapshots, never overwritten:
-│                              #   <id>@<slot>.so + <id>@<slot>.show.txt
+├── bin/                       # step-1 program snapshots: <id>.so + <id>.show.txt (later: <id>@<slot>.*)
 ├── corpus/                    # collected or user-supplied logs — may contain PII
 │   ├── signatures.jsonl
 │   ├── transactions.jsonl

@@ -56,21 +56,20 @@ call count with the human first):
   `corpus/` counting as 1, made with `mkdir`). The recipes read every one through
   the glob `incident_<n>/corpus*/transactions.jsonl` and count each transaction
   once, by signature. After a page cap, resume with `--before` into such a fresh
-  directory; an `--out` that already holds any collector output
-  (`signatures.jsonl`, `transactions.jsonl`, `collection-gaps.tsv`) is refused
+  directory; an `--out` that already holds `signatures.jsonl`,
+  `transactions.jsonl` or `collection-gaps.tsv`, even an empty one, is refused
   rather than overwritten, and so is one that — or whose `incident_*` directory —
   is a symbolic link, holds one, or is tracked by git (README § Run directory). An
   `incident_<n>/` that the corpus lands in gets a `.gitignore` of `*` if it has
   none (Rule 11d).
-- **Calls are capped.** `--max-tx` counts every `getTransaction` call, failed
-  ones included, and 10 failed calls in a row (a rate limit or an outage) stop the
-  run, so a run makes at most addresses × `--max-pages` + `--max-tx` calls.
 - **Gaps are written down.** A `getTransaction` that failed (transport error, RPC
-  error or null result), a signature page that failed, a history truncated by
-  `--max-pages`, the `--max-tx` cap and a stop after 10 failed calls in a row each
-  add a `<signature or address><TAB><reason>` row to `<out>/collection-gaps.tsv`,
-  and the run ends with `collection gaps: N`.
-  Every row goes into LEDGER.md and INCIDENTS.json `collection_gaps`.
+  error or null result), a signature page that failed, history the page cap
+  truncated (it stopped on a full page of 1,000; a shorter page ends the history),
+  the `--max-tx` cap, and a stop after ten failed `getTransaction` calls in a row
+  each add a `<signature or address><TAB><reason>` row to
+  `<out>/collection-gaps.tsv`, and the run ends with `collection gaps: N`.
+  `--max-tx` counts every `getTransaction` call, failed ones included. Every row
+  goes into LEDGER.md and INCIDENTS.json `collection_gaps`.
 - Verdict evidence is read at `finalized`. The one exception is the
   "is it still ongoing?" check, which may read `confirmed` as long as it says so.
 
@@ -115,7 +114,8 @@ gave you (`OUTPUT-RULES.md` Rule 11e).
 
 The analysis recipes run offline over a `transactions.jsonl`; `collect.sh` and
 `snapshot-program.sh` are the two networked, read-only steps. All of them are
-exercised by `scripts/tests/test-dnr.sh` — the offline ones against the committed
+exercised by `scripts/tests/test-dnr.sh` (the networked ones also by
+`scripts/tests/test-dnr-collect.sh`) — the offline ones against the committed
 fixtures in `scripts/dnr/fixtures/` (`log-newline-injection.jsonl`,
 `log-tab-injection.jsonl`, `token-amount-over-2-53.jsonl`,
 `lamports-over-2-53.jsonl`, `same-owner-move.jsonl`, `same-owner-drain.jsonl`,

@@ -55,8 +55,9 @@ from queries. Victim lists stay in INCIDENTS.json, not here.}
 ## Collection gaps
 
 {What this corpus cannot answer: every row of `corpus*/collection-gaps.tsv` (a
-failed fetch, a truncated history, a cap), provider retention, a missing v1
-opt-in, a `Log truncated` tail, an un-fetched sibling address. Never a URL.}
+failed fetch, a truncated history, a cap, a stop after ten failed fetches in a
+row), provider retention, a missing v1 opt-in, a `Log truncated` tail, an
+un-fetched sibling address. Never a URL.}
 
 ## Appendix — hypothesis ledger
 

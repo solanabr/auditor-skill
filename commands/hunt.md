@@ -59,14 +59,14 @@ directory.
      off-chain logs carry PII and are never committed.
    - **Snapshot each program in scope now:**
      `bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/snapshot-program.sh" <program_id> incident_<n>`
-     — read-only (`program show` + `program dump`, or `program-v4 show` +
-     `program-v4 download` for a loader-v4 program), kept as
-     `incident_<n>/bin/<id>@<slot>.so` and never overwritten, CLI error text passed
-     through `redact.sh`. Keep the line it prints (last-deployed slot, zero-trimmed
-     sha256, file) for the agent, which pastes it into `LEDGER.md`. If the team
-     ships a hotfix while you hunt, the on-chain binary is overwritten; this copy is
-     what Leg 3 runs on, and a later snapshot adds `bin/<id>@<new slot>.so` next to
-     it.
+     — read-only `solana program show` + `solana program dump` (loader-v4:
+     `program-v4 show` + `program-v4 download`) into `incident_<n>/bin/`, CLI error
+     text passed through `redact.sh`. Keep the line it prints (last-deployed slot,
+     zero-trimmed sha256) for the agent, which pastes it into `LEDGER.md`. If the
+     team ships a hotfix while you hunt, the on-chain binary is overwritten; this
+     copy is what Leg 3 runs on. A later snapshot of a redeployed program is kept as
+     `bin/<id>@<slot>.so`; `bin/<id>.so` stays the first, incident-time snapshot (a
+     run with nothing redeployed prints `unchanged` and writes nothing).
 
 2. **Get the corpus** (this command). The user's own corpus comes first:
    `--logs <dir>` (a `transactions.jsonl`, Geyser/indexer export, or service logs);
@@ -82,10 +82,10 @@ directory.
      unknown argument), so never pass one. `--window <fromUnix>..<toUnix>` becomes
      `--since <fromUnix> --until <toUnix>` (an open end is left out); the page cap
      is `--max-pages N` (pages of up to 1,000 signatures per address, default 20)
-     and the transaction cap `--max-tx N` (default 2,000 `getTransaction` calls,
-     failed ones included). The estimate to show is at most addresses × max-pages
-     `getSignaturesForAddress` calls plus max-tx `getTransaction` calls; after 10
-     failed calls in a row the collector stops on its own.
+     and the transaction cap `--max-tx N` (default 2,000; it counts every
+     `getTransaction` call, failed ones included). The estimate to show is at most
+     addresses × max-pages `getSignaturesForAddress` calls plus max-tx
+     `getTransaction` calls; ten failed calls in a row stop the run sooner.
    - Then run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/collect.sh" --out incident_<n>/corpus --confirmed --since <fromUnix> --until <toUnix> --max-pages N --max-tx N -- <address> …`
      (`$RPC_URL` from the environment, never on the command line; it finalizes and
      passes `maxSupportedTransactionVersion: 1`). This step touches the network, so
@@ -96,8 +96,8 @@ directory.
      (Rule 11b), never a URL with a key.
    - The collector ends with `collection gaps: N` and writes one
      `<signature or address><TAB><reason>` row per gap (a fetch that failed, a
-     history truncated by `--max-pages`, the `--max-tx` cap, a stop after 10 failed
-     calls in a row) to `incident_<n>/corpus/collection-gaps.tsv`; the agent copies
+     history the page cap truncated, the `--max-tx` cap, a stop after ten failed
+     fetches in a row) to `incident_<n>/corpus/collection-gaps.tsv`; the agent copies
      every row into the ledger's **Collection gaps** line and into
      `collection_gaps` of each incident in `INCIDENTS.json`.
    - Any wider collection the agent asks for comes back here: show the human its

@@ -65,14 +65,14 @@ directory.
      create a new one.
    - **Snapshot every implicated program now:**
      `bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/snapshot-program.sh" <program_id> incident_<n>`
-     — read-only (`program show` + `program dump`, or `program-v4 show` +
-     `program-v4 download` for a loader-v4 program), kept as
-     `incident_<n>/bin/<id>@<slot>.so` and never overwritten, with the CLI's error
-     text passed through `redact.sh`. Keep the line it prints (last-deployed slot,
-     zero-trimmed sha256, file) for the agent, which copies it into `LEDGER.md`. A
-     hotfix shipped mid-investigation overwrites the on-chain binary; the copy
-     taken before it is what Leg 3 runs on, and this run's snapshot adds
-     `bin/<id>@<new slot>.so` next to it.
+     — read-only `solana program show` + `solana program dump` (loader-v4:
+     `program-v4 show` + `program-v4 download`) into `incident_<n>/bin/`, with the
+     CLI's error text passed through `redact.sh`. Keep the line(s) it prints
+     (last-deployed slot, zero-trimmed sha256) for the agent, which copies them into
+     `LEDGER.md`. A hotfix shipped mid-investigation overwrites the on-chain binary;
+     this copy is what Leg 3 runs on. A later snapshot of a redeployed program is
+     kept as `bin/<id>@<slot>.so`; `bin/<id>.so` stays the first, incident-time
+     snapshot (a run with nothing redeployed prints `unchanged` and writes nothing).
 
 2. **Turn the lead into seed entities, in `incident-responder`.** Spawn the agent
    (Task) in respond mode with the lead, the run directory, the snapshot lines and

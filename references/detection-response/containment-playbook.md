@@ -82,9 +82,10 @@ program's loader record (no write):
   snapshot records `last_deployed_slot=n/a (immutable loader)`.
 
 A last-deployed slot **after** the incident slot means the incident binary is
-gone (a hotfix overwrote it); snapshot the current bytes immediately anyway (the
-earlier `bin/<id>@<slot>.so` is kept), and note the provenance gap
-(`incidents-schema.md` → `binary_provenance`).
+gone (a hotfix overwrote it); snapshot the current bytes immediately anyway (a
+snapshot never replaces an earlier one: `bin/<id>.so` stays the first, a later one
+is `bin/<id>@<slot>.so`), and note the provenance gap (`incidents-schema.md` →
+`binary_provenance`).
 
 ## Coordination (drafts only)
 
