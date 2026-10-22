@@ -43,9 +43,13 @@
 # address, a collection gap to record in the ledger. Signatures are fetched newest
 # first (by slot, across all addresses), so --max-tx drops the oldest.
 #
-# SECRETS: the endpoint comes from $RPC_URL and is NEVER echoed. curl's stderr is
-# captured to a temp file and passed through redact.sh. Output files and the
-# "provider" line carry the HOST only.
+# SECRETS: the endpoint comes from $RPC_URL and is NEVER echoed. curl runs with -q
+# (no ~/.curlrc) and reads the URL from a config on stdin (-K -), so the key stays
+# out of its argv; an $RPC_URL holding a quote, a backslash, whitespace or a control
+# character is refused. curl's stderr is captured to a temp file and passed through
+# redact.sh. Output files carry no URL, and the "provider" line carries the host's
+# last two DNS labels only, since some providers put an endpoint token in a
+# subdomain.
 #
 # Transactions are fetched jsonParsed, commitment finalized, with
 # maxSupportedTransactionVersion:1 — mandatory, since v1 transactions are live on
@@ -86,6 +90,12 @@ if [ -z "${RPC_URL:-}" ]; then
   echo "collect.sh: set \$RPC_URL in the environment (never on the command line, so it stays out of history and ledgers)." >&2
   exit 2
 fi
+# The URL goes into a quoted curl config line: refuse what could end or escape it.
+case "$RPC_URL" in
+  *[[:space:][:cntrl:]\"\\]*)
+    echo "collect.sh: \$RPC_URL holds a quote, a backslash, whitespace or a control character; refusing it." >&2
+    exit 2 ;;
+esac
 # Addresses and --before are spliced into JSON request bodies and usually come from
 # target content (declare_id!, Anchor.toml): accept base58 only.
 for addr in "${addrs[@]}"; do
@@ -158,17 +168,21 @@ todo="$out/.signatures.todo"
 errf="$(mktemp "${TMPDIR:-/tmp}/dnr_collect.XXXXXX")"
 trap 'rm -f "$errf" "$todo"' EXIT
 
-# Host only, for disclosure under OUTPUT-RULES.md Rule 11b. Strip scheme, path and
-# any userinfo.
-provider="$(printf '%s' "$RPC_URL" | sed -E 's#^[A-Za-z][A-Za-z0-9+.-]*://##; s#[/?].*$##; s#^[^@]*@##')"
-echo "provider: $provider   (Rule 11b: this host received the queried addresses)"
+# Provider domain, for disclosure under OUTPUT-RULES.md Rule 11b: strip the scheme,
+# any userinfo, path, query and fragment, then keep the host's last two DNS labels (an
+# IP address, or a host of one or two labels, is kept whole).
+provider="$(printf '%s' "$RPC_URL" | sed -E -e 's|^[A-Za-z][A-Za-z0-9+.-]*://||' -e 's|^[^/?#]*@||' \
+  -e 's|[/?#].*$||' -e 's|^.*\.([^.]+\.[A-Za-z][^.:]*)\.?(:[0-9]*)?$|\1\2|')"
+echo "provider: $provider   (Rule 11b: this provider received the queried addresses)"
 echo "addresses: ${#addrs[@]}   window: since=$since until=$until before=${before_start:-<newest>}   caps: max_pages=$max_pages max_tx=$max_tx"
 
 rpc() {  # rpc <method> <params-json> -> the whole JSON response on stdout
   : > "$errf"
-  curl -sS -m 60 -A auditor-skill-research -X POST -H 'Content-Type: application/json' \
-    -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$1\",\"params\":$2}" \
-    "$RPC_URL" 2>"$errf"
+  # -q comes first so no ~/.curlrc is read; the URL arrives on stdin, the body (no
+  # secret in it) as --data-raw.
+  printf 'url = "%s"\n' "$RPC_URL" | curl -q -K - -sS -m 60 -A auditor-skill-research -X POST \
+    -H 'Content-Type: application/json' \
+    --data-raw "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$1\",\"params\":$2}" 2>"$errf"
   if [ -s "$errf" ]; then "$REDACT" <"$errf" >&2; fi
 }
 

@@ -16,7 +16,7 @@ Full method and the verdict rules these feed: `references/detection-response/`.
 | `profile.sh` | Baseline a `transactions.jsonl`: outcome / version histograms, time window, fee-payer, signer and top-level-program inventories — all from structural fields, never from log text. |
 | `frames.py` | Attribute each `Program log:` / `Program data:` line to the program frame that emitted it, as JSONL. Walks the log array one element at a time with anchored regexes. |
 | `deltas.py` | `lamports` or `tokens`: per-account / per-(owner,mint) balance movement, computed in Python integers, successful transactions only. |
-| `redact.sh` | A stderr/stdout filter that strips provider credentials (e.g. `?api-key=…`) before text reaches the transcript, the ledger, or a report. |
+| `redact.sh` | A stderr/stdout filter that strips provider credentials (e.g. `?api-key=…`, a `/v2/<key>` path, a token in a subdomain, curl's verbose request lines) before text reaches the transcript, the ledger, or a report. |
 | `fixtures/` | Committed adversarial corpora the self-test and the docs cite. |
 
 ## Running them

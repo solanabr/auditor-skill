@@ -78,28 +78,40 @@ v1="$(printf '%s\n' "$prof" | awk '/^-- version/{f=1;next} /^--/{f=0} f && $2=="
 eq "profile: v1 transaction counted in the version histogram" "$v1" "1"
 
 # ---------------------------------------------------------------------------
-# 5. redact.sh strips keys wherever a provider puts them, and keeps the text
-#    around the URL intact (a closing paren or quote is not eaten).
+# 5. redact.sh strips keys wherever a provider puts them — query, path, userinfo,
+#    subdomain, and curl's own error and verbose lines — and keeps the text around
+#    the URL intact (a closing paren or quote is not eaten).
 # ---------------------------------------------------------------------------
 red() { printf '%s\n' "$1" | bash "$DNR/redact.sh"; }
 r1="$(red 'error: failed POST https://rpc.example.com/?api-key=SECRET123456 after 1 try')"
 case "$r1" in *SECRET123456*) bad "redact: query api-key leaked ($r1)" ;; *REDACTED*) ok "redact: query-string key removed" ;; *) bad "redact: unexpected ($r1)" ;; esac
 r2="$(red 'see (https://solana-mainnet.g.alchemy.com/v2/ALCHEMYKEY123) now')"
-eq "redact: path-segment key (/v2/<key>) removed, closing paren kept" "$r2" "see (https://solana-mainnet.g.alchemy.com/REDACTED) now"
+eq "redact: path-segment key (/v2/<key>) removed, closing paren kept" "$r2" "see (https://REDACTED.alchemy.com/REDACTED) now"
 r3="$(red 'url https://rpc.ankr.com/solana/ANKRKEY456 timed out')"
-eq "redact: second-segment key (/solana/<key>) removed" "$r3" "url https://rpc.ankr.com/REDACTED timed out"
+eq "redact: second-segment key (/solana/<key>) removed" "$r3" "url https://REDACTED.ankr.com/REDACTED timed out"
 r4="$(red 'auth https://user:PASSW0RD@host.example.com/rpc failed')"
-eq "redact: userinfo key removed" "$r4" "auth https://REDACTED@host.example.com/REDACTED failed"
+eq "redact: userinfo key removed" "$r4" "auth https://REDACTED@REDACTED.example.com/REDACTED failed"
 r5="$(red 'header api-key=BAREKEY99&x=1 rejected')"
 eq "redact: bare api-key=value removed" "$r5" "header api-key=REDACTED&x=1 rejected"
 r6="$(red 'plain text, no url')"
 eq "redact: text without a URL is unchanged" "$r6" "plain text, no url"
 r7="$(red 'HTTPS://user:SECRETPW@Host.Example.com/v2/KEYUP done')"
-eq "redact: upper-case scheme, userinfo and path key removed" "$r7" "HTTPS://REDACTED@Host.Example.com/REDACTED done"
+eq "redact: upper-case scheme, userinfo and path key removed" "$r7" "HTTPS://REDACTED@REDACTED.Example.com/REDACTED done"
 r8="$(red 'wss://rpc.example.com/ws?api-key=WSKEY1 closed')"
-eq "redact: a websocket URL is redacted like https" "$r8" "wss://rpc.example.com/REDACTED closed"
+eq "redact: a websocket URL is redacted like https" "$r8" "wss://REDACTED.example.com/REDACTED closed"
 r9="$(red 'Api-Key=UPPERKEY9 and ACCESS_TOKEN=T0K3N&x=1')"
 eq "redact: key names in any letter case" "$r9" "Api-Key=REDACTED and ACCESS_TOKEN=REDACTED&x=1"
+eq "redact: a subdomain token keeps only the last two labels" \
+  "$(red 'via https://TOKSUB42.rpc.example.test then https://TOKSUB42.rpc.example.test/v2/K')" \
+  "via https://REDACTED.example.test then https://REDACTED.example.test/REDACTED"
+eq "redact: an IP address and a two-label host are kept" \
+  "$(red 'http://127.0.0.1:8899/v2/K and https://example.test/v2/K')" "http://127.0.0.1:8899/REDACTED and https://example.test/REDACTED"
+eq "redact: curl verbose request line loses its path" "$(red '> POST /v2/LEAKME42 HTTP/2')" "> POST /REDACTED HTTP/2"
+eq "redact: curl verbose Host header keeps the last two labels" "$(red '> Host: TOKSUB42.rpc.example.test')" "> Host: REDACTED.example.test"
+eq "redact: curl HTTP/2 :path header loses its path" "$(red '* [HTTP/2] [1] [:path: /v2/LEAKME42]')" "* [HTTP/2] [1] [:path: /REDACTED]"
+eq "redact: curl error naming a bare host keeps the last two labels" \
+  "$(red 'curl: (6) Could not resolve host: TOKSUB42.rpc.example.test')" "curl: (6) Could not resolve host: REDACTED.example.test"
+eq "redact: dotted names in other text are left alone" "$(red 'curl 8.7.1 calls os.path.join')" "curl 8.7.1 calls os.path.join"
 
 # ---------------------------------------------------------------------------
 # 6. collect.sh is gated: it refuses without --confirmed, and without $RPC_URL,
@@ -164,10 +176,18 @@ eq "profile: programIdIndex resolved through accountKeys" "$pidx" "1"
 mkdir -p "$TT/bin"
 cat > "$TT/bin/curl" <<'PY'
 #!/usr/bin/env python3
-import json, os, sys
+import json, os, re, sys
 args = sys.argv[1:]
-body = args[args.index("-d") + 1]
-url = args[-1]
+with open(os.environ["FAKE_CURL_ARGV"], "a") as log:
+    log.write(json.dumps(args) + "\n")
+url = ""
+if args[args.index("-K") + 1] == "-":
+    for line in sys.stdin:
+        m = re.match(r'\s*url\s*=\s*"(.*)"\s*$', line)
+        url = m.group(1) if m else url
+if not url:
+    sys.stderr.write("curl: no URL specified\n"); sys.exit(2)
+body = args[args.index("--data-raw") + 1]
 sys.stderr.write(f"curl: note: talking to {url}\n")
 req = json.loads(body)
 with open(os.environ["FAKE_CURL_LOG"], "a") as log:
@@ -193,7 +213,7 @@ else:
     print(json.dumps({"jsonrpc": "2.0", "id": 1, "error": {"code": -32601, "message": "nope"}}))
 PY
 chmod +x "$TT/bin/curl"
-export FAKE_CURL_LOG="$TT/curl.log"
+export FAKE_CURL_LOG="$TT/curl.log" FAKE_CURL_ARGV="$TT/curl.argv"
 ( PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/?api-key=LEAKME42" \
     bash "$DNR/collect.sh" --out "$TT/c" --confirmed --since 1 --max-pages 1 --before "$CURSOR" -- "$A_ADDR" ) > "$TT/c.out" 2>&1
 code=$?
@@ -207,7 +227,23 @@ if grep -q 'LEAKME42' "$TT/c.out" "$TT/c/signatures.jsonl" "$TT/c/transactions.j
 else
   ok "collect: key absent from stdout/stderr and corpus files"
 fi
-if grep -q 'provider: rpc.example.test ' "$TT/c.out"; then ok "collect: provider disclosed as host only"; else bad "collect: provider line wrong"; fi
+if grep -q 'provider: example.test ' "$TT/c.out"; then ok "collect: provider disclosed as its last two DNS labels"; else bad "collect: provider line wrong"; fi
+if grep -q LEAKME42 "$FAKE_CURL_ARGV"; then bad "collect: the key reached curl's argv"; else ok "collect: the key never reaches curl's argv (URL via -K - on stdin)"; fi
+eq "collect: every curl call starts with -q (no ~/.curlrc)" "$(grep -vc '^\["-q", "-K", "-",' "$FAKE_CURL_ARGV")" "0"
+( PATH="$TT/bin:$PATH" RPC_URL="https://TOKSUB42.rpc.example.test/v2/LEAKME42" \
+    bash "$DNR/collect.sh" --out "$TT/c-sub" --confirmed --max-pages 1 -- "$A_ADDR" ) > "$TT/c-sub.out" 2>&1
+if grep -q 'provider: example.test ' "$TT/c-sub.out" && ! grep -q 'TOKSUB42\|LEAKME42' "$TT/c-sub.out"; then
+  ok "collect: a subdomain token never reaches the output"
+else
+  bad "collect: subdomain token or key in the output ($(grep -m1 'TOKSUB42\|LEAKME42\|provider' "$TT/c-sub.out"))"
+fi
+calls_before="$(grep -c . "$FAKE_CURL_LOG" 2>/dev/null || true)"
+for url in 'a space:https://rpc.example.test/?k=a b' 'a quote:https://rpc.example.test/"x' 'a backslash:https://rpc.example.test/\x'; do
+  ( PATH="$TT/bin:$PATH" RPC_URL="${url#*:}" bash "$DNR/collect.sh" --out "$TT/c-bad" --confirmed -- "$A_ADDR" ) > /dev/null 2>&1
+  code=$?
+  if [[ "$code" == 2 && ! -e "$TT/c-bad" ]]; then ok "collect: refuses an \$RPC_URL holding ${url%%:*} (exit 2)"; else bad "collect: \$RPC_URL holding ${url%%:*} -> exit $code"; fi
+done
+eq "collect: a refused \$RPC_URL made no RPC call" "$(grep -c . "$FAKE_CURL_LOG" 2>/dev/null || true)" "$calls_before"
 # --max-tx keeps the newest signatures across addresses (by slot), not the first
 # address's or the alphabetically first ones.
 ( PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \

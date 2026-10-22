@@ -63,9 +63,11 @@ directory.
    - Then run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/collect.sh" --out incident_<n>/corpus --confirmed …`
      (`$RPC_URL` from the environment, never on the command line; it finalizes and
      passes `maxSupportedTransactionVersion: 1`). This step touches the network, so
-     it prompts — approve it once. Disclose the provider **host** (the service
-     that received the queried addresses) and the literal `$RPC_URL` in the ledger
-     and report (Rule 11b), never a URL with a key.
+     it prompts — approve it once. Disclose the provider **domain** (the service
+     that received the queried addresses: the host's last two DNS labels, as the
+     collector's `provider:` line prints it, since a subdomain can carry an
+     endpoint token) and the literal `$RPC_URL` in the ledger and report
+     (Rule 11b), never a URL with a key.
 
 3. **Baseline (Phase 1).** `bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh" incident_<n>/corpus/transactions.jsonl`
    for outcome/version histograms, window, and signer/program inventories; write

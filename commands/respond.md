@@ -67,8 +67,9 @@ directory.
 3. **Scope (Phase 1).** Gather everything the seed entities touched, then widen by
    exactly one ring — the account a signer used, another signer on the same
    program, the instruction a session moved to next. Corpus: `--logs`, or the gated
-   collection described in `/auditor:hunt` step 2 (name the RPC provider host under
-   Rule 11b; a keyed URL is never written anywhere). Merge everything into one
+   collection described in `/auditor:hunt` step 2 (name the RPC provider's domain,
+   the host's last two DNS labels, under Rule 11b; a keyed URL is never written
+   anywhere). Merge everything into one
    timeline ordered by `(slot, transactionIndex)`.
 
 4. **Outcome and damage (Phase 2).** A status code can't tell you whether it

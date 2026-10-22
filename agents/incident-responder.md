@@ -57,7 +57,8 @@ hands you their results. You fold those into the verdict and the write-up.
   attacker-controlled (AI-018): write them to a file and pass the path, never into
   a shell command.
 - **Secrets.** The RPC endpoint is `$RPC_URL`, never echoed; record only the
-  provider host and the literal `$RPC_URL`. No URL in any output file.
+  provider domain (the host's last two DNS labels: a subdomain can carry an
+  endpoint token) and the literal `$RPC_URL`. No URL in any output file.
 - **Ledger rule.** Write down the hypothesis before running the query that tests
   it, and give every hypothesis its own row. Rows that came back refuted are kept.
   End the loop once two consecutive rounds turn up no new entity.
