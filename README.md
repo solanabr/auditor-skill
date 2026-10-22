@@ -88,7 +88,7 @@ Registers the marketplace and installs the `auditor` plugin — all 17 `/auditor
 
 ### Option 2: Install script
 
-Installs the skill and inits the tooling. With no argument it installs to `~/.claude/skills/auditor-skill`, a user-level skill, wherever you run it from; to install elsewhere, pass a path outside the repositories you audit. It warns on stderr when the install directory is inside a git work tree. Re-running it installs a fresh clone at the same path and moves the earlier install aside to `<path>.old-<timestamp>`, without running git in it:
+Installs the skill and inits the tooling. With no argument it installs to `~/.claude/skills/auditor-skill`, a user-level skill, wherever you run it from; to install elsewhere, pass a path outside the repositories you audit. It warns on stderr when the install directory is inside a git work tree. Re-running it installs a fresh clone at the same path and moves the earlier install, without running git in it, to `$XDG_STATE_HOME/auditor-skill/backup-<timestamp>`, or `~/.local/state/auditor-skill/backup-<timestamp>` when `XDG_STATE_HOME` is not set. That private directory is outside every skills directory, so Claude Code does not load the old copy as a second skill; the end of the run prints its path:
 
 ```bash
 # read it first (it's a security tool, after all):
@@ -105,7 +105,7 @@ curl -fsSL https://raw.githubusercontent.com/solanabr/auditor-skill/main/install
 git clone https://github.com/solanabr/auditor-skill.git ~/.claude/skills/auditor-skill
 ```
 
-Claude Code auto-discovers user-level skills under `~/.claude/skills/`; invoke by asking your agent to "audit this repo using the auditor-skill" (use **Option 1** for the `/auditor:*` slash commands). This is also Option 2's default path, so a later `install.sh` run without a path upgrades this clone: it installs a fresh clone and moves this one aside, without running git in it. For other agents (Cursor, Windsurf, Copilot, Codex), copy the folder anywhere the agent reads outside the repository you audit, and point it at its `SKILL.md`.
+Claude Code auto-discovers user-level skills under `~/.claude/skills/`; invoke by asking your agent to "audit this repo using the auditor-skill" (use **Option 1** for the `/auditor:*` slash commands). This is also Option 2's default path, so a later `install.sh` run without a path upgrades this clone: it installs a fresh clone and moves this one to Option 2's backup directory, without running git in it. For other agents (Cursor, Windsurf, Copilot, Codex), copy the folder anywhere the agent reads outside the repository you audit, and point it at its `SKILL.md`.
 
 ### Option 4: Feed files to the API directly
 

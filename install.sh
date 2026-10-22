@@ -7,8 +7,9 @@
 #   ./install.sh <target-dir>                      # any other location outside the repositories you audit
 #   curl -fsSL https://raw.githubusercontent.com/solanabr/auditor-skill/main/install.sh | bash
 #
-# Re-running installs a fresh clone at the same path and moves the earlier install aside to
-# <path>.old-<timestamp>. No git command ever runs inside an existing copy, and nothing from it is reused.
+# Re-running installs a fresh clone at the same path and moves the earlier install to
+# ${XDG_STATE_HOME:-~/.local/state}/auditor-skill/backup-<timestamp>. No git command ever runs inside an
+# existing copy, and nothing from it is reused.
 set -euo pipefail
 
 REPO="https://github.com/solanabr/auditor-skill.git"
@@ -27,8 +28,9 @@ case "$DEST" in
 esac
 
 # An existing copy is never opened with git, since its repo config can name filters and commands for git to
-# run. An earlier install (a directory with .git/ and our SKILL.md) is moved aside once the fresh clone is
-# ready; anything else is left alone.
+# run. An earlier install (a directory with .git/ and our SKILL.md) is moved, once the fresh clone is ready,
+# to a backup in a private directory outside every skills directory: left next to the install, Claude Code
+# could load it as a second skill. Anything else is left alone.
 old=""
 if [ -L "$DEST" ]; then
   echo "error: $DEST is a symbolic link; pass the directory it points to." >&2
@@ -40,11 +42,22 @@ elif [ -e "$DEST" ]; then
     echo "error: $DEST exists and is not an auditor-skill install; remove it or pass another path." >&2
     exit 2
   fi
-  old="$DEST.old-$(date +%Y%m%d-%H%M%S)"
+  case "${XDG_STATE_HOME:-}" in   # a relative XDG_STATE_HOME is ignored, as the XDG spec says
+    /*) state=$XDG_STATE_HOME ;;
+    *) case "${HOME:-}" in
+         /*) state="${HOME%/}/.local/state" ;;
+         *) echo "error: $DEST holds an earlier install, and neither XDG_STATE_HOME nor HOME is an absolute path to back it up under." >&2
+            exit 2 ;;
+       esac ;;
+  esac
+  backups="${state%/}/auditor-skill"
+  old="$backups/backup-$(date +%Y%m%d-%H%M%S)"
   if [ -e "$old" ] || [ -L "$old" ]; then
     echo "error: $old already exists; run the installer again in a second." >&2
     exit 2
   fi
+  (umask 077; mkdir -p "$backups")
+  chmod 700 "$backups"
 fi
 
 echo "→ Installing auditor-skill into: $DEST"
@@ -71,14 +84,23 @@ git -C "$tmp/auditor-skill" submodule update --init --depth 1 -- vendor/trailofb
   || echo "  (skipped — the native corpus works without it)"
 
 if [ -n "$old" ]; then
+  if [ -e "$old" ] || [ -L "$old" ]; then   # checked again: mv onto an existing directory would move into it
+    echo "error: $old already exists; run the installer again in a second." >&2
+    exit 2
+  fi
   mv "$DEST" "$old"
-  echo "→ The earlier install is now $old; nothing from it is reused. Delete it when you no longer need it."
 fi
 mv "$tmp/auditor-skill" "$DEST"
 
 cat <<EOF
 
 ✓ auditor-skill installed → $DEST
+EOF
+if [ -n "$old" ]; then
+  echo "  The earlier install is now $old"
+  echo "  Nothing from it is reused; delete it when you no longer need it."
+fi
+cat <<EOF
 
 Next steps:
   • For the /auditor:* slash commands, install as a Claude Code plugin:
