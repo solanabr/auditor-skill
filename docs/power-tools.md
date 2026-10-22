@@ -60,7 +60,7 @@ Reference: [`references/orchestration/pre-scan.md`](../references/orchestration/
 
 ## audit-mem
 
-A local SQLite findings store (default `.audit-memory/audit.db`, gitignored; schema created lazily) for cross-audit memory. It is the **authoritative** source for de-dup, regression state, and FP rulings — because those must be *auditable* ("suppressed by ruling #14, dated X").
+A local SQLite findings store (default `.audit-memory/audit.db`, self-ignored ([Rule 11d](../OUTPUT-RULES.md#11d--output-hygiene)); schema created lazily) for cross-audit memory. It is the **authoritative** source for de-dup, regression state, and FP rulings — because those must be *auditable* ("suppressed by ruling #14, dated X").
 
 ### Content-addressed identity
 
@@ -79,9 +79,10 @@ The same bug keeps its identity across commits and line drift — the same norma
 
 ### Lifecycle example
 
-Run from the repository under audit; `audit-mem` stands for `"<auditor-skill root>/tools/auditor-tools/target/release/audit-mem"`.
+Use an in-tree store only after the [Rule 11d](../OUTPUT-RULES.md#11d--output-hygiene) check (the repository does not track `.audit-memory`, and you created it); otherwise pass `--db <path outside the tree>`. Write `.audit-memory/.gitignore` containing `*` before the first call. The example uses the in-tree store, so it runs from the repository under audit; `audit-mem` stands for `"<auditor-skill root>/tools/auditor-tools/target/release/audit-mem"`.
 
 ```bash
+mkdir -p .audit-memory && printf '*\n' > .audit-memory/.gitignore
 audit-mem --db .audit-memory/audit.db init
 
 # first observation -> "OPEN <id>"
