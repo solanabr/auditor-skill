@@ -53,7 +53,7 @@ bumps the `schema` string to `auditor-incidents/2`.
       "binary_provenance": "dumped-unchanged | dumped-after-hotfix | rebuilt-hash-match | source-only | none",
       "evidence": ["<file>: <pipeline> -> <result>"],
       "poc": {
-        "tier": "PoC-REPRODUCED | PoC-SIM-REPRODUCED | PoC-ATTEMPTED | PoC-PROSE | null",
+        "tier": "PoC-REPRODUCED | PoC-SIM-REPRODUCED | PoC-FUZZ-REPRODUCED | PoC-ATTEMPTED | PoC-PROSE | null",
         "path": "incident_<n>/poc/INC-1.1/",
         "command": "./run.sh",
         "verified": true,
