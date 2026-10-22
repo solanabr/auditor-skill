@@ -215,6 +215,11 @@ scripts/report-to-pdf.sh	"${CLAUDE_PLUGIN_ROOT}/scripts/report-to-pdf.sh" [path/
 commands/hunt.md	`${CLAUDE_PLUGIN_ROOT}/references/detection-response/README.md`
 commands/respond.md	`${CLAUDE_PLUGIN_ROOT}/references/detection-response/README.md`
 agents/incident-responder.md	`${CLAUDE_PLUGIN_ROOT}/references/detection-response/README.md`
+docs/commands.md	`<auditor-skill root>/scripts/threat-model/collect.sh`
+docs/agents.md	`<auditor-skill root>/scripts/threat-model/collect.sh`
+docs/agents.md	`<auditor-skill root>/templates/poc/`
+docs/audit-flows.md	`<auditor-skill root>/scripts/report-to-pdf.sh`
+AGENTS.md	`<auditor-skill root>/scripts/threat-model/collect.sh`
 PINS
 
 # ---- 4. every rooted path names something that ships --------------------------------------------------
