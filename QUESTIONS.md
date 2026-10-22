@@ -384,11 +384,11 @@ Branch to audit: _______________
 Commit hash (optional): _______________
 ```
 
-**Option B: Clone into auditor's workspace (recommended for private repos)**
+**Option B: Local checkout in the auditor's workspace (recommended for private repos)**
 ```
-Clone the auditor-skill folder into your repo:
-  cp -r auditor-skill/ your-repo/.github/skills/auditor-skill/
-Then invoke the audit from your IDE's AI agent.
+Install auditor-skill outside your repository (the plugin, or a user-level skill
+such as ~/.claude/skills/auditor-skill; OUTPUT-RULES.md Rule 11e), then invoke
+the audit from your IDE's AI agent in the repository.
 ```
 
 **Option C: Upload files (for web-based service)**
