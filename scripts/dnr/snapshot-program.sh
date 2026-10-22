@@ -95,8 +95,8 @@ esac
 case "$dir" in */) dir="${dir%"${dir##*[!/]}"}"; [ -n "$dir" ] || dir=/ ;; esac
 
 # refuse_planted <dir>: exit 2 unless <dir> is safe to write into — not a symbolic
-# link, holding none, and not tracked by git. The git calls carry the Rule 11c flags,
-# because the tree is usually the audited one. Outside a work tree nothing is tracked;
+# link, holding none, and not tracked by git. The git calls carry the Rule 11c flags
+# and GIT_NO_LAZY_FETCH=1, because the tree is usually the audited one. Outside a work tree nothing is tracked;
 # inside one, a path git cannot classify is refused.
 refuse_planted() {
   local listed
@@ -107,9 +107,9 @@ refuse_planted() {
     echo "${0##*/}: refusing $1: it contains a symbolic link — use a new run directory." >&2; exit 2
   fi
   [ -d "$(dirname "$1")" ] || return 0
-  [ "$(git --no-pager -c core.fsmonitor=false -c log.showSignature=false -C "$(dirname "$1")" \
+  [ "$(GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -C "$(dirname "$1")" \
         rev-parse --is-inside-work-tree 2>/dev/null)" = true ] || return 0
-  if ! listed="$(git --no-pager -c core.fsmonitor=false -c log.showSignature=false -C "$(dirname "$1")" \
+  if ! listed="$(GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -C "$(dirname "$1")" \
         ls-files -- ":(literal,icase)$(basename "$1")" 2>/dev/null)"; then
     echo "${0##*/}: refusing $1: git cannot tell whether it is tracked." >&2; exit 2
   fi

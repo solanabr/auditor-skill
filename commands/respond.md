@@ -95,9 +95,9 @@ directory.
 
 5. **Root cause & PoC (Phase 3).** Spawn `context-builder` on the implicated
    handler in the source deployed at the incident slot. Read that revision without
-   checking it out: from a `git clone --no-local` copy outside the client's
-   checkout, use
-   `git --no-pager -c core.fsmonitor=false -c log.showSignature=false show --no-textconv <rev>:<path>`
+   checking it out: make a copy outside the client's checkout with
+   `GIT_NO_LAZY_FETCH=1 git clone --no-local <checkout> <scratch copy>`, and read from the copy with
+   `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false show <rev>:<path>`
    (Rule 11c). Never `checkout`, `switch` or `worktree add` in `--repo`. Then spawn
    `poc-engineer` in incident mode to reproduce on the bytes from step 1 (Leg 3) —
    in-process SVM or a local surfnet, harness keys only, asserting the observed

@@ -84,9 +84,11 @@ not the thing standing between the treasury and the exit.
 9. **Read the incident-slot source without checking it out** (`OUTPUT-RULES.md`
    Rule 11c). `--repo` is usually the client's own checkout, and checking out runs
    its hooks and filters and changes its tree: never `checkout`, `switch` or
-   `worktree add` there. Clone it with `git clone --no-local` to a directory
-   outside it, and read the revision deployed at the incident slot from that copy
-   with `git --no-pager -c core.fsmonitor=false -c log.showSignature=false show --no-textconv <rev>:<path>`.
+   `worktree add` there. Copy it to a directory outside it with
+   `GIT_NO_LAZY_FETCH=1 git clone --no-local <checkout> <scratch copy>`, and read the revision deployed at the incident slot from that copy with
+   `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false show <rev>:<path>`
+   (`GIT_NO_LAZY_FETCH=1` keeps a partial clone from fetching missing objects
+   through the checkout's own remote configuration).
 
 These rules, and the `allowed-tools` lists on the commands, are **not a sandbox**
 (see the end of this file). When confinement actually matters — above all when
@@ -178,8 +180,8 @@ states it is fixed (unverified)".
 and stop if it already exists. Reuse an existing `incident_*` only if git does not
 track it and it holds no symbolic links, and only after the human confirms which
 one. Never write into a tracked `incident_*`. Both checks must print nothing:
-`git --no-pager -c core.fsmonitor=false -c log.showSignature=false ls-files -- incident_<k>`
-(Rule 11c) and `find incident_<k> -type l`. `collect.sh` and `snapshot-program.sh`
+`GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false --icase-pathspecs ls-files -- incident_<k>`
+(Rule 11c; any letter case) and `find incident_<k> -type l`. `collect.sh` and `snapshot-program.sh`
 refuse, with exit 2 and before writing anything, a run directory that is a
 symbolic link, holds one, or is tracked by git. The **first** thing written in a
 new run directory is a `.gitignore` containing a single line, `*` (Rule 11d) — a
