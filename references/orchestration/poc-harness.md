@@ -28,21 +28,35 @@ Probe what is actually installed before choosing a framework. A missing tool is 
 *blocker to name in the report*, not a reason to skip the finding or fake a result.
 
 **Execution gate ([`OUTPUT-RULES.md` Rule 11a](../../OUTPUT-RULES.md#rule-11-operating-safety)).**
-A PoC that path- or git-depends on target crates, that builds the target (for example
-`cargo build-sbf` / `anchor build` on the client tree to get its `.so`), or that is
-built anywhere inside the target tree runs target-controlled code: cargo reads
-`.cargo/config*` and rustup reads `rust-toolchain*` from every parent directory, so a
-crate under `audit_<n>/poc/` or `incident_<n>/poc/` picks up the target's rustc
-wrapper, runner, linker, `[env]` and toolchain. Such a PoC runs in the execution mode
-recorded at intake (for an incident, the mode the command recorded):
-`templates/poc/run.sh` needs `AUDITOR_EXEC_MODE` set to it — `isolated` inside the
-isolated runner, or `native` — and otherwise refuses with exit 3, which makes the PoC
-`[PoC-ATTEMPTED]`. The only exemption is a self-contained `templates/poc` crate whose
-program runs inside Mollusk or LiteSVM — no `git` dependency, no `path` / `workspace`
-reference leaving the crate directory, no build of the target, and only dependencies on the framework allowlist `run.sh` checks (crates.io `solana-*`, `anchor-*`, `spl-*`, `mollusk-*`, `litesvm*`, `borsh*`, `bytemuck*`, `pinocchio*`, `sha2`, `thiserror`) — which `run.sh` copies
-to a scratch directory outside the target tree and builds with a pinned toolchain.
-If the recorded mode cannot run the PoC, record `[PoC-ATTEMPTED]` with the blocker
-"no isolated runner" and keep the prose PoC.
+Building a PoC runs code — the build scripts and proc-macros of its dependencies, then
+its tests — and the crate can carry target code or crates taken from the target's
+manifest. So every PoC runs in the execution mode recorded at intake (for an incident,
+the mode the command recorded in the ledger header): `templates/poc/run.sh` needs
+`AUDITOR_EXEC_MODE` set to it — `isolated` inside the isolated runner, or `native` —
+and otherwise exits 3 before it compiles anything, which makes the PoC
+`[PoC-ATTEMPTED]`. With no recorded mode, ask once (a non-interactive run is native,
+and the report says so). As a second layer, `run.sh` never builds inside the target
+tree: cargo reads `.cargo/config*` and rustup reads `rust-toolchain*` from every
+parent directory, so a crate built under `audit_<n>/poc/` or `incident_<n>/poc/`
+would pick up the target's rustc wrapper, runner, linker, `[env]` and toolchain.
+`run.sh` copies the crate to a scratch directory outside the tree and builds it there
+with a pinned toolchain; it refuses a crate holding a symbolic link, a `.cargo/`
+directory or a `rust-toolchain*` file, and a `path` dependency on target crates must
+be absolute. Building the target itself (for example `cargo build-sbf` /
+`anchor build` on the client tree to get its `.so`) runs target code in the same mode;
+an incident whose root cause is supply chain / CI is never built natively — use the
+dumped program bytes. If the recorded mode cannot run the PoC, record
+`[PoC-ATTEMPTED]` with the blocker "no isolated runner" and keep the prose PoC.
+
+**Build cache.** `run.sh` builds every run in a fresh scratch directory, so each run
+compiles the whole dependency graph from cold. To reuse compiled dependencies between
+runs of one audit, create a directory outside any repository, e.g.
+`${XDG_CACHE_HOME:-$HOME/.cache}/auditor-skill/poc-target/<repo-name>-audit_<n>`
+(`…-incident_<n>` for an incident), pass it to every `run.sh` call as
+`CARGO_TARGET_DIR`, and delete it when the engagement ends. Never point
+`CARGO_TARGET_DIR` inside the target tree or at a directory you did not create: cargo
+trusts the build outputs it finds there. The `.so` files stay in the scratch copy
+(`SBF_OUT_DIR`).
 
 **Run the probes below from `${TMPDIR:-/tmp}`, never from inside the target tree**
 (`cd "${TMPDIR:-/tmp}"` first, with `RUSTUP_TOOLCHAIN` pinned — Rule 11a). Inside it,

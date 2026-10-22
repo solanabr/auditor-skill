@@ -28,30 +28,39 @@ Fill every field. This is the prose the executable proves — it must map 1:1 on
 ## Reproduce
 
 ```bash
-./run.sh
+AUDITOR_EXEC_MODE=isolated ./run.sh   # or native: the execution mode recorded for the run
 ```
 
-Builds both arms with `cargo build-sbf` (platform-tools >= v1.54) and runs both
-tests with `SBF_OUT_DIR` wired — never inside the audited repo. A self-contained
-crate is copied to a scratch directory under `$TMPDIR` (printed; `KEEP_POC_BUILD=1`
-keeps it) and built there with the toolchain pinned, so the target's
-`.cargo/config*` and `rust-toolchain*` never apply. A crate that depends on target
-crates builds in place only with `AUDITOR_EXEC_MODE=isolated|native`, the run's
-recorded mode (`OUTPUT-RULES.md` Rule 11a). Exit `0` means the exploit reproduced on
-`vulnerable` **and** was blocked on `fixed`; `1` / `2` mean the PoC is not valid —
-see the failing arm's message; `3` is a named blocker (no SBF toolchain, bad
-inputs, a build that failed, or no execution mode for a crate that needs one), and
-the finding's prose PoC still stands.
+Building this crate runs code — dependency build scripts and proc-macros, then the
+tests — so every run needs `AUDITOR_EXEC_MODE` set to the execution mode recorded
+at intake (`OUTPUT-RULES.md` Rule 11a): `isolated` inside a container, VM or
+sandbox with no keys mounted, or `native` on this machine, which the report then
+states. Without it, `run.sh` exits `3` before it copies or compiles anything.
 
-**Dependencies — the framework allowlist.** `run.sh` reads the manifests with
-`cargo metadata` and accepts only crates.io packages named `solana-*`, `anchor-*`,
-`spl-*`, `mollusk-*`, `litesvm*`, `borsh*`, `bytemuck*`, `pinocchio*`, `sha2` or
-`thiserror` (`_` counts as `-`), plus path dependencies inside this crate
-(`shared-test-utils`). Any other dependency — a crate copied from the target's own
-`Cargo.toml`, for instance — would run its build script and proc-macros on the
-host, so it needs `AUDITOR_EXEC_MODE` like a target dependency, or `run.sh` exits
-`3`. The list lives at the top of `run.sh`; it is a name check, not a review, so
-read what the manifest pulls in all the same.
+Builds both arms with `cargo build-sbf` (platform-tools >= v1.54) and runs both
+tests with `SBF_OUT_DIR` wired — never inside the audited repo. The crate is copied
+to a scratch directory under `$TMPDIR` (printed; `KEEP_POC_BUILD=1` keeps it) and
+built there with the toolchain pinned, so the target's `.cargo/config*` and
+`rust-toolchain*` never apply; a crate holding a symbolic link, a `.cargo/`
+directory or a `rust-toolchain*` file is refused. Exit `0` means the exploit
+reproduced on `vulnerable` **and** was blocked on `fixed`; `1` / `2` mean the PoC
+is not valid — see the failing arm's message; `3` is a named blocker (no execution
+mode, no SBF toolchain, bad inputs, or a build that failed), and the finding's
+prose PoC still stands.
+
+**Dependencies.** Framework crates by default, as in the template. A crate copied
+from the target's manifest runs its build script in the recorded mode, so add one
+only when the PoC needs it, and read what the manifest pulls in. A `path`
+dependency on target crates must be an absolute path: the build runs from the
+scratch copy, not from this directory.
+
+**Build cache.** Each run compiles every dependency from cold in its fresh scratch
+directory. To reuse compiled dependencies between runs of one audit, create a
+directory outside any repository, e.g.
+`${XDG_CACHE_HOME:-$HOME/.cache}/auditor-skill/poc-target/<repo-name>-audit_<n>`,
+export it as `CARGO_TARGET_DIR`, and delete it when the engagement ends. Never
+point `CARGO_TARGET_DIR` inside the target tree or at a directory you did not
+create: cargo trusts the build outputs it finds there.
 
 ## Contract
 
