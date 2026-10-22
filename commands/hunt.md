@@ -87,9 +87,11 @@ directory.
      **Collection gaps** line and into `collection_gaps` of each incident in
      `INCIDENTS.json`.
 
-3. **Baseline (Phase 1).** `bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh" incident_<n>/corpus/transactions.jsonl`
+3. **Baseline (Phase 1).** `bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh" incident_<n>/corpus*/transactions.jsonl`
    for outcome/version histograms, window, and signer/program inventories; write
-   each number into the ledger. Do not read the corpus into context (README rule 2).
+   each number into the ledger. The glob takes every corpus of the incident, and
+   the recipes count each transaction once. Do not read the corpus into context
+   (README rule 2).
 
 4. **Hunt loop (Phase 2).** Run the seed sweeps in
    `${CLAUDE_PLUGIN_ROOT}/references/detection-response/log-sources.md`, one

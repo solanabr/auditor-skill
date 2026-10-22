@@ -3,7 +3,10 @@
 emitted it, reading a getTransaction JSONL corpus.
 
 Input: one getTransaction result object per line (the `result` field of an RPC
-response, encoding `jsonParsed` or `json`), on stdin or in files named as args.
+response, encoding `jsonParsed` or `json`), on stdin or in files named as args —
+every corpus of an incident at once (`incident_<n>/corpus*/transactions.jsonl`).
+Each signature is read once: a later copy of the same transaction is skipped, and
+the number skipped is reported on stderr.
 Output: JSONL, one record per emitted log line:
 
     {"sig": "...", "ok": true, "depth": 2, "program": "<id|?>",
@@ -105,6 +108,8 @@ def _iter_lines(argv: list[str]):
 
 def main(argv: list[str]) -> int:
     out = sys.stdout
+    seen: set[str] = set()
+    dupes = 0
     for line in _iter_lines(argv):
         line = line.strip()
         if not line:
@@ -116,8 +121,17 @@ def main(argv: list[str]) -> int:
             continue
         if not isinstance(tx, dict):
             continue
+        sigs = (tx.get("transaction") or {}).get("signatures") or []
+        if sigs and isinstance(sigs[0], str):
+            if sigs[0] in seen:
+                dupes += 1
+                continue
+            seen.add(sigs[0])
         for row in _rows(tx):
             out.write(json.dumps(row, ensure_ascii=False) + "\n")
+    if dupes:
+        print(f"frames.py: skipped {dupes} transaction(s) already read under the same signature",
+              file=sys.stderr)
     return 0
 
 

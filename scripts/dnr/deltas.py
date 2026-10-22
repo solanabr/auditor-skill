@@ -3,7 +3,10 @@
 every total done in Python integers.
 
 Input: one getTransaction result object per line (`jsonParsed` or `json`), on
-stdin or in files named as args. The corpus is streamed one transaction at a time,
+stdin or in files named as args — every corpus of an incident at once
+(`incident_<n>/corpus*/transactions.jsonl`). A transaction is counted once however
+many inputs hold it: the first occurrence of each signature wins, and the number
+skipped is reported on stderr. The corpus is streamed one transaction at a time,
 and every named file is opened once before the first row is written: a missing or
 unreadable one exits 1 with no output.
 
@@ -137,8 +140,16 @@ def _unreadable(paths):
     return None
 
 
-def _iter_tx(argv):
-    """Yield one transaction at a time, so the corpus is never held in memory."""
+def _signature(tx: dict):
+    sigs = (tx.get("transaction") or {}).get("signatures") or []
+    return sigs[0] if sigs and isinstance(sigs[0], str) else None
+
+
+def _iter_tx(argv, dupes):
+    """Yield one transaction at a time, so the corpus is never held in memory, and
+    each signature once: a later copy (the same transaction in a second corpus) is
+    skipped and counted in dupes[0]."""
+    seen = set()
     srcs = argv or ["-"]
     for path in srcs:
         fh = sys.stdin if path == "-" else open(path, encoding="utf-8", errors="replace")
@@ -151,8 +162,15 @@ def _iter_tx(argv):
                     obj = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                if isinstance(obj, dict):
-                    yield obj
+                if not isinstance(obj, dict):
+                    continue
+                sig = _signature(obj)
+                if sig is not None:
+                    if sig in seen:
+                        dupes[0] += 1
+                        continue
+                    seen.add(sig)
+                yield obj
         finally:
             if fh is not sys.stdin:
                 fh.close()
@@ -167,11 +185,15 @@ def main(argv: list[str]) -> int:
     if bad:
         print(f"deltas.py: cannot read {bad}", file=sys.stderr)
         return 1
-    txs = _iter_tx(files)
+    dupes = [0]
+    txs = _iter_tx(files, dupes)
     if mode == "lamports":
         _lamports(txs, sys.stdout)
     else:
         _tokens(txs, sys.stdout)
+    if dupes[0]:
+        print(f"deltas.py: skipped {dupes[0]} transaction(s) already read under the same signature",
+              file=sys.stderr)
     return 0
 
 

@@ -3,7 +3,11 @@
 # context window. Prints a handful of small aggregates: the numbers you quote in
 # the ledger, each the output of one query over the corpus.
 #
-#   bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh" <corpus.jsonl>
+#   bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh" <corpus.jsonl> [<corpus.jsonl> ...]
+#
+# Give it every corpus of an incident at once (incident_<n>/corpus*/transactions.jsonl):
+# each transaction is counted once, at the first line that carries its signature, and
+# the number of later copies skipped is reported at the end.
 #
 # What it reports (all from structural fields, never from log text):
 #   - transaction count and the finalized/failed split (meta.err)
@@ -26,17 +30,42 @@
 #
 # Uses jq per line. jq is fine for counting scalars and grouping base58 strings;
 # it is only unsafe for u64 ARITHMETIC (see deltas.py) and for flattening the log
-# array (see frames.py). bash >= 3.2, jq, no network.
+# array (see frames.py). The one-per-signature pass runs as `python3 -I` and keeps
+# each line byte for byte. bash >= 3.2, jq, python3, no network.
 
 set -euo pipefail
 
-corpus="${1:-}"
-if [[ -z "$corpus" || ! -f "$corpus" ]]; then
-  echo "usage: profile.sh <corpus.jsonl>" >&2
-  exit 2
-fi
+usage() { echo "usage: profile.sh <corpus.jsonl> [<corpus.jsonl> ...]" >&2; exit 2; }
+[ "$#" -gt 0 ] || usage
+for f in "$@"; do [[ -f "$f" ]] || usage; done
 
-echo "== corpus: $corpus"
+# One pass keeps the first line of each signature, across every file given, in a
+# private temp file that the queries below read; it prints how many it skipped.
+tmpd="$(mktemp -d "${TMPDIR:-/tmp}/dnr_profile.XXXXXX")"
+trap 'rm -rf "$tmpd"' EXIT
+corpus="$tmpd/corpus.jsonl"
+dupes="$(python3 -I -c 'import json, sys
+seen, dupes = set(), 0
+with open(sys.argv[1], "wb") as out:
+    for path in sys.argv[2:]:
+        with open(path, "rb") as fh:
+            for line in fh:
+                try:
+                    tx = json.loads(line)
+                except ValueError:
+                    tx = None
+                t = tx.get("transaction") if isinstance(tx, dict) else None
+                sigs = t.get("signatures") if isinstance(t, dict) else None
+                sig = sigs[0] if isinstance(sigs, list) and sigs and isinstance(sigs[0], str) else None
+                if sig is not None:
+                    if sig in seen:
+                        dupes += 1
+                        continue
+                    seen.add(sig)
+                out.write(line if line.endswith(b"\n") else line + b"\n")
+print(dupes)' "$corpus" "$@")"
+
+echo "== corpus: $*"
 echo "-- transactions / outcome"
 jq -r 'if (.meta.err == null) then "ok" else "failed" end' "$corpus" | sort | uniq -c
 echo "-- version"
@@ -74,3 +103,6 @@ jq -r "$KEYDEF"'
   | $m.instructions[]?
   | (.programId // (if .programIdIndex != null then $keys[.programIdIndex] else empty end)) // empty' "$corpus" \
   | sort | uniq -c | sort -rn | sed -n '1,20p'
+if [ "$dupes" -gt 0 ]; then
+  echo "-- skipped: $dupes transaction(s) already read under the same signature"
+fi

@@ -94,7 +94,7 @@ bumps the `schema` string to `auditor-incidents/2`.
 - **`evidence`** strings are `"<source file>: <pipeline> -> <result>"` — the query
   that produced each number (hard rule 5). Never a URL, never a secret.
 - **`collection_gaps`** holds every row of the collector's
-  `corpus/collection-gaps.tsv`, as `"<signature or address>: <reason>"` (a fetch
+  `corpus*/collection-gaps.tsv`, as `"<signature or address>: <reason>"` (a fetch
   that failed, a history truncated by `--max-pages`, the `--max-tx` cap, a stop
   after 10 failed calls in a row), plus the
   gaps the run found itself (provider retention, a `Log truncated` tail, a sibling

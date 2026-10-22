@@ -49,8 +49,13 @@ call count with the human first):
   usually come from target content, so the collector accepts only base58
   addresses (and a base58 `--before` signature) and refuses anything else before
   it writes a file or sends a request.
-- **Reruns go to a new `--out`.** After a page cap, resume with `--before` into a
-  fresh directory; an `--out` that already holds any collector output
+- **Reruns go to a new `--out`.** The first collection of an incident lands in
+  `incident_<n>/corpus/`; a resume, or a later collection (respond's widened ring),
+  goes to the next `incident_<n>/corpus-<k>/` (`<k>` = highest existing + 1,
+  `corpus/` counting as 1, made with `mkdir`). The recipes read every one through
+  the glob `incident_<n>/corpus*/transactions.jsonl` and count each transaction
+  once, by signature. After a page cap, resume with `--before` into such a fresh
+  directory; an `--out` that already holds any collector output
   (`signatures.jsonl`, `transactions.jsonl`, `collection-gaps.tsv`) is refused
   rather than overwritten, and so is one that — or whose `incident_*` directory —
   is a symbolic link, holds one, or is tracked by git (README § Run directory). An
@@ -119,14 +124,14 @@ with no network.
 ```bash
 # baseline (no log parsing): outcome / version histograms, window, signer &
 # program inventories
-bash "<auditor-skill root>/scripts/dnr/profile.sh" incident_<n>/corpus/transactions.jsonl
+bash "<auditor-skill root>/scripts/dnr/profile.sh" incident_<n>/corpus*/transactions.jsonl
 
 # program-log attribution, as JSONL (one record per emitted line, by frame)
-python3 -I "<auditor-skill root>/scripts/dnr/frames.py" incident_<n>/corpus/transactions.jsonl > incident_<n>/frames.jsonl
+python3 -I "<auditor-skill root>/scripts/dnr/frames.py" incident_<n>/corpus*/transactions.jsonl > incident_<n>/frames.jsonl
 
 # balance movements, exact, successful transactions only
-python3 -I "<auditor-skill root>/scripts/dnr/deltas.py" tokens   incident_<n>/corpus/transactions.jsonl
-python3 -I "<auditor-skill root>/scripts/dnr/deltas.py" lamports incident_<n>/corpus/transactions.jsonl
+python3 -I "<auditor-skill root>/scripts/dnr/deltas.py" tokens   incident_<n>/corpus*/transactions.jsonl
+python3 -I "<auditor-skill root>/scripts/dnr/deltas.py" lamports incident_<n>/corpus*/transactions.jsonl
 ```
 
 Program bytes and `solana program show` come only from `snapshot-program.sh`, and

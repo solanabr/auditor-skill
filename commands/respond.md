@@ -75,7 +75,12 @@ directory.
    anywhere). Show the human the addresses, the window you chose around the lead,
    the caps and the estimated call count, get a yes, and pass exactly those values:
    the window as `--since <fromUnix> --until <toUnix>`, the caps as
-   `--max-pages N --max-tx N`, never a `--window` argument. Copy every row of the
+   `--max-pages N --max-tx N`, never a `--window` argument. A collection into an
+   incident that already has a corpus goes to a new `incident_<n>/corpus-<k>/`
+   (`<k>` is the highest existing number + 1, `corpus/` counting as 1; created with
+   `mkdir`, under the step-1 rule), and every recipe then reads
+   `incident_<n>/corpus*/transactions.jsonl`, counting each transaction once. Copy
+   every row of the
    collector's `collection-gaps.tsv` into the ledger's **Collection gaps** line and
    into `collection_gaps` of the incident in `INCIDENTS.json`. Merge everything into
    one timeline ordered by `(slot, transactionIndex)`.

@@ -40,9 +40,11 @@ hands you their results. You fold those into the verdict and the write-up.
 - **Bundled scripts come from the installation.** Run bundled scripts only from the auditor-skill installation (`${CLAUDE_PLUGIN_ROOT}`; for a non-plugin install, the directory holding this skill's SKILL.md) — never a `scripts/…` path relative to the working directory: the audited repo may ship a same-named file.
   Every python run — the bundled scripts and any one-off over the corpus — is
   `python3 -I`, so a `json.py` or `PYTHONPATH` entry from the target never loads:
-  - `bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh" incident_<n>/corpus/transactions.jsonl`
-  - `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/frames.py" incident_<n>/corpus/transactions.jsonl`
-  - `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/deltas.py" tokens|lamports incident_<n>/corpus/transactions.jsonl`
+  - `bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh" incident_<n>/corpus*/transactions.jsonl`
+  - `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/frames.py" incident_<n>/corpus*/transactions.jsonl`
+  - `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/deltas.py" tokens|lamports incident_<n>/corpus*/transactions.jsonl`
+  - the glob takes every corpus of the incident (`corpus/`, then `corpus-<k>/` for
+    each later collection); all three count a transaction once, by signature
   - `set -o pipefail; <cmd> 2>&1 | bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/redact.sh"` for anything that might print `$RPC_URL`, on one command line: `set -o pipefail` keeps `<cmd>`'s failure as the exit status
 - **CLI reads are keyless.** Program bytes and `program show` come only from
   `snapshot-program.sh`, signature history and transactions only from
@@ -88,6 +90,6 @@ custodian attestation.
 
 Return to the orchestrator the paths written (`INCIDENTS.json`, the report or the
 plan, `LEDGER.md`) and a short ledger summary (rounds run, suspects, verdicts,
-collection gaps — every row of `corpus/collection-gaps.tsv` is in `LEDGER.md` and
+collection gaps — every row of `corpus*/collection-gaps.tsv` is in `LEDGER.md` and
 in `collection_gaps`). You write files under `incident_<n>/` only; you never touch the
 client's tree.

@@ -187,7 +187,10 @@ incident_<n>/
 │                              #   <id>@<slot>.so + <id>@<slot>.show.txt
 ├── corpus/                    # collected or user-supplied logs — may contain PII
 │   ├── signatures.jsonl
-│   └── transactions.jsonl
+│   ├── transactions.jsonl
+│   └── collection-gaps.tsv
+├── corpus-<k>/                # each later collection (k = 2, 3, …), same files;
+│                              #   recipes read corpus*/ and count a signature once
 ├── INCIDENTS.json             # the structured result (incidents-schema.md)
 ├── INCIDENT_REPORT.md         # the hunt write-up (templates/incident-report.md)
 ├── RESPONSE-INC-<n>.<k>.md    # one proposed plan per lead (templates/response-plan.md)

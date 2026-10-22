@@ -855,6 +855,39 @@ fi
 eq "big ints: deltas over that corpus stay exact (BigOne, BigTwo)" \
   "$(python3 -I "$DNR/deltas.py" lamports "$TT/big16/transactions.jsonl" | awk -F'\t' '{printf "%s=%s ", $2, $3}')" "BigOne=1 BigTwo=1 "
 
+# ---------------------------------------------------------------------------
+# 17. A second collection into an incident goes to corpus-2/ and is not refused;
+#     the recipes then read corpus*/ and count a transaction held by both corpora
+#     once (first occurrence wins), so damage figures are not doubled.
+# ---------------------------------------------------------------------------
+mkdir "$TT/incident_21"
+for c in corpus corpus-2; do
+  [[ "$c" == corpus ]] || mkdir "$TT/incident_21/$c"
+  ( PATH="$TT/bin:$PATH" FAKE_CURL_TX_FIXTURE="$FIX/same-owner-drain.jsonl" RPC_URL="https://rpc.example.test/" \
+      bash "$DNR/collect.sh" --out "$TT/incident_21/$c" --confirmed -- "$A_ADDR" ) > "$TT/incident_21.$c.out" 2>&1
+  eq "two corpora: collecting into incident_21/$c succeeds" "$?" "0"
+done
+both="$(python3 -I "$DNR/deltas.py" tokens "$TT"/incident_21/corpus*/transactions.jsonl 2> "$TT/both.err")"
+eq "two corpora: a drain held by both is counted once (VaultPDA -140, once)" \
+  "$(printf '%s\n' "$both" | awk -F'\t' '$2=="VaultPDA"{print $4}' | tr '\n' ' ')" "-140 "
+if grep -q 'skipped 1 transaction(s) already read under the same signature' "$TT/both.err"; then ok "two corpora: deltas.py says how many copies it skipped"; else bad "two corpora: no skipped-copy note"; fi
+for mode in tokens lamports; do
+  eq "dedupe: deltas $mode over two fixtures given twice equals them once" \
+    "$(python3 -I "$DNR/deltas.py" $mode "$FIX/same-owner-drain.jsonl" "$FIX/lamports-over-2-53.jsonl" "$FIX/same-owner-drain.jsonl" "$FIX/lamports-over-2-53.jsonl" 2>/dev/null)" \
+    "$(python3 -I "$DNR/deltas.py" $mode "$FIX/same-owner-drain.jsonl" "$FIX/lamports-over-2-53.jsonl")"
+done
+eq "dedupe: frames over a fixture given twice equals the fixture once" \
+  "$(python3 -I "$DNR/frames.py" "$FIX/log-newline-injection.jsonl" "$FIX/log-newline-injection.jsonl" 2>/dev/null)" "$logs"
+prof2="$(bash "$DNR/profile.sh" "$FIX/clean-mixed.jsonl" "$FIX/clean-mixed.jsonl")"
+eq "dedupe: profile over a corpus given twice counts each transaction once" \
+  "$(printf '%s\n' "$prof2" | sed -n '/^-- transactions/,/^-- version/p' | tr -s ' ' | tr '\n' '|')" \
+  "$(bash "$DNR/profile.sh" "$FIX/clean-mixed.jsonl" | sed -n '/^-- transactions/,/^-- version/p' | tr -s ' ' | tr '\n' '|')"
+if printf '%s\n' "$prof2" | grep -q '^-- skipped: 3 transaction(s) already read under the same signature$'; then
+  ok "dedupe: profile reports the copies it skipped"
+else
+  bad "dedupe: profile did not report skipped copies"
+fi
+
 if [[ "$fails" -ne 0 ]]; then
   echo "test-dnr: $fails assertion(s) FAILED" >&2
   exit 1
