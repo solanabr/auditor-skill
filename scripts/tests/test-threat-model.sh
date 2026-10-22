@@ -754,30 +754,30 @@ put "$TQ" programs/q/src/lib.rs 'pub fn q() { require!(x, E::Q); }'
 commit "$TQ" -m "initial"
 put "$TQ" programs/q/src/lib.rs 'pub fn q() {}'
 commit "$TQ" -m "$(printf 'Tidy q%s```%s[31m %s' "$CR" "$ESC" "$(i=0; while [ $i -lt 120 ]; do printf 'long-subject-'; i=$((i + 1)); done)")"
-git -C "$TQ" config remote.mirror.url "$(printf 'https://example.invalid/m\n```\n## Forged heading')"
+git -C "$TQ" config remote.mirror.url "$(printf 'https://example.invalid/m\n```\n## Extra heading')"
 # The schema value holds a TAB and a newline (JSON escapes \t and \n) followed by a would-be manifest row.
-printf '{"schema": "auditor-incidents/9\\t\\n99\\tforged-row\\tjson\\t-\\t-\\tforged", "incidents": []}\n' > "$T/forged-schema.json"
+printf '{"schema": "auditor-incidents/9\\t\\n99\\textra-row\\tjson\\t-\\t-\\textra", "incidents": []}\n' > "$T/control-schema.json"
 mkdir -p "$TQ/incident_x
-77${TB}forged-dir"
-cp "$T/forged-schema.json" "$TQ/incident_x
-77${TB}forged-dir/INCIDENTS.json"
+77${TB}extra-dir"
+cp "$T/control-schema.json" "$TQ/incident_x
+77${TB}extra-dir/INCIDENTS.json"
 for tool in jq python3; do
   if ! command -v "$tool" >/dev/null 2>&1; then skp "T-q ($tool): $tool not installed"; continue; fi
   OUTQ="$T/textq-$tool/audit_1/bootstrap"
-  TM_JSON_TOOL=$tool collect --repo "$TQ" --out "$OUTQ" --offline --vulns "$T/forged-schema.json"
+  TM_JSON_TOOL=$tool collect --repo "$TQ" --out "$OUTQ" --offline --vulns "$T/control-schema.json"
   check "T-q ($tool): every inputs.tsv row has six cells" tsv_ok "$OUTQ/inputs.tsv"
   check "T-q ($tool): a schema string cannot add an inputs.tsv row" sh -c "! grep -q '^99' '$OUTQ/inputs.tsv'"
-  check "T-q ($tool): ... it is recorded with its control characters escaped" has "$OUTQ/inputs.tsv" 'auditor-incidents/9\t\n99\tforged-row'
+  check "T-q ($tool): ... it is recorded with its control characters escaped" has "$OUTQ/inputs.tsv" 'auditor-incidents/9\t\n99\textra-row'
   check "T-q ($tool): an incident directory name cannot add an inputs.tsv row" sh -c "! grep -q '^77' '$OUTQ/inputs.tsv'"
-  check "T-q ($tool): ... it is recorded escaped" has "$OUTQ/inputs.tsv" 'incident_x\n77\tforged-dir/INCIDENTS.json'
+  check "T-q ($tool): ... it is recorded escaped" has "$OUTQ/inputs.tsv" 'incident_x\n77\textra-dir/INCIDENTS.json'
   check "T-q ($tool): history.md keeps its code fences paired, with no CR or ESC" fences_ok "$OUTQ/history.md"
 done
 OUTQ="$T/textq-$( command -v jq >/dev/null 2>&1 && echo jq || echo python3)/audit_1/bootstrap"
 if [ -s "$OUTQ/history.md" ]; then
-  check "T-q: a multi-line remote URL stays on one R6 line" sh -c "! grep -q '^## Forged heading' '$OUTQ/history.md'"
+  check "T-q: a multi-line remote URL stays on one R6 line" sh -c "! grep -q '^## Extra heading' '$OUTQ/history.md'"
   check "T-q: ... shown escaped on the remote's own line" has "$OUTQ/history.md" 'remote.mirror.url https://example.invalid/m\n```\n'
   check "T-q: a CR in a commit subject is shown as \\r" has "$OUTQ/history.md" 'Tidy q\r```'
-  check "T-q: an incident directory name in R6 is shown escaped" has "$OUTQ/history.md" 'incident_x\n77\tforged-dir/INCIDENTS.json'
+  check "T-q: an incident directory name in R6 is shown escaped" has "$OUTQ/history.md" 'incident_x\n77\textra-dir/INCIDENTS.json'
   check "T-q: a row with a long subject is cut, ending in ..." \
     sh -c "awk '/^## R3/,/^## R4/' '$OUTQ/history.md' | grep 'long-subject' | awk 'length(\$0) > 520 || !/[.][.][.]\$/ { bad = 1 } END { exit bad || NR != 1 }'"
 else
