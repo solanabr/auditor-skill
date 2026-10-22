@@ -43,9 +43,11 @@ would pick up the target's rustc wrapper, runner, linker, `[env]` and toolchain.
 with a pinned toolchain; it refuses a crate holding a symbolic link, a `.cargo/`
 directory or a `rust-toolchain*` file, and a `path` dependency on target crates must
 be absolute. Building the target itself (for example `cargo build-sbf` /
-`anchor build` on the client tree to get its `.so`) runs target code in the same mode;
-an incident whose root cause is supply chain / CI is never built natively — use the
-dumped program bytes. If the recorded mode cannot run the PoC, record
+`anchor build` on the client tree to get its `.so`) runs target code in the same mode.
+An incident whose root cause is supply chain / CI is never built natively, and its PoC
+never builds or links the target's crates in any mode, since they may be the payload:
+it runs on the dumped program bytes alone (`run.sh` prebuilt mode), with the
+template's own crates. If the recorded mode cannot run the PoC, record
 `[PoC-ATTEMPTED]` with the blocker "no isolated runner" and keep the prose PoC.
 
 **Build cache.** `run.sh` builds every run in a fresh scratch directory, so each run

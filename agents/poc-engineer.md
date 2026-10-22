@@ -86,7 +86,10 @@ against the program's **real bytes**:
 - **Local only:** in-process SVM / loopback surfnet, harness keys
   (`Keypair::new()`), `127.0.0.1`. Never send to or `simulateTransaction` against a
   public cluster. Build the incident commit per `OUTPUT-RULES.md` Rule 11a — never
-  natively when the root cause is supply-chain / CI. If real bytes are unavailable,
+  natively when the root cause is supply-chain / CI. Under that root cause the PoC
+  never builds or links the target's crates in any mode, since they may be the
+  payload: it runs on the dumped bytes alone (`VULNERABLE_SO`), with the template's
+  own crates. If real bytes are unavailable,
   Leg 3 is unmet and the incident verdict ceiling is `suspected`: emit
   `[PoC-ATTEMPTED]` + the prose, and say so.
 

@@ -79,8 +79,10 @@
 #     or, with FIXED_SO, "... vulnerable sha256=<…> fixed sha256=<…> (<how the
 #     fixed arm held>) → [PoC-REPRODUCED]". A build of this crate's own arms prints
 #     another line, and a model is never Leg 3.
-#   * the incident commit is built natively ONLY when its root cause is not supply
-#     chain / CI; otherwise supply the dumped ELF here (OUTPUT-RULES.md Rule 11a).
+#   * an incident whose root cause is supply chain / CI is never built natively, and
+#     its PoC never builds or links the target's crates in any mode (they may be the
+#     payload): it runs on the dumped ELF here, with the template's own crates
+#     (OUTPUT-RULES.md Rule 11a).
 
 set -euo pipefail
 
