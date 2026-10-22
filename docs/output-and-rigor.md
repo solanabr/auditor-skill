@@ -126,4 +126,4 @@ Like a real firm, the **client-facing report issues no "safe to deploy" guarante
 | Incident (hunt/respond) | `incident_<n>/INCIDENTS.json` · `INCIDENT_REPORT.md` · `RESPONSE-INC-<n>.<k>.md` · `LEDGER.md` |
 | Incident PoC / patch | `incident_<n>/poc/INC-<n>.<k>/` · `incident_<n>/patches/INC-<n>.<k>.patch` |
 
-Where `<n>` = count of existing `audit_*/` directories + 1. Each directory's first file is a `.gitignore` containing `*` (Rule 11d). For incidents, `<n>` = count of existing `incident_*/` directories + 1 (mirrors `audit_<n>`).
+Where `<n>` is the highest existing `audit_*/` number + 1; the directory is created with `mkdir` (not `-p`), and its first file is a `.gitignore` containing `*` (Rule 11d). For incidents, `<n>` is the highest existing number + 1 and the directory is created with `mkdir` (not `-p`); an existing one is reused only when git does not track it, it holds no symbolic links, and you confirm it ([run directory](../references/detection-response/README.md#run-directory-incident_n)).
