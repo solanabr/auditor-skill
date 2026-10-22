@@ -900,6 +900,35 @@ bash "$COLLECT" --repo "$UR" --out "$T/urls-x/audit_1/bootstrap" --parent 'ssh:/
 check "T-t: a rejected URL is echoed on stderr without its credentials" \
   sh -c "grep -q 'ssh://\*\*\*@example.invalid/x?\*\*\*' '$T/urls.err' && ! grep -q 'TOKEN-SSH\|QUERY-SSH' '$T/urls.err'"
 
+# =================================================================================================
+# T-u: a fork that records the parent's fix with `git merge -s ours` (history merged, code not) is
+# still compared from its own fork point, so the fix it lacks is listed as absent.
+# =================================================================================================
+PO="$T/par-ours"; mkrepo "$PO"
+put "$PO" "$AMM" "$AMM_P1"
+commit "$PO" -m "amm v1"
+PO1=$(short "$PO" HEAD)
+FO="$T/fork-ours"; git clone -q "$PO" "$FO"
+put "$FO" programs/amm/src/extra.rs '// fork-specific module'
+commit "$FO" -m "fork: add extra module"
+put "$PO" "$AMM" 'pub fn deposit(ctx: Context<Deposit>, amount: u64) -> Result<()> {
+    require_keys_eq!(ctx.accounts.vault.key(), pool.vault);
+    Ok(())
+}
+pub fn withdraw(ctx: Context<Withdraw>, amount: u64) -> Result<()> {
+    require!(amount > 0, AmmError::ZeroAmount);
+    Ok(())
+}'
+commit "$PO" -m "fix: reject zero withdrawals (security)"
+git -C "$FO" fetch -q "$PO" main:refs/remotes/upstream/main
+git -C "$FO" merge -q -s ours --no-edit upstream/main
+OUTFO="$T/fork-ours-run/audit_1/bootstrap"
+collect --repo "$FO" --out "$OUTFO" --offline --parent "$PO"
+check "T-u: after a merge -s ours, the fork point is the fork's own (first-parent) one" \
+  sh -c "grep -q '^fork point: $PO1 ' '$OUTFO/history.md'"
+check "T-u: ... and the parent's fix the fork never applied is listed as absent" \
+  sh -c "grep -q 'require!(amount > 0, AmmError::ZeroAmount);.*\[text absent from target @ pin - verify\]' '$OUTFO/history.md'"
+
 echo
 echo "threat-model collector tests: $pass passed, $fail failed, $skip skipped"
 [ "$fail" -eq 0 ]

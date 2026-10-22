@@ -167,7 +167,7 @@ partial clone.
 | R3b ADDED-QUIET | guard text added by a keyword-free commit of at most `--small` lines | a quiet fix: the surface was reachable before it |
 | R3c ADDED | guard text added by a keyword commit of at most `--fix-ceiling` lines | the fixed surface; look for twins left unfixed |
 | R4 | files and functions by number of commits touching them; a `note:` line counts `.rs` files the target's attributes send to another diff driver | where the churn concentrates; after a note, function counts may be low |
-| R5 | fork point (shared history, else identical file content), the parent's keyword commits after it, and each guard line the parent added after it, tagged `text present elsewhere in target - verify` or `text absent from target @ pin - verify`, absent rows and smaller commits first | hints only: present may be a twin, absent may be reformatted code |
+| R5 | fork point (the newest shared commit on the target's first-parent line, else in its whole ancestry, else identical file content), the parent's keyword commits after it, and each guard line the parent added after it, tagged `text present elsewhere in target - verify` or `text absent from target @ pin - verify`, absent rows and smaller commits first | hints only: present may be a twin, absent may be reformatted code |
 | R6 | fork phrases, `security_txt!` source / auditors, `declare_id!`, remotes, first commits, report-like files | provenance strings, never URLs to visit |
 | R7 / R8 | inputs and audit-mem status | |
 
@@ -185,7 +185,9 @@ partial clone.
 - **Blind spots.** Flipped comparisons (`>` to `>=`), changed inputs to a guard whose text did not change, plain
   `if … { return Err(…) }` checks without a listed token, macro-generated constraints, merge resolutions, and
   identical guard text removed in one file and added in another by the same commit (netted as a move even when the
-  two guard different accounts) do not show up. History lists what someone touched, not what is missing; §4 keeps code-only goals for that reason.
+  two guard different accounts) do not show up. A fork whose first-parent line holds no parent commit (the parent
+  arrived only through a merge) gets its fork point from its whole ancestry, where a merge made with `-s ours`
+  (recording the parent's history without its code) can still place the fork point after fixes it never applied. History lists what someone touched, not what is missing; §4 keeps code-only goals for that reason.
 
 ## 4. From rows to attacker goals
 

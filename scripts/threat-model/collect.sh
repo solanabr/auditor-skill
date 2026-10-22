@@ -552,10 +552,19 @@ R4_OTHER=$(sed -E 's/^ *[0-9]+ //' "$TMPD/r4a" | grep -E '\.rs"?$' |
     echo "NOT FOUND (parent $(clean "$(redact "$PARENT")"): $PARENT_STATUS)"
   else
     G "$PDIR" rev-list --all > "$TMPD/parent.revs" 2>/dev/null
-    G "$REPO" rev-list "$PIN_SHA" > "$TMPD/target.revs" 2>/dev/null
-    FORK="" METHOD="shared history"
+    # The fork point is looked for on the target's first-parent line first: a parent commit reached only
+    # through a merge (one made with -s ours records the parent's history without its code) must not
+    # move the fork point past fixes the target never applied. R5d then tags each later parent guard
+    # present or absent at the pin. Without a shared commit on that line, the whole ancestry is searched.
+    FORK="" METHOD="shared history, first-parent line"
     if [ -s "$TMPD/parent.revs" ]; then
+      G "$REPO" rev-list --first-parent "$PIN_SHA" > "$TMPD/target.revs" 2>/dev/null
       FORK=$(awk 'NR == FNR { p[$1] = 1; next } ($1 in p) { print; exit }' "$TMPD/parent.revs" "$TMPD/target.revs")
+      if [ -z "$FORK" ]; then
+        METHOD="shared history"
+        G "$REPO" rev-list "$PIN_SHA" > "$TMPD/target.revs" 2>/dev/null
+        FORK=$(awk 'NR == FNR { p[$1] = 1; next } ($1 in p) { print; exit }' "$TMPD/parent.revs" "$TMPD/target.revs")
+      fi
     fi
     if [ -z "$FORK" ]; then
       METHOD="blob identity"
