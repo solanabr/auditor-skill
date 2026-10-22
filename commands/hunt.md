@@ -141,20 +141,20 @@ directory.
 
 6. **Reproduce (Phase 4).** For a source-confirmed flaw, spawn `poc-engineer` in
    **incident mode**: reproduce on the program's **real bytes** (the step-1 dump, or
-   a hash-matched build), in an in-process SVM or a local surfnet, signing only with
-   harness keys, and assert the effect seen on-chain — not just that the call was
-   accepted. This is Leg 3, and it counts only with run.sh's prebuilt-mode success
-   line, which names the sha256 of the bytes it ran; that hash goes into the
-   ledger. If it can't run on real bytes, the ceiling is `suspected` — stated, not
-   hidden. Every PoC run and any build of target code (the incident commit) needs
-   the Rule 11a mode: ask once (a non-interactive run is native, and the report
-   says so), pass it to the agent for the ledger header, and pass it on as
-   `AUDITOR_EXEC_MODE`.
+   a hash-matched build) with `run.sh` `VULNERABLE_SO` alone — no fix needs to
+   exist yet — in an in-process SVM or a local surfnet, signing only with harness
+   keys, and assert the effect seen on-chain with `assert_exploit_effect!`, not
+   just that the call was accepted. This is Leg 3, met only when `run.sh` ends with
+   `OK: reproduced on prebuilt bytes — vulnerable sha256=<the step-1 hash> →
+   [PoC-REPRODUCED]`. If it can't run on real bytes, the ceiling is `suspected` —
+   stated, not hidden. Every PoC run and any build of target code (the incident
+   commit) needs the Rule 11a mode: ask once (a non-interactive run is native, and
+   the report says so), pass it to the agent for the ledger header, and pass it on
+   as `AUDITOR_EXEC_MODE`.
 
 7. **Emit, in `incident-responder`.** Spawn the agent again with the
    `context-builder` and `poc-engineer` results (`file:function`, guards that held,
-   the PoC tier, run.sh's success line and the sha256 it names, the execution
-   mode). It
+   the PoC tier, `run.sh`'s final line, the execution mode). It
    writes `incident_<n>/INCIDENTS.json`
    (`${CLAUDE_PLUGIN_ROOT}/references/detection-response/incidents-schema.md`) and
    `INCIDENT_REPORT.md` (`${CLAUDE_PLUGIN_ROOT}/templates/incident-report.md`):

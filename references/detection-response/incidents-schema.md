@@ -57,7 +57,7 @@ bumps the `schema` string to `auditor-incidents/2`.
         "path": "incident_<n>/poc/INC-1.1/",
         "command": "AUDITOR_EXEC_MODE=<isolated|native> VULNERABLE_SO=<incident .so> [FIXED_SO=<fixed .so>] ./run.sh",
         "verified": true,
-        "negative": "the fixed arm rejected the same attack with <specific error>"
+        "negative": "null | rejected with the pinned error | blocked: failed, account unchanged"
       },
       "collection_gaps": ["<what the corpus could not answer — never a URL>"],
       "response_plan": "RESPONSE-INC-1.1.md"
@@ -91,6 +91,12 @@ bumps the `schema` string to `auditor-incidents/2`.
   `dumped-after-hotfix` (a later upgrade overwrote the incident binary — dump and
   hash anyway, provenance noted), `source-only` or `none` (Leg 3 unmet → ceiling
   `suspected`).
+- **`poc`** records the run as made. `command` carries `AUDITOR_EXEC_MODE` and
+  `VULNERABLE_SO`, plus `FIXED_SO` when a fixed arm ran. `verified` is true only
+  when `run.sh` ended with `OK: reproduced on prebuilt bytes — vulnerable
+  sha256=<hash>`, `<hash>` being the snapshot's. `negative` is how the fixed arm
+  held: `rejected with the pinned error` for our patch, `blocked: failed, account
+  unchanged` for a deployed hotfix, or null when no fixed arm ran.
 - **`evidence`** strings are `"<source file>: <pipeline> -> <result>"` — the query
   that produced each number (hard rule 5). Never a URL, never a secret.
 - **`collection_gaps`** holds every row of the collector's

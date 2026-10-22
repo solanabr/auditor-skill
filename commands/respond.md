@@ -118,26 +118,29 @@ directory.
    `GIT_NO_LAZY_FETCH=1 git clone --no-local <checkout> <scratch copy>`, and read from the copy with
    `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false show --no-textconv <rev>:<path>`
    (Rule 11c). Never `checkout`, `switch` or `worktree add` in `--repo`. Then spawn
-   `poc-engineer` in incident mode to reproduce on the bytes from step 1 (Leg 3) —
-   in-process SVM or a local surfnet, harness keys only, asserting the observed
-   effect. Leg 3 counts only with run.sh's prebuilt-mode success line, which names
-   the sha256 of the bytes it ran; that hash goes into the ledger. No usable bytes
-   → the ceiling is `suspected`. Every PoC run and any build of target code needs
-   the Rule 11a mode: ask once (a non-interactive run is native, and the report
-   says so), pass it to the agent for the ledger header, and pass it on as
-   `AUDITOR_EXEC_MODE`. `key_compromise` stays at `suspected` unless a person
-   records a custodian attestation word for word (README).
+   `poc-engineer` in incident mode to reproduce on the bytes from step 1 (Leg 3)
+   with `run.sh` `VULNERABLE_SO` alone — in-process SVM or a local surfnet, harness
+   keys only, asserting the observed effect with `assert_exploit_effect!`. Leg 3 is
+   met only when `run.sh` ends with `OK: reproduced on prebuilt bytes — vulnerable
+   sha256=<the step-1 hash> → [PoC-REPRODUCED]`; no usable bytes → the ceiling is
+   `suspected`. Every PoC run and any build of target code needs the Rule 11a
+   mode: ask once (a non-interactive run is native, and the report says so),
+   pass it to the agent for the ledger header, pass it on as `AUDITOR_EXEC_MODE`.
+   `key_compromise` stays at `suspected` unless a person records a custodian
+   attestation word for word (README).
 
 6. **The plan (Phase 4), in `incident-responder`.** Spawn the agent with the
    `context-builder` and `poc-engineer` results. It writes
    `incident_<n>/RESPONSE-INC-<n>.<k>.md` from
    `${CLAUDE_PLUGIN_ROOT}/templates/response-plan.md`; a plan written for another
    lead is never overwritten. It covers the verdict, the timeline, containment, the
-   code fix (handed off as `/auditor:patch INC-<n>.<k>`), recovery, coordination
-   drafts, alerting proposals and the unanswered questions. Each action states what
-   it is, the query result behind it, who has to sign, whether it can be undone,
-   and the cost if it turns out to be wrong — picked from the menu and within the
-   "do not" list in
+   code fix (handed off as `/auditor:patch INC-<n>.<k>`), the check of a hotfix the
+   team already deployed (the PoC re-run with `FIXED_SO` = a fresh dump of the
+   current bytes and `assert_exploit_blocked!` on the fixed arm, reported apart from
+   our fix), recovery, coordination drafts, alerting proposals and the unanswered
+   questions. Each action states what it is, the query result behind it, who has
+   to sign, whether it can be undone, and the cost if it turns out to be wrong —
+   picked from the menu and within the "do not" list in
    `${CLAUDE_PLUGIN_ROOT}/references/detection-response/containment-playbook.md`.
    Then it updates `INCIDENTS.json`. Present its summary and the paths it wrote.
 

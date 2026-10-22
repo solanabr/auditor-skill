@@ -103,10 +103,12 @@ write-up.
 Assign exactly one per finding and route it (`incidents[]` vs `ruled_out[]`) per
 the README table. `confirmed_exploited` needs all three legs — on-chain effect at
 `finalized`, the flaw in the source deployed at the incident slot, and a local
-`[PoC-*]` fired this session on the program's **real bytes** (run.sh's
-prebuilt-mode success line, whose sha256 goes into the ledger). Short of that it
-is `suspected`. `key_compromise` is capped at `suspected` absent a human-recorded
-custodian attestation.
+`[PoC-*]` fired this session on the program's **real bytes**: for
+`[PoC-REPRODUCED]`, `run.sh` ending with `OK: reproduced on prebuilt bytes —
+vulnerable sha256=<hash> → [PoC-REPRODUCED]`, `<hash>` being the snapshot's
+zero-trimmed sha256 in `LEDGER.md`. Short of that it is `suspected`.
+`key_compromise` is capped at `suspected` absent a human-recorded custodian
+attestation.
 
 ## Execution-mode and disclosure pointers
 
