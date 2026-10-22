@@ -39,7 +39,7 @@ Commands are namespaced `auditor`, so you invoke them as `/auditor:audit`, `/aud
 - **[audit-flows.md](audit-flows.md)** — the full lifecycle; when to use one-shot vs automated vs interactive vs fix-review; the cheap lanes.
 - **[commands.md](commands.md)** — reference entry for each of the 17 commands, grouped by phase.
 - **[agents.md](agents.md)** — the 9-agent roster: role, model tier, when each fires, how they chain.
-- **[power-tools.md](power-tools.md)** — `audit-scan`, `audit-mem`, Trail of Bits plugins, Surfpool sim, the PoC/patch stack.
+- **[power-tools.md](power-tools.md)** — `audit-scan`, `audit-mem`, Trail of Bits plugins, Surfpool sim, the PoC/patch stack, the bundled scripts and their flags.
 - **[poc-and-patches.md](poc-and-patches.md)** — executable PoC + patch delivery, framework matrix, evidence and fix tiers.
 - **[output-and-rigor.md](output-and-rigor.md)** — severity model, the Rule 5b gate, report templates, the no-"safe to deploy" convention.
 - **[detection-response.md](detection-response.md)** — post-incident hunting and incident workup.

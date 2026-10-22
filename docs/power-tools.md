@@ -1,6 +1,6 @@
 # Power Tools
 
-The tooling that makes auditor-skill more than a prompt: a deterministic pre-scanner, cross-audit memory, vendored SAST/fuzz/coverage/mutation, mainnet-fork economic sim, and the PoC/patch harness stack. Back to the [docs index](README.md).
+The tooling that makes auditor-skill more than a prompt: a deterministic pre-scanner, cross-audit memory, vendored SAST/fuzz/coverage/mutation, mainnet-fork economic sim, the PoC/patch harness stack, and the bundled scripts the commands run. Back to the [docs index](README.md).
 
 Every tool here is an **optional layer**. The corpus works fully without any of them — each one either saves tokens, adds memory, or upgrades an asserted finding to a demonstrated one, and degrades gracefully (with a named blocker) when absent.
 
@@ -11,6 +11,7 @@ Every tool here is an **optional layer**. The corpus works fully without any of 
 | [Trail of Bits plugins](#trail-of-bits-plugins) | real SAST, fuzzing, coverage, mutation | plugin install or `install.sh`; else `git submodule update --init --depth 1 -- vendor/trailofbits` |
 | [Surfpool sim](#surfpool-economic-simulation) | a real $ P/L for economic findings | `surfpool` CLI + MCP |
 | [PoC/patch harness](#pocpatch-harness-stack) | executable exploits + verified fixes | platform-tools ≥ v1.54 |
+| [Bundled scripts](#bundled-scripts) | incident corpus collection and queries, the threat-model history collector, the Trail of Bits bump review | nothing to build: bash ≥ 3.2, plus `jq`, `python3`, `curl` or the `solana` CLI per script |
 
 ---
 
@@ -180,3 +181,145 @@ Frameworks by finding type — **Mollusk** (single-instruction logic/access-cont
 Toolchain gate: **`cargo build-sbf` platform-tools ≥ v1.54** (the default v1.51/cargo 1.84 bundle cannot parse the `edition2024` manifests in modern `mollusk-svm`/`litesvm` — pass `--tools-version v1.54`). Never hard-fails: any absence → `[PoC-ATTEMPTED]` + the prose PoC is kept; downgrading the evidence tier never downgrades the finding's severity.
 
 Full walkthrough — layout, framework matrix, tiers, the "executable outranks prose but prose is never removed" rule, toolchain requirements: **[poc-and-patches.md](poc-and-patches.md)**. Reference: [`references/orchestration/poc-harness.md`](../references/orchestration/poc-harness.md).
+
+---
+
+## Bundled scripts
+
+Shell and Python scripts that ship with auditor-skill; there is nothing to build. The commands run them by absolute path from the installation, never by a `scripts/` path relative to the audited repository ([Rule 11e](../OUTPUT-RULES.md#11e--bundled-paths)), and run the Python ones as `python3 -I`. Each runs under bash 3.2 or later. The blocks below give each script's arguments, exit codes, network use and outputs.
+
+### Detection & response recipes (`scripts/dnr/`)
+
+The recipes behind `/auditor:hunt` and `/auditor:respond` ([detection-response.md](detection-response.md); method and hazards: [`scripts/dnr/README.md`](../scripts/dnr/README.md)). They summarise a transaction corpus without reading it into context. The two that use the network take the endpoint from `$RPC_URL` in the environment, never from the command line.
+
+#### `snapshot-program.sh`
+
+```bash
+bash "<auditor-skill root>/scripts/dnr/snapshot-program.sh" <program_id> <incident_dir>
+```
+
+Step 1 of every hunt and response: it keeps the deployed program bytes before a hotfix can replace them. It runs `solana program show` and `solana program dump`, checks the ELF header, hashes the dump the way `solana-verify` does (trailing zero padding trimmed, then sha256), and prints one ledger line: `program=… owner=… last_deployed_slot=… authority=… sha256_zero_trimmed=… elf_bytes=… padding_bytes=… file=bin/<id>.so`.
+
+- **Arguments:** a base58 program id and the incident directory. No flags.
+- **Exit:** 0 done · 2 usage error, an id that is not base58, or no `$RPC_URL` · 3 named blocker: no `solana` CLI, a CLI error, a loader-v4 program, or a dump without the ELF magic.
+- **Network:** two read-only `solana` CLI calls to `$RPC_URL`; it signs nothing. CLI errors pass through `redact.sh`.
+- **Writes:** `<incident_dir>/bin/<id>.show.txt` and `<incident_dir>/bin/<id>.so`. An `incident_*` directory without a `.gitignore` gets one containing `*` (Rule 11d).
+
+#### `collect.sh`
+
+```bash
+bash "<auditor-skill root>/scripts/dnr/collect.sh" --out <dir> --confirmed [--since <unix>] [--until <unix>] \
+  [--before <signature>] [--max-pages N] [--max-tx N] -- <address> [<address> ...]
+```
+
+The one gated collector: it pages each address's signature history, failed transactions included (they are evidence of attempts), and fetches every transaction in the window into a local JSONL corpus, newest first.
+
+| Flag | Meaning |
+|------|---------|
+| `--out <dir>` | corpus directory (required); one that already holds a corpus is refused, so a resume goes into a new directory |
+| `--confirmed` | required; the commands pass it only after a person has approved the addresses, the window, the caps and the estimated call count |
+| `--since <unix>`, `--until <unix>` | the window, on `blockTime`; `0` (the default) leaves that end open |
+| `--before <signature>` | start paging just older than this signature: resume a capped run, or skip activity after the incident |
+| `--max-pages N` | pages of 1,000 signatures per address (default 20) |
+| `--max-tx N` | transactions fetched in total (default 2000); the oldest are left out first |
+| `-- <address> ...` | the base58 addresses to page |
+
+- **Exit:** 0 done; RPC errors, a page cap that stops before the window and the `--max-tx` cut are reported as collection gaps · 2 refused before any network call: no `--confirmed`, no `--out` or address, no `$RPC_URL`, an address or `--before` value that is not base58, a number that is not a plain integer, or an `--out` that already holds a corpus.
+- **Network:** read-only JSON-RPC to `$RPC_URL` (`getSignaturesForAddress`, then `getTransaction` at `finalized` with `maxSupportedTransactionVersion: 1`), and only with `--confirmed`. It prints the provider host for the Rule 11b disclosure; curl errors pass through `redact.sh`.
+- **Writes:** `<dir>/signatures.jsonl` and `<dir>/transactions.jsonl`; collection gaps go to stderr. An `incident_*` directory (`<dir>` or its parent) without a `.gitignore` gets one containing `*`.
+
+#### `profile.sh`
+
+```bash
+bash "<auditor-skill root>/scripts/dnr/profile.sh" <corpus.jsonl>
+```
+
+The baseline of a `getTransaction` JSONL corpus, from structural fields only, never from log text: the succeeded / failed split, the transaction-version histogram, the `blockTime` window, and the top 20 fee payers, signers and top-level programs.
+
+- **Arguments:** the corpus file. No flags.
+- **Exit:** 0 done · 2 usage error or no such file · another non-zero status when `jq` cannot parse a line.
+- **Network:** none. **Writes:** stdout only. Needs `jq`.
+
+#### `frames.py`
+
+```bash
+python3 -I "<auditor-skill root>/scripts/dnr/frames.py" [<corpus.jsonl> ...]    # reads stdin when no file is named
+```
+
+Attributes each `Program log:`, `Program data:` and `Program return:` line to the program frame that emitted it. It walks the log array one element at a time with anchored patterns, so a newline inside a log payload cannot forge a frame. Output is JSONL on stdout, one `{sig, ok, depth, program, kind, text}` record per line, where `kind` is `log`, `data`, `return`, `truncated` or `unparsed`; an input line that is not JSON becomes a `parse_error` record. A log line is what the program asserted, never proof that state changed.
+
+- **Arguments:** corpus files, or none. No flags.
+- **Exit:** 0 done · 1 a file that cannot be read.
+- **Network:** none. **Writes:** stdout only.
+
+#### `deltas.py`
+
+```bash
+python3 -I "<auditor-skill root>/scripts/dnr/deltas.py" lamports|tokens [<corpus.jsonl> ...]    # reads stdin when no file is named
+```
+
+Balance movements of successful transactions, computed in Python integers so that amounts above 2^53 stay exact. `lamports` prints `signature`, `account`, `delta` for each non-zero lamport change, with the fee added back for the fee payer. `tokens` prints `signature`, `owner`, `mint`, `delta` in raw units, net across every token account the owner holds of that mint. The output is TSV on stdout; tabs, newlines, carriage returns and backslashes inside a field are escaped.
+
+- **Arguments:** the mode, then corpus files or none.
+- **Exit:** 0 done · 2 a missing or unknown mode · 1 a file that cannot be read.
+- **Network:** none. **Writes:** stdout only.
+
+#### `redact.sh`
+
+```bash
+some-command 2>&1 | bash "<auditor-skill root>/scripts/dnr/redact.sh"
+```
+
+A filter from stdin to stdout that removes provider credentials. In a URL of any scheme it keeps the scheme and host, replaces userinfo with `REDACTED@` and replaces the path and query with `/REDACTED`; a bare `api-key=`, `token=`, `secret=`, `auth=` or `access-token=` value outside a URL is redacted too. It is a convenience, not a guarantee: no RPC URL goes into a ledger, `INCIDENTS.json` or a report in any case. Record the provider host and the literal string `$RPC_URL` instead.
+
+- **Arguments:** none. **Exit:** 0. **Network:** none.
+
+### Threat-model collector
+
+#### `threat-model/collect.sh`
+
+```bash
+bash "<auditor-skill root>/scripts/threat-model/collect.sh" --repo <dir> --out audit_<n>/bootstrap [options]
+bash "<auditor-skill root>/scripts/threat-model/collect.sh" --repo <dir> --out audit_<n>/bootstrap --detect
+```
+
+The read-only collector behind `/auditor:threat-model --bootstrap` ([method and output contract](../references/audit-lifecycle/threat-model-bootstrap.md)). It gathers commits whose message matches security keywords, reverts, account-guard lines that were removed or quietly added, churn, an optional fork-parent comparison, provenance signals, prior-vulnerability inputs and the `audit-mem` warm block. It never checks out, builds, runs or modifies the target, and it runs git with the Rule 11c hardening.
+
+| Flag | Meaning |
+|------|---------|
+| `--repo <dir>` | the target repository (required) |
+| `--out <dir>` | the output directory (required), normally `audit_<n>/bootstrap` |
+| `--pin <rev>` | the commit to analyse (default `HEAD`); only its ancestry is mined |
+| `--paths <pathspec>` | target pathspec, repeatable (default `programs/*.rs` when the commit has a `programs/` directory, else `*.rs`) |
+| `--parent <https-url\|dir>` | the fork parent: an `https://` URL, cloned bare into a temp directory that is deleted on exit, or a local repository |
+| `--parent-paths <spec>` | parent pathspec, repeatable (default: the same rule, applied to the parent) |
+| `--import <rev>` | the target commit that imported the parent's code (default: the root commit) |
+| `--vulns <file\|https-url>` | a prior-vulnerability input, repeatable: PDF, Markdown, text, CSV, JSON, or an `INCIDENTS.json` (allowlisted fields only) |
+| `--program-id <id>` | save `audit-mem warm --program-id <id>` (needs the built tool and a database) |
+| `--audit-mem-db <path>` | the `audit-mem` database (default `<repo>/.audit-memory/audit.db`, skipped when the target tracks `.audit-memory`) |
+| `--keywords <ere>` | extra commit-message keywords, as an ERE alternation such as `drain\|bypass` |
+| `--offline` | never use the network: `--parent` and `--vulns` URLs are recorded, not fetched |
+| `--detect` | evaluate triggers T3 and T4 only, print them and exit; writes nothing |
+| `--cap <n>` | rows per section before `TRUNCATED` (default 60) |
+| `--small <n>` | changed-line ceiling for a quiet-fix candidate commit (default 40) |
+| `--fix-ceiling <n>` | changed-line ceiling for the `ADDED` rows of a keyword commit (default 300) |
+| `-h`, `--help` | print the usage header |
+
+- **Exit:** 0 done (a section may print `NOT FOUND`) · 2 usage error or rejected input · 3 the target is not a git repository, or the pin does not resolve.
+- **Network:** only for an `https://` URL passed in `--parent` (a bare clone without submodules, credential helpers or other protocols) or in `--vulns` (curl, https only through redirects too, with 60-second and 50 MB limits). Never with `--offline` or `--detect`, and never for a URL found in target content.
+- **Writes:** in `<out>`: `history.md` (sections R0 to R8), `inputs.tsv` (the manifest of every input), `inputs/` (converted or copied inputs), `diffs/` (the diffs of commits it flags) and, with `--program-id`, `audit-mem-warm.json`. `<out>`, and an `audit_*` parent without a `.gitignore`, each get a `.gitignore` containing `*`. `--detect` prints `T3 yes|no <signals>` and `T4 yes|no <signals>` to stdout.
+- **Needs:** git; `jq` or `python3` for JSON inputs, `pdftotext` to convert PDFs, `curl` for `--vulns` URLs. The environment variable `TM_JSON_TOOL=jq|python3|none` pins the JSON tool; the self-test uses it.
+
+### Trail of Bits bump review
+
+#### `tob-delta-review.sh`
+
+```bash
+bash "<auditor-skill root>/scripts/tob-delta-review.sh" [--fetch] <tob-clone> <old-sha> <new-sha>
+```
+
+The maintainer's report for moving the `vendor/trailofbits` pin ([CONTRIBUTING.md §5](../CONTRIBUTING.md#bumping-vendortrailofbits)). It prints markdown to stdout: the commit count and ancestry, plugins added or removed, load surfaces (nested `.claude/`, hooks, MCP and LSP servers, settings, `CLAUDE.md` / `AGENTS.md`, workflow scripts), plugin manifests and the ones that declare hooks or servers inline, skill and command counts per plugin, new executables, symbolic links and gitlinks, hosts and pipe-to-shell patterns in added lines, the `LICENSE`, and whether every plugin that `references/orchestration/boundary-map.md` and this page name still exists. The report informs a human reviewer; it is not a verdict.
+
+- **Arguments:** `<tob-clone>` is a full, non-shallow clone of `https://github.com/trailofbits/skills` (a shallow one draws a warning); `<old-sha>` and `<new-sha>` are the current and proposed pins. `--fetch` runs `git fetch origin` in the clone first.
+- **Exit:** 0 report printed · 2 usage error, a missing clone directory, a failed fetch, or a commit the clone does not have.
+- **Network:** only with `--fetch`. **Writes:** nothing but a temp directory, removed on exit.

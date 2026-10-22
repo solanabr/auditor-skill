@@ -48,7 +48,7 @@ auditor-skill is a **skill file** (a structured prompt + checklists) that turns 
 | [docs/audit-flows.md](docs/audit-flows.md) | The lifecycle and when to use each flow (`/audit`, `/audit-cycle`, `/audit-assist`, `/re-audit`) |
 | [docs/commands.md](docs/commands.md) | Reference for all 17 commands |
 | [docs/agents.md](docs/agents.md) | The 9-agent roster and how they chain |
-| [docs/power-tools.md](docs/power-tools.md) | `audit-scan`, `audit-mem`, Trail of Bits, Surfpool, PoC/patch harnesses |
+| [docs/power-tools.md](docs/power-tools.md) | `audit-scan`, `audit-mem`, Trail of Bits, Surfpool, PoC/patch harnesses, the bundled scripts and their flags |
 | [docs/poc-and-patches.md](docs/poc-and-patches.md) | Executable exploit + fix-patch delivery |
 | [docs/output-and-rigor.md](docs/output-and-rigor.md) | Severity, the Rule 5b gate, scope-gated loading, report format |
 | [docs/detection-response.md](docs/detection-response.md) | Post-incident hunting + incident workup (`/auditor:hunt`, `/auditor:respond`) |
