@@ -49,6 +49,7 @@ HOW TO USE:
 | **Scope**           | {FULL / PROGRAM / BACKEND / FRONTEND / DEVOPS}    |
 | **In scope**        | {paths / programs / dirs reviewed}                |
 | **Out of scope**    | {excluded paths + reason — Q44} |
+| **audit-mem store** | {path of the store that passed the Rule 11d check / none} |
 
 ---
 
