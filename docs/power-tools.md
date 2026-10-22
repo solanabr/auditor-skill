@@ -80,9 +80,10 @@ The same bug keeps its identity across commits and line drift — the same norma
 
 ### Lifecycle example
 
-Use an in-tree store only after the [Rule 11d](../OUTPUT-RULES.md#11d--output-hygiene) check (the repository does not track `.audit-memory`, and you created it); otherwise pass `--db <path outside the tree>`. Write `.audit-memory/.gitignore` containing `*` before the first call. The example uses the in-tree store, so it runs from the repository under audit; `audit-mem` stands for `"<auditor-skill root>/tools/auditor-tools/target/release/audit-mem"`.
+Use an in-tree store only if you created it and the [Rule 11d](../OUTPUT-RULES.md#11d--output-hygiene) check passes: `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false --icase-pathspecs ls-files -- .audit-memory`, run in the repository under audit, prints nothing and exits 0. Any output, in any letter case, or any error means: do not use that store, and pass `--db <path outside the tree>` instead. Run the check before writing `.audit-memory/.gitignore` (containing `*`) and before every `audit-mem` use. The example uses the in-tree store, so it runs from the repository under audit; `audit-mem` stands for `"<auditor-skill root>/tools/auditor-tools/target/release/audit-mem"`.
 
 ```bash
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false --icase-pathspecs ls-files -- .audit-memory   # must print nothing and exit 0; repeat before each call
 mkdir -p .audit-memory && printf '*\n' > .audit-memory/.gitignore
 audit-mem --db .audit-memory/audit.db init
 
@@ -296,7 +297,7 @@ The read-only collector behind `/auditor:threat-model --bootstrap` ([method and 
 | `--import <rev>` | the target commit that imported the parent's code (default: the root commit) |
 | `--vulns <file\|https-url>` | a prior-vulnerability input, repeatable: PDF, Markdown, text, CSV, JSON, or an `INCIDENTS.json` (allowlisted fields only) |
 | `--program-id <id>` | save `audit-mem warm --program-id <id>` (needs the built tool and a database) |
-| `--audit-mem-db <path>` | the `audit-mem` database (default `<repo>/.audit-memory/audit.db`, skipped when the target tracks `.audit-memory`) |
+| `--audit-mem-db <path>` | the `audit-mem` database (default `<repo>/.audit-memory/audit.db`, skipped when the target tracks `.audit-memory` in any letter case, or git cannot tell) |
 | `--keywords <ere>` | extra commit-message keywords, as an ERE alternation such as `drain\|bypass` |
 | `--offline` | never use the network: `--parent` and `--vulns` URLs are recorded, not fetched |
 | `--detect` | evaluate triggers T3 and T4 only, print them and exit; writes nothing |
