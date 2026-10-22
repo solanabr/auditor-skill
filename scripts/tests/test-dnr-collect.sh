@@ -32,7 +32,9 @@ export RPC_URL="https://rpc.example.test/"
 # Stand-in RPC behind a fake curl. $FAKE_BOOK is a JSON file:
 #   {"sigs": {<address>: [<getSignaturesForAddress entries, newest first>]},
 #    "tx":   {<signature>: <transaction JSON text, spliced verbatim>}}
-# Pages honour "limit" and "before". A transaction not in "tx" is a small one
+# Pages honour "limit" and "before"; FAKE_SIG_FIRST_PAGE=<n> cuts the first page
+# (the one without "before") to n entries, a short page before the end of the
+# history. A transaction not in "tx" is a small one
 # made from its signature entry. FAKE_TX_FAIL=<mode>[:<k>] fails every k-th
 # getTransaction call (every call when k is left out): transport (curl exit 28),
 # rpc429 (JSON-RPC error 429) or null (result null). Every request is appended
@@ -62,7 +64,10 @@ if m == "getSignaturesForAddress":
     entries = book["sigs"].get(p[0], [])
     names = [e["signature"] for e in entries]
     start = names.index(p[1]["before"]) + 1 if p[1].get("before") in names else 0
-    reply('"result":' + json.dumps(entries[start:start + p[1]["limit"]]))
+    limit = p[1]["limit"]
+    if "before" not in p[1] and os.environ.get("FAKE_SIG_FIRST_PAGE"):
+        limit = min(limit, int(os.environ["FAKE_SIG_FIRST_PAGE"]))
+    reply('"result":' + json.dumps(entries[start:start + limit]))
 if m == "getTransaction":
     calls = sum(1 for line in open(log) if '"getTransaction"' in line)
     mode, _, every = os.environ.get("FAKE_TX_FAIL", "").partition(":")
@@ -297,10 +302,12 @@ eq "failing endpoint: --max-tx 5 with every second call failing -> 5 calls, 3 fe
   "$(calls getTransaction)/$(grep -c . "$TT/fail-alt-cap/transactions.jsonl")/$(tail -1 "$TT/fail-alt-cap/collection-gaps.tsv" | cut -f1)" "5/3/S06"
 
 # ---------------------------------------------------------------------------
-# 5. A page shorter than 1000 ends an address's history; a page cap that stops
-#    on a full page, before --since was crossed, truncated it, whatever --since
-#    and --until are: a notice with the --before to resume from, and a gap row.
-#    These runs pass --max-tx 0 and look only at the paging.
+# 5. An empty page ends an address's history. A page shorter than 1000 ends it
+#    only on the cap's last page, since a node can return one before the end. A
+#    page cap that stops on a full page, before --since was crossed, may have left
+#    older history out, whatever --since and --until are: a notice with the
+#    --before to resume from, and a gap row. These runs pass --max-tx 0 and look
+#    only at the paging.
 # ---------------------------------------------------------------------------
 # hist <n>: <n> signatures P0001.. newest first, block times 1700005000 - k.
 hist() { book '{"'"$A_ADDR"'": [{"signature": "P%04d" % k, "slot": 100000 - k, "err": None, "blockTime": 1700005000 - k} for k in range(1, '"$1"' + 1)]}'; }
@@ -319,15 +326,27 @@ if [[ "$(calls getSignaturesForAddress)" == 3 && -z "$(trunc_row "$TT/pg-exact")
 else
   bad "paging: history ending on a page boundary -> row '$(trunc_row "$TT/pg-exact")'"
 fi
+hist 1500; rm -f "$FAKE_CURL_LOG"
+collect "$TT/pg-tail" --max-tx 0 -- "$A_ADDR"
+eq "paging: a short page under the cap costs one more call, and the empty page ends the history (calls, paging notices, gap row)" \
+  "$(calls getSignaturesForAddress)|$(grep -c 'older history may exist' "$TT/pg-tail.out")|$(trunc_row "$TT/pg-tail")" "3|0|"
+rm -f "$FAKE_CURL_LOG"
+FAKE_SIG_FIRST_PAGE=300 collect "$TT/pg-midshort" --max-tx 0 -- "$A_ADDR"
+eq "paging: a short page followed by more history keeps paging (300 + 1000 + 200 + 0; calls, signatures, gap row)" \
+  "$(calls getSignaturesForAddress)|$(grep -c . "$TT/pg-midshort/signatures.jsonl")|$(trunc_row "$TT/pg-midshort")" "4|1500|"
+rm -f "$FAKE_CURL_LOG"
+FAKE_SIG_FIRST_PAGE=300 collect "$TT/pg-capshort" --max-pages 1 --max-tx 0 -- "$A_ADDR"
+eq "paging: a short page on the cap's last page ends the history quietly (calls, paging notices, gap row)" \
+  "$(calls getSignaturesForAddress)|$(grep -c 'older history may exist' "$TT/pg-capshort.out")|$(trunc_row "$TT/pg-capshort")" "1|0|"
 hist 2500
 collect "$TT/pg-full" --max-pages 2 --max-tx 0 -- "$A_ADDR"
-eq "paging: no window, the cap stops on a full page -> a truncation gap row with the resume cursor" \
+eq "paging: no window, the cap stops on a full page -> a gap row saying older history may exist, with the resume cursor" \
   "$(trunc_row "$TT/pg-full")" \
-  "history truncated: the page cap (--max-pages 2) stopped on a full page at blockTime 1700003000; resume into a new --out with --before P2000, or raise --max-pages"
-if grep -q "history truncated for $A_ADDR: the page cap (--max-pages 2) stopped on a full page at blockTime 1700003000 — resume into a new --out with --before P2000" "$TT/pg-full.out"; then
-  ok "paging: no window, the run prints the truncation notice"
+  "older history may exist: the page cap (--max-pages 2) stopped on a full page at blockTime 1700003000; resume into a new --out with --before P2000, or raise --max-pages"
+if grep -q "older history may exist for $A_ADDR: the page cap (--max-pages 2) stopped on a full page at blockTime 1700003000 — resume into a new --out with --before P2000" "$TT/pg-full.out"; then
+  ok "paging: no window, the run prints the notice"
 else
-  bad "paging: no truncation notice without a window"
+  bad "paging: no notice without a window"
 fi
 collect "$TT/pg-until" --until 100 --max-pages 2 --max-tx 0 -- "$A_ADDR"
 case "$(trunc_row "$TT/pg-until")" in
@@ -337,8 +356,8 @@ case "$(trunc_row "$TT/pg-until")" in
 esac
 collect "$TT/pg-until-in" --until 1700004500 --max-pages 2 --max-tx 0 -- "$A_ADDR"
 case "$(trunc_row "$TT/pg-until-in")" in
-  "history truncated: the page cap (--max-pages 2) stopped on a full page at blockTime 1700003000; resume into a new --out with --before P2000, or raise --max-pages")
-    ok "paging: --until only, the cap stops on a full page inside the window -> truncation gap row" ;;
+  "older history may exist: the page cap (--max-pages 2) stopped on a full page at blockTime 1700003000; resume into a new --out with --before P2000, or raise --max-pages")
+    ok "paging: --until only, the cap stops on a full page inside the window -> gap row" ;;
   *) bad "paging: --until only, full page inside the window -> row '$(trunc_row "$TT/pg-until-in")'" ;;
 esac
 hist 1500

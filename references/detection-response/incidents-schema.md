@@ -101,10 +101,10 @@ bumps the `schema` string to `auditor-incidents/2`.
   that produced each number (hard rule 5). Never a URL, never a secret.
 - **`collection_gaps`** holds every row of the collector's
   `corpus*/collection-gaps.tsv`, as `"<signature or address>: <reason>"` (a fetch
-  that failed, history the page cap truncated, the `--max-tx` cap, a stop after
-  ten failed fetches in a row), plus the gaps the run found itself (provider
-  retention, a `Log truncated` tail, a sibling address not collected). The same
-  rows go into LEDGER.md.
+  that failed, a page cap that stopped on a full page, where older history may
+  exist, the `--max-tx` cap, a stop after ten failed fetches in a row), plus the
+  gaps the run found itself (provider retention, a `Log truncated` tail, a sibling
+  address not collected). The same rows go into LEDGER.md.
 - **Secrets / PII.** No RPC URL anywhere, including `collection_gaps`. Victim and
   attacker wallet lists stay in this file inside `incident_<n>/`, which is
   git-ignored; they are not lifted into any shared report.

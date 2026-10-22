@@ -33,9 +33,11 @@ gated (README rule 3; the command confirms addresses, window, caps and estimated
 call count with the human first):
 
 - **Signatures:** `getSignaturesForAddress`, newest→oldest, 1–1000 per page,
-  paged with the `before` cursor until the history ends (a page shorter than
-  1000), the window start, or the page cap; a page cap that cuts a full page
-  reports the history as truncated, with the `--before` cursor that resumes it.
+  paged with the `before` cursor until the history ends (an empty page), the
+  window start, or the page cap. A page shorter than 1000 is not the end, except
+  on the last page the cap allows: a node can return one before the end (for
+  example when its archive backend fails). A page cap that stops on a full page
+  reports that older history may exist, with the `--before` cursor that resumes it.
   Only this method is unaffected by transaction v1. `err` is per-signature, so failed
   attempts are visible here before you fetch anything.
 - **Transactions:** `getTransaction`, `encoding: jsonParsed`, `commitment:
@@ -63,11 +65,11 @@ call count with the human first):
   find (README § Run directory). An `incident_<n>/` that the corpus lands in gets a
   `.gitignore` of `*` if it has none (Rule 11d).
 - **Gaps are written down.** A `getTransaction` that failed (transport error, RPC
-  error or null result), a signature page that failed, history the page cap
-  truncated (it stopped on a full page of 1,000; a shorter page ends the history),
-  the `--max-tx` cap, and a stop after ten failed `getTransaction` calls in a row
-  each add a `<signature or address><TAB><reason>` row to
-  `<out>/collection-gaps.tsv`, and the run ends with `collection gaps: N`.
+  error or null result), a signature page that failed, a page cap that stopped on
+  a full page of 1,000 (older history may exist), the `--max-tx` cap, and a stop
+  after ten failed `getTransaction` calls in a row each add a
+  `<signature or address><TAB><reason>` row to `<out>/collection-gaps.tsv`, and
+  the run ends with `collection gaps: N`.
   `--max-tx` counts every `getTransaction` call, failed ones included. Every row
   goes into LEDGER.md and INCIDENTS.json `collection_gaps`.
 - Verdict evidence is read at `finalized`. The one exception is the

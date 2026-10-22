@@ -45,10 +45,14 @@
 # so a resume never erases the first pass. Every address and --before value must be
 # base58, and every number a plain integer, before anything is written or sent.
 #
-# A page shorter than the 1000 signatures asked for is the end of the address's
-# history. When the page cap stops paging on a full page before --since was crossed,
-# whatever --since and --until are, the script says so ("history truncated") with
-# the --before to resume from: the corpus is then incomplete for that address, a
+# PAGING: an empty page is the end of the address's history, and so is a page that
+# crosses --since. A page shorter than the 1000 signatures asked for is not, except
+# on the last page --max-pages allows: a node can return a short page before the end
+# (for example when its archive backend fails), so paging goes on. That costs one
+# more call when the history did end there, never more calls than --max-pages. When
+# the page cap stops paging on a full page before --since was crossed, whatever
+# --since and --until are, the script says so ("older history may exist") with the
+# --before to resume from: the corpus may then be incomplete for that address, a
 # collection gap to record in the ledger. Signatures are fetched newest first (by
 # slot, across all addresses; within a slot, in the order the RPC returned them), so
 # --max-tx drops the oldest. The script runs under LC_ALL=C, so neither that order
@@ -56,11 +60,12 @@
 #
 # COLLECTION GAPS: every gap is also a row of <dir>/collection-gaps.tsv,
 # `<signature or address><TAB><reason>`: a getTransaction that failed (transport
-# error, RPC error or null result), a signature page that failed, history the page
-# cap truncated, the --max-tx cap, and the stop on a failing endpoint (the
-# last two name the first signature not fetched). The run ends with
-# "collection gaps: N (see <dir>/collection-gaps.tsv)". Gaps leave the exit status
-# at 0; copy each row into LEDGER.md and INCIDENTS.json `collection_gaps`.
+# error, RPC error or null result), a signature page that failed, a page cap that
+# stopped on a full page (older history may exist), the --max-tx cap, and the stop
+# on a failing endpoint (the last two name the first signature not fetched). The
+# run ends with "collection gaps: N (see <dir>/collection-gaps.tsv)". Gaps leave the
+# exit status at 0; copy each row into LEDGER.md and INCIDENTS.json
+# `collection_gaps`.
 #
 # SECRETS: the endpoint comes from $RPC_URL and is NEVER echoed. curl runs with -q
 # (no ~/.curlrc) and reads the URL from a config on stdin (-K -), so the key stays
@@ -275,9 +280,11 @@ gap() {  # gap <signature or address> <reason>: one row per thing the corpus lac
   ngaps=$((ngaps + 1))
 }
 
-# 1. signature history, newest -> oldest, bounded by --since and --max-pages. A page
-#    shorter than the 1000 asked for ends the address's history; a cap that stops
-#    paging on a full page, before --since was crossed, truncated it.
+# 1. signature history, newest -> oldest, bounded by --since and --max-pages. An
+#    empty page ends the address's history. A page shorter than the 1000 asked for
+#    ends it only on the cap's last page: a node can return a short page before the
+#    end, so paging goes on. A cap that stops paging on a full page, before --since
+#    was crossed, may have left older history out.
 collected=0
 for addr in "${addrs[@]}"; do
   before="$before_start"; page=0; oldest=0; ended=0
@@ -298,8 +305,9 @@ for addr in "${addrs[@]}"; do
       oldest="$(printf '%s' "$resp" | jq -r '.result[-1].blockTime // 0')"
       collected=$((collected + n))
     fi
-    if [ "$n" -lt 1000 ]; then ended=1; break; fi
+    if [ "$n" -eq 0 ]; then ended=1; break; fi
     if [ "$since" -gt 0 ] && [ "$oldest" -gt 0 ] && [ "$oldest" -lt "$since" ]; then ended=1; break; fi
+    if [ "$n" -lt 1000 ] && [ "$page" -ge "$max_pages" ]; then ended=1; break; fi
   done
   if [ "$ended" -eq 0 ]; then
     if [ "$page" -eq 0 ]; then
@@ -313,8 +321,8 @@ for addr in "${addrs[@]}"; do
       fi
     fi
     resume="${before:+resume into a new --out with --before $before, or }raise --max-pages"
-    echo "  ! history truncated for $addr: $stop — $resume; recorded as a collection gap" >&2
-    gap "$addr" "history truncated: $stop; $resume"
+    echo "  ! older history may exist for $addr: $stop — $resume; recorded as a collection gap" >&2
+    gap "$addr" "older history may exist: $stop; $resume"
   fi
 done
 echo "signatures collected: $collected -> $sig_file"

@@ -96,10 +96,11 @@ directory.
      (Rule 11b), never a URL with a key.
    - The collector ends with `collection gaps: N` and writes one
      `<signature or address><TAB><reason>` row per gap (a fetch that failed, a
-     history the page cap truncated, the `--max-tx` cap, a stop after ten failed
-     fetches in a row) to `incident_<n>/corpus/collection-gaps.tsv`; the agent copies
-     every row into the ledger's **Collection gaps** line and into
-     `collection_gaps` of each incident in `INCIDENTS.json`.
+     page cap that stopped on a full page, where older history may exist, the
+     `--max-tx` cap, a stop after ten failed fetches in a row) to
+     `incident_<n>/corpus/collection-gaps.tsv`; the agent copies every row into the
+     ledger's **Collection gaps** line and into `collection_gaps` of each incident
+     in `INCIDENTS.json`.
    - Any wider collection the agent asks for comes back here: show the human its
      exact addresses, window and caps, and collect into the next
      `incident_<n>/corpus-<k>/` (`<k>` = highest existing + 1, `corpus/` counting as

@@ -240,8 +240,8 @@ The one gated collector: it pages each address's signature history, failed trans
 | `--out <dir>` | corpus directory (required). One that holds `signatures.jsonl`, `transactions.jsonl` or `collection-gaps.tsv`, even an empty one, is refused, so a resume goes into a new directory |
 | `--confirmed` | required; the commands pass it only after a person has approved the addresses, the window, the caps and the estimated call count |
 | `--since <unix>`, `--until <unix>` | the window, on `blockTime`; `0` (the default) leaves that end open |
-| `--before <signature>` | start paging just older than this signature: resume a capped or truncated run, or skip activity after the incident |
-| `--max-pages N` | pages of 1,000 signatures per address (default 20); a page of fewer than 1,000 ends that address's history |
+| `--before <signature>` | start paging just older than this signature: resume a capped run, or skip activity after the incident |
+| `--max-pages N` | pages of up to 1,000 signatures per address (default 20). An empty page ends that address's history; a page of fewer than 1,000 ends it only on the last page the cap allows, since a node can return a short page before the end, so a history that ends inside the cap costs one more call |
 | `--max-tx N` | `getTransaction` calls in total, failures included (default 2000); the oldest signatures are left out first. After 10 failed calls in a row the run stops |
 | `-- <address> ...` | the base58 addresses to page |
 
@@ -262,7 +262,7 @@ The one gated collector: it pages each address's signature history, failed trans
 - **Network:** read-only JSON-RPC to `$RPC_URL` (`getSignaturesForAddress`, then `getTransaction` at `finalized` with `maxSupportedTransactionVersion: 1`), and only with `--confirmed`. The URL reaches curl through a config on stdin (`curl -q -K -`), never as an argument. The `provider:` line names the provider's domain (the host's last two labels) for the Rule 11b disclosure; curl errors pass through `redact.sh`.
 - **Writes:** `<dir>/signatures.jsonl`, `<dir>/transactions.jsonl` and `<dir>/collection-gaps.tsv`.
   - `transactions.jsonl` is written by jq only when a test round-trip shows jq keeps 64-bit integers exact (a check of behaviour, not of the version); otherwise it is written by `python3 -I`.
-  - `collection-gaps.tsv` has one `<signature or address><TAB><reason>` row per gap: a failed `getTransaction`, a failed signature page (older history not collected), a history truncated at `--max-pages` (with the `--before` to resume from), the `--max-tx` cap, or the stop after 10 failed calls in a row.
+  - `collection-gaps.tsv` has one `<signature or address><TAB><reason>` row per gap: a failed `getTransaction`, a failed signature page (older history not collected), a page cap that stopped on a full page, where older history may exist (with the `--before` to resume from), the `--max-tx` cap, or the stop after 10 failed calls in a row.
   - stdout ends with `collection gaps: N (see …)`. Notices go to stderr and start with `  ! `.
   - An `incident_*` directory (`<dir>` or its parent) without a `.gitignore` gets one containing `*`.
 - **Needs:** curl and jq; `python3` too when jq rounds large integers (before jq 1.7).
