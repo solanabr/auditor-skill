@@ -4,11 +4,12 @@
 # Reproduces the finding from a clean checkout of THIS crate:
 #   1. builds the `vulnerable` arm to SBF, runs tests/exploit.rs      → exploit must SUCCEED
 #   2. builds the `fixed`      arm to SBF, runs tests/fixed_blocked.rs → same attack must be REJECTED
-# Exit 0: the exploit reproduces on `vulnerable` and is blocked on `fixed` — the
-# evidence that earns [PoC-REPRODUCED]. Exit 1: the exploit did not reproduce. Exit 2:
-# the fixed arm did not block it. Exit 3: a named blocker (toolchain, inputs, a build
-# that failed, or the execution mode below) — record [PoC-ATTEMPTED] and keep the
-# prose PoC.
+# Exit 0: the exploit reproduces on `vulnerable` and, when the fixed arm runs, is
+# blocked on `fixed` — the evidence that earns [PoC-REPRODUCED]. Exit 1: the exploit
+# did not reproduce. Exit 2: the fixed arm did not block it. Exit 3: a named blocker
+# (toolchain, inputs, a build that failed, the execution mode below, an assertion
+# that never ran, or an inconclusive fixed arm) — record [PoC-ATTEMPTED] and keep
+# the prose PoC.
 #
 # Why two build+test passes and not one: both arms compile to the SAME `.so`
 # filename ({PROGRAM_NAME}.so), so they cannot coexist in SBF_OUT_DIR. Build an arm,
@@ -44,18 +45,34 @@
 #     CARGO_TARGET_DIR to a cache directory you created outside any repository —
 #     never one inside the target tree or one you did not create: cargo trusts the
 #     build outputs it finds there. SBF_OUT_DIR stays in the scratch copy either way.
+#   * mollusk looks for {CRATE}.so in tests/fixtures/ and BPF_OUT_DIR before
+#     SBF_OUT_DIR, so run.sh unsets BPF_OUT_DIR and refuses a crate holding
+#     tests/fixtures/{CRATE}.so: the bytes that run are the arm run.sh placed.
 #
-# INCIDENT MODE (detection & response, references/detection-response/): Leg 3 of
-# `confirmed_exploited` requires the REAL program bytes, not a minimized replica.
-# Set BOTH of these to run each arm against a prebuilt .so instead of building:
-#     VULNERABLE_SO=/path/to/deployed-or-vulnerable.so  \
-#     FIXED_SO=/path/to/patched-or-current.so           ./run.sh
-#   * both-or-neither: setting only one exits 3.
-#   * a bad path, a file without the ELF magic, or a missing `cargo` all exit 3
-#     (a named precondition failure, never a bare `cp` error).
-#   * the tests must be in incident form, or it exits 3: tests/exploit.rs asserts
-#     the observed effect via `outcome.get_account(&pk)`, and tests/fixed_blocked.rs
-#     pins the guard's error with `assert_exploit_rejected_with!`.
+# PREBUILT BYTES (incidents under references/detection-response/, or a patch re-run
+# against the target's own builds). Leg 3 of `confirmed_exploited` needs the exploit
+# to run on the REAL program bytes, not on this crate's minimized arms:
+#     VULNERABLE_SO=/path/to/deployed-or-vulnerable.so ./run.sh
+# runs the exploit arm alone on those bytes, and adding
+#     FIXED_SO=/path/to/patched-or-current.so
+# also runs the fixed arm, on the FIXED_SO bytes. FIXED_SO without VULNERABLE_SO
+# exits 3.
+#   * a bad path, a file without the ELF magic, or a missing `cargo` or `python3`
+#     exits 3 (a named precondition failure, never a bare `cp` error).
+#   * an arm counts only on a contract assertion that RAN AND HELD:
+#     assert_exploit_effect! on the vulnerable bytes; assert_exploit_rejected_with!
+#     (our fix: the guard's exact error) or assert_exploit_blocked! (a fix the team
+#     deployed) on the fixed bytes. Each leaves a marker in AUDITOR_POC_MARKERS,
+#     which run.sh points at a fresh directory per arm; a passing test without its
+#     marker exits 3, and a fixed arm that fails on a harness error exits 3 as
+#     inconclusive. The marker is a floor, not proof: read the assertion all the
+#     same.
+#   * success prints the one line that can stand for Leg 3, naming the zero-trimmed
+#     sha256 of the bytes that ran:
+#       OK: reproduced on prebuilt bytes — vulnerable sha256=<64 hex> → [PoC-REPRODUCED]
+#     or, with FIXED_SO, "... vulnerable sha256=<…> fixed sha256=<…> (<how the
+#     fixed arm held>) → [PoC-REPRODUCED]". A build of this crate's own arms prints
+#     another line, and a model is never Leg 3.
 #   * the incident commit is built natively ONLY when its root cause is not supply
 #     chain / CI; otherwise supply the dumped ELF here (OUTPUT-RULES.md Rule 11a).
 
@@ -81,14 +98,14 @@ esac
 VULNERABLE_SO="${VULNERABLE_SO:-}"
 FIXED_SO="${FIXED_SO:-}"
 PREBUILT=0
-if [[ -n "${VULNERABLE_SO}" || -n "${FIXED_SO}" ]]; then
-  # both-or-neither
-  if [[ -z "${VULNERABLE_SO}" || -z "${FIXED_SO}" ]]; then
-    echo "[PoC-ATTEMPTED] blocker: VULNERABLE_SO and FIXED_SO are both-or-neither — set both or neither." >&2
-    exit 3
-  fi
-  for pair in "vulnerable:${VULNERABLE_SO}" "fixed:${FIXED_SO}"; do
-    arm="${pair%%:*}"; path="${pair#*:}"
+if [[ -n "${FIXED_SO}" && -z "${VULNERABLE_SO}" ]]; then
+  echo "[PoC-ATTEMPTED] blocker: FIXED_SO needs VULNERABLE_SO — the fixed bytes are checked against the exploit on the vulnerable ones." >&2
+  exit 3
+fi
+if [[ -n "${VULNERABLE_SO}" ]]; then
+  for arm in vulnerable fixed; do
+    if [[ "${arm}" == vulnerable ]]; then path="${VULNERABLE_SO}"; else path="${FIXED_SO}"; fi
+    [[ -n "${path}" ]] || continue
     if [[ ! -f "${path}" ]]; then
       echo "[PoC-ATTEMPTED] blocker: ${arm} .so not found at '${path}'." >&2
       exit 3
@@ -101,7 +118,7 @@ if [[ -n "${VULNERABLE_SO}" || -n "${FIXED_SO}" ]]; then
       exit 3
     fi
   done
-  # The build runs from a scratch directory, so pin both paths absolute now.
+  # The build runs from a scratch directory, so pin the paths absolute now.
   abs_path() {
     local p="$1" d f
     case "${p}" in */*) d="${p%/*}"; f="${p##*/}" ;; *) d="."; f="${p}" ;; esac
@@ -110,26 +127,10 @@ if [[ -n "${VULNERABLE_SO}" || -n "${FIXED_SO}" ]]; then
     printf '%s/%s\n' "${d}" "${f}"
   }
   VULNERABLE_SO="$(abs_path "${VULNERABLE_SO}")"
-  FIXED_SO="$(abs_path "${FIXED_SO}")"
-  # On real bytes, `Ok` / "any Err" prove nothing about the incident. Incident mode
-  # therefore requires, in live (non-comment) code:
-  #   * tests/exploit.rs asserts the observed Leg-1 effect through
-  #     `outcome.get_account(&pk)` — the account the attack changed, as seen on-chain;
-  #   * tests/fixed_blocked.rs pins the guard's error with
-  #     `assert_exploit_rejected_with!`, not the any-error form.
-  live() {  # live <file> <regex> : a match on a line that is not a // comment
-    # Counted, not `grep -q`: an early-exit reader under pipefail would hand the
-    # grep before it a SIGPIPE on a large file and turn a live match into "absent".
-    local n
-    n="$(grep -E "$2" "$1" 2>/dev/null | grep -Evc '^[[:space:]]*//')" || true
-    [[ "${n:-0}" -gt 0 ]]
-  }
-  if ! live "${HERE}/tests/exploit.rs" 'get_account[[:space:]]*\('; then
-    echo "[PoC-ATTEMPTED] blocker: prebuilt (incident) mode needs tests/exploit.rs to assert the observed effect via outcome.get_account(&pk) — Ok alone proves nothing on real bytes." >&2
-    exit 3
-  fi
-  if ! live "${HERE}/tests/fixed_blocked.rs" 'assert_exploit_rejected_with!'; then
-    echo "[PoC-ATTEMPTED] blocker: prebuilt (incident) mode needs tests/fixed_blocked.rs to pin the guard's error with assert_exploit_rejected_with! — any Err is not a fix." >&2
+  if [[ -n "${FIXED_SO}" ]]; then FIXED_SO="$(abs_path "${FIXED_SO}")"; fi
+  # The success line names the zero-trimmed hash of the bytes that ran.
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "[PoC-ATTEMPTED] blocker: python3 not on PATH — prebuilt mode names the zero-trimmed sha256 of the bytes it ran, which needs python3." >&2
     exit 3
   fi
   PREBUILT=1
@@ -204,6 +205,10 @@ if [[ -n "${extra}" ]]; then
   echo "[PoC-ATTEMPTED] blocker: ${extra#./} inside the crate is a symbolic link, a .cargo/ directory or a rust-toolchain* file. run.sh builds a copy of the crate outside the target tree and never copies these; remove it (for a link, copy in the file itself)." >&2
   exit 3
 fi
+if [[ -e "${HERE}/tests/fixtures/${CRATE}.so" ]]; then
+  echo "[PoC-ATTEMPTED] blocker: tests/fixtures/${CRATE}.so would load in place of the arm run.sh puts in SBF_OUT_DIR (mollusk looks in tests/fixtures first); remove it." >&2
+  exit 3
+fi
 if ! BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/auditor-poc.XXXXXX")"; then
   echo "[PoC-ATTEMPTED] blocker: cannot create a scratch build directory under ${TMPDIR:-/tmp}." >&2
   exit 3
@@ -228,6 +233,8 @@ if [[ -z "${RUSTUP_TOOLCHAIN:-}" ]] && command -v rustup >/dev/null 2>&1; then
        exit 3 ;;
   esac
 fi
+# mollusk reads BPF_OUT_DIR before SBF_OUT_DIR; only the arm placed below may load.
+unset BPF_OUT_DIR
 export SBF_OUT_DIR="${BUILD_DIR}/target/deploy"
 if ! { cd "${BUILD_DIR}" && mkdir -p "${SBF_OUT_DIR}"; }; then
   echo "[PoC-ATTEMPTED] blocker: cannot prepare ${SBF_OUT_DIR}." >&2
@@ -281,26 +288,64 @@ build_tests() {  # build_tests <arm> <test>: a test binary that does not compile
   fi
 }
 
+run_tests() {  # run_tests <arm> <test>: the arm's test, with an empty marker directory of its own
+  local dir="${BUILD_DIR}/markers/$1"
+  if ! { rm -rf "${dir}" && mkdir -p "${dir}"; }; then
+    echo "[PoC-ATTEMPTED] blocker: cannot prepare the marker directory ${dir}." >&2
+    exit 3
+  fi
+  AUDITOR_POC_MARKERS="${dir}" cargo test --manifest-path "${BUILD_DIR}/Cargo.toml" \
+    --no-default-features --features "$1" --test "$2" -- --nocapture
+}
+
+marker() {  # marker <arm> <kind>: the first line of the marker an assertion left, if any
+  local file="${BUILD_DIR}/markers/$1/$2"
+  [[ -s "${file}" ]] && head -n 1 "${file}"
+}
+
 # 1. vulnerable arm — the exploit must land.
 place_arm vulnerable
 build_tests vulnerable exploit
 echo ">> running exploit against 'vulnerable' (expect: SUCCEEDS)"
-if ! cargo test --manifest-path "${BUILD_DIR}/Cargo.toml" \
-      --no-default-features --features vulnerable \
-      --test exploit -- --nocapture; then
+if ! run_tests vulnerable exploit; then
   echo "FAIL: exploit did not reproduce on the vulnerable arm — PoC is not valid." >&2
   exit 1
+fi
+if [[ "${PREBUILT}" -eq 1 ]]; then
+  if ! effect="$(marker vulnerable effect)"; then
+    echo "[PoC-ATTEMPTED] blocker: tests/exploit.rs passed on the prebuilt bytes, but no assert_exploit_effect! ran and held — Ok alone proves nothing on real bytes; assert the effect the attack leaves (shared-test-utils)." >&2
+    exit 3
+  fi
+  echo "   effect: ${effect}"
+  if [[ -z "${FIXED_SO}" ]]; then
+    echo "OK: reproduced on prebuilt bytes — vulnerable sha256=$(elf_hash "${VULNERABLE_SO}") → [PoC-REPRODUCED]"
+    exit 0
+  fi
 fi
 
 # 2. fixed arm — the same attack must be turned away.
 place_arm fixed
 build_tests fixed fixed_blocked
 echo ">> running same attack against 'fixed' (expect: REJECTED)"
-if ! cargo test --manifest-path "${BUILD_DIR}/Cargo.toml" \
-      --no-default-features --features fixed \
-      --test fixed_blocked -- --nocapture; then
+if ! run_tests fixed fixed_blocked; then
+  if why="$(marker fixed inconclusive)"; then
+    echo "[PoC-ATTEMPTED] blocker: the fixed arm failed on a harness error, not a guard (${why}). The attack as written no longer fits the program, so this run shows neither a fix nor its absence; fix the harness and re-run." >&2
+    exit 3
+  fi
   echo "FAIL: the fixed arm did not block the attack — fix is incomplete." >&2
   exit 2
 fi
-
-echo "OK: exploit reproduces on 'vulnerable' and is blocked on 'fixed'  → [PoC-REPRODUCED]"
+if [[ "${PREBUILT}" -eq 0 ]]; then
+  echo "OK: exploit reproduces on 'vulnerable' and is blocked on 'fixed' (this crate's own arms: a model, never Leg 3)  → [PoC-REPRODUCED]"
+  exit 0
+fi
+if held="$(marker fixed rejected_with)"; then
+  how="rejected with the pinned error"
+elif held="$(marker fixed blocked)"; then
+  how="blocked: failed, account unchanged"
+else
+  echo "[PoC-ATTEMPTED] blocker: tests/fixed_blocked.rs passed on the prebuilt bytes, but neither assert_exploit_rejected_with! nor assert_exploit_blocked! ran and held — any Err is not a fix on real bytes." >&2
+  exit 3
+fi
+echo "   fixed arm: ${held}"
+echo "OK: reproduced on prebuilt bytes — vulnerable sha256=$(elf_hash "${VULNERABLE_SO}") fixed sha256=$(elf_hash "${FIXED_SO}") (${how}) → [PoC-REPRODUCED]"

@@ -12,21 +12,20 @@
 
 use borsh::BorshSerialize;
 use shared_test_utils::{
-    assert_exploit_rejected, mollusk_for, program_owned_account, random_pubkey, system_account,
+    assert_exploit_rejected_with, mollusk_for, program_owned_account, random_pubkey, system_account,
 };
 use solana_sdk::{
     instruction::{AccountMeta, Instruction},
-    pubkey::Pubkey,
+    program_error::ProgramError,
 };
 use {PROGRAM_NAME}::State;
 
 #[test]
 fn same_attack_rejected_on_fixed() {
-    // {PROGRAM_ID}: a fresh key for an audit-time PoC. In INCIDENT mode
-    // (references/detection-response/) set this to the REAL deployed program id —
-    // the `fixed` arm runs the real/patched bytes, and an Anchor program whose
-    // declare_id! does not match its own id rejects every instruction, which would
-    // masquerade as a "fix".
+    // {PROGRAM_ID}: a fresh key for an audit-time PoC. On real bytes (run.sh
+    // FIXED_SO) set this to the REAL deployed program id — an Anchor program whose
+    // declare_id! does not match its own id rejects every instruction with
+    // Custom(4100), which would masquerade as a "fix".
     let program_id = random_pubkey();
     let mollusk = mollusk_for(program_id, "{PROGRAM_NAME}");
 
@@ -54,28 +53,36 @@ fn same_attack_rejected_on_fixed() {
         data: vec![],
     };
 
-    let outcome = mollusk.process_instruction(
-        &ix,
-        &[
-            (state_pk, state_acct),
-            (legit_authority, system_account(0)),
-            (attacker, system_account(1_000_000_000)),
-        ],
+    let accounts = vec![
+        (state_pk, state_acct),
+        (legit_authority, system_account(0)),
+        (attacker, system_account(1_000_000_000)),
+    ];
+    let outcome = mollusk.process_instruction(&ix, &accounts);
+
+    // The contract: on the fixed build the restored guard turns the attack away with
+    // ITS error, compared with == (a value, never a pattern), so a rejection for an
+    // unrelated reason — a wrong program id, a short account list — cannot pass for
+    // the fix. run.sh accepts prebuilt bytes only when this assertion ran and held.
+    // {GUARD_ERROR}: here the restored is_signer check's error; a custom error is
+    // `ProgramError::Custom(<code>)`.
+    assert_exploit_rejected_with!(
+        outcome,
+        ProgramError::MissingRequiredSignature,
+        "{WHICH_GUARD_BLOCKS_IT}"
     );
 
-    // The contract: on the fixed build, the restored guard turns the attack away.
-    // AUDIT mode: any error proves the hole is closed.
-    assert_exploit_rejected!(outcome, "{WHICH_GUARD_BLOCKS_IT}");
-
-    // INCIDENT mode (references/detection-response/, Leg 3): the any-error form
-    // above is NOT enough — pin the guard's SPECIFIC error, so a rejection for an
-    // unrelated reason can't certify the fix. Replace the line above with:
+    // A hotfix the team already deployed (run.sh FIXED_SO = a fresh dump of the
+    // current bytes) rejects with an error you cannot know in advance. For that check
+    // only, replace the assertion above with this one, keeping the account and read
+    // of tests/exploit.rs. run.sh then reports the fixed arm as "blocked", which
+    // never stands for our own fix:
     //
-    //   use mollusk_svm::result::ProgramResult;
-    //   use solana_sdk::program_error::ProgramError;
-    //   assert_exploit_rejected_with!(
+    //   shared_test_utils::assert_exploit_blocked!(
     //       outcome,
-    //       ProgramResult::Failure(ProgramError::MissingRequiredSignature), // the guard's error
-    //       "{WHICH_GUARD_BLOCKS_IT}"
+    //       before: &accounts,
+    //       account: state_pk,
+    //       read: |a| a.data[0..32].to_vec(),
+    //       why: "{WHICH_GUARD_BLOCKS_IT}",
     //   );
 }
