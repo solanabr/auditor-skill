@@ -13,14 +13,19 @@ discard it.
 
 The rebuild runs target-controlled code (build scripts, proc-macros, toolchain files), so it follows the
 execution mode recorded at intake — `OUTPUT-RULES.md` Rule 11a (isolated recommended; native allowed and
-stated in the report). If it cannot run in that mode, stop at `[FIX-PROPOSED]`. Create the worktree from a
-clone you made yourself; for a checkout the client supplied, follow Rule 11c first.
+stated in the report). If it cannot run in that mode, stop at `[FIX-PROPOSED]`. Create the worktree in a
+copy you made yourself, `GIT_NO_LAZY_FETCH=1 git clone --no-local <checkout> <scratch copy>` (Rule 11c),
+never in a checkout the client supplied: every git command below runs from the scratch directory and on the
+copy (`git -C`), none in the client checkout. `{CHECKOUT}` and `{PATH_TO}` are absolute paths.
 
 ```bash
-git worktree add /tmp/fix-{FINDING_ID} {COMMIT}      # the audited commit the patch targets
-cd /tmp/fix-{FINDING_ID}
-git apply {PATH_TO}/{FINDING_ID}.patch               # or: git am < ... for format-patch
-cargo build-sbf --tools-version v1.54                 # rebuild the patched program
+SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/fix-{FINDING_ID}.XXXXXX")" &&  # a fresh directory at an unpredictable path
+  cd "$SCRATCH" &&                                                # out of the client checkout before any git
+  GIT_NO_LAZY_FETCH=1 git clone --no-local {CHECKOUT} "$SCRATCH/copy" &&  # the Rule 11c copy
+  git -C "$SCRATCH/copy" worktree add "$SCRATCH/fix" {COMMIT} &&  # the audited commit the patch targets
+  cd "$SCRATCH/fix" &&
+  git apply {PATH_TO}/{FINDING_ID}.patch &&                       # or: git am < ... for format-patch
+  cargo build-sbf --tools-version v1.54                           # rebuild the patched program
 ```
 
 - [ ] Patch applied cleanly against `{COMMIT}` (no fuzz, no reject `.rej` files).
@@ -32,13 +37,24 @@ Re-run the finding's own exploit against the **patched** build. The line that
 previously succeeded must now fail.
 
 ```bash
-{PATH_TO}/poc/{FINDING_ID}/run.sh
+# {MODE}: the execution mode recorded at intake, isolated | native (OUTPUT-RULES.md Rule 11a)
+AUDITOR_EXEC_MODE={MODE} {PATH_TO}/poc/{FINDING_ID}/run.sh                    # minimized model
+AUDITOR_EXEC_MODE={MODE} VULNERABLE_SO={UNPATCHED_SO} FIXED_SO={PATCHED_SO} \
+  {PATH_TO}/poc/{FINDING_ID}/run.sh                                           # patched target build
 ```
 
 **Re-detonated against:** {patched target build (`VULNERABLE_SO` / `FIXED_SO` overrides — `templates/poc/run.sh`) | minimized model}
-— a *patched target build* runs `run.sh` against the unpatched and patched builds of the target itself
-(set both overrides or neither); the *minimized model* is the PoC crate's own `vulnerable` / `fixed` arms
-with the patch transplanted.
+— a *patched target build* runs `run.sh` with `VULNERABLE_SO` = the unpatched build and `FIXED_SO` = the
+patched build of the target itself. That is `run.sh`'s prebuilt mode: it exits 3 unless both files are ELF
+programs and each arm's contract assertion ran and held on the bytes `run.sh` placed (loaded through
+`mollusk_for`) — `assert_exploit_effect!` in `tests/exploit.rs` on the unpatched bytes,
+`assert_exploit_rejected_with!` (the guard's exact error) in `tests/fixed_blocked.rs` on the patched ones.
+Only a final line ending in `(rejected with the pinned error) → [PoC-REPRODUCED]` verifies our patch; exit 2
+means it did not block the attack, and exit 3 decides nothing (no contract assertion ran, the harness could
+not decide, or other bytes ran). A PoC written with the any-result `assert_exploit_succeeds!` /
+`assert_exploit_rejected!` switches to these first. The PoC must also use the program's real id, since an
+Anchor program checks its own `declare_id!`; `run.sh` does not check that. The *minimized model* is the PoC
+crate's own `vulnerable` / `fixed` arms with the patch transplanted.
 
 - **Pre-fix (recorded when the PoC was built):** `tests/exploit.rs` SUCCEEDED on the
   `vulnerable` arm — the attack went through. → `[PoC-REPRODUCED]`

@@ -49,6 +49,7 @@ HOW TO USE:
 | **Scope**           | {FULL / PROGRAM / BACKEND / FRONTEND / DEVOPS}    |
 | **In scope**        | {paths / programs / dirs reviewed}                |
 | **Out of scope**    | {excluded paths + reason — Q44} |
+| **audit-mem store** | {path of the store that passed the Rule 11d check / none} |
 
 ---
 
@@ -170,9 +171,9 @@ text for report §4.6.}
 
 <!--
 Q46. OUTPUT-RULES Rule 11a: where target-controlled code (builds, tests, installs,
-Anchor.toml [scripts], and PoCs that depend on target crates, build the target or
-are built inside its tree) may run. Asked once per audit;
-every later step that executes target code uses this answer. In the auto flow an
+Anchor.toml [scripts], and every PoC build) may run. Asked once per audit;
+every later step that executes target code or builds a PoC uses this answer, and
+templates/poc/run.sh receives it as AUDITOR_EXEC_MODE. In the auto flow an
 unanswered Q46 is "native" and goes in §9 with its basis. Outside services are not
 gated — they are listed in the report (Rule 11b).
 -->

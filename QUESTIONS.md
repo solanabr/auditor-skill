@@ -384,11 +384,11 @@ Branch to audit: _______________
 Commit hash (optional): _______________
 ```
 
-**Option B: Clone into auditor's workspace (recommended for private repos)**
+**Option B: Local checkout in the auditor's workspace (recommended for private repos)**
 ```
-Clone the auditor-skill folder into your repo:
-  cp -r auditor-skill/ your-repo/.github/skills/auditor-skill/
-Then invoke the audit from your IDE's AI agent.
+Install auditor-skill outside your repository (the plugin, or a user-level skill
+such as ~/.claude/skills/auditor-skill; OUTPUT-RULES.md Rule 11e), then invoke
+the audit from your IDE's AI agent in the repository.
 ```
 
 **Option C: Upload files (for web-based service)**
@@ -443,5 +443,5 @@ Building, testing or installing the project runs code the project controls — b
 | Q35 = MiCA/GDPR | Enables compliance checklist (18) |
 | Q39 = Specific scope | Skips irrelevant checklists, reduces cost/time |
 | Q41 = Quick scan | Uses grep + known vectors only, skips semantic analysis |
-| Q46 = Isolated | Builds, tests, installs, and PoCs that depend on target crates, build the target or are built inside its tree, run in a container / VM / sandbox (`OUTPUT-RULES.md` Rule 11a); a step that cannot run there keeps its source-level verdict, and a PoC records `[PoC-ATTEMPTED]` |
+| Q46 = Isolated | Builds, tests, installs and every PoC build run in a container / VM / sandbox (`OUTPUT-RULES.md` Rule 11a); a step that cannot run there keeps its source-level verdict, and a PoC records `[PoC-ATTEMPTED]` |
 | Q46 = Native, or unanswered | Target-controlled code runs on the auditor's machine; the report's Coverage & Limitations states it |
