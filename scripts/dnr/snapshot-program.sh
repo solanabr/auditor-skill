@@ -29,14 +29,19 @@
 # Loader-v4 programs (owner LoaderV411…) are not handled here: the script stops
 # with a named blocker rather than guess at a CLI command.
 #
+# RUN DIRECTORY: <incident_dir>, and the nearest incident_* directory above it, must
+# not be a symbolic link, hold one, or be tracked by git; such a directory is refused
+# with exit 2 before anything is written or the CLI runs.
+#
 # SECRETS: --url takes "$RPC_URL" from the environment; the CLI's stderr is captured
 # to a temp file and passed through redact.sh (the CLI echoes the full URL, key
 # included, in its errors). Nothing written to <incident_dir> contains the URL.
 #
-# Exit: 0 ok · 2 usage / not a base58 id / no $RPC_URL · 3 named blocker (no solana
-# CLI, CLI error, loader-v4, dump without ELF magic). bash >= 3.2, python3 for the
-# hash, run as `python3 -I` because the working directory is usually the audited
-# repo: without -I, a hashlib.py there would be imported in place of the stdlib.
+# Exit: 0 ok · 2 usage / not a base58 id / no $RPC_URL / a refused run directory ·
+# 3 named blocker (no solana CLI, CLI error, loader-v4, dump without ELF magic).
+# bash >= 3.2, python3 for the hash, run as `python3 -I` because the working
+# directory is usually the audited repo: without -I, a hashlib.py there would be
+# imported in place of the stdlib.
 
 set -uo pipefail
 
@@ -58,12 +63,47 @@ if [ -z "${RPC_URL:-}" ]; then
   echo "snapshot-program.sh: set \$RPC_URL in the environment." >&2
   exit 2
 fi
+case "$dir" in */) dir="${dir%"${dir##*[!/]}"}"; [ -n "$dir" ] || dir=/ ;; esac
+
+# refuse_planted <dir>: exit 2 unless <dir> is safe to write into — not a symbolic
+# link, holding none, and not tracked by git. The git calls carry the Rule 11c flags,
+# because the tree is usually the audited one. Outside a work tree nothing is tracked;
+# inside one, a path git cannot classify is refused.
+refuse_planted() {
+  local listed
+  if [ -L "$1" ]; then
+    echo "${0##*/}: refusing $1: it is a symbolic link — use a new run directory." >&2; exit 2
+  fi
+  if [ -d "$1" ] && [ -n "$(find "$1" -type l -print 2>/dev/null | sed -n 1p)" ]; then
+    echo "${0##*/}: refusing $1: it contains a symbolic link — use a new run directory." >&2; exit 2
+  fi
+  [ -d "$(dirname "$1")" ] || return 0
+  [ "$(git --no-pager -c core.fsmonitor=false -c log.showSignature=false -C "$(dirname "$1")" \
+        rev-parse --is-inside-work-tree 2>/dev/null)" = true ] || return 0
+  if ! listed="$(git --no-pager -c core.fsmonitor=false -c log.showSignature=false -C "$(dirname "$1")" \
+        ls-files -- ":(literal,icase)$(basename "$1")" 2>/dev/null)"; then
+    echo "${0##*/}: refusing $1: git cannot tell whether it is tracked." >&2; exit 2
+  fi
+  if [ -n "$listed" ]; then
+    echo "${0##*/}: refusing $1: git tracks it, so it is not a run directory to write into." >&2; exit 2
+  fi
+  return 0
+}
+# <incident_dir>, and the nearest incident_* directory above it, checked as a whole.
+refuse_planted "$dir"
+run_dir="$dir"
+while :; do
+  case "$(basename "$run_dir")" in incident_*) [ "$run_dir" = "$dir" ] || refuse_planted "$run_dir"; break ;; esac
+  case "$run_dir" in .|/) break ;; esac
+  run_dir="$(dirname "$run_dir")"
+done
+
 if ! command -v solana >/dev/null 2>&1; then
   echo "[blocker] solana CLI not on PATH — install it, or dump the program another way and record its zero-trimmed sha256 and last-deployed slot in LEDGER.md by hand." >&2
   exit 3
 fi
 
-mkdir -p "$dir/bin"
+mkdir -p "$dir/bin" || exit 2
 # Rule 11d: an incident_<n>/ directory ignores itself when it has no .gitignore of
 # its own, so the dumped program never shows in git status.
 case "$(basename "$dir")" in

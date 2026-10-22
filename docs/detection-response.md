@@ -48,7 +48,8 @@ Telegram bot (`@seal_911_bot`). These commands are the after-the-fact workup.
 
 Everything lands in a per-run `incident_<n>/` directory whose first file is a
 `.gitignore` of `*` — raw corpora and off-chain logs carry PII and are never
-committed:
+committed. Each run makes a new one; an existing one is reused only when git does
+not track it, it holds no symbolic links, and you confirm it:
 
 - `bin/` — the step-1 snapshot of each implicated program (`<id>.so` plus its
   `solana program show` output), taken before anything else so a mid-investigation

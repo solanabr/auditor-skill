@@ -49,8 +49,10 @@ call count with the human first):
   it writes a file or sends a request.
 - **Reruns go to a new `--out`.** After a page cap, resume with `--before` into a
   fresh directory; an `--out` that already holds `signatures.jsonl` is refused
-  rather than overwritten. An `incident_<n>/` that the corpus lands in gets a
-  `.gitignore` of `*` if it has none (Rule 11d).
+  rather than overwritten, and so is one that — or whose `incident_*` directory —
+  is a symbolic link, holds one, or is tracked by git (README § Run directory). An
+  `incident_<n>/` that the corpus lands in gets a `.gitignore` of `*` if it has
+  none (Rule 11d).
 - Verdict evidence is read at `finalized`. The one exception is the
   "is it still ongoing?" check, which may read `confirmed` as long as it says so.
 

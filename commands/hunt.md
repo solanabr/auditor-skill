@@ -35,10 +35,14 @@ directory.
 ## Steps
 
 1. **Run directory, then the program bytes — before anything else.**
-   - Create `incident_<n>/` where `<n>` = existing `incident_*/` + 1 (`--fresh`
-     forces a new one). Its **first** file is `incident_<n>/.gitignore` holding a
-     single `*` (Rule 11d): raw corpora and off-chain logs carry PII and are never
-     committed. Start `LEDGER.md` from
+   - Create `incident_<n>/`: `<n>` is the highest existing number + 1; create the
+     dir with `mkdir` (not `-p`) and stop if it already exists. Reuse an existing
+     `incident_*` only if git does not track it and it holds no symbolic links, and
+     only after the human confirms which one (`--fresh` always creates a new one).
+     Never write into a tracked `incident_*`; the bundled scripts refuse one, and
+     one that is or holds a symbolic link, with exit 2. Its **first** file is
+     `incident_<n>/.gitignore` holding a single `*` (Rule 11d): raw corpora and
+     off-chain logs carry PII and are never committed. Start `LEDGER.md` from
      `${CLAUDE_PLUGIN_ROOT}/templates/hunt-ledger.md`.
    - **Snapshot each program in scope now:**
      `bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/snapshot-program.sh" <program_id> incident_<n>`

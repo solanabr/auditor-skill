@@ -378,6 +378,60 @@ eq "deltas: the attacker total is exact (Python ints)" \
 print(sum(int(l.split("\t")[3]) for l in open(sys.argv[1]) if l.split("\t")[1] == "Attacker"))' "$TT/big-d.tsv")" \
   "$(python3 -I -c 'print(20000 * (2**60 + 1))')"
 
+# ---------------------------------------------------------------------------
+# 15. collect.sh and snapshot-program.sh refuse a run directory that holds a
+#     symbolic link, is one, or is tracked by git (in any letter case): exit 2,
+#     nothing written inside it or outside it, no RPC call. An untracked,
+#     link-free incident_<n>/ in the same repository is still accepted.
+# ---------------------------------------------------------------------------
+X="$TT/outside"; mkdir -p "$X/bin" "$X/corpus" "$X/b3"; printf 'canary\n' > "$X/canary"
+mkdir -p "$TT/pl-a/incident_2" "$TT/pl-b"
+ln -s "$X/canary" "$TT/pl-a/incident_2/LEDGER.md"
+ln -s "$X/gitignore" "$TT/pl-a/incident_2/.gitignore"   # dangling: a write would create it outside
+ln -s "$X/bin" "$TT/pl-a/incident_2/bin"
+ln -s "$X/corpus" "$TT/pl-a/incident_2/corpus"
+ln -s "$X/b3" "$TT/pl-b/incident_3"
+REPO="$TT/repo"; mkdir -p "$REPO/incident_4" "$REPO/INCIDENT_6" "$REPO/incident_5"
+for f in incident_4/LEDGER.md INCIDENT_6/LEDGER.md incident_5/LEDGER.md; do printf 'prior\n' > "$REPO/$f"; done
+if git -C "$REPO" init -q >/dev/null 2>&1 && git -C "$REPO" add incident_4/LEDGER.md INCIDENT_6/LEDGER.md; then
+  ok "run dir: test repository tracks incident_4/ and INCIDENT_6/"
+else
+  bad "run dir: could not set up the test repository"
+fi
+tree_state() { find "$X" "$TT/pl-a" "$TT/pl-b" "$REPO" -path "$REPO/.git" -prune -o -print | LC_ALL=C sort; cat "$X/canary"; }
+state_before="$(tree_state)"
+calls_before="$(grep -c . "$FAKE_CURL_LOG" 2>/dev/null || true)"
+for case in \
+  "a symbolic link inside the run dir:$TT/pl-a/incident_2:$TT/pl-a/incident_2/corpus2" \
+  "a run dir that is a symbolic link:$TT/pl-b/incident_3:$TT/pl-b/incident_3/corpus" \
+  "the same link with a trailing slash:$TT/pl-b/incident_3/:$TT/pl-b/incident_3/" \
+  "a run dir git tracks:$REPO/incident_4:$REPO/incident_4/corpus" \
+  "a run dir git tracks in another letter case:$REPO/incident_6:$REPO/incident_6/corpus"; do
+  label="${case%%:*}"; rest="${case#*:}"; snapdir="${rest%%:*}"; outdir="${rest#*:}"
+  ( PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
+      bash "$DNR/collect.sh" --out "$outdir" --confirmed --max-pages 1 -- "$A_ADDR" ) > "$TT/rd.out" 2>&1
+  c1=$?
+  PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" bash "$DNR/snapshot-program.sh" "$PID" "$snapdir" >> "$TT/rd.out" 2>&1
+  c2=$?
+  if [[ "$c1" == 2 && "$c2" == 2 ]] && [[ "$(grep -c 'refusing' "$TT/rd.out")" == 2 ]]; then
+    ok "run dir: $label -> collect and snapshot refuse (exit 2)"
+  else
+    bad "run dir: $label -> collect exit $c1, snapshot exit $c2 ($(tr '\n' ' ' < "$TT/rd.out"))"
+  fi
+done
+if [[ "$(tree_state)" == "$state_before" ]]; then ok "run dir: refused runs wrote nothing, inside or outside"; else bad "run dir: a refused run changed the tree"; fi
+eq "run dir: refused runs made no RPC call" "$(grep -c . "$FAKE_CURL_LOG" 2>/dev/null || true)" "$calls_before"
+( PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
+    bash "$DNR/collect.sh" --out "$REPO/incident_5/corpus" --confirmed --max-pages 1 -- "$A_ADDR" ) > /dev/null 2>&1
+c1=$?
+PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" bash "$DNR/snapshot-program.sh" "$PID" "$REPO/incident_5" > /dev/null 2>&1
+c2=$?
+if [[ "$c1" == 0 && "$c2" == 0 && -s "$REPO/incident_5/corpus/transactions.jsonl" && -s "$REPO/incident_5/bin/$PID.so" ]]; then
+  ok "run dir: an untracked, link-free incident_<n>/ in a repository is accepted (control)"
+else
+  bad "run dir: the untracked control dir -> collect exit $c1, snapshot exit $c2"
+fi
+
 if [[ "$fails" -ne 0 ]]; then
   echo "test-dnr: $fails assertion(s) FAILED" >&2
   exit 1

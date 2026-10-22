@@ -38,10 +38,18 @@ directory.
 ## Steps
 
 1. **Run directory, then the program bytes — before anything else.**
-   - For an `INC-<n>.<k>` lead, adopt the `incident_<n>/` it names and work into
-     that `INCIDENTS.json`; minting a fresh directory would orphan the incident.
-     For any other lead, create `incident_<n>/` (its first file is a `.gitignore`
-     holding `*`, Rule 11d) or reuse the newest one unless `--fresh`.
+   - For a new `incident_<n>/`, `<n>` is the highest existing number + 1; create
+     the dir with `mkdir` (not `-p`) and stop if it already exists. Its first file
+     is a `.gitignore` holding `*` (Rule 11d). Reuse an existing `incident_*` only if git
+     does not track it and it holds no symbolic links, and only after the human
+     confirms which one. Never write into a tracked `incident_*`; the bundled
+     scripts refuse one, and one that is or holds a symbolic link, with exit 2.
+   - For an `INC-<n>.<k>` lead, the lead names the `incident_<n>/` to reuse (naming
+     it is the confirmation): adopt it under that rule and work into its
+     `INCIDENTS.json`; minting a fresh directory would orphan the incident. For any
+     other lead, offer the newest `incident_*` for reuse under the same rule; with
+     `--fresh`, or when no one can confirm (a non-interactive run), create a new
+     one.
    - **Snapshot every implicated program now:**
      `bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/snapshot-program.sh" <program_id> incident_<n>`
      — read-only `solana program show` + `solana program dump` into `incident_<n>/bin/`, with

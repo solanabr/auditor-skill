@@ -157,11 +157,17 @@ states it is fixed (unverified)".
 
 ## Run directory: `incident_<n>/`
 
-`<n>` = count of existing `incident_*/` directories + 1 (mirrors `audit_<n>`,
-`OUTPUT-RULES.md` Rule 9). The **first** thing written in a new run directory is a
-`.gitignore` containing a single line, `*` (Rule 11d) — a raw transaction corpus
-and off-chain logs can carry PII and must never be committed; the repo `.gitignore`
-also ignores `incident_*/` as a backstop.
+`<n>` is the highest existing number + 1; create the dir with `mkdir` (not `-p`)
+and stop if it already exists. Reuse an existing `incident_*` only if git does not
+track it and it holds no symbolic links, and only after the human confirms which
+one. Never write into a tracked `incident_*`. Both checks must print nothing:
+`git --no-pager -c core.fsmonitor=false -c log.showSignature=false ls-files -- incident_<k>`
+(Rule 11c) and `find incident_<k> -type l`. `collect.sh` and `snapshot-program.sh`
+refuse, with exit 2 and before writing anything, a run directory that is a
+symbolic link, holds one, or is tracked by git. The **first** thing written in a
+new run directory is a `.gitignore` containing a single line, `*` (Rule 11d) — a
+raw transaction corpus and off-chain logs can carry PII and must never be
+committed; the repo `.gitignore` also ignores `incident_*/` as a backstop.
 
 ```
 incident_<n>/

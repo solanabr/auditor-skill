@@ -11,8 +11,8 @@ Full method and the verdict rules these feed: `references/detection-response/`.
 
 | File | What it does |
 |------|--------------|
-| `snapshot-program.sh` | Step 1 of every run: read-only `solana program show` + `dump` of each implicated program into `incident_<n>/bin/`, printing the last-deployed slot and the zero-trimmed sha256 for the ledger — before a hotfix can overwrite the incident binary. Refuses an id that is not base58. |
-| `collect.sh` | The gated collector: pages signature history (failed transactions included — they are attempt evidence) and fetches transactions into a local JSONL corpus. Refuses without `--confirmed`, on any input that is not base58, and when `--out` already holds a corpus; read-only RPC only; capped; reports when the page cap stops short of the window. |
+| `snapshot-program.sh` | Step 1 of every run: read-only `solana program show` + `dump` of each implicated program into `incident_<n>/bin/`, printing the last-deployed slot and the zero-trimmed sha256 for the ledger — before a hotfix can overwrite the incident binary. Refuses an id that is not base58, and a run directory that is a symbolic link, holds one, or is tracked by git. |
+| `collect.sh` | The gated collector: pages signature history (failed transactions included — they are attempt evidence) and fetches transactions into a local JSONL corpus. Refuses without `--confirmed`, on any input that is not base58, when `--out` already holds a corpus, and when `--out` or its `incident_*` directory is a symbolic link, holds one, or is tracked by git; read-only RPC only; capped; reports when the page cap stops short of the window. |
 | `profile.sh` | Baseline a `transactions.jsonl`: outcome / version histograms, time window, fee-payer, signer and top-level-program inventories — all from structural fields, never from log text. |
 | `frames.py` | Attribute each `Program log:` / `Program data:` line to the program frame that emitted it, as JSONL. Walks the log array one element at a time with anchored regexes. |
 | `deltas.py` | `lamports` or `tokens`: per-account / per-(owner,mint) balance movement, computed in Python integers, successful transactions only. |

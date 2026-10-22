@@ -28,6 +28,11 @@
 # success, or a `suspected` incident whose attack has not landed yet. Filtering
 # failures out would make those undetectable. Use `meta.err` downstream.
 #
+# RUN DIRECTORY: --out, and the nearest incident_* directory at or above it, must be
+# a directory this run may write into. Either one that is a symbolic link, holds a
+# symbolic link, or is tracked by git is refused with exit 2 before anything is
+# written or sent.
+#
 # --before <sig> starts paging just older than that signature (resume a capped run,
 # or skip activity newer than the incident) — always into a new --out: an --out that
 # already holds signatures is refused, so a resume never erases the first pass. Every
@@ -99,13 +104,47 @@ for n in "$since" "$until" "$max_pages" "$max_tx"; do
     exit 2
   fi
 done
+case "$out" in */) out="${out%"${out##*[!/]}"}"; [ -n "$out" ] || out=/ ;; esac
+
+# refuse_planted <dir>: exit 2 unless <dir> is safe to write into — not a symbolic
+# link, holding none, and not tracked by git. The git calls carry the Rule 11c flags,
+# because the tree is usually the audited one. Outside a work tree nothing is tracked;
+# inside one, a path git cannot classify is refused.
+refuse_planted() {
+  local listed
+  if [ -L "$1" ]; then
+    echo "${0##*/}: refusing $1: it is a symbolic link — use a new run directory." >&2; exit 2
+  fi
+  if [ -d "$1" ] && [ -n "$(find "$1" -type l -print 2>/dev/null | sed -n 1p)" ]; then
+    echo "${0##*/}: refusing $1: it contains a symbolic link — use a new run directory." >&2; exit 2
+  fi
+  [ -d "$(dirname "$1")" ] || return 0
+  [ "$(git --no-pager -c core.fsmonitor=false -c log.showSignature=false -C "$(dirname "$1")" \
+        rev-parse --is-inside-work-tree 2>/dev/null)" = true ] || return 0
+  if ! listed="$(git --no-pager -c core.fsmonitor=false -c log.showSignature=false -C "$(dirname "$1")" \
+        ls-files -- ":(literal,icase)$(basename "$1")" 2>/dev/null)"; then
+    echo "${0##*/}: refusing $1: git cannot tell whether it is tracked." >&2; exit 2
+  fi
+  if [ -n "$listed" ]; then
+    echo "${0##*/}: refusing $1: git tracks it, so it is not a run directory to write into." >&2; exit 2
+  fi
+  return 0
+}
+# --out, and the nearest incident_* directory above it, checked as a whole.
+refuse_planted "$out"
+run_dir="$out"
+while :; do
+  case "$(basename "$run_dir")" in incident_*) [ "$run_dir" = "$out" ] || refuse_planted "$run_dir"; break ;; esac
+  case "$run_dir" in .|/) break ;; esac
+  run_dir="$(dirname "$run_dir")"
+done
 # A second pass into the same --out would truncate the first one's corpus.
 if [ -s "$out/signatures.jsonl" ]; then
   echo "collect.sh: $out already holds a collected corpus — use a new --out (resume there with --before)." >&2
   exit 2
 fi
 
-mkdir -p "$out"
+mkdir -p "$out" || exit 2
 # Rule 11d: an incident_<n>/ directory (the --out itself or its parent) ignores itself
 # when it has no .gitignore of its own, so the corpus never shows in git status.
 for d in "$out" "$(dirname "$out")"; do
