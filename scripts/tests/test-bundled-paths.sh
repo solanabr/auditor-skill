@@ -6,7 +6,7 @@
 #   2. the skill body, references/, discovery/, docs/, templates/ and README.md never *run* one by a
 #      relative path: an interpreter, `source` / `.`, `uv run`, `env …` or `cd` in front of it, a `test -d/-x`
 #      on it, a copy of templates/poc, or a code span / code line that starts with a relative script and
-#      passes it arguments. Prose that merely names a path ("a self-contained templates/poc crate", a
+#      passes it arguments. Prose that merely names a path ("a minimized templates/poc crate", a
 #      markdown link) is allowed there;
 #   3. every site fixed so far keeps its rooted form, and the corpus-read and .audit-memory rules stay
 #      stated (the PINS list);
@@ -133,7 +133,7 @@ for line in \
   'cd "<auditor-skill root>/tools/auditor-tools" && cargo build --release' \
   'PDF via `"${CLAUDE_SKILL_DIR}/scripts/report-to-pdf.sh"`' \
   'Optional PDF via `scripts/report-to-pdf.sh` (pandoc-gated)' \
-  'a self-contained `templates/poc` crate is exempt' \
+  'a minimized `templates/poc` crate builds from a scratch copy' \
   'The bundled `scripts/threat-model/collect.sh`, run from the installation' \
   'If `tools/auditor-tools/` is built' \
   '- **Recipes:** [`scripts/dnr/`](../scripts/dnr/) — profiling' \
