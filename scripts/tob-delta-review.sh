@@ -30,6 +30,7 @@ g() { git --no-pager -c log.showSignature=false -C "$repo" ${ATTR[@]+"${ATTR[@]}
 # on every diff, log and show: plain text with fixed a/ b/ prefixes and no rename or copy detection
 DIFFSAFE=(--no-color --no-ext-diff --no-textconv --no-renames --src-prefix=a/ --dst-prefix=b/)
 SCAN=("${DIFFSAFE[@]}" --text)   # on every call whose output a scan reads: no file counts as binary
+PAIRED=("${SCAN[@]}" -M)         # the file list and the added-line scans pair renamed files
 if [ "$fetch" -eq 1 ]; then g fetch --quiet origin || { echo "fetch failed" >&2; exit 2; }; fi
 for c in "$old" "$new"; do
   g cat-file -e "$c^{commit}" 2>/dev/null \
@@ -49,7 +50,7 @@ entries() { g ls-tree -r --full-tree "$1" | awk -F'\t' '{ split($1, a, " "); pri
 
 entries "$old" > "$tmp/old"
 entries "$new" > "$tmp/new"
-g diff "${SCAN[@]}" --name-status -M "$old" "$new" > "$tmp/ns"
+g diff "${PAIRED[@]}" --name-status "$old" "$new" > "$tmp/ns"
 
 echo "## trailofbits/skills $(g log "${DIFFSAFE[@]}" -1 --format='%h %cs' "$old") -> $(g log "${DIFFSAFE[@]}" -1 --format='%h %cs' "$new")"
 echo
@@ -109,14 +110,25 @@ show "$tmp/links"
 
 hosts() { grep -E '^\+' | grep -oE 'https?://[A-Za-z0-9.-]+' | sort | uniq -c | sort -rn; }
 NOTESTS=(':(exclude)*/tests/*' ':(exclude)*/evals/*' ':(exclude)*/evals-extra/*' ':(exclude)*/fixtures/*')
+# the paths each added-line scan below reads
+CODE=('*.sh' '*.bash' '*.py' '*.js' '*.mjs' '*.cjs' '*.ts' '*.json' '*.toml' '*.yml' '*.yaml' "${NOTESTS[@]}" \
+  ':(exclude)*.lock' ':(exclude)*package-lock.json')
+MD=('*.md' "${NOTESTS[@]}")
+ALL=(. ':(exclude)*.lock')
+
+section "Renamed files, OLD -> NEW (the added-line scans below read only the lines each rename changed)"
+# Pairs over the whole tree and within each scan's paths: a scan pairs only the files it reads.
+renames() { g diff "${PAIRED[@]}" --name-status --diff-filter=R "$old" "$new" -- "$@"; }
+{ awk -F'\t' '$1 ~ /^R/' "$tmp/ns"; renames "${CODE[@]}"; renames "${MD[@]}"; renames "${ALL[@]}"; } \
+  | awk -F'\t' '{ printf "- %s -> %s (%d%% similar)\n", $2, $3, substr($1, 2) }' | sort -u > "$tmp/ren"
+show "$tmp/ren"
 
 section "Hosts in added lines of scripts and config (excluding tests, evals, fixtures and lockfiles)"
-g diff "${SCAN[@]}" -U0 "$old" "$new" -- '*.sh' '*.bash' '*.py' '*.js' '*.mjs' '*.cjs' '*.ts' '*.json' '*.toml' '*.yml' '*.yaml' \
-  "${NOTESTS[@]}" ':(exclude)*.lock' ':(exclude)*package-lock.json' | hosts > "$tmp/hosts" || true
+g diff "${PAIRED[@]}" -U0 "$old" "$new" -- "${CODE[@]}" | hosts > "$tmp/hosts" || true
 show "$tmp/hosts"
 
 section "Hosts in added Markdown lines: skill and command text an agent may follow (excluding tests, evals and fixtures)"
-g diff "${SCAN[@]}" -U0 "$old" "$new" -- '*.md' "${NOTESTS[@]}" | hosts > "$tmp/mdhosts" || true
+g diff "${PAIRED[@]}" -U0 "$old" "$new" -- "${MD[@]}" | hosts > "$tmp/mdhosts" || true
 show "$tmp/mdhosts"
 
 section "Remote-exec patterns in added lines, continuation lines joined, any letter case (pipe to a shell or interpreter, sh -c \"\$(curl …)\", <(curl …), PowerShell irm … | iex and iex (irm …), npx --yes, pip / pipx / uv tool / uvx from git or a URL, cargo install --git, go install …@latest)"
@@ -143,7 +155,7 @@ FROM="([^|;&]*[[:space:]=])?[\"']?(git[+]|https?://)"   # an install source from
 RX_PKG="npx[[:space:]]+(-y|--yes)([[:space:]]|\$)|pip[0-9.]*[[:space:]]+install[[:space:]]+$FROM|(pipx|uv[[:space:]]+tool)[[:space:]]+(install|run)[[:space:]]+$FROM"
 RX_PKG="$RX_PKG|uvx[[:space:]]+([^|;&]*[[:space:]])?--from[[:space:]=]+[\"']?(git[+]|https?://)|cargo([[:space:]]+[+][^[:space:]]+)?[[:space:]]+install[[:space:]]+([^|;&]*[[:space:]])?--git([[:space:]=]|\$)"
 RX_PKG="$RX_PKG|(^|[^[:alnum:]_.-])go[[:space:]]+(install|run)[[:space:]]+([^|;&]*[[:space:]])?[^[:space:]|;&]+@latest([^[:alnum:]_.-]|\$)"
-g diff "${SCAN[@]}" -U0 "$old" "$new" -- . ':(exclude)*.lock' | joined \
+g diff "${PAIRED[@]}" -U0 "$old" "$new" -- "${ALL[@]}" | joined \
   | grep -iE "$RX_PIPE|$RX_SUBST|$RX_PROC|$RX_IEX|$RX_PKG" > "$tmp/rx" || true
 show "$tmp/rx"
 
