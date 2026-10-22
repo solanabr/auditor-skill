@@ -41,7 +41,9 @@
 # --since was reached — or, with only --until set, while still above --until — the
 # script says so ("window not reached"): the corpus is then incomplete for that
 # address, a collection gap to record in the ledger. Signatures are fetched newest
-# first (by slot, across all addresses), so --max-tx drops the oldest.
+# first (by slot, across all addresses; within a slot, in the order the RPC returned
+# them), so --max-tx drops the oldest. The script runs under LC_ALL=C, so neither
+# that order nor any character range depends on the caller's locale.
 #
 # COLLECTION GAPS: every gap is also a row of <dir>/collection-gaps.tsv,
 # `<signature or address><TAB><reason>`: a getTransaction that failed (transport
@@ -66,6 +68,7 @@
 # <dir>/collection-gaps.tsv.
 
 set -uo pipefail
+export LC_ALL=C
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REDACT="$HERE/redact.sh"
@@ -248,11 +251,12 @@ echo "signatures collected: $collected -> $sig_file"
 # 2. unique signatures within [since, until] — failed ones included — newest first
 #    across every address (slot, descending), so a --max-tx cap keeps the most recent
 #    activity; a signature seen under two addresses is kept once, at its first place.
+#    The sort is stable: within a slot the RPC's own newest-first order stands.
 #    Read from a file (not a pipe) so the counter survives the loop.
 jq -r --argjson s "$since" --argjson u "$until" '
   select(($s == 0) or ((.blockTime // 0) >= $s))
   | select(($u == 0) or ((.blockTime // 0) <= $u))
-  | "\(.slot // 0) \(.signature)"' "$sig_file" | sort -k1,1nr | awk '!seen[$2]++ { print $2 }' > "$todo"
+  | "\(.slot // 0) \(.signature)"' "$sig_file" | sort -s -k1,1nr | awk '!seen[$2]++ { print $2 }' > "$todo"
 
 fetched=0; total="$(grep -c . "$todo")"; i=0
 while IFS= read -r sig; do
