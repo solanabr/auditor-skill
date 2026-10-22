@@ -13,12 +13,14 @@
 #   - agents have name, description and tools; commands have description and allowed-tools; SKILL.md has
 #     name and description;
 #   - tools and allowed-tools list 'Name' or 'Name(pattern)' entries (agents: names only, no pattern),
-#     separated by ', ' or one per item, none empty and none in FORBIDDEN_TOOL_ENTRIES.
+#     separated by ', ' or one per item, none empty; allowed-tools lists none of FORBIDDEN_ALLOWED_TOOLS.
+# known-vectors/*.md carry frontmatter too, but Claude Code does not load it (check-corpus.sh reads its id).
 # Usage: bash scripts/check-frontmatter.sh [FILE...]. Exit 0 = every file passes. Needs bash >= 3.2, awk.
 set -uo pipefail
 
-# Entries that tools and allowed-tools may never list, space-separated (each is a whole entry).
-FORBIDDEN_TOOL_ENTRIES='*'
+# Entries the allowed-tools of a command or SKILL.md may never list, space-separated, each a whole entry.
+# (An agent's tools list tool names only, so * fails there by that rule.)
+FORBIDDEN_ALLOWED_TOOLS='*'
 
 if [ $# -eq 0 ]; then
   cd "$(dirname "$0")/.." || exit 2
@@ -63,7 +65,7 @@ function entries(s, key,   i, c, depth, cur, n) {
 }
 function entry(e, key,   i) {
   if (e == "") { bad(key " has an empty entry"); return }
-  for (i in forbid) if (e == forbid[i]) { bad(key " may not list " q e q); return }
+  if (key == "allowed-tools") for (i in forbid) if (e == forbid[i]) { bad(key " may not list " q e q); return }
   if (kind == "agent" && e !~ /^[A-Z][A-Za-z]*$/) { bad(key " entry " q e q " is not a tool name"); return }
   if (e !~ /^[A-Z][A-Za-z]*(\([^()]+\))?$/)
     bad(key " entry " q e q " is not Name or Name(pattern), with no parentheses inside the pattern")
@@ -135,7 +137,7 @@ for f in "$@"; do
     *) echo "::error::$f: not under agents/ or commands/ and not a SKILL.md; its keys are unknown" >&2; fail=1; continue ;;
   esac
   if [ ! -f "$f" ]; then echo "::error::$f: no such file" >&2; fail=1; continue; fi
-  LC_ALL=C awk -v file="$f" -v kind="$kind" -v q="'" -v forbidden="$FORBIDDEN_TOOL_ENTRIES" "$PROG" "$f" >&2 || fail=1
+  LC_ALL=C awk -v file="$f" -v kind="$kind" -v q="'" -v forbidden="$FORBIDDEN_ALLOWED_TOOLS" "$PROG" "$f" >&2 || fail=1
   n=$((n + 1))
 done
 if [ "$fail" -ne 0 ]; then echo "frontmatter check FAILED" >&2; exit 1; fi

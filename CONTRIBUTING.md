@@ -163,8 +163,8 @@ It holds the frontmatter of `commands/*.md`, `agents/*.md` and `SKILL.md` to a f
 - `tools` and `allowed-tools` list `Name` or `Name(pattern)` entries, either on one line separated by `, `
   or one per line as `  - item`; an item may be single-quoted, as in
   `  - 'Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh" *)'`. A pattern holds no parentheses,
-  agents list tool names only, and no entry may be one of `FORBIDDEN_TOOL_ENTRIES` in the script (today
-  `*`).
+  agents list tool names only, and `allowed-tools` lists nothing from `FORBIDDEN_ALLOWED_TOOLS` in the
+  script (today `*`).
 
 ### CI
 

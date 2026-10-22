@@ -127,6 +127,17 @@ fm commands/item-without-list.md fail "$C" "allowed-tools: Read" "  - Grep"
 fm skill/SKILL.md pass "name: s" 'description: "A skill."'
 fm skill-no-name/SKILL.md fail 'description: "A skill."'
 fm other/notes.md fail "$N" "$D"
+# FORBIDDEN_ALLOWED_TOOLS holds only for allowed-tools: with bare Bash added to it, a command's bare Bash
+# fails while its Bash(pattern) entries and an agent's Bash tool still pass
+sed "s/^FORBIDDEN_ALLOWED_TOOLS='\(.*\)'\$/FORBIDDEN_ALLOWED_TOOLS='\1 Bash'/" "$ROOT/scripts/check-frontmatter.sh" > "$T/fm-no-bash.sh"
+if grep -q "^FORBIDDEN_ALLOWED_TOOLS='.* Bash'\$" "$T/fm-no-bash.sh"; then pass=$((pass + 1)); echo "PASS frontmatter: FORBIDDEN_ALLOWED_TOOLS is one line to extend"
+else failn=$((failn + 1)); echo "FAIL frontmatter: no FORBIDDEN_ALLOWED_TOOLS='…' line in check-frontmatter.sh"; fi
+printf -- '---\n%s\n%s\n---\n' "$C" "allowed-tools: Read, Bash, Bash(jq *)" > "$T/fm/commands/bare-bash.md"
+expect "frontmatter, with Bash forbidden: a command's bare Bash fails" 1 bash "$T/fm-no-bash.sh" "$T/fm/commands/bare-bash.md"
+fm commands/bash-patterns.md pass "$C" "allowed-tools:" "  - Read" "  - 'Bash(jq *)'"
+expect "frontmatter, with Bash forbidden: Bash(pattern) entries pass" 0 bash "$T/fm-no-bash.sh" "$T/fm/commands/bash-patterns.md"
+expect "frontmatter, with Bash forbidden: an agent's Bash tool passes" 0 bash "$T/fm-no-bash.sh" "$T/fm/agents/a00-control.md" \
+  "$ROOT/agents/context-builder.md"
 # large input: a 300 KB description and a 1 MiB body read whole by every awk; a --- near the description's end
 long=$(awk 'BEGIN { for (i = 0; i < 10000; i++) printf "word%05d and more text here, ", i }')
 fm agents/long-description.md pass "$N" "description: ${long}end." "$TL" "$M"
