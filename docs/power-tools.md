@@ -224,6 +224,7 @@ Step 1 of every hunt and response: it keeps the deployed program bytes before a 
   - After a redeploy it keeps the new bytes as `<id>@<slot>.so` with its `.show.txt` and prints the first snapshot's line and the new one.
   - A kept file is never replaced.
   - An `incident_*` directory without a `.gitignore` gets one containing `*` (Rule 11d).
+- **Needs:** the `solana` CLI and `python3`, which hashes the dump as `python3 -I`.
 
 #### `collect.sh`
 
@@ -260,7 +261,7 @@ The one gated collector: it pages each address's signature history, failed trans
     - no private temp directory.
 - **Network:** read-only JSON-RPC to `$RPC_URL` (`getSignaturesForAddress`, then `getTransaction` at `finalized` with `maxSupportedTransactionVersion: 1`), and only with `--confirmed`. The URL reaches curl through a config on stdin (`curl -q -K -`), never as an argument. The `provider:` line names the provider's domain (the host's last two labels) for the Rule 11b disclosure; curl errors pass through `redact.sh`.
 - **Writes:** `<dir>/signatures.jsonl`, `<dir>/transactions.jsonl` and `<dir>/collection-gaps.tsv`.
-  - `transactions.jsonl` is written by jq only when jq keeps 64-bit integers exact; otherwise it is written by `python3 -I`.
+  - `transactions.jsonl` is written by jq only when a test round-trip shows jq keeps 64-bit integers exact (a check of behaviour, not of the version); otherwise it is written by `python3 -I`.
   - `collection-gaps.tsv` has one `<signature or address><TAB><reason>` row per gap: a failed `getTransaction`, a failed signature page (older history not collected), a history truncated at `--max-pages` (with the `--before` to resume from), the `--max-tx` cap, or the stop after 10 failed calls in a row.
   - stdout ends with `collection gaps: N (see …)`. Notices go to stderr and start with `  ! `.
   - An `incident_*` directory (`<dir>` or its parent) without a `.gitignore` gets one containing `*`.
