@@ -12,8 +12,12 @@
 #      stated (the PINS list);
 #   4. every rooted path those files name exists in this checkout (binaries: declared in the crate);
 #   5. Rule 11e and its pointers in SKILL.md / AGENTS.md / FULL-AUDIT.md are in place; 11a–11e keep their
-#      headings.
-# The detector is first run against known-good and known-bad lines, so a broken pattern fails the test.
+#      headings;
+#   6. /auditor:hunt, /auditor:respond and incident-responder name every corpus file they read (references/,
+#      templates/, checklists/, discovery/, OUTPUT-RULES.md, …) from ${CLAUDE_PLUGIN_ROOT}: no relative corpus
+#      directory and no bare corpus file name. Run-directory outputs (audit_<n>/threat-model.md,
+#      INCIDENT_REPORT.md) are not corpus files.
+# Each detector is first run against known-good and known-bad lines, so a broken pattern fails the test.
 # Usage (from the repo root): bash scripts/tests/test-bundled-paths.sh   (VERBOSE=1 lists every check)
 # Needs bash >= 3.2, grep, sed, awk, find. No network.
 set -uo pipefail
@@ -202,6 +206,9 @@ docs/output-and-rigor.md	Corpus Markdown that command or agent text names by a r
 references/orchestration/pre-scan.md	confirm that the audited repository does not track it (`git ls-files .audit-memory` prints nothing
 scripts/threat-model/collect.sh	bash "${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --repo
 scripts/report-to-pdf.sh	"${CLAUDE_PLUGIN_ROOT}/scripts/report-to-pdf.sh" [path/to/REPORT.md]
+commands/hunt.md	`${CLAUDE_PLUGIN_ROOT}/references/detection-response/README.md`
+commands/respond.md	`${CLAUDE_PLUGIN_ROOT}/references/detection-response/README.md`
+agents/incident-responder.md	`${CLAUDE_PLUGIN_ROOT}/references/detection-response/README.md`
 PINS
 
 # ---- 4. every rooted path names something that ships --------------------------------------------------
@@ -233,6 +240,53 @@ for f in SKILL.md AGENTS.md FULL-AUDIT.md; do
 done
 if grep -qF '${CLAUDE_SKILL_DIR}' SKILL.md; then ok "SKILL.md names its root as \${CLAUDE_SKILL_DIR}"
 else bad "SKILL.md does not name its root as \${CLAUDE_SKILL_DIR}"; fi
+
+# ---- 6. the D&R commands and agent read the corpus from the root ----------------------------------------
+CORPUS_FILES="commands/hunt.md commands/respond.md agents/incident-responder.md"
+# Every corpus file name (escaped for ERE), so a bare `log-sources.md` or `OUTPUT-RULES.md` counts as well.
+CORPUS_NAMES=$( { find references templates checklists discovery -name '*.md'
+  printf '%s\n' OUTPUT-RULES.md QUESTIONS.md SKILL.md FULL-AUDIT.md; } | sed -e 's#.*/##' -e 's#[.]#\\.#g' | sort -u \
+  | awk '{ printf "%s%s", (NR > 1 ? "|" : ""), $0 }')
+CORPUS_REL="${PRE}(references|templates|checklists|discovery)/"
+CORPUS_BARE="(^|[^A-Za-z0-9_./}>-])(${CORPUS_NAMES})"
+corpus_lines() { # corpus_lines (stdin -> numbers of lines naming a corpus file by a relative path)
+  # "this skill's SKILL.md" says where a non-plugin install lives; it is not a file to read.
+  strip_rooted strict | sed -E "s#this skill's SKILL[.]md#this skill's @SKILL@#g" \
+    | grep -nE -e "$CORPUS_REL" -e "$CORPUS_BARE" | cut -d: -f1
+}
+expect_corpus() { # expect_corpus yes|no LINE
+  local got=no
+  [ -n "$(printf '%s\n' "$2" | corpus_lines)" ] && got=yes
+  if [ "$got" = "$1" ]; then ok "corpus detector flagged=$1: $2"; else bad "corpus detector flagged=$got, want $1: $2"; fi
+}
+[ -n "$CORPUS_NAMES" ] && ok "corpus file names collected" || bad "no corpus file names found"
+for line in \
+  'Read `references/detection-response/README.md` first' \
+  'Run the seed sweeps in `log-sources.md`, one ledger row per query' \
+  'Start `LEDGER.md` from `templates/hunt-ledger.md`.' \
+  "follows the run's mode (\`OUTPUT-RULES.md\` Rule 11a)" \
+  'from `./references/detection-response/README.md`' \
+  'or `intake.md` §6 if an audit preceded this' \
+  'map the alert to checklists/17-logging-monitoring-incident-response.md'; do
+  expect_corpus yes "$line"
+done
+for line in \
+  'Read `${CLAUDE_PLUGIN_ROOT}/references/detection-response/README.md` first' \
+  'Start `LEDGER.md` from `${CLAUDE_PLUGIN_ROOT}/templates/hunt-ledger.md`.' \
+  '(`${CLAUDE_PLUGIN_ROOT}/OUTPUT-RULES.md` Rule 11a)' \
+  'from `audit_<n>/threat-model.md` or `audit_<n>/intake.md` §6' \
+  'write `incident_<n>/INCIDENTS.json` and `INCIDENT_REPORT.md`' \
+  "(\`\${CLAUDE_PLUGIN_ROOT}\`; for a non-plugin install, the directory holding this skill's SKILL.md)" \
+  '*Method credited to anthropics/defending-code-reference-harness (dnr-hunt); see ATTRIBUTION.md.*' \
+  'the hard rules (README rule 3, README § "allowed-tools is not a sandbox")'; do
+  expect_corpus no "$line"
+done
+for f in $CORPUS_FILES; do
+  [ -f "$f" ] || { bad "$f: listed for the corpus-read scan but missing"; continue; }
+  n=$(corpus_lines < "$f")
+  if [ -z "$n" ]; then ok "$f: every corpus file is read from \${CLAUDE_PLUGIN_ROOT}"; continue; fi
+  for n in $n; do bad "$f:$n: corpus file not read from \${CLAUDE_PLUGIN_ROOT}: $(sed -n "${n}p" "$f" | cut -c1-160)"; done
+done
 
 echo "---- bundled paths: $pass passed, $failn failed"
 [ "$failn" -eq 0 ]

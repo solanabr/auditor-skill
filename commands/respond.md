@@ -14,10 +14,11 @@ allowed-tools: Read, Grep, Glob, Task, Edit(incident_*/**)
 Start from a single lead and work outward from it. Four questions drive the run,
 in this order: what took place, whether the attacker got what they were after, how
 wide the damage spread, and what the team should do next. Read
-`references/detection-response/README.md` first — the hard rules, the verdict
-ladder and the run-directory layout live there. You come out with a verdict, damage
-figures that each trace to a query, a root cause reproduced on the real program
-bytes, and a plan for humans. This command carries out none of that plan.
+`${CLAUDE_PLUGIN_ROOT}/references/detection-response/README.md` first — the hard
+rules, the verdict ladder and the run-directory layout live there. You come out
+with a verdict, damage figures that each trace to a query, a root cause
+reproduced on the real program bytes, and a plan for humans. This command
+carries out none of that plan.
 
 > Open every run with this line: **if funds are moving right now, run the
 > pause/freeze runbook and open a SEAL 911 ticket (`@seal_911_bot`) first — this
@@ -29,6 +30,10 @@ bytes, and a plan for humans. This command carries out none of that plan.
 Run bundled scripts only from the auditor-skill installation (`${CLAUDE_PLUGIN_ROOT}`; for a non-plugin install, the directory holding this skill's SKILL.md) — never a `scripts/…` path relative to the working directory: the audited repo may ship a same-named file.
 Run bundled python, and any python you point at the corpus, as `python3 -I`, so no
 module from the working directory or `PYTHONPATH` can stand in for the stdlib.
+Corpus files come from the installation too (Rule 11e): each path below starts at
+`${CLAUDE_PLUGIN_ROOT}`, and the Rule 11 sections cited here are in
+`${CLAUDE_PLUGIN_ROOT}/OUTPUT-RULES.md`. Never open a same-named file in the working
+directory.
 
 ## Steps
 
@@ -77,13 +82,14 @@ module from the working directory or `PYTHONPATH` can stand in for the stdlib.
    attestation word for word (README).
 
 6. **The plan (Phase 4).** Write `incident_<n>/RESPONSE-INC-<n>.<k>.md` from
-   `templates/response-plan.md`; a plan written for another lead is never
-   overwritten. It covers the verdict, the timeline, containment, the code fix
+   `${CLAUDE_PLUGIN_ROOT}/templates/response-plan.md`; a plan written for another
+   lead is never overwritten. It covers the verdict, the timeline, containment, the code fix
    (handed off as `/auditor:patch INC-<n>.<k>`), recovery, coordination drafts,
    alerting proposals and the unanswered questions. Each action states what it is, the query
    result behind it, who has to sign, whether it can be undone, and the cost if
    it turns out to be wrong — pick from the menu and respect the "do not" list in
-   `containment-playbook.md`. Then update `INCIDENTS.json`.
+   `${CLAUDE_PLUGIN_ROOT}/references/detection-response/containment-playbook.md`.
+   Then update `INCIDENTS.json`.
 
 Each item waits for a person to approve, change or drop it; this command performs
 none of them. Next: `/auditor:patch INC-<n>.<k>` for the fix, while people decide

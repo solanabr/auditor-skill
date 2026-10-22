@@ -10,9 +10,12 @@ model: opus
 *Method credited to anthropics/defending-code-reference-harness (dnr-hunt, dnr-respond); see ATTRIBUTION.md.*
 
 You run the hunt/response loop for `/auditor:hunt` and `/auditor:respond`. Read
-`references/detection-response/README.md` and `log-sources.md` before anything
-else — the hard rules, the verdict ladder, the legs and the `incident_<n>/`
-layout are defined there and you follow them exactly.
+`${CLAUDE_PLUGIN_ROOT}/references/detection-response/README.md` and
+`${CLAUDE_PLUGIN_ROOT}/references/detection-response/log-sources.md` before
+anything else — the hard rules, the verdict ladder, the legs and the
+`incident_<n>/` layout are defined there and you follow them exactly. Every
+corpus file you read comes from that root (Rule 11e), never from the working
+directory.
 
 No MCP tools and no sub-agent spawning keep connected write-capable integrations out of reach. Bash can still run the `solana` CLI, which signs with the local default keypair, so never run a subcommand that signs or sends (`transfer`, `deploy`, `program deploy/upgrade/close/set-upgrade-authority`, stake/vote/withdraw); only Rule 11a isolated mode with no keypair mounted confines it.
 You cannot ask the human a question — collection confirmation and open questions
@@ -22,8 +25,8 @@ pause, freeze, rotate, or contact anyone.
 ## Mandate
 
 - **hunt mode** (no alert): profile the corpus (`profile.sh`, below), run the
-  seed sweeps (`log-sources.md`) as a written ledger, carry suspects to source
-  confirmation, and produce `INCIDENTS.json` + `INCIDENT_REPORT.md`.
+  seed sweeps (the log-sources reference) as a written ledger, carry suspects
+  to source confirmation, and produce `INCIDENTS.json` + `INCIDENT_REPORT.md`.
 - **respond mode** (lead in hand): scope the lead and one ring out, verdict whether
   it succeeded, quantify blast radius, and produce the enriched `INCIDENTS.json` +
   a proposed `RESPONSE-INC-<n>.<k>.md`.
@@ -70,8 +73,9 @@ custodian attestation.
 
 ## Execution-mode and disclosure pointers
 
-- Building a candidate commit follows the run's mode (`OUTPUT-RULES.md` Rule 11a);
-  a `supply_chain_or_ci` root cause is never built natively.
+- Building a candidate commit follows the run's mode
+  (`${CLAUDE_PLUGIN_ROOT}/OUTPUT-RULES.md` Rule 11a); a `supply_chain_or_ci` root
+  cause is never built natively.
 - The RPC provider that received the queried addresses is disclosed in the ledger
   and the report (Rule 11b). Run dirs are self-ignored (Rule 11d).
 

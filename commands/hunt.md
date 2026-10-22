@@ -12,10 +12,11 @@ allowed-tools: Read, Grep, Glob, Task, Edit(incident_*/**)
 **Arguments:** $ARGUMENTS
 
 Sweep a Solana program's recent history for signs it was attacked. Read
-`references/detection-response/README.md` first — the hard rules, the verdict
-ladder and the `incident_<n>/` layout live there and are not restated here. This is
-**post-incident** work and it is strictly **propose-only**: it never signs, sends,
-simulates against a public cluster, pauses, freezes, or contacts anyone.
+`${CLAUDE_PLUGIN_ROOT}/references/detection-response/README.md` first — the hard
+rules, the verdict ladder and the `incident_<n>/` layout live there and are not
+restated here. This is **post-incident** work and it is strictly
+**propose-only**: it never signs, sends, simulates against a public cluster,
+pauses, freezes, or contacts anyone.
 
 > The `allowed-tools` above pre-approve only read-only, text-only work; they are
 > **not a sandbox** (README § "allowed-tools is not a sandbox"). `jq`, `solana`,
@@ -26,6 +27,10 @@ simulates against a public cluster, pauses, freezes, or contacts anyone.
 Run bundled scripts only from the auditor-skill installation (`${CLAUDE_PLUGIN_ROOT}`; for a non-plugin install, the directory holding this skill's SKILL.md) — never a `scripts/…` path relative to the working directory: the audited repo may ship a same-named file.
 Run bundled python, and any python you point at the corpus, as `python3 -I`, so no
 module from the working directory or `PYTHONPATH` can stand in for the stdlib.
+Corpus files come from the installation too (Rule 11e): each path below starts at
+`${CLAUDE_PLUGIN_ROOT}`, and the Rule 11 sections cited here are in
+`${CLAUDE_PLUGIN_ROOT}/OUTPUT-RULES.md`. Never open a same-named file in the working
+directory.
 
 ## Steps
 
@@ -33,7 +38,8 @@ module from the working directory or `PYTHONPATH` can stand in for the stdlib.
    - Create `incident_<n>/` where `<n>` = existing `incident_*/` + 1 (`--fresh`
      forces a new one). Its **first** file is `incident_<n>/.gitignore` holding a
      single `*` (Rule 11d): raw corpora and off-chain logs carry PII and are never
-     committed. Start `LEDGER.md` from `templates/hunt-ledger.md`.
+     committed. Start `LEDGER.md` from
+     `${CLAUDE_PLUGIN_ROOT}/templates/hunt-ledger.md`.
    - **Snapshot each program in scope now:**
      `bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/snapshot-program.sh" <program_id> incident_<n>`
      — read-only `solana program show` + `solana program dump` into `incident_<n>/bin/`, CLI
@@ -46,7 +52,7 @@ module from the working directory or `PYTHONPATH` can stand in for the stdlib.
    it — **gated** (README rule 3):
    - Resolve seed addresses: the arguments, else `declare_id!` / `Anchor.toml`, plus
      vault / authority / mint / treasury from `audit_<n>/threat-model.md` or
-     `intake.md` §6 if an audit preceded this.
+     `audit_<n>/intake.md` §6 if an audit preceded this.
    - Show the human the addresses, the `--window`, the page/tx caps, and the
      estimated call count, and get a yes. In a non-interactive run, collection
      happens only if `--collect` was passed.
@@ -61,8 +67,9 @@ module from the working directory or `PYTHONPATH` can stand in for the stdlib.
    for outcome/version histograms, window, and signer/program inventories; write
    each number into the ledger. Do not read the corpus into context (README rule 2).
 
-4. **Hunt loop (Phase 2).** Run the seed sweeps in `log-sources.md`, one ledger row
-   per query (`jq`, or the bundled `deltas.py` / `frames.py` run as
+4. **Hunt loop (Phase 2).** Run the seed sweeps in
+   `${CLAUDE_PLUGIN_ROOT}/references/detection-response/log-sources.md`, one
+   ledger row per query (`jq`, or the bundled `deltas.py` / `frames.py` run as
    `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/<name>.py"`). Pivot from every hit
    along the campaign chain. Stop after two rounds with no new entity. A program-log line is a
    hint, never proof (rule 1).
@@ -83,9 +90,10 @@ module from the working directory or `PYTHONPATH` can stand in for the stdlib.
    non-interactive run is native, and the report says so), record it in the ledger
    header, and pass it on as `AUDITOR_EXEC_MODE`.
 
-7. **Emit.** Write `incident_<n>/INCIDENTS.json` (`incidents-schema.md`) and
-   `INCIDENT_REPORT.md` (`templates/incident-report.md`): executive summary,
-   `(slot, transactionIndex)` timeline, per-incident evidence / source / PoC /
+7. **Emit.** Write `incident_<n>/INCIDENTS.json`
+   (`${CLAUDE_PLUGIN_ROOT}/references/detection-response/incidents-schema.md`) and
+   `INCIDENT_REPORT.md` (`${CLAUDE_PLUGIN_ROOT}/templates/incident-report.md`):
+   executive summary, `(slot, transactionIndex)` timeline, per-incident evidence / source / PoC /
    blast radius, a Ruled-out section, collection gaps, and the ledger as the
    appendix. Then point the user on: `/auditor:respond INC-<n>.<k>`,
    `/auditor:poc INC-<n>.<k>`, `/auditor:patch INC-<n>.<k>`.
