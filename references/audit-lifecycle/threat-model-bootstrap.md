@@ -127,7 +127,8 @@ resolve, or the target is a partial clone or git cannot read its config.
 - **`--vulns` formats.** A GHSA/CVE id list or plain text, a Markdown report, a CSV `id,title,component,description`,
   a JSON list, an `INCIDENTS.json`, or a PDF. A PDF is converted with `pdftotext -layout` when installed; otherwise
   read it with `Read` (at most 20 pages per call) or ask for a Markdown export. Every source lands in `inputs.tsv`
-  with its sha256 and status, including the ones that could not be read.
+  with its sha256 and status, including the ones that could not be read. A local path that is a symbolic link, or
+  that reaches its file through a directory link inside the target tree, is skipped and noted there.
 - **Incidents.** `incident_*/INCIDENTS.json` next to the target is picked up automatically, except one that is a
   symbolic link, sits in a linked directory, or lies in an `incident_*` directory the target tracks: those are skipped
   and noted in `inputs.tsv`. Only files whose `schema` is `auditor-incidents/1` are read, and only the schema's stable

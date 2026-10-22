@@ -987,6 +987,37 @@ check "T-w: run as pasted, the command runs nothing but git" \
   sh -c "[ ! -e '$QP/ran-subst' ] && [ ! -e '$QP/ran-tick' ] && [ ! -e '$QP/ran-pipe' ]"
 check "T-w: ... and shows the rest of that file's diff" grep -qF -- '-#[account(mut, has_one = quoted_admin)]' "$T/quoted-hint.out"
 
+# =================================================================================================
+# T-x: a local --vulns path is read only when it is not a symbolic link and reaches its file through no
+# directory link inside the target tree; inputs.tsv records every skip. A directory link outside the
+# tree (the caller's own) is followed.
+# =================================================================================================
+mkdir -p "$T/vx-outside" "$T/vx-real"
+printf '# VX-SECRET-FILE\n' > "$T/vx-outside/secret.md"
+printf '# VX-SECRET-DIR\n' > "$T/vx-outside/report.md"
+printf '# VX-USER-LINKED-DIR\n' > "$T/vx-real/review.md"
+ln -s "$T/vx-real" "$T/vx-user-dir"
+ln -s "$T/vx-outside/secret.md" "$T/vx-user-file.md"
+VX="$T/vlinks"; mkrepo "$VX"
+put "$VX" programs/v/src/lib.rs 'pub fn v() {}'
+commit "$VX" -m "initial"
+mkdir -p "$VX/audits"
+ln -s "$T/vx-outside/secret.md" "$VX/audits/prior.md"
+ln -s "$T/vx-outside" "$VX/reports"
+OUTVX="$T/vlinks-run/audit_1/bootstrap"
+collect --repo "$VX" --out "$OUTVX" --offline --vulns "$VX/audits/prior.md" --vulns "$VX/reports/report.md" \
+  --vulns "$T/vx-user-file.md" --vulns "$T/vx-user-dir/review.md"
+check "T-x: a --vulns file in the target tree that is a symbolic link is not copied" \
+  sh -c "! grep -rq 'VX-SECRET-FILE' '$OUTVX/inputs/'"
+check "T-x: a --vulns path through a directory link in the target tree is not copied" \
+  sh -c "! grep -rq 'VX-SECRET-DIR' '$OUTVX/inputs/'"
+for vx in audits/prior.md reports/report.md vx-user-file.md; do
+  check "T-x: inputs.tsv records $vx as a skipped symbolic link" \
+    sh -c "grep -F '$vx' '$OUTVX/inputs.tsv' | grep -q 'skipped: symbolic link'"
+done
+check "T-x: a --vulns path through the caller's own directory link outside the tree is copied" \
+  sh -c "grep -F 'vx-user-dir/review.md' '$OUTVX/inputs.tsv' | grep -q 'copied' && grep -rq 'VX-USER-LINKED-DIR' '$OUTVX/inputs/'"
+
 echo
 echo "threat-model collector tests: $pass passed, $fail failed, $skip skipped"
 [ "$fail" -eq 0 ]

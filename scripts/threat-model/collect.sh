@@ -22,7 +22,9 @@
 #   --import <rev>            target commit that imported the parent code (default: the root commit);
 #                             pass it when the code arrived after the root commit, or R5 finds no match
 #   --vulns <file|https-url>  prior-vulnerability input, repeatable: PDF, Markdown, text, CSV, JSON,
-#                             or INCIDENTS.json (schema auditor-incidents/1; allowlisted fields only)
+#                             or INCIDENTS.json (schema auditor-incidents/1; allowlisted fields only); a
+#                             local path that is a symbolic link, or passes through a directory link in
+#                             the target tree, is skipped
 #   --program-id <id>         save `audit-mem warm --program-id <id>` from the --audit-mem-db store
 #                             (needs the built tool)
 #   --audit-mem-db <path>     audit-mem store that --program-id reads; nothing is read without it (the
@@ -800,6 +802,23 @@ ingest() { # ingest <source label> <local file> <dest base name>
   esac
 }
 safe_name() { printf '%s' "$1" | sed 's/[^A-Za-z0-9._-]/_/g'; }
+# A local --vulns path is read only when it is not a symbolic link and reaches its file through no directory
+# link inside the target tree: the target controls those, and a link can point anywhere (a keypair, a .env).
+# Links outside the tree, such as /tmp on macOS or the caller's own, are followed.
+REPO_PHYS=$(cd "$REPO_ABS" && pwd -P)
+tree_link() { # tree_link <absolute path>: status 0 when the path is a symbolic link, or passes through a
+              # directory link that sits inside the target tree or whose place cannot be resolved
+  local rest=${1#/} cur="" comp phys
+  [ -L "$1" ] && return 0
+  while :; do
+    case "$rest" in */*) comp=${rest%%/*}; rest=${rest#*/} ;; *) return 1 ;; esac
+    if [ -n "$comp" ] && [ -L "$cur/$comp" ]; then
+      phys=$(cd "${cur:-/}" 2>/dev/null && pwd -P) || return 0
+      case "$phys/" in "$REPO_PHYS"/*) return 0 ;; esac
+    fi
+    cur="$cur/$comp"
+  done
+}
 vi=0
 while IFS= read -r v; do
   [ -z "$v" ] && continue
@@ -815,6 +834,8 @@ while IFS= read -r v; do
     else
       record "$v" url "-" "-" "fetch failed"
     fi
+  elif tree_link "$v"; then
+    record "$v" "-" "-" "-" "skipped: symbolic link (the file, or a directory on its path inside the target tree)"
   else
     ingest "$v" "$v" "v$vi-$(safe_name "$(basename "$v")")"
   fi
