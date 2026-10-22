@@ -25,9 +25,12 @@ that defines its `{baseDir}` placeholder or anchors its relative paths (`scripts
 `workflows/…`, `tools/…`) — the semgrep skill, for one, runs `{baseDir}/scripts/run-scans.sh`. Both
 point into that plugin's own directory, `<auditor-skill root>/vendor/trailofbits/plugins/<plugin>/`:
 for a skill file, normally `skills/<skill>/`; some plugins keep a tool at the plugin root (e.g.
-`constant-time-analysis/ct_analyzer/`), and plugin-level agents count from the plugin root. Substitute
-that absolute directory before running or reading anything, and never resolve such a path against the
-working directory (`OUTPUT-RULES.md` Rule 11e).
+`constant-time-analysis/ct_analyzer/`). In a plugin-level agent (`agents/*.md`), a path written
+`{baseDir}/skills/<skill>/…` counts from the plugin root (`sharp-edges`, `differential-review`), but
+`zeroize-audit` hands its agents the skill directory, `skills/zeroize-audit/`, as `baseDir`. A Markdown
+link counts from the directory of the file that contains it. Substitute the resolved absolute directory
+before running or reading anything, and never resolve such a path against the working directory
+(`OUTPUT-RULES.md` Rule 11e).
 
 If absent (submodule not initialized), run the native fallback and note in the report:
 "deeper tooling available via `git submodule update --init --depth 1 -- vendor/trailofbits`, run in the
@@ -42,9 +45,9 @@ auditor-skill directory (plugin and install.sh installs already include it)".
 | Coverage & mutation | `testing-handbook-skills`, `mutation-testing` | evidence-back FV coverage items; an uncaught mutant downgrades the corresponding checklist PASS; `/auditor:patch --verify-with-mutation` uses a caught mutant on the patched line as fix evidence. Mutation runs follow Rule 11a | FV items marked `[PARTIAL — not machine-verified]` |
 | Secret zeroization (IR-level) | `zeroize-audit` | verify KV-112 / RS-015 at the IR level; it compiles the target (Rule 11a) | grep `zeroize`/`Zeroizing` on secret-bearing types |
 | Constant-time (custom crypto) | `constant-time-analysis` | check secret-dependent branches when custom crypto is present; it compiles the code it checks (Rule 11a) | note "manual constant-time review needed" |
-| Entry-point enumeration | `entry-point-analyzer` | seed the Phase 0 instruction matrix (has native Solana support) | manual `#[instruction]` enumeration |
+| Entry-point enumeration | `entry-point-analyzer` | seed the Phase 0 instruction matrix (has native Solana support); on Solidity it runs `slither .` when Slither is installed, which compiles the target (Rule 11a) | manual `#[instruction]` enumeration |
 | Supply-chain metadata | `supply-chain-risk-auditor` | enrich checklist 11 (SC-044..046). Covers npm / PyPI / Go only. Its collector sends the project's dependency names to 8 outside services — OSV, the npm registry and downloads API, PyPI, the Go module proxy, deps.dev, the GitHub API (with your `gh` token when logged in) and OpenSSF Scorecard — so the report records it (Rule 11b). `--offline` only replays cached responses; it is not a privacy control | `npm audit` / `cargo audit` + grep |
-| Dimensional / unit analysis | `dimensional-analysis` | annotate + propagate units through DeFi value paths (checklist 03/06) — catches mixed-decimals / wrong-scale bugs | manual per-quantity unit tracking |
+| Dimensional / unit analysis | `dimensional-analysis` (its roles run as `dimensional-analysis:*` agents, so it needs the ToB plugin installed; without them it reports BLOCKED) | annotate + propagate units through DeFi value paths (checklist 03/06) — catches mixed-decimals / wrong-scale bugs. It writes unit comments into the files it is given and `DIMENSIONAL_SCOPE.json` / `DIMENSIONAL_UNITS.md` at the project root, and adopts a `DIMENSIONAL_UNITS.md` it finds there, so run it on a scratch copy of the tree without the target's `DIMENSIONAL_*` files | manual per-quantity unit tracking |
 | Insecure-default trace | `insecure-defaults` (now a command + Workflow, `/insecure-defaults:audit`, that runs only with the ToB plugin installed; from the vendored tree, read its `references/*.md` category files) | fail-open vs fail-secure path trace for suspected weak defaults (checklist 12/13) | grep fallback-secret patterns |
 | API misuse / footguns | `sharp-edges` | misuse-resistance review of a program's own public/CPI interface + config schema | `references/framework-idioms/*` footgun catalog |
 | Exploitability verify | `fp-check` (local; an executable PoC it builds follows Rule 11a); `second-opinion` sends the selected code to an external LLM CLI — OpenAI Codex or Google Antigravity / Gemini — so the report records it (Rule 11b) | `peer-reviewer` + `poc-engineer` confirm a finding is real, not a harness artifact | manual re-derivation |
