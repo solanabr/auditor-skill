@@ -49,7 +49,7 @@ grep -rnE --include='*.yml' --include='*.yaml' 'github\.event\.(issue|pull_reque
 
 **Step 4: Is the comparison sound?** (recipe R3)
 ```
-grep -rnE --include='*.yml' --include='*.yaml' -e "contains\([[:space:]]*'[^']*(OWNER|MEMBER|COLLABORATOR)" -e 'author_association[[:space:]]*!=' -e '!contains\(fromJSON' -e 'github\.(actor|triggering_actor)[[:space:]]*[!=]=' -e "'(CONTRIBUTOR|FIRST_TIMER|FIRST_TIME_CONTRIBUTOR|MANNEQUIN)'" -e "app/[A-Za-z0-9_-]+'" .github/
+grep -rnE --include='*.yml' --include='*.yaml' -e "contains\([[:space:]]*'[^']*(OWNER|MEMBER|COLLABORATOR)" -e 'author_association[[:space:]]*!=' -e '![[:space:]]*contains\([[:space:]]*from(JSON|Json)' -e 'github\.(actor|triggering_actor)[[:space:]]*[!=]=' -e 'contains\(.*github\.(actor|triggering_actor)' -e "[\"'](CONTRIBUTOR|FIRST_TIMER|FIRST_TIME_CONTRIBUTOR|MANNEQUIN)[\"']" -e "app/[A-Za-z0-9_-]+'" .github/
 ```
 - ✅ PASS:
   - membership is `==` or `contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), …)`, and the allowed set is those three only;
@@ -59,6 +59,7 @@ grep -rnE --include='*.yml' --include='*.yaml' -e "contains\([[:space:]]*'[^']*(
   - string-form `contains()` in a workflow with any trigger that lacks the field;
   - a deny-list (`!= 'NONE'`, `!contains(fromJSON(…), …)`), or `CONTRIBUTOR` / `FIRST_TIME_*` in the allowed set;
   - a trust decision on `github.actor` / `github.triggering_actor` for PR-family or `workflow_run` events (Synacktiv 2024 showed `github.actor` set to `dependabot[bot]` on an attacker's PR);
+  - `contains(github.actor, …)` on any event, because it tests a substring;
   - an `app/<slug>` string compared to `github.actor`, which never matches.
 
 **Step 5: If the job runs PR code, is the approved commit bound?**

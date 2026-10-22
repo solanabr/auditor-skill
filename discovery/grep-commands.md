@@ -421,9 +421,9 @@ grep -rnE --include='*.yml' --include='*.yaml' 'github\.event\.(issue|pull_reque
 
 ```bash
 # R3 — unsound gate comparisons: string contains(), deny-lists, untrusted association values, app/<slug> strings, actor gates
-grep -rnE --include='*.yml' --include='*.yaml' -e "contains\([[:space:]]*'[^']*(OWNER|MEMBER|COLLABORATOR)" -e 'author_association[[:space:]]*!=' -e '!contains\(fromJSON' -e 'github\.(actor|triggering_actor)[[:space:]]*[!=]=' -e "'(CONTRIBUTOR|FIRST_TIMER|FIRST_TIME_CONTRIBUTOR|MANNEQUIN)'" -e "app/[A-Za-z0-9_-]+'" .github/
+grep -rnE --include='*.yml' --include='*.yaml' -e "contains\([[:space:]]*'[^']*(OWNER|MEMBER|COLLABORATOR)" -e 'author_association[[:space:]]*!=' -e '![[:space:]]*contains\([[:space:]]*from(JSON|Json)' -e 'github\.(actor|triggering_actor)[[:space:]]*[!=]=' -e 'contains\(.*github\.(actor|triggering_actor)' -e "[\"'](CONTRIBUTOR|FIRST_TIMER|FIRST_TIME_CONTRIBUTOR|MANNEQUIN)[\"']" -e "app/[A-Za-z0-9_-]+'" .github/
 ```
-> An actor comparison is a sound allowlist on `issue_comment` (the actor is the commenter) and unsound on PR-family and `workflow_run` events (DEP-091).
+> An actor comparison is a sound allowlist on `issue_comment` (the actor is the commenter) and unsound on PR-family and `workflow_run` events (DEP-091). `contains(github.actor, …)` is a substring test and unsound on every event. Function names are case-insensitive, so `fromJson` counts the same as `fromJSON`.
 
 ```bash
 # R4 — workflow_run consumers: head fields and artifact downloads
