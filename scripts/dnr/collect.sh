@@ -39,9 +39,10 @@
 #
 # --before <sig> starts paging just older than that signature (resume a capped run,
 # or skip activity newer than the incident) — always into a new --out: an --out that
-# already holds signatures is refused, so a resume never erases the first pass. Every
-# address and --before value must be base58, and every number a plain integer,
-# before anything is written or sent. Paging an address ends when its history does
+# already holds any of this script's output files is refused, so a resume or a
+# second collection never erases an earlier one. Every address and --before value
+# must be base58, and every number a plain integer, before anything is written or
+# sent. Paging an address ends when its history does
 # (a page shorter than 1000) or once --since is crossed; when --max-pages stops it
 # first, with a full last page, the history is truncated and the script says so
 # ("truncated by --max-pages", with the --before cursor that resumes it): a
@@ -168,11 +169,14 @@ while :; do
   case "$run_dir" in .|/) break ;; esac
   run_dir="$(dirname "$run_dir")"
 done
-# A second pass into the same --out would truncate the first one's corpus.
-if [ -s "$out/signatures.jsonl" ]; then
-  echo "collect.sh: $out already holds a collected corpus — use a new --out (resume there with --before)." >&2
-  exit 2
-fi
+# Never write over an earlier run's output: a resume or a second collection goes
+# into a new --out (for an incident, the next incident_<n>/corpus-<k>/).
+for f in signatures.jsonl transactions.jsonl collection-gaps.tsv; do
+  if [ -e "$out/$f" ] || [ -L "$out/$f" ]; then
+    echo "collect.sh: $out already holds $f from an earlier run — use a new --out (resume there with --before)." >&2
+    exit 2
+  fi
+done
 
 mkdir -p "$out" || exit 2
 # Rule 11d: an incident_<n>/ directory (the --out itself or its parent) ignores itself
@@ -182,12 +186,13 @@ for d in "$out" "$(dirname "$out")"; do
     incident_*) [ -e "$d/.gitignore" ] || printf '*\n' > "$d/.gitignore" ;;
   esac
 done
-sig_file="$out/signatures.jsonl"; : > "$sig_file"
-tx_file="$out/transactions.jsonl"; : > "$tx_file"
-gaps="$out/collection-gaps.tsv"; : > "$gaps"; ngaps=0
-todo="$out/.signatures.todo"
-errf="$(mktemp "${TMPDIR:-/tmp}/dnr_collect.XXXXXX")"
-trap 'rm -f "$errf" "$todo"' EXIT
+sig_file="$out/signatures.jsonl"; tx_file="$out/transactions.jsonl"; gaps="$out/collection-gaps.tsv"
+# noclobber: creating an output file that appeared since the check above fails.
+( set -C; : > "$sig_file" && : > "$tx_file" && : > "$gaps" ) || exit 2
+ngaps=0
+tmpd="$(mktemp -d "${TMPDIR:-/tmp}/dnr_collect.XXXXXX")" || exit 2
+trap 'rm -rf "$tmpd"' EXIT
+errf="$tmpd/stderr"; todo="$tmpd/todo"
 
 # Provider domain, for disclosure under OUTPUT-RULES.md Rule 11b: strip the scheme,
 # any userinfo, path, query and fragment, then keep the host's last two DNS labels (an

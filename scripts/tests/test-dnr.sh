@@ -365,7 +365,7 @@ fi
 hrun h2500s 2500 --since 1700002000 --max-pages 2
 eq "collect: --since crossed inside the cap -> no truncation" "$(truncated h2500s)" "0"
 # A second pass into an --out that already holds a corpus is refused, so the first
-# pass survives.
+# pass survives — and so is an --out holding only an earlier transactions.jsonl.
 cp "$TT/c/signatures.jsonl" "$TT/c.sig.before"
 ( PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
     bash "$DNR/collect.sh" --out "$TT/c" --confirmed --max-pages 1 -- "$A_ADDR" ) > "$TT/c4.out" 2>&1
@@ -374,6 +374,15 @@ if [[ "$code" == 2 ]] && grep -q 'use a new --out' "$TT/c4.out" && cmp -s "$TT/c
   ok "collect: refuses to reuse an --out that holds a corpus (exit 2, corpus intact)"
 else
   bad "collect: reuse of a filled --out -> exit $code"
+fi
+mkdir -p "$TT/c6"; cp "$TT/c/transactions.jsonl" "$TT/c6/transactions.jsonl"
+( PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
+    bash "$DNR/collect.sh" --out "$TT/c6" --confirmed --max-pages 1 -- "$A_ADDR" ) > /dev/null 2>&1
+code=$?
+if [[ "$code" == 2 && ! -e "$TT/c6/signatures.jsonl" ]] && cmp -s "$TT/c6/transactions.jsonl" "$TT/c/transactions.jsonl"; then
+  ok "collect: an earlier transactions.jsonl alone is never truncated (exit 2, file intact)"
+else
+  bad "collect: an --out holding transactions.jsonl -> exit $code"
 fi
 # --max-tx counts every getTransaction call, failed ones included, and 10 failures
 # in a row stop the run with a gap row for the rest.
