@@ -715,6 +715,51 @@ check "T-p: a shallow clone is collected with a note that its history is cut" \
   has "$OUTSH/history.md" "Shallow clone: history before the shallow boundary is missing"
 check "T-p: a full clone carries no such note" hasnt "$H1" "Shallow clone:"
 
+# =================================================================================================
+# T-q: target text in inputs.tsv and history.md stays one value per cell and one row per line: control
+# characters are escaped and long values cut, whichever JSON tool runs.
+# =================================================================================================
+CR=$(printf '\r'); ESC=$(printf '\033'); TB=$(printf '\t')
+tsv_ok() { # tsv_ok <inputs.tsv>: every row has exactly six cells and no carriage return
+  awk -F '\t' 'NF != 6 { bad = 1 } END { exit bad }' "$1" && ! grep -q "$CR" "$1"
+}
+fences_ok() { # fences_ok <history.md>: code fences open and close in pairs, no stray CR or ESC
+  [ $(( $(grep -c '^```' "$1") % 2 )) -eq 0 ] && ! grep -q "$CR" "$1" && ! grep -q "$ESC" "$1"
+}
+TQ="$T/textq"; mkrepo "$TQ"
+put "$TQ" programs/q/src/lib.rs 'pub fn q() { require!(x, E::Q); }'
+commit "$TQ" -m "initial"
+put "$TQ" programs/q/src/lib.rs 'pub fn q() {}'
+commit "$TQ" -m "$(printf 'Tidy q%s```%s[31m %s' "$CR" "$ESC" "$(i=0; while [ $i -lt 120 ]; do printf 'long-subject-'; i=$((i + 1)); done)")"
+git -C "$TQ" config remote.mirror.url "$(printf 'https://example.invalid/m\n```\n## Forged heading')"
+# The schema value holds a TAB and a newline (JSON escapes \t and \n) followed by a would-be manifest row.
+printf '{"schema": "auditor-incidents/9\\t\\n99\\tforged-row\\tjson\\t-\\t-\\tforged", "incidents": []}\n' > "$T/forged-schema.json"
+mkdir -p "$TQ/incident_x
+77${TB}forged-dir"
+cp "$T/forged-schema.json" "$TQ/incident_x
+77${TB}forged-dir/INCIDENTS.json"
+for tool in jq python3; do
+  if ! command -v "$tool" >/dev/null 2>&1; then skp "T-q ($tool): $tool not installed"; continue; fi
+  OUTQ="$T/textq-$tool/audit_1/bootstrap"
+  TM_JSON_TOOL=$tool collect --repo "$TQ" --out "$OUTQ" --offline --vulns "$T/forged-schema.json"
+  check "T-q ($tool): every inputs.tsv row has six cells" tsv_ok "$OUTQ/inputs.tsv"
+  check "T-q ($tool): a schema string cannot add an inputs.tsv row" sh -c "! grep -q '^99' '$OUTQ/inputs.tsv'"
+  check "T-q ($tool): ... it is recorded with its control characters escaped" has "$OUTQ/inputs.tsv" 'auditor-incidents/9\t\n99\tforged-row'
+  check "T-q ($tool): an incident directory name cannot add an inputs.tsv row" sh -c "! grep -q '^77' '$OUTQ/inputs.tsv'"
+  check "T-q ($tool): ... it is recorded escaped" has "$OUTQ/inputs.tsv" 'incident_x\n77\tforged-dir/INCIDENTS.json'
+  check "T-q ($tool): history.md keeps its code fences paired, with no CR or ESC" fences_ok "$OUTQ/history.md"
+done
+OUTQ="$T/textq-$( command -v jq >/dev/null 2>&1 && echo jq || echo python3)/audit_1/bootstrap"
+if [ -s "$OUTQ/history.md" ]; then
+  check "T-q: a multi-line remote URL stays on one R6 line" sh -c "! grep -q '^## Forged heading' '$OUTQ/history.md'"
+  check "T-q: ... shown escaped" has "$OUTQ/history.md" 'https://example.invalid/m\n```\n## Forged heading'
+  check "T-q: a CR in a commit subject is shown as \\r" has "$OUTQ/history.md" 'Tidy q\r```'
+  check "T-q: an incident directory name in R6 is shown escaped" has "$OUTQ/history.md" 'incident_x\n77\tforged-dir/INCIDENTS.json'
+  check "T-q: a long subject is cut" sh -c "awk 'length(\$0) > 520 { bad = 1 } END { exit bad }' '$OUTQ/history.md'"
+else
+  skp "T-q history checks: needs jq or python3"
+fi
+
 echo
 echo "threat-model collector tests: $pass passed, $fail failed, $skip skipped"
 [ "$fail" -eq 0 ]

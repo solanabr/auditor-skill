@@ -210,12 +210,27 @@ export TM_ATTR_RE="(^|[(,])[ $TAB]*(address|seeds|bump|close|owner)[ $TAB]*=[^=]
 # git's built-in rust hunk-header pattern, passed to git for R4 so the target's config cannot redefine it.
 RUST_FUNC="^[$TAB ]*((pub(\\([^\\)]+\\))?[$TAB ]+)?((async|const|unsafe|extern([$TAB ]+\"[^\"]+\"))[$TAB ]+)?(struct|enum|union|mod|trait|fn|impl|macro_rules!)[< $TAB]+[^;]*)\$"
 
+# Target text reaches inputs.tsv and history.md as one value per cell and one row per line: TAB, LF and
+# CR are shown as \t, \n and \r, every other control character (C0 and DEL) as ?, and a value longer
+# than 500 characters is cut, ending in "...".
+CLEAN_AWK='
+  BEGIN { for (i = 1; i < 32; i++) esc[sprintf("%c", i)] = "?"
+          esc["\t"] = "\\t"; esc["\n"] = "\\n"; esc["\r"] = "\\r"; esc[sprintf("%c", 127)] = "?" }
+  function clean(s,   out, i, n, c) {
+    n = length(s); if (n > 600) n = 600
+    out = ""
+    for (i = 1; i <= n; i++) { c = substr(s, i, 1); out = out ((c in esc) ? esc[c] : c) }
+    if (length(out) > 500 || length(s) > 600) out = substr(out, 1, 500) "..."
+    return out }'
+clean()       { CLEAN_IN=$1 awk "$CLEAN_AWK"' BEGIN { printf "%s", clean(ENVIRON["CLEAN_IN"]) }'; }
+clean_lines() { awk "$CLEAN_AWK"' { print clean($0) }'; }
+
 # An empty section prints NOT FOUND and a capped one TRUNCATED, so "no rows" never reads as "clean".
 emit_capped() { # emit_capped <file> <what was searched>
   local f=$1 what=$2 n
   n=$(wc -l < "$f" | tr -d ' ')
   if [ "$n" -eq 0 ]; then echo "NOT FOUND ($what)"; return 0; fi
-  head -n "$CAP" "$f"
+  head -n "$CAP" "$f" | clean_lines
   if [ "$n" -gt "$CAP" ]; then echo "TRUNCATED (+$((n - CAP)) more rows; raise --cap)"; fi
   return 0
 }
@@ -280,6 +295,15 @@ guard_rows() {
     END { flush() }' | sort -k1,1n -k5 | cut -d' ' -f"$([ "${GR_SIZE:-0}" = 1 ] && echo 2- || echo 3-)"
 }
 
+# remote_urls: one "remote.<name>.url <value>" line per configured remote URL. Config is read NUL-separated,
+# so a newline inside a value stays on its line, shown as \n.
+remote_urls() {
+  G "$REPO" config -z --get-regexp '^remote\..*\.url$' 2>/dev/null | tr '\n\000' '\001\n' |
+    awk '{ i = index($0, "\001"); if (i) $0 = substr($0, 1, i - 1) " " substr($0, i + 1)
+           out = ""; while ((i = index($0, "\001")) > 0) { out = out substr($0, 1, i - 1) "\\n"; $0 = substr($0, i + 1) }
+           print out $0 }'
+}
+
 # ---- triggers T3 (provenance) and T4 (prior reports, incidents) ---------------------------------------
 # T2 (intake §7 records a prior audit or an incident) is read by the command, not here.
 FORK_PHRASES='fork(ed)? (of|from)|white[- ]?label'
@@ -292,7 +316,7 @@ eval_triggers() {
   G "$REPO" grep -I -i -q -E "$FORK_PHRASES" "$PIN_SHA" -- 'README*' '*/README*' 'docs/*' 2>/dev/null && t3="readme-phrase"
   src=$(G "$REPO" grep -h -a -E 'source_code[[:space:]]*:' "$PIN_SHA" -- '*.rs' 2>/dev/null |
         sed -nE 's/.*source_code[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' | head -n 3)
-  remotes=$(G "$REPO" config --get-regexp '^remote\..*\.url$' 2>/dev/null | awk '{print $2}' | norm_url)
+  remotes=$(remote_urls | awk '{print $2}' | norm_url)
   # One string per line, read as written: target strings are never word-split or glob-expanded.
   while IFS= read -r s; do
     [ -n "$s" ] || continue
@@ -379,11 +403,11 @@ while IFS= read -r p; do [ -n "$p" ] && PPATHS+=("$p"); done <<< "$PPATHS_NL"
   echo
   echo "| | |"
   echo "|---|---|"
-  echo "| Target | \`$REPO_ABS\` |"
+  echo "| Target | \`$(clean "$REPO_ABS")\` |"
   echo "| Pinned commit | \`$PIN_SHA\` |"
-  echo "| Target paths | \`${TPATHS[*]}\` |"
-  if [ -n "$PARENT" ]; then echo "| Parent | $(redact "$PARENT") — $PARENT_STATUS${PHEAD:+ @ \`$PHEAD\`} |"; else echo "| Parent | none |"; fi
-  echo "| Parent paths | \`${PPATHS[*]}\` |"
+  echo "| Target paths | \`$(clean "${TPATHS[*]}")\` |"
+  if [ -n "$PARENT" ]; then echo "| Parent | $(clean "$(redact "$PARENT")") — $PARENT_STATUS${PHEAD:+ @ \`$PHEAD\`} |"; else echo "| Parent | none |"; fi
+  echo "| Parent paths | \`$(clean "${PPATHS[*]}")\` |"
   echo "| Network | $([ "$OFFLINE" -eq 1 ] && echo 'offline' || echo 'explicit https URLs only') |"
   echo "| Collector | scripts/threat-model/collect.sh v$COLLECTOR_VERSION, cap $CAP rows, quiet-fix ceiling $SMALL lines, fix ceiling $FIX_CEILING lines |"
   echo
@@ -412,7 +436,7 @@ while IFS= read -r p; do [ -n "$p" ] && PPATHS+=("$p"); done <<< "$PPATHS_NL"
 
 # ---- R1 keyword commits (whole message) --------------------------------------------------------------
 G "$REPO" log "${DIFFSAFE[@]}" -i -E --grep="$KW" --format='%h %ad %s' --date=short "$PIN_SHA" -- "${TPATHS[@]}" > "$TMPD/r1" 2>/dev/null
-{ section "R1 Commits whose message matches security keywords" "Case-insensitive, whole commit message: \`$KW\`"
+{ section "R1 Commits whose message matches security keywords" "Case-insensitive, whole commit message: \`$(clean "$KW")\`"
   emit_capped "$TMPD/r1" "no commit message in the pin ancestry matches"; endsec; } >> "$H"
 
 # ---- R2 reverts ------------------------------------------------------------------------------------
@@ -473,7 +497,7 @@ R4_OTHER=$(sed -E 's/^ *[0-9]+ //' "$TMPD/r4a" | grep -E '\.rs"?$' |
   if [ -z "$PARENT" ]; then
     echo "NOT FOUND (no --parent given; a URL found in target content is never fetched)"
   elif [ -z "$PDIR" ] || [ -z "$PHEAD" ]; then
-    echo "NOT FOUND (parent $(redact "$PARENT"): $PARENT_STATUS)"
+    echo "NOT FOUND (parent $(clean "$(redact "$PARENT")"): $PARENT_STATUS)"
   else
     G "$PDIR" rev-list --all > "$TMPD/parent.revs" 2>/dev/null
     G "$REPO" rev-list "$PIN_SHA" > "$TMPD/target.revs" 2>/dev/null
@@ -501,8 +525,8 @@ R4_OTHER=$(sed -E 's/^ *[0-9]+ //' "$TMPD/r4a" | grep -E '\.rs"?$' |
     if [ -z "$FORK" ]; then
       echo "NOT FOUND (no shared commit and no identical file content between the target import and the parent)"
     else
-      echo "fork point: $(G "$PDIR" log "${DIFFSAFE[@]}" -1 --format='%h %ad %s' --date=short "$FORK") — $METHOD"
-      echo "parent head: $(G "$PDIR" log "${DIFFSAFE[@]}" -1 --format='%h %ad %s' --date=short "$PHEAD")"
+      echo "fork point: $(clean "$(G "$PDIR" log "${DIFFSAFE[@]}" -1 --format='%h %ad %s' --date=short "$FORK")") — $METHOD"
+      echo "parent head: $(clean "$(G "$PDIR" log "${DIFFSAFE[@]}" -1 --format='%h %ad %s' --date=short "$PHEAD")")"
       if [ "$(G "$PDIR" rev-parse --is-shallow-repository 2>/dev/null)" = true ]; then
         echo "note: the parent is a shallow clone; its history before the shallow boundary is missing"
       fi
@@ -546,7 +570,7 @@ R4_OTHER=$(sed -E 's/^ *[0-9]+ //' "$TMPD/r4a" | grep -E '\.rs"?$' |
   G "$REPO" grep -n -a -E 'declare_id!' "$PIN_SHA" -- '*.rs' 2>/dev/null | strip_pin > "$TMPD/r6c"
   emit_capped "$TMPD/r6c" "no declare_id!"
   echo "--- configured remotes (strings from .git/config) ---"
-  G "$REPO" config --get-regexp '^remote\..*\.url$' 2>/dev/null | sed -E 's#(https://)[^/@ ]*@#\1***@#' > "$TMPD/r6d"
+  remote_urls | sed -E 's#(https://)[^/@ ]*@#\1***@#' > "$TMPD/r6d"
   emit_capped "$TMPD/r6d" "no remote configured"
   echo "--- first commits ---"
   G "$REPO" log "${DIFFSAFE[@]}" --reverse --format='%h %ad %s' --date=short "$PIN_SHA" 2>/dev/null | head -n 3 > "$TMPD/r6e"
@@ -555,7 +579,9 @@ R4_OTHER=$(sed -E 's/^ *[0-9]+ //' "$TMPD/r4a" | grep -E '\.rs"?$' |
   G "$REPO" ls-tree -r --name-only "$PIN_SHA" 2>/dev/null | grep -iE '\.(pdf|md)$' | grep -iE "$REPORT_RE" > "$TMPD/r6f"
   emit_capped "$TMPD/r6f" "no audit, post-mortem or incident file"
   echo "--- auditor-skill outputs next to the target ---"
-  ls -d "$REPO_ABS"/audit_*/ "$REPO_ABS"/incident_*/INCIDENTS.json 2>/dev/null > "$TMPD/r6g"
+  for d in "$REPO_ABS"/audit_*/ "$REPO_ABS"/incident_*/INCIDENTS.json; do
+    if [ -e "$d" ] || [ -L "$d" ]; then clean "$d"; echo; fi
+  done > "$TMPD/r6g"
   emit_capped "$TMPD/r6g" "no audit_*/ or incident_*/INCIDENTS.json"
   endsec
 } >> "$H"
@@ -564,7 +590,7 @@ R4_OTHER=$(sed -E 's/^ *[0-9]+ //' "$TMPD/r4a" | grep -E '\.rs"?$' |
 INPUT_N=0
 record() { # record <source> <format> <sha256> <stored_as> <status>
   INPUT_N=$((INPUT_N + 1))
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$INPUT_N" "$(redact "$1")" "$2" "$3" "$4" "$5" >> "$OUT/inputs.tsv"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$INPUT_N" "$(clean "$(redact "$1")")" "$2" "$3" "$4" "$(clean "$5")" >> "$OUT/inputs.tsv"
 }
 # JSON tools in order of preference. When jq is missing, too old, or fails on a file, python3 takes
 # over; with neither, JSON inputs are recorded but never copied. TM_JSON_TOOL (jq | python3 | none)
@@ -735,7 +761,7 @@ done < "$TMPD/r6f.newest"
   if [ -z "$PROGRAM_ID" ]; then echo "NOT FOUND (no --program-id given)"
   elif [ -z "$DB" ]; then echo "NOT FOUND (no --audit-mem-db given; the collector never looks for a store on its own)"
   elif [ ! -x "$BIN" ]; then echo "NOT FOUND (tools/auditor-tools is not built)"
-  elif [ ! -f "$DB" ]; then echo "NOT FOUND (no database at $DB)"
+  elif [ ! -f "$DB" ]; then echo "NOT FOUND (no database at $(clean "$DB"))"
   elif "$BIN" --db "$DB" warm --program-id "$PROGRAM_ID" > "$OUT/audit-mem-warm.json" 2>/dev/null; then
     echo "saved: audit-mem-warm.json"
   else

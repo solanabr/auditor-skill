@@ -171,6 +171,9 @@ partial clone.
 
 - **Empty is not clean.** An empty section prints `NOT FOUND (<what was searched>)`. A capped one prints
   `TRUNCATED (+n more rows; raise --cap)`.
+- **Escaped text.** Target text (commit subjects, file contents and names, remote URLs, incident fields) appears in
+  `history.md` and `inputs.tsv` with TAB, LF and CR shown as `\t`, `\n` and `\r`, any other control character as
+  `?`, and values over 500 characters cut with `...`.
 - **Moves.** A guard moved unchanged inside one file of one commit cancels out. A guard that is edited, or moved to
   another file, prints its old text as REMOVED.
 - **Blind spots.** Flipped comparisons (`>` to `>=`), changed inputs to a guard whose text did not change, plain
