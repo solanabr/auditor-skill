@@ -32,12 +32,14 @@ not the thing standing between the treasury and the exit.
 
 ## The hard rules
 
-1. **A log line is not a state change.** Program logs, `emit!` / `emit_cpi!`
-   events and inner-instruction records are things a program *said*; a compromised
-   or malicious program can say anything, and the lines still appear when a later
+1. **A log line is not a state change.** Program logs, `emit!` lines and the event
+   payloads `emit_cpi!` carries are things a program *said*; a compromised or
+   malicious program can say anything, and the lines still appear when a later
    instruction in the same transaction fails and the whole transaction reverts
    (KV-122). Evidence is a runtime effect — `meta.err`, a balance delta, an
-   account's current value — read at `finalized`, never the log text.
+   account's current value — read at `finalized`, never the log text. Which
+   instruction ran comes from the runtime-recorded instruction lists (top-level
+   and `meta.innerInstructions`), which show invocation, never effect.
 2. **Query the corpus; do not pour it into the conversation.** A real history is
    larger than any context window (~20 KB per transaction, gigabytes for a serious
    corpus). Profile it with the bundled recipes (rule 8), interrogate it with
@@ -111,11 +113,16 @@ other outcome is filed under `ruled_out[]`.
   **runtime-recorded** deltas show the effect: a balance or token-balance movement
   (`deltas.py`). For an effect that changes only account *data* — an authority,
   config or oracle takeover, which `getTransaction` meta does **not** diff —
-  Leg 1 instead requires all of: a finalized success; a runtime-recorded invoke of
-  the instruction (`frames.py`, not an inner-instruction record, which shows
-  invocation and never effect); the field's current value from `getAccountInfo`;
-  and evidence the attacker's transaction was the last successful one with that
-  account writable (signature history + `accountKeys[].writable`). Short of that,
+  Leg 1 instead requires all of: a finalized success; the instruction that ran,
+  identified from the transaction's runtime-recorded instruction data — the
+  top-level `transaction.message.instructions` entry, or the
+  `meta.innerInstructions` entry when it was reached by CPI (`frames.py
+  --instructions`, an `ix` record) — decoded against the program's discriminator
+  or IDL and matched to its runtime invoke line (the `invoke` record whose `ix_seq`
+  names it); the field's current value from `getAccountInfo`; and evidence the
+  attacker's transaction was the last successful one with that account writable
+  (signature history + `accountKeys[].writable`). A program log such as
+  `Instruction: X` stays a hint (rule 1): any program can print it. Short of that,
   the ceiling is `suspected`.
 - **Leg 2 — the flaw in source.** The missing or wrong check named at
   `file:function`, in the source that was **deployed at the incident slot** — not

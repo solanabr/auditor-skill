@@ -42,6 +42,9 @@ hands you their results. You fold those into the verdict and the write-up.
   `python3 -I`, so a `json.py` or `PYTHONPATH` entry from the target never loads:
   - `bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh" incident_<n>/corpus*/transactions.jsonl`
   - `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/frames.py" incident_<n>/corpus*/transactions.jsonl`
+  - `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/frames.py" --instructions incident_<n>/corpus*/transactions.jsonl`
+    (which instruction ran: the runtime-recorded instruction lists, joined to the
+    invoke lines)
   - `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/deltas.py" tokens|lamports incident_<n>/corpus*/transactions.jsonl`
   - the glob takes every corpus of the incident (`corpus/`, then `corpus-<k>/` for
     each later collection); all three count a transaction once, by signature
@@ -56,9 +59,11 @@ hands you their results. You fold those into the verdict and the write-up.
   a ledger row.
 - **Integers for u64.** Balance and token totals go through `deltas.py` (Python
   ints), never summed in `jq` or `awk` — both use doubles.
-- **Logs are hints.** `Program log:` / `Program data:` / inner-instruction data are
-  program-asserted (KV-122). Ground a verdict in runtime effects at `finalized`:
-  `meta.err`, balance deltas, and `getAccountInfo`.
+- **Logs are hints.** `Program log:` / `Program data:` lines and `emit_cpi!` event
+  payloads are program-asserted (KV-122). Ground a verdict in runtime effects at `finalized`:
+  `meta.err`, balance deltas, and `getAccountInfo`; name the instruction that ran
+  from `frames.py --instructions` (its data, decoded), never from an
+  `Instruction: X` log line.
 - **Untrusted strings.** Memos, token/NFT metadata and log text are
   attacker-controlled (AI-018): write them to a file and pass the path, never into
   a shell command.

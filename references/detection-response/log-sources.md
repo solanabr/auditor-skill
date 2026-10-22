@@ -19,8 +19,9 @@ Classify every datum by how much it can be trusted, because the verdict legs
 | Datum | Where | Proves |
 |-------|-------|--------|
 | `meta.err`, `preBalances`/`postBalances`, `pre`/`postTokenBalances`, `meta.fee`, `computeUnitsConsumed` | `getTransaction` meta | **runtime-recorded** — the ledger's own account of the effect. Leg-1 evidence (at `finalized`). |
-| invoke / `success` / `failed` lines, CPI depth | `meta.logMessages` | **runtime-recorded** that a program *ran*; parse with `frames.py`. Shows invocation, never effect. |
-| `Program log:` / `Program data:` / `emit!` / `emit_cpi!` / inner-instruction data | logs + `meta.innerInstructions` | **program-asserted** — a hint, forgeable by a malicious/compromised program, emitted even on a later-reverted tx (KV-122). Never a verdict leg on its own. |
+| invoke / `success` / `failed` lines, CPI depth | `meta.logMessages` | **runtime-recorded** that a program *ran*; parse with `frames.py` (`--instructions` for `invoke` records). Shows invocation, never effect. |
+| instruction lists: top-level `transaction.message.instructions`, CPI `meta.innerInstructions` (program, accounts, data, stack height) | `getTransaction` | **runtime-recorded** — which instruction, with which data, ran; `frames.py --instructions` (`ix` records). Identifies the instruction for Leg 1 (decode the data against the discriminator or IDL); shows invocation, never effect. |
+| `Program log:` / `Program data:` / `emit!` lines, and the event payload an `emit_cpi!` self-CPI carries | logs, `meta.innerInstructions` | **program-asserted** — a hint, forgeable by a malicious/compromised program, emitted even on a later-reverted tx (KV-122). Never a verdict leg on its own; an `Instruction: X` log line never identifies the instruction. |
 | an account's live field (authority, config, oracle price) | `getAccountInfo` | **runtime** current state. The account-data half of Leg 1. |
 | `type`, `description`, parsed transfers | Helius Enhanced / webhooks | **provider-derived** interpretation. A lead, re-checked against raw meta. Webhooks fire at `confirmed` and can duplicate. |
 
@@ -118,8 +119,9 @@ exercised by `scripts/tests/test-dnr.sh` — the offline ones against the commit
 fixtures in `scripts/dnr/fixtures/` (`log-newline-injection.jsonl`,
 `log-tab-injection.jsonl`, `token-amount-over-2-53.jsonl`,
 `lamports-over-2-53.jsonl`, `same-owner-move.jsonl`, `same-owner-drain.jsonl`,
-`clean-mixed.jsonl`), the networked ones against fake `curl` / `solana` binaries,
-with no network.
+`clean-mixed.jsonl`, and the instruction fixtures `ix-native-no-logs.jsonl`,
+`ix-cpi-victim.jsonl`, `ix-anchor-victim.jsonl`, `ix-lying-log.jsonl`), the
+networked ones against fake `curl` / `solana` binaries, with no network.
 
 ```bash
 # baseline (no log parsing): outcome / version histograms, window, signer &
@@ -128,6 +130,10 @@ bash "<auditor-skill root>/scripts/dnr/profile.sh" incident_<n>/corpus*/transact
 
 # program-log attribution, as JSONL (one record per emitted line, by frame)
 python3 -I "<auditor-skill root>/scripts/dnr/frames.py" incident_<n>/corpus*/transactions.jsonl > incident_<n>/frames.jsonl
+
+# which instruction ran, from the runtime-recorded instruction lists (ix records,
+# top-level and CPI, data as given) joined to the runtime invoke lines
+python3 -I "<auditor-skill root>/scripts/dnr/frames.py" --instructions incident_<n>/corpus*/transactions.jsonl > incident_<n>/instructions.jsonl
 
 # balance movements, exact, successful transactions only
 python3 -I "<auditor-skill root>/scripts/dnr/deltas.py" tokens   incident_<n>/corpus*/transactions.jsonl
@@ -165,7 +171,8 @@ the JSONL; DuckDB is optional.
   units out per mint (Python ints),
   record/account counts, and the `(slot, transactionIndex)` window. Victim-wallet
   lists are **internal only** and never leave `incident_<n>/`.
-- **Root cause.** `frames.py` + the instruction list point at the program and
+- **Root cause.** `frames.py --instructions` (the runtime-recorded instruction
+  lists, decoded against the discriminator or IDL) points at the program and
   instruction; confirm the flaw in the source deployed at the incident slot
   (Leg 2), then reproduce on the real bytes (Leg 3).
 
@@ -179,8 +186,9 @@ Round-1 hypotheses, each a ledger row; let hits spawn pivots:
    (each row is one token account); a drain is a large net negative from
    vault/treasury owners.
 3. **Privileged instructions whose signer is not in the authority set** — the
-   takeover tell: a set-authority / set-config / upgrade / withdraw whose signer
-   the threat model does not list as that role.
+   takeover tell: a set-authority / set-config / upgrade / withdraw (found in the
+   `ix` records of `frames.py --instructions`, by discriminator, top-level or CPI)
+   whose signer the threat model does not list as that role.
 4. **First-seen signers and attacker-deployed programs:** a signer or program id
    appearing for the first time just before the effect; a program deployed
    (loader `invoke`) shortly before it is used.

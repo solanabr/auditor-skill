@@ -12,6 +12,26 @@ Output: JSONL, one record per emitted log line:
     {"sig": "...", "ok": true, "depth": 2, "program": "<id|?>",
      "kind": "log|data|return|truncated|unparsed", "text": "..."}
 
+With `--instructions`, it emits instead what the runtime recorded about each
+instruction, for Leg 1's "which instruction ran":
+
+    {"sig", "ok", "kind": "ix", "seq": k, "top": i, "inner": j|null,
+     "stack_height": h|null, "program": "<id|?>", "data": "<base58 as given>"|null,
+     "data_status": "raw|parsed-only|absent", "accounts": [...]}
+        one per instruction, from the transaction's own instruction lists:
+        `transaction.message.instructions[i]` (inner = null) and
+        `meta.innerInstructions[*].instructions[j]` of top-level instruction i
+        (a CPI), in execution order (seq). `data` is exactly what the RPC gave;
+        a jsonParsed instruction decoded by the RPC carries `parsed` and
+        `program_name` instead, marked "parsed-only". No field of an `ix` record
+        comes from the logs.
+    {"sig", "ok", "kind": "invoke", "seq": m, "program": "<id>", "depth": N,
+     "outcome": "success|failed: ...|null", "ix_seq": k|null}
+        one per runtime `Program <id> invoke [N]` line, with the outcome its
+        matching success / failed line gave (null when the log ends first), and
+        the `ix` record it ran: matched in order on program id and depth (stack
+        height); an instruction with no invoke line is passed over.
+
 Design rules, each forced by a real failure mode:
 
   * Walk `logMessages` one element at a time. Never flatten the array into one
@@ -30,7 +50,7 @@ Design rules, each forced by a real failure mode:
   * Output is JSONL with the raw text in a JSON string, so tabs/newlines inside a
     payload are escaped by the encoder and can never break a column.
 
-Run it as `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/frames.py" <corpus.jsonl>`.
+Run it as `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/frames.py" [--instructions] <corpus.jsonl>...`.
 Isolated mode keeps the working directory (usually the audited repo) and
 PYTHONPATH off sys.path, so it imports nothing beyond the stdlib — keep it that
 way: no sibling modules.
@@ -97,6 +117,87 @@ def _rows(tx: dict):
                    "kind": "unparsed", "text": msg}
 
 
+def _keys(tx: dict) -> list:
+    """The transaction's account keys, in index order: jsonParsed folds lookup-table
+    addresses in; encoding json lists them in meta.loadedAddresses."""
+    msg = (tx.get("transaction") or {}).get("message") or {}
+    keys = [k.get("pubkey") if isinstance(k, dict) else k for k in msg.get("accountKeys") or []]
+    loaded = (tx.get("meta") or {}).get("loadedAddresses") or {}
+    if isinstance(loaded, dict) and loaded and not any(isinstance(k, dict) for k in msg.get("accountKeys") or []):
+        keys += list(loaded.get("writable") or []) + list(loaded.get("readonly") or [])
+    return keys
+
+
+def _ix_record(ix, keys, sig, ok, seq, top, inner):
+    if not isinstance(ix, dict):
+        ix = {}
+    pidx = ix.get("programIdIndex")
+    program = ix.get("programId")
+    if program is None and type(pidx) is int and 0 <= pidx < len(keys):
+        program = keys[pidx]
+    accounts = []
+    for a in ix.get("accounts") or []:
+        accounts.append(keys[a] if type(a) is int and 0 <= a < len(keys) else a)
+    rec = {"sig": sig, "ok": ok, "kind": "ix", "seq": seq, "top": top, "inner": inner,
+           "stack_height": ix.get("stackHeight"), "program": program or "?",
+           "data": ix.get("data") if isinstance(ix.get("data"), str) else None}
+    if rec["data"] is not None:
+        rec["data_status"] = "raw"
+    elif "parsed" in ix:
+        rec["data_status"] = "parsed-only"
+        rec["program_name"] = ix.get("program")
+        rec["parsed"] = ix.get("parsed")
+    else:
+        rec["data_status"] = "absent"
+    rec["accounts"] = accounts
+    return rec
+
+
+def _instruction_rows(tx: dict):
+    """`ix` records from the instruction lists, then `invoke` records from the
+    runtime's invoke / success / failed lines, each joined to the `ix` it ran."""
+    meta = tx.get("meta") or {}
+    txn = tx.get("transaction") or {}
+    sigs = txn.get("signatures") or []
+    sig = sigs[0] if sigs else "?"
+    ok = meta.get("err") is None
+    keys = _keys(tx)
+    inner_by_top: dict = {}
+    for group in meta.get("innerInstructions") or []:
+        if isinstance(group, dict) and type(group.get("index")) is int:
+            inner_by_top.setdefault(group["index"], []).extend(group.get("instructions") or [])
+    ixs = []
+    for i, ix in enumerate((txn.get("message") or {}).get("instructions") or []):
+        ixs.append(_ix_record(ix, keys, sig, ok, len(ixs), i, None))
+        for j, inner in enumerate(inner_by_top.get(i, [])):
+            ixs.append(_ix_record(inner, keys, sig, ok, len(ixs), i, j))
+    yield from ixs
+    invokes, stack, ptr = [], [], 0
+    for msg in meta.get("logMessages") or []:
+        if not isinstance(msg, str):
+            continue
+        m = _INVOKE.match(msg)
+        if m:
+            program, depth = m.group(1), int(m.group(2))
+            match = None
+            while ptr < len(ixs):
+                cand = ixs[ptr]
+                ptr += 1
+                want = 1 if cand["inner"] is None else cand["stack_height"]
+                if cand["program"] == program and (depth == want or (want is None and depth >= 2)):
+                    match = cand["seq"]
+                    break
+            rec = {"sig": sig, "ok": ok, "kind": "invoke", "seq": len(invokes), "program": program,
+                   "depth": depth, "outcome": None, "ix_seq": match}
+            invokes.append(rec)
+            stack.append(rec)
+            continue
+        e = _EXIT.match(msg)
+        if e and stack:
+            stack.pop()["outcome"] = e.group(2)
+    yield from invokes
+
+
 def _iter_lines(argv: list[str]):
     if argv:
         for path in argv:
@@ -108,6 +209,9 @@ def _iter_lines(argv: list[str]):
 
 def main(argv: list[str]) -> int:
     out = sys.stdout
+    rows = _rows
+    if argv[:1] == ["--instructions"]:
+        rows, argv = _instruction_rows, argv[1:]
     seen: set[str] = set()
     dupes = 0
     for line in _iter_lines(argv):
@@ -127,7 +231,7 @@ def main(argv: list[str]) -> int:
                 dupes += 1
                 continue
             seen.add(sigs[0])
-        for row in _rows(tx):
+        for row in rows(tx):
             out.write(json.dumps(row, ensure_ascii=False) + "\n")
     if dupes:
         print(f"frames.py: skipped {dupes} transaction(s) already read under the same signature",

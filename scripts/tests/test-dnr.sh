@@ -919,6 +919,48 @@ else
   bad "profile: malformed lines not reported ($(tail -n 2 "$TT/malformed.out" | tr '\n' ' '))"
 fi
 
+# ---------------------------------------------------------------------------
+# 19. frames.py --instructions: which instruction ran comes from the transaction's
+#     runtime-recorded instruction lists, never from a log. The default mode finds
+#     nothing for a program that logs nothing or one reached by CPI, and cannot tell
+#     an Anchor program's "Instruction: X" from a lying program's; the ix records
+#     can: their data is decoded here against the Anchor discriminator.
+# ---------------------------------------------------------------------------
+ixr() { python3 -I "$DNR/frames.py" --instructions "$FIX/$1.jsonl"; }
+# disc8 <ix-record query>: the first 8 bytes (hex) of the selected record's base58 data
+disc8() { python3 -I -c 'import json, sys
+B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+recs = [json.loads(l) for l in sys.stdin]
+r = [x for x in recs if x["kind"] == "ix" and x["seq"] == int(sys.argv[1])][0]
+n = 0
+for c in r["data"]:
+    n = n * 58 + B58.index(c)
+raw = n.to_bytes((n.bit_length() + 7) // 8, "big")
+print(raw[:8].hex())' "$1"; }
+anchor_disc() { python3 -I -c 'import hashlib, sys; print(hashlib.sha256(("global:" + sys.argv[1]).encode()).digest()[:8].hex())' "$1"; }
+eq "instructions: control, the default mode yields no record for a program that logs nothing or one reached by CPI" \
+  "$(python3 -I "$DNR/frames.py" "$FIX/ix-native-no-logs.jsonl" "$FIX/ix-cpi-victim.jsonl" | grep -c . || true)" "0"
+eq "instructions: control, a lying program's log line equals the Anchor victim's" \
+  "$(python3 -I "$DNR/frames.py" "$FIX/ix-lying-log.jsonl" | jq -r .text)" "$(python3 -I "$DNR/frames.py" "$FIX/ix-anchor-victim.jsonl" | jq -r .text)"
+nat="$(ixr ix-native-no-logs)"
+eq "instructions: a program that logs nothing still has its ix record, data exactly as given" \
+  "$(printf '%s\n' "$nat" | jq -r 'select(.kind=="ix" and .seq==0) | "\(.program) \(.data)"')" \
+  "$(jq -r '.transaction.message.instructions[0] | "\(.programId) \(.data)"' "$FIX/ix-native-no-logs.jsonl")"
+eq "instructions: ... joined to its runtime invoke line (ix_seq 0, depth 1, success)" \
+  "$(printf '%s\n' "$nat" | jq -r 'select(.kind=="invoke" and .seq==0) | "\(.ix_seq) \(.depth) \(.outcome)"')" "0 1 success"
+eq "instructions: an RPC-parsed instruction is marked parsed-only, with what the RPC gave" \
+  "$(printf '%s\n' "$nat" | jq -r 'select(.kind=="ix" and .seq==1) | "\(.data_status) \(.data) \(.program_name) \(.parsed.type)"')" "parsed-only null system transfer"
+cpi="$(ixr ix-cpi-victim)"
+eq "instructions: a CPI-reached victim (encoding json) is an inner ix record: program, top 0, inner 0, stack height 2" \
+  "$(printf '%s\n' "$cpi" | jq -r 'select(.kind=="ix" and .seq==1) | "\(.program) \(.top) \(.inner) \(.stack_height)"')" "CpiVictim1111111111111111111111111111111111 0 0 2"
+eq "instructions: ... whose data carries set_authority's discriminator" "$(printf '%s\n' "$cpi" | disc8 1)" "$(anchor_disc set_authority)"
+eq "instructions: ... and whose depth-2 invoke line joins it (ix_seq 1, success)" \
+  "$(printf '%s\n' "$cpi" | jq -r 'select(.kind=="invoke" and .depth==2) | "\(.ix_seq) \(.outcome)"')" "1 success"
+eq "instructions: the Anchor victim's data carries set_authority's discriminator" "$(ixr ix-anchor-victim | disc8 0)" "$(anchor_disc set_authority)"
+eq "instructions: the lying program's data carries deposit's discriminator, whatever its log says" "$(ixr ix-lying-log | disc8 0)" "$(anchor_disc deposit)"
+eq "instructions: no ix record carries a log-derived field" \
+  "$(for f in ix-native-no-logs ix-cpi-victim ix-anchor-victim ix-lying-log; do ixr "$f"; done | jq -r 'select(.kind=="ix") | keys - ["sig","ok","kind","seq","top","inner","stack_height","program","data","data_status","accounts","program_name","parsed"] | length' | sort -u)" "0"
+
 if [[ "$fails" -ne 0 ]]; then
   echo "test-dnr: $fails assertion(s) FAILED" >&2
   exit 1
