@@ -29,7 +29,8 @@
 #   --small <n>               changed-line ceiling for a quiet-fix candidate commit (default 40)
 #   --fix-ceiling <n>         changed-line ceiling for a keyword commit's ADDED rows (default 300)
 #
-# Exit status: 0 done (sections may print NOT FOUND), 2 usage error or rejected input,
+# Exit status: 0 done (sections may print NOT FOUND), 2 usage error or rejected input (including a
+#              run directory that is or holds a symbolic link, or that git tracks),
 #              3 target is not a git repository or the pin does not resolve.
 
 set -uo pipefail
@@ -73,6 +74,11 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$REPO" ] || die "--repo is required"
 [ -n "$OUT" ]  || die "--out is required"
+# The run directory and its audit_<n> parent are checked by name below, so --out is a plain path: no "."
+# or ".." component (a leading "./" aside) and no trailing slash, which would resolve a final link.
+OUT=${OUT#./}
+case "/$OUT/" in */./*|*/../*) die "--out takes a plain path without . or .. components: $OUT" ;; esac
+while [ "${OUT%/}" != "$OUT" ] && [ "$OUT" != / ]; do OUT=${OUT%/}; done
 case "$CAP" in ''|*[!0-9]*) die "--cap must be a number" ;; esac
 case "$SMALL" in ''|*[!0-9]*) die "--small must be a number" ;; esac
 case "$FIX_CEILING" in ''|*[!0-9]*) die "--fix-ceiling must be a number" ;; esac
@@ -259,11 +265,28 @@ eval_triggers() {
 if [ "$DETECT" -eq 1 ]; then eval_triggers; exit 0; fi
 
 # ---- output dir (OUTPUT-RULES.md Rule 11d) -----------------------------------------------------------
+# Only a run directory this audit made is written to: never one that is or holds a symbolic link, and
+# never one git tracks, where the output would become changes to tracked files. Checked before the first
+# write or removal, for the output dir and its audit_<n>/ parent. If git cannot answer for a directory
+# inside a work tree, it counts as tracked.
+refuse_planted() { # refuse_planted <dir>
+  local d=$1 up listed
+  [ -L "$d" ] && die "refusing a run directory that is a symbolic link: $d (use a new audit_<n>)"
+  if [ -d "$d" ] && [ -n "$(find "$d" -type l -print 2>/dev/null | sed -n 1p)" ]; then
+    die "refusing a run directory that holds symbolic links: $d (use a new audit_<n>)"
+  fi
+  up=$(dirname "$d")
+  [ -d "$up" ] && [ "$(G "$up" rev-parse --is-inside-work-tree 2>/dev/null)" = true ] || return 0
+  listed=$(G "$up" --icase-pathspecs ls-files -- "$(basename "$d")" 2>/dev/null) || listed=unknown
+  [ -z "$listed" ] || die "refusing a run directory that git tracks: $d (use a new audit_<n>)"
+}
+AUD_DIR=$(dirname "$OUT")
+case "$(basename "$AUD_DIR")" in audit_*) refuse_planted "$AUD_DIR" ;; esac
+refuse_planted "$OUT"
 mkdir -p "$OUT" || die "cannot create $OUT"
 # Working material never lands in the client's git status: the output dir ignores itself, and so does
 # its audit_<n>/ parent when it has no .gitignore of its own (only for a dir named audit_*).
 [ -e "$OUT/.gitignore" ] || printf '*\n' > "$OUT/.gitignore"
-AUD_DIR=$(dirname "$OUT")
 case "$(basename "$AUD_DIR")" in
   audit_*) [ -e "$AUD_DIR/.gitignore" ] || printf '*\n' > "$AUD_DIR/.gitignore" ;;
 esac
@@ -596,9 +619,16 @@ while IFS= read -r v; do
     ingest "$v" "$v" "v$vi-$(safe_name "$(basename "$v")")"
   fi
 done <<< "$VULNS_NL"
+# An incident file counts only where an auditor run wrote it: not a symbolic link, not inside a linked
+# directory, and not in an incident_* directory the target tracks.
 ii=0
 for f in "$REPO_ABS"/incident_*/INCIDENTS.json; do
+  d=$(dirname "$f")
+  if [ -L "$f" ] || [ -L "$d" ]; then record "$f" "-" "-" "-" "skipped: symbolic link (file or directory)"; continue; fi
   [ -f "$f" ] || continue
+  if ! listed=$(G "$REPO_ABS" --icase-pathspecs ls-files -- "$(basename "$d")" 2>/dev/null) || [ -n "$listed" ]; then
+    record "$f" "-" "-" "-" "skipped: tracked by the target, not written by an auditor run"; continue
+  fi
   ii=$((ii + 1)); ingest "$f" "$f" "incident$ii-INCIDENTS.json"
 done
 ri=0

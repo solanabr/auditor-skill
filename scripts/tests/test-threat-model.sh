@@ -475,6 +475,58 @@ check "T-m: a tracked store in another letter case is not trusted either" \
   has "$T/mem4/audit_1/bootstrap/history.md" "NOT FOUND (store not trusted: tracked by target)"
 check "T-m: ... and not read" test ! -e "$T/marks/audit-mem"
 
+# =================================================================================================
+# T-n: the collector writes only into a run directory this audit made (Rule 11d): never through a
+# symbolic link, never into one that holds a link, never into one git tracks.
+# =================================================================================================
+RD="$T/rundirs"; mkrepo "$RD"
+put "$RD" programs/r/src/lib.rs 'pub fn a() { require!(x, E::A); }'
+put "$RD" audit_3/REPORT.md '# shipped report'
+commit "$RD" -m "initial"
+mkdir -p "$T/elsewhere" "$T/plainrun" "$RD/audit_1" "$RD/audit_2/bootstrap"
+ln -s "$T/elsewhere" "$T/plainrun/bootstrap"
+ln -s "$T/elsewhere" "$RD/audit_1/bootstrap"
+ln -s "$T/elsewhere/planted-gitignore" "$RD/audit_2/bootstrap/.gitignore"
+ln -s "$T/elsewhere" "$RD/audit_4"
+check "T-n: a bootstrap dir that is a symbolic link is refused (exit 2)" \
+  test "$(rc --repo "$RD" --out "$T/plainrun/bootstrap" --offline)" = 2
+check "T-n: ... also when --out ends in a slash" test "$(rc --repo "$RD" --out "$T/plainrun/bootstrap/" --offline)" = 2
+check "T-n: an audit_<n> that holds a linked bootstrap dir is refused (exit 2)" \
+  test "$(rc --repo "$RD" --out "$RD/audit_1/bootstrap" --offline)" = 2
+check "T-n: a bootstrap dir that holds a symbolic link is refused (exit 2)" \
+  test "$(rc --repo "$RD" --out "$RD/audit_2/bootstrap" --offline)" = 2
+check "T-n: an audit_<n> parent that is a symbolic link is refused (exit 2)" \
+  test "$(rc --repo "$RD" --out "$RD/audit_4/bootstrap" --offline)" = 2
+check "T-n: a . component cannot hide the audit_<n> parent (exit 2)" \
+  test "$(rc --repo "$RD" --out "$RD/audit_4/./bootstrap" --offline)" = 2
+check "T-n: nothing was written through any of the links" test -z "$(ls -A "$T/elsewhere")"
+check "T-n: a tracked audit_<n> is refused (exit 2)" test "$(rc --repo "$RD" --out "$RD/audit_3/bootstrap" --offline)" = 2
+check "T-n: ... nothing is created in it and git status stays clean" \
+  sh -c "[ ! -e '$RD/audit_3/bootstrap' ] && [ -z \"\$(git -C '$RD' status --porcelain --untracked-files=no)\" ]"
+if command -v jq >/dev/null 2>&1 || command -v python3 >/dev/null 2>&1; then
+  inc() { printf '{"schema": "auditor-incidents/1", "incidents": [{"id": "%s", "verdict": "suspected"}]}\n' "$1"; }
+  mkdir -p "$RD/incident_6" "$RD/incident_7" "$T/elsewhere-inc/dir"
+  inc INC-RUN-OK > "$RD/incident_6/INCIDENTS.json"
+  inc INC-LINKED-FILE > "$T/elsewhere-inc/file.json"; ln -s "$T/elsewhere-inc/file.json" "$RD/incident_7/INCIDENTS.json"
+  inc INC-LINKED-DIR > "$T/elsewhere-inc/dir/INCIDENTS.json"; ln -s "$T/elsewhere-inc/dir" "$RD/incident_8"
+  put "$RD" incident_9/INCIDENTS.json "$(inc INC-TRACKED)"; commit "$RD" -m "ship an incident file"
+  mkdir -p "$RD/audit_5"; printf '# intake\n' > "$RD/audit_5/intake.md"
+  collect --repo "$RD" --out "$RD/audit_5/bootstrap" --offline
+  check "T-n: an untracked audit_<n> without links is reused" test -s "$RD/audit_5/bootstrap/history.md"
+  check "T-n: an incident file written in place is still extracted" sh -c "grep -rq 'INC-RUN-OK' '$RD/audit_5/bootstrap/inputs/'"
+  for bad in INC-LINKED-FILE INC-LINKED-DIR INC-TRACKED; do
+    check "T-n: $bad is not read" sh -c "! grep -rq '$bad' '$RD/audit_5/bootstrap/inputs/'"
+  done
+  check "T-n: inputs.tsv records the linked incident file as skipped" \
+    sh -c "grep -F 'incident_7/INCIDENTS.json' '$RD/audit_5/bootstrap/inputs.tsv' | grep -q 'skipped: symbolic link'"
+  check "T-n: inputs.tsv records the incident file in a linked dir as skipped" \
+    sh -c "grep -F 'incident_8/INCIDENTS.json' '$RD/audit_5/bootstrap/inputs.tsv' | grep -q 'skipped: symbolic link'"
+  check "T-n: inputs.tsv records the tracked incident file as skipped" \
+    sh -c "grep -F 'incident_9/INCIDENTS.json' '$RD/audit_5/bootstrap/inputs.tsv' | grep -q 'skipped: tracked'"
+else
+  skp "T-n incident files: needs jq or python3"
+fi
+
 echo
 echo "threat-model collector tests: $pass passed, $fail failed, $skip skipped"
 [ "$fail" -eq 0 ]
