@@ -93,6 +93,11 @@ bumps the `schema` string to `auditor-incidents/2`.
   `suspected`).
 - **`evidence`** strings are `"<source file>: <pipeline> -> <result>"` — the query
   that produced each number (hard rule 5). Never a URL, never a secret.
+- **`collection_gaps`** holds every row of the collector's
+  `corpus/collection-gaps.tsv`, as `"<signature or address>: <reason>"` (a fetch
+  that failed, a window the page cap did not reach, the `--max-tx` cap), plus the
+  gaps the run found itself (provider retention, a `Log truncated` tail, a sibling
+  address not collected). The same rows go into LEDGER.md.
 - **Secrets / PII.** No RPC URL anywhere, including `collection_gaps`. Victim and
   attacker wallet lists stay in this file inside `incident_<n>/`, which is
   git-ignored; they are not lifted into any shared report.

@@ -8,7 +8,7 @@
 **Run:** incident_{N}/ · **Mode:** hunt | respond · **Opened:** {ISO, est}
 **RPC provider:** {domain only — the host's last two DNS labels, as `collect.sh` prints it — or "user-supplied corpus — no collection"} · **Endpoint:** `$RPC_URL` (never written out)
 **Corpus:** {files + line counts} · **Window:** slots {from}–{to} ({from blockTime}–{to blockTime}, est)
-**Collection gaps:** {retention limits, a missing v1 opt-in, `Log truncated` tails — never a URL}
+**Collection gaps:** {every row of `corpus/collection-gaps.tsv` (signature or address: reason), plus retention limits, a missing v1 opt-in, `Log truncated` tails — never a URL}
 **Execution mode (Rule 11a):** {isolated | native — asked once, before anything builds target code; passed to `run.sh` as `AUDITOR_EXEC_MODE`}
 
 ## Baseline (from the bundled `profile.sh`)

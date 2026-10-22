@@ -193,6 +193,17 @@ req = json.loads(body)
 with open(os.environ["FAKE_CURL_LOG"], "a") as log:
     log.write(json.dumps(req) + "\n")
 m, p = req["method"], req["params"]
+# FAKE_CURL_TX_FAIL=<sig>=transport|rpc|null fails that one getTransaction;
+# FAKE_CURL_PAGE_FAIL=1 fails every getSignaturesForAddress with an RPC error.
+fail_sig, _, fail_mode = os.environ.get("FAKE_CURL_TX_FAIL", "").partition("=")
+if m == "getTransaction" and p[0] == fail_sig and fail_mode == "transport":
+    sys.stderr.write(f"curl: (7) Failed to connect to {url.split('/')[2]} port 443 after 2 ms: Couldn't connect to server\n")
+    sys.exit(7)
+if m == "getTransaction" and p[0] == fail_sig and fail_mode in ("rpc", "null"):
+    out = {"error": {"code": -32009, "message": "Transaction version (1) is not supported"}} if fail_mode == "rpc" else {"result": None}
+    print(json.dumps(dict({"jsonrpc": "2.0", "id": 1}, **out))); sys.exit(0)
+if m == "getSignaturesForAddress" and os.environ.get("FAKE_CURL_PAGE_FAIL"):
+    print(json.dumps({"jsonrpc": "2.0", "id": 1, "error": {"code": -32005, "message": "Node is behind"}})); sys.exit(0)
 if m == "getSignaturesForAddress" and p[0].startswith("AddrB"):
     res = [
         {"signature": "SigZnewest", "slot": 9, "err": None, "blockTime": 1700000900},
@@ -237,6 +248,30 @@ if grep -q 'provider: example.test ' "$TT/c-sub.out" && ! grep -q 'TOKSUB42\|LEA
 else
   bad "collect: subdomain token or key in the output ($(grep -m1 'TOKSUB42\|LEAKME42\|provider' "$TT/c-sub.out"))"
 fi
+# Collection gaps: every getTransaction that fails (transport error, RPC error,
+# null result), a failed signature page, an unreached window and the --max-tx cap
+# each become a <subject>TAB<reason> row of collection-gaps.tsv, and the run says how
+# many. curl's own exit status reaches the row.
+eq "collect: a clean run reports no collection gaps" \
+  "$(grep -c '^collection gaps: 0 (see .*collection-gaps.tsv)$' "$TT/c-sub.out")/$(grep -c . "$TT/c-sub/collection-gaps.tsv")" "1/0"
+for mode in "transport:transport error (curl exit 7)" "rpc:RPC error -32009" "null:null result"; do
+  ( PATH="$TT/bin:$PATH" FAKE_CURL_TX_FAIL="SigOK=${mode%%:*}" RPC_URL="https://TOKSUB42.rpc.example.test/v2/LEAKME42" \
+      bash "$DNR/collect.sh" --out "$TT/g-${mode%%:*}" --confirmed --max-pages 1 -- "$A_ADDR" ) > "$TT/g.out" 2>&1
+  code=$?
+  row="$(cat "$TT/g-${mode%%:*}/collection-gaps.tsv" 2>/dev/null)"
+  if [[ "$code" == 0 && "$row" == "SigOK$(printf '\t')getTransaction: ${mode#*:}" ]] \
+     && grep -q '^collection gaps: 1 (see .*collection-gaps.tsv)$' "$TT/g.out" \
+     && [[ "$(grep -c . "$TT/g-${mode%%:*}/transactions.jsonl")" == 1 ]]; then
+    ok "collect: a failed getTransaction (${mode%%:*}) is a gap row with its reason; the rest is still fetched"
+  else
+    bad "collect: failed getTransaction (${mode%%:*}) -> exit $code, row '$row'"
+  fi
+done
+if grep -q 'TOKSUB42\|LEAKME42' "$TT/g.out"; then bad "collect: curl's error leaked the endpoint"; else ok "collect: curl's own error is redacted (no subdomain token, no key)"; fi
+( PATH="$TT/bin:$PATH" FAKE_CURL_PAGE_FAIL=1 RPC_URL="https://rpc.example.test/" \
+    bash "$DNR/collect.sh" --out "$TT/g-page" --confirmed --max-pages 1 -- "$A_ADDR" ) > "$TT/g.out" 2>&1
+eq "collect: a failed signature page is a gap row" "$(cat "$TT/g-page/collection-gaps.tsv")" \
+  "$A_ADDR$(printf '\t')getSignaturesForAddress page 0: RPC error -32005; older history not collected"
 calls_before="$(grep -c . "$FAKE_CURL_LOG" 2>/dev/null || true)"
 for url in 'a space:https://rpc.example.test/?k=a b' 'a quote:https://rpc.example.test/"x' 'a backslash:https://rpc.example.test/\x'; do
   ( PATH="$TT/bin:$PATH" RPC_URL="${url#*:}" bash "$DNR/collect.sh" --out "$TT/c-bad" --confirmed -- "$A_ADDR" ) > /dev/null 2>&1
@@ -255,6 +290,9 @@ eq "collect: --max-tx 2 fetches the two newest signatures across both addresses"
     bash "$DNR/collect.sh" --out "$TT/c3" --confirmed --until 100 --max-pages 1 -- "$A_ADDR" ) > "$TT/c3.out" 2>&1
 if grep -q 'stopped paging above --until' "$TT/c3.out"; then ok "collect: warns when paging stops above --until"; else bad "collect: no warning for a window above --until"; fi
 if grep -q 'resume into a new --out with --before' "$TT/c3.out"; then ok "collect: the notice says to resume into a new --out"; else bad "collect: resume notice still points at the same --out"; fi
+eq "collect: an unreached window is a gap row" "$(cut -f1 "$TT/c3/collection-gaps.tsv" | tr '\n' ' ')" "$A_ADDR "
+eq "collect: the --max-tx cap is one gap row naming the first signature not fetched" \
+  "$(cut -f1 "$TT/c2/collection-gaps.tsv")|$(grep -c 'collection gaps: 1 ' "$TT/c2.out")" "SigFail|1"
 # A second pass into an --out that already holds a corpus is refused, so the first
 # pass survives.
 cp "$TT/c/signatures.jsonl" "$TT/c.sig.before"

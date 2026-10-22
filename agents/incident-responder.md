@@ -88,5 +88,6 @@ custodian attestation.
 
 Return to the orchestrator the paths written (`INCIDENTS.json`, the report or the
 plan, `LEDGER.md`) and a short ledger summary (rounds run, suspects, verdicts,
-collection gaps). You write files under `incident_<n>/` only; you never touch the
+collection gaps — every row of `corpus/collection-gaps.tsv` is in `LEDGER.md` and
+in `collection_gaps`). You write files under `incident_<n>/` only; you never touch the
 client's tree.

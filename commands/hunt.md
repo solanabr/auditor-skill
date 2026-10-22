@@ -68,6 +68,12 @@ directory.
      collector's `provider:` line prints it, since a subdomain can carry an
      endpoint token) and the literal `$RPC_URL` in the ledger and report
      (Rule 11b), never a URL with a key.
+   - The collector ends with `collection gaps: N` and writes one
+     `<signature or address><TAB><reason>` row per gap (a fetch that failed, a
+     window the page cap did not reach, the `--max-tx` cap) to
+     `incident_<n>/corpus/collection-gaps.tsv`. Copy every row into the ledger's
+     **Collection gaps** line and into `collection_gaps` of each incident in
+     `INCIDENTS.json`.
 
 3. **Baseline (Phase 1).** `bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh" incident_<n>/corpus/transactions.jsonl`
    for outcome/version histograms, window, and signer/program inventories; write

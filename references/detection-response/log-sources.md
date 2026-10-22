@@ -53,6 +53,11 @@ call count with the human first):
   is a symbolic link, holds one, or is tracked by git (README § Run directory). An
   `incident_<n>/` that the corpus lands in gets a `.gitignore` of `*` if it has
   none (Rule 11d).
+- **Gaps are written down.** A `getTransaction` that failed (transport error, RPC
+  error or null result), a signature page that failed, a window the page cap did
+  not reach and the `--max-tx` cap each add a `<signature or address><TAB><reason>`
+  row to `<out>/collection-gaps.tsv`, and the run ends with `collection gaps: N`.
+  Every row goes into LEDGER.md and INCIDENTS.json `collection_gaps`.
 - Verdict evidence is read at `finalized`. The one exception is the
   "is it still ongoing?" check, which may read `confirmed` as long as it says so.
 

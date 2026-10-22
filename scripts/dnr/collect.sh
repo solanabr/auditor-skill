@@ -43,6 +43,13 @@
 # address, a collection gap to record in the ledger. Signatures are fetched newest
 # first (by slot, across all addresses), so --max-tx drops the oldest.
 #
+# COLLECTION GAPS: every gap is also a row of <dir>/collection-gaps.tsv,
+# `<signature or address><TAB><reason>`: a getTransaction that failed (transport
+# error, RPC error or null result), a signature page that failed, a window the page
+# cap did not reach, and the --max-tx cap. The run ends with
+# "collection gaps: N (see <dir>/collection-gaps.tsv)". Gaps leave the exit status
+# at 0; copy each row into LEDGER.md and INCIDENTS.json `collection_gaps`.
+#
 # SECRETS: the endpoint comes from $RPC_URL and is NEVER echoed. curl runs with -q
 # (no ~/.curlrc) and reads the URL from a config on stdin (-K -), so the key stays
 # out of its argv; an $RPC_URL holding a quote, a backslash, whitespace or a control
@@ -55,7 +62,8 @@
 # maxSupportedTransactionVersion:1 — mandatory, since v1 transactions are live on
 # mainnet and a v1 fetch without the opt-in returns RPC error -32015.
 #
-# bash >= 3.2, curl, jq. Output: <dir>/signatures.jsonl, <dir>/transactions.jsonl.
+# bash >= 3.2, curl, jq. Output: <dir>/signatures.jsonl, <dir>/transactions.jsonl,
+# <dir>/collection-gaps.tsv.
 
 set -uo pipefail
 
@@ -164,6 +172,7 @@ for d in "$out" "$(dirname "$out")"; do
 done
 sig_file="$out/signatures.jsonl"; : > "$sig_file"
 tx_file="$out/transactions.jsonl"; : > "$tx_file"
+gaps="$out/collection-gaps.tsv"; : > "$gaps"; ngaps=0
 todo="$out/.signatures.todo"
 errf="$(mktemp "${TMPDIR:-/tmp}/dnr_collect.XXXXXX")"
 trap 'rm -f "$errf" "$todo"' EXIT
@@ -176,14 +185,33 @@ provider="$(printf '%s' "$RPC_URL" | sed -E -e 's|^[A-Za-z][A-Za-z0-9+.-]*://||'
 echo "provider: $provider   (Rule 11b: this provider received the queried addresses)"
 echo "addresses: ${#addrs[@]}   window: since=$since until=$until before=${before_start:-<newest>}   caps: max_pages=$max_pages max_tx=$max_tx"
 
-rpc() {  # rpc <method> <params-json> -> the whole JSON response on stdout
+rpc() {  # rpc <method> <params-json> -> the whole JSON response on stdout; returns curl's status
+  local rc
   : > "$errf"
   # -q comes first so no ~/.curlrc is read; the URL arrives on stdin, the body (no
   # secret in it) as --data-raw.
   printf 'url = "%s"\n' "$RPC_URL" | curl -q -K - -sS -m 60 -A auditor-skill-research -X POST \
     -H 'Content-Type: application/json' \
     --data-raw "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$1\",\"params\":$2}" 2>"$errf"
+  rc=$?
   if [ -s "$errf" ]; then "$REDACT" <"$errf" >&2; fi
+  return "$rc"
+}
+failure() {  # failure <curl status> <response> -> why the call returned no usable result
+  local kind code
+  if [ "$1" -ne 0 ]; then echo "transport error (curl exit $1)"; return; fi
+  kind="$(printf '%s' "$2" | jq -r 'if type != "object" then "unreadable"
+    elif has("error") then "error \(.error.code? // "")" elif .result == null then "null"
+    else "unreadable" end' 2>/dev/null)"
+  case "$kind" in
+    error*) code="${kind#error}"; code="${code//[!0-9-]/}"; echo "RPC error${code:+ $code}" ;;
+    null) echo "null result" ;;
+    *) echo "unreadable response" ;;
+  esac
+}
+gap() {  # gap <signature or address> <reason>: one row per thing the corpus lacks
+  printf '%s\t%s\n' "$1" "$(printf '%s' "$2" | tr '\t\r\n' '   ')" >> "$gaps"
+  ngaps=$((ngaps + 1))
 }
 
 # 1. signature history, newest -> oldest, bounded by --since and --max-pages.
@@ -192,9 +220,11 @@ for addr in "${addrs[@]}"; do
   before="$before_start"; page=0; oldest=0; reached=0
   while [ "$page" -lt "$max_pages" ]; do
     cfg="{\"limit\":1000,\"commitment\":\"finalized\"${before:+,\"before\":\"$before\"}}"
-    resp="$(rpc getSignaturesForAddress "[\"$addr\",$cfg]")"
-    if ! printf '%s' "$resp" | jq -e '.result' >/dev/null 2>&1; then
-      echo "  ! RPC error paging $addr (page $page) — recorded as a collection gap" >&2
+    resp="$(rpc getSignaturesForAddress "[\"$addr\",$cfg]")"; rc=$?
+    if [ "$rc" -ne 0 ] || ! printf '%s' "$resp" | jq -e '.result | arrays' >/dev/null 2>&1; then
+      reason="$(failure "$rc" "$resp")"
+      echo "  ! paging $addr (page $page) failed: $reason — recorded as a collection gap" >&2
+      gap "$addr" "getSignaturesForAddress page $page: $reason; older history not collected"
       reached=1; break
     fi
     n="$(printf '%s' "$resp" | jq '.result | length')"
@@ -206,9 +236,11 @@ for addr in "${addrs[@]}"; do
     if [ "$since" -gt 0 ] && [ "$oldest" -gt 0 ] && [ "$oldest" -lt "$since" ]; then reached=1; break; fi
   done
   if [ "$reached" -eq 0 ] && [ "$since" -gt 0 ]; then
-    echo "  ! window not reached for $addr (oldest=$oldest, since=$since): page cap hit — resume into a new --out with --before $before, or raise --max-pages; record as a collection gap" >&2
+    echo "  ! window not reached for $addr (oldest=$oldest, since=$since): page cap hit — resume into a new --out with --before $before, or raise --max-pages; recorded as a collection gap" >&2
+    gap "$addr" "window not reached: the page cap stopped at blockTime $oldest, still after --since $since; resume into a new --out with --before $before"
   elif [ "$reached" -eq 0 ] && [ "$until" -gt 0 ] && [ "$oldest" -gt "$until" ]; then
-    echo "  ! window not reached for $addr (oldest=$oldest, until=$until): the page cap stopped paging above --until, so nothing inside the window was collected — resume into a new --out with --before $before, or raise --max-pages; record as a collection gap" >&2
+    echo "  ! window not reached for $addr (oldest=$oldest, until=$until): the page cap stopped paging above --until, so nothing inside the window was collected — resume into a new --out with --before $before, or raise --max-pages; recorded as a collection gap" >&2
+    gap "$addr" "window not reached: the page cap stopped at blockTime $oldest, still after --until $until, so nothing inside the window was collected; resume into a new --out with --before $before"
   fi
 done
 echo "signatures collected: $collected -> $sig_file"
@@ -222,19 +254,24 @@ jq -r --argjson s "$since" --argjson u "$until" '
   | select(($u == 0) or ((.blockTime // 0) <= $u))
   | "\(.slot // 0) \(.signature)"' "$sig_file" | sort -k1,1nr | awk '!seen[$2]++ { print $2 }' > "$todo"
 
-fetched=0
+fetched=0; total="$(grep -c . "$todo")"; i=0
 while IFS= read -r sig; do
   [ -z "$sig" ] && continue
+  i=$((i + 1))
   if [ "$fetched" -ge "$max_tx" ]; then
-    echo "  ! reached --max-tx=$max_tx; remaining signatures not fetched — record as a collection gap" >&2
+    echo "  ! reached --max-tx=$max_tx; $((total - i + 1)) signatures not fetched — recorded as a collection gap" >&2
+    gap "$sig" "not fetched: --max-tx=$max_tx reached; this and $((total - i)) older signatures in signatures.jsonl were not fetched"
     break
   fi
-  resp="$(rpc getTransaction "[\"$sig\",{\"encoding\":\"jsonParsed\",\"maxSupportedTransactionVersion\":1,\"commitment\":\"finalized\"}]")"
-  if printf '%s' "$resp" | jq -e '.result' >/dev/null 2>&1; then
+  resp="$(rpc getTransaction "[\"$sig\",{\"encoding\":\"jsonParsed\",\"maxSupportedTransactionVersion\":1,\"commitment\":\"finalized\"}]")"; rc=$?
+  if [ "$rc" -eq 0 ] && printf '%s' "$resp" | jq -e '.result | objects' >/dev/null 2>&1; then
     printf '%s' "$resp" | jq -c '.result' >> "$tx_file"
     fetched=$((fetched + 1))
   else
-    echo "  ! getTransaction failed for a signature — recorded as a collection gap" >&2
+    reason="$(failure "$rc" "$resp")"
+    echo "  ! getTransaction failed for a signature: $reason — recorded as a collection gap" >&2
+    gap "$sig" "getTransaction: $reason"
   fi
 done < "$todo"
 echo "transactions fetched: $fetched -> $tx_file"
+echo "collection gaps: $ngaps (see $gaps)"

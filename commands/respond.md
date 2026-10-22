@@ -69,8 +69,10 @@ directory.
    program, the instruction a session moved to next. Corpus: `--logs`, or the gated
    collection described in `/auditor:hunt` step 2 (name the RPC provider's domain,
    the host's last two DNS labels, under Rule 11b; a keyed URL is never written
-   anywhere). Merge everything into one
-   timeline ordered by `(slot, transactionIndex)`.
+   anywhere). Copy every row of the collector's `collection-gaps.tsv` into the
+   ledger's **Collection gaps** line and into `collection_gaps` of the incident in
+   `INCIDENTS.json`. Merge everything into one timeline ordered by
+   `(slot, transactionIndex)`.
 
 4. **Outcome and damage (Phase 2).** A status code can't tell you whether it
    worked — Leg 1 can: a balance movement, or for a takeover the four-part
