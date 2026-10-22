@@ -20,9 +20,11 @@
 //!        - `assert_exploit_succeeds!` / `assert_exploit_rejected!`: any `Ok` / any
 //!          error, for an audit-time model only.
 //!
-//! The first three leave a marker each time they run and hold (`mark`). On prebuilt
-//! bytes `run.sh` accepts an arm only with its marker, so an assertion in a comment,
-//! a string or dead code — or one that never ran — does not count. The marker is a
+//! Each assertion leaves markers (`mark`): `attempted` when it starts, `held` when
+//! it holds, and the first three a marker of their own kind. On prebuilt bytes
+//! `run.sh` accepts an arm only with its assertion's marker, so an assertion in a
+//! comment, a string or dead code — or one that never ran — does not count, and a
+//! test that fails before any assertion ran decides nothing. The markers are a
 //! floor, not proof: whoever reads the PoC still checks that the assertion states
 //! the finding's effect and the guard's error.
 //!
@@ -134,15 +136,9 @@ pub fn attacker_owned_account(claimed_owner: Pubkey, data: Vec<u8>) -> Account {
 /// ```
 #[macro_export]
 macro_rules! assert_exploit_succeeds {
-    ($outcome:expr, $why:expr) => {{
-        let outcome = &$outcome;
-        assert!(
-            outcome.program_result.is_ok(),
-            "exploit was expected to SUCCEED ({}), but the program rejected it: {:?}",
-            $why,
-            outcome.program_result,
-        );
-    }};
+    ($outcome:expr, $why:expr $(,)?) => {
+        $crate::__assert_succeeds(&$outcome, &$why)
+    };
 }
 
 /// Assert the fix held: the program rejected the same crafted instruction.
@@ -159,14 +155,9 @@ macro_rules! assert_exploit_succeeds {
 /// ```
 #[macro_export]
 macro_rules! assert_exploit_rejected {
-    ($outcome:expr, $why:expr) => {{
-        let outcome = &$outcome;
-        assert!(
-            outcome.program_result.is_err(),
-            "attack was expected to be REJECTED ({}), but the program accepted it",
-            $why,
-        );
-    }};
+    ($outcome:expr, $why:expr $(,)?) => {
+        $crate::__assert_rejected(&$outcome, &$why)
+    };
 }
 
 /// Assert the exploit went through AND left its effect: after the attack, `read`
@@ -259,6 +250,27 @@ macro_rules! assert_exploit_blocked {
 // ---------------------------------------------------------------------------
 
 #[doc(hidden)]
+pub fn __assert_succeeds(outcome: &InstructionResult, why: &str) {
+    attempt("succeeds", why);
+    let result = &outcome.program_result;
+    assert!(
+        result.is_ok(),
+        "exploit was expected to SUCCEED ({why}), but the program rejected it: {result:?}"
+    );
+    held("succeeds", why);
+}
+
+#[doc(hidden)]
+pub fn __assert_rejected(outcome: &InstructionResult, why: &str) {
+    attempt("rejected", why);
+    assert!(
+        outcome.program_result.is_err(),
+        "attack was expected to be REJECTED ({why}), but the program accepted it"
+    );
+    held("rejected", why);
+}
+
+#[doc(hidden)]
 pub fn __assert_effect<T, F>(
     outcome: &InstructionResult,
     before: &[(Pubkey, Account)],
@@ -270,6 +282,7 @@ pub fn __assert_effect<T, F>(
     T: PartialEq + core::fmt::Debug,
     F: Fn(&Account) -> T,
 {
+    attempt("effect", why);
     let result = &outcome.program_result;
     assert!(
         result.is_ok(),
@@ -285,21 +298,22 @@ pub fn __assert_effect<T, F>(
         was != expect,
         "{account:?} already read {expect:?} before the attack, so this shows no effect ({why})"
     );
-    mark(
-        "effect",
-        &format!("{account:?}: {was:?} -> {now:?} ({why})"),
-    );
+    let line = format!("{account:?}: {was:?} -> {now:?} ({why})");
+    mark("effect", &line);
+    held("effect", &line);
 }
 
 #[doc(hidden)]
 pub fn __assert_rejected_with(outcome: &InstructionResult, expected: ProgramResult, why: &str) {
+    attempt("rejected_with", why);
     let result = &outcome.program_result;
-    if *result == expected {
-        mark("rejected_with", &format!("{result:?} ({why})"));
-        return;
+    if *result != expected {
+        inconclusive_if_harness(result, why);
+        panic!("attack was expected to be REJECTED with {expected:?} ({why}), but got: {result:?}");
     }
-    inconclusive_if_harness(result, why);
-    panic!("attack was expected to be REJECTED with {expected:?} ({why}), but got: {result:?}");
+    let line = format!("{result:?} ({why})");
+    mark("rejected_with", &line);
+    held("rejected_with", &line);
 }
 
 #[doc(hidden)]
@@ -313,6 +327,7 @@ pub fn __assert_blocked<T, F>(
     T: PartialEq + core::fmt::Debug,
     F: Fn(&Account) -> T,
 {
+    attempt("blocked", why);
     let result = &outcome.program_result;
     assert!(
         result.is_err(),
@@ -324,10 +339,9 @@ pub fn __assert_blocked<T, F>(
         now == was,
         "the attack failed with {result:?}, yet {account:?} changed: {was:?} -> {now:?} ({why})"
     );
-    mark(
-        "blocked",
-        &format!("{result:?}; {account:?} unchanged ({why})"),
-    );
+    let line = format!("{result:?}; {account:?} unchanged ({why})");
+    mark("blocked", &line);
+    held("blocked", &line);
 }
 
 fn before_and_after<T, F: Fn(&Account) -> T>(
@@ -337,16 +351,16 @@ fn before_and_after<T, F: Fn(&Account) -> T>(
     read: &F,
     why: &str,
 ) -> (T, T) {
-    let was = before
-        .iter()
-        .find(|(key, _)| key == account)
-        .map(|(_, acct)| acct)
-        .unwrap_or_else(|| {
-            panic!("{account:?} is not in the account list given to the instruction ({why})")
-        });
-    let now = outcome
-        .get_account(account)
-        .unwrap_or_else(|| panic!("{account:?} is not in the instruction result ({why})"));
+    let Some((_, was)) = before.iter().find(|(key, _)| key == account) else {
+        inconclusive(&format!(
+            "{account:?} is not in the account list given to the instruction ({why})"
+        ));
+    };
+    let Some(now) = outcome.get_account(account) else {
+        inconclusive(&format!(
+            "{account:?} is not in the instruction result ({why})"
+        ));
+    };
     (read(was), read(now))
 }
 
@@ -386,14 +400,36 @@ fn harness_note(result: &ProgramResult) -> String {
 
 fn inconclusive_if_harness(result: &ProgramResult, why: &str) {
     if let Some(reason) = harness_error(result) {
-        mark("inconclusive", &format!("{result:?}: {reason} ({why})"));
-        panic!("INCONCLUSIVE: {result:?} is a harness error, not a guard: {reason} ({why})");
+        inconclusive(&format!(
+            "a harness error, not a guard: {result:?}: {reason} ({why})"
+        ));
     }
 }
 
-/// Record that a contract assertion ran and held, or for "inconclusive", why it
-/// could not decide. `run.sh` points AUDITOR_POC_MARKERS at an empty directory per
-/// arm and reads it after the arm's test; nothing is written when it is unset.
+/// Fail the test as inconclusive: the PoC as written cannot decide its arm, which
+/// `run.sh` reports as a blocker, never as a verdict.
+fn inconclusive(reason: &str) -> ! {
+    mark("inconclusive", reason);
+    panic!("INCONCLUSIVE: {reason}");
+}
+
+/// A contract assertion starts: `run.sh` counts a failed test as a verdict only when
+/// an assertion ran and did not hold.
+fn attempt(kind: &str, why: &str) {
+    mark("attempted", &format!("{kind} ({why})"));
+}
+
+/// A contract assertion held. The three that count on prebuilt bytes have also left
+/// a marker of their own kind, which `run.sh` reports.
+fn held(kind: &str, line: &str) {
+    mark("held", &format!("{kind}: {line}"));
+}
+
+/// Append a line to the `kind` marker: `attempted` and `held` for every contract
+/// assertion, `effect` / `rejected_with` / `blocked` for the three that count on
+/// prebuilt bytes, and `inconclusive` for why an assertion could not decide.
+/// `run.sh` points AUDITOR_POC_MARKERS at an empty directory per arm and reads it
+/// after the arm's test; nothing is written when it is unset.
 fn mark(kind: &str, line: &str) {
     let Some(dir) = std::env::var_os("AUDITOR_POC_MARKERS").filter(|dir| !dir.is_empty()) else {
         return;

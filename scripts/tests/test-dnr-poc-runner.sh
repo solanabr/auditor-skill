@@ -9,6 +9,9 @@
 #     error is inconclusive (exit 3); success prints the Leg 3 line with the
 #     zero-trimmed hashes (computed with `python3 -I`, so a hashlib.py in the working
 #     directory never loads);
+#   * verdicts: a failed test is exit 1 / 2 only when a contract assertion ran and did
+#     not hold; one that failed before any assertion ran (the program did not load,
+#     the setup panicked) or after every assertion held is inconclusive (exit 3);
 #   * where the crate builds (always a scratch copy outside the target tree with a
 #     pinned toolchain; a crate holding a symbolic link, .cargo/, rust-toolchain* or
 #     tests/fixtures/<crate>.so is refused; BPF_OUT_DIR is cleared; an inherited
@@ -55,7 +58,8 @@ open(f"{d}/vuln.so", "wb").write(elf + b"\x00" * 4096)
 open(f"{d}/fixed.so", "wb").write(elf[:-1] + b"\x99" + b"\x00" * 128)
 open(f"{d}/with-header.bin", "wb").write((3).to_bytes(4, "little") + b"\x00" * 41 + elf)
 open(f"{d}/text.so", "w").write("not an elf\n")
-for name in ["takeover", "noop", "reject:MissingRequiredSignature", "reject:Custom(6001)", "reject:Custom(4100)", "dirty-reject"]:
+for name in ["takeover", "noop", "reject:MissingRequiredSignature", "reject:Custom(6001)", "reject:Custom(4100)",
+             "dirty-reject", "unloadable"]:
     stem = name.replace(":", "-").replace("(", "").replace(")", "")
     open(f"{d}/sb-{stem}.so", "wb").write(b"\x7fELF" + name.encode() + b"\x00" * 64)
 PY
@@ -66,9 +70,10 @@ PY
 # rust-toolchain.toml there when RUSTUP_TOOLCHAIN is not pinned. With SHIM_CALLS set it
 # also logs every call, tab-separated: working directory, CARGO_TARGET_DIR,
 # SBF_OUT_DIR, BPF_OUT_DIR, AUDITOR_POC_MARKERS, arguments. A test run (not --no-run)
-# leaves the markers SHIM_MARKERS names for its test, as the contract assertions do
-# when they hold; by default those of a PoC whose assertions all hold, and none for
-# SHIM_MARKERS=none. SHIM_FAIL makes one step fail with cargo's own exit code, 101.
+# leaves the markers SHIM_MARKERS names for its test (<test>:<kind>), as
+# shared-test-utils does: by default those of a PoC whose assertions all ran and
+# held, and none for SHIM_MARKERS=none. SHIM_FAIL makes one step fail with cargo's
+# own exit code, 101.
 mkdir -p "$T/shim"
 cat > "$T/shim/cargo" <<'SH'
 #!/bin/sh
@@ -91,7 +96,7 @@ case " $* " in
   *" --no-run "*) ;;
   *" --test "*)
     t="$*"; t="${t##*--test }"; t="${t%% *}"
-    for m in ${SHIM_MARKERS-exploit:effect fixed_blocked:rejected_with}; do
+    for m in ${SHIM_MARKERS-exploit:attempted exploit:held exploit:effect fixed_blocked:attempted fixed_blocked:held fixed_blocked:rejected_with}; do
       if [ "${m%%:*}" = "$t" ] && [ -n "${AUDITOR_POC_MARKERS:-}" ]; then
         echo "shim ${m#*:}" >> "$AUDITOR_POC_MARKERS/${m#*:}"
       fi
@@ -147,6 +152,11 @@ from_scratch() {
 }
 zhash() { python3 -I -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read().rstrip(b"\x00")).hexdigest())' "$1"; }
 LEG3='OK: reproduced on prebuilt bytes — vulnerable sha256='
+# Shim marker sets for one test whose contract assertion ran and held: the
+# exploit's effect, the fixed arm's pinned error, a deployed fix's block.
+EV="exploit:attempted exploit:held exploit:effect"
+FR="fixed_blocked:attempted fixed_blocked:held fixed_blocked:rejected_with"
+FB="fixed_blocked:attempted fixed_blocked:held fixed_blocked:blocked"
 
 # ---------------------------------------------------------------------------
 # The execution mode. Without AUDITOR_EXEC_MODE=isolated|native, run.sh exits 3
@@ -221,17 +231,40 @@ fi
 code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" SHIM_MARKERS=none)"
 [ "$code" = 3 ] && grep -q 'no assert_exploit_effect! ran and held' "$T/out" && ! grep -q 'running same attack' "$T/out" \
   && ok "exploit test passes but leaves no effect marker -> exit 3 before the fixed arm" || bad "no effect marker: exit $code"
-code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" SHIM_MARKERS=exploit:effect)"
+code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" SHIM_MARKERS="$EV")"
 [ "$code" = 3 ] && grep -q 'neither assert_exploit_rejected_with! nor assert_exploit_blocked! ran and held' "$T/out" \
   && ok "fixed test passes but leaves no rejection marker -> exit 3" || bad "no fixed marker: exit $code"
-code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" SHIM_MARKERS="exploit:effect fixed_blocked:blocked")"
+code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" SHIM_MARKERS="$EV $FB")"
 [ "$code" = 0 ] && grep -qx "${LEG3}${want} fixed sha256=${wantf} (blocked: failed, account unchanged) → \[PoC-REPRODUCED\]" "$T/out" \
   && ok "a blocked marker (a deployed fix) -> exit 0, and the line says blocked, not pinned" || bad "blocked marker: exit $code"
-code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=fixed_blocked SHIM_MARKERS="exploit:effect fixed_blocked:inconclusive")"
-[ "$code" = 3 ] && grep -q 'harness error, not a guard' "$T/out" && ok "a fixed arm that fails on a harness error -> exit 3 (inconclusive), not 2" || bad "inconclusive: exit $code"
+code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=fixed_blocked SHIM_MARKERS="$EV fixed_blocked:attempted fixed_blocked:inconclusive")"
+[ "$code" = 3 ] && grep -q 'the fixed arm is inconclusive: shim inconclusive' "$T/out" && ! grep -q 'fix is incomplete' "$T/out" \
+  && ok "a fixed arm whose assertion could not decide (an inconclusive marker) -> exit 3, not 2" || bad "inconclusive: exit $code"
 code="$(gate "$T/inc" "$NATIVE" SHIM_MARKERS=none)"
 [ "$code" = 0 ] && grep -q "(this crate's own arms: a model, never Leg 3)" "$T/out" && ! grep -q "^$LEG3" "$T/out" \
   && ok "build mode needs no marker and prints the model line, never the Leg 3 line" || bad "build mode without markers: exit $code"
+
+# A failed test is a verdict (exit 1 / 2) only when a contract assertion ran and did
+# not hold. One that failed before any assertion ran (the program did not load, the
+# setup panicked), or after every assertion held, is inconclusive: exit 3.
+code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=fixed_blocked SHIM_MARKERS="$EV")"
+[ "$code" = 3 ] && grep -q 'inconclusive: no contract assertion ran' "$T/out" && ! grep -q 'fix is incomplete' "$T/out" \
+  && ok "a fixed-arm test that fails before any contract assertion ran -> exit 3 (inconclusive), not 2" || bad "fixed arm, no assertion ran: exit $code"
+code="$(gate "$T/inc" "$NATIVE" "$VULN" SHIM_FAIL=exploit SHIM_MARKERS=none)"
+[ "$code" = 3 ] && grep -q 'inconclusive: no contract assertion ran' "$T/out" && ! grep -q 'did not reproduce' "$T/out" \
+  && ok "an exploit test that fails before any contract assertion ran -> exit 3, not 1" || bad "exploit, no assertion ran: exit $code"
+code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=fixed_blocked SHIM_MARKERS="$EV $FR")"
+[ "$code" = 3 ] && grep -q 'every contract assertion that ran held' "$T/out" \
+  && ok "a fixed-arm test that fails after its contract assertion held -> exit 3, not 2" || bad "fixed arm fails after it held: exit $code"
+code="$(gate "$T/inc" "$NATIVE" SHIM_FAIL=fixed_blocked SHIM_MARKERS="$EV")"
+[ "$code" = 3 ] && grep -q 'inconclusive: no contract assertion ran' "$T/out" \
+  && ok "build mode too: a fixed-arm failure with no contract assertion run -> exit 3" || bad "build mode, no assertion ran: exit $code"
+code="$(gate "$T/inc" "$NATIVE" "$VULN" SHIM_MARKERS="$EV exploit:attempted")"
+[ "$code" = 3 ] && grep -q 'ran and did not hold, yet the test passed' "$T/out" && ! grep -q "^$LEG3" "$T/out" \
+  && ok "prebuilt bytes: a passing test with a contract assertion that did not hold -> exit 3" || bad "pass with an unheld assertion: exit $code"
+code="$(gate "$T/inc" "$NATIVE" "$VULN" SHIM_MARKERS="$EV exploit:inconclusive")"
+[ "$code" = 3 ] && grep -q 'the vulnerable arm is inconclusive: shim inconclusive' "$T/out" && ! grep -q "^$LEG3" "$T/out" \
+  && ok "a passing test that left an inconclusive marker -> exit 3" || bad "pass with an inconclusive marker: exit $code"
 
 code="$(gate "$T/inc" "$NATIVE" "$VULN" BPF_OUT_DIR="$T")"
 [ "$code" = 0 ] && awk -F'\t' '$4 != "" { bad = 1 } END { exit bad }' "$T/calls" && ok "a caller's BPF_OUT_DIR never reaches cargo (mollusk would look there before SBF_OUT_DIR)" || bad "BPF_OUT_DIR: exit $code"
@@ -361,10 +394,12 @@ code="$(run "$T/inc" "$SP" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=no-run:exploit)"
 [ "$code" = 3 ] && grep -q 'tests/exploit.rs failed to build for the vulnerable arm' "$T/out" && ok "an exploit test that does not compile -> exit 3" || bad "exploit test build failure: exit $code"
 code="$(run "$T/inc" "$SP" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=no-run:fixed_blocked)"
 [ "$code" = 3 ] && grep -q 'tests/fixed_blocked.rs failed to build for the fixed arm' "$T/out" && ok "a fixed-arm test that does not compile -> exit 3" || bad "fixed test build failure: exit $code"
-code="$(run "$T/inc" "$SP" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=exploit)"
-[ "$code" = 1 ] && ok "exploit test failing -> exit 1" || bad "exploit failure: exit $code"
-code="$(run "$T/inc" "$SP" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=fixed_blocked)"
-[ "$code" = 2 ] && grep -q 'fix is incomplete' "$T/out" && ok "fixed-arm test failing (no harness marker) -> exit 2" || bad "fixed-arm failure: exit $code"
+code="$(run "$T/inc" "$SP" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=exploit SHIM_MARKERS=exploit:attempted)"
+[ "$code" = 1 ] && grep -q 'did not reproduce' "$T/out" && ok "exploit test failing in its contract assertion -> exit 1" || bad "exploit failure: exit $code"
+code="$(run "$T/inc" "$SP" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=fixed_blocked SHIM_MARKERS="$EV fixed_blocked:attempted")"
+[ "$code" = 2 ] && grep -q 'fix is incomplete' "$T/out" && ok "fixed-arm test failing in its contract assertion -> exit 2" || bad "fixed-arm failure: exit $code"
+code="$(run "$T/inc" "$SP" "$NATIVE" SHIM_FAIL=fixed_blocked SHIM_MARKERS="$EV fixed_blocked:attempted")"
+[ "$code" = 2 ] && grep -q 'fix is incomplete' "$T/out" && ok "build mode: fixed-arm test failing in its contract assertion -> exit 2" || bad "build mode fixed-arm failure: exit $code"
 code="$(run "$T/inc" "$SP" "$NATIVE")"
 [ "$code" = 0 ] && grep -q "building 'fixed' arm to SBF" "$T/out" && ok "build mode (no prebuilt bytes) runs both arms -> exit 0" || bad "build mode: exit $code"
 
@@ -374,7 +409,8 @@ code="$(run "$T/inc" "$SP" "$NATIVE")"
 # <crate>.so the way mollusk does (tests/fixtures, BPF_OUT_DIR, SBF_OUT_DIR, the
 # working directory) and acts out the text after the ELF magic: "takeover" writes the
 # first signer's key into the first writable account's bytes 0..32, "noop" accepts and
-# changes nothing, "reject:<error>" fails with that error.
+# changes nothing, "reject:<error>" fails with that error, "unloadable" makes the
+# loader panic.
 # ---------------------------------------------------------------------------
 mk_standins() {  # mk_standins <dir>
   local S="$1"
@@ -477,7 +513,10 @@ impl Mollusk {
             .unwrap_or_else(|| panic!("stand-in mollusk: {file} not found"));
         let bytes = std::fs::read(&path).expect("read the program");
         let tag: Vec<u8> = bytes[4..].iter().copied().take_while(|b| *b != 0).collect();
-        Mollusk { behaviour: String::from_utf8(tag).expect("utf-8 behaviour") }
+        let behaviour = String::from_utf8(tag).expect("utf-8 behaviour");
+        // As mollusk's loader panics on bytes it cannot load.
+        assert!(behaviour != "unloadable", "stand-in mollusk: the loader rejects these bytes");
+        Mollusk { behaviour }
     }
     pub fn process_instruction(&self, ix: &Instruction, accounts: &[(Pubkey, Account)]) -> InstructionResult {
         let mut out = accounts.to_vec();
@@ -528,6 +567,8 @@ swap() { awk "$2" "$1" > "$1.new" && mv "$1.new" "$1"; }
 # Drop the assertion block that starts at the line matching <regex> (through "    );").
 DROP='BEGIN { re = ARGV[2]; ARGV[2] = "" } $0 ~ re { skip = 1 } skip { if ($0 == "    );") skip = 0; next } { print }'
 drop_block() { awk "$DROP" "$1" "$2" > "$1.new" && mv "$1.new" "$1"; }
+# subst <file> <old> <new>: replace the one occurrence of <old>, literally
+subst() { python3 -I -c 'import sys; p, a, b = sys.argv[1:]; s = open(p).read(); assert s.count(a) == 1, a; open(p, "w").write(s.replace(a, b))' "$1" "$2" "$3"; }
 
 if command -v cargo >/dev/null 2>&1 && command -v rustup >/dev/null 2>&1; then
   mk_standins "$T/si"
@@ -581,7 +622,7 @@ if command -v cargo >/dev/null 2>&1 && command -v rustup >/dev/null 2>&1; then
   code="$(e2e "$T/e-base" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-reject-Custom6001.so")"
   [ "$code" = 2 ] && grep -q 'REJECTED with Failure(MissingRequiredSignature)' "$T/out" && ok "real cargo: a rejection with another error than the pinned one -> exit 2" || bad "real cargo, other error: exit $code"
   code="$(e2e "$T/e-base" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-reject-Custom4100.so")"
-  [ "$code" = 3 ] && grep -q 'harness error, not a guard (Failure(Custom(4100))' "$T/out" && ok "real cargo: Custom(4100) (wrong program id) on the fixed arm -> inconclusive, exit 3" || bad "real cargo, 4100: exit $code"
+  [ "$code" = 3 ] && grep -q 'inconclusive: a harness error, not a guard: Failure(Custom(4100))' "$T/out" && ok "real cargo: Custom(4100) (wrong program id) on the fixed arm -> inconclusive, exit 3" || bad "real cargo, 4100: exit $code"
   mkdir -p "$T/bpf"; cp "$SB-takeover.so" "$T/bpf/poc_e2e.so"
   code="$(e2e "$T/e-base" VULNERABLE_SO="$SB-noop.so" BPF_OUT_DIR="$T/bpf")"
   [ "$code" = 1 ] && ok "real cargo: a caller's BPF_OUT_DIR holding other bytes is not what runs (exit 1 on the no-op bytes)" || bad "real cargo, BPF_OUT_DIR: exit $code"
@@ -622,6 +663,21 @@ if command -v cargo >/dev/null 2>&1 && command -v rustup >/dev/null 2>&1; then
     rm -rf "$T/e-pat"
   done
 
+  # A program that does not load, or a test that fails before its contract assertion
+  # ran, decides nothing: exit 3, never 1 or 2.
+  code="$(e2e "$T/e-base" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-unloadable.so")"
+  [ "$code" = 3 ] && grep -q 'inconclusive: no contract assertion ran' "$T/out" && ! grep -q 'fix is incomplete' "$T/out" \
+    && ok "real cargo: fixed bytes the loader rejects -> inconclusive, exit 3, not 2" || { bad "real cargo, unloadable fixed bytes: exit $code"; cat "$T/out" >&2; }
+  code="$(e2e "$T/e-base" VULNERABLE_SO="$SB-unloadable.so")"
+  [ "$code" = 3 ] && grep -q 'inconclusive: no contract assertion ran' "$T/out" && ! grep -q 'did not reproduce' "$T/out" \
+    && ok "real cargo: vulnerable bytes the loader rejects -> inconclusive, exit 3, not 1" || { bad "real cargo, unloadable vulnerable bytes: exit $code"; cat "$T/out" >&2; }
+  mk_e2e "$T/e-panic"
+  subst "$T/e-panic/tests/fixed_blocked.rs" '    let outcome = mollusk.process_instruction(&ix, &accounts);' '    panic!("the setup failed");
+    let outcome = mollusk.process_instruction(&ix, &accounts);'
+  code="$(e2e "$T/e-panic" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-reject-MissingRequiredSignature.so")"
+  [ "$code" = 3 ] && grep -q 'inconclusive: no contract assertion ran' "$T/out" && ! grep -q 'fix is incomplete' "$T/out" \
+    && ok "real cargo: a fixed-arm test that panics before its contract assertion -> exit 3, not 2" || { bad "real cargo, panic before the assertion: exit $code"; cat "$T/out" >&2; }
+
   # The deployed-hotfix check: the template's commented replacement, swapped in as written.
   mk_e2e "$T/e-hotfix"
   drop_block "$T/e-hotfix/tests/fixed_blocked.rs" '^    assert_exploit_rejected_with!\($'
@@ -635,7 +691,7 @@ if command -v cargo >/dev/null 2>&1 && command -v rustup >/dev/null 2>&1; then
     code="$(e2e "$T/e-hotfix" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-dirty-reject.so")"
     [ "$code" = 2 ] && grep -q 'yet .* changed' "$T/out" && ok "real cargo: a hotfix run that fails but still changes the account is not blocked -> exit 2" || bad "real cargo, hotfix fails with a change: exit $code"
     code="$(e2e "$T/e-hotfix" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-reject-Custom4100.so")"
-    [ "$code" = 3 ] && grep -q 'harness error, not a guard' "$T/out" && ok "real cargo: a hotfix check that fails on Custom(4100) -> inconclusive, exit 3" || bad "real cargo, hotfix 4100: exit $code"
+    [ "$code" = 3 ] && grep -q 'inconclusive: a harness error, not a guard' "$T/out" && ok "real cargo: a hotfix check that fails on Custom(4100) -> inconclusive, exit 3" || bad "real cargo, hotfix 4100: exit $code"
   else
     bad "real cargo: could not swap in the template's commented assert_exploit_blocked! replacement"
   fi

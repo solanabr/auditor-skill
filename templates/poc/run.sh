@@ -6,10 +6,11 @@
 #   2. builds the `fixed`      arm to SBF, runs tests/fixed_blocked.rs → same attack must be REJECTED
 # Exit 0: the exploit reproduces on `vulnerable` and, when the fixed arm runs, is
 # blocked on `fixed` — the evidence that earns [PoC-REPRODUCED]. Exit 1: the exploit
-# did not reproduce. Exit 2: the fixed arm did not block it. Exit 3: a named blocker
-# (toolchain, inputs, a build that failed, the execution mode below, an assertion
-# that never ran, or an inconclusive fixed arm) — record [PoC-ATTEMPTED] and keep
-# the prose PoC.
+# did not reproduce. Exit 2: the fixed arm did not block it. Exits 1 and 2 need a
+# contract assertion (shared-test-utils) that ran and did not hold. Exit 3: a named
+# blocker (toolchain, inputs, a build that failed, the execution mode below) or an
+# inconclusive arm (no contract assertion ran, the test failed outside them, or the
+# harness could not decide) — record [PoC-ATTEMPTED] and keep the prose PoC.
 #
 # Why two build+test passes and not one: both arms compile to the SAME `.so`
 # filename ({PROGRAM_NAME}.so), so they cannot coexist in SBF_OUT_DIR. Build an arm,
@@ -62,11 +63,10 @@
 #   * an arm counts only on a contract assertion that RAN AND HELD:
 #     assert_exploit_effect! on the vulnerable bytes; assert_exploit_rejected_with!
 #     (our fix: the guard's exact error) or assert_exploit_blocked! (a fix the team
-#     deployed) on the fixed bytes. Each leaves a marker in AUDITOR_POC_MARKERS,
-#     which run.sh points at a fresh directory per arm; a passing test without its
-#     marker exits 3, and a fixed arm that fails on a harness error exits 3 as
-#     inconclusive. The marker is a floor, not proof: read the assertion all the
-#     same.
+#     deployed) on the fixed bytes. Each leaves markers in AUDITOR_POC_MARKERS, which
+#     run.sh points at a fresh directory per arm; a passing test without its marker
+#     exits 3, and so does an arm the harness could not decide. The marker is a
+#     floor, not proof: read the assertion all the same.
 #   * success prints the one line that can stand for Leg 3, naming the zero-trimmed
 #     sha256 of the bytes that ran:
 #       OK: reproduced on prebuilt bytes — vulnerable sha256=<64 hex> → [PoC-REPRODUCED]
@@ -303,11 +303,50 @@ marker() {  # marker <arm> <kind>: the first line of the marker an assertion lef
   [[ -s "${file}" ]] && head -n 1 "${file}"
 }
 
+count() {  # count <arm> <kind>: how many lines the arm's <kind> marker holds
+  local file="${BUILD_DIR}/markers/$1/$2"
+  if [[ -f "${file}" ]]; then awk 'END { print NR }' "${file}"; else echo 0; fi
+}
+
+inconclusive() {  # inconclusive <arm> <reason>: the arm decided nothing — a blocker, never a verdict
+  local what="whether the fix holds"
+  [[ "$1" == vulnerable ]] && what="whether the exploit reproduces"
+  echo "[PoC-ATTEMPTED] blocker: the $1 arm is inconclusive: $2. This run does not show ${what}; fix the PoC and re-run." >&2
+  exit 3
+}
+
+# settle <arm> <status>: the verdict on an arm from its test's exit status and the
+# markers it left. Returns 1 for a verdict against the arm — a contract assertion ran
+# and did not hold; returns 0 for a pass; exits 3 for everything else.
+settle() {
+  local arm="$1" status="$2" why attempted held
+  if why="$(marker "${arm}" inconclusive)"; then inconclusive "${arm}" "${why}"; fi
+  attempted="$(count "${arm}" attempted)"
+  held="$(count "${arm}" held)"
+  if [[ "${status}" -ne 0 ]]; then
+    if [[ "${attempted}" -eq 0 ]]; then
+      inconclusive "${arm}" "no contract assertion ran; the test failed before one (did the program load?)"
+    fi
+    if [[ "${attempted}" -le "${held}" ]]; then
+      inconclusive "${arm}" "every contract assertion that ran held, so the test failed outside them"
+    fi
+    return 1
+  fi
+  if [[ "${PREBUILT}" -eq 1 ]]; then
+    if [[ "${attempted}" -ne "${held}" ]]; then
+      inconclusive "${arm}" "a contract assertion ran and did not hold, yet the test passed"
+    fi
+  fi
+  return 0
+}
+
 # 1. vulnerable arm — the exploit must land.
 place_arm vulnerable
 build_tests vulnerable exploit
 echo ">> running exploit against 'vulnerable' (expect: SUCCEEDS)"
-if ! run_tests vulnerable exploit; then
+status=0
+run_tests vulnerable exploit || status=$?
+if ! settle vulnerable "${status}"; then
   echo "FAIL: exploit did not reproduce on the vulnerable arm — PoC is not valid." >&2
   exit 1
 fi
@@ -327,11 +366,9 @@ fi
 place_arm fixed
 build_tests fixed fixed_blocked
 echo ">> running same attack against 'fixed' (expect: REJECTED)"
-if ! run_tests fixed fixed_blocked; then
-  if why="$(marker fixed inconclusive)"; then
-    echo "[PoC-ATTEMPTED] blocker: the fixed arm failed on a harness error, not a guard (${why}). The attack as written no longer fits the program, so this run shows neither a fix nor its absence; fix the harness and re-run." >&2
-    exit 3
-  fi
+status=0
+run_tests fixed fixed_blocked || status=$?
+if ! settle fixed "${status}"; then
   echo "FAIL: the fixed arm did not block the attack — fix is incomplete." >&2
   exit 2
 fi

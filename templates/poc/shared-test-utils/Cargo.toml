@@ -2,7 +2,7 @@
 #
 # One shared crate that every per-finding PoC crate under `templates/poc/` depends
 # on by RELATIVE PATH. It provides the Mollusk bring-up helper, a small set of
-# account fixtures, and the two assertion macros that encode the PoC contract
+# account fixtures, and the assertion macros that encode the PoC contract
 # ("exploit succeeds on the vulnerable arm / is rejected on the fixed arm").
 #
 # This is TEMPLATE SOURCE. It is NOT compiled at skill-authoring time — the
