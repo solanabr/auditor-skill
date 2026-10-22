@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # test-corpus-pins.sh — fixture tests for scripts/check-corpus.sh §5 (vendored submodule pins) and a smoke
-# test of scripts/tob-delta-review.sh. Run from the repo root: `bash scripts/tests/test-corpus-pins.sh`.
+# test of scripts/tob-delta-review.sh, also under a maintainer git config that colours and converts diffs.
+# Run from the repo root: `bash scripts/tests/test-corpus-pins.sh`.
 # Builds throwaway git repos under ${TMPDIR:-/tmp}; no network; bash >= 3.2.
 set -uo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
@@ -128,6 +129,19 @@ case "$inline" in *".claude-plugin/marketplace.json"*) pass=$((pass + 1)); echo 
 bash "$ROOT/scripts/tob-delta-review.sh" "$fx" deadbeef "$fxnew" >/dev/null 2>&1
 [ $? -eq 2 ] && { pass=$((pass + 1)); echo "PASS delta review rejects an unknown commit"; } \
   || { failn=$((failn + 1)); echo "FAIL delta review accepted an unknown commit"; }
+# the maintainer's own git config (temp HOME: colour, an external diff tool, a textconv driver the clone's
+# attributes select) must not change the report
+mkdir -p "$T/home"
+printf '[color]\n\tui = always\n\tdiff = always\n[diff]\n\texternal = true\n[diff "tc"]\n\ttextconv = sed s/evil/other/g\n' \
+  > "$T/home/.gitconfig"
+printf '* diff=tc\n' > "$fx/.git/info/attributes"
+rep2=$(unset GIT_CONFIG_GLOBAL XDG_CONFIG_HOME; HOME="$T/home" bash "$ROOT/scripts/tob-delta-review.sh" "$fx" "$fxold" "$fxnew" 2>&1)
+hosts=$(printf '%s\n' "$rep2" | sed -n '/^### Hosts in added lines/,/^### Pipe-to-shell/p')
+case "$hosts" in *"https://evil.example"*) pass=$((pass + 1)); echo "PASS delta review lists an added host under color.ui=always";;
+  *) failn=$((failn + 1)); echo "FAIL delta review lost the added host under the maintainer's git config"; echo "$hosts";; esac
+[ "$rep2" = "$rep" ] && { pass=$((pass + 1)); echo "PASS delta review is unchanged by the maintainer's git config"; } \
+  || { failn=$((failn + 1)); echo "FAIL delta review changed under the maintainer's git config"; }
+rm -f "$fx/.git/info/attributes"
 
 echo "---- $pass passed, $failn failed"
 [ "$failn" -eq 0 ]
