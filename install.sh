@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# auditor-skill installer — drops the skill into a project's .claude/skills/
+# auditor-skill installer — clones the skill to a directory and fetches the pinned Trail of Bits tooling.
+# Install it outside any repository you audit (OUTPUT-RULES.md Rule 11e).
 #
 # Usage:
-#   ./install.sh                                   # → ./.claude/skills/auditor-skill
-#   ./install.sh <target-dir>                      # custom location
-#   ./install.sh ~/.claude/skills/auditor-skill    # install globally (all projects)
-#   curl -fsSL https://raw.githubusercontent.com/solanabr/auditor-skill/main/install.sh | bash
+#   ./install.sh ~/.claude/skills/auditor-skill    # user-level: every project, outside the repositories you audit
+#   ./install.sh <target-dir>                      # any other location outside the repositories you audit
+#   ./install.sh                                   # → ./.claude/skills/auditor-skill — only outside a repository you will audit
+#   curl -fsSL https://raw.githubusercontent.com/solanabr/auditor-skill/main/install.sh | bash -s -- ~/.claude/skills/auditor-skill
 set -euo pipefail
 
 REPO="https://github.com/solanabr/auditor-skill.git"
@@ -13,6 +14,16 @@ DEST="${1:-.claude/skills/auditor-skill}"
 
 echo "→ Installing auditor-skill into: $DEST"
 mkdir -p "$(dirname "$DEST")"
+
+# A copy inside a repository you audit resolves its scripts, tools and corpus from a tree that
+# repository controls. Warn, and leave the choice to the user.
+if top=$(git --no-pager -c core.fsmonitor=false -C "$(dirname "$DEST")" rev-parse --show-toplevel 2>/dev/null); then
+  {
+    echo "warning: $DEST is inside the git work tree $top."
+    echo "  If you will audit that repository, install outside it instead, e.g. ./install.sh ~/.claude/skills/auditor-skill"
+    echo "  (OUTPUT-RULES.md Rule 11e)."
+  } >&2
+fi
 
 if [ -d "$DEST/.git" ]; then
   echo "→ Already present — updating"
