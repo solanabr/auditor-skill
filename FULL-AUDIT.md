@@ -349,8 +349,10 @@ ACTIONS:
   W3='web3\.js@(npm:)?1\.95\.(6|7)([^0-9]|$)|/web3\.js/-/web3\.js-1\.95\.(6|7)\.tgz|"@solana/web3\.js"[[:space:]]*:[[:space:]]*"=?1\.95\.(6|7)"'
   grep -rnE "$W3" --exclude-dir=node_modules --include='package.json' --include='package-lock.json' \
     --include='pnpm-lock.yaml' --include='yarn.lock' --include='bun.lock' .
-  GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-    log --all --oneline --no-textconv -G"$W3" -- '*lock*' '*package.json'
+  # history too; --text because a committed .gitattributes can mark lockfiles binary,
+  # which hides them from -G
+  GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c core.bigFileThreshold=512m \
+    log --all --oneline --text --no-textconv -G"$W3" -- '*lock*' '*package.json'
   # → hijacked @solana/web3.js releases (KV-077 Step 2, SC-005). A hit now is CRITICAL;
   #   a hit in history means rotate every key a build from that window loaded
 
@@ -396,8 +398,8 @@ ACTIONS:
 
   # Dependency changes since the baseline (last audited ref; first audit: last
   # release tag) → checklist 11 §11.11: review the published artifacts' code delta
-  GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-    diff --no-textconv --no-ext-diff --stat <baseline>..HEAD \
+  GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c core.bigFileThreshold=512m \
+    diff --text --no-textconv --no-ext-diff --stat <baseline>..HEAD \
     -- '*.lock' '*-lock.json' '*-lock.yaml' '*Cargo.toml' '*package.json'   # Rule 11c flags
 
 RECORD: dependency audit results
