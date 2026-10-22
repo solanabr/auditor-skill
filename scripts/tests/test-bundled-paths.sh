@@ -13,7 +13,10 @@
 #   4. every rooted path those files name exists in this checkout (binaries: declared in the crate);
 #   5. Rule 11e and its pointers in SKILL.md / AGENTS.md / FULL-AUDIT.md are in place; 11a–11e keep their
 #      headings;
-#   6. /auditor:hunt, /auditor:respond and incident-responder name every corpus file they read (references/,
+#   6. the .audit-memory store check runs case-insensitively everywhere: no line pairs `ls-files` with
+#      `.audit-memory` without --icase-pathspecs (the canonical form is pinned in OUTPUT-RULES.md and
+#      pre-scan.md), since on a case-insensitive filesystem a tracked .AUDIT-MEMORY/ is the same directory;
+#   7. /auditor:hunt, /auditor:respond and incident-responder name every corpus file they read (references/,
 #      templates/, checklists/, discovery/, OUTPUT-RULES.md, …) from ${CLAUDE_PLUGIN_ROOT}: no relative corpus
 #      directory and no bare corpus file name. Run-directory outputs (audit_<n>/threat-model.md,
 #      INCIDENT_REPORT.md) are not corpus files.
@@ -204,9 +207,9 @@ OUTPUT-RULES.md	In a vendored Trail of Bits skill, `{baseDir}` and every relativ
 OUTPUT-RULES.md	The installation never sits inside the repository under audit
 OUTPUT-RULES.md	Its `.claude/rules/`, like the rest of its `.claude/`, is data
 OUTPUT-RULES.md	Corpus Markdown that command or agent text names by a relative path
-OUTPUT-RULES.md	confirm that the audited repository does not track it (`git ls-files .audit-memory` prints nothing
+OUTPUT-RULES.md	GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false --icase-pathspecs ls-files -- .audit-memory
 docs/output-and-rigor.md	Corpus Markdown that command or agent text names by a relative path
-references/orchestration/pre-scan.md	confirm that the audited repository does not track it (`git ls-files .audit-memory` prints nothing
+references/orchestration/pre-scan.md	GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false --icase-pathspecs ls-files -- .audit-memory
 scripts/threat-model/collect.sh	bash "${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --repo
 scripts/report-to-pdf.sh	"${CLAUDE_PLUGIN_ROOT}/scripts/report-to-pdf.sh" [path/to/REPORT.md]
 commands/hunt.md	`${CLAUDE_PLUGIN_ROOT}/references/detection-response/README.md`
@@ -244,7 +247,33 @@ done
 if grep -qF '${CLAUDE_SKILL_DIR}' SKILL.md; then ok "SKILL.md names its root as \${CLAUDE_SKILL_DIR}"
 else bad "SKILL.md does not name its root as \${CLAUDE_SKILL_DIR}"; fi
 
-# ---- 6. the D&R commands and agent read the corpus from the root ----------------------------------------
+# ---- 6. the store check is case-insensitive everywhere -------------------------------------------------
+# A line that runs `ls-files` on .audit-memory must carry --icase-pathspecs. This file is left out: it
+# names the old form on purpose, in the detector checks below.
+store_case_lines() { # store_case_lines (stdin -> lines pairing ls-files with .audit-memory, case-sensitively)
+  grep -n 'ls-files' | grep -F '.audit-memory' | grep -v -e '--icase-pathspecs'
+}
+expect_store() { # expect_store yes|no LINE
+  local got=no
+  [ -n "$(printf '%s\n' "$2" | store_case_lines)" ] && got=yes
+  if [ "$got" = "$1" ]; then ok "store-check detector flagged=$1: $2"; else bad "store-check detector flagged=$got, want $1: $2"; fi
+}
+expect_store yes 'confirm that the audited repository does not track it (`git ls-files .audit-memory` prints nothing'
+expect_store yes 'git --no-pager -c core.fsmonitor=false ls-files -- .audit-memory'
+expect_store no 'GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false --icase-pathspecs ls-files -- .audit-memory'
+expect_store no '  listed=$(G "$REPO" --icase-pathspecs ls-files -- .audit-memory 2>/dev/null) || return 0'
+store_files="$STRICT_FILES $RUN_FILES $(find scripts -type f \( -name '*.sh' -o -name '*.py' \) \
+  ! -path scripts/tests/test-bundled-paths.sh | sort)"
+store_bad=0
+for f in $store_files; do
+  for n in $(store_case_lines < "$f" | cut -d: -f1); do
+    bad "$f:$n: case-sensitive .audit-memory store check (use: GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false --icase-pathspecs ls-files -- .audit-memory)"
+    store_bad=$((store_bad + 1))
+  done
+done
+[ "$store_bad" -eq 0 ] && ok "no case-sensitive .audit-memory store check anywhere"
+
+# ---- 7. the D&R commands and agent read the corpus from the root ----------------------------------------
 CORPUS_FILES="commands/hunt.md commands/respond.md agents/incident-responder.md"
 # Every corpus file name (escaped for ERE), so a bare `log-sources.md` or `OUTPUT-RULES.md` counts as well.
 CORPUS_NAMES=$( { find references templates checklists discovery -name '*.md'
