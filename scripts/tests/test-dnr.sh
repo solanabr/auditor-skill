@@ -138,16 +138,30 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 7. deltas.py sums one owner's token accounts per mint (no overwrite), and keeps
-#    lamport math exact above 2^53.
+# 7. deltas.py keys token movement by token account and mint, with the owner as a
+#    label: an owner's net is the sum of its rows (Python ints), and two accounts
+#    never share a bucket, even with no owner. Lamport math stays exact above 2^53.
 # ---------------------------------------------------------------------------
-mv="$(python3 -I "$DNR/deltas.py" tokens "$FIX/same-owner-move.jsonl" | grep -c . || true)"
-eq "deltas tokens: internal move between one owner's accounts nets to zero (no row)" "$mv" "0"
+owner_sum() {  # owner_sum <owner> < deltas tokens output: that owner's net, in Python ints
+  python3 -I -c 'import sys
+print(sum(int(r.split("\t")[3]) for r in sys.stdin if r.split("\t")[1] == sys.argv[1]))' "$1"
+}
+mvrows="$(python3 -I "$DNR/deltas.py" tokens "$FIX/same-owner-move.jsonl")"
+eq "deltas tokens: an internal move shows both legs (two token accounts)" \
+  "$(printf '%s\n' "$mvrows" | awk -F'\t' '{printf "%s:%s ", $5, $4}')" "TA1:-100 TA2:100 "
+eq "deltas tokens: ... and nets to zero for the owner" "$(printf '%s\n' "$mvrows" | owner_sum VaultPDA)" "0"
 dr="$(python3 -I "$DNR/deltas.py" tokens "$FIX/same-owner-drain.jsonl")"
-eq "deltas tokens: two-account drain is the sum (-140), not the last account" \
-  "$(printf '%s\n' "$dr" | awk -F'\t' '$2=="VaultPDA"{print $4}')" "-140"
-eq "deltas tokens: attacker receives +140" \
-  "$(printf '%s\n' "$dr" | awk -F'\t' '$2=="Attacker"{print $4}')" "140"
+eq "deltas tokens: a two-account drain sums to -140 for the owner" "$(printf '%s\n' "$dr" | owner_sum VaultPDA)" "-140"
+eq "deltas tokens: attacker receives +140" "$(printf '%s\n' "$dr" | owner_sum Attacker)" "140"
+nrows="$(python3 -I -c 'import json
+bal = lambda i, a: {"accountIndex": i, "mint": "MintNoOwner", "uiTokenAmount": {"amount": str(a)}}
+print(json.dumps({"meta": {"err": None, "preTokenBalances": [bal(1, 100), bal(2, 0)],
+    "postTokenBalances": [bal(1, 60), bal(2, 40)]},
+    "transaction": {"signatures": ["SigNoOwner"], "message": {"accountKeys": [
+        {"pubkey": "Payer"}, {"pubkey": "TokAcctA"}, {"pubkey": "TokAcctB"}]}}}))' \
+  | python3 -I "$DNR/deltas.py" tokens)"
+eq "deltas tokens: two owner-less accounts that transfer to each other show both legs" \
+  "$(printf '%s\n' "$nrows" | awk -F'\t' '{printf "%s %s %s; ", $2, $5, $4}')" "? TokAcctA -40; ? TokAcctB 40; "
 bl="$(python3 -I "$DNR/deltas.py" lamports "$FIX/lamports-over-2-53.jsonl")"
 eq "deltas lamports: +1 above 2^53 is exact (BigOne)" "$(printf '%s\n' "$bl" | awk -F'\t' '$2=="BigOne"{print $3}')" "1"
 eq "deltas lamports: +1 above 2^53 is exact (BigTwo)" "$(printf '%s\n' "$bl" | awk -F'\t' '$2=="BigTwo"{print $3}')" "1"
@@ -868,8 +882,8 @@ for c in corpus corpus-2; do
   eq "two corpora: collecting into incident_21/$c succeeds" "$?" "0"
 done
 both="$(python3 -I "$DNR/deltas.py" tokens "$TT"/incident_21/corpus*/transactions.jsonl 2> "$TT/both.err")"
-eq "two corpora: a drain held by both is counted once (VaultPDA -140, once)" \
-  "$(printf '%s\n' "$both" | awk -F'\t' '$2=="VaultPDA"{print $4}' | tr '\n' ' ')" "-140 "
+eq "two corpora: a drain held by both is counted once (3 rows, VaultPDA -140)" \
+  "$(printf '%s\n' "$both" | grep -c .)/$(printf '%s\n' "$both" | owner_sum VaultPDA)" "3/-140"
 if grep -q 'skipped 1 transaction(s) already read under the same signature' "$TT/both.err"; then ok "two corpora: deltas.py says how many copies it skipped"; else bad "two corpora: no skipped-copy note"; fi
 for mode in tokens lamports; do
   eq "dedupe: deltas $mode over two fixtures given twice equals them once" \

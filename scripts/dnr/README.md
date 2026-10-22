@@ -15,7 +15,7 @@ Full method and the verdict rules these feed: `references/detection-response/`.
 | `collect.sh` | The gated collector: pages signature history (failed transactions included — they are attempt evidence) and fetches transactions into a local JSONL corpus. Refuses without `--confirmed`, on any input that is not base58, when `--out` already holds collector output, and when `--out` or its `incident_*` directory is a symbolic link, holds one, or is tracked by git; read-only RPC only; capped (`--max-tx` counts every `getTransaction` call, and 10 failures in a row stop the run); reports a history the page cap truncated, and writes every gap (a failed fetch, a truncated history, a cap, a stop) to `collection-gaps.tsv`. |
 | `profile.sh` | Baseline a `transactions.jsonl`: outcome / version histograms, time window, fee-payer, signer and top-level-program inventories — all from structural fields, never from log text. |
 | `frames.py` | Attribute each `Program log:` / `Program data:` line to the program frame that emitted it, as JSONL. Walks the log array one element at a time with anchored regexes. |
-| `deltas.py` | `lamports` or `tokens`: per-account / per-(owner,mint) balance movement, computed in Python integers, successful transactions only. |
+| `deltas.py` | `lamports` or `tokens`: per-account / per-(token account, mint) balance movement, with the owner as a label, computed in Python integers, successful transactions only. |
 | `redact.sh` | A stderr/stdout filter that strips provider credentials (e.g. `?api-key=…`, a `/v2/<key>` path, a token in a subdomain, curl's verbose request lines) before text reaches the transcript, the ledger, or a report. |
 | `fixtures/` | Committed adversarial corpora the self-test and the docs cite. |
 

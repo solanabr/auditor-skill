@@ -161,7 +161,8 @@ the JSONL; DuckDB is optional.
   says yes. Confirm with Leg 1 (README): a balance movement, or the four-part
   account-data check for takeovers.
 - **Blast radius.** Count it from queries: distinct victim owners and mints
-  (`deltas.py tokens` grouped), total raw units out per mint (Python ints),
+  (`deltas.py tokens` rows, one per token account, summed per owner), total raw
+  units out per mint (Python ints),
   record/account counts, and the `(slot, transactionIndex)` window. Victim-wallet
   lists are **internal only** and never leave `incident_<n>/`.
 - **Root cause.** `frames.py` + the instruction list point at the program and
@@ -174,8 +175,9 @@ Round-1 hypotheses, each a ledger row; let hits spawn pivots:
 
 1. **Failed-then-succeeded clusters** from one signer/program: probing that found
    a hole (`err` history from `getSignaturesForAddress`, then the first success).
-2. **Outflow outliers per mint:** `deltas.py tokens` grouped by mint; a drain is a
-   large net negative from vault/treasury owners.
+2. **Outflow outliers per mint:** `deltas.py tokens` summed per owner and mint
+   (each row is one token account); a drain is a large net negative from
+   vault/treasury owners.
 3. **Privileged instructions whose signer is not in the authority set** — the
    takeover tell: a set-authority / set-config / upgrade / withdraw whose signer
    the threat model does not list as that role.
