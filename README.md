@@ -127,7 +127,7 @@ The native corpus works fully **without** it (it falls back to grep-based checks
 cd "<auditor-skill root>/tools/auditor-tools" && cargo build --release
 ```
 
-The auditor runs them, the scripts and the Trail of Bits plugins by absolute path from the installation, never by a path relative to the project it audits ([OUTPUT-RULES.md Rule 11e](OUTPUT-RULES.md#11e--bundled-paths)). If the installation sits inside the repository under audit anyway (the `install.sh` default, `.claude/skills/auditor-skill`), the build runs inside that tree, where cargo and rustup read its `.cargo/config*` and `rust-toolchain*` from every parent directory: build there only in [Rule 11a](OUTPUT-RULES.md#rule-11-operating-safety) isolated mode, or move the installation out (Option 2 with a path such as `~/.claude/skills/auditor-skill`) and build it there.
+The auditor runs them, the scripts and the Trail of Bits plugins by absolute path from the installation, never by a path relative to the project it audits ([OUTPUT-RULES.md Rule 11e](OUTPUT-RULES.md#11e--bundled-paths)). If the installation sits inside the repository under audit anyway (the `install.sh` default, `.claude/skills/auditor-skill`), the build runs inside that tree, where cargo and rustup read its `.cargo/config*` and `rust-toolchain*` from every parent directory: build there only in [Rule 11a](OUTPUT-RULES.md#rule-11-operating-safety) isolated mode, or delete that copy and install a fresh one outside (the plugin, or Option 2 with the path `~/.claude/skills/auditor-skill`) and build that one. Never move or update a copy you find inside a repository ([Installation](#installation)).
 
 ---
 
