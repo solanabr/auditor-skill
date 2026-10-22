@@ -2,11 +2,11 @@
 # test-dnr.sh — self-test for the detection & response recipes (scripts/dnr/).
 #
 # Runnable from the repo root with bash >= 3.2, using only jq / python3 / awk / sed.
-# No network. Exits non-zero on the first failed assertion. The integrator wires a
-# CI step that runs every scripts/tests/*.sh.
+# No network. Exits non-zero on the first failed assertion. CI (corpus-check.yml)
+# runs every scripts/tests/*.sh.
 #
-# Each assertion pins a property a must-fix demanded, against the committed
-# adversarial fixtures, so "validated" claims in the docs point at a real check.
+# Each assertion pins a documented property against the committed adversarial
+# fixtures, so "validated" claims in the docs point at a real check.
 
 set -uo pipefail
 
