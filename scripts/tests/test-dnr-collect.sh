@@ -450,6 +450,7 @@ snap() {
   ( export "$@" PATH="$TT/sol:$TT/bin:$PATH"; bash "$DNR/snapshot-program.sh" "$PID" "$dir" ) > "$dir.out" 2>&1
 }
 cli_calls() { if [[ -f "$FAKE_SOL_ARGV" ]]; then grep -c . "$FAKE_SOL_ARGV"; else echo 0; fi; }
+names() { ls "$1" | LC_ALL=C sort | tr '\n' ' '; }   # a directory's entries, in byte order
 
 # ---------------------------------------------------------------------------
 # 6. snapshot-program.sh needs python3 for the hash: with none on PATH it stops
@@ -489,7 +490,7 @@ eq "keep: same slot and hash -> exit 0, 'unchanged', then the first snapshot's l
   "$code|$(sed -n 1p "$K.out")|$(sed -n 2p "$K.out")" \
   "0|unchanged: the program on-chain matches bin/$PID.so (same last-deployed slot and zero-trimmed sha256); nothing written|$line1"
 eq "keep: an unchanged run rewrites nothing and adds nothing" \
-  "$(find "$K/bin" -type f -newer "$TT/ref2001" | wc -l | tr -d ' ')|$(ls "$K/bin" | tr '\n' ' ')" "0|$PID.show.txt $PID.so "
+  "$(find "$K/bin" -type f -newer "$TT/ref2001" | wc -l | tr -d ' ')|$(names "$K/bin")" "0|$PID.show.txt $PID.so "
 snap "$K" FAKE_SOL_SLOTS=200
 code=$?
 if [[ "$code" == 0 ]] && cmp -s "$K/bin/$PID.so" "$TT/first.so" && cmp -s "$K/bin/$PID.show.txt" "$TT/first.show" \
@@ -539,7 +540,7 @@ eq "loader-v4: the CLI calls, in order" \
   "$(jq -r 'map(select(. != "-C" and (test("cli.yml$") | not) and (test("dump.so$") | not))) | join(" ")' "$FAKE_SOL_ARGV" | grep -v '^config ' | tr '\n' '|')" \
   "program show $PID --buffer-authority 11111111111111111111111111111111|program-v4 show --program-id $PID --authority 11111111111111111111111111111111|program-v4 download --program-id $PID|program-v4 show --program-id $PID --authority 11111111111111111111111111111111|"
 snap "$L/v4" FAKE_SOL_LOADER=v4 FAKE_SOL_SLOTS=900
-eq "loader-v4: a redeploy is kept beside the first snapshot" "$?|$(ls "$L/v4/bin" | tr '\n' ' ')" \
+eq "loader-v4: a redeploy is kept beside the first snapshot" "$?|$(names "$L/v4/bin")" \
   "0|$PID.show.txt $PID.so $PID@900.show.txt $PID@900.so "
 for ld in v2 v1; do
   snap "$L/$ld" FAKE_SOL_LOADER="$ld"
