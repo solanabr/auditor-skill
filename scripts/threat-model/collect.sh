@@ -102,7 +102,15 @@ classify_source() {
     *)         case "${1%%/*}" in *:*) echo rejected ;; *) echo path ;; esac ;;
   esac
 }
-redact() { printf '%s' "$1" | sed -E 's#^(https://)[^/@]*@#\1***@#'; }
+# URLs are written to history.md, inputs.tsv and stderr without the parts that carry credentials or
+# signed tokens: the userinfo, the query string and the fragment of a URL become ***. redact_urls
+# filters text (any URL at the start of a line or after a space); redact does one value.
+redact_urls() {
+  sed -E -e 's%(^|[[:space:]])([A-Za-z][A-Za-z0-9+.-]*://)[^/@?#[:space:]]*@%\1\2***@%g' \
+         -e 's%(^|[[:space:]])([A-Za-z][A-Za-z0-9+.-]*://[^?#[:space:]]*)[?][^#[:space:]]*%\1\2?***%g' \
+         -e 's%(^|[[:space:]])([A-Za-z][A-Za-z0-9+.-]*://[^#[:space:]]*)[#][^[:space:]]*%\1\2#***%g'
+}
+redact() { printf '%s\n' "$1" | redact_urls | awk 'NR > 1 { printf "\n" } { printf "%s", $0 }'; }
 if [ -n "$PARENT" ] && [ "$(classify_source "$PARENT")" = rejected ]; then
   die "--parent accepts an https:// URL or a local path, not: $(redact "$PARENT")"
 fi
@@ -616,7 +624,7 @@ R4_OTHER=$(sed -E 's/^ *[0-9]+ //' "$TMPD/r4a" | grep -E '\.rs"?$' |
   G "$REPO" grep -n -a -E 'declare_id!' "$PIN_SHA" -- '*.rs' 2>/dev/null | strip_pin > "$TMPD/r6c"
   emit_capped "$TMPD/r6c" "no declare_id!"
   echo "--- configured remotes (strings from .git/config) ---"
-  remote_urls | sed -E 's#(https://)[^/@ ]*@#\1***@#' > "$TMPD/r6d"
+  remote_urls | redact_urls > "$TMPD/r6d"
   emit_capped "$TMPD/r6d" "no remote configured"
   echo "--- first commits ---"
   G "$REPO" log "${DIFFSAFE[@]}" --reverse --format='%h %ad %s' --date=short "$PIN_SHA" 2>/dev/null | head -n 3 > "$TMPD/r6e"

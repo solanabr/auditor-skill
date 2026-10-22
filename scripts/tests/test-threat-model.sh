@@ -775,7 +775,7 @@ done
 OUTQ="$T/textq-$( command -v jq >/dev/null 2>&1 && echo jq || echo python3)/audit_1/bootstrap"
 if [ -s "$OUTQ/history.md" ]; then
   check "T-q: a multi-line remote URL stays on one R6 line" sh -c "! grep -q '^## Forged heading' '$OUTQ/history.md'"
-  check "T-q: ... shown escaped" has "$OUTQ/history.md" 'https://example.invalid/m\n```\n## Forged heading'
+  check "T-q: ... shown escaped on the remote's own line" has "$OUTQ/history.md" 'remote.mirror.url https://example.invalid/m\n```\n'
   check "T-q: a CR in a commit subject is shown as \\r" has "$OUTQ/history.md" 'Tidy q\r```'
   check "T-q: an incident directory name in R6 is shown escaped" has "$OUTQ/history.md" 'incident_x\n77\tforged-dir/INCIDENTS.json'
   check "T-q: a row with a long subject is cut, ending in ..." \
@@ -877,6 +877,28 @@ check "T-s: ... and its long message is cut with a visible marker" \
   grep -q '^TRUNCATED ([0-9]* more message lines; run git show [0-9a-f]\{40\})' "$OUTSD/diffs/target-$C_BIG.diff"
 check "T-s: a cut diff ends in a TRUNCATED marker naming the full id and path" \
   grep -q "^TRUNCATED ([0-9]* more lines; run git show [0-9a-f]\{40\} -- programs/s/src/huge.rs)" "$OUTSD/diffs/target-$C_HUGE.diff"
+
+# =================================================================================================
+# T-t: URLs are written without credentials: userinfo, query string and fragment become *** in
+# history.md, inputs.tsv and on stderr.
+# =================================================================================================
+UR="$T/urls"; mkrepo "$UR"
+put "$UR" programs/u/src/lib.rs 'pub fn u() {}'
+commit "$UR" -m "initial"
+git -C "$UR" config remote.origin.url 'https://bot:TOKEN-REMOTE@example.invalid/org/repo.git?token=QUERY-REMOTE'
+OUTUR="$T/urls-run/audit_1/bootstrap"
+collect --repo "$UR" --out "$OUTUR" --offline \
+  --parent 'https://user:TOKEN-PARENT@example.invalid/org/parent.git?token=QUERY-PARENT#FRAG-PARENT' \
+  --vulns 'https://example.invalid/reports/r1.pdf?X-Amz-Signature=SIG-VULNS#FRAG-VULNS'
+for secret in TOKEN-REMOTE QUERY-REMOTE TOKEN-PARENT QUERY-PARENT FRAG-PARENT SIG-VULNS FRAG-VULNS; do
+  check "T-t: $secret appears in neither history.md nor inputs.tsv" \
+    sh -c "! grep -q '$secret' '$OUTUR/history.md' && ! grep -q '$secret' '$OUTUR/inputs.tsv'"
+done
+check "T-t: the parent URL keeps its host and path" has "$OUTUR/history.md" 'https://***@example.invalid/org/parent.git?***#***'
+check "T-t: the --vulns URL keeps its host and path" has "$OUTUR/inputs.tsv" 'https://example.invalid/reports/r1.pdf?***#***'
+bash "$COLLECT" --repo "$UR" --out "$T/urls-x/audit_1/bootstrap" --parent 'ssh://user:TOKEN-SSH@example.invalid/x?k=QUERY-SSH' >/dev/null 2>"$T/urls.err"
+check "T-t: a rejected URL is echoed on stderr without its credentials" \
+  sh -c "grep -q 'ssh://\*\*\*@example.invalid/x?\*\*\*' '$T/urls.err' && ! grep -q 'TOKEN-SSH\|QUERY-SSH' '$T/urls.err'"
 
 echo
 echo "threat-model collector tests: $pass passed, $fail failed, $skip skipped"
