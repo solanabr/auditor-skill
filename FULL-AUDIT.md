@@ -354,7 +354,8 @@ ACTIONS:
   GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c core.bigFileThreshold=512m \
     log --all --oneline --text --no-textconv -G"$W3" -- '*lock*' '*package.json'
   # → hijacked @solana/web3.js releases (KV-077 Step 2, SC-005). A hit now is CRITICAL;
-  #   a hit in history means rotate every key a build from that window loaded
+  #   a hit in history means rotate every key a build from that window loaded; a `fatal:` /
+  #   `lazy fetching disabled` line means a partial clone: the history part is INCONCLUSIVE
 
   # Audits, registry queries and any cargo / rustc command (even --version) run from
   # a scratch dir OUTSIDE the target tree, on copies of the manifest + lockfile, with

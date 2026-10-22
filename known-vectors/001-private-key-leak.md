@@ -58,6 +58,7 @@ GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=
 ```
 - ✅ PASS: Zero matches across all three
 - ❌ FAIL: Any match → key was in history. MUST rotate immediately, even if commit was reverted
+- ⚠️ INCONCLUSIVE: any `fatal:` or `lazy fetching disabled` line in the output — the checkout is a partial clone with incomplete history (OUTPUT-RULES Rule 11c); record it as not checked, never as a PASS
 
 **Step 6: Verify git-tracked files right now**
 ```

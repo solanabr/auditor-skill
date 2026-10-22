@@ -36,6 +36,7 @@ GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=
 ```
 - ✅ PASS: Zero matches in the tree, and either zero matches in history or evidence that every key a build from that window loaded was rotated
 - ❌ FAIL: Compromised package version in the tree — CRITICAL; or a `@solana/web3.js` 1.95.6 / 1.95.7 hit in history with no evidence of rotation — every key a build containing it loaded is exposed: rotate it
+- ⚠️ INCONCLUSIVE (history part): a `fatal:` or `lazy fetching disabled` line means the checkout is a partial clone with incomplete history (OUTPUT-RULES Rule 11c); the history search did not run, so it is never a PASS
 
 **Step 3: Run npm audit**
 ```
