@@ -33,13 +33,20 @@ Re-run the finding's own exploit against the **patched** build. The line that
 previously succeeded must now fail.
 
 ```bash
-{PATH_TO}/poc/{FINDING_ID}/run.sh
+# {MODE}: the execution mode recorded at intake, isolated | native (OUTPUT-RULES.md Rule 11a)
+AUDITOR_EXEC_MODE={MODE} {PATH_TO}/poc/{FINDING_ID}/run.sh                    # minimized model
+AUDITOR_EXEC_MODE={MODE} VULNERABLE_SO={UNPATCHED_SO} FIXED_SO={PATCHED_SO} \
+  {PATH_TO}/poc/{FINDING_ID}/run.sh                                           # patched target build
 ```
 
 **Re-detonated against:** {patched target build (`VULNERABLE_SO` / `FIXED_SO` overrides — `templates/poc/run.sh`) | minimized model}
 — a *patched target build* runs `run.sh` against the unpatched and patched builds of the target itself
-(set both overrides or neither); the *minimized model* is the PoC crate's own `vulnerable` / `fixed` arms
-with the patch transplanted.
+(set both overrides or neither). That is `run.sh`'s prebuilt mode: it exits 3 unless both files are ELF
+programs, `tests/exploit.rs` reads the changed account back with a live `outcome.get_account(&pk)` call,
+and `tests/fixed_blocked.rs` pins the guard's error with a live `assert_exploit_rejected_with!`. The PoC
+must also use the program's real id, since an Anchor program checks its own `declare_id!`; `run.sh` does
+not check that. Convert audit-form tests first. The *minimized model* is the PoC crate's own
+`vulnerable` / `fixed` arms with the patch transplanted.
 
 - **Pre-fix (recorded when the PoC was built):** `tests/exploit.rs` SUCCEEDED on the
   `vulnerable` arm — the attack went through. → `[PoC-REPRODUCED]`
