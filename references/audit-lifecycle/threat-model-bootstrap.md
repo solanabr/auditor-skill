@@ -101,9 +101,11 @@ bash "$COLLECTOR" --repo <target> --out audit_<n>/bootstrap --pin <sha> \
   incident (many protocols keep an `audits/` folder) is read from the pinned commit and converted or copied the same
   way, up to 20, newest-named first; the rest stay listed in R6.
 - **Other inputs** need no collector: `--seed` (a prior `threat-model.md`) and `--design-doc` are read directly.
-- **Prior rulings.** `--program-id <id>` saves `audit-mem warm --program-id <id>` to `audit-mem-warm.json` when
-  `tools/auditor-tools` is built and a findings database exists. The default in-tree store is skipped, with R8 noting
-  "store not trusted", when the target tracks `.audit-memory` (`OUTPUT-RULES.md` Rule 11d).
+- **Prior rulings.** `--program-id <id> --audit-mem-db <path>` saves `audit-mem warm --program-id <id>` for that
+  store to `audit-mem-warm.json` when `tools/auditor-tools` is built and the database exists. The collector reads no
+  other store and never looks for one in the target tree; without `--audit-mem-db`, R8 prints NOT FOUND. Pass it only
+  when the store passes the `OUTPUT-RULES.md` Rule 11d check: the repository does not track `.audit-memory`, and you
+  created the store (intake records its path).
 
 ## 3. Read the output
 

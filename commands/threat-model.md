@@ -16,7 +16,7 @@ Build the threat model **before** the manual review judges anything — analogou
 - The in-scope **code** (instructions, accounts, PDAs, CPIs, arithmetic).
 - `audit_<n>/intake.md` §6 — the trust-model inputs (who is trusted). The actor list to expand. Read it if present; if absent, run `/auditor:intake` first or reconstruct actors from the code and note intake was unavailable.
 - `audit_<n>/worksheets/context/*` — `context-builder`'s invariants, assumptions, and external-interaction risks, if the context phase has run.
-- `"${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release/audit-mem" warm --program-id <id>` prior invariants + open FP rulings, if that binary is built (`test -x` on the same path; skip cleanly otherwise) and the store passes the `OUTPUT-RULES.md` Rule 11d check (else a fresh `--db` store outside the tree). In bootstrap mode the collector saves it as `audit_<n>/bootstrap/audit-mem-warm.json`, and skips the default in-tree store when the target tracks `.audit-memory`.
+- `"${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release/audit-mem" warm --program-id <id>` prior invariants + open FP rulings, if that binary is built (`test -x` on the same path; skip cleanly otherwise) and the store passes the `OUTPUT-RULES.md` Rule 11d check (else a fresh `--db` store outside the tree). In bootstrap mode the collector reads audit memory only from a store passed as `--audit-mem-db <path>` and saves it as `audit_<n>/bootstrap/audit-mem-warm.json`; it never looks for a store on its own. Pass `--audit-mem-db` only when the Rule 11d check passes: the repository does not track `.audit-memory`, and you created the store (intake records its path). Otherwise leave it out.
 - **Bootstrap inputs** (`--bootstrap`, or any of `--vulns` / `--seed` / `--parent`, or a trigger below). Load `references/audit-lifecycle/threat-model-bootstrap.md` first. They are:
   - the target's git history and, with `--parent`, a fork parent (an `https://` URL or a local clone);
   - prior-vulnerability sources: `--vulns` (repeatable) takes prior audit reports (PDF or Markdown), disclosed-exploit write-ups, advisory or finding lists (text, CSV, JSON), and `INCIDENTS.json`; `incident_*/INCIDENTS.json` next to the target is read automatically;
@@ -42,7 +42,7 @@ You run git only through the collector. Run bundled scripts only from the audito
 
 ```bash
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --repo <target> --out audit_<n>/bootstrap --pin <sha from intake> --offline \
-  [--paths <in-scope program dir>] [--vulns <file>] [--program-id <id>]
+  [--paths <in-scope program dir>] [--vulns <file>] [--program-id <id> --audit-mem-db <store intake recorded>]
 ```
 
 Drop `--offline` only when the user passed an `https://` `--parent` / `--vulns` value or confirmed the exact URL. Then hand `audit_<n>/bootstrap/` to `threat-modeler` together with the other inputs.
