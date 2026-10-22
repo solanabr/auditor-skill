@@ -132,7 +132,10 @@ fails that PR until the README pin is updated on the same branch. Never auto-mer
    first). Read every section: plugins added or removed; load surfaces (nested `.claude/`, `.claude-plugin/`
    manifests and any hooks / MCP / LSP servers they declare, `hooks/`, `.mcp.json` / `.lsp.json`, settings,
    `CLAUDE.md` / `AGENTS.md`, `workflows/*.js`); new executables; symlinks (`120000`) and gitlinks
-   (`160000`); hosts and pipe-to-shell patterns in added script lines; the `LICENSE` (must be unchanged).
+   (`160000`); hosts in added script, config and Markdown lines (tests, evals, fixtures and lockfiles left
+   out); remote-exec patterns in added lines, with continuation lines joined (a download piped to a shell or
+   interpreter, `sh -c "$(curl …)"`, `<(curl …)`, `npx --yes`, `pip` or `uvx` from a URL); the `LICENSE`
+   (must be unchanged).
 2. The script ends by checking that every plugin named in `references/orchestration/boundary-map.md` and
    `docs/power-tools.md` still exists. For each one that changed (`git diff <old> <new> -- plugins/<name>`),
    update its rows when the entry point, behaviour, execution (`OUTPUT-RULES.md` Rule 11a) or outside
