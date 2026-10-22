@@ -55,7 +55,7 @@ The fan-out is **domain-partitioned, not N identical clones** — naive N-way fa
 ### threat-modeler
 **Role:** enumerate what an attacker would *want* and *where they could push*, before any bug is judged. No severities, no verdicts.
 **Produces:** `audit_<n>/threat-model.md` — asset inventory, actor × capability table (the "must NOT" column is the security property later phases test), trust-boundary map (each crossing marked validated or `✗`), and **attacker goals to test** mapped to checklists/vectors.
-**Inputs:** the code, the context worksheets, `intake.md` §6 (the trust-model actor list), `audit-mem warm` if built, and in bootstrap mode the collector's `audit_<n>/bootstrap/` output (git history, fork-parent hints, prior audits, post-mortems, allowlisted incident fields). It stays `Read, Grep, Glob`: the bundled `${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh` runs the git.
+**Inputs:** the code, the context worksheets, `intake.md` §6 (the trust-model actor list), `audit-mem warm` if built, and in bootstrap mode the collector's `audit_<n>/bootstrap/` output (git history, fork-parent hints, prior audits, post-mortems, allowlisted incident fields). It stays `Read, Grep, Glob`: the bundled `<auditor-skill root>/scripts/threat-model/collect.sh` runs the git.
 **Downstream:** seeds report §4.4/§4.6/§4.7 and hands the reviewers concrete goals to falsify. A goal that turns out reachable becomes a finding downstream — through the Rule 5b gate, not here.
 
 ### vuln-hunter
