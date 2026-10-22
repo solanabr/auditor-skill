@@ -453,8 +453,9 @@ cli_calls() { if [[ -f "$FAKE_SOL_ARGV" ]]; then grep -c . "$FAKE_SOL_ARGV"; els
 names() { ls "$1" | LC_ALL=C sort | tr '\n' ' '; }   # a directory's entries, in byte order
 
 # ---------------------------------------------------------------------------
-# 6. snapshot-program.sh needs python3 for the hash: with none on PATH it stops
-#    with a named blocker (exit 3) before the CLI runs, and writes nothing.
+# 6. snapshot-program.sh needs python3 (the id check and the hash): with none on
+#    PATH it stops with a named blocker (exit 3) before the CLI runs, and writes
+#    nothing.
 # ---------------------------------------------------------------------------
 before="$(cli_calls)"
 ( PATH="$TT/sol:$TT/nopy" bash "$DNR/snapshot-program.sh" "$PID" "$TT/nopy-inc" ) > "$TT/nopy-inc.out" 2>&1
