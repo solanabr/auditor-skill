@@ -133,7 +133,7 @@ refuse_planted() {
   if [ -L "$1" ]; then
     echo "${0##*/}: refusing $1: it is a symbolic link — use a new run directory." >&2; exit 2
   fi
-  if [ -d "$1" ] && [ -n "$(find "$1" -type l -print 2>/dev/null | sed -n 1p)" ]; then
+  if [ -d "$1" ] && [ -n "$(find "$1" -type l -print -quit 2>/dev/null)" ]; then
     echo "${0##*/}: refusing $1: it contains a symbolic link — use a new run directory." >&2; exit 2
   fi
   [ -d "$(dirname "$1")" ] || return 0
