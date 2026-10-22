@@ -53,10 +53,10 @@ directory.
      dir with `mkdir` (not `-p`) and stop if it already exists. Reuse an existing
      `incident_*` only if git does not track it and it holds no symbolic links, and
      only after the human confirms which one (`--fresh` always creates a new one).
-     Never write into a tracked `incident_*`; the bundled scripts refuse one, and
-     one that is or holds a symbolic link, with exit 2. Its **first** file is
-     `incident_<n>/.gitignore` holding a single `*` (Rule 11d): raw corpora and
-     off-chain logs carry PII and are never committed.
+     Never write into a tracked `incident_*`; the bundled scripts refuse one, one
+     that is or holds a symbolic link, and one that git or find cannot check, with
+     exit 2. Its **first** file is `incident_<n>/.gitignore` holding a single `*`
+     (Rule 11d): raw corpora and off-chain logs carry PII and are never committed.
    - **Snapshot each program in scope now:**
      `bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/snapshot-program.sh" <program_id> incident_<n>`
      — read-only `solana program show` + `solana program dump` (loader-v4:

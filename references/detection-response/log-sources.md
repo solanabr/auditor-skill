@@ -59,9 +59,9 @@ call count with the human first):
   directory; an `--out` that already holds `signatures.jsonl`,
   `transactions.jsonl` or `collection-gaps.tsv`, even an empty one, is refused
   rather than overwritten, and so is one that — or whose `incident_*` directory —
-  is a symbolic link, holds one, or is tracked by git (README § Run directory). An
-  `incident_<n>/` that the corpus lands in gets a `.gitignore` of `*` if it has
-  none (Rule 11d).
+  is a symbolic link, holds one, is tracked by git, or cannot be checked by git or
+  find (README § Run directory). An `incident_<n>/` that the corpus lands in gets a
+  `.gitignore` of `*` if it has none (Rule 11d).
 - **Gaps are written down.** A `getTransaction` that failed (transport error, RPC
   error or null result), a signature page that failed, history the page cap
   truncated (it stopped on a full page of 1,000; a shorter page ends the history),

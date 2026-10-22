@@ -56,7 +56,8 @@ directory.
      is a `.gitignore` holding `*` (Rule 11d). Reuse an existing `incident_*` only if git
      does not track it and it holds no symbolic links, and only after the human
      confirms which one. Never write into a tracked `incident_*`; the bundled
-     scripts refuse one, and one that is or holds a symbolic link, with exit 2.
+     scripts refuse one, one that is or holds a symbolic link, and one that git or
+     find cannot check, with exit 2.
    - For an `INC-<n>.<k>` lead, the lead names the `incident_<n>/` to reuse (naming
      it is the confirmation): adopt it under that rule; the agent works into its
      `INCIDENTS.json`, since minting a fresh directory would orphan the incident.

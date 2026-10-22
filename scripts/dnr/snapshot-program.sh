@@ -54,8 +54,9 @@
 # solana-verify hash-matched build).
 #
 # RUN DIRECTORY: <incident_dir>, and the nearest incident_* directory above it, must
-# not be a symbolic link, hold one, or be tracked by git; such a directory is refused
-# with exit 2 before anything is written or the CLI runs.
+# not be a symbolic link, hold one, or be tracked by git, and git and find must be
+# able to check it; any other directory is refused with exit 2 before anything is
+# written or the CLI runs.
 #
 # SECRETS: the CLI reads "$RPC_URL" from the temp config, never from argv; an
 # $RPC_URL holding a quote, a backslash, whitespace or a control character is refused.

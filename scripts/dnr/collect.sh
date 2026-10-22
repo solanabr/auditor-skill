@@ -35,8 +35,8 @@
 #
 # RUN DIRECTORY: --out, and the nearest incident_* directory at or above it, must be
 # a directory this run may write into. Either one that is a symbolic link, holds a
-# symbolic link, or is tracked by git is refused with exit 2 before anything is
-# written or sent.
+# symbolic link, is tracked by git, or that git or find cannot check is refused with
+# exit 2 before anything is written or sent.
 #
 # --before <sig> starts paging just older than that signature (resume a capped run,
 # or skip activity newer than the incident) — always into a new --out: an --out that

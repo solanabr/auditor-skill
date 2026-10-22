@@ -186,14 +186,16 @@ states it is fixed (unverified)".
 `<n>` is the highest existing number + 1; create the dir with `mkdir` (not `-p`)
 and stop if it already exists. Reuse an existing `incident_*` only if git does not
 track it and it holds no symbolic links, and only after the human confirms which
-one. Never write into a tracked `incident_*`. Both checks must print nothing:
+one. Never write into a tracked `incident_*`. Both checks must print nothing and
+exit 0:
 `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false --icase-pathspecs ls-files -- incident_<k>`
 (Rule 11c; any letter case) and `find incident_<k> -type l`. `collect.sh` and `snapshot-program.sh`
 refuse, with exit 2 and before writing anything, a run directory that is a
-symbolic link, holds one, or is tracked by git. The **first** thing written in a
-new run directory is a `.gitignore` containing a single line, `*` (Rule 11d) — a
-raw transaction corpus and off-chain logs can carry PII and must never be
-committed; the repo `.gitignore` also ignores `incident_*/` as a backstop.
+symbolic link, holds one, is tracked by git, or that git or find cannot check.
+The **first** thing written in a new run directory is a `.gitignore` containing a
+single line, `*` (Rule 11d) — a raw transaction corpus and off-chain logs can
+carry PII and must never be committed; the repo `.gitignore` also ignores
+`incident_*/` as a backstop.
 
 ```
 incident_<n>/

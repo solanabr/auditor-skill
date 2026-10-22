@@ -208,7 +208,7 @@ Step 1 of every hunt and response: it keeps the deployed program bytes before a 
     - a usage error;
     - an id that is not base58 or not 32 bytes;
     - no `$RPC_URL`, or one that holds a quote, a backslash, whitespace or a control character;
-    - a run directory that is a symbolic link, contains one, or is tracked by git.
+    - a run directory that is a symbolic link, contains one, is tracked by git, or that git or find cannot check (the check fails closed).
   - 3, a named blocker:
     - no `solana` CLI or `python3`;
     - the CLI did not take the keyless config;
@@ -253,7 +253,7 @@ The one gated collector: it pages each address's signature history, failed trans
     - no `$RPC_URL`, or one that holds a quote, a backslash, whitespace or a control character;
     - an address or `--before` value that is not base58;
     - a number that is not a plain integer;
-    - an `--out`, or the nearest `incident_*` directory at or above it, that is a symbolic link, contains one, or is tracked by git (in any letter case);
+    - an `--out`, or the nearest `incident_*` directory at or above it, that is a symbolic link, contains one, is tracked by git (in any letter case), or that git or find cannot check;
     - an `--out` that already holds a corpus file.
   - 3, a named blocker:
     - no curl or jq;
