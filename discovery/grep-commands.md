@@ -239,19 +239,24 @@ grep_search: "NEXT_PUBLIC_"   includePattern: "apps/web/**/*.tsx"
 
 ### Committed env/key files
 ```bash
-# Terminal:
-git ls-files | grep -iE "\.env|keypair|delegate\.json|\.pem|\.key"
+# Terminal (OUTPUT-RULES Rule 11c flags):
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  ls-files | grep -iE "\.env|keypair|delegate\.json|\.pem|\.key"
 find . -name "*.env*" -not -path "./node_modules/*" -not -path "./.git/*"
 find . -name "*keypair*" -not -path "./node_modules/*" -not -path "./.git/*"
 ```
 
 ### Git history secrets
 ```bash
-# Terminal (a pickaxe search runs the repo's textconv drivers unless --no-textconv is given; in a
-# checkout you did not clone yourself, add the other OUTPUT-RULES Rule 11c flags too):
-git log --all --no-textconv -S "private" --oneline | head -20
-git log --all --no-textconv -S "secret" --oneline | head -20
-git log --all --no-textconv -S "BEGIN RSA" --oneline | head -20
+# Terminal (OUTPUT-RULES Rule 11c flags; a pickaxe search runs the repo's textconv drivers unless
+# --no-textconv is given). -S also matches files a committed .gitattributes marks -diff or binary;
+# -G and patch output (-p) skip their content unless --text is given:
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  log --all --no-textconv --no-ext-diff -S "private" --oneline | head -20
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  log --all --no-textconv --no-ext-diff -S "secret" --oneline | head -20
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  log --all --no-textconv --no-ext-diff -S "BEGIN RSA" --oneline | head -20
 ```
 
 ---
@@ -331,8 +336,9 @@ grep_search: "load_instruction_at|get_instruction_relative"   isRegexp: true   i
 
 ### Terraform / IaC hygiene (DEP-080..DEP-086)
 ```
-# Terminal:
-git ls-files | grep -E "\.tfstate|tfplan|\.terraform/"
+# Terminal (OUTPUT-RULES Rule 11c flags on git):
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  ls-files | grep -E "\.tfstate|tfplan|\.terraform/"
 grep -rn -E "allUsers|allAuthenticatedUsers|0\.0\.0\.0/0|roles/(editor|owner)|ingress.*all" terraform/
 ```
 
@@ -400,7 +406,7 @@ npx license-checker --summary
 
 ## GitHub Actions (CI trigger trust)
 
-> Locators for `references/vuln-classes/github-actions.md`, KV-080, KV-116, KV-139, KV-140, DEP-067..071 / DEP-090..096 and AI-021..035. A hit is a place to read, not a finding: open the whole workflow, then trace trigger → actor → payload → sink → privilege. Every recipe is recursive with `--include` and fully single-quoted where it contains `$` or `!`, so it runs unchanged in bash and zsh and never trips on an unmatched glob. Point the same commands at any `action.yml` / `action.yaml` outside `.github/` (composite actions at the repo root). `scripts/tests/test-gha-recipes.sh` runs R1–R8 exactly as written here against `scripts/tests/fixtures/gha/`.
+> Locators for `references/vuln-classes/github-actions.md`, KV-080, KV-116, KV-139, KV-140, DEP-067..071 / DEP-090..096 and AI-021..035. A hit is a place to read, not a finding: open the whole workflow, then trace trigger → actor → payload → sink → privilege. Every recipe is recursive with `--include` and fully single-quoted where it contains `$` or `!`, so it runs unchanged in bash and zsh and never trips on an unmatched glob. Point the same commands at any `action.yml` / `action.yaml` outside `.github/` (composite actions at the repo root). `scripts/tests/test-gha-recipes.sh` runs R1–R8 exactly as written here, plus the KV-116 Step 1, KV-139 Step 1 and KV-140 Step 6 locators, against `scripts/tests/fixtures/gha/`, and fails if a known vector's copy of R1–R5 or R7 differs from this file by a byte.
 
 ```bash
 # R1 — files with a comment / review / issue / discussion trigger that never mention author_association
@@ -416,13 +422,13 @@ grep -rnE --include='*.yml' --include='*.yaml' 'github\.event\.(issue|pull_reque
 
 ```bash
 # R3 — unsound gate comparisons: string contains(), deny-lists, untrusted association values, app/<slug> strings, actor gates
-grep -rnE --include='*.yml' --include='*.yaml' -e "contains\([[:space:]]*'[^']*(OWNER|MEMBER|COLLABORATOR)" -e 'author_association[[:space:]]*!=' -e '!contains\(fromJSON' -e 'github\.(actor|triggering_actor)[[:space:]]*[!=]=' -e "'(CONTRIBUTOR|FIRST_TIMER|FIRST_TIME_CONTRIBUTOR|MANNEQUIN)'" -e "app/[A-Za-z0-9_-]+'" .github/
+grep -rnE --include='*.yml' --include='*.yaml' -e "contains\([[:space:]]*'[^']*(OWNER|MEMBER|COLLABORATOR)" -e 'author_association[[:space:]]*!=' -e '![[:space:]]*contains\([[:space:]]*from(JSON|Json)' -e 'github\.(actor|triggering_actor)[[:space:]]*[!=]=' -e 'contains\(.*github\.(actor|triggering_actor)' -e "[\"'](CONTRIBUTOR|FIRST_TIMER|FIRST_TIME_CONTRIBUTOR|MANNEQUIN)[\"']" -e "app/[A-Za-z0-9_-]+'" .github/
 ```
-> An actor comparison is a sound allowlist on `issue_comment` (the actor is the commenter) and unsound on PR-family and `workflow_run` events (DEP-091).
+> An actor comparison is a sound allowlist on `issue_comment` (the actor is the commenter) and unsound on PR-family and `workflow_run` events (DEP-091). `contains(github.actor, …)` is a substring test and unsound on every event. Function names are case-insensitive, so `fromJson` counts the same as `fromJSON`.
 
 ```bash
 # R4 — workflow_run consumers: head fields and artifact downloads
-grep -rnE --include='*.yml' --include='*.yaml' 'workflow_run\.(head_branch|head_sha|head_commit|head_repository|display_title|pull_requests)|download-artifact|run-id:' .github/
+grep -rnE --include='*.yml' --include='*.yaml' 'workflow_run\.(head_branch|head_sha|head_commit|head_repository|display_title|pull_requests)|download-artifact|downloadArtifact|listWorkflowRunArtifacts|gh run download|run-id:' .github/
 ```
 > DEP-094, KV-140.
 
@@ -434,23 +440,23 @@ grep -rnE --include='*.yml' --include='*.yaml' '(>>|tee[[:space:]]+(-a|--append)
 
 ```bash
 # R6 — attacker-controlled expressions (confirm the sink: run:, script:, an agent prompt field, an env file)
-grep -rnE --include='*.yml' --include='*.yaml' '\$\{\{.*(github\.event\.[a-z_.]*(body|default_branch|email|head_ref|label|message|name|page_name|ref|title|head_branch|display_title)|github\.head_ref|github\.event\.(commits|pages)\[|toJSON\(github\.event)' .github/
+grep -rnE --include='*.yml' --include='*.yaml' '\$\{\{.*(github\.event\.[a-z_.]*(body|default_branch|email|head_ref|label|message|name|page_name|ref|title|head_branch|display_title)|github\.head_ref|github\.event\.(commits|pages)\[|to(JSON|Json)\(github(\)|\.event[).]))' .github/
 ```
-> Matches inside `env:` are the safe shell pattern but still taint agent prompts and env files (DEP-069, AI-023/024).
+> Matches inside `env:` are the safe shell pattern but still taint agent prompts and env files (DEP-069, AI-023/024). Whole-context dumps count: `toJSON(github)` and `toJson(github.event…)` carry every attacker-controlled field.
 
 ```bash
 # R7 — checkouts and fetches of PR or run heads, and the checkout-guard opt-out
-grep -rnE --include='*.yml' --include='*.yaml' 'ref:[[:space:]]*\$\{\{[[:space:]]*(github\.event\.(pull_request\.(head\.(sha|ref)|merge_commit_sha)|workflow_run\.head_(sha|branch))|github\.head_ref)|repository:[[:space:]]*\$\{\{[[:space:]]*github\.event\.pull_request\.head\.repo\.full_name|refs/pull/|gh pr checkout|git (fetch|pull|checkout)[^#]*(pull/|head_ref|head\.ref|head\.sha)|allow-unsafe-pr-checkout' .github/
+grep -rnE --include='*.yml' --include='*.yaml' 'ref:[[:space:]]*.?\$\{\{[[:space:]]*(github\.event\.(pull_request\.(head\.(sha|ref)|merge_commit_sha)|workflow_run\.head_(sha|branch))|github\.head_ref|steps\.[A-Za-z0-9_-]+\.outputs\.head_(sha|ref)|from(JSON|Json)\(steps\.[A-Za-z0-9_-]+\.outputs\.[A-Za-z0-9_]+\)\.head\.(sha|ref))|repository:[[:space:]]*.?\$\{\{[[:space:]]*github\.event\.pull_request\.head\.repo\.full_name|refs/pull/|gh pr checkout|git (fetch|pull|checkout)[^#]*(pull/|head_ref|head\.ref|head\.sha)|allow-unsafe-pr-checkout' .github/
 ```
-> DEP-092 (the commit that was approved) and DEP-093 (privileged triggers).
+> DEP-092 (the commit that was approved) and DEP-093 (privileged triggers). Quoted expressions match too, and so do checkouts of a step output: `steps.<id>.outputs.head_sha` / `head_ref` and `fromJSON(steps.<id>.outputs.result).head.sha`. For a `ref:` fed by any other step output, read the step that sets it.
 
 ```bash
 # R8 — AI agents in CI, their gates, and pre-v1 claude-code-action input names
-grep -rnE --include='*.yml' --include='*.yaml' 'anthropics/claude-code-action|run-gemini-cli|gemini-cli-action|openai/codex-action|actions/ai-inference|claude -p|@anthropic-ai/claude-code|codex exec|gemini -p|allowed_non_write_users|allowed_bots|allow-users|allow-bots|include_comments_by_actor|direct_prompt|override_prompt|custom_instructions|allowed_tools|disallowed_tools|allowedTools|show_full_output|additional_permissions' .github/
+grep -rnE --include='*.yml' --include='*.yaml' 'anthropics/claude-code-(base-)?action|run-gemini-cli|gemini-cli-action|openai/codex-action|actions/ai-inference|claude (-p|--print)|@anthropic-ai/claude-code|codex exec|gemini -p|allowed_non_write_users|allowed_bots|allow-users|allow-bots|include_comments_by_actor|direct_prompt|override_prompt|custom_instructions|allowed_tools|disallowed_tools|allowedTools|show_full_output|additional_permissions' .github/
 ```
 > AI-023..031, AI-034..035, KV-116. Pre-v1 names (`direct_prompt`, `override_prompt`, `custom_instructions`, `allowed_tools`, `disallowed_tools`) can remain after a workflow's `uses:` line moves to `@v1` or a SHA, so judge each step by the keys it sets.
 
-**Tool cross-check (optional, static).** `zizmor --offline --persona=auditor .github/workflows/` and CodeQL's `actions` language cover template injection, env-file writes, dangerous triggers and bot conditions. Neither replaces R1–R3, R7 or R8: on `scripts/tests/fixtures/gha/`, zizmor 1.30.1 did not flag a mention-only gate, the cross-object OR, a deny-list, event text in an agent prompt input, `allowed_non_write_users: "*"` or `allow-unsafe-pr-checkout: true` (details in `references/vuln-classes/github-actions.md` §9).
+**Tool cross-check (optional, static).** `zizmor --offline --persona=auditor .github/workflows/` and CodeQL's `actions` language cover template injection, env-file writes, dangerous triggers and bot conditions. Neither replaces R1–R3, R7 or R8: on fixtures 01–17 in `scripts/tests/fixtures/gha/`, zizmor 1.30.1 did not flag a mention-only gate, the cross-object OR, a deny-list, event text in an agent prompt input, `allowed_non_write_users: "*"` or `allow-unsafe-pr-checkout: true` (details in `references/vuln-classes/github-actions.md` §9).
 
 ---
 
@@ -610,8 +616,8 @@ grep_search: "openai|anthropic|llm|gpt|completion|embedding|prompt"   isRegexp: 
 
 ### Change management controls
 ```bash
-# Terminal: Check branch protection
-git remote -v
+# Terminal: Check branch protection (OUTPUT-RULES Rule 11c flags)
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false remote -v
 # Terminal: Check for PR templates
 find .github -name "*pull_request*" -o -name "CODEOWNERS" 2>/dev/null
 ```

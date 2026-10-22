@@ -14,7 +14,7 @@ category: devops
 
 **Step 1: Check if .env is currently tracked**
 ```
-git ls-files | grep -E "\.env"
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false ls-files | grep -E "\.env"   # Rule 11c flags
 ```
 - ✅ PASS: No .env files tracked
 - ❌ FAIL: .env file is tracked — IMMEDIATE action: `git rm --cached .env` + rotate all secrets
@@ -28,7 +28,9 @@ grep -E "\.env" .gitignore
 
 **Step 3: Check if .env was EVER committed**
 ```
-git log --all --diff-filter=A --name-only --pretty=format: | grep -E "\.env"
+# OUTPUT-RULES Rule 11c flags
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  log --all --no-textconv --diff-filter=A --name-only --pretty=format: | grep -E "\.env"
 ```
 - ✅ PASS: .env was never committed
 - ❌ FAIL: .env was committed at some point — secrets are in history, rotate ALL variables in that file

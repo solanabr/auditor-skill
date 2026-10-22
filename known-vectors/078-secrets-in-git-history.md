@@ -37,32 +37,47 @@ grep -rn --include="*.ts" --include="*.tsx" -E "[1-9A-HJ-NP-Za-km-z]{64,88}" . |
 
 **Step 4: Scan ALL committed files in git history for dangerous filenames**
 ```
-git log --all --diff-filter=A --name-only --pretty=format: | sort -u | grep -iE "\.env$|\.pem$|id_rsa|keypair|wallet.*\.json|secret|credential|\.key$|delegate\.json"
+# Every file ever added (OUTPUT-RULES Rule 11c flags)
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  log --all --no-textconv --diff-filter=A --name-only --pretty=format: \
+  | sort -u | grep -iE "\.env$|\.pem$|id_rsa|keypair|wallet.*\.json|secret|credential|\.key$|delegate\.json"
 ```
 - ✅ PASS: Zero dangerous filenames ever committed
 - ❌ FAIL: Dangerous file was committed at some point (even if deleted later — IT IS STILL IN HISTORY)
 
 **Step 5: Search actual git history content for leaked secrets**
 ```
-# Search for private key patterns in ALL historical content (--no-textconv: OUTPUT-RULES Rule 11c):
-git log --all -p --no-textconv -S "BEGIN RSA" --diff-filter=ACMR -- . 2>/dev/null | head -20
-git log --all -p --no-textconv -S "sk_live" --diff-filter=ACMR -- . 2>/dev/null | head -20
-git log --all -p --no-textconv -S "PRIVATE_KEY" --diff-filter=ACMR -- . 2>/dev/null | head -20
-git log --all -p --no-textconv -S "mnemonic" --diff-filter=ACMR -- . 2>/dev/null | head -20
+# Search for private key patterns in ALL historical content (OUTPUT-RULES Rule 11c flags). A file a committed
+# .gitattributes marks -diff or binary still matches -S, but its patch shows no content; re-run with --text
+# limited to text pathspecs:
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  log --all -p --no-textconv --no-ext-diff -S "BEGIN RSA" --diff-filter=ACMR -- . | head -20
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  log --all -p --no-textconv --no-ext-diff -S "sk_live" --diff-filter=ACMR -- . | head -20
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  log --all -p --no-textconv --no-ext-diff -S "PRIVATE_KEY" --diff-filter=ACMR -- . | head -20
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  log --all -p --no-textconv --no-ext-diff -S "mnemonic" --diff-filter=ACMR -- . | head -20
 ```
-- ✅ PASS: Zero matches in entire git history
+- ✅ PASS: Zero matches in entire git history, and no `fatal:` or `lazy fetching disabled` line in the output
 - ❌ FAIL: Any secret found in historical commits — MUST rotate the credential AND consider `git filter-repo` to rewrite history (force push required)
+- ⚠️ INCONCLUSIVE: any `fatal:` or `lazy fetching disabled` line in the output — the checkout is a partial clone with incomplete history (OUTPUT-RULES Rule 11c); record it as not checked, never as a PASS
 
 **Step 6: Search git history for Solana keypair arrays**
 ```
-git log --all -p --no-textconv --diff-filter=ACMR -- '*.json' '*.ts' '*.js' 2>/dev/null | grep -E "\[([0-9]{1,3},){20,}" | head -10
+# --text: a committed .gitattributes can mark these files -diff or binary, which hides the arrays from the patch
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c core.bigFileThreshold=512m \
+  log --all -p --text --no-textconv --no-ext-diff --diff-filter=ACMR -- '*.json' '*.ts' '*.js' \
+  | grep -E "\[([0-9]{1,3},){20,}" | head -10
 ```
-- ✅ PASS: No keypair-like arrays in history
-- ❌ FAIL: Possible keypair in git history — identify commit: `git log --all -p --no-textconv -S '[123,45,67' -- .`
+- ✅ PASS: No keypair-like arrays in history, and no `fatal:` or `lazy fetching disabled` line in the output
+- ❌ FAIL: Possible keypair in git history — identify commit: `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false log --all -p --no-textconv --no-ext-diff -S '[123,45,67' -- .`
+- ⚠️ INCONCLUSIVE: any `fatal:` or `lazy fetching disabled` line in the output — the checkout is a partial clone with incomplete history (OUTPUT-RULES Rule 11c); record it as not checked, never as a PASS
 
 **Step 7: Check for .env files ever tracked**
 ```
-git log --all --diff-filter=A --name-only --pretty=format: | grep -E "^\.env|/\.env"
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  log --all --no-textconv --diff-filter=A --name-only --pretty=format: | grep -E "^\.env|/\.env"
 ```
 - ✅ PASS: No .env file ever committed
 - ❌ FAIL: .env file was committed — secrets in history, rotate ALL env vars
@@ -76,7 +91,8 @@ cat .gitignore | grep -E "\.env|keypair|\.pem|\.key|id_rsa|delegate\.json"
 
 **Step 9: Check for currently tracked files that should be ignored**
 ```
-git ls-files | grep -iE "\.env|keypair|secret|credential|\.pem|\.key$|delegate\.json"
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+  ls-files | grep -iE "\.env|keypair|secret|credential|\.pem|\.key$|delegate\.json"   # Rule 11c flags
 ```
 - ✅ PASS: Zero results — no sensitive files currently tracked
 - ❌ FAIL: Sensitive file tracked — remove with `git rm --cached <file>` immediately

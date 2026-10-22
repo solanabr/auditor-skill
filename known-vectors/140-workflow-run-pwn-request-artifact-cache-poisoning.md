@@ -41,7 +41,7 @@ grep -rnE --include='*.yml' --include='*.yaml' 'pull_request_target|workflow_run
 
 **Step 2: Is fork-controlled code checked out or fetched?** (recipe R7)
 ```
-grep -rnE --include='*.yml' --include='*.yaml' 'ref:[[:space:]]*\$\{\{[[:space:]]*(github\.event\.(pull_request\.(head\.(sha|ref)|merge_commit_sha)|workflow_run\.head_(sha|branch))|github\.head_ref)|repository:[[:space:]]*\$\{\{[[:space:]]*github\.event\.pull_request\.head\.repo\.full_name|refs/pull/|gh pr checkout|git (fetch|pull|checkout)[^#]*(pull/|head_ref|head\.ref|head\.sha)|allow-unsafe-pr-checkout' .github/
+grep -rnE --include='*.yml' --include='*.yaml' 'ref:[[:space:]]*.?\$\{\{[[:space:]]*(github\.event\.(pull_request\.(head\.(sha|ref)|merge_commit_sha)|workflow_run\.head_(sha|branch))|github\.head_ref|steps\.[A-Za-z0-9_-]+\.outputs\.head_(sha|ref)|from(JSON|Json)\(steps\.[A-Za-z0-9_-]+\.outputs\.[A-Za-z0-9_]+\)\.head\.(sha|ref))|repository:[[:space:]]*.?\$\{\{[[:space:]]*github\.event\.pull_request\.head\.repo\.full_name|refs/pull/|gh pr checkout|git (fetch|pull|checkout)[^#]*(pull/|head_ref|head\.ref|head\.sha)|allow-unsafe-pr-checkout' .github/
 ```
 - ✅ PASS: the job checks out only the base ref, or nothing, and its `actions/checkout` carries the fork-PR guard (v2.8.0 / v3.7.0 / v4.4.0 / v5.1.0 / v6.1.0 / v7.0.0 or later in that line).
 - ❌ FAIL: a privileged job checks out or fetches the PR head or merge commit, `workflow_run.head_branch` / `head_sha`, or the fork repository, or sets `allow-unsafe-pr-checkout: true`.
@@ -59,7 +59,7 @@ grep -rnE --include='*.yml' --include='*.yaml' 'ref:[[:space:]]*\$\{\{[[:space:]
 
 **Step 4: `workflow_run` artifacts and gates** (recipe R4)
 ```
-grep -rnE --include='*.yml' --include='*.yaml' 'workflow_run\.(head_branch|head_sha|head_commit|head_repository|display_title|pull_requests)|download-artifact|run-id:' .github/
+grep -rnE --include='*.yml' --include='*.yaml' 'workflow_run\.(head_branch|head_sha|head_commit|head_repository|display_title|pull_requests)|download-artifact|downloadArtifact|listWorkflowRunArtifacts|gh run download|run-id:' .github/
 ```
 - ✅ PASS:
   - artifacts are downloaded into `${{ runner.temp }}`, parsed and validated as data (a numeric PR number, say);
@@ -77,8 +77,9 @@ grep -rnE --include='*.yml' --include='*.yaml' '(>>|tee[[:space:]]+(-a|--append)
 
 **Step 6: Cache trust boundary**
 ```
-grep -rnE --include='*.yml' --include='*.yaml' 'actions/cache|[[:space:]]cache:[[:space:]]*[a-z]|cache-dependency-path' .github/
+grep -rnE --include='*.yml' --include='*.yaml' 'actions/cache|Swatinem/rust-cache|actions-rust-lang/setup-rust-toolchain|actions/setup-go|astral-sh/setup-uv|[[:space:]]cache:[[:space:]]*.?[a-z]|cache-dependency-path|enable-cache|bundler-cache|type=gha|SCCACHE_GHA_ENABLED' .github/
 ```
+- Writers of the same Actions cache include `actions/cache`; any `setup-*` action with a `cache:` input (`actions/setup-go` v4+ caches by default unless `cache: false`); `Swatinem/rust-cache` and `actions-rust-lang/setup-rust-toolchain` (caches through it by default); `astral-sh/setup-uv` (`enable-cache`); `ruby/setup-ruby` with `bundler-cache: true`; Docker `cache-from` / `cache-to: type=gha`; and sccache with `SCCACHE_GHA_ENABLED`. Read any other setup or build action's inputs for a cache option.
 - ✅ PASS: release, publish and deploy jobs restore no Actions cache that a default-branch-context job running untrusted code can write. Those writers include `pull_request_target`, `issue_comment`, `issues`, `discussion*`, `workflow_run` and agent jobs.
 - ❌ FAIL: a release job restores a cache key that such a job also saves. The 10 GB eviction lets the writer replace existing entries (Ultralytics, Clinejection).
 

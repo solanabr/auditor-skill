@@ -18,7 +18,7 @@
 >
 > **Why this surface is unusual:** for most categories the program bug is the loss; here **the majority of
 > nine-figure-adjacent losses are NOT program bugs.** Slope (2022, ~$4.5M, ~9k wallets) shipped seed
-> phrases to a Sentry logging endpoint; `@solana/web3.js` (2024, ~$190K) was an npm supply-chain backdoor
+> phrases to a Sentry logging endpoint; `@solana/web3.js` (Dec 2024) was an npm supply-chain backdoor
 > exfiltrating keys via a CloudFlare header; DEXX (2024, ~$30M) was operator-side custody compromise of a
 > trading-bot platform; the pump.fun-bot npm poisoning (2025) shipped a wallet-drainer through a poisoned
 > lockfile. The on-chain smart-account audit is real and dense, but it is **~30% of the custody risk** — the
@@ -294,7 +294,7 @@ Wallet/multisig programs are **state machines with adversarial members** — tes
 - [ ] Negative tests reject: stale-approval-after-rotation, approve-then-substitute-accounts, execute-twice, below-quorum, single-guardian-recovery (§6)
 
 *Public incidents referenced: Slope (2022, ~$4.5M, ~9k wallets — Sentry telemetry shipping plaintext seed
-phrases), `@solana/web3.js` npm backdoor (2024, ~$190K — phished maintainer, key exfiltration via CloudFlare
+phrases), `@solana/web3.js` npm backdoor (Dec 2024 — phished maintainer, key exfiltration via CloudFlare
 header), DEXX (2024, ~$30M — trading-bot operator key-custody compromise), solana-pumpfun-bot (2025 — GitHub
 release-URL lockfile poisoning shipping a wallet-drainer). Squads-class threshold/state-machine mechanics and
 the guardian-recovery pattern are public smart-account architecture; the incident lessons are public

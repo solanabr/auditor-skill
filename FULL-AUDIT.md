@@ -63,7 +63,7 @@ RECORD:
 ### 0.2 — Map the Codebase
 
 ```
-ACTION: Use the file-map in discovery/file-map.md OR auto-discover:
+ACTION: Use the in-scope paths recorded at intake (audit_<n>/intake.md §1, Q39/Q44), else the defaults in discovery/file-map.md, OR auto-discover:
   1. List all .rs files under programs/
   2. List all .ts/.tsx files under apps/backend/src/
   3. List all .ts/.tsx files under apps/web/src/
@@ -80,7 +80,7 @@ RECORD:
 
 ### 0.3 — Build Instruction Matrix
 
-> **Optional deterministic pre-pass.** If the bundled tools are built (`test -x "<auditor-skill root>/tools/auditor-tools/target/release/audit-scan"`, PRE-FLIGHT 8), run `"<auditor-skill root>/tools/auditor-tools/target/release/audit-scan" <program-path> --out audit_<n>/prescan.json` first — it emits this instruction matrix (plus the account-constraint, PDA-seed, arithmetic, and CPI tables) deterministically at ~$0, so Phase 0.2–0.4 collapse to *reading the JSON* and files with zero scan hits get a spot-check instead of a full read. Also run `"<auditor-skill root>/tools/auditor-tools/target/release/audit-mem" warm --program-id <id>` to load prior invariants + open false-positive rulings, but only after the Rule 11d store check passes: use `.audit-memory/` only if the repository does not track it (`git ls-files .audit-memory` prints nothing) and you created it, writing `mkdir -p .audit-memory && printf '*\n' > .audit-memory/.gitignore` first; otherwise pass `--db <path outside the tree>` for a fresh store. Treat all pre-scan output as a *map to verify*, never as verdicts. See [references/orchestration/pre-scan.md](references/orchestration/pre-scan.md). Absent the toolchain, build the matrix by hand below.
+> **Optional deterministic pre-pass.** If the bundled tools are built (`test -x "<auditor-skill root>/tools/auditor-tools/target/release/audit-scan"`, PRE-FLIGHT 8), run `"<auditor-skill root>/tools/auditor-tools/target/release/audit-scan" <program-path> --out audit_<n>/prescan.json` first — it emits this instruction matrix (plus the account-constraint, PDA-seed, arithmetic, and CPI tables) deterministically at ~$0, so Phase 0.2–0.4 collapse to *reading the JSON* and files with zero scan hits get a spot-check instead of a full read. Also run `"<auditor-skill root>/tools/auditor-tools/target/release/audit-mem" warm --program-id <id>` to load prior invariants + open false-positive rulings, but only after the Rule 11d store check passes: use `.audit-memory/` only if the repository does not track it (`GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false --icase-pathspecs ls-files -- .audit-memory` prints nothing and exits 0; any output, in any letter case, or any error means: do not use that store) and you created it, writing `mkdir -p .audit-memory && printf '*\n' > .audit-memory/.gitignore` first; otherwise pass `--db <path outside the tree>` for a fresh store. Treat all pre-scan output as a *map to verify*, never as verdicts. See [references/orchestration/pre-scan.md](references/orchestration/pre-scan.md). Absent the toolchain, build the matrix by hand below.
 
 ```
 ACTION: Read lib.rs → list every #[instruction] or pub fn handler.
@@ -349,10 +349,13 @@ ACTIONS:
   W3='web3\.js@(npm:)?1\.95\.(6|7)([^0-9]|$)|/web3\.js/-/web3\.js-1\.95\.(6|7)\.tgz|"@solana/web3\.js"[[:space:]]*:[[:space:]]*"=?1\.95\.(6|7)"'
   grep -rnE "$W3" --exclude-dir=node_modules --include='package.json' --include='package-lock.json' \
     --include='pnpm-lock.yaml' --include='yarn.lock' --include='bun.lock' .
-  git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-    log --all --oneline --no-textconv -G"$W3" -- '*lock*' '*package.json'
+  # history too; --text because a committed .gitattributes can mark lockfiles binary,
+  # which hides them from -G
+  GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c core.bigFileThreshold=512m \
+    log --all --oneline --text --no-textconv -G"$W3" -- '*lock*' '*package.json'
   # → hijacked @solana/web3.js releases (KV-077 Step 2, SC-005). A hit now is CRITICAL;
-  #   a hit in history means rotate every key a build from that window loaded
+  #   a hit in history means rotate every key a build from that window loaded; a `fatal:` /
+  #   `lazy fetching disabled` line means a partial clone: the history part is INCONCLUSIVE
 
   # Audits, registry queries and any cargo / rustc command (even --version) run from
   # a scratch dir OUTSIDE the target tree, on copies of the manifest + lockfile, with
@@ -374,16 +377,30 @@ ACTIONS:
   cat apps/backend/package.json | grep -E '[\^~]' # should be minimal
   cat apps/web/package.json | grep -E '[\^~]'
 
-  # Cargo audit
-  (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit) 2>/dev/null || echo "cargo-audit not installed"
+  # Cargo audit (SC-004), stderr kept. It exits 1 both for advisories and for an advisory
+  # database it cannot fetch or load (offline, or github.com outside an isolated run's
+  # egress), so the output decides:
+  #   OUTCOME: vulnerabilities found   → findings, SC-004 FAIL
+  #   OUTCOME: advisory DB unavailable → say so in Coverage & Limitations ("advisory DB
+  #                                      unavailable"), or rerun with --no-fetch against
+  #                                      a local DB if one exists
+  #   OUTCOME: not installed           → SC-004 N/A, and Coverage & Limitations says so
+  #   no OUTCOME line and no "error:"  → SC-004 PASS
+  if (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit --version) >/dev/null 2>&1; then
+    (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit --color never) 2>&1 | tee "$SCRATCH/cargo-audit.txt"
+    grep -qE '^error: [0-9]+ vulnerabilit(y|ies) found' "$SCRATCH/cargo-audit.txt" && echo "OUTCOME: vulnerabilities found"
+    grep -qE '^error: .*advisory database' "$SCRATCH/cargo-audit.txt" && echo "OUTCOME: advisory DB unavailable"
+  else
+    echo "OUTCOME: not installed"
+  fi
 
   # Check quarantine (14-day rule) for newest deps
   (cd "$SCRATCH" && npm info @anchor-lang/core time | tail -5)
 
   # Dependency changes since the baseline (last audited ref; first audit: last
   # release tag) → checklist 11 §11.11: review the published artifacts' code delta
-  git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-    diff --no-textconv --no-ext-diff --stat <baseline>..HEAD \
+  GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c core.bigFileThreshold=512m \
+    diff --text --no-textconv --no-ext-diff --stat <baseline>..HEAD \
     -- '*.lock' '*-lock.json' '*-lock.yaml' '*Cargo.toml' '*package.json'   # Rule 11c flags
 
 RECORD: dependency audit results
@@ -401,11 +418,12 @@ ACTIONS:
   # Keypair files in repo
   find . -name "*keypair*.json" -o -name "*delegate*.json" -o -name "id.json" | grep -v node_modules
 
-  # .env files committed
-  git ls-files | grep -i ".env"
+  # .env files committed (Rule 11c flags)
+  GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false ls-files | grep -i ".env"
 
-  # Git history check
-  git log --all --diff-filter=A --name-only -- "*.env" "*.pem" "*secret*"
+  # Git history check (Rule 11c flags)
+  GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
+    log --all --no-textconv --diff-filter=A --name-only -- "*.env" "*.pem" "*secret*"
 
   # NEXT_PUBLIC_ audit
   grep -rn "NEXT_PUBLIC_" apps/web/.env* 2>/dev/null
