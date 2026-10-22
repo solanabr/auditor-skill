@@ -211,6 +211,24 @@ OUT4="$T/run4/audit_1/bootstrap"
 collect --repo "$FORKI" --out "$OUT4" --parent "$PAR"
 check "R5b: fork point found through blob identity for a history-less import" \
   sh -c "grep -q '^fork point: $P1 .* blob identity: 1 of 1 import blobs' '$OUT4/history.md'"
+# A fork whose first commit holds only a README: the code arrives in a later commit, named by --import.
+FORKR="$T/fork-readme"; mkrepo "$FORKR"
+put "$FORKR" README.md '# our fork'
+commit "$FORKR" -m "Initial commit"
+put "$FORKR" "$AMM" "$AMM_P1"
+commit "$FORKR" -m "import upstream amm"
+C_IMPORT=$(git -C "$FORKR" rev-parse HEAD)
+OUT4R="$T/run4r/audit_1/bootstrap"
+collect --repo "$FORKR" --out "$OUT4R" --parent "$PAR"
+check "R5b: without --import, a README-only root commit leaves R5 NOT FOUND" \
+  sh -c "awk '/^## R5/,/^## R6/' '$OUT4R/history.md' | grep -q '^NOT FOUND (no shared commit'"
+OUT4I="$T/run4i/audit_1/bootstrap"
+collect --repo "$FORKR" --out "$OUT4I" --parent "$PAR" --import "$C_IMPORT"
+check "R5b: --import names the commit that brought the code in" \
+  sh -c "grep -q '^fork point: $P1 .* blob identity: 1 of 1 import blobs' '$OUT4I/history.md'"
+check "--import: a value that is not a commit is refused (exit 2)" \
+  test "$(bash "$COLLECT" --repo "$FORKR" --out "$T/run4x/audit_1/bootstrap" --parent "$PAR" --import "--output=$T/import-written.txt" >/dev/null 2>&1; echo $?)" = 2
+check "--import: ... and nothing is created" sh -c "[ ! -e '$T/import-written.txt' ] && [ ! -e '$T/run4x' ]"
 
 # =================================================================================================
 # T-g: hostile .git/config and attributes. Nothing configured by the target may execute.

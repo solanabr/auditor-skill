@@ -133,6 +133,11 @@ DIFFSAFE=(--no-textconv --no-ext-diff --no-color --src-prefix=a/ --dst-prefix=b/
 
 G "$REPO" rev-parse --git-dir >/dev/null 2>&1 || { echo "collect.sh: not a git repository: $REPO" >&2; exit 3; }
 PIN_SHA=$(G "$REPO" rev-parse --verify --quiet "$PIN^{commit}") || { echo "collect.sh: pin does not resolve: $PIN" >&2; exit 3; }
+# --import reaches git only as the full commit id it resolves to, never as the string given.
+if [ -n "$IMPORT" ]; then
+  IMPORT_SHA=$(G "$REPO" rev-parse --verify --quiet "$IMPORT^{commit}") || die "--import does not resolve to a commit: $IMPORT"
+  IMPORT=$IMPORT_SHA
+fi
 REPO_ABS=$(cd "$REPO" && pwd)
 REPO=$REPO_ABS
 
