@@ -38,13 +38,14 @@
 #
 # Exit status: 0 done (sections may print NOT FOUND), 2 usage error or rejected input (including an
 #              --import that is not a commit, and a run directory that is or holds a symbolic link,
-#              that git tracks, or that git or find cannot check),
+#              that is reached through one inside the working directory or the target tree, that git
+#              tracks, or that git or find cannot check),
 #              3 --repo is not the top level of a git repository (or a bare repository), the pin
 #              does not resolve, or the target is a partial clone (reading it could fetch from its
 #              promisor remote) or git cannot read its config.
 
 set -uo pipefail
-unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES CDPATH
 # No git call may fetch a missing object from a promisor remote (partial clones are refused below too).
 export GIT_NO_LAZY_FETCH=1 LC_ALL=C
 
@@ -122,6 +123,7 @@ while IFS= read -r v; do
 done <<< "$VULNS_NL"
 # Every caller-supplied path becomes absolute here: the collector later leaves the caller's working
 # directory (usually the audited repository) so no tool can pick up a module or config file from it.
+WD_PHYS=$(pwd -P) || die "cannot resolve the working directory"
 abspath() { case "$1" in /*) printf '%s' "$1" ;; *) printf '%s/%s' "$PWD" "$1" ;; esac; }
 OUT=$(abspath "$OUT")
 [ -n "$AUDIT_MEM_DB" ] && AUDIT_MEM_DB=$(abspath "$AUDIT_MEM_DB")
@@ -194,6 +196,7 @@ if [ -n "$IMPORT" ]; then
 fi
 REPO_ABS=$(cd "$REPO" && pwd)
 REPO=$REPO_ABS
+REPO_PHYS=$(cd "$REPO_ABS" && pwd -P)
 SHALLOW=$(G "$REPO" rev-parse --is-shallow-repository 2>/dev/null)
 EMPTY_TREE=$(G "$REPO" hash-object -t tree /dev/null)
 # Where this git has --attr-source, R4 reads gitattributes from the empty tree instead of the target's
@@ -414,9 +417,25 @@ if [ "$DETECT" -eq 1 ]; then eval_triggers; exit 0; fi
 # write or removal, for the output dir and its audit_<n>/ parent. The check fails closed: a directory
 # find cannot fully read, or one git cannot answer for (another owner, an unreadable config), is refused.
 # The only git error that passes is "not a git repository" from discovery: the directory is outside
-# every repository, so nothing there can be tracked.
+# every repository, so nothing there can be tracked. As in the detection-response collectors, every
+# directory on the way to the run directory is checked too.
+# run_path_link <absolute path>: status 0 when a directory on the way to the path is a symbolic link inside
+# the working directory or the target tree, or one whose place cannot be resolved. A link above both (such
+# as /tmp on macOS) is the operator's, and is followed.
+run_path_link() {
+  local rest=${1#/} cur="" comp phys
+  while :; do
+    case "$rest" in */*) comp=${rest%%/*}; rest=${rest#*/} ;; *) return 1 ;; esac
+    if [ -n "$comp" ] && [ -L "$cur/$comp" ]; then
+      phys=$(cd "${cur:-/}" 2>/dev/null && pwd -P) || return 0
+      case "$phys/" in "${WD_PHYS%/}"/*|"${REPO_PHYS%/}"/*) return 0 ;; esac
+    fi
+    cur="$cur/$comp"
+  done
+}
 check_run_dir() { # check_run_dir <dir>
   local d=$1 up links inside listed
+  run_path_link "$d" && die "refusing a run directory reached through a symbolic link inside the working directory or the target tree: $d (use a new audit_<n>)"
   [ -L "$d" ] && die "refusing a run directory that is a symbolic link: $d (use a new audit_<n>)"
   if [ -d "$d" ]; then
     links=$(find "$d" -type l -print 2>/dev/null) || die "refusing a run directory that cannot be fully read: $d (use a new audit_<n>)"
@@ -805,7 +824,6 @@ safe_name() { printf '%s' "$1" | sed 's/[^A-Za-z0-9._-]/_/g'; }
 # A local --vulns path is read only when it is not a symbolic link and reaches its file through no directory
 # link inside the target tree: the target controls those, and a link can point anywhere (a keypair, a .env).
 # Links outside the tree, such as /tmp on macOS or the caller's own, are followed.
-REPO_PHYS=$(cd "$REPO_ABS" && pwd -P)
 tree_link() { # tree_link <absolute path>: status 0 when the path is a symbolic link, or passes through a
               # directory link that sits inside the target tree or whose place cannot be resolved
   local rest=${1#/} cur="" comp phys
