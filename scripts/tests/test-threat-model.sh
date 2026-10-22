@@ -273,6 +273,89 @@ check "T-g: collector still produces rows on the hostile repo" has "$OUT5/histor
 check "T-g: no textconv, external diff, fsmonitor, gpg or pager program ran" \
   sh -c "[ -z \"\$(ls '$T/marks')\" ]"
 
+# =================================================================================================
+# T-o: diff output. Diffs run as text with the big-file, hunk-fusing and root-commit settings pinned, so
+# neither the target's attributes nor its config can hide a guard change; R4 pins git's rust pattern.
+# =================================================================================================
+SH_BIG=""; i=0; while [ $i -lt 60 ]; do SH_BIG="$SH_BIG// filler line $i"$'\n'; i=$((i + 1)); done
+for how in gitattributes info-attributes bigfile; do
+  AT="$T/shape-$how"; mkrepo "$AT"
+  put "$AT" programs/a/src/lib.rs '#[account(mut, has_one = authority)]'
+  commit "$AT" -m "initial"
+  put "$AT" programs/a/src/lib.rs '#[account(mut)]'
+  commit "$AT" -m "Rework accounts"
+  put "$AT" programs/a/src/big.rs "${SH_BIG}pub fn b() -> Result<()> { require!(x, E::B); Ok(()) }"
+  commit "$AT" -m "Reorganise helpers"
+  case "$how" in
+    gitattributes)   put "$AT" .gitattributes '*.rs -diff'; commit "$AT" -m "attributes" ;;
+    info-attributes) mkdir -p "$AT/.git/info"; printf '*.rs -diff\n' > "$AT/.git/info/attributes" ;;
+    bigfile)         git -C "$AT" config core.bigFileThreshold 1 ;;
+  esac
+  OUTA="$T/shape-run-$how/audit_1/bootstrap"
+  collect --repo "$AT" --out "$OUTA" --offline
+  check "T-o ($how): the removed guard line is still reported" \
+    has "$OUTA/history.md" "REMOVED x1 programs/a/src/lib.rs: #[account(mut, has_one = authority)]"
+  check "T-o ($how): a 61-line commit is not taken for a quiet fix" hasnt "$OUTA/history.md" "ADDED-QUIET x1 programs/a/src/big.rs"
+done
+# A commit's size counts every file it changes in the pathspec, not only the file holding the guard.
+SPLIT="$T/shape-split"; mkrepo "$SPLIT"
+put "$SPLIT" programs/s/src/lib.rs 'pub fn s() {}'
+commit "$SPLIT" -m "initial"
+put "$SPLIT" programs/s/src/lib.rs 'pub fn s() -> Result<()> { require!(ok, E::S); Ok(()) }'
+put "$SPLIT" programs/s/src/filler.rs "$SH_BIG"
+commit "$SPLIT" -m "Reorganise modules"
+collect --repo "$SPLIT" --out "$T/shape-run-split/audit_1/bootstrap" --offline
+check "T-o: a 62-line commit over two files is not taken for a quiet fix" \
+  hasnt "$T/shape-run-split/audit_1/bootstrap/history.md" "ADDED-QUIET x"
+R4T="$T/shape-r4"; mkrepo "$R4T"
+R4_BODY='impl Pool {
+    pub fn alpha_guard(&self) -> u64 {
+        let a = 1;
+        a
+    }
+    pub fn beta_guard(&self) -> u64 {
+        let b = 2;
+        b
+    }
+}'
+put "$R4T" programs/f/src/lib.rs "$R4_BODY"
+commit "$R4T" -m "initial"
+put "$R4T" programs/f/src/lib.rs "$(printf '%s\n' "$R4_BODY" | sed 's/= 1;/= 10;/; s/= 2;/= 20;/')"
+commit "$R4T" -m "Tune constants"
+git -C "$R4T" config diff.rust.xfuncname '^NO_MATCH$'
+git -C "$R4T" config diff.interHunkContext 100
+git -C "$R4T" config log.showRoot false
+if git -C "$R4T" --attr-source="$(git -C "$R4T" hash-object -t tree /dev/null)" check-attr diff -- x.rs >/dev/null 2>&1; then
+  R4_ATTR=" (and committed .gitattributes)"
+  put "$R4T" .gitattributes '*.rs diff=other'; commit "$R4T" -m "attributes"
+  git -C "$R4T" config diff.other.xfuncname '^NO_MATCH$'
+else
+  R4_ATTR=""; skp "T-o (R4): committed .gitattributes are ignored only where git has --attr-source"
+fi
+OUTR4="$T/shape-run-r4/audit_1/bootstrap"
+collect --repo "$R4T" --out "$OUTR4" --offline
+R4S="$T/r4s.txt"; section_of "$OUTR4/history.md" "R4" > "$R4S"
+check "T-o (R4): both function names survive a redefined rust driver and fused hunks$R4_ATTR" \
+  sh -c "grep -q ' alpha_guard\$' '$R4S' && grep -q ' beta_guard\$' '$R4S'"
+check "T-o (R4): log.showRoot=false does not hide the root commit" grep -qE '^ *2 programs/f/src/lib.rs$' "$R4S"
+check "T-o (R4): no note when every .rs file uses the pinned driver" hasnt "$R4S" "note:"
+check "T-o: history.md says what is pinned and what is not" has "$OUTR4/history.md" "rust hunk-header pattern, pinned"
+mkdir -p "$R4T/.git/info"; printf '*.rs diff=other\n' > "$R4T/.git/info/attributes"
+OUTR4N="$T/shape-run-r4n/audit_1/bootstrap"
+collect --repo "$R4T" --out "$OUTR4N" --offline
+check "T-o (R4): .rs files that .git/info/attributes sends to another driver are counted in a note" \
+  sh -c "awk '/^## R4/,/^## R5/' '$OUTR4N/history.md' | grep -q '^note: the target.s attributes send 1 .rs file'"
+GR="$T/shape-grep"; mkrepo "$GR"
+put "$GR" programs/g/src/lib.rs 'declare_id!("Demo1111111111111111111111111111111111111111");
+security_txt! { source_code: "https://example.invalid/not-a-remote" }'
+commit "$GR" -m "initial"
+mkdir -p "$GR/.git/info"; printf '*.rs -diff\n' > "$GR/.git/info/attributes"
+collect --repo "$GR" --out "$T/shape-run-grep/audit_1/bootstrap" --offline
+check "T-o (grep): a Rust file the target marks binary is still searched (R6 declare_id!)" \
+  has "$T/shape-run-grep/audit_1/bootstrap/history.md" 'declare_id!("Demo1111'
+check "T-o (grep): ... and still reaches the T3 source_code check" \
+  has "$T/shape-run-grep/audit_1/bootstrap/history.md" "T3 yes security_txt-source_code"
+
 # T-py: the collector runs python3 isolated and outside the target, so a target json.py never loads.
 if command -v python3 >/dev/null 2>&1; then
   PYT="$T/pyhijack"; mkrepo "$PYT"

@@ -119,17 +119,21 @@ VULNS_NL=$abs_vulns
 # The target's .git/config, attributes and hooks are attacker-controlled: never page, never run
 # fsmonitor or signature helpers, and give every log/show --no-textconv --no-ext-diff with fixed diff
 # prefixes. Nothing is ever checked out, so no smudge or clean filter can run. Output-shaping settings
-# (grep line numbers and columns, colour, path quoting, log encoding) are pinned as well, from the
-# target's config and from the auditor's own ~/.gitconfig alike, so the parsers below see plain text.
+# (grep line numbers and columns, colour, path quoting, log encoding, the big-file threshold, hunk
+# fusing, root-commit diffs) are pinned as well, from the target's config and from the auditor's own
+# ~/.gitconfig alike, so the parsers below see plain text. Every diff runs with --text, so neither an
+# attribute (-diff, diff=<driver> with binary set) nor a size threshold turns a change into
+# "Binary files differ".
 G() {
   local d=$1; shift
   git --no-pager -C "$d" -c core.fsmonitor=false -c core.pager=cat -c log.showSignature=false \
       -c gpg.program=false -c gpg.ssh.program=false \
       -c grep.lineNumber=false -c grep.column=false -c grep.patternType=basic -c grep.extendedRegexp=false \
       -c color.ui=never -c color.grep=never -c color.diff=never -c core.quotePath=false \
-      -c i18n.logOutputEncoding=UTF-8 "$@"
+      -c i18n.logOutputEncoding=UTF-8 -c core.bigFileThreshold=512m -c diff.interHunkContext=0 \
+      -c log.showRoot=true "$@"
 }
-DIFFSAFE=(--no-textconv --no-ext-diff --no-color --src-prefix=a/ --dst-prefix=b/)
+DIFFSAFE=(--text --no-textconv --no-ext-diff --no-color --src-prefix=a/ --dst-prefix=b/)
 
 G "$REPO" rev-parse --git-dir >/dev/null 2>&1 || { echo "collect.sh: not a git repository: $REPO" >&2; exit 3; }
 PIN_SHA=$(G "$REPO" rev-parse --verify --quiet "$PIN^{commit}") || { echo "collect.sh: pin does not resolve: $PIN" >&2; exit 3; }
@@ -140,6 +144,11 @@ if [ -n "$IMPORT" ]; then
 fi
 REPO_ABS=$(cd "$REPO" && pwd)
 REPO=$REPO_ABS
+EMPTY_TREE=$(G "$REPO" hash-object -t tree /dev/null)
+# Where this git has --attr-source, R4 reads gitattributes from the empty tree instead of the target's
+# .gitattributes; an older git has no such option and keeps reading them.
+ATTR_SRC=""
+G "$REPO" --attr-source="$EMPTY_TREE" check-attr diff -- probe.rs >/dev/null 2>&1 && ATTR_SRC=$EMPTY_TREE
 
 # Default pathspec: an Anchor-style programs/ tree when the commit has one, else every Rust file.
 default_paths() { # default_paths <repo> <commit>
@@ -165,6 +174,8 @@ export TM_ALWAYS_RE="require(_keys)?(_eq|_neq|_gt|_gte)?!|has_one|constraint[ $T
 # address/seeds/bump/close/owner count only in attribute position: at line start or after "(" or ",",
 # never on a `let` line or a line ending in ";" (variable names, not constraints).
 export TM_ATTR_RE="(^|[(,])[ $TAB]*(address|seeds|bump|close|owner)[ $TAB]*=[^=]"
+# git's built-in rust hunk-header pattern, passed to git for R4 so the target's config cannot redefine it.
+RUST_FUNC="^[$TAB ]*((pub(\\([^\\)]+\\))?[$TAB ]+)?((async|const|unsafe|extern([$TAB ]+\"[^\"]+\"))[$TAB ]+)?(struct|enum|union|mod|trait|fn|impl|macro_rules!)[< $TAB]+[^;]*)\$"
 
 # An empty section prints NOT FOUND and a capped one TRUNCATED, so "no rows" never reads as "clean".
 emit_capped() { # emit_capped <file> <what was searched>
@@ -192,20 +203,18 @@ sha256_of() {
 # <= FIX_CEILING lines in the pathspec; ADDED-QUIET for keyword-free commits of <= SMALL lines. Only
 # identical text (after trimming) removed and re-added in the same file of the same commit cancels out;
 # an edited guard prints both its old text (REMOVED) and, when the commit qualifies, its new text.
+# A commit's changed-line count comes from its own patch, which --pickaxe-all prints for every file in
+# the pathspec (a --numstat count would be zero for a file git treats as binary).
 # With GR_SIZE=1 each row starts with the commit's changed-line count (a sort key for R5d).
 guard_rows() {
-  local repo=$1 range=$2 kwfile churnfile; shift 2
-  kwfile="$TMPD/kw.$RANDOM"; churnfile="$TMPD/churn.$RANDOM"
+  local repo=$1 range=$2 kwfile; shift 2
+  kwfile="$TMPD/kw.$RANDOM"
   G "$repo" log "${DIFFSAFE[@]}" -i -E --grep="$KW" --format=%H "$range" -- "$@" > "$kwfile" 2>/dev/null
-  G "$repo" log "${DIFFSAFE[@]}" --no-renames --numstat --format='__C__ %H' "$range" -- "$@" 2>/dev/null |
-    awk '/^__C__ / { c = $2; n[c] = 0; next } NF >= 3 && $1 ~ /^[0-9]+$/ { n[c] += $1 + $2 }
-         END { for (c in n) print c, n[c] }' > "$churnfile"
-  G "$repo" log "${DIFFSAFE[@]}" --min-parents=1 -p -U0 --no-renames -G"$GUARD_G" \
+  G "$repo" log "${DIFFSAFE[@]}" --min-parents=1 -p -U0 --no-renames --pickaxe-all -G"$GUARD_G" \
       --format='__C__ %H %h %ad %s' --date=short "$range" -- "$@" 2>/dev/null |
-  awk -v small="$SMALL" -v ceil="$FIX_CEILING" -v kwfile="$kwfile" -v churnfile="$churnfile" '
+  awk -v small="$SMALL" -v ceil="$FIX_CEILING" -v kwfile="$kwfile" '
     BEGIN { always = ENVIRON["TM_ALWAYS_RE"]; attr = ENVIRON["TM_ATTR_RE"]
-            while ((getline l < kwfile) > 0) kw[l] = 1
-            while ((getline l < churnfile) > 0) { split(l, a, " "); size[a[1]] = a[2] } }
+            while ((getline l < kwfile) > 0) kw[l] = 1 }
     function isguard(s) {
       if (s ~ always) return 1
       if (s ~ attr && s !~ /(^|[^A-Za-z0-9_])let[ \t]/ && s !~ /;[ \t]*$/) return 1
@@ -214,14 +223,14 @@ guard_rows() {
       if (full == "") return
       for (k in net) {
         n = net[k]
-        if (n < 0) printf "%06d %d %s %s REMOVED x%d %s: %s    # %s\n", ci, size[full], short, date, -n, fileof[k], textof[k], subj
-        else if (n > 0 && (full in kw) && size[full] + 0 <= ceil + 0)
-          printf "%06d %d %s %s ADDED x%d %s: %s    # %s\n", ci, size[full], short, date, n, fileof[k], textof[k], subj
-        else if (n > 0 && !(full in kw) && size[full] + 0 <= small + 0)
-          printf "%06d %d %s %s ADDED-QUIET x%d %s: %s    # %s\n", ci, size[full], short, date, n, fileof[k], textof[k], subj
+        if (n < 0) printf "%06d %d %s %s REMOVED x%d %s: %s    # %s\n", ci, size, short, date, -n, fileof[k], textof[k], subj
+        else if (n > 0 && (full in kw) && size <= ceil + 0)
+          printf "%06d %d %s %s ADDED x%d %s: %s    # %s\n", ci, size, short, date, n, fileof[k], textof[k], subj
+        else if (n > 0 && !(full in kw) && size <= small + 0)
+          printf "%06d %d %s %s ADDED-QUIET x%d %s: %s    # %s\n", ci, size, short, date, n, fileof[k], textof[k], subj
       }
       delete net; delete fileof; delete textof }
-    /^__C__ / { flush(); ci++; full = $2; short = $3; date = $4
+    /^__C__ / { flush(); ci++; full = $2; short = $3; date = $4; size = 0
                 subj = $0; sub(/^__C__ [^ ]+ [^ ]+ [^ ]+ ?/, "", subj); inhdr = 0; next }
     /^diff --git / { inhdr = 1; oldp = ""; file = ""; next }
     inhdr && /^--- a\// { oldp = substr($0, 7); next }
@@ -229,7 +238,7 @@ guard_rows() {
     inhdr && /^\+\+\+ \/dev\/null/ { file = oldp; next }
     /^@@/ { inhdr = 0; next }
     inhdr { next }
-    /^[-+]/ { s = substr($0, 2)
+    /^[-+]/ { size++; s = substr($0, 2)
               if (!isguard(s)) next
               t = s; gsub(/^[ \t]+|[ \t]+$/, "", t)
               k = file SUBSEP t
@@ -248,7 +257,7 @@ norm_url() { tr 'A-Z' 'a-z' | sed -E 's#^[a-z+]+://##; s#^git@##; s#:#/#; s#\.gi
 eval_triggers() {
   local t3="" t4="" cur="" src remotes s d n
   G "$REPO" grep -I -i -q -E "$FORK_PHRASES" "$PIN_SHA" -- 'README*' '*/README*' 'docs/*' 2>/dev/null && t3="readme-phrase"
-  src=$(G "$REPO" grep -h -I -E 'source_code[[:space:]]*:' "$PIN_SHA" -- '*.rs' 2>/dev/null |
+  src=$(G "$REPO" grep -h -a -E 'source_code[[:space:]]*:' "$PIN_SHA" -- '*.rs' 2>/dev/null |
         sed -nE 's/.*source_code[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' | head -n 3)
   remotes=$(G "$REPO" config --get-regexp '^remote\..*\.url$' 2>/dev/null | awk '{print $2}' | norm_url)
   # One string per line, read as written: target strings are never word-split or glob-expanded.
@@ -344,7 +353,13 @@ while IFS= read -r p; do [ -n "$p" ] && PPATHS+=("$p"); done <<< "$PPATHS_NL"
   echo "| Collector | scripts/threat-model/collect.sh v$COLLECTOR_VERSION, cap $CAP rows, quiet-fix ceiling $SMALL lines, fix ceiling $FIX_CEILING lines |"
   echo
   echo "Leads, not findings: every row points at history to re-derive from the code at the pinned commit."
-  echo "Git ran without pager, fsmonitor, signature helpers, textconv, external diff or output-shaping config (OUTPUT-RULES.md Rule 11c)."
+  echo "Git ran without pager, fsmonitor, signature helpers, textconv or external diff (OUTPUT-RULES.md Rule 11c), with its grep, colour, path-quoting, log-encoding, big-file, hunk-fusing and root-commit settings pinned."
+  echo "Diffs, and searches of Rust files and the target paths, run as text, so no attribute or setting of the target makes git skip a file as binary; README/docs searches still skip binary files."
+  if [ -n "$ATTR_SRC" ]; then
+    echo "R4 function names use git's rust hunk-header pattern, pinned. The target's .gitattributes are ignored there (--attr-source); its .git/info/attributes still apply, and R4 counts the .rs files they send to another diff driver."
+  else
+    echo "R4 function names use git's rust hunk-header pattern, pinned. This git has no --attr-source, so the target's .gitattributes and .git/info/attributes still apply there; R4 counts the .rs files they send to another diff driver."
+  fi
   echo "An empty section prints NOT FOUND; a capped one prints TRUNCATED (+n)."
 } > "$H"
 
@@ -392,17 +407,26 @@ done
 
 # ---- R4 churn --------------------------------------------------------------------------------------
 G "$REPO" log "${DIFFSAFE[@]}" --no-renames --format= --name-only "$PIN_SHA" -- "${TPATHS[@]}" 2>/dev/null | sed '/^$/d' | sort | uniq -c | sort -k1,1nr -k2 > "$TMPD/r4a"
+# Function names come from hunk headers: *.rs maps to the rust driver, whose pattern is passed on the
+# command line, and with ATTR_SRC the target's .gitattributes are not read. Its .git/info/attributes
+# still are; the .rs files they send to another driver are counted in a note.
 printf '*.rs diff=rust\n' > "$TMPD/rs.attributes"
-G "$REPO" -c core.attributesFile="$TMPD/rs.attributes" log "${DIFFSAFE[@]}" -p -U0 --no-renames \
+R4_GIT=(${ATTR_SRC:+"--attr-source=$ATTR_SRC"} -c core.attributesFile="$TMPD/rs.attributes" -c diff.rust.xfuncname="$RUST_FUNC")
+G "$REPO" "${R4_GIT[@]}" log "${DIFFSAFE[@]}" -p -U0 --no-renames \
     --format='__C__ %h' "$PIN_SHA" -- "${TPATHS[@]}" 2>/dev/null | awk '
   /^__C__ / { c = $2; next }
   /^@@ / { s = $0; sub(/^@@ [^@]*@@ ?/, "", s)
            if (match(s, /fn [A-Za-z0-9_]+/)) { f = substr(s, RSTART + 3, RLENGTH - 3)
              if (!seen[c SUBSEP f]++) cnt[f]++ } }
   END { for (f in cnt) printf "%4d %s\n", cnt[f], f }' | sort -k1,1nr -k2 > "$TMPD/r4b"
-{ section "R4 Churn" "Files, then functions (hunk headers from git's built-in rust driver), by number of commits touching them."
+R4_OTHER=$(sed -E 's/^ *[0-9]+ //' "$TMPD/r4a" | grep -E '\.rs"?$' |
+  G "$REPO" "${R4_GIT[@]}" check-attr --stdin diff 2>/dev/null | grep -vc ': diff: rust$')
+{ section "R4 Churn" "Files, then functions (hunk headers from git's rust pattern, pinned), by number of commits touching them."
   emit_capped "$TMPD/r4a" "no file in the target paths changed"
   echo "--- functions ---"
+  if [ "${R4_OTHER:-0}" -gt 0 ]; then
+    echo "note: the target's attributes send $R4_OTHER .rs file(s) above to another diff driver; their hunks may name no function, or one that driver chose"
+  fi
   emit_capped "$TMPD/r4b" "no rust function header in the diffs"; endsec; } >> "$H"
 
 # ---- R5 fork parent --------------------------------------------------------------------------------
@@ -423,7 +447,6 @@ G "$REPO" -c core.attributesFile="$TMPD/rs.attributes" log "${DIFFSAFE[@]}" -p -
       METHOD="blob identity"
       [ -n "$IMPORT" ] || IMPORT=$(G "$REPO" rev-list --max-parents=0 "$PIN_SHA" | tail -n 1)
       # ls-tree takes literal paths, not globs; a diff from the empty tree honours the pathspec.
-      EMPTY_TREE=$(G "$REPO" hash-object -t tree /dev/null)
       G "$REPO" diff-tree "${DIFFSAFE[@]}" -r --no-renames "$EMPTY_TREE" "$IMPORT" -- "${TPATHS[@]}" 2>/dev/null |
         awk '/^:/ { print $4 }' | sort -u | head -n 2000 > "$TMPD/import.blobs"
       if [ -s "$TMPD/import.blobs" ]; then
@@ -448,7 +471,7 @@ G "$REPO" -c core.attributesFile="$TMPD/rs.attributes" log "${DIFFSAFE[@]}" -p -
       emit_capped "$TMPD/r5c" "no keyword commit in the parent after the fork point"
       echo
       echo "--- R5d guard lines the parent added after the fork point, looked up in the target @ pin ---"
-      G "$REPO" grep -h -I -e '' "$PIN_SHA" -- "${TPATHS[@]}" 2>/dev/null | awk '{ gsub(/[ \t]/, ""); print }' > "$TMPD/target.lines"
+      G "$REPO" grep -h -a -e '' "$PIN_SHA" -- "${TPATHS[@]}" 2>/dev/null | awk '{ gsub(/[ \t]/, ""); print }' > "$TMPD/target.lines"
       echo "__no_line_matches_this__" >> "$TMPD/target.lines"   # keeps the join below two-file even for an empty tree
       # Absent rows first, then smaller commits, then commit order: a real fix should not fall past
       # the cap behind feature releases.
@@ -476,10 +499,10 @@ G "$REPO" -c core.attributesFile="$TMPD/rs.attributes" log "${DIFFSAFE[@]}" -p -
   G "$REPO" grep -n -I -i -E "$FORK_PHRASES" "$PIN_SHA" -- 'README*' '*/README*' 'docs/*' 2>/dev/null | strip_pin > "$TMPD/r6a"
   emit_capped "$TMPD/r6a" "no fork phrase"
   echo "--- security_txt! source_code / auditors ---"
-  G "$REPO" grep -n -I -E '(source_code|auditors)[[:space:]]*:' "$PIN_SHA" -- '*.rs' 2>/dev/null | strip_pin > "$TMPD/r6b"
+  G "$REPO" grep -n -a -E '(source_code|auditors)[[:space:]]*:' "$PIN_SHA" -- '*.rs' 2>/dev/null | strip_pin > "$TMPD/r6b"
   emit_capped "$TMPD/r6b" "no security_txt! source_code or auditors field"
   echo "--- declare_id! ---"
-  G "$REPO" grep -n -I -E 'declare_id!' "$PIN_SHA" -- '*.rs' 2>/dev/null | strip_pin > "$TMPD/r6c"
+  G "$REPO" grep -n -a -E 'declare_id!' "$PIN_SHA" -- '*.rs' 2>/dev/null | strip_pin > "$TMPD/r6c"
   emit_capped "$TMPD/r6c" "no declare_id!"
   echo "--- configured remotes (strings from .git/config) ---"
   G "$REPO" config --get-regexp '^remote\..*\.url$' 2>/dev/null | sed -E 's#(https://)[^/@ ]*@#\1***@#' > "$TMPD/r6d"
