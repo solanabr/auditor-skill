@@ -93,6 +93,6 @@ already captured.
   and exact balance deltas, each checked against adversarial fixtures by
   `scripts/tests/test-dnr.sh`.
 - **Scripts run from the installation, never from the audited repo.** The commands
-  invoke them as `"${CLAUDE_PLUGIN_ROOT}/scripts/dnr/…"` and run python as
-  `python3 -I`, so a same-named script, or a `json.py` the repo ships in the
-  working directory or on `PYTHONPATH`, never runs in their place.
+  invoke them by absolute path, `"<auditor-skill root>/scripts/dnr/…"`, and run
+  python as `python3 -I`, so a same-named script, or a `json.py` the repo ships in
+  the working directory or on `PYTHONPATH`, never runs in their place.

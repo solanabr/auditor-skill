@@ -21,6 +21,10 @@ eq()   { if [[ "$2" == "$3" ]]; then ok "$1 ($2)"; else bad "$1: expected '$3', 
 for tool in jq python3 awk sed; do
   command -v "$tool" >/dev/null 2>&1 || { echo "test-dnr: missing required tool: $tool" >&2; exit 3; }
 done
+# collect.sh takes only base58 addresses and signatures (32-44 / 32-88 characters).
+A_ADDR="AddrA111111111111111111111111111111111111111"
+B_ADDR="AddrB111111111111111111111111111111111111111"
+CURSOR="SigStart111111111111111111111111111111111111111111111111111111111111111111111111111"
 
 # ---------------------------------------------------------------------------
 # 1. frames.py attributes program logs by frame and never splits on an embedded
@@ -101,12 +105,12 @@ eq "redact: key names in any letter case" "$r9" "Api-Key=REDACTED and ACCESS_TOK
 # 6. collect.sh is gated: it refuses without --confirmed, and without $RPC_URL,
 #    before any network call.
 # ---------------------------------------------------------------------------
-if ( unset RPC_URL; bash "$DNR/collect.sh" --out "${TMPDIR:-/tmp}/dnr_ct.$$" -- Addr1 ) >/dev/null 2>&1; then
+if ( unset RPC_URL; bash "$DNR/collect.sh" --out "${TMPDIR:-/tmp}/dnr_ct.$$" -- "$A_ADDR" ) >/dev/null 2>&1; then
   bad "collect: ran without --confirmed (must refuse)"
 else
   ok "collect: refuses without --confirmed"
 fi
-if ( unset RPC_URL; bash "$DNR/collect.sh" --out "${TMPDIR:-/tmp}/dnr_ct.$$" --confirmed -- Addr1 ) >/dev/null 2>&1; then
+if ( unset RPC_URL; bash "$DNR/collect.sh" --out "${TMPDIR:-/tmp}/dnr_ct.$$" --confirmed -- "$A_ADDR" ) >/dev/null 2>&1; then
   bad "collect: ran without \$RPC_URL (must refuse)"
 else
   ok "collect: refuses without \$RPC_URL"
@@ -169,7 +173,7 @@ req = json.loads(body)
 with open(os.environ["FAKE_CURL_LOG"], "a") as log:
     log.write(json.dumps(req) + "\n")
 m, p = req["method"], req["params"]
-if m == "getSignaturesForAddress" and p[0] == "AddrB":
+if m == "getSignaturesForAddress" and p[0].startswith("AddrB"):
     res = [
         {"signature": "SigZnewest", "slot": 9, "err": None, "blockTime": 1700000900},
         {"signature": "SigAoldest", "slot": 0, "err": None, "blockTime": 1700000100},
@@ -191,13 +195,13 @@ PY
 chmod +x "$TT/bin/curl"
 export FAKE_CURL_LOG="$TT/curl.log"
 ( PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/?api-key=LEAKME42" \
-    bash "$DNR/collect.sh" --out "$TT/c" --confirmed --since 1 --max-pages 1 --before SigStart -- AddrA ) > "$TT/c.out" 2>&1
+    bash "$DNR/collect.sh" --out "$TT/c" --confirmed --since 1 --max-pages 1 --before "$CURSOR" -- "$A_ADDR" ) > "$TT/c.out" 2>&1
 code=$?
 eq "collect: exits 0 against the fake RPC (system bash)" "$code" "0"
 eq "collect: fetched both the successful AND the failed transaction" \
   "$(grep -c . "$TT/c/transactions.jsonl" 2>/dev/null || true)" "2"
 if grep -q 'window not reached' "$TT/c.out"; then ok "collect: reports the unreached window when the page cap stops first"; else bad "collect: no 'window not reached' notice"; fi
-if grep -q '"before": "SigStart"' "$FAKE_CURL_LOG"; then ok "collect: --before passed through to the first page"; else bad "collect: --before not passed through"; fi
+if grep -q "\"before\": \"$CURSOR\"" "$FAKE_CURL_LOG"; then ok "collect: --before passed through to the first page"; else bad "collect: --before not passed through"; fi
 if grep -q 'LEAKME42' "$TT/c.out" "$TT/c/signatures.jsonl" "$TT/c/transactions.jsonl"; then
   bad "collect: the key leaked into output"
 else
@@ -207,13 +211,45 @@ if grep -q 'provider: rpc.example.test ' "$TT/c.out"; then ok "collect: provider
 # --max-tx keeps the newest signatures across addresses (by slot), not the first
 # address's or the alphabetically first ones.
 ( PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
-    bash "$DNR/collect.sh" --out "$TT/c2" --confirmed --max-pages 1 --max-tx 2 -- AddrA AddrB ) > "$TT/c2.out" 2>&1
+    bash "$DNR/collect.sh" --out "$TT/c2" --confirmed --max-pages 1 --max-tx 2 -- "$A_ADDR" "$B_ADDR" ) > "$TT/c2.out" 2>&1
 got="$(jq -r '.transaction.signatures[0]' "$TT/c2/transactions.jsonl" 2>/dev/null | tr '\n' ' ')"
 eq "collect: --max-tx 2 fetches the two newest signatures across both addresses" "$got" "SigZnewest SigOK "
 # With only --until set, a page cap that stops above it collected nothing inside the window.
 ( PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
-    bash "$DNR/collect.sh" --out "$TT/c3" --confirmed --until 100 --max-pages 1 -- AddrA ) > "$TT/c3.out" 2>&1
+    bash "$DNR/collect.sh" --out "$TT/c3" --confirmed --until 100 --max-pages 1 -- "$A_ADDR" ) > "$TT/c3.out" 2>&1
 if grep -q 'stopped paging above --until' "$TT/c3.out"; then ok "collect: warns when paging stops above --until"; else bad "collect: no warning for a window above --until"; fi
+if grep -q 'resume into a new --out with --before' "$TT/c3.out"; then ok "collect: the notice says to resume into a new --out"; else bad "collect: resume notice still points at the same --out"; fi
+# A second pass into an --out that already holds a corpus is refused, so the first
+# pass survives.
+cp "$TT/c/signatures.jsonl" "$TT/c.sig.before"
+( PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
+    bash "$DNR/collect.sh" --out "$TT/c" --confirmed --max-pages 1 -- "$A_ADDR" ) > "$TT/c4.out" 2>&1
+code=$?
+if [[ "$code" == 2 ]] && grep -q 'use a new --out' "$TT/c4.out" && cmp -s "$TT/c/signatures.jsonl" "$TT/c.sig.before"; then
+  ok "collect: refuses to reuse an --out that holds a corpus (exit 2, corpus intact)"
+else
+  bad "collect: reuse of a filled --out -> exit $code"
+fi
+# Inputs are checked before any write or RPC call: an address that is not base58,
+# a --before that is not a signature, a cap that is not a number.
+calls_before="$(grep -c . "$FAKE_CURL_LOG" 2>/dev/null || true)"
+for args in "-- AddrA" "-- ../../x" "--before not/a/sig -- $A_ADDR" "--max-tx 2x -- $A_ADDR"; do
+  # shellcheck disable=SC2086
+  ( PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
+      bash "$DNR/collect.sh" --out "$TT/c5" --confirmed $args ) > /dev/null 2>&1
+  code=$?
+  if [[ "$code" == 2 && ! -e "$TT/c5" ]]; then ok "collect: refuses '$args' (exit 2, nothing written)"; else bad "collect: '$args' -> exit $code"; fi
+done
+eq "collect: refused inputs made no RPC call" "$(grep -c . "$FAKE_CURL_LOG" 2>/dev/null || true)" "$calls_before"
+# Rule 11d: an incident_<n>/ that the corpus lands in ignores itself; an existing
+# .gitignore is left alone.
+( PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
+    bash "$DNR/collect.sh" --out "$TT/incident_7/corpus" --confirmed --max-pages 1 -- "$A_ADDR" ) > /dev/null 2>&1
+eq "collect: incident_<n>/.gitignore holds '*'" "$(cat "$TT/incident_7/.gitignore" 2>/dev/null)" "*"
+mkdir -p "$TT/incident_9"; printf 'keep-me\n' > "$TT/incident_9/.gitignore"
+( PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
+    bash "$DNR/collect.sh" --out "$TT/incident_9/corpus" --confirmed --max-pages 1 -- "$A_ADDR" ) > /dev/null 2>&1
+eq "collect: an existing incident_<n>/.gitignore is not overwritten" "$(cat "$TT/incident_9/.gitignore")" "keep-me"
 
 # ---------------------------------------------------------------------------
 # 11. snapshot-program.sh against a fake `solana`: writes bin/<id>.so, prints the
@@ -258,6 +294,11 @@ for badid in '../../escape' 'Prog111' 'ProgTest111111111111111111111111111111111
   code=$?
   if [[ "$code" == 2 && ! -e "$TT/inc5" ]]; then ok "snapshot: refuses the id '$badid' (exit 2, nothing written)"; else bad "snapshot: id '$badid' -> exit $code"; fi
 done
+# Rule 11d: snapshotting into incident_<n>/ makes it ignore itself; a directory with
+# another name gets no .gitignore from the script.
+PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" bash "$DNR/snapshot-program.sh" "$PID" "$TT/incident_8" >/dev/null 2>&1
+eq "snapshot: incident_<n>/.gitignore holds '*'" "$(cat "$TT/incident_8/.gitignore" 2>/dev/null)" "*"
+if [[ ! -e "$TT/inc/.gitignore" ]]; then ok "snapshot: no .gitignore written into a directory not named incident_*"; else bad "snapshot: wrote a .gitignore outside an incident_* directory"; fi
 
 # ---------------------------------------------------------------------------
 # 12. Bundled python runs isolated (`python3 -I`). A json.py / re.py / hashlib.py
@@ -286,6 +327,24 @@ case "$iso" in
   *) bad "isolation: snapshot hash wrong or missing ($iso)" ;;
 esac
 if [[ -e "$MARK" ]]; then bad "isolation: a planted module ran ($(tr '\n' ' ' < "$MARK"))"; else ok "isolation: no planted json.py / re.py / hashlib.py ran"; fi
+
+# ---------------------------------------------------------------------------
+# 13. profile.sh on a large corpus: 5,000 transactions with distinct fee payers,
+#     signers and programs, so every top-20 list is well past the pipe buffer. It
+#     must finish (exit 0) and print the last section, not die of SIGPIPE (141).
+# ---------------------------------------------------------------------------
+python3 -I -c 'import json, sys
+for i in range(5000):
+    payer = "Payer%039d" % i
+    prog = "Prog%040d" % i
+    print(json.dumps({"slot": i, "version": 0, "meta": {"err": None},
+        "transaction": {"signatures": ["S%d" % i], "message": {
+            "accountKeys": [{"pubkey": payer, "signer": True}, {"pubkey": prog, "signer": False}],
+            "instructions": [{"programId": prog}]}}}))' > "$TT/big.jsonl"
+bash "$DNR/profile.sh" "$TT/big.jsonl" > "$TT/big.out" 2>&1
+eq "profile: a 5,000-payer corpus completes (no SIGPIPE exit)" "$?" "0"
+eq "profile: the last section still prints its 20 rows" \
+  "$(awk '/^-- top-level programs/{f=1;next} f' "$TT/big.out" | grep -c .)" "20"
 
 if [[ "$fails" -ne 0 ]]; then
   echo "test-dnr: $fails assertion(s) FAILED" >&2

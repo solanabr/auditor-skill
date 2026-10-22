@@ -25,15 +25,15 @@ mistaken — and then it stops. Carrying it out is never the track's job.
   even when a connected tool could send them. Coordination is **drafts only**
   (below).
 - **Read-only CLI only**, and each piped through the installation's
-  `${CLAUDE_PLUGIN_ROOT}/scripts/dnr/redact.sh` (never a relative `scripts/` path)
+  `<auditor-skill root>/scripts/dnr/redact.sh` (never a relative `scripts/` path)
   so a key in an error never reaches the transcript: `solana program show`,
   `solana program dump`, `solana account`, `solana confirm -v <sig>`,
   `getAccountInfo` / `getTransaction` / `getSignaturesForAddress`. No Helius or
   other MCP write tool, no webhook/subscription setup — those are out of the
   agent's `tools:` allowlist by construction (README).
 - Building a candidate commit to reproduce follows the run's execution mode
-  (`OUTPUT-RULES.md` Rule 11a); a `supply_chain_or_ci` / `off_chain` root cause is
-  **never** built natively.
+  (`OUTPUT-RULES.md` Rule 11a); a `supply_chain_or_ci` root cause is **never**
+  built natively.
 
 ## The action menu (every row is a proposal)
 

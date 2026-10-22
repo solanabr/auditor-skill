@@ -11,8 +11,8 @@ Full method and the verdict rules these feed: `references/detection-response/`.
 
 | File | What it does |
 |------|--------------|
-| `snapshot-program.sh` | Step 1 of every run: read-only `solana program show` + `dump` of each implicated program into `incident_<n>/bin/`, printing the last-deployed slot and the zero-trimmed sha256 for the ledger — before a hotfix can overwrite the incident binary. |
-| `collect.sh` | The gated collector: pages signature history (failed transactions included — they are attempt evidence) and fetches transactions into a local JSONL corpus. Refuses without `--confirmed`; read-only RPC only; capped; reports when the page cap stops short of the window. |
+| `snapshot-program.sh` | Step 1 of every run: read-only `solana program show` + `dump` of each implicated program into `incident_<n>/bin/`, printing the last-deployed slot and the zero-trimmed sha256 for the ledger — before a hotfix can overwrite the incident binary. Refuses an id that is not base58. |
+| `collect.sh` | The gated collector: pages signature history (failed transactions included — they are attempt evidence) and fetches transactions into a local JSONL corpus. Refuses without `--confirmed`, on any input that is not base58, and when `--out` already holds a corpus; read-only RPC only; capped; reports when the page cap stops short of the window. |
 | `profile.sh` | Baseline a `transactions.jsonl`: outcome / version histograms, time window, fee-payer, signer and top-level-program inventories — all from structural fields, never from log text. |
 | `frames.py` | Attribute each `Program log:` / `Program data:` line to the program frame that emitted it, as JSONL. Walks the log array one element at a time with anchored regexes. |
 | `deltas.py` | `lamports` or `tokens`: per-account / per-(owner,mint) balance movement, computed in Python integers, successful transactions only. |
@@ -21,18 +21,19 @@ Full method and the verdict rules these feed: `references/detection-response/`.
 
 ## Running them
 
-Always from the auditor-skill installation, by absolute path — the commands
-write it as `${CLAUDE_PLUGIN_ROOT}/scripts/dnr/…` — and never as a `scripts/…`
-path relative to the working directory, which during an incident is usually the
+Always from the auditor-skill installation, by absolute path —
+`<auditor-skill root>/scripts/dnr/…`, the root the invoking command gave you
+(`OUTPUT-RULES.md` Rule 11e) — and never as a `scripts/…` path relative to the
+working directory, which during an incident is usually the
 audited repo and may ship a same-named file. The python recipes run as
 `python3 -I` (isolated: neither the working directory nor `PYTHONPATH` reaches
 `sys.path`), so they import only the stdlib and never a sibling module.
 `snapshot-program.sh` hashes with `python3 -I` for the same reason.
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh" <corpus.jsonl>
-python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/frames.py" <corpus.jsonl>
-python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/deltas.py" tokens|lamports <corpus.jsonl>
+bash "<auditor-skill root>/scripts/dnr/profile.sh" <corpus.jsonl>
+python3 -I "<auditor-skill root>/scripts/dnr/frames.py" <corpus.jsonl>
+python3 -I "<auditor-skill root>/scripts/dnr/deltas.py" tokens|lamports <corpus.jsonl>
 ```
 
 ## Two hazards these encode, and why
@@ -56,8 +57,8 @@ and checks that none of them loads.
 ## What a log line proves
 
 `Program log:` / `Program data:` / inner-instruction records are
-**program-asserted**: a (possibly compromised) program said them, and they can be
-emitted by a transaction that later fails within the same slot. They attribute an
+**program-asserted**: a (possibly compromised) program said them, and they still
+appear when a later instruction in the same transaction fails. They attribute an
 utterance to a frame; they never prove a state change happened (KV-122). A verdict
 is grounded in runtime-recorded effects — `meta.err`, balance deltas, and the
 account's current value — at `finalized`, not in log text. See

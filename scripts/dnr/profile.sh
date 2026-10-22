@@ -20,6 +20,10 @@
 # It deliberately does NOT touch logMessages or balances: those go through
 # frames.py and deltas.py, which handle the newline-forgery and >2^53 hazards.
 #
+# Top-20 lists end in `sed -n '1,20p'`, never `head`: under `set -o pipefail` a
+# reader that exits early hands `sort` a SIGPIPE once the list outgrows the pipe
+# buffer, and the script would stop with 141 halfway through the profile.
+#
 # Uses jq per line. jq is fine for counting scalars and grouping base58 strings;
 # it is only unsafe for u64 ARITHMETIC (see deltas.py) and for flattening the log
 # array (see frames.py). bash >= 3.2, jq, no network.
@@ -48,7 +52,7 @@ jq -r '.blockTime // empty' "$corpus" | sort -n | awk '
 KEYDEF='def key: if type == "object" then .pubkey else . end;'
 echo "-- fee payers (accountKeys[0], top 20)"
 jq -r "$KEYDEF"' (.transaction.message.accountKeys[0] // empty) | key' "$corpus" \
-  | sort | uniq -c | sort -rn | head -20
+  | sort | uniq -c | sort -rn | sed -n '1,20p'
 echo "-- signers (top 20)"
 # jsonParsed marks each key's `signer`; encoding: json puts the signers first, the
 # count in message.header.numRequiredSignatures.
@@ -59,7 +63,7 @@ jq -r "$KEYDEF"'
     then ($ak[] | select((.signer // false) == true) | .pubkey)
     else ($ak[0:($m.header.numRequiredSignatures // 1)][] | key)
     end' "$corpus" \
-  | sort | uniq -c | sort -rn | head -20
+  | sort | uniq -c | sort -rn | sed -n '1,20p'
 echo "-- top-level programs invoked (instructions[].programId / programIdIndex, top 20)"
 # jsonParsed carries `programId`; encoding: json carries `programIdIndex` into the
 # static accountKeys (a top-level program id is always a static key, never one
@@ -69,4 +73,4 @@ jq -r "$KEYDEF"'
   | (($m.accountKeys // []) | map(key)) as $keys
   | $m.instructions[]?
   | (.programId // (if .programIdIndex != null then $keys[.programIdIndex] else empty end)) // empty' "$corpus" \
-  | sort | uniq -c | sort -rn | head -20
+  | sort | uniq -c | sort -rn | sed -n '1,20p'

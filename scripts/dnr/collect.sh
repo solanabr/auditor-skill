@@ -29,7 +29,10 @@
 # failures out would make those undetectable. Use `meta.err` downstream.
 #
 # --before <sig> starts paging just older than that signature (resume a capped run,
-# or skip activity newer than the incident). When the page cap stops paging before
+# or skip activity newer than the incident) — always into a new --out: an --out that
+# already holds signatures is refused, so a resume never erases the first pass. Every
+# address and --before value must be base58, and every number a plain integer,
+# before anything is written or sent. When the page cap stops paging before
 # --since was reached — or, with only --until set, while still above --until — the
 # script says so ("window not reached"): the corpus is then incomplete for that
 # address, a collection gap to record in the ledger. Signatures are fetched newest
@@ -78,8 +81,38 @@ if [ -z "${RPC_URL:-}" ]; then
   echo "collect.sh: set \$RPC_URL in the environment (never on the command line, so it stays out of history and ledgers)." >&2
   exit 2
 fi
+# Addresses and --before are spliced into JSON request bodies and usually come from
+# target content (declare_id!, Anchor.toml): accept base58 only.
+for addr in "${addrs[@]}"; do
+  if ! [[ "$addr" =~ ^[1-9A-HJ-NP-Za-km-z]{32,44}$ ]]; then
+    echo "collect.sh: '$addr' is not a base58 address (32-44 characters of [1-9A-HJ-NP-Za-km-z])." >&2
+    exit 2
+  fi
+done
+if [ -n "$before_start" ] && ! [[ "$before_start" =~ ^[1-9A-HJ-NP-Za-km-z]{32,88}$ ]]; then
+  echo "collect.sh: --before '$before_start' is not a base58 signature." >&2
+  exit 2
+fi
+for n in "$since" "$until" "$max_pages" "$max_tx"; do
+  if ! [[ "$n" =~ ^[0-9]+$ ]]; then
+    echo "collect.sh: '$n' is not a non-negative integer (--since, --until, --max-pages, --max-tx)." >&2
+    exit 2
+  fi
+done
+# A second pass into the same --out would truncate the first one's corpus.
+if [ -s "$out/signatures.jsonl" ]; then
+  echo "collect.sh: $out already holds a collected corpus — use a new --out (resume there with --before)." >&2
+  exit 2
+fi
 
 mkdir -p "$out"
+# Rule 11d: an incident_<n>/ directory (the --out itself or its parent) ignores itself
+# when it has no .gitignore of its own, so the corpus never shows in git status.
+for d in "$out" "$(dirname "$out")"; do
+  case "$(basename "$d")" in
+    incident_*) [ -e "$d/.gitignore" ] || printf '*\n' > "$d/.gitignore" ;;
+  esac
+done
 sig_file="$out/signatures.jsonl"; : > "$sig_file"
 tx_file="$out/transactions.jsonl"; : > "$tx_file"
 todo="$out/.signatures.todo"
@@ -120,9 +153,9 @@ for addr in "${addrs[@]}"; do
     if [ "$since" -gt 0 ] && [ "$oldest" -gt 0 ] && [ "$oldest" -lt "$since" ]; then reached=1; break; fi
   done
   if [ "$reached" -eq 0 ] && [ "$since" -gt 0 ]; then
-    echo "  ! window not reached for $addr (oldest=$oldest, since=$since): page cap hit — resume with --before $before, or raise --max-pages; record as a collection gap" >&2
+    echo "  ! window not reached for $addr (oldest=$oldest, since=$since): page cap hit — resume into a new --out with --before $before, or raise --max-pages; record as a collection gap" >&2
   elif [ "$reached" -eq 0 ] && [ "$until" -gt 0 ] && [ "$oldest" -gt "$until" ]; then
-    echo "  ! window not reached for $addr (oldest=$oldest, until=$until): the page cap stopped paging above --until, so nothing inside the window was collected — resume with --before $before, or raise --max-pages; record as a collection gap" >&2
+    echo "  ! window not reached for $addr (oldest=$oldest, until=$until): the page cap stopped paging above --until, so nothing inside the window was collected — resume into a new --out with --before $before, or raise --max-pages; record as a collection gap" >&2
   fi
 done
 echo "signatures collected: $collected -> $sig_file"

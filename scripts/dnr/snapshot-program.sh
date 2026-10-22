@@ -64,6 +64,11 @@ if ! command -v solana >/dev/null 2>&1; then
 fi
 
 mkdir -p "$dir/bin"
+# Rule 11d: an incident_<n>/ directory ignores itself when it has no .gitignore of
+# its own, so the dumped program never shows in git status.
+case "$(basename "$dir")" in
+  incident_*) [ -e "$dir/.gitignore" ] || printf '*\n' > "$dir/.gitignore" ;;
+esac
 err="$(mktemp "${TMPDIR:-/tmp}/dnr_snap.XXXXXX")"
 trap 'rm -f "$err"' EXIT
 show="$dir/bin/$pid.show.txt"

@@ -97,12 +97,13 @@ bumps the `schema` string to `auditor-incidents/2`.
   attacker wallet lists stay in this file inside `incident_<n>/`, which is
   git-ignored; they are not lifted into any shared report.
 
-## The stable read surface for #15 and audits
+## The stable read surface for the threat-model bootstrap and audits
 
-A consumer (threat-model bootstrap, a later audit) reads only: top-level `schema`
-and `incidents[]`; per incident `id`, `verdict`, `outcome`, `root_cause_class`,
-`vuln.{program,instruction,file,function,line,mechanism,severity,kv,checklist}`,
-`poc.tier`, and optionally `urgency`. It never reads `attacker`, `transactions`,
+A consumer (the threat-model bootstrap, a later audit) reads only: top-level
+`schema` and `incidents[]`; per incident `id`, `verdict`, `outcome`,
+`root_cause_class`, `vuln.{program,instruction,file,function,line,mechanism,severity,kv,checklist}`,
+`poc.tier`, and optionally `urgency`. The threat-model bootstrap reads that surface
+except `vuln.severity` and `urgency`, which it leaves out by design. A consumer never reads `attacker`, `transactions`,
 `timeline`, `blast_radius`, `evidence`, `binary_provenance`, `collection_gaps` or
 `response_plan`, and never the `ruled_out[]` list. These read fields are stable
 across runs within `auditor-incidents/1`.

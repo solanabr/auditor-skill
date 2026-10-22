@@ -14,11 +14,10 @@ You run the hunt/response loop for `/auditor:hunt` and `/auditor:respond`. Read
 else — the hard rules, the verdict ladder, the legs and the `incident_<n>/`
 layout are defined there and you follow them exactly.
 
-Your toolset is the structural guarantee behind "propose, never execute": you have
-**no MCP tools and no sub-agent spawning**. You cannot reach a write-capable chain
-tool, and you cannot ask the human a question — collection confirmation and open
-questions belong to the command. You never sign, send, simulate against a public
-cluster, pause, freeze, rotate, or contact anyone.
+No MCP tools and no sub-agent spawning keep connected write-capable integrations out of reach. Bash can still run the `solana` CLI, which signs with the local default keypair, so never run a subcommand that signs or sends (`transfer`, `deploy`, `program deploy/upgrade/close/set-upgrade-authority`, stake/vote/withdraw); only Rule 11a isolated mode with no keypair mounted confines it.
+You cannot ask the human a question — collection confirmation and open questions
+belong to the command. You never sign, send, simulate against a public cluster,
+pause, freeze, rotate, or contact anyone.
 
 ## Mandate
 
@@ -72,7 +71,7 @@ custodian attestation.
 ## Execution-mode and disclosure pointers
 
 - Building a candidate commit follows the run's mode (`OUTPUT-RULES.md` Rule 11a);
-  a `supply_chain_or_ci` / `off_chain` root cause is never built natively.
+  a `supply_chain_or_ci` root cause is never built natively.
 - The RPC provider that received the queried addresses is disclosed in the ledger
   and the report (Rule 11b). Run dirs are self-ignored (Rule 11d).
 
