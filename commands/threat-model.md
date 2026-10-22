@@ -47,6 +47,8 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --repo <target> --o
 
 Drop `--offline` only when the user passed an `https://` `--parent` / `--vulns` value or confirmed the exact URL. Then hand `audit_<n>/bootstrap/` to `threat-modeler` together with the other inputs.
 
+`audit_<n>` is this audit's directory from intake. For a new one, `<n>` is the highest existing number + 1; create the dir with `mkdir` (not `-p`) and stop if it exists. Reuse an existing `audit_*` only if git does not track it and it holds no symbolic links. Never write into a tracked `audit_*`. The collector exits 2 on a run directory that is or holds a symbolic link, or that git tracks.
+
 The collector is not pre-approved for this command, so running it goes through the usual permission prompt; a pattern in this file's frontmatter would not have the installation path filled in.
 
 ## What to build

@@ -37,7 +37,7 @@ Turn the passive `QUESTIONS.md` questionnaire into a **persisted** `audit_<n>/in
 
 6. **Record assumed defaults.** In `--auto`, every unanswered question goes in the **Assumed Defaults (Unanswered)** table with the default applied and its basis. Each entry is carried into the report's **§4.6 Assumptions & Simplifications** as an explicit assumption — so "no finding here" reads against a stated default, not a blanket clearance. In interactive mode this table should be empty (everything was asked); if non-empty, it lists only what the human explicitly deferred.
 
-7. **Write `audit_<n>/intake.md`.** `{n}` = count of existing `audit_*/` dirs + 1 (`OUTPUT-RULES.md` Rule 9). Create the directory with a `.gitignore` containing `*` as its first file (Rule 11d). This file is the intake of record.
+7. **Write `audit_<n>/intake.md`.** `<n>` is the highest existing `audit_*` number + 1 (`OUTPUT-RULES.md` Rule 9); create the dir with `mkdir` (not `mkdir -p`) and stop if it exists. Reuse an existing `audit_*` only if git does not track it (`git ls-files -- audit_<n>` prints nothing; Rule 11c flags in a checkout you did not clone) and it holds no symbolic links (`find audit_<n> -type l` prints nothing). Never write into a tracked `audit_*`. The directory's first file is a `.gitignore` containing `*` (Rule 11d). This file is the intake of record.
 
 ## Output
 
