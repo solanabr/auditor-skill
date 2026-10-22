@@ -22,6 +22,9 @@
 #     tests/fixtures/<crate>.so is refused; BPF_OUT_DIR is cleared; an inherited
 #     CARGO_TARGET_DIR is honoured), and the exit codes (a failed build is 3, a failed
 #     verdict 1/2);
+#   * dependency pins: the crate's Cargo.lock is what resolves; a crate without one
+#     gets a line saying so; UPDATE_PINS moves only the named pins, with cargo update
+#     -p in the scratch copy before anything is built, and refuses any other entry;
 #   * the patch verification recipe (templates/patch/VERIFICATION.md §1): its worktree
 #     is made in a Rule 11c copy, and no git runs in the client checkout.
 #
@@ -123,6 +126,7 @@ case " $* " in
 esac
 case "${SHIM_FAIL:-}" in
   build-sbf) if [ "${1:-}" = build-sbf ]; then echo "[shim cargo: build-sbf fails]"; exit 101; fi ;;
+  update) if [ "${1:-}" = update ]; then echo "[shim cargo: update fails]"; exit 101; fi ;;
   no-run:*)
     case " $* " in *" --no-run "*)
       case " $* " in *" --test ${SHIM_FAIL#no-run:} "*) echo "[shim cargo: test build fails]"; exit 101 ;; esac ;;
@@ -446,6 +450,32 @@ else
   bad "CARGO_TARGET_DIR: exit $code, build dir '$bd'"; cat "$T/calls" >&2
 fi
 
+# Dependency pins: a crate without Cargo.lock gets a line saying so; UPDATE_PINS moves
+# only the named pins, with cargo update -p in the scratch copy, before anything is
+# built; an entry that is not <crate>[@<version>] is refused before anything is copied.
+code="$(gate "$T/inc" "$NATIVE" "$VULN")"
+[ "$code" = 0 ] && grep -q '^>> no Cargo.lock in the crate' "$T/out" && ok "a crate without Cargo.lock -> a line says cargo resolves every dependency now" || bad "no Cargo.lock line: exit $code"
+mk_crate "$T/locked"; printf '# a lock\n' > "$T/locked/Cargo.lock"
+code="$(gate "$T/locked" "$NATIVE" "$VULN")"
+[ "$code" = 0 ] && ! grep -q 'no Cargo.lock' "$T/out" && ok "a crate with its Cargo.lock -> no such line" || bad "crate with a lock: exit $code"
+code="$(gate "$T/locked" "$NATIVE" "$VULN" "UPDATE_PINS=solana-program@3.0.0 borsh")"
+bd="$(build_dir)"
+if [ "$code" = 0 ] && from_scratch "$bd" \
+   && awk -F'\t' '$6 ~ /^update / { u++; if (b) late = 1; next } { b = 1 } END { exit !(u == 2 && !late) }' "$T/calls" \
+   && grep -qF "update --manifest-path $bd/Cargo.toml --package solana-program@3.0.0" "$T/calls" \
+   && grep -qF "update --manifest-path $bd/Cargo.toml --package borsh" "$T/calls"; then
+  ok "UPDATE_PINS -> cargo update -p <each pin> in the scratch copy, before any build"
+else
+  bad "UPDATE_PINS: exit $code"; cat "$T/calls" >&2
+fi
+code="$(gate "$T/locked" "$NATIVE" "$VULN" UPDATE_PINS=borsh SHIM_FAIL=update)"
+[ "$code" = 3 ] && grep -q 'cargo update -p borsh failed' "$T/out" && ! awk -F'\t' '$6 ~ /^(build-sbf|test) / { f = 1 } END { exit !f }' "$T/calls" \
+  && ok "a cargo update that fails -> exit 3, nothing built" || bad "failing UPDATE_PINS: exit $code"
+for spec in '--config=build.rustc-wrapper="x"' 'borsh;true' '../borsh' 'b*' 'borsh@' 'borsh@=3.0.0' '-p'; do
+  code="$(gate "$T/locked" "$NATIVE" "$VULN" "UPDATE_PINS=borsh $spec")"
+  [ "$code" = 3 ] && grep -q 'UPDATE_PINS entry' "$T/out" && nothing_ran && ok "UPDATE_PINS entry '$spec' -> refused before anything is copied" || bad "UPDATE_PINS '$spec': exit $code"
+done
+
 # Exit codes: a build that fails is a blocker (3); only the test verdicts are 1 and 2.
 code="$(run "$T/inc" "$SP" "$NATIVE" SHIM_FAIL=build-sbf)"
 [ "$code" = 3 ] && grep -q 'SBF build failed' "$T/out" && ok "cargo build-sbf failing (101) -> exit 3" || bad "build-sbf failure: exit $code"
@@ -740,6 +770,32 @@ if command -v cargo >/dev/null 2>&1 && command -v rustup >/dev/null 2>&1; then
   else
     bad "real cargo, VULNERABLE_SO alone: exit $code"; cat "$T/out" >&2
   fi
+
+  # Dependency pins with real cargo, against a vendored directory registry that stands
+  # in for crates.io (the user's own CARGO_HOME config, which run.sh keeps): the
+  # crate's Cargo.lock is what resolves, a newer compatible release stays out until
+  # UPDATE_PINS moves that pin alone, and a crate without a lock says so.
+  V="$T/vendored"; CH="$T/cargo-home"
+  mk_vendored() {  # mk_vendored <version>: the stand-in crate `pinme` at <version>
+    mkdir -p "$V/pinme-$1/src"
+    printf '[package]\nname = "pinme"\nversion = "%s"\nedition = "2021"\n' "$1" > "$V/pinme-$1/Cargo.toml"
+    printf 'pub const VERSION: &str = "%s";\n' "$1" > "$V/pinme-$1/src/lib.rs"
+    printf '{"files":{},"package":null}\n' > "$V/pinme-$1/.cargo-checksum.json"
+  }
+  pinned() { sed -n '/^name = "pinme"$/{n;s/^version = "\(.*\)"$/\1/p;}' "$1"; }
+  mk_vendored 1.0.0
+  mkdir -p "$CH"; printf '[source.crates-io]\nreplace-with = "vendored"\n\n[source.vendored]\ndirectory = "%s"\n' "$V" > "$CH/config.toml"
+  mk_e2e "$T/e-lock"; printf 'pinme = "1"\n' >> "$T/e-lock/Cargo.toml"
+  code="$(e2e "$T/e-lock" CARGO_HOME="$CH" VULNERABLE_SO="$SB-takeover.so")"
+  [ "$code" = 0 ] && grep -q '^>> no Cargo.lock in the crate' "$T/out" && [ "$(pinned "$T/e-lock/Cargo.lock")" = 1.0.0 ] \
+    && ok "real cargo: a crate without a lock says so, and the lock it resolves (pinme 1.0.0) comes back with it" || { bad "real cargo, first lock: exit $code"; cat "$T/out" >&2; }
+  mk_vendored 1.1.0
+  code="$(e2e "$T/e-lock" CARGO_HOME="$CH" VULNERABLE_SO="$SB-takeover.so")"
+  [ "$code" = 0 ] && ! grep -q 'no Cargo.lock' "$T/out" && [ "$(pinned "$T/e-lock/Cargo.lock")" = 1.0.0 ] \
+    && ok "real cargo: the crate's lock is what resolves: pinme stays at 1.0.0 with 1.1.0 available" || { bad "real cargo, kept pin: exit $code"; cat "$T/out" >&2; }
+  code="$(e2e "$T/e-lock" CARGO_HOME="$CH" VULNERABLE_SO="$SB-takeover.so" UPDATE_PINS=pinme@1.0.0)"
+  [ "$code" = 0 ] && grep -q '^>> moving the pinme@1.0.0 pin' "$T/out" && [ "$(pinned "$T/e-lock/Cargo.lock")" = 1.1.0 ] \
+    && ok "real cargo: UPDATE_PINS=pinme@1.0.0 moves that pin (to 1.1.0) in the scratch copy, and the moved lock comes back" || { bad "real cargo, UPDATE_PINS: exit $code"; cat "$T/out" >&2; }
 
   # Results the contract must turn down, outside the hostile tree.
   mk_e2e "$T/e-base"

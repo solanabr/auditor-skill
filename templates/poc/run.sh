@@ -51,6 +51,16 @@
 #     SBF_OUT_DIR, so run.sh unsets BPF_OUT_DIR and refuses a crate holding
 #     tests/fixtures/{CRATE}.so: the bytes that run are the arm run.sh placed.
 #
+# DEPENDENCY PINS. The template ships a Cargo.lock; keep it with the crate (run.sh
+# prints a line when the crate has none, and cargo then resolves every dependency
+# to its newest compatible release). A crate the PoC adds keeps every pin it does
+# not need to move. When cargo reports a conflict with a pinned release, name that
+# pin and run.sh moves it alone, in the scratch copy, before it builds:
+#     UPDATE_PINS="solana-program@3.0.0" ./run.sh      # cargo update -p solana-program@3.0.0
+# (several pins: separate them with spaces). The moved lock comes back next to this
+# file with the rest. Never run cargo update in the crate itself: inside the target
+# tree it would read the target's .cargo/config*.
+#
 # PREBUILT BYTES (incidents under references/detection-response/, or a patch re-run
 # against the target's own builds). Leg 3 of `confirmed_exploited` needs the exploit
 # to run on the REAL program bytes, not on this crate's minimized arms:
@@ -155,6 +165,18 @@ if [[ "${PREBUILT}" -eq 0 ]] && ! command -v cargo-build-sbf >/dev/null 2>&1; th
   exit 3
 fi
 
+# The pins to move (see DEPENDENCY PINS above): each a crate name, optionally
+# @<the version Cargo.lock pins>, and nothing else.
+PIN_SPEC='^[A-Za-z][A-Za-z0-9_-]*(@[0-9][0-9A-Za-z.+-]*)?$'
+set -f
+for spec in ${UPDATE_PINS:-}; do
+  if [[ ! "${spec}" =~ ${PIN_SPEC} ]]; then
+    echo "[PoC-ATTEMPTED] blocker: UPDATE_PINS entry '${spec}' is not <crate> or <crate>@<pinned version> — nothing was copied or built." >&2
+    exit 3
+  fi
+done
+set +f
+
 # ── Where to build (see WHERE IT BUILDS above) ──────────────────────────────────
 # No here-documents or here-strings below: bash 3.2 may put their temp files in the
 # working directory (it does under a sandbox that denies /tmp), where a listing of
@@ -249,6 +271,20 @@ if ! { cd "${BUILD_DIR}" && mkdir -p "${SBF_OUT_DIR}"; }; then
   exit 3
 fi
 echo ">> build dir: ${BUILD_DIR} (scratch copy outside the target tree; AUDITOR_EXEC_MODE=${AUDITOR_EXEC_MODE}; toolchain ${RUSTUP_TOOLCHAIN:-unpinned: no rustup}; $([[ "${KEEP_POC_BUILD:-0}" == 1 ]] && echo kept || echo removed on exit))"
+
+# Dependency pins (see DEPENDENCY PINS above).
+if [[ ! -f "${HERE}/Cargo.lock" ]]; then
+  echo ">> no Cargo.lock in the crate: cargo resolves every dependency to its newest compatible release now; the resolved lock is kept next to run.sh"
+fi
+set -f
+for spec in ${UPDATE_PINS:-}; do
+  echo ">> moving the ${spec} pin: cargo update -p ${spec}, in the scratch copy"
+  if ! cargo update --manifest-path "${BUILD_DIR}/Cargo.toml" --package "${spec}"; then
+    echo "[PoC-ATTEMPTED] blocker: cargo update -p ${spec} failed — see the cargo output above." >&2
+    exit 3
+  fi
+done
+set +f
 
 # Print the .so path and a solana-verify-style hash: trailing zero padding (the
 # loader pads a program account well past the ELF — a live JUP6 dump carried
