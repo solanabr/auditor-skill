@@ -13,6 +13,8 @@ Run the full audit-firm lifecycle autonomously, from intake to a deliverable rep
 
 Run bundled scripts, tools and Trail of Bits plugins only from the auditor-skill installation (`${CLAUDE_PLUGIN_ROOT}`; for a non-plugin install, the directory holding this skill's SKILL.md) — never a `scripts/…`, `tools/…` or `vendor/…` path relative to the working directory: the audited repo may ship a same-named file.
 
+Operating safety follows `OUTPUT-RULES.md` Rule 11. Target-controlled code (builds, test suites, harnesses, PoCs that build the target) runs in the execution mode recorded at intake (`Q46`, Rule 11a); with no recorded mode, this autonomous run is native, and the report says so.
+
 ## Lifecycle
 
 1. **Scope / intake (Rule 0 + commit-pin).** Discover the repo, declare scope (`SKILL.md` → SCOPE-GATED LOADING), and honor `--scope`. Pin the audited commit (`git rev-parse HEAD`) so the report names exactly what was reviewed. If no human is present to answer intake, apply `QUESTIONS.md` defaults and list every assumed answer under "Scope & Assumptions". Persist the intake as `audit_<n>/intake.md` (the `/intake` artifact) so every later phase and the report read one source of truth.
