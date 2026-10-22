@@ -1,4 +1,4 @@
-# Fixture: claude-code-action with pre-v1 input names; the comment body reaches direct_prompt.
+# Fixture: claude-code-action with pre-v1 input names; the comment body reaches the old prompt input.
 name: f14-pre-v1-agent-inputs
 on:
   issue_comment:

@@ -1,4 +1,4 @@
-# Fixture: tag-triggered image release reads and writes the Docker layer cache in the Actions cache (type=gha).
+# Fixture: tag-triggered image release reads and writes the Docker layer cache in the Actions cache backend.
 name: f37-docker-gha-cache
 on:
   push:

@@ -1,4 +1,4 @@
-# Fixture: tag-triggered release job on actions/setup-go v5, which restores and saves the Go cache by default.
+# Fixture: tag-triggered release job on the Go setup action (v5), which restores and saves the Go cache by default.
 name: f38-setup-go-default-cache
 on:
   push:

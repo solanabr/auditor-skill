@@ -1,4 +1,4 @@
-# Fixture: tag-triggered release job restores the Rust build cache through Swatinem/rust-cache.
+# Fixture: tag-triggered release job restores the Rust build cache through a third-party cache action.
 name: f35-rust-cache
 on:
   push:

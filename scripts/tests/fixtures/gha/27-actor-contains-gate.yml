@@ -1,4 +1,4 @@
-# Fixture: pull_request_target gate runs contains() on github.actor, a substring test on whoever last acted on the PR.
+# Fixture: pull_request_target gate runs a substring test on the acting account's login, which is whoever last acted on the PR.
 name: f27-actor-contains-gate
 on:
   pull_request_target:

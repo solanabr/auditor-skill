@@ -1,4 +1,4 @@
-# Fixture: workflow_run consumer fetches the triggering run's artifact with gh run download into the workspace.
+# Fixture: workflow_run consumer fetches the triggering run's artifact with the GitHub CLI into the workspace.
 name: f30-workflow-run-gh-run-download
 on:
   workflow_run:
