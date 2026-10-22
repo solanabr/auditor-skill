@@ -31,10 +31,10 @@
   It never checks out, builds, runs, fetches into or modifies the target, and runs every git call hardened per
   `OUTPUT-RULES.md` Rule 11c (no pager, fsmonitor, signature helpers, textconv or external diff; lazy fetching
   (`GIT_NO_LAZY_FETCH=1`) and every transport protocol off; grep, colour, big-file, hunk and root-commit settings
-  pinned; diffs and searches forced to text). A partial clone is refused (exit 3), because reading its missing objects would
-  fetch from its promisor remote: make a full copy you control first. The target's `.git/config` and attributes are
-  untrusted; `history.md` states which attributes can still shape R4's function names. It works from a temp
-  directory, never from the target, and its python3 helper runs isolated (`-I`), so no module or config file
+  pinned; diffs and searches forced to text). A partial clone is refused (exit 3), because reading its missing
+  objects would fetch from its promisor remote: make a full copy you control first. The target's `.git/config` and
+  attributes are untrusted; `history.md` states which attributes can still shape R4's function names. It works from
+  a temp directory, never from the target, and its python3 helper runs isolated (`-I`), so no module or config file
   shipped in the target is loaded.
 - **Network only on explicit request.** The collector fetches nothing unless the user passed an `https://` URL as
   `--parent` or `--vulns`, or confirmed one exact URL in an interactive run; it never contacts a remote the target
@@ -187,7 +187,8 @@ partial clone.
   identical guard text removed in one file and added in another by the same commit (netted as a move even when the
   two guard different accounts) do not show up. A fork whose first-parent line holds no parent commit (the parent
   arrived only through a merge) gets its fork point from its whole ancestry, where a merge made with `-s ours`
-  (recording the parent's history without its code) can still place the fork point after fixes it never applied. History lists what someone touched, not what is missing; §4 keeps code-only goals for that reason.
+  (recording the parent's history without its code) can still place the fork point after fixes it never applied.
+  History lists what someone touched, not what is missing; §4 keeps code-only goals for that reason.
 
 ## 4. From rows to attacker goals
 
