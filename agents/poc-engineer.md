@@ -51,12 +51,16 @@ against the program's **real bytes**:
 - **Assert the guard's exact error** on the `fixed` arm with
   `assert_exploit_rejected_with!` when `FIXED_SO` is our patched build. When it is a
   fresh dump of a hotfix the team deployed, swap in the template's commented
-  `assert_exploit_blocked!`, in a copy of the crate: the attack failed, the account
-  is unchanged and the error is not a harness error. Report that check apart from
-  ours.
+  `assert_exploit_blocked!` and its positive control, in a copy of the crate: a
+  legitimate call goes through on the same bytes and changes the account, and the
+  attack fails with an error that is not a harness error and leaves it unchanged. If
+  no legitimate call can show that on the deployed bytes, pin the hotfix's error
+  with `assert_exploit_rejected_with!` instead. Report that check apart from ours.
 - **Markers and the Leg 3 line.** Each of these assertions leaves a marker when it
-  runs and holds, and on prebuilt bytes `run.sh` accepts an arm only with its marker.
-  A fixed arm that fails on a harness error exits 3 as inconclusive. Leg 3 is met
+  runs and holds, and on prebuilt bytes `run.sh` accepts an arm only with its marker
+  and only when every program `mollusk_for` loaded is the `.so` it placed: load the
+  program under test only through `mollusk_for`, by name. A test that fails before
+  its assertion ran, or on a harness error, exits 3 as inconclusive. Leg 3 is met
   only by `run.sh` ending with
   `OK: reproduced on prebuilt bytes — vulnerable sha256=<hash> → [PoC-REPRODUCED]`
   (with `FIXED_SO`, the line also names `fixed sha256=<…>` and how that arm held),

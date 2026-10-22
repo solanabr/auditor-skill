@@ -139,12 +139,26 @@ concrete value the attack leaves there, which the account did not hold before), 
 `tests/fixed_blocked.rs` asserts the guard's exact error with
 `assert_exploit_rejected_with!` (a value compared with `==`, never a pattern). For a
 fix the team deployed, whose error is not known in advance, the fixed arm uses
-`assert_exploit_blocked!` instead: the attack failed, the same account reads the same,
-and the error is not a harness error. Each leaves a marker when it runs and holds; on
-prebuilt bytes `run.sh` accepts an arm only with its marker, and a fixed arm that fails
-on a harness error (`Custom(4100)`, a short account list) is inconclusive, exit 3. The
-marker is a floor, not proof: whoever reads the PoC still checks that the assertion
-states the finding's effect and the guard's error.
+`assert_exploit_blocked!` instead, with a positive control: a legitimate call (the
+instruction the finding concerns, with valid accounts and signers) goes through on the
+same bytes and runner and changes the account the attack targets, and the attack then
+fails with an error that is not a harness error and leaves that account unchanged. A
+control that fails or changes nothing makes the run inconclusive. When no legitimate
+call can show the change on those bytes (a hotfix that turned the instruction off),
+pin the hotfix's error with `assert_exploit_rejected_with!` instead: a failure alone is
+never a block.
+
+Each assertion leaves a marker when it starts and another when it holds. A failed test
+is a verdict (exit 1 or 2) only when an assertion ran and did not hold. It is
+inconclusive, exit 3, when it failed before any assertion ran (the program did not
+load, the setup panicked) or the harness could not decide (a harness error such as
+`Custom(4100)` or a short account list, a control that failed). On prebuilt bytes
+`run.sh` accepts an arm only with its assertion's marker, and only when every program
+`mollusk_for` loaded is the `.so` `run.sh` placed, unchanged after the test
+(`mollusk_for` records each path and zero-trimmed sha256): load the program under test
+only through `mollusk_for`, by name. The markers are a floor, not proof: whoever reads
+the PoC still checks that the assertion states the finding's effect and the guard's
+error.
 
 **Leg 3 of an incident** (`references/detection-response/README.md`) is met only by a
 `run.sh` run on prebuilt bytes that ends with
@@ -195,8 +209,8 @@ the minimized model (the patch transplanted onto the crate's `vulnerable` arm, a
 `VERIFICATION.md` §2) or on the target itself: `run.sh` with `VULNERABLE_SO` set to the
 unpatched build and `FIXED_SO` to the patched one. That is prebuilt mode: `run.sh`
 exits 3 unless both files are ELF programs and each arm's contract assertion ran and
-held, `assert_exploit_effect!` on the unpatched bytes and `assert_exploit_rejected_with!`
-on the patched ones. Our patch is shown only by a line ending in `(rejected with the
+held on the bytes `run.sh` placed, `assert_exploit_effect!` on the unpatched bytes and
+`assert_exploit_rejected_with!` on the patched ones. Our patch is shown only by a line ending in `(rejected with the
 pinned error) → [PoC-REPRODUCED]`; a `(blocked: …)` line comes from the check of a fix
 the team deployed and is reported apart, never as evidence for our patch. The PoC must
 also use the program's real id (an Anchor program checks its own `declare_id!`), which

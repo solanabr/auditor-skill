@@ -45,10 +45,12 @@ built there with the toolchain pinned, so the target's `.cargo/config*` and
 directory or a `rust-toolchain*` file is refused, and so is a
 `tests/fixtures/{PROGRAM_NAME}.so`, which mollusk would load in place of the arm.
 Exit `0` means the exploit reproduced on `vulnerable` **and**, when the fixed arm
-runs, was blocked on `fixed`; `1` / `2` mean the PoC is not valid — see the failing
-arm's message; `3` is a named blocker (no execution mode, no SBF toolchain, bad
-inputs, a build that failed, or an inconclusive fixed arm), and the finding's prose
-PoC still stands.
+runs, was blocked on `fixed`; `1` / `2` mean a contract assertion ran on that arm and
+did not hold — see its message; `3` is a named blocker (no execution mode, no SBF
+toolchain, bad inputs, a build that failed) or an inconclusive arm (no contract
+assertion ran, the test failed outside them, the harness could not decide, or the
+test loaded other bytes than the placed arm), and the finding's prose PoC still
+stands.
 
 **Dependencies.** Framework crates by default, as in the template. A crate copied
 from the target's manifest runs its build script in the recorded mode, so add one
@@ -76,17 +78,27 @@ patch (`templates/patch/patch.md`) made runnable.
 
 The expected error is a value compared with `==`, never a pattern. To check a fix the
 team already deployed, whose error you cannot know in advance, swap in the commented
-`assert_exploit_blocked!` in `tests/fixed_blocked.rs`: it passes when the attack
-failed, the account is unchanged and the error is not a harness error (a wrong program
-id or account list). `assert_exploit_succeeds!` / `assert_exploit_rejected!` accept any
-`Ok` / any error and fit an audit-time model only.
+lines in `tests/fixed_blocked.rs`: `assert_exploit_blocked!` with its positive control.
+It passes when a legitimate call (the same instruction, as its rightful caller makes
+it) goes through on the same bytes and changes the account, and the attack then fails
+with an error that is not a harness error (a wrong program id or account list) and
+leaves the account unchanged. A control that fails or changes nothing is inconclusive;
+when no legitimate call can show the change on those bytes, pin the fix's error with
+`assert_exploit_rejected_with!` instead. `assert_exploit_succeeds!` /
+`assert_exploit_rejected!` accept any `Ok` / any error and fit an audit-time model
+only.
 
 **Prebuilt bytes.** `VULNERABLE_SO=<.so>` runs the exploit arm alone on those bytes;
 adding `FIXED_SO=<.so>` runs the fixed arm on others. Each contract assertion leaves a
-marker when it runs and holds, and on prebuilt bytes `run.sh` accepts an arm only with
-its marker. A fixed arm that fails on a harness error exits `3` (inconclusive), not `2`.
-The marker is a floor, not proof: read the assertion all the same. Success prints the
-only line that can stand for Leg 3 of an incident:
+marker when it starts and another when it holds, and on prebuilt bytes `run.sh`
+accepts an arm only with its assertion's marker. `mollusk_for` records the path and
+zero-trimmed sha256 of every program it loads, and an arm counts only when each is the
+`.so` `run.sh` placed, still unchanged after the test: load the program under test
+only through `mollusk_for`, by name. A test that fails before any contract assertion
+ran (the program did not load, the setup panicked) exits `3` (inconclusive), not `1`
+or `2`, and so does a fixed arm that fails on a harness error. The markers are a
+floor, not proof: read the assertion all the same. Success prints the only line that
+can stand for Leg 3 of an incident, naming the bytes that ran:
 
 ```
 OK: reproduced on prebuilt bytes — vulnerable sha256=<zero-trimmed sha256> → [PoC-REPRODUCED]
