@@ -11,21 +11,29 @@
 #
 # ── Fill these in ──────────────────────────────────────────────────────────────
 #   {PROGRAM_NAME} : this crate's package name, snake_case, e.g. `poc_f_012_vault`.
-#                    Reuse the SAME token as the compiled .so base name in run.sh
-#                    and in the `mollusk_for(.., "{PROGRAM_NAME}")` calls in tests.
+#                    It is also the compiled .so base name, which run.sh reads
+#                    from this manifest, so reuse the SAME token in the
+#                    `mollusk_for(.., "{PROGRAM_NAME}")` calls in tests and in
+#                    Cargo.lock's entry for this crate.
 # ───────────────────────────────────────────────────────────────────────────────
 
 [package]
 name = "{PROGRAM_NAME}"
 version = "0.1.0"
 edition = "2021"
+# The rustc of platform-tools v1.54, which run.sh builds the arms with. It reports
+# 1.89.0-dev, which meets this.
+rust-version = "1.89"
 publish = false
 license = "MIT"
 
 # Its own workspace root, so cargo never looks for one in a parent directory: not
 # above the scratch copy `run.sh` builds from, and not in the audited repo this
 # crate sits in, whose own `[workspace]` would claim it and refuse to build it.
+# Resolver 3 resolves a dependency that Cargo.lock does not pin yet to a release
+# whose `rust-version` the toolchain above meets.
 [workspace]
+resolver = "3"
 
 # `cdylib` so `cargo build-sbf` can emit the loadable `.so` Mollusk runs;
 # `lib`   so the `tests/` can import this crate's types (state structs, ids).
@@ -46,12 +54,16 @@ solana-program = "3"
 borsh = "1"
 
 [dev-dependencies]
-# mollusk-svm loads a COMPILED .so — it needs an SBF build first, NOT `cargo test`
-# alone. Build with `cargo build-sbf --tools-version v1.54` (or newer): the default
-# bundled toolchain ships platform-tools v1.51 / cargo 1.84, which cannot parse the
-# edition2024 manifests in the modern mollusk-svm dependency tree. Platform-tools
-# >= v1.54 bundles cargo >= 1.85, which builds the graph with no pinning. `run.sh`
-# selects the toolchain and wires SBF_OUT_DIR for you.
+# mollusk-svm loads a COMPILED .so, so the tests need an SBF build of the arm first.
+# Build and test only through `run.sh`: it builds each arm with platform-tools
+# v1.54 (whose cargo reads the edition2024 manifests in this tree), places the .so
+# where `mollusk_for` looks, and runs each arm's test binary.
+#
+# Cargo.lock pins every crate below, at releases published at least 14 days before
+# the template shipped. Keep it with the crate: run.sh copies it into the scratch
+# build and back. A crate you add keeps those pins; when it needs a newer release of
+# a pinned one, move only that pin with run.sh's UPDATE_PINS. mollusk-svm 0.14 and
+# later need solana-account 4 and solana-rent 4, here and in shared-test-utils.
 mollusk-svm = "0.13"
 solana-sdk = "3"
 solana-account = "3"
