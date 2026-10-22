@@ -929,6 +929,35 @@ check "T-u: after a merge -s ours, the fork point is the fork's own (first-paren
 check "T-u: ... and the parent's fix the fork never applied is listed as absent" \
   sh -c "grep -q 'require!(amount > 0, AmmError::ZeroAmount);.*\[text absent from target @ pin - verify\]' '$OUTFO/history.md'"
 
+# =================================================================================================
+# T-v: the run-directory and partial-clone checks refuse when git or find cannot answer, rather than
+# treating "no answer" as "not tracked" or "no links". A stand-in git reports the error git gives for a
+# repository owned by another user (safe.directory) for the calls under test and runs the real git
+# for everything else.
+# =================================================================================================
+REALGIT=$(command -v git)
+mkdir -p "$T/gitwrap-tracked" "$T/gitwrap-config"
+printf '#!/bin/sh\nfor a in "$@"; do case "$a" in --is-inside-work-tree|ls-files) echo "fatal: detected dubious ownership in repository at '"'"'$PWD'"'"'" >&2; exit 128 ;; esac; done\nexec "%s" "$@"\n' "$REALGIT" > "$T/gitwrap-tracked/git"
+printf '#!/bin/sh\nfor a in "$@"; do case "$a" in --get-regexp) echo "fatal: detected dubious ownership in repository at '"'"'$PWD'"'"'" >&2; exit 128 ;; esac; done\nexec "%s" "$@"\n' "$REALGIT" > "$T/gitwrap-config/git"
+chmod +x "$T/gitwrap-tracked/git" "$T/gitwrap-config/git"
+FC="$T/failclosed"; mkrepo "$FC"
+put "$FC" programs/f/src/lib.rs 'pub fn f() {}'
+commit "$FC" -m "initial"
+check "T-v: when git cannot say whether the run directory is tracked, it is refused (exit 2)" \
+  test "$(PATH="$T/gitwrap-tracked:$PATH" rc --repo "$FC" --out "$FC/audit_1/bootstrap" --offline)" = 2
+check "T-v: ... and nothing is written" test ! -e "$FC/audit_1"
+check "T-v: a run directory outside every repository is still accepted" \
+  test "$(rc --repo "$FC" --out "$T/failclosed-outside/audit_1/bootstrap" --offline)" = 0
+mkdir -p "$FC/audit_2/bootstrap/sub"; ln -s "$T/elsewhere" "$FC/audit_2/bootstrap/sub/link"
+chmod 0300 "$FC/audit_2/bootstrap/sub"
+check "T-v: a run directory that cannot be fully read (a 0300 subdirectory) is refused (exit 2)" \
+  test "$(rc --repo "$FC" --out "$FC/audit_2/bootstrap" --offline)" = 2
+chmod 0700 "$FC/audit_2/bootstrap/sub"
+check "T-v: ... and nothing is written through the link it hides" test -z "$(ls -A "$T/elsewhere")"
+check "T-v: when git cannot read the target's config, the partial-clone check refuses (exit 3)" \
+  test "$(PATH="$T/gitwrap-config:$PATH" rc --repo "$FC" --out "$FC/audit_3/bootstrap" --offline)" = 3
+check "T-v: ... and nothing is written" test ! -e "$FC/audit_3"
+
 echo
 echo "threat-model collector tests: $pass passed, $fail failed, $skip skipped"
 [ "$fail" -eq 0 ]

@@ -35,11 +35,11 @@
 #   --fix-ceiling <n>         changed-line ceiling for a keyword commit's ADDED rows (default 300)
 #
 # Exit status: 0 done (sections may print NOT FOUND), 2 usage error or rejected input (including an
-#              --import that is not a commit, and a run directory that is or holds a symbolic link
-#              or that git tracks),
+#              --import that is not a commit, and a run directory that is or holds a symbolic link,
+#              that git tracks, or that git or find cannot check),
 #              3 --repo is not the top level of a git repository (or a bare repository), the pin
 #              does not resolve, or the target is a partial clone (reading it could fetch from its
-#              promisor remote).
+#              promisor remote) or git cannot read its config.
 
 set -uo pipefail
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
@@ -168,14 +168,22 @@ repo_top() {
 }
 repo_top "$REPO" || { echo "collect.sh: not a git repository (or not its top level): $REPO" >&2; exit 3; }
 # partial_clone <dir>: status 0 for a partial clone (extensions.partialClone, or a remote.<name>.promisor
-# key), where reading a missing object would fetch it from the promisor remote. Reading config runs nothing.
+# key), where reading a missing object would fetch it from the promisor remote; 1 for none; 2 when git
+# cannot read the config (git config exits 1 only for "no match"). Reading config runs nothing.
 partial_clone() {
-  [ -n "$(G "$1" config --get-regexp '^(extensions\.partialclone|remote\..*\.promisor)$' 2>/dev/null)" ]
+  local keys rc
+  keys=$(G "$1" config --get-regexp '^(extensions\.partialclone|remote\..*\.promisor)$' 2>/dev/null); rc=$?
+  if [ "$rc" -eq 0 ] && [ -n "$keys" ]; then return 0; fi
+  if [ "$rc" -le 1 ]; then return 1; fi
+  return 2
 }
-if partial_clone "$REPO"; then
-  echo "collect.sh: the target is a partial clone: reading missing objects would fetch from its promisor remote. Make a full copy you control first (OUTPUT-RULES Rule 11c)." >&2
-  exit 3
-fi
+partial_clone "$REPO"
+case $? in
+  0) echo "collect.sh: the target is a partial clone: reading missing objects would fetch from its promisor remote. Make a full copy you control first (OUTPUT-RULES Rule 11c)." >&2
+     exit 3 ;;
+  2) echo "collect.sh: git cannot read the target's config, so a partial clone cannot be ruled out: $REPO" >&2
+     exit 3 ;;
+esac
 PIN_SHA=$(G "$REPO" rev-parse --verify --quiet "$PIN^{commit}") || { echo "collect.sh: pin does not resolve: $PIN" >&2; exit 3; }
 # --import reaches git only as the full commit id it resolves to, never as the string given.
 if [ -n "$IMPORT" ]; then
@@ -388,17 +396,26 @@ if [ "$DETECT" -eq 1 ]; then eval_triggers; exit 0; fi
 # ---- output dir (OUTPUT-RULES.md Rule 11d) -----------------------------------------------------------
 # Only a run directory this audit made is written to: never one that is or holds a symbolic link, and
 # never one git tracks, where the output would become changes to tracked files. Checked before the first
-# write or removal, for the output dir and its audit_<n>/ parent. If git cannot answer for a directory
-# inside a work tree, it counts as tracked.
+# write or removal, for the output dir and its audit_<n>/ parent. The check fails closed: a directory
+# find cannot fully read, or one git cannot answer for (another owner, an unreadable config), is refused.
+# The only git error that passes is "not a git repository" from discovery: the directory is outside
+# every repository, so nothing there can be tracked.
 check_run_dir() { # check_run_dir <dir>
-  local d=$1 up listed
+  local d=$1 up links inside listed
   [ -L "$d" ] && die "refusing a run directory that is a symbolic link: $d (use a new audit_<n>)"
-  if [ -d "$d" ] && [ -n "$(find "$d" -type l -print 2>/dev/null | sed -n 1p)" ]; then
-    die "refusing a run directory that holds symbolic links: $d (use a new audit_<n>)"
+  if [ -d "$d" ]; then
+    links=$(find "$d" -type l -print 2>/dev/null) || die "refusing a run directory that cannot be fully read: $d (use a new audit_<n>)"
+    [ -z "$links" ] || die "refusing a run directory that holds symbolic links: $d (use a new audit_<n>)"
   fi
   up=$(dirname "$d")
-  [ -d "$up" ] && [ "$(G "$up" rev-parse --is-inside-work-tree 2>/dev/null)" = true ] || return 0
-  listed=$(G "$up" --icase-pathspecs ls-files -- "$(basename "$d")" 2>/dev/null) || listed=unknown
+  [ -d "$up" ] || return 0
+  if ! inside=$(G "$up" rev-parse --is-inside-work-tree 2>"$TMPD/run-dir.err"); then
+    grep -qi 'not a git repository (or any' "$TMPD/run-dir.err" && return 0
+    die "refusing a run directory that git cannot check: $d (use a new audit_<n>)"
+  fi
+  [ "$inside" = true ] || return 0
+  listed=$(G "$up" --icase-pathspecs ls-files -- "$(basename "$d")" 2>/dev/null) ||
+    die "refusing a run directory that git cannot check: $d (use a new audit_<n>)"
   [ -z "$listed" ] || die "refusing a run directory that git tracks: $d (use a new audit_<n>)"
 }
 AUD_DIR=$(dirname "$OUT")
@@ -432,10 +449,13 @@ if [ -n "$PARENT" ]; then
     fi
   elif ! repo_top "$PARENT"; then
     PARENT_STATUS="not a git repository (or not its top level)"
-  elif partial_clone "$PARENT"; then
-    PARENT_STATUS="the parent is a partial clone, not used (reading it could fetch from its promisor remote)"
   else
-    PDIR="$PARENT"; PARENT_STATUS="local repository"
+    partial_clone "$PARENT"
+    case $? in
+      0) PARENT_STATUS="the parent is a partial clone, not used (reading it could fetch from its promisor remote)" ;;
+      2) PARENT_STATUS="git cannot read the parent's config, not used" ;;
+      *) PDIR="$PARENT"; PARENT_STATUS="local repository" ;;
+    esac
   fi
   if [ -n "$PDIR" ]; then PHEAD=$(G "$PDIR" rev-parse --verify --quiet 'HEAD^{commit}'); fi
 fi
