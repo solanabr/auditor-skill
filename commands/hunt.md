@@ -57,10 +57,17 @@ directory.
    - Resolve seed addresses: the arguments, else `declare_id!` / `Anchor.toml`, plus
      vault / authority / mint / treasury from `audit_<n>/threat-model.md` or
      `audit_<n>/intake.md` §6 if an audit preceded this.
-   - Show the human the addresses, the `--window`, the page/tx caps, and the
+   - Show the human the addresses, the window, the page/tx caps, and the
      estimated call count, and get a yes. In a non-interactive run, collection
      happens only if `--collect` was passed.
-   - Then run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/collect.sh" --out incident_<n>/corpus --confirmed …`
+   - Pass exactly the approved values; collect.sh has no `--window` (it refuses an
+     unknown argument), so never pass one. `--window <fromUnix>..<toUnix>` becomes
+     `--since <fromUnix> --until <toUnix>` (an open end is left out); the page cap
+     is `--max-pages N` (pages of up to 1,000 signatures per address, default 20)
+     and the transaction cap `--max-tx N` (default 2,000). The estimate to show is
+     at most addresses × max-pages `getSignaturesForAddress` calls plus max-tx
+     `getTransaction` calls.
+   - Then run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/collect.sh" --out incident_<n>/corpus --confirmed --since <fromUnix> --until <toUnix> --max-pages N --max-tx N -- <address> …`
      (`$RPC_URL` from the environment, never on the command line; it finalizes and
      passes `maxSupportedTransactionVersion: 1`). This step touches the network, so
      it prompts — approve it once. Disclose the provider **domain** (the service
