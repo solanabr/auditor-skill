@@ -150,21 +150,25 @@ case "$out" in */) out="${out%"${out##*[!/]}"}"; [ -n "$out" ] || out=/ ;; esac
 # refuse_planted <dir>: exit 2 unless <dir> is safe to write into — not a symbolic
 # link, holding none, and not tracked by git. The git calls carry the Rule 11c flags,
 # because the tree is usually the audited one. Outside a work tree nothing is tracked;
-# inside one, a path git cannot classify is refused.
+# inside one, a path git cannot classify is refused, and so is a directory find
+# cannot read: a check that cannot run never counts as a pass.
 refuse_planted() {
-  local listed
+  local listed top
   if [ -L "$1" ]; then
     echo "${0##*/}: refusing $1: it is a symbolic link — use a new run directory." >&2; exit 2
   fi
-  if [ -d "$1" ] && [ -n "$(find "$1" -type l -print -quit 2>/dev/null)" ]; then
-    echo "${0##*/}: refusing $1: it contains a symbolic link — use a new run directory." >&2; exit 2
+  if [ -d "$1" ] && { listed="$(find "$1" -type l -print -quit 2>/dev/null)"; [ $? -ne 0 ] || [ -n "$listed" ]; }; then
+    echo "${0##*/}: refusing $1: it contains a symbolic link, or a directory find cannot read — use a new run directory." >&2; exit 2
   fi
   [ -d "$(dirname "$1")" ] || return 0
-  [ "$(GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -C "$(dirname "$1")" \
-        rev-parse --is-inside-work-tree 2>/dev/null)" = true ] || return 0
+  # A .git at or above the directory means git must answer; with none, nothing is tracked.
+  if ! top="$(cd "$(dirname "$1")" && pwd -P)"; then
+    echo "${0##*/}: refusing $1: its parent directory cannot be resolved." >&2; exit 2
+  fi
+  while [ ! -e "$top/.git" ]; do [ "$top" = / ] && return 0; top="$(dirname "$top")"; done
   if ! listed="$(GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -C "$(dirname "$1")" --icase-pathspecs \
         ls-files -- ":(literal,icase)$(basename "$1")" 2>/dev/null)"; then
-    echo "${0##*/}: refusing $1: git cannot tell whether it is tracked." >&2; exit 2
+    echo "${0##*/}: refusing $1: it is inside a git work tree and git cannot tell whether it is tracked (git missing, or it does not trust this repository)." >&2; exit 2
   fi
   if [ -n "$listed" ]; then
     echo "${0##*/}: refusing $1: git tracks it, so it is not a run directory to write into." >&2; exit 2

@@ -599,6 +599,40 @@ if [[ "$c1" == 0 && "$c2" == 0 && -s "$REPO/incident_5/corpus/transactions.jsonl
 else
   bad "run dir: the untracked control dir -> collect exit $c1, snapshot exit $c2"
 fi
+# A check that cannot run refuses instead of passing. Git refusing the repository
+# (owned by another user, as with a checkout mounted into a container), git missing
+# or failing, and a run directory find cannot read (here hiding a link to the
+# outside) each mean exit 2, nothing written and no RPC call.
+mkdir -p "$TT/gitfail" "$TT/pl-c/incident_9"
+printf '#!/bin/sh\nexit 127\n' > "$TT/gitfail/git"; chmod +x "$TT/gitfail/git"
+ln -s "$X/bin" "$TT/pl-c/incident_9/bin"; chmod 0300 "$TT/pl-c/incident_9"
+state_before="$(tree_state)"
+calls_before="$(grep -c . "$FAKE_CURL_LOG" 2>/dev/null || true)"
+for case in \
+  "git does not trust the repository|GIT_TEST_ASSUME_DIFFERENT_OWNER=1 PATH=$TT/bin:$PATH|$REPO/incident_4|$REPO/incident_4/corpus" \
+  "git does not trust the repository, untracked dir|GIT_TEST_ASSUME_DIFFERENT_OWNER=1 PATH=$TT/bin:$PATH|$REPO/incident_5|$REPO/incident_5/corpus-2" \
+  "git missing or failing|PATH=$TT/gitfail:$TT/bin:$PATH|$REPO/incident_4|$REPO/incident_4/corpus" \
+  "a run dir find cannot read|PATH=$TT/bin:$PATH|$TT/pl-c/incident_9|$TT/pl-c/incident_9/corpus"; do
+  label="${case%%|*}"; rest="${case#*|}"; envs="${rest%%|*}"; rest="${rest#*|}"; snapdir="${rest%%|*}"; outdir="${rest#*|}"
+  ( export RPC_URL="https://rpc.example.test/" ${envs%% PATH=*} PATH="${envs##*PATH=}"
+    bash "$DNR/collect.sh" --out "$outdir" --confirmed --max-pages 1 -- "$A_ADDR" ) > "$TT/rd.out" 2>&1
+  c1=$?
+  ( export RPC_URL="https://rpc.example.test/" ${envs%% PATH=*} PATH="${envs##*PATH=}"
+    bash "$DNR/snapshot-program.sh" "$PID" "$snapdir" ) >> "$TT/rd.out" 2>&1
+  c2=$?
+  if [[ "$c1" == 2 && "$c2" == 2 ]] && [[ "$(grep -c 'refusing' "$TT/rd.out")" == 2 ]]; then
+    ok "run dir: $label -> collect and snapshot refuse (exit 2)"
+  else
+    bad "run dir: $label -> collect exit $c1, snapshot exit $c2 ($(tr '\n' ' ' < "$TT/rd.out"))"
+  fi
+done
+chmod 0700 "$TT/pl-c/incident_9"
+if [[ "$(tree_state)" == "$state_before" && -z "$(ls -A "$X/bin")" ]]; then
+  ok "run dir: unverifiable runs wrote nothing, inside or outside"
+else
+  bad "run dir: an unverifiable run changed the tree"
+fi
+eq "run dir: unverifiable runs made no RPC call" "$(grep -c . "$FAKE_CURL_LOG" 2>/dev/null || true)" "$calls_before"
 
 # ---------------------------------------------------------------------------
 # 16. A second collection into an incident goes to corpus-2/, next to corpus/, and
