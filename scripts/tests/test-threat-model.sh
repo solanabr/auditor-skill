@@ -388,6 +388,24 @@ check "T-j: --parent scp-style host:path is rejected" test "$(rc --repo "$TGT" -
 check "T-j: --parent ssh:// is rejected" test "$(rc --repo "$TGT" --out "$T/x/b" --parent ssh://example.invalid/p.git)" = 2
 check "T-j: --vulns file:// is rejected" test "$(rc --repo "$TGT" --out "$T/x/b" --vulns file:///etc/hosts)" = 2
 check "T-j: a non-repository target exits 3" test "$(rc --repo "$T/home" --out "$T/x/b")" = 3
+check "--help prints the whole header, exit statuses included" \
+  sh -c "bash '$COLLECT' --help | grep -q 'Exit status:' && bash '$COLLECT' --help | grep -q 'does not resolve'"
+# --repo must be the top level of its own repository; a plain directory inside another one is refused.
+mkdir -p "$TGT/not-a-repo"
+check "T-j: a plain directory inside another repository exits 3" \
+  test "$(rc --repo "$TGT/not-a-repo" --out "$T/x/b" --detect)" = 3
+bash "$COLLECT" --repo "$TGT/not-a-repo" --out "$T/x/b" --detect >/dev/null 2>"$T/nested.err"
+check "T-j: ... and says it is not the top level" has "$T/nested.err" "not a git repository (or not its top level)"
+ln -s "$TGT" "$T/tgt-link"
+check "T-j: a symbolic link to a repository's top level is accepted" \
+  test "$(rc --repo "$T/tgt-link" --out "$T/x/b" --detect)" = 0
+git clone -q --bare "$TGT" "$T/tgt-bare.git"
+check "T-j: a bare repository is accepted" test "$(rc --repo "$T/tgt-bare.git" --out "$T/x/b" --detect)" = 0
+rmdir "$TGT/not-a-repo"
+OUTNP="$T/run-nested-parent/audit_1/bootstrap"
+collect --repo "$FORKH" --out "$OUTNP" --offline --parent "$PAR/programs"
+check "T-j: a local --parent inside another repository is not used" \
+  has "$OUTNP/history.md" "NOT FOUND (parent $PAR/programs: not a git repository (or not its top level))"
 # Large input: classify_source used to pipe the argument into grep -q, whose early exit under pipefail
 # could turn "rejected" into "path". A long multi-line scp-style value must still be rejected.
 LONG=$(i=0; while [ $i -lt 3000 ]; do printf 'padding-line-%s\n' "$i"; i=$((i + 1)); done)

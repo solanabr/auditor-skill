@@ -31,7 +31,8 @@
 #
 # Exit status: 0 done (sections may print NOT FOUND), 2 usage error or rejected input (including a
 #              run directory that is or holds a symbolic link, or that git tracks),
-#              3 target is not a git repository or the pin does not resolve.
+#              3 --repo is not the top level of a git repository (or a bare repository), or the pin
+#              does not resolve.
 
 set -uo pipefail
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
@@ -68,7 +69,7 @@ while [ $# -gt 0 ]; do
     --cap)           need "$@"; CAP=$2; shift 2 ;;
     --small)         need "$@"; SMALL=$2; shift 2 ;;
     --fix-ceiling)   need "$@"; FIX_CEILING=$2; shift 2 ;;
-    -h|--help)       sed -n '2,33p' "$0"; exit 0 ;;
+    -h|--help)       sed -n '2,/^$/p' "$0"; exit 0 ;;
     *)               die "unknown argument: $1 (see --help)" ;;
   esac
 done
@@ -135,7 +136,19 @@ G() {
 }
 DIFFSAFE=(--text --no-textconv --no-ext-diff --no-color --src-prefix=a/ --dst-prefix=b/)
 
-G "$REPO" rev-parse --git-dir >/dev/null 2>&1 || { echo "collect.sh: not a git repository: $REPO" >&2; exit 3; }
+# repo_top <dir>: status 0 when <dir> is the top level of its own repository (or a bare repository
+# itself), compared with symbolic links resolved on both sides. A plain directory inside another
+# repository fails, so that outer repository is never mined in its place.
+repo_top() {
+  local top
+  if [ "$(G "$1" rev-parse --is-bare-repository 2>/dev/null)" = true ]; then
+    top=$(G "$1" rev-parse --absolute-git-dir 2>/dev/null) || return 1
+  else
+    top=$(G "$1" rev-parse --show-toplevel 2>/dev/null) || return 1
+  fi
+  [ -n "$top" ] && [ "$(cd "$top" 2>/dev/null && pwd -P)" = "$(cd "$1" 2>/dev/null && pwd -P)" ]
+}
+repo_top "$REPO" || { echo "collect.sh: not a git repository (or not its top level): $REPO" >&2; exit 3; }
 PIN_SHA=$(G "$REPO" rev-parse --verify --quiet "$PIN^{commit}") || { echo "collect.sh: pin does not resolve: $PIN" >&2; exit 3; }
 # --import reaches git only as the full commit id it resolves to, never as the string given.
 if [ -n "$IMPORT" ]; then
@@ -325,10 +338,10 @@ if [ -n "$PARENT" ]; then
     else
       PARENT_STATUS="clone failed"
     fi
-  elif G "$PARENT" rev-parse --git-dir >/dev/null 2>&1; then
+  elif repo_top "$PARENT"; then
     PDIR="$PARENT"; PARENT_STATUS="local repository"
   else
-    PARENT_STATUS="not a git repository"
+    PARENT_STATUS="not a git repository (or not its top level)"
   fi
   if [ -n "$PDIR" ]; then PHEAD=$(G "$PDIR" rev-parse --verify --quiet 'HEAD^{commit}'); fi
 fi
