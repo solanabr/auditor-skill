@@ -440,6 +440,16 @@ commit "$MR" -m "initial"
   done; } >> "$MR/.git/config"
 DM=$(bash "$COLLECT" --repo "$MR" --out "$T/mrrun/audit_1/bootstrap" --detect 2>/dev/null)
 check "2,000 remotes: a source_code matching the first remote does not fire T3" sh -c "printf '%s\n' '$DM' | grep -q '^T3 no none'"
+# A source_code string is compared as written, never expanded against the filesystem: "/*"-style
+# patterns would otherwise stall on deep trees. Here the glob would expand to exactly the configured
+# remote, so an expansion shows up as T3 not firing.
+GL="$T/globsrc"; mkrepo "$GL"; mkdir -p "$T/globdir"; : > "$T/globdir/only-entry"
+put "$GL" programs/g/src/lib.rs "security_txt! { source_code: \"$T/globdir/*\" }"
+commit "$GL" -m "initial"
+git -C "$GL" config remote.origin.url "$T/globdir/only-entry"
+DG=$(bash "$COLLECT" --repo "$GL" --out "$T/globrun/audit_1/bootstrap" --detect 2>/dev/null)
+check "T3: a source_code glob is compared as a string, not expanded" \
+  sh -c "printf '%s\n' '$DG' | grep -q '^T3 yes security_txt-source_code'"
 
 # =================================================================================================
 # T-m: the default in-tree audit-mem store is read only when the target does not track it (Rule 11d).

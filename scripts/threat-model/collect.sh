@@ -246,9 +246,11 @@ eval_triggers() {
   src=$(G "$REPO" grep -h -I -E 'source_code[[:space:]]*:' "$PIN_SHA" -- '*.rs' 2>/dev/null |
         sed -nE 's/.*source_code[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' | head -n 3)
   remotes=$(G "$REPO" config --get-regexp '^remote\..*\.url$' 2>/dev/null | awk '{print $2}' | norm_url)
-  for s in $src; do
+  # One string per line, read as written: target strings are never word-split or glob-expanded.
+  while IFS= read -r s; do
+    [ -n "$s" ] || continue
     grep -qxF -- "$(printf '%s' "$s" | norm_url)" <<< "$remotes" || { t3="${t3:+$t3,}security_txt-source_code"; break; }
-  done
+  done <<< "$src"
   [ -d "$(dirname "$OUT")" ] && cur=$(cd "$(dirname "$OUT")" && pwd)
   for d in "$REPO_ABS"/audit_*/; do
     [ -f "$d/REPORT.md" ] || continue
