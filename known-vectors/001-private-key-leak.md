@@ -45,13 +45,16 @@ GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=
 
 **Step 5: Deep git history search for key content**
 ```
-# Search git history for actual secret values, not just filenames (OUTPUT-RULES Rule 11c flags)
-GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-  log --all -p --no-textconv --no-ext-diff -S "BEGIN RSA PRIVATE" --oneline -- "*.ts" "*.json" "*.pem" | head -40
+# Search git history for actual secret values, not just filenames (OUTPUT-RULES Rule 11c flags). -S also finds
+# files a committed .gitattributes marks -diff or binary, but the patch then shows only "Binary files differ":
+# --text prints their content on the text-pathspec searches
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c core.bigFileThreshold=512m \
+  log --all -p --text --no-textconv --no-ext-diff -S "BEGIN RSA PRIVATE" --oneline -- "*.ts" "*.json" "*.pem" | head -40
+# whole repository, so no --text: a file marked binary shows no content here; re-run with --text limited to text pathspecs
 GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
   log --all -p --no-textconv --no-ext-diff -S "BEGIN EC PRIVATE" --oneline | head -20
-GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-  log --all -p --no-textconv --no-ext-diff -S "mnemonic" --oneline -- "*.ts" "*.json" "*.env" | head -20
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c core.bigFileThreshold=512m \
+  log --all -p --text --no-textconv --no-ext-diff -S "mnemonic" --oneline -- "*.ts" "*.json" "*.env" | head -20
 ```
 - ✅ PASS: Zero matches across all three
 - ❌ FAIL: Any match → key was in history. MUST rotate immediately, even if commit was reverted

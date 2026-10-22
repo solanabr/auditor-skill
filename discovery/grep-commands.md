@@ -249,7 +249,8 @@ find . -name "*keypair*" -not -path "./node_modules/*" -not -path "./.git/*"
 ### Git history secrets
 ```bash
 # Terminal (OUTPUT-RULES Rule 11c flags; a pickaxe search runs the repo's textconv drivers unless
-# --no-textconv is given):
+# --no-textconv is given). -S also matches files a committed .gitattributes marks -diff or binary;
+# -G and patch output (-p) skip their content unless --text is given:
 GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
   log --all --no-textconv --no-ext-diff -S "private" --oneline | head -20
 GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \

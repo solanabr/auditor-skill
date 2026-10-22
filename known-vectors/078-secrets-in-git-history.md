@@ -47,7 +47,9 @@ GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=
 
 **Step 5: Search actual git history content for leaked secrets**
 ```
-# Search for private key patterns in ALL historical content (OUTPUT-RULES Rule 11c flags):
+# Search for private key patterns in ALL historical content (OUTPUT-RULES Rule 11c flags). A file a committed
+# .gitattributes marks -diff or binary still matches -S, but its patch shows no content; re-run with --text
+# limited to text pathspecs:
 GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
   log --all -p --no-textconv --no-ext-diff -S "BEGIN RSA" --diff-filter=ACMR -- . 2>/dev/null | head -20
 GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
@@ -62,8 +64,9 @@ GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=
 
 **Step 6: Search git history for Solana keypair arrays**
 ```
-GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-  log --all -p --no-textconv --no-ext-diff --diff-filter=ACMR -- '*.json' '*.ts' '*.js' 2>/dev/null \
+# --text: a committed .gitattributes can mark these files -diff or binary, which hides the arrays from the patch
+GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c core.bigFileThreshold=512m \
+  log --all -p --text --no-textconv --no-ext-diff --diff-filter=ACMR -- '*.json' '*.ts' '*.js' 2>/dev/null \
   | grep -E "\[([0-9]{1,3},){20,}" | head -10
 ```
 - ✅ PASS: No keypair-like arrays in history
