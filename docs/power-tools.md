@@ -169,7 +169,7 @@ For economic / oracle / MEV findings, a yes/no isn't proof — Rule 5b wants a d
 /auditor:poc F-003 --fork     # build the executable Surfpool PoC → [PoC-SIM-REPRODUCED]
 ```
 
-Enabled by the `surfpool` CLI + its MCP (keyless). The fork fetches mainnet state from its RPC datasource, which receives the program ids and account addresses the simulation reads, so the report names that provider ([Rule 11b](../OUTPUT-RULES.md#11b--outside-service-disclosure)). Absent → fall back to Mollusk/LiteSVM if the logic is modelable, else `[PoC-ATTEMPTED]` with the blocker named ("surfpool CLI + MCP unreachable / fork state unavailable"). See [poc-and-patches.md](poc-and-patches.md#framework-selection).
+Enabled by the `surfpool` CLI + its MCP (keyless). The fork fetches mainnet state from its RPC datasource, which receives the program ids and account addresses the simulation reads, so the report names that provider's domain ([Rule 11b](../OUTPUT-RULES.md#11b--outside-service-disclosure)). Absent → fall back to Mollusk/LiteSVM if the logic is modelable, else `[PoC-ATTEMPTED]` with the blocker named ("surfpool CLI + MCP unreachable / fork state unavailable"). See [poc-and-patches.md](poc-and-patches.md#framework-selection).
 
 ---
 
@@ -262,7 +262,7 @@ python3 -I "<auditor-skill root>/scripts/dnr/deltas.py" lamports|tokens [<corpus
 Balance movements of successful transactions, computed in Python integers so that amounts above 2^53 stay exact. `lamports` prints `signature`, `account`, `delta` for each non-zero lamport change, with the fee added back for the fee payer. `tokens` prints `signature`, `owner`, `mint`, `delta` in raw units, net across every token account the owner holds of that mint. The output is TSV on stdout; tabs, newlines, carriage returns and backslashes inside a field are escaped.
 
 - **Arguments:** the mode, then corpus files or none.
-- **Exit:** 0 done · 2 a missing or unknown mode · 1 a file that cannot be read.
+- **Exit:** 0 done · 2 a missing or unknown mode · 1 a file that cannot be read, checked before any row is printed.
 - **Network:** none. **Writes:** stdout only.
 
 #### `redact.sh`

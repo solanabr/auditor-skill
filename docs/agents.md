@@ -67,7 +67,7 @@ The fan-out is **domain-partitioned, not N identical clones** — naive N-way fa
 ### economic-analyst
 **Role:** value-flow safety and economic-attack quantification — owns checklist 06 (incl. §6.10 staking/reward accounting) + the economic known-vectors (first-depositor, donation, MEV, oracle, rounding).
 **Produces:** economic findings with the **quantified Attacker-Model** block filled — attack cost vs extractable value, flash-loanable ceilings, atomicity.
-**Tooling:** drives `/auditor:economic-sim` (Surfpool mainnet-fork) to reproduce deposit→manipulate→withdraw against forked state for a real net P/L — the PoC Rule 5b requires for High/Critical economic findings. The fork's RPC datasource receives the addresses it reads, so the report names that provider ([Rule 11b](../OUTPUT-RULES.md#11b--outside-service-disclosure)). Runs the **design pass** (economic architecture, incentives) alongside `context-builder` before the line-by-line walk.
+**Tooling:** drives `/auditor:economic-sim` (Surfpool mainnet-fork) to reproduce deposit→manipulate→withdraw against forked state for a real net P/L — the PoC Rule 5b requires for High/Critical economic findings. The fork's RPC datasource receives the addresses it reads, so the report names that provider's domain ([Rule 11b](../OUTPUT-RULES.md#11b--outside-service-disclosure)). Runs the **design pass** (economic architecture, incentives) alongside `context-builder` before the line-by-line walk.
 
 ### peer-reviewer
 **Role:** the independent second pass (Neodyme dual-review, bounded to control cost). Keeps the primary reviewers honest on the findings that gate a deploy.
