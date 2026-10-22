@@ -107,7 +107,8 @@ ncopy=0
 while read -r id file step; do
   ncopy=$((ncopy + 1))
   line=$(recipe "$id")
-  if [ -n "$line" ] && kv_step "$file" "$step" | grep -qxF -- "$line"; then
+  steps=$(kv_step "$file" "$step")
+  if [ -n "$line" ] && grep -qxF -- "$line" <<< "$steps"; then
     echo "ok   copy of $id in $file step $step"
   else
     echo "FAIL copy of $id in $file step $step differs from discovery/grep-commands.md"

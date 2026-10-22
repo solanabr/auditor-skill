@@ -3,7 +3,10 @@
 #   1. scripts/check-attribution.sh flags a trailer in a commit message of 1 MiB as well as a short one,
 #      and fails on a range git cannot read or one that holds no commits;
 #   2. scripts/check-frontmatter.sh passes every real command, agent and SKILL.md and the shapes they use,
-#      and fails each case below where Claude Code would read a field differently from what is written.
+#      and fails each case below where Claude Code would read a field differently from what is written;
+#   3. scripts/check-pipefail.sh flags each pipe into a reader that can stop early in a script under
+#      pipefail, and leaves quoted text, here-documents, waived lines and scripts without pipefail alone.
+#      It runs over the scripts this suite's own checks live in; CI runs it over every tracked script.
 # Usage (from the repo root): bash scripts/tests/test-ci-checks.sh   (VERBOSE=1 shows each check's output)
 # Builds throwaway files and git repos under ${TMPDIR:-/tmp}; no network; bash >= 3.2.
 set -uo pipefail
@@ -129,6 +132,68 @@ awk 'BEGIN { for (i = 0; i < 17000; i++) printf "body line %05d xxxxxxxxxxxxxxxx
   >> "$T/fm/agents/long-description.md"
 fmrun agents/long-description.md pass
 fm agents/long-dashes.md fail "$N" "description: ${long}then --- end." "$TL" "$M"
+
+# ---- 3. check-pipefail.sh --------------------------------------------------------------------------
+lint() { # lint WANT NAME LINE...  — a script setting pipefail, then the LINEs; the check must WANT (flag|pass)
+  local want=$1 f="$T/lint/$2.sh" got=pass; shift 2
+  mkdir -p "$T/lint"; { echo '#!/usr/bin/env bash'; echo 'set -euo pipefail'; printf '%s\n' "$@"; } > "$f"
+  out=$(bash "$ROOT/scripts/check-pipefail.sh" "$f" 2>&1) || got=flag
+  if [ "$got" = "$want" ]; then pass=$((pass + 1)); echo "PASS pipefail $want: $*"; if [ -n "${VERBOSE:-}" ]; then echo "$out"; fi
+  else failn=$((failn + 1)); echo "FAIL pipefail $*: got $got, want $want"; echo "$out"; fi
+}
+lint flag if-grep-q 'if git log -1 --format=%B "$sha" | grep -qiE "$pattern"; then :; fi'
+lint flag head-in-subst 'x=$(sed -n "s/a/b/p" f | head -1 | tr -d x)'
+lint flag grep-l 'cmd | grep -l x'
+lint flag grep-L 'cmd | grep -L x'
+lint flag grep-m1 'cmd | grep -m1 x'
+lint flag grep-m-1 'cmd | grep -m 1 x'
+lint flag grep-quiet 'cmd | grep --quiet x'
+lint flag grep-devnull "if cmd | grep -E '\"(hooks|mcpServers)\"' >/dev/null; then :; fi"
+lint flag sed-q 'cmd | sed 1q'
+lint flag sed-block-q "cmd | sed -n '/x/{p;q;}'"
+lint flag awk-exit "cmd | awk '{ print; exit }'"
+lint flag read-one 'cmd | read -r first'
+lint flag continued 'cmd --flag \' '  | grep -q x'
+lint flag trailing-pipe 'cmd |' '  head -n 1'
+lint flag pipe-amp 'cmd |& grep -q x'
+lint flag env-prefix 'cmd | LC_ALL=C grep -q x'
+lint flag full-path 'cmd | /usr/bin/head -1'
+lint flag in-function 'f() { cmd | grep -q x; }'
+lint flag subshell 'x=$(cmd | (read -r a; echo "$a"))'
+lint flag option-after-e 'cmd | grep -e pat -q'
+lint flag after-or 'a || b | head -1'
+lint pass grep-c 'n=$(cmd | grep -c x)'
+lint pass grep-v 'cmd | grep -v x | sort -u'
+lint pass sed-range "cmd | sed -n '1,3p'"
+lint pass sed-q-in-regex "cmd | sed 's/quote/q/'"
+lint pass sh-c 'sh -c "cmd | grep -q x"'
+lint pass bash-c "bash -c 'cmd | head -1'"
+lint pass waived 'cmd | grep -q x   # pipefail-ok: one line of input'
+lint pass heredoc "cat <<'EOF'" 'cmd | head -1' 'EOF' 'echo done'
+lint pass noclobber 'cmd 2>|"$err"'
+lint pass or-list 'cmd || grep -q x file'
+lint pass file-reader 'grep -q x file && head -1 file'
+lint pass while-read 'cmd | while read -r l; do :; done'
+lint pass comment '# cmd | head -1'
+lint pass in-quotes 'echo "a | head -1"'
+lint pass stderr-null "cmd | grep -E 'x' 2>/dev/null"
+lint pass case-arm 'case "$x" in grep|head) ;; esac'
+lint pass arithmetic 'x=$((a | b))'
+lint pass e-takes-q 'cmd | grep -e -q file'
+printf '#!/usr/bin/env bash\nset -u\ncmd | head -1\n' > "$T/lint/no-pipefail.sh"
+expect "pipefail: a script without pipefail is left alone" 0 bash "$ROOT/scripts/check-pipefail.sh" "$T/lint/no-pipefail.sh"
+# large input: 20,000 lines with one pipe into head at the end, reported at its own line
+{ echo '#!/usr/bin/env bash'; echo 'set -uo pipefail'
+  awk 'BEGIN { for (i = 0; i < 20000; i++) printf "echo \"line %05d xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\" | grep -c x\n", i }'
+  echo 'v=$(cmd | head -1)'; } > "$T/lint/large.sh"
+out=$(bash "$ROOT/scripts/check-pipefail.sh" "$T/lint/large.sh" 2>&1)
+case "$out" in *"large.sh:20003: a pipe into head"*) pass=$((pass + 1)); echo "PASS pipefail: a 1 MiB script is read to its last line";;
+  *) failn=$((failn + 1)); echo "FAIL pipefail: the pipe on the last line of a 1 MiB script was not reported at line 20003"; echo "$out";; esac
+expect "pipefail: the CI check scripts and their suites are clean" 0 bash "$ROOT/scripts/check-pipefail.sh" \
+  "$ROOT/scripts/check-attribution.sh" "$ROOT/scripts/check-corpus.sh" "$ROOT/scripts/check-frontmatter.sh" \
+  "$ROOT/scripts/check-hygiene.sh" "$ROOT/scripts/check-pipefail.sh" "$ROOT/scripts/tob-delta-review.sh" \
+  "$ROOT/scripts/tests/test-bundled-paths.sh" "$ROOT/scripts/tests/test-ci-checks.sh" \
+  "$ROOT/scripts/tests/test-corpus-pins.sh" "$ROOT/scripts/tests/test-gha-recipes.sh"
 
 echo "---- $pass passed, $failn failed"
 [ "$failn" -eq 0 ]

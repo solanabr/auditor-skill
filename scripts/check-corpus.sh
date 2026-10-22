@@ -89,13 +89,13 @@ done
 for f in known-vectors/[0-9][0-9][0-9]-*.md; do
   b=$(basename "$f"); id=${b:0:3}
   grep -qF "($b)" known-vectors/INDEX.md || err "known-vectors/INDEX.md has no link to $b"
-  fid=$(sed -nE 's/^id: *([0-9]+).*/\1/p' "$f" | head -1 | tr -d '\r')
+  fid=$(sed -nE 's/^id: *([0-9]+).*/\1/p' "$f" | sed -n 1p | tr -d '\r')
   [[ -n "$fid" && $((10#$fid)) -eq $((10#$id)) ]] || err "$b: frontmatter id '${fid:-missing}' does not match filename"
 done
 ok "every vector file is indexed and its frontmatter id matches"
 
 # ---- 4. version agreement ------------------------------------------------------------------------
-v=$(sed -nE 's/^> \*\*Version:\*\* *([0-9]+\.[0-9]+).*/\1/p' SKILL.md | tr -d '\r' | head -1)
+v=$(sed -nE 's/^> \*\*Version:\*\* *([0-9]+\.[0-9]+).*/\1/p' SKILL.md | tr -d '\r' | sed -n 1p)
 if [[ -z "$v" ]]; then err "SKILL.md: could not read the Version line"; else
   ok "SKILL.md version $v"
   expect .claude-plugin/plugin.json "\"version\": \"$v."
@@ -143,12 +143,12 @@ if [[ -n "$top" && "$top" == "$(pwd -P)" ]]; then
     for r in $refs; do
       [[ "$sha" == "$r"* ]] || err "README.md links $url at $r, which is not the pinned commit ${sha:0:7}"
     done
-    line=$(grep -E "$base_re$sha([^/]|$)" README.md | head -1 | sed -E 's#https?://[^ )>]*##g')
+    line=$(grep -E "$base_re$sha([^/]|$)" README.md | sed -n 1p | sed -E 's#https?://[^ )>]*##g')
     # each run of letters and digits on its own line, so SHAs one character apart are all read
     for s in $(printf '%s\n' "$line" | tr -c '0-9A-Za-z' '\n' | grep -ixE '[0-9a-f]{7,40}' | tr 'A-F' 'a-f'); do
       [[ "$s" == "${sha:0:7}" || "$s" == "$sha" ]] || err "README.md pin line shows '$s', but $path is pinned at ${sha:0:7}"
     done
-    d=$(printf '%s\n' "$line" | grep -oE '20[0-9]{2}-[0-9]{2}-[0-9]{2}' | head -1)
+    d=$(printf '%s\n' "$line" | grep -oE '20[0-9]{2}-[0-9]{2}-[0-9]{2}' | sed -n 1p)
     if [[ -n "$d" && -e "$path/.git" ]] && git -C "$path" cat-file -e "$sha^{commit}" 2>/dev/null; then
       cdate=$(git -C "$path" -c log.showSignature=false log -1 --format=%cs "$sha")
       [[ "$d" == "$cdate" ]] || err "README.md pin line says $d, but $path@${sha:0:7} is dated $cdate"
