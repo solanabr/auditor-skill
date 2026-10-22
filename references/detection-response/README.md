@@ -233,6 +233,14 @@ turn up no new entity; the ledger becomes the appendix of the incident report.
         └─ /auditor:patch INC-<n>.<k>   →  proposed fix, re-detonated against the deployed bytes
 ```
 
+Inside each run, the command keeps the human in the loop (arguments, the run
+directory, the program snapshot, the collection approval and the collector, the
+execution-mode question, `context-builder` and `poc-engineer`), and the
+`incident-responder` agent does all reading and analysis of the corpus: the
+ledger, the profile, the sweeps, the verdict, `INCIDENTS.json`, the report and the
+plan. The command passes the agent its parameters explicitly and never opens a
+corpus file itself.
+
 A confirmed incident's `vuln` entry is a Rule 5b finding (blocks filled with the
 *observed* values), so `/auditor:threat-model --bootstrap` and a later audit can
 read past incidents as prior vulnerabilities from `INCIDENTS.json`
@@ -248,13 +256,19 @@ every `scripts/dnr` run prompts — a pattern relative to the working directory 
 pre-approve whatever same-named file the audited repo ships (rule 8) — and so do
 `jq`, which is not text-only (`jq -n env` or `$ENV` prints every environment
 variable, `$RPC_URL` included), and everything that touches the chain or executes
-code: `solana`, `curl`,
-`cargo`, `surfpool`, a bare `python3`, `sqlite3`, `awk`. The agent's `tools:` list (no MCP
-tools, no sub-agent spawning) keeps connected write-capable integrations out of
-reach, but its `Bash` can still run the `solana` CLI, which signs with the local
-default keypair, so the track never runs a subcommand that signs or sends, and only
-Rule 11a isolated mode with no keypair mounted confines it. The command also asks
-the human before it collects a corpus.
+code: `solana`, `curl`, `cargo`, `surfpool`, a bare `python3`, `sqlite3`, `awk`.
+
+**MCP servers.** `/auditor:hunt` and `/auditor:respond` hand all reading and
+analysis of the incident corpus to the `incident-responder` agent, whose tool list
+has no MCP tools, so it cannot call a signing or transfer tool. The commands
+themselves run in your session, where every connected MCP server stays callable.
+They call no MCP tool. Before a live incident, disconnect or deny write-capable
+MCP servers (for example, tools that transfer or stake). The agent's `Bash` can
+still run the `solana` CLI, which signs with the local default keypair, so the
+track never runs a subcommand that signs or sends and reads only through the
+keyless config; only Rule 11a isolated mode with no keypair mounted confines it.
+The command also asks the human before it collects a corpus, and runs the
+collector itself, with exactly the approved values.
 
 ---
 

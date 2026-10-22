@@ -6,7 +6,9 @@ Everything else in auditor-skill is pre-deployment — find the flaw before an
 attacker does. This track is for the morning after: a protocol may already have
 been attacked, and the evidence is in the chain's transaction history. It ships
 two commands, `/auditor:hunt` and `/auditor:respond`, and one agent,
-`incident-responder`. Back to the [docs index](README.md).
+`incident-responder`: the commands keep you in the loop (arguments, approvals, the
+collector, results), and the agent does all reading and analysis of the corpus.
+Back to the [docs index](README.md).
 
 The normative contract — the hard rules, the verdict ladder, the `incident_<n>/`
 layout — is [`references/detection-response/README.md`](../references/detection-response/README.md).
@@ -86,6 +88,13 @@ already captured.
   ([containment playbook](../references/detection-response/containment-playbook.md)).
 - **Local reproduction only.** PoCs run against `127.0.0.1`; the track never sends
   to or simulates against a public cluster.
+- **MCP servers stay callable in your session.** `/auditor:hunt` and
+  `/auditor:respond` hand all reading and analysis of the incident corpus to the
+  `incident-responder` agent, whose tool list has no MCP tools, so it cannot call
+  a signing or transfer tool. The commands themselves run in your session, where
+  every connected MCP server stays callable. They call no MCP tool. Before a live
+  incident, disconnect or deny write-capable MCP servers (for example, tools that
+  transfer or stake).
 - **Not a sandbox.** The commands' `allowed-tools` pre-approve only reading, `Task`
   and edits under `incident_*/`; they are intent, not confinement. No bundled script
   is pre-approved, and neither is `jq` (it can print the environment), so each
