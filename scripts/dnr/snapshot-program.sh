@@ -46,11 +46,11 @@
 # <incident_dir> contains the URL.
 #
 # Exit: 0 ok · 2 usage / not a base58 id / no or unusable $RPC_URL / a refused run
-# directory · 3 named blocker (no solana CLI, config not taken, CLI error, loader-v4,
-# dump without ELF magic).
-# bash >= 3.2, python3 for the hash, run as `python3 -I` because the working
-# directory is usually the audited repo: without -I, a hashlib.py there would be
-# imported in place of the stdlib.
+# directory · 3 named blocker (no solana CLI or python3, config not taken, CLI error,
+# loader-v4, dump without ELF magic, hash not computed).
+# bash >= 3.2, python3 for the hash, checked before the CLI runs, and run as
+# `python3 -I` because the working directory is usually the audited repo: without
+# -I, a hashlib.py there would be imported in place of the stdlib.
 
 set -uo pipefail
 
@@ -117,6 +117,10 @@ if ! command -v solana >/dev/null 2>&1; then
   echo "[blocker] solana CLI not on PATH — install it, or dump the program another way and record its zero-trimmed sha256 and last-deployed slot in LEDGER.md by hand." >&2
   exit 3
 fi
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "[blocker] python3 not on PATH — it hashes the dump; install it, or snapshot $pid by hand and record its zero-trimmed sha256 and last-deployed slot in LEDGER.md." >&2
+  exit 3
+fi
 
 # mktemp -d creates the directory with mode 0700.
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/dnr_snap.XXXXXX")" || {
@@ -176,5 +180,10 @@ stats="$(python3 -I -c 'import hashlib, sys
 raw = open(sys.argv[1], "rb").read()
 trimmed = raw.rstrip(b"\0")
 print(hashlib.sha256(trimmed).hexdigest(), len(trimmed), len(raw) - len(trimmed))' "$so")"
+re='^[0-9a-f]{64} [0-9]+ [0-9]+$'
+if ! [[ "$stats" =~ $re ]]; then
+  echo "[blocker] python3 -I did not hash bin/$pid.so; hash it by hand (trailing zero bytes trimmed, then sha256)." >&2
+  exit 3
+fi
 set -- $stats
 echo "program=$pid owner=${owner:-unknown} last_deployed_slot=${slot:-unknown} authority=${auth:-none} sha256_zero_trimmed=$1 elf_bytes=$2 padding_bytes=$3 file=bin/$pid.so"

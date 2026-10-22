@@ -354,6 +354,117 @@ case "$(trunc_row "$TT/pg-since-cap")" in
   *) bad "paging: full page still after --since -> row '$(trunc_row "$TT/pg-since-cap")'" ;;
 esac
 
+# ---------------------------------------------------------------------------
+# A solana CLI stand-in that answers like solana-cli 3.1.10 (Agave) did against a
+# loopback RPC serving each kind of account: the same output lines and error text.
+#   * a config without websocket_url is ignored (defaults: mainnet-beta, id.json);
+#   * `program show` and `program-v4 show` resolve a default signer unless
+#     --buffer-authority / --authority is given;
+#   * `program show` / `program dump` reject a loader-v4 or non-program account
+#     ("is not an SBF program"); `program-v4 show` / `download` reject anything
+#     not owned by loader-v4 ("is not owned by loader-v4");
+#   * an immutable loader (BPFLoader2, BPFLoader) shows no authority and no slot.
+# FAKE_SOL_LOADER is v3 (upgradeable, default), v2, v1, v4 or none. FAKE_SOL_SLOTS
+# is a comma list of last-deployed slots: each read of the program (show, dump,
+# download) takes the next one and the last one repeats, so a deploy can land
+# between two reads. The dumped ELF carries its slot, so each deploy hashes apart.
+# Every call is appended to $FAKE_SOL_ARGV.
+# ---------------------------------------------------------------------------
+mkdir -p "$TT/sol"
+printf '#!/bin/sh\nexec "%s" -I "$0.py" "$@"\n' "$PY" > "$TT/sol/solana"
+cat > "$TT/sol/solana.py" <<'PY'
+import json, os, re, sys
+a = sys.argv[1:]
+with open(os.environ["FAKE_SOL_ARGV"], "a") as log:
+    log.write(json.dumps(a) + "\n")
+cfg = {}
+if "-C" in a:
+    i = a.index("-C")
+    for line in open(a[i + 1]):
+        m = re.match(r'(\w+): "(.*)"$', line.rstrip("\n"))
+        if m:
+            cfg[m.group(1)] = m.group(2)
+    del a[i:i + 2]
+if "websocket_url" not in cfg:
+    cfg = {"json_rpc_url": "https://api.mainnet-beta.solana.com", "keypair_path": "/home/fake/.config/solana/id.json"}
+kp = cfg["keypair_path"]
+if a[:3] == ["config", "get", "keypair"]:
+    print(f"Key Path: {kp}"); sys.exit(0)
+def fail(msg):
+    sys.stderr.write(f"Error: {msg}\n"); sys.exit(1)
+def opt(name):
+    return a[a.index(name) + 1] if name in a else None
+OWNERS = {"v3": "BPFLoaderUpgradeab1e11111111111111111111111", "v2": "BPFLoader2111111111111111111111111111111111",
+          "v1": "BPFLoader1111111111111111111111111111111111", "v4": "LoaderV411111111111111111111111111111111111",
+          "none": "11111111111111111111111111111111"}
+loader = os.environ.get("FAKE_SOL_LOADER", "v3")
+AUTH = "p2Yicb86aZig616Eav2VWG9vuXR5mEqhtzshZYBxzsV"
+def read_slot():
+    if loader in ("v1", "v2"):
+        return 0
+    slots = os.environ.get("FAKE_SOL_SLOTS", "12345").split(",")
+    path = os.environ["FAKE_SOL_READS"]
+    n = int(open(path).read()) if os.path.exists(path) else 0
+    open(path, "w").write(str(n + 1))
+    return int(slots[min(n, len(slots) - 1)])
+def elf(slot):
+    return b"\x7fELF" + slot.to_bytes(8, "little") + bytes(range(1, 40)) + b"\0" * 300
+def length(data):
+    return f"{len(data)} ({len(data):#x}) bytes"
+def no_signer():
+    fail(f'Dynamic program error: No default signer found, run "solana-keygen new -o {kp}" to create a new one')
+cmd = a[:2]
+if cmd == ["program", "show"] or cmd == ["program-v4", "show"]:
+    if opt("--buffer-authority" if cmd[0] == "program" else "--authority") is None and not os.path.exists(kp):
+        no_signer()
+pid = a[2] if cmd[0] == "program" else opt("--program-id")
+if cmd in (["program", "show"], ["program", "dump"]) and loader in ("v4", "none"):
+    fail(f"{pid} is not an SBF program")
+if cmd[0] == "program-v4" and loader != "v4":
+    fail(f"{pid} is not owned by loader-v4")
+if cmd == ["program", "show"] and loader == "v3":
+    slot = read_slot()
+    print(f"\nProgram Id: {pid}\nOwner: {OWNERS[loader]}\nProgramData Address: YMN9Qj5jPNp7j14VPcML1B6xGgcPWVZUGLFU3Mnyfaf\n"
+          f"Authority: {AUTH}\nLast Deployed In Slot: {slot}\nData Length: {length(elf(slot))}\nBalance: 0.00114144 SOL\n")
+elif cmd == ["program", "show"]:
+    print(f"\nProgram Id: {pid}\nOwner: {OWNERS[loader]}\nData Length: {length(elf(0))}\n")
+elif cmd == ["program-v4", "show"]:
+    slot = read_slot()
+    print(f"\nProgram Id: {pid}\nOwner: {OWNERS[loader]}\nAuthority: {AUTH}\nLast Deployed In Slot: {slot}\n"
+          f"Status: deployed\nData Length: {length(elf(slot))}\n")
+elif cmd in (["program", "dump"], ["program-v4", "download"]):
+    path = a[3] if cmd[0] == "program" else [x for x in a[2:] if not x.startswith("--") and x != pid][-1]
+    open(path, "wb").write(elf(read_slot()))
+    print(f"Wrote program to {path}")
+else:
+    sys.stderr.write("fake solana: refusing an unexpected subcommand\n"); sys.exit(9)
+PY
+chmod +x "$TT/sol/solana"
+export FAKE_SOL_ARGV="$TT/sol.argv" FAKE_SOL_READS="$TT/sol.reads"
+PID="ProgTest11111111111111111111111111111111111"   # base58, 32 bytes
+# snap <dir> [var=value ...]: run snapshot-program.sh on a fresh read counter,
+# output in <dir>.out; extra variables go to the stand-in.
+snap() {
+  local dir="$1"; shift
+  rm -f "$FAKE_SOL_READS"
+  ( export "$@" PATH="$TT/sol:$TT/bin:$PATH"; bash "$DNR/snapshot-program.sh" "$PID" "$dir" ) > "$dir.out" 2>&1
+}
+cli_calls() { if [[ -f "$FAKE_SOL_ARGV" ]]; then grep -c . "$FAKE_SOL_ARGV"; else echo 0; fi; }
+
+# ---------------------------------------------------------------------------
+# 6. snapshot-program.sh needs python3 for the hash: with none on PATH it stops
+#    with a named blocker (exit 3) before the CLI runs, and writes nothing.
+# ---------------------------------------------------------------------------
+before="$(cli_calls)"
+( PATH="$TT/sol:$TT/nopy" bash "$DNR/snapshot-program.sh" "$PID" "$TT/nopy-inc" ) > "$TT/nopy-inc.out" 2>&1
+code=$?
+if [[ "$code" == 3 && ! -e "$TT/nopy-inc" ]] && grep -q '^\[blocker\] python3 not on PATH' "$TT/nopy-inc.out"; then
+  ok "snapshot: no python3 -> named blocker (exit 3), nothing written"
+else
+  bad "snapshot: no python3 -> exit $code ($(tr '\n' ' ' < "$TT/nopy-inc.out"))"
+fi
+eq "snapshot: no CLI call before the python3 check" "$(cli_calls)" "$before"
+
 if [[ "$fails" -ne 0 ]]; then
   echo "test-dnr-collect: $fails assertion(s) FAILED" >&2
   exit 1
