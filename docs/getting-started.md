@@ -50,7 +50,7 @@ If `cargo` is absent, skip both — the audit proceeds on the grep walk. Full de
 
 > auditor-skill was originally built for one Solana/Anchor DeFi project and then generalized. Two things must be set before a serious run:
 
-1. **`discovery/file-map.md`** — update it with your actual folder structure, file names, and state-variable names. It maps each checklist to the globs it scans; the defaults assume `programs/{name}/src/`, `apps/backend/src/`, `apps/web/src/`. Wrong globs mean the walk looks in the wrong place.
+1. **Your layout** — `discovery/file-map.md` maps each checklist to the globs it scans, and its defaults assume `programs/{name}/src/`, `apps/backend/src/`, `apps/web/src/`. If your code lives elsewhere, record it at intake (next item): the in-scope paths under `QUESTIONS.md` Q39 ("Specific files/modules") and the exclusions under Q44 go into `audit_<n>/intake.md` §1. Do not edit the file-map in a shared or plugin install: an update overwrites it, and the edit is lost. Wrong paths mean the walk looks in the wrong place.
 2. **Intake** — the questionnaire drives scope, severity calibration, and which compliance checklists apply. Either:
    - fill a copy of [`QUESTIONS.md`](../QUESTIONS.md) (46 questions) by hand, or
    - run `/auditor:intake` (alias `/scope`) to walk the questions interactively and persist the answers to `audit_<n>/intake.md` — the durable artifact both `/auditor:audit-cycle` and `/auditor:audit-assist` read. Use `/auditor:intake --auto` for no-human pipelines (it records the applied default for every unanswered question).

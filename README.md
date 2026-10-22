@@ -17,7 +17,7 @@ auditor-skill is a **skill file** (a structured prompt + checklists) that turns 
 
 **It is not a SaaS product.** It's a folder of markdown files you install for your AI agent — outside any repository you audit — or send to an LLM API.
 
-> **Adaptation required before use.** This skill was originally developed for a specific Solana/Anchor DeFi project and then generalized. Before running it on your project you must update `discovery/file-map.md` with your actual folder structure, file names, and state variable names. The questionnaire in `QUESTIONS.md` is a blank template — fill it out (or run `/auditor:intake`) for your project before invoking the auditor. Everything else (checklists, known vectors, output rules) is fully portable as-is.
+> **Adaptation required before use.** This skill was originally developed for a specific Solana/Anchor DeFi project and then generalized. `discovery/file-map.md` assumes that project's layout (`programs/{name}/src/`, `apps/backend/src/`, `apps/web/src/`). If yours differs, record where your code lives at intake instead: the in-scope paths under `QUESTIONS.md` Q39 ("Specific files/modules") and the exclusions under Q44, which `/auditor:intake` writes to `audit_<n>/intake.md` §1. An edited `discovery/file-map.md` in a shared or plugin install is lost on the next update. The questionnaire in `QUESTIONS.md` is a blank template — fill it out (or run `/auditor:intake`) for your project before invoking the auditor. Everything else (checklists, known vectors, output rules) is fully portable as-is.
 
 ---
 
@@ -75,6 +75,8 @@ auditor-skill is a **skill file** (a structured prompt + checklists) that turns 
 
 Install auditor-skill **outside any repository you audit**: the plugin (Option 1), or a user-level skill such as `install.sh ~/.claude/skills/auditor-skill`. A copy inside the audited repository resolves its scripts, tools and corpus from a tree that repository controls, and that repository's own `.claude/`, `.mcp.json` and `CLAUDE.md` are target-controlled too ([OUTPUT-RULES.md Rule 11e](OUTPUT-RULES.md#11e--bundled-paths)).
 
+**Upgrading from 7.5 or earlier.** If your copy sits inside a repository (the `install.sh` default, `.claude/skills/auditor-skill`), move it out with `mv .claude/skills/auditor-skill ~/.claude/skills/auditor-skill`, update it there with Option 2 (on an existing copy, `install.sh` pulls and fetches the new Trail of Bits pin), and rebuild the Rust tools if you use them. Or remove it and switch to the plugin (Option 1). Plugin users get 7.6.0, with the new pin, when they update the plugin.
+
 ### Option 1: Claude Code plugin marketplace (recommended)
 
 ```
@@ -86,7 +88,7 @@ Registers the marketplace and installs the `auditor` plugin — all 17 `/auditor
 
 ### Option 2: Install script
 
-Installs the skill and inits the tooling. Pass a path outside the repositories you audit; with no argument it installs into the current directory's `.claude/skills/auditor-skill`, so never run it bare inside a repository you are about to audit:
+Installs the skill and inits the tooling. Pass a path outside the repositories you audit; with no argument it installs into the current directory's `.claude/skills/auditor-skill`, so never run it bare inside a repository you are about to audit. It warns on stderr when the install directory is inside a git work tree:
 
 ```bash
 # read it first (it's a security tool, after all):

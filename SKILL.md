@@ -250,8 +250,8 @@ Full verdict-format rules (what each token must cite): see [OUTPUT-RULES.md](OUT
 
 This entire `auditor-skill/` folder is self-contained and portable:
 
-1. Copy the full `auditor-skill/` directory into the target repository
-2. Update `discovery/file-map.md` with the target's folder structure
+1. Install the full `auditor-skill/` directory outside the target repository: the plugin, or a user-level skill such as `~/.claude/skills/auditor-skill` ([OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 11e)
+2. Record the target's folder structure at intake (`QUESTIONS.md` Q39 in-scope paths, Q44 exclusions) rather than editing `discovery/file-map.md`, which an update overwrites
 3. Checklists 01-07: any Solana/Anchor program
 4. Checklists 08-10: any TypeScript/Express/Next.js project
 5. Checklist 14: any Python project
