@@ -58,6 +58,15 @@ only when the PoC needs it, and read what the manifest pulls in. A `path`
 dependency on target crates must be an absolute path: the build runs from the
 scratch copy, not from this directory.
 
+**Pins.** `Cargo.lock` pins the whole dependency graph at releases published at
+least 14 days before the template shipped, so an unmodified crate resolves to the
+same versions on every run. Keep it with the crate; `run.sh` prints a line when it
+is missing. A crate you add keeps every pin it does not need to move. When cargo
+reports a conflict with a pinned release, move that pin alone:
+`UPDATE_PINS="<crate>@<pinned version>" ./run.sh` runs `cargo update -p` in the
+scratch copy and brings the moved lock back. Never run `cargo update` in this
+directory: inside the target tree it would read the target's `.cargo/config*`.
+
 **Build cache.** Each run compiles every dependency from cold in its fresh scratch
 directory. To reuse compiled dependencies between runs of one audit, create a
 directory outside any repository, e.g.

@@ -60,6 +60,16 @@ runs of one audit, create a directory outside any repository, e.g.
 trusts the build outputs it finds there. The `.so` files stay in the scratch copy
 (`SBF_OUT_DIR`).
 
+**Dependency pins.** The template ships a `Cargo.lock` that pins its whole dependency
+graph at releases published at least 14 days before the template shipped, and sets
+`rust-version` with resolver 3, so a crate it does not pin yet resolves to a release
+the platform-tools rustc builds. An unmodified template resolves to that lock, and a
+PoC that adds crates keeps every pin it does not need to move. Copy the template with
+its lock, never delete the lock, and when cargo reports a conflict with a pinned
+release, move only that pin through `run.sh`: `UPDATE_PINS="<crate>@<pinned version>"`
+runs `cargo update -p` in the scratch copy before the build, and the moved lock comes
+back with the crate. `run.sh` prints a line when a crate has no `Cargo.lock`.
+
 **Runners you write.** `templates/poc/run.sh` is the runner for the template's crate. A
 Trident or cargo-fuzz target or a Surfpool scenario has no template, so `poc-engineer`
 writes its `run.sh`, and that runner keeps both rules above. It starts with `run.sh`'s
