@@ -191,7 +191,7 @@ Shell and Python scripts that ship with auditor-skill; there is nothing to build
 
 ### Detection & response recipes (`scripts/dnr/`)
 
-The recipes behind `/auditor:hunt` and `/auditor:respond` ([detection-response.md](detection-response.md); method and hazards: [`scripts/dnr/README.md`](../scripts/dnr/README.md)). They summarise a transaction corpus without reading it into context. The two that use the network take the endpoint from `$RPC_URL` in the environment, never from the command line.
+The recipes behind `/auditor:hunt` and `/auditor:respond` ([detection-response.md](detection-response.md); method and hazards: [`scripts/dnr/README.md`](../scripts/dnr/README.md)). They summarise a transaction corpus without reading it into context. The two that use the network take the endpoint from `$RPC_URL` in the environment, never from the command line, and hand it to curl or the `solana` CLI through a config, never as an argument.
 
 #### `snapshot-program.sh`
 
@@ -199,12 +199,12 @@ The recipes behind `/auditor:hunt` and `/auditor:respond` ([detection-response.m
 bash "<auditor-skill root>/scripts/dnr/snapshot-program.sh" <program_id> <incident_dir>
 ```
 
-Step 1 of every hunt and response: it keeps the deployed program bytes before a hotfix can replace them. It runs `solana program show` and `solana program dump`, checks the ELF header, hashes the dump the way `solana-verify` does (trailing zero padding trimmed, then sha256), and prints one ledger line: `program=… owner=… last_deployed_slot=… authority=… sha256_zero_trimmed=… elf_bytes=… padding_bytes=… file=bin/<id>.so`.
+Step 1 of every hunt and response: it keeps the deployed program bytes before a hotfix can replace them. It runs `solana program show` and `solana program dump`, checks the ELF header, hashes the dump the way `solana-verify` does (trailing zero padding trimmed, then sha256), and prints one ledger line: `program=… owner=… last_deployed_slot=… authority=… sha256_zero_trimmed=… elf_bytes=… padding_bytes=… file=bin/…`.
 
 - **Arguments:** a base58 program id and the incident directory. No flags.
-- **Exit:** 0 done · 2 usage error, an id that is not base58, or no `$RPC_URL` · 3 named blocker: no `solana` CLI, a CLI error, a loader-v4 program, or a dump without the ELF magic.
-- **Network:** two read-only `solana` CLI calls to `$RPC_URL`; it signs nothing. CLI errors pass through `redact.sh`.
-- **Writes:** `<incident_dir>/bin/<id>.show.txt` and `<incident_dir>/bin/<id>.so`. An `incident_*` directory without a `.gitignore` gets one containing `*` (Rule 11d).
+- **Exit:** 0 done · 2 refused before any network call: a usage error, an id that is not base58, no `$RPC_URL` or one that holds a quote, a backslash, whitespace or a control character, or a run directory that is a symbolic link, contains one, or is tracked by git · 3 named blocker: no `solana` CLI, the CLI did not load the keyless config, a CLI error, or a dump without the ELF magic.
+- **Network:** two read-only `solana` CLI calls to `$RPC_URL`, which reaches the CLI through a temporary `-C` config with no usable keypair path; it signs nothing. CLI errors pass through `redact.sh`.
+- **Writes:** the `solana program show` text and the dumped `.so` under `<incident_dir>/bin/`, named after the program id. An `incident_*` directory without a `.gitignore` gets one containing `*` (Rule 11d).
 
 #### `collect.sh`
 
@@ -217,7 +217,7 @@ The one gated collector: it pages each address's signature history, failed trans
 
 | Flag | Meaning |
 |------|---------|
-| `--out <dir>` | corpus directory (required); one that already holds a corpus is refused, so a resume goes into a new directory |
+| `--out <dir>` | corpus directory (required); one that already holds collector output is refused, so a resume goes into a new directory |
 | `--confirmed` | required; the commands pass it only after a person has approved the addresses, the window, the caps and the estimated call count |
 | `--since <unix>`, `--until <unix>` | the window, on `blockTime`; `0` (the default) leaves that end open |
 | `--before <signature>` | start paging just older than this signature: resume a capped run, or skip activity after the incident |
@@ -225,9 +225,9 @@ The one gated collector: it pages each address's signature history, failed trans
 | `--max-tx N` | transactions fetched in total (default 2000); the oldest are left out first |
 | `-- <address> ...` | the base58 addresses to page |
 
-- **Exit:** 0 done; RPC errors, a page cap that stops before the window and the `--max-tx` cut are reported as collection gaps · 2 refused before any network call: no `--confirmed`, no `--out` or address, no `$RPC_URL`, an address or `--before` value that is not base58, a number that is not a plain integer, or an `--out` that already holds a corpus.
-- **Network:** read-only JSON-RPC to `$RPC_URL` (`getSignaturesForAddress`, then `getTransaction` at `finalized` with `maxSupportedTransactionVersion: 1`), and only with `--confirmed`. It prints the provider host for the Rule 11b disclosure; curl errors pass through `redact.sh`.
-- **Writes:** `<dir>/signatures.jsonl`, `<dir>/transactions.jsonl` and a record of the collection gaps, such as transactions it could not fetch, which it also reports on stderr. An `incident_*` directory (`<dir>` or its parent) without a `.gitignore` gets one containing `*`.
+- **Exit:** 0 done, collection gaps included · 2 refused before anything is written or sent: no `--confirmed`; a usage error or an unknown argument; no `$RPC_URL`, or one that holds a quote, a backslash, whitespace or a control character; an address or `--before` value that is not base58; a number that is not a plain integer; an `--out`, or the nearest `incident_*` directory at or above it, that is a symbolic link, contains one, or is tracked by git (in any letter case); or an `--out` that already holds collector output.
+- **Network:** read-only JSON-RPC to `$RPC_URL` (`getSignaturesForAddress`, then `getTransaction` at `finalized` with `maxSupportedTransactionVersion: 1`), and only with `--confirmed`. The URL reaches curl through a config on stdin (`curl -q -K -`), never as an argument. The `provider:` line it prints names the provider's domain (the host's last two labels) for the Rule 11b disclosure; curl errors pass through `redact.sh`.
+- **Writes:** `<dir>/signatures.jsonl`, `<dir>/transactions.jsonl` and `<dir>/collection-gaps.tsv`, one `<signature or address><TAB><reason>` row per gap: a failed `getTransaction` or signature page, a window the page cap did not reach, or the `--max-tx` cap. The run ends with the gap count. An `incident_*` directory (`<dir>` or its parent) without a `.gitignore` gets one containing `*`.
 
 #### `profile.sh`
 
@@ -271,7 +271,7 @@ Balance movements of successful transactions, computed in Python integers so tha
 some-command 2>&1 | bash "<auditor-skill root>/scripts/dnr/redact.sh"
 ```
 
-A filter from stdin to stdout that removes provider credentials. In a URL of any scheme it keeps the scheme and host, replaces userinfo with `REDACTED@` and replaces the path and query with `/REDACTED`; a bare `api-key=`, `token=`, `secret=`, `auth=` or `access-token=` value outside a URL is redacted too. It is a convenience, not a guarantee: no RPC URL goes into a ledger, `INCIDENTS.json` or a report in any case. Record the provider host and the literal string `$RPC_URL` instead.
+A filter from stdin to stdout that removes provider credentials. In a URL of any scheme it keeps the scheme and the host's last two DNS labels (`REDACTED.provider.example`; an IP address or a two-label host stays whole), replaces userinfo with `REDACTED@` and replaces the path and query with `/REDACTED`. On curl's own error and verbose lines it shortens bare host names the same way and redacts the request path. A bare `api-key=`, `token=`, `secret=`, `auth=` or `access-token=` value outside a URL is redacted too. It is a convenience, not a guarantee: no RPC URL goes into a ledger, `INCIDENTS.json` or a report in any case. Record the provider's domain, as `collect.sh` prints it, and the literal string `$RPC_URL` instead.
 
 - **Arguments:** none. **Exit:** 0. **Network:** none.
 
