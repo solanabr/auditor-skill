@@ -165,8 +165,8 @@ The patch is a **proposal**: the auditor stays read-only on the client tree and 
 back the diff plus this verification record for the client to apply and re-test.
 
 **Re-detonating against the target's own build.** The PoC proves the patch either on
-the minimized model (the patch transplanted into the crate's `fixed` arm) or on the
-target itself: `run.sh` with `VULNERABLE_SO` set to the unpatched build and
+the minimized model (the patch transplanted onto the crate's `vulnerable` arm, as in
+`VERIFICATION.md` §2) or on the target itself: `run.sh` with `VULNERABLE_SO` set to the unpatched build and
 `FIXED_SO` to the patched one, both or neither. That is prebuilt mode, and `run.sh`
 exits 3 unless both files are ELF programs, `tests/exploit.rs` reads the changed
 account back with a live `outcome.get_account(&pk)` call, and
