@@ -604,8 +604,8 @@ L="$TT/loaders"; mkdir -p "$L"; rm -f "$FAKE_SOL_ARGV"
 snap "$L/v4" FAKE_SOL_LOADER=v4 FAKE_SOL_SLOTS=777
 code=$?
 case "$code|$(cat "$L/v4.out")" in
-  "0|program=$PID owner=LoaderV411111111111111111111111111111111111 last_deployed_slot=777 authority=p2Yicb86aZig616Eav2VWG9vuXR5mEqhtzshZYBxzsV sha256_zero_trimmed="*" elf_bytes=51 padding_bytes=300 file=bin/$PID.so")
-    ok "loader-v4: snapshotted (exit 0) with its owner, deploy slot and authority" ;;
+  "0|program=$PID owner=LoaderV411111111111111111111111111111111111 last_deployed_slot=777 authority=p2Yicb86aZig616Eav2VWG9vuXR5mEqhtzshZYBxzsV status=deployed sha256_zero_trimmed="*" elf_bytes=51 padding_bytes=300 file=bin/$PID.so")
+    ok "loader-v4: snapshotted (exit 0) with its owner, deploy slot, authority and status" ;;
   *) bad "loader-v4: exit $code ($(tr '\n' ' ' < "$L/v4.out"))" ;;
 esac
 eq "loader-v4: the CLI calls, in order" \

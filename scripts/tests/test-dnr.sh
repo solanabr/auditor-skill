@@ -452,7 +452,7 @@ if [[ "$code" == 2 && ! -e "$TT/inc7" ]]; then ok "snapshot: refuses an \$RPC_UR
 v4snap="$(PATH="$TT/bin:$PATH" FAKE_SOLANA_V4=1 RPC_URL="https://rpc.example.test/" bash "$DNR/snapshot-program.sh" "$PID" "$TT/inc3" 2>&1)"
 code=$?
 case "$code|$v4snap" in
-  "0|program=$PID owner=LoaderV411111111111111111111111111111111111 last_deployed_slot=12345 authority=Auth111 "*" file=bin/$PID.so")
+  "0|program=$PID owner=LoaderV411111111111111111111111111111111111 last_deployed_slot=12345 authority=Auth111 status=deployed sha256_zero_trimmed="*" file=bin/$PID.so")
     ok "snapshot: a loader-v4 program is read with program-v4 show / download (exit 0)" ;;
   *) bad "snapshot: loader-v4 program -> exit $code ($v4snap)" ;;
 esac

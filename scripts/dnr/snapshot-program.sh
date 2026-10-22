@@ -36,6 +36,8 @@
 #        sha256_zero_trimmed=<hex> elf_bytes=<n> padding_bytes=<n> file=bin/<id>.so
 #      A program under an immutable loader (BPFLoader2, or the older BPFLoader) has
 #      no deploy slot and no authority: last_deployed_slot=n/a (immutable loader).
+#      A loader-v4 program's line also carries its status after the authority:
+#      status=deployed, retracted or finalized.
 #
 # NEVER OVERWRITTEN: the first snapshot is bin/<id>.so + bin/<id>.show.txt, the
 # incident-time bytes that Leg 3 and the patch flow run on. A later run (respond
@@ -321,12 +323,16 @@ sha="$(hashed "$dump")" || exit 3
 sha="${sha%% *}"
 # ledger_line <.so> <.show.txt>: the line for one snapshot kept in bin/.
 ledger_line() {
-  local s o l a
+  local s o l a st=""
   s="$(hashed "$1")" || exit 3
   o="$(field "Owner" "$2")"; l="$(slot_of "$2")"; a="$(field "Authority" "$2")"
+  # A loader-v4 program also has a status (deployed, retracted or finalized).
+  if [ "$o" = LoaderV411111111111111111111111111111111111 ]; then
+    st="$(field "Status" "$2")"; st=" status=${st:-unknown}"
+  fi
   # shellcheck disable=SC2086
   set -- "${1#"$dir/"}" $s
-  echo "program=$pid owner=${o:-unknown} last_deployed_slot=${l:-unknown} authority=${a:-none} sha256_zero_trimmed=$2 elf_bytes=$3 padding_bytes=$4 file=$1"
+  echo "program=$pid owner=${o:-unknown} last_deployed_slot=${l:-unknown} authority=${a:-none}$st sha256_zero_trimmed=$2 elf_bytes=$3 padding_bytes=$4 file=$1"
 }
 # keep <temp file> <path in bin/>: copy under a name that must still be free. With
 # set -C the descriptor cannot be opened on a taken name, so a kept snapshot is never
