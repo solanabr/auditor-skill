@@ -117,6 +117,20 @@ python3 -I "<auditor-skill root>/scripts/dnr/deltas.py" tokens   incident_<n>/co
 python3 -I "<auditor-skill root>/scripts/dnr/deltas.py" lamports incident_<n>/corpus/transactions.jsonl
 ```
 
+Program bytes and `solana program show` come only from `snapshot-program.sh`, and
+signature history and transactions only from `collect.sh`. Any other read — an
+account's current value (`getAccountInfo`, the account-data half of Leg 1) or one
+transaction (`solana confirm -v <signature>`) — runs the solana CLI on a throwaway
+config, in a single command line: the URL stays out of argv, the keypair path
+names a file that does not exist, the read runs only if the CLI loaded that config,
+the exit status survives the redaction, and the directory is removed afterwards.
+Never pass `--url`.
+
+```bash
+# swap "account <address> --output json" for "confirm -v <signature>" as needed
+set -o pipefail; d="$(mktemp -d "${TMPDIR:-/tmp}/dnr_cli.XXXXXX")" && printf 'json_rpc_url: "%s"\nwebsocket_url: ""\nkeypair_path: "%s/none.json"\n' "$RPC_URL" "$d" > "$d/cli.yml" && solana -C "$d/cli.yml" config get keypair | grep -F "$d/none.json" > /dev/null && solana -C "$d/cli.yml" account <address> --output json 2>&1 | bash "<auditor-skill root>/scripts/dnr/redact.sh"; s=$?; rm -rf "$d"; (exit $s)
+```
+
 Aggregate `deltas.py` output further in Python ints (`python3 -I`). `awk` and
 `jq` are fine for grouping and counting keys, but **never for summing amounts**:
 both store numbers as doubles, so a u64 total above 2^53 silently loses precision.

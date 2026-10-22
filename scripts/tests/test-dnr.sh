@@ -290,16 +290,43 @@ eq "collect: an existing incident_<n>/.gitignore is not overwritten" "$(cat "$TT
 # ---------------------------------------------------------------------------
 # 11. snapshot-program.sh against a fake `solana`: writes bin/<id>.so, prints the
 #     ledger line (owner, last-deployed slot, zero-trimmed hash, padding), redacts a
-#     CLI error, and stops with a blocker for loader-v4.
+#     CLI error, and stops with a blocker for loader-v4. The CLI runs from a
+#     throwaway -C config: no URL in argv, a keypair path that does not exist, a
+#     0700 directory removed on exit, and a blocker if the CLI ignores the config.
+#     Like solana-cli 3.1, the fake reads a config only when it holds
+#     websocket_url, and `program show` needs a signer unless --buffer-authority
+#     is given.
 # ---------------------------------------------------------------------------
 printf '#!/bin/sh\nexec python3 -I "$0.py" "$@"\n' > "$TT/bin/solana"
 cat > "$TT/bin/solana.py" <<'PY'
-import os, sys
+import json, os, re, sys
 a = sys.argv[1:]
-url = a[a.index("--url") + 1] if "--url" in a else ""
+with open(os.environ["FAKE_SOLANA_ARGV"], "a") as log:
+    log.write(json.dumps(a) + "\n")
+cfg = {}
+if "-C" in a:
+    i = a.index("-C")
+    for line in open(a[i + 1]):
+        m = re.match(r'(\w+): "(.*)"$', line.rstrip("\n"))
+        if m:
+            cfg[m.group(1)] = m.group(2)
+    del a[i:i + 2]
+if "websocket_url" not in cfg or os.environ.get("FAKE_SOLANA_IGNORE_CONFIG"):
+    cfg = {"json_rpc_url": "https://api.mainnet-beta.solana.com", "keypair_path": "/home/fake/.config/solana/id.json"}
+url, kp = cfg.get("json_rpc_url", ""), cfg.get("keypair_path", "")
+if a[:3] == ["config", "get", "keypair"]:
+    print(f"Key Path: {kp} "); sys.exit(0)
+try:
+    mode = oct(os.stat(os.path.dirname(kp)).st_mode & 0o777)
+except OSError:
+    mode = "none"
+with open(os.environ["FAKE_SOLANA_SEEN"], "a") as log:
+    log.write(f"{kp}\t{os.path.exists(kp)}\t{mode}\n")
 if os.environ.get("FAKE_SOLANA_FAIL"):
     sys.stderr.write(f"Error: RPC request error: cluster version query failed: {url}\n"); sys.exit(1)
 owner = "LoaderV411111111111111111111111111111111111" if os.environ.get("FAKE_SOLANA_V4") else "BPFLoaderUpgradeab1e11111111111111111111111"
+if a[:2] == ["program", "show"] and "--buffer-authority" not in a and not os.path.exists(kp):
+    sys.stderr.write(f'Error: Dynamic program error: No default signer found, run "solana-keygen new -o {kp}"\n'); sys.exit(1)
 if a[:2] == ["program", "show"]:
     print(f"Program Id: {a[2]}\nOwner: {owner}\nProgramData Address: PdA111\nAuthority: Auth111\nLast Deployed In Slot: 12345\nData Length: 100 (0x64) bytes\nBalance: 1 SOL")
 elif a[:2] == ["program", "dump"]:
@@ -309,6 +336,7 @@ else:
     sys.stderr.write("fake solana: refusing unexpected subcommand\n"); sys.exit(9)
 PY
 chmod +x "$TT/bin/solana"
+export FAKE_SOLANA_ARGV="$TT/solana.argv" FAKE_SOLANA_SEEN="$TT/solana.seen"
 PID="ProgTest1111111111111111111111111111111111"   # 42 base58 characters
 snap="$(PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/v2/LEAKME42" bash "$DNR/snapshot-program.sh" "$PID" "$TT/inc" 2>&1)"
 code=$?
@@ -322,6 +350,26 @@ snapfail="$(PATH="$TT/bin:$PATH" FAKE_SOLANA_FAIL=1 RPC_URL="https://rpc.example
 code=$?
 eq "snapshot: CLI failure -> exit 3" "$code" "3"
 case "$snapfail" in *LEAKME42*) bad "snapshot: key leaked from the CLI error" ;; *REDACTED*) ok "snapshot: CLI error redacted" ;; *) bad "snapshot: error text not shown ($snapfail)" ;; esac
+if grep -q LEAKME42 "$FAKE_SOLANA_ARGV"; then bad "snapshot: the key reached the CLI's argv"; else ok "snapshot: the key never reaches the CLI's argv"; fi
+eq "snapshot: every CLI call names a -C config and none passes --url" \
+  "$(grep -c . "$FAKE_SOLANA_ARGV")/$(grep -c '"-C"' "$FAKE_SOLANA_ARGV")/$(grep -c '"--url"' "$FAKE_SOLANA_ARGV")" \
+  "$(grep -c . "$FAKE_SOLANA_ARGV")/$(grep -c . "$FAKE_SOLANA_ARGV")/0"
+eq "snapshot: the CLI is given a keypair path that does not exist, in a 0700 directory" \
+  "$(awk -F'\t' '{print $2, $3}' "$FAKE_SOLANA_SEEN" | sort -u)" "False 0o700"
+gone=1; while IFS="$(printf '\t')" read -r kp _ _; do [[ -e "$(dirname "$kp")" ]] && gone=0; done < "$FAKE_SOLANA_SEEN"
+if [[ "$gone" == 1 ]]; then ok "snapshot: the temp config directory is removed on exit"; else bad "snapshot: a temp config directory was left behind"; fi
+calls_before="$(grep -c '"program"' "$FAKE_SOLANA_ARGV")"
+PATH="$TT/bin:$PATH" FAKE_SOLANA_IGNORE_CONFIG=1 RPC_URL="https://rpc.example.test/" bash "$DNR/snapshot-program.sh" "$PID" "$TT/inc6" > "$TT/inc6.out" 2>&1
+code=$?
+if [[ "$code" == 3 && ! -e "$TT/inc6/bin" ]] && grep -q 'did not load the keyless config' "$TT/inc6.out"; then
+  ok "snapshot: a CLI that ignores the config stops with a blocker before show or dump (exit 3)"
+else
+  bad "snapshot: CLI ignoring the config -> exit $code"
+fi
+eq "snapshot: no program call after the config check failed" "$(grep -c '"program"' "$FAKE_SOLANA_ARGV")" "$calls_before"
+PATH="$TT/bin:$PATH" RPC_URL='https://rpc.example.test/"x' bash "$DNR/snapshot-program.sh" "$PID" "$TT/inc7" >/dev/null 2>&1
+code=$?
+if [[ "$code" == 2 && ! -e "$TT/inc7" ]]; then ok "snapshot: refuses an \$RPC_URL holding a quote (exit 2, nothing written)"; else bad "snapshot: quoted \$RPC_URL -> exit $code"; fi
 PATH="$TT/bin:$PATH" FAKE_SOLANA_V4=1 RPC_URL="https://rpc.example.test/" bash "$DNR/snapshot-program.sh" "$PID" "$TT/inc3" >/dev/null 2>&1
 eq "snapshot: loader-v4 program stops with a named blocker (exit 3)" "$?" "3"
 # The id is used in file names: anything but a base58 key is refused before any write.

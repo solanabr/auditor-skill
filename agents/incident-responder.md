@@ -44,6 +44,10 @@ hands you their results. You fold those into the verdict and the write-up.
   - `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/frames.py" incident_<n>/corpus/transactions.jsonl`
   - `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/deltas.py" tokens|lamports incident_<n>/corpus/transactions.jsonl`
   - `<cmd> 2>&1 | bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/redact.sh"` for anything that might print `$RPC_URL`
+- **CLI reads are keyless.** Program bytes and `program show` come only from
+  `snapshot-program.sh`, signature history and transactions only from
+  `collect.sh`; any other `solana` read uses the throwaway-config recipe in the
+  log-sources reference, never `--url`.
 - **Query, never pour in.** Profile and interrogate the corpus with the shipped
   recipes and `jq`; never read a multi-megabyte corpus file into context. Each
   figure you report must trace back to a query executed in this run and logged as

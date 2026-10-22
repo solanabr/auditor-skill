@@ -24,11 +24,14 @@ mistaken — and then it stops. Carrying it out is never the track's job.
 - **No outbound communication.** No mail, chat, posts, issues, PRs, or webhooks,
   even when a connected tool could send them. Coordination is **drafts only**
   (below).
-- **Read-only CLI only**, and each piped through the installation's
-  `<auditor-skill root>/scripts/dnr/redact.sh` (never a relative `scripts/` path)
-  so a key in an error never reaches the transcript: `solana program show`,
-  `solana program dump`, `solana account`, `solana confirm -v <sig>`,
-  `getAccountInfo` / `getTransaction` / `getSignaturesForAddress`. No Helius or
+- **Read-only, keyless reads only.** Program bytes and `solana program show` come
+  only from `<auditor-skill root>/scripts/dnr/snapshot-program.sh`, and
+  `getSignaturesForAddress` / `getTransaction` only from `collect.sh`. Any other
+  read — `solana account <address>` (`getAccountInfo`), `solana confirm -v <sig>` —
+  uses the throwaway-config recipe in `log-sources.md`, never `--url`: no key in
+  argv, no keypair to sign with, and its output piped through the installation's
+  `redact.sh` (never a relative `scripts/` path) so a key in an error never
+  reaches the transcript. No Helius or
   other MCP write tool, no webhook/subscription setup — those are out of the
   agent's `tools:` allowlist by construction (README).
 - Building a candidate commit to reproduce follows the run's execution mode

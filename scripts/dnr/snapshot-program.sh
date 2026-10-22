@@ -13,10 +13,16 @@
 # /auditor:hunt and /auditor:respond runs this for every implicated program, before
 # any collection or analysis.
 #
-# What it does (read-only — two CLI calls, no signing, no keypair):
-#   1. `solana program show <id>` → <incident_dir>/bin/<id>.show.txt
-#   2. `solana program dump <id> <incident_dir>/bin/<id>.so`
-#   3. checks the ELF magic, hashes the dump the way solana-verify does (trailing
+# What it does (read-only — no signing, and no keypair the CLI could sign with):
+#   1. writes a throwaway CLI config in a private temp dir (mode 0700, removed on
+#      exit): `json_rpc_url` is $RPC_URL, so the URL never appears in argv, and
+#      `keypair_path` names a file that does not exist. `solana config get keypair`
+#      must report that path back, or the CLI fell back to its defaults and the
+#      script stops with a blocker.
+#   2. `solana -C <config> program show <id>` → <incident_dir>/bin/<id>.show.txt
+#      (with a fixed `--buffer-authority`, so the CLI never looks for a signer)
+#   3. `solana -C <config> program dump <id> <incident_dir>/bin/<id>.so`
+#   4. checks the ELF magic, hashes the dump the way solana-verify does (trailing
 #      zero padding trimmed, then sha256), and prints ONE ledger-ready line:
 #        program=<id> owner=<loader> last_deployed_slot=<N> authority=<A>
 #        sha256_zero_trimmed=<hex> elf_bytes=<n> padding_bytes=<n> file=bin/<id>.so
@@ -33,12 +39,15 @@
 # not be a symbolic link, hold one, or be tracked by git; such a directory is refused
 # with exit 2 before anything is written or the CLI runs.
 #
-# SECRETS: --url takes "$RPC_URL" from the environment; the CLI's stderr is captured
-# to a temp file and passed through redact.sh (the CLI echoes the full URL, key
-# included, in its errors). Nothing written to <incident_dir> contains the URL.
+# SECRETS: the CLI reads "$RPC_URL" from the temp config, never from argv; an
+# $RPC_URL holding a quote, a backslash, whitespace or a control character is refused.
+# The CLI's stderr is captured to a temp file and passed through redact.sh (the CLI
+# echoes the full URL, key included, in its errors). Nothing written to
+# <incident_dir> contains the URL.
 #
-# Exit: 0 ok · 2 usage / not a base58 id / no $RPC_URL / a refused run directory ·
-# 3 named blocker (no solana CLI, CLI error, loader-v4, dump without ELF magic).
+# Exit: 0 ok · 2 usage / not a base58 id / no or unusable $RPC_URL / a refused run
+# directory · 3 named blocker (no solana CLI, config not taken, CLI error, loader-v4,
+# dump without ELF magic).
 # bash >= 3.2, python3 for the hash, run as `python3 -I` because the working
 # directory is usually the audited repo: without -I, a hashlib.py there would be
 # imported in place of the stdlib.
@@ -63,6 +72,12 @@ if [ -z "${RPC_URL:-}" ]; then
   echo "snapshot-program.sh: set \$RPC_URL in the environment." >&2
   exit 2
 fi
+# The URL goes into a quoted YAML value: refuse what could end or escape it.
+case "$RPC_URL" in
+  *[[:space:][:cntrl:]\"\\]*)
+    echo "snapshot-program.sh: \$RPC_URL holds a quote, a backslash, whitespace or a control character; refusing it." >&2
+    exit 2 ;;
+esac
 case "$dir" in */) dir="${dir%"${dir##*[!/]}"}"; [ -n "$dir" ] || dir=/ ;; esac
 
 # refuse_planted <dir>: exit 2 unless <dir> is safe to write into — not a symbolic
@@ -103,18 +118,32 @@ if ! command -v solana >/dev/null 2>&1; then
   exit 3
 fi
 
+# mktemp -d creates the directory with mode 0700.
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/dnr_snap.XXXXXX")" || {
+  echo "[blocker] cannot create a private temp directory for the CLI config." >&2; exit 3; }
+trap 'rm -rf "$tmp"' EXIT
+err="$tmp/stderr"; cfg="$tmp/cli.yml"; nokey="$tmp/no-keypair.json"
+printf 'json_rpc_url: "%s"\nwebsocket_url: ""\nkeypair_path: "%s"\n' "$RPC_URL" "$nokey" > "$cfg"
+# A config the CLI cannot parse is silently replaced by its defaults (public
+# mainnet-beta and the default keypair), so confirm it took this one.
+case "$(solana -C "$cfg" config get keypair 2>/dev/null)" in
+  *"$nokey"*) ;;
+  *) echo "[blocker] the solana CLI did not load the keyless config; snapshot $pid by hand and record its zero-trimmed sha256 and last-deployed slot in LEDGER.md." >&2
+     exit 3 ;;
+esac
+
 mkdir -p "$dir/bin" || exit 2
 # Rule 11d: an incident_<n>/ directory ignores itself when it has no .gitignore of
 # its own, so the dumped program never shows in git status.
 case "$(basename "$dir")" in
   incident_*) [ -e "$dir/.gitignore" ] || printf '*\n' > "$dir/.gitignore" ;;
 esac
-err="$(mktemp "${TMPDIR:-/tmp}/dnr_snap.XXXXXX")"
-trap 'rm -f "$err"' EXIT
 show="$dir/bin/$pid.show.txt"
 so="$dir/bin/$pid.so"
 
-if ! solana program show "$pid" --url "$RPC_URL" >"$show" 2>"$err"; then
+# --buffer-authority only matters for --buffers / --programs listings; naming one
+# (the System Program id) stops `show` from resolving a default signer.
+if ! solana -C "$cfg" program show "$pid" --buffer-authority 11111111111111111111111111111111 >"$show" 2>"$err"; then
   echo "[blocker] solana program show failed for $pid:" >&2
   "$REDACT" <"$err" >&2
   exit 3
@@ -131,7 +160,7 @@ case "$owner" in
 esac
 
 : > "$err"
-if ! solana program dump "$pid" "$so" --url "$RPC_URL" >/dev/null 2>"$err"; then
+if ! solana -C "$cfg" program dump "$pid" "$so" >/dev/null 2>"$err"; then
   echo "[blocker] solana program dump failed for $pid:" >&2
   "$REDACT" <"$err" >&2
   exit 3
