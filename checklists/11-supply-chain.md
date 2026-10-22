@@ -85,7 +85,7 @@ Run the registry-facing commands these items call for (`npm audit`, `cargo audit
 
 - [ ] **SC-044**: Lockfile provenance — no `package-lock.json`/`yarn.lock` entry resolves a dependency to a non-registry URL (e.g. a GitHub-Release tarball). A non-registry `resolved`/`resolution` URL bypasses `npm audit`, deprecation, and takedown, and is how the pump.fun-bot `crypto-layout-utils` campaign (2025) shipped malware after the registry pulled the package. (KB VC-26)
 - [ ] **SC-045**: Install-hook secret harvesting — review every `postinstall`/`preinstall` script and Python `__init__.py`/`setup.py` for reads of `~/.config/solana/id.json` or other wallet/keypair paths and any outbound exfil (HTTP POST, DNS, webhook). This is the exact behavior of the FakeFix campaign (20 npm + 4 PyPI packages, 2025) that drained Solana keypairs on install. (KB VC-26)
-- [ ] **SC-046**: Publish-credential integrity — package publishing enforces FIDO2/hardware-key 2FA or OIDC/trusted-publishing (NOT phishable TOTP), and releases are diffed post-publish against the built artifact. Publisher-credential compromise drove the web3.js $190K incident and the Trust Wallet browser-extension $7M loss. (KB VC-26)
+- [ ] **SC-046**: Publish-credential integrity — package publishing enforces FIDO2/hardware-key 2FA or OIDC/trusted-publishing (NOT phishable TOTP), and releases are diffed post-publish against the built artifact. Publisher-credential compromise drove the Dec-2024 `@solana/web3.js` 1.95.6/1.95.7 incident (Anza RCA, §11.11) and the Trust Wallet browser-extension $7M loss. (KB VC-26)
 
 ## 11.9 — Monorepos & Alternative Package Managers (Bun / pnpm / Turborepo)
 
