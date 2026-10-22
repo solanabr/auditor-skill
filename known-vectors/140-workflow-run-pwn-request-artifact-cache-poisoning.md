@@ -77,9 +77,9 @@ grep -rnE --include='*.yml' --include='*.yaml' '(>>|tee[[:space:]]+(-a|--append)
 
 **Step 6: Cache trust boundary**
 ```
-grep -rnE --include='*.yml' --include='*.yaml' 'actions/cache|Swatinem/rust-cache|actions/setup-go|[[:space:]]cache:[[:space:]]*.?[a-z]|cache-dependency-path|type=gha|SCCACHE_GHA_ENABLED' .github/
+grep -rnE --include='*.yml' --include='*.yaml' 'actions/cache|Swatinem/rust-cache|actions-rust-lang/setup-rust-toolchain|actions/setup-go|astral-sh/setup-uv|[[:space:]]cache:[[:space:]]*.?[a-z]|cache-dependency-path|enable-cache|bundler-cache|type=gha|SCCACHE_GHA_ENABLED' .github/
 ```
-- Writers of the same Actions cache: `actions/cache`, any `setup-*` action with a `cache:` input (`actions/setup-go` v4+ caches by default unless `cache: false`), `Swatinem/rust-cache`, Docker `cache-from` / `cache-to: type=gha`, and sccache with `SCCACHE_GHA_ENABLED`.
+- Writers of the same Actions cache include `actions/cache`; any `setup-*` action with a `cache:` input (`actions/setup-go` v4+ caches by default unless `cache: false`); `Swatinem/rust-cache` and `actions-rust-lang/setup-rust-toolchain` (caches through it by default); `astral-sh/setup-uv` (`enable-cache`); `ruby/setup-ruby` with `bundler-cache: true`; Docker `cache-from` / `cache-to: type=gha`; and sccache with `SCCACHE_GHA_ENABLED`. Read any other setup or build action's inputs for a cache option.
 - ✅ PASS: release, publish and deploy jobs restore no Actions cache that a default-branch-context job running untrusted code can write. Those writers include `pull_request_target`, `issue_comment`, `issues`, `discussion*`, `workflow_run` and agent jobs.
 - ❌ FAIL: a release job restores a cache key that such a job also saves. The 10 GB eviction lets the writer replace existing entries (Ultralytics, Clinejection).
 
