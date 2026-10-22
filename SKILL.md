@@ -109,7 +109,7 @@ The auditor scans file extensions and applies the correct checklists automatical
 If context was lost, a file was too large, or a pattern is unfamiliar — say so. Never mark `[PASS]` without reading the code. See [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 10.
 
 ### 6. Operating Safety
-Target-controlled code runs only in the execution mode chosen at intake (isolated recommended; native allowed, with a report caveat), the report names every outside service a tool contacts, a `.git/` the auditor did not clone is never allowed to run its config, and audit output never reaches git or a public CI log. See [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 11.
+Target-controlled code runs only in the execution mode chosen at intake (isolated recommended; native allowed, with a report caveat), the report names every outside service a tool contacts, a `.git/` the auditor did not clone is never allowed to run its config, audit output never reaches git or a public CI log, and bundled scripts, tools and corpus files resolve from the installation root, never from the audited repo. See [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 11.
 
 ---
 
