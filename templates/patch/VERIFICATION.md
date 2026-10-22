@@ -40,12 +40,14 @@ AUDITOR_EXEC_MODE={MODE} VULNERABLE_SO={UNPATCHED_SO} FIXED_SO={PATCHED_SO} \
 ```
 
 **Re-detonated against:** {patched target build (`VULNERABLE_SO` / `FIXED_SO` overrides — `templates/poc/run.sh`) | minimized model}
-— a *patched target build* runs `run.sh` against the unpatched and patched builds of the target itself
-(set both overrides or neither). That is `run.sh`'s prebuilt mode: it exits 3 unless both files are ELF
-programs, `tests/exploit.rs` reads the changed account back with a live `outcome.get_account(&pk)` call,
-and `tests/fixed_blocked.rs` pins the guard's error with a live `assert_exploit_rejected_with!`. The PoC
-must also use the program's real id, since an Anchor program checks its own `declare_id!`; `run.sh` does
-not check that. Convert audit-form tests first. The *minimized model* is the PoC crate's own
+— a *patched target build* runs `run.sh` with `VULNERABLE_SO` = the unpatched build and `FIXED_SO` = the
+patched build of the target itself. That is `run.sh`'s prebuilt mode: it exits 3 unless both files are ELF
+programs and each arm's contract assertion ran and held — `assert_exploit_effect!` in `tests/exploit.rs` on
+the unpatched bytes, `assert_exploit_rejected_with!` (the guard's exact error) in `tests/fixed_blocked.rs`
+on the patched ones. Only a final line ending in `(rejected with the pinned error) → [PoC-REPRODUCED]`
+verifies our patch. A PoC written with the any-result `assert_exploit_succeeds!` / `assert_exploit_rejected!`
+switches to these first. The PoC must also use the program's real id, since an Anchor program checks its
+own `declare_id!`; `run.sh` does not check that. The *minimized model* is the PoC crate's own
 `vulnerable` / `fixed` arms with the patch transplanted.
 
 - **Pre-fix (recorded when the PoC was built):** `tests/exploit.rs` SUCCEEDED on the
