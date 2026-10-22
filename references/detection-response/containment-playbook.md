@@ -40,7 +40,8 @@ mistaken — and then it stops. Carrying it out is never the track's job.
   transfer or stake) — README § "allowed-tools is not a sandbox".
 - Building a candidate commit to reproduce follows the run's execution mode
   (`OUTPUT-RULES.md` Rule 11a); a `supply_chain_or_ci` root cause is **never**
-  built natively.
+  built natively, and its PoC never builds or links the target's crates: it runs
+  on the dumped bytes alone.
 
 ## The action menu (every row is a proposal)
 

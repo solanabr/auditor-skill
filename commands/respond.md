@@ -136,8 +136,8 @@ directory.
    lead is never overwritten. It covers the verdict, the timeline, containment, the
    code fix (handed off as `/auditor:patch INC-<n>.<k>`), the check of a hotfix the
    team already deployed (the PoC re-run with `FIXED_SO` = a fresh dump of the
-   current bytes and `assert_exploit_blocked!` on the fixed arm, reported apart from
-   our fix), recovery, coordination drafts, alerting proposals and the unanswered
+   current bytes and `assert_exploit_blocked!` with its positive control on the
+   fixed arm, reported apart from our fix), recovery, coordination drafts, alerting proposals and the unanswered
    questions. Each action states what it is, the query result behind it, who has
    to sign, whether it can be undone, and the cost if it turns out to be wrong —
    picked from the menu and within the "do not" list in

@@ -114,7 +114,8 @@ attestation.
 
 - Building a candidate commit follows the run's mode
   (`${CLAUDE_PLUGIN_ROOT}/OUTPUT-RULES.md` Rule 11a); a `supply_chain_or_ci` root
-  cause is never built natively.
+  cause is never built natively, and its PoC never builds or links the target's
+  crates: it runs on the dumped bytes alone.
 - The RPC provider that received the queried addresses is disclosed in the ledger
   and the report (Rule 11b). Run dirs are self-ignored (Rule 11d).
 

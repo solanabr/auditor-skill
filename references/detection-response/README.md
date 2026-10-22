@@ -141,7 +141,7 @@ other outcome is filed under `ruled_out[]`.
   `OK: reproduced on prebuilt bytes — vulnerable sha256=<hash> → [PoC-REPRODUCED]`,
   where `<hash>` is the zero-trimmed sha256 recorded in `LEDGER.md` for the snapshot,
   or the hash-matched build's (with `FIXED_SO`, the line also names the fixed bytes).
-  `run.sh` prints it only after the exploit's `assert_exploit_effect!` ran and held:
+  `run.sh` prints it only after the exploit's `assert_exploit_effect!` ran and held on the bytes it placed (every program `mollusk_for` loaded is the snapshot):
   the **observed Leg-1 effect** (the account the attack changed and the value it left
   there), not merely an `Ok`. A PoC built only from a minimized replica crate prints
   another line and does **not** satisfy Leg 3. See `incidents-schema.md` →
@@ -164,7 +164,9 @@ exposure), and is never routed to `ruled_out`.
 `oracle_or_dependency` · `economic_design` · `off_chain` · `supply_chain_or_ci` ·
 `unknown`. A `supply_chain_or_ci` root cause links to the GitHub Actions
 reference (`references/vuln-classes/github-actions.md`) and is **never built
-natively** (Rule 11a): `build.rs` and proc-macros execute at build time.
+natively** (Rule 11a): `build.rs` and proc-macros execute at build time. Its PoC
+never builds or links the target's crates in any mode (they may be the payload)
+and runs on the dumped bytes alone.
 
 ## Urgency and status
 
