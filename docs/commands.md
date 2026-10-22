@@ -84,12 +84,12 @@ Quantifies a candidate economic finding: model capital/setup cost, extractable v
 **When:** a High/Critical economic finding needs the dollar figure Rule 5b requires. **Emits:** the quantified PoC (dollar figures, not yes/no). See [power-tools.md](power-tools.md#surfpool-economic-simulation).
 
 ### `/auditor:poc`
-**Arg:** `<finding-id | file:line> [--fork] [--fuzz] [--force]`
+**Arg:** `<finding-id | INC-n.k | file:line> [--fork] [--fuzz] [--force]`
 Turns a *confirmed* finding into a runnable exploit: resolve the finding + its context worksheet, gate on severity (N≥7 by default; `--force` overrides), detect the toolchain (never assume), pick the harness by finding type (Mollusk / LiteSVM / Surfpool `--fork` / Trident-cargo-fuzz `--fuzz`), spawn `poc-engineer` to fill a feature-gated `vulnerable`/`fixed` crate that **asserts** the flaw.
 **When:** demonstrate a High/Critical finding executably. **Emits:** `audit_<n>/poc/F-xxx/` (crate + one-command `run.sh`) + the earned `[PoC-*]` tier. Never hard-fails — toolchain absence → `[PoC-ATTEMPTED]` + the prose PoC is kept. Full detail: [poc-and-patches.md](poc-and-patches.md).
 
 ### `/auditor:patch`
-**Arg:** `<finding-id> [--verify-with-mutation]`
+**Arg:** `<finding-id | INC-n.k> [--verify-with-mutation]`
 Drafts and verifies a fix: `patch-engineer` writes a **minimal idiomatic** unified diff against the pinned commit that closes *exactly* the cited bound (obeys the Rust/Anchor/Pinocchio rules), applies it to a **scratch worktree** (never the client tree), rebuilds, and **re-runs the finding's PoC** — which must now revert. `--verify-with-mutation` adds `mewt` mutation + a blast-radius check.
 **When:** hand the client a proven fix. **Emits:** `audit_<n>/patches/F-xxx.patch` + `VERIFICATION.md` + the `[FIX-*]` tier. Proposal only — `[FIX-VERIFIED]` requires an *executed* revert; no PoC → `[FIX-PROPOSED]` ceiling. Detail: [poc-and-patches.md](poc-and-patches.md).
 
