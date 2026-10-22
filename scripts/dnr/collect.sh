@@ -60,10 +60,13 @@
 #
 # Transactions are fetched jsonParsed, commitment finalized, with
 # maxSupportedTransactionVersion:1 — mandatory, since v1 transactions are live on
-# mainnet and a v1 fetch without the opt-in returns RPC error -32015.
+# mainnet and a v1 fetch without the opt-in returns RPC error -32015. Each one is
+# written to the corpus by `python3 -I`, never re-encoded by jq: jq before 1.7 turns
+# every number into a double, which rounds lamport balances and other u64 fields
+# above 2^53.
 #
-# bash >= 3.2, curl, jq. Output: <dir>/signatures.jsonl, <dir>/transactions.jsonl,
-# <dir>/collection-gaps.tsv.
+# bash >= 3.2, curl, jq, python3. Output: <dir>/signatures.jsonl,
+# <dir>/transactions.jsonl, <dir>/collection-gaps.tsv.
 
 set -uo pipefail
 
@@ -121,6 +124,9 @@ for n in "$since" "$until" "$max_pages" "$max_tx"; do
     echo "collect.sh: '$n' is not a non-negative integer (--since, --until, --max-pages, --max-tx)." >&2
     exit 2
   fi
+done
+for tool in curl jq python3; do
+  command -v "$tool" >/dev/null 2>&1 || { echo "collect.sh: $tool is not on PATH." >&2; exit 2; }
 done
 case "$out" in */) out="${out%"${out##*[!/]}"}"; [ -n "$out" ] || out=/ ;; esac
 
@@ -209,6 +215,31 @@ failure() {  # failure <curl status> <response> -> why the call returned no usab
     *) echo "unreadable response" ;;
   esac
 }
+# A getTransaction response goes to the corpus through python3 -I, whose json keeps
+# integers exact (jq before 1.7 rounds every number above 2^53). Exit 0: the result
+# object was appended to the file in argv[1] as one compact line. Exit 1: it printed
+# why the response holds no transaction.
+TX_PY='import json, sys
+try:
+    r = json.loads(sys.stdin.buffer.read())
+except ValueError:
+    r = None
+if not isinstance(r, dict):
+    print("unreadable response"); sys.exit(1)
+res = r.get("result")
+if isinstance(res, dict):
+    with open(sys.argv[1], "a", encoding="utf-8") as f:
+        f.write(json.dumps(res, separators=(",", ":")) + "\n")
+    sys.exit(0)
+if "error" in r:
+    e = r["error"]
+    c = e.get("code") if isinstance(e, dict) else None
+    print("RPC error %d" % c if type(c) is int else "RPC error")
+elif res is None:
+    print("null result")
+else:
+    print("unreadable response")
+sys.exit(1)'
 gap() {  # gap <signature or address> <reason>: one row per thing the corpus lacks
   printf '%s\t%s\n' "$1" "$(printf '%s' "$2" | tr '\t\r\n' '   ')" >> "$gaps"
   ngaps=$((ngaps + 1))
@@ -264,14 +295,13 @@ while IFS= read -r sig; do
     break
   fi
   resp="$(rpc getTransaction "[\"$sig\",{\"encoding\":\"jsonParsed\",\"maxSupportedTransactionVersion\":1,\"commitment\":\"finalized\"}]")"; rc=$?
-  if [ "$rc" -eq 0 ] && printf '%s' "$resp" | jq -e '.result | objects' >/dev/null 2>&1; then
-    printf '%s' "$resp" | jq -c '.result' >> "$tx_file"
-    fetched=$((fetched + 1))
-  else
-    reason="$(failure "$rc" "$resp")"
-    echo "  ! getTransaction failed for a signature: $reason — recorded as a collection gap" >&2
-    gap "$sig" "getTransaction: $reason"
+  if [ "$rc" -ne 0 ]; then
+    reason="transport error (curl exit $rc)"
+  elif reason="$(printf '%s' "$resp" | python3 -I -c "$TX_PY" "$tx_file")"; then
+    fetched=$((fetched + 1)); continue
   fi
+  echo "  ! getTransaction failed for a signature: $reason — recorded as a collection gap" >&2
+  gap "$sig" "getTransaction: $reason"
 done < "$todo"
 echo "transactions fetched: $fetched -> $tx_file"
 echo "collection gaps: $ngaps (see $gaps)"

@@ -213,6 +213,17 @@ if m == "getTransaction" and p[0] == fail_sig and fail_mode in ("rpc", "null"):
     print(json.dumps(dict({"jsonrpc": "2.0", "id": 1}, **out))); sys.exit(0)
 if m == "getSignaturesForAddress" and os.environ.get("FAKE_CURL_PAGE_FAIL"):
     print(json.dumps({"jsonrpc": "2.0", "id": 1, "error": {"code": -32005, "message": "Node is behind"}})); sys.exit(0)
+# FAKE_CURL_TX_FIXTURE=<file>: one signature, whose getTransaction result is that
+# file's first line spliced in verbatim, so big integers arrive as literals.
+fx = os.environ.get("FAKE_CURL_TX_FIXTURE")
+if fx:
+    tx = open(fx).readline().strip()
+    if m == "getSignaturesForAddress":
+        res = [] if "before" in p[1] else [{"signature": json.loads(tx)["transaction"]["signatures"][0], "slot": 403, "err": None, "blockTime": 1700000700}]
+        print(json.dumps({"jsonrpc": "2.0", "id": 1, "result": res}))
+    else:
+        sys.stdout.write('{"jsonrpc":"2.0","id":1,"result":' + tx + '}')
+    sys.exit(0)
 if m == "getSignaturesForAddress" and p[0].startswith("AddrB"):
     res = [
         {"signature": "SigZnewest", "slot": 9, "err": None, "blockTime": 1700000900},
@@ -562,6 +573,53 @@ if [[ "$c1" == 0 && "$c2" == 0 && -s "$REPO/incident_5/corpus/transactions.jsonl
 else
   bad "run dir: the untracked control dir -> collect exit $c1, snapshot exit $c2"
 fi
+
+# ---------------------------------------------------------------------------
+# 16. Big integers survive jq < 1.7. A stand-in jq rounds every number it reads on
+#     stdin to a double first, as jq 1.6 does (the apt package on Ubuntu 22.04 and
+#     Debian 12). Through it, the old `jq -c .result` path rounds the fixture's
+#     lamports (the control); collect.sh's corpus line comes out byte-identical to
+#     the RPC's literal, and deltas.py stays exact.
+# ---------------------------------------------------------------------------
+REAL_JQ="$(command -v jq)"; export REAL_JQ
+mkdir -p "$TT/jq16"
+cat > "$TT/jq16/jq" <<'PY'
+#!/usr/bin/env python3
+import json, os, subprocess, sys
+args, real = sys.argv[1:], os.environ["REAL_JQ"]
+if "--version" in args or any(os.path.isfile(a) for a in args):
+    os.execv(real, [real] + args)
+def dump(v):
+    if isinstance(v, float):
+        return str(int(v)) if v.is_integer() else repr(v)
+    if isinstance(v, list):
+        return "[" + ",".join(dump(x) for x in v) + "]"
+    if isinstance(v, dict):
+        return "{" + ",".join(json.dumps(k) + ":" + dump(x) for k, x in v.items()) + "}"
+    return json.dumps(v)
+data, dec, i, out = sys.stdin.read(), json.JSONDecoder(parse_int=float), 0, []
+while True:
+    while i < len(data) and data[i] in " \t\r\n":
+        i += 1
+    if i >= len(data):
+        break
+    v, i = dec.raw_decode(data, i)
+    out.append(dump(v))
+sys.exit(subprocess.run([real] + args, input="\n".join(out).encode()).returncode)
+PY
+chmod +x "$TT/jq16/jq"
+ctl="$(printf '{"result":%s}' "$(cat "$FIX/lamports-over-2-53.jsonl")" | PATH="$TT/jq16:$PATH" jq -c .result \
+  | python3 -I "$DNR/deltas.py" lamports | awk -F'\t' '$2=="BigOne"{print $3}')"
+eq "big ints: control, through the jq 1.6 stand-in jq -c .result rounds BigOne's +1 to +2" "$ctl" "2"
+( PATH="$TT/jq16:$TT/bin:$PATH" FAKE_CURL_TX_FIXTURE="$FIX/lamports-over-2-53.jsonl" RPC_URL="https://rpc.example.test/" \
+    bash "$DNR/collect.sh" --out "$TT/big16" --confirmed -- "$A_ADDR" ) > "$TT/big16.out" 2>&1
+if cmp -s "$TT/big16/transactions.jsonl" "$FIX/lamports-over-2-53.jsonl"; then
+  ok "big ints: with jq 1.6, collect.sh writes the transaction byte-identical to the RPC's literal"
+else
+  bad "big ints: the corpus line differs from the RPC's literal ($(head -c 200 "$TT/big16/transactions.jsonl" 2>/dev/null))"
+fi
+eq "big ints: deltas over that corpus stay exact (BigOne, BigTwo)" \
+  "$(python3 -I "$DNR/deltas.py" lamports "$TT/big16/transactions.jsonl" | awk -F'\t' '{printf "%s=%s ", $2, $3}')" "BigOne=1 BigTwo=1 "
 
 if [[ "$fails" -ne 0 ]]; then
   echo "test-dnr: $fails assertion(s) FAILED" >&2
