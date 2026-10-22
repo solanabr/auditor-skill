@@ -91,7 +91,7 @@ collect() {
   local out="$1"; shift
   ( PATH="$TT/bin:$PATH" bash "$DNR/collect.sh" --out "$out" --confirmed "$@" ) > "$out.out" 2>&1
 }
-calls() { grep -c "\"$1\"" "$FAKE_CURL_LOG" 2>/dev/null || true; }
+calls() { if [[ -f "$FAKE_CURL_LOG" ]]; then grep -c "\"$1\"" "$FAKE_CURL_LOG"; else echo 0; fi; }
 sigs_of() { jq -r '.transaction.signatures[0]' "$1" 2>/dev/null | tr '\n' ' '; }
 
 # A jq 1.6 stand-in, first on PATH from $TT/jq16: it reads every input number as
@@ -260,6 +260,41 @@ mkdir -p "$TT/keep-empty"; : > "$TT/keep-empty/signatures.jsonl"
 collect "$TT/keep-empty" -- "$A_ADDR"
 eq "no clobber: an empty signatures.jsonl is refused too (exit 2)" "$?" "2"
 eq "no clobber: refused runs made no RPC call" "$(calls getSignaturesForAddress)" "$before"
+
+# ---------------------------------------------------------------------------
+# 4. --max-tx counts getTransaction calls, failed ones included, and 10 failed
+#    calls in a row stop the run, so a failing endpoint gets no more calls than
+#    the estimate the human approved. Each run starts a fresh call log.
+# ---------------------------------------------------------------------------
+book '{"'"$A_ADDR"'": [{"signature": "S%02d" % k, "slot": 100 - k, "err": None, "blockTime": 1700000000 - k} for k in range(1, 26)]}'
+rm -f "$FAKE_CURL_LOG"
+FAKE_TX_FAIL=rpc429 collect "$TT/fail-cap" --max-tx 2 -- "$A_ADDR"
+code=$?
+eq "failing endpoint: --max-tx 2 makes exactly 2 getTransaction calls" "$(calls getTransaction)" "2"
+eq "failing endpoint: exit 0; two error rows, then the cap row naming the third signature" \
+  "$code|$(cut -f1 "$TT/fail-cap/collection-gaps.tsv" | tr '\n' ' ')|$(cut -f2 "$TT/fail-cap/collection-gaps.tsv" | sed -n 3p)" \
+  "0|S01 S02 S03 |not fetched: --max-tx=2 calls reached; this and 22 older signatures in signatures.jsonl were not fetched"
+rm -f "$FAKE_CURL_LOG"
+FAKE_TX_FAIL=transport collect "$TT/fail-run" -- "$A_ADDR"
+code=$?
+eq "failing endpoint: 10 failed calls in a row stop the run (default --max-tx)" "$(calls getTransaction)/$code" "10/0"
+eq "failing endpoint: the stop is a gap row naming the first signature not fetched" \
+  "$(sed -n 11p "$TT/fail-run/collection-gaps.tsv")" \
+  "S11$(printf '\t')not fetched: stopped after 10 getTransaction calls in a row failed (last: transport error (curl exit 28)); this and 14 older signatures in signatures.jsonl were not fetched"
+if grep -q 'stopped: 10 getTransaction calls in a row failed .*the endpoint is failing (rate limit or outage.*collected 0, collection gaps 11' "$TT/fail-run.out" \
+   && grep -q '^collection gaps: 11 ' "$TT/fail-run.out"; then
+  ok "failing endpoint: the run says the endpoint is failing, with what it collected and the gap count"
+else
+  bad "failing endpoint: stop message missing ($(grep -m1 'stopped' "$TT/fail-run.out"))"
+fi
+rm -f "$FAKE_CURL_LOG"
+FAKE_TX_FAIL=null:2 collect "$TT/fail-alt" -- "$A_ADDR"
+eq "failing endpoint: failures that alternate with successes never stop the run (25 calls, 13 fetched, 12 gaps)" \
+  "$(calls getTransaction)/$(grep -c . "$TT/fail-alt/transactions.jsonl")/$(grep -c . "$TT/fail-alt/collection-gaps.tsv")" "25/13/12"
+rm -f "$FAKE_CURL_LOG"
+FAKE_TX_FAIL=null:2 collect "$TT/fail-alt-cap" --max-tx 5 -- "$A_ADDR"
+eq "failing endpoint: --max-tx 5 with every second call failing -> 5 calls, 3 fetched, cap row names S06" \
+  "$(calls getTransaction)/$(grep -c . "$TT/fail-alt-cap/transactions.jsonl")/$(tail -1 "$TT/fail-alt-cap/collection-gaps.tsv" | cut -f1)" "5/3/S06"
 
 if [[ "$fails" -ne 0 ]]; then
   echo "test-dnr-collect: $fails assertion(s) FAILED" >&2

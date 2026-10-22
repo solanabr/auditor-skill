@@ -22,6 +22,11 @@
 #     a simulate, or a write method.
 #   * CAPPED: --max-pages (default 20 → up to 20000 signatures per address) and
 #     --max-tx (default 2000) bound the work and the spend. Raise them deliberately.
+#     --max-tx counts getTransaction calls, failed ones included, so a run makes at
+#     most addresses × max-pages + max-tx calls.
+#   * STOPS ON A FAILING ENDPOINT: after 10 getTransaction calls in a row fail
+#     (rate limit, outage, or history the endpoint does not serve), it fetches
+#     nothing more and records the stop as a collection gap.
 #
 # WHAT IS KEPT: every signature in the window, FAILED ones included. A failed
 # transaction moves no state, but it is evidence of an attempt — probing before a
@@ -50,7 +55,8 @@
 # COLLECTION GAPS: every gap is also a row of <dir>/collection-gaps.tsv,
 # `<signature or address><TAB><reason>`: a getTransaction that failed (transport
 # error, RPC error or null result), a signature page that failed, a window the page
-# cap did not reach, and the --max-tx cap. The run ends with
+# cap did not reach, the --max-tx cap, and the stop on a failing endpoint (the
+# last two name the first signature not fetched). The run ends with
 # "collection gaps: N (see <dir>/collection-gaps.tsv)". Gaps leave the exit status
 # at 0; copy each row into LEDGER.md and INCIDENTS.json `collection_gaps`.
 #
@@ -304,24 +310,34 @@ jq -r --argjson s "$since" --argjson u "$until" '
   | select(($u == 0) or ((.blockTime // 0) <= $u))
   | "\(.slot // 0) \(.signature)"' "$sig_file" | sort -s -k1,1nr | awk '!seen[$2]++ { print $2 }' > "$todo"
 
-fetched=0; total="$(grep -c . "$todo")"; i=0
+# 3. fetch. Every getTransaction call counts against --max-tx, and max_failed calls
+#    failing in a row stop the run: the endpoint is failing, and the rest would too.
+max_failed=10
+fetched=0; calls=0; failed=0; total="$(grep -c . "$todo")"; i=0
 while IFS= read -r sig; do
   [ -z "$sig" ] && continue
   i=$((i + 1))
-  if [ "$fetched" -ge "$max_tx" ]; then
-    echo "  ! reached --max-tx=$max_tx; $((total - i + 1)) signatures not fetched — recorded as a collection gap" >&2
-    gap "$sig" "not fetched: --max-tx=$max_tx reached; this and $((total - i)) older signatures in signatures.jsonl were not fetched"
+  if [ "$failed" -ge "$max_failed" ]; then
+    gap "$sig" "not fetched: stopped after $max_failed getTransaction calls in a row failed (last: $reason); this and $((total - i)) older signatures in signatures.jsonl were not fetched"
+    echo "  ! stopped: $max_failed getTransaction calls in a row failed (last: $reason) — the endpoint is failing (rate limit or outage, or it does not serve this history); collected $fetched, collection gaps $ngaps; $((total - i + 1)) signatures not fetched — recorded as a collection gap" >&2
     break
   fi
+  if [ "$calls" -ge "$max_tx" ]; then
+    echo "  ! reached --max-tx=$max_tx getTransaction calls; $((total - i + 1)) signatures not fetched — recorded as a collection gap" >&2
+    gap "$sig" "not fetched: --max-tx=$max_tx calls reached; this and $((total - i)) older signatures in signatures.jsonl were not fetched"
+    break
+  fi
+  calls=$((calls + 1))
   resp="$(rpc getTransaction "[\"$sig\",{\"encoding\":\"jsonParsed\",\"maxSupportedTransactionVersion\":1,\"commitment\":\"finalized\"}]")"; rc=$?
   if [ "$rc" -eq 0 ] && printf '%s' "$resp" | jq -e '.result | objects' >/dev/null 2>&1 \
      && line="$(printf '%s' "$resp" | result_line)" && [ -n "$line" ]; then
     printf '%s\n' "$line" >> "$tx_file"
-    fetched=$((fetched + 1))
+    fetched=$((fetched + 1)); failed=0
   else
     reason="$(failure "$rc" "$resp")"
     echo "  ! getTransaction failed for a signature: $reason — recorded as a collection gap" >&2
     gap "$sig" "getTransaction: $reason"
+    failed=$((failed + 1))
   fi
 done < "$todo"
 echo "transactions fetched: $fetched -> $tx_file"
