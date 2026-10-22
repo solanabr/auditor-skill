@@ -17,7 +17,7 @@ auditor-skill is a **skill file** (a structured prompt + checklists) that turns 
 
 **It is not a SaaS product.** It's a folder of markdown files you install for your AI agent — outside any repository you audit — or send to an LLM API.
 
-> **Adaptation required before use.** This skill was originally developed for a specific Solana/Anchor DeFi project and then generalized. Before running it on your project you must update `discovery/file-map.md` with your actual folder structure, file names, and state variable names. The questionnaire in `QUESTIONS.md` is a blank template — fill it out (or run `/auditor:intake`) for your project before invoking the auditor. Everything else (checklists, known vectors, output rules) is fully portable as-is.
+> **Adaptation required before use.** This skill was originally developed for a specific Solana/Anchor DeFi project and then generalized. `discovery/file-map.md` assumes that project's layout (`programs/{name}/src/`, `apps/backend/src/`, `apps/web/src/`). If yours differs, record where your code lives at intake instead: the in-scope paths under `QUESTIONS.md` Q39 ("Specific files/modules") and the exclusions under Q44, which `/auditor:intake` writes to `audit_<n>/intake.md` §1. An edited `discovery/file-map.md` in a shared or plugin install is lost on the next update. The questionnaire in `QUESTIONS.md` is a blank template — fill it out (or run `/auditor:intake`) for your project before invoking the auditor. Everything else (checklists, known vectors, output rules) is fully portable as-is.
 
 ---
 
@@ -48,7 +48,7 @@ auditor-skill is a **skill file** (a structured prompt + checklists) that turns 
 | [docs/audit-flows.md](docs/audit-flows.md) | The lifecycle and when to use each flow (`/audit`, `/audit-cycle`, `/audit-assist`, `/re-audit`) |
 | [docs/commands.md](docs/commands.md) | Reference for all 17 commands |
 | [docs/agents.md](docs/agents.md) | The 9-agent roster and how they chain |
-| [docs/power-tools.md](docs/power-tools.md) | `audit-scan`, `audit-mem`, Trail of Bits, Surfpool, PoC/patch harnesses |
+| [docs/power-tools.md](docs/power-tools.md) | `audit-scan`, `audit-mem`, Trail of Bits, Surfpool, PoC/patch harnesses, the bundled scripts and their flags |
 | [docs/poc-and-patches.md](docs/poc-and-patches.md) | Executable exploit + fix-patch delivery |
 | [docs/output-and-rigor.md](docs/output-and-rigor.md) | Severity, the Rule 5b gate, scope-gated loading, report format |
 | [docs/detection-response.md](docs/detection-response.md) | Post-incident hunting + incident workup (`/auditor:hunt`, `/auditor:respond`) |
@@ -75,6 +75,8 @@ auditor-skill is a **skill file** (a structured prompt + checklists) that turns 
 
 Install auditor-skill **outside any repository you audit**: the plugin (Option 1), or a user-level skill such as `install.sh ~/.claude/skills/auditor-skill`. A copy inside the audited repository resolves its scripts, tools and corpus from a tree that repository controls, and that repository's own `.claude/`, `.mcp.json` and `CLAUDE.md` are target-controlled too ([OUTPUT-RULES.md Rule 11e](OUTPUT-RULES.md#11e--bundled-paths)).
 
+**Upgrading from 7.5 or earlier.** If your copy sits inside a repository (the `install.sh` default, `.claude/skills/auditor-skill`), delete it (`rm -rf .claude/skills/auditor-skill`) and install a fresh copy outside: the plugin (Option 1), or Option 2 with the path `~/.claude/skills/auditor-skill`. Never move or update a copy you find inside a repository: its git config may have come with that repository. Plugin users get 7.6.0, with the new Trail of Bits pin, when they update the plugin.
+
 ### Option 1: Claude Code plugin marketplace (recommended)
 
 ```
@@ -86,7 +88,7 @@ Registers the marketplace and installs the `auditor` plugin — all 17 `/auditor
 
 ### Option 2: Install script
 
-Installs the skill and inits the tooling. Pass a path outside the repositories you audit; with no argument it installs into the current directory's `.claude/skills/auditor-skill`, so never run it bare inside a repository you are about to audit:
+Installs the skill and inits the tooling. Pass a path outside the repositories you audit; with no argument it installs into the current directory's `.claude/skills/auditor-skill`, so never run it bare inside a repository you are about to audit. It warns on stderr when the install directory is inside a git work tree. Re-running it with the same path installs a fresh clone there and moves the earlier install aside to `<path>.old-<timestamp>`, without running git in it. A run without a path never replaces anything, and stops if `.claude/skills/auditor-skill` already exists:
 
 ```bash
 # read it first (it's a security tool, after all):

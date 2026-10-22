@@ -27,7 +27,7 @@ Turns the passive `QUESTIONS.md` questionnaire into a persisted `audit_<n>/intak
 **Arg:** `[path] [--auto] [--bootstrap] [--vulns <file|https-url>] [--seed <threat-model.md>] [--design-doc <file>] [--parent <https-url|path>]`
 Builds the pre-review threat model *before* verdicts (analogous to how context reconstruction precedes verdicts): an **asset inventory** (crown-jewel funds/authority/data and where they live), an **actor × capability table** (each actor → what it can do → what it must NOT be able to do — the load-bearing column), and a **trust-boundary map** (every CPI, caller-supplied account, instruction arg, `remaining_accounts`, sysvar that crosses into higher trust, with whether it is validated). Ends with **attacker goals to test** (`AG-n`, each with an Evidence cell), mapped to the checklists/vectors that hunt them.
 **When:** after intake + context, before the manual review. **Emits:** `audit_<n>/threat-model.md` (seeds report §4.4/§4.6/§4.7), plus `audit_<n>/bootstrap/` in bootstrap mode.
-No verdicts, no severities — target enumeration only. `--auto` drives the `threat-modeler` agent; interactive asks the human. **`--bootstrap`** (also implied by `--vulns` / `--seed` / `--parent`, and auto-selected offline when intake records a prior audit or incident, a fork is detected, or prior audits / incidents sit next to the target) runs the bundled `${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh` first (never a `scripts/` path relative to the audited repo): keyword commits, reverts, removed and quietly added account guards, churn, an optional fork-parent comparison, and prior audit reports (PDF/MD), post-mortems, lists and `INCIDENTS.json`. Network only for an `https://` URL the user passes in `--parent` / `--vulns`, even with `--auto`; automatic trigger runs stay offline and record a detected parent as not cloned. Interactively it drafts first, then interviews the team. Method: [threat-model-bootstrap.md](../references/audit-lifecycle/threat-model-bootstrap.md). Every claim cites `file:line` or its evidence; banned words → `UNKNOWN — needs manual review`.
+No verdicts, no severities — target enumeration only. `--auto` drives the `threat-modeler` agent; interactive asks the human. **`--bootstrap`** (also implied by `--vulns` / `--seed` / `--parent`, and auto-selected offline when intake records a prior audit or incident, a fork is detected, or prior audits / incidents sit next to the target) runs the bundled `<auditor-skill root>/scripts/threat-model/collect.sh` first (never a `scripts/` path relative to the audited repo): keyword commits, reverts, removed and quietly added account guards, churn, an optional fork-parent comparison, and prior audit reports (PDF/MD), post-mortems, lists and `INCIDENTS.json`. Network only for an `https://` URL the user passes in `--parent` / `--vulns`, even with `--auto`; automatic trigger runs stay offline and record a detected parent as not cloned. Interactively it drafts first, then interviews the team. Method: [threat-model-bootstrap.md](../references/audit-lifecycle/threat-model-bootstrap.md). Every claim cites `file:line` or its evidence; banned words → `UNKNOWN — needs manual review`.
 
 ---
 
@@ -84,12 +84,12 @@ Quantifies a candidate economic finding: model capital/setup cost, extractable v
 **When:** a High/Critical economic finding needs the dollar figure Rule 5b requires. **Emits:** the quantified PoC (dollar figures, not yes/no). See [power-tools.md](power-tools.md#surfpool-economic-simulation).
 
 ### `/auditor:poc`
-**Arg:** `<finding-id | file:line> [--fork] [--fuzz] [--force]`
+**Arg:** `<finding-id | INC-n.k | file:line> [--fork] [--fuzz] [--force]`
 Turns a *confirmed* finding into a runnable exploit: resolve the finding + its context worksheet, gate on severity (N≥7 by default; `--force` overrides), detect the toolchain (never assume), pick the harness by finding type (Mollusk / LiteSVM / Surfpool `--fork` / Trident-cargo-fuzz `--fuzz`), spawn `poc-engineer` to fill a feature-gated `vulnerable`/`fixed` crate that **asserts** the flaw.
 **When:** demonstrate a High/Critical finding executably. **Emits:** `audit_<n>/poc/F-xxx/` (crate + one-command `run.sh`) + the earned `[PoC-*]` tier. Never hard-fails — toolchain absence → `[PoC-ATTEMPTED]` + the prose PoC is kept. Full detail: [poc-and-patches.md](poc-and-patches.md).
 
 ### `/auditor:patch`
-**Arg:** `<finding-id> [--verify-with-mutation]`
+**Arg:** `<finding-id | INC-n.k> [--verify-with-mutation]`
 Drafts and verifies a fix: `patch-engineer` writes a **minimal idiomatic** unified diff against the pinned commit that closes *exactly* the cited bound (obeys the Rust/Anchor/Pinocchio rules), applies it to a **scratch worktree** (never the client tree), rebuilds, and **re-runs the finding's PoC** — which must now revert. `--verify-with-mutation` adds `mewt` mutation + a blast-radius check.
 **When:** hand the client a proven fix. **Emits:** `audit_<n>/patches/F-xxx.patch` + `VERIFICATION.md` + the `[FIX-*]` tier. Proposal only — `[FIX-VERIFIED]` requires an *executed* revert; no PoC → `[FIX-PROPOSED]` ceiling. Detail: [poc-and-patches.md](poc-and-patches.md).
 
@@ -116,7 +116,7 @@ Verification-verb discipline: use "we re-tested and confirmed" only when *you* v
 
 ## Detection & response
 
-Post-incident only — never part of an audit. Both commands are propose-only: they never sign, send, simulate against a public cluster, pause or freeze anything. Contract: [`references/detection-response/README.md`](../references/detection-response/README.md); orientation: [detection-response.md](detection-response.md).
+Post-incident only — never part of an audit. Both commands are propose-only: they never sign, send, simulate against a public cluster, pause or freeze anything. They hand all reading and analysis of the incident corpus to the `incident-responder` agent, whose tool list has no MCP tools; the commands themselves run in your session, where every connected MCP server stays callable, and call no MCP tool. Before a live incident, disconnect or deny write-capable MCP servers (for example, tools that transfer or stake). Contract: [`references/detection-response/README.md`](../references/detection-response/README.md); orientation: [detection-response.md](detection-response.md).
 
 ### `/auditor:hunt`
 **Arg:** `[<address> ...] [--logs <dir>] [--repo <path>] [--window <fromUnix>..<toUnix>] [--collect] [--fresh]`

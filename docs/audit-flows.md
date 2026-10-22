@@ -88,7 +88,7 @@ The fully automated audit team. Runs the whole lifecycle above with **no human i
 /auditor:audit-cycle --scope program --with-poc   # + executable PoCs & patches for confirmed N≥7
 ```
 
-Delivers the **client-facing** report (`templates/audit-report.md`): executive summary, commit-pinned scope, findings with PoC/reachability, a code-maturity narrative, trust-model caveats, disclaimers — and, like a real firm, **no "safe to deploy" guarantee**. Optional PDF via `scripts/report-to-pdf.sh` (pandoc-gated; Markdown is always the deliverable). Generated fuzz/FV harnesses ship to `audit_<n>/harnesses/` with a coverage-gaps note; with `--with-poc`, PoCs land in `audit_<n>/poc/` and patches in `audit_<n>/patches/`.
+Delivers the **client-facing** report (`templates/audit-report.md`): executive summary, commit-pinned scope, findings with PoC/reachability, a code-maturity narrative, trust-model caveats, disclaimers — and, like a real firm, **no "safe to deploy" guarantee**. Optional PDF via `<auditor-skill root>/scripts/report-to-pdf.sh` (pandoc-gated; Markdown is always the deliverable). Generated fuzz/FV harnesses ship to `audit_<n>/harnesses/` with a coverage-gaps note; with `--with-poc`, PoCs land in `audit_<n>/poc/` and patches in `audit_<n>/patches/`.
 
 Use it when you want a reproducible, hands-off first-pass audit and a deliverable document.
 

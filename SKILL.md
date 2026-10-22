@@ -109,7 +109,7 @@ The auditor scans file extensions and applies the correct checklists automatical
 If context was lost, a file was too large, or a pattern is unfamiliar — say so. Never mark `[PASS]` without reading the code. See [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 10.
 
 ### 6. Operating Safety
-Target-controlled code runs only in the execution mode chosen at intake (isolated recommended; native allowed, with a report caveat), the report names every outside service a tool contacts, a `.git/` the auditor did not clone is never allowed to run its config, and audit output never reaches git or a public CI log. See [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 11.
+Target-controlled code runs only in the execution mode chosen at intake (isolated recommended; native allowed, with a report caveat), the report names every outside service a tool contacts, a `.git/` the auditor did not clone is never allowed to run its config, audit output never reaches git or a public CI log, and bundled scripts, tools and corpus files resolve from the installation root, never from the audited repo. See [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 11.
 
 ---
 
@@ -250,8 +250,8 @@ Full verdict-format rules (what each token must cite): see [OUTPUT-RULES.md](OUT
 
 This entire `auditor-skill/` folder is self-contained and portable:
 
-1. Copy the full `auditor-skill/` directory into the target repository
-2. Update `discovery/file-map.md` with the target's folder structure
+1. Install the full `auditor-skill/` directory outside the target repository: the plugin, or a user-level skill such as `~/.claude/skills/auditor-skill` ([OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 11e)
+2. Record the target's folder structure at intake (`QUESTIONS.md` Q39 in-scope paths, Q44 exclusions) rather than editing `discovery/file-map.md`, which an update overwrites
 3. Checklists 01-07: any Solana/Anchor program
 4. Checklists 08-10: any TypeScript/Express/Next.js project
 5. Checklist 14: any Python project
