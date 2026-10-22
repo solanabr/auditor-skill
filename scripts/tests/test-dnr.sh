@@ -344,12 +344,14 @@ eq "collect: an existing incident_<n>/.gitignore is not overwritten" "$(cat "$TT
 # ---------------------------------------------------------------------------
 # 11. snapshot-program.sh against a fake `solana`: writes bin/<id>.so, prints the
 #     ledger line (owner, last-deployed slot, zero-trimmed hash, padding), redacts a
-#     CLI error, and stops with a blocker for loader-v4. The CLI runs from a
-#     throwaway -C config: no URL in argv, a keypair path that does not exist, a
-#     0700 directory removed on exit, and a blocker if the CLI ignores the config.
-#     Like solana-cli 3.1, the fake reads a config only when it holds
-#     websocket_url, and `program show` needs a signer unless --buffer-authority
-#     is given.
+#     CLI error, and reads a loader-v4 program through program-v4 show / download.
+#     The CLI runs from a throwaway -C config: no URL in argv, a keypair path that
+#     does not exist, a 0700 directory removed on exit, and a blocker if the CLI
+#     ignores the config. Like solana-cli 3.1, the fake reads a config only when it
+#     holds websocket_url, `program show` / `program-v4 show` need a signer unless
+#     --buffer-authority / --authority is given, `program show` / `dump` reject a
+#     loader-v4 program ("is not an SBF program"), and `program-v4` commands reject
+#     anything else ("is not owned by loader-v4").
 # ---------------------------------------------------------------------------
 printf '#!/bin/sh\nexec python3 -I "$0.py" "$@"\n' > "$TT/bin/solana"
 cat > "$TT/bin/solana.py" <<'PY'
@@ -378,20 +380,29 @@ with open(os.environ["FAKE_SOLANA_SEEN"], "a") as log:
     log.write(f"{kp}\t{os.path.exists(kp)}\t{mode}\n")
 if os.environ.get("FAKE_SOLANA_FAIL"):
     sys.stderr.write(f"Error: RPC request error: cluster version query failed: {url}\n"); sys.exit(1)
-owner = "LoaderV411111111111111111111111111111111111" if os.environ.get("FAKE_SOLANA_V4") else "BPFLoaderUpgradeab1e11111111111111111111111"
-if a[:2] == ["program", "show"] and "--buffer-authority" not in a and not os.path.exists(kp):
-    sys.stderr.write(f'Error: Dynamic program error: No default signer found, run "solana-keygen new -o {kp}"\n'); sys.exit(1)
+v4 = bool(os.environ.get("FAKE_SOLANA_V4"))
+owner = "LoaderV411111111111111111111111111111111111" if v4 else "BPFLoaderUpgradeab1e11111111111111111111111"
+if (a[:2] == ["program", "show"] and "--buffer-authority" not in a or a[:2] == ["program-v4", "show"] and "--authority" not in a) \
+        and not os.path.exists(kp):
+    sys.stderr.write(f'Error: Dynamic program error: No default signer found, run "solana-keygen new -o {kp}" to create a new one\n'); sys.exit(1)
+pid = a[2] if a[0] == "program" else a[a.index("--program-id") + 1]
+if a[:2] in (["program", "show"], ["program", "dump"]) and v4:
+    sys.stderr.write(f"Error: {pid} is not an SBF program\n"); sys.exit(1)
+if a[0] == "program-v4" and not v4:
+    sys.stderr.write(f"Error: {pid} is not owned by loader-v4\n"); sys.exit(1)
 if a[:2] == ["program", "show"]:
-    print(f"Program Id: {a[2]}\nOwner: {owner}\nProgramData Address: PdA111\nAuthority: Auth111\nLast Deployed In Slot: 12345\nData Length: 100 (0x64) bytes\nBalance: 1 SOL")
-elif a[:2] == ["program", "dump"]:
-    open(a[3], "wb").write(b"\x7fELF" + bytes(range(1, 30)) + b"\x00" * 500)
-    print(f"Wrote program to {a[3]}")
+    print(f"\nProgram Id: {pid}\nOwner: {owner}\nProgramData Address: PdA111\nAuthority: Auth111\nLast Deployed In Slot: 12345\nData Length: 100 (0x64) bytes\nBalance: 1 SOL\n")
+elif a[:2] == ["program-v4", "show"]:
+    print(f"\nProgram Id: {pid}\nOwner: {owner}\nAuthority: Auth111\nLast Deployed In Slot: 12345\nStatus: deployed\nData Length: 100 (0x64) bytes\n")
+elif a[:2] in (["program", "dump"], ["program-v4", "download"]):
+    open(a[-1], "wb").write(b"\x7fELF" + bytes(range(1, 30)) + b"\x00" * 500)
+    print(f"Wrote program to {a[-1]}")
 else:
     sys.stderr.write("fake solana: refusing unexpected subcommand\n"); sys.exit(9)
 PY
 chmod +x "$TT/bin/solana"
 export FAKE_SOLANA_ARGV="$TT/solana.argv" FAKE_SOLANA_SEEN="$TT/solana.seen"
-PID="ProgTest1111111111111111111111111111111111"   # 42 base58 characters
+PID="ProgTest11111111111111111111111111111111111"   # base58, decodes to 32 bytes
 snap="$(PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/v2/LEAKME42" bash "$DNR/snapshot-program.sh" "$PID" "$TT/inc" 2>&1)"
 code=$?
 eq "snapshot: exits 0 with the fake CLI" "$code" "0"
@@ -424,8 +435,13 @@ eq "snapshot: no program call after the config check failed" "$(grep -c '"progra
 PATH="$TT/bin:$PATH" RPC_URL='https://rpc.example.test/"x' bash "$DNR/snapshot-program.sh" "$PID" "$TT/inc7" >/dev/null 2>&1
 code=$?
 if [[ "$code" == 2 && ! -e "$TT/inc7" ]]; then ok "snapshot: refuses an \$RPC_URL holding a quote (exit 2, nothing written)"; else bad "snapshot: quoted \$RPC_URL -> exit $code"; fi
-PATH="$TT/bin:$PATH" FAKE_SOLANA_V4=1 RPC_URL="https://rpc.example.test/" bash "$DNR/snapshot-program.sh" "$PID" "$TT/inc3" >/dev/null 2>&1
-eq "snapshot: loader-v4 program stops with a named blocker (exit 3)" "$?" "3"
+v4snap="$(PATH="$TT/bin:$PATH" FAKE_SOLANA_V4=1 RPC_URL="https://rpc.example.test/" bash "$DNR/snapshot-program.sh" "$PID" "$TT/inc3" 2>&1)"
+code=$?
+case "$code|$v4snap" in
+  "0|program=$PID owner=LoaderV411111111111111111111111111111111111 last_deployed_slot=12345 authority=Auth111 "*" file=bin/$PID.so")
+    ok "snapshot: a loader-v4 program is read with program-v4 show / download (exit 0)" ;;
+  *) bad "snapshot: loader-v4 program -> exit $code ($v4snap)" ;;
+esac
 # The id is used in file names: anything but a base58 key is refused before any write.
 for badid in '../../escape' 'Prog111' 'ProgTest111111111111111111111111111111111/x' 'Prog0OIl1111111111111111111111111111111111'; do
   PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" bash "$DNR/snapshot-program.sh" "$badid" "$TT/inc5" >/dev/null 2>&1

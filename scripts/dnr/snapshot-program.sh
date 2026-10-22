@@ -20,13 +20,19 @@
 #      must report that path back, or the CLI fell back to its defaults and the
 #      script stops with a blocker.
 #   2. `solana -C <config> program show <id>` into the temp dir (with a fixed
-#      `--buffer-authority`, so the CLI never looks for a signer)
-#   3. `solana -C <config> program dump <id>` into the temp dir
+#      `--buffer-authority`, so the CLI never looks for a signer). It rejects a
+#      loader-v4 program as "not an SBF program"; that one is read with
+#      `program-v4 show --program-id <id>` (a fixed `--authority`, for the same
+#      reason), and an account neither command reads stops with a blocker.
+#   3. `solana -C <config> program dump <id>` (loader-v4: `program-v4 download
+#      --program-id <id>`) into the temp dir
 #   4. checks the ELF magic, hashes the dump the way solana-verify does (trailing
 #      zero padding trimmed, then sha256), keeps the dump and the show output in
 #      <incident_dir>/bin/, and prints ONE ledger-ready line:
 #        program=<id> owner=<loader> last_deployed_slot=<N> authority=<A>
 #        sha256_zero_trimmed=<hex> elf_bytes=<n> padding_bytes=<n> file=bin/<id>.so
+#      A program under an immutable loader (BPFLoader2, or the older BPFLoader) has
+#      no deploy slot and no authority: last_deployed_slot=n/a (immutable loader).
 #
 # NEVER OVERWRITTEN: the first snapshot is bin/<id>.so + bin/<id>.show.txt, the
 # incident-time bytes that Leg 3 and the patch flow run on. A later run (respond
@@ -44,9 +50,6 @@
 # replaced it (dumped-after-hotfix; the incident bytes need an archived binary or a
 # solana-verify hash-matched build).
 #
-# Loader-v4 programs (owner LoaderV411…) are not handled here: the script stops
-# with a named blocker rather than guess at a CLI command.
-#
 # RUN DIRECTORY: <incident_dir>, and the nearest incident_* directory above it, must
 # not be a symbolic link, hold one, or be tracked by git; such a directory is refused
 # with exit 2 before anything is written or the CLI runs.
@@ -57,11 +60,11 @@
 # echoes the full URL, key included, in its errors). Nothing written to
 # <incident_dir> contains the URL.
 #
-# Exit: 0 ok · 2 usage / not a base58 id / no or unusable $RPC_URL / a refused run
-# directory · 3 named blocker (no solana CLI or python3, config not taken, CLI error,
-# loader-v4, dump without ELF magic, hash not computed, a snapshot name already
-# taken).
-# bash >= 3.2, python3 for the hash, checked before the CLI runs, and run as
+# Exit: 0 ok · 2 usage / not a base58 32-byte public key / no or unusable $RPC_URL /
+# a refused run directory · 3 named blocker (no solana CLI or python3, config not
+# taken, CLI error or no program under any loader, dump without ELF magic, hash not
+# computed, a snapshot name already taken).
+# bash >= 3.2, python3 for the id check and the hash, checked before the CLI runs, and run as
 # `python3 -I` because the working directory is usually the audited repo: without
 # -I, a hashlib.py there would be imported in place of the stdlib.
 
@@ -77,7 +80,8 @@ if [ -z "$pid" ] || [ -z "$dir" ]; then
   exit 2
 fi
 # The id becomes part of file names under <incident_dir>/bin/: accept only a base58
-# public key (32-44 characters of the Bitcoin alphabet), so it cannot carry a path.
+# public key (32-44 characters of the Bitcoin alphabet), so it cannot carry a path;
+# that it decodes to 32 bytes is checked once python3 is known to be there.
 if ! [[ "$pid" =~ ^[1-9A-HJ-NP-Za-km-z]{32,44}$ ]]; then
   echo "snapshot-program.sh: '$pid' is not a base58 program id (32-44 characters of [1-9A-HJ-NP-Za-km-z])." >&2
   exit 2
@@ -132,9 +136,21 @@ if ! command -v solana >/dev/null 2>&1; then
   exit 3
 fi
 if ! command -v python3 >/dev/null 2>&1; then
-  echo "[blocker] python3 not on PATH — it hashes the dump; install it, or snapshot $pid by hand and record its zero-trimmed sha256 and last-deployed slot in LEDGER.md." >&2
+  echo "[blocker] python3 not on PATH — it checks the id and hashes the dump; install it, or snapshot $pid by hand and record its zero-trimmed sha256 and last-deployed slot in LEDGER.md." >&2
   exit 3
 fi
+# The CLI takes an id that is not 32 bytes as no id at all: `program-v4 show` then
+# lists every loader-v4 program of the authority instead of failing.
+case "$(python3 -I -c 'import sys
+a = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+n = 0
+for c in sys.argv[1]:
+    n = n * 58 + a.index(c)
+print(len(sys.argv[1]) - len(sys.argv[1].lstrip("1")) + (n.bit_length() + 7) // 8)' "$pid" 2>/dev/null)" in
+  32) ;;
+  [0-9]*) echo "snapshot-program.sh: '$pid' does not decode to a 32-byte public key." >&2; exit 2 ;;
+  *) echo "[blocker] python3 -I did not run; snapshot $pid by hand and record its zero-trimmed sha256 and last-deployed slot in LEDGER.md." >&2; exit 3 ;;
+esac
 
 # mktemp -d creates the directory with mode 0700.
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/dnr_snap.XXXXXX")" || {
@@ -150,27 +166,53 @@ case "$(solana -C "$cfg" config get keypair 2>/dev/null)" in
      exit 3 ;;
 esac
 
-show="$tmp/show.txt"; dump="$tmp/dump.so"
-# --buffer-authority only matters for --buffers / --programs listings; naming one
-# (the System Program id) stops `show` from resolving a default signer.
-if ! solana -C "$cfg" program show "$pid" --buffer-authority 11111111111111111111111111111111 >"$show" 2>"$err"; then
-  echo "[blocker] solana program show failed for $pid:" >&2
-  "$REDACT" <"$err" >&2
-  exit 3
-fi
+show="$tmp/show.txt"; dump="$tmp/dump.so"; v4=0
+# show_program <file>: the program's `show` output. --buffer-authority and
+# --authority only matter for listings; naming one (the System Program id) stops
+# the CLI from resolving a default signer.
+show_program() {
+  rm -f "$1" "$err"
+  if [ "$v4" -eq 1 ]; then
+    solana -C "$cfg" program-v4 show --program-id "$pid" --authority 11111111111111111111111111111111 >"$1" 2>"$err"
+  else
+    solana -C "$cfg" program show "$pid" --buffer-authority 11111111111111111111111111111111 >"$1" 2>"$err"
+  fi
+}
+# dump_program <file>: the program's bytes, as the CLI writes them.
+dump_program() {
+  rm -f "$1" "$err"
+  if [ "$v4" -eq 1 ]; then
+    solana -C "$cfg" program-v4 download --program-id "$pid" "$1" >/dev/null 2>"$err"
+  else
+    solana -C "$cfg" program dump "$pid" "$1" >/dev/null 2>"$err"
+  fi
+}
 field() { awk -F': *' -v k="$1" '$1 == k {print $2; exit}' "$2" 2>/dev/null; }
-owner="$(field "Owner" "$show")"
-slot="$(field "Last Deployed In Slot" "$show")"
+# slot_of <show output>: the last-deployed slot; an immutable loader has none.
+slot_of() {
+  case "$(field "Owner" "$1")" in
+    BPFLoader2111111111111111111111111111111111|BPFLoader1111111111111111111111111111111111)
+      echo "n/a (immutable loader)" ;;
+    *) field "Last Deployed In Slot" "$1" ;;
+  esac
+}
 
-case "$owner" in
-  LoaderV4*)
-    echo "[blocker] $pid is a loader-v4 program (owner $owner): snapshot it with loader-v4 tooling and record the zero-trimmed sha256 and the deploy slot (LoaderV4State bytes [0..8]) in LEDGER.md by hand." >&2
-    exit 3 ;;
-esac
+# `program show` reads upgradeable and immutable-loader programs and rejects a
+# loader-v4 one, which `program-v4 show` reads.
+if ! show_program "$show"; then
+  mv "$err" "$tmp/stderr.show"
+  v4=1
+  if ! show_program "$show" || [ "$(field "Owner" "$show")" != LoaderV411111111111111111111111111111111111 ]; then
+    echo "[blocker] neither solana program show nor program-v4 show reads $pid as a program:" >&2
+    "$REDACT" <"$tmp/stderr.show" >&2
+    "$REDACT" <"$err" >&2
+    exit 3
+  fi
+fi
+slot="$(slot_of "$show")"
 
-rm -f "$err"
-if ! solana -C "$cfg" program dump "$pid" "$dump" >/dev/null 2>"$err"; then
-  echo "[blocker] solana program dump failed for $pid:" >&2
+if ! dump_program "$dump"; then
+  echo "[blocker] the solana CLI could not dump $pid:" >&2
   "$REDACT" <"$err" >&2
   exit 3
 fi
@@ -204,7 +246,7 @@ sha="${sha%% *}"
 ledger_line() {
   local s o l a
   s="$(hashed "$1")" || exit 3
-  o="$(field "Owner" "$2")"; l="$(field "Last Deployed In Slot" "$2")"; a="$(field "Authority" "$2")"
+  o="$(field "Owner" "$2")"; l="$(slot_of "$2")"; a="$(field "Authority" "$2")"
   # shellcheck disable=SC2086
   set -- "${1#"$dir/"}" $s
   echo "program=$pid owner=${o:-unknown} last_deployed_slot=${l:-unknown} authority=${a:-none} sha256_zero_trimmed=$2 elf_bytes=$3 padding_bytes=$4 file=$1"
@@ -242,7 +284,7 @@ fi
 # A later run: the program on-chain may be a snapshot already kept.
 for f in "$first" "$dir/bin/$pid"@*.so; do
   [ -f "$f" ] || continue
-  if [ "$(field "Last Deployed In Slot" "${f%.so}.show.txt")" = "$slot" ] \
+  if [ "$(slot_of "${f%.so}.show.txt")" = "$slot" ] \
      && [ "$(hash_of "$f" | cut -d' ' -f1)" = "$sha" ]; then
     echo "unchanged: the program on-chain matches ${f#"$dir/"} (same last-deployed slot and zero-trimmed sha256); nothing written"
     ledger_line "$f" "${f%.so}.show.txt"

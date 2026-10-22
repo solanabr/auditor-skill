@@ -521,6 +521,55 @@ else
   bad "keep: lone show.txt -> exit $code, bin: $(ls "$K2/bin" | tr '\n' ' ')"
 fi
 
+# ---------------------------------------------------------------------------
+# 8. Every loader the CLI knows: upgradeable (program show / dump), immutable
+#    (no slot, no authority) and loader-v4 (program-v4 show / download, after
+#    `program show` rejects it). An account under none of them is a blocker that
+#    shows both CLI errors; an id that is not 32 bytes is refused before the CLI.
+# ---------------------------------------------------------------------------
+L="$TT/loaders"; mkdir -p "$L"; rm -f "$FAKE_SOL_ARGV"
+snap "$L/v4" FAKE_SOL_LOADER=v4 FAKE_SOL_SLOTS=777
+code=$?
+case "$code|$(cat "$L/v4.out")" in
+  "0|program=$PID owner=LoaderV411111111111111111111111111111111111 last_deployed_slot=777 authority=p2Yicb86aZig616Eav2VWG9vuXR5mEqhtzshZYBxzsV sha256_zero_trimmed="*" elf_bytes=51 padding_bytes=300 file=bin/$PID.so")
+    ok "loader-v4: snapshotted (exit 0) with its owner, deploy slot and authority" ;;
+  *) bad "loader-v4: exit $code ($(tr '\n' ' ' < "$L/v4.out"))" ;;
+esac
+eq "loader-v4: the CLI calls, in order" \
+  "$(jq -r 'map(select(. != "-C" and (test("cli.yml$") | not) and (test("dump.so$") | not))) | join(" ")' "$FAKE_SOL_ARGV" | grep -v '^config ' | tr '\n' '|')" \
+  "program show $PID --buffer-authority 11111111111111111111111111111111|program-v4 show --program-id $PID --authority 11111111111111111111111111111111|program-v4 download --program-id $PID|"
+snap "$L/v4" FAKE_SOL_LOADER=v4 FAKE_SOL_SLOTS=900
+eq "loader-v4: a redeploy is kept beside the first snapshot" "$?|$(ls "$L/v4/bin" | tr '\n' ' ')" \
+  "0|$PID.show.txt $PID.so $PID@900.show.txt $PID@900.so "
+for ld in v2 v1; do
+  snap "$L/$ld" FAKE_SOL_LOADER="$ld"
+  code=$?
+  case "$code|$(cat "$L/$ld.out")" in
+    "0|program=$PID owner=BPFLoader"*" last_deployed_slot=n/a (immutable loader) authority=none sha256_zero_trimmed="*" file=bin/$PID.so")
+      ok "immutable loader ($ld): last_deployed_slot=n/a (immutable loader), no authority" ;;
+    *) bad "immutable loader ($ld): exit $code ($(tr '\n' ' ' < "$L/$ld.out"))" ;;
+  esac
+done
+snap "$L/v2" FAKE_SOL_LOADER=v2
+eq "immutable loader: a second run is 'unchanged'" "$?|$(sed -n 1p "$L/v2.out" | cut -d' ' -f1)" "0|unchanged:"
+snap "$L/none" FAKE_SOL_LOADER=none
+code=$?
+if [[ "$code" == 3 && ! -e "$L/none/bin" ]] && grep -q 'neither solana program show nor program-v4 show reads' "$L/none.out" \
+   && grep -q "Error: $PID is not an SBF program" "$L/none.out" && grep -q "Error: $PID is not owned by loader-v4" "$L/none.out"; then
+  ok "no program: a blocker (exit 3) with both CLI errors, nothing written"
+else
+  bad "no program: exit $code ($(tr '\n' ' ' < "$L/none.out"))"
+fi
+before="$(cli_calls)"
+( PATH="$TT/sol:$TT/bin:$PATH" bash "$DNR/snapshot-program.sh" "ProgTest1111111111111111111111111111111111" "$L/short" ) > "$L/short.out" 2>&1
+code=$?
+if [[ "$code" == 2 && ! -e "$L/short" ]] && grep -q 'does not decode to a 32-byte public key' "$L/short.out"; then
+  ok "id check: a base58 id of 31 bytes is refused (exit 2), nothing written"
+else
+  bad "id check: 31-byte id -> exit $code ($(tr '\n' ' ' < "$L/short.out"))"
+fi
+eq "id check: no CLI call for that id" "$(cli_calls)" "$before"
+
 if [[ "$fails" -ne 0 ]]; then
   echo "test-dnr-collect: $fails assertion(s) FAILED" >&2
   exit 1
