@@ -51,26 +51,28 @@ GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=
 # .gitattributes marks -diff or binary still matches -S, but its patch shows no content; re-run with --text
 # limited to text pathspecs:
 GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-  log --all -p --no-textconv --no-ext-diff -S "BEGIN RSA" --diff-filter=ACMR -- . 2>/dev/null | head -20
+  log --all -p --no-textconv --no-ext-diff -S "BEGIN RSA" --diff-filter=ACMR -- . | head -20
 GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-  log --all -p --no-textconv --no-ext-diff -S "sk_live" --diff-filter=ACMR -- . 2>/dev/null | head -20
+  log --all -p --no-textconv --no-ext-diff -S "sk_live" --diff-filter=ACMR -- . | head -20
 GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-  log --all -p --no-textconv --no-ext-diff -S "PRIVATE_KEY" --diff-filter=ACMR -- . 2>/dev/null | head -20
+  log --all -p --no-textconv --no-ext-diff -S "PRIVATE_KEY" --diff-filter=ACMR -- . | head -20
 GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-  log --all -p --no-textconv --no-ext-diff -S "mnemonic" --diff-filter=ACMR -- . 2>/dev/null | head -20
+  log --all -p --no-textconv --no-ext-diff -S "mnemonic" --diff-filter=ACMR -- . | head -20
 ```
-- ✅ PASS: Zero matches in entire git history
+- ✅ PASS: Zero matches in entire git history, and no `fatal:` or `lazy fetching disabled` line in the output
 - ❌ FAIL: Any secret found in historical commits — MUST rotate the credential AND consider `git filter-repo` to rewrite history (force push required)
+- ⚠️ INCONCLUSIVE: any `fatal:` or `lazy fetching disabled` line in the output — the checkout is a partial clone with incomplete history (OUTPUT-RULES Rule 11c); record it as not checked, never as a PASS
 
 **Step 6: Search git history for Solana keypair arrays**
 ```
 # --text: a committed .gitattributes can mark these files -diff or binary, which hides the arrays from the patch
 GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c core.bigFileThreshold=512m \
-  log --all -p --text --no-textconv --no-ext-diff --diff-filter=ACMR -- '*.json' '*.ts' '*.js' 2>/dev/null \
+  log --all -p --text --no-textconv --no-ext-diff --diff-filter=ACMR -- '*.json' '*.ts' '*.js' \
   | grep -E "\[([0-9]{1,3},){20,}" | head -10
 ```
-- ✅ PASS: No keypair-like arrays in history
+- ✅ PASS: No keypair-like arrays in history, and no `fatal:` or `lazy fetching disabled` line in the output
 - ❌ FAIL: Possible keypair in git history — identify commit: `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false log --all -p --no-textconv --no-ext-diff -S '[123,45,67' -- .`
+- ⚠️ INCONCLUSIVE: any `fatal:` or `lazy fetching disabled` line in the output — the checkout is a partial clone with incomplete history (OUTPUT-RULES Rule 11c); record it as not checked, never as a PASS
 
 **Step 7: Check for .env files ever tracked**
 ```
