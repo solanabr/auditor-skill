@@ -628,7 +628,7 @@ commit "$RD" -m "initial"
 mkdir -p "$T/elsewhere" "$T/plainrun" "$RD/audit_1" "$RD/audit_2/bootstrap"
 ln -s "$T/elsewhere" "$T/plainrun/bootstrap"
 ln -s "$T/elsewhere" "$RD/audit_1/bootstrap"
-ln -s "$T/elsewhere/planted-gitignore" "$RD/audit_2/bootstrap/.gitignore"
+ln -s "$T/elsewhere/gitignore-target" "$RD/audit_2/bootstrap/.gitignore"
 ln -s "$T/elsewhere" "$RD/audit_4"
 check "T-n: a bootstrap dir that is a symbolic link is refused (exit 2)" \
   test "$(rc --repo "$RD" --out "$T/plainrun/bootstrap" --offline)" = 2

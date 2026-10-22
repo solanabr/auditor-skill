@@ -303,7 +303,7 @@ if [ "$DETECT" -eq 1 ]; then eval_triggers; exit 0; fi
 # never one git tracks, where the output would become changes to tracked files. Checked before the first
 # write or removal, for the output dir and its audit_<n>/ parent. If git cannot answer for a directory
 # inside a work tree, it counts as tracked.
-refuse_planted() { # refuse_planted <dir>
+check_run_dir() { # check_run_dir <dir>
   local d=$1 up listed
   [ -L "$d" ] && die "refusing a run directory that is a symbolic link: $d (use a new audit_<n>)"
   if [ -d "$d" ] && [ -n "$(find "$d" -type l -print 2>/dev/null | sed -n 1p)" ]; then
@@ -315,8 +315,8 @@ refuse_planted() { # refuse_planted <dir>
   [ -z "$listed" ] || die "refusing a run directory that git tracks: $d (use a new audit_<n>)"
 }
 AUD_DIR=$(dirname "$OUT")
-case "$(basename "$AUD_DIR")" in audit_*) refuse_planted "$AUD_DIR" ;; esac
-refuse_planted "$OUT"
+case "$(basename "$AUD_DIR")" in audit_*) check_run_dir "$AUD_DIR" ;; esac
+check_run_dir "$OUT"
 mkdir -p "$OUT" || die "cannot create $OUT"
 # Working material never lands in the client's git status: the output dir ignores itself, and so does
 # its audit_<n>/ parent when it has no .gitignore of its own (only for a dir named audit_*).
