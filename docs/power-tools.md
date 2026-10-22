@@ -226,7 +226,7 @@ The one gated collector: it pages each address's signature history, failed trans
 
 - **Exit:** 0 done; RPC errors, a page cap that stops before the window and the `--max-tx` cut are reported as collection gaps · 2 refused before any network call: no `--confirmed`, no `--out` or address, no `$RPC_URL`, an address or `--before` value that is not base58, a number that is not a plain integer, or an `--out` that already holds a corpus.
 - **Network:** read-only JSON-RPC to `$RPC_URL` (`getSignaturesForAddress`, then `getTransaction` at `finalized` with `maxSupportedTransactionVersion: 1`), and only with `--confirmed`. It prints the provider host for the Rule 11b disclosure; curl errors pass through `redact.sh`.
-- **Writes:** `<dir>/signatures.jsonl` and `<dir>/transactions.jsonl`; collection gaps go to stderr. An `incident_*` directory (`<dir>` or its parent) without a `.gitignore` gets one containing `*`.
+- **Writes:** `<dir>/signatures.jsonl`, `<dir>/transactions.jsonl` and a record of the collection gaps, such as transactions it could not fetch, which it also reports on stderr. An `incident_*` directory (`<dir>` or its parent) without a `.gitignore` gets one containing `*`.
 
 #### `profile.sh`
 
