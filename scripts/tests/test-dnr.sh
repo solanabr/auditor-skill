@@ -185,8 +185,8 @@ eq "profile: programIdIndex resolved through accountKeys" "$pidx" "1"
 
 # ---------------------------------------------------------------------------
 # 10. collect.sh end to end against a fake `curl` (no network): runs under the
-#     system bash, keeps FAILED transactions, reports an unreached window, passes
-#     --before through, and never prints the key.
+#     system bash, keeps FAILED transactions, takes a short last page as the end of
+#     history, passes --before through, and never prints the key.
 # ---------------------------------------------------------------------------
 mkdir -p "$TT/bin"
 cat > "$TT/bin/curl" <<'PY'
@@ -246,7 +246,8 @@ code=$?
 eq "collect: exits 0 against the fake RPC (system bash)" "$code" "0"
 eq "collect: fetched both the successful AND the failed transaction" \
   "$(grep -c . "$TT/c/transactions.jsonl" 2>/dev/null || true)" "2"
-if grep -q 'window not reached' "$TT/c.out"; then ok "collect: reports the unreached window when the page cap stops first"; else bad "collect: no 'window not reached' notice"; fi
+eq "collect: a short last page at the page cap is the end of history (no notice, no gap row)" \
+  "$(grep -c '^  ! ' "$TT/c.out")/$(grep -c . "$TT/c/collection-gaps.tsv")" "0/0"
 if grep -q "\"before\": \"$CURSOR\"" "$FAKE_CURL_LOG"; then ok "collect: --before passed through to the first page"; else bad "collect: --before not passed through"; fi
 if grep -q 'LEAKME42' "$TT/c.out" "$TT/c/signatures.jsonl" "$TT/c/transactions.jsonl"; then
   bad "collect: the key leaked into output"
@@ -264,7 +265,7 @@ else
   bad "collect: subdomain token or key in the output ($(grep -m1 'TOKSUB42\|LEAKME42\|provider' "$TT/c-sub.out"))"
 fi
 # Collection gaps: every getTransaction that fails (transport error, RPC error,
-# null result), a failed signature page, an unreached window and the --max-tx cap
+# null result), a failed signature page, a truncated history and the --max-tx cap
 # each become a <subject>TAB<reason> row of collection-gaps.tsv, and the run says how
 # many. curl's own exit status reaches the row.
 eq "collect: a clean run reports no collection gaps" \
@@ -300,12 +301,12 @@ eq "collect: a refused \$RPC_URL made no RPC call" "$(grep -c . "$FAKE_CURL_LOG"
     bash "$DNR/collect.sh" --out "$TT/c2" --confirmed --max-pages 1 --max-tx 2 -- "$A_ADDR" "$B_ADDR" ) > "$TT/c2.out" 2>&1
 got="$(jq -r '.transaction.signatures[0]' "$TT/c2/transactions.jsonl" 2>/dev/null | tr '\n' ' ')"
 eq "collect: --max-tx 2 fetches the two newest signatures across both addresses" "$got" "SigZnewest SigOK "
-# With only --until set, a page cap that stops above it collected nothing inside the window.
+# With only --until set, a short last page at the page cap still ends the history:
+# nothing older exists, so there is no notice and no gap row.
 ( PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
     bash "$DNR/collect.sh" --out "$TT/c3" --confirmed --until 100 --max-pages 1 -- "$A_ADDR" ) > "$TT/c3.out" 2>&1
-if grep -q 'stopped paging above --until' "$TT/c3.out"; then ok "collect: warns when paging stops above --until"; else bad "collect: no warning for a window above --until"; fi
-if grep -q 'resume into a new --out with --before' "$TT/c3.out"; then ok "collect: the notice says to resume into a new --out"; else bad "collect: resume notice still points at the same --out"; fi
-eq "collect: an unreached window is a gap row" "$(cut -f1 "$TT/c3/collection-gaps.tsv" | tr '\n' ' ')" "$A_ADDR "
+eq "collect: --until only, a short last page at the cap is the end of history (no notice, no gap row)" \
+  "$(grep -c '^  ! ' "$TT/c3.out")/$(grep -c . "$TT/c3/collection-gaps.tsv")" "0/0"
 eq "collect: the --max-tx cap is one gap row naming the first signature not fetched" \
   "$(cut -f1 "$TT/c2/collection-gaps.tsv")|$(grep -c 'collection gaps: 1 ' "$TT/c2.out")" "SigFail|1"
 # A second pass into an --out that already holds a corpus is refused, so the first

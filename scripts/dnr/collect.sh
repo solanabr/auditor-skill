@@ -44,18 +44,19 @@
 # empty one, is refused, and the script creates its files with noclobber (`set -C`),
 # so a resume never erases the first pass. Every
 # address and --before value must be base58, and every number a plain integer,
-# before anything is written or sent. When the page cap stops paging before
-# --since was reached — or, with only --until set, while still above --until — the
-# script says so ("window not reached"): the corpus is then incomplete for that
-# address, a collection gap to record in the ledger. Signatures are fetched newest
+# before anything is written or sent. A page shorter than the 1000 signatures asked
+# for is the end of the address's history. When the page cap stops paging on a full
+# page before --since was crossed, whatever --since and --until are, the script says
+# so ("history truncated") with the --before to resume from: the corpus is then
+# incomplete for that address, a collection gap to record in the ledger. Signatures are fetched newest
 # first (by slot, across all addresses; within a slot, in the order the RPC returned
 # them), so --max-tx drops the oldest. The script runs under LC_ALL=C, so neither
 # that order nor any character range depends on the caller's locale.
 #
 # COLLECTION GAPS: every gap is also a row of <dir>/collection-gaps.tsv,
 # `<signature or address><TAB><reason>`: a getTransaction that failed (transport
-# error, RPC error or null result), a signature page that failed, a window the page
-# cap did not reach, the --max-tx cap, and the stop on a failing endpoint (the
+# error, RPC error or null result), a signature page that failed, history the page
+# cap truncated, the --max-tx cap, and the stop on a failing endpoint (the
 # last two name the first signature not fetched). The run ends with
 # "collection gaps: N (see <dir>/collection-gaps.tsv)". Gaps leave the exit status
 # at 0; copy each row into LEDGER.md and INCIDENTS.json `collection_gaps`.
@@ -269,10 +270,12 @@ gap() {  # gap <signature or address> <reason>: one row per thing the corpus lac
   ngaps=$((ngaps + 1))
 }
 
-# 1. signature history, newest -> oldest, bounded by --since and --max-pages.
+# 1. signature history, newest -> oldest, bounded by --since and --max-pages. A page
+#    shorter than the 1000 asked for ends the address's history; a cap that stops
+#    paging on a full page, before --since was crossed, truncated it.
 collected=0
 for addr in "${addrs[@]}"; do
-  before="$before_start"; page=0; oldest=0; reached=0
+  before="$before_start"; page=0; oldest=0; ended=0
   while [ "$page" -lt "$max_pages" ]; do
     cfg="{\"limit\":1000,\"commitment\":\"finalized\"${before:+,\"before\":\"$before\"}}"
     resp="$(rpc getSignaturesForAddress "[\"$addr\",$cfg]")"; rc=$?
@@ -280,22 +283,33 @@ for addr in "${addrs[@]}"; do
       reason="$(failure "$rc" "$resp")"
       echo "  ! paging $addr (page $page) failed: $reason — recorded as a collection gap" >&2
       gap "$addr" "getSignaturesForAddress page $page: $reason; older history not collected"
-      reached=1; break
+      ended=1; break
     fi
     n="$(printf '%s' "$resp" | jq '.result | length')"
-    if [ "$n" -eq 0 ]; then reached=1; break; fi
-    printf '%s' "$resp" | jq -c --arg a "$addr" '.result[] | . + {queried_address:$a}' >> "$sig_file"
-    before="$(printf '%s' "$resp" | jq -r '.result[-1].signature')"
-    oldest="$(printf '%s' "$resp" | jq -r '.result[-1].blockTime // 0')"
-    page=$((page + 1)); collected=$((collected + n))
-    if [ "$since" -gt 0 ] && [ "$oldest" -gt 0 ] && [ "$oldest" -lt "$since" ]; then reached=1; break; fi
+    page=$((page + 1))
+    if [ "$n" -gt 0 ]; then
+      printf '%s' "$resp" | jq -c --arg a "$addr" '.result[] | . + {queried_address:$a}' >> "$sig_file"
+      before="$(printf '%s' "$resp" | jq -r '.result[-1].signature')"
+      oldest="$(printf '%s' "$resp" | jq -r '.result[-1].blockTime // 0')"
+      collected=$((collected + n))
+    fi
+    if [ "$n" -lt 1000 ]; then ended=1; break; fi
+    if [ "$since" -gt 0 ] && [ "$oldest" -gt 0 ] && [ "$oldest" -lt "$since" ]; then ended=1; break; fi
   done
-  if [ "$reached" -eq 0 ] && [ "$since" -gt 0 ]; then
-    echo "  ! window not reached for $addr (oldest=$oldest, since=$since): page cap hit — resume into a new --out with --before $before, or raise --max-pages; recorded as a collection gap" >&2
-    gap "$addr" "window not reached: the page cap stopped at blockTime $oldest, still after --since $since; resume into a new --out with --before $before"
-  elif [ "$reached" -eq 0 ] && [ "$until" -gt 0 ] && [ "$oldest" -gt "$until" ]; then
-    echo "  ! window not reached for $addr (oldest=$oldest, until=$until): the page cap stopped paging above --until, so nothing inside the window was collected — resume into a new --out with --before $before, or raise --max-pages; recorded as a collection gap" >&2
-    gap "$addr" "window not reached: the page cap stopped at blockTime $oldest, still after --until $until, so nothing inside the window was collected; resume into a new --out with --before $before"
+  if [ "$ended" -eq 0 ]; then
+    if [ "$page" -eq 0 ]; then
+      stop="--max-pages 0 fetched no page"
+    else
+      stop="the page cap (--max-pages $max_pages) stopped on a full page at blockTime $oldest"
+      if [ "$since" -gt 0 ]; then
+        stop="$stop, still after --since $since"
+      elif [ "$until" -gt 0 ] && [ "$oldest" -gt "$until" ]; then
+        stop="$stop, still after --until $until, so nothing inside the window was collected"
+      fi
+    fi
+    resume="${before:+resume into a new --out with --before $before, or }raise --max-pages"
+    echo "  ! history truncated for $addr: $stop — $resume; recorded as a collection gap" >&2
+    gap "$addr" "history truncated: $stop; $resume"
   fi
 done
 echo "signatures collected: $collected -> $sig_file"

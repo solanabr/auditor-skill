@@ -296,6 +296,64 @@ FAKE_TX_FAIL=null:2 collect "$TT/fail-alt-cap" --max-tx 5 -- "$A_ADDR"
 eq "failing endpoint: --max-tx 5 with every second call failing -> 5 calls, 3 fetched, cap row names S06" \
   "$(calls getTransaction)/$(grep -c . "$TT/fail-alt-cap/transactions.jsonl")/$(tail -1 "$TT/fail-alt-cap/collection-gaps.tsv" | cut -f1)" "5/3/S06"
 
+# ---------------------------------------------------------------------------
+# 5. A page shorter than 1000 ends an address's history; a page cap that stops
+#    on a full page, before --since was crossed, truncated it, whatever --since
+#    and --until are: a notice with the --before to resume from, and a gap row.
+#    These runs pass --max-tx 0 and look only at the paging.
+# ---------------------------------------------------------------------------
+# hist <n>: <n> signatures P0001.. newest first, block times 1700005000 - k.
+hist() { book '{"'"$A_ADDR"'": [{"signature": "P%04d" % k, "slot": 100000 - k, "err": None, "blockTime": 1700005000 - k} for k in range(1, '"$1"' + 1)]}'; }
+trunc_row() { grep "^$A_ADDR$(printf '\t')" "$1/collection-gaps.tsv" | cut -f2; }
+hist 1500; rm -f "$FAKE_CURL_LOG"
+collect "$TT/pg-short" --since 1000 --max-pages 2 --max-tx 0 -- "$A_ADDR"
+if [[ "$(calls getSignaturesForAddress)" == 2 && -z "$(trunc_row "$TT/pg-short")" ]] && ! grep -q 'page cap' "$TT/pg-short.out"; then
+  ok "paging: a short last page at the cap (1000 + 500, --since never crossed) ends the history: no notice, no gap row"
+else
+  bad "paging: short last page at the cap -> $(grep -m1 'page cap' "$TT/pg-short.out")"
+fi
+hist 2000; rm -f "$FAKE_CURL_LOG"
+collect "$TT/pg-exact" --max-pages 3 --max-tx 0 -- "$A_ADDR"
+if [[ "$(calls getSignaturesForAddress)" == 3 && -z "$(trunc_row "$TT/pg-exact")" ]]; then
+  ok "paging: an empty page under the cap ends the history (1000 + 1000 + 0): no gap row"
+else
+  bad "paging: history ending on a page boundary -> row '$(trunc_row "$TT/pg-exact")'"
+fi
+hist 2500
+collect "$TT/pg-full" --max-pages 2 --max-tx 0 -- "$A_ADDR"
+eq "paging: no window, the cap stops on a full page -> a truncation gap row with the resume cursor" \
+  "$(trunc_row "$TT/pg-full")" \
+  "history truncated: the page cap (--max-pages 2) stopped on a full page at blockTime 1700003000; resume into a new --out with --before P2000, or raise --max-pages"
+if grep -q "history truncated for $A_ADDR: the page cap (--max-pages 2) stopped on a full page at blockTime 1700003000 — resume into a new --out with --before P2000" "$TT/pg-full.out"; then
+  ok "paging: no window, the run prints the truncation notice"
+else
+  bad "paging: no truncation notice without a window"
+fi
+collect "$TT/pg-until" --until 100 --max-pages 2 --max-tx 0 -- "$A_ADDR"
+case "$(trunc_row "$TT/pg-until")" in
+  *"blockTime 1700003000, still after --until 100, so nothing inside the window was collected; resume into a new --out with --before P2000"*)
+    ok "paging: --until only, the cap stops on a full page above --until -> gap row says nothing inside the window was collected" ;;
+  *) bad "paging: --until only, full page above --until -> row '$(trunc_row "$TT/pg-until")'" ;;
+esac
+collect "$TT/pg-until-in" --until 1700004500 --max-pages 2 --max-tx 0 -- "$A_ADDR"
+case "$(trunc_row "$TT/pg-until-in")" in
+  "history truncated: the page cap (--max-pages 2) stopped on a full page at blockTime 1700003000; resume into a new --out with --before P2000, or raise --max-pages")
+    ok "paging: --until only, the cap stops on a full page inside the window -> truncation gap row" ;;
+  *) bad "paging: --until only, full page inside the window -> row '$(trunc_row "$TT/pg-until-in")'" ;;
+esac
+hist 1500
+collect "$TT/pg-until-short" --until 100 --max-pages 2 --max-tx 0 -- "$A_ADDR"
+eq "paging: --until only, a short last page at the cap above --until -> no notice, no gap row" \
+  "$(grep -c '^  ! ' "$TT/pg-until-short.out")|$(trunc_row "$TT/pg-until-short")" "0|"
+hist 2500
+collect "$TT/pg-since" --since 1700003500 --max-pages 2 --max-tx 0 -- "$A_ADDR"
+eq "paging: the cap's last full page crossed --since -> no gap row" "$(trunc_row "$TT/pg-since")" ""
+collect "$TT/pg-since-cap" --since 1700002000 --max-pages 2 --max-tx 0 -- "$A_ADDR"
+case "$(trunc_row "$TT/pg-since-cap")" in
+  *"at blockTime 1700003000, still after --since 1700002000; resume into a new --out with --before P2000"*) ok "paging: the cap stops on a full page still after --since -> gap row" ;;
+  *) bad "paging: full page still after --since -> row '$(trunc_row "$TT/pg-since-cap")'" ;;
+esac
+
 if [[ "$fails" -ne 0 ]]; then
   echo "test-dnr-collect: $fails assertion(s) FAILED" >&2
   exit 1
