@@ -121,6 +121,32 @@ for sh in bash zsh; do
   "$sh" -c 'set -o pipefail; (exit 7) 2>&1 | bash "$1"' _ "$DNR/redact.sh" >/dev/null 2>&1
   eq "redact: $sh 'set -o pipefail; <cmd> 2>&1 | redact.sh' keeps the failure" "$?" "7"
 done
+# The documented capture-to-a-file line, run as written (some-cmd stands in for a
+# command that prints a key and fails), in a shell with noclobber set: it writes with
+# 2>|, so it redacts and keeps the status. The control with a plain 2> fails before
+# the command runs.
+form="$(awk '/^#     err="\$\(mktemp/ { sub(/^#     /, ""); print }' "$DNR/redact.sh")"
+case "$form" in *'some-cmd 2>|"$err"'*) ok "redact: the documented capture line writes with 2>|" ;; *) bad "redact: capture line not found or not 2>| ($form)" ;; esac
+for sh in bash zsh; do
+  command -v "$sh" >/dev/null 2>&1 || continue
+  case "$sh" in bash) nc='set -C' ;; *) nc='setopt noclobber' ;; esac
+  for variant in '2>|' '2>'; do
+    line="${form//some-cmd 2>|/some_cmd $variant}"
+    got="$(CLAUDE_PLUGIN_ROOT="$HERE/../.." "$sh" -c "$nc; some_cmd() { echo 'via https://rpc.example.test/?api-key=NOCLOBKEY42' >&2; return 7; }; $line" 2>&1)"
+    code=$?
+    if [[ "$variant" == '2>|' ]]; then
+      if [[ "$code" == 7 && "$got" == *REDACTED* && "$got" != *NOCLOBKEY42* ]]; then
+        ok "redact: $sh with noclobber, the documented capture line redacts and keeps the status (7)"
+      else
+        bad "redact: $sh with noclobber, capture line -> exit $code ($got)"
+      fi
+    elif [[ "$code" != 7 ]]; then
+      ok "redact: control, $sh with noclobber and a plain 2> fails before the command runs (exit $code)"
+    else
+      bad "redact: control, $sh with noclobber accepted a plain 2> ($got)"
+    fi
+  done
+done
 
 # ---------------------------------------------------------------------------
 # 6. collect.sh is gated: it refuses without --confirmed, and without $RPC_URL,
