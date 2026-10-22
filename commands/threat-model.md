@@ -61,7 +61,7 @@ Collector flags (`references/audit-lifecycle/threat-model-bootstrap.md` §2 has 
 
 `audit_<n>` is this audit's directory from intake. For a new one, `<n>` is the highest existing number + 1; create the dir with `mkdir` (not `-p`) and stop if it exists. Reuse an existing `audit_*` only if git does not track it and it holds no symbolic links. Never write into a tracked `audit_*`. The collector exits 2 on a run directory that is or holds a symbolic link, or that git tracks.
 
-The collector is not pre-approved for this command, so running it goes through the usual permission prompt; a pattern in this file's frontmatter would not have the installation path filled in.
+The collector is not pre-approved for this command, so running it goes through the usual permission prompt; re-adding a pre-approval pattern is tracked in #37.
 
 ## What to build
 
