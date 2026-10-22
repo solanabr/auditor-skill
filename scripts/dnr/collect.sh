@@ -44,8 +44,10 @@
 # or skip activity newer than the incident) — always into a new --out: an --out that
 # already holds signatures.jsonl, transactions.jsonl or collection-gaps.tsv, even an
 # empty one, is refused, and the script creates its files with noclobber (`set -C`),
-# so a resume never erases the first pass. Every address and --before value must be
-# base58, and every number a plain integer, before anything is written or sent.
+# so a resume never erases the first pass. It writes them only through the
+# descriptors opened when it created them, and reads the signature list back from a
+# private copy. Every address and --before value must be base58, and every number a
+# plain integer, before anything is written or sent.
 #
 # PAGING: an empty page is the end of the address's history, and so is a page that
 # crosses --since. A page shorter than the 1000 signatures asked for is not, except
@@ -88,8 +90,9 @@
 # carry only slots, block times and small error codes, and jq writes them.
 #
 # Exit: 0 done (collection gaps included) · 2 usage, a refused input, $RPC_URL, run
-# directory or --out · 3 named blocker (no curl or jq; a jq that rounds large
-# integers and no working python3).
+# directory, or an --out that holds a corpus file or where they cannot be created · 3
+# named blocker (no curl or jq; a jq that rounds large integers and no working
+# python3; no private temp directory, which is made before anything is written).
 # bash >= 3.2, curl, jq (and python3 with jq < 1.7). Output: <dir>/signatures.jsonl,
 # <dir>/transactions.jsonl, <dir>/collection-gaps.tsv.
 
@@ -259,6 +262,14 @@ sys.stdout.buffer.write(out.encode("utf-8", "backslashreplace") + b"\n")' 2>/dev
   fi
 fi
 
+# mktemp -d creates the directory with mode 0700, before anything is written; curl's
+# stderr, a copy of the signature list and the fetch list live there.
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/dnr_collect.XXXXXX")" || {
+  echo "[blocker] cannot create a private temp directory." >&2; exit 3; }
+trap 'rm -rf "$tmp"' EXIT
+errf="$tmp/stderr"; sig_copy="$tmp/signatures.jsonl"; todo="$tmp/signatures.todo"
+: > "$sig_copy"
+
 mkdir -p "$out" || exit 2
 # Rule 11d: an incident_<n>/ directory (the --out itself or its parent) ignores itself
 # when it has no .gitignore of its own, so the corpus never shows in git status.
@@ -267,14 +278,12 @@ for d in "$out" "$(dirname "$out")"; do
     incident_*) [ -e "$d/.gitignore" ] || printf '*\n' > "$d/.gitignore" ;;
   esac
 done
-# mktemp -d creates the directory with mode 0700; curl's stderr and the fetch list live there.
-tmp="$(mktemp -d "${TMPDIR:-/tmp}/dnr_collect.XXXXXX")" || {
-  echo "[blocker] cannot create a private temp directory." >&2; exit 3; }
-trap 'rm -rf "$tmp"' EXIT
-errf="$tmp/stderr"; todo="$tmp/signatures.todo"
+# The corpus files are created here (set -C: never over an existing file) and written
+# only through these descriptors (3: signatures, 4: transactions, 5: gaps), never
+# reopened by name.
 sig_file="$out/signatures.jsonl"; tx_file="$out/transactions.jsonl"; gaps="$out/collection-gaps.tsv"
-if ! { : > "$sig_file" && : > "$tx_file" && : > "$gaps"; } 2>/dev/null; then
-  echo "collect.sh: $out already holds a collected corpus — use a new --out (resume there with --before)." >&2
+if ! { exec 3>"$sig_file" 4>"$tx_file" 5>"$gaps"; } 2>/dev/null; then
+  echo "collect.sh: cannot create the corpus files in $out (it is not writable, or one of them appeared after the check) — use a new --out." >&2
   exit 2
 fi
 ngaps=0
@@ -312,7 +321,7 @@ failure() {  # failure <curl status> <response> -> why the call returned no usab
   esac
 }
 gap() {  # gap <signature or address> <reason>: one row per thing the corpus lacks
-  printf '%s\t%s\n' "$1" "$(printf '%s' "$2" | tr '\t\r\n' '   ')" >> "$gaps"
+  printf '%s\t%s\n' "$1" "$(printf '%s' "$2" | tr '\t\r\n' '   ')" >&5
   ngaps=$((ngaps + 1))
 }
 
@@ -336,7 +345,9 @@ for addr in "${addrs[@]}"; do
     n="$(printf '%s' "$resp" | jq '.result | length')"
     page=$((page + 1))
     if [ "$n" -gt 0 ]; then
-      printf '%s' "$resp" | jq -c --arg a "$addr" '.result[] | . + {queried_address:$a}' >> "$sig_file"
+      lines="$(printf '%s' "$resp" | jq -c --arg a "$addr" '.result[] | . + {queried_address:$a}')"
+      printf '%s\n' "$lines" >&3
+      printf '%s\n' "$lines" >> "$sig_copy"
       before="$(printf '%s' "$resp" | jq -r '.result[-1].signature')"
       oldest="$(printf '%s' "$resp" | jq -r '.result[-1].blockTime // 0')"
       collected=$((collected + n))
@@ -367,11 +378,12 @@ echo "signatures collected: $collected -> $sig_file"
 #    across every address (slot, descending), so a --max-tx cap keeps the most recent
 #    activity; a signature seen under two addresses is kept once, at its first place.
 #    The sort is stable: within a slot the RPC's own newest-first order stands.
-#    Read from a file (not a pipe) so the counter survives the loop.
+#    Read from the private copy of signatures.jsonl, and from a file (not a pipe) so
+#    the counter survives the loop.
 jq -r --argjson s "$since" --argjson u "$until" '
   select(($s == 0) or ((.blockTime // 0) >= $s))
   | select(($u == 0) or ((.blockTime // 0) <= $u))
-  | "\(.slot // 0) \(.signature)"' "$sig_file" | sort -s -k1,1nr | awk '!seen[$2]++ { print $2 }' > "$todo"
+  | "\(.slot // 0) \(.signature)"' "$sig_copy" | sort -s -k1,1nr | awk '!seen[$2]++ { print $2 }' > "$todo"
 
 # 3. fetch. Every getTransaction call counts against --max-tx, and max_failed calls
 #    failing in a row stop the run: the endpoint is failing, and the rest would too.
@@ -394,7 +406,7 @@ while IFS= read -r sig; do
   resp="$(rpc getTransaction "[\"$sig\",{\"encoding\":\"jsonParsed\",\"maxSupportedTransactionVersion\":1,\"commitment\":\"finalized\"}]")"; rc=$?
   if [ "$rc" -eq 0 ] && printf '%s' "$resp" | jq -e '.result | objects' >/dev/null 2>&1 \
      && line="$(printf '%s' "$resp" | result_line)" && [ -n "$line" ]; then
-    printf '%s\n' "$line" >> "$tx_file"
+    printf '%s\n' "$line" >&4
     fetched=$((fetched + 1)); failed=0
   else
     reason="$(failure "$rc" "$resp")"

@@ -37,8 +37,9 @@ export RPC_URL="https://rpc.example.test/"
 # history. A transaction not in "tx" is a small one
 # made from its signature entry. FAKE_TX_FAIL=<mode>[:<k>] fails every k-th
 # getTransaction call (every call when k is left out): transport (curl exit 28),
-# rpc429 (JSON-RPC error 429) or null (result null). Every request is appended
-# to $FAKE_CURL_LOG.
+# rpc429 (JSON-RPC error 429) or null (result null). FAKE_SWAP=<method>|<path>|<target>
+# replaces <path> with a symbolic link to <target> during the first call of that
+# method. Every request is appended to $FAKE_CURL_LOG.
 # ---------------------------------------------------------------------------
 mkdir -p "$TT/bin"
 printf '#!/bin/sh\nexec "%s" -I "$0.py" "$@"\n' "$PY" > "$TT/bin/curl"
@@ -57,6 +58,11 @@ m, p = req["method"], req["params"]
 log = os.environ["FAKE_CURL_LOG"]
 with open(log, "a") as f:
     f.write(json.dumps({"method": m, "params": p}) + "\n")
+swap_on, _, swap = os.environ.get("FAKE_SWAP", "").partition("|")
+if swap_on == m and not os.path.islink(swap.partition("|")[0]):
+    path, _, target = swap.partition("|")
+    os.remove(path)
+    os.symlink(target, path)
 book = json.load(open(os.environ["FAKE_BOOK"]))
 def reply(member):
     sys.stdout.write('{"jsonrpc":"2.0","id":1,' + member + '}'); sys.exit(0)
@@ -387,7 +393,8 @@ esac
 # is a comma list of last-deployed slots: each read of the program (show, dump,
 # download) takes the next one and the last one repeats, so a deploy can land
 # between two reads. The dumped ELF carries its slot, so each deploy hashes apart.
-# Every call is appended to $FAKE_SOL_ARGV.
+# FAKE_SOL_PLANT=<link>|<target> makes the dump call also create <link>, a symbolic
+# link to <target>. Every call is appended to $FAKE_SOL_ARGV.
 # ---------------------------------------------------------------------------
 mkdir -p "$TT/sol"
 printf '#!/bin/sh\nexec "%s" -I "$0.py" "$@"\n' "$PY" > "$TT/sol/solana"
@@ -454,6 +461,9 @@ elif cmd == ["program-v4", "show"]:
 elif cmd in (["program", "dump"], ["program-v4", "download"]):
     path = a[3] if cmd[0] == "program" else [x for x in a[2:] if not x.startswith("--") and x != pid][-1]
     open(path, "wb").write(elf(read_slot()))
+    link, _, target = os.environ.get("FAKE_SOL_PLANT", "").partition("|")
+    if link and not os.path.lexists(link):
+        os.symlink(target, link)
     print(f"Wrote program to {path}")
 else:
     sys.stderr.write("fake solana: refusing an unexpected subcommand\n"); sys.exit(9)
@@ -625,6 +635,89 @@ if [[ "$code" == 0 ]] && grep -q "moved during the dump (700 -> 800); dumping ag
 else
   bad "slot check: loader-v4 deploy during the dump -> exit $code ($(tr '\n' ' ' < "$R/v4.out"))"
 fi
+
+# ---------------------------------------------------------------------------
+# 10. collect.sh makes its private temp directory before it writes anything and
+#     removes it on exit; when none can be made it stops with a blocker (exit 3)
+#     and --out is not created. An --out it cannot write into is named as such
+#     (exit 2). The corpus files are written only through the descriptors opened
+#     when they were created, and the fetch list comes from a private copy of the
+#     signature list: a corpus file replaced by a symbolic link mid-run never
+#     receives a write, or hands over a signature, through that link.
+# ---------------------------------------------------------------------------
+book '{"'"$A_ADDR"'": [{"signature": "S%02d" % k, "slot": 100 - k, "err": None, "blockTime": 1700000000 - k} for k in range(1, 4)]}'
+mkdir -p "$TT/tmpd"
+( export TMPDIR="$TT/tmpd"; collect "$TT/w-ok" -- "$A_ADDR" )
+eq "temp dir: a run exits 0 and leaves no dnr_collect.* directory behind" "$?|$(ls -A "$TT/tmpd" | tr '\n' ' ')" "0|"
+( export TMPDIR="$TT/tmpd" FAKE_TX_FAIL=transport; collect "$TT/w-fail" -- "$A_ADDR" )
+eq "temp dir: ... nor does a run whose every fetch fails" "$?|$(ls -A "$TT/tmpd" | tr '\n' ' ')" "0|"
+before="$(calls getSignaturesForAddress)"
+( export TMPDIR="$TT/no-such-dir"; collect "$TT/w-notmp" -- "$A_ADDR" )
+code=$?
+if [[ "$code" == 3 && ! -e "$TT/w-notmp" ]] && grep -q '^\[blocker\] cannot create a private temp directory' "$TT/w-notmp.out"; then
+  ok "temp dir: none can be made -> named blocker (exit 3), --out not created"
+else
+  bad "temp dir: no temp dir -> exit $code, --out $( [[ -e "$TT/w-notmp" ]] && echo created || echo absent) ($(tr '\n' ' ' < "$TT/w-notmp.out"))"
+fi
+eq "temp dir: ... and no RPC call" "$(calls getSignaturesForAddress)" "$before"
+mkdir -p "$TT/w-ro"; chmod 0500 "$TT/w-ro"
+if [[ -w "$TT/w-ro" ]]; then
+  ok "unwritable --out: skipped, this user can write into a 0500 directory"
+else
+  collect "$TT/w-ro" -- "$A_ADDR"
+  code=$?
+  if [[ "$code" == 2 ]] && grep -q "cannot create the corpus files in $TT/w-ro" "$TT/w-ro.out" && ! grep -q 'already holds' "$TT/w-ro.out"; then
+    ok "unwritable --out: exit 2, named as a directory it cannot create the corpus files in"
+  else
+    bad "unwritable --out: exit $code ($(tr '\n' ' ' < "$TT/w-ro.out"))"
+  fi
+fi
+chmod 0700 "$TT/w-ro"
+printf 'outside\n' > "$TT/outside-tx"; printf 'outside\n' > "$TT/outside-gaps"
+printf '{"signature":"SForged","slot":999,"err":null,"blockTime":1700000999}\n' > "$TT/outside-sigs"
+cp "$TT/outside-sigs" "$TT/outside-sigs.before"
+FAKE_SWAP="getTransaction|$TT/w-swap-tx/transactions.jsonl|$TT/outside-tx" collect "$TT/w-swap-tx" -- "$A_ADDR"
+code=$?
+if [[ "$code" == 0 && "$(cat "$TT/outside-tx")" == outside && -L "$TT/w-swap-tx/transactions.jsonl" ]]; then
+  ok "descriptors: transactions.jsonl replaced by a link mid-run -> no write goes through the link"
+else
+  bad "descriptors: swapped transactions.jsonl -> exit $code, outside file now '$(tr '\n' ' ' < "$TT/outside-tx")'"
+fi
+FAKE_TX_FAIL=null FAKE_SWAP="getTransaction|$TT/w-swap-gaps/collection-gaps.tsv|$TT/outside-gaps" collect "$TT/w-swap-gaps" -- "$A_ADDR"
+code=$?
+if [[ "$code" == 0 && "$(cat "$TT/outside-gaps")" == outside ]] && grep -q '^collection gaps: 3 ' "$TT/w-swap-gaps.out"; then
+  ok "descriptors: collection-gaps.tsv replaced by a link mid-run -> its 3 rows never go through the link"
+else
+  bad "descriptors: swapped collection-gaps.tsv -> exit $code, outside file now '$(tr '\n' ' ' < "$TT/outside-gaps")'"
+fi
+rm -f "$FAKE_CURL_LOG"
+FAKE_SWAP="getSignaturesForAddress|$TT/w-swap-sigs/signatures.jsonl|$TT/outside-sigs" collect "$TT/w-swap-sigs" -- "$A_ADDR"
+code=$?
+eq "descriptors: signatures.jsonl replaced by a link mid-run -> the 3 signatures the RPC gave are fetched, none from the link" \
+  "$code|$(calls getTransaction)|$(grep -c SForged "$FAKE_CURL_LOG")" "0|3|0"
+if cmp -s "$TT/outside-sigs" "$TT/outside-sigs.before"; then
+  ok "descriptors: ... and no signature line is written through the link"
+else
+  bad "descriptors: the swapped signatures.jsonl link received lines"
+fi
+
+# ---------------------------------------------------------------------------
+# 11. snapshot-program.sh checks the run directory again just before its first
+#     write: a symbolic link that appears in it while the CLI runs (here during
+#     the dump) stops the run with exit 2, and nothing is written inside or outside.
+# ---------------------------------------------------------------------------
+mkdir -p "$TT/plant-out"
+for case in "bin|$TT/plant-out" "LEDGER.md|$TT/plant-out/ledger"; do
+  name="${case%%|*}"; target="${case#*|}"
+  P="$TT/plant-$name/incident_1"; mkdir -p "$P"
+  snap "$P" FAKE_SOL_PLANT="$P/$name|$target"
+  code=$?
+  if [[ "$code" == 2 && ! -e "$P/bin/$PID.so" && -z "$(ls -A "$TT/plant-out")" ]] && grep -q "refusing $P" "$P.out"; then
+    ok "re-check: a $name link that appears during the dump -> exit 2, nothing written inside or outside"
+  else
+    bad "re-check: $name link planted during the dump -> exit $code, outside: $(ls -A "$TT/plant-out" | tr '\n' ' ') ($(tr '\n' ' ' < "$P.out"))"
+  fi
+done
 
 if [[ "$fails" -ne 0 ]]; then
   echo "test-dnr-collect: $fails assertion(s) FAILED" >&2

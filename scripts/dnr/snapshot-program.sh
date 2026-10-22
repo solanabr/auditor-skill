@@ -45,8 +45,9 @@
 #     "unchanged" and that snapshot's line, writes nothing, and exits 0;
 #   * otherwise it keeps the current bytes as bin/<id>@<slot>.so and
 #     bin/<id>@<slot>.show.txt, and prints the first snapshot's line and the new one.
-# Files are written with noclobber (`set -C`): a name already taken stops the
-# script with a blocker instead of being replaced.
+# Files are written with noclobber (`set -C`), each through the descriptor opened
+# when it was created: a name already taken stops the script with a blocker instead
+# of being replaced.
 #
 # Compare `last_deployed_slot` to the incident slot: earlier → this dump IS the
 # incident binary (binary_provenance: dumped-unchanged); later → a newer upgrade
@@ -58,7 +59,8 @@
 # above it, such as /tmp on macOS, is the operator's). <incident_dir>, and the nearest
 # incident_* directory above it, must not be a symbolic link, hold one, or be tracked
 # by git, and git and find must be able to check it; any other directory is refused
-# with exit 2 before anything is written or the CLI runs.
+# with exit 2 before anything is written or the CLI runs. The check runs again just
+# before the first write, when bin/ must also be a directory of its own, not a link.
 #
 # SECRETS: the CLI reads "$RPC_URL" from the temp config, never from argv; an
 # $RPC_URL holding a quote, a backslash, whitespace or a control character is refused.
@@ -320,20 +322,30 @@ ledger_line() {
   echo "program=$pid owner=${o:-unknown} last_deployed_slot=${l:-unknown} authority=${a:-none} sha256_zero_trimmed=$2 elf_bytes=$3 padding_bytes=$4 file=$1"
 }
 # keep <temp file> <path in bin/>: copy under a name that must still be free. With
-# set -C the `: >` fails on a taken name, so a kept snapshot is never replaced.
+# set -C the descriptor cannot be opened on a taken name, so a kept snapshot is never
+# replaced, and the bytes go through the descriptor opened when the file was created.
 keep() {
-  if ! { : > "$2"; } 2>/dev/null; then
+  if ! { exec 6>"$2"; } 2>/dev/null; then
     echo "[blocker] ${2#"$dir/"} already exists; a snapshot is never overwritten, and nothing replaced it." >&2
     exit 3
   fi
-  if ! cat "$1" >> "$2"; then
+  if ! cat "$1" >&6; then
+    exec 6>&-
     rm -f "$2"
     echo "[blocker] could not write ${2#"$dir/"}." >&2
     exit 3
   fi
+  exec 6>&-
 }
 
+# Just before the first write: the run directory again (the CLI reads take time), and a
+# bin/ that is a directory of its own, not a symbolic link.
+check_run_dir
 mkdir -p "$dir/bin" || exit 2
+if [ -L "$dir/bin" ] || [ ! -d "$dir/bin" ]; then
+  echo "snapshot-program.sh: refusing $dir/bin: it is not a directory of its own — use a new run directory." >&2
+  exit 2
+fi
 # Rule 11d: an incident_<n>/ directory ignores itself when it has no .gitignore of
 # its own, so the dumped program never shows in git status.
 case "$(basename "$dir")" in
