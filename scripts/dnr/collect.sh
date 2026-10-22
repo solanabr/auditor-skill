@@ -64,8 +64,17 @@
 # maxSupportedTransactionVersion:1 — mandatory, since v1 transactions are live on
 # mainnet and a v1 fetch without the opt-in returns RPC error -32015.
 #
-# bash >= 3.2, curl, jq. Output: <dir>/signatures.jsonl, <dir>/transactions.jsonl,
-# <dir>/collection-gaps.tsv.
+# EXACT INTEGERS: lamport balances and jsonParsed amounts pass 2^53, and jq < 1.7
+# re-encodes every number as a double. jq writes transactions.jsonl only when it
+# keeps a 2^64-1 literal exact; otherwise `python3 -I` does (its json module keeps
+# integers exact), one compact JSON object per line either way. Signature pages
+# carry only slots, block times and small error codes, and jq writes them.
+#
+# Exit: 0 done (collection gaps included) · 2 usage, a refused input, $RPC_URL, run
+# directory or --out · 3 named blocker (no curl or jq; a jq that rounds large
+# integers and no working python3).
+# bash >= 3.2, curl, jq (and python3 with jq < 1.7). Output: <dir>/signatures.jsonl,
+# <dir>/transactions.jsonl, <dir>/collection-gaps.tsv.
 
 set -uo pipefail
 export LC_ALL=C
@@ -163,6 +172,33 @@ done
 if [ -s "$out/signatures.jsonl" ]; then
   echo "collect.sh: $out already holds a collected corpus — use a new --out (resume there with --before)." >&2
   exit 2
+fi
+
+for tool in curl jq; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "[blocker] $tool is not on PATH; collect.sh needs curl and jq." >&2
+    exit 3
+  fi
+done
+# result_line: the JSON-RPC response on stdin -> its .result object as one compact
+# line, every integer exact (EXACT INTEGERS above).
+probe='{"result":{"n":[18446744073709551615,-9007199254740993]}}'
+want='{"n":[18446744073709551615,-9007199254740993]}'
+if [ "$(printf '%s' "$probe" | jq -c '.result' 2>/dev/null)" = "$want" ]; then
+  result_line() { jq -c '.result'; }
+else
+  result_line() {
+    python3 -I -c 'import json, sys
+r = json.loads(sys.stdin.buffer.read().decode("utf-8", "replace"))["result"]
+if not isinstance(r, dict):
+    sys.exit(1)
+out = json.dumps(r, ensure_ascii=False, separators=(",", ":"))
+sys.stdout.buffer.write(out.encode("utf-8", "backslashreplace") + b"\n")' 2>/dev/null
+  }
+  if [ "$(printf '%s' "$probe" | result_line)" != "$want" ]; then
+    echo "[blocker] this jq rounds integers above 2^53 (jq < 1.7) and python3 -I is not available to write the corpus instead; install jq >= 1.7 or python3." >&2
+    exit 3
+  fi
 fi
 
 mkdir -p "$out" || exit 2
@@ -268,8 +304,9 @@ while IFS= read -r sig; do
     break
   fi
   resp="$(rpc getTransaction "[\"$sig\",{\"encoding\":\"jsonParsed\",\"maxSupportedTransactionVersion\":1,\"commitment\":\"finalized\"}]")"; rc=$?
-  if [ "$rc" -eq 0 ] && printf '%s' "$resp" | jq -e '.result | objects' >/dev/null 2>&1; then
-    printf '%s' "$resp" | jq -c '.result' >> "$tx_file"
+  if [ "$rc" -eq 0 ] && printf '%s' "$resp" | jq -e '.result | objects' >/dev/null 2>&1 \
+     && line="$(printf '%s' "$resp" | result_line)" && [ -n "$line" ]; then
+    printf '%s\n' "$line" >> "$tx_file"
     fetched=$((fetched + 1))
   else
     reason="$(failure "$rc" "$resp")"
