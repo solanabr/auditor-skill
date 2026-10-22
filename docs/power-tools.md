@@ -273,11 +273,11 @@ The one gated collector: it pages each address's signature history, failed trans
 bash "<auditor-skill root>/scripts/dnr/profile.sh" <corpus.jsonl> [<corpus.jsonl> ...]
 ```
 
-The baseline of one or more `getTransaction` JSONL corpora, such as every `incident_<n>/corpus*/transactions.jsonl`, counting each signature once. It reads structural fields only, never log text, and reports the succeeded / failed split, the transaction-version histogram, the `blockTime` window, and the top 20 fee payers, signers and top-level programs. Repeated signatures are skipped and reported in a closing `-- skipped` line; malformed lines are skipped and counted.
+The baseline of one or more `getTransaction` JSONL corpora, such as every `incident_<n>/corpus*/transactions.jsonl`, counting each signature once. It reads structural fields only, never log text, and reports the succeeded / failed split, the transaction-version histogram, the `blockTime` window, and the top 20 fee payers, signers and top-level programs. It keeps the first occurrence of each signature and skips malformed lines; closing `-- skipped` lines give both counts.
 
 - **Arguments:** one or more corpus files. No flags.
-- **Exit:** 0 done · 2 usage error or no such file.
-- **Network:** none. **Writes:** stdout only. Needs `jq`.
+- **Exit:** 0 done · 2 usage error or no such file · 3 `jq` or `python3` missing, checked before anything is read (`[blocker] <tool> is not on PATH; profile.sh needs jq and python3.`).
+- **Network:** none. **Writes:** stdout only. Needs `jq` and `python3` (the one-per-signature pass runs as `python3 -I`).
 
 #### `frames.py`
 
@@ -288,7 +288,7 @@ python3 -I "<auditor-skill root>/scripts/dnr/frames.py" [--instructions] [<corpu
 Attributes each `Program log:`, `Program data:` and `Program return:` line to the program frame that emitted it. It walks the log array one element at a time with anchored patterns, so a newline inside a log payload cannot forge a frame. Output is JSONL on stdout, one `{sig, ok, depth, program, kind, text}` record per line, where `kind` is `log`, `data`, `return`, `truncated` or `unparsed`; an input line that is not JSON becomes a `parse_error` record. A log line is what the program asserted, never proof that state changed.
 
 - **Arguments:** corpus files (several corpora count each signature once; skipped copies are reported on stderr), or none for stdin.
-- **`--instructions`:** prints the instructions the runtime recorded instead: an `ix` record for each top-level and inner (CPI) instruction, with its data as given, and the `invoke` records joined to them.
+- **`--instructions`:** prints the instruction records instead; the default output is unchanged without it. An `ix` record for each entry of `message.instructions` and `meta.innerInstructions` gives the program, the top-level and inner index, the stack height, the accounts, and the data as given (or `parsed-only`). An `invoke` record gives each invocation's depth, outcome and the `ix_seq` it ran. No `ix` field comes from log text.
 - **Exit:** 0 done · 1 a file that cannot be read.
 - **Network:** none. **Writes:** stdout only.
 
