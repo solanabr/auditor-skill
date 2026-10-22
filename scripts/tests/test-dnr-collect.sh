@@ -239,6 +239,28 @@ else
 fi
 eq "exact: that blocker comes before any RPC call" "$(calls getSignaturesForAddress)" "$before"
 
+# ---------------------------------------------------------------------------
+# 3. collect.sh never truncates a corpus: an --out that holds any of its three
+#    files, even an empty one, is refused before any call, and the file is left
+#    as it was.
+# ---------------------------------------------------------------------------
+before="$(calls getSignaturesForAddress)"
+for f in transactions.jsonl signatures.jsonl collection-gaps.tsv; do
+  mkdir -p "$TT/keep-$f"; printf '{"kept":1}\n' > "$TT/keep-$f/$f"
+  collect "$TT/keep-$f" -- "$A_ADDR"
+  code=$?
+  if [[ "$code" == 2 && "$(cat "$TT/keep-$f/$f")" == '{"kept":1}' && "$(ls "$TT/keep-$f")" == "$f" ]] \
+     && grep -q "already holds a collected corpus ($f)" "$TT/keep-$f.out"; then
+    ok "no clobber: an --out holding only $f is refused (exit 2), the file intact"
+  else
+    bad "no clobber: --out holding $f -> exit $code, now '$(cat "$TT/keep-$f/$f")', dir: $(ls "$TT/keep-$f" | tr '\n' ' ')"
+  fi
+done
+mkdir -p "$TT/keep-empty"; : > "$TT/keep-empty/signatures.jsonl"
+collect "$TT/keep-empty" -- "$A_ADDR"
+eq "no clobber: an empty signatures.jsonl is refused too (exit 2)" "$?" "2"
+eq "no clobber: refused runs made no RPC call" "$(calls getSignaturesForAddress)" "$before"
+
 if [[ "$fails" -ne 0 ]]; then
   echo "test-dnr-collect: $fails assertion(s) FAILED" >&2
   exit 1

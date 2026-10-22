@@ -35,7 +35,9 @@
 #
 # --before <sig> starts paging just older than that signature (resume a capped run,
 # or skip activity newer than the incident) — always into a new --out: an --out that
-# already holds signatures is refused, so a resume never erases the first pass. Every
+# already holds signatures.jsonl, transactions.jsonl or collection-gaps.tsv, even an
+# empty one, is refused, and the script creates its files with noclobber (`set -C`),
+# so a resume never erases the first pass. Every
 # address and --before value must be base58, and every number a plain integer,
 # before anything is written or sent. When the page cap stops paging before
 # --since was reached — or, with only --until set, while still above --until — the
@@ -76,7 +78,8 @@
 # bash >= 3.2, curl, jq (and python3 with jq < 1.7). Output: <dir>/signatures.jsonl,
 # <dir>/transactions.jsonl, <dir>/collection-gaps.tsv.
 
-set -uo pipefail
+# -C (noclobber): no redirection in this script replaces an existing file.
+set -Cuo pipefail
 export LC_ALL=C
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -168,11 +171,13 @@ while :; do
   case "$run_dir" in .|/) break ;; esac
   run_dir="$(dirname "$run_dir")"
 done
-# A second pass into the same --out would truncate the first one's corpus.
-if [ -s "$out/signatures.jsonl" ]; then
-  echo "collect.sh: $out already holds a collected corpus — use a new --out (resume there with --before)." >&2
-  exit 2
-fi
+# A second pass into the same --out would mix into, or truncate, the first one's corpus.
+for f in signatures.jsonl transactions.jsonl collection-gaps.tsv; do
+  if [ -e "$out/$f" ] || [ -L "$out/$f" ]; then
+    echo "collect.sh: $out already holds a collected corpus ($f) — use a new --out (resume there with --before)." >&2
+    exit 2
+  fi
+done
 
 for tool in curl jq; do
   if ! command -v "$tool" >/dev/null 2>&1; then
@@ -209,12 +214,17 @@ for d in "$out" "$(dirname "$out")"; do
     incident_*) [ -e "$d/.gitignore" ] || printf '*\n' > "$d/.gitignore" ;;
   esac
 done
-sig_file="$out/signatures.jsonl"; : > "$sig_file"
-tx_file="$out/transactions.jsonl"; : > "$tx_file"
-gaps="$out/collection-gaps.tsv"; : > "$gaps"; ngaps=0
-todo="$out/.signatures.todo"
-errf="$(mktemp "${TMPDIR:-/tmp}/dnr_collect.XXXXXX")"
-trap 'rm -f "$errf" "$todo"' EXIT
+# mktemp -d creates the directory with mode 0700; curl's stderr and the fetch list live there.
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/dnr_collect.XXXXXX")" || {
+  echo "[blocker] cannot create a private temp directory." >&2; exit 3; }
+trap 'rm -rf "$tmp"' EXIT
+errf="$tmp/stderr"; todo="$tmp/signatures.todo"
+sig_file="$out/signatures.jsonl"; tx_file="$out/transactions.jsonl"; gaps="$out/collection-gaps.tsv"
+if ! { : > "$sig_file" && : > "$tx_file" && : > "$gaps"; } 2>/dev/null; then
+  echo "collect.sh: $out already holds a collected corpus — use a new --out (resume there with --before)." >&2
+  exit 2
+fi
+ngaps=0
 
 # Provider domain, for disclosure under OUTPUT-RULES.md Rule 11b: strip the scheme,
 # any userinfo, path, query and fragment, then keep the host's last two DNS labels (an
@@ -226,7 +236,7 @@ echo "addresses: ${#addrs[@]}   window: since=$since until=$until before=${befor
 
 rpc() {  # rpc <method> <params-json> -> the whole JSON response on stdout; returns curl's status
   local rc
-  : > "$errf"
+  rm -f "$errf"
   # -q comes first so no ~/.curlrc is read; the URL arrives on stdin, the body (no
   # secret in it) as --data-raw.
   printf 'url = "%s"\n' "$RPC_URL" | curl -q -K - -sS -m 60 -A auditor-skill-research -X POST \
