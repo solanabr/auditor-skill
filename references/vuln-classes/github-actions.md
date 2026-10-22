@@ -55,7 +55,9 @@ GitHub changed several defaults in 2025–2026; older write-ups and some tools' 
 | 2026-06-18 / 2026-07-20 | `actions/checkout` v7.0.0 refuses to check out fork-PR code on `pull_request_target`, and on `workflow_run` when the upstream run was a `pull_request*` event, unless the step sets `allow-unsafe-pr-checkout: true`. Backported to v2.8.0, v3.7.0, v4.4.0, v5.1.0 and v6.1.0 (not v1). Floating major tags such as `@v4` picked it up; refs pinned to a SHA, a minor or a patch version did not | The guard does not see `git fetch` / `gh pr checkout`, checkouts of other repositories, or `issue_comment` and other events (§5.1) |
 
 Verify instead of trusting a date: `git ls-remote https://github.com/actions/checkout refs/tags/<tag>` gives the SHA
-a tag points to, and the release notes of the pinned version say whether it carries the guard or the restore.
+a tag points to, and the release notes of the pinned version say whether it carries the guard or the restore. Run
+`git ls-remote` from a scratch dir outside the checkout, so its repo config does not apply; the `owner/repo` slug must
+match `^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`.
 
 ---
 
@@ -387,11 +389,12 @@ deploy keypair, an upgrade authority, a Squads member key, or an SDK's npm or cr
 ## 7. Pointers: pinning, supply chain, runners, permissions
 
 - **Pinning (DEP-067, DEP-070).** Every action is pinned to a full SHA with a `# vX.Y.Z` comment, and the SHA resolves to
-  a tag or branch of the named repository (`git ls-remote https://github.com/<owner>/<repo>` lists it): a commit that
-  exists only in a fork can still be referenced through the parent's `owner/repo` slug, an "impostor commit"
-  (Chainguard, 2023). Pins are kept current by a Dependabot or Renovate `github-actions` updater, because an old pin
-  keeps fixed bugs (§1). Tag repointing is not hypothetical: tj-actions/changed-files and reviewdog in 2025,
-  trivy-action in 2026 (§8).
+  a tag or branch of the named repository (`git ls-remote https://github.com/<owner>/<repo>` lists it; run it from a
+  scratch dir outside the checkout, so its repo config does not apply, and only for an `owner/repo` slug, the first two
+  segments of the `uses:` value, that matches `^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`): a commit that exists only in a fork
+  can still be referenced through the parent's `owner/repo` slug, an "impostor commit" (Chainguard, 2023). Pins are
+  kept current by a Dependabot or Renovate `github-actions` updater, because an old pin keeps fixed bugs (§1). Tag
+  repointing is not hypothetical: tj-actions/changed-files and reviewdog in 2025, trivy-action in 2026 (§8).
 - **Self-hosted runners.** Fork-PR jobs do not run on persistent self-hosted runners in public repositories. The PyTorch
   research (Stawinski and Khan, 2024) turned a merged typo fix into contributor status, ran on a self-hosted runner and
   reached release credentials.
