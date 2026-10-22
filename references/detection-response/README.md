@@ -213,12 +213,12 @@ read past incidents as prior vulnerabilities from `INCIDENTS.json`
 
 A command's `allowed-tools` list **pre-approves** calls for the turn that runs it;
 it does not restrict what is callable, and it is not a security boundary. We use it
-to pre-approve only read-only, text-only work: `Read`, `Grep`, `Glob`, `Task`,
-writes confined to `incident_*/`, and `jq`. No bundled script is pre-approved, so
+to pre-approve only read-only, text-only work: `Read`, `Grep`, `Glob`, `Task` and
+writes confined to `incident_*/`. No bundled script is pre-approved, so
 every `scripts/dnr` run prompts — a pattern relative to the working directory would
-pre-approve whatever same-named file the audited repo ships (rule 8) — and so does
-everything that touches the chain or executes code: `solana`, `curl`, `cargo`,
-`surfpool`, a bare `python3`, `sqlite3`, `awk`. The agent's `tools:` list (no MCP
+pre-approve whatever same-named file the audited repo ships (rule 8) — and so do
+`jq` and everything that touches the chain or executes code: `solana`, `curl`,
+`cargo`, `surfpool`, a bare `python3`, `sqlite3`, `awk`. The agent's `tools:` list (no MCP
 tools, no sub-agent spawning) keeps connected write-capable integrations out of
 reach, but its `Bash` can still run the `solana` CLI, which signs with the local
 default keypair, so the track never runs a subcommand that signs or sends, and only
