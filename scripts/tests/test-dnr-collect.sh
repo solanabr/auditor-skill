@@ -95,9 +95,9 @@ calls() { if [[ -f "$FAKE_CURL_LOG" ]]; then grep -c "\"$1\"" "$FAKE_CURL_LOG"; 
 sigs_of() { jq -r '.transaction.signatures[0]' "$1" 2>/dev/null | tr '\n' ' '; }
 
 # A jq 1.6 stand-in, first on PATH from $TT/jq16: it reads every input number as
-# an IEEE-754 double and prints it the way jq 1.6 does (shortest round-trip
-# digits; exponent form when the decimal point is more than 15 places past the
-# last digit, or before -3), then runs the filter in the real jq.
+# an IEEE-754 double and prints it the way jq 1.6 does (the shortest digits that
+# round-trip, in exponent form for very large or very small magnitudes), then runs
+# the filter in the real jq.
 export REAL_JQ="$(command -v jq)"
 mkdir -p "$TT/jq16"
 printf '#!/bin/sh\nexec "%s" -I "$0.py" "$@"\n' "$PY" > "$TT/jq16/jq"
