@@ -548,6 +548,17 @@ for badid in '../../escape' 'Prog111' 'ProgTest111111111111111111111111111111111
   code=$?
   if [[ "$code" == 2 && ! -e "$TT/inc5" ]]; then ok "snapshot: refuses the id '$badid' (exit 2, nothing written)"; else bad "snapshot: id '$badid' -> exit $code"; fi
 done
+# python3 hashes the dump: on a PATH without it, a named blocker (exit 3) comes
+# before anything is written.
+mkdir -p "$TT/nopy"
+for t in dirname basename; do ln -s "$(command -v "$t")" "$TT/nopy/$t"; done
+PATH="$TT/nopy:$TT/bin" RPC_URL="https://rpc.example.test/" "$(command -v bash)" "$DNR/snapshot-program.sh" "$PID" "$TT/inc-nopy" > "$TT/nopy.out" 2>&1
+code=$?
+if [[ "$code" == 3 && ! -e "$TT/inc-nopy" ]] && grep -q '^\[blocker\] python3 not on PATH' "$TT/nopy.out"; then
+  ok "snapshot: without python3 on PATH, a named blocker (exit 3) and nothing written"
+else
+  bad "snapshot: no python3 -> exit $code ($(tr '\n' ' ' < "$TT/nopy.out"))"
+fi
 # Rule 11d: snapshotting into incident_<n>/ makes it ignore itself; a directory with
 # another name gets no .gitignore from the script.
 PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" bash "$DNR/snapshot-program.sh" "$PID" "$TT/incident_8" >/dev/null 2>&1

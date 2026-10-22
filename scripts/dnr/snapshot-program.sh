@@ -46,8 +46,8 @@
 # <incident_dir> contains the URL.
 #
 # Exit: 0 ok · 2 usage / not a base58 id / no or unusable $RPC_URL / a refused run
-# directory · 3 named blocker (no solana CLI, config not taken, CLI error, loader-v4,
-# dump without ELF magic).
+# directory · 3 named blocker (no solana CLI, no python3, config not taken, CLI
+# error, loader-v4, dump without ELF magic).
 # bash >= 3.2, python3 for the hash, run as `python3 -I` because the working
 # directory is usually the audited repo: without -I, a hashlib.py there would be
 # imported in place of the stdlib.
@@ -115,6 +115,10 @@ done
 
 if ! command -v solana >/dev/null 2>&1; then
   echo "[blocker] solana CLI not on PATH — install it, or dump the program another way and record its zero-trimmed sha256 and last-deployed slot in LEDGER.md by hand." >&2
+  exit 3
+fi
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "[blocker] python3 not on PATH — it hashes the dump; install it, or dump the program another way and record its zero-trimmed sha256 and last-deployed slot in LEDGER.md by hand." >&2
   exit 3
 fi
 
