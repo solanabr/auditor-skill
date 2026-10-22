@@ -67,9 +67,9 @@
 # error, RPC error or null result), a signature page that failed, a page cap that
 # stopped on a full page (older history may exist), the --max-tx cap, and the stop
 # on a failing endpoint (the last two name the first signature not fetched). The
-# run ends with "collection gaps: N (see <dir>/collection-gaps.tsv)". Gaps leave the
-# exit status at 0; copy each row into LEDGER.md and INCIDENTS.json
-# `collection_gaps`.
+# run ends with "transactions fetched: N of M calls -> <dir>/transactions.jsonl" and
+# "collection gaps: N (see <dir>/collection-gaps.tsv)". Gaps leave the exit status at
+# 0; copy each row into LEDGER.md and INCIDENTS.json `collection_gaps`.
 #
 # SECRETS: the endpoint comes from $RPC_URL and is NEVER echoed. curl runs with -q
 # (no ~/.curlrc) and reads the URL from a config on stdin (-K -), so the key stays
@@ -415,5 +415,5 @@ while IFS= read -r sig; do
     failed=$((failed + 1))
   fi
 done < "$todo"
-echo "transactions fetched: $fetched -> $tx_file"
+echo "transactions fetched: $fetched of $calls calls -> $tx_file"
 echo "collection gaps: $ngaps (see $gaps)"

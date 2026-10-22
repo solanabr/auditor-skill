@@ -302,6 +302,8 @@ rm -f "$FAKE_CURL_LOG"
 FAKE_TX_FAIL=null:2 collect "$TT/fail-alt" -- "$A_ADDR"
 eq "failing endpoint: failures that alternate with successes never stop the run (25 calls, 13 fetched, 12 gaps)" \
   "$(calls getTransaction)/$(grep -c . "$TT/fail-alt/transactions.jsonl")/$(grep -c . "$TT/fail-alt/collection-gaps.tsv")" "25/13/12"
+eq "failing endpoint: the summary gives the transactions fetched out of the calls made" \
+  "$(grep '^transactions fetched: ' "$TT/fail-alt.out")" "transactions fetched: 13 of 25 calls -> $TT/fail-alt/transactions.jsonl"
 rm -f "$FAKE_CURL_LOG"
 FAKE_TX_FAIL=null:2 collect "$TT/fail-alt-cap" --max-tx 5 -- "$A_ADDR"
 eq "failing endpoint: --max-tx 5 with every second call failing -> 5 calls, 3 fetched, cap row names S06" \
