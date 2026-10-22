@@ -3,7 +3,9 @@
 every total done in Python integers.
 
 Input: one getTransaction result object per line (`jsonParsed` or `json`), on
-stdin or in files named as args.
+stdin or in files named as args. The corpus is streamed one transaction at a time,
+and every named file is opened once before the first row is written: a missing or
+unreadable one exits 1 with no output.
 
 Two modes:
   deltas.py lamports [files...]   per (signature, account) non-zero lamport delta;
@@ -122,7 +124,21 @@ def _tokens(txs, out):
                 out.write(f"{_clean(sig)}\t{_clean(owner)}\t{_clean(mint)}\t{d}\n")
 
 
+def _unreadable(paths):
+    """The first input that cannot be opened, as "<path>: <reason>", else None. Checked
+    before the first row is written, so a bad later file never leaves partial output."""
+    for path in paths:
+        if path == "-":
+            continue
+        try:
+            open(path, encoding="utf-8", errors="replace").close()
+        except OSError as e:
+            return f"{path}: {e.strerror or e}"
+    return None
+
+
 def _iter_tx(argv):
+    """Yield one transaction at a time, so the corpus is never held in memory."""
     srcs = argv or ["-"]
     for path in srcs:
         fh = sys.stdin if path == "-" else open(path, encoding="utf-8", errors="replace")
@@ -147,7 +163,11 @@ def main(argv: list[str]) -> int:
         print("usage: deltas.py lamports|tokens [files...]", file=sys.stderr)
         return 2
     mode, files = argv[0], argv[1:]
-    txs = list(_iter_tx(files))
+    bad = _unreadable(files)
+    if bad:
+        print(f"deltas.py: cannot read {bad}", file=sys.stderr)
+        return 1
+    txs = _iter_tx(files)
     if mode == "lamports":
         _lamports(txs, sys.stdout)
     else:

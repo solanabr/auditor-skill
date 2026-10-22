@@ -346,6 +346,38 @@ eq "profile: a 5,000-payer corpus completes (no SIGPIPE exit)" "$?" "0"
 eq "profile: the last section still prints its 20 rows" \
   "$(awk '/^-- top-level programs/{f=1;next} f' "$TT/big.out" | grep -c .)" "20"
 
+# ---------------------------------------------------------------------------
+# 14. deltas.py streams its corpus and checks every input before the first row:
+#     a missing or unreadable later file exits 1 with no output, and a 20,000-
+#     transaction corpus split over two files sums exactly.
+# ---------------------------------------------------------------------------
+for later in "a missing file:$TT/no-such-corpus.jsonl" "a directory:$TT"; do
+  python3 -I "$DNR/deltas.py" tokens "$FIX/same-owner-drain.jsonl" "${later#*:}" > "$TT/d.out" 2> "$TT/d.err"
+  code=$?
+  if [[ "$code" == 1 && ! -s "$TT/d.out" ]] && grep -q 'cannot read' "$TT/d.err"; then
+    ok "deltas: ${later%%:*} as a later input exits 1 before any row"
+  else
+    bad "deltas: ${later%%:*} as a later input -> exit $code, $(grep -c . "$TT/d.out") row(s)"
+  fi
+done
+python3 -I -c 'import json, sys
+amt = 2**60 + 1
+for part, rng in ((sys.argv[1], range(0, 10000)), (sys.argv[2], range(10000, 20000))):
+    with open(part, "w") as f:
+        for i in rng:
+            bal = lambda o, a: {"owner": o, "mint": "MintBig", "uiTokenAmount": {"amount": str(a)}}
+            f.write(json.dumps({"meta": {"err": None,
+                "preTokenBalances": [bal("Vault", 2**64), bal("Attacker", 0)],
+                "postTokenBalances": [bal("Vault", 2**64 - amt), bal("Attacker", amt)]},
+                "transaction": {"signatures": ["S%d" % i]}}) + "\n")' "$TT/big-a.jsonl" "$TT/big-b.jsonl"
+python3 -I "$DNR/deltas.py" tokens "$TT/big-a.jsonl" "$TT/big-b.jsonl" > "$TT/big-d.tsv"
+eq "deltas: a 20,000-transaction corpus over two files completes" "$?" "0"
+eq "deltas: two rows per transaction" "$(grep -c . "$TT/big-d.tsv")" "40000"
+eq "deltas: the attacker total is exact (Python ints)" \
+  "$(python3 -I -c 'import sys
+print(sum(int(l.split("\t")[3]) for l in open(sys.argv[1]) if l.split("\t")[1] == "Attacker"))' "$TT/big-d.tsv")" \
+  "$(python3 -I -c 'print(20000 * (2**60 + 1))')"
+
 if [[ "$fails" -ne 0 ]]; then
   echo "test-dnr: $fails assertion(s) FAILED" >&2
   exit 1
