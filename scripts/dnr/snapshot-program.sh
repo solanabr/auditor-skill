@@ -68,9 +68,9 @@
 # taken, CLI error or no program under any loader, dump without ELF magic, the
 # last-deployed slot moving during two dumps, hash not computed, a snapshot name
 # already taken).
-# bash >= 3.2, python3 for the id check and the hash, checked before the CLI runs, and run as
-# `python3 -I` because the working directory is usually the audited repo: without
-# -I, a hashlib.py there would be imported in place of the stdlib.
+# bash >= 3.2, and python3 for the id check and the hash: checked before the CLI
+# runs, and run as `python3 -I` because the working directory is usually the audited
+# repo: without -I, a hashlib.py there would be imported in place of the stdlib.
 
 # -C (noclobber): no redirection in this script replaces an existing file.
 set -Cuo pipefail

@@ -42,16 +42,17 @@
 # or skip activity newer than the incident) — always into a new --out: an --out that
 # already holds signatures.jsonl, transactions.jsonl or collection-gaps.tsv, even an
 # empty one, is refused, and the script creates its files with noclobber (`set -C`),
-# so a resume never erases the first pass. Every
-# address and --before value must be base58, and every number a plain integer,
-# before anything is written or sent. A page shorter than the 1000 signatures asked
-# for is the end of the address's history. When the page cap stops paging on a full
-# page before --since was crossed, whatever --since and --until are, the script says
-# so ("history truncated") with the --before to resume from: the corpus is then
-# incomplete for that address, a collection gap to record in the ledger. Signatures are fetched newest
-# first (by slot, across all addresses; within a slot, in the order the RPC returned
-# them), so --max-tx drops the oldest. The script runs under LC_ALL=C, so neither
-# that order nor any character range depends on the caller's locale.
+# so a resume never erases the first pass. Every address and --before value must be
+# base58, and every number a plain integer, before anything is written or sent.
+#
+# A page shorter than the 1000 signatures asked for is the end of the address's
+# history. When the page cap stops paging on a full page before --since was crossed,
+# whatever --since and --until are, the script says so ("history truncated") with
+# the --before to resume from: the corpus is then incomplete for that address, a
+# collection gap to record in the ledger. Signatures are fetched newest first (by
+# slot, across all addresses; within a slot, in the order the RPC returned them), so
+# --max-tx drops the oldest. The script runs under LC_ALL=C, so neither that order
+# nor any character range depends on the caller's locale.
 #
 # COLLECTION GAPS: every gap is also a row of <dir>/collection-gaps.tsv,
 # `<signature or address><TAB><reason>`: a getTransaction that failed (transport
