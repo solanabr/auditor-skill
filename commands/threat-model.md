@@ -47,6 +47,8 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --repo <target> --o
 
 Drop `--offline` only when the user passed an `https://` `--parent` / `--vulns` value or confirmed the exact URL. Then hand `audit_<n>/bootstrap/` to `threat-modeler` together with the other inputs.
 
+If the collector exits 3 because the target is a partial clone, collect from a full copy you control instead (`OUTPUT-RULES.md` Rule 11c): reading its missing objects would fetch from the promisor remote its config names.
+
 Collector flags (`references/audit-lifecycle/threat-model-bootstrap.md` §2 has the table and exit statuses):
 - `--repo <dir>` (the target, at its repository's top level) and `--out audit_<n>/bootstrap`: required.
 - `--pin <rev>`: the commit to mine (default `HEAD`); pass the intake pin.

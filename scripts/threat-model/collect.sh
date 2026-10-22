@@ -3,8 +3,9 @@
 #
 # Gathers history-derived leads for /auditor:threat-model: security-keyword commits, reverts, removed
 # or quietly added account guards, churn, an optional fork-parent comparison, provenance signals,
-# prior-vulnerability inputs and the audit-mem warm block. It never checks out, builds, runs or
-# modifies the target. Output contract: references/audit-lifecycle/threat-model-bootstrap.md.
+# prior-vulnerability inputs and the audit-mem warm block. It never checks out, builds, runs, fetches
+# into or modifies the target: lazy fetching and transport protocols are off, and a partial clone is
+# refused. Output contract: references/audit-lifecycle/threat-model-bootstrap.md.
 # Git hardening follows OUTPUT-RULES.md Rule 11c; the output directory follows Rule 11d.
 #
 # Usage (from the installation, never as a scripts/ path relative to the working directory):
@@ -36,12 +37,14 @@
 # Exit status: 0 done (sections may print NOT FOUND), 2 usage error or rejected input (including an
 #              --import that is not a commit, and a run directory that is or holds a symbolic link
 #              or that git tracks),
-#              3 --repo is not the top level of a git repository (or a bare repository), or the pin
-#              does not resolve.
+#              3 --repo is not the top level of a git repository (or a bare repository), the pin
+#              does not resolve, or the target is a partial clone (reading it could fetch from its
+#              promisor remote).
 
 set -uo pipefail
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
-export LC_ALL=C
+# No git call may fetch a missing object from a promisor remote (partial clones are refused below too).
+export GIT_NO_LAZY_FETCH=1 LC_ALL=C
 
 SELF_DIR=$(cd "$(dirname "$0")" && pwd)
 SKILL_ROOT=$(cd "$SELF_DIR/../.." && pwd)
@@ -124,7 +127,9 @@ VULNS_NL=$abs_vulns
 # ---- hardened git (OUTPUT-RULES.md Rule 11c) --------------------------------------------------------
 # The target's .git/config, attributes and hooks are attacker-controlled: never page, never run
 # fsmonitor or signature helpers, and give every log/show --no-textconv --no-ext-diff with fixed diff
-# prefixes. Nothing is ever checked out, so no smudge or clean filter can run. Output-shaping settings
+# prefixes. Nothing is ever checked out, so no smudge or clean filter can run, and no transport
+# protocol is allowed, so no remote the target configures is ever contacted (the one https clone of a
+# user-given --parent URL below allows https for that call only). Output-shaping settings
 # (grep line numbers and columns, colour, path quoting, log encoding, the big-file threshold, hunk
 # fusing, root-commit diffs) are pinned as well, from the target's config and from the auditor's own
 # ~/.gitconfig alike, so the parsers below see plain text. Every diff runs with --text, so neither an
@@ -133,7 +138,7 @@ VULNS_NL=$abs_vulns
 G() {
   local d=$1; shift
   git --no-pager -C "$d" -c core.fsmonitor=false -c core.pager=cat -c log.showSignature=false \
-      -c gpg.program=false -c gpg.ssh.program=false \
+      -c gpg.program=false -c gpg.ssh.program=false -c protocol.allow=never \
       -c grep.lineNumber=false -c grep.column=false -c grep.patternType=basic -c grep.extendedRegexp=false \
       -c color.ui=never -c color.grep=never -c color.diff=never -c core.quotePath=false \
       -c i18n.logOutputEncoding=UTF-8 -c core.bigFileThreshold=512m -c diff.interHunkContext=0 \
@@ -154,6 +159,15 @@ repo_top() {
   [ -n "$top" ] && [ "$(cd "$top" 2>/dev/null && pwd -P)" = "$(cd "$1" 2>/dev/null && pwd -P)" ]
 }
 repo_top "$REPO" || { echo "collect.sh: not a git repository (or not its top level): $REPO" >&2; exit 3; }
+# partial_clone <dir>: status 0 for a partial clone (extensions.partialClone, or a remote.<name>.promisor
+# key), where reading a missing object would fetch it from the promisor remote. Reading config runs nothing.
+partial_clone() {
+  [ -n "$(G "$1" config --get-regexp '^(extensions\.partialclone|remote\..*\.promisor)$' 2>/dev/null)" ]
+}
+if partial_clone "$REPO"; then
+  echo "collect.sh: the target is a partial clone: reading missing objects would fetch from its promisor remote. Make a full copy you control first (OUTPUT-RULES Rule 11c)." >&2
+  exit 3
+fi
 PIN_SHA=$(G "$REPO" rev-parse --verify --quiet "$PIN^{commit}") || { echo "collect.sh: pin does not resolve: $PIN" >&2; exit 3; }
 # --import reaches git only as the full commit id it resolves to, never as the string given.
 if [ -n "$IMPORT" ]; then
@@ -162,6 +176,7 @@ if [ -n "$IMPORT" ]; then
 fi
 REPO_ABS=$(cd "$REPO" && pwd)
 REPO=$REPO_ABS
+SHALLOW=$(G "$REPO" rev-parse --is-shallow-repository 2>/dev/null)
 EMPTY_TREE=$(G "$REPO" hash-object -t tree /dev/null)
 # Where this git has --attr-source, R4 reads gitattributes from the empty tree instead of the target's
 # .gitattributes; an older git has no such option and keeps reading them.
@@ -343,10 +358,12 @@ if [ -n "$PARENT" ]; then
     else
       PARENT_STATUS="clone failed"
     fi
-  elif repo_top "$PARENT"; then
-    PDIR="$PARENT"; PARENT_STATUS="local repository"
-  else
+  elif ! repo_top "$PARENT"; then
     PARENT_STATUS="not a git repository (or not its top level)"
+  elif partial_clone "$PARENT"; then
+    PARENT_STATUS="the parent is a partial clone, not used (reading it could fetch from its promisor remote)"
+  else
+    PDIR="$PARENT"; PARENT_STATUS="local repository"
   fi
   if [ -n "$PDIR" ]; then PHEAD=$(G "$PDIR" rev-parse --verify --quiet 'HEAD^{commit}'); fi
 fi
@@ -371,7 +388,10 @@ while IFS= read -r p; do [ -n "$p" ] && PPATHS+=("$p"); done <<< "$PPATHS_NL"
   echo "| Collector | scripts/threat-model/collect.sh v$COLLECTOR_VERSION, cap $CAP rows, quiet-fix ceiling $SMALL lines, fix ceiling $FIX_CEILING lines |"
   echo
   echo "Leads, not findings: every row points at history to re-derive from the code at the pinned commit."
-  echo "Git ran without pager, fsmonitor, signature helpers, textconv or external diff (OUTPUT-RULES.md Rule 11c), with its grep, colour, path-quoting, log-encoding, big-file, hunk-fusing and root-commit settings pinned."
+  echo "Git ran without pager, fsmonitor, signature helpers, textconv or external diff (OUTPUT-RULES.md Rule 11c), with lazy fetching and every transport protocol off (a partial clone is refused), and with its grep, colour, path-quoting, log-encoding, big-file, hunk-fusing and root-commit settings pinned."
+  if [ "$SHALLOW" = true ]; then
+    echo "Shallow clone: history before the shallow boundary is missing, so a NOT FOUND or a short list below may only mean that history is cut."
+  fi
   echo "Diffs, and searches of Rust files and the target paths, run as text, so no attribute or setting of the target makes git skip a file as binary; README/docs searches still skip binary files."
   if [ -n "$ATTR_SRC" ]; then
     echo "R4 function names use git's rust hunk-header pattern, pinned. The target's .gitattributes are ignored there (--attr-source); its .git/info/attributes still apply, and R4 counts the .rs files they send to another diff driver."
@@ -384,7 +404,7 @@ while IFS= read -r p; do [ -n "$p" ] && PPATHS+=("$p"); done <<< "$PPATHS_NL"
 # ---- R0 preflight ---------------------------------------------------------------------------------
 {
   section "R0 Preflight" "Shallow clones hide history. T3/T4 are the triggers this script can evaluate offline."
-  echo "shallow: $(G "$REPO" rev-parse --is-shallow-repository 2>/dev/null)"
+  echo "shallow: $SHALLOW"
   echo "commits in the pin ancestry touching the target paths: $(G "$REPO" rev-list --count "$PIN_SHA" -- "${TPATHS[@]}" 2>/dev/null)"
   eval_triggers
   endsec
@@ -483,6 +503,9 @@ R4_OTHER=$(sed -E 's/^ *[0-9]+ //' "$TMPD/r4a" | grep -E '\.rs"?$' |
     else
       echo "fork point: $(G "$PDIR" log "${DIFFSAFE[@]}" -1 --format='%h %ad %s' --date=short "$FORK") — $METHOD"
       echo "parent head: $(G "$PDIR" log "${DIFFSAFE[@]}" -1 --format='%h %ad %s' --date=short "$PHEAD")"
+      if [ "$(G "$PDIR" rev-parse --is-shallow-repository 2>/dev/null)" = true ]; then
+        echo "note: the parent is a shallow clone; its history before the shallow boundary is missing"
+      fi
       echo
       echo "--- R5c parent commits after the fork point whose whole message matches a keyword ---"
       G "$PDIR" log "${DIFFSAFE[@]}" -i -E --grep="$KW" --format='%h %ad %s' --date=short "$FORK..$PHEAD" -- "${PPATHS[@]}" > "$TMPD/r5c" 2>/dev/null

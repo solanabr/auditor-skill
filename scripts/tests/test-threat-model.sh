@@ -389,7 +389,7 @@ check "T-j: --parent ssh:// is rejected" test "$(rc --repo "$TGT" --out "$T/x/b"
 check "T-j: --vulns file:// is rejected" test "$(rc --repo "$TGT" --out "$T/x/b" --vulns file:///etc/hosts)" = 2
 check "T-j: a non-repository target exits 3" test "$(rc --repo "$T/home" --out "$T/x/b")" = 3
 check "--help prints the whole header, exit statuses included" \
-  sh -c "bash '$COLLECT' --help | grep -q 'Exit status:' && bash '$COLLECT' --help | grep -q 'does not resolve'"
+  sh -c "bash '$COLLECT' --help | grep -q 'Exit status:' && bash '$COLLECT' --help | grep -q 'promisor remote)'"
 # --repo must be the top level of its own repository; a plain directory inside another one is refused.
 mkdir -p "$TGT/not-a-repo"
 check "T-j: a plain directory inside another repository exits 3" \
@@ -668,6 +668,52 @@ if command -v jq >/dev/null 2>&1 || command -v python3 >/dev/null 2>&1; then
 else
   skp "T-n incident files: needs jq or python3"
 fi
+
+# =================================================================================================
+# T-p: partial and shallow clones. A partial clone is refused (exit 3) before any object is read, so
+# its promisor remote is never contacted; a shallow clone is collected with a note that history is cut.
+# =================================================================================================
+git_at_least() { # git_at_least <major> <minor>
+  local v; v=$(git --version | sed -E 's/^git version ([0-9]+)\.([0-9]+).*/\1 \2/')
+  [ "${v% *}" -gt "$1" ] || { [ "${v% *}" -eq "$1" ] && [ "${v#* }" -ge "$2" ]; }
+}
+SRV="$T/promisor-server"; mkrepo "$SRV"
+put "$SRV" programs/s/src/lib.rs '#[account(mut, has_one = authority)]'
+put "$SRV" README.md 'Example pool, forked from the upstream reference pool.'
+commit "$SRV" -m "initial"
+put "$SRV" programs/s/src/lib.rs '#[account(mut)]'
+commit "$SRV" -m "Rework accounts"
+git -C "$SRV" config uploadpack.allowFilter true
+if ! git_at_least 2 44; then
+  skp "T-p: partial clone needs git >= 2.44 (GIT_NO_LAZY_FETCH); this git is older"
+elif ! git clone -q --filter=blob:none --no-local "file://$SRV" "$T/partial" >/dev/null 2>&1; then
+  skp "T-p: this git could not make a blobless partial clone"
+else
+  printf '#!/bin/sh\ntouch "%s/marks/promisor-fetch"\nexit 1\n' "$T" > "$T/bin/mark-fetch"; chmod +x "$T/bin/mark-fetch"
+  git -C "$T/partial" config remote.origin.uploadpack "$T/bin/mark-fetch"
+  rm -f "$T/marks/promisor-fetch"
+  git -C "$T/partial" log -p >/dev/null 2>&1
+  if [ -e "$T/marks/promisor-fetch" ]; then ok "T-p sanity: plain 'git log -p' in the partial clone fetches from its promisor"
+  else skp "T-p sanity: this git did not fetch a missing object"; fi
+  rm -f "$T/marks/promisor-fetch"
+  check "T-p: a partial clone is refused in --detect (exit 3)" \
+    test "$(rc --repo "$T/partial" --out "$T/pc-run/audit_1/bootstrap" --detect)" = 3
+  check "T-p: ... and in a full run (exit 3)" test "$(rc --repo "$T/partial" --out "$T/pc-run/audit_1/bootstrap" --offline)" = 3
+  bash "$COLLECT" --repo "$T/partial" --out "$T/pc-run/audit_1/bootstrap" --offline >/dev/null 2>"$T/partial.err"
+  check "T-p: ... with a message naming the promisor remote" has "$T/partial.err" "the target is a partial clone"
+  check "T-p: the promisor remote is never contacted" test ! -e "$T/marks/promisor-fetch"
+  check "T-p: nothing is written for a refused target" test ! -e "$T/pc-run"
+  OUTPP="$T/pc-parent/audit_1/bootstrap"; rm -f "$T/marks/promisor-fetch"
+  collect --repo "$TGT" --out "$OUTPP" --offline --parent "$T/partial"
+  check "T-p: a local --parent that is a partial clone is not used" has "$OUTPP/history.md" "is a partial clone"
+  check "T-p: ... and its promisor remote is never contacted" test ! -e "$T/marks/promisor-fetch"
+fi
+git clone -q --depth 1 --no-local "file://$SRV" "$T/shallow" >/dev/null 2>&1
+OUTSH="$T/shallow-run/audit_1/bootstrap"
+collect --repo "$T/shallow" --out "$OUTSH" --offline
+check "T-p: a shallow clone is collected with a note that its history is cut" \
+  has "$OUTSH/history.md" "Shallow clone: history before the shallow boundary is missing"
+check "T-p: a full clone carries no such note" hasnt "$H1" "Shallow clone:"
 
 echo
 echo "threat-model collector tests: $pass passed, $fail failed, $skip skipped"
