@@ -405,7 +405,7 @@ npx license-checker --summary
 
 ## GitHub Actions (CI trigger trust)
 
-> Locators for `references/vuln-classes/github-actions.md`, KV-080, KV-116, KV-139, KV-140, DEP-067..071 / DEP-090..096 and AI-021..035. A hit is a place to read, not a finding: open the whole workflow, then trace trigger → actor → payload → sink → privilege. Every recipe is recursive with `--include` and fully single-quoted where it contains `$` or `!`, so it runs unchanged in bash and zsh and never trips on an unmatched glob. Point the same commands at any `action.yml` / `action.yaml` outside `.github/` (composite actions at the repo root). `scripts/tests/test-gha-recipes.sh` runs R1–R8 exactly as written here against `scripts/tests/fixtures/gha/`.
+> Locators for `references/vuln-classes/github-actions.md`, KV-080, KV-116, KV-139, KV-140, DEP-067..071 / DEP-090..096 and AI-021..035. A hit is a place to read, not a finding: open the whole workflow, then trace trigger → actor → payload → sink → privilege. Every recipe is recursive with `--include` and fully single-quoted where it contains `$` or `!`, so it runs unchanged in bash and zsh and never trips on an unmatched glob. Point the same commands at any `action.yml` / `action.yaml` outside `.github/` (composite actions at the repo root). `scripts/tests/test-gha-recipes.sh` runs R1–R8 exactly as written here, plus the KV-116 Step 1, KV-139 Step 1 and KV-140 Step 6 locators, against `scripts/tests/fixtures/gha/`, and fails if a known vector's copy of R1–R5 or R7 differs from this file by a byte.
 
 ```bash
 # R1 — files with a comment / review / issue / discussion trigger that never mention author_association
