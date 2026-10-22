@@ -59,7 +59,7 @@ grep -rnE --include='*.yml' --include='*.yaml' 'ref:[[:space:]]*.?\$\{\{[[:space
 
 **Step 4: `workflow_run` artifacts and gates** (recipe R4)
 ```
-grep -rnE --include='*.yml' --include='*.yaml' 'workflow_run\.(head_branch|head_sha|head_commit|head_repository|display_title|pull_requests)|download-artifact|downloadArtifact|gh run download|run-id:' .github/
+grep -rnE --include='*.yml' --include='*.yaml' 'workflow_run\.(head_branch|head_sha|head_commit|head_repository|display_title|pull_requests)|download-artifact|downloadArtifact|listWorkflowRunArtifacts|gh run download|run-id:' .github/
 ```
 - ✅ PASS:
   - artifacts are downloaded into `${{ runner.temp }}`, parsed and validated as data (a numeric PR number, say);
