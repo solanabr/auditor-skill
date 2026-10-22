@@ -1,6 +1,6 @@
 ---
 name: auditor:hunt
-description: Post-incident threat hunt over Solana transaction history and program logs with NO alert in hand — profile the corpus, run a written hypothesis ledger, confirm suspects in the deployed source, reproduce locally on the real program bytes, and emit incident_<n>/INCIDENTS.json + INCIDENT_REPORT.md. Proposes; never signs, sends, or acts on-chain.
+description: "Post-incident threat hunt for when no alert has fired: baseline a Solana program's transaction history and program logs, record each hypothesis and its query in a ledger, check each suspect against the source deployed at the incident slot, replay the attack locally on the real program bytes, and write incident_<n>/INCIDENTS.json and INCIDENT_REPORT.md. Proposes only; never signs, sends, or acts on-chain."
 argument-hint: "[<address> ...] [--logs <dir>] [--repo <path>] [--window <fromUnix>..<toUnix>] [--collect] [--fresh]"
 allowed-tools: Read, Grep, Glob, Task, Edit(incident_*/**), Bash(jq *)
 ---
