@@ -179,8 +179,9 @@ eq "profile: programIdIndex resolved through accountKeys" "$pidx" "1"
 
 # ---------------------------------------------------------------------------
 # 10. collect.sh end to end against a fake `curl` (no network): runs under the
-#     system bash, keeps FAILED transactions, reports an unreached window, passes
-#     --before through, and never prints the key.
+#     system bash, keeps FAILED transactions, reports a history truncated by
+#     --max-pages (and nothing else), passes --before through, counts every
+#     getTransaction call toward --max-tx, and never prints the key.
 # ---------------------------------------------------------------------------
 mkdir -p "$TT/bin"
 cat > "$TT/bin/curl" <<'PY'
@@ -213,6 +214,9 @@ if m == "getTransaction" and p[0] == fail_sig and fail_mode in ("rpc", "null"):
     print(json.dumps(dict({"jsonrpc": "2.0", "id": 1}, **out))); sys.exit(0)
 if m == "getSignaturesForAddress" and os.environ.get("FAKE_CURL_PAGE_FAIL"):
     print(json.dumps({"jsonrpc": "2.0", "id": 1, "error": {"code": -32005, "message": "Node is behind"}})); sys.exit(0)
+# FAKE_CURL_TX_FAIL_ALL=1 fails every getTransaction (a rate-limited endpoint).
+if m == "getTransaction" and os.environ.get("FAKE_CURL_TX_FAIL_ALL"):
+    print(json.dumps({"jsonrpc": "2.0", "id": 1, "error": {"code": 429, "message": "Too many requests"}})); sys.exit(0)
 # FAKE_CURL_TX_FIXTURE=<file>: one signature, whose getTransaction result is that
 # file's first line spliced in verbatim, so big integers arrive as literals.
 fx = os.environ.get("FAKE_CURL_TX_FIXTURE")
@@ -224,6 +228,22 @@ if fx:
     else:
         sys.stdout.write('{"jsonrpc":"2.0","id":1,"result":' + tx + '}')
     sys.exit(0)
+# FAKE_CURL_HISTORY=<n>: any address has n signatures (slots n..1, newest first),
+# served at most `limit` per page and only older than `before`.
+hist = int(os.environ.get("FAKE_CURL_HISTORY") or 0)
+if m == "getSignaturesForAddress" and hist:
+    b58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+    def hsig(k):
+        out = ""
+        while True:
+            out, k = b58[k % 58] + out, k // 58
+            if not k:
+                return "Hist" + out.rjust(40, "1")
+    slots = {hsig(k): k for k in range(1, hist + 1)}
+    top = slots.get(p[1].get("before"), hist + 1) - 1
+    res = [{"signature": hsig(k), "slot": k, "err": None, "blockTime": 1700000000 + k}
+           for k in range(top, max(top - p[1]["limit"], 0), -1)]
+    print(json.dumps({"jsonrpc": "2.0", "id": 1, "result": res})); sys.exit(0)
 if m == "getSignaturesForAddress" and p[0].startswith("AddrB"):
     res = [
         {"signature": "SigZnewest", "slot": 9, "err": None, "blockTime": 1700000900},
@@ -251,7 +271,11 @@ code=$?
 eq "collect: exits 0 against the fake RPC (system bash)" "$code" "0"
 eq "collect: fetched both the successful AND the failed transaction" \
   "$(grep -c . "$TT/c/transactions.jsonl" 2>/dev/null || true)" "2"
-if grep -q 'window not reached' "$TT/c.out"; then ok "collect: reports the unreached window when the page cap stops first"; else bad "collect: no 'window not reached' notice"; fi
+if ! grep -q 'truncated by --max-pages' "$TT/c.out" && [[ ! -s "$TT/c/collection-gaps.tsv" ]]; then
+  ok "collect: a short last page at the page cap is the end of history (no truncation notice, no gap)"
+else
+  bad "collect: a short last page was reported as truncated"
+fi
 if grep -q "\"before\": \"$CURSOR\"" "$FAKE_CURL_LOG"; then ok "collect: --before passed through to the first page"; else bad "collect: --before not passed through"; fi
 if grep -q 'LEAKME42' "$TT/c.out" "$TT/c/signatures.jsonl" "$TT/c/transactions.jsonl"; then
   bad "collect: the key leaked into output"
@@ -305,14 +329,41 @@ eq "collect: a refused \$RPC_URL made no RPC call" "$(grep -c . "$FAKE_CURL_LOG"
     bash "$DNR/collect.sh" --out "$TT/c2" --confirmed --max-pages 1 --max-tx 2 -- "$A_ADDR" "$B_ADDR" ) > "$TT/c2.out" 2>&1
 got="$(jq -r '.transaction.signatures[0]' "$TT/c2/transactions.jsonl" 2>/dev/null | tr '\n' ' ')"
 eq "collect: --max-tx 2 fetches the two newest signatures across both addresses" "$got" "SigZnewest SigOK "
-# With only --until set, a page cap that stops above it collected nothing inside the window.
-( PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
-    bash "$DNR/collect.sh" --out "$TT/c3" --confirmed --until 100 --max-pages 1 -- "$A_ADDR" ) > "$TT/c3.out" 2>&1
-if grep -q 'stopped paging above --until' "$TT/c3.out"; then ok "collect: warns when paging stops above --until"; else bad "collect: no warning for a window above --until"; fi
-if grep -q 'resume into a new --out with --before' "$TT/c3.out"; then ok "collect: the notice says to resume into a new --out"; else bad "collect: resume notice still points at the same --out"; fi
-eq "collect: an unreached window is a gap row" "$(cut -f1 "$TT/c3/collection-gaps.tsv" | tr '\n' ' ')" "$A_ADDR "
 eq "collect: the --max-tx cap is one gap row naming the first signature not fetched" \
   "$(cut -f1 "$TT/c2/collection-gaps.tsv")|$(grep -c 'collection gaps: 1 ' "$TT/c2.out")" "SigFail|1"
+# Paging stops at the end of history (a page shorter than 1000), when --since is
+# crossed, or at --max-pages; only the last, after a full page, truncates history,
+# and then the notice and a gap row give the cursor that resumes it, whatever the
+# window. --max-tx 0 keeps these runs to paging.
+hrun() {  # hrun <out> <history size> <collect args...>: page a served history
+  local o="$1" h="$2"; shift 2
+  ( PATH="$TT/bin:$PATH" FAKE_CURL_HISTORY="$h" RPC_URL="https://rpc.example.test/" \
+      bash "$DNR/collect.sh" --out "$TT/$o" --confirmed --max-tx 0 "$@" -- "$A_ADDR" ) > "$TT/$o.out" 2>&1
+}
+truncated() { grep -c 'truncated by --max-pages' "$TT/$1/collection-gaps.tsv" 2>/dev/null || true; }
+hrun h3 3 --since 1600000000 --max-pages 1
+eq "collect: 3 signatures, a short page at the cap, --since unreached -> no truncation" "$(truncated h3)/$(grep -c 'truncated' "$TT/h3.out")" "0/0"
+hrun h3u 3 --until 100 --max-pages 1
+eq "collect: 3 signatures, --until only, short page -> no truncation" "$(truncated h3u)/$(grep -c 'truncated' "$TT/h3u.out")" "0/0"
+hrun h1500 1500 --max-pages 2
+eq "collect: 1,500 signatures over 2 pages (1,000 + 500) -> no truncation, all collected" \
+  "$(truncated h1500)/$(grep -c . "$TT/h1500/signatures.jsonl")" "0/1500"
+hrun h2500 2500 --max-pages 2
+eq "collect: 2,500 signatures, no window, full page at --max-pages 2 -> truncated, gap row" \
+  "$(truncated h2500)/$(grep -c 'truncated by --max-pages=2 after 2000 signatures' "$TT/h2500.out")" "1/1"
+cursor="$(sed -n 's/.*resume into a new --out with --before \([1-9A-HJ-NP-Za-km-z]*\).*/\1/p' "$TT/h2500/collection-gaps.tsv")"
+eq "collect: the resume cursor is the oldest signature collected" "$cursor" "$(jq -r '.signature' "$TT/h2500/signatures.jsonl" | tail -n 1)"
+hrun h2500r 2500 --max-pages 2 --before "$cursor"
+eq "collect: resuming with --before collects exactly the rest, with no notice" \
+  "$(grep -c . "$TT/h2500r/signatures.jsonl")/$(truncated h2500r)/$(cat "$TT/h2500/signatures.jsonl" "$TT/h2500r/signatures.jsonl" | jq -r .signature | sort -u | grep -c .)" "500/0/2500"
+hrun h2500u 2500 --until 1700000100 --max-pages 1
+if grep -q 'nothing at or before --until 1700000100 was collected' "$TT/h2500u/collection-gaps.tsv"; then
+  ok "collect: --until only, full page at the cap above --until -> truncated, nothing inside the window"
+else
+  bad "collect: --until-only truncation not reported ($(cat "$TT/h2500u/collection-gaps.tsv"))"
+fi
+hrun h2500s 2500 --since 1700002000 --max-pages 2
+eq "collect: --since crossed inside the cap -> no truncation" "$(truncated h2500s)" "0"
 # A second pass into an --out that already holds a corpus is refused, so the first
 # pass survives.
 cp "$TT/c/signatures.jsonl" "$TT/c.sig.before"
@@ -323,6 +374,24 @@ if [[ "$code" == 2 ]] && grep -q 'use a new --out' "$TT/c4.out" && cmp -s "$TT/c
   ok "collect: refuses to reuse an --out that holds a corpus (exit 2, corpus intact)"
 else
   bad "collect: reuse of a filled --out -> exit $code"
+fi
+# --max-tx counts every getTransaction call, failed ones included, and 10 failures
+# in a row stop the run with a gap row for the rest.
+txcalls() { grep -c '"method": "getTransaction"' "$FAKE_CURL_LOG" 2>/dev/null || true; }
+before_tx="$(txcalls)"
+( PATH="$TT/bin:$PATH" FAKE_CURL_TX_FAIL_ALL=1 FAKE_CURL_HISTORY=30 RPC_URL="https://rpc.example.test/" \
+    bash "$DNR/collect.sh" --out "$TT/f2" --confirmed --max-tx 2 -- "$A_ADDR" ) > "$TT/f2.out" 2>&1
+eq "collect: an always-failing endpoint with --max-tx 2 gets exactly 2 getTransaction calls" "$(( $(txcalls) - before_tx ))" "2"
+before_tx="$(txcalls)"
+( PATH="$TT/bin:$PATH" FAKE_CURL_TX_FAIL_ALL=1 FAKE_CURL_HISTORY=30 RPC_URL="https://rpc.example.test/" \
+    bash "$DNR/collect.sh" --out "$TT/f10" --confirmed --max-tx 100 -- "$A_ADDR" ) > "$TT/f10.out" 2>&1
+code=$?
+eq "collect: 10 failed calls in a row stop the run (10 calls, not 30)" "$(( $(txcalls) - before_tx ))" "10"
+if [[ "$code" == 0 ]] && grep -q 'endpoint failing (rate limit or outage): 10 getTransaction calls in a row failed, so the run stops — 0 transactions collected, 11 collection gaps' "$TT/f10.out" \
+   && grep -q 'in a row failed (rate limit or outage); this and 19 older signatures' "$TT/f10/collection-gaps.tsv"; then
+  ok "collect: the stop is reported (collected and gap counts) and the rest is one gap row"
+else
+  bad "collect: consecutive-failure stop not reported ($(grep 'endpoint\|gaps' "$TT/f10.out" | tr '\n' ' '))"
 fi
 # Inputs are checked before any write or RPC call: an address that is not base58,
 # a --before that is not a signature, a cap that is not a number.

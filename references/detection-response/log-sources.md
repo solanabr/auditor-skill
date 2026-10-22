@@ -32,8 +32,10 @@ gated (README rule 3; the command confirms addresses, window, caps and estimated
 call count with the human first):
 
 - **Signatures:** `getSignaturesForAddress`, newest→oldest, 1–1000 per page,
-  paged with the `before` cursor until the window start or a page cap. Only this
-  method is unaffected by transaction v1. `err` is per-signature, so failed
+  paged with the `before` cursor until the history ends (a page shorter than
+  1000), the window start, or the page cap; a page cap that cuts a full page
+  reports the history as truncated, with the `--before` cursor that resumes it.
+  Only this method is unaffected by transaction v1. `err` is per-signature, so failed
   attempts are visible here before you fetch anything.
 - **Transactions:** `getTransaction`, `encoding: jsonParsed`, `commitment:
   finalized`, **`maxSupportedTransactionVersion: 1`**. The opt-in is mandatory: v1
@@ -53,10 +55,14 @@ call count with the human first):
   is a symbolic link, holds one, or is tracked by git (README § Run directory). An
   `incident_<n>/` that the corpus lands in gets a `.gitignore` of `*` if it has
   none (Rule 11d).
+- **Calls are capped.** `--max-tx` counts every `getTransaction` call, failed
+  ones included, and 10 failed calls in a row (a rate limit or an outage) stop the
+  run, so a run makes at most addresses × `--max-pages` + `--max-tx` calls.
 - **Gaps are written down.** A `getTransaction` that failed (transport error, RPC
-  error or null result), a signature page that failed, a window the page cap did
-  not reach and the `--max-tx` cap each add a `<signature or address><TAB><reason>`
-  row to `<out>/collection-gaps.tsv`, and the run ends with `collection gaps: N`.
+  error or null result), a signature page that failed, a history truncated by
+  `--max-pages`, the `--max-tx` cap and a stop after 10 failed calls in a row each
+  add a `<signature or address><TAB><reason>` row to `<out>/collection-gaps.tsv`,
+  and the run ends with `collection gaps: N`.
   Every row goes into LEDGER.md and INCIDENTS.json `collection_gaps`.
 - Verdict evidence is read at `finalized`. The one exception is the
   "is it still ongoing?" check, which may read `confirmed` as long as it says so.

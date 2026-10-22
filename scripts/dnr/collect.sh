@@ -20,8 +20,12 @@
 #     before any network call.
 #   * READ-ONLY RPC only: getSignaturesForAddress and getTransaction. Never a send,
 #     a simulate, or a write method.
-#   * CAPPED: --max-pages (default 20 → up to 20000 signatures per address) and
-#     --max-tx (default 2000) bound the work and the spend. Raise them deliberately.
+#   * CAPPED: --max-pages (default 20; a page is one getSignaturesForAddress call of
+#     up to 1000 signatures, per address) and --max-tx (default 2000 getTransaction
+#     CALLS, failed ones included) bound the work and the spend, so a run makes at
+#     most addresses x max-pages + max-tx calls. After 10 getTransaction calls in a
+#     row fail (a rate limit or an outage), the run stops fetching and says so.
+#     Raise the caps deliberately.
 #
 # WHAT IS KEPT: every signature in the window, FAILED ones included. A failed
 # transaction moves no state, but it is evidence of an attempt — probing before a
@@ -37,16 +41,18 @@
 # or skip activity newer than the incident) — always into a new --out: an --out that
 # already holds signatures is refused, so a resume never erases the first pass. Every
 # address and --before value must be base58, and every number a plain integer,
-# before anything is written or sent. When the page cap stops paging before
-# --since was reached — or, with only --until set, while still above --until — the
-# script says so ("window not reached"): the corpus is then incomplete for that
-# address, a collection gap to record in the ledger. Signatures are fetched newest
-# first (by slot, across all addresses), so --max-tx drops the oldest.
+# before anything is written or sent. Paging an address ends when its history does
+# (a page shorter than 1000) or once --since is crossed; when --max-pages stops it
+# first, with a full last page, the history is truncated and the script says so
+# ("truncated by --max-pages", with the --before cursor that resumes it): a
+# collection gap to record in the ledger. Signatures are fetched newest first (by
+# slot, across all addresses), so --max-tx drops the oldest.
 #
 # COLLECTION GAPS: every gap is also a row of <dir>/collection-gaps.tsv,
 # `<signature or address><TAB><reason>`: a getTransaction that failed (transport
-# error, RPC error or null result), a signature page that failed, a window the page
-# cap did not reach, and the --max-tx cap. The run ends with
+# error, RPC error or null result), a signature page that failed, a history truncated
+# by --max-pages, the --max-tx cap, and a stop after consecutive failures. The run
+# ends with
 # "collection gaps: N (see <dir>/collection-gaps.tsv)". Gaps leave the exit status
 # at 0; copy each row into LEDGER.md and INCIDENTS.json `collection_gaps`.
 #
@@ -245,33 +251,41 @@ gap() {  # gap <signature or address> <reason>: one row per thing the corpus lac
   ngaps=$((ngaps + 1))
 }
 
-# 1. signature history, newest -> oldest, bounded by --since and --max-pages.
+# 1. signature history, newest -> oldest, one page of up to $LIMIT per call. Paging an
+#    address ends with its history (a page shorter than $LIMIT), once --since is
+#    crossed, or on a failed page; --max-pages stopping it after a full page leaves
+#    older history uncollected, which is reported with the cursor that resumes it.
+LIMIT=1000
 collected=0
 for addr in "${addrs[@]}"; do
-  before="$before_start"; page=0; oldest=0; reached=0
+  before="$before_start"; page=0; oldest=0; got=0; ended=0
   while [ "$page" -lt "$max_pages" ]; do
-    cfg="{\"limit\":1000,\"commitment\":\"finalized\"${before:+,\"before\":\"$before\"}}"
+    cfg="{\"limit\":$LIMIT,\"commitment\":\"finalized\"${before:+,\"before\":\"$before\"}}"
     resp="$(rpc getSignaturesForAddress "[\"$addr\",$cfg]")"; rc=$?
     if [ "$rc" -ne 0 ] || ! printf '%s' "$resp" | jq -e '.result | arrays' >/dev/null 2>&1; then
       reason="$(failure "$rc" "$resp")"
       echo "  ! paging $addr (page $page) failed: $reason — recorded as a collection gap" >&2
       gap "$addr" "getSignaturesForAddress page $page: $reason; older history not collected"
-      reached=1; break
+      ended=1; break
     fi
     n="$(printf '%s' "$resp" | jq '.result | length')"
-    if [ "$n" -eq 0 ]; then reached=1; break; fi
-    printf '%s' "$resp" | jq -c --arg a "$addr" '.result[] | . + {queried_address:$a}' >> "$sig_file"
-    before="$(printf '%s' "$resp" | jq -r '.result[-1].signature')"
-    oldest="$(printf '%s' "$resp" | jq -r '.result[-1].blockTime // 0')"
-    page=$((page + 1)); collected=$((collected + n))
-    if [ "$since" -gt 0 ] && [ "$oldest" -gt 0 ] && [ "$oldest" -lt "$since" ]; then reached=1; break; fi
+    page=$((page + 1))
+    if [ "$n" -gt 0 ]; then
+      printf '%s' "$resp" | jq -c --arg a "$addr" '.result[] | . + {queried_address:$a}' >> "$sig_file"
+      before="$(printf '%s' "$resp" | jq -r '.result[-1].signature')"
+      oldest="$(printf '%s' "$resp" | jq -r '.result[-1].blockTime // 0')"
+      got=$((got + n)); collected=$((collected + n))
+    fi
+    if [ "$n" -lt "$LIMIT" ]; then ended=1; break; fi
+    if [ "$since" -gt 0 ] && [ "$oldest" -gt 0 ] && [ "$oldest" -lt "$since" ]; then ended=1; break; fi
   done
-  if [ "$reached" -eq 0 ] && [ "$since" -gt 0 ]; then
-    echo "  ! window not reached for $addr (oldest=$oldest, since=$since): page cap hit — resume into a new --out with --before $before, or raise --max-pages; recorded as a collection gap" >&2
-    gap "$addr" "window not reached: the page cap stopped at blockTime $oldest, still after --since $since; resume into a new --out with --before $before"
-  elif [ "$reached" -eq 0 ] && [ "$until" -gt 0 ] && [ "$oldest" -gt "$until" ]; then
-    echo "  ! window not reached for $addr (oldest=$oldest, until=$until): the page cap stopped paging above --until, so nothing inside the window was collected — resume into a new --out with --before $before, or raise --max-pages; recorded as a collection gap" >&2
-    gap "$addr" "window not reached: the page cap stopped at blockTime $oldest, still after --until $until, so nothing inside the window was collected; resume into a new --out with --before $before"
+  if [ "$ended" -eq 0 ]; then
+    resume="resume into a new --out with --before $before"
+    [ -n "$before" ] || resume="raise --max-pages"
+    inside=""
+    if [ "$until" -gt 0 ] && [ "$oldest" -gt "$until" ]; then inside=", so nothing at or before --until $until was collected"; fi
+    echo "  ! history of $addr truncated by --max-pages=$max_pages after $got signatures (oldest blockTime $oldest)$inside — $resume; recorded as a collection gap" >&2
+    gap "$addr" "history truncated by --max-pages=$max_pages after $got signatures (oldest blockTime $oldest)$inside; $resume"
   fi
 done
 echo "signatures collected: $collected -> $sig_file"
@@ -285,23 +299,34 @@ jq -r --argjson s "$since" --argjson u "$until" '
   | select(($u == 0) or ((.blockTime // 0) <= $u))
   | "\(.slot // 0) \(.signature)"' "$sig_file" | sort -k1,1nr | awk '!seen[$2]++ { print $2 }' > "$todo"
 
-fetched=0; total="$(grep -c . "$todo")"; i=0
+# 3. one getTransaction call per signature. --max-tx counts calls, failed ones
+#    included; MAX_FAILS calls failing in a row (a rate limit or an outage) stop the
+#    run, since every further call would fail the same way.
+MAX_FAILS=10
+calls=0; fetched=0; streak=0; total="$(grep -c . "$todo")"; i=0
 while IFS= read -r sig; do
   [ -z "$sig" ] && continue
   i=$((i + 1))
-  if [ "$fetched" -ge "$max_tx" ]; then
-    echo "  ! reached --max-tx=$max_tx; $((total - i + 1)) signatures not fetched — recorded as a collection gap" >&2
-    gap "$sig" "not fetched: --max-tx=$max_tx reached; this and $((total - i)) older signatures in signatures.jsonl were not fetched"
+  if [ "$calls" -ge "$max_tx" ]; then
+    echo "  ! reached --max-tx=$max_tx getTransaction calls; $((total - i + 1)) signatures not fetched — recorded as a collection gap" >&2
+    gap "$sig" "not fetched: --max-tx=$max_tx calls reached; this and $((total - i)) older signatures in signatures.jsonl were not fetched"
     break
   fi
+  if [ "$streak" -ge "$MAX_FAILS" ]; then
+    gap "$sig" "not fetched: $MAX_FAILS getTransaction calls in a row failed (rate limit or outage); this and $((total - i)) older signatures in signatures.jsonl were not fetched"
+    echo "  ! endpoint failing (rate limit or outage): $MAX_FAILS getTransaction calls in a row failed, so the run stops — $fetched transactions collected, $ngaps collection gaps" >&2
+    break
+  fi
+  calls=$((calls + 1))
   resp="$(rpc getTransaction "[\"$sig\",{\"encoding\":\"jsonParsed\",\"maxSupportedTransactionVersion\":1,\"commitment\":\"finalized\"}]")"; rc=$?
   if [ "$rc" -ne 0 ]; then
     reason="transport error (curl exit $rc)"
   elif reason="$(printf '%s' "$resp" | python3 -I -c "$TX_PY" "$tx_file")"; then
-    fetched=$((fetched + 1)); continue
+    fetched=$((fetched + 1)); streak=0; continue
   fi
+  streak=$((streak + 1))
   echo "  ! getTransaction failed for a signature: $reason — recorded as a collection gap" >&2
   gap "$sig" "getTransaction: $reason"
 done < "$todo"
-echo "transactions fetched: $fetched -> $tx_file"
+echo "transactions fetched: $fetched of $calls calls -> $tx_file"
 echo "collection gaps: $ngaps (see $gaps)"
