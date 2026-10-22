@@ -235,6 +235,7 @@ PRIMARY:
   apps/web/package.json                # Frontend
   packages/*/package.json              # Shared
   package-lock.json                    # Lock file
+  npm-shrinkwrap.json                  # Lock file (npm, same format)
   Cargo.toml                           # Rust workspace
   Cargo.lock                           # Rust lock file
 
