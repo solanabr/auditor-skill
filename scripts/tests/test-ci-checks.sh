@@ -157,6 +157,8 @@ fm commands/c01-desc-dots-end.md fail "description: Runs the scan..." "allowed-t
 fm commands/c02-hint-dots-plain.md fail "$C" "argument-hint: <path> ..." "allowed-tools: Read, Grep"
 fm commands/c03-pattern-dots.md fail "$C" "allowed-tools: Read, Bash(ls ... *)"
 fm commands/c04-pattern-dots-end.md fail "$C" "allowed-tools: Read, Bash(ls *)..."
+fm commands/plugin-root-items.md pass "$C" "allowed-tools:" "  - Read" "  - Grep" \
+  "  - 'Bash(\"\${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh\" *)'" "  - 'Bash(bash \"\${CLAUDE_PLUGIN_ROOT}/scripts/dnr/redact.sh\" *)'"
 fm skill/SKILL.md pass "name: s" 'description: "A skill."'
 fm skill-no-name/SKILL.md fail 'description: "A skill."'
 fm skills/agents/SKILL.md pass "name: a" 'description: "A skill in a directory named agents."'
@@ -196,6 +198,12 @@ fm commands/bash-patterns.md pass "$C" "allowed-tools:" "  - Read" "  - 'Bash(jq
 expect "frontmatter, with Bash forbidden: Bash(pattern) entries pass" 0 bash "$T/fm-no-bash.sh" "$T/fm/commands/bash-patterns.md"
 expect "frontmatter, with Bash forbidden: an agent's Bash tool passes" 0 bash "$T/fm-no-bash.sh" "$T/fm/agents/a00-control.md" \
   "$ROOT/agents/context-builder.md"
+for all in 'Bash(*)' 'Bash( * )' 'Bash(:*)' 'Bash(**)'; do
+  printf -- '---\n%s\n%s\n---\n' "$C" "allowed-tools: Read, $all" > "$T/fm/commands/catch-all.md"
+  expect "frontmatter, with Bash forbidden: $all fails" 1 bash "$T/fm-no-bash.sh" "$T/fm/commands/catch-all.md"
+done
+expect "frontmatter, with Bash forbidden: Bash(\"\${CLAUDE_PLUGIN_ROOT}/…\" *) items pass" 0 bash "$T/fm-no-bash.sh" \
+  "$T/fm/commands/plugin-root-items.md"
 # large input: a 300 KB description and a 1 MiB body read whole by every awk; a --- near the description's end
 long=$(awk 'BEGIN { for (i = 0; i < 10000; i++) printf "word%05d and more text here, ", i }')
 fm agents/long-description.md pass "$N" "description: ${long}end." "$TL" "$M"

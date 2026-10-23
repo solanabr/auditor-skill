@@ -16,14 +16,14 @@
 #   - agents have name, description and tools; commands have description and allowed-tools; a SKILL.md has
 #     name and description, and for now no other key;
 #   - tools and allowed-tools list 'Name' or 'Name(pattern)' entries (agents: names only, no pattern),
-#     separated by ', ' or one per item, none empty; allowed-tools lists none of FORBIDDEN_ALLOWED_TOOLS;
+#     separated by ', ' or one per item, none empty; allowed-tools lists nothing in FORBIDDEN_ALLOWED_TOOLS;
 #   - a file named with .md in another letter case (.MD) fails: name it .md.
 # known-vectors/*.md carry frontmatter too, but Claude Code does not load it (check-corpus.sh reads its id).
 # Usage: bash scripts/check-frontmatter.sh [FILE...]. Exit 0 = every file passes. Needs bash >= 3.2, awk, find.
 set -uo pipefail
 
-# Entries the allowed-tools of a command or skill may never list, space-separated, each a whole entry.
-# (An agent's tools list tool names only, so * fails there by that rule.)
+# Entries the allowed-tools of a command or skill may never list, space-separated. A name also refuses its
+# catch-all patterns, such as Bash(*) for Bash. (An agent's tools list names only, so * fails there too.)
 FORBIDDEN_ALLOWED_TOOLS='*'
 
 if [ $# -eq 0 ]; then
@@ -72,9 +72,15 @@ function entries(s, key,   i, c, depth, cur, n) {
   entry(cur, key)
   return n + 1
 }
-function entry(e, key,   i) {
+function entry(e, key,   i, f, p, all) {
   if (e == "") { bad(key " has an empty entry"); return }
-  if (key == "allowed-tools") for (i in forbid) if (e == forbid[i]) { bad(key " may not list " q e q); return }
+  # a forbidden entry, or its name with a pattern that is empty once spaces, * and : are removed: Bash(*)
+  if (key == "allowed-tools") for (i in forbid) {
+    f = forbid[i]; all = 0
+    if (substr(e, 1, length(f) + 1) == f "(" && substr(e, length(e)) == ")") {
+      p = substr(e, length(f) + 2, length(e) - length(f) - 2); gsub(/[ *:]/, "", p); all = (p == "") }
+    if (e == f || all) { bad(key " may not list " q e q); return }
+  }
   if (kind == "agent" && e !~ /^[A-Z][A-Za-z]*$/) { bad(key " entry " q e q " is not a tool name"); return }
   if (e !~ /^[A-Z][A-Za-z]*(\([^()]+\))?$/)
     bad(key " entry " q e q " is not Name or Name(pattern), with no parentheses inside the pattern")
