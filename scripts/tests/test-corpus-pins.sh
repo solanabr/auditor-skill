@@ -2,8 +2,8 @@
 # test-corpus-pins.sh — fixture tests for scripts/check-corpus.sh §5 (vendored submodule pins) and a smoke
 # test of scripts/tob-delta-review.sh: under a maintainer git config that colours and converts diffs too, and
 # over a table of remote-exec lines (multi-line installers included), a host in added Markdown, a 1 MiB
-# manifest that declares hooks, renamed files (one moved unchanged that holds 1 MiB), and test and lockfile
-# exclusions that hold only as written.
+# manifest that declares hooks, renamed files (one moved unchanged that holds 1 MiB), monitors and bin/ as
+# load surfaces, and test and lockfile exclusions that hold only as written.
 # Run from the repo root: `bash scripts/tests/test-corpus-pins.sh`.
 # Builds throwaway git repos under ${TMPDIR:-/tmp}; no network; bash >= 3.2.
 set -uo pipefail
@@ -462,6 +462,21 @@ case "$(sect8 "Hosts in added lines" "Hosts in added Markdown")$(sect8 "Remote-e
   *"lower-tests.example"*|*"lower-lock.example"*) failn=$((failn + 1)); echo "FAIL delta review scanned tests/ or a .lock file"
     sect8 "Hosts in added lines" "Hosts in added Markdown"; sect8 "Remote-exec patterns" "Files moved unchanged";;
   *) pass=$((pass + 1)); echo "PASS delta review still leaves tests/ and .lock files out";; esac
+
+# monitors and bin/ are load surfaces, and a manifest that declares monitors is listed
+ls8="$T/ls8"; mkdir -p "$ls8" && git -C "$ls8" init -q && echo x > "$ls8/README.md" && git -C "$ls8" add README.md \
+  && git -C "$ls8" commit -q -m old; ls8old=$(git -C "$ls8" rev-parse HEAD)
+blob "$ls8" plugins/p/monitors/monitors.json '[{"name": "m", "command": "./run.sh", "description": "status"}]'
+blob "$ls8" plugins/p/bin/tool 'echo tool'
+blob "$ls8" plugins/p/.claude-plugin/plugin.json '{"name": "p", "experimental": {"monitors": []}}'
+git -C "$ls8" commit -q -m new; ls8new=$(git -C "$ls8" rev-parse HEAD)
+rep8=$(bash "$ROOT/scripts/tob-delta-review.sh" "$ls8" "$ls8old" "$ls8new" 2>&1)
+for want in "Load surfaces|Plugin manifests|plugins/p/monitors/monitors.json" "Load surfaces|Plugin manifests|plugins/p/bin/tool" \
+            "Manifests (plugin.json|Skills and commands|plugins/p/.claude-plugin/plugin.json"; do
+  from=${want%%|*}; rest=${want#*|}; to=${rest%%|*}; text=${rest#*|}
+  case "$(sect8 "$from" "$to")" in *"$text"*) pass=$((pass + 1)); echo "PASS delta review: '$from' lists $text";;
+    *) failn=$((failn + 1)); echo "FAIL delta review: '$from' misses $text"; sect8 "$from" "$to";; esac
+done
 
 echo "---- $pass passed, $failn failed"
 [ "$failn" -eq 0 ]

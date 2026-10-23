@@ -32,9 +32,10 @@ g() { git --no-pager -c log.showSignature=false -c core.quotePath=false -C "$rep
 DIFFSAFE=(--no-color --no-ext-diff --no-textconv --no-renames --src-prefix=a/ --dst-prefix=b/)
 SCAN=("${DIFFSAFE[@]}" --text)   # on every call whose output a scan reads: no file counts as binary
 PAIRED=("${SCAN[@]}" -M)         # the file list and the rename lists pair renamed files
-# Paths Claude Code loads or runs on its own: nested .claude/, hooks, MCP/LSP, settings, CLAUDE.md / AGENTS.md.
-# Path and URL scans match in any letter case, as macOS's default file system and hosts do.
-LOADSURF='(^|/|[[:space:]])\.claude/|(^|/|[[:space:]])hooks(/|\.json)|\.mcp\.json|\.lsp\.json|settings[^/]*\.json|(^|/|[[:space:]])(claude|agents)\.md|workflows/[^/]*\.js'
+# Paths Claude Code loads or runs on its own: nested .claude/, hooks, monitors, bin/ (put on PATH), MCP/LSP,
+# settings, CLAUDE.md / AGENTS.md. Path and URL scans match in any letter case, as macOS's default file system and
+# hosts do.
+LOADSURF='(^|/|[[:space:]])\.claude/|(^|/|[[:space:]])(hooks|monitors)(/|\.json)|(^|/|[[:space:]])bin/|\.mcp\.json|\.lsp\.json|settings[^/]*\.json|(^|/|[[:space:]])(claude|agents)\.md|workflows/[^/]*\.js'
 if [ "$fetch" -eq 1 ]; then g fetch --quiet origin || { echo "fetch failed" >&2; exit 2; }; fi
 for c in "$old" "$new"; do
   g cat-file -e "$c^{commit}" 2>/dev/null \
@@ -67,7 +68,7 @@ g ls-tree --name-only "$new:plugins" | sort > "$tmp/p_new"
 comm -3 "$tmp/p_old" "$tmp/p_new" | awk -F'\t' '{ if ($1 == "") print "+ " $2; else print "- " $1 }' > "$tmp/p"
 show "$tmp/p"
 
-section "Load surfaces: nested .claude/, hooks, MCP/LSP, settings, CLAUDE.md/AGENTS.md, Workflow scripts"
+section "Load surfaces: nested .claude/, hooks, monitors, bin/, MCP/LSP, settings, CLAUDE.md/AGENTS.md, Workflow scripts"
 grep -iE "$LOADSURF" "$tmp/ns" > "$tmp/ls" || true
 show "$tmp/ls"
 
@@ -76,10 +77,10 @@ grep -iE '\.claude-plugin/' "$tmp/ns" | grep -vE '^M' > "$tmp/man" || true
 show "$tmp/man"
 echo "($(grep -ciE '^M.*\.claude-plugin/' "$tmp/ns") modified — version and description bumps; inline declarations below)"
 
-section "Manifests (plugin.json, marketplace.json) that declare hooks, MCP or LSP servers inline (at NEW)"
+section "Manifests (plugin.json, marketplace.json) that declare hooks, monitors, MCP or LSP servers inline (at NEW)"
 awk -F'\t' 'tolower($2) ~ /(^|\/)\.claude-plugin\/(plugin|marketplace)\.json$/ {print $2}' "$tmp/new" | while IFS= read -r f; do
   # a count, so grep reads the whole manifest and the pipe never closes early
-  n=$(g show "${SCAN[@]}" "$new:$f" | grep -ciE '"(hooks|mcpServers|lspServers)"')
+  n=$(g show "${SCAN[@]}" "$new:$f" | grep -ciE '"(hooks|monitors|mcpServers|lspServers)"')
   if [ "${n:-0}" -gt 0 ]; then echo "$f"; fi
 done > "$tmp/inline"
 show "$tmp/inline"
