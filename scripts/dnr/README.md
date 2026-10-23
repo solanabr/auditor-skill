@@ -74,11 +74,12 @@ because `python3 -I` keeps a sibling module off `sys.path`;
   each make it malformed. So does an integer literal of more than 20 digits, or
   `-0`, anywhere in the line, in a field a recipe reads or not: an RPC response
   holds neither, and the bound keeps every Python reading the same lines (3.11
-  and later refuse to convert an integer of more than 4300 digits). So does nesting deeper than 200 (jq reads at most 256,
-  so every recipe stops at the same depth): the depth is counted on the line's
-  text before it is parsed, as the brackets `[` and `{` outside strings, the
-  top-level object being 1, so a deep value that a later duplicate key replaces
-  counts too. A raw CR between JSON tokens is whitespace; inside a string it is
+  and later refuse to convert an integer of more than 4300 digits). So does
+  nesting deeper than 200 (jq reads at most 256, so every recipe stops at the
+  same depth): the depth is counted on the line's text before it is parsed, as
+  the brackets `[` and `{` outside strings, escapes honoured, the top-level
+  object being 1, so a deep value that a later duplicate key replaces counts
+  too. A raw CR between JSON tokens is whitespace; inside a string it is
   invalid JSON.
 - **Shape.** Every field a recipe reads must have the type it reads it as:
   `meta`, `transaction` and `message` are objects; `signatures`, `accountKeys`,
@@ -88,13 +89,14 @@ because `python3 -I` keeps a sibling module off `sys.path`;
   holds (0 to 2^64 − 1, as in RPC data: a float, a negative number or a larger
   one is never rounded or read); a token `uiTokenAmount.amount` is the decimal
   text of a u64: 1 to 20 ASCII digits, leading zeros allowed, at most 2^64 − 1
-  (not `1_000`, `+5`, `1e3`, a non-ASCII digit or a JSON number). These bounds keep every delta and sum exact and
-  printable. The account keys are all strings, or all objects with a string
-  `pubkey`; every index (`programIdIndex`, `accountIndex`, an inner group's
-  `index`, `numRequiredSignatures`) is a non-negative integer, and a `programId`
-  is not empty. Keys, program ids and a string `version` hold no character of
-  the fixed list below, so each prints as one line, as written.
-  `shaped()` in the block is the full rule.
+  (not `1_000`, `+5`, `1e3`, a non-ASCII digit or a JSON number). These bounds
+  keep every delta and sum exact and printable. The account keys are all
+  strings, or all objects with a string `pubkey`; every index
+  (`programIdIndex`, `accountIndex`, an inner group's `index`,
+  `numRequiredSignatures`) is a non-negative integer, and a `programId` is not
+  empty. Keys, program ids and a string `version` hold no character of the fixed
+  list below, so each prints as one line, as written. `shaped()` in the block is
+  the full rule.
 - **The fixed character list** (`_UNSAFE` in the block): the C0 controls
   U+0000–U+001F, DEL U+007F, the C1 controls U+0080–U+009F, the line and
   paragraph separators U+2028 and U+2029, the bidirectional controls U+061C,
@@ -114,6 +116,12 @@ because `python3 -I` keeps a sibling module off `sys.path`;
   exit status depends on line order.
 - **Copies.** A transaction is read once, at the first line that carries its
   signature; the copies skipped are counted in a note of their own.
+- **A balance with no account key.** In `deltas.py lamports`, a balance whose
+  index has no account key (the transaction lists fewer keys than balances, as
+  an `encoding: json` export without `meta.loadedAddresses` does) is still a
+  movement: its row names the account `#<index>`, never leaves it out, and a note
+  on stderr counts those rows: `deltas.py: N row(s) name a balance index that has
+  no account key, as #<index>: …`.
 - **Output.** `frames.py` and `deltas.py` write UTF-8 whatever the locale, and
   neither prints a character of the fixed list raw. `deltas.py` doubles a
   backslash and escapes, in every column, a tab, newline and carriage return as
