@@ -48,16 +48,21 @@
 #
 # NEVER OVERWRITTEN: the first snapshot is bin/<id>.so + bin/<id>.show.txt, the
 # incident-time bytes that Leg 3 and the patch flow run on. A later run (respond
-# runs this again after the hunt) compares the program on-chain with every
-# snapshot already in bin/:
+# runs this again after the hunt) checks every snapshot already in bin/, then
+# compares the program on-chain with them, in this order:
+#   * each kept .so must still be a regular file with the ELF magic, beside a
+#     regular .show.txt (a .show.txt alone counts as a snapshot too), and later
+#     snapshots need the first one; anything else stops it with a blocker;
+#   * other bytes than any snapshot kept at the same or a later last-deployed slot:
+#     bin/ and the chain disagree, so it stops with a blocker and writes nothing,
+#     even when another snapshot matches;
 #   * the same last-deployed slot and zero-trimmed sha256 as one of them: it prints
-#     "unchanged" and that snapshot's line, writes nothing, and exits 0;
-#   * other bytes than a snapshot kept at the same or a later last-deployed slot:
-#     bin/ and the chain disagree, so it stops with a blocker and writes nothing;
+#     "unchanged" and that snapshot's line, with the authority and status read now
+#     (a transfer or a loader-v4 finalize changes neither the slot nor the bytes;
+#     a notice on stderr names a change since the snapshot was kept), writes
+#     nothing, and exits 0;
 #   * otherwise it keeps the current bytes as bin/<id>@<slot>.so and
 #     bin/<id>@<slot>.show.txt, and prints the first snapshot's line and the new one.
-# Each kept .so must still be a regular file with the ELF magic, beside a regular
-# .show.txt; any other kept snapshot stops the script with a blocker.
 # Files are written with noclobber (`set -C`), each through the descriptor opened
 # when it was created: a name already taken stops the script with a blocker instead
 # of being replaced.
@@ -87,7 +92,8 @@
 # owner), show output naming another Program Id, dump without ELF magic, the
 # last-deployed slot moving during two dumps, hash not computed, a snapshot name
 # already taken, a kept snapshot that is not a regular ELF file beside a regular
-# .show.txt, or one the chain's bytes disagree with at its slot or a later one).
+# .show.txt, later snapshots without the first one, or a snapshot the chain's bytes
+# disagree with at its slot or a later one).
 # bash >= 3.2, and python3 for the id check and the hash: checked before the CLI
 # runs, and run as `python3 -I` because the working directory is usually the audited
 # repo: without -I, a hashlib.py there would be imported in place of the stdlib.
@@ -408,38 +414,64 @@ case "$(basename "$dir")" in
   incident_*) [ -e "$dir/.gitignore" ] || printf '*\n' > "$dir/.gitignore" ;;
 esac
 first="$dir/bin/$pid.so"; first_show="$dir/bin/$pid.show.txt"
-if [ ! -e "$first" ] && [ ! -e "$first_show" ]; then
+# Every snapshot kept in bin/, the first one and each later one, named by its path
+# without .so or .show.txt: a lone .show.txt counts too.
+stems=()
+for f in "$first" "$first_show" "$dir/bin/$pid"@*.so "$dir/bin/$pid"@*.show.txt; do
+  [ -e "$f" ] || [ -L "$f" ] || continue
+  f="${f%.so}"; f="${f%.show.txt}"; known=0
+  for g in ${stems[@]+"${stems[@]}"}; do [ "$g" = "$f" ] && known=1; done
+  [ "$known" = 1 ] || stems+=("$f")
+done
+if [ "${#stems[@]}" -eq 0 ]; then
   keep "$dump" "$first"; keep "$show" "$first_show"
   ledger_line "$first" "$first_show"
   exit 0
 fi
-if [ ! -e "$first" ]; then
-  echo "[blocker] bin/$pid.show.txt exists without bin/$pid.so (an earlier snapshot did not finish): move it aside and run again; it is never overwritten." >&2
+if [ ! -e "$first" ] && [ ! -L "$first" ] && [ ! -e "$first_show" ] && [ ! -L "$first_show" ]; then
+  echo "[blocker] bin/ holds later snapshots of $pid but not the first one, bin/$pid.so with its .show.txt: the incident-time bytes are missing. Put them back from where they were copied, or use a new run directory; nothing written." >&2
   exit 3
 fi
-# A later run: the program on-chain may be a snapshot already kept. Each kept .so must
-# still be a regular file with the ELF magic, beside a regular .show.txt. Bytes on-chain
-# that differ from a snapshot recorded at the same or a later last-deployed slot are a
-# disagreement between the chain and bin/, never a new snapshot.
-for f in "$first" "$dir/bin/$pid"@*.so; do
-  [ -e "$f" ] || [ -L "$f" ] || continue
-  s="${f%.so}.show.txt"
-  if [ -L "$f" ] || [ ! -f "$f" ] || [ "$(elf_magic "$f")" != "7f454c46" ] || [ -L "$s" ] || [ ! -f "$s" ]; then
-    echo "[blocker] ${f#"$dir/"} is not a regular file with the ELF magic beside a regular ${s#"$dir/"}: a kept snapshot is no longer as it was written. Compare it with the ledger line it was kept with; nothing written." >&2
+# A later run: first every kept snapshot must still be as it was written, a regular .so
+# with the ELF magic beside a regular .show.txt.
+for f in "${stems[@]}"; do
+  if [ ! -e "$f.so" ] && [ ! -L "$f.so" ]; then
+    echo "[blocker] ${f#"$dir/"}.show.txt exists without ${f#"$dir/"}.so (an earlier snapshot did not finish): move it aside and run again; it is never overwritten." >&2
     exit 3
   fi
-  k="$(slot_of "$s")"
-  h="$(hashed "$f")" || exit 3
+  if [ -L "$f.so" ] || [ ! -f "$f.so" ] || [ "$(elf_magic "$f.so")" != "7f454c46" ] || [ -L "$f.show.txt" ] || [ ! -f "$f.show.txt" ]; then
+    echo "[blocker] ${f#"$dir/"}.so is not a regular file with the ELF magic beside a regular ${f#"$dir/"}.show.txt: a kept snapshot is no longer as it was written. Compare it with the ledger line it was kept with; nothing written." >&2
+    exit 3
+  fi
+done
+# Then any of them kept at the same or a later last-deployed slot than the chain's,
+# with other bytes: bin/ and the chain disagree, so nothing matches and nothing is kept.
+slots=(); hashes=()
+for f in "${stems[@]}"; do
+  k="$(slot_of "$f.show.txt")"
+  h="$(hashed "$f.so")" || exit 3
   h="${h%% *}"
-  if [ "$k" = "$slot" ] && [ "$h" = "$sha" ]; then
-    echo "unchanged: the program on-chain matches ${f#"$dir/"} (same last-deployed slot and zero-trimmed sha256); nothing written"
-    ledger_line "$f" "$s"
+  slots+=("$k"); hashes+=("$h")
+  if [ "$h" != "$sha" ] && [[ "$k" =~ ^[0-9]{1,18}$ && "$slot" =~ ^[0-9]{1,18}$ ]] && [ "$k" -ge "$slot" ]; then
+    echo "[blocker] ${f#"$dir/"}.so was kept at last-deployed slot $k, not older than the slot on-chain now ($slot), yet the program on-chain has other bytes: bin/ and the chain disagree. Compare that snapshot with its ledger line before trusting either; nothing written." >&2
+    exit 3
+  fi
+done
+# Only then a match: the same slot and bytes. The line gives the authority and status
+# read now, which a transfer or a loader-v4 finalize changes without a deploy.
+i=0
+for f in "${stems[@]}"; do
+  if [ "${slots[$i]}" = "$slot" ] && [ "${hashes[$i]}" = "$sha" ]; then
+    echo "unchanged: the program on-chain matches ${f#"$dir/"}.so (same last-deployed slot and zero-trimmed sha256); nothing written"
+    ledger_line "$f.so" "$show"
+    was="$(field "Authority" "$f.show.txt")/$(field "Status" "$f.show.txt")"
+    now="$(field "Authority" "$show")/$(field "Status" "$show")"
+    if [ "$was" != "$now" ]; then
+      echo "  ! the authority or status of $pid changed since ${f#"$dir/"}.show.txt was kept (authority/status then: ${was}; now: ${now}); the line above gives the current ones" >&2
+    fi
     exit 0
   fi
-  if [[ "$k" =~ ^[0-9]{1,18}$ && "$slot" =~ ^[0-9]{1,18}$ ]] && [ "$k" -ge "$slot" ]; then
-    echo "[blocker] ${f#"$dir/"} was kept at last-deployed slot $k, not older than the slot on-chain now ($slot), yet the program on-chain has other bytes: bin/ and the chain disagree. Compare that snapshot with its ledger line before trusting either; nothing written." >&2
-    exit 3
-  fi
+  i=$((i + 1))
 done
 case "$slot" in
   ''|*[!0-9]*)

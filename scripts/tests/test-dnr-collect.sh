@@ -493,7 +493,7 @@ elif cmd == ["program-v4", "show"]:
     shown_id = shown()
     slot = read_slot()
     print(f"\nProgram Id: {shown_id}\nOwner: {OWNERS[loader]}\nAuthority: {AUTH}\nLast Deployed In Slot: {slot}\n"
-          f"Status: deployed\nData Length: {length(elf(slot))}\n")
+          f"Status: {os.environ.get('FAKE_SOL_STATUS', 'deployed')}\nData Length: {length(elf(slot))}\n")
 elif cmd[0] == "account":
     if loader == "missing":
         fail(f"AccountNotFound: pubkey={pid}")
@@ -585,7 +585,7 @@ printf 'other bytes\n' > "$K/bin/$PID@300.show.txt"
 snap "$K" FAKE_SOL_SLOTS=300
 code=$?
 if [[ "$code" == 3 && "$(cat "$K/bin/$PID@300.show.txt")" == "other bytes" && ! -e "$K/bin/$PID@300.so" ]] \
-   && grep -q "blocker.*bin/$PID@300.so or bin/$PID@300.show.txt already exists.*never overwritten" "$K.out"; then
+   && grep -q "blocker.*bin/$PID@300.show.txt exists without bin/$PID@300.so (an earlier snapshot did not finish).*never overwritten" "$K.out"; then
   ok "keep: a taken bin/<id>@<slot>.show.txt is a blocker (exit 3) and stays as it was"
 else
   bad "keep: taken @300 name -> exit $code ($(tr '\n' ' ' < "$K.out"))"
@@ -628,6 +628,49 @@ for case in "a .so without the ELF magic|so-text" "a .show.txt that is a directo
     bad "kept snapshots: $label -> exit $code, bin: $(names "$K4/bin") ($(tr '\n' ' ' < "$K4.out"))"
   fi
 done
+# Every kept snapshot is checked before any of them can match, so a match with one
+# never hides another that is damaged, or that the chain's bytes disagree with.
+for case in "a later snapshot with other bytes than the chain|other" "a later snapshot that is not an ELF|text" \
+            "a later snapshot's .show.txt that is a directory|dir" "a later .show.txt without its .so|lone"; do
+  label="${case%%|*}"; how="${case#*|}"
+  K5="$TT/keep5-$how/incident_1"; mkdir -p "$TT/keep5-$how"
+  snap "$K5" FAKE_SOL_SLOTS=100; snap "$K5" FAKE_SOL_SLOTS=200
+  case "$how" in
+    text) printf 'not an elf\n' > "$K5/bin/$PID@200.so.new"; mv "$K5/bin/$PID@200.so.new" "$K5/bin/$PID@200.so" ;;
+    dir) rm -f "$K5/bin/$PID@200.show.txt"; mkdir "$K5/bin/$PID@200.show.txt" ;;
+    lone) rm -f "$K5/bin/$PID@200.so" ;;
+  esac
+  before_names="$(names "$K5/bin")"
+  snap "$K5" FAKE_SOL_SLOTS=100
+  code=$?
+  if [[ "$code" == 3 && "$(names "$K5/bin")" == "$before_names" ]] && ! grep -q '^unchanged' "$K5.out" && grep -q "^\[blocker\] bin/$PID@200" "$K5.out"; then
+    ok "kept snapshots: the chain matches bin/<id>.so, but $label -> blocker (exit 3), nothing written"
+  else
+    bad "kept snapshots: the chain matches bin/<id>.so, but $label -> exit $code ($(tr '\n' ' ' < "$K5.out"))"
+  fi
+done
+# Later snapshots without the first one: the incident-time bytes are gone, and no new
+# "first" snapshot takes their place.
+K6="$TT/keep6/incident_1"; mkdir -p "$TT/keep6"
+snap "$K6" FAKE_SOL_SLOTS=100; snap "$K6" FAKE_SOL_SLOTS=200
+rm -f "$K6/bin/$PID.so" "$K6/bin/$PID.show.txt"
+snap "$K6" FAKE_SOL_SLOTS=200 FAKE_SOL_SALT=x
+code=$?
+if [[ "$code" == 3 && "$(names "$K6/bin")" == "$PID@200.show.txt $PID@200.so " ]] \
+   && grep -q "^\[blocker\] bin/ holds later snapshots of $PID but not the first one" "$K6.out"; then
+  ok "kept snapshots: later snapshots without bin/<id>.so -> blocker (exit 3), no new first snapshot"
+else
+  bad "kept snapshots: later snapshots without bin/<id>.so -> exit $code, bin: $(names "$K6/bin") ($(tr '\n' ' ' < "$K6.out"))"
+fi
+# An unchanged program whose authority or loader-v4 status changed: the line gives the
+# values read now, and a notice names the change.
+K7="$TT/keep7/incident_1"; mkdir -p "$TT/keep7"
+snap "$K7" FAKE_SOL_LOADER=v4 FAKE_SOL_SLOTS=100
+snap "$K7" FAKE_SOL_LOADER=v4 FAKE_SOL_SLOTS=100 FAKE_SOL_STATUS=finalized FAKE_SOL_AUTH=NewAuth1111111111111111111111111111111111111
+code=$?
+eq "unchanged: the line gives the authority and status read now, and a notice names the change" \
+  "$code|$(sed -n 1p "$K7.out" | cut -d' ' -f1)|$(grep -o 'authority=[^ ]* status=[^ ]*' "$K7.out")|$(grep -c '^  ! the authority or status of .* changed since bin/.*show.txt was kept (authority/status then: p2Yicb86aZig616Eav2VWG9vuXR5mEqhtzshZYBxzsV/deployed; now: NewAuth1111111111111111111111111111111111111/finalized)' "$K7.out")" \
+  "0|unchanged:|authority=NewAuth1111111111111111111111111111111111111 status=finalized|1"
 K2="$TT/keep2/incident_1"; mkdir -p "$K2/bin"; printf 'partial\n' > "$K2/bin/$PID.show.txt"
 snap "$K2" FAKE_SOL_SLOTS=100
 code=$?

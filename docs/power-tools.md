@@ -219,13 +219,13 @@ Step 1 of every hunt and response: it keeps the deployed program bytes before a 
     - a dump without the ELF magic;
     - a slot that moved during both dumps;
     - a hash that could not be computed;
-    - a snapshot name already taken, or a lone `bin/<id>.show.txt`;
-    - a kept snapshot that is not a regular file with the ELF magic beside a regular `.show.txt`;
-    - bytes on-chain that differ from a snapshot kept at the same or a later last-deployed slot.
+    - a snapshot name already taken, or a `.show.txt` without its `.so`;
+    - a kept snapshot that is not a regular file with the ELF magic beside a regular `.show.txt`, or later snapshots (`<id>@<slot>.so`) without the first one;
+    - bytes on-chain that differ from any snapshot kept at the same or a later last-deployed slot, even when another snapshot matches. Every kept snapshot is checked before any can match.
 - **Network:** read-only `solana` CLI calls to `$RPC_URL`, which reaches the CLI through a temporary `-C` config with no usable keypair path; it signs nothing. CLI errors pass through `redact.sh`.
 - **Writes:** in `<incident_dir>/bin/`:
   - The first snapshot is `<id>.so` with `<id>.show.txt`.
-  - If the slot and zero-trimmed sha256 match a kept snapshot, a later run prints `unchanged: …` with that snapshot's line and writes nothing.
+  - If the slot and zero-trimmed sha256 match a kept snapshot, a later run prints `unchanged: …` and that snapshot's line, with the authority and status read now, and writes nothing. A transfer of authority or a loader-v4 finalize changes neither the slot nor the bytes, so a notice on stderr names any change since the snapshot was kept.
   - After a redeploy it keeps the new bytes as `<id>@<slot>.so` with its `.show.txt` and prints the first snapshot's line and the new one.
   - A kept file is never replaced; each is written through the descriptor opened when it was created.
   - An `incident_*` directory without a `.gitignore` gets one containing `*` (Rule 11d).
