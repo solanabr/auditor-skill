@@ -215,7 +215,7 @@ import json, os, sys
 d, literal = sys.argv[1], sys.argv[2] == "1"
 os.makedirs(d)
 P = "Prog7xQmP4sN9kR2wBcD3eF5gH6jK8mN1pQ2rS3tUvW"
-Q = "Vict1m9xQmP4sN9kR2wBcD3eF5gH6jK8mN1pQ2rS3tU"
+Q = "Prog2xQmP4sN9kR2wBcD3eF5gH6jK8mN1pQ2rS3tU"
 TOK = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
 U64 = 2**64 - 1
 def tx(sig, meta=None, keys=None, ixs=None, extra=None):
