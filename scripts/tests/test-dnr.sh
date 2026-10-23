@@ -194,6 +194,31 @@ print(json.dumps({"meta": {"err": None, "preTokenBalances": [bal(1, 100), bal(2,
   | python3 -I "$DNR/deltas.py" tokens)"
 eq "deltas tokens: two owner-less accounts that transfer to each other show both legs" \
   "$(printf '%s\n' "$nrows" | awk -F'\t' '{printf "%s %s %s; ", $2, $5, $4}')" "? TokAcctA -40; ? TokAcctB 40; "
+# A balance whose index has no account key is keyed, and printed, as #<index>, as in
+# lamports; one with no accountIndex is a row of its own, #?. A note counts each kind,
+# and a transfer between two such accounts never nets to zero, with an owner or none.
+krows="$(python3 -I -c 'import json
+def bal(i, a, owner=None):
+    b = {"mint": "MintK", "uiTokenAmount": {"amount": str(a)}}
+    if i is not None:
+        b["accountIndex"] = i
+    if owner:
+        b["owner"] = owner
+    return b
+def tx(sig, pre, post):
+    print(json.dumps({"meta": {"err": None, "preTokenBalances": pre, "postTokenBalances": post},
+        "transaction": {"signatures": [sig], "message": {"accountKeys": [{"pubkey": "Payer"}]}}}))
+tx("SigKeyless", [bal(1, 100), bal(2, 0)], [bal(1, 60), bal(2, 40)])
+tx("SigKeylessVault", [bal(1, 100, "VaultPDA"), bal(2, 0, "VaultPDA")], [bal(1, 60, "VaultPDA"), bal(2, 40, "VaultPDA")])
+tx("SigNoIndex", [bal(None, 100), bal(None, 0)], [bal(None, 60), bal(None, 40)])' \
+  | python3 -I "$DNR/deltas.py" tokens 2>&1)"
+eq "deltas tokens: balances whose index has no account key are rows #<index>, never merged, owner or none" \
+  "$(printf '%s\n' "$krows" | awk -F'\t' '$1 ~ /^SigKeyless/ {printf "%s %s %s %s; ", $1, $2, $5, $4}')" \
+  "SigKeyless ? #1 -40; SigKeyless ? #2 40; SigKeylessVault VaultPDA #1 -40; SigKeylessVault VaultPDA #2 40; "
+eq "deltas tokens: balances with no accountIndex are rows of their own, #?, pre negative and post positive" \
+  "$(printf '%s\n' "$krows" | awk -F'\t' '$1 == "SigNoIndex" {printf "%s %s; ", $5, $4}')" "#? -100; #? 60; #? 40; "
+eq "deltas tokens: a note on stderr counts each kind of row" \
+  "$(printf '%s\n' "$krows" | grep -c '^deltas.py: 4 row(s) name a balance index that has no account key, as #<index>: ')|$(printf '%s\n' "$krows" | grep -c '^deltas.py: 3 row(s) name a token balance that has no accountIndex, as #?: ')" "1|1"
 bl="$(python3 -I "$DNR/deltas.py" lamports "$FIX/lamports-over-2-53.jsonl")"
 eq "deltas lamports: +1 above 2^53 is exact (BigOne)" "$(printf '%s\n' "$bl" | awk -F'\t' '$2=="BigOne"{print $3}')" "1"
 eq "deltas lamports: +1 above 2^53 is exact (BigTwo)" "$(printf '%s\n' "$bl" | awk -F'\t' '$2=="BigTwo"{print $3}')" "1"
@@ -559,11 +584,12 @@ amt = 2**60 + 1
 for part, rng in ((sys.argv[1], range(0, 10000)), (sys.argv[2], range(10000, 20000))):
     with open(part, "w") as f:
         for i in rng:
-            bal = lambda o, a: {"owner": o, "mint": "MintBig", "uiTokenAmount": {"amount": str(a)}}
+            bal = lambda k, o, a: {"accountIndex": k, "owner": o, "mint": "MintBig", "uiTokenAmount": {"amount": str(a)}}
             f.write(json.dumps({"meta": {"err": None,
-                "preTokenBalances": [bal("Vault", 2**64 - 1), bal("Attacker", 0)],
-                "postTokenBalances": [bal("Vault", 2**64 - 1 - amt), bal("Attacker", amt)]},
-                "transaction": {"signatures": ["S%d" % i]}}) + "\n")' "$TT/big-a.jsonl" "$TT/big-b.jsonl"
+                "preTokenBalances": [bal(1, "Vault", 2**64 - 1), bal(2, "Attacker", 0)],
+                "postTokenBalances": [bal(1, "Vault", 2**64 - 1 - amt), bal(2, "Attacker", amt)]},
+                "transaction": {"signatures": ["S%d" % i], "message": {
+                    "accountKeys": ["Payer", "VaultTok", "AttackerTok"]}}}) + "\n")' "$TT/big-a.jsonl" "$TT/big-b.jsonl"
 python3 -I "$DNR/deltas.py" tokens "$TT/big-a.jsonl" "$TT/big-b.jsonl" > "$TT/big-d.tsv"
 eq "deltas: a 20,000-transaction corpus over two files completes" "$?" "0"
 eq "deltas: two rows per transaction" "$(grep -c . "$TT/big-d.tsv")" "40000"

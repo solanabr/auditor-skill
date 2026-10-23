@@ -15,7 +15,7 @@ Full method and the verdict rules these feed: `references/detection-response/`.
 | `collect.sh` | The gated collector: pages signature history (failed transactions included — they are attempt evidence) and fetches transactions into a local JSONL corpus, integers exact on any jq. Refuses without `--confirmed`, on any input that is not base58, when `--out` already holds any corpus file, when `--out` has a `.` or `..` component or is reached through a symbolic link inside the working directory, and when `--out` or the `incident_*` directory above it is a symbolic link, holds one, is tracked by git, or cannot be checked by git or find; writes the corpus files only through the descriptors it opened when it created them; read-only RPC only; capped (`--max-tx` counts every `getTransaction` call) and stops after ten failed calls in a row; pages until an empty page (a shorter page ends the history only on the cap's last page); reports when the page cap stops on a full page, where older history may exist, and writes every gap (a failed fetch, that page cap, the `--max-tx` cap, a stop, an interrupted run) to `collection-gaps.tsv`. Ends with `transactions fetched: N of M calls` and `collection gaps: N`. |
 | `profile.sh` | Baseline a `transactions.jsonl`: outcome / version histograms, time window, fee-payer, signer and top-level-program inventories — all from structural fields, never from log text. Reads under the input contract (below). |
 | `frames.py` | Attribute each `Program log:` / `Program data:` line to the program frame that emitted it, as JSONL. Walks the log array one element at a time with anchored regexes. With `--instructions`, emits the runtime-recorded instructions instead (`ix`: top-level and CPI, program, accounts, data as given) and the runtime invoke lines joined to them (`invoke`), which is how Leg 1 names the instruction that ran. |
-| `deltas.py` | `lamports` or `tokens`: per-account / per-(token account, mint) balance movement, with the owner as a label, computed in Python integers, successful transactions only. An amount or balance that is not an exact integer makes its line malformed; it is never rounded. A lamport balance whose index has no account key is printed as `#<index>` and counted in a note, never left out. |
+| `deltas.py` | `lamports` or `tokens`: per-account / per-(token account, mint) balance movement, with the owner as a label, computed in Python integers, successful transactions only. An amount or balance that is not an exact integer makes its line malformed; it is never rounded. A balance whose index has no account key is printed as `#<index>`, and a token balance with no `accountIndex` as `#?`, each counted in a note, never left out or merged with another account. |
 | `redact.sh` | A stderr/stdout filter that strips provider credentials (e.g. `?api-key=…`, a `/v2/<key>` path, a token in a subdomain, curl's verbose request lines) before text reaches the transcript, the ledger, or a report. |
 | `fixtures/` | Committed adversarial corpora the self-test and the docs cite. |
 
@@ -116,12 +116,16 @@ because `python3 -I` keeps a sibling module off `sys.path`;
   exit status depends on line order.
 - **Copies.** A transaction is read once, at the first line that carries its
   signature; the copies skipped are counted in a note of their own.
-- **A balance with no account key.** In `deltas.py lamports`, a balance whose
-  index has no account key (the transaction lists fewer keys than balances, as
-  an `encoding: json` export without `meta.loadedAddresses` does) is still a
-  movement: its row names the account `#<index>`, never leaves it out, and a note
-  on stderr counts those rows: `deltas.py: N row(s) name a balance index that has
-  no account key, as #<index>: …`.
+- **A balance with no account key.** In `deltas.py`, a lamport or token balance
+  whose index has no account key (the transaction lists fewer keys than
+  balances, as an `encoding: json` export without `meta.loadedAddresses` does)
+  is still a movement: its row names the account `#<index>`, never leaves it out
+  and never merges it with another account, and a note on stderr counts those
+  rows: `deltas.py: N row(s) name a balance index that has no account key, as
+  #<index>: …`. A token balance with no `accountIndex` has nothing to pair its
+  pre and post sides by, so each side is a row of its own named `#?`, the pre
+  balance negative and the post balance positive, counted in a note of its own:
+  `deltas.py: N row(s) name a token balance that has no accountIndex, as #?: …`.
 - **Output.** `frames.py` and `deltas.py` write UTF-8 whatever the locale, and
   neither prints a character of the fixed list raw. `deltas.py` doubles a
   backslash and escapes, in every column, a tab, newline and carriage return as

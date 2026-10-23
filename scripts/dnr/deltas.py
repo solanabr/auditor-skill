@@ -26,7 +26,9 @@ Two modes:
                                   per (signature, token account, mint) raw-unit
                                   token delta; columns: signature, owner (a label,
                                   `?` when the RPC gave none), mint, delta, token
-                                  account.
+                                  account. A balance whose index has no account
+                                  key is printed as #<index>, and one with no
+                                  accountIndex as #?, each counted in a note.
 
 Output: TSV on stdout, or with `--out <file>` (a new name) in a temporary file
 beside it that becomes <file> only once the run is complete; UTF-8 whatever the
@@ -40,8 +42,11 @@ line and paragraph separators, bidirectional controls, zero-width characters:
 printed as itself, whichever Python runs it.
 Token deltas are per token account (its `accountIndex` resolved through the
 transaction's account keys) and mint, so two accounts never share a bucket, even
-when the RPC gives no owner; sum the rows per owner for an owner's net, which nets
-a move between one owner's accounts to zero and adds up a drain across several.
+when the RPC gives no owner or the index has no account key (`#<index>`); a
+balance with no `accountIndex` is a row of its own (`#?`), its pre balance
+negative and its post balance positive. Sum the rows per owner for an owner's
+net, which nets a move between one owner's accounts to zero and adds up a drain
+across several.
 Aggregate further in Python ints — never in jq or awk, whose numbers are doubles.
 
 Why Python ints, not jq: a u64 token amount or a lamport balance can exceed 2^53,
@@ -147,43 +152,57 @@ def _lamports(txs, out):
 
 
 def _tokens(txs, out):
+    """Write the rows; return how many name a balance index that has no account key,
+    and how many a balance that has no accountIndex."""
+    keyless = indexless = 0
     for tx in txs:
         if not _ok(tx):
             continue
         meta = tx.get("meta") or {}
         sig = ((tx.get("transaction") or {}).get("signatures") or ["?"])[0]
         keys = _account_keys(tx)
-        acc: "OrderedDict[tuple[str, str], list[int]]" = OrderedDict()
+        acc: "OrderedDict[tuple, list[int]]" = OrderedDict()
         labels: dict = {}
 
         def fold(entries, slot):
-            for b in entries or []:
+            for n, b in enumerate(entries or []):
                 owner = b.get("owner") or "?"
                 mint = b.get("mint") or "?"
                 amt = (b.get("uiTokenAmount") or {}).get("amount")
                 # amount is the decimal STRING of a u64 in ASCII digits (the input
                 # contract makes anything else malformed); int() is exact.
                 val = int(amt) if amt is not None else 0
-                # Keyed by the token account, so two accounts never merge — not even
-                # two owner-less ones. Without a usable accountIndex the owner is the
-                # key; SUM, never assign, in that bucket. Fixtures: same-owner-move.jsonl
-                # (two legs, net 0 for the owner), same-owner-drain.jsonl (-140 for
-                # the owner, over two accounts).
+                # Keyed by the token account and mint, so two accounts never merge —
+                # not even two owner-less ones. An index that has no account key is
+                # keyed, and printed, as #<index>, as in lamports. A balance with no
+                # accountIndex has nothing to pair it with its other side, so it is a
+                # bucket of its own, printed as #?. SUM, never assign, in a bucket.
+                # Fixtures: same-owner-move.jsonl (two legs, net 0 for the owner),
+                # same-owner-drain.jsonl (-140 for the owner, over two accounts).
                 idx = b.get("accountIndex")
-                account = keys[idx] if type(idx) is int and 0 <= idx < len(keys) else None
-                key = (account if account is not None else "owner:" + owner, mint)
+                if type(idx) is int and 0 <= idx < len(keys):
+                    key, account = ("key", keys[idx], mint), keys[idx]
+                elif idx is not None:
+                    key, account = ("index", idx, mint), "#%d" % idx
+                else:
+                    key, account = ("entry", slot, n, mint), "#?"
                 acc.setdefault(key, [0, 0])[slot] += val
                 if key not in labels or b.get("owner"):
-                    labels[key] = (owner, account or "?")
+                    labels[key] = (owner, mint, account)
 
         fold(meta.get("preTokenBalances"), 0)
         fold(meta.get("postTokenBalances"), 1)
         for key, (p, q) in acc.items():
             d = q - p
             if d != 0:
-                owner, account = labels[key]
-                out.write(f"{_clean(sig)}\t{_clean(owner)}\t{_clean(key[1])}\t{d}\t{_clean(account)}\n"
+                owner, mint, account = labels[key]
+                if key[0] == "index":
+                    keyless += 1
+                elif key[0] == "entry":
+                    indexless += 1
+                out.write(f"{_clean(sig)}\t{_clean(owner)}\t{_clean(mint)}\t{d}\t{_clean(account)}\n"
                           .encode("utf-8"))
+    return keyless, indexless
 
 
 # ---- input contract (scripts/dnr/README.md); the same block is in profile.sh, frames.py, deltas.py
@@ -554,14 +573,14 @@ def main(argv: list[str]) -> int:
         print("deltas.py: " + problem[1], file=sys.stderr)
         return problem[0]
     stats = {"dupes": 0, "bad": []}
-    out, keyless = None, 0
+    out, keyless, indexless = None, 0, 0
     try:
         out = Output(out_path)
         txs = (tx for _line, tx in records(files, stats))
         if mode == "lamports":
             keyless = _lamports(txs, out)
         else:
-            _tokens(txs, out)
+            keyless, indexless = _tokens(txs, out)
         out.done()
     except OSError as e:
         print("deltas.py: " + shown(e), file=sys.stderr)
@@ -575,6 +594,10 @@ def main(argv: list[str]) -> int:
         print("deltas.py: %d row(s) name a balance index that has no account key, as #<index>: the "
               "transaction lists fewer keys than balances (an encoding json export without "
               "meta.loadedAddresses, say)" % keyless, file=sys.stderr)
+    if indexless:
+        print("deltas.py: %d row(s) name a token balance that has no accountIndex, as #?: nothing "
+              "pairs it with its other side, so a pre balance is a row of its own with a negative "
+              "delta, and a post balance one with a positive delta" % indexless, file=sys.stderr)
     return 0
 
 
