@@ -474,6 +474,14 @@ code="$(gate "$T/inc" "$NATIVE" SHIM_FAIL=fixed_blocked SHIM_MARKERS="$EV")"
 code="$(gate "$T/inc" "$NATIVE" "$VULN" SHIM_FAIL=exploit SHIM_MARKERS="exploit:attempted=rejected_with exploit:failed=rejected_with exploit:loaded")"
 [ "$code" = 3 ] && grep -q 'is not one this arm counts' "$T/out" && ! grep -q 'did not reproduce' "$T/out" \
   && ok "an exploit test that fails in another arm's assertion -> exit 3, not 1" || bad "exploit fails in another arm's assertion: exit $code"
+# An any-result assertion counts neither for nor against an arm on prebuilt bytes; in
+# a model run it still decides.
+code="$(gate "$T/inc" "$NATIVE" "$VULN" SHIM_FAIL=exploit SHIM_MARKERS="exploit:attempted=succeeds exploit:failed=succeeds exploit:loaded")"
+[ "$code" = 3 ] && grep -q 'is not one this arm counts' "$T/out" && ! grep -q 'did not reproduce' "$T/out" \
+  && ok "prebuilt bytes: a failed assert_exploit_succeeds! -> exit 3, not 1" || bad "prebuilt, failed any-result assertion: exit $code"
+code="$(gate "$T/inc" "$NATIVE" SHIM_FAIL=exploit SHIM_MARKERS="exploit:attempted=succeeds exploit:failed=succeeds exploit:loaded")"
+[ "$code" = 1 ] && grep -q 'did not reproduce' "$T/out" \
+  && ok "build mode: a failed assert_exploit_succeeds! is a verdict, exit 1" || bad "build mode, failed any-result assertion: exit $code"
 code="$(gate "$T/inc" "$NATIVE" "$VULN" SHIM_MARKERS="$EV exploit:attempted")"
 [ "$code" = 3 ] && grep -q 'ran and did not hold, yet the test passed' "$T/out" && ! grep -q "^$LEG3" "$T/out" \
   && ok "prebuilt bytes: a passing test with a contract assertion that did not hold -> exit 3" || bad "pass with an unheld assertion: exit $code"
