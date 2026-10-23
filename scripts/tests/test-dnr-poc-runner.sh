@@ -585,6 +585,12 @@ for text in 'patch.crates-io.borsh = { path = "/elsewhere/borsh" }' 'patch = { c
   [ "$code" = 3 ] && grep -q 'Cargo.toml:1 holds a \[patch\] or \[replace\] table' "$T/out" && ok "refused: a top-level key, $text" || bad "top-level $text: exit $code"
   rm -rf "$T/patch-root"
 done
+# A manifest that cargo can read under another letter case is checked like one.
+mk_crate "$T/lc-manifest"; mkdir -p "$T/lc-manifest/inner/src"
+printf '[package]\nname = "inner"\nversion = "0.1.0"\n' > "$T/lc-manifest/inner/cargo.toml"
+code="$(gate "$T/lc-manifest" "$NATIVE" "$VULN")"
+[ "$code" = 3 ] && grep -q 'inner/cargo.toml is not a member' "$T/out" && nothing_built \
+  && ok "a cargo.toml outside the workspace, spelled in another letter case -> refused before anything compiles" || bad "lower-case manifest: exit $code"
 mk_patched "$T/patch-mention" Cargo.toml "$(printf '# [patch.crates-io]\n[package.metadata.notes]\ntext = "see [patch.crates-io]"\npatch-level = 1')"
 code="$(gate "$T/patch-mention" "$NATIVE" "$VULN")"
 [ "$code" = 0 ] && ok "a comment, a string and a patch-level key that only mention [patch] -> not refused" || { bad "mentions of [patch]: exit $code"; cat "$T/out" >&2; }
@@ -674,6 +680,22 @@ refused "$T/d-cargo" .cargo "a .cargo/ directory inside the crate"
 mk_crate "$T/d-tc"
 printf '[toolchain]\npath = "%s"\n' "$T/faketc" > "$T/d-tc/rust-toolchain.toml"
 refused "$T/d-tc" rust-toolchain.toml "a rust-toolchain.toml inside the crate"
+# The same names in any letter case: a filesystem that ignores case lets cargo and
+# rustup read .CARGO/ as .cargo/ and Rust-Toolchain.toml as rust-toolchain.toml.
+mk_crate "$T/d-cargo-uc"; mkdir -p "$T/d-cargo-uc/.CARGO"
+printf '[build]\nrustc-wrapper = "%s"\n' "$T/wrap.sh" > "$T/d-cargo-uc/.CARGO/config.toml"
+refused "$T/d-cargo-uc" .CARGO "a .CARGO/ directory inside the crate"
+mk_crate "$T/d-tc-uc"
+printf '[toolchain]\npath = "%s"\n' "$T/faketc" > "$T/d-tc-uc/Rust-Toolchain.toml"
+refused "$T/d-tc-uc" Rust-Toolchain.toml "a Rust-Toolchain.toml inside the crate"
+# A target directory, in any letter case, is never copied: cargo would take the build
+# outputs in it for its own.
+mk_crate "$T/d-target"; mkdir -p "$T/d-target/TARGET/debug"; printf 'shipped\n' > "$T/d-target/TARGET/debug/shipped.txt"
+code="$(gate "$T/d-target" "$NATIVE" "$VULN" KEEP_POC_BUILD=1)"
+bd="$(build_dir)"
+[ "$code" = 0 ] && [ -n "$bd" ] && [ ! -e "$bd/TARGET/debug/shipped.txt" ] && [ ! -e "$bd/target/debug/shipped.txt" ] \
+  && ok "a TARGET/ directory in the crate is not copied into the scratch build" || bad "TARGET/ directory: exit $code"
+[ -n "$bd" ] && rm -rf "$bd"
 
 # A build cache: an inherited CARGO_TARGET_DIR reaches every cargo call unchanged,
 # while SBF_OUT_DIR, and the --sbf-out-dir the SBF builds get, stay in the scratch copy.

@@ -43,8 +43,11 @@
 # rustflags, an alias that shadows `build-sbf`), and rustup its rust-toolchain*
 # (which can name a `path` toolchain, i.e. any binaries). So, in either mode:
 #   * a crate that holds a symbolic link, a .cargo/ directory or a rust-toolchain*
-#     file is refused (exit 3): the copy below never takes them.
-#   * the crate is copied (without target/) into a fresh scratch directory,
+#     file, in any letter case (a filesystem that ignores case lets cargo and
+#     rustup read .CARGO/ as .cargo/), is refused (exit 3): the copy below never
+#     takes them.
+#   * the crate is copied, without a target/ directory in any letter case, into a
+#     fresh scratch directory,
 #     `mktemp -d "${TMPDIR:-/tmp}/auditor-poc.XXXXXX"`, and built and tested there
 #     with RUSTUP_TOOLCHAIN pinned to the caller's value, else rustup's default. The
 #     directory is printed, and removed on exit unless KEEP_POC_BUILD=1; the resolved
@@ -259,6 +262,14 @@ def unquote(key):
     return key
 
 
+def identity(path):
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (st.st_dev, st.st_ino)
+
+
 def crate(meta_path, root):
     root = os.path.realpath(root)
     with open(meta_path, encoding="utf-8") as f:
@@ -275,10 +286,15 @@ def crate(meta_path, root):
                 refuse("%s (%s) is a proc-macro package: run.sh refuses build-time code in the crate, in either mode." % (pkg["name"], src))
             if manifest == os.path.join(root, "Cargo.toml") and ("lib" in kinds or "cdylib" in kinds):
                 lib = target.get("name", "")
+    # A manifest in any letter case, matched to the members by file identity: a
+    # filesystem that ignores case lets cargo read cargo.toml as Cargo.toml.
+    known = set(identity(manifest) for manifest in members)
     for top, dirs, files in os.walk(root):
         dirs[:] = [d for d in dirs if not (top == root and d in ("target", "markers"))]
-        if "Cargo.toml" in files and os.path.realpath(os.path.join(top, "Cargo.toml")) not in members:
-            refuse("%s is not a member of the workspace this crate defines, so these checks do not cover it: make it a member or remove it." % os.path.relpath(os.path.join(top, "Cargo.toml"), root))
+        for name in files:
+            path = os.path.join(top, name)
+            if name.lower() == "cargo.toml" and identity(path) not in known:
+                refuse("%s is not a member of the workspace this crate defines, so these checks do not cover it: make it a member or remove it." % os.path.relpath(path, root))
     for manifest in sorted(members):
         try:
             with open(manifest, encoding="utf-8") as f:
@@ -440,12 +456,12 @@ harness() { python3 -I -c "${HARNESS_PY}" "$@"; }
 # working directory (it does under a sandbox that denies /tmp), where a listing of
 # the crate would pick them up.
 
-# The first symbolic link, .cargo/ or rust-toolchain* inside the crate; prints
-# nothing when there is none. copy_crate takes none of them, so a crate holding one
-# is refused rather than built in a shape it was not written in.
+# The first symbolic link, .cargo/ or rust-toolchain* inside the crate, in any letter
+# case; prints nothing when there is none. copy_crate takes none of them, so a crate
+# holding one is refused rather than built in a shape it was not written in.
 crate_extra() {
   local found
-  found="$(cd "${HERE}" && find . \( -name target -type d \) -prune -o \( -type l -o -name .cargo -o -name 'rust-toolchain*' \) -print)"
+  found="$(cd "${HERE}" && find . \( -iname target -type d \) -prune -o \( -type l -o -iname .cargo -o -iname 'rust-toolchain*' \) -print)"
   if [[ -n "${found}" ]]; then echo "${found%%$'\n'*}"; fi
   return 0
 }
@@ -465,13 +481,14 @@ inherited_config() {
   done
 }
 
-# copy_crate <dest> : the crate's files, never target/, .cargo/ or rust-toolchain*. The
+# copy_crate <dest> : the crate's files, never target/, .cargo/ or rust-toolchain* in any
+# letter case (cargo would take build outputs in a TARGET/ copy for its own). The
 # copies are stamped with the time of the copy, never the originals': with a shared
 # CARGO_TARGET_DIR, cargo would otherwise count a build of another crate of the same
 # name, made after these files were last changed, as this crate's own.
 copy_crate() {
   local list rel IFS=$'\n'
-  list="$(cd "${HERE}" && find . \( \( -name target -type d \) -o -name .cargo -o -name 'rust-toolchain*' -o -name .git \) -prune -o -type f -print)" || return 1
+  list="$(cd "${HERE}" && find . \( \( -iname target -type d \) -o -iname .cargo -o -iname 'rust-toolchain*' -o -iname .git \) -prune -o -type f -print)" || return 1
   set -f
   for rel in ${list}; do
     if ! { mkdir -p "$1/$(dirname "${rel}")" && cp "${HERE}/${rel}" "$1/${rel}"; }; then
