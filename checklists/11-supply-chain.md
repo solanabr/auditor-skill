@@ -12,8 +12,8 @@ Run the registry-facing commands these items call for (`npm audit`, `cargo audit
 
 ## 11.1 — Known Compromised Packages
 
-- [ ] **SC-001**: `axios@1.14.1` is NOT in any `package.json` or `package-lock.json` — **CRITICAL if found**
-- [ ] **SC-002**: `axios@0.30.4` is NOT in any `package.json` or `package-lock.json` — **CRITICAL if found**
+- [ ] **SC-001**: `axios@1.14.1` is NOT in any manifest or lockfile (`package.json`, `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lock`) — **CRITICAL if found** (grep in KV-077 Step 2)
+- [ ] **SC-002**: `axios@0.30.4` is NOT in any manifest or lockfile (`package.json`, `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lock`) — **CRITICAL if found** (grep in KV-077 Step 2)
 - [ ] **SC-003**: Run `npm audit` — zero critical or high vulnerabilities
 - [ ] **SC-004**: Run `cargo audit` on a scratch copy of `Cargo.lock` with stderr kept (FULL-AUDIT Step 3.2) — zero advisories. It exits 1 both for advisories and for an advisory database it cannot fetch or load, so read the output: vulnerabilities found → FAIL; advisory DB unavailable → not a PASS: record "advisory DB unavailable" in Coverage & Limitations, or rerun with `--no-fetch` against a local DB if one exists; N/A only when cargo-audit is not installed, and Coverage & Limitations says so
 - [ ] **SC-005**: Check for known compromised packages in the npm ecosystem (event-stream, ua-parser-js, etc.) — including hijacked releases of legitimate packages: `@solana/web3.js` 1.95.6 and 1.95.7 (Dec 2024) shipped a key-exfiltration backdoor; any lockfile or manifest resolving to them is **CRITICAL** (grep in KV-077 Step 2)

@@ -4,11 +4,15 @@
 #   - checklist 11 §11.11: the npm / yarn lockfile hint prints each changed version, resolved, integrity or
 #     checksum line after the key of its entry (package-lock.json and npm-shrinkwrap.json with and without
 #     resolved fields, lockfile v1, an npm alias, yarn v1 and berry), and "?" when the key is outside the
-#     hunk; every hint prints the same under a checkout config that sets colour and zero context lines;
-#     step 4's sweep deletes every entry that is neither a regular file nor a directory;
-#   - the @solana/web3.js 1.95.6 / 1.95.7 check, FULL-AUDIT Step 3.2 and KV-077 Step 2 (the same commands
-#     in both): resolved-field shapes, and the key-line form in the tree and in history (added, removed, a
-#     changed key, an alias, a merged side branch), but not another package at that version; above 64 KiB;
+#     hunk, in tab-indented and CRLF lockfiles too; every hint prints the same under a checkout config that
+#     sets colour and zero context lines; step 4's sweep deletes every entry that is neither a regular file
+#     nor a directory, in 0555 and 0000 directories too;
+#   - the known-bad release check for axios 1.14.1 / 0.30.4 and @solana/web3.js 1.95.6 / 1.95.7, the same
+#     commands in FULL-AUDIT Step 3.2, KV-077 Step 2 and (its tree part) discovery/grep-commands.md: the
+#     single-line shapes (resolved URLs, pnpm v5 and v9 keys, yarn berry, bun, exact pins), and the key-line
+#     form in the tree and in history (added, removed, a changed key, an alias, a deleted lockfile, a merged
+#     side branch, a merge commit, tab and CRLF lockfiles), but not another package at those versions; the
+#     --oneline history search; above 64 KiB;
 #   - the scratch-directory recipes, FULL-AUDIT Step 3.2 and KV-089 Steps 1, 2 and 5: with $SCRATCH unset,
 #     empty or missing, or mktemp failing, they print OUTCOME: no scratch copy and run nothing; otherwise
 #     npm, cargo and rustup run only inside the scratch directory;
@@ -22,6 +26,7 @@ FA="$ROOT/FULL-AUDIT.md"
 KV077="$ROOT/known-vectors/077-malicious-npm-package-typosquatting.md"
 KV089="$ROOT/known-vectors/089-unpatched-server-dependencies.md"
 KV137="$ROOT/known-vectors/137-vendored-program-version-drift.md"
+GC="$ROOT/discovery/grep-commands.md"
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_NAMESPACE SCRATCH
 T=$(mktemp -d "${TMPDIR:-/tmp}/lockfile-recipes.XXXXXX") || exit 1
 trap 'chmod -R u+rwX "$T" 2>/dev/null; rm -rf "$T"' EXIT
@@ -42,8 +47,10 @@ cl_hint() {
     g { s = 1; sub(/^> /, ""); print }
   ' "$CL"
 }
-# The web3.js check: from the W3= line to the end of the history awk, comments dropped, indentation removed.
-w3_block() { awk '/^ *W3=/ {g = 1} g && !/^ *#/ {sub(/^ */, ""); print} g && /print c, f, \$0}'"'"'$/ {exit}' "$1"; }
+# The known-bad check: from the AX= line to the end of the history awk, comments dropped, indentation removed;
+# its tree part is the first 8 of those lines.
+kb_block() { awk '/^ *AX=/ {g = 1} g && !/^ *#/ {sub(/^ */, ""); print} g && /print c, f, \$0}'"'"'$/ {exit}' "$1"; }
+kb_tree() { awk '/^ *AX=/ {g = 1} g && !/^ *#/ {sub(/^ */, ""); print; if (++n == 8) exit}' "$1"; }
 # A known vector's step: the lines of the first code block after "**Step <n>:".
 kv_step() { awk -v n="$2" 'index($0, "**Step " n ":") == 1 {s = 1; next} s && /^```$/ {if (c) exit; c = 1; next} s && c' "$1"; }
 # FULL-AUDIT Step 3.2's scratch block, from SCRATCH= to its closing fi, block indentation removed.
@@ -99,11 +106,16 @@ other_locks() { # other_locks WEB3VER INT ANCHORVER ANCHORSUM BORSHSUM — pnpm,
   printf 'source = "registry+https://github.com/rust-lang/crates.io-index"\nchecksum = "%s"\n' "$5" >> Cargo.lock
 }
 H="$T/hints"
-git init -q "$H" && mkdir -p "$H/rez" "$H/norez" "$H/v1" "$H/shrink" "$H/yarn1" "$H/berry" || exit 1
+git init -q "$H" && mkdir -p "$H/rez" "$H/norez" "$H/v1" "$H/shrink" "$H/yarn1" "$H/berry" "$H/tabcrlf" "$H/yarncrlf" \
+  "$H/pnpm5" || exit 1
 locks() { # locks WEB3VER A B C — every lockfile of the hints fixture
   ( cd "$H" && npm_lock "$1" "$2" "$3" "$4" 1 > rez/package-lock.json && npm_lock "$1" "$2" "$3" "$4" 0 > norez/package-lock.json \
     && npm_lock "$1" "$2" "$3" "$4" 0 > shrink/npm-shrinkwrap.json && v1_lock "$1" "$2" "$3" > v1/package-lock.json \
-    && yarn1_lock "$1" "$2" "$3" > yarn1/yarn.lock && berry_lock "$1" "$2" "$3" > berry/yarn.lock )
+    && yarn1_lock "$1" "$2" "$3" > yarn1/yarn.lock && berry_lock "$1" "$2" "$3" > berry/yarn.lock \
+    && npm_lock "$1" "$2" "$3" "$4" 0 | awk '{gsub(/  /, "\t"); printf "%s\r\n", $0}' > tabcrlf/package-lock.json \
+    && yarn1_lock "$1" "$2" "$3" | awk '{printf "%s\r\n", $0}' > yarncrlf/yarn.lock \
+    && printf 'lockfileVersion: 5.4\n\npackages:\n\n  /@solana/web3.js/%s:\n    resolution: {integrity: sha512-%s}\n' \
+         "$1" "$2" > pnpm5/pnpm-lock.yaml )
 }
 locks 1.95.5 AAAA BBBB CCCC && (cd "$H" && other_locks 1.95.5 AAAA 0.30.1 aaaa bbbb) \
   && git -C "$H" add -A && git -C "$H" commit -qm base && git -C "$H" tag rev-base \
@@ -130,9 +142,14 @@ for want in \
   '"@solana/web3.js@^1.95.5" +  version "1.95.6"' \
   '"@babel/runtime@^7.25.0" +  integrity sha512-EEEE' \
   '"@solana/web3.js@npm:^1.95.5" +  resolution: "@solana/web3.js@npm:1.95.6"' \
-  '? +  checksum: 10c0/EEEE'; do
+  '? +  checksum: 10c0/EEEE' \
+  "$(printf '"node_modules/@solana/web3.js" +\t\t\t"version": "1.95.6",')" \
+  "$(printf '"node_modules/@babel/runtime" +\t\t\t"integrity": "sha512-EEEE",')"; do
   if has "$T/npm.out" "$want"; then ok "npm/yarn hint prints: $want"; else bad "npm/yarn hint lacks: $want"; fi
 done
+if [ "$(grep -cxF '"@babel/runtime@^7.25.0" +  integrity sha512-EEEE' "$T/npm.out")" = 2 ]; then
+  ok "npm/yarn hint names an integrity-only change in a CRLF yarn.lock"
+else bad "npm/yarn hint lost the name of an integrity-only change in a CRLF yarn.lock"; fi
 n=$(grep -cv -e '^+++ ' -e '^"' -e '^? ' "$T/npm.out")
 if [ -s "$T/npm.out" ] && [ "$n" = 0 ]; then ok "npm/yarn hint: every changed line carries a key or ?"
 else bad "npm/yarn hint: no output, or $n lines without a key or ?"; sed 's/^/  | /' "$T/npm.out"; fi
@@ -166,25 +183,35 @@ if [ -n "$sweep" ] && [ -n "$confirm" ] && [ -z "$left" ] && [ "$(wc -l < "$T/sw
   ok "step 4 opens 0555 and 0000 directories, deletes and lists links and FIFOs, and changes no link target"
 else bad "step 4 ('$sweep', then '$confirm') left: $left"; sed 's/^/  | /' "$T/sweep.out" "$T/sweep.err"; fi
 
-# ---- 2. the @solana/web3.js 1.95.6 / 1.95.7 check -------------------------------------------------------
-w3_block "$FA" > "$T/w3-fa.sh"; w3_block "$KV077" > "$T/w3-kv.sh"
-if [ -s "$T/w3-fa.sh" ] && cmp -s "$T/w3-fa.sh" "$T/w3-kv.sh"; then ok "FULL-AUDIT Step 3.2 and KV-077 Step 2 run the same web3.js check"
-else bad "the web3.js check differs between FULL-AUDIT Step 3.2 and KV-077 Step 2"; fi
-run_w3() { ( cd "$1" && bash "$T/w3-fa.sh" ) > "$T/w3.out" 2>&1; }
+# ---- 2. the known-bad release check ---------------------------------------------------------------------
+kb_block "$FA" > "$T/kb-fa.sh"; kb_block "$KV077" > "$T/kb-kv.sh"; kb_tree "$KV077" > "$T/kbt-kv.sh"; kb_tree "$GC" > "$T/kbt-gc.sh"
+if [ -s "$T/kb-fa.sh" ] && cmp -s "$T/kb-fa.sh" "$T/kb-kv.sh" && [ "$(wc -l < "$T/kbt-kv.sh" | tr -d ' ')" = 8 ] \
+   && cmp -s "$T/kbt-kv.sh" "$T/kbt-gc.sh"; then
+  ok "FULL-AUDIT Step 3.2, KV-077 Step 2 and discovery/grep-commands.md carry the same known-bad check"
+else bad "the known-bad check differs between FULL-AUDIT Step 3.2, KV-077 Step 2 and discovery/grep-commands.md"; fi
+run_kb() { ( cd "$1" && bash "$T/kb-fa.sh" ) > "$T/kb.out" 2>&1; }
+c() { git add -A && git commit -qm "$1" && git rev-parse --short HEAD; }
 
-# resolved-field shapes, in the hints fixture at rev-head
-run_w3 "$H"
+# single-line shapes and the key-line form in the hints fixture, at rev-head
+run_kb "$H"
+hc=$(git -C "$H" rev-parse --short rev-head)
 for want in \
   './rez/package-lock.json:23:      "resolved": "https://registry.npmjs.org/@solana/web3.js/-/web3.js-1.95.6.tgz",' \
   './berry/yarn.lock:25:  resolution: "@solana/web3.js@npm:1.95.6"' \
   "./pnpm-lock.yaml:5:  '@solana/web3.js@1.95.6':" \
+  './pnpm5/pnpm-lock.yaml:5:  /@solana/web3.js/1.95.6:' \
   './norez/package-lock.json-21-      "version": "1.95.6",' \
   './shrink/npm-shrinkwrap.json-21-      "version": "1.95.6",' \
-  './v1/package-lock.json-12-      "version": "1.95.6",'; do
-  if has "$T/w3.out" "$want"; then ok "web3.js check, tree: $want"; else bad "web3.js check, tree, missing: $want"; fi
+  './v1/package-lock.json-12-      "version": "1.95.6",' \
+  "$hc head" \
+  "$hc b/norez/package-lock.json +      \"version\": \"1.95.6\"," \
+  "$(printf '%s b/tabcrlf/package-lock.json +\t\t\t"version": "1.95.6",' "$hc")"; do
+  if has "$T/kb.out" "$want"; then ok "known-bad check: $want"; else bad "known-bad check, missing: $want"; fi
 done
+if grep -q '^\./tabcrlf/package-lock\.json-[0-9]*-' "$T/kb.out"; then ok "known-bad check, tree: a tab-indented CRLF lockfile"
+else bad "known-bad check, tree: the tab-indented CRLF lockfile is missed"; fi
 
-# the key-line form in history: npm lockfiles without resolved fields
+# the key-line form in history: npm lockfiles without resolved fields, filler above 64 KiB, a merged side branch
 W="$T/w3"
 pl() { # pl FILE WEB3VER [ALIASVER] [DECOYVER] [FILLER]: FILLER entries come first, so the file passes 64 KiB
   {
@@ -202,7 +229,6 @@ pl() { # pl FILE WEB3VER [ALIASVER] [DECOYVER] [FILLER]: FILLER entries come fir
   } > "$1"
 }
 git init -q -b main "$W" && mkdir -p "$W/apps/web" && cd "$W" || exit 1
-c() { git add -A && git commit -qm "$1" && git rev-parse --short HEAD; }
 pl apps/web/package-lock.json 1.95.6 "" "" 1500; C1=$(c root-1.95.6)
 pl apps/web/package-lock.json 1.95.5 "" "" 1500; C2=$(c web3-1.95.5)
 pl apps/web/package-lock.json 1.95.8 "" 1.95.6 1500; C3=$(c web3-1.95.8-decoy-1.95.6)
@@ -213,31 +239,91 @@ pl apps/web/npm-shrinkwrap.json 1.95.8 1.95.7 1.95.6 1500; C7=$(c shrinkwrap-ali
 cd "$ROOT" || exit 1
 size=$(wc -c < "$W/apps/web/package-lock.json" | tr -d ' ')
 git -C "$W" config color.ui always; git -C "$W" config diff.context 0; git -C "$W" config log.showRoot false
-run_w3 "$W"
+git -C "$W" config log.diffMerges cc
+run_kb "$W"
 f=b/apps/web/package-lock.json
-if grep -qx '\./apps/web/npm-shrinkwrap\.json-[0-9]*-      "version": "1\.95\.7",' "$T/w3.out"; then
-  ok "web3.js check, tree: the alias entry in npm-shrinkwrap.json"
-else bad "web3.js check, tree: the alias entry in npm-shrinkwrap.json is missing"; fi
+if grep -qx '\./apps/web/npm-shrinkwrap\.json-[0-9]*-      "version": "1\.95\.7",' "$T/kb.out"; then
+  ok "known-bad check, tree: the alias entry in npm-shrinkwrap.json"
+else bad "known-bad check, tree: the alias entry in npm-shrinkwrap.json is missing"; fi
 for want in \
   "$C1 $f +      \"version\": \"1.95.6\"," \
   "$C2 $f -      \"version\": \"1.95.6\"," \
   "$C4 $f +      \"version\": \"1.95.7\"," \
   "$C5 $f -      \"version\": \"1.95.7\"," \
   "$C7 b/apps/web/npm-shrinkwrap.json +      \"version\": \"1.95.7\","; do
-  if has "$T/w3.out" "$want"; then ok "web3.js check, key-line form: $want"; else bad "web3.js check, key-line form, missing: $want"; fi
+  if has "$T/kb.out" "$want"; then ok "known-bad check, key-line form: $want"; else bad "known-bad check, key-line form, missing: $want"; fi
 done
-if [ "$size" -gt 65536 ] && [ "$(grep -c '1\.95\.6' "$T/w3.out")" = 2 ]; then
-  ok "web3.js check passes over filler and the decoy at 1.95.6 ($size-byte lockfile)"
-else bad "web3.js check reports another package at 1.95.6, or the lockfile is under 64 KiB ($size bytes)"; sed 's/^/  | /' "$T/w3.out"; fi
-# a key that changes while the version line stays the same
+if [ "$size" -gt 65536 ] && [ "$(grep -c '1\.95\.6' "$T/kb.out")" = 2 ]; then
+  ok "known-bad check passes over filler and the decoy at 1.95.6 ($size-byte lockfile)"
+else bad "known-bad check reports another package at 1.95.6, or the lockfile is under 64 KiB ($size bytes)"; sed 's/^/  | /' "$T/kb.out"; fi
+
+# a key that changes beside an unchanged version line, and a deleted lockfile
 git init -q "$T/w3k" && mkdir -p "$T/w3k/a" && printf '{\n  "packages": {\n    "node_modules/@solana/web3.js": {\n      "version": "1.95.6",\n      "integrity": "sha512-w"\n    }\n  }\n}\n' > "$T/w3k/a/package-lock.json" \
   && K1=$(cd "$T/w3k" && c add) \
   && printf '{\n  "packages": {\n    "node_modules/other": {\n      "version": "1.95.6",\n      "integrity": "sha512-w"\n    }\n  }\n}\n' > "$T/w3k/a/package-lock.json" \
-  && K2=$(cd "$T/w3k" && c rename)
-run_w3 "$T/w3k"
-if grep -q "^$K2 b/a/package-lock.json  *\"version\": \"1.95.6\",$" "$T/w3.out" && grep -q "^$K1 " "$T/w3.out"; then
-  ok "web3.js check, history: a commit that changes the key beside an unchanged version line"
-else bad "web3.js check, history: the changed key is not reported"; sed 's/^/  | /' "$T/w3.out"; fi
+  && K2=$(cd "$T/w3k" && c rename) && pl "$T/w3k/a/npm-shrinkwrap.json" 1.95.7 && K3=$(cd "$T/w3k" && c shrinkwrap) \
+  && rm "$T/w3k/a/npm-shrinkwrap.json" && K4=$(cd "$T/w3k" && c drop)
+run_kb "$T/w3k"
+if grep -q "^$K2 b/a/package-lock.json  *\"version\": \"1.95.6\",$" "$T/kb.out" && grep -q "^$K1 " "$T/kb.out"; then
+  ok "known-bad check, history: a commit that changes the key beside an unchanged version line"
+else bad "known-bad check, history: the changed key is not reported"; sed 's/^/  | /' "$T/kb.out"; fi
+if has "$T/kb.out" "$K4 a/a/npm-shrinkwrap.json -      \"version\": \"1.95.7\","; then
+  ok "known-bad check, history: a commit that deletes the lockfile, under its a/ path"
+else bad "known-bad check, history: the deleted lockfile is not reported under its a/ path"; sed 's/^/  | /' "$T/kb.out"; fi
+
+# a version only a merge commit brings in (a lockfile regenerated while resolving a conflict), and a pnpm v5 key
+M="$T/kbm"
+git init -q -b main "$M" && mkdir -p "$M/app" && cd "$M" || exit 1
+yl() { printf '"@solana/web3.js@^1.95.5":\n  version "%s"\n  resolved "https://registry.yarnpkg.com/@solana/web3.js/-/web3.js-%s.tgz#a"\n' "$1" "$1" > app/yarn.lock; }
+yl 1.95.5; pl app/package-lock.json 1.95.5; echo a > app/x; c base > /dev/null
+git checkout -qb feat && echo b > app/x && c feat > /dev/null && git checkout -q main && echo c > app/y && c main-y > /dev/null
+git checkout -qb release && git merge -q --no-commit feat > /dev/null 2>&1; yl 1.95.6; pl app/package-lock.json 1.95.6
+MM=$(c "merge feat") && git checkout -q main
+printf 'lockfileVersion: 5.4\n\npackages:\n\n  /@solana/web3.js/1.95.7:\n    resolution: {integrity: sha512-p}\n' > app/pnpm-lock.yaml
+M5=$(c pnpm5)
+cd "$ROOT" || exit 1
+git -C "$M" config log.diffMerges cc
+run_kb "$M"
+for want in "$MM merge feat" "$MM b/app/package-lock.json +      \"version\": \"1.95.6\"," "$M5 pnpm5"; do
+  if has "$T/kb.out" "$want"; then ok "known-bad check, history: $want"; else bad "known-bad check, history, missing: $want"; fi
+done
+
+# axios 1.14.1 / 0.30.4 in every shape, beside packages that must not match
+X="$T/ax"
+git init -q -b main "$X" && cd "$X" && mkdir -p p1 p2 p3 p4 p5 p6 p7 p8 d1 d3 || exit 1
+printf '{\n  "dependencies": {\n    "axios": "1.14.1"\n  }\n}\n' > p1/package.json
+printf '{\n  "packages": {\n    "node_modules/axios": {\n      "version": "1.14.1",\n      "resolved": "https://registry.npmjs.org/axios/-/axios-1.14.1.tgz",\n      "integrity": "sha512-a"\n    }\n  }\n}\n' > p2/package-lock.json
+ax3() { printf '{\n  "packages": {\n    "node_modules/axios": {\n      "version": "%s",\n      "integrity": "sha512-a"\n    },\n    "node_modules/@solana/web3.js": {\n      "version": "0.30.4",\n      "integrity": "sha512-w"\n    }\n  }\n}\n' "$1" > p3/package-lock.json; }
+ax3 0.30.4
+printf '{\n  "packages": {\n    "node_modules/my-axios": {\n      "name": "axios",\n      "version": "1.14.1",\n      "integrity": "sha512-a"\n    }\n  }\n}\n' > p4/npm-shrinkwrap.json
+printf 'axios@^1.14.0:\n  version "1.14.1"\n  resolved "https://registry.yarnpkg.com/axios/-/axios-1.14.1.tgz#abc"\n  integrity sha512-a\n' > p5/yarn.lock
+printf '"axios@npm:^1.14.0":\n  version: 1.14.1\n  resolution: "axios@npm:1.14.1"\n  checksum: 10c0/abc\n' > p6/yarn.lock
+printf 'packages:\n\n  axios@1.14.1:\n    resolution: {integrity: sha512-a}\n\n  /axios/0.30.4:\n    resolution: {integrity: sha512-b}\n' > p7/pnpm-lock.yaml
+printf '{\n  "packages": {\n    "axios": ["axios@1.14.1", "", {}, "sha512-a"],\n  }\n}\n' > p8/bun.lock
+printf '{\n  "packages": {\n    "node_modules/vue-axios": {\n      "version": "1.14.1",\n      "resolved": "https://registry.npmjs.org/vue-axios/-/vue-axios-1.14.1.tgz"\n    },\n    "node_modules/@nuxtjs/axios": {\n      "version": "0.30.4"\n    }\n  }\n}\n' > d1/package-lock.json
+printf 'packages:\n\n  vue-axios@1.14.1:\n    resolution: {integrity: sha512-v}\n' > d1/pnpm-lock.yaml
+printf '{\n  "packages": {\n    "node_modules/axios": {\n      "version": "1.14.2"\n    }\n  }\n}\n' > d3/package-lock.json
+XA=$(c all) && ax3 0.30.5 && XB=$(c bump) && git checkout -q "$XA"
+cd "$ROOT" || exit 1
+run_kb "$X"
+for want in \
+  './p1/package.json:3:    "axios": "1.14.1"' \
+  './p2/package-lock.json:5:      "resolved": "https://registry.npmjs.org/axios/-/axios-1.14.1.tgz",' \
+  './p5/yarn.lock:3:  resolved "https://registry.yarnpkg.com/axios/-/axios-1.14.1.tgz#abc"' \
+  './p6/yarn.lock:3:  resolution: "axios@npm:1.14.1"' \
+  './p7/pnpm-lock.yaml:3:  axios@1.14.1:' \
+  './p7/pnpm-lock.yaml:6:  /axios/0.30.4:' \
+  './p8/bun.lock:3:    "axios": ["axios@1.14.1", "", {}, "sha512-a"],' \
+  './p3/package-lock.json-4-      "version": "0.30.4",' \
+  './p4/npm-shrinkwrap.json-5-      "version": "1.14.1",' \
+  "$XA all" \
+  "$XA b/p4/npm-shrinkwrap.json +      \"version\": \"1.14.1\"," \
+  "$XB b/p3/package-lock.json -      \"version\": \"0.30.4\","; do
+  if has "$T/kb.out" "$want"; then ok "known-bad check, axios: $want"; else bad "known-bad check, axios, missing: $want"; fi
+done
+if ! grep -q -e '/d1/' -e '/d3/' -e ' b/d1/' -e ' b/d3/' "$T/kb.out" && [ "$(grep -c 'p3/package-lock' "$T/kb.out")" = 3 ]; then
+  ok "known-bad check skips vue-axios, @nuxtjs/axios, axios 1.14.2 and @solana/web3.js at an axios version"
+else bad "known-bad check reports a package it should skip"; sed 's/^/  | /' "$T/kb.out"; fi
 
 # ---- 3. scratch-directory recipes -----------------------------------------------------------------------
 kv_step "$KV089" 1 > "$T/kv1.sh"; kv_step "$KV089" 2 > "$T/kv2.sh"; kv_step "$KV089" 5 > "$T/kv5.sh"; fa_scratch > "$T/fa.sh"
