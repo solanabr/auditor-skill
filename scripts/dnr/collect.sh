@@ -358,7 +358,7 @@ interrupted() {
     for a in "${addrs[@]}"; do
       k=$((k + 1))
       if [ "$k" -eq $((addrs_done + 1)) ]; then
-        gap "$a" "getSignaturesForAddress page $page: $why; older history not collected"
+        gap "$a" "getSignaturesForAddress page $page: $why; older history not collected${before:+; resume into a new --out with --before $before}"
       elif [ "$k" -gt $((addrs_done + 1)) ]; then
         gap "$a" "not paged: $why"
       fi
@@ -433,7 +433,7 @@ for addr in "${addrs[@]}"; do
     echo "  ! older history may exist for $addr: $stop — $resume; recorded as a collection gap" >&2
     gap "$addr" "older history may exist: $stop; $resume"
   fi
-  addrs_done=$((addrs_done + 1)); page=0
+  addrs_done=$((addrs_done + 1)); page=0; before="$before_start"
 done
 phase=listed
 echo "signatures collected: $collected -> $sig_file"

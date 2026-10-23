@@ -823,28 +823,32 @@ for case in "bin|$TT/plant-out" "LEDGER.md|$TT/plant-out/ledger"; do
 done
 
 # ---------------------------------------------------------------------------
-# 12. A run stopped by INT, TERM or HUP (here TERM, sent while the stand-in holds
-#     one call) records what it had not finished as collection gaps, prints its
-#     closing lines and exits 128 + the signal number. During the fetch, one row
-#     names the first signature listed but not fetched; during paging, the address
-#     being paged is a row too, and nothing is fetched.
+# 12. A run stopped by INT, TERM or HUP (sent while the stand-in holds one call)
+#     records what it had not finished as collection gaps, prints its closing lines
+#     and exits 128 + the signal number. During the fetch, one row names the first
+#     signature listed but not fetched; during paging, the address being paged is a
+#     row too, with the point to resume from once a page has been read, and nothing
+#     is fetched.
 # ---------------------------------------------------------------------------
-# hold_run <out dir> <method>|<k> <args...>: run collect.sh in the background and
-# send it TERM while the stand-in holds call k of <method>; returns its exit status.
+# hold_run <out dir> <method>|<k> <signal> <args...>: run collect.sh in the
+# background, with SIGINT at its default as in a run from a terminal, and send it
+# <signal> while the stand-in holds call k of <method>; returns its exit status.
 hold_run() {
-  local out="$1" hold="$2" pid n=0
-  shift 2
+  local out="$1" hold="$2" sig="$3" pid n=0
+  shift 3
   mkdir -p "$TT/hold"; rm -f "$TT/hold/reached" "$TT/hold/release"
-  FAKE_HOLD="$hold|$TT/hold" PATH="$TT/bin:$PATH" bash "$DNR/collect.sh" --out "$out" --confirmed "$@" > "$out.out" 2>&1 &
+  FAKE_HOLD="$hold|$TT/hold" PATH="$TT/bin:$PATH" "$PY" -c 'import os, signal, sys
+signal.signal(signal.SIGINT, signal.SIG_DFL)
+os.execvp("bash", ["bash"] + sys.argv[1:])' "$DNR/collect.sh" --out "$out" --confirmed "$@" > "$out.out" 2>&1 &
   pid=$!
   while [[ ! -e "$TT/hold/reached" && "$n" -lt 200 ]]; do sleep 0.05; n=$((n + 1)); done
-  kill -TERM "$pid"
+  kill -"$sig" "$pid"
   touch "$TT/hold/release"
   wait "$pid"
 }
 book '{"'"$A_ADDR"'": [{"signature": "S%02d" % k, "slot": 100 - k, "err": None, "blockTime": 1700000000 - k} for k in range(1, 6)]}'
 rm -f "$FAKE_CURL_LOG"
-hold_run "$TT/int-fetch" "getTransaction|3" -- "$A_ADDR"
+hold_run "$TT/int-fetch" "getTransaction|3" TERM -- "$A_ADDR"
 code=$?
 row="$(grep 'interrupted' "$TT/int-fetch/collection-gaps.tsv")"
 first="${row%%$(printf '\t')*}"
@@ -861,16 +865,33 @@ B_ADDR="AddrB111111111111111111111111111111111111111"
 book '{"'"$A_ADDR"'": [{"signature": "SigA%d" % k, "slot": 30 - k, "err": None, "blockTime": 1700000030 - k} for k in range(1, 4)],
        "'"$B_ADDR"'": [{"signature": "SigB%d" % k, "slot": 20 - k, "err": None, "blockTime": 1700000020 - k} for k in range(1, 4)]}'
 rm -f "$FAKE_CURL_LOG"
-hold_run "$TT/int-page" "getSignaturesForAddress|3" -- "$A_ADDR" "$B_ADDR"
+hold_run "$TT/int-page" "getSignaturesForAddress|3" TERM -- "$A_ADDR" "$B_ADDR"
 code=$?
 eq "interrupted paging: exit 143, and no getTransaction call" "$code|$(calls getTransaction)" "143|0"
-if grep -q "^$B_ADDR$(printf '\t')getSignaturesForAddress page [01]: the run was interrupted (TERM); older history not collected$" "$TT/int-page/collection-gaps.tsv" \
-   && grep -q "^SigA1$(printf '\t')not fetched: the run was interrupted (TERM); this and [25] older signatures in signatures.jsonl were not fetched$" "$TT/int-page/collection-gaps.tsv" \
+if grep -q "^$B_ADDR$(printf '\t')getSignaturesForAddress page 0: the run was interrupted (TERM); older history not collected$" "$TT/int-page/collection-gaps.tsv" \
+   && grep -q "^SigA1$(printf '\t')not fetched: the run was interrupted (TERM); this and 2 older signatures in signatures.jsonl were not fetched$" "$TT/int-page/collection-gaps.tsv" \
    && grep -q '^collection gaps: 2 (see ' "$TT/int-page.out"; then
   ok "interrupted paging: a gap row for the address being paged, one for the signatures listed, and the closing lines"
 else
   bad "interrupted paging: rows '$(tr '\n' '|' < "$TT/int-page/collection-gaps.tsv")', output '$(tr '\n' '|' < "$TT/int-page.out")'"
 fi
+# INT during the fetch, as from a terminal: exit 130, the same row naming INT.
+rm -f "$FAKE_CURL_LOG"
+book '{"'"$A_ADDR"'": [{"signature": "S%02d" % k, "slot": 100 - k, "err": None, "blockTime": 1700000000 - k} for k in range(1, 6)]}'
+hold_run "$TT/int-int" "getTransaction|2" INT -- "$A_ADDR"
+code=$?
+eq "interrupted fetch, INT: exit 130, and the row for the signatures not fetched" \
+  "$code|$(cut -f2 "$TT/int-int/collection-gaps.tsv")" "130|not fetched: the run was interrupted (INT); this and 3 older signatures in signatures.jsonl were not fetched"
+# HUP while the second page of an address is read: exit 129, and the address row
+# names the signature to resume from with --before.
+rm -f "$FAKE_CURL_LOG"
+hold_run "$TT/int-hup" "getSignaturesForAddress|2" HUP -- "$A_ADDR"
+code=$?
+eq "interrupted paging, HUP on a later page: exit 129, the address row with its resume point, and the closing lines" \
+  "$code|$(sed -n 1p "$TT/int-hup/collection-gaps.tsv")|$(grep -c '^collection gaps: 2 (see ' "$TT/int-hup.out")" \
+  "129|$A_ADDR$(printf '\t')getSignaturesForAddress page 1: the run was interrupted (HUP); older history not collected; resume into a new --out with --before S05|1"
+book '{"'"$A_ADDR"'": [{"signature": "SigA%d" % k, "slot": 30 - k, "err": None, "blockTime": 1700000030 - k} for k in range(1, 4)],
+       "'"$B_ADDR"'": [{"signature": "SigB%d" % k, "slot": 20 - k, "err": None, "blockTime": 1700000020 - k} for k in range(1, 4)]}'
 # The same paging run with its stdout through a pipe that is closed when the run is
 # stopped: TERM goes to the whole process group, as for `collect.sh … | tee log`, so
 # the reader dies too. Every gap row still lands before any output, and the run
