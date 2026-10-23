@@ -17,6 +17,7 @@
 # Builds throwaway files and git repos under ${TMPDIR:-/tmp}; no network; bash >= 3.2.
 set -uo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+cd "$ROOT" || exit 1   # check-frontmatter.sh reads a path below the current directory from there
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_NAMESPACE
 T=$(mktemp -d "${TMPDIR:-/tmp}/ci-checks.XXXXXX") || exit 1
 trap 'rm -rf "$T"' EXIT
@@ -180,6 +181,14 @@ fm skill-no-name/SKILL.md fail 'description: "A skill."'
 fm skills/agents/SKILL.md pass "name: a" 'description: "A skill in a directory named agents."'
 fm skills/forked/SKILL.md fail "name: f" 'description: "A forked skill."' "context: fork"
 fm skills/with-tools/SKILL.md fail "name: t" 'description: "A skill."' "allowed-tools: Read"
+# a .md under agents/ or commands/ is an agent or a command, also one named SKILL.md: the first of agents/,
+# commands/ and skills/ in the path gives the kind
+fm agents/skill.md fail "$N" "$D"
+fm agents/sub/SKILL.md fail "$N" "$D"
+fm agents/tools/SKILL.md pass "$N" "$D" "$TL" "$M"
+fm commands/skill.md fail "name: c" "$C"
+fm commands/sub/SKILL.md fail "name: c" "$C"
+fm skills/s/agents/SKILL.md pass "name: s" 'description: "A skill in a directory named agents, in a skill."'
 # with no arguments the check reads every .md at any depth under commands/ and agents/ (dotfiles too),
 # the root SKILL.md, and every SKILL.md under skills/, in any letter case; a .MD name fails
 lay="$T/layout"; mkdir -p "$lay/scripts" "$lay/commands/sub" "$lay/agents/deep/er" "$lay/skills/s" "$lay/skills/t/u"
@@ -191,17 +200,20 @@ bad_fm() { printf -- '---\n%s\n%s\n%s\n---\n' "$N" "description: Ends with ---" 
 good_c "$lay/commands/c.md"; good_a "$lay/agents/a.md"; good_s "$lay/SKILL.md"
 bad_fm "$lay/commands/sub/nested.md"; bad_fm "$lay/agents/deep/er/deeper.md"; bad_fm "$lay/agents/.hidden.md"
 bad_fm "$lay/skills/s/SKILL.md"; bad_fm "$lay/skills/t/u/skill.md"; good_c "$lay/commands/Upper.MD"
+mkdir -p "$lay/agents/as-skill"; good_s "$lay/agents/skill.md"; good_s "$lay/agents/as-skill/SKILL.md"   # no tools
 expect "frontmatter: with no arguments, nested, hidden, lower-case and .MD files are read too" 1 bash "$lay/scripts/check-frontmatter.sh"
 for want in "commands/sub/nested.md:3: --- inside" "agents/deep/er/deeper.md:3: --- inside" "agents/.hidden.md:3: --- inside" \
-            "skills/s/SKILL.md:3: --- inside" "skills/t/u/skill.md:3: --- inside" "commands/Upper.MD: name the file with a lowercase .md"; do
+            "skills/s/SKILL.md:3: --- inside" "skills/t/u/skill.md:3: --- inside" "commands/Upper.MD: name the file with a lowercase .md" \
+            "agents/skill.md:4: missing required key tools" "agents/as-skill/SKILL.md:4: missing required key tools"; do
   case "$out" in *"$want"*) pass=$((pass + 1)); echo "PASS frontmatter: ... $want";;
     *) failn=$((failn + 1)); echo "FAIL frontmatter: the default list missed: $want"; echo "$out";; esac
 done
 good_c "$lay/commands/sub/nested.md"; good_a "$lay/agents/deep/er/deeper.md"; good_a "$lay/agents/.hidden.md"
 good_s "$lay/skills/s/SKILL.md"; good_s "$lay/skills/t/u/skill.md"; mv "$lay/commands/Upper.MD" "$lay/commands/renamed.md"
+good_a "$lay/agents/skill.md"; good_a "$lay/agents/as-skill/SKILL.md"
 expect "frontmatter: with no arguments, every kind of file passes once fixed" 0 bash "$lay/scripts/check-frontmatter.sh"
-case "$out" in *"passed: 9 files"*) pass=$((pass + 1)); echo "PASS frontmatter: ... 9 files read";;
-  *) failn=$((failn + 1)); echo "FAIL frontmatter: the default list did not read 9 files"; echo "$out";; esac
+case "$out" in *"passed: 11 files"*) pass=$((pass + 1)); echo "PASS frontmatter: ... 11 files read";;
+  *) failn=$((failn + 1)); echo "FAIL frontmatter: the default list did not read 11 files"; echo "$out";; esac
 fm other/notes.md fail "$N" "$D"
 # FORBIDDEN_ALLOWED_TOOLS holds only for allowed-tools: with bare Bash added to it, a command's bare Bash
 # fails while its Bash(pattern) entries and an agent's Bash tool still pass

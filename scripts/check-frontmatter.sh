@@ -2,8 +2,11 @@
 # check-frontmatter.sh — fail when Claude Code would read a frontmatter field differently from what is
 # written. With no arguments it checks every file whose frontmatter Claude Code loads: each .md file at any
 # depth under commands/ and agents/, and SKILL.md at the root and at any depth under skills/, matching .md and
-# SKILL.md in any letter case. Given files, it checks those; the kind comes from the path. The frontmatter
-# must keep to a flat subset:
+# SKILL.md in any letter case. Given files, it checks those. The kind comes from the first directory of the
+# path, below the current directory, named agents, commands or skills in any letter case, as Claude Code reads
+# a plugin root: each .md under agents/ is an agent and each under commands/ a command, also one named
+# SKILL.md; a SKILL.md under skills/, or under none of the three, is a skill. The frontmatter must keep to a
+# flat subset:
 #   - line 1 is exactly '---' and the block ends at the next line that is exactly '---'; no other line of
 #     the block contains '---' or is a '...' document end; the file holds no NUL byte, and the block no tab,
 #     CR, other control character, U+0085, U+2028 or U+2029;
@@ -154,12 +157,20 @@ END {
 
 fail=0; n=0
 for f in "$@"; do
-  case "$(printf '%s' "$f" | LC_ALL=C tr 'A-Z' 'a-z')" in
-    skill.md | */skill.md) kind=skill ;;
-    agents/*.md | */agents/*.md) kind=agent ;;
-    commands/*.md | */commands/*.md) kind=command ;;
-    *) echo "::error::$f: not under agents/ or commands/ and not a SKILL.md; its keys are unknown" >&2; fail=1; continue ;;
-  esac
+  rel=$f; case "$f" in "$PWD"/*) rel=${f#"$PWD"/} ;; esac
+  low=$(printf '%s' "$rel" | LC_ALL=C tr 'A-Z' 'a-z'); rest=$low; kind=
+  while :; do   # the first directory named agents, commands or skills gives the kind
+    case "$rest" in
+      agents/*) case "$low" in *.md) kind=agent ;; esac; break ;;
+      commands/*) case "$low" in *.md) kind=command ;; esac; break ;;
+      skills/*) case "$low" in */skill.md) kind=skill ;; esac; break ;;
+      */*) rest=${rest#*/} ;;
+      *) case "$low" in skill.md | */skill.md) kind=skill ;; esac; break ;;
+    esac
+  done
+  if [ -z "$kind" ]; then
+    echo "::error::$f: not under agents/ or commands/ and not a SKILL.md; its keys are unknown" >&2; fail=1; continue
+  fi
   case "$f" in *.md) ;; *) echo "::error::$f: name the file with a lowercase .md" >&2; fail=1; continue ;; esac
   if [ ! -f "$f" ]; then echo "::error::$f: no such file" >&2; fail=1; continue; fi
   # awk does not see a NUL byte the same way everywhere, so look for one first
