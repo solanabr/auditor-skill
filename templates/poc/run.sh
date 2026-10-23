@@ -146,6 +146,32 @@ set -Eeuo pipefail
 # command substitution (bash 3.2 runs the trap there too) it only passes the status
 # up, and the caller names the blocker.
 trap 'rc=$?; [ "${BASH_SUBSHELL:-0}" -gt 0 ] && exit "${rc}"; echo "[PoC-ATTEMPTED] blocker: run.sh could not finish (unexpected error, status ${rc}); this run decides nothing." >&2; exit 3' ERR
+# Every way out ends in on_exit. It drops the build lock this run holds and the
+# scratch copy, keeping the resolved Cargo.lock with the crate. A run that stops
+# anywhere but at a verdict (VERDICT names the exit 0, 1 or 2 taken) or a named
+# blocker (exit 3) exits 3 as well: an unset variable under set -u, say, which bash
+# 3.2 hands this trap as status 0.
+VERDICT=""
+BUILD_DIR=""
+LOCK_HELD=0
+on_exit() {
+  local rc="$1"
+  if [[ "${LOCK_HELD}" == 1 ]]; then release_lock; fi
+  if [[ -n "${BUILD_DIR}" ]]; then
+    if [[ -f "${BUILD_DIR}/Cargo.lock" ]]; then
+      cp -p "${BUILD_DIR}/Cargo.lock" "${HERE}/Cargo.lock" 2>/dev/null || true
+    fi
+    case "${BUILD_DIR}" in
+      */auditor-poc.*) if [[ "${KEEP_POC_BUILD:-0}" != 1 ]]; then rm -rf "${BUILD_DIR}" || true; fi ;;
+    esac
+  fi
+  if [[ "${rc}" != 3 && "${rc}" != "${VERDICT}" ]]; then
+    echo "[PoC-ATTEMPTED] blocker: run.sh stopped before a verdict (status ${rc}); this run decides nothing." >&2
+    exit 3
+  fi
+  exit "${rc}"
+}
+trap 'on_exit "$?"' EXIT
 
 TOOLS_VERSION="${TOOLS_VERSION:-v1.54}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -648,7 +674,6 @@ copy_crate() {
 # The lock names its holder's pid. A lock whose holder is gone is broken by one run at
 # a time (the .break directory beside it), and only while it still names that holder;
 # a run drops the lock only while it still names this run.
-LOCK_HELD=0
 restamp() {  # give the scratch copy's own files the current time, under the lock
   find "${BUILD_DIR}" \( \( -iname target -type d \) -o -path "${RUN_DIR}" \) -prune -o -type f -exec touch {} + 2>/dev/null || true
   return 0
@@ -692,17 +717,6 @@ release_lock() {
   return 0
 }
 
-finish() {  # keep the resolved Cargo.lock with the crate; drop the scratch directory
-  release_lock
-  if [[ -f "${BUILD_DIR}/Cargo.lock" ]]; then
-    cp -p "${BUILD_DIR}/Cargo.lock" "${HERE}/Cargo.lock" 2>/dev/null || true
-  fi
-  case "${BUILD_DIR}" in
-    */auditor-poc.*) if [[ "${KEEP_POC_BUILD:-0}" != 1 ]]; then rm -rf "${BUILD_DIR}" || true; fi ;;
-  esac
-  return 0
-}
-
 extra="$(crate_extra)"
 if [[ -n "${extra}" ]]; then
   echo "[PoC-ATTEMPTED] blocker: ${extra#./} inside the crate is a symbolic link, a .cargo/ directory or a rust-toolchain* file. run.sh builds a copy of the crate outside the target tree and never copies these; remove it (for a link, copy in the file itself)." >&2
@@ -713,7 +727,6 @@ if ! BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/auditor-poc.XXXXXX")"; then
   exit 3
 fi
 BUILD_DIR="$(cd "${BUILD_DIR}" && pwd -P)"
-trap finish EXIT
 inherited="$(inherited_config "${BUILD_DIR}")"
 if [[ -n "${inherited}" ]]; then
   echo "[PoC-ATTEMPTED] blocker: the scratch build directory ${BUILD_DIR} would inherit ${inherited}; point TMPDIR outside any repository." >&2
@@ -920,14 +933,14 @@ release_lock
 if ! settle vulnerable "${status}"; then
   nonregistry
   echo "FAIL: exploit did not reproduce on the vulnerable arm — PoC is not valid." >&2
-  exit 1
+  VERDICT=1; exit 1
 fi
 if [[ "${PREBUILT}" -eq 1 ]]; then
   echo "   effect: ${HELD_LINE}"
   if [[ -z "${FIXED_SO}" ]]; then
     nonregistry
     echo "OK: reproduced on prebuilt bytes — vulnerable sha256=${VULNERABLE_HASH} → [PoC-REPRODUCED]"
-    exit 0
+    VERDICT=0; exit 0
   fi
 fi
 
@@ -943,14 +956,15 @@ release_lock
 if ! settle fixed "${status}"; then
   nonregistry
   echo "FAIL: the fixed arm did not block the attack — fix is incomplete." >&2
-  exit 2
+  VERDICT=2; exit 2
 fi
 nonregistry
 if [[ "${PREBUILT}" -eq 0 ]]; then
   echo "OK: exploit reproduces on 'vulnerable' and is blocked on 'fixed' (this crate's own arms: a model, never Leg 3)  → [PoC-REPRODUCED]"
-  exit 0
+  VERDICT=0; exit 0
 fi
 how="blocked: failed, account unchanged"
 if [[ "${HELD_KIND}" == rejected_with ]]; then how="rejected with the pinned error"; fi
 echo "   fixed arm: ${HELD_LINE}"
 echo "OK: reproduced on prebuilt bytes — vulnerable sha256=${VULNERABLE_HASH} fixed sha256=${PLACED_HASH} (${how}) → [PoC-REPRODUCED]"
+VERDICT=0; exit 0

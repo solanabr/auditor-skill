@@ -869,6 +869,14 @@ code="$(run "$T/inc" "$SP" "$NATIVE" SHIM_FAIL=fixed_blocked SHIM_MARKERS="$EV f
 [ "$code" = 2 ] && grep -q 'fix is incomplete' "$T/out" && ok "build mode: fixed-arm test failing in its contract assertion -> exit 2" || bad "build mode fixed-arm failure: exit $code"
 code="$(run "$T/inc" "$SP" "$NATIVE")"
 [ "$code" = 0 ] && grep -q "building 'fixed' arm to SBF" "$T/out" && ok "build mode (no prebuilt bytes) runs both arms -> exit 0" || bad "build mode: exit $code"
+# A run that stops anywhere but at a verdict or a named blocker exits 3, never 0, 1 or
+# 2: here a copy of run.sh meets an unset variable under set -u (bash 3.2 hands the
+# EXIT trap status 0 for it) once the scratch copy exists.
+mk_crate "$T/stop"
+python3 -I -c 'import sys; p = sys.argv[1]; s = open(p).read(); a = "\n# Dependency pins (see DEPENDENCY PINS above)."; assert s.count(a) == 1; open(p, "w").write(s.replace(a, "\n: \"${AUDITOR_TEST_UNSET}\"" + a))' "$T/stop/run.sh"
+code="$(gate "$T/stop" "$NATIVE" "$VULN")"
+[ "$code" = 3 ] && grep -q 'stopped before a verdict' "$T/out" && ! grep -q '^OK' "$T/out" && [ -z "$(ls -A "$T/tmp-gate")" ] \
+  && ok "a run that stops on an unset variable -> exit 3 with a blocker line, the scratch copy removed" || { bad "stop on an unset variable: exit $code"; cat "$T/out" >&2; }
 
 # ---------------------------------------------------------------------------
 # Real cargo and rustup, when present: the template's own tests and shared-test-utils,
