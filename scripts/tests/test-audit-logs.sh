@@ -124,8 +124,9 @@ binary() {
 }
 
 # agree <recipe> [<stdin file>] -- <args...>: runs the script and audit-logs, and leaves in
-# $T/diff why they differ (exit status, stdout, "skipped" notes); empty when they agree.
-# The outputs stay in $T/s.* and $T/b.*.
+# $T/diff why they differ (exit status, stdout, the notes on stderr); empty when they
+# agree. When both succeed every stderr line is compared, less the program's name;
+# otherwise the "skipped" notes are. The outputs stay in $T/s.* and $T/b.*.
 agree() {
   local r="$1" in=/dev/null sc bc; shift
   if [[ "$1" != -- ]]; then in="$1"; shift; fi
@@ -133,7 +134,11 @@ agree() {
   script "$r" ${1+"$@"} < "$in" > "$T/s.out" 2> "$T/s.err"; sc=$?
   binary "$r" ${1+"$@"} < "$in" > "$T/b.out" 2> "$T/b.err"; bc=$?
   if [[ "$r" == profile ]]; then norm_counts < "$T/s.out" > "$T/s.cmp"; else cp "$T/s.out" "$T/s.cmp"; fi
-  notes "$T/s.err" > "$T/s.notes"; notes "$T/b.err" > "$T/b.notes"
+  if [[ "$sc$bc" == 00 ]]; then
+    sed 's/^[a-z][a-z.-]*: //' "$T/s.err" > "$T/s.notes"; sed 's/^[a-z][a-z.-]*: //' "$T/b.err" > "$T/b.notes"
+  else
+    notes "$T/s.err" > "$T/s.notes"; notes "$T/b.err" > "$T/b.notes"
+  fi
   : > "$T/diff"
   [[ "$sc" == "$bc" ]] || echo "exit $sc (script) vs $bc (audit-logs)" >> "$T/diff"
   cmp -s "$T/s.cmp" "$T/b.out" || { echo "stdout:"; diff "$T/s.cmp" "$T/b.out" | sed -n '1,6p'; } >> "$T/diff"
@@ -211,6 +216,7 @@ os.makedirs(d)
 P = "Prog7xQmP4sN9kR2wBcD3eF5gH6jK8mN1pQ2rS3tUvW"
 Q = "Vict1m9xQmP4sN9kR2wBcD3eF5gH6jK8mN1pQ2rS3tU"
 TOK = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+U64 = 2**64 - 1
 def tx(sig, meta=None, keys=None, ixs=None, extra=None):
     t = {"meta": dict({"err": None, "fee": 5000}, **(meta or {})),
          "transaction": {"signatures": [sig], "message": {"accountKeys": keys if keys is not None else ["Payer1"],
@@ -222,22 +228,21 @@ def write(name, lines):
         for line in lines:
             f.write((line if isinstance(line, bytes) else json.dumps(line, ensure_ascii=False).encode()) + b"\n")
 big = [
-    tx("SigBig1", {"fee": 5000, "preBalances": [2**64, 2**53 + 1, 10**40], "postBalances": [2**64 - 4999, 2**53, 10**40 + 10**39]},
-       ["PayerBig", "AcctBig", "Acct40"]),
-    tx("SigBig2", {"fee": 10**30, "preBalances": [10**31, 7], "postBalances": [0, 7]}, ["PayerFee", "Same"]),
-    tx("SigBig3", {"preBalances": [int("9" * 4300), -5], "postBalances": [int("9" * 4300) - 1, 5]}, ["Payer4300", "Neg"]),
+    tx("SigBig1", {"fee": 5000, "preBalances": [U64, 2**53 + 1, 2**63], "postBalances": [U64 - 4999, 2**53, 2**63 + 2**62]},
+       ["PayerBig", "AcctBig", "Acct63"]),
+    tx("SigBig2", {"fee": 2**63, "preBalances": [U64, 7], "postBalances": [U64 - 2**63, 7]}, ["PayerFee", "Same"]),
     tx("SigBig4", {"preTokenBalances": [
-        {"accountIndex": 1, "mint": "MintA", "owner": "Vault", "uiTokenAmount": {"amount": str(2**64 + 1)}},
-        {"accountIndex": 2, "mint": "MintA", "owner": "", "uiTokenAmount": {"amount": "0000000000000000000007"}},
-        {"mint": "MintB", "owner": "NoIndex", "uiTokenAmount": {"amount": "1" * 45}},
+        {"accountIndex": 1, "mint": "MintA", "owner": "Vault", "uiTokenAmount": {"amount": str(U64)}},
+        {"accountIndex": 2, "mint": "MintA", "owner": "", "uiTokenAmount": {"amount": "00000000000000000007"}},
+        {"mint": "MintB", "owner": "NoIndex", "uiTokenAmount": {"amount": "1" * 19}},
         {"accountIndex": 99, "mint": "MintB", "owner": "NoIndex", "uiTokenAmount": {"amount": "2"}}],
        "postTokenBalances": [
         {"accountIndex": 1, "mint": "MintA", "owner": "Vault", "uiTokenAmount": {"amount": "0"}},
-        {"accountIndex": 2, "mint": "MintA", "uiTokenAmount": {"amount": str(2**64 + 8)}},
-        {"mint": "MintB", "owner": "NoIndex", "uiTokenAmount": {"amount": "2" * 45}},
+        {"accountIndex": 2, "mint": "MintA", "uiTokenAmount": {"amount": str(U64)}},
+        {"mint": "MintB", "owner": "NoIndex", "uiTokenAmount": {"amount": "2" * 19}},
         {"accountIndex": 3, "mint": "MintB", "owner": "x\ty\\z", "uiTokenAmount": {}}]},
        ["Payer1", "TokVault", "TokAttacker", "owner:NoIndex"]),
-    tx("SigBig5", {"err": {"InstructionError": [0, {"Custom": 6000}]}, "preBalances": [10**20], "postBalances": [0]}, ["Failed"]),
+    tx("SigBig5", {"err": {"InstructionError": [0, {"Custom": 6000}]}, "preBalances": [10**18], "postBalances": [0]}, ["Failed"]),
     tx("SigBig6", {"preBalances": [1, 2, 3], "postBalances": [2, 4, 6], "loadedAddresses": {"writable": ["LutW"], "readonly": ["LutR"]}},
        ["Static"]),
     tx("SigBig7", {"preBalances": [1, 2], "postBalances": [1, 3], "loadedAddresses": {"writable": ["LutX"], "readonly": []}},
@@ -258,7 +263,7 @@ logs = [
                       "Program log: after the stack emptied", "%s signer_key().is_none()" % Q], err={"Custom": 1}),
     frame("SigLog3", ["Program %s invoke [007]" % P, "Program %s invoke [1234567890]" % P, "Program %s invoke [0]" % P,
                       "Program %s invoke [1]" % P[:31], "Program %s invoke [1]" % (P + "Z"), "Program %s success\n" % P,
-                      "Program log: \u2028 \u0085 \u007f \u001b[31m \t \\ \" \U0001F600 \u00e9", "Program data: ", "Program log: "]),
+                      "Program log:   \u0085 \u007f \u001b[31m \t \\ \" \U0001F600 é", "Program data: ", "Program log: "]),
     frame("SigLog4", []),
     tx("SigLog5", {}, None, None),
 ]
@@ -271,7 +276,6 @@ ixs = [
                       {"index": 0, "instructions": [ix(programIdIndex=2, accounts=[0, 3], data="3Bxs", stackHeight=2),
                                                     ix(programIdIndex=3, accounts=[], data="", stackHeight=2.0)]},
                       {"index": 0, "instructions": [ix(programIdIndex=1, accounts=[1], data="x", stackHeight=True)]},
-                      {"index": -1, "instructions": [ix(programIdIndex=1, data="neg")]},
                       {"index": 10**30, "instructions": [ix(programIdIndex=1, data="huge")]},
                       {"index": 1, "instructions": [ix(programIdIndex=2, data="s", stackHeight="2"),
                                                     ix(programIdIndex=2, data="n"), ix(programIdIndex=2, data="z", stackHeight=0)]}],
@@ -288,9 +292,9 @@ ixs = [
            parsed={"type": "transfer", "info": {"lamports": 2**64 + 1, "ratio": 0.1, "big": 1e22, "tiny": 5e-324,
                                                 "neg": -0.0, "whole": 100.0, "tie": 1365507272084322.25, "list": [1, "two", None, True]}},
            accounts=None),
-        ix(programIdIndex=-1, parsed=None, program=7),
+        ix(programIdIndex=0, parsed=None, program=7),
         ix(programIdIndex=1, parsed={"type": "x"}),
-        ix(programId="", data="emptyid"),
+        ix(programIdIndex=9, data="noprogram"),
         ix(programIdIndex=2, accounts=[1])]),
     b'{"meta":{"err":null,"innerInstructions":[{"index":0,"instructions":[{"programIdIndex":1,"stackHeight":2,"data":"d"}]}],'
     b'"logMessages":["Program ' + P.encode() + b' invoke [1]","Program ' + P.encode() + b' invoke [2]"]},'
@@ -299,16 +303,16 @@ ixs = [
 ]
 write("instructions.jsonl", ixs)
 ties = []
-names = ["aaa", "AAA", "Bbb", "bBB", "\u00e9", "e", "z", "Z", "a b", "a", "ab", "a_", "Ab", "b", "B", "zz", "Zz", "zZ",
-         "m", "M", "n", "N", "\u2028", "x\u0085y", ""]
+names = ["aaa", "AAA", "Bbb", "bBB", "é", "e", "z", "Z", "a b", "a", "ab", "a_", "Ab", "b", "B", "zz", "Zz", "zZ",
+         "m", "M", "n", "N", " x", "x　y", ""]
 for k, n in enumerate(names):
     for c in range(2):
         ties.append(tx("SigTie%d_%d" % (k, c), {"preBalances": [1], "postBalances": [1]}, [n, "Second" + str(k % 3)],
-                       [ix(programId=n or "?x"), ix(programIdIndex=-1), ix(programIdIndex=1)],
+                       [ix(programId=n or "?x"), ix(programIdIndex=0), ix(programIdIndex=1)],
                        {"blockTime": 1700000000 + k}))
 for k in range(3):
     ties.append(tx("SigTop%d" % k, {}, ["Top", "Top2"], [], {"blockTime": 1700000000}))
-for k, h in enumerate([0, -1, 1, 2, 10**30, None, -(10**30)]):
+for k, h in enumerate([0, 1, 2, 3, 10**30, None, 5]):
     t = tx("SigHdr%d" % k, {}, ["H1", "H2", "H3"], [])
     t["transaction"]["message"]["header"] = {"numRequiredSignatures": h}
     ties.append(t)
@@ -321,7 +325,7 @@ nums = [tx("SigNum0", {}, ["P"], [], {"version": "legacy", "blockTime": 17000000
         tx("SigNum3", {}, ["P"], [], {"version": False}),
         tx("SigNum4", {}, ["P"], [], {"version": None}),
         tx("SigNum5", {}, ["P"], [], {"version": [0, "\u007f"]}),
-        tx("SigNum6", {}, ["P"], [], {"version": "v\u2028x"})]
+        tx("SigNum6", {}, ["P"], [], {"version": "v x"})]
 if literal:
     nums += [b'{"version":1.0,"blockTime":-0,"meta":null,"transaction":{"signatures":["SigNum7"]}}',
              b'{"version":1E2,"blockTime":0,"transaction":{"signatures":["SigNum8"]}}',
@@ -335,12 +339,12 @@ done
 same5 "own cases, all files at once" incident_1/crafted/big.jsonl incident_1/crafted/logs.jsonl \
   incident_1/crafted/instructions.jsonl incident_1/crafted/ties.jsonl incident_1/crafted/numbers.jsonl
 agree lamports -- incident_1/crafted/big.jsonl
-eq "own cases: lamport deltas above 2^53 and of 40 digits are exact" \
-  "$(awk -F'\t' '$1 == "SigBig1" { printf "%s=%s ", $2, $3 }' "$T/b.out")" "PayerBig=1 AcctBig=-1 Acct40=1000000000000000000000000000000000000000 "
+eq "own cases: lamport deltas above 2^53, up to 2^64 - 1, are exact" \
+  "$(awk -F'\t' '$1 == "SigBig1" { printf "%s=%s ", $2, $3 }' "$T/b.out")" "PayerBig=1 AcctBig=-1 Acct63=4611686018427387904 "
 agree tokens -- incident_1/crafted/big.jsonl
-eq "own cases: token deltas above 2^64 are exact, keyed by account and mint (an account named owner:X shares the owner's bucket)" \
+eq "own cases: token deltas near 2^64 are exact, keyed by account and mint (an account named owner:X shares the owner's bucket)" \
   "$(awk -F'\t' '$1 == "SigBig4" { printf "%s:%s:%s ", $5, $3, $4 }' "$T/b.out")" \
-  "TokVault:MintA:-18446744073709551617 TokAttacker:MintA:18446744073709551617 owner:NoIndex:MintB:111111111111111111111111111111111111111111109 "
+  "TokVault:MintA:-18446744073709551615 TokAttacker:MintA:18446744073709551608 owner:NoIndex:MintB:1111111111111111109 "
 agree profile -- incident_1/crafted/ties.jsonl
 eq "own cases: the top-20 cut falls inside a tie of 25, broken by descending byte order" \
   "$(LC_ALL=C awk '/^-- fee payers/ { f = 1; next } /^--/ { f = 0 } f { n++; if (n == 1 || n == 20) printf "%s|", $0 }' "$T/b.out")" \
@@ -353,6 +357,83 @@ if [[ "$literal" == 1 ]]; then
     bad "own cases: the jq number forms are missing from the profile"
   fi
 fi
+
+# The recipes' bounds, each case next to a clean line: balances whose lists differ
+# in length or name more indexes than there are keys, nesting past 200 levels
+# (counted on the text, a value a later duplicate key replaces included),
+# integers outside u64, negative indexes, an empty program id, and the characters
+# a key, program id or version may not hold. deltas lamports prints a balance with
+# no account key as #<index>, and says so on stderr.
+python3 -I - "$WT/incident_1/rules" <<'PY'
+import json, os, sys
+d = sys.argv[1]
+os.makedirs(d)
+U64 = 2**64 - 1
+def tx(sig, meta=None, message=None, extra=None):
+    t = {"meta": dict({"err": None, "fee": 0}, **(meta or {})),
+         "transaction": {"signatures": [sig], "message": message if message is not None else {"accountKeys": ["Payer1", "Acct1"]}}}
+    t.update(extra or {})
+    return json.dumps(t, ensure_ascii=False).encode()
+clean = tx("SigRulesClean", {"preBalances": [10, 20], "postBalances": [5, 25]})
+def deep(sig, n, prefix=b"", suffix=b""):
+    return (b'{"meta":{"x":' + prefix + b"[" * (n - 2) + b"]" * (n - 2) + suffix + b'},"transaction":{"signatures":["'
+            + sig.encode() + b'"]}}')
+cases = {
+    "balances": [
+        tx("SigLen1", {"preBalances": [1, 2], "postBalances": [1]}),
+        tx("SigLen2", {"preBalances": [1]}),
+        tx("SigKeyless", {"fee": 5, "preBalances": [10, 20, 30, 40], "postBalances": [5, 25, 31, 40]},
+           {"accountKeys": ["OnlyKey"]}),
+    ],
+    "depth": [
+        deep("SigDepth200", 200),
+        deep("SigDepth201", 201),
+        deep("SigDupDepth", 250, suffix=b',"x":1'),
+        b'{"meta":{"x":"' + b"[" * 300 + b'"},"transaction":{"signatures":["SigBracketsInAString"]}}',
+    ],
+    "bounds": [
+        tx("SigU64Max", {"preBalances": [U64, 0], "postBalances": [0, U64]}),
+        tx("SigOverU64", {"preBalances": [U64 + 1, 0], "postBalances": [0, 1]}),
+        tx("SigNegative", {"preBalances": [-1, 0], "postBalances": [0, 1]}),
+        tx("SigFeeOver", {"fee": U64 + 1, "preBalances": [1, 0], "postBalances": [0, 1]}),
+        tx("SigHuge", {"preBalances": [int("9" * 4300), 0], "postBalances": [0, 1]}),
+        tx("SigAmount21", {"postTokenBalances": [{"accountIndex": 1, "mint": "M", "uiTokenAmount": {"amount": "0" * 20 + "1"}}]}),
+        tx("SigAmountOver", {"postTokenBalances": [{"accountIndex": 1, "mint": "M", "uiTokenAmount": {"amount": str(U64 + 1)}}]}),
+        tx("SigAmountSum", {"postTokenBalances": [{"mint": "M", "owner": "O", "uiTokenAmount": {"amount": str(U64)}}] * 4}),
+    ],
+    "indexes": [
+        tx("SigPidx", message={"accountKeys": ["Payer1"], "instructions": [{"programIdIndex": -1}]}),
+        tx("SigAidx", {"postTokenBalances": [{"accountIndex": -1, "mint": "M", "uiTokenAmount": {"amount": "1"}}]}),
+        tx("SigGroup", {"innerInstructions": [{"index": -1, "instructions": []}]}),
+        tx("SigGroupNull", {"innerInstructions": [{"index": None, "instructions": []}]}),
+        tx("SigHeader", message={"accountKeys": ["Payer1"], "header": {"numRequiredSignatures": -1}}),
+        tx("SigEmptyId", message={"accountKeys": ["Payer1"], "instructions": [{"programId": ""}]}),
+        tx("SigZeroIdx", message={"accountKeys": ["Payer1"], "instructions": [{"programIdIndex": -0}]}),
+    ],
+    "chars": [tx("SigKeyChar%04x" % c, message={"accountKeys": ["Key" + chr(c)]})
+              for c in (0x00, 0x1b, 0x7f, 0x85, 0x2028, 0x2029, 0x202e, 0x2066, 0x200f, 0x061c, 0x200b, 0xfeff)]
+             + [tx("SigProgChar", message={"accountKeys": ["P"], "instructions": [{"programId": "Prog‮"}]}),
+                tx("SigVersionChar", extra={"version": "0 "}),
+                tx("SigSafeSpaces", {"preBalances": [1, 2], "postBalances": [2, 1]}, {"accountKeys": ["Key A", "Key　B"]}),
+                tx("SigOddText‮ \x01", {"preBalances": [1, 2], "postBalances": [2, 1],
+                    "loadedAddresses": {"writable": ["Lut​"]},
+                    "postTokenBalances": [{"accountIndex": 1, "mint": "Mint﻿", "owner": "Own\x7f\u0085",
+                                           "uiTokenAmount": {"amount": "3"}}]})],
+}
+for name, lines in cases.items():
+    with open(os.path.join(d, name + ".jsonl"), "wb") as f:
+        f.write(clean + b"\n" + b"\n".join(lines) + b"\n")
+PY
+# Until the scripts follow these rules (lane dnr), the cases are pending: their
+# result is printed, not counted.
+python3 -I "$DNR/deltas.py" lamports "$WT/incident_1/rules/balances.jsonl" > "$T/probe.out" 2> /dev/null
+for f in balances depth bounds indexes chars; do
+  if grep -q '#1' "$T/probe.out"; then
+    same5 "recipe bounds, $f.jsonl" "incident_1/rules/$f.jsonl"
+  else
+    echo "pending: recipe bounds, $f.jsonl (the scripts in this checkout predate these rules)"
+  fi
+done
 
 # ---------------------------------------------------------------------------
 # 4. A generated corpus: 6,000 transactions in two files, the second opening with
@@ -376,7 +457,7 @@ def one(i):
     keys = [{"pubkey": n, "signer": j == 0, "writable": j < 3} for j, n in enumerate(names)] if parsed else names
     loaded = {"writable": [R.choice(accts)], "readonly": [R.choice(accts)]} if not parsed and R.random() < 0.3 else {"writable": [], "readonly": []}
     n = len(names) + len(loaded["writable"]) + len(loaded["readonly"])
-    pre = [R.choice([R.randint(0, 10**12), 2**53 + R.randint(0, 9), 2**64 + R.randint(0, 9)]) for _ in range(n)]
+    pre = [R.choice([R.randint(10**9, 10**12), 2**53 + R.randint(0, 9), 2**63 + R.randint(10**9, 10**10)]) for _ in range(n)]
     post = [p + R.choice([0, 0, 1, -1, R.randint(-10**9, 10**9)]) for p in pre]
     p0, p1 = names[-2], names[-1]
     tops = [({"programId": p0, "accounts": [names[1]], "data": b58(12)} if parsed else
@@ -391,7 +472,7 @@ def one(i):
             "Program %s success" % p1, "Program data: " + b58(20), "Program %s success" % p0]
     tb = lambda a: [{"accountIndex": 1, "mint": R.choice(mints), "owner": R.choice(payers),
                      "uiTokenAmount": {"amount": str(a), "decimals": 6}}]
-    amount = R.choice([R.randint(0, 10**9), 2**64 + R.randint(0, 9)])
+    amount = R.choice([R.randint(10**6, 10**9), 2**63 + R.randint(10**6, 10**9)])
     return {"slot": 1000 + i, "blockTime": 1700000000 + R.randint(0, 86400), "version": R.choice([0, "legacy", 0]),
             "meta": {"err": None if R.random() < 0.9 else {"InstructionError": [0, {"Custom": 1}]},
                      "fee": 5000, "preBalances": pre, "postBalances": post, "loadedAddresses": loaded,
@@ -436,10 +517,15 @@ for r in profile frames ix lamports tokens; do
     bad "--out: audit-logs $r -> exit $sc (script) / $bc, or the files differ"
   fi
 done
-# A second run replaces its own output, as the scripts' --out does.
-binary frames --out incident_1/out-frames.txt incident_1/crafted/ties.jsonl > /dev/null 2>&1
-binary frames incident_1/crafted/ties.jsonl > "$T/b.stdout" 2> /dev/null
-if cmp -s "$T/b.stdout" "$WT/incident_1/out-frames.txt"; then ok "--out: a second run replaces the file it wrote before"; else bad "--out: a second run did not replace its earlier output"; fi
+# An output never replaces a file: a second run to the same name is refused, by
+# audit-logs as by the script, and the file keeps the first output.
+cp "$WT/incident_1/out-frames.txt" "$T/first.out"
+agree frames -- --out incident_1/out-frames.txt incident_1/crafted/ties.jsonl
+if [[ ! -s "$T/diff" && ! -s "$T/b.out" ]] && grep -q '^audit-logs: refused: ' "$T/b.err" && cmp -s "$T/first.out" "$WT/incident_1/out-frames.txt"; then
+  ok "--out: a second run to the same name is refused, as by the script, and the file keeps its output"
+else
+  bad "--out: a second run to the same name -> $(tr '\n' ' ' < "$T/diff")"
+fi
 eq "--out: no temporary file is left beside the outputs" \
   "$(find "$WT/incident_1" -name '.*' ! -name .gitignore 2>/dev/null | tr '\n' ' ')" ""
 mkdir -p "$WT/incident_1/unread" "$T/elsewhere"
@@ -484,18 +570,17 @@ eq "--out: nothing was written through a link" "$(ls -A "$T/elsewhere" | tr '\n'
 eq "--out: the files beside them are as they were" "$(cat "$WT/incident_1/kept.txt")" "previous"
 
 # SIGTERM while audit-logs reads: stdin holds one transaction, then stays open until
-# the run has been stopped. The --out file keeps what it held, and no temporary
+# the run has been stopped. No file appears under the --out name, and no temporary
 # file is left.
 partial() { local f; for f in "$WT"/incident_1/.held.txt.*.partial; do [[ -e "$f" ]] && return 0; done; return 1; }
-printf 'previous\n' > "$WT/incident_1/held.txt"
 ( sed -n 1p "$FIX/clean-mixed.jsonl"; sleep 10 ) | ( cd "$WT" && exec "$BIN" frames --out incident_1/held.txt ) &
 pid=$!
 n=0; while ! partial && [[ "$n" -lt 100 ]]; do sleep 0.1; n=$((n + 1)); done
 kill -TERM "$pid" 2>/dev/null
 wait "$pid"
 code=$?
-eq "SIGTERM: exit 143, the --out file as it was, no temporary file left" \
-  "$code|$(cat "$WT/incident_1/held.txt")|$(partial && echo left)" "143|previous|"
+eq "SIGTERM: exit 143, nothing under the --out name, no temporary file left" \
+  "$code|$([[ -e "$WT/incident_1/held.txt" ]] && echo written)|$(partial && echo left)" "143||"
 
 # ---------------------------------------------------------------------------
 # 6. Confinement. The working directory reached through a link above it is the
