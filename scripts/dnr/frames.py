@@ -221,7 +221,6 @@ def _instruction_rows(tx: dict):
 # ---- input contract (scripts/dnr/README.md); the same block is in profile.sh, frames.py, deltas.py
 _NONE = type(None)
 _DIGITS = re.compile("[0-9]+")
-_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 _SURROGATE_ESCAPE = re.compile(r"\\u[dD][89a-fA-F]")
 _LONE_SURROGATE = re.compile("[\ud800-\udfff]")
 # Containers may nest this deep, the top-level object being 1: well below the 256 that
@@ -393,8 +392,9 @@ def _index(v):
 
 
 def _plain(v):
-    """A string with no control character, so it prints as one line."""
-    return type(v) is str and not _CONTROL.search(v)
+    """A string of printable characters only (no control character, no line or
+    paragraph separator), so it prints as one line."""
+    return type(v) is str and v.isprintable()
 
 
 def _u64(v):

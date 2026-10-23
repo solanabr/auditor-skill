@@ -32,7 +32,8 @@ Output: TSV on stdout, or with `--out <file>` in a temporary file beside it that
 replaces <file> only once the run is complete; UTF-8 whatever the locale.
 Signatures, owners and mints are base58 in real RPC data and deltas are decimal
 integers; any tab, newline, carriage return or backslash in a string field is
-escaped (`\\t`, `\\n`, `\\r`, `\\\\`), so a crafted corpus cannot forge a row.
+escaped (`\\t`, `\\n`, `\\r`, `\\\\`), so a crafted corpus cannot forge a row, and so
+is every other character Python does not print (`\\x00`, `\\u2028`, …).
 Token deltas are per token account (its `accountIndex` resolved through the
 transaction's account keys) and mint, so two accounts never share a bucket, even
 when the RPC gives no owner; sum the rows per owner for an owner's net, which nets
@@ -98,12 +99,20 @@ def _ok(tx: dict) -> bool:
     return (tx.get("meta") or {}).get("err") is None
 
 
+_TSV = {"\\": "\\\\", "\t": "\\t", "\n": "\\n", "\r": "\\r"}
+
+
 def _clean(s) -> str:
-    """Escape the bytes that could break a TSV row. Real RPC data carries base58
-    here, but a corpus can come from an untrusted export, so a key or mint holding a
-    tab or newline must not be able to forge an extra row or column."""
-    return (str(s).replace("\\", "\\\\").replace("\t", "\\t")
-            .replace("\n", "\\n").replace("\r", "\\r"))
+    """Escape what could break a TSV row, or hide in one. Real RPC data carries
+    base58 here, but a corpus can come from an untrusted export: a backslash, tab,
+    newline or carriage return is written as a backslash escape, so a key or mint
+    cannot forge an extra row or column, and every other character Python does not
+    print (a control character, a line or paragraph separator) as its escape too."""
+    s = str(s)
+    if s.isprintable() and "\\" not in s:
+        return s
+    return "".join(_TSV.get(c) or (c if c.isprintable() else c.encode("unicode_escape").decode("ascii"))
+                   for c in s)
 
 
 def _lamports(txs, out):
@@ -175,7 +184,6 @@ def _tokens(txs, out):
 # ---- input contract (scripts/dnr/README.md); the same block is in profile.sh, frames.py, deltas.py
 _NONE = type(None)
 _DIGITS = re.compile("[0-9]+")
-_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 _SURROGATE_ESCAPE = re.compile(r"\\u[dD][89a-fA-F]")
 _LONE_SURROGATE = re.compile("[\ud800-\udfff]")
 # Containers may nest this deep, the top-level object being 1: well below the 256 that
@@ -347,8 +355,9 @@ def _index(v):
 
 
 def _plain(v):
-    """A string with no control character, so it prints as one line."""
-    return type(v) is str and not _CONTROL.search(v)
+    """A string of printable characters only (no control character, no line or
+    paragraph separator), so it prints as one line."""
+    return type(v) is str and v.isprintable()
 
 
 def _u64(v):

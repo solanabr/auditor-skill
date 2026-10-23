@@ -84,7 +84,8 @@ because `python3 -I` keeps a sibling module off `sys.path`;
   `pubkey`; every index (`programIdIndex`, `accountIndex`, an inner group's
   `index`, `numRequiredSignatures`) is a non-negative integer, and a `programId`
   is not empty. Keys, program ids and a
-  string `version` hold no control character, so each prints as one line.
+  string `version` hold printable characters only (no control character, no line
+  or paragraph separator), so each prints as one line.
   `shaped()` in the block is the full rule.
 - **Malformed lines are counted, never echoed and never fatal.** A line that
   breaks a rule above is skipped. Each recipe then prints one note per input on
@@ -97,7 +98,10 @@ because `python3 -I` keeps a sibling module off `sys.path`;
   exit status depends on line order.
 - **Copies.** A transaction is read once, at the first line that carries its
   signature; the copies skipped are counted in a note of their own.
-- **Output.** `frames.py` and `deltas.py` write UTF-8 whatever the locale. To
+- **Output.** `frames.py` and `deltas.py` write UTF-8 whatever the locale.
+  `deltas.py` escapes, in every column, a backslash, tab, newline and carriage
+  return (`\\`, `\t`, `\n`, `\r`) and every other character Python does not print
+  (`\x00`, `\u2028`, …); `frames.py` writes JSON, which escapes control characters. To
   keep an output, pass `--out <file>`, never a shell redirection into
   `incident_<n>/`: the recipe writes a temporary file beside `<file>` and renames
   it onto `<file>` only when the run completes, so a run that is cut short never

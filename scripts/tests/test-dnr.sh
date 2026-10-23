@@ -937,6 +937,8 @@ bad = {
         b'"instructions"', b'"header": {"numRequiredSignatures": -1}, "instructions"'),
     "a-negative-accountIndex": enc(tx("SigBad43", pre_tb=[dict(bal("0"), accountIndex=-1)], post_tb=[dict(bal("5"), accountIndex=-1)])),
     "a-negative-inner-index": enc(tx("SigBad44", meta_extra={"innerInstructions": [{"index": -1, "instructions": []}]})),
+    "a-key-holding-a-line-separator": enc(tx("SigBad45", keys=["Payer1111111111111111\u2028Forged222222222222222", "Two1111111111111111111111111111111111111111"])),
+    "a-program-id-holding-a-next-line": enc(tx("SigBad46", ixs=[{"programId": "Prog\x85Forged", "accounts": []}])),
 }
 last = ("instruction-a-string", "keys-strings-and-objects", "header-count-a-string", "a-pubkey-that-is-an-object",
         "a-truncated-line-holding-a-drain", "nesting-300-deep")
@@ -949,6 +951,8 @@ good = {
     "a-duplicate-key": enc(tx("SigGood6", mark=False)).replace(b'"err": null', b'"err": {"Custom": 1}, "err": null'),
     "fewer-keys-than-balances": enc(tx("SigGood7", pre=[10000, 5, 9000000000], post=[5000, 10, 0], mark=False)),
     "nesting-200-deep": enc(tx("SigGood8", meta_extra={"x": "PLACE"}, mark=False)).replace(b'"PLACE"', b"[" * 198 + b"]" * 198),
+    "control-characters-in-owner-mint-and-signature": enc(tx("Sig\x0bGood9", pre=[10000, 5], post=[5000, 6], mark=False,
+        pre_tb=[dict(bal("0"), owner="Own\x00er\u2028X", mint="Mi\x1e\x85nt")], post_tb=[dict(bal("5"), owner="Own\x00er\u2028X", mint="Mi\x1e\x85nt")])),
 }
 for kind, cases in (("bad", bad), ("good", good)):
     for name, line in cases.items():
@@ -1005,6 +1009,9 @@ eq "contract: a raw CR between JSON tokens is not a line break: deltas keeps tha
 eq "contract: a balance whose index has no account key is a row named #<index>, with a note" \
   "$(python3 -I "$DNR/deltas.py" lamports "$TT/c20/good-fewer-keys-than-balances.jsonl" 2> "$TT/k20.err" | grep '^SigGood7' | tr '\t\n' ' |')$(grep -c '^deltas.py: 1 row(s) name a balance index that has no account key, as #<index>' "$TT/k20.err")" \
   "SigGood7 TokAcct11111111111111111111111111111111111 5|SigGood7 #2 -9000000000|1"
+eq "contract: deltas escapes every character it does not print, in every column" \
+  "$(python3 -I "$DNR/deltas.py" tokens "$TT/c20/good-control-characters-in-owner-mint-and-signature.jsonl" | grep -c '^Sig\\x0bGood9	Own\\x00er\\u2028X	Mi\\x1e\\x85nt	5	TokAcct')|$(python3 -I "$DNR/deltas.py" lamports "$TT/c20/good-control-characters-in-owner-mint-and-signature.jsonl" | grep -c '^Sig\\x0bGood9	')|$(python3 -I "$DNR/deltas.py" tokens "$TT/c20/good-control-characters-in-owner-mint-and-signature.jsonl" | python3 -I -c 'import sys; print(sum(not c.isprintable() and c not in "\t\n" for c in sys.stdin.read()))')" \
+  "1|1|0"
 eq "contract: the u64 maximum stays exact" \
   "$(python3 -I "$DNR/deltas.py" tokens "$TT/c20/good-an-amount-of-u64-max.jsonl" | awk -F'\t' '$1 == "SigGood5" { print $4 }')" "18446744073709551615"
 eq "contract: malformed lines are counted per input, named by path and line, not echoed; copies are counted apart" \
