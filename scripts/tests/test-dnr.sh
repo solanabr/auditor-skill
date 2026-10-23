@@ -1053,6 +1053,24 @@ eq "contract: frames writes those characters as \\u escapes, and the text reads 
   "$(grep -c -F '"text": "a\u202eb\u0085c\u007fd\u200be\ufefff"' "$TT/u20.frames")|$(unsafe20 "$TT/u20.frames")|$(python3 -I -c 'import json, sys
 print(any(json.loads(l).get("text") == "a\u202eb\x85c\x7fd\u200be\ufefff" for l in open(sys.argv[1], encoding="utf-8")))' "$TT/u20.frames")" \
   "1|0|True"
+# profile.sh counts and orders keys byte by byte under every locale: fee payers that
+# differ only in a character a UTF-8 collation ignores (U+00AD, U+034F, U+2060) stay
+# separate lines, in the same order under en_US.UTF-8 as under C.
+python3 -I - "$TT/l20.jsonl" <<'PY'
+import json, sys
+def tx(sig, payer):
+    return {"blockTime": 1700000000, "version": 0,
+            "meta": {"err": None, "fee": 5000, "preBalances": [1], "postBalances": [1]},
+            "transaction": {"signatures": [sig], "message": {"accountKeys": [payer]}}}
+payers = ["Payer1", "Pay­er1", "Payer1͏", "Pay⁠er1", "Payer1"]
+with open(sys.argv[1], "w", encoding="utf-8") as f:
+    for k, payer in enumerate(payers):
+        f.write(json.dumps(tx("SigLook%d" % k, payer), ensure_ascii=False) + "\n")
+PY
+LC_ALL=en_US.UTF-8 bash "$DNR/profile.sh" "$TT/l20.jsonl" > "$TT/l20.en" 2> /dev/null
+LC_ALL=C bash "$DNR/profile.sh" "$TT/l20.jsonl" > "$TT/l20.c" 2> /dev/null
+eq "contract: profile counts keys byte by byte, the same under every locale" \
+  "$(sed -n '/^-- fee payers/,/^-- signers/p' "$TT/l20.en" | grep -c '^ *[12] Pay')|$(cmp -s "$TT/l20.en" "$TT/l20.c" && echo same)" "4|same"
 # U+1FAE8 is new in Unicode 15: Python 3.9 (Unicode 13) and 3.11 (Unicode 14) do not
 # count it printable, Python 3.12 does; nor does any of them count U+00A0 (a no-break
 # space). The fixed list makes no difference between them: both print as themselves.

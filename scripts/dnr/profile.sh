@@ -440,15 +440,19 @@ with open(os.path.join(tmpd, "notes"), "w") as out:
         out.write("-- skipped: " + note + "\n")
         print("profile.sh: skipped " + note, file=sys.stderr)' "$tmpd" "$out" "$@"
 
-# report: the profile, from the deduplicated corpus.
+# report: the profile, from the deduplicated corpus. Every sort and uniq runs under
+# LC_ALL=C and compares bytes: under a UTF-8 locale, sort and uniq can count two keys
+# that differ only in a character the collation ignores (U+00AD, say) as one line,
+# and order ties by that locale. Under C, each key is its own line and every tie
+# falls in the same order wherever the profile runs.
 report() {
 cat "$tmpd/header"
 echo "-- transactions / outcome"
-jq -r 'if (.meta.err == null) then "ok" else "failed" end' "$corpus" | sort | uniq -c
+jq -r 'if (.meta.err == null) then "ok" else "failed" end' "$corpus" | LC_ALL=C sort | LC_ALL=C uniq -c
 echo "-- version"
-jq -r '(.version // "legacy") | tostring' "$corpus" | sort | uniq -c
+jq -r '(.version // "legacy") | tostring' "$corpus" | LC_ALL=C sort | LC_ALL=C uniq -c
 echo "-- time window (blockTime)"
-jq -r '.blockTime // empty' "$corpus" | sort -n | awk '
+jq -r '.blockTime // empty' "$corpus" | LC_ALL=C sort -n | awk '
   NR==1 {min=$0} {max=$0} END {
     if (NR) printf "   first=%s  last=%s  spanning=%d entries with a blockTime\n", min, max, NR
     else    print "   (no blockTime on these entries)"
@@ -458,7 +462,7 @@ jq -r '.blockTime // empty' "$corpus" | sort -n | awk '
 KEYDEF='def key: if type == "object" then .pubkey else . end;'
 echo "-- fee payers (accountKeys[0], top 20)"
 jq -r "$KEYDEF"' (.transaction.message.accountKeys[0] // empty) | key' "$corpus" \
-  | sort | uniq -c | sort -rn | sed -n '1,20p'
+  | LC_ALL=C sort | LC_ALL=C uniq -c | LC_ALL=C sort -rn | sed -n '1,20p'
 echo "-- signers (top 20)"
 # jsonParsed marks each key's `signer`; encoding: json puts the signers first, the
 # count in message.header.numRequiredSignatures.
@@ -469,7 +473,7 @@ jq -r "$KEYDEF"'
     then ($ak[] | select((.signer // false) == true) | .pubkey)
     else ($ak[0:($m.header.numRequiredSignatures // 1)][] | key)
     end' "$corpus" \
-  | sort | uniq -c | sort -rn | sed -n '1,20p'
+  | LC_ALL=C sort | LC_ALL=C uniq -c | LC_ALL=C sort -rn | sed -n '1,20p'
 echo "-- top-level programs invoked (instructions[].programId / programIdIndex, top 20)"
 # jsonParsed carries `programId`; encoding: json carries `programIdIndex` into the
 # static accountKeys (a top-level program id is always a static key, never one
@@ -479,7 +483,7 @@ jq -r "$KEYDEF"'
   | (($m.accountKeys // []) | map(key)) as $keys
   | $m.instructions[]?
   | (.programId // (if .programIdIndex != null then $keys[.programIdIndex] else empty end)) // empty' "$corpus" \
-  | sort | uniq -c | sort -rn | sed -n '1,20p'
+  | LC_ALL=C sort | LC_ALL=C uniq -c | LC_ALL=C sort -rn | sed -n '1,20p'
 cat "$tmpd/notes"
 }
 

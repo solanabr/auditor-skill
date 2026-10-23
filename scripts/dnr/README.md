@@ -130,6 +130,10 @@ because `python3 -I` keeps a sibling module off `sys.path`;
   hex). `frames.py` writes JSON: the encoder escapes the C0 controls, and every
   other character of the list is written as a `\uNNNN` escape (lowercase hex),
   so the value read back is unchanged.
+- **Counting.** `profile.sh` counts and orders values byte by byte (`sort` and
+  `uniq` run under `LC_ALL=C`), so two keys that differ only in a character a
+  locale's collation ignores stay two lines, and ties fall in the same order under
+  every locale.
 - **Saved output.** To keep an output, pass `--out <file>` with a new name,
   never a shell redirection into `incident_<n>/`. The recipe writes a temporary
   file beside `<file>` and gives it that name only when the run completes, so a
