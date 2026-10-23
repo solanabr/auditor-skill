@@ -1,29 +1,45 @@
 # auditor-tools
 
-Host-side static-analysis CLI for Solana/Anchor Rust codebases. Two binaries built
-from one library:
+Host-side CLI tools for Solana/Anchor audits and incident response. Three
+binaries:
 
 - **`audit-scan`** — parse a codebase and emit the *risky surface* as one JSON
   object, so the LLM auditor spends tokens on judgment instead of mechanical
   enumeration.
 - **`audit-mem`** — a SQLite findings store for cross-audit memory: exact dedup,
   regression detection, false-positive suppression, and warm re-audits.
+- **`audit-logs`** — the detection & response analysis recipes of `scripts/dnr/`
+  (`profile.sh`, `frames.py`, `deltas.py`) in one offline binary with the same
+  output.
 
-This is a plain synchronous CLI — no async runtime, no network. Parsing uses `syn`
-with `proc-macro2`'s `span-locations` feature, so every finding carries a real
-line number (`node.span().start().line`).
+`audit-scan` and `audit-mem` are built from one library; `audit-logs` is its own
+package, `audit-logs/`, with no dependencies. These are plain synchronous CLIs — no
+async runtime, no network. Parsing uses `syn` with `proc-macro2`'s
+`span-locations` feature, so every finding carries a real line number
+(`node.span().start().line`).
 
 ## Build
 
+Build in the auditor-skill installation, never inside a repository under audit:
+cargo reads `.cargo/config*` from every parent directory of the build.
+
 ```bash
-cd tools/auditor-tools
-cargo build --release
-# binaries at target/release/audit-scan and target/release/audit-mem
-cargo test          # runs tests/scan_fixture.rs and tests/mem_roundtrip.rs
+cd "<auditor-skill root>/tools/auditor-tools"
+cargo build --release --locked
+# binaries at target/release/audit-scan, target/release/audit-mem and target/release/audit-logs
+cargo test --locked          # the tests of both packages
 ```
 
 The `rusqlite` dependency uses the `bundled` feature — it compiles SQLite from
 source (`cc` required), so there is no system-library dependency.
+`cargo build --release --locked -p audit-logs` builds `audit-logs` alone: it
+compiles no dependency and needs no C compiler, though cargo still reads the
+crates.io index once for the workspace lockfile.
+
+A plugin update installs auditor-skill into a new versioned directory, so the
+binaries have to be built again after each update. Until `audit-logs` is built
+there, `/auditor:hunt`, `/auditor:respond` and `incident-responder` run the scripts
+in `scripts/dnr/`.
 
 ## `audit-scan`
 
@@ -200,6 +216,75 @@ protocol_profile(program_id PK, protocol_class, trust_assumptions_json,
                  oracle_set, admin_set, notes)
 ```
 
+## `audit-logs`
+
+```
+audit-logs profile [--out <file>] <corpus.jsonl>...
+audit-logs frames [--instructions] [--out <file>] [<corpus.jsonl>...]
+audit-logs deltas lamports|tokens [--out <file>] [<corpus.jsonl>...]
+```
+
+Each subcommand prints what its script in `scripts/dnr/` prints, byte for byte:
+`profile` the report of `profile.sh`, `frames` the records of `frames.py`, `deltas`
+the rows of `deltas.py`, with the same `skipped …` notes on stderr and the same exit
+status. It reads its input under the same input contract
+(`scripts/dnr/README.md`, "Input contract"): a malformed line is counted and
+reported, never echoed and never fatal; an amount or balance that is not an exact
+integer makes its line malformed and is never rounded; every total is exact at any
+size; a transaction several corpora hold is read once. `scripts/tests/test-audit-logs.sh`
+checks the output against the scripts on every fixture in `scripts/dnr/fixtures/`,
+on the crafted input-contract cases of `test-dnr.sh`, and on a generated corpus of
+6,000 transactions. The scripts stay the reference implementation.
+
+The commands run it only by its absolute path in the installation, and only when
+that file exists and is executable:
+`"<auditor-skill root>/tools/auditor-tools/target/release/audit-logs"`.
+
+### Where it reads and writes
+
+It is built to be pre-approved as one `Bash(…)` rule on its absolute path, so it
+must be safe whatever arguments follow:
+
+- Every path is relative to the working directory, has no `.`, `..` or empty
+  component, passes through no symbolic link, and names a file inside an
+  `incident_<n>/` run directory: a real directory, directly in the working
+  directory, holding a `.gitignore` of `*` (OUTPUT-RULES.md Rule 11d). Anything else
+  is refused, with exit 2, before any file is opened. Run the scripts on a corpus
+  kept elsewhere, such as a `--logs` export.
+- An input is opened without following a link and must still be the regular file
+  that was checked. With no corpus named, `frames` and `deltas` read stdin.
+- `--out <file>` writes a new temporary file beside `<file>`, created exclusively
+  and never through a link, and renames it onto `<file>` once the output is whole;
+  TERM, INT and HUP remove the temporary file. An existing `<file>` must be a
+  regular file with no other name.
+- Each option is given once, before the corpus paths.
+- It refuses to run from an installation inside the working directory, or from a
+  path holding a quote, `$`, a backtick, a backslash or a newline.
+- It opens no network connection, runs no other program and reads no environment
+  variable.
+
+Exit: 0 done · 1 an input that cannot be read, an `--out` that cannot be written,
+or a failed write · 2 usage, or a refused path. `profile` also exits 2 for an input
+that is missing or not a regular file, as `profile.sh` does.
+
+### Where it differs from the scripts
+
+- `profile` orders the ties in its top-20 lists by byte value, as `sort` does under
+  `LC_ALL=C`; under another locale `profile.sh` orders them by that locale. It pads
+  the count column to 7 places, as GNU `uniq -c` does; BSD `uniq -c` pads to 4.
+- `profile` prints a number in the version or `blockTime` as jq 1.7 does, from the
+  literal (`1.0`, `1E+2`, every digit of a large integer). A jq built without
+  decNumber prints a rounded double there instead.
+- A line nested more than 256 levels deep (jq's limit) is malformed for all three
+  subcommands. Of the scripts, `frames.py` and `deltas.py` read such a line up to
+  Python's recursion limit, and `profile.sh` stops partway with jq's parse error.
+- An integer of more than 4,300 digits makes its line malformed, as in Python 3.11
+  and later (Python's default limit on reading an int). A total of any size is
+  printed exactly, where `deltas.py` under Python 3.11 and later stops with a
+  traceback on a total of more than 4,300 digits.
+- It takes only the paths above, each option once; the scripts also take absolute
+  paths, `-` for stdin, and a repeated option.
+
 ## How the auditor agents consume this
 
 These tools are an **optional token-efficiency layer**. The audit skill degrades
@@ -209,6 +294,10 @@ gracefully — it works without them; they just save context and add memory.
   feed the JSON to the auditor as the initial map of instructions, account
   constraints, PDAs, arithmetic, panics, and CPIs. The model then reasons about
   reachability and severity instead of grepping the tree.
+- **`audit-logs` profiles an incident corpus.** `/auditor:hunt`, `/auditor:respond`
+  and `incident-responder` run it on `incident_<n>/corpus*/transactions.jsonl` when
+  it is built, and the scripts in `scripts/dnr/` when it is not; both give the same
+  figures.
 - **`audit-mem` warm-starts re-audits.** On a repeat audit of the same program,
   `warm --program-id` returns the protocol profile, recorded invariants, and any
   standing false-positive/accepted-risk rulings so prior context is not
