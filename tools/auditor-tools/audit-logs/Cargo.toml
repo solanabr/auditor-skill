@@ -1,0 +1,13 @@
+[package]
+name = "audit-logs"
+version = "0.1.0"
+edition = "2021"
+description = "Offline profiler for Solana getTransaction JSONL corpora: profile, frames and deltas, as scripts/dnr computes them."
+license = "MIT"
+publish = false
+
+# No dependencies: the JSON reader, the number formats and the exact integers are
+# written here, so the output matches the scripts byte for byte.
+[[bin]]
+name = "audit-logs"
+path = "src/main.rs"

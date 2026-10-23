@@ -31,3 +31,9 @@ anyhow = "1"
 
 [profile.release]
 opt-level = 2
+
+# audit-logs is its own package with no dependencies, so building it changes nothing
+# in the dependency set or features of audit-scan and audit-mem.
+[workspace]
+members = [".", "audit-logs"]
+default-members = [".", "audit-logs"]
