@@ -19,7 +19,9 @@ Two modes:
   deltas.py lamports [--out <file>] [files...]
                                   per (signature, account) non-zero lamport delta;
                                   the fee is added back for the fee payer (index 0),
-                                  so the row reflects movement, not the fee.
+                                  so the row reflects movement, not the fee. A balance
+                                  whose index has no account key is printed as
+                                  #<index>, and counted in a note on stderr.
   deltas.py tokens [--out <file>] [files...]
                                   per (signature, token account, mint) raw-unit
                                   token delta; columns: signature, owner (a label,
@@ -104,6 +106,8 @@ def _clean(s) -> str:
 
 
 def _lamports(txs, out):
+    """Write the rows; return how many name a balance index that has no account key."""
+    keyless = 0
     for tx in txs:
         if not _ok(tx):
             continue
@@ -113,10 +117,18 @@ def _lamports(txs, out):
         fee = meta.get("fee") or 0
         keys = _account_keys(tx)
         sig = ((tx.get("transaction") or {}).get("signatures") or ["?"])[0]
-        for i in range(min(len(pre), len(post), len(keys))):
+        # pre and post are the same length (the input contract). A balance whose
+        # index has no account key is still a movement: it is printed as #<index>.
+        for i in range(len(pre)):
             d = post[i] - pre[i] + (fee if i == 0 else 0)
             if d != 0:
-                out.write(f"{_clean(sig)}\t{_clean(keys[i])}\t{d}\n".encode("utf-8"))
+                if i < len(keys):
+                    account = keys[i]
+                else:
+                    account = "#%d" % i
+                    keyless += 1
+                out.write(f"{_clean(sig)}\t{_clean(account)}\t{d}\n".encode("utf-8"))
+    return keyless
 
 
 def _tokens(txs, out):
@@ -375,6 +387,8 @@ def shaped(tx):
         v = meta.get(name)
         if not (_of(v, list) and all(type(x) is int for x in v or [])):
             return False
+    if len(meta.get("preBalances") or []) != len(meta.get("postBalances") or []):
+        return False
     for name in ("preTokenBalances", "postTokenBalances"):
         v = meta.get(name)
         if not (_of(v, list) and all(_token_balance(b) for b in v or [])):
@@ -459,12 +473,12 @@ def main(argv: list[str]) -> int:
         print("deltas.py: " + problem[1], file=sys.stderr)
         return problem[0]
     stats = {"dupes": 0, "bad": []}
-    out = None
+    out, keyless = None, 0
     try:
         out = Output(out_path)
         txs = (tx for _line, tx in records(files, stats))
         if mode == "lamports":
-            _lamports(txs, out)
+            keyless = _lamports(txs, out)
         else:
             _tokens(txs, out)
         out.done()
@@ -476,6 +490,10 @@ def main(argv: list[str]) -> int:
             out.close()
     for note in skipped(stats):
         print("deltas.py: skipped " + note, file=sys.stderr)
+    if keyless:
+        print("deltas.py: %d row(s) name a balance index that has no account key, as #<index>: the "
+              "transaction lists fewer keys than balances (an encoding json export without "
+              "meta.loadedAddresses, say)" % keyless, file=sys.stderr)
     return 0
 
 

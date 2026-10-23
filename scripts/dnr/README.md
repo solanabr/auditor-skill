@@ -15,7 +15,7 @@ Full method and the verdict rules these feed: `references/detection-response/`.
 | `collect.sh` | The gated collector: pages signature history (failed transactions included — they are attempt evidence) and fetches transactions into a local JSONL corpus, integers exact on any jq. Refuses without `--confirmed`, on any input that is not base58, when `--out` already holds any corpus file, when `--out` has a `.` or `..` component or is reached through a symbolic link inside the working directory, and when `--out` or the `incident_*` directory above it is a symbolic link, holds one, is tracked by git, or cannot be checked by git or find; writes the corpus files only through the descriptors it opened when it created them; read-only RPC only; capped (`--max-tx` counts every `getTransaction` call) and stops after ten failed calls in a row; pages until an empty page (a shorter page ends the history only on the cap's last page); reports when the page cap stops on a full page, where older history may exist, and writes every gap (a failed fetch, that page cap, the `--max-tx` cap, a stop, an interrupted run) to `collection-gaps.tsv`. Ends with `transactions fetched: N of M calls` and `collection gaps: N`. |
 | `profile.sh` | Baseline a `transactions.jsonl`: outcome / version histograms, time window, fee-payer, signer and top-level-program inventories — all from structural fields, never from log text. Reads under the input contract (below). |
 | `frames.py` | Attribute each `Program log:` / `Program data:` line to the program frame that emitted it, as JSONL. Walks the log array one element at a time with anchored regexes. With `--instructions`, emits the runtime-recorded instructions instead (`ix`: top-level and CPI, program, accounts, data as given) and the runtime invoke lines joined to them (`invoke`), which is how Leg 1 names the instruction that ran. |
-| `deltas.py` | `lamports` or `tokens`: per-account / per-(token account, mint) balance movement, with the owner as a label, computed in Python integers, successful transactions only. An amount or balance that is not an exact integer makes its line malformed; it is never rounded. |
+| `deltas.py` | `lamports` or `tokens`: per-account / per-(token account, mint) balance movement, with the owner as a label, computed in Python integers, successful transactions only. An amount or balance that is not an exact integer makes its line malformed; it is never rounded. A lamport balance whose index has no account key is printed as `#<index>` and counted in a note, never left out. |
 | `redact.sh` | A stderr/stdout filter that strips provider credentials (e.g. `?api-key=…`, a `/v2/<key>` path, a token in a subdomain, curl's verbose request lines) before text reaches the transcript, the ledger, or a report. |
 | `fixtures/` | Committed adversarial corpora the self-test and the docs cite. |
 
@@ -73,8 +73,9 @@ because `python3 -I` keeps a sibling module off `sys.path`;
 - **Shape.** Every field a recipe reads must have the type it reads it as:
   `meta`, `transaction` and `message` are objects; `signatures`, `accountKeys`,
   `instructions`, `logMessages`, `innerInstructions` and the balance arrays are
-  lists; `fee`, `blockTime` and the lamport balances are JSON integers (a float is
-  never rounded); a token `uiTokenAmount.amount` is a string of ASCII digits (not
+  lists, and `preBalances` and `postBalances` have the same length; `fee`,
+  `blockTime` and the lamport balances are JSON integers (a float is never
+  rounded); a token `uiTokenAmount.amount` is a string of ASCII digits (not
   `1_000`, `+5`, `1e3`, a non-ASCII digit or a JSON number); the account keys are
   all strings, or all objects with a string `pubkey`. Keys, program ids and a
   string `version` hold no control character, so each prints as one line.

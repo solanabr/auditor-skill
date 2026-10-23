@@ -434,6 +434,8 @@ def shaped(tx):
         v = meta.get(name)
         if not (_of(v, list) and all(type(x) is int for x in v or [])):
             return False
+    if len(meta.get("preBalances") or []) != len(meta.get("postBalances") or []):
+        return False
     for name in ("preTokenBalances", "postTokenBalances"):
         v = meta.get(name)
         if not (_of(v, list) and all(_token_balance(b) for b in v or [])):

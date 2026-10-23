@@ -920,6 +920,7 @@ bad = {
     "a-key-holding-a-newline": enc(tx("SigBad28", keys=["Payer11111111111\nForged2222222222222222222"])),
     "a-program-id-holding-a-newline": enc(tx("SigBad29", ixs=[{"programId": "Prog\nForged", "accounts": []}])),
     "a-version-holding-a-newline": enc(dict(tx("SigBad30"), version="0\n   999 legacy")),
+    "balance-lists-of-different-lengths": enc(tx("SigBad31", pre=[10000, 5, 9000000000], post=[5000, 10])),
 }
 last = ("instruction-a-string", "keys-strings-and-objects", "header-count-a-string", "a-pubkey-that-is-an-object",
         "a-truncated-line-holding-a-drain")
@@ -930,6 +931,7 @@ good = {
     "an-escaped-backslash-before-u": enc(tx("SigGood4", mark=False)).replace(b"Program log: hello", b"Program log: \\\\ud800"),
     "a-45-digit-amount": enc(tx("SigGood5", pre_tb=[bal("0")], post_tb=[bal("1" * 45)], mark=False)),
     "a-duplicate-key": enc(tx("SigGood6", mark=False)).replace(b'"err": null', b'"err": {"Custom": 1}, "err": null'),
+    "fewer-keys-than-balances": enc(tx("SigGood7", pre=[10000, 5, 9000000000], post=[5000, 10, 0], mark=False)),
 }
 for kind, cases in (("bad", bad), ("good", good)):
     for name, line in cases.items():
@@ -983,6 +985,9 @@ for f in "$TT"/c20/good-*.jsonl; do
 done
 eq "contract: a raw CR between JSON tokens is not a line break: deltas keeps that transaction's rows" \
   "$(python3 -I "$DNR/deltas.py" lamports "$TT/c20/good-raw-CR-between-tokens.jsonl" | cut -f1 | sort -u | tr '\n' ' ')" "SigClean SigGood1 "
+eq "contract: a balance whose index has no account key is a row named #<index>, with a note" \
+  "$(python3 -I "$DNR/deltas.py" lamports "$TT/c20/good-fewer-keys-than-balances.jsonl" 2> "$TT/k20.err" | grep '^SigGood7' | tr '\t\n' ' |')$(grep -c '^deltas.py: 1 row(s) name a balance index that has no account key, as #<index>' "$TT/k20.err")" \
+  "SigGood7 TokAcct11111111111111111111111111111111111 5|SigGood7 #2 -9000000000|1"
 eq "contract: a 45-digit amount stays exact" \
   "$(python3 -I "$DNR/deltas.py" tokens "$TT/c20/good-a-45-digit-amount.jsonl" | awk -F'\t' '$1 == "SigGood5" { print $4 }')" "$(python3 -I -c 'print("1" * 45)')"
 eq "contract: malformed lines are counted per input, named by path and line, not echoed; copies are counted apart" \
