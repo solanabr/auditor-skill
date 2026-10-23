@@ -16,7 +16,8 @@
 #   - the scratch-directory recipes, FULL-AUDIT Step 3.2 and KV-089 Steps 1, 2 and 5: with $SCRATCH unset,
 #     empty, missing, relative or inside the working directory, or mktemp failing, they print OUTCOME: no
 #     scratch copy and run nothing; otherwise npm, cargo and rustup run only inside the scratch directory;
-#   - KV-137 Step 2: the upstream comparison runs in a scratch copy and nothing from the checkout's config.
+#   - KV-137 Step 2: the upstream comparison runs in a scratch copy with no work tree, against upstream's
+#     default branch whatever its name, and nothing from the checkout's config runs; a relative TMPDIR stops it.
 # Usage (from the repo root): bash scripts/tests/test-lockfile-recipes.sh
 # Needs bash >= 3.2, git, grep, sed, awk, find, mkfifo. No network: the upstream is a local path.
 set -uo pipefail
@@ -375,7 +376,7 @@ scratch_case "FULL-AUDIT Step 3.2" "$T/fa.sh" "" TMPDIR="$T/tmp"
 
 # ---- 4. KV-137 Step 2: upstream fetched into a scratch copy -----------------------------------------------
 U="$T/kv137"
-git init -q -b main "$U/up" && mkdir -p "$U/up/programs/p" && echo v1 > "$U/up/programs/p/lib.rs" \
+git init -q -b trunk "$U/up" && mkdir -p "$U/up/programs/p" && echo v1 > "$U/up/programs/p/lib.rs" \
   && (cd "$U/up" && c v1 > /dev/null) && git clone -q "$U/up" "$U/client" \
   && echo fix > "$U/up/programs/p/fix.rs" && (cd "$U/up" && c "upstream security fix" > /dev/null) \
   && echo t > "$U/client/tenant" && (cd "$U/client" && c tenant > /dev/null) || exit 1
@@ -386,13 +387,19 @@ for h in post-checkout reference-transaction; do
 done
 refs_before=$(git -C "$U/client" for-each-ref | wc -l | tr -d ' ')
 deployed=$(git -C "$U/up" rev-list --max-parents=0 HEAD)
-awk '/^\*\*Step 2:/ {s = 1} s && /^SCRATCH=/ {g = 1} g {print} g && /\| head -40 \)$/ {exit}' "$KV137" \
+awk '/^\*\*Step 2:/ {s = 1} s && /^SCRATCH=/ {g = 1} g {print} g && /^fi$/ {exit}' "$KV137" \
   | sed -e "s#<checkout>#$U/client#; s#<UPSTREAM_REPO>#$U/up#; s#<deployed_commit>#$deployed#" > "$T/kv137.sh"
-( cd "$U/client" && TMPDIR="$T/tmp" bash "$T/kv137.sh" ) > "$T/kv137.out" 2>&1
+mkdir -p "$T/tmp137"
+( cd "$U/client" && TMPDIR="$T/tmp137" bash "$T/kv137.sh" ) > "$T/kv137.out" 2>&1
 if grep -q ' upstream security fix$' "$T/kv137.out" && [ -z "$(ls "$U" | grep '^fired-')" ] \
-   && [ "$(git -C "$U/client" for-each-ref | wc -l | tr -d ' ')" = "$refs_before" ]; then
-  ok "KV-137 Step 2 lists the upstream fix from a scratch copy and leaves the checkout alone"
+   && [ "$(git -C "$U/client" for-each-ref | wc -l | tr -d ' ')" = "$refs_before" ] \
+   && [ "$(ls -A "$T/tmp137"/auditor-upstream.*/copy)" = .git ]; then
+  ok "KV-137 Step 2 lists the fix on upstream's default branch from a copy with no work tree, and leaves the checkout alone"
 else bad "KV-137 Step 2"; sed 's/^/  | /' "$T/kv137.out"; fi
+( cd "$U/client" && TMPDIR=rel bash "$T/kv137.sh" ) > "$T/kv137.out" 2>&1
+if has "$T/kv137.out" "OUTCOME: no scratch copy (check TMPDIR)" && [ ! -e "$U/client/copy" ]; then
+  ok "KV-137 Step 2 with a relative TMPDIR prints OUTCOME: no scratch copy and clones nothing"
+else bad "KV-137 Step 2 with a relative TMPDIR"; sed 's/^/  | /' "$T/kv137.out"; fi
 
 echo "---- $pass passed, $failn failed"
 [ "$failn" -eq 0 ]
