@@ -315,6 +315,7 @@ Balance movements of successful transactions, computed in Python integers so tha
 
 - `lamports` prints `signature`, `account`, `delta` for each non-zero lamport change, with the fee added back for the fee payer.
 - `tokens` prints one row per token account: `signature`, `owner` (`?` when the corpus names none), `mint`, `delta` in raw units, and the token account. Sum the rows per owner and mint for an owner's net movement.
+- A balance whose index has no account key is printed as `#<index>`. A token balance with no `accountIndex` has nothing to pair its pre and post sides by, so each side is a row of its own, `#?`. A note on stderr counts each kind; neither is ever merged with another account.
 
 The output is TSV on stdout; tabs, newlines, carriage returns and backslashes inside a field are escaped, and so is every other character of the input contract's fixed list (control characters, line and paragraph separators, bidirectional controls, zero-width characters; `scripts/dnr/README.md`). Several corpora count each signature once. An amount or balance that is not an exact integer (a float, `1_000`, a non-ASCII digit) makes its line malformed under the shared input contract: the line is skipped and counted, never rounded. Skipped copies, and each input's malformed lines, are reported on stderr; the malformed lines are collection gaps.
 
