@@ -26,7 +26,9 @@
 #     revisions are the last one or two words before -- that are not options. git-ro puts them behind
 #     --end-of-options and ends them with --, so no option can take one as its value.
 #   diff-tree: as git always runs it, on trees.
-#   blame: needs <rev> -- <path>; git-ro puts the revision right after the subcommand.
+#   blame: needs <rev> -- <path>; git-ro puts the revision right after the subcommand. It refuses a
+#     repository whose config sets blame.ignoreRevsFile: git reads that file, prints a line it cannot
+#     parse, and no command-line value resets the setting. Blame a copy instead.
 #   grep: committed content only. With no revision it searches the index, as with --cached.
 #   ls-files: no -m/--modified (it runs clean filters), --eol, or --format reading the work tree.
 #   cat-file: no --filters or --batch-command; standard input reaches --batch and --batch-check only.
@@ -43,7 +45,8 @@
 #   --output*, --ext-diff, --textconv, --show-signature, --exec*, --upload-pack*, --receive-pack*,
 #   --remote (--remotes is allowed), --git-dir*, --work-tree*, --namespace*, --super-prefix*,
 #   --config-env*, --recurse-submodules*, --submodule*, --no-index, --contents*, --ignore-revs-file*,
-#   --exclude-from*, --pathspec-from-file*, --open-files-in-pager*; -O (a diff order file, grep's pager),
+#   --exclude-from*, --pathspec-from-file*, --open-files-in-pager*, --remerge-diff and --diff-merges=remerge
+#   or r (they run the merge drivers the repository configures); -O (a diff order file, grep's pager),
 #   grep -f/--file and --untracked, ls-files -X, blame -S.
 # --format and --pretty take a built-in name, a format: or tformat: string, or a string with a %. Other
 # names can be pretty.<name> aliases from the repository's config, and %G or %(signature runs the
@@ -55,9 +58,11 @@
 # and system and global config dropped. git runs with --no-pager, and -c pins override the repository's
 # config. They switch off:
 #   - programs config can name: core.fsmonitor, core.pager, core.hooksPath (hooks), diff.external,
-#     gpg.program, gpg.ssh.program and gpg.x509.program, log.showSignature and format.pretty;
+#     gpg.program, gpg.ssh.program and gpg.x509.program, log.showSignature and format.pretty, and
+#     log.diffMerges (a remerge diff runs merge.<driver>.driver);
 #   - fetching: protocol.allow=never stops lazy fetch and every remote helper on every git version;
-#   - files outside the tree that config can name: blame.ignoreRevsFile, mailmap.file;
+#   - files outside the tree that config can name and git prints from or parses: core.attributesFile,
+#     core.excludesFile, diff.orderFile, mailmap.file;
 #   - other repositories: submodule.recurse, diff.submodule;
 #   - output shaping: colour, core.quotePath, i18n.logOutputEncoding, core.bigFileThreshold.
 # --no-textconv --no-ext-diff go on log, show, diff, diff-tree, blame and reflog show, and --no-textconv
@@ -96,8 +101,8 @@ BLAME_USAGE='blame needs <rev> -- <path>: a revision, then --, then one path'
 # Long options refused with any ending, refused as written, and allowed only with a checked value; an
 # abbreviation of any of them is refused, except the four exact options that share a denied name's prefix.
 DENY_PREFIX='output exec upload-pack receive-pack git-dir work-tree namespace super-prefix config-env recurse-submodules submodule contents ignore-revs-file exclude-from pathspec-from-file open-files-in-pager'
-DENY_EXACT='ext-diff textconv show-signature no-index remote'
-GUARDED='format pretty'
+DENY_EXACT='ext-diff textconv show-signature no-index remote remerge-diff'
+GUARDED='format pretty diff-merges'
 EXACT_OK='exclude text ignore-rev batch'
 
 refuse() { confine_refuse "$1"; }
@@ -117,7 +122,13 @@ check_format() { # check_format <value of --format or --pretty>
   fi
 }
 
-check_long() { # check_long <option without its leading -->: returns 2 when the next word is its value
+check_merges() { # check_merges <value of --diff-merges>
+  case "$1" in
+    remerge|r) refuse "a remerge diff runs the merge drivers the repository configures: --diff-merges=$(confine_text "$1")" ;;
+  esac
+}
+
+check_long() { # check_long <option without its leading -->: sets NEXT when the next word is its value
   local name=${1%%=*} d
   while :; do
     case "$name" in no-no-*) name=${name#no-no-} ;; *) break ;; esac
@@ -136,16 +147,23 @@ check_long() { # check_long <option without its leading -->: returns 2 when the 
     format|pretty)
       case "$1" in
         *=*) check_format "${1#*=}" ;;
-        format) return 2 ;;
+        format) NEXT=format ;;
+      esac ;;
+    diff-merges)
+      case "$1" in
+        *=*) check_merges "${1#*=}" ;;
+        *) NEXT=merges ;;
       esac ;;
   esac
   return 0
 }
 
 # check_options <subcommand> <arg>...: the denylist, before the first --. A short option whose first
-# letter takes free text (-S<string>, -e<pattern>) is checked by that letter only.
+# letter takes free text (-S<string>, -e<pattern>) is checked by that letter only. The value of
+# --format or --diff-merges given as the next word is checked as a value, and as an option too.
 check_options() {
-  local a short_deny short_free first value=0
+  local a short_deny short_free first
+  NEXT=""
   SUB=$1
   shift
   case "$SUB" in
@@ -163,14 +181,13 @@ check_options() {
     *) short_deny='' short_free='' ;;
   esac
   for a in "$@"; do
-    if [ "$value" -eq 1 ]; then
-      check_format "$a"
-      value=0
-      continue
-    fi
+    case "$NEXT" in
+      format) NEXT=""; check_format "$a" ;;
+      merges) NEXT=""; check_merges "$a" ;;
+    esac
     case "$a" in
       --) break ;;
-      --?*) check_long "${a#--}" || value=1 ;;
+      --?*) check_long "${a#--}" ;;
       -?*)
         [ -n "$short_deny" ] || continue
         first=${a#-}
@@ -257,8 +274,9 @@ run_copy() { # run_copy <dir> <R>
     k=$((k + 1))
   done
   confine_mkdir "$WT/$r/$dest" || refuse "cannot create $r/$dest"
-  scratch=$(mktemp -d "${TMPDIR:-/tmp}/auditor-git-ro.XXXXXX") && scratch=$(cd -P -- "$scratch" && pwd -P) ||
+  scratch=$(mktemp -d "${TMPDIR:-/tmp}/auditor-git-ro.XXXXXX") && confine_phys "$scratch" ||
     { rmdir "$WT/$r/$dest"; refuse "cannot create a scratch directory"; }
+  scratch=$CONFINE_PHYS
   case "$scratch/" in
     "${WT%/}/"*) rmdir "$scratch" "$WT/$r/$dest"; refuse "the scratch directory (TMPDIR) lies inside the working directory" ;;
   esac
@@ -489,6 +507,12 @@ run_blame() { # run_blame [<options>] <rev> -- <path>
   case "$rev" in -*) refuse "$BLAME_USAGE" ;; esac
   [ "$dd" -lt 2 ] || opts=("${args[@]:0:$((dd - 1))}")
   check_options blame ${opts[@]+"${opts[@]}"}
+  hgit "$REPO" config --get-all blame.ignorerevsfile >/dev/null 2>&1
+  case $? in
+    1) ;;
+    0) refuse "blame does not run where the repository's config sets blame.ignoreRevsFile; blame a copy (git-ro.sh copy, then --git-dir)" ;;
+    *) refuse "git cannot read the repository's config" ;;
+  esac
   hgit "$REPO" blame --no-textconv --no-ext-diff "$rev" ${opts[@]+"${opts[@]}"} -- "$path" </dev/null
   exit $?
 }
