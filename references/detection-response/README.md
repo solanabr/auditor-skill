@@ -141,11 +141,17 @@ other outcome is filed under `ruled_out[]`.
   `OK: reproduced on prebuilt bytes — vulnerable sha256=<hash> → [PoC-REPRODUCED]`,
   where `<hash>` is the zero-trimmed sha256 recorded in `LEDGER.md` for the snapshot,
   or the hash-matched build's (with `FIXED_SO`, the line also names the fixed bytes).
-  `run.sh` prints it only after the exploit's `assert_exploit_effect!` ran and held on the bytes it placed (every program `mollusk_for` loaded is the snapshot):
-  the **observed Leg-1 effect** (the account the attack changed and the value it left
-  there), not merely an `Ok`. A PoC built only from a minimized replica crate prints
-  another line and does **not** satisfy Leg 3. See `incidents-schema.md` →
-  `binary_provenance` and `poc-engineer`'s incident mode.
+  `run.sh` prints it only after the exploit's `assert_exploit_effect!` ran and held on
+  the bytes it placed (every program `mollusk_for` or `litesvm_for!` loaded is the
+  snapshot): the **observed Leg-1 effect** (the account the attack changed and the
+  value it left there), not merely an `Ok`. A LiteSVM PoC meets Leg 3 the same way: it
+  loads the program through `litesvm_for!` and asserts with the macros' LiteSVM forms.
+  A harness error (a wrong program id, a short account list) on either arm is exit 3,
+  inconclusive: Leg 3 stays unmet, `LEDGER.md` records `run.sh`'s blocker line with
+  "PoC re-run needed", and `poc-engineer` repairs the harness setup once and re-runs.
+  A PoC built only from a minimized replica crate prints another line and does
+  **not** satisfy Leg 3. See `incidents-schema.md` → `binary_provenance` and
+  `poc-engineer`'s incident mode.
 
 **Key compromise is capped at `suspected`.** When the root cause is a stolen or
 misused signer (`root_cause_class: key_compromise`), on-chain data cannot tell a

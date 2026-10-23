@@ -34,9 +34,13 @@ SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/fix-{FINDING_ID}.XXXXXX")" &&  # a fresh d
 ## 2. PoC now reverts (mandatory for [FIX-VERIFIED])
 
 Re-run the finding's own exploit against the **patched** build. The line that
-previously succeeded must now fail.
+previously succeeded must now fail. Refresh the crate's harness from the installation
+first, so the run is the installation's `run.sh` and assertions, and run the crate only
+through that `run.sh`.
 
 ```bash
+cp "<auditor-skill root>/templates/poc/run.sh" {PATH_TO}/poc/{FINDING_ID}/run.sh
+cp "<auditor-skill root>/templates/poc/shared-test-utils/src/lib.rs" {PATH_TO}/poc/{FINDING_ID}/shared-test-utils/src/lib.rs
 # {MODE}: the execution mode recorded at intake, isolated | native (OUTPUT-RULES.md Rule 11a)
 AUDITOR_EXEC_MODE={MODE} {PATH_TO}/poc/{FINDING_ID}/run.sh                    # minimized model
 AUDITOR_EXEC_MODE={MODE} VULNERABLE_SO={UNPATCHED_SO} FIXED_SO={PATCHED_SO} \
@@ -51,7 +55,8 @@ programs and each arm's contract assertion ran and held on the bytes `run.sh` pl
 `assert_exploit_rejected_with!` (the guard's exact error) in `tests/fixed_blocked.rs` on the patched ones.
 Only a final line ending in `(rejected with the pinned error) → [PoC-REPRODUCED]` verifies our patch; exit 2
 means it did not block the attack, and exit 3 decides nothing (no contract assertion ran, the harness could
-not decide, or other bytes ran). A PoC written with the any-result `assert_exploit_succeeds!` /
+not decide — a harness error, on either arm — or other bytes ran): record `run.sh`'s blocker line verbatim
+with the flag "PoC re-run needed", never as a revert. A PoC written with the any-result `assert_exploit_succeeds!` /
 `assert_exploit_rejected!` switches to these first. The PoC must also use the program's real id, since an
 Anchor program checks its own `declare_id!`; `run.sh` does not check that. The *minimized model* is the PoC
 crate's own `vulnerable` / `fixed` arms with the patch transplanted.
