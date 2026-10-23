@@ -76,9 +76,11 @@ counts but leave the version alone, so several content PRs can be open at once w
 version line.
 
 There are two kinds of bump:
-- **Patch (X.Y.Z+1).** It moves only `.claude-plugin/plugin.json` and both `.claude-plugin/marketplace.json`
-  entries. The plugin cache is keyed by that version, so plugin users receive the change. SKILL.md, the README
-  "What It Does" heading and `templates/audit-report.md` keep X.Y. There is no tag or GitHub Release.
+- **Patch (X.Y.Z+1).** The last commit of each PR that ships a step between minor releases. It moves only
+  `.claude-plugin/plugin.json` and both `.claude-plugin/marketplace.json` entries, which
+  `scripts/check-corpus.sh` holds to one version. The plugin cache is keyed by that version, so plugin users
+  receive the change. SKILL.md, the README "What It Does" heading and `templates/audit-report.md` keep X.Y.
+  There is no tag or GitHub Release.
 - **Minor or major (X.Y+1.0).** Every version reference moves together, the release is tagged with a GitHub
   Release, and the release-only steps below run.
 
