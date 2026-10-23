@@ -212,6 +212,7 @@ Step 1 of every hunt and response: it keeps the deployed program bytes before a 
     - a run directory that is a symbolic link, contains one, is tracked by git, or that git or find cannot check (the check fails closed). The check runs again just before the first write, when `bin/` must also be a directory of its own.
   - 3, a named blocker:
     - no `solana` CLI or `python3`;
+    - no private temp directory for the CLI config;
     - the CLI did not take the keyless config;
     - a CLI error;
     - no program under any loader: one more read (`solana account`, its data written to the temp directory) names the account's owner in the blocker. When a loader owns the account, the blocker says which case it is: a data account of the loader (a program's data account or a buffer: check the id), or an executable account neither `show` could read (a closed program, or a failing endpoint: run the snapshot again);
@@ -220,7 +221,9 @@ Step 1 of every hunt and response: it keeps the deployed program bytes before a 
     - a slot that moved during both dumps;
     - a hash that could not be computed;
     - a snapshot name already taken, or a `.show.txt` without its `.so`;
+    - a kept file that could not be written;
     - a kept snapshot that is not a regular file with the ELF magic beside a regular `.show.txt`, or later snapshots (`<id>@<slot>.so`) without the first one;
+    - bytes on-chain that differ from every kept snapshot, under a last-deployed slot that is not a plain number and so cannot name a new one;
     - bytes on-chain that differ from any snapshot kept at the same or a later last-deployed slot, even when another snapshot matches. Every kept snapshot is checked before any can match.
 - **Network:** read-only `solana` CLI calls to `$RPC_URL`, which reaches the CLI through a temporary `-C` config with no usable keypair path; it signs nothing. CLI errors pass through `redact.sh`.
 - **Writes:** in `<incident_dir>/bin/`:
