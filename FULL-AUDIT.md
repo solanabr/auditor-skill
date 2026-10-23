@@ -398,7 +398,7 @@ ACTIONS:
   case "$SCRATCH" in /*) ;; *) SCRATCH= ;; esac      # an absolute path only,
   case "$SCRATCH/" in "$PWD"/*) SCRATCH= ;; esac     # never inside the working directory
   if [ -z "$SCRATCH" ] || [ ! -d "$SCRATCH" ]; then
-    echo "OUTCOME: no scratch copy (create it first)"
+    echo "OUTCOME: no scratch copy (check TMPDIR)"
   else
     TC=$(cd "$SCRATCH" && rustup default | cut -d' ' -f1)   # your own toolchain, never the target's
     mkdir -p "$SCRATCH/backend" "$SCRATCH/web" "$SCRATCH/rust"

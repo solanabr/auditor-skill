@@ -372,14 +372,14 @@ scratch_case "KV-089 Step 5, SCRATCH unset" "$T/kv5.sh" "OUTCOME: no scratch cop
 scratch_case "KV-089 Step 5, SCRATCH a missing directory" "$T/kv5.sh" "OUTCOME: no scratch copy (run Step 1 first)" \
   SCRATCH="$T/missing" TMPDIR="$T/tmp"
 scratch_case "KV-089 Step 1, mktemp fails" "$T/kv1.sh" "OUTCOME: no scratch copy (check TMPDIR)" TMPDIR="$T/missing"
-scratch_case "FULL-AUDIT Step 3.2, mktemp fails" "$T/fa.sh" "OUTCOME: no scratch copy (create it first)" TMPDIR="$T/missing"
+scratch_case "FULL-AUDIT Step 3.2, mktemp fails" "$T/fa.sh" "OUTCOME: no scratch copy (check TMPDIR)" TMPDIR="$T/missing"
 mkdir -p "$T/tgt/rel" "$T/tgt/inside" "$T/tgt/tmpin" "$T/tgt/reltmp"
 scratch_case "KV-089 Step 2, SCRATCH a relative path" "$T/kv2.sh" "OUTCOME: no scratch copy (run Step 1 first)" SCRATCH=rel \
   TMPDIR="$T/tmp"
 scratch_case "KV-089 Step 5, SCRATCH inside the working directory" "$T/kv5.sh" "OUTCOME: no scratch copy (run Step 1 first)" \
   SCRATCH="$T/tgt/inside" TMPDIR="$T/tmp"
 scratch_case "KV-089 Step 1, TMPDIR a relative path" "$T/kv1.sh" "OUTCOME: no scratch copy (check TMPDIR)" TMPDIR=reltmp
-scratch_case "FULL-AUDIT Step 3.2, TMPDIR inside the working directory" "$T/fa.sh" "OUTCOME: no scratch copy (create it first)" \
+scratch_case "FULL-AUDIT Step 3.2, TMPDIR inside the working directory" "$T/fa.sh" "OUTCOME: no scratch copy (check TMPDIR)" \
   TMPDIR="$T/tgt/tmpin"
 scratch_case "KV-089 Steps 1, 2 and 5 in one shell" "$T/kv125.sh" "" TMPDIR="$T/tmp"
 scratch_case "FULL-AUDIT Step 3.2" "$T/fa.sh" "" TMPDIR="$T/tmp"
