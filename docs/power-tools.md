@@ -286,8 +286,8 @@ bash "<auditor-skill root>/scripts/dnr/profile.sh" [--out <file>] <corpus.jsonl>
 The baseline of one or more `getTransaction` JSONL corpora, such as every `incident_<n>/corpus*/transactions.jsonl`, counting each signature once. It reads structural fields only, never log text, and reports the succeeded / failed split, the transaction-version histogram, the `blockTime` window, and the top 20 fee payers, signers and top-level programs. It keeps the first occurrence of each signature and skips malformed lines under the input contract the three recipes share ([`scripts/dnr/README.md`](../scripts/dnr/README.md#input-contract)); closing `-- skipped` lines give both counts, one per input for malformed lines, and are printed on stderr too. Those malformed lines are collection gaps.
 
 - **Arguments:** one or more corpus files.
-- **`--out <file>`:** writes the report to a temporary file beside `<file>` and renames it onto `<file>` once the report is whole, as `frames.py` and `deltas.py` do.
-- **Exit:** 0 done · 1 a corpus file that cannot be read, or an `--out` that cannot be written · 2 usage error, no such file, or a file or `--out` that is a symbolic link or reached through one inside the working directory · 3 `jq` or `python3` missing, checked before anything is read (`[blocker] <tool> is not on PATH; profile.sh needs jq and python3.`).
+- **`--out <file>`:** writes the report to a temporary file beside `<file>`, a new name, and gives it that name once the report is whole, as `frames.py` and `deltas.py` do.
+- **Exit:** 0 done · 1 a corpus file that cannot be read, or an `--out` that cannot be written · 2 usage error, no such file, a file or `--out` that is a symbolic link or reached through one inside the working directory, or an `--out` that already exists · 3 `jq` or `python3` missing, checked before anything is read (`[blocker] <tool> is not on PATH; profile.sh needs jq and python3.`).
 - **Network:** none. **Writes:** stdout, or the `--out` file. Needs `jq` and `python3` (the one-per-signature pass runs as `python3 -I`).
 
 #### `frames.py`
@@ -300,8 +300,8 @@ Attributes each `Program log:`, `Program data:` and `Program return:` line to th
 
 - **Arguments:** corpus files (several corpora count each signature once), or none for stdin. Skipped copies, and each input's malformed lines, are reported on stderr.
 - **`--instructions`:** prints the instruction records instead; the default output is unchanged without it. An `ix` record for each entry of `message.instructions` and `meta.innerInstructions` gives the program, the top-level and inner index, the stack height, the accounts, and the data as given (or `parsed-only`). An `invoke` record gives each invocation's depth, outcome and the `ix_seq` it ran. No `ix` field comes from log text.
-- **`--out <file>`:** writes the records to a temporary file beside `<file>` and renames it onto `<file>` only when the run completes, so a run cut short never leaves a partial file under that name; a run stopped by TERM removes its temporary file. Use it, not a shell redirection, to keep an output in `incident_<n>/`.
-- **Exit:** 0 done · 1 a file that cannot be read, or an `--out` that cannot be written, checked before any record is printed · 2 usage error, or a file or `--out` that is a symbolic link or reached through one inside the working directory.
+- **`--out <file>`:** writes the records to a temporary file beside `<file>` and gives it that name only when the run completes, so a run cut short never leaves a partial file under that name; a run stopped by TERM removes its temporary file. `<file>` must be a new name: an output never replaces a file, an input corpus least of all. Use it, not a shell redirection, to keep an output in `incident_<n>/`.
+- **Exit:** 0 done · 1 a file that cannot be read, or an `--out` that cannot be written, checked before any record is printed · 2 usage error, a file or `--out` that is a symbolic link or reached through one inside the working directory, or an `--out` that already exists.
 - **Network:** none. **Writes:** stdout, or the `--out` file.
 
 #### `deltas.py`
@@ -318,7 +318,7 @@ Balance movements of successful transactions, computed in Python integers so tha
 The output is TSV on stdout; tabs, newlines, carriage returns and backslashes inside a field are escaped. Several corpora count each signature once. An amount or balance that is not an exact integer (a float, `1_000`, a non-ASCII digit) makes its line malformed under the shared input contract: the line is skipped and counted, never rounded. Skipped copies, and each input's malformed lines, are reported on stderr; the malformed lines are collection gaps.
 
 - **Arguments:** the mode, then `--out <file>` (written as `frames.py` writes it), then corpus files or none.
-- **Exit:** 0 done · 2 a missing or unknown mode, or a file or `--out` that is a symbolic link or reached through one inside the working directory · 1 a file that cannot be read, or an `--out` that cannot be written, checked before any row is printed.
+- **Exit:** 0 done · 2 a missing or unknown mode, a file or `--out` that is a symbolic link or reached through one inside the working directory, or an `--out` that already exists · 1 a file that cannot be read, or an `--out` that cannot be written, checked before any row is printed.
 - **Network:** none. **Writes:** stdout, or the `--out` file.
 
 #### `redact.sh`

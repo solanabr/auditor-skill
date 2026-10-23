@@ -1081,14 +1081,18 @@ for r in frames lamports; do
 done
 
 # ---------------------------------------------------------------------------
-# 22. --out writes a recipe's output to a temporary file beside <file> and renames
-#     it onto <file> only once it is whole: <file> then holds what stdout would
-#     have, no temporary file is left, and a run stopped by SIGTERM leaves <file>
-#     as it was. An --out that is a symbolic link, or reached through one inside
-#     the working directory, is refused (exit 2) and nothing is written.
+# 22. --out writes a recipe's output to a temporary file beside <file> and gives
+#     it that name only once it is whole: <file> then holds what stdout would have,
+#     and no temporary file is left. An output never replaces a file: an --out that
+#     exists, the input corpus among them, is refused (exit 2) and left as it was,
+#     and so is one that is a symbolic link, or reached through one inside the
+#     working directory. A run stopped by SIGTERM leaves no <file> and no
+#     temporary file.
 # ---------------------------------------------------------------------------
 W22="$TT/wd22"; mkdir -p "$W22/out" "$TT/elsewhere22"
 cat "$FIX/clean-mixed.jsonl" "$FIX/same-owner-drain.jsonl" "$FIX/ix-cpi-victim.jsonl" "$FIX/log-tab-injection.jsonl" > "$W22/corpus.jsonl"
+cp "$W22/corpus.jsonl" "$TT/corpus22.before"
+printf 'previous\n' > "$W22/out/taken.txt"
 for r in profile frames ix lamports tokens; do
   case "$r" in
     profile) set -- bash "$DNR/profile.sh" ;;
@@ -1104,8 +1108,19 @@ for r in profile frames ix lamports tokens; do
   else
     bad "--out: $r -> exit $code, file and stdout differ"
   fi
+  "$@" --out "$W22/corpus.jsonl" "$W22/corpus.jsonl" > /dev/null 2> "$TT/o22.err"
+  c1=$?
+  "$@" --out "$W22/out/taken.txt" "$W22/corpus.jsonl" > /dev/null 2>> "$TT/o22.err"
+  c2=$?
+  if [[ "$c1" == 2 && "$c2" == 2 && "$(cat "$W22/out/taken.txt")" == previous \
+        && "$(grep -c 'already exists, and an output never replaces a file: name a new one$' "$TT/o22.err")" == 2 ]] \
+     && cmp -s "$W22/corpus.jsonl" "$TT/corpus22.before"; then
+    ok "--out: $r refuses an --out that exists, its own input corpus too (exit 2, both left as they were)"
+  else
+    bad "--out: $r with an existing --out -> exit $c1 / $c2 ($(tr '\n' ' ' < "$TT/o22.err"))"
+  fi
 done
-eq "--out: no temporary file is left beside the outputs" "$(ls -A "$W22/out" | tr '\n' ' ')" "frames.txt ix.txt lamports.txt profile.txt tokens.txt "
+eq "--out: no temporary file is left beside the outputs" "$(ls -A "$W22/out" | tr '\n' ' ')" "frames.txt ix.txt lamports.txt profile.txt taken.txt tokens.txt "
 ln -s "$TT/elsewhere22/out.txt" "$W22/out-link.txt"
 ln -s "$TT/elsewhere22" "$W22/dir-link"
 for case in "a link|out-link.txt" "a path through a directory link in the working directory|dir-link/out.txt"; do
@@ -1122,21 +1137,24 @@ for case in "a link|out-link.txt" "a path through a directory link in the workin
 done
 eq "--out: nothing was written through those links" "$(ls -A "$TT/elsewhere22" | tr '\n' ' ')" ""
 # A run stopped by SIGTERM while it reads: stdin holds one transaction, then stays
-# open until the run has been stopped.
+# open until the test has stopped the run and lets the writer go.
 partial22() { local f; for f in "$W22"/out/."$1".*.partial; do [[ -e "$f" ]] && return 0; done; return 1; }
 for r in frames deltas; do
-  printf 'previous\n' > "$W22/out/held-$r.txt"
+  rm -f "$TT/release22"
   case "$r" in
-    frames) ( sed -n 1p "$FIX/clean-mixed.jsonl"; sleep 3 ) | python3 -I "$DNR/frames.py" --out "$W22/out/held-$r.txt" & ;;
-    deltas) ( sed -n 1p "$FIX/clean-mixed.jsonl"; sleep 3 ) | python3 -I "$DNR/deltas.py" lamports --out "$W22/out/held-$r.txt" & ;;
+    frames) ( sed -n 1p "$FIX/clean-mixed.jsonl"; n=0; while [[ ! -e "$TT/release22" && "$n" -lt 400 ]]; do sleep 0.05; n=$((n + 1)); done ) \
+              | python3 -I "$DNR/frames.py" --out "$W22/out/held-$r.txt" & ;;
+    deltas) ( sed -n 1p "$FIX/clean-mixed.jsonl"; n=0; while [[ ! -e "$TT/release22" && "$n" -lt 400 ]]; do sleep 0.05; n=$((n + 1)); done ) \
+              | python3 -I "$DNR/deltas.py" lamports --out "$W22/out/held-$r.txt" & ;;
   esac
   pid=$!
-  n=0; while ! partial22 "held-$r.txt" && [[ "$n" -lt 100 ]]; do sleep 0.1; n=$((n + 1)); done
+  n=0; while ! partial22 "held-$r.txt" && [[ "$n" -lt 200 ]]; do sleep 0.05; n=$((n + 1)); done
   kill -TERM "$pid" 2>/dev/null
   wait "$pid"
   code=$?
-  eq "--out: $r stopped by SIGTERM -> exit 143, the file as it was, no temporary file left" \
-    "$code|$(cat "$W22/out/held-$r.txt")|$(partial22 "held-$r.txt" && echo left)" "143|previous|"
+  touch "$TT/release22"
+  eq "--out: $r stopped by SIGTERM -> exit 143, no file under the --out name, no temporary file left" \
+    "$code|$([[ -e "$W22/out/held-$r.txt" ]] && echo written)|$(partial22 "held-$r.txt" && echo left)" "143||"
 done
 
 if [[ "$fails" -ne 0 ]]; then

@@ -157,7 +157,8 @@ prints a `skipped N malformed line(s) in input I (<path>), the first at line L`
 note per input on stderr. Copy every such note into the ledger's **Collection
 gaps** line: those transactions are missing from every figure. Keep a recipe's
 output with `--out <file>`, as above, never with a shell redirection: the file
-appears under its name only once the run is complete.
+appears under its name only once the run is complete, and since an output never
+replaces a file, a re-run names a new one (`frames-2.jsonl`).
 
 Program bytes and `solana program show` come only from `snapshot-program.sh`, and
 signature history and transactions only from `collect.sh`. Any other read — an

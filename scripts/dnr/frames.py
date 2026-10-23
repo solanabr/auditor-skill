@@ -10,9 +10,9 @@ Lines are read under the input contract that profile.sh and deltas.py share
 and a named input that is a symbolic link is refused. Each signature is read
 once: a later copy of the same transaction is skipped. Both counts are reported
 on stderr, the malformed lines per input, as collection gaps.
-Output: JSONL on stdout, or with `--out <file>` in a temporary file beside it
-that replaces <file> only once the run is complete. One record per emitted log
-line:
+Output: JSONL on stdout, or with `--out <file>` (a new name) in a temporary file
+beside it that becomes <file> only once the run is complete. One record per
+emitted log line:
 
     {"sig": "...", "ok": true, "depth": 2, "program": "<id|?>",
      "kind": "log|data|return|truncated|unparsed", "text": "..."}
@@ -63,9 +63,10 @@ way: no sibling modules. That is why the input-contract block below is a copy,
 kept the same in all three recipes (scripts/tests/test-dnr.sh compares them).
 
 Exit: 0 done · 1 a named input that cannot be read, an --out that cannot be
-written, or a write that failed · 2 usage, or a named input or --out that is a
-symbolic link, or reached through one inside the working directory. Every input
-and the --out path are checked before the first record is written.
+written, or a write that failed · 2 usage, a named input or --out that is a
+symbolic link or reached through one inside the working directory, or an --out
+that already exists. Every input and the --out path are checked before the first
+record is written.
 
 No network. stdlib only.
 """
@@ -300,15 +301,16 @@ def unusable(paths):
 
 
 def unwritable(path):
-    """None when --out path can take an output file, else (exit status, message): 2 for
-    a symbolic link, or a path reached through one inside the working directory, 1
-    for a path that is not a regular file or whose directory does not exist."""
+    """None when --out path can take a new output file, else (exit status, message): 2
+    for a symbolic link, a path reached through one inside the working directory, or
+    a path that exists (an output never replaces a file, an input corpus least of
+    all), 1 for a path whose directory does not exist."""
     try:
         if linked(path):
             return 2, ("--out %s is a symbolic link, or is reached through one inside the working"
                        " directory; refusing it" % shown(path))
-        if os.path.lexists(path) and not os.path.isfile(path):
-            return 1, "cannot write --out %s: not a regular file" % shown(path)
+        if os.path.lexists(path):
+            return 2, "--out %s already exists, and an output never replaces a file: name a new one" % shown(path)
         if not os.path.isdir(os.path.dirname(path) or "."):
             return 1, "cannot write --out %s: its directory does not exist" % shown(path)
     except OSError as e:
@@ -318,17 +320,27 @@ def unwritable(path):
 
 class Output:
     """Where the output goes: stdout, or for --out a new temporary file beside the path
-    that done() renames onto it once it is whole, so the path never holds a partial
-    output. close() removes a temporary file done() did not rename; SIGTERM exits
-    through it."""
+    that done() links to the path once it is whole, so the path never holds a partial
+    output, and never replaces a file that appeared in the meantime. close() removes
+    a temporary file done() did not link; SIGTERM exits through it, and is held off
+    while the temporary file is made, so its name is always known."""
 
     def __init__(self, path):
         self.path, self.temp, self.fh = path, None, sys.stdout.buffer
-        if path is not None:
-            signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
+        if path is None:
+            return
+        signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
+        held = signal.pthread_sigmask(signal.SIG_BLOCK, [signal.SIGTERM])
+        try:
             fd, self.temp = tempfile.mkstemp(dir=os.path.dirname(path) or ".",
                                              prefix="." + os.path.basename(path) + ".", suffix=".partial")
             self.fh = os.fdopen(fd, "wb")
+        finally:
+            try:
+                signal.pthread_sigmask(signal.SIG_SETMASK, held)
+            except BaseException:
+                self.close()
+                raise
 
     def write(self, data):
         self.fh.write(data)
@@ -337,7 +349,8 @@ class Output:
         self.fh.flush()
         if self.temp is not None:
             self.fh.close()
-            os.replace(self.temp, self.path)
+            os.link(self.temp, self.path)
+            os.unlink(self.temp)
             self.temp = None
 
     def close(self):

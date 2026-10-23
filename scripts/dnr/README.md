@@ -101,14 +101,16 @@ because `python3 -I` keeps a sibling module off `sys.path`;
 - **Output.** `frames.py` and `deltas.py` write UTF-8 whatever the locale.
   `deltas.py` escapes, in every column, a backslash, tab, newline and carriage
   return (`\\`, `\t`, `\n`, `\r`) and every other character Python does not print
-  (`\x00`, `\u2028`, …); `frames.py` writes JSON, which escapes control characters. To
-  keep an output, pass `--out <file>`, never a shell redirection into
-  `incident_<n>/`: the recipe writes a temporary file beside `<file>` and renames
-  it onto `<file>` only when the run completes, so a run that is cut short never
-  leaves a partial output under the final name, and one stopped by TERM removes
-  its temporary file. An `--out` that is a symbolic link, or reached through one
-  inside the working directory, is refused (exit 2); one whose directory is
-  missing is an error (exit 1).
+  (`\x00`, `\u2028`, …); `frames.py` writes JSON, which escapes control
+  characters.
+- **Saved output.** To keep an output, pass `--out <file>` with a new name,
+  never a shell redirection into `incident_<n>/`. The recipe writes a temporary
+  file beside `<file>` and gives it that name only when the run completes, so a
+  run that is cut short never leaves a partial output under the final name, and
+  one stopped by TERM removes its temporary file. An output never replaces a
+  file: an `--out` that already exists (an input corpus among them) is refused
+  (exit 2), and so is one that is a symbolic link or reached through one inside
+  the working directory; one whose directory is missing is an error (exit 1).
 
 ## Two hazards these encode, and why
 

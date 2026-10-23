@@ -13,7 +13,8 @@
 # that is a symbolic link, or reached through one inside the working directory, is
 # refused. The closing "-- skipped" lines are printed on stderr as well, before any
 # query runs; the malformed lines of each input are collection gaps. With --out, the
-# report goes to a temporary file beside <file> that replaces it only once whole.
+# report goes to a temporary file beside <file>, a new name, which gets the report
+# only once it is whole.
 #
 # What it reports (all from structural fields, never from log text):
 #   - transaction count and the finalized/failed split (meta.err)
@@ -40,9 +41,9 @@
 # each well-formed line byte for byte, less surrounding whitespace.
 #
 # Exit: 0 done · 1 a corpus file that cannot be read, or an --out that cannot be
-# written · 2 usage, no such file, or a file or --out that is a symbolic link, or
-# reached through one inside the working directory · 3 jq or python3 missing (a named
-# blocker). Every file is checked before anything is printed. bash >= 3.2, jq,
+# written · 2 usage, no such file, a file or --out that is a symbolic link or reached
+# through one inside the working directory, or an --out that already exists · 3 jq or
+# python3 missing (a named blocker). Every file is checked before anything is printed. bash >= 3.2, jq,
 # python3, no network.
 
 set -euo pipefail
@@ -154,15 +155,16 @@ def unusable(paths):
 
 
 def unwritable(path):
-    """None when --out path can take an output file, else (exit status, message): 2 for
-    a symbolic link, or a path reached through one inside the working directory, 1
-    for a path that is not a regular file or whose directory does not exist."""
+    """None when --out path can take a new output file, else (exit status, message): 2
+    for a symbolic link, a path reached through one inside the working directory, or
+    a path that exists (an output never replaces a file, an input corpus least of
+    all), 1 for a path whose directory does not exist."""
     try:
         if linked(path):
             return 2, ("--out %s is a symbolic link, or is reached through one inside the working"
                        " directory; refusing it" % shown(path))
-        if os.path.lexists(path) and not os.path.isfile(path):
-            return 1, "cannot write --out %s: not a regular file" % shown(path)
+        if os.path.lexists(path):
+            return 2, "--out %s already exists, and an output never replaces a file: name a new one" % shown(path)
         if not os.path.isdir(os.path.dirname(path) or "."):
             return 1, "cannot write --out %s: its directory does not exist" % shown(path)
     except OSError as e:
@@ -172,17 +174,27 @@ def unwritable(path):
 
 class Output:
     """Where the output goes: stdout, or for --out a new temporary file beside the path
-    that done() renames onto it once it is whole, so the path never holds a partial
-    output. close() removes a temporary file done() did not rename; SIGTERM exits
-    through it."""
+    that done() links to the path once it is whole, so the path never holds a partial
+    output, and never replaces a file that appeared in the meantime. close() removes
+    a temporary file done() did not link; SIGTERM exits through it, and is held off
+    while the temporary file is made, so its name is always known."""
 
     def __init__(self, path):
         self.path, self.temp, self.fh = path, None, sys.stdout.buffer
-        if path is not None:
-            signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
+        if path is None:
+            return
+        signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
+        held = signal.pthread_sigmask(signal.SIG_BLOCK, [signal.SIGTERM])
+        try:
             fd, self.temp = tempfile.mkstemp(dir=os.path.dirname(path) or ".",
                                              prefix="." + os.path.basename(path) + ".", suffix=".partial")
             self.fh = os.fdopen(fd, "wb")
+        finally:
+            try:
+                signal.pthread_sigmask(signal.SIG_SETMASK, held)
+            except BaseException:
+                self.close()
+                raise
 
     def write(self, data):
         self.fh.write(data)
@@ -191,7 +203,8 @@ class Output:
         self.fh.flush()
         if self.temp is not None:
             self.fh.close()
-            os.replace(self.temp, self.path)
+            os.link(self.temp, self.path)
+            os.unlink(self.temp)
             self.temp = None
 
     def close(self):
@@ -445,13 +458,17 @@ jq -r "$KEYDEF"'
 cat "$tmpd/notes"
 }
 
-# With --out, the report goes to a temporary file beside <file>, which replaces
-# <file> only once the report is whole (os.replace, which never follows a link).
+# With --out, the report goes to a temporary file beside <file>, which is linked to
+# <file> only once the report is whole; a link never replaces a file that appeared
+# in the meantime.
 if [ -z "$out" ]; then
   report
 else
   staged="$(mktemp "$(dirname "$out")/.$(basename "$out").XXXXXX")" || exit 1
   report > "$staged"
-  python3 -I -c 'import os, sys; os.replace(sys.argv[1], sys.argv[2])' "$staged" "$out"
-  staged=""
+  python3 -I -c 'import os, sys
+try:
+    os.link(sys.argv[1], sys.argv[2])
+except OSError as e:
+    sys.exit("profile.sh: cannot write --out: %s" % e.strerror)' "$staged" "$out"
 fi
