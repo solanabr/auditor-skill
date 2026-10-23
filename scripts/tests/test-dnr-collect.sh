@@ -411,7 +411,7 @@ esac
 # between two reads. The dumped ELF carries its slot, so each deploy hashes apart.
 # FAKE_SOL_SALT=<text> adds that text to the ELF, so the same slot can give other
 # bytes. FAKE_SOL_SHOWN_ID=<id>[:<k>] makes a show name <id> as its Program Id once
-# k reads (default 0) have been made. FAKE_SOL_PLANT=<link>|<target> makes the dump
+# k reads (default 0) have been made. FAKE_SOL_LINK=<link>|<target> makes the dump
 # call also create <link>, a symbolic link to <target>. Every call is appended to
 # $FAKE_SOL_ARGV.
 # ---------------------------------------------------------------------------
@@ -501,7 +501,7 @@ elif cmd[0] == "account":
 elif cmd in (["program", "dump"], ["program-v4", "download"]):
     path = a[3] if cmd[0] == "program" else [x for x in a[2:] if not x.startswith("--") and x != pid][-1]
     open(path, "wb").write(elf(read_slot()))
-    link, _, target = os.environ.get("FAKE_SOL_PLANT", "").partition("|")
+    link, _, target = os.environ.get("FAKE_SOL_LINK", "").partition("|")
     if link and not os.path.lexists(link):
         os.symlink(target, link)
     print(f"Wrote program to {path}")
@@ -809,16 +809,16 @@ fi
 #     write: a symbolic link that appears in it while the CLI runs (here during
 #     the dump) stops the run with exit 2, and nothing is written inside or outside.
 # ---------------------------------------------------------------------------
-mkdir -p "$TT/plant-out"
-for case in "bin|$TT/plant-out" "LEDGER.md|$TT/plant-out/ledger"; do
+mkdir -p "$TT/link-out"
+for case in "bin|$TT/link-out" "LEDGER.md|$TT/link-out/ledger"; do
   name="${case%%|*}"; target="${case#*|}"
-  P="$TT/plant-$name/incident_1"; mkdir -p "$P"
-  snap "$P" FAKE_SOL_PLANT="$P/$name|$target"
+  P="$TT/late-$name/incident_1"; mkdir -p "$P"
+  snap "$P" FAKE_SOL_LINK="$P/$name|$target"
   code=$?
-  if [[ "$code" == 2 && ! -e "$P/bin/$PID.so" && -z "$(ls -A "$TT/plant-out")" ]] && grep -q "refusing $P" "$P.out"; then
+  if [[ "$code" == 2 && ! -e "$P/bin/$PID.so" && -z "$(ls -A "$TT/link-out")" ]] && grep -q "refusing $P" "$P.out"; then
     ok "re-check: a $name link that appears during the dump -> exit 2, nothing written inside or outside"
   else
-    bad "re-check: $name link planted during the dump -> exit $code, outside: $(ls -A "$TT/plant-out" | tr '\n' ' ') ($(tr '\n' ' ' < "$P.out"))"
+    bad "re-check: $name link made during the dump -> exit $code, outside: $(ls -A "$TT/link-out" | tr '\n' ' ') ($(tr '\n' ' ' < "$P.out"))"
   fi
 done
 
