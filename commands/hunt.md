@@ -166,8 +166,8 @@ directory.
    stated, not hidden. Every PoC run and any build of target code (the incident
    commit) needs the Rule 11a mode: ask once (a non-interactive run is native, and
    the report says so), pass it to the agent for the ledger header, and pass it on
-   as `AUDITOR_EXEC_MODE`. Hand it the PoC build cache from the ledger header, if
-   any, and pass one it creates to the agent for that header. Before the Leg 3 line
+   as `AUDITOR_EXEC_MODE`. Hand `poc-engineer` the PoC build cache from the ledger
+   header, if any, and pass one it creates to the agent for that header. Before the Leg 3 line
    counts, check the crate's harness copy and its `non-registry code:` line as
    `/auditor:poc` step 6 does.
 
