@@ -148,10 +148,11 @@ section "Hosts in added Markdown lines: skill and command text an agent may foll
 added "$tmp/mv_md" "${MD[@]}" | hosts > "$tmp/mdhosts" || true
 show "$tmp/mdhosts"
 
-section "Remote-exec patterns in added lines, continuation lines joined, any letter case (pipe to a shell or interpreter, sh -c \"\$(curl …)\", <(curl …), PowerShell irm … | iex and iex (irm …), npx --yes, pip / pipx / uv tool / uvx from git or a URL, cargo install --git, go install …@latest)"
-# "<path>: <added line>". An added line ending in a backslash, or in a pipe outside a Markdown table row, is
-# joined with the next added line, so a multi-line installer is scanned as one command. A "+++ " line names
-# the file only inside a file header, so an added line that starts with "++ " is scanned like any other.
+section "Remote-exec patterns in added lines, continuation lines joined, any letter case (a download piped to or evaluated by a shell, an interpreter or PowerShell; npx --yes, bunx and dlx; pip, pipx, uv, uvx, npm, cargo and deno installs from git or a URL; go install …@latest)"
+# "<path>: <added line>". An added line ending in a backslash, in a space and a backtick (PowerShell), or in a
+# pipe outside a Markdown table row, is joined with the next added line, so a multi-line installer is scanned as
+# one command. A "+++ " line names the file only inside a file header, so an added line that starts with "++ "
+# is scanned like any other.
 joined() { awk '
   function flush() { if (buf != "") print file ": " buf; buf = "" }
   /^diff --git / { flush(); hdr = 1; next }
@@ -160,6 +161,7 @@ joined() { awk '
   hdr { next }
   /^\+/ { s = substr($0, 2); if (buf != "") sub(/^[ \t]+/, "", s); buf = (buf == "") ? s : buf " " s
           if (buf ~ /\\[ \t]*$/) { sub(/[ \t]*\\[ \t]*$/, "", buf); next }
+          if (buf ~ /[ \t]`[ \t]*$/) { sub(/[ \t]*`[ \t]*$/, "", buf); next }
           if (buf ~ /[|][ \t]*$/ && s !~ /^[ \t]*[|]/) next
           flush(); next }
   { flush() }
@@ -167,17 +169,23 @@ joined() { awk '
 # Matched in any letter case: PowerShell ignores case, and so does macOS's default file system.
 SHELLS="((ba|z|da|k)?sh|python[0-9.]*|node|perl|ruby|pwsh|powershell|iex|invoke-expression)([[:space:];&|)\"']|\$)"
 GET='(curl|wget)([.]exe)?|(^|[^[:alnum:]_-])(irm|iwr|invoke-restmethod|invoke-webrequest)'   # a download command
-RX_PIPE="($GET)[[:space:]].*[|][[:space:]]*(sudo([[:space:]]+-[A-Za-z]+([[:space:]]+[A-Za-z0-9_]+)?)*[[:space:]]+)?((/[^[:space:]|]*/)?env([[:space:]]+[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*)*[[:space:]]+)?(/[^[:space:]|]*/)?$SHELLS"
-RX_SUBST="((ba|z|da|k)?sh[[:space:]]+-c|eval)[[:space:]]+[\"']?[\$][(][[:space:]]*(curl|wget)[[:space:]]"
-RX_PROC='(source|[.]|(ba|z|da|k)?sh)[[:space:]]+<[(][[:space:]]*(curl|wget)[[:space:]]'
-IEX='(^|[^[:alnum:]_-])(iex|invoke-expression)[[:space:]]*[$]?[(]'   # PowerShell evaluating a subexpression
-RX_IEX="$IEX(.*[^[:alnum:]_-])?(irm|iwr|curl|wget|invoke-restmethod|invoke-webrequest)([^[:alnum:]_-]|\$)|$IEX.*net[.]webclient"
+RX_PIPE="($GET)[\"']?[[:space:]].*[|][[:space:]]*(sudo([[:space:]]+-[-A-Za-z0-9=,_]+([[:space:]]+[A-Za-z0-9_]+)?)*[[:space:]]+)?((/[^[:space:]|]*/)?env([[:space:]]+[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*)*[[:space:]]+)?(/[^[:space:]|]*/)?$SHELLS"
+# a shell, eval, an interpreter's -c / -e, or a here-string handed "$(curl …)" or `curl …`
+RX_SUBST="((ba|z|da|k)?sh[[:space:]]+-c|eval|(python[0-9.]*|node|perl|ruby)[[:space:]]+-[ce]|<<<)[[:space:]]*[\"']?([\$][(]|\`)[[:space:]]*(curl|wget)[[:space:]]"
+RX_PROC='(source|[.]|(ba|z|da|k)?sh)[[:space:]]+(<[[:space:]]*)?<[(][[:space:]]*(curl|wget)[[:space:]]'
+# PowerShell: a download and Invoke-Expression, or a script block made from text, anywhere on one joined line
+DL='(curl|wget)([.]exe)?|(^|[^[:alnum:]_-])(irm|iwr|invoke-restmethod|invoke-webrequest)([^[:alnum:]_-]|$)|downloadstring|net[.]webclient'
+PSRUN='(^|[^[:alnum:]_-])(iex|invoke-expression)([^[:alnum:]_-]|$)|\[scriptblock\]::create'
+RX_PS="($DL).*($PSRUN)|($PSRUN).*($DL)"
 FROM="([^|;&]*[[:space:]=])?[\"']?(git[+]|https?://)"   # an install source from git or a URL, quoted or not
-RX_PKG="npx[[:space:]]+(-y|--yes)([[:space:]]|\$)|pip[0-9.]*[[:space:]]+install[[:space:]]+$FROM|(pipx|uv[[:space:]]+tool)[[:space:]]+(install|run)[[:space:]]+$FROM"
-RX_PKG="$RX_PKG|uvx[[:space:]]+([^|;&]*[[:space:]])?--from[[:space:]=]+[\"']?(git[+]|https?://)|cargo([[:space:]]+[+][^[:space:]]+)?[[:space:]]+install[[:space:]]+([^|;&]*[[:space:]])?--git([[:space:]=]|\$)"
-RX_PKG="$RX_PKG|(^|[^[:alnum:]_.-])go[[:space:]]+(install|run)[[:space:]]+([^|;&]*[[:space:]])?[^[:space:]|;&]+@latest([^[:alnum:]_.-]|\$)"
+RX_PKG="npx[[:space:]]+(-y|--yes)([[:space:]]|\$)|(^|[^[:alnum:]_-])(bunx|bun[[:space:]]+x|pnpm[[:space:]]+dlx|yarn[[:space:]]+dlx)[[:space:]]"
+RX_PKG="$RX_PKG|pip[0-9.]*[[:space:]]+install[[:space:]]+$FROM|(pipx|uv[[:space:]]+tool)[[:space:]]+(install|run)[[:space:]]+$FROM|uvx[[:space:]]+$FROM"
+RX_PKG="$RX_PKG|uv[[:space:]]+run[[:space:]]+([^|;&]*[[:space:]])?--with(-requirements)?[[:space:]=]+[\"']?(git[+]|https?://)"
+RX_PKG="$RX_PKG|(npm|pnpm|yarn|bun)[[:space:]]+(i|install|add)[[:space:]]+$FROM|deno[[:space:]]+(run|install)[[:space:]]+([^|;&]*[[:space:]])?[\"']?https?://"
+RX_PKG="$RX_PKG|cargo([[:space:]]+[+][^[:space:]]+)?[[:space:]]+install[[:space:]]+([^|;&]*[[:space:]])?--(git|index)([[:space:]=]|\$)"
+RX_PKG="$RX_PKG|(^|[^[:alnum:]_.-])go[[:space:]]+(install|run)[[:space:]]+([^|;&]*[[:space:]])?[^[:space:]|;&]+@(latest|main|master|head)([^[:alnum:]_.-]|\$)"
 added "$tmp/mv_all" "${ALL[@]}" | joined \
-  | grep -iE "$RX_PIPE|$RX_SUBST|$RX_PROC|$RX_IEX|$RX_PKG" > "$tmp/rx" || true
+  | grep -iE "$RX_PIPE|$RX_SUBST|$RX_PROC|$RX_PS|$RX_PKG" > "$tmp/rx" || true
 show "$tmp/rx"
 
 section "LICENSE"
