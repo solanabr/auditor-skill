@@ -202,7 +202,7 @@ book '{"'"$A_ADDR"'": [
 LC_ALL=C collect "$TT/loc-c" --max-tx 3 -- "$A_ADDR"
 eq "order: --max-tx 3 keeps the newest slot, then the RPC's order within slot 50 (LC_ALL=C)" \
   "$(sigs_of "$TT/loc-c/transactions.jsonl")|$(cut -f1 "$TT/loc-c/collection-gaps.tsv")" "SigTop SigBeta sigalpha |SigAlpha"
-utf8="$(locale -a 2>/dev/null | grep -i -m1 -E '^en_US\.utf-?8$' || true)"
+utf8="$(locale -a 2>/dev/null | grep -i -E '^en_US\.utf-?8$' | sed -n 1p || true)"
 if [[ -n "$utf8" ]]; then
   LC_ALL="$utf8" collect "$TT/loc-u" --max-tx 3 -- "$A_ADDR"
   if cmp -s "$TT/loc-c/transactions.jsonl" "$TT/loc-u/transactions.jsonl" \
