@@ -141,32 +141,36 @@ version in a trailing comment.
 - Scripts run under macOS `/bin/bash` 3.2 with BSD tools and under bash 5 with GNU tools: no `declare -A`,
   `mapfile` or `${x,,}`, and no GNU-only sed or grep flags. Quote every expansion.
 - Under `set -o pipefail`, never pipe into a reader that can stop before its input ends: `grep -q`, `-l`,
-  `-L` or `-m`, grep writing to `/dev/null`, `head`, `read`, `sed` with `q`, `awk` with `exit`. Count with
-  `grep -c`, print with `sed -n '1,Np'`, or capture the output first. `scripts/check-pipefail.sh` enforces
-  this over every tracked `*.sh` file; a pipe meant to stop early carries `# pipefail-ok: <reason>`.
+  `-L` or `-m`, grep writing to `/dev/null`, `head`, `read`, `sed` with `q`, `awk` with `exit`, also inside a
+  `"$( … )"` or a `>( … )`. Count with `grep -c`, print with `sed -n '1,Np'`, or capture the output first.
+  `scripts/check-pipefail.sh` enforces this over every tracked `*.sh` file that mentions pipefail; a pipe
+  meant to stop early carries the comment `# pipefail-ok: <reason>` on its line.
 - A change to a pipeline gets a test with an input larger than a pipe holds (over 64 KiB; 1 MiB is usual).
 
 ### Frontmatter of commands, agents and `SKILL.md`
 
 `scripts/check-frontmatter.sh` fails when Claude Code would read a field differently from what is written.
-It holds the frontmatter of `commands/*.md`, `agents/*.md`, `SKILL.md` and `skills/*/SKILL.md` to a flat
-subset:
+It reads every file whose frontmatter Claude Code loads: each `.md` file at any depth under `commands/` and
+`agents/`, the root `SKILL.md`, and every `SKILL.md` under `skills/`, in any letter case. Name such a file
+with a lowercase `.md`. Its frontmatter keeps to a flat subset:
 
 - Line 1 is exactly `---`, and the block ends at the next line that is exactly `---`. No other line of the
-  block contains `---`, even inside a quoted value, and none is `...`. No tabs or CRs.
-- One `key: value` per line, with a lowercase key the check knows, each key once. Agents need `name`,
+  block contains `---`, even inside a quoted value, and none is `...`. The file holds no NUL byte; the block
+  holds no tab, CR or other control character, and no U+0085, U+2028 or U+2029.
+- One `key: value` per line, each key once, written exactly as the check lists it. Agents need `name`,
   `description` and `tools`; commands need `description` and `allowed-tools`; a `SKILL.md` needs `name` and
   `description` and, for now, has no other key. A new key is added to the check's list when it is first
   used.
 - Quote a value that starts with a YAML indicator (`-`, `?`, `:`, `,`, `[`, `]`, `{`, `}`, `#`, `&`, `*`,
-  `!`, `|`, `>`, `%`, `@` or a backtick), holds `: ` or ` #`, ends in `:`, or would read as a number, a
-  boolean or null (`3000`, `yes`, `null`). Double quotes escape only `\"` and `\\`; single quotes double a
-  `'`.
+  `!`, `|`, `>`, `%`, `@` or a backtick), holds `: `, ` #` or `...`, ends in `:`, or would read as a number,
+  a boolean or null (`3000`, `++7`, `yes`, `null`). Double quotes escape only `\"` and `\\`; single quotes
+  double a `'`.
 - `tools` and `allowed-tools` list `Name` or `Name(pattern)` entries, either on one line separated by `, `
   or one per line as `  - item`; an item may be single-quoted, as in
-  `  - 'Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh" *)'`. A pattern holds no parentheses,
-  agents list tool names only, and `allowed-tools` lists nothing from `FORBIDDEN_ALLOWED_TOOLS` in the
-  script (today `*`).
+  `  - 'Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh" *)'`. A pattern holds no parentheses, and
+  agents list tool names only. `allowed-tools` lists nothing from `FORBIDDEN_ALLOWED_TOOLS` in the script
+  (today `*`), nor a catch-all pattern of a name in it, such as `Bash(*)` once `Bash` is listed.
+- The block is at most 65,536 bytes and holds at most 256 of `[`, `{` and ` - `.
 
 ### CI
 
@@ -175,7 +179,8 @@ subset:
   It sets `REQUIRE_TOOLCHAIN=1`, so the PoC runner's suite fails when cargo or rustup is missing instead of
   skipping its real-toolchain checks.
 - **`corpus-check`, job "macOS, bash 3.2 and BSD tools (advisory)"**: the same checks on `macos-26`, with a
-  stock PATH plus `~/.cargo/bin` that its first step asserts. It is not a required check.
+  stock PATH plus `~/.cargo/bin` that its first step asserts. It is not a required check. A newer push to the
+  same ref cancels its older run.
 - **`plugin-validate`**: weekly and on demand, `claude plugin validate --strict` over the repository
   directory with Claude Code at the exact npm version in `CLAUDE_CODE_VERSION`. Advisory. Bump that
   version by hand after reading the release notes.
@@ -192,12 +197,14 @@ fails that PR until the README pin is updated on the same branch. Never auto-mer
    first). Read every section: plugins added or removed; load surfaces (nested `.claude/`, `.claude-plugin/`
    manifests and any hooks / MCP / LSP servers they declare, `hooks/`, `.mcp.json` / `.lsp.json`, settings,
    `CLAUDE.md` / `AGENTS.md`, `workflows/*.js`); new executables; symlinks (`120000`) and gitlinks
-   (`160000`); renamed files, OLD -> NEW (the added-line scans read only the lines a rename changed);
-   hosts in added script, config and Markdown lines (tests, evals, fixtures and lockfiles left out);
-   remote-exec patterns in added lines, in any letter case and with continuation lines joined (a download
-   piped to a shell or interpreter, `sh -c "$(curl …)"`, `<(curl …)`, PowerShell `irm … | iex` and
-   `iex (irm …)`, `npx --yes`, `pip`, `pipx`, `uv tool` or `uvx` from git or a URL, `cargo install --git`,
-   `go install …@latest`); the `LICENSE` (must be unchanged).
+   (`160000`); paths git still quotes, to read by hand; renamed files, OLD -> NEW (a file moved unchanged,
+   to a path that is not a load surface, is left out of the added-line scans; every other renamed file is
+   scanned whole); hosts in added script, config and Markdown lines (tests, evals, fixtures and lockfiles
+   left out); remote-exec patterns in added lines, with continuation lines joined (a download piped to or
+   evaluated by a shell, an interpreter or PowerShell, such as `sh -c "$(curl …)"`, `<(curl …)` or
+   `irm … | iex`; `npx --yes`, `bunx` and `dlx`; `pip`, `pipx`, `uv`, `uvx`, `npm`, `cargo` and `deno`
+   installs from git or a URL; `go install …@latest`); the `LICENSE` (must be unchanged). Paths, hosts and
+   commands match in any letter case.
 2. The script ends by checking that every plugin named in `references/orchestration/boundary-map.md` and
    `docs/power-tools.md` still exists. For each one that changed (`git diff <old> <new> -- plugins/<name>`),
    update its rows when the entry point, behaviour, execution (`OUTPUT-RULES.md` Rule 11a) or outside
