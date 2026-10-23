@@ -134,14 +134,17 @@ because `python3 -I` keeps a sibling module off `sys.path`;
   pre and post sides by, so each side is a row of its own named `#?`, the pre
   balance negative and the post balance positive, counted in a note of its own:
   `deltas.py: N row(s) name a token balance that has no accountIndex, as #?: …`.
-- **Output.** `frames.py` and `deltas.py` write UTF-8 whatever the locale, and
-  neither prints a character of the fixed list raw. `deltas.py` doubles a
-  backslash and escapes, in every column, a tab, newline and carriage return as
-  `\t`, `\n`, `\r`, and every other character of the list as `\xNN` below
-  U+0100 and `\uNNNN` above it (`\x00`, `\x85`, `\u2028`, `\u202e`, lowercase
-  hex). `frames.py` writes JSON: the encoder escapes the C0 controls, and every
-  other character of the list is written as a `\uNNNN` escape (lowercase hex),
-  so the value read back is unchanged.
+- **Output.** No recipe prints a character of the fixed list raw, and
+  `frames.py` and `deltas.py` write UTF-8 whatever the locale. `deltas.py`
+  doubles a backslash and escapes, in every column, a tab, newline and carriage
+  return as `\t`, `\n`, `\r`, and every other character of the list as `\xNN`
+  below U+0100 and `\uNNNN` above it (`\x00`, `\x85`, `\u2028`, `\u202e`,
+  lowercase hex). `frames.py` writes JSON: the encoder escapes the C0 controls,
+  and every other character of the list is written as a `\uNNNN` escape
+  (lowercase hex), so the value read back is unchanged. `profile.sh` prints a
+  `version` that is not a string as its JSON text, the same way: jq escapes the
+  C0 controls and DEL, and every other character of the list becomes a `\uNNNN`
+  escape.
 - **Counting.** `profile.sh` counts and orders values byte by byte (`sort` and
   `uniq` run under `LC_ALL=C`), so two keys that differ only in a character a
   locale's collation ignores stay two lines, and ties fall in the same order under

@@ -19,7 +19,8 @@
 #
 # What it reports (all from structural fields, never from log text):
 #   - transaction count and the finalized/failed split (meta.err)
-#   - version histogram (legacy / 0 / 1)
+#   - version histogram (legacy / 0 / 1; a version that is not a string as its JSON
+#     text, with no character of the contract's fixed list raw)
 #   - time window (min/max blockTime, when present)
 #   - fee-payer inventory: accountKeys[0].pubkey, top 20 by count
 #   - signer inventory: every accountKeys[].signer == true, top 20 by count
@@ -539,7 +540,18 @@ cat "$tmpd/header"
 echo "-- transactions / outcome"
 jq -r 'if (.meta.err == null) then "ok" else "failed" end' "$corpus" | LC_ALL=C sort | LC_ALL=C uniq -c
 echo "-- version"
-jq -r '(.version // "legacy") | tostring' "$corpus" | LC_ALL=C sort | LC_ALL=C uniq -c
+# A version that is not a string prints as its JSON text (tostring), where jq escapes
+# the C0 controls and DEL; every other character of the fixed _UNSAFE list becomes a
+# \uNNNN escape too (lowercase hex), as frames.py writes it, so none prints raw.
+jq -r '
+  def hex4: [(. / 4096 | floor), (. / 256 | floor) % 16, (. / 16 | floor) % 16, . % 16]
+    | map("0123456789abcdef"[.:. + 1]) | add;
+  def unsafe: . < 32 or (. >= 127 and . < 160) or . == 1564 or (. >= 8203 and . < 8208)
+    or (. >= 8232 and . < 8239) or (. >= 8294 and . < 8298) or . == 65279;
+  (.version // "legacy")
+  | if type == "string" then .
+    else [tostring | explode[] | if unsafe then ("\\u" + hex4 | explode[]) else . end] | implode
+    end' "$corpus" | LC_ALL=C sort | LC_ALL=C uniq -c
 echo "-- time window (blockTime)"
 jq -r '.blockTime // empty' "$corpus" | LC_ALL=C sort -n | awk '
   NR==1 {min=$0} {max=$0} END {

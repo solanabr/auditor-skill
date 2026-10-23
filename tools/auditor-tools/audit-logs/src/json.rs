@@ -466,7 +466,8 @@ pub fn write_py_str(out: &mut String, s: &str) {
     out.push('"');
 }
 
-/// Appends jq's compact text of a value, as `tostring` and `jq -c` print it.
+/// Appends a value's compact JSON text as profile.sh prints a version that is not a
+/// string: jq's `tostring`, with no unsafe character raw.
 pub fn write_jq(out: &mut String, value: &Value) {
     match value {
         Value::Null => out.push_str("null"),
@@ -498,8 +499,9 @@ pub fn write_jq(out: &mut String, value: &Value) {
     }
 }
 
-/// A string as jq dumps it: quote and backslash escaped, the C0 controls and DEL
-/// as `\n`-style escapes or `\u00xx`, everything else as is.
+/// A string as profile.sh prints it in a version: jq's dump (quote and backslash
+/// escaped, the C0 controls and DEL as `\n`-style escapes or `\u00xx`), with every
+/// other unsafe character as `\uNNNN` too.
 fn write_jq_str(out: &mut String, s: &str) {
     out.push('"');
     for c in s.chars() {
@@ -511,9 +513,7 @@ fn write_jq_str(out: &mut String, s: &str) {
             '\t' => out.push_str("\\t"),
             '\u{8}' => out.push_str("\\b"),
             '\u{c}' => out.push_str("\\f"),
-            c if (c as u32) < 0x20 || c == '\u{7f}' => {
-                out.push_str(&format!("\\u{:04x}", c as u32))
-            }
+            c if unsafe_char(c) => out.push_str(&format!("\\u{:04x}", c as u32)),
             c => out.push(c),
         }
     }
@@ -609,5 +609,15 @@ mod tests {
         let mut s = String::new();
         write_jq(&mut s, &v);
         assert_eq!(s, r#"{"a":[1.0,"\u007f",1E+2,{"b":true}],"c":null}"#);
+        let v = parse_line(
+            r#"{"k\u2028":["\u0001\n\u0085\u00a0\u061c\u200b\u202e\u2069\ufeff\u3000"]}"#,
+        )
+        .unwrap();
+        let mut s = String::new();
+        write_jq(&mut s, &v);
+        assert_eq!(
+            s,
+            "{\"k\\u2028\":[\"\\u0001\\n\\u0085\u{a0}\\u061c\\u200b\\u202e\\u2069\\ufeff\u{3000}\"]}"
+        );
     }
 }

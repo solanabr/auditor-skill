@@ -363,12 +363,15 @@ fi
 # (counted on the text, a value a later duplicate key replaces included),
 # integers outside u64, negative indexes, an empty program id, integer literals of
 # more than 20 digits or -0 anywhere in a line, and the characters a key, program
-# id or version may not hold, which deltas and frames print escaped. deltas
-# lamports prints a balance with no account key as #<index>, and says so on stderr.
-python3 -I - "$WT/incident_1/rules" <<'PY'
-import json, os, sys
+# id or version may not hold, which deltas and frames print escaped, as profile does
+# in a version that is not a string (one case per character of profile.sh's own
+# _UNSAFE list). deltas lamports prints a balance with no account key as #<index>,
+# and says so on stderr.
+python3 -I - "$WT/incident_1/rules" "$DNR/profile.sh" <<'PY'
+import json, os, re, sys
 d = sys.argv[1]
 os.makedirs(d)
+UNSAFE = re.compile(re.search(r'^_UNSAFE = re\.compile\(r"(.*)"\)$', open(sys.argv[2], encoding="utf-8").read(), re.M).group(1))
 U64 = 2**64 - 1
 def tx(sig, meta=None, message=None, extra=None):
     t = {"meta": dict({"err": None, "fee": 0}, **(meta or {})),
@@ -430,12 +433,16 @@ cases = {
                     "loadedAddresses": {"writable": ["Lut\u200b"]},
                     "postTokenBalances": [{"accountIndex": 1, "mint": "Mint\ufeff", "owner": "Own\x7f\u0085",
                                            "uiTokenAmount": {"amount": "3"}}]})],
+    "versions": [tx("SigVer%04x" % c, extra={"version": {"k": "a" + chr(c) + "b"}})
+                 for c in range(0x10000) if UNSAFE.match(chr(c))]
+                + [tx("SigVerKey", extra={"version": {"k\u2028": 1}}), tx("SigVerList", extra={"version": ["\u202e", 0]}),
+                   tx("SigVerDeep", extra={"version": {"a": [{"b": "\x85\ufeff"}]}})],
 }
 for name, lines in cases.items():
     with open(os.path.join(d, name + ".jsonl"), "wb") as f:
         f.write(clean + b"\n" + b"\n".join(lines) + b"\n")
 PY
-for f in balances depth bounds indexes integers chars; do
+for f in balances depth bounds indexes integers chars versions; do
   same5 "recipe bounds, $f.jsonl" "incident_1/rules/$f.jsonl"
 done
 agree lamports -- incident_1/rules/balances.jsonl
@@ -445,6 +452,21 @@ eq "recipe bounds: a balance with no account key is a #<index> row, counted on s
 agree frames -- incident_1/rules/chars.jsonl
 eq "recipe bounds: frames writes an unsafe character in a signature or a log as a \\u escape" \
   "$(grep -c '"sig": "SigOddText\\u202e\\u2028\\u0001".*"text": "x\\u2066y\\u0085z"' "$T/b.out")" "1"
+agree profile -- incident_1/rules/versions.jsonl
+python3 -I - "$DNR/profile.sh" "$WT/incident_1/rules/versions.jsonl" "$T/b.out" > "$T/versions.check" <<'PY'
+import json, re, sys
+unsafe = re.compile(re.search(r'^_UNSAFE = re\.compile\(r"(.*)"\)$', open(sys.argv[1], encoding="utf-8").read(), re.M).group(1))
+want = set()
+for line in open(sys.argv[2], encoding="utf-8"):
+    v = json.loads(line).get("version")
+    if v is not None:
+        want.add(unsafe.sub(lambda m: "\\u%04x" % ord(m.group()), json.dumps(v, ensure_ascii=False, separators=(",", ":"))))
+out = open(sys.argv[3], encoding="utf-8").read()
+got = set(re.findall(r"(?m)^ *[0-9]+ (.*)$", out.split("-- version\n", 1)[1].split("\n-- ", 1)[0]))
+print("%d cases, %d not as expected|%d raw" % (len(want), len(want - got), len(unsafe.findall(out.replace("\n", "")))))
+PY
+eq "recipe bounds: profile writes each unsafe character of a version that is not a string as a \\u escape" \
+  "$(cat "$T/versions.check")" "86 cases, 0 not as expected|0 raw"
 
 # ---------------------------------------------------------------------------
 # 4. A generated corpus: 6,000 transactions in two files, the second opening with

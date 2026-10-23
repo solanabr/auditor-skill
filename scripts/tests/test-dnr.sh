@@ -1184,6 +1184,38 @@ eq "contract: frames writes those characters as \\u escapes, and the text reads 
   "$(grep -c -F '"text": "a\u202eb\u0085c\u007fd\u200be\ufefff"' "$TT/u20.frames")|$(unsafe20 "$TT/u20.frames")|$(python3 -I -c 'import json, sys
 print(any(json.loads(l).get("text") == "a\u202eb\x85c\x7fd\u200be\ufefff" for l in open(sys.argv[1], encoding="utf-8")))' "$TT/u20.frames")" \
   "1|0|True"
+# profile.sh prints a version that is not a string as its JSON text. One transaction
+# per character of its own _UNSAFE list holds that character in an object value, and
+# one each holds a character in a key, an array and a nested object: each version
+# line must be the JSON text with every listed character escaped, and none raw.
+python3 -I - "$DNR/profile.sh" "$TT/v20.jsonl" <<'PY'
+import json, re, sys
+unsafe = re.compile(re.search(r'^_UNSAFE = re\.compile\(r"(.*)"\)$', open(sys.argv[1], encoding="utf-8").read(), re.M).group(1))
+def tx(sig, version):
+    return {"blockTime": 1700000000, "version": version,
+            "meta": {"err": None, "fee": 5000, "preBalances": [1], "postBalances": [1]},
+            "transaction": {"signatures": [sig], "message": {"accountKeys": ["Payer1"]}}}
+rows = [tx("SigVer%04x" % c, {"k": "a" + chr(c) + "b"}) for c in range(0x10000) if unsafe.match(chr(c))]
+rows += [tx("SigVerKey", {"k ": 1}), tx("SigVerList", ["‮", 0]), tx("SigVerDeep", {"a": [{"b": "\x85﻿"}]})]
+with open(sys.argv[2], "w", encoding="utf-8") as f:
+    for row in rows:
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+PY
+bash "$DNR/profile.sh" "$TT/v20.jsonl" > "$TT/v20.out" 2>&1
+python3 -I - "$DNR/profile.sh" "$TT/v20.jsonl" "$TT/v20.out" > "$TT/v20.check" <<'PY'
+import json, re, sys
+unsafe = re.compile(re.search(r'^_UNSAFE = re\.compile\(r"(.*)"\)$', open(sys.argv[1], encoding="utf-8").read(), re.M).group(1))
+want = {}
+for line in open(sys.argv[2], encoding="utf-8"):
+    v = json.loads(line)["version"]
+    want[unsafe.sub(lambda m: "\\u%04x" % ord(m.group()), json.dumps(v, ensure_ascii=False, separators=(",", ":")))] = v
+out = open(sys.argv[3], encoding="utf-8").read()
+got = re.findall(r"(?m)^ *([0-9]+) (.*)$", out.split("-- version\n", 1)[1].split("\n-- ", 1)[0])
+ok = sum(1 for n, text in got if n == "1" and text in want and json.loads(text) == want[text])
+print("%d of %d|%d raw" % (ok, len(want), len(unsafe.findall(out.replace("\n", "")))))
+PY
+eq "contract: profile writes each listed character of a version that is not a string as an escape, and the version reads back the same" \
+  "$(cat "$TT/v20.check")" "86 of 86|0 raw"
 # profile.sh counts and orders keys byte by byte under every locale: fee payers that
 # differ only in a character a UTF-8 collation ignores (U+00AD, U+034F, U+2060) stay
 # separate lines, in the same order under en_US.UTF-8 as under C.

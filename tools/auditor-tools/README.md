@@ -236,7 +236,8 @@ its line malformed and is never rounded; every total is exact; a transaction
 several corpora hold is read once. A key, program id or string version holding a
 character of the contract's fixed list (the C0 and C1 controls, DEL, the line and
 paragraph separators, the bidirectional and zero-width characters) is malformed,
-and `frames` and `deltas` print such a character only as an escape. `deltas
+and no subcommand prints such a character raw: `frames` and `deltas` escape it,
+and so does `profile` in a version that is not a string. `deltas
 lamports` prints a balance whose index has no account key as `#<index>` and counts
 those rows on stderr. `scripts/tests/test-audit-logs.sh`
 checks the output against the scripts on every fixture in `scripts/dnr/fixtures/`,
