@@ -247,7 +247,7 @@ before a command trusts an `OK` line it compares the crate's `run.sh` with the
 installation's `templates/poc/run.sh` byte for byte, and its `shared-test-utils/` with
 the installation's (only the version requirements in `shared-test-utils/Cargo.toml` may
 differ). A re-run — `/auditor:patch`, re-audit step 4b, an incident's `FIXED_SO` run —
-refreshes both from the installation first. A copy that differs is not evidence:
+first refreshes `run.sh` and `shared-test-utils/src/` from the installation. A copy that differs is not evidence:
 refresh it, re-run, and record the difference. `run.sh` itself binds the build to that
 copy: it exits 3 when the crate's `shared-test-utils` dependency is renamed or resolves
 anywhere but `<crate>/shared-test-utils`, or when another dependency supplies that
@@ -317,7 +317,7 @@ pinned error) → [PoC-REPRODUCED]`; a `(blocked: …)` line comes from the chec
 the team deployed and is reported apart, never as evidence for our patch. The PoC must
 also use the program's real id (an Anchor program checks its own `declare_id!`), which
 `run.sh` does not check. The run needs `AUDITOR_EXEC_MODE` like any other, and the
-crate's `run.sh` and `shared-test-utils/` are refreshed from the installation before it
+crate's `run.sh` and `shared-test-utils/src/` are refreshed from the installation before it
 (§3, "Checking the harness copy"). Exit 3 decides nothing: it is a harness error to
 report, flag "PoC re-run needed" and repair, never a broken fix. `VERIFICATION.md`
 records which target the PoC re-ran against in its *Re-detonated against* field.

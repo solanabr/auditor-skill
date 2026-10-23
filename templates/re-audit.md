@@ -19,7 +19,7 @@ PoC re-run @ {HEAD_SHA} (Re-detonated against: {patched target build (`VULNERABL
 
 A re-run against the client's fix is a *patched target build*: `run.sh` in prebuilt mode with
 `VULNERABLE_SO` = the build of the audited commit and `FIXED_SO` = the build of the head commit, after the
-crate's `run.sh` and `shared-test-utils/` are refreshed from the installation. The value follows `run.sh`:
+crate's `run.sh` and `shared-test-utils/src/` are refreshed from the installation. The value follows `run.sh`:
 
 - **reverts** — exit 0, ending in `(rejected with the pinned error) → [PoC-REPRODUCED]` (the head build
   turns the attack away with the error the PoC pins) or `(blocked: failed, account unchanged) →

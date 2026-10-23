@@ -65,7 +65,7 @@ the non-registry code in the build: the path and git dependencies in the resolve
 `run.sh` and `shared-test-utils/` are the installation's copies; leave them as they
 are. Before a command trusts an `OK` line it compares them with the installation's
 `templates/poc/` (only the version requirements in `shared-test-utils/Cargo.toml` may
-differ), and a re-run refreshes them first.
+differ), and a re-run first refreshes `run.sh` and `shared-test-utils/src/` from it.
 
 **Dependencies.** Framework crates by default, as in the template. A crate copied
 from the target's manifest runs its build script in the recorded mode, so add one
