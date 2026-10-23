@@ -28,7 +28,7 @@ In an interactive run, ask once: *"Is a member of the protocol team on hand duri
 
 - **Automated (`--auto`, the `audit-cycle` path)** — spawn the **`threat-modeler`** agent (opus). It reconstructs the three artifacts from code + context worksheets and emits `audit_<n>/threat-model.md`, every claim cited to `file:line`.
 - **Interactive (default)** — ask the human the model questions a tool cannot settle: which assets are the crown jewels, which actors are genuinely trusted vs. untrusted, what each actor must be prevented from doing. Fill the artifact from their answers plus the code.
-- **Bootstrap (`--bootstrap`)** — seed goals from history before anyone answers. With `--auto` it runs unattended (`Mode: bootstrap`). Interactively it drafts first and then interviews the team only on what the draft could not settle (`Mode: bootstrap → interview`).
+- **Bootstrap (`--bootstrap`)** — seed goals from history before anyone answers. With `--auto` it runs non-interactively (`Mode: bootstrap`). Interactively it drafts first and then interviews the team only on what the draft could not settle (`Mode: bootstrap → interview`).
 
 **Triggers.** Without an explicit flag, bootstrap runs only when one of these fires:
 - **T2:** intake §7 records a prior audit (Q25) or an incident (Q26).

@@ -45,7 +45,7 @@ Running `audit-scan` (built at `<auditor-skill root>/tools/auditor-tools/target/
 
 ### Optional: threat-model bootstrap (`scripts/threat-model/collect.sh`)
 
-Runs only on an explicit `--bootstrap` or when a trigger fires (prior audit or incident in intake, fork provenance, prior audits or incident files next to the target); autonomous runs collect offline. The collector itself costs $0 in LLM tokens (under 5 s on raydium-cp-swap, 51 commits, and orca whirlpools, 962 commits). At the default caps (60 rows per section; keyword commits above 300 changed lines add no ADDED rows) `history.md` adds **~8K input tokens** or less; the saved diffs (≤20 files of ≤400 lines, ~40K tokens if all were read) are opened only for rows cited as evidence.
+Runs only on an explicit `--bootstrap` or when a trigger fires (prior audit or incident in intake, fork provenance, prior audits or incident files next to the target); non-interactive runs collect offline. The collector itself costs $0 in LLM tokens (under 5 s on raydium-cp-swap, 51 commits, and orca whirlpools, 962 commits). At the default caps (60 rows per section; keyword commits above 300 changed lines add no ADDED rows) `history.md` adds **~8K input tokens** or less; the saved diffs (≤20 files of ≤400 lines, ~40K tokens if all were read) are opened only for rows cited as evidence.
 
 ### Detection & response (`/auditor:hunt`, `/auditor:respond`)
 
