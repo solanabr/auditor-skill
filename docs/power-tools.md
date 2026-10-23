@@ -28,7 +28,7 @@ cd "<auditor-skill root>/tools/auditor-tools" && cargo build --release        # 
 "<auditor-skill root>/tools/auditor-tools/target/release/audit-scan" ./programs/my-program/src --pretty --out audit_1/prescan.json
 ```
 
-The installation belongs outside the repository under audit. If it sits inside it anyway (such as `.claude/skills/auditor-skill`, where `install.sh` without a path installed through 7.6), the build runs inside the target tree, where cargo and rustup read the target's `.cargo/config*` and `rust-toolchain*` from every parent directory. Build there only in [Rule 11a](../OUTPUT-RULES.md#rule-11-operating-safety) isolated mode, or delete that copy and install a fresh one outside the repository (the plugin, or `install.sh ~/.claude/skills/auditor-skill`) and build that one. Never move or update a copy you find inside a repository ([README](../README.md#installation)).
+The installation belongs outside the repository under audit. If it sits inside it anyway (such as `.claude/skills/auditor-skill`, where `install.sh` without a path installed through 7.6.0), the build runs inside the target tree, where cargo and rustup read the target's `.cargo/config*` and `rust-toolchain*` from every parent directory. Build there only in [Rule 11a](../OUTPUT-RULES.md#rule-11-operating-safety) isolated mode, or delete that copy and install a fresh one outside the repository (the plugin, or `install.sh ~/.claude/skills/auditor-skill`) and build that one. Never move or update a copy you find inside a repository ([README](../README.md#installation)).
 
 Recursively walks `*.rs` (skipping `target/`, `.git/`, `node_modules/`), parses each with `syn::parse_file`, prints one JSON object to stdout or `--out FILE`. Files that fail to parse are skipped (best-effort).
 

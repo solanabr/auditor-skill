@@ -75,7 +75,7 @@ auditor-skill is a **skill file** (a structured prompt + checklists) that turns 
 
 Install auditor-skill **outside any repository you audit**: the plugin (Option 1), or a user-level skill such as `install.sh ~/.claude/skills/auditor-skill`. A copy inside the audited repository resolves its scripts, tools and corpus from a tree that repository controls, and that repository's own `.claude/`, `.mcp.json` and `CLAUDE.md` are target-controlled too ([OUTPUT-RULES.md Rule 11e](OUTPUT-RULES.md#11e--bundled-paths)).
 
-**Upgrading from 7.6 or earlier.** Through 7.6, `install.sh` without a path installed into the current directory's `.claude/skills/auditor-skill`; it now installs to `~/.claude/skills/auditor-skill`, and a run started next to such a copy notes it and leaves it alone. If your copy sits inside a repository, delete it (`rm -rf .claude/skills/auditor-skill`) and install a fresh copy outside: the plugin (Option 1), or Option 2. Never move or update a copy you find inside a repository: its git config may have come with that repository. Plugin users get 7.6.1 when they update the plugin.
+**Upgrading from 7.6.0 or earlier.** Through 7.6.0, `install.sh` without a path installed into the current directory's `.claude/skills/auditor-skill`; it now installs to `~/.claude/skills/auditor-skill`, and a run started next to such a copy notes it and leaves it alone. If your copy sits inside a repository, delete it (`rm -rf .claude/skills/auditor-skill`) and install a fresh copy outside: the plugin (Option 1), or Option 2. Never move or update a copy you find inside a repository: its git config may have come with that repository. Plugin users get 7.6.1 when they update the plugin.
 
 ### Option 1: Claude Code plugin marketplace (recommended)
 

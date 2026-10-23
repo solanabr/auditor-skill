@@ -38,7 +38,7 @@ main() {
     # Through 7.6 a run without a path installed into ./.claude/skills/auditor-skill; a copy there stays as it is.
     if { [ -e .claude/skills/auditor-skill ] || [ -L .claude/skills/auditor-skill ]; } \
        && [ "$(physical .claude/skills/auditor-skill)" != "$(physical "$DEST")" ]; then
-      echo "note: this run installs to $DEST and leaves ./.claude/skills/auditor-skill alone; see \"Upgrading from 7.6 or earlier\" in the README." >&2
+      echo "note: this run installs to $DEST and leaves ./.claude/skills/auditor-skill alone; see \"Upgrading from 7.6.0 or earlier\" in the README." >&2
     fi
   fi
   while [ "$DEST" != "/" ] && [ "${DEST%/}" != "$DEST" ]; do DEST="${DEST%/}"; done

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-install.sh — install.sh:
 #   - a run without a path installs at $HOME/.claude/skills/auditor-skill, never in the directory it starts in,
-#     notes a copy at ./.claude/skills/auditor-skill (7.6's default) without touching it, and stops before
+#     notes a copy at ./.claude/skills/auditor-skill (7.6.0's default) without touching it, and stops before
 #     anything runs when HOME is not an absolute path;
 #   - a run over an earlier install, with or without a path, installs a fresh clone and moves that copy, without
 #     running git in it, to a backup in a mode-700 directory under XDG_STATE_HOME or ~/.local/state, so nothing
@@ -263,16 +263,16 @@ mkdir -p "$h18/.local" && ln -s "$h18/.claude/skills" "$h18/.local/state"
 HOME="$h18" GIT_TRACE="$T/trace18" run up "$T"
 check "a ~/.local/state linked into the skills directory is refused before any git command" ok18
 
-# 19. a run without a path started where 7.6 installed by default prints a notice about the copy there, and runs
+# 19. a run without a path started where 7.6.0 installed by default prints a notice about the copy there, and runs
 #     no git in it; started from HOME, where that copy is the default install, it prints none
 h19="$T/home19"; p19="$T/proj19"; mkdir -p "$h19" "$p19/.claude/skills" && git clone -q "$T/up.git" "$p19/.claude/skills/auditor-skill" \
   && echo old > "$p19/.claude/skills/auditor-skill/old-marker" \
   && git -C "$p19/.claude/skills/auditor-skill" config core.fsmonitor "$T/canary.sh fsmonitor"
 HOME="$h19" run up "$p19"
 ok19() { installed "$h19/.claude/skills/auditor-skill" && [ "$(grep -c '^note: ' "$T/err")" = 1 ] \
-  && grep -q '^note: .*leaves \./\.claude/skills/auditor-skill alone; see "Upgrading from 7\.6 or earlier" in the README\.$' "$T/err" \
+  && grep -q '^note: .*leaves \./\.claude/skills/auditor-skill alone; see "Upgrading from 7\.6\.0 or earlier" in the README\.$' "$T/err" \
   && [ -f "$p19/.claude/skills/auditor-skill/old-marker" ] && none_fired; }
-check "a run without a path notes a 7.6 default copy in the directory it starts in, and leaves it alone" ok19
+check "a run without a path notes a 7.6.0 default copy in the directory it starts in, and leaves it alone" ok19
 HOME="$p19" run up "$p19"
 ok19b() { installed "$p19/.claude/skills/auditor-skill" && ! grep -q '^note: ' "$T/err" && none_fired; }
 check "a run without a path from HOME upgrades the default install there without the notice" ok19b
