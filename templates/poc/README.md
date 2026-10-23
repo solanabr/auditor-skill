@@ -128,9 +128,10 @@ fix's error with `assert_exploit_rejected_with!` instead. `assert_exploit_succee
 `assert_exploit_rejected!` accept any `Ok` / any error that is not a harness error, and
 fit an audit-time model only.
 
-**Migrating a PoC from 7.6.** A PoC written against the 7.6 macros (which took the
-`process_instruction` result and a `before:` list) no longer builds once its harness
-copy is refreshed; the build fails with a `compile_error!` naming the new form.
+**Migrating a PoC from 7.6.0 or earlier.** A PoC written against those macros
+(which took the `process_instruction` result, and for the 7.6.0 effect and blocked
+forms a `before:` list) no longer builds once its harness copy is refreshed; the build
+fails with a `compile_error!` naming the new form.
 Rewriting each call into the new form — the runner, the instruction and its account
 list (or the LiteSVM runner and the transaction), with the same `account`, `read`,
 `expect` / `error` and `why` — is a harness repair: it changes how the attack is run,

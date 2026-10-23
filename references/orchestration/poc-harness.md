@@ -268,9 +268,10 @@ exist yet. A LiteSVM PoC reaches the same line when it loads the program through
 `litesvm_for!` and asserts with the macros' LiteSVM forms. A run of the crate's own
 arms, a model, prints another line and never satisfies Leg 3, whatever its tier.
 
-**Migrating a 7.6 PoC.** A PoC written against the 7.6 macros fails to build once a
-re-run refreshes its harness copy — the old `assert_exploit_effect!(outcome, before: …)`
-form is now a `compile_error!` that names the new one. Rewriting each call into the
+**Migrating a 7.6.0 or earlier PoC.** A PoC written against those macros fails to build
+once a re-run refreshes its harness copy — each old form that took the result, such as
+`assert_exploit_effect!(outcome, before: …)` or `assert_exploit_succeeds!(outcome, …)`,
+is now a `compile_error!` that names the new one. Rewriting each call into the
 form that runs the attack itself, keeping the same `account`, `read`, `expect` /
 `error` and `why`, is a harness repair (it changes how the attack runs, not what is
 asserted): about five lines per test, recorded in `harness-repair.diff`.
