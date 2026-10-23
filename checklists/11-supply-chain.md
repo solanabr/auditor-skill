@@ -131,8 +131,8 @@ Run the registry-facing commands these items call for (`npm audit`, `cargo audit
 > GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c core.bigFileThreshold=512m \
 >   diff --text --no-textconv --no-ext-diff --no-color -U3 <base>..<head> \
 >   -- '*package-lock.json' '*npm-shrinkwrap.json' '*yarn.lock' \
->   | awk '/^[+][+][+] /{print} /^@@/{o=n="?"}
->          /^[-+ ] *"[^"]*": [{]$/ || /^[-+ ] +"name": / || /^[-+ ][^ #].*:$/ {k=$0; sub(/^[-+ ] */, "", k)
+>   | awk '{sub(/\r$/, "")} /^[+][+][+] /{print} /^@@/{o=n="?"}
+>          /^[-+ ][[:space:]]*"[^"]*": [{]$/ || /^[-+ ][[:space:]]+"name": / || /^[-+ ][^[:space:]#].*:$/ {k=$0; sub(/^[-+ ][[:space:]]*/, "", k)
 >            sub(/(: [{]|:|,)$/, "", k); if (/^-/) o=k; else if (/^[+]/) n=k; else o=n=k}
 >          /^-[[:space:]]+"?(version|resolved|resolution|integrity|checksum)"?:?[[:space:]]/{print o, $0}
 >          /^[+][[:space:]]+"?(version|resolved|resolution|integrity|checksum)"?:?[[:space:]]/{print n, $0}'
