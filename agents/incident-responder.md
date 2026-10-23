@@ -72,6 +72,17 @@ write-up.
   - `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/deltas.py" tokens|lamports incident_<n>/corpus*/transactions.jsonl`
   - the glob takes every corpus of the incident (`corpus/`, then `corpus-<k>/` for
     each later collection); all three count a transaction once, by signature
+  - a line a recipe cannot read is skipped, never echoed, and reported per input on
+    stderr as `skipped N malformed line(s) in input I (<path>), the first at line L
+    (…)`: copy each such note into `LEDGER.md`'s **Collection gaps** line and into
+    `collection_gaps`. Keep a recipe's output with `--out incident_<n>/<name>`, a
+    new name, never with a shell redirection: the file appears only once the run
+    is complete, and an output never replaces a file
+  - a collection the command reports as ended without its `collection gaps: N` line
+    was killed: record as gaps each signature in its `signatures.jsonl` with no
+    transaction in `transactions.jsonl`, and every address whose history may not
+    have been paged to its end: the last `queried_address` in `signatures.jsonl` and
+    every address given after it, or every address given when none appears
   - `set -o pipefail; <cmd> 2>&1 | bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/redact.sh"` for anything that might print `$RPC_URL`, on one command line: `set -o pipefail` keeps `<cmd>`'s failure as the exit status
 - **CLI reads are keyless.** Program bytes and `program show` come only from
   `snapshot-program.sh`, signature history and transactions only from the corpora
@@ -123,6 +134,7 @@ attestation.
 
 Return to the command the paths written (`INCIDENTS.json`, the report or the
 plan, `LEDGER.md`), a short ledger summary (rounds run, suspects, verdicts,
-collection gaps — every row of `corpus*/collection-gaps.tsv` is in `LEDGER.md` and
-in `collection_gaps`), and any collection you propose (addresses, window, caps).
+collection gaps — every row of `corpus*/collection-gaps.tsv`, and every recipe note
+of skipped malformed lines, is in `LEDGER.md` and in `collection_gaps`), and any
+collection you propose (addresses, window, caps).
 You write files under `incident_<n>/` only; you never touch the client's tree.

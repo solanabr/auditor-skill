@@ -58,8 +58,10 @@ from queries. Victim lists stay in INCIDENTS.json, not here.}
 
 {What this corpus cannot answer: every row of `corpus*/collection-gaps.tsv` (a
 failed fetch, a page cap where older history may exist, the `--max-tx` cap, a stop
-after ten failed fetches in a row), provider retention, a missing v1 opt-in, a
-`Log truncated` tail, an un-fetched sibling address. Never a URL.}
+after ten failed fetches in a row, an interrupted run), the lines the recipes
+skipped as malformed (each input, its count and first line), provider retention, a
+missing v1 opt-in, a `Log truncated` tail, an un-fetched sibling address. Never a
+URL.}
 
 ## Appendix — hypothesis ledger
 
