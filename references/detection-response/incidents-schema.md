@@ -103,11 +103,12 @@ bumps the `schema` string to `auditor-incidents/2`.
   `corpus*/collection-gaps.tsv`, as `"<signature or address>: <reason>"` (a fetch
   that failed, a page cap that stopped on a full page, where older history may
   exist, the `--max-tx` cap, a stop after ten failed fetches in a row, an
-  interrupted run), plus the gaps the run found itself (provider retention, a
-  `Log truncated` tail, a sibling address not collected, and each recipe note
-  `skipped N malformed line(s) in input I (<path>) …`, as `"<path>: N malformed
-  line(s) the recipes skipped, the first at line L"`). The same rows go into
-  LEDGER.md.
+  interrupted run), the unfetched signatures and unfinished addresses of a
+  collection killed outright or stopped by a failed write, plus the gaps the run
+  found itself (provider retention, a `Log truncated` tail, a sibling address not
+  collected, and each recipe note `skipped N malformed line(s) in input I (<path>)
+  …`, as `"<path>: N malformed line(s) the recipes skipped, the first at line
+  L"`). The same rows go into LEDGER.md.
 - **Secrets / PII.** No RPC URL anywhere, including `collection_gaps`. Victim and
   attacker wallet lists stay in this file inside `incident_<n>/`, which is
   git-ignored; they are not lifted into any shared report.
