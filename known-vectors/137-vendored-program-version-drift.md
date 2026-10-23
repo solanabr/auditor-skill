@@ -36,13 +36,25 @@ grep -rn -E "declare_id!" programs/ | sort   # compare against known vendor/upst
 **Step 2: Diff the deployed version against upstream HEAD and its security history**
 ```
 solana-verify verify-from-repo -um --program-id <PROGRAM_ID> <UPSTREAM_REPO> 2>/dev/null   # or compare build hashes
-GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-  log --oneline --no-textconv <deployed_commit>..upstream/main -- programs/ | head -40
+# Upstream is fetched into a Rule 11c copy outside the target tree, never into the client checkout (OUTPUT-RULES
+# Rule 11c). The copy needs no work tree, and HEAD is upstream's default branch, whatever it is called.
+# <checkout>: the target's top level, as an absolute path; <UPSTREAM_REPO>: the upstream's https:// URL
+SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/auditor-upstream.XXXXXX")
+case "$SCRATCH" in /*) ;; *) SCRATCH= ;; esac      # an absolute path only,
+case "$SCRATCH/" in "$PWD"/*) SCRATCH= ;; esac     # never inside the working directory
+if [ -n "$SCRATCH" ] && [ -d "$SCRATCH" ]; then
+  ( cd "$SCRATCH" && GIT_NO_LAZY_FETCH=1 git clone --no-local --no-checkout <checkout> copy \
+    && git -C copy fetch --no-tags <UPSTREAM_REPO> HEAD \
+    && git --no-pager -C copy log --oneline <deployed_commit>..FETCH_HEAD -- programs/ | head -40 )
+else
+  echo "OUTCOME: no scratch copy (check TMPDIR)"
+fi
 gh api repos/<upstream>/security-advisories 2>/dev/null; gh release list -R <upstream> | head -10
 ```
 - ✅ PASS: the deployed build corresponds to upstream HEAD or a maintained release branch, and no security-tagged commit / advisory / release note exists after the deployed commit
 - ❌ FAIL: upstream contains fix commits, advisories or releases newer than the deployed build — treat every one of those diffs as a live exploit candidate against this deployment and escalate to manual review of each
 - ⚠️ PARTIAL: provenance is known but the deployed commit cannot be established (no verifiable build) — the drift is unmeasurable, which is itself a finding
+- ⚠️ Not run, never a PASS: `OUTCOME: no scratch copy (check TMPDIR)` — point `TMPDIR` at an absolute directory outside the target tree and run the step again
 
 **Step 3: Advisory subscription and patch SLA exist and have fired before**
 ```

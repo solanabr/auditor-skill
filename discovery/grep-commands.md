@@ -375,8 +375,17 @@ grep_search: "target=\"_blank\""   includePattern: "apps/web/**/*.tsx"
 
 ### Check for compromised packages
 ```bash
-# Terminal:
-grep -E "axios.*1\.14\.1|axios.*0\.30\.4" package-lock.json
+# Terminal: known-bad releases in manifests and lockfiles, as in KV-077 Step 2 (which also searches history)
+AX='(^|[^A-Za-z0-9_.-])axios[@/](npm:)?(1\.14\.1|0\.30\.4)([^0-9]|$)|/axios/-/axios-(1\.14\.1|0\.30\.4)\.tgz|"axios"[[:space:]]*:[[:space:]]*"=?(1\.14\.1|0\.30\.4)"'
+W3='web3\.js[@/](npm:)?1\.95\.(6|7)([^0-9]|$)|/web3\.js/-/web3\.js-1\.95\.(6|7)\.tgz|"@solana/web3\.js"[[:space:]]*:[[:space:]]*"=?1\.95\.(6|7)"'
+grep -rnE -e "$AX" -e "$W3" --exclude-dir=node_modules --include='package.json' --include='package-lock.json' \
+  --include='npm-shrinkwrap.json' --include='pnpm-lock.yaml' --include='yarn.lock' --include='bun.lock' .
+# package-lock.json / npm-shrinkwrap.json without "resolved" fields: the name on the entry's key (or "name")
+# line, the version on a line below it
+grep -rnE -A2 --exclude-dir=node_modules --include='package-lock.json' --include='npm-shrinkwrap.json' \
+  '"(([^"]*/)?node_modules/)?axios": [{]|"name": "axios"' . | grep -E '"version": "(1\.14\.1|0\.30\.4)"'
+grep -rnE -A2 --exclude-dir=node_modules --include='package-lock.json' --include='npm-shrinkwrap.json' \
+  '"([^"]*/)?@solana/web3\.js": [{]|"name": "@solana/web3\.js"' . | grep -E '"version": "1\.95\.(6|7)"'
 # from a scratch dir OUTSIDE the target tree holding copies of package.json + the lockfile (OUTPUT-RULES Rule 11a)
 npm audit
 ```

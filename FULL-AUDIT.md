@@ -343,65 +343,100 @@ RECORD: governance configuration + findings
 ```
 ACTIONS:
 
-  # Check for compromised packages
-  grep "axios" apps/backend/package.json apps/web/package.json
-  # → verify NOT 1.14.1 or 0.30.4
-  W3='web3\.js@(npm:)?1\.95\.(6|7)([^0-9]|$)|/web3\.js/-/web3\.js-1\.95\.(6|7)\.tgz|"@solana/web3\.js"[[:space:]]*:[[:space:]]*"=?1\.95\.(6|7)"'
-  grep -rnE "$W3" --exclude-dir=node_modules --include='package.json' --include='package-lock.json' \
-    --include='pnpm-lock.yaml' --include='yarn.lock' --include='bun.lock' .
-  # history too; --text because a committed .gitattributes can mark lockfiles binary,
-  # which hides them from -G
+  # Check for compromised packages: axios 1.14.1 / 0.30.4 (AX) and the hijacked
+  # @solana/web3.js 1.95.6 / 1.95.7 (W3), as exact pins and resolved versions in package.json,
+  # package-lock / npm-shrinkwrap, pnpm (lockfile v5 keys too), yarn v1 + berry and bun
+  AX='(^|[^A-Za-z0-9_.-])axios[@/](npm:)?(1\.14\.1|0\.30\.4)([^0-9]|$)|/axios/-/axios-(1\.14\.1|0\.30\.4)\.tgz|"axios"[[:space:]]*:[[:space:]]*"=?(1\.14\.1|0\.30\.4)"'
+  W3='web3\.js[@/](npm:)?1\.95\.(6|7)([^0-9]|$)|/web3\.js/-/web3\.js-1\.95\.(6|7)\.tgz|"@solana/web3\.js"[[:space:]]*:[[:space:]]*"=?1\.95\.(6|7)"'
+  grep -rnE -e "$AX" -e "$W3" --exclude-dir=node_modules --include='package.json' --include='package-lock.json' \
+    --include='npm-shrinkwrap.json' --include='pnpm-lock.yaml' --include='yarn.lock' --include='bun.lock' .
+  # a package-lock.json or npm-shrinkwrap.json written without "resolved" fields names the
+  # package only on the entry's key line (or its "name" line, for an alias), with the
+  # version on a line below it
+  grep -rnE -A2 --exclude-dir=node_modules --include='package-lock.json' --include='npm-shrinkwrap.json' \
+    '"(([^"]*/)?node_modules/)?axios": [{]|"name": "axios"' . | grep -E '"version": "(1\.14\.1|0\.30\.4)"'
+  grep -rnE -A2 --exclude-dir=node_modules --include='package-lock.json' --include='npm-shrinkwrap.json' \
+    '"([^"]*/)?@solana/web3\.js": [{]|"name": "@solana/web3\.js"' . | grep -E '"version": "1\.95\.(6|7)"'
+  # history too: every branch, merge commits (against their first parent) and the root
+  # commit; --text because a committed .gitattributes can mark lockfiles binary, which
+  # hides them from -G
   GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c core.bigFileThreshold=512m \
-    log --all --oneline --text --no-textconv --no-ext-diff -G"$W3" -- '*lock*' '*package.json'
-  # → hijacked @solana/web3.js releases (KV-077 Step 2, SC-005). A hit now is CRITICAL;
-  #   a hit in history means rotate every key a build from that window loaded; a `fatal:` /
-  #   `lazy fetching disabled` line means a partial clone: the history part is INCONCLUSIVE
-
-  # Audits, registry queries and any cargo / rustc command (even --version) run from
-  # a scratch dir OUTSIDE the target tree, on copies of the manifest + lockfile, with
-  # the toolchain pinned, so the target's .npmrc / .cargo/config* / rust-toolchain*
-  # cannot steer them — cargo and rustup read those from every parent directory, so
-  # audit_<n>/ inside the tree is not far enough (Rule 11a)
-  SCRATCH=$(mktemp -d)   # outside the target tree
-  TC=$(cd "$SCRATCH" && rustup default | cut -d' ' -f1)   # your own toolchain, never the target's
-  mkdir -p "$SCRATCH/backend" "$SCRATCH/web" "$SCRATCH/rust"
-  cp apps/backend/package.json apps/backend/package-lock.json "$SCRATCH/backend/"
-  cp apps/web/package.json apps/web/package-lock.json "$SCRATCH/web/"
-  cp Cargo.lock "$SCRATCH/rust/"
-
-  # Run npm audit
-  (cd "$SCRATCH/backend" && npm audit)
-  (cd "$SCRATCH/web" && npm audit)
+    log --all --full-history --root --diff-merges=first-parent --no-patch --oneline --text --no-textconv --no-ext-diff \
+    -G"$AX|$W3" -- '*lock*' '*package.json' '*npm-shrinkwrap.json'
+  # ...and the key-line form in history: each commit that added or removed such an entry
+  KL='"(([^"]*/)?node_modules/)?axios": [{]|"name": "axios"|"version": "(1\.14\.1|0\.30\.4)"|"([^"]*/)?@solana/web3\.js": [{]|"name": "@solana/web3\.js"|"version": "1\.95\.(6|7)"'
+  GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c core.bigFileThreshold=512m \
+    log --all --full-history --root --diff-merges=first-parent -p -U3 --no-color --format='commit %h' --text --no-textconv --no-ext-diff \
+    -G"$KL" -- '*package-lock.json' '*npm-shrinkwrap.json' \
+    | awk 'function bad(k) {return (k ~ /"(([^"]*\/)?node_modules\/)?axios"/ && /"version": "(1\.14\.1|0\.30\.4)"/) ||
+                                   (k ~ /@solana\/web3\.js"/ && /"version": "1\.95\.(6|7)"/)}
+           {sub(/\r$/, "")} /^commit /{c=$2} /^--- /{f=substr($0, 5)} /^[+][+][+] [^\/]/{f=substr($0, 5)} /^@@/{o=n=""}
+           /^[-+ ][[:space:]]*"[^"]*": [{]$/ || /^[-+ ][[:space:]]+"name": /{if (/^-/) o=$0; else if (/^[+]/) n=$0; else o=n=$0}
+           /^[-+ ][[:space:]]+"version": "/{w=bad(o); v=bad(n); if ((/^-/ && w) || (/^[+]/ && v) || (/^ / && w != v)) print c, f, $0}'
+  # → known-bad releases (KV-077 Step 2; SC-001, SC-002, SC-005). A hit now is CRITICAL;
+  #   a hit in history means rotate every key or credential a build from that window could
+  #   read; a `fatal:` / `lazy fetching disabled` line means a partial clone: the history
+  #   part is INCONCLUSIVE
 
   # Check version pinning
   cat apps/backend/package.json | grep -E '[\^~]' # should be minimal
   cat apps/web/package.json | grep -E '[\^~]'
 
-  # Cargo audit (SC-004), stderr kept. It exits 1 both for advisories and for an advisory
-  # database it cannot fetch or load (offline, or github.com outside an isolated run's
-  # egress), so the output decides:
-  #   OUTCOME: vulnerabilities found   → findings, SC-004 FAIL
-  #   OUTCOME: advisory DB unavailable → say so in Coverage & Limitations ("advisory DB
-  #                                      unavailable"), or rerun with --no-fetch against
-  #                                      a local DB if one exists
-  #   OUTCOME: not installed           → SC-004 N/A, and Coverage & Limitations says so
-  #   no OUTCOME line and no "error:"  → SC-004 PASS
-  if (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit --version) >/dev/null 2>&1; then
-    (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit --color never) 2>&1 | tee "$SCRATCH/cargo-audit.txt"
-    grep -qE '^error: [0-9]+ vulnerabilit(y|ies) found' "$SCRATCH/cargo-audit.txt" && echo "OUTCOME: vulnerabilities found"
-    grep -qE '^error: .*advisory database' "$SCRATCH/cargo-audit.txt" && echo "OUTCOME: advisory DB unavailable"
+  # Audits, registry queries and any cargo / rustc command (even --version) run from
+  # a scratch dir OUTSIDE the target tree, on copies of the manifest + lockfile, with
+  # the toolchain pinned, so the target's .npmrc / .cargo/config* / rust-toolchain*
+  # cannot steer them — cargo and rustup read those from every parent directory, so
+  # audit_<n>/ inside the tree is not far enough (Rule 11a). Run the block below as
+  # one command: $SCRATCH lasts only as long as its shell, and with it empty
+  # `cd "$SCRATCH"` would stay in the target tree. So the block first checks that it
+  # is an absolute directory outside the working directory:
+  #   OUTCOME: no scratch copy → nothing below ran (npm audit, cargo audit, the
+  #                              quarantine check): never a PASS. Point TMPDIR at an
+  #                              absolute directory outside the target tree if mktemp
+  #                              failed or landed inside it, then run the whole block again
+  SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/auditor-scratch.XXXXXX")   # outside the target tree
+  case "$SCRATCH" in /*) ;; *) SCRATCH= ;; esac      # an absolute path only,
+  case "$SCRATCH/" in "$PWD"/*) SCRATCH= ;; esac     # never inside the working directory
+  if [ -z "$SCRATCH" ] || [ ! -d "$SCRATCH" ]; then
+    echo "OUTCOME: no scratch copy (create it first)"
   else
-    echo "OUTCOME: not installed"
-  fi
+    TC=$(cd "$SCRATCH" && rustup default | cut -d' ' -f1)   # your own toolchain, never the target's
+    mkdir -p "$SCRATCH/backend" "$SCRATCH/web" "$SCRATCH/rust"
+    cp apps/backend/package.json apps/backend/package-lock.json "$SCRATCH/backend/"
+    cp apps/web/package.json apps/web/package-lock.json "$SCRATCH/web/"
+    cp Cargo.lock "$SCRATCH/rust/"
 
-  # Check quarantine (14-day rule) for newest deps
-  (cd "$SCRATCH" && npm info @anchor-lang/core time | tail -5)
+    # Run npm audit
+    (cd "$SCRATCH/backend" && npm audit)
+    (cd "$SCRATCH/web" && npm audit)
+
+    # Cargo audit (SC-004), stderr kept. It exits 1 both for advisories and for an advisory
+    # database it cannot fetch or load (offline, or github.com outside an isolated run's
+    # egress), so the output decides:
+    #   OUTCOME: vulnerabilities found   → findings, SC-004 FAIL
+    #   OUTCOME: advisory DB unavailable → say so in Coverage & Limitations ("advisory DB
+    #                                      unavailable"), or rerun with --no-fetch against
+    #                                      a local DB if one exists
+    #   OUTCOME: not installed           → SC-004 N/A, and Coverage & Limitations says so
+    #   no OUTCOME line and no "error:"  → SC-004 PASS
+    if (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit --version) >/dev/null 2>&1; then
+      (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit --color never) 2>&1 | tee "$SCRATCH/cargo-audit.txt"
+      grep -qE '^error: [0-9]+ vulnerabilit(y|ies) found' "$SCRATCH/cargo-audit.txt" && echo "OUTCOME: vulnerabilities found"
+      grep -qE '^error: .*advisory database' "$SCRATCH/cargo-audit.txt" && echo "OUTCOME: advisory DB unavailable"
+    else
+      echo "OUTCOME: not installed"
+    fi
+
+    # Check quarantine (14-day rule) for newest deps
+    (cd "$SCRATCH" && npm info @anchor-lang/core time | tail -5)
+  fi
 
   # Dependency changes since the baseline (last audited ref; first audit: last
   # release tag) → checklist 11 §11.11: review the published artifacts' code delta
+  # (Rule 11c flags; the same files as §11.11's first lockfile hint)
   GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c core.bigFileThreshold=512m \
-    diff --text --no-textconv --no-ext-diff --stat <baseline>..HEAD \
-    -- '*.lock' '*-lock.json' '*-lock.yaml' '*Cargo.toml' '*package.json'   # Rule 11c flags
+    diff --text --no-textconv --no-ext-diff --no-color --stat <baseline>..HEAD -- '*.lock' '*-lock.json' \
+    '*npm-shrinkwrap.json' '*-lock.yaml' '*go.sum' '*Cargo.toml' '*package.json' '*pyproject.toml' '*requirements*.txt'
 
 RECORD: dependency audit results
 ```
