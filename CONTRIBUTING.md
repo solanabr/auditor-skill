@@ -217,9 +217,9 @@ under the lowercase name.
   name. It runs the commands in §2. Every suite runs before the step fails, and the failed ones are listed.
   It sets `REQUIRE_TOOLCHAIN=1`, so the PoC runner's suite fails when cargo or rustup is missing instead of
   skipping its real-toolchain checks.
-- **`corpus-check`, job "macOS, bash 3.2 and BSD tools (advisory)"**: the same checks on `macos-26`, with a
-  stock PATH plus `~/.cargo/bin` that its first step asserts. It is not a required check. A newer push to the
-  same ref cancels its older run.
+- **`corpus-check`, job "macOS, bash 3.2 and BSD tools (advisory)"**: the same checks, except the
+  pull-request attribution check, on `macos-26`, with a stock PATH plus `~/.cargo/bin` that its first step
+  asserts. It is not a required check. A newer push to the same ref cancels its older run.
 - **`plugin-validate`**: weekly and on demand, `claude plugin validate --strict` over the repository
   directory. Advisory. Claude Code comes from `.github/plugin-validate/`: an exact version in `package.json`,
   every package's integrity hash in `package-lock.json`, installed with `npm ci --ignore-scripts`. The native
