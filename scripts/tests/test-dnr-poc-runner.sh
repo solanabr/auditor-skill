@@ -169,7 +169,10 @@ for top, dirs, files in os.walk(root):
     if top == root and meta == "build-script":
         targets.append({"name": "build-script-build", "kind": ["custom-build"], "crate_types": ["bin"], "src_path": os.path.join(top, "build.rs")})
     packages.append({"name": name, "version": "0.1.0", "id": "path+file://%s#%s@0.1.0" % (top, name), "manifest_path": os.path.join(top, "Cargo.toml"), "targets": targets})
-print(json.dumps({"packages": packages, "workspace_members": [p["id"] for p in packages], "workspace_root": root, "version": 1}))
+# The directory cargo builds into: CARGO_TARGET_DIR, CARGO_BUILD_TARGET_DIR, then
+# SHIM_TARGET_DIR, which stands for a target-dir set in cargo's own config.
+target = os.environ.get("CARGO_TARGET_DIR") or os.environ.get("CARGO_BUILD_TARGET_DIR") or os.environ.get("SHIM_TARGET_DIR") or os.path.join(root, "target")
+print(json.dumps({"packages": packages, "workspace_members": [p["id"] for p in packages], "workspace_root": root, "target_directory": target, "version": 1}))
 PY
 cat > "$T/shim/build.py" <<'PY'
 import json, os, sys
@@ -768,6 +771,20 @@ kill "$live" 2>/dev/null; wait "$live" 2>/dev/null
 [ "$code" = 3 ] && grep -q 'could not take the build lock' "$T/out" \
   && ok "a build lock held by a live process -> exit 3 after the wait, never a silent reuse" || { bad "held lock not honoured: exit $code"; cat "$T/out" >&2; }
 rm -rf "$T/lockcache/.auditor-poc-build.lock"
+# The lock goes in the directory cargo reports it builds into, which a target-dir in
+# cargo's own config sets as well as CARGO_TARGET_DIR (the stand-in reads it from
+# SHIM_TARGET_DIR): a live lock there holds the run.
+rm -rf "$T/cfgcache"; mkdir -p "$T/cfgcache"
+code="$(gate "$T/inc" "$NATIVE" "$VULN" SHIM_TARGET_DIR="$T/cfgcache")"
+[ "$code" = 0 ] && grep -qF ">> target dir: $T/cfgcache " "$T/out" && [ ! -e "$T/cfgcache/.auditor-poc-build.lock" ] \
+  && ok "a target directory from cargo's config -> run.sh names it and takes and drops its lock there" || { bad "target dir from cargo's config: exit $code"; cat "$T/out" >&2; }
+sleep 30 & live=$!
+mkdir -p "$T/cfgcache/.auditor-poc-build.lock"; echo "$live" > "$T/cfgcache/.auditor-poc-build.lock/pid"
+code="$(gate "$T/inc" "$NATIVE" "$VULN" SHIM_TARGET_DIR="$T/cfgcache" POC_LOCK_WAIT=1)"
+kill "$live" 2>/dev/null; wait "$live" 2>/dev/null
+[ "$code" = 3 ] && grep -qF "could not take the build lock in $T/cfgcache " "$T/out" \
+  && ok "a live lock in the target directory cargo's config names -> exit 3, the run never builds beside it" || { bad "lock in the configured target dir: exit $code"; cat "$T/out" >&2; }
+rm -rf "$T/cfgcache/.auditor-poc-build.lock"
 
 # An unreadable VULNERABLE_SO is a blocker, not a verdict: the ELF-magic read fails
 # under set -e and the run exits 3, never 1.
@@ -1203,6 +1220,18 @@ if command -v cargo >/dev/null 2>&1 && command -v rustup >/dev/null 2>&1; then
   else
     bad "real cargo, VULNERABLE_SO alone: exit $code"; cat "$T/out" >&2
   fi
+  # A target-dir in cargo's own config (here the CARGO_HOME config, which run.sh keeps)
+  # is where cargo builds, so the build lock goes there too: a live lock in it holds
+  # the run.
+  CF="$T/cfg-home"; mkdir -p "$CF" "$T/cfg-target"
+  printf '[build]\ntarget-dir = "%s"\n' "$T/cfg-target" > "$CF/config.toml"
+  sleep 30 & live=$!
+  mkdir -p "$T/cfg-target/.auditor-poc-build.lock"; echo "$live" > "$T/cfg-target/.auditor-poc-build.lock/pid"
+  code="$(run "$RC" "$PATH" "$NATIVE" CARGO_NET_OFFLINE=true CARGO_HOME="$CF" POC_LOCK_WAIT=1 VULNERABLE_SO="$SB-takeover.so")"
+  kill "$live" 2>/dev/null; wait "$live" 2>/dev/null
+  [ "$code" = 3 ] && grep -qF "could not take the build lock in $T/cfg-target " "$T/out" \
+    && ok "real cargo: a target-dir in cargo's own config is where the build lock goes" || { bad "real cargo, target-dir from cargo's config: exit $code"; cat "$T/out" >&2; }
+  rm -rf "$T/cfg-target/.auditor-poc-build.lock"
 
   # Dependency pins with real cargo, against a vendored directory registry that stands
   # in for crates.io (the user's own CARGO_HOME config, which run.sh keeps): the

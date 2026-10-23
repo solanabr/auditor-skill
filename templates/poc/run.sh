@@ -69,9 +69,10 @@
 #     CARGO_BUILD_TARGET_DIR inside the target tree or at a directory you did not
 #     create: cargo trusts the build outputs it finds there. Two crates of the same
 #     name resolve to the same cached artifact path, so run.sh holds a lock inside
-#     that directory around each arm's build and test and re-stamps the scratch copy
-#     under the lock; cargo then rebuilds this crate's own code and the cache serves
-#     only its dependencies. If a stale artifact is handed over anyway, the fresh
+#     the directory cargo builds into (cargo metadata's target_directory, which a
+#     target-dir in cargo's own config sets too) around each arm's build and test
+#     and re-stamps the scratch copy under the lock; cargo then rebuilds this
+#     crate's own code and the cache serves only its dependencies. If a stale artifact is handed over anyway, the fresh
 #     check in `harness checkbuild` makes the run a blocker, not a verdict.
 #     SBF_OUT_DIR stays in the scratch copy either way.
 #   * mollusk looks for <crate>.so in tests/fixtures/ and BPF_OUT_DIR before
@@ -227,8 +228,9 @@ set +f
 # well past the ELF — a live JUP6 dump carried ~892 KB of it — so trailing zeros are
 # trimmed before hashing, and the digest matches `solana-verify`). `harness crate`:
 # the program name, from cargo metadata, after the build-time-code and manifest
-# checks (exit 3 and the reason otherwise). `harness exe`: the test binary in
-# cargo's JSON output. `harness settle`: an arm's verdict from its markers.
+# checks (exit 3 and the reason otherwise). `harness targetdir`: the directory cargo
+# builds into, from cargo metadata. `harness checkbuild`: the test binary in cargo's
+# JSON output. `harness settle`: an arm's verdict from its markers.
 # `harness nonregistry`: the path and git dependencies in Cargo.lock. python3 runs
 # isolated (-I): `python3 -c` would otherwise import modules such as hashlib.py from
 # the working directory, or from PYTHONPATH, in place of the stdlib.
@@ -564,6 +566,9 @@ if command == "hash":
     print(zhash(args[0]))
 elif command == "crate":
     crate(*args)
+elif command == "targetdir":
+    with open(args[0], encoding="utf-8") as f:
+        print(json.load(f).get("target_directory") or "")
 elif command == "checkbuild":
     checkbuild(*args)
 elif command == "settle":
@@ -712,11 +717,8 @@ if ! { cd "${BUILD_DIR}" && mkdir -p "${SBF_OUT_DIR}"; }; then
   echo "[PoC-ATTEMPTED] blocker: cannot prepare ${SBF_OUT_DIR}." >&2
   exit 3
 fi
-# The directory cargo actually builds into (a shared cache, or this run's own), the
-# build lock inside it, and the set of artifacts this run compiles fresh (the fresh
-# check in `harness checkbuild` reads it across arms).
-EFFECTIVE_TARGET="${CARGO_TARGET_DIR:-${CARGO_BUILD_TARGET_DIR:-${BUILD_DIR}/target}}"
-LOCK="${EFFECTIVE_TARGET}/.auditor-poc-build.lock"
+# The set of artifacts this run compiles fresh (the fresh check in `harness
+# checkbuild` reads it across arms).
 : > "${RUN_DIR}/built" || true
 echo ">> build dir: ${BUILD_DIR} (scratch copy outside the target tree; AUDITOR_EXEC_MODE=${AUDITOR_EXEC_MODE}; toolchain ${RUSTUP_TOOLCHAIN:-unpinned: no rustup}; $([[ "${KEEP_POC_BUILD:-0}" == 1 ]] && echo kept || echo removed on exit))"
 
@@ -736,6 +738,16 @@ if [[ -e "${BUILD_DIR}/tests/fixtures/${CRATE}.so" ]]; then
   echo "[PoC-ATTEMPTED] blocker: tests/fixtures/${CRATE}.so would load in place of the arm run.sh puts in SBF_OUT_DIR (mollusk looks in tests/fixtures first); remove it." >&2
   exit 3
 fi
+# The directory cargo builds into, as cargo metadata reports it — CARGO_TARGET_DIR,
+# CARGO_BUILD_TARGET_DIR or a target-dir in cargo's own config (a shared cache), else
+# this run's own — and the build lock inside it.
+EFFECTIVE_TARGET="$(harness targetdir "${RUN_DIR}/metadata.json")" || EFFECTIVE_TARGET=""
+if [[ "${EFFECTIVE_TARGET}" != /* ]]; then
+  echo "[PoC-ATTEMPTED] blocker: cargo metadata names no target directory for the crate, so run.sh cannot place its build lock." >&2
+  exit 3
+fi
+LOCK="${EFFECTIVE_TARGET}/.auditor-poc-build.lock"
+echo ">> target dir: ${EFFECTIVE_TARGET} (the build lock goes here)"
 
 # Dependency pins (see DEPENDENCY PINS above).
 if [[ ! -f "${HERE}/Cargo.lock" ]]; then
