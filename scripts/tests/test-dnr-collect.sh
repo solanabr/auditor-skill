@@ -994,6 +994,22 @@ for pipe in ignore default; do
     "$(cat "$TT/int-pipe-$pipe.status" 2>/dev/null)|$(cut -f1 "$TT/int-pipe-$pipe/collection-gaps.tsv" | tr '\n' ' ')" "143|$B_ADDR SigA1 "
 done
 
+# A run whose stdout is a pipe no one reads any more (the reader exited before the
+# run began): every message fails, and the collection still completes with a whole
+# corpus, whether SIGPIPE was ignored when it started or at its default.
+book '{"'"$A_ADDR"'": [{"signature": "S%02d" % k, "slot": 100 - k, "err": None, "blockTime": 1700000000 - k} for k in range(1, 6)]}'
+for pipe in ignore default; do
+  out="$TT/closed-$pipe"; rm -f "$TT/closed-reader"
+  { n=0; while [[ ! -e "$TT/closed-reader" && "$n" -lt 200 ]]; do sleep 0.05; n=$((n + 1)); done; sleep 0.2
+    PATH="$TT/bin:$PATH" "$PY" -c 'import os, signal, sys
+signal.signal(signal.SIGPIPE, signal.SIG_IGN if sys.argv[1] == "ignore" else signal.SIG_DFL)
+os.execvp("bash", ["bash"] + sys.argv[2:])' "$pipe" "$DNR/collect.sh" --out "$out" --confirmed -- "$A_ADDR" 2> "$out.err"
+    echo "$?" > "$out.status"; } | { exec 0<&-; touch "$TT/closed-reader"; }
+  eq "closed stdout (SIGPIPE $pipe): the run completes, every signature listed and fetched, no gap row" \
+    "$(cat "$out.status")|$(grep -c '"queried_address"' "$out/signatures.jsonl")|$(jq -r '.transaction.signatures[0]' "$out/transactions.jsonl" | tr '\n' ' ')|$(grep -c . "$out/collection-gaps.tsv")" \
+    "0|5|S01 S02 S03 S04 S05 |0"
+done
+
 if [[ "$fails" -ne 0 ]]; then
   echo "test-dnr-collect: $fails assertion(s) FAILED" >&2
   exit 1

@@ -81,7 +81,9 @@
 # may not have been paged to its end: the last queried_address in signatures.jsonl
 # and every address given after it, or every address given when none appears. A run
 # makes up to addresses × --max-pages + --max-tx calls, each up to 60 s, so run a
-# long one in the background, or with a timeout sized from that count.
+# long one in the background, or with a timeout sized from that count. A stdout or
+# stderr that stops taking output (a reader that exited, a closed terminal) loses the
+# messages, never the run: the collection goes on, and its corpus files are whole.
 #
 # SECRETS: the endpoint comes from $RPC_URL and is NEVER echoed. curl runs with -q
 # (no ~/.curlrc) and reads the URL from a config on stdin (-K -), so the key stays
@@ -302,14 +304,20 @@ if ! { exec 3>"$sig_file" 4>"$tx_file" 5>"$gaps"; } 2>/dev/null; then
   exit 2
 fi
 ngaps=0
+# say <text>: one line on stdout, or where the caller sends it, written by a subshell.
+# Once the corpus files are open, every message goes through it: a write that fails
+# (a reader that exited, a closed terminal) ends only that subshell, so it never stops
+# the collection, and bash 3.2, which keeps the text of a failed write and flushes it
+# with a later one, never carries that text into a corpus file.
+say() { ( printf '%s\n' "$*" ) 2>/dev/null; }
 
 # Provider domain, for disclosure under OUTPUT-RULES.md Rule 11b: strip the scheme,
 # any userinfo, path, query and fragment, then keep the host's last two DNS labels (an
 # IP address, or a host of one or two labels, is kept whole).
 provider="$(printf '%s' "$RPC_URL" | sed -E -e 's|^[A-Za-z][A-Za-z0-9+.-]*://||' -e 's|^[^/?#]*@||' \
   -e 's|[/?#].*$||' -e 's|^.*\.([^.]+\.[A-Za-z][^.:]*)\.?(:[0-9]*)?$|\1\2|')"
-echo "provider: $provider   (Rule 11b: this provider received the queried addresses)"
-echo "addresses: ${#addrs[@]}   window: since=$since until=$until before=${before_start:-<newest>}   caps: max_pages=$max_pages max_tx=$max_tx"
+say "provider: $provider   (Rule 11b: this provider received the queried addresses)"
+say "addresses: ${#addrs[@]}   window: since=$since until=$until before=${before_start:-<newest>}   caps: max_pages=$max_pages max_tx=$max_tx"
 
 rpc() {  # rpc <method> <params-json> -> the whole JSON response on stdout; returns curl's status
   local rc
@@ -376,15 +384,15 @@ interrupted() {
     first="$(sed -n "${next}p" "$todo")"
     [ -z "$first" ] || gap "$first" "not fetched: $why; this and $((total - next)) older signatures in signatures.jsonl were not fetched"
   fi
-  [ "$said_collected" = 1 ] || echo "signatures collected: $collected -> $sig_file"
-  [ -z "$first" ] || echo "  ! $why: $((total - next + 1)) signatures listed in signatures.jsonl were not fetched — recorded as a collection gap" >&2
+  [ "$said_collected" = 1 ] || say "signatures collected: $collected -> $sig_file"
+  [ -z "$first" ] || say "  ! $why: $((total - next + 1)) signatures listed in signatures.jsonl were not fetched — recorded as a collection gap" >&2
   [ "$closed" = 1 ] || close_run
   exit "$2"
 }
 # close_run: the closing lines.
 close_run() {
-  echo "transactions fetched: $fetched of $calls calls -> $tx_file"
-  echo "collection gaps: $ngaps (see $gaps)"
+  say "transactions fetched: $fetched of $calls calls -> $tx_file"
+  say "collection gaps: $ngaps (see $gaps)"
 }
 trap 'interrupted INT 130' INT
 trap 'interrupted TERM 143' TERM
@@ -402,7 +410,7 @@ for addr in "${addrs[@]}"; do
     resp="$(rpc getSignaturesForAddress "[\"$addr\",$cfg]")"; rc=$?
     if [ "$rc" -ne 0 ] || ! printf '%s' "$resp" | jq -e '.result | arrays' >/dev/null 2>&1; then
       reason="$(failure "$rc" "$resp")"
-      echo "  ! paging $addr (page $page) failed: $reason — recorded as a collection gap" >&2
+      say "  ! paging $addr (page $page) failed: $reason — recorded as a collection gap" >&2
       gap "$addr" "getSignaturesForAddress page $page: $reason; older history not collected"
       ended=1; break
     fi
@@ -433,13 +441,13 @@ for addr in "${addrs[@]}"; do
       fi
     fi
     resume="${before:+resume into a new --out with --before $before, or }raise --max-pages"
-    echo "  ! older history may exist for $addr: $stop — $resume; recorded as a collection gap" >&2
+    say "  ! older history may exist for $addr: $stop — $resume; recorded as a collection gap" >&2
     gap "$addr" "older history may exist: $stop; $resume"
   fi
   addrs_done=$((addrs_done + 1)); page=0; before="$before_start"
 done
 phase=listed
-echo "signatures collected: $collected -> $sig_file"
+say "signatures collected: $collected -> $sig_file"
 said_collected=1
 
 # 2. unique signatures within [since, until] — failed ones included — newest first
@@ -462,11 +470,11 @@ while IFS= read -r sig; do
   if [ "$failed" -ge "$max_failed" ]; then
     gap "$sig" "not fetched: stopped after $max_failed getTransaction calls in a row failed (last: $reason); this and $((total - i)) older signatures in signatures.jsonl were not fetched"
     handled=$total
-    echo "  ! stopped: $max_failed getTransaction calls in a row failed (last: $reason) — the endpoint is failing (rate limit or outage, or it does not serve this history); collected $fetched, collection gaps $ngaps; $((total - i + 1)) signatures not fetched — recorded as a collection gap" >&2
+    say "  ! stopped: $max_failed getTransaction calls in a row failed (last: $reason) — the endpoint is failing (rate limit or outage, or it does not serve this history); collected $fetched, collection gaps $ngaps; $((total - i + 1)) signatures not fetched — recorded as a collection gap" >&2
     break
   fi
   if [ "$calls" -ge "$max_tx" ]; then
-    echo "  ! reached --max-tx=$max_tx getTransaction calls; $((total - i + 1)) signatures not fetched — recorded as a collection gap" >&2
+    say "  ! reached --max-tx=$max_tx getTransaction calls; $((total - i + 1)) signatures not fetched — recorded as a collection gap" >&2
     gap "$sig" "not fetched: --max-tx=$max_tx calls reached; this and $((total - i)) older signatures in signatures.jsonl were not fetched"
     handled=$total
     break
@@ -481,7 +489,7 @@ while IFS= read -r sig; do
     reason="$(failure "$rc" "$resp")"
     gap "$sig" "getTransaction: $reason"
     handled=$i; failed=$((failed + 1))
-    echo "  ! getTransaction failed for a signature: $reason — recorded as a collection gap" >&2
+    say "  ! getTransaction failed for a signature: $reason — recorded as a collection gap" >&2
   fi
 done < "$todo"
 phase=done
