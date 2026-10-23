@@ -39,12 +39,14 @@ export RPC_URL="https://rpc.example.test/"
 # getTransaction call (every call when k is left out): transport (curl exit 28),
 # rpc429 (JSON-RPC error 429) or null (result null). FAKE_SWAP=<method>|<path>|<target>
 # replaces <path> with a symbolic link to <target> during the first call of that
-# method. Every request is appended to $FAKE_CURL_LOG.
+# method. FAKE_HOLD=<method>|<k>|<dir> holds the k-th call of that method: it creates
+# <dir>/reached, then waits (20 s at most) for <dir>/release before it replies. Every
+# request is appended to $FAKE_CURL_LOG.
 # ---------------------------------------------------------------------------
 mkdir -p "$TT/bin"
 printf '#!/bin/sh\nexec "%s" -I "$0.py" "$@"\n' "$PY" > "$TT/bin/curl"
 cat > "$TT/bin/curl.py" <<'PY'
-import json, os, re, sys
+import json, os, re, sys, time
 args = sys.argv[1:]
 url = ""
 if args[args.index("-K") + 1] == "-":
@@ -63,6 +65,15 @@ if swap_on == m and not os.path.islink(swap.partition("|")[0]):
     path, _, target = swap.partition("|")
     os.remove(path)
     os.symlink(target, path)
+hold_on, _, hold = os.environ.get("FAKE_HOLD", "").partition("|")
+if hold_on == m:
+    k, _, hold_dir = hold.partition("|")
+    if sum(1 for line in open(log) if '"%s"' % m in line) == int(k):
+        open(os.path.join(hold_dir, "reached"), "w").close()
+        for _ in range(400):
+            if os.path.exists(os.path.join(hold_dir, "release")):
+                break
+            time.sleep(0.05)
 book = json.load(open(os.environ["FAKE_BOOK"]))
 def reply(member):
     sys.stdout.write('{"jsonrpc":"2.0","id":1,' + member + '}'); sys.exit(0)
@@ -810,6 +821,56 @@ for case in "bin|$TT/plant-out" "LEDGER.md|$TT/plant-out/ledger"; do
     bad "re-check: $name link planted during the dump -> exit $code, outside: $(ls -A "$TT/plant-out" | tr '\n' ' ') ($(tr '\n' ' ' < "$P.out"))"
   fi
 done
+
+# ---------------------------------------------------------------------------
+# 12. A run stopped by INT, TERM or HUP (here TERM, sent while the stand-in holds
+#     one call) records what it had not finished as collection gaps, prints its
+#     closing lines and exits 128 + the signal number. During the fetch, one row
+#     names the first signature listed but not fetched; during paging, the address
+#     being paged is a row too, and nothing is fetched.
+# ---------------------------------------------------------------------------
+# hold_run <out dir> <method>|<k> <args...>: run collect.sh in the background and
+# send it TERM while the stand-in holds call k of <method>; returns its exit status.
+hold_run() {
+  local out="$1" hold="$2" pid n=0
+  shift 2
+  mkdir -p "$TT/hold"; rm -f "$TT/hold/reached" "$TT/hold/release"
+  FAKE_HOLD="$hold|$TT/hold" PATH="$TT/bin:$PATH" bash "$DNR/collect.sh" --out "$out" --confirmed "$@" > "$out.out" 2>&1 &
+  pid=$!
+  while [[ ! -e "$TT/hold/reached" && "$n" -lt 200 ]]; do sleep 0.05; n=$((n + 1)); done
+  kill -TERM "$pid"
+  touch "$TT/hold/release"
+  wait "$pid"
+}
+book '{"'"$A_ADDR"'": [{"signature": "S%02d" % k, "slot": 100 - k, "err": None, "blockTime": 1700000000 - k} for k in range(1, 6)]}'
+rm -f "$FAKE_CURL_LOG"
+hold_run "$TT/int-fetch" "getTransaction|3" -- "$A_ADDR"
+code=$?
+row="$(grep 'interrupted' "$TT/int-fetch/collection-gaps.tsv")"
+first="${row%%$(printf '\t')*}"
+k="${first#S0}"
+eq "interrupted fetch: exit 143, and one gap row naming the first signature not fetched, with the rest counted" \
+  "$code|$row" "143|$first$(printf '\t')not fetched: the run was interrupted (TERM); this and $((5 - ${k:-0})) older signatures in signatures.jsonl were not fetched"
+eq "interrupted fetch: every listed signature is fetched or covered by that row" \
+  "$(python3 -I -c 'import json, sys
+got = {json.loads(l)["transaction"]["signatures"][0] for l in open(sys.argv[1])}
+print(sorted(got | {"S%02d" % k for k in range(int(sys.argv[2] or 9), 6)}) == ["S%02d" % k for k in range(1, 6)])' "$TT/int-fetch/transactions.jsonl" "$k")" "True"
+eq "interrupted fetch: the run still closes with its fetch summary and gap count" \
+  "$(grep -c '^transactions fetched: [0-9]* of [0-9]* calls -> ' "$TT/int-fetch.out")|$(grep -c '^collection gaps: 1 (see ' "$TT/int-fetch.out")" "1|1"
+B_ADDR="AddrB111111111111111111111111111111111111111"
+book '{"'"$A_ADDR"'": [{"signature": "SigA%d" % k, "slot": 30 - k, "err": None, "blockTime": 1700000030 - k} for k in range(1, 4)],
+       "'"$B_ADDR"'": [{"signature": "SigB%d" % k, "slot": 20 - k, "err": None, "blockTime": 1700000020 - k} for k in range(1, 4)]}'
+rm -f "$FAKE_CURL_LOG"
+hold_run "$TT/int-page" "getSignaturesForAddress|3" -- "$A_ADDR" "$B_ADDR"
+code=$?
+eq "interrupted paging: exit 143, and no getTransaction call" "$code|$(calls getTransaction)" "143|0"
+if grep -q "^$B_ADDR$(printf '\t')getSignaturesForAddress page [01]: the run was interrupted (TERM); older history not collected$" "$TT/int-page/collection-gaps.tsv" \
+   && grep -q "^SigA1$(printf '\t')not fetched: the run was interrupted (TERM); this and [25] older signatures in signatures.jsonl were not fetched$" "$TT/int-page/collection-gaps.tsv" \
+   && grep -q '^collection gaps: 2 (see ' "$TT/int-page.out"; then
+  ok "interrupted paging: a gap row for the address being paged, one for the signatures listed, and the closing lines"
+else
+  bad "interrupted paging: rows '$(tr '\n' '|' < "$TT/int-page/collection-gaps.tsv")', output '$(tr '\n' '|' < "$TT/int-page.out")'"
+fi
 
 if [[ "$fails" -ne 0 ]]; then
   echo "test-dnr-collect: $fails assertion(s) FAILED" >&2

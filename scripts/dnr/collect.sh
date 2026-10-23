@@ -71,6 +71,15 @@
 # "collection gaps: N (see <dir>/collection-gaps.tsv)". Gaps leave the exit status at
 # 0; copy each row into LEDGER.md and INCIDENTS.json `collection_gaps`.
 #
+# INTERRUPTED: an INT, TERM or HUP ends the run with the same record. The address
+# being paged and each address after it, and the signatures listed but not fetched
+# (one row naming the first), become gap rows; the closing lines are printed; the
+# exit status is 128 + the signal number (130, 143, 129). A run killed outright
+# (SIGKILL) writes nothing more: then each signature in signatures.jsonl with no
+# transaction in transactions.jsonl, and each address past the last one paged, is a
+# gap. A run makes up to addresses × --max-pages + --max-tx calls, each up to 60 s,
+# so run a long one in the background, or with a timeout sized from that count.
+#
 # SECRETS: the endpoint comes from $RPC_URL and is NEVER echoed. curl runs with -q
 # (no ~/.curlrc) and reads the URL from a config on stdin (-K -), so the key stays
 # out of its argv; an $RPC_URL holding a quote, a backslash, whitespace or a control
@@ -92,7 +101,8 @@
 # Exit: 0 done (collection gaps included) · 2 usage, a refused input, $RPC_URL, run
 # directory, or an --out that holds a corpus file or where they cannot be created · 3
 # named blocker (no curl or jq; a jq that rounds large integers and no working
-# python3; no private temp directory, which is made before anything is written).
+# python3; no private temp directory, which is made before anything is written) ·
+# 128 + N stopped by signal N (INT, TERM or HUP), with what was left recorded as gaps.
 # bash >= 3.2, curl, jq (and python3 with jq < 1.7). Output: <dir>/signatures.jsonl,
 # <dir>/transactions.jsonl, <dir>/collection-gaps.tsv.
 
@@ -324,13 +334,53 @@ gap() {  # gap <signature or address> <reason>: one row per thing the corpus lac
   printf '%s\t%s\n' "$1" "$(printf '%s' "$2" | tr '\t\r\n' '   ')" >&5
   ngaps=$((ngaps + 1))
 }
+# fetch_list: the signatures to fetch, newest first, into $todo (step 2 below).
+fetch_list() {
+  jq -r --argjson s "$since" --argjson u "$until" '
+    select(($s == 0) or ((.blockTime // 0) >= $s))
+    | select(($u == 0) or ((.blockTime // 0) <= $u))
+    | "\(.slot // 0) \(.signature)"' "$sig_copy" | sort -s -k1,1nr | awk '!seen[$2]++ { print $2 }' >| "$todo"
+}
+# interrupted <signal> <exit status>: an INT, TERM or HUP ends the run here. What it
+# had not finished becomes collection gaps: the address being paged and every address
+# after it, and the signatures listed but not fetched (one row, naming the first);
+# then it prints the closing lines and exits 128 + the signal number.
+phase=paging; addrs_done=0; page=0; handled=0; fetched=0; calls=0; collected=0
+interrupted() {
+  local why="the run was interrupted ($1)" k=0 a next first
+  trap '' INT TERM HUP
+  if [ "$phase" = paging ] || [ "$phase" = listed ]; then
+    for a in "${addrs[@]}"; do
+      k=$((k + 1))
+      if [ "$phase" = paging ] && [ "$k" -eq $((addrs_done + 1)) ]; then
+        gap "$a" "getSignaturesForAddress page $page: $why; older history not collected"
+      elif [ "$phase" = paging ] && [ "$k" -gt $((addrs_done + 1)) ]; then
+        gap "$a" "not paged: $why"
+      fi
+    done
+    echo "signatures collected: $collected -> $sig_file"
+    fetch_list; total="$(grep -c . "$todo")"; handled=0
+  fi
+  if [ "$phase" != done ]; then
+    next=$((handled + 1)); first="$(sed -n "${next}p" "$todo")"
+    if [ -n "$first" ]; then
+      gap "$first" "not fetched: $why; this and $((total - next)) older signatures in signatures.jsonl were not fetched"
+      echo "  ! $why: $((total - next + 1)) signatures listed in signatures.jsonl were not fetched — recorded as a collection gap" >&2
+    fi
+  fi
+  echo "transactions fetched: $fetched of $calls calls -> $tx_file"
+  echo "collection gaps: $ngaps (see $gaps)"
+  exit "$2"
+}
+trap 'interrupted INT 130' INT
+trap 'interrupted TERM 143' TERM
+trap 'interrupted HUP 129' HUP
 
 # 1. signature history, newest -> oldest, bounded by --since and --max-pages. An
 #    empty page ends the address's history. A page shorter than the 1000 asked for
 #    ends it only on the cap's last page: a node can return a short page before the
 #    end, so paging goes on. A cap that stops paging on a full page, before --since
 #    was crossed, may have left older history out.
-collected=0
 for addr in "${addrs[@]}"; do
   before="$before_start"; page=0; oldest=0; ended=0
   while [ "$page" -lt "$max_pages" ]; do
@@ -371,24 +421,25 @@ for addr in "${addrs[@]}"; do
     echo "  ! older history may exist for $addr: $stop — $resume; recorded as a collection gap" >&2
     gap "$addr" "older history may exist: $stop; $resume"
   fi
+  addrs_done=$((addrs_done + 1))
 done
+phase=listed
 echo "signatures collected: $collected -> $sig_file"
 
 # 2. unique signatures within [since, until] — failed ones included — newest first
 #    across every address (slot, descending), so a --max-tx cap keeps the most recent
 #    activity; a signature seen under two addresses is kept once, at its first place.
 #    The sort is stable: within a slot the RPC's own newest-first order stands.
-#    Read from the private copy of signatures.jsonl, and from a file (not a pipe) so
-#    the counter survives the loop.
-jq -r --argjson s "$since" --argjson u "$until" '
-  select(($s == 0) or ((.blockTime // 0) >= $s))
-  | select(($u == 0) or ((.blockTime // 0) <= $u))
-  | "\(.slot // 0) \(.signature)"' "$sig_copy" | sort -s -k1,1nr | awk '!seen[$2]++ { print $2 }' > "$todo"
+#    Read from the private copy of signatures.jsonl (fetch_list, above), and then
+#    from a file (not a pipe) so the counters survive the loop.
+fetch_list
+total="$(grep -c . "$todo")"
+phase=fetching
 
 # 3. fetch. Every getTransaction call counts against --max-tx, and max_failed calls
 #    failing in a row stop the run: the endpoint is failing, and the rest would too.
 max_failed=10
-fetched=0; calls=0; failed=0; total="$(grep -c . "$todo")"; i=0
+failed=0; i=0
 while IFS= read -r sig; do
   [ -z "$sig" ] && continue
   i=$((i + 1))
@@ -414,6 +465,8 @@ while IFS= read -r sig; do
     gap "$sig" "getTransaction: $reason"
     failed=$((failed + 1))
   fi
+  handled=$i
 done < "$todo"
+phase=done
 echo "transactions fetched: $fetched of $calls calls -> $tx_file"
 echo "collection gaps: $ngaps (see $gaps)"
