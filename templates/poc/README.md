@@ -89,6 +89,11 @@ cache once per engagement with `mktemp -d "${TMPDIR:-/tmp}/auditor-poc-target.XX
 mode, pass it to every run as `CARGO_TARGET_DIR`, and delete it when the engagement
 ends. Never point `CARGO_TARGET_DIR` or `CARGO_BUILD_TARGET_DIR` inside the target tree
 or at a directory you did not create: cargo trusts the build outputs it finds there.
+PoC crates of one engagement often share a package name, so their artifacts land on
+the same paths in the cache: `run.sh` holds a lock inside the cache around each arm's
+build and test, and re-stamps its scratch copy under the lock so cargo rebuilds the
+crate's own code. A run that still finds one of its own units reported as already
+built, without having built it, stops with exit 3 instead of running it.
 
 ## Contract
 
@@ -122,6 +127,14 @@ inconclusive; when no legitimate call can show the change on those bytes, pin th
 fix's error with `assert_exploit_rejected_with!` instead. `assert_exploit_succeeds!` /
 `assert_exploit_rejected!` accept any `Ok` / any error that is not a harness error, and
 fit an audit-time model only.
+
+**Migrating a PoC from 7.6.** A PoC written against the 7.6 macros (which took the
+`process_instruction` result and a `before:` list) no longer builds once its harness
+copy is refreshed; the build fails with a `compile_error!` naming the new form.
+Rewriting each call into the new form — the runner, the instruction and its account
+list (or the LiteSVM runner and the transaction), with the same `account`, `read`,
+`expect` / `error` and `why` — is a harness repair: it changes how the attack is run,
+not what is asserted, so record it in `harness-repair.diff` like any other repair.
 
 **Markers.** Each contract assertion leaves a marker once its attack has run and
 another when it holds, each tagged with its test. An arm counts — in a model run as on

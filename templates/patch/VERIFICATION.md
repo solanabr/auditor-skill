@@ -51,7 +51,7 @@ AUDITOR_EXEC_MODE={MODE} VULNERABLE_SO={UNPATCHED_SO} FIXED_SO={PATCHED_SO} \
 — a *patched target build* runs `run.sh` with `VULNERABLE_SO` = the unpatched build and `FIXED_SO` = the
 patched build of the target itself. That is `run.sh`'s prebuilt mode: it exits 3 unless both files are ELF
 programs and each arm's contract assertion ran and held on the bytes `run.sh` placed (loaded through
-`mollusk_for`) — `assert_exploit_effect!` in `tests/exploit.rs` on the unpatched bytes,
+`mollusk_for` or `litesvm_for!`) — `assert_exploit_effect!` in `tests/exploit.rs` on the unpatched bytes,
 `assert_exploit_rejected_with!` (the guard's exact error) in `tests/fixed_blocked.rs` on the patched ones.
 Only a final line ending in `(rejected with the pinned error) → [PoC-REPRODUCED]` verifies our patch; exit 2
 means it did not block the attack, and exit 3 decides nothing (no contract assertion ran, the harness could

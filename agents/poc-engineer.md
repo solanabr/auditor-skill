@@ -42,7 +42,7 @@ After the gate, it builds and runs from a scratch copy outside the target tree, 
 A harness error is an inconclusive arm: `run.sh` exits 3 when the attack as written does not fit the program (a wrong program id, a missing or misordered account, a harness that does not match the program), on either arm. Never file it silently. Return `[PoC-ATTEMPTED]` with `run.sh`'s blocker line verbatim and the flag "PoC re-run needed", for the finding block and, for an incident, `LEDGER.md`. Then make at least one repair-and-retry pass:
 
 1. Diagnose the harness error from that line and the test output.
-2. Fix only the PoC's harness setup — the program id, the account list and its order, the fixtures, the runner bring-up — mirrored in both test files, so the two attacks stay byte-identical. Never change the assertions, the expected error or effect, or the target.
+2. Fix only the PoC's harness setup — the program id, the account list and its order, the fixtures, the runner bring-up — mirrored in both test files, so the two attacks stay byte-identical. Never change the assertions, the expected error or effect, or the target. Rewriting a call from the 7.6 macro form into the current one (the runner, instruction and accounts, or the LiteSVM runner and transaction, with the same `account`, `read`, `expect` / `error` and `why`) is part of this harness setup, not a change to the assertion.
 3. Keep the first-run copies of the files you change, and record the repair as `diff -u` of each in `harness-repair.diff` next to the PoC.
 4. Re-run through `run.sh`.
 

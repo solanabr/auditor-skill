@@ -67,7 +67,10 @@ an incident the ledger header). Pass it to every `run.sh` call as `CARGO_TARGET_
 and delete it when the engagement ends. Never point `CARGO_TARGET_DIR` or
 `CARGO_BUILD_TARGET_DIR` inside the target tree or at a directory you did not create:
 cargo trusts the build outputs it finds there. The `.so` files stay in the scratch copy
-(`SBF_OUT_DIR`).
+(`SBF_OUT_DIR`). PoC crates of one engagement often share a package name, so their
+artifacts land on the same cache paths: `run.sh` holds a lock inside the cache around
+each arm's build and test and re-stamps its scratch copy under it, and a run that finds
+one of its own units reported as already built, without having built it, exits 3.
 
 **Dependency pins.** The template ships a `Cargo.lock` that pins its whole dependency
 graph at releases published at least 14 days before the template shipped, and sets
@@ -209,7 +212,10 @@ account, or a control that failed. In a model run as on prebuilt bytes, `run.sh`
 accepts an arm only with a held assertion of that arm, and only when every program the
 runner helpers (`mollusk_for`, `litesvm_for!`) loaded is the `.so` `run.sh` placed,
 unchanged after the test (each load records its path and zero-trimmed sha256): load
-the program under test only through them, by name. On prebuilt bytes the vulnerable
+the program under test only through them, by name. The attack must also target one of
+those loaded program ids — an instruction or transaction aimed at the System program
+or an added helper is inconclusive, since its outcome did not come from the placed
+bytes. On prebuilt bytes the vulnerable
 arm counts only on `assert_exploit_effect!` and the fixed arm only on
 `assert_exploit_rejected_with!` or `assert_exploit_blocked!`. When the pinned error is
 itself harness-class (a fix that now needs an extra account), it holds, and the run's
@@ -236,7 +242,11 @@ installation's `templates/poc/run.sh` byte for byte, and its `shared-test-utils/
 the installation's (only the version requirements in `shared-test-utils/Cargo.toml` may
 differ). A re-run — `/auditor:patch`, re-audit step 4b, an incident's `FIXED_SO` run —
 refreshes both from the installation first. A copy that differs is not evidence:
-refresh it, re-run, and record the difference.
+refresh it, re-run, and record the difference. `run.sh` itself binds the build to that
+copy: it exits 3 when the crate's `shared-test-utils` dependency is renamed or resolves
+anywhere but `<crate>/shared-test-utils`, or when another dependency supplies that
+import name. Read the run's non-registry line as well: it names any path or git
+dependency and any source compiled from outside the crate.
 
 **Leg 3 of an incident** (`references/detection-response/README.md`) is met only by a
 `run.sh` run on prebuilt bytes that ends with
@@ -251,6 +261,13 @@ or the hash-matched build. `VULNERABLE_SO` alone is enough for Leg 3: no fix nee
 exist yet. A LiteSVM PoC reaches the same line when it loads the program through
 `litesvm_for!` and asserts with the macros' LiteSVM forms. A run of the crate's own
 arms, a model, prints another line and never satisfies Leg 3, whatever its tier.
+
+**Migrating a 7.6 PoC.** A PoC written against the 7.6 macros fails to build once a
+re-run refreshes its harness copy — the old `assert_exploit_effect!(outcome, before: …)`
+form is now a `compile_error!` that names the new one. Rewriting each call into the
+form that runs the attack itself, keeping the same `account`, `read`, `expect` /
+`error` and `why`, is a harness repair (it changes how the attack runs, not what is
+asserted): about five lines per test, recorded in `harness-repair.diff`.
 
 ---
 
