@@ -179,6 +179,25 @@ impl Confined {
     pub fn depth(&self) -> usize {
         self.parts.len()
     }
+
+    /// An output audit-logs may create or regenerate: a file directly in the run
+    /// directory, named `[A-Za-z0-9][A-Za-z0-9._-]*` with a `.jsonl`, `.tsv` or `.txt`
+    /// extension, at most 128 bytes. A corpus in `corpus*/`, a snapshot in `bin/`,
+    /// the ledger and the run directory's own files are never outputs.
+    pub fn is_output(&self) -> bool {
+        let [_, name] = self.parts.as_slice() else {
+            return false;
+        };
+        let stem_ok = name.len() <= 128
+            && name.first().is_some_and(u8::is_ascii_alphanumeric)
+            && name
+                .iter()
+                .all(|&c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'-'));
+        stem_ok
+            && [&b".jsonl"[..], b".tsv", b".txt"]
+                .iter()
+                .any(|ext| name.ends_with(ext))
+    }
 }
 
 fn run_dir_name(part: &[u8]) -> bool {
@@ -454,6 +473,67 @@ impl Drop for Sink {
         {
             TEMP.store(std::ptr::null_mut(), Ordering::SeqCst);
             let _ = fs::remove_file(&*temp);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn path(s: &str) -> Option<Confined> {
+        confine("input 1", OsStr::new(s)).ok()
+    }
+
+    #[test]
+    fn path_grammar() {
+        assert!(path("incident_1/corpus/transactions.jsonl").is_some());
+        assert!(path("./incident_123456/x").is_some());
+        let long = format!("incident_1/{}", "a".repeat(1100));
+        for bad in [
+            "",
+            "/abs/incident_1/x",
+            "-x",
+            "~/x",
+            "incident_1",
+            "incident_1/",
+            "incident_1//x",
+            "incident_1/./x",
+            "incident_1/../x",
+            "././incident_1/x",
+            "audit_1/x",
+            "incident_1234567/x",
+            "INCIDENT_1/x",
+            "incident_/x",
+            "x/incident_1/y",
+            "incident_1/a\nb",
+            "incident_1/a\u{7f}b",
+            &long,
+        ] {
+            assert!(path(bad).is_none(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn output_names() {
+        for good in [
+            "incident_1/frames.jsonl",
+            "incident_1/d-1.tsv",
+            "incident_1/P_2.txt",
+        ] {
+            assert!(path(good).is_some_and(|c| c.is_output()), "{good}");
+        }
+        for bad in [
+            "incident_1/corpus/transactions.jsonl",
+            "incident_1/LEDGER.md",
+            "incident_1/INCIDENTS.json",
+            "incident_1/.gitignore",
+            "incident_1/.x.txt",
+            "incident_1/.jsonl",
+            "incident_1/a b.txt",
+            "incident_1/x.jsonl.partial",
+        ] {
+            assert!(!path(bad).is_some_and(|c| c.is_output()), "{bad}");
         }
     }
 }
