@@ -12,7 +12,10 @@
 #   4. .github/workflows: the required job keeps its name; every workflow and job reads contents only; no
 #      workflow runs on pull_request_target or workflow_run, and no run: script holds a ${{ }} expression; every
 #      job has timeout-minutes, every action is pinned by full SHA with its version, and no checkout keeps
-#      credentials.
+#      credentials;
+#   5. scripts/check-hygiene.sh fails on each kind of file it names, and on a top-level directory named
+#      commands, agents, skills, hooks, bin, monitors or .claude-plugin in another letter case, also when it
+#      is the last of 3,000 tracked paths; it passes the repository itself, and fails outside a checkout.
 # Usage (from the repo root): bash scripts/tests/test-ci-checks.sh   (VERBOSE=1 shows each check's output)
 # Builds throwaway files and git repos under ${TMPDIR:-/tmp}; no network; bash >= 3.2.
 set -uo pipefail
@@ -404,6 +407,41 @@ case "$probs" in *"job a permissions grants more"*"pull_request_target or workfl
         pass=$((pass + 1)); echo "PASS workflows: the checker flags job permissions, the trigger and both scripts";;
       *) failn=$((failn + 1)); echo "FAIL workflows: the checker missed a \${{ }} in a run: script"; echo "$probs";; esac;;
   *) failn=$((failn + 1)); echo "FAIL workflows: the checker missed job permissions or the trigger"; echo "$probs";; esac
+
+# ---- 5. check-hygiene.sh ------------------------------------------------------------------------------
+HYG="$ROOT/scripts/check-hygiene.sh"
+hy() { # hy NAME WANT PATH...  — a repo tracking the script, the real manifests and each PATH as an empty file put
+  # straight into the index, so paths in other letter cases stay apart on any file system; the check must WANT
+  local name=$1 d="$T/hy/$1" want=$2 got=pass e p; shift 2
+  mkdir -p "$d/scripts" "$d/.claude-plugin" && git -C "$d" init -q && cp "$HYG" "$d/scripts/check-hygiene.sh" \
+    && cp "$ROOT/.claude-plugin/plugin.json" "$ROOT/.claude-plugin/marketplace.json" "$d/.claude-plugin/" \
+    && git -C "$d" add scripts .claude-plugin && e=$(git -C "$d" hash-object -w --stdin < /dev/null) || return
+  for p in "$@"; do git -C "$d" update-index --add --cacheinfo "100644,$e,$p"; done
+  out=$(bash "$d/scripts/check-hygiene.sh" 2>&1) || got=fail
+  if [ "$got" = "$want" ]; then pass=$((pass + 1)); echo "PASS hygiene $want: $name"; if [ -n "${VERBOSE:-}" ]; then echo "$out"; fi
+  else failn=$((failn + 1)); echo "FAIL hygiene $name: got $got, want $want"; echo "$out"; fi
+}
+hysaid() { # hysaid TEXT  — the last hy output holds TEXT
+  case "$out" in *"$1"*) pass=$((pass + 1)); echo "PASS hygiene: ... $1";;
+    *) failn=$((failn + 1)); echo "FAIL hygiene: the output lacks: $1"; echo "$out";; esac
+}
+expect "hygiene: the repository passes" 0 bash "$HYG"
+hy clean pass
+hy lower-case-dirs pass agents/a.md commands/c.md skills/s/SKILL.md docs/Agents/x.md
+for d in Agents COMMANDS Skills Hooks BIN Monitors .Claude-Plugin; do hy "case-$d" fail "$d/x.md"; done
+hy case-both fail agents/a.md Agents/b.md; hysaid "Agents/: name it agents/"
+hy env fail .env; hy env-example pass .env.example; hy ds-store fail docs/.DS_Store; hy vendor-env pass vendor/x/.env
+hy per-user fail .claude/settings.json; hy per-user-case fail .Claude/settings.json; hy cursor-case fail .CURSOR/rules
+mkdir -p "$T/hy-nogit/scripts" && cp "$HYG" "$T/hy-nogit/scripts/"
+expect "hygiene: outside a checkout fails" 2 bash "$T/hy-nogit/scripts/check-hygiene.sh"
+# large input: 3,000 tracked paths, over 64 KiB of names, with a top-level directory in another letter case last
+hy big pass
+e=$(git -C "$T/hy/big" hash-object -w --stdin < /dev/null)
+awk -v e="$e" 'BEGIN { for (i = 0; i < 3000; i++) printf "100644 %s\tdocs/many/file-%05d-xxxxxxxxxxxxxxxxxxxxxxxx.md\n", e, i
+  printf "100644 %s\tskILLS/s/SKILL.md\n", e }' | git -C "$T/hy/big" update-index --index-info
+expect "hygiene: 3,000 tracked paths, a directory in another letter case last" 1 bash "$T/hy/big/scripts/check-hygiene.sh"
+case "$out" in *"skILLS/: name it skills/"*) pass=$((pass + 1)); echo "PASS hygiene: ... the last path is read";;
+  *) failn=$((failn + 1)); echo "FAIL hygiene: the last of 3,000 paths was not read"; echo "$out";; esac
 
 echo "---- $pass passed, $failn failed"
 [ "$failn" -eq 0 ]
