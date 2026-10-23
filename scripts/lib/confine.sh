@@ -25,14 +25,27 @@ confine_refuse() { # confine_refuse <reason>: the refusal line, then exit 64
   exit 64
 }
 
-confine_text() { # confine_text <s>: <s> for a message, control characters as ?, cut after 200 bytes
-  local s=${1//[[:cntrl:]]/?}
-  if [ "${#s}" -gt 200 ]; then s="${s:0:200}..."; fi
-  printf '%s' "$s"
+confine_shown() { # confine_shown <s>: sets CONFINE_SHOWN to <s> for a message: control characters as ?, cut after 200 bytes
+  CONFINE_SHOWN=${1//[[:cntrl:]]/?}
+  if [ "${#CONFINE_SHOWN}" -gt 200 ]; then CONFINE_SHOWN="${CONFINE_SHOWN:0:200}..."; fi
+}
+
+confine_text() { # confine_text <s>: prints <s> as confine_shown sets it
+  confine_shown "$1"
+  printf '%s' "$CONFINE_SHOWN"
+}
+
+# confine_phys <dir>: sets CONFINE_PHYS to <dir> with every symbolic link resolved, then goes back to WT;
+# status 1 when <dir> cannot be entered.
+confine_phys() {
+  local rc=0
+  if cd -P -- "$1" 2>/dev/null; then CONFINE_PHYS=$PWD; else rc=1; fi
+  cd -- "$CONFINE_WT" 2>/dev/null || confine_refuse "the working directory cannot be entered again"
+  return "$rc"
 }
 
 confine_init() { # confine_init <tool> <installation root, physical>
-  local root=$2 wt rest e phys clean=""
+  local root=$2 rest e clean=""
   CONFINE_TOOL=$1
   IFS=$' \t\n'
   unset CDPATH BASH_ENV ENV
@@ -43,32 +56,32 @@ confine_init() { # confine_init <tool> <installation root, physical>
     ''|*'"'*|*'$'*|*'`'*|*'\'*|*[[:cntrl:]]*)
       confine_refuse "the installation path holds a quote, \$, a backtick, a backslash or a control character, so its quoted call cannot match as written" ;;
   esac
-  wt=$(pwd -P) || confine_refuse "the working directory cannot be resolved"
-  case "$wt" in
+  cd -P . 2>/dev/null || confine_refuse "the working directory cannot be resolved"
+  CONFINE_WT=$PWD
+  case "$CONFINE_WT" in
     /*) ;;
     *) confine_refuse "the working directory cannot be resolved" ;;
   esac
-  case "$wt" in *[[:cntrl:]]*) confine_refuse "the working directory path holds a control character" ;; esac
+  case "$CONFINE_WT" in *[[:cntrl:]]*) confine_refuse "the working directory path holds a control character" ;; esac
   case "$root/" in
-    "${wt%/}/"*) confine_refuse "the installation lies inside the working directory; install it outside the tree under audit (Rule 11e)" ;;
+    "${CONFINE_WT%/}/"*) confine_refuse "the installation lies inside the working directory; install it outside the tree under audit (Rule 11e)" ;;
   esac
   rest="${PATH-}:"
   while [ -n "$rest" ]; do
     e=${rest%%:*}
     rest=${rest#*:}
     case "$e" in /*) ;; *) continue ;; esac
-    phys=$(cd -P -- "$e" 2>/dev/null && pwd -P) || continue
-    case "$phys" in *[[:cntrl:]]*) continue ;; esac
-    case "$phys/" in "${wt%/}/"*) continue ;; esac
-    clean=${clean:+$clean:}$phys
+    confine_phys "$e" || continue
+    case "$CONFINE_PHYS" in *[[:cntrl:]]*) continue ;; esac
+    case "$CONFINE_PHYS/" in "${CONFINE_WT%/}/"*) continue ;; esac
+    clean=${clean:+$clean:}$CONFINE_PHYS
   done
   [ -n "$clean" ] || confine_refuse "no PATH entry is left outside the working directory"
   PATH=$clean
   export PATH
   hash -r
-  CONFINE_WT=$wt
   CONFINE_ROOT=$root
-  CONFINE_CEILING=${wt%/*}
+  CONFINE_CEILING=${CONFINE_WT%/*}
   [ -n "$CONFINE_CEILING" ] || CONFINE_CEILING=/
 }
 
@@ -80,10 +93,10 @@ confine_need() { # confine_need <program>...: refuse unless each is on the clean
 }
 
 # ---- git (OUTPUT-RULES.md Rule 11c) --------------------------------------------------------------------
-# hgit <dir> <git arguments>: git in <dir> with only the environment below and the repository's own
-# config overridden by the -c pins. GIT_CEILING_DIRECTORIES stops discovery at WT's parent unless the
-# caller sets CONFINE_CEILING for one call. GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS makes git refuse
-# abbreviated long options where its option parser supports that; git-ro.sh refuses them on its own too.
+# hgit <dir> <git arguments>: git in <dir> with only the environment below, and the -c pins over the
+# repository's own config. GIT_CEILING_DIRECTORIES stops discovery at WT's parent unless the caller sets
+# CONFINE_CEILING for one call. GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS makes git refuse abbreviated long
+# options where its option parser checks it; git-ro.sh refuses them on its own as well.
 hgit() {
   local d=$1
   shift
@@ -93,23 +106,26 @@ hgit() {
     git --no-pager -C "$d" \
     -c core.fsmonitor=false -c core.pager=cat -c core.hooksPath=/dev/null -c core.untrackedCache=false \
     -c log.showSignature=false -c gpg.program=false -c gpg.ssh.program=false -c gpg.x509.program=false \
-    -c protocol.allow=never -c diff.external= -c blame.ignoreRevsFile= -c core.bigFileThreshold=512m \
-    -c color.ui=never -c color.diff=never -c color.grep=never -c color.decorate=never \
-    -c core.quotePath=false -c i18n.logOutputEncoding=UTF-8 -c format.pretty=medium \
-    -c mailmap.file=/dev/null -c submodule.recurse=false -c diff.submodule=short "$@"
+    -c protocol.allow=never -c diff.external= -c core.bigFileThreshold=512m \
+    -c core.attributesFile=/dev/null -c core.excludesFile=/dev/null -c diff.orderFile=/dev/null \
+    -c mailmap.file=/dev/null -c color.ui=never -c color.diff=never -c color.grep=never \
+    -c color.decorate=never -c core.quotePath=false -c i18n.logOutputEncoding=UTF-8 -c format.pretty=medium \
+    -c log.diffMerges=separate -c submodule.recurse=false -c diff.submodule=short "$@"
 }
 
 # confine_repo_top <dir>: status 0 when <dir> (absolute) is the top level of its own repository, or a
 # bare repository itself, compared with symbolic links resolved on both sides. A directory inside
 # another repository fails, so that repository is never read in its place.
 confine_repo_top() {
-  local top
+  local top here
   if [ "$(hgit "$1" rev-parse --is-bare-repository 2>/dev/null)" = true ]; then
     top=$(hgit "$1" rev-parse --absolute-git-dir 2>/dev/null) || return 1
   else
     top=$(hgit "$1" rev-parse --show-toplevel 2>/dev/null) || return 1
   fi
-  [ -n "$top" ] && [ "$(cd -P -- "$top" 2>/dev/null && pwd -P)" = "$(cd -P -- "$1" 2>/dev/null && pwd -P)" ]
+  [ -n "$top" ] && confine_phys "$1" || return 1
+  here=$CONFINE_PHYS
+  confine_phys "$top" && [ "$CONFINE_PHYS" = "$here" ]
 }
 
 # confine_partial_clone <dir>: status 0 for a partial clone (extensions.partialClone, or a
@@ -133,26 +149,37 @@ confine_partial_clone() {
 # physical path), CONFINE_GIT_DIR and CONFINE_BARE (true or false).
 confine_repo() {
   local what=$2 shown abs info bare gitdir common top d links
-  shown=$(confine_text "$1")
+  confine_shown "$1"
+  shown=$CONFINE_SHOWN
   confine_path "$1" "$what" dir
   if [ "$CONFINE_REL" = . ]; then abs=$CONFINE_WT; else abs=$CONFINE_WT/$CONFINE_REL; fi
-  abs=$(cd -P -- "$abs" 2>/dev/null && pwd -P) || confine_refuse "$what cannot be resolved: $shown"
-  info=$(hgit "$abs" rev-parse --is-bare-repository --absolute-git-dir --git-common-dir 2>/dev/null) ||
-    confine_refuse "$what is not a git repository that git can read (none there, or another user owns it: audit a copy): $shown"
+  confine_phys "$abs" || confine_refuse "$what cannot be resolved: $shown"
+  abs=$CONFINE_PHYS
+  # One call where there is a work tree; a bare repository has no top level, so it takes a second.
+  if info=$(hgit "$abs" rev-parse --is-bare-repository --absolute-git-dir --git-common-dir --show-toplevel 2>/dev/null); then
+    top=${info##*$'\n'}
+    info=${info%$'\n'*}
+  else
+    info=$(hgit "$abs" rev-parse --is-bare-repository --absolute-git-dir --git-common-dir 2>/dev/null) ||
+      confine_refuse "$what is not a git repository that git can read (none there, or another user owns it: audit a copy): $shown"
+    top=""
+  fi
   bare=${info%%$'\n'*}
   info=${info#*$'\n'}
   gitdir=${info%%$'\n'*}
   common=${info#*$'\n'}
   case "$bare" in
     true) top=$gitdir ;;
-    false) top=$(hgit "$abs" rev-parse --show-toplevel 2>/dev/null) || top="" ;;
+    false) ;;
     *) confine_refuse "git cannot describe the repository at $what: $shown" ;;
   esac
-  [ -n "$top" ] && [ "$(cd -P -- "$top" 2>/dev/null && pwd -P)" = "$abs" ] ||
+  [ -n "$top" ] && confine_phys "$top" && [ "$CONFINE_PHYS" = "$abs" ] ||
     confine_refuse "$what is not the top level of its repository: $shown"
   case "$common" in /*) ;; *) common=$abs/$common ;; esac
-  gitdir=$(cd -P -- "$gitdir" 2>/dev/null && pwd -P) || confine_refuse "$what has a git directory that cannot be resolved: $shown"
-  common=$(cd -P -- "$common" 2>/dev/null && pwd -P) || confine_refuse "$what has a git directory that cannot be resolved: $shown"
+  confine_phys "$gitdir" || confine_refuse "$what has a git directory that cannot be resolved: $shown"
+  gitdir=$CONFINE_PHYS
+  confine_phys "$common" || confine_refuse "$what has a git directory that cannot be resolved: $shown"
+  common=$CONFINE_PHYS
   for d in "$gitdir" "$common"; do
     case "$d/" in
       "${CONFINE_WT%/}/"*) ;;
@@ -188,8 +215,9 @@ confine_tracked() {
 # dir (an existing directory; "." is WT itself), new (nothing there yet) or any (absent, a regular file
 # or a directory). Sets CONFINE_REL (the path without a leading ./) and CONFINE_TYPE (dir, file or none).
 confine_path() {
-  local p=$1 what=$2 want=$3 shown rest cur comp d phys
-  shown=$(confine_text "$p")
+  local p=$1 what=$2 want=$3 shown rest cur comp d
+  confine_shown "$p"
+  shown=$CONFINE_SHOWN
   if [ "$p" = . ] && [ "$want" = dir ]; then
     CONFINE_REL=. CONFINE_TYPE=dir
     return 0
@@ -224,8 +252,8 @@ confine_path() {
     esac
   done
   if [ "$CONFINE_TYPE" = dir ]; then d=$cur; else d=${cur%/*}; fi
-  phys=$(cd -P -- "$d" 2>/dev/null && pwd -P) || confine_refuse "$what cannot be resolved: $shown"
-  case "$phys/" in
+  confine_phys "$d" || confine_refuse "$what cannot be resolved: $shown"
+  case "$CONFINE_PHYS/" in
     "${CONFINE_WT%/}/"*) ;;
     *) confine_refuse "$what resolves outside the working directory: $shown" ;;
   esac
@@ -260,7 +288,8 @@ confine_ignore_all() { # confine_ignore_all <file>: status 0 when <file> is a re
 # its name without a leading ./.
 confine_rundir() {
   local r=${1#./} what=$2 shown links listed
-  shown=$(confine_text "$1")
+  confine_shown "$1"
+  shown=$CONFINE_SHOWN
   confine_rundir_name "$r" ||
     confine_refuse "$what must be a run directory named audit_<n> or incident_<n> in the working directory: $shown"
   [ ! -L "$CONFINE_WT/$r" ] || confine_refuse "$what is a symbolic link: $shown"
