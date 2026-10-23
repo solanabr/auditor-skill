@@ -71,6 +71,10 @@ the non-registry code in the build: the path and git dependencies in the resolve
 are. Before a command trusts an `OK` line it compares them with the installation's
 `templates/poc/` (only the version requirements in `shared-test-utils/Cargo.toml` may
 differ), and a re-run first refreshes `run.sh` and `shared-test-utils/src/` from it.
+`run.sh` itself refuses a crate that does not depend on its own `shared-test-utils/`
+under the import name `shared_test_utils`, one where another dependency takes that
+import name (spelled with `-` or `_`), and a build that compiles a `shared_test_utils`
+from anywhere else.
 
 **Dependencies.** Framework crates by default, as in the template. A crate copied
 from the target's manifest runs its build script in the recorded mode, so add one
@@ -95,10 +99,12 @@ mode, pass it to every run as `CARGO_TARGET_DIR`, and delete it when the engagem
 ends. Never point `CARGO_TARGET_DIR` or `CARGO_BUILD_TARGET_DIR` inside the target tree
 or at a directory you did not create: cargo trusts the build outputs it finds there.
 PoC crates of one engagement often share a package name, so their artifacts land on
-the same paths in the cache: `run.sh` holds a lock inside the cache around each arm's
-build and test, and re-stamps its scratch copy under the lock so cargo rebuilds the
-crate's own code. A run that still finds one of its own units reported as already
-built, without having built it, stops with exit 3 instead of running it.
+the same paths in the cache: `run.sh` holds a lock inside the directory cargo builds
+into (a `target-dir` in your own cargo config counts too) around each arm's build and
+test, and re-stamps its scratch copy under the lock so cargo rebuilds the crate's own
+code. A run waits up to `POC_LOCK_WAIT` seconds (default 900) for the lock, then stops
+with exit 3. A run that still finds one of its own units reported as already built,
+without having built it, stops with exit 3 instead of running it.
 
 ## Contract
 
@@ -130,9 +136,9 @@ with an error that is not a harness error and leaves the account unchanged. A co
 that targets another program, starts from another state, fails or changes nothing is
 inconclusive; when no legitimate call can show the change on those bytes, pin the
 fix's error with `assert_exploit_rejected_with!` instead, as a new check, not a harness
-repair. `assert_exploit_succeeds!` /
-`assert_exploit_rejected!` accept any `Ok` / any error that is not a harness error, and
-fit an audit-time model only.
+repair. `assert_exploit_succeeds!` / `assert_exploit_rejected!` take the same runner
+and attack, accept any `Ok` / any error that is not a harness error, and fit an
+audit-time model only.
 
 **Migrating a PoC from 7.6.0 or earlier.** A PoC written against those macros
 (which took the `process_instruction` result, and for the 7.6.0 effect and blocked
@@ -147,7 +153,8 @@ not what is asserted, so record it in `harness-repair.diff` like any other repai
 another when it holds, each tagged with its test. An arm counts — in a model run as on
 prebuilt bytes — only with a held assertion of that arm, and only when every program
 the runner helpers loaded is the `.so` `run.sh` placed, still unchanged after the
-test. A failed assertion in one test is a verdict even when another test is
+test, and the attack targeted one of them; a LiteSVM attack that failed in an
+instruction for another program decides nothing. A failed assertion in one test is a verdict even when another test is
 inconclusive; a test that fails before any contract assertion ran (the program did
 not load, the setup panicked) exits `3` (inconclusive), not `1` or `2`. The markers are
 a floor, not proof: read the assertion all the same.

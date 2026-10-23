@@ -68,9 +68,12 @@ and delete it when the engagement ends. Never point `CARGO_TARGET_DIR` or
 `CARGO_BUILD_TARGET_DIR` inside the target tree or at a directory you did not create:
 cargo trusts the build outputs it finds there. The `.so` files stay in the scratch copy
 (`SBF_OUT_DIR`). PoC crates of one engagement often share a package name, so their
-artifacts land on the same cache paths: `run.sh` holds a lock inside the cache around
-each arm's build and test and re-stamps its scratch copy under it, and a run that finds
-one of its own units reported as already built, without having built it, exits 3.
+artifacts land on the same cache paths: `run.sh` holds a lock inside the directory
+cargo builds into (cargo metadata's `target_directory`, which a `target-dir` in the
+user's own cargo config also sets) around each arm's build and test and re-stamps its
+scratch copy under it. A run waits up to `POC_LOCK_WAIT` seconds (default 900) for the
+lock, then exits 3, and a run that finds one of its own units reported as already
+built, without having built it, exits 3.
 
 **Dependency pins.** The template ships a `Cargo.lock` that pins its whole dependency
 graph at releases published at least 14 days before the template shipped, and sets
@@ -186,8 +189,9 @@ not. Downgrading the tier never downgrades the finding's severity or removes its
 concrete value the attack leaves there, which the account did not hold before), and
 `tests/fixed_blocked.rs` asserts the guard's exact error with
 `assert_exploit_rejected_with!` (a value compared with `==`, never a pattern). Each
-macro runs the attack itself and returns its result: on Mollusk, the runner, one
-instruction and its account list; on LiteSVM, the runner and one signed legacy
+macro, the any-result `assert_exploit_succeeds!` / `assert_exploit_rejected!` of a
+model included, runs the attack itself and returns its result: on Mollusk, the runner,
+one instruction and its account list; on LiteSVM, the runner and one signed legacy
 `Transaction`, with any setup sent before it. A Mollusk PoC is one instruction; a
 sequence goes to LiteSVM, whose PoC adds `litesvm = "0.13"` and loads the program
 through `litesvm_for!`. For a fix the team deployed, whose error is not known in
@@ -214,10 +218,11 @@ account, or a control that failed. In a model run as on prebuilt bytes, `run.sh`
 accepts an arm only with a held assertion of that arm, and only when every program the
 runner helpers (`mollusk_for`, `litesvm_for!`) loaded is the `.so` `run.sh` placed,
 unchanged after the test (each load records its path and zero-trimmed sha256): load
-the program under test only through them, by name. The attack must also target one of
-those loaded program ids — an instruction or transaction aimed at the System program
-or an added helper is inconclusive, since its outcome did not come from the placed
-bytes. On prebuilt bytes the vulnerable
+the program under test only through them, by name. In every macro the attack must
+also target one of those loaded program ids — an instruction or transaction aimed at
+the System program or an added helper is inconclusive, since its outcome did not come
+from the placed bytes — and a LiteSVM transaction that failed in an instruction for
+another program is inconclusive too. On prebuilt bytes the vulnerable
 arm counts only on `assert_exploit_effect!` and the fixed arm only on
 `assert_exploit_rejected_with!` or `assert_exploit_blocked!`. When the pinned error is
 itself harness-class (a fix that now needs an extra account), it holds, and the run's
@@ -247,11 +252,12 @@ before a command trusts an `OK` line it compares the crate's `run.sh` with the
 installation's `templates/poc/run.sh` byte for byte, and its `shared-test-utils/` with
 the installation's (only the version requirements in `shared-test-utils/Cargo.toml` may
 differ). A re-run — `/auditor:patch`, re-audit step 4b, an incident's `FIXED_SO` run —
-first refreshes `run.sh` and `shared-test-utils/src/` from the installation. A copy that differs is not evidence:
-refresh it, re-run, and record the difference. `run.sh` itself binds the build to that
-copy: it exits 3 when the crate's `shared-test-utils` dependency is renamed or resolves
-anywhere but `<crate>/shared-test-utils`, or when another dependency supplies that
-import name. Read the run's non-registry line as well: it names any path or git
+first refreshes `run.sh` and `shared-test-utils/src/` from the installation. A copy
+that differs is not evidence: refresh it, re-run, and record the difference. `run.sh`
+itself binds the build to that copy: it exits 3 when the crate does not depend on
+`<crate>/shared-test-utils` under the import name `shared_test_utils`, when another
+dependency takes that import name (spelled with `-` or `_`), or when an arm's build
+compiles a `shared_test_utils` from anywhere else, or none. Read the run's non-registry line as well: it names any path or git
 dependency and any source compiled from outside the crate.
 
 **Leg 3 of an incident** (`references/detection-response/README.md`) is met only by a
