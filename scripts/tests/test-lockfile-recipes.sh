@@ -163,6 +163,13 @@ for m in 'changed manifests and lockfiles' "$NPM" 'pnpm (pnpm-lock.yaml)' 'bun (
 done
 has "$T/plain.out" '"borsh" +checksum = "eeee"' && ok "Cargo.lock hint names a checksum-only change" \
   || bad "Cargo.lock hint lost the name of a checksum-only change"
+# FULL-AUDIT Step 3.2's list of changed dependency files: the same flags and files as the first hint
+stat_args() { tr -d '>\\' | tr -s ' \n' '\n\n' | grep -E -e "^--" -e "^'"; }
+cl_hint 'changed manifests and lockfiles' | stat_args > "$T/stat-cl"
+awk '/^  # Dependency changes since the baseline/ {g = 1} g && /^  *(GIT_NO_LAZY_FETCH|diff|.\*)/ {print} g && /requirements/ {exit}' "$FA" \
+  | stat_args > "$T/stat-fa"
+if [ -s "$T/stat-cl" ] && cmp -s "$T/stat-cl" "$T/stat-fa"; then ok "FULL-AUDIT Step 3.2 lists the same dependency files as §11.11"
+else bad "FULL-AUDIT Step 3.2's dependency-change list differs from §11.11's"; diff "$T/stat-cl" "$T/stat-fa" | sed 's/^/  | /'; fi
 
 # step 4: the sweep before any diff or grep, over an artifact whose directories are 0555 and 0000, then the
 # check that only files and directories are left, then the diff

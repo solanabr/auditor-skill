@@ -429,9 +429,10 @@ ACTIONS:
 
   # Dependency changes since the baseline (last audited ref; first audit: last
   # release tag) → checklist 11 §11.11: review the published artifacts' code delta
+  # (Rule 11c flags; the same files as §11.11's first lockfile hint)
   GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c core.bigFileThreshold=512m \
-    diff --text --no-textconv --no-ext-diff --stat <baseline>..HEAD \
-    -- '*.lock' '*-lock.json' '*npm-shrinkwrap.json' '*-lock.yaml' '*Cargo.toml' '*package.json'   # Rule 11c flags
+    diff --text --no-textconv --no-ext-diff --no-color --stat <baseline>..HEAD -- '*.lock' '*-lock.json' \
+    '*npm-shrinkwrap.json' '*-lock.yaml' '*go.sum' '*Cargo.toml' '*package.json' '*pyproject.toml' '*requirements*.txt'
 
 RECORD: dependency audit results
 ```
