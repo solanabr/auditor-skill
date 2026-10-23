@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # check-frontmatter.sh — fail when Claude Code would read a frontmatter field differently from what is
-# written. Checks the files whose frontmatter Claude Code loads: commands/*.md, agents/*.md and SKILL.md
-# (or the files given; the kind comes from the path). The frontmatter must be a flat subset that every
-# YAML loader reads the same way:
+# written. Checks the files whose frontmatter Claude Code loads: commands/*.md, agents/*.md, SKILL.md and
+# skills/*/SKILL.md (or the files given; the kind comes from the path). The frontmatter must be a flat
+# subset that every YAML loader reads the same way:
 #   - line 1 is exactly '---' and the block ends at the next line that is exactly '---'; no other line of
 #     the block contains '---', is a '...' document end, or holds a tab or CR;
 #   - every line is 'key: value', with a known lowercase key, each key once; tools and allowed-tools may
@@ -10,21 +10,22 @@
 #   - a value is plain, 'single-quoted' ('' is the only escape) or "double-quoted" (\" and \\ are the only
 #     escapes). A plain value starts with no YAML indicator, holds no ': ' or ' #', does not end in ':' or a
 #     space, and is not one YAML reads as a number, boolean or null. disable-model-invocation is true or false;
-#   - agents have name, description and tools; commands have description and allowed-tools; SKILL.md has
-#     name and description;
+#   - agents have name, description and tools; commands have description and allowed-tools; a SKILL.md has
+#     name and description, and for now no other key;
 #   - tools and allowed-tools list 'Name' or 'Name(pattern)' entries (agents: names only, no pattern),
 #     separated by ', ' or one per item, none empty; allowed-tools lists none of FORBIDDEN_ALLOWED_TOOLS.
 # known-vectors/*.md carry frontmatter too, but Claude Code does not load it (check-corpus.sh reads its id).
 # Usage: bash scripts/check-frontmatter.sh [FILE...]. Exit 0 = every file passes. Needs bash >= 3.2, awk.
 set -uo pipefail
 
-# Entries the allowed-tools of a command or SKILL.md may never list, space-separated, each a whole entry.
+# Entries the allowed-tools of a command or skill may never list, space-separated, each a whole entry.
 # (An agent's tools list tool names only, so * fails there by that rule.)
 FORBIDDEN_ALLOWED_TOOLS='*'
 
 if [ $# -eq 0 ]; then
   cd "$(dirname "$0")/.." || exit 2
   set -- commands/*.md agents/*.md SKILL.md
+  for f in skills/*/SKILL.md; do if [ -f "$f" ]; then set -- "$@" "$f"; fi; done
 fi
 
 PROG='
@@ -113,7 +114,7 @@ BEGIN {
   else if (kind == "command") {
     what = "a command"; keys = "name description argument-hint allowed-tools model disable-model-invocation"
     need = "description allowed-tools"
-  } else { what = "SKILL.md"; keys = "name description allowed-tools when_to_use"; need = "name description" }
+  } else { what = "a SKILL.md"; keys = "name description"; need = "name description" }
   n = split(keys, a, " "); for (i = 1; i <= n; i++) known[a[i]] = 1
 }
 NR == 1 { if ($0 != "---") { bad("line 1 must be exactly --- (no BOM, CR or trailing text)"); exit } opened = 1; next }
@@ -131,9 +132,9 @@ END {
 fail=0; n=0
 for f in "$@"; do
   case "$f" in
+    SKILL.md | */SKILL.md) kind=skill ;;
     agents/*.md | */agents/*.md) kind=agent ;;
     commands/*.md | */commands/*.md) kind=command ;;
-    SKILL.md | */SKILL.md) kind=skill ;;
     *) echo "::error::$f: not under agents/ or commands/ and not a SKILL.md; its keys are unknown" >&2; fail=1; continue ;;
   esac
   if [ ! -f "$f" ]; then echo "::error::$f: no such file" >&2; fail=1; continue; fi

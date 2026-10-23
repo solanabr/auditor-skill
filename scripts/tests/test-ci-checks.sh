@@ -6,7 +6,8 @@
 #      and fails each case below where Claude Code would read a field differently from what is written;
 #   3. scripts/check-pipefail.sh flags each pipe into a reader that can stop early in a script under
 #      pipefail, and leaves quoted text, here-documents, waived lines and scripts without pipefail alone.
-#      The check scripts and four suites must pass it here; CI runs it over every tracked *.sh file;
+#      The check scripts, and the suites that test them, must pass it here; CI runs it over every tracked
+#      *.sh file;
 #   4. .github/workflows: the required job keeps its name, every workflow reads contents only, every job has
 #      timeout-minutes, every action is pinned by full SHA with its version, and no checkout keeps credentials.
 # Usage (from the repo root): bash scripts/tests/test-ci-checks.sh   (VERBOSE=1 shows each check's output)
@@ -126,6 +127,23 @@ fm commands/dashes-in-item.md fail "$C" "allowed-tools:" "  - 'Bash(echo --- *)'
 fm commands/item-without-list.md fail "$C" "allowed-tools: Read" "  - Grep"
 fm skill/SKILL.md pass "name: s" 'description: "A skill."'
 fm skill-no-name/SKILL.md fail 'description: "A skill."'
+fm skills/agents/SKILL.md pass "name: a" 'description: "A skill in a directory named agents."'
+fm skills/forked/SKILL.md fail "name: f" 'description: "A forked skill."' "context: fork"
+fm skills/with-tools/SKILL.md fail "name: t" 'description: "A skill."' "allowed-tools: Read"
+# with no arguments the check reads commands/, agents/, SKILL.md and every skills/*/SKILL.md
+lay="$T/layout"; mkdir -p "$lay/scripts" "$lay/commands" "$lay/agents" "$lay/skills/s"
+cp "$ROOT/scripts/check-frontmatter.sh" "$lay/scripts/"
+printf -- '---\n%s\n%s\n---\n' "$C" "allowed-tools: Read" > "$lay/commands/c.md"
+printf -- '---\n%s\n%s\n%s\n---\n' "$N" "$D" "$TL" > "$lay/agents/a.md"
+printf -- '---\n%s\n%s\n---\n' "name: root" 'description: "The root skill."' > "$lay/SKILL.md"
+printf -- '---\n%s\n%s\n---\n' "name: s" "description: Ends with ---" > "$lay/skills/s/SKILL.md"
+expect "frontmatter: with no arguments, a skills/*/SKILL.md is read too" 1 bash "$lay/scripts/check-frontmatter.sh"
+case "$out" in *"skills/s/SKILL.md:3: --- inside"*) pass=$((pass + 1)); echo "PASS frontmatter: ... and named in the error";;
+  *) failn=$((failn + 1)); echo "FAIL frontmatter: the skills/*/SKILL.md error is missing"; echo "$out";; esac
+printf -- '---\n%s\n%s\n---\n' "name: s" 'description: "A skill."' > "$lay/skills/s/SKILL.md"
+expect "frontmatter: with no arguments, all four kinds of file pass" 0 bash "$lay/scripts/check-frontmatter.sh"
+case "$out" in *"passed: 4 files"*) pass=$((pass + 1)); echo "PASS frontmatter: ... 4 files read";;
+  *) failn=$((failn + 1)); echo "FAIL frontmatter: the default list did not read 4 files"; echo "$out";; esac
 fm other/notes.md fail "$N" "$D"
 # FORBIDDEN_ALLOWED_TOOLS holds only for allowed-tools: with bare Bash added to it, a command's bare Bash
 # fails while its Bash(pattern) entries and an agent's Bash tool still pass

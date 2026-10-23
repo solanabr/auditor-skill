@@ -60,8 +60,8 @@ bash scripts/check-attribution.sh origin/main..HEAD
    `git switch -c feat/<topic>-<dd-mm-yyyy>` (prefixes in use: `feat/`, `fix/`, `docs/`, `perf/`, `chore/`).
 2. Make the change. Run `bash scripts/check-corpus.sh` before every commit that touches
    `checklists/`, `known-vectors/`, `references/methodologies/`, or any file that quotes a count, and
-   `bash scripts/check-frontmatter.sh` before one that touches the frontmatter of `commands/`, `agents/`
-   or `SKILL.md`.
+   `bash scripts/check-frontmatter.sh` before one that touches the frontmatter of `commands/`, `agents/`,
+   `skills/` or `SKILL.md`.
 3. Commit with a conventional-style subject and a body that says *what* and *why*:
    `feat(corpus): <what> — <why>`, `fix(vector): …`, `docs(readme): …`, `chore(release): bump version to X.Y.Z`.
 4. Push the branch and open a PR against `main` using the template. Fill in every section; "n/a" is an
@@ -149,13 +149,15 @@ version in a trailing comment.
 ### Frontmatter of commands, agents and `SKILL.md`
 
 `scripts/check-frontmatter.sh` fails when Claude Code would read a field differently from what is written.
-It holds the frontmatter of `commands/*.md`, `agents/*.md` and `SKILL.md` to a flat subset:
+It holds the frontmatter of `commands/*.md`, `agents/*.md`, `SKILL.md` and `skills/*/SKILL.md` to a flat
+subset:
 
 - Line 1 is exactly `---`, and the block ends at the next line that is exactly `---`. No other line of the
   block contains `---`, even inside a quoted value, and none is `...`. No tabs or CRs.
 - One `key: value` per line, with a lowercase key the check knows, each key once. Agents need `name`,
-  `description` and `tools`; commands need `description` and `allowed-tools`; `SKILL.md` needs `name` and
-  `description`.
+  `description` and `tools`; commands need `description` and `allowed-tools`; a `SKILL.md` needs `name` and
+  `description` and, for now, has no other key. A new key is added to the check's list when it is first
+  used.
 - Quote a value that starts with a YAML indicator (`-`, `?`, `:`, `,`, `[`, `]`, `{`, `}`, `#`, `&`, `*`,
   `!`, `|`, `>`, `%`, `@` or a backtick), holds `: ` or ` #`, ends in `:`, or would read as a number, a
   boolean or null (`3000`, `yes`, `null`). Double quotes escape only `\"` and `\\`; single quotes double a
