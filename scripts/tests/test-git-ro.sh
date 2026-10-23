@@ -38,6 +38,17 @@ has()   { grep -qF -- "$2" "$1"; }
 hasnt() { ! grep -qF -- "$2" "$1"; }
 nomarks() { [ -z "$(ls -A "$T/marks")" ]; }
 clearmarks() { rm -f "$T/marks"/*; }
+# snapshot <dir> <file> [<top-level name to leave out>]: every directory, link and file under <dir>, each
+# file with its checksum, so two snapshots differ when any byte of the repository or its work tree did.
+snapshot() {
+  local -a skip=()
+  [ -z "${3-}" ] || skip=(-path "./$3" -prune -o)
+  (cd "$1" && {
+    find . ${skip[@]+"${skip[@]}"} -type d -print
+    find . ${skip[@]+"${skip[@]}"} -type l -print | while IFS= read -r l; do printf '%s -> %s\n' "$l" "$(readlink "$l")"; done
+    find . ${skip[@]+"${skip[@]}"} -type f -exec cksum {} +
+  }) | LC_ALL=C sort > "$2"
+}
 
 SHELLS=("$BASH")
 if [ -x /bin/bash ] && [ "$(/bin/bash -c 'printf %s "$BASH_VERSION"')" != "$BASH_VERSION" ]; then
@@ -257,7 +268,10 @@ check "git-ro.sh is executable" test -x "$GITRO"
 check "run directly by its path, it reads the repository" test "$(cat "$T/direct.out")" = "$SIGNED"
 (cd "$WT" && "$RUNDIR" new audit) >"$T/new.out" 2>&1
 check "rundir.sh new audit makes audit_1 for the copy" test "$(cat "$T/new.out")" = audit_1
+snapshot "$WT" "$T/snap.copy.before" audit_1
 run_once "$WT" copy . audit_1
+snapshot "$WT" "$T/snap.copy.after" audit_1
+check "copy changes no byte outside its run directory" cmp -s "$T/snap.copy.before" "$T/snap.copy.after"
 check "copy prints the copy's path" test "$(cat "$T/out")" = audit_1/src.git
 check "copy exits 0" test "$RC" = 0
 check "copy writes the auditor-copy marker" \
@@ -309,15 +323,21 @@ check "no arguments: usage, exit 64" \
 # =================================================================================================
 # Every allowed form runs, prints, and starts nothing the repository's config names.
 # =================================================================================================
+# Each one must also leave every byte of the repository and its work tree as it was.
 nallowed=0
+snapshot "$WT" "$T/snap.base"
 while IFS= read -r line; do
   case "$line" in ''|'#'*) continue ;; esac
   want_rc=${line%%$'\t'*}
   IFS=$'\t' read -r -a args <<< "${line#*$'\t'}"
   run "$WT" "${args[@]}"
   nallowed=$((nallowed + 1))
-  if [ "$RC" = "$want_rc" ] && { [ "$want_rc" != 0 ] || [ -s "$T/out" ]; } && nomarks; then ok "allowed: git-ro.sh ${args[*]}"
-  else ko "allowed: git-ro.sh ${args[*]} -> status $RC, marks: $(ls "$T/marks" | tr '\n' ' ') stderr: $(cat "$T/err")"; fi
+  snapshot "$WT" "$T/snap.now"
+  if [ "$RC" = "$want_rc" ] && { [ "$want_rc" != 0 ] || [ -s "$T/out" ]; } && nomarks && cmp -s "$T/snap.base" "$T/snap.now"; then
+    ok "allowed: git-ro.sh ${args[*]}"
+  else
+    ko "allowed: git-ro.sh ${args[*]} -> status $RC, marks: $(ls "$T/marks" | tr '\n' ' ') stderr: $(cat "$T/err"), repository $(cmp -s "$T/snap.base" "$T/snap.now" && echo unchanged || echo CHANGED)"
+  fi
   clearmarks
 done <<'EOF'
 0	log
@@ -440,13 +460,19 @@ check "blame refuses a repository whose config names an ignore-revs file" \
 check "... and prints nothing from that file" hasnt "$T/err" NOT-A-REVISION
 run "$WT" --git-dir audit_1/src.git blame HEAD -- a.rs
 check "blame reads a copy" has "$T/out" 'require!(owner == authority)'
+snapshot "$WT" "$T/snap.now"
+check "the reads since the allowed forms changed no byte of the repository either" cmp -s "$T/snap.base" "$T/snap.now"
 git -C "$WT" config --unset blame.ignoreRevsFile
+snapshot "$WT" "$T/snap.base"
 for b in 'HEAD -- a.rs' '-L 1,1 HEAD -- a.rs' '-w --reverse HEAD~3..HEAD -- a.rs' '-M -C HEAD -- programs/demo/src/lib.rs'; do
   # shellcheck disable=SC2086
   run "$WT" blame $b
   check "allowed: git-ro.sh blame $b (diff driver, filters and hooks configured)" sh -c "[ '$RC' = 0 ] && [ -s '$T/out' ] && [ -z \"\$(ls -A '$T/marks')\" ]"
 done
+snapshot "$WT" "$T/snap.now"
+check "blame changed no byte of the repository" cmp -s "$T/snap.base" "$T/snap.now"
 git -C "$WT" config blame.ignoreRevsFile "$T/outside-revs"
+snapshot "$WT" "$T/snap.base"
 run "$WT" diff HEAD~3..HEAD
 check "no colour reaches the output, whatever color.* the repository sets" hasnt "$T/out" '?['
 run "$WT" log --format=%s -1 "$C_CTRL"
@@ -475,6 +501,8 @@ check "a TAB in an argument is allowed" test "$RC" != 64
 run "$WT" log --format=%H%x00 -1
 check "a NUL a format asks for prints as ?" test "$(cat "$T/out")" = "$SIGNED?"
 check "no allowed form ran a configured program, hook or helper" nomarks
+snapshot "$WT" "$T/snap.now"
+check "... and none changed a byte of the repository or its work tree" cmp -s "$T/snap.base" "$T/snap.now"
 
 # =================================================================================================
 # The argument order and the environment git receives.
@@ -724,6 +752,7 @@ shape_runs() { # shape_runs <tag>: git-ro's output into $T/shape.<tag>, plain gi
 $PATTERNS
 EOF
 }
+snapshot "$SH" "$T/snap.base"
 shape_runs clean
 check "the clean grep cases find what they look for" has "$T/shape.clean" 'HEAD:src/a.rs:1:let owner_ok = true;'
 check "... where a basic pattern's parentheses match themselves" \
@@ -739,6 +768,8 @@ for setting in grep.patternType=fixed grep.patternType=perl grep.patternType=ext
   check "git-ro grep and log --grep under $setting print what they print with a clean config" \
     cmp -s "$T/shape.clean" "$T/shape.$setting"
 done
+snapshot "$SH" "$T/snap.now"
+check "... and changed no byte of the repository" cmp -s "$T/snap.base" "$T/snap.now"
 git -C "$SH" config log.showRoot false
 git -C "$SH" log -p --reverse --format=%s > "$T/plain.out" 2>&1
 if grep -qF '+let owner_ok = true;' "$T/plain.out"; then skp "sanity: plain git still shows the root patch under log.showRoot=false"
