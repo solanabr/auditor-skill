@@ -1300,6 +1300,95 @@ for r in frames deltas; do
     "$code|$([[ -e "$W22/out/held-$r.txt" ]] && echo written)|$(partial22 "held-$r.txt" && echo left)" "143||"
 done
 
+# ---------------------------------------------------------------------------
+# 23. The --out directory is opened once, one name at a time from the working
+#     directory, and the temporary file is made, linked and removed through it. A run
+#     directory moved aside and replaced by a link to a directory outside, mid-run,
+#     never receives the output through that link, and no temporary file is left:
+#     frames.py and deltas.py finish in the directory they opened; profile.sh, which
+#     writes its report to its private temp directory first, opens the --out
+#     directory only then, and refuses the link (exit 2). A swap that keeps
+#     alternating while each recipe runs many times changes nothing either.
+# ---------------------------------------------------------------------------
+W23="$TT/wd23"; mkdir -p "$W23" "$TT/outside23"
+partial23() { local f; for f in "$1"/.*.partial; do [[ -e "$f" ]] && return 0; done; return 1; }
+for r in frames deltas; do
+  case "$r" in
+    frames) set -- python3 -I "$DNR/frames.py" ;;
+    deltas) set -- python3 -I "$DNR/deltas.py" lamports ;;
+  esac
+  mkdir -p "$W23/incident_$r"; rm -f "$TT/release23"
+  ( sed -n 1p "$FIX/clean-mixed.jsonl"; n=0; while [[ ! -e "$TT/release23" && "$n" -lt 400 ]]; do sleep 0.05; n=$((n + 1)); done ) \
+    | ( cd "$W23" && exec "$@" --out "incident_$r/out.txt" ) 2> /dev/null &
+  pid=$!
+  n=0; while ! partial23 "$W23/incident_$r" && [[ "$n" -lt 200 ]]; do sleep 0.05; n=$((n + 1)); done
+  mv "$W23/incident_$r" "$W23/moved-$r" && ln -s "$TT/outside23" "$W23/incident_$r"
+  touch "$TT/release23"
+  wait "$pid"
+  code=$?
+  eq "--out: $r whose run directory is replaced by a link mid-run -> exit 0, the output in the directory it opened, nothing through the link" \
+    "$code|$(ls -A "$W23/moved-$r" | tr '\n' ' ')|$(ls -A "$TT/outside23" | tr '\n' ' ')" "0|out.txt |"
+done
+mkdir -p "$TT/jq23" "$W23/incident_profile"; rm -f "$TT/release23"
+printf '#!/bin/sh\n[ -e "%s/held" ] || { : > "%s/held"; n=0; while [ ! -e "%s" ] && [ "$n" -lt 400 ]; do sleep 0.05; n=$((n + 1)); done; }\nexec "%s" "$@"\n' \
+  "$TT/jq23" "$TT/jq23" "$TT/release23" "$(command -v jq)" > "$TT/jq23/jq"
+chmod +x "$TT/jq23/jq"
+( cd "$W23" && PATH="$TT/jq23:$PATH" exec bash "$DNR/profile.sh" --out incident_profile/out.txt "$FIX/clean-mixed.jsonl" ) > /dev/null 2> "$TT/p23.err" &
+pid=$!
+n=0; while [[ ! -e "$TT/jq23/held" && "$n" -lt 200 ]]; do sleep 0.05; n=$((n + 1)); done
+mv "$W23/incident_profile" "$W23/moved-profile" && ln -s "$TT/outside23" "$W23/incident_profile"
+touch "$TT/release23"
+wait "$pid"
+code=$?
+eq "--out: profile whose run directory is replaced by a link while its queries run -> refused (exit 2), nothing written inside or outside" \
+  "$code|$(grep -c 'is a symbolic link, or is reached through one inside the working directory; refusing it$' "$TT/p23.err")|$(ls -A "$W23/moved-profile" | tr '\n' ' ')|$(ls -A "$TT/outside23" | tr '\n' ' ')" \
+  "2|1||"
+# race23.py: each recipe runs 40 times with --out incident_1/o-<recipe>-<k>.txt while
+# a thread keeps moving incident_1 aside and putting a link to a directory outside in
+# its place, then moving it back. Prints the files outside, the temporary files left,
+# and whether any run exited 0.
+cat > "$TT/race23.py" <<'PY'
+import os, subprocess, sys, threading, time
+base, dnr, corpus = sys.argv[1:4]
+wt, outside, real = base + "/wt", base + "/outside", base + "/wt/incident_1.real"
+os.makedirs(wt + "/incident_1")
+os.makedirs(outside)
+stop = []
+def swap():
+    while not stop:
+        try:
+            os.rename(wt + "/incident_1", real)
+            os.symlink(outside, wt + "/incident_1")
+            time.sleep(0.0003)
+            os.unlink(wt + "/incident_1")
+            os.rename(real, wt + "/incident_1")
+            time.sleep(0.0015)
+        except OSError:
+            pass
+runs = {"frames": ["python3", "-I", dnr + "/frames.py"], "deltas": ["python3", "-I", dnr + "/deltas.py", "lamports"],
+        "profile": ["bash", dnr + "/profile.sh"]}
+done = 0
+t = threading.Thread(target=swap)
+t.start()
+try:
+    for name, cmd in runs.items():
+        for k in range(40):
+            p = subprocess.run(cmd + ["--out", "incident_1/o-%s-%d.txt" % (name, k), corpus], cwd=wt,
+                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            done += p.returncode == 0
+finally:
+    stop.append(1)
+    t.join()
+    if os.path.islink(wt + "/incident_1"):
+        os.unlink(wt + "/incident_1")
+    if os.path.isdir(real):
+        os.rename(real, wt + "/incident_1")
+left = [n for n in os.listdir(wt + "/incident_1") if not n.startswith("o-")]
+print("%d|%d|%s" % (len(os.listdir(outside)), len(left), "some" if done else "none"))
+PY
+race23="$(python3 -I "$TT/race23.py" "$TT/race23" "$DNR" "$FIX/clean-mixed.jsonl")"
+eq "--out: 120 runs under a directory swap -> no file outside, no temporary file left, and some runs completed" "$race23" "0|0|some"
+
 if [[ "$fails" -ne 0 ]]; then
   echo "test-dnr: $fails assertion(s) FAILED" >&2
   exit 1

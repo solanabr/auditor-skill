@@ -147,6 +147,13 @@ because `python3 -I` keeps a sibling module off `sys.path`;
   file: an `--out` that already exists (an input corpus among them) is refused
   (exit 2), and so is one that is a symbolic link or reached through one inside
   the working directory; one whose directory is missing is an error (exit 1).
+  The recipe opens the directory of `<file>` once, one name at a time, following
+  a symbolic link only above the working directory, and makes, names and removes
+  its files through it: a directory on the way that is moved, or replaced by a
+  link, while the recipe runs never moves the output elsewhere. `profile.sh`
+  writes its report into its private temp directory first and opens the
+  directory of `<file>` only once the report is whole, so a link that is there
+  by then is refused.
 
 ## Two hazards these encode, and why
 

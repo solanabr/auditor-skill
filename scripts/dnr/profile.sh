@@ -13,8 +13,9 @@
 # that is a symbolic link, or reached through one inside the working directory, is
 # refused. The closing "-- skipped" lines are printed on stderr as well, before any
 # query runs; the malformed lines of each input are collection gaps. With --out, the
-# report goes to a temporary file beside <file>, a new name, which gets the report
-# only once it is whole.
+# finished report goes to a temporary file beside <file>, a new name, which gets the
+# report only once it is whole; that directory is opened once, never through a
+# symbolic link inside the working directory.
 #
 # What it reports (all from structural fields, never from log text):
 #   - transaction count and the finalized/failed split (meta.err)
@@ -65,14 +66,14 @@ done
 # the input contract that frames.py and deltas.py share (README.md). It checks every
 # input and the --out path first, writes the report's header line with each path
 # escaped, and writes the closing "-- skipped" lines, which it also prints on stderr
-# before any query runs.
+# before any query runs. The same program, run as "publish", writes the finished
+# report to --out.
 tmpd="$(mktemp -d "${TMPDIR:-/tmp}/dnr_profile.XXXXXX")"
-staged=""
-trap 'rm -rf "$tmpd"; [ -z "$staged" ] || rm -f "$staged"' EXIT
+trap 'rm -rf "$tmpd"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 corpus="$tmpd/corpus.jsonl"
-python3 -I -c 'import errno, json, math, os, re, signal, stat, sys, tempfile
+recipe='import errno, json, math, os, re, signal, stat, sys
 # ---- input contract (scripts/dnr/README.md); the same block is in profile.sh, frames.py, deltas.py
 _NONE = type(None)
 _DIGITS = re.compile("[0-9]+")
@@ -192,23 +193,83 @@ def unwritable(path):
     return None
 
 
+def _within(fd, here):
+    """True when the directory open on fd is the working directory (here, its stat) or
+    below it, found by walking up through its parents."""
+    cur = os.dup(fd)
+    try:
+        while True:
+            st = os.fstat(cur)
+            if os.path.samestat(st, here):
+                return True
+            up = os.open("..", os.O_RDONLY | os.O_DIRECTORY, dir_fd=cur)
+            os.close(cur)
+            cur = up
+            if os.path.samestat(os.fstat(cur), st):
+                return False
+    finally:
+        os.close(cur)
+
+
+def pinned(path):
+    """The directory of --out path, opened one name at a time from the working directory
+    (or the root): a name that is a symbolic link is followed only outside the working
+    directory, as linked() allows, so the directory is the one that check passed. The
+    output is made, named and removed through this descriptor, so a name on its way
+    that is later moved or replaced by a link never moves the output elsewhere."""
+    here = os.stat(".")
+    flags = os.O_RDONLY | os.O_DIRECTORY
+    fd = os.open(os.sep if os.path.isabs(path) else ".", flags)
+    try:
+        for part in os.path.dirname(path).split(os.sep):
+            if part in ("", "."):
+                continue
+            try:
+                step = os.open(part, flags | os.O_NOFOLLOW, dir_fd=fd)
+            except OSError as e:
+                if e.errno not in (errno.ELOOP, errno.ENOTDIR):
+                    raise
+                if not stat.S_ISLNK(os.stat(part, dir_fd=fd, follow_symlinks=False).st_mode):
+                    raise
+                if _within(fd, here):
+                    raise OSError(errno.ELOOP, "a symbolic link inside the working directory is on the way to --out")
+                step = os.open(part, flags, dir_fd=fd)
+            os.close(fd)
+            fd = step
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
 class Output:
-    """Where the output goes: stdout, or for --out a new temporary file beside the path
-    that done() links to the path once it is whole, so the path never holds a partial
-    output, and never replaces a file that appeared in the meantime. close() removes
-    a temporary file done() did not link; SIGTERM exits through it, and is held off
-    while the temporary file is made, so its name is always known."""
+    """Where the output goes: stdout, or for --out a new temporary file in the directory
+    of the path, which done() links to the path once it is whole, so the path never
+    holds a partial output, and never replaces a file that appeared in the meantime.
+    That directory is opened once (pinned()), and the temporary file is made, linked
+    and removed through it. close() removes a temporary file done() did not link;
+    SIGTERM exits through it, and is held off while the temporary file is made, so its
+    name is always known."""
 
     def __init__(self, path):
-        self.path, self.temp, self.fh = path, None, sys.stdout.buffer
+        self.path, self.dir, self.temp, self.fh = path, None, None, sys.stdout.buffer
         if path is None:
             return
         signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
         held = signal.pthread_sigmask(signal.SIG_BLOCK, [signal.SIGTERM])
         try:
-            fd, self.temp = tempfile.mkstemp(dir=os.path.dirname(path) or ".",
-                                             prefix="." + os.path.basename(path) + ".", suffix=".partial")
+            self.dir = pinned(path)
+            while self.temp is None:
+                temp = ".%s.%s.partial" % (os.path.basename(path), os.urandom(6).hex())
+                try:
+                    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=self.dir)
+                except FileExistsError:
+                    continue
+                self.temp = temp
             self.fh = os.fdopen(fd, "wb")
+        except BaseException:
+            self.close()
+            raise
         finally:
             try:
                 signal.pthread_sigmask(signal.SIG_SETMASK, held)
@@ -223,18 +284,23 @@ class Output:
         self.fh.flush()
         if self.temp is not None:
             self.fh.close()
-            os.link(self.temp, self.path)
-            os.unlink(self.temp)
+            os.link(self.temp, os.path.basename(self.path), src_dir_fd=self.dir, dst_dir_fd=self.dir,
+                    follow_symlinks=False)
+            os.unlink(self.temp, dir_fd=self.dir)
             self.temp = None
 
     def close(self):
         if self.temp is not None:
-            self.fh.close()
+            if self.fh is not sys.stdout.buffer:
+                self.fh.close()
             try:
-                os.unlink(self.temp)
+                os.unlink(self.temp, dir_fd=self.dir)
             except OSError:
                 pass
             self.temp = None
+        if self.dir is not None:
+            os.close(self.dir)
+            self.dir = None
 
 
 def _lone_surrogate(obj):
@@ -423,7 +489,26 @@ def skipped(stats):
     return notes
 # ---- end of input contract ----
 
-tmpd, out_path, paths = sys.argv[1], sys.argv[2], sys.argv[3:]
+if sys.argv[1] == "publish":
+    # The finished report, from the private temp directory to --out through Output,
+    # after the --out path is checked again.
+    problem = unwritable(sys.argv[3])
+    if problem:
+        print("profile.sh: " + problem[1], file=sys.stderr)
+        sys.exit(problem[0])
+    out = None
+    try:
+        out = Output(sys.argv[3])
+        with open(sys.argv[2], "rb") as report:
+            out.write(report.read())
+        out.done()
+    except OSError as e:
+        sys.exit("profile.sh: cannot write --out: " + shown(e.strerror or e))
+    finally:
+        if out is not None:
+            out.close()
+    sys.exit(0)
+tmpd, out_path, paths = sys.argv[2], sys.argv[3], sys.argv[4:]
 problem = unusable(paths)
 if problem is None and out_path:
     problem = unwritable(out_path)
@@ -439,7 +524,8 @@ with open(os.path.join(tmpd, "header"), "w") as out:
 with open(os.path.join(tmpd, "notes"), "w") as out:
     for note in skipped(stats):
         out.write("-- skipped: " + note + "\n")
-        print("profile.sh: skipped " + note, file=sys.stderr)' "$tmpd" "$out" "$@"
+        print("profile.sh: skipped " + note, file=sys.stderr)'
+python3 -I -c "$recipe" check "$tmpd" "$out" "$@"
 
 # report: the profile, from the deduplicated corpus. Every sort and uniq runs under
 # LC_ALL=C and compares bytes: under a UTF-8 locale, sort and uniq can count two keys
@@ -488,17 +574,12 @@ jq -r "$KEYDEF"'
 cat "$tmpd/notes"
 }
 
-# With --out, the report goes to a temporary file beside <file>, which is linked to
-# <file> only once the report is whole; a link never replaces a file that appeared
-# in the meantime.
+# With --out, the report is written whole into the private temp directory first, then
+# to a temporary file beside <file>, which is linked to <file>; a link never replaces
+# a file that appeared in the meantime.
 if [ -z "$out" ]; then
   report
 else
-  staged="$(mktemp "$(dirname "$out")/.$(basename "$out").XXXXXX")" || exit 1
-  report > "$staged"
-  python3 -I -c 'import os, sys
-try:
-    os.link(sys.argv[1], sys.argv[2])
-except OSError as e:
-    sys.exit("profile.sh: cannot write --out: %s" % e.strerror)' "$staged" "$out"
+  report > "$tmpd/report"
+  python3 -I -c "$recipe" publish "$tmpd/report" "$out"
 fi

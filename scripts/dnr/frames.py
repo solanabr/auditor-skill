@@ -11,8 +11,8 @@ and a named input that is a symbolic link is refused. Each signature is read
 once: a later copy of the same transaction is skipped. Both counts are reported
 on stderr, the malformed lines per input, as collection gaps.
 Output: JSONL on stdout, or with `--out <file>` (a new name) in a temporary file
-beside it that becomes <file> only once the run is complete. One record per
-emitted log line:
+beside it that becomes <file> only once the run is complete, both made through
+the directory of <file>, opened once. One record per emitted log line:
 
     {"sig": "...", "ok": true, "depth": 2, "program": "<id|?>",
      "kind": "log|data|return|truncated|unparsed", "text": "..."}
@@ -84,7 +84,6 @@ import re
 import signal
 import stat
 import sys
-import tempfile
 
 # base58 (Bitcoin alphabet) pubkey, 32..44 chars — the shape of a program id. The
 # runtime's own lines are matched whole, with ASCII digits only, and an invoke
@@ -348,23 +347,83 @@ def unwritable(path):
     return None
 
 
+def _within(fd, here):
+    """True when the directory open on fd is the working directory (here, its stat) or
+    below it, found by walking up through its parents."""
+    cur = os.dup(fd)
+    try:
+        while True:
+            st = os.fstat(cur)
+            if os.path.samestat(st, here):
+                return True
+            up = os.open("..", os.O_RDONLY | os.O_DIRECTORY, dir_fd=cur)
+            os.close(cur)
+            cur = up
+            if os.path.samestat(os.fstat(cur), st):
+                return False
+    finally:
+        os.close(cur)
+
+
+def pinned(path):
+    """The directory of --out path, opened one name at a time from the working directory
+    (or the root): a name that is a symbolic link is followed only outside the working
+    directory, as linked() allows, so the directory is the one that check passed. The
+    output is made, named and removed through this descriptor, so a name on its way
+    that is later moved or replaced by a link never moves the output elsewhere."""
+    here = os.stat(".")
+    flags = os.O_RDONLY | os.O_DIRECTORY
+    fd = os.open(os.sep if os.path.isabs(path) else ".", flags)
+    try:
+        for part in os.path.dirname(path).split(os.sep):
+            if part in ("", "."):
+                continue
+            try:
+                step = os.open(part, flags | os.O_NOFOLLOW, dir_fd=fd)
+            except OSError as e:
+                if e.errno not in (errno.ELOOP, errno.ENOTDIR):
+                    raise
+                if not stat.S_ISLNK(os.stat(part, dir_fd=fd, follow_symlinks=False).st_mode):
+                    raise
+                if _within(fd, here):
+                    raise OSError(errno.ELOOP, "a symbolic link inside the working directory is on the way to --out")
+                step = os.open(part, flags, dir_fd=fd)
+            os.close(fd)
+            fd = step
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
 class Output:
-    """Where the output goes: stdout, or for --out a new temporary file beside the path
-    that done() links to the path once it is whole, so the path never holds a partial
-    output, and never replaces a file that appeared in the meantime. close() removes
-    a temporary file done() did not link; SIGTERM exits through it, and is held off
-    while the temporary file is made, so its name is always known."""
+    """Where the output goes: stdout, or for --out a new temporary file in the directory
+    of the path, which done() links to the path once it is whole, so the path never
+    holds a partial output, and never replaces a file that appeared in the meantime.
+    That directory is opened once (pinned()), and the temporary file is made, linked
+    and removed through it. close() removes a temporary file done() did not link;
+    SIGTERM exits through it, and is held off while the temporary file is made, so its
+    name is always known."""
 
     def __init__(self, path):
-        self.path, self.temp, self.fh = path, None, sys.stdout.buffer
+        self.path, self.dir, self.temp, self.fh = path, None, None, sys.stdout.buffer
         if path is None:
             return
         signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
         held = signal.pthread_sigmask(signal.SIG_BLOCK, [signal.SIGTERM])
         try:
-            fd, self.temp = tempfile.mkstemp(dir=os.path.dirname(path) or ".",
-                                             prefix="." + os.path.basename(path) + ".", suffix=".partial")
+            self.dir = pinned(path)
+            while self.temp is None:
+                temp = ".%s.%s.partial" % (os.path.basename(path), os.urandom(6).hex())
+                try:
+                    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=self.dir)
+                except FileExistsError:
+                    continue
+                self.temp = temp
             self.fh = os.fdopen(fd, "wb")
+        except BaseException:
+            self.close()
+            raise
         finally:
             try:
                 signal.pthread_sigmask(signal.SIG_SETMASK, held)
@@ -379,18 +438,23 @@ class Output:
         self.fh.flush()
         if self.temp is not None:
             self.fh.close()
-            os.link(self.temp, self.path)
-            os.unlink(self.temp)
+            os.link(self.temp, os.path.basename(self.path), src_dir_fd=self.dir, dst_dir_fd=self.dir,
+                    follow_symlinks=False)
+            os.unlink(self.temp, dir_fd=self.dir)
             self.temp = None
 
     def close(self):
         if self.temp is not None:
-            self.fh.close()
+            if self.fh is not sys.stdout.buffer:
+                self.fh.close()
             try:
-                os.unlink(self.temp)
+                os.unlink(self.temp, dir_fd=self.dir)
             except OSError:
                 pass
             self.temp = None
+        if self.dir is not None:
+            os.close(self.dir)
+            self.dir = None
 
 
 def _lone_surrogate(obj):
