@@ -149,20 +149,14 @@ fn u64_digits(digits: &str) -> bool {
 
 /// `_u64`: an integer a u64 holds, as a lamport balance and the fee are.
 fn u64_int(v: &Value) -> bool {
-    match v.as_int_lit() {
-        Some("-0") => true,
-        Some(lit) => u64_digits(lit),
-        None => false,
-    }
+    v.as_int_lit().is_some_and(u64_digits)
 }
 
 /// `_index`: absent or null, or an integer from 0.
 fn index(v: Option<&Value>) -> bool {
     match v {
         None | Some(Value::Null) => true,
-        Some(x) => x
-            .as_int_lit()
-            .is_some_and(|lit| lit == "-0" || !lit.starts_with('-')),
+        Some(x) => x.as_int_lit().is_some_and(|lit| !lit.starts_with('-')),
     }
 }
 
@@ -399,7 +393,12 @@ mod tests {
     fn balances_and_amounts_are_u64() {
         let keys = r#""accountKeys":["K","L"]"#;
         assert!(reads(
-            r#""preBalances":[0,18446744073709551615],"postBalances":[-0,1]"#,
+            r#""preBalances":[0,18446744073709551615],"postBalances":[0,1]"#,
+            keys
+        ));
+        assert!(!reads(r#""preBalances":[0,1],"postBalances":[-0,1]"#, keys));
+        assert!(!reads(
+            r#""preBalances":[0,1],"postBalances":[0,1],"x":123456789012345678901"#,
             keys
         ));
         assert!(!reads(
@@ -427,7 +426,7 @@ mod tests {
     fn indexes_and_program_ids() {
         let ix = |i: &str| reads("", &format!(r#""accountKeys":["K"],"instructions":[{i}]"#));
         assert!(ix(r#"{"programIdIndex":0}"#));
-        assert!(ix(r#"{"programIdIndex":-0}"#));
+        assert!(!ix(r#"{"programIdIndex":-0}"#));
         assert!(!ix(r#"{"programIdIndex":-1}"#));
         assert!(!ix(r#"{"programId":""}"#));
         assert!(reads(
@@ -453,7 +452,7 @@ mod tests {
         ] {
             assert!(!reads("", &format!(r#""accountKeys":["K{c}"]"#)), "{c}");
         }
-        assert!(reads("", r#""accountKeys":["K é　"]"#));
+        assert!(reads("", r#""accountKeys":["K\u00a0\u00e9\u3000"]"#));
     }
 
     #[test]

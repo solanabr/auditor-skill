@@ -3,17 +3,18 @@
 //! `json.dumps(ensure_ascii=False)` and jq's compact `tostring`.
 //!
 //! Python rules kept here: whitespace is space, tab, LF and CR; `NaN`,
-//! `Infinity` and a float that overflows are refused; an integer of more than
-//! 4,300 digits is refused; a control character inside a string is refused; a
-//! repeated key keeps its first position and its last value; and a lone
-//! surrogate left by a `\u` escape refuses the line, unless a later copy of its
-//! key replaced it. Nesting is capped at 200 levels anywhere in the text, well
-//! below jq's parsing limit of 256, so every line read here is one profile.sh's jq
-//! can also read.
+//! `Infinity` and a float that overflows are refused; a control character inside
+//! a string is refused; a repeated key keeps its first position and its last
+//! value; and a lone surrogate left by a `\u` escape refuses the line, unless a
+//! later copy of its key replaced it. The recipes' own bounds are kept too: an
+//! integer literal of more than 20 digits, or `-0`, anywhere in the line, refuses
+//! it, and so does nesting deeper than 200 levels anywhere in the text (jq parses
+//! at most 256), a value a later duplicate key replaces included.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
 
+use crate::contract::unsafe_char;
 use crate::num::{jq_number, py_float_repr, MAX_INT_DIGITS};
 
 /// The deepest nesting a line may have, the top-level object being 1; one more
@@ -207,7 +208,7 @@ impl<'a> Parser<'a> {
             }
         } else {
             let digits = int_end - start - usize::from(lit.starts_with('-'));
-            if digits > MAX_INT_DIGITS {
+            if digits > MAX_INT_DIGITS || lit == "-0" {
                 return Err(Bad);
             }
         }
@@ -430,15 +431,14 @@ fn write_py_num(out: &mut String, n: &Num) {
             Ok(v) => out.push_str(&py_float_repr(v)),
             Err(_) => out.push_str(n.lit),
         }
-    } else if n.lit == "-0" {
-        out.push('0');
     } else {
         out.push_str(n.lit);
     }
 }
 
-/// A Python str as `json.dumps(ensure_ascii=False)` writes it: quote, backslash
-/// and the C0 controls escaped (`\n`-style where JSON has one, else `\u00XX`).
+/// A Python str as frames.py writes it: `json.dumps(ensure_ascii=False)`, which
+/// escapes quote, backslash and the C0 controls (`\n`-style where JSON has one,
+/// else `\u00XX`), then every other unsafe character as `\uNNNN`.
 pub fn write_py_str(out: &mut String, s: &str) {
     out.push('"');
     let mut run = 0;
@@ -451,7 +451,7 @@ pub fn write_py_str(out: &mut String, s: &str) {
             '\t' => "\\t",
             '\u{8}' => "\\b",
             '\u{c}' => "\\f",
-            c if (c as u32) < 0x20 => "",
+            c if unsafe_char(c) => "",
             _ => continue,
         };
         out.push_str(&s[run..i]);
@@ -535,8 +535,8 @@ mod tests {
     #[test]
     fn accepts_what_python_accepts() {
         assert_eq!(
-            py(r#"{"a": [1, 2.50, -0, 1E2, "x"]}"#).unwrap(),
-            r#"{"a": [1, 2.5, 0, 100.0, "x"]}"#
+            py(r#"{"a": [1, 2.50, -1, 1E2, -0.0, "x"]}"#).unwrap(),
+            r#"{"a": [1, 2.5, -1, 100.0, -0.0, "x"]}"#
         );
         assert_eq!(py("{\"a\":\r1}").unwrap(), r#"{"a": 1}"#);
         assert_eq!(
@@ -555,8 +555,12 @@ mod tests {
             py(r#"[1e-400, 1e16, 1e-7]"#).unwrap(),
             "[0.0, 1e+16, 1e-07]"
         );
-        assert_eq!(py(&format!("[{}]", "1".repeat(4300))).unwrap().len(), 4302);
-        assert_eq!(py("\"\u{7f}\u{2028}\"").unwrap(), "\"\u{7f}\u{2028}\"");
+        assert_eq!(py(&format!("[{}]", "1".repeat(20))).unwrap().len(), 22);
+        assert_eq!(py(&format!("[-{}]", "9".repeat(20))).unwrap().len(), 23);
+        assert_eq!(
+            py("\"\u{7f}\u{85}\u{2028}\u{202e}\u{feff}\u{a0}\u{e9}\"").unwrap(),
+            "\"\\u007f\\u0085\\u2028\\u202e\\ufeff\u{a0}\u{e9}\""
+        );
         assert_eq!(py(r#""\u0001\b\f""#).unwrap(), r#""\u0001\b\f""#);
         let deep = format!("{}{}", "[".repeat(MAX_DEPTH), "]".repeat(MAX_DEPTH));
         assert!(py(&deep).is_some());
@@ -591,8 +595,10 @@ mod tests {
         ] {
             assert!(py(bad).is_none(), "{bad:?}");
         }
-        assert!(py(&format!("[{}]", "1".repeat(4301))).is_none());
-        assert!(py(&format!("[-{}]", "1".repeat(4300))).is_some());
+        assert!(py(&format!("[{}]", "1".repeat(21))).is_none());
+        assert!(py(&format!("[-{}]", "1".repeat(21))).is_none());
+        assert!(py("[-0]").is_none());
+        assert!(py(r#"{"a": -0, "a": 1}"#).is_none());
         let deep = format!("{}{}", "[".repeat(MAX_DEPTH + 1), "]".repeat(MAX_DEPTH + 1));
         assert!(py(&deep).is_none());
     }

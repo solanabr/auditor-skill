@@ -211,7 +211,13 @@ fn run_dir_name(part: &[u8]) -> bool {
 /// The grammar every path argument must meet before anything is opened.
 pub fn confine(what: &str, arg: &OsStr) -> Result<Confined, Refusal> {
     let raw = arg.as_bytes();
-    let refuse = |why: &str| Err(Refusal(format!("{what} ({}) {why}", shown(raw))));
+    // An input is named as the scripts name it, "input N (path)"; --out as "--out path".
+    let name = if what == "--out" {
+        format!("--out {}", shown(raw))
+    } else {
+        format!("{what} ({})", shown(raw))
+    };
+    let refuse = |why: &str| Err(Refusal(format!("{name} {why}")));
     if raw.is_empty() || raw.len() > MAX_PATH {
         return refuse(&format!("is empty or longer than {MAX_PATH} bytes"));
     }

@@ -5,9 +5,9 @@
 use std::cmp::Ordering;
 use std::fmt;
 
-/// Python's default limit on the digits of an int read from a string
-/// (`sys.int_info.default_max_str_digits`): `json.loads` and `int()` refuse more.
-pub const MAX_INT_DIGITS: usize = 4300;
+/// The most digits a JSON integer literal may have (an RPC value has at most 20);
+/// a longer one, or `-0`, makes its line malformed.
+pub const MAX_INT_DIGITS: usize = 20;
 
 /// Decimal digits held by one limb of a [`Big`].
 const LIMB_DIGITS: usize = 9;

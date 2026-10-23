@@ -152,7 +152,9 @@ fn inputs(wt: &Path, call: &Call, checked: &[Confined]) -> Result<Vec<Input>, St
             Found::Link => {
                 return Err(Stop(
                     2,
-                    format!("refused: {label} is a symbolic link, or is reached through one"),
+                    format!(
+                        "refused: {label} is a symbolic link, or is reached through one inside the working directory"
+                    ),
                 ));
             }
             Found::Missing(_) => return Err(cannot("No such file or directory".into())),
@@ -192,21 +194,21 @@ fn out_path(wt: &Path, c: &Confined) -> Result<PathBuf, Stop> {
     match confine::walk(wt, c) {
         Found::Link => Err(Stop(
             2,
-            format!("refused: --out ({shown}) is a symbolic link, or is reached through one"),
+            format!("refused: --out {shown} is a symbolic link, or is reached through one inside the working directory"),
         )),
         Found::Missing(n) if n + 1 < c.depth() => Err(Stop(
             1,
-            format!("cannot write --out ({shown}): its directory does not exist"),
+            format!("cannot write --out {shown}: its directory does not exist"),
         )),
         Found::Missing(_) => Ok(()),
         Found::Unreadable(e) => Err(Stop(
             1,
-            format!("cannot write --out ({shown}): {}", confine::os_message(&e)),
+            format!("cannot write --out {shown}: {}", confine::os_message(&e)),
         )),
         Found::File(_) => Err(Stop(
             2,
             format!(
-                "refused: --out ({shown}) already exists, and an output never replaces a file: name a new one"
+                "refused: --out {shown} already exists, and an output never replaces a file: name a new one"
             ),
         )),
     }?;
@@ -214,7 +216,7 @@ fn out_path(wt: &Path, c: &Confined) -> Result<PathBuf, Stop> {
     if !confine::stays_inside(wt, &parent) {
         return Err(Stop(
             2,
-            format!("refused: --out ({shown}) resolves outside the working directory"),
+            format!("refused: --out {shown} resolves outside the working directory"),
         ));
     }
     Ok(full)
@@ -233,7 +235,7 @@ fn run(args: &[OsString]) -> Result<(), Stop> {
                 return Err(Stop(
                     2,
                     format!(
-                        "refused: --out ({}) is not a .jsonl, .tsv or .txt file directly in the run directory",
+                        "refused: --out {} is not a .jsonl, .tsv or .txt file directly in the run directory",
                         c.shown()
                     ),
                 ));
