@@ -199,7 +199,7 @@ The recipes behind `/auditor:hunt` and `/auditor:respond` ([detection-response.m
 bash "<auditor-skill root>/scripts/dnr/snapshot-program.sh" <program_id> <incident_dir>
 ```
 
-Step 1 of every hunt and response: it keeps the deployed program bytes before a hotfix can replace them. It runs `solana program show` and `solana program dump`, or `solana program-v4 show` and `download` for a loader-v4 program. It reads the program again after the dump and dumps once more if the last-deployed slot moved. It checks the ELF header, hashes the dump the way `solana-verify` does (trailing zero padding trimmed, then sha256), and prints a ledger line: `program=… owner=… last_deployed_slot=… authority=… sha256_zero_trimmed=… elf_bytes=… padding_bytes=… file=bin/<id>[@<slot>].so`. A program on an immutable loader shows `last_deployed_slot=n/a (immutable loader)` and `authority=none`.
+Step 1 of every hunt and response: it keeps the deployed program bytes before a hotfix can replace them. It runs `solana program show` and `solana program dump`, or `solana program-v4 show` and `download` for a loader-v4 program. It reads the program again after the dump and dumps once more if the last-deployed slot moved. Every `show` must name the requested id as its Program Id. It checks the ELF header, hashes the dump the way `solana-verify` does (trailing zero padding trimmed, then sha256), and prints a ledger line: `program=… owner=… last_deployed_slot=… authority=… sha256_zero_trimmed=… elf_bytes=… padding_bytes=… file=bin/<id>[@<slot>].so`. A loader-v4 program's line also has `status=…` (`deployed`, `retracted` or `finalized`) after `authority=`. A program on an immutable loader shows `last_deployed_slot=n/a (immutable loader)` and `authority=none`.
 
 - **Arguments:** a base58 program id (32 bytes) and the incident directory. No flags.
 - **Exit:**
@@ -208,21 +208,26 @@ Step 1 of every hunt and response: it keeps the deployed program bytes before a 
     - a usage error;
     - an id that is not base58 or not 32 bytes;
     - no `$RPC_URL`, or one that holds a quote, a backslash, whitespace or a control character;
-    - a run directory that is a symbolic link, contains one, is tracked by git, or that git or find cannot check (the check fails closed).
+    - a run directory with a `.` or `..` component, or reached through a symbolic link inside the working directory;
+    - a run directory that is a symbolic link, contains one, is tracked by git, or that git or find cannot check (the check fails closed). The check runs again just before the first write, when `bin/` must also be a directory of its own.
   - 3, a named blocker:
     - no `solana` CLI or `python3`;
     - the CLI did not take the keyless config;
-    - a CLI error, or no program under any loader;
+    - a CLI error;
+    - no program under any loader: one more read (`solana account`, its data written to the temp directory) names the account's owner in the blocker;
+    - a `show` that names another Program Id;
     - a dump without the ELF magic;
     - a slot that moved during both dumps;
     - a hash that could not be computed;
-    - a snapshot name already taken, or a lone `bin/<id>.show.txt`.
+    - a snapshot name already taken, or a lone `bin/<id>.show.txt`;
+    - a kept snapshot that is not a regular file with the ELF magic beside a regular `.show.txt`;
+    - bytes on-chain that differ from a snapshot kept at the same or a later last-deployed slot.
 - **Network:** read-only `solana` CLI calls to `$RPC_URL`, which reaches the CLI through a temporary `-C` config with no usable keypair path; it signs nothing. CLI errors pass through `redact.sh`.
 - **Writes:** in `<incident_dir>/bin/`:
   - The first snapshot is `<id>.so` with `<id>.show.txt`.
   - If the slot and zero-trimmed sha256 match a kept snapshot, a later run prints `unchanged: …` with that snapshot's line and writes nothing.
   - After a redeploy it keeps the new bytes as `<id>@<slot>.so` with its `.show.txt` and prints the first snapshot's line and the new one.
-  - A kept file is never replaced.
+  - A kept file is never replaced; each is written through the descriptor opened when it was created.
   - An `incident_*` directory without a `.gitignore` gets one containing `*` (Rule 11d).
 - **Needs:** the `solana` CLI and `python3`, which hashes the dump as `python3 -I`.
 
@@ -237,7 +242,7 @@ The one gated collector: it pages each address's signature history, failed trans
 
 | Flag | Meaning |
 |------|---------|
-| `--out <dir>` | corpus directory (required). One that holds `signatures.jsonl`, `transactions.jsonl` or `collection-gaps.tsv`, even an empty one, is refused, so a resume goes into a new directory |
+| `--out <dir>` | corpus directory (required): a plain path without `.` or `..` components, reached through no symbolic link inside the working directory. One that holds `signatures.jsonl`, `transactions.jsonl` or `collection-gaps.tsv`, even an empty one, is refused, so a resume goes into a new directory |
 | `--confirmed` | required; the commands pass it only after a person has approved the addresses, the window, the caps and the estimated call count |
 | `--since <unix>`, `--until <unix>` | the window, on `blockTime`; `0` (the default) leaves that end open |
 | `--before <signature>` | start paging just older than this signature: resume a capped run, or skip activity after the incident |
@@ -253,18 +258,23 @@ The one gated collector: it pages each address's signature history, failed trans
     - no `$RPC_URL`, or one that holds a quote, a backslash, whitespace or a control character;
     - an address or `--before` value that is not base58;
     - a number that is not a plain integer;
-    - an `--out`, or the nearest `incident_*` directory at or above it, that is a symbolic link, contains one, is tracked by git (in any letter case), or that git or find cannot check;
-    - an `--out` that already holds a corpus file.
+    - an `--out` with a `.` or `..` component, or reached through a symbolic link inside the working directory;
+    - an `--out`, or the nearest `incident_*` directory above it, that is a symbolic link, contains one, is tracked by git (in any letter case), or that git or find cannot check;
+    - an `--out` that already holds a corpus file, or where the corpus files cannot be created.
   - 3, a named blocker:
     - no curl or jq;
     - a jq that rounds large integers and no working `python3`;
-    - no private temp directory.
+    - no private temp directory, which is made before anything is written.
+  - 128 + N: stopped by signal N (INT, TERM or HUP), with what was left recorded as collection gaps.
 - **Network:** read-only JSON-RPC to `$RPC_URL` (`getSignaturesForAddress`, then `getTransaction` at `finalized` with `maxSupportedTransactionVersion: 1`), and only with `--confirmed`. The URL reaches curl through a config on stdin (`curl -q -K -`), never as an argument. The `provider:` line names the provider's domain (the host's last two labels) for the Rule 11b disclosure; curl errors pass through `redact.sh`.
 - **Writes:** `<dir>/signatures.jsonl`, `<dir>/transactions.jsonl` and `<dir>/collection-gaps.tsv`.
   - `transactions.jsonl` is written by jq only when a test round-trip shows jq keeps 64-bit integers exact (a check of behaviour, not of the version); otherwise it is written by `python3 -I`.
   - `collection-gaps.tsv` has one `<signature or address><TAB><reason>` row per gap: a failed `getTransaction`, a failed signature page (older history not collected), a page cap that stopped on a full page, where older history may exist (with the `--before` to resume from), the `--max-tx` cap, or the stop after 10 failed calls in a row.
-  - stdout ends with `collection gaps: N (see …)`. Notices go to stderr and start with `  ! `.
+  - The three files are written only through the descriptors opened when they were created.
+  - stdout ends with `transactions fetched: N of M calls -> …` and `collection gaps: N (see …)`. Notices go to stderr and start with `  ! `.
+  - A run stopped by INT, TERM or HUP adds gap rows for the address being paged and each one after it, and one for the signatures listed but not fetched, then prints the closing lines. A run killed outright prints nothing more; then each signature in `signatures.jsonl` with no transaction in `transactions.jsonl` is a gap.
   - An `incident_*` directory (`<dir>` or its parent) without a `.gitignore` gets one containing `*`.
+- **Run time:** up to addresses × `--max-pages` + `--max-tx` calls, one at a time, each up to 60 seconds. Run a long collection in the background, or with a timeout sized from that count.
 - **Needs:** curl and jq; `python3` too when jq rounds large integers (before jq 1.7).
 
 #### `profile.sh`
@@ -335,7 +345,7 @@ The read-only collector behind `/auditor:threat-model --bootstrap` ([method and 
 | Flag | Meaning |
 |------|---------|
 | `--repo <dir>` | the target (required): the top level of its own repository, or a bare repository. Anything else, a partial clone, or a target whose config git cannot read exits 3 |
-| `--out <dir>` | the run directory (required), normally `audit_<n>/bootstrap`: a plain path without `.` or `..` components. If it, or its `audit_<n>` parent, is a symbolic link, holds one, is tracked by git, or cannot be checked (find cannot read all of it, or git cannot answer, as for a repository git refuses as owned by another user), the run exits 2 |
+| `--out <dir>` | the run directory (required), normally `audit_<n>/bootstrap`: a plain path without `.` or `..` components, reached through no symbolic link inside the working directory or the target tree. If it, or its `audit_<n>` parent, is a symbolic link, holds one, is tracked by git, or cannot be checked (find cannot read all of it, or git cannot answer, as for a repository git refuses as owned by another user), the run exits 2 |
 | `--pin <rev>` | the commit to analyse (default `HEAD`); only its ancestry is mined. Exit 3 if it does not resolve |
 | `--paths <pathspec>` | target pathspec, repeatable (default `programs/*.rs` when the commit has a `programs/` directory, else `*.rs`) |
 | `--parent <https-url\|dir>` | the fork parent: an `https://` URL, cloned bare into a temp directory that is deleted on exit, or the top level of a local repository. A local path that is not a top level, is a partial clone, or has a config git cannot read is recorded as not used, R5 prints `NOT FOUND`, and the run goes on |
@@ -352,7 +362,7 @@ The read-only collector behind `/auditor:threat-model --bootstrap` ([method and 
 | `--fix-ceiling <n>` | changed-line ceiling for the `ADDED` rows of a keyword commit (default 300) |
 | `-h`, `--help` | print the usage header, flags and exit statuses included |
 
-- **Exit:** 0 done (a section may print `NOT FOUND`) · 2 usage error or rejected input, including an `--out` with `.` or `..` components, a run directory that is a symbolic link, holds one, is tracked by git, or cannot be checked by git or find (the check fails closed), and an `--import` that is not a commit · 3 `--repo` is not the top level of a git repository (or a bare repository), the pin does not resolve, the target is a partial clone (reading it could fetch from its promisor remote), or git cannot read its config.
+- **Exit:** 0 done (a section may print `NOT FOUND`) · 2 usage error or rejected input, including an `--out` with `.` or `..` components or reached through a symbolic link inside the working directory or the target tree, a run directory that is a symbolic link, holds one, is tracked by git, or cannot be checked by git or find (the check fails closed), and an `--import` that is not a commit · 3 `--repo` is not the top level of a git repository (or a bare repository), the pin does not resolve, the target is a partial clone (reading it could fetch from its promisor remote), or git cannot read its config.
 - **Network:** only for an `https://` URL passed in `--parent` (a bare clone without submodules, credential helpers or other protocols) or in `--vulns` (curl, https only through redirects too, with 60-second and 50 MB limits). Never with `--offline` or `--detect`, and never for a URL found in target content. Every git call runs with `GIT_NO_LAZY_FETCH=1` and `protocol.allow=never`, the parent's https clone allowing https for that call only, so no remote the target configures is contacted. URLs in `history.md`, `inputs.tsv` and stderr show userinfo, query string and fragment as `***`.
 - **Writes:** in `<out>`:
   - `history.md`: sections R0 to R8; a "Shallow clone" line when the target is shallow; and which git settings are pinned.

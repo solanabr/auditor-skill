@@ -56,8 +56,9 @@ directory.
      is a `.gitignore` holding `*` (Rule 11d). Reuse an existing `incident_*` only if git
      does not track it and it holds no symbolic links, and only after the human
      confirms which one. Never write into a tracked `incident_*`; the bundled
-     scripts refuse one, one that is or holds a symbolic link, and one that git or
-     find cannot check, with exit 2.
+     scripts refuse one, one that is or holds a symbolic link or is reached through
+     one, a path with a `.` or `..` component, and one that git or find cannot
+     check, with exit 2.
    - For an `INC-<n>.<k>` lead, the lead names the `incident_<n>/` to reuse (naming
      it is the confirmation): adopt it under that rule; the agent works into its
      `INCIDENTS.json`, since minting a fresh directory would orphan the incident.
@@ -69,8 +70,9 @@ directory.
      — read-only `solana program show` + `solana program dump` (loader-v4:
      `program-v4 show` + `program-v4 download`) into `incident_<n>/bin/`, with the
      CLI's error text passed through `redact.sh`. Keep the line(s) it prints
-     (last-deployed slot, zero-trimmed sha256) for the agent, which copies them into
-     `LEDGER.md`. A hotfix shipped mid-investigation overwrites the on-chain binary;
+     (last-deployed slot, zero-trimmed sha256, and a loader-v4 program's status)
+     for the agent, which copies them into `LEDGER.md`. A blocker that names the
+     account's owner means the id is not a program: check the id before going on. A hotfix shipped mid-investigation overwrites the on-chain binary;
      this copy is what Leg 3 runs on. A later snapshot of a redeployed program is
      kept as `bin/<id>@<slot>.so`; `bin/<id>.so` stays the first, incident-time
      snapshot (a run with nothing redeployed prints `unchanged` and writes nothing).
@@ -96,13 +98,16 @@ directory.
    incident that already has a corpus goes to a new `incident_<n>/corpus-<k>/`
    (`<k>` is the highest existing number + 1, `corpus/` counting as 1; created with
    `mkdir`, under the step-1 rule), and every recipe then reads
-   `incident_<n>/corpus*/transactions.jsonl`, counting each transaction once. Pass
-   the agent the corpus paths, the collector's `provider:` domain (the host's last
-   two DNS labels, disclosed under Rule 11b; a keyed URL is never written
-   anywhere) and its `collection-gaps.tsv`; it copies every row into the ledger's
-   **Collection gaps** line and into `collection_gaps` of the incident in
-   `INCIDENTS.json`, and merges everything into one timeline ordered by
-   `(slot, transactionIndex)`.
+   `incident_<n>/corpus*/transactions.jsonl`, counting each transaction once. Run a
+   long collection in the background, or with a timeout sized from the estimated
+   call count; a run stopped early still records what it had not fetched as gaps.
+   Pass the agent the corpus paths, the collector's `provider:` domain (the host's
+   last two DNS labels, disclosed under Rule 11b; a keyed URL is never written
+   anywhere), its `collection-gaps.tsv`, and whether the run ended with its
+   `collection gaps: N` line; it copies every row, and every `skipped N malformed
+   line(s)` note the recipes print, into the ledger's **Collection gaps** line and
+   into `collection_gaps` of the incident in `INCIDENTS.json`, and merges
+   everything into one timeline ordered by `(slot, transactionIndex)`.
 
 4. **Outcome and damage (Phase 2), in `incident-responder`.** A status code can't
    tell you whether it worked — Leg 1 can: a balance movement, or for a takeover
