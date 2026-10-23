@@ -117,15 +117,16 @@ show "$tmp/quoted"
 
 hosts() { grep -E '^\+' | grep -oiE 'https?://[A-Za-z0-9.-]+' | LC_ALL=C tr 'A-Z' 'a-z' | sort | uniq -c | sort -rn; }
 NOTESTS=(':(exclude)*/tests/*' ':(exclude)*/evals/*' ':(exclude)*/evals-extra/*' ':(exclude)*/fixtures/*')
-# the paths each added-line scan below reads
-CODE=('*.sh' '*.bash' '*.py' '*.js' '*.mjs' '*.cjs' '*.ts' '*.json' '*.toml' '*.yml' '*.yaml' "${NOTESTS[@]}" \
-  ':(exclude)*.lock' ':(exclude)*package-lock.json')
-MD=('*.md' "${NOTESTS[@]}")
+# the paths each added-line scan below reads: names in any letter case, less the exclusions as they are written
+CODE=()
+for x in sh bash py js mjs cjs ts json toml yml yaml; do CODE+=(":(icase)*.$x"); done
+CODE+=("${NOTESTS[@]}" ':(exclude)*.lock' ':(exclude)*package-lock.json')
+MD=(':(icase)*.md' "${NOTESTS[@]}")
 ALL=(. ':(exclude)*.lock')
 
 section "Renamed files, OLD -> NEW (each is scanned whole: in the added-line scans, or, when moved unchanged between ordinary paths, in the section after them)"
 # Pairs over the whole tree and within each scan's paths: a scan pairs only the files it reads.
-renames() { g --icase-pathspecs diff "${PAIRED[@]}" --name-status --diff-filter=R "$old" "$new" -- "$@"; }
+renames() { g diff "${PAIRED[@]}" --name-status --diff-filter=R "$old" "$new" -- "$@"; }
 { awk -F'\t' '$1 ~ /^R/' "$tmp/ns"; renames "${CODE[@]}"; renames "${MD[@]}"; renames "${ALL[@]}"; } \
   | awk -F'\t' '{ printf "- %s -> %s (%d%% similar)\n", $2, $3, substr($1, 2) }' | sort -u > "$tmp/ren"
 show "$tmp/ren"
@@ -141,7 +142,7 @@ moved "${CODE[@]}" > "$tmp/mv_code"; moved "${MD[@]}" > "$tmp/mv_md"; moved "${A
 # the files at the NEW paths of LIST ("OLD<tab>NEW" lines), MODE only keeps just those. Without rename detection
 # a/ and b/ name the same path, so the path is the header's second half.
 added() { local mode=$1 list=$2; shift 2
-  g --icase-pathspecs diff "${SCAN[@]}" -U0 "$old" "$new" -- "$@" | awk -v mode="$mode" -v list="$list" '
+  g diff "${SCAN[@]}" -U0 "$old" "$new" -- "$@" | awk -v mode="$mode" -v list="$list" '
     BEGIN { while ((getline l < list) > 0) { split(l, a, "\t"); s[a[2]] = 1 } }
     /^diff --git / { n = (length($0) - 16) / 2; keep = (substr($0, 14, n) in s) == (mode == "only") }
     keep'; }
