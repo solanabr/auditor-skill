@@ -404,8 +404,11 @@ esac
 #   * an immutable loader (BPFLoader2, BPFLoader) shows no authority and no slot;
 #   * `account` shows the owner, and with --output-file writes the data there instead
 #     of a hex dump; an address with no account is "AccountNotFound".
-# FAKE_SOL_LOADER is v3 (upgradeable, default), v2, v1, v4, none (an account owned by
-# the System Program) or missing (no account at all). FAKE_SOL_SLOTS
+# FAKE_SOL_LOADER is v3 (upgradeable, default), v2, v1, v4, v3data (a data account of
+# the upgradeable loader, not executable), none (an account owned by the System
+# Program) or missing (no account at all). FAKE_SOL_SHOW_FAIL=1 makes both show
+# commands fail as a rate-limited endpoint does. FAKE_SOL_AUTH and FAKE_SOL_STATUS
+# replace the authority and the loader-v4 status a show prints. FAKE_SOL_SLOTS
 # is a comma list of last-deployed slots: each read of the program (show, dump,
 # download) takes the next one and the last one repeats, so a deploy can land
 # between two reads. The dumped ELF carries its slot, so each deploy hashes apart.
@@ -441,9 +444,9 @@ def opt(name):
     return a[a.index(name) + 1] if name in a else None
 OWNERS = {"v3": "BPFLoaderUpgradeab1e11111111111111111111111", "v2": "BPFLoader2111111111111111111111111111111111",
           "v1": "BPFLoader1111111111111111111111111111111111", "v4": "LoaderV411111111111111111111111111111111111",
-          "none": "11111111111111111111111111111111"}
+          "v3data": "BPFLoaderUpgradeab1e11111111111111111111111", "none": "11111111111111111111111111111111"}
 loader = os.environ.get("FAKE_SOL_LOADER", "v3")
-AUTH = "p2Yicb86aZig616Eav2VWG9vuXR5mEqhtzshZYBxzsV"
+AUTH = os.environ.get("FAKE_SOL_AUTH", "p2Yicb86aZig616Eav2VWG9vuXR5mEqhtzshZYBxzsV")
 def read_slot():
     if loader in ("v1", "v2"):
         return 0
@@ -471,6 +474,10 @@ if cmd == ["program", "show"] or cmd == ["program-v4", "show"]:
 pid = a[2] if cmd[0] == "program" else a[1] if cmd[0] == "account" else opt("--program-id")
 if cmd[0] in ("program", "program-v4") and loader == "missing":
     fail(f"Unable to find the account {pid}")
+if cmd in (["program", "show"], ["program-v4", "show"]) and os.environ.get("FAKE_SOL_SHOW_FAIL"):
+    fail("429 Too Many Requests")
+if cmd in (["program", "show"], ["program", "dump"]) and loader == "v3data":
+    fail(f"{pid} is not an upgradeable program")
 if cmd in (["program", "show"], ["program", "dump"]) and loader in ("v4", "none"):
     fail(f"{pid} is not an SBF program")
 if cmd[0] == "program-v4" and loader != "v4":
@@ -490,9 +497,9 @@ elif cmd == ["program-v4", "show"]:
 elif cmd[0] == "account":
     if loader == "missing":
         fail(f"AccountNotFound: pubkey={pid}")
-    data = elf(0) if loader != "none" else b"\x01" * 165
+    data = elf(0) if loader not in ("none", "v3data") else b"\x01" * 165
     print(f"\nPublic Key: {pid}\nBalance: 0.00203928 SOL\nOwner: {OWNERS[loader]}\n"
-          f"Executable: {str(loader != 'none').lower()}\nRent Epoch: 18446744073709551615")
+          f"Executable: {str(loader not in ('none', 'v3data')).lower()}\nRent Epoch: 18446744073709551615")
     if opt("--output-file"):
         open(opt("--output-file"), "wb").write(data)
         print(f"\nWrote account data to {opt('--output-file')}")
@@ -672,6 +679,25 @@ fi
 eq "no program: the blocker names the account's owner, read with one more call" \
   "$(grep 'is not a program' "$L/none.out")|$(grep '"account"' "$FAKE_SOL_ARGV" | grep -c '"--output-file"')" \
   "[blocker] $PID is not a program: its account is owned by 11111111111111111111111111111111. Check the id; nothing written.|1"
+# An account a loader owns: executable, when both show commands failed on a program
+# (here a rate-limited endpoint), the blocker says to run the snapshot again; a data
+# account of the loader, to check the id.
+snap "$L/show-fail" FAKE_SOL_SHOW_FAIL=1
+code=$?
+if [[ "$code" == 3 && ! -e "$L/show-fail/bin" ]] && ! grep -q 'is not a program' "$L/show-fail.out" \
+   && grep -q "^\[blocker\] the account of $PID is owned by BPFLoaderUpgradeab1e11111111111111111111111, a loader, yet neither show command read it as a program (see the errors above): .* Run the snapshot again" "$L/show-fail.out"; then
+  ok "no show: a program the show commands failed to read -> blocker (exit 3) to run again, never 'not a program'"
+else
+  bad "no show: exit $code ($(tr '\n' ' ' < "$L/show-fail.out"))"
+fi
+snap "$L/v3data" FAKE_SOL_LOADER=v3data
+code=$?
+if [[ "$code" == 3 && ! -e "$L/v3data/bin" ]] \
+   && grep -q "^\[blocker\] $PID is not a program: it is a data account of BPFLoaderUpgradeab1e11111111111111111111111, a loader (a program's data account or a buffer). Check the id" "$L/v3data.out"; then
+  ok "no program: a data account of the loader -> blocker (exit 3) to check the id"
+else
+  bad "no program: loader data account -> exit $code ($(tr '\n' ' ' < "$L/v3data.out"))"
+fi
 snap "$L/missing" FAKE_SOL_LOADER=missing
 code=$?
 if [[ "$code" == 3 && ! -e "$L/missing/bin" ]] && grep -q "^\[blocker\] $PID is not a program, and its account could not be read either:$" "$L/missing.out" \

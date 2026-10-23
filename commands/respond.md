@@ -72,7 +72,9 @@ directory.
      CLI's error text passed through `redact.sh`. Keep the line(s) it prints
      (last-deployed slot, zero-trimmed sha256, and a loader-v4 program's status)
      for the agent, which copies them into `LEDGER.md`. A blocker that names the
-     account's owner means the id is not a program: check the id before going on. A hotfix shipped mid-investigation overwrites the on-chain binary;
+     account's owner: check the id before going on, unless it says a loader owns
+     an executable account neither `show` could read; then run the snapshot
+     again. A hotfix shipped mid-investigation overwrites the on-chain binary;
      this copy is what Leg 3 runs on. A later snapshot of a redeployed program is
      kept as `bin/<id>@<slot>.so`; `bin/<id>.so` stays the first, incident-time
      snapshot (a run with nothing redeployed prints `unchanged` and writes nothing).

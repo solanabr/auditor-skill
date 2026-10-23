@@ -26,7 +26,11 @@
 #      reason). The output must name <id> as its Program Id, or the script stops
 #      with a blocker. An account neither command reads stops with a blocker that
 #      names the account's owner, from one more read (`solana -C <config> account
-#      <id> --output-file <temp file>`, so no hex dump of its data is printed).
+#      <id> --output-file <temp file>`, so no hex dump of its data is printed). When
+#      a loader owns it, the blocker says which case it is: a data account of the
+#      loader (a program's data account or a buffer: check the id), or an
+#      executable account the show commands failed to read (a closed program, or a
+#      failing endpoint: run the snapshot again).
 #   3. `solana -C <config> program dump <id>` (loader-v4: `program-v4 download
 #      --program-id <id>`) into the temp dir, then `show` again: the slot and the
 #      bytes come from separate reads, so a slot that moved means a deploy landed
@@ -285,7 +289,19 @@ if ! show_program "$show"; then
     rm -f "$err"
     if solana -C "$cfg" account "$pid" --output-file "$tmp/account.data" >"$tmp/account.txt" 2>"$err" \
        && owner="$(field "Owner" "$tmp/account.txt")" && [[ "$owner" =~ ^[1-9A-HJ-NP-Za-km-z]{32,44}$ ]]; then
-      echo "[blocker] $pid is not a program: its account is owned by $owner. Check the id; nothing written." >&2
+      # An account a loader owns is a program, or one of its data accounts: when it is
+      # executable, the show commands failed on a program (closed, or a failing
+      # endpoint), and the id is right.
+      case "$owner" in
+        BPFLoaderUpgradeab1e11111111111111111111111|BPFLoader2111111111111111111111111111111111|BPFLoader1111111111111111111111111111111111|LoaderV411111111111111111111111111111111111)
+          if [ "$(field "Executable" "$tmp/account.txt")" = false ]; then
+            echo "[blocker] $pid is not a program: it is a data account of $owner, a loader (a program's data account or a buffer). Check the id, and use the program's own address; nothing written." >&2
+          else
+            echo "[blocker] the account of $pid is owned by $owner, a loader, yet neither show command read it as a program (see the errors above): the program may be closed, or the endpoint failed or limited the requests. Run the snapshot again before treating the id as wrong; nothing written." >&2
+          fi ;;
+        *)
+          echo "[blocker] $pid is not a program: its account is owned by $owner. Check the id; nothing written." >&2 ;;
+      esac
     else
       echo "[blocker] $pid is not a program, and its account could not be read either:" >&2
       "$REDACT" <"$err" >&2

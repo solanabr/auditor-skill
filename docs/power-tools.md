@@ -214,7 +214,7 @@ Step 1 of every hunt and response: it keeps the deployed program bytes before a 
     - no `solana` CLI or `python3`;
     - the CLI did not take the keyless config;
     - a CLI error;
-    - no program under any loader: one more read (`solana account`, its data written to the temp directory) names the account's owner in the blocker;
+    - no program under any loader: one more read (`solana account`, its data written to the temp directory) names the account's owner in the blocker. When a loader owns the account, the blocker says which case it is: a data account of the loader (a program's data account or a buffer: check the id), or an executable account neither `show` could read (a closed program, or a failing endpoint: run the snapshot again);
     - a `show` that names another Program Id;
     - a dump without the ELF magic;
     - a slot that moved during both dumps;

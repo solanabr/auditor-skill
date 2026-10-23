@@ -55,18 +55,20 @@ directory.
      only after the human confirms which one (`--fresh` always creates a new one).
      Never write into a tracked `incident_*`; the bundled scripts refuse one, one
      that is or holds a symbolic link or is reached through one, a path with a `.`
-     or `..` component, and one that git or find cannot check, with exit 2. Its **first** file is `incident_<n>/.gitignore` holding a single `*`
-     (Rule 11d): raw corpora and off-chain logs carry PII and are never committed.
+     or `..` component, and one that git or find cannot check, with exit 2. Its
+     **first** file is `incident_<n>/.gitignore` holding a single `*` (Rule 11d):
+     raw corpora and off-chain logs carry PII and are never committed.
    - **Snapshot each program in scope now:**
      `bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/snapshot-program.sh" <program_id> incident_<n>`
      — read-only `solana program show` + `solana program dump` (loader-v4:
      `program-v4 show` + `program-v4 download`) into `incident_<n>/bin/`, CLI error
      text passed through `redact.sh`. Keep the line it prints (last-deployed slot,
      zero-trimmed sha256, and a loader-v4 program's status) for the agent, which
-     pastes it into `LEDGER.md`. A blocker that names the account's owner means the
-     id is not a program: check the id before going on. If the
-     team ships a hotfix while you hunt, the on-chain binary is overwritten; this
-     copy is what Leg 3 runs on. A later snapshot of a redeployed program is kept as
+     pastes it into `LEDGER.md`. A blocker that names the account's owner: check
+     the id before going on, unless it says a loader owns an executable account
+     neither `show` could read; then run the snapshot again. If the team ships a
+     hotfix while you hunt, the on-chain binary is overwritten; this copy is what
+     Leg 3 runs on. A later snapshot of a redeployed program is kept as
      `bin/<id>@<slot>.so`; `bin/<id>.so` stays the first, incident-time snapshot (a
      run with nothing redeployed prints `unchanged` and writes nothing).
 
