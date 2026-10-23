@@ -58,9 +58,12 @@
 #     (the crate, shared-test-utils, any other member), and a build script (`build =
 #     false` turns one off), a proc-macro package, a Cargo.toml that is not a member,
 #     or a [patch] or [replace] table in a manifest stops the run. Check code that is
-#     generated at build time into the crate instead. A shared-test-utils dependency
-#     that is renamed or resolves outside the crate's own shared-test-utils/ stops it
-#     too: the contract macros must come from the harness copy that was checked.
+#     generated at build time into the crate instead. The contract macros must come
+#     from the harness copy that was checked, so the crate depends on its own
+#     shared-test-utils/ under the import name shared_test_utils; a crate without
+#     that dependency, one that imports it under another name, another dependency
+#     imported as shared_test_utils (with - or _), and a build that compiles a
+#     shared_test_utils from anywhere else, or none, stop it too.
 #   * the build cache: to reuse compiled dependencies between runs of one
 #     engagement, create a directory once per engagement with
 #     `mktemp -d "${TMPDIR:-/tmp}/auditor-poc-target.XXXXXX"` (inside the isolated
@@ -348,21 +351,25 @@ def crate(meta_path, root):
                 lib = target.get("name", "")
         if manifest == os.path.join(root, "Cargo.toml"):
             root_pkg = pkg
-    # The harness the markers come from must be the copied one. If the crate names a
-    # shared-test-utils dependency, it must be the path member at
-    # <root>/shared-test-utils and carry the import name `shared_test_utils`; no other
-    # dependency may supply that import name. A crate that names none cannot leave a
-    # contract marker, so it is left to decide nothing on its own.
+    # The harness the markers come from must be the copied one. The crate depends on
+    # the path member at <root>/shared-test-utils, imported as shared_test_utils, and
+    # no other dependency takes that import name. Cargo reads - and _ in a dependency
+    # key as one import name, so both spellings are compared.
     stu_dir = os.path.join(root, "shared-test-utils")
+    bound = False
     for dep in (root_pkg or {}).get("dependencies", []):
-        name, rename, path = dep.get("name"), dep.get("rename"), dep.get("path")
+        name, rename, path = dep.get("name") or "", dep.get("rename"), dep.get("path")
+        imported = (rename or name).replace("-", "_")
         if name == "shared-test-utils":
-            if rename:
-                refuse("the crate renames its shared-test-utils dependency to %r; keep its own name, so the macros come from the copied harness." % rename)
+            if imported != "shared_test_utils":
+                refuse("the crate imports its shared-test-utils dependency as %s; keep the import name shared_test_utils, so the macros come from the copied harness." % rename)
             if not path or not identity(path) or identity(path) != identity(stu_dir):
                 refuse("the crate names a shared-test-utils dependency at %s, not the copied %s: the contract macros must come from the harness that run.sh checked." % (path or "a registry", os.path.relpath(stu_dir, root)))
-        elif rename == "shared-test-utils":
-            refuse("the crate maps the import name shared-test-utils onto %s; the contract macros must come from the copied harness." % name)
+            bound = True
+        elif imported == "shared_test_utils":
+            refuse("the crate imports %s as shared_test_utils; the contract macros must come from the copied harness." % name)
+    if not bound:
+        refuse("the crate does not depend on its own shared-test-utils/ (shared-test-utils = { path = \"shared-test-utils\" }): the contract macros must come from the harness that run.sh checked.")
     # A manifest in any letter case, matched to the members by file identity: a
     # filesystem that ignores case lets cargo read cargo.toml as Cargo.toml.
     known = set(identity(manifest) for manifest in members)
@@ -387,20 +394,24 @@ def crate(meta_path, root):
     print(lib)
 
 
+LIBS = ("lib", "rlib", "dylib", "cdylib", "staticlib", "proc-macro")
+
+
 def checkbuild(root, build_json, built_file, test):
     # The cargo-test --no-run output for one arm: refuse (exit 3) when a unit of the
     # crate own workspace is reported fresh without this run having built it (a
     # shared build cache handing over another same-named crate artifact), or when
-    # the harness this build compiled is not the copied one; then print the arm own
-    # test binary. built_file carries, across arms, the artifacts this run built
-    # fresh, so a dependency reused between arms (shared-test-utils) stays allowed.
+    # this build compiled a shared_test_utils from anywhere but the copied harness,
+    # or none at all; then print the arm own test binary. built_file carries, across
+    # arms, the artifacts this run built fresh, so a dependency reused between arms
+    # (shared-test-utils) stays allowed.
     root = os.path.realpath(root)
     try:
         with open(built_file, encoding="utf-8") as f:
             built = set(line.rstrip("\n") for line in f)
     except OSError:
         built = set()
-    fresh_reused, new_built, exe, stu_src = [], [], set(), None
+    fresh_reused, new_built, exe, stu_srcs = [], [], set(), []
     for msg in json_lines(build_json):
         if msg.get("reason") != "compiler-artifact":
             continue
@@ -412,15 +423,18 @@ def checkbuild(root, build_json, built_file, test):
                 fresh_reused.append(target.get("name", "?"))
             if not msg.get("fresh"):
                 new_built.extend(names)
-        if target.get("name") == "shared_test_utils" and "lib" in target.get("kind", []):
-            stu_src = target.get("src_path", "")
+        if target.get("name") == "shared_test_utils" and any(k in LIBS for k in target.get("kind", [])):
+            stu_srcs.append(target.get("src_path", ""))
         if (manifest == os.path.join(root, "Cargo.toml") and "test" in target.get("kind", [])
                 and target.get("name") == test and msg.get("executable")):
             exe.add(msg["executable"])
     if fresh_reused:
         refuse("cargo reported %s as already built without this run compiling it — a build cache shared with another crate of the same name handed over its artifact. Give this run its own CARGO_TARGET_DIR, or run PoCs one at a time." % ", ".join(sorted(set(fresh_reused))))
-    if stu_src is not None and not under(stu_src, os.path.join(root, "shared-test-utils")):
-        refuse("the shared_test_utils this build compiled is %s, outside the copied harness: the contract macros must come from the copy run.sh made." % stu_src)
+    elsewhere = [src for src in stu_srcs if not under(src, os.path.join(root, "shared-test-utils"))]
+    if elsewhere:
+        refuse("the shared_test_utils this build compiled is %s, outside the copied harness: the contract macros must come from the copy run.sh made." % elsewhere[0])
+    if not stu_srcs:
+        refuse("this build compiled no shared_test_utils from the copied harness: the contract macros must come from the copy run.sh made.")
     try:
         with open(built_file, "a", encoding="utf-8") as f:
             for n in new_built:
@@ -856,7 +870,8 @@ build_tests() {  # build_tests <arm> <test>: the arm's test binary, EXE; one tha
   fi
   # checkbuild prints the arm's own test binary, or refuses (exit 3): a crate unit
   # reported fresh that this run never built (a shared cache handed it over), a
-  # shared-test-utils compiled from outside the copied harness, or no single test.
+  # shared_test_utils compiled from outside the copied harness or none at all, or no
+  # single test.
   EXE="$(harness checkbuild "${BUILD_DIR}" "${json}" "${RUN_DIR}/built" "$2")" || rc=$?
   if [[ "${rc}" -ne 0 ]]; then
     if [[ "${rc}" -eq 3 ]]; then echo "[PoC-ATTEMPTED] blocker: ${EXE}" >&2

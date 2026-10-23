@@ -70,10 +70,11 @@ trap 'rm -rf "$T"' EXIT
 # run.sh reports physical paths (pwd -P); compare against the same.
 T="$(cd "$T" && pwd -P)" || exit 1
 
-mk_crate() {  # mk_crate <dir>: run.sh, a manifest and the template's tests (the shim never compiles them)
-  mkdir -p "$1/tests"
+mk_crate() {  # mk_crate <dir>: run.sh, a manifest, its own shared-test-utils/ and the template's tests (the shim never compiles them)
+  mkdir -p "$1/tests" "$1/shared-test-utils"
   cp "$TEMPLATE/run.sh" "$1/run.sh"
   printf '[package]\nname = "poc_shim"\nversion = "0.1.0"\nedition = "2021"\n' > "$1/Cargo.toml"
+  printf '[package]\nname = "shared-test-utils"\nversion = "0.1.0"\n' > "$1/shared-test-utils/Cargo.toml"
   cp "$TEMPLATE/tests/exploit.rs" "$TEMPLATE/tests/fixed_blocked.rs" "$1/tests/"
 }
 mk_crate "$T/inc"
@@ -103,12 +104,16 @@ PY
 # rust-toolchain.toml there when RUSTUP_TOOLCHAIN is not pinned. With SHIM_CALLS set it
 # also logs every call, tab-separated: working directory, CARGO_TARGET_DIR,
 # SBF_OUT_DIR, BPF_OUT_DIR, AUDITOR_POC_MARKERS, arguments. `metadata` lists every
-# Cargo.toml under the crate as a member, the root package named SHIM_CRATE (poc_shim);
+# Cargo.toml under the crate as a member, the root package named SHIM_CRATE (poc_shim),
+# with a dependency on the crate's own shared-test-utils/ (SHIM_STU=none drops it, and
+# SHIM_STU=<name>,<rename>,<path> sets another, @copy standing for that directory);
 # SHIM_META=build-script gives the root a build script and SHIM_META=proc-macro makes
 # its lib a proc-macro. `build-sbf` writes the arm's .so. `test --no-run` writes a
 # Cargo.lock when the crate has none (SHIM_LOCK adds name@version@path|<git source>
-# entries), prints SHIM_JSON_PAD other artifacts, then the stand-in test binary
-# $T/shim/bin/<test> (none for SHIM_FAIL=no-exe:<test>). SHIM_FAIL makes one step fail
+# entries), prints SHIM_JSON_PAD other artifacts, the shared_test_utils lib of the
+# crate's own shared-test-utils/ (SHIM_STU_BUILD=elsewhere: of another copy; =none: no
+# such lib), then the stand-in test binary $T/shim/bin/<test> (none for
+# SHIM_FAIL=no-exe:<test>). SHIM_FAIL makes one step fail
 # with cargo's own exit code, 101.
 #
 # The stand-in test binary logs its run to SHIM_CALLS as well (arguments "testbin
@@ -159,6 +164,13 @@ SH
 cat > "$T/shim/meta.py" <<'PY'
 import json, os, sys
 root, crate, meta = sys.argv[1], os.environ.get("SHIM_CRATE", "poc_shim"), os.environ.get("SHIM_META", "")
+stu = os.environ.get("SHIM_STU", "shared-test-utils,,@copy")
+deps = []
+if stu != "none":
+    name, rename, path = stu.split(",", 2)
+    path = os.path.join(root, "shared-test-utils") if path == "@copy" else path
+    deps.append({"name": name, "rename": rename or None, "path": path or None, "kind": "dev",
+                 "source": None if path else "registry+https://github.com/rust-lang/crates.io-index"})
 packages = []
 for top, dirs, files in os.walk(root):
     dirs[:] = sorted(d for d in dirs if not (top == root and d in ("target", "markers")))
@@ -169,7 +181,8 @@ for top, dirs, files in os.walk(root):
     targets = [{"name": name.replace("-", "_"), "kind": kind, "crate_types": kind, "src_path": os.path.join(top, "src", "lib.rs")}]
     if top == root and meta == "build-script":
         targets.append({"name": "build-script-build", "kind": ["custom-build"], "crate_types": ["bin"], "src_path": os.path.join(top, "build.rs")})
-    packages.append({"name": name, "version": "0.1.0", "id": "path+file://%s#%s@0.1.0" % (top, name), "manifest_path": os.path.join(top, "Cargo.toml"), "targets": targets})
+    packages.append({"name": name, "version": "0.1.0", "id": "path+file://%s#%s@0.1.0" % (top, name), "manifest_path": os.path.join(top, "Cargo.toml"),
+                     "targets": targets, "dependencies": deps if top == root else []})
 # The directory cargo builds into: CARGO_TARGET_DIR, CARGO_BUILD_TARGET_DIR, then
 # SHIM_TARGET_DIR, which stands for a target-dir set in cargo's own config.
 target = os.environ.get("CARGO_TARGET_DIR") or os.environ.get("CARGO_BUILD_TARGET_DIR") or os.environ.get("SHIM_TARGET_DIR") or os.path.join(root, "target")
@@ -202,6 +215,12 @@ if fresh:
     print(json.dumps({"reason": "compiler-artifact", "package_id": "path+file://%s#poc_shim@0.1.0" % root, "manifest_path": os.path.join(root, "Cargo.toml"),
                       "target": {"kind": ["lib"], "crate_types": ["lib"], "name": "poc_shim", "src_path": os.path.join(root, "src", "lib.rs")},
                       "profile": {"test": False}, "features": [], "filenames": ["/cache/debug/deps/libpoc_shim-shared.rlib"], "executable": None, "fresh": True}))
+stu_build = os.environ.get("SHIM_STU_BUILD", "copy")
+if stu_build != "none":
+    stu_root = os.path.join(root, "shared-test-utils") if stu_build == "copy" else "/elsewhere/shared-test-utils"
+    print(json.dumps({"reason": "compiler-artifact", "package_id": "path+file://%s#shared-test-utils@0.1.0" % stu_root, "manifest_path": os.path.join(stu_root, "Cargo.toml"),
+                      "target": {"kind": ["lib"], "crate_types": ["lib"], "name": "shared_test_utils", "src_path": os.path.join(stu_root, "src", "lib.rs")},
+                      "profile": {"test": False}, "features": [], "filenames": ["/target/debug/deps/libshared_test_utils-shim.rlib"], "executable": None, "fresh": False}))
 if fail != "no-exe:" + test:
     exe = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin", test)
     print(json.dumps({"reason": "compiler-artifact", "package_id": "path+file://%s#poc_shim@0.1.0" % root, "manifest_path": os.path.join(root, "Cargo.toml"),
@@ -628,6 +647,32 @@ printf '[package]\nname = "inner"\nversion = "0.1.0"\n' > "$T/lc-manifest/inner/
 code="$(gate "$T/lc-manifest" "$NATIVE" "$VULN")"
 [ "$code" = 3 ] && grep -q 'inner/cargo.toml is not a member' "$T/out" && nothing_built \
   && ok "a cargo.toml outside the workspace, spelled in another letter case -> refused before anything compiles" || bad "lower-case manifest: exit $code"
+# The harness binding, from the manifests: the crate depends on its own
+# shared-test-utils/, imported as shared_test_utils, and no other dependency takes that
+# import name, spelled with - or _. Each of these is refused before anything compiles.
+while IFS='|' read -r stu text; do
+  [ -n "$stu" ] || continue
+  code="$(gate "$T/inc" "$NATIVE" "$VULN" "SHIM_STU=$stu")"
+  [ "$code" = 3 ] && grep -qF "$text" "$T/out" && nothing_built && one_blocker \
+    && ok "harness binding: the dependency '$stu' -> refused before anything compiles" || { bad "harness binding '$stu': exit $code"; cat "$T/out" >&2; }
+done <<'CASES'
+none|does not depend on its own shared-test-utils/
+evil-harness,shared_test_utils,/elsewhere/eh|imports evil-harness as shared_test_utils
+evil-harness,shared-test-utils,/elsewhere/eh|imports evil-harness as shared_test_utils
+shared_test_utils,,/elsewhere/eh|imports shared_test_utils as shared_test_utils
+shared-test-utils,harness,@copy|imports its shared-test-utils dependency as harness
+shared-test-utils,,|names a shared-test-utils dependency at a registry
+CASES
+code="$(gate "$T/inc" "$NATIVE" "$VULN" "SHIM_STU=shared-test-utils,shared_test_utils,@copy")"
+[ "$code" = 0 ] && grep -q "^$LEG3" "$T/out" && ok "harness binding: the crate's own copy keyed as shared_test_utils -> accepted" || { bad "harness binding, own copy keyed with _: exit $code"; cat "$T/out" >&2; }
+# And from each arm's build: a shared_test_utils compiled from anywhere but the copy,
+# or none at all, stops the run before its test binary runs.
+for stu in none elsewhere; do
+  want_text='compiled no shared_test_utils'; [ "$stu" = elsewhere ] && want_text='outside the copied harness'
+  code="$(gate "$T/inc" "$NATIVE" "$VULN" "SHIM_STU_BUILD=$stu")"
+  [ "$code" = 3 ] && grep -q "$want_text" "$T/out" && one_blocker && ! awk -F'\t' '$6 ~ /^testbin / { f = 1 } END { exit !f }' "$T/calls" \
+    && ok "harness binding: a build with $stu shared_test_utils -> exit 3, no test binary run" || { bad "harness binding, build $stu: exit $code"; cat "$T/out" >&2; }
+done
 mk_patched "$T/patch-mention" Cargo.toml "$(printf '# [patch.crates-io]\n[package.metadata.notes]\ntext = "see [patch.crates-io]"\npatch-level = 1')"
 code="$(gate "$T/patch-mention" "$NATIVE" "$VULN")"
 [ "$code" = 0 ] && ok "a comment, a string and a patch-level key that only mention [patch] -> not refused" || { bad "mentions of [patch]: exit $code"; cat "$T/out" >&2; }
@@ -1749,6 +1794,18 @@ members = [\"shared-test-utils\"]"
   code="$(e2e "$T/e-hc" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-reject-MissingRequiredSignature.so")"
   [ "$code" = 3 ] && grep -q 'shared-test-utils dependency' "$T/out" && ! grep -q "^$LEG3" "$T/out" \
     && ok "real cargo: a shared-test-utils dependency pointed outside the crate (copy byte-identical) -> exit 3" || { bad "real cargo, harness-copy bind: exit $code"; cat "$T/out" >&2; }
+  # The same binding against an import-name rename: the crate keeps its own
+  # shared-test-utils/ as a member, byte-identical, while its manifest imports another
+  # package as shared_test_utils, the key spelled with _.
+  mk_e2e "$T/e-hc2"; mkdir -p "$T/e-hc2-elsewhere/eh/src"
+  sed 's/^name = "shared-test-utils"/name = "evil-harness"/' "$T/e-hc2/shared-test-utils/Cargo.toml" > "$T/e-hc2-elsewhere/eh/Cargo.toml"
+  cp "$T/e-hc2/shared-test-utils/src/lib.rs" "$T/e-hc2-elsewhere/eh/src/lib.rs"
+  subst "$T/e-hc2/Cargo.toml" 'shared-test-utils = { path = "shared-test-utils" }' "shared_test_utils = { package = \"evil-harness\", path = \"$T/e-hc2-elsewhere/eh\" }"
+  subst "$T/e-hc2/Cargo.toml" '[workspace]' "[workspace]
+members = [\"shared-test-utils\"]"
+  code="$(e2e "$T/e-hc2" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-reject-MissingRequiredSignature.so")"
+  [ "$code" = 3 ] && grep -q 'imports evil-harness as shared_test_utils' "$T/out" && ! grep -q "^$LEG3" "$T/out" \
+    && ok "real cargo: another package imported as shared_test_utils, its own copy kept as a member -> exit 3" || { bad "real cargo, import-name rename: exit $code"; cat "$T/out" >&2; }
 
   # Code from outside the crate without a dependency: a test module by absolute #[path]
   # and the lib target's own out-of-tree path both compile; the non-registry line names
