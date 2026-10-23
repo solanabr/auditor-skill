@@ -182,8 +182,12 @@ with a lowercase `.md`. Its frontmatter keeps to a flat subset:
   stock PATH plus `~/.cargo/bin` that its first step asserts. It is not a required check. A newer push to the
   same ref cancels its older run.
 - **`plugin-validate`**: weekly and on demand, `claude plugin validate --strict` over the repository
-  directory with Claude Code at the exact npm version in `CLAUDE_CODE_VERSION`. Advisory. Bump that
-  version by hand after reading the release notes.
+  directory. Advisory. Claude Code comes from `.github/plugin-validate/`: an exact version in `package.json`,
+  every package's integrity hash in `package-lock.json`, installed with `npm ci --ignore-scripts`. The native
+  binary is the platform's optional dependency, which the job runs directly; the main package's postinstall
+  only copies it over a placeholder. To move to a new version, after reading its release notes, set it in
+  `package.json` and, in that directory, run
+  `NPM_CONFIG_USERCONFIG=<empty file> npm install --package-lock-only --ignore-scripts`.
 
 ### Bumping `vendor/trailofbits`
 

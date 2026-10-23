@@ -1,0 +1,8 @@
+{
+  "name": "auditor-skill-plugin-validate",
+  "private": true,
+  "description": "Claude Code at one exact version for the weekly plugin-validate workflow. See CONTRIBUTING.md.",
+  "dependencies": {
+    "@anthropic-ai/claude-code": "2.1.304"
+  }
+}
