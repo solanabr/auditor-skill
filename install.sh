@@ -28,6 +28,19 @@ physical() {
   printf '%s%s\n' "$(cd -P "$p" && pwd)" "$rest"
 }
 
+# no_claude_dir: refuse a backup directory under a directory named .claude, skills, commands or agents, in any
+# letter case, on its path as given or with links resolved: Claude Code could load the copy kept there.
+no_claude_dir() {
+  local p
+  for p in "$backups" "$(physical "$backups")"; do
+    case "/$(printf '%s' "$p" | LC_ALL=C tr '[:upper:]' '[:lower:]')/" in
+      */.claude/*|*/skills/*|*/commands/*|*/agents/*)
+        echo "error: the backup directory $backups lies inside a .claude, skills, commands or agents directory; set XDG_STATE_HOME elsewhere." >&2
+        exit 2 ;;
+    esac
+  done
+}
+
 main() {
   if [ -n "${1:-}" ]; then
     DEST=$1
@@ -81,6 +94,7 @@ main() {
         echo "error: the backup directory $backups lies inside $(dirname "$DEST"), beside the install; set XDG_STATE_HOME elsewhere." >&2
         exit 2 ;;
     esac
+    no_claude_dir
     old="$backups/backup-$(date +%Y%m%d-%H%M%S)"
     if [ -e "$old" ] || [ -L "$old" ]; then
       echo "error: $old already exists; run the installer again in a second." >&2
@@ -148,6 +162,7 @@ swap() {
     echo "error: $backups is a symbolic link; backups go only to a real directory." >&2
     exit 2
   fi
+  no_claude_dir   # checked again too: a link on its path can appear while the clone runs
   (umask 077; mkdir -p "$backups")
   chmod 700 "$backups"
   if [ -e "$old" ] || [ -L "$old" ]; then   # checked again: mv onto an existing directory would move into it

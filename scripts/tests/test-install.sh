@@ -8,7 +8,8 @@
 #     in its repo config (filters, hooks, transport commands) runs and nothing is left beside the install; a
 #     backup path that exists, or no absolute XDG_STATE_HOME or HOME, stops the run before any git command;
 #   - a path that is a symbolic link, or that holds something other than an install, is refused, and so is a
-#     backup directory that is a link or lies beside the install;
+#     backup directory that is a link, lies beside the install, or lies under a .claude, skills, commands or
+#     agents directory in any letter case, including one a link moves there while the clone runs;
 #   - a download cut short runs nothing and exits non-zero, and a failed clone leaves the earlier install alone;
 #   - a warning goes to stderr when the install directory is inside a git work tree;
 #   - GIT_DIR and GIT_WORK_TREE naming another repository change nothing: that repository is left as it was, and
@@ -305,6 +306,32 @@ GIT_DIR="$T/other21/.git" GIT_WORK_TREE="$T/other21" run up2 "$T" "$T/gd21/both/
 check "GIT_DIR and GIT_WORK_TREE naming another repository leave it as it was and install the upstream" ok21 "$T/gd21/both/auditor-skill"
 GIT_DIR="$T/other21/.git" run up2 "$T" "$T/gd21/dir/auditor-skill"
 check "GIT_DIR alone naming another repository leaves it as it was and installs the upstream" ok21 "$T/gd21/dir/auditor-skill"
+
+# 22. a backup directory under a .claude, skills, commands or agents directory, in any letter case, is refused
+#     before any git command, also away from the install, and nothing is created there; an ordinary one still works
+d22="$T/i22/auditor-skill"
+mkdir -p "$T/i22" && git clone -q "$T/up.git" "$d22" && echo old > "$d22/old-marker"
+refused22() { grep -q 'lies inside a \.claude, skills, commands or agents directory; set XDG_STATE_HOME elsewhere' "$T/err" \
+  && [ -f "$d22/old-marker" ] && [ "$(ls -A "$T/i22")" = auditor-skill ]; }
+ok22() { [ "$rc" -eq 2 ] && refused22 && [ ! -s "$T/trace22" ] && [ ! -e "$1/auditor-skill" ]; }
+for s in "$T/p22a/.claude/skills/state" "$T/p22b/Skills/state" "$T/p22c/.claude/commands"; do
+  mkdir -p "$s" && rm -f "$T/trace22"
+  XDG_STATE_HOME="$s" GIT_TRACE="$T/trace22" run up "$T" "$d22"
+  check "a backup directory under ${s#"$T"/} is refused before any git command" ok22 "$s"
+done
+echo old > "$d22/old-marker"   # an earlier install to back up, whatever the runs above did
+XDG_STATE_HOME="$T/state22" run up "$T" "$d22"
+ok22d() { installed "$d22" && [ ! -e "$d22/old-marker" ] && backed_up "$T/i22" "$T/state22/auditor-skill"; }
+check "an ordinary backup directory away from the install still works" ok22d
+# The check runs again before the backup directory is created: a post-checkout hook from the test's git template
+# links the state directory, missing when the run starts, into a .claude/skills directory while the clone runs.
+echo old > "$d22/old-marker" && mkdir -p "$T/s22" "$T/x22/.claude/skills" "$T/tpl22/hooks" \
+  && printf '#!/bin/sh\n[ -e "%s/s22/state" ] || ln -s "%s/x22/.claude/skills" "%s/s22/state"\n' "$T" "$T" "$T" \
+       > "$T/tpl22/hooks/post-checkout" && chmod +x "$T/tpl22/hooks/post-checkout" \
+  && { cat "$T/up.gitconfig"; printf '[init]\n\ttemplateDir = %s/tpl22\n' "$T"; } > "$T/up22.gitconfig"
+XDG_STATE_HOME="$T/s22/state" run up22 "$T" "$d22"
+ok22e() { [ "$rc" -eq 2 ] && refused22 && [ -L "$T/s22/state" ] && [ -z "$(ls -A "$T/x22/.claude/skills")" ]; }
+check "a state directory linked into a skills directory while the clone runs is refused before anything moves" ok22e
 
 echo "---- $pass passed, $failn failed"
 [ "$failn" -eq 0 ]
