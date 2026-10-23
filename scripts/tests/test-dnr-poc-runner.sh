@@ -53,7 +53,9 @@
 # run through run.sh against small stand-in crates (mollusk-svm, litesvm, solana-sdk,
 # borsh, ...) whose program behaviour is the text after the ELF magic in the prebuilt
 # .so: path dependencies only, offline. bash >= 3.2; uses only standard POSIX tools +
-# python3. Exits non-zero if any assertion fails.
+# python3. Exits non-zero if any assertion fails. With REQUIRE_TOOLCHAIN=1 (CI sets
+# it), a missing cargo or rustup fails the run instead of skipping the real-toolchain
+# checks.
 
 set -uo pipefail
 
@@ -263,7 +265,7 @@ nothing_ran() { [ ! -e "$T/calls" ] && [ -z "$(ls -A "$T/tmp-gate")" ] && ! grep
 nothing_built() {
   [ -z "$(ls -A "$T/tmp-gate")" ] && { [ ! -e "$T/calls" ] || awk -F'\t' '$6 !~ /^metadata / { b = 1 } END { exit b }' "$T/calls"; }
 }
-build_dir() { sed -n 's/^>> build dir: \([^ ]*\).*/\1/p' "$T/out" | head -n 1; }
+build_dir() { sed -n 's/^>> build dir: \([^ ]*\).*/\1/p' "$T/out" | sed -n 1p; }
 # from_scratch <dir>: <dir> is a scratch copy under the gate's TMPDIR, and every
 # logged cargo call and test binary run started from it.
 from_scratch() {
@@ -624,6 +626,8 @@ if [ -s "$LOG" ]; then bad "run.sh let cargo/rustup see the target's config: $(t
 if command -v rustup >/dev/null 2>&1; then
   tc="$(rustup default 2>/dev/null | sed -n 's/ (default)$//p')"
   grep -q "^>> build dir: .*toolchain ${tc};" "$T/out" && ok "toolchain pinned to rustup's default (${tc}), not left to a rust-toolchain file" || bad "toolchain not pinned (want ${tc})"
+elif [ "${REQUIRE_TOOLCHAIN:-}" = 1 ]; then
+  bad "REQUIRE_TOOLCHAIN=1, but rustup is not on PATH: the toolchain pin check cannot run"
 fi
 rm -f "$LOG"
 code="$(run "$R/incident_1/poc/INC-1.1" "$SP" "$NATIVE" "$VULN" "$FIX" KEEP_POC_BUILD=1)"
@@ -1551,6 +1555,8 @@ RS
   code="$(e2e "$T/e-lite-hotfix" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-reject-InvalidInstructionData.so")"
   [ "$code" = 3 ] && grep -q 'the legitimate call failed on these bytes (InstructionError(0, InvalidInstructionData))' "$T/out" \
     && ok "real cargo, LiteSVM: a control that fails -> exit 3" || { bad "real cargo, LiteSVM failing control: exit $code"; cat "$T/out" >&2; }
+elif [ "${REQUIRE_TOOLCHAIN:-}" = 1 ]; then
+  bad "REQUIRE_TOOLCHAIN=1, but cargo or rustup is not on PATH: the real-toolchain checks cannot run"
 else
   echo "note: cargo or rustup not on PATH; the real-toolchain checks are skipped (the shim checks above still ran)"
 fi
