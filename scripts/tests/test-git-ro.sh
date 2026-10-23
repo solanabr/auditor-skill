@@ -271,14 +271,17 @@ run "$WT" --git-dir audit_1/src.git log --format=%H -1
 check "--git-dir reads the copy" test "$(cat "$T/out")" = "$SIGNED"
 run_once "$WT" copy . audit_1
 check "a second copy goes to src-2.git" test "$(cat "$T/out")" = audit_1/src-2.git
-# Each shell copies into a run directory of its own; the output must match but for that name.
+# Each shell copies the hostile repository into a fresh run directory of its own, in a working
+# directory of its own (so the run directories in WT do not depend on how many shells there are).
 i=0
 for sh in "${SHELLS[@]}"; do
-  r=$(cd "$WT" && "$RUNDIR" new audit)
-  (cd "$WT" && "$sh" "$GITRO" copy . "$r") 2>&1 | sed "s#$r#<R>#g" > "$T/copy.$i"
+  git clone -q --no-local "$WT/audit_1/src.git" "$T/copyx$i" >/dev/null 2>&1
+  cat "$WT/.git/config" >> "$T/copyx$i/.git/config"
+  (cd "$T/copyx$i" && "$RUNDIR" new audit >/dev/null && "$sh" "$GITRO" copy . audit_1) 2>&1 | sed "s#$T/copyx$i#<W>#g" > "$T/copy.$i"
   i=$((i + 1))
 done
 check "copy prints the same under each shell" sh -c "[ -z \"\$(cat '$T'/copy.* | sort -u | sed 1,2d)\" ]"
+check "... and ran nothing the copied config names" nomarks
 
 # =================================================================================================
 # The case file: hostile argument vectors, each refused with its one line.
