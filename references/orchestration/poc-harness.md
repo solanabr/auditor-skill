@@ -299,6 +299,17 @@ crate's `run.sh` and `shared-test-utils/` are refreshed from the installation be
 report, flag "PoC re-run needed" and repair, never a broken fix. `VERIFICATION.md`
 records which target the PoC re-ran against in its *Re-detonated against* field.
 
+**Re-running against the client's fix (`/auditor:re-audit` step 4b).** The same prebuilt
+run, with `VULNERABLE_SO` set to the build of the audited commit and `FIXED_SO` to the
+build of the head commit, records one field per finding, in the words of *Re-detonated
+against*: `PoC re-run @ <head sha> (Re-detonated against: patched target build |
+minimized model; AUDITOR_EXEC_MODE=<mode>): reverts | still succeeds | inconclusive
+(<harness error>) | not run (<reason>)` (`<auditor-skill root>/templates/re-audit.md`).
+`reverts` needs exit 0 and names how the fixed arm held: `(rejected with the pinned
+error)`, or `(blocked: …)` for the client's own error, checked with
+`assert_exploit_blocked!` and its positive control. A FIXED status without a `reverts`
+re-run is flagged, not downgraded.
+
 ---
 
 ## 5. Where this sits in the flow
@@ -309,7 +320,8 @@ records which target the PoC re-ran against in its *Re-detonated against* field.
 3. `/auditor:patch` → `patch-engineer` writes `templates/patch/` diff → apply to a
    scratch worktree → re-run the PoC → award a fix tier (§4).
 4. `audit-cycle` / `re-audit` fold both tiers back into the finding block; the report's
-   **Auditor Verification** line carries the fix verdict.
+   **Auditor Verification** line carries the fix verdict, and `RE-AUDIT.md` the step-4b
+   PoC re-run of each finding (§4).
 
 Build/toolchain failures that block any of this are troubleshooting, not findings —
 resolve via `references/framework-idioms/build-and-tooling.md` (GLIBC floors, the
