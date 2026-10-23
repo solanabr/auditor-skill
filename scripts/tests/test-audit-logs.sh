@@ -263,7 +263,7 @@ logs = [
                       "Program log: after the stack emptied", "%s signer_key().is_none()" % Q], err={"Custom": 1}),
     frame("SigLog3", ["Program %s invoke [007]" % P, "Program %s invoke [1234567890]" % P, "Program %s invoke [0]" % P,
                       "Program %s invoke [1]" % P[:31], "Program %s invoke [1]" % (P + "Z"), "Program %s success\n" % P,
-                      "Program log:   \u0085 \u007f \u001b[31m \t \\ \" \U0001F600 é", "Program data: ", "Program log: "]),
+                      "Program log: \u2028 \u0085 \u007f \u001b[31m \t \\ \" \U0001F600 \u00e9", "Program data: ", "Program log: "]),
     frame("SigLog4", []),
     tx("SigLog5", {}, None, None),
 ]
@@ -276,7 +276,7 @@ ixs = [
                       {"index": 0, "instructions": [ix(programIdIndex=2, accounts=[0, 3], data="3Bxs", stackHeight=2),
                                                     ix(programIdIndex=3, accounts=[], data="", stackHeight=2.0)]},
                       {"index": 0, "instructions": [ix(programIdIndex=1, accounts=[1], data="x", stackHeight=True)]},
-                      {"index": 10**30, "instructions": [ix(programIdIndex=1, data="huge")]},
+                      {"index": 10**19, "instructions": [ix(programIdIndex=1, data="huge")]},
                       {"index": 1, "instructions": [ix(programIdIndex=2, data="s", stackHeight="2"),
                                                     ix(programIdIndex=2, data="n"), ix(programIdIndex=2, data="z", stackHeight=0)]}],
                   "logMessages": ["Program %s invoke [1]" % P, "Program LutW1111111111111111111111111111111111 invoke [2]",
@@ -284,7 +284,7 @@ ixs = [
                                   "Program %s invoke [1]" % Q, "Program %s invoke [2]" % Q, "Program %s invoke [3]" % Q,
                                   "Program %s failed: custom program error: 0x1" % Q]},
        ["Payer1", P, Q, "LutW1111111111111111111111111111111111"],
-       [ix(programIdIndex=1, accounts=[0, 1, 2, 3, 4, 5, -1, 10**25, 1.5, None, {"k": [1e16, 1e-07]}], data="3Bxs4h24hBtQy9rw"),
+       [ix(programIdIndex=1, accounts=[0, 1, 2, 3, 4, 5, -1, 10**19, 1.5, None, {"k": [1e16, 1e-07]}], data="3Bxs4h24hBtQy9rw"),
         ix(programIdIndex=2, accounts=[], data="")], {"version": 0}),
     tx("SigIx2", {"loadedAddresses": {"writable": ["NotAppended"]}},
        [{"pubkey": "ParsedPayer", "signer": True, "writable": True}, {"pubkey": P, "signer": False}],
@@ -299,12 +299,12 @@ ixs = [
     b'{"meta":{"err":null,"innerInstructions":[{"index":0,"instructions":[{"programIdIndex":1,"stackHeight":2,"data":"d"}]}],'
     b'"logMessages":["Program ' + P.encode() + b' invoke [1]","Program ' + P.encode() + b' invoke [2]"]},'
     b'"transaction":{"signatures":["SigIx3"],"message":{"accountKeys":["Payer1","' + P.encode() + b'"],'
-    b'"instructions":[{"programIdIndex":1,"accounts":[-0,1],"data":"a","parsed":{"a":1,"b":2,"a":3},"stackHeight":-0}]}}}',
+    b'"instructions":[{"programIdIndex":1,"accounts":[0,1],"data":"a","parsed":{"a":1,"b":2,"a":3},"stackHeight":-0.0}]}}}',
 ]
 write("instructions.jsonl", ixs)
 ties = []
-names = ["aaa", "AAA", "Bbb", "bBB", "é", "e", "z", "Z", "a b", "a", "ab", "a_", "Ab", "b", "B", "zz", "Zz", "zZ",
-         "m", "M", "n", "N", " x", "x　y", ""]
+names = ["aaa", "AAA", "Bbb", "bBB", "\u00e9", "e", "z", "Z", "a b", "a", "ab", "a_", "Ab", "b", "B", "zz", "Zz", "zZ",
+         "m", "M", "n", "N", "\u00a0x", "x\u3000y", ""]
 for k, n in enumerate(names):
     for c in range(2):
         ties.append(tx("SigTie%d_%d" % (k, c), {"preBalances": [1], "postBalances": [1]}, [n, "Second" + str(k % 3)],
@@ -312,7 +312,7 @@ for k, n in enumerate(names):
                        {"blockTime": 1700000000 + k}))
 for k in range(3):
     ties.append(tx("SigTop%d" % k, {}, ["Top", "Top2"], [], {"blockTime": 1700000000}))
-for k, h in enumerate([0, 1, 2, 3, 10**30, None, 5]):
+for k, h in enumerate([0, 1, 2, 3, 10**19, None, 5]):
     t = tx("SigHdr%d" % k, {}, ["H1", "H2", "H3"], [])
     t["transaction"]["message"]["header"] = {"numRequiredSignatures": h}
     ties.append(t)
@@ -325,12 +325,12 @@ nums = [tx("SigNum0", {}, ["P"], [], {"version": "legacy", "blockTime": 17000000
         tx("SigNum3", {}, ["P"], [], {"version": False}),
         tx("SigNum4", {}, ["P"], [], {"version": None}),
         tx("SigNum5", {}, ["P"], [], {"version": [0, "\u007f"]}),
-        tx("SigNum6", {}, ["P"], [], {"version": "v x"})]
+        tx("SigNum6", {}, ["P"], [], {"version": "v\u00a0x"})]
 if literal:
-    nums += [b'{"version":1.0,"blockTime":-0,"meta":null,"transaction":{"signatures":["SigNum7"]}}',
-             b'{"version":1E2,"blockTime":0,"transaction":{"signatures":["SigNum8"]}}',
-             b'{"version":{"a":[1.50,"\\u007f"],"b":1e-7,"c":-0},"blockTime":100000000000000000000000000001,"transaction":{"signatures":["SigNum9"]}}',
-             b'{"version":-0,"blockTime":-100000000000000000000000000001,"transaction":{"signatures":["SigNum10"]}}']
+    nums += [b'{"version":1.0,"blockTime":0,"meta":null,"transaction":{"signatures":["SigNum7"]}}',
+             b'{"version":1E2,"blockTime":7,"transaction":{"signatures":["SigNum8"]}}',
+             b'{"version":{"a":[1.50,"\\u007f\\u2028"],"b":1e-7,"c":-0.0},"blockTime":10000000000000000001,"transaction":{"signatures":["SigNum9"]}}',
+             b'{"version":-1,"blockTime":-10000000000000000001,"transaction":{"signatures":["SigNum10"]}}']
 write("numbers.jsonl", nums)
 PY
 for f in big logs instructions ties numbers; do
@@ -351,8 +351,8 @@ eq "own cases: the top-20 cut falls inside a tie of 25, broken by descending byt
   "      7 H1|      2 Z|"
 if [[ "$literal" == 1 ]]; then
   agree profile -- incident_1/crafted/numbers.jsonl
-  if grep -q '^      1 1E+2$' "$T/b.out" && grep -q 'first=-100000000000000000000000000001  last=100000000000000000000000000001' "$T/b.out"; then
-    ok "own cases: versions and blockTimes print as jq writes them (1E+2, 30 digits)"
+  if grep -q '^      1 1E+2$' "$T/b.out" && grep -q 'first=-10000000000000000001  last=10000000000000000001' "$T/b.out"; then
+    ok "own cases: versions and blockTimes print as jq writes them (1E+2, 20 digits)"
   else
     bad "own cases: the jq number forms are missing from the profile"
   fi
@@ -361,9 +361,10 @@ fi
 # The recipes' bounds, each case next to a clean line: balances whose lists differ
 # in length or name more indexes than there are keys, nesting past 200 levels
 # (counted on the text, a value a later duplicate key replaces included),
-# integers outside u64, negative indexes, an empty program id, and the characters
-# a key, program id or version may not hold. deltas lamports prints a balance with
-# no account key as #<index>, and says so on stderr.
+# integers outside u64, negative indexes, an empty program id, integer literals of
+# more than 20 digits or -0 anywhere in a line, and the characters a key, program
+# id or version may not hold, which deltas and frames print escaped. deltas
+# lamports prints a balance with no account key as #<index>, and says so on stderr.
 python3 -I - "$WT/incident_1/rules" <<'PY'
 import json, os, sys
 d = sys.argv[1]
@@ -408,32 +409,41 @@ cases = {
         tx("SigGroupNull", {"innerInstructions": [{"index": None, "instructions": []}]}),
         tx("SigHeader", message={"accountKeys": ["Payer1"], "header": {"numRequiredSignatures": -1}}),
         tx("SigEmptyId", message={"accountKeys": ["Payer1"], "instructions": [{"programId": ""}]}),
-        tx("SigZeroIdx", message={"accountKeys": ["Payer1"], "instructions": [{"programIdIndex": -0}]}),
+        b'{"meta":{"err":null},"transaction":{"signatures":["SigZeroIdx"],"message":{"accountKeys":["Payer1"],'
+        b'"instructions":[{"programIdIndex":-0}]}}}',
+    ],
+    "integers": [
+        tx("SigInt20", extra={"slot": 99999999999999999999}),
+        tx("SigInt21", extra={"slot": 100000000000000000000}),
+        tx("SigIntNeg21", extra={"slot": -100000000000000000000}),
+        b'{"meta":{"err":null},"slot":-0,"transaction":{"signatures":["SigMinusZero"]}}',
+        b'{"meta":{"err":null},"x":-0,"x":1,"transaction":{"signatures":["SigMinusZeroReplaced"]}}',
+        b'{"meta":{"err":null},"x":-0.0,"transaction":{"signatures":["SigMinusZeroFloat"]}}',
     ],
     "chars": [tx("SigKeyChar%04x" % c, message={"accountKeys": ["Key" + chr(c)]})
               for c in (0x00, 0x1b, 0x7f, 0x85, 0x2028, 0x2029, 0x202e, 0x2066, 0x200f, 0x061c, 0x200b, 0xfeff)]
-             + [tx("SigProgChar", message={"accountKeys": ["P"], "instructions": [{"programId": "Prog‮"}]}),
-                tx("SigVersionChar", extra={"version": "0 "}),
-                tx("SigSafeSpaces", {"preBalances": [1, 2], "postBalances": [2, 1]}, {"accountKeys": ["Key A", "Key　B"]}),
-                tx("SigOddText‮ \x01", {"preBalances": [1, 2], "postBalances": [2, 1],
-                    "loadedAddresses": {"writable": ["Lut​"]},
-                    "postTokenBalances": [{"accountIndex": 1, "mint": "Mint﻿", "owner": "Own\x7f\u0085",
+             + [tx("SigProgChar", message={"accountKeys": ["P"], "instructions": [{"programId": "Prog\u202e"}]}),
+                tx("SigVersionChar", extra={"version": "0\u2028"}),
+                tx("SigSafeSpaces", {"preBalances": [1, 2], "postBalances": [2, 1]}, {"accountKeys": ["Key\u00a0A", "Key\u3000B"]}),
+                tx("SigOddText\u202e\u2028\x01", {"preBalances": [1, 2], "postBalances": [2, 1],
+                    "loadedAddresses": {"writable": ["Lut\u200b"]},
+                    "postTokenBalances": [{"accountIndex": 1, "mint": "Mint\ufeff", "owner": "Own\x7f\u0085",
                                            "uiTokenAmount": {"amount": "3"}}]})],
 }
 for name, lines in cases.items():
     with open(os.path.join(d, name + ".jsonl"), "wb") as f:
         f.write(clean + b"\n" + b"\n".join(lines) + b"\n")
 PY
-# Until the scripts follow these rules (lane dnr), the cases are pending: their
-# result is printed, not counted.
-python3 -I "$DNR/deltas.py" lamports "$WT/incident_1/rules/balances.jsonl" > "$T/probe.out" 2> /dev/null
-for f in balances depth bounds indexes chars; do
-  if grep -q '#1' "$T/probe.out"; then
-    same5 "recipe bounds, $f.jsonl" "incident_1/rules/$f.jsonl"
-  else
-    echo "pending: recipe bounds, $f.jsonl (the scripts in this checkout predate these rules)"
-  fi
+for f in balances depth bounds indexes integers chars; do
+  same5 "recipe bounds, $f.jsonl" "incident_1/rules/$f.jsonl"
 done
+agree lamports -- incident_1/rules/balances.jsonl
+eq "recipe bounds: a balance with no account key is a #<index> row, counted on stderr" \
+  "$(awk -F'\t' '$1 == "SigKeyless" { printf "%s=%s ", $2, $3 }' "$T/b.out")|$(grep -c 'row(s) name a balance index that has no account key' "$T/b.err")" \
+  "#1=5 #2=1 |1"
+agree frames -- incident_1/rules/chars.jsonl
+eq "recipe bounds: frames writes an unsafe character in a signature as a \\u escape" \
+  "$(grep -c 'SigOddText\\u202e\\u2028\\u0001' "$T/b.out")" "1"
 
 # ---------------------------------------------------------------------------
 # 4. A generated corpus: 6,000 transactions in two files, the second opening with
