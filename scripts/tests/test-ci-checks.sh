@@ -8,8 +8,10 @@
 #      pipefail, and leaves quoted text, here-documents, waived lines and scripts without pipefail alone.
 #      The check scripts, and the suites that test them, must pass it here; CI runs it over every tracked
 #      *.sh file;
-#   4. .github/workflows: the required job keeps its name, every workflow reads contents only, every job has
-#      timeout-minutes, every action is pinned by full SHA with its version, and no checkout keeps credentials.
+#   4. .github/workflows: the required job keeps its name; every workflow and job reads contents only; no
+#      workflow runs on pull_request_target or workflow_run, and no run: script holds a ${{ }} expression; every
+#      job has timeout-minutes, every action is pinned by full SHA with its version, and no checkout keeps
+#      credentials.
 # Usage (from the repo root): bash scripts/tests/test-ci-checks.sh   (VERBOSE=1 shows each check's output)
 # Builds throwaway files and git repos under ${TMPDIR:-/tmp}; no network; bash >= 3.2.
 set -uo pipefail
@@ -309,6 +311,15 @@ wfcheck() { # wfcheck FILE -> one line per problem
     /^permissions:/ { if ($0 !~ /^permissions:[ \t]*$/) print f ": permissions is not a block"; perm = 1; next }
     perm == 1 && /^  [^ ]/ { if ($0 !~ /^  contents: read[ \t]*$/) print f ": permissions grants more than contents: read"; next }
     perm == 1 { perm = 2 }
+    # a job may narrow nothing further than contents: read either
+    /^    permissions:/ { if ($0 !~ /^    permissions:[ \t]*$/) print f ": job " job " permissions is not a block"; jperm = 1; next }
+    jperm && /^      [^ ]/ { if ($0 !~ /^      contents: read[ \t]*$/) print f ": job " job " permissions grants more than contents: read"; next }
+    jperm { jperm = 0 }
+    /^on:.*(pull_request_target|workflow_run)|^[ \t-]*(pull_request_target|workflow_run)[ \t]*:?[ \t]*$/ {
+      print f ": runs on pull_request_target or workflow_run" }
+    # run: scripts, one-line or block: an expression there is pasted into the script before it runs
+    inrun { match($0, /^[ \t]*/); if (RLENGTH > runind || $0 ~ /^[ \t]*$/) { if (index($0, "${{")) print f ": ${{ }} inside a run: script"; next } inrun = 0 }
+    /^[ \t]*(- )?run:/ { match($0, /^[ \t]*(- )?/); runind = RLENGTH; inrun = 1; if (index($0, "${{")) print f ": ${{ }} inside a run: script"; next }
     /^jobs:/ { injobs = 1; next }
     injobs && /^  [A-Za-z0-9_-]+:[ \t]*$/ { if (job != "" && !to) print f ": job " job " has no timeout-minutes"
       job = $1; sub(/:$/, "", job); to = 0; next }
@@ -329,13 +340,26 @@ for wf in "$ROOT"/.github/workflows/*.yml; do
   if [ -z "$probs" ]; then pass=$((pass + 1)); echo "PASS workflows: ${wf##*/} reads contents only, times out, pins actions, drops credentials"
   else failn=$((failn + 1)); echo "FAIL workflows: ${wf##*/}"; echo "$probs"; fi
 done
-# the checker itself: a job with no timeout, an action pinned by tag, and a checkout that keeps credentials
+# the checker itself: a job with no timeout, an action pinned by tag, and a checkout that keeps credentials;
+# then a workflow on pull_request_target whose job writes contents and pastes the PR title into a script
 printf 'name: x\non: push\npermissions:\n  contents: write\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n' \
   > "$T/bad-workflow.yml"
 probs=$(wfcheck "$T/bad-workflow.yml")
 case "$probs" in *"permissions grants more"*"pinned by full SHA"*"no timeout-minutes"*"1 checkout(s) but 0"*)
     pass=$((pass + 1)); echo "PASS workflows: the checker flags a bad workflow on every count";;
   *) failn=$((failn + 1)); echo "FAIL workflows: the checker missed problems in a bad workflow"; echo "$probs";; esac
+{ printf 'name: x\non: pull_request_target\npermissions:\n  contents: read\njobs:\n  a:\n    runs-on: ubuntu-latest\n'
+  printf '    timeout-minutes: 5\n    permissions:\n      contents: write\n      id-token: write\n    steps:\n'
+  printf '      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n'
+  printf '          persist-credentials: false\n      - run: echo "${{ github.event.pull_request.title }}"\n'
+  printf '      - name: block\n        run: |\n          echo one\n          echo "${{ github.head_ref }}"\n'
+} > "$T/bad-workflow-2.yml"
+probs=$(wfcheck "$T/bad-workflow-2.yml")
+case "$probs" in *"job a permissions grants more"*"pull_request_target or workflow_run"*|*"pull_request_target or workflow_run"*"job a permissions grants more"*)
+    case "$probs" in *'${{ }} inside a run: script'*'${{ }} inside a run: script'*)
+        pass=$((pass + 1)); echo "PASS workflows: the checker flags job permissions, the trigger and both scripts";;
+      *) failn=$((failn + 1)); echo "FAIL workflows: the checker missed a \${{ }} in a run: script"; echo "$probs";; esac;;
+  *) failn=$((failn + 1)); echo "FAIL workflows: the checker missed job permissions or the trigger"; echo "$probs";; esac
 
 echo "---- $pass passed, $failn failed"
 [ "$failn" -eq 0 ]
