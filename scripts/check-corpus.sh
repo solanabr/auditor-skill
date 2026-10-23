@@ -113,6 +113,8 @@ fi
 # submodules uninitialized (CI checks out with submodules: false) and in worktrees. It runs only when this
 # directory is the top of its own checkout, so a copy inside another repo never reads the parent's pins.
 # A gitlink-only bump (Dependabot) fails here until a human updates the pin line (CONTRIBUTING.md §5).
+# README.md is read byte by byte (LC_ALL=C), so a byte that is not UTF-8 stops no grep, sed or tr.
+export LC_ALL=C
 gm() { # .gitmodules from the index, else from the working tree
   git config --blob :.gitmodules "$@" 2>/dev/null || { [[ -f .gitmodules ]] && git config -f .gitmodules "$@"; }
 }

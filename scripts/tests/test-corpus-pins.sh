@@ -53,6 +53,12 @@ See $URL/tree/cfe5d7b for the old tree.";                                  expec
 mk "$T/text" vendor/trailofbits "$URL.git" "${GOOD/\`82fe822\`/\`cfe5d7b\`}"; expect_rc "stale link text fails" 1 "$T/text"
 mk "$T/adjacent" vendor/trailofbits "$URL.git" "${GOOD/\`82fe822\`/\`82fe822 cfe5d7b\`}"
 expect_rc "stale short SHA one character after the pin fails" 1 "$T/adjacent"
+# a byte that is not UTF-8 before a stale SHA on the pin line, read in a UTF-8 locale where one exists
+mk "$T/badbyte" vendor/trailofbits "$URL.git" "$(printf '%s caf\377 cfe5d7b' "$GOOD")"
+utf8=$(locale -a 2>/dev/null | grep -iE '^(en_US|C)[.]utf-?8$' | sed -n 1p)
+out=$(LC_ALL=${utf8:-C} run_s5 "$T/badbyte" 2>&1); got=$?
+if [ "$got" -eq 1 ]; then pass=$((pass + 1)); echo "PASS stale short SHA after a byte that is not UTF-8 fails (LC_ALL=${utf8:-C})"
+else failn=$((failn + 1)); echo "FAIL stale short SHA after a byte that is not UTF-8 passed (LC_ALL=${utf8:-C})"; echo "$out"; fi
 mk "$T/upper" vendor/trailofbits "$URL.git" "$GOOD
 Old: HTTP://GitHub.com/TrailOfBits/Skills/tree/$(echo $OLD | tr a-f A-F)";   expect_rc "stale URL in other spelling fails" 1 "$T/upper"
 mk "$T/none" vendor/trailofbits "$URL.git" "No pin documented here.";     expect_rc "missing pin line fails" 1 "$T/none"
