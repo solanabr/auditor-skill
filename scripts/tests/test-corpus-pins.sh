@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# test-corpus-pins.sh — fixture tests for scripts/check-corpus.sh §5 (vendored submodule pins) and a smoke
-# test of scripts/tob-delta-review.sh: under a maintainer git config that colours and converts diffs too, and
-# over a table of remote-exec lines (multi-line installers included), a host in added Markdown, a 1 MiB
-# manifest that declares hooks, renamed files (one moved unchanged that holds 1 MiB), monitors and bin/ as
-# load surfaces, and test and lockfile exclusions that hold only as written.
+# test-corpus-pins.sh — fixture tests for scripts/check-corpus.sh §4 (plugin.json and both marketplace.json
+# entries carry one version) and §5 (vendored submodule pins), and a smoke test of scripts/tob-delta-review.sh:
+# under a maintainer git config that colours and converts diffs too, and over a table of remote-exec lines
+# (multi-line installers included), a host in added Markdown, a 1 MiB manifest that declares hooks, renamed
+# files (one moved unchanged that holds 1 MiB), monitors and bin/ as load surfaces, and test and lockfile
+# exclusions that hold only as written.
 # Run from the repo root: `bash scripts/tests/test-corpus-pins.sh`.
 # Builds throwaway git repos under ${TMPDIR:-/tmp}; no network; bash >= 3.2.
 set -uo pipefail
@@ -14,6 +15,9 @@ export GIT_CEILING_DIRECTORIES="$T"   # fixtures never see a repository above th
 S5=$T/section5.sh
 sed -n '/^# ---- 5\. vendored submodule pins/,/^fi$/p' "$ROOT/scripts/check-corpus.sh" > "$S5"
 [ -s "$S5" ] || { echo "could not extract check 5 from scripts/check-corpus.sh" >&2; exit 1; }
+S4=$T/section4.sh
+sed -n '/^# ---- 4\. version agreement/,/^fi$/p' "$ROOT/scripts/check-corpus.sh" > "$S4"
+[ -s "$S4" ] || { echo "could not extract check 4 from scripts/check-corpus.sh" >&2; exit 1; }
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid \
   GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
 
@@ -102,6 +106,28 @@ mk "$T/deepold" vendor/trailofbits "$URL.git" "$GOOD
 Old SAST: $URL/tree/$OLD/plugins/static-analysis";                          expect_rc "deep link at a stale commit fails" 1 "$T/deepold"
 mk "$T/samepin" vendor/trailofbits "$URL.git" "$GOOD
 Mirror: http://www.github.com/trailofbits/skills/tree/$PIN";               expect_rc "pin URL repeated in another spelling fails" 1 "$T/samepin"
+
+# check 4: plugin.json and both marketplace.json entries carry the same full version, not only the same X.Y
+ver() { # ver NAME PLUGIN ENTRY1 ENTRY2 -> a tree whose SKILL.md, report template and README say 7.6
+  local d="$T/ver/$1"; mkdir -p "$d/.claude-plugin" "$d/templates"
+  printf '> **Version:** 7.6\n' > "$d/SKILL.md"; printf 'auditor-skill v7.6\n' > "$d/templates/audit-report.md"
+  printf '## What It Does (v7.6)\n' > "$d/README.md"; printf '{\n  "name": "auditor",\n  "version": "%s"\n}\n' "$2" > "$d/.claude-plugin/plugin.json"
+  printf '{\n  "metadata": {\n    "version": "%s"\n  },\n  "plugins": [\n    {\n      "version": "%s"\n    }\n  ]\n}\n' "$3" "$4" \
+    > "$d/.claude-plugin/marketplace.json"
+}
+run_s4() { # run_s4 DIR -> exit status of the section (0 = no err)
+  ( cd "$1" && fail=0
+    err() { echo "  ::error::$*"; fail=1; }; ok() { echo "  ok  $*"; }
+    expect() { if grep -qF -- "$2" "$1"; then ok "$1 has '$2'"; else err "$1 is missing '$2'"; fi; }
+    . "$S4"; exit $fail )
+}
+for c in "agree|7.6.1|7.6.1|7.6.1|0" "one-entry-behind|7.6.1|7.6.1|7.6.0|1" "both-behind|7.6.1|7.6.0|7.6.0|1" \
+         "plugin-behind|7.6.0|7.6.1|7.6.1|1"; do
+  IFS='|' read -r name pv e1 e2 want <<< "$c"
+  ver "$name" "$pv" "$e1" "$e2"; out=$(run_s4 "$T/ver/$name" 2>&1); got=$?
+  if [ "$got" -eq "$want" ]; then pass=$((pass + 1)); echo "PASS check 4, plugin.json $pv, marketplace $e1 and $e2 (rc=$got)"
+  else failn=$((failn + 1)); echo "FAIL check 4, plugin.json $pv, marketplace $e1 and $e2 (rc=$got, want $want)"; echo "$out"; fi
+done
 
 # date check: only when the submodule commit is available locally
 mkdir -p "$T/up" && git -C "$T/up" init -q && echo x > "$T/up/f" && git -C "$T/up" add f \

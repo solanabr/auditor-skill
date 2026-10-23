@@ -7,7 +7,8 @@
 #      Checklists Reference table in SKILL.md and the folder-structure listing in README.md
 #   2. the item total, vector total and methodology count everywhere they are quoted
 #   3. every known-vectors/NNN-*.md has an INDEX.md link and a matching frontmatter id
-#   4. the version in SKILL.md agrees with plugin.json, marketplace.json, audit-report.md and README.md
+#   4. the version in SKILL.md agrees with plugin.json, marketplace.json, audit-report.md and README.md, and
+#      both marketplace.json entries carry plugin.json's full version
 #   5. every submodule's URL is one SUBMODULE_URLS lists, and its gitlink is the commit README.md names (one
 #      https://github.com/<org>/<repo>/tree/<sha>)
 # Portable: macOS /bin/bash 3.2 with BSD sed and grep gives the same output as bash 5 with GNU tools.
@@ -104,6 +105,11 @@ if [[ -z "$v" ]]; then err "SKILL.md: could not read the Version line"; else
   expect README.md "## What It Does (v$v)"
   n=$(grep -c "\"version\": \"$v\." .claude-plugin/marketplace.json || true)
   [[ "$n" == "2" ]] || err ".claude-plugin/marketplace.json: expected 2 version references to $v.x, found $n"
+  # a patch release moves only these three strings, so they must agree to the last digit
+  pv=$(sed -nE 's/^[[:space:]]*"version": "([0-9]+\.[0-9]+\.[0-9]+)".*/\1/p' .claude-plugin/plugin.json | sed -n 1p)
+  n=$(grep -cF "\"version\": \"$pv\"" .claude-plugin/marketplace.json || true)
+  [[ -n "$pv" && "$n" == "2" ]] \
+    || err ".claude-plugin/marketplace.json: both entries must carry plugin.json's version ${pv:-?}, found $n"
 fi
 
 # ---- 5. vendored submodule pins ------------------------------------------------------------------
