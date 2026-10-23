@@ -277,5 +277,17 @@ HOME="$p19" run up "$p19"
 ok19b() { installed "$p19/.claude/skills/auditor-skill" && ! grep -q '^note: ' "$T/err" && none_fired; }
 check "a run without a path from HOME upgrades the default install there without the notice" ok19b
 
+# 20. an earlier install that cannot be moved (its directory is not writable) stops the run: it exits non-zero and
+#     leaves the earlier install in place, with nothing new in the skills directory (root can move it anyway)
+if [ "$(id -u)" != 0 ]; then
+  h20="$T/home20"; d20="$h20/.claude/skills/auditor-skill"
+  mkdir -p "$h20/.claude/skills" && git clone -q "$T/up.git" "$d20" && echo old > "$d20/old-marker" && chmod a-w "$d20"
+  HOME="$h20" run up "$T"
+  chmod u+w "$d20"
+  ok20() { [ "$rc" -ne 0 ] && grep -q 'could not move the earlier install out of' "$T/err" && [ -f "$d20/old-marker" ] \
+    && [ "$(ls -A "$h20/.claude/skills")" = auditor-skill ] && ! grep -q 'auditor-skill installed' "$T/out"; }
+  check "an earlier install that cannot be moved stops the run and stays in place" ok20
+fi
+
 echo "---- $pass passed, $failn failed"
 [ "$failn" -eq 0 ]

@@ -153,7 +153,11 @@ swap() {
     exit 2
   fi
   hold=$(mktemp -d "$(dirname "$DEST")/.auditor-skill-old.XXXXXX")
-  mv "$DEST" "$hold/auditor-skill"
+  if ! mv "$DEST" "$hold/auditor-skill"; then
+    rmdir "$hold"
+    echo "error: could not move the earlier install out of $DEST; it is unchanged." >&2
+    exit 1
+  fi
   if ! mv "$tmp/auditor-skill" "$DEST"; then
     if mv "$hold/auditor-skill" "$DEST"; then
       rmdir "$hold"
