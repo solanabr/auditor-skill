@@ -27,16 +27,21 @@
 //!          only.
 //!
 //! Each assertion leaves markers (`mark`), tagged with the test that ran it:
-//! `attempted` once the attack has run, `held` when the assertion holds, and the
-//! first three a marker of their own kind; the runner helpers leave a `loaded`
-//! marker naming the bytes they loaded. `run.sh` counts an arm only on a contract
-//! assertion of that arm that ran and held, and only when every load names the
-//! bytes it placed, so an assertion in a comment, a string or dead code — or one
-//! that never ran — does not count, a test that fails before any assertion ran
-//! decides nothing, and one test's inconclusive result does not hide another test's
-//! failed assertion. A harness error — the attack as written does not fit the
-//! program, or the runtime could not run it — makes an arm inconclusive, on either
-//! arm, never a verdict. The markers are a floor, not proof: whoever reads the PoC
+//! `attempted` once the attack has run, `held` when the assertion holds, `failed`
+//! when it ran and did not hold, and the first three a marker of their own kind; the
+//! runner helpers leave a `loaded` marker naming the bytes they loaded. `run.sh`
+//! counts an arm only on a contract assertion of that arm that ran and held, and
+//! only when every load names the bytes it placed, so an assertion in a comment, a
+//! string or dead code — or one that never ran — does not count, a test that fails
+//! before any assertion ran decides nothing, and one test's inconclusive result does
+//! not hide another test's failed assertion. A test the process ended inside an
+//! assertion leaves `attempted` with no `held` and no `failed`, so it decides
+//! nothing rather than reading as a failed assertion. An attack that targets a
+//! program other than the one `mollusk_for` or `litesvm_for!` loaded is inconclusive
+//! too: the outcome did not come from the placed bytes. A harness error — the attack
+//! as written does not fit the program, or the runtime could not run it — makes an
+//! arm inconclusive, on either arm, never a verdict. The markers are a floor, not
+//! proof: whoever reads the PoC
 //! still checks that the assertion states the finding's effect and the guard's
 //! error, and that the program under test is loaded only through `mollusk_for` or
 //! `litesvm_for!`.
@@ -52,6 +57,7 @@ use sha2::{Digest, Sha256};
 use solana_account::Account;
 use solana_pubkey::Pubkey;
 use solana_rent::Rent;
+use std::cell::RefCell;
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 
@@ -99,6 +105,7 @@ pub fn mollusk_for(program_id: Pubkey, so_name: &str) -> Mollusk {
         std::panic::resume_unwind(panic);
     }
     __loaded(&path, &elf);
+    __record_target(&format!("{program_id:?}"));
     mollusk
 }
 
@@ -117,7 +124,10 @@ macro_rules! litesvm_for {
         let (__path, __elf) = $crate::__program_elf($so_name);
         let mut __svm = ::litesvm::LiteSVM::new();
         match __svm.add_program($program_id, &__elf) {
-            ::core::result::Result::Ok(()) => $crate::__loaded(&__path, &__elf),
+            ::core::result::Result::Ok(()) => {
+                $crate::__loaded(&__path, &__elf);
+                $crate::__record_target(&::std::format!("{:?}", $program_id));
+            }
             ::core::result::Result::Err(__err) => {
                 $crate::__not_loaded(&__path, &__elf, &::std::format!("{:?}", __err))
             }
@@ -185,6 +195,59 @@ pub fn __not_loaded(path: &Path, elf: &[u8], error: &str) -> ! {
         path.display(),
         zero_trimmed_sha256(elf)
     ))
+}
+
+thread_local! {
+    // The program ids this test loaded through mollusk_for / litesvm_for!. A contract
+    // macro's attack must target one of them, or the effect, rejection or block came
+    // from another program (the runtime registers the System program, and a PoC may
+    // add helpers) while the placed bytes never ran.
+    static LOADED: RefCell<Vec<String>> = RefCell::new(Vec::new());
+}
+
+#[doc(hidden)]
+pub fn __record_target(program: &str) {
+    LOADED.with(|l| l.borrow_mut().push(program.to_string()));
+}
+
+/// The attack must target a program the harness loaded; otherwise the outcome did not
+/// come from the placed bytes, so the run decides nothing.
+#[doc(hidden)]
+pub fn __require_target(targets: &[String], why: &str) {
+    LOADED.with(|l| {
+        let loaded = l.borrow();
+        if loaded.is_empty() {
+            inconclusive(&format!(
+                "no program was loaded through mollusk_for or litesvm_for!, so the attack cannot be tied to the bytes run.sh placed ({why})"
+            ));
+        }
+        if !targets.iter().any(|t| loaded.iter().any(|x| x == t)) {
+            inconclusive(&format!(
+                "the attack targets {}, not {} — the program run.sh placed and the harness loaded ({why})",
+                targets.join(", "),
+                loaded.join(", ")
+            ));
+        }
+    });
+}
+
+/// On LiteSVM a transaction can hold several instructions. When the attack failed with
+/// an instruction error, that instruction must target a loaded program, or the
+/// rejection came from elsewhere. An accepted attack, or a failure outside any
+/// instruction, is left to the assertion (a verdict, or a harness error).
+#[doc(hidden)]
+pub fn __require_error_instruction(error: Option<&str>, programs: &[String], why: &str) {
+    let Some(rest) = error.and_then(|err| err.strip_prefix("InstructionError(")) else {
+        return;
+    };
+    let index = rest.split_once(", ").and_then(|(i, _)| i.trim().parse::<usize>().ok());
+    match index.and_then(|i| programs.get(i)) {
+        Some(program) => __require_target(std::slice::from_ref(program), why),
+        None => inconclusive(&format!(
+            "the attack failed in an instruction this transaction does not hold ({}) ({why})",
+            error.unwrap_or_default()
+        )),
+    }
 }
 
 /// The sha256 `run.sh` (and `solana-verify`) name a program by: trailing zero
@@ -345,7 +408,9 @@ macro_rules! assert_exploit_effect {
      read: $read:expr, expect: $expect:expr, why: $why:expr $(,)?) => {{
         let __mollusk: &$crate::__Mollusk = &$mollusk;
         let __accounts: &[_] = $accounts;
-        let __outcome = __mollusk.process_instruction($ix, __accounts);
+        let __ix = $ix;
+        let __outcome = __mollusk.process_instruction(__ix, __accounts);
+        $crate::__require_target(&[::std::format!("{:?}", __ix.program_id)], $why);
         $crate::__assert_effect(&__outcome, __accounts, &$account, $read, $expect, $why);
         __outcome
     }};
@@ -353,15 +418,19 @@ macro_rules! assert_exploit_effect {
      expect: $expect:expr, why: $why:expr $(,)?) => {{
         let __svm: &mut ::litesvm::LiteSVM = &mut $svm;
         let __account = $account;
+        let __tx = $tx;
+        let __programs: ::std::vec::Vec<::std::string::String> =
+            __tx.message.program_ids().into_iter().map(|__id| ::std::format!("{:?}", __id)).collect();
         let __was = __svm.get_account(&__account);
-        let __result = __svm.send_transaction($tx);
+        let __result = __svm.send_transaction(__tx);
         let __now = __svm.get_account(&__account);
+        $crate::__require_target(&__programs, $why);
         $crate::__assert_effect_on(
             $crate::__Run {
                 error: __result.as_ref().err().map(|__f| ::std::format!("{:?}", __f.err)),
                 was: __was.as_ref(),
                 now: __now.as_ref(),
-                programs: ::std::vec::Vec::new(),
+                programs: __programs,
             },
             &__account,
             $read,
@@ -418,19 +487,23 @@ macro_rules! assert_exploit_rejected_with {
      why: $why:expr $(,)?) => {{
         let __mollusk: &$crate::__Mollusk = &$mollusk;
         let __expected = $crate::__ProgramResult::Failure($expected);
-        let __outcome = __mollusk.process_instruction($ix, $accounts);
+        let __ix = $ix;
+        let __outcome = __mollusk.process_instruction(__ix, $accounts);
+        $crate::__require_target(&[::std::format!("{:?}", __ix.program_id)], $why);
         $crate::__assert_rejected_with(&__outcome, __expected, $why);
         __outcome
     }};
     ($svm:expr, tx: $tx:expr, error: $expected:expr, why: $why:expr $(,)?) => {{
         let __svm: &mut ::litesvm::LiteSVM = &mut $svm;
         let __expected = $crate::__ProgramResult::Failure($expected);
-        let __result = __svm.send_transaction($tx);
-        $crate::__assert_rejected_with_tx(
-            __result.as_ref().err().map(|__f| ::std::format!("{:?}", __f.err)),
-            __expected,
-            $why,
-        );
+        let __tx = $tx;
+        let __programs: ::std::vec::Vec<::std::string::String> =
+            __tx.message.program_ids().into_iter().map(|__id| ::std::format!("{:?}", __id)).collect();
+        let __result = __svm.send_transaction(__tx);
+        let __error = __result.as_ref().err().map(|__f| ::std::format!("{:?}", __f.err));
+        $crate::__require_target(&__programs, $why);
+        $crate::__require_error_instruction(__error.as_deref(), &__programs, $why);
+        $crate::__assert_rejected_with_tx(__error, __expected, $why);
         __result
     }};
     ($outcome:expr, $expected:expr, $why:expr $(,)?) => {
@@ -488,6 +561,7 @@ macro_rules! assert_exploit_blocked {
         let __control_accounts: &[_] = $control_accounts;
         let __control = __mollusk.process_instruction(__control_ix, __control_accounts);
         let __outcome = __mollusk.process_instruction(__ix, __accounts);
+        $crate::__require_target(&[::std::format!("{:?}", __ix.program_id)], $why);
         $crate::__assert_blocked(
             (&__outcome, __accounts, &__ix.program_id),
             (&__control, __control_accounts, &__control_ix.program_id),
@@ -522,9 +596,12 @@ macro_rules! assert_exploit_blocked {
         let __was = __svm.get_account(&__account);
         let __result = __svm.send_transaction(__tx);
         let __now = __svm.get_account(&__account);
+        let __error = __result.as_ref().err().map(|__f| ::std::format!("{:?}", __f.err));
+        $crate::__require_target(&__programs, $why);
+        $crate::__require_error_instruction(__error.as_deref(), &__programs, $why);
         $crate::__assert_blocked_on(
             $crate::__Run {
-                error: __result.as_ref().err().map(|__f| ::std::format!("{:?}", __f.err)),
+                error: __error,
                 was: __was.as_ref(),
                 now: __now.as_ref(),
                 programs: __programs,
@@ -607,7 +684,7 @@ pub fn __assert_succeeds_on(error: Option<String>, why: &str) {
     attempt("succeeds", why);
     if let Some(error) = error {
         inconclusive_if_harness(&error, why);
-        panic!("exploit was expected to SUCCEED ({why}), but the program rejected it: {error}");
+        fail("succeeds", format!("exploit was expected to SUCCEED ({why}), but the program rejected it: {error}"));
     }
     held("succeeds", why);
 }
@@ -621,7 +698,7 @@ pub fn __assert_rejected(outcome: &InstructionResult, why: &str) {
 pub fn __assert_rejected_on(error: Option<String>, why: &str) {
     attempt("rejected", why);
     let Some(error) = error else {
-        panic!("attack was expected to be REJECTED ({why}), but the program accepted it");
+        fail("rejected", format!("attack was expected to be REJECTED ({why}), but the program accepted it"));
     };
     inconclusive_if_harness(&error, why);
     held("rejected", why);
@@ -658,8 +735,9 @@ where
     attempt("effect", why);
     if let Some(error) = &run.error {
         inconclusive_if_harness(error, why);
-        panic!(
-            "exploit was expected to SUCCEED and change {account:?} ({why}), but the program returned {error}"
+        fail(
+            "effect",
+            format!("exploit was expected to SUCCEED and change {account:?} ({why}), but the program returned {error}"),
         );
     }
     let was = read_state(run.was, &read, account, "before the attack", why);
@@ -669,10 +747,12 @@ where
             "{account:?} already read {expect:?} before the attack, so this run cannot show an effect ({why})"
         ));
     }
-    assert!(
-        now == expect,
-        "after the attack {account:?} reads {now:?}, not {expect:?} ({why})"
-    );
+    if now != expect {
+        fail(
+            "effect",
+            format!("after the attack {account:?} reads {now:?}, not {expect:?} ({why})"),
+        );
+    }
     let line = format!("{account:?}: {was:?} -> {now:?} ({why})");
     mark("effect", &line);
     held("effect", &line);
@@ -704,7 +784,7 @@ fn rejected_with(error: Option<String>, matched: bool, expected: &str, why: &str
                 inconclusive_if_harness(error, why);
             }
             let got = other.as_deref().unwrap_or("Ok, the program accepted it");
-            panic!("attack was expected to be REJECTED with {expected} ({why}), but got: {got}");
+            fail("rejected_with", format!("attack was expected to be REJECTED with {expected} ({why}), but got: {got}"));
         }
     };
     let note = harness_error(&error)
@@ -777,15 +857,17 @@ pub fn __assert_blocked_on<A, K, T, F>(
         ));
     }
     let Some(error) = &attack.error else {
-        panic!("attack was expected to be BLOCKED ({why}), but the program accepted it");
+        fail("blocked", format!("attack was expected to be BLOCKED ({why}), but the program accepted it"));
     };
     inconclusive_if_harness(error, why);
     let was = read_state(attack.was, &read, account, "before the attack", why);
     let now = read_state(attack.now, &read, account, "after the attack", why);
-    assert!(
-        now == was,
-        "the attack failed with {error}, yet {account:?} changed: {was:?} -> {now:?} ({why})"
-    );
+    if now != was {
+        fail(
+            "blocked",
+            format!("the attack failed with {error}, yet {account:?} changed: {was:?} -> {now:?} ({why})"),
+        );
+    }
     let line = format!(
         "{error}; {account:?} unchanged, while the legitimate call changed it: {control_was:?} -> {control_now:?} ({why})"
     );
@@ -854,7 +936,13 @@ fn harness_error(printed: &str) -> Option<&'static str> {
         "Custom(101)" | "Custom(102)" => {
             Some("the program does not recognise the instruction or its arguments")
         }
-        "UnsupportedProgramId" | "ProgramFailedToCompile" | "ComputationalBudgetExceeded" => {
+        "ReadonlyDataModified" | "ReadonlyLamportChange" | "ExternalAccountDataModified"
+        | "ExecutableDataModified" | "ExecutableLamportChange" | "AccountNotExecutable"
+        | "PrivilegeEscalation" => {
+            Some("the attack's account list does not fit the program (an account was writable, signed or executable where the runtime did not allow it)")
+        }
+        "UnsupportedProgramId" | "ProgramFailedToCompile" | "ComputationalBudgetExceeded"
+        | "ProgramEnvironmentSetupFailure" => {
             Some("the runtime could not run the instruction as written")
         }
         _ => None,
@@ -876,6 +964,16 @@ fn inconclusive(reason: &str) -> ! {
     panic!("INCONCLUSIVE: {reason}");
 }
 
+/// Fail the test as a verdict: an assertion of this arm ran and did not hold. It
+/// writes a `failed` marker, tagged with the assertion kind, before it panics, so
+/// `run.sh` tells a verdict (exit 1 or 2) from a test the process ended inside an
+/// assertion (which leaves `attempted` but no `held` and no `failed`, and decides
+/// nothing).
+fn fail(kind: &str, message: String) -> ! {
+    mark("failed", &format!("{kind}: {message}"));
+    panic!("{message}");
+}
+
 /// A contract assertion's attack has run: `run.sh` counts a failed test as a verdict
 /// only when an assertion ran and did not hold.
 fn attempt(kind: &str, why: &str) {
@@ -889,9 +987,10 @@ fn held(kind: &str, line: &str) {
 }
 
 /// Append a line to the `kind` marker: `attempted` and `held` for every contract
-/// assertion, `effect` / `rejected_with` / `blocked` for the three that count on
-/// prebuilt bytes, `loaded` for each program the runner helpers load, and
-/// `inconclusive` for why a load or an assertion could not decide. Each line starts
+/// assertion, `failed` when one ran and did not hold, `effect` / `rejected_with` /
+/// `blocked` for the three that count on prebuilt bytes, `loaded` for each program
+/// the runner helpers load, and `inconclusive` for why a load or an assertion could
+/// not decide. Each line starts
 /// with the test that wrote it — libtest names each test's thread after the test —
 /// and a tab, so `run.sh` decides test by test. `run.sh` points AUDITOR_POC_MARKERS
 /// at an empty directory per arm, for the test binary's run only, and reads it after

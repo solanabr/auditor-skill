@@ -58,16 +58,22 @@
 #     (the crate, shared-test-utils, any other member), and a build script (`build =
 #     false` turns one off), a proc-macro package, a Cargo.toml that is not a member,
 #     or a [patch] or [replace] table in a manifest stops the run. Check code that is
-#     generated at build time into the crate instead.
+#     generated at build time into the crate instead. A shared-test-utils dependency
+#     that is renamed or resolves outside the crate's own shared-test-utils/ stops it
+#     too: the contract macros must come from the harness copy that was checked.
 #   * the build cache: to reuse compiled dependencies between runs of one
 #     engagement, create a directory once per engagement with
 #     `mktemp -d "${TMPDIR:-/tmp}/auditor-poc-target.XXXXXX"` (inside the isolated
 #     runner in isolated mode), record it next to the execution mode, and pass it to
 #     every run as CARGO_TARGET_DIR. Never point CARGO_TARGET_DIR or
 #     CARGO_BUILD_TARGET_DIR inside the target tree or at a directory you did not
-#     create: cargo trusts the build outputs it finds there. The copy below gets fresh
-#     timestamps, so cargo rebuilds the crate's own code on every run and the cache
-#     serves only its dependencies. SBF_OUT_DIR stays in the scratch copy either way.
+#     create: cargo trusts the build outputs it finds there. Two crates of the same
+#     name resolve to the same cached artifact path, so run.sh holds a lock inside
+#     that directory around each arm's build and test and re-stamps the scratch copy
+#     under the lock; cargo then rebuilds this crate's own code and the cache serves
+#     only its dependencies. If a stale artifact is handed over anyway, the fresh
+#     check in `harness checkbuild` makes the run a blocker, not a verdict.
+#     SBF_OUT_DIR stays in the scratch copy either way.
 #   * mollusk looks for <crate>.so in tests/fixtures/ and BPF_OUT_DIR before
 #     SBF_OUT_DIR, so run.sh unsets BPF_OUT_DIR and refuses a crate holding
 #     tests/fixtures/<crate>.so: the bytes that run are the arm run.sh placed.
@@ -90,15 +96,18 @@
 #   * every contract assertion leaves markers tagged with the test that ran it. An
 #     arm counts only on a contract assertion of that arm that RAN AND HELD, and only
 #     when every program the runner helpers (mollusk_for, litesvm_for!) loaded is the
-#     .so run.sh placed, unchanged after the test (exit 3 otherwise): load the
-#     program under test only through them. A test that passes without one exits 3.
+#     .so run.sh placed, unchanged after the test, and the attack targeted one of
+#     those programs (exit 3 otherwise): load the program under test only through
+#     them. A test that passes without one exits 3.
 #   * an assertion of the arm that ran and did not hold, in any test, is a verdict
 #     (exit 1 or 2), whatever another test left. A test that failed before any
-#     assertion ran, or after every one held, and an assertion that could not decide
+#     assertion ran, after every one held, or between an assertion's start and its
+#     result (the process died mid-assertion), and an assertion that could not decide
 #     (a harness error, on either arm), exit 3. The markers are a floor, not proof:
 #     read the assertion all the same.
 #   * before the final line, run.sh prints the non-registry code in the build: the
-#     path and git dependencies in the resolved Cargo.lock.
+#     path and git dependencies in the resolved Cargo.lock, a `[lib] path` or
+#     `#[path]` source compiled from outside the crate, and the like.
 #
 # PREBUILT BYTES (incidents under references/detection-response/, or a re-run
 # against the target's own builds). Leg 3 of `confirmed_exploited` needs the exploit
@@ -126,7 +135,12 @@
 #     payload): it runs on the dumped ELF here, with the template's own crates
 #     (OUTPUT-RULES.md Rule 11a).
 
-set -euo pipefail
+set -Eeuo pipefail
+# Only an assertion that ran and did not hold gives a verdict (exit 1 or 2). Any
+# other command that fails — an unreadable input, a failed path resolution, a step
+# that errors under set -e — is a blocker, never a verdict: this trap turns it into
+# exit 3. The explicit `exit 1` / `exit 2` below are the only verdicts.
+trap 'rc=$?; echo "[PoC-ATTEMPTED] blocker: run.sh could not finish (unexpected error, status ${rc}); this run decides nothing." >&2; exit 3' ERR
 
 TOOLS_VERSION="${TOOLS_VERSION:-v1.54}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -270,11 +284,17 @@ def identity(path):
     return (st.st_dev, st.st_ino)
 
 
+def under(path, root):
+    root = os.path.realpath(root)
+    path = os.path.realpath(path)
+    return path == root or path.startswith(root + os.sep)
+
+
 def crate(meta_path, root):
     root = os.path.realpath(root)
     with open(meta_path, encoding="utf-8") as f:
         meta = json.load(f)
-    members, lib = {}, None
+    members, lib, root_pkg = {}, None, None
     for pkg in meta.get("packages", []):
         manifest = os.path.realpath(pkg["manifest_path"])
         members[manifest] = pkg["name"]
@@ -286,6 +306,23 @@ def crate(meta_path, root):
                 refuse("%s (%s) is a proc-macro package: run.sh refuses build-time code in the crate, in either mode." % (pkg["name"], src))
             if manifest == os.path.join(root, "Cargo.toml") and ("lib" in kinds or "cdylib" in kinds):
                 lib = target.get("name", "")
+        if manifest == os.path.join(root, "Cargo.toml"):
+            root_pkg = pkg
+    # The harness the markers come from must be the copied one. If the crate names a
+    # shared-test-utils dependency, it must be the path member at
+    # <root>/shared-test-utils and carry the import name `shared_test_utils`; no other
+    # dependency may supply that import name. A crate that names none cannot leave a
+    # contract marker, so it is left to decide nothing on its own.
+    stu_dir = os.path.join(root, "shared-test-utils")
+    for dep in (root_pkg or {}).get("dependencies", []):
+        name, rename, path = dep.get("name"), dep.get("rename"), dep.get("path")
+        if name == "shared-test-utils":
+            if rename:
+                refuse("the crate renames its shared-test-utils dependency to %r; keep its own name, so the macros come from the copied harness." % rename)
+            if not path or not identity(path) or identity(path) != identity(stu_dir):
+                refuse("the crate names a shared-test-utils dependency at %s, not the copied %s: the contract macros must come from the harness that run.sh checked." % (path or "a registry", os.path.relpath(stu_dir, root)))
+        elif rename == "shared-test-utils":
+            refuse("the crate maps the import name shared-test-utils onto %s; the contract macros must come from the copied harness." % name)
     # A manifest in any letter case, matched to the members by file identity: a
     # filesystem that ignores case lets cargo read cargo.toml as Cargo.toml.
     known = set(identity(manifest) for manifest in members)
@@ -310,15 +347,49 @@ def crate(meta_path, root):
     print(lib)
 
 
-def executable(path, test):
-    found = set()
-    for msg in json_lines(path):
+def checkbuild(root, build_json, built_file, test):
+    # The cargo-test --no-run output for one arm: refuse (exit 3) when a unit of the
+    # crate own workspace is reported fresh without this run having built it (a
+    # shared build cache handing over another same-named crate artifact), or when
+    # the harness this build compiled is not the copied one; then print the arm own
+    # test binary. built_file carries, across arms, the artifacts this run built
+    # fresh, so a dependency reused between arms (shared-test-utils) stays allowed.
+    root = os.path.realpath(root)
+    try:
+        with open(built_file, encoding="utf-8") as f:
+            built = set(line.rstrip("\n") for line in f)
+    except OSError:
+        built = set()
+    fresh_reused, new_built, exe, stu_src = [], [], set(), None
+    for msg in json_lines(build_json):
+        if msg.get("reason") != "compiler-artifact":
+            continue
         target = msg.get("target") or {}
-        if msg.get("reason") == "compiler-artifact" and "test" in target.get("kind", []) and target.get("name") == test and msg.get("executable"):
-            found.add(msg["executable"])
-    if len(found) != 1:
-        sys.exit(1)
-    print(found.pop())
+        manifest = msg.get("manifest_path", "")
+        names = msg.get("filenames") or []
+        if under(manifest, root):
+            if msg.get("fresh") and not any(n in built for n in names):
+                fresh_reused.append(target.get("name", "?"))
+            if not msg.get("fresh"):
+                new_built.extend(names)
+        if target.get("name") == "shared_test_utils" and "lib" in target.get("kind", []):
+            stu_src = target.get("src_path", "")
+        if (manifest == os.path.join(root, "Cargo.toml") and "test" in target.get("kind", [])
+                and target.get("name") == test and msg.get("executable")):
+            exe.add(msg["executable"])
+    if fresh_reused:
+        refuse("cargo reported %s as already built without this run compiling it — a build cache shared with another crate of the same name handed over its artifact. Give this run its own CARGO_TARGET_DIR, or run PoCs one at a time." % ", ".join(sorted(set(fresh_reused))))
+    if stu_src is not None and not under(stu_src, os.path.join(root, "shared-test-utils")):
+        refuse("the shared_test_utils this build compiled is %s, outside the copied harness: the contract macros must come from the copy run.sh made." % stu_src)
+    try:
+        with open(built_file, "a", encoding="utf-8") as f:
+            for n in new_built:
+                f.write(n + "\n")
+    except OSError:
+        pass
+    if len(exe) != 1:
+        refuse("cargo reported %d test binaries for tests/%s.rs in this crate, not one." % (len(exe), test))
+    print(exe.pop())
 
 
 SUCCEEDS = {"vulnerable": ("effect", "succeeds"), "fixed": ("rejected_with", "blocked", "rejected")}
@@ -346,18 +417,27 @@ def kind_of(text):
 
 
 def settle(directory, arm, status, prebuilt, placed_so, placed):
-    attempted, held, stuck = (markers(directory, k) for k in ("attempted", "held", "inconclusive"))
+    # Per test: the kinds it started (attempted), held, and failed (ran and did not
+    # hold), and the inconclusive lines it left. A failed marker is what the contract
+    # macros write just before their verdict panic; an attempted kind with neither a
+    # held nor a failed marker is an assertion the process stopped inside — the test
+    # died mid-assertion, which decides nothing.
+    attempted, held, failed, stuck = (markers(directory, k) for k in ("attempted", "held", "failed", "inconclusive"))
     tests = {}
-    for slot, found in enumerate((attempted, held, stuck)):
+    for slot, found in enumerate((attempted, held, failed)):
         for test, text in found:
-            tests.setdefault(test, ([], [], []))[slot].append(kind_of(text) if slot < 2 else text)
+            tests.setdefault(test, ([], [], [], []))[slot].append(kind_of(text))
+    for test, text in stuck:
+        tests.setdefault(test, ([], [], [], []))[3].append(text)
+    counts = COUNTS[arm] if prebuilt == "1" else SUCCEEDS[arm]
 
-    def unheld(test):
-        ran, rest = tests[test][0], list(tests[test][1])
+    def pending(test):
+        # attempted kinds with no matching held or failed: the assertion did not resolve.
+        resolved = list(tests[test][1]) + list(tests[test][2])
         out = []
-        for kind in ran:
-            if kind in rest:
-                rest.remove(kind)
+        for kind in tests[test][0]:
+            if kind in resolved:
+                resolved.remove(kind)
             else:
                 out.append(kind)
         return out
@@ -376,23 +456,26 @@ def settle(directory, arm, status, prebuilt, placed_so, placed):
     def say(*fields):
         print("\t".join(flat(field) for field in fields))
 
+    any_failed = any(tests[t][2] for t in tests)
+    any_pending = any(pending(t) for t in tests)
     if status != "0":
-        failed = [t for t in sorted(tests) if not tests[t][2] and any(k in SUCCEEDS[arm] for k in unheld(t))]
-        if failed:
+        verdict = [t for t in sorted(tests) if not tests[t][3] and any(k in counts for k in tests[t][2])]
+        if verdict:
             why = bytes_differ()
-            return say("inconclusive", why) if why else say("fail", failed[0])
+            return say("inconclusive", why) if why else say("fail", verdict[0])
         if stuck:
             return say("inconclusive", "%s (test %s)" % (stuck[0][1], stuck[0][0]))
+        if any_pending:
+            return say("inconclusive", "the test stopped between a contract assertion start and its result; the process ended mid-assertion")
         if not attempted:
             return say("inconclusive", "no contract assertion ran; the test failed before one (did the program load?)")
-        if any(unheld(t) for t in tests):
+        if any_failed:
             return say("inconclusive", "the assertion that did not hold is not one this arm counts")
         return say("inconclusive", "every contract assertion that ran held, so the test failed outside them")
     if stuck:
         return say("inconclusive", "%s (test %s)" % (stuck[0][1], stuck[0][0]))
-    if any(unheld(t) for t in tests):
+    if any_failed or any_pending:
         return say("inconclusive", "a contract assertion ran and did not hold, yet the test passed")
-    counts = COUNTS[arm] if prebuilt == "1" else SUCCEEDS[arm]
     shown = [(kind_of(text), "%s (test %s)" % (text.split(": ", 1)[-1], test)) for test, text in held if kind_of(text) in counts]
     if not shown:
         return say("blocker", MISSING[(arm, prebuilt)])
@@ -402,18 +485,48 @@ def settle(directory, arm, status, prebuilt, placed_so, placed):
     say("pass", *shown[0])
 
 
-def nonregistry(lock, meta_path, builds):
+def nonregistry(root, lock, meta_path, builds):
+    # The code the run compiled or linked that did not come from a registry: path and
+    # git dependencies from Cargo.lock, a target whose source sits outside the crate
+    # (a `[lib] path` or a `#[path]` module that a lockfile entry never names), and
+    # any such source listed in a compiled binary dep-info (.d) file.
+    root = os.path.realpath(root)
     members, paths, found, package = set(), {}, [], None
+    out, seen = [], set()
+
+    def note(text):
+        if text not in seen:
+            seen.add(text)
+            out.append(text)
+
+    registry = os.path.realpath(os.environ.get("CARGO_HOME", os.path.expanduser("~/.cargo")))
+    sysroot = os.path.realpath(os.environ.get("AUDITOR_SYSROOT", "/nonexistent"))
+
+    def outside(path):
+        return path and not under(path, root) and not under(path, registry) and not under(path, sysroot)
+
     with open(meta_path, encoding="utf-8") as f:
         for pkg in json.load(f).get("packages", []):
             members.add((pkg["name"], pkg["version"]))
+    depfiles = []
     for build in builds:
         for msg in json_lines(build):
+            if msg.get("reason") != "compiler-artifact":
+                continue
             pid, manifest = msg.get("package_id", ""), msg.get("manifest_path")
-            if msg.get("reason") == "compiler-artifact" and manifest and pid.startswith("path+"):
+            if manifest and pid.startswith("path+"):
                 fragment = pid.rsplit("#", 1)[-1]
                 name, at, version = fragment.rpartition("@")
                 paths[(name if at else os.path.basename(os.path.dirname(manifest)), version)] = os.path.dirname(manifest)
+            target = msg.get("target") or {}
+            src = target.get("src_path")
+            if manifest == os.path.join(root, "Cargo.toml") and src and outside(src):
+                note("%s (path %s)" % (target.get("name", "?"), src))
+            for name in msg.get("filenames") or []:
+                if name and not name.endswith((".rlib", ".rmeta", ".so", ".dylib", ".dll")):
+                    depfiles.append(name + ".d")
+            if msg.get("executable"):
+                depfiles.append(msg["executable"] + ".d")
     with open(lock, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -424,14 +537,23 @@ def nonregistry(lock, meta_path, builds):
                 m = re.match(r"^(name|version|source) = \"(.*)\"$", line)
                 if m:
                     package[m.group(1)] = m.group(2)
-    out = []
     for package in found:
         key = (package.get("name", "?"), package.get("version", "?"))
         source = package.get("source")
         if source is None and key not in members:
-            out.append("%s %s (path%s)" % (key[0], key[1], " " + paths[key] if key in paths else ""))
+            note("%s %s (path%s)" % (key[0], key[1], " " + paths[key] if key in paths else ""))
         elif source is not None and source.startswith("git+"):
-            out.append("%s %s (%s)" % (key[0], key[1], source))
+            note("%s %s (%s)" % (key[0], key[1], source))
+    for depfile in set(depfiles):
+        try:
+            with open(depfile, encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        except OSError:
+            continue
+        for token in re.split(r"(?<!\\)[ \n]+", text.split(":", 1)[-1]):
+            token = token.replace("\\ ", " ").strip()
+            if token.startswith("/") and os.path.splitext(token)[1] == ".rs" and outside(token):
+                note("%s (compiled in)" % token)
     print(flat(", ".join(out)) if out else "none: every dependency comes from a registry")
 
 
@@ -440,12 +562,12 @@ if command == "hash":
     print(zhash(args[0]))
 elif command == "crate":
     crate(*args)
-elif command == "exe":
-    executable(*args)
+elif command == "checkbuild":
+    checkbuild(*args)
 elif command == "settle":
     settle(*args)
 elif command == "nonregistry":
-    nonregistry(args[0], args[1], args[2:])
+    nonregistry(args[0], args[1], args[2], args[3:])
 else:
     sys.exit(2)
 '
@@ -499,7 +621,44 @@ copy_crate() {
   return 0
 }
 
+# The build lock. When CARGO_TARGET_DIR (or CARGO_BUILD_TARGET_DIR) is shared between
+# runs, two crates of the same name resolve to the same cached artifact path, so this
+# run holds a lock inside that directory from just before each arm's build until its
+# test binary exits, and re-stamps the scratch copy under the lock so cargo rebuilds
+# this crate's own code rather than reuse another run's. With a private target
+# directory the lock is uncontended. The fresh check in `harness checkbuild` is a
+# second guard. (With no shared cache this is one empty directory made and removed.)
+LOCK_HELD=0
+restamp() {  # give the scratch copy's own files the current time, under the lock
+  find "${BUILD_DIR}" \( \( -iname target -type d \) -o -path "${RUN_DIR}" \) -prune -o -type f -exec touch {} + 2>/dev/null || true
+  return 0
+}
+acquire_lock() {  # take the build lock, then re-stamp; 0 on success, non-zero to block
+  local waited=0 holder
+  mkdir -p "${EFFECTIVE_TARGET}" 2>/dev/null || return 1
+  while ! mkdir "${LOCK}" 2>/dev/null; do
+    holder=""
+    if [[ -f "${LOCK}/pid" ]]; then holder="$(cat "${LOCK}/pid" 2>/dev/null || true)"; fi
+    if [[ -n "${holder}" ]] && ! kill -0 "${holder}" 2>/dev/null; then
+      rm -rf "${LOCK}" 2>/dev/null || true
+      continue
+    fi
+    waited=$((waited + 1))
+    if [[ "${waited}" -gt "${POC_LOCK_WAIT:-900}" ]]; then return 2; fi
+    sleep 1
+  done
+  echo "$$" > "${LOCK}/pid" 2>/dev/null || true
+  LOCK_HELD=1
+  restamp
+  return 0
+}
+release_lock() {
+  if [[ "${LOCK_HELD}" == 1 ]]; then rm -rf "${LOCK}" 2>/dev/null || true; LOCK_HELD=0; fi
+  return 0
+}
+
 finish() {  # keep the resolved Cargo.lock with the crate; drop the scratch directory
+  release_lock
   if [[ -f "${BUILD_DIR}/Cargo.lock" ]]; then
     cp -p "${BUILD_DIR}/Cargo.lock" "${HERE}/Cargo.lock" 2>/dev/null || true
   fi
@@ -551,6 +710,12 @@ if ! { cd "${BUILD_DIR}" && mkdir -p "${SBF_OUT_DIR}"; }; then
   echo "[PoC-ATTEMPTED] blocker: cannot prepare ${SBF_OUT_DIR}." >&2
   exit 3
 fi
+# The directory cargo actually builds into (a shared cache, or this run's own), the
+# build lock inside it, and the set of artifacts this run compiles fresh (the fresh
+# check in `harness checkbuild` reads it across arms).
+EFFECTIVE_TARGET="${CARGO_TARGET_DIR:-${CARGO_BUILD_TARGET_DIR:-${BUILD_DIR}/target}}"
+LOCK="${EFFECTIVE_TARGET}/.auditor-poc-build.lock"
+: > "${RUN_DIR}/built" || true
 echo ">> build dir: ${BUILD_DIR} (scratch copy outside the target tree; AUDITOR_EXEC_MODE=${AUDITOR_EXEC_MODE}; toolchain ${RUSTUP_TOOLCHAIN:-unpinned: no rustup}; $([[ "${KEEP_POC_BUILD:-0}" == 1 ]] && echo kept || echo removed on exit))"
 
 # What the crate builds, from its manifests: nothing compiles in these steps.
@@ -591,9 +756,14 @@ case "$(uname -s 2>/dev/null || true)" in
   *) LIBPATH_VAR=LD_LIBRARY_PATH; LIBPATH_REST="${LD_LIBRARY_PATH:-}" ;;
 esac
 SYSROOT_LIB="$("${RUSTC:-rustc}" --print target-libdir 2>/dev/null || true)"
+# The toolchain's own source, so `harness nonregistry` does not read the standard
+# library as out-of-tree code.
+export AUDITOR_SYSROOT="$("${RUSTC:-rustc}" --print sysroot 2>/dev/null || echo /nonexistent)"
 
 place_arm() {  # place_arm <arm> : put <crate>.so in SBF_OUT_DIR for this arm; PLACED_HASH names its bytes
   local arm="$1" so="${SBF_OUT_DIR}/${CRATE}.so"
+  # Drop the other arm's bytes first, so a build that writes nothing cannot leave them.
+  rm -f "${so}" 2>/dev/null || true
   if [[ "${PREBUILT}" -eq 1 ]]; then
     local src; [[ "${arm}" == "vulnerable" ]] && src="${VULNERABLE_SO}" || src="${FIXED_SO}"
     if ! cp -f "${src}" "${so}"; then
@@ -629,9 +799,17 @@ build_tests() {  # build_tests <arm> <test>: the arm's test binary, EXE; one tha
     echo "[PoC-ATTEMPTED] blocker: tests/$2.rs failed to build for the $1 arm — see the cargo output above." >&2
     exit 3
   fi
-  EXE="$(harness exe "${json}" "$2")" || rc=$?
-  if [[ "${rc}" -ne 0 || ! -x "${EXE}" ]]; then
-    echo "[PoC-ATTEMPTED] blocker: cargo reported no single test binary for tests/$2.rs on the $1 arm." >&2
+  # checkbuild prints the arm's own test binary, or refuses (exit 3): a crate unit
+  # reported fresh that this run never built (a shared cache handed it over), a
+  # shared-test-utils compiled from outside the copied harness, or no single test.
+  EXE="$(harness checkbuild "${BUILD_DIR}" "${json}" "${RUN_DIR}/built" "$2")" || rc=$?
+  if [[ "${rc}" -ne 0 ]]; then
+    if [[ "${rc}" -eq 3 ]]; then echo "[PoC-ATTEMPTED] blocker: ${EXE}" >&2
+    else echo "[PoC-ATTEMPTED] blocker: could not read the $1 build output for tests/$2.rs." >&2; fi
+    exit 3
+  fi
+  if [[ ! -x "${EXE}" ]]; then
+    echo "[PoC-ATTEMPTED] blocker: the test binary cargo named for tests/$2.rs is not executable (${EXE})." >&2
     exit 3
   fi
 }
@@ -675,25 +853,28 @@ settle() {
   esac
 }
 
-nonregistry() {  # the path and git dependencies in the resolved Cargo.lock: code that came from no registry
-  local line
-  if line="$(harness nonregistry "${BUILD_DIR}/Cargo.lock" "${RUN_DIR}/metadata.json" "${RUN_DIR}"/build-*.json)"; then
-    echo "   non-registry code: ${line}"
-  else
-    echo "   non-registry code: unknown — ${BUILD_DIR}/Cargo.lock could not be read"
-  fi
+NONREG=""
+capture_nonreg() {  # the non-registry code, read right after a build (before a test can rewrite the lock)
+  NONREG="$(harness nonregistry "${BUILD_DIR}" "${BUILD_DIR}/Cargo.lock" "${RUN_DIR}/metadata.json" "${RUN_DIR}"/build-*.json 2>/dev/null)" \
+    || NONREG="unknown — ${BUILD_DIR}/Cargo.lock could not be read"
+}
+nonregistry() {  # the path and git dependencies and out-of-tree sources the build pulled in
+  echo "   non-registry code: ${NONREG:-unknown — no build was read}"
 }
 
 HELD_KIND=""
 HELD_LINE=""
 
-# 1. vulnerable arm — the exploit must land.
+# 1. vulnerable arm — the exploit must land. The lock spans the build and the test.
+acquire_lock || { echo "[PoC-ATTEMPTED] blocker: could not take the build lock in ${EFFECTIVE_TARGET} (another PoC run may hold it, or the directory is not writable)." >&2; exit 3; }
 place_arm vulnerable
 VULNERABLE_HASH="${PLACED_HASH}"
 build_tests vulnerable exploit
+capture_nonreg
 echo ">> running exploit against 'vulnerable' (expect: SUCCEEDS)"
 status=0
 run_tests vulnerable || status=$?
+release_lock
 if ! settle vulnerable "${status}"; then
   nonregistry
   echo "FAIL: exploit did not reproduce on the vulnerable arm — PoC is not valid." >&2
@@ -709,11 +890,14 @@ if [[ "${PREBUILT}" -eq 1 ]]; then
 fi
 
 # 2. fixed arm — the same attack must be turned away.
+acquire_lock || { echo "[PoC-ATTEMPTED] blocker: could not take the build lock in ${EFFECTIVE_TARGET} (another PoC run may hold it, or the directory is not writable)." >&2; exit 3; }
 place_arm fixed
 build_tests fixed fixed_blocked
+capture_nonreg
 echo ">> running same attack against 'fixed' (expect: REJECTED)"
 status=0
 run_tests fixed || status=$?
+release_lock
 if ! settle fixed "${status}"; then
   nonregistry
   echo "FAIL: the fixed arm did not block the attack — fix is incomplete." >&2

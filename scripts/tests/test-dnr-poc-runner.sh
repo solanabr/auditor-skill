@@ -92,7 +92,7 @@ open(f"{d}/with-header.bin", "wb").write((3).to_bytes(4, "little") + b"\x00" * 4
 open(f"{d}/text.so", "w").write("not an elf\n")
 for name in ["takeover", "noop", "reject:MissingRequiredSignature", "reject:Custom(6001)", "reject:Custom(4100)",
              "reject:InvalidInstructionData", "reject:NotEnoughAccountKeys", "dirty-reject", "guard:Custom(6001)",
-             "guard:Custom(4100)", "dirty-guard", "unloadable"]:
+             "guard:Custom(4100)", "dirty-guard", "ro-modified", "unloadable"]:
     stem = name.replace(":", "-").replace("(", "").replace(")", "")
     open(f"{d}/sb-{stem}.so", "wb").write(b"\x7fELF" + name.encode() + b"\x00" * 64)
 PY
@@ -190,11 +190,19 @@ for n in range(int(os.environ.get("SHIM_JSON_PAD", "0"))):
                       "manifest_path": "/registry/pad%d/Cargo.toml" % n, "target": {"kind": ["lib"], "crate_types": ["lib"], "name": "pad%d" % n,
                       "src_path": "/registry/pad%d/src/lib.rs" % n}, "profile": {"test": False}, "features": [],
                       "filenames": ["/target/debug/deps/libpad%d.rlib" % n], "executable": None, "fresh": True}))
+# SHIM_FRESH=1 reports the crate's own lib and test as already built (fresh) without
+# this run compiling them — a build cache shared with another same-named crate — so
+# the fresh check in `harness checkbuild` can be exercised without real cargo.
+fresh = os.environ.get("SHIM_FRESH", "") == "1"
+if fresh:
+    print(json.dumps({"reason": "compiler-artifact", "package_id": "path+file://%s#poc_shim@0.1.0" % root, "manifest_path": os.path.join(root, "Cargo.toml"),
+                      "target": {"kind": ["lib"], "crate_types": ["lib"], "name": "poc_shim", "src_path": os.path.join(root, "src", "lib.rs")},
+                      "profile": {"test": False}, "features": [], "filenames": ["/cache/debug/deps/libpoc_shim-shared.rlib"], "executable": None, "fresh": True}))
 if fail != "no-exe:" + test:
     exe = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin", test)
     print(json.dumps({"reason": "compiler-artifact", "package_id": "path+file://%s#poc_shim@0.1.0" % root, "manifest_path": os.path.join(root, "Cargo.toml"),
                       "target": {"kind": ["test"], "crate_types": ["bin"], "name": test, "src_path": os.path.join(root, "tests", test + ".rs")},
-                      "profile": {"test": True}, "features": [], "filenames": [exe], "executable": exe, "fresh": False}))
+                      "profile": {"test": True}, "features": [], "filenames": [exe], "executable": exe, "fresh": fresh}))
 print(json.dumps({"reason": "build-finished", "success": True}))
 PY
 cat > "$T/shim/bin/exploit" <<'SH'
@@ -223,6 +231,7 @@ for m in ${SHIM_MARKERS-exploit:attempted exploit:held exploit:effect exploit:lo
     tamper) for so in "${SBF_OUT_DIR:-/nonexistent}"/*.so; do [ -f "$so" ] && printf 'x' >> "$so"; done ;;
     attempted) printf '%s\t%s (shim)\n' "$tag" "$assertion" >> "$AUDITOR_POC_MARKERS/attempted" ;;
     held) printf '%s\t%s: shim\n' "$tag" "$assertion" >> "$AUDITOR_POC_MARKERS/held" ;;
+    failed) printf '%s\t%s: shim did not hold\n' "$tag" "$assertion" >> "$AUDITOR_POC_MARKERS/failed" ;;
     *) printf '%s\tshim %s\n' "$tag" "$kind" >> "$AUDITOR_POC_MARKERS/$kind" ;;
   esac
 done
@@ -450,10 +459,19 @@ code="$(gate "$T/inc" "$NATIVE" "$VULN" SHIM_FAIL=exploit SHIM_MARKERS=none)"
 code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=fixed_blocked SHIM_MARKERS="$EV $FR")"
 [ "$code" = 3 ] && grep -q 'every contract assertion that ran held' "$T/out" \
   && ok "a fixed-arm test that fails after its contract assertion held -> exit 3, not 2" || bad "fixed arm fails after it held: exit $code"
+# A test the process ended inside an assertion (attempted, no held and no failed) is
+# not a verdict: the macros write `failed` only when an assertion ran and did not hold,
+# so a process that dies between an assertion's start and its result decides nothing.
+code="$(gate "$T/inc" "$NATIVE" "$VULN" SHIM_FAIL=exploit SHIM_MARKERS="exploit:attempted exploit:loaded")"
+[ "$code" = 3 ] && grep -q 'the process ended mid-assertion' "$T/out" && ! grep -q 'did not reproduce' "$T/out" \
+  && ok "a vulnerable test that ends inside an assertion (no failed marker) -> exit 3, not 1" || bad "vulnerable arm, died mid-assertion: exit $code"
+code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=fixed_blocked SHIM_MARKERS="$EV fixed_blocked:attempted fixed_blocked:loaded")"
+[ "$code" = 3 ] && grep -q 'the process ended mid-assertion' "$T/out" && ! grep -q 'fix is incomplete' "$T/out" \
+  && ok "a fixed test that ends inside an assertion (no failed marker) -> exit 3, not 2" || bad "fixed arm, died mid-assertion: exit $code"
 code="$(gate "$T/inc" "$NATIVE" SHIM_FAIL=fixed_blocked SHIM_MARKERS="$EV")"
 [ "$code" = 3 ] && grep -q 'inconclusive: no contract assertion ran' "$T/out" \
   && ok "build mode too: a fixed-arm failure with no contract assertion run -> exit 3" || bad "build mode, no assertion ran: exit $code"
-code="$(gate "$T/inc" "$NATIVE" "$VULN" SHIM_FAIL=exploit SHIM_MARKERS="exploit:attempted=rejected_with exploit:loaded")"
+code="$(gate "$T/inc" "$NATIVE" "$VULN" SHIM_FAIL=exploit SHIM_MARKERS="exploit:attempted=rejected_with exploit:failed=rejected_with exploit:loaded")"
 [ "$code" = 3 ] && grep -q 'is not one this arm counts' "$T/out" && ! grep -q 'did not reproduce' "$T/out" \
   && ok "an exploit test that fails in another arm's assertion -> exit 3, not 1" || bad "exploit fails in another arm's assertion: exit $code"
 code="$(gate "$T/inc" "$NATIVE" "$VULN" SHIM_MARKERS="$EV exploit:attempted")"
@@ -466,15 +484,15 @@ code="$(gate "$T/inc" "$NATIVE" "$VULN" SHIM_MARKERS="$EV exploit:inconclusive")
 # Markers are decided test by test: one test's inconclusive result does not hide another
 # test's assertion that ran and did not hold; within one test, inconclusive stands.
 code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=fixed_blocked \
-  SHIM_MARKERS="$EV fixed_blocked:attempted@guard fixed_blocked:loaded@guard fixed_blocked:attempted@other fixed_blocked:inconclusive@other fixed_blocked:loaded@other")"
+  SHIM_MARKERS="$EV fixed_blocked:attempted@guard fixed_blocked:failed@guard fixed_blocked:loaded@guard fixed_blocked:attempted@other fixed_blocked:inconclusive@other fixed_blocked:loaded@other")"
 [ "$code" = 2 ] && grep -q 'fix is incomplete' "$T/out" && grep -q '^   failed: test guard$' "$T/out" \
   && ok "a fixed arm where one test's assertion did not hold and another is inconclusive -> exit 2, naming the test" || { bad "fixed arm, failed next to inconclusive: exit $code"; cat "$T/out" >&2; }
 code="$(gate "$T/inc" "$NATIVE" "$VULN" SHIM_FAIL=exploit \
-  SHIM_MARKERS="exploit:attempted@main exploit:loaded@main exploit:attempted@other exploit:inconclusive@other exploit:loaded@other")"
+  SHIM_MARKERS="exploit:attempted@main exploit:failed@main exploit:loaded@main exploit:attempted@other exploit:inconclusive@other exploit:loaded@other")"
 [ "$code" = 1 ] && grep -q 'did not reproduce' "$T/out" \
   && ok "a vulnerable arm where one test's assertion did not hold and another is inconclusive -> exit 1" || bad "vulnerable arm, failed next to inconclusive: exit $code"
 code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=fixed_blocked \
-  SHIM_MARKERS="$EV fixed_blocked:attempted@one fixed_blocked:attempted@one fixed_blocked:inconclusive@one fixed_blocked:loaded@one")"
+  SHIM_MARKERS="$EV fixed_blocked:attempted@one fixed_blocked:failed@one fixed_blocked:inconclusive@one fixed_blocked:loaded@one")"
 [ "$code" = 3 ] && grep -q 'the fixed arm is inconclusive' "$T/out" \
   && ok "one test with both an assertion that did not hold and an inconclusive one -> exit 3" || bad "same test, failed and inconclusive: exit $code"
 
@@ -489,7 +507,7 @@ code="$(gate "$T/inc" "$NATIVE" "$VULN" SHIM_MARKERS="$EV exploit:loaded-other")
 code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" SHIM_MARKERS="$EV $FR fixed_blocked:loaded-other")"
 [ "$code" = 3 ] && grep -q 'loaded bytes other than the ones run.sh placed' "$T/out" && ! grep -q "^$LEG3" "$T/out" \
   && ok "a fixed-arm test that also loads other bytes -> exit 3, no Leg 3 line" || bad "fixed arm, other bytes: exit $code"
-code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=fixed_blocked SHIM_MARKERS="$EV fixed_blocked:attempted fixed_blocked:loaded-other")"
+code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=fixed_blocked SHIM_MARKERS="$EV fixed_blocked:attempted fixed_blocked:failed fixed_blocked:loaded-other")"
 [ "$code" = 3 ] && grep -q 'loaded bytes other than the ones run.sh placed' "$T/out" && ! grep -q 'fix is incomplete' "$T/out" \
   && ok "a fixed-arm assertion that fails on other bytes -> exit 3, not 2" || bad "fixed arm fails on other bytes: exit $code"
 code="$(gate "$T/inc" "$NATIVE" "$VULN" SHIM_MARKERS="$EV exploit:tamper")"
@@ -511,7 +529,7 @@ bd="$(build_dir)"; size="$(wc -c < "$bd/markers/build-vulnerable.json" 2>/dev/nu
   && ok "a ${size}-byte JSON build output -> the test binary is still found, exit 0" || bad "large JSON output: exit $code, ${size:-0} bytes"
 [ -n "$bd" ] && rm -rf "$bd"
 code="$(gate "$T/inc" "$NATIVE" "$VULN" SHIM_FAIL=no-exe:exploit)"
-[ "$code" = 3 ] && grep -q 'cargo reported no single test binary for tests/exploit.rs' "$T/out" \
+[ "$code" = 3 ] && grep -q 'cargo reported 0 test binaries for tests/exploit.rs in this crate' "$T/out" \
   && ok "a test build that names no test binary -> exit 3" || bad "no test binary: exit $code"
 
 # The non-registry line: before the final line, the path and git dependencies in the
@@ -522,7 +540,7 @@ line="$(grep -n -m 1 '^   non-registry code: ' "$T/out")"; okline="$(grep -n -m 
 [ "$code" = 0 ] && [ "${line#*:}" = "   non-registry code: vault 0.2.0 (path), helper 1.0.0 (git+https://example.invalid/helper.git#abc)" ] \
   && [ "${line%%:*}" -lt "${okline%%:*}" ] \
   && ok "the path and git dependencies in Cargo.lock are named before the OK line" || { bad "non-registry line: exit $code, '$line'"; cat "$T/out" >&2; }
-code="$(gate "$T/inc" "$NATIVE" "$VULN" SHIM_FAIL=exploit SHIM_MARKERS="exploit:attempted exploit:loaded")"
+code="$(gate "$T/inc" "$NATIVE" "$VULN" SHIM_FAIL=exploit SHIM_MARKERS="exploit:attempted exploit:failed exploit:loaded")"
 [ "$code" = 1 ] && grep -q '^   non-registry code: none' "$T/out" && ok "a verdict line also comes after the non-registry line" || bad "non-registry line on a verdict: exit $code"
 
 # The hash runs with the crate dir as its working directory. A hashlib.py planted
@@ -714,6 +732,43 @@ else
   bad "CARGO_TARGET_DIR: exit $code, build dir '$bd'"; cat "$T/calls" >&2
 fi
 
+# A shared build cache. run.sh holds a lock inside the cache around each arm's build
+# and test, and `harness checkbuild` refuses an arm when cargo reports one of the
+# crate's own units already built without this run compiling it (the stand-in reports
+# that with SHIM_FRESH=1). The lock dir lands in the cache and is gone afterwards.
+code="$(gate "$T/inc" "$NATIVE" "$VULN" CARGO_TARGET_DIR="$T/cache" SHIM_FRESH=1)"
+[ "$code" = 3 ] && grep -q 'already built without this run compiling it' "$T/out" \
+  && ok "a crate unit reported fresh that this run did not build -> exit 3 (a cache shared with a same-named crate)" || { bad "shared-cache fresh guard: exit $code"; cat "$T/out" >&2; }
+rm -rf "$T/lockcache"; mkdir -p "$T/lockcache"
+code="$(gate "$T/inc" "$NATIVE" "$VULN" CARGO_TARGET_DIR="$T/lockcache")"
+[ "$code" = 0 ] && [ ! -e "$T/lockcache/.auditor-poc-build.lock" ] \
+  && ok "the build lock is taken inside the shared cache and removed on exit" || bad "build lock not released: exit $code"
+# A stale lock (its holder gone) is broken; a lock held by a live process makes the
+# run wait and then block, never silently reuse. A short dead-pid loop supplies a pid
+# that is certainly not running.
+dead=$( (exec sh -c 'echo $$') ); rm -rf "$T/lockcache/.auditor-poc-build.lock"; mkdir -p "$T/lockcache/.auditor-poc-build.lock"; echo "$dead" > "$T/lockcache/.auditor-poc-build.lock/pid"
+code="$(gate "$T/inc" "$NATIVE" "$VULN" CARGO_TARGET_DIR="$T/lockcache")"
+[ "$code" = 0 ] && ok "a stale build lock (holder gone) is broken, and the run proceeds" || { bad "stale lock not broken: exit $code"; cat "$T/out" >&2; }
+sleep 30 & live=$!
+rm -rf "$T/lockcache/.auditor-poc-build.lock"; mkdir -p "$T/lockcache/.auditor-poc-build.lock"; echo "$live" > "$T/lockcache/.auditor-poc-build.lock/pid"
+code="$(gate "$T/inc" "$NATIVE" "$VULN" CARGO_TARGET_DIR="$T/lockcache" POC_LOCK_WAIT=1)"
+kill "$live" 2>/dev/null; wait "$live" 2>/dev/null
+[ "$code" = 3 ] && grep -q 'could not take the build lock' "$T/out" \
+  && ok "a build lock held by a live process -> exit 3 after the wait, never a silent reuse" || { bad "held lock not honoured: exit $code"; cat "$T/out" >&2; }
+rm -rf "$T/lockcache/.auditor-poc-build.lock"
+
+# An unreadable VULNERABLE_SO is a blocker, not a verdict: the ELF-magic read fails
+# under set -e and the run exits 3, never 1.
+cp "$T/vuln.so" "$T/unreadable.so"; chmod 000 "$T/unreadable.so"
+if [ -r "$T/unreadable.so" ]; then
+  echo "note: cannot drop read permission here (running as root?); the unreadable-input check is skipped"
+else
+  code="$(run "$T/inc" "$SP" "$NATIVE" VULNERABLE_SO="$T/unreadable.so")"
+  [ "$code" = 3 ] && ! grep -q 'did not reproduce' "$T/out" \
+    && ok "an unreadable VULNERABLE_SO -> exit 3 (a blocker), never a verdict" || { bad "unreadable VULNERABLE_SO: exit $code"; cat "$T/out" >&2; }
+fi
+chmod 644 "$T/unreadable.so" 2>/dev/null || true
+
 # Dependency pins: a crate without Cargo.lock gets a line saying so; UPDATE_PINS moves
 # only the named pins, with cargo update -p in the scratch copy, before anything is
 # built; an entry that is not <crate>[@<version>] is refused before anything is copied.
@@ -748,11 +803,11 @@ code="$(run "$T/inc" "$SP" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=no-run:exploit)"
 [ "$code" = 3 ] && grep -q 'tests/exploit.rs failed to build for the vulnerable arm' "$T/out" && ok "an exploit test that does not compile -> exit 3" || bad "exploit test build failure: exit $code"
 code="$(run "$T/inc" "$SP" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=no-run:fixed_blocked)"
 [ "$code" = 3 ] && grep -q 'tests/fixed_blocked.rs failed to build for the fixed arm' "$T/out" && ok "a fixed-arm test that does not compile -> exit 3" || bad "fixed test build failure: exit $code"
-code="$(run "$T/inc" "$SP" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=exploit SHIM_MARKERS="exploit:attempted exploit:loaded")"
+code="$(run "$T/inc" "$SP" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=exploit SHIM_MARKERS="exploit:attempted exploit:failed exploit:loaded")"
 [ "$code" = 1 ] && grep -q 'did not reproduce' "$T/out" && ok "exploit test failing in its contract assertion -> exit 1" || bad "exploit failure: exit $code"
-code="$(run "$T/inc" "$SP" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=fixed_blocked SHIM_MARKERS="$EV fixed_blocked:attempted fixed_blocked:loaded")"
+code="$(run "$T/inc" "$SP" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=fixed_blocked SHIM_MARKERS="$EV fixed_blocked:attempted fixed_blocked:failed fixed_blocked:loaded")"
 [ "$code" = 2 ] && grep -q 'fix is incomplete' "$T/out" && ok "fixed-arm test failing in its contract assertion -> exit 2" || bad "fixed-arm failure: exit $code"
-code="$(run "$T/inc" "$SP" "$NATIVE" SHIM_FAIL=fixed_blocked SHIM_MARKERS="$EV fixed_blocked:attempted fixed_blocked:loaded")"
+code="$(run "$T/inc" "$SP" "$NATIVE" SHIM_FAIL=fixed_blocked SHIM_MARKERS="$EV fixed_blocked:attempted fixed_blocked:failed fixed_blocked:loaded")"
 [ "$code" = 2 ] && grep -q 'fix is incomplete' "$T/out" && ok "build mode: fixed-arm test failing in its contract assertion -> exit 2" || bad "build mode fixed-arm failure: exit $code"
 code="$(run "$T/inc" "$SP" "$NATIVE")"
 [ "$code" = 0 ] && grep -q "building 'fixed' arm to SBF" "$T/out" && ok "build mode (no prebuilt bytes) runs both arms -> exit 0" || bad "build mode: exit $code"
@@ -859,7 +914,7 @@ pub mod result {
     use solana_program_error::ProgramError;
     use solana_pubkey::Pubkey;
     #[derive(Clone, Debug, PartialEq, Eq)]
-    pub enum InstructionError { MissingAccount, UnsupportedProgramId, ComputationalBudgetExceeded }
+    pub enum InstructionError { MissingAccount, UnsupportedProgramId, ComputationalBudgetExceeded, ReadonlyDataModified }
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub enum ProgramResult { Success, Failure(ProgramError), UnknownError(InstructionError) }
     impl ProgramResult {
@@ -924,6 +979,10 @@ impl Mollusk {
             return InstructionResult { program_result: ProgramResult::Failure(ProgramError::Custom(6001)), resulting_accounts: out };
         } else if b == "noop" {
             ProgramResult::Success
+        } else if b == "ro-modified" {
+            // The runtime stops the instruction: a read-only account was written. Mollusk
+            // surfaces it as UnknownError, like the other account-list mismatches.
+            ProgramResult::UnknownError(result::InstructionError::ReadonlyDataModified)
         } else if let Some(name) = b.strip_prefix("guard:").or_else(|| b.strip_prefix("reject:")) {
             ProgramResult::Failure(error(name))
         } else {
@@ -1195,11 +1254,16 @@ if command -v cargo >/dev/null 2>&1 && command -v rustup >/dev/null 2>&1; then
   code="$(e2e "$T/e-base" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-reject-Custom4100.so")"
   [ "$code" = 3 ] && grep -q 'inconclusive: a harness error, not a guard: Failure(Custom(4100))' "$T/out" && ok "real cargo: Custom(4100) (wrong program id) on the fixed arm -> inconclusive, exit 3" || bad "real cargo, 4100: exit $code"
   # A harness error is inconclusive on the vulnerable arm too: never "did not reproduce".
+  # ro-modified returns UnknownError(ReadonlyDataModified), one of the account-list
+  # mismatches the classifier now also catches.
   for name in Custom4100 NotEnoughAccountKeys; do
     code="$(e2e "$T/e-base" VULNERABLE_SO="$SB-reject-$name.so")"
     [ "$code" = 3 ] && grep -q 'the vulnerable arm is inconclusive: a harness error, not a guard' "$T/out" && ! grep -q 'did not reproduce' "$T/out" \
       && ok "real cargo: a harness error ($name) on the vulnerable arm -> inconclusive, exit 3, not 1" || { bad "real cargo, vulnerable $name: exit $code"; cat "$T/out" >&2; }
   done
+  code="$(e2e "$T/e-base" VULNERABLE_SO="$SB-ro-modified.so")"
+  [ "$code" = 3 ] && grep -q 'inconclusive: a harness error, not a guard: UnknownError(ReadonlyDataModified)' "$T/out" && ! grep -q 'did not reproduce' "$T/out" \
+    && ok "real cargo: UnknownError(ReadonlyDataModified) on the vulnerable arm -> inconclusive, exit 3" || { bad "real cargo, ReadonlyDataModified: exit $code"; cat "$T/out" >&2; }
   mkdir -p "$T/bpf"; cp "$SB-takeover.so" "$T/bpf/poc_e2e.so"
   code="$(e2e "$T/e-base" VULNERABLE_SO="$SB-noop.so" BPF_OUT_DIR="$T/bpf")"
   [ "$code" = 1 ] && ok "real cargo: a caller's BPF_OUT_DIR holding other bytes is not what runs (exit 1 on the no-op bytes)" || bad "real cargo, BPF_OUT_DIR: exit $code"
@@ -1356,6 +1420,16 @@ RS
   code="$(e2e "$T/e-direct" VULNERABLE_SO="$SB-noop.so")"
   [ "$code" = 3 ] && grep -q 'no program was loaded through mollusk_for' "$T/out" && ! grep -q "^$LEG3" "$T/out" \
     && ok "real cargo: a runner made with Mollusk::new, not mollusk_for -> exit 3, no Leg 3 line" || { bad "real cargo, Mollusk::new: exit $code"; cat "$T/out" >&2; }
+  # The attack must target the program mollusk_for loaded: an instruction aimed at a
+  # different program id is inconclusive, even though the stand-in would act on it.
+  mk_e2e "$T/e-wrongprog"
+  subst "$T/e-wrongprog/tests/exploit.rs" '    let ix = Instruction {
+        program_id,' '    let elsewhere = random_pubkey();
+    let ix = Instruction {
+        program_id: elsewhere,'
+  code="$(e2e "$T/e-wrongprog" VULNERABLE_SO="$SB-takeover.so")"
+  [ "$code" = 3 ] && grep -q 'the attack targets .* not .* the program run.sh placed and the harness loaded' "$T/out" && ! grep -q "^$LEG3" "$T/out" \
+    && ok "real cargo: an attack aimed at a program mollusk_for did not load -> exit 3, no Leg 3 line" || { bad "real cargo, attack on another program: exit $code"; cat "$T/out" >&2; }
 
   # The crate's own build-time code, with real cargo metadata: a build script that would
   # leave a file never runs, whether it is the crate's, a member's, or that of a path
@@ -1544,7 +1618,7 @@ RS
         accounts: vec![' '        program_id: random_pubkey(),
         accounts: vec!['
   code="$(e2e "$T/e-lite-other" VULNERABLE_SO="$SB-takeover.so")"
-  [ "$code" = 3 ] && grep -q 'the vulnerable arm is inconclusive: a harness error' "$T/out" \
+  [ "$code" = 3 ] && grep -q 'the vulnerable arm is inconclusive: the attack targets .* not .* the program run.sh placed' "$T/out" \
     && ok "real cargo, LiteSVM: an attack on a program the runner does not hold -> exit 3" || { bad "real cargo, LiteSVM unknown program: exit $code"; cat "$T/out" >&2; }
   mk_lite "$T/e-lite-hotfix" blocked
   code="$(e2e "$T/e-lite-hotfix" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-guard-Custom6001.so")"
@@ -1555,6 +1629,70 @@ RS
   code="$(e2e "$T/e-lite-hotfix" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-reject-InvalidInstructionData.so")"
   [ "$code" = 3 ] && grep -q 'the legitimate call failed on these bytes (InstructionError(0, InvalidInstructionData))' "$T/out" \
     && ok "real cargo, LiteSVM: a control that fails -> exit 3" || { bad "real cargo, LiteSVM failing control: exit $code"; cat "$T/out" >&2; }
+
+  # A shared build cache, two crates of the same name. Crate B is the template (pins
+  # MissingRequiredSignature); crate A pins Custom(6001). A cargo wrapper builds A's
+  # fixed-arm test into the shared cache while B is between its copy and its build —
+  # what a concurrent run of A does. With the lock and the re-stamp, B rebuilds and
+  # runs its OWN test (exit 2, B's pin does not match the Custom(6001) bytes); it never
+  # exits 0 on A's binary. The wrapper fires once, on B's first cargo call.
+  mk_e2e "$T/cache-A"; mk_e2e "$T/cache-B"
+  swap "$T/cache-A/tests/fixed_blocked.rs" '/^        error: ProgramError::MissingRequiredSignature,$/ { print "        error: ProgramError::Custom(6001),"; next } { print }'
+  REAL_CARGO="$(command -v cargo)"; mkdir -p "$T/cache-wrap"
+  cat > "$T/cache-wrap/cargo" <<SH
+#!/bin/sh
+if [ ! -e "$T/cache-A.built" ]; then
+  : > "$T/cache-A.built"
+  acopy="\$(mktemp -d "$T/cache-A.copy.XXXXXX")"; cp -R "$T/cache-A/." "\$acopy/"
+  "$REAL_CARGO" test --manifest-path "\$acopy/Cargo.toml" --no-default-features --features fixed \\
+    --test fixed_blocked --no-run --message-format=json-render-diagnostics >/dev/null 2>&1 || true
+fi
+exec "$REAL_CARGO" "\$@"
+SH
+  chmod +x "$T/cache-wrap/cargo"
+  rm -f "$T/cache-A.built"; rm -rf "$T/cache-shared"
+  code="$(run "$T/cache-B" "$T/cache-wrap:$PATH" "$NATIVE" CARGO_NET_OFFLINE=true CARGO_TARGET_DIR="$T/cache-shared" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-reject-Custom6001.so")"
+  if [ "$code" != 0 ] && ! grep -q "(rejected with the pinned error) → \[PoC-REPRODUCED\]" "$T/out"; then
+    ok "real cargo: a same-named crate built into the shared cache between this run's copy and build does not hand over its result ($(grep -cE '^(FAIL|\[PoC-ATTEMPTED\])' "$T/out" >/dev/null && echo "blocked/exit $code"))"
+  else
+    bad "real cargo, shared-cache handover: exit $code"; cat "$T/out" >&2
+  fi
+
+  # The harness-copy check binds the build to the copied shared-test-utils. The crate's
+  # own shared-test-utils/ stays byte-identical to the installation's, while the root
+  # manifest points the dependency at another copy outside the crate: refused (exit 3).
+  mk_e2e "$T/e-hc"; mkdir -p "$T/e-hc-elsewhere/stu/src"
+  sed 's/^version = "0.1.0"/version = "0.1.1"/' "$T/e-hc/shared-test-utils/Cargo.toml" > "$T/e-hc-elsewhere/stu/Cargo.toml"
+  { echo "// another copy of the harness, outside the crate"; cat "$T/e-hc/shared-test-utils/src/lib.rs"; } > "$T/e-hc-elsewhere/stu/src/lib.rs"
+  subst "$T/e-hc/Cargo.toml" 'shared-test-utils = { path = "shared-test-utils" }' "shared-test-utils = { path = \"$T/e-hc-elsewhere/stu\" }"
+  subst "$T/e-hc/Cargo.toml" '[workspace]' "[workspace]
+members = [\"shared-test-utils\"]"
+  cmp -s "$TEMPLATE/shared-test-utils/src/lib.rs" "$T/e-hc/shared-test-utils/src/lib.rs" || bad "harness-copy setup: the crate's shared-test-utils/src/lib.rs is not the installation's"
+  code="$(e2e "$T/e-hc" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-reject-MissingRequiredSignature.so")"
+  [ "$code" = 3 ] && grep -q 'shared-test-utils dependency' "$T/out" && ! grep -q "^$LEG3" "$T/out" \
+    && ok "real cargo: a shared-test-utils dependency pointed outside the crate (copy byte-identical) -> exit 3" || { bad "real cargo, harness-copy bind: exit $code"; cat "$T/out" >&2; }
+
+  # Code from outside the crate without a dependency: a test module by absolute #[path]
+  # and the lib target's own out-of-tree path both compile; the non-registry line names
+  # them, so an OK line never hides them.
+  mk_e2e "$T/e-oot"; mkdir -p "$T/e-oot-outside"
+  printf 'pub fn note() -> u8 { 1 }\n' > "$T/e-oot-outside/helper.rs"
+  subst "$T/e-oot/tests/exploit.rs" '#![cfg(feature = "vulnerable")]' "#![cfg(feature = \"vulnerable\")]
+#[path = \"$T/e-oot-outside/helper.rs\"]
+mod helper;"
+  subst "$T/e-oot/tests/exploit.rs" '    assert_exploit_effect!(' '    let _ = helper::note();
+    assert_exploit_effect!('
+  cp "$T/e-oot/src/lib.rs" "$T/e-oot-outside/lib.rs"; : > "$T/e-oot/src/lib.rs"
+  subst "$T/e-oot/Cargo.toml" '[workspace]' "[lib]
+path = \"$T/e-oot-outside/lib.rs\"
+
+[workspace]"
+  code="$(e2e "$T/e-oot" VULNERABLE_SO="$SB-takeover.so")"
+  if [ "$code" = 0 ] && grep -q "non-registry code: .*$T/e-oot-outside/lib.rs" "$T/out" && grep -q "non-registry code: .*$T/e-oot-outside/helper.rs" "$T/out"; then
+    ok "real cargo: a [lib] path and a #[path] module from outside the crate are named on the non-registry line"
+  else
+    bad "real cargo, out-of-tree sources: exit $code"; grep 'non-registry' "$T/out" >&2
+  fi
 elif [ "${REQUIRE_TOOLCHAIN:-}" = 1 ]; then
   bad "REQUIRE_TOOLCHAIN=1, but cargo or rustup is not on PATH: the real-toolchain checks cannot run"
 else
