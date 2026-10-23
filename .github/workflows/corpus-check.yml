@@ -63,6 +63,9 @@ jobs:
     name: macOS, bash 3.2 and BSD tools (advisory)
     runs-on: macos-26
     timeout-minutes: 30
+    concurrency:   # a newer push to the same ref cancels this job's older run
+      group: corpus-macos-${{ github.ref }}
+      cancel-in-progress: true
     defaults:
       run:
         shell: /bin/bash --noprofile --norc -e {0}
@@ -72,7 +75,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
           submodules: false
           persist-credentials: false
 
