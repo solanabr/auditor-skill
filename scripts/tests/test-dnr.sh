@@ -1127,6 +1127,27 @@ for r in frames lamports; do
     fi
   done
 done
+# A FIFO named as a corpus is not a regular file: each recipe refuses it at once,
+# never waiting for a writer (a run still going after 10 s is stopped and fails).
+mkfifo "$TT/in21.fifo"
+res=""
+for r in profile frames lamports; do
+  case "$r" in
+    profile) ( bash "$DNR/profile.sh" "$TT/in21.fifo" > /dev/null 2> "$TT/f21.err"; echo "$?" > "$TT/f21.code" ) & ;;
+    frames) ( python3 -I "$DNR/frames.py" "$TT/in21.fifo" > /dev/null 2> "$TT/f21.err"; echo "$?" > "$TT/f21.code" ) & ;;
+    lamports) ( python3 -I "$DNR/deltas.py" lamports "$TT/in21.fifo" > /dev/null 2> "$TT/f21.err"; echo "$?" > "$TT/f21.code" ) & ;;
+  esac
+  pid=$!; n=0
+  while kill -0 "$pid" 2>/dev/null && [[ "$n" -lt 200 ]]; do sleep 0.05; n=$((n + 1)); done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+    res="$res $r:waiting"
+  else
+    wait "$pid"
+    res="$res $(cat "$TT/f21.code"):$(grep -c 'usage: profile.sh\|cannot read input 1 (.*): not a regular file$' "$TT/f21.err")"
+  fi
+done
+eq "input paths: a FIFO is refused at once by profile (usage, exit 2), frames and deltas (exit 1)" "${res# }" "2:1 1:1 1:1"
 
 # ---------------------------------------------------------------------------
 # 22. --out writes a recipe's output to a temporary file beside <file> and gives
