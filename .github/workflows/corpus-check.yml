@@ -46,7 +46,7 @@ jobs:
           done
           if [ -n "$failed" ]; then echo "failed suites:$failed"; exit 1; fi
 
-      - name: Repository hygiene (no env / state / local assistant files tracked)
+      - name: Repository hygiene (no env / state / local assistant files, no plugin-root load surface tracked)
         if: ${{ !cancelled() }}
         run: bash scripts/check-hygiene.sh
 
@@ -57,9 +57,10 @@ jobs:
         run: bash scripts/check-attribution.sh "origin/${BASE_REF}..HEAD"
 
   corpus-macos:
-    # Advisory: do not add this job to the required checks. It runs the same checks under macOS /bin/bash 3.2
-    # with BSD sed, grep and awk. Every step sets a stock macOS PATH plus ~/.cargo/bin, which the first step
-    # asserts, so no tool from the runner image's Homebrew stands in for the system one.
+    # Advisory: do not add this job to the required checks. It runs the same checks, except the pull-request
+    # attribution check, under macOS /bin/bash 3.2 with BSD sed, grep and awk. Every step sets a stock macOS PATH
+    # plus ~/.cargo/bin, which the first step asserts, so no tool from the runner image's Homebrew stands in for
+    # the system one.
     name: macOS, bash 3.2 and BSD tools (advisory)
     runs-on: macos-26
     timeout-minutes: 30
@@ -124,7 +125,7 @@ jobs:
           done
           if [ -n "$failed" ]; then echo "failed suites:$failed"; exit 1; fi
 
-      - name: Repository hygiene (no env / state / local assistant files tracked)
+      - name: Repository hygiene (no env / state / local assistant files, no plugin-root load surface tracked)
         if: ${{ !cancelled() }}
         run: |
           export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin"
