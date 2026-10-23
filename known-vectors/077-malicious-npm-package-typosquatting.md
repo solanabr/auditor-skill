@@ -26,7 +26,7 @@ cat package.json apps/backend/package.json apps/web/package.json | grep -E "\"@|
 grep -iE "axios@1\.14\.1|axios@0\.30\.4" package.json apps/*/package.json package-lock.json
 # Hijacked @solana/web3.js releases — exact pins and resolved versions in package-lock / npm-shrinkwrap /
 # pnpm / yarn v1 + berry / bun; ranges such as "^1.95.7" do not match on their own:
-W3='web3\.js@(npm:)?1\.95\.(6|7)([^0-9]|$)|/web3\.js/-/web3\.js-1\.95\.(6|7)\.tgz|"@solana/web3\.js"[[:space:]]*:[[:space:]]*"=?1\.95\.(6|7)"'
+W3='web3\.js[@/](npm:)?1\.95\.(6|7)([^0-9]|$)|/web3\.js/-/web3\.js-1\.95\.(6|7)\.tgz|"@solana/web3\.js"[[:space:]]*:[[:space:]]*"=?1\.95\.(6|7)"'
 grep -rnE "$W3" --exclude-dir=node_modules --include='package.json' --include='package-lock.json' \
   --include='npm-shrinkwrap.json' --include='pnpm-lock.yaml' --include='yarn.lock' --include='bun.lock' .
 # A package-lock.json or npm-shrinkwrap.json written without "resolved" fields names the package only on the

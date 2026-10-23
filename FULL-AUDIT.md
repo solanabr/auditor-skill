@@ -346,7 +346,7 @@ ACTIONS:
   # Check for compromised packages
   grep "axios" apps/backend/package.json apps/web/package.json
   # → verify NOT 1.14.1 or 0.30.4
-  W3='web3\.js@(npm:)?1\.95\.(6|7)([^0-9]|$)|/web3\.js/-/web3\.js-1\.95\.(6|7)\.tgz|"@solana/web3\.js"[[:space:]]*:[[:space:]]*"=?1\.95\.(6|7)"'
+  W3='web3\.js[@/](npm:)?1\.95\.(6|7)([^0-9]|$)|/web3\.js/-/web3\.js-1\.95\.(6|7)\.tgz|"@solana/web3\.js"[[:space:]]*:[[:space:]]*"=?1\.95\.(6|7)"'
   grep -rnE "$W3" --exclude-dir=node_modules --include='package.json' --include='package-lock.json' \
     --include='npm-shrinkwrap.json' --include='pnpm-lock.yaml' --include='yarn.lock' --include='bun.lock' .
   # a package-lock.json or npm-shrinkwrap.json written without "resolved" fields names the
