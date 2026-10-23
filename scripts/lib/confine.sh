@@ -94,9 +94,11 @@ confine_need() { # confine_need <program>...: refuse unless each is on the clean
 
 # ---- git (OUTPUT-RULES.md Rule 11c) --------------------------------------------------------------------
 # hgit <dir> <git arguments>: git in <dir> with only the environment below, and the -c pins over the
-# repository's own config. GIT_CEILING_DIRECTORIES stops discovery at WT's parent unless the caller sets
-# CONFINE_CEILING for one call. GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS makes git refuse abbreviated long
-# options where its option parser checks it; git-ro.sh refuses them on its own as well.
+# repository's own config: what it runs, what it fetches, the files it reads, and how it reads history
+# and patterns (grep.patternType, log.showRoot, replace refs, the commit-graph cache).
+# GIT_CEILING_DIRECTORIES stops discovery at WT's parent unless the caller sets CONFINE_CEILING for one
+# call. GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS makes git refuse abbreviated long options where its option
+# parser checks it; git-ro.sh refuses them on its own as well.
 hgit() {
   local d=$1
   shift
@@ -110,7 +112,9 @@ hgit() {
     -c core.attributesFile=/dev/null -c core.excludesFile=/dev/null -c diff.orderFile=/dev/null \
     -c mailmap.file=/dev/null -c color.ui=never -c color.diff=never -c color.grep=never \
     -c color.decorate=never -c core.quotePath=false -c i18n.logOutputEncoding=UTF-8 -c format.pretty=medium \
-    -c log.diffMerges=separate -c submodule.recurse=false -c diff.submodule=short "$@"
+    -c log.diffMerges=separate -c submodule.recurse=false -c diff.submodule=short \
+    -c grep.patternType=basic -c grep.extendedRegexp=false -c log.showRoot=true \
+    -c core.useReplaceRefs=false -c core.commitGraph=false "$@"
 }
 
 # confine_repo_top <dir>: status 0 when <dir> (absolute) is the top level of its own repository, or a
@@ -145,8 +149,9 @@ confine_partial_clone() {
 
 # confine_repo <dir> <what>: refuse <dir> (. for WT, or a confined directory) unless it is the top level
 # of a repository, or a bare repository, whose git directory and common directory resolve inside WT,
-# hold no symbolic link and borrow no objects (objects/info/alternates). Sets CONFINE_REPO (its
-# physical path), CONFINE_GIT_DIR and CONFINE_BARE (true or false).
+# hold no symbolic link, borrow no objects (objects/info/alternates) and rewrite no commit's parents
+# (info/grafts). Sets CONFINE_REPO (its physical path), CONFINE_GIT_DIR, CONFINE_COMMON_DIR and
+# CONFINE_BARE (true or false).
 confine_repo() {
   local what=$2 shown abs info bare gitdir common top d links
   confine_shown "$1"
@@ -192,8 +197,12 @@ confine_repo() {
   if [ -e "$common/objects/info/alternates" ]; then
     confine_refuse "$what borrows objects from another repository (objects/info/alternates); audit a full copy: $shown"
   fi
+  if [ -e "$common/info/grafts" ]; then
+    confine_refuse "$what rewrites commit parents (info/grafts), so git would show another history; review that file: $shown"
+  fi
   CONFINE_REPO=$abs
   CONFINE_GIT_DIR=$gitdir
+  CONFINE_COMMON_DIR=$common
   CONFINE_BARE=$bare
 }
 

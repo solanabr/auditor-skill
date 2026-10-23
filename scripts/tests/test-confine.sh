@@ -266,7 +266,9 @@ check "hgit passes only the hardened environment" \
 awk -F '\037' '$1 == "ARGV" { print $2, ($3 == "-C"), $5, $6; exit }' "$T/rec.log" > "$T/argv"
 check "hgit runs git --no-pager -C <dir> -c core.fsmonitor=false first" test "$(cat "$T/argv")" = '--no-pager 1 -c core.fsmonitor=false'
 for pin in core.pager=cat core.hooksPath=/dev/null protocol.allow=never core.attributesFile=/dev/null \
-           log.showSignature=false gpg.program=false submodule.recurse=false diff.submodule=short; do
+           log.showSignature=false gpg.program=false submodule.recurse=false diff.submodule=short \
+           log.diffMerges=separate grep.patternType=basic grep.extendedRegexp=false log.showRoot=true \
+           core.useReplaceRefs=false core.commitGraph=false; do
   check "hgit pins $pin before the subcommand" \
     awk -F '\037' -v pin="$pin" '$1 == "ARGV" { for (i = 2; i <= NF && $i != "rev-parse"; i++) if ($i == pin && $(i - 1) == "-c") found = 1; exit } END { exit !found }' "$T/rec.log"
 done
@@ -280,14 +282,15 @@ git clone -q --bare "$RW" "$RW/copy.git"
 mkdir -p "$RW/plain" "$RW/gitfile" "$RW/gitlink"
 printf 'gitdir: %s/.git\n' "$O" > "$RW/gitfile/.git"
 ln -s "$O/.git" "$RW/gitlink/.git"
-for d in linked alt wtree; do mkrepo "$RW/$d"; put "$RW/$d" f "$d"; commit "$RW/$d" -m "$d"; done
+for d in linked alt wtree grafted; do mkrepo "$RW/$d"; put "$RW/$d" f "$d"; commit "$RW/$d" -m "$d"; done
+git -C "$RW/grafted" rev-parse HEAD > "$RW/grafted/.git/info/grafts"
 ln -s "$O/.git/HEAD" "$RW/linked/.git/refs/heads/elsewhere"
 printf '%s/.git/objects\n' "$O" > "$RW/alt/.git/objects/info/alternates"
 git -C "$RW/wtree" config core.worktree "$O"
-lib "$RW" 'confine_repo . R; printf "%s|%s|%s" "$CONFINE_REPO" "$CONFINE_GIT_DIR" "$CONFINE_BARE"'
-check "confine_repo accepts the working directory's repository" out_is "$RW|$RW/.git|false"
-lib "$RW" 'confine_repo copy.git R; printf "%s|%s|%s" "$CONFINE_REPO" "$CONFINE_GIT_DIR" "$CONFINE_BARE"'
-check "... and a bare repository inside it" out_is "$RW/copy.git|$RW/copy.git|true"
+lib "$RW" 'confine_repo . R; printf "%s|%s|%s|%s" "$CONFINE_REPO" "$CONFINE_GIT_DIR" "$CONFINE_COMMON_DIR" "$CONFINE_BARE"'
+check "confine_repo accepts the working directory's repository" out_is "$RW|$RW/.git|$RW/.git|false"
+lib "$RW" 'confine_repo copy.git R; printf "%s|%s|%s|%s" "$CONFINE_REPO" "$CONFINE_GIT_DIR" "$CONFINE_COMMON_DIR" "$CONFINE_BARE"'
+check "... and a bare repository inside it" out_is "$RW/copy.git|$RW/copy.git|$RW/copy.git|true"
 lib "$RW" 'confine_repo programs R'
 check "a directory inside the repository is not its top level" refused 'R is not the top level of its repository: programs'
 lib "$RW" 'confine_repo plain/../programs R'
@@ -303,6 +306,9 @@ check "a repository with alternates is refused" \
   refused 'R borrows objects from another repository (objects/info/alternates); audit a full copy: alt'
 lib "$RW" 'confine_repo wtree R'
 check "a repository whose work tree is elsewhere is refused" refused 'R is not the top level of its repository: wtree'
+lib "$RW" 'confine_repo grafted R'
+check "a repository that rewrites commit parents with info/grafts is refused" \
+  refused 'R rewrites commit parents (info/grafts), so git would show another history; review that file: grafted'
 lib "$RW/plain" 'confine_repo . R'
 check "a working directory that is not a repository top level is refused (discovery stops at WT's parent)" \
   refused 'R is not a git repository that git can read (none there, or another user owns it: audit a copy): .'
