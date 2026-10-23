@@ -72,9 +72,11 @@
 #     the directory cargo builds into (cargo metadata's target_directory, which a
 #     target-dir in cargo's own config sets too) around each arm's build and test
 #     and re-stamps the scratch copy under the lock; cargo then rebuilds this
-#     crate's own code and the cache serves only its dependencies. If a stale artifact is handed over anyway, the fresh
-#     check in `harness checkbuild` makes the run a blocker, not a verdict.
-#     SBF_OUT_DIR stays in the scratch copy either way.
+#     crate's own code and the cache serves only its dependencies. A run waits up
+#     to POC_LOCK_WAIT seconds (default 900) for the lock, then stops with exit 3.
+#     If a stale artifact is handed over anyway, the fresh check in `harness
+#     checkbuild` makes the run a blocker, not a verdict. SBF_OUT_DIR stays in the
+#     scratch copy either way.
 #   * mollusk looks for <crate>.so in tests/fixtures/ and BPF_OUT_DIR before
 #     SBF_OUT_DIR, so run.sh unsets BPF_OUT_DIR and refuses a crate holding
 #     tests/fixtures/<crate>.so: the bytes that run are the arm run.sh placed.
@@ -222,6 +224,14 @@ for spec in ${UPDATE_PINS:-}; do
   fi
 done
 set +f
+# How long a run waits for the build lock (see the build cache under WHERE IT BUILDS):
+# whole seconds, compared as a number and never evaluated.
+LOCK_WAIT="${POC_LOCK_WAIT:-900}"
+LOCK_WAIT_SPEC='^(0|[1-9][0-9]{0,5})$'
+if [[ ! "${LOCK_WAIT}" =~ ${LOCK_WAIT_SPEC} ]]; then
+  echo "[PoC-ATTEMPTED] blocker: POC_LOCK_WAIT is '${LOCK_WAIT}', not a whole number of seconds (at most 999999) — nothing was copied or built." >&2
+  exit 3
+fi
 
 # ── What python3 reads for run.sh ───────────────────────────────────────────────
 # `harness hash <file>`: the zero-trimmed sha256 (the loader pads a program account
@@ -628,39 +638,57 @@ copy_crate() {
   return 0
 }
 
-# The build lock. When CARGO_TARGET_DIR (or CARGO_BUILD_TARGET_DIR) is shared between
-# runs, two crates of the same name resolve to the same cached artifact path, so this
-# run holds a lock inside that directory from just before each arm's build until its
+# The build lock. When the target directory is shared between runs (a build cache),
+# two crates of the same name resolve to the same cached artifact path, so this run
+# holds a lock inside that directory from just before each arm's build until its
 # test binary exits, and re-stamps the scratch copy under the lock so cargo rebuilds
 # this crate's own code rather than reuse another run's. With a private target
 # directory the lock is uncontended. The fresh check in `harness checkbuild` is a
 # second guard. (With no shared cache this is one empty directory made and removed.)
+# The lock names its holder's pid. A lock whose holder is gone is broken by one run at
+# a time (the .break directory beside it), and only while it still names that holder;
+# a run drops the lock only while it still names this run.
 LOCK_HELD=0
 restamp() {  # give the scratch copy's own files the current time, under the lock
   find "${BUILD_DIR}" \( \( -iname target -type d \) -o -path "${RUN_DIR}" \) -prune -o -type f -exec touch {} + 2>/dev/null || true
   return 0
 }
+lock_holder() {  # the pid the lock names, or nothing
+  local pid
+  pid="$(cat "${LOCK}/pid" 2>/dev/null || true)"
+  if [[ "${pid}" =~ ^[0-9]+$ ]]; then echo "${pid}"; fi
+  return 0
+}
 acquire_lock() {  # take the build lock, then re-stamp; 0 on success, non-zero to block
-  local waited=0 holder
+  local waited=0 holder broken
   mkdir -p "${EFFECTIVE_TARGET}" 2>/dev/null || return 1
   while ! mkdir "${LOCK}" 2>/dev/null; do
-    holder=""
-    if [[ -f "${LOCK}/pid" ]]; then holder="$(cat "${LOCK}/pid" 2>/dev/null || true)"; fi
-    if [[ -n "${holder}" ]] && ! kill -0 "${holder}" 2>/dev/null; then
-      rm -rf "${LOCK}" 2>/dev/null || true
+    holder="$(lock_holder)"
+    if [[ -n "${holder}" ]] && ! kill -0 "${holder}" 2>/dev/null && mkdir "${LOCK}.break" 2>/dev/null; then
+      broken=0
+      if [[ "$(lock_holder)" == "${holder}" ]]; then rm -rf "${LOCK}" 2>/dev/null || broken=1; fi
+      rmdir "${LOCK}.break" 2>/dev/null || true
+      [[ "${broken}" -eq 0 ]] || return 1
       continue
     fi
     waited=$((waited + 1))
-    if [[ "${waited}" -gt "${POC_LOCK_WAIT:-900}" ]]; then return 2; fi
+    if [[ "${waited}" -gt "${LOCK_WAIT}" ]]; then return 2; fi
     sleep 1
   done
-  echo "$$" > "${LOCK}/pid" 2>/dev/null || true
+  # The pid is written aside and renamed in, so no run reads a partial one.
+  if ! { echo "$$" > "${LOCK}/pid.$$" && mv -f "${LOCK}/pid.$$" "${LOCK}/pid"; } 2>/dev/null; then
+    rm -rf "${LOCK}" 2>/dev/null || true
+    return 1
+  fi
   LOCK_HELD=1
   restamp
   return 0
 }
 release_lock() {
-  if [[ "${LOCK_HELD}" == 1 ]]; then rm -rf "${LOCK}" 2>/dev/null || true; LOCK_HELD=0; fi
+  if [[ "${LOCK_HELD}" == 1 ]]; then
+    if [[ "$(lock_holder)" == "$$" ]]; then rm -rf "${LOCK}" 2>/dev/null || true; fi
+    LOCK_HELD=0
+  fi
   return 0
 }
 

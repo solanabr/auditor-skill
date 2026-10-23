@@ -120,7 +120,8 @@ PY
 # fixed_blocked, unless =<assertion> says otherwise), and each line starts with the test
 # name (<test>_case unless @ gives one). Marker `loaded` records the zero-trimmed hash
 # of the .so in SBF_OUT_DIR, as mollusk_for does; `loaded-other` records other bytes;
-# `tamper` changes the placed .so. SHIM_FAIL=<test> makes that test binary fail.
+# `tamper` changes the placed .so; `relock` makes the build lock in CARGO_TARGET_DIR
+# name SHIM_RELOCK_PID. SHIM_FAIL=<test> makes that test binary fail.
 mkdir -p "$T/shim/bin"
 cat > "$T/shim/cargo" <<'SH'
 #!/bin/sh
@@ -232,6 +233,7 @@ for m in ${SHIM_MARKERS-exploit:attempted exploit:held exploit:effect exploit:lo
       done ;;
     loaded-other) printf '%s\t%064d %s\n' "$tag" 0 /elsewhere/other.so >> "$AUDITOR_POC_MARKERS/loaded" ;;
     tamper) for so in "${SBF_OUT_DIR:-/nonexistent}"/*.so; do [ -f "$so" ] && printf 'x' >> "$so"; done ;;
+    relock) printf '%s\n' "${SHIM_RELOCK_PID:-}" > "${CARGO_TARGET_DIR:-/nonexistent}/.auditor-poc-build.lock/pid" ;;
     attempted) printf '%s\t%s (shim)\n' "$tag" "$assertion" >> "$AUDITOR_POC_MARKERS/attempted" ;;
     held) printf '%s\t%s: shim\n' "$tag" "$assertion" >> "$AUDITOR_POC_MARKERS/held" ;;
     failed) printf '%s\t%s: shim did not hold\n' "$tag" "$assertion" >> "$AUDITOR_POC_MARKERS/failed" ;;
@@ -770,6 +772,33 @@ code="$(gate "$T/inc" "$NATIVE" "$VULN" CARGO_TARGET_DIR="$T/lockcache" POC_LOCK
 kill "$live" 2>/dev/null; wait "$live" 2>/dev/null
 [ "$code" = 3 ] && grep -q 'could not take the build lock' "$T/out" \
   && ok "a build lock held by a live process -> exit 3 after the wait, never a silent reuse" || { bad "held lock not honoured: exit $code"; cat "$T/out" >&2; }
+rm -rf "$T/lockcache/.auditor-poc-build.lock"
+# A stale lock is broken by one run at a time: while another run's .break directory
+# stands beside it, the run waits, and the lock is left as it was.
+mkdir -p "$T/lockcache/.auditor-poc-build.lock" "$T/lockcache/.auditor-poc-build.lock.break"; echo "$dead" > "$T/lockcache/.auditor-poc-build.lock/pid"
+code="$(gate "$T/inc" "$NATIVE" "$VULN" CARGO_TARGET_DIR="$T/lockcache" POC_LOCK_WAIT=1)"
+[ "$code" = 3 ] && grep -q 'could not take the build lock' "$T/out" && [ "$(cat "$T/lockcache/.auditor-poc-build.lock/pid" 2>/dev/null)" = "$dead" ] \
+  && ok "a stale lock another run is breaking (its .break directory stands) -> the run waits, then exit 3, the lock untouched" || { bad "stale lock while another run breaks it: exit $code"; cat "$T/out" >&2; }
+rm -rf "$T/lockcache/.auditor-poc-build.lock" "$T/lockcache/.auditor-poc-build.lock.break"
+# A run drops the lock only while it still names this run: here the stand-in test makes
+# it name another live process, whose lock stays.
+sleep 30 & live=$!
+code="$(gate "$T/inc" "$NATIVE" "$VULN" CARGO_TARGET_DIR="$T/lockcache" SHIM_RELOCK_PID="$live" SHIM_MARKERS="$EV exploit:relock")"
+[ "$code" = 0 ] && [ "$(cat "$T/lockcache/.auditor-poc-build.lock/pid" 2>/dev/null)" = "$live" ] \
+  && ok "a lock that names another run by release time is left in place" || { bad "release of a lock naming another run: exit $code"; cat "$T/out" >&2; }
+kill "$live" 2>/dev/null; wait "$live" 2>/dev/null
+rm -rf "$T/lockcache/.auditor-poc-build.lock"
+# POC_LOCK_WAIT is whole seconds, checked before anything is copied and never evaluated
+# (a lock held by a live process makes the run wait, where it is read).
+sleep 30 & live=$!
+mkdir -p "$T/lockcache/.auditor-poc-build.lock"; echo "$live" > "$T/lockcache/.auditor-poc-build.lock/pid"
+for wait_spec in "HOME[\$(touch $T/lockwait.marker)]" 08 -1 1.5 ' 1'; do
+  rm -f "$T/lockwait.marker"
+  code="$(gate "$T/inc" "$NATIVE" "$VULN" CARGO_TARGET_DIR="$T/lockcache" "POC_LOCK_WAIT=$wait_spec")"
+  [ "$code" = 3 ] && grep -q 'POC_LOCK_WAIT is' "$T/out" && nothing_ran && [ ! -e "$T/lockwait.marker" ] \
+    && ok "POC_LOCK_WAIT='$wait_spec' -> refused before anything is copied, never evaluated" || { bad "POC_LOCK_WAIT '$wait_spec': exit $code"; cat "$T/out" >&2; }
+done
+kill "$live" 2>/dev/null; wait "$live" 2>/dev/null
 rm -rf "$T/lockcache/.auditor-poc-build.lock"
 # The lock goes in the directory cargo reports it builds into, which a target-dir in
 # cargo's own config sets as well as CARGO_TARGET_DIR (the stand-in reads it from
