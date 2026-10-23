@@ -48,8 +48,9 @@
 #   --config-env*, --recurse-submodules*, --submodule*, --no-index, --contents*, --ignore-revs-file*,
 #   --exclude-from*, --pathspec-from-file*, --open-files-in-pager*, --remerge-diff and --diff-merges=remerge
 #   or r (they run the merge drivers the repository configures), --no-cached and --no-staged (they would
-#   undo the --cached git-ro adds); -O (a diff order file, grep's pager), grep -f/--file and --untracked,
-#   ls-files -X and --exclude-per-directory, blame -S.
+#   undo the --cached git-ro adds), -z, --null and cat-file -Z (NUL-separated output; see Output); -O (a
+#   diff order file, grep's pager), grep -f/--file and --untracked, ls-files -X and
+#   --exclude-per-directory, blame -S.
 # --format and --pretty take a built-in name, a format: or tformat: string, or a string with a %. Other
 # names can be pretty.<name> aliases from the repository's config, and %G or %(signature runs the
 # signature program, so both are refused.
@@ -84,10 +85,11 @@
 # unless asked (--cc, -m, --diff-merges). Reads trust the repository's object store; copy runs every
 # object through index-pack, which checks each one's hash.
 #
-# Output: control characters other than TAB and LF in what git prints, errors included, print as ?, so
-# binary content does not round-trip. Standard input is never read except as above. In a partial
-# clone every read prints a note first; nothing is fetched, and a missing object fails. In a shallow
-# clone every read notes that older history is missing.
+# Output: every control character other than TAB and LF, NUL included, prints as ? in what git prints,
+# errors included, so binary content does not round-trip, and a %x00 in a format prints ?. The options
+# that only change separators to NUL (-z, --null, cat-file -Z) are refused. Standard input is never read
+# except as above. In a partial clone every read prints a note first; nothing is fetched, and a missing
+# object fails. In a shallow clone every read notes that older history is missing.
 #
 # copy runs `clone --no-local --bare --no-recurse-submodules --template=` of <dir> into <R>/src.git
 # (src-2.git, src-3.git, ... once that exists) under the same hardened call, with protocol.file.allow
@@ -115,7 +117,7 @@ BLAME_USAGE='blame needs <rev> -- <path>: a revision, then --, then one path'
 # Long options refused with any ending, refused as written, and allowed only with a checked value; an
 # abbreviation of any of them is refused, except the four exact options that share a denied name's prefix.
 DENY_PREFIX='output exec upload-pack receive-pack git-dir work-tree namespace super-prefix config-env recurse-submodules submodule contents ignore-revs-file exclude-from pathspec-from-file open-files-in-pager'
-DENY_EXACT='ext-diff textconv show-signature no-index remote remerge-diff no-cached no-staged'
+DENY_EXACT='ext-diff textconv show-signature no-index remote remerge-diff no-cached no-staged null'
 GUARDED='format pretty diff-merges'
 EXACT_OK='exclude text ignore-rev batch'
 
@@ -188,11 +190,12 @@ check_options() {
     *) EXTRA='' ;;
   esac
   case "$SUB" in
-    log|show|diff|diff-tree|reflog) short_deny=O short_free=SGIL ;;
-    grep) short_deny=Of short_free=e ;;
-    ls-files) short_deny=mX short_free=x ;;
-    blame) short_deny=S short_free=L ;;
-    *) short_deny='' short_free='' ;;
+    log|show|diff|diff-tree|reflog) short_deny=Oz short_free=SGIL ;;
+    grep) short_deny=Ofz short_free=e ;;
+    ls-files) short_deny=mXz short_free=x ;;
+    blame) short_deny=Sz short_free=L ;;
+    cat-file) short_deny=zZ short_free='' ;;
+    *) short_deny=z short_free='' ;;
   esac
   for a in "$@"; do
     case "$NEXT" in
@@ -203,7 +206,6 @@ check_options() {
       --) break ;;
       --?*) check_long "${a#--}" ;;
       -?*)
-        [ -n "$short_deny" ] || continue
         first=${a#-}
         first=${first%"${first#?}"}
         case "$short_free" in *"$first"*) continue ;; esac
@@ -342,8 +344,9 @@ run_config() { # run_config <arg>...: reads of the repository's own config file
         action=$1 ;;
       get:--all|get:--regexp|get:--value=*|get:--url=*|get:--default=*|legacy:--default=*)
         opts+=("$1") ;;
-      *:--show-origin|*:--show-scope|*:--name-only|*:-z|*:--null|*:--local|*:--no-includes)
+      *:--show-origin|*:--show-scope|*:--name-only|*:--local|*:--no-includes)
         opts+=("$1") ;;
+      *:-z|*:--null) refuse "config does not allow $1" ;;
       get:--bool|get:--int|get:--bool-or-int|get:--path|get:--expiry-date|get:--fixed-value|get:--type=*)
         opts+=("$1") ;;
       legacy:--bool|legacy:--int|legacy:--bool-or-int|legacy:--path|legacy:--expiry-date|legacy:--fixed-value|legacy:--type=*)
@@ -618,6 +621,6 @@ main() {
   exit $?
 }
 
-# What git prints, errors included, goes out with control characters other than TAB and LF as ?.
-CTRL='\001-\010\013-\037\177'
+# What git prints, errors included, goes out with every control character but TAB and LF, NUL too, as ?.
+CTRL='\000-\010\013-\037\177'
 { main "$@" 2>&1 1>&3 3>&- | tr "$CTRL" '?' 1>&2 3>&-; } 3>&1 | tr "$CTRL" '?'

@@ -146,6 +146,29 @@
 64	git-ro: refused: a remerge diff runs the merge drivers the repository configures: --diff-merges=r	log	--diff-merges	r	-p
 64	git-ro: refused: a remerge diff runs the merge drivers the repository configures: --diff-merges=remerge	show	--diff-merges	remerge	merged
 64	git-ro: refused: a remerge diff runs the merge drivers the repository configures: --diff-merges=r	reflog	show	--diff-merges=r
+# NUL-separated output: the output filter prints NUL as ?, so the options that ask for it are refused
+64	git-ro: refused: log does not allow -z	log	-z
+64	git-ro: refused: log does not allow -pz	log	-pz
+64	git-ro: refused: log does not allow -z	log	-z	--format=%H
+64	git-ro: refused: show does not allow -z	show	-z	HEAD
+64	git-ro: refused: diff does not allow -z	diff	-z	HEAD~1	HEAD
+64	git-ro: refused: diff-tree does not allow -z	diff-tree	-z	-r	HEAD
+64	git-ro: refused: rev-list does not allow -z	rev-list	-z	HEAD
+64	git-ro: refused: ls-files does not allow -z	ls-files	-z
+64	git-ro: refused: ls-files does not allow -sz	ls-files	-sz
+64	git-ro: refused: ls-tree does not allow -z	ls-tree	-z	HEAD
+64	git-ro: refused: grep does not allow -z	grep	-z	-e	x	HEAD
+64	git-ro: refused: grep does not allow -nz	grep	-nz	-e	x	HEAD
+64	git-ro: refused: reflog does not allow -z	reflog	show	-z
+64	git-ro: refused: shortlog does not allow -z	shortlog	-z	-s	HEAD
+64	git-ro: refused: blame does not allow -z	blame	-z	HEAD	--	a.rs
+64	git-ro: refused: cat-file does not allow -z	cat-file	-z	--batch
+64	git-ro: refused: cat-file does not allow -Z	cat-file	-Z	--batch-check
+64	git-ro: refused: grep does not allow --null	grep	--null	-e	x	HEAD
+64	git-ro: refused: grep does not allow --nul: write options out in full	grep	--nul	-e	x	HEAD
+64	git-ro: refused: config does not allow -z	config	-z	--list
+64	git-ro: refused: config does not allow --null	config	--null	--list
+64	git-ro: refused: config does not allow -z	config	list	-z
 64	git-ro: refused: log does not allow -O/etc/hosts	log	-O/etc/hosts	-p
 64	git-ro: refused: log does not allow -pO/etc/hosts	log	-pO/etc/hosts
 64	git-ro: refused: show does not allow --textconv	show	--textconv	HEAD

@@ -472,6 +472,8 @@ run_in "$T/shortlog.in" "$WT" shortlog -s
 check "other subcommands never read standard input (shortlog prints nothing)" test "$RC:$(cat "$T/out")" = 0:
 run "$WT" grep -e $'\t' HEAD
 check "a TAB in an argument is allowed" test "$RC" != 64
+run "$WT" log --format=%H%x00 -1
+check "a NUL a format asks for prints as ?" test "$(cat "$T/out")" = "$SIGNED?"
 check "no allowed form ran a configured program, hook or helper" nomarks
 
 # =================================================================================================
@@ -761,6 +763,9 @@ for c in 'log -p -1' 'show HEAD' 'diff HEAD~1..HEAD' 'diff-tree -p HEAD' 'reflog
   run "$SH" $c
   check "git-ro $c shows the submodule's new commit whatever .gitmodules ignores" has "$T/out" "+Subproject commit $O2"
 done
+run "$SH" cat-file -p HEAD:bin.dat
+printf 'a?b?c\n' > "$T/bin.want"
+check "NUL and the other control bytes of a blob print as ?" cmp -s "$T/out" "$T/bin.want"
 git -C "$SH" rev-parse HEAD > "$SH/.git/info/grafts"
 if [ "$(git -C "$SH" -c advice.graftFileDeprecated=false rev-list --count HEAD 2>/dev/null)" = 1 ]; then
   ok "sanity: plain git cuts the history at the grafted commit"
