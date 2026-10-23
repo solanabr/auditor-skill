@@ -11,7 +11,8 @@
 #
 # <dir> is "." (the default) or a path relative to the working directory, with no "..", and no symbolic
 # link on the way. It must be the top level of a repository, or a bare repository, whose git directory
-# lies inside the working directory, holds no symbolic link and borrows no objects (alternates).
+# lies inside the working directory, holds no symbolic link, borrows no objects (alternates) and
+# rewrites no commit's parents (info/grafts).
 # --git-dir names a copy that `copy` made in a run directory <R> (audit_<n> or incident_<n>).
 #
 # No caller word ever precedes the git subcommand. Every argument lands after the subcommand name, so
@@ -65,16 +66,28 @@
 #   - files outside the tree that config can name and git prints from or parses: core.attributesFile,
 #     core.excludesFile, diff.orderFile, mailmap.file;
 #   - other repositories: submodule.recurse, diff.submodule;
+#   - what a read would hide or replace: grep.patternType and grep.extendedRegexp (how grep and log
+#     --grep read a pattern; -E, -F, -G and -P still choose), log.showRoot (the root commit's patch),
+#     core.useReplaceRefs (refs/replace), core.commitGraph (its cached parents);
 #   - output shaping: colour, core.quotePath, i18n.logOutputEncoding, core.bigFileThreshold.
-# --no-textconv --no-ext-diff go on log, show, diff, diff-tree, blame and reflog show, and --no-textconv
-# on grep. Clean and smudge filters cannot be pinned by name, so no allowed form reads the work tree's
-# content. Re-check the pins and this list against each new git release: a new config key that runs a
-# program or reads a file, or a read command that starts one, reopens what they close. The fixtures in
-# scripts/tests/test-git-ro.sh only prove the keys they set.
+# --no-textconv --no-ext-diff --ignore-submodules=none go on log, show, diff, diff-tree and reflog show
+# (submodule.<name>.ignore, even from .gitmodules, would hide a submodule's new commit), --no-textconv
+# --no-ext-diff on blame, and --no-textconv on grep. Clean and smudge filters cannot be pinned by name,
+# so no allowed form reads the work tree's content. Re-check the pins and this list against each new git
+# release: a new config key that runs a program or reads a file, or that hides or replaces what a read
+# shows, reopens what they close. The fixtures in scripts/tests/test-git-ro.sh only prove the keys they set.
+# Not pinned, because they shape output but still show every change, or come from content the
+# repository carries: diff.renames, diff.renameLimit, diff.context, diff.algorithm and the other diff
+# layout keys; .mailmap (it renames authors in the default formats; %an and %ae print the commit's own);
+# gitattributes binary or -diff and diff.<driver>.binary ("Binary files differ"; add --text or -a);
+# .gitignore and info/exclude for ls-files -o --exclude-standard. log -p prints no patch for a merge
+# unless asked (--cc, -m, --diff-merges). Reads trust the repository's object store; copy runs every
+# object through index-pack, which checks each one's hash.
 #
 # Output: control characters other than TAB and LF in what git prints, errors included, print as ?, so
 # binary content does not round-trip. Standard input is never read except as above. In a partial
-# clone, every read prints a note first; nothing is fetched, and a missing object fails.
+# clone every read prints a note first; nothing is fetched, and a missing object fails. In a shallow
+# clone every read notes that older history is missing.
 #
 # copy runs `clone --no-local --bare --no-recurse-submodules --template=` of <dir> into <R>/src.git
 # (src-2.git, src-3.git, ... once that exists) under the same hardened call, with protocol.file.allow
@@ -199,12 +212,15 @@ check_options() {
   done
 }
 
-note_partial() {
+note_history() { # the notes for a partial or a shallow clone
   confine_partial_clone "$REPO" >/dev/null
   case $? in
     0) printf '%s\n' 'git-ro: partial clone: missing objects are not fetched; history and contents may be incomplete (Rule 11c)' >&2 ;;
     2) refuse "git cannot read the repository's config, so a partial clone cannot be ruled out" ;;
   esac
+  if [ -e "$CONFINE_COMMON_DIR/shallow" ]; then
+    printf '%s\n' 'git-ro: shallow clone: history before the shallow boundary is missing (Rule 11c)' >&2
+  fi
 }
 
 open_copy() { # open_copy <R>/src[-<k>].git: a copy that copy made
@@ -472,7 +488,7 @@ run_diff() {
     case "$a" in --cached|--staged) cached=1 ;; *) opts+=("$a") ;; esac
   done
   if [ "$cached" -eq 1 ]; then
-    hgit "$REPO" diff --no-textconv --no-ext-diff --cached ${opts[@]+"${opts[@]}"} -- ${post[@]+"${post[@]}"} </dev/null
+    hgit "$REPO" diff --no-textconv --no-ext-diff --ignore-submodules=none --cached ${opts[@]+"${opts[@]}"} -- ${post[@]+"${post[@]}"} </dev/null
     exit $?
   fi
   i=0
@@ -491,7 +507,8 @@ run_diff() {
     [ "$i" -eq "$last" ] || [ "$i" -eq "$prev" ] || rest+=("${opts[$i]}")
     i=$((i + 1))
   done
-  hgit "$REPO" diff --no-textconv --no-ext-diff ${rest[@]+"${rest[@]}"} --end-of-options "${revs[@]}" -- ${post[@]+"${post[@]}"} </dev/null
+  hgit "$REPO" diff --no-textconv --no-ext-diff --ignore-submodules=none ${rest[@]+"${rest[@]}"} --end-of-options "${revs[@]}" \
+    -- ${post[@]+"${post[@]}"} </dev/null
   exit $?
 }
 
@@ -574,7 +591,7 @@ main() {
     config) run_config "$@" ;;
     remote) run_remote "$@" ;;
   esac
-  note_partial
+  note_history
   case "$sub" in
     diff) run_diff "$@" ;;
     blame) run_blame "$@" ;;
@@ -583,10 +600,10 @@ main() {
       [ "${1-}" = show ] || refuse "reflog only reads: reflog show [<options>] [<ref>]"
       shift
       check_options reflog "$@"
-      hgit "$REPO" reflog show --no-textconv --no-ext-diff "$@" </dev/null ;;
+      hgit "$REPO" reflog show --no-textconv --no-ext-diff --ignore-submodules=none "$@" </dev/null ;;
     log|show|diff-tree)
       check_options "$sub" "$@"
-      hgit "$REPO" "$sub" --no-textconv --no-ext-diff "$@" </dev/null ;;
+      hgit "$REPO" "$sub" --no-textconv --no-ext-diff --ignore-submodules=none "$@" </dev/null ;;
     cat-file)
       check_options cat-file "$@"
       for a in "$@"; do

@@ -688,6 +688,94 @@ run "$G" grep -n -e committed
 check "... and finds the committed text" test "$(cat "$T/out")" = 'keys/id.txt:1:committed text'
 
 # =================================================================================================
+# What the repository could set to change what a read shows: how grep and log --grep read a pattern,
+# the root commit's patch, replace refs, submodule ignore rules, grafts and a shallow file.
+# =================================================================================================
+SH="$T/shape"; mkrepo "$SH"
+put "$SH" src/a.rs "$(printf 'let owner_ok = true;\nliteral (ok) here\npipe a|b here\ncount x{2} here\nxx double')"
+printf 'a\000b\001c\n' > "$SH/bin.dat"
+git -C "$SH" add bin.dat
+commit "$SH" -m 'root import'
+put "$SH" src/b.rs 'fn second() {}'
+commit "$SH" -m 'second step'
+printf '[submodule "sub"]\n\tpath = sub\n\turl = ./sub\n\tignore = all\n' > "$SH/.gitmodules"
+git -C "$SH" add .gitmodules
+git -C "$SH" update-index --add --cacheinfo "160000,$O1,sub"
+commit "$SH" -m 'add sub'
+git -C "$SH" update-index --cacheinfo "160000,$O2,sub"
+commit "$SH" -m 'move sub'
+# Each case runs through git-ro and through plain git, with the repository's config clean and then under
+# each setting that changes how a pattern is read. git-ro must print what it printed with a clean config.
+PATTERNS=$(printf '%s\n' 'grep	-n	-e	owner.*ok	HEAD' 'grep	-n	-e	(ok)	HEAD' 'grep	-n	-e	a|b	HEAD' \
+  'grep	-n	-e	x{2}	HEAD' 'grep	-n	-e	owner.*ok' 'grep	-n	-E	-e	(ok)	HEAD' 'grep	-n	-F	-e	x{2}	HEAD' \
+  'log	--format=%s	--grep	sec.nd' 'log	--format=%s	-E	--grep	second|root')
+shape_runs() { # shape_runs <tag>: git-ro's output into $T/shape.<tag>, plain git's into $T/plain.<tag>
+  local line
+  : > "$T/shape.$1"
+  : > "$T/plain.$1"
+  while IFS= read -r line; do
+    IFS=$'\t' read -r -a args <<< "$line"
+    run "$SH" "${args[@]}"
+    { printf '$ %s\nstatus %s\n' "${args[*]}" "$RC"; cat "$T/out" "$T/err"; } >> "$T/shape.$1"
+    { printf '$ %s\n' "${args[*]}"; git -C "$SH" "${args[@]}" 2>&1; printf 'status %s\n' "$?"; } >> "$T/plain.$1"
+  done <<EOF
+$PATTERNS
+EOF
+}
+shape_runs clean
+check "the clean grep cases find what they look for" has "$T/shape.clean" 'HEAD:src/a.rs:1:let owner_ok = true;'
+check "... where a basic pattern's parentheses match themselves" \
+  awk '/^\$ / { on = ($0 == "$ grep -n -e (ok) HEAD") } on && /^HEAD:src\/a.rs:/ { n++; if ($0 !~ /^HEAD:src\/a.rs:2:/) bad = 1 } END { exit !(n == 1 && !bad) }' "$T/shape.clean"
+check "... and a caller's -E still reads an extended pattern" \
+  awk '/^\$ / { on = ($0 == "$ grep -n -E -e (ok) HEAD") } on && /^HEAD:src\/a.rs:1:/ { found = 1 } END { exit !found }' "$T/shape.clean"
+for setting in grep.patternType=fixed grep.patternType=perl grep.patternType=extended grep.extendedRegexp=true; do
+  git -C "$SH" config "${setting%%=*}" "${setting#*=}"
+  shape_runs "$setting"
+  git -C "$SH" config --unset "${setting%%=*}"
+  if cmp -s "$T/plain.clean" "$T/plain.$setting"; then skp "sanity: plain git reads patterns the same under $setting"
+  else ok "sanity: plain git reads patterns differently under $setting"; fi
+  check "git-ro grep and log --grep under $setting print what they print with a clean config" \
+    cmp -s "$T/shape.clean" "$T/shape.$setting"
+done
+git -C "$SH" config log.showRoot false
+git -C "$SH" log -p --reverse --format=%s > "$T/plain.out" 2>&1
+if grep -qF '+let owner_ok = true;' "$T/plain.out"; then skp "sanity: plain git still shows the root patch under log.showRoot=false"
+else ok "sanity: plain git hides the root commit's patch under log.showRoot=false"; fi
+run "$SH" log -p --reverse --format=%s
+check "log.showRoot=false from the repository does not hide the root commit's patch" has "$T/out" '+let owner_ok = true;'
+git -C "$SH" config --unset log.showRoot
+C2=$(git -C "$SH" rev-parse HEAD~2)
+FAKE=$(git -C "$SH" commit-tree -p "$(git -C "$SH" rev-parse HEAD~3)" -m 'REPLACED STEP' "$(git -C "$SH" rev-parse "$C2^{tree}")")
+git -C "$SH" replace "$C2" "$FAKE"
+git -C "$SH" log --format=%s > "$T/plain.out" 2>&1
+if grep -qx 'REPLACED STEP' "$T/plain.out"; then ok "sanity: plain git shows the replacement commit"
+else skp "sanity: this git does not show the replacement commit"; fi
+run "$SH" log --format=%s
+check "a replace ref does not change what log shows" sh -c "grep -qx 'second step' '$T/out' && ! grep -q 'REPLACED STEP' '$T/out'"
+git -C "$SH" replace -d "$C2" >/dev/null
+git -C "$SH" log -p -1 > "$T/plain.out" 2>&1
+if grep -qF "+Subproject commit $O2" "$T/plain.out"; then skp "sanity: plain git shows the submodule change that .gitmodules ignores"
+else ok "sanity: plain git hides a submodule change that .gitmodules ignores"; fi
+for c in 'log -p -1' 'show HEAD' 'diff HEAD~1..HEAD' 'diff-tree -p HEAD' 'reflog show -p -1'; do
+  # shellcheck disable=SC2086
+  run "$SH" $c
+  check "git-ro $c shows the submodule's new commit whatever .gitmodules ignores" has "$T/out" "+Subproject commit $O2"
+done
+git -C "$SH" rev-parse HEAD > "$SH/.git/info/grafts"
+if [ "$(git -C "$SH" -c advice.graftFileDeprecated=false rev-list --count HEAD 2>/dev/null)" = 1 ]; then
+  ok "sanity: plain git cuts the history at the grafted commit"
+else skp "sanity: this git does not read info/grafts"; fi
+run "$SH" log --oneline
+check "a repository with info/grafts is refused" \
+  err_is 'git-ro: refused: the working directory rewrites commit parents (info/grafts), so git would show another history; review that file: .'
+rm "$SH/.git/info/grafts"
+git -C "$SH" rev-parse HEAD~1 > "$SH/.git/shallow"
+run "$SH" log --format=%s
+check "a shallow clone gets a note" test "$(sed -n 1p "$T/err")" = 'git-ro: shallow clone: history before the shallow boundary is missing (Rule 11c)'
+check "... and its history stops at the boundary" test "$(wc -l < "$T/out" | tr -d ' ')" = 2
+rm "$SH/.git/shallow"
+
+# =================================================================================================
 # The installation: never inside the working directory, and only a path a quoted call can match.
 # =================================================================================================
 run "$ROOT" rev-parse HEAD
