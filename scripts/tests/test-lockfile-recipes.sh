@@ -24,7 +24,7 @@ KV089="$ROOT/known-vectors/089-unpatched-server-dependencies.md"
 KV137="$ROOT/known-vectors/137-vendored-program-version-drift.md"
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_NAMESPACE SCRATCH
 T=$(mktemp -d "${TMPDIR:-/tmp}/lockfile-recipes.XXXXXX") || exit 1
-trap 'rm -rf "$T"' EXIT
+trap 'chmod -R u+rwX "$T" 2>/dev/null; rm -rf "$T"' EXIT
 export GIT_CEILING_DIRECTORIES="$T" GIT_ALLOW_PROTOCOL=file GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
   GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
 pass=0; failn=0
@@ -147,18 +147,24 @@ done
 has "$T/plain.out" '"borsh" +checksum = "eeee"' && ok "Cargo.lock hint names a checksum-only change" \
   || bad "Cargo.lock hint lost the name of a checksum-only change"
 
-# step 4: the sweep before any diff or grep
-sweep=$(grep -o 'run `find old new [^`]*`' "$CL" | sed 's/^run `//; s/`$//')
-mkdir -p "$T/art/old/pkg" "$T/art/new/pkg/sub"
-echo a > "$T/art/old/pkg/a.js"; echo b > "$T/art/new/pkg/a.js"
-ln -s /etc/hosts "$T/art/new/pkg/link"; ln -s sub "$T/art/new/pkg/dirlink"
-mkfifo "$T/art/new/pkg/sub/fifo" "$T/art/old/pkg/fifo"
-( cd "$T/art" && eval "$sweep" ) > "$T/sweep.out" 2>&1
-left=$(cd "$T/art" && find old new ! -type f ! -type d | wc -l | tr -d ' ')
-if [ -n "$sweep" ] && [ "$left" = 0 ] && [ "$(wc -l < "$T/sweep.out" | tr -d ' ')" = 4 ] \
-   && [ -f "$T/art/old/pkg/a.js" ] && [ -f "$T/art/new/pkg/a.js" ] && [ -d "$T/art/new/pkg/sub" ]; then
-  ok "step 4 deletes and lists links and FIFOs, and keeps files and directories"
-else bad "step 4 sweep ('$sweep'): $left non-regular entries left"; sed 's/^/  | /' "$T/sweep.out"; fi
+# step 4: the sweep before any diff or grep, over an artifact whose directories are 0555 and 0000, then the
+# check that only files and directories are left, then the diff
+sweep=$(sed -n 's/.*Before any `diff` or `grep`, run `\([^`]*\)`.*/\1/p' "$CL")
+confirm=$(sed -n 's/.*Then confirm that `\([^`]*\)` prints nothing.*/\1/p' "$CL")
+A="$T/art"; mkdir -p "$A/old/pkg" "$A/new/pkg/sub" "$A/new/pkg/ro" "$A/new/pkg/hidden"
+echo a > "$A/old/pkg/a.js"; echo b > "$A/new/pkg/a.js"; echo keep > "$T/linked-file"; chmod 444 "$T/linked-file"
+ln -s "$T/linked-file" "$A/new/pkg/link"; ln -s sub "$A/new/pkg/dirlink"
+mkfifo "$A/new/pkg/sub/fifo" "$A/old/pkg/fifo" "$A/new/pkg/ro/fifo"
+echo 'require("child_process")' > "$A/new/pkg/hidden/run.js"; ln -s "$T/linked-file" "$A/new/pkg/hidden/link"
+chmod 555 "$A/new/pkg/ro"; chmod 000 "$A/new/pkg/hidden"
+( cd "$A" && eval "$sweep" ) > "$T/sweep.out" 2>&1
+left=$(cd "$A" && eval "$confirm" 2>&1)
+( cd "$A" && diff -ruN old/ new/ ) > "$T/sweep.diff" 2> "$T/sweep.err"
+if [ -n "$sweep" ] && [ -n "$confirm" ] && [ -z "$left" ] && [ "$(wc -l < "$T/sweep.out" | tr -d ' ')" = 6 ] \
+   && ! grep -q 'Permission denied' "$T/sweep.err" && grep -q 'child_process' "$T/sweep.diff" \
+   && [ -f "$A/old/pkg/a.js" ] && [ -d "$A/new/pkg/sub" ] && [ "$(ls -l "$T/linked-file" | cut -c1-10)" = -r--r--r-- ]; then
+  ok "step 4 opens 0555 and 0000 directories, deletes and lists links and FIFOs, and changes no link target"
+else bad "step 4 ('$sweep', then '$confirm') left: $left"; sed 's/^/  | /' "$T/sweep.out" "$T/sweep.err"; fi
 
 # ---- 2. the @solana/web3.js 1.95.6 / 1.95.7 check -------------------------------------------------------
 w3_block "$FA" > "$T/w3-fa.sh"; w3_block "$KV077" > "$T/w3-kv.sh"
