@@ -50,7 +50,7 @@ main() {
       /*) DEST="${HOME%/}/.claude/skills/auditor-skill" ;;
       *) echo "error: HOME is not set to an absolute path; pass the install directory explicitly." >&2; exit 2 ;;
     esac
-    # Through 7.6 a run without a path installed into ./.claude/skills/auditor-skill; a copy there stays as it is.
+    # Through 7.6.0 a run without a path installed into ./.claude/skills/auditor-skill; a copy there stays as it is.
     if { [ -e .claude/skills/auditor-skill ] || [ -L .claude/skills/auditor-skill ]; } \
        && [ "$(physical .claude/skills/auditor-skill)" != "$(physical "$DEST")" ]; then
       echo "note: this run installs to $DEST and leaves ./.claude/skills/auditor-skill alone; see \"Upgrading from 7.6.0 or earlier\" in the README." >&2
