@@ -81,7 +81,9 @@ because `python3 -I` keeps a sibling module off `sys.path`;
   text of a u64, at most 20 ASCII digits (not `1_000`, `+5`, `1e3`, a non-ASCII
   digit or a JSON number). These bounds keep every delta and sum exact and
   printable. The account keys are all strings, or all objects with a string
-  `pubkey`. Keys, program ids and a
+  `pubkey`; every index (`programIdIndex`, `accountIndex`, an inner group's
+  `index`, `numRequiredSignatures`) is a non-negative integer, and a `programId`
+  is not empty. Keys, program ids and a
   string `version` hold no control character, so each prints as one line.
   `shaped()` in the block is the full rule.
 - **Malformed lines are counted, never echoed and never fatal.** A line that

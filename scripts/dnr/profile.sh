@@ -240,6 +240,12 @@ def _of(v, *types):
     return type(v) in types + (_NONE,)
 
 
+def _index(v):
+    """null (or absent), or an integer index from 0: a negative one would count back
+    from the end in jq and in Python, but name no account in the recipes."""
+    return v is None or (type(v) is int and v >= 0)
+
+
 def _plain(v):
     """A string with no control character, so it prints as one line."""
     return type(v) is str and not _CONTROL.search(v)
@@ -256,12 +262,12 @@ def _amount(v):
 
 
 def _instruction(ix):
-    return (type(ix) is dict and _of(ix.get("programIdIndex"), int) and _of(ix.get("accounts"), list)
-            and (ix.get("programId") is None or _plain(ix.get("programId"))))
+    return (type(ix) is dict and _index(ix.get("programIdIndex")) and _of(ix.get("accounts"), list)
+            and (ix.get("programId") is None or (_plain(ix.get("programId")) and ix.get("programId") != "")))
 
 
 def _token_balance(b):
-    if type(b) is not dict or not (_of(b.get("accountIndex"), int) and _of(b.get("owner"), str)
+    if type(b) is not dict or not (_index(b.get("accountIndex")) and _of(b.get("owner"), str)
                                    and _of(b.get("mint"), str) and _of(b.get("uiTokenAmount"), dict)):
         return False
     amount = (b.get("uiTokenAmount") or {}).get("amount")
@@ -284,7 +290,7 @@ def shaped(tx):
     m = m or {}
     keys, header, ixs = m.get("accountKeys"), m.get("header"), m.get("instructions")
     if not (_of(keys, list) and _of(header, dict) and _of(ixs, list)
-            and _of((header or {}).get("numRequiredSignatures"), int)
+            and _index((header or {}).get("numRequiredSignatures"))
             and all(_instruction(ix) for ix in ixs or [])):
         return False
     if keys and not (all(_plain(k) for k in keys)
@@ -296,7 +302,8 @@ def shaped(tx):
             and all(type(s) is str for s in logs or [])):
         return False
     for g in groups or []:
-        if not (type(g) is dict and type(g.get("index")) is int and _of(g.get("instructions"), list)
+        if not (type(g) is dict and g.get("index") is not None and _index(g.get("index"))
+                and _of(g.get("instructions"), list)
                 and all(_instruction(ix) for ix in g.get("instructions") or [])):
             return False
     for name in ("writable", "readonly"):

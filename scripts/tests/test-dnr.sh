@@ -930,6 +930,13 @@ bad = {
     "lamports-a-4301-digit-delta": enc(tx("SigBad38", pre=[10000, 0], post=[5000, 0])).replace(
         b"[10000, 0]", b"[10000, -" + b"9" * 4300 + b"]").replace(b"[5000, 0]", b"[5000, " + b"9" * 4300 + b"]"),
     "tokens-a-4301-digit-sum": enc(tx("SigBad39", pre_tb=[bal("0")], post_tb=[bal("9" * 4300), bal("9" * 4300)])),
+    "a-negative-programIdIndex": enc(tx("SigBad40", keys=["Payer1111111111111111111111111111111111111", "Last111111111111111111111111111111111111111"],
+                                        ixs=[{"programIdIndex": -1, "accounts": [0]}])),
+    "an-empty-programId": enc(tx("SigBad41", ixs=[{"programId": "", "accounts": [0]}])),
+    "a-negative-numRequiredSignatures": enc(tx("SigBad42", keys=["Payer1111111111111111111111111111111111111", "Two1111111111111111111111111111111111111111"])).replace(
+        b'"instructions"', b'"header": {"numRequiredSignatures": -1}, "instructions"'),
+    "a-negative-accountIndex": enc(tx("SigBad43", pre_tb=[dict(bal("0"), accountIndex=-1)], post_tb=[dict(bal("5"), accountIndex=-1)])),
+    "a-negative-inner-index": enc(tx("SigBad44", meta_extra={"innerInstructions": [{"index": -1, "instructions": []}]})),
 }
 last = ("instruction-a-string", "keys-strings-and-objects", "header-count-a-string", "a-pubkey-that-is-an-object",
         "a-truncated-line-holding-a-drain", "nesting-300-deep")
