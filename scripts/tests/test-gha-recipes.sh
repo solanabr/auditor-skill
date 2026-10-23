@@ -5,7 +5,8 @@
 #   K116-1   KV-116 Step 1 (AI-agent steps);
 #   K139-1   KV-139 Step 1 (externally triggerable workflows);
 #   K140-6   KV-140 Step 6 (Actions cache writers and restorers).
-# It also checks that every known-vector step that repeats an R recipe carries it byte for byte.
+# It also checks that every known-vector step that repeats an R recipe carries it byte for byte, and runs R1
+# over large inputs: 2,000 workflows, and two of about 1 MiB.
 #
 # Usage (from the repo root): bash scripts/tests/test-gha-recipes.sh
 # Needs bash >= 3.2, grep, awk, xargs. No network. The fixtures are copied into a temp dir as
@@ -107,7 +108,8 @@ ncopy=0
 while read -r id file step; do
   ncopy=$((ncopy + 1))
   line=$(recipe "$id")
-  if [ -n "$line" ] && kv_step "$file" "$step" | grep -qxF -- "$line"; then
+  steps=$(kv_step "$file" "$step")
+  if [ -n "$line" ] && grep -qxF -- "$line" <<< "$steps"; then
     echo "ok   copy of $id in $file step $step"
   else
     echo "FAIL copy of $id in $file step $step differs from discovery/grep-commands.md"
@@ -120,5 +122,26 @@ for id in R1 R2 R3 R4 R5 R6 R7 R8 K116-1 K139-1 K140-6; do
   case " $(expected "$id") " in *" 09 "*) echo "FAIL $id: negative control 09 is expected"; fail=1 ;; esac
 done
 
+# Large inputs: 2,000 gated workflows (a file list over 64 KiB for R1's xargs) and two of about 1 MiB with
+# the trigger on their first lines; one has its author_association gate on its last line. R1 must read each
+# file whole and flag only the ungated one.
+large="$work/large"; mkdir -p "$large/.github/workflows"
+awk -v d="$large/.github/workflows" 'BEGIN { for (i = 0; i < 2000; i++) { f = sprintf("%s/small-gated-workflow-%04d.yml", d, i)
+  printf "on: issue_comment\njobs:\n  a:\n    if: github.event.comment.author_association == %sOWNER%s\n", "\047", "\047" > f; close(f) } }'
+for g in gated ungated; do
+  { printf 'on:\n  issue_comment:\n    types: [created]\njobs:\n  big:\n    runs-on: ubuntu-latest\n    steps:\n'
+    awk 'BEGIN { for (i = 0; i < 17000; i++) printf "      - run: echo step %05d xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n", i }'
+    if [ "$g" = gated ]; then echo "    if: github.event.comment.author_association == 'MEMBER'"; fi
+  } > "$large/.github/workflows/big-$g.yml"
+done
+size=$(wc -c < "$large/.github/workflows/big-gated.yml" | tr -d ' ')
+got=$(cd "$large" && eval "$(recipe R1)" </dev/null 2>/dev/null | sed 's#^\.github/workflows/##' | sort | tr '\n' ' ')
+if [ "$got" = "big-ungated.yml " ] && [ "$size" -gt 1048576 ]; then
+  echo "ok   R1 on large inputs: 2,000 gated workflows and two of $size bytes, only the ungated one flagged"
+else
+  echo "FAIL R1 on large inputs: got [$got] want [big-ungated.yml ] (big file: $size bytes)"
+  fail=1
+fi
+
 if [ "$fail" -ne 0 ]; then echo "gha recipe test FAILED" >&2; exit 1; fi
-echo "gha recipe test passed: $nrec recipes, $(ls "$fixtures"/*.yml | wc -l | tr -d ' ') fixtures, $ncopy copies"
+echo "gha recipe test passed: $nrec recipes, $(ls "$fixtures"/*.yml | wc -l | tr -d ' ') fixtures, $ncopy copies, large inputs"

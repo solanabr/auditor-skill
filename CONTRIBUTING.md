@@ -38,6 +38,20 @@ Optional: `git submodule update --init --depth 1 -- vendor/trailofbits` for the 
 tooling and `cd tools/auditor-tools && cargo build --release` for the Rust CLIs. Neither is needed for
 corpus PRs.
 
+The checks run with the stock tools of macOS (`/bin/bash` 3.2, BSD sed, grep and awk) as well as with bash 5
+and GNU tools on Linux. Beyond git they need python3 and jq, plus cargo and rustup for the PoC runner's
+real-toolchain checks (`scripts/tests/test-dnr-poc-runner.sh` skips those without them). This is what the
+required CI job runs:
+
+```bash
+bash scripts/check-corpus.sh
+bash scripts/check-frontmatter.sh
+bash scripts/check-pipefail.sh
+for t in scripts/tests/*.sh; do bash "$t" || echo "FAILED: $t"; done
+bash scripts/check-hygiene.sh
+bash scripts/check-attribution.sh origin/main..HEAD
+```
+
 ---
 
 ## 3. Branch and PR flow
@@ -45,7 +59,9 @@ corpus PRs.
 1. Branch from an up-to-date `main`:
    `git switch -c feat/<topic>-<dd-mm-yyyy>` (prefixes in use: `feat/`, `fix/`, `docs/`, `perf/`, `chore/`).
 2. Make the change. Run `bash scripts/check-corpus.sh` before every commit that touches
-   `checklists/`, `known-vectors/`, `references/methodologies/`, or any file that quotes a count.
+   `checklists/`, `known-vectors/`, `references/methodologies/`, or any file that quotes a count, and
+   `bash scripts/check-frontmatter.sh` before one that touches the frontmatter of `commands/`, `agents/`,
+   `skills/` or `SKILL.md`.
 3. Commit with a conventional-style subject and a body that says *what* and *why*:
    `feat(corpus): <what> — <why>`, `fix(vector): …`, `docs(readme): …`, `chore(release): bump version to X.Y.Z`.
 4. Push the branch and open a PR against `main` using the template. Fill in every section; "n/a" is an
@@ -120,6 +136,59 @@ warning-free, add or extend a fixture under the tool's test directory for any pa
 new flags in `docs/power-tools.md`. Workflow files pin third-party actions to a full commit SHA with the
 version in a trailing comment.
 
+### Shell scripts
+
+- Scripts run under macOS `/bin/bash` 3.2 with BSD tools and under bash 5 with GNU tools: no `declare -A`,
+  `mapfile` or `${x,,}`, and no GNU-only sed or grep flags. Quote every expansion.
+- Under `set -o pipefail`, never pipe into a reader that can stop before its input ends: `grep -q`, `-l`,
+  `-L` or `-m`, grep writing to `/dev/null`, `head`, `read`, `sed` with `q`, `awk` with `exit`, also inside a
+  `"$( … )"` or a `>( … )`. Count with `grep -c`, print with `sed -n '1,Np'`, or capture the output first.
+  `scripts/check-pipefail.sh` enforces this over every tracked `*.sh` file that mentions pipefail; a pipe
+  meant to stop early carries the comment `# pipefail-ok: <reason>` on its line.
+- A change to a pipeline gets a test with an input larger than a pipe holds (over 64 KiB; 1 MiB is usual).
+
+### Frontmatter of commands, agents and `SKILL.md`
+
+`scripts/check-frontmatter.sh` fails when Claude Code would read a field differently from what is written.
+It reads every file whose frontmatter Claude Code loads: each `.md` file at any depth under `commands/` and
+`agents/`, the root `SKILL.md`, and every `SKILL.md` under `skills/`, in any letter case. Name such a file
+with a lowercase `.md`. Its frontmatter keeps to a flat subset:
+
+- Line 1 is exactly `---`, and the block ends at the next line that is exactly `---`. No other line of the
+  block contains `---`, even inside a quoted value, and none is `...`. The file holds no NUL byte; the block
+  holds no tab, CR or other control character, and no U+0085, U+2028 or U+2029.
+- One `key: value` per line, each key once, written exactly as the check lists it. Agents need `name`,
+  `description` and `tools`; commands need `description` and `allowed-tools`; a `SKILL.md` needs `name` and
+  `description` and, for now, has no other key. A new key is added to the check's list when it is first
+  used.
+- Quote a value that starts with a YAML indicator (`-`, `?`, `:`, `,`, `[`, `]`, `{`, `}`, `#`, `&`, `*`,
+  `!`, `|`, `>`, `%`, `@` or a backtick), holds `: `, ` #` or `...`, ends in `:`, or would read as a number,
+  a boolean or null (`3000`, `++7`, `yes`, `null`). Double quotes escape only `\"` and `\\`; single quotes
+  double a `'`.
+- `tools` and `allowed-tools` list `Name` or `Name(pattern)` entries, either on one line separated by `, `
+  or one per line as `  - item`; an item may be single-quoted, as in
+  `  - 'Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh" *)'`. A pattern holds no parentheses, and
+  agents list tool names only. `allowed-tools` lists nothing from `FORBIDDEN_ALLOWED_TOOLS` in the script
+  (today `*`), nor a catch-all pattern of a name in it, such as `Bash(*)` once `Bash` is listed.
+- The block is at most 65,536 bytes and holds at most 256 of `[`, `{` and ` - `.
+
+### CI
+
+- **`corpus-check`, job "counts, index, version, hygiene"**: required by branch protection, so keep its
+  name. It runs the commands in §2. Every suite runs before the step fails, and the failed ones are listed.
+  It sets `REQUIRE_TOOLCHAIN=1`, so the PoC runner's suite fails when cargo or rustup is missing instead of
+  skipping its real-toolchain checks.
+- **`corpus-check`, job "macOS, bash 3.2 and BSD tools (advisory)"**: the same checks on `macos-26`, with a
+  stock PATH plus `~/.cargo/bin` that its first step asserts. It is not a required check. A newer push to the
+  same ref cancels its older run.
+- **`plugin-validate`**: weekly and on demand, `claude plugin validate --strict` over the repository
+  directory. Advisory. Claude Code comes from `.github/plugin-validate/`: an exact version in `package.json`,
+  every package's integrity hash in `package-lock.json`, installed with `npm ci --ignore-scripts`. The native
+  binary is the platform's optional dependency, which the job runs directly; the main package's postinstall
+  only copies it over a placeholder. To move to a new version, after reading its release notes, set it in
+  `package.json` and, in that directory, run
+  `NPM_CONFIG_USERCONFIG=<empty file> npm install --package-lock-only --ignore-scripts`.
+
 ### Bumping `vendor/trailofbits`
 
 The Trail of Bits pin ships to every user: Claude Code clones the plugin with its submodules, and
@@ -132,10 +201,14 @@ fails that PR until the README pin is updated on the same branch. Never auto-mer
    first). Read every section: plugins added or removed; load surfaces (nested `.claude/`, `.claude-plugin/`
    manifests and any hooks / MCP / LSP servers they declare, `hooks/`, `.mcp.json` / `.lsp.json`, settings,
    `CLAUDE.md` / `AGENTS.md`, `workflows/*.js`); new executables; symlinks (`120000`) and gitlinks
-   (`160000`); hosts in added script, config and Markdown lines (tests, evals, fixtures and lockfiles left
-   out); remote-exec patterns in added lines, with continuation lines joined (a download piped to a shell or
-   interpreter, `sh -c "$(curl …)"`, `<(curl …)`, `npx --yes`, `pip` or `uvx` from a URL); the `LICENSE`
-   (must be unchanged).
+   (`160000`); paths git still quotes, to read by hand; renamed files, OLD -> NEW (a file moved unchanged,
+   to a path that is not a load surface, is left out of the added-line scans; every other renamed file is
+   scanned whole); hosts in added script, config and Markdown lines (tests, evals, fixtures and lockfiles
+   left out); remote-exec patterns in added lines, with continuation lines joined (a download piped to or
+   evaluated by a shell, an interpreter or PowerShell, such as `sh -c "$(curl …)"`, `<(curl …)` or
+   `irm … | iex`; `npx --yes`, `bunx` and `dlx`; `pip`, `pipx`, `uv`, `uvx`, `npm`, `cargo` and `deno`
+   installs from git or a URL; `go install …@latest`); the `LICENSE` (must be unchanged). Paths, hosts and
+   commands match in any letter case.
 2. The script ends by checking that every plugin named in `references/orchestration/boundary-map.md` and
    `docs/power-tools.md` still exists. For each one that changed (`git diff <old> <new> -- plugins/<name>`),
    update its rows when the entry point, behaviour, execution (`OUTPUT-RULES.md` Rule 11a) or outside
@@ -153,6 +226,7 @@ fails that PR until the README pin is updated on the same branch. Never auto-mer
 
 - Does the change do one thing, and is that thing described accurately in the PR?
 - Do all counts, index rows, and reference-table rows agree (`scripts/check-corpus.sh` green)?
+- Does every command, agent and `SKILL.md` frontmatter pass `scripts/check-frontmatter.sh`?
 - Are new vectors / items checkable from code, with a PASS / FAIL shape and a grep?
 - Are cited incidents real and public?
 - No attribution trailers, no secrets, no `.env` / state / local assistant files tracked.
