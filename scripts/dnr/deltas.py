@@ -177,6 +177,9 @@ _DIGITS = re.compile("[0-9]+")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 _SURROGATE_ESCAPE = re.compile(r"\\u[dD][89a-fA-F]")
 _LONE_SURROGATE = re.compile("[\ud800-\udfff]")
+# Containers may nest this deep, the top-level object being 1: well below the 256 that
+# jq reads, so profile.sh never meets a line its queries cannot parse.
+_DEPTH = 200
 
 
 def _no_constant(name):
@@ -315,6 +318,19 @@ def _lone_surrogate(obj):
     return False
 
 
+def _too_deep(obj):
+    stack = [(obj, 1)]
+    while stack:
+        v, depth = stack.pop()
+        if depth > _DEPTH:
+            return True
+        if isinstance(v, dict):
+            stack.extend((x, depth + 1) for x in v.values() if isinstance(x, (dict, list)))
+        elif isinstance(v, list):
+            stack.extend((x, depth + 1) for x in v if isinstance(x, (dict, list)))
+    return False
+
+
 def _of(v, *types):
     """v is null (or absent), or exactly one of types: a bool is not an int."""
     return type(v) in types + (_NONE,)
@@ -404,6 +420,9 @@ def parsed(line):
     except (ValueError, RecursionError):
         return None
     if _SURROGATE_ESCAPE.search(text) and _lone_surrogate(tx):
+        return None
+    # Only a line with more brackets than _DEPTH can nest that deep.
+    if text.count("[") + text.count("{") > _DEPTH and _too_deep(tx):
         return None
     return tx if shaped(tx) else None
 

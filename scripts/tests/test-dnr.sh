@@ -921,9 +921,10 @@ bad = {
     "a-program-id-holding-a-newline": enc(tx("SigBad29", ixs=[{"programId": "Prog\nForged", "accounts": []}])),
     "a-version-holding-a-newline": enc(dict(tx("SigBad30"), version="0\n   999 legacy")),
     "balance-lists-of-different-lengths": enc(tx("SigBad31", pre=[10000, 5, 9000000000], post=[5000, 10])),
+    "nesting-300-deep": enc(tx("SigBad32", meta_extra={"x": "PLACE"})).replace(b'"PLACE"', b"[" * 300 + b"]" * 300),
 }
 last = ("instruction-a-string", "keys-strings-and-objects", "header-count-a-string", "a-pubkey-that-is-an-object",
-        "a-truncated-line-holding-a-drain")
+        "a-truncated-line-holding-a-drain", "nesting-300-deep")
 good = {
     "raw-CR-between-tokens": enc(tx("SigGood1", mark=False)).replace(b', "transaction"', b',\r"transaction"'),
     "CRLF-line-end": enc(tx("SigGood2", mark=False)) + b"\r",
@@ -932,6 +933,7 @@ good = {
     "a-45-digit-amount": enc(tx("SigGood5", pre_tb=[bal("0")], post_tb=[bal("1" * 45)], mark=False)),
     "a-duplicate-key": enc(tx("SigGood6", mark=False)).replace(b'"err": null', b'"err": {"Custom": 1}, "err": null'),
     "fewer-keys-than-balances": enc(tx("SigGood7", pre=[10000, 5, 9000000000], post=[5000, 10, 0], mark=False)),
+    "nesting-200-deep": enc(tx("SigGood8", meta_extra={"x": "PLACE"}, mark=False)).replace(b'"PLACE"', b"[" * 198 + b"]" * 198),
 }
 for kind, cases in (("bad", bad), ("good", good)):
     for name, line in cases.items():
@@ -971,16 +973,16 @@ for f in "$TT"/c20/bad-*.jsonl; do
   name="${f##*/bad-}"; name="${name%.jsonl}"
   : > "$TT/r20.all"; rm -f "$TT/r20.lost"
   eq "contract: $name is one malformed line for every recipe, which carries on" "$(runs20 "$f")" "0:1 0:1 0:1 0:1 0:1"
-  if grep -q 'CRAFTED\|Traceback' "$TT/r20.all" || [[ -e "$TT/r20.lost" ]]; then
-    bad "contract: $name was echoed, raised, or lost the clean transaction ($(cat "$TT/r20.lost" 2>/dev/null))"
+  if grep -q 'CRAFTED\|Traceback\|^jq: ' "$TT/r20.all" || [[ -e "$TT/r20.lost" ]]; then
+    bad "contract: $name was echoed, raised, failed a query, or lost the clean transaction ($(cat "$TT/r20.lost" 2>/dev/null))"
   fi
 done
 for f in "$TT"/c20/good-*.jsonl; do
   name="${f##*/good-}"; name="${name%.jsonl}"
   : > "$TT/r20.all"; rm -f "$TT/r20.lost"
   eq "contract: $name is read as a transaction by every recipe" "$(runs20 "$f")" "0:0 0:0 0:0 0:0 0:0"
-  if grep -q 'Traceback' "$TT/r20.all" || [[ -e "$TT/r20.lost" ]]; then
-    bad "contract: $name raised or lost the clean transaction ($(cat "$TT/r20.lost" 2>/dev/null))"
+  if grep -q 'Traceback\|^jq: ' "$TT/r20.all" || [[ -e "$TT/r20.lost" ]]; then
+    bad "contract: $name raised, failed a query, or lost the clean transaction ($(cat "$TT/r20.lost" 2>/dev/null))"
   fi
 done
 eq "contract: a raw CR between JSON tokens is not a line break: deltas keeps that transaction's rows" \
