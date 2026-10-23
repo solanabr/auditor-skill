@@ -48,9 +48,10 @@ for the menu and the "do not" list (never `program close`, never `--final`).
   account): re-run with `FIXED_SO` set to a fresh dump of the **current on-chain**
   bytes. It holds when `run.sh` ends with `… fixed sha256=<that dump> (blocked:
   failed, account unchanged) → [PoC-REPRODUCED]`; exit 3 (no assertion ran, a harness
-  error, a control that failed) is inconclusive, not a broken fix. When no legitimate
-  call can show the change on the live bytes, pin the hotfix's error with
-  `assert_exploit_rejected_with!` instead. Report the two results apart — ours
+  error, a control that failed) is inconclusive, not a broken fix, and is recorded with
+  its blocker line and "PoC re-run needed". When no legitimate call can show the change
+  on the live bytes, pin the hotfix's error with `assert_exploit_rejected_with!`
+  instead, as a new check, not a harness repair. Report the two results apart — ours
   proves the proposal, theirs proves what is live.
 - **Stop-gap while the code fix is pending:** {the containment row that holds the
   line until then}.

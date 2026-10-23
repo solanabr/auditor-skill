@@ -146,9 +146,9 @@ other outcome is filed under `ruled_out[]`.
   snapshot): the **observed Leg-1 effect** (the account the attack changed and the
   value it left there), not merely an `Ok`. A LiteSVM PoC meets Leg 3 the same way: it
   loads the program through `litesvm_for!` and asserts with the macros' LiteSVM forms.
-  A harness error (a wrong program id, a short account list) on either arm is exit 3,
-  inconclusive: Leg 3 stays unmet, `LEDGER.md` records `run.sh`'s blocker line with
-  "PoC re-run needed", and `poc-engineer` repairs the harness setup once and re-runs.
+  Every exit 3 leaves Leg 3 unmet: `LEDGER.md` records `run.sh`'s blocker line with
+  "PoC re-run needed". A harness error (a wrong program id, a short account list, on
+  either arm) also gets `poc-engineer`'s one repair pass on the harness setup.
   A PoC built only from a minimized replica crate prints another line and does
   **not** satisfy Leg 3. See `incidents-schema.md` → `binary_provenance` and
   `poc-engineer`'s incident mode.
