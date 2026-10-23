@@ -45,7 +45,9 @@ Telegram bot (`@seal_911_bot`). These commands are the after-the-fact workup.
   the collector finalizes and passes `maxSupportedTransactionVersion: 1`, which is
   mandatory now that v1 transactions are live on mainnet. Non-interactive runs
   collect only with `--collect`. A long collection runs in the background; one
-  that is stopped records what it had not fetched as collection gaps.
+  stopped by INT, TERM or HUP, or by a failed write, records what it had not
+  fetched as collection gaps; for one killed outright, the agent records them from
+  its files.
 - **Source** (`--repo`): needed to confirm a flaw and to reach
   `confirmed_exploited`; without it, findings cap at `suspected`.
 

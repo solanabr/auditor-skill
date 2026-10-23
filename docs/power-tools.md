@@ -264,14 +264,15 @@ The one gated collector: it pages each address's signature history, failed trans
   - 3, a named blocker:
     - no curl or jq;
     - a jq that rounds large integers and no working `python3`;
-    - no private temp directory, which is made before anything is written.
+    - no private temp directory, which is made before anything is written;
+    - a failed write to a corpus file, to `collection-gaps.tsv`, or to the private signature and fetch lists (a full disk, say). The run stops there: it makes no further call, records what it had not collected as gap rows while `collection-gaps.tsv` still takes them, and prints the blocker in place of the closing lines. When the blocker says `collection-gaps.tsv` is incomplete too, record the gaps as for a run killed outright.
   - 128 + N: stopped by signal N (INT, TERM or HUP), with what was left recorded as collection gaps.
 - **Network:** read-only JSON-RPC to `$RPC_URL` (`getSignaturesForAddress`, then `getTransaction` at `finalized` with `maxSupportedTransactionVersion: 1`), and only with `--confirmed`. The URL reaches curl through a config on stdin (`curl -q -K -`), never as an argument. The `provider:` line names the provider's domain (the host's last two labels) for the Rule 11b disclosure; curl errors pass through `redact.sh`.
 - **Writes:** `<dir>/signatures.jsonl`, `<dir>/transactions.jsonl` and `<dir>/collection-gaps.tsv`.
   - `transactions.jsonl` is written by jq only when a test round-trip shows jq keeps 64-bit integers exact (a check of behaviour, not of the version); otherwise it is written by `python3 -I`.
   - `collection-gaps.tsv` has one `<signature or address><TAB><reason>` row per gap: a failed `getTransaction`, a failed signature page (older history not collected), a page cap that stopped on a full page, where older history may exist (with the `--before` to resume from), the `--max-tx` cap, or the stop after 10 failed calls in a row.
   - The three files are written only through the descriptors opened when they were created.
-  - stdout ends with `transactions fetched: N of M calls -> …` and `collection gaps: N (see …)`. Notices go to stderr and start with `  ! `.
+  - stdout ends with `transactions fetched: N of M calls -> …` and `collection gaps: N (see …)`, except after a failed write (exit 3), when a `[blocker]` line on stderr takes their place. Notices go to stderr and start with `  ! `.
   - A run stopped by INT, TERM or HUP adds gap rows for the address being paged (naming the `--before` signature to resume from, once one of its pages was read) and each one after it, and one for the signatures listed but not fetched, then prints the closing lines. A run killed outright prints nothing more; then each signature in `signatures.jsonl` with no transaction in `transactions.jsonl` is a gap, and so is every address whose history may not have been paged to its end: the last `queried_address` in `signatures.jsonl` and every address given after it, or every address given when none appears.
   - An `incident_*` directory (`<dir>` or its parent) without a `.gitignore` gets one containing `*`.
 - **Run time:** up to addresses × `--max-pages` + `--max-tx` calls, one at a time, each up to 60 seconds. Run a long collection in the background, or with a timeout sized from that count.
