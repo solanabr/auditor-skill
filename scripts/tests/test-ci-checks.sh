@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # test-ci-checks.sh — fixture tests for the CI checks that have no suite of their own:
 #   1. scripts/check-attribution.sh flags a trailer in a commit message of 1 MiB as well as a short one,
-#      and fails on a range git cannot read or one that holds no commits;
+#      and fails on a range git cannot read or one that holds no commits; scripts/hooks/commit-msg refuses
+#      the same trailer with any spacing after its colon;
 #   2. scripts/check-frontmatter.sh passes every real command, agent and SKILL.md and the shapes they use,
 #      and fails each case below where Claude Code would read a field differently from what is written;
 #   3. scripts/check-pipefail.sh flags each pipe into a reader that can stop early in a script under
@@ -60,6 +61,12 @@ done
 expect "attribution: a range git cannot read fails" 1 attr "no-such-ref..HEAD"
 expect "attribution: a range with no commits fails" 1 attr "HEAD..HEAD"
 expect "attribution: an option in place of a range fails" 1 attr "--all"
+for sp in " " "\t" ""; do   # the commit-msg hook reads the same pattern
+  printf "docs: a message\n\nCo-Authored-By:${sp}%s\n" "${TRAILER#Co-Authored-By: }" > "$T/hook-msg"
+  expect "commit-msg hook: a trailer with '${sp:-no space}' after the colon is refused" 1 sh "$ROOT/scripts/hooks/commit-msg" "$T/hook-msg"
+done
+printf 'docs: a message\n\nCo-Authored-By: A Person <person@example.invalid>\n' > "$T/hook-msg"
+expect "commit-msg hook: a co-author trailer that names no assistant is accepted" 0 sh "$ROOT/scripts/hooks/commit-msg" "$T/hook-msg"
 
 # ---- 2. check-frontmatter.sh -----------------------------------------------------------------------
 expect "frontmatter: every real command, agent and SKILL.md passes" 0 bash "$ROOT/scripts/check-frontmatter.sh"
