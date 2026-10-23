@@ -345,31 +345,35 @@ fetch_list() {
 }
 # interrupted <signal> <exit status>: an INT, TERM or HUP ends the run here. What it
 # had not finished becomes collection gaps: the address being paged and every address
-# after it, and the signatures listed but not fetched (one row, naming the first);
-# then it prints the closing lines and exits 128 + the signal number.
-phase=paging; addrs_done=0; page=0; handled=0; fetched=0; calls=0; collected=0
+# after it, and the signatures listed but not fetched (one row, naming the first). It
+# writes every row, and computes every count, before it prints anything: its output
+# may go to a pipe that is already closed, so SIGPIPE is ignored and a failed write
+# comes last. Then it prints the closing lines and exits 128 + the signal number.
+phase=paging; addrs_done=0; page=0; handled=0; fetched=0; calls=0; collected=0; total=0
 interrupted() {
-  local why="the run was interrupted ($1)" k=0 a next first
-  trap '' INT TERM HUP
-  if [ "$phase" = paging ] || [ "$phase" = listed ]; then
+  local why="the run was interrupted ($1)" k=0 a next first=""
+  trap '' INT TERM HUP PIPE
+  if [ "$phase" = paging ]; then
     for a in "${addrs[@]}"; do
       k=$((k + 1))
-      if [ "$phase" = paging ] && [ "$k" -eq $((addrs_done + 1)) ]; then
+      if [ "$k" -eq $((addrs_done + 1)) ]; then
         gap "$a" "getSignaturesForAddress page $page: $why; older history not collected"
-      elif [ "$phase" = paging ] && [ "$k" -gt $((addrs_done + 1)) ]; then
+      elif [ "$k" -gt $((addrs_done + 1)) ]; then
         gap "$a" "not paged: $why"
       fi
     done
-    echo "signatures collected: $collected -> $sig_file"
+  fi
+  if [ "$phase" = paging ] || [ "$phase" = listed ]; then
     fetch_list; total="$(grep -c . "$todo")"; handled=0
   fi
+  case "$total" in ''|*[!0-9]*) total=0 ;; esac
+  next=$((handled + 1))
   if [ "$phase" != done ]; then
-    next=$((handled + 1)); first="$(sed -n "${next}p" "$todo")"
-    if [ -n "$first" ]; then
-      gap "$first" "not fetched: $why; this and $((total - next)) older signatures in signatures.jsonl were not fetched"
-      echo "  ! $why: $((total - next + 1)) signatures listed in signatures.jsonl were not fetched — recorded as a collection gap" >&2
-    fi
+    first="$(sed -n "${next}p" "$todo")"
+    [ -z "$first" ] || gap "$first" "not fetched: $why; this and $((total - next)) older signatures in signatures.jsonl were not fetched"
   fi
+  [ "$phase" != paging ] || echo "signatures collected: $collected -> $sig_file"
+  [ -z "$first" ] || echo "  ! $why: $((total - next + 1)) signatures listed in signatures.jsonl were not fetched — recorded as a collection gap" >&2
   echo "transactions fetched: $fetched of $calls calls -> $tx_file"
   echo "collection gaps: $ngaps (see $gaps)"
   exit "$2"

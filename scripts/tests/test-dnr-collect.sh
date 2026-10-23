@@ -871,6 +871,38 @@ if grep -q "^$B_ADDR$(printf '\t')getSignaturesForAddress page [01]: the run was
 else
   bad "interrupted paging: rows '$(tr '\n' '|' < "$TT/int-page/collection-gaps.tsv")', output '$(tr '\n' '|' < "$TT/int-page.out")'"
 fi
+# The same paging run with its stdout through a pipe that is closed when the run is
+# stopped: TERM goes to the whole process group, as for `collect.sh … | tee log`, so
+# the reader dies too. Every gap row still lands before any output, and the run
+# exits 143, whether SIGPIPE was ignored when it started or at its default.
+# grouprun <out dir> <method>|<k> ignore|default <args...>: run collect.sh piped into
+# cat, in a process group of its own, and send TERM to the group while the stand-in
+# holds call k of <method>. collect.sh's exit status is written to <out dir>.status.
+grouprun() {
+  local out="$1" hold="$2" pipe="$3" n=0 pg
+  shift 3
+  mkdir -p "$TT/hold"; rm -f "$TT/hold/reached" "$TT/hold/release" "$TT/pg"
+  FAKE_HOLD="$hold|$TT/hold" PATH="$TT/bin:$PATH" "$PY" -c 'import os, signal, sys
+if sys.argv[2] == "default":
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+os.setsid()
+open(sys.argv[1], "w").write(str(os.getpid()))
+os.execvp("bash", ["bash", "-c", sys.argv[3]] + sys.argv[4:])' "$TT/pg" "$pipe" \
+    'trap : TERM; ( trap : TERM; bash "$1" --out "$2" --confirmed "${@:3}" 2> "$2.err"; echo "$?" > "$2.status" ) | cat > "$2.out"' \
+    _ "$DNR/collect.sh" "$out" "$@" &
+  while [[ ! -e "$TT/hold/reached" && "$n" -lt 200 ]]; do sleep 0.05; n=$((n + 1)); done
+  pg="$(cat "$TT/pg")"
+  kill -TERM -- "-$pg"
+  touch "$TT/hold/release"
+  wait
+  n=0; while [[ ! -s "$out.status" && "$n" -lt 200 ]]; do sleep 0.05; n=$((n + 1)); done
+}
+for pipe in ignore default; do
+  rm -f "$FAKE_CURL_LOG"
+  grouprun "$TT/int-pipe-$pipe" "getSignaturesForAddress|3" "$pipe" -- "$A_ADDR" "$B_ADDR"
+  eq "interrupted paging, stdout closed (SIGPIPE $pipe): exit 143, the address row and the row for the signatures listed" \
+    "$(cat "$TT/int-pipe-$pipe.status" 2>/dev/null)|$(cut -f1 "$TT/int-pipe-$pipe/collection-gaps.tsv" | tr '\n' ' ')" "143|$B_ADDR SigA1 "
+done
 
 if [[ "$fails" -ne 0 ]]; then
   echo "test-dnr-collect: $fails assertion(s) FAILED" >&2
