@@ -15,8 +15,16 @@
 # Everything from the line after #! to the last line is one brace group, which bash reads to its end before
 # running any of it: a download cut short (curl … | bash) is a syntax error and changes nothing.
 set -euo pipefail
+unset CDPATH
 
 REPO="https://github.com/solanabr/auditor-skill.git"
+
+# physical PATH: PATH with its longest existing directory prefix resolved through any links (cd -P).
+physical() {
+  local p=$1 rest=""
+  while [ ! -d "$p" ]; do rest="/${p##*/}$rest"; p=$(dirname "$p"); done
+  printf '%s%s\n' "$(cd -P "$p" && pwd)" "$rest"
+}
 
 main() {
   if [ -n "${1:-}" ]; then
@@ -39,7 +47,7 @@ main() {
   # could load it as a second skill. Anything else is left alone.
   old=""
   if [ -L "$DEST" ]; then
-    echo "error: $DEST is a symbolic link; pass the directory it points to." >&2
+    echo "error: $DEST is a symbolic link, which the installer neither follows nor replaces; remove the link or pass another path." >&2
     exit 2
   elif [ -d "$DEST" ] && [ -z "$(ls -A "$DEST")" ]; then
     rmdir "$DEST"
@@ -57,6 +65,15 @@ main() {
          esac ;;
     esac
     backups="${state%/}/auditor-skill"
+    if [ -L "$backups" ]; then
+      echo "error: $backups is a symbolic link; backups go only to a real directory. Remove the link or set XDG_STATE_HOME elsewhere." >&2
+      exit 2
+    fi
+    case "$(physical "$backups")/" in
+      "$(physical "$(dirname "$DEST")")"/*)
+        echo "error: the backup directory $backups lies inside $(dirname "$DEST"), beside the install; set XDG_STATE_HOME elsewhere." >&2
+        exit 2 ;;
+    esac
     old="$backups/backup-$(date +%Y%m%d-%H%M%S)"
     if [ -e "$old" ] || [ -L "$old" ]; then
       echo "error: $old already exists; run the installer again in a second." >&2
@@ -120,6 +137,10 @@ EOF
 # renamed into a private directory beside DEST and the clone renamed into place, both on DEST's filesystem; only
 # then does the earlier install move to the state directory, which may sit on another volume.
 swap() {
+  if [ -L "$backups" ]; then   # checked again before anything is created there
+    echo "error: $backups is a symbolic link; backups go only to a real directory." >&2
+    exit 2
+  fi
   (umask 077; mkdir -p "$backups")
   chmod 700 "$backups"
   if [ -e "$old" ] || [ -L "$old" ]; then   # checked again: mv onto an existing directory would move into it

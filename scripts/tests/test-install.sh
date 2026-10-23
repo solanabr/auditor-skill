@@ -6,7 +6,8 @@
 #     running git in it, to a backup in a mode-700 directory under XDG_STATE_HOME or ~/.local/state, so nothing
 #     in its repo config (filters, hooks, transport commands) runs and nothing is left beside the install; a
 #     backup path that exists, or no absolute XDG_STATE_HOME or HOME, stops the run before any git command;
-#   - a path that is a symbolic link, or that holds something other than an install, is refused;
+#   - a path that is a symbolic link, or that holds something other than an install, is refused, and so is a
+#     backup directory that is a link or lies beside the install;
 #   - a download cut short runs nothing and exits non-zero, and a failed clone leaves the earlier install alone;
 #   - a warning goes to stderr when the install directory is inside a git work tree.
 # Run from the repo root: `bash scripts/tests/test-install.sh`.
@@ -135,7 +136,8 @@ check "a path that is not an install is refused and left alone" ok6
 # 7. a path that is a symbolic link is refused
 mkdir -p "$T/linked" && git clone -q "$T/up.git" "$T/linked/real" && ln -s "$T/linked/real" "$T/linked/auditor-skill"
 run up "$T/linked" "$T/linked/auditor-skill"
-ok7() { [ "$rc" -eq 2 ] && [ -L "$T/linked/auditor-skill" ] && head_is "$T/linked/real" "$(git -C "$T/up.seed" log -1 --format=%s)"; }
+ok7() { [ "$rc" -eq 2 ] && grep -q 'neither follows nor replaces' "$T/err" && [ -L "$T/linked/auditor-skill" ] \
+  && head_is "$T/linked/real" "$(git -C "$T/up.seed" log -1 --format=%s)"; }
 check "a path that is a symbolic link is refused" ok7
 
 # 8. an empty directory at the path is installed into
@@ -229,6 +231,36 @@ HOME="$h15" run missing "$T"
 ok15() { [ "$rc" -ne 0 ] && ! grep -q 'auditor-skill installed' "$T/out" && [ -f "$d15/old-marker" ] && [ ! -e "$h15/.local" ] \
   && [ "$(ls -A "$h15/.claude/skills")" = auditor-skill ]; }
 check "a failed clone exits non-zero and leaves the earlier install in place, with no backup" ok15
+
+# 16. a default path that is a symbolic link is refused before any git command; link and target stay as they were
+h16="$T/home16"; mkdir -p "$h16/.claude/skills" "$T/real16" && git clone -q "$T/up.git" "$T/real16/auditor-skill" \
+  && echo old > "$T/real16/auditor-skill/old-marker" && ln -s "$T/real16/auditor-skill" "$h16/.claude/skills/auditor-skill"
+HOME="$h16" GIT_TRACE="$T/trace16" run up "$T"
+ok16() { [ "$rc" -eq 2 ] && grep -q 'neither follows nor replaces' "$T/err" && [ ! -s "$T/trace16" ] \
+  && [ -L "$h16/.claude/skills/auditor-skill" ] && [ -f "$T/real16/auditor-skill/old-marker" ] && [ ! -e "$h16/.local" ]; }
+check "a run without a path refuses a linked default path and runs no git" ok16
+
+# 17. a backup directory that is a symbolic link is refused before any git command, so nothing lands where it points
+h17="$T/home17"; d17="$h17/.claude/skills/auditor-skill"
+mkdir -p "$h17/.claude/skills" "$h17/.local/state" "$T/other17/skills" && git clone -q "$T/up.git" "$d17" && echo old > "$d17/old-marker" \
+  && ln -s "$T/other17/skills" "$h17/.local/state/auditor-skill"
+HOME="$h17" GIT_TRACE="$T/trace17" run up "$T"
+ok17() { [ "$rc" -eq 2 ] && grep -q 'is a symbolic link; backups go only to a real directory' "$T/err" && [ ! -s "$T/trace17" ] \
+  && [ -z "$(ls -A "$T/other17/skills")" ] && [ -f "$d17/old-marker" ] && [ "$(ls -A "$h17/.claude/skills")" = auditor-skill ]; }
+check "a linked backup directory is refused before any git command" ok17
+
+# 18. a backup directory beside the install is refused before any git command: XDG_STATE_HOME set to the skills
+#     directory, and ~/.local/state linked to it
+h18="$T/home18"; d18="$h18/.claude/skills/auditor-skill"
+mkdir -p "$h18/.claude/skills" && git clone -q "$T/up.git" "$d18" && echo old > "$d18/old-marker"
+mode18=$(ls -ld "$d18" | cut -c1-10)
+HOME="$h18" XDG_STATE_HOME="$h18/.claude/skills" GIT_TRACE="$T/trace18" run up "$T"
+ok18() { [ "$rc" -eq 2 ] && grep -q 'beside the install' "$T/err" && [ ! -s "$T/trace18" ] && [ -f "$d18/old-marker" ] \
+  && [ "$(ls -ld "$d18" | cut -c1-10)" = "$mode18" ] && [ "$(ls -A "$h18/.claude/skills")" = auditor-skill ]; }
+check "XDG_STATE_HOME inside the skills directory is refused before any git command" ok18
+mkdir -p "$h18/.local" && ln -s "$h18/.claude/skills" "$h18/.local/state"
+HOME="$h18" GIT_TRACE="$T/trace18" run up "$T"
+check "a ~/.local/state linked into the skills directory is refused before any git command" ok18
 
 echo "---- $pass passed, $failn failed"
 [ "$failn" -eq 0 ]
