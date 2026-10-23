@@ -238,16 +238,18 @@ fails that PR until the README pin is updated on the same branch. Never auto-mer
 1. In a full clone of `https://github.com/trailofbits/skills`, run
    `bash scripts/tob-delta-review.sh <clone> <old-sha> <new-sha>` (read-only; `--fetch` updates the clone
    first). Read every section: plugins added or removed; load surfaces (nested `.claude/`, `.claude-plugin/`
-   manifests and any hooks / MCP / LSP servers they declare, `hooks/`, `.mcp.json` / `.lsp.json`, settings,
-   `CLAUDE.md` / `AGENTS.md`, `workflows/*.js`); new executables; symlinks (`120000`) and gitlinks
-   (`160000`); paths git still quotes, to read by hand; renamed files, OLD -> NEW (a file moved unchanged,
-   to a path that is not a load surface, is left out of the added-line scans; every other renamed file is
-   scanned whole); hosts in added script, config and Markdown lines (tests, evals, fixtures and lockfiles
-   left out); remote-exec patterns in added lines, with continuation lines joined (a download piped to or
-   evaluated by a shell, an interpreter or PowerShell, such as `sh -c "$(curl …)"`, `<(curl …)` or
-   `irm … | iex`; `npx --yes`, `bunx` and `dlx`; `pip`, `pipx`, `uv`, `uvx`, `npm`, `cargo` and `deno`
-   installs from git or a URL; `go install …@latest`); the `LICENSE` (must be unchanged). Paths, hosts and
-   commands match in any letter case.
+   manifests and any hooks / monitors / MCP / LSP servers they declare, `hooks/`, `monitors/`, `bin/`,
+   `.mcp.json` / `.lsp.json`, settings, `CLAUDE.md` / `AGENTS.md`, `workflows/*.js`); new executables;
+   symlinks (`120000`) and gitlinks (`160000`); paths git still quotes, to read by hand; renamed files,
+   OLD -> NEW; hosts in added script, config and Markdown lines (tests, evals, fixtures and lockfiles left
+   out, matched as their names are written); remote-exec patterns in added lines, with continuation lines
+   joined (a download piped to or evaluated by a shell, an interpreter or PowerShell, such as
+   `sh -c "$(curl …)"`, `<(curl …)` or `irm … | iex`; `npx --yes`, `bunx` and `dlx`; `pip`, `pipx`, `uv`,
+   `uvx`, `npm`, `cargo` and `deno` installs from git or a URL; `go install …@latest`); files moved unchanged
+   between ordinary paths, with the hosts and remote-exec patterns in them (every other renamed file is
+   scanned whole in the added-line scans: one moved out of a test, eval, fixture or lockfile path, or into a
+   load surface, a `SKILL.md`, `commands/`, `agents/`, `bin/` or `scripts/`); the `LICENSE` (must be
+   unchanged). Paths, hosts and commands match in any letter case.
 2. The script ends by checking that every plugin named in `references/orchestration/boundary-map.md` and
    `docs/power-tools.md` still exists. For each one that changed (`git diff <old> <new> -- plugins/<name>`),
    update its rows when the entry point, behaviour, execution (`OUTPUT-RULES.md` Rule 11a) or outside
