@@ -797,6 +797,16 @@ if command -v cargo >/dev/null 2>&1 && command -v rustup >/dev/null 2>&1; then
   [ "$code" = 0 ] && grep -q '^>> moving the pinme@1.0.0 pin' "$T/out" && [ "$(pinned "$T/e-lock/Cargo.lock")" = 1.1.0 ] \
     && ok "real cargo: UPDATE_PINS=pinme@1.0.0 moves that pin (to 1.1.0) in the scratch copy, and the moved lock comes back" || { bad "real cargo, UPDATE_PINS: exit $code"; cat "$T/out" >&2; }
 
+  # Two crates of the same name share a CARGO_TARGET_DIR: each run builds and runs its
+  # own tests, even when the other crate was built after this one's files last changed.
+  mk_e2e "$T/e-twin-old"; mk_e2e "$T/e-twin-new"
+  swap "$T/e-twin-new/tests/fixed_blocked.rs" '/^        ProgramError::MissingRequiredSignature,$/ { print "        ProgramError::Custom(6001),"; next } { print }'
+  find "$T/e-twin-old" -type f -exec touch -t 202001010000 {} +
+  code="$(e2e "$T/e-twin-new" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-reject-Custom6001.so")"
+  code2="$(e2e "$T/e-twin-old" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-reject-Custom6001.so")"
+  [ "$code" = 0 ] && [ "$code2" = 2 ] && grep -q 'REJECTED with Failure(MissingRequiredSignature)' "$T/out" \
+    && ok "real cargo: a crate whose files predate another same-named crate's build in the shared cache still runs its own tests" || { bad "real cargo, same-named crates in one cache: exit $code then $code2"; cat "$T/out" >&2; }
+
   # Results the contract must turn down, outside the hostile tree.
   mk_e2e "$T/e-base"
   code="$(e2e "$T/e-base" VULNERABLE_SO="$SB-noop.so")"

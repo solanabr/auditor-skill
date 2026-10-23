@@ -46,7 +46,9 @@
 #   * to reuse compiled dependencies between runs of one audit, export
 #     CARGO_TARGET_DIR to a cache directory you created outside any repository —
 #     never one inside the target tree or one you did not create: cargo trusts the
-#     build outputs it finds there. SBF_OUT_DIR stays in the scratch copy either way.
+#     build outputs it finds there. The copy below gets fresh timestamps, so cargo
+#     rebuilds the crate's own code on every run and the cache serves only its
+#     dependencies. SBF_OUT_DIR stays in the scratch copy either way.
 #   * mollusk looks for {CRATE}.so in tests/fixtures/ and BPF_OUT_DIR before
 #     SBF_OUT_DIR, so run.sh unsets BPF_OUT_DIR and refuses a crate holding
 #     tests/fixtures/{CRATE}.so: the bytes that run are the arm run.sh placed.
@@ -207,12 +209,16 @@ inherited_config() {
   done
 }
 
-copy_crate() {  # copy_crate <dest> : the crate's files, never target/, .cargo/ or rust-toolchain*
+# copy_crate <dest> : the crate's files, never target/, .cargo/ or rust-toolchain*. The
+# copies are stamped with the time of the copy, never the originals': with a shared
+# CARGO_TARGET_DIR, cargo would otherwise count a build of another crate of the same
+# name, made after these files were last changed, as this crate's own.
+copy_crate() {
   local list rel IFS=$'\n'
   list="$(cd "${HERE}" && find . \( \( -name target -type d \) -o -name .cargo -o -name 'rust-toolchain*' -o -name .git \) -prune -o -type f -print)" || return 1
   set -f
   for rel in ${list}; do
-    if ! { mkdir -p "$1/$(dirname "${rel}")" && cp -p "${HERE}/${rel}" "$1/${rel}"; }; then
+    if ! { mkdir -p "$1/$(dirname "${rel}")" && cp "${HERE}/${rel}" "$1/${rel}"; }; then
       set +f; return 1
     fi
   done
