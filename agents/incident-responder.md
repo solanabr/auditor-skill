@@ -82,10 +82,11 @@ write-up.
     new name, never with a shell redirection: the file appears only once the run
     is complete, and an output never replaces a file
   - a collection the command reports as ended without its `collection gaps: N` line
-    was killed: record as gaps each signature in its `signatures.jsonl` with no
-    transaction in `transactions.jsonl`, and every address whose history may not
-    have been paged to its end: the last `queried_address` in `signatures.jsonl` and
-    every address given after it, or every address given when none appears
+    was killed, or stopped on a failed write: record as gaps each signature in its
+    `signatures.jsonl` with no transaction in `transactions.jsonl`, and every
+    address whose history may not have been paged to its end: the last
+    `queried_address` in `signatures.jsonl` and every address given after it, or
+    every address given when none appears
   - `set -o pipefail; <cmd> 2>&1 | bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/redact.sh"` for anything that might print `$RPC_URL`, on one command line: `set -o pipefail` keeps `<cmd>`'s failure as the exit status
 - **CLI reads are keyless.** Program bytes and `program show` come only from
   `snapshot-program.sh`, signature history and transactions only from the corpora

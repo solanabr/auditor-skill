@@ -8,7 +8,7 @@
 **Run:** incident_{N}/ · **Mode:** hunt | respond · **Opened:** {ISO, est}
 **RPC provider:** {domain only — the host's last two DNS labels, as `collect.sh` prints it — or "user-supplied corpus — no collection"} · **Endpoint:** `$RPC_URL` (never written out)
 **Corpus:** {files + line counts} · **Window:** slots {from}–{to} ({from blockTime}–{to blockTime}, est)
-**Collection gaps:** {every row of `corpus*/collection-gaps.tsv` (signature or address: reason), a killed collection's unfetched signatures and unfinished addresses, every recipe note of skipped malformed lines (path: count, first line), plus retention limits, a missing v1 opt-in, `Log truncated` tails — never a URL}
+**Collection gaps:** {every row of `corpus*/collection-gaps.tsv` (signature or address: reason), the unfetched signatures and unfinished addresses of a collection killed outright or stopped by a failed write, every recipe note of skipped malformed lines (path: count, first line), plus retention limits, a missing v1 opt-in, `Log truncated` tails — never a URL}
 **Execution mode (Rule 11a):** {isolated | native — asked once, before the first PoC run or build of target code; passed to every `run.sh` call as `AUDITOR_EXEC_MODE`}
 **PoC build cache:** {the directory made once with `mktemp -d` for this incident's `run.sh` calls, passed as `CARGO_TARGET_DIR` — inside the isolated runner in isolated mode / none}
 **PoC re-run flag:** {set to "PoC re-run needed" with `run.sh`'s blocker line when a Leg-3 run exits 3; cleared once a re-run decides}
