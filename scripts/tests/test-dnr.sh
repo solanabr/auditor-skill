@@ -630,8 +630,11 @@ fi
 # or failing, and a run directory find cannot read (here hiding a link to the
 # outside) each mean exit 2, nothing written and no RPC call. The ownership cases run
 # with no global or system git config: a machine-wide safe.directory (CI runners set
-# one) would otherwise make git trust the repository.
+# one) would otherwise make git trust the repository. A repository named in the
+# environment (GIT_DIR, GIT_WORK_TREE) never stands in for the one the run directory
+# is in: the tracked directory is still refused.
 mkdir -p "$TT/gitfail" "$TT/pl-c/incident_9"
+git init -q "$TT/other-repo" >/dev/null 2>&1
 printf '#!/bin/sh\nexit 127\n' > "$TT/gitfail/git"; chmod +x "$TT/gitfail/git"
 ln -s "$X/bin" "$TT/pl-c/incident_9/bin"; chmod 0300 "$TT/pl-c/incident_9"
 state_before="$(tree_state)"
@@ -640,6 +643,7 @@ for case in \
   "git does not trust the repository|GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TEST_ASSUME_DIFFERENT_OWNER=1 PATH=$TT/bin:$PATH|$REPO/incident_4|$REPO/incident_4/corpus" \
   "git does not trust the repository, untracked dir|GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TEST_ASSUME_DIFFERENT_OWNER=1 PATH=$TT/bin:$PATH|$REPO/incident_5|$REPO/incident_5/corpus-2" \
   "git missing or failing|PATH=$TT/gitfail:$TT/bin:$PATH|$REPO/incident_4|$REPO/incident_4/corpus" \
+  "a repository named in the environment|GIT_DIR=$TT/other-repo/.git GIT_WORK_TREE=$TT/other-repo PATH=$TT/bin:$PATH|$REPO/incident_4|$REPO/incident_4/corpus" \
   "a run dir find cannot read|PATH=$TT/bin:$PATH|$TT/pl-c/incident_9|$TT/pl-c/incident_9/corpus"; do
   label="${case%%|*}"; rest="${case#*|}"; envs="${rest%%|*}"; rest="${rest#*|}"; snapdir="${rest%%|*}"; outdir="${rest#*|}"
   ( export RPC_URL="https://rpc.example.test/" ${envs%% PATH=*} PATH="${envs##*PATH=}"

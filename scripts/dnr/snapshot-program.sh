@@ -90,6 +90,9 @@
 
 # -C (noclobber): no redirection in this script replaces an existing file.
 set -Cuo pipefail
+# No cd may search $CDPATH, and no git call may use a repository named in the
+# environment instead of the directory it is pointed at.
+unset CDPATH GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REDACT="$HERE/redact.sh"
@@ -125,8 +128,7 @@ case "/$dir/" in
 esac
 
 # The working directory is usually the audited repository: a symbolic link below it
-# belongs to that tree. No cd below may search $CDPATH.
-unset CDPATH
+# belongs to that tree.
 if ! here="$(pwd -P)"; then
   echo "snapshot-program.sh: cannot resolve the working directory." >&2; exit 2
 fi
