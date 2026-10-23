@@ -389,7 +389,7 @@ eval_triggers() {
   local t3="" t4="" cur="" src remotes s d n
   G "$REPO" grep -a -i -q -E "$FORK_PHRASES" "$PIN_SHA" -- 'README*' '*/README*' 'docs/*' 2>/dev/null && t3="readme-phrase"
   src=$(G "$REPO" grep -h -a -E 'source_code[[:space:]]*:' "$PIN_SHA" -- '*.rs' 2>/dev/null |
-        sed -nE 's/.*source_code[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' | head -n 3)
+        sed -nE 's/.*source_code[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' | sed -n '1,3p')
   remotes=$(remote_urls | awk '{print $2}' | norm_url)
   # One string per line, read as written: target strings are never word-split or glob-expanded.
   while IFS= read -r s; do
@@ -544,7 +544,7 @@ G "$REPO" log "${DIFFSAFE[@]}" -i -E --grep="$KW" --format='%h %ad %s' --date=sh
 # ---- R2 reverts ------------------------------------------------------------------------------------
 G "$REPO" log "${DIFFSAFE[@]}" -E --grep='^Revert "|This reverts commit [0-9a-f]{7,40}' --format='%H %h %ad %s' --date=short "$PIN_SHA" -- "${TPATHS[@]}" 2>/dev/null |
 while read -r full short date subj; do
-  rev=$(G "$REPO" log "${DIFFSAFE[@]}" -1 --format=%B "$full" 2>/dev/null | grep -oE 'reverts commit [0-9a-f]{7,40}' | head -n 1 | awk '{print substr($3, 1, 10)}')
+  rev=$(G "$REPO" log "${DIFFSAFE[@]}" -1 --format=%B "$full" 2>/dev/null | grep -oE 'reverts commit [0-9a-f]{7,40}' | sed -n 1p | awk '{print substr($3, 1, 10)}')
   echo "$short $date $subj  -> reverts ${rev:-unknown}"
 done > "$TMPD/r2"
 { section "R2 Reverts" "A reverted fix, or a revert of a revert, marks a surface someone changed their mind about."
@@ -567,7 +567,7 @@ grep -E ' ADDED x' "$TMPD/r3" > "$TMPD/r3c"
   endsec; } >> "$H"
 # Saved diffs name the commit by its full id (a short id could also be the name of a ref) and hold only
 # the files the commit's rows name.
-grep -E ' (REMOVED|ADDED-QUIET) x' "$TMPD/r3ids" | awk '!s[$1]++ { print $1, $2 }' | head -n 20 |
+grep -E ' (REMOVED|ADDED-QUIET) x' "$TMPD/r3ids" | awk '!s[$1]++ { print $1, $2 }' | sed -n '1,20p' |
 while read -r full c; do
   awk -F '\t' -v c="$full" '$1 == c && !s[$2]++ { print $2 }' "$TMPD/r3.paths" > "$TMPD/save.paths"
   save_diff "$REPO" "$full" "$OUT/diffs/target-$c.diff" "$TMPD/save.paths" "${TPATHS[@]}"
@@ -625,7 +625,7 @@ R4_OTHER=$(sed -E 's/^ *[0-9]+ //' "$TMPD/r4a" | grep -E '\.rs"?$' |
       [ -n "$IMPORT" ] || IMPORT=$(G "$REPO" rev-list --max-parents=0 "$PIN_SHA" | tail -n 1)
       # ls-tree takes literal paths, not globs; a diff from the empty tree honours the pathspec.
       G "$REPO" diff-tree "${DIFFSAFE[@]}" -r --no-renames "$EMPTY_TREE" "$IMPORT" -- "${TPATHS[@]}" 2>/dev/null |
-        awk '/^:/ { print $4 }' | sort -u | head -n 2000 > "$TMPD/import.blobs"
+        awk '/^:/ { print $4 }' | sort -u | sed -n '1,2000p' > "$TMPD/import.blobs"
       if [ -s "$TMPD/import.blobs" ]; then
         G "$PDIR" log "${DIFFSAFE[@]}" --all --no-renames --raw --no-abbrev --format='__C__ %ct %H' -- "${PPATHS[@]}" 2>/dev/null |
           awk 'NR == FNR { want[$1] = 1; total++; next }
@@ -664,7 +664,7 @@ R4_OTHER=$(sed -E 's/^ *[0-9]+ //' "$TMPD/r4a" | grep -E '\.rs"?$' |
         "$TMPD/target.lines" - | sort -k1,1n -k2,2n -k3,3n | cut -d' ' -f4- > "$TMPD/r5dids"
       cut -d' ' -f2- "$TMPD/r5dids" > "$TMPD/r5d"
       emit_capped "$TMPD/r5d" "the parent added no guard line after the fork point"
-      awk '/text absent from target/ && !s[$1]++ { print $1, $2 }' "$TMPD/r5dids" | head -n 20 |
+      awk '/text absent from target/ && !s[$1]++ { print $1, $2 }' "$TMPD/r5dids" | sed -n '1,20p' |
       while read -r full c; do
         awk -F '\t' -v c="$full" '$1 == c && !s[$2]++ { print $2 }' "$TMPD/r5.paths" > "$TMPD/save.paths"
         save_diff "$PDIR" "$full" "$OUT/diffs/parent-$c.diff" "$TMPD/save.paths" "${PPATHS[@]}"
@@ -690,7 +690,7 @@ R4_OTHER=$(sed -E 's/^ *[0-9]+ //' "$TMPD/r4a" | grep -E '\.rs"?$' |
   remote_urls | redact_urls > "$TMPD/r6d"
   emit_capped "$TMPD/r6d" "no remote configured"
   echo "--- first commits ---"
-  G "$REPO" log "${DIFFSAFE[@]}" --reverse --format='%h %ad %s' --date=short "$PIN_SHA" 2>/dev/null | head -n 3 > "$TMPD/r6e"
+  G "$REPO" log "${DIFFSAFE[@]}" --reverse --format='%h %ad %s' --date=short "$PIN_SHA" 2>/dev/null | sed -n '1,3p' > "$TMPD/r6e"
   emit_capped "$TMPD/r6e" "no commits"
   echo "--- report-like files in the pinned tree ---"
   G "$REPO" ls-tree -r --name-only "$PIN_SHA" 2>/dev/null | grep -iE '\.(pdf|md)$' | grep -iE "$REPORT_RE" > "$TMPD/r6f"

@@ -267,7 +267,7 @@ cat >> "$HOS/.git/config" <<EOF
 EOF
 # Sanity: the fixture really is hostile for plain git.
 git -C "$HOS" log -p -1 >/dev/null 2>&1
-if ls "$T/marks" | grep -qE 'textconv|extdiff|external'; then ok "T-g sanity: plain 'git log -p' runs the configured diff program"
+if grep -qE 'textconv|extdiff|external' <<< "$(ls "$T/marks")"; then ok "T-g sanity: plain 'git log -p' runs the configured diff program"
 else skp "T-g sanity: this git did not run the configured diff program"; fi
 git -C "$HOS" status >/dev/null 2>&1
 if [ -e "$T/marks/fsmonitor" ]; then ok "T-g sanity: plain 'git status' runs core.fsmonitor"

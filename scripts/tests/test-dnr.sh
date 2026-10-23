@@ -695,7 +695,7 @@ prof2="$(bash "$DNR/profile.sh" "$FIX/clean-mixed.jsonl" "$FIX/clean-mixed.jsonl
 eq "dedupe: profile over a corpus given twice counts each transaction once" \
   "$(printf '%s\n' "$prof2" | sed -n '/^-- transactions/,/^-- version/p' | tr -s ' ' | tr '\n' '|')" \
   "$(bash "$DNR/profile.sh" "$FIX/clean-mixed.jsonl" | sed -n '/^-- transactions/,/^-- version/p' | tr -s ' ' | tr '\n' '|')"
-if printf '%s\n' "$prof2" | grep -q '^-- skipped: 3 transaction(s) already read under the same signature$'; then
+if grep -q '^-- skipped: 3 transaction(s) already read under the same signature$' <<< "$prof2"; then
   ok "dedupe: profile reports the copies it skipped"
 else
   bad "dedupe: profile did not report skipped copies"
