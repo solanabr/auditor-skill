@@ -68,6 +68,11 @@ mk "$T/sshurl" vendor/trailofbits "ssh://git@github.com/trailofbits/skills.git/"
 mk "$T/slash" vendor/trailofbits "$URL/" "$GOOD";                         expect_rc "trailing-slash URL passes" 0 "$T/slash"
 mk "$T/space" "vendor/trail of bits" "$URL.git" "$GOOD";                  expect_rc "path with spaces passes" 0 "$T/space"
 mk "$T/gitlab" vendor/trailofbits "https://gitlab.com/x/y.git" "$GOOD";   expect_rc "non-GitHub URL fails closed" 1 "$T/gitlab"
+# another GitHub repository, pinned consistently in README.md, is not on SUBMODULE_URLS
+mk "$T/otherrepo" vendor/trailofbits "https://github.com/someone/skills.git" "${GOOD//trailofbits\/skills/someone/skills}"
+expect_rc "a GitHub repository not on SUBMODULE_URLS fails" 1 "$T/otherrepo"
+case "$out" in *"is not in SUBMODULE_URLS"*) pass=$((pass + 1)); echo "PASS ... with the SUBMODULE_URLS message";;
+  *) failn=$((failn + 1)); echo "FAIL ... without the SUBMODULE_URLS message"; echo "$out";; esac
 mk "$T/undecl" vendor/trailofbits "$URL.git" "$GOOD"
 git -C "$T/undecl" update-index --add --cacheinfo "160000,$OLD,vendor/other"; expect_rc "undeclared gitlink fails" 1 "$T/undecl"
 mk "$T/skipwt" vendor/trailofbits "$URL.git" "$GOOD"

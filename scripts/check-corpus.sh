@@ -8,7 +8,8 @@
 #   2. the item total, vector total and methodology count everywhere they are quoted
 #   3. every known-vectors/NNN-*.md has an INDEX.md link and a matching frontmatter id
 #   4. the version in SKILL.md agrees with plugin.json, marketplace.json, audit-report.md and README.md
-#   5. every submodule gitlink is the commit README.md names (one https://github.com/<org>/<repo>/tree/<sha>)
+#   5. every submodule's URL is one SUBMODULE_URLS lists, and its gitlink is the commit README.md names (one
+#      https://github.com/<org>/<repo>/tree/<sha>)
 # Portable: macOS /bin/bash 3.2 with BSD sed and grep gives the same output as bash 5 with GNU tools.
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -115,6 +116,9 @@ fi
 # A gitlink-only bump (Dependabot) fails here until a human updates the pin line (CONTRIBUTING.md §5).
 # README.md is read byte by byte (LC_ALL=C), so a byte that is not UTF-8 stops no grep, sed or tr.
 export LC_ALL=C
+# The repositories a submodule may come from, space-separated, as the check spells them: https, no .git suffix.
+# One is added here only after its content is reviewed like code (CONTRIBUTING.md §5).
+SUBMODULE_URLS='https://github.com/trailofbits/skills'
 gm() { # .gitmodules from the index, else from the working tree
   git config --blob :.gitmodules "$@" 2>/dev/null || { [[ -f .gitmodules ]] && git config -f .gitmodules "$@"; }
 }
@@ -132,6 +136,10 @@ if [[ -n "$top" && "$top" == "$(pwd -P)" ]]; then
     if [[ ! "$url" =~ ^https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
       err "$path: submodule URL '$url' is not a github.com repository (extend check 5)"; continue
     fi
+    case " $SUBMODULE_URLS " in
+      *" $url "*) ;;
+      *) err "$path: submodule URL '$url' is not in SUBMODULE_URLS in scripts/check-corpus.sh"; continue ;;
+    esac
     base="$url/tree/"
     base_re=$(printf '%s' "$base" | sed 's/\./\\./g')
     repo_re="https?://(www\.)?$(printf '%s' "${url#https://}" | sed 's/\./\\./g')"
