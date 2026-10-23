@@ -6,7 +6,9 @@
 #   2. builds the `fixed`      arm to SBF, runs tests/fixed_blocked.rs → same attack must be REJECTED
 # Exit 0: the exploit reproduces on `vulnerable` and, when the fixed arm runs, is
 # blocked on `fixed` — the evidence that earns [PoC-REPRODUCED]. Exit 1: the exploit
-# did not reproduce. Exit 2: the fixed arm did not block it. Exits 1 and 2 need a
+# did not reproduce. Exit 2: the fixed arm did not block it; the final line says
+# whether that arm accepted the attack, rejected it with another error than the
+# pinned one, or failed it while the account still changed. Exits 1 and 2 need a
 # contract assertion of that arm (shared-test-utils) that ran and did not hold.
 # Exit 3: a named blocker (toolchain, inputs, a build that failed, the execution
 # mode below, build-time code in the crate) or an inconclusive arm (no contract
@@ -470,6 +472,12 @@ def kind_of(text):
     return re.split(r"[ :]", text, maxsplit=1)[0]
 
 
+def outcome_of(text):
+    # A failed marker reads "<kind> <outcome>: <message>": what the program did.
+    head = text.split(":", 1)[0].split(" ")
+    return head[1] if len(head) == 2 and re.match(r"^[a-z-]+$", head[1]) else ""
+
+
 def settle(directory, arm, status, prebuilt, placed_so, placed):
     # Per test: the kinds it started (attempted), held, and failed (ran and did not
     # hold), and the inconclusive lines it left. A failed marker is what the contract
@@ -516,7 +524,10 @@ def settle(directory, arm, status, prebuilt, placed_so, placed):
         verdict = [t for t in sorted(tests) if not tests[t][3] and any(k in counts for k in tests[t][2])]
         if verdict:
             why = bytes_differ()
-            return say("inconclusive", why) if why else say("fail", verdict[0])
+            if why:
+                return say("inconclusive", why)
+            how = [outcome_of(text) for test, text in failed if test == verdict[0] and kind_of(text) in counts]
+            return say("fail", verdict[0], how[0] if how else "")
         if stuck:
             return say("inconclusive", "%s (test %s)" % (stuck[0][1], stuck[0][0]))
         if any_pending:
@@ -906,7 +917,8 @@ inconclusive() {  # inconclusive <arm> <reason>: the arm decided nothing — a b
 # settle <arm> <status>: the verdict on an arm from its test's exit status and the
 # markers each test left. Returns 0 when the arm held (HELD_KIND and HELD_LINE say
 # how) and 1 for a verdict against it — an assertion of the arm ran and did not hold,
-# on the placed bytes; exits 3 for everything else.
+# on the placed bytes, and FAILED_HOW names what the program did; exits 3 for
+# everything else.
 settle() {
   local out verdict rc=0 tab=$'\t'
   out="$(harness settle "${RUN_DIR}/$1" "$1" "$2" "${PREBUILT}" "${SBF_OUT_DIR}/${CRATE}.so" "${PLACED_HASH}")" || rc=$?
@@ -917,7 +929,7 @@ settle() {
   verdict="${out%%"${tab}"*}"; out="${out#*"${tab}"}"
   case "${verdict}" in
     pass) HELD_KIND="${out%%"${tab}"*}"; HELD_LINE="${out#*"${tab}"}"; return 0 ;;
-    fail) echo "   failed: test ${out}"; return 1 ;;
+    fail) FAILED_HOW="${out#*"${tab}"}"; echo "   failed: test ${out%%"${tab}"*}"; return 1 ;;
     inconclusive) inconclusive "$1" "${out}" ;;
     *) echo "[PoC-ATTEMPTED] blocker: ${out}" >&2; exit 3 ;;
   esac
@@ -934,6 +946,7 @@ nonregistry() {  # the path and git dependencies and out-of-tree sources the bui
 
 HELD_KIND=""
 HELD_LINE=""
+FAILED_HOW=""
 
 # 1. vulnerable arm — the exploit must land. The lock spans the build and the test.
 acquire_lock || { echo "[PoC-ATTEMPTED] blocker: could not take the build lock in ${EFFECTIVE_TARGET} (another PoC run may hold it, or the directory is not writable)." >&2; exit 3; }
@@ -970,7 +983,12 @@ run_tests fixed || status=$?
 release_lock
 if ! settle fixed "${status}"; then
   nonregistry
-  echo "FAIL: the fixed arm did not block the attack — fix is incomplete." >&2
+  case "${FAILED_HOW}" in
+    accepted) echo "FAIL: the fixed arm accepted the attack — fix is incomplete." >&2 ;;
+    changed) echo "FAIL: the fixed arm failed the attack, yet the account changed — fix is incomplete." >&2 ;;
+    other-error) echo "FAIL: the fixed arm rejected the attack with another error than the pinned one — the test's message names both." >&2 ;;
+    *) echo "FAIL: the fixed arm did not block the attack — fix is incomplete." >&2 ;;
+  esac
   VERDICT=2; exit 2
 fi
 nonregistry

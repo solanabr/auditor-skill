@@ -125,8 +125,9 @@ PY
 # default those of a test whose assertions all ran and held on the placed bytes, and
 # none for SHIM_MARKERS=none. An entry is <test>:<marker>[=<assertion>][@<test name>]:
 # attempted and held name the assertion (effect on exploit, rejected_with on
-# fixed_blocked, unless =<assertion> says otherwise), and each line starts with the test
-# name (<test>_case unless @ gives one). Marker `loaded` records the zero-trimmed hash
+# fixed_blocked, unless =<assertion> says otherwise; a failed marker's =<assertion> may
+# end in +<outcome>, what the program did), and each line starts with the test name
+# (<test>_case unless @ gives one). Marker `loaded` records the zero-trimmed hash
 # of the .so in SBF_OUT_DIR, as mollusk_for does; `loaded-other` records other bytes;
 # `tamper` changes the placed .so; `relock` makes the build lock in CARGO_TARGET_DIR
 # name SHIM_RELOCK_PID. SHIM_FAIL=<test> makes that test binary fail.
@@ -258,7 +259,7 @@ for m in ${SHIM_MARKERS-exploit:attempted exploit:held exploit:effect exploit:lo
     relock) printf '%s\n' "${SHIM_RELOCK_PID:-}" > "${CARGO_TARGET_DIR:-/nonexistent}/.auditor-poc-build.lock/pid" ;;
     attempted) printf '%s\t%s (shim)\n' "$tag" "$assertion" >> "$AUDITOR_POC_MARKERS/attempted" ;;
     held) printf '%s\t%s: shim\n' "$tag" "$assertion" >> "$AUDITOR_POC_MARKERS/held" ;;
-    failed) printf '%s\t%s: shim did not hold\n' "$tag" "$assertion" >> "$AUDITOR_POC_MARKERS/failed" ;;
+    failed) printf '%s\t%s: shim did not hold\n' "$tag" "$(printf '%s' "$assertion" | tr '+' ' ')" >> "$AUDITOR_POC_MARKERS/failed" ;;
     *) printf '%s\tshim %s\n' "$tag" "$kind" >> "$AUDITOR_POC_MARKERS/$kind" ;;
   esac
 done
@@ -915,6 +916,20 @@ code="$(run "$T/inc" "$SP" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=fixed_blocked SHIM
 [ "$code" = 2 ] && grep -q 'fix is incomplete' "$T/out" && ok "fixed-arm test failing in its contract assertion -> exit 2" || bad "fixed-arm failure: exit $code"
 code="$(run "$T/inc" "$SP" "$NATIVE" SHIM_FAIL=fixed_blocked SHIM_MARKERS="$EV fixed_blocked:attempted fixed_blocked:failed fixed_blocked:loaded")"
 [ "$code" = 2 ] && grep -q 'fix is incomplete' "$T/out" && ok "build mode: fixed-arm test failing in its contract assertion -> exit 2" || bad "build mode fixed-arm failure: exit $code"
+# Exit 2's final line says what the fixed arm did, from the outcome its failed
+# assertion wrote: it accepted the attack, rejected it with another error than the
+# pinned one, or failed it while the account changed.
+while IFS='|' read -r assertion how line; do
+  [ -n "$assertion" ] || continue
+  code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=fixed_blocked SHIM_MARKERS="$EV fixed_blocked:attempted=$assertion fixed_blocked:failed=$assertion+$how fixed_blocked:loaded")"
+  [ "$code" = 2 ] && [ "$(tail -n 1 "$T/out")" = "$line" ] \
+    && ok "a fixed arm whose $assertion assertion failed with '$how' -> exit 2, the final line saying so" || { bad "exit 2 line for $assertion/$how: exit $code"; cat "$T/out" >&2; }
+done <<'CASES'
+rejected_with|accepted|FAIL: the fixed arm accepted the attack — fix is incomplete.
+rejected_with|other-error|FAIL: the fixed arm rejected the attack with another error than the pinned one — the test's message names both.
+blocked|accepted|FAIL: the fixed arm accepted the attack — fix is incomplete.
+blocked|changed|FAIL: the fixed arm failed the attack, yet the account changed — fix is incomplete.
+CASES
 code="$(run "$T/inc" "$SP" "$NATIVE")"
 [ "$code" = 0 ] && grep -q "building 'fixed' arm to SBF" "$T/out" && ok "build mode (no prebuilt bytes) runs both arms -> exit 0" || bad "build mode: exit $code"
 # A run that stops anywhere but at a verdict or a named blocker exits 3, never 0, 1 or
@@ -1373,9 +1388,10 @@ if command -v cargo >/dev/null 2>&1 && command -v rustup >/dev/null 2>&1; then
   code="$(e2e "$T/e-base" VULNERABLE_SO="$SB-dirty-reject.so")"
   [ "$code" = 1 ] && grep -q 'expected to SUCCEED and change' "$T/out" && ok "real cargo: an exploit that fails, even with the account changed, -> exit 1 (the effect needs success)" || bad "real cargo, failed exploit with a change: exit $code"
   code="$(e2e "$T/e-base" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-takeover.so")"
-  [ "$code" = 2 ] && ok "real cargo: fixed bytes that let the attack through -> exit 2" || bad "real cargo, fix lets it through: exit $code"
+  [ "$code" = 2 ] && grep -q '^FAIL: the fixed arm accepted the attack' "$T/out" && ok "real cargo: fixed bytes that let the attack through -> exit 2, 'the fixed arm accepted the attack'" || bad "real cargo, fix lets it through: exit $code"
   code="$(e2e "$T/e-base" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-reject-Custom6001.so")"
-  [ "$code" = 2 ] && grep -q 'REJECTED with Failure(MissingRequiredSignature)' "$T/out" && ok "real cargo: a rejection with another error than the pinned one -> exit 2" || bad "real cargo, other error: exit $code"
+  [ "$code" = 2 ] && grep -q 'REJECTED with Failure(MissingRequiredSignature)' "$T/out" && grep -q '^FAIL: the fixed arm rejected the attack with another error than the pinned one' "$T/out" \
+    && ok "real cargo: a rejection with another error than the pinned one -> exit 2, a final line of its own" || bad "real cargo, other error: exit $code"
   code="$(e2e "$T/e-base" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-reject-Custom4100.so")"
   [ "$code" = 3 ] && grep -q 'inconclusive: a harness error, not a guard: Failure(Custom(4100))' "$T/out" && ok "real cargo: Custom(4100) (wrong program id) on the fixed arm -> inconclusive, exit 3" || bad "real cargo, 4100: exit $code"
   # A harness error is inconclusive on the vulnerable arm too: never "did not reproduce".
@@ -1638,9 +1654,10 @@ exclude = ["inner"]'
     [ "$code" = 3 ] && grep -q 'the legitimate call went through but left' "$T/out" \
       && ok "real cargo: a hotfix check whose legitimate call changes nothing -> inconclusive, exit 3" || { bad "real cargo, hotfix no-op control: exit $code"; cat "$T/out" >&2; }
     code="$(e2e "$T/e-hotfix" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-takeover.so")"
-    [ "$code" = 2 ] && grep -q 'expected to be BLOCKED' "$T/out" && ok "real cargo: a hotfix that lets the attack through -> exit 2" || bad "real cargo, hotfix lets it through: exit $code"
+    [ "$code" = 2 ] && grep -q 'expected to be BLOCKED' "$T/out" && grep -q '^FAIL: the fixed arm accepted the attack' "$T/out" && ok "real cargo: a hotfix that lets the attack through -> exit 2" || bad "real cargo, hotfix lets it through: exit $code"
     code="$(e2e "$T/e-hotfix" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-dirty-guard.so")"
-    [ "$code" = 2 ] && grep -q 'yet .* changed' "$T/out" && ok "real cargo: a hotfix run that fails but still changes the account is not blocked -> exit 2" || bad "real cargo, hotfix fails with a change: exit $code"
+    [ "$code" = 2 ] && grep -q 'yet .* changed' "$T/out" && grep -q '^FAIL: the fixed arm failed the attack, yet the account changed' "$T/out" \
+      && ok "real cargo: a hotfix run that fails but still changes the account is not blocked -> exit 2, a final line of its own" || bad "real cargo, hotfix fails with a change: exit $code"
     code="$(e2e "$T/e-hotfix" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-guard-Custom4100.so")"
     [ "$code" = 3 ] && grep -q 'inconclusive: a harness error, not a guard' "$T/out" && ok "real cargo: a hotfix check whose attack fails on Custom(4100) -> inconclusive, exit 3" || bad "real cargo, hotfix 4100: exit $code"
     cp -R "$T/e-hotfix" "$T/e-ctl-id"
@@ -1748,7 +1765,7 @@ RS
   [ "$code" = 3 ] && grep -q 'a harness error, not a guard: InstructionError(0, Custom(4100))' "$T/out" \
     && ok "real cargo, LiteSVM: a harness error on the vulnerable arm -> exit 3, not 1" || { bad "real cargo, LiteSVM 4100: exit $code"; cat "$T/out" >&2; }
   code="$(e2e "$T/e-lite" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-reject-Custom6001.so")"
-  [ "$code" = 2 ] && grep -q 'REJECTED with Failure(MissingRequiredSignature)' "$T/out" \
+  [ "$code" = 2 ] && grep -q 'REJECTED with Failure(MissingRequiredSignature)' "$T/out" && grep -q '^FAIL: the fixed arm rejected the attack with another error than the pinned one' "$T/out" \
     && ok "real cargo, LiteSVM: a rejection with another error than the pinned one -> exit 2" || { bad "real cargo, LiteSVM other error: exit $code"; cat "$T/out" >&2; }
   code="$(e2e "$T/e-lite" VULNERABLE_SO="$SB-unloadable.so")"
   [ "$code" = 3 ] && grep -q 'did not load as a program' "$T/out" && ok "real cargo, LiteSVM: bytes litesvm_for! cannot load -> exit 3" || { bad "real cargo, LiteSVM unloadable: exit $code"; cat "$T/out" >&2; }
@@ -1764,7 +1781,7 @@ RS
   [ "$code" = 0 ] && grep -q '(blocked: failed, account unchanged) → \[PoC-REPRODUCED\]' "$T/out" \
     && ok "real cargo, LiteSVM: the blocked form runs its control on a clone of the runner and counts as blocked" || { bad "real cargo, LiteSVM hotfix: exit $code"; cat "$T/out" >&2; }
   code="$(e2e "$T/e-lite-hotfix" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-takeover.so")"
-  [ "$code" = 2 ] && grep -q 'expected to be BLOCKED' "$T/out" && ok "real cargo, LiteSVM: a hotfix that lets the attack through -> exit 2" || { bad "real cargo, LiteSVM hotfix through: exit $code"; cat "$T/out" >&2; }
+  [ "$code" = 2 ] && grep -q 'expected to be BLOCKED' "$T/out" && grep -q '^FAIL: the fixed arm accepted the attack' "$T/out" && ok "real cargo, LiteSVM: a hotfix that lets the attack through -> exit 2" || { bad "real cargo, LiteSVM hotfix through: exit $code"; cat "$T/out" >&2; }
   code="$(e2e "$T/e-lite-hotfix" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-reject-InvalidInstructionData.so")"
   [ "$code" = 3 ] && grep -q 'the legitimate call failed on these bytes (InstructionError(0, InvalidInstructionData))' "$T/out" \
     && ok "real cargo, LiteSVM: a control that fails -> exit 3" || { bad "real cargo, LiteSVM failing control: exit $code"; cat "$T/out" >&2; }

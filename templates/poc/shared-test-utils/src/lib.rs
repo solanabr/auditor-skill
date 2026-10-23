@@ -719,7 +719,7 @@ pub fn __assert_succeeds_on(error: Option<String>, why: &str) {
     attempt("succeeds", why);
     if let Some(error) = error {
         inconclusive_if_harness(&error, why);
-        fail("succeeds", format!("exploit was expected to SUCCEED ({why}), but the program rejected it: {error}"));
+        fail("succeeds", "rejected", format!("exploit was expected to SUCCEED ({why}), but the program rejected it: {error}"));
     }
     held("succeeds", why);
 }
@@ -733,7 +733,7 @@ pub fn __assert_rejected(outcome: &InstructionResult, why: &str) {
 pub fn __assert_rejected_on(error: Option<String>, why: &str) {
     attempt("rejected", why);
     let Some(error) = error else {
-        fail("rejected", format!("attack was expected to be REJECTED ({why}), but the program accepted it"));
+        fail("rejected", "accepted", format!("attack was expected to be REJECTED ({why}), but the program accepted it"));
     };
     inconclusive_if_harness(&error, why);
     held("rejected", why);
@@ -772,6 +772,7 @@ where
         inconclusive_if_harness(error, why);
         fail(
             "effect",
+            "rejected",
             format!("exploit was expected to SUCCEED and change {account:?} ({why}), but the program returned {error}"),
         );
     }
@@ -785,6 +786,7 @@ where
     if now != expect {
         fail(
             "effect",
+            "no-effect",
             format!("after the attack {account:?} reads {now:?}, not {expect:?} ({why})"),
         );
     }
@@ -818,8 +820,9 @@ fn rejected_with(error: Option<String>, matched: bool, expected: &str, why: &str
             if let Some(error) = &other {
                 inconclusive_if_harness(error, why);
             }
+            let outcome = if other.is_some() { "other-error" } else { "accepted" };
             let got = other.as_deref().unwrap_or("Ok, the program accepted it");
-            fail("rejected_with", format!("attack was expected to be REJECTED with {expected} ({why}), but got: {got}"));
+            fail("rejected_with", outcome, format!("attack was expected to be REJECTED with {expected} ({why}), but got: {got}"));
         }
     };
     let note = harness_error(&error)
@@ -892,7 +895,7 @@ pub fn __assert_blocked_on<A, K, T, F>(
         ));
     }
     let Some(error) = &attack.error else {
-        fail("blocked", format!("attack was expected to be BLOCKED ({why}), but the program accepted it"));
+        fail("blocked", "accepted", format!("attack was expected to be BLOCKED ({why}), but the program accepted it"));
     };
     inconclusive_if_harness(error, why);
     let was = read_state(attack.was, &read, account, "before the attack", why);
@@ -900,6 +903,7 @@ pub fn __assert_blocked_on<A, K, T, F>(
     if now != was {
         fail(
             "blocked",
+            "changed",
             format!("the attack failed with {error}, yet {account:?} changed: {was:?} -> {now:?} ({why})"),
         );
     }
@@ -1000,12 +1004,14 @@ fn inconclusive(reason: &str) -> ! {
 }
 
 /// Fail the test as a verdict: an assertion of this arm ran and did not hold. It
-/// writes a `failed` marker, tagged with the assertion kind, before it panics, so
-/// `run.sh` tells a verdict (exit 1 or 2) from a test the process ended inside an
-/// assertion (which leaves `attempted` but no `held` and no `failed`, and decides
-/// nothing).
-fn fail(kind: &str, message: String) -> ! {
-    mark("failed", &format!("{kind}: {message}"));
+/// writes a `failed` marker, tagged with the assertion kind and what the program did
+/// (`accepted`, `other-error` or `changed` against a fix, `rejected` or `no-effect`
+/// against an exploit), before it panics, so `run.sh` tells a verdict (exit 1 or 2)
+/// from a test the process ended inside an assertion (which leaves `attempted` but
+/// no `held` and no `failed`, and decides nothing), and names what happened in its
+/// final line.
+fn fail(kind: &str, outcome: &str, message: String) -> ! {
+    mark("failed", &format!("{kind} {outcome}: {message}"));
     panic!("{message}");
 }
 
