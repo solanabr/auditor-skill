@@ -70,7 +70,8 @@ pub fn shown(raw: &[u8]) -> String {
     s
 }
 
-fn escape_char(s: &mut String, c: u32) {
+/// Appends Python's `unicode_escape` of one character.
+pub fn escape_char(s: &mut String, c: u32) {
     match c {
         0x5C => s.push_str("\\\\"),
         0x09 => s.push_str("\\t"),
@@ -83,9 +84,28 @@ fn escape_char(s: &mut String, c: u32) {
     }
 }
 
+/// A character the recipes never accept in a key, program id or version, and
+/// never print raw: a C0 control, DEL, a C1 control, the line and paragraph
+/// separators, a bidirectional control, or a zero-width character.
+pub fn unsafe_char(c: char) -> bool {
+    matches!(c,
+        '\u{0}'..='\u{1f}'
+        | '\u{7f}'..='\u{9f}'
+        | '\u{2028}'
+        | '\u{2029}'
+        | '\u{202a}'..='\u{202e}'
+        | '\u{2066}'..='\u{2069}'
+        | '\u{200e}'
+        | '\u{200f}'
+        | '\u{61c}'
+        | '\u{200b}'..='\u{200d}'
+        | '\u{feff}')
+}
+
+/// A string with no unsafe character, so it prints as one line, as written.
 fn plain(v: &Value) -> bool {
     match v {
-        Value::Str(s) => !s.bytes().any(|c| c < 0x20 || c == 0x7F),
+        Value::Str(s) => !s.chars().any(unsafe_char),
         _ => false,
     }
 }
@@ -119,31 +139,54 @@ fn items<'v, 'a>(v: Option<&'v Value<'a>>) -> &'v [Value<'a>] {
     v.and_then(Value::as_array).unwrap_or(&[])
 }
 
-/// `_amount`: a string of ASCII digits that Python's `int()` reads.
+/// Decimal digits that hold a u64 value (leading zeros allowed).
+fn u64_digits(digits: &str) -> bool {
+    let value = digits.trim_start_matches('0');
+    !digits.is_empty()
+        && digits.bytes().all(|c| c.is_ascii_digit())
+        && (value.len() < 20 || (value.len() == 20 && value <= "18446744073709551615"))
+}
+
+/// `_u64`: an integer a u64 holds, as a lamport balance and the fee are.
+fn u64_int(v: &Value) -> bool {
+    match v.as_int_lit() {
+        Some("-0") => true,
+        Some(lit) => u64_digits(lit),
+        None => false,
+    }
+}
+
+/// `_index`: absent or null, or an integer from 0.
+fn index(v: Option<&Value>) -> bool {
+    match v {
+        None | Some(Value::Null) => true,
+        Some(x) => x
+            .as_int_lit()
+            .is_some_and(|lit| lit == "-0" || !lit.starts_with('-')),
+    }
+}
+
+/// `_amount`: the decimal text of a u64, in at most 20 ASCII digits.
 fn amount(v: &Value) -> bool {
     match v {
-        Value::Str(s) => {
-            !s.is_empty()
-                && s.len() <= crate::num::MAX_INT_DIGITS
-                && s.bytes().all(|c| c.is_ascii_digit())
-        }
+        Value::Str(s) => s.len() <= 20 && u64_digits(s),
         _ => false,
     }
 }
 
 fn instruction(ix: &Value) -> bool {
     ix.is_object()
-        && of(ix.get("programIdIndex"), is_int)
+        && index(ix.get("programIdIndex"))
         && of(ix.get("accounts"), is_arr)
         && match ix.get("programId") {
             None | Some(Value::Null) => true,
-            Some(p) => plain(p),
+            Some(p) => plain(p) && p.as_str() != Some(""),
         }
 }
 
 fn token_balance(b: &Value) -> bool {
     if !(b.is_object()
-        && of(b.get("accountIndex"), is_int)
+        && index(b.get("accountIndex"))
         && of(b.get("owner"), is_str)
         && of(b.get("mint"), is_str)
         && of(b.get("uiTokenAmount"), is_obj))
@@ -183,7 +226,7 @@ pub fn shaped(tx: &Value) -> bool {
     if !(of(keys, is_arr)
         && of(header, is_obj)
         && of(ixs, is_arr)
-        && of(header.and_then(|h| h.get("numRequiredSignatures")), is_int)
+        && index(header.and_then(|h| h.get("numRequiredSignatures")))
         && items(ixs).iter().all(instruction))
     {
         return false;
@@ -203,7 +246,7 @@ pub fn shaped(tx: &Value) -> bool {
     if !(of(groups, is_arr)
         && of(loaded, is_obj)
         && of(logs, is_arr)
-        && of(meta.and_then(|m| m.get("fee")), is_int)
+        && of(meta.and_then(|m| m.get("fee")), u64_int)
         && items(logs).iter().all(is_str))
     {
         return false;
@@ -211,7 +254,8 @@ pub fn shaped(tx: &Value) -> bool {
     for g in items(groups) {
         let inner = g.get("instructions");
         if !(g.is_object()
-            && g.get("index").is_some_and(is_int)
+            && !matches!(g.get("index"), None | Some(Value::Null))
+            && index(g.get("index"))
             && of(inner, is_arr)
             && items(inner).iter().all(instruction))
         {
@@ -226,9 +270,13 @@ pub fn shaped(tx: &Value) -> bool {
     }
     for name in ["preBalances", "postBalances"] {
         let v = meta.and_then(|m| m.get(name));
-        if !(of(v, is_arr) && items(v).iter().all(is_int)) {
+        if !(of(v, is_arr) && items(v).iter().all(u64_int)) {
             return false;
         }
+    }
+    let balances = |name| items(meta.and_then(|m| m.get(name))).len();
+    if balances("preBalances") != balances("postBalances") {
+        return false;
     }
     for name in ["preTokenBalances", "postTokenBalances"] {
         let v = meta.and_then(|m| m.get(name));
@@ -338,6 +386,74 @@ mod tests {
         assert_eq!(shown(b"x\xffy\xe2\x82z"), "x\\udcffy\\udce2\\udc82z");
         let long = "x".repeat(200);
         assert_eq!(shown(long.as_bytes()), format!("{}...", "x".repeat(120)));
+    }
+
+    fn reads(meta: &str, message: &str) -> bool {
+        let line = format!(
+            r#"{{"meta":{{{meta}}},"transaction":{{"signatures":["S"],"message":{{{message}}}}}}}"#
+        );
+        parse_line(&line).is_some_and(|tx| shaped(&tx))
+    }
+
+    #[test]
+    fn balances_and_amounts_are_u64() {
+        let keys = r#""accountKeys":["K","L"]"#;
+        assert!(reads(
+            r#""preBalances":[0,18446744073709551615],"postBalances":[-0,1]"#,
+            keys
+        ));
+        assert!(!reads(
+            r#""preBalances":[18446744073709551616],"postBalances":[1]"#,
+            keys
+        ));
+        assert!(!reads(r#""preBalances":[-1],"postBalances":[1]"#, keys));
+        assert!(!reads(r#""preBalances":[1,2],"postBalances":[1]"#, keys));
+        assert!(!reads(r#""preBalances":[1]"#, keys));
+        assert!(!reads(r#""fee":-5"#, keys));
+        let amount = |a: &str| {
+            reads(
+                &format!(r#""postTokenBalances":[{{"uiTokenAmount":{{"amount":{a}}}}}]"#),
+                keys,
+            )
+        };
+        assert!(amount(r#""18446744073709551615""#));
+        assert!(amount(r#""00000000000000000007""#));
+        assert!(!amount(r#""18446744073709551616""#));
+        assert!(!amount(r#""000000000000000000007""#));
+        assert!(!amount(r#""""#));
+    }
+
+    #[test]
+    fn indexes_and_program_ids() {
+        let ix = |i: &str| reads("", &format!(r#""accountKeys":["K"],"instructions":[{i}]"#));
+        assert!(ix(r#"{"programIdIndex":0}"#));
+        assert!(ix(r#"{"programIdIndex":-0}"#));
+        assert!(!ix(r#"{"programIdIndex":-1}"#));
+        assert!(!ix(r#"{"programId":""}"#));
+        assert!(reads(
+            r#""innerInstructions":[{"index":3,"instructions":[]}]"#,
+            ""
+        ));
+        assert!(!reads(
+            r#""innerInstructions":[{"index":-2,"instructions":[]}]"#,
+            ""
+        ));
+        assert!(!reads(
+            r#""innerInstructions":[{"index":null,"instructions":[]}]"#,
+            ""
+        ));
+        assert!(!reads("", r#""header":{"numRequiredSignatures":-1}"#));
+    }
+
+    #[test]
+    fn keys_hold_no_unsafe_character() {
+        for c in [
+            "\\u0000", "\\u001b", "\\u007f", "\\u0085", "\\u2028", "\\u2029", "\\u202e", "\\u2066",
+            "\\u200f", "\\u061c", "\\u200b", "\\ufeff",
+        ] {
+            assert!(!reads("", &format!(r#""accountKeys":["K{c}"]"#)), "{c}");
+        }
+        assert!(reads("", r#""accountKeys":["K é　"]"#));
     }
 
     #[test]

@@ -4,7 +4,8 @@
 //! that is a real directory holding a `.gitignore` of `*`. Inputs are opened
 //! without following a link and must be the regular file that was checked;
 //! output goes to a new temporary file, created exclusively beside the named
-//! file and renamed onto it once complete. Nothing here reads the environment.
+//! file, which takes that new name, never replacing a file, once the output is
+//! complete. Nothing here reads the environment.
 
 use std::ffi::{CString, OsStr};
 use std::fs::{self, File, Metadata, OpenOptions};
@@ -362,7 +363,7 @@ extern "C" fn on_signal(sig: c_int) {
 }
 
 /// Where a subcommand's output goes: stdout, or a temporary file beside the
-/// `--out` path that replaces it only once the output is whole.
+/// `--out` path that takes that name only once the output is whole.
 pub enum Sink {
     Stdout(BufWriter<io::Stdout>),
     Temp {
@@ -380,8 +381,15 @@ impl Sink {
 
     /// A new file `.<name>.<suffix>.partial` beside `path`, created exclusively
     /// (never through a link, never over an existing file), mode 0600. TERM, INT
-    /// and HUP remove it before exiting with 128 + the signal.
+    /// and HUP remove it before exiting with 128 + the signal: the handlers are in
+    /// place, and the name is known to them, before the file is created.
     pub fn temp(path: PathBuf) -> io::Result<Sink> {
+        // SAFETY: on_signal only calls async-signal-safe functions.
+        unsafe {
+            for sig in [sys::SIGTERM, sys::SIGINT, sys::SIGHUP] {
+                sys::signal(sig, on_signal);
+            }
+        }
         let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
         let name = path
             .file_name()
@@ -403,6 +411,9 @@ impl Sink {
                 .as_bytes(),
             );
             let temp = dir.join(OsStr::from_bytes(&leaf));
+            let c = CString::new(temp.as_os_str().as_bytes())
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "a NUL in the path"))?;
+            TEMP.store(c.into_raw(), Ordering::SeqCst);
             let opened = OpenOptions::new()
                 .write(true)
                 .create_new(true)
@@ -411,15 +422,6 @@ impl Sink {
                 .open(&temp);
             match opened {
                 Ok(file) => {
-                    if let Ok(c) = CString::new(temp.as_os_str().as_bytes()) {
-                        TEMP.store(c.into_raw(), Ordering::SeqCst);
-                        // SAFETY: on_signal only calls async-signal-safe functions.
-                        unsafe {
-                            for sig in [sys::SIGTERM, sys::SIGINT, sys::SIGHUP] {
-                                sys::signal(sig, on_signal);
-                            }
-                        }
-                    }
                     let file = BufWriter::with_capacity(1 << 16, file);
                     return Ok(Sink::Temp {
                         file,
@@ -428,8 +430,12 @@ impl Sink {
                         done: false,
                     });
                 }
-                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
-                Err(e) => return Err(e),
+                Err(e) => {
+                    TEMP.store(std::ptr::null_mut(), Ordering::SeqCst);
+                    if e.kind() != io::ErrorKind::AlreadyExists {
+                        return Err(e);
+                    }
+                }
             }
         }
         Err(io::Error::new(
@@ -445,7 +451,9 @@ impl Sink {
         }
     }
 
-    /// Flushes, and renames a temporary file onto its path.
+    /// Flushes, and gives a temporary file its path: a hard link, which fails
+    /// rather than replace a file that appeared in the meantime, then the
+    /// temporary name is removed.
     pub fn finish(&mut self) -> io::Result<()> {
         match self {
             Sink::Stdout(w) => w.flush(),
@@ -456,10 +464,11 @@ impl Sink {
                 done,
             } => {
                 file.flush()?;
-                fs::rename(&*temp, &*path)?;
+                fs::hard_link(&*temp, &*path)?;
                 *done = true;
+                let removed = fs::remove_file(&*temp);
                 TEMP.store(std::ptr::null_mut(), Ordering::SeqCst);
-                Ok(())
+                removed
             }
         }
     }

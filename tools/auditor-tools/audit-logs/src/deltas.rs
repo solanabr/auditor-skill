@@ -3,18 +3,19 @@
 
 use std::collections::HashMap;
 
+use crate::contract::{escape_char, unsafe_char};
 use crate::json::Value;
 use crate::num::Int;
 
-/// Escapes what could break a TSV row: backslash, tab, LF and CR.
+/// Escapes what could break a TSV row, or hide in one: backslash, tab, LF and CR
+/// as `\\`, `\t`, `\n`, `\r`, and every other unsafe character as Python's
+/// `unicode_escape` writes it (`\x1b`, `\u2028`).
 fn clean(out: &mut String, s: &str) {
     for c in s.chars() {
-        match c {
-            '\\' => out.push_str("\\\\"),
-            '\t' => out.push_str("\\t"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            c => out.push(c),
+        if c == '\\' || unsafe_char(c) {
+            escape_char(out, c as u32);
+        } else {
+            out.push(c);
         }
     }
 }
@@ -72,10 +73,11 @@ fn int(v: &Value) -> Int {
 }
 
 /// Per (signature, account): the non-zero lamport delta, with the fee added back
-/// for the fee payer.
-pub fn lamports(tx: &Value, out: &mut String) {
+/// for the fee payer. A balance whose index has no account key is printed as
+/// `#<index>`; returns how many rows name one.
+pub fn lamports(tx: &Value, out: &mut String) -> u64 {
     if !ok(tx) {
-        return;
+        return 0;
     }
     let meta = tx.field("meta");
     let pre = list(meta.and_then(|m| m.field("preBalances")));
@@ -86,18 +88,27 @@ pub fn lamports(tx: &Value, out: &mut String) {
         .unwrap_or_else(Int::zero);
     let keys = account_keys(tx);
     let sig = sig(tx);
-    for i in 0..pre.len().min(post.len()).min(keys.len()) {
-        let mut d = int(&post[i]).sub(&int(&pre[i]));
+    // pre and post are the same length (the input contract).
+    let mut keyless = 0;
+    for (i, (p, q)) in pre.iter().zip(post).enumerate() {
+        let mut d = int(q).sub(&int(p));
         if i == 0 {
             d = d.add(&fee);
         }
         if !d.is_zero() {
             clean(out, sig);
             out.push('\t');
-            clean(out, keys[i]);
+            match keys.get(i) {
+                Some(k) => clean(out, k),
+                None => {
+                    out.push_str(&format!("#{i}"));
+                    keyless += 1;
+                }
+            }
             out.push_str(&format!("\t{d}\n"));
         }
     }
+    keyless
 }
 
 /// Per (signature, token account, mint): the non-zero raw-unit delta, with the
@@ -174,5 +185,23 @@ pub fn tokens(tx: &Value, out: &mut String) {
             clean(out, account);
             out.push('\n');
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tsv_fields_are_escaped() {
+        let mut s = String::new();
+        clean(
+            &mut s,
+            "a\\b\tc\nd\re\u{1b}f\u{7f}g\u{85}h\u{2028}i\u{feff}j\u{a0}k\u{e9}",
+        );
+        assert_eq!(
+            s,
+            "a\\\\b\\tc\\nd\\re\\x1bf\\x7fg\\x85h\\u2028i\\ufeffj\u{a0}k\u{e9}"
+        );
     }
 }

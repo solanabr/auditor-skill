@@ -27,7 +27,6 @@ mod profile;
 use std::ffi::OsString;
 use std::fs;
 use std::io;
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -184,11 +183,9 @@ fn inputs(wt: &Path, call: &Call, checked: &[Confined]) -> Result<Vec<Input>, St
     Ok(out)
 }
 
-/// Checks the `--out` path as the scripts do, plus the confinement rules: its
-/// directory must exist, and an existing file there must be a regular file that
-/// is not a link, has no other name, and is none of the inputs (`reads`, as device
-/// and inode).
-fn out_path(wt: &Path, c: &Confined, reads: &[(u64, u64)]) -> Result<PathBuf, Stop> {
+/// Checks the `--out` path as the scripts do: a new name, not a link and not
+/// reached through one, in a directory that exists.
+fn out_path(wt: &Path, c: &Confined) -> Result<PathBuf, Stop> {
     confine::check_run_dir(wt, c).map_err(refused)?;
     let shown = c.shown();
     let full = c.full(wt);
@@ -206,19 +203,12 @@ fn out_path(wt: &Path, c: &Confined, reads: &[(u64, u64)]) -> Result<PathBuf, St
             1,
             format!("cannot write --out ({shown}): {}", confine::os_message(&e)),
         )),
-        Found::File(md) if !md.file_type().is_file() => Err(Stop(
-            1,
-            format!("cannot write --out ({shown}): not a regular file"),
-        )),
-        Found::File(md) if md.nlink() > 1 => Err(Stop(
+        Found::File(_) => Err(Stop(
             2,
-            format!("refused: --out ({shown}) has more than one name (a hard link)"),
+            format!(
+                "refused: --out ({shown}) already exists, and an output never replaces a file: name a new one"
+            ),
         )),
-        Found::File(md) if reads.contains(&(md.dev(), md.ino())) => Err(Stop(
-            2,
-            format!("refused: --out ({shown}) is one of the inputs"),
-        )),
-        Found::File(_) => Ok(()),
     }?;
     let parent = full.parent().map(Path::to_path_buf).unwrap_or_default();
     if !confine::stays_inside(wt, &parent) {
@@ -255,15 +245,8 @@ fn run(args: &[OsString]) -> Result<(), Stop> {
     let wt = confine::working_tree().map_err(refused)?;
     confine::self_check(&wt).map_err(refused)?;
     let inputs = inputs(&wt, &call, &checked)?;
-    let reads: Vec<(u64, u64)> = inputs
-        .iter()
-        .filter_map(|i| match &i.source {
-            Source::File(_, md) => Some((md.dev(), md.ino())),
-            Source::Stdin => None,
-        })
-        .collect();
     let out = match &out_arg {
-        Some(c) => Some(out_path(&wt, c, &reads)?),
+        Some(c) => Some(out_path(&wt, c)?),
         None => None,
     };
 
@@ -277,9 +260,9 @@ fn run(args: &[OsString]) -> Result<(), Stop> {
         None => Sink::stdout(),
     };
     let failed = |e: io::Error| Stop(1, confine::os_message(&e));
-    // The --out path is checked again just before the rename.
+    // The --out path is checked again just before the output takes its name.
     let recheck = || match &out_arg {
-        Some(c) => out_path(&wt, c, &reads).map(|_| ()),
+        Some(c) => out_path(&wt, c).map(|_| ()),
         None => Ok(()),
     };
     let mut stats = Stats::default();
@@ -310,12 +293,13 @@ fn run(args: &[OsString]) -> Result<(), Stop> {
         }
         recipe => {
             let mut buf = String::new();
+            let mut keyless = 0;
             for_each_record(inputs, &mut stats, |tx| {
                 buf.clear();
                 match recipe {
                     Recipe::Frames => frames::rows(tx, &mut buf),
                     Recipe::Instructions => frames::instruction_rows(tx, &mut buf),
-                    Recipe::Lamports => deltas::lamports(tx, &mut buf),
+                    Recipe::Lamports => keyless += deltas::lamports(tx, &mut buf),
                     _ => deltas::tokens(tx, &mut buf),
                 }
                 sink.write_all(buf.as_bytes())
@@ -325,6 +309,13 @@ fn run(args: &[OsString]) -> Result<(), Stop> {
             sink.finish().map_err(failed)?;
             for note in stats.notes() {
                 eprintln!("audit-logs: skipped {note}");
+            }
+            if keyless > 0 {
+                eprintln!(
+                    "audit-logs: {keyless} row(s) name a balance index that has no account key, as #<index>: \
+                     the transaction lists fewer keys than balances (an encoding json export without \
+                     meta.loadedAddresses, say)"
+                );
             }
         }
     }

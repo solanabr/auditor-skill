@@ -7,16 +7,18 @@
 //! 4,300 digits is refused; a control character inside a string is refused; a
 //! repeated key keeps its first position and its last value; and a lone
 //! surrogate left by a `\u` escape refuses the line, unless a later copy of its
-//! key replaced it. Nesting is capped at jq's parsing limit, so every line read
-//! here is one profile.sh's jq can also read.
+//! key replaced it. Nesting is capped at 200 levels anywhere in the text, well
+//! below jq's parsing limit of 256, so every line read here is one profile.sh's jq
+//! can also read.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
 
 use crate::num::{jq_number, py_float_repr, MAX_INT_DIGITS};
 
-/// jq 1.7's parsing depth limit; one more `[` or `{` makes a line malformed.
-pub const MAX_DEPTH: usize = 256;
+/// The deepest nesting a line may have, the top-level object being 1; one more
+/// `[` or `{` makes the line malformed.
+pub const MAX_DEPTH: usize = 200;
 
 /// Objects with more keys than this look up repeated keys through a map.
 const INDEXED_KEYS: usize = 32;
