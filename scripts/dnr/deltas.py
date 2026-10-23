@@ -10,24 +10,27 @@ line, an amount or balance that is not an exact integer among them, is skipped a
 counted, never echoed. A transaction is counted once however many inputs hold it:
 the first occurrence of each signature wins. Both counts are reported on stderr,
 the malformed lines per input, as collection gaps. The corpus is streamed one
-transaction at a time, and every named file is checked before the first row is
-written: one that cannot be read exits 1, and one that is a symbolic link, or
-reached through one inside the working directory, exits 2, with no output either
-way.
+transaction at a time, and every named file (and the --out path) is checked
+before the first row is written: one that cannot be read or written exits 1, and
+one that is a symbolic link, or reached through one inside the working directory,
+exits 2, with no output either way.
 
 Two modes:
-  deltas.py lamports [files...]   per (signature, account) non-zero lamport delta;
+  deltas.py lamports [--out <file>] [files...]
+                                  per (signature, account) non-zero lamport delta;
                                   the fee is added back for the fee payer (index 0),
                                   so the row reflects movement, not the fee.
-  deltas.py tokens   [files...]   per (signature, token account, mint) raw-unit
+  deltas.py tokens [--out <file>] [files...]
+                                  per (signature, token account, mint) raw-unit
                                   token delta; columns: signature, owner (a label,
                                   `?` when the RPC gave none), mint, delta, token
                                   account.
 
-Output: TSV on stdout, UTF-8 whatever the locale. Signatures, owners and mints
-are base58 in real RPC data and deltas are decimal integers; any tab, newline,
-carriage return or backslash in a string field is escaped (`\\t`, `\\n`, `\\r`,
-`\\\\`), so a crafted corpus cannot forge a row.
+Output: TSV on stdout, or with `--out <file>` in a temporary file beside it that
+replaces <file> only once the run is complete; UTF-8 whatever the locale.
+Signatures, owners and mints are base58 in real RPC data and deltas are decimal
+integers; any tab, newline, carriage return or backslash in a string field is
+escaped (`\\t`, `\\n`, `\\r`, `\\\\`), so a crafted corpus cannot forge a row.
 Token deltas are per token account (its `accountIndex` resolved through the
 transaction's account keys) and mint, so two accounts never share a bucket, even
 when the RPC gives no owner; sum the rows per owner for an owner's net, which nets
@@ -67,8 +70,10 @@ import json
 import math
 import os
 import re
+import signal
 import stat
 import sys
+import tempfile
 from collections import OrderedDict
 
 
@@ -230,6 +235,57 @@ def unusable(paths):
     return None
 
 
+def unwritable(path):
+    """None when --out path can take an output file, else (exit status, message): 2 for
+    a symbolic link, or a path reached through one inside the working directory, 1
+    for a path that is not a regular file or whose directory does not exist."""
+    try:
+        if linked(path):
+            return 2, ("--out %s is a symbolic link, or is reached through one inside the working"
+                       " directory; refusing it" % shown(path))
+        if os.path.lexists(path) and not os.path.isfile(path):
+            return 1, "cannot write --out %s: not a regular file" % shown(path)
+        if not os.path.isdir(os.path.dirname(path) or "."):
+            return 1, "cannot write --out %s: its directory does not exist" % shown(path)
+    except OSError as e:
+        return 1, "cannot write --out %s: %s" % (shown(path), shown(e.strerror or e))
+    return None
+
+
+class Output:
+    """Where the output goes: stdout, or for --out a new temporary file beside the path
+    that done() renames onto it once it is whole, so the path never holds a partial
+    output. close() removes a temporary file done() did not rename; SIGTERM exits
+    through it."""
+
+    def __init__(self, path):
+        self.path, self.temp, self.fh = path, None, sys.stdout.buffer
+        if path is not None:
+            signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
+            fd, self.temp = tempfile.mkstemp(dir=os.path.dirname(path) or ".",
+                                             prefix="." + os.path.basename(path) + ".", suffix=".partial")
+            self.fh = os.fdopen(fd, "wb")
+
+    def write(self, data):
+        self.fh.write(data)
+
+    def done(self):
+        self.fh.flush()
+        if self.temp is not None:
+            self.fh.close()
+            os.replace(self.temp, self.path)
+            self.temp = None
+
+    def close(self):
+        if self.temp is not None:
+            self.fh.close()
+            try:
+                os.unlink(self.temp)
+            except OSError:
+                pass
+            self.temp = None
+
+
 def _lone_surrogate(obj):
     stack = [obj]
     while stack:
@@ -386,26 +442,38 @@ def skipped(stats):
 
 
 def main(argv: list[str]) -> int:
+    usage = "usage: deltas.py lamports|tokens [--out <file>] [<corpus.jsonl> ...]"
     if not argv or argv[0] not in ("lamports", "tokens"):
-        print("usage: deltas.py lamports|tokens [files...]", file=sys.stderr)
+        print(usage, file=sys.stderr)
         return 2
-    mode, files = argv[0], argv[1:]
+    mode, files, out_path = argv[0], argv[1:], None
+    if files[:1] == ["--out"]:
+        if len(files) < 2:
+            print(usage, file=sys.stderr)
+            return 2
+        out_path, files = files[1], files[2:]
     problem = unusable(files)
+    if problem is None and out_path is not None:
+        problem = unwritable(out_path)
     if problem:
         print("deltas.py: " + problem[1], file=sys.stderr)
         return problem[0]
     stats = {"dupes": 0, "bad": []}
-    out = sys.stdout.buffer
+    out = None
     try:
+        out = Output(out_path)
         txs = (tx for _line, tx in records(files, stats))
         if mode == "lamports":
             _lamports(txs, out)
         else:
             _tokens(txs, out)
-        out.flush()
+        out.done()
     except OSError as e:
         print("deltas.py: " + shown(e), file=sys.stderr)
         return 1
+    finally:
+        if out is not None:
+            out.close()
     for note in skipped(stats):
         print("deltas.py: skipped " + note, file=sys.stderr)
     return 0

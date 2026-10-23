@@ -131,11 +131,11 @@ networked ones against fake `curl` / `solana` binaries, with no network.
 bash "<auditor-skill root>/scripts/dnr/profile.sh" incident_<n>/corpus*/transactions.jsonl
 
 # program-log attribution, as JSONL (one record per emitted line, by frame)
-python3 -I "<auditor-skill root>/scripts/dnr/frames.py" incident_<n>/corpus*/transactions.jsonl > incident_<n>/frames.jsonl
+python3 -I "<auditor-skill root>/scripts/dnr/frames.py" --out incident_<n>/frames.jsonl incident_<n>/corpus*/transactions.jsonl
 
 # which instruction ran, from the runtime-recorded instruction lists (ix records,
 # top-level and CPI, data as given) joined to the runtime invoke lines
-python3 -I "<auditor-skill root>/scripts/dnr/frames.py" --instructions incident_<n>/corpus*/transactions.jsonl > incident_<n>/instructions.jsonl
+python3 -I "<auditor-skill root>/scripts/dnr/frames.py" --instructions --out incident_<n>/instructions.jsonl incident_<n>/corpus*/transactions.jsonl
 
 # balance movements, exact, successful transactions only
 python3 -I "<auditor-skill root>/scripts/dnr/deltas.py" tokens   incident_<n>/corpus*/transactions.jsonl

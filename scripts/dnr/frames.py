@@ -10,7 +10,9 @@ Lines are read under the input contract that profile.sh and deltas.py share
 and a named input that is a symbolic link is refused. Each signature is read
 once: a later copy of the same transaction is skipped. Both counts are reported
 on stderr, the malformed lines per input, as collection gaps.
-Output: JSONL on stdout, one record per emitted log line:
+Output: JSONL on stdout, or with `--out <file>` in a temporary file beside it
+that replaces <file> only once the run is complete. One record per emitted log
+line:
 
     {"sig": "...", "ok": true, "depth": 2, "program": "<id|?>",
      "kind": "log|data|return|truncated|unparsed", "text": "..."}
@@ -54,15 +56,16 @@ Design rules, each forced by a real failure mode:
     payload are escaped by the encoder and can never break a column. It is
     written as UTF-8 whatever the locale.
 
-Run it as `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/frames.py" [--instructions] <corpus.jsonl>...`.
+Run it as `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/frames.py" [--instructions] [--out <file>] <corpus.jsonl>...`.
 Isolated mode keeps the working directory (usually the audited repo) and
 PYTHONPATH off sys.path, so it imports nothing beyond the stdlib — keep it that
 way: no sibling modules. That is why the input-contract block below is a copy,
 kept the same in all three recipes (scripts/tests/test-dnr.sh compares them).
 
-Exit: 0 done · 1 a named input that cannot be read, or a write that failed · 2 a
-named input that is a symbolic link, or reached through one inside the working
-directory. Every input is checked before the first record is written.
+Exit: 0 done · 1 a named input that cannot be read, an --out that cannot be
+written, or a write that failed · 2 usage, or a named input or --out that is a
+symbolic link, or reached through one inside the working directory. Every input
+and the --out path are checked before the first record is written.
 
 No network. stdlib only.
 """
@@ -74,8 +77,10 @@ import json
 import math
 import os
 import re
+import signal
 import stat
 import sys
+import tempfile
 
 # base58 (Bitcoin alphabet) pubkey, 32..44 chars — the shape of a program id. The
 # runtime's own lines are matched whole, with ASCII digits only, and an invoke
@@ -289,6 +294,57 @@ def unusable(paths):
     return None
 
 
+def unwritable(path):
+    """None when --out path can take an output file, else (exit status, message): 2 for
+    a symbolic link, or a path reached through one inside the working directory, 1
+    for a path that is not a regular file or whose directory does not exist."""
+    try:
+        if linked(path):
+            return 2, ("--out %s is a symbolic link, or is reached through one inside the working"
+                       " directory; refusing it" % shown(path))
+        if os.path.lexists(path) and not os.path.isfile(path):
+            return 1, "cannot write --out %s: not a regular file" % shown(path)
+        if not os.path.isdir(os.path.dirname(path) or "."):
+            return 1, "cannot write --out %s: its directory does not exist" % shown(path)
+    except OSError as e:
+        return 1, "cannot write --out %s: %s" % (shown(path), shown(e.strerror or e))
+    return None
+
+
+class Output:
+    """Where the output goes: stdout, or for --out a new temporary file beside the path
+    that done() renames onto it once it is whole, so the path never holds a partial
+    output. close() removes a temporary file done() did not rename; SIGTERM exits
+    through it."""
+
+    def __init__(self, path):
+        self.path, self.temp, self.fh = path, None, sys.stdout.buffer
+        if path is not None:
+            signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
+            fd, self.temp = tempfile.mkstemp(dir=os.path.dirname(path) or ".",
+                                             prefix="." + os.path.basename(path) + ".", suffix=".partial")
+            self.fh = os.fdopen(fd, "wb")
+
+    def write(self, data):
+        self.fh.write(data)
+
+    def done(self):
+        self.fh.flush()
+        if self.temp is not None:
+            self.fh.close()
+            os.replace(self.temp, self.path)
+            self.temp = None
+
+    def close(self):
+        if self.temp is not None:
+            self.fh.close()
+            try:
+                os.unlink(self.temp)
+            except OSError:
+                pass
+            self.temp = None
+
+
 def _lone_surrogate(obj):
     stack = [obj]
     while stack:
@@ -445,23 +501,35 @@ def skipped(stats):
 
 
 def main(argv: list[str]) -> int:
-    rows = _rows
-    if argv[:1] == ["--instructions"]:
-        rows, argv = _instruction_rows, argv[1:]
+    rows, out_path = _rows, None
+    while argv[:1] in (["--instructions"], ["--out"]):
+        if argv[0] == "--instructions":
+            rows, argv = _instruction_rows, argv[1:]
+        elif len(argv) > 1:
+            out_path, argv = argv[1], argv[2:]
+        else:
+            print("usage: frames.py [--instructions] [--out <file>] [<corpus.jsonl> ...]", file=sys.stderr)
+            return 2
     problem = unusable(argv)
+    if problem is None and out_path is not None:
+        problem = unwritable(out_path)
     if problem:
         print("frames.py: " + problem[1], file=sys.stderr)
         return problem[0]
     stats = {"dupes": 0, "bad": []}
-    out = sys.stdout.buffer
+    out = None
     try:
+        out = Output(out_path)
         for _line, tx in records(argv, stats):
             for row in rows(tx):
                 out.write((json.dumps(row, ensure_ascii=False) + "\n").encode("utf-8"))
-        out.flush()
+        out.done()
     except OSError as e:
         print("frames.py: " + shown(e), file=sys.stderr)
         return 1
+    finally:
+        if out is not None:
+            out.close()
     for note in skipped(stats):
         print("frames.py: skipped " + note, file=sys.stderr)
     return 0

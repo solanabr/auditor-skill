@@ -31,9 +31,9 @@ audited repo and may ship a same-named file. The python recipes run as
 `snapshot-program.sh` hashes with `python3 -I` for the same reason.
 
 ```bash
-bash "<auditor-skill root>/scripts/dnr/profile.sh" <corpus.jsonl>...
-python3 -I "<auditor-skill root>/scripts/dnr/frames.py" [--instructions] <corpus.jsonl>...
-python3 -I "<auditor-skill root>/scripts/dnr/deltas.py" tokens|lamports <corpus.jsonl>...
+bash "<auditor-skill root>/scripts/dnr/profile.sh" [--out <file>] <corpus.jsonl>...
+python3 -I "<auditor-skill root>/scripts/dnr/frames.py" [--instructions] [--out <file>] <corpus.jsonl>...
+python3 -I "<auditor-skill root>/scripts/dnr/deltas.py" tokens|lamports [--out <file>] <corpus.jsonl>...
 ```
 
 Each takes every corpus of an incident at once
@@ -81,7 +81,14 @@ because `python3 -I` keeps a sibling module off `sys.path`;
   exit status depends on line order.
 - **Copies.** A transaction is read once, at the first line that carries its
   signature; the copies skipped are counted in a note of their own.
-- **Output.** `frames.py` and `deltas.py` write UTF-8 whatever the locale.
+- **Output.** `frames.py` and `deltas.py` write UTF-8 whatever the locale. To
+  keep an output, pass `--out <file>`, never a shell redirection into
+  `incident_<n>/`: the recipe writes a temporary file beside `<file>` and renames
+  it onto `<file>` only when the run completes, so a run that is cut short never
+  leaves a partial output under the final name, and one stopped by TERM removes
+  its temporary file. An `--out` that is a symbolic link, or reached through one
+  inside the working directory, is refused (exit 2); one whose directory is
+  missing is an error (exit 1).
 
 ## Two hazards these encode, and why
 

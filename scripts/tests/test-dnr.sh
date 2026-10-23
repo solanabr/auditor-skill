@@ -1051,6 +1051,65 @@ for r in frames lamports; do
   done
 done
 
+# ---------------------------------------------------------------------------
+# 22. --out writes a recipe's output to a temporary file beside <file> and renames
+#     it onto <file> only once it is whole: <file> then holds what stdout would
+#     have, no temporary file is left, and a run stopped by SIGTERM leaves <file>
+#     as it was. An --out that is a symbolic link, or reached through one inside
+#     the working directory, is refused (exit 2) and nothing is written.
+# ---------------------------------------------------------------------------
+W22="$TT/wd22"; mkdir -p "$W22/out" "$TT/elsewhere22"
+cat "$FIX/clean-mixed.jsonl" "$FIX/same-owner-drain.jsonl" "$FIX/ix-cpi-victim.jsonl" "$FIX/log-tab-injection.jsonl" > "$W22/corpus.jsonl"
+for r in profile frames ix lamports tokens; do
+  case "$r" in
+    profile) set -- bash "$DNR/profile.sh" ;;
+    frames) set -- python3 -I "$DNR/frames.py" ;;
+    ix) set -- python3 -I "$DNR/frames.py" --instructions ;;
+    *) set -- python3 -I "$DNR/deltas.py" "$r" ;;
+  esac
+  "$@" "$W22/corpus.jsonl" > "$TT/o22.stdout" 2>/dev/null
+  "$@" --out "$W22/out/$r.txt" "$W22/corpus.jsonl" > "$TT/o22.out" 2>/dev/null
+  code=$?
+  if [[ "$code" == 0 && -s "$TT/o22.stdout" && ! -s "$TT/o22.out" ]] && cmp -s "$TT/o22.stdout" "$W22/out/$r.txt"; then
+    ok "--out: $r writes what it prints on stdout into the file, and nothing on stdout"
+  else
+    bad "--out: $r -> exit $code, file and stdout differ"
+  fi
+done
+eq "--out: no temporary file is left beside the outputs" "$(ls -A "$W22/out" | tr '\n' ' ')" "frames.txt ix.txt lamports.txt profile.txt tokens.txt "
+ln -s "$TT/elsewhere22/out.txt" "$W22/out-link.txt"
+ln -s "$TT/elsewhere22" "$W22/dir-link"
+for case in "a link|out-link.txt" "a path through a directory link in the working directory|dir-link/out.txt"; do
+  res=""
+  for r in profile frames lamports; do
+    case "$r" in
+      profile) ( cd "$W22" && bash "$DNR/profile.sh" --out "${case#*|}" corpus.jsonl ) > /dev/null 2> "$TT/o22.err" ;;
+      frames) ( cd "$W22" && python3 -I "$DNR/frames.py" --out "${case#*|}" corpus.jsonl ) > /dev/null 2> "$TT/o22.err" ;;
+      lamports) ( cd "$W22" && python3 -I "$DNR/deltas.py" lamports --out "${case#*|}" corpus.jsonl ) > /dev/null 2> "$TT/o22.err" ;;
+    esac
+    res="$res $?:$(grep -c 'is a symbolic link, or is reached through one inside the working directory; refusing it$' "$TT/o22.err")"
+  done
+  eq "--out: ${case%%|*} -> profile, frames and deltas refuse it (exit 2)" "${res# }" "2:1 2:1 2:1"
+done
+eq "--out: nothing was written through those links" "$(ls -A "$TT/elsewhere22" | tr '\n' ' ')" ""
+# A run stopped by SIGTERM while it reads: stdin holds one transaction, then stays
+# open until the run has been stopped.
+partial22() { local f; for f in "$W22"/out/."$1".*.partial; do [[ -e "$f" ]] && return 0; done; return 1; }
+for r in frames deltas; do
+  printf 'previous\n' > "$W22/out/held-$r.txt"
+  case "$r" in
+    frames) ( sed -n 1p "$FIX/clean-mixed.jsonl"; sleep 3 ) | python3 -I "$DNR/frames.py" --out "$W22/out/held-$r.txt" & ;;
+    deltas) ( sed -n 1p "$FIX/clean-mixed.jsonl"; sleep 3 ) | python3 -I "$DNR/deltas.py" lamports --out "$W22/out/held-$r.txt" & ;;
+  esac
+  pid=$!
+  n=0; while ! partial22 "held-$r.txt" && [[ "$n" -lt 100 ]]; do sleep 0.1; n=$((n + 1)); done
+  kill -TERM "$pid" 2>/dev/null
+  wait "$pid"
+  code=$?
+  eq "--out: $r stopped by SIGTERM -> exit 143, the file as it was, no temporary file left" \
+    "$code|$(cat "$W22/out/held-$r.txt")|$(partial22 "held-$r.txt" && echo left)" "143|previous|"
+done
+
 if [[ "$fails" -ne 0 ]]; then
   echo "test-dnr: $fails assertion(s) FAILED" >&2
   exit 1
