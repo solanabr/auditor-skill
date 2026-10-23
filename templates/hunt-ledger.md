@@ -11,6 +11,7 @@
 **Collection gaps:** {every row of `corpus*/collection-gaps.tsv` (signature or address: reason), every recipe note of skipped malformed lines (path: count, first line), plus retention limits, a missing v1 opt-in, `Log truncated` tails — never a URL}
 **Execution mode (Rule 11a):** {isolated | native — asked once, before the first PoC run or build of target code; passed to every `run.sh` call as `AUDITOR_EXEC_MODE`}
 **PoC build cache:** {the directory made once with `mktemp -d` for this incident's `run.sh` calls, passed as `CARGO_TARGET_DIR` — inside the isolated runner in isolated mode / none}
+**PoC re-run flag:** {set to "PoC re-run needed" with run.sh's blocker line when a Leg-3 run exits 3 (a harness error); cleared once a repaired re-run decides}
 **Snapshots:** {per program: `bin/<id>.so`, last-deployed slot, zero-trimmed sha256 — the hash `run.sh`'s Leg 3 line must name (`OK: reproduced on prebuilt bytes — vulnerable sha256=<…>`)}
 
 ## Baseline (from the bundled `profile.sh`)
