@@ -104,6 +104,34 @@ fm agents/blank-line.md fail "$N" "" "$D" "$TL" "$M"
 fm agents/comment-line.md fail "$N" "# a comment" "$D" "$TL" "$M"
 fm agents/quoted-trailing.md fail "$N" 'description: "An agent." and more' "$TL" "$M"
 fm agents/unknown-key.md fail "$N" "$D" "$TL" "$M" "color: blue"
+# three dots in a plain value, number-like prefixes, and control characters
+fm agents/b01-dots-end.md fail "$N" "description: Reads the diff..." "$TL" "$M"
+fm agents/b02-dots-mid.md fail "$N" "description: Reads the diff... then reports." "$TL" "$M"
+fm agents/b03-dots-four.md fail "$N" "description: Wait.... then reports." "$TL" "$M"
+fm agents/b04-model-dots.md fail "$N" "$D" "$TL" "model: sonnet..."
+fm agents/b05-name-dots.md fail "name: x..." "$D" "$TL" "$M"
+fm agents/b16-dots-dq.md pass "$N" 'description: "Reads the diff... then reports."' "$TL" "$M"
+fm agents/b17-dots-sq.md pass "$N" "description: 'Reads the diff... then reports.'" "$TL" "$M"
+fm agents/b18-dots-tools-first.md fail "$N" "$TL" "description: Reads the diff..." "$M"
+fm agents/b20-two-dots.md pass "$N" "description: Reads the diff.. then reports." "$TL" "$M"
+fm agents/number-signs.md fail "name: ++7" "$D" "$TL" "$M"
+fm agents/number-sign-dot.md fail "name: +-.5" "$D" "$TL" "$M"
+fmbytes() { # fmbytes NAME WANT TEXT  — an agent whose description is TEXT, with its printf escapes as bytes
+  mkdir -p "$T/fm/agents"; printf -- "---\n%s\ndescription: $3\n%s\n%s\n---\n" "$N" "$TL" "$M" > "$T/fm/agents/$1.md"
+  fmrun "agents/$1.md" "$2"
+}
+fmbytes b06-nul-before-tools fail 'An agent.\000 More.'
+fmbytes b07-nul-hides-hash fail 'An agent.\000 # hidden'
+fmbytes b08-del fail 'An\177 agent.'
+fmbytes b09-c1-0080 fail 'An\302\200 agent.'
+fmbytes b10-nel-0085 fail 'An\302\205 agent.'
+fmbytes b11-ls-2028 fail 'An\342\200\250 agent.'
+fmbytes b12-ps-2029 fail 'An\342\200\251 agent.'
+fmbytes b13-ctl-01 fail 'An\001 agent.'
+fmbytes b14-ctl-0c fail 'An\014 agent.'
+fmbytes b15-bom-mid pass 'An\357\273\277 agent.'
+fmbytes b19-ellipsis-char pass 'Reads the diff\342\200\246 then reports.'
+fmbytes utf8-dash-accent pass 'An agent \342\200\224 with a dash and caf\303\251.'
 printf '\357\273\277---\n%s\n%s\n%s\n---\n' "$N" "$D" "$TL" > "$T/fm/agents/bom.md"; fmrun agents/bom.md fail
 printf -- '---\r\n%s\r\n%s\r\n%s\r\n---\r\n' "$N" "$D" "$TL" > "$T/fm/agents/crlf.md"; fmrun agents/crlf.md fail
 printf -- '---\n%s\n%s\n%s\n' "$N" "$D" "$TL" > "$T/fm/agents/no-closing.md"; fmrun agents/no-closing.md fail
@@ -125,6 +153,10 @@ fm commands/boolean-ok.md pass "$C" "allowed-tools: Read" "disable-model-invocat
 fm commands/boolean-yes.md fail "$C" "allowed-tools: Read" "disable-model-invocation: yes"
 fm commands/dashes-in-item.md fail "$C" "allowed-tools:" "  - 'Bash(echo --- *)'"
 fm commands/item-without-list.md fail "$C" "allowed-tools: Read" "  - Grep"
+fm commands/c01-desc-dots-end.md fail "description: Runs the scan..." "allowed-tools: Read, Grep"
+fm commands/c02-hint-dots-plain.md fail "$C" "argument-hint: <path> ..." "allowed-tools: Read, Grep"
+fm commands/c03-pattern-dots.md fail "$C" "allowed-tools: Read, Bash(ls ... *)"
+fm commands/c04-pattern-dots-end.md fail "$C" "allowed-tools: Read, Bash(ls *)..."
 fm skill/SKILL.md pass "name: s" 'description: "A skill."'
 fm skill-no-name/SKILL.md fail 'description: "A skill."'
 fm skills/agents/SKILL.md pass "name: a" 'description: "A skill in a directory named agents."'

@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 # check-frontmatter.sh — fail when Claude Code would read a frontmatter field differently from what is
 # written. Checks the files whose frontmatter Claude Code loads: commands/*.md, agents/*.md, SKILL.md and
-# skills/*/SKILL.md (or the files given; the kind comes from the path). The frontmatter must be a flat
-# subset that every YAML loader reads the same way:
+# skills/*/SKILL.md (or the files given; the kind comes from the path). The frontmatter must keep to a flat
+# subset:
 #   - line 1 is exactly '---' and the block ends at the next line that is exactly '---'; no other line of
-#     the block contains '---', is a '...' document end, or holds a tab or CR;
+#     the block contains '---' or is a '...' document end; the file holds no NUL byte, and the block no tab,
+#     CR, other control character, U+0085, U+2028 or U+2029;
 #   - every line is 'key: value', with a known lowercase key, each key once; tools and allowed-tools may
 #     instead be 'key:' followed by '  - item' lines;
 #   - a value is plain, 'single-quoted' ('' is the only escape) or "double-quoted" (\" and \\ are the only
-#     escapes). A plain value starts with no YAML indicator, holds no ': ' or ' #', does not end in ':' or a
-#     space, and is not one YAML reads as a number, boolean or null. disable-model-invocation is true or false;
+#     escapes). A plain value starts with no YAML indicator, holds no ': ', ' #' or '...', does not end in
+#     ':' or a space, and is not one YAML reads as a number, boolean or null. disable-model-invocation is
+#     true or false;
 #   - agents have name, description and tools; commands have description and allowed-tools; a SKILL.md has
 #     name and description, and for now no other key;
 #   - tools and allowed-tools list 'Name' or 'Name(pattern)' entries (agents: names only, no pattern),
@@ -45,8 +47,9 @@ function scalar(v, what,   c, s) {
     if (index(v, ": ") || v ~ /:$/) { bad(what " holds a colon and a space, or ends in a colon; quote it"); return "" }
     if (index(v, " #")) { bad(what " holds a space and #, which starts a YAML comment; quote it"); return "" }
     if (v ~ / $/) { bad(what " ends in a space"); return "" }
+    if (index(v, "...")) { bad(what " holds ..., which YAML reads as a document end; quote it"); return "" }
     if (v ~ /^(~|null|Null|NULL|true|True|TRUE|false|False|FALSE|yes|Yes|YES|no|No|NO|on|On|ON|off|Off|OFF|[yYnN])$/ \
-        || v ~ /^[-+.]?[0-9]/ || v ~ /^[-+]?[.](inf|Inf|INF|nan|NaN|NAN)$/) {
+        || v ~ /^[-+.]*[0-9]/ || v ~ /^[-+]*[.](inf|Inf|INF|nan|NaN|NAN)$/) {
       bad(what " is read as a number, boolean or null; quote it"); return "" }
     s = v
   }
@@ -83,6 +86,8 @@ function endlist() {
 function check_line(   key, rest, s) {
   if (index($0, "---")) bad("--- inside the frontmatter block; reword the line")
   if ($0 ~ /[\t\r]/) bad("tab or carriage return in the frontmatter block")
+  if ($0 ~ /[\001-\010\013\014\016-\037\177]|\302[\200-\237]|\342\200[\250\251]/)
+    bad("a control character, U+0085, U+2028 or U+2029 in the frontmatter block")
   if (substr($0, 1, 3) == "...") { bad("a ... line inside the frontmatter block"); return }
   if (substr($0, 1, 4) == "  - ") {
     if (listkey == "") bad("list item outside a tools or allowed-tools list"); else item(substr($0, 5))
@@ -138,6 +143,10 @@ for f in "$@"; do
     *) echo "::error::$f: not under agents/ or commands/ and not a SKILL.md; its keys are unknown" >&2; fail=1; continue ;;
   esac
   if [ ! -f "$f" ]; then echo "::error::$f: no such file" >&2; fail=1; continue; fi
+  # awk does not see a NUL byte the same way everywhere, so look for one first
+  if [ "$(LC_ALL=C tr -d '\000' < "$f" | wc -c)" -ne "$(wc -c < "$f")" ]; then
+    echo "::error::$f: a NUL byte" >&2; fail=1; continue
+  fi
   LC_ALL=C awk -v file="$f" -v kind="$kind" -v q="'" -v forbidden="$FORBIDDEN_ALLOWED_TOOLS" "$PROG" "$f" >&2 || fail=1
   n=$((n + 1))
 done
