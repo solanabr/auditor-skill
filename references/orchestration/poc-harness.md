@@ -165,10 +165,11 @@ rung down is a real, reportable finding — the ladder degrades gracefully to pr
         │
 [PoC-ATTEMPTED]        A required tool was absent (no cargo build-sbf, surfpool
         │              unreachable, fork state unavailable), the recorded execution
-        │              mode could not run it (no isolated runner — Rule 11a), OR the
-        │              flaw could not be minimized into a standalone crate. Name
-        │              the exact blocker, KEEP the prose PoC, record what a maintainer
-        │              must install/provide.
+        │              mode could not run it (no isolated runner — Rule 11a), run.sh
+        │              exited 3 ("PoC re-run needed"; a harness error after one
+        │              repair pass), OR the flaw could not be minimized into a
+        │              standalone crate. Name the exact blocker, KEEP the prose PoC,
+        │              record what a maintainer must install/provide.
         │
 [PoC-PROSE]            No executable attempt applicable/possible; the structured
    (weakest, still      attacker-narrative PoC (actor → capability → steps → guard
@@ -199,7 +200,8 @@ harness error and leaves that account unchanged. A control for another program, 
 another state, that fails or that changes nothing makes the run inconclusive. When no
 legitimate call can show the change on those bytes (a hotfix that turned the
 instruction off), pin the hotfix's error with `assert_exploit_rejected_with!` instead:
-a failure alone is never a block.
+a failure alone is never a block. That swap changes the assertion, so it is a new
+check, reported with its reason, never part of a harness repair.
 
 Each assertion leaves a marker once its attack has run and another when it holds, each
 tagged with the test that ran it. A failed test is a verdict (exit 1 or 2) only when an
@@ -224,16 +226,20 @@ the byte-identical attack and shows it fits the program. The markers are a floor
 proof: whoever reads the PoC still checks that the assertion states the finding's
 effect and the guard's error.
 
-**Harness errors: report, flag, repair once.** A harness error (an inconclusive arm,
-exit 3) is never filed silently. The
-finding block and, for an incident, `LEDGER.md` record `[PoC-ATTEMPTED]` with
-`run.sh`'s blocker line verbatim and the flag "PoC re-run needed". `poc-engineer` then
-makes at least one repair-and-retry pass: it diagnoses the harness error (a wrong
-program id, a missing or misordered account, a harness that does not match the
-program), fixes only the PoC's harness setup — mirrored in both test files, so the two
-attacks stay byte-identical — and re-runs through `run.sh`. The repair never changes the
-assertions, the expected error or effect, or the target, and its diff is kept next to
-the PoC as `harness-repair.diff`. If the re-run is still inconclusive, the finding stays
+**Exit 3: flag every one, repair a harness error once.** Every `run.sh` exit 3 decides
+nothing, and none is filed silently. The finding block and, for an incident,
+`LEDGER.md` record `[PoC-ATTEMPTED]` with `run.sh`'s blocker line verbatim as the
+reason and the flag "PoC re-run needed", which stays until a re-run decides. A harness
+error also gets at least one repair-and-retry pass from `poc-engineer`. A harness error
+is an inconclusive arm (`… arm is inconclusive: …`: a wrong program id, a missing or
+misordered account, a harness that does not match the program), or a test that no
+longer builds against the refreshed harness copy. The pass fixes only the PoC's
+harness setup — mirrored in both test files, so the two attacks stay byte-identical —
+and re-runs through `run.sh`. The repair never changes the assertions, the expected
+error or effect, or the target, and its diff is kept next to the PoC as
+`harness-repair.diff`. Any other exit 3 (no execution mode, no toolchain, a bad input,
+a refused crate, the build lock) gets no repair pass: the PoC is re-run once what its
+line names is fixed. If the repaired re-run is still inconclusive, the finding stays
 `[PoC-ATTEMPTED]` with the error and the flag.
 
 **Checking the harness copy.** Every marker comes from code inside the PoC crate, so

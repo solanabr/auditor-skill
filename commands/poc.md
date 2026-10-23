@@ -43,7 +43,7 @@ Turn a *confirmed* finding into a runnable exploit. Read `OUTPUT-RULES.md` first
    - the filled harness crate (copied from `"${CLAUDE_PLUGIN_ROOT}/templates/poc/"`),
    - a one-command **`run.sh`** that reproduces the result from a clean checkout: the template's own for its crate (`cargo test`), or one `poc-engineer` writes for a `trident fuzz` or `cargo fuzz` target or the surfpool scenario. Every runner needs `AUDITOR_EXEC_MODE` set to the run's recorded mode (`OUTPUT-RULES.md` Rule 11a) and otherwise exits 3 → `[PoC-ATTEMPTED]` before it copies or compiles anything; a runner `poc-engineer` writes starts with the template `run.sh`'s mode gate, verbatim (the lines are in `references/orchestration/poc-harness.md` §1). No runner builds inside the target tree: each copies the crate to a scratch directory outside it (printed) with the toolchain pinned,
    - the earned **`[PoC-*]` evidence tier** recorded against the finding (see vocabulary below), which `audit-cycle` / `re-audit` fold back into the report's finding block,
-   - for a harness error (`run.sh` exit 3 on an inconclusive arm): never filed silently. The finding block and, for an incident, `LEDGER.md` show `[PoC-ATTEMPTED]`, `run.sh`'s blocker line verbatim and the flag "PoC re-run needed". `poc-engineer` has made its repair-and-retry pass (only the harness setup; never the assertions, the expected error or effect, or the target), and its diff sits next to the PoC as `harness-repair.diff`.
+   - for every `run.sh` exit 3: never filed silently. The finding block and, for an incident, `LEDGER.md` show `[PoC-ATTEMPTED]`, `run.sh`'s blocker line verbatim as the reason, and the flag "PoC re-run needed". For a harness error (an inconclusive arm, or tests that no longer build against the refreshed harness copy), `poc-engineer` has made its repair-and-retry pass (only the harness setup; never the assertions, the expected error or effect, or the target), and its diff sits next to the PoC as `harness-repair.diff`. Any other exit 3 gets no repair pass.
 
 ## Evidence tiers (emit exactly one)
 
@@ -52,7 +52,7 @@ Turn a *confirmed* finding into a runnable exploit. Read `OUTPUT-RULES.md` first
 | `[PoC-REPRODUCED]` | The exploit ran and **asserted** the flaw — succeeds on the `vulnerable` arm, rejected on the `fixed` arm (Mollusk / LiteSVM). |
 | `[PoC-SIM-REPRODUCED]` | Reproduced against a **Surfpool mainnet-fork** with a recorded net P/L (economic / oracle / MEV). |
 | `[PoC-FUZZ-REPRODUCED]` | A **Trident / cargo-fuzz** target produced the crashing / invariant-breaking input; the corpus entry is saved. |
-| `[PoC-ATTEMPTED]` | A required tool was absent (no `cargo build-sbf`, surfpool unreachable, fork state unavailable), the recorded execution mode could not run it, a harness error survived the repair pass ("PoC re-run needed"), **or** the flaw could not be minimized into a standalone crate. Name the exact blocker, **keep the existing prose PoC**, and record what a maintainer must install/provide to promote it. |
+| `[PoC-ATTEMPTED]` | A required tool was absent (no `cargo build-sbf`, surfpool unreachable, fork state unavailable), the recorded execution mode could not run it, `run.sh` exited 3 (its blocker line, with "PoC re-run needed"; for a harness error, after the repair pass), **or** the flaw could not be minimized into a standalone crate. Name the exact blocker, **keep the existing prose PoC**, and record what a maintainer must install/provide to promote it. |
 
 ## Never hard-fail
 
