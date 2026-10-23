@@ -229,9 +229,12 @@ Each subcommand prints what its script in `scripts/dnr/` prints, byte for byte:
 the rows of `deltas.py`, with the same `skipped …` notes on stderr and the same exit
 status. It reads its input under the same input contract
 (`scripts/dnr/README.md`, "Input contract"): a malformed line is counted and
-reported, never echoed and never fatal; an amount or balance that is not an exact
-integer makes its line malformed and is never rounded; every total is exact at any
-size; a transaction several corpora hold is read once. `scripts/tests/test-audit-logs.sh`
+reported, never echoed and never fatal; a line nested more than 200 levels deep is
+malformed; a lamport balance, the fee or a token amount that is not a u64 integer
+(0 to 2^64 − 1) makes its line malformed and is never rounded; every total is
+exact; a transaction several corpora hold is read once. `deltas lamports` prints a
+balance whose index has no account key as `#<index>` and counts those rows on
+stderr. `scripts/tests/test-audit-logs.sh`
 checks the output against the scripts on every fixture in `scripts/dnr/fixtures/`,
 on the crafted input-contract cases of `test-dnr.sh`, and on a generated corpus of
 6,000 transactions. The scripts stay the reference implementation.
@@ -253,13 +256,11 @@ must be safe whatever arguments follow:
   kept elsewhere, such as a `--logs` export.
 - An input is opened without following a link and must still be the regular file
   that was checked. With no corpus named, `frames` and `deltas` read stdin.
-- `--out <file>` names a file directly in the run directory, `<name>.jsonl`,
-  `.tsv` or `.txt`, so an output never lands on a corpus in `corpus*/`, the
-  ledger, or the run directory's own files. It writes a new temporary file beside
-  `<file>`, created exclusively and never through a link, and renames it onto
-  `<file>` once the output is whole, after checking the path again; TERM, INT and
-  HUP remove the temporary file. An existing `<file>` must be a regular file with
-  no other name, and none of the run's inputs.
+- `--out <file>` names a new file directly in the run directory, `<name>.jsonl`,
+  `.tsv` or `.txt`; an output never replaces a file, so an existing `<file>` is
+  refused. It writes a new temporary file beside `<file>`, created exclusively and
+  never through a link, and links it to `<file>` once the output is whole, after
+  checking the path again; TERM, INT and HUP remove the temporary file.
 - Each option is given once, before the corpus paths.
 - It refuses to run from an installation inside the working directory, or from a
   path holding a quote, `$`, a backtick, a backslash or a newline.
@@ -278,15 +279,9 @@ that is missing or not a regular file, as `profile.sh` does.
 - `profile` prints a number in the version or `blockTime` as jq 1.7 does, from the
   literal (`1.0`, `1E+2`, every digit of a large integer). A jq built without
   decNumber prints a rounded double there instead.
-- A line nested more than 256 levels deep (jq's limit) is malformed for all three
-  subcommands. Of the scripts, `frames.py` and `deltas.py` read such a line up to
-  Python's recursion limit, and `profile.sh` stops partway with jq's parse error.
-- An integer of more than 4,300 digits makes its line malformed, as in Python 3.11
-  and later (Python's default limit on reading an int). A total of any size is
-  printed exactly, where `deltas.py` under Python 3.11 and later stops with a
-  traceback on a total of more than 4,300 digits.
 - It takes only the paths above, each option once; the scripts also take absolute
-  paths, `-` for stdin, a repeated option, and an `--out` anywhere.
+  paths, `-` for stdin, a repeated option, and an `--out` anywhere a new file can
+  be made.
 
 ## How the auditor agents consume this
 
