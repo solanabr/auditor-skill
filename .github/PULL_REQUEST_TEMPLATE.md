@@ -26,7 +26,7 @@
 - [ ] New vectors / items are checkable from code (grep + PASS / FAIL shape)
 - [ ] Cited incidents are real and public; no invented figures
 - [ ] No AI-attribution trailers in any commit; no secrets, `.env`, state or local assistant files tracked
-- [ ] Version line untouched (content PR) **or** this is the release PR and every version reference moved together
+- [ ] Version line untouched (content PR) **or** a patch bump (plugin.json and both marketplace entries only) **or** a minor or major release PR where every version reference moved together
 
 ## Stacked on
 

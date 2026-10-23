@@ -74,10 +74,17 @@ Version bumps are their own `chore(release)` PR (or the last commit of a release
 counts but leave the version alone, so several content PRs can be open at once without conflicting on the
 version line.
 
-A release PR also re-checks every row of ATTRIBUTION.md's "Assessed, not vendored" table against its
+There are two kinds of bump:
+- **Patch (X.Y.Z+1).** It moves only `.claude-plugin/plugin.json` and both `.claude-plugin/marketplace.json`
+  entries. The plugin cache is keyed by that version, so plugin users receive the change. SKILL.md, the README
+  "What It Does" heading and `templates/audit-report.md` keep X.Y. There is no tag or GitHub Release.
+- **Minor or major (X.Y+1.0).** Every version reference moves together, the release is tagged with a GitHub
+  Release, and the release-only steps below run.
+
+A minor or major release PR also re-checks every row of ATTRIBUTION.md's "Assessed, not vendored" table against its
 re-check trigger and updates the assessed commit.
 
-A release PR also regenerates `templates/poc/Cargo.lock`, the pins every PoC crate starts from. The
+A minor or major release PR also regenerates `templates/poc/Cargo.lock`, the pins every PoC crate starts from. The
 release author owns this step; nothing is built, and the only hosts contacted are `index.crates.io` and
 `static.crates.io`:
 
