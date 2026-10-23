@@ -229,12 +229,16 @@ Each subcommand prints what its script in `scripts/dnr/` prints, byte for byte:
 the rows of `deltas.py`, with the same `skipped …` notes on stderr and the same exit
 status. It reads its input under the same input contract
 (`scripts/dnr/README.md`, "Input contract"): a malformed line is counted and
-reported, never echoed and never fatal; a line nested more than 200 levels deep is
-malformed; a lamport balance, the fee or a token amount that is not a u64 integer
-(0 to 2^64 − 1) makes its line malformed and is never rounded; every total is
-exact; a transaction several corpora hold is read once. `deltas lamports` prints a
-balance whose index has no account key as `#<index>` and counts those rows on
-stderr. `scripts/tests/test-audit-logs.sh`
+reported, never echoed and never fatal; a line nested more than 200 levels deep, or
+holding an integer literal of more than 20 digits or `-0`, is malformed; a lamport
+balance, the fee or a token amount that is not a u64 value (0 to 2^64 − 1) makes
+its line malformed and is never rounded; every total is exact; a transaction
+several corpora hold is read once. A key, program id or string version holding a
+character of the contract's fixed list (the C0 and C1 controls, DEL, the line and
+paragraph separators, the bidirectional and zero-width characters) is malformed,
+and `frames` and `deltas` print such a character only as an escape. `deltas
+lamports` prints a balance whose index has no account key as `#<index>` and counts
+those rows on stderr. `scripts/tests/test-audit-logs.sh`
 checks the output against the scripts on every fixture in `scripts/dnr/fixtures/`,
 on the crafted input-contract cases of `test-dnr.sh`, and on a generated corpus of
 6,000 transactions. The scripts stay the reference implementation.
