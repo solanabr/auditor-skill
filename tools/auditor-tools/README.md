@@ -253,10 +253,13 @@ must be safe whatever arguments follow:
   kept elsewhere, such as a `--logs` export.
 - An input is opened without following a link and must still be the regular file
   that was checked. With no corpus named, `frames` and `deltas` read stdin.
-- `--out <file>` writes a new temporary file beside `<file>`, created exclusively
-  and never through a link, and renames it onto `<file>` once the output is whole;
-  TERM, INT and HUP remove the temporary file. An existing `<file>` must be a
-  regular file with no other name.
+- `--out <file>` names a file directly in the run directory, `<name>.jsonl`,
+  `.tsv` or `.txt`, so an output never lands on a corpus in `corpus*/`, the
+  ledger, or the run directory's own files. It writes a new temporary file beside
+  `<file>`, created exclusively and never through a link, and renames it onto
+  `<file>` once the output is whole, after checking the path again; TERM, INT and
+  HUP remove the temporary file. An existing `<file>` must be a regular file with
+  no other name, and none of the run's inputs.
 - Each option is given once, before the corpus paths.
 - It refuses to run from an installation inside the working directory, or from a
   path holding a quote, `$`, a backtick, a backslash or a newline.
@@ -283,7 +286,7 @@ that is missing or not a regular file, as `profile.sh` does.
   printed exactly, where `deltas.py` under Python 3.11 and later stops with a
   traceback on a total of more than 4,300 digits.
 - It takes only the paths above, each option once; the scripts also take absolute
-  paths, `-` for stdin, and a repeated option.
+  paths, `-` for stdin, a repeated option, and an `--out` anywhere.
 
 ## How the auditor agents consume this
 
