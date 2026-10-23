@@ -12,9 +12,9 @@
 //!      ownership / signer exploit almost always has to construct.
 //!   3. the assertion macros that encode the PoC contract — the attack must go
 //!      through on the `vulnerable` build and must be turned away on the `fixed`
-//!      build. The first three run the attack themselves, on the runner you pass,
-//!      and return its result: one instruction with its account list on Mollusk, or
-//!      one transaction on LiteSVM, with any setup run before it:
+//!      build. Each runs the attack itself, on the runner you pass, and returns its
+//!      result: one instruction with its account list on Mollusk, or one transaction
+//!      on LiteSVM, with any setup run before it:
 //!        - `assert_exploit_effect!`: it went through AND left a concrete value in
 //!          the account it targets, which that account did not hold before;
 //!        - `assert_exploit_rejected_with!`: it was rejected with this exact error;
@@ -37,8 +37,9 @@
 //! not hide another test's failed assertion. A test the process ended inside an
 //! assertion leaves `attempted` with no `held` and no `failed`, so it decides
 //! nothing rather than reading as a failed assertion. An attack that targets a
-//! program other than the one `mollusk_for` or `litesvm_for!` loaded is inconclusive
-//! too: the outcome did not come from the placed bytes. A harness error — the attack
+//! program other than the one `mollusk_for` or `litesvm_for!` loaded, or a LiteSVM
+//! attack that failed in an instruction for another program, is inconclusive too,
+//! in every macro: the outcome did not come from the placed bytes. A harness error — the attack
 //! as written does not fit the program, or the runtime could not run it — makes an
 //! arm inconclusive, on either arm, never a verdict. The markers are a floor, not
 //! proof: whoever reads the PoC
@@ -316,60 +317,92 @@ pub fn attacker_owned_account(claimed_owner: Pubkey, data: Vec<u8>) -> Account {
 // PoC contract macros
 // ---------------------------------------------------------------------------
 
-/// Assert the exploit went through: the program accepted the crafted attack.
+/// Run the attack and assert it went through: the program accepted it.
 ///
-/// Feed it the value `mollusk.process_instruction(...)` returned and a short reason
-/// string describing what the acceptance proves, or, on LiteSVM, the runner and the
-/// transaction, which the macro sends. Any `Ok` passes, so this fits an audit-time
-/// model only; on prebuilt bytes `run.sh` accepts the vulnerable arm only on
-/// `assert_exploit_effect!`, because a program can accept a call and do no harm. A
-/// harness error fails it as inconclusive.
+/// Pass the runner and the attack as for `assert_exploit_effect!` — on Mollusk,
+/// `mollusk`, `ix: &ix` and `accounts: &accounts`; on LiteSVM, `svm` and `tx: tx` —
+/// and a short reason string describing what the acceptance proves. The macro returns
+/// that call's result. Any `Ok` passes, so this fits an audit-time model only; on
+/// prebuilt bytes `run.sh` accepts the vulnerable arm only on `assert_exploit_effect!`,
+/// because a program can accept a call and do no harm. An attack aimed at a program
+/// the harness did not load, and a harness error, fail it as inconclusive.
 ///
 /// ```ignore
-/// let outcome = mollusk.process_instruction(&ix, &accounts);
-/// assert_exploit_succeeds!(outcome, "no signer check let an unsigned admin key through");
+/// assert_exploit_succeeds!(mollusk, ix: &ix, accounts: &accounts, why: "no signer check let an unsigned admin key through");
 /// assert_exploit_succeeds!(svm, tx: tx, why: "no signer check let an unsigned admin key through");
 /// ```
 #[macro_export]
 macro_rules! assert_exploit_succeeds {
     ($svm:expr, tx: $tx:expr, why: $why:expr $(,)?) => {{
         let __svm: &mut ::litesvm::LiteSVM = &mut $svm;
-        let __result = __svm.send_transaction($tx);
-        $crate::__assert_succeeds_on(
-            __result.as_ref().err().map(|__f| ::std::format!("{:?}", __f.err)),
-            $why,
-        );
+        let __tx = $tx;
+        let __programs: ::std::vec::Vec<::std::string::String> =
+            __tx.message.program_ids().into_iter().map(|__id| ::std::format!("{:?}", __id)).collect();
+        let __result = __svm.send_transaction(__tx);
+        let __error = __result.as_ref().err().map(|__f| ::std::format!("{:?}", __f.err));
+        $crate::__require_target(&__programs, $why);
+        $crate::__require_error_instruction(__error.as_deref(), &__programs, $why);
+        $crate::__assert_succeeds_on(__error, $why);
         __result
     }};
+    ($mollusk:expr, ix: $ix:expr, accounts: $accounts:expr, why: $why:expr $(,)?) => {{
+        let __mollusk: &$crate::__Mollusk = &$mollusk;
+        let __ix = $ix;
+        let __outcome = __mollusk.process_instruction(__ix, $accounts);
+        $crate::__require_target(&[::std::format!("{:?}", __ix.program_id)], $why);
+        $crate::__assert_succeeds(&__outcome, $why);
+        __outcome
+    }};
     ($outcome:expr, $why:expr $(,)?) => {
-        $crate::__assert_succeeds(&$outcome, &$why)
+        ::core::compile_error!(
+            "assert_exploit_succeeds! now runs the attack itself and returns its result: \
+             assert_exploit_succeeds!(mollusk, ix: &ix, accounts: &accounts, why: …) in place of \
+             (outcome, why), without the `let outcome = mollusk.process_instruction(…)` line. \
+             On LiteSVM: assert_exploit_succeeds!(svm, tx: tx, why: …)."
+        )
     };
 }
 
-/// Assert the fix held: the program rejected the same crafted attack.
+/// Run the attack and assert the fix held: the program rejected it.
 ///
-/// The mirror of `assert_exploit_succeeds!`: any error that is not a harness error
-/// passes. That fits an audit-time model only. A rejection for an unrelated reason
-/// would pass too, so on prebuilt bytes `run.sh` accepts the fixed arm only on
-/// `assert_exploit_rejected_with!` or `assert_exploit_blocked!`.
+/// The mirror of `assert_exploit_succeeds!`, with the same runner and attack: any
+/// error that is not a harness error passes. That fits an audit-time model only. A
+/// rejection for an unrelated reason would pass too, so on prebuilt bytes `run.sh`
+/// accepts the fixed arm only on `assert_exploit_rejected_with!` or
+/// `assert_exploit_blocked!`.
 ///
 /// ```ignore
-/// let outcome = mollusk.process_instruction(&ix, &accounts);
-/// assert_exploit_rejected!(outcome, "the added is_signer check turned the unsigned key away");
+/// assert_exploit_rejected!(mollusk, ix: &ix, accounts: &accounts, why: "the added is_signer check turned the unsigned key away");
 /// ```
 #[macro_export]
 macro_rules! assert_exploit_rejected {
     ($svm:expr, tx: $tx:expr, why: $why:expr $(,)?) => {{
         let __svm: &mut ::litesvm::LiteSVM = &mut $svm;
-        let __result = __svm.send_transaction($tx);
-        $crate::__assert_rejected_on(
-            __result.as_ref().err().map(|__f| ::std::format!("{:?}", __f.err)),
-            $why,
-        );
+        let __tx = $tx;
+        let __programs: ::std::vec::Vec<::std::string::String> =
+            __tx.message.program_ids().into_iter().map(|__id| ::std::format!("{:?}", __id)).collect();
+        let __result = __svm.send_transaction(__tx);
+        let __error = __result.as_ref().err().map(|__f| ::std::format!("{:?}", __f.err));
+        $crate::__require_target(&__programs, $why);
+        $crate::__require_error_instruction(__error.as_deref(), &__programs, $why);
+        $crate::__assert_rejected_on(__error, $why);
         __result
     }};
+    ($mollusk:expr, ix: $ix:expr, accounts: $accounts:expr, why: $why:expr $(,)?) => {{
+        let __mollusk: &$crate::__Mollusk = &$mollusk;
+        let __ix = $ix;
+        let __outcome = __mollusk.process_instruction(__ix, $accounts);
+        $crate::__require_target(&[::std::format!("{:?}", __ix.program_id)], $why);
+        $crate::__assert_rejected(&__outcome, $why);
+        __outcome
+    }};
     ($outcome:expr, $why:expr $(,)?) => {
-        $crate::__assert_rejected(&$outcome, &$why)
+        ::core::compile_error!(
+            "assert_exploit_rejected! now runs the attack itself and returns its result: \
+             assert_exploit_rejected!(mollusk, ix: &ix, accounts: &accounts, why: …) in place of \
+             (outcome, why), without the `let outcome = mollusk.process_instruction(…)` line. \
+             On LiteSVM: assert_exploit_rejected!(svm, tx: tx, why: …)."
+        )
     };
 }
 
@@ -424,10 +457,12 @@ macro_rules! assert_exploit_effect {
         let __was = __svm.get_account(&__account);
         let __result = __svm.send_transaction(__tx);
         let __now = __svm.get_account(&__account);
+        let __error = __result.as_ref().err().map(|__f| ::std::format!("{:?}", __f.err));
         $crate::__require_target(&__programs, $why);
+        $crate::__require_error_instruction(__error.as_deref(), &__programs, $why);
         $crate::__assert_effect_on(
             $crate::__Run {
-                error: __result.as_ref().err().map(|__f| ::std::format!("{:?}", __f.err)),
+                error: __error,
                 was: __was.as_ref(),
                 now: __now.as_ref(),
                 programs: __programs,

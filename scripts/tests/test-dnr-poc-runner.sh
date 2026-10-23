@@ -31,7 +31,9 @@
 #   * the macros run the attack themselves; their old forms do not compile and say how
 #     to migrate; an effect present before the attack, a read that panics, and a
 #     positive control for another program or from another state are inconclusive;
-#     the LiteSVM forms reach the same lines;
+#     the LiteSVM forms reach the same lines; every form, in a model run as on
+#     prebuilt bytes, is bound to the program run.sh placed, and a LiteSVM attack that
+#     failed in another program's instruction is inconclusive;
 #   * the deployed-hotfix check holds only with its positive control: a legitimate
 #     call that goes through on the same bytes and changes the account;
 #   * where the crate builds (always a scratch copy outside the target tree with a
@@ -52,7 +54,8 @@
 # tests/exploit.rs and tests/fixed_blocked.rs and its shared-test-utils are built and
 # run through run.sh against small stand-in crates (mollusk-svm, litesvm, solana-sdk,
 # borsh, ...) whose program behaviour is the text after the ELF magic in the prebuilt
-# .so: path dependencies only, offline. bash >= 3.2; uses only standard POSIX tools +
+# .so (model runs get theirs from a stand-in cargo-build-sbf): path dependencies only,
+# offline. bash >= 3.2; uses only standard POSIX tools +
 # python3. Exits non-zero if any assertion fails. With REQUIRE_TOOLCHAIN=1 (CI sets
 # it), a missing cargo or rustup fails the run instead of skipping the real-toolchain
 # checks.
@@ -1000,9 +1003,7 @@ pub mod transaction {
     pub struct Message { pub instructions: Vec<Instruction>, pub payer: Option<Pubkey> }
     impl Message {
         pub fn program_ids(&self) -> Vec<&Pubkey> {
-            let mut ids: Vec<&Pubkey> = Vec::new();
-            for ix in &self.instructions { if !ids.contains(&&ix.program_id) { ids.push(&ix.program_id); } }
-            ids
+            self.instructions.iter().map(|ix| &ix.program_id).collect()
         }
     }
     #[derive(Clone, Debug)]
@@ -1135,7 +1136,7 @@ pub struct TransactionMetadata { pub logs: Vec<String> }
 pub struct FailedTransactionMetadata { pub err: TransactionError, pub meta: TransactionMetadata }
 pub type TransactionResult = Result<TransactionMetadata, FailedTransactionMetadata>;
 #[derive(Clone, Default)]
-pub struct LiteSVM { program: Option<(Pubkey, Mollusk)>, accounts: Vec<(Pubkey, Account)> }
+pub struct LiteSVM { programs: Vec<(Pubkey, Mollusk)>, accounts: Vec<(Pubkey, Account)> }
 impl LiteSVM {
     pub fn new() -> Self { Self::default() }
     pub fn add_program(&mut self, program_id: impl Into<Pubkey>, bytes: &[u8]) -> Result<(), LiteSVMError> {
@@ -1145,7 +1146,8 @@ impl LiteSVM {
         }
         let mut mollusk = Mollusk::default();
         mollusk.add_program_with_loader_and_elf(&program_id, &mollusk_svm::program::loader_keys::LOADER_V3, bytes);
-        self.program = Some((program_id, mollusk));
+        self.programs.retain(|(id, _)| *id != program_id);
+        self.programs.push((program_id, mollusk));
         Ok(())
     }
     pub fn set_account(&mut self, address: Pubkey, account: Account) -> Result<(), LiteSVMError> {
@@ -1164,7 +1166,7 @@ impl LiteSVM {
                 err: TransactionError::InstructionError(index as u8, InstructionError(name)),
                 meta: TransactionMetadata::default(),
             };
-            let Some((_, mollusk)) = self.program.as_ref().filter(|(id, _)| *id == ix.program_id) else {
+            let Some((_, mollusk)) = self.programs.iter().find(|(id, _)| *id == ix.program_id) else {
                 return Err(fail("UnsupportedProgramId".to_string()));
             };
             let given: Vec<(Pubkey, Account)> = ix.accounts.iter()
@@ -1401,15 +1403,14 @@ if command -v cargo >/dev/null 2>&1 && command -v rustup >/dev/null 2>&1; then
     print "        assert_exploit_effect!(mollusk, ix: &ix, accounts: &accounts, account: state_pk,"
     print "            read: |a| a.data[0..32].to_vec(), expect: attacker.to_bytes().to_vec(), why: \"never runs\");"
     print "    }"
-    print "    let outcome = mollusk.process_instruction(&ix, &accounts);"
-    print "    shared_test_utils::assert_exploit_succeeds!(outcome, \"Ok only\");"
+    print "    shared_test_utils::assert_exploit_succeeds!(mollusk, ix: &ix, accounts: &accounts, why: \"Ok only\");"
   } { print }'
   code="$(e2e "$T/e-dead" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-reject-MissingRequiredSignature.so")"
   [ "$code" = 3 ] && grep -q 'no assert_exploit_effect! ran and held' "$T/out" \
     && ok "real cargo: the effect assertion only in a comment, a string and dead code, plus the any-Ok one -> exit 3" || { bad "real cargo, dead effect assertion: exit $code"; cat "$T/out" >&2; }
   mk_e2e "$T/e-any"
   drop_block "$T/e-any/tests/fixed_blocked.rs" '^    assert_exploit_rejected_with!\($'
-  swap "$T/e-any/tests/fixed_blocked.rs" '/^    \/\/ A hotfix the team already deployed/ { print "    let outcome = mollusk.process_instruction(&ix, &accounts);"; print "    shared_test_utils::assert_exploit_rejected!(outcome, \"any error\");" } { print }'
+  swap "$T/e-any/tests/fixed_blocked.rs" '/^    \/\/ A hotfix the team already deployed/ { print "    shared_test_utils::assert_exploit_rejected!(mollusk, ix: &ix, accounts: &accounts, why: \"any error\");" } { print }'
   code="$(e2e "$T/e-any" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-reject-MissingRequiredSignature.so")"
   [ "$code" = 3 ] && grep -q 'neither assert_exploit_rejected_with! nor assert_exploit_blocked! ran and held' "$T/out" \
     && ok "real cargo: the any-error assertion on the fixed arm -> exit 3" || { bad "real cargo, any-error fixed arm: exit $code"; cat "$T/out" >&2; }
@@ -1496,6 +1497,21 @@ if command -v cargo >/dev/null 2>&1 && command -v rustup >/dev/null 2>&1; then
   code="$(e2e "$T/e-old" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-reject-MissingRequiredSignature.so")"
   [ "$code" = 3 ] && grep -q 'assert_exploit_blocked! now runs the attack and its positive control itself' "$T/out" \
     && ok "real cargo: the old assert_exploit_blocked!(outcome, before: ...) form fails to build with the migration -> exit 3" || { bad "real cargo, old blocked form: exit $code"; cat "$T/out" >&2; }
+  # The any-result forms ran on a result the test handed them, too; that form is gone.
+  mk_e2e "$T/e-old"
+  subst "$T/e-old/tests/exploit.rs" '    assert_exploit_effect!(' '    let outcome = mollusk.process_instruction(&ix, &accounts);
+    shared_test_utils::assert_exploit_succeeds!(outcome, "old form");
+    assert_exploit_effect!('
+  code="$(e2e "$T/e-old" VULNERABLE_SO="$SB-takeover.so")"
+  [ "$code" = 3 ] && grep -q 'tests/exploit.rs failed to build' "$T/out" && grep -q 'assert_exploit_succeeds! now runs the attack itself' "$T/out" \
+    && ok "real cargo: the old assert_exploit_succeeds!(outcome, why) form fails to build with the migration -> exit 3" || { bad "real cargo, old succeeds form: exit $code"; cat "$T/out" >&2; }
+  mk_e2e "$T/e-old"
+  subst "$T/e-old/tests/fixed_blocked.rs" '    assert_exploit_rejected_with!(' '    let outcome = mollusk.process_instruction(&ix, &accounts);
+    shared_test_utils::assert_exploit_rejected!(outcome, "old form");
+    assert_exploit_rejected_with!('
+  code="$(e2e "$T/e-old" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-reject-MissingRequiredSignature.so")"
+  [ "$code" = 3 ] && grep -q 'tests/fixed_blocked.rs failed to build' "$T/out" && grep -q 'assert_exploit_rejected! now runs the attack itself' "$T/out" \
+    && ok "real cargo: the old assert_exploit_rejected!(outcome, why) form fails to build with the migration -> exit 3" || { bad "real cargo, old rejected form: exit $code"; cat "$T/out" >&2; }
 
   # One test's inconclusive result does not hide another test's failed assertion.
   mk_e2e "$T/e-mask"
@@ -1752,6 +1768,90 @@ RS
   code="$(e2e "$T/e-lite-hotfix" VULNERABLE_SO="$SB-takeover.so" FIXED_SO="$SB-reject-InvalidInstructionData.so")"
   [ "$code" = 3 ] && grep -q 'the legitimate call failed on these bytes (InstructionError(0, InvalidInstructionData))' "$T/out" \
     && ok "real cargo, LiteSVM: a control that fails -> exit 3" || { bad "real cargo, LiteSVM failing control: exit $code"; cat "$T/out" >&2; }
+
+  # The LiteSVM effect form binds the instruction that failed: a failure in an
+  # instruction for another program, which the test added itself, says nothing about
+  # the placed one.
+  mk_lite "$T/e-lite-ix" rejected_with
+  subst "$T/e-lite-ix/tests/exploit.rs" '    assert_exploit_effect!(svm, tx: Transaction::new_with_payer(&[ix], Some(&attacker)), account: state_pk,' "    let other = random_pubkey();
+    svm.add_program(other, &std::fs::read(\"$SB-reject-Custom6001.so\").expect(\"other program\")).expect(\"add other program\");
+    let other_ix = Instruction { program_id: other, accounts: vec![AccountMeta::new_readonly(attacker, true)], data: vec![] };
+    assert_exploit_effect!(svm, tx: Transaction::new_with_payer(&[ix, other_ix], Some(&attacker)), account: state_pk,"
+  code="$(e2e "$T/e-lite-ix" VULNERABLE_SO="$SB-takeover.so")"
+  [ "$code" = 3 ] && grep -q 'the vulnerable arm is inconclusive: the attack targets .* not .* the program run.sh placed' "$T/out" && ! grep -q 'did not reproduce' "$T/out" \
+    && ok "real cargo, LiteSVM: an effect assertion whose transaction failed in another program's instruction -> exit 3, not 1" || { bad "real cargo, LiteSVM failure in another program: exit $code"; cat "$T/out" >&2; }
+
+  # Model runs: the crate's own arms, built by a stand-in cargo-build-sbf that writes
+  # each arm's stand-in program (SBF_VULNERABLE, default takeover; SBF_FIXED, default
+  # reject:MissingRequiredSignature). The any-result forms count here, and every form
+  # is bound to the program run.sh placed.
+  mkdir -p "$T/sbf"
+  cat > "$T/sbf/cargo-build-sbf" <<'SH'
+#!/bin/sh
+out=""; features=""; prev=""
+for a in "$@"; do
+  case "$prev" in --sbf-out-dir) out="$a" ;; --features) features="$a" ;; esac
+  prev="$a"
+done
+case "$features" in
+  vulnerable) b="${SBF_VULNERABLE:-takeover}" ;;
+  *) b="${SBF_FIXED:-reject:MissingRequiredSignature}" ;;
+esac
+printf '\177ELF%s' "$b" > "$out/poc_e2e.so"
+SH
+  chmod +x "$T/sbf/cargo-build-sbf"
+  e2e_model() {  # e2e_model <crate> [VAR=val ...] -> exit code, real cargo, each arm built by the stand-in
+    local crate="$1"; shift
+    run "$crate" "$T/sbf:$PATH" "$NATIVE" "${E2E[@]}" "$@"
+  }
+  MODEL="OK: exploit reproduces on 'vulnerable' and is blocked on 'fixed'"
+  mk_e2e "$T/m-base"
+  code="$(e2e_model "$T/m-base")"
+  [ "$code" = 0 ] && grep -q "^$MODEL" "$T/out" && ! grep -q "^$LEG3" "$T/out" \
+    && ok "real cargo, model run: the template's own arms reproduce, and the model line, never the Leg 3 line, is printed" || { bad "real cargo, model run: exit $code"; cat "$T/out" >&2; }
+  mk_e2e "$T/m-any"
+  drop_block "$T/m-any/tests/exploit.rs" '^    assert_exploit_effect!\($'
+  swap "$T/m-any/tests/exploit.rs" '/^    let _ = SYSTEM_PROGRAM_ID;/ { print "    shared_test_utils::assert_exploit_succeeds!(mollusk, ix: &ix, accounts: &accounts, why: \"the model accepts it\");" } { print }'
+  drop_block "$T/m-any/tests/fixed_blocked.rs" '^    assert_exploit_rejected_with!\($'
+  swap "$T/m-any/tests/fixed_blocked.rs" '/^    \/\/ A hotfix the team already deployed/ { print "    shared_test_utils::assert_exploit_rejected!(mollusk, ix: &ix, accounts: &accounts, why: \"the model rejects it\");" } { print }'
+  code="$(e2e_model "$T/m-any")"
+  [ "$code" = 0 ] && grep -q "^$MODEL" "$T/out" \
+    && ok "real cargo, model run: the any-result forms run the attack on the placed program and count" || { bad "real cargo, model run with the any-result forms: exit $code"; cat "$T/out" >&2; }
+  cp -R "$T/m-any" "$T/m-any-other"
+  subst "$T/m-any-other/tests/exploit.rs" '    let ix = Instruction {
+        program_id,' '    let ix = Instruction {
+        program_id: random_pubkey(),'
+  code="$(e2e_model "$T/m-any-other")"
+  [ "$code" = 3 ] && grep -q 'the vulnerable arm is inconclusive: the attack targets .* not .* the program run.sh placed' "$T/out" && ! grep -q '^OK' "$T/out" \
+    && ok "real cargo, model run: assert_exploit_succeeds! aimed at another program id -> exit 3, no OK line" || { bad "real cargo, model run, any-result form on another program: exit $code"; cat "$T/out" >&2; }
+  # On LiteSVM too: transactions that only call another program the tests added
+  # themselves decide nothing, whatever they return.
+  mk_lite "$T/m-lite-other" rejected_with
+  for arm in vulnerable fixed; do
+    if [ "$arm" = vulnerable ]; then f=exploit; tname=exploit_succeeds_on_vulnerable; other=noop; form=assert_exploit_succeeds
+    else f=fixed_blocked; tname=same_attack_rejected_on_fixed; other=reject-Custom6001; form=assert_exploit_rejected; fi
+    cat > "$T/m-lite-other/tests/$f.rs" <<RS
+#![cfg(feature = "$arm")]
+use shared_test_utils::{litesvm_for, random_pubkey, system_account};
+use solana_sdk::instruction::{AccountMeta, Instruction};
+use solana_sdk::transaction::Transaction;
+
+#[test]
+fn $tname() {
+    let program_id = random_pubkey();
+    let mut svm = litesvm_for!(program_id, "poc_e2e");
+    let other = random_pubkey();
+    svm.add_program(other, &std::fs::read("$SB-$other.so").expect("other program")).expect("add other program");
+    let attacker = random_pubkey();
+    svm.set_account(attacker, system_account(1_000_000_000)).expect("attacker");
+    let ix = Instruction { program_id: other, accounts: vec![AccountMeta::new_readonly(attacker, true)], data: vec![] };
+    shared_test_utils::$form!(svm, tx: Transaction::new_with_payer(&[ix], Some(&attacker)), why: "another program");
+}
+RS
+  done
+  code="$(e2e_model "$T/m-lite-other")"
+  [ "$code" = 3 ] && grep -q 'the vulnerable arm is inconclusive: the attack targets .* not .* the program run.sh placed' "$T/out" && ! grep -q '^OK' "$T/out" \
+    && ok "real cargo, LiteSVM model run: any-result transactions that never call the placed program -> exit 3, no OK line" || { bad "real cargo, LiteSVM model run on another program: exit $code"; cat "$T/out" >&2; }
 
   # A shared build cache, two crates of the same name. Crate B is the template (pins
   # MissingRequiredSignature); crate A pins Custom(6001). A cargo wrapper builds A's
