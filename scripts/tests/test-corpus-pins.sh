@@ -305,6 +305,30 @@ case "$h4|$m4|$x4" in *"https://attr.example"*"|"*"https://attr-md.example"*"|"*
     pass=$((pass + 1)); echo "PASS delta review reads files upstream .gitattributes marks -diff";;
   *) failn=$((failn + 1)); echo "FAIL delta review missed files upstream .gitattributes marks -diff"; echo "$h4"; echo "$m4"; echo "$x4";; esac
 
+# letter case and quoted paths: a hooks file, a manifest and a script named in other letter cases, a URL in
+# capitals, a manifest under a non-ASCII directory, and a path git still quotes
+cs="$T/cs"; mkdir -p "$cs/plugins/x" && git -C "$cs" init -q && echo x > "$cs/plugins/x/README.md" && git -C "$cs" add plugins \
+  && git -C "$cs" commit -q -m old; csold=$(git -C "$cs" rev-parse HEAD)
+mkdir -p "$cs/plugins/x/Hooks" "$cs/plugins/x/.Claude-Plugin" "$cs/plugins/café/.claude-plugin" "$cs/plugins/q\"uote"
+echo '{}' > "$cs/plugins/x/Hooks/Hooks.json"; printf '{"name":"x","hooks":{}}\n' > "$cs/plugins/x/.Claude-Plugin/Plugin.json"
+printf '{"name":"cafe","hooks":{}}\n' > "$cs/plugins/café/.claude-plugin/plugin.json"
+printf '#!/bin/sh\necho HTTPS://Upper.example/x\n' > "$cs/plugins/x/run.sh"
+printf '#!/bin/sh\necho https://shout.example/a\n' > "$cs/plugins/x/Setup.SH"; echo q > "$cs/plugins/q\"uote/README.md"
+git -C "$cs" add plugins && git -C "$cs" commit -q -m new; csnew=$(git -C "$cs" rev-parse HEAD)
+rep7=$(bash "$ROOT/scripts/tob-delta-review.sh" "$cs" "$csold" "$csnew" 2>&1)
+sect() { printf '%s\n' "$rep7" | sed -n "/^### $1/,/^### $2/p"; }
+for want in "Load surfaces|Plugin manifests|plugins/x/Hooks/Hooks.json" \
+            "Plugin manifests|Manifests (plugin.json|plugins/x/.Claude-Plugin/Plugin.json" \
+            "Manifests (plugin.json|Skills and commands|plugins/x/.Claude-Plugin/Plugin.json" \
+            "Manifests (plugin.json|Skills and commands|plugins/café/.claude-plugin/plugin.json" \
+            "Paths git still quotes|Renamed files|q\\\"uote" \
+            "Hosts in added lines|Hosts in added Markdown|https://upper.example" \
+            "Hosts in added lines|Hosts in added Markdown|https://shout.example"; do
+  from=${want%%|*}; rest=${want#*|}; to=${rest%%|*}; text=${rest#*|}
+  case "$(sect "$from" "$to")" in *"$text"*) pass=$((pass + 1)); echo "PASS delta review, any letter case: '$from' lists $text";;
+    *) failn=$((failn + 1)); echo "FAIL delta review, any letter case: '$from' misses $text"; sect "$from" "$to";; esac
+done
+
 # renames: a file moved unchanged to a path that is not a load surface is listed as a rename and left out of
 # the added-line scans; a file moved into a load surface (hooks/), one moved and changed, and one moved out of
 # tests/ (which the host scan leaves out) are scanned whole
