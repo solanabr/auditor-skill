@@ -254,8 +254,8 @@ fails that PR until the README pin is updated on the same branch. Never auto-mer
    services it contacts (Rule 11b) changed.
 3. Update the README pin line — short SHA, full `…/tree/<sha>` URL, upstream commit date — on the bump
    branch; `bash scripts/check-corpus.sh` must pass.
-4. After merge, cut a release (§3): the plugin cache is keyed by version, so plugin users receive a new
-   pin only with a release.
+4. After merge, bump the version (§3; a patch bump is enough): the plugin cache is keyed by version, so
+   plugin users receive a new pin only with a version bump.
 5. Tell `solanabr/ai-kit` the new full SHA. Its `skill-registry.json` records our pin under `vendored`, and
    its CI fails until that record moves too.
 
