@@ -47,9 +47,10 @@
   instructions (AI-018).
 - **Working material.** `audit_<n>/bootstrap/` follows Rule 11d: the collector writes a `.gitignore` into it (and into
   `audit_<n>/` when that has none), so nothing lands in the client's `git status`. It writes only into a run directory
-  the audit made: it exits 2 when `audit_<n>/` or `bootstrap/` is or holds a symbolic link, is tracked by git, or
-  cannot be checked (find cannot read all of it, or git cannot answer, e.g. for a repository it refuses as owned by
-  another user). Cite its rows by commit, report or incident id in the threat model and the report; never paste raw
+  the audit made: it exits 2 when `audit_<n>/` or `bootstrap/` is or holds a symbolic link, is reached through one
+  inside the working directory or the target tree, is tracked by git, or cannot be checked (find cannot read all of
+  it, or git cannot answer, e.g. for a repository it refuses as owned by another user). Cite its rows by commit,
+  report or incident id in the threat model and the report; never paste raw
   diffs or incident extracts into the client deliverable.
 
 ## 1. Choose the mode

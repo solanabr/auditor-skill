@@ -197,7 +197,9 @@ exit 0:
 `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false --icase-pathspecs ls-files -- incident_<k>`
 (Rule 11c; any letter case) and `find incident_<k> -type l`. `collect.sh` and `snapshot-program.sh`
 refuse, with exit 2 and before writing anything, a run directory that is a
-symbolic link, holds one, is tracked by git, or that git or find cannot check.
+symbolic link, holds one, is tracked by git, or that git or find cannot check,
+and a path to it with a `.` or `..` component or a symbolic link on its way
+inside the working directory.
 The **first** thing written in a new run directory is a `.gitignore` containing a
 single line, `*` (Rule 11d) — a raw transaction corpus and off-chain logs can
 carry PII and must never be committed; the repo `.gitignore` also ignores
