@@ -15,10 +15,11 @@ improvements. This document is the short version of "how a change gets in".
 - **Counts must stay consistent.** Item and vector totals are hardcoded in several files (see §4). CI runs
   `scripts/check-corpus.sh` and fails the PR if any of them disagree with the files on disk.
 - **No AI-attribution trailers in commits or PRs.** Commits and PR descriptions must not carry
-  `Co-Authored-By: … Claude/Anthropic`, "Generated with …", or similar trailers. A `commit-msg` hook that
-  enforces this ships in `scripts/hooks/` (enable it with the command in §2) and CI re-checks every commit
-  in the PR range. Using AI tooling to help write a contribution is fine; the author of record is the
-  human who opens the PR and takes responsibility for the content.
+  `Co-Authored-By: … Claude/Anthropic`, "Generated with …", or similar trailers, and no commit names an AI
+  assistant as its author or committer. A `commit-msg` hook that refuses such a trailer ships in
+  `scripts/hooks/` (enable it with the command in §2), and CI re-checks every commit in the PR range. Using AI
+  tooling to help write a contribution is fine; the author of record is the human who opens the PR and takes
+  responsibility for the content.
 - **Security issues in this repository** (install script, Rust tools, workflows, or corpus content that
   could mislead an auditor into a dangerous action) go through [SECURITY.md](SECURITY.md), not a public
   issue.
