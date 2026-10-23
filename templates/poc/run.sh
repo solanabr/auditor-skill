@@ -60,8 +60,10 @@
 #   * the crate's own build-time code is refused (exit 3) before anything compiles:
 #     `cargo metadata --no-deps`, run in the scratch copy, lists the crate's packages
 #     (the crate, shared-test-utils, any other member), and a build script (`build =
-#     false` turns one off), a proc-macro package, a Cargo.toml that is not a member,
-#     or a [patch] or [replace] table in a manifest stops the run. Check code that is
+#     false` turns one off), a proc-macro package, a Cargo.toml inside the crate that
+#     is not a member, or a [patch] or [replace] table in a manifest stops the run. A
+#     path dependency outside the crate is not refused: its build script runs in the
+#     recorded mode, and the non-registry line names it. Check code that is
 #     generated at build time into the crate instead. The contract macros must come
 #     from the harness copy that was checked, so the crate depends on its own
 #     shared-test-utils/ under the import name shared_test_utils; a crate without
@@ -93,7 +95,7 @@
 # to its newest compatible release). A crate the PoC adds keeps every pin it does
 # not need to move. When cargo reports a conflict with a pinned release, name that
 # pin and run.sh moves it alone, in the scratch copy, before it builds:
-#     UPDATE_PINS="solana-program@3.0.0" ./run.sh      # cargo update -p solana-program@3.0.0
+#     AUDITOR_EXEC_MODE=<mode> UPDATE_PINS="solana-program@3.0.0" ./run.sh   # cargo update -p solana-program@3.0.0
 # (several pins: separate them with spaces). The moved lock comes back next to this
 # file with the rest. Never run cargo update in the crate itself: inside the target
 # tree it would read the target's .cargo/config*.

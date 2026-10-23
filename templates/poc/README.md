@@ -45,8 +45,8 @@ the toolchain pinned, so the target's `.cargo/config*` and `rust-toolchain*` nev
 apply. Refused before anything compiles, in either mode: a symbolic link, a `.cargo/`
 directory or a `rust-toolchain*` file in the crate; build-time code of the crate's
 own — a build script (`build = false` turns one off), a proc-macro package, a
-`Cargo.toml` that is not a member of the crate's workspace, a `[patch]` or `[replace]`
-table — so check generated code into the crate instead; and a
+`Cargo.toml` inside the crate that is not a member of its workspace, a `[patch]` or
+`[replace]` table — so check generated code into the crate instead; and a
 `tests/fixtures/{PROGRAM_NAME}.so`, which mollusk would load in place of the arm.
 
 Exit `0` means the exploit reproduced on `vulnerable` **and**, when the fixed arm
@@ -65,7 +65,7 @@ refreshed harness copy) gets a repair pass: repair the harness setup once, never
 assertions or the target, and re-run (`references/orchestration/poc-harness.md` §3).
 Before its final line, `run.sh` names
 the non-registry code in the build: the path and git dependencies in the resolved
-`Cargo.lock`.
+`Cargo.lock`, and any source compiled from outside the crate.
 
 `run.sh` and `shared-test-utils/` are the installation's copies; leave them as they
 are. Before a command trusts an `OK` line it compares them with the installation's
@@ -80,16 +80,18 @@ from anywhere else.
 from the target's manifest runs its build script in the recorded mode, so add one
 only when the PoC needs it, and read what the manifest pulls in. A `path`
 dependency on target crates must be an absolute path: the build runs from the
-scratch copy, not from this directory.
+scratch copy, not from this directory. Such a dependency is not refused: its build
+script runs in the recorded mode, and the non-registry line names it.
 
 **Pins.** `Cargo.lock` pins the whole dependency graph at releases published at
 least 14 days before the template shipped, so an unmodified crate resolves to the
 same versions on every run. Keep it with the crate; `run.sh` prints a line when it
 is missing. A crate you add keeps every pin it does not need to move. When cargo
 reports a conflict with a pinned release, move that pin alone:
-`UPDATE_PINS="<crate>@<pinned version>" ./run.sh` runs `cargo update -p` in the
-scratch copy and brings the moved lock back. Never run `cargo update` in this
-directory: inside the target tree it would read the target's `.cargo/config*`.
+`AUDITOR_EXEC_MODE=<mode> UPDATE_PINS="<crate>@<pinned version>" ./run.sh` runs
+`cargo update -p` in the scratch copy and brings the moved lock back. Never run
+`cargo update` in this directory: inside the target tree it would read the target's
+`.cargo/config*`.
 
 **Build cache.** Each run compiles every dependency from cold in its fresh scratch
 directory. To reuse compiled dependencies between runs of one engagement, create the
@@ -126,7 +128,8 @@ the attack as written does not fit the program, or the runtime could not run it 
 inconclusive on either arm, and so is an effect the account already held before the
 attack. When the guard's error is itself harness-class (a fix that now needs an extra
 account, say), pin it all the same: the vulnerable arm, running the byte-identical
-attack, is its positive control, and the `fixed arm:` line says so. To check a fix the
+attack, is its positive control, and the `fixed arm:` line (on prebuilt bytes with
+`FIXED_SO`) says so. To check a fix the
 team already deployed, whose error you cannot know in advance, swap in the commented
 lines in `tests/fixed_blocked.rs`: `assert_exploit_blocked!` with its positive control,
 which the macro runs on the same runner. It passes when a legitimate call (the same

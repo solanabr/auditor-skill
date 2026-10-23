@@ -46,11 +46,13 @@ with a pinned toolchain; it refuses a crate holding a symbolic link, a `.cargo/`
 directory or a `rust-toolchain*` file, and a `path` dependency on target crates must
 be absolute. It also refuses the crate's own build-time code, in either mode and
 before anything compiles: from `cargo metadata --no-deps` in the scratch copy, a build
-script (`build = false` turns one off), a proc-macro package, or a `Cargo.toml` that is
-not a member of the crate's workspace, and from the manifests, a `[patch]` or
-`[replace]` table. Code generated at build time is checked into the crate instead.
-Before its final line `run.sh` names the non-registry code in the build: the path and
-git dependencies in the resolved `Cargo.lock`. Building the target itself (for example `cargo build-sbf` /
+script (`build = false` turns one off), a proc-macro package, or a `Cargo.toml` inside
+the crate that is not a member of its workspace, and from the manifests, a `[patch]` or
+`[replace]` table. Code generated at build time is checked into the crate instead. A
+`path` dependency outside the crate is not refused: its build script runs in the
+recorded mode. Before its final line `run.sh` names the non-registry code in the
+build: the path and git dependencies in the resolved `Cargo.lock`, and any source
+compiled from outside the crate. Building the target itself (for example `cargo build-sbf` /
 `anchor build` on the client tree to get its `.so`) runs target code in the same mode.
 An incident whose root cause is supply chain / CI is never built natively, and its PoC
 never builds or links the target's crates in any mode, since they may be the payload:
@@ -226,7 +228,7 @@ another program is inconclusive too. On prebuilt bytes the vulnerable
 arm counts only on `assert_exploit_effect!` and the fixed arm only on
 `assert_exploit_rejected_with!` or `assert_exploit_blocked!`. When the pinned error is
 itself harness-class (a fix that now needs an extra account), it holds, and the run's
-`fixed arm:` line says so: the positive control is then the vulnerable arm, which runs
+`fixed arm:` line (on prebuilt bytes with `FIXED_SO`) says so: the positive control is then the vulnerable arm, which runs
 the byte-identical attack and shows it fits the program. The markers are a floor, not
 proof: whoever reads the PoC still checks that the assertion states the finding's
 effect and the guard's error.
