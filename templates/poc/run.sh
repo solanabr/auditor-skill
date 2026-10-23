@@ -14,8 +14,10 @@
 # mode below, build-time code in the crate) or an inconclusive arm (no contract
 # assertion ran, the test failed outside them, the harness could not decide — a
 # harness error such as a wrong program id or a short account list, on either arm
-# — or other bytes ran). Record [PoC-ATTEMPTED] with that line, mark the finding
-# "PoC re-run needed", and keep the prose PoC.
+# — or other bytes ran). Record every exit 3 as [PoC-ATTEMPTED] with that line, mark
+# the finding "PoC re-run needed" with that line as the reason, and keep the prose
+# PoC. Only a harness error gets a repair pass, on the harness setup alone, never on
+# the assertions or the target (references/orchestration/poc-harness.md §3).
 #
 # This file is the installation's templates/poc/run.sh, unedited: nothing in it is
 # filled in (the program name comes from Cargo.toml), so a copy can be compared
@@ -910,7 +912,7 @@ run_tests() {  # run_tests <arm>: the arm's test binary, run as `cargo test` run
 inconclusive() {  # inconclusive <arm> <reason>: the arm decided nothing — a blocker, never a verdict
   local what="whether the fix holds"
   [[ "$1" == vulnerable ]] && what="whether the exploit reproduces"
-  echo "[PoC-ATTEMPTED] blocker: the $1 arm is inconclusive: $2. This run does not show ${what}; repair the PoC's harness setup and re-run." >&2
+  echo "[PoC-ATTEMPTED] blocker: the $1 arm is inconclusive: $2. This run does not show ${what}; repair the PoC's harness setup, never its assertions or the target, and re-run." >&2
   exit 3
 }
 

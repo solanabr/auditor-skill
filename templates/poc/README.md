@@ -51,14 +51,19 @@ table — so check generated code into the crate instead; and a
 
 Exit `0` means the exploit reproduced on `vulnerable` **and**, when the fixed arm
 runs, was blocked on `fixed`; `1` / `2` mean a contract assertion of that arm ran and
-did not hold — see its message; `3` is a named blocker (no execution mode, no SBF
-toolchain, bad inputs, a build that failed, build-time code in the crate) or an
+did not hold — see its message, and for `2` the final line, which says whether the
+fixed arm accepted the attack, rejected it with another error than the pinned one, or
+failed it while the account still changed; `3` is a named blocker (no execution mode,
+no SBF toolchain, bad inputs, a build that failed, build-time code in the crate) or an
 inconclusive arm (no contract assertion ran, the test failed outside them, the
 harness could not decide — a harness error such as a wrong program id or a short
 account list, on either arm — or the test loaded other bytes than the placed arm). On
-`3` the finding's prose PoC still stands: record `[PoC-ATTEMPTED]` with the blocker
-line, mark the finding "PoC re-run needed", repair the harness setup once and re-run
-(`references/orchestration/poc-harness.md` §3). Before its final line, `run.sh` names
+every `3` the finding's prose PoC still stands: record `[PoC-ATTEMPTED]` with the
+blocker line, and mark the finding "PoC re-run needed" with that line as the reason.
+Only a harness error (an inconclusive arm, or a test that no longer builds against the
+refreshed harness copy) gets a repair pass: repair the harness setup once, never the
+assertions or the target, and re-run (`references/orchestration/poc-harness.md` §3).
+Before its final line, `run.sh` names
 the non-registry code in the build: the path and git dependencies in the resolved
 `Cargo.lock`.
 
@@ -124,7 +129,8 @@ state of the account) goes through and changes the account, and the attack then 
 with an error that is not a harness error and leaves the account unchanged. A control
 that targets another program, starts from another state, fails or changes nothing is
 inconclusive; when no legitimate call can show the change on those bytes, pin the
-fix's error with `assert_exploit_rejected_with!` instead. `assert_exploit_succeeds!` /
+fix's error with `assert_exploit_rejected_with!` instead, as a new check, not a harness
+repair. `assert_exploit_succeeds!` /
 `assert_exploit_rejected!` accept any `Ok` / any error that is not a harness error, and
 fit an audit-time model only.
 

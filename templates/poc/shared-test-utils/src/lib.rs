@@ -884,7 +884,7 @@ pub fn __assert_blocked_on<A, K, T, F>(
     }
     if let Some(error) = &control.error {
         inconclusive(&format!(
-            "the legitimate call failed on these bytes ({error}): the harness does not drive this program, or the fix turned the instruction off; pin the fix's error with assert_exploit_rejected_with! instead ({why})"
+            "the legitimate call failed on these bytes ({error}): the harness does not drive this program, or the fix turned the instruction off, and then pinning the fix's error with assert_exploit_rejected_with! is a new check, not a harness repair ({why})"
         ));
     }
     let control_was = read_state(control.was, &read, account, "before the legitimate call", why);

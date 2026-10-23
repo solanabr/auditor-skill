@@ -84,7 +84,8 @@ fn same_attack_rejected_on_fixed() {
     // without it, a program that fails every call would pass for a fix. run.sh then
     // reports the fixed arm as "blocked", which never stands for our own fix. If no
     // legitimate call can go through and change the account on these bytes, pin the
-    // hotfix's error with assert_exploit_rejected_with! instead.
+    // hotfix's error with assert_exploit_rejected_with! instead, as a new check, not a
+    // harness repair.
     //
     //   // {LEGITIMATE_CALL}: the same instruction as the attack, as its rightful
     //   // caller makes it — here the real authority signs and hands over to a new key.
