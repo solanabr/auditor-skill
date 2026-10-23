@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # check-frontmatter.sh — fail when Claude Code would read a frontmatter field differently from what is
-# written. Checks the files whose frontmatter Claude Code loads: commands/*.md, agents/*.md, SKILL.md and
-# skills/*/SKILL.md (or the files given; the kind comes from the path). The frontmatter must keep to a flat
-# subset:
+# written. With no arguments it checks every file whose frontmatter Claude Code loads: each .md file at any
+# depth under commands/ and agents/, and SKILL.md at the root and at any depth under skills/, matching .md and
+# SKILL.md in any letter case. Given files, it checks those; the kind comes from the path. The frontmatter
+# must keep to a flat subset:
 #   - line 1 is exactly '---' and the block ends at the next line that is exactly '---'; no other line of
 #     the block contains '---' or is a '...' document end; the file holds no NUL byte, and the block no tab,
 #     CR, other control character, U+0085, U+2028 or U+2029;
@@ -15,9 +16,10 @@
 #   - agents have name, description and tools; commands have description and allowed-tools; a SKILL.md has
 #     name and description, and for now no other key;
 #   - tools and allowed-tools list 'Name' or 'Name(pattern)' entries (agents: names only, no pattern),
-#     separated by ', ' or one per item, none empty; allowed-tools lists none of FORBIDDEN_ALLOWED_TOOLS.
+#     separated by ', ' or one per item, none empty; allowed-tools lists none of FORBIDDEN_ALLOWED_TOOLS;
+#   - a file named with .md in another letter case (.MD) fails: name it .md.
 # known-vectors/*.md carry frontmatter too, but Claude Code does not load it (check-corpus.sh reads its id).
-# Usage: bash scripts/check-frontmatter.sh [FILE...]. Exit 0 = every file passes. Needs bash >= 3.2, awk.
+# Usage: bash scripts/check-frontmatter.sh [FILE...]. Exit 0 = every file passes. Needs bash >= 3.2, awk, find.
 set -uo pipefail
 
 # Entries the allowed-tools of a command or skill may never list, space-separated, each a whole entry.
@@ -26,8 +28,11 @@ FORBIDDEN_ALLOWED_TOOLS='*'
 
 if [ $# -eq 0 ]; then
   cd "$(dirname "$0")/.." || exit 2
-  set -- commands/*.md agents/*.md SKILL.md
-  for f in skills/*/SKILL.md; do if [ -f "$f" ]; then set -- "$@" "$f"; fi; done
+  files=$( { find commands agents \( -type f -o -type l \) -iname '*.md' 2>/dev/null
+             find skills \( -type f -o -type l \) -iname SKILL.md 2>/dev/null
+             find . -maxdepth 1 \( -type f -o -type l \) -iname SKILL.md | sed 's#^[.]/##'; } | LC_ALL=C sort)
+  set --
+  while IFS= read -r f; do if [ -n "$f" ]; then set -- "$@" "$f"; fi; done <<< "$files"
 fi
 
 PROG='
@@ -136,12 +141,13 @@ END {
 
 fail=0; n=0
 for f in "$@"; do
-  case "$f" in
-    SKILL.md | */SKILL.md) kind=skill ;;
+  case "$(printf '%s' "$f" | LC_ALL=C tr 'A-Z' 'a-z')" in
+    skill.md | */skill.md) kind=skill ;;
     agents/*.md | */agents/*.md) kind=agent ;;
     commands/*.md | */commands/*.md) kind=command ;;
     *) echo "::error::$f: not under agents/ or commands/ and not a SKILL.md; its keys are unknown" >&2; fail=1; continue ;;
   esac
+  case "$f" in *.md) ;; *) echo "::error::$f: name the file with a lowercase .md" >&2; fail=1; continue ;; esac
   if [ ! -f "$f" ]; then echo "::error::$f: no such file" >&2; fail=1; continue; fi
   # awk does not see a NUL byte the same way everywhere, so look for one first
   if [ "$(LC_ALL=C tr -d '\000' < "$f" | wc -c)" -ne "$(wc -c < "$f")" ]; then

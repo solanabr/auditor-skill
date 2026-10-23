@@ -162,20 +162,28 @@ fm skill-no-name/SKILL.md fail 'description: "A skill."'
 fm skills/agents/SKILL.md pass "name: a" 'description: "A skill in a directory named agents."'
 fm skills/forked/SKILL.md fail "name: f" 'description: "A forked skill."' "context: fork"
 fm skills/with-tools/SKILL.md fail "name: t" 'description: "A skill."' "allowed-tools: Read"
-# with no arguments the check reads commands/, agents/, SKILL.md and every skills/*/SKILL.md
-lay="$T/layout"; mkdir -p "$lay/scripts" "$lay/commands" "$lay/agents" "$lay/skills/s"
+# with no arguments the check reads every .md at any depth under commands/ and agents/ (dotfiles too),
+# the root SKILL.md, and every SKILL.md under skills/, in any letter case; a .MD name fails
+lay="$T/layout"; mkdir -p "$lay/scripts" "$lay/commands/sub" "$lay/agents/deep/er" "$lay/skills/s" "$lay/skills/t/u"
 cp "$ROOT/scripts/check-frontmatter.sh" "$lay/scripts/"
-printf -- '---\n%s\n%s\n---\n' "$C" "allowed-tools: Read" > "$lay/commands/c.md"
-printf -- '---\n%s\n%s\n%s\n---\n' "$N" "$D" "$TL" > "$lay/agents/a.md"
-printf -- '---\n%s\n%s\n---\n' "name: root" 'description: "The root skill."' > "$lay/SKILL.md"
-printf -- '---\n%s\n%s\n---\n' "name: s" "description: Ends with ---" > "$lay/skills/s/SKILL.md"
-expect "frontmatter: with no arguments, a skills/*/SKILL.md is read too" 1 bash "$lay/scripts/check-frontmatter.sh"
-case "$out" in *"skills/s/SKILL.md:3: --- inside"*) pass=$((pass + 1)); echo "PASS frontmatter: ... and named in the error";;
-  *) failn=$((failn + 1)); echo "FAIL frontmatter: the skills/*/SKILL.md error is missing"; echo "$out";; esac
-printf -- '---\n%s\n%s\n---\n' "name: s" 'description: "A skill."' > "$lay/skills/s/SKILL.md"
-expect "frontmatter: with no arguments, all four kinds of file pass" 0 bash "$lay/scripts/check-frontmatter.sh"
-case "$out" in *"passed: 4 files"*) pass=$((pass + 1)); echo "PASS frontmatter: ... 4 files read";;
-  *) failn=$((failn + 1)); echo "FAIL frontmatter: the default list did not read 4 files"; echo "$out";; esac
+good_c() { printf -- '---\n%s\n%s\n---\n' "$C" "allowed-tools: Read" > "$1"; }
+good_a() { printf -- '---\n%s\n%s\n%s\n---\n' "$N" "$D" "$TL" > "$1"; }
+good_s() { printf -- '---\n%s\n%s\n---\n' "name: s" 'description: "A skill."' > "$1"; }
+bad_fm() { printf -- '---\n%s\n%s\n%s\n---\n' "$N" "description: Ends with ---" "$TL" > "$1"; }
+good_c "$lay/commands/c.md"; good_a "$lay/agents/a.md"; good_s "$lay/SKILL.md"
+bad_fm "$lay/commands/sub/nested.md"; bad_fm "$lay/agents/deep/er/deeper.md"; bad_fm "$lay/agents/.hidden.md"
+bad_fm "$lay/skills/s/SKILL.md"; bad_fm "$lay/skills/t/u/skill.md"; good_c "$lay/commands/Upper.MD"
+expect "frontmatter: with no arguments, nested, hidden, lower-case and .MD files are read too" 1 bash "$lay/scripts/check-frontmatter.sh"
+for want in "commands/sub/nested.md:3: --- inside" "agents/deep/er/deeper.md:3: --- inside" "agents/.hidden.md:3: --- inside" \
+            "skills/s/SKILL.md:3: --- inside" "skills/t/u/skill.md:3: --- inside" "commands/Upper.MD: name the file with a lowercase .md"; do
+  case "$out" in *"$want"*) pass=$((pass + 1)); echo "PASS frontmatter: ... $want";;
+    *) failn=$((failn + 1)); echo "FAIL frontmatter: the default list missed: $want"; echo "$out";; esac
+done
+good_c "$lay/commands/sub/nested.md"; good_a "$lay/agents/deep/er/deeper.md"; good_a "$lay/agents/.hidden.md"
+good_s "$lay/skills/s/SKILL.md"; good_s "$lay/skills/t/u/skill.md"; mv "$lay/commands/Upper.MD" "$lay/commands/upper.md"
+expect "frontmatter: with no arguments, every kind of file passes once fixed" 0 bash "$lay/scripts/check-frontmatter.sh"
+case "$out" in *"passed: 9 files"*) pass=$((pass + 1)); echo "PASS frontmatter: ... 9 files read";;
+  *) failn=$((failn + 1)); echo "FAIL frontmatter: the default list did not read 9 files"; echo "$out";; esac
 fm other/notes.md fail "$N" "$D"
 # FORBIDDEN_ALLOWED_TOOLS holds only for allowed-tools: with bare Bash added to it, a command's bare Bash
 # fails while its Bash(pattern) entries and an agent's Bash tool still pass
