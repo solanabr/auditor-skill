@@ -78,9 +78,12 @@ _NONE = type(None)
 _DIGITS = re.compile("[0-9]+")
 _SURROGATE_ESCAPE = re.compile(r"\\u[dD][89a-fA-F]")
 _LONE_SURROGATE = re.compile("[\ud800-\udfff]")
-# Containers may nest this deep, the top-level object being 1: well below the 256 that
-# jq reads, so profile.sh never meets a line its queries cannot parse.
+# Brackets may nest this deep, the top-level object being 1: well below the 256 that
+# jq reads, so profile.sh never meets a line its queries cannot parse. The depth is
+# counted on the text of the line, before it is parsed.
 _DEPTH = 200
+# One JSON string (its escapes included) or one bracket: what that count reads.
+_TOKEN = re.compile(r"\"[^\"\\]*(?:\\.[^\"\\]*)*\"|[\[\]{}]", re.S)
 # Lamport balances, the fee and token amounts are u64 values in RPC data; bounding
 # them keeps every computed delta and sum far inside what Python prints.
 _U64 = 2 ** 64 - 1
@@ -234,16 +237,21 @@ def _lone_surrogate(obj):
     return False
 
 
-def _too_deep(obj):
-    stack = [(obj, 1)]
-    while stack:
-        v, depth = stack.pop()
-        if depth > _DEPTH:
-            return True
-        if isinstance(v, dict):
-            stack.extend((x, depth + 1) for x in v.values() if isinstance(x, (dict, list)))
-        elif isinstance(v, list):
-            stack.extend((x, depth + 1) for x in v if isinstance(x, (dict, list)))
+def _too_deep(text):
+    """True when the brackets outside strings in a line nest deeper than _DEPTH. It
+    reads the text, not the parsed value, so a deep value that a later duplicate key
+    replaces counts too."""
+    if text.count("[") + text.count("{") <= _DEPTH:
+        return False
+    depth = 0
+    for m in _TOKEN.finditer(text):
+        c = m.group()
+        if c == "[" or c == "{":
+            depth += 1
+            if depth > _DEPTH:
+                return True
+        elif c == "]" or c == "}":
+            depth -= 1
     return False
 
 
@@ -340,13 +348,15 @@ def parsed(line):
     """The transaction one stripped line holds, or None when the line is malformed."""
     try:
         text = line.decode("utf-8")
+    except ValueError:
+        return None
+    if _too_deep(text):
+        return None
+    try:
         tx = _DECODER.decode(text)
     except (ValueError, RecursionError):
         return None
     if _SURROGATE_ESCAPE.search(text) and _lone_surrogate(tx):
-        return None
-    # Only a line with more brackets than _DEPTH can nest that deep.
-    if text.count("[") + text.count("{") > _DEPTH and _too_deep(tx):
         return None
     return tx if shaped(tx) else None
 

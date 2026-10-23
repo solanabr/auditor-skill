@@ -943,9 +943,11 @@ bad = {
     "a-negative-inner-index": enc(tx("SigBad44", meta_extra={"innerInstructions": [{"index": -1, "instructions": []}]})),
     "a-key-holding-a-line-separator": enc(tx("SigBad45", keys=["Payer1111111111111111\u2028Forged222222222222222", "Two1111111111111111111111111111111111111111"])),
     "a-program-id-holding-a-next-line": enc(tx("SigBad46", ixs=[{"programId": "Prog\x85Forged", "accounts": []}])),
+    "nesting-300-deep-under-a-key-repeated-later": enc(tx("SigBad47", meta_extra={"x": "PLACE"})).replace(
+        b'"PLACE"', b"[" * 298 + b"]" * 298 + b', "x": 1'),
 }
 last = ("instruction-a-string", "keys-strings-and-objects", "header-count-a-string", "a-pubkey-that-is-an-object",
-        "a-truncated-line-holding-a-drain", "nesting-300-deep")
+        "a-truncated-line-holding-a-drain", "nesting-300-deep", "nesting-300-deep-under-a-key-repeated-later")
 good = {
     "raw-CR-between-tokens": enc(tx("SigGood1", mark=False)).replace(b', "transaction"', b',\r"transaction"'),
     "CRLF-line-end": enc(tx("SigGood2", mark=False)) + b"\r",
@@ -955,6 +957,8 @@ good = {
     "a-duplicate-key": enc(tx("SigGood6", mark=False)).replace(b'"err": null', b'"err": {"Custom": 1}, "err": null'),
     "fewer-keys-than-balances": enc(tx("SigGood7", pre=[10000, 5, 9000000000], post=[5000, 10, 0], mark=False)),
     "nesting-200-deep": enc(tx("SigGood8", meta_extra={"x": "PLACE"}, mark=False)).replace(b'"PLACE"', b"[" * 198 + b"]" * 198),
+    "brackets-and-escaped-quotes-inside-strings": enc(tx("SigGood10", mark=False)).replace(
+        b"Program log: hello", b"Program log: " + b"[{" * 150 + b'\\\\\\" ' + b"[" * 150),
     "control-characters-in-owner-mint-and-signature": enc(tx("Sig\x0bGood9", pre=[10000, 5], post=[5000, 6], mark=False,
         pre_tb=[dict(bal("0"), owner="Own\x00er\u2028X", mint="Mi\x1e\x85nt")], post_tb=[dict(bal("5"), owner="Own\x00er\u2028X", mint="Mi\x1e\x85nt")])),
 }

@@ -67,10 +67,13 @@ because `python3 -I` keeps a sibling module off `sys.path`;
   break. Surrounding ASCII whitespace is stripped (a CRLF line end is fine), and
   a blank line is skipped without being counted.
 - **Text.** A line must be valid UTF-8 and one JSON object. `NaN`, `Infinity`,
-  a number too large for a float, containers nested more than 200 deep (jq reads
-  at most 256, so every recipe stops at the same depth), and a `\u` escape that
-  leaves a lone surrogate each make it malformed. A raw CR between JSON tokens is
-  whitespace; inside a string it is invalid JSON.
+  a number too large for a float, and a `\u` escape that leaves a lone surrogate
+  each make it malformed. So does nesting deeper than 200 (jq reads at most 256,
+  so every recipe stops at the same depth): the depth is counted on the line's
+  text before it is parsed, as the brackets `[` and `{` outside strings, the
+  top-level object being 1, so a deep value that a later duplicate key replaces
+  counts too. A raw CR between JSON tokens is whitespace; inside a string it is
+  invalid JSON.
 - **Shape.** Every field a recipe reads must have the type it reads it as:
   `meta`, `transaction` and `message` are objects; `signatures`, `accountKeys`,
   `instructions`, `logMessages`, `innerInstructions` and the balance arrays are
