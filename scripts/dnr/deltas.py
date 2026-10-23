@@ -34,7 +34,10 @@ locale.
 Signatures, owners and mints are base58 in real RPC data and deltas are decimal
 integers; any tab, newline, carriage return or backslash in a string field is
 escaped (`\\t`, `\\n`, `\\r`, `\\\\`), so a crafted corpus cannot forge a row, and so
-is every other character Python does not print (`\\x00`, `\\u2028`, …).
+is every other character of the input contract's fixed list (control characters,
+line and paragraph separators, bidirectional controls, zero-width characters:
+`\\x00`, `\\x85`, `\\u2028`, `\\u202e`, `\\u200b`, …); any other character is
+printed as itself, whichever Python runs it.
 Token deltas are per token account (its `accountIndex` resolved through the
 transaction's account keys) and mint, so two accounts never share a bucket, even
 when the RPC gives no owner; sum the rows per owner for an owner's net, which nets
@@ -100,20 +103,21 @@ def _ok(tx: dict) -> bool:
     return (tx.get("meta") or {}).get("err") is None
 
 
-_TSV = {"\\": "\\\\", "\t": "\\t", "\n": "\\n", "\r": "\\r"}
+_TSV = {"\t": "\\t", "\n": "\\n", "\r": "\\r"}
+
+
+def _escape(m) -> str:
+    c = m.group()
+    return _TSV.get(c) or ("\\x%02x" % ord(c) if ord(c) < 0x100 else "\\u%04x" % ord(c))
 
 
 def _clean(s) -> str:
     """Escape what could break a TSV row, or hide in one. Real RPC data carries
-    base58 here, but a corpus can come from an untrusted export: a backslash, tab,
-    newline or carriage return is written as a backslash escape, so a key or mint
-    cannot forge an extra row or column, and every other character Python does not
-    print (a control character, a line or paragraph separator) as its escape too."""
-    s = str(s)
-    if s.isprintable() and "\\" not in s:
-        return s
-    return "".join(_TSV.get(c) or (c if c.isprintable() else c.encode("unicode_escape").decode("ascii"))
-                   for c in s)
+    base58 here, but a corpus can come from an untrusted export: a backslash is
+    doubled, and each character of the contract's fixed _UNSAFE list is written as
+    an escape (\\t, \\n, \\r; else \\xNN below U+0100 and \\uNNNN above), so a key or
+    mint cannot forge an extra row or column, or hide a control character in one."""
+    return _UNSAFE.sub(_escape, str(s).replace("\\", "\\\\"))
 
 
 def _lamports(txs, out):
@@ -193,6 +197,13 @@ _LONE_SURROGATE = re.compile("[\ud800-\udfff]")
 _DEPTH = 200
 # One JSON string (its escapes included) or one bracket: what that count reads.
 _TOKEN = re.compile(r"\"[^\"\\]*(?:\\.[^\"\\]*)*\"|[\[\]{}]", re.S)
+# The characters no key, program id or string version may hold, and that no recipe
+# prints raw: the C0 controls, DEL, the C1 controls, the line and paragraph
+# separators, the bidirectional controls (U+061C, U+200E-200F, U+202A-202E,
+# U+2066-2069) and the zero-width characters (U+200B-200D, U+FEFF). The list is
+# fixed, so the same lines are malformed under every Python, whatever Unicode
+# version it knows; every other character, assigned or not, prints as itself.
+_UNSAFE = re.compile(r"[\x00-\x1f\x7f-\x9f\u061c\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]")
 # Lamport balances, the fee and token amounts are u64 values in RPC data; bounding
 # them keeps every computed delta and sum far inside what Python prints.
 _U64 = 2 ** 64 - 1
@@ -376,9 +387,8 @@ def _index(v):
 
 
 def _plain(v):
-    """A string of printable characters only (no control character, no line or
-    paragraph separator), so it prints as one line."""
-    return type(v) is str and v.isprintable()
+    """A string with no _UNSAFE character, so it prints as one line, as written."""
+    return type(v) is str and not _UNSAFE.search(v)
 
 
 def _u64(v):

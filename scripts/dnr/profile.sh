@@ -84,6 +84,13 @@ _LONE_SURROGATE = re.compile("[\ud800-\udfff]")
 _DEPTH = 200
 # One JSON string (its escapes included) or one bracket: what that count reads.
 _TOKEN = re.compile(r"\"[^\"\\]*(?:\\.[^\"\\]*)*\"|[\[\]{}]", re.S)
+# The characters no key, program id or string version may hold, and that no recipe
+# prints raw: the C0 controls, DEL, the C1 controls, the line and paragraph
+# separators, the bidirectional controls (U+061C, U+200E-200F, U+202A-202E,
+# U+2066-2069) and the zero-width characters (U+200B-200D, U+FEFF). The list is
+# fixed, so the same lines are malformed under every Python, whatever Unicode
+# version it knows; every other character, assigned or not, prints as itself.
+_UNSAFE = re.compile(r"[\x00-\x1f\x7f-\x9f\u061c\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]")
 # Lamport balances, the fee and token amounts are u64 values in RPC data; bounding
 # them keeps every computed delta and sum far inside what Python prints.
 _U64 = 2 ** 64 - 1
@@ -267,9 +274,8 @@ def _index(v):
 
 
 def _plain(v):
-    """A string of printable characters only (no control character, no line or
-    paragraph separator), so it prints as one line."""
-    return type(v) is str and v.isprintable()
+    """A string with no _UNSAFE character, so it prints as one line, as written."""
+    return type(v) is str and not _UNSAFE.search(v)
 
 
 def _u64(v):

@@ -86,10 +86,17 @@ because `python3 -I` keeps a sibling module off `sys.path`;
   printable. The account keys are all strings, or all objects with a string
   `pubkey`; every index (`programIdIndex`, `accountIndex`, an inner group's
   `index`, `numRequiredSignatures`) is a non-negative integer, and a `programId`
-  is not empty. Keys, program ids and a
-  string `version` hold printable characters only (no control character, no line
-  or paragraph separator), so each prints as one line.
+  is not empty. Keys, program ids and a string `version` hold no character of
+  the fixed list below, so each prints as one line, as written.
   `shaped()` in the block is the full rule.
+- **The fixed character list** (`_UNSAFE` in the block): the C0 controls
+  U+0000–U+001F, DEL U+007F, the C1 controls U+0080–U+009F, the line and
+  paragraph separators U+2028 and U+2029, the bidirectional controls U+061C,
+  U+200E, U+200F, U+202A–U+202E and U+2066–U+2069, and the zero-width characters
+  U+200B–U+200D and U+FEFF. The list is fixed: it does not follow the Unicode
+  tables of the Python that runs a recipe, so the same lines are malformed and
+  the same characters escaped under every version. Every other character,
+  assigned or not, counts as printable.
 - **Malformed lines are counted, never echoed and never fatal.** A line that
   breaks a rule above is skipped. Each recipe then prints one note per input on
   stderr (`profile.sh` also closes its report with it):
@@ -101,11 +108,14 @@ because `python3 -I` keeps a sibling module off `sys.path`;
   exit status depends on line order.
 - **Copies.** A transaction is read once, at the first line that carries its
   signature; the copies skipped are counted in a note of their own.
-- **Output.** `frames.py` and `deltas.py` write UTF-8 whatever the locale.
-  `deltas.py` escapes, in every column, a backslash, tab, newline and carriage
-  return (`\\`, `\t`, `\n`, `\r`) and every other character Python does not print
-  (`\x00`, `\u2028`, …); `frames.py` writes JSON, which escapes control
-  characters.
+- **Output.** `frames.py` and `deltas.py` write UTF-8 whatever the locale, and
+  neither prints a character of the fixed list raw. `deltas.py` doubles a
+  backslash and escapes, in every column, a tab, newline and carriage return as
+  `\t`, `\n`, `\r`, and every other character of the list as `\xNN` below
+  U+0100 and `\uNNNN` above it (`\x00`, `\x85`, `\u2028`, `\u202e`, lowercase
+  hex). `frames.py` writes JSON: the encoder escapes the C0 controls, and every
+  other character of the list is written as a `\uNNNN` escape (lowercase hex),
+  so the value read back is unchanged.
 - **Saved output.** To keep an output, pass `--out <file>` with a new name,
   never a shell redirection into `incident_<n>/`. The recipe writes a temporary
   file beside `<file>` and gives it that name only when the run completes, so a
