@@ -350,6 +350,7 @@ fetch_list() {
 # may go to a pipe that is already closed, so SIGPIPE is ignored and a failed write
 # comes last. Then it prints the closing lines and exits 128 + the signal number.
 phase=paging; addrs_done=0; page=0; handled=0; fetched=0; calls=0; collected=0; total=0
+said_collected=0; closed=0
 interrupted() {
   local why="the run was interrupted ($1)" k=0 a next first=""
   trap '' INT TERM HUP PIPE
@@ -372,11 +373,15 @@ interrupted() {
     first="$(sed -n "${next}p" "$todo")"
     [ -z "$first" ] || gap "$first" "not fetched: $why; this and $((total - next)) older signatures in signatures.jsonl were not fetched"
   fi
-  [ "$phase" != paging ] || echo "signatures collected: $collected -> $sig_file"
+  [ "$said_collected" = 1 ] || echo "signatures collected: $collected -> $sig_file"
   [ -z "$first" ] || echo "  ! $why: $((total - next + 1)) signatures listed in signatures.jsonl were not fetched — recorded as a collection gap" >&2
+  [ "$closed" = 1 ] || close_run
+  exit "$2"
+}
+# close_run: the closing lines.
+close_run() {
   echo "transactions fetched: $fetched of $calls calls -> $tx_file"
   echo "collection gaps: $ngaps (see $gaps)"
-  exit "$2"
 }
 trap 'interrupted INT 130' INT
 trap 'interrupted TERM 143' TERM
@@ -402,8 +407,9 @@ for addr in "${addrs[@]}"; do
     page=$((page + 1))
     if [ "$n" -gt 0 ]; then
       lines="$(printf '%s' "$resp" | jq -c --arg a "$addr" '.result[] | . + {queried_address:$a}')"
-      printf '%s\n' "$lines" >&3
+      # The private copy first: it is what an interrupted run counts as listed.
       printf '%s\n' "$lines" >> "$sig_copy"
+      printf '%s\n' "$lines" >&3
       before="$(printf '%s' "$resp" | jq -r '.result[-1].signature')"
       oldest="$(printf '%s' "$resp" | jq -r '.result[-1].blockTime // 0')"
       collected=$((collected + n))
@@ -431,6 +437,7 @@ for addr in "${addrs[@]}"; do
 done
 phase=listed
 echo "signatures collected: $collected -> $sig_file"
+said_collected=1
 
 # 2. unique signatures within [since, until] — failed ones included — newest first
 #    across every address (slot, descending), so a --max-tx cap keeps the most recent
@@ -451,12 +458,14 @@ while IFS= read -r sig; do
   i=$((i + 1))
   if [ "$failed" -ge "$max_failed" ]; then
     gap "$sig" "not fetched: stopped after $max_failed getTransaction calls in a row failed (last: $reason); this and $((total - i)) older signatures in signatures.jsonl were not fetched"
+    handled=$total
     echo "  ! stopped: $max_failed getTransaction calls in a row failed (last: $reason) — the endpoint is failing (rate limit or outage, or it does not serve this history); collected $fetched, collection gaps $ngaps; $((total - i + 1)) signatures not fetched — recorded as a collection gap" >&2
     break
   fi
   if [ "$calls" -ge "$max_tx" ]; then
     echo "  ! reached --max-tx=$max_tx getTransaction calls; $((total - i + 1)) signatures not fetched — recorded as a collection gap" >&2
     gap "$sig" "not fetched: --max-tx=$max_tx calls reached; this and $((total - i)) older signatures in signatures.jsonl were not fetched"
+    handled=$total
     break
   fi
   calls=$((calls + 1))
@@ -464,15 +473,14 @@ while IFS= read -r sig; do
   if [ "$rc" -eq 0 ] && printf '%s' "$resp" | jq -e '.result | objects' >/dev/null 2>&1 \
      && line="$(printf '%s' "$resp" | result_line)" && [ -n "$line" ]; then
     printf '%s\n' "$line" >&4
-    fetched=$((fetched + 1)); failed=0
+    handled=$i; fetched=$((fetched + 1)); failed=0
   else
     reason="$(failure "$rc" "$resp")"
-    echo "  ! getTransaction failed for a signature: $reason — recorded as a collection gap" >&2
     gap "$sig" "getTransaction: $reason"
-    failed=$((failed + 1))
+    handled=$i; failed=$((failed + 1))
+    echo "  ! getTransaction failed for a signature: $reason — recorded as a collection gap" >&2
   fi
-  handled=$i
 done < "$todo"
 phase=done
-echo "transactions fetched: $fetched of $calls calls -> $tx_file"
-echo "collection gaps: $ngaps (see $gaps)"
+close_run
+closed=1
