@@ -199,7 +199,7 @@ The recipes behind `/auditor:hunt` and `/auditor:respond` ([detection-response.m
 bash "<auditor-skill root>/scripts/dnr/snapshot-program.sh" <program_id> <incident_dir>
 ```
 
-Step 1 of every hunt and response: it keeps the deployed program bytes before a hotfix can replace them. It runs `solana program show` and `solana program dump`, or `solana program-v4 show` and `download` for a loader-v4 program. It reads the program again after the dump and dumps once more if the last-deployed slot moved. It checks the ELF header, hashes the dump the way `solana-verify` does (trailing zero padding trimmed, then sha256), and prints a ledger line: `program=… owner=… last_deployed_slot=… authority=… sha256_zero_trimmed=… elf_bytes=… padding_bytes=… file=bin/<id>[@<slot>].so`. A program on an immutable loader shows `last_deployed_slot=n/a (immutable loader)` and `authority=none`.
+Step 1 of every hunt and response: it keeps the deployed program bytes before a hotfix can replace them. It runs `solana program show` and `solana program dump`, or `solana program-v4 show` and `download` for a loader-v4 program. It reads the program again after the dump and dumps once more if the last-deployed slot moved. Every `show` must name the requested id as its Program Id. It checks the ELF header, hashes the dump the way `solana-verify` does (trailing zero padding trimmed, then sha256), and prints a ledger line: `program=… owner=… last_deployed_slot=… authority=… sha256_zero_trimmed=… elf_bytes=… padding_bytes=… file=bin/<id>[@<slot>].so`. A loader-v4 program's line also has `status=…` (`deployed`, `retracted` or `finalized`) after `authority=`. A program on an immutable loader shows `last_deployed_slot=n/a (immutable loader)` and `authority=none`.
 
 - **Arguments:** a base58 program id (32 bytes) and the incident directory. No flags.
 - **Exit:**
@@ -208,21 +208,26 @@ Step 1 of every hunt and response: it keeps the deployed program bytes before a 
     - a usage error;
     - an id that is not base58 or not 32 bytes;
     - no `$RPC_URL`, or one that holds a quote, a backslash, whitespace or a control character;
-    - a run directory that is a symbolic link, contains one, is tracked by git, or that git or find cannot check (the check fails closed).
+    - a run directory with a `.` or `..` component, or reached through a symbolic link inside the working directory;
+    - a run directory that is a symbolic link, contains one, is tracked by git, or that git or find cannot check (the check fails closed). The check runs again just before the first write, when `bin/` must also be a directory of its own.
   - 3, a named blocker:
     - no `solana` CLI or `python3`;
     - the CLI did not take the keyless config;
-    - a CLI error, or no program under any loader;
+    - a CLI error;
+    - no program under any loader: one more read (`solana account`, its data written to the temp directory) names the account's owner in the blocker. When a loader owns the account, the blocker says which case it is: a data account of the loader (a program's data account or a buffer: check the id), or an executable account neither `show` could read (a closed program, or a failing endpoint: run the snapshot again);
+    - a `show` that names another Program Id;
     - a dump without the ELF magic;
     - a slot that moved during both dumps;
     - a hash that could not be computed;
-    - a snapshot name already taken, or a lone `bin/<id>.show.txt`.
+    - a snapshot name already taken, or a `.show.txt` without its `.so`;
+    - a kept snapshot that is not a regular file with the ELF magic beside a regular `.show.txt`, or later snapshots (`<id>@<slot>.so`) without the first one;
+    - bytes on-chain that differ from any snapshot kept at the same or a later last-deployed slot, even when another snapshot matches. Every kept snapshot is checked before any can match.
 - **Network:** read-only `solana` CLI calls to `$RPC_URL`, which reaches the CLI through a temporary `-C` config with no usable keypair path; it signs nothing. CLI errors pass through `redact.sh`.
 - **Writes:** in `<incident_dir>/bin/`:
   - The first snapshot is `<id>.so` with `<id>.show.txt`.
-  - If the slot and zero-trimmed sha256 match a kept snapshot, a later run prints `unchanged: …` with that snapshot's line and writes nothing.
+  - If the slot and zero-trimmed sha256 match a kept snapshot, a later run prints `unchanged: …` and that snapshot's line, with the authority and status read now, and writes nothing. A transfer of authority or a loader-v4 finalize changes neither the slot nor the bytes, so a notice on stderr names any change since the snapshot was kept.
   - After a redeploy it keeps the new bytes as `<id>@<slot>.so` with its `.show.txt` and prints the first snapshot's line and the new one.
-  - A kept file is never replaced.
+  - A kept file is never replaced; each is written through the descriptor opened when it was created.
   - An `incident_*` directory without a `.gitignore` gets one containing `*` (Rule 11d).
 - **Needs:** the `solana` CLI and `python3`, which hashes the dump as `python3 -I`.
 
@@ -237,7 +242,7 @@ The one gated collector: it pages each address's signature history, failed trans
 
 | Flag | Meaning |
 |------|---------|
-| `--out <dir>` | corpus directory (required). One that holds `signatures.jsonl`, `transactions.jsonl` or `collection-gaps.tsv`, even an empty one, is refused, so a resume goes into a new directory |
+| `--out <dir>` | corpus directory (required): a plain path without `.` or `..` components, reached through no symbolic link inside the working directory. One that holds `signatures.jsonl`, `transactions.jsonl` or `collection-gaps.tsv`, even an empty one, is refused, so a resume goes into a new directory |
 | `--confirmed` | required; the commands pass it only after a person has approved the addresses, the window, the caps and the estimated call count |
 | `--since <unix>`, `--until <unix>` | the window, on `blockTime`; `0` (the default) leaves that end open |
 | `--before <signature>` | start paging just older than this signature: resume a capped run, or skip activity after the incident |
@@ -253,49 +258,56 @@ The one gated collector: it pages each address's signature history, failed trans
     - no `$RPC_URL`, or one that holds a quote, a backslash, whitespace or a control character;
     - an address or `--before` value that is not base58;
     - a number that is not a plain integer;
-    - an `--out`, or the nearest `incident_*` directory at or above it, that is a symbolic link, contains one, is tracked by git (in any letter case), or that git or find cannot check;
-    - an `--out` that already holds a corpus file.
+    - an `--out` with a `.` or `..` component, or reached through a symbolic link inside the working directory;
+    - an `--out`, or the nearest `incident_*` directory above it, that is a symbolic link, contains one, is tracked by git (in any letter case), or that git or find cannot check;
+    - an `--out` that already holds a corpus file, or where the corpus files cannot be created.
   - 3, a named blocker:
     - no curl or jq;
     - a jq that rounds large integers and no working `python3`;
-    - no private temp directory.
+    - no private temp directory, which is made before anything is written.
+  - 128 + N: stopped by signal N (INT, TERM or HUP), with what was left recorded as collection gaps.
 - **Network:** read-only JSON-RPC to `$RPC_URL` (`getSignaturesForAddress`, then `getTransaction` at `finalized` with `maxSupportedTransactionVersion: 1`), and only with `--confirmed`. The URL reaches curl through a config on stdin (`curl -q -K -`), never as an argument. The `provider:` line names the provider's domain (the host's last two labels) for the Rule 11b disclosure; curl errors pass through `redact.sh`.
 - **Writes:** `<dir>/signatures.jsonl`, `<dir>/transactions.jsonl` and `<dir>/collection-gaps.tsv`.
   - `transactions.jsonl` is written by jq only when a test round-trip shows jq keeps 64-bit integers exact (a check of behaviour, not of the version); otherwise it is written by `python3 -I`.
   - `collection-gaps.tsv` has one `<signature or address><TAB><reason>` row per gap: a failed `getTransaction`, a failed signature page (older history not collected), a page cap that stopped on a full page, where older history may exist (with the `--before` to resume from), the `--max-tx` cap, or the stop after 10 failed calls in a row.
-  - stdout ends with `collection gaps: N (see …)`. Notices go to stderr and start with `  ! `.
+  - The three files are written only through the descriptors opened when they were created.
+  - stdout ends with `transactions fetched: N of M calls -> …` and `collection gaps: N (see …)`. Notices go to stderr and start with `  ! `.
+  - A run stopped by INT, TERM or HUP adds gap rows for the address being paged (naming the `--before` signature to resume from, once one of its pages was read) and each one after it, and one for the signatures listed but not fetched, then prints the closing lines. A run killed outright prints nothing more; then each signature in `signatures.jsonl` with no transaction in `transactions.jsonl` is a gap, and so is every address whose history may not have been paged to its end: the last `queried_address` in `signatures.jsonl` and every address given after it, or every address given when none appears.
   - An `incident_*` directory (`<dir>` or its parent) without a `.gitignore` gets one containing `*`.
+- **Run time:** up to addresses × `--max-pages` + `--max-tx` calls, one at a time, each up to 60 seconds. Run a long collection in the background, or with a timeout sized from that count.
 - **Needs:** curl and jq; `python3` too when jq rounds large integers (before jq 1.7).
 
 #### `profile.sh`
 
 ```bash
-bash "<auditor-skill root>/scripts/dnr/profile.sh" <corpus.jsonl> [<corpus.jsonl> ...]
+bash "<auditor-skill root>/scripts/dnr/profile.sh" [--out <file>] <corpus.jsonl> [<corpus.jsonl> ...]
 ```
 
-The baseline of one or more `getTransaction` JSONL corpora, such as every `incident_<n>/corpus*/transactions.jsonl`, counting each signature once. It reads structural fields only, never log text, and reports the succeeded / failed split, the transaction-version histogram, the `blockTime` window, and the top 20 fee payers, signers and top-level programs. It keeps the first occurrence of each signature and skips malformed lines; closing `-- skipped` lines give both counts.
+The baseline of one or more `getTransaction` JSONL corpora, such as every `incident_<n>/corpus*/transactions.jsonl`, counting each signature once. It reads structural fields only, never log text, and reports the succeeded / failed split, the transaction-version histogram, the `blockTime` window, and the top 20 fee payers, signers and top-level programs. It keeps the first occurrence of each signature and skips malformed lines under the input contract the three recipes share ([`scripts/dnr/README.md`](../scripts/dnr/README.md#input-contract)); closing `-- skipped` lines give both counts, one per input for malformed lines, and are printed on stderr too. Those malformed lines are collection gaps.
 
-- **Arguments:** one or more corpus files. No flags.
-- **Exit:** 0 done · 2 usage error or no such file · 3 `jq` or `python3` missing, checked before anything is read (`[blocker] <tool> is not on PATH; profile.sh needs jq and python3.`).
-- **Network:** none. **Writes:** stdout only. Needs `jq` and `python3` (the one-per-signature pass runs as `python3 -I`).
+- **Arguments:** one or more corpus files.
+- **`--out <file>`:** writes the report to a temporary file beside `<file>`, a new name, and gives it that name once the report is whole, as `frames.py` and `deltas.py` do.
+- **Exit:** 0 done · 1 a corpus file that cannot be read, or an `--out` that cannot be written · 2 usage error, no such file, a file or `--out` that is a symbolic link or reached through one inside the working directory, or an `--out` that already exists · 3 `jq` or `python3` missing, checked before anything is read (`[blocker] <tool> is not on PATH; profile.sh needs jq and python3.`).
+- **Network:** none. **Writes:** stdout, or the `--out` file. Needs `jq` and `python3` (the one-per-signature pass runs as `python3 -I`).
 
 #### `frames.py`
 
 ```bash
-python3 -I "<auditor-skill root>/scripts/dnr/frames.py" [--instructions] [<corpus.jsonl> ...]    # reads stdin when no file is named
+python3 -I "<auditor-skill root>/scripts/dnr/frames.py" [--instructions] [--out <file>] [<corpus.jsonl> ...]    # reads stdin when no file is named
 ```
 
-Attributes each `Program log:`, `Program data:` and `Program return:` line to the program frame that emitted it. It walks the log array one element at a time with anchored patterns, so a newline inside a log payload cannot forge a frame. Output is JSONL on stdout, one `{sig, ok, depth, program, kind, text}` record per line, where `kind` is `log`, `data`, `return`, `truncated` or `unparsed`; an input line that is not JSON becomes a `parse_error` record. A log line is what the program asserted, never proof that state changed.
+Attributes each `Program log:`, `Program data:` and `Program return:` line to the program frame that emitted it. It walks the log array one element at a time with anchored patterns, so a newline inside a log payload cannot forge a frame. Output is JSONL on stdout, one `{sig, ok, depth, program, kind, text}` record per line, where `kind` is `log`, `data`, `return`, `truncated` or `unparsed`; a character of the input contract's fixed list is written as a `\uNNNN` escape, never raw. A malformed input line is skipped and counted under the shared input contract, never echoed. A log line is what the program asserted, never proof that state changed.
 
-- **Arguments:** corpus files (several corpora count each signature once; skipped copies are reported on stderr), or none for stdin.
+- **Arguments:** corpus files (several corpora count each signature once), or none for stdin. Skipped copies, and each input's malformed lines, are reported on stderr.
 - **`--instructions`:** prints the instruction records instead; the default output is unchanged without it. An `ix` record for each entry of `message.instructions` and `meta.innerInstructions` gives the program, the top-level and inner index, the stack height, the accounts, and the data as given (or `parsed-only`). An `invoke` record gives each invocation's depth, outcome and the `ix_seq` it ran. No `ix` field comes from log text.
-- **Exit:** 0 done · 1 a file that cannot be read.
-- **Network:** none. **Writes:** stdout only.
+- **`--out <file>`:** writes the records to a temporary file beside `<file>` and gives it that name only when the run completes, so a run cut short never leaves a partial file under that name; a run stopped by TERM removes its temporary file. `<file>` must be a new name: an output never replaces a file, an input corpus least of all. Use it, not a shell redirection, to keep an output in `incident_<n>/`.
+- **Exit:** 0 done · 1 a file that cannot be read, or an `--out` that cannot be written, checked before any record is printed · 2 usage error, a file or `--out` that is a symbolic link or reached through one inside the working directory, or an `--out` that already exists.
+- **Network:** none. **Writes:** stdout, or the `--out` file.
 
 #### `deltas.py`
 
 ```bash
-python3 -I "<auditor-skill root>/scripts/dnr/deltas.py" lamports|tokens [<corpus.jsonl> ...]    # reads stdin when no file is named
+python3 -I "<auditor-skill root>/scripts/dnr/deltas.py" lamports|tokens [--out <file>] [<corpus.jsonl> ...]    # reads stdin when no file is named
 ```
 
 Balance movements of successful transactions, computed in Python integers so that amounts above 2^53 stay exact.
@@ -303,11 +315,11 @@ Balance movements of successful transactions, computed in Python integers so tha
 - `lamports` prints `signature`, `account`, `delta` for each non-zero lamport change, with the fee added back for the fee payer.
 - `tokens` prints one row per token account: `signature`, `owner` (`?` when the corpus names none), `mint`, `delta` in raw units, and the token account. Sum the rows per owner and mint for an owner's net movement.
 
-The output is TSV on stdout; tabs, newlines, carriage returns and backslashes inside a field are escaped. Several corpora count each signature once; skipped copies are reported on stderr.
+The output is TSV on stdout; tabs, newlines, carriage returns and backslashes inside a field are escaped, and so is every other character of the input contract's fixed list (control characters, line and paragraph separators, bidirectional controls, zero-width characters; `scripts/dnr/README.md`). Several corpora count each signature once. An amount or balance that is not an exact integer (a float, `1_000`, a non-ASCII digit) makes its line malformed under the shared input contract: the line is skipped and counted, never rounded. Skipped copies, and each input's malformed lines, are reported on stderr; the malformed lines are collection gaps.
 
-- **Arguments:** the mode, then corpus files or none.
-- **Exit:** 0 done · 2 a missing or unknown mode · 1 a file that cannot be read, checked before any row is printed.
-- **Network:** none. **Writes:** stdout only.
+- **Arguments:** the mode, then `--out <file>` (written as `frames.py` writes it), then corpus files or none.
+- **Exit:** 0 done · 2 a missing or unknown mode, a file or `--out` that is a symbolic link or reached through one inside the working directory, or an `--out` that already exists · 1 a file that cannot be read, or an `--out` that cannot be written, checked before any row is printed.
+- **Network:** none. **Writes:** stdout, or the `--out` file.
 
 #### `redact.sh`
 
@@ -333,7 +345,7 @@ The read-only collector behind `/auditor:threat-model --bootstrap` ([method and 
 | Flag | Meaning |
 |------|---------|
 | `--repo <dir>` | the target (required): the top level of its own repository, or a bare repository. Anything else, a partial clone, or a target whose config git cannot read exits 3 |
-| `--out <dir>` | the run directory (required), normally `audit_<n>/bootstrap`: a plain path without `.` or `..` components. If it, or its `audit_<n>` parent, is a symbolic link, holds one, is tracked by git, or cannot be checked (find cannot read all of it, or git cannot answer, as for a repository git refuses as owned by another user), the run exits 2 |
+| `--out <dir>` | the run directory (required), normally `audit_<n>/bootstrap`: a plain path without `.` or `..` components, reached through no symbolic link inside the working directory or the target tree. If it, or its `audit_<n>` parent, is a symbolic link, holds one, is tracked by git, or cannot be checked (find cannot read all of it, or git cannot answer, as for a repository git refuses as owned by another user), the run exits 2 |
 | `--pin <rev>` | the commit to analyse (default `HEAD`); only its ancestry is mined. Exit 3 if it does not resolve |
 | `--paths <pathspec>` | target pathspec, repeatable (default `programs/*.rs` when the commit has a `programs/` directory, else `*.rs`) |
 | `--parent <https-url\|dir>` | the fork parent: an `https://` URL, cloned bare into a temp directory that is deleted on exit, or the top level of a local repository. A local path that is not a top level, is a partial clone, or has a config git cannot read is recorded as not used, R5 prints `NOT FOUND`, and the run goes on |
@@ -350,7 +362,7 @@ The read-only collector behind `/auditor:threat-model --bootstrap` ([method and 
 | `--fix-ceiling <n>` | changed-line ceiling for the `ADDED` rows of a keyword commit (default 300) |
 | `-h`, `--help` | print the usage header, flags and exit statuses included |
 
-- **Exit:** 0 done (a section may print `NOT FOUND`) · 2 usage error or rejected input, including an `--out` with `.` or `..` components, a run directory that is a symbolic link, holds one, is tracked by git, or cannot be checked by git or find (the check fails closed), and an `--import` that is not a commit · 3 `--repo` is not the top level of a git repository (or a bare repository), the pin does not resolve, the target is a partial clone (reading it could fetch from its promisor remote), or git cannot read its config.
+- **Exit:** 0 done (a section may print `NOT FOUND`) · 2 usage error or rejected input, including an `--out` with `.` or `..` components or reached through a symbolic link inside the working directory or the target tree, a run directory that is a symbolic link, holds one, is tracked by git, or cannot be checked by git or find (the check fails closed), and an `--import` that is not a commit · 3 `--repo` is not the top level of a git repository (or a bare repository), the pin does not resolve, the target is a partial clone (reading it could fetch from its promisor remote), or git cannot read its config.
 - **Network:** only for an `https://` URL passed in `--parent` (a bare clone without submodules, credential helpers or other protocols) or in `--vulns` (curl, https only through redirects too, with 60-second and 50 MB limits). Never with `--offline` or `--detect`, and never for a URL found in target content. Every git call runs with `GIT_NO_LAZY_FETCH=1` and `protocol.allow=never`, the parent's https clone allowing https for that call only, so no remote the target configures is contacted. URLs in `history.md`, `inputs.tsv` and stderr show userinfo, query string and fragment as `***`.
 - **Writes:** in `<out>`:
   - `history.md`: sections R0 to R8; a "Shallow clone" line when the target is shallow; and which git settings are pinned.

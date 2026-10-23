@@ -5,9 +5,14 @@ emitted it, reading a getTransaction JSONL corpus.
 Input: one getTransaction result object per line (the `result` field of an RPC
 response, encoding `jsonParsed` or `json`), on stdin or in files named as args —
 every corpus of an incident at once (`incident_<n>/corpus*/transactions.jsonl`).
-Each signature is read once: a later copy of the same transaction is skipped, and
-the number skipped is reported on stderr.
-Output: JSONL, one record per emitted log line:
+Lines are read under the input contract that profile.sh and deltas.py share
+(scripts/dnr/README.md): a malformed line is skipped and counted, never echoed,
+and a named input that is a symbolic link is refused. Each signature is read
+once: a later copy of the same transaction is skipped. Both counts are reported
+on stderr, the malformed lines per input, as collection gaps.
+Output: JSONL on stdout, or with `--out <file>` (a new name) in a temporary file
+beside it that becomes <file> only once the run is complete. One record per
+emitted log line:
 
     {"sig": "...", "ok": true, "depth": 2, "program": "<id|?>",
      "kind": "log|data|return|truncated|unparsed", "text": "..."}
@@ -48,30 +53,49 @@ Design rules, each forced by a real failure mode:
     utterance to a frame; it is never proof that a state change happened (KV-122).
     Downstream verdict logic must treat `kind in {log,data,return}` as a hint.
   * Output is JSONL with the raw text in a JSON string, so tabs/newlines inside a
-    payload are escaped by the encoder and can never break a column.
+    payload are escaped by the encoder and can never break a column; every other
+    character of the input contract's fixed list (DEL, C1 controls, line and
+    paragraph separators, bidirectional controls, zero-width characters) is
+    written as a \\uNNNN escape too, so none prints raw and the value read back is
+    the same. It is written as UTF-8 whatever the locale.
 
-Run it as `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/frames.py" [--instructions] <corpus.jsonl>...`.
+Run it as `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/frames.py" [--instructions] [--out <file>] <corpus.jsonl>...`.
 Isolated mode keeps the working directory (usually the audited repo) and
 PYTHONPATH off sys.path, so it imports nothing beyond the stdlib — keep it that
-way: no sibling modules.
+way: no sibling modules. That is why the input-contract block below is a copy,
+kept the same in all three recipes (scripts/tests/test-dnr.sh compares them).
+
+Exit: 0 done · 1 a named input that cannot be read, an --out that cannot be
+written, or a write that failed · 2 usage, a named input or --out that is a
+symbolic link or reached through one inside the working directory, or an --out
+that already exists. Every input and the --out path are checked before the first
+record is written.
 
 No network. stdlib only.
 """
 
 from __future__ import annotations
 
+import errno
 import json
+import math
+import os
 import re
+import signal
+import stat
 import sys
+import tempfile
 
-# base58 (Bitcoin alphabet) pubkey, 32..44 chars — the shape of a program id.
+# base58 (Bitcoin alphabet) pubkey, 32..44 chars — the shape of a program id. The
+# runtime's own lines are matched whole, with ASCII digits only, and an invoke
+# depth of at most 9 digits, so reading it as an int can never fail.
 _B58 = r"[1-9A-HJ-NP-Za-km-z]{32,44}"
-_INVOKE = re.compile(rf"^Program ({_B58}) invoke \[(\d+)\]$")
-_EXIT = re.compile(rf"^Program ({_B58}) (success|failed: .*)$")
+_INVOKE = re.compile(rf"^Program ({_B58}) invoke \[([0-9]{{1,9}})\]\Z")
+_EXIT = re.compile(rf"^Program ({_B58}) (success|failed: .*)\Z")
 _LOG = "Program log: "
 _DATA = "Program data: "
-_RETURN = re.compile(rf"^Program return: ({_B58}) (.*)$")
-_CONSUMED = re.compile(rf"^Program ({_B58}) consumed \d+ of \d+ compute units$")
+_RETURN = re.compile(rf"^Program return: ({_B58}) (.*)\Z")
+_CONSUMED = re.compile(rf"^Program ({_B58}) consumed [0-9]+ of [0-9]+ compute units\Z")
 
 
 def _rows(tx: dict):
@@ -198,44 +222,395 @@ def _instruction_rows(tx: dict):
     yield from invokes
 
 
-def _iter_lines(argv: list[str]):
-    if argv:
-        for path in argv:
-            with open(path, encoding="utf-8", errors="replace") as fh:
-                yield from fh
-    else:
-        yield from sys.stdin
+def _json_line(row) -> bytes:
+    """One record as a JSON line: JSON escapes the C0 controls, and every other
+    character of the contract's fixed _UNSAFE list becomes a \\uNNNN escape."""
+    text = json.dumps(row, ensure_ascii=False)
+    return (_UNSAFE.sub(lambda m: "\\u%04x" % ord(m.group()), text) + "\n").encode("utf-8")
+
+
+# ---- input contract (scripts/dnr/README.md); the same block is in profile.sh, frames.py, deltas.py
+_NONE = type(None)
+_DIGITS = re.compile("[0-9]+")
+_SURROGATE_ESCAPE = re.compile(r"\\u[dD][89a-fA-F]")
+_LONE_SURROGATE = re.compile("[\ud800-\udfff]")
+# Brackets may nest this deep, the top-level object being 1: well below the 256 that
+# jq reads, so profile.sh never meets a line its queries cannot parse. The depth is
+# counted on the text of the line, before it is parsed.
+_DEPTH = 200
+# One JSON string (its escapes included) or one bracket: what that count reads.
+_TOKEN = re.compile(r"\"[^\"\\]*(?:\\.[^\"\\]*)*\"|[\[\]{}]", re.S)
+# The characters no key, program id or string version may hold, and that no recipe
+# prints raw: the C0 controls, DEL, the C1 controls, the line and paragraph
+# separators, the bidirectional controls (U+061C, U+200E-200F, U+202A-202E,
+# U+2066-2069) and the zero-width characters (U+200B-200D, U+FEFF). The list is
+# fixed, so the same lines are malformed under every Python, whatever Unicode
+# version it knows; every other character, assigned or not, prints as itself.
+_UNSAFE = re.compile(r"[\x00-\x1f\x7f-\x9f\u061c\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]")
+# Lamport balances, the fee and token amounts are u64 values in RPC data; bounding
+# them keeps every computed delta and sum far inside what Python prints.
+_U64 = 2 ** 64 - 1
+
+
+def _no_constant(name):
+    raise ValueError("not a JSON number: " + name)
+
+
+def _finite(text):
+    value = float(text)
+    if not math.isfinite(value):
+        raise ValueError("not a finite number")
+    return value
+
+
+def _integer(text):
+    """A JSON integer, from its literal: at most 20 digits, and never -0, which no RPC
+    value is. Every integer of a line is checked, read or not, so every Python reads
+    the same lines (3.11 and later refuse to convert more than 4300 digits)."""
+    if text == "-0" or len(text.lstrip("-")) > 20:
+        raise ValueError("not an integer an RPC response holds")
+    return int(text)
+
+
+_DECODER = json.JSONDecoder(parse_constant=_no_constant, parse_float=_finite, parse_int=_integer)
+
+
+def shown(text, cap=120):
+    """text for a message: printable ASCII, every other character escaped, cut at cap."""
+    s = str(text).encode("unicode_escape").decode("ascii")
+    return s if len(s) <= cap else s[:cap] + "..."
+
+
+def linked(path):
+    """True when path is a symbolic link, or reaches its file through a directory that
+    is a symbolic link inside the working directory. Links above it are followed."""
+    if os.path.islink(path):
+        return True
+    here = os.getcwd()
+    cur = os.sep if os.path.isabs(path) else here
+    for part in path.split(os.sep)[:-1]:
+        if not part:
+            continue
+        step = os.path.join(cur, part)
+        if os.path.islink(step):
+            parent = os.path.realpath(cur)
+            if parent == here or parent.startswith(here.rstrip(os.sep) + os.sep):
+                return True
+        cur = step
+    return False
+
+
+def opened(path):
+    """One named input, opened for reading: never through a final symbolic link, and
+    only a regular file (a FIFO or a device is not opened for a blocking read)."""
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(errno.EINVAL, "not a regular file")
+        return os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def unusable(paths):
+    """None when every named input can be read, else (exit status, message) for the
+    first one that cannot: 2 for a symbolic link, 1 for anything else."""
+    for n, path in enumerate(paths, 1):
+        if path == "-":
+            continue
+        try:
+            if linked(path):
+                return 2, ("input %d (%s) is a symbolic link, or is reached through one inside the"
+                           " working directory; refusing it" % (n, shown(path)))
+            opened(path).close()
+        except OSError as e:
+            return 1, "cannot read input %d (%s): %s" % (n, shown(path), shown(e.strerror or e))
+    return None
+
+
+def unwritable(path):
+    """None when --out path can take a new output file, else (exit status, message): 2
+    for a symbolic link, a path reached through one inside the working directory, or
+    a path that exists (an output never replaces a file, an input corpus least of
+    all), 1 for a path whose directory does not exist."""
+    try:
+        if linked(path):
+            return 2, ("--out %s is a symbolic link, or is reached through one inside the working"
+                       " directory; refusing it" % shown(path))
+        if os.path.lexists(path):
+            return 2, "--out %s already exists, and an output never replaces a file: name a new one" % shown(path)
+        if not os.path.isdir(os.path.dirname(path) or "."):
+            return 1, "cannot write --out %s: its directory does not exist" % shown(path)
+    except OSError as e:
+        return 1, "cannot write --out %s: %s" % (shown(path), shown(e.strerror or e))
+    return None
+
+
+class Output:
+    """Where the output goes: stdout, or for --out a new temporary file beside the path
+    that done() links to the path once it is whole, so the path never holds a partial
+    output, and never replaces a file that appeared in the meantime. close() removes
+    a temporary file done() did not link; SIGTERM exits through it, and is held off
+    while the temporary file is made, so its name is always known."""
+
+    def __init__(self, path):
+        self.path, self.temp, self.fh = path, None, sys.stdout.buffer
+        if path is None:
+            return
+        signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
+        held = signal.pthread_sigmask(signal.SIG_BLOCK, [signal.SIGTERM])
+        try:
+            fd, self.temp = tempfile.mkstemp(dir=os.path.dirname(path) or ".",
+                                             prefix="." + os.path.basename(path) + ".", suffix=".partial")
+            self.fh = os.fdopen(fd, "wb")
+        finally:
+            try:
+                signal.pthread_sigmask(signal.SIG_SETMASK, held)
+            except BaseException:
+                self.close()
+                raise
+
+    def write(self, data):
+        self.fh.write(data)
+
+    def done(self):
+        self.fh.flush()
+        if self.temp is not None:
+            self.fh.close()
+            os.link(self.temp, self.path)
+            os.unlink(self.temp)
+            self.temp = None
+
+    def close(self):
+        if self.temp is not None:
+            self.fh.close()
+            try:
+                os.unlink(self.temp)
+            except OSError:
+                pass
+            self.temp = None
+
+
+def _lone_surrogate(obj):
+    stack = [obj]
+    while stack:
+        v = stack.pop()
+        if isinstance(v, str):
+            if _LONE_SURROGATE.search(v):
+                return True
+        elif isinstance(v, dict):
+            for k, x in v.items():
+                if _LONE_SURROGATE.search(k):
+                    return True
+                stack.append(x)
+        elif isinstance(v, list):
+            stack.extend(v)
+    return False
+
+
+def _too_deep(text):
+    """True when the brackets outside strings in a line nest deeper than _DEPTH. It
+    reads the text, not the parsed value, so a deep value that a later duplicate key
+    replaces counts too."""
+    if text.count("[") + text.count("{") <= _DEPTH:
+        return False
+    depth = 0
+    for m in _TOKEN.finditer(text):
+        c = m.group()
+        if c == "[" or c == "{":
+            depth += 1
+            if depth > _DEPTH:
+                return True
+        elif c == "]" or c == "}":
+            depth -= 1
+    return False
+
+
+def _of(v, *types):
+    """v is null (or absent), or exactly one of types: a bool is not an int."""
+    return type(v) in types + (_NONE,)
+
+
+def _index(v):
+    """null (or absent), or an integer index from 0: a negative one would count back
+    from the end in jq and in Python, but name no account in the recipes."""
+    return v is None or (type(v) is int and v >= 0)
+
+
+def _plain(v):
+    """A string with no _UNSAFE character, so it prints as one line, as written."""
+    return type(v) is str and not _UNSAFE.search(v)
+
+
+def _u64(v):
+    """An integer a u64 holds, as a lamport balance and the fee are."""
+    return type(v) is int and 0 <= v <= _U64
+
+
+def _amount(v):
+    """A raw token amount: the decimal text of a u64, in ASCII digits."""
+    return type(v) is str and len(v) <= 20 and bool(_DIGITS.fullmatch(v)) and int(v) <= _U64
+
+
+def _instruction(ix):
+    return (type(ix) is dict and _index(ix.get("programIdIndex")) and _of(ix.get("accounts"), list)
+            and (ix.get("programId") is None or (_plain(ix.get("programId")) and ix.get("programId") != "")))
+
+
+def _token_balance(b):
+    if type(b) is not dict or not (_index(b.get("accountIndex")) and _of(b.get("owner"), str)
+                                   and _of(b.get("mint"), str) and _of(b.get("uiTokenAmount"), dict)):
+        return False
+    amount = (b.get("uiTokenAmount") or {}).get("amount")
+    return amount is None or _amount(amount)
+
+
+def shaped(tx):
+    """True when every field the three recipes read has the type they read it as, and
+    every key, program id and version profile.sh prints is one line."""
+    if type(tx) is not dict:
+        return False
+    t, meta, version = tx.get("transaction"), tx.get("meta"), tx.get("version")
+    if not (_of(t, dict) and _of(meta, dict) and _of(tx.get("blockTime"), int)
+            and (type(version) is not str or _plain(version))):
+        return False
+    t, meta = t or {}, meta or {}
+    m, sigs = t.get("message"), t.get("signatures")
+    if not (_of(m, dict) and _of(sigs, list) and all(type(s) is str for s in sigs or [])):
+        return False
+    m = m or {}
+    keys, header, ixs = m.get("accountKeys"), m.get("header"), m.get("instructions")
+    if not (_of(keys, list) and _of(header, dict) and _of(ixs, list)
+            and _index((header or {}).get("numRequiredSignatures"))
+            and all(_instruction(ix) for ix in ixs or [])):
+        return False
+    if keys and not (all(_plain(k) for k in keys)
+                     or all(type(k) is dict and _plain(k.get("pubkey")) for k in keys)):
+        return False
+    groups, loaded, logs = meta.get("innerInstructions"), meta.get("loadedAddresses"), meta.get("logMessages")
+    if not (_of(groups, list) and _of(loaded, dict) and _of(logs, list)
+            and (meta.get("fee") is None or _u64(meta.get("fee")))
+            and all(type(s) is str for s in logs or [])):
+        return False
+    for g in groups or []:
+        if not (type(g) is dict and g.get("index") is not None and _index(g.get("index"))
+                and _of(g.get("instructions"), list)
+                and all(_instruction(ix) for ix in g.get("instructions") or [])):
+            return False
+    for name in ("writable", "readonly"):
+        v = (loaded or {}).get(name)
+        if not (_of(v, list) and all(type(a) is str for a in v or [])):
+            return False
+    for name in ("preBalances", "postBalances"):
+        v = meta.get(name)
+        if not (_of(v, list) and all(_u64(x) for x in v or [])):
+            return False
+    if len(meta.get("preBalances") or []) != len(meta.get("postBalances") or []):
+        return False
+    for name in ("preTokenBalances", "postTokenBalances"):
+        v = meta.get(name)
+        if not (_of(v, list) and all(_token_balance(b) for b in v or [])):
+            return False
+    return True
+
+
+def parsed(line):
+    """The transaction one stripped line holds, or None when the line is malformed."""
+    try:
+        text = line.decode("utf-8")
+    except ValueError:
+        return None
+    if _too_deep(text):
+        return None
+    try:
+        tx = _DECODER.decode(text)
+    except (ValueError, RecursionError):
+        return None
+    if _SURROGATE_ESCAPE.search(text) and _lone_surrogate(tx):
+        return None
+    return tx if shaped(tx) else None
+
+
+def records(paths, stats):
+    """Yield (line, tx) for each well-formed line of the named inputs (stdin when none
+    is named, or for "-"), once per signature. stats["dupes"] counts the later copies
+    skipped, and stats["bad"] gets [input, count, first line] for each input that had
+    malformed lines."""
+    seen = set()
+    for n, path in enumerate(paths or ["-"], 1):
+        label = "stdin" if path == "-" else "input %d (%s)" % (n, shown(path))
+        fh = sys.stdin.buffer if path == "-" else opened(path)
+        bad = None
+        try:
+            for i, raw in enumerate(fh, 1):
+                line = raw.strip()
+                if not line:
+                    continue
+                tx = parsed(line)
+                if tx is None:
+                    if bad is None:
+                        bad = [label, 0, i]
+                        stats["bad"].append(bad)
+                    bad[1] += 1
+                    continue
+                sigs = (tx.get("transaction") or {}).get("signatures")
+                if sigs:
+                    if sigs[0] in seen:
+                        stats["dupes"] += 1
+                        continue
+                    seen.add(sigs[0])
+                yield line, tx
+        finally:
+            if path != "-":
+                fh.close()
+
+
+def skipped(stats):
+    """What was skipped, each phrase to follow the word "skipped": the later copies of a
+    transaction, then the malformed lines of each input, which are collection gaps."""
+    notes = []
+    if stats["dupes"]:
+        notes.append("%d transaction(s) already read under the same signature" % stats["dupes"])
+    for label, count, first in stats["bad"]:
+        notes.append("%d malformed line(s) in %s, the first at line %d (not a getTransaction JSON object"
+                     " the recipes can read)" % (count, label, first))
+    return notes
+# ---- end of input contract ----
 
 
 def main(argv: list[str]) -> int:
-    out = sys.stdout
-    rows = _rows
-    if argv[:1] == ["--instructions"]:
-        rows, argv = _instruction_rows, argv[1:]
-    seen: set[str] = set()
-    dupes = 0
-    for line in _iter_lines(argv):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            tx = json.loads(line)
-        except json.JSONDecodeError:
-            print(json.dumps({"kind": "parse_error", "text": line[:200]}), file=out)
-            continue
-        if not isinstance(tx, dict):
-            continue
-        sigs = (tx.get("transaction") or {}).get("signatures") or []
-        if sigs and isinstance(sigs[0], str):
-            if sigs[0] in seen:
-                dupes += 1
-                continue
-            seen.add(sigs[0])
-        for row in rows(tx):
-            out.write(json.dumps(row, ensure_ascii=False) + "\n")
-    if dupes:
-        print(f"frames.py: skipped {dupes} transaction(s) already read under the same signature",
-              file=sys.stderr)
+    rows, out_path = _rows, None
+    while argv[:1] in (["--instructions"], ["--out"]):
+        if argv[0] == "--instructions":
+            rows, argv = _instruction_rows, argv[1:]
+        elif len(argv) > 1:
+            out_path, argv = argv[1], argv[2:]
+        else:
+            print("usage: frames.py [--instructions] [--out <file>] [<corpus.jsonl> ...]", file=sys.stderr)
+            return 2
+    problem = unusable(argv)
+    if problem is None and out_path is not None:
+        problem = unwritable(out_path)
+    if problem:
+        print("frames.py: " + problem[1], file=sys.stderr)
+        return problem[0]
+    stats = {"dupes": 0, "bad": []}
+    out = None
+    try:
+        out = Output(out_path)
+        for _line, tx in records(argv, stats):
+            for row in rows(tx):
+                out.write(_json_line(row))
+        out.done()
+    except OSError as e:
+        print("frames.py: " + shown(e), file=sys.stderr)
+        return 1
+    finally:
+        if out is not None:
+            out.close()
+    for note in skipped(stats):
+        print("frames.py: skipped " + note, file=sys.stderr)
     return 0
 
 

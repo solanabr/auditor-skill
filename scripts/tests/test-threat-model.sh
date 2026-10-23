@@ -267,7 +267,7 @@ cat >> "$HOS/.git/config" <<EOF
 EOF
 # Sanity: the fixture really is hostile for plain git.
 git -C "$HOS" log -p -1 >/dev/null 2>&1
-if ls "$T/marks" | grep -qE 'textconv|extdiff|external'; then ok "T-g sanity: plain 'git log -p' runs the configured diff program"
+if grep -qE 'textconv|extdiff|external' <<< "$(ls "$T/marks")"; then ok "T-g sanity: plain 'git log -p' runs the configured diff program"
 else skp "T-g sanity: this git did not run the configured diff program"; fi
 git -C "$HOS" status >/dev/null 2>&1
 if [ -e "$T/marks/fsmonitor" ]; then ok "T-g sanity: plain 'git status' runs core.fsmonitor"
@@ -668,6 +668,23 @@ check "T-n: nothing was written through any of the links" test -z "$(ls -A "$T/e
 check "T-n: a tracked audit_<n> is refused (exit 2)" test "$(rc --repo "$RD" --out "$RD/audit_3/bootstrap" --offline)" = 2
 check "T-n: ... nothing is created in it and git status stays clean" \
   sh -c "[ ! -e '$RD/audit_3/bootstrap' ] && [ -z \"\$(git -C '$RD' status --porcelain --untracked-files=no)\" ]"
+# The way to the run directory is checked too, as in the detection-response collectors: a directory on it that
+# is a symbolic link inside the working directory or the target tree is refused, for a relative or an absolute
+# --out, also after an outside link leads into the tree. A link above both, the operator's own, is followed.
+mkdir -p "$T/elsewhere-y" "$T/opdir-y"
+ln -s "$T/elsewhere-y" "$RD/linked"
+ln -s "$RD" "$T/to-rd"
+ln -s "$T/opdir-y" "$T/op-link-y"
+check "T-n: a relative --out through a link inside the working directory is refused (exit 2)" \
+  test "$(cd "$RD" && rc --repo . --out linked/audit_9/bootstrap --offline)" = 2
+check "T-n: an absolute --out through a link inside the target tree is refused (exit 2)" \
+  test "$(rc --repo "$RD" --out "$RD/linked/audit_9/bootstrap" --offline)" = 2
+check "T-n: ... also when an outside link leads into the tree first (exit 2)" \
+  test "$(rc --repo "$RD" --out "$T/to-rd/linked/audit_9/bootstrap" --offline)" = 2
+check "T-n: nothing was written through those links" test -z "$(ls -A "$T/elsewhere-y")"
+check "T-n: a link above the working directory and the tree, the operator's own, is followed (exit 0)" \
+  test "$(cd "$RD" && rc --repo . --out "$T/op-link-y/audit_1/bootstrap" --offline)" = 0
+check "T-n: ... and the output lands behind it" test -s "$T/opdir-y/audit_1/bootstrap/history.md"
 if command -v jq >/dev/null 2>&1 || command -v python3 >/dev/null 2>&1; then
   inc() { printf '{"schema": "auditor-incidents/1", "incidents": [{"id": "%s", "verdict": "suspected"}]}\n' "$1"; }
   mkdir -p "$RD/incident_6" "$RD/incident_7" "$T/elsewhere-inc/dir"

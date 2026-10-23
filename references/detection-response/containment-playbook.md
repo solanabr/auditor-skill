@@ -78,7 +78,8 @@ program's loader record (no write):
   followed by the ELF. `solana program show` refuses such a program ("is not an
   SBF program"); `solana program-v4 show --program-id <id>` prints the same
   "Last Deployed In Slot", authority and status. `snapshot-program.sh` handles
-  both loaders.
+  both loaders, and its loader-v4 line records the status (`status=deployed`,
+  `retracted` or `finalized`).
 - **BPFLoader2 / BPFLoader1:** immutable, with no deploy slot or authority; the
   snapshot records `last_deployed_slot=n/a (immutable loader)`.
 
