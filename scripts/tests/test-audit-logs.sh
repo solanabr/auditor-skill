@@ -426,6 +426,7 @@ cases = {
                 tx("SigVersionChar", extra={"version": "0\u2028"}),
                 tx("SigSafeSpaces", {"preBalances": [1, 2], "postBalances": [2, 1]}, {"accountKeys": ["Key\u00a0A", "Key\u3000B"]}),
                 tx("SigOddText\u202e\u2028\x01", {"preBalances": [1, 2], "postBalances": [2, 1],
+                    "logMessages": ["Program log: x\u2066y\u0085z"],
                     "loadedAddresses": {"writable": ["Lut\u200b"]},
                     "postTokenBalances": [{"accountIndex": 1, "mint": "Mint\ufeff", "owner": "Own\x7f\u0085",
                                            "uiTokenAmount": {"amount": "3"}}]})],
@@ -442,8 +443,8 @@ eq "recipe bounds: a balance with no account key is a #<index> row, counted on s
   "$(awk -F'\t' '$1 == "SigKeyless" { printf "%s=%s ", $2, $3 }' "$T/b.out")|$(grep -c 'row(s) name a balance index that has no account key' "$T/b.err")" \
   "#1=5 #2=1 |1"
 agree frames -- incident_1/rules/chars.jsonl
-eq "recipe bounds: frames writes an unsafe character in a signature as a \\u escape" \
-  "$(grep -c 'SigOddText\\u202e\\u2028\\u0001' "$T/b.out")" "1"
+eq "recipe bounds: frames writes an unsafe character in a signature or a log as a \\u escape" \
+  "$(grep -c '"sig": "SigOddText\\u202e\\u2028\\u0001".*"text": "x\\u2066y\\u0085z"' "$T/b.out")" "1"
 
 # ---------------------------------------------------------------------------
 # 4. A generated corpus: 6,000 transactions in two files, the second opening with
