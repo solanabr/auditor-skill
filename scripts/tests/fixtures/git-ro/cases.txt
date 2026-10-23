@@ -168,6 +168,12 @@
 64	git-ro: refused: grep does not allow -nf	grep	-nf	pats	HEAD
 64	git-ro: refused: grep does not allow --file=pats	grep	--file=pats	HEAD
 64	git-ro: refused: grep does not allow --textconv	grep	--textconv	-e	x	HEAD
+64	git-ro: refused: grep does not allow --no-cached	grep	--no-cached	-e	x
+64	git-ro: refused: grep does not allow --no-staged	grep	-n	--no-staged	-e	x
+64	git-ro: refused: grep does not allow --no-no-no-cached	grep	--no-no-no-cached	-e	x
+64	git-ro: refused: grep does not allow --no-cache: write options out in full	grep	--no-cache	-e	x
+64	git-ro: refused: diff does not allow --no-cached	diff	--cached	--no-cached
+64	git-ro: refused: diff does not allow --no-staged	diff	--no-staged	HEAD~1	HEAD
 64	git-ro: refused: blame does not allow --contents	blame	--contents	a.rs	HEAD	--	a.rs
 64	git-ro: refused: blame does not allow --cont: write options out in full	blame	--cont	a.rs	HEAD	--	a.rs
 64	git-ro: refused: blame does not allow --contents=a.rs	blame	--contents=a.rs	HEAD	--	a.rs
@@ -186,6 +192,8 @@
 64	git-ro: refused: ls-files does not allow --mod: write options out in full	ls-files	--mod
 64	git-ro: refused: ls-files does not allow --eol	ls-files	--eol
 64	git-ro: refused: ls-files does not allow --recurse-submodules	ls-files	--recurse-submodules
+64	git-ro: refused: ls-files does not allow --exclude-per-directory=.gitignore	ls-files	-o	--exclude-per-directory=.gitignore
+64	git-ro: refused: ls-files does not allow --exclude-p=x: write options out in full	ls-files	-o	--exclude-p=x
 64	git-ro: refused: ls-files does not read the work tree: %(path) %(eolinfo:worktree)	ls-files	--format=%(path) %(eolinfo:worktree)
 64	git-ro: refused: cat-file does not allow --textconv	cat-file	--textconv	HEAD:a.rs
 64	git-ro: refused: cat-file does not allow --filters	cat-file	--filters	HEAD:a.rs

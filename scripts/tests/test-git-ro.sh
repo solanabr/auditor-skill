@@ -334,6 +334,7 @@ done <<'EOF'
 0	log	-c	--oneline	-1
 0	log	--no-textconv	--no-ext-diff	--no-show-signature	-1
 0	log	--exclude=refs/heads/side	--all	--oneline
+0	log	--oneline	--end-of-options	HEAD
 0	log	-p	-m	-1	merged
 0	log	-p	--diff-merges=first-parent	-1	merged
 0	log	--diff-merges	separate	-p	-1	merged
@@ -452,6 +453,16 @@ check "a blob above the 64 KiB pipe buffer comes through whole" \
 printf 'HEAD:a.rs\n' > "$T/batch.in"
 run_in "$T/batch.in" "$WT" cat-file --batch
 check "cat-file --batch reads standard input" has "$T/out" 'fn a() { require!(owner == authority); }'
+run_in "$T/batch.in" "$WT" cat-file --batch-check
+check "cat-file --batch-check reads standard input" has "$T/out" ' blob '
+if [ "$(git version | awk '{ split($3, v, "."); print (v[1] > 2 || (v[1] == 2 && v[2] >= 46)) ? "yes" : "no" }')" = yes ]; then
+  run "$WT" config get remote.origin.url
+  check "config get reads the repository's own file" test "$RC:$(cat "$T/out")" = 0:https://example.invalid/acme/pool.git
+  run "$WT" config list
+  check "config list shows no included values" sh -c "[ '$RC' = 0 ] && ! grep -q TOKEN-FROM-INCLUDE '$T/out' && grep -q '^include.path=' '$T/out'"
+else
+  skp "config get and config list need git 2.46 or later"
+fi
 printf '%s\n' "$SIGNED control bytes" "$O1 first" > "$T/shortlog.in"
 run_in "$T/shortlog.in" "$WT" shortlog -s
 check "other subcommands never read standard input (shortlog prints nothing)" test "$RC:$(cat "$T/out")" = 0:
@@ -502,6 +513,22 @@ check "... with GIT_CONFIG_GLOBAL=/dev/null and GIT_CONFIG_NOSYSTEM=1" \
   sh -c "grep -qx 'ENV GIT_CONFIG_GLOBAL=/dev/null' '$T/rec.log' && grep -qx 'ENV GIT_CONFIG_NOSYSTEM=1' '$T/rec.log'"
 check "... and GIT_CEILING_DIRECTORIES at the working directory's parent" grep -qx "ENV GIT_CEILING_DIRECTORIES=$T" "$T/rec.log"
 clearmarks
+: > "$T/rec.log"
+GIT_DIR="$O/.git" GIT_CONFIG_PARAMETERS="'core.hooksPath=$T/hooks'" PATH="$T/rec:$PATH" run_once "$WT" copy . audit_1
+check "copy under the recorder makes a copy" test "$RC" = 0
+before_clone() { # before_clone <word> <next word>: the clone's git call carries "<word> <next word>" before clone
+  awk -F '\037' -v a="$1" -v b="$2" '$1 == "ARGV" { c = 0; for (i = 2; i <= NF; i++) if ($i == "clone") { c = i; break }
+    if (c) for (i = 2; i < c; i++) if ($i == a && $(i + 1) == b) found = 1 } END { exit !found }' "$T/rec.log"
+}
+check "copy's clone runs with -c core.hooksPath=/dev/null" before_clone -c core.hooksPath=/dev/null
+check "... with -c protocol.allow=never" before_clone -c protocol.allow=never
+check "... and -c protocol.file.allow=always for this clone" before_clone -c protocol.file.allow=always
+check "... with --no-local --bare --no-recurse-submodules --template=" \
+  awk -F '\037' '$1 == "ARGV" { for (i = 2; i <= NF; i++) if ($i == "clone") { ok = ($(i + 1) == "--no-local" && $(i + 2) == "--bare" && $(i + 3) == "--no-recurse-submodules" && $(i + 4) == "--template=") } } END { exit !ok }' "$T/rec.log"
+awk '/^ENV / { sub(/^ENV /, ""); sub(/=.*/, ""); print }' "$T/rec.log" | sort -u > "$T/env.names"
+check "... and only the hardened environment" \
+  test -z "$(grep -vxE 'HOME|PATH|TMPDIR|LC_ALL|TZ|GIT_NO_LAZY_FETCH|GIT_CONFIG_NOSYSTEM|GIT_CONFIG_GLOBAL|GIT_TERMINAL_PROMPT|GIT_OPTIONAL_LOCKS|GIT_CEILING_DIRECTORIES|GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS|PWD|OLDPWD|SHLVL|_' "$T/env.names")"
+check "... and runs no hook" nomarks
 
 # PATH: entries inside the working directory, relative ones and "." are dropped before anything runs.
 mkdir -p "$WT/.bin" "$WT/bin"
@@ -531,6 +558,8 @@ if ! git clone -q --filter=blob:none --no-local "file://$SRV" "$PC" >/dev/null 2
   skp "partial clones: this git could not make a blobless clone"
 else
   git -C "$PC" config remote.origin.url "evil::$SRV"
+  git -C "$PC" config core.hooksPath "$T/hooks"
+  for h in post-checkout post-index-change reference-transaction; do cp "$T/hooks/$h" "$PC/.git/hooks/$h"; done
   MISSING=$(git -C "$SRV" rev-parse HEAD~1:f.txt)
   clearmarks
   env -u GIT_NO_LAZY_FETCH git -C "$PC" cat-file -p "$MISSING" >/dev/null 2>&1
@@ -636,6 +665,23 @@ check "tracked: a repository above the working directory decides" test "$(cat "$
 run "$TRK/inner" log -1
 check "... but git-ro never reads that repository's history" \
   err_is 'git-ro: refused: the working directory is not a git repository that git can read (none there, or another user owns it: audit a copy): .'
+
+# =================================================================================================
+# grep never reads the work tree: a tracked directory replaced by a link to files outside stays unread.
+# =================================================================================================
+G="$T/grep-link"; mkrepo "$G"
+put "$G" keys/id.txt 'committed text'
+commit "$G" -m keys
+mkdir -p "$T/outside-keys"
+printf 'OUTSIDE-KEY-MATERIAL\n' > "$T/outside-keys/id.txt"
+rm -r "$G/keys"
+ln -s "$T/outside-keys" "$G/keys"
+if git -C "$G" grep -e OUTSIDE-KEY-MATERIAL >/dev/null 2>&1; then ok "sanity: plain git grep reads a file through the linked directory"
+else skp "sanity: this git does not read through the linked directory"; fi
+run "$G" grep -e OUTSIDE-KEY-MATERIAL
+check "git-ro grep searches the index, not the linked directory" test "$RC:$(cat "$T/out")" = 1:
+run "$G" grep -n -e committed
+check "... and finds the committed text" test "$(cat "$T/out")" = 'keys/id.txt:1:committed text'
 
 # =================================================================================================
 # The installation: never inside the working directory, and only a path a quoted call can match.
