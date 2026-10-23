@@ -139,8 +139,10 @@ set -Eeuo pipefail
 # Only an assertion that ran and did not hold gives a verdict (exit 1 or 2). Any
 # other command that fails — an unreadable input, a failed path resolution, a step
 # that errors under set -e — is a blocker, never a verdict: this trap turns it into
-# exit 3. The explicit `exit 1` / `exit 2` below are the only verdicts.
-trap 'rc=$?; echo "[PoC-ATTEMPTED] blocker: run.sh could not finish (unexpected error, status ${rc}); this run decides nothing." >&2; exit 3' ERR
+# exit 3. The explicit `exit 1` / `exit 2` below are the only verdicts. Inside a
+# command substitution (bash 3.2 runs the trap there too) it only passes the status
+# up, and the caller names the blocker.
+trap 'rc=$?; [ "${BASH_SUBSHELL:-0}" -gt 0 ] && exit "${rc}"; echo "[PoC-ATTEMPTED] blocker: run.sh could not finish (unexpected error, status ${rc}); this run decides nothing." >&2; exit 3' ERR
 
 TOOLS_VERSION="${TOOLS_VERSION:-v1.54}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"

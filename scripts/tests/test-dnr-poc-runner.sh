@@ -275,6 +275,10 @@ nothing_built() {
   [ -z "$(ls -A "$T/tmp-gate")" ] && { [ ! -e "$T/calls" ] || awk -F'\t' '$6 !~ /^metadata / { b = 1 } END { exit b }' "$T/calls"; }
 }
 build_dir() { sed -n 's/^>> build dir: \([^ ]*\).*/\1/p' "$T/out" | sed -n 1p; }
+# one_blocker: the run named its blocker once. A refusal found inside a command
+# substitution is reported by its caller only, never next to the generic line the
+# ERR trap prints (bash 3.2 runs that trap inside the substitution too).
+one_blocker() { [ "$(grep -c '^\[PoC-ATTEMPTED\]' "$T/out")" = 1 ]; }
 # from_scratch <dir>: <dir> is a scratch copy under the gate's TMPDIR, and every
 # logged cargo call and test binary run started from it.
 from_scratch() {
@@ -537,8 +541,8 @@ bd="$(build_dir)"; size="$(wc -c < "$bd/markers/build-vulnerable.json" 2>/dev/nu
   && ok "a ${size}-byte JSON build output -> the test binary is still found, exit 0" || bad "large JSON output: exit $code, ${size:-0} bytes"
 [ -n "$bd" ] && rm -rf "$bd"
 code="$(gate "$T/inc" "$NATIVE" "$VULN" SHIM_FAIL=no-exe:exploit)"
-[ "$code" = 3 ] && grep -q 'cargo reported 0 test binaries for tests/exploit.rs in this crate' "$T/out" \
-  && ok "a test build that names no test binary -> exit 3" || bad "no test binary: exit $code"
+[ "$code" = 3 ] && grep -q 'cargo reported 0 test binaries for tests/exploit.rs in this crate' "$T/out" && one_blocker \
+  && ok "a test build that names no test binary -> exit 3, one blocker line" || bad "no test binary: exit $code"
 
 # The non-registry line: before the final line, the path and git dependencies in the
 # resolved Cargo.lock; "none" when every dependency comes from a registry.
@@ -575,8 +579,8 @@ for meta in build-script proc-macro; do
   for mode in "$VULN" "VULNERABLE_SO="; do
     label=prebuilt; [ "$mode" = "VULNERABLE_SO=" ] && label=build
     code="$(gate "$T/inc" "$NATIVE" "$mode" SHIM_META="$meta")"
-    [ "$code" = 3 ] && grep -q "$want_text" "$T/out" && nothing_built \
-      && ok "a $meta in the crate ($label mode) -> exit 3 before anything compiles" || { bad "$meta, $label mode: exit $code"; cat "$T/out" >&2; }
+    [ "$code" = 3 ] && grep -q "$want_text" "$T/out" && nothing_built && one_blocker \
+      && ok "a $meta in the crate ($label mode) -> exit 3 before anything compiles, one blocker line" || { bad "$meta, $label mode: exit $code"; cat "$T/out" >&2; }
   done
 done
 code="$(gate "$T/inc" "$NATIVE" "$VULN" SHIM_FAIL=metadata)"
@@ -596,7 +600,7 @@ while IFS='|' read -r where text; do
   n=$((n + 1)); body="$(printf '%b' "$text")"; first="${body%%$'\n'*}"
   mk_patched "$T/patch-$n" "$where" "$body"
   code="$(gate "$T/patch-$n" "$NATIVE" "$VULN")"
-  [ "$code" = 3 ] && grep -q 'holds a \[patch\] or \[replace\] table' "$T/out" && nothing_built \
+  [ "$code" = 3 ] && grep -q 'holds a \[patch\] or \[replace\] table' "$T/out" && nothing_built && one_blocker \
     && ok "refused before anything compiles: $where gets $first" || { bad "$where with $first: exit $code"; cat "$T/out" >&2; }
 done <<'CASES'
 Cargo.toml|[patch.crates-io]\nborsh = { path = "/elsewhere/borsh" }
@@ -745,8 +749,8 @@ fi
 # crate's own units already built without this run compiling it (the stand-in reports
 # that with SHIM_FRESH=1). The lock dir lands in the cache and is gone afterwards.
 code="$(gate "$T/inc" "$NATIVE" "$VULN" CARGO_TARGET_DIR="$T/cache" SHIM_FRESH=1)"
-[ "$code" = 3 ] && grep -q 'already built without this run compiling it' "$T/out" \
-  && ok "a crate unit reported fresh that this run did not build -> exit 3 (a cache shared with a same-named crate)" || { bad "shared-cache fresh guard: exit $code"; cat "$T/out" >&2; }
+[ "$code" = 3 ] && grep -q 'already built without this run compiling it' "$T/out" && one_blocker \
+  && ok "a crate unit reported fresh that this run did not build -> exit 3 (a cache shared with a same-named crate), one blocker line" || { bad "shared-cache fresh guard: exit $code"; cat "$T/out" >&2; }
 rm -rf "$T/lockcache"; mkdir -p "$T/lockcache"
 code="$(gate "$T/inc" "$NATIVE" "$VULN" CARGO_TARGET_DIR="$T/lockcache")"
 [ "$code" = 0 ] && [ ! -e "$T/lockcache/.auditor-poc-build.lock" ] \
@@ -772,8 +776,8 @@ if [ -r "$T/unreadable.so" ]; then
   echo "note: cannot drop read permission here (running as root?); the unreadable-input check is skipped"
 else
   code="$(run "$T/inc" "$SP" "$NATIVE" VULNERABLE_SO="$T/unreadable.so")"
-  [ "$code" = 3 ] && ! grep -q 'did not reproduce' "$T/out" \
-    && ok "an unreadable VULNERABLE_SO -> exit 3 (a blocker), never a verdict" || { bad "unreadable VULNERABLE_SO: exit $code"; cat "$T/out" >&2; }
+  [ "$code" = 3 ] && ! grep -q 'did not reproduce' "$T/out" && one_blocker \
+    && ok "an unreadable VULNERABLE_SO -> exit 3 (a blocker), never a verdict, one blocker line" || { bad "unreadable VULNERABLE_SO: exit $code"; cat "$T/out" >&2; }
 fi
 chmod 644 "$T/unreadable.so" 2>/dev/null || true
 
