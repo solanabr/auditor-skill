@@ -123,29 +123,35 @@ CODE=('*.sh' '*.bash' '*.py' '*.js' '*.mjs' '*.cjs' '*.ts' '*.json' '*.toml' '*.
 MD=('*.md' "${NOTESTS[@]}")
 ALL=(. ':(exclude)*.lock')
 
-section "Renamed files, OLD -> NEW (a file moved unchanged, to a path that is not a load surface, is left out of the added-line scans; every other renamed file is scanned whole)"
+section "Renamed files, OLD -> NEW (each is scanned whole: in the added-line scans, or, when moved unchanged between ordinary paths, in the section after them)"
 # Pairs over the whole tree and within each scan's paths: a scan pairs only the files it reads.
 renames() { g --icase-pathspecs diff "${PAIRED[@]}" --name-status --diff-filter=R "$old" "$new" -- "$@"; }
 { awk -F'\t' '$1 ~ /^R/' "$tmp/ns"; renames "${CODE[@]}"; renames "${MD[@]}"; renames "${ALL[@]}"; } \
   | awk -F'\t' '{ printf "- %s -> %s (%d%% similar)\n", $2, $3, substr($1, 2) }' | sort -u > "$tmp/ren"
 show "$tmp/ren"
-# The new paths of files a scan pairs as moved unchanged (R100), outside the load surfaces: the scan skips them.
-moved() { renames "$@" | awk -F'\t' -v rx="$LOADSURF" '$1 == "R100" && tolower($3) !~ rx { print $3 }'; }
+# "OLD<tab>NEW" for each file a scan pairs as moved unchanged (R100) from an ordinary path, one every scan reads
+# (not under tests/, evals/, evals-extra/ or fixtures/, and no lockfile), to an ordinary path, one that is no
+# surface: no load surface above, no SKILL.md, and not under commands/, agents/, bin/ or scripts/. The scan skips
+# them; the section after the added-line scans lists them and scans them whole.
+MOVESURF="$LOADSURF|(^|/)skill\\.md\$|(^|/)(commands|agents|bin|scripts)/"
+moved() { renames "$@" | rx="$MOVESURF" awk -F'\t' '$1 == "R100" && tolower($3) !~ ENVIRON["rx"] \
+  && $2 !~ /\/(tests|evals|evals-extra|fixtures)\/|[.]lock$|package-lock[.]json$/ { print $2 "\t" $3 }'; }
 moved "${CODE[@]}" > "$tmp/mv_code"; moved "${MD[@]}" > "$tmp/mv_md"; moved "${ALL[@]}" > "$tmp/mv_all"
-# added() SKIP PATHSPEC...: the -U0 diff a scan reads, every file as added or changed, less the files in SKIP.
-# Without rename detection a/ and b/ name the same path, so the path is the header's second half.
-added() { local skip=$1; shift
-  g --icase-pathspecs diff "${SCAN[@]}" -U0 "$old" "$new" -- "$@" | awk -v skip="$skip" '
-    BEGIN { while ((getline p < skip) > 0) s[p] = 1 }
-    /^diff --git / { n = (length($0) - 16) / 2; keep = !(substr($0, 14, n) in s) }
+# added() MODE LIST PATHSPEC...: the -U0 diff a scan reads, every file as added or changed. MODE skip leaves out
+# the files at the NEW paths of LIST ("OLD<tab>NEW" lines), MODE only keeps just those. Without rename detection
+# a/ and b/ name the same path, so the path is the header's second half.
+added() { local mode=$1 list=$2; shift 2
+  g --icase-pathspecs diff "${SCAN[@]}" -U0 "$old" "$new" -- "$@" | awk -v mode="$mode" -v list="$list" '
+    BEGIN { while ((getline l < list) > 0) { split(l, a, "\t"); s[a[2]] = 1 } }
+    /^diff --git / { n = (length($0) - 16) / 2; keep = (substr($0, 14, n) in s) == (mode == "only") }
     keep'; }
 
 section "Hosts in added lines of scripts and config (excluding tests, evals, fixtures and lockfiles)"
-added "$tmp/mv_code" "${CODE[@]}" | hosts > "$tmp/hosts" || true
+added skip "$tmp/mv_code" "${CODE[@]}" | hosts > "$tmp/hosts" || true
 show "$tmp/hosts"
 
 section "Hosts in added Markdown lines: skill and command text an agent may follow (excluding tests, evals and fixtures)"
-added "$tmp/mv_md" "${MD[@]}" | hosts > "$tmp/mdhosts" || true
+added skip "$tmp/mv_md" "${MD[@]}" | hosts > "$tmp/mdhosts" || true
 show "$tmp/mdhosts"
 
 section "Remote-exec patterns in added lines, continuation lines joined, any letter case (a download piped to or evaluated by a shell, an interpreter or PowerShell; npx --yes, bunx and dlx; pip, pipx, uv, uvx, npm, cargo and deno installs from git or a URL; go install …@latest)"
@@ -184,9 +190,20 @@ RX_PKG="$RX_PKG|uv[[:space:]]+run[[:space:]]+([^|;&]*[[:space:]])?--with(-requir
 RX_PKG="$RX_PKG|(npm|pnpm|yarn|bun)[[:space:]]+(i|install|add)[[:space:]]+$FROM|deno[[:space:]]+(run|install)[[:space:]]+([^|;&]*[[:space:]])?[\"']?https?://"
 RX_PKG="$RX_PKG|cargo([[:space:]]+[+][^[:space:]]+)?[[:space:]]+install[[:space:]]+([^|;&]*[[:space:]])?--(git|index)([[:space:]=]|\$)"
 RX_PKG="$RX_PKG|(^|[^[:alnum:]_.-])go[[:space:]]+(install|run)[[:space:]]+([^|;&]*[[:space:]])?[^[:space:]|;&]+@(latest|main|master|head)([^[:alnum:]_.-]|\$)"
-added "$tmp/mv_all" "${ALL[@]}" | joined \
-  | grep -iE "$RX_PIPE|$RX_SUBST|$RX_PROC|$RX_PS|$RX_PKG" > "$tmp/rx" || true
+RX="$RX_PIPE|$RX_SUBST|$RX_PROC|$RX_PS|$RX_PKG"
+added skip "$tmp/mv_all" "${ALL[@]}" | joined | grep -iE "$RX" > "$tmp/rx" || true
 show "$tmp/rx"
+
+section "Files moved unchanged between ordinary paths (from no test, eval, fixture or lockfile path; to no load surface, SKILL.md, commands/, agents/, bin/ or scripts/), OLD -> NEW, and the hosts and remote-exec patterns in them"
+sort -u "$tmp/mv_code" "$tmp/mv_md" "$tmp/mv_all" > "$tmp/mv"
+awk -F'\t' '{ print "- " $1 " -> " $2 }' "$tmp/mv" > "$tmp/mvl"
+show "$tmp/mvl"
+if [ -s "$tmp/mv" ]; then
+  { added only "$tmp/mv" "${CODE[@]}"; added only "$tmp/mv" "${MD[@]}"; } | hosts > "$tmp/mvhosts" || true
+  added only "$tmp/mv" "${ALL[@]}" | joined | grep -iE "$RX" > "$tmp/mvrx" || true
+  printf '\nHosts in them (excluding tests, evals, fixtures and lockfiles):\n'; show "$tmp/mvhosts"
+  printf '\nRemote-exec patterns in them:\n'; show "$tmp/mvrx"
+fi
 
 section "LICENSE"
 if g diff "${DIFFSAFE[@]}" --quiet "$old" "$new" -- LICENSE; then echo "unchanged"; else echo "**CHANGED** — re-check ATTRIBUTION.md"; fi
