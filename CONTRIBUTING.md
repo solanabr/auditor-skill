@@ -77,6 +77,23 @@ version line.
 A release PR also re-checks every row of ATTRIBUTION.md's "Assessed, not vendored" table against its
 re-check trigger and updates the assessed commit.
 
+A release PR also regenerates `templates/poc/Cargo.lock`, the pins every PoC crate starts from. The
+release author owns this step; nothing is built, and the only hosts contacted are `index.crates.io` and
+`static.crates.io`:
+
+1. Copy `templates/poc/` to a scratch directory, replace `{PROGRAM_NAME}` with `poc_template` in its
+   `Cargo.toml`, and use a fresh `CARGO_HOME`.
+2. Take the cutoff 14 days before the release date (the SC-007 / SC-010 quarantine), as
+   `YYYY-MM-DDT00:00:00Z`, and run `cargo +nightly generate-lockfile -Zunstable-options --publish-time
+   <cutoff>` there. The manifests' `rust-version` and resolver 3 keep every release buildable with the
+   platform-tools rustc.
+3. Check that `cargo update --workspace --locked --offline` leaves the file unchanged, with stable cargo
+   and with platform-tools' own cargo (`~/.cache/solana/<tools version>/platform-tools/rust/bin/cargo`,
+   `RUSTC` set to its `rustc`).
+4. Set the root entry back to `name = "{PROGRAM_NAME}"`, copy the file to `templates/poc/Cargo.lock`, and
+   review the lock diff like code (SC-047): every added crate and every moved version, with its publish
+   date. Run `bash scripts/tests/test-dnr-poc-runner.sh`.
+
 ---
 
 ## 4. Adding corpus content
