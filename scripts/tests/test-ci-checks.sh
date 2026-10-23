@@ -3,7 +3,7 @@
 #   1. scripts/check-attribution.sh flags a trailer in a commit message of 1 MiB as well as a short one,
 #      and fails on a range git cannot read or one that holds no commits; it and scripts/hooks/commit-msg,
 #      which share one pattern, refuse the same trailer with any spacing around its colon, or folded onto
-#      the next line;
+#      the next line; the check also fails a commit whose author or committer is an AI assistant;
 #   2. scripts/check-frontmatter.sh passes every real command, agent and SKILL.md and the shapes they use,
 #      and fails each case below where Claude Code would read a field differently from what is written;
 #   3. scripts/check-pipefail.sh flags each pipe into a reader that can stop early in a script under
@@ -88,6 +88,17 @@ expect "commit-msg hook: a folded co-author trailer that names no assistant is a
 p1=$(grep -E '^(pattern|unfold)=' "$ROOT/scripts/check-attribution.sh"); p2=$(grep -E '^(pattern|unfold)=' "$ROOT/scripts/hooks/commit-msg")
 if [ -n "$p1" ] && [ "$p1" = "$p2" ]; then pass=$((pass + 1)); echo "PASS attribution: the commit-msg hook has check-attribution.sh's pattern and unfolding"
 else failn=$((failn + 1)); echo "FAIL attribution: the commit-msg hook and check-attribution.sh differ"; echo "$p1"; echo "$p2"; fi
+# an AI assistant as the author or the committer, by name or by email, with a clean message; a person whose
+# first name is Claude passes
+for who in "author|$(printf 'Cl%s' aude)|noreply@example.invalid|1" "committer|Claude Code|cc@example.invalid|1" \
+           "author|A Person|NoReply@Anthropic.com|1" "committer|anthropic|bot@example.invalid|1" \
+           "author|Claude Monet|claude@example.invalid|0"; do
+  IFS='|' read -r role nm em want <<< "$who"
+  git -C "$at" reset -q --hard "$clean" && echo g >> "$at/f"
+  if [ "$role" = author ]; then GIT_AUTHOR_NAME=$nm GIT_AUTHOR_EMAIL=$em git -C "$at" commit -q -a -m "fix: a clean message"
+  else GIT_COMMITTER_NAME=$nm GIT_COMMITTER_EMAIL=$em git -C "$at" commit -q -a -m "fix: a clean message"; fi
+  expect "attribution: a commit whose $role is $nm <$em>" "$want" attr "$clean..HEAD"
+done
 
 # ---- 2. check-frontmatter.sh -----------------------------------------------------------------------
 expect "frontmatter: every real command, agent and SKILL.md passes" 0 bash "$ROOT/scripts/check-frontmatter.sh"
