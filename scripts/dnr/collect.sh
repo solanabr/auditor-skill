@@ -85,6 +85,14 @@
 # stderr that stops taking output (a reader that exited, a closed terminal) loses the
 # messages, never the run: the collection goes on, and its corpus files are whole.
 #
+# A WRITE THAT FAILS: every write to the three corpus files, and to the private copies
+# of the signature and fetch lists, is checked (a full disk, a file-size limit). One
+# that fails stops the run where it is: no further call is made, what was left becomes
+# gap rows as for an interrupted run, while the gap file still takes them, and a
+# "[blocker] a write to <file> failed" line takes the place of the closing lines (exit
+# 3). The corpus is then incomplete; when a gap row could not be written either, the
+# blocker says so, and the gaps are recorded as for a run killed outright.
+#
 # SECRETS: the endpoint comes from $RPC_URL and is NEVER echoed. curl runs with -q
 # (no ~/.curlrc) and reads the URL from a config on stdin (-K -), so the key stays
 # out of its argv; an $RPC_URL holding a quote, a backslash, whitespace or a control
@@ -106,8 +114,9 @@
 # Exit: 0 done (collection gaps included) · 2 usage, a refused input, $RPC_URL, run
 # directory, or an --out that holds a corpus file or where they cannot be created · 3
 # named blocker (no curl or jq; a jq that rounds large integers and no working
-# python3; no private temp directory, which is made before anything is written) ·
-# 128 + N stopped by signal N (INT, TERM or HUP), with what was left recorded as gaps.
+# python3; no private temp directory, which is made before anything is written; a
+# write that failed, which ends the run without its closing lines) · 128 + N stopped
+# by signal N (INT, TERM or HUP), with what was left recorded as gaps.
 # bash >= 3.2, curl, jq (and python3 with jq < 1.7). Output: <dir>/signatures.jsonl,
 # <dir>/transactions.jsonl, <dir>/collection-gaps.tsv.
 
@@ -280,12 +289,13 @@ sys.stdout.buffer.write(out.encode("utf-8", "backslashreplace") + b"\n")' 2>/dev
 fi
 
 # mktemp -d creates the directory with mode 0700, before anything is written; curl's
-# stderr, a copy of the signature list and the fetch list live there.
+# stderr, a copy of the signature list (written through descriptor 6) and the fetch
+# list live there.
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/dnr_collect.XXXXXX")" || {
   echo "[blocker] cannot create a private temp directory." >&2; exit 3; }
 trap 'rm -rf "$tmp"' EXIT
 errf="$tmp/stderr"; sig_copy="$tmp/signatures.jsonl"; todo="$tmp/signatures.todo"
-: > "$sig_copy"
+exec 6>"$sig_copy"
 
 mkdir -p "$out" || exit 2
 # Rule 11d: an incident_<n>/ directory (the --out itself or its parent) ignores itself
@@ -303,13 +313,19 @@ if ! { exec 3>"$sig_file" 4>"$tx_file" 5>"$gaps"; } 2>/dev/null; then
   echo "collect.sh: cannot create the corpus files in $out (it is not writable, or one of them appeared after the check) — use a new --out." >&2
   exit 2
 fi
-ngaps=0
+ngaps=0; gaps_whole=1; wfail=""
 # say <text>: one line on stdout, or where the caller sends it, written by a subshell.
 # Once the corpus files are open, every message goes through it: a write that fails
 # (a reader that exited, a closed terminal) ends only that subshell, so it never stops
 # the collection, and bash 3.2, which keeps the text of a failed write and flushes it
 # with a later one, never carries that text into a corpus file.
 say() { ( printf '%s\n' "$*" ) 2>/dev/null; }
+# put <descriptor> <text>: <text> and a newline, written to an open descriptor by a
+# subshell whose output is that descriptor, and that INT, TERM and HUP do not stop.
+# Every write to the corpus, the gap file and the private copy goes through it: its
+# status says whether the write succeeded, and the text of a write that failed ends
+# with the subshell, never in another file.
+put() { ( trap '' INT TERM HUP; printf '%s\n' "$2" ) >&"$1"; }
 
 # Provider domain, for disclosure under OUTPUT-RULES.md Rule 11b: strip the scheme,
 # any userinfo, path, query and fragment, then keep the host's last two DNS labels (an
@@ -343,27 +359,36 @@ failure() {  # failure <curl status> <response> -> why the call returned no usab
     *) echo "unreadable response" ;;
   esac
 }
-gap() {  # gap <signature or address> <reason>: one row per thing the corpus lacks
-  printf '%s\t%s\n' "$1" "$(printf '%s' "$2" | tr '\t\r\n' '   ')" >&5
-  ngaps=$((ngaps + 1))
+# gap <signature or address> <reason>: one row per thing the corpus lacks. A row that
+# cannot be written leaves the gap file incomplete: status 1.
+gap() {
+  if put 5 "$1$(printf '\t')$(printf '%s' "$2" | tr '\t\r\n' '   ')"; then
+    ngaps=$((ngaps + 1))
+  else
+    gaps_whole=0; [ -n "$wfail" ] || wfail="collection-gaps.tsv"
+    return 1
+  fi
 }
-# fetch_list: the signatures to fetch, newest first, into $todo (step 2 below).
+# fetch_list: the signatures to fetch, newest first, into $todo (step 2 below), from
+# the first $collected lines of the private copy: the pages written whole to both.
 fetch_list() {
-  jq -r --argjson s "$since" --argjson u "$until" '
+  awk -v n="$collected" 'NR <= n' "$sig_copy" | jq -r --argjson s "$since" --argjson u "$until" '
     select(($s == 0) or ((.blockTime // 0) >= $s))
     | select(($u == 0) or ((.blockTime // 0) <= $u))
-    | "\(.slot // 0) \(.signature)"' "$sig_copy" | sort -s -k1,1nr | awk '!seen[$2]++ { print $2 }' >| "$todo"
+    | "\(.slot // 0) \(.signature)"' | sort -s -k1,1nr | awk '!seen[$2]++ { print $2 }' >| "$todo"
 }
-# interrupted <signal> <exit status>: an INT, TERM or HUP ends the run here. What it
-# had not finished becomes collection gaps: the address being paged and every address
-# after it, and the signatures listed but not fetched (one row, naming the first). It
-# writes every row, and computes every count, before it prints anything: its output
-# may go to a pipe that is already closed, so SIGPIPE is ignored and a failed write
-# comes last. Then it prints the closing lines and exits 128 + the signal number.
+# cut_short <why> <exit status>: an INT, TERM or HUP, or a write that failed, ends
+# the run here. What it had not finished becomes collection gaps: the address being
+# paged and every address after it, and the signatures listed but not fetched (one
+# row, naming the first). It writes every row, and computes every count, before it
+# prints anything: its output may go to a pipe that is already closed, so SIGPIPE is
+# ignored and a failed write comes last. Then it prints the closing lines and exits
+# with the status given; once a write has failed, here or before, it prints a blocker
+# instead of the closing lines and exits 3.
 phase=paging; addrs_done=0; page=0; handled=0; fetched=0; calls=0; collected=0; total=0
 said_collected=0; closed=0
-interrupted() {
-  local why="the run was interrupted ($1)" k=0 a next first=""
+cut_short() {
+  local why="$1" k=0 a next first="" listed=1
   trap '' INT TERM HUP PIPE
   if [ "$phase" = paging ]; then
     for a in "${addrs[@]}"; do
@@ -376,27 +401,42 @@ interrupted() {
     done
   fi
   if [ "$phase" = paging ] || [ "$phase" = listed ]; then
-    fetch_list; total="$(grep -c . "$todo")"; handled=0
+    if fetch_list; then
+      total="$(grep -c . "$todo")"
+    else
+      listed=0; gaps_whole=0; [ -n "$wfail" ] || wfail="the private fetch list"
+    fi
+    handled=0
   fi
   case "$total" in ''|*[!0-9]*) total=0 ;; esac
   next=$((handled + 1))
-  if [ "$phase" != done ]; then
+  if [ "$phase" != done ] && [ "$listed" = 1 ]; then
     first="$(sed -n "${next}p" "$todo")"
     [ -z "$first" ] || gap "$first" "not fetched: $why; this and $((total - next)) older signatures in signatures.jsonl were not fetched"
+  fi
+  if [ -n "$wfail" ]; then
+    if [ "$gaps_whole" = 1 ]; then
+      say "[blocker] a write to $wfail failed (see the error above), so the run stopped, and the corpus in $out is incomplete: $gaps records what it had not collected. Fix the cause (a full disk, say), then collect the rest into a new --out." >&2
+    else
+      say "[blocker] a write to $wfail failed (see the error above), so the run stopped, and the corpus in $out is incomplete, and so is $gaps: record the gaps as for a run killed outright. Fix the cause (a full disk, say), then collect the rest into a new --out." >&2
+    fi
+    exit 3
   fi
   [ "$said_collected" = 1 ] || say "signatures collected: $collected -> $sig_file"
   [ -z "$first" ] || say "  ! $why: $((total - next + 1)) signatures listed in signatures.jsonl were not fetched — recorded as a collection gap" >&2
   [ "$closed" = 1 ] || close_run
   exit "$2"
 }
+# failed_write <name>: a write to <name> failed, so the run stops (exit 3).
+failed_write() { [ -n "$wfail" ] || wfail="$1"; cut_short "a write to $1 failed" 3; }
 # close_run: the closing lines.
 close_run() {
   say "transactions fetched: $fetched of $calls calls -> $tx_file"
   say "collection gaps: $ngaps (see $gaps)"
 }
-trap 'interrupted INT 130' INT
-trap 'interrupted TERM 143' TERM
-trap 'interrupted HUP 129' HUP
+trap 'cut_short "the run was interrupted (INT)" 130' INT
+trap 'cut_short "the run was interrupted (TERM)" 143' TERM
+trap 'cut_short "the run was interrupted (HUP)" 129' HUP
 
 # 1. signature history, newest -> oldest, bounded by --since and --max-pages. An
 #    empty page ends the address's history. A page shorter than the 1000 asked for
@@ -411,20 +451,22 @@ for addr in "${addrs[@]}"; do
     if [ "$rc" -ne 0 ] || ! printf '%s' "$resp" | jq -e '.result | arrays' >/dev/null 2>&1; then
       reason="$(failure "$rc" "$resp")"
       say "  ! paging $addr (page $page) failed: $reason — recorded as a collection gap" >&2
-      gap "$addr" "getSignaturesForAddress page $page: $reason; older history not collected"
+      gap "$addr" "getSignaturesForAddress page $page: $reason; older history not collected" \
+        || failed_write "collection-gaps.tsv"
       ended=1; break
     fi
     n="$(printf '%s' "$resp" | jq '.result | length')"
-    page=$((page + 1))
     if [ "$n" -gt 0 ]; then
       lines="$(printf '%s' "$resp" | jq -c --arg a "$addr" '.result[] | . + {queried_address:$a}')"
-      # The private copy first: it is what an interrupted run counts as listed.
-      printf '%s\n' "$lines" >> "$sig_copy"
-      printf '%s\n' "$lines" >&3
+      # The private copy first, then signatures.jsonl: once both hold the page, it
+      # counts as listed (fetch_list reads the first $collected lines of the copy).
+      put 6 "$lines" || failed_write "the private copy of the signature list"
+      put 3 "$lines" || failed_write "signatures.jsonl"
+      collected=$((collected + n))
       before="$(printf '%s' "$resp" | jq -r '.result[-1].signature')"
       oldest="$(printf '%s' "$resp" | jq -r '.result[-1].blockTime // 0')"
-      collected=$((collected + n))
     fi
+    page=$((page + 1))
     if [ "$n" -eq 0 ]; then ended=1; break; fi
     if [ "$since" -gt 0 ] && [ "$oldest" -gt 0 ] && [ "$oldest" -lt "$since" ]; then ended=1; break; fi
     if [ "$n" -lt 1000 ] && [ "$page" -ge "$max_pages" ]; then ended=1; break; fi
@@ -442,7 +484,7 @@ for addr in "${addrs[@]}"; do
     fi
     resume="${before:+resume into a new --out with --before $before, or }raise --max-pages"
     say "  ! older history may exist for $addr: $stop — $resume; recorded as a collection gap" >&2
-    gap "$addr" "older history may exist: $stop; $resume"
+    gap "$addr" "older history may exist: $stop; $resume" || failed_write "collection-gaps.tsv"
   fi
   addrs_done=$((addrs_done + 1)); page=0; before="$before_start"
 done
@@ -456,7 +498,7 @@ said_collected=1
 #    The sort is stable: within a slot the RPC's own newest-first order stands.
 #    Read from the private copy of signatures.jsonl (fetch_list, above), and then
 #    from a file (not a pipe) so the counters survive the loop.
-fetch_list
+fetch_list || failed_write "the private fetch list"
 total="$(grep -c . "$todo")"
 phase=fetching
 
@@ -468,26 +510,28 @@ while IFS= read -r sig; do
   [ -z "$sig" ] && continue
   i=$((i + 1))
   if [ "$failed" -ge "$max_failed" ]; then
-    gap "$sig" "not fetched: stopped after $max_failed getTransaction calls in a row failed (last: $reason); this and $((total - i)) older signatures in signatures.jsonl were not fetched"
+    gap "$sig" "not fetched: stopped after $max_failed getTransaction calls in a row failed (last: $reason); this and $((total - i)) older signatures in signatures.jsonl were not fetched" \
+      || failed_write "collection-gaps.tsv"
     handled=$total
     say "  ! stopped: $max_failed getTransaction calls in a row failed (last: $reason) — the endpoint is failing (rate limit or outage, or it does not serve this history); collected $fetched, collection gaps $ngaps; $((total - i + 1)) signatures not fetched — recorded as a collection gap" >&2
     break
   fi
   if [ "$calls" -ge "$max_tx" ]; then
-    say "  ! reached --max-tx=$max_tx getTransaction calls; $((total - i + 1)) signatures not fetched — recorded as a collection gap" >&2
-    gap "$sig" "not fetched: --max-tx=$max_tx calls reached; this and $((total - i)) older signatures in signatures.jsonl were not fetched"
+    gap "$sig" "not fetched: --max-tx=$max_tx calls reached; this and $((total - i)) older signatures in signatures.jsonl were not fetched" \
+      || failed_write "collection-gaps.tsv"
     handled=$total
+    say "  ! reached --max-tx=$max_tx getTransaction calls; $((total - i + 1)) signatures not fetched — recorded as a collection gap" >&2
     break
   fi
   calls=$((calls + 1))
   resp="$(rpc getTransaction "[\"$sig\",{\"encoding\":\"jsonParsed\",\"maxSupportedTransactionVersion\":1,\"commitment\":\"finalized\"}]")"; rc=$?
   if [ "$rc" -eq 0 ] && printf '%s' "$resp" | jq -e '.result | objects' >/dev/null 2>&1 \
      && line="$(printf '%s' "$resp" | result_line)" && [ -n "$line" ]; then
-    printf '%s\n' "$line" >&4
+    put 4 "$line" || failed_write "transactions.jsonl"
     handled=$i; fetched=$((fetched + 1)); failed=0
   else
     reason="$(failure "$rc" "$resp")"
-    gap "$sig" "getTransaction: $reason"
+    gap "$sig" "getTransaction: $reason" || failed_write "collection-gaps.tsv"
     handled=$i; failed=$((failed + 1))
     say "  ! getTransaction failed for a signature: $reason — recorded as a collection gap" >&2
   fi

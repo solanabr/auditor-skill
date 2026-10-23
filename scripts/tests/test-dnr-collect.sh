@@ -1010,6 +1010,56 @@ os.execvp("bash", ["bash"] + sys.argv[2:])' "$pipe" "$DNR/collect.sh" --out "$ou
     "0|5|S01 S02 S03 S04 S05 |0"
 done
 
+# ---------------------------------------------------------------------------
+# 13. A write that fails stops the run: no further call, what was left recorded as
+#     gap rows while the gap file takes them, a blocker in place of the closing
+#     lines, exit 3. A file-size limit (ulimit -f, in KiB) stands in for a full disk:
+#     with SIGXFSZ ignored the write fails (EFBIG), and at its default the writer is
+#     stopped by the signal. The output goes through a pipe, out of the limit's reach.
+# ---------------------------------------------------------------------------
+# limited <out dir> <KiB> ignore|default <args...>: run collect.sh under that limit;
+# its exit status is written to <out dir>.status.
+limited() {
+  local out="$1" kib="$2" xfsz="$3"
+  shift 3
+  ( ulimit -f "$kib" || exit 99
+    [ "$xfsz" = default ] || trap '' XFSZ
+    PATH="$TT/bin:$PATH" bash "$DNR/collect.sh" --out "$out" --confirmed "$@"; echo "$?" > "$out.status" ) 2>&1 | cat > "$out.out"
+}
+closing() { grep -c '^transactions fetched: \|^collection gaps: ' "$1"; }
+# Transactions of about 3 KB each: under an 8 KiB limit, the third one does not fit.
+book '{"'"$A_ADDR"'": [{"signature": "S%02d" % k, "slot": 100 - k, "err": None, "blockTime": 1700000000 - k} for k in range(1, 6)]}' \
+     '{"S%02d" % k: json.dumps({"slot": 100 - k, "meta": {"err": None, "logMessages": ["Program log: " + "x" * 3000]}, "transaction": {"signatures": ["S%02d" % k]}}) for k in range(1, 6)}'
+for xfsz in ignore default; do
+  out="$TT/wf-tx-$xfsz"; rm -f "$FAKE_CURL_LOG"
+  limited "$out" 8 "$xfsz" -- "$A_ADDR"
+  eq "failed write (SIGXFSZ $xfsz): transactions.jsonl full at the third transaction -> exit 3, no further call, no closing lines" \
+    "$(cat "$out.status")|$(calls getTransaction)|$(closing "$out.out")" "3|3|0"
+  eq "failed write (SIGXFSZ $xfsz): one gap row names that transaction and counts the rest" \
+    "$(cat "$out/collection-gaps.tsv")" \
+    "S03$(printf '\t')not fetched: a write to transactions.jsonl failed; this and 2 older signatures in signatures.jsonl were not fetched"
+  eq "failed write (SIGXFSZ $xfsz): the blocker names the file, and says the gap file records the rest" \
+    "$(grep -c "^\[blocker\] a write to transactions.jsonl failed (see the error above), so the run stopped, and the corpus in $out is incomplete: $out/collection-gaps.tsv records what it had not collected\." "$out.out")" "1"
+done
+# Signature entries of about 3 KB each: the page does not fit in the private copy of
+# the signature list, which is written first; nothing is fetched.
+book '{"'"$A_ADDR"'": [{"signature": "S%02d" % k, "slot": 100 - k, "err": None, "blockTime": 1700000000 - k, "memo": "m" * 3000} for k in range(1, 6)]}'
+out="$TT/wf-page"; rm -f "$FAKE_CURL_LOG"
+limited "$out" 8 ignore -- "$A_ADDR"
+eq "failed write: a page that does not fit -> exit 3, no getTransaction call, no closing lines, the address row" \
+  "$(cat "$out.status")|$(calls getTransaction)|$(closing "$out.out")|$(cat "$out/collection-gaps.tsv")" \
+  "3|0|0|$A_ADDR$(printf '\t')getSignaturesForAddress page 0: a write to the private copy of the signature list failed; older history not collected"
+# The gap file itself fills up: twenty addresses and --max-pages 0 write a row each and
+# nothing else, past a 1 KiB limit. The blocker says the gap file is incomplete too.
+addrs20="$("$PY" -I -c 'print(" ".join("Addr%s%s" % (c, "1" * 39) for c in "ABCDEFGHJKLMNPQRSTUV"))')"
+out="$TT/wf-gaps"; rm -f "$FAKE_CURL_LOG"
+# shellcheck disable=SC2086
+limited "$out" 1 ignore --max-pages 0 -- $addrs20
+eq "failed write: a full gap file -> exit 3, no RPC call, no closing lines" \
+  "$(cat "$out.status")|$(calls getSignaturesForAddress)|$(closing "$out.out")" "3|0|0"
+eq "failed write: ... and the blocker says the gap file is incomplete too" \
+  "$(grep -c "^\[blocker\] a write to collection-gaps.tsv failed (see the error above), so the run stopped, and the corpus in $out is incomplete, and so is $out/collection-gaps.tsv: record the gaps as for a run killed outright\." "$out.out")" "1"
+
 if [[ "$fails" -ne 0 ]]; then
   echo "test-dnr-collect: $fails assertion(s) FAILED" >&2
   exit 1
