@@ -241,7 +241,7 @@ big = [
         {"accountIndex": 2, "mint": "MintA", "uiTokenAmount": {"amount": str(U64)}},
         {"mint": "MintB", "owner": "NoIndex", "uiTokenAmount": {"amount": "2" * 19}},
         {"accountIndex": 3, "mint": "MintB", "owner": "x\ty\\z", "uiTokenAmount": {}}]},
-       ["Payer1", "TokVault", "TokAttacker", "owner:NoIndex"]),
+       ["Payer1", "TokVault", "TokOther", "owner:NoIndex"]),
     tx("SigBig5", {"err": {"InstructionError": [0, {"Custom": 6000}]}, "preBalances": [10**18], "postBalances": [0]}, ["Failed"]),
     tx("SigBig6", {"preBalances": [1, 2, 3], "postBalances": [2, 4, 6], "loadedAddresses": {"writable": ["LutW"], "readonly": ["LutR"]}},
        ["Static"]),
@@ -313,7 +313,7 @@ for k, n in enumerate(names):
 for k in range(3):
     ties.append(tx("SigTop%d" % k, {}, ["Top", "Top2"], [], {"blockTime": 1700000000}))
 for k, h in enumerate([0, 1, 2, 3, 10**19, None, 5]):
-    t = tx("SigHdr%d" % k, {}, ["H1", "H2", "H3"], [])
+    t = tx("SigHdr%d" % k, {}, ["Hdr1", "Hdr2", "Hdr3"], [])
     t["transaction"]["message"]["header"] = {"numRequiredSignatures": h}
     ties.append(t)
 for k, s in enumerate([True, False, 1, "true", None]):
@@ -344,11 +344,11 @@ eq "own cases: lamport deltas above 2^53, up to 2^64 - 1, are exact" \
 agree tokens -- incident_1/crafted/big.jsonl
 eq "own cases: token deltas near 2^64 are exact, keyed by account and mint (an account named owner:X shares the owner's bucket)" \
   "$(awk -F'\t' '$1 == "SigBig4" { printf "%s:%s:%s ", $5, $3, $4 }' "$T/b.out")" \
-  "TokVault:MintA:-18446744073709551615 TokAttacker:MintA:18446744073709551608 owner:NoIndex:MintB:1111111111111111109 "
+  "TokVault:MintA:-18446744073709551615 TokOther:MintA:18446744073709551608 owner:NoIndex:MintB:1111111111111111109 "
 agree profile -- incident_1/crafted/ties.jsonl
 eq "own cases: the top-20 cut falls inside a tie of 25, broken by descending byte order" \
   "$(LC_ALL=C awk '/^-- fee payers/ { f = 1; next } /^--/ { f = 0 } f { n++; if (n == 1 || n == 20) printf "%s|", $0 }' "$T/b.out")" \
-  "      7 H1|      2 Z|"
+  "      7 Hdr1|      2 Z|"
 if [[ "$literal" == 1 ]]; then
   agree profile -- incident_1/crafted/numbers.jsonl
   if grep -q '^      1 1E+2$' "$T/b.out" && grep -q 'first=-10000000000000000001  last=10000000000000000001' "$T/b.out"; then
