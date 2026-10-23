@@ -5,8 +5,9 @@
 #     checksum line after the key of its entry (package-lock.json and npm-shrinkwrap.json with and without
 #     resolved fields, lockfile v1, an npm alias, yarn v1 and berry), and "?" when the key is outside the
 #     hunk, in tab-indented and CRLF lockfiles too; every hint prints the same under a checkout config that
-#     sets colour and zero context lines; step 4's sweep deletes every entry that is neither a regular file
-#     nor a directory, in 0555 and 0000 directories too;
+#     sets colour and zero context lines; the changed-files hint, which FULL-AUDIT Step 3.2 repeats, lists
+#     a go.mod change; step 4's sweep deletes every entry that is neither a regular file nor a directory, in
+#     0555 and 0000 directories too;
 #   - the known-bad release check for axios 1.14.1 / 0.30.4 and @solana/web3.js 1.95.6 / 1.95.7, the same
 #     commands in FULL-AUDIT Step 3.2, KV-077 Step 2 and (its tree part) discovery/grep-commands.md: the
 #     single-line shapes (resolved URLs, pnpm v5 and v9 keys, yarn berry, bun, exact pins), and the key-line
@@ -100,7 +101,7 @@ berry_lock() { # berry_lock WEB3VER WEB3SUM BABELSUM — @babel/runtime's checks
   printf '"@solana/web3.js@npm:^1.95.5":\n  version: %s\n  resolution: "@solana/web3.js@npm:%s"\n' "$1" "$1"
   printf '  dependencies:\n    "@babel/runtime": "npm:^7.25.0"\n  checksum: 10c0/%s\n  languageName: node\n  linkType: hard\n' "$2"
 }
-other_locks() { # other_locks WEB3VER INT ANCHORVER ANCHORSUM BORSHSUM — pnpm, bun and Cargo.lock
+other_locks() { # other_locks WEB3VER INT ANCHORVER ANCHORSUM BORSHSUM — pnpm, bun, Cargo.lock and go.mod
   printf "lockfileVersion: '9.0'\n\npackages:\n\n  '@solana/web3.js@%s':\n    resolution: {integrity: sha512-%s}\n" \
     "$1" "$2" > pnpm-lock.yaml
   printf '{\n  "lockfileVersion": 1,\n  "packages": {\n    "@solana/web3.js": ["@solana/web3.js@%s", "", {}, "sha512-%s"],\n  }\n}\n' \
@@ -109,6 +110,7 @@ other_locks() { # other_locks WEB3VER INT ANCHORVER ANCHORSUM BORSHSUM — pnpm,
   printf 'version = "%s"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\nchecksum = "%s"\n' "$3" "$4" >> Cargo.lock
   printf 'dependencies = [\n "borsh",\n]\n\n[[package]]\nname = "borsh"\nversion = "1.5.1"\n' >> Cargo.lock
   printf 'source = "registry+https://github.com/rust-lang/crates.io-index"\nchecksum = "%s"\n' "$5" >> Cargo.lock
+  printf 'module example.invalid/app\n\ngo 1.22\n\nrequire example.invalid/anchor v%s\n' "$3" > go.mod
 }
 H="$T/hints"
 git init -q "$H" && mkdir -p "$H/rez" "$H/norez" "$H/v1" "$H/shrink" "$H/yarn1" "$H/berry" "$H/tabcrlf" "$H/yarncrlf" \
@@ -175,6 +177,10 @@ awk '/^  # Dependency changes since the baseline/ {g = 1} g && /^  *(GIT_NO_LAZY
   | stat_args > "$T/stat-fa"
 if [ -s "$T/stat-cl" ] && cmp -s "$T/stat-cl" "$T/stat-fa"; then ok "FULL-AUDIT Step 3.2 lists the same dependency files as §11.11"
 else bad "FULL-AUDIT Step 3.2's dependency-change list differs from §11.11's"; diff "$T/stat-cl" "$T/stat-fa" | sed 's/^/  | /'; fi
+# a go.mod edit (a require or replace line) need not change go.sum, so the list names go.mod too
+run_hint 'changed manifests and lockfiles' "$T/stat.out"
+if grep -q '^ go\.mod ' "$T/stat.out"; then ok "the changed-files hint lists a go.mod change"
+else bad "the changed-files hint does not list a go.mod change"; sed 's/^/  | /' "$T/stat.out"; fi
 
 # step 4: the sweep before any diff or grep, over an artifact whose directories are 0555 and 0000, then the
 # check that only files and directories are left, then the diff

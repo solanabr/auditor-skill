@@ -124,7 +124,7 @@ Run the registry-facing commands these items call for (`npm audit`, `cargo audit
 > # changed manifests and lockfiles
 > GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c core.bigFileThreshold=512m \
 >   diff --text --no-textconv --no-ext-diff --no-color --stat <base>..<head> -- '*.lock' '*-lock.json' '*npm-shrinkwrap.json' \
->   '*-lock.yaml' '*go.sum' '*Cargo.toml' '*package.json' '*pyproject.toml' '*requirements*.txt'
+>   '*-lock.yaml' '*go.sum' '*go.mod' '*Cargo.toml' '*package.json' '*pyproject.toml' '*requirements*.txt'
 > # npm (package-lock.json, npm-shrinkwrap.json), yarn v1 and berry (yarn.lock): each changed version / resolved /
 > # resolution / integrity / checksum line after the key of its entry (an npm alias: after its "name" line). A
 > # lockfile written without resolved fields names its packages only there. "?": the key is outside the hunk
