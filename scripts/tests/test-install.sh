@@ -7,6 +7,7 @@
 #     in its repo config (filters, hooks, transport commands) runs and nothing is left beside the install; a
 #     backup path that exists, or no absolute XDG_STATE_HOME or HOME, stops the run before any git command;
 #   - a path that is a symbolic link, or that holds something other than an install, is refused;
+#   - a download cut short runs nothing and exits non-zero, and a failed clone leaves the earlier install alone;
 #   - a warning goes to stderr when the install directory is inside a git work tree.
 # Run from the repo root: `bash scripts/tests/test-install.sh`.
 # Offline: a temp global config maps the canonical URL to local bare upstreams, and GIT_ALLOW_PROTOCOL=file
@@ -58,11 +59,14 @@ warned() { grep -q 'is inside the git work tree' "$T/err"; }
 none_fired() { [ -z "$(ls "$T" | grep '^fired-')" ]; }
 installed() { [ "$rc" -eq 0 ] && grep -q 'auditor-skill installed' "$T/out" && [ -f "$1/SKILL.md" ]; }
 # backed_up DIR BACKUPS: the earlier copy (old-marker) is the one backup in BACKUPS, which is mode 700; DIR, the
-# directory that holds the install, holds nothing else; the end-of-run message names the backup's full path.
+# directory that holds the install, holds nothing else; the run names the backup's full path right after the
+# move, before the install is reported, and again at the end.
 backed_up() {
   local b; b=$(ls -d "$2"/backup-* 2>/dev/null)
   [ "$(printf '%s\n' "$b" | grep -c .)" = 1 ] && [ -f "$b/old-marker" ] && [ "$(ls -ld "$2" | cut -c1-10)" = drwx------ ] \
-    && [ "$(ls -A "$1")" = auditor-skill ] && grep -qxF "  The earlier install is now $b" "$T/out"
+    && [ "$(ls -A "$1")" = auditor-skill ] && grep -qxF "  The earlier install is now $b" "$T/out" \
+    && awk -v m="→ The earlier install is now $b;" 'index($0, m) == 1 {moved = NR} /auditor-skill installed/ {done = NR}
+         END {exit !(moved && moved < done)}' "$T/out"
 }
 
 # 1. explicit path inside a work tree: warns, then installs
@@ -191,6 +195,40 @@ HOME= XDG_STATE_HOME=rel GIT_TRACE="$T/trace13" run up "$T/thirteen" "$d13"
 ok13() { [ "$rc" -eq 2 ] && grep -q 'neither XDG_STATE_HOME nor HOME is an absolute path' "$T/err" && [ ! -s "$T/trace13" ] \
   && [ -f "$d13/old-marker" ] && [ "$(ls -A "$T/thirteen")" = auditor-skill ]; }
 check "an earlier install with no absolute XDG_STATE_HOME or HOME stops the run before anything moves" ok13
+
+# 14. a download cut short (curl … | bash) changes nothing: every prefix of install.sh past its first line, cut at
+#     a line end or inside a line, is a syntax error, and the earlier install, HOME and the skills directory stay
+#     as they were
+h14="$T/home14" && d14="$h14/.claude/skills/auditor-skill"
+mkdir -p "$h14/.claude/skills" && git clone -q "$T/up.git" "$d14" && echo old > "$d14/old-marker" \
+  && git -C "$d14" config core.fsmonitor "$T/canary.sh fsmonitor"
+unchanged14() { [ -f "$d14/old-marker" ] && [ ! -e "$h14/.local" ] && [ "$(ls -A "$h14/.claude/skills")" = auditor-skill ] && none_fired; }
+cut14() { # cut14 HEAD-ARGS...: run that prefix of install.sh as `curl … | bash` would; sets rc
+  head "$@" "$ROOT/install.sh" > "$T/cut.sh"
+  ( cd "$T" && HOME="$h14" GIT_CONFIG_GLOBAL="$T/up.gitconfig" bash < "$T/cut.sh" ) > /dev/null 2>&1; rc=$?
+}
+size=$(wc -c < "$ROOT/install.sh" | tr -d ' '); lines=$(wc -l < "$ROOT/install.sh" | tr -d ' ')
+first=$(head -n 1 "$ROOT/install.sh" | wc -c | tr -d ' '); bad14=""; n=1
+while [ "$n" -lt "$lines" ]; do
+  cut14 -n "$n"; { [ "$n" -eq 1 ] || [ "$rc" -ne 0 ]; } && unchanged14 || bad14="$bad14 lines=$n:rc=$rc"; n=$((n + 1))
+done
+n=1
+while [ "$n" -lt "$((size - 1))" ]; do   # the whole script without its final newline is complete
+  cut14 -c "$n"; { [ "$n" -le "$first" ] || [ "$rc" -ne 0 ]; } && unchanged14 || bad14="$bad14 bytes=$n:rc=$rc"
+  if [ "$n" -lt "$((size - 40))" ]; then n=$((n + 53)); else n=$((n + 1)); fi
+done
+if [ -z "$bad14" ]; then pass=$((pass + 1)); echo "PASS a download cut short anywhere after its first line runs nothing and exits non-zero"
+else failn=$((failn + 1)); echo "FAIL a download cut short ran something or exited 0:$bad14"; fi
+
+# 15. a clone that fails stops the run: it exits non-zero, the earlier install stays where it is, and nothing is
+#     backed up or left in the skills directory
+h15="$T/home15" && d15="$h15/.claude/skills/auditor-skill"
+mkdir -p "$h15/.claude/skills" && git clone -q "$T/up.git" "$d15" && echo old > "$d15/old-marker"
+printf '[url "file://%s/missing.git"]\n\tinsteadOf = https://github.com/solanabr/auditor-skill.git\n' "$T" > "$T/missing.gitconfig"
+HOME="$h15" run missing "$T"
+ok15() { [ "$rc" -ne 0 ] && ! grep -q 'auditor-skill installed' "$T/out" && [ -f "$d15/old-marker" ] && [ ! -e "$h15/.local" ] \
+  && [ "$(ls -A "$h15/.claude/skills")" = auditor-skill ]; }
+check "a failed clone exits non-zero and leaves the earlier install in place, with no backup" ok15
 
 echo "---- $pass passed, $failn failed"
 [ "$failn" -eq 0 ]
