@@ -25,16 +25,24 @@ crate's `run.sh` and `shared-test-utils/` are refreshed from the installation. T
   turns the attack away with the error the PoC pins) or `(blocked: failed, account unchanged) →
   [PoC-REPRODUCED]` (the client's own error, checked with `assert_exploit_blocked!` and its positive
   control). Record which, with the final line.
-- **still succeeds** — exit 2: the head build did not turn the attack away.
+- **still succeeds** — exit 2 where the head build let the attack through: the final line is
+  `FAIL: … did not block …`. An exit 2 whose message is instead `attack was expected to be REJECTED with
+  <X>, but got: <other error>` is **not** `still succeeds` — the head build turned the attack away with
+  its own error, not the one the PoC pins. Record that as `inconclusive (pinned error <X> vs <other>)` and
+  re-run with `assert_exploit_blocked!` and its positive control (the form for a fix whose error is not
+  known in advance); better still, use that form from the start for a client fix.
 - **inconclusive (`<harness error>`)** — exit 3, with `run.sh`'s blocker line verbatim; the finding is
   flagged "PoC re-run needed". Exit 1 is inconclusive too: the exploit did not reproduce on the audited
   build, so the run shows nothing about the fix.
 - **not run (`<reason>`)** — no PoC, no execution mode that can run it, no toolchain, or a commit that
   could not be built.
 
-**FIXED needs an executed revert.** A FIXED row whose re-run is not `reverts` keeps its status, is
-flagged `⚑ no executed re-run`, and takes the verb "we re-derived from the code and confirmed"; only a
-`reverts` re-run supports "we re-tested and confirmed".
+**FIXED needs an executed revert.** A FIXED row whose re-run is `reverts` takes the verb "we re-tested and
+confirmed". A FIXED row whose re-run is `inconclusive` or `not run` keeps its status on a read-based
+re-derivation, is flagged `⚑ no executed revert`, and takes the verb "we re-derived from the code and
+confirmed". A re-run that `still succeeds` contradicts FIXED: do not record FIXED unless a written reason
+explains the gap (for example, the PoC exercises a path the fix deliberately left, re-derived from the
+code) — otherwise the finding is PARTIALLY-FIXED or STILL-OPEN.
 
 ## 2. New findings on the changed surface
 
@@ -52,4 +60,4 @@ not an omission.
 ## 4. Safe-to-deploy verdict
 
 {The updated verdict. ACKNOWLEDGED, DISPUTED and STILL-OPEN findings keep their severity, and a FIXED row
-flagged `⚑ no executed re-run` is named here as resting on a re-derivation.}
+flagged `⚑ no executed revert` is named here as resting on a re-derivation.}
