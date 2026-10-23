@@ -238,6 +238,7 @@ auditor-skill/
 ├── templates/               ← Output + deliverable templates
 │   ├── report-template.md   ← Internal item-by-item verdict report
 │   ├── audit-report.md      ← Client-facing findings report (no deploy guarantee)
+│   ├── re-audit.md          ← Fix-review record (RE-AUDIT.md), with each finding's PoC re-run
 │   ├── context-worksheet.md · instruction-worksheet.md · intake.md · threat-model.md
 │   ├── incident-report.md · response-plan.md · hunt-ledger.md
 │   ├── poc/                 ← exploit-harness crate skeleton + shared-test-utils
