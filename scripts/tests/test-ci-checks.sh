@@ -104,6 +104,7 @@ fm agents/blank-line.md fail "$N" "" "$D" "$TL" "$M"
 fm agents/comment-line.md fail "$N" "# a comment" "$D" "$TL" "$M"
 fm agents/quoted-trailing.md fail "$N" 'description: "An agent." and more' "$TL" "$M"
 fm agents/unknown-key.md fail "$N" "$D" "$TL" "$M" "color: blue"
+fm agents/case-variant-key.md fail "$N" "$D" "TOOLS: Read" "$M"
 # three dots in a plain value, number-like prefixes, and control characters
 fm agents/b01-dots-end.md fail "$N" "description: Reads the diff..." "$TL" "$M"
 fm agents/b02-dots-mid.md fail "$N" "description: Reads the diff... then reports." "$TL" "$M"
@@ -204,13 +205,16 @@ for all in 'Bash(*)' 'Bash( * )' 'Bash(:*)' 'Bash(**)'; do
 done
 expect "frontmatter, with Bash forbidden: Bash(\"\${CLAUDE_PLUGIN_ROOT}/…\" *) items pass" 0 bash "$T/fm-no-bash.sh" \
   "$T/fm/commands/plugin-root-items.md"
-# large input: a 300 KB description and a 1 MiB body read whole by every awk; a --- near the description's end
-long=$(awk 'BEGIN { for (i = 0; i < 10000; i++) printf "word%05d and more text here, ", i }')
+# large input: a 60 KB description and a 1 MiB body read whole by every awk; a --- near the end of that
+# description; a block over 65,536 bytes; more than 256 of [, { and ' - '
+long=$(awk 'BEGIN { for (i = 0; i < 2000; i++) printf "word%05d and more text here, ", i }')
 fm agents/long-description.md pass "$N" "description: ${long}end." "$TL" "$M"
 awk 'BEGIN { for (i = 0; i < 17000; i++) printf "body line %05d xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n", i }' \
   >> "$T/fm/agents/long-description.md"
 fmrun agents/long-description.md pass
 fm agents/long-dashes.md fail "$N" "description: ${long}then --- end." "$TL" "$M"
+fm agents/over-64k.md fail "$N" "description: ${long}${long}end." "$TL" "$M"
+fm agents/many-brackets.md fail "$N" "description: Notes $(awk 'BEGIN { for (i = 0; i < 257; i++) printf "[x] " }')end" "$TL" "$M"
 
 # ---- 3. check-pipefail.sh --------------------------------------------------------------------------
 lint() { # lint WANT NAME LINE...  — a script setting pipefail, then the LINEs; the check must WANT (flag|pass)

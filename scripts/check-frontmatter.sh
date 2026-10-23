@@ -7,8 +7,8 @@
 #   - line 1 is exactly '---' and the block ends at the next line that is exactly '---'; no other line of
 #     the block contains '---' or is a '...' document end; the file holds no NUL byte, and the block no tab,
 #     CR, other control character, U+0085, U+2028 or U+2029;
-#   - every line is 'key: value', with a known lowercase key, each key once; tools and allowed-tools may
-#     instead be 'key:' followed by '  - item' lines;
+#   - every line is 'key: value', with a key the check knows, written as listed, each key once; tools and
+#     allowed-tools may instead be 'key:' followed by '  - item' lines;
 #   - a value is plain, 'single-quoted' ('' is the only escape) or "double-quoted" (\" and \\ are the only
 #     escapes). A plain value starts with no YAML indicator, holds no ': ', ' #' or '...', does not end in
 #     ':' or a space, and is not one YAML reads as a number, boolean or null. disable-model-invocation is
@@ -17,6 +17,7 @@
 #     name and description, and for now no other key;
 #   - tools and allowed-tools list 'Name' or 'Name(pattern)' entries (agents: names only, no pattern),
 #     separated by ', ' or one per item, none empty; allowed-tools lists nothing in FORBIDDEN_ALLOWED_TOOLS;
+#   - the block is at most 65,536 bytes and holds at most 256 of '[', '{' and ' - ';
 #   - a file named with .md in another letter case (.MD) fails: name it .md.
 # known-vectors/*.md carry frontmatter too, but Claude Code does not load it (check-corpus.sh reads its id).
 # Usage: bash scripts/check-frontmatter.sh [FILE...]. Exit 0 = every file passes. Needs bash >= 3.2, awk, find.
@@ -94,11 +95,12 @@ function endlist() {
   if (listkey != "" && nitems == 0) { printf "::error::%s:%d: %s is an empty list\n", file, listline, listkey; st = 1 }
   listkey = ""
 }
-function check_line(   key, rest, s) {
+function check_line(   key, rest, s, t, k, hit) {
   if (index($0, "---")) bad("--- inside the frontmatter block; reword the line")
   if ($0 ~ /[\t\r]/) bad("tab or carriage return in the frontmatter block")
   if ($0 ~ /[\001-\010\013\014\016-\037\177]|\302[\200-\237]|\342\200[\250\251]/)
     bad("a control character, U+0085, U+2028 or U+2029 in the frontmatter block")
+  size += length($0) + 1; t = $0; marks += gsub(/[[{]/, "", t); t = $0; marks += gsub(/ - /, "", t)
   if (substr($0, 1, 3) == "...") { bad("a ... line inside the frontmatter block"); return }
   if (substr($0, 1, 4) == "  - ") {
     if (listkey == "") bad("list item outside a tools or allowed-tools list"); else item(substr($0, 5))
@@ -107,8 +109,11 @@ function check_line(   key, rest, s) {
   endlist()
   if (!match($0, /^[A-Za-z0-9_-]+:/)) { bad("not a key: value line"); return }
   key = substr($0, 1, RLENGTH - 1); rest = substr($0, RLENGTH + 1)
-  if (key ~ /[A-Z]/) bad("key " q key q " has a capital letter; keys are lowercase")
-  else if (!(key in known)) bad("unknown key " q key q " for " what)
+  if (!(key in known)) {
+    hit = ""; for (k in known) if (tolower(k) == tolower(key)) hit = k
+    if (hit != "") bad("key " q key q " differs from " q hit q " only in letter case")
+    else bad("unknown key " q key q " for " what)
+  }
   if (key in seen) bad("second " q key q " key")
   seen[key] = 1
   if (rest == "") {
@@ -142,6 +147,8 @@ END {
   if (!closed) { bad("no closing --- line"); exit st }
   endlist()
   n = split(need, r, " "); for (i = 1; i <= n; i++) if (!(r[i] in seen)) bad("missing required key " r[i])
+  if (size > 65536) bad("the frontmatter block is " size " bytes, over 65,536")
+  if (marks > 256) bad("the frontmatter block holds " marks " of [, { and \" - \", over 256")
   exit st
 }'
 
