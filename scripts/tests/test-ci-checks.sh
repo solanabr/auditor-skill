@@ -15,7 +15,9 @@
 #      credentials;
 #   5. scripts/check-hygiene.sh fails on each kind of file it names, and on a top-level directory named
 #      commands, agents, skills, hooks, bin, monitors or .claude-plugin in another letter case, also when it
-#      is the last of 3,000 tracked paths; it passes the repository itself, and fails outside a checkout.
+#      is the last of 3,000 tracked paths; on each load surface at the plugin root unless the allow list
+#      names it; and on a manifest key beyond its list, also at the end of a 1 MiB manifest. It passes the
+#      repository itself, and fails outside a checkout and without jq.
 # Usage (from the repo root): bash scripts/tests/test-ci-checks.sh   (VERBOSE=1 shows each check's output)
 # Builds throwaway files and git repos under ${TMPDIR:-/tmp}; no network; bash >= 3.2.
 set -uo pipefail
@@ -410,17 +412,21 @@ case "$probs" in *"job a permissions grants more"*"pull_request_target or workfl
 
 # ---- 5. check-hygiene.sh ------------------------------------------------------------------------------
 HYG="$ROOT/scripts/check-hygiene.sh"
-hy() { # hy NAME WANT PATH...  — a repo tracking the script, the real manifests and each PATH as an empty file put
-  # straight into the index, so paths in other letter cases stay apart on any file system; the check must WANT
-  local name=$1 d="$T/hy/$1" want=$2 got=pass e p; shift 2
+hyrepo() { # hyrepo NAME PATH...  — a repo tracking the script, the real manifests and each PATH as an empty file
+  # put straight into the index, so paths in other letter cases stay apart on any file system
+  local d="$T/hy/$1" e p; shift
   mkdir -p "$d/scripts" "$d/.claude-plugin" && git -C "$d" init -q && cp "$HYG" "$d/scripts/check-hygiene.sh" \
     && cp "$ROOT/.claude-plugin/plugin.json" "$ROOT/.claude-plugin/marketplace.json" "$d/.claude-plugin/" \
     && git -C "$d" add scripts .claude-plugin && e=$(git -C "$d" hash-object -w --stdin < /dev/null) || return
   for p in "$@"; do git -C "$d" update-index --add --cacheinfo "100644,$e,$p"; done
-  out=$(bash "$d/scripts/check-hygiene.sh" 2>&1) || got=fail
-  if [ "$got" = "$want" ]; then pass=$((pass + 1)); echo "PASS hygiene $want: $name"; if [ -n "${VERBOSE:-}" ]; then echo "$out"; fi
-  else failn=$((failn + 1)); echo "FAIL hygiene $name: got $got, want $want"; echo "$out"; fi
 }
+hyrun() { # hyrun NAME WANT  — the check in repo NAME must WANT (pass|fail)
+  local got=pass
+  out=$(bash "$T/hy/$1/scripts/check-hygiene.sh" 2>&1) || got=fail
+  if [ "$got" = "$2" ]; then pass=$((pass + 1)); echo "PASS hygiene $2: $1"; if [ -n "${VERBOSE:-}" ]; then echo "$out"; fi
+  else failn=$((failn + 1)); echo "FAIL hygiene $1: got $got, want $2"; echo "$out"; fi
+}
+hy() { local name=$1 want=$2; shift 2; hyrepo "$name" "$@"; hyrun "$name" "$want"; }   # hy NAME WANT PATH...
 hysaid() { # hysaid TEXT  — the last hy output holds TEXT
   case "$out" in *"$1"*) pass=$((pass + 1)); echo "PASS hygiene: ... $1";;
     *) failn=$((failn + 1)); echo "FAIL hygiene: the output lacks: $1"; echo "$out";; esac
@@ -442,6 +448,48 @@ awk -v e="$e" 'BEGIN { for (i = 0; i < 3000; i++) printf "100644 %s\tdocs/many/f
 expect "hygiene: 3,000 tracked paths, a directory in another letter case last" 1 bash "$T/hy/big/scripts/check-hygiene.sh"
 case "$out" in *"skILLS/: name it skills/"*) pass=$((pass + 1)); echo "PASS hygiene: ... the last path is read";;
   *) failn=$((failn + 1)); echo "FAIL hygiene: the last of 3,000 paths was not read"; echo "$out";; esac
+# load surfaces at the plugin root, in any letter case, and a .claude/ directory below it
+for p in hooks/hooks.json monitors/monitors.json bin/git .mcp.json .LSP.json settings.json Settings.Local.JSON \
+         docs/.claude/settings.json references/x/.Claude/skills/y/SKILL.md vendor/x/.claude/settings.json \
+         .claude-plugin/hooks.json .claude-plugin/Plugin.json; do
+  hy "surface-$(printf '%s' "$p" | tr '/' '_')" fail "$p"
+done
+hysaid "list it in ALLOWED_LOAD_SURFACES"
+hy not-surfaces pass docs/hooks/README.md scripts/bin/tool docs/settings.json tools/x/.mcp.json docs/monitors/x.md
+# ALLOWED_LOAD_SURFACES lets a listed path through, in its exact letter case; a path with a space never matches
+sed "s#^ALLOWED_LOAD_SURFACES=''\$#ALLOWED_LOAD_SURFACES='hooks/hooks.json .mcp.json hooks/a hooks/b'#" "$ROOT/scripts/check-hygiene.sh" \
+  > "$T/hyg-allow.sh"
+if [ "$(grep -c "^ALLOWED_LOAD_SURFACES='hooks/hooks.json .mcp.json hooks/a hooks/b'\$" "$T/hyg-allow.sh")" = 1 ]; then
+  pass=$((pass + 1)); echo "PASS hygiene: ALLOWED_LOAD_SURFACES is one line to extend"
+else failn=$((failn + 1)); echo "FAIL hygiene: no ALLOWED_LOAD_SURFACES='' line in check-hygiene.sh"; fi
+HYG="$T/hyg-allow.sh"
+hy allow-listed pass hooks/hooks.json .mcp.json; hy allow-another fail hooks/hooks.json hooks/run.sh
+hy allow-other-case fail .MCP.json; hy allow-space fail "hooks/a hooks/b"
+HYG="$ROOT/scripts/check-hygiene.sh"
+# a manifest key beyond the list fails, however it is spelled in the file; a manifest jq cannot read fails
+hym() { # hym NAME MANIFEST JSON TEXT  — the check fails on .claude-plugin/MANIFEST holding JSON, saying TEXT
+  hyrepo "$1" && printf '%s\n' "$3" > "$T/hy/$1/.claude-plugin/$2" && hyrun "$1" fail && hysaid "$4"
+}
+hym m-hooks plugin.json '{"name": "auditor", "hooks": "./hooks.json"}' "plugin.json: key 'hooks'"
+hym m-escaped plugin.json '{"name": "auditor", "ho\u006fks": {}}' "plugin.json: key 'hooks'"
+hym m-monitors plugin.json '{"name": "auditor", "experimental": {"monitors": [{"name": "m", "command": "x"}]}}' \
+  "key 'experimental.monitors'"
+hym m-mcp plugin.json '{"name": "auditor", "mcpServers": {"s": {"command": "x"}}}' "key 'mcpServers'"
+hym m-nested plugin.json '{"name": "auditor", "author": {"name": "a", "hooks": {}}}' "key 'author.hooks'"
+hym m-space plugin.json '{"name version": "auditor"}' "key 'name version'"
+hym m-entry marketplace.json '{"name": "auditor", "plugins": [{"name": "auditor", "source": ".", "lspServers": {}}]}' \
+  "key 'plugins.[].lspServers'"
+hym m-root marketplace.json '{"name": "auditor", "metadata": {"pluginRoot": "./x"}, "plugins": []}' "key 'metadata.pluginRoot'"
+hym m-broken plugin.json '{"name": ' "plugin.json: jq cannot read it"
+# large input: a 1 MiB plugin.json whose last key is hooks
+hyrepo m-large && awk 'BEGIN { printf "{\"name\": \"auditor\", \"description\": \""
+  for (i = 0; i < 17000; i++) printf "line %05d xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx ", i
+  print "\", \"hooks\": {}}" }' > "$T/hy/m-large/.claude-plugin/plugin.json"
+hyrun m-large fail; hysaid "plugin.json: key 'hooks'"
+mkdir -p "$T/nojq"; for t in git tr dirname; do ln -s "$(command -v "$t")" "$T/nojq/$t"; done
+hyrepo no-jq; out=$(PATH="$T/nojq" "$BASH" "$T/hy/no-jq/scripts/check-hygiene.sh" 2>&1); got=$?
+case "$got:$out" in 1:*"jq is needed"*) pass=$((pass + 1)); echo "PASS hygiene: without jq the manifests fail";;
+  *) failn=$((failn + 1)); echo "FAIL hygiene: without jq (rc=$got)"; echo "$out";; esac
 
 echo "---- $pass passed, $failn failed"
 [ "$failn" -eq 0 ]
