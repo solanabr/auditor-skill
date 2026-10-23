@@ -15,7 +15,9 @@
 # Everything from the line after #! to the last line is one brace group, which bash reads to its end before
 # running any of it: a download cut short (curl … | bash) is a syntax error and changes nothing.
 set -euo pipefail
-unset CDPATH
+# No cd may search $CDPATH, and no git call may use a repository named in the environment instead of the
+# directory it is pointed at.
+unset CDPATH GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
 
 REPO="https://github.com/solanabr/auditor-skill.git"
 

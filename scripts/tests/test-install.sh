@@ -10,7 +10,9 @@
 #   - a path that is a symbolic link, or that holds something other than an install, is refused, and so is a
 #     backup directory that is a link or lies beside the install;
 #   - a download cut short runs nothing and exits non-zero, and a failed clone leaves the earlier install alone;
-#   - a warning goes to stderr when the install directory is inside a git work tree.
+#   - a warning goes to stderr when the install directory is inside a git work tree;
+#   - GIT_DIR and GIT_WORK_TREE naming another repository change nothing: that repository is left as it was, and
+#     the install and its submodule come from the upstream.
 # Run from the repo root: `bash scripts/tests/test-install.sh`.
 # Offline: a temp global config maps the canonical URL to local bare upstreams, and GIT_ALLOW_PROTOCOL=file
 # refuses every other transport. HOME is a temp dir too. Builds throwaway repos under ${TMPDIR:-/tmp};
@@ -288,6 +290,21 @@ if [ "$(id -u)" != 0 ]; then
     && [ "$(ls -A "$h20/.claude/skills")" = auditor-skill ] && ! grep -q 'auditor-skill installed' "$T/out"; }
   check "an earlier install that cannot be moved stops the run and stays in place" ok20
 fi
+
+# 21. GIT_DIR, with or without GIT_WORK_TREE, naming another repository that has its own vendor/trailofbits
+#     submodule: the install and its submodule are the upstream's, no warning names that repository, and every file
+#     in it stays as it was
+git init -q "$T/tobx" && echo x > "$T/tobx/x" && git -C "$T/tobx" add x && git -C "$T/tobx" commit -q -m x \
+  && git init -q "$T/other21" && echo o > "$T/other21/o" && git -C "$T/other21" add o \
+  && git -C "$T/other21" submodule add -q "file://$T/tobx" vendor/trailofbits && git -C "$T/other21" commit -q -m other
+snap21() { (cd "$T/other21" && find . -type f -exec cksum {} + | LC_ALL=C sort && find . -type d | LC_ALL=C sort); }
+before21=$(snap21)
+ok21() { installed "$1" && ! warned && head_is "$1" base && [ -f "$1/vendor/trailofbits/p" ] \
+  && [ ! -e "$1/vendor/trailofbits/x" ] && [ -n "$before21" ] && [ "$(snap21)" = "$before21" ]; }
+GIT_DIR="$T/other21/.git" GIT_WORK_TREE="$T/other21" run up2 "$T" "$T/gd21/both/auditor-skill"
+check "GIT_DIR and GIT_WORK_TREE naming another repository leave it as it was and install the upstream" ok21 "$T/gd21/both/auditor-skill"
+GIT_DIR="$T/other21/.git" run up2 "$T" "$T/gd21/dir/auditor-skill"
+check "GIT_DIR alone naming another repository leaves it as it was and installs the upstream" ok21 "$T/gd21/dir/auditor-skill"
 
 echo "---- $pass passed, $failn failed"
 [ "$failn" -eq 0 ]
