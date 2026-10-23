@@ -76,12 +76,12 @@ because `python3 -I` keeps a sibling module off `sys.path`;
   `-0`, anywhere in the line, in a field a recipe reads or not: an RPC response
   holds neither, and the bound keeps every Python reading the same lines (3.11
   and later refuse to convert an integer of more than 4300 digits). So does
-  nesting deeper than 200 (jq reads at most 256, so every recipe stops at the
-  same depth): the depth is counted on the line's text before it is parsed, as
-  the brackets `[` and `{` outside strings, escapes honoured, the top-level
-  object being 1, so a deep value that a later duplicate key replaces counts
-  too. A raw CR between JSON tokens is whitespace; inside a string it is
-  invalid JSON.
+  nesting deeper than 128 (jq gives an object two of its 256 parser slots, so
+  it reads at most 128 nested objects, and every recipe stops at that depth):
+  the depth is counted on the line's text before it is parsed, as the brackets
+  `[` and `{` outside strings, escapes honoured, the top-level object being 1,
+  so a deep value that a later duplicate key replaces counts too. A raw CR
+  between JSON tokens is whitespace; inside a string it is invalid JSON.
 - **Shape.** Every field a recipe reads must have the type it reads it as:
   `meta`, `transaction` and `message` are objects; `signatures`, `accountKeys`,
   `instructions`, `logMessages`, `innerInstructions` and the balance arrays are

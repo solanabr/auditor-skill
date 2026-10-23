@@ -210,10 +210,11 @@ _NONE = type(None)
 _DIGITS = re.compile("[0-9]+")
 _SURROGATE_ESCAPE = re.compile(r"\\u[dD][89a-fA-F]")
 _LONE_SURROGATE = re.compile("[\ud800-\udfff]")
-# Brackets may nest this deep, the top-level object being 1: well below the 256 that
-# jq reads, so profile.sh never meets a line its queries cannot parse. The depth is
-# counted on the text of the line, before it is parsed.
-_DEPTH = 200
+# Brackets may nest this deep, the top-level object being 1. The parser of jq has
+# 256 slots and an object takes two of them, so jq reads 128 nested objects and no
+# more: at this depth profile.sh never meets a line its queries cannot parse. The
+# depth is counted on the text of the line, before it is parsed.
+_DEPTH = 128
 # One JSON string (its escapes included) or one bracket: what that count reads.
 _TOKEN = re.compile(r"\"[^\"\\]*(?:\\.[^\"\\]*)*\"|[\[\]{}]", re.S)
 # The characters no key, program id or string version may hold, and that no recipe

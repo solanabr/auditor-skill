@@ -914,6 +914,13 @@ def bal(amount):
     return {"accountIndex": 1, "mint": "MintM", "owner": "OwnerA", "uiTokenAmount": {"amount": amount, "decimals": 0}}
 def enc(obj):
     return json.dumps(obj, ensure_ascii=False).encode()
+def nested(bracket, depth):
+    """The value of meta.x such that the deepest bracket of the line is at depth, the
+    line's object being 1 and meta 2: objects ({"a": {...}}) or arrays ([[...]])."""
+    n = depth - 2
+    if bracket == b"{":
+        return b'{"a": ' * (n - 1) + b"{}" + b"}" * (n - 1)
+    return b"[" * n + b"]" * n
 clean = enc(tx("SigClean", pre_tb=[bal("0")], post_tb=[bal("7")], mark=False,
                keys=[{"pubkey": "PayerClean111111111111111111111111111111111", "signer": True},
                      {"pubkey": "TokAcct11111111111111111111111111111111111", "signer": False}]))
@@ -982,9 +989,13 @@ bad = {
         b'"PLACE"', b"9" * 4301),
     "minus-0-in-a-field-no-recipe-reads": enc(tx("SigBad56", meta_extra={"computeUnitsConsumed": "PLACE"})).replace(b'"PLACE"', b"-0"),
     "a-fee-of-minus-0": enc(tx("SigBad57", meta_extra={"fee": "PLACE"})).replace(b'"PLACE"', b"-0"),
+    "objects-nested-129-deep": enc(tx("SigBad58", meta_extra={"x": "PLACE"})).replace(b'"PLACE"', nested(b"{", 129)),
+    "objects-nested-200-deep": enc(tx("SigBad59", meta_extra={"x": "PLACE"})).replace(b'"PLACE"', nested(b"{", 200)),
+    "arrays-nested-129-deep": enc(tx("SigBad60", meta_extra={"x": "PLACE"})).replace(b'"PLACE"', nested(b"[", 129)),
 }
 last = ("instruction-a-string", "keys-strings-and-objects", "header-count-a-string", "a-pubkey-that-is-an-object",
-        "a-truncated-line-holding-a-drain", "nesting-300-deep", "nesting-300-deep-under-a-key-repeated-later")
+        "a-truncated-line-holding-a-drain", "nesting-300-deep", "nesting-300-deep-under-a-key-repeated-later",
+        "objects-nested-129-deep", "objects-nested-200-deep", "arrays-nested-129-deep")
 good = {
     "raw-CR-between-tokens": enc(tx("SigGood1", mark=False)).replace(b', "transaction"', b',\r"transaction"'),
     "CRLF-line-end": enc(tx("SigGood2", mark=False)) + b"\r",
@@ -993,7 +1004,8 @@ good = {
     "an-amount-of-u64-max": enc(tx("SigGood5", pre_tb=[bal("0")], post_tb=[bal(str(2**64 - 1))], mark=False)),
     "a-duplicate-key": enc(tx("SigGood6", mark=False)).replace(b'"err": null', b'"err": {"Custom": 1}, "err": null'),
     "fewer-keys-than-balances": enc(tx("SigGood7", pre=[10000, 5, 9000000000], post=[5000, 10, 0], mark=False)),
-    "nesting-200-deep": enc(tx("SigGood8", meta_extra={"x": "PLACE"}, mark=False)).replace(b'"PLACE"', b"[" * 198 + b"]" * 198),
+    "arrays-nested-128-deep": enc(tx("SigGood8", meta_extra={"x": "PLACE"}, mark=False)).replace(b'"PLACE"', nested(b"[", 128)),
+    "objects-nested-128-deep": enc(tx("SigGood14", meta_extra={"x": "PLACE"}, mark=False)).replace(b'"PLACE"', nested(b"{", 128)),
     "a-key-holding-a-character-new-in-Unicode-15": enc(tx("SigGood11", mark=False,
         keys=[{"pubkey": "Payer\U0001fae8111111111111111111111111111111111", "signer": True},
               {"pubkey": "TokAcct\U0001fae8 1111111111111111111111111111111111", "signer": False}],
@@ -1015,9 +1027,10 @@ for kind, cases in (("bad", bad), ("good", good)):
         with open(os.path.join(d, "%s-%s.jsonl" % (kind, name)), "wb") as f:
             f.write(line + b"\n" + clean + b"\n")
 # The same crafted lines after the clean one: the result must not depend on where they sit.
-for name in last:
-    with open(os.path.join(d, "bad-%s-last.jsonl" % name), "wb") as f:
-        f.write(clean + b"\n" + bad[name] + b"\n")
+for kind, cases, names in (("bad", bad, last), ("good", good, ("arrays-nested-128-deep", "objects-nested-128-deep"))):
+    for name in names:
+        with open(os.path.join(d, "%s-%s-last.jsonl" % (kind, name)), "wb") as f:
+            f.write(clean + b"\n" + cases[name] + b"\n")
 PY
 # runs20 <corpus>: exit status and malformed count of profile, frames, frames
 # --instructions, deltas lamports and deltas tokens, as "s:n s:n s:n s:n s:n", where n
