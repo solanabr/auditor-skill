@@ -273,10 +273,10 @@ The one gated collector: it pages each address's signature history, failed trans
 bash "<auditor-skill root>/scripts/dnr/profile.sh" <corpus.jsonl> [<corpus.jsonl> ...]
 ```
 
-The baseline of one or more `getTransaction` JSONL corpora, such as every `incident_<n>/corpus*/transactions.jsonl`, counting each signature once. It reads structural fields only, never log text, and reports the succeeded / failed split, the transaction-version histogram, the `blockTime` window, and the top 20 fee payers, signers and top-level programs. It keeps the first occurrence of each signature and skips malformed lines; closing `-- skipped` lines give both counts.
+The baseline of one or more `getTransaction` JSONL corpora, such as every `incident_<n>/corpus*/transactions.jsonl`, counting each signature once. It reads structural fields only, never log text, and reports the succeeded / failed split, the transaction-version histogram, the `blockTime` window, and the top 20 fee payers, signers and top-level programs. It keeps the first occurrence of each signature and skips malformed lines under the input contract the three recipes share ([`scripts/dnr/README.md`](../scripts/dnr/README.md#input-contract)); closing `-- skipped` lines give both counts, one per input for malformed lines, and are printed on stderr too. Those malformed lines are collection gaps.
 
 - **Arguments:** one or more corpus files. No flags.
-- **Exit:** 0 done · 2 usage error or no such file · 3 `jq` or `python3` missing, checked before anything is read (`[blocker] <tool> is not on PATH; profile.sh needs jq and python3.`).
+- **Exit:** 0 done · 1 a corpus file that cannot be read · 2 usage error, no such file, or a file that is a symbolic link or reached through one inside the working directory · 3 `jq` or `python3` missing, checked before anything is read (`[blocker] <tool> is not on PATH; profile.sh needs jq and python3.`).
 - **Network:** none. **Writes:** stdout only. Needs `jq` and `python3` (the one-per-signature pass runs as `python3 -I`).
 
 #### `frames.py`
@@ -285,11 +285,11 @@ The baseline of one or more `getTransaction` JSONL corpora, such as every `incid
 python3 -I "<auditor-skill root>/scripts/dnr/frames.py" [--instructions] [<corpus.jsonl> ...]    # reads stdin when no file is named
 ```
 
-Attributes each `Program log:`, `Program data:` and `Program return:` line to the program frame that emitted it. It walks the log array one element at a time with anchored patterns, so a newline inside a log payload cannot forge a frame. Output is JSONL on stdout, one `{sig, ok, depth, program, kind, text}` record per line, where `kind` is `log`, `data`, `return`, `truncated` or `unparsed`; an input line that is not JSON becomes a `parse_error` record. A log line is what the program asserted, never proof that state changed.
+Attributes each `Program log:`, `Program data:` and `Program return:` line to the program frame that emitted it. It walks the log array one element at a time with anchored patterns, so a newline inside a log payload cannot forge a frame. Output is JSONL on stdout, one `{sig, ok, depth, program, kind, text}` record per line, where `kind` is `log`, `data`, `return`, `truncated` or `unparsed`. A malformed input line is skipped and counted under the shared input contract, never echoed. A log line is what the program asserted, never proof that state changed.
 
-- **Arguments:** corpus files (several corpora count each signature once; skipped copies are reported on stderr), or none for stdin.
+- **Arguments:** corpus files (several corpora count each signature once), or none for stdin. Skipped copies, and each input's malformed lines, are reported on stderr.
 - **`--instructions`:** prints the instruction records instead; the default output is unchanged without it. An `ix` record for each entry of `message.instructions` and `meta.innerInstructions` gives the program, the top-level and inner index, the stack height, the accounts, and the data as given (or `parsed-only`). An `invoke` record gives each invocation's depth, outcome and the `ix_seq` it ran. No `ix` field comes from log text.
-- **Exit:** 0 done · 1 a file that cannot be read.
+- **Exit:** 0 done · 1 a file that cannot be read, checked before any record is printed · 2 a file that is a symbolic link or reached through one inside the working directory.
 - **Network:** none. **Writes:** stdout only.
 
 #### `deltas.py`
@@ -303,10 +303,10 @@ Balance movements of successful transactions, computed in Python integers so tha
 - `lamports` prints `signature`, `account`, `delta` for each non-zero lamport change, with the fee added back for the fee payer.
 - `tokens` prints one row per token account: `signature`, `owner` (`?` when the corpus names none), `mint`, `delta` in raw units, and the token account. Sum the rows per owner and mint for an owner's net movement.
 
-The output is TSV on stdout; tabs, newlines, carriage returns and backslashes inside a field are escaped. Several corpora count each signature once; skipped copies are reported on stderr.
+The output is TSV on stdout; tabs, newlines, carriage returns and backslashes inside a field are escaped. Several corpora count each signature once. An amount or balance that is not an exact integer (a float, `1_000`, a non-ASCII digit) makes its line malformed under the shared input contract: the line is skipped and counted, never rounded. Skipped copies, and each input's malformed lines, are reported on stderr; the malformed lines are collection gaps.
 
 - **Arguments:** the mode, then corpus files or none.
-- **Exit:** 0 done · 2 a missing or unknown mode · 1 a file that cannot be read, checked before any row is printed.
+- **Exit:** 0 done · 2 a missing or unknown mode, or a file that is a symbolic link or reached through one inside the working directory · 1 a file that cannot be read, checked before any row is printed.
 - **Network:** none. **Writes:** stdout only.
 
 #### `redact.sh`

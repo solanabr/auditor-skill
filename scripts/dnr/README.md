@@ -40,6 +40,49 @@ Each takes every corpus of an incident at once
 (`incident_<n>/corpus*/transactions.jsonl`) and reads a transaction that more
 than one of them holds once, by signature, saying how many copies it skipped.
 
+## Input contract
+
+`profile.sh`, `frames.py` and `deltas.py` read their input the same way, through
+one block of code that is the same in all three files. It is copied, not shared,
+because `python3 -I` keeps a sibling module off `sys.path`;
+`scripts/tests/test-dnr.sh` fails when the copies differ.
+
+- **Inputs.** Every named file is checked before anything is printed. A file
+  that is a symbolic link, or that is reached through a directory link inside
+  the working directory, is refused (exit 2), since an approval prompt shows the
+  path, not where it leads. A file that cannot be read, or is not a regular file,
+  is an error (exit 1). With no file named, `frames.py` and `deltas.py` read
+  stdin. A message shows a path escaped to printable ASCII and cut at 120
+  characters, never raw.
+- **Lines.** Input is read as bytes and split on LF only, so a CR is not a line
+  break. Surrounding ASCII whitespace is stripped (a CRLF line end is fine), and
+  a blank line is skipped without being counted.
+- **Text.** A line must be valid UTF-8 and one JSON object. `NaN`, `Infinity`,
+  a number too large for a float, nesting deeper than the parser allows, and a
+  `\u` escape that leaves a lone surrogate each make it malformed. A raw CR
+  between JSON tokens is whitespace; inside a string it is invalid JSON.
+- **Shape.** Every field a recipe reads must have the type it reads it as:
+  `meta`, `transaction` and `message` are objects; `signatures`, `accountKeys`,
+  `instructions`, `logMessages`, `innerInstructions` and the balance arrays are
+  lists; `fee`, `blockTime` and the lamport balances are JSON integers (a float is
+  never rounded); a token `uiTokenAmount.amount` is a string of ASCII digits (not
+  `1_000`, `+5`, `1e3`, a non-ASCII digit or a JSON number); the account keys are
+  all strings, or all objects with a string `pubkey`. Keys, program ids and a
+  string `version` hold no control character, so each prints as one line.
+  `shaped()` in the block is the full rule.
+- **Malformed lines are counted, never echoed and never fatal.** A line that
+  breaks a rule above is skipped. Each recipe then prints one note per input on
+  stderr (`profile.sh` also closes its report with it):
+  `skipped N malformed line(s) in input I (<path>), the first at line L (…)`.
+  Those lines are collection gaps: copy each note into the ledger's **Collection
+  gaps** line and into `collection_gaps` in `INCIDENTS.json`. The three recipes
+  agree on which lines are malformed, wherever a line sits in a file, so a
+  profile, a frame list and a delta table describe the same transactions, and no
+  exit status depends on line order.
+- **Copies.** A transaction is read once, at the first line that carries its
+  signature; the copies skipped are counted in a note of their own.
+- **Output.** `frames.py` and `deltas.py` write UTF-8 whatever the locale.
+
 ## Two hazards these encode, and why
 
 - **A program log can forge a frame.** `Program log:` text is attacker-chosen and

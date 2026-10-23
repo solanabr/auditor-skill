@@ -846,6 +846,211 @@ for case in \
   fi
 done
 
+# ---------------------------------------------------------------------------
+# 20. One input contract for profile.sh, frames.py and deltas.py (README.md):
+#     binary lines split on LF only, ASCII whitespace stripped, strict UTF-8, one
+#     JSON object per line with every field the recipes read of the type they read
+#     it as, amounts and balances exact integers. A malformed line is skipped and
+#     counted, never echoed and never a traceback, and the three recipes agree on
+#     it. The contract code is one block, the same in all three files.
+# ---------------------------------------------------------------------------
+contract() { sed -n '/^# ---- input contract/,/^# ---- end of input contract/p' "$1"; }
+if [[ -n "$(contract "$DNR/frames.py")" ]] && [[ "$(contract "$DNR/frames.py")" == "$(contract "$DNR/deltas.py")" ]] \
+   && [[ "$(contract "$DNR/frames.py")" == "$(contract "$DNR/profile.sh")" ]]; then
+  ok "contract: the input-contract block is the same in profile.sh, frames.py and deltas.py"
+else
+  bad "contract: the input-contract block differs between the recipes"
+fi
+# Each case is one crafted line (holding the word CRAFTED, so an echo would show)
+# followed by one clean transaction, which must always come through.
+python3 -I - "$TT/c20" <<'PY'
+import json, os, sys
+d = sys.argv[1]
+os.makedirs(d)
+P = "Prog7xQmP4sN9kR2wBcD3eF5gH6jK8mN1pQ2rS3tUvW"
+def tx(sig, logs=None, pre=None, post=None, pre_tb=None, post_tb=None, keys=None, ixs=None, meta_extra=None, mark=True):
+    meta = {"err": None, "fee": 5000, "preBalances": pre or [10000, 5], "postBalances": post or [5000, 10],
+            "preTokenBalances": pre_tb or [], "postTokenBalances": post_tb or [],
+            "logMessages": logs if logs is not None else ["Program %s invoke [1]" % P, "Program log: hello", "Program %s success" % P]}
+    meta.update(meta_extra or {})
+    t = {"blockTime": 1700000000, "meta": meta, "transaction": {"signatures": [sig], "message": {
+        "accountKeys": keys if keys is not None else [{"pubkey": "Payer1111111111111111111111111111111111111", "signer": True},
+                                                     {"pubkey": "TokAcct11111111111111111111111111111111111", "signer": False}],
+        "instructions": ixs if ixs is not None else [{"programId": P, "accounts": [0, 1], "data": "3Bxs4h24hBtQy9rw"}]}}}
+    if mark:
+        t["note"] = "CRAFTED"
+    return t
+def bal(amount):
+    return {"accountIndex": 1, "mint": "MintM", "owner": "OwnerA", "uiTokenAmount": {"amount": amount, "decimals": 0}}
+def enc(obj):
+    return json.dumps(obj, ensure_ascii=False).encode()
+clean = enc(tx("SigClean", pre_tb=[bal("0")], post_tb=[bal("7")], mark=False,
+               keys=[{"pubkey": "PayerClean111111111111111111111111111111111", "signer": True},
+                     {"pubkey": "TokAcct11111111111111111111111111111111111", "signer": False}]))
+bad = {
+    "lone-surrogate-in-a-log": enc(tx("SigBad1")).replace(b"Program log: hello", b"Program log: \\ud800 hello"),
+    "lone-surrogate-in-an-owner": enc(tx("SigBad2", pre_tb=[bal("0")], post_tb=[bal("1")])).replace(b'"OwnerA"', b'"\\udc80"', 1),
+    "meta-is-a-list": b'{"meta":[1,"CRAFTED"],"transaction":{"signatures":["SigBad3"],"message":{"accountKeys":[],"instructions":[]}}}',
+    "key-without-pubkey": enc(tx("SigBad4", keys=[{"pubkey": "Payer1111111111111111111111111111111111111"}, {"signer": False}])),
+    "keys-strings-and-objects": enc(tx("SigBad5", keys=["Payer1111111111111111111111111111111111111", {"pubkey": "TokAcct11111111111111111111111111111111111"}])),
+    "instruction-a-string": enc(tx("SigBad6", ixs=["CRAFTED"])),
+    "header-count-a-string": enc(tx("SigBad7", keys=["Payer1111111111111111111111111111111111111"])).replace(b'"instructions"', b'"header": {"numRequiredSignatures": "1"}, "instructions"'),
+    "raw-CR-inside-a-string": enc(tx("SigBad8")).replace(b"Program log: hello", b"Program log: hel\rlo"),
+    "amount-1_000": enc(tx("SigBad9", pre_tb=[bal("0")], post_tb=[bal("1_000")])),
+    "amount-arabic-indic-digit": enc(tx("SigBad10", pre_tb=[bal("0")], post_tb=[bal("٣")])),
+    "amount-full-width-digits": enc(tx("SigBad11", pre_tb=[bal("0")], post_tb=[bal("１２")])),
+    "amount-a-JSON-float": enc(tx("SigBad12", pre_tb=[bal("0")], post_tb=[bal(1.5)])),
+    "amount-1e3": enc(tx("SigBad13", pre_tb=[bal("0")], post_tb=[bal("1e3")])),
+    "amount-signed": enc(tx("SigBad14", pre_tb=[bal("0")], post_tb=[bal("+5")])),
+    "lamports-a-float": enc(tx("SigBad15", pre=[10000, 1.5], post=[5000, 3.5])),
+    "lamports-Infinity": enc(tx("SigBad16", pre=[10000, 1], post=[5000, 2])).replace(b"[5000, 2]", b"[5000, Infinity]"),
+    "lamports-NaN": enc(tx("SigBad17", pre=[10000, 1], post=[5000, 2])).replace(b"[5000, 2]", b"[5000, NaN]"),
+    "fee-a-string": enc(tx("SigBad18", meta_extra={"fee": "5000"})),
+    "float-out-of-range": enc(tx("SigBad19", meta_extra={"computeUnitsConsumed": 1.5})).replace(b"1.5", b"1e400"),
+    "invalid-UTF-8": enc(tx("SigBad20")).replace(b"Program log: hello", b"Program log: hel\xfflo"),
+    "leading-x1c": b"\x1c" + enc(tx("SigBad21")),
+    "a-JSON-array": b'["CRAFTED"]',
+    "a-log-that-is-not-a-string": enc(tx("SigBad22", logs=["Program log: hello", 5])),
+    "inner-group-without-index": enc(tx("SigBad23", meta_extra={"innerInstructions": [{"instructions": []}]})),
+    "nesting-deeper-than-the-parser": b'{"meta":{"x":' + b"[" * 100000 + b"]" * 100000 + b'},"note":"CRAFTED"}',
+    "a-truncated-line-holding-a-drain": enc(tx("SigBad24", pre_tb=[bal("9000000")], post_tb=[bal("0")]))[:-2],
+    "amount-a-float-above-2^53": enc(tx("SigBad25", pre_tb=[bal("0")], post_tb=[bal("PLACE")])).replace(b'"PLACE"', b"9007199254740993.0"),
+    "lamports-a-float-above-2^53": enc(tx("SigBad26", pre=[10000, 1], post=[5000, 2])).replace(b"[5000, 2]", b"[5000, 9007199254740993.0]"),
+    "a-pubkey-that-is-an-object": enc(tx("SigBad27", keys=[{"pubkey": {"a": 1, "b": 2}, "signer": True}])),
+    "a-key-holding-a-newline": enc(tx("SigBad28", keys=["Payer11111111111\nForged2222222222222222222"])),
+    "a-program-id-holding-a-newline": enc(tx("SigBad29", ixs=[{"programId": "Prog\nForged", "accounts": []}])),
+    "a-version-holding-a-newline": enc(dict(tx("SigBad30"), version="0\n   999 legacy")),
+}
+last = ("instruction-a-string", "keys-strings-and-objects", "header-count-a-string", "a-pubkey-that-is-an-object",
+        "a-truncated-line-holding-a-drain")
+good = {
+    "raw-CR-between-tokens": enc(tx("SigGood1", mark=False)).replace(b', "transaction"', b',\r"transaction"'),
+    "CRLF-line-end": enc(tx("SigGood2", mark=False)) + b"\r",
+    "a-surrogate-pair-escape": enc(tx("SigGood3", mark=False)).replace(b"Program log: hello", b"Program log: \\ud83d\\ude00"),
+    "an-escaped-backslash-before-u": enc(tx("SigGood4", mark=False)).replace(b"Program log: hello", b"Program log: \\\\ud800"),
+    "a-45-digit-amount": enc(tx("SigGood5", pre_tb=[bal("0")], post_tb=[bal("1" * 45)], mark=False)),
+    "a-duplicate-key": enc(tx("SigGood6", mark=False)).replace(b'"err": null', b'"err": {"Custom": 1}, "err": null'),
+}
+for kind, cases in (("bad", bad), ("good", good)):
+    for name, line in cases.items():
+        assert kind == "good" or b"CRAFTED" in line, name
+        with open(os.path.join(d, "%s-%s.jsonl" % (kind, name)), "wb") as f:
+            f.write(line + b"\n" + clean + b"\n")
+# The same crafted lines after the clean one: the result must not depend on where they sit.
+for name in last:
+    with open(os.path.join(d, "bad-%s-last.jsonl" % name), "wb") as f:
+        f.write(clean + b"\n" + bad[name] + b"\n")
+PY
+# runs20 <corpus>: exit status and malformed count of profile, frames, frames
+# --instructions, deltas lamports and deltas tokens, as "s:n s:n s:n s:n s:n", where n
+# is the count from the "skipped N malformed" line on stderr (0 when there is none).
+runs20() {
+  local f="$1" out="" rc n
+  for r in profile frames ix lamports tokens; do
+    case "$r" in
+      profile) bash "$DNR/profile.sh" "$f" > "$TT/r20.out" 2> "$TT/r20.err" ;;
+      frames) python3 -I "$DNR/frames.py" "$f" > "$TT/r20.out" 2> "$TT/r20.err" ;;
+      ix) python3 -I "$DNR/frames.py" --instructions "$f" > "$TT/r20.out" 2> "$TT/r20.err" ;;
+      *) python3 -I "$DNR/deltas.py" "$r" "$f" > "$TT/r20.out" 2> "$TT/r20.err" ;;
+    esac
+    rc=$?
+    n="$(sed -n 's/^[a-z]*\.[a-z]*: skipped \([0-9]*\) malformed line.*/\1/p' "$TT/r20.err")"
+    out="$out $rc:${n:-0}"
+    cat "$TT/r20.out" "$TT/r20.err" >> "$TT/r20.all"
+    case "$r" in
+      profile) grep -q 'PayerClean' "$TT/r20.out" || echo "profile lost the clean transaction" >> "$TT/r20.lost" ;;
+      frames|ix) grep -q '"sig": "SigClean"' "$TT/r20.out" || echo "$r lost the clean transaction" >> "$TT/r20.lost" ;;
+      lamports|tokens) grep -q '^SigClean	' "$TT/r20.out" || echo "$r lost the clean transaction" >> "$TT/r20.lost" ;;
+    esac
+  done
+  echo "${out# }"
+}
+for f in "$TT"/c20/bad-*.jsonl; do
+  name="${f##*/bad-}"; name="${name%.jsonl}"
+  : > "$TT/r20.all"; rm -f "$TT/r20.lost"
+  eq "contract: $name is one malformed line for every recipe, which carries on" "$(runs20 "$f")" "0:1 0:1 0:1 0:1 0:1"
+  if grep -q 'CRAFTED\|Traceback' "$TT/r20.all" || [[ -e "$TT/r20.lost" ]]; then
+    bad "contract: $name was echoed, raised, or lost the clean transaction ($(cat "$TT/r20.lost" 2>/dev/null))"
+  fi
+done
+for f in "$TT"/c20/good-*.jsonl; do
+  name="${f##*/good-}"; name="${name%.jsonl}"
+  : > "$TT/r20.all"; rm -f "$TT/r20.lost"
+  eq "contract: $name is read as a transaction by every recipe" "$(runs20 "$f")" "0:0 0:0 0:0 0:0 0:0"
+  if grep -q 'Traceback' "$TT/r20.all" || [[ -e "$TT/r20.lost" ]]; then
+    bad "contract: $name raised or lost the clean transaction ($(cat "$TT/r20.lost" 2>/dev/null))"
+  fi
+done
+eq "contract: a raw CR between JSON tokens is not a line break: deltas keeps that transaction's rows" \
+  "$(python3 -I "$DNR/deltas.py" lamports "$TT/c20/good-raw-CR-between-tokens.jsonl" | cut -f1 | sort -u | tr '\n' ' ')" "SigClean SigGood1 "
+eq "contract: a 45-digit amount stays exact" \
+  "$(python3 -I "$DNR/deltas.py" tokens "$TT/c20/good-a-45-digit-amount.jsonl" | awk -F'\t' '$1 == "SigGood5" { print $4 }')" "$(python3 -I -c 'print("1" * 45)')"
+eq "contract: malformed lines are counted per input, named by path and line, not echoed; copies are counted apart" \
+  "$(cd "$TT/c20" && python3 -I "$DNR/frames.py" good-a-duplicate-key.jsonl bad-meta-is-a-list.jsonl bad-a-JSON-array.jsonl 2>&1 >/dev/null | tr '\n' '|')" \
+  "frames.py: skipped 2 transaction(s) already read under the same signature|frames.py: skipped 1 malformed line(s) in input 2 (bad-meta-is-a-list.jsonl), the first at line 1 (not a getTransaction JSON object the recipes can read)|frames.py: skipped 1 malformed line(s) in input 3 (bad-a-JSON-array.jsonl), the first at line 1 (not a getTransaction JSON object the recipes can read)|"
+eq "contract: on stdin, the same note names stdin" \
+  "$(python3 -I "$DNR/deltas.py" lamports < "$TT/c20/bad-meta-is-a-list.jsonl" 2>&1 >/dev/null)" \
+  "deltas.py: skipped 1 malformed line(s) in stdin, the first at line 1 (not a getTransaction JSON object the recipes can read)"
+prof20="$(cd "$TT/c20" && bash "$DNR/profile.sh" bad-meta-is-a-list.jsonl 2> "$TT/p20.err")"
+eq "contract: profile.sh closes its report with the note, and prints it on stderr too" \
+  "$(printf '%s\n' "$prof20" | grep '^-- skipped:')|$(cat "$TT/p20.err")" \
+  "-- skipped: 1 malformed line(s) in input 1 (bad-meta-is-a-list.jsonl), the first at line 1 (not a getTransaction JSON object the recipes can read)|profile.sh: skipped 1 malformed line(s) in input 1 (bad-meta-is-a-list.jsonl), the first at line 1 (not a getTransaction JSON object the recipes can read)"
+
+# ---------------------------------------------------------------------------
+# 21. The recipes refuse a corpus path that is a symbolic link, or that passes
+#     through a directory link inside the working directory (exit 2, no output),
+#     and show a path they cannot use only escaped and capped. A link above the
+#     working directory, the operator's own, is followed.
+# ---------------------------------------------------------------------------
+W21="$TT/wd21"; mkdir -p "$W21/real" "$TT/op21"
+cp "$FIX/same-owner-drain.jsonl" "$W21/real/corpus.jsonl"
+cp "$FIX/same-owner-drain.jsonl" "$TT/op21/corpus.jsonl"
+ln -s "$W21/real/corpus.jsonl" "$W21/file-link.jsonl"
+ln -s "$W21/real" "$W21/dir-link"
+ln -s "$TT/op21" "$TT/op-link21"
+# runs21 <path>: "status:output lines:refusal lines" for profile, frames and deltas,
+# each run from $W21.
+runs21() {
+  local res="" r
+  for r in profile frames tokens; do
+    case "$r" in
+      profile) ( cd "$W21" && bash "$DNR/profile.sh" "$1" ) > "$TT/r21.out" 2> "$TT/r21.err" ;;
+      frames) ( cd "$W21" && python3 -I "$DNR/frames.py" "$1" ) > "$TT/r21.out" 2> "$TT/r21.err" ;;
+      tokens) ( cd "$W21" && python3 -I "$DNR/deltas.py" tokens "$1" ) > "$TT/r21.out" 2> "$TT/r21.err" ;;
+    esac
+    res="$res $?:$(grep -c . "$TT/r21.out"):$(grep -c 'is a symbolic link, or is reached through one inside the working directory; refusing it$' "$TT/r21.err")"
+  done
+  echo "${res# }"
+}
+for case in "a file that is a link|file-link.jsonl" "a path through a directory link in the working directory|dir-link/corpus.jsonl" \
+  "the same path, absolute|$W21/dir-link/corpus.jsonl"; do
+  eq "input links: ${case%%|*} -> profile, frames and deltas refuse it (exit 2, no output)" "$(runs21 "${case#*|}")" "2:0:1 2:0:1 2:0:1"
+done
+got="$(runs21 "$TT/op-link21/corpus.jsonl")"
+case "$got" in
+  0:[1-9]*:0\ 0:*:0\ 0:[1-9]*:0) ok "input links: a directory link above the working directory is followed ($got)" ;;
+  *) bad "input links: the operator's directory link was refused ($got)" ;;
+esac
+oddp="$TT/no such"$'\n'"line"$'\033'"[31m.jsonl"
+longp="$TT/$(python3 -I -c 'print("x" * 400)').jsonl"
+for r in frames lamports; do
+  for p in "$oddp" "$longp"; do
+    case "$r" in
+      frames) python3 -I "$DNR/frames.py" "$p" > "$TT/r21.out" 2> "$TT/r21.err" ;;
+      lamports) python3 -I "$DNR/deltas.py" lamports "$p" > "$TT/r21.out" 2> "$TT/r21.err" ;;
+    esac
+    code=$?
+    msg="$(cat "$TT/r21.err")"
+    if [[ "$code" == 1 && ! -s "$TT/r21.out" && "$(grep -c . "$TT/r21.err")" == 1 && "$msg" == *"cannot read input 1 ("* \
+          && "$msg" != *$'\033'* && ${#msg} -lt 260 ]] \
+       && { [[ "$p" == "$longp" && "$msg" == *"...)"* ]] || [[ "$p" == "$oddp" && "$msg" == *'such\nline\x1b[31m.jsonl'* ]]; }; then
+      ok "input paths: $r shows an unreadable path escaped and capped, on one line (exit 1)"
+    else
+      bad "input paths: $r unreadable path -> exit $code, message '$msg'"
+    fi
+  done
+done
+
 if [[ "$fails" -ne 0 ]]; then
   echo "test-dnr: $fails assertion(s) FAILED" >&2
   exit 1
