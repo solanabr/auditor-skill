@@ -134,11 +134,15 @@ directory.
    `suspected`. Every PoC run and any build of target code needs the Rule 11a
    mode: ask once (a non-interactive run is native, and the report says so),
    pass it to the agent for the ledger header, pass it on as `AUDITOR_EXEC_MODE`.
-   `key_compromise` stays at `suspected` unless a person records a custodian
+   Hand it the PoC build cache from the ledger header, if any, and pass one it
+   creates to the agent for that header. Before the Leg 3 line counts, check the
+   crate's harness copy and its `non-registry code:` line as `/auditor:poc` step 6
+   does. `key_compromise` stays at `suspected` unless a person records a custodian
    attestation word for word (README).
 
 6. **The plan (Phase 4), in `incident-responder`.** Spawn the agent with the
-   `context-builder` and `poc-engineer` results. It writes
+   `context-builder` and `poc-engineer` results (as in hunt step 7, the re-run flag
+   and the build cache included). It writes
    `incident_<n>/RESPONSE-INC-<n>.<k>.md` from
    `${CLAUDE_PLUGIN_ROOT}/templates/response-plan.md`; a plan written for another
    lead is never overwritten. It covers the verdict, the timeline, containment, the

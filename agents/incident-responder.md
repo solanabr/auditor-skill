@@ -35,11 +35,14 @@ pause, freeze, rotate, or contact anyone.
 The command names everything you work from in your prompt: the run directory, the
 corpus paths (`incident_<n>/corpus*/transactions.jsonl`, any `--logs` files), the
 snapshot lines from `snapshot-program.sh`, the provider domain, the window and caps
-the human approved for each collection, the execution mode once one is recorded,
-and, later, the `context-builder` and `poc-engineer` results. Work from exactly
-those. You never run `collect.sh`: when the corpus is not enough, return the exact
-addresses, window and caps you propose; the command asks the human and collects
-into the next `incident_<n>/corpus-<k>/`.
+the human approved for each collection, the execution mode and the PoC build cache
+once they are recorded, and, later, the `context-builder` and `poc-engineer`
+results. Work from exactly those. Copy the mode and the cache into `LEDGER.md`'s
+**Execution mode** and **PoC build cache** lines. When a Leg-3 `run.sh` run exits 3,
+set the **PoC re-run flag** line to "PoC re-run needed" with `run.sh`'s blocker line
+verbatim, and clear it once a re-run decides. You never run `collect.sh`: when the
+corpus is not enough, return the exact addresses, window and caps you propose; the
+command asks the human and collects into the next `incident_<n>/corpus-<k>/`.
 
 ## Mandate
 
