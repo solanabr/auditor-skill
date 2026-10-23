@@ -145,10 +145,14 @@ show "$tmp/mdhosts"
 
 section "Remote-exec patterns in added lines, continuation lines joined, any letter case (pipe to a shell or interpreter, sh -c \"\$(curl …)\", <(curl …), PowerShell irm … | iex and iex (irm …), npx --yes, pip / pipx / uv tool / uvx from git or a URL, cargo install --git, go install …@latest)"
 # "<path>: <added line>". An added line ending in a backslash, or in a pipe outside a Markdown table row, is
-# joined with the next added line, so a multi-line installer is scanned as one command.
+# joined with the next added line, so a multi-line installer is scanned as one command. A "+++ " line names
+# the file only inside a file header, so an added line that starts with "++ " is scanned like any other.
 joined() { awk '
   function flush() { if (buf != "") print file ": " buf; buf = "" }
-  /^\+\+\+ / { flush(); file = substr($0, 5); sub(/^b\//, "", file); next }
+  /^diff --git / { flush(); hdr = 1; next }
+  hdr && /^\+\+\+ / { file = substr($0, 5); sub(/^b\//, "", file); next }
+  /^@@/ { flush(); hdr = 0; next }
+  hdr { next }
   /^\+/ { s = substr($0, 2); if (buf != "") sub(/^[ \t]+/, "", s); buf = (buf == "") ? s : buf " " s
           if (buf ~ /\\[ \t]*$/) { sub(/[ \t]*\\[ \t]*$/, "", buf); next }
           if (buf ~ /[|][ \t]*$/ && s !~ /^[ \t]*[|]/) next
