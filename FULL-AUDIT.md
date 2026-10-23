@@ -388,11 +388,15 @@ ACTIONS:
   # cannot steer them — cargo and rustup read those from every parent directory, so
   # audit_<n>/ inside the tree is not far enough (Rule 11a). Run the block below as
   # one command: $SCRATCH lasts only as long as its shell, and with it empty
-  # `cd "$SCRATCH"` would stay in the target tree. So the block checks it first:
+  # `cd "$SCRATCH"` would stay in the target tree. So the block first checks that it
+  # is an absolute directory outside the working directory:
   #   OUTCOME: no scratch copy → nothing below ran (npm audit, cargo audit, the
-  #                              quarantine check): never a PASS. Fix the temp dir if
-  #                              mktemp failed, then run the whole block again
+  #                              quarantine check): never a PASS. Point TMPDIR at an
+  #                              absolute directory outside the target tree if mktemp
+  #                              failed or landed inside it, then run the whole block again
   SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/auditor-scratch.XXXXXX")   # outside the target tree
+  case "$SCRATCH" in /*) ;; *) SCRATCH= ;; esac      # an absolute path only,
+  case "$SCRATCH/" in "$PWD"/*) SCRATCH= ;; esac     # never inside the working directory
   if [ -z "$SCRATCH" ] || [ ! -d "$SCRATCH" ]; then
     echo "OUTCOME: no scratch copy (create it first)"
   else

@@ -17,11 +17,13 @@ Known vulnerability in production dependency → attacker uses public exploit to
 # Audits and registry queries run from a scratch dir OUTSIDE the target tree, on copies of
 # the manifest + lockfile, so the target's .npmrc cannot steer them (OUTPUT-RULES Rule 11a).
 # $SCRATCH lasts only as long as its shell: run Steps 1, 2 and 5 in one shell. Each step
-# runs nothing unless $SCRATCH names a directory, since `cd "$SCRATCH"` with it empty
-# would stay in the target tree
+# runs nothing unless $SCRATCH is an absolute directory outside the working directory, since
+# `cd "$SCRATCH"` with it empty would stay in the target tree
 SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/auditor-scratch.XXXXXX")   # outside the target tree
+case "$SCRATCH" in /*) ;; *) SCRATCH= ;; esac      # an absolute path only,
+case "$SCRATCH/" in "$PWD"/*) SCRATCH= ;; esac     # never inside the working directory
 if [ -z "$SCRATCH" ] || [ ! -d "$SCRATCH" ]; then
-  echo "OUTCOME: no scratch copy (mktemp failed)"
+  echo "OUTCOME: no scratch copy (check TMPDIR)"
 else
   mkdir -p "$SCRATCH/backend" "$SCRATCH/web"
   cp apps/backend/package.json apps/backend/package-lock.json "$SCRATCH/backend/"
@@ -33,13 +35,15 @@ fi
 - ✅ PASS: Zero high/critical vulnerabilities
 - ⚠️ PARTIAL: Only moderate or low vulnerabilities
 - ❌ FAIL: High/critical vulnerabilities in production dependencies
-- ⚠️ Not run, never a PASS: `OUTCOME: no scratch copy (mktemp failed)` — no scratch dir was created; fix the temp dir (`TMPDIR`) and run the step again
+- ⚠️ Not run, never a PASS: `OUTCOME: no scratch copy (check TMPDIR)` — mktemp failed, or gave a relative path or one inside the working directory; point `TMPDIR` at an absolute directory outside the target tree and run the step again
 
 **Step 2: Check for outdated packages**
 ```
 # On the Step 1 copies. They have no node_modules, so Current reads MISSING:
 # compare Wanted / Latest with the version the lockfile pins
-if [ -z "${SCRATCH:-}" ] || [ ! -d "$SCRATCH" ]; then
+case "${SCRATCH:-}" in /*) ;; *) SCRATCH= ;; esac   # an absolute path only,
+case "$SCRATCH/" in "$PWD"/*) SCRATCH= ;; esac     # never inside the working directory
+if [ -z "$SCRATCH" ] || [ ! -d "$SCRATCH" ]; then
   echo "OUTCOME: no scratch copy (run Step 1 first)"
 else
   (cd "$SCRATCH/backend" && npm outdated)
@@ -70,7 +74,9 @@ grep -E "\"[~^]" apps/backend/package.json apps/web/package.json | head -20
 # A copy of Cargo.lock in the Step 1 scratch dir, toolchain pinned (OUTPUT-RULES Rule 11a), stderr
 # kept. cargo-audit exits 1 both for advisories and for an advisory database it cannot fetch or
 # load, so the OUTCOME line decides (the FULL-AUDIT Step 3.2 recipe)
-if [ -z "${SCRATCH:-}" ] || [ ! -d "$SCRATCH" ]; then
+case "${SCRATCH:-}" in /*) ;; *) SCRATCH= ;; esac   # an absolute path only,
+case "$SCRATCH/" in "$PWD"/*) SCRATCH= ;; esac     # never inside the working directory
+if [ -z "$SCRATCH" ] || [ ! -d "$SCRATCH" ]; then
   echo "OUTCOME: no scratch copy (run Step 1 first)"
 else
   mkdir -p "$SCRATCH/rust" && cp Cargo.lock "$SCRATCH/rust/"

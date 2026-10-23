@@ -14,8 +14,8 @@
 #     side branch, a merge commit, tab and CRLF lockfiles), but not another package at those versions; the
 #     --oneline history search; above 64 KiB;
 #   - the scratch-directory recipes, FULL-AUDIT Step 3.2 and KV-089 Steps 1, 2 and 5: with $SCRATCH unset,
-#     empty or missing, or mktemp failing, they print OUTCOME: no scratch copy and run nothing; otherwise
-#     npm, cargo and rustup run only inside the scratch directory;
+#     empty, missing, relative or inside the working directory, or mktemp failing, they print OUTCOME: no
+#     scratch copy and run nothing; otherwise npm, cargo and rustup run only inside the scratch directory;
 #   - KV-137 Step 2: the upstream comparison runs in a scratch copy and nothing from the checkout's config.
 # Usage (from the repo root): bash scripts/tests/test-lockfile-recipes.sh
 # Needs bash >= 3.2, git, grep, sed, awk, find, mkfifo. No network: the upstream is a local path.
@@ -360,8 +360,16 @@ scratch_case "KV-089 Step 2, SCRATCH empty" "$T/kv2.sh" "OUTCOME: no scratch cop
 scratch_case "KV-089 Step 5, SCRATCH unset" "$T/kv5.sh" "OUTCOME: no scratch copy (run Step 1 first)" -u SCRATCH TMPDIR="$T/tmp"
 scratch_case "KV-089 Step 5, SCRATCH a missing directory" "$T/kv5.sh" "OUTCOME: no scratch copy (run Step 1 first)" \
   SCRATCH="$T/missing" TMPDIR="$T/tmp"
-scratch_case "KV-089 Step 1, mktemp fails" "$T/kv1.sh" "OUTCOME: no scratch copy (mktemp failed)" TMPDIR="$T/missing"
+scratch_case "KV-089 Step 1, mktemp fails" "$T/kv1.sh" "OUTCOME: no scratch copy (check TMPDIR)" TMPDIR="$T/missing"
 scratch_case "FULL-AUDIT Step 3.2, mktemp fails" "$T/fa.sh" "OUTCOME: no scratch copy (create it first)" TMPDIR="$T/missing"
+mkdir -p "$T/tgt/rel" "$T/tgt/inside" "$T/tgt/tmpin" "$T/tgt/reltmp"
+scratch_case "KV-089 Step 2, SCRATCH a relative path" "$T/kv2.sh" "OUTCOME: no scratch copy (run Step 1 first)" SCRATCH=rel \
+  TMPDIR="$T/tmp"
+scratch_case "KV-089 Step 5, SCRATCH inside the working directory" "$T/kv5.sh" "OUTCOME: no scratch copy (run Step 1 first)" \
+  SCRATCH="$T/tgt/inside" TMPDIR="$T/tmp"
+scratch_case "KV-089 Step 1, TMPDIR a relative path" "$T/kv1.sh" "OUTCOME: no scratch copy (check TMPDIR)" TMPDIR=reltmp
+scratch_case "FULL-AUDIT Step 3.2, TMPDIR inside the working directory" "$T/fa.sh" "OUTCOME: no scratch copy (create it first)" \
+  TMPDIR="$T/tgt/tmpin"
 scratch_case "KV-089 Steps 1, 2 and 5 in one shell" "$T/kv125.sh" "" TMPDIR="$T/tmp"
 scratch_case "FULL-AUDIT Step 3.2" "$T/fa.sh" "" TMPDIR="$T/tmp"
 
