@@ -458,6 +458,7 @@ Categories scoring ≤ 1 are prioritized in the Remediation Roadmap regardless o
 - [ ] All High findings fixed and verified
 - [ ] Medium findings addressed or accepted with documented risk
 - [ ] Regression tests added for each fix
+- [ ] Each finding's PoC re-run against the head build is recorded in `RE-AUDIT.md` (`reverts | still succeeds | inconclusive | not run`), and every FIXED without an executed revert is flagged
 - [ ] Program re-deployed and verified on-chain
 - [ ] Binary hash matches source code
 

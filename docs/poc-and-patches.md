@@ -98,4 +98,4 @@ The patch is a **proposal, not an application** — the auditor stays read-only 
 1. Rule 5b confirms the finding ([output-and-rigor.md](output-and-rigor.md#the-rule-5b-validation-gate)).
 2. `/auditor:poc` → detect gates → pick framework → `poc-engineer` fills a copy of `<auditor-skill root>/templates/poc/` → `run.sh` → award the highest tier reached.
 3. `/auditor:patch` → `patch-engineer` writes the `templates/patch/` diff → apply to a scratch worktree → re-run the PoC → award a fix tier.
-4. `/auditor:audit-cycle` / `/auditor:re-audit` fold both tiers back into the finding block; the report's **Auditor Verification** line carries the fix verdict.
+4. `/auditor:audit-cycle` / `/auditor:re-audit` fold both tiers back into the finding block; the report's **Auditor Verification** line carries the fix verdict, and `RE-AUDIT.md` records each finding's step-4b PoC re-run (`<auditor-skill root>/templates/re-audit.md`).

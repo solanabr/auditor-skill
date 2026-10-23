@@ -112,7 +112,7 @@ Use it when domain judgment matters — the agent does the mechanical review, yo
 
 ### `/auditor:re-audit`
 
-Takes a prior `audit_<n>/REPORT.md` + the current tree and classifies every prior finding: **FIXED** / **PARTIALLY-FIXED** / **STILL-OPEN** / **REGRESSED** / **ACKNOWLEDGED** / **DISPUTED**. It re-runs Rule 5b on each claimed fix (a cosmetic patch is not FIXED), cites the remediation commit/PR hash, audits the changed surface for NEW findings via the diff-audit path, and runs a **sibling-patch-propagation sweep** — grep the codebase for the same anti-pattern the fix closed, so a fix applied to one call site but not its twins is caught. Emits `audit_<n+1>/RE-AUDIT.md`.
+Takes a prior `audit_<n>/REPORT.md` + the current tree and classifies every prior finding: **FIXED** / **PARTIALLY-FIXED** / **STILL-OPEN** / **REGRESSED** / **ACKNOWLEDGED** / **DISPUTED**. It re-runs Rule 5b on each claimed fix (a cosmetic patch is not FIXED), cites the remediation commit/PR hash, audits the changed surface for NEW findings via the diff-audit path, and runs a **sibling-patch-propagation sweep** — grep the codebase for the same anti-pattern the fix closed, so a fix applied to one call site but not its twins is caught. Where a finding has a PoC, it re-runs it against the head build and records the result per finding (`PoC re-run @ <sha>: reverts | still succeeds | inconclusive | not run`); a FIXED status with no executed revert is flagged, not downgraded. Emits `audit_<n+1>/RE-AUDIT.md`.
 
 ```
 /auditor:re-audit audit_1/REPORT.md main..HEAD

@@ -109,7 +109,7 @@ Aggregates the session's checkpoints and findings into the final report: de-dup 
 ### `/auditor:re-audit`
 **Arg:** `[prior-report] [base..head]`
 Fix-review / re-audit against a prior `audit_<n>/REPORT.md` (arg 1) and the current tree (delta `base..head`, default `main..HEAD`). Classifies every prior finding **FIXED / PARTIALLY-FIXED / STILL-OPEN / REGRESSED / ACKNOWLEDGED / DISPUTED** — each non-open status citing the **remediation commit/PR hash**, and re-running Rule 5b on the fix (a cosmetic/incomplete patch is not FIXED). Then audits the changed surface for NEW findings (diff-audit path) and runs a **sibling-patch-propagation sweep** for un-patched twins of every fixed anti-pattern (the sweep always emits a result — "no siblings found" is a first-class output). Its diff-audit pass includes the dependency lane, and differential execution (step 4b) runs in the intake execution mode (Rule 11a).
-**When:** the team responded to findings and you verify. **Emits:** `audit_<n+1>/RE-AUDIT.md` — finding-diff table + new findings + sibling sweep + updated deploy verdict.
+**When:** the team responded to findings and you verify. **Emits:** `audit_<n+1>/RE-AUDIT.md` (from `<auditor-skill root>/templates/re-audit.md`) — finding-diff table with each finding's step-4b PoC re-run (`reverts | still succeeds | inconclusive | not run`, a FIXED without an executed revert flagged) + new findings + sibling sweep + updated deploy verdict.
 Verification-verb discipline: use "we re-tested and confirmed" only when *you* verified against the current tree; a client's "we fixed it" stays "client states fixed (unverified)" and is not FIXED until independently confirmed.
 
 ---
