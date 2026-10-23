@@ -21,7 +21,8 @@
 #   - tools and allowed-tools list 'Name' or 'Name(pattern)' entries (agents: names only, no pattern),
 #     separated by ', ' or one per item, none empty; allowed-tools lists nothing in FORBIDDEN_ALLOWED_TOOLS;
 #   - the block is at most 65,536 bytes and holds at most 256 of '[', '{' and ' - ';
-#   - a file named with .md in another letter case (.MD) fails: name it .md.
+#   - a file named with .md in another letter case (.MD) fails: name it .md;
+#   - two agents, two commands or two skills with the same name, in any letter case, fail.
 # known-vectors/*.md carry frontmatter too, but Claude Code does not load it (check-corpus.sh reads its id).
 # Usage: bash scripts/check-frontmatter.sh [FILE...]. Exit 0 = every file passes. Needs bash >= 3.2, awk, find.
 set -uo pipefail
@@ -128,6 +129,7 @@ function check_line(   key, rest, s, t, k, hit) {
   if (key in boolean) { if (substr(rest, 2) !~ /^(true|false)$/) bad(key " must be true or false"); return }
   s = scalar(substr(rest, 2), "the value of " key); if (!sok) return
   if (s == "") { bad(key " has an empty value"); return }
+  if (key == "name") nm = s
   if (key in listable) entries(s, key)
 }
 BEGIN {
@@ -152,9 +154,12 @@ END {
   n = split(need, r, " "); for (i = 1; i <= n; i++) if (!(r[i] in seen)) bad("missing required key " r[i])
   if (size > 65536) bad("the frontmatter block is " size " bytes, over 65,536")
   if (marks > 256) bad("the frontmatter block holds " marks " of [, { and \" - \", over 256")
+  if (nm != "") printf "%s\t%s\t%s\n", kind, tolower(nm), file >> names
   exit st
 }'
 
+names=$(mktemp "${TMPDIR:-/tmp}/frontmatter.XXXXXX") || exit 2
+trap 'rm -f "$names"' EXIT
 fail=0; n=0
 for f in "$@"; do
   rel=$f; case "$f" in "$PWD"/*) rel=${f#"$PWD"/} ;; esac
@@ -177,8 +182,14 @@ for f in "$@"; do
   if [ "$(LC_ALL=C tr -d '\000' < "$f" | wc -c)" -ne "$(wc -c < "$f")" ]; then
     echo "::error::$f: a NUL byte" >&2; fail=1; continue
   fi
-  LC_ALL=C awk -v file="$f" -v kind="$kind" -v q="'" -v forbidden="$FORBIDDEN_ALLOWED_TOOLS" "$PROG" "$f" >&2 || fail=1
+  LC_ALL=C awk -v file="$f" -v kind="$kind" -v q="'" -v forbidden="$FORBIDDEN_ALLOWED_TOOLS" -v names="$names" \
+    "$PROG" "$f" >&2 || fail=1
   n=$((n + 1))
 done
+# one name for two files of a kind: Claude Code would load one of them under it
+dups=$(LC_ALL=C awk -F'\t' '{ k = $1 "\t" $2; c[k]++; f[k] = f[k] (c[k] > 1 ? ", " : "") substr($0, length(k) + 2) }
+  END { for (k in c) if (c[k] > 1) { split(k, a, "\t"); printf "::error::%s: %d %ss named %s\n", f[k], c[k], a[1], a[2] } }' \
+  "$names" | LC_ALL=C sort)
+if [ -n "$dups" ]; then printf '%s\n' "$dups" >&2; fail=1; fi
 if [ "$fail" -ne 0 ]; then echo "frontmatter check FAILED" >&2; exit 1; fi
 echo "frontmatter check passed: $n files"

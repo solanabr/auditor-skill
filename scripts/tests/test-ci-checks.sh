@@ -194,8 +194,9 @@ fm skills/s/agents/SKILL.md pass "name: s" 'description: "A skill in a directory
 lay="$T/layout"; mkdir -p "$lay/scripts" "$lay/commands/sub" "$lay/agents/deep/er" "$lay/skills/s" "$lay/skills/t/u"
 cp "$ROOT/scripts/check-frontmatter.sh" "$lay/scripts/"
 good_c() { printf -- '---\n%s\n%s\n---\n' "$C" "allowed-tools: Read" > "$1"; }
-good_a() { printf -- '---\n%s\n%s\n%s\n---\n' "$N" "$D" "$TL" > "$1"; }
-good_s() { printf -- '---\n%s\n%s\n---\n' "name: s" 'description: "A skill."' > "$1"; }
+ga=0; gs=0   # each agent and skill written below gets a name of its own
+good_a() { ga=$((ga + 1)); printf -- '---\n%s\n%s\n%s\n---\n' "name: a$ga" "$D" "$TL" > "$1"; }
+good_s() { gs=$((gs + 1)); printf -- '---\n%s\n%s\n---\n' "name: s$gs" 'description: "A skill."' > "$1"; }
 bad_fm() { printf -- '---\n%s\n%s\n%s\n---\n' "$N" "description: Ends with ---" "$TL" > "$1"; }
 good_c "$lay/commands/c.md"; good_a "$lay/agents/a.md"; good_s "$lay/SKILL.md"
 bad_fm "$lay/commands/sub/nested.md"; bad_fm "$lay/agents/deep/er/deeper.md"; bad_fm "$lay/agents/.hidden.md"
@@ -214,7 +215,25 @@ good_a "$lay/agents/skill.md"; good_a "$lay/agents/as-skill/SKILL.md"
 expect "frontmatter: with no arguments, every kind of file passes once fixed" 0 bash "$lay/scripts/check-frontmatter.sh"
 case "$out" in *"passed: 11 files"*) pass=$((pass + 1)); echo "PASS frontmatter: ... 11 files read";;
   *) failn=$((failn + 1)); echo "FAIL frontmatter: the default list did not read 11 files"; echo "$out";; esac
+printf -- '---\nname: A1\n%s\n%s\n---\n' "$D" "$TL" > "$lay/agents/twin.md"   # agents/a.md is named a1
+expect "frontmatter: with no arguments, a second agent named a1 fails" 1 bash "$lay/scripts/check-frontmatter.sh"
+case "$out" in *"agents/a.md, agents/twin.md: 2 agents named a1"*) pass=$((pass + 1)); echo "PASS frontmatter: ... both files named";;
+  *) failn=$((failn + 1)); echo "FAIL frontmatter: the duplicate name was not reported with both files"; echo "$out";; esac
 fm other/notes.md fail "$N" "$D"
+# one name for two agents, two commands or two skills fails, compared in any letter case; an agent and a
+# command may share one
+fm agents/twin-1.md pass "name: twin" "$D" "$TL"
+fm agents/twin-2.md pass 'name: "Twin"' "$D" "$TL"
+fm commands/twin-1.md pass "name: auditor:twin" "$C" "allowed-tools: Read"
+fm commands/twin-2.md pass "name: auditor:twin" "$C" "allowed-tools: Read"
+fm commands/twin.md pass "name: twin" "$C" "allowed-tools: Read"
+for pair in "agents/twin-1.md agents/twin-2.md|1|2 agents named twin" "commands/twin-1.md commands/twin-2.md|1|2 commands named auditor:twin" \
+            "skill/SKILL.md skills/s/agents/SKILL.md|1|2 skills named s" "agents/twin-1.md commands/twin.md|0|passed: 2 files"; do
+  files=${pair%%|*}; rest=${pair#*|}; want=${rest%%|*}; text=${rest#*|}
+  out=$(cd "$T/fm" && bash "$ROOT/scripts/check-frontmatter.sh" $files 2>&1); got=$?
+  case "$got:$out" in "$want:"*"$text"*) pass=$((pass + 1)); echo "PASS frontmatter: $files -> $text";;
+    *) failn=$((failn + 1)); echo "FAIL frontmatter: $files (rc=$got, want $want and '$text')"; echo "$out";; esac
+done
 # FORBIDDEN_ALLOWED_TOOLS holds only for allowed-tools: with bare Bash added to it, a command's bare Bash
 # fails while its Bash(pattern) entries and an agent's Bash tool still pass
 sed "s/^FORBIDDEN_ALLOWED_TOOLS='\(.*\)'\$/FORBIDDEN_ALLOWED_TOOLS='\1 Bash'/" "$ROOT/scripts/check-frontmatter.sh" > "$T/fm-no-bash.sh"
