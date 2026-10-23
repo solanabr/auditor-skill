@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # test-ci-checks.sh — fixture tests for the CI checks that have no suite of their own:
 #   1. scripts/check-attribution.sh flags a trailer in a commit message of 1 MiB as well as a short one,
-#      and fails on a range git cannot read or one that holds no commits; scripts/hooks/commit-msg refuses
-#      the same trailer with any spacing after its colon;
+#      and fails on a range git cannot read or one that holds no commits; it and scripts/hooks/commit-msg,
+#      which share one pattern, refuse the same trailer with any spacing around its colon, or folded onto
+#      the next line;
 #   2. scripts/check-frontmatter.sh passes every real command, agent and SKILL.md and the shapes they use,
 #      and fails each case below where Claude Code would read a field differently from what is written;
 #   3. scripts/check-pipefail.sh flags each pipe into a reader that can stop early in a script under
@@ -73,6 +74,20 @@ for sp in " " "\t" ""; do   # the commit-msg hook reads the same pattern
 done
 printf 'docs: a message\n\nCo-Authored-By: A Person <person@example.invalid>\n' > "$T/hook-msg"
 expect "commit-msg hook: a co-author trailer that names no assistant is accepted" 0 sh "$ROOT/scripts/hooks/commit-msg" "$T/hook-msg"
+# a space or a tab before the colon, and a trailer folded onto the next line, which git reads as the trailer
+for form in 'a space before the colon|Co-Authored-By : %s' 'a tab before the colon|Co-Authored-By\t: %s' \
+            'the value folded onto a line that starts with a space|Co-Authored-By:\n %s' \
+            'the value folded onto a line that starts with a tab|Co-Authored-By:\n\t%s'; do
+  printf "docs: a message\n\n${form#*|}\n" "${TRAILER#Co-Authored-By: }" > "$T/form-msg"
+  git -C "$at" reset -q --hard "$clean" && echo f >> "$at/f" && git -C "$at" commit -q -a -F "$T/form-msg"
+  expect "attribution: a trailer with ${form%%|*} fails" 1 attr "$clean..HEAD"
+  expect "commit-msg hook: a trailer with ${form%%|*} is refused" 1 sh "$ROOT/scripts/hooks/commit-msg" "$T/form-msg"
+done
+printf 'docs: a message\n\nCo-Authored-By:\n A Person <person@example.invalid>\n' > "$T/hook-msg"
+expect "commit-msg hook: a folded co-author trailer that names no assistant is accepted" 0 sh "$ROOT/scripts/hooks/commit-msg" "$T/hook-msg"
+p1=$(grep -E '^(pattern|unfold)=' "$ROOT/scripts/check-attribution.sh"); p2=$(grep -E '^(pattern|unfold)=' "$ROOT/scripts/hooks/commit-msg")
+if [ -n "$p1" ] && [ "$p1" = "$p2" ]; then pass=$((pass + 1)); echo "PASS attribution: the commit-msg hook has check-attribution.sh's pattern and unfolding"
+else failn=$((failn + 1)); echo "FAIL attribution: the commit-msg hook and check-attribution.sh differ"; echo "$p1"; echo "$p2"; fi
 
 # ---- 2. check-frontmatter.sh -----------------------------------------------------------------------
 expect "frontmatter: every real command, agent and SKILL.md passes" 0 bash "$ROOT/scripts/check-frontmatter.sh"

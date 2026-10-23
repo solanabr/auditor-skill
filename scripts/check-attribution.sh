@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # check-attribution.sh — fail if any commit in RANGE carries an AI-attribution trailer.
 # Usage: bash scripts/check-attribution.sh "origin/main..HEAD"
-# Same pattern as scripts/hooks/commit-msg (any spacing after "Co-Authored-By:"), applied to a commit range
-# (used by CI on pull requests).
+# Same pattern and unfolding as scripts/hooks/commit-msg, applied to a commit range (used by CI on pull
+# requests): any spacing around the colon of "Co-Authored-By:", and a trailer folded onto the next line, as git
+# reads trailers.
 # A range git cannot read, or one that holds no commits, fails: there is nothing to vouch for.
 set -uo pipefail
 range=${1:-"origin/main..HEAD"}
-pattern='^(Co-Authored-By:.*(Claude|Anthropic|noreply@anthropic\.com))|(Generated with .*Claude)|(🤖 Generated)'
+pattern='^(Co-Authored-By[[:space:]]*:.*(Claude|Anthropic|noreply@anthropic\.com))|(Generated with .*Claude)|(🤖 Generated)'
+# a line that starts with a space or a tab continues the one before it, as in a git trailer
+unfold='NR > 1 && /^[ \t]/ { sub(/^[ \t]+/, " "); line = line $0; next } NR > 1 { print line } { line = $0 } END { if (NR) print line }'
 
 case "$range" in -*) echo "::error::'$range' is not a commit range" >&2; exit 1 ;; esac
 commits=$(git rev-list "$range" --) || { echo "::error::cannot read the commit range '$range'" >&2; exit 1; }
@@ -17,7 +20,7 @@ while read -r sha; do
   msg=$(git -c log.showSignature=false log -1 --format=%B "$sha") \
     || { echo "::error::cannot read the message of commit $sha" >&2; bad=1; continue; }
   # count the matches: grep -c reads the whole message, however long, so nothing ends the pipe early
-  n=$(printf '%s\n' "$msg" | grep -ciE "$pattern")
+  n=$(printf '%s\n' "$msg" | awk "$unfold" | grep -ciE "$pattern")
   if [[ "${n:-0}" -gt 0 ]]; then
     echo "::error::commit $sha carries an AI-attribution trailer — remove it (see CONTRIBUTING.md §1)" >&2
     bad=1

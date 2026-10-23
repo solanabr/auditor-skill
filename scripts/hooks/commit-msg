@@ -2,8 +2,12 @@
 # Block AI-assistant attribution trailers in commit messages.
 # Scoped to attribution trailers only, so legitimate mentions of Claude/Anthropic
 # in commit subjects (this repo is about Claude skills) are not blocked.
+# The pattern and the unfolding are scripts/check-attribution.sh's, which CI runs on every commit of a PR.
 msg_file="$1"
-if grep -qiE '^(Co-Authored-By:.*(Claude|Anthropic|noreply@anthropic\.com))|(Generated with .*Claude)|(🤖 Generated)' "$msg_file"; then
+pattern='^(Co-Authored-By[[:space:]]*:.*(Claude|Anthropic|noreply@anthropic\.com))|(Generated with .*Claude)|(🤖 Generated)'
+# a line that starts with a space or a tab continues the one before it, as in a git trailer
+unfold='NR > 1 && /^[ \t]/ { sub(/^[ \t]+/, " "); line = line $0; next } NR > 1 { print line } { line = $0 } END { if (NR) print line }'
+if awk "$unfold" "$msg_file" | grep -qiE "$pattern"; then
   echo "commit-msg: remove the AI attribution trailer before committing." >&2
   exit 1
 fi
