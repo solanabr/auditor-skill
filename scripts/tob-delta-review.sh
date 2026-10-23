@@ -27,10 +27,13 @@ cd "$(dirname "$0")/.."
 
 ATTR=()
 g() { git --no-pager -c log.showSignature=false -C "$repo" ${ATTR[@]+"${ATTR[@]}"} "$@"; }
-# on every diff, log and show: plain text with fixed a/ b/ prefixes and no rename or copy detection
+# on every diff, log and show: plain text with fixed a/ b/ prefixes, and no rename or copy detection unless
+# the call asks for renames (PAIRED)
 DIFFSAFE=(--no-color --no-ext-diff --no-textconv --no-renames --src-prefix=a/ --dst-prefix=b/)
 SCAN=("${DIFFSAFE[@]}" --text)   # on every call whose output a scan reads: no file counts as binary
-PAIRED=("${SCAN[@]}" -M)         # the file list and the added-line scans pair renamed files
+PAIRED=("${SCAN[@]}" -M)         # the file list and the rename lists pair renamed files
+# paths Claude Code loads or runs on its own: nested .claude/, hooks, MCP/LSP, settings, CLAUDE.md / AGENTS.md
+LOADSURF='(^|/|[[:space:]])\.claude/|(^|/|[[:space:]])hooks(/|\.json)|\.mcp\.json|\.lsp\.json|settings[^/]*\.json|(^|/|[[:space:]])(CLAUDE|AGENTS)\.md|workflows/[^/]*\.js'
 if [ "$fetch" -eq 1 ]; then g fetch --quiet origin || { echo "fetch failed" >&2; exit 2; }; fi
 for c in "$old" "$new"; do
   g cat-file -e "$c^{commit}" 2>/dev/null \
@@ -64,8 +67,7 @@ comm -3 "$tmp/p_old" "$tmp/p_new" | awk -F'\t' '{ if ($1 == "") print "+ " $2; e
 show "$tmp/p"
 
 section "Load surfaces: nested .claude/, hooks, MCP/LSP, settings, CLAUDE.md/AGENTS.md, Workflow scripts"
-grep -E '(^|/|[[:space:]])\.claude/|(^|/|[[:space:]])hooks(/|\.json)|\.mcp\.json|\.lsp\.json|settings[^/]*\.json|(^|/|[[:space:]])(CLAUDE|AGENTS)\.md|workflows/[^/]*\.js' \
-  "$tmp/ns" > "$tmp/ls" || true
+grep -E "$LOADSURF" "$tmp/ns" > "$tmp/ls" || true
 show "$tmp/ls"
 
 section "Plugin manifests (.claude-plugin/) added or removed"
@@ -116,19 +118,29 @@ CODE=('*.sh' '*.bash' '*.py' '*.js' '*.mjs' '*.cjs' '*.ts' '*.json' '*.toml' '*.
 MD=('*.md' "${NOTESTS[@]}")
 ALL=(. ':(exclude)*.lock')
 
-section "Renamed files, OLD -> NEW (the added-line scans below read only the lines each rename changed)"
+section "Renamed files, OLD -> NEW (a file moved unchanged, to a path that is not a load surface, is left out of the added-line scans; every other renamed file is scanned whole)"
 # Pairs over the whole tree and within each scan's paths: a scan pairs only the files it reads.
 renames() { g diff "${PAIRED[@]}" --name-status --diff-filter=R "$old" "$new" -- "$@"; }
 { awk -F'\t' '$1 ~ /^R/' "$tmp/ns"; renames "${CODE[@]}"; renames "${MD[@]}"; renames "${ALL[@]}"; } \
   | awk -F'\t' '{ printf "- %s -> %s (%d%% similar)\n", $2, $3, substr($1, 2) }' | sort -u > "$tmp/ren"
 show "$tmp/ren"
+# The new paths of files a scan pairs as moved unchanged (R100), outside the load surfaces: the scan skips them.
+moved() { renames "$@" | awk -F'\t' -v rx="$LOADSURF" '$1 == "R100" && $3 !~ rx { print $3 }'; }
+moved "${CODE[@]}" > "$tmp/mv_code"; moved "${MD[@]}" > "$tmp/mv_md"; moved "${ALL[@]}" > "$tmp/mv_all"
+# added() SKIP PATHSPEC...: the -U0 diff a scan reads, every file as added or changed, less the files in SKIP.
+# Without rename detection a/ and b/ name the same path, so the path is the header's second half.
+added() { local skip=$1; shift
+  g diff "${SCAN[@]}" -U0 "$old" "$new" -- "$@" | awk -v skip="$skip" '
+    BEGIN { while ((getline p < skip) > 0) s[p] = 1 }
+    /^diff --git / { n = (length($0) - 16) / 2; keep = !(substr($0, 14, n) in s) }
+    keep'; }
 
 section "Hosts in added lines of scripts and config (excluding tests, evals, fixtures and lockfiles)"
-g diff "${PAIRED[@]}" -U0 "$old" "$new" -- "${CODE[@]}" | hosts > "$tmp/hosts" || true
+added "$tmp/mv_code" "${CODE[@]}" | hosts > "$tmp/hosts" || true
 show "$tmp/hosts"
 
 section "Hosts in added Markdown lines: skill and command text an agent may follow (excluding tests, evals and fixtures)"
-g diff "${PAIRED[@]}" -U0 "$old" "$new" -- "${MD[@]}" | hosts > "$tmp/mdhosts" || true
+added "$tmp/mv_md" "${MD[@]}" | hosts > "$tmp/mdhosts" || true
 show "$tmp/mdhosts"
 
 section "Remote-exec patterns in added lines, continuation lines joined, any letter case (pipe to a shell or interpreter, sh -c \"\$(curl …)\", <(curl …), PowerShell irm … | iex and iex (irm …), npx --yes, pip / pipx / uv tool / uvx from git or a URL, cargo install --git, go install …@latest)"
@@ -155,7 +167,7 @@ FROM="([^|;&]*[[:space:]=])?[\"']?(git[+]|https?://)"   # an install source from
 RX_PKG="npx[[:space:]]+(-y|--yes)([[:space:]]|\$)|pip[0-9.]*[[:space:]]+install[[:space:]]+$FROM|(pipx|uv[[:space:]]+tool)[[:space:]]+(install|run)[[:space:]]+$FROM"
 RX_PKG="$RX_PKG|uvx[[:space:]]+([^|;&]*[[:space:]])?--from[[:space:]=]+[\"']?(git[+]|https?://)|cargo([[:space:]]+[+][^[:space:]]+)?[[:space:]]+install[[:space:]]+([^|;&]*[[:space:]])?--git([[:space:]=]|\$)"
 RX_PKG="$RX_PKG|(^|[^[:alnum:]_.-])go[[:space:]]+(install|run)[[:space:]]+([^|;&]*[[:space:]])?[^[:space:]|;&]+@latest([^[:alnum:]_.-]|\$)"
-g diff "${PAIRED[@]}" -U0 "$old" "$new" -- "${ALL[@]}" | joined \
+added "$tmp/mv_all" "${ALL[@]}" | joined \
   | grep -iE "$RX_PIPE|$RX_SUBST|$RX_PROC|$RX_IEX|$RX_PKG" > "$tmp/rx" || true
 show "$tmp/rx"
 

