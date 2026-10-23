@@ -21,7 +21,8 @@
 #     upstream's default branch whatever its name, and nothing from the checkout's config runs; a relative
 #     TMPDIR stops it. Step 2 takes an https:// URL only and fetches over https only: an option-shaped
 #     remote.upstream.url that Step 1 prints, a local path or a file:// URL fetches nothing and fires no
-#     canary, and an option-shaped deployed commit is read as a revision; SC-054 names the same fetch.
+#     canary, and an option-shaped deployed commit is read as a revision; its log, above 64 KiB, is cut at
+#     40 lines; SC-054 names the same fetch.
 # Usage (from the repo root): bash scripts/tests/test-lockfile-recipes.sh
 # Needs bash >= 3.2, git, grep, sed, awk, find, mkfifo. No network: the test's git config rewrites the
 # upstream's https URL to a local path.
@@ -386,8 +387,19 @@ scratch_case "FULL-AUDIT Step 3.2" "$T/fa.sh" "" TMPDIR="$T/tmp"
 
 # ---- 4. KV-137 Steps 1 and 2: upstream fetched into a scratch copy -----------------------------------------
 U="$T/kv137"
+filler137() { # 400 upstream commits under programs/ with long subjects, so the log Step 2 cuts at 40 lines passes 64 KiB
+  local i=1 pad
+  pad=$(printf '%0200d' 0)
+  while [ "$i" -le 400 ]; do
+    printf 'commit refs/heads/trunk\ncommitter t <t@example.invalid> %s +0000\ndata <<EOT\nfiller %s %s\nEOT\n' \
+      "$((1700000000 + i))" "$i" "$pad"
+    if [ "$i" = 1 ]; then printf 'from refs/heads/trunk^0\n'; fi
+    printf 'M 100644 inline programs/p/filler.rs\ndata <<EOT\n%s\nEOT\n\n' "$i"
+    i=$((i + 1))
+  done | git -C "$U/up" fast-import --quiet
+}
 git init -q -b trunk "$U/up" && mkdir -p "$U/up/programs/p" && echo v1 > "$U/up/programs/p/lib.rs" \
-  && (cd "$U/up" && c v1 > /dev/null) && git clone -q "$U/up" "$U/client" \
+  && (cd "$U/up" && c v1 > /dev/null) && git clone -q "$U/up" "$U/client" && filler137 && git -C "$U/up" reset -q --hard \
   && echo fix > "$U/up/programs/p/fix.rs" && (cd "$U/up" && c "upstream security fix" > /dev/null) \
   && echo t > "$U/client/tenant" && (cd "$U/client" && c tenant > /dev/null) || exit 1
 printf '#!/bin/sh\ntouch "%s/fired-$1"\n' "$U" > "$U/canary.sh" && chmod +x "$U/canary.sh"
@@ -403,6 +415,7 @@ mkdir -p "$U/bin" && printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "%s/verify-args"\
   && chmod +x "$U/bin/solana-verify" || exit 1
 refs_before=$(git -C "$U/client" for-each-ref | wc -l | tr -d ' ')
 deployed=$(git -C "$U/up" rev-list --max-parents=0 HEAD)
+logsize=$(git -C "$U/up" log --oneline "$deployed..HEAD" -- programs/ | wc -c | tr -d ' ')
 step137() { # step137 UPSTREAM_REPO DEPLOYED: Step 2 from the top of its block to its closing fi, placeholders filled
   awk '/^\*\*Step 2:/ {s = 1} s && !g && /^```$/ {g = 1; next} g {print} g && /^fi$/ {exit}' "$KV137" \
     | sed -e "s#<checkout>#$U/client#; s#<UPSTREAM_REPO>#$1#; s#<deployed_commit>#$2#; s#<PROGRAM_ID>#Prog1111#" \
@@ -418,12 +431,13 @@ NOFETCH='OUTCOME: upstream URL is not an https:// URL; not fetched'
 mkdir -p "$T/tmp137" "$T/tmp137b" "$T/tmp137c" "$T/tmp137d" "$T/tmp137e"
 
 step137 "$URL" "$deployed"; run137 TMPDIR="$T/tmp137"
-if grep -q ' upstream security fix$' "$T/kv137.out" && [ -z "$(fired)" ] \
+if grep -q ' upstream security fix$' "$T/kv137.out" && [ -z "$(fired)" ] && [ "$logsize" -gt 65536 ] \
+   && [ "$(grep -cE '^[0-9a-f]{7,} (filler [0-9]+ 0+|upstream security fix)$' "$T/kv137.out")" = 40 ] \
    && [ "$(git -C "$U/client" for-each-ref | wc -l | tr -d ' ')" = "$refs_before" ] \
    && [ "$(ls -A "$T/tmp137"/auditor-upstream.*/copy)" = .git ] \
    && [ "$(cat "$U/verify-args" 2>/dev/null)" = "$(printf 'verify-from-repo\n-um\n--program-id\nProg1111\n%s' "$URL")" ]; then
-  ok "KV-137 Step 2 lists the fix on upstream's default branch from a copy with no work tree, gives solana-verify the URL as one argument, and leaves the checkout alone"
-else bad "KV-137 Step 2"; sed 's/^/  | /' "$T/kv137.out"; fi
+  ok "KV-137 Step 2 lists the fix on upstream's default branch, cut at 40 lines from a $logsize-byte log, from a copy with no work tree, gives solana-verify the URL as one argument, and leaves the checkout alone"
+else bad "KV-137 Step 2 (log of $logsize bytes)"; sed 's/^/  | /' "$T/kv137.out"; fi
 run137 -u GIT_ALLOW_PROTOCOL TMPDIR="$T/tmp137b"
 if grep -q "transport 'file' not allowed" "$T/kv137.out" && ! grep -q ' upstream security fix$' "$T/kv137.out" \
    && ls -d "$T/tmp137b"/auditor-upstream.*/copy > /dev/null 2>&1 && [ -z "$(fired)" ]; then
