@@ -1075,6 +1075,54 @@ for f in "$TT"/c20/good-*.jsonl; do
     bad "contract: $name raised, failed a query, or lost the clean transaction ($(cat "$TT/r20.lost" 2>/dev/null))"
   fi
 done
+# A string that never ends, of 80 KiB and of 1 MiB of escaped quotes followed by 200
+# brackets, before and after the clean transaction: the depth pre-scan reads it in one
+# pass, so each recipe finishes within 10 seconds and counts one malformed line. The
+# recipes run under a Python timeout, so no GNU timeout is needed; a run past it is
+# stopped with its whole process group. long20.py prints "<case> s:n s:n s:n s:n s:n"
+# per file, as runs20 does (T for a run that timed out), and a PROBLEM line for an
+# echoed line, a traceback or a lost clean transaction.
+cat > "$TT/long20.py" <<'PY'
+import os, re, signal, subprocess, sys
+dnr, d = sys.argv[1], sys.argv[2]
+clean = open(os.path.join(d, "bad-a-JSON-array.jsonl"), "rb").read().split(b"\n")[1]
+runs = (("profile", ["bash", dnr + "/profile.sh"], b"PayerClean"),
+        ("frames", ["python3", "-I", dnr + "/frames.py"], b'"sig": "SigClean"'),
+        ("ix", ["python3", "-I", dnr + "/frames.py", "--instructions"], b'"sig": "SigClean"'),
+        ("lamports", ["python3", "-I", dnr + "/deltas.py", "lamports"], b"\nSigClean\t"),
+        ("tokens", ["python3", "-I", dnr + "/deltas.py", "tokens"], b"\nSigClean\t"))
+for size, k in (("80KiB", 40 * 1024), ("1MiB", 512 * 1024)):
+    line = b'{"note": "CRAFTED ' + b'\\"' * k + b"[" * 200
+    for pos in ("first", "last"):
+        name = "unterminated-string-%s-%s" % (size, pos)
+        path = os.path.join(d, name + ".jsonl")
+        with open(path, "wb") as f:
+            f.write(line + b"\n" + clean + b"\n" if pos == "first" else clean + b"\n" + line + b"\n")
+        got = []
+        for label, cmd, mark in runs:
+            p = subprocess.Popen(cmd + [path], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, start_new_session=True)
+            try:
+                out, err = p.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                os.killpg(p.pid, signal.SIGKILL)
+                p.communicate()
+                got.append("T")
+                continue
+            n = re.search(rb"skipped (\d+) malformed line", err)
+            got.append("%d:%s" % (p.returncode, n.group(1).decode() if n else "0"))
+            if b"CRAFTED" in out + err or b"Traceback" in err or mark not in b"\n" + out:
+                print("PROBLEM %s %s: echoed the line, raised, or lost the clean transaction" % (name, label))
+        print(name + " " + " ".join(got))
+PY
+long20="$(python3 -I "$TT/long20.py" "$DNR" "$TT/c20")"
+for size in 80KiB 1MiB; do
+  for pos in first last; do
+    eq "contract: a string that never ends ($size, $pos) is one malformed line for every recipe, each within 10 s" \
+      "$(printf '%s\n' "$long20" | sed -n "s/^unterminated-string-$size-$pos //p")" "0:1 0:1 0:1 0:1 0:1"
+  done
+done
+case "$long20" in *PROBLEM*) bad "contract: strings that never end: $(printf '%s\n' "$long20" | sed -n 's/^PROBLEM //p' | tr '\n' ';')" ;; esac
 eq "contract: a raw CR between JSON tokens is not a line break: deltas keeps that transaction's rows" \
   "$(python3 -I "$DNR/deltas.py" lamports "$TT/c20/good-raw-CR-between-tokens.jsonl" | cut -f1 | sort -u | tr '\n' ' ')" "SigClean SigGood1 "
 eq "contract: a balance whose index has no account key is a row named #<index>, with a note" \

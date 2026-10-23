@@ -84,8 +84,10 @@ _LONE_SURROGATE = re.compile("[\ud800-\udfff]")
 # more: at this depth profile.sh never meets a line its queries cannot parse. The
 # depth is counted on the text of the line, before it is parsed.
 _DEPTH = 128
-# One JSON string (its escapes included) or one bracket: what that count reads.
-_TOKEN = re.compile(r"\"[^\"\\]*(?:\\.[^\"\\]*)*\"|[\[\]{}]", re.S)
+# One JSON string (its escapes included) or one bracket: what that count reads. The
+# closing quote is optional, so a string that never ends is one token, read in one
+# pass to the end of the line, and the parser then refuses the line.
+_TOKEN = re.compile(r"\"[^\"\\]*(?:\\.[^\"\\]*)*\"?|[\[\]{}]", re.S)
 # The characters no key, program id or string version may hold, and that no recipe
 # prints raw: the C0 controls, DEL, the C1 controls, the line and paragraph
 # separators, the bidirectional controls (U+061C, U+200E-200F, U+202A-202E,
