@@ -95,7 +95,7 @@ bash "$COLLECTOR" --repo <target> --out audit_<n>/bootstrap --pin <sha> \
 | Flag | Meaning |
 |------|---------|
 | `--repo <dir>` | required: the target, at the top level of its repository (or a bare repository) |
-| `--out <dir>` | required: the run directory `audit_<n>/bootstrap`, as a plain path without `.` or `..` components |
+| `--out <dir>` | required: the run directory `audit_<n>/bootstrap`, as a plain path without `.` or `..` components, reached through no symbolic link inside the working directory or the target tree |
 | `--pin <rev>` | the commit to analyse (default `HEAD`); only its ancestry is mined. Pass the intake pin |
 | `--paths <pathspec>` | target pathspec, repeatable; default `programs/*.rs` when the commit has a `programs/` dir, else `*.rs` |
 | `--parent <https-url\|dir>` | fork parent: an `https://` URL (bare clone into a temp dir) or a local repository's top level |
@@ -113,9 +113,10 @@ bash "$COLLECTOR" --repo <target> --out audit_<n>/bootstrap --pin <sha> \
 | `-h`, `--help` | print the usage header and exit |
 
 **Exit status.** 0: done (sections may still print NOT FOUND). 2: usage error or rejected input, including an
-`--import` that is not a commit and a run directory that is or holds a symbolic link, that git tracks, or that git
-or find cannot check. 3: `--repo` is not the top level of a git repository (or a bare repository), the pin does not
-resolve, or the target is a partial clone or git cannot read its config.
+`--import` that is not a commit and a run directory that is or holds a symbolic link, that is reached through one
+inside the working directory or the target tree, that git tracks, or that git or find cannot check. 3: `--repo` is
+not the top level of a git repository (or a bare repository), the pin does not resolve, or the target is a partial
+clone or git cannot read its config.
 
 - **Scope.** Pass the in-scope program dirs as `--paths`, and the parent's as `--parent-paths` when the fork renamed
   them. `--cap`, `--small` and `--fix-ceiling` tune volume.
