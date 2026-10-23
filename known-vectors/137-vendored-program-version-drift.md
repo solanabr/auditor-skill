@@ -58,7 +58,7 @@ elif [ -n "$SCRATCH" ] && [ -d "$SCRATCH" ]; then
 else
   echo "OUTCOME: no scratch copy (check TMPDIR)"
 fi
-# <upstream>: the GitHub <owner>/<repo>, whose names hold only letters, digits, ".", "_" and "-"
+# <upstream>: the GitHub owner/repo slug, used only if it matches ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$
 gh api repos/<upstream>/security-advisories 2>/dev/null; gh release list -R <upstream> | head -10
 ```
 - ✅ PASS: the deployed build corresponds to upstream HEAD or a maintained release branch, and no security-tagged commit / advisory / release note exists after the deployed commit
