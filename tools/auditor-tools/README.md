@@ -278,9 +278,10 @@ that is missing or not a regular file, as `profile.sh` does.
 
 ### Where it differs from the scripts
 
-- `profile` orders the ties in its top-20 lists by byte value, as `sort` does under
-  `LC_ALL=C`; under another locale `profile.sh` orders them by that locale. It pads
-  the count column to 7 places, as GNU `uniq -c` does; BSD `uniq -c` pads to 4.
+- `profile` pads the count column to 7 places, as GNU `uniq -c` does; BSD `uniq -c`
+  pads to 4. Both count and order keys byte by byte, as `profile.sh` runs `sort` and
+  `uniq` under `LC_ALL=C`, so the counts and the order of ties are the same under
+  every locale.
 - `profile` prints a number in the version or `blockTime` as jq 1.7 does, from the
   literal (`1.0`, `1E+2`, every digit of a large integer). A jq built without
   decNumber prints a rounded double there instead.

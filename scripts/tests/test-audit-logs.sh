@@ -19,9 +19,10 @@
 # inside the working directory, or under a path a quoted rule cannot match, is refused;
 # and a run stopped by SIGTERM leaves its --out file as it was.
 #
-# The scripts run under LC_ALL=C: audit-logs orders profile.sh's ties by byte value, as
-# sort does there. profile.sh's count column, which BSD uniq pads to 4 and GNU uniq to 7,
-# is compared as GNU pads it. Without cargo the suite is skipped, loudly; with
+# frames.py and deltas.py run under LC_ALL=C. profile.sh runs under the caller's locale,
+# and on two cases under en_US.UTF-8 too: it counts and orders byte by byte under every
+# locale, as audit-logs does. Its count column, which BSD uniq pads to 4 and GNU uniq to
+# 7, is compared as GNU pads it. Without cargo the suite is skipped, loudly; with
 # REQUIRE_TOOLCHAIN=1 (CI) that is a failure. AUDIT_LOGS=<path> tests a binary already
 # built (CI's release build) instead of building one.
 #
@@ -107,7 +108,7 @@ notes() { sed -n 's/^[a-z][a-z.-]*: skipped /skipped /p' "$1"; }
 script() {
   local r="$1"; shift
   case "$r" in
-    profile) ( cd "$WT" && LC_ALL=C bash "$DNR/profile.sh" "$@" ) ;;
+    profile) ( cd "$WT" && bash "$DNR/profile.sh" "$@" ) ;;
     frames) ( cd "$WT" && LC_ALL=C python3 -I "$DNR/frames.py" "$@" ) ;;
     ix) ( cd "$WT" && LC_ALL=C python3 -I "$DNR/frames.py" --instructions "$@" ) ;;
     *) ( cd "$WT" && LC_ALL=C python3 -I "$DNR/deltas.py" "$r" "$@" ) ;;
@@ -319,6 +320,9 @@ for k, h in enumerate([0, 1, 2, 3, 10**19, None, 5]):
 for k, s in enumerate([True, False, 1, "true", None]):
     ties.append(tx("SigSigner%d" % k, {}, [{"pubkey": "ObjSigner%d" % k, "signer": s}, {"pubkey": "ObjOther", "signer": True}], []))
 write("ties.jsonl", ties)
+# Keys that differ only in a character a UTF-8 collation ignores, each its own key.
+write("lookalike.jsonl", [tx("SigLook%d" % k, {}, [n, "Second"], [ix(programId=n)])
+                          for k, n in enumerate(["Payer1", "Pay\u00ader1", "Payer1\u034f", "Pay\u2060er1", "Payer1"])])
 nums = [tx("SigNum0", {}, ["P"], [], {"version": "legacy", "blockTime": 1700000000}),
         tx("SigNum1", {}, ["P"], [], {"version": "0", "blockTime": -5}),
         tx("SigNum2", {}, ["P"], [], {"version": True}),
@@ -333,11 +337,12 @@ if literal:
              b'{"version":-1,"blockTime":-10000000000000000001,"transaction":{"signatures":["SigNum10"]}}']
 write("numbers.jsonl", nums)
 PY
-for f in big logs instructions ties numbers; do
+for f in big logs instructions ties numbers lookalike; do
   same5 "own case $f.jsonl" "incident_1/crafted/$f.jsonl"
 done
 same5 "own cases, all files at once" incident_1/crafted/big.jsonl incident_1/crafted/logs.jsonl \
-  incident_1/crafted/instructions.jsonl incident_1/crafted/ties.jsonl incident_1/crafted/numbers.jsonl
+  incident_1/crafted/instructions.jsonl incident_1/crafted/ties.jsonl incident_1/crafted/numbers.jsonl \
+  incident_1/crafted/lookalike.jsonl
 agree lamports -- incident_1/crafted/big.jsonl
 eq "own cases: lamport deltas above 2^53, up to 2^64 - 1, are exact" \
   "$(awk -F'\t' '$1 == "SigBig1" { printf "%s=%s ", $2, $3 }' "$T/b.out")" "PayerBig=1 AcctBig=-1 Acct63=4611686018427387904 "
@@ -349,6 +354,13 @@ agree profile -- incident_1/crafted/ties.jsonl
 eq "own cases: the top-20 cut falls inside a tie of 25, broken by descending byte order" \
   "$(LC_ALL=C awk '/^-- fee payers/ { f = 1; next } /^--/ { f = 0 } f { n++; if (n == 1 || n == 20) printf "%s|", $0 }' "$T/b.out")" \
   "      7 Hdr1|      2 Z|"
+for f in ties lookalike; do
+  LC_ALL=en_US.UTF-8 agree profile -- "incident_1/crafted/$f.jsonl"
+  eq "own cases: profile.sh under en_US.UTF-8 counts and orders $f.jsonl as audit-logs does" "$(tr '\n' ' ' < "$T/diff")" ""
+done
+eq "own cases: keys that differ only in a character a collation ignores are four fee payers" \
+  "$(awk '/^-- fee payers/ { f = 1; next } /^--/ { f = 0 } f' "$T/b.out" | tr -s ' ' | tr '\n' '|')" \
+  "$(printf ' 2 Payer1| 1 Pay\342\201\240er1| 1 Pay\302\255er1| 1 Payer1\315\217|')"
 if [[ "$literal" == 1 ]]; then
   agree profile -- incident_1/crafted/numbers.jsonl
   if grep -q '^      1 1E+2$' "$T/b.out" && grep -q 'first=-10000000000000000001  last=10000000000000000001' "$T/b.out"; then
