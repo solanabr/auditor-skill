@@ -86,20 +86,29 @@ pub fn escape_char(s: &mut String, c: u32) {
 
 /// A character the recipes never accept in a key, program id or version, and
 /// never print raw: a C0 control, DEL, a C1 control, the line and paragraph
-/// separators, a bidirectional control, or a zero-width character.
+/// separators, a bidirectional control, or a code point Unicode marks
+/// default-ignorable. The list is the recipes' `_UNSAFE`, fixed.
 pub fn unsafe_char(c: char) -> bool {
     matches!(c,
         '\u{0}'..='\u{1f}'
         | '\u{7f}'..='\u{9f}'
-        | '\u{2028}'
-        | '\u{2029}'
-        | '\u{202a}'..='\u{202e}'
-        | '\u{2066}'..='\u{2069}'
-        | '\u{200e}'
-        | '\u{200f}'
+        | '\u{ad}'
+        | '\u{34f}'
         | '\u{61c}'
-        | '\u{200b}'..='\u{200d}'
-        | '\u{feff}')
+        | '\u{115f}'..='\u{1160}'
+        | '\u{17b4}'..='\u{17b5}'
+        | '\u{180b}'..='\u{180f}'
+        | '\u{200b}'..='\u{200f}'
+        | '\u{2028}'..='\u{202e}'
+        | '\u{2060}'..='\u{206f}'
+        | '\u{3164}'
+        | '\u{fe00}'..='\u{fe0f}'
+        | '\u{feff}'
+        | '\u{ffa0}'
+        | '\u{fff0}'..='\u{fff8}'
+        | '\u{1bca0}'..='\u{1bca3}'
+        | '\u{1d173}'..='\u{1d17a}'
+        | '\u{e0000}'..='\u{e0fff}')
 }
 
 /// A string with no unsafe character, so it prints as one line, as written.
@@ -447,12 +456,41 @@ mod tests {
     #[test]
     fn keys_hold_no_unsafe_character() {
         for c in [
-            "\\u0000", "\\u001b", "\\u007f", "\\u0085", "\\u2028", "\\u2029", "\\u202e", "\\u2066",
-            "\\u200f", "\\u061c", "\\u200b", "\\ufeff",
+            "\\u0000",
+            "\\u001b",
+            "\\u007f",
+            "\\u0085",
+            "\\u2028",
+            "\\u2029",
+            "\\u202e",
+            "\\u2066",
+            "\\u200f",
+            "\\u061c",
+            "\\u200b",
+            "\\ufeff",
+            "\\u00ad",
+            "\\u034f",
+            "\\u115f",
+            "\\u17b5",
+            "\\u180e",
+            "\\u2060",
+            "\\u2065",
+            "\\u206f",
+            "\\u3164",
+            "\\ufe0f",
+            "\\uffa0",
+            "\\ufff8",
+            "\\ud82f\\udca0",
+            "\\ud834\\udd7a",
+            "\\udb40\\udc41",
+            "\\udb43\\udfff",
         ] {
             assert!(!reads("", &format!(r#""accountKeys":["K{c}"]"#)), "{c}");
         }
-        assert!(reads("", r#""accountKeys":["K\u00a0\u00e9\u3000"]"#));
+        assert!(reads(
+            "",
+            r#""accountKeys":["K\u00a0\u00e9\u3000\u00ac\u2070\ufff9\ud82f\udca4\udb44\udc00"]"#
+        ));
     }
 
     #[test]

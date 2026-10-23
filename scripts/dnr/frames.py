@@ -55,9 +55,10 @@ Design rules, each forced by a real failure mode:
   * Output is JSONL with the raw text in a JSON string, so tabs/newlines inside a
     payload are escaped by the encoder and can never break a column; every other
     character of the input contract's fixed list (DEL, C1 controls, line and
-    paragraph separators, bidirectional controls, zero-width characters) is
-    written as a \\uNNNN escape too, so none prints raw and the value read back is
-    the same. It is written as UTF-8 whatever the locale.
+    paragraph separators, bidirectional controls, default-ignorable code points)
+    is written as a \\uNNNN escape too (a surrogate pair above U+FFFF, as JSON
+    writes one), so none prints raw and the value read back is the same. It is
+    written as UTF-8 whatever the locale.
 
 Run it as `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/frames.py" [--instructions] [--out <file>] <corpus.jsonl>...`.
 Isolated mode keeps the working directory (usually the audited repo) and
@@ -221,11 +222,20 @@ def _instruction_rows(tx: dict):
     yield from invokes
 
 
+def _json_escape(m) -> str:
+    """A character as a JSON \\uNNNN escape, or a surrogate pair of them above U+FFFF."""
+    o = ord(m.group())
+    if o < 0x10000:
+        return "\\u%04x" % o
+    o -= 0x10000
+    return "\\u%04x\\u%04x" % (0xD800 + (o >> 10), 0xDC00 + (o & 0x3FF))
+
+
 def _json_line(row) -> bytes:
     """One record as a JSON line: JSON escapes the C0 controls, and every other
     character of the contract's fixed _UNSAFE list becomes a \\uNNNN escape."""
     text = json.dumps(row, ensure_ascii=False)
-    return (_UNSAFE.sub(lambda m: "\\u%04x" % ord(m.group()), text) + "\n").encode("utf-8")
+    return (_UNSAFE.sub(_json_escape, text) + "\n").encode("utf-8")
 
 
 # ---- input contract (scripts/dnr/README.md); the same block is in profile.sh, frames.py, deltas.py
@@ -245,10 +255,13 @@ _TOKEN = re.compile(r"\"[^\"\\]*(?:\\.[^\"\\]*)*\"?|[\[\]{}]", re.S)
 # The characters no key, program id or string version may hold, and that no recipe
 # prints raw: the C0 controls, DEL, the C1 controls, the line and paragraph
 # separators, the bidirectional controls (U+061C, U+200E-200F, U+202A-202E,
-# U+2066-2069) and the zero-width characters (U+200B-200D, U+FEFF). The list is
-# fixed, so the same lines are malformed under every Python, whatever Unicode
-# version it knows; every other character, assigned or not, prints as itself.
-_UNSAFE = re.compile(r"[\x00-\x1f\x7f-\x9f\u061c\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]")
+# U+2066-2069), and the code points Unicode marks default-ignorable, which text
+# shows as nothing: U+00AD, U+034F, U+061C, U+115F-1160, U+17B4-17B5, U+180B-180F,
+# U+200B-200F, U+202A-202E, U+2060-206F, U+3164, U+FE00-FE0F, U+FEFF, U+FFA0,
+# U+FFF0-FFF8, U+1BCA0-1BCA3, U+1D173-1D17A and U+E0000-E0FFF. The list is fixed,
+# so the same lines are malformed under every Python, whatever Unicode version it
+# knows; every other character, assigned or not, prints as itself.
+_UNSAFE = re.compile(r"[\x00-\x1f\x7f-\x9f\xad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f\u2028-\u202e\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0\ufff0-\ufff8\U0001bca0-\U0001bca3\U0001d173-\U0001d17a\U000e0000-\U000e0fff]")
 # Lamport balances, the fee and token amounts are u64 values in RPC data; bounding
 # them keeps every computed delta and sum far inside what Python prints.
 _U64 = 2 ** 64 - 1

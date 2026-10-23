@@ -436,9 +436,18 @@ fn write_py_num(out: &mut String, n: &Num) {
     }
 }
 
+/// Appends `c` as a JSON `\uNNNN` escape, or a surrogate pair of them above U+FFFF.
+fn push_json_escape(out: &mut String, c: char) {
+    let mut units = [0u16; 2];
+    for unit in c.encode_utf16(&mut units).iter() {
+        out.push_str(&format!("\\u{unit:04x}"));
+    }
+}
+
 /// A Python str as frames.py writes it: `json.dumps(ensure_ascii=False)`, which
 /// escapes quote, backslash and the C0 controls (`\n`-style where JSON has one,
-/// else `\u00XX`), then every other unsafe character as `\uNNNN`.
+/// else `\u00XX`), then every other unsafe character as `\uNNNN` (a surrogate
+/// pair above U+FFFF).
 pub fn write_py_str(out: &mut String, s: &str) {
     out.push('"');
     let mut run = 0;
@@ -456,7 +465,7 @@ pub fn write_py_str(out: &mut String, s: &str) {
         };
         out.push_str(&s[run..i]);
         if esc.is_empty() {
-            out.push_str(&format!("\\u{:04x}", c as u32));
+            push_json_escape(out, c);
         } else {
             out.push_str(esc);
         }
@@ -501,7 +510,7 @@ pub fn write_jq(out: &mut String, value: &Value) {
 
 /// A string as profile.sh prints it in a version: jq's dump (quote and backslash
 /// escaped, the C0 controls and DEL as `\n`-style escapes or `\u00xx`), with every
-/// other unsafe character as `\uNNNN` too.
+/// other unsafe character as `\uNNNN` too (a surrogate pair above U+FFFF).
 fn write_jq_str(out: &mut String, s: &str) {
     out.push('"');
     for c in s.chars() {
@@ -513,7 +522,7 @@ fn write_jq_str(out: &mut String, s: &str) {
             '\t' => out.push_str("\\t"),
             '\u{8}' => out.push_str("\\b"),
             '\u{c}' => out.push_str("\\f"),
-            c if unsafe_char(c) => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c if unsafe_char(c) => push_json_escape(out, c),
             c => out.push(c),
         }
     }
@@ -618,6 +627,20 @@ mod tests {
         assert_eq!(
             s,
             "{\"k\\u2028\":[\"\\u0001\\n\\u0085\u{a0}\\u061c\\u200b\\u202e\\u2069\\ufeff\u{3000}\"]}"
+        );
+        let v =
+            parse_line(r#"["\u00ad\u2060\ud834\udd73\udb40\udc41\ufff9\ud83d\ude00"]"#).unwrap();
+        let mut s = String::new();
+        write_jq(&mut s, &v);
+        assert_eq!(
+            s,
+            "[\"\\u00ad\\u2060\\ud834\\udd73\\udb40\\udc41\u{fff9}\u{1f600}\"]"
+        );
+        let mut s = String::new();
+        write_py(&mut s, &v);
+        assert_eq!(
+            s,
+            "[\"\\u00ad\\u2060\\ud834\\udd73\\udb40\\udc41\u{fff9}\u{1f600}\"]"
         );
     }
 }

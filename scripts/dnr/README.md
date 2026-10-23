@@ -108,11 +108,15 @@ because `python3 -I` keeps a sibling module off `sys.path`;
 - **The fixed character list** (`_UNSAFE` in the block): the C0 controls
   U+0000–U+001F, DEL U+007F, the C1 controls U+0080–U+009F, the line and
   paragraph separators U+2028 and U+2029, the bidirectional controls U+061C,
-  U+200E, U+200F, U+202A–U+202E and U+2066–U+2069, and the zero-width characters
-  U+200B–U+200D and U+FEFF. The list is fixed: it does not follow the Unicode
-  tables of the Python that runs a recipe, so the same lines are malformed and
-  the same characters escaped under every version. Every other character,
-  assigned or not, counts as printable.
+  U+200E, U+200F, U+202A–U+202E and U+2066–U+2069, and the code points Unicode
+  marks default-ignorable, which text shows as nothing, so two keys that differ
+  only in one look the same: U+00AD, U+034F, U+061C, U+115F–U+1160,
+  U+17B4–U+17B5, U+180B–U+180F, U+200B–U+200F, U+202A–U+202E, U+2060–U+206F,
+  U+3164, U+FE00–U+FE0F, U+FEFF, U+FFA0, U+FFF0–U+FFF8, U+1BCA0–U+1BCA3,
+  U+1D173–U+1D17A and U+E0000–U+E0FFF. The list is fixed: it does not follow the
+  Unicode tables of the Python, jq or OS that runs a recipe, so the same lines
+  are malformed and the same characters escaped under every version. Every other
+  character, assigned or not, counts as printable.
 - **Malformed lines are counted, never echoed and never fatal.** A line that
   breaks a rule above is skipped. Each recipe then prints one note per input on
   stderr (`profile.sh` also closes its report with it):
@@ -138,13 +142,14 @@ because `python3 -I` keeps a sibling module off `sys.path`;
   `frames.py` and `deltas.py` write UTF-8 whatever the locale. `deltas.py`
   doubles a backslash and escapes, in every column, a tab, newline and carriage
   return as `\t`, `\n`, `\r`, and every other character of the list as `\xNN`
-  below U+0100 and `\uNNNN` above it (`\x00`, `\x85`, `\u2028`, `\u202e`,
-  lowercase hex). `frames.py` writes JSON: the encoder escapes the C0 controls,
-  and every other character of the list is written as a `\uNNNN` escape
-  (lowercase hex), so the value read back is unchanged. `profile.sh` prints a
-  `version` that is not a string as its JSON text, the same way: jq escapes the
-  C0 controls and DEL, and every other character of the list becomes a `\uNNNN`
-  escape.
+  below U+0100, `\uNNNN` up to U+FFFF and `\UNNNNNNNN` above (`\x00`, `\x85`,
+  `\xad`, `\u2028`, `\u202e`, `\U000e0041`, lowercase hex). `frames.py` writes
+  JSON: the encoder escapes the C0 controls, and every other character of the
+  list is written as a `\uNNNN` escape (lowercase hex; above U+FFFF, the
+  surrogate pair JSON writes, `\udb40\udc41`), so the value read back is
+  unchanged. `profile.sh` prints a `version` that is not a string as its JSON
+  text, the same way: jq escapes the C0 controls and DEL, and every other
+  character of the list becomes a `\uNNNN` escape.
 - **Counting.** `profile.sh` counts and orders values byte by byte (`sort` and
   `uniq` run under `LC_ALL=C`), so two keys that differ only in a character a
   locale's collation ignores stay two lines, and ties fall in the same order under

@@ -197,11 +197,11 @@ mod tests {
         let mut s = String::new();
         clean(
             &mut s,
-            "a\\b\tc\nd\re\u{1b}f\u{7f}g\u{85}h\u{2028}i\u{feff}j\u{a0}k\u{e9}",
+            "a\\b\tc\nd\re\u{1b}f\u{7f}g\u{85}h\u{2028}i\u{feff}j\u{a0}k\u{e9}l\u{ad}m\u{2060}n\u{e0041}o",
         );
         assert_eq!(
             s,
-            "a\\\\b\\tc\\nd\\re\\x1bf\\x7fg\\x85h\\u2028i\\ufeffj\u{a0}k\u{e9}"
+            "a\\\\b\\tc\\nd\\re\\x1bf\\x7fg\\x85h\\u2028i\\ufeffj\u{a0}k\u{e9}l\\xadm\\u2060n\\U000e0041o"
         );
     }
 }

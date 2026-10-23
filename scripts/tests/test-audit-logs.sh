@@ -320,9 +320,10 @@ for k, h in enumerate([0, 1, 2, 3, 10**19, None, 5]):
 for k, s in enumerate([True, False, 1, "true", None]):
     ties.append(tx("SigSigner%d" % k, {}, [{"pubkey": "ObjSigner%d" % k, "signer": s}, {"pubkey": "ObjOther", "signer": True}], []))
 write("ties.jsonl", ties)
-# Keys that differ only in a character a UTF-8 collation ignores, each its own key.
+# Keys that differ only in a character a UTF-8 collation ignores and the fixed list
+# does not hold (U+00A0, U+FFF9, U+2800), each its own key.
 write("lookalike.jsonl", [tx("SigLook%d" % k, {}, [n, "Second"], [ix(programId=n)])
-                          for k, n in enumerate(["Payer1", "Pay\u00ader1", "Payer1\u034f", "Pay\u2060er1", "Payer1"])])
+                          for k, n in enumerate(["Payer1", "Pay\u00a0er1", "Pay\ufff9er1", "Payer1\u2800", "Payer1"])])
 nums = [tx("SigNum0", {}, ["P"], [], {"version": "legacy", "blockTime": 1700000000}),
         tx("SigNum1", {}, ["P"], [], {"version": "0", "blockTime": -5}),
         tx("SigNum2", {}, ["P"], [], {"version": True}),
@@ -360,7 +361,7 @@ for f in ties lookalike; do
 done
 eq "own cases: keys that differ only in a character a collation ignores are four fee payers" \
   "$(awk '/^-- fee payers/ { f = 1; next } /^--/ { f = 0 } f' "$T/b.out" | tr -s ' ' | tr '\n' '|')" \
-  "$(printf ' 2 Payer1| 1 Pay\342\201\240er1| 1 Pay\302\255er1| 1 Payer1\315\217|')"
+  "$(printf ' 2 Payer1| 1 Pay\357\277\271er1| 1 Pay\302\240er1| 1 Payer1\342\240\200|')"
 if [[ "$literal" == 1 ]]; then
   agree profile -- incident_1/crafted/numbers.jsonl
   if grep -q '^      1 1E+2$' "$T/b.out" && grep -q 'first=-10000000000000000001  last=10000000000000000001' "$T/b.out"; then
@@ -384,6 +385,9 @@ import json, os, re, sys
 d = sys.argv[1]
 os.makedirs(d)
 UNSAFE = re.compile(re.search(r'^_UNSAFE = re\.compile\(r"(.*)"\)$', open(sys.argv[2], encoding="utf-8").read(), re.M).group(1))
+CODE = [c for c in range(0x110000) if not 0xd800 <= c < 0xe000]
+LISTED = [c for c in CODE if UNSAFE.match(chr(c))]
+NEAR = sorted({n for c in LISTED for n in (c - 1, c + 1) if 0 <= n < 0x110000 and not 0xd800 <= n < 0xe000} - set(LISTED))
 U64 = 2**64 - 1
 def tx(sig, meta=None, message=None, extra=None):
     t = {"meta": dict({"err": None, "fee": 0}, **(meta or {})),
@@ -436,7 +440,9 @@ cases = {
         b'{"meta":{"err":null},"x":-0.0,"transaction":{"signatures":["SigMinusZeroFloat"]}}',
     ],
     "chars": [tx("SigKeyChar%04x" % c, message={"accountKeys": ["Key" + chr(c)]})
-              for c in (0x00, 0x1b, 0x7f, 0x85, 0x2028, 0x2029, 0x202e, 0x2066, 0x200f, 0x061c, 0x200b, 0xfeff)]
+              for c in (0x00, 0x1b, 0x7f, 0x85, 0x2028, 0x2029, 0x202e, 0x2066, 0x200f, 0x061c, 0x200b, 0xfeff,
+                        0xad, 0x34f, 0x1160, 0x180e, 0x2060, 0x206f, 0x3164, 0xfe0f, 0xffa0, 0xfff8, 0x1bca3,
+                        0x1d173, 0xe0001, 0xe0fff)]
              + [tx("SigProgChar", message={"accountKeys": ["P"], "instructions": [{"programId": "Prog\u202e"}]}),
                 tx("SigVersionChar", extra={"version": "0\u2028"}),
                 tx("SigSafeSpaces", {"preBalances": [1, 2], "postBalances": [2, 1]}, {"accountKeys": ["Key\u00a0A", "Key\u3000B"]}),
@@ -445,10 +451,9 @@ cases = {
                     "loadedAddresses": {"writable": ["Lut\u200b"]},
                     "postTokenBalances": [{"accountIndex": 1, "mint": "Mint\ufeff", "owner": "Own\x7f\u0085",
                                            "uiTokenAmount": {"amount": "3"}}]})],
-    "versions": [tx("SigVer%04x" % c, extra={"version": {"k": "a" + chr(c) + "b"}})
-                 for c in range(0x10000) if UNSAFE.match(chr(c))]
+    "versions": [tx("SigVer%x" % c, extra={"version": {"k": "a" + chr(c) + "b"}}) for c in LISTED + NEAR]
                 + [tx("SigVerKey", extra={"version": {"k\u2028": 1}}), tx("SigVerList", extra={"version": ["\u202e", 0]}),
-                   tx("SigVerDeep", extra={"version": {"a": [{"b": "\x85\ufeff"}]}})],
+                   tx("SigVerDeep", extra={"version": {"a": [{"b": "\x85\ufeff\U000e0041"}]}})],
 }
 for name, lines in cases.items():
     with open(os.path.join(d, name + ".jsonl"), "wb") as f:
@@ -468,17 +473,23 @@ agree profile -- incident_1/rules/versions.jsonl
 python3 -I - "$DNR/profile.sh" "$WT/incident_1/rules/versions.jsonl" "$T/b.out" > "$T/versions.check" <<'PY'
 import json, re, sys
 unsafe = re.compile(re.search(r'^_UNSAFE = re\.compile\(r"(.*)"\)$', open(sys.argv[1], encoding="utf-8").read(), re.M).group(1))
+def escape(m):
+    o = ord(m.group())
+    if o < 0x10000:
+        return "\\u%04x" % o
+    o -= 0x10000
+    return "\\u%04x\\u%04x" % (0xd800 + (o >> 10), 0xdc00 + (o & 0x3ff))
 want = set()
 for line in open(sys.argv[2], encoding="utf-8"):
     v = json.loads(line).get("version")
     if v is not None:
-        want.add(unsafe.sub(lambda m: "\\u%04x" % ord(m.group()), json.dumps(v, ensure_ascii=False, separators=(",", ":"))))
+        want.add(unsafe.sub(escape, json.dumps(v, ensure_ascii=False, separators=(",", ":"))))
 out = open(sys.argv[3], encoding="utf-8").read()
 got = set(re.findall(r"(?m)^ *[0-9]+ (.*)$", out.split("-- version\n", 1)[1].split("\n-- ", 1)[0]))
 print("%d cases, %d not as expected|%d raw" % (len(want), len(want - got), len(unsafe.findall(out.replace("\n", "")))))
 PY
-eq "recipe bounds: profile writes each unsafe character of a version that is not a string as a \\u escape" \
-  "$(cat "$T/versions.check")" "86 cases, 0 not as expected|0 raw"
+eq "recipe bounds: profile writes each unsafe character of a version that is not a string as a \\u escape, and its neighbours as they are" \
+  "$(cat "$T/versions.check")" "4281 cases, 0 not as expected|0 raw"
 
 # ---------------------------------------------------------------------------
 # 4. A generated corpus: 6,000 transactions in two files, the second opening with

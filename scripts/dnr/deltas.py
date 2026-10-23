@@ -37,9 +37,9 @@ Signatures, owners and mints are base58 in real RPC data and deltas are decimal
 integers; any tab, newline, carriage return or backslash in a string field is
 escaped (`\\t`, `\\n`, `\\r`, `\\\\`), so a crafted corpus cannot forge a row, and so
 is every other character of the input contract's fixed list (control characters,
-line and paragraph separators, bidirectional controls, zero-width characters:
-`\\x00`, `\\x85`, `\\u2028`, `\\u202e`, `\\u200b`, …); any other character is
-printed as itself, whichever Python runs it.
+line and paragraph separators, bidirectional controls, default-ignorable code
+points: `\\x00`, `\\x85`, `\\u2028`, `\\u202e`, `\\u200b`, `\\U000e0041`, …); any
+other character is printed as itself, whichever Python runs it.
 Token deltas are per token account (its `accountIndex` resolved through the
 transaction's account keys) and mint, so two accounts never share a bucket, even
 when the RPC gives no owner or the index has no account key (`#<index>`); a
@@ -112,15 +112,17 @@ _TSV = {"\t": "\\t", "\n": "\\n", "\r": "\\r"}
 
 def _escape(m) -> str:
     c = m.group()
-    return _TSV.get(c) or ("\\x%02x" % ord(c) if ord(c) < 0x100 else "\\u%04x" % ord(c))
+    o = ord(c)
+    return _TSV.get(c) or ("\\x%02x" % o if o < 0x100 else "\\u%04x" % o if o < 0x10000 else "\\U%08x" % o)
 
 
 def _clean(s) -> str:
     """Escape what could break a TSV row, or hide in one. Real RPC data carries
     base58 here, but a corpus can come from an untrusted export: a backslash is
     doubled, and each character of the contract's fixed _UNSAFE list is written as
-    an escape (\\t, \\n, \\r; else \\xNN below U+0100 and \\uNNNN above), so a key or
-    mint cannot forge an extra row or column, or hide a control character in one."""
+    an escape (\\t, \\n, \\r; else \\xNN below U+0100, \\uNNNN below U+10000 and
+    \\UNNNNNNNN above), so a key or mint cannot forge an extra row or column, or
+    hide a control character in one."""
     return _UNSAFE.sub(_escape, str(s).replace("\\", "\\\\"))
 
 
@@ -221,10 +223,13 @@ _TOKEN = re.compile(r"\"[^\"\\]*(?:\\.[^\"\\]*)*\"?|[\[\]{}]", re.S)
 # The characters no key, program id or string version may hold, and that no recipe
 # prints raw: the C0 controls, DEL, the C1 controls, the line and paragraph
 # separators, the bidirectional controls (U+061C, U+200E-200F, U+202A-202E,
-# U+2066-2069) and the zero-width characters (U+200B-200D, U+FEFF). The list is
-# fixed, so the same lines are malformed under every Python, whatever Unicode
-# version it knows; every other character, assigned or not, prints as itself.
-_UNSAFE = re.compile(r"[\x00-\x1f\x7f-\x9f\u061c\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]")
+# U+2066-2069), and the code points Unicode marks default-ignorable, which text
+# shows as nothing: U+00AD, U+034F, U+061C, U+115F-1160, U+17B4-17B5, U+180B-180F,
+# U+200B-200F, U+202A-202E, U+2060-206F, U+3164, U+FE00-FE0F, U+FEFF, U+FFA0,
+# U+FFF0-FFF8, U+1BCA0-1BCA3, U+1D173-1D17A and U+E0000-E0FFF. The list is fixed,
+# so the same lines are malformed under every Python, whatever Unicode version it
+# knows; every other character, assigned or not, prints as itself.
+_UNSAFE = re.compile(r"[\x00-\x1f\x7f-\x9f\xad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f\u2028-\u202e\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0\ufff0-\ufff8\U0001bca0-\U0001bca3\U0001d173-\U0001d17a\U000e0000-\U000e0fff]")
 # Lamport balances, the fee and token amounts are u64 values in RPC data; bounding
 # them keeps every computed delta and sum far inside what Python prints.
 _U64 = 2 ** 64 - 1

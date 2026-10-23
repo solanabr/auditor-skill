@@ -1036,6 +1036,12 @@ bad = {
     "objects-nested-129-deep": enc(tx("SigBad58", meta_extra={"x": "PLACE"})).replace(b'"PLACE"', nested(b"{", 129)),
     "objects-nested-200-deep": enc(tx("SigBad59", meta_extra={"x": "PLACE"})).replace(b'"PLACE"', nested(b"{", 200)),
     "arrays-nested-129-deep": enc(tx("SigBad60", meta_extra={"x": "PLACE"})).replace(b'"PLACE"', nested(b"[", 129)),
+    "a-key-holding-a-soft-hyphen": enc(tx("SigBad61", keys=["Pay\u00ader11111111111111111111111111111111111", "Two1111111111111111111111111111111111111111"])),
+    "a-pubkey-holding-a-hangul-filler": enc(tx("SigBad62", keys=[{"pubkey": "Payer1111111111111111111111111111111111111", "signer": True},
+                                                               {"pubkey": "TokAcct\u3164111111111111111111111111111111111", "signer": False}])),
+    "a-program-id-holding-a-word-joiner": enc(tx("SigBad63", ixs=[{"programId": "Prog\u2060Forged", "accounts": []}])),
+    "a-version-holding-a-variation-selector": enc(dict(tx("SigBad64"), version="0\ufe0f")),
+    "a-key-holding-a-tag-character": enc(tx("SigBad65", keys=["Payer\U000e0041111111111111111111111111111111111", "Two1111111111111111111111111111111111111111"])),
 }
 last = ("instruction-a-string", "keys-strings-and-objects", "header-count-a-string", "a-pubkey-that-is-an-object",
         "a-truncated-line-holding-a-drain", "nesting-300-deep", "nesting-300-deep-under-a-key-repeated-later",
@@ -1062,6 +1068,10 @@ good = {
         meta_extra={"computeUnitsConsumed": 99999999999999999999, "y": "PLACE"})).replace(b'"PLACE"', b"-0.0"),
     "brackets-and-escaped-quotes-inside-strings": enc(tx("SigGood10", mark=False)).replace(
         b"Program log: hello", b"Program log: " + b"[{" * 150 + b'\\\\\\" ' + b"[" * 150),
+    "default-ignorable-characters-in-owner-mint-and-a-log": enc(tx("SigGood15", mark=False,
+        logs=["Program %s invoke [1]" % P, "Program log: a\u2060b\u3164c\uffa0d\U0001bca0e\ufff0f", "Program %s success" % P],
+        pre_tb=[dict(bal("0"), owner="Own\u00ader\u034fX\U000e0001", mint="Mi\u180ent\ufe0f\U0001d173")],
+        post_tb=[dict(bal("5"), owner="Own\u00ader\u034fX\U000e0001", mint="Mi\u180ent\ufe0f\U0001d173")])),
     "control-characters-in-owner-mint-and-signature": enc(tx("Sig\x0bGood9", pre=[10000, 5], post=[5000, 6], mark=False,
         pre_tb=[dict(bal("0"), owner="Own\x00er\u2028X", mint="Mi\x1e\x85nt")], post_tb=[dict(bal("5"), owner="Own\x00er\u2028X", mint="Mi\x1e\x85nt")])),
 }
@@ -1169,11 +1179,11 @@ eq "contract: a raw CR between JSON tokens is not a line break: deltas keeps tha
 eq "contract: a balance whose index has no account key is a row named #<index>, with a note" \
   "$(python3 -I "$DNR/deltas.py" lamports "$TT/c20/good-fewer-keys-than-balances.jsonl" 2> "$TT/k20.err" | grep '^SigGood7' | tr '\t\n' ' |')$(grep -c '^deltas.py: 1 row(s) name a balance index that has no account key, as #<index>' "$TT/k20.err")" \
   "SigGood7 TokAcct11111111111111111111111111111111111 5|SigGood7 #2 -9000000000|1"
-# unsafe20 <file>: how many characters of the contract's fixed list, tab and newline
-# aside, <file> holds.
+# unsafe20 <file>: how many characters of the contract's fixed list (deltas.py's
+# _UNSAFE), tab and newline aside, <file> holds.
 unsafe20() { python3 -I -c 'import re, sys
-print(len(re.findall(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u061c\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]",
-                     open(sys.argv[1], encoding="utf-8").read())))' "$1"; }
+unsafe = re.compile(re.search(r"^_UNSAFE = re\.compile\(r\"(.*)\"\)$", open(sys.argv[1], encoding="utf-8").read(), re.M).group(1))
+print(sum(1 for c in open(sys.argv[2], encoding="utf-8").read() if c not in "\t\n" and unsafe.match(c)))' "$DNR/deltas.py" "$1"; }
 python3 -I "$DNR/deltas.py" tokens "$TT/c20/good-control-characters-in-owner-mint-and-signature.jsonl" > "$TT/u20.tokens"
 python3 -I "$DNR/deltas.py" tokens "$TT/c20/good-bidi-and-zero-width-characters-in-owner-mint-and-a-log.jsonl" >> "$TT/u20.tokens"
 eq "contract: deltas escapes each character of the fixed list, in every column" \
@@ -1184,10 +1194,28 @@ eq "contract: frames writes those characters as \\u escapes, and the text reads 
   "$(grep -c -F '"text": "a\u202eb\u0085c\u007fd\u200be\ufefff"' "$TT/u20.frames")|$(unsafe20 "$TT/u20.frames")|$(python3 -I -c 'import json, sys
 print(any(json.loads(l).get("text") == "a\u202eb\x85c\x7fd\u200be\ufefff" for l in open(sys.argv[1], encoding="utf-8")))' "$TT/u20.frames")" \
   "1|0|True"
+# The default-ignorable code points of the list where the recipes print text: deltas
+# writes \xNN, \uNNNN or \UNNNNNNNN, frames a \uNNNN escape (a surrogate pair above
+# U+FFFF), and the text frames writes reads back the same.
+python3 -I "$DNR/deltas.py" tokens "$TT/c20/good-default-ignorable-characters-in-owner-mint-and-a-log.jsonl" > "$TT/d20.tokens"
+python3 -I "$DNR/frames.py" "$TT/c20/good-default-ignorable-characters-in-owner-mint-and-a-log.jsonl" > "$TT/d20.frames"
+python3 -I - "$TT/d20.tokens" "$TT/d20.frames" > "$TT/d20.check" <<'PY'
+import json, sys
+rows = [line.rstrip("\n").split("\t") for line in open(sys.argv[1], encoding="utf-8")]
+tsv = [r for r in rows if r[0] == "SigGood15"] == [["SigGood15", "Own\\xader\\u034fX\\U000e0001",
+                                                     "Mi\\u180ent\\ufe0f\\U0001d173", "5", "TokAcct11111111111111111111111111111111111"]]
+frames = open(sys.argv[2], encoding="utf-8").read()
+text = '"text": "a\\u2060b\\u3164c\\uffa0d\\ud82f\\udca0e\\ufff0f"' in frames
+back = any(json.loads(line).get("text") == "a\u2060b\u3164c\uffa0d\U0001bca0e\ufff0f" for line in frames.splitlines())
+print(tsv, text, back)
+PY
+eq "contract: deltas and frames escape the default-ignorable code points, frames with a surrogate pair above U+FFFF" \
+  "$(cat "$TT/d20.check")|$(unsafe20 "$TT/d20.tokens")|$(unsafe20 "$TT/d20.frames")" "True True True|0|0"
 # profile.sh prints a version that is not a string as its JSON text. One transaction
-# per character of its own _UNSAFE list holds that character in an object value, and
-# one each holds a character in a key, an array and a nested object: each version
-# line must be the JSON text with every listed character escaped, and none raw.
+# per character of its own _UNSAFE list, and one per neighbour of each range that is
+# not on it, holds that character in an object value; one each holds a character in
+# a key, an array and a nested object. Each version line must be the JSON text with
+# every listed character escaped (a surrogate pair above U+FFFF), and none raw.
 python3 -I - "$DNR/profile.sh" "$TT/v20.jsonl" <<'PY'
 import json, re, sys
 unsafe = re.compile(re.search(r'^_UNSAFE = re\.compile\(r"(.*)"\)$', open(sys.argv[1], encoding="utf-8").read(), re.M).group(1))
@@ -1195,8 +1223,12 @@ def tx(sig, version):
     return {"blockTime": 1700000000, "version": version,
             "meta": {"err": None, "fee": 5000, "preBalances": [1], "postBalances": [1]},
             "transaction": {"signatures": [sig], "message": {"accountKeys": ["Payer1"]}}}
-rows = [tx("SigVer%04x" % c, {"k": "a" + chr(c) + "b"}) for c in range(0x10000) if unsafe.match(chr(c))]
-rows += [tx("SigVerKey", {"k ": 1}), tx("SigVerList", ["‮", 0]), tx("SigVerDeep", {"a": [{"b": "\x85﻿"}]})]
+code = [c for c in range(0x110000) if not 0xd800 <= c < 0xe000]
+listed = [c for c in code if unsafe.match(chr(c))]
+near = sorted({n for c in listed for n in (c - 1, c + 1) if 0 <= n < 0x110000 and not 0xd800 <= n < 0xe000} - set(listed))
+rows = [tx("SigVer%x" % c, {"k": "a" + chr(c) + "b"}) for c in listed + near]
+rows += [tx("SigVerKey", {"k\u2028": 1}), tx("SigVerList", ["\u202e", 0]),
+         tx("SigVerDeep", {"a": [{"b": "\x85\ufeff\U000e0041"}]})]
 with open(sys.argv[2], "w", encoding="utf-8") as f:
     for row in rows:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -1205,27 +1237,34 @@ bash "$DNR/profile.sh" "$TT/v20.jsonl" > "$TT/v20.out" 2>&1
 python3 -I - "$DNR/profile.sh" "$TT/v20.jsonl" "$TT/v20.out" > "$TT/v20.check" <<'PY'
 import json, re, sys
 unsafe = re.compile(re.search(r'^_UNSAFE = re\.compile\(r"(.*)"\)$', open(sys.argv[1], encoding="utf-8").read(), re.M).group(1))
+def escape(m):
+    o = ord(m.group())
+    if o < 0x10000:
+        return "\\u%04x" % o
+    o -= 0x10000
+    return "\\u%04x\\u%04x" % (0xd800 + (o >> 10), 0xdc00 + (o & 0x3ff))
 want = {}
 for line in open(sys.argv[2], encoding="utf-8"):
     v = json.loads(line)["version"]
-    want[unsafe.sub(lambda m: "\\u%04x" % ord(m.group()), json.dumps(v, ensure_ascii=False, separators=(",", ":")))] = v
+    want[unsafe.sub(escape, json.dumps(v, ensure_ascii=False, separators=(",", ":")))] = v
 out = open(sys.argv[3], encoding="utf-8").read()
 got = re.findall(r"(?m)^ *([0-9]+) (.*)$", out.split("-- version\n", 1)[1].split("\n-- ", 1)[0])
 ok = sum(1 for n, text in got if n == "1" and text in want and json.loads(text) == want[text])
 print("%d of %d|%d raw" % (ok, len(want), len(unsafe.findall(out.replace("\n", "")))))
 PY
 eq "contract: profile writes each listed character of a version that is not a string as an escape, and the version reads back the same" \
-  "$(cat "$TT/v20.check")" "86 of 86|0 raw"
+  "$(cat "$TT/v20.check")" "4281 of 4281|0 raw"
 # profile.sh counts and orders keys byte by byte under every locale: fee payers that
-# differ only in a character a UTF-8 collation ignores (U+00AD, U+034F, U+2060) stay
-# separate lines, in the same order under en_US.UTF-8 as under C.
+# differ only in a character a UTF-8 collation ignores, and that is not on the fixed
+# list (U+00A0, U+FFF9, U+2800), stay separate lines, in the same order under
+# en_US.UTF-8 as under C.
 python3 -I - "$TT/l20.jsonl" <<'PY'
 import json, sys
 def tx(sig, payer):
     return {"blockTime": 1700000000, "version": 0,
             "meta": {"err": None, "fee": 5000, "preBalances": [1], "postBalances": [1]},
             "transaction": {"signatures": [sig], "message": {"accountKeys": [payer]}}}
-payers = ["Payer1", "Pay­er1", "Payer1͏", "Pay⁠er1", "Payer1"]
+payers = ["Payer1", "Pay\u00a0er1", "Pay\ufff9er1", "Payer1\u2800", "Payer1"]
 with open(sys.argv[1], "w", encoding="utf-8") as f:
     for k, payer in enumerate(payers):
         f.write(json.dumps(tx("SigLook%d" % k, payer), ensure_ascii=False) + "\n")

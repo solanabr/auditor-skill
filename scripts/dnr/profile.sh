@@ -92,10 +92,13 @@ _TOKEN = re.compile(r"\"[^\"\\]*(?:\\.[^\"\\]*)*\"?|[\[\]{}]", re.S)
 # The characters no key, program id or string version may hold, and that no recipe
 # prints raw: the C0 controls, DEL, the C1 controls, the line and paragraph
 # separators, the bidirectional controls (U+061C, U+200E-200F, U+202A-202E,
-# U+2066-2069) and the zero-width characters (U+200B-200D, U+FEFF). The list is
-# fixed, so the same lines are malformed under every Python, whatever Unicode
-# version it knows; every other character, assigned or not, prints as itself.
-_UNSAFE = re.compile(r"[\x00-\x1f\x7f-\x9f\u061c\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]")
+# U+2066-2069), and the code points Unicode marks default-ignorable, which text
+# shows as nothing: U+00AD, U+034F, U+061C, U+115F-1160, U+17B4-17B5, U+180B-180F,
+# U+200B-200F, U+202A-202E, U+2060-206F, U+3164, U+FE00-FE0F, U+FEFF, U+FFA0,
+# U+FFF0-FFF8, U+1BCA0-1BCA3, U+1D173-1D17A and U+E0000-E0FFF. The list is fixed,
+# so the same lines are malformed under every Python, whatever Unicode version it
+# knows; every other character, assigned or not, prints as itself.
+_UNSAFE = re.compile(r"[\x00-\x1f\x7f-\x9f\xad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f\u2028-\u202e\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0\ufff0-\ufff8\U0001bca0-\U0001bca3\U0001d173-\U0001d17a\U000e0000-\U000e0fff]")
 # Lamport balances, the fee and token amounts are u64 values in RPC data; bounding
 # them keeps every computed delta and sum far inside what Python prints.
 _U64 = 2 ** 64 - 1
@@ -532,7 +535,7 @@ python3 -I -c "$recipe" check "$tmpd" "$out" "$@"
 
 # report: the profile, from the deduplicated corpus. Every sort and uniq runs under
 # LC_ALL=C and compares bytes: under a UTF-8 locale, sort and uniq can count two keys
-# that differ only in a character the collation ignores (U+00AD, say) as one line,
+# that differ only in a character the collation ignores (U+00A0, say) as one line,
 # and order ties by that locale. Under C, each key is its own line and every tie
 # falls in the same order wherever the profile runs.
 report() {
@@ -542,15 +545,23 @@ jq -r 'if (.meta.err == null) then "ok" else "failed" end' "$corpus" | LC_ALL=C 
 echo "-- version"
 # A version that is not a string prints as its JSON text (tostring), where jq escapes
 # the C0 controls and DEL; every other character of the fixed _UNSAFE list becomes a
-# \uNNNN escape too (lowercase hex), as frames.py writes it, so none prints raw.
+# \uNNNN escape too (lowercase hex; a surrogate pair above U+FFFF), as frames.py
+# writes it, so none prints raw. `unsafe` holds _UNSAFE's code points, in decimal.
 jq -r '
   def hex4: [(. / 4096 | floor), (. / 256 | floor) % 16, (. / 16 | floor) % 16, . % 16]
     | map("0123456789abcdef"[.:. + 1]) | add;
-  def unsafe: . < 32 or (. >= 127 and . < 160) or . == 1564 or (. >= 8203 and . < 8208)
-    or (. >= 8232 and . < 8239) or (. >= 8294 and . < 8298) or . == 65279;
+  def escape: if . < 65536 then "\\u" + hex4
+    else (. - 65536) as $c
+    | "\\u" + (55296 + ($c / 1024 | floor) | hex4) + "\\u" + (56320 + $c % 1024 | hex4) end;
+  def unsafe: . < 32 or (. >= 127 and . < 160) or . == 173 or . == 847 or . == 1564
+    or . == 4447 or . == 4448 or . == 6068 or . == 6069 or (. >= 6155 and . < 6160)
+    or (. >= 8203 and . < 8208) or (. >= 8232 and . < 8239) or (. >= 8288 and . < 8304)
+    or . == 12644 or (. >= 65024 and . < 65040) or . == 65279 or . == 65440
+    or (. >= 65520 and . < 65529) or (. >= 113824 and . < 113828)
+    or (. >= 119155 and . < 119163) or (. >= 917504 and . < 921600);
   (.version // "legacy")
   | if type == "string" then .
-    else [tostring | explode[] | if unsafe then ("\\u" + hex4 | explode[]) else . end] | implode
+    else [tostring | explode[] | if unsafe then (escape | explode[]) else . end] | implode
     end' "$corpus" | LC_ALL=C sort | LC_ALL=C uniq -c
 echo "-- time window (blockTime)"
 jq -r '.blockTime // empty' "$corpus" | LC_ALL=C sort -n | awk '
