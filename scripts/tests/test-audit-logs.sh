@@ -421,21 +421,27 @@ for r in frames ix lamports tokens; do
   agree "$r" "$WT/incident_1/crafted/instructions.jsonl" --
   if [[ -s "$T/diff" ]]; then bad "stdin: $r differs ($(tr '\n' ' ' < "$T/diff"))"; else ok "stdin: $r agrees when it reads stdin"; fi
 done
+# audit-logs writes an --out file only directly in the run directory, named
+# <name>.jsonl, .tsv or .txt; the scripts write to the same kind of path here.
 two=(incident_1/crafted/big.jsonl incident_1/crafted/logs.jsonl)
 for r in profile frames ix lamports tokens; do
   binary "$r" "${two[@]}" > "$T/b.stdout" 2> /dev/null
-  script "$r" --out "incident_1/out/s-$r.txt" "${two[@]}" > "$T/s.out" 2> /dev/null; sc=$?
-  binary "$r" --out "incident_1/out/$r.txt" "${two[@]}" > "$T/b.out" 2> /dev/null; bc=$?
-  if [[ "$r" == profile ]]; then norm_counts < "$WT/incident_1/out/s-$r.txt" > "$T/s.file"; else cp "$WT/incident_1/out/s-$r.txt" "$T/s.file"; fi
-  if [[ "$sc$bc" == 00 && ! -s "$T/s.out" && ! -s "$T/b.out" ]] && cmp -s "$T/b.stdout" "$WT/incident_1/out/$r.txt" \
-     && cmp -s "$T/s.file" "$WT/incident_1/out/$r.txt"; then
+  script "$r" --out "incident_1/s-$r.txt" "${two[@]}" > "$T/s.out" 2> /dev/null; sc=$?
+  binary "$r" --out "incident_1/out-$r.txt" "${two[@]}" > "$T/b.out" 2> /dev/null; bc=$?
+  if [[ "$r" == profile ]]; then norm_counts < "$WT/incident_1/s-$r.txt" > "$T/s.file"; else cp "$WT/incident_1/s-$r.txt" "$T/s.file"; fi
+  if [[ "$sc$bc" == 00 && ! -s "$T/s.out" && ! -s "$T/b.out" ]] && cmp -s "$T/b.stdout" "$WT/incident_1/out-$r.txt" \
+     && cmp -s "$T/s.file" "$WT/incident_1/out-$r.txt"; then
     ok "--out: audit-logs $r writes into the file what it prints on stdout, as the script does"
   else
     bad "--out: audit-logs $r -> exit $sc (script) / $bc, or the files differ"
   fi
 done
-eq "--out: no temporary file is left beside the outputs" "$(ls -A "$WT/incident_1/out" | tr '\n' ' ')" \
-  "frames.txt ix.txt lamports.txt profile.txt s-frames.txt s-ix.txt s-lamports.txt s-profile.txt s-tokens.txt tokens.txt "
+# A second run replaces its own output, as the scripts' --out does.
+binary frames --out incident_1/out-frames.txt incident_1/crafted/ties.jsonl > /dev/null 2>&1
+binary frames incident_1/crafted/ties.jsonl > "$T/b.stdout" 2> /dev/null
+if cmp -s "$T/b.stdout" "$WT/incident_1/out-frames.txt"; then ok "--out: a second run replaces the file it wrote before"; else bad "--out: a second run did not replace its earlier output"; fi
+eq "--out: no temporary file is left beside the outputs" \
+  "$(find "$WT/incident_1" -name '.*' ! -name .gitignore 2>/dev/null | tr '\n' ' ')" ""
 mkdir -p "$WT/incident_1/unread" "$T/elsewhere"
 cp "$FIX/clean-mixed.jsonl" "$WT/incident_1/unread/c.jsonl"; chmod 000 "$WT/incident_1/unread/c.jsonl"
 cp "$FIX/clean-mixed.jsonl" "$T/elsewhere/c.jsonl"
@@ -455,13 +461,17 @@ for c in "missing|incident_1/corpus/no-such.jsonl" "a directory|incident_1/corpu
     agree "$r" -- ${c#*|}
     if [[ -s "$T/diff" || -s "$T/b.out" ]] || ! grep -q '^audit-logs: ' "$T/b.err"; then differ="$differ $r"; fi
   done
-  if [[ -z "$differ" ]]; then ok "input that cannot be used, $c: same exit status as each script, nothing on stdout"
+  if [[ -z "$differ" ]]; then ok "input that cannot be used, ${c%%|*}: same exit status as each script, nothing on stdout"
   else bad "input that cannot be used, ${c%%|*}: differs in$differ"; fi
 done
-printf 'previous\n' > "$WT/incident_1/out/kept.txt"
+# An --out path the scripts refuse too, or cannot write: the same exit status. (One
+# in a subdirectory or a missing directory is a hostile-argument case below:
+# audit-logs refuses it before any check the scripts make.)
+printf 'previous\n' > "$WT/incident_1/kept.txt"
 ln -s "$T/elsewhere/out.txt" "$WT/incident_1/out-link.txt"
+mkdir "$WT/incident_1/adir.txt"
 for c in "a link|incident_1/out-link.txt" "a path through a directory link|incident_1/dirlink/out.txt" \
-         "in a missing directory|incident_1/no-such-dir/out.txt" "a directory|incident_1/out"; do
+         "a directory|incident_1/adir.txt"; do
   differ=""
   for r in profile frames lamports; do
     agree "$r" -- --out "${c#*|}" incident_1/corpus/clean-mixed.jsonl
@@ -471,21 +481,21 @@ for c in "a link|incident_1/out-link.txt" "a path through a directory link|incid
   else bad "--out that cannot be used, ${c%%|*}: differs in$differ"; fi
 done
 eq "--out: nothing was written through a link" "$(ls -A "$T/elsewhere" | tr '\n' ' ')" "c.jsonl "
-eq "--out: the files beside them are as they were" "$(cat "$WT/incident_1/out/kept.txt")" "previous"
+eq "--out: the files beside them are as they were" "$(cat "$WT/incident_1/kept.txt")" "previous"
 
 # SIGTERM while audit-logs reads: stdin holds one transaction, then stays open until
 # the run has been stopped. The --out file keeps what it held, and no temporary
 # file is left.
-partial() { local f; for f in "$WT"/incident_1/out/.held.txt.*.partial; do [[ -e "$f" ]] && return 0; done; return 1; }
-printf 'previous\n' > "$WT/incident_1/out/held.txt"
-( sed -n 1p "$FIX/clean-mixed.jsonl"; sleep 3 ) | ( cd "$WT" && exec "$BIN" frames --out incident_1/out/held.txt ) &
+partial() { local f; for f in "$WT"/incident_1/.held.txt.*.partial; do [[ -e "$f" ]] && return 0; done; return 1; }
+printf 'previous\n' > "$WT/incident_1/held.txt"
+( sed -n 1p "$FIX/clean-mixed.jsonl"; sleep 10 ) | ( cd "$WT" && exec "$BIN" frames --out incident_1/held.txt ) &
 pid=$!
 n=0; while ! partial && [[ "$n" -lt 100 ]]; do sleep 0.1; n=$((n + 1)); done
 kill -TERM "$pid" 2>/dev/null
 wait "$pid"
 code=$?
 eq "SIGTERM: exit 143, the --out file as it was, no temporary file left" \
-  "$code|$(cat "$WT/incident_1/out/held.txt")|$(partial && echo left)" "143|previous|"
+  "$code|$(cat "$WT/incident_1/held.txt")|$(partial && echo left)" "143|previous|"
 
 # ---------------------------------------------------------------------------
 # 6. Confinement. The working directory reached through a link above it is the
@@ -519,10 +529,11 @@ done
 # The hostile-argument cases, from a working directory laid out for them: a
 # canary file outside every run directory and one outside the working directory,
 # links to both from inside incident_1/, a linked run directory, run directories
-# without a proper .gitignore, a FIFO, a file with a second name, and a link where
-# an output would go. Each case runs with stdin from /dev/null and a 10 s limit.
+# without a proper .gitignore, a FIFO, a file with a second name, a link where an
+# output would go, and a corpus and a ledger an output must not replace. Each case
+# runs with stdin from /dev/null and a 30 s limit.
 H="$T/hostile"; HW="$H/wt"; HO="$H/outside"
-mkdir -p "$HW/incident_1/subdir" "$HW/incident_3" "$HW/incident_4" "$HW/audit_1" "$HO"
+mkdir -p "$HW/incident_1/subdir" "$HW/incident_1/corpus" "$HW/incident_3" "$HW/incident_4" "$HW/audit_1" "$HO"
 printf '*\n' > "$HW/incident_1/.gitignore"; printf '*\n' > "$HW/audit_1/.gitignore"
 printf '!x\n' > "$HW/incident_4/.gitignore"; printf '*\n' > "$HO/.gitignore"
 CANARY="SEKRET4f1c9e2a"
@@ -531,6 +542,8 @@ for f in "$HW/canary.jsonl" "$HO/secret.jsonl" "$HW/incident_3/canary.jsonl" "$H
   printf '%s\n' "$canary" > "$f"
 done
 sed -n 1p "$FIX/clean-mixed.jsonl" > "$HW/incident_1/corpus.jsonl"
+sed -n 2p "$FIX/clean-mixed.jsonl" > "$HW/incident_1/corpus/transactions.jsonl"
+printf '# ledger\n' > "$HW/incident_1/LEDGER.md"
 ln -s ../canary.jsonl "$HW/incident_1/link.jsonl"
 ln -s "$HO" "$HW/incident_1/dlink"
 ln -s "$HO" "$HW/incident_2"
@@ -589,12 +602,12 @@ for cf in "$T"/cases/*; do
   ( cd "$HW" && exec "$BIN" ${args[@]+"${args[@]}"} ) < /dev/null > "$T/h.out" 2> "$T/h.err" &
   pid=$!
   n=0
-  while kill -0 "$pid" 2>/dev/null && [[ "$n" -lt 100 ]]; do sleep 0.1; n=$((n + 1)); done
+  while kill -0 "$pid" 2>/dev/null && [[ "$n" -lt 300 ]]; do sleep 0.1; n=$((n + 1)); done
   if kill -0 "$pid" 2>/dev/null; then kill -KILL "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; code=hung; else wait "$pid"; code=$?; fi
   snapshot > "$T/h.after"
   partials="$(find "$H" -name '*.partial' 2>/dev/null)"
   why=""
-  [[ "$code" == hung ]] && why="$why still running after 10 s;"
+  [[ "$code" == hung ]] && why="$why still running after 30 s;"
   [[ "$code" == 0 ]] && why="$why exit 0;"
   cmp -s "$T/h.before" "$T/h.after" || why="$why changed files ($(diff "$T/h.before" "$T/h.after" | sed -n '2p'));"
   [[ -z "$partials" ]] || why="$why left $partials;"

@@ -73,3 +73,12 @@ a link after a good corpus	deltas	lamports	incident_1/corpus.jsonl	incident_1/li
 --out into a run directory with no .gitignore	frames	--out	incident_3/x.jsonl	incident_1/corpus.jsonl
 --out very long	frames	--out	incident_1/@LONG:5000@	incident_1/corpus.jsonl
 --out home	deltas	tokens	--out	~/x.tsv	incident_1/corpus.jsonl
+--out onto its own input	frames	--out	incident_1/corpus.jsonl	incident_1/corpus.jsonl
+--out onto its own input, spelled differently	deltas	lamports	--out	./incident_1/corpus.jsonl	incident_1/corpus.jsonl
+--out onto a collected corpus	frames	--out	incident_1/corpus/transactions.jsonl	incident_1/corpus.jsonl
+--out in a subdirectory	frames	--out	incident_1/subdir/x.jsonl	incident_1/corpus.jsonl
+--out onto the ledger	profile	--out	incident_1/LEDGER.md	incident_1/corpus.jsonl
+--out onto the run directory's .gitignore	profile	--out	incident_1/.gitignore	incident_1/corpus.jsonl
+--out hidden	frames	--out	incident_1/.x.txt	incident_1/corpus.jsonl
+--out with another extension	deltas	tokens	--out	incident_1/x.json	incident_1/corpus.jsonl
+--out with no name before the extension	frames	--out	incident_1/.jsonl	incident_1/corpus.jsonl
