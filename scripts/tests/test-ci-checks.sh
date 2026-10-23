@@ -263,6 +263,31 @@ lint pass stderr-null "cmd | grep -E 'x' 2>/dev/null"
 lint pass case-arm 'case "$x" in grep|head) ;; esac'
 lint pass arithmetic 'x=$((a | b))'
 lint pass e-takes-q 'cmd | grep -e -q file'
+# command substitutions inside double quotes, wrapped and quoted command names, long-option prefixes,
+# process substitutions, here-document delimiters with other characters, and waivers that are not comments
+lint flag dq-subst 'x="$(cmd | head -1)"'
+lint flag dq-subst-inner-quote 'x="$(cmd "$a" | head -1)"'
+lint flag local-dq 'f() { local v="$(git log | head -1)"; }'
+lint flag echo-dq-subst 'echo "$(cmd | grep -m1 x)"'
+lint flag dq-backticks 'x="`cmd | head -1`"'
+lint flag backslash-cmd 'cmd | \head -1'
+lint flag quoted-cmd "cmd | 'grep' -q x"
+lint flag gnu-prefixed 'cmd | ghead -1'
+lint flag long-prefix 'cmd | grep --qui x'
+lint flag if-read 'cmd | if read -r a; then :; fi'
+lint flag timeout-head 'cmd | timeout 5 head -1'
+lint flag tee-procsub 'cmd | tee >(grep -q x) >/dev/null'
+lint flag heredoc-dash-delim "cat <<'END-X'" 'cmd | grep -q y' 'END-X' 'z=$(cmd | head -1)'
+lint flag waiver-in-string 'cmd | grep -q "# pipefail-ok: x"'
+lint flag waiver-other-stmt 'echo "# pipefail-ok: x"; cmd | head -1'
+lint pass regex-in-dbl-bracket '[[ $x =~ grep|head ]] && :'
+lint pass dq-plain 'echo "a | head -1 and $(date)"'
+lint pass file-option "cmd | grep --file=patterns.txt"
+lint pass waived-multiline 'x=$(cmd |' '  head -1)   # pipefail-ok: the first line is all it needs'
+for set in 'set -e -o pipefail' 'set -o errexit -o pipefail' 'set -o pipefail -u'; do
+  printf '#!/usr/bin/env bash\n%s\ncmd | head -1\n' "$set" > "$T/lint/set-form.sh"
+  expect "pipefail: a script that sets '$set' is checked" 1 bash "$ROOT/scripts/check-pipefail.sh" "$T/lint/set-form.sh"
+done
 printf '#!/usr/bin/env bash\nset -u\ncmd | head -1\n' > "$T/lint/no-pipefail.sh"
 expect "pipefail: a script without pipefail is left alone" 0 bash "$ROOT/scripts/check-pipefail.sh" "$T/lint/no-pipefail.sh"
 # large input: 20,000 lines with one pipe into head at the end, reported at its own line
