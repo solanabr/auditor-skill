@@ -48,6 +48,8 @@
 # read these expressions the same way. bash >= 3.2.
 
 set -uo pipefail
+# Bytes, not characters: under a UTF-8 locale BSD sed stops at an invalid byte.
+export LC_ALL=C
 
 q="'"
 # Characters that end a URL or a key in surrounding text: whitespace, quotes,

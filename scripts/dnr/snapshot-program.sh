@@ -100,6 +100,8 @@
 
 # -C (noclobber): no redirection in this script replaces an existing file.
 set -Cuo pipefail
+# Bytes, not characters, in every tool this script runs.
+export LC_ALL=C
 # No cd may search $CDPATH, and no git call may use a repository named in the
 # environment instead of the directory it is pointed at.
 unset CDPATH GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES

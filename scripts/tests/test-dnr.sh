@@ -101,6 +101,9 @@ r8="$(red 'wss://rpc.example.com/ws?api-key=WSKEY1 closed')"
 eq "redact: a websocket URL is redacted like https" "$r8" "wss://REDACTED.example.com/REDACTED closed"
 r9="$(red 'Api-Key=UPPERKEY9 and ACCESS_TOKEN=T0K3N&x=1')"
 eq "redact: key names in any letter case" "$r9" "Api-Key=REDACTED and ACCESS_TOKEN=REDACTED&x=1"
+eq "redact: an invalid UTF-8 byte under a UTF-8 locale does not stop the filter" \
+  "$(printf 'bad \377 byte https://rpc.example.com/?api-key=K1 end\n' | LC_ALL=C.UTF-8 bash "$DNR/redact.sh" | LC_ALL=C tr -d '\377')" \
+  "bad  byte https://REDACTED.example.com/REDACTED end"
 eq "redact: a subdomain token keeps only the last two labels" \
   "$(red 'via https://TOKSUB42.rpc.example.test then https://TOKSUB42.rpc.example.test/v2/K')" \
   "via https://REDACTED.example.test then https://REDACTED.example.test/REDACTED"
