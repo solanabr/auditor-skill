@@ -34,15 +34,23 @@ manifest. So every PoC runs in the execution mode recorded at intake (for an inc
 the mode the command recorded in the ledger header): `templates/poc/run.sh` needs
 `AUDITOR_EXEC_MODE` set to it — `isolated` inside the isolated runner, or `native` —
 and otherwise exits 3 before it compiles anything, which makes the PoC
-`[PoC-ATTEMPTED]`. With no recorded mode, ask once (a non-interactive run is native,
-and the report says so). As a second layer, `run.sh` never builds inside the target
+`[PoC-ATTEMPTED]`. With no recorded mode, the command asks once (a non-interactive
+run is native, and the report says so) and hands the mode on; `poc-engineer` and
+`patch-engineer` use the mode the command hands them and never ask. Build and test the
+crate only through `run.sh`. As a second layer, `run.sh` never builds inside the target
 tree: cargo reads `.cargo/config*` and rustup reads `rust-toolchain*` from every
 parent directory, so a crate built under `audit_<n>/poc/` or `incident_<n>/poc/`
 would pick up the target's rustc wrapper, runner, linker, `[env]` and toolchain.
 `run.sh` copies the crate to a scratch directory outside the tree and builds it there
 with a pinned toolchain; it refuses a crate holding a symbolic link, a `.cargo/`
 directory or a `rust-toolchain*` file, and a `path` dependency on target crates must
-be absolute. Building the target itself (for example `cargo build-sbf` /
+be absolute. It also refuses the crate's own build-time code, in either mode and
+before anything compiles: from `cargo metadata --no-deps` in the scratch copy, a build
+script (`build = false` turns one off), a proc-macro package, or a `Cargo.toml` that is
+not a member of the crate's workspace, and from the manifests, a `[patch]` or
+`[replace]` table. Code generated at build time is checked into the crate instead.
+Before its final line `run.sh` names the non-registry code in the build: the path and
+git dependencies in the resolved `Cargo.lock`. Building the target itself (for example `cargo build-sbf` /
 `anchor build` on the client tree to get its `.so`) runs target code in the same mode.
 An incident whose root cause is supply chain / CI is never built natively, and its PoC
 never builds or links the target's crates in any mode, since they may be the payload:
@@ -52,13 +60,27 @@ template's own crates. If the recorded mode cannot run the PoC, record
 
 **Build cache.** `run.sh` builds every run in a fresh scratch directory, so each run
 compiles the whole dependency graph from cold. To reuse compiled dependencies between
-runs of one audit, create a directory outside any repository, e.g.
-`${XDG_CACHE_HOME:-$HOME/.cache}/auditor-skill/poc-target/<repo-name>-audit_<n>`
-(`…-incident_<n>` for an incident), pass it to every `run.sh` call as
-`CARGO_TARGET_DIR`, and delete it when the engagement ends. Never point
-`CARGO_TARGET_DIR` inside the target tree or at a directory you did not create: cargo
-trusts the build outputs it finds there. The `.so` files stay in the scratch copy
-(`SBF_OUT_DIR`).
+runs of one engagement, create the cache once per engagement with
+`mktemp -d "${TMPDIR:-/tmp}/auditor-poc-target.XXXXXX"` — inside the isolated runner in
+isolated mode — and record its path next to the execution mode (`intake.md` §8, or for
+an incident the ledger header). Pass it to every `run.sh` call as `CARGO_TARGET_DIR`,
+and delete it when the engagement ends. Never point `CARGO_TARGET_DIR` or
+`CARGO_BUILD_TARGET_DIR` inside the target tree or at a directory you did not create:
+cargo trusts the build outputs it finds there. The `.so` files stay in the scratch copy
+(`SBF_OUT_DIR`). PoC crates of one engagement often share a package name, so their
+artifacts land on the same cache paths: `run.sh` holds a lock inside the cache around
+each arm's build and test and re-stamps its scratch copy under it, and a run that finds
+one of its own units reported as already built, without having built it, exits 3.
+
+**Dependency pins.** The template ships a `Cargo.lock` that pins its whole dependency
+graph at releases published at least 14 days before the template shipped, and sets
+`rust-version` with resolver 3, so a crate it does not pin yet resolves to a release
+the platform-tools rustc builds. An unmodified template resolves to that lock, and a
+PoC that adds crates keeps every pin it does not need to move. Copy the template with
+its lock, never delete the lock, and when cargo reports a conflict with a pinned
+release, move only that pin through `run.sh`: `UPDATE_PINS="<crate>@<pinned version>"`
+runs `cargo update -p` in the scratch copy before the build, and the moved lock comes
+back with the crate. `run.sh` prints a line when a crate has no `Cargo.lock`.
 
 **Runners you write.** `templates/poc/run.sh` is the runner for the template's crate. A
 Trident or cargo-fuzz target or a Surfpool scenario has no template, so `poc-engineer`
@@ -144,7 +166,7 @@ rung down is a real, reportable finding — the ladder degrades gracefully to pr
 [PoC-ATTEMPTED]        A required tool was absent (no cargo build-sbf, surfpool
         │              unreachable, fork state unavailable), the recorded execution
         │              mode could not run it (no isolated runner — Rule 11a), OR the
-        │              flaw could not be minimized into a self-contained crate. Name
+        │              flaw could not be minimized into a standalone crate. Name
         │              the exact blocker, KEEP the prose PoC, record what a maintainer
         │              must install/provide.
         │
@@ -162,28 +184,69 @@ not. Downgrading the tier never downgrades the finding's severity or removes its
 `assert_exploit_effect!` (the account the attack changes, how to read the field, and the
 concrete value the attack leaves there, which the account did not hold before), and
 `tests/fixed_blocked.rs` asserts the guard's exact error with
-`assert_exploit_rejected_with!` (a value compared with `==`, never a pattern). For a
-fix the team deployed, whose error is not known in advance, the fixed arm uses
-`assert_exploit_blocked!` instead, with a positive control: a legitimate call (the
-instruction the finding concerns, with valid accounts and signers) goes through on the
-same bytes and runner and changes the account the attack targets, and the attack then
-fails with an error that is not a harness error and leaves that account unchanged. A
-control that fails or changes nothing makes the run inconclusive. When no legitimate
-call can show the change on those bytes (a hotfix that turned the instruction off),
-pin the hotfix's error with `assert_exploit_rejected_with!` instead: a failure alone is
-never a block.
+`assert_exploit_rejected_with!` (a value compared with `==`, never a pattern). Each
+macro runs the attack itself and returns its result: on Mollusk, the runner, one
+instruction and its account list; on LiteSVM, the runner and one signed legacy
+`Transaction`, with any setup sent before it. A Mollusk PoC is one instruction; a
+sequence goes to LiteSVM, whose PoC adds `litesvm = "0.13"` and loads the program
+through `litesvm_for!`. For a fix the team deployed, whose error is not known in
+advance, the fixed arm uses `assert_exploit_blocked!` instead, with a positive control
+that the macro runs on the same runner (on LiteSVM, on a clone of it): a legitimate
+call (the instruction the finding concerns, with valid accounts and signers), to the
+same program and from the same state of the account the attack targets, goes through
+and changes that account, and the attack then fails with an error that is not a
+harness error and leaves that account unchanged. A control for another program, from
+another state, that fails or that changes nothing makes the run inconclusive. When no
+legitimate call can show the change on those bytes (a hotfix that turned the
+instruction off), pin the hotfix's error with `assert_exploit_rejected_with!` instead:
+a failure alone is never a block.
 
-Each assertion leaves a marker when it starts and another when it holds. A failed test
-is a verdict (exit 1 or 2) only when an assertion ran and did not hold. It is
-inconclusive, exit 3, when it failed before any assertion ran (the program did not
-load, the setup panicked) or the harness could not decide (a harness error such as
-`Custom(4100)` or a short account list, a control that failed). On prebuilt bytes
-`run.sh` accepts an arm only with its assertion's marker, and only when every program
-`mollusk_for` loaded is the `.so` `run.sh` placed, unchanged after the test
-(`mollusk_for` records each path and zero-trimmed sha256): load the program under test
-only through `mollusk_for`, by name. The markers are a floor, not proof: whoever reads
-the PoC still checks that the assertion states the finding's effect and the guard's
-error.
+Each assertion leaves a marker once its attack has run and another when it holds, each
+tagged with the test that ran it. A failed test is a verdict (exit 1 or 2) only when an
+assertion of that arm ran and did not hold, and one test's inconclusive result does not
+hide another test's failed assertion. It is inconclusive, exit 3, when it failed before
+any assertion ran (the program did not load, the setup panicked) or the harness could
+not decide: a harness error such as `Custom(4100)` or a short account list, on either
+arm, an effect the account already held before the attack, a read that does not fit the
+account, or a control that failed. In a model run as on prebuilt bytes, `run.sh`
+accepts an arm only with a held assertion of that arm, and only when every program the
+runner helpers (`mollusk_for`, `litesvm_for!`) loaded is the `.so` `run.sh` placed,
+unchanged after the test (each load records its path and zero-trimmed sha256): load
+the program under test only through them, by name. The attack must also target one of
+those loaded program ids — an instruction or transaction aimed at the System program
+or an added helper is inconclusive, since its outcome did not come from the placed
+bytes. On prebuilt bytes the vulnerable
+arm counts only on `assert_exploit_effect!` and the fixed arm only on
+`assert_exploit_rejected_with!` or `assert_exploit_blocked!`. When the pinned error is
+itself harness-class (a fix that now needs an extra account), it holds, and the run's
+`fixed arm:` line says so: the positive control is then the vulnerable arm, which runs
+the byte-identical attack and shows it fits the program. The markers are a floor, not
+proof: whoever reads the PoC still checks that the assertion states the finding's
+effect and the guard's error.
+
+**Harness errors: report, flag, repair once.** A harness error (an inconclusive arm,
+exit 3) is never filed silently. The
+finding block and, for an incident, `LEDGER.md` record `[PoC-ATTEMPTED]` with
+`run.sh`'s blocker line verbatim and the flag "PoC re-run needed". `poc-engineer` then
+makes at least one repair-and-retry pass: it diagnoses the harness error (a wrong
+program id, a missing or misordered account, a harness that does not match the
+program), fixes only the PoC's harness setup — mirrored in both test files, so the two
+attacks stay byte-identical — and re-runs through `run.sh`. The repair never changes the
+assertions, the expected error or effect, or the target, and its diff is kept next to
+the PoC as `harness-repair.diff`. If the re-run is still inconclusive, the finding stays
+`[PoC-ATTEMPTED]` with the error and the flag.
+
+**Checking the harness copy.** Every marker comes from code inside the PoC crate, so
+before a command trusts an `OK` line it compares the crate's `run.sh` with the
+installation's `templates/poc/run.sh` byte for byte, and its `shared-test-utils/` with
+the installation's (only the version requirements in `shared-test-utils/Cargo.toml` may
+differ). A re-run — `/auditor:patch`, re-audit step 4b, an incident's `FIXED_SO` run —
+refreshes both from the installation first. A copy that differs is not evidence:
+refresh it, re-run, and record the difference. `run.sh` itself binds the build to that
+copy: it exits 3 when the crate's `shared-test-utils` dependency is renamed or resolves
+anywhere but `<crate>/shared-test-utils`, or when another dependency supplies that
+import name. Read the run's non-registry line as well: it names any path or git
+dependency and any source compiled from outside the crate.
 
 **Leg 3 of an incident** (`references/detection-response/README.md`) is met only by a
 `run.sh` run on prebuilt bytes that ends with
@@ -195,8 +258,16 @@ OK: reproduced on prebuilt bytes — vulnerable sha256=<64 hex> → [PoC-REPRODU
 (with `FIXED_SO`, the same line also names `fixed sha256=<…>` and how the fixed arm
 held), where `<64 hex>` is the zero-trimmed sha256 recorded for the incident snapshot
 or the hash-matched build. `VULNERABLE_SO` alone is enough for Leg 3: no fix needs to
-exist yet. A run of the crate's own arms, a model, prints another line and never
-satisfies Leg 3, whatever its tier.
+exist yet. A LiteSVM PoC reaches the same line when it loads the program through
+`litesvm_for!` and asserts with the macros' LiteSVM forms. A run of the crate's own
+arms, a model, prints another line and never satisfies Leg 3, whatever its tier.
+
+**Migrating a 7.6 PoC.** A PoC written against the 7.6 macros fails to build once a
+re-run refreshes its harness copy — the old `assert_exploit_effect!(outcome, before: …)`
+form is now a `compile_error!` that names the new one. Rewriting each call into the
+form that runs the attack itself, keeping the same `account`, `read`, `expect` /
+`error` and `why`, is a harness repair (it changes how the attack runs, not what is
+asserted): about five lines per test, recorded in `harness-repair.diff`.
 
 ---
 
@@ -239,9 +310,22 @@ held on the bytes `run.sh` placed, `assert_exploit_effect!` on the unpatched byt
 pinned error) → [PoC-REPRODUCED]`; a `(blocked: …)` line comes from the check of a fix
 the team deployed and is reported apart, never as evidence for our patch. The PoC must
 also use the program's real id (an Anchor program checks its own `declare_id!`), which
-`run.sh` does not check. The run needs `AUDITOR_EXEC_MODE` like any other.
-`VERIFICATION.md` records which target the PoC re-ran against in its *Re-detonated
-against* field.
+`run.sh` does not check. The run needs `AUDITOR_EXEC_MODE` like any other, and the
+crate's `run.sh` and `shared-test-utils/` are refreshed from the installation before it
+(§3, "Checking the harness copy"). Exit 3 decides nothing: it is a harness error to
+report, flag "PoC re-run needed" and repair, never a broken fix. `VERIFICATION.md`
+records which target the PoC re-ran against in its *Re-detonated against* field.
+
+**Re-running against the client's fix (`/auditor:re-audit` step 4b).** The same prebuilt
+run, with `VULNERABLE_SO` set to the build of the audited commit and `FIXED_SO` to the
+build of the head commit, records one field per finding, in the words of *Re-detonated
+against*: `PoC re-run @ <head sha> (Re-detonated against: patched target build |
+minimized model; AUDITOR_EXEC_MODE=<mode>): reverts | still succeeds | inconclusive
+(<harness error>) | not run (<reason>)` (`<auditor-skill root>/templates/re-audit.md`).
+`reverts` needs exit 0 and names how the fixed arm held: `(rejected with the pinned
+error)`, or `(blocked: …)` for the client's own error, checked with
+`assert_exploit_blocked!` and its positive control. A FIXED status without a `reverts`
+re-run is flagged, not downgraded.
 
 ---
 
@@ -253,7 +337,8 @@ against* field.
 3. `/auditor:patch` → `patch-engineer` writes `templates/patch/` diff → apply to a
    scratch worktree → re-run the PoC → award a fix tier (§4).
 4. `audit-cycle` / `re-audit` fold both tiers back into the finding block; the report's
-   **Auditor Verification** line carries the fix verdict.
+   **Auditor Verification** line carries the fix verdict, and `RE-AUDIT.md` the step-4b
+   PoC re-run of each finding (§4).
 
 Build/toolchain failures that block any of this are troubleshooting, not findings —
 resolve via `references/framework-idioms/build-and-tooling.md` (GLIBC floors, the

@@ -58,7 +58,8 @@ pub fn process(
     //   • unvalidated CPI:  invoke `*callee.key` with no program-id pin, so control
     //                       routes to attacker bytecode.
     // The privileged effect the attacker gains goes below (state write, transfer,
-    // CPI). `tests/exploit.rs` asserts this path returns Ok for the crafted input.
+    // CPI). `tests/exploit.rs` asserts that the crafted input goes through and leaves
+    // that effect.
     // ───────────────────────────────────────────────────────────────────────────
 
     Ok(())

@@ -7,19 +7,23 @@
 #
 # This is TEMPLATE SOURCE. It is NOT compiled at skill-authoring time — the
 # `poc-engineer` copies the `templates/poc/` tree into `audit_<n>/poc/F-xxx/` and
-# the user's Solana toolchain builds it at audit time (see run.sh: `cargo build-sbf`,
-# platform-tools >= v1.54 / cargo >= 1.85).
+# the user's Solana toolchain builds it at audit time, only through the crate's
+# run.sh (platform-tools >= v1.54 / cargo >= 1.85). It is a member of that crate's
+# workspace, so the crate's Cargo.lock pins its dependencies too.
 #
-# Version note: the crate versions below track the current SVM test stack. If the
-# copied crate fails to resolve, move these framework crates to the versions the
-# audited repo uses. Framework crates by default: a crate copied from the target's
-# manifest runs its build script in the recorded execution mode, so add one only
-# when the PoC needs it.
+# Version note: the crate versions below track the current SVM test stack.
+# mollusk-svm 0.14 and later need solana-account 4 and solana-rent 4, so move those
+# three together. If the copied crate fails to resolve, move these framework crates
+# to the versions the audited repo uses. Framework crates by default: a crate
+# copied from the target's manifest runs its build script in the recorded
+# execution mode, so add one only when the PoC needs it. Only the version
+# requirements below may differ from the installation's copy of this file.
 
 [package]
 name = "shared-test-utils"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.89"
 publish = false
 license = "MIT"
 

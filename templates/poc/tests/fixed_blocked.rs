@@ -58,29 +58,33 @@ fn same_attack_rejected_on_fixed() {
         (legit_authority, system_account(0)),
         (attacker, system_account(1_000_000_000)),
     ];
-    let outcome = mollusk.process_instruction(&ix, &accounts);
 
     // The contract: on the fixed build the restored guard turns the attack away with
     // ITS error, compared with == (a value, never a pattern), so a rejection for an
     // unrelated reason — a wrong program id, a short account list — cannot pass for
-    // the fix. run.sh accepts prebuilt bytes only when this assertion ran and held.
+    // the fix: such a harness error is inconclusive. The macro runs the attack
+    // itself, `ix` with `accounts` on `mollusk`, and returns the result. run.sh
+    // counts this arm only when this assertion ran and held.
     // {GUARD_ERROR}: here the restored is_signer check's error; a custom error is
     // `ProgramError::Custom(<code>)`.
     assert_exploit_rejected_with!(
-        outcome,
-        ProgramError::MissingRequiredSignature,
-        "{WHICH_GUARD_BLOCKS_IT}"
+        mollusk,
+        ix: &ix,
+        accounts: &accounts,
+        error: ProgramError::MissingRequiredSignature,
+        why: "{WHICH_GUARD_BLOCKS_IT}",
     );
 
     // A hotfix the team already deployed (run.sh FIXED_SO = a fresh dump of the
     // current bytes) rejects with an error you cannot know in advance. For that check
     // only, replace the assertion above with the lines below, keeping the account and
-    // read of tests/exploit.rs. They add a positive control: a legitimate call, on the
-    // same bytes and runner, must go through and change that account, or the run is
-    // inconclusive — without it, a program that fails every call would pass for a
-    // fix. run.sh then reports the fixed arm as "blocked", which never stands for our
-    // own fix. If no legitimate call can go through and change the account on these
-    // bytes, pin the hotfix's error with assert_exploit_rejected_with! instead.
+    // read of tests/exploit.rs. They add a positive control that the macro runs on the
+    // same runner: a legitimate call, to the same program and from the same state of
+    // that account, must go through and change it, or the run is inconclusive —
+    // without it, a program that fails every call would pass for a fix. run.sh then
+    // reports the fixed arm as "blocked", which never stands for our own fix. If no
+    // legitimate call can go through and change the account on these bytes, pin the
+    // hotfix's error with assert_exploit_rejected_with! instead.
     //
     //   // {LEGITIMATE_CALL}: the same instruction as the attack, as its rightful
     //   // caller makes it — here the real authority signs and hands over to a new key.
@@ -99,12 +103,12 @@ fn same_attack_rejected_on_fixed() {
     //       (legit_authority, system_account(1_000_000_000)),
     //       (next_authority, system_account(0)),
     //   ];
-    //   let control = mollusk.process_instruction(&legit_ix, &legit_accounts);
     //   shared_test_utils::assert_exploit_blocked!(
-    //       outcome,
-    //       before: &accounts,
-    //       control: control,
-    //       control_before: &legit_accounts,
+    //       mollusk,
+    //       ix: &ix,
+    //       accounts: &accounts,
+    //       control_ix: &legit_ix,
+    //       control_accounts: &legit_accounts,
     //       account: state_pk,
     //       read: |a| a.data[0..32].to_vec(),
     //       why: "{WHICH_GUARD_BLOCKS_IT}",
