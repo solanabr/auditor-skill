@@ -263,7 +263,16 @@ def _finite(text):
     return value
 
 
-_DECODER = json.JSONDecoder(parse_constant=_no_constant, parse_float=_finite)
+def _integer(text):
+    """A JSON integer, from its literal: at most 20 digits, and never -0, which no RPC
+    value is. Every integer of a line is checked, read or not, so every Python reads
+    the same lines (3.11 and later refuse to convert more than 4300 digits)."""
+    if text == "-0" or len(text.lstrip("-")) > 20:
+        raise ValueError("not an integer an RPC response holds")
+    return int(text)
+
+
+_DECODER = json.JSONDecoder(parse_constant=_no_constant, parse_float=_finite, parse_int=_integer)
 
 
 def shown(text, cap=120):

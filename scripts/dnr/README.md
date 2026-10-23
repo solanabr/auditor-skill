@@ -68,7 +68,10 @@ because `python3 -I` keeps a sibling module off `sys.path`;
   a blank line is skipped without being counted.
 - **Text.** A line must be valid UTF-8 and one JSON object. `NaN`, `Infinity`,
   a number too large for a float, and a `\u` escape that leaves a lone surrogate
-  each make it malformed. So does nesting deeper than 200 (jq reads at most 256,
+  each make it malformed. So does an integer literal of more than 20 digits, or
+  `-0`, anywhere in the line, in a field a recipe reads or not: an RPC response
+  holds neither, and the bound keeps every Python reading the same lines (3.11
+  and later refuse to convert an integer of more than 4300 digits). So does nesting deeper than 200 (jq reads at most 256,
   so every recipe stops at the same depth): the depth is counted on the line's
   text before it is parsed, as the brackets `[` and `{` outside strings, the
   top-level object being 1, so a deep value that a later duplicate key replaces
@@ -81,8 +84,8 @@ because `python3 -I` keeps a sibling module off `sys.path`;
   is a JSON integer; the lamport balances and `fee` are JSON integers that a u64
   holds (0 to 2^64 − 1, as in RPC data: a float, a negative number or a larger
   one is never rounded or read); a token `uiTokenAmount.amount` is the decimal
-  text of a u64, at most 20 ASCII digits (not `1_000`, `+5`, `1e3`, a non-ASCII
-  digit or a JSON number). These bounds keep every delta and sum exact and
+  text of a u64: 1 to 20 ASCII digits, leading zeros allowed, at most 2^64 − 1
+  (not `1_000`, `+5`, `1e3`, a non-ASCII digit or a JSON number). These bounds keep every delta and sum exact and
   printable. The account keys are all strings, or all objects with a string
   `pubkey`; every index (`programIdIndex`, `accountIndex`, an inner group's
   `index`, `numRequiredSignatures`) is a non-negative integer, and a `programId`

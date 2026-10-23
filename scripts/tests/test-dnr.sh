@@ -951,6 +951,11 @@ bad = {
     "a-key-holding-DEL": enc(tx("SigBad51", keys=["Payer\x7f111111111111111111111111111111111111", "Two1111111111111111111111111111111111111111"])),
     "a-program-id-holding-a-zero-width-space": enc(tx("SigBad52", ixs=[{"programId": "Prog​Forged", "accounts": []}])),
     "a-version-holding-a-byte-order-mark": enc(dict(tx("SigBad53"), version="0﻿")),
+    "a-21-digit-integer-in-a-field-no-recipe-reads": enc(tx("SigBad54", meta_extra={"computeUnitsConsumed": 10 ** 20})),
+    "a-4301-digit-integer-in-a-field-no-recipe-reads": enc(tx("SigBad55", meta_extra={"computeUnitsConsumed": "PLACE"})).replace(
+        b'"PLACE"', b"9" * 4301),
+    "minus-0-in-a-field-no-recipe-reads": enc(tx("SigBad56", meta_extra={"computeUnitsConsumed": "PLACE"})).replace(b'"PLACE"', b"-0"),
+    "a-fee-of-minus-0": enc(tx("SigBad57", meta_extra={"fee": "PLACE"})).replace(b'"PLACE"', b"-0"),
 }
 last = ("instruction-a-string", "keys-strings-and-objects", "header-count-a-string", "a-pubkey-that-is-an-object",
         "a-truncated-line-holding-a-drain", "nesting-300-deep", "nesting-300-deep-under-a-key-repeated-later")
@@ -971,6 +976,8 @@ good = {
         logs=["Program %s invoke [1]" % P, "Program log: a‮b\x85c\x7fd​e﻿f", "Program %s success" % P],
         pre_tb=[dict(bal("0"), owner="Own‮er​X﻿", mint="Mi؜nt⁦\x7f")],
         post_tb=[dict(bal("5"), owner="Own‮er​X﻿", mint="Mi؜nt⁦\x7f")])),
+    "a-20-digit-integer-and-minus-0.0-in-fields-no-recipe-reads": enc(tx("SigGood13", mark=False,
+        meta_extra={"computeUnitsConsumed": 99999999999999999999, "y": "PLACE"})).replace(b'"PLACE"', b"-0.0"),
     "brackets-and-escaped-quotes-inside-strings": enc(tx("SigGood10", mark=False)).replace(
         b"Program log: hello", b"Program log: " + b"[{" * 150 + b'\\\\\\" ' + b"[" * 150),
     "control-characters-in-owner-mint-and-signature": enc(tx("Sig\x0bGood9", pre=[10000, 5], post=[5000, 6], mark=False,
