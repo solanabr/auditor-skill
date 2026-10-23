@@ -46,8 +46,9 @@
 #   --remote (--remotes is allowed), --git-dir*, --work-tree*, --namespace*, --super-prefix*,
 #   --config-env*, --recurse-submodules*, --submodule*, --no-index, --contents*, --ignore-revs-file*,
 #   --exclude-from*, --pathspec-from-file*, --open-files-in-pager*, --remerge-diff and --diff-merges=remerge
-#   or r (they run the merge drivers the repository configures); -O (a diff order file, grep's pager),
-#   grep -f/--file and --untracked, ls-files -X, blame -S.
+#   or r (they run the merge drivers the repository configures), --no-cached and --no-staged (they would
+#   undo the --cached git-ro adds); -O (a diff order file, grep's pager), grep -f/--file and --untracked,
+#   ls-files -X and --exclude-per-directory, blame -S.
 # --format and --pretty take a built-in name, a format: or tformat: string, or a string with a %. Other
 # names can be pretty.<name> aliases from the repository's config, and %G or %(signature runs the
 # signature program, so both are refused.
@@ -101,7 +102,7 @@ BLAME_USAGE='blame needs <rev> -- <path>: a revision, then --, then one path'
 # Long options refused with any ending, refused as written, and allowed only with a checked value; an
 # abbreviation of any of them is refused, except the four exact options that share a denied name's prefix.
 DENY_PREFIX='output exec upload-pack receive-pack git-dir work-tree namespace super-prefix config-env recurse-submodules submodule contents ignore-revs-file exclude-from pathspec-from-file open-files-in-pager'
-DENY_EXACT='ext-diff textconv show-signature no-index remote remerge-diff'
+DENY_EXACT='ext-diff textconv show-signature no-index remote remerge-diff no-cached no-staged'
 GUARDED='format pretty diff-merges'
 EXACT_OK='exclude text ignore-rev batch'
 
@@ -168,7 +169,7 @@ check_options() {
   shift
   case "$SUB" in
     grep) EXTRA='file untracked' ;;
-    ls-files) EXTRA='modified eol' ;;
+    ls-files) EXTRA='modified eol exclude-per-directory' ;;
     cat-file) EXTRA='filters batch-command' ;;
     describe) EXTRA='dirty broken' ;;
     *) EXTRA='' ;;
