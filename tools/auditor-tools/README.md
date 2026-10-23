@@ -249,7 +249,7 @@ must be safe whatever arguments follow:
   component, passes through no symbolic link, and names a file inside an
   `incident_<n>/` run directory: a real directory, directly in the working
   directory, holding a `.gitignore` of `*` (OUTPUT-RULES.md Rule 11d). Anything else
-  is refused, with exit 2, before any file is opened. Run the scripts on a corpus
+  is refused, with exit 2, before any input is read. Run the scripts on a corpus
   kept elsewhere, such as a `--logs` export.
 - An input is opened without following a link and must still be the regular file
   that was checked. With no corpus named, `frames` and `deltas` read stdin.
