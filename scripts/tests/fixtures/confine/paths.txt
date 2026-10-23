@@ -1,0 +1,45 @@
+# confine_path cases for test-confine.sh, run in its fixture tree: a.rs (a file), src/ (src/lib.rs,
+# src/deep/x.rs), link (a symbolic link to a.rs), linkdir (to src), dangling (to nothing), out (to a
+# directory outside the tree), fifo (a named pipe) and src/inner (a symbolic link to ../a.rs).
+# One case per line: <want><TAB><path><TAB><status><TAB><stdout "CONFINE_REL CONFINE_TYPE", or the stderr line>.
+dir	.	0	. dir
+dir	src	0	src dir
+dir	./src	0	src dir
+dir	src/deep	0	src/deep dir
+any	a.rs	0	a.rs file
+any	./a.rs	0	a.rs file
+any	src/lib.rs	0	src/lib.rs file
+any	src	0	src dir
+any	new.rs	0	new.rs none
+any	src/new/x.rs	0	src/new/x.rs none
+new	src/new.rs	0	src/new.rs none
+new	absent/x	0	absent/x none
+any	.	64	test: refused: the path has an empty, . or .. component: .
+any	./	64	test: refused: the path has an empty, . or .. component: ./
+any	././a.rs	64	test: refused: the path has an empty, . or .. component: ././a.rs
+any	src/	64	test: refused: the path has an empty, . or .. component: src/
+any	src//lib.rs	64	test: refused: the path has an empty, . or .. component: src//lib.rs
+any	src/./lib.rs	64	test: refused: the path has an empty, . or .. component: src/./lib.rs
+any	src/../a.rs	64	test: refused: the path has an empty, . or .. component: src/../a.rs
+any	..	64	test: refused: the path has an empty, . or .. component: ..
+any	../wt/a.rs	64	test: refused: the path has an empty, . or .. component: ../wt/a.rs
+any	src/..	64	test: refused: the path has an empty, . or .. component: src/..
+any	/etc/hosts	64	test: refused: the path must be relative to the working directory: /etc/hosts
+any	//etc	64	test: refused: the path must be relative to the working directory: //etc
+any	-x	64	test: refused: the path may not start with - or ~: -x
+any	--output=x	64	test: refused: the path may not start with - or ~: --output=x
+any	~	64	test: refused: the path may not start with - or ~: ~
+any	~root/x	64	test: refused: the path may not start with - or ~: ~root/x
+any	link	64	test: refused: the path passes through a symbolic link: link
+any	linkdir/lib.rs	64	test: refused: the path passes through a symbolic link: linkdir/lib.rs
+any	linkdir	64	test: refused: the path passes through a symbolic link: linkdir
+any	dangling	64	test: refused: the path passes through a symbolic link: dangling
+any	dangling/x	64	test: refused: the path passes through a symbolic link: dangling/x
+any	out/x	64	test: refused: the path passes through a symbolic link: out/x
+any	src/inner	64	test: refused: the path passes through a symbolic link: src/inner
+any	fifo	64	test: refused: the path is not a regular file or a directory: fifo
+any	a.rs/x	64	test: refused: the path has a component that is not a directory: a.rs/x
+dir	a.rs	64	test: refused: the path is not an existing directory: a.rs
+dir	absent	64	test: refused: the path is not an existing directory: absent
+new	a.rs	64	test: refused: the path already exists: a.rs
+new	src	64	test: refused: the path already exists: src
