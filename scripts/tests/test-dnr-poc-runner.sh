@@ -15,7 +15,9 @@
 #     or on a harness error, on either arm, is inconclusive (exit 3); a passing test
 #     counts only with a held assertion of its arm; markers carry the test that wrote
 #     them, so one test's inconclusive result does not hide another test's failed
-#     assertion;
+#     assertion; exit 2's final line says whether the fixed arm accepted the attack,
+#     rejected it with another error than the pinned one, or failed it while the
+#     account changed;
 #   * how an arm runs: its test binary is built with `cargo test --no-run`, found in
 #     cargo's JSON output (a large one too) and run directly, from the package root
 #     with CARGO_MANIFEST_DIR and the dynamic library path set; only that run gets
@@ -26,6 +28,9 @@
 #   * the crate's own build-time code (a build script, a proc-macro package, a
 #     Cargo.toml that is not a member, a [patch] or [replace] table) is refused before
 #     anything compiles; `build = false` is honoured;
+#   * the harness binding: the crate depends on its own shared-test-utils/ under the
+#     import name shared_test_utils, no other dependency takes that name in either
+#     spelling, and each arm's build compiles that copy and no other;
 #   * the non-registry line before the final line: the path and git dependencies in
 #     the resolved Cargo.lock;
 #   * the macros run the attack themselves; their old forms do not compile and say how
@@ -40,7 +45,12 @@
 #     pinned toolchain; a crate holding a symbolic link, .cargo/, rust-toolchain* or
 #     tests/fixtures/<crate>.so is refused; BPF_OUT_DIR is cleared; an inherited
 #     CARGO_TARGET_DIR is honoured), and the exit codes (a failed build is 3, a failed
-#     verdict 1/2);
+#     verdict 1/2; a refusal prints one blocker line; a run that stops anywhere else,
+#     an unset variable included, exits 3);
+#   * the build lock: it goes in the directory cargo metadata reports (a target-dir in
+#     cargo's own config included); a stale one is broken by one run at a time; a run
+#     drops only a lock that still names it; POC_LOCK_WAIT is whole seconds, never
+#     evaluated;
 #   * dependency pins: the crate's Cargo.lock is what resolves; a crate without one
 #     gets a line saying so; UPDATE_PINS moves only the named pins, with cargo update
 #     -p in the scratch copy before anything is built, and refuses any other entry;
