@@ -421,7 +421,7 @@ for addr in "${addrs[@]}"; do
     echo "  ! older history may exist for $addr: $stop — $resume; recorded as a collection gap" >&2
     gap "$addr" "older history may exist: $stop; $resume"
   fi
-  addrs_done=$((addrs_done + 1))
+  addrs_done=$((addrs_done + 1)); page=0
 done
 phase=listed
 echo "signatures collected: $collected -> $sig_file"
