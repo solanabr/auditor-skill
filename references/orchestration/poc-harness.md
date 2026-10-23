@@ -308,19 +308,23 @@ The patch is a **proposal**: the auditor stays read-only on the client tree and 
 back the diff plus this verification record for the client to apply and re-test.
 
 **Re-detonating against the target's own build.** The PoC proves the patch either on
-the minimized model (the patch transplanted onto the crate's `vulnerable` arm, as in
-`VERIFICATION.md` §2) or on the target itself: `run.sh` with `VULNERABLE_SO` set to the
-unpatched build and `FIXED_SO` to the patched one. That is prebuilt mode: `run.sh`
+the minimized model or on the target itself. On the minimized model the crate's
+`fixed.rs` is its `vulnerable.rs` with the patch transplanted, and `run.sh` with no
+overrides must exit 0 (`VERIFICATION.md` §2; re-audit step 4b checks a client's fix the
+same way). On the target itself, `run.sh` runs with `VULNERABLE_SO` set to the unpatched
+build and `FIXED_SO` to the patched one. That is prebuilt mode: `run.sh`
 exits 3 unless both files are ELF programs and each arm's contract assertion ran and
 held on the bytes `run.sh` placed, `assert_exploit_effect!` on the unpatched bytes and
 `assert_exploit_rejected_with!` on the patched ones. Our patch is shown only by a line ending in `(rejected with the
 pinned error) → [PoC-REPRODUCED]`; a `(blocked: …)` line comes from the check of a fix
-the team deployed and is reported apart, never as evidence for our patch. The PoC must
-also use the program's real id (an Anchor program checks its own `declare_id!`), which
+the team deployed and is reported apart, never as evidence for our patch. An exit 2 says
+in its final line whether the patched arm accepted the attack or rejected it with
+another error than the pinned one; neither is a revert. The PoC must also use the
+program's real id (an Anchor program checks its own `declare_id!`), which
 `run.sh` does not check. The run needs `AUDITOR_EXEC_MODE` like any other, and the
 crate's `run.sh` and `shared-test-utils/src/` are refreshed from the installation before it
-(§3, "Checking the harness copy"). Exit 3 decides nothing: it is a harness error to
-report, flag "PoC re-run needed" and repair, never a broken fix. `VERIFICATION.md`
+(§3, "Checking the harness copy"). Exit 3 decides nothing: record its blocker line with
+"PoC re-run needed" (a harness error also gets the repair pass), never a broken fix. `VERIFICATION.md`
 records which target the PoC re-ran against in its *Re-detonated against* field.
 
 **Re-running against the client's fix (`/auditor:re-audit` step 4b).** The same prebuilt
@@ -328,11 +332,14 @@ run, with `VULNERABLE_SO` set to the build of the audited commit and `FIXED_SO` 
 build of the head commit, records one field per finding, in the words of *Re-detonated
 against*: `PoC re-run @ <head sha> (Re-detonated against: patched target build |
 minimized model; AUDITOR_EXEC_MODE=<mode>): reverts | still succeeds | inconclusive
-(<harness error>) | not run (<reason>)` (`<auditor-skill root>/templates/re-audit.md`).
+(<reason>) | not run (<reason>)` (`<auditor-skill root>/templates/re-audit.md`).
 `reverts` needs exit 0 and names how the fixed arm held: `(rejected with the pinned
-error)`, or `(blocked: …)` for the client's own error, checked with
-`assert_exploit_blocked!` and its positive control. A FIXED status without a `reverts`
-re-run is flagged, not downgraded.
+error)`, `(blocked: …)` for the client's own error, checked with
+`assert_exploit_blocked!` and its positive control, or the model line on the minimized
+model. An exit 2 is `still succeeds` only when the fixed arm accepted the attack or
+failed it while the account changed; one that rejected it with another error than the
+pinned one is `inconclusive`, and so is every exit 3. A FIXED status without a
+`reverts` re-run is flagged, not downgraded.
 
 ---
 
