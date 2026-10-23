@@ -1192,6 +1192,23 @@ for r in profile frames lamports; do
   fi
 done
 eq "input paths: a FIFO is refused at once by profile (usage, exit 2), frames and deltas (exit 1)" "${res# }" "2:1 1:1 1:1"
+# The README's exit statuses for an input: profile.sh refuses a missing file or a
+# directory as a usage error (exit 2); a regular file it cannot read is exit 1, and
+# frames.py and deltas.py give exit 1 for all three.
+cp "$FIX/clean-mixed.jsonl" "$TT/unread21.jsonl"; chmod 000 "$TT/unread21.jsonl"
+if [[ -r "$TT/unread21.jsonl" ]]; then
+  ok "input paths: skipped, this user can read a 000 file"
+else
+  res=""
+  for p in "$TT/no-such21.jsonl" "$TT" "$TT/unread21.jsonl"; do
+    bash "$DNR/profile.sh" "$p" > /dev/null 2>&1; s1=$?
+    python3 -I "$DNR/frames.py" "$p" > /dev/null 2>&1; s2=$?
+    python3 -I "$DNR/deltas.py" lamports "$p" > /dev/null 2>&1; s3=$?
+    res="$res $s1:$s2:$s3"
+  done
+  eq "input paths: a missing file, a directory and an unreadable file -> profile 2, 2, 1; frames and deltas 1" "${res# }" "2:1:1 2:1:1 1:1:1"
+fi
+chmod 0600 "$TT/unread21.jsonl"
 
 # ---------------------------------------------------------------------------
 # 22. --out writes a recipe's output to a temporary file beside <file> and gives

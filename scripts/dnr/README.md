@@ -63,7 +63,8 @@ because `python3 -I` keeps a sibling module off `sys.path`;
   that is a symbolic link, or that is reached through a directory link inside
   the working directory, is refused (exit 2), since an approval prompt shows the
   path, not where it leads. A file that cannot be read, or is not a regular file,
-  is an error (exit 1). With no file named, `frames.py` and `deltas.py` read
+  is an error (exit 1); `profile.sh` refuses a missing or non-regular file as a
+  usage error (exit 2). With no file named, `frames.py` and `deltas.py` read
   stdin. A message shows a path escaped to printable ASCII and cut at 120
   characters, never raw.
 - **Lines.** Input is read as bytes and split on LF only, so a CR is not a line
