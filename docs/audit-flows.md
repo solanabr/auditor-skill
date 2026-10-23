@@ -126,7 +126,7 @@ These skip the full item-by-item walk.
 
 ### `/auditor:quick-scan`
 
-Discovery + static analysis (ToB `static-analysis` if present, else grep scanners) + only the CRITICAL/HIGH known-vectors for the detected domains. Reports findings with severity + `file:line`, and states plainly it is a triage pass. Good for a first look or a CI gate; points to `/auditor:audit` for full coverage. As a CI gate on a public repository it publishes pass/fail only — no finding counts — in comments, logs and artifacts, and sends details through a private channel, failing the job when none is available and never falling back to printing them (`OUTPUT-RULES.md` Rule 11d).
+Discovery + static analysis (ToB `static-analysis` if present, else grep scanners) + only the CRITICAL/HIGH known-vectors for the detected domains. Reports findings with severity + `file:line`, and states plainly it is a triage pass. Good for a first look or a CI gate; points to `/auditor:audit` for full coverage. As a CI gate it runs unattended, so the run must be able to run its analyzers: an analyzer that did not run is reported as not run, and the gate fails. As a CI gate on a public repository it publishes pass/fail only — no finding counts — in comments, logs and artifacts, and sends details through a private channel, failing the job when none is available and never falling back to printing them (`OUTPUT-RULES.md` Rule 11d).
 
 ### `/auditor:diff-audit`
 

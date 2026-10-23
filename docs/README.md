@@ -33,6 +33,8 @@ Commands are namespaced `auditor`, so you invoke them as `/auditor:audit`, `/aud
 | Cut audit token cost ~30-40% | build `audit-scan` | [power-tools.md](power-tools.md#audit-scan) |
 | Remember findings across audits | build `audit-mem` | [power-tools.md](power-tools.md#audit-mem) |
 
+As a CI gate, `/auditor:quick-scan` runs unattended, so the run must be able to run its analyzers: a gate whose analyzers did not run fails.
+
 ## Guides
 
 - **[getting-started.md](getting-started.md)** — install, submodule, build the Rust tools, run your first audit, the adaptation note.

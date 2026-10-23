@@ -65,6 +65,8 @@ Everything else — checklists, known vectors, output rules — is portable as-i
 /auditor:quick-scan
 ```
 
+As a CI gate it runs unattended, so the run must be able to run its analyzers: a gate whose analyzers did not run fails.
+
 **Full one-shot audit** of a program:
 
 ```
