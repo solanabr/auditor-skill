@@ -76,7 +76,9 @@ call count with the human first):
   failed ones included. Every row goes into LEDGER.md and INCIDENTS.json
   `collection_gaps`. A run killed outright writes no closing lines: then every
   signature in `signatures.jsonl` with no transaction in `transactions.jsonl` is a
-  gap.
+  gap, and so is every address whose history may not have been paged to its end:
+  the last `queried_address` in `signatures.jsonl` and every address given after
+  it, or every address given when none appears.
 - **Collections take time.** A run makes up to addresses × `--max-pages` +
   `--max-tx` calls, one at a time, each up to 60 seconds. Run a long one in the
   background, or with a timeout sized from that count, so that no tool timeout

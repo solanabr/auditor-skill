@@ -109,8 +109,10 @@ directory.
      `incident_<n>/corpus/collection-gaps.tsv`; the agent copies every row into the
      ledger's **Collection gaps** line and into `collection_gaps` of each incident
      in `INCIDENTS.json`. A run that ends without those two lines was killed: tell
-     the agent, which records each signature in `signatures.jsonl` with no
-     transaction in `transactions.jsonl` as a gap.
+     the agent, which records as gaps each signature in `signatures.jsonl` with no
+     transaction in `transactions.jsonl`, and every address whose history may not
+     have been paged to its end: the last `queried_address` in `signatures.jsonl`
+     and every address given after it, or every address given when none appears.
    - Any wider collection the agent asks for comes back here: show the human its
      exact addresses, window and caps, and collect into the next
      `incident_<n>/corpus-<k>/` (`<k>` = highest existing + 1, `corpus/` counting as

@@ -72,13 +72,16 @@
 # 0; copy each row into LEDGER.md and INCIDENTS.json `collection_gaps`.
 #
 # INTERRUPTED: an INT, TERM or HUP ends the run with the same record. The address
-# being paged and each address after it, and the signatures listed but not fetched
-# (one row naming the first), become gap rows; the closing lines are printed; the
-# exit status is 128 + the signal number (130, 143, 129). A run killed outright
+# being paged (with the --before signature to resume from, once one of its pages was
+# read) and each address after it, and the signatures listed but not fetched (one
+# row naming the first), become gap rows; the closing lines are printed; the exit
+# status is 128 + the signal number (130, 143, 129). A run killed outright
 # (SIGKILL) writes nothing more: then each signature in signatures.jsonl with no
-# transaction in transactions.jsonl, and each address past the last one paged, is a
-# gap. A run makes up to addresses × --max-pages + --max-tx calls, each up to 60 s,
-# so run a long one in the background, or with a timeout sized from that count.
+# transaction in transactions.jsonl is a gap, and so is every address whose history
+# may not have been paged to its end: the last queried_address in signatures.jsonl
+# and every address given after it, or every address given when none appears. A run
+# makes up to addresses × --max-pages + --max-tx calls, each up to 60 s, so run a
+# long one in the background, or with a timeout sized from that count.
 #
 # SECRETS: the endpoint comes from $RPC_URL and is NEVER echoed. curl runs with -q
 # (no ~/.curlrc) and reads the URL from a config on stdin (-K -), so the key stays

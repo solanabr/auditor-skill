@@ -47,7 +47,10 @@ background, or with a timeout sized from that call count; never let a short
 tool timeout cut it off unnoticed. A run stopped by INT, TERM or HUP records
 what it had not finished as collection gaps and prints its closing lines. A run
 killed outright prints nothing more: then every signature in `signatures.jsonl`
-with no transaction in `transactions.jsonl` is a gap.
+with no transaction in `transactions.jsonl` is a gap, and so is every address
+whose history may not have been paged to its end: the last `queried_address` in
+`signatures.jsonl` and every address given after it, or every address given when
+none appears.
 
 ## Input contract
 
