@@ -42,7 +42,7 @@ Uses ToB tooling if present, else the grep scanners (noting the gap).
 ### `/auditor:quick-scan`
 **Arg:** (none)
 Fast triage: discovery + scope + static analysis (ToB `static-analysis` if present, else `discovery/grep-commands.md`) + only CRITICAL/HIGH known-vectors for the detected domains — not the full set.
-**When:** first look, CI gate (on a public repo: pass/fail only, no counts — Rule 11d). As a CI gate it runs unattended, so the run must be able to run its analyzers: an analyzer that did not run is reported as not run, and the gate fails. **Emits:** findings with severity + `file:line`; explicitly states it is a triage pass and points to `/auditor:audit`.
+**When:** first look, CI gate (on a public repo: pass/fail only, no counts — Rule 11d). As a CI gate it runs non-interactively, so the run must be able to run its analyzers: an analyzer that did not run is reported as not run, and the gate fails. **Emits:** findings with severity + `file:line`; explicitly states it is a triage pass and points to `/auditor:audit`.
 
 ### `/auditor:deep-review`
 **Arg:** `<file> [function|instruction]`
