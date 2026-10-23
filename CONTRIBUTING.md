@@ -175,8 +175,9 @@ version in a trailing comment.
 
 `scripts/check-frontmatter.sh` fails when Claude Code would read a field differently from what is written.
 It reads every file whose frontmatter Claude Code loads: each `.md` file at any depth under `commands/` and
-`agents/`, the root `SKILL.md`, and every `SKILL.md` under `skills/`, in any letter case. Name such a file
-with a lowercase `.md`. Its frontmatter keeps to a flat subset:
+`agents/`, the root `SKILL.md`, and every `SKILL.md` under `skills/`, in any letter case. A `.md` under
+`agents/` or `commands/` is an agent or a command, even one named `SKILL.md`. Name each file with a lowercase
+`.md`, and give each agent, command and skill a `name` of its own. The frontmatter keeps to a flat subset:
 
 - Line 1 is exactly `---`, and the block ends at the next line that is exactly `---`. No other line of the
   block contains `---`, even inside a quoted value, and none is `...`. The file holds no NUL byte; the block
