@@ -51,6 +51,12 @@ git -C "$at" reset -q --hard "$clean"
 printf 'docs: a short message\n\n%s\n' "$TRAILER" > "$T/small-msg"
 echo d >> "$at/f" && git -C "$at" commit -q -a -F "$T/small-msg"
 expect "attribution: a trailer in a short message fails" 1 attr "$clean..HEAD"
+for sp in "\t" ""; do   # a tab, or no space, after the colon
+  git -C "$at" reset -q --hard "$clean"
+  printf "docs: a message\n\nCo-Authored-By:${sp}%s\n" "${TRAILER#Co-Authored-By: }" > "$T/sp-msg"
+  echo e >> "$at/f" && git -C "$at" commit -q -a -F "$T/sp-msg"
+  expect "attribution: a trailer with '${sp:-no space}' after the colon fails" 1 attr "$clean..HEAD"
+done
 expect "attribution: a range git cannot read fails" 1 attr "no-such-ref..HEAD"
 expect "attribution: a range with no commits fails" 1 attr "HEAD..HEAD"
 expect "attribution: an option in place of a range fails" 1 attr "--all"

@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # check-attribution.sh — fail if any commit in RANGE carries an AI-attribution trailer.
 # Usage: bash scripts/check-attribution.sh "origin/main..HEAD"
-# Same pattern as scripts/hooks/commit-msg, applied to a commit range (used by CI on pull requests).
+# Same pattern as scripts/hooks/commit-msg (any spacing after "Co-Authored-By:"), applied to a commit range
+# (used by CI on pull requests).
 # A range git cannot read, or one that holds no commits, fails: there is nothing to vouch for.
 set -uo pipefail
 range=${1:-"origin/main..HEAD"}
-pattern='^(Co-Authored-By: .*(Claude|Anthropic|noreply@anthropic\.com))|(Generated with .*Claude)|(🤖 Generated)'
+pattern='^(Co-Authored-By:.*(Claude|Anthropic|noreply@anthropic\.com))|(Generated with .*Claude)|(🤖 Generated)'
 
 case "$range" in -*) echo "::error::'$range' is not a commit range" >&2; exit 1 ;; esac
 commits=$(git rev-list "$range" --) || { echo "::error::cannot read the commit range '$range'" >&2; exit 1; }
