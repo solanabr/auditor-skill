@@ -244,7 +244,7 @@ auditor-skill/
 │   └── patch/               ← patch + VERIFICATION templates
 │
 ├── docs/                    ← Usage guides (start at docs/README.md)
-├── scripts/                 ← report-to-pdf.sh, check-corpus.sh, tob-delta-review.sh + the no-attribution commit hook
+├── scripts/                 ← report-to-pdf.sh, the CI checks (check-*.sh), tob-delta-review.sh + the no-attribution commit hook
 │   ├── dnr/                 ← detection & response recipes (gated RPC collector, program snapshot, corpus profile, log frames, balance deltas)
 │   ├── threat-model/        ← collect.sh — the read-only threat-model bootstrap collector
 │   └── tests/               ← script self-tests (+ fixtures/gha/, workflows that are never executed)
