@@ -63,9 +63,9 @@ blocker line, and mark the finding "PoC re-run needed" with that line as the rea
 Only a harness error (an inconclusive arm, or a test that no longer builds against the
 refreshed harness copy) gets a repair pass: repair the harness setup once, never the
 assertions or the target, and re-run (`references/orchestration/poc-harness.md` §3).
-Before its final line, `run.sh` names
-the non-registry code in the build: the path and git dependencies in the resolved
-`Cargo.lock`, and any source compiled from outside the crate.
+Before its final line, `run.sh` names the non-registry code in the build: the path and
+git dependencies in the resolved `Cargo.lock`, and any source compiled from outside the
+crate.
 
 `run.sh` and `shared-test-utils/` are the installation's copies; leave them as they
 are. Before a command trusts an `OK` line it compares them with the installation's
@@ -129,38 +129,39 @@ inconclusive on either arm, and so is an effect the account already held before 
 attack. When the guard's error is itself harness-class (a fix that now needs an extra
 account, say), pin it all the same: the vulnerable arm, running the byte-identical
 attack, is its positive control, and the `fixed arm:` line (on prebuilt bytes with
-`FIXED_SO`) says so. To check a fix the
-team already deployed, whose error you cannot know in advance, swap in the commented
-lines in `tests/fixed_blocked.rs`: `assert_exploit_blocked!` with its positive control,
-which the macro runs on the same runner. It passes when a legitimate call (the same
-instruction, as its rightful caller makes it, to the same program and from the same
-state of the account) goes through and changes the account, and the attack then fails
-with an error that is not a harness error and leaves the account unchanged. A control
-that targets another program, starts from another state, fails or changes nothing is
-inconclusive; when no legitimate call can show the change on those bytes, pin the
-fix's error with `assert_exploit_rejected_with!` instead, as a new check, not a harness
-repair. `assert_exploit_succeeds!` / `assert_exploit_rejected!` take the same runner
-and attack, accept any `Ok` / any error that is not a harness error, and fit an
-audit-time model only.
+`FIXED_SO`) says so. To check a fix the team already deployed, whose error you cannot
+know in advance, swap in the commented lines in `tests/fixed_blocked.rs`:
+`assert_exploit_blocked!` with its positive control, which the macro runs on the same
+runner. It passes when a legitimate call (the same instruction, as its rightful caller
+makes it, to the same program and from the same state of the account) goes through and
+changes the account, and the attack then fails with an error that is not a harness
+error and leaves the account unchanged. A control that targets another program, starts
+from another state, fails or changes nothing is inconclusive; when no legitimate call
+can show the change on those bytes, pin the fix's error with
+`assert_exploit_rejected_with!` instead, as a new check, not a harness repair.
+`assert_exploit_succeeds!` / `assert_exploit_rejected!` take the same runner and
+attack, accept any `Ok` / any error that is not a harness error, and fit an audit-time
+model only.
 
-**Migrating a PoC from 7.6.0 or earlier.** A PoC written against those macros
-(which took the `process_instruction` result, and for the 7.6.0 effect and blocked
-forms a `before:` list) no longer builds once its harness copy is refreshed; the build
-fails with a `compile_error!` naming the new form.
-Rewriting each call into the new form — the runner, the instruction and its account
-list (or the LiteSVM runner and the transaction), with the same `account`, `read`,
-`expect` / `error` and `why` — is a harness repair: it changes how the attack is run,
-not what is asserted, so record it in `harness-repair.diff` like any other repair.
+**Migrating a PoC from 7.6.0 or earlier.** A PoC written against those macros (which
+took the `process_instruction` result, and for the 7.6.0 effect and blocked forms a
+`before:` list) no longer builds once its harness copy is refreshed; the build fails
+with a `compile_error!` naming the new form. Rewriting each call into the new form —
+the runner, the instruction and its account list (or the LiteSVM runner and the
+transaction), with the same `account`, `read`, `expect` / `error` and `why` — is a
+harness repair: it changes how the attack is run, not what is asserted, so record it
+in `harness-repair.diff` like any other repair.
 
 **Markers.** Each contract assertion leaves a marker once its attack has run and
 another when it holds, each tagged with its test. An arm counts — in a model run as on
 prebuilt bytes — only with a held assertion of that arm, and only when every program
 the runner helpers loaded is the `.so` `run.sh` placed, still unchanged after the
 test, and the attack targeted one of them; a LiteSVM attack that failed in an
-instruction for another program decides nothing. A failed assertion in one test is a verdict even when another test is
-inconclusive; a test that fails before any contract assertion ran (the program did
-not load, the setup panicked) exits `3` (inconclusive), not `1` or `2`. The markers are
-a floor, not proof: read the assertion all the same.
+instruction for another program decides nothing. A failed assertion in one test is a
+verdict even when another test is inconclusive; a test that fails before any contract
+assertion ran (the program did not load, the setup panicked) exits `3`
+(inconclusive), not `1` or `2`. The markers are a floor, not proof: read the
+assertion all the same.
 
 **Prebuilt bytes.** `VULNERABLE_SO=<.so>` runs the exploit arm alone on those bytes;
 adding `FIXED_SO=<.so>` runs the fixed arm on others. On prebuilt bytes the vulnerable

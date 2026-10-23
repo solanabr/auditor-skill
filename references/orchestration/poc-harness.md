@@ -228,10 +228,10 @@ another program is inconclusive too. On prebuilt bytes the vulnerable
 arm counts only on `assert_exploit_effect!` and the fixed arm only on
 `assert_exploit_rejected_with!` or `assert_exploit_blocked!`. When the pinned error is
 itself harness-class (a fix that now needs an extra account), it holds, and the run's
-`fixed arm:` line (on prebuilt bytes with `FIXED_SO`) says so: the positive control is then the vulnerable arm, which runs
-the byte-identical attack and shows it fits the program. The markers are a floor, not
-proof: whoever reads the PoC still checks that the assertion states the finding's
-effect and the guard's error.
+`fixed arm:` line (on prebuilt bytes with `FIXED_SO`) says so: the positive control is
+then the vulnerable arm, which runs the byte-identical attack and shows it fits the
+program. The markers are a floor, not proof: whoever reads the PoC still checks that
+the assertion states the finding's effect and the guard's error.
 
 **Exit 3: flag every one, repair a harness error once.** Every `run.sh` exit 3 decides
 nothing, and none is filed silently. The finding block and, for an incident,
@@ -259,8 +259,9 @@ that differs is not evidence: refresh it, re-run, and record the difference. `ru
 itself binds the build to that copy: it exits 3 when the crate does not depend on
 `<crate>/shared-test-utils` under the import name `shared_test_utils`, when another
 dependency takes that import name (spelled with `-` or `_`), or when an arm's build
-compiles a `shared_test_utils` from anywhere else, or none. Read the run's non-registry line as well: it names any path or git
-dependency and any source compiled from outside the crate.
+compiles a `shared_test_utils` from anywhere else, or none. Read the run's
+non-registry line as well: it names any path or git dependency and any source compiled
+from outside the crate.
 
 **Leg 3 of an incident** (`references/detection-response/README.md`) is met only by a
 `run.sh` run on prebuilt bytes that ends with
@@ -330,10 +331,11 @@ in its final line whether the patched arm accepted the attack or rejected it wit
 another error than the pinned one; neither is a revert. The PoC must also use the
 program's real id (an Anchor program checks its own `declare_id!`), which
 `run.sh` does not check. The run needs `AUDITOR_EXEC_MODE` like any other, and the
-crate's `run.sh` and `shared-test-utils/src/` are refreshed from the installation before it
-(§3, "Checking the harness copy"). Exit 3 decides nothing: record its blocker line with
-"PoC re-run needed" (a harness error also gets the repair pass), never a broken fix. `VERIFICATION.md`
-records which target the PoC re-ran against in its *Re-detonated against* field.
+crate's `run.sh` and `shared-test-utils/src/` are refreshed from the installation
+before it (§3, "Checking the harness copy"). Exit 3 decides nothing: record its blocker
+line with "PoC re-run needed" (a harness error also gets the repair pass), never a
+broken fix. `VERIFICATION.md` records which target the PoC re-ran against in its
+*Re-detonated against* field.
 
 **Re-running against the client's fix (`/auditor:re-audit` step 4b).** The same prebuilt
 run, with `VULNERABLE_SO` set to the build of the audited commit and `FIXED_SO` to the
