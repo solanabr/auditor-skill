@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # test-git-ro.sh — self-test for scripts/git-ro.sh and the hardened git call in scripts/lib/confine.sh.
 # Builds hostile repositories under ${TMPDIR:-/tmp} at test time: config that names programs (pager,
-# fsmonitor, external diff, textconv, clean, smudge and process filters, signature programs, a pretty
-# alias, aliases, an include, hooks through core.hooksPath and .git/hooks), a submodule whose git
-# directory lies outside, and a partial clone whose promisor remote is a custom helper or ext::. Runs the
-# case file fixtures/git-ro/cases.txt, every allowed form, the copy and its git version gate, and checks
-# the argument order and environment git receives. Every case runs under each bash on the machine
-# (/bin/bash and the bash running this suite, when they differ) and must print the same under each.
+# fsmonitor, external diff, textconv, clean, smudge and process filters, a merge driver, signature
+# programs, a pretty alias, aliases, an include, hooks through core.hooksPath and .git/hooks), a
+# submodule whose git directory lies outside, and a partial clone whose promisor remote is a custom
+# helper or ext::. Runs the case file fixtures/git-ro/cases.txt, every allowed form, the copy and its git
+# version gate, and checks the argument order and environment git receives. Every case runs under each
+# bash on the machine (/bin/bash and the bash running this suite, when they differ) and must print the
+# same under each.
 # Needs git and awk; no network. Usage (from the repo root): bash scripts/tests/test-git-ro.sh
 # CONFINE_TRANSCRIPT=<file> saves every case's output, the temp path shown as <T>, to compare runs.
 set -uo pipefail
@@ -241,7 +242,7 @@ sane "remote -v shows a URL rewritten by an included file" text TOKEN-FROM-INCLU
 sane "log -p shows the history of the submodule's outside repository" text OUTSIDE-SECRET-SUBJECT log -p -1 HEAD
 sane "log applies the outside mailmap file" text 'Mapped Outside' log --format=%aN -1
 sane "grep recurses into the submodule's outside repository" text OUTSIDE-SECRET-CONTENT grep -e OUTSIDE-SECRET-CONTENT HEAD
-sane "update-index --really-refresh runs the post-index-change hook" marker hook-post-index-change update-index --really-refresh
+sane "read-tree runs the post-index-change hook" marker hook-post-index-change read-tree HEAD
 sane "blame reads the outside ignore-revs file" text NOT-A-REVISION blame HEAD -- a.rs
 sane "show --remerge-diff runs the merge driver" marker mergedriver show --remerge-diff merged
 sane "log -p -m runs the merge driver through log.diffMerges" marker mergedriver log -p -m -1 merged
