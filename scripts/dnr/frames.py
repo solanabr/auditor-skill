@@ -227,6 +227,9 @@ _LONE_SURROGATE = re.compile("[\ud800-\udfff]")
 # Containers may nest this deep, the top-level object being 1: well below the 256 that
 # jq reads, so profile.sh never meets a line its queries cannot parse.
 _DEPTH = 200
+# Lamport balances, the fee and token amounts are u64 values in RPC data; bounding
+# them keeps every computed delta and sum far inside what Python prints.
+_U64 = 2 ** 64 - 1
 
 
 def _no_constant(name):
@@ -388,15 +391,14 @@ def _plain(v):
     return type(v) is str and not _CONTROL.search(v)
 
 
+def _u64(v):
+    """An integer a u64 holds, as a lamport balance and the fee are."""
+    return type(v) is int and 0 <= v <= _U64
+
+
 def _amount(v):
-    """A raw token amount: a string of ASCII digits that Python reads as an int."""
-    if type(v) is not str or not _DIGITS.fullmatch(v):
-        return False
-    try:
-        int(v)
-    except ValueError:
-        return False
-    return True
+    """A raw token amount: the decimal text of a u64, in ASCII digits."""
+    return type(v) is str and len(v) <= 20 and bool(_DIGITS.fullmatch(v)) and int(v) <= _U64
 
 
 def _instruction(ix):
@@ -435,7 +437,8 @@ def shaped(tx):
                      or all(type(k) is dict and _plain(k.get("pubkey")) for k in keys)):
         return False
     groups, loaded, logs = meta.get("innerInstructions"), meta.get("loadedAddresses"), meta.get("logMessages")
-    if not (_of(groups, list) and _of(loaded, dict) and _of(logs, list) and _of(meta.get("fee"), int)
+    if not (_of(groups, list) and _of(loaded, dict) and _of(logs, list)
+            and (meta.get("fee") is None or _u64(meta.get("fee")))
             and all(type(s) is str for s in logs or [])):
         return False
     for g in groups or []:
@@ -448,7 +451,7 @@ def shaped(tx):
             return False
     for name in ("preBalances", "postBalances"):
         v = meta.get(name)
-        if not (_of(v, list) and all(type(x) is int for x in v or [])):
+        if not (_of(v, list) and all(_u64(x) for x in v or [])):
             return False
     if len(meta.get("preBalances") or []) != len(meta.get("postBalances") or []):
         return False

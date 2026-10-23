@@ -44,9 +44,10 @@ and jq numbers are IEEE doubles. Over the adversarial fixture
 `token-amount-over-2-53.jsonl`, `jq` reports a delta of 2 for a true 1 and drops
 a true 1 entirely. Python's `int` is arbitrary precision, and these amounts arrive
 as JSON strings of ASCII digits (`uiTokenAmount.amount`) or as JSON integers that
-Python parses losslessly, so the arithmetic is exact. Anything else in those
-fields (a float, `1_000`, a sign, a non-ASCII digit) makes the line malformed
-rather than being rounded or read as a number.
+Python parses losslessly, so the arithmetic is exact. Each must be a u64 value, as
+in RPC data; anything else in those fields (a float, `1_000`, a sign, a non-ASCII
+digit, a value above 2^64 - 1) makes the line malformed rather than being rounded
+or read as a number, and keeps every delta far inside what Python prints.
 
 Success-only: a failed transaction commits no instruction state (atomic revert —
 `references/false-positives.md` FP-4), so a delta from a failed tx would be a
@@ -146,8 +147,8 @@ def _tokens(txs, out):
                 owner = b.get("owner") or "?"
                 mint = b.get("mint") or "?"
                 amt = (b.get("uiTokenAmount") or {}).get("amount")
-                # amount is a decimal STRING of ASCII digits (the input contract
-                # makes anything else malformed); int() is exact.
+                # amount is the decimal STRING of a u64 in ASCII digits (the input
+                # contract makes anything else malformed); int() is exact.
                 val = int(amt) if amt is not None else 0
                 # Keyed by the token account, so two accounts never merge — not even
                 # two owner-less ones. Without a usable accountIndex the owner is the
@@ -180,6 +181,9 @@ _LONE_SURROGATE = re.compile("[\ud800-\udfff]")
 # Containers may nest this deep, the top-level object being 1: well below the 256 that
 # jq reads, so profile.sh never meets a line its queries cannot parse.
 _DEPTH = 200
+# Lamport balances, the fee and token amounts are u64 values in RPC data; bounding
+# them keeps every computed delta and sum far inside what Python prints.
+_U64 = 2 ** 64 - 1
 
 
 def _no_constant(name):
@@ -341,15 +345,14 @@ def _plain(v):
     return type(v) is str and not _CONTROL.search(v)
 
 
+def _u64(v):
+    """An integer a u64 holds, as a lamport balance and the fee are."""
+    return type(v) is int and 0 <= v <= _U64
+
+
 def _amount(v):
-    """A raw token amount: a string of ASCII digits that Python reads as an int."""
-    if type(v) is not str or not _DIGITS.fullmatch(v):
-        return False
-    try:
-        int(v)
-    except ValueError:
-        return False
-    return True
+    """A raw token amount: the decimal text of a u64, in ASCII digits."""
+    return type(v) is str and len(v) <= 20 and bool(_DIGITS.fullmatch(v)) and int(v) <= _U64
 
 
 def _instruction(ix):
@@ -388,7 +391,8 @@ def shaped(tx):
                      or all(type(k) is dict and _plain(k.get("pubkey")) for k in keys)):
         return False
     groups, loaded, logs = meta.get("innerInstructions"), meta.get("loadedAddresses"), meta.get("logMessages")
-    if not (_of(groups, list) and _of(loaded, dict) and _of(logs, list) and _of(meta.get("fee"), int)
+    if not (_of(groups, list) and _of(loaded, dict) and _of(logs, list)
+            and (meta.get("fee") is None or _u64(meta.get("fee")))
             and all(type(s) is str for s in logs or [])):
         return False
     for g in groups or []:
@@ -401,7 +405,7 @@ def shaped(tx):
             return False
     for name in ("preBalances", "postBalances"):
         v = meta.get(name)
-        if not (_of(v, list) and all(type(x) is int for x in v or [])):
+        if not (_of(v, list) and all(_u64(x) for x in v or [])):
             return False
     if len(meta.get("preBalances") or []) != len(meta.get("postBalances") or []):
         return False

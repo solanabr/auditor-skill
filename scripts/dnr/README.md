@@ -74,11 +74,14 @@ because `python3 -I` keeps a sibling module off `sys.path`;
 - **Shape.** Every field a recipe reads must have the type it reads it as:
   `meta`, `transaction` and `message` are objects; `signatures`, `accountKeys`,
   `instructions`, `logMessages`, `innerInstructions` and the balance arrays are
-  lists, and `preBalances` and `postBalances` have the same length; `fee`,
-  `blockTime` and the lamport balances are JSON integers (a float is never
-  rounded); a token `uiTokenAmount.amount` is a string of ASCII digits (not
-  `1_000`, `+5`, `1e3`, a non-ASCII digit or a JSON number); the account keys are
-  all strings, or all objects with a string `pubkey`. Keys, program ids and a
+  lists, and `preBalances` and `postBalances` have the same length; `blockTime`
+  is a JSON integer; the lamport balances and `fee` are JSON integers that a u64
+  holds (0 to 2^64 − 1, as in RPC data: a float, a negative number or a larger
+  one is never rounded or read); a token `uiTokenAmount.amount` is the decimal
+  text of a u64, at most 20 ASCII digits (not `1_000`, `+5`, `1e3`, a non-ASCII
+  digit or a JSON number). These bounds keep every delta and sum exact and
+  printable. The account keys are all strings, or all objects with a string
+  `pubkey`. Keys, program ids and a
   string `version` hold no control character, so each prints as one line.
   `shaped()` in the block is the full rule.
 - **Malformed lines are counted, never echoed and never fatal.** A line that

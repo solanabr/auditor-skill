@@ -561,8 +561,8 @@ for part, rng in ((sys.argv[1], range(0, 10000)), (sys.argv[2], range(10000, 200
         for i in rng:
             bal = lambda o, a: {"owner": o, "mint": "MintBig", "uiTokenAmount": {"amount": str(a)}}
             f.write(json.dumps({"meta": {"err": None,
-                "preTokenBalances": [bal("Vault", 2**64), bal("Attacker", 0)],
-                "postTokenBalances": [bal("Vault", 2**64 - amt), bal("Attacker", amt)]},
+                "preTokenBalances": [bal("Vault", 2**64 - 1), bal("Attacker", 0)],
+                "postTokenBalances": [bal("Vault", 2**64 - 1 - amt), bal("Attacker", amt)]},
                 "transaction": {"signatures": ["S%d" % i]}}) + "\n")' "$TT/big-a.jsonl" "$TT/big-b.jsonl"
 python3 -I "$DNR/deltas.py" tokens "$TT/big-a.jsonl" "$TT/big-b.jsonl" > "$TT/big-d.tsv"
 eq "deltas: a 20,000-transaction corpus over two files completes" "$?" "0"
@@ -922,6 +922,14 @@ bad = {
     "a-version-holding-a-newline": enc(dict(tx("SigBad30"), version="0\n   999 legacy")),
     "balance-lists-of-different-lengths": enc(tx("SigBad31", pre=[10000, 5, 9000000000], post=[5000, 10])),
     "nesting-300-deep": enc(tx("SigBad32", meta_extra={"x": "PLACE"})).replace(b'"PLACE"', b"[" * 300 + b"]" * 300),
+    "a-lamport-balance-above-u64": enc(tx("SigBad33", pre=[10000, 5], post=[5000, 2**64])),
+    "a-negative-lamport-balance": enc(tx("SigBad34", pre=[10000, -5], post=[5000, 10])),
+    "a-fee-above-u64": enc(tx("SigBad35", meta_extra={"fee": 2**64})),
+    "an-amount-above-u64": enc(tx("SigBad36", pre_tb=[bal("0")], post_tb=[bal(str(2**64))])),
+    "a-45-digit-amount": enc(tx("SigBad37", pre_tb=[bal("0")], post_tb=[bal("1" * 45)])),
+    "lamports-a-4301-digit-delta": enc(tx("SigBad38", pre=[10000, 0], post=[5000, 0])).replace(
+        b"[10000, 0]", b"[10000, -" + b"9" * 4300 + b"]").replace(b"[5000, 0]", b"[5000, " + b"9" * 4300 + b"]"),
+    "tokens-a-4301-digit-sum": enc(tx("SigBad39", pre_tb=[bal("0")], post_tb=[bal("9" * 4300), bal("9" * 4300)])),
 }
 last = ("instruction-a-string", "keys-strings-and-objects", "header-count-a-string", "a-pubkey-that-is-an-object",
         "a-truncated-line-holding-a-drain", "nesting-300-deep")
@@ -930,7 +938,7 @@ good = {
     "CRLF-line-end": enc(tx("SigGood2", mark=False)) + b"\r",
     "a-surrogate-pair-escape": enc(tx("SigGood3", mark=False)).replace(b"Program log: hello", b"Program log: \\ud83d\\ude00"),
     "an-escaped-backslash-before-u": enc(tx("SigGood4", mark=False)).replace(b"Program log: hello", b"Program log: \\\\ud800"),
-    "a-45-digit-amount": enc(tx("SigGood5", pre_tb=[bal("0")], post_tb=[bal("1" * 45)], mark=False)),
+    "an-amount-of-u64-max": enc(tx("SigGood5", pre_tb=[bal("0")], post_tb=[bal(str(2**64 - 1))], mark=False)),
     "a-duplicate-key": enc(tx("SigGood6", mark=False)).replace(b'"err": null', b'"err": {"Custom": 1}, "err": null'),
     "fewer-keys-than-balances": enc(tx("SigGood7", pre=[10000, 5, 9000000000], post=[5000, 10, 0], mark=False)),
     "nesting-200-deep": enc(tx("SigGood8", meta_extra={"x": "PLACE"}, mark=False)).replace(b'"PLACE"', b"[" * 198 + b"]" * 198),
@@ -990,8 +998,8 @@ eq "contract: a raw CR between JSON tokens is not a line break: deltas keeps tha
 eq "contract: a balance whose index has no account key is a row named #<index>, with a note" \
   "$(python3 -I "$DNR/deltas.py" lamports "$TT/c20/good-fewer-keys-than-balances.jsonl" 2> "$TT/k20.err" | grep '^SigGood7' | tr '\t\n' ' |')$(grep -c '^deltas.py: 1 row(s) name a balance index that has no account key, as #<index>' "$TT/k20.err")" \
   "SigGood7 TokAcct11111111111111111111111111111111111 5|SigGood7 #2 -9000000000|1"
-eq "contract: a 45-digit amount stays exact" \
-  "$(python3 -I "$DNR/deltas.py" tokens "$TT/c20/good-a-45-digit-amount.jsonl" | awk -F'\t' '$1 == "SigGood5" { print $4 }')" "$(python3 -I -c 'print("1" * 45)')"
+eq "contract: the u64 maximum stays exact" \
+  "$(python3 -I "$DNR/deltas.py" tokens "$TT/c20/good-an-amount-of-u64-max.jsonl" | awk -F'\t' '$1 == "SigGood5" { print $4 }')" "18446744073709551615"
 eq "contract: malformed lines are counted per input, named by path and line, not echoed; copies are counted apart" \
   "$(cd "$TT/c20" && python3 -I "$DNR/frames.py" good-a-duplicate-key.jsonl bad-meta-is-a-list.jsonl bad-a-JSON-array.jsonl 2>&1 >/dev/null | tr '\n' '|')" \
   "frames.py: skipped 2 transaction(s) already read under the same signature|frames.py: skipped 1 malformed line(s) in input 2 (bad-meta-is-a-list.jsonl), the first at line 1 (not a getTransaction JSON object the recipes can read)|frames.py: skipped 1 malformed line(s) in input 3 (bad-a-JSON-array.jsonl), the first at line 1 (not a getTransaction JSON object the recipes can read)|"
