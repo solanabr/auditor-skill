@@ -252,6 +252,11 @@ fn run(args: &[OsString]) -> Result<(), Stop> {
         None => Sink::stdout(),
     };
     let failed = |e: io::Error| Stop(1, confine::os_message(&e));
+    // The --out path is checked again just before the rename.
+    let recheck = || match &out_arg {
+        Some(c) => out_path(&wt, c).map(|_| ()),
+        None => Ok(()),
+    };
     let mut stats = Stats::default();
     match call.recipe {
         Recipe::Profile => {
@@ -275,6 +280,7 @@ fn run(args: &[OsString]) -> Result<(), Stop> {
             }
             sink.write_all(prof.report(&header, &notes).as_bytes())
                 .map_err(failed)?;
+            recheck()?;
             sink.finish().map_err(failed)?;
         }
         recipe => {
@@ -290,6 +296,7 @@ fn run(args: &[OsString]) -> Result<(), Stop> {
                 sink.write_all(buf.as_bytes())
             })
             .map_err(failed)?;
+            recheck()?;
             sink.finish().map_err(failed)?;
             for note in stats.notes() {
                 eprintln!("audit-logs: skipped {note}");
