@@ -16,10 +16,14 @@
 #   - the scratch-directory recipes, FULL-AUDIT Step 3.2 and KV-089 Steps 1, 2 and 5: with $SCRATCH unset,
 #     empty, missing, relative or inside the working directory, or mktemp failing, they print OUTCOME: no
 #     scratch copy and run nothing; otherwise npm, cargo and rustup run only inside the scratch directory;
-#   - KV-137 Step 2: the upstream comparison runs in a scratch copy with no work tree, against upstream's
-#     default branch whatever its name, and nothing from the checkout's config runs; a relative TMPDIR stops it.
+#   - KV-137 Steps 1 and 2: the upstream comparison runs in a scratch copy with no work tree, against
+#     upstream's default branch whatever its name, and nothing from the checkout's config runs; a relative
+#     TMPDIR stops it. Step 2 takes an https:// URL only and fetches over https only: an option-shaped
+#     remote.upstream.url that Step 1 prints, a local path or a file:// URL fetches nothing and fires no
+#     canary, and an option-shaped deployed commit is read as a revision; SC-054 names the same fetch.
 # Usage (from the repo root): bash scripts/tests/test-lockfile-recipes.sh
-# Needs bash >= 3.2, git, grep, sed, awk, find, mkfifo. No network: the upstream is a local path.
+# Needs bash >= 3.2, git, grep, sed, awk, find, mkfifo. No network: the test's git config rewrites the
+# upstream's https URL to a local path.
 set -uo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 CL="$ROOT/checklists/11-supply-chain.md"
@@ -374,7 +378,7 @@ scratch_case "FULL-AUDIT Step 3.2, TMPDIR inside the working directory" "$T/fa.s
 scratch_case "KV-089 Steps 1, 2 and 5 in one shell" "$T/kv125.sh" "" TMPDIR="$T/tmp"
 scratch_case "FULL-AUDIT Step 3.2" "$T/fa.sh" "" TMPDIR="$T/tmp"
 
-# ---- 4. KV-137 Step 2: upstream fetched into a scratch copy -----------------------------------------------
+# ---- 4. KV-137 Steps 1 and 2: upstream fetched into a scratch copy -----------------------------------------
 U="$T/kv137"
 git init -q -b trunk "$U/up" && mkdir -p "$U/up/programs/p" && echo v1 > "$U/up/programs/p/lib.rs" \
   && (cd "$U/up" && c v1 > /dev/null) && git clone -q "$U/up" "$U/client" \
@@ -385,21 +389,79 @@ git -C "$U/client" config core.fsmonitor "$U/canary.sh fsmonitor"
 for h in post-checkout reference-transaction; do
   printf '#!/bin/sh\ntouch "%s/fired-%s"\n' "$U" "$h" > "$U/client/.git/hooks/$h"; chmod +x "$U/client/.git/hooks/$h"
 done
+# The upstream's https URL, which the test's git config rewrites to the local upstream, and a solana-verify stub
+# that records its arguments, one per line.
+URL=https://upstream.example.invalid/vendor/program
+printf '[url "%s"]\n\tinsteadOf = %s\n' "$U/up" "$URL" > "$U/gitconfig"
+mkdir -p "$U/bin" && printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "%s/verify-args"\n' "$U" > "$U/bin/solana-verify" \
+  && chmod +x "$U/bin/solana-verify" || exit 1
 refs_before=$(git -C "$U/client" for-each-ref | wc -l | tr -d ' ')
 deployed=$(git -C "$U/up" rev-list --max-parents=0 HEAD)
-awk '/^\*\*Step 2:/ {s = 1} s && /^SCRATCH=/ {g = 1} g {print} g && /^fi$/ {exit}' "$KV137" \
-  | sed -e "s#<checkout>#$U/client#; s#<UPSTREAM_REPO>#$U/up#; s#<deployed_commit>#$deployed#" > "$T/kv137.sh"
-mkdir -p "$T/tmp137"
-( cd "$U/client" && TMPDIR="$T/tmp137" bash "$T/kv137.sh" ) > "$T/kv137.out" 2>&1
-if grep -q ' upstream security fix$' "$T/kv137.out" && [ -z "$(ls "$U" | grep '^fired-')" ] \
+step137() { # step137 UPSTREAM_REPO DEPLOYED: Step 2 from the top of its block to its closing fi, placeholders filled
+  awk '/^\*\*Step 2:/ {s = 1} s && !g && /^```$/ {g = 1; next} g {print} g && /^fi$/ {exit}' "$KV137" \
+    | sed -e "s#<checkout>#$U/client#; s#<UPSTREAM_REPO>#$1#; s#<deployed_commit>#$2#; s#<PROGRAM_ID>#Prog1111#" \
+    > "$T/kv137.sh"
+}
+run137() { # run137 [env argument...]: run it in the checkout, the stub first on PATH, with no canary or record left
+  rm -f "$U"/fired-* "$U/verify-args"
+  ( cd "$U/client" && env "$@" GIT_CONFIG_GLOBAL="$U/gitconfig" PATH="$U/bin:$PATH" bash "$T/kv137.sh" ) \
+    > "$T/kv137.out" 2>&1
+}
+fired() { ls "$U" | grep '^fired-'; }
+NOFETCH='OUTCOME: upstream URL is not an https:// URL; not fetched'
+mkdir -p "$T/tmp137" "$T/tmp137b" "$T/tmp137c" "$T/tmp137d" "$T/tmp137e"
+
+step137 "$URL" "$deployed"; run137 TMPDIR="$T/tmp137"
+if grep -q ' upstream security fix$' "$T/kv137.out" && [ -z "$(fired)" ] \
    && [ "$(git -C "$U/client" for-each-ref | wc -l | tr -d ' ')" = "$refs_before" ] \
-   && [ "$(ls -A "$T/tmp137"/auditor-upstream.*/copy)" = .git ]; then
-  ok "KV-137 Step 2 lists the fix on upstream's default branch from a copy with no work tree, and leaves the checkout alone"
+   && [ "$(ls -A "$T/tmp137"/auditor-upstream.*/copy)" = .git ] \
+   && [ "$(cat "$U/verify-args" 2>/dev/null)" = "$(printf 'verify-from-repo\n-um\n--program-id\nProg1111\n%s' "$URL")" ]; then
+  ok "KV-137 Step 2 lists the fix on upstream's default branch from a copy with no work tree, gives solana-verify the URL as one argument, and leaves the checkout alone"
 else bad "KV-137 Step 2"; sed 's/^/  | /' "$T/kv137.out"; fi
-( cd "$U/client" && TMPDIR=rel bash "$T/kv137.sh" ) > "$T/kv137.out" 2>&1
+run137 -u GIT_ALLOW_PROTOCOL TMPDIR="$T/tmp137b"
+if grep -q "transport 'file' not allowed" "$T/kv137.out" && ! grep -q ' upstream security fix$' "$T/kv137.out" \
+   && ls -d "$T/tmp137b"/auditor-upstream.*/copy > /dev/null 2>&1 && [ -z "$(fired)" ]; then
+  ok "KV-137 Step 2 fetches over https only: git config that rewrites the URL to a local repository does not get it fetched"
+else bad "KV-137 Step 2 fetched over a transport other than https"; sed 's/^/  | /' "$T/kv137.out"; fi
+run137 TMPDIR=rel
 if has "$T/kv137.out" "OUTCOME: no scratch copy (check TMPDIR)" && [ ! -e "$U/client/copy" ]; then
   ok "KV-137 Step 2 with a relative TMPDIR prints OUTCOME: no scratch copy and clones nothing"
 else bad "KV-137 Step 2 with a relative TMPDIR"; sed 's/^/  | /' "$T/kv137.out"; fi
+
+# an option-shaped remote.upstream.url in the checkout's config: Step 1 prints it, and Step 2 gets it as written
+opt="--upload-pack=touch $U/fired-upload-pack;:"
+git -C "$U/client" config remote.upstream.url "$opt"
+kv_step "$KV137" 1 > "$T/kv137-1.sh"; rm -f "$U"/fired-*
+( cd "$U/client" && bash "$T/kv137-1.sh" ) > "$T/kv137-1.out" 2>&1
+if has "$T/kv137-1.out" "$opt" && [ -z "$(fired)" ]; then ok "KV-137 Step 1 prints the checkout's remote.upstream.url as data"
+else bad "KV-137 Step 1 with an option-shaped remote.upstream.url"; sed 's/^/  | /' "$T/kv137-1.out"; fi
+step137 "$opt" "$deployed"; run137 TMPDIR="$T/tmp137c"
+if has "$T/kv137.out" "$NOFETCH" && [ -z "$(fired)" ] && [ ! -e "$U/verify-args" ] \
+   && [ -z "$(find "$T/tmp137c" -name copy)" ]; then
+  ok "KV-137 Step 2 drops an option-shaped upstream URL: no canary fires, and neither solana-verify nor git runs on it"
+else bad "KV-137 Step 2 with an option-shaped upstream URL"; fired | sed 's/^/  | fired: /'; sed 's/^/  | /' "$T/kv137.out"; fi
+for v in "$U/up" "file://$U/up"; do
+  case "$v" in file:*) what="a file:// URL" ;; *) what="a local path" ;; esac
+  step137 "$v" "$deployed"; run137 TMPDIR="$T/tmp137d"
+  if has "$T/kv137.out" "$NOFETCH" && ! grep -q ' upstream security fix$' "$T/kv137.out" && [ ! -e "$U/verify-args" ]; then
+    ok "KV-137 Step 2 fetches nothing from $what"
+  else bad "KV-137 Step 2 used $what as the upstream"; sed 's/^/  | /' "$T/kv137.out"; fi
+done
+# an option-shaped deployed commit is read as a revision, never as a git log option
+step137 "$URL" "--output=$U/fired-output"; run137 TMPDIR="$T/tmp137e"
+if [ -z "$(fired)" ] && ! grep -q ' upstream security fix$' "$T/kv137.out" \
+   && ls "$T/tmp137e"/auditor-upstream.*/copy/.git/FETCH_HEAD > /dev/null 2>&1; then
+  ok "KV-137 Step 2 reads an option-shaped deployed commit as a revision"
+else bad "KV-137 Step 2 with an option-shaped deployed commit"; fired | sed 's/^/  | fired: /'; sed 's/^/  | /' "$T/kv137.out"; fi
+# SC-054 names the fetch and log forms Step 2 runs
+sc054=$(grep -F '**SC-054**' "$CL"); st137=$(kv_step "$KV137" 2); miss=
+for w in '-c protocol.allow=never -c protocol.https.allow=always' 'fetch --no-tags --end-of-options "$UPSTREAM" HEAD' \
+         'log --oneline --end-of-options <deployed' 'https://'; do
+  case "$sc054" in *"$w"*) ;; *) miss="$miss SC-054:'$w'" ;; esac
+  case "$st137" in *"$w"*) ;; *) miss="$miss Step-2:'$w'" ;; esac
+done
+if [ -z "$miss" ]; then ok "SC-054 names the https-only fetch and the log form KV-137 Step 2 runs"
+else bad "SC-054 and KV-137 Step 2 differ, missing:$miss"; fi
 
 echo "---- $pass passed, $failn failed"
 [ "$failn" -eq 0 ]
