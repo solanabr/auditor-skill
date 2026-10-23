@@ -197,6 +197,17 @@ It reads every file whose frontmatter Claude Code loads: each `.md` file at any 
   (today `*`), nor a catch-all pattern of a name in it, such as `Bash(*)` once `Bash` is listed.
 - The block is at most 65,536 bytes and holds at most 256 of `[`, `{` and ` - `.
 
+### Load surfaces at the plugin root
+
+`scripts/check-hygiene.sh` fails when the plugin root gains a path Claude Code loads beyond those commands,
+agents and `SKILL.md` files: `hooks/`, `monitors/` or `bin/`, or `.mcp.json`, `.lsp.json` or `settings*.json`,
+at the root and in any letter case, or a `.claude/` directory below it. Read such a path like code before you
+add it to `ALLOWED_LOAD_SURFACES` in the script (empty today). `.claude-plugin/` holds only `plugin.json` and
+`marketplace.json`, and each of their keys is on the script's list; add a key there only once you know what
+Claude Code loads from it. A top-level `commands`, `agents`, `skills`, `hooks`, `bin`, `monitors` or
+`.claude-plugin` directory named in another letter case fails too: a case-insensitive file system loads it
+under the lowercase name.
+
 ### CI
 
 - **`corpus-check`, job "counts, index, version, hygiene"**: required by branch protection, so keep its
@@ -254,4 +265,5 @@ fails that PR until the README pin is updated on the same branch. Never auto-mer
 - Does every command, agent and `SKILL.md` frontmatter pass `scripts/check-frontmatter.sh`?
 - Are new vectors / items checkable from code, with a PASS / FAIL shape and a grep?
 - Are cited incidents real and public?
-- No attribution trailers, no secrets, no `.env` / state / local assistant files tracked.
+- No attribution trailers, no secrets, no `.env` / state / local assistant files tracked, and no new load
+  surface at the plugin root (`scripts/check-hygiene.sh`).
