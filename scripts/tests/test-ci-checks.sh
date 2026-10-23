@@ -185,7 +185,7 @@ for want in "commands/sub/nested.md:3: --- inside" "agents/deep/er/deeper.md:3: 
     *) failn=$((failn + 1)); echo "FAIL frontmatter: the default list missed: $want"; echo "$out";; esac
 done
 good_c "$lay/commands/sub/nested.md"; good_a "$lay/agents/deep/er/deeper.md"; good_a "$lay/agents/.hidden.md"
-good_s "$lay/skills/s/SKILL.md"; good_s "$lay/skills/t/u/skill.md"; mv "$lay/commands/Upper.MD" "$lay/commands/upper.md"
+good_s "$lay/skills/s/SKILL.md"; good_s "$lay/skills/t/u/skill.md"; mv "$lay/commands/Upper.MD" "$lay/commands/renamed.md"
 expect "frontmatter: with no arguments, every kind of file passes once fixed" 0 bash "$lay/scripts/check-frontmatter.sh"
 case "$out" in *"passed: 9 files"*) pass=$((pass + 1)); echo "PASS frontmatter: ... 9 files read";;
   *) failn=$((failn + 1)); echo "FAIL frontmatter: the default list did not read 9 files"; echo "$out";; esac
