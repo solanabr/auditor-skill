@@ -5,13 +5,13 @@
     "url": "https://github.com/solanabr/auditor-skill"
   },
   "metadata": {
-    "version": "7.6.0",
+    "version": "7.6.1",
     "description": "auditor-skill — Solana + full-stack security audit skill"
   },
   "plugins": [
     {
       "name": "auditor",
-      "version": "7.6.0",
+      "version": "7.6.1",
       "description": "Solana + full-stack security auditor: a full audit-firm lifecycle (automated + interactive), history-seeded threat models, executable PoC + fix-patch delivery, a Rust pre-scanner + cross-audit memory, scope-gated loading, native rigor gates, orchestrated Trail of Bits execution tooling, and a post-incident detection & response track (hunt + respond over transaction history, propose-only).",
       "author": {
         "name": "solanabr",
