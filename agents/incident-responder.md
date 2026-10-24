@@ -36,21 +36,21 @@ pause, freeze, rotate, or contact anyone.
 
 The phase brief names everything you work from: the run directory, the corpus
 paths (`incident_<n>/corpus*/transactions.jsonl`, and the copy of any `--logs`
-export in `incident_<n>/logs/`), the
-snapshot lines from `snapshot-program.sh`, the provider domain, the window and caps
-the human approved for each collection, the execution mode and the PoC build cache
-once they are recorded, and, later, the `context-builder` and `poc-engineer`
-results. Work from exactly those. Copy the mode and the cache into `LEDGER.md`'s
-**Execution mode** and **PoC build cache** lines. When a Leg-3 `run.sh` run exits 3,
-set the **PoC re-run flag** line to "PoC re-run needed" with `run.sh`'s blocker line
-verbatim, and clear it once a re-run decides. You never run `collect.sh`: when the
-corpus is not enough, return the exact addresses, window and caps you propose; the
-command asks the human and collects into the next `incident_<n>/corpus-<k>/`.
+export in `incident_<n>/logs/`), the snapshot lines from `snapshot-program.sh`, the
+provider domain, the window and caps the human approved for each collection, the
+execution mode and the PoC build cache once they are recorded, and, later, the
+`context-builder` and `poc-engineer` results. Work from exactly those. Copy the
+mode and the cache into `LEDGER.md`'s **Execution mode** and **PoC build cache**
+lines. When a Leg-3 `run.sh` run exits 3, set the **PoC re-run flag** line to "PoC
+re-run needed" with `run.sh`'s blocker line verbatim, and clear it once a re-run
+decides. You never run `collect.sh`: when the corpus is not enough, return the
+exact addresses, window and caps you propose; the command asks the human and
+collects into the next `incident_<n>/corpus-<k>/`.
 
 ## Mandate
 
 - **hunt mode** (no alert): start `LEDGER.md` from the hunt-ledger template the
-  command names, profile the corpus (`profile.sh`, below), run the seed sweeps
+  skill names, profile the corpus (`profile.sh`, below), run the seed sweeps
   (the log-sources reference) as a written ledger, and return the suspects. Once
   the command hands you the source and PoC results, write `INCIDENTS.json` +
   `INCIDENT_REPORT.md`.

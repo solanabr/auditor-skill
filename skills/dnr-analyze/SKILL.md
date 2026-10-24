@@ -93,10 +93,11 @@ These forms, and only these, are pre-approved for this phase:
   (doubles; use `deltas.py`), and never flatten log arrays with it (use
   `frames.py`).
 - **Anything else** prompts the human or is denied: `jq` itself, a bare
-  `python3`, `solana`, `curl`, a compound command. A read outside these forms that
-  the work needs, such as the keyless `getAccountInfo` recipe in the log-sources
-  reference, is attempted once as written there; when it is denied, record the gap
-  in the ledger and in your report, and never work around it.
+  `python3`, `solana`, `curl`, a bundled script not listed above. A read outside
+  these forms that the work needs, such as the keyless `getAccountInfo` recipe in
+  the log-sources reference, is attempted once as written there; when it is
+  denied, record the gap in the ledger and in your report, and never work around
+  it.
 
 ## Report back
 
