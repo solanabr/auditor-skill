@@ -8,10 +8,10 @@
 # small settings files, writes nothing, and runs nothing from the tree.
 #
 # Claude Code loads project config from the directory it starts in, from directories below it, and from
-# each parent up to the repository root. Config a repository ships can shadow this plugin's skills and
-# agents (a project skill named auditor:dnr-analyze takes the fork's place), carry hooks or MCP servers,
-# or grant permissions. So preflight refuses when it finds, matching names in any letter case, never
-# following a symbolic link and skipping every .git directory:
+# each parent up to the repository root. Config a repository ships can put a skill or agent of its own
+# in place of one of this plugin's, carry hooks or MCP servers, or grant permissions. So preflight refuses
+# when it finds, matching names in any letter case, never following a symbolic link and skipping every
+# .git directory:
 #   - in the working directory, at any depth:
 #     - a .claude that is a symbolic link;
 #     - in a .claude directory, a skills, commands, agents, hooks, output-styles or workflows directory, or
