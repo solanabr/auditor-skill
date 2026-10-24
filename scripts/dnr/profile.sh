@@ -550,10 +550,10 @@ def parsed(line):
 
 
 def records(paths, stats):
-    """Yield (line, tx) for each well-formed line of the named inputs (stdin when none
-    is named, or for "-"), once per signature. stats["dupes"] counts the later copies
-    skipped, and stats["bad"] gets [input, count, first line] for each input that had
-    malformed lines."""
+    """Yield (line, tx) for each well-formed line of the named inputs, which unusable()
+    has checked (stdin when none is named), once per signature. stats["dupes"] counts
+    the later copies skipped, and stats["bad"] gets [input, count, first line] for each
+    input that had malformed lines."""
     seen = set()
     for n, path in enumerate(paths or ["-"], 1):
         label = "stdin" if path == "-" else "input %d (%s)" % (n, shown(path))
