@@ -172,11 +172,11 @@ directory.
    with arguments that start `respond outcome incident_<n>` and carry what step 3
    names. A status code can't tell you whether it worked — Leg 1 can: a balance
    movement, or for a takeover the four-part account-data check, read at
-   `finalized`. The fork sizes the damage from queries: distinct victims, raw
-   units out per mint (Python ints), the window. It checks whether activity is
-   still under way; that one read may use `confirmed` if it says so. An attempt
-   that failed is still documented: what it went after and what stopped it. It
-   returns the verdict so far, the figures with the ledger rows behind them, and
+   `finalized`. The fork sizes the damage from queries: distinct victims, raw units
+   out per mint (`deltas.py tokens --by mint`, exact), the window. It checks whether
+   activity is still under way; that one read may use `confirmed` if it says so. An
+   attempt that failed is still documented: what it went after and what stopped it.
+   It returns the verdict so far, the figures with the ledger rows behind them, and
    the implicated handler.
 
 5. **Root cause & PoC (Phase 3)** (this command). Spawn `context-builder` on the

@@ -69,7 +69,7 @@ These forms, and only these, are pre-approved for this phase:
 "${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release/audit-logs" profile incident_<n>/corpus*/transactions.jsonl
 "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh" incident_<n>/corpus*/transactions.jsonl
 "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/frames.py" [--instructions] incident_<n>/corpus*/transactions.jsonl
-"${CLAUDE_PLUGIN_ROOT}/scripts/dnr/deltas.py" tokens|lamports incident_<n>/corpus*/transactions.jsonl
+"${CLAUDE_PLUGIN_ROOT}/scripts/dnr/deltas.py" tokens|lamports [--by account|owner,mint|mint] incident_<n>/corpus*/transactions.jsonl
 "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/jq-ro.sh" [-c] [-r] [-s] [-e] [-n] [--arg <name> <value>]... [--argjson <name> <json>]... <filter> incident_<n>/<file>...
 ```
 
@@ -89,19 +89,21 @@ collection there is no `corpus*/`, and the line then fails.
   partial file.
   These forms replace the `bash …` and `python3 -I …` spellings in the references.
 - **audit-logs first.** It runs the three recipes as subcommands (`profile`,
-  `frames [--instructions]`, `deltas tokens|lamports`) with the same arguments
+  `frames [--instructions]`, `deltas tokens|lamports [--by …]`) with the same arguments
   after the subcommand, and prints what they print. Run the script with those
   arguments instead when audit-logs exits 126 or 127 (not built, or not
   executable), dies by a signal (a status above 128), or exits 4 as a stale build
   (its stderr starts `audit-logs: stale build:`, and it writes nothing). Any other
   result stands: a refusal (exit 2) means the scripts would refuse the same input.
   Each ledger row names the tool that produced it.
-- **jq only through `jq-ro.sh`.** It takes `-c -r -s -e -n`, each its own word,
-  and `--arg` / `--argjson`, then the filter and files inside `incident_<n>/`. A
-  jq variable (`$name`, `$ENV`) puts a `$` in the line, so write values into the
-  filter as literals instead (`select(.slot == 301)`). Never sum u64 amounts in it
-  (doubles; use `deltas.py`), and never flatten log arrays with it (use
-  `frames.py`).
+- **jq only through `jq-ro.sh`.** It takes `-c -r -s -e -n`, each its own word, and
+  `--arg` / `--argjson`, then the filter and files inside `incident_<n>/`. A jq
+  variable (`$name`, `$ENV`) puts a `$` in the line, so write values into the filter
+  as literals instead (`select(.slot == 301)`). Never sum u64 amounts in it
+  (doubles; use `deltas.py --by`: `tokens --by owner,mint` for an owner's net per
+  mint, `tokens --by mint` for a mint's loss and how many lost,
+  `lamports --by account` for an account's net), and never flatten log arrays with
+  it (use `frames.py`).
 - **Anything else** prompts the human or is denied: `jq` itself, a bare
   `python3`, `solana`, `curl`, a bundled script not listed above. A read outside
   these forms that the work needs, such as an `rpc-read.sh` read from the

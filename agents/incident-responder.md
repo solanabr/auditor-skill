@@ -80,14 +80,16 @@ write-up.
   - `"${CLAUDE_PLUGIN_ROOT}/scripts/dnr/frames.py" --instructions incident_<n>/corpus*/transactions.jsonl`
     (which instruction ran: the runtime-recorded instruction lists, joined to the
     invoke lines)
-  - `"${CLAUDE_PLUGIN_ROOT}/scripts/dnr/deltas.py" tokens|lamports incident_<n>/corpus*/transactions.jsonl`
+  - `"${CLAUDE_PLUGIN_ROOT}/scripts/dnr/deltas.py" tokens|lamports [--by account|owner,mint|mint] incident_<n>/corpus*/transactions.jsonl`
+    (with `--by`, exact sums in place of the rows: an account's net, an owner's net per
+    mint, or per mint the loss and how many owners lost, the gain and how many gained)
   - `"${CLAUDE_PLUGIN_ROOT}/scripts/dnr/jq-ro.sh" [-c] [-r] [-s] [-e] [-n] [--arg <name> <value>]... [--argjson <name> <json>]... <filter> incident_<n>/<file>...`
     for every jq query, with values written into the filter as literals rather
     than `$` variables. Never run `jq` itself: `jq -n env` prints the
     environment, `$RPC_URL` included
   - `audit-logs`, by the path the skill's list gives, run first, with the
     script's arguments after its subcommand: `profile`, `frames [--instructions]`,
-    `deltas tokens|lamports`. It prints what the scripts print and exits the same
+    `deltas tokens|lamports [--by …]`. It prints what the scripts print and exits the same
     way, except where the "Where it differs" list in
     `${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/README.md` says otherwise. Run the
     script instead when audit-logs exits 126 or 127 (not built, or not
@@ -132,9 +134,9 @@ write-up.
   Any other one-off over the corpus is `python3 -I` and prompts the human. Each
   figure you report must trace back to a query executed in this run and logged as
   a ledger row.
-- **Integers for u64.** Balance and token totals go through `deltas.py` (Python
-  ints) or `audit-logs deltas` (exact integers), never summed in `jq` or `awk` —
-  both use doubles.
+- **Integers for u64.** Balance and token totals go through `deltas.py --by` or
+  `audit-logs deltas --by` (exact integers, and pre-approved), never summed in
+  `jq` or `awk` — both use doubles.
 - **Logs are hints.** `Program log:` / `Program data:` lines and `emit_cpi!` event
   payloads are program-asserted (KV-122). Ground a verdict in runtime effects at `finalized`:
   `meta.err`, balance deltas, and `getAccountInfo`; name the instruction that ran
