@@ -82,8 +82,15 @@
 #     scripts/lib/isolation.sh passes: a throwaway HOME holding a fresh Solana keypair,
 #     TMPDIR in the scratch copy, the cleaned PATH and the user's CARGO_HOME and
 #     RUSTUP_HOME. No token, RPC_URL, SSH agent or default wallet reaches the crate's
-#     code. Only cargo's downloads get the proxy variables, and only cargo build-sbf
-#     the real HOME, where it keeps its platform tools and the SDK's toolchain link.
+#     code. The dependencies are downloaded first, by cargo update and cargo fetch,
+#     which run no build script, and every build and test after them runs offline,
+#     without the proxy variables. cargo build-sbf installs its platform tools once,
+#     with --install-only, which builds nothing: that call alone gets the real HOME
+#     (where they live), and the proxy as well. Each arm then builds with
+#     --skip-tools-install --offline in the throwaway HOME, whose .cache/solana links
+#     to the real one. A cargo build-sbf without those options builds each arm with
+#     the real HOME and the proxy variables, as before, and run.sh prints a line
+#     saying so.
 #     VULNERABLE_SO, FIXED_SO, UPDATE_PINS, KEEP_POC_BUILD, CARGO_TARGET_DIR,
 #     CARGO_BUILD_TARGET_DIR and RUSTC are not read from the environment, and
 #     TOOLS_VERSION must be v<n>.<n> or v<n>.<n>.<n>.
@@ -541,8 +548,9 @@ take_args() {
 # child / child_net / child_sbf [NAME=value...] <program> [<arg>...]: how run.sh starts a
 # cargo call or a test binary. ./run.sh hands it its own environment. The installation's
 # copy runs it under env -i with only what scripts/lib/isolation.sh passes; child_net adds
-# the proxy variables, for cargo's downloads, and child_sbf the real HOME as well, where
-# cargo build-sbf keeps its platform tools and the SDK's toolchain link.
+# the proxy variables, for the cargo calls that only download, and child_sbf the real HOME
+# as well, where cargo build-sbf installs its platform tools and points the SDK's
+# toolchain link.
 child() { if [[ "${CLEAN}" == 1 ]]; then iso_run "$@"; else env "$@"; fi; }
 child_net() { if [[ "${CLEAN}" == 1 ]]; then iso_net "$@"; else env "$@"; fi; }
 child_sbf() { if [[ "${CLEAN}" == 1 ]]; then iso_net "HOME=${ISO_REAL_HOME}" "$@"; else env "$@"; fi; }
@@ -1222,6 +1230,35 @@ for spec in ${UPDATE_PINS:-}; do
   fi
 done
 set +f
+# The downloads, before anything compiles (see ARGUMENTS above). In the installation's
+# copy cargo fetch, which runs no build script, gets the proxy variables; every build and
+# test after it runs offline without them.
+if [[ "${CLEAN}" == 1 ]] && ! child_net cargo fetch --manifest-path "${BUILD_DIR}/Cargo.toml"; then
+  echo "[PoC-ATTEMPTED] blocker: cargo fetch could not download the crate's dependencies — see the cargo output above." >&2
+  exit 3
+fi
+# cargo build-sbf in the installation's copy: its platform tools are installed once, with
+# the real HOME (where they live) and the proxy variables, building nothing; each arm then
+# builds offline in the throwaway HOME, whose .cache/solana links to the real one, where
+# cargo build-sbf finds them. A cargo build-sbf without these options builds as before.
+SBF_SPLIT=0
+if [[ "${CLEAN}" == 1 && "${PREBUILT}" -eq 0 ]]; then
+  sbf_help="$(child cargo build-sbf --help 2>/dev/null || true)"
+  if [[ "${sbf_help}" == *--install-only* && "${sbf_help}" == *--skip-tools-install* && "${sbf_help}" == *--offline* ]]; then
+    echo ">> installing the platform tools ${TOOLS_VERSION}: cargo build-sbf --install-only, with the real HOME"
+    if ! child_sbf cargo build-sbf --install-only --tools-version "${TOOLS_VERSION}"; then
+      echo "[PoC-ATTEMPTED] blocker: cargo build-sbf --install-only could not install the platform tools ${TOOLS_VERSION} — see the cargo output above." >&2
+      exit 3
+    fi
+    if ! { mkdir "${ISO_HOME}/.cache" && ln -s "${ISO_REAL_HOME}/.cache/solana" "${ISO_HOME}/.cache/solana"; }; then
+      echo "[PoC-ATTEMPTED] blocker: cannot link the platform tools into the throwaway HOME ${ISO_HOME}." >&2
+      exit 3
+    fi
+    SBF_SPLIT=1
+  else
+    echo ">> this cargo build-sbf has no --install-only, --skip-tools-install or --offline: each arm builds with the real HOME and the proxy variables"
+  fi
+fi
 
 # The dynamic library path `cargo test` gives a test binary: its deps directory, the
 # directory above, the toolchain's target libdir, then what the caller had.
@@ -1250,7 +1287,9 @@ place_arm() {  # place_arm <arm> : put <crate>.so in SBF_OUT_DIR for this arm; P
     echo ">> ${arm} arm: prebuilt ${src}"
   else
     echo ">> building '${arm}' arm to SBF (${CRATE}.so)"
-    if ! child_sbf cargo build-sbf \
+    local -a build=(child_sbf cargo build-sbf)
+    if [[ "${SBF_SPLIT}" == 1 ]]; then build=(child CARGO_NET_OFFLINE=true cargo build-sbf --skip-tools-install --offline); fi
+    if ! "${build[@]}" \
       --tools-version "${TOOLS_VERSION}" \
       --manifest-path "${BUILD_DIR}/Cargo.toml" \
       --no-default-features --features "${arm}" \
@@ -1270,7 +1309,9 @@ place_arm() {  # place_arm <arm> : put <crate>.so in SBF_OUT_DIR for this arm; P
 
 build_tests() {  # build_tests <arm> <test>: the arm's test binary, EXE; one that does not compile is a blocker, not a verdict
   local json="${RUN_DIR}/build-$1.json" rc=0
-  if ! child_net cargo test --manifest-path "${BUILD_DIR}/Cargo.toml" \
+  local -a cmd=(child_net cargo test)
+  if [[ "${CLEAN}" == 1 ]]; then cmd=(child cargo test --offline); fi
+  if ! "${cmd[@]}" --manifest-path "${BUILD_DIR}/Cargo.toml" \
         --no-default-features --features "$1" --test "$2" --no-run \
         --message-format=json-render-diagnostics > "${json}"; then
     echo "[PoC-ATTEMPTED] blocker: tests/$2.rs failed to build for the $1 arm — see the cargo output above." >&2

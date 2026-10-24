@@ -48,10 +48,12 @@
 # .config/solana/id.json; TMPDIR, a scratch directory; LC_ALL=C; USER, LOGNAME, LANG, TERM,
 # RUSTUP_TOOLCHAIN, CARGO_NET_OFFLINE, SSL_CERT_FILE and SSL_CERT_DIR when they are set; the user's
 # CARGO_HOME and RUSTUP_HOME, resolved against the real HOME; and the variables its caller adds. A child
-# that downloads (cargo fetching crates) also gets the proxy variables http_proxy, https_proxy, all_proxy
-# and no_proxy, in either case, when they are set: a sandbox's network allowlist works through them, and
-# its proxy URL can carry a session token, so a test binary never gets them. No token, RPC_URL,
-# SSH_AUTH_SOCK, or git or cargo setting in the environment reaches a child.
+# that only downloads (cargo fetch or cargo update, which run no build script, or an installer) also gets
+# the proxy variables http_proxy, https_proxy, all_proxy and no_proxy, in either case, when they are set:
+# a sandbox's network allowlist works through them, and its proxy URL can carry a session token, so
+# nothing that compiles or runs code from the build gets them (a build script or proc-macro would see
+# them too). No token, RPC_URL, SSH_AUTH_SOCK, or git or cargo setting in the environment reaches a
+# child.
 #
 # Functions:
 #   iso_homes                    prints the home directories the self-check reads, one per line.
@@ -86,7 +88,8 @@
 #                                runs <program> under env -i "${ISO_ENV[@]}" and the NAME=value words, a
 #                                later word for a name winning; status 126 for a program path holding "=".
 #   iso_net [NAME=value...] <program> [<arg>...]
-#                                the same, with the proxy words of ISO_NET as well: for a download.
+#                                the same, with the proxy words of ISO_NET as well: for a download that
+#                                runs no code from the build.
 # Needs bash >= 3.2, python3 (the self-check and the keypair), env, mkdir and mktemp.
 
 # What iso_credentials, iso_cred_names, iso_homes and iso_env run, with python3 -I so that no module comes

@@ -70,7 +70,9 @@
 #     on CI, or with REQUIRE_TOOLCHAIN=1, a machine that does not fails the run);
 #   * environment cleaning: canary variables in the caller's environment reach no cargo
 #     call, no build script and no test binary; HOME is a throwaway one with a fresh
-#     Solana keypair, but for cargo build-sbf; only cargo's downloads see the proxy;
+#     Solana keypair, but for cargo build-sbf --install-only; only cargo fetch, cargo
+#     update and that install see the proxy, and every build and test after them runs
+#     offline (a cargo build-sbf without those options builds as before, and says so);
 #   * the resolved Cargo.lock comes back into the crate in place of a regular file only;
 #   * scripts/runner/probe.sh: fixed version queries from a scratch directory in the
 #     cleaned environment, the isolation line, --only and its case file
@@ -142,13 +144,15 @@ PY
 # with a dependency on the crate's own shared-test-utils/ (SHIM_STU=none drops it, and
 # SHIM_STU=<name>,<rename>,<path> sets another, @copy standing for that directory);
 # SHIM_META=build-script gives the root a build script and SHIM_META=proc-macro makes
-# its lib a proc-macro. `build-sbf` writes the arm's .so. `test --no-run` writes a
+# its lib a proc-macro. `build-sbf` writes the arm's .so; `build-sbf --help` lists
+# --install-only, --offline and --skip-tools-install (none of them with
+# SHIM_SBF_HELP=old), and `build-sbf --install-only` builds nothing. `test --no-run` writes a
 # Cargo.lock when the crate has none (SHIM_LOCK adds name@version@path|<git source>
 # entries), prints SHIM_JSON_PAD other artifacts, the shared_test_utils lib of the
 # crate's own shared-test-utils/ (SHIM_STU_BUILD=elsewhere: of another copy; =none: no
 # such lib), then the stand-in test binary $T/shim/bin/<test> (none for
-# SHIM_FAIL=no-exe:<test>). SHIM_FAIL makes one step fail
-# with cargo's own exit code, 101.
+# SHIM_FAIL=no-exe:<test>). SHIM_FAIL makes one step fail (build-sbf, update, metadata,
+# fetch, install-only) with cargo's own exit code, 101.
 #
 # The stand-in test binary logs its run to SHIM_CALLS as well (arguments "testbin
 # <test> ..."; SHIM_CALLS.env gets CARGO_MANIFEST_DIR and the dynamic library path) and
@@ -199,7 +203,15 @@ for a in "$@"; do
   prev="$a"
 done
 case "${SHIM_FAIL:-}" in
-  build-sbf|update|metadata) if [ "${1:-}" = "$SHIM_FAIL" ]; then echo "[shim cargo: $SHIM_FAIL fails]" >&2; exit 101; fi ;;
+  build-sbf|update|metadata|fetch) if [ "${1:-}" = "$SHIM_FAIL" ]; then echo "[shim cargo: $SHIM_FAIL fails]" >&2; exit 101; fi ;;
+esac
+case "${1:-} $*" in
+  "build-sbf "*" --help"*)
+    if [ "${SHIM_SBF_HELP:-}" != old ]; then printf '        --install-only\n        --offline\n        --skip-tools-install\n'; fi
+    printf '        --tools-version <STRING>\n'; exit 0 ;;
+  "build-sbf "*" --install-only"*)
+    if [ "${SHIM_FAIL:-}" = install-only ]; then echo "[shim cargo: install-only fails]" >&2; exit 101; fi
+    echo "[shim cargo build-sbf --install-only]"; exit 0 ;;
 esac
 case "${1:-}" in
   metadata) exec python3 -I "$here/meta.py" "$(dirname "$manifest")" ;;
@@ -1444,8 +1456,9 @@ printf 'native\n' > "$WT/audit_1/exec-mode"
 # Environment cleaning. Canary variables in the caller's environment reach no cargo call and no test
 # binary; neither do the inputs ./run.sh reads from it (here VULNERABLE_SO, KEEP_POC_BUILD, UPDATE_PINS,
 # CARGO_TARGET_DIR: the run builds both arms, moves no pin and leaves nothing behind). HOME is the
-# throwaway one with a fresh Solana keypair, but for cargo build-sbf; only cargo's downloads see the
-# proxy; and a cargo on PATH inside the working directory never runs.
+# throwaway one with a fresh Solana keypair, but for cargo build-sbf --install-only; only cargo fetch and
+# that install see the proxy, every build and test after them runs offline; and a cargo on PATH inside
+# the working directory never runs.
 mkdir -p "$WT/.bin"; printf '#!/bin/sh\necho ran > "%s"\nexit 0\n' "$T/wt-cargo.marker" > "$WT/.bin/cargo"; chmod +x "$WT/.bin/cargo"
 : > "$T/canary-v17"
 SHIM_EXTRA=(SHIM_WALLET_COPY="$T/wallet")
@@ -1464,13 +1477,19 @@ bd="$(new_build_dir)"
 [ -n "$bd" ] && [ ! -e "$bd" ] && [ -z "$(ls -A "$NT")" ] && ok "the environment's KEEP_POC_BUILD is not read: the scratch copy is gone" || bad "KEEP_POC_BUILD from the environment kept '$bd'"
 ! awk -F'\t' '$6 ~ /^update / { f = 1 } END { exit !f }' "$T/calls" && ok "the environment's UPDATE_PINS is not read: no cargo update" || bad "UPDATE_PINS from the environment ran cargo update"
 none_in_blocks '.' '^CARGO_TARGET_DIR=' && [ ! -e "$T/canary-v11" ] && ok "the environment's CARGO_TARGET_DIR reaches no child" || bad "CARGO_TARGET_DIR reached a child"
-in_blocks '^== (cargo (metadata|test)|testbin)' "^HOME=$bd/markers/home\$" && in_blocks '^== cargo build-sbf' "^HOME=$CLEANHOME\$" \
-  && ok "HOME is the throwaway $bd/markers/home, but for cargo build-sbf, which keeps the real one" || { bad "HOME in the children"; grep -n '^== \|^HOME=' "$T/envdump" >&2; }
+in_blocks '^== (cargo (metadata|fetch|test|build-sbf --skip-tools-install)|testbin)' "^HOME=$bd/markers/home\$" \
+  && in_blocks '^== cargo build-sbf --install-only' "^HOME=$CLEANHOME\$" \
+  && ok "HOME is the throwaway $bd/markers/home, but for cargo build-sbf --install-only, which installs the tools in the real one" || { bad "HOME in the children"; grep -n '^== \|^HOME=' "$T/envdump" >&2; }
 in_blocks '.' "^TMPDIR=$bd/markers/tmp\$" && in_blocks '.' '^LC_ALL=C$' && none_in_blocks '.' '^SBF_OUT_DIR=$' \
   && in_blocks '^== (cargo (build-sbf|test)|testbin)' "^SBF_OUT_DIR=$bd/target/deploy\$" \
   && ok "every child gets TMPDIR in the scratch copy, LC_ALL=C and the SBF_OUT_DIR run.sh set" || { bad "TMPDIR, LC_ALL or SBF_OUT_DIR in the children"; cat "$T/envdump" >&2; }
-in_blocks '^== cargo (test|build-sbf)' '^HTTPS_PROXY=http://proxy.invalid:3128$' && none_in_blocks '^== (testbin|cargo metadata)' '^HTTPS_PROXY=' \
-  && ok "the proxy reaches cargo's downloads, never cargo metadata or a test binary" || { bad "proxy variables in the children"; grep -n '^== \|PROXY' "$T/envdump" >&2; }
+in_blocks '^== cargo (fetch|build-sbf --install-only)' '^HTTPS_PROXY=http://proxy.invalid:3128$' \
+  && none_in_blocks '^== (testbin|cargo (metadata|test|build-sbf --help|build-sbf --skip-tools-install))' '^HTTPS_PROXY=' \
+  && ok "the proxy reaches cargo fetch and the platform-tools install, never a build, a test or cargo metadata" || { bad "proxy variables in the children"; grep -n '^== \|PROXY' "$T/envdump" >&2; }
+steps="$(awk -F'\t' '{ split($6, a, " "); s = a[1] } s == "build-sbf" { s = ($6 ~ /--install-only/) ? "install" : ($6 ~ /--help/) ? "help" : ($6 ~ /^build-sbf --skip-tools-install --offline /) ? "arm" : "other" }
+  s == "test" { s = ($6 ~ /^test --offline /) ? "test" : "other" } s != "metadata" && s != "testbin" { printf "%s ", s }' "$T/calls")"
+[ "$steps" = "fetch help install arm test arm test " ] && in_blocks '^== cargo build-sbf --skip-tools-install' '^CARGO_NET_OFFLINE=true$' \
+  && ok "cargo fetch first, then the install, then each arm built with --skip-tools-install --offline and tested with --offline" || { bad "the build steps: '$steps'"; cat "$T/calls" >&2; }
 none_in_blocks '.' "$WT/.bin" && [ ! -e "$T/wt-cargo.marker" ] && ok "a cargo on PATH inside the working directory never runs, and that PATH entry reaches no child" || bad "PATH inside the working directory"
 w="$T/wallet.exploit"
 if [ -f "$w" ] && python3 -I -c 'import json, sys; k = json.load(open(sys.argv[1])); sys.exit(not (isinstance(k, list) and len(k) == 64 and all(isinstance(b, int) and 0 <= b < 256 for b in k)))' "$w"; then
@@ -1482,6 +1501,25 @@ else
   bad "no throwaway keypair in the test binary's HOME"
 fi
 rm -rf "$WT/.bin"
+
+# A cargo build-sbf whose --help lists none of --install-only, --skip-tools-install and --offline builds
+# each arm as before, with the real HOME and the proxy, and says so; an install or a fetch that fails is a
+# blocker before any arm builds.
+SHIM_EXTRA=(SHIM_SBF_HELP=old)
+code="$(ngate HTTPS_PROXY=http://proxy.invalid:3128 -- --crate audit_1/poc/F-1)"
+SHIM_EXTRA=()
+[ "$code" = 0 ] && grep -qxF ">> this cargo build-sbf has no --install-only, --skip-tools-install or --offline: each arm builds with the real HOME and the proxy variables" "$T/out" \
+  && in_blocks '^== cargo build-sbf --tools-version' "^HOME=$CLEANHOME\$" && in_blocks '^== cargo build-sbf --tools-version' '^HTTPS_PROXY=http://proxy.invalid:3128$' \
+  && ! awk -F'\t' '$6 ~ /^build-sbf --install-only/ { f = 1 } END { exit !f }' "$T/calls" \
+  && ok "a cargo build-sbf without --install-only and --skip-tools-install -> each arm builds as before, and run.sh says so" || { bad "an older cargo build-sbf: exit $code"; cat "$T/out" >&2; }
+for spec in 'install-only|cargo build-sbf --install-only could not install the platform tools v1.54' 'fetch|cargo fetch could not download the crate'"'"'s dependencies'; do
+  SHIM_EXTRA=(SHIM_FAIL="${spec%%|*}")
+  code="$(ngate -- --crate audit_1/poc/F-1)"
+  SHIM_EXTRA=()
+  [ "$code" = 3 ] && grep -qF "[PoC-ATTEMPTED] blocker: ${spec#*|} — see the cargo output above." "$T/out" && one_blocker \
+    && ! awk -F'\t' '$6 ~ /^(build-sbf --skip|build-sbf --tools|test |testbin )/ { f = 1 } END { exit !f }' "$T/calls" \
+    && ok "a failed ${spec%%|*} -> exit 3 before any arm builds" || { bad "a failed ${spec%%|*}: exit $code"; cat "$T/out" >&2; }
+done
 
 # The resolved Cargo.lock comes back into the crate in place of a regular file only: a symbolic link
 # planted there while the test ran is left as it is, and its target untouched.
@@ -2699,17 +2737,20 @@ path = \"$T/e-oot-outside/lib.rs\"
   RSO=(--vulnerable-so audit_1/exec/sb/sb-takeover.so --fixed-so audit_1/exec/sb/sb-reject-MissingRequiredSignature.so)
   rm -f "$T/envdep.env"
   code="$(rr AUDITOR_CANARY=canary-r1 GITHUB_TOKEN=canary-r2 CARGO_TARGET_DIR="$T/canary-r3" RUSTFLAGS=--cfg=canary_r4 \
-    RUSTC_WRAPPER="$T/canary-r5" CARGO_REGISTRY_TOKEN=canary-r6 RPC_URL=https://rpc.invalid/canary-r7 -- --crate audit_1/poc/F-1 "${RSO[@]}")"
+    RUSTC_WRAPPER="$T/canary-r5" CARGO_REGISTRY_TOKEN=canary-r6 RPC_URL=https://rpc.invalid/canary-r7 \
+    HTTPS_PROXY=http://user:canary-r9@127.0.0.1:9 https_proxy=http://user:canary-r9@127.0.0.1:9 ALL_PROXY=http://127.0.0.1:9 \
+    NO_PROXY=canary-r10.invalid -- --crate audit_1/poc/F-1 "${RSO[@]}")"
   if [ "$code" = 0 ] && grep -qx "${LEG3}$(zhash "$SB-takeover.so") fixed sha256=$(zhash "$SB-reject-MissingRequiredSignature.so") (rejected with the pinned error) → \[PoC-REPRODUCED\]" "$T/out"; then
     ok "real cargo, the installation's copy: --crate with prebuilt bytes under exec/ reaches the Leg 3 line"
   else
     bad "real cargo, --crate: exit $code"; cat "$T/out" >&2
   fi
   if [ -s "$T/envdep.env" ] && ! grep -q canary "$T/envdep.env" && [ ! -e "$T/canary-r3" ] \
+     && ! grep -qi '^[a-z_]*proxy=' "$T/envdep.env" && ! grep -qF "=$CLEANHOME" "$T/envdep.env" \
      && grep -q "^HOME=$NT/auditor-poc\.[A-Za-z0-9]*/markers/home\$" "$T/envdep.env" \
      && grep -q "^TMPDIR=$NT/auditor-poc\.[A-Za-z0-9]*/markers/tmp\$" "$T/envdep.env" \
      && grep -qx "CARGO_HOME=${CARGO_HOME:-$HOME/.cargo}" "$T/envdep.env" && ! grep -q '^RUSTC_WRAPPER=' "$T/envdep.env"; then
-    ok "real cargo: a build script in the build sees no canary, the throwaway HOME and TMPDIR, the real CARGO_HOME"
+    ok "real cargo: a build script in the build sees no canary and no proxy variable, the throwaway HOME (never the real one) and TMPDIR, the real CARGO_HOME"
   else
     bad "real cargo: the build script's environment"; cat "$T/envdep.env" >&2
   fi
@@ -2722,16 +2763,39 @@ path = \"$T/e-oot-outside/lib.rs\"
   code2="$(rr TMPDIR="$NTC" -- --crate audit_1/poc/F-1 "${RSO[@]}" --cache "$RCACHE")"
   [ "$code" = 0 ] && [ "$code2" = 0 ] && [ -d "$RCACHE/debug" ] && grep -qF ">> target dir: $RCACHE " "$T/out" && [ ! -e "$RCACHE/.auditor-poc-build.lock" ] \
     && ok "real cargo: --cache <a --new-cache directory> -> both runs build into it, and its lock is gone" || { bad "real cargo, --cache: exit $code then $code2"; cat "$T/out" >&2; }
-  # A model run: the crate's own arms, built by a stand-in cargo-build-sbf that records its
-  # environment. cargo build-sbf alone keeps the real HOME, and gets no canary either.
+  # A model run: the crate's own arms, built by a stand-in cargo-build-sbf that records the
+  # environment and arguments of each call. The install alone gets the real HOME and the proxy;
+  # each arm builds with --skip-tools-install --offline in the throwaway HOME, whose
+  # .cache/solana links to the real one; no call gets a canary.
   mkdir -p "$T/sbf-env"
-  printf '#!/bin/sh\n/usr/bin/env > "%s"\nout=""; features=""; prev=""\nfor a in "$@"; do\n  case "$prev" in --sbf-out-dir) out="$a" ;; --features) features="$a" ;; esac\n  prev="$a"\ndone\ncase "$features" in vulnerable) b=takeover ;; *) b=reject:MissingRequiredSignature ;; esac\nprintf '"'"'\\177ELF%%s'"'"' "$b" > "$out/poc_e2e.so"\n' "$T/sbf-env.env" > "$T/sbf-env/cargo-build-sbf"
+  cat > "$T/sbf-env/cargo-build-sbf" <<'SH'
+#!/bin/sh
+log=@LOG@
+case " $* " in
+  *" --help "*) printf '        --install-only\n        --offline\n        --skip-tools-install\n'; exit 0 ;;
+  *" --install-only "*) { /usr/bin/env; echo "args: $*"; } > "$log.install"; exit 0 ;;
+esac
+{ /usr/bin/env; echo "args: $*"; echo "tools: $(readlink "$HOME/.cache/solana" 2>/dev/null)"; } > "$log"
+out=""; features=""; prev=""
+for a in "$@"; do
+  case "$prev" in --sbf-out-dir) out="$a" ;; --features) features="$a" ;; esac
+  prev="$a"
+done
+case "$features" in vulnerable) b=takeover ;; *) b=reject:MissingRequiredSignature ;; esac
+printf '\177ELF%s' "$b" > "$out/poc_e2e.so"
+SH
+  sed "s#@LOG@#'$T/sbf-env.env'#" "$T/sbf-env/cargo-build-sbf" > "$T/sbf-env/cargo-build-sbf.new" && mv "$T/sbf-env/cargo-build-sbf.new" "$T/sbf-env/cargo-build-sbf"
   chmod +x "$T/sbf-env/cargo-build-sbf"
   REAL=(HOME="$CLEANHOME" "${TOOL_HOMES[@]}" PATH="$T/sbf-env:$PATH" TMPDIR="$NT" CARGO_NET_OFFLINE=true)
-  rm -f "$T/sbf-env.env"
-  code="$(rr TMPDIR="$NTC" AUDITOR_CANARY=canary-r8 -- --crate audit_1/poc/F-1 --cache "$RCACHE")"
-  [ "$code" = 0 ] && grep -q "^$MODEL" "$T/out" && grep -qx "HOME=$CLEANHOME" "$T/sbf-env.env" && ! grep -q canary "$T/sbf-env.env" \
-    && ok "real cargo, model run: the crate's own arms reproduce; cargo build-sbf gets the real HOME and no canary" || { bad "real cargo, model run, the installation's copy: exit $code"; cat "$T/out" "$T/sbf-env.env" >&2; }
+  rm -f "$T/sbf-env.env" "$T/sbf-env.env.install"
+  code="$(rr TMPDIR="$NTC" AUDITOR_CANARY=canary-r8 HTTPS_PROXY=http://user:secret-r11@127.0.0.1:9 -- --crate audit_1/poc/F-1 --cache "$RCACHE")"
+  [ "$code" = 0 ] && grep -q "^$MODEL" "$T/out" && ! grep -q canary "$T/sbf-env.env" "$T/sbf-env.env.install" \
+    && grep -qx "HOME=$CLEANHOME" "$T/sbf-env.env.install" && grep -qx 'HTTPS_PROXY=http://user:secret-r11@127.0.0.1:9' "$T/sbf-env.env.install" \
+    && grep -qx 'args: build-sbf --install-only --tools-version v1.54' "$T/sbf-env.env.install" \
+    && grep -q "^HOME=$NTC/auditor-poc\.[A-Za-z0-9]*/markers/home\$" "$T/sbf-env.env" && ! grep -qi '^[a-z_]*proxy=' "$T/sbf-env.env" \
+    && grep -qx 'CARGO_NET_OFFLINE=true' "$T/sbf-env.env" && grep -q '^args: build-sbf --skip-tools-install --offline --tools-version v1.54 ' "$T/sbf-env.env" \
+    && grep -qx "tools: $CLEANHOME/.cache/solana" "$T/sbf-env.env" \
+    && ok "real cargo, model run: the crate's own arms reproduce; the install alone gets the real HOME and the proxy, each arm builds offline in the throwaway HOME" || { bad "real cargo, model run, the installation's copy: exit $code"; cat "$T/out" "$T/sbf-env.env" "$T/sbf-env.env.install" >&2; }
 elif [ "${REQUIRE_TOOLCHAIN:-}" = 1 ]; then
   bad "REQUIRE_TOOLCHAIN=1, but cargo or rustup is not on PATH: the real-toolchain checks cannot run"
 else

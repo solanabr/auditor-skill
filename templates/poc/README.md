@@ -60,12 +60,16 @@ pins in one argument, and `--cache` only a directory `--new-cache` made. In isol
 mode it first runs the credential self-check of `scripts/lib/isolation.sh`: a readable
 key, cloud or registry credential, or a reachable agent socket stops the run, since
 this is then not the isolated runner, and so does a check that cannot finish; in
-native mode it prints what is readable as a warning. Every cargo call and test binary
-runs in a cleaned environment, with a throwaway `HOME` holding a fresh Solana keypair,
-so no token, `RPC_URL`, SSH agent or default wallet reaches this crate's code; only
-`cargo build-sbf` keeps the real `HOME`, where its platform tools live. Two more forms
-help: `--init <R>/poc/<ID>` makes a new crate, the template's files byte for byte, and
-`--new-cache` makes a build cache (below) and prints its path.
+native mode it prints, as a warning, what is readable by kind and count, never a path.
+Every cargo call and test binary runs in a cleaned environment, with a throwaway
+`HOME` holding a fresh Solana keypair, so no token, `RPC_URL`, SSH agent or default
+wallet reaches this crate's code. The dependencies are downloaded first
+(`cargo fetch`, and `cargo update` for a pin), which run no build script, and every
+build and test after them runs offline, without the proxy variables.
+`cargo build-sbf` installs its platform tools once, building nothing, with the real
+`HOME`, where they live, and the proxy, then builds each arm in the throwaway one. Two
+more forms help: `--init <R>/poc/<ID>` makes a new crate, the template's files byte
+for byte, and `--new-cache` makes a build cache (below) and prints its path.
 
 **Toolchains.** `"<auditor-skill root>/scripts/runner/probe.sh"` reports the
 toolchains these runs need and whether this machine passes the self-check.
