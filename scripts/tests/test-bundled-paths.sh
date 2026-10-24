@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-bundled-paths.sh — bundled executables run from the auditor-skill root, never by a path relative to
 # the working directory, which during an audit is usually the target repository (OUTPUT-RULES.md Rule 11e).
-#   1. commands/ and agents/, where Claude Code fills in ${CLAUDE_PLUGIN_ROOT}, name no bundled tool,
+#   1. commands/, agents/ and skills/*/SKILL.md, where Claude Code fills in ${CLAUDE_PLUGIN_ROOT}, name no bundled tool,
 #      Trail of Bits plugin, PoC template or script by a relative path, and never use ${CLAUDE_SKILL_DIR};
 #   2. the skill body, references/, discovery/, docs/, templates/ and README.md never *run* one by a
 #      relative path: an interpreter, `source` / `.`, `uv run`, `env …` or `cd` in front of it, a `test -d/-x`
@@ -32,7 +32,7 @@ pass=0; failn=0
 ok()  { pass=$((pass + 1)); if [ -n "${VERBOSE:-}" ]; then echo "ok   $*"; fi; }
 bad() { failn=$((failn + 1)); echo "FAIL $*"; }
 
-STRICT_FILES=$(ls commands/*.md agents/*.md)
+STRICT_FILES=$(ls commands/*.md agents/*.md skills/*/SKILL.md 2>/dev/null)
 RUN_FILES=$(ls SKILL.md FULL-AUDIT.md AGENTS.md OUTPUT-RULES.md README.md; find references discovery docs templates -name '*.md' | sort)
 
 # A bundled path preceded by start of line or a non-path character, after any ./ or ../ prefix.
