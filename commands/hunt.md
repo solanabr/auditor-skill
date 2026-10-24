@@ -147,7 +147,10 @@ directory.
      `audit_<n>/intake.md` §6 if an audit preceded this.
    - Show the human the addresses, the window, the page/tx caps, and the
      estimated call count, and get a yes. In a non-interactive run, collection
-     happens only if `--collect` was passed.
+     happens only if `--collect` was passed. It stands in for that yes, not for
+     permission prompts: in `claude -p` the snapshot, the collector and the
+     `--logs` copy are denied unless the permission mode or the run's rules allow
+     them; say so when one is denied, and stop.
    - Pass exactly the approved values; collect.sh has no `--window` (it refuses an
      unknown argument), so never pass one. `--window <fromUnix>..<toUnix>` becomes
      `--since <fromUnix> --until <toUnix>` (an open end is left out); the page cap

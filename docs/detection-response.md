@@ -49,10 +49,12 @@ Telegram bot (`@seal_911_bot`). These commands are the after-the-fact workup.
   collector runs. Set `RPC_URL` in the environment (never on the command line);
   the collector finalizes and passes `maxSupportedTransactionVersion: 1`, which is
   mandatory now that v1 transactions are live on mainnet. Non-interactive runs
-  collect only with `--collect`. A long collection runs in the background; one
-  stopped by INT, TERM or HUP, or by a failed write, records what it had not
-  fetched as collection gaps; for one killed outright, the agent records them from
-  its files.
+  collect only with `--collect`, which stands in for your yes to the addresses,
+  window and caps, not for permission prompts: in `claude -p` the snapshot, the
+  collector and the `--logs` copy are denied unless the permission mode or the
+  run's rules allow them. A long collection runs in the background; one stopped by
+  INT, TERM or HUP, or by a failed write, records what it had not fetched as
+  collection gaps; for one killed outright, the agent records them from its files.
 - **Source** (`--repo`): needed to confirm a flaw and to reach
   `confirmed_exploited`; without it, findings cap at `suspected`.
 
