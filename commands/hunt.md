@@ -184,21 +184,20 @@ directory.
 
 3. **Baseline (Phase 1), in the `auditor:dnr-analyze` skill.** Invoke it with the
    Skill tool, with arguments that start `hunt baseline incident_<n>` (the step-1
-   directory) and then
-   name, explicitly: every corpus path (`incident_<n>/corpus*/transactions.jsonl`,
-   and the `--logs` copies in `incident_<n>/logs/`); the snapshot lines; the provider
+   directory) and then name, explicitly: every corpus path
+   (`incident_<n>/corpus*/transactions.jsonl` once a collection ran, and the
+   `--logs` copies in `incident_<n>/logs/`); the snapshot lines; the provider
    domain; the window and caps the collection used, and whether it ended with its
    `collection gaps: N` line; and the execution mode, if one is already recorded.
    The fork starts `LEDGER.md` from `${CLAUDE_PLUGIN_ROOT}/templates/hunt-ledger.md`
-   and runs `profile.sh` over `incident_<n>/corpus*/transactions.jsonl`, or the
-   same profile from `audit-logs` when it is built, for outcome/version
-   histograms, window, and signer/program inventories, and writes each number into
-   the ledger. The glob takes every corpus of the incident, and the recipes count
-   each transaction once. A line a recipe cannot read is skipped and reported as
+   and runs `profile.sh` over every corpus path the brief names, or the same profile
+   from `audit-logs` when it is built, for outcome/version histograms, window, and
+   signer/program inventories, and writes each number into the ledger. The `corpus*`
+   glob takes every collection of the incident, and the recipes count each
+   transaction once. A line a recipe cannot read is skipped and reported as
    `skipped N malformed line(s) in input I (<path>) …` on stderr; the fork copies
    each such note into the ledger's **Collection gaps** line. Nothing reads the
    corpus into context (README rule 2).
-
 4. **Hunt loop (Phase 2), in the same fork.** It runs the seed sweeps in
    `${CLAUDE_PLUGIN_ROOT}/references/detection-response/log-sources.md`, one ledger
    row per query (`jq-ro.sh`, or the bundled `deltas.py` / `frames.py`, with

@@ -102,7 +102,9 @@ write-up.
     the way; the tools refuse anything else (exit 2, `<tool>: refused: …`) before
     they read any input
   - the glob takes every corpus of the incident (`corpus/`, then `corpus-<k>/` for
-    each later collection); all three count a transaction once, by signature
+    each later collection); all three count a transaction once, by signature. Name
+    only the corpus paths the brief gives, and only ones that exist: a run with
+    only `--logs` copies has no `corpus*/`, and a line with that glob then fails
   - a line a recipe cannot read is skipped, never echoed, and reported per input on
     stderr as `skipped N malformed line(s) in input I (<path>), the first at line L
     (…)`: copy each such note into `LEDGER.md`'s **Collection gaps** line and into

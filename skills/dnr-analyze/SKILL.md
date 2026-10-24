@@ -73,6 +73,11 @@ These forms, and only these, are pre-approved for this phase:
 "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/jq-ro.sh" [-c] [-r] [-s] [-e] [-n] [--arg <name> <value>]... [--argjson <name> <json>]... <filter> incident_<n>/<file>...
 ```
 
+Give each the corpus paths the brief names in place of
+`incident_<n>/corpus*/transactions.jsonl`: that glob once a collection ran, and
+each `--logs` copy in `incident_<n>/logs/`. Name only paths that exist: with no
+collection there is no `corpus*/`, and the line then fails.
+
 - **As written.** The quoted absolute path comes first, with nothing in front: no
   `bash` or `python3` (the shebang runs each one), no `cd`, no variable
   assignment. One tool per call, with no `&&`, `;` or `|` between commands, and no
