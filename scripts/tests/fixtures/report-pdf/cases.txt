@@ -32,3 +32,5 @@
 2	report-to-pdf: refused: the report must be audit_<n>/REPORT.md, audit_<n>/RE-AUDIT.md, audit_<n>/PR-REPORT.md or incident_<n>/INCIDENT_REPORT.md, relative to the working directory: audit_1/REPORT.md;id	audit_1/REPORT.md;id
 2	report-to-pdf: refused: usage: report-to-pdf.sh [path/to/REPORT.md], one of audit_<n>/REPORT.md, audit_<n>/RE-AUDIT.md, audit_<n>/PR-REPORT.md or incident_<n>/INCIDENT_REPORT.md	audit_1/REPORT.md	audit_1/REPORT.md
 2	report-to-pdf: refused: usage: report-to-pdf.sh [path/to/REPORT.md], one of audit_<n>/REPORT.md, audit_<n>/RE-AUDIT.md, audit_<n>/PR-REPORT.md or incident_<n>/INCIDENT_REPORT.md	audit_1/REPORT.md	-o
+# A control character (ESC, 0x1B) in a value: the line shows it as ?.
+2	report-to-pdf: refused: the report must be audit_<n>/REPORT.md, audit_<n>/RE-AUDIT.md, audit_<n>/PR-REPORT.md or incident_<n>/INCIDENT_REPORT.md, relative to the working directory: audit_1/REPORT.md?	audit_1/REPORT.md

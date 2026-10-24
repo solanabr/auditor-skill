@@ -48,3 +48,5 @@
 64	rpc-read: refused: --cluster is given twice	account	AddrA111111111111111111111111111111111111111	--cluster	devnet	--cluster	testnet
 64	rpc-read: refused: --run must be a run directory named audit_<n> or incident_<n> in the working directory: /tmp/incident_1	confirm	5h6xBEauJ3PK6SWCZ1PGjBvj8vDdWG3KpwATGy1ARAXFSDwt8GFXM7W5Ncn16wmqokgpiKRLuS83KUxyZyv2sUYv	--run	/tmp/incident_1
 64	rpc-read: refused: --run must be a run directory named audit_<n> or incident_<n> in the working directory: ../incident_1	program-show	ProgTest11111111111111111111111111111111111	--run	../incident_1
+# A control character (ESC, 0x1B) in a value: the line shows it as ?.
+64	rpc-read: refused: --run must be a run directory named audit_<n> or incident_<n> in the working directory: incident_1?	account	AddrA111111111111111111111111111111111111111	--run	incident_1

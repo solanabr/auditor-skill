@@ -23,3 +23,5 @@
 2	snapshot-program.sh: refused: the incident directory must be incident_<n>, relative to the working directory: incident_1/.	ProgTest11111111111111111111111111111111111	incident_1/.
 2	snapshot-program.sh: refused: the incident directory must be incident_<n>, relative to the working directory: -incident_1	ProgTest11111111111111111111111111111111111	-incident_1
 2	snapshot-program.sh: refused: the incident directory must be incident_<n>, relative to the working directory: Incident_1	ProgTest11111111111111111111111111111111111	Incident_1
+# A control character (ESC, 0x1B) in a value: the line shows it as ?.
+2	snapshot-program.sh: refused: the incident directory must be incident_<n>, relative to the working directory: incident_1?	ProgTest11111111111111111111111111111111111	incident_1
