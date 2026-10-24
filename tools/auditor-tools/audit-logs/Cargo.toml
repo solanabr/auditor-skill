@@ -2,6 +2,7 @@
 name = "audit-logs"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.82"
 description = "Offline profiler for Solana getTransaction JSONL corpora: profile, frames and deltas, as scripts/dnr computes them."
 license = "MIT"
 publish = false
