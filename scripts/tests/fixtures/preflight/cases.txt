@@ -93,7 +93,7 @@
 0		j:.claude/settings.local.json={"includeCoAuthoredBy":true}
 0		j:.claude/settings.json={"model":"x","model":"y"}
 0		j:.claude/settings.json={"model":{"hooks":{}}}
-0		j:.claude/settings.json=  {"model" : "x"}  
+0		j:.claude/settings.json=  {"model" : "x"}  	d:src
 0		j:.Claude/Settings.Json={"model":"x"}
 0		d:.git/.claude/skills	j:.git/.mcp.json={}	d:sub/.git/.claude/agents	d:a/b/.git/hooks/x/.claude/commands
 0		d:.claude/rules
