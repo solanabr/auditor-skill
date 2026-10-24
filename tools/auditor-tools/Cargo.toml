@@ -28,6 +28,9 @@ clap = { version = "4", features = ["derive"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 sha2 = "0.10"
 anyhow = "1"
+# For openat, as audit-logs takes it: already in the lockfile, without its default
+# features, so the libc every package builds with keeps the same features.
+libc = { version = "0.2", default-features = false }
 
 [profile.release]
 opt-level = 2

@@ -83,6 +83,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "libc",
  "proc-macro2",
  "quote",
  "rusqlite",
