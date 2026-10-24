@@ -43,7 +43,8 @@ not the thing standing between the treasury and the exit.
 2. **Query the corpus; do not pour it into the conversation.** A real history is
    larger than any context window (~20 KB per transaction, gigabytes for a serious
    corpus). Profile it with the bundled recipes (rule 8), interrogate it with
-   `jq` / `python3 -I`, and bring back only the small results. Do not open a
+   `jq-ro.sh` (jq over files inside `incident_<n>/`, with an empty environment) or
+   `python3 -I`, and bring back only the small results. Do not open a
    multi-megabyte corpus file in context. Small inputs — an alert line, a short
    error log, a single `getTransaction` — can be opened in full.
 3. **Plans only — no actions.** The track's output is a written plan. It never
@@ -77,10 +78,11 @@ not the thing standing between the treasury and the exit.
    `<auditor-skill root>` — the installation root the invoking command gave you —
    never as a `scripts/…` path relative to the working directory: the audited repo
    may ship a same-named file. A root left unfilled makes the path start at `/`, and
-   it fails; never fall back to a relative path. Every python run — the bundled
-   `.py` recipes and any one-off over the corpus — is `python3 -I`: without it, a
-   `json.py` in the working directory (for `python3 -` / `-c`) or on `PYTHONPATH`
-   replaces the stdlib module and runs as you.
+   it fails; never fall back to a relative path. The bundled recipes run directly by
+   that path, with nothing in front: the `.py` ones' shebang runs them as
+   `python3 -I`. Any one-off python over the corpus is `python3 -I` too: without
+   it, a `json.py` in the working directory (for `python3 -` / `-c`) or on
+   `PYTHONPATH` replaces the stdlib module and runs as you.
 9. **Read the incident-slot source without checking it out** (`OUTPUT-RULES.md`
    Rule 11c). `--repo` is usually the client's own checkout, and checking out runs
    its hooks and filters and changes its tree: never `checkout`, `switch` or
@@ -254,8 +256,9 @@ directory, the program snapshot, the collection approval and the collector, the
 execution-mode question, `context-builder` and `poc-engineer`), and the
 `incident-responder` agent does all reading and analysis of the corpus: the
 ledger, the profile, the sweeps, the verdict, `INCIDENTS.json`, the report and the
-plan. The command passes the agent its parameters explicitly and never opens a
-corpus file itself.
+plan. It runs one phase at a time, as the fork of the `auditor:dnr-analyze` skill;
+the command passes each phase its parameters explicitly, as the skill's arguments,
+and never opens a corpus file itself.
 
 A confirmed incident's `vuln` entry is a Rule 5b finding (blocks filled with the
 *observed* values), so `/auditor:threat-model --bootstrap` and a later audit can
@@ -264,19 +267,31 @@ read past incidents as prior vulnerabilities from `INCIDENTS.json`
 
 ## allowed-tools is not a sandbox
 
-A command's `allowed-tools` list **pre-approves** calls for the turn that runs it;
-it does not restrict what is callable, and it is not a security boundary. We use it
-to pre-approve only reading (`Read`, `Grep`, `Glob`), `Task` and edits confined to
-`incident_*/`. No bundled script is pre-approved, so
-every `scripts/dnr` run prompts — a pattern relative to the working directory would
-pre-approve whatever same-named file the audited repo ships (rule 8) — and so do
-`jq`, which is not text-only (`jq -n env` or `$ENV` prints every environment
-variable, `$RPC_URL` included), and everything that touches the chain or executes
-code: `solana`, `curl`, `cargo`, `surfpool`, a bare `python3`, `sqlite3`, `awk`.
+A command's or a skill's `allowed-tools` list **pre-approves** calls for the turn
+that runs it; it does not restrict what is callable, and it is not a security
+boundary. `/auditor:hunt` and `/auditor:respond` pre-approve only reading (`Read`,
+`Grep`, `Glob`), `Task`, edits confined to `incident_*/`, `preflight.sh` and
+`rundir.sh` by their exact paths in the installation, and invoking the
+`auditor:dnr-analyze` skill. Inside its fork, that skill pre-approves the offline
+analysis tools by their exact paths in the installation, run directly with nothing
+in front: `profile.sh`, `frames.py`, `deltas.py`, `jq-ro.sh` and `audit-logs`. The
+recipes and `audit-logs` read only files inside an `incident_<n>/` run directory,
+and `jq-ro.sh` only files inside a run directory; it runs `jq` with an empty
+environment and refuses every option that reads a file or module. No
+pattern names a path relative to the working directory, which would pre-approve
+whatever same-named file the audited repo ships (rule 8). Everything else prompts:
+the networked `collect.sh` and `snapshot-program.sh`, `redact.sh`, `jq` itself
+(`jq -n env` or `$ENV` prints every environment variable, `$RPC_URL` included), a
+line that holds a `$`, and everything that touches the chain or executes code:
+`solana`, `curl`, `cargo`, `surfpool`, a bare `python3`, `sqlite3`, `awk`. Claude
+Code's own read-only commands (`cat`, `grep`, `ls`, …) run without a prompt in
+every mode, outside the working directory too, unless
+`permissions.blockReadsOutsideWorkingDirectories` is on.
 
 **MCP servers.** `/auditor:hunt` and `/auditor:respond` hand all reading and
-analysis of the incident corpus to the `incident-responder` agent, whose tool list
-has no MCP tools, so it cannot call a signing or transfer tool. The commands
+analysis of the incident corpus to the `incident-responder` agent, as the fork of
+the `auditor:dnr-analyze` skill; its tool list has no MCP tools, so it cannot call
+a signing or transfer tool. The commands
 themselves run in your session, where every connected MCP server stays callable.
 They call no MCP tool. Before a live incident, disconnect or deny write-capable
 MCP servers (for example, tools that transfer or stake). The agent's `Bash` can
