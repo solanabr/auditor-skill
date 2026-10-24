@@ -1691,7 +1691,8 @@ eq "--out: 120 runs under a directory swap -> no file outside, no temporary file
 #     frames or deltas exits non-zero with one "refused" line, prints nothing on
 #     stdout, changes no file, leaves no temporary file and shows no canary text.
 #     A copy of the recipes inside the working directory, or under a path holding a
-#     quote or $, refuses to run (exit 2). profile.sh's jq reads no ~/.jq.
+#     quote or $, refuses to run (exit 2), and so does one reached through a link
+#     whose name holds a $. profile.sh's jq reads no ~/.jq.
 # ---------------------------------------------------------------------------
 eq "entry points: the #! lines" \
   "$(head -n 1 "$DNR/profile.sh")|$(head -n 1 "$DNR/frames.py")|$(head -n 1 "$DNR/deltas.py")" \
@@ -1726,6 +1727,18 @@ for root in "$RW/inst" "$TT/q24\"x" "$TT/d24\$x"; do
 done
 eq "entry points: an installation inside the working directory, or under a path holding a quote or \$, is refused (exit 2, no output)" \
   "${res# }" "2 2 2 2 2 2 2 2 2"
+mkdir -p "$TT/real24/scripts"
+cp -R "$DNR" "$HERE/../lib" "$TT/real24/scripts/"
+ln -s "$TT/real24" "$TT/l24\$x"
+res=""
+for r in profile.sh frames.py deltas.py; do
+  if [[ "$r" == deltas.py ]]; then set -- lamports "$F/clean-mixed.jsonl"; else set -- "$F/clean-mixed.jsonl"; fi
+  ( cd "$RW" && "$TT/l24\$x/scripts/dnr/$r" "$@" ) > "$TT/i24.out" 2> "$TT/i24.err"
+  c=$?
+  [[ ! -s "$TT/i24.out" ]] && grep -q "^$r: refused: the installation path holds a quote, \\\$" "$TT/i24.err" && res="$res $c" || res="$res $c:$(tr '\n' ' ' < "$TT/i24.err")"
+done
+eq "entry points: an installation reached through a link whose name holds a \$ is refused (exit 2, no output)" \
+  "${res# }" "2 2 2"
 mkdir -p "$TT/home24"
 printf 'def tostring: "HOME-JQ";\n' > "$TT/home24/.jq"
 printf '%s\n' '{"version":7,"meta":{"err":null},"transaction":{"signatures":["SigVersion7"],"message":{"accountKeys":["Payer7"]}}}' > "$RW/incident_1/v24.jsonl"

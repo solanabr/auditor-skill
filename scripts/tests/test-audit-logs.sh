@@ -823,12 +823,15 @@ if [[ "$code" == 0 ]] && cmp -s "$T/via-link.out" "$T/direct.out"; then
 else
   bad "confinement: a link above the working directory -> exit $code"
 fi
-mkdir -p "$WT/tools/auditor-tools/target/release" "$T/dollar\$dir" "$T/quote\"dir"
+mkdir -p "$WT/tools/auditor-tools/target/release" "$T/dollar\$dir" "$T/quote\"dir" "$T/plain-dir"
 cp "$BIN" "$WT/tools/auditor-tools/target/release/audit-logs"
 cp "$BIN" "$T/dollar\$dir/audit-logs"
 cp "$BIN" "$T/quote\"dir/audit-logs"
+cp "$BIN" "$T/plain-dir/audit-logs"
+ln -s "$T/plain-dir" "$T/link\$dir"
 for c in "inside the working directory|$WT/tools/auditor-tools/target/release/audit-logs" \
-         "under a path holding \$|$T/dollar\$dir/audit-logs" "under a path holding a quote|$T/quote\"dir/audit-logs"; do
+         "under a path holding \$|$T/dollar\$dir/audit-logs" "under a path holding a quote|$T/quote\"dir/audit-logs" \
+         "reached through a link whose name holds \$|$T/link\$dir/audit-logs"; do
   ( cd "$WT" && "${c#*|}" frames incident_1/corpus/clean-mixed.jsonl ) > "$T/c1.out" 2> "$T/c1.err"
   code=$?
   if [[ "$code" == 2 && ! -s "$T/c1.out" ]] && grep -q '^audit-logs: refused: ' "$T/c1.err"; then

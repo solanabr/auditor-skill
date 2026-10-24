@@ -691,7 +691,7 @@ with open(os.path.join(tmpd, "notes"), "w") as out:
     for note in skipped(stats):
         out.write("-- skipped: " + note + "\n")
         print("profile.sh: skipped " + note, file=sys.stderr)'
-python3 -I -c "$recipe" check "$tmpd" "$here/profile.sh" "$@"
+python3 -I -c "$recipe" check "$tmpd" "$0" "$@"
 
 # report: the profile, from the deduplicated corpus. Every sort and uniq runs under
 # LC_ALL=C and compares bytes: under a UTF-8 locale, sort and uniq can count two keys
@@ -767,5 +767,5 @@ if [ "${1-}" != --out ]; then
   report
 else
   report > "$tmpd/report"
-  python3 -I -c "$recipe" publish "$tmpd" "$here/profile.sh" "$@"
+  python3 -I -c "$recipe" publish "$tmpd" "$0" "$@"
 fi

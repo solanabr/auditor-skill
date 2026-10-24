@@ -190,9 +190,9 @@ because `python3 -I` keeps a sibling module off `sys.path`;
   temp directory first, then checks `--out` again and opens the run directory
   only once the report is whole, so a link that is there by then is refused.
 - **Entry points.** Each recipe refuses to run (exit 2) from an installation
-  inside the working directory, or from a path holding a quote, `$`, a
-  backtick, a backslash or a control character, which its quoted call could not
-  match as written. Its options come before the corpus paths, each at most once;
+  inside the working directory, or from a path, as it was invoked or with its
+  links resolved, holding a quote, `$`, a backtick, a backslash or a control
+  character, which its quoted call could not match as written. Its options come before the corpus paths, each at most once;
   an unknown or repeated option is refused (exit 2). `profile.sh` sources
   `scripts/lib/confine.sh`, which sets `LC_ALL=C` and `umask 077` and keeps only
   `PATH` entries outside the working directory; its private temp directory must

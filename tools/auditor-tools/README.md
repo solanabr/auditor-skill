@@ -308,7 +308,8 @@ three recipes, in the same words (`scripts/dnr/README.md`, "Input contract"), an
   `profile.sh` does.
 - Each option is given once, before the corpus paths.
 - It refuses to run from an installation inside the working directory, or from a
-  path holding a quote, `$`, a backtick, a backslash or a control character.
+  path, as it was invoked or with its links resolved, holding a quote, `$`, a
+  backtick, a backslash or a control character.
 - It opens no network connection, runs no other program and reads no environment
   variable. It does not ask git whether it tracks the run directory, and on a
   case-insensitive filesystem a directory named `INCIDENT_1` is read as

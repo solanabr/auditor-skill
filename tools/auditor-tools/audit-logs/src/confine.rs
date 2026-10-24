@@ -48,14 +48,22 @@ pub fn working_tree() -> Result<PathBuf, Stop> {
 
 /// Refuses to run from a path that a quoted `Bash("<root>/…")` rule could not match
 /// as written, or from an installation inside the working directory (Rule 11e),
-/// in the words of `scripts/lib/confine.sh`.
+/// in the words of `scripts/lib/confine.sh`. The path is checked as it was invoked
+/// (argv[0], when it names a path), as the system names the executable, and with
+/// every link resolved, as the recipes check theirs.
 pub fn self_check(wt: &Path) -> Result<(), Stop> {
     let exe = std::env::current_exe()
         .map_err(|e| refuse(format!("cannot resolve its own path: {}", os_message(&e))))?;
     let real = exe
         .canonicalize()
         .map_err(|e| refuse(format!("cannot resolve its own path: {}", os_message(&e))))?;
-    for p in [&exe, &real] {
+    let invoked = std::env::args_os()
+        .next()
+        .map(PathBuf::from)
+        .filter(|p| p.as_os_str().as_bytes().contains(&b'/'))
+        .map(|p| wt.join(p))
+        .unwrap_or_else(|| exe.clone());
+    for p in [&invoked, &exe, &real] {
         if p.as_os_str()
             .as_bytes()
             .iter()
