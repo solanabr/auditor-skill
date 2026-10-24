@@ -74,8 +74,10 @@
 #     does a check that cannot finish; in native mode it is a warning. Through a driver,
 #     on the homes it is given: the Solana CLI's keypair, linked and deep directories,
 #     the entry budget, the places the environment names, the variable names that look
-#     like credentials, and agent sockets (serving one needs a machine that allows it;
-#     on CI, or with REQUIRE_TOOLCHAIN=1, a machine that does not fails the run);
+#     like credentials, and agent sockets (serving one needs a machine that allows it:
+#     on CI a machine that does not fails the run, anywhere else one SKIP line says
+#     so). On CI the runner's own home must pass the check, so that the checks that
+#     isolated mode passes run there;
 #   * environment cleaning: canary variables in the caller's environment reach no cargo
 #     call, no build script and no test binary; HOME is a throwaway one with a fresh
 #     Solana keypair, but for cargo build-sbf --install-only; only cargo fetch, cargo
@@ -1221,11 +1223,17 @@ done
 # The execution mode: the stricter of <R>/exec-mode and AUDITOR_EXEC_MODE (none, then isolated, then
 # native). Missing or none exits 3 before anything is copied, and so does a --mode that is not it.
 # Isolated runs can pass only where no credential the self-check reads is readable, here in an empty
-# HOME and the account's home directory; the driver says whether this machine's is.
+# HOME and the account's home directory; the driver says whether this machine's is. A CI runner must be
+# such a machine, so that those checks run there.
 readable="$(cd "$WT" && env -i HOME="$CLEANHOME" "${TOOL_HOMES[@]}" PATH="$PATH" bash "$T/iso-driver.sh" "$ROOT" creds 2>&1)"; rc=$?
 ISOLATED_OK=0
-if [ "$rc" = 0 ]; then ISOLATED_OK=1
-else echo "note: this machine is not an isolated runner (${readable%%$'\n'*}); the checks that isolated mode passes are skipped"
+if [ "$rc" = 0 ]; then
+  ISOLATED_OK=1
+  ok "this machine passes the isolation self-check, so the checks that isolated mode passes run"
+elif [ "${CI:-}" = true ]; then
+  bad "this CI runner does not pass the isolation self-check (${readable%%$'\n'*}), so the checks that isolated mode passes cannot run"
+else
+  echo "note: this machine is not an isolated runner (${readable%%$'\n'*}); the checks that isolated mode passes are skipped"
 fi
 while IFS='|' read -r file env expect_mode; do
   [ -n "$expect_mode" ] || continue
@@ -1494,8 +1502,8 @@ out="$(cd "$WT" && env -i HOME="$CLEANHOME" PATH="$PATH" GITHUB_TOKEN=x AWS_SECR
   && ok "iso_cred_names names the variables that look like credentials, and no others" || bad "iso_cred_names: '$out'"
 # Agent sockets count when they accept a connection: SSH_AUTH_SOCK, sockets in ~/.ssh and ~/.gnupg, in
 # GNUPGHOME, ssh-*/agent.* under TMPDIR, and in the runtime directory's gnupg/. A socket nothing listens on
-# does not. Serving one needs a machine that allows it; on CI, and with REQUIRE_TOOLCHAIN=1, a machine that
-# does not fails the run.
+# does not. Serving one needs a machine that allows it: on CI a machine that does not fails the run, and
+# anywhere else one SKIP line says the checks did not run.
 SK="$T/k"; mkdir -p "$SK/.ssh" "$SK/.gnupg" "$T/g" "$T/t/ssh-a" "$T/r/gnupg" "$T/q/.ssh"
 python3 -I -c 'import socket, sys, time
 keep = []
@@ -1523,10 +1531,11 @@ if [ -S "$T/a-stale" ] && python3 -I -c 'import socket, sys; socket.socket(socke
   [ "$code" = 3 ] && grep -q '^\[PoC-ATTEMPTED\] blocker: isolated mode, but these are readable here: .*agent sockets (' "$T/out" && new_nothing_ran \
     && ok "isolated mode with an SSH agent that accepts a connection -> exit 3 naming agent sockets" || { bad "isolated, SSH agent: exit $code"; cat "$T/out" >&2; }
   printf 'native\n' > "$WT/audit_1/exec-mode"
-elif [ "${CI:-}" = true ] || [ "${REQUIRE_TOOLCHAIN:-}" = 1 ]; then
+  ok "the agent socket checks ran, on Unix sockets this machine serves"
+elif [ "${CI:-}" = true ]; then
   bad "the agent socket checks cannot run: this machine does not let the suite serve a Unix socket"
 else
-  echo "note: this machine does not let the suite serve a Unix socket; the agent socket checks are skipped"
+  echo "SKIP the agent socket checks did not run: this machine does not let the suite serve a Unix socket (on CI this fails)"
 fi
 kill "$agent" 2>/dev/null; wait "$agent" 2>/dev/null
 
