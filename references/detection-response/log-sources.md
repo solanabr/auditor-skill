@@ -156,6 +156,9 @@ networked ones against fake `curl` / `solana` binaries, with no network.
 # balance movements, exact, successful transactions only
 "<auditor-skill root>/scripts/dnr/deltas.py" tokens   incident_<n>/corpus*/transactions.jsonl
 "<auditor-skill root>/scripts/dnr/deltas.py" lamports incident_<n>/corpus*/transactions.jsonl
+
+# any other query: jq over files inside the run directory, with an empty environment
+"<auditor-skill root>/scripts/dnr/jq-ro.sh" -c 'select(.slot > 301) | .transaction.signatures[0]' incident_<n>/corpus/transactions.jsonl
 ```
 
 Run `audit-logs` first, by its path in the installation,
