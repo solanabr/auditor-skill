@@ -130,7 +130,9 @@ impl Profile {
                 m.and_then(|m| m.get("header"))
                     .and_then(|h| h.get("numRequiredSignatures")),
             ) {
-                Some(v) => v.as_int_lit().map_or(1, |lit| slice_end(keys.len(), lit)),
+                Some(v) => v
+                    .as_int_lit()
+                    .map_or(1.min(keys.len()), |lit| slice_end(keys.len(), lit)),
                 None => 1.min(keys.len()),
             };
             for k in &keys[..n] {
