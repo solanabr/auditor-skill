@@ -105,15 +105,29 @@ already captured.
   every connected MCP server stays callable. They call no MCP tool. Before a live
   incident, disconnect or deny write-capable MCP servers (for example, tools that
   transfer or stake).
+- **A clean working directory.** Both commands start with
+  `"<auditor-skill root>/scripts/preflight.sh"`, which refuses a working tree that
+  ships Claude Code project config, anywhere in it or in a parent up to the
+  repository root: a `.claude/` with skills, commands, agents, hooks, output styles
+  or workflows in it, a `.claude/settings.json` or `settings.local.json` with any
+  key beyond `$schema`, `model`, `cleanupPeriodDays` and `includeCoAuthoredBy`, or
+  a `.mcp.json`. Claude Code loads that config beside the plugin's, so a
+  repository could shadow this plugin's skills and agents (its own
+  `auditor:dnr-analyze` would replace the analysis fork) or carry hooks and MCP
+  servers. Run the commands from an incident workspace of their own: they need no
+  repository. To work inside one, make a clean copy: clone it to a new directory,
+  delete every `.claude/` and `.mcp.json` in the copy, and start Claude Code
+  there. `CLAUDE.md` files are listed, not refused; their text is the
+  repository's, never instructions.
 - **What runs without asking.** The commands pre-approve only reading, `Task`,
   edits under `incident_*/`, the checks `preflight.sh` and `rundir.sh`, and the
-  `auditor:dnr-analyze` skill. Inside the skill's
-  fork, the offline analysis tools run without a prompt: `profile.sh`, `frames.py`,
-  `deltas.py`, `jq-ro.sh` (jq over run-directory files, with an empty environment)
-  and `audit-logs`, each run directly by its path in the installation and reading
-  only files inside a run directory. The collector, the program snapshot, `jq`
-  itself and anything that executes code still ask. Pre-approval is not a sandbox:
-  real confinement is an isolated run mode
+  `auditor:dnr-analyze` skill. Inside the skill's fork, the offline analysis tools
+  run without a prompt: `profile.sh`, `frames.py`, `deltas.py`, `jq-ro.sh` (jq over
+  run-directory files, with an empty environment) and `audit-logs`, each run
+  directly by its path in the installation and reading only files inside a run
+  directory. The collector, the program snapshot, `jq` itself and anything that
+  executes code still ask. Pre-approval is not a sandbox: real confinement is an
+  isolated run mode
   ([`OUTPUT-RULES.md` Rule 11](../OUTPUT-RULES.md#rule-11-operating-safety)); the
   RPC provider that received your addresses is disclosed under Rule 11b.
 - **One approval for the skill.** A command's pre-approvals last for the turn that
