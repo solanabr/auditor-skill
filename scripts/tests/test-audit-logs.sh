@@ -19,7 +19,7 @@
 # Then confinement: every case in fixtures/audit-logs/hostile-args.txt exits non-zero,
 # changes no file, leaves no temporary file and prints no canary text; an installation
 # inside the working directory, or under a path a quoted rule cannot match, is refused;
-# and a run stopped by SIGTERM leaves its --out file as it was.
+# and a run stopped by TERM, INT or HUP leaves its --out file as it was.
 #
 # frames.py and deltas.py run under LC_ALL=C. profile.sh runs under the caller's locale,
 # and on two cases under en_US.UTF-8 too: it counts and orders byte by byte under every
@@ -707,18 +707,36 @@ done
 eq "--out: nothing was written through a link" "$(ls -A "$T/elsewhere" | tr '\n' ' ')" "c.jsonl "
 eq "--out: the files beside them are as they were" "$(cat "$WT/incident_1/kept.txt")" "previous"
 
-# SIGTERM while audit-logs reads: stdin holds one transaction, then stays open until
-# the run has been stopped. No file appears under the --out name, and no temporary
-# file is left.
-partial() { local f; for f in "$WT"/incident_1/.held.txt.*.partial; do [[ -e "$f" ]] && return 0; done; return 1; }
-( sed -n 1p "$FIX/clean-mixed.jsonl"; sleep 10 ) | ( cd "$WT" && exec "$BIN" frames --out incident_1/held.txt ) &
-pid=$!
-n=0; while ! partial && [[ "$n" -lt 100 ]]; do sleep 0.1; n=$((n + 1)); done
-kill -TERM "$pid" 2>/dev/null
-wait "$pid"
-code=$?
-eq "SIGTERM: exit 143, nothing under the --out name, no temporary file left" \
-  "$code|$([[ -e "$WT/incident_1/held.txt" ]] && echo written)|$(partial && echo left)" "143||"
+# A signal while audit-logs reads: stdin holds one transaction, then stays open until
+# the signal has been sent. TERM, INT and HUP leave no file under the --out name and
+# no temporary file, with the status of each script (128 + the signal); a signal the
+# caller ignores stays ignored, and the run completes. Each run starts with SIGINT at
+# its default (a background job inherits it ignored).
+partial() { local f; for f in "$WT"/incident_1/."$1".*.partial; do [[ -e "$f" ]] && return 0; done; return 1; }
+SIGDFL='import os, signal, sys
+signal.signal(signal.SIGINT, signal.SIG_DFL)
+os.execvp(sys.argv[1], sys.argv[1:])'
+for s in TERM:143 INT:130 HUP:129 HUP:ignored TERM:ignored; do
+  sig="${s%%:*}"; want="${s#*:}"; held="held-$sig-$want.txt"
+  rm -f "$T/release-sig"
+  ( sed -n 1p "$FIX/clean-mixed.jsonl"; n=0; while [[ ! -e "$T/release-sig" && "$n" -lt 200 ]]; do sleep 0.05; n=$((n + 1)); done ) \
+    | ( cd "$WT" || exit 99; [[ "$want" != ignored ]] || trap '' "$sig"
+        exec python3 -I -c "$SIGDFL" "$BIN" frames --out "incident_1/$held" ) &
+  pid=$!
+  n=0; while ! partial "$held" && [[ "$n" -lt 200 ]]; do sleep 0.05; n=$((n + 1)); done
+  kill -"$sig" "$pid" 2>/dev/null
+  if [[ "$want" == ignored ]]; then sleep 0.2; fi
+  touch "$T/release-sig"
+  wait "$pid"
+  code=$?
+  if [[ "$want" == ignored ]]; then
+    eq "SIG$sig ignored by the caller: the run completes (exit 0, the output under the --out name, no temporary file left)" \
+      "$code|$([[ -f "$WT/incident_1/$held" ]] && echo written)|$(partial "$held" && echo left)" "0|written|"
+  else
+    eq "SIG$sig: exit $want, nothing under the --out name, no temporary file left" \
+      "$code|$([[ -e "$WT/incident_1/$held" ]] && echo written)|$(partial "$held" && echo left)" "$want||"
+  fi
+done
 
 # With stdin closed and no corpus named, frames and deltas read nothing, as the
 # scripts do: exit 0, no output.

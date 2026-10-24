@@ -461,8 +461,9 @@ impl Sink {
     /// and makes sure it is the directory checked; then a new file
     /// `.<name>.<suffix>.partial` in it, created exclusively (never through a link,
     /// never over an existing file), mode 0600. TERM, INT and HUP remove it before
-    /// exiting with 128 + the signal: they are held off while it is made, so its
-    /// name is always known to the handler when one arrives.
+    /// exiting with 128 + the signal, unless the caller ignores the signal: they are
+    /// held off while it is made, linked and removed, so the handler always knows
+    /// whether a temporary file is left.
     pub fn temp(out: &Output) -> io::Result<Sink> {
         let dir = open_at(
             libc::AT_FDCWD,
@@ -480,10 +481,15 @@ impl Sink {
             .map(|d| d.subsec_nanos())
             .unwrap_or(0);
         let held = Held::new();
-        // SAFETY: on_signal only calls async-signal-safe functions.
+        // SAFETY: on_signal only calls async-signal-safe functions. A signal the
+        // caller ignores stays ignored; none is delivered in between, being held.
         unsafe {
             for sig in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
-                libc::signal(sig, on_signal as extern "C" fn(c_int) as libc::sighandler_t);
+                let before =
+                    libc::signal(sig, on_signal as extern "C" fn(c_int) as libc::sighandler_t);
+                if before == libc::SIG_IGN {
+                    libc::signal(sig, libc::SIG_IGN);
+                }
             }
         }
         for attempt in 0u32..100 {
@@ -548,14 +554,18 @@ impl Sink {
             } => {
                 file.flush()?;
                 let d = dir.as_raw_fd();
+                // Held from the link to the removal: a signal meanwhile is delivered
+                // once the temporary name is gone and the handler no longer names it.
+                let _held = Held::new();
                 // SAFETY: both names are NUL-terminated and live; `d` is open.
                 if unsafe { libc::linkat(d, temp.as_ptr(), d, name.as_ptr(), 0) } != 0 {
                     return Err(io::Error::last_os_error());
                 }
                 *done = true;
-                TEMP_NAME.store(std::ptr::null_mut(), Ordering::SeqCst);
                 // SAFETY: as above.
-                if unsafe { libc::unlinkat(d, temp.as_ptr(), 0) } != 0 {
+                let removed = unsafe { libc::unlinkat(d, temp.as_ptr(), 0) } == 0;
+                TEMP_NAME.store(std::ptr::null_mut(), Ordering::SeqCst);
+                if !removed {
                     return Err(io::Error::last_os_error());
                 }
                 Ok(())
@@ -570,13 +580,14 @@ impl Drop for Sink {
             dir, temp, done, ..
         } = self
         {
-            TEMP_NAME.store(std::ptr::null_mut(), Ordering::SeqCst);
+            let _held = Held::new();
             if !*done {
                 // SAFETY: `temp` is NUL-terminated and `dir` is still open.
                 unsafe {
                     libc::unlinkat(dir.as_raw_fd(), temp.as_ptr(), 0);
                 }
             }
+            TEMP_NAME.store(std::ptr::null_mut(), Ordering::SeqCst);
         }
     }
 }

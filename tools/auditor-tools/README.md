@@ -301,9 +301,11 @@ three recipes, in the same words (`scripts/dnr/README.md`, "Input contract"), an
   (`O_CREAT|O_EXCL|O_NOFOLLOW`, mode 0600), linked to `<file>` once the output is
   whole (`linkat`, which never replaces a file) and removed (`unlinkat`), all
   through that descriptor, so a run directory moved or replaced by a link mid-run
-  never moves the output elsewhere. TERM, INT and HUP remove the temporary file; they are held
-  off while it is made. `profile` checks `--out` again and opens its run directory
-  only once its report is whole, as `profile.sh` does.
+  never moves the output elsewhere. TERM, INT and HUP remove the temporary file
+  before it exits with 128 plus the signal, unless the caller ignores the signal;
+  they are held off while the file is made, linked and removed. `profile` checks
+  `--out` again and opens its run directory only once its report is whole, as
+  `profile.sh` does.
 - Each option is given once, before the corpus paths.
 - It refuses to run from an installation inside the working directory, or from a
   path holding a quote, `$`, a backtick, a backslash or a control character.

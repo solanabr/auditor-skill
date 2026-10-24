@@ -77,6 +77,7 @@ tmpd="$(mktemp -d "${TMPDIR:-/tmp}/dnr_profile.XXXXXX")"
 trap 'rm -rf "$tmpd"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+trap 'exit 129' HUP
 confine_phys "$tmpd" || confine_refuse "its temp directory cannot be resolved"
 case "$CONFINE_PHYS/" in
   "${CONFINE_WT%/}/"*) confine_refuse "its temp directory lies inside the working directory; set TMPDIR outside it" ;;
@@ -361,15 +362,18 @@ class Output:
     holds a partial output, and never replaces a file that appeared in the meantime.
     That directory is opened once (pinned()), and the temporary file is made, linked
     and removed through it. close() removes a temporary file done() did not link;
-    SIGTERM exits through it, and is held off while the temporary file is made, so its
-    name is always known."""
+    SIGTERM, SIGINT and SIGHUP exit through it, unless the caller ignores them, and are
+    held off while the temporary file is made, so its name is always known."""
 
     def __init__(self, path):
         self.path, self.dir, self.temp, self.fh = path, None, None, sys.stdout.buffer
         if path is None:
             return
-        signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
-        held = signal.pthread_sigmask(signal.SIG_BLOCK, [signal.SIGTERM])
+        stops = [signal.SIGTERM, signal.SIGINT, signal.SIGHUP]
+        held = signal.pthread_sigmask(signal.SIG_BLOCK, stops)
+        for s in stops:
+            if signal.getsignal(s) != signal.SIG_IGN:
+                signal.signal(s, lambda signum, frame: sys.exit(128 + signum))
         try:
             self.dir = pinned(path)
             while self.temp is None:

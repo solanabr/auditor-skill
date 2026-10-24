@@ -177,7 +177,8 @@ because `python3 -I` keeps a sibling module off `sys.path`;
   never a shell redirection into `incident_<n>/`. The recipe writes a temporary
   file beside `<file>` and gives it that name only when the run completes, so a
   run that is cut short never leaves a partial output under the final name, and
-  one stopped by TERM removes its temporary file. An output never replaces a
+  one stopped by TERM, INT or HUP removes its temporary file (a signal the caller
+  ignores stays ignored). An output never replaces a
   file: an `--out` that already exists (an input corpus among them) is refused
   (exit 2), and so is one that is a symbolic link, in a subdirectory, in a run
   directory that is a link or has no `.gitignore` of `*`, outside every run

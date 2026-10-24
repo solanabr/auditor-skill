@@ -1490,8 +1490,8 @@ done
 #     file is left. Any other --out is refused (exit 2) and nothing is written: one
 #     that exists, the input corpus among them; a symbolic link; one in a
 #     subdirectory, through a link, in a linked run directory, outside every run
-#     directory, absolute, or of another kind. A run stopped by SIGTERM leaves no
-#     <file> and no temporary file.
+#     directory, absolute, or of another kind. A run stopped by TERM, INT or HUP
+#     leaves no <file> and no temporary file; one the caller ignores stays ignored.
 # ---------------------------------------------------------------------------
 W22="$TT/wd22"; mkdir -p "$W22/incident_1/sub" "$TT/elsewhere22"
 printf '*\n' > "$W22/incident_1/.gitignore"
@@ -1553,25 +1553,39 @@ for case in "a link|incident_1/out-link.txt|is a symbolic link" \
 done
 eq "--out: nothing was written through those links, or anywhere but the outputs" \
   "$(ls -A "$TT/elsewhere22" | tr '\n' ' ')|$(ls -A "$W22/incident_1/sub" | tr '\n' ' ')|$(ls -A "$W22" | tr '\n' ' ')" "||incident_1 incident_2 "
-# A run stopped by SIGTERM while it reads: stdin holds one transaction, then stays
-# open until the test has stopped the run and lets the writer go.
+# A run stopped by a signal while it reads: stdin holds one transaction, then stays
+# open until the test has sent the signal and lets the writer go. Each run starts
+# with SIGINT at its default (a background job inherits it ignored), or with the
+# signal ignored, in which case the run carries on and completes.
 partial22() { local f; for f in "$W22"/incident_1/."$1".*.partial; do [[ -e "$f" ]] && return 0; done; return 1; }
+SIGDFL='import os, signal, sys
+signal.signal(signal.SIGINT, signal.SIG_DFL)
+os.execvp(sys.argv[1], sys.argv[1:])'
 for r in frames deltas; do
-  rm -f "$TT/release22"
-  case "$r" in
-    frames) ( sed -n 1p "$FIX/clean-mixed.jsonl"; n=0; while [[ ! -e "$TT/release22" && "$n" -lt 400 ]]; do sleep 0.05; n=$((n + 1)); done ) \
-              | ( cd "$W22" && exec python3 -I "$DNR/frames.py" --out "incident_1/held-$r.txt" ) & ;;
-    deltas) ( sed -n 1p "$FIX/clean-mixed.jsonl"; n=0; while [[ ! -e "$TT/release22" && "$n" -lt 400 ]]; do sleep 0.05; n=$((n + 1)); done ) \
-              | ( cd "$W22" && exec python3 -I "$DNR/deltas.py" lamports --out "incident_1/held-$r.txt" ) & ;;
-  esac
-  pid=$!
-  n=0; while ! partial22 "held-$r.txt" && [[ "$n" -lt 200 ]]; do sleep 0.05; n=$((n + 1)); done
-  kill -TERM "$pid" 2>/dev/null
-  wait "$pid"
-  code=$?
-  touch "$TT/release22"
-  eq "--out: $r stopped by SIGTERM -> exit 143, no file under the --out name, no temporary file left" \
-    "$code|$([[ -e "$W22/incident_1/held-$r.txt" ]] && echo written)|$(partial22 "held-$r.txt" && echo left)" "143||"
+  for s in TERM:143 INT:130 HUP:129 HUP:ignored; do
+    sig="${s%%:*}"; want="${s#*:}"; held="held-$r-$sig-$want.txt"
+    rm -f "$TT/release22"
+    ( sed -n 1p "$FIX/clean-mixed.jsonl"; n=0; while [[ ! -e "$TT/release22" && "$n" -lt 400 ]]; do sleep 0.05; n=$((n + 1)); done ) \
+      | ( cd "$W22" || exit 99; [[ "$want" != ignored ]] || trap '' "$sig"
+          case "$r" in
+            frames) exec python3 -I -c "$SIGDFL" python3 -I "$DNR/frames.py" --out "incident_1/$held" ;;
+            deltas) exec python3 -I -c "$SIGDFL" python3 -I "$DNR/deltas.py" lamports --out "incident_1/$held" ;;
+          esac ) &
+    pid=$!
+    n=0; while ! partial22 "$held" && [[ "$n" -lt 200 ]]; do sleep 0.05; n=$((n + 1)); done
+    kill -"$sig" "$pid" 2>/dev/null
+    if [[ "$want" == ignored ]]; then sleep 0.2; fi
+    touch "$TT/release22"
+    wait "$pid"
+    code=$?
+    if [[ "$want" == ignored ]]; then
+      eq "--out: $r sent a $sig it ignores -> runs to the end (exit 0, the output under the --out name, no temporary file left)" \
+        "$code|$([[ -f "$W22/incident_1/$held" ]] && echo written)|$(partial22 "$held" && echo left)" "0|written|"
+    else
+      eq "--out: $r stopped by SIG$sig -> exit $want, no file under the --out name, no temporary file left" \
+        "$code|$([[ -e "$W22/incident_1/$held" ]] && echo written)|$(partial22 "$held" && echo left)" "$want||"
+    fi
+  done
 done
 
 # ---------------------------------------------------------------------------
