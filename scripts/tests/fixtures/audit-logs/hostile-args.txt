@@ -97,3 +97,12 @@ a run directory holding no file	profile	incident_1/
 --out into an audit run directory	frames	--out	audit_1/x.jsonl	incident_1/corpus.jsonl
 --out into a run directory whose .gitignore is not *	deltas	tokens	--out	incident_4/x.tsv	incident_1/corpus.jsonl
 --out after a refused input	frames	--out	incident_1/x.jsonl	incident_1/link.jsonl
+--out with a . component	frames	--out	incident_1/./x.jsonl	incident_1/corpus.jsonl
+--out empty	frames	--out		incident_1/corpus.jsonl
+--out naming the run directory	frames	--out	incident_1	incident_1/corpus.jsonl
+--out naming the run directory with a slash	deltas	tokens	--out	incident_1/	incident_1/corpus.jsonl
+--out with a newline in its name	frames	--out	incident_1/x@NL@y.jsonl	incident_1/corpus.jsonl
+--out into a run directory named in capitals	frames	--out	INCIDENT_1/x.jsonl	incident_1/corpus.jsonl
+--out whose name starts with a dash	frames	--out	incident_1/-x.jsonl	incident_1/corpus.jsonl
+--out with a name of 129 bytes	profile	--out	incident_1/@LONG:125@.txt	incident_1/corpus.jsonl
+--out onto a FIFO	frames	--out	incident_1/fifo	incident_1/corpus.jsonl
