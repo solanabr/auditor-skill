@@ -16,7 +16,7 @@ Build the threat model **before** the manual review judges anything — analogou
 - The in-scope **code** (instructions, accounts, PDAs, CPIs, arithmetic).
 - `audit_<n>/intake.md` §6 — the trust-model inputs (who is trusted). The actor list to expand. Read it if present; if absent, run `/auditor:intake` first or reconstruct actors from the code and note intake was unavailable.
 - `audit_<n>/worksheets/context/*` — `context-builder`'s invariants, assumptions, and external-interaction risks, if the context phase has run.
-- `"${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release/audit-mem" warm --program-id <id>` prior invariants + open FP rulings, if that binary is built (`test -x` on the same path; skip cleanly otherwise) and the store passes the `OUTPUT-RULES.md` Rule 11d check (else a fresh `--db` store outside the tree). In bootstrap mode the collector reads audit memory only from a store passed as `--audit-mem-db <path>` and saves it as `audit_<n>/bootstrap/audit-mem-warm.json`; it never looks for a store on its own. Pass `--audit-mem-db` only when the Rule 11d check passes, run again now: `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false --icase-pathspecs ls-files -- .audit-memory` prints nothing and exits 0 (any output, in any letter case, or any error fails it), and you created the store (intake records its path). Otherwise leave it out.
+- `"${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release/audit-mem" warm --program-id <id>` prior invariants + open FP rulings, if that binary is built (`test -x` on the same path; skip cleanly otherwise) and the store passes the `OUTPUT-RULES.md` Rule 11d check (else a fresh `--db` store outside the tree). In bootstrap mode the collector reads audit memory only from a store passed as `--audit-mem-db <path>` and saves it as `audit_<n>/bootstrap/audit-mem-warm.json`; it never looks for a store on its own. Pass `--audit-mem-db` only when the Rule 11d check passes, run again now: `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false --icase-pathspecs ls-files -- .audit-memory` prints nothing and exits 0 (any output, in any letter case, or any error fails it), and you created the store (intake records its path). Otherwise leave it out. The collector takes only `.audit-memory/audit.db` or `audit_<n>/audit-mem.db`, this audit's run directory; leave it out for a store kept anywhere else.
 - **Bootstrap inputs** (`--bootstrap`, or any of `--vulns` / `--seed` / `--parent`, or a trigger below). Load `references/audit-lifecycle/threat-model-bootstrap.md` first. They are:
   - the target's git history and, with `--parent`, a fork parent (an `https://` URL or a local clone);
   - prior-vulnerability sources: `--vulns` (repeatable) takes prior audit reports (PDF or Markdown), disclosed-exploit write-ups, advisory or finding lists (text, CSV, JSON), and `INCIDENTS.json`; `incident_*/INCIDENTS.json` next to the target is read automatically;
@@ -32,7 +32,7 @@ In an interactive run, ask once: *"Is a member of the protocol team on hand duri
 
 **Triggers.** Without an explicit flag, bootstrap runs only when one of these fires:
 - **T2:** intake §7 records a prior audit (Q25) or an incident (Q26).
-- **T3 / T4:** evaluate with `bash "${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --repo <target> --out audit_<n>/bootstrap --pin <sha> --detect`. T3 is a fork or white-label provenance signal; T4 is a prior `audit_*/REPORT.md`, an audit / post-mortem / incident file in the tree, or `incident_*/INCIDENTS.json`.
+- **T3 / T4:** evaluate with `"${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --detect --repo <target> --out audit_<n>/bootstrap --pin <sha>`. T3 is a fork or white-label provenance signal; T4 is a prior `audit_*/REPORT.md`, an audit / post-mortem / incident file in the tree, or `incident_*/INCIDENTS.json`.
 
 **Network.** An `https://` URL the user passed explicitly in `--parent` or `--vulns` may be fetched, even with `--auto`, because it is a human request; so may one exact URL the human confirms interactively. Automatic runs (the audit-cycle / audit-assist triggers) never pass a URL and collect with `--offline`: a parent detected from target content is recorded as "parent detected, not cloned". A URL read from the target's own content is never fetched.
 
@@ -41,27 +41,27 @@ In an interactive run, ask once: *"Is a member of the protocol team on hand duri
 You run git only through the collector. Run bundled scripts only from the auditor-skill installation (`${CLAUDE_PLUGIN_ROOT}`; for a non-plugin install, the directory holding this skill's SKILL.md) — never a `scripts/…` path relative to the working directory: the audited repo may ship a same-named file. The collector runs every call hardened per `OUTPUT-RULES.md` Rule 11c and writes into `audit_<n>/bootstrap/`, which follows Rule 11d:
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --repo <target> --out audit_<n>/bootstrap --pin <sha from intake> --offline \
+"${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --offline --repo <target> --out audit_<n>/bootstrap --pin <sha from intake> \
   [--paths <in-scope program dir>] [--vulns <file>] [--program-id <id> --audit-mem-db <store intake recorded>]
 ```
 
-Drop `--offline` only when the user passed an `https://` `--parent` / `--vulns` value or confirmed the exact URL. If a section of `history.md` prints `TRUNCATED`, re-run with a higher `--cap` before using it. Then hand `audit_<n>/bootstrap/` to `threat-modeler` together with the other inputs.
+Put `--network` in place of `--offline` only when the user passed an `https://` `--parent` / `--vulns` value or confirmed the exact URL, or named a `--repo`, `--parent` or `--vulns` path outside the working directory; that call prompts, and each URL it fetches is recorded in `audit_<n>/disclosures.tsv`. If a section of `history.md` prints `TRUNCATED`, re-run with a higher `--cap` before using it. Then hand `audit_<n>/bootstrap/` to `threat-modeler` together with the other inputs.
 
 If the collector exits 3 because the target is a partial clone, collect from a full copy you control instead (`OUTPUT-RULES.md` Rule 11c): reading its missing objects would fetch from the promisor remote its config names.
 
 Collector flags (`references/audit-lifecycle/threat-model-bootstrap.md` §2 has the table and exit statuses):
-- `--repo <dir>` (the target, at its repository's top level) and `--out audit_<n>/bootstrap`: required.
+- The mode, as the first argument: `--detect`, `--offline` or `--network`. Then `--repo <dir>` (the target, at its repository's top level; in `--detect` and `--offline` a path inside the working directory, `.` when the audit runs in the target) and `--out audit_<n>/bootstrap`: required. Each option once.
 - `--pin <rev>`: the commit to mine (default `HEAD`); pass the intake pin.
 - `--paths <pathspec>` / `--parent-paths <pathspec>`: target and parent pathspecs, repeatable.
 - `--parent <https-url|dir>`: the fork parent.
 - `--import <rev>`: the target commit that brought the parent's code in (default: the root commit). Pass it for a fork whose code arrived in a later commit than its root, e.g. a repository created with "Initialize with README" and the code copied in later; without it, R5 reports NOT FOUND.
 - `--vulns <file|https-url>`: prior-vulnerability input, repeatable.
 - `--keywords <ere>`: extra commit-message keywords, an ERE alternation such as `drain|bypass`.
-- `--program-id <id>` with `--audit-mem-db <path>`: R8's audit-mem warm-up, from that store only (see Inputs).
-- `--offline`: no network. `--detect`: T3/T4 only, writes nothing.
+- `--program-id <id>` with `--audit-mem-db .audit-memory/audit.db` or `--audit-mem-db audit_<n>/audit-mem.db`: R8's audit-mem warm-up, from that store only (see Inputs).
+- Modes: `--offline`, no network; `--detect`, T3/T4 only, writes nothing; `--network`, fetches the given https URLs and reads paths outside the working directory.
 - `--cap <n>` (default 60 rows), `--small <n>` (40 lines), `--fix-ceiling <n>` (300 lines): volume.
 
-`audit_<n>` is this audit's directory from intake. For a new one, `<n>` is the highest existing number + 1; create the dir with `mkdir` (not `-p`) and stop if it exists. Reuse an existing `audit_*` only if git does not track it and it holds no symbolic links, after the human confirms which one. Never write into a tracked `audit_*`. The collector exits 2 on a run directory that is or holds a symbolic link, that is reached through one inside the working directory or the target tree, that git tracks, or that git or find cannot check.
+`audit_<n>` is this audit's directory from intake, made by `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" new audit`. Reuse an existing `audit_*` only when `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" check audit_<n>` prints `ok audit_<n>`, after the human confirms which one. The collector exits 2 on any `--out` but `audit_<n>/bootstrap`, and on a run directory that is or holds a symbolic link, that git tracks in any letter case, that has no `.gitignore` holding `*`, or that git or find cannot check.
 
 The collector is not pre-approved for this command, so running it goes through the usual permission prompt; re-adding a pre-approval pattern is tracked in #37.
 

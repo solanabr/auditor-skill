@@ -14,8 +14,7 @@
 #   "${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --detect --repo <dir> --out audit_<n>/bootstrap [--pin <rev>]
 #   "${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --offline --repo <dir> --out audit_<n>/bootstrap [options]
 #   "${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --network --repo <dir> --out audit_<n>/bootstrap [options]
-# A mode after other options is refused (exit 2), as in the older form
-#   bash "${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --repo <dir> --out audit_<n>/bootstrap --offline
+# A mode anywhere but first is refused (exit 2).
 #
 # Modes:
 #   --detect    only evaluate triggers T3 and T4, print them and exit (writes nothing)
