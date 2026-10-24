@@ -122,7 +122,9 @@ call count with the human first):
 ## Recipes (bundled `scripts/dnr/`)
 
 Run them from the installation, never as a `scripts/…` path relative to the
-working directory, and run the python ones as `python3 -I` (README rule 8).
+working directory, and run the three analysis recipes directly by their quoted
+path, from the working directory: their first lines run `profile.sh` under
+`/bin/bash` and the python ones as `python3 -I` (README rule 8).
 `<auditor-skill root>` below is the absolute installation root the invoking command
 gave you (`OUTPUT-RULES.md` Rule 11e).
 
@@ -140,28 +142,44 @@ networked ones against fake `curl` / `solana` binaries, with no network.
 ```bash
 # baseline (no log parsing): outcome / version histograms, window, signer &
 # program inventories
-bash "<auditor-skill root>/scripts/dnr/profile.sh" incident_<n>/corpus*/transactions.jsonl
+"<auditor-skill root>/scripts/dnr/profile.sh" incident_<n>/corpus*/transactions.jsonl
 
 # program-log attribution, as JSONL (one record per emitted line, by frame)
-python3 -I "<auditor-skill root>/scripts/dnr/frames.py" --out incident_<n>/frames.jsonl incident_<n>/corpus*/transactions.jsonl
+"<auditor-skill root>/scripts/dnr/frames.py" --out incident_<n>/frames.jsonl incident_<n>/corpus*/transactions.jsonl
 
 # which instruction ran, from the runtime-recorded instruction lists (ix records,
 # top-level and CPI, data as given) joined to the runtime invoke lines
-python3 -I "<auditor-skill root>/scripts/dnr/frames.py" --instructions --out incident_<n>/instructions.jsonl incident_<n>/corpus*/transactions.jsonl
+"<auditor-skill root>/scripts/dnr/frames.py" --instructions --out incident_<n>/instructions.jsonl incident_<n>/corpus*/transactions.jsonl
 
 # balance movements, exact, successful transactions only
-python3 -I "<auditor-skill root>/scripts/dnr/deltas.py" tokens   incident_<n>/corpus*/transactions.jsonl
-python3 -I "<auditor-skill root>/scripts/dnr/deltas.py" lamports incident_<n>/corpus*/transactions.jsonl
+"<auditor-skill root>/scripts/dnr/deltas.py" tokens   incident_<n>/corpus*/transactions.jsonl
+"<auditor-skill root>/scripts/dnr/deltas.py" lamports incident_<n>/corpus*/transactions.jsonl
 ```
 
-The three analysis recipes share one input contract (`scripts/dnr/README.md`): a
-line they cannot read is skipped and counted, never echoed, and each recipe
-prints a `skipped N malformed line(s) in input I (<path>), the first at line L`
-note per input on stderr. Copy every such note into the ledger's **Collection
+When `audit-logs` is built (an executable file at
+`<auditor-skill root>/tools/auditor-tools/target/release/audit-logs`), run it by
+that path in place of the three analysis recipes, with the same arguments after its
+subcommand: `profile`, `frames [--instructions]`, `deltas tokens|lamports`. It prints
+the same output and notes, reads and refuses the same paths and exits the same
+way, but for the differences `tools/auditor-tools/README.md` lists;
+`scripts/tests/test-audit-logs.sh` checks it against the scripts. Run the scripts
+instead when it exits 4 (`audit-logs: stale build: …`: the recipes changed since it
+was built), cannot run, or dies on a signal. Never look for it on `PATH`, and never
+build it in the audited repository.
+
+The three analysis recipes share one input contract (`scripts/dnr/README.md`).
+They read only regular files with one name in `incident_<n>/`, by paths relative
+to the working directory with no `..` and no symbolic link on the way, and refuse
+any other (exit 2) before reading anything: copy a corpus kept elsewhere, such as
+a `--logs` export, into `incident_<n>/logs/` first. A line they cannot read is
+skipped and counted, never echoed, and each recipe prints a
+`skipped N malformed line(s) in input I (<path>), the first at line L` note per
+input on stderr. Copy every such note into the ledger's **Collection
 gaps** line: those transactions are missing from every figure. Keep a recipe's
-output with `--out <file>`, as above, never with a shell redirection: the file
-appears under its name only once the run is complete, and since an output never
-replaces a file, a re-run names a new one (`frames-2.jsonl`).
+output with `--out <file>`, a new `.jsonl`, `.tsv` or `.txt` name directly in the
+run directory, as above, never with a shell redirection: the file appears under its
+name only once the run is complete, and since an output never replaces a file, a
+re-run names a new one (`frames-2.jsonl`).
 
 Program bytes and `solana program show` come only from `snapshot-program.sh`, and
 signature history and transactions only from `collect.sh`. Any other read — an

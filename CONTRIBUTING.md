@@ -41,8 +41,9 @@ corpus PRs.
 
 The checks run with the stock tools of macOS (`/bin/bash` 3.2, BSD sed, grep and awk) as well as with bash 5
 and GNU tools on Linux. Beyond git they need python3 and jq, plus cargo and rustup for the PoC runner's
-real-toolchain checks (`scripts/tests/test-dnr-poc-runner.sh` skips those without them). This is what the
-required CI job runs:
+real-toolchain checks (`scripts/tests/test-dnr-poc-runner.sh` skips those without them), and cargo for
+`scripts/tests/test-audit-logs.sh`, which builds `audit-logs` (its one dependency, `libc`, comes from the
+local cargo cache or crates.io) and is skipped, loudly, without it. This is what the required CI job runs:
 
 ```bash
 bash scripts/check-corpus.sh
@@ -52,6 +53,11 @@ for t in scripts/tests/*.sh; do bash "$t" || echo "FAILED: $t"; done
 bash scripts/check-hygiene.sh
 bash scripts/check-attribution.sh origin/main..HEAD
 ```
+
+A change to what `scripts/dnr/profile.sh`, `frames.py` or `deltas.py` prints, accepts or refuses goes into
+`tools/auditor-tools/audit-logs` too: `scripts/tests/test-audit-logs.sh` compares the two and fails until
+they agree, and a binary built before the change refuses to run (exit 4) until it is rebuilt. Without cargo
+that suite is skipped; CI runs it with `REQUIRE_TOOLCHAIN=1`, where a missing cargo fails it.
 
 ---
 

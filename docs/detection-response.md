@@ -109,8 +109,14 @@ already captured.
 - **Recipes:** [`scripts/dnr/`](../scripts/dnr/) — profiling, log-frame attribution,
   and exact balance deltas, each checked against adversarial fixtures by
   `scripts/tests/test-dnr.sh`. They share one input contract: a line they cannot
-  read is counted, never echoed, and a corpus path that is a symbolic link is
-  refused.
+  read is counted, never echoed, and they read only regular files with one name in
+  `incident_<n>/`, by paths relative to the working directory with no symbolic
+  link on the way, refusing any other before they read anything. When
+  [`audit-logs`](power-tools.md#audit-logs) is built in the installation, the
+  commands run it in place of the three analysis scripts: the same figures from
+  one offline binary, checked against the scripts by
+  `scripts/tests/test-audit-logs.sh`. Without it, or when it reports a stale
+  build, they run the scripts.
 - **Scripts run from the installation, never from the audited repo.** The commands
   invoke them by absolute path, `"<auditor-skill root>/scripts/dnr/…"`, and run
   python as `python3 -I`, so a same-named script, or a `json.py` the repo ships in

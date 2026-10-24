@@ -191,6 +191,12 @@ because `python3 -I` keeps a sibling module off `sys.path`;
   `scripts/lib/confine.sh`, which sets `LC_ALL=C` and `umask 077` and keeps only
   `PATH` entries outside the working directory, and its private temp directory
   must lie outside it too.
+- **audit-logs.** `tools/auditor-tools/audit-logs` is the same three recipes as
+  one binary, and `scripts/tests/test-audit-logs.sh` fails when its output,
+  notes, exit status or refusals differ from these scripts'. A change to what a
+  recipe prints, accepts or refuses goes into both; a binary built before such a
+  change refuses to run (exit 4, `audit-logs: stale build: …`) until it is
+  rebuilt.
 
 ## Two hazards these encode, and why
 
