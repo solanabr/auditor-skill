@@ -18,7 +18,7 @@ a rule exits 2, and one that cannot be read or written 1, with no output either
 way.
 
 Two modes:
-  deltas.py lamports [--out <file>] [files...]
+  deltas.py lamports [--by account] [--out <file>] [files...]
                                   per (signature, account) non-zero lamport delta;
                                   the fee is added back for the fee payer (index 0),
                                   so the row reflects movement, not the fee. A balance
@@ -31,6 +31,22 @@ Two modes:
                                   account. A balance whose index has no account
                                   key is printed as #<index>, and one with no
                                   accountIndex as #?, each counted in a note.
+
+--by sums those rows, in Python integers, and prints the sums in place of the rows
+once the corpus is read (it keeps one sum per name, never the rows): one TSV row per
+sum, the most negative first, then by name in byte order; a sum of 0 prints no row:
+  lamports --by account           per account: account, net delta.
+  tokens --by owner,mint          per (owner, mint): owner, mint, net delta, and a
+                                  fourth column that is empty, or, for a balance the
+                                  RPC gave no owner (`?`), names its token account,
+                                  since such balances are summed per token account.
+  tokens --by mint                per mint, over those owner nets: mint, the sum of
+                                  the negative nets (0 or less) and how many owners
+                                  had one, then the sum of the positive nets and how
+                                  many had one.
+A row named #<index> or #? stands for an account only within its own transaction, so
+no sum holds a lamport row so named, nor a token row that also has no owner; a note
+on stderr counts them.
 
 Output: TSV on stdout, or with `--out <file>` (a new name directly in the run
 directory) in a temporary file beside it that becomes <file> only once the run is
@@ -130,9 +146,10 @@ def _clean(s) -> str:
     return _UNSAFE.sub(_escape, str(s).replace("\\", "\\\\"))
 
 
-def _lamports(txs, out):
-    """Write the rows; return how many name a balance index that has no account key."""
-    keyless = 0
+def _lamport_rows(txs, counts):
+    """Yield (signature, account, delta, keyed) for each non-zero lamport movement. A
+    balance whose index has no account key is a movement too, named #<index>: keyed is
+    then False, and counts["keyless"] counts it."""
     for tx in txs:
         if not _ok(tx):
             continue
@@ -148,18 +165,16 @@ def _lamports(txs, out):
             d = post[i] - pre[i] + (fee if i == 0 else 0)
             if d != 0:
                 if i < len(keys):
-                    account = keys[i]
+                    yield sig, keys[i], d, True
                 else:
-                    account = "#%d" % i
-                    keyless += 1
-                out.write(f"{_clean(sig)}\t{_clean(account)}\t{d}\n".encode("utf-8"))
-    return keyless
+                    counts["keyless"] += 1
+                    yield sig, "#%d" % i, d, False
 
 
-def _tokens(txs, out):
-    """Write the rows; return how many name a balance index that has no account key,
-    and how many a balance that has no accountIndex."""
-    keyless = indexless = 0
+def _token_rows(txs, counts):
+    """Yield (signature, owner, mint, delta, token account, keyed) for each non-zero
+    token movement; counts["keyless"] and counts["indexless"] count the rows named
+    #<index> and #?, whose keyed is False."""
     for tx in txs:
         if not _ok(tx):
             continue
@@ -202,12 +217,61 @@ def _tokens(txs, out):
             if d != 0:
                 owner, mint, account = labels[key]
                 if key[0] == "index":
-                    keyless += 1
+                    counts["keyless"] += 1
                 elif key[0] == "entry":
-                    indexless += 1
-                out.write(f"{_clean(sig)}\t{_clean(owner)}\t{_clean(mint)}\t{d}\t{_clean(account)}\n"
-                          .encode("utf-8"))
-    return keyless, indexless
+                    counts["indexless"] += 1
+                yield sig, owner, mint, d, account, key[0] == "key"
+
+
+def _write_rows(rows, mode, out):
+    for r in rows:
+        if mode == "lamports":
+            sig, account, d, _keyed = r
+            out.write(f"{_clean(sig)}\t{_clean(account)}\t{d}\n".encode("utf-8"))
+        else:
+            sig, owner, mint, d, account, _keyed = r
+            out.write(f"{_clean(sig)}\t{_clean(owner)}\t{_clean(mint)}\t{d}\t{_clean(account)}\n"
+                      .encode("utf-8"))
+
+
+def _write_sums(rows, by, out):
+    """Write the sums --by names (the module docstring); return how many rows no sum
+    holds. Names are compared and printed as _clean() writes them."""
+    nets, left = {}, 0
+    for r in rows:
+        if by == "account":
+            _sig, account, d, keyed = r
+            key = (_clean(account), "", "") if keyed else None
+        else:
+            _sig, owner, mint, d, account, keyed = r
+            if owner != "?":
+                key = (_clean(owner), _clean(mint), "")
+            else:
+                key = ("?", _clean(mint), _clean(account)) if keyed else None
+        if key is None:
+            left += 1
+        else:
+            nets[key] = nets.get(key, 0) + d
+    if by == "mint":
+        mints = {}
+        for (_owner, mint, _account), net in nets.items():
+            m = mints.setdefault(mint, [0, 0, 0, 0])
+            if net < 0:
+                m[0] += net
+                m[1] += 1
+            elif net > 0:
+                m[2] += net
+                m[3] += 1
+        for mint, (loss, losers, gain, gainers) in sorted(mints.items(), key=lambda kv: (kv[1][0], kv[0])):
+            if losers or gainers:
+                out.write(f"{mint}\t{loss}\t{losers}\t{gain}\t{gainers}\n".encode("utf-8"))
+    else:
+        for (name, mint, account), net in sorted(nets.items(), key=lambda kv: (kv[1], kv[0])):
+            if net and by == "account":
+                out.write(f"{name}\t{net}\n".encode("utf-8"))
+            elif net:
+                out.write(f"{name}\t{mint}\t{net}\t{account}\n".encode("utf-8"))
+    return left
 
 
 # ---- input contract (scripts/dnr/README.md); the same block is in profile.sh, frames.py, deltas.py
@@ -760,9 +824,9 @@ def skipped(stats):
 
 
 def main(argv: list[str]) -> int:
-    usage = "deltas.py lamports|tokens [--out <file>] [<corpus.jsonl> ...]"
+    usage = "deltas.py lamports|tokens [--by account|owner,mint|mint] [--out <file>] [<corpus.jsonl> ...]"
     problem = installed(__file__)
-    mode, files, out_path = (argv[:1] or [""])[0], argv[1:], None
+    mode, files, out_path, by = (argv[:1] or [""])[0], argv[1:], None, None
     if problem is None and mode not in ("lamports", "tokens"):
         problem = refusal("deltas takes lamports or tokens", usage)
     while problem is None and files[:1] and files[0].startswith("-"):
@@ -771,6 +835,13 @@ def main(argv: list[str]) -> int:
                 problem = refusal("--out needs a file", usage)
                 break
             out_path, files = files[1], files[2:]
+        elif files[0] == "--by" and by is None:
+            if len(files) < 2:
+                problem = refusal("--by needs a grouping", usage)
+                break
+            by, files = files[1], files[2:]
+            if (mode, by) not in (("lamports", "account"), ("tokens", "owner,mint"), ("tokens", "mint")):
+                problem = refusal("--by takes account for lamports, and owner,mint or mint for tokens", usage)
         else:
             problem = refusal("option %s is unknown here or given twice" % shown(files[0]), usage)
     if problem is None:
@@ -781,7 +852,7 @@ def main(argv: list[str]) -> int:
         print("deltas.py: " + problem[1], file=sys.stderr)
         return problem[0]
     stats = {"dupes": 0, "bad": []}
-    out, keyless, indexless = None, 0, 0
+    out, counts, left = None, {"keyless": 0, "indexless": 0}, 0
     try:
         try:
             out = Output(out_path)
@@ -789,10 +860,11 @@ def main(argv: list[str]) -> int:
             print("deltas.py: cannot write --out: " + (e.strerror or shown(e)), file=sys.stderr)
             return 1
         txs = (tx for _line, tx in records(files, stats))
-        if mode == "lamports":
-            keyless = _lamports(txs, out)
+        rows = _lamport_rows(txs, counts) if mode == "lamports" else _token_rows(txs, counts)
+        if by is None:
+            _write_rows(rows, mode, out)
         else:
-            keyless, indexless = _tokens(txs, out)
+            left = _write_sums(rows, by, out)
         out.done()
     except OSError as e:
         print("deltas.py: " + (e.strerror or shown(e)), file=sys.stderr)
@@ -802,14 +874,18 @@ def main(argv: list[str]) -> int:
             out.close()
     for note in skipped(stats):
         print("deltas.py: skipped " + note, file=sys.stderr)
-    if keyless:
+    if counts["keyless"]:
         print("deltas.py: %d row(s) name a balance index that has no account key, as #<index>: the "
               "transaction lists fewer keys than balances (an encoding json export without "
-              "meta.loadedAddresses, say)" % keyless, file=sys.stderr)
-    if indexless:
+              "meta.loadedAddresses, say)" % counts["keyless"], file=sys.stderr)
+    if counts["indexless"]:
         print("deltas.py: %d row(s) name a token balance that has no accountIndex, as #?: nothing "
               "pairs it with its other side, so a pre balance is a row of its own with a negative "
-              "delta, and a post balance one with a positive delta" % indexless, file=sys.stderr)
+              "delta, and a post balance one with a positive delta" % counts["indexless"], file=sys.stderr)
+    if left:
+        print("deltas.py: %d row(s) name %s, so no sum holds them; run without --by to see them"
+              % (left, "no account key" if mode == "lamports" else "neither an owner nor an account key"),
+              file=sys.stderr)
     return 0
 
 

@@ -1870,6 +1870,78 @@ done
 if [[ "$n24" -ge 50 ]]; then ok "entry points: $n24 hostile cases run against the recipes"; else bad "entry points: only $n24 hostile cases run against the recipes"; fi
 eq "entry points: the protected file is unchanged" "$(cat "$H24/wt/protected.txt")" "protected"
 
+# ---------------------------------------------------------------------------
+# 25. deltas.py --by sums the rows in Python integers and prints the sums in place
+#     of the rows, the most negative first, then by name: lamports per account,
+#     tokens per (owner, mint) and per mint. A sum of 0 prints no row, a token
+#     balance with no owner is summed per token account, and a row no sum can hold
+#     (a placeholder account, and no owner for a token row) is counted in a note.
+#     A grouping the mode does not take is refused.
+# ---------------------------------------------------------------------------
+eq "sums: tokens --by owner,mint nets an owner's two accounts, the drain first" \
+  "$(deltas tokens --by owner,mint "$F/same-owner-drain.jsonl" | tr '\t\n' ',|')" "VaultPDA,MintM,-140,|Attacker,MintM,140,|"
+eq "sums: a move between one owner's accounts sums to no row" \
+  "$(deltas tokens --by owner,mint "$F/same-owner-move.jsonl" | grep -c . || true)" "0"
+eq "sums: tokens --by mint gives the loss and how many owners lost, then the gain and how many gained" \
+  "$(deltas tokens --by mint "$F/same-owner-drain.jsonl" | tr '\t\n' ',|')" "MintM,-140,1,140,1|"
+eq "sums: lamports --by account, exact above 2^53, by net and then by name" \
+  "$(deltas lamports --by account "$F/lamports-over-2-53.jsonl" "$F/clean-mixed.jsonl" | tr '\t\n' ',|')" \
+  "PayerOne11111111111111111111111111111111111,-5000000|BigOne,1|BigTwo,1|Dest111111111111111111111111111111111111111,5000000|"
+python3 -I -c 'import json
+def tx(sig, keys, pre, post, toks_pre, toks_post, err=None):
+    return json.dumps({"meta": {"err": err, "fee": 0, "preBalances": pre, "postBalances": post,
+                                "preTokenBalances": toks_pre, "postTokenBalances": toks_post},
+                       "transaction": {"signatures": [sig], "message": {"accountKeys": keys}}})
+def tb(i, mint, amount, owner=None):
+    b = {"mint": mint, "uiTokenAmount": {"amount": str(amount)}}
+    if i is not None:
+        b["accountIndex"] = i
+    if owner is not None:
+        b["owner"] = owner
+    return b
+big = 2**60
+keys = ["Payer", "TA1", "TA2", "TA3", "TA4", "TA5"]
+# Victim loses 2^60 + 1 over two accounts and two transactions; Thief gains it; a tie at
+# -7 between Alpha and Beta sorts by name; TA4 and TA5 have no owner, so they stay apart.
+print(tx("SigSum1", keys, [10, 0, 0, 0, 0, 0], [10, 0, 0, 0, 0, 0],
+         [tb(1, "MintM", big, "Victim"), tb(2, "MintM", 0, "Thief")],
+         [tb(1, "MintM", 0, "Victim"), tb(2, "MintM", big, "Thief")]))
+print(tx("SigSum2", keys, [10, 5, 0, 0, 0, 0], [10, 0, 5, 0, 0, 0],
+         [tb(3, "MintM", 1, "Victim"), tb(2, "MintM", big, "Thief"), tb(4, "MintN", 7, "Beta"), tb(5, "MintN", 7, "Alpha")],
+         [tb(3, "MintM", 0, "Victim"), tb(2, "MintM", big + 1, "Thief"), tb(4, "MintN", 0, "Beta"), tb(5, "MintN", 0, "Alpha")]))
+print(tx("SigSum3", keys, [10, 0, 0, 0, 0, 0], [10, 0, 0, 0, 0, 0],
+         [tb(4, "MintN", 3), tb(5, "MintN", 0), tb(None, "MintN", 2)],
+         [tb(4, "MintN", 0), tb(5, "MintN", 3), tb(9, "MintN", 2, "Gamma")]))
+# a balance index with no account key: a lamport row no sum holds
+print(tx("SigSum4", ["Payer"], [10, 4], [10, 0], [], []))
+# a failed transaction moves nothing
+print(tx("SigSum5", keys, [10, 100, 0, 0, 0, 0], [10, 0, 100, 0, 0, 0],
+         [tb(1, "MintM", 5, "Victim")], [tb(1, "MintM", 0, "Victim")], err={"InstructionError": [0, "Custom"]}))' > "$RW/incident_1/sums25.jsonl"
+eq "sums: per (owner, mint), exact above 2^53; an owner-less balance per token account, a placeholder left out" \
+  "$(deltas tokens --by owner,mint incident_1/sums25.jsonl 2> "$TT/s25.err" | tr '\t\n' ',|')" \
+  "Victim,MintM,-1152921504606846977,|Alpha,MintN,-7,|Beta,MintN,-7,|?,MintN,-3,TA4|Gamma,MintN,2,|?,MintN,3,TA5|Thief,MintM,1152921504606846977,|"
+eq "sums: ... and a note counts the row no sum holds" \
+  "$(grep -c '^deltas.py: 1 row(s) name neither an owner nor an account key, so no sum holds them; run without --by to see them$' "$TT/s25.err")" "1"
+eq "sums: per mint, from those nets" \
+  "$(deltas tokens --by mint incident_1/sums25.jsonl 2> /dev/null | tr '\t\n' ',|')" \
+  "MintM,-1152921504606846977,1,1152921504606846977,1|MintN,-17,3,5,2|"
+eq "sums: lamports --by account leaves out a balance index with no account key, and says so" \
+  "$(deltas lamports --by account incident_1/sums25.jsonl 2> "$TT/s25.err" | tr '\t\n' ',|')|$(grep -c '^deltas.py: 1 row(s) name no account key, so no sum holds them; run without --by to see them$' "$TT/s25.err")" \
+  "TA1,-5|TA2,5||1"
+( cd "$RW" && "$DNR/deltas.py" tokens --by mint --out incident_1/sums25.tsv "$F/same-owner-drain.jsonl" ) > "$TT/s25.out" 2>&1
+eq "sums: --out keeps the sums and prints nothing" "$?|$(tr '\t\n' ',|' < "$RW/incident_1/sums25.tsv")|$(wc -c < "$TT/s25.out" | tr -d ' ')" "0|MintM,-140,1,140,1||0"
+res=""
+for a in "tokens --by account incident_1/sums25.jsonl" "tokens --by owner incident_1/sums25.jsonl" \
+         "lamports --by mint incident_1/sums25.jsonl" "lamports --by owner,mint incident_1/sums25.jsonl" "tokens --by" \
+         "tokens --by mint --by mint incident_1/sums25.jsonl"; do
+  # shellcheck disable=SC2086
+  ( cd "$RW" && "$DNR/deltas.py" $a ) > "$TT/s25.out" 2> "$TT/s25.err"
+  c=$?
+  [[ "$c" == 2 && ! -s "$TT/s25.out" && "$(grep -c . "$TT/s25.err")" == 1 ]] && grep -q '^deltas.py: refused: ' "$TT/s25.err" &&
+    res="$res $c" || res="$res $c:$(tr '\n' ' ' < "$TT/s25.err")"
+done
+eq "sums: a grouping the mode does not take, none, or two are refused (exit 2, one line, no output)" "${res# }" "2 2 2 2 2 2"
+
 if [[ "$fails" -ne 0 ]]; then
   echo "test-dnr: $fails assertion(s) FAILED" >&2
   exit 1
