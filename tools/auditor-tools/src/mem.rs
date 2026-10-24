@@ -3,13 +3,50 @@
 //! Provides exact-dedup of findings, regression detection (a `FIXED` finding
 //! re-observed becomes `REGRESSED`), false-positive suppression rulings, and a
 //! warm-start context block for re-audits.
+//!
+//! A store is opened only when it exists: read-only for the subcommands that read
+//! it ([`open_read_only`]), for reading and writing for the ones that write it
+//! ([`open_read_write`]). Either way it must hold only the tables audit-mem makes,
+//! and SQLite runs in its defensive mode, with triggers and views off and
+//! `trusted_schema` off, so a crafted store cannot run anything through its
+//! schema.
 
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::config::DbConfig;
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+
+use crate::confine::shown;
+
+/// The tables of a store, as `ensure_schema` makes them.
+pub const TABLES: [&str; 5] = [
+    "findings",
+    "occurrences",
+    "fp_rulings",
+    "invariants",
+    "protocol_profile",
+];
+
+/// A store audit-mem refuses to use: not one it wrote, or one its schema check
+/// refuses. The CLI prints it as a refusal.
+#[derive(Debug)]
+pub struct Refusal(pub String);
+
+impl std::fmt::Display for Refusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Refusal {}
+
+fn refusal(why: String) -> anyhow::Error {
+    anyhow::Error::new(Refusal(why))
+}
 
 /// Compute the stable finding id: `sha256(program_id \n code_signature \n root_cause)`.
 pub fn finding_id(program_id: &str, code_signature: &str, root_cause: &str) -> String {
@@ -36,28 +73,111 @@ fn now_ts() -> String {
     secs.to_string()
 }
 
-/// Open (or create) the database at `path` and ensure the schema exists.
-pub fn open_db(path: &str) -> Result<Connection> {
-    if let Some(parent) = std::path::Path::new(path).parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).ok();
+/// SQLite's defensive mode, with triggers, views and `trusted_schema` off and
+/// temporary tables in memory: what a store's schema holds can run nothing, and
+/// no file is made outside the store.
+fn harden(conn: &Connection) -> Result<()> {
+    conn.set_db_config(DbConfig::SQLITE_DBCONFIG_DEFENSIVE, true)?;
+    conn.set_db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_TRIGGER, false)?;
+    conn.set_db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_VIEW, false)?;
+    conn.execute_batch(
+        "PRAGMA trusted_schema = OFF; PRAGMA temp_store = MEMORY; PRAGMA cell_size_check = ON;",
+    )?;
+    Ok(())
+}
+
+/// Refuses a store holding anything but audit-mem's tables, their automatic
+/// indexes and `sqlite_sequence`: a view, a trigger, a virtual table, an index of
+/// its own or another table. Returns the tables of audit-mem's it holds.
+fn verify_schema(conn: &Connection) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare("SELECT type, name, tbl_name, sql FROM sqlite_schema")?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+            r.get::<_, Option<String>>(3)?,
+        ))
+    })?;
+    let mut tables = Vec::new();
+    for row in rows {
+        let (kind, name, table, sql) = row?;
+        let ours = TABLES.contains(&table.as_str());
+        let plain_table = sql.as_deref().is_some_and(|s| {
+            s.get(..13)
+                .is_some_and(|head| head.eq_ignore_ascii_case("CREATE TABLE "))
+        });
+        let ok = match kind.as_str() {
+            "table" => (ours && name == table && plain_table) || name == "sqlite_sequence",
+            "index" => ours && name.starts_with("sqlite_autoindex_") && sql.is_none(),
+            _ => false,
+        };
+        if !ok {
+            return Err(refusal(format!(
+                "it holds the {} {}, which audit-mem never makes, so it is not a store audit-mem wrote",
+                shown(kind.as_bytes()),
+                shown(name.as_bytes())
+            )));
+        }
+        if kind == "table" && ours {
+            tables.push(name);
         }
     }
-    let conn = Connection::open(path)?;
-    init_schema(&conn)?;
+    Ok(tables)
+}
+
+/// Opens a store that exists for reading only: read-only, through no symbolic
+/// link, never made or written (`query_only`), hardened as `harden` does. It must
+/// hold every table of audit-mem's and nothing else.
+pub fn open_read_only(path: &Path) -> Result<Connection> {
+    let conn = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY
+            | OpenFlags::SQLITE_OPEN_NOFOLLOW
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    harden(&conn)?;
+    conn.execute_batch("PRAGMA query_only = ON;")?;
+    let tables = verify_schema(&conn)?;
+    for table in TABLES {
+        if !tables.iter().any(|t| t == table) {
+            return Err(refusal(format!(
+                "it has no {table} table, so it is not a store audit-mem wrote; audit-mem init makes the tables"
+            )));
+        }
+    }
+    Ok(conn)
+}
+
+/// Opens a store that exists for reading and writing, through no symbolic link
+/// and never making the file, hardened as `harden` does; it must hold nothing but
+/// audit-mem's tables, and gets every table it lacks (`ensure_schema`).
+pub fn open_read_write(path: &Path) -> Result<Connection> {
+    let conn = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_WRITE
+            | OpenFlags::SQLITE_OPEN_NOFOLLOW
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    harden(&conn)?;
+    verify_schema(&conn)?;
+    ensure_schema(&conn)?;
     Ok(conn)
 }
 
 /// Open an in-memory database with the schema applied (used by tests).
 pub fn open_in_memory() -> Result<Connection> {
     let conn = Connection::open_in_memory()?;
-    init_schema(&conn)?;
+    harden(&conn)?;
+    ensure_schema(&conn)?;
     Ok(conn)
 }
 
-/// Create all tables if they do not already exist. Safe to call repeatedly.
-pub fn init_schema(conn: &Connection) -> Result<()> {
-    conn.execute_batch(
+/// Create all tables if they do not already exist. Safe to call repeatedly; one
+/// transaction.
+pub fn ensure_schema(conn: &Connection) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    tx.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS findings (
             finding_id        TEXT PRIMARY KEY,
@@ -114,6 +234,7 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
         );
         "#,
     )?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -358,7 +479,7 @@ pub struct InvariantRow {
 }
 
 /// The warm-start context block returned for a re-audit.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Default)]
 pub struct WarmContext {
     pub profile: Option<ProtocolProfile>,
     pub invariants: Vec<InvariantRow>,

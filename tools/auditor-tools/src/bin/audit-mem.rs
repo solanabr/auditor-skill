@@ -1,132 +1,647 @@
-//! `audit-mem <cmd>` — SQLite findings store for cross-audit memory.
+//! `audit-mem <subcommand> [--db <store>] [options]` — SQLite findings store for
+//! cross-audit memory.
 //!
 //! Subcommands: `init`, `put-finding`, `set-status`, `rule`, `check`,
 //! `regressions`, `warm`. See the crate README for full usage.
+//!
+//! It is built so that `warm`, `check`, `regressions`, `init` and `put-finding`
+//! can be pre-approved, each as a rule on its absolute path and subcommand, safe
+//! whatever arguments follow (`confine.rs`):
+//! - The subcommand comes first; each option is given once, as `--name <value>`
+//!   or `--name=<value>`, and the word after `--name` is its value whatever it
+//!   looks like. Every text value is UTF-8, at most 4096 bytes, and holds no
+//!   control or formatting character.
+//! - `--db` is `.audit-memory/audit.db` (the default) or `<R>/audit-mem.db`, where
+//!   `<R>` is a run directory, `audit_<n>` or `incident_<n>`, that passes
+//!   `scripts/rundir.sh check`. Before it uses the in-tree store, audit-mem checks
+//!   it as `scripts/rundir.sh store` does: untracked in any letter case (asked of
+//!   git as confine.sh's `hgit` asks it), a real directory holding no symbolic
+//!   link, with a `.gitignore` of exactly `*`; git that cannot answer is a
+//!   refusal. The database is a regular file with one name.
+//! - `warm`, `check` and `regressions` open the store read-only and never make
+//!   it; with no store they print an empty answer. `init` makes the store: the
+//!   `.audit-memory/` directory with a plain mkdir, its `.gitignore` first, then
+//!   the database, each made exclusively and never through a link. The other
+//!   subcommands write only a store that `init` made.
+//!
+//! Exit: 0 done (`check`: suppressed) · 1 `check`: not suppressed · 2 refused, or
+//! the store cannot be read or written.
 
+use std::ffi::{OsStr, OsString};
+use std::fs;
+use std::io::{self, Read, Write};
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::{DirBuilderExt, MetadataExt};
+use std::path::Path;
 use std::process::ExitCode;
 
-use anyhow::Result;
+use auditor_tools::confine::{self, os_message, refuse, shown, unsafe_char, Dir, Git, Stop};
 use auditor_tools::mem;
-use clap::{Parser, Subcommand};
+use rusqlite::Connection;
 
-#[derive(Parser, Debug)]
-#[command(
-    name = "audit-mem",
-    about = "Cross-audit findings memory: dedup, regression detection, FP suppression, warm re-audits."
-)]
-struct Cli {
-    /// Path to the SQLite database (created if missing).
-    #[arg(long, default_value = ".audit-memory/audit.db", global = true)]
-    db: String,
+const USAGE: &str = "usage: audit-mem <subcommand> [--db <store>] [options], the subcommand \
+being init, put-finding, set-status, rule, check, regressions or warm";
 
-    #[command(subcommand)]
-    cmd: Command,
-}
+/// The longest text value accepted, in bytes.
+const MAX_FIELD: usize = 4096;
 
-#[derive(Subcommand, Debug)]
-enum Command {
-    /// Create the database schema.
+/// The in-tree store.
+const IN_TREE: &[u8] = b".audit-memory/audit.db";
+const STORE_DIR: &[u8] = b".audit-memory";
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Sub {
     Init,
-
-    /// Upsert a finding and append an occurrence.
-    PutFinding {
-        #[arg(long)]
-        program_id: String,
-        #[arg(long)]
-        signature: String,
-        #[arg(long)]
-        root_cause: String,
-        #[arg(long)]
-        title: String,
-        #[arg(long)]
-        severity: i64,
-        #[arg(long)]
-        commit: Option<String>,
-        #[arg(long)]
-        audit_n: Option<String>,
-        #[arg(long)]
-        file: Option<String>,
-        #[arg(long)]
-        line: Option<i64>,
-        #[arg(long)]
-        verdict: Option<String>,
-    },
-
-    /// Update the status of a finding.
-    SetStatus {
-        #[arg(long)]
-        program_id: String,
-        #[arg(long)]
-        signature: String,
-        #[arg(long)]
-        root_cause: String,
-        /// One of FIXED | OPEN | ACKNOWLEDGED | DISPUTED.
-        #[arg(long)]
-        status: String,
-    },
-
-    /// Record a false-positive / accepted-risk ruling.
-    Rule {
-        #[arg(long)]
-        program_id: String,
-        #[arg(long)]
-        signature: String,
-        /// One of FALSE_POSITIVE | ACCEPTED_RISK.
-        #[arg(long)]
-        ruling: String,
-        #[arg(long)]
-        rationale: String,
-        #[arg(long)]
-        by: String,
-        #[arg(long)]
-        scope: Option<String>,
-    },
-
-    /// Check whether a (program_id, signature) pair is suppressed.
-    /// Exit 0 if suppressed, exit 1 otherwise.
-    Check {
-        #[arg(long)]
-        program_id: String,
-        #[arg(long)]
-        signature: String,
-    },
-
-    /// List findings whose status is REGRESSED, as JSON.
-    Regressions {
-        #[arg(long)]
-        program_id: String,
-    },
-
-    /// Emit the warm-start context block for a re-audit, as JSON.
-    Warm {
-        #[arg(long)]
-        program_id: String,
-    },
+    PutFinding,
+    SetStatus,
+    Rule,
+    Check,
+    Regressions,
+    Warm,
 }
 
-fn main() -> ExitCode {
-    match run() {
-        Ok(code) => code,
-        Err(err) => {
-            eprintln!("error: {:#}", err);
-            ExitCode::from(2)
+impl Sub {
+    fn parse(word: &[u8]) -> Option<Sub> {
+        Some(match word {
+            b"init" => Sub::Init,
+            b"put-finding" => Sub::PutFinding,
+            b"set-status" => Sub::SetStatus,
+            b"rule" => Sub::Rule,
+            b"check" => Sub::Check,
+            b"regressions" => Sub::Regressions,
+            b"warm" => Sub::Warm,
+            _ => return None,
+        })
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Sub::Init => "init",
+            Sub::PutFinding => "put-finding",
+            Sub::SetStatus => "set-status",
+            Sub::Rule => "rule",
+            Sub::Check => "check",
+            Sub::Regressions => "regressions",
+            Sub::Warm => "warm",
         }
+    }
+
+    /// The options it takes besides `--db`, the ones it needs first.
+    fn options(self) -> (&'static [&'static str], &'static [&'static str]) {
+        match self {
+            Sub::Init => (&[], &[]),
+            Sub::PutFinding => (
+                &["program-id", "signature", "root-cause", "title", "severity"],
+                &["commit", "audit-n", "file", "line", "verdict"],
+            ),
+            Sub::SetStatus => (&["program-id", "signature", "root-cause", "status"], &[]),
+            Sub::Rule => (
+                &["program-id", "signature", "ruling", "rationale", "by"],
+                &["scope"],
+            ),
+            Sub::Check => (&["program-id", "signature"], &[]),
+            Sub::Regressions | Sub::Warm => (&["program-id"], &[]),
+        }
+    }
+
+    /// Whether it only reads the store.
+    fn reads_only(self) -> bool {
+        matches!(self, Sub::Check | Sub::Regressions | Sub::Warm)
     }
 }
 
-fn run() -> Result<ExitCode> {
-    let cli = Cli::parse();
-    let conn = mem::open_db(&cli.db)?;
+/// A call that passed the grammar: the subcommand, `--db` as given (or the
+/// default), and each other option's value, by name.
+struct Call {
+    sub: Sub,
+    db: OsString,
+    values: Vec<(&'static str, OsString)>,
+}
 
-    match cli.cmd {
-        Command::Init => {
-            // Schema is created by open_db; make the intent explicit.
-            mem::init_schema(&conn)?;
-            println!("initialized {}", cli.db);
+impl Call {
+    fn raw(&self, name: &str) -> Option<&OsStr> {
+        self.values
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, v)| v.as_os_str())
+    }
+
+    /// A text value under the field rule: UTF-8, non-empty when the subcommand
+    /// needs the option, at most 4096 bytes, and no control or formatting
+    /// character (`confine::unsafe_char`).
+    fn text(&self, name: &str) -> Result<Option<String>, Stop> {
+        let Some(v) = self.raw(name) else {
+            return Ok(None);
+        };
+        let Some(s) = v.to_str() else {
+            return Err(refuse(format!("--{name} is not UTF-8")));
+        };
+        if s.is_empty() && self.sub.options().0.contains(&name) {
+            return Err(refuse(format!("--{name} is empty")));
         }
+        if s.len() > MAX_FIELD {
+            return Err(refuse(format!("--{name} is longer than {MAX_FIELD} bytes")));
+        }
+        if s.chars().any(unsafe_char) {
+            return Err(refuse(format!(
+                "--{name} holds a control or formatting character: {}",
+                shown(s.as_bytes())
+            )));
+        }
+        Ok(Some(s.to_string()))
+    }
 
-        Command::PutFinding {
-            program_id,
+    /// A text value the subcommand needs (the grammar has made sure it is given).
+    fn need(&self, name: &str) -> Result<String, Stop> {
+        self.text(name)?
+            .ok_or_else(|| refuse(format!("{} needs --{name}", self.sub.name())))
+    }
+
+    /// One of a fixed set of words.
+    fn word(&self, name: &str, allowed: &[&str]) -> Result<String, Stop> {
+        let v = self.need(name)?;
+        if allowed.contains(&v.as_str()) {
+            Ok(v)
+        } else {
+            Err(refuse(format!(
+                "--{name} must be one of {}: {}",
+                allowed.join(", "),
+                shown(v.as_bytes())
+            )))
+        }
+    }
+
+    /// A decimal number within `range`, digits only.
+    fn number(
+        &self,
+        name: &str,
+        range: std::ops::RangeInclusive<i64>,
+    ) -> Result<Option<i64>, Stop> {
+        let Some(v) = self.text(name)? else {
+            return Ok(None);
+        };
+        let n = (!v.is_empty() && v.len() <= 10 && v.bytes().all(|c| c.is_ascii_digit()))
+            .then(|| v.parse::<i64>().ok())
+            .flatten()
+            .filter(|n| range.contains(n));
+        n.map(Some).ok_or_else(|| {
+            refuse(format!(
+                "--{name} must be a whole number from {} to {}: {}",
+                range.start(),
+                range.end(),
+                shown(v.as_bytes())
+            ))
+        })
+    }
+}
+
+fn usage(why: &str) -> Stop {
+    refuse(format!("{why} ({USAGE})"))
+}
+
+/// The closed grammar: the subcommand first, then its options, each once.
+fn parse(args: &[OsString]) -> Result<Call, Stop> {
+    let Some(first) = args.first() else {
+        return Err(usage("no subcommand"));
+    };
+    let sub = Sub::parse(first.as_bytes()).ok_or_else(|| {
+        usage(&format!(
+            "{} is not a subcommand, and the subcommand comes first",
+            shown(first.as_bytes())
+        ))
+    })?;
+    let (needed, optional) = sub.options();
+    let mut db = None;
+    let mut values: Vec<(&'static str, OsString)> = Vec::new();
+    let mut rest = &args[1..];
+    while let Some(word) = rest.first() {
+        let w = word.as_bytes();
+        let Some(opt) = w.strip_prefix(b"--").filter(|o| !o.is_empty()) else {
+            return Err(refuse(format!(
+                "{} takes no argument {}",
+                sub.name(),
+                shown(w)
+            )));
+        };
+        let (name, value) = match opt.iter().position(|&c| c == b'=') {
+            Some(i) => {
+                rest = &rest[1..];
+                (&opt[..i], OsStr::from_bytes(&opt[i + 1..]).to_os_string())
+            }
+            None => {
+                let v = rest
+                    .get(1)
+                    .ok_or_else(|| refuse(format!("--{} needs a value", shown(opt))))?;
+                rest = &rest[2..];
+                (opt, v.clone())
+            }
+        };
+        if name == b"db" {
+            if db.replace(value).is_some() {
+                return Err(refuse("--db is given more than once".into()));
+            }
+            continue;
+        }
+        let Some(&known) = needed
+            .iter()
+            .chain(optional.iter())
+            .find(|n| n.as_bytes() == name)
+        else {
+            return Err(refuse(format!(
+                "{} takes no option --{}",
+                sub.name(),
+                shown(name)
+            )));
+        };
+        if values.iter().any(|(n, _)| *n == known) {
+            return Err(refuse(format!("--{known} is given more than once")));
+        }
+        values.push((known, value));
+    }
+    for name in needed {
+        if !values.iter().any(|(n, _)| n == name) {
+            return Err(refuse(format!("{} needs --{name}", sub.name())));
+        }
+    }
+    Ok(Call {
+        sub,
+        db: db.unwrap_or_else(|| OsStr::from_bytes(IN_TREE).to_os_string()),
+        values,
+    })
+}
+
+/// What the store's database file is.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Db {
+    /// No file (or, for the in-tree store, no `.audit-memory/`).
+    Absent,
+    /// A file of no bytes: an `init` that did not finish.
+    Empty,
+    /// A SQLite database in rollback-journal mode.
+    Sqlite,
+}
+
+/// A store that passed its checks: its path relative to WT, its directory (a run
+/// directory or `.audit-memory`) and lstat, when the directory exists, the
+/// database's name there, and what the file is.
+struct Store {
+    path: Vec<u8>,
+    dir: Vec<u8>,
+    dir_md: Option<fs::Metadata>,
+    name: &'static [u8],
+    db: Db,
+    in_tree: bool,
+}
+
+impl Store {
+    fn shown(&self) -> String {
+        shown(&self.path)
+    }
+
+    fn path(&self) -> &Path {
+        Path::new(OsStr::from_bytes(&self.path))
+    }
+}
+
+/// Checks `--db` and its store before anything is opened: the path's shape, then
+/// the run directory as `rundir.sh check` checks it, or the in-tree store as
+/// `rundir.sh store` checks it, in their words, then the database file.
+fn check_store(wt: &Path, arg: &OsStr) -> Result<Store, Stop> {
+    let raw = arg.as_bytes();
+    let path = raw.strip_prefix(b"./").unwrap_or(raw);
+    let mut git = Git::new(wt);
+    let mut store = if path == IN_TREE {
+        in_tree_store(wt, &mut git)?
+    } else {
+        let run = path
+            .strip_suffix(b"/audit-mem.db")
+            .filter(|r| confine::is_run_dir_name(r))
+            .ok_or_else(|| {
+                refuse(format!(
+                    "--db must be .audit-memory/audit.db, audit_<n>/audit-mem.db or \
+                     incident_<n>/audit-mem.db: {}",
+                    shown(raw)
+                ))
+            })?;
+        let md = confine::run_dir(wt, &mut git, run, "--db")?;
+        Store {
+            path: path.to_vec(),
+            dir: run.to_vec(),
+            dir_md: Some(md),
+            name: b"audit-mem.db",
+            db: Db::Absent,
+            in_tree: false,
+        }
+    };
+    store.db = match &store.dir_md {
+        Some(md) => database(wt, &store, md)?,
+        None => Db::Absent,
+    };
+    Ok(store)
+}
+
+/// The in-tree store, checked as `rundir.sh store` checks it, in its words.
+fn in_tree_store(wt: &Path, git: &mut Git) -> Result<Store, Stop> {
+    let d = ".audit-memory";
+    git.need()?;
+    match git.tracked(STORE_DIR) {
+        Some(listed) if listed.is_empty() => {}
+        Some(_) => {
+            return Err(refuse(format!(
+                "the repository tracks {d} (in some letter case); use <R>/audit-mem.db"
+            )))
+        }
+        None => return Err(refuse(format!("git cannot tell whether {d} is tracked"))),
+    }
+    let mut store = Store {
+        path: IN_TREE.to_vec(),
+        dir: STORE_DIR.to_vec(),
+        dir_md: None,
+        name: b"audit.db",
+        db: Db::Absent,
+        in_tree: true,
+    };
+    let dir = wt.join(d);
+    let md = match fs::symlink_metadata(&dir) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(store),
+        Err(e) => {
+            return Err(refuse(format!(
+                "{d} cannot be checked ({}); use <R>/audit-mem.db",
+                os_message(&e)
+            )))
+        }
+        Ok(md) if md.file_type().is_symlink() => {
+            return Err(refuse(format!(
+                "{d} is a symbolic link; use <R>/audit-mem.db"
+            )))
+        }
+        Ok(md) if !md.is_dir() => {
+            return Err(refuse(format!(
+                "{d} is not a directory; use <R>/audit-mem.db"
+            )))
+        }
+        Ok(md) => md,
+    };
+    match confine::holds_link(&dir) {
+        Ok(false) => {}
+        Ok(true) => {
+            return Err(refuse(format!(
+                "{d} holds a symbolic link; use <R>/audit-mem.db"
+            )))
+        }
+        Err(_) => {
+            return Err(refuse(format!(
+                "{d} cannot be fully read; use <R>/audit-mem.db"
+            )))
+        }
+    }
+    if !confine::ignores_all(&dir.join(".gitignore")) {
+        return Err(refuse(format!(
+            "{d} has no .gitignore holding exactly *; use <R>/audit-mem.db"
+        )));
+    }
+    store.dir_md = Some(md);
+    Ok(store)
+}
+
+/// What the database file is: absent, empty, or a SQLite database in
+/// rollback-journal mode (the header's magic, and 1 in its bytes 18 and 19). A
+/// file that is not regular, has a second name, or holds anything else is
+/// refused; so is a database in WAL mode, which audit-mem never sets and whose
+/// read-only open would make a file beside it.
+fn database(wt: &Path, store: &Store, dir_md: &fs::Metadata) -> Result<Db, Stop> {
+    let s = store.shown();
+    let tail = if store.in_tree {
+        "; use <R>/audit-mem.db"
+    } else {
+        ""
+    };
+    match fs::symlink_metadata(wt.join(store.path())) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Db::Absent),
+        Err(e) => {
+            return Err(refuse(format!(
+                "{s} cannot be checked ({}){tail}",
+                os_message(&e)
+            )))
+        }
+        Ok(md) if !md.file_type().is_file() => {
+            return Err(refuse(format!("{s} is not a regular file{tail}")))
+        }
+        Ok(md) if md.nlink() != 1 => {
+            return Err(refuse(format!(
+                "{s} has more than one name (a hard link){tail}"
+            )))
+        }
+        Ok(_) => {}
+    }
+    let mut head = Vec::new();
+    Dir::open(&store.dir, dir_md)
+        .and_then(|dir| dir.open_regular(store.name, false))
+        .and_then(|f| f.take(100).read_to_end(&mut head))
+        .map_err(|e| refuse(format!("{s} cannot be read: {}", os_message(&e))))?;
+    if head.is_empty() {
+        return Ok(Db::Empty);
+    }
+    if head.len() < 100 || !head.starts_with(b"SQLite format 3\0") {
+        return Err(refuse(format!(
+            "{s} is not a SQLite database, so it is not a store audit-mem wrote{tail}"
+        )));
+    }
+    if head[18] != 1 || head[19] != 1 {
+        return Err(refuse(format!(
+            "{s} is not in rollback-journal mode (a WAL database, say), which audit-mem never sets{tail}"
+        )));
+    }
+    Ok(Db::Sqlite)
+}
+
+/// Makes what `init` needs of the store: for the in-tree store with no
+/// `.audit-memory/`, the directory with a plain mkdir (mode 0700), its
+/// `.gitignore` of `*` first, then an empty database; in a directory that exists
+/// with no database, the database. Each file is made through the directory,
+/// opened once without following a link, exclusively.
+fn make_store(wt: &Path, store: &Store) -> Result<(), Stop> {
+    let s = store.shown();
+    let failed = |e: io::Error| Stop(2, format!("error: cannot make {s}: {}", os_message(&e)));
+    let md = match &store.dir_md {
+        Some(md) => md.clone(),
+        None => {
+            let dir = wt.join(OsStr::from_bytes(&store.dir));
+            fs::DirBuilder::new()
+                .mode(0o700)
+                .create(&dir)
+                .map_err(failed)?;
+            let md = fs::symlink_metadata(&dir).map_err(failed)?;
+            let made = Dir::open(&store.dir, &md).map_err(failed)?;
+            made.create(b".gitignore")
+                .and_then(|mut f| f.write_all(b"*\n").and_then(|()| f.flush()))
+                .map_err(failed)?;
+            md
+        }
+    };
+    if store.db == Db::Absent {
+        Dir::open(&store.dir, &md)
+            .and_then(|dir| dir.create(store.name))
+            .map_err(failed)?;
+    }
+    Ok(())
+}
+
+/// A store error as one line: a store audit-mem refuses (`mem::Refusal`) as a
+/// refusal, naming the store; anything SQLite says as an error.
+fn store_error(store: &Store) -> impl Fn(anyhow::Error) -> Stop + '_ {
+    move |e: anyhow::Error| match e.downcast_ref::<mem::Refusal>() {
+        Some(r) => refuse(format!("{}: {r}", store.shown())),
+        None => Stop(
+            2,
+            format!(
+                "error: {}: {}",
+                store.shown(),
+                shown(format!("{e:#}").as_bytes())
+            ),
+        ),
+    }
+}
+
+/// A subcommand with every value it takes checked.
+enum Action {
+    Init,
+    PutFinding {
+        signature: String,
+        root_cause: String,
+        title: String,
+        severity: i64,
+        commit: Option<String>,
+        audit_n: Option<String>,
+        file: Option<String>,
+        line: Option<i64>,
+        verdict: Option<String>,
+    },
+    SetStatus {
+        signature: String,
+        root_cause: String,
+        status: String,
+    },
+    Rule {
+        signature: String,
+        ruling: String,
+        rationale: String,
+        by: String,
+        scope: Option<String>,
+    },
+    Check {
+        signature: String,
+    },
+    Regressions,
+    Warm,
+}
+
+/// Checks every value of the call, before the store is looked at.
+fn action(call: &Call) -> Result<Action, Stop> {
+    Ok(match call.sub {
+        Sub::Init => Action::Init,
+        Sub::PutFinding => Action::PutFinding {
+            signature: call.need("signature")?,
+            root_cause: call.need("root-cause")?,
+            title: call.need("title")?,
+            severity: call
+                .number("severity", 1..=10)?
+                .ok_or_else(|| refuse("put-finding needs --severity".into()))?,
+            commit: call.text("commit")?,
+            audit_n: call.text("audit-n")?,
+            file: call.text("file")?,
+            line: call.number("line", 1..=999_999_999)?,
+            verdict: call.text("verdict")?,
+        },
+        Sub::SetStatus => Action::SetStatus {
+            signature: call.need("signature")?,
+            root_cause: call.need("root-cause")?,
+            status: call.word("status", &["FIXED", "OPEN", "ACKNOWLEDGED", "DISPUTED"])?,
+        },
+        Sub::Rule => Action::Rule {
+            signature: call.need("signature")?,
+            ruling: call.word("ruling", &["FALSE_POSITIVE", "ACCEPTED_RISK"])?,
+            rationale: call.need("rationale")?,
+            by: call.need("by")?,
+            scope: call.text("scope")?,
+        },
+        Sub::Check => Action::Check {
+            signature: call.need("signature")?,
+        },
+        Sub::Regressions => Action::Regressions,
+        Sub::Warm => Action::Warm,
+    })
+}
+
+fn print_json<T: serde::Serialize>(value: &T) -> Result<(), Stop> {
+    let json = serde_json::to_string(value).map_err(|e| Stop(2, format!("error: {e}")))?;
+    out(&confine::json_text(json))
+}
+
+fn out(line: &str) -> Result<(), Stop> {
+    let mut stdout = io::stdout().lock();
+    stdout
+        .write_all(line.as_bytes())
+        .and_then(|()| stdout.write_all(b"\n"))
+        .and_then(|()| stdout.flush())
+        .map_err(|e| {
+            Stop(
+                2,
+                format!("error: cannot write the answer: {}", os_message(&e)),
+            )
+        })
+}
+
+/// `warm`, `check` and `regressions`: the store opened read-only, or the empty
+/// answer when there is none.
+fn read(store: &Store, pid: &str, action: &Action) -> Result<ExitCode, Stop> {
+    if store.db == Db::Empty {
+        return Err(refuse(format!(
+            "{} is empty; audit-mem init makes the store",
+            store.shown()
+        )));
+    }
+    let failed = store_error(store);
+    let conn = match store.db {
+        Db::Sqlite => Some(mem::open_read_only(store.path()).map_err(&failed)?),
+        _ => None,
+    };
+    match (action, conn) {
+        (Action::Warm, None) => print_json(&mem::WarmContext::default())?,
+        (Action::Warm, Some(c)) => print_json(&mem::warm(&c, pid).map_err(&failed)?)?,
+        (Action::Regressions, None) => out("[]")?,
+        (Action::Regressions, Some(c)) => print_json(&mem::regressions(&c, pid).map_err(&failed)?)?,
+        (Action::Check { .. }, None) => {
+            out(r#"{"suppressed":false,"store":"absent"}"#)?;
+            return Ok(ExitCode::FAILURE);
+        }
+        (Action::Check { signature }, Some(c)) => {
+            let result = mem::check(&c, pid, signature).map_err(&failed)?;
+            print_json(&result)?;
+            if !result.suppressed {
+                return Ok(ExitCode::FAILURE);
+            }
+        }
+        _ => return Err(refuse("this subcommand does not read the store".into())),
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The subcommands that write: `init` makes the store when it is missing; the
+/// others write only a store `init` made. Returns the line to print.
+fn write(wt: &Path, store: &Store, pid: &str, action: Action) -> Result<String, Stop> {
+    if matches!(action, Action::Init) {
+        make_store(wt, store)?;
+    } else if store.db != Db::Sqlite {
+        return Err(refuse(format!(
+            "there is no store at {}; audit-mem init makes it",
+            store.shown()
+        )));
+    }
+    let failed = store_error(store);
+    let conn: Connection = mem::open_read_write(store.path()).map_err(&failed)?;
+    Ok(match action {
+        Action::PutFinding {
             signature,
             root_cause,
             title,
@@ -140,7 +655,7 @@ fn run() -> Result<ExitCode> {
             let outcome = mem::put_finding(
                 &conn,
                 &mem::PutFinding {
-                    program_id: &program_id,
+                    program_id: pid,
                     signature: &signature,
                     root_cause: &root_cause,
                     title: &title,
@@ -151,26 +666,24 @@ fn run() -> Result<ExitCode> {
                     line,
                     verdict: verdict.as_deref(),
                 },
-            )?;
+            )
+            .map_err(&failed)?;
             if outcome.regressed {
-                println!("REGRESSED {}", outcome.finding_id);
+                format!("REGRESSED {}", outcome.finding_id)
             } else {
-                println!("{} {}", outcome.status, outcome.finding_id);
+                format!("{} {}", outcome.status, outcome.finding_id)
             }
         }
-
-        Command::SetStatus {
-            program_id,
+        Action::SetStatus {
             signature,
             root_cause,
             status,
         } => {
-            let changed = mem::set_status(&conn, &program_id, &signature, &root_cause, &status)?;
-            println!("updated {} row(s) -> {}", changed, status);
+            let changed =
+                mem::set_status(&conn, pid, &signature, &root_cause, &status).map_err(&failed)?;
+            format!("updated {} row(s) -> {}", changed, status)
         }
-
-        Command::Rule {
-            program_id,
+        Action::Rule {
             signature,
             ruling,
             rationale,
@@ -179,39 +692,51 @@ fn run() -> Result<ExitCode> {
         } => {
             let id = mem::add_ruling(
                 &conn,
-                &program_id,
+                pid,
                 &signature,
                 &ruling,
                 &rationale,
                 &by,
                 scope.as_deref(),
-            )?;
-            println!("ruling {} recorded ({})", id, ruling);
+            )
+            .map_err(&failed)?;
+            format!("ruling {} recorded ({})", id, ruling)
         }
-
-        Command::Check {
-            program_id,
-            signature,
-        } => {
-            let result = mem::check(&conn, &program_id, &signature)?;
-            println!("{}", serde_json::to_string(&result)?);
-            return Ok(if result.suppressed {
-                ExitCode::SUCCESS
-            } else {
-                ExitCode::FAILURE
-            });
+        Action::Init => format!("initialized {}", store.shown()),
+        Action::Check { .. } | Action::Regressions | Action::Warm => {
+            return Err(refuse("this subcommand does not write the store".into()))
         }
+    })
+}
 
-        Command::Regressions { program_id } => {
-            let rows = mem::regressions(&conn, &program_id)?;
-            println!("{}", serde_json::to_string(&rows)?);
-        }
+fn run(args: &[OsString]) -> Result<ExitCode, Stop> {
+    let wt = confine::working_tree()?;
+    confine::self_check(&wt)?;
+    let call = parse(args)?;
+    let pid = match call.sub {
+        Sub::Init => String::new(),
+        _ => call.need("program-id")?,
+    };
+    let action = action(&call)?;
+    let store = check_store(&wt, &call.db)?;
+    if call.sub.reads_only() {
+        return read(&store, &pid, &action);
+    }
+    out(&write(&wt, &store, &pid, action)?)?;
+    Ok(ExitCode::SUCCESS)
+}
 
-        Command::Warm { program_id } => {
-            let ctx = mem::warm(&conn, &program_id)?;
-            println!("{}", serde_json::to_string(&ctx)?);
+fn main() -> ExitCode {
+    // SAFETY: umask only sets this process's file-mode mask.
+    unsafe {
+        libc::umask(0o077);
+    }
+    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    match run(&args) {
+        Ok(code) => code,
+        Err(Stop(code, message)) => {
+            eprintln!("audit-mem: {message}");
+            ExitCode::from(code)
         }
     }
-
-    Ok(ExitCode::SUCCESS)
 }

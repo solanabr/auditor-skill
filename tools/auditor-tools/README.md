@@ -191,11 +191,14 @@ audit-scan ./programs/my-program/src --pretty --out audit_1/prescan.json
 ## `audit-mem`
 
 ```
-audit-mem [--db PATH] <subcommand>
+audit-mem <subcommand> [--db <store>] [options]
 ```
 
-`--db` defaults to `.audit-memory/audit.db` (parent directory auto-created). The
-schema is created lazily on any command, so `init` is optional but explicit.
+The subcommand comes first, then its options. A store is `.audit-memory/audit.db`
+in the working directory (the default) or `<R>/audit-mem.db`, a store for one run in
+a run directory, `audit_<n>/` or `incident_<n>/`; nothing else. `init` makes it. The
+other subcommands use only a store `init` made, and `warm`, `check` and
+`regressions` read it without writing to it.
 
 A finding's identity is
 `finding_id = sha256(program_id "\n" code_signature "\n" root_cause)` (hex), which
@@ -205,7 +208,7 @@ gives exact deduplication across audits.
 
 | Subcommand | Purpose |
 |---|---|
-| `init` | Create the schema. |
+| `init` | Make the store: for `.audit-memory/audit.db` with no `.audit-memory/`, the directory, its `.gitignore` of `*` first, then the database; in a run directory, the database. On a store that exists, add the tables it lacks. Prints `initialized <store>`. |
 | `put-finding` | Upsert a finding + append an occurrence. Prints `<STATUS> <finding_id>`, or `REGRESSED <finding_id>` on regression. |
 | `set-status` | Set a finding's status (`FIXED` \| `OPEN` \| `ACKNOWLEDGED` \| `DISPUTED`). |
 | `rule` | Record a `FALSE_POSITIVE` \| `ACCEPTED_RISK` ruling with a timestamp. |
@@ -217,21 +220,82 @@ gives exact deduplication across audits.
 was `FIXED`, the status transitions to `REGRESSED` and the command prints
 `REGRESSED <finding_id>`. Brand-new findings start `OPEN`.
 
-### `put-finding` flags
+### Options
 
 ```
---program-id <PID>   --signature <SIG>   --root-cause <RC>   --title <T>   --severity <N>
-[--commit <SHA>] [--audit-n <N>] [--file <PATH>] [--line <N>] [--verdict <V>]
+any subcommand  [--db .audit-memory/audit.db | <R>/audit-mem.db]
+put-finding     --program-id <PID> --signature <SIG> --root-cause <RC> --title <T> --severity <1-10>
+                [--commit <SHA>] [--audit-n <N>] [--file <PATH>] [--line <N>] [--verdict <V>]
+set-status      --program-id <PID> --signature <SIG> --root-cause <RC> --status <STATUS>
+rule            --program-id <PID> --signature <SIG> --ruling <RULING> --rationale <R> --by <WHO>
+                [--scope <S>]
+check           --program-id <PID> --signature <SIG>
+regressions     --program-id <PID>
+warm            --program-id <PID>
 ```
+
+Each option is given once, as `--name <value>` or `--name=<value>`; the word after
+`--name` is its value, whatever it looks like. A text value is UTF-8, at most 4096
+bytes, and holds no control or formatting character: the C0 and C1 controls, DEL,
+the line and paragraph separators, the bidirectional controls, and the code points
+Unicode marks default-ignorable (audit-logs' list). `--severity` is a whole number
+from 1 to 10 and `--line` one from 1.
+
+### Where it reads and writes
+
+It is built so that `warm`, `check`, `regressions`, `init` and `put-finding` can
+each be pre-approved as one `Bash(…)` rule on its absolute path and subcommand
+(`"<root>/tools/auditor-tools/target/release/audit-mem" warm *`), safe whatever
+arguments follow. `rule` and `set-status` decide what later audits suppress, and
+are never pre-approved. Its rules are those of `scripts/lib/confine.sh` and
+`scripts/rundir.sh`, in `src/confine.rs`:
+
+- `--db` is `.audit-memory/audit.db` or `<R>/audit-mem.db`, relative to the working
+  directory (one leading `./` allowed), where `<R>` passes `scripts/rundir.sh check`:
+  a real directory in the working directory, holding no symbolic link, tracked by no
+  repository in any letter case, with a `.gitignore` of exactly `*`.
+- Before it uses `.audit-memory/`, it checks it as `scripts/rundir.sh store` does:
+  the repository tracks no `.audit-memory` in any letter case, and `.audit-memory/`
+  is a real directory holding no symbolic link, with a `.gitignore` of exactly `*`.
+  Whether you made the store yourself stays your judgement (OUTPUT-RULES.md
+  Rule 11d).
+- It asks git what is tracked as confine.sh's `hgit` asks it: git from a `PATH` with
+  every entry inside the working directory removed, with an environment of its own
+  and the repository's config pinned off. When git cannot answer, it refuses.
+- The database is a regular file with one name, in rollback-journal mode: a
+  database in WAL mode is refused, since a read-only open of one makes a file beside
+  it. It holds only audit-mem's tables, their automatic indexes and
+  `sqlite_sequence`; a view, a trigger, a virtual table or any other object is
+  refused. SQLite never follows a link (`SQLITE_OPEN_NOFOLLOW`) and runs in its
+  defensive mode (`SQLITE_DBCONFIG_DEFENSIVE`), with triggers and views off,
+  `trusted_schema` off and temporary tables in memory.
+- `warm`, `check` and `regressions` open the store read-only
+  (`SQLITE_OPEN_READ_ONLY`, `PRAGMA query_only=ON`), and never make the file or
+  write the schema. With no store they print an empty answer: `warm`
+  `{"profile":null,"invariants":[],"open_fp_rulings":[]}`, `check`
+  `{"suppressed":false,"store":"absent"}` with exit 1, and `regressions` `[]`.
+- `init` makes `.audit-memory/` with a plain `mkdir` (mode 0700), its `.gitignore`
+  first, then an empty database, each file made exclusively
+  (`O_CREAT|O_EXCL|O_NOFOLLOW`, mode 0600) through the directory, opened once
+  without following a link. A `.audit-memory/` that already exists must pass the
+  check above. The other subcommands that write refuse when there is no store.
+- It refuses to run from an installation inside the working directory, or from a
+  path, as it was invoked or with its links resolved, holding a quote, `$`, a
+  backtick, a backslash or a control character. It opens no network connection
+  and runs no program but git. Its JSON writes a control, bidirectional or invisible
+  character as a `\u` escape.
+
+Exit: 0 done (`check`: suppressed) · 1 `check`: not suppressed · 2 refused, with
+one stderr line, `audit-mem: refused: <reason>`, or a store SQLite cannot read or
+write (`audit-mem: error: …`).
 
 ### Example lifecycle
 
 ```bash
-audit-mem --db .audit-memory/audit.db init
+audit-mem init                    # .audit-memory/, its .gitignore of *, then audit.db
 
 # first observation -> "OPEN <id>"
-audit-mem --db .audit-memory/audit.db put-finding \
-  --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
+audit-mem put-finding --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
   --root-cause 'unchecked subtraction can underflow vault balance' \
   --title 'Vault balance underflow' --severity 3 \
   --commit c0ffee1 --audit-n audit-1 --file src/withdraw.rs --line 42 --verdict TRUE_POSITIVE
@@ -250,6 +314,10 @@ audit-mem rule --program-id VaultProg... --signature 'unchecked_sub@vault.balanc
   --ruling FALSE_POSITIVE --rationale 'guarded by prior require!' --by auditor
 audit-mem check --program-id VaultProg... --signature 'unchecked_sub@vault.balance'
 #   -> {"suppressed":true,"ruling":{...}}   (exit 0)
+
+# a store for one run
+audit-mem init --db audit_1/audit-mem.db
+audit-mem warm --db audit_1/audit-mem.db --program-id VaultProg...
 ```
 
 ### Schema
