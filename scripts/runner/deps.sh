@@ -601,7 +601,7 @@ def unpack(archive, filename, algo, expected, dest):
             skipped.append((name, kind))
             continue
         cur = dest
-        ok = True
+        why = None
         for p in parts[:-1] if kind == "file" else parts:
             cur = os.path.join(cur, p)
             try:
@@ -609,10 +609,13 @@ def unpack(archive, filename, algo, expected, dest):
                 dirs += 1
             except FileExistsError:
                 if not stat.S_ISDIR(os.lstat(cur).st_mode):
-                    ok = False
+                    why = "a file stands where its directory goes"
                     break
-        if not ok:
-            skipped.append((name, "a file stands where its directory goes"))
+            except OSError as e:
+                why = "cannot be written: %s" % e.strerror
+                break
+        if why:
+            skipped.append((name, why))
             continue
         if kind == "dir":
             continue
@@ -621,6 +624,9 @@ def unpack(archive, filename, algo, expected, dest):
             fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | NOFOLLOW, 0o600)
         except FileExistsError:
             skipped.append((name, "the name is taken (given twice, or the same in another letter case)"))
+            continue
+        except OSError as e:
+            skipped.append((name, "cannot be written: %s" % e.strerror))
             continue
         with os.fdopen(fd, "wb") as out:
             src = opener(e)
@@ -650,6 +656,16 @@ except BaseException as why:
     fail("cannot read the answer or the artifact: %s" % why)
 '
 registry_py() { (cd / && exec python3 -I -c "$REGISTRY_PY" "$@"); }
+# registry_watched <out> <argument>...: registry_py under the watchdog, for the steps that read an artifact
+# (a gzip stream can unpack to far more than it weighs); its output in <out>, STEP_END set.
+registry_watched() {
+  local out=$1
+  shift
+  STEP_OUT=$out
+  step / python3 -I -c "$REGISTRY_PY" "$@"
+  STEP_OUT=""
+  [ "$STEP_END" = "exit 0" ]
+}
 
 # npm names in a URL path: a scoped name's / as %2F.
 npm_path() { case "$1" in @*/*) printf '%s%%2F%s' "${1%%/*}" "${1#*/}" ;; *) printf '%s' "$1" ;; esac; }
@@ -806,12 +822,21 @@ case "$ACTION" in
     get "$aurl" "$S/artifact"
     [ "$HTTP" = 200 ] || { printf 'HTTP %s for %s\n' "$HTTP" "$aurl" > "$S/report"; keep "$S/report"; done_with 3 "the download of $aurl answered HTTP $HTTP"; }
     { printf 'artifact: %s %s %s\n' "$ECO" "$NAME" "$VER"; printf 'from: %s\n' "$aurl"; } > "$S/report"
-    why=$(registry_py verify "$S/artifact" "$algo" "$digest") || { printf '%s\n' "$why" >> "$S/report"; keep "$S/report"; done_with 3 "$why"; }
+    if ! registry_watched "$S/verify" verify "$S/artifact" "$algo" "$digest"; then
+      why=$(stopped)
+      [ -n "$why" ] || why=$(cat "$S/verify" 2>/dev/null)
+      printf '%s\n' "$why" >> "$S/report"
+      keep "$S/report"
+      done_with 3 "${why:-the digest could not be checked}"
+    fi
     keep "$S/report"
     AD=$DEPS/$ACTION-$N
     confine_mkdir "$AD" && confine_mkdir "$AD/files" || done_with 3 "cannot create $R/deps/$ACTION-$N"
     iso_copy_new "$S/artifact" "$AD/$afile" || done_with 3 "cannot keep the artifact in $R/deps/$ACTION-$N"
-    result=$(registry_py unpack "$S/artifact" "$afile" "$algo" "$digest" "$AD/files") && rc=0 || rc=$?
+    registry_watched "$S/unpacked" unpack "$S/artifact" "$afile" "$algo" "$digest" "$AD/files" && rc=0 || rc=1
+    result=$(cat "$S/unpacked" 2>/dev/null)
+    why=$(stopped)
+    [ -z "$why" ] || result=${result:+$result$'\n'}"the unpack $why"
     printf '%s\n' "$result" >> "$DEPS/$ACTION-$N.txt"
     [ "$rc" = 0 ] || done_with 3 "${result##*$'\n'}"
     done_with 0 "$NAME $VER, its $algo digest as $reg gives it, unpacked into $R/deps/$ACTION-$N/files" ;;

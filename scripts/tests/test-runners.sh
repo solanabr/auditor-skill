@@ -728,7 +728,8 @@ def tgz(entries):
 crate = tgz([("demo-1.0.0/Cargo.toml", "file", b"[package]\nname = \"demo\"\n"), ("demo-1.0.0/src/lib.rs", "file", b"pub fn f() {}\n"),
              ("demo-1.0.0/../escape.txt", "file", b"no"), ("/abs.txt", "file", b"no"), ("demo-1.0.0/link", "sym", "/etc/passwd"),
              ("demo-1.0.0/hard", "hard", "demo-1.0.0/src/lib.rs"), ("demo-1.0.0/fifo", "fifo", ""), ("demo-1.0.0/dev", "dev", ""),
-             ("demo-1.0.0/esc\x1bname", "file", b"no"), ("demo-1.0.0/src/lib.rs", "file", b"again")])
+             ("demo-1.0.0/esc\x1bname", "file", b"no"), ("demo-1.0.0/src/lib.rs", "file", b"again"),
+             ("demo-1.0.0/" + "n" * 300, "file", b"long")])
 put("https://static.crates.io/crates/demo/demo-1.0.0.crate", crate)
 put("https://crates.io/api/v1/crates/demo/1.0.0", json.dumps({"version": {"num": "1.0.0", "crate": "demo", "checksum": hashlib.sha256(crate).hexdigest()}}))
 put("https://static.crates.io/crates/demo/demo-2.0.0.crate", crate)
@@ -810,8 +811,8 @@ check "fetch-artifact crates: the record from crates.io, then the .crate from st
   sh -c "[ '$RC' = 0 ] && grep -qxF 'url: https://crates.io/api/v1/crates/demo/1.0.0' '$T/calls' && grep -qxF 'url: https://static.crates.io/crates/demo/demo-1.0.0.crate' '$T/calls' && [ -f '$FA/demo-1.0.0.crate' ] && [ \"\$(cat '$FA/files/demo-1.0.0/src/lib.rs')\" = 'pub fn f() {}' ]"
 check "... only regular files and directories, modes 0600 and 0700, whatever the archive says" \
   sh -c "[ -z \"\$(find '$FA' ! -type f ! -type d -print)\" ] && [ -z \"\$(find '$FA/files' -type f ! -perm 600 -print)\" ] && [ -z \"\$(find '$FA/files' -type d ! -perm 700 -print)\" ] && [ ! -e '$WT/audit_1/deps/escape.txt' ] && [ ! -e '$FA/escape.txt' ]"
-check "... every entry left out is listed: unsafe names, links, special files, a name given twice" \
-  sh -c "for w in 'demo-1.0.0/../escape.txt: unsafe name' '/abs.txt: unsafe name' 'demo-1.0.0/link: symbolic link' 'demo-1.0.0/hard: hard link' 'demo-1.0.0/fifo: special file' 'demo-1.0.0/dev: special file' 'demo-1.0.0/esc?name: unsafe name' 'demo-1.0.0/src/lib.rs: the name is taken'; do grep -qF \"  \$w\" '$WT/audit_1/deps/fetch-artifact-$n.txt' || exit 1; done"
+check "... every entry left out is listed: unsafe names, links, special files, a name given twice, one too long to write" \
+  sh -c "for w in 'demo-1.0.0/../escape.txt: unsafe name' '/abs.txt: unsafe name' 'demo-1.0.0/link: symbolic link' 'demo-1.0.0/hard: hard link' 'demo-1.0.0/fifo: special file' 'demo-1.0.0/dev: special file' 'demo-1.0.0/esc?name: unsafe name' 'demo-1.0.0/src/lib.rs: the name is taken' 'nnnnnnnnnn: cannot be written: '; do grep -qF \"\$w\" '$WT/audit_1/deps/fetch-artifact-$n.txt' || exit 1; done"
 check "... the run directory still passes its check (no link was made)" sh -c "(cd '$WT' && '$ROOT/scripts/rundir.sh' check audit_1) >/dev/null"
 check "... one disclosure row, before the first request" sh -c "[ \$(( \$(wc -l < '$DT') - 1 - $r0 )) = 1 ] && sed -n '\$p' '$DT' | grep -q '	crates.io	crate name and version (the crates.io API, then the .crate download): demo@1.0.0	1\$'"
 run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates demo 2.0.0
