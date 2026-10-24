@@ -8,7 +8,8 @@
 # audit. A refusal is one stderr line, "sast: refused: <reason>", with exit 64, before anything is sent; a
 # blocker is one stderr line, "sast: blocker: <reason>", with exit 3.
 #
-# --path is a confined directory or regular file under the working directory. Each --ruleset is one of
+# --path is a confined directory or regular file under the working directory, holding no symbolic link that
+# resolves outside it (semgrep could read and quote what it points to). Each --ruleset is one of
 # p/rust, p/trailofbits, p/typescript, p/javascript, p/python, p/golang, p/secrets, p/github-actions and
 # p/solidity, each at most once. The scan runs
 #   semgrep scan --config <id>... --metrics=off --disable-version-check --sarif --output <scratch> --error -- <path>
@@ -86,6 +87,30 @@ else
   PATH_REL=$CONFINE_REL
 fi
 if [ "$PATH_REL" = . ]; then TARGET=$WT; else TARGET=$WT/$PATH_REL; fi
+# A symbolic link under the path that resolves outside the working directory would let semgrep read, and
+# quote into the SARIF, a file the audit never named (a key, say). .git is not scanned and not looked in.
+if [ -d "$TARGET" ]; then
+  command -v python3 >/dev/null 2>&1 || refuse "python3 is not on PATH, so the links under --path cannot be checked"
+  out=$( (cd / && exec python3 -I -c 'import os, re, sys
+top, wt = sys.argv[1], os.path.realpath(sys.argv[2]) + os.sep
+n = 0
+for d, dirs, files in os.walk(top, onerror=lambda e: (print("cannot be read"), sys.exit(2))):
+    dirs[:] = [x for x in dirs if x != ".git"]
+    for name in dirs + files:
+        n += 1
+        if n > 500000:
+            print("holds more than 500000 entries")
+            sys.exit(2)
+        p = os.path.join(d, name)
+        if os.path.islink(p) and not (os.path.realpath(p) + os.sep).startswith(wt):
+            print(re.sub(r"[\x00-\x1f\x7f]", "?", os.path.relpath(p, sys.argv[2]))[:200])
+            sys.exit(1)' "$TARGET" "$WT") 2>/dev/null)
+  case $? in
+    0) ;;
+    1) refuse "--path holds a symbolic link that resolves outside the working directory, $out; semgrep could read and quote what it points to, so scan a directory without it" ;;
+    *) refuse "the links under --path cannot be checked: it ${out:-cannot be read}" ;;
+  esac
+fi
 CAP=${AUDITOR_RUN_TIMEOUT:-1800}
 { case "$CAP" in ''|*[!0-9]*) false ;; *) [ "${#CAP}" -le 5 ] && [ "$CAP" -ge 1 ] && [ "$CAP" -le 86400 ] ;; esac; } ||
   refuse "AUDITOR_RUN_TIMEOUT is '$(confine_text "$CAP")', not a whole number of seconds from 1 to 86400"

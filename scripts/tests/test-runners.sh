@@ -884,6 +884,15 @@ printf 'programs/\n' > "$WT/src/.semgrepignore"
 run "$SAST" "$WT" -- semgrep --run audit_1 --path . --ruleset p/rust
 check "a .semgrepignore under the path is named in the last line" sh -c "[ '$RC' = 0 ] && grep -q '; note: .semgrepignore files narrow the scan: src/.semgrepignore\$' '$T/out'"
 rm -f "$WT/src/.semgrepignore"
+mkdir -p "$WT/src/inner"
+ln -s ../a.rs "$WT/src/inner/near.rs"
+run "$SAST" "$WT" -- semgrep --run audit_1 --path src --ruleset p/rust
+check "a link under --path that stays inside the working directory is fine" test "$RC" = 0
+ln -s "$CREDHOME/.ssh/id_rsa" "$WT/src/inner/key.rs"
+run "$SAST" "$WT" -- semgrep --run audit_1 --path src --ruleset p/secrets
+check "a link under --path that resolves outside the working directory is refused before anything is sent" \
+  sh -c "[ '$RC' = 64 ] && grep -qxF 'sast: refused: --path holds a symbolic link that resolves outside the working directory, src/inner/key.rs; semgrep could read and quote what it points to, so scan a directory without it' '$T/err' && [ ! -s '$T/calls' ] && [ -z \"\$(ls -A '$NT')\" ]"
+rm -rf "$WT/src/inner"
 run "$SAST" "$WT" PATH="$SPATH" -- semgrep --run audit_1 --path . --ruleset p/rust
 check "sast without semgrep: exit 3, nothing sent" sh -c "[ '$RC' = 3 ] && grep -qxF 'sast: blocker: semgrep is not on PATH, so the scan cannot run here — nothing was sent.' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
 
