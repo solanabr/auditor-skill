@@ -176,6 +176,9 @@ every later step that executes target code or builds a PoC uses this answer, and
 templates/poc/run.sh receives it as AUDITOR_EXEC_MODE. In the auto flow an
 unanswered Q46 is "native" and goes in §9 with its basis. Outside services are not
 gated — they are listed in the report (Rule 11b).
+Q47: whether DEP-072 / DEP-073 may probe the project's own hosts and buckets,
+read-only and unauthenticated. Unanswered, and always in the auto flow, it is "no"
+and goes in §9; those items then give the owner a command to run instead.
 -->
 
 | | |
@@ -184,6 +187,7 @@ gated — they are listed in the report (Rule 11b).
 | **Isolation used**        | {container / VM / Claude Code sandbox — no keys or credentials mounted / N/A (native)} |
 | **PoC build cache**       | {the directory made once with `mktemp -d` for this engagement's `run.sh` calls, passed as `CARGO_TARGET_DIR` — inside the isolated runner in isolated mode / none} |
 | **Outside services**      | {disclosed in the report per Rule 11b — e.g. RPC provider, second-opinion LLM, registry queries / none planned} |
+| **Live probes**           | {yes — read-only, unauthenticated probes of: <the hosts and buckets the client named or confirmed> / no} (Q47) |
 
 ---
 
@@ -204,6 +208,7 @@ human explicitly deferred.
 | {Q11 upgradeable — unanswered} | {assumed present; upgrade authority treated as trusted-but-single unless code shows otherwise} | QUESTIONS.md default |
 | {Q23 oracle — unanswered} | {assumed no oracle unless code shows a feed} | inferred from code |
 | {Q46 execution mode — unanswered} | {native — target-controlled code runs on the auditor's machine; the report states it} | OUTPUT-RULES Rule 11a default |
+| {Q47 live probes — unanswered or auto flow} | {no — DEP-072 / DEP-073 give the owner a command to run and stay `[PARTIAL]` until its output arrives} | QUESTIONS.md Q47 default |
 | {…} | {…} | {…} |
 
 > Every default listed here is carried into the report's **§4.6 Assumptions &

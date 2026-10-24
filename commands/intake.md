@@ -13,8 +13,8 @@ Turn the passive `QUESTIONS.md` questionnaire into a **persisted** `audit_<n>/in
 
 ## Mode
 
-- **Interactive (default)** — walk the human through the questions. Ask sharp, answerable questions; do not dump all 46 at once. Group by section, skip questions the repo already answers (detected language, framework), confirm rather than re-ask.
-- **`--auto`** — no human present (the `audit-cycle` path). Apply the `QUESTIONS.md` default for every unanswered question and record each under **Assumed Defaults (Unanswered)** with the exact default applied. Never leave a field blank; never assume silently.
+- **Interactive (default)** — walk the human through the questions. Ask sharp, answerable questions; do not dump all 47 at once. Group by section, skip questions the repo already answers (detected language, framework), confirm rather than re-ask.
+- **`--auto`** — no human present (the `audit-cycle` path). Apply the `QUESTIONS.md` default for every unanswered question and record each under **Assumed Defaults (Unanswered)** with the exact default applied. Never leave a field blank; never assume silently. Live probes (`Q47`) are always **no** in this mode.
 
 ## Steps
 
@@ -35,9 +35,11 @@ Turn the passive `QUESTIONS.md` questionnaire into a **persisted** `audit_<n>/in
 
 5. **Execution mode (`Q46`).** Ask once per audit where target-controlled code may run — **isolated** (recommended: container, VM, or Claude Code sandbox with no keys or credentials mounted) or **native** (the auditor's own machine) — per `OUTPUT-RULES.md` Rule 11a. Record the mode and the isolation used in §8 of `intake.md`; every later step that builds, tests or installs the target, or builds a PoC, uses it. Also tell the human that tools which send code, dependency names or addresses to outside services are listed in the report rather than gated (Rule 11b). In `--auto`, an unanswered `Q46` is recorded as **native** in **Assumed Defaults** with the basis "Rule 11a default when no mode is recorded" — and the report then states that target code ran on the auditor's machine.
 
-6. **Record assumed defaults.** In `--auto`, every unanswered question goes in the **Assumed Defaults (Unanswered)** table with the default applied and its basis. Each entry is carried into the report's **§4.6 Assumptions & Simplifications** as an explicit assumption — so "no finding here" reads against a stated default, not a blanket clearance. In interactive mode this table should be empty (everything was asked); if non-empty, it lists only what the human explicitly deferred.
+6. **Live probes (`Q47`).** Ask once whether DEP-072 and DEP-073 may probe the project's own live hosts and buckets: read-only and unauthenticated, and only hosts and buckets the human names, or that the repository's own deployment config names and the human confirms. Never a third-party service (`QUESTIONS.md` Q47). Record the answer and the named hosts and buckets in §8 of `intake.md`. In `--auto`, or when Q47 is unanswered, record **no** in **Assumed Defaults** with the basis "QUESTIONS.md Q47: no live probes without a human's yes"; those items then give the owner a command to run instead.
 
-7. **Write `audit_<n>/intake.md`.** `<n>` is the highest existing `audit_*` number + 1 (`OUTPUT-RULES.md` Rule 11d); create the dir with `mkdir` (not `mkdir -p`) and stop if it exists. Reuse an existing `audit_*` only if git does not track it (`GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false --icase-pathspecs ls-files -- audit_<n>` prints nothing and exits 0) and it holds no symbolic links (`find audit_<n> -type l` prints nothing and exits 0), and only after the human confirms which one. Never write into a tracked `audit_*`. The directory's first file is a `.gitignore` containing `*` (Rule 11d). This file is the intake of record.
+7. **Record assumed defaults.** In `--auto`, every unanswered question goes in the **Assumed Defaults (Unanswered)** table with the default applied and its basis. Each entry is carried into the report's **§4.6 Assumptions & Simplifications** as an explicit assumption — so "no finding here" reads against a stated default, not a blanket clearance. In interactive mode this table should be empty (everything was asked); if non-empty, it lists only what the human explicitly deferred.
+
+8. **Write `audit_<n>/intake.md`.** `<n>` is the highest existing `audit_*` number + 1 (`OUTPUT-RULES.md` Rule 11d); create the dir with `mkdir` (not `mkdir -p`) and stop if it exists. Reuse an existing `audit_*` only if git does not track it (`GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false --icase-pathspecs ls-files -- audit_<n>` prints nothing and exits 0) and it holds no symbolic links (`find audit_<n> -type l` prints nothing and exits 0), and only after the human confirms which one. Never write into a tracked `audit_*`. The directory's first file is a `.gitignore` containing `*` (Rule 11d). This file is the intake of record.
 
 ## Output
 

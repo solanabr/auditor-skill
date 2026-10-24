@@ -423,6 +423,13 @@ Building, testing or installing the project runs code the project controls — b
 
 > Tools that send code, dependency names or addresses to outside services (an RPC provider, a second-opinion LLM, package registries) are not gated by this answer; the report lists each one (Rule 11b).
 
+### Q47. May the auditor probe the project's own live hosts and buckets?
+DEP-072 (public cloud storage buckets) and DEP-073 (a `.git/` directory a web server exposes) can be checked against the deployed system. Asked once per audit. An unanswered Q47 counts as **no**, and so does every `/auditor:intake --auto` run.
+- [ ] **Yes** — read-only, unauthenticated probes of the project's own hosts and buckets: _______________
+- [ ] **No** — no live probes: the auditor gives the owner a command to run, and the item stays open until its output comes back, with the date
+
+> **The project's own:** a host or bucket named here, or named by the repository's own deployment config and confirmed by the client. Never a third-party service: shared CDNs, SaaS, the cloud provider's own APIs beyond the named bucket, package registries. A probe never uses the auditor's credentials, cookies or tool config (`aws s3 ls s3://<bucket> --no-sign-request`, `curl -q …`), and the report lists each one as an outside contact (Rule 11b).
+
 ---
 
 ## How Answers Affect the Audit
@@ -445,3 +452,5 @@ Building, testing or installing the project runs code the project controls — b
 | Q41 = Quick scan | Uses grep + known vectors only, skips semantic analysis |
 | Q46 = Isolated | Builds, tests, installs and every PoC build run in a container / VM / sandbox (`OUTPUT-RULES.md` Rule 11a); a step that cannot run there keeps its source-level verdict, and a PoC records `[PoC-ATTEMPTED]` |
 | Q46 = Native, or unanswered | Target-controlled code runs on the auditor's machine; the report's Coverage & Limitations states it |
+| Q47 = Yes | DEP-072 / DEP-073 may probe the hosts and buckets named or confirmed at intake, read-only and unauthenticated; the report lists each probe as an outside contact (`OUTPUT-RULES.md` Rule 11b) |
+| Q47 = No, unanswered, or `--auto` | No live probes: DEP-072 / DEP-073 give the owner a command to run and the evidence to send back (its output, with the date), and stay `[PARTIAL]` until it arrives, never `[PASS]` |
