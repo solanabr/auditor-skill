@@ -96,7 +96,8 @@
 #   iso_watch <seconds> <report> <dir> [NAME=value...] <program> [<arg>...]
 #                                runs <program> as iso_run does, in <dir>, with standard input closed, in a
 #                                session of its own, under ulimit -t of four times <seconds> and ulimit -f of
-#                                4 GiB. After <seconds> of wall-clock time every process of that session's
+#                                4194304 (ulimit -f counts 1024-byte blocks, so 4 GiB). After <seconds> of
+#                                wall-clock time every process of that session's
 #                                group gets SIGTERM, then SIGKILL five seconds later, and so does every one
 #                                left when <program> exits. python3 starts from /, so nothing in the working
 #                                directory picks the interpreter. It writes one line to <report>, a new file:
