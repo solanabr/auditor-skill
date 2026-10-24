@@ -9,6 +9,10 @@ use std::io::{self, BufRead, BufReader};
 use crate::confine::Checked;
 use crate::json::{parse_line, too_deep, Value};
 
+/// The longest line read as a transaction, in bytes, its LF left out. A longer one
+/// is malformed, and is read past without being kept.
+pub const MAX_LINE: usize = 64 << 20;
+
 /// What one pass skipped: later copies of a transaction, and per input the
 /// malformed lines (label, count, first line number).
 #[derive(Default)]
@@ -288,6 +292,41 @@ pub fn shaped(tx: &Value) -> bool {
     true
 }
 
+/// The next line of `reader` into `buf`, its LF left out: `None` at the end of the
+/// input, `Some(false)` for a line longer than `max` bytes, which is read to its LF
+/// but not kept, as the recipes' `_lines()` reads it.
+fn next_line(reader: &mut dyn BufRead, buf: &mut Vec<u8>, max: usize) -> io::Result<Option<bool>> {
+    buf.clear();
+    let (mut any, mut long) = (false, false);
+    loop {
+        let chunk = match reader.fill_buf() {
+            Ok(chunk) => chunk,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        };
+        if chunk.is_empty() {
+            return Ok(any.then_some(!long));
+        }
+        any = true;
+        let (take, end) = match chunk.iter().position(|&c| c == b'\n') {
+            Some(i) => (i, true),
+            None => (chunk.len(), false),
+        };
+        if !long {
+            if buf.len() + take > max {
+                long = true;
+                buf.clear();
+            } else {
+                buf.extend_from_slice(&chunk[..take]);
+            }
+        }
+        reader.consume(take + usize::from(end));
+        if end {
+            return Ok(Some(!long));
+        }
+    }
+}
+
 /// Python's `bytes.strip()`: space, tab, LF, CR, VT and FF at either end.
 fn strip(line: &[u8]) -> &[u8] {
     let ws = |c: &u8| matches!(c, b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C);
@@ -326,18 +365,15 @@ where
         };
         let mut bad: Option<usize> = None;
         let mut lineno: u64 = 0;
-        loop {
-            buf.clear();
-            if reader.read_until(b'\n', &mut buf)? == 0 {
-                break;
-            }
+        while let Some(kept) = next_line(reader.as_mut(), &mut buf, MAX_LINE)? {
             lineno += 1;
             let line = strip(&buf);
-            if line.is_empty() {
+            if kept && line.is_empty() {
                 continue;
             }
-            let tx = std::str::from_utf8(line)
-                .ok()
+            let tx = kept
+                .then_some(line)
+                .and_then(|line| std::str::from_utf8(line).ok())
                 .filter(|text| !too_deep(text.as_bytes()))
                 .and_then(parse_line)
                 .filter(shaped);
@@ -489,6 +525,34 @@ mod tests {
             "",
             r#""accountKeys":["K\u00a0\u00e9\u3000\u00ac\u2070\ufff9\ud82f\udca4\udb44\udc00"]"#
         ));
+    }
+
+    /// Each line `next_line` reads from `input` with a bound of 4 bytes, as the
+    /// bytes kept, or "LONG" for a line over the bound.
+    fn lines(input: &[u8], chunk: usize) -> Vec<String> {
+        let mut reader = BufReader::with_capacity(chunk, input);
+        let (mut buf, mut out) = (Vec::new(), Vec::new());
+        while let Some(kept) = next_line(&mut reader, &mut buf, 4).unwrap() {
+            out.push(match kept {
+                true => String::from_utf8(buf.clone()).unwrap(),
+                false => "LONG".to_string(),
+            });
+        }
+        out
+    }
+
+    #[test]
+    fn lines_over_the_bound_are_read_past() {
+        for chunk in [1, 2, 3, 64] {
+            assert_eq!(
+                lines(b"abcd\nabcde\n\nab", chunk),
+                ["abcd", "LONG", "", "ab"],
+                "{chunk}"
+            );
+            assert_eq!(lines(b"ab\nabcdefghij", chunk), ["ab", "LONG"], "{chunk}");
+            assert_eq!(lines(b"abcdefgh\nx\n", chunk), ["LONG", "x"], "{chunk}");
+            assert!(lines(b"", chunk).is_empty());
+        }
     }
 
     #[test]

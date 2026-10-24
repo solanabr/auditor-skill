@@ -708,6 +708,27 @@ def parsed(line):
     return tx if shaped(tx) else None
 
 
+# The longest line read as a transaction, in bytes, its LF left out. A longer one is
+# malformed, and is read past to its LF without being kept.
+_LINE = 64 << 20
+
+
+def _lines(fh):
+    """Each line of fh without its LF, or None for a line longer than _LINE bytes."""
+    while True:
+        raw = fh.readline(_LINE + 1)
+        if raw.endswith(b"\n"):
+            yield raw[:-1]
+        elif len(raw) <= _LINE:
+            if raw:
+                yield raw
+            return
+        else:
+            while raw and not raw.endswith(b"\n"):
+                raw = fh.readline(1 << 20)
+            yield None
+
+
 def records(paths, stats):
     """Yield (line, tx) for each well-formed line of the named inputs, which unusable()
     has checked (stdin when none is named), once per signature. stats["dupes"] counts
@@ -719,11 +740,11 @@ def records(paths, stats):
         fh = sys.stdin.buffer if path == "-" else opened(path)
         bad = None
         try:
-            for i, raw in enumerate(fh, 1):
-                line = raw.strip()
-                if not line:
+            for i, raw in enumerate(_lines(fh), 1):
+                line = raw.strip() if raw is not None else None
+                if line == b"":
                     continue
-                tx = parsed(line)
+                tx = parsed(line) if line is not None else None
                 if tx is None:
                     if bad is None:
                         bad = [label, 0, i]

@@ -977,6 +977,12 @@ def bal(amount):
     return {"accountIndex": 1, "mint": "MintM", "owner": "OwnerA", "uiTokenAmount": {"amount": amount, "decimals": 0}}
 def enc(obj):
     return json.dumps(obj, ensure_ascii=False).encode()
+LINE = 64 << 20
+def padded(n, t):
+    """t as one line of exactly n bytes, meta.pad holding the filler."""
+    t["meta"]["pad"] = ""
+    base = enc(t)
+    return base.replace(b'"pad": ""', b'"pad": "' + b"a" * (n - len(base)) + b'"', 1)
 def nested(bracket, depth):
     """The value of meta.x such that the deepest bracket of the line is at depth, the
     line's object being 1 and meta 2: objects ({"a": {...}}) or arrays ([[...]])."""
@@ -1068,6 +1074,7 @@ bad = {
     "a-lone-surrogate-in-a-key-of-an-object-replaced-later": enc(tx("SigBad68", meta_extra={"x": "PLACE"})).replace(
         b'"PLACE"', b'{"a": [{"\\ud800": 1}]}, "x": {}'),
     "a-lone-low-surrogate-under-a-top-level-key-repeated-later": b'{"note": "\\udc00", "note": "CRAFTED", ' + enc(tx("SigBad69"))[1:],
+    "a-line-over-64-MiB": padded(LINE + 1, tx("SigBad70")),
 }
 last = ("instruction-a-string", "keys-strings-and-objects", "header-count-a-string", "a-pubkey-that-is-an-object",
         "a-truncated-line-holding-a-drain", "nesting-300-deep", "nesting-300-deep-under-a-key-repeated-later",
@@ -1099,6 +1106,7 @@ good = {
         logs=["Program %s invoke [1]" % P, "Program log: a\u2060b\u3164c\uffa0d\U0001bca0e\ufff0f", "Program %s success" % P],
         pre_tb=[dict(bal("0"), owner="Own\u00ader\u034fX\U000e0001", mint="Mi\u180ent\ufe0f\U0001d173")],
         post_tb=[dict(bal("5"), owner="Own\u00ader\u034fX\U000e0001", mint="Mi\u180ent\ufe0f\U0001d173")])),
+    "a-line-of-64-MiB": padded(LINE, tx("SigGood16", mark=False)),
     "control-characters-in-owner-mint-and-signature": enc(tx("Sig\x0bGood9", pre=[10000, 5], post=[5000, 6], mark=False,
         pre_tb=[dict(bal("0"), owner="Own\x00er\u2028X", mint="Mi\x1e\x85nt")], post_tb=[dict(bal("5"), owner="Own\x00er\u2028X", mint="Mi\x1e\x85nt")])),
 }
@@ -1112,6 +1120,9 @@ for kind, cases, names in (("bad", bad, last), ("good", good, ("arrays-nested-12
     for name in names:
         with open(os.path.join(d, "%s-%s-last.jsonl" % (kind, name)), "wb") as f:
             f.write(clean + b"\n" + cases[name] + b"\n")
+# A line over 64 MiB that ends the input with no LF after it.
+with open(os.path.join(d, "bad-a-line-over-64-MiB-with-no-LF-at-the-end.jsonl"), "wb") as f:
+    f.write(clean + b"\n" + bad["a-line-over-64-MiB"])
 PY
 # runs20 <corpus>: exit status and malformed count of profile, frames, frames
 # --instructions, deltas lamports and deltas tokens, as "s:n s:n s:n s:n s:n", where n

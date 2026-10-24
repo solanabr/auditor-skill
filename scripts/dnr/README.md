@@ -89,7 +89,8 @@ because `python3 -I` keeps a sibling module off `sys.path`;
   reusing it with `"<auditor-skill root>/scripts/rundir.sh" check incident_<n>`.
 - **Lines.** Input is read as bytes and split on LF only, so a CR is not a line
   break. Surrounding ASCII whitespace is stripped (a CRLF line end is fine), and
-  a blank line is skipped without being counted.
+  a blank line is skipped without being counted. A line longer than 64 MiB, its
+  LF left out, is malformed: it is read past to its LF without being kept.
 - **Text.** A line must be valid UTF-8 and one JSON object. `NaN`, `Infinity`,
   a number too large for a float, and a `\u` escape that leaves a lone surrogate
   anywhere in the line (in a value a later duplicate key replaces too, since jq

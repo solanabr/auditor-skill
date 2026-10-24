@@ -234,7 +234,8 @@ Each subcommand prints what its script in `scripts/dnr/` prints, byte for byte:
 the rows of `deltas.py`, with the same `skipped …` notes on stderr and the same exit
 status. It reads its input under the same input contract
 (`scripts/dnr/README.md`, "Input contract"): a malformed line is counted and
-reported, never echoed and never fatal; a line nested more than 128 levels deep,
+reported, never echoed and never fatal; a line longer than 64 MiB is malformed, and
+is read past without being kept; a line nested more than 128 levels deep,
 counted on its text before it is parsed, or holding an integer literal of more than
 20 digits or `-0`, is malformed; a lamport balance, the fee or a token amount that
 is not a u64 value (0 to 2^64 − 1) makes its line malformed and is never rounded;
