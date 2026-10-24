@@ -74,7 +74,7 @@ confine_init() { # confine_init <tool> <installation root, physical> [<refusal s
   esac
   case "$CONFINE_WT" in *[[:cntrl:]]*) confine_refuse "the working directory path holds a control character" ;; esac
   case "$root/" in
-    "${CONFINE_WT%/}/"*) confine_refuse "the installation lies inside the working directory; install it outside the tree under audit (Rule 11e)" ;;
+    "${CONFINE_WT%/}/"*) confine_refuse "the installation lies inside the working directory; install it outside the tree under audit, or run from a directory that does not contain it (Rule 11e)" ;;
   esac
   rest="${PATH-}:"
   while [ -n "$rest" ]; do
