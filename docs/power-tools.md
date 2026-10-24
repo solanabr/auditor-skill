@@ -342,19 +342,20 @@ Attributes each `Program log:`, `Program data:` and `Program return:` line to th
 #### `deltas.py`
 
 ```bash
-"<auditor-skill root>/scripts/dnr/deltas.py" lamports|tokens [--out <file>] [<corpus.jsonl> ...]    # reads stdin when no file is named
+"<auditor-skill root>/scripts/dnr/deltas.py" lamports|tokens [--by account|owner,mint|mint] [--out <file>] [<corpus.jsonl> ...]    # reads stdin when no file is named
 ```
 
 Balance movements of successful transactions, computed in Python integers so that amounts above 2^53 stay exact.
 
 - `lamports` prints `signature`, `account`, `delta` for each non-zero lamport change, with the fee added back for the fee payer.
-- `tokens` prints one row per token account: `signature`, `owner` (`?` when the corpus names none), `mint`, `delta` in raw units, and the token account. Sum the rows per owner and mint for an owner's net movement.
-- A balance whose index has no account key is printed as `#<index>`. A token balance with no `accountIndex` has nothing to pair its pre and post sides by, so each side is a row of its own, `#?`. A note on stderr counts each kind; neither is ever merged with another account.
+- `tokens` prints one row per token account: `signature`, `owner` (`?` when the corpus names none), `mint`, `delta` in raw units, and the token account.
+- `--by` prints exact sums in place of the rows, the most negative first, then by name; a sum of 0 prints no row. `lamports --by account`: `account`, its net. `tokens --by owner,mint`: `owner`, `mint`, the net, and a fourth column, empty unless the corpus names no owner: such balances are summed per token account, which it names. `tokens --by mint`: `mint`, the sum of the owners' negative nets and how many owners had one, then the sum of the positive nets and how many. These are the blast-radius figures: an owner's net movement per mint, and a mint's total loss and number of losers.
+- A balance whose index has no account key is printed as `#<index>`. A token balance with no `accountIndex` has nothing to pair its pre and post sides by, so each side is a row of its own, `#?`. A note on stderr counts each kind; neither is ever merged with another account. Such a name stands for an account only within its own transaction, so no `--by` sum holds a lamport row so named, nor a token row with no owner either; a note counts them.
 
 The output is TSV on stdout; tabs, newlines, carriage returns and backslashes inside a field are escaped, and so is every other character of the input contract's fixed list (control characters, line and paragraph separators, bidirectional controls, and the code points Unicode marks default-ignorable, zero-width characters among them; `scripts/dnr/README.md`). Several corpora count each signature once. An amount or balance that is not an exact integer (a float, `1_000`, a non-ASCII digit) makes its line malformed under the shared input contract: the line is skipped and counted, never rounded. Skipped copies, and each input's malformed lines, are reported on stderr; the malformed lines are collection gaps.
 
-- **Arguments:** the mode, then `--out <file>` (written as `frames.py` writes it), then corpus files or none; each named file is checked as for `profile.sh`.
-- **Exit:** 0 done · 2 a missing or unknown mode, or a path the input contract refuses, as for `profile.sh` · 1 a file that cannot be read, or an `--out` that cannot be written, checked before any row is printed.
+- **Arguments:** the mode, then `--by <grouping>` and `--out <file>` (written as `frames.py` writes it), each at most once, then corpus files or none; each named file is checked as for `profile.sh`.
+- **Exit:** 0 done · 2 a missing or unknown mode, a grouping the mode does not take, or a path the input contract refuses, as for `profile.sh` · 1 a file that cannot be read, or an `--out` that cannot be written, checked before any row is printed.
 - **Network:** none. **Writes:** stdout, or the `--out` file.
 
 #### `redact.sh`

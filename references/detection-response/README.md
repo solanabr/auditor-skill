@@ -58,8 +58,8 @@ not the thing standing between the treasury and the exit.
    Never send to, or `simulateTransaction` against, a public cluster.
 5. **Numbers are measured, not remembered.** Counts, totals, distinct-victim
    figures, windows and any dollar amount must each come from a query executed in
-   this run and logged as a ledger row; nothing is estimated. Sum u64 values in
-   Python ints — `jq` and `awk` both use doubles.
+   this run and logged as a ledger row; nothing is estimated. Sum u64 values with
+   `deltas.py --by`, or in Python ints — `jq` and `awk` both use doubles.
 6. **Secrets stay out of everything you write.** The RPC endpoint is read from
    `$RPC_URL` and never echoed; run any command that might print it as
    `set -o pipefail; <cmd> 2>&1 | bash "<auditor-skill root>/scripts/dnr/redact.sh"`

@@ -226,12 +226,12 @@ protocol_profile(program_id PK, protocol_class, trust_assumptions_json,
 ```
 audit-logs profile [--out <file>] <corpus.jsonl>...
 audit-logs frames [--instructions] [--out <file>] [<corpus.jsonl>...]
-audit-logs deltas lamports|tokens [--out <file>] [<corpus.jsonl>...]
+audit-logs deltas lamports|tokens [--by account|owner,mint|mint] [--out <file>] [<corpus.jsonl>...]
 ```
 
 Each subcommand prints what its script in `scripts/dnr/` prints, byte for byte:
 `profile` the report of `profile.sh`, `frames` the records of `frames.py`, `deltas`
-the rows of `deltas.py`, with the same `skipped …` notes on stderr and the same exit
+the rows of `deltas.py`, or with `--by` its sums, with the same `skipped …` notes on stderr and the same exit
 status. It reads its input under the same input contract
 (`scripts/dnr/README.md`, "Input contract"): a malformed line is counted and
 reported, never echoed and never fatal; a line longer than 64 MiB is malformed, and
