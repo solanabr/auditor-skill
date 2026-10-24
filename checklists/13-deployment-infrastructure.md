@@ -110,8 +110,8 @@ Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{seve
 
 ## 13.10 — Production Hardening
 
-- [ ] **DEP-072**: Cloud storage buckets (S3, GCS, Azure Blob) are NOT publicly readable or writable — verify with `aws s3 ls` or equivalent
-- [ ] **DEP-073**: `.git` directory not accessible in production web server (test: `curl https://domain/.git/HEAD`)
+- [ ] **DEP-072**: Cloud storage buckets (S3, GCS, Azure Blob) are NOT publicly readable or writable — verify read access with an unauthenticated, read-only listing, such as `aws s3 ls s3://<bucket> --no-sign-request` (a listing, not `AccessDenied`, means the bucket is public), or the equivalent for GCS / Azure. Run it only when `QUESTIONS.md` Q47 allows live probes, only for a bucket that is the project's own (Q47), and list it in the report as an outside contact (Rule 11b). Otherwise give the owner that command and ask for its output with the date; until it arrives the item stays `[PARTIAL]`, never `[PASS]`. Write access is never probed: judge it from the bucket policy and ACLs, in the IaC or from the owner
+- [ ] **DEP-073**: `.git` directory not accessible in production web server — test with an unauthenticated request that reads no cookies, netrc or curl config: `curl -q -sS -o /dev/null -w '%{http_code}' https://<host>/.git/HEAD` (`200` means exposed; `-q` stays first, so `.curlrc` is not read). Run it only when `QUESTIONS.md` Q47 allows live probes, only against a host that is the project's own (Q47), and list it in the report as an outside contact (Rule 11b). Otherwise give the owner that command and ask for its output with the date; until it arrives the item stays `[PARTIAL]`, never `[PASS]`
 - [ ] **DEP-074**: Backup files (.bak, .sql, .dump, .old, .swp) not accessible via web server
 - [ ] **DEP-075**: Docker containers run as non-root user with minimal capabilities and read-only filesystem where possible
 - [ ] **DEP-076**: Default credentials changed on ALL services before production deployment (databases, admin panels, queues, caches)
