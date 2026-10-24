@@ -206,7 +206,7 @@ It reads every file whose frontmatter Claude Code loads: each `.md` file at any 
   double a `'`.
 - `tools` and `allowed-tools` list `Name` or `Name(pattern)` entries, either on one line separated by `, `
   or one per line as `  - item`; an item may be single-quoted, as in
-  `  - 'Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh" *)'`. A pattern holds no parentheses, and
+  `  - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh" *)'`. A pattern holds no parentheses, and
   agents list tool names only. `allowed-tools` lists nothing from `FORBIDDEN_ALLOWED_TOOLS` in the script
   (today `*`), nor a catch-all pattern of a name in it, such as `Bash(*)` once `Bash` is listed.
 - The block is at most 65,536 bytes and holds at most 256 of `[`, `{` and ` - `.
