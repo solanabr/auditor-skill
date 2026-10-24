@@ -104,8 +104,8 @@ collection there is no `corpus*/`, and the line then fails.
   `frames.py`).
 - **Anything else** prompts the human or is denied: `jq` itself, a bare
   `python3`, `solana`, `curl`, a bundled script not listed above. A read outside
-  these forms that the work needs, such as the keyless `getAccountInfo` recipe in
-  the log-sources reference, is attempted once as written there; when it is
+  these forms that the work needs, such as an `rpc-read.sh` read from the
+  log-sources reference, is attempted once as written there; when it is
   denied, record the gap in the ledger and in your report, and never work around
   it.
 

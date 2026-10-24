@@ -123,8 +123,10 @@ write-up.
   - `set -o pipefail; <cmd> 2>&1 | bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/redact.sh"` for anything that might print `$RPC_URL`, on one command line: `set -o pipefail` keeps `<cmd>`'s failure as the exit status. It is none of the forms above, so the human approves it
 - **CLI reads are keyless.** Program bytes and `program show` come only from
   `snapshot-program.sh`, signature history and transactions only from the corpora
-  the command collected; any other `solana` read uses the throwaway-config recipe
-  in the log-sources reference, never `--url`.
+  the command collected; any other read (an account's current value, one
+  transaction) goes through
+  `"${CLAUDE_PLUGIN_ROOT}/scripts/rpc-read.sh" account <address>|confirm <signature> --run incident_<n>`,
+  which asks for approval: never `solana` itself, and never `--url`.
 - **Query, never pour in.** Profile and interrogate the corpus with the shipped
   recipes and `jq-ro.sh`; never read a multi-megabyte corpus file into context.
   Any other one-off over the corpus is `python3 -I` and prompts the human. Each
