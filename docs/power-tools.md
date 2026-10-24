@@ -257,7 +257,7 @@ The one gated collector: it pages each address's signature history, failed trans
 | `--max-tx N` | `getTransaction` calls in total, failures included (default 2000, at most `AUDITOR_RPC_MAX_TX`); the oldest signatures are left out first. After 10 failed calls in a row the run stops |
 | `-- <address> ...` | the base58 addresses to page, at most `AUDITOR_RPC_MAX_ADDRESSES` |
 
-- **Caps:** no argument can go past the caps set in the environment, where a command line cannot set them: `AUDITOR_RPC_MAX_PAGES` (default 100), `AUDITOR_RPC_MAX_TX` (default 10000) and `AUDITOR_RPC_MAX_ADDRESSES` (default 25). A value over its cap is refused, naming the variable to raise.
+- **Caps:** no argument can go past the caps set in the environment, where a command line cannot set them: `AUDITOR_RPC_MAX_PAGES` (default 100), `AUDITOR_RPC_MAX_TX` (default 10000) and `AUDITOR_RPC_MAX_ADDRESSES` (default 25). A value over its cap is refused, naming the variable to raise; a default over a cap set lower drops to that cap, and the run's `caps:` line prints the values used.
 - **Exit:**
   - 0: done, collection gaps included.
   - 2, refused before anything is written or sent, with one line, `collect.sh: refused: <reason>`:

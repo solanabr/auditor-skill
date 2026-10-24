@@ -44,7 +44,8 @@ A collection is the slow step: `collect.sh` makes up to addresses ×
 `--max-pages` + `--max-tx` calls, one at a time, each up to 60 seconds, and
 usually well under one second on a healthy endpoint. No argument raises the caps
 set in the environment: `AUDITOR_RPC_MAX_PAGES` (default 100),
-`AUDITOR_RPC_MAX_TX` (default 10000) and `AUDITOR_RPC_MAX_ADDRESSES` (default 25). Run a long one in the
+`AUDITOR_RPC_MAX_TX` (default 10000) and `AUDITOR_RPC_MAX_ADDRESSES` (default
+25); a default over a cap set lower drops to that cap. Run a long one in the
 background, or with a timeout sized from that call count; never let a short
 tool timeout cut it off unnoticed. A run stopped by INT, TERM or HUP records
 what it had not finished as collection gaps and prints its closing lines. A run

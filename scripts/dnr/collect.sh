@@ -30,7 +30,8 @@
 #     the user sets in the environment: AUDITOR_RPC_MAX_PAGES (default 100),
 #     AUDITOR_RPC_MAX_TX (default 10000) and AUDITOR_RPC_MAX_ADDRESSES (default 25,
 #     the addresses after --). A value over its cap is refused (exit 2) with the
-#     variable to raise; a cap that is not a plain integer is refused too.
+#     variable to raise, and a default over a cap set lower drops to that cap; a
+#     cap that is not a plain integer is refused too.
 #   * DISCLOSED: before the first call, one row goes into
 #     incident_<n>/disclosures.tsv (OUTPUT-RULES.md Rule 11b; the format is in
 #     scripts/lib/confine.sh): the provider domain and the addresses queried. A run
@@ -215,12 +216,21 @@ cap() {
   [[ "$CAP" =~ ^[0-9]{1,18}$ ]] || confine_refuse "$1 in the environment is not a plain integer: $(confine_text "$CAP")"
   CAP=$((10#$CAP))
 }
+# A value given over its cap is refused; a default over a cap set lower drops to that cap.
 cap AUDITOR_RPC_MAX_PAGES 100
-[ "$max_pages" -le "$CAP" ] ||
-  confine_refuse "--max-pages $max_pages is over the cap of $CAP pages per address; to allow more, raise AUDITOR_RPC_MAX_PAGES in the environment"
+if [ "$max_pages" -gt "$CAP" ]; then
+  case "$seen" in
+    *" --max-pages "*) confine_refuse "--max-pages $max_pages is over the cap of $CAP pages per address; to allow more, raise AUDITOR_RPC_MAX_PAGES in the environment" ;;
+  esac
+  max_pages=$CAP
+fi
 cap AUDITOR_RPC_MAX_TX 10000
-[ "$max_tx" -le "$CAP" ] ||
-  confine_refuse "--max-tx $max_tx is over the cap of $CAP getTransaction calls; to allow more, raise AUDITOR_RPC_MAX_TX in the environment"
+if [ "$max_tx" -gt "$CAP" ]; then
+  case "$seen" in
+    *" --max-tx "*) confine_refuse "--max-tx $max_tx is over the cap of $CAP getTransaction calls; to allow more, raise AUDITOR_RPC_MAX_TX in the environment" ;;
+  esac
+  max_tx=$CAP
+fi
 cap AUDITOR_RPC_MAX_ADDRESSES 25
 [ "${#addrs[@]}" -le "$CAP" ] ||
   confine_refuse "${#addrs[@]} addresses are over the cap of $CAP; to allow more, raise AUDITOR_RPC_MAX_ADDRESSES in the environment"

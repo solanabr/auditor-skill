@@ -1149,7 +1149,8 @@ eq "run dir: a TMPDIR inside the working directory is a blocker (exit 3), with n
 #     after a value option is that value, and the environment caps bound
 #     --max-pages, --max-tx and the addresses. Arguments cannot raise a cap; a
 #     value over its cap, or a cap that is not an integer, is refused (exit 2)
-#     naming the variable, before any call.
+#     naming the variable, before any call. A default over a cap set lower drops
+#     to the cap.
 # ---------------------------------------------------------------------------
 rm -f "$FAKE_CURL_LOG"
 G2="$(cd "$WT" && "$RUNDIR" new incident)"
@@ -1178,7 +1179,6 @@ eq "caps: a lower cap in the environment holds (AUDITOR_RPC_MAX_PAGES=3, --max-p
 eq "caps: ... AUDITOR_RPC_MAX_TX=1, --max-tx 2: exit 2" "$(AUDITOR_RPC_MAX_TX=1 rc_collect --out "$G2/corpus" --confirmed --max-tx 2 -- "$A_ADDR")" "2"
 eq "caps: ... AUDITOR_RPC_MAX_ADDRESSES=1, two addresses: exit 2" \
   "$(AUDITOR_RPC_MAX_ADDRESSES=1 rc_collect --out "$G2/corpus" --confirmed -- "$A_ADDR" "AddrB111111111111111111111111111111111111111")" "2"
-eq "caps: the default --max-tx (2000) is over a cap of 1000 too (exit 2)" "$(AUDITOR_RPC_MAX_TX=1000 rc_collect --out "$G2/corpus" --confirmed -- "$A_ADDR")" "2"
 for bad_cap in abc -1 1e3 "12 3" 1234567890123456789; do
   eq "caps: AUDITOR_RPC_MAX_PAGES='$bad_cap' is refused (exit 2)" "$(AUDITOR_RPC_MAX_PAGES="$bad_cap" rc_collect --out "$G2/corpus" --confirmed -- "$A_ADDR")" "2"
 done
@@ -1188,6 +1188,9 @@ eq "caps: refused runs made no RPC call and wrote nothing" "$(calls getSignature
 eq "caps: a value at a raised cap is accepted (AUDITOR_RPC_MAX_PAGES=150, --max-pages 150: exit 0)" \
   "$(AUDITOR_RPC_MAX_PAGES=150 rc_collect --out "$G2/corpus" --confirmed --max-pages 150 -- "$A_ADDR")" "0"
 eq "caps: an empty cap variable takes the default" "$(AUDITOR_RPC_MAX_TX= rc_collect --out "$G2/corpus-2" --confirmed --max-tx 10000 -- "$A_ADDR")" "0"
+eq "caps: caps set below the defaults lower them (AUDITOR_RPC_MAX_PAGES=3, AUDITOR_RPC_MAX_TX=1000, neither option: exit 0)" \
+  "$(AUDITOR_RPC_MAX_PAGES=3 AUDITOR_RPC_MAX_TX=1000 rc_collect --out "$G2/corpus-3" --confirmed -- "$A_ADDR")" "0"
+eq "caps: ... and the run prints the caps it used" "$(grep -c 'caps: max_pages=3 max_tx=1000$' "$TT/rc.out")" "1"
 
 # ---------------------------------------------------------------------------
 # 16. Disclosure (OUTPUT-RULES.md Rule 11b): before its first call collect.sh adds
