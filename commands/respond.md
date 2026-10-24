@@ -109,12 +109,15 @@ directory.
      rule; with `--fresh`, or when no one can confirm (a non-interactive run),
      create a new one.
    - From here on, every path this command passes on and every phase brief names
-     that one directory, spelled exactly as `rundir.sh` printed or checked it.
-     Never write into another `incident_*`, one in another letter case, or one git
-     tracks. The bundled scripts take only `incident_<n>` directly in the working
-     directory, holding its `.gitignore` of `*`, and refuse (exit 2) one that is or
-     holds a symbolic link or is reached through one, a path with a `.` or `..`
-     component, and one that git or find cannot check.
+     that one directory, spelled exactly as `rundir.sh` printed or checked it. Never
+     write into another `incident_*`, one in another letter case, or one git tracks.
+     Every bundled script takes only `incident_<n>` directly in the working
+     directory, holding its `.gitignore` of `*`, reached through no symbolic link
+     and with no `.` or `..` component, and refuses any other (exit 2; `rundir.sh`
+     exits 64). The collectors, `jq-ro.sh` and `rundir.sh` also refuse one that
+     holds a symbolic link anywhere in it, that git tracks, or that git or find
+     cannot check; the recipes and `audit-logs` check only the paths they read and
+     write.
    - **Snapshot every implicated program now:**
      `"${CLAUDE_PLUGIN_ROOT}/scripts/dnr/snapshot-program.sh" <program_id> incident_<n>`
      — read-only `solana program show` + `solana program dump` (loader-v4:
