@@ -196,9 +196,11 @@ because `python3 -I` keeps a sibling module off `sys.path`;
 - **audit-logs.** `tools/auditor-tools/audit-logs` is the same three recipes as
   one binary, and `scripts/tests/test-audit-logs.sh` fails when its output,
   notes, exit status or refusals differ from these scripts'. A change to what a
-  recipe prints, accepts or refuses goes into both; a binary built before such a
-  change refuses to run (exit 4, `audit-logs: stale build: …`) until it is
-  rebuilt.
+  recipe prints, accepts or refuses goes into both. Build it again after every
+  update: a binary built before a change to one of these recipes, to
+  `scripts/lib/confine.sh` or to its own `Cargo.toml` or `src/` refuses to run
+  (exit 4, `audit-logs: stale build: …`) until it is rebuilt, and one built
+  before any other change runs as before.
 
 ## Two hazards these encode, and why
 

@@ -2,9 +2,10 @@
 # test-audit-logs.sh — audit-logs (tools/auditor-tools/audit-logs) against the scripts it
 # mirrors, scripts/dnr/profile.sh, frames.py and deltas.py, and its confinement.
 #
-# Builds audit-logs from a copy of its package and of the three recipes it carries a copy
-# of (its one dependency, libc, comes from the cargo cache or crates.io), runs it and the
-# scripts on the same corpora from the same working directory,
+# Builds audit-logs from a copy of its package, of the three recipes it mirrors and of
+# scripts/lib/confine.sh, the files it compares at start (its one dependency, libc, comes
+# from the cargo cache or crates.io), runs it and the scripts on the same corpora from the
+# same working directory,
 # and compares, for each of the five recipes (profile, frames, frames --instructions,
 # deltas lamports, deltas tokens), the exit status, stdout and the "skipped" notes on
 # stderr. The corpora:
@@ -55,11 +56,13 @@ T="$(cd "$T" && pwd -P)" || exit 1
 
 # ---------------------------------------------------------------------------
 # 0. The binary: AUDIT_LOGS when given, else a release build of a copy of the
-#    package laid out as in the repository, beside a copy of the three recipes it
-#    carries (SRC), a workspace of its own with the release profile of
+#    package laid out as in the repository, beside a copy of the three recipes and of
+#    scripts/lib/confine.sh (SRC), a workspace of its own with the release profile of
 #    tools/auditor-tools and a lockfile of its two packages, audit-logs and libc,
 #    taken from tools/auditor-tools/Cargo.lock. The package has one dependency, libc, no build
 #    script, and no code that opens a socket, runs a program or reads the environment.
+#    The files it compares at start, to refuse a stale build, are the recipes,
+#    scripts/lib/confine.sh, its Cargo.toml and every file of its src/.
 # ---------------------------------------------------------------------------
 if grep -nE 'std::net|TcpStream|UdpSocket|process::Command|Command::new|env::var|set_var|env::vars|libc::(socket|connect|bind|listen|accept|exec[a-z]*|posix_spawn[a-z]*|fork|vfork|system|popen|getenv|setenv|putenv)\b' \
     "$PKG"/src/*.rs > "$T/apis"; then
@@ -70,6 +73,14 @@ fi
 deps="$(awk '/^\[/ { d = ($0 ~ /dependencies\]$/) } d && /=/' "$PKG/Cargo.toml")"
 if [[ "$deps" == 'libc = "0.2"' && ! -e "$PKG/build.rs" ]]; then ok "source: audit-logs has one dependency, libc, and no build script"
 else bad "source: audit-logs has other dependencies, or a build script ($deps)"; fi
+unlisted=""
+for f in scripts/dnr/profile.sh scripts/dnr/frames.py scripts/dnr/deltas.py scripts/lib/confine.sh \
+    tools/auditor-tools/audit-logs/Cargo.toml "$PKG"/src/*.rs; do
+  case "$f" in /*) f="tools/auditor-tools/audit-logs/src/${f##*/}" ;; esac
+  grep -qxF "    \"$f\"," "$PKG/src/main.rs" || unlisted="$unlisted $f"
+done
+if [[ -z "$unlisted" ]]; then ok "source: the stale-build check compares the recipes, confine.sh, Cargo.toml and every src/*.rs"
+else bad "source: the stale-build check leaves out$unlisted"; fi
 
 if [[ -n "${AUDIT_LOGS:-}" ]]; then
   case "$AUDIT_LOGS" in /*) BIN="$AUDIT_LOGS" ;; *) BIN="$PWD/$AUDIT_LOGS" ;; esac
@@ -78,9 +89,10 @@ if [[ -n "${AUDIT_LOGS:-}" ]]; then
 elif command -v cargo >/dev/null 2>&1; then
   SRC="$T/src"
   P="$SRC/tools/auditor-tools/audit-logs"
-  mkdir -p "$P" "$SRC/scripts/dnr"
+  mkdir -p "$P" "$SRC/scripts/dnr" "$SRC/scripts/lib"
   cp -R "$PKG/Cargo.toml" "$PKG/src" "$P/"
   cp "$DNR/profile.sh" "$DNR/frames.py" "$DNR/deltas.py" "$SRC/scripts/dnr/"
+  cp "$ROOT/scripts/lib/confine.sh" "$SRC/scripts/lib/"
   { printf '\n[workspace]\n\n'; awk '/^\[/ { p = ($0 == "[profile.release]") } p' "$ROOT/tools/auditor-tools/Cargo.toml"; } >> "$P/Cargo.toml"
   { awk '/^\[\[package\]\]/ { exit } /^version = / { print }' "$ROOT/tools/auditor-tools/Cargo.lock"
     awk 'BEGIN { RS = ""; ORS = "\n\n" } /\nname = "(audit-logs|libc)"\n/ { print "\n" $0 }' "$ROOT/tools/auditor-tools/Cargo.lock"; } > "$P/Cargo.lock"
@@ -833,29 +845,34 @@ with open(cases, encoding="utf-8") as f:
 PY
 }
 # ---- end of hostile layout ----
-# A stale build: audit-logs carries a copy of the three recipes it was built from and
-# compares it with the installed ones before anything else. With a recipe of the copy
-# this suite built changed, or missing, every subcommand writes nothing and exits 4
-# with one line; with the recipes as they were, it runs again.
+# A stale build: audit-logs carries a copy of the files it was built from (the three
+# recipes, scripts/lib/confine.sh, its Cargo.toml and src/) and compares it with the
+# installed ones before anything else. With one of them changed in the copy this suite
+# built, or missing, every subcommand writes nothing and exits 4 with one line naming
+# it; with the files as they were, it runs again.
 if [[ -n "${SRC:-}" ]]; then
-  stale() { # stale <recipe>: "status:stdout lines:stale lines" for profile, frames and deltas tokens
+  stale() { # stale <file>: "status:stdout lines:stale lines" for profile, frames and deltas tokens
     local res="" r
     for r in profile frames "deltas tokens"; do
       # $r is the subcommand, then its mode: separate words.
       ( cd "$WT" && "$BIN" $r incident_1/corpus/clean-mixed.jsonl ) > "$T/stale.out" 2> "$T/stale.err"
-      res="$res $?:$(grep -c . "$T/stale.out"):$(grep -c "^audit-logs: stale build: scripts/dnr/$1 is not the one it was built from; rebuild it (cargo build --release --locked in tools/auditor-tools) or run the scripts$" "$T/stale.err")"
+      res="$res $?:$(grep -c . "$T/stale.out"):$(grep -cxF "audit-logs: stale build: $1 is not the one it was built from; rebuild it (cargo build --release --locked in tools/auditor-tools) or run the scripts" "$T/stale.err")"
     done
     echo "${res# }"
   }
-  printf '\n' >> "$SRC/scripts/dnr/frames.py"
-  eq "stale build: a recipe changed since the build -> each subcommand exits 4, prints nothing, says to rebuild or run the scripts" \
-    "$(stale frames.py)" "4:0:1 4:0:1 4:0:1"
-  cp "$DNR/frames.py" "$SRC/scripts/dnr/frames.py"
+  for f in scripts/dnr/frames.py scripts/lib/confine.sh tools/auditor-tools/audit-logs/Cargo.toml \
+      tools/auditor-tools/audit-logs/src/num.rs; do
+    cp "$SRC/$f" "$T/stale.keep"
+    printf '\n' >> "$SRC/$f"
+    eq "stale build: $f changed since the build -> each subcommand exits 4, prints nothing, says to rebuild or run the scripts" \
+      "$(stale "$f")" "4:0:1 4:0:1 4:0:1"
+    cp "$T/stale.keep" "$SRC/$f"
+  done
   mv "$SRC/scripts/dnr/deltas.py" "$T/deltas.py.away"
-  eq "stale build: a recipe missing -> the same" "$(stale deltas.py)" "4:0:1 4:0:1 4:0:1"
+  eq "stale build: a recipe missing -> the same" "$(stale scripts/dnr/deltas.py)" "4:0:1 4:0:1 4:0:1"
   mv "$T/deltas.py.away" "$SRC/scripts/dnr/deltas.py"
   ( cd "$WT" && "$BIN" frames incident_1/corpus/clean-mixed.jsonl ) > /dev/null 2>&1
-  eq "stale build: with the recipes as they were built, it runs again" "$?" "0"
+  eq "stale build: with the files as they were built, it runs again" "$?" "0"
 else
   echo "note: AUDIT_LOGS names a binary built elsewhere; the stale-build cases are left out"
 fi

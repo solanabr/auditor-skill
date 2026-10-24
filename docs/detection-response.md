@@ -115,8 +115,8 @@ already captured.
   [`audit-logs`](power-tools.md#audit-logs) is built in the installation, the
   commands run it in place of the three analysis scripts: the same figures from
   one offline binary, checked against the scripts by
-  `scripts/tests/test-audit-logs.sh`. Without it, or when it reports a stale
-  build, they run the scripts.
+  `scripts/tests/test-audit-logs.sh`. Build it again after every update. Without
+  it, or when it reports a stale build, they run the scripts.
 - **Scripts run from the installation, never from the audited repo.** The commands
   invoke them by absolute path, `"<auditor-skill root>/scripts/dnr/…"`, and run
   python as `python3 -I`, so a same-named script, or a `json.py` the repo ships in

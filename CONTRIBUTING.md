@@ -56,8 +56,10 @@ bash scripts/check-attribution.sh origin/main..HEAD
 
 A change to what `scripts/dnr/profile.sh`, `frames.py` or `deltas.py` prints, accepts or refuses goes into
 `tools/auditor-tools/audit-logs` too: `scripts/tests/test-audit-logs.sh` compares the two and fails until
-they agree, and a binary built before the change refuses to run (exit 4) until it is rebuilt. Without cargo
-that suite is skipped; CI runs it with `REQUIRE_TOOLCHAIN=1`, where a missing cargo fails it.
+they agree. A binary built before a change to those recipes, to `scripts/lib/confine.sh` or to its own
+`Cargo.toml` or `src/` refuses to run (exit 4) until it is rebuilt; a new file in `audit-logs/src/` goes
+into the `BUILT_FROM` list in its `main.rs`, which the suite checks. Without cargo that suite is skipped;
+CI runs it with `REQUIRE_TOOLCHAIN=1`, where a missing cargo fails it.
 
 ---
 

@@ -163,9 +163,9 @@ subcommand: `profile`, `frames [--instructions]`, `deltas tokens|lamports`. It p
 the same output and notes, reads and refuses the same paths and exits the same
 way, but for the differences `tools/auditor-tools/README.md` lists;
 `scripts/tests/test-audit-logs.sh` checks it against the scripts. Run the scripts
-instead when it exits 4 (`audit-logs: stale build: …`: the recipes changed since it
-was built), cannot run, or dies on a signal. Never look for it on `PATH`, and never
-build it in the audited repository.
+instead when it exits 4 (`audit-logs: stale build: …`: a file it was built from has
+changed since), cannot run, or dies on a signal. Never look for it on `PATH`, and
+never build it in the audited repository.
 
 The three analysis recipes share one input contract (`scripts/dnr/README.md`).
 They read only regular files with one name in `incident_<n>/`, by paths relative

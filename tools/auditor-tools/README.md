@@ -41,8 +41,10 @@ A plugin update installs auditor-skill into a new versioned directory, so the
 binaries have to be built again after each update. Until `audit-logs` is built
 there, `/auditor:hunt`, `/auditor:respond` and `incident-responder` run the scripts
 in `scripts/dnr/`. An update in place, such as a `git pull` of a clone, leaves the
-old `audit-logs` in `target/`, which then refuses to run (exit 4, below) until it is
-built again.
+old `audit-logs` in `target/`, so build it again after any update: the old binary
+refuses to run (exit 4, below) only when the update changed a file it was built
+from, that is one of the three recipes, `scripts/lib/confine.sh`, or its own
+`Cargo.toml` or `src/`.
 
 ## `audit-scan`
 
@@ -256,16 +258,21 @@ that file exists and is executable:
 
 ### A stale build
 
-`audit-logs` carries a copy of the three recipes it was built from (`include_bytes!`
-of `scripts/dnr/profile.sh`, `frames.py` and `deltas.py`, read from the installation
-it was built in). Before anything else it compares them with the installed ones;
-when one differs, or cannot be read, it writes nothing and exits 4 with one line:
+`audit-logs` carries a copy of the files it was built from, read with
+`include_bytes!` from the installation it was built in: the three recipes it mirrors
+(`scripts/dnr/profile.sh`, `frames.py` and `deltas.py`), `scripts/lib/confine.sh`,
+which `profile.sh` sources, and its own `Cargo.toml` and `src/*.rs`. Once it has
+checked its installation path (below), and before it reads any argument, it compares
+them with the installed files; when one differs, or cannot be read, it writes
+nothing and exits 4 with one line:
 
 ```
-audit-logs: stale build: <recipe> is not the one it was built from; rebuild it (cargo build --release --locked in tools/auditor-tools) or run the scripts
+audit-logs: stale build: <file> is not the one it was built from; rebuild it (cargo build --release --locked in tools/auditor-tools) or run the scripts
 ```
 
-No recipe exits 4, so a caller that sees it runs the scripts.
+No recipe exits 4, so a caller that sees it runs the scripts. An update that changes
+none of those files leaves the old binary running: build it again after every
+update all the same.
 
 ### Where it reads and writes
 

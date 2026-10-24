@@ -14,8 +14,9 @@
 //! run directory (`confine.rs`). With no corpus named, frames and deltas read
 //! stdin. Exit: 0 done · 1 an input that cannot be read, an `--out` that cannot be
 //! written, or a failed write · 2 usage, or a path the input contract refuses, as
-//! the recipes refuse it · 4 a stale build: the installed recipes are not the ones
-//! it was built from, so it writes nothing and says to rebuild or run the scripts.
+//! the recipes refuse it · 4 a stale build: an installed file it was built from
+//! (a recipe it mirrors, `scripts/lib/confine.sh`, or its own manifest or source)
+//! has changed, so it writes nothing and says to rebuild or run the scripts.
 
 mod confine;
 mod contract;
@@ -39,40 +40,45 @@ const USAGE: &str = "usage: audit-logs profile [--out <file>] <corpus.jsonl>... 
 frames [--instructions] [--out <file>] [<corpus.jsonl>...] | \
 deltas lamports|tokens [--out <file>] [<corpus.jsonl>...]";
 
-/// The installation audit-logs was built in, and the recipes it mirrors there, as
-/// they were when it was built.
+/// The installation audit-logs was built in.
 const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../..");
-const RECIPES: [(&str, &[u8]); 3] = [
-    (
-        "scripts/dnr/profile.sh",
-        include_bytes!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../../scripts/dnr/profile.sh"
-        )),
-    ),
-    (
-        "scripts/dnr/frames.py",
-        include_bytes!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../../scripts/dnr/frames.py"
-        )),
-    ),
-    (
-        "scripts/dnr/deltas.py",
-        include_bytes!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../../scripts/dnr/deltas.py"
-        )),
-    ),
+
+/// Each file named, relative to the installation, with its bytes as they were at
+/// build time.
+macro_rules! built_from {
+    ($($path:literal),+ $(,)?) => {
+        &[$((
+            $path,
+            include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../", $path)),
+        )),+]
+    };
+}
+
+/// The files audit-logs was built from: the recipes it mirrors, the shared checks
+/// `profile.sh` sources, and its own manifest and source.
+const BUILT_FROM: &[(&str, &[u8])] = built_from![
+    "scripts/dnr/profile.sh",
+    "scripts/dnr/frames.py",
+    "scripts/dnr/deltas.py",
+    "scripts/lib/confine.sh",
+    "tools/auditor-tools/audit-logs/Cargo.toml",
+    "tools/auditor-tools/audit-logs/src/confine.rs",
+    "tools/auditor-tools/audit-logs/src/contract.rs",
+    "tools/auditor-tools/audit-logs/src/deltas.rs",
+    "tools/auditor-tools/audit-logs/src/frames.rs",
+    "tools/auditor-tools/audit-logs/src/json.rs",
+    "tools/auditor-tools/audit-logs/src/main.rs",
+    "tools/auditor-tools/audit-logs/src/num.rs",
+    "tools/auditor-tools/audit-logs/src/profile.rs",
 ];
 
 /// The exit status of a stale build; no recipe exits with it.
 const STALE: u8 = 4;
 
-/// Refuses to run when an installed recipe is not the one it was built from: its
-/// output would follow another contract than the scripts'.
+/// Refuses to run when an installed file it was built from has changed or is
+/// missing: its output could then follow another contract than the scripts'.
 fn current() -> Result<(), Stop> {
-    for (name, built) in RECIPES {
+    for &(name, built) in BUILT_FROM {
         if !fs::read(Path::new(ROOT).join(name)).is_ok_and(|now| now == built) {
             return Err(Stop(
                 STALE,
