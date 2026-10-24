@@ -27,10 +27,9 @@ mod profile;
 use std::ffi::OsString;
 use std::io;
 use std::os::unix::ffi::OsStrExt;
-use std::path::PathBuf;
 use std::process::ExitCode;
 
-use confine::{os_message, Confined, Sink, Stop};
+use confine::{os_message, Confined, Output, Sink, Stop};
 use contract::{for_each_record, shown, Input, Source, Stats};
 
 const USAGE: &str = "usage: audit-logs profile [--out <file>] <corpus.jsonl>... | \
@@ -122,10 +121,10 @@ fn run(args: &[OsString]) -> Result<(), Stop> {
     let mut inputs = Vec::new();
     for (n, arg) in call.files.iter().enumerate() {
         let c = confine::confine(&format!("input {}", n + 1), arg)?;
-        let md = confine::input(&wt, &c)?;
+        let checked = confine::input(&wt, &c)?;
         inputs.push(Input {
             label: c.label().to_string(),
-            source: Source::File(c.full(&wt), md),
+            source: Source::File(checked),
         });
     }
     if call.files.is_empty() {
@@ -134,16 +133,16 @@ fn run(args: &[OsString]) -> Result<(), Stop> {
             source: Source::Stdin,
         });
     }
-    let out: Option<(Confined, PathBuf)> = match &call.out {
+    let out: Option<(Confined, Output)> = match &call.out {
         Some(arg) => {
             let c = confine::confine("--out", arg)?;
-            let path = confine::output(&wt, &c)?;
-            Some((c, path))
+            let checked = confine::output(&wt, &c)?;
+            Some((c, checked))
         }
         None => None,
     };
-    let sink = |out: &Option<(Confined, PathBuf)>| match out {
-        Some((_, path)) => Sink::temp(path.clone())
+    let sink = |out: Option<&Output>| match out {
+        Some(checked) => Sink::temp(checked)
             .map_err(|e| Stop(1, format!("cannot write --out: {}", os_message(&e)))),
         None => Ok(Sink::stdout()),
     };
@@ -171,16 +170,17 @@ fn run(args: &[OsString]) -> Result<(), Stop> {
             }
             let report = prof.report(&header, &notes);
             // As profile.sh does: the report is whole before --out is checked again
-            // and its directory opened.
-            if let Some((c, _)) = &out {
-                confine::output(&wt, c)?;
-            }
-            let mut sink = sink(&out)?;
+            // and its run directory opened.
+            let again = match &out {
+                Some((c, _)) => Some(confine::output(&wt, c)?),
+                None => None,
+            };
+            let mut sink = sink(again.as_ref())?;
             sink.write_all(report.as_bytes()).map_err(failed)?;
             sink.finish().map_err(failed)?;
         }
         recipe => {
-            let mut sink = sink(&out)?;
+            let mut sink = sink(out.as_ref().map(|(_, checked)| checked))?;
             let mut buf = String::new();
             let (mut keyless, mut indexless) = (0, 0);
             for_each_record(inputs, &mut stats, |tx| {

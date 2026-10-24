@@ -6,8 +6,12 @@ description = "Offline profiler for Solana getTransaction JSONL corpora: profile
 license = "MIT"
 publish = false
 
-# No dependencies: the JSON reader, the number formats and the exact integers are
-# written here, so the output matches the scripts byte for byte.
 [[bin]]
 name = "audit-logs"
 path = "src/main.rs"
+
+# One dependency, libc, already in the workspace lockfile, for openat, linkat and
+# unlinkat. The JSON reader, the number formats and the exact integers are written
+# here, so the output matches the scripts byte for byte.
+[dependencies]
+libc = "0.2"

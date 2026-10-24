@@ -2,8 +2,9 @@
 # test-audit-logs.sh — audit-logs (tools/auditor-tools/audit-logs) against the scripts it
 # mirrors, scripts/dnr/profile.sh, frames.py and deltas.py, and its confinement.
 #
-# Builds audit-logs from a copy of its package (it has no dependencies, so cargo needs no
-# network), runs it and the scripts on the same corpora from the same working directory,
+# Builds audit-logs from a copy of its package (its one dependency, libc, comes from the
+# cargo cache or crates.io), runs it and the scripts on the same corpora from the same
+# working directory,
 # and compares, for each of the five recipes (profile, frames, frames --instructions,
 # deltas lamports, deltas tokens), the exit status, stdout and the "skipped" notes on
 # stderr. The corpora:
@@ -53,17 +54,20 @@ trap 'rm -rf "$T"' EXIT
 
 # ---------------------------------------------------------------------------
 # 0. The binary: AUDIT_LOGS when given, else a release build of a copy of the
-#    package, a workspace of its own with the release profile of tools/auditor-tools.
-#    The package has no dependencies, no build script, and no code that opens a
-#    socket, runs a program or reads the environment.
+#    package, a workspace of its own with the release profile of tools/auditor-tools
+#    and a lockfile of its two packages, audit-logs and libc, taken from
+#    tools/auditor-tools/Cargo.lock. The package has one dependency, libc, no build
+#    script, and no code that opens a socket, runs a program or reads the environment.
 # ---------------------------------------------------------------------------
-if grep -nE 'std::net|TcpStream|UdpSocket|process::Command|Command::new|env::var|set_var|env::vars' "$PKG"/src/*.rs > "$T/apis"; then
+if grep -nE 'std::net|TcpStream|UdpSocket|process::Command|Command::new|env::var|set_var|env::vars|libc::(socket|connect|bind|listen|accept|exec[a-z]*|posix_spawn[a-z]*|fork|vfork|system|popen|getenv|setenv|putenv)\b' \
+    "$PKG"/src/*.rs > "$T/apis"; then
   bad "source: audit-logs names a network, process or environment API ($(tr '\n' ' ' < "$T/apis"))"
 else
   ok "source: audit-logs names no network, process or environment API"
 fi
 deps="$(awk '/^\[/ { d = ($0 ~ /dependencies\]$/) } d && /=/' "$PKG/Cargo.toml")"
-if [[ -z "$deps" && ! -e "$PKG/build.rs" ]]; then ok "source: audit-logs has no dependency and no build script"; else bad "source: audit-logs has dependencies or a build script ($deps)"; fi
+if [[ "$deps" == 'libc = "0.2"' && ! -e "$PKG/build.rs" ]]; then ok "source: audit-logs has one dependency, libc, and no build script"
+else bad "source: audit-logs has other dependencies, or a build script ($deps)"; fi
 
 if [[ -n "${AUDIT_LOGS:-}" ]]; then
   case "$AUDIT_LOGS" in /*) BIN="$AUDIT_LOGS" ;; *) BIN="$PWD/$AUDIT_LOGS" ;; esac
@@ -73,12 +77,14 @@ elif command -v cargo >/dev/null 2>&1; then
   mkdir "$T/pkg"
   cp -R "$PKG/Cargo.toml" "$PKG/src" "$T/pkg/"
   { printf '\n[workspace]\n\n'; awk '/^\[/ { p = ($0 == "[profile.release]") } p' "$ROOT/tools/auditor-tools/Cargo.toml"; } >> "$T/pkg/Cargo.toml"
-  if cargo build --release --offline --manifest-path "$T/pkg/Cargo.toml" --target-dir "$T/target" > "$T/build.log" 2>&1; then
+  { awk '/^\[\[package\]\]/ { exit } /^version = / { print }' "$ROOT/tools/auditor-tools/Cargo.lock"
+    awk 'BEGIN { RS = ""; ORS = "\n\n" } /\nname = "(audit-logs|libc)"\n/ { print "\n" $0 }' "$ROOT/tools/auditor-tools/Cargo.lock"; } > "$T/pkg/Cargo.lock"
+  if cargo build --release --locked --manifest-path "$T/pkg/Cargo.toml" --target-dir "$T/target" > "$T/build.log" 2>&1; then
     BIN="$T/target/release/audit-logs"
     # A cargo config that names a build target puts the binary under target/<triple>/.
     for b in "$T"/target/*/release/audit-logs; do [[ -x "$BIN" || ! -x "$b" ]] || BIN="$b"; done
     if grep -q '^warning' "$T/build.log"; then bad "build: cargo build --release printed warnings"; sed -n '1,40p' "$T/build.log" >&2
-    else ok "build: cargo build --release, offline, with no warning"; fi
+    else ok "build: cargo build --release --locked, with no warning"; fi
   else
     sed -n '1,60p' "$T/build.log" >&2
     bad "build: cargo build --release failed"
@@ -693,6 +699,31 @@ wait "$pid"
 code=$?
 eq "SIGTERM: exit 143, nothing under the --out name, no temporary file left" \
   "$code|$([[ -e "$WT/incident_1/held.txt" ]] && echo written)|$(partial && echo left)" "143||"
+
+# The run directory of --out is opened once and the temporary file is made, linked
+# and removed through it: a run directory moved aside mid-run, and replaced by a link
+# to a directory outside, gets the output in the directory opened, and nothing goes
+# through the link. profile writes nothing before its report is whole; it then checks
+# --out again and refuses the link, as profile.sh does.
+mkdir -p "$WT/incident_7" "$T/outside7"
+printf '*\n' > "$WT/incident_7/.gitignore"
+partial7() { local f; for f in "$WT"/incident_7/.*.partial; do [[ -e "$f" ]] && return 0; done; return 1; }
+for r in frames "deltas lamports"; do
+  rm -f "$T/release7"
+  # $r is the subcommand, then its mode: separate words.
+  ( sed -n 1p "$FIX/clean-mixed.jsonl"; n=0; while [[ ! -e "$T/release7" && "$n" -lt 400 ]]; do sleep 0.05; n=$((n + 1)); done ) \
+    | ( cd "$WT" && exec "$BIN" $r --out incident_7/out.txt ) 2> /dev/null &
+  pid=$!
+  n=0; while ! partial7 && [[ "$n" -lt 200 ]]; do sleep 0.05; n=$((n + 1)); done
+  mv "$WT/incident_7" "$WT/moved7" && ln -s "$T/outside7" "$WT/incident_7"
+  touch "$T/release7"
+  wait "$pid"
+  code=$?
+  eq "--out: $r whose run directory is replaced by a link mid-run -> exit 0, the output in the directory it opened, nothing through the link" \
+    "$code|$(LC_ALL=C ls -A "$WT/moved7" | tr '\n' ' ')|$(ls -A "$T/outside7" | tr '\n' ' ')" "0|.gitignore out.txt |"
+  rm -f "$WT/incident_7" "$WT/moved7/out.txt"
+  mv "$WT/moved7" "$WT/incident_7"
+done
 
 # ---------------------------------------------------------------------------
 # 6. Confinement. The working directory reached through a link above it is the

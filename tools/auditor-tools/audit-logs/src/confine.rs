@@ -1,113 +1,28 @@
 //! Where audit-logs may read and write. A path argument is relative to the
 //! physical working directory (WT), has no `.`, `..` or empty component, passes
 //! through no symbolic link, and lies inside an `incident_<n>/` run directory
-//! that is a real directory holding a `.gitignore` of `*`. Inputs are opened
-//! without following a link and must be the regular file that was checked;
-//! output goes to a new temporary file, created exclusively beside the named
-//! file, which takes that new name, never replacing a file, once the output is
-//! complete. Nothing here reads the environment.
+//! that is a real directory holding a `.gitignore` of `*`. An input is opened
+//! through each directory on its way, none followed if it is a link, and must be
+//! the regular file with one name that was checked. Output goes to a new
+//! temporary file in the run directory, made, linked to its new name (never
+//! replacing a file) and removed through that directory, opened once. Nothing
+//! here reads the environment.
 
 use std::ffi::{CString, OsStr};
 use std::fs::{self, File, Metadata, OpenOptions};
 use std::io::{self, BufWriter, Read, Write};
-use std::os::raw::{c_char, c_int};
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+use std::os::raw::c_int;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::contract::shown;
 
 /// The longest path argument accepted, in bytes.
 const MAX_PATH: usize = 1024;
-
-#[cfg(any(
-    target_os = "macos",
-    target_os = "ios",
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd",
-    target_os = "dragonfly"
-))]
-mod flags {
-    pub const O_NOFOLLOW: i32 = 0x100;
-    pub const O_NONBLOCK: i32 = 0x4;
-}
-
-#[cfg(all(
-    any(target_os = "linux", target_os = "android"),
-    any(
-        target_arch = "x86",
-        target_arch = "x86_64",
-        target_arch = "riscv32",
-        target_arch = "riscv64",
-        target_arch = "s390x",
-        target_arch = "loongarch64"
-    )
-))]
-mod flags {
-    pub const O_NOFOLLOW: i32 = 0x20000;
-    pub const O_NONBLOCK: i32 = 0x800;
-}
-
-#[cfg(all(
-    any(target_os = "linux", target_os = "android"),
-    any(
-        target_arch = "arm",
-        target_arch = "aarch64",
-        target_arch = "powerpc",
-        target_arch = "powerpc64"
-    )
-))]
-mod flags {
-    pub const O_NOFOLLOW: i32 = 0x8000;
-    pub const O_NONBLOCK: i32 = 0x800;
-}
-
-// Any other target opens without these flags; the device and inode check after
-// opening still refuses a file that is not the one checked.
-#[cfg(not(any(
-    target_os = "macos",
-    target_os = "ios",
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd",
-    target_os = "dragonfly",
-    all(
-        any(target_os = "linux", target_os = "android"),
-        any(
-            target_arch = "x86",
-            target_arch = "x86_64",
-            target_arch = "riscv32",
-            target_arch = "riscv64",
-            target_arch = "s390x",
-            target_arch = "loongarch64",
-            target_arch = "arm",
-            target_arch = "aarch64",
-            target_arch = "powerpc",
-            target_arch = "powerpc64"
-        )
-    )
-)))]
-mod flags {
-    pub const O_NOFOLLOW: i32 = 0;
-    pub const O_NONBLOCK: i32 = 0;
-}
-
-mod sys {
-    use std::os::raw::{c_char, c_int};
-
-    extern "C" {
-        pub fn signal(signum: c_int, handler: extern "C" fn(c_int)) -> usize;
-        pub fn unlink(path: *const c_char) -> c_int;
-        pub fn _exit(status: c_int) -> !;
-    }
-
-    pub const SIGHUP: c_int = 1;
-    pub const SIGINT: c_int = 2;
-    pub const SIGTERM: c_int = 15;
-}
 
 /// Ends a run with an exit status and one stderr line: 2 for a refusal, 1 for a
 /// file that cannot be read or written.
@@ -268,16 +183,21 @@ fn run_dir(wt: &Path, c: &Confined) -> Result<Metadata, Stop> {
         }
     };
     let gi = dir.join(".gitignore");
-    let ok = match fs::symlink_metadata(&gi) {
-        Ok(gmd) if gmd.file_type().is_file() => {
-            let mut text = Vec::new();
-            open_checked(&gi, &gmd, false)
-                .and_then(|f| f.take(16).read_to_end(&mut text))
-                .is_ok()
-                && (text == b"*" || text == b"*\n")
-        }
-        _ => false,
-    };
+    let mut text = Vec::new();
+    let ok = fs::symlink_metadata(&gi).is_ok_and(|gmd| gmd.file_type().is_file())
+        && OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .open(&gi)
+            .and_then(|f| {
+                if f.metadata()?.file_type().is_file() {
+                    f.take(16).read_to_end(&mut text)
+                } else {
+                    Ok(0)
+                }
+            })
+            .is_ok()
+        && (text == b"*" || text == b"*\n");
     if ok {
         Ok(md)
     } else {
@@ -289,11 +209,54 @@ fn run_dir(wt: &Path, c: &Confined) -> Result<Metadata, Stop> {
     }
 }
 
-/// Checks a named input as the recipes' `_confined()` and `unusable()` do, and
-/// returns its lstat: a regular file with one name in a run directory, every name
-/// on the way checked with lstat (so a link is refused before anything is read
-/// through it), resolving inside WT, and one that opens.
-pub fn input(wt: &Path, c: &Confined) -> Result<Metadata, Stop> {
+/// A named input that passed its checks: opened again when its turn comes, and
+/// read only if it is still the file checked.
+pub struct Checked {
+    parts: Vec<Vec<u8>>,
+    md: Metadata,
+}
+
+impl Checked {
+    /// Opens the input through each directory on its way from WT, none of them
+    /// followed if it is a symbolic link, and the file itself without following a
+    /// link or blocking on a FIFO; it must be the regular file with one name that
+    /// was checked.
+    pub fn open(&self) -> io::Result<File> {
+        let mut dir = open_at(libc::AT_FDCWD, b".", libc::O_RDONLY | libc::O_DIRECTORY, 0)?;
+        let (last, on_the_way) = self
+            .parts
+            .split_last()
+            .ok_or_else(|| invalid("an empty path"))?;
+        for part in on_the_way {
+            dir = open_at(
+                dir.as_raw_fd(),
+                part,
+                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW,
+                0,
+            )?;
+        }
+        let file = File::from(open_at(
+            dir.as_raw_fd(),
+            last,
+            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK,
+            0,
+        )?);
+        let now = file.metadata()?;
+        if !now.file_type().is_file() || now.nlink() != 1 {
+            return Err(invalid("not a regular file with one name"));
+        }
+        if now.dev() != self.md.dev() || now.ino() != self.md.ino() {
+            return Err(invalid("changed while it was checked"));
+        }
+        Ok(file)
+    }
+}
+
+/// Checks a named input as the recipes' `_confined()` and `unusable()` do: a
+/// regular file with one name in a run directory, every name on the way checked
+/// with lstat (so a link is refused before anything is read through it),
+/// resolving inside WT, and one that opens.
+pub fn input(wt: &Path, c: &Confined) -> Result<Checked, Stop> {
     run_dir(wt, c)?;
     let label = &c.label;
     let mut last = None;
@@ -333,29 +296,40 @@ pub fn input(wt: &Path, c: &Confined) -> Result<Metadata, Stop> {
             "{label} has more than one name (a hard link)"
         )));
     }
-    let full = c.full(wt);
-    if !stays_inside(wt, &full) {
+    if !stays_inside(wt, &c.full(wt)) {
         return Err(refuse(format!(
             "{label} resolves outside the working directory"
         )));
     }
-    open_checked(&full, &md, true)
+    let checked = Checked {
+        parts: c.parts.clone(),
+        md,
+    };
+    checked
+        .open()
         .map_err(|e| Stop(1, format!("cannot read {label}: {}", os_message(&e))))?;
-    Ok(md)
+    Ok(checked)
+}
+
+/// An `--out` path that passed its checks: its run directory, as lstat found it,
+/// and the name to create there.
+pub struct Output {
+    dir: Vec<u8>,
+    dir_md: Metadata,
+    name: Vec<u8>,
 }
 
 /// Checks the `--out` path as the recipes' `unwritable()` does: a new `.jsonl`,
 /// `.tsv` or `.txt` name directly in a run directory, which resolves inside WT.
-pub fn output(wt: &Path, c: &Confined) -> Result<PathBuf, Stop> {
+pub fn output(wt: &Path, c: &Confined) -> Result<Output, Stop> {
     let label = &c.label;
     if !c.is_output() {
         return Err(refuse(format!(
             "{label} is not a .jsonl, .tsv or .txt file directly in the run directory"
         )));
     }
-    run_dir(wt, c)?;
-    let full = c.full(wt);
-    match fs::symlink_metadata(&full) {
+    let dir_md = run_dir(wt, c)?;
+    match fs::symlink_metadata(c.full(wt)) {
         Ok(md) if md.file_type().is_symlink() => {
             return Err(refuse(format!("{label} is a symbolic link")))
         }
@@ -372,31 +346,11 @@ pub fn output(wt: &Path, c: &Confined) -> Result<PathBuf, Stop> {
             "{label} resolves outside the working directory"
         )));
     }
-    Ok(full)
-}
-
-/// Opens a file for reading without following a final link and without blocking
-/// on a FIFO, then makes sure it is the regular file `md` describes, and, for an
-/// input (`one_name`), that it has one name.
-pub fn open_checked(path: &Path, md: &Metadata, one_name: bool) -> io::Result<File> {
-    let file = OpenOptions::new()
-        .read(true)
-        .custom_flags(flags::O_NOFOLLOW | flags::O_NONBLOCK)
-        .open(path)?;
-    let now = file.metadata()?;
-    if !now.file_type().is_file() || (one_name && now.nlink() != 1) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "not a regular file with one name",
-        ));
-    }
-    if now.dev() != md.dev() || now.ino() != md.ino() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "changed while it was checked",
-        ));
-    }
-    Ok(file)
+    Ok(Output {
+        dir: c.parts[0].clone(),
+        dir_md,
+        name: c.parts[1].clone(),
+    })
 }
 
 /// `realpath(WT/p)` must stay under WT.
@@ -417,29 +371,83 @@ pub fn os_message(e: &io::Error) -> String {
     }
 }
 
-/// The temporary file a signal handler removes before exiting.
-static TEMP: AtomicPtr<c_char> = AtomicPtr::new(std::ptr::null_mut());
+fn invalid(why: &str) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidInput, why.to_string())
+}
+
+fn c_name(name: &[u8]) -> io::Result<CString> {
+    CString::new(name).map_err(|_| invalid("a NUL in a name"))
+}
+
+/// `openat(dir, name, flags | O_CLOEXEC, mode)`.
+fn open_at(dir: RawFd, name: &[u8], flags: c_int, mode: libc::c_uint) -> io::Result<OwnedFd> {
+    let name = c_name(name)?;
+    // SAFETY: `name` is a NUL-terminated string that outlives the call, and `dir` is
+    // AT_FDCWD or a descriptor the caller holds open.
+    let fd = unsafe { libc::openat(dir, name.as_ptr(), flags | libc::O_CLOEXEC, mode) };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `fd` is a descriptor openat just returned, owned by nothing else.
+    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+}
+
+/// The run directory and the temporary file a signal handler removes before
+/// exiting: the directory's descriptor, then the file's name in it.
+static TEMP_DIR: AtomicI32 = AtomicI32::new(-1);
+static TEMP_NAME: AtomicPtr<libc::c_char> = AtomicPtr::new(std::ptr::null_mut());
 
 extern "C" fn on_signal(sig: c_int) {
-    let p = TEMP.load(Ordering::SeqCst);
-    // SAFETY: `p` is null or a NUL-terminated path leaked by `Sink::temp` and never
-    // freed; unlink and _exit are async-signal-safe.
+    let name = TEMP_NAME.load(Ordering::SeqCst);
+    // SAFETY: `name` is null or a NUL-terminated name owned by the live `Sink`, which
+    // clears it before freeing it and before closing the directory TEMP_DIR names;
+    // unlinkat and _exit are async-signal-safe.
     unsafe {
-        if !p.is_null() {
-            sys::unlink(p);
+        if !name.is_null() {
+            libc::unlinkat(TEMP_DIR.load(Ordering::SeqCst), name, 0);
         }
-        sys::_exit(128 + sig);
+        libc::_exit(128 + sig);
     }
 }
 
-/// Where a subcommand's output goes: stdout, or a temporary file beside the
-/// `--out` path that takes that name only once the output is whole.
+/// Holds TERM, INT and HUP off while it lives; one that arrives meanwhile is
+/// delivered when it is dropped.
+struct Held(libc::sigset_t);
+
+impl Held {
+    fn new() -> Held {
+        // SAFETY: plain calls on sigset_t values this function owns.
+        unsafe {
+            let mut set: libc::sigset_t = std::mem::zeroed();
+            let mut old: libc::sigset_t = std::mem::zeroed();
+            libc::sigemptyset(&mut set);
+            for sig in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
+                libc::sigaddset(&mut set, sig);
+            }
+            libc::pthread_sigmask(libc::SIG_BLOCK, &set, &mut old);
+            Held(old)
+        }
+    }
+}
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        // SAFETY: restores the mask Held::new saved.
+        unsafe {
+            libc::pthread_sigmask(libc::SIG_SETMASK, &self.0, std::ptr::null_mut());
+        }
+    }
+}
+
+/// Where a subcommand's output goes: stdout, or a temporary file in the run
+/// directory of `--out` that takes the `--out` name only once the output is whole.
 pub enum Sink {
     Stdout(BufWriter<io::Stdout>),
     Temp {
         file: BufWriter<File>,
-        temp: PathBuf,
-        path: PathBuf,
+        dir: OwnedFd,
+        temp: CString,
+        name: CString,
         done: bool,
     },
 }
@@ -449,29 +457,38 @@ impl Sink {
         Sink::Stdout(BufWriter::with_capacity(1 << 16, io::stdout()))
     }
 
-    /// A new file `.<name>.<suffix>.partial` beside `path`, created exclusively
-    /// (never through a link, never over an existing file), mode 0600. TERM, INT
-    /// and HUP remove it before exiting with 128 + the signal: the handlers are in
-    /// place, and the name is known to them, before the file is created.
-    pub fn temp(path: PathBuf) -> io::Result<Sink> {
-        // SAFETY: on_signal only calls async-signal-safe functions.
-        unsafe {
-            for sig in [sys::SIGTERM, sys::SIGINT, sys::SIGHUP] {
-                sys::signal(sig, on_signal);
-            }
+    /// Opens the run directory of `out` once, from WT and without following a link,
+    /// and makes sure it is the directory checked; then a new file
+    /// `.<name>.<suffix>.partial` in it, created exclusively (never through a link,
+    /// never over an existing file), mode 0600. TERM, INT and HUP remove it before
+    /// exiting with 128 + the signal: they are held off while it is made, so its
+    /// name is always known to the handler when one arrives.
+    pub fn temp(out: &Output) -> io::Result<Sink> {
+        let dir = open_at(
+            libc::AT_FDCWD,
+            &out.dir,
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW,
+            0,
+        )?;
+        let st = File::from(dir.try_clone()?).metadata()?;
+        if st.dev() != out.dir_md.dev() || st.ino() != out.dir_md.ino() {
+            return Err(invalid("the run directory changed after it was checked"));
         }
-        let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
-        let name = path
-            .file_name()
-            .map(|n| n.as_bytes().to_vec())
-            .unwrap_or_default();
+        let name = c_name(&out.name)?;
         let seed = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.subsec_nanos())
             .unwrap_or(0);
+        let held = Held::new();
+        // SAFETY: on_signal only calls async-signal-safe functions.
+        unsafe {
+            for sig in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
+                libc::signal(sig, on_signal as extern "C" fn(c_int) as libc::sighandler_t);
+            }
+        }
         for attempt in 0u32..100 {
             let mut leaf = b".".to_vec();
-            leaf.extend_from_slice(&name);
+            leaf.extend_from_slice(&out.name);
             leaf.extend_from_slice(
                 format!(
                     ".{}{:08x}.partial",
@@ -480,32 +497,27 @@ impl Sink {
                 )
                 .as_bytes(),
             );
-            let temp = dir.join(OsStr::from_bytes(&leaf));
-            let c = CString::new(temp.as_os_str().as_bytes())
-                .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "a NUL in the path"))?;
-            TEMP.store(c.into_raw(), Ordering::SeqCst);
-            let opened = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .custom_flags(flags::O_NOFOLLOW)
-                .open(&temp);
-            match opened {
-                Ok(file) => {
-                    let file = BufWriter::with_capacity(1 << 16, file);
+            match open_at(
+                dir.as_raw_fd(),
+                &leaf,
+                libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW,
+                0o600,
+            ) {
+                Ok(fd) => {
+                    let temp = c_name(&leaf)?;
+                    TEMP_DIR.store(dir.as_raw_fd(), Ordering::SeqCst);
+                    TEMP_NAME.store(temp.as_ptr().cast_mut(), Ordering::SeqCst);
+                    drop(held);
                     return Ok(Sink::Temp {
-                        file,
+                        file: BufWriter::with_capacity(1 << 16, File::from(fd)),
+                        dir,
                         temp,
-                        path,
+                        name,
                         done: false,
                     });
                 }
-                Err(e) => {
-                    TEMP.store(std::ptr::null_mut(), Ordering::SeqCst);
-                    if e.kind() != io::ErrorKind::AlreadyExists {
-                        return Err(e);
-                    }
-                }
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(e) => return Err(e),
             }
         }
         Err(io::Error::new(
@@ -521,24 +533,32 @@ impl Sink {
         }
     }
 
-    /// Flushes, and gives a temporary file its path: a hard link, which fails
-    /// rather than replace a file that appeared in the meantime, then the
-    /// temporary name is removed.
+    /// Flushes, and gives a temporary file its name, through the run directory: a
+    /// hard link, which fails rather than replace a file that appeared in the
+    /// meantime, then the temporary name is removed.
     pub fn finish(&mut self) -> io::Result<()> {
         match self {
             Sink::Stdout(w) => w.flush(),
             Sink::Temp {
                 file,
+                dir,
                 temp,
-                path,
+                name,
                 done,
             } => {
                 file.flush()?;
-                fs::hard_link(&*temp, &*path)?;
+                let d = dir.as_raw_fd();
+                // SAFETY: both names are NUL-terminated and live; `d` is open.
+                if unsafe { libc::linkat(d, temp.as_ptr(), d, name.as_ptr(), 0) } != 0 {
+                    return Err(io::Error::last_os_error());
+                }
                 *done = true;
-                let removed = fs::remove_file(&*temp);
-                TEMP.store(std::ptr::null_mut(), Ordering::SeqCst);
-                removed
+                TEMP_NAME.store(std::ptr::null_mut(), Ordering::SeqCst);
+                // SAFETY: as above.
+                if unsafe { libc::unlinkat(d, temp.as_ptr(), 0) } != 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(())
             }
         }
     }
@@ -547,11 +567,16 @@ impl Sink {
 impl Drop for Sink {
     fn drop(&mut self) {
         if let Sink::Temp {
-            temp, done: false, ..
+            dir, temp, done, ..
         } = self
         {
-            TEMP.store(std::ptr::null_mut(), Ordering::SeqCst);
-            let _ = fs::remove_file(&*temp);
+            TEMP_NAME.store(std::ptr::null_mut(), Ordering::SeqCst);
+            if !*done {
+                // SAFETY: `temp` is NUL-terminated and `dir` is still open.
+                unsafe {
+                    libc::unlinkat(dir.as_raw_fd(), temp.as_ptr(), 0);
+                }
+            }
         }
     }
 }

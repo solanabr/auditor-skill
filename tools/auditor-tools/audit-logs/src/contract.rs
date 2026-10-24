@@ -4,11 +4,9 @@
 //! and deltas.py share.
 
 use std::collections::HashSet;
-use std::fs::Metadata;
 use std::io::{self, BufRead, BufReader};
-use std::path::PathBuf;
 
-use crate::confine::open_checked;
+use crate::confine::Checked;
 use crate::json::{parse_line, too_deep, Value};
 
 /// What one pass skipped: later copies of a transaction, and per input the
@@ -302,7 +300,7 @@ fn strip(line: &[u8]) -> &[u8] {
 /// comes and refused unless it is still the file checked, or stdin.
 pub enum Source {
     Stdin,
-    File(PathBuf, Metadata),
+    File(Checked),
 }
 
 /// One input to read, with the label its "skipped" note names it by.
@@ -324,10 +322,7 @@ where
     for input in inputs {
         let mut reader: Box<dyn BufRead> = match &input.source {
             Source::Stdin => Box::new(io::stdin().lock()),
-            Source::File(path, md) => Box::new(BufReader::with_capacity(
-                1 << 16,
-                open_checked(path, md, true)?,
-            )),
+            Source::File(checked) => Box::new(BufReader::with_capacity(1 << 16, checked.open()?)),
         };
         let mut bad: Option<usize> = None;
         let mut lineno: u64 = 0;
