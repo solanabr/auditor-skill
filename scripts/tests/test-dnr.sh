@@ -1727,6 +1727,15 @@ for root in "$RW/inst" "$TT/q24\"x" "$TT/d24\$x"; do
 done
 eq "entry points: an installation inside the working directory, or under a path holding a quote or \$, is refused (exit 2, no output)" \
   "${res# }" "2 2 2 2 2 2 2 2 2"
+res=""
+for r in profile.sh frames.py deltas.py; do
+  if [[ "$r" == deltas.py ]]; then set -- lamports "$F/clean-mixed.jsonl"; else set -- "$F/clean-mixed.jsonl"; fi
+  ( cd "$RW" && "$RW/inst/scripts/dnr/$r" "$@" ) > /dev/null 2> "$TT/i24.err"
+  res="$res$(cat "$TT/i24.err")|"
+done
+inside='the installation lies inside the working directory; install it outside the tree under audit, or run from a directory that does not contain it (Rule 11e)'
+eq "entry points: an installation inside the working directory is refused in the words of scripts/lib/confine.sh" \
+  "$res" "profile.sh: refused: $inside|frames.py: refused: $inside|deltas.py: refused: $inside|"
 mkdir -p "$TT/real24/scripts"
 cp -R "$DNR" "$HERE/../lib" "$TT/real24/scripts/"
 ln -s "$TT/real24" "$TT/l24\$x"

@@ -316,7 +316,7 @@ def installed(path):
                        " control character, so its quoted call cannot match as written")
     if real.startswith(here.rstrip(os.sep) + os.sep):
         return 2, ("refused: the installation lies inside the working directory; install it outside the"
-                   " tree under audit (Rule 11e)")
+                   " tree under audit, or run from a directory that does not contain it (Rule 11e)")
     return None
 
 

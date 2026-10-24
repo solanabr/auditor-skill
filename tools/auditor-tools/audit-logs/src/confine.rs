@@ -79,7 +79,7 @@ pub fn self_check(wt: &Path) -> Result<(), Stop> {
     if real.starts_with(wt) {
         return Err(refuse(
             "the installation lies inside the working directory; install it outside the tree \
-             under audit (Rule 11e)"
+             under audit, or run from a directory that does not contain it (Rule 11e)"
                 .into(),
         ));
     }

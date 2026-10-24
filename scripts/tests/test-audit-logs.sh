@@ -841,6 +841,9 @@ for c in "inside the working directory|$WT/tools/auditor-tools/target/release/au
     bad "confinement: an installation ${c%%|*} -> exit $code ($(tr '\n' ' ' < "$T/c1.err"))"
   fi
 done
+( cd "$WT" && "$WT/tools/auditor-tools/target/release/audit-logs" frames incident_1/corpus/clean-mixed.jsonl ) > /dev/null 2> "$T/c1.err"
+eq "confinement: an installation inside the working directory is refused in the words of scripts/lib/confine.sh" "$(cat "$T/c1.err")" \
+  "audit-logs: refused: the installation lies inside the working directory; install it outside the tree under audit, or run from a directory that does not contain it (Rule 11e)"
 
 # ---- hostile layout (fixtures/audit-logs/hostile-args.txt); the same block is in test-audit-logs.sh and test-dnr.sh
 # hostile_layout <dir> <a clean transaction line>: the working directory the case file
