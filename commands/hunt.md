@@ -35,8 +35,11 @@ export, or recipe output — only the agent's report and the paths it names.
 > `Task`, edits under `incident_*/` and invoking the `auditor:dnr-analyze` skill;
 > they are **not a sandbox** (README § "allowed-tools is not a sandbox"). Inside its
 > fork, the skill pre-approves the offline analysis tools by their exact paths:
-> `profile.sh`, `frames.py`, `deltas.py`, `jq-ro.sh` and `audit-logs`, which read
-> only files inside `incident_*/`. Everything else still prompts: `jq` itself
+> `profile.sh`, `frames.py`, `deltas.py`, `jq-ro.sh` and `audit-logs`. They read
+> only regular files with one name in a run directory, by relative paths, and the
+> recipes and `audit-logs` write only a new `.jsonl`, `.tsv` or `.txt` file
+> directly in one (`--out`); anything else they refuse (exit 2) before reading any
+> input. Everything else still prompts: `jq` itself
 > (`jq -n env` prints the environment, `$RPC_URL` included), `solana`, `curl`,
 > `cargo`, `surfpool`, a bare `python3`, and the networked `collect.sh` and
 > `snapshot-program.sh`. If funds may be moving now, this is not emergency

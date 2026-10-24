@@ -75,17 +75,17 @@ These forms, and only these, are pre-approved for this phase:
   assignment. One tool per call, with no `&&`, `;` or `|` between commands, and no
   `$` or backtick anywhere in the line, inside quotes too: Claude Code asks about
   any command that holds one. Keep an output with `> incident_<n>/<new name>` at
-  the end, or a recipe's own `--out incident_<n>/<new name>`, which never leaves a
-  partial file. These forms replace the `bash …` and `python3 -I …` spellings in
-  the references.
+  the end, or a recipe's own `--out incident_<n>/<name>.jsonl` (or `.tsv`, `.txt`:
+  a new name directly in the run directory), which never leaves a partial file.
+  These forms replace the `bash …` and `python3 -I …` spellings in the references.
 - **audit-logs first.** It runs the three recipes as subcommands (`profile`,
   `frames [--instructions]`, `deltas tokens|lamports`) with the same arguments
   after the subcommand, and prints what they print. Run the script with those
   arguments instead when audit-logs exits 126 or 127 (not built, or not
-  executable), dies by a signal (a status above 128), or refuses as a stale build
-  (its stderr starts `audit-logs: stale build:`). Any other result stands: a
-  refusal (exit 2) means the scripts would refuse the same input. Each ledger row
-  names the tool that produced it.
+  executable), dies by a signal (a status above 128), or exits 4 as a stale build
+  (its stderr starts `audit-logs: stale build:`, and it writes nothing). Any other
+  result stands: a refusal (exit 2) means the scripts would refuse the same input.
+  Each ledger row names the tool that produced it.
 - **jq only through `jq-ro.sh`.** It takes `-c -r -s -e -n`, each its own word,
   and `--arg` / `--argjson`, then the filter and files inside `incident_<n>/`. A
   jq variable (`$name`, `$ENV`) puts a `$` in the line, so write values into the

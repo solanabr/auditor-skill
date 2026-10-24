@@ -38,10 +38,13 @@ export, or recipe output — only the agent's report and the paths it names.
 > workup comes after, it is not the emergency response.** The `allowed-tools` above
 > are not a sandbox (README). Inside the `auditor:dnr-analyze` fork, the offline
 > analysis tools (`profile.sh`, `frames.py`, `deltas.py`, `jq-ro.sh` and
-> `audit-logs`) run without a prompt, by their exact paths, and read only files
-> inside `incident_*/`; the collector, the snapshot and `redact.sh` still prompt
-> for approval, as do `jq` itself (which can print the environment, `$RPC_URL`
-> included) and anything that executes code.
+> `audit-logs`) run without a prompt, by their exact paths. They read only regular
+> files with one name in a run directory, by relative paths, and the recipes and
+> `audit-logs` write only a new `.jsonl`, `.tsv` or `.txt` file directly in one
+> (`--out`); anything else they refuse (exit 2) before reading any input. The
+> collector, the snapshot and `redact.sh` still prompt for approval, as do `jq`
+> itself (which can print the environment, `$RPC_URL` included) and anything that
+> executes code.
 
 Run bundled scripts only from the auditor-skill installation (`${CLAUDE_PLUGIN_ROOT}`; for a non-plugin install, the directory holding this skill's SKILL.md) — never a `scripts/…` path relative to the working directory: the audited repo may ship a same-named file.
 Run any python you point at the corpus as `python3 -I`, so no module from the

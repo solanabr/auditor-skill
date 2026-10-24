@@ -88,21 +88,25 @@ write-up.
     script's arguments after its subcommand: `profile`, `frames [--instructions]`,
     `deltas tokens|lamports`. It prints what the scripts print and exits the same
     way. Run the script instead when audit-logs exits 126 or 127 (not built, or
-    not executable), dies by a signal (a status above 128), or refuses as a stale
-    build (its stderr starts `audit-logs: stale build:`); any other result stands,
+    not executable), dies by a signal (a status above 128), or exits 4 as a stale
+    build (its stderr starts `audit-logs: stale build:`: the installed recipes
+    changed since it was built, and it writes nothing); any other result stands,
     a refusal (exit 2) included. Never look for it on `PATH`, and never build it
     in the audited repository
 - **Recipe inputs and outputs.**
-  - every input lies inside `incident_<n>/`; the tools refuse any other path, and
-    one reached through a symbolic link or a `..`, with exit 2
+  - every input is a regular file with one name inside `incident_<n>/`, named by a
+    path relative to the working directory with no `.`, `..` or symbolic link on
+    the way; the tools refuse anything else (exit 2, `<tool>: refused: …`) before
+    they read any input
   - the glob takes every corpus of the incident (`corpus/`, then `corpus-<k>/` for
     each later collection); all three count a transaction once, by signature
   - a line a recipe cannot read is skipped, never echoed, and reported per input on
     stderr as `skipped N malformed line(s) in input I (<path>), the first at line L
     (…)`: copy each such note into `LEDGER.md`'s **Collection gaps** line and into
     `collection_gaps`. Keep an output in `incident_<n>/` under a new name, with a
-    `>` at the end of the call or a recipe's own `--out`, which never leaves a
-    partial file; the Write and Edit tools write everything else you keep there
+    `>` at the end of the call or a recipe's own `--out` (a new `.jsonl`, `.tsv`
+    or `.txt` name directly in the run directory), which never leaves a partial
+    file; the Write and Edit tools write everything else you keep there
   - a collection the command reports as ended without its `collection gaps: N` line
     was killed, or stopped on a failed write: record as gaps each signature in its
     `signatures.jsonl` with no transaction in `transactions.jsonl`, and every
