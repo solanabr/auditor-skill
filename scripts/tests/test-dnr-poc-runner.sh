@@ -59,8 +59,9 @@
 #     --init, --new-cache): every argument is checked before anything is copied, by the
 #     case file fixtures/poc-run/cases.txt among others; --init copies the template
 #     byte for byte; --cache takes only a directory --new-cache made; the mode is the
-#     stricter of <R>/exec-mode and AUDITOR_EXEC_MODE, and --mode must match it; the
-#     installation's template never builds itself;
+#     stricter of AUDITOR_EXEC_MODE and the exec-mode of every run directory an
+#     argument names, and --mode must match it; ./run.sh in a crate at <R>/poc/<ID>
+#     reads <R>/exec-mode as well; the installation's template never builds itself;
 #   * the isolation self-check (scripts/lib/isolation.sh): in isolated mode, a fake HOME
 #     holding any credential it reads stops the run before anything is copied, and so
 #     does a check that cannot finish; in native mode it is a warning. Through a driver,
@@ -1266,6 +1267,71 @@ rmdir "$WT/audit_1/exec-mode"; printf 'native\n' > "$WT/audit_1/exec-mode"
 code="$(ngate AUDITOR_EXEC_MODE=yes -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
 [ "$code" = 3 ] && grep -qF "run.sh refused: AUDITOR_EXEC_MODE is 'yes', not none, isolated or native" "$T/out" && new_nothing_ran \
   && ok "AUDITOR_EXEC_MODE=yes -> refused, even with a recorded mode" || { bad "AUDITOR_EXEC_MODE=yes: exit $code"; cat "$T/out" >&2; }
+
+# Every run directory an argument names counts: here --vulnerable-so and --fixed-so under audit_2/exec/.
+( cd "$WT" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null || bad "rundir.sh could not make audit_2"
+mkdir -p "$WT/audit_2/exec/b"; cp "$T/vuln.so" "$T/fixed.so" "$WT/audit_2/exec/b/"
+while IFS='|' read -r one two expect; do
+  [ -n "$expect" ] || continue
+  if [ -n "$one" ]; then printf '%s\n' "$one" > "$WT/audit_1/exec-mode"; else rm -f "$WT/audit_1/exec-mode"; fi
+  if [ -n "$two" ]; then printf '%s\n' "$two" > "$WT/audit_2/exec-mode"; else rm -f "$WT/audit_2/exec-mode"; fi
+  code="$(ngate -- --crate audit_1/poc/F-1 --vulnerable-so audit_2/exec/b/vuln.so --fixed-so audit_2/exec/b/fixed.so)"
+  label="audit_1/exec-mode '${one:-absent}', audit_2/exec-mode '${two:-absent}'"
+  sources="audit_1/exec-mode: ${one:-absent}; audit_2/exec-mode: ${two:-absent}; AUDITOR_EXEC_MODE: unset"
+  case "$expect" in
+    none) [ "$code" = 3 ] && grep -qF "blocker: the recorded execution mode is none ($sources)" "$T/out" && new_nothing_ran \
+            && ok "$label -> none, from the run directory of the prebuilt bytes: exit 3" || { bad "$label: exit $code"; cat "$T/out" >&2; } ;;
+    *) grep -qxF ">> execution mode: $expect (the stricter of $sources)" "$T/out" && { [ "$code" = 0 ] || [ "$expect" = isolated ]; } \
+         && ok "$label -> $expect, the stricter over both run directories" || { bad "$label: exit $code"; cat "$T/out" >&2; } ;;
+  esac
+done <<'CASES'
+native|isolated|isolated
+isolated|native|isolated
+native|none|none
+|native|native
+CASES
+rm -rf "$WT/audit_2"
+printf 'native\n' > "$WT/audit_1/exec-mode"
+
+# ./run.sh in a crate at <R>/poc/<ID> takes the stricter of <R>/exec-mode and AUDITOR_EXEC_MODE as well;
+# a crate anywhere else, or an exec-mode it cannot use, leaves the mode gate to decide from the environment.
+while IFS='|' read -r file env expect; do
+  [ -n "$expect" ] || continue
+  if [ -n "$file" ]; then printf '%s\n' "$file" > "$WT/audit_1/exec-mode"; else rm -f "$WT/audit_1/exec-mode"; fi
+  set -- "$VULN"; [ -n "$env" ] && set -- "$@" "AUDITOR_EXEC_MODE=$env"
+  code="$(gate "$WT/audit_1/poc/F-1" "$@")"
+  label="./run.sh with exec-mode '${file:-absent}', AUDITOR_EXEC_MODE '${env:-unset}'"
+  case "$expect" in
+    isolated|native)
+      [ "$code" = 0 ] && grep -q "^>> build dir: .*AUDITOR_EXEC_MODE=$expect;" "$T/out" \
+        && { [ -z "$file" ] || grep -qxF ">> execution mode: $expect (the stricter of audit_1/exec-mode: $file; AUDITOR_EXEC_MODE: ${env:-unset})" "$T/out"; } \
+        && ok "$label -> runs in $expect mode" || { bad "$label: exit $code, want $expect"; cat "$T/out" >&2; } ;;
+    none)
+      [ "$code" = 3 ] && grep -qF "blocker: the recorded execution mode is none (audit_1/exec-mode: $file; AUDITOR_EXEC_MODE: ${env:-unset})" "$T/out" && nothing_ran && one_blocker \
+        && ok "$label -> none: exit 3, nothing copied or built" || { bad "$label: exit $code, want none"; cat "$T/out" >&2; } ;;
+    gate)
+      [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: AUDITOR_EXEC_MODE is '$env', not isolated or native — nothing was copied or built." "$T/out" && nothing_ran \
+        && ok "$label -> the mode gate's own blocker" || { bad "$label: exit $code, want the gate"; cat "$T/out" >&2; } ;;
+    refused)
+      [ "$code" = 3 ] && grep -qF "run.sh refused: audit_1/exec-mode holds something other than one word, none, isolated or native — nothing was copied or built." "$T/out" && nothing_ran \
+        && ok "$label -> refused: exit 3" || { bad "$label: exit $code, want refused"; cat "$T/out" >&2; } ;;
+  esac
+done <<'CASES'
+none|native|none
+native|none|none
+none||none
+isolated|native|isolated
+native|isolated|isolated
+native||native
+|native|native
+||gate
+native|yes|gate
+yes|native|refused
+CASES
+mkdir -p "$T/not-a-run/poc"; cp -R "$WT/audit_1/poc/F-1" "$T/not-a-run/poc/F-1"; printf 'none\n' > "$T/not-a-run/exec-mode"
+code="$(gate "$T/not-a-run/poc/F-1" "$VULN" "$NATIVE")"
+[ "$code" = 0 ] && ! grep -q '^>> execution mode:' "$T/out" && ok "./run.sh in a crate outside a run directory reads no exec-mode" || { bad "./run.sh outside a run directory: exit $code"; cat "$T/out" >&2; }
+printf 'native\n' > "$WT/audit_1/exec-mode"
 
 # The isolation self-check. In isolated mode, a fake HOME holding any one credential the check reads
 # stops the run before anything is copied, naming its kind, and so does a check that cannot finish; in

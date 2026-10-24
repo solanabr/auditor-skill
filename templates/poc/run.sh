@@ -11,8 +11,9 @@
 # directory under audit, takes the crate and its inputs as arguments (ARGUMENTS below):
 # that is the form a command pre-approves. A copy inside a crate, run as ./run.sh, builds
 # the crate it sits in and reads its inputs from the environment: AUDITOR_EXEC_MODE,
-# VULNERABLE_SO, FIXED_SO, UPDATE_PINS, CARGO_TARGET_DIR and KEEP_POC_BUILD. Both read
-# TOOLS_VERSION and POC_LOCK_WAIT from the environment.
+# VULNERABLE_SO, FIXED_SO, UPDATE_PINS, CARGO_TARGET_DIR and KEEP_POC_BUILD (and, for a
+# crate at <R>/poc/<ID>, <R>/exec-mode). Both read TOOLS_VERSION and POC_LOCK_WAIT from
+# the environment.
 #
 # Reproduces the finding from a clean checkout of THIS crate:
 #   1. builds the `vulnerable` arm to SBF, runs tests/exploit.rs      → exploit must SUCCEED
@@ -66,11 +67,13 @@
 #     directory --new-cache made: $TMPDIR/auditor-poc-target.XXXXXX, outside the
 #     working directory, yours, mode 0700, holding the marker file .auditor-poc-cache.
 #     --new-cache prints its path and exits 0; record it next to the execution mode.
-#   * the execution mode is the stricter of <R>/exec-mode (one word, none, isolated or
-#     native, written when the human answers Q46) and AUDITOR_EXEC_MODE, none being
-#     the strictest and native the least. With neither set, with none, or with a
-#     --mode that names another mode than that, run.sh exits 3 before it copies
-#     anything; --mode catches a mode that changed without the human.
+#   * the execution mode is the stricter of AUDITOR_EXEC_MODE and the exec-mode of
+#     each run directory an argument names (one word, none, isolated or native,
+#     written when the human answers Q46): the crate's <R>, and that of --vulnerable-so
+#     and --fixed-so. none is the strictest and native the least. With no mode
+#     recorded, with none, or with a --mode that names another mode than that, run.sh
+#     exits 3 before it copies anything; --mode catches a mode that changed without
+#     the human.
 #   * in isolated mode the credential self-check of scripts/lib/isolation.sh runs
 #     first: a readable key, cloud or registry credential, or a reachable agent socket
 #     means this is not the isolated runner, and the run stops with exit 3, as it does
@@ -101,8 +104,12 @@
 # needs the execution mode recorded for the audit or incident (OUTPUT-RULES.md Rule
 # 11a, QUESTIONS.md Q46): AUDITOR_EXEC_MODE=isolated inside the isolated runner, or
 # AUDITOR_EXEC_MODE=native (the report then states that the PoC build ran on this
-# host); the installation's copy takes the stricter of it and <R>/exec-mode
-# (ARGUMENTS). Without it, run.sh exits 3 before it copies or compiles anything.
+# host). The installation's copy takes the stricter of it and <R>/exec-mode
+# (ARGUMENTS), and so does ./run.sh in a crate at <R>/poc/<ID>; none stops either.
+# Without a mode, run.sh exits 3 before it copies or compiles anything. The agent
+# writes <R>/exec-mode and could write another word there, so a human who chose
+# isolated also sets AUDITOR_EXEC_MODE=isolated where Claude Code runs: the stricter
+# mode then holds whatever the file says.
 #
 # WHERE IT BUILDS. This crate normally sits inside the audited repo
 # (audit_<n>/poc/…, incident_<n>/poc/…). Built there, cargo would read the target's
@@ -314,7 +321,7 @@ crate_arg() {
 }
 
 # so_arg <option> <path>: a regular file under a run directory's bin/ or exec/. Sets
-# SO_PATH to its physical path.
+# SO_PATH to its physical path and SO_RUN to that run directory.
 so_arg() {
   local opt="$1" shown rel kind
   confine_shown "$2"; shown="${CONFINE_SHOWN}"
@@ -326,7 +333,7 @@ so_arg() {
   esac
   confine_rundir "${rel%%/*}" "the run directory of ${opt}"
   [[ "${kind}" == file ]] || refuse "${opt} is not an existing regular file: ${shown}"
-  SO_PATH="${WT}/${rel}"
+  SO_PATH="${WT}/${rel}"; SO_RUN="${CONFINE_RUN}"
 }
 
 tmp_base() {  # tmp_base: TMP_BASE is TMPDIR (else /tmp), physical, and outside the working directory
@@ -365,37 +372,50 @@ cache_arg() {
   CACHE_DIR="${TMP_BASE%/}/${name}"
 }
 
-# exec_mode <--mode value or nothing>: MODE becomes the stricter of <R>/exec-mode and
-# AUDITOR_EXEC_MODE (none, then isolated, then native), and must be --mode when that is
-# given.
+# mode_file <run directory> <its name>: MODE_TEXT is the one word its exec-mode holds
+# (none, isolated or native), or empty when it has none; anything else is refused.
+mode_file() {
+  local file="$1/exec-mode" size text=""
+  MODE_TEXT=""
+  [[ -e "${file}" || -L "${file}" ]] || return 0
+  [[ -f "${file}" && ! -L "${file}" ]] || refuse "$2/exec-mode is not a regular file"
+  size="$(wc -c < "${file}")" || refuse "$2/exec-mode cannot be read"
+  size="${size//[!0-9]/}"
+  if [[ "${size}" -le 9 ]]; then text="$(cat -- "${file}")" || refuse "$2/exec-mode cannot be read"; fi
+  case "${text}" in
+    none|isolated|native) [[ "${size}" -le $(( ${#text} + 1 )) ]] || text="" ;;
+    *) text="" ;;
+  esac
+  [[ -n "${text}" ]] || refuse "$2/exec-mode holds something other than one word, none, isolated or native"
+  MODE_TEXT="${text}"
+}
+
+# exec_mode <--mode value or nothing>: MODE becomes the stricter of AUDITOR_EXEC_MODE and
+# the exec-mode of every run directory an argument names (none, then isolated, then
+# native), and must be --mode when that is given.
 exec_mode() {
-  local want="$1" file="${WT}/${CRATE_RUN}/exec-mode" size text=""
-  ENV_MODE="${AUDITOR_EXEC_MODE:-}"; FILE_MODE=""
+  local want="$1" run seen=" " words=""
+  ENV_MODE="${AUDITOR_EXEC_MODE:-}"; MODE_SOURCES=""
   case "${ENV_MODE}" in
     ''|none|isolated|native) ;;
     *) refuse "AUDITOR_EXEC_MODE is '$(confine_text "${ENV_MODE}")', not none, isolated or native" ;;
   esac
-  if [[ -e "${file}" || -L "${file}" ]]; then
-    [[ -f "${file}" && ! -L "${file}" ]] || refuse "${CRATE_RUN}/exec-mode is not a regular file"
-    size="$(wc -c < "${file}")" || refuse "${CRATE_RUN}/exec-mode cannot be read"
-    size="${size//[!0-9]/}"
-    if [[ "${size}" -le 9 ]]; then text="$(cat -- "${file}")" || refuse "${CRATE_RUN}/exec-mode cannot be read"; fi
-    case "${text}" in
-      none|isolated|native) [[ "${size}" -le $(( ${#text} + 1 )) ]] || text="" ;;
-      *) text="" ;;
-    esac
-    [[ -n "${text}" ]] || refuse "${CRATE_RUN}/exec-mode holds something other than one word, none, isolated or native"
-    FILE_MODE="${text}"
-  fi
-  if [[ -z "${FILE_MODE}${ENV_MODE}" ]]; then
+  for run in "${CRATE_RUN}" "${VSO_RUN}" "${FSO_RUN}"; do
+    [[ -n "${run}" && "${seen}" != *" ${run} "* ]] || continue
+    seen="${seen}${run} "
+    mode_file "${WT}/${run}" "${run}"
+    words="${words} ${MODE_TEXT}"
+    MODE_SOURCES="${MODE_SOURCES}${run}/exec-mode: ${MODE_TEXT:-absent}; "
+  done
+  MODE_SOURCES="${MODE_SOURCES}AUDITOR_EXEC_MODE: ${ENV_MODE:-unset}"
+  if [[ -z "${words// /}${ENV_MODE}" ]]; then
     blocker "no recorded mode: ${CRATE_RUN}/exec-mode is missing and AUDITOR_EXEC_MODE is not set (OUTPUT-RULES.md Rule 11a, QUESTIONS.md Q46). Record the human's answer in ${CRATE_RUN}/exec-mode and run this again — nothing was copied or built."
   fi
-  case " ${FILE_MODE} ${ENV_MODE} " in
+  case " ${words} ${ENV_MODE} " in
     *" none "*) MODE=none ;;
     *" isolated "*) MODE=isolated ;;
     *) MODE=native ;;
   esac
-  MODE_SOURCES="${CRATE_RUN}/exec-mode: ${FILE_MODE:-absent}; AUDITOR_EXEC_MODE: ${ENV_MODE:-unset}"
   if [[ "${MODE}" == none ]]; then
     blocker "the recorded execution mode is none (${MODE_SOURCES}): no target code is built or run for this engagement (OUTPUT-RULES.md Rule 11a) — nothing was copied or built."
   fi
@@ -504,12 +524,12 @@ take_args() {
     *) refuse "give --crate, --init or --new-cache (${USAGE})" ;;
   esac
   crate_arg --crate "${crate}" dir
-  VULNERABLE_SO=""; FIXED_SO=""
+  VULNERABLE_SO=""; FIXED_SO=""; VSO_RUN=""; FSO_RUN=""
   case "${seen}" in
     *" --fixed-so "*) case "${seen}" in *" --vulnerable-so "*) ;; *) refuse "--fixed-so needs --vulnerable-so: the fixed bytes are checked against the exploit on the vulnerable ones" ;; esac ;;
   esac
-  case "${seen}" in *" --vulnerable-so "*) so_arg --vulnerable-so "${vso}"; VULNERABLE_SO="${SO_PATH}" ;; esac
-  case "${seen}" in *" --fixed-so "*) so_arg --fixed-so "${fso}"; FIXED_SO="${SO_PATH}" ;; esac
+  case "${seen}" in *" --vulnerable-so "*) so_arg --vulnerable-so "${vso}"; VULNERABLE_SO="${SO_PATH}"; VSO_RUN="${SO_RUN}" ;; esac
+  case "${seen}" in *" --fixed-so "*) so_arg --fixed-so "${fso}"; FIXED_SO="${SO_PATH}"; FSO_RUN="${SO_RUN}" ;; esac
   case "${seen}" in
     *" --update-pins "*)
       case "${pins}" in *[[:cntrl:]]*) refuse "--update-pins holds a control character" ;; esac
@@ -545,6 +565,39 @@ take_args() {
   CLEAN=1
 }
 
+# crate_mode: ./run.sh in a crate at <R>/poc/<ID>, with <R> and <ID> as --crate takes
+# them, reads <R>/exec-mode as well and takes the stricter of it and AUDITOR_EXEC_MODE
+# (see EXECUTION MODE above). Without that file, or with an AUDITOR_EXEC_MODE that is not
+# none, isolated or native, the mode gate below decides from the environment alone.
+crate_mode() {
+  local run="${HERE%/poc/*}" id="${HERE##*/}" name env="${AUDITOR_EXEC_MODE:-}" n
+  name="${run##*/}"
+  [[ "${HERE}" == "${run}/poc/${id}" ]] || return 0
+  case "${name}" in
+    audit_*|incident_*) digits "${name#*_}" 6 || return 0 ;;
+    *) return 0 ;;
+  esac
+  case "${id}" in
+    F-*) digits "${id#F-}" 4 || return 0 ;;
+    INC-*.*) n="${id#INC-}"; { digits "${n%%.*}" 6 && digits "${n#*.}" 4; } || return 0 ;;
+    *) return 0 ;;
+  esac
+  mode_file "${run}" "${name}"
+  [[ -n "${MODE_TEXT}" ]] || return 0
+  case "${env}" in ''|none|isolated|native) ;; *) return 0 ;; esac
+  case " ${MODE_TEXT} ${env} " in
+    *" none "*) MODE=none ;;
+    *" isolated "*) MODE=isolated ;;
+    *) MODE=native ;;
+  esac
+  MODE_SOURCES="${name}/exec-mode: ${MODE_TEXT}; AUDITOR_EXEC_MODE: ${env:-unset}"
+  if [[ "${MODE}" == none ]]; then
+    blocker "the recorded execution mode is none (${MODE_SOURCES}): no target code is built or run for this engagement (OUTPUT-RULES.md Rule 11a) — nothing was copied or built."
+  fi
+  echo ">> execution mode: ${MODE} (the stricter of ${MODE_SOURCES})"
+  AUDITOR_EXEC_MODE="${MODE}"
+}
+
 # child / child_net / child_sbf [NAME=value...] <program> [<arg>...]: how run.sh starts a
 # cargo call or a test binary. ./run.sh hands it its own environment. The installation's
 # copy runs it under env -i with only what scripts/lib/isolation.sh passes; child_net adds
@@ -561,6 +614,7 @@ elif [[ "${SELF}" == */templates/poc && -f "${SELF%/templates/poc}/scripts/lib/c
   blocker "this run.sh is the installation's template, not a PoC crate: run it with --crate <R>/poc/<ID> (--init <R>/poc/<ID> makes one) — nothing was copied or built."
 else
   HERE="${SELF}"
+  crate_mode
 fi
 
 TOOLS_VERSION="${TOOLS_VERSION:-v1.54}"

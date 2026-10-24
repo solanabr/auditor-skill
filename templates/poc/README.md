@@ -44,12 +44,17 @@ AUDITOR_EXEC_MODE=isolated ./run.sh   # or native: the execution mode recorded f
 Building this crate runs code — dependency build scripts and proc-macros, then the
 tests — so every run needs the execution mode recorded at intake (`OUTPUT-RULES.md`
 Rule 11a): `isolated` inside a container, VM or sandbox with no keys mounted, or
-`native` on this machine, which the report then states. `./run.sh` reads it from
-`AUDITOR_EXEC_MODE`. The installation's copy takes the stricter of `<R>/exec-mode`,
-the one word recorded when the human answered (`none`, `isolated` or `native`), and
-`AUDITOR_EXEC_MODE`, `none` being the strictest; a `--mode <mode>` must name that
-mode. With no mode, with `none`, or with a `--mode` that names another, `run.sh` exits
-`3` before it copies or compiles anything.
+`native` on this machine, which the report then states. `run.sh` takes the stricter
+of `AUDITOR_EXEC_MODE` and `<R>/exec-mode`, the one word recorded when the human
+answered (`none`, `isolated` or `native`), `none` being the strictest. The
+installation's copy reads the `exec-mode` of every run directory its arguments name,
+and `./run.sh` that of the run directory this crate sits in; a `--mode <mode>` must
+name the mode that results. With no mode, with `none`, or with a `--mode` that names
+another, `run.sh` exits `3` before it copies or compiles anything. The agent writes
+`<R>/exec-mode` and could write another word there, so if you chose `isolated`, also
+set `AUDITOR_EXEC_MODE=isolated` in the environment Claude Code runs in: the stricter
+mode then holds whatever the file says. `--mode` catches a mode that changed without
+you, not an agent that writes both.
 
 **The installation's copy** is the form a command pre-approves, so it checks every
 argument before it copies anything, and refuses what does not fit (exit `3`, on one
