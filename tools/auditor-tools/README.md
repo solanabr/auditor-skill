@@ -214,7 +214,9 @@ gives exact deduplication across audits.
 | `rule` | Record a `FALSE_POSITIVE` \| `ACCEPTED_RISK` ruling with a timestamp. |
 | `check` | Print `{"suppressed":bool,"ruling":..}`; exit 0 if suppressed by a `FALSE_POSITIVE` ruling, else exit 1. |
 | `regressions` | JSON list of findings with status `REGRESSED`. |
-| `warm` | JSON `{profile, invariants[], open_fp_rulings[]}` — the warm-start context block for a re-audit. |
+| `warm` | JSON `{profile, invariants[], open_fp_rulings[]}` — the warm-start context block for a re-audit: what `profile` and `invariant` recorded, and the standing rulings. |
+| `profile` | Record the program's protocol profile. Fields not given keep what the profile holds. Prints `profile <program_id> recorded`. |
+| `invariant` | Record an invariant of the program, one per statement: the same statement again updates the fields given. Prints `invariant <id> recorded` or `invariant <id> updated`. |
 
 **Regression rule:** when `put-finding` re-observes a finding whose stored status
 was `FIXED`, the status transitions to `REGRESSED` and the command prints
@@ -232,6 +234,10 @@ rule            --program-id <PID> --signature <SIG> --ruling <RULING> --rationa
 check           --program-id <PID> --signature <SIG>
 regressions     --program-id <PID>
 warm            --program-id <PID>
+profile         --program-id <PID>, and at least one of [--protocol-class <C>]
+                [--trust-assumptions-json <JSON>] [--oracle-set <S>] [--admin-set <S>] [--notes <N>]
+invariant       --program-id <PID> --statement <S> [--protocol-class <C>] [--source-fn <F>]
+                [--cited-line <FILE:LINE>] [--status <S>]
 ```
 
 Each option is given once, as `--name <value>` or `--name=<value>`; the word after
@@ -239,16 +245,17 @@ Each option is given once, as `--name <value>` or `--name=<value>`; the word aft
 bytes, and holds no control or formatting character: the C0 and C1 controls, DEL,
 the line and paragraph separators, the bidirectional controls, and the code points
 Unicode marks default-ignorable (audit-logs' list). `--severity` is a whole number
-from 1 to 10 and `--line` one from 1.
+from 1 to 10 and `--line` one from 1. `--trust-assumptions-json` must be JSON.
 
 ### Where it reads and writes
 
 It is built so that `warm`, `check`, `regressions`, `init` and `put-finding` can
 each be pre-approved as one `Bash(…)` rule on its absolute path and subcommand
 (`"<root>/tools/auditor-tools/target/release/audit-mem" warm *`), safe whatever
-arguments follow. `rule` and `set-status` decide what later audits suppress, and
-are never pre-approved. Its rules are those of `scripts/lib/confine.sh` and
-`scripts/rundir.sh`, in `src/confine.rs`:
+arguments follow; `profile` and `invariant` follow the same rules. `rule` and
+`set-status` decide what later audits suppress, and are never pre-approved. Its
+rules are those of `scripts/lib/confine.sh` and `scripts/rundir.sh`, in
+`src/confine.rs`:
 
 - `--db` is `.audit-memory/audit.db` or `<R>/audit-mem.db`, relative to the working
   directory (one leading `./` allowed), where `<R>` passes `scripts/rundir.sh check`:
@@ -308,6 +315,12 @@ audit-mem set-status --program-id VaultProg... --signature 'unchecked_sub@vault.
 audit-mem put-finding --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
   --root-cause 'unchecked subtraction can underflow vault balance' \
   --title 'Vault balance underflow' --severity 3 --commit c0ffee3 --audit-n audit-3
+
+# the protocol profile and an invariant, which warm returns
+audit-mem profile --program-id VaultProg... --protocol-class vault \
+  --trust-assumptions-json '{"admin":"3-of-5 multisig"}' --oracle-set 'pyth SOL/USD'
+audit-mem invariant --program-id VaultProg... --statement 'total_shares == shares_mint.supply' \
+  --status 'Manually verified' --cited-line src/vault.rs:88
 
 # suppress a known false positive, then gate on it
 audit-mem rule --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
@@ -473,8 +486,8 @@ gracefully — it works without them; they just save context and add memory.
   in its place when it is not built or reports a stale build; both give the same
   figures.
 - **`audit-mem` warm-starts re-audits.** On a repeat audit of the same program,
-  `warm --program-id` returns the protocol profile, recorded invariants, and any
-  standing false-positive/accepted-risk rulings so prior context is not
-  re-derived. `check` auto-suppresses findings previously ruled `FALSE_POSITIVE`,
-  and `put-finding` + `regressions` surface anything that was fixed and has since
-  regressed.
+  `warm --program-id` returns the protocol profile and invariants that `profile`
+  and `invariant` recorded, and any standing false-positive/accepted-risk rulings,
+  so prior context is not re-derived. `check` auto-suppresses findings previously
+  ruled `FALSE_POSITIVE`, and `put-finding` + `regressions` surface anything that
+  was fixed and has since regressed.

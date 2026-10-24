@@ -1,8 +1,9 @@
 //! Cross-audit findings memory backed by SQLite (bundled `rusqlite`).
 //!
 //! Provides exact-dedup of findings, regression detection (a `FIXED` finding
-//! re-observed becomes `REGRESSED`), false-positive suppression rulings, and a
-//! warm-start context block for re-audits.
+//! re-observed becomes `REGRESSED`), false-positive suppression rulings, the
+//! protocol profile and invariants of a program, and a warm-start context block
+//! for re-audits.
 //!
 //! A store is opened only when it exists: read-only for the subcommands that read
 //! it ([`open_read_only`]), for reading and writing for the ones that write it
@@ -467,6 +468,44 @@ pub struct ProtocolProfile {
     pub notes: String,
 }
 
+/// The fields [`put_profile`] sets; `None` keeps what the profile holds.
+#[derive(Default)]
+pub struct ProfileFields<'a> {
+    pub protocol_class: Option<&'a str>,
+    pub trust_assumptions_json: Option<&'a str>,
+    pub oracle_set: Option<&'a str>,
+    pub admin_set: Option<&'a str>,
+    pub notes: Option<&'a str>,
+}
+
+/// Record a program's protocol profile: a new profile takes the fields given and
+/// empty text for the rest; an existing one takes the fields given and keeps the
+/// others. One transaction.
+pub fn put_profile(conn: &Connection, program_id: &str, f: &ProfileFields) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "INSERT OR IGNORE INTO protocol_profile (program_id, protocol_class, trust_assumptions_json, \
+         oracle_set, admin_set, notes) VALUES (?1, '', '', '', '', '')",
+        params![program_id],
+    )?;
+    tx.execute(
+        "UPDATE protocol_profile SET protocol_class = COALESCE(?2, protocol_class), \
+         trust_assumptions_json = COALESCE(?3, trust_assumptions_json), \
+         oracle_set = COALESCE(?4, oracle_set), admin_set = COALESCE(?5, admin_set), \
+         notes = COALESCE(?6, notes) WHERE program_id = ?1",
+        params![
+            program_id,
+            f.protocol_class,
+            f.trust_assumptions_json,
+            f.oracle_set,
+            f.admin_set,
+            f.notes
+        ],
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
 #[derive(Debug, Serialize)]
 pub struct InvariantRow {
     pub inv_id: i64,
@@ -476,6 +515,65 @@ pub struct InvariantRow {
     pub source_fn: String,
     pub cited_line: String,
     pub status: String,
+}
+
+/// The fields [`put_invariant`] sets besides the statement; `None` keeps what an
+/// existing invariant holds.
+#[derive(Default)]
+pub struct InvariantFields<'a> {
+    pub protocol_class: Option<&'a str>,
+    pub source_fn: Option<&'a str>,
+    pub cited_line: Option<&'a str>,
+    pub status: Option<&'a str>,
+}
+
+/// Record an invariant of a program: one per (program_id, statement). A new one
+/// takes the fields given and empty text for the rest; recording the same
+/// statement again updates the fields given. Returns its id, and whether it is
+/// new. One transaction.
+pub fn put_invariant(
+    conn: &Connection,
+    program_id: &str,
+    statement: &str,
+    f: &InvariantFields,
+) -> Result<(i64, bool)> {
+    let tx = conn.unchecked_transaction()?;
+    let existing: Option<i64> = tx
+        .query_row(
+            "SELECT inv_id FROM invariants WHERE program_id = ?1 AND statement = ?2 \
+             ORDER BY inv_id LIMIT 1",
+            params![program_id, statement],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let outcome = match existing {
+        Some(id) => {
+            tx.execute(
+                "UPDATE invariants SET protocol_class = COALESCE(?2, protocol_class), \
+                 source_fn = COALESCE(?3, source_fn), cited_line = COALESCE(?4, cited_line), \
+                 status = COALESCE(?5, status) WHERE inv_id = ?1",
+                params![id, f.protocol_class, f.source_fn, f.cited_line, f.status],
+            )?;
+            (id, false)
+        }
+        None => {
+            tx.execute(
+                "INSERT INTO invariants (program_id, protocol_class, statement, source_fn, cited_line, status) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    program_id,
+                    f.protocol_class.unwrap_or(""),
+                    statement,
+                    f.source_fn.unwrap_or(""),
+                    f.cited_line.unwrap_or(""),
+                    f.status.unwrap_or(""),
+                ],
+            )?;
+            (tx.last_insert_rowid(), true)
+        }
+    };
+    tx.commit()?;
+    Ok(outcome)
 }
 
 /// The warm-start context block returned for a re-audit.

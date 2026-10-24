@@ -2,11 +2,12 @@
 //! cross-audit memory.
 //!
 //! Subcommands: `init`, `put-finding`, `set-status`, `rule`, `check`,
-//! `regressions`, `warm`. See the crate README for full usage.
+//! `regressions`, `warm`, `profile`, `invariant`. See the crate README for full
+//! usage.
 //!
 //! It is built so that `warm`, `check`, `regressions`, `init` and `put-finding`
-//! can be pre-approved, each as a rule on its absolute path and subcommand, safe
-//! whatever arguments follow (`confine.rs`):
+//! (and `profile` and `invariant`) can be pre-approved, each as a rule on its
+//! absolute path and subcommand, safe whatever arguments follow (`confine.rs`):
 //! - The subcommand comes first; each option is given once, as `--name <value>`
 //!   or `--name=<value>`, and the word after `--name` is its value whatever it
 //!   looks like. Every text value is UTF-8, at most 4096 bytes, and holds no
@@ -40,7 +41,7 @@ use auditor_tools::mem;
 use rusqlite::Connection;
 
 const USAGE: &str = "usage: audit-mem <subcommand> [--db <store>] [options], the subcommand \
-being init, put-finding, set-status, rule, check, regressions or warm";
+being init, put-finding, set-status, rule, check, regressions, warm, profile or invariant";
 
 /// The longest text value accepted, in bytes.
 const MAX_FIELD: usize = 4096;
@@ -58,6 +59,8 @@ enum Sub {
     Check,
     Regressions,
     Warm,
+    Profile,
+    Invariant,
 }
 
 impl Sub {
@@ -70,6 +73,8 @@ impl Sub {
             b"check" => Sub::Check,
             b"regressions" => Sub::Regressions,
             b"warm" => Sub::Warm,
+            b"profile" => Sub::Profile,
+            b"invariant" => Sub::Invariant,
             _ => return None,
         })
     }
@@ -83,6 +88,8 @@ impl Sub {
             Sub::Check => "check",
             Sub::Regressions => "regressions",
             Sub::Warm => "warm",
+            Sub::Profile => "profile",
+            Sub::Invariant => "invariant",
         }
     }
 
@@ -101,6 +108,20 @@ impl Sub {
             ),
             Sub::Check => (&["program-id", "signature"], &[]),
             Sub::Regressions | Sub::Warm => (&["program-id"], &[]),
+            Sub::Profile => (
+                &["program-id"],
+                &[
+                    "protocol-class",
+                    "trust-assumptions-json",
+                    "oracle-set",
+                    "admin-set",
+                    "notes",
+                ],
+            ),
+            Sub::Invariant => (
+                &["program-id", "statement"],
+                &["protocol-class", "source-fn", "cited-line", "status"],
+            ),
         }
     }
 
@@ -262,6 +283,12 @@ fn parse(args: &[OsString]) -> Result<Call, Stop> {
         if !values.iter().any(|(n, _)| n == name) {
             return Err(refuse(format!("{} needs --{name}", sub.name())));
         }
+    }
+    if sub == Sub::Profile && values.len() < 2 {
+        return Err(refuse(format!(
+            "profile needs at least one of --{}",
+            optional.join(", --")
+        )));
     }
     Ok(Call {
         sub,
@@ -534,6 +561,20 @@ enum Action {
     },
     Regressions,
     Warm,
+    Profile {
+        protocol_class: Option<String>,
+        trust_assumptions_json: Option<String>,
+        oracle_set: Option<String>,
+        admin_set: Option<String>,
+        notes: Option<String>,
+    },
+    Invariant {
+        statement: String,
+        protocol_class: Option<String>,
+        source_fn: Option<String>,
+        cited_line: Option<String>,
+        status: Option<String>,
+    },
 }
 
 /// Checks every value of the call, before the store is looked at.
@@ -570,6 +611,28 @@ fn action(call: &Call) -> Result<Action, Stop> {
         },
         Sub::Regressions => Action::Regressions,
         Sub::Warm => Action::Warm,
+        Sub::Profile => {
+            let trust_assumptions_json = call.text("trust-assumptions-json")?;
+            if let Some(json) = &trust_assumptions_json {
+                if serde_json::from_str::<serde_json::Value>(json).is_err() {
+                    return Err(refuse("--trust-assumptions-json is not JSON".into()));
+                }
+            }
+            Action::Profile {
+                protocol_class: call.text("protocol-class")?,
+                trust_assumptions_json,
+                oracle_set: call.text("oracle-set")?,
+                admin_set: call.text("admin-set")?,
+                notes: call.text("notes")?,
+            }
+        }
+        Sub::Invariant => Action::Invariant {
+            statement: call.need("statement")?,
+            protocol_class: call.text("protocol-class")?,
+            source_fn: call.text("source-fn")?,
+            cited_line: call.text("cited-line")?,
+            status: call.text("status")?,
+        },
     })
 }
 
@@ -701,6 +764,52 @@ fn write(wt: &Path, store: &Store, pid: &str, action: Action) -> Result<String, 
             )
             .map_err(&failed)?;
             format!("ruling {} recorded ({})", id, ruling)
+        }
+        Action::Profile {
+            protocol_class,
+            trust_assumptions_json,
+            oracle_set,
+            admin_set,
+            notes,
+        } => {
+            mem::put_profile(
+                &conn,
+                pid,
+                &mem::ProfileFields {
+                    protocol_class: protocol_class.as_deref(),
+                    trust_assumptions_json: trust_assumptions_json.as_deref(),
+                    oracle_set: oracle_set.as_deref(),
+                    admin_set: admin_set.as_deref(),
+                    notes: notes.as_deref(),
+                },
+            )
+            .map_err(&failed)?;
+            format!("profile {} recorded", pid)
+        }
+        Action::Invariant {
+            statement,
+            protocol_class,
+            source_fn,
+            cited_line,
+            status,
+        } => {
+            let (id, new) = mem::put_invariant(
+                &conn,
+                pid,
+                &statement,
+                &mem::InvariantFields {
+                    protocol_class: protocol_class.as_deref(),
+                    source_fn: source_fn.as_deref(),
+                    cited_line: cited_line.as_deref(),
+                    status: status.as_deref(),
+                },
+            )
+            .map_err(&failed)?;
+            format!(
+                "invariant {} {}",
+                id,
+                if new { "recorded" } else { "updated" }
+            )
         }
         Action::Init => format!("initialized {}", store.shown()),
         Action::Check { .. } | Action::Regressions | Action::Warm => {

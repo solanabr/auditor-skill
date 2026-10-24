@@ -1,5 +1,5 @@
-//! audit-mem as a command: which store it uses, how it opens it, and what it
-//! refuses.
+//! audit-mem as a command: which store it uses, how it opens it, what it refuses,
+//! and the profile and invariants warm reports.
 
 mod common;
 
@@ -446,7 +446,7 @@ fn takes_db_only_as_one_of_two_stores() {
 #[test]
 fn refuses_options_before_the_subcommand_and_any_it_does_not_take() {
     let wt = store();
-    let usage = "usage: audit-mem <subcommand> [--db <store>] [options], the subcommand being init, put-finding, set-status, rule, check, regressions or warm";
+    let usage = "usage: audit-mem <subcommand> [--db <store>] [options], the subcommand being init, put-finding, set-status, rule, check, regressions, warm, profile or invariant";
     for (args, why) in [
         (vec![], format!("no subcommand ({usage})")),
         (
@@ -538,6 +538,24 @@ fn refuses_options_before_the_subcommand_and_any_it_does_not_take() {
                 "a",
             ],
             "--ruling must be one of FALSE_POSITIVE, ACCEPTED_RISK: fp".into(),
+        ),
+        (
+            vec!["profile", "--program-id", P],
+            "profile needs at least one of --protocol-class, --trust-assumptions-json, --oracle-set, --admin-set, --notes".into(),
+        ),
+        (
+            vec![
+                "profile",
+                "--program-id",
+                P,
+                "--trust-assumptions-json",
+                "admin is trusted",
+            ],
+            "--trust-assumptions-json is not JSON".into(),
+        ),
+        (
+            vec!["invariant", "--program-id", P],
+            "invariant needs --statement".into(),
         ),
     ] {
         refused(&mem(&wt, &args), "audit-mem", &why);
@@ -718,6 +736,10 @@ fn opens_a_store_read_only_for_warm_check_and_regressions() {
         ],
     ));
     ok(&rule(&wt, &[]));
+    ok(&mem(
+        &wt,
+        &["profile", "--program-id", P, "--protocol-class", "vault"],
+    ));
     let db = wt.path(".audit-memory/audit.db");
     fs::set_permissions(&db, fs::Permissions::from_mode(0o400)).expect("chmod");
     let before = wt.snapshot();
@@ -733,20 +755,7 @@ fn opens_a_store_read_only_for_warm_check_and_regressions() {
     );
     assert_eq!(fs::metadata(&db).expect("stat").mtime_nsec(), mtime);
     // A writer needs write access, which a read-only open never asks for.
-    let o = mem(
-        &wt,
-        &[
-            "set-status",
-            "--program-id",
-            P,
-            "--signature",
-            SIG,
-            "--root-cause",
-            "r",
-            "--status",
-            "FIXED",
-        ],
-    );
+    let o = mem(&wt, &["profile", "--program-id", P, "--notes", "n"]);
     assert_eq!(o.status.code(), Some(2));
     assert!(
         stderr(&o).starts_with("audit-mem: error: .audit-memory/audit.db: "),
@@ -833,4 +842,124 @@ fn refuses_a_crafted_store() {
             );
         }
     }
+}
+
+#[test]
+fn profile_and_invariant_record_what_warm_returns() {
+    let wt = store();
+    assert_eq!(
+        ok(&mem(
+            &wt,
+            &[
+                "profile",
+                "--program-id",
+                P,
+                "--protocol-class",
+                "vault",
+                "--trust-assumptions-json",
+                "{\"admin\":\"multisig\"}",
+                "--oracle-set",
+                "pyth SOL/USD"
+            ]
+        )),
+        format!("profile {P} recorded\n")
+    );
+    ok(&mem(
+        &wt,
+        &[
+            "profile",
+            "--program-id",
+            P,
+            "--notes",
+            "upgrade authority held by a 3-of-5",
+        ],
+    ));
+    assert_eq!(
+        ok(&mem(
+            &wt,
+            &[
+                "invariant",
+                "--program-id",
+                P,
+                "--statement",
+                "total_shares == shares_mint.supply",
+                "--protocol-class",
+                "vault",
+                "--status",
+                "Unproven"
+            ]
+        )),
+        "invariant 1 recorded\n"
+    );
+    assert_eq!(
+        ok(&mem(
+            &wt,
+            &[
+                "invariant",
+                "--program-id",
+                P,
+                "--statement",
+                "total_shares == shares_mint.supply",
+                "--status",
+                "Manually verified",
+                "--cited-line",
+                "src/vault.rs:88",
+                "--source-fn",
+                "deposit"
+            ]
+        )),
+        "invariant 1 updated\n"
+    );
+    ok(&mem(
+        &wt,
+        &[
+            "invariant",
+            "--program-id",
+            P,
+            "--statement",
+            "only the authority moves funds",
+        ],
+    ));
+    let warm = json(&mem(&wt, &["warm", "--program-id", P]));
+    assert_eq!(warm["profile"]["protocol_class"], "vault");
+    assert_eq!(
+        warm["profile"]["trust_assumptions_json"],
+        "{\"admin\":\"multisig\"}"
+    );
+    assert_eq!(warm["profile"]["oracle_set"], "pyth SOL/USD");
+    assert_eq!(
+        warm["profile"]["notes"],
+        "upgrade authority held by a 3-of-5"
+    );
+    assert_eq!(warm["invariants"].as_array().map(Vec::len), Some(2));
+    assert_eq!(warm["invariants"][0]["status"], "Manually verified");
+    assert_eq!(warm["invariants"][0]["protocol_class"], "vault");
+    assert_eq!(warm["invariants"][0]["source_fn"], "deposit");
+    assert_eq!(
+        warm["invariants"][1]["statement"],
+        "only the authority moves funds"
+    );
+    // Neither writer suppresses anything.
+    let (code, result) = check(&wt, &[]);
+    assert_eq!(
+        (code, result["suppressed"].clone()),
+        (Some(1), Value::Bool(false))
+    );
+    // They follow put-finding's field rules.
+    refused(
+        &mem(
+            &wt,
+            &["invariant", "--program-id", P, "--statement", "a\u{202e}b"],
+        ),
+        "audit-mem",
+        "--statement holds a control or formatting character: a?b",
+    );
+    refused(
+        &mem(
+            &wt,
+            &["profile", "--program-id", P, "--notes", &"n".repeat(4097)],
+        ),
+        "audit-mem",
+        "--notes is longer than 4096 bytes",
+    );
 }

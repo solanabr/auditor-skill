@@ -98,3 +98,66 @@ fn dedup_regression_and_suppression() {
     assert_eq!(warm.open_fp_rulings.len(), 1);
     assert!(warm.profile.is_none(), "no profile inserted in this test");
 }
+
+#[test]
+fn profile_and_invariants_reach_warm() {
+    let conn = mem::open_in_memory().expect("open in-memory db");
+    mem::put_profile(
+        &conn,
+        "Prog1111111111111111111111111111111111111111",
+        &mem::ProfileFields {
+            protocol_class: Some("vault"),
+            notes: Some("first pass"),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    mem::put_profile(
+        &conn,
+        "Prog1111111111111111111111111111111111111111",
+        &mem::ProfileFields {
+            oracle_set: Some("pyth SOL/USD"),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let (id, new) = mem::put_invariant(
+        &conn,
+        "Prog1111111111111111111111111111111111111111",
+        "total_shares == shares_mint.supply",
+        &mem::InvariantFields {
+            status: Some("Unproven"),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(new);
+    let (again, new) = mem::put_invariant(
+        &conn,
+        "Prog1111111111111111111111111111111111111111",
+        "total_shares == shares_mint.supply",
+        &mem::InvariantFields {
+            status: Some("Manually verified"),
+            cited_line: Some("src/vault.rs:88"),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        (again, new),
+        (id, false),
+        "the same statement is one invariant"
+    );
+    let warm = mem::warm(&conn, "Prog1111111111111111111111111111111111111111").unwrap();
+    let profile = warm.profile.expect("the profile");
+    assert_eq!(profile.protocol_class, "vault");
+    assert_eq!(profile.oracle_set, "pyth SOL/USD");
+    assert_eq!(
+        profile.notes, "first pass",
+        "a later write keeps the fields it does not give"
+    );
+    assert_eq!(warm.invariants.len(), 1);
+    assert_eq!(warm.invariants[0].status, "Manually verified");
+    assert_eq!(warm.invariants[0].cited_line, "src/vault.rs:88");
+    assert!(mem::warm(&conn, "OtherProg").unwrap().profile.is_none());
+}
