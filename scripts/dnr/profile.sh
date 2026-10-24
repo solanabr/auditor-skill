@@ -76,15 +76,20 @@ done
 # with each path escaped, and writes the closing "-- skipped" lines, which it also
 # prints on stderr before any query runs. The same program, run as "publish", writes
 # the finished report to --out.
-tmpd="$(mktemp -d "${TMPDIR:-/tmp}/dnr_profile.XXXXXX")"
+# TMPDIR is checked before anything is made in it, so a TMPDIR inside the working
+# directory gets nothing written there.
+rc=0
+confine_scratch dnr_profile || rc=$?
+case "$rc" in
+  0) ;;
+  2) confine_refuse "its temp directory lies inside the working directory; set TMPDIR outside it" ;;
+  *) echo "profile.sh: cannot make a private temp directory in $(confine_text "${TMPDIR:-/tmp}")" >&2; exit 1 ;;
+esac
+tmpd=$CONFINE_SCRATCH
 trap 'rm -rf "$tmpd"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
-confine_phys "$tmpd" || confine_refuse "its temp directory cannot be resolved"
-case "$CONFINE_PHYS/" in
-  "${CONFINE_WT%/}/"*) confine_refuse "its temp directory lies inside the working directory; set TMPDIR outside it" ;;
-esac
 corpus="$tmpd/corpus.jsonl"
 recipe='import errno, json, math, os, re, signal, stat, sys
 # ---- input contract (scripts/dnr/README.md); the same block is in profile.sh, frames.py, deltas.py

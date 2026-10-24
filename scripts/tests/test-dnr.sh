@@ -1753,6 +1753,18 @@ printf 'def tostring: "HOME-JQ";\n' > "$TT/home24/.jq"
 printf '%s\n' '{"version":7,"meta":{"err":null},"transaction":{"signatures":["SigVersion7"],"message":{"accountKeys":["Payer7"]}}}' > "$RW/incident_1/v24.jsonl"
 eq "entry points: profile.sh's jq reads no ~/.jq (the version histogram as jq prints it)" \
   "$(cd "$RW" && HOME="$TT/home24" "$DNR/profile.sh" incident_1/v24.jsonl 2>&1 | sed -n '/^-- version/{n;p;}' | tr -s ' ')" " 1 7"
+# A TMPDIR inside the working directory is refused before anything is made in it: an rm
+# that removes nothing, first on PATH, would leave behind whatever was.
+mkdir -p "$TT/rm24" "$RW/tmp24"
+printf '#!/bin/sh\nexit 0\n' > "$TT/rm24/rm"
+chmod +x "$TT/rm24/rm"
+( cd "$RW" && PATH="$TT/rm24:$PATH" TMPDIR="$RW/tmp24" "$DNR/profile.sh" "$F/clean-mixed.jsonl" ) > "$TT/t24.out" 2> "$TT/t24.err"
+eq "entry points: profile.sh refuses a TMPDIR inside the working directory, and makes nothing there" \
+  "$?|$(cat "$TT/t24.err")|$(ls -A "$RW/tmp24" | tr '\n' ' ')|$(wc -c < "$TT/t24.out" | tr -d ' ')" \
+  "2|profile.sh: refused: its temp directory lies inside the working directory; set TMPDIR outside it||0"
+( cd "$RW" && TMPDIR="$TT/no-such-dir24" "$DNR/profile.sh" "$F/clean-mixed.jsonl" ) > "$TT/t24.out" 2> "$TT/t24.err"
+eq "entry points: profile.sh stops with one line (exit 1) when TMPDIR does not exist" \
+  "$?|$(grep -c . "$TT/t24.err")|$(wc -c < "$TT/t24.out" | tr -d ' ')" "1|1|0"
 # ---- hostile layout (fixtures/audit-logs/hostile-args.txt); the same block is in test-audit-logs.sh and test-dnr.sh
 # hostile_layout <dir> <a clean transaction line>: the working directory the case file
 # names, <dir>/wt, and a directory outside it, <dir>/outside, in which a canary
