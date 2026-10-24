@@ -36,13 +36,18 @@ Telegram bot (`@seal_911_bot`). These commands are the after-the-fact workup.
 ## Inputs
 
 - **Your own corpus** (preferred): point `--logs` at a directory of
-  `getTransaction` JSONL, a Geyser/indexer export, or service logs.
+  `getTransaction` JSONL, a Geyser/indexer export, or service logs. A line the
+  recipes cannot read is skipped and counted as a collection gap, never guessed
+  at: a non-integer amount, for example, is never rounded.
 - **Collected from RPC** (gated): with no `--logs`, the command shows you the
   addresses, window, caps and estimated call count and asks before the one shipped
   collector runs. Set `RPC_URL` in the environment (never on the command line);
   the collector finalizes and passes `maxSupportedTransactionVersion: 1`, which is
   mandatory now that v1 transactions are live on mainnet. Non-interactive runs
-  collect only with `--collect`.
+  collect only with `--collect`. A long collection runs in the background; one
+  stopped by INT, TERM or HUP, or by a failed write, records what it had not
+  fetched as collection gaps; for one killed outright, the agent records them from
+  its files.
 - **Source** (`--repo`): needed to confirm a flaw and to reach
   `confirmed_exploited`; without it, findings cap at `suspected`.
 
@@ -103,7 +108,9 @@ already captured.
   RPC provider that received your addresses is disclosed under Rule 11b.
 - **Recipes:** [`scripts/dnr/`](../scripts/dnr/) — profiling, log-frame attribution,
   and exact balance deltas, each checked against adversarial fixtures by
-  `scripts/tests/test-dnr.sh`.
+  `scripts/tests/test-dnr.sh`. They share one input contract: a line they cannot
+  read is counted, never echoed, and a corpus path that is a symbolic link is
+  refused.
 - **Scripts run from the installation, never from the audited repo.** The commands
   invoke them by absolute path, `"<auditor-skill root>/scripts/dnr/…"`, and run
   python as `python3 -I`, so a same-named script, or a `json.py` the repo ships in

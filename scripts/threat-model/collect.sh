@@ -38,13 +38,14 @@
 #
 # Exit status: 0 done (sections may print NOT FOUND), 2 usage error or rejected input (including an
 #              --import that is not a commit, and a run directory that is or holds a symbolic link,
-#              that git tracks, or that git or find cannot check),
+#              that is reached through one inside the working directory or the target tree, that git
+#              tracks, or that git or find cannot check),
 #              3 --repo is not the top level of a git repository (or a bare repository), the pin
 #              does not resolve, or the target is a partial clone (reading it could fetch from its
 #              promisor remote) or git cannot read its config.
 
 set -uo pipefail
-unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES CDPATH
 # No git call may fetch a missing object from a promisor remote (partial clones are refused below too).
 export GIT_NO_LAZY_FETCH=1 LC_ALL=C
 
@@ -122,6 +123,7 @@ while IFS= read -r v; do
 done <<< "$VULNS_NL"
 # Every caller-supplied path becomes absolute here: the collector later leaves the caller's working
 # directory (usually the audited repository) so no tool can pick up a module or config file from it.
+WD_PHYS=$(pwd -P) || die "cannot resolve the working directory"
 abspath() { case "$1" in /*) printf '%s' "$1" ;; *) printf '%s/%s' "$PWD" "$1" ;; esac; }
 OUT=$(abspath "$OUT")
 [ -n "$AUDIT_MEM_DB" ] && AUDIT_MEM_DB=$(abspath "$AUDIT_MEM_DB")
@@ -194,6 +196,7 @@ if [ -n "$IMPORT" ]; then
 fi
 REPO_ABS=$(cd "$REPO" && pwd)
 REPO=$REPO_ABS
+REPO_PHYS=$(cd "$REPO_ABS" && pwd -P)
 SHALLOW=$(G "$REPO" rev-parse --is-shallow-repository 2>/dev/null)
 EMPTY_TREE=$(G "$REPO" hash-object -t tree /dev/null)
 # Where this git has --attr-source, R4 reads gitattributes from the empty tree instead of the target's
@@ -386,7 +389,7 @@ eval_triggers() {
   local t3="" t4="" cur="" src remotes s d n
   G "$REPO" grep -a -i -q -E "$FORK_PHRASES" "$PIN_SHA" -- 'README*' '*/README*' 'docs/*' 2>/dev/null && t3="readme-phrase"
   src=$(G "$REPO" grep -h -a -E 'source_code[[:space:]]*:' "$PIN_SHA" -- '*.rs' 2>/dev/null |
-        sed -nE 's/.*source_code[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' | head -n 3)
+        sed -nE 's/.*source_code[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' | sed -n '1,3p')
   remotes=$(remote_urls | awk '{print $2}' | norm_url)
   # One string per line, read as written: target strings are never word-split or glob-expanded.
   while IFS= read -r s; do
@@ -414,9 +417,25 @@ if [ "$DETECT" -eq 1 ]; then eval_triggers; exit 0; fi
 # write or removal, for the output dir and its audit_<n>/ parent. The check fails closed: a directory
 # find cannot fully read, or one git cannot answer for (another owner, an unreadable config), is refused.
 # The only git error that passes is "not a git repository" from discovery: the directory is outside
-# every repository, so nothing there can be tracked.
+# every repository, so nothing there can be tracked. As in the detection-response collectors, every
+# directory on the way to the run directory is checked too.
+# run_path_link <absolute path>: status 0 when a directory on the way to the path is a symbolic link inside
+# the working directory or the target tree, or one whose place cannot be resolved. A link above both (such
+# as /tmp on macOS) is the operator's, and is followed.
+run_path_link() {
+  local rest=${1#/} cur="" comp phys
+  while :; do
+    case "$rest" in */*) comp=${rest%%/*}; rest=${rest#*/} ;; *) return 1 ;; esac
+    if [ -n "$comp" ] && [ -L "$cur/$comp" ]; then
+      phys=$(cd "${cur:-/}" 2>/dev/null && pwd -P) || return 0
+      case "$phys/" in "${WD_PHYS%/}"/*|"${REPO_PHYS%/}"/*) return 0 ;; esac
+    fi
+    cur="$cur/$comp"
+  done
+}
 check_run_dir() { # check_run_dir <dir>
   local d=$1 up links inside listed
+  run_path_link "$d" && die "refusing a run directory reached through a symbolic link inside the working directory or the target tree: $d (use a new audit_<n>)"
   [ -L "$d" ] && die "refusing a run directory that is a symbolic link: $d (use a new audit_<n>)"
   if [ -d "$d" ]; then
     links=$(find "$d" -type l -print 2>/dev/null) || die "refusing a run directory that cannot be fully read: $d (use a new audit_<n>)"
@@ -525,7 +544,7 @@ G "$REPO" log "${DIFFSAFE[@]}" -i -E --grep="$KW" --format='%h %ad %s' --date=sh
 # ---- R2 reverts ------------------------------------------------------------------------------------
 G "$REPO" log "${DIFFSAFE[@]}" -E --grep='^Revert "|This reverts commit [0-9a-f]{7,40}' --format='%H %h %ad %s' --date=short "$PIN_SHA" -- "${TPATHS[@]}" 2>/dev/null |
 while read -r full short date subj; do
-  rev=$(G "$REPO" log "${DIFFSAFE[@]}" -1 --format=%B "$full" 2>/dev/null | grep -oE 'reverts commit [0-9a-f]{7,40}' | head -n 1 | awk '{print substr($3, 1, 10)}')
+  rev=$(G "$REPO" log "${DIFFSAFE[@]}" -1 --format=%B "$full" 2>/dev/null | grep -oE 'reverts commit [0-9a-f]{7,40}' | sed -n 1p | awk '{print substr($3, 1, 10)}')
   echo "$short $date $subj  -> reverts ${rev:-unknown}"
 done > "$TMPD/r2"
 { section "R2 Reverts" "A reverted fix, or a revert of a revert, marks a surface someone changed their mind about."
@@ -548,7 +567,7 @@ grep -E ' ADDED x' "$TMPD/r3" > "$TMPD/r3c"
   endsec; } >> "$H"
 # Saved diffs name the commit by its full id (a short id could also be the name of a ref) and hold only
 # the files the commit's rows name.
-grep -E ' (REMOVED|ADDED-QUIET) x' "$TMPD/r3ids" | awk '!s[$1]++ { print $1, $2 }' | head -n 20 |
+grep -E ' (REMOVED|ADDED-QUIET) x' "$TMPD/r3ids" | awk '!s[$1]++ { print $1, $2 }' | sed -n '1,20p' |
 while read -r full c; do
   awk -F '\t' -v c="$full" '$1 == c && !s[$2]++ { print $2 }' "$TMPD/r3.paths" > "$TMPD/save.paths"
   save_diff "$REPO" "$full" "$OUT/diffs/target-$c.diff" "$TMPD/save.paths" "${TPATHS[@]}"
@@ -606,7 +625,7 @@ R4_OTHER=$(sed -E 's/^ *[0-9]+ //' "$TMPD/r4a" | grep -E '\.rs"?$' |
       [ -n "$IMPORT" ] || IMPORT=$(G "$REPO" rev-list --max-parents=0 "$PIN_SHA" | tail -n 1)
       # ls-tree takes literal paths, not globs; a diff from the empty tree honours the pathspec.
       G "$REPO" diff-tree "${DIFFSAFE[@]}" -r --no-renames "$EMPTY_TREE" "$IMPORT" -- "${TPATHS[@]}" 2>/dev/null |
-        awk '/^:/ { print $4 }' | sort -u | head -n 2000 > "$TMPD/import.blobs"
+        awk '/^:/ { print $4 }' | sort -u | sed -n '1,2000p' > "$TMPD/import.blobs"
       if [ -s "$TMPD/import.blobs" ]; then
         G "$PDIR" log "${DIFFSAFE[@]}" --all --no-renames --raw --no-abbrev --format='__C__ %ct %H' -- "${PPATHS[@]}" 2>/dev/null |
           awk 'NR == FNR { want[$1] = 1; total++; next }
@@ -645,7 +664,7 @@ R4_OTHER=$(sed -E 's/^ *[0-9]+ //' "$TMPD/r4a" | grep -E '\.rs"?$' |
         "$TMPD/target.lines" - | sort -k1,1n -k2,2n -k3,3n | cut -d' ' -f4- > "$TMPD/r5dids"
       cut -d' ' -f2- "$TMPD/r5dids" > "$TMPD/r5d"
       emit_capped "$TMPD/r5d" "the parent added no guard line after the fork point"
-      awk '/text absent from target/ && !s[$1]++ { print $1, $2 }' "$TMPD/r5dids" | head -n 20 |
+      awk '/text absent from target/ && !s[$1]++ { print $1, $2 }' "$TMPD/r5dids" | sed -n '1,20p' |
       while read -r full c; do
         awk -F '\t' -v c="$full" '$1 == c && !s[$2]++ { print $2 }' "$TMPD/r5.paths" > "$TMPD/save.paths"
         save_diff "$PDIR" "$full" "$OUT/diffs/parent-$c.diff" "$TMPD/save.paths" "${PPATHS[@]}"
@@ -671,7 +690,7 @@ R4_OTHER=$(sed -E 's/^ *[0-9]+ //' "$TMPD/r4a" | grep -E '\.rs"?$' |
   remote_urls | redact_urls > "$TMPD/r6d"
   emit_capped "$TMPD/r6d" "no remote configured"
   echo "--- first commits ---"
-  G "$REPO" log "${DIFFSAFE[@]}" --reverse --format='%h %ad %s' --date=short "$PIN_SHA" 2>/dev/null | head -n 3 > "$TMPD/r6e"
+  G "$REPO" log "${DIFFSAFE[@]}" --reverse --format='%h %ad %s' --date=short "$PIN_SHA" 2>/dev/null | sed -n '1,3p' > "$TMPD/r6e"
   emit_capped "$TMPD/r6e" "no commits"
   echo "--- report-like files in the pinned tree ---"
   G "$REPO" ls-tree -r --name-only "$PIN_SHA" 2>/dev/null | grep -iE '\.(pdf|md)$' | grep -iE "$REPORT_RE" > "$TMPD/r6f"
@@ -805,7 +824,6 @@ safe_name() { printf '%s' "$1" | sed 's/[^A-Za-z0-9._-]/_/g'; }
 # A local --vulns path is read only when it is not a symbolic link and reaches its file through no directory
 # link inside the target tree: the target controls those, and a link can point anywhere (a keypair, a .env).
 # Links outside the tree, such as /tmp on macOS or the caller's own, are followed.
-REPO_PHYS=$(cd "$REPO_ABS" && pwd -P)
 tree_link() { # tree_link <absolute path>: status 0 when the path is a symbolic link, or passes through a
               # directory link that sits inside the target tree or whose place cannot be resolved
   local rest=${1#/} cur="" comp phys

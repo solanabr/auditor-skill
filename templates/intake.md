@@ -182,6 +182,7 @@ gated — they are listed in the report (Rule 11b).
 | ------------------------- | ------------------------------------------- |
 | **Execution mode**        | {isolated (recommended) / native} (Q46)     |
 | **Isolation used**        | {container / VM / Claude Code sandbox — no keys or credentials mounted / N/A (native)} |
+| **PoC build cache**       | {the directory made once with `mktemp -d` for this engagement's `run.sh` calls, passed as `CARGO_TARGET_DIR` — inside the isolated runner in isolated mode / none} |
 | **Outside services**      | {disclosed in the report per Rule 11b — e.g. RPC provider, second-opinion LLM, registry queries / none planned} |
 
 ---

@@ -9,7 +9,7 @@ cd "<auditor-skill root>/tools/auditor-tools" && cargo build --release
 # binaries: <auditor-skill root>/tools/auditor-tools/target/release/audit-scan  and  …/audit-mem
 ```
 
-The installation belongs outside the repository under audit (Rule 11e). If it sits inside it anyway (the `install.sh` default, `.claude/skills/auditor-skill`), that build runs inside the target tree, where cargo and rustup read the target's `.cargo/config*` and `rust-toolchain*` from every parent directory: build there only in Rule 11a isolated mode. Otherwise skip the build, note it, and ask the human to delete that copy and install a fresh one outside the repository (the plugin, or `install.sh ~/.claude/skills/auditor-skill`). Never move or update a copy found inside a repository (README, Installation).
+The installation belongs outside the repository under audit (Rule 11e). If it sits inside it anyway (such as `.claude/skills/auditor-skill`, where `install.sh` without a path installed through 7.6.0), that build runs inside the target tree, where cargo and rustup read the target's `.cargo/config*` and `rust-toolchain*` from every parent directory: build there only in Rule 11a isolated mode. Otherwise skip the build, note it, and ask the human to delete that copy and install a fresh one outside the repository (the plugin, or `install.sh ~/.claude/skills/auditor-skill`). Never move or update a copy found inside a repository (README, Installation).
 
 In the commands below, `audit-scan` and `audit-mem` stand for those absolute binary paths. Never run them as a relative `tools/…` path.
 

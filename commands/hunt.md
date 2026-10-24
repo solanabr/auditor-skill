@@ -54,17 +54,21 @@ directory.
      `incident_*` only if git does not track it and it holds no symbolic links, and
      only after the human confirms which one (`--fresh` always creates a new one).
      Never write into a tracked `incident_*`; the bundled scripts refuse one, one
-     that is or holds a symbolic link, and one that git or find cannot check, with
-     exit 2. Its **first** file is `incident_<n>/.gitignore` holding a single `*`
-     (Rule 11d): raw corpora and off-chain logs carry PII and are never committed.
+     that is or holds a symbolic link or is reached through one, a path with a `.`
+     or `..` component, and one that git or find cannot check, with exit 2. Its
+     **first** file is `incident_<n>/.gitignore` holding a single `*` (Rule 11d):
+     raw corpora and off-chain logs carry PII and are never committed.
    - **Snapshot each program in scope now:**
      `bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/snapshot-program.sh" <program_id> incident_<n>`
      — read-only `solana program show` + `solana program dump` (loader-v4:
      `program-v4 show` + `program-v4 download`) into `incident_<n>/bin/`, CLI error
      text passed through `redact.sh`. Keep the line it prints (last-deployed slot,
-     zero-trimmed sha256) for the agent, which pastes it into `LEDGER.md`. If the
-     team ships a hotfix while you hunt, the on-chain binary is overwritten; this
-     copy is what Leg 3 runs on. A later snapshot of a redeployed program is kept as
+     zero-trimmed sha256, and a loader-v4 program's status) for the agent, which
+     pastes it into `LEDGER.md`. A blocker that names the account's owner: check
+     the id before going on, unless it says a loader owns an executable account
+     neither `show` could read; then run the snapshot again. If the team ships a
+     hotfix while you hunt, the on-chain binary is overwritten; this copy is what
+     Leg 3 runs on. A later snapshot of a redeployed program is kept as
      `bin/<id>@<slot>.so`; `bin/<id>.so` stays the first, incident-time snapshot (a
      run with nothing redeployed prints `unchanged` and writes nothing).
 
@@ -89,18 +93,27 @@ directory.
    - Then run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/collect.sh" --out incident_<n>/corpus --confirmed --since <fromUnix> --until <toUnix> --max-pages N --max-tx N -- <address> …`
      (`$RPC_URL` from the environment, never on the command line; it finalizes and
      passes `maxSupportedTransactionVersion: 1`). This step touches the network, so
-     it prompts — approve it once. Its `provider:` line names the provider
+     it prompts — approve it once. A run makes up to the estimated call count, one
+     call at a time, so run a long one in the background, or with a timeout sized
+     from that count, never under a short tool timeout. Its `provider:` line names
+     the provider
      **domain** (the service that received the queried addresses: the host's last
      two DNS labels, since a subdomain can carry an endpoint token); pass it to the
      agent, which discloses it and the literal `$RPC_URL` in the ledger and report
      (Rule 11b), never a URL with a key.
-   - The collector ends with `collection gaps: N` and writes one
-     `<signature or address><TAB><reason>` row per gap (a fetch that failed, a
-     page cap that stopped on a full page, where older history may exist, the
-     `--max-tx` cap, a stop after ten failed fetches in a row) to
+   - The collector ends with `transactions fetched: N of M calls` and
+     `collection gaps: N`, and writes one `<signature or address><TAB><reason>` row
+     per gap (a fetch that failed, a page cap that stopped on a full page, where
+     older history may exist, the `--max-tx` cap, a stop after ten failed fetches
+     in a row, a run stopped by INT, TERM or HUP) to
      `incident_<n>/corpus/collection-gaps.tsv`; the agent copies every row into the
      ledger's **Collection gaps** line and into `collection_gaps` of each incident
-     in `INCIDENTS.json`.
+     in `INCIDENTS.json`. A run that ends without those two lines was killed, or
+     stopped on a failed write (exit 3, a `[blocker]` line): tell the agent, which
+     records as gaps each signature in `signatures.jsonl` with no transaction in
+     `transactions.jsonl`, and every address whose history may not have been paged
+     to its end: the last `queried_address` in `signatures.jsonl` and every address
+     given after it, or every address given when none appears.
    - Any wider collection the agent asks for comes back here: show the human its
      exact addresses, window and caps, and collect into the next
      `incident_<n>/corpus-<k>/` (`<k>` = highest existing + 1, `corpus/` counting as
@@ -116,8 +129,11 @@ directory.
    `bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh" incident_<n>/corpus*/transactions.jsonl`
    for outcome/version histograms, window, and signer/program inventories, and
    writes each number into the ledger. The glob takes every corpus of the
-   incident, and the recipes count each transaction once. Nothing reads the
-   corpus into context (README rule 2).
+   incident, and the recipes count each transaction once. A line a recipe cannot
+   read is skipped and reported as `skipped N malformed line(s) in input I
+   (<path>) …` on stderr; the agent copies each such note into the ledger's
+   **Collection gaps** line. Nothing reads the corpus into context (README rule
+   2).
 
 4. **Hunt loop (Phase 2), in the same agent run.** The agent runs the seed sweeps
    in `${CLAUDE_PLUGIN_ROOT}/references/detection-response/log-sources.md`, one
@@ -151,11 +167,15 @@ directory.
    stated, not hidden. Every PoC run and any build of target code (the incident
    commit) needs the Rule 11a mode: ask once (a non-interactive run is native, and
    the report says so), pass it to the agent for the ledger header, and pass it on
-   as `AUDITOR_EXEC_MODE`.
+   as `AUDITOR_EXEC_MODE`. Hand `poc-engineer` the PoC build cache from the ledger
+   header, if any, and pass one it creates to the agent for that header. Before the Leg 3 line
+   counts, check the crate's harness copy and its `non-registry code:` line as
+   `/auditor:poc` step 6 does.
 
 7. **Emit, in `incident-responder`.** Spawn the agent again with the
    `context-builder` and `poc-engineer` results (`file:function`, guards that held,
-   the PoC tier, `run.sh`'s final line, the execution mode). It
+   the PoC tier, `run.sh`'s final line — for an exit 3, its blocker line with "PoC
+   re-run needed" — the execution mode and the PoC build cache). It
    writes `incident_<n>/INCIDENTS.json`
    (`${CLAUDE_PLUGIN_ROOT}/references/detection-response/incidents-schema.md`) and
    `INCIDENT_REPORT.md` (`${CLAUDE_PLUGIN_ROOT}/templates/incident-report.md`):

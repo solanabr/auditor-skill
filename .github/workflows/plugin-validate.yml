@@ -1,0 +1,48 @@
+name: plugin-validate
+
+# Weekly, and on demand: Claude Code's own validator over the repository directory (the marketplace, the
+# plugin and its commands, agents and skill), to notice when a Claude Code release reads them differently.
+# Advisory: not a required check. It needs no secret and no login.
+on:
+  schedule:
+    - cron: "23 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: claude plugin validate --strict (weekly, advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: false
+          persist-credentials: false
+
+      # Claude Code at the exact version in .github/plugin-validate/package.json, every package checked against
+      # the integrity hashes in its lockfile, and no install script run. The native binary comes in the
+      # platform's own package (an optional dependency); the main package's postinstall only copies it over a
+      # placeholder, so the next step runs it from the platform package.
+      - name: Install Claude Code from the committed lockfile
+        run: |
+          dir="$RUNNER_TEMP/claude-code"
+          mkdir -p "$dir"
+          cp .github/plugin-validate/package.json .github/plugin-validate/package-lock.json "$dir/"
+          cd "$dir"
+          npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Validate the repository directory (not .claude-plugin/marketplace.json alone)
+        env:
+          DISABLE_AUTOUPDATER: "1"
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+        run: |
+          claude="$RUNNER_TEMP/claude-code/node_modules/@anthropic-ai/claude-code-linux-x64/claude"
+          [ -x "$claude" ] || { echo "::error::no native claude binary at $claude"; exit 1; }
+          export CLAUDE_CONFIG_DIR="$RUNNER_TEMP/claude-config"
+          mkdir -p "$CLAUDE_CONFIG_DIR"
+          "$claude" --version
+          "$claude" plugin validate --strict "$GITHUB_WORKSPACE"

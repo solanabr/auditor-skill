@@ -60,18 +60,30 @@ call count with the human first):
   once, by signature. After a page cap, resume with `--before` into such a fresh
   directory; an `--out` that already holds `signatures.jsonl`,
   `transactions.jsonl` or `collection-gaps.tsv`, even an empty one, is refused
-  rather than overwritten, and so is one that — or whose `incident_*` directory —
-  is a symbolic link, holds one, is tracked by git, or cannot be checked by git or
-  find (README § Run directory). An `incident_<n>/` that the corpus lands in gets a
-  `.gitignore` of `*` if it has none (Rule 11d).
+  rather than overwritten, and so is one with a `.` or `..` component, one reached
+  through a symbolic link inside the working directory, and one that — or whose
+  `incident_*` directory — is a symbolic link, holds one, is tracked by git, or
+  cannot be checked by git or find (README § Run directory). An `incident_<n>/`
+  that the corpus lands in gets a `.gitignore` of `*` if it has none (Rule 11d).
 - **Gaps are written down.** A `getTransaction` that failed (transport error, RPC
   error or null result), a signature page that failed, a page cap that stopped on
-  a full page of 1,000 (older history may exist), the `--max-tx` cap, and a stop
-  after ten failed `getTransaction` calls in a row each add a
-  `<signature or address><TAB><reason>` row to `<out>/collection-gaps.tsv`, and
-  the run ends with `collection gaps: N`.
-  `--max-tx` counts every `getTransaction` call, failed ones included. Every row
-  goes into LEDGER.md and INCIDENTS.json `collection_gaps`.
+  a full page of 1,000 (older history may exist), the `--max-tx` cap, a stop
+  after ten failed `getTransaction` calls in a row, and a run stopped by INT, TERM
+  or HUP (the address being paged and those after it, and the signatures listed
+  but not fetched) each add a `<signature or address><TAB><reason>` row to
+  `<out>/collection-gaps.tsv`, and the run ends with `transactions fetched: N of M
+  calls` and `collection gaps: N`. `--max-tx` counts every `getTransaction` call,
+  failed ones included. Every row goes into LEDGER.md and INCIDENTS.json
+  `collection_gaps`. A run killed outright, or stopped by a failed write (a
+  `[blocker]` line, exit 3), writes no closing lines: then every signature in
+  `signatures.jsonl` with no transaction in `transactions.jsonl` is a gap, and so
+  is every address whose history may not have been paged to its end: the last
+  `queried_address` in `signatures.jsonl` and every address given after it, or
+  every address given when none appears.
+- **Collections take time.** A run makes up to addresses × `--max-pages` +
+  `--max-tx` calls, one at a time, each up to 60 seconds. Run a long one in the
+  background, or with a timeout sized from that count, so that no tool timeout
+  cuts it off unnoticed.
 - Verdict evidence is read at `finalized`. The one exception is the
   "is it still ongoing?" check, which may read `confirmed` as long as it says so.
 
@@ -131,16 +143,25 @@ networked ones against fake `curl` / `solana` binaries, with no network.
 bash "<auditor-skill root>/scripts/dnr/profile.sh" incident_<n>/corpus*/transactions.jsonl
 
 # program-log attribution, as JSONL (one record per emitted line, by frame)
-python3 -I "<auditor-skill root>/scripts/dnr/frames.py" incident_<n>/corpus*/transactions.jsonl > incident_<n>/frames.jsonl
+python3 -I "<auditor-skill root>/scripts/dnr/frames.py" --out incident_<n>/frames.jsonl incident_<n>/corpus*/transactions.jsonl
 
 # which instruction ran, from the runtime-recorded instruction lists (ix records,
 # top-level and CPI, data as given) joined to the runtime invoke lines
-python3 -I "<auditor-skill root>/scripts/dnr/frames.py" --instructions incident_<n>/corpus*/transactions.jsonl > incident_<n>/instructions.jsonl
+python3 -I "<auditor-skill root>/scripts/dnr/frames.py" --instructions --out incident_<n>/instructions.jsonl incident_<n>/corpus*/transactions.jsonl
 
 # balance movements, exact, successful transactions only
 python3 -I "<auditor-skill root>/scripts/dnr/deltas.py" tokens   incident_<n>/corpus*/transactions.jsonl
 python3 -I "<auditor-skill root>/scripts/dnr/deltas.py" lamports incident_<n>/corpus*/transactions.jsonl
 ```
+
+The three analysis recipes share one input contract (`scripts/dnr/README.md`): a
+line they cannot read is skipped and counted, never echoed, and each recipe
+prints a `skipped N malformed line(s) in input I (<path>), the first at line L`
+note per input on stderr. Copy every such note into the ledger's **Collection
+gaps** line: those transactions are missing from every figure. Keep a recipe's
+output with `--out <file>`, as above, never with a shell redirection: the file
+appears under its name only once the run is complete, and since an output never
+replaces a file, a re-run names a new one (`frames-2.jsonl`).
 
 Program bytes and `solana program show` come only from `snapshot-program.sh`, and
 signature history and transactions only from `collect.sh`. Any other read — an

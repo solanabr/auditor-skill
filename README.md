@@ -24,7 +24,7 @@ auditor-skill is a **skill file** (a structured prompt + checklists) that turns 
 ## What It Does (v7.6)
 
 - **Detection & response, post-incident (v7.6).** `/auditor:hunt` works through transaction history, program logs and Geyser/indexer exports with a written hypothesis ledger; `/auditor:respond` starts from a signature, address or alert and establishes whether the attack landed, how far it reached, and why. Verdicts follow a single [ladder](references/detection-response/README.md#the-verdict-ladder-the-one-normative-copy); the response plan is for humans to carry out — the track acts on nothing. Ported Solana-native from Anthropic's defending-code-reference-harness.
-- **History-seeded threat models (v7.6).** `/auditor:threat-model --bootstrap` starts the threat model from what already went wrong: removed or quietly added account guards, reverts and fix commits in the target's history, a fork's distance from its parent, prior audit reports, post-mortems and incident records. One read-only, hardened collector (`scripts/threat-model/collect.sh`) gathers it; autonomous runs stay offline, and every goal cites its evidence.
+- **History-seeded threat models (v7.6).** `/auditor:threat-model --bootstrap` starts the threat model from what already went wrong: removed or quietly added account guards, reverts and fix commits in the target's history, a fork's distance from its parent, prior audit reports, post-mortems and incident records. One read-only, hardened collector (`scripts/threat-model/collect.sh`) gathers it; non-interactive runs stay offline, and every goal cites its evidence.
 - **GitHub Actions trigger trust (v7.6).** A CI playbook (`references/vuln-classes/github-actions.md`) for the shapes an outside account uses to reach a privileged job — comment-triggered commands without per-event author gating, expression and env-file injection, `pull_request_target` / `workflow_run` pwn requests with artifact and cache poisoning, and AI coding agents in CI — with KV-139/140, checklist 13 §13.13 (DEP-090..096), AI-034..035, read-only rules of engagement, and zsh-safe locator recipes backed by a fixture self-test.
 - **Operating safety & dependency-update review (v7.6).** A new OUTPUT-RULES Rule 11 covers five things. Target code runs in the execution mode chosen at intake (isolated recommended; native allowed, with a report caveat). Outside-service use is disclosed. Untrusted `.git/` checkouts are read without letting git run their config. Audit output never reaches git or a public CI log. Bundled scripts and tools run from the installation, never from a path in the audited repository. Checklist 11 §11.11 (SC-059..062) reviews what a dependency bump's *published code* actually changed, wired into `/auditor:diff-audit` and `/auditor:re-audit`. KV-077 and SC-005 now catch the hijacked `@solana/web3.js` 1.95.6 / 1.95.7 releases.
 - **Trail of Bits pin, reviewed and visible (v7.6).** `vendor/trailofbits` moves from `cfe5d7b` (2026-06-30) to `82fe822` (2026-09-28) after a full delta review; upstream had since fixed a semgrep path that silently dropped two third-party rulesets and SARIF parsing that read CodeQL severities as zero errors. The pin is shown under Installation, fetched shallow, checked by CI against the gitlink, and moved by a monthly Dependabot PR that a maintainer reviews with `scripts/tob-delta-review.sh`; plugin users receive it with this release.
@@ -75,7 +75,7 @@ auditor-skill is a **skill file** (a structured prompt + checklists) that turns 
 
 Install auditor-skill **outside any repository you audit**: the plugin (Option 1), or a user-level skill such as `install.sh ~/.claude/skills/auditor-skill`. A copy inside the audited repository resolves its scripts, tools and corpus from a tree that repository controls, and that repository's own `.claude/`, `.mcp.json` and `CLAUDE.md` are target-controlled too ([OUTPUT-RULES.md Rule 11e](OUTPUT-RULES.md#11e--bundled-paths)).
 
-**Upgrading from 7.5 or earlier.** If your copy sits inside a repository (the `install.sh` default, `.claude/skills/auditor-skill`), delete it (`rm -rf .claude/skills/auditor-skill`) and install a fresh copy outside: the plugin (Option 1), or Option 2 with the path `~/.claude/skills/auditor-skill`. Never move or update a copy you find inside a repository: its git config may have come with that repository. Plugin users get 7.6.0, with the new Trail of Bits pin, when they update the plugin.
+**Upgrading from 7.6.0 or earlier.** Through 7.6.0, `install.sh` without a path installed into the current directory's `.claude/skills/auditor-skill`; it now installs to `~/.claude/skills/auditor-skill`, and a run started next to such a copy notes it and leaves it alone. If your copy sits inside a repository, delete it (`rm -rf .claude/skills/auditor-skill`) and install a fresh copy outside: the plugin (Option 1), or Option 2. Never move or update a copy you find inside a repository: its git config may have come with that repository. Plugin users get 7.6.1 when they update the plugin.
 
 ### Option 1: Claude Code plugin marketplace (recommended)
 
@@ -88,12 +88,12 @@ Registers the marketplace and installs the `auditor` plugin — all 17 `/auditor
 
 ### Option 2: Install script
 
-Installs the skill and inits the tooling. Pass a path outside the repositories you audit; with no argument it installs into the current directory's `.claude/skills/auditor-skill`, so never run it bare inside a repository you are about to audit. It warns on stderr when the install directory is inside a git work tree. Re-running it with the same path installs a fresh clone there and moves the earlier install aside to `<path>.old-<timestamp>`, without running git in it. A run without a path never replaces anything, and stops if `.claude/skills/auditor-skill` already exists:
+Installs the skill and inits the tooling. With no argument it installs to `~/.claude/skills/auditor-skill`, a user-level skill, wherever you run it from; to install elsewhere, pass a path outside the repositories you audit. It warns on stderr when the install directory is inside a git work tree. Re-running it installs a fresh clone at the same path and moves the earlier install, without running git in it, to `$XDG_STATE_HOME/auditor-skill/backup-<timestamp>`, or `~/.local/state/auditor-skill/backup-<timestamp>` when `XDG_STATE_HOME` is unset or not an absolute path. That private directory must lie outside every skills directory, so that Claude Code does not load the old copy as a second skill: the run refuses a backup directory inside the install's parent directory, or one under a directory named `.claude`, `skills`, `commands` or `agents` in any letter case, on its path as given or with links resolved. The run prints the backup's path. Each upgrade keeps a full copy there, including anything built inside it such as the Rust tools' build output, and nothing removes old backups: delete them when you no longer need them. A symbolic link at the install path or at the backup directory is refused, never followed:
 
 ```bash
 # read it first (it's a security tool, after all):
 git clone https://github.com/solanabr/auditor-skill.git
-./auditor-skill/install.sh ~/.claude/skills/auditor-skill    # user-level, outside any audited repository
+./auditor-skill/install.sh ~/.claude/skills/auditor-skill    # user-level (also the default), outside any audited repository
 
 # one-liner (convenience), same target:
 curl -fsSL https://raw.githubusercontent.com/solanabr/auditor-skill/main/install.sh | bash -s -- ~/.claude/skills/auditor-skill
@@ -105,7 +105,7 @@ curl -fsSL https://raw.githubusercontent.com/solanabr/auditor-skill/main/install
 git clone https://github.com/solanabr/auditor-skill.git ~/.claude/skills/auditor-skill
 ```
 
-Claude Code auto-discovers user-level skills under `~/.claude/skills/`; invoke by asking your agent to "audit this repo using the auditor-skill" (use **Option 1** for the `/auditor:*` slash commands). For other agents (Cursor, Windsurf, Copilot, Codex), copy the folder anywhere the agent reads outside the repository you audit, and point it at its `SKILL.md`.
+Claude Code auto-discovers user-level skills under `~/.claude/skills/`; invoke by asking your agent to "audit this repo using the auditor-skill" (use **Option 1** for the `/auditor:*` slash commands). This is also Option 2's default path, so a later `install.sh` run without a path upgrades this clone: it installs a fresh clone and moves this one to Option 2's backup directory, without running git in it. For other agents (Cursor, Windsurf, Copilot, Codex), copy the folder anywhere the agent reads outside the repository you audit, and point it at its `SKILL.md`.
 
 ### Option 4: Feed files to the API directly
 
@@ -127,7 +127,7 @@ The native corpus works fully **without** it (it falls back to grep-based checks
 cd "<auditor-skill root>/tools/auditor-tools" && cargo build --release
 ```
 
-The auditor runs them, the scripts and the Trail of Bits plugins by absolute path from the installation, never by a path relative to the project it audits ([OUTPUT-RULES.md Rule 11e](OUTPUT-RULES.md#11e--bundled-paths)). If the installation sits inside the repository under audit anyway (the `install.sh` default, `.claude/skills/auditor-skill`), the build runs inside that tree, where cargo and rustup read its `.cargo/config*` and `rust-toolchain*` from every parent directory: build there only in [Rule 11a](OUTPUT-RULES.md#rule-11-operating-safety) isolated mode, or delete that copy and install a fresh one outside (the plugin, or Option 2 with the path `~/.claude/skills/auditor-skill`) and build that one. Never move or update a copy you find inside a repository ([Installation](#installation)).
+The auditor runs them, the scripts and the Trail of Bits plugins by absolute path from the installation, never by a path relative to the project it audits ([OUTPUT-RULES.md Rule 11e](OUTPUT-RULES.md#11e--bundled-paths)). If the installation sits inside the repository under audit anyway (such as `.claude/skills/auditor-skill`, where `install.sh` without a path installed through 7.6.0), the build runs inside that tree, where cargo and rustup read its `.cargo/config*` and `rust-toolchain*` from every parent directory: build there only in [Rule 11a](OUTPUT-RULES.md#rule-11-operating-safety) isolated mode, or delete that copy and install a fresh one outside (the plugin, or Option 2 with the path `~/.claude/skills/auditor-skill`) and build that one. Never move or update a copy you find inside a repository ([Installation](#installation)).
 
 ---
 
@@ -238,13 +238,14 @@ auditor-skill/
 ├── templates/               ← Output + deliverable templates
 │   ├── report-template.md   ← Internal item-by-item verdict report
 │   ├── audit-report.md      ← Client-facing findings report (no deploy guarantee)
+│   ├── re-audit.md          ← Fix-review record (RE-AUDIT.md), with each finding's PoC re-run
 │   ├── context-worksheet.md · instruction-worksheet.md · intake.md · threat-model.md
 │   ├── incident-report.md · response-plan.md · hunt-ledger.md
 │   ├── poc/                 ← exploit-harness crate skeleton + shared-test-utils
 │   └── patch/               ← patch + VERIFICATION templates
 │
 ├── docs/                    ← Usage guides (start at docs/README.md)
-├── scripts/                 ← report-to-pdf.sh, check-corpus.sh, tob-delta-review.sh + the no-attribution commit hook
+├── scripts/                 ← report-to-pdf.sh, the CI checks (check-*.sh), tob-delta-review.sh + the no-attribution commit hook
 │   ├── dnr/                 ← detection & response recipes (gated RPC collector, program snapshot, corpus profile, log frames, balance deltas)
 │   ├── threat-model/        ← collect.sh — the read-only threat-model bootstrap collector
 │   └── tests/               ← script self-tests (+ fixtures/gha/, workflows that are never executed)

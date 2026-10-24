@@ -42,7 +42,8 @@ incident slot; the missing/wrong check; sibling instructions checked.}
 on prebuilt bytes — vulnerable sha256=<the snapshot's hash> …`; the real-bytes
 provenance — dumped-unchanged / rebuilt-hash-match / …; if a fixed arm ran, how it
 held (the pinned error for our patch; blocked for a deployed hotfix). If Leg 3 unmet,
-say why and that the verdict ceiling is `suspected`.}
+say why and that the verdict ceiling is `suspected`; for any `run.sh` exit 3 give its
+blocker line verbatim and the flag "PoC re-run needed".}
 
 **Blast radius.** {records, distinct victims, raw units out per mint, window — all
 from queries. Victim lists stay in INCIDENTS.json, not here.}
@@ -58,8 +59,12 @@ from queries. Victim lists stay in INCIDENTS.json, not here.}
 
 {What this corpus cannot answer: every row of `corpus*/collection-gaps.tsv` (a
 failed fetch, a page cap where older history may exist, the `--max-tx` cap, a stop
-after ten failed fetches in a row), provider retention, a missing v1 opt-in, a
-`Log truncated` tail, an un-fetched sibling address. Never a URL.}
+after ten failed fetches in a row, an interrupted run), the unfetched signatures
+and unfinished addresses of a collection killed outright or stopped by a failed
+write, the lines the recipes skipped as malformed (each input, its count and
+first line), provider retention, a
+missing v1 opt-in, a `Log truncated` tail, an un-fetched sibling address. Never a
+URL.}
 
 ## Appendix — hypothesis ledger
 

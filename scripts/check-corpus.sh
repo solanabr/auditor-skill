@@ -7,8 +7,11 @@
 #      Checklists Reference table in SKILL.md and the folder-structure listing in README.md
 #   2. the item total, vector total and methodology count everywhere they are quoted
 #   3. every known-vectors/NNN-*.md has an INDEX.md link and a matching frontmatter id
-#   4. the version in SKILL.md agrees with plugin.json, marketplace.json, audit-report.md and README.md
-#   5. every submodule gitlink is the commit README.md names (one https://github.com/<org>/<repo>/tree/<sha>)
+#   4. the version in SKILL.md agrees with plugin.json, marketplace.json, audit-report.md and README.md, and
+#      both marketplace.json entries carry plugin.json's full version
+#   5. every submodule's URL is one SUBMODULE_URLS lists, and its gitlink is the commit README.md names (one
+#      https://github.com/<org>/<repo>/tree/<sha>)
+# Portable: macOS /bin/bash 3.2 with BSD sed and grep gives the same output as bash 5 with GNU tools.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
@@ -18,30 +21,31 @@ ok()  { echo "ok  $*"; }
 expect() { # expect FILE LITERAL
   if grep -qF -- "$2" "$1"; then ok "$1 has '$2'"; else err "$1 is missing '$2'"; fi
 }
-commas() { echo "$1" | sed -E ':a;s/([0-9])([0-9]{3})($|,)/\1,\2\3/;ta'; }
+commas() { echo "$1" | sed -E -e ':a' -e 's/([0-9])([0-9]{3})($|,)/\1,\2\3/' -e 'ta'; }
 
 # ---- 1. per-checklist counts -------------------------------------------------------------------
-declare -A actual
+# An indexed array keyed by the checklist number in base 10 (08 and 09 are not octal)
+actual=()
 total=0
 for f in checklists/[0-9][0-9]-*.md; do
   n=$(basename "$f" | cut -c1-2)
   b=$(grep -cE '\*\*[A-Z]{2,5}-[0-9]{3}\*\*' "$f" || true)
   t=$(grep -cE '^\| [A-Z]{2,5}-[0-9]{3} \|' "$f" || true)
-  actual[$n]=$((b + t)); total=$((total + b + t))
+  actual[$((10#$n))]=$((b + t)); total=$((total + b + t))
 done
 ok "checklists on disk: ${#actual[@]} files, $total items"
 
 while IFS='|' read -r _ num _ cnt _; do
   num=$(echo "$num" | tr -d ' \r'); cnt=$(echo "$cnt" | tr -d ' \r')
   [[ "$num" =~ ^[0-9]{2}$ ]] || continue
-  if [[ "${actual[$num]:-?}" != "$cnt" ]]; then
-    err "SKILL.md Checklists Reference: checklist $num says $cnt items, file has ${actual[$num]:-?}"
+  if [[ "${actual[$((10#$num))]:-?}" != "$cnt" ]]; then
+    err "SKILL.md Checklists Reference: checklist $num says $cnt items, file has ${actual[$((10#$num))]:-?}"
   fi
 done < <(grep -E '^\| [0-9]{2} \| ' SKILL.md)
 
 while read -r num cnt; do
-  if [[ "${actual[$num]:-?}" != "$cnt" ]]; then
-    err "README.md folder structure: checklist $num says $cnt items, file has ${actual[$num]:-?}"
+  if [[ "${actual[$((10#$num))]:-?}" != "$cnt" ]]; then
+    err "README.md folder structure: checklist $num says $cnt items, file has ${actual[$((10#$num))]:-?}"
   fi
 done < <(sed -nE 's/.*[^0-9]([0-9]{2})-[a-z0-9-]+\.md.*\(([0-9]+) items\).*/\1 \2/p' README.md)
 
@@ -87,13 +91,13 @@ done
 for f in known-vectors/[0-9][0-9][0-9]-*.md; do
   b=$(basename "$f"); id=${b:0:3}
   grep -qF "($b)" known-vectors/INDEX.md || err "known-vectors/INDEX.md has no link to $b"
-  fid=$(sed -nE 's/^id: *([0-9]+).*/\1/p' "$f" | head -1 | tr -d '\r')
+  fid=$(sed -nE 's/^id: *([0-9]+).*/\1/p' "$f" | sed -n 1p | tr -d '\r')
   [[ -n "$fid" && $((10#$fid)) -eq $((10#$id)) ]] || err "$b: frontmatter id '${fid:-missing}' does not match filename"
 done
 ok "every vector file is indexed and its frontmatter id matches"
 
 # ---- 4. version agreement ------------------------------------------------------------------------
-v=$(sed -nE 's/^> \*\*Version:\*\* *([0-9]+\.[0-9]+).*/\1/p' SKILL.md | tr -d '\r' | head -1)
+v=$(sed -nE 's/^> \*\*Version:\*\* *([0-9]+\.[0-9]+).*/\1/p' SKILL.md | tr -d '\r' | sed -n 1p)
 if [[ -z "$v" ]]; then err "SKILL.md: could not read the Version line"; else
   ok "SKILL.md version $v"
   expect .claude-plugin/plugin.json "\"version\": \"$v."
@@ -101,6 +105,11 @@ if [[ -z "$v" ]]; then err "SKILL.md: could not read the Version line"; else
   expect README.md "## What It Does (v$v)"
   n=$(grep -c "\"version\": \"$v\." .claude-plugin/marketplace.json || true)
   [[ "$n" == "2" ]] || err ".claude-plugin/marketplace.json: expected 2 version references to $v.x, found $n"
+  # a patch release moves only these three strings, so they must agree to the last digit
+  pv=$(sed -nE 's/^[[:space:]]*"version": "([0-9]+\.[0-9]+\.[0-9]+)".*/\1/p' .claude-plugin/plugin.json | sed -n 1p)
+  n=$(grep -cF "\"version\": \"$pv\"" .claude-plugin/marketplace.json || true)
+  [[ -n "$pv" && "$n" == "2" ]] \
+    || err ".claude-plugin/marketplace.json: both entries must carry plugin.json's version ${pv:-?}, found $n"
 fi
 
 # ---- 5. vendored submodule pins ------------------------------------------------------------------
@@ -111,6 +120,11 @@ fi
 # submodules uninitialized (CI checks out with submodules: false) and in worktrees. It runs only when this
 # directory is the top of its own checkout, so a copy inside another repo never reads the parent's pins.
 # A gitlink-only bump (Dependabot) fails here until a human updates the pin line (CONTRIBUTING.md §5).
+# README.md is read byte by byte (LC_ALL=C), so a byte that is not UTF-8 stops no grep, sed or tr.
+export LC_ALL=C
+# The repositories a submodule may come from, space-separated, as the check spells them: https, no .git suffix.
+# One is added here only after its content is reviewed like code (CONTRIBUTING.md §5).
+SUBMODULE_URLS='https://github.com/trailofbits/skills'
 gm() { # .gitmodules from the index, else from the working tree
   git config --blob :.gitmodules "$@" 2>/dev/null || { [[ -f .gitmodules ]] && git config -f .gitmodules "$@"; }
 }
@@ -128,6 +142,10 @@ if [[ -n "$top" && "$top" == "$(pwd -P)" ]]; then
     if [[ ! "$url" =~ ^https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
       err "$path: submodule URL '$url' is not a github.com repository (extend check 5)"; continue
     fi
+    case " $SUBMODULE_URLS " in
+      *" $url "*) ;;
+      *) err "$path: submodule URL '$url' is not in SUBMODULE_URLS in scripts/check-corpus.sh"; continue ;;
+    esac
     base="$url/tree/"
     base_re=$(printf '%s' "$base" | sed 's/\./\\./g')
     repo_re="https?://(www\.)?$(printf '%s' "${url#https://}" | sed 's/\./\\./g')"
@@ -141,13 +159,14 @@ if [[ -n "$top" && "$top" == "$(pwd -P)" ]]; then
     for r in $refs; do
       [[ "$sha" == "$r"* ]] || err "README.md links $url at $r, which is not the pinned commit ${sha:0:7}"
     done
-    line=$(grep -E "$base_re$sha([^/]|$)" README.md | head -1 | sed -E 's#https?://[^ )>]*##g')
-    for s in $(printf '%s\n' "$line" | grep -ioE '(^|[^0-9a-z])[0-9a-f]{7,40}([^0-9a-z]|$)' | grep -ioE '[0-9a-f]{7,40}' | tr 'A-F' 'a-f'); do
+    line=$(grep -E "$base_re$sha([^/]|$)" README.md | sed -n 1p | sed -E 's#https?://[^ )>]*##g')
+    # each run of letters and digits on its own line, so SHAs one character apart are all read
+    for s in $(printf '%s\n' "$line" | tr -c '0-9A-Za-z' '\n' | grep -ixE '[0-9a-f]{7,40}' | tr 'A-F' 'a-f'); do
       [[ "$s" == "${sha:0:7}" || "$s" == "$sha" ]] || err "README.md pin line shows '$s', but $path is pinned at ${sha:0:7}"
     done
-    d=$(printf '%s\n' "$line" | grep -oE '20[0-9]{2}-[0-9]{2}-[0-9]{2}' | head -1)
+    d=$(printf '%s\n' "$line" | grep -oE '20[0-9]{2}-[0-9]{2}-[0-9]{2}' | sed -n 1p)
     if [[ -n "$d" && -e "$path/.git" ]] && git -C "$path" cat-file -e "$sha^{commit}" 2>/dev/null; then
-      cdate=$(git -C "$path" log -1 --format=%cs "$sha")
+      cdate=$(git -C "$path" -c log.showSignature=false log -1 --format=%cs "$sha")
       [[ "$d" == "$cdate" ]] || err "README.md pin line says $d, but $path@${sha:0:7} is dated $cdate"
     fi
   done < <(gm -z --get-regexp '^submodule\..*\.path$')

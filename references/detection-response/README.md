@@ -141,11 +141,17 @@ other outcome is filed under `ruled_out[]`.
   `OK: reproduced on prebuilt bytes — vulnerable sha256=<hash> → [PoC-REPRODUCED]`,
   where `<hash>` is the zero-trimmed sha256 recorded in `LEDGER.md` for the snapshot,
   or the hash-matched build's (with `FIXED_SO`, the line also names the fixed bytes).
-  `run.sh` prints it only after the exploit's `assert_exploit_effect!` ran and held on the bytes it placed (every program `mollusk_for` loaded is the snapshot):
-  the **observed Leg-1 effect** (the account the attack changed and the value it left
-  there), not merely an `Ok`. A PoC built only from a minimized replica crate prints
-  another line and does **not** satisfy Leg 3. See `incidents-schema.md` →
-  `binary_provenance` and `poc-engineer`'s incident mode.
+  `run.sh` prints it only after the exploit's `assert_exploit_effect!` ran and held on
+  the bytes it placed (every program `mollusk_for` or `litesvm_for!` loaded is the
+  snapshot): the **observed Leg-1 effect** (the account the attack changed and the
+  value it left there), not merely an `Ok`. A LiteSVM PoC meets Leg 3 the same way: it
+  loads the program through `litesvm_for!` and asserts with the macros' LiteSVM forms.
+  Every exit 3 leaves Leg 3 unmet: `LEDGER.md` records `run.sh`'s blocker line with
+  "PoC re-run needed". A harness error (a wrong program id, a short account list, on
+  either arm) also gets `poc-engineer`'s one repair pass on the harness setup.
+  A PoC built only from a minimized replica crate prints another line and does
+  **not** satisfy Leg 3. See `incidents-schema.md` → `binary_provenance` and
+  `poc-engineer`'s incident mode.
 
 **Key compromise is capped at `suspected`.** When the root cause is a stolen or
 misused signer (`root_cause_class: key_compromise`), on-chain data cannot tell a
@@ -191,7 +197,9 @@ exit 0:
 `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false --icase-pathspecs ls-files -- incident_<k>`
 (Rule 11c; any letter case) and `find incident_<k> -type l`. `collect.sh` and `snapshot-program.sh`
 refuse, with exit 2 and before writing anything, a run directory that is a
-symbolic link, holds one, is tracked by git, or that git or find cannot check.
+symbolic link, holds one, is tracked by git, or that git or find cannot check,
+and a path to it with a `.` or `..` component or a symbolic link on its way
+inside the working directory.
 The **first** thing written in a new run directory is a `.gitignore` containing a
 single line, `*` (Rule 11d) — a raw transaction corpus and off-chain logs can
 carry PII and must never be committed; the repo `.gitignore` also ignores

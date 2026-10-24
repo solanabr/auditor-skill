@@ -11,13 +11,16 @@
 # (`2> >(...)`) is not used anywhere in this track: it needs /dev/fd, which some
 # sandboxes deny.
 #
-#     err="$(mktemp "${TMPDIR:-/tmp}/dnr_err.XXXXXX")"; some-cmd 2>"$err"; s=$?; bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/redact.sh" <"$err" >&2; rm -f "$err"; (exit $s)
+#     err="$(mktemp "${TMPDIR:-/tmp}/dnr_err.XXXXXX")"; some-cmd 2>|"$err"; s=$?; bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/redact.sh" <"$err" >&2; rm -f "$err"; (exit $s)
 #     set -o pipefail; some-cmd 2>&1 | bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/redact.sh"
 #
 # Both keep some-cmd's exit status, in bash and in zsh: the first saves it before
 # filtering, and `set -o pipefail` at the start of the second line makes the
 # pipeline fail when some-cmd does — without it, the filter's own 0 is the status.
-# Give mktemp a template: without one, macOS ignores $TMPDIR.
+# The first writes with `2>|`, which replaces the file mktemp just made even in a
+# shell with noclobber set (`set -C`, zsh `setopt noclobber`); a plain `2>` fails
+# there before some-cmd runs. Give mktemp a template: without one, macOS ignores
+# $TMPDIR.
 #
 # Always the installation's copy, never a relative scripts/ path: the audited repo
 # may ship a same-named file.
@@ -45,6 +48,8 @@
 # read these expressions the same way. bash >= 3.2.
 
 set -uo pipefail
+# Bytes, not characters: under a UTF-8 locale BSD sed stops at an invalid byte.
+export LC_ALL=C
 
 q="'"
 # Characters that end a URL or a key in surrounding text: whitespace, quotes,

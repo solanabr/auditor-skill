@@ -34,11 +34,15 @@ SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/fix-{FINDING_ID}.XXXXXX")" &&  # a fresh d
 ## 2. PoC now reverts (mandatory for [FIX-VERIFIED])
 
 Re-run the finding's own exploit against the **patched** build. The line that
-previously succeeded must now fail.
+previously succeeded must now fail. Refresh the crate's harness from the installation
+first, so the run is the installation's `run.sh` and assertions, and run the crate only
+through that `run.sh`.
 
 ```bash
+cp "<auditor-skill root>/templates/poc/run.sh" {PATH_TO}/poc/{FINDING_ID}/run.sh
+cp "<auditor-skill root>/templates/poc/shared-test-utils/src/lib.rs" {PATH_TO}/poc/{FINDING_ID}/shared-test-utils/src/lib.rs
 # {MODE}: the execution mode recorded at intake, isolated | native (OUTPUT-RULES.md Rule 11a)
-AUDITOR_EXEC_MODE={MODE} {PATH_TO}/poc/{FINDING_ID}/run.sh                    # minimized model
+AUDITOR_EXEC_MODE={MODE} {PATH_TO}/poc/{FINDING_ID}/run.sh                    # minimized model (src/fixed.rs: the patch on src/vulnerable.rs)
 AUDITOR_EXEC_MODE={MODE} VULNERABLE_SO={UNPATCHED_SO} FIXED_SO={PATCHED_SO} \
   {PATH_TO}/poc/{FINDING_ID}/run.sh                                           # patched target build
 ```
@@ -47,22 +51,27 @@ AUDITOR_EXEC_MODE={MODE} VULNERABLE_SO={UNPATCHED_SO} FIXED_SO={PATCHED_SO} \
 — a *patched target build* runs `run.sh` with `VULNERABLE_SO` = the unpatched build and `FIXED_SO` = the
 patched build of the target itself. That is `run.sh`'s prebuilt mode: it exits 3 unless both files are ELF
 programs and each arm's contract assertion ran and held on the bytes `run.sh` placed (loaded through
-`mollusk_for`) — `assert_exploit_effect!` in `tests/exploit.rs` on the unpatched bytes,
+`mollusk_for` or `litesvm_for!`) — `assert_exploit_effect!` in `tests/exploit.rs` on the unpatched bytes,
 `assert_exploit_rejected_with!` (the guard's exact error) in `tests/fixed_blocked.rs` on the patched ones.
-Only a final line ending in `(rejected with the pinned error) → [PoC-REPRODUCED]` verifies our patch; exit 2
-means it did not block the attack, and exit 3 decides nothing (no contract assertion ran, the harness could
-not decide, or other bytes ran). A PoC written with the any-result `assert_exploit_succeeds!` /
+Only a final line ending in `(rejected with the pinned error) → [PoC-REPRODUCED]` verifies our patch. An exit
+2 ending `FAIL: the fixed arm accepted the attack …` means it did not block the attack; one ending `FAIL: the
+fixed arm rejected the attack with another error than the pinned one …` means the patched build stops it with
+another error than the guard's, which is no revert of the cited guard. Exit 3 decides nothing (no contract
+assertion ran, the harness could not decide — a harness error, on either arm — or other bytes ran): record
+`run.sh`'s blocker line verbatim with the flag "PoC re-run needed", never as a revert. A PoC written with the any-result `assert_exploit_succeeds!` /
 `assert_exploit_rejected!` switches to these first. The PoC must also use the program's real id, since an
 Anchor program checks its own `declare_id!`; `run.sh` does not check that. The *minimized model* is the PoC
-crate's own `vulnerable` / `fixed` arms with the patch transplanted.
+crate's own arms, with `src/fixed.rs` made from `src/vulnerable.rs` with the patch transplanted (it must equal
+the `fixed` arm `patch.md` describes): `run.sh` with no overrides must exit 0, ending in the model line.
 
 - **Pre-fix (recorded when the PoC was built):** `tests/exploit.rs` SUCCEEDED on the
   `vulnerable` arm — the attack went through. → `[PoC-REPRODUCED]`
-- **Post-fix (this step):** transplant the patch onto the PoC's `vulnerable` arm (or
-  point the harness at the patched source) and re-run `tests/exploit.rs`. It must now
-  **revert / error** — the previously-open path is closed.
+- **Post-fix (this step):** with the patch transplanted onto `src/vulnerable.rs` as
+  `src/fixed.rs`, or with the patched target build as `FIXED_SO`, the same attack in
+  `tests/fixed_blocked.rs` must now be **rejected** on the fixed arm: `run.sh` exits 0 —
+  the previously-open path is closed.
 
-- [ ] The finding's exploit **reverts** on the patched build (was Ok → now Err).
+- [ ] The finding's exploit **reverts** on the patched build (`run.sh` exit 0: was Ok → now Err).
 - [ ] The legitimate path still works (a positive test for the honest caller passes).
 
 Reading the diff is not verification. Only an executed revert of the finding's own

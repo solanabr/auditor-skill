@@ -235,6 +235,7 @@ PRIMARY:
   apps/web/package.json                # Frontend
   packages/*/package.json              # Shared
   package-lock.json                    # Lock file
+  npm-shrinkwrap.json                  # Lock file (npm, same format)
   Cargo.toml                           # Rust workspace
   Cargo.lock                           # Rust lock file
 
@@ -507,12 +508,11 @@ GREP PATTERNS:
 
 When auditing a different repository:
 
-1. **Copy** the entire `.github/skills/auditor-skill/` folder
-2. **Update** this file's "Repository Layout Assumptions" to match the target
-3. **Update** the glob patterns above if directories differ
-4. The checklists themselves are **generic** — they work for any Solana/Anchor program
-5. Checklists 08-13 work for any TypeScript/Express/Next.js project
-6. Checklist 14 works for any Python project
-7. Checklist 15 works for Go, Java, Ruby, PHP, or any other language
-8. Checklists 16-18 are **universal** — apply to every project regardless of stack
-9. Add new checklists for frameworks not covered (e.g., if target uses Actix instead of Express)
+1. **Install** auditor-skill outside the repository under audit (the plugin, or `~/.claude/skills/auditor-skill`; OUTPUT-RULES Rule 11e)
+2. **Record** the target's in-scope paths at intake where its layout or directories differ from the "Repository Layout Assumptions" and the globs above (`QUESTIONS.md` Q39, exclusions under Q44, written to `audit_<n>/intake.md` §1), instead of editing this file, which a shared or plugin install overwrites on update
+3. The checklists themselves are **generic** — they work for any Solana/Anchor program
+4. Checklists 08-13 work for any TypeScript/Express/Next.js project
+5. Checklist 14 works for any Python project
+6. Checklist 15 works for Go, Java, Ruby, PHP, or any other language
+7. Checklists 16-18 are **universal** — apply to every project regardless of stack
+8. Add new checklists for frameworks not covered (e.g., if target uses Actix instead of Express) to auditor-skill itself ([CONTRIBUTING.md §4](../CONTRIBUTING.md#4-adding-corpus-content)), not to an install

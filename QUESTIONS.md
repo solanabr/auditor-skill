@@ -419,7 +419,7 @@ _______________
 Building, testing or installing the project runs code the project controls — build scripts, proc-macros, test suites, `Anchor.toml` scripts, package install hooks. Asked once per audit; see `OUTPUT-RULES.md` Rule 11a.
 - [ ] **Isolated** (recommended) — a container, VM, or Claude Code sandbox, with no keys or credentials mounted
 - [ ] **Native** — on the auditor's own machine (the report says so)
-- [ ] No preference — recorded as **native** (also the default when automated runs leave Q46 unanswered), and the report carries that caveat
+- [ ] No preference — recorded as **native** (also the default when non-interactive runs leave Q46 unanswered), and the report carries that caveat
 
 > Tools that send code, dependency names or addresses to outside services (an RPC provider, a second-opinion LLM, package registries) are not gated by this answer; the report lists each one (Rule 11b).
 

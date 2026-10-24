@@ -22,11 +22,11 @@
 ## Checklist
 
 - [ ] One coherent theme; unrelated changes split out
-- [ ] `bash scripts/check-corpus.sh` passes locally
+- [ ] `bash scripts/check-corpus.sh` and `bash scripts/check-frontmatter.sh` pass locally
 - [ ] New vectors / items are checkable from code (grep + PASS / FAIL shape)
 - [ ] Cited incidents are real and public; no invented figures
 - [ ] No AI-attribution trailers in any commit; no secrets, `.env`, state or local assistant files tracked
-- [ ] Version line untouched (content PR) **or** this is the release PR and every version reference moved together
+- [ ] Version line untouched (content PR) **or** a patch bump (plugin.json and both marketplace entries only) **or** a minor or major release PR where every version reference moved together
 
 ## Stacked on
 

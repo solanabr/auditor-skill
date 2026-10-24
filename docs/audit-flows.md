@@ -112,7 +112,7 @@ Use it when domain judgment matters — the agent does the mechanical review, yo
 
 ### `/auditor:re-audit`
 
-Takes a prior `audit_<n>/REPORT.md` + the current tree and classifies every prior finding: **FIXED** / **PARTIALLY-FIXED** / **STILL-OPEN** / **REGRESSED** / **ACKNOWLEDGED** / **DISPUTED**. It re-runs Rule 5b on each claimed fix (a cosmetic patch is not FIXED), cites the remediation commit/PR hash, audits the changed surface for NEW findings via the diff-audit path, and runs a **sibling-patch-propagation sweep** — grep the codebase for the same anti-pattern the fix closed, so a fix applied to one call site but not its twins is caught. Emits `audit_<n+1>/RE-AUDIT.md`.
+Takes a prior `audit_<n>/REPORT.md` + the current tree and classifies every prior finding: **FIXED** / **PARTIALLY-FIXED** / **STILL-OPEN** / **REGRESSED** / **ACKNOWLEDGED** / **DISPUTED**. It re-runs Rule 5b on each claimed fix (a cosmetic patch is not FIXED), cites the remediation commit/PR hash, audits the changed surface for NEW findings via the diff-audit path, and runs a **sibling-patch-propagation sweep** — grep the codebase for the same anti-pattern the fix closed, so a fix applied to one call site but not its twins is caught. Where a finding has a PoC, it re-runs it against the head build and records the result per finding (`PoC re-run @ <sha>: reverts | still succeeds | inconclusive | not run`); a FIXED status with no executed revert is flagged, not downgraded. Emits `audit_<n+1>/RE-AUDIT.md`.
 
 ```
 /auditor:re-audit audit_1/REPORT.md main..HEAD
@@ -126,7 +126,7 @@ These skip the full item-by-item walk.
 
 ### `/auditor:quick-scan`
 
-Discovery + static analysis (ToB `static-analysis` if present, else grep scanners) + only the CRITICAL/HIGH known-vectors for the detected domains. Reports findings with severity + `file:line`, and states plainly it is a triage pass. Good for a first look or a CI gate; points to `/auditor:audit` for full coverage. As a CI gate on a public repository it publishes pass/fail only — no finding counts — in comments, logs and artifacts, and sends details through a private channel, failing the job when none is available and never falling back to printing them (`OUTPUT-RULES.md` Rule 11d).
+Discovery + static analysis (ToB `static-analysis` if present, else grep scanners) + only the CRITICAL/HIGH known-vectors for the detected domains. Reports findings with severity + `file:line`, and states plainly it is a triage pass. Good for a first look or a CI gate; points to `/auditor:audit` for full coverage. As a CI gate it runs non-interactively, so the run must be able to run its analyzers: an analyzer that did not run is reported as not run, and the gate fails. As a CI gate on a public repository it publishes pass/fail only — no finding counts — in comments, logs and artifacts, and sends details through a private channel, failing the job when none is available and never falling back to printing them (`OUTPUT-RULES.md` Rule 11d).
 
 ### `/auditor:diff-audit`
 

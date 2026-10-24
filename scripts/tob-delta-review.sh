@@ -26,10 +26,16 @@ old=$2; new=$3
 cd "$(dirname "$0")/.."
 
 ATTR=()
-g() { git --no-pager -c log.showSignature=false -C "$repo" ${ATTR[@]+"${ATTR[@]}"} "$@"; }
-# on every diff, log and show: plain text with fixed a/ b/ prefixes and no rename or copy detection
+g() { git --no-pager -c log.showSignature=false -c core.quotePath=false -C "$repo" ${ATTR[@]+"${ATTR[@]}"} "$@"; }
+# on every diff, log and show: plain text with fixed a/ b/ prefixes, and no rename or copy detection unless
+# the call asks for renames (PAIRED)
 DIFFSAFE=(--no-color --no-ext-diff --no-textconv --no-renames --src-prefix=a/ --dst-prefix=b/)
 SCAN=("${DIFFSAFE[@]}" --text)   # on every call whose output a scan reads: no file counts as binary
+PAIRED=("${SCAN[@]}" -M)         # the file list and the rename lists pair renamed files
+# Paths Claude Code loads or runs on its own: nested .claude/, hooks, monitors, bin/ (put on PATH), MCP/LSP,
+# settings, CLAUDE.md / AGENTS.md. Path and URL scans match in any letter case, as macOS's default file system and
+# hosts do.
+LOADSURF='(^|/|[[:space:]])\.claude/|(^|/|[[:space:]])(hooks|monitors)(/|\.json)|(^|/|[[:space:]])bin/|\.mcp\.json|\.lsp\.json|settings[^/]*\.json|(^|/|[[:space:]])(claude|agents)\.md|workflows/[^/]*\.js'
 if [ "$fetch" -eq 1 ]; then g fetch --quiet origin || { echo "fetch failed" >&2; exit 2; }; fi
 for c in "$old" "$new"; do
   g cat-file -e "$c^{commit}" 2>/dev/null \
@@ -49,7 +55,7 @@ entries() { g ls-tree -r --full-tree "$1" | awk -F'\t' '{ split($1, a, " "); pri
 
 entries "$old" > "$tmp/old"
 entries "$new" > "$tmp/new"
-g diff "${SCAN[@]}" --name-status -M "$old" "$new" > "$tmp/ns"
+g diff "${PAIRED[@]}" --name-status "$old" "$new" > "$tmp/ns"
 
 echo "## trailofbits/skills $(g log "${DIFFSAFE[@]}" -1 --format='%h %cs' "$old") -> $(g log "${DIFFSAFE[@]}" -1 --format='%h %cs' "$new")"
 echo
@@ -62,19 +68,20 @@ g ls-tree --name-only "$new:plugins" | sort > "$tmp/p_new"
 comm -3 "$tmp/p_old" "$tmp/p_new" | awk -F'\t' '{ if ($1 == "") print "+ " $2; else print "- " $1 }' > "$tmp/p"
 show "$tmp/p"
 
-section "Load surfaces: nested .claude/, hooks, MCP/LSP, settings, CLAUDE.md/AGENTS.md, Workflow scripts"
-grep -E '(^|/|[[:space:]])\.claude/|(^|/|[[:space:]])hooks(/|\.json)|\.mcp\.json|\.lsp\.json|settings[^/]*\.json|(^|/|[[:space:]])(CLAUDE|AGENTS)\.md|workflows/[^/]*\.js' \
-  "$tmp/ns" > "$tmp/ls" || true
+section "Load surfaces: nested .claude/, hooks, monitors, bin/, MCP/LSP, settings, CLAUDE.md/AGENTS.md, Workflow scripts"
+grep -iE "$LOADSURF" "$tmp/ns" > "$tmp/ls" || true
 show "$tmp/ls"
 
 section "Plugin manifests (.claude-plugin/) added or removed"
-grep -E '\.claude-plugin/' "$tmp/ns" | grep -vE '^M' > "$tmp/man" || true
+grep -iE '\.claude-plugin/' "$tmp/ns" | grep -vE '^M' > "$tmp/man" || true
 show "$tmp/man"
-echo "($(grep -cE '^M.*\.claude-plugin/' "$tmp/ns") modified — version and description bumps; inline declarations below)"
+echo "($(grep -ciE '^M.*\.claude-plugin/' "$tmp/ns") modified — version and description bumps; inline declarations below)"
 
-section "Manifests (plugin.json, marketplace.json) that declare hooks, MCP or LSP servers inline (at NEW)"
-awk -F'\t' '$2 ~ /(^|\/)\.claude-plugin\/(plugin|marketplace)\.json$/ {print $2}' "$tmp/new" | while IFS= read -r f; do
-  if g show "${SCAN[@]}" "$new:$f" | grep -E '"(hooks|mcpServers|lspServers)"' >/dev/null; then echo "$f"; fi
+section "Manifests (plugin.json, marketplace.json) that declare hooks, monitors, MCP or LSP servers inline (at NEW)"
+awk -F'\t' 'tolower($2) ~ /(^|\/)\.claude-plugin\/(plugin|marketplace)\.json$/ {print $2}' "$tmp/new" | while IFS= read -r f; do
+  # a count, so grep reads the whole manifest and the pipe never closes early
+  n=$(g show "${SCAN[@]}" "$new:$f" | grep -ciE '"(hooks|monitors|mcpServers|lspServers)"')
+  if [ "${n:-0}" -gt 0 ]; then echo "$f"; fi
 done > "$tmp/inline"
 show "$tmp/inline"
 
@@ -105,38 +112,100 @@ section "Symlinks (120000) and gitlinks (160000) at NEW"
 awk -F'\t' '$1 == "120000" || $1 == "160000" {print $1 " " $2}' "$tmp/new" > "$tmp/links"
 show "$tmp/links"
 
-hosts() { grep -E '^\+' | grep -oE 'https?://[A-Za-z0-9.-]+' | sort | uniq -c | sort -rn; }
+section "Paths git still quotes (a quote, backslash or control character in the name; the scans may miss them): read by hand"
+awk -F'\t' 'substr($2, 1, 1) == "\"" {print $2}' "$tmp/new" > "$tmp/quoted"
+show "$tmp/quoted"
+
+hosts() { grep -E '^\+' | grep -oiE 'https?://[A-Za-z0-9.-]+' | LC_ALL=C tr 'A-Z' 'a-z' | sort | uniq -c | sort -rn; }
 NOTESTS=(':(exclude)*/tests/*' ':(exclude)*/evals/*' ':(exclude)*/evals-extra/*' ':(exclude)*/fixtures/*')
+# the paths each added-line scan below reads: names in any letter case, less the exclusions as they are written
+CODE=()
+for x in sh bash py js mjs cjs ts json toml yml yaml; do CODE+=(":(icase)*.$x"); done
+CODE+=("${NOTESTS[@]}" ':(exclude)*.lock' ':(exclude)*package-lock.json')
+MD=(':(icase)*.md' "${NOTESTS[@]}")
+ALL=(. ':(exclude)*.lock')
+
+section "Renamed files, OLD -> NEW (each is scanned whole: in the added-line scans, or, when moved unchanged between ordinary paths, in the section after them)"
+# Pairs over the whole tree and within each scan's paths: a scan pairs only the files it reads.
+renames() { g diff "${PAIRED[@]}" --name-status --diff-filter=R "$old" "$new" -- "$@"; }
+{ awk -F'\t' '$1 ~ /^R/' "$tmp/ns"; renames "${CODE[@]}"; renames "${MD[@]}"; renames "${ALL[@]}"; } \
+  | awk -F'\t' '{ printf "- %s -> %s (%d%% similar)\n", $2, $3, substr($1, 2) }' | sort -u > "$tmp/ren"
+show "$tmp/ren"
+# "OLD<tab>NEW" for each file a scan pairs as moved unchanged (R100) from an ordinary path, one every scan reads
+# (not under tests/, evals/, evals-extra/ or fixtures/, and no lockfile), to an ordinary path, one that is no
+# surface: no load surface above, no SKILL.md, and not under commands/, agents/, bin/ or scripts/. The scan skips
+# them; the section after the added-line scans lists them and scans them whole.
+MOVESURF="$LOADSURF|(^|/)skill\\.md\$|(^|/)(commands|agents|bin|scripts)/"
+moved() { renames "$@" | rx="$MOVESURF" awk -F'\t' '$1 == "R100" && tolower($3) !~ ENVIRON["rx"] \
+  && $2 !~ /\/(tests|evals|evals-extra|fixtures)\/|[.]lock$|package-lock[.]json$/ { print $2 "\t" $3 }'; }
+moved "${CODE[@]}" > "$tmp/mv_code"; moved "${MD[@]}" > "$tmp/mv_md"; moved "${ALL[@]}" > "$tmp/mv_all"
+# added() MODE LIST PATHSPEC...: the -U0 diff a scan reads, every file as added or changed. MODE skip leaves out
+# the files at the NEW paths of LIST ("OLD<tab>NEW" lines), MODE only keeps just those. Without rename detection
+# a/ and b/ name the same path, so the path is the header's second half.
+added() { local mode=$1 list=$2; shift 2
+  g diff "${SCAN[@]}" -U0 "$old" "$new" -- "$@" | awk -v mode="$mode" -v list="$list" '
+    BEGIN { while ((getline l < list) > 0) { split(l, a, "\t"); s[a[2]] = 1 } }
+    /^diff --git / { n = (length($0) - 16) / 2; keep = (substr($0, 14, n) in s) == (mode == "only") }
+    keep'; }
 
 section "Hosts in added lines of scripts and config (excluding tests, evals, fixtures and lockfiles)"
-g diff "${SCAN[@]}" -U0 "$old" "$new" -- '*.sh' '*.bash' '*.py' '*.js' '*.mjs' '*.cjs' '*.ts' '*.json' '*.toml' '*.yml' '*.yaml' \
-  "${NOTESTS[@]}" ':(exclude)*.lock' ':(exclude)*package-lock.json' | hosts > "$tmp/hosts" || true
+added skip "$tmp/mv_code" "${CODE[@]}" | hosts > "$tmp/hosts" || true
 show "$tmp/hosts"
 
 section "Hosts in added Markdown lines: skill and command text an agent may follow (excluding tests, evals and fixtures)"
-g diff "${SCAN[@]}" -U0 "$old" "$new" -- '*.md' "${NOTESTS[@]}" | hosts > "$tmp/mdhosts" || true
+added skip "$tmp/mv_md" "${MD[@]}" | hosts > "$tmp/mdhosts" || true
 show "$tmp/mdhosts"
 
-section "Remote-exec patterns in added lines, continuation lines joined (pipe to a shell or interpreter, sh -c \"\$(curl …)\", <(curl …), npx --yes, pip / uvx from a URL)"
-# "<path>: <added line>". An added line ending in a backslash, or in a pipe outside a Markdown table row, is
-# joined with the next added line, so a multi-line installer is scanned as one command.
+section "Remote-exec patterns in added lines, continuation lines joined, any letter case (a download piped to or evaluated by a shell, an interpreter or PowerShell; npx --yes, bunx and dlx; pip, pipx, uv, uvx, npm, cargo and deno installs from git or a URL; go install …@latest)"
+# "<path>: <added line>". An added line ending in a backslash, in a space and a backtick (PowerShell), or in a
+# pipe outside a Markdown table row, is joined with the next added line, so a multi-line installer is scanned as
+# one command. A "+++ " line names the file only inside a file header, so an added line that starts with "++ "
+# is scanned like any other.
 joined() { awk '
   function flush() { if (buf != "") print file ": " buf; buf = "" }
-  /^\+\+\+ / { flush(); file = substr($0, 5); sub(/^b\//, "", file); next }
+  /^diff --git / { flush(); hdr = 1; next }
+  hdr && /^\+\+\+ / { file = substr($0, 5); sub(/^b\//, "", file); next }
+  /^@@/ { flush(); hdr = 0; next }
+  hdr { next }
   /^\+/ { s = substr($0, 2); if (buf != "") sub(/^[ \t]+/, "", s); buf = (buf == "") ? s : buf " " s
           if (buf ~ /\\[ \t]*$/) { sub(/[ \t]*\\[ \t]*$/, "", buf); next }
+          if (buf ~ /[ \t]`[ \t]*$/) { sub(/[ \t]*`[ \t]*$/, "", buf); next }
           if (buf ~ /[|][ \t]*$/ && s !~ /^[ \t]*[|]/) next
           flush(); next }
   { flush() }
   END { flush() }'; }
-SHELLS='((ba|z|da|k)?sh|python[0-9.]*|node|perl|ruby)([[:space:];&|)]|$)'
-RX_PIPE="(curl|wget)[[:space:]].*[|][[:space:]]*(sudo([[:space:]]+-[A-Za-z]+([[:space:]]+[A-Za-z0-9_]+)?)*[[:space:]]+)?((/[^[:space:]|]*/)?env([[:space:]]+[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*)*[[:space:]]+)?(/[^[:space:]|]*/)?$SHELLS"
-RX_SUBST="((ba|z|da|k)?sh[[:space:]]+-c|eval)[[:space:]]+[\"']?[\$][(][[:space:]]*(curl|wget)[[:space:]]"
-RX_PROC='(source|[.]|(ba|z|da|k)?sh)[[:space:]]+<[(][[:space:]]*(curl|wget)[[:space:]]'
-RX_PKG='npx[[:space:]]+(-y|--yes)([[:space:]]|$)|pip[0-9.]*[[:space:]]+install[[:space:]]+([^|;&]*[[:space:]])?(git[+]|https?://)|uvx[[:space:]]+--from[[:space:]]+git[+]'
-g diff "${SCAN[@]}" -U0 "$old" "$new" -- . ':(exclude)*.lock' | joined \
-  | grep -E "$RX_PIPE|$RX_SUBST|$RX_PROC|$RX_PKG" > "$tmp/rx" || true
+# Matched in any letter case: PowerShell ignores case, and so does macOS's default file system.
+SHELLS="((ba|z|da|k)?sh|python[0-9.]*|node|perl|ruby|pwsh|powershell|iex|invoke-expression)([[:space:];&|)\"']|\$)"
+GET='(curl|wget)([.]exe)?|(^|[^[:alnum:]_-])(irm|iwr|invoke-restmethod|invoke-webrequest)'   # a download command
+RX_PIPE="($GET)[\"']?[[:space:]].*[|][[:space:]]*(sudo([[:space:]]+-[-A-Za-z0-9=,_]+([[:space:]]+[A-Za-z0-9_]+)?)*[[:space:]]+)?((/[^[:space:]|]*/)?env([[:space:]]+[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*)*[[:space:]]+)?(/[^[:space:]|]*/)?$SHELLS"
+# a shell, eval, an interpreter's -c / -e, or a here-string handed "$(curl …)" or `curl …`
+RX_SUBST="((ba|z|da|k)?sh[[:space:]]+-c|eval|(python[0-9.]*|node|perl|ruby)[[:space:]]+-[ce]|<<<)[[:space:]]*[\"']?([\$][(]|\`)[[:space:]]*(curl|wget)[[:space:]]"
+RX_PROC='(source|[.]|(ba|z|da|k)?sh)[[:space:]]+(<[[:space:]]*)?<[(][[:space:]]*(curl|wget)[[:space:]]'
+# PowerShell: a download and Invoke-Expression, or a script block made from text, anywhere on one joined line
+DL='(curl|wget)([.]exe)?|(^|[^[:alnum:]_-])(irm|iwr|invoke-restmethod|invoke-webrequest)([^[:alnum:]_-]|$)|downloadstring|net[.]webclient'
+PSRUN='(^|[^[:alnum:]_-])(iex|invoke-expression)([^[:alnum:]_-]|$)|\[scriptblock\]::create'
+RX_PS="($DL).*($PSRUN)|($PSRUN).*($DL)"
+FROM="([^|;&]*[[:space:]=])?[\"']?(git[+]|https?://)"   # an install source from git or a URL, quoted or not
+RX_PKG="npx[[:space:]]+(-y|--yes)([[:space:]]|\$)|(^|[^[:alnum:]_-])(bunx|bun[[:space:]]+x|pnpm[[:space:]]+dlx|yarn[[:space:]]+dlx)[[:space:]]"
+RX_PKG="$RX_PKG|pip[0-9.]*[[:space:]]+install[[:space:]]+$FROM|(pipx|uv[[:space:]]+tool)[[:space:]]+(install|run)[[:space:]]+$FROM|uvx[[:space:]]+$FROM"
+RX_PKG="$RX_PKG|uv[[:space:]]+run[[:space:]]+([^|;&]*[[:space:]])?--with(-requirements)?[[:space:]=]+[\"']?(git[+]|https?://)"
+RX_PKG="$RX_PKG|(npm|pnpm|yarn|bun)[[:space:]]+(i|install|add)[[:space:]]+$FROM|deno[[:space:]]+(run|install)[[:space:]]+([^|;&]*[[:space:]])?[\"']?https?://"
+RX_PKG="$RX_PKG|cargo([[:space:]]+[+][^[:space:]]+)?[[:space:]]+install[[:space:]]+([^|;&]*[[:space:]])?--(git|index)([[:space:]=]|\$)"
+RX_PKG="$RX_PKG|(^|[^[:alnum:]_.-])go[[:space:]]+(install|run)[[:space:]]+([^|;&]*[[:space:]])?[^[:space:]|;&]+@(latest|main|master|head)([^[:alnum:]_.-]|\$)"
+RX="$RX_PIPE|$RX_SUBST|$RX_PROC|$RX_PS|$RX_PKG"
+added skip "$tmp/mv_all" "${ALL[@]}" | joined | grep -iE "$RX" > "$tmp/rx" || true
 show "$tmp/rx"
+
+section "Files moved unchanged between ordinary paths (from no test, eval, fixture or lockfile path; to no load surface, SKILL.md, commands/, agents/, bin/ or scripts/), OLD -> NEW, and the hosts and remote-exec patterns in them"
+sort -u "$tmp/mv_code" "$tmp/mv_md" "$tmp/mv_all" > "$tmp/mv"
+awk -F'\t' '{ print "- " $1 " -> " $2 }' "$tmp/mv" > "$tmp/mvl"
+show "$tmp/mvl"
+if [ -s "$tmp/mv" ]; then
+  { added only "$tmp/mv" "${CODE[@]}"; added only "$tmp/mv" "${MD[@]}"; } | hosts > "$tmp/mvhosts" || true
+  added only "$tmp/mv" "${ALL[@]}" | joined | grep -iE "$RX" > "$tmp/mvrx" || true
+  printf '\nHosts in them (excluding tests, evals, fixtures and lockfiles):\n'; show "$tmp/mvhosts"
+  printf '\nRemote-exec patterns in them:\n'; show "$tmp/mvrx"
+fi
 
 section "LICENSE"
 if g diff "${DIFFSAFE[@]}" --quiet "$old" "$new" -- LICENSE; then echo "unchanged"; else echo "**CHANGED** — re-check ATTRIBUTION.md"; fi
