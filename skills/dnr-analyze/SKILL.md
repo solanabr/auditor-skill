@@ -50,10 +50,13 @@ your instructions say.
 
 ## Where you read and write
 
-- **Inside `incident_<n>/` only.** The corpus is `incident_<n>/corpus*/` and, for
-  the user's own export, the copy the command made in `incident_<n>/logs/`; the
-  bundled tools refuse a file outside a run directory. Reference files come from
-  `${CLAUDE_PLUGIN_ROOT}`. Never read or write the client's tree.
+- **Inside `incident_<n>/` only.** That is the run directory the brief names,
+  which the command made or checked with `rundir.sh`, spelled exactly as the brief
+  spells it: never another `incident_*`, and never the same name in another letter
+  case. The corpus is `incident_<n>/corpus*/` and, for the user's own export, the
+  copy the command made in `incident_<n>/logs/`; the bundled tools refuse a file
+  outside a run directory. Reference files come from `${CLAUDE_PLUGIN_ROOT}`. Never
+  read or write the client's tree.
 - **Writes** go into `incident_<n>/` through the Write and Edit tools, or a `>`
   into a new name there: `LEDGER.md`, a saved query result, `INCIDENTS.json`,
   `INCIDENT_REPORT.md`, a response plan. Nothing else writes.
@@ -67,7 +70,7 @@ These forms, and only these, are pre-approved for this phase:
 "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh" incident_<n>/corpus*/transactions.jsonl
 "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/frames.py" [--instructions] incident_<n>/corpus*/transactions.jsonl
 "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/deltas.py" tokens|lamports incident_<n>/corpus*/transactions.jsonl
-"${CLAUDE_PLUGIN_ROOT}/scripts/dnr/jq-ro.sh" [-c] [-r] [-s] [-e] [-n] [--arg <name> <value>]... <filter> incident_<n>/<file>...
+"${CLAUDE_PLUGIN_ROOT}/scripts/dnr/jq-ro.sh" [-c] [-r] [-s] [-e] [-n] [--arg <name> <value>]... [--argjson <name> <json>]... <filter> incident_<n>/<file>...
 ```
 
 - **As written.** The quoted absolute path comes first, with nothing in front: no

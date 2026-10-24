@@ -80,7 +80,7 @@ write-up.
     (which instruction ran: the runtime-recorded instruction lists, joined to the
     invoke lines)
   - `"${CLAUDE_PLUGIN_ROOT}/scripts/dnr/deltas.py" tokens|lamports incident_<n>/corpus*/transactions.jsonl`
-  - `"${CLAUDE_PLUGIN_ROOT}/scripts/dnr/jq-ro.sh" [-c] [-r] [-s] [-e] [-n] [--arg <name> <value>]... <filter> incident_<n>/<file>...`
+  - `"${CLAUDE_PLUGIN_ROOT}/scripts/dnr/jq-ro.sh" [-c] [-r] [-s] [-e] [-n] [--arg <name> <value>]... [--argjson <name> <json>]... <filter> incident_<n>/<file>...`
     for every jq query, with values written into the filter as literals rather
     than `$` variables. Never run `jq` itself: `jq -n env` prints the
     environment, `$RPC_URL` included
