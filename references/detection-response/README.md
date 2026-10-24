@@ -43,7 +43,8 @@ not the thing standing between the treasury and the exit.
 2. **Query the corpus; do not pour it into the conversation.** A real history is
    larger than any context window (~20 KB per transaction, gigabytes for a serious
    corpus). Profile it with the bundled recipes (rule 8), interrogate it with
-   `jq` / `python3 -I`, and bring back only the small results. Do not open a
+   `jq-ro.sh` (jq over files inside `incident_<n>/`, with an empty environment) or
+   `python3 -I`, and bring back only the small results. Do not open a
    multi-megabyte corpus file in context. Small inputs — an alert line, a short
    error log, a single `getTransaction` — can be opened in full.
 3. **Plans only — no actions.** The track's output is a written plan. It never
@@ -57,8 +58,8 @@ not the thing standing between the treasury and the exit.
    Never send to, or `simulateTransaction` against, a public cluster.
 5. **Numbers are measured, not remembered.** Counts, totals, distinct-victim
    figures, windows and any dollar amount must each come from a query executed in
-   this run and logged as a ledger row; nothing is estimated. Sum u64 values in
-   Python ints — `jq` and `awk` both use doubles.
+   this run and logged as a ledger row; nothing is estimated. Sum u64 values with
+   `deltas.py --by`, or in Python ints — `jq` and `awk` both use doubles.
 6. **Secrets stay out of everything you write.** The RPC endpoint is read from
    `$RPC_URL` and never echoed; run any command that might print it as
    `set -o pipefail; <cmd> 2>&1 | bash "<auditor-skill root>/scripts/dnr/redact.sh"`
@@ -77,10 +78,11 @@ not the thing standing between the treasury and the exit.
    `<auditor-skill root>` — the installation root the invoking command gave you —
    never as a `scripts/…` path relative to the working directory: the audited repo
    may ship a same-named file. A root left unfilled makes the path start at `/`, and
-   it fails; never fall back to a relative path. Every python run — the bundled
-   `.py` recipes and any one-off over the corpus — is `python3 -I`: without it, a
-   `json.py` in the working directory (for `python3 -` / `-c`) or on `PYTHONPATH`
-   replaces the stdlib module and runs as you.
+   it fails; never fall back to a relative path. The bundled recipes run directly by
+   that path, with nothing in front: the `.py` ones' shebang runs them as
+   `python3 -I`. Any one-off python over the corpus is `python3 -I` too: without
+   it, a `json.py` in the working directory (for `python3 -` / `-c`) or on
+   `PYTHONPATH` replaces the stdlib module and runs as you.
 9. **Read the incident-slot source without checking it out** (`OUTPUT-RULES.md`
    Rule 11c). `--repo` is usually the client's own checkout, and checking out runs
    its hooks and filters and changes its tree: never `checkout`, `switch` or
@@ -189,17 +191,18 @@ states it is fixed (unverified)".
 
 ## Run directory: `incident_<n>/`
 
-`<n>` is the highest existing number + 1; create the dir with `mkdir` (not `-p`)
-and stop if it already exists. Reuse an existing `incident_*` only if git does not
-track it and it holds no symbolic links, and only after the human confirms which
-one. Never write into a tracked `incident_*`. Both checks must print nothing and
-exit 0:
-`GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false --icase-pathspecs ls-files -- incident_<k>`
-(Rule 11c; any letter case) and `find incident_<k> -type l`. `collect.sh` and `snapshot-program.sh`
-refuse, with exit 2 and before writing anything, a run directory that is a
-symbolic link, holds one, is tracked by git, or that git or find cannot check,
-and a path to it with a `.` or `..` component or a symbolic link on its way
-inside the working directory.
+Make one with `"<auditor-skill root>/scripts/rundir.sh" new incident`, which takes
+the highest existing `<n>` + 1, writes its `.gitignore` of `*` first and makes
+`bin/`, `poc/`, `patches/`, `exec/` and `logs/`. Reuse one only after the human
+confirms which, and only when
+`"<auditor-skill root>/scripts/rundir.sh" check incident_<k>` prints
+`ok incident_<k>`: a real directory directly in the working directory, holding no
+symbolic link, tracked by no repository in any letter case, whose `.gitignore`
+holds exactly `*`. Never write into a tracked `incident_*`. `collect.sh` and
+`snapshot-program.sh` refuse, with exit 2 and before writing anything, a run
+directory that fails those checks or that git or find cannot check, and a path
+to it with a `.` or `..` component or a symbolic link on its way inside the
+working directory.
 The **first** thing written in a new run directory is a `.gitignore` containing a
 single line, `*` (Rule 11d) — a raw transaction corpus and off-chain logs can
 carry PII and must never be committed; the repo `.gitignore` also ignores
@@ -210,7 +213,9 @@ incident_<n>/
 ├── .gitignore                 # "*" — nothing here is ever committed
 ├── LEDGER.md                  # the hypothesis ledger (templates/hunt-ledger.md)
 ├── bin/                       # step-1 program snapshots: <id>.so + <id>.show.txt (later: <id>@<slot>.*)
-├── corpus/                    # collected or user-supplied logs — may contain PII
+├── disclosures.tsv            # one row per networked run: the service and what it received (Rule 11b)
+├── logs/                      # the --logs copies, one per export — may contain PII
+├── corpus/                    # the collected corpus — may contain PII
 │   ├── signatures.jsonl
 │   ├── transactions.jsonl
 │   └── collection-gaps.tsv
@@ -219,7 +224,9 @@ incident_<n>/
 ├── INCIDENTS.json             # the structured result (incidents-schema.md)
 ├── INCIDENT_REPORT.md         # the hunt write-up (templates/incident-report.md)
 ├── RESPONSE-INC-<n>.<k>.md    # one proposed plan per lead (templates/response-plan.md)
+├── rpc/                       # what rpc-read.sh printed, and an account's data, one file per read
 ├── poc/INC-<n>.<k>/           # the executed PoC crate for an incident
+├── exec/                      # artifacts and logs a bundled runner copies out of its scratch build
 └── patches/INC-<n>.<k>.patch  # a proposed fix + VERIFICATION.md
 ```
 
@@ -254,8 +261,9 @@ directory, the program snapshot, the collection approval and the collector, the
 execution-mode question, `context-builder` and `poc-engineer`), and the
 `incident-responder` agent does all reading and analysis of the corpus: the
 ledger, the profile, the sweeps, the verdict, `INCIDENTS.json`, the report and the
-plan. The command passes the agent its parameters explicitly and never opens a
-corpus file itself.
+plan. It runs one phase at a time, as the fork of the `auditor:dnr-analyze` skill;
+the command passes each phase its parameters explicitly, as the skill's arguments,
+and never opens a corpus file itself.
 
 A confirmed incident's `vuln` entry is a Rule 5b finding (blocks filled with the
 *observed* values), so `/auditor:threat-model --bootstrap` and a later audit can
@@ -264,19 +272,32 @@ read past incidents as prior vulnerabilities from `INCIDENTS.json`
 
 ## allowed-tools is not a sandbox
 
-A command's `allowed-tools` list **pre-approves** calls for the turn that runs it;
-it does not restrict what is callable, and it is not a security boundary. We use it
-to pre-approve only reading (`Read`, `Grep`, `Glob`), `Task` and edits confined to
-`incident_*/`. No bundled script is pre-approved, so
-every `scripts/dnr` run prompts — a pattern relative to the working directory would
-pre-approve whatever same-named file the audited repo ships (rule 8) — and so do
-`jq`, which is not text-only (`jq -n env` or `$ENV` prints every environment
-variable, `$RPC_URL` included), and everything that touches the chain or executes
-code: `solana`, `curl`, `cargo`, `surfpool`, a bare `python3`, `sqlite3`, `awk`.
+A command's or a skill's `allowed-tools` list **pre-approves** calls for the turn
+that runs it; it does not restrict what is callable, and it is not a security
+boundary. `/auditor:hunt` and `/auditor:respond` pre-approve only reading (`Read`,
+`Grep`, `Glob`), `Task`, edits confined to `incident_*/`, `preflight.sh` and
+`rundir.sh` by their exact paths in the installation, and invoking the
+`auditor:dnr-analyze` skill. Inside its fork, that skill pre-approves the offline
+analysis tools by their exact paths in the installation, run directly with nothing
+in front: `profile.sh`, `frames.py`, `deltas.py`, `jq-ro.sh` and `audit-logs`. The
+recipes and `audit-logs` read only files inside an `incident_<n>/` run directory,
+and `jq-ro.sh` only files inside a run directory; it runs `jq` with an empty
+environment and refuses every option that reads a file or module. No
+pattern names a path relative to the working directory, which would pre-approve
+whatever same-named file the audited repo ships (rule 8). Everything else prompts:
+the networked `collect.sh` and `snapshot-program.sh`, `redact.sh`, `jq` itself
+(`jq -n env` or `$ENV` prints every environment variable, `$RPC_URL` included), a
+line that holds a `$`, and everything that touches the chain or executes code:
+`solana`, `curl`, `cargo`, `surfpool`, a bare `python3`, `sqlite3`, `awk`. Claude
+Code's own read-only commands (`cat`, `grep`, `ls`, …) run without a prompt, in
+every mode, on paths inside the working directory, outside the run directory too;
+one that reaches outside the working directory, such as a `find` over a `--logs`
+export, asks unless a `Read` rule covers that path.
 
 **MCP servers.** `/auditor:hunt` and `/auditor:respond` hand all reading and
-analysis of the incident corpus to the `incident-responder` agent, whose tool list
-has no MCP tools, so it cannot call a signing or transfer tool. The commands
+analysis of the incident corpus to the `incident-responder` agent, as the fork of
+the `auditor:dnr-analyze` skill; its tool list has no MCP tools, so it cannot call
+a signing or transfer tool. The commands
 themselves run in your session, where every connected MCP server stays callable.
 They call no MCP tool. Before a live incident, disconnect or deny write-capable
 MCP servers (for example, tools that transfer or stake). The agent's `Bash` can

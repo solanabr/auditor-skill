@@ -1,0 +1,102 @@
+# Tree shapes for scripts/preflight.sh. test-preflight.sh builds each case's entries in a new, empty working
+# directory outside any repository and runs preflight there, with no arguments, under each bash.
+# One case per line: <exit status><TAB><the one stderr line, empty for status 0><TAB><entry>[<TAB><entry>...].
+# An entry is d:<path> (a directory), f:<path> (an empty file), j:<path>=<text> (a file holding <text>) or
+# l:<path>=<target> (a symbolic link to <target>); the directories above <path> are made too. A status-64
+# case prints nothing on stdout; a status-0 case prints nothing on stderr and ends with the ok line. No case
+# changes anything in the working directory.
+64	preflight: refused: the working tree ships Claude Code project config (.claude/skills), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	d:.claude/skills
+64	preflight: refused: the working tree ships Claude Code project config (.claude/commands), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	d:.claude/commands
+64	preflight: refused: the working tree ships Claude Code project config (.claude/agents), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	d:.claude/agents
+64	preflight: refused: the working tree ships Claude Code project config (.claude/hooks), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	d:.claude/hooks
+64	preflight: refused: the working tree ships Claude Code project config (.claude/output-styles), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	d:.claude/output-styles
+64	preflight: refused: the working tree ships Claude Code project config (.claude/workflows), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	d:.claude/workflows
+64	preflight: refused: the working tree ships Claude Code project config (.claude/scheduled_tasks.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	f:.claude/scheduled_tasks.json
+64	preflight: refused: the working tree ships Claude Code project config (.claude/scheduled_tasks.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	d:.claude/scheduled_tasks.json
+64	preflight: refused: the working tree ships Claude Code project config (.mcp.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	f:.mcp.json
+64	preflight: refused: the working tree ships Claude Code project config (.mcp.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	d:.mcp.json
+64	preflight: refused: the working tree ships Claude Code project config (.mcp.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.mcp.json={}
+64	preflight: refused: the working tree ships Claude Code project config (.claude), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	l:.claude=elsewhere	d:elsewhere/skills
+64	preflight: refused: the working tree ships Claude Code project config (.claude), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	l:.claude=missing
+64	preflight: refused: the working tree ships Claude Code project config (.claude), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	l:.claude=elsewhere	d:elsewhere
+64	preflight: refused: the working tree ships Claude Code project config (.claude/skills), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	l:.claude/skills=../shared	d:shared
+64	preflight: refused: the working tree ships Claude Code project config (.claude/agents), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	l:.claude/agents=missing
+64	preflight: refused: the working tree ships Claude Code project config (.claude/hooks), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	l:.claude/hooks=/
+64	preflight: refused: the working tree ships Claude Code project config (.mcp.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	l:.mcp.json=servers.json	j:servers.json={}
+64	preflight: refused: the working tree ships Claude Code project config (.mcp.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	l:.mcp.json=missing
+64	preflight: refused: the working tree ships Claude Code project config (.claude/settings.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	l:.claude/settings.json=../ok.json	j:ok.json={"model":"x"}
+64	preflight: refused: the working tree ships Claude Code project config (.claude/settings.local.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	l:.claude/settings.local.json=missing
+64	preflight: refused: the working tree ships Claude Code project config (.claude/settings.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.claude/settings.json={"hooks":{}}
+64	preflight: refused: the working tree ships Claude Code project config (.claude/settings.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.claude/settings.json={"permissions":{"allow":["Bash(*)"]}}
+64	preflight: refused: the working tree ships Claude Code project config (.claude/settings.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.claude/settings.json={"env":{"RPC_URL":"x"}}
+64	preflight: refused: the working tree ships Claude Code project config (.claude/settings.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.claude/settings.json={"enabledPlugins":{"x@y":true}}
+64	preflight: refused: the working tree ships Claude Code project config (.claude/settings.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.claude/settings.json={"model":"x","statusLine":{"type":"command","command":"x"}}
+64	preflight: refused: the working tree ships Claude Code project config (.claude/settings.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.claude/settings.json={"apiKeyHelper":"x"}
+64	preflight: refused: the working tree ships Claude Code project config (.claude/settings.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.claude/settings.json={"outputStyle":"x"}
+64	preflight: refused: the working tree ships Claude Code project config (.claude/settings.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.claude/settings.json={"Model":"x"}
+64	preflight: refused: the working tree ships Claude Code project config (.claude/settings.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.claude/settings.json={"model ":"x"}
+64	preflight: refused: the working tree ships Claude Code project config (.claude/settings.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.claude/settings.json=[]
+64	preflight: refused: the working tree ships Claude Code project config (.claude/settings.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.claude/settings.json="model"
+64	preflight: refused: the working tree ships Claude Code project config (.claude/settings.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.claude/settings.json=null
+64	preflight: refused: the working tree ships Claude Code project config (.claude/settings.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.claude/settings.json=not json
+64	preflight: refused: the working tree ships Claude Code project config (.claude/settings.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.claude/settings.json={"model":"x"
+64	preflight: refused: the working tree ships Claude Code project config (.claude/settings.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.claude/settings.json={"model":"x"} {"hooks":{}}
+64	preflight: refused: the working tree ships Claude Code project config (.claude/settings.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.claude/settings.json={"model":"x"} {"model":"y"}
+64	preflight: refused: the working tree ships Claude Code project config (.claude/settings.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.claude/settings.json={"model":"x"}]
+64	preflight: refused: the working tree ships Claude Code project config (.claude/settings.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	f:.claude/settings.json
+64	preflight: refused: the working tree ships Claude Code project config (.claude/settings.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	d:.claude/settings.json
+64	preflight: refused: the working tree ships Claude Code project config (.claude/settings.local.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.claude/settings.local.json={"hooks":{}}
+64	preflight: refused: the working tree ships Claude Code project config (.claude/settings.local.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	f:.claude/settings.local.json
+64	preflight: refused: the working tree ships Claude Code project config (.Claude/Skills), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	d:.Claude/Skills
+64	preflight: refused: the working tree ships Claude Code project config (.CLAUDE/AGENTS), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	d:.CLAUDE/AGENTS
+64	preflight: refused: the working tree ships Claude Code project config (.claude/Hooks), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	d:.claude/Hooks
+64	preflight: refused: the working tree ships Claude Code project config (.cLaUdE/Output-Styles), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	d:.cLaUdE/Output-Styles
+64	preflight: refused: the working tree ships Claude Code project config (.Claude/WORKFLOWS), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	d:.Claude/WORKFLOWS
+64	preflight: refused: the working tree ships Claude Code project config (.claude/Scheduled_Tasks.JSON), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	f:.claude/Scheduled_Tasks.JSON
+64	preflight: refused: the working tree ships Claude Code project config (.MCP.JSON), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	f:.MCP.JSON
+64	preflight: refused: the working tree ships Claude Code project config (.Mcp.Json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	f:.Mcp.Json
+64	preflight: refused: the working tree ships Claude Code project config (.CLAUDE), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	l:.CLAUDE=missing
+64	preflight: refused: the working tree ships Claude Code project config (.Claude/Settings.JSON), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.Claude/Settings.JSON={"hooks":{}}
+64	preflight: refused: the working tree ships Claude Code project config (.claude/SETTINGS.LOCAL.JSON), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.claude/SETTINGS.LOCAL.JSON={"hooks":{}}
+64	preflight: refused: the working tree ships Claude Code project config (a/.claude/skills), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	d:a/.claude/skills
+64	preflight: refused: the working tree ships Claude Code project config (a/b/.claude/commands), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	d:a/b/.claude/commands
+64	preflight: refused: the working tree ships Claude Code project config (a/b/c/d/e/f/g/h/.claude/hooks), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	d:a/b/c/d/e/f/g/h/.claude/hooks
+64	preflight: refused: the working tree ships Claude Code project config (a/b/c/.mcp.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	f:a/b/c/.mcp.json
+64	preflight: refused: the working tree ships Claude Code project config (deep/one/two/.claude/settings.local.json), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:deep/one/two/.claude/settings.local.json={"hooks":{}}
+64	preflight: refused: the working tree ships Claude Code project config (x/y/.claude), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	l:x/y/.claude=../../z	d:z
+64	preflight: refused: the working tree ships Claude Code project config (.claude/x/.claude/skills), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	d:.claude/x/.claude/skills
+64	preflight: refused: the working tree ships Claude Code project config (node_modules/pkg/.claude/agents), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	d:node_modules/pkg/.claude/agents
+64	preflight: refused: the working tree ships Claude Code project config (sub/.claude/skills), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	f:sub/.git	d:sub/.claude/skills
+64	preflight: refused: the working tree ships Claude Code project config (.claude/agents), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	d:.git/x	d:.claude/agents
+64	preflight: refused: the working tree ships Claude Code project config (a/.claude/agents), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	d:b/.claude/skills	d:a/.claude/agents
+64	preflight: refused: the working tree ships Claude Code project config (.claude/hooks), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	f:z/.mcp.json	d:.claude/hooks
+64	preflight: refused: the working tree ships Claude Code project config (B/.claude/skills), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	d:B/.claude/skills	d:a/.claude/skills
+64	preflight: refused: the working tree ships Claude Code project config (.claude/agents), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.claude/settings.json={"model":"x"}	d:.claude/agents
+64	preflight: refused: the working tree ships Claude Code project config (.claude/skills), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	f:CLAUDE.md	d:.claude/skills
+64	preflight: refused: the working tree ships Claude Code project config (.claude/skills), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	d:.claude/rules	d:.claude/skills
+0		d:src
+0		d:.claude
+0		f:.claude
+0		f:.claude/notes.txt
+0		f:.claude/skills
+0		f:.claude/agents
+0		f:.claude/hooks.json
+0		d:.claude/skill	d:.claude/agent	d:.claude/command	d:.claude/hook	d:.claude/output-style
+0		d:.claude/skills.disabled	d:.claude/agents-old
+0		d:x.claude/skills	d:claude/skills	d:.claudex/agents	d:.claude-plugin/skills
+0		f:mcp.json	f:.mcp.json.bak	f:x.mcp.json	d:.mcp	f:docs/.mcp.json.example
+0		f:.claude/settings.json.bak	f:.claude/settings.jsonc	f:docs/settings.json	f:.claude/scheduled_tasks.json.bak
+0		l:docs/settings.json=../x	l:docs/skills=..
+0		j:.claude/settings.json={}
+0		j:.claude/settings.json={"model":"claude-opus-5-5"}
+0		j:.claude/settings.json={"$schema":"https://json.schemastore.org/claude-code-settings.json","model":"x","cleanupPeriodDays":30,"includeCoAuthoredBy":false}
+0		j:.claude/settings.local.json={"includeCoAuthoredBy":true}
+0		j:.claude/settings.json={"model":"x","model":"y"}
+0		j:.claude/settings.json={"model":{"hooks":{}}}
+0		j:.claude/settings.json=  {"model" : "x"}  	d:src
+0		j:.Claude/Settings.Json={"model":"x"}
+0		d:.git/.claude/skills	j:.git/.mcp.json={}	d:sub/.git/.claude/agents	d:a/b/.git/hooks/x/.claude/commands
+0		d:.claude/rules
+0		f:CLAUDE.md	f:.claude/CLAUDE.md	f:docs/claude.md	f:CLAUDE.local.md
+0		d:CLAUDE.md
+0		l:loop=.	l:a/up=..

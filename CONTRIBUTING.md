@@ -41,8 +41,9 @@ corpus PRs.
 
 The checks run with the stock tools of macOS (`/bin/bash` 3.2, BSD sed, grep and awk) as well as with bash 5
 and GNU tools on Linux. Beyond git they need python3 and jq, plus cargo and rustup for the PoC runner's
-real-toolchain checks (`scripts/tests/test-dnr-poc-runner.sh` skips those without them). This is what the
-required CI job runs:
+real-toolchain checks (`scripts/tests/test-dnr-poc-runner.sh` skips those without them), and cargo for
+`scripts/tests/test-audit-logs.sh`, which builds `audit-logs` (its one dependency, `libc`, comes from the
+local cargo cache or crates.io) and is skipped, loudly, without it. This is what the required CI job runs:
 
 ```bash
 bash scripts/check-corpus.sh
@@ -52,6 +53,13 @@ for t in scripts/tests/*.sh; do bash "$t" || echo "FAILED: $t"; done
 bash scripts/check-hygiene.sh
 bash scripts/check-attribution.sh origin/main..HEAD
 ```
+
+A change to what `scripts/dnr/profile.sh`, `frames.py` or `deltas.py` prints, accepts or refuses goes into
+`tools/auditor-tools/audit-logs` too: `scripts/tests/test-audit-logs.sh` compares the two and fails until
+they agree. A binary built before a change to those recipes, to `scripts/lib/confine.sh` or to its own
+`Cargo.toml` or `src/` refuses to run (exit 4) until it is rebuilt; a new file in `audit-logs/src/` goes
+into the `BUILT_FROM` list in its `main.rs`, which the suite checks. Without cargo that suite is skipped;
+CI runs it with `REQUIRE_TOOLCHAIN=1`, where a missing cargo fails it.
 
 ---
 
@@ -187,15 +195,18 @@ It reads every file whose frontmatter Claude Code loads: each `.md` file at any 
   holds no tab, CR or other control character, and no U+0085, U+2028 or U+2029.
 - One `key: value` per line, each key once, written exactly as the check lists it. Agents need `name`,
   `description` and `tools`; commands need `description` and `allowed-tools`; a `SKILL.md` needs `name` and
-  `description` and, for now, has no other key. A new key is added to the check's list when it is first
-  used.
+  `description`. One under `skills/` may also have `context: fork`, which then needs
+  `agent: auditor:<name>` naming the plugin agent `agents/<name>.md` (its frontmatter names it `<name>`);
+  `background` (with `context: fork`) and `user-invocable`, each `true` or `false`; and `allowed-tools`,
+  read as a command's. The root `SKILL.md` has no other key. A new key is added to the check's list when
+  it is first used.
 - Quote a value that starts with a YAML indicator (`-`, `?`, `:`, `,`, `[`, `]`, `{`, `}`, `#`, `&`, `*`,
   `!`, `|`, `>`, `%`, `@` or a backtick), holds `: `, ` #` or `...`, ends in `:`, or would read as a number,
   a boolean or null (`3000`, `++7`, `yes`, `null`). Double quotes escape only `\"` and `\\`; single quotes
   double a `'`.
 - `tools` and `allowed-tools` list `Name` or `Name(pattern)` entries, either on one line separated by `, `
   or one per line as `  - item`; an item may be single-quoted, as in
-  `  - 'Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh" *)'`. A pattern holds no parentheses, and
+  `  - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh" *)'`. A pattern holds no parentheses, and
   agents list tool names only. `allowed-tools` lists nothing from `FORBIDDEN_ALLOWED_TOOLS` in the script
   (today `*`), nor a catch-all pattern of a name in it, such as `Bash(*)` once `Bash` is listed.
 - The block is at most 65,536 bytes and holds at most 256 of `[`, `{` and ` - `.
@@ -204,8 +215,11 @@ It reads every file whose frontmatter Claude Code loads: each `.md` file at any 
 
 `scripts/check-hygiene.sh` fails when the plugin root gains a path Claude Code loads beyond those commands,
 agents and `SKILL.md` files: `hooks/`, `monitors/` or `bin/`, or `.mcp.json`, `.lsp.json` or `settings*.json`,
-at the root and in any letter case, or a `.claude/` directory below it. Read such a path like code before you
-add it to `ALLOWED_LOAD_SURFACES` in the script (empty today). `.claude-plugin/` holds only `plugin.json` and
+at the root and in any letter case, or a `.claude/` directory below it. It fails too on a `SKILL.md`, in any
+letter case, other than the root's and `skills/<name>/SKILL.md`: with `"skills": "./"` in `plugin.json`,
+Claude Code loads `<dir>/SKILL.md` one level down when the root holds none, and a `skills/SKILL.md` makes all
+of `skills/` one skill. Read such a path like code before you add it to `ALLOWED_LOAD_SURFACES` in the script
+(empty today). `.claude-plugin/` holds only `plugin.json` and
 `marketplace.json`, and each of their keys is on the script's list; add a key there only once you know what
 Claude Code loads from it. A top-level `commands`, `agents`, `skills`, `hooks`, `bin`, `monitors` or
 `.claude-plugin` directory named in another letter case fails too: a case-insensitive file system loads it
@@ -220,6 +234,9 @@ under the lowercase name.
 - **`corpus-check`, job "macOS, bash 3.2 and BSD tools (advisory)"**: the same checks, except the
   pull-request attribution check, on `macos-26`, with a stock PATH plus `~/.cargo/bin` that its first step
   asserts. It is not a required check. A newer push to the same ref cancels its older run.
+- **`corpus-check`, job "auditor-tools build and audit-logs parity"**: builds `tools/auditor-tools` as a
+  user does (`cargo build --release --locked`) with warnings denied, runs the unit tests, and runs
+  `scripts/tests/test-audit-logs.sh` against that release binary. It is not a required check.
 - **`plugin-validate`**: weekly and on demand, `claude plugin validate --strict` over the repository
   directory. Advisory. Claude Code comes from `.github/plugin-validate/`: an exact version in `package.json`,
   every package's integrity hash in `package-lock.json`, installed with `npm ci --ignore-scripts`. The native

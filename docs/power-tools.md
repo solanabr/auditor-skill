@@ -8,6 +8,7 @@ Every tool here is an **optional layer**. The corpus works fully without any of 
 |------|----------|------------------|
 | [`audit-scan`](#audit-scan) | ~30-40% fewer input tokens; a map of the risky surface | `cargo build --release` |
 | [`audit-mem`](#audit-mem) | exact de-dup, regression detection, FP suppression, warm re-audits | `cargo build --release` |
+| [`audit-logs`](#audit-logs) | the incident recipes `profile.sh`, `frames.py` and `deltas.py` as one offline binary, with the same output | `cargo build --release --locked` |
 | [Trail of Bits plugins](#trail-of-bits-plugins) | real SAST, fuzzing, coverage, mutation | plugin install or `install.sh`; else `git submodule update --init --depth 1 -- vendor/trailofbits` |
 | [Surfpool sim](#surfpool-economic-simulation) | a real $ P/L for economic findings | `surfpool` CLI + MCP |
 | [PoC/patch harness](#pocpatch-harness-stack) | executable exploits + verified fixes | platform-tools ≥ v1.54 |
@@ -121,6 +122,29 @@ Reference: [`references/orchestration/pre-scan.md`](../references/orchestration/
 
 ---
 
+## audit-logs
+
+The detection & response analysis recipes, [`profile.sh`](#profilesh), [`frames.py`](#framespy) and [`deltas.py`](#deltaspy), as one offline Rust binary. Each subcommand prints what its script prints, with the same `skipped …` notes and exit status, under the same input contract, and refuses the same paths in the same words; `scripts/tests/test-audit-logs.sh` checks that against the scripts. Inside the `auditor:dnr-analyze` fork, where `/auditor:hunt` and `/auditor:respond` run `incident-responder` for each analysis phase, it runs first, and the script runs in its place when it is not built or reports a stale build.
+
+### Run it
+
+```bash
+cd "<auditor-skill root>/tools/auditor-tools" && cargo build --release --locked        # after every install or update
+"<auditor-skill root>/tools/auditor-tools/target/release/audit-logs" profile incident_<n>/corpus*/transactions.jsonl
+"<auditor-skill root>/tools/auditor-tools/target/release/audit-logs" frames --instructions --out incident_<n>/instructions.jsonl incident_<n>/corpus*/transactions.jsonl
+"<auditor-skill root>/tools/auditor-tools/target/release/audit-logs" deltas tokens incident_<n>/corpus*/transactions.jsonl
+```
+
+Build it in the installation, never inside the repository under audit, as for `audit-scan`, and build it again after every update. A plugin update installs auditor-skill into a new versioned directory, where the fork runs the scripts until it is built there; an update in place, such as a `git pull` of a clone, leaves the old binary, which refuses to run (exit 4, below) only when the update changed a file it was built from: a recipe it mirrors, `scripts/lib/confine.sh`, or its own `Cargo.toml` or `src/`. `cargo build --release --locked -p audit-logs` builds it alone: it compiles one dependency, `libc`, and needs no C compiler, though cargo still reads the crates.io index for the workspace lockfile.
+
+- **Paths:** as for the scripts: each corpus is a regular file with one name in an `incident_<n>/` run directory whose `.gitignore` holds `*`, named relative to the working directory, with no empty, `.` or `..` component and no symbolic link on the way; each option comes once, before the corpus paths; `--out` names a new `<name>.jsonl`, `.tsv` or `.txt` directly in the run directory. Anything else is refused with exit 2 before any input is read. With no corpus named, `frames` and `deltas` read stdin.
+- **Exit:** 0 done · 1 an input that cannot be read, an `--out` that cannot be written, or a failed write · 2 usage, or a refused path · 4 a stale build: it carries a copy of the files it was built from (the three recipes, `scripts/lib/confine.sh`, its `Cargo.toml` and `src/`), and when an installed one differs it writes nothing and prints one line, `audit-logs: stale build: …`; rebuild it, or run the scripts.
+- **Pre-approval:** inside the `auditor:dnr-analyze` fork, `audit-logs` runs without a prompt by this path, as do the three recipes and `jq-ro.sh`; no other bundled script is pre-approved, and neither is `jq`. Each refuses a named input outside a run directory before reading anything (exit 2). With no corpus named, `frames` and `deltas` read stdin, which a `<` redirect can fill from any file Claude Code lets the fork read; they print nothing from a line that is not a transaction. A line that holds a `$` or a backtick, inside quotes too, still prompts.
+- **Network:** none. **Writes:** stdout, or the `--out` file, through a new temporary file beside it, made, linked and removed through the run directory, opened once.
+- **Where it differs from the scripts:** `profile` pads its counts as GNU `uniq -c` does (BSD `uniq -c` pads to 4); a closed stdout, a broken pipe or a stdin that is a directory ends it with another exit status; and it needs none of what `profile.sh` alone refuses to run without (a `TMPDIR` and a `PATH` entry outside the working directory, `jq`, `python3`); see [`tools/auditor-tools/README.md`](../tools/auditor-tools/README.md#where-it-differs-from-the-scripts).
+
+---
+
 ## Trail of Bits plugins
 
 auditor-skill's corpus is the **knowledge** layer; Trail of Bits (vendored at `vendor/trailofbits`, CC-BY-SA — a reference, not a copy) is the **execution** layer — tools prose + grep cannot run. The plugin install and `install.sh` fetch it at the pinned commit, which the [README](../README.md#tool-execution-trail-of-bits--optional-rust-tools) names and which moves only through the review in [CONTRIBUTING.md §5](../CONTRIBUTING.md#5-tooling-changes). For any other clone, initialize it from the auditor-skill directory:
@@ -187,11 +211,11 @@ Full walkthrough — layout, framework matrix, tiers, the "executable outranks p
 
 ## Bundled scripts
 
-Shell and Python scripts that ship with auditor-skill; there is nothing to build. The commands run them by absolute path from the installation, never by a `scripts/` path relative to the audited repository ([Rule 11e](../OUTPUT-RULES.md#11e--bundled-paths)), and run the Python ones as `python3 -I`. The shell scripts run under bash 3.2 or later. The blocks below give each script's arguments, exit codes, network use and outputs.
+Shell and Python scripts that ship with auditor-skill; there is nothing to build. The commands run them by absolute path from the installation, never by a `scripts/` path relative to the audited repository ([Rule 11e](../OUTPUT-RULES.md#11e--bundled-paths)); the Python ones run directly by that path, their first line running them as `python3 -I`. The shell scripts run under bash 3.2 or later. The blocks below give each script's arguments, exit codes, network use and outputs.
 
 ### Detection & response recipes (`scripts/dnr/`)
 
-The recipes behind `/auditor:hunt` and `/auditor:respond` ([detection-response.md](detection-response.md); method and hazards: [`scripts/dnr/README.md`](../scripts/dnr/README.md)). They summarise a transaction corpus without reading it into context. The two that use the network take the endpoint from `$RPC_URL` in the environment, never from the command line, and hand it to curl or the `solana` CLI through a config, never as an argument.
+The recipes behind `/auditor:hunt` and `/auditor:respond` ([detection-response.md](detection-response.md); method and hazards: [`scripts/dnr/README.md`](../scripts/dnr/README.md)). They summarise a transaction corpus without reading it into context. Inside the `auditor:dnr-analyze` fork, where `/auditor:hunt` and `/auditor:respond` run `incident-responder` for each analysis phase, [`audit-logs`](#audit-logs) runs first, with the same arguments after its subcommand, and `profile.sh`, `frames.py` or `deltas.py` runs in its place when it is not built or reports a stale build. The two that use the network take the endpoint from `$RPC_URL` in the environment, never from the command line, and hand it to curl or the `solana` CLI through a config, never as an argument.
 
 #### `snapshot-program.sh`
 
@@ -291,46 +315,47 @@ The one gated collector: it pages each address's signature history, failed trans
 #### `profile.sh`
 
 ```bash
-bash "<auditor-skill root>/scripts/dnr/profile.sh" [--out <file>] <corpus.jsonl> [<corpus.jsonl> ...]
+"<auditor-skill root>/scripts/dnr/profile.sh" [--out <file>] <corpus.jsonl> [<corpus.jsonl> ...]
 ```
 
-The baseline of one or more `getTransaction` JSONL corpora, such as every `incident_<n>/corpus*/transactions.jsonl`, counting each signature once. It reads structural fields only, never log text, and reports the succeeded / failed split, the transaction-version histogram, the `blockTime` window, and the top 20 fee payers, signers and top-level programs. It keeps the first occurrence of each signature and skips malformed lines under the input contract the three recipes share ([`scripts/dnr/README.md`](../scripts/dnr/README.md#input-contract)); closing `-- skipped` lines give both counts, one per input for malformed lines, and are printed on stderr too. Those malformed lines are collection gaps.
+The baseline of one or more `getTransaction` JSONL corpora, such as every `incident_<n>/corpus*/transactions.jsonl`, counting each signature once. It reads structural fields only, never log text, and reports the succeeded / failed split, the transaction-version histogram (a version that is not a string as its JSON text, with each character of the input contract's fixed list as a `\uNNNN` escape), the `blockTime` window, and the top 20 fee payers, signers and top-level programs. It counts and orders them byte by byte (`sort` and `uniq` run under `LC_ALL=C`), so the figures and the order of ties are the same under every locale. It keeps the first occurrence of each signature and skips malformed lines under the input contract the three recipes share ([`scripts/dnr/README.md`](../scripts/dnr/README.md#input-contract)); closing `-- skipped` lines give both counts, one per input for malformed lines, and are printed on stderr too. Those malformed lines are collection gaps.
 
-- **Arguments:** one or more corpus files.
-- **`--out <file>`:** writes the report to a temporary file beside `<file>`, a new name, and gives it that name once the report is whole, as `frames.py` and `deltas.py` do.
-- **Exit:** 0 done · 1 a corpus file that cannot be read, or an `--out` that cannot be written · 2 usage error, no such file, a file or `--out` that is a symbolic link or reached through one inside the working directory, or an `--out` that already exists · 3 `jq` or `python3` missing, checked before anything is read (`[blocker] <tool> is not on PATH; profile.sh needs jq and python3.`).
+- **Arguments:** one or more corpus files, each a regular file with one name in a run directory `incident_<n>/` whose `.gitignore` holds `*`, named relative to the working directory, with no empty, `.` or `..` component and no symbolic link on the way; any other is refused before any input is read. Run it directly by its quoted path, from the working directory: it refuses to run from an installation inside it.
+- **`--out <file>`:** a new `.jsonl`, `.tsv` or `.txt` name directly in the run directory; writes the report to a temporary file beside `<file>` and gives it that name once the report is whole, as `frames.py` and `deltas.py` do.
+- **Exit:** 0 done · 1 a corpus file that cannot be read, or an `--out` that cannot be written · 2 usage error, or a path the input contract refuses (a missing or non-regular file, one with a second name, one outside a run directory or reached through a symbolic link, an `--out` that is not a new name directly in a run directory), as one `profile.sh: refused: …` line · 3 `jq` or `python3` missing, checked before anything is read (`[blocker] <tool> is not on PATH; profile.sh needs jq and python3.`).
 - **Network:** none. **Writes:** stdout, or the `--out` file. Needs `jq` and `python3` (the one-per-signature pass runs as `python3 -I`).
 
 #### `frames.py`
 
 ```bash
-python3 -I "<auditor-skill root>/scripts/dnr/frames.py" [--instructions] [--out <file>] [<corpus.jsonl> ...]    # reads stdin when no file is named
+"<auditor-skill root>/scripts/dnr/frames.py" [--instructions] [--out <file>] [<corpus.jsonl> ...]    # reads stdin when no file is named
 ```
 
-Attributes each `Program log:`, `Program data:` and `Program return:` line to the program frame that emitted it. It walks the log array one element at a time with anchored patterns, so a newline inside a log payload cannot forge a frame. Output is JSONL on stdout, one `{sig, ok, depth, program, kind, text}` record per line, where `kind` is `log`, `data`, `return`, `truncated` or `unparsed`; a character of the input contract's fixed list is written as a `\uNNNN` escape, never raw. A malformed input line is skipped and counted under the shared input contract, never echoed. A log line is what the program asserted, never proof that state changed.
+Attributes each `Program log:`, `Program data:` and `Program return:` line to the program frame that emitted it. It walks the log array one element at a time with anchored patterns, so a newline inside a log payload cannot forge a frame. Output is JSONL on stdout, one `{sig, ok, depth, program, kind, text}` record per line, where `kind` is `log`, `data`, `return`, `truncated` or `unparsed`; a character of the input contract's fixed list is written as a `\uNNNN` escape (a surrogate pair above U+FFFF), never raw. A malformed input line is skipped and counted under the shared input contract, never echoed. A log line is what the program asserted, never proof that state changed.
 
-- **Arguments:** corpus files (several corpora count each signature once), or none for stdin. Skipped copies, and each input's malformed lines, are reported on stderr.
+- **Arguments:** corpus files (several corpora count each signature once), or none for stdin; each named file is checked as for `profile.sh`. Skipped copies, and each input's malformed lines, are reported on stderr.
 - **`--instructions`:** prints the instruction records instead; the default output is unchanged without it. An `ix` record for each entry of `message.instructions` and `meta.innerInstructions` gives the program, the top-level and inner index, the stack height, the accounts, and the data as given (or `parsed-only`). An `invoke` record gives each invocation's depth, outcome and the `ix_seq` it ran. No `ix` field comes from log text.
-- **`--out <file>`:** writes the records to a temporary file beside `<file>` and gives it that name only when the run completes, so a run cut short never leaves a partial file under that name; a run stopped by TERM removes its temporary file. `<file>` must be a new name: an output never replaces a file, an input corpus least of all. Use it, not a shell redirection, to keep an output in `incident_<n>/`.
-- **Exit:** 0 done · 1 a file that cannot be read, or an `--out` that cannot be written, checked before any record is printed · 2 usage error, a file or `--out` that is a symbolic link or reached through one inside the working directory, or an `--out` that already exists.
+- **`--out <file>`:** writes the records to a temporary file beside `<file>` and gives it that name only when the run completes, so a run cut short never leaves a partial file under that name; a run stopped by TERM, INT or HUP removes its temporary file (a signal the caller ignores stays ignored). `<file>` must be a new `.jsonl`, `.tsv` or `.txt` name directly in the run directory: an output never replaces a file, an input corpus least of all. A `>` into a new name in `incident_<n>/` keeps an output too, but gives a partial file to a run cut short.
+- **Exit:** 0 done · 1 a file that cannot be read, or an `--out` that cannot be written, checked before any record is printed · 2 usage error, or a path the input contract refuses, as for `profile.sh`.
 - **Network:** none. **Writes:** stdout, or the `--out` file.
 
 #### `deltas.py`
 
 ```bash
-python3 -I "<auditor-skill root>/scripts/dnr/deltas.py" lamports|tokens [--out <file>] [<corpus.jsonl> ...]    # reads stdin when no file is named
+"<auditor-skill root>/scripts/dnr/deltas.py" lamports|tokens [--by account|owner,mint|mint] [--out <file>] [<corpus.jsonl> ...]    # reads stdin when no file is named
 ```
 
 Balance movements of successful transactions, computed in Python integers so that amounts above 2^53 stay exact.
 
 - `lamports` prints `signature`, `account`, `delta` for each non-zero lamport change, with the fee added back for the fee payer.
-- `tokens` prints one row per token account: `signature`, `owner` (`?` when the corpus names none), `mint`, `delta` in raw units, and the token account. Sum the rows per owner and mint for an owner's net movement.
-- A balance whose index has no account key is printed as `#<index>`. A token balance with no `accountIndex` has nothing to pair its pre and post sides by, so each side is a row of its own, `#?`. A note on stderr counts each kind; neither is ever merged with another account.
+- `tokens` prints one row per token account: `signature`, `owner` (`?` when the corpus names none), `mint`, `delta` in raw units, and the token account.
+- `--by` prints exact sums in place of the rows, the most negative first, then by name; a sum of 0 prints no row. `lamports --by account`: `account`, its net. `tokens --by owner,mint`: `owner`, `mint`, the net, and a fourth column, empty unless the corpus names no owner: such balances are summed per token account, which it names. `tokens --by mint`: `mint`, the sum of the owners' negative nets and how many owners had one, then the sum of the positive nets and how many. These are the blast-radius figures: an owner's net movement per mint, and a mint's total loss and number of losers.
+- A balance whose index has no account key is printed as `#<index>`. A token balance with no `accountIndex` has nothing to pair its pre and post sides by, so each side is a row of its own, `#?`. A note on stderr counts each kind; neither is ever merged with another account. Such a name stands for an account only within its own transaction, so no `--by` sum holds a lamport row so named, nor a token row with no owner either; a note counts them.
 
-The output is TSV on stdout; tabs, newlines, carriage returns and backslashes inside a field are escaped, and so is every other character of the input contract's fixed list (control characters, line and paragraph separators, bidirectional controls, zero-width characters; `scripts/dnr/README.md`). Several corpora count each signature once. An amount or balance that is not an exact integer (a float, `1_000`, a non-ASCII digit) makes its line malformed under the shared input contract: the line is skipped and counted, never rounded. Skipped copies, and each input's malformed lines, are reported on stderr; the malformed lines are collection gaps.
+The output is TSV on stdout; tabs, newlines, carriage returns and backslashes inside a field are escaped, and so is every other character of the input contract's fixed list (control characters, line and paragraph separators, bidirectional controls, and the code points Unicode marks default-ignorable, zero-width characters among them; `scripts/dnr/README.md`). Several corpora count each signature once. An amount or balance that is not an exact integer (a float, `1_000`, a non-ASCII digit) makes its line malformed under the shared input contract: the line is skipped and counted, never rounded. Skipped copies, and each input's malformed lines, are reported on stderr; the malformed lines are collection gaps.
 
-- **Arguments:** the mode, then `--out <file>` (written as `frames.py` writes it), then corpus files or none.
-- **Exit:** 0 done · 2 a missing or unknown mode, a file or `--out` that is a symbolic link or reached through one inside the working directory, or an `--out` that already exists · 1 a file that cannot be read, or an `--out` that cannot be written, checked before any row is printed.
+- **Arguments:** the mode, then `--by <grouping>` and `--out <file>` (written as `frames.py` writes it), each at most once, then corpus files or none; each named file is checked as for `profile.sh`.
+- **Exit:** 0 done · 2 a missing or unknown mode, a grouping the mode does not take, or a path the input contract refuses, as for `profile.sh` · 1 a file that cannot be read, or an `--out` that cannot be written, checked before any row is printed.
 - **Network:** none. **Writes:** stdout, or the `--out` file.
 
 #### `redact.sh`
@@ -342,6 +367,18 @@ set -o pipefail; some-command 2>&1 | bash "<auditor-skill root>/scripts/dnr/reda
 A filter from stdin to stdout that removes provider credentials. In a URL of any scheme it keeps the scheme and the host's last two DNS labels (`REDACTED.provider.example`; an IP address or a two-label host stays whole), replaces userinfo with `REDACTED@` and replaces the path and query with `/REDACTED`. On curl's own error and verbose lines it shortens bare host names the same way and redacts the request path. A bare `api-key=`, `token=`, `secret=`, `auth=` or `access-token=` value outside a URL is redacted too. It is a convenience, not a guarantee: no RPC URL goes into a ledger, `INCIDENTS.json` or a report in any case. Record the provider's domain, as `collect.sh` prints it, and the literal string `$RPC_URL` instead.
 
 - **Arguments:** none. **Exit:** 0. **Network:** none.
+
+#### `jq-ro.sh`
+
+```bash
+"<auditor-skill root>/scripts/dnr/jq-ro.sh" -c 'select(.slot > 301) | .transaction.signatures[0]' incident_<n>/corpus/transactions.jsonl
+```
+
+`jq` over files inside a run directory, with nothing else to read. The `auditor:dnr-analyze` fork pre-approves it in place of `jq`, which can print the environment. It runs `jq` as `env -i HOME=/nonexistent PATH=/usr/bin:/bin`, so `$ENV` and `env` hold those two values and no `~/.jq` loads, and it prints every control character but tab and newline as `?`.
+
+- **Arguments:** `-c`, `-r`, `-s`, `-e` and `-n`, each its own word; `--arg <name> <value>` and `--argjson <name> <json>`, each name bound once; then the filter and one or more inputs. Every other option is refused, `--rawfile`, `--slurpfile`, `-f`/`--from-file` and `-L` among them, and so is a filter that holds `import`, `include` or `modulemeta`. Each input is a relative path to a regular file with one link inside `audit_<n>/` or `incident_<n>/`, with no `.`, `..` or symbolic link on the way. Standard input is never read.
+- **Exit:** jq's own status, or 2 when it refuses, with one stderr line, `jq-ro: refused: <reason>`. **Network:** none.
+- **Pre-approval:** Claude Code asks about a line that holds a `$`, inside quotes too, so write values into the filter as literals rather than as `--arg` variables.
 
 ### Threat-model collector
 
@@ -408,7 +445,7 @@ Each option is given at most once, except the repeatable `--paths`, `--parent-pa
 "<auditor-skill root>/scripts/rpc-read.sh" program-show <program_id> [--run <R>] [--cluster mainnet-beta|devnet|testnet]
 ```
 
-One read-only read from the chain through the `solana` CLI: an account's current value (`getAccountInfo`), one transaction, or a program's metadata such as its upgrade authority. It packages the throwaway-config method of [`references/detection-response/log-sources.md`](../references/detection-response/log-sources.md): the CLI runs on a config in a private temp directory, the endpoint in its `json_rpc_url` and a keypair path that names no file, and the read runs only when `solana config get keypair` reports that path back. Run it directly by its path, from the working directory.
+One read-only read from the chain through the `solana` CLI: an account's current value (`getAccountInfo`), one transaction, or a program's metadata such as its upgrade authority. The CLI runs on a throwaway config in a private temp directory, the endpoint in its `json_rpc_url` and a keypair path that names no file, and the read runs only when `solana config get keypair` reports that path back. Run it directly by its path, from the working directory.
 
 - **Endpoint:** `$RPC_URL` from the environment, never an argument; with `--cluster`, one of the public endpoints fixed in the script: `https://api.mainnet-beta.solana.com`, `https://api.devnet.solana.com` or `https://api.testnet.solana.com`.
 - **Reads:** `account` runs `solana account <address> --lamports --output-file <temp file>` and prints the address, balance in lamports, owner, executable flag and rent epoch, then the data's length and sha256; the data itself is never printed. `confirm` runs `solana confirm -v <signature>` and drops the CLI's first lines, which name the endpoint and the keypair path. `program-show` runs `solana program show <id>`, or `program-v4 show` for a loader-v4 program, each with a fixed authority so the CLI never looks for a signer, and the output must name the id as its Program Id. The CLI's output and errors pass through `redact.sh`, since its text can name the endpoint, key included. Every control character in what is printed shows as `?`, except TAB and LF.

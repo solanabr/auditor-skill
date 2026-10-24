@@ -28,7 +28,7 @@ Classify every datum by how much it can be trusted, because the verdict legs
 ## Collecting from RPC (gated)
 
 The user's own corpus comes first. When there is none,
-`bash "<auditor-skill root>/scripts/dnr/collect.sh"` is the only path, and it is
+`"<auditor-skill root>/scripts/dnr/collect.sh"` is the only path, and it is
 gated (README rule 3; the command confirms addresses, window, caps and estimated
 call count with the human first):
 
@@ -55,16 +55,17 @@ call count with the human first):
 - **Reruns go to a new `--out`.** The first collection of an incident lands in
   `incident_<n>/corpus/`; a resume, or a later collection (respond's widened ring),
   goes to the next `incident_<n>/corpus-<k>/` (`<k>` = highest existing + 1,
-  `corpus/` counting as 1, made with `mkdir`). The recipes read every one through
-  the glob `incident_<n>/corpus*/transactions.jsonl` and count each transaction
-  once, by signature. After a page cap, resume with `--before` into such a fresh
-  directory; an `--out` that already holds `signatures.jsonl`,
+  `corpus/` counting as 1; `collect.sh` makes it). The recipes read every one
+  through the glob `incident_<n>/corpus*/transactions.jsonl` and count each
+  transaction once, by signature. After a page cap, resume with `--before` into
+  such a fresh directory; an `--out` that already holds `signatures.jsonl`,
   `transactions.jsonl` or `collection-gaps.tsv`, even an empty one, is refused
   rather than overwritten, and so is one with a `.` or `..` component, one reached
   through a symbolic link inside the working directory, and one that — or whose
   `incident_*` directory — is a symbolic link, holds one, is tracked by git, or
-  cannot be checked by git or find (README § Run directory). An `incident_<n>/`
-  that the corpus lands in gets a `.gitignore` of `*` if it has none (Rule 11d).
+  cannot be checked by git or find, and one whose `incident_*` directory has no
+  `.gitignore` holding exactly `*` (README § Run directory;
+  `rundir.sh new incident` writes it first).
 - **Gaps are written down.** A `getTransaction` that failed (transport error, RPC
   error or null result), a signature page that failed, a page cap that stopped on
   a full page of 1,000 (older history may exist), the `--max-tx` cap, a stop
@@ -122,7 +123,11 @@ call count with the human first):
 ## Recipes (bundled `scripts/dnr/`)
 
 Run them from the installation, never as a `scripts/…` path relative to the
-working directory, and run the python ones as `python3 -I` (README rule 8).
+working directory: run the three analysis recipes directly by their quoted
+absolute path, from the working directory, with nothing in front, since their
+first lines run `profile.sh` under `/bin/bash` and the python ones as `python3 -I`
+(README rule 8). That is the form the `auditor:dnr-analyze` skill pre-approves;
+`bash` or `python3` in front, or a `$` anywhere in the line, makes Claude Code ask.
 `<auditor-skill root>` below is the absolute installation root the invoking command
 gave you (`OUTPUT-RULES.md` Rule 11e).
 
@@ -140,46 +145,76 @@ networked ones against fake `curl` / `solana` binaries, with no network.
 ```bash
 # baseline (no log parsing): outcome / version histograms, window, signer &
 # program inventories
-bash "<auditor-skill root>/scripts/dnr/profile.sh" incident_<n>/corpus*/transactions.jsonl
+"<auditor-skill root>/scripts/dnr/profile.sh" incident_<n>/corpus*/transactions.jsonl
 
 # program-log attribution, as JSONL (one record per emitted line, by frame)
-python3 -I "<auditor-skill root>/scripts/dnr/frames.py" --out incident_<n>/frames.jsonl incident_<n>/corpus*/transactions.jsonl
+"<auditor-skill root>/scripts/dnr/frames.py" --out incident_<n>/frames.jsonl incident_<n>/corpus*/transactions.jsonl
 
 # which instruction ran, from the runtime-recorded instruction lists (ix records,
 # top-level and CPI, data as given) joined to the runtime invoke lines
-python3 -I "<auditor-skill root>/scripts/dnr/frames.py" --instructions --out incident_<n>/instructions.jsonl incident_<n>/corpus*/transactions.jsonl
+"<auditor-skill root>/scripts/dnr/frames.py" --instructions --out incident_<n>/instructions.jsonl incident_<n>/corpus*/transactions.jsonl
 
 # balance movements, exact, successful transactions only
-python3 -I "<auditor-skill root>/scripts/dnr/deltas.py" tokens   incident_<n>/corpus*/transactions.jsonl
-python3 -I "<auditor-skill root>/scripts/dnr/deltas.py" lamports incident_<n>/corpus*/transactions.jsonl
+"<auditor-skill root>/scripts/dnr/deltas.py" tokens   incident_<n>/corpus*/transactions.jsonl
+"<auditor-skill root>/scripts/dnr/deltas.py" lamports incident_<n>/corpus*/transactions.jsonl
+
+# the same, summed exactly: an owner's net per mint, a mint's loss and losers, an account's net
+"<auditor-skill root>/scripts/dnr/deltas.py" tokens --by owner,mint incident_<n>/corpus*/transactions.jsonl
+"<auditor-skill root>/scripts/dnr/deltas.py" tokens --by mint incident_<n>/corpus*/transactions.jsonl
+"<auditor-skill root>/scripts/dnr/deltas.py" lamports --by account incident_<n>/corpus*/transactions.jsonl
+
+# any other query: jq over files inside the run directory, with an empty environment
+"<auditor-skill root>/scripts/dnr/jq-ro.sh" -c 'select(.slot > 301) | .transaction.signatures[0]' incident_<n>/corpus/transactions.jsonl
 ```
 
-The three analysis recipes share one input contract (`scripts/dnr/README.md`): a
-line they cannot read is skipped and counted, never echoed, and each recipe
-prints a `skipped N malformed line(s) in input I (<path>), the first at line L`
-note per input on stderr. Copy every such note into the ledger's **Collection
+Run `audit-logs` first, by its path in the installation,
+`<auditor-skill root>/tools/auditor-tools/target/release/audit-logs`, in place of
+the three analysis recipes, with the same arguments after its subcommand:
+`profile`, `frames [--instructions]`, `deltas tokens|lamports`. It prints the same
+output and notes, reads and refuses the same paths and exits the same way, but for
+the differences `tools/auditor-tools/README.md` lists;
+`scripts/tests/test-audit-logs.sh` checks it against the scripts. Run the script
+instead when it exits 126 or 127 (not built, or not runnable), 4
+(`audit-logs: stale build: …`: a file it was built from has changed since), or dies
+on a signal. Never look for it on `PATH`, and never build it in the audited
+repository.
+
+The three analysis recipes share one input contract (`scripts/dnr/README.md`).
+They read only regular files with one name in `incident_<n>/`, by paths relative
+to the working directory with no `..` and no symbolic link on the way, and refuse
+any other (exit 2) before reading anything: copy a corpus kept elsewhere, such as
+a `--logs` export, into `incident_<n>/logs/` first. A line they cannot read is
+skipped and counted, never echoed, and each recipe prints a
+`skipped N malformed line(s) in input I (<path>), the first at line L` note per
+input on stderr. Copy every such note into the ledger's **Collection
 gaps** line: those transactions are missing from every figure. Keep a recipe's
-output with `--out <file>`, as above, never with a shell redirection: the file
-appears under its name only once the run is complete, and since an output never
-replaces a file, a re-run names a new one (`frames-2.jsonl`).
+output with `--out <file>`, a new `.jsonl`, `.tsv` or `.txt` name directly in the
+run directory, as above, or with a `>` into a new name in `incident_<n>/`: with
+`--out` the file appears under its name only once the run is complete, and since an
+output never replaces a file, a re-run names a new one (`frames-2.jsonl`).
 
 Program bytes and `solana program show` come only from `snapshot-program.sh`, and
 signature history and transactions only from `collect.sh`. Any other read — an
 account's current value (`getAccountInfo`, the account-data half of Leg 1) or one
-transaction (`solana confirm -v <signature>`) — runs the solana CLI on a throwaway
-config, in a single command line: the URL stays out of argv, the keypair path
-names a file that does not exist, the read runs only if the CLI loaded that config,
-the exit status survives the redaction, and the directory is removed afterwards.
-Never pass `--url`.
+transaction — goes through `rpc-read.sh`, which runs the solana CLI on a throwaway
+config: the URL stays out of argv, the keypair path names a file that does not
+exist, the read runs only if the CLI loaded that config, its output and errors are
+redacted, and the directory is removed afterwards. The account's data is kept in
+`incident_<n>/rpc/account-<address>.data`, never printed; decode it from there
+(`python3 -I`). Each read is recorded in `incident_<n>/disclosures.tsv`. Never
+pass `--url`.
 
 ```bash
-# swap "account <address> --output json" for "confirm -v <signature>" as needed
-set -o pipefail; d="$(mktemp -d "${TMPDIR:-/tmp}/dnr_cli.XXXXXX")" && printf 'json_rpc_url: "%s"\nwebsocket_url: ""\nkeypair_path: "%s/none.json"\n' "$RPC_URL" "$d" > "$d/cli.yml" && solana -C "$d/cli.yml" config get keypair | grep -F "$d/none.json" > /dev/null && solana -C "$d/cli.yml" account <address> --output json 2>&1 | bash "<auditor-skill root>/scripts/dnr/redact.sh"; s=$?; rm -rf "$d"; (exit $s)
+"<auditor-skill root>/scripts/rpc-read.sh" account <address> --run incident_<n>
+"<auditor-skill root>/scripts/rpc-read.sh" confirm <signature> --run incident_<n>
 ```
 
-Aggregate `deltas.py` output further in Python ints (`python3 -I`). `awk` and
-`jq` are fine for grouping and counting keys, but **never for summing amounts**:
-both store numbers as doubles, so a u64 total above 2^53 silently loses precision.
+Sum `deltas.py` rows with its own `--by`, in exact integers and with no prompt in
+the fork; any other aggregation is a `python3 -I` one-off, which asks for approval.
+`jq-ro.sh` (which reads JSON, so not `deltas.py`'s TSV) and `awk` are fine for
+grouping and counting keys, but **never for summing amounts**: both store numbers
+as doubles, so a u64 total above 2^53 silently loses precision. Write a `jq-ro.sh`
+filter's values as literals: a `$` variable makes Claude Code ask.
 For a corpus too large for these passes, the same queries become DuckDB SQL over
 the JSONL; DuckDB is optional.
 
@@ -190,8 +225,8 @@ the JSONL; DuckDB is optional.
   says yes. Confirm with Leg 1 (README): a balance movement, or the four-part
   account-data check for takeovers.
 - **Blast radius.** Count it from queries: distinct victim owners and mints
-  (`deltas.py tokens` rows, one per token account, summed per owner), total raw
-  units out per mint (Python ints),
+  (`deltas.py tokens --by owner,mint`, an owner's net per mint), total raw units
+  out per mint and how many owners lost (`deltas.py tokens --by mint`),
   record/account counts, and the `(slot, transactionIndex)` window. Victim-wallet
   lists are **internal only** and never leave `incident_<n>/`.
 - **Root cause.** `frames.py --instructions` (the runtime-recorded instruction
@@ -205,9 +240,9 @@ Round-1 hypotheses, each a ledger row; let hits spawn pivots:
 
 1. **Failed-then-succeeded clusters** from one signer/program: probing that found
    a hole (`err` history from `getSignaturesForAddress`, then the first success).
-2. **Outflow outliers per mint:** `deltas.py tokens` summed per owner and mint
-   (each row is one token account); a drain is a large net negative from
-   vault/treasury owners.
+2. **Outflow outliers per mint:** `deltas.py tokens --by owner,mint` (each
+   owner's net per mint, the largest outflow first); a drain is a large net
+   negative from vault/treasury owners.
 3. **Privileged instructions whose signer is not in the authority set** — the
    takeover tell: a set-authority / set-config / upgrade / withdraw (found in the
    `ix` records of `frames.py --instructions`, by discriminator, top-level or CPI)

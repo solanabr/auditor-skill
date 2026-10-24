@@ -8,7 +8,10 @@
 #   - hooks/, monitors/ or bin/, .mcp.json, .lsp.json or settings*.json at the root, in any letter case, or a
 #     .claude/ directory below the root;
 #   - in .claude-plugin/, a file other than plugin.json and marketplace.json, or a key in either beyond
-#     PLUGIN_KEYS and MARKETPLACE_KEYS (read with jq; a manifest jq cannot read fails).
+#     PLUGIN_KEYS and MARKETPLACE_KEYS (read with jq; a manifest jq cannot read fails);
+#   - a SKILL.md, in any letter case, other than SKILL.md and skills/<name>/SKILL.md: with "skills": "./" in
+#     plugin.json, Claude Code loads <dir>/SKILL.md when the root holds none, and a skills/SKILL.md makes all of
+#     skills/ one skill.
 # Paths come from git ls-files; a run outside a checkout fails.
 # Usage: bash scripts/check-hygiene.sh. Needs bash >= 3.2, git and jq.
 set -uo pipefail
@@ -18,7 +21,7 @@ cd "$(dirname "$0")/.." || exit 2
 ALLOWED_LOAD_SURFACES=''
 # The keys each manifest may hold, as dotted paths ([] is an array element). A key is added when it is first
 # used, once what Claude Code loads from it is known.
-PLUGIN_KEYS='name version description author author.name author.url'
+PLUGIN_KEYS='name version description author author.name author.url skills'
 MARKETPLACE_KEYS="name owner owner.name owner.url metadata metadata.version metadata.description plugins plugins.[] \
 plugins.[].name plugins.[].version plugins.[].description plugins.[].author plugins.[].author.name plugins.[].author.url \
 plugins.[].source"
@@ -58,6 +61,15 @@ while IFS= read -r -d '' f <&3 && IFS= read -r -d '' low <&4; do
     ?*/.claude/*) surface "$f" "a .claude/ directory below the root" ;;
     */*) ;;
     .mcp.json | .lsp.json | settings*.json) surface "$f" "Claude Code loads it from the plugin root" ;;
+  esac
+  case "$low" in skill.md | */skill.md)
+    why="a SKILL.md other than SKILL.md and skills/<name>/SKILL.md, which Claude Code may load as a skill"
+    case "$f" in
+      SKILL.md) ;;
+      skills/*/*/*) surface "$f" "$why" ;;
+      skills/*/SKILL.md) ;;
+      *) surface "$f" "$why" ;;
+    esac ;;
   esac
   case "$f" in
     .claude-plugin/plugin.json | .claude-plugin/marketplace.json) manifests="$manifests $f" ;;

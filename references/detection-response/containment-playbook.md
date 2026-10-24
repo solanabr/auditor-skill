@@ -27,11 +27,13 @@ mistaken — and then it stops. Carrying it out is never the track's job.
 - **Read-only, keyless reads only.** Program bytes and `solana program show` come
   only from `<auditor-skill root>/scripts/dnr/snapshot-program.sh`, and
   `getSignaturesForAddress` / `getTransaction` only from `collect.sh`. Any other
-  read — `solana account <address>` (`getAccountInfo`), `solana confirm -v <sig>` —
-  uses the throwaway-config recipe in `log-sources.md`, never `--url`: no key in
-  argv, no keypair to sign with, and its output piped through the installation's
-  `redact.sh` (never a relative `scripts/` path) after `set -o pipefail;`, so a
-  key in an error never reaches the transcript and a failed read still fails.
+  read — an account's current value (`getAccountInfo`) or one transaction — goes
+  through
+  `"<auditor-skill root>/scripts/rpc-read.sh" account <address>|confirm <signature> --run incident_<n>`,
+  never `solana` itself and never `--url`: it keeps the key out of argv, has no
+  keypair to sign with, and passes the CLI's output and errors through
+  `redact.sh`, so a key in an error never reaches the transcript and a failed
+  read still fails.
 - **No MCP write tool**, no webhook/subscription setup. The `incident-responder`
   agent that does the corpus work has no MCP tools, so it cannot call a signing or
   transfer tool; `/auditor:hunt` and `/auditor:respond` run in your session, where

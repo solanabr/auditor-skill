@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-bundled-paths.sh — bundled executables run from the auditor-skill root, never by a path relative to
 # the working directory, which during an audit is usually the target repository (OUTPUT-RULES.md Rule 11e).
-#   1. commands/ and agents/, where Claude Code fills in ${CLAUDE_PLUGIN_ROOT}, name no bundled tool,
+#   1. commands/, agents/ and skills/*/SKILL.md, where Claude Code fills in ${CLAUDE_PLUGIN_ROOT}, name no bundled tool,
 #      Trail of Bits plugin, PoC template or script by a relative path, and never use ${CLAUDE_SKILL_DIR};
 #   2. the skill body, references/, discovery/, docs/, templates/ and README.md never *run* one by a
 #      relative path: an interpreter, `source` / `.`, `uv run`, `env …` or `cd` in front of it, a `test -d/-x`
@@ -16,7 +16,7 @@
 #   6. the .audit-memory store check runs case-insensitively everywhere: no line pairs `ls-files` with
 #      `.audit-memory` without --icase-pathspecs (the canonical form is pinned in OUTPUT-RULES.md and
 #      pre-scan.md), since on a case-insensitive filesystem a tracked .AUDIT-MEMORY/ is the same directory;
-#   7. /auditor:hunt, /auditor:respond and incident-responder name every corpus file they read (references/,
+#   7. /auditor:hunt, /auditor:respond, incident-responder and auditor:dnr-analyze name every corpus file they read (references/,
 #      templates/, checklists/, discovery/, OUTPUT-RULES.md, …) from ${CLAUDE_PLUGIN_ROOT}: no relative corpus
 #      directory and no bare corpus file name. Run-directory outputs (audit_<n>/threat-model.md,
 #      INCIDENT_REPORT.md) are not corpus files.
@@ -32,7 +32,7 @@ pass=0; failn=0
 ok()  { pass=$((pass + 1)); if [ -n "${VERBOSE:-}" ]; then echo "ok   $*"; fi; }
 bad() { failn=$((failn + 1)); echo "FAIL $*"; }
 
-STRICT_FILES=$(ls commands/*.md agents/*.md)
+STRICT_FILES=$(ls commands/*.md agents/*.md skills/*/SKILL.md 2>/dev/null)
 RUN_FILES=$(ls SKILL.md FULL-AUDIT.md AGENTS.md OUTPUT-RULES.md README.md; find references discovery docs templates -name '*.md' | sort)
 
 # A bundled path preceded by start of line or a non-path character, after any ./ or ../ prefix.
@@ -230,7 +230,7 @@ PINS
 
 # ---- 4. every rooted path names something that ships --------------------------------------------------
 bins=$(awk '/^\[\[bin\]\]/ { b = 1; next } b && /^name *=/ { gsub(/.*= *"|".*/, ""); print; b = 0 }' \
-  tools/auditor-tools/Cargo.toml)
+  tools/auditor-tools/Cargo.toml tools/auditor-tools/*/Cargo.toml)
 [ -n "$bins" ] && ok "crate binaries: $(echo $bins)" || bad "no [[bin]] names in tools/auditor-tools/Cargo.toml"
 for p in $(grep -ohE '([$][{]CLAUDE_(PLUGIN_ROOT|SKILL_DIR)[}]|<auditor-skill root>)/[A-Za-z0-9_./-]*' \
     $STRICT_FILES $RUN_FILES | sed -E 's#^[^/]*/##; s#\.+$##' | sort -u); do
@@ -285,7 +285,7 @@ done
 [ "$store_bad" -eq 0 ] && ok "no case-sensitive .audit-memory store check anywhere"
 
 # ---- 7. the D&R commands and agent read the corpus from the root ----------------------------------------
-CORPUS_FILES="commands/hunt.md commands/respond.md agents/incident-responder.md"
+CORPUS_FILES="commands/hunt.md commands/respond.md agents/incident-responder.md skills/dnr-analyze/SKILL.md"
 # Every corpus file name (escaped for ERE), so a bare `log-sources.md` or `OUTPUT-RULES.md` counts as well.
 CORPUS_NAMES=$( { find references templates checklists discovery -name '*.md'
   printf '%s\n' OUTPUT-RULES.md QUESTIONS.md SKILL.md FULL-AUDIT.md; } | sed -e 's#.*/##' -e 's#[.]#\\.#g' | sort -u \

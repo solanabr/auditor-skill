@@ -1,0 +1,1028 @@
+#!/usr/bin/env bash
+# test-audit-logs.sh — audit-logs (tools/auditor-tools/audit-logs) against the scripts it
+# mirrors, scripts/dnr/profile.sh, frames.py and deltas.py, and its confinement.
+#
+# Builds audit-logs from a copy of its package, of the three recipes it mirrors and of
+# scripts/lib/confine.sh, the files it compares at start (its one dependency, libc, comes
+# from the cargo cache or crates.io), runs it and the scripts on the same corpora from the
+# same working directory, and compares, for each of the five recipes (profile, frames,
+# frames --instructions, deltas lamports, deltas tokens) and the three sums of deltas
+# (lamports --by account, tokens --by owner,mint and tokens --by mint), the exit status,
+# stdout and the "skipped" notes on stderr. The corpora:
+#   1. every committed fixture in scripts/dnr/fixtures/, one at a time and all at once;
+#   2. the crafted input-contract cases of test-dnr.sh §20, made by the code in that file;
+#   3. cases of its own: amounts and balances above 2^53, forged log lines, ties at the
+#      top-20 cut, jq's number forms, odd indices and stack heights, floats Python rounds;
+#   4. a generated corpus of 6,000 transactions in two files, well past the pipe buffer;
+#   5. stdin, a closed stdin, --out, and the exit statuses for a missing, unreadable,
+#      linked or non-regular input or --out, and for an input replaced once checked.
+# Then confinement: every case in fixtures/audit-logs/hostile-args.txt exits non-zero,
+# changes no file, leaves no temporary file and prints no canary text; an installation
+# inside the working directory, or under a path a quoted rule cannot match, is refused;
+# and a run stopped by TERM, INT or HUP leaves its --out file as it was.
+#
+# frames.py and deltas.py run under LC_ALL=C. profile.sh runs under the caller's locale,
+# and on two cases under en_US.UTF-8 too: it counts and orders byte by byte under every
+# locale, as audit-logs does. Its count column, which BSD uniq pads to 4 and GNU uniq to
+# 7, is compared as GNU pads it. Without cargo the suite is skipped, loudly; with
+# REQUIRE_TOOLCHAIN=1 (CI) that is a failure. AUDIT_LOGS=<path> tests a binary already
+# built (CI's release build) instead of building one.
+#
+# bash >= 3.2, jq, python3, awk, sed, cmp. No network.
+
+set -uo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$HERE/../.." && pwd)"
+DNR="$ROOT/scripts/dnr"
+FIX="$DNR/fixtures"
+PKG="$ROOT/tools/auditor-tools/audit-logs"
+CASES="$HERE/fixtures/audit-logs/hostile-args.txt"
+fails=0
+ok()  { printf 'ok   %s\n' "$1"; }
+bad() { printf 'FAIL %s\n' "$1" >&2; fails=$((fails+1)); }
+eq()  { if [[ "$2" == "$3" ]]; then ok "$1 ($2)"; else bad "$1: expected '$3', got '$2'"; fi; }
+finish() {
+  if [[ "$fails" -ne 0 ]]; then echo "test-audit-logs: $fails assertion(s) FAILED" >&2; exit 1; fi
+  echo "test-audit-logs: all assertions passed"; exit 0
+}
+
+for tool in jq python3 awk sed cmp; do
+  command -v "$tool" >/dev/null 2>&1 || { echo "test-audit-logs: missing required tool: $tool" >&2; exit 3; }
+done
+T="$(mktemp -d "${TMPDIR:-/tmp}/audit_logs_test.XXXXXX")" || exit 1
+trap 'rm -rf "$T"' EXIT
+T="$(cd "$T" && pwd -P)" || exit 1
+
+# ---------------------------------------------------------------------------
+# 0. The binary: AUDIT_LOGS when given, else a release build of a copy of the
+#    package laid out as in the repository, beside a copy of the three recipes and of
+#    scripts/lib/confine.sh (SRC), a workspace of its own with the release profile of
+#    tools/auditor-tools and a lockfile of its two packages, audit-logs and libc,
+#    taken from tools/auditor-tools/Cargo.lock. The package has one dependency, libc,
+#    without its default features (so a workspace build gives the libc of audit-scan and
+#    audit-mem no other feature), no build script, and no code that opens a socket, runs
+#    a program or reads the environment.
+#    The files it compares at start, to refuse a stale build, are the recipes,
+#    scripts/lib/confine.sh, its Cargo.toml and every file of its src/.
+# ---------------------------------------------------------------------------
+if grep -nE 'std::net|TcpStream|UdpSocket|process::Command|Command::new|env::var|set_var|env::vars|libc::(socket|connect|bind|listen|accept|exec[a-z]*|posix_spawn[a-z]*|fork|vfork|system|popen|getenv|setenv|putenv)\b' \
+    "$PKG"/src/*.rs > "$T/apis"; then
+  bad "source: audit-logs names a network, process or environment API ($(tr '\n' ' ' < "$T/apis"))"
+else
+  ok "source: audit-logs names no network, process or environment API"
+fi
+deps="$(awk '/^\[/ { d = ($0 ~ /dependencies\]$/) } d && /=/' "$PKG/Cargo.toml")"
+if [[ "$deps" == 'libc = { version = "0.2", default-features = false }' && ! -e "$PKG/build.rs" ]]; then
+  ok "source: audit-logs has one dependency, libc without its default features, and no build script"
+else bad "source: audit-logs has other dependencies, libc with its default features, or a build script ($deps)"; fi
+unlisted=""
+for f in scripts/dnr/profile.sh scripts/dnr/frames.py scripts/dnr/deltas.py scripts/lib/confine.sh \
+    tools/auditor-tools/audit-logs/Cargo.toml "$PKG"/src/*.rs; do
+  case "$f" in /*) f="tools/auditor-tools/audit-logs/src/${f##*/}" ;; esac
+  grep -qxF "    \"$f\"," "$PKG/src/main.rs" || unlisted="$unlisted $f"
+done
+if [[ -z "$unlisted" ]]; then ok "source: the stale-build check compares the recipes, confine.sh, Cargo.toml and every src/*.rs"
+else bad "source: the stale-build check leaves out$unlisted"; fi
+
+if [[ -n "${AUDIT_LOGS:-}" ]]; then
+  case "$AUDIT_LOGS" in /*) BIN="$AUDIT_LOGS" ;; *) BIN="$PWD/$AUDIT_LOGS" ;; esac
+  if [[ ! -f "$BIN" || ! -x "$BIN" ]]; then echo "test-audit-logs: AUDIT_LOGS ($AUDIT_LOGS) is not an executable file" >&2; exit 1; fi
+  ok "build: testing the binary AUDIT_LOGS names"
+elif command -v cargo >/dev/null 2>&1; then
+  SRC="$T/src"
+  P="$SRC/tools/auditor-tools/audit-logs"
+  mkdir -p "$P" "$SRC/scripts/dnr" "$SRC/scripts/lib"
+  cp -R "$PKG/Cargo.toml" "$PKG/src" "$P/"
+  cp "$DNR/profile.sh" "$DNR/frames.py" "$DNR/deltas.py" "$SRC/scripts/dnr/"
+  cp "$ROOT/scripts/lib/confine.sh" "$SRC/scripts/lib/"
+  { printf '\n[workspace]\n\n'; awk '/^\[/ { p = ($0 == "[profile.release]") } p' "$ROOT/tools/auditor-tools/Cargo.toml"; } >> "$P/Cargo.toml"
+  { awk '/^\[\[package\]\]/ { exit } /^version = / { print }' "$ROOT/tools/auditor-tools/Cargo.lock"
+    awk 'BEGIN { RS = ""; ORS = "\n\n" } /\nname = "(audit-logs|libc)"\n/ { print "\n" $0 }' "$ROOT/tools/auditor-tools/Cargo.lock"; } > "$P/Cargo.lock"
+  if cargo build --release --locked --manifest-path "$P/Cargo.toml" --target-dir "$T/target" > "$T/build.log" 2>&1; then
+    BIN="$T/target/release/audit-logs"
+    # A cargo config that names a build target puts the binary under target/<triple>/.
+    for b in "$T"/target/*/release/audit-logs; do [[ -x "$BIN" || ! -x "$b" ]] || BIN="$b"; done
+    if grep -q '^warning' "$T/build.log"; then bad "build: cargo build --release printed warnings"; sed -n '1,40p' "$T/build.log" >&2
+    else ok "build: cargo build --release --locked, with no warning"; fi
+  else
+    sed -n '1,60p' "$T/build.log" >&2
+    bad "build: cargo build --release failed"
+    finish
+  fi
+elif [[ "${REQUIRE_TOOLCHAIN:-}" == 1 ]]; then
+  bad "REQUIRE_TOOLCHAIN=1, but cargo is not on PATH: audit-logs cannot be built, so its parity with scripts/dnr is not checked"
+  finish
+else
+  echo "SKIP test-audit-logs: cargo is not on PATH, so audit-logs is not built and its parity with scripts/dnr is NOT checked"
+  exit 0
+fi
+
+WT="$T/wt"
+mkdir -p "$WT/incident_1/corpus" "$WT/incident_1/out"
+printf '*\n' > "$WT/incident_1/.gitignore"
+
+# norm_counts: profile.sh's count column as GNU uniq pads it, 7 columns.
+norm_counts() {
+  LC_ALL=C awk 'match($0, /^ *[0-9]+ /) { c = substr($0, 1, RLENGTH - 1); sub(/^ +/, "", c)
+                 printf "%7s %s\n", c, substr($0, RLENGTH + 1); next } { print }'
+}
+# notes <stderr file>: its "skipped" notes, without the program name.
+notes() { sed -n 's/^[a-z][a-z.-]*: skipped /skipped /p' "$1"; }
+
+# script|binary <recipe> <args...>: one run of a recipe, from $WT.
+script() {
+  local r="$1"; shift
+  case "$r" in
+    profile) ( cd "$WT" && bash "$DNR/profile.sh" "$@" ) ;;
+    frames) ( cd "$WT" && LC_ALL=C python3 -I "$DNR/frames.py" "$@" ) ;;
+    ix) ( cd "$WT" && LC_ALL=C python3 -I "$DNR/frames.py" --instructions "$@" ) ;;
+    by-account) ( cd "$WT" && LC_ALL=C python3 -I "$DNR/deltas.py" lamports --by account "$@" ) ;;
+    by-owner-mint) ( cd "$WT" && LC_ALL=C python3 -I "$DNR/deltas.py" tokens --by owner,mint "$@" ) ;;
+    by-mint) ( cd "$WT" && LC_ALL=C python3 -I "$DNR/deltas.py" tokens --by mint "$@" ) ;;
+    *) ( cd "$WT" && LC_ALL=C python3 -I "$DNR/deltas.py" "$r" "$@" ) ;;
+  esac
+}
+binary() {
+  local r="$1"; shift
+  case "$r" in
+    profile) ( cd "$WT" && "$BIN" profile "$@" ) ;;
+    frames) ( cd "$WT" && "$BIN" frames "$@" ) ;;
+    ix) ( cd "$WT" && "$BIN" frames --instructions "$@" ) ;;
+    by-account) ( cd "$WT" && "$BIN" deltas lamports --by account "$@" ) ;;
+    by-owner-mint) ( cd "$WT" && "$BIN" deltas tokens --by owner,mint "$@" ) ;;
+    by-mint) ( cd "$WT" && "$BIN" deltas tokens --by mint "$@" ) ;;
+    *) ( cd "$WT" && "$BIN" deltas "$r" "$@" ) ;;
+  esac
+}
+
+# agree <recipe> [<stdin file>] -- <args...>: runs the script and audit-logs, and leaves in
+# $T/diff why they differ (exit status, stdout, the notes on stderr); empty when they
+# agree. When both succeed every stderr line is compared, less the program's name;
+# otherwise the "skipped" notes are. The outputs stay in $T/s.* and $T/b.*.
+agree() {
+  local r="$1" in=/dev/null sc bc; shift
+  if [[ "$1" != -- ]]; then in="$1"; shift; fi
+  shift
+  script "$r" ${1+"$@"} < "$in" > "$T/s.out" 2> "$T/s.err"; sc=$?
+  binary "$r" ${1+"$@"} < "$in" > "$T/b.out" 2> "$T/b.err"; bc=$?
+  if [[ "$r" == profile ]]; then norm_counts < "$T/s.out" > "$T/s.cmp"; else cp "$T/s.out" "$T/s.cmp"; fi
+  if [[ "$sc$bc" == 00 ]]; then
+    sed 's/^[a-z][a-z.-]*: //' "$T/s.err" > "$T/s.notes"; sed 's/^[a-z][a-z.-]*: //' "$T/b.err" > "$T/b.notes"
+  else
+    notes "$T/s.err" > "$T/s.notes"; notes "$T/b.err" > "$T/b.notes"
+  fi
+  : > "$T/diff"
+  [[ "$sc" == "$bc" ]] || echo "exit $sc (script) vs $bc (audit-logs)" >> "$T/diff"
+  cmp -s "$T/s.cmp" "$T/b.out" || { echo "stdout:"; diff "$T/s.cmp" "$T/b.out" | sed -n '1,6p'; } >> "$T/diff"
+  cmp -s "$T/s.notes" "$T/b.notes" || { echo "notes:"; diff "$T/s.notes" "$T/b.notes" | sed -n '1,4p'; } >> "$T/diff"
+}
+
+# same_all <what> <args...>: the five recipes and the three sums agree on the same arguments.
+same_all() {
+  local what="$1" r differ=""; shift
+  for r in profile frames ix lamports tokens by-account by-owner-mint by-mint; do
+    agree "$r" -- "$@"
+    if [[ -s "$T/diff" ]]; then differ="$differ $r"; sed "s/^/  $r: /" "$T/diff" >&2; fi
+  done
+  if [[ -z "$differ" ]]; then ok "$what: the recipes and the sums agree"; else bad "$what: differs in$differ"; fi
+}
+
+# ---------------------------------------------------------------------------
+# 1. Every committed fixture, one at a time, then all at once (later copies of a
+#    signature are skipped and counted the same way).
+# ---------------------------------------------------------------------------
+cp "$FIX"/*.jsonl "$WT/incident_1/corpus/"
+fixtures=()
+for f in "$FIX"/*.jsonl; do
+  same_all "fixture ${f##*/}" "incident_1/corpus/${f##*/}"
+  fixtures+=("incident_1/corpus/${f##*/}")
+done
+same_all "all fixtures, each named twice" "${fixtures[@]}" "${fixtures[@]}"
+( cd "$WT" && "$BIN" frames "${fixtures[@]}" "${fixtures[@]}" ) > /dev/null 2> "$T/twice.err"
+if grep -q '^audit-logs: skipped [1-9][0-9]* transaction(s) already read under the same signature$' "$T/twice.err"; then
+  ok "all fixtures twice: audit-logs reports the copies it skipped"
+else
+  bad "all fixtures twice: no skipped-copy note ($(tr '\n' ' ' < "$T/twice.err"))"
+fi
+agree lamports -- incident_1/corpus/lamports-over-2-53.jsonl
+eq "fixture: a +1 lamport delta above 2^53 is exact in audit-logs" "$(awk -F'\t' '$2 == "BigOne" { print $3 }' "$T/b.out")" "1"
+agree tokens -- incident_1/corpus/token-amount-over-2-53.jsonl
+eq "fixture: token deltas of 1 above 2^53 are exact in audit-logs" "$(awk -F'\t' '{ printf "%s ", $4 }' "$T/b.out")" "1 1 "
+agree by-owner-mint -- incident_1/corpus/same-owner-drain.jsonl
+eq "fixture: audit-logs deltas tokens --by owner,mint nets an owner's two accounts" "$(tr '\t\n' ',|' < "$T/b.out")" \
+  "VaultPDA,MintM,-140,|Attacker,MintM,140,|"
+agree by-mint -- incident_1/corpus/same-owner-drain.jsonl
+eq "fixture: audit-logs deltas tokens --by mint gives the loss, the losers, the gain and the gainers" \
+  "$(tr '\t\n' ',|' < "$T/b.out")" "MintM,-140,1,140,1|"
+agree by-account -- incident_1/corpus/lamports-over-2-53.jsonl incident_1/corpus/clean-mixed.jsonl
+eq "fixture: audit-logs deltas lamports --by account sums exactly above 2^53, by net and then by name" \
+  "$(tr '\t\n' ',|' < "$T/b.out")" \
+  "PayerOne11111111111111111111111111111111111,-5000000|BigOne,1|BigTwo,1|Dest111111111111111111111111111111111111111,5000000|"
+agree frames -- incident_1/corpus/log-newline-injection.jsonl
+jq -c 'select(.program | test("Fake"))' "$T/b.out" > "$T/forged"
+eq "fixture: no frame is attributed to the program a log line forged" "$(grep -c . "$T/forged")" "0"
+
+# ---------------------------------------------------------------------------
+# 2. The crafted input-contract cases of test-dnr.sh §20, made by its own code:
+#    each malformed line is counted, never echoed, by both, and each well-formed
+#    one read the same way.
+# ---------------------------------------------------------------------------
+sed -n "/^python3 -I - \"\$RW\/incident_1\/c20\" <<'PY'\$/,/^PY\$/p" "$HERE/test-dnr.sh" > "$T/c20.raw"
+sed '1d;$d' "$T/c20.raw" > "$T/c20.py"
+if [[ "$(grep -c . "$T/c20.py")" -gt 20 ]] && python3 -I "$T/c20.py" "$WT/incident_1/c20" 2> "$T/c20.err"; then
+  n=0
+  for f in "$WT"/incident_1/c20/*.jsonl; do
+    same_all "test-dnr.sh contract case ${f##*/}" "incident_1/c20/${f##*/}"
+    n=$((n + 1))
+  done
+  [[ "$n" -ge 30 ]] && ok "contract cases: $n files from test-dnr.sh §20" || bad "contract cases: only $n files from test-dnr.sh §20"
+else
+  bad "contract cases: could not run the case generator from test-dnr.sh §20 ($(tr '\n' ' ' < "$T/c20.err" 2>/dev/null))"
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Cases of its own. jq writes a number as it was given (1.0, 1E+2), so the
+#    version and blockTime cases that print one need a jq that keeps number
+#    literals (jq 1.7 with decNumber); with another jq they are left out, and said so.
+# ---------------------------------------------------------------------------
+literal=0
+if [[ "$(printf '[100000000000000000001,1.0,1E2]\n' | jq -c . 2>/dev/null)" == '[100000000000000000001,1.0,1E+2]' ]]; then
+  literal=1
+else
+  echo "note: this jq does not keep number literals; the version and blockTime literal cases are left out"
+fi
+python3 -I - "$WT/incident_1/crafted" "$literal" <<'PY'
+import json, os, sys
+d, literal = sys.argv[1], sys.argv[2] == "1"
+os.makedirs(d)
+P = "Prog7xQmP4sN9kR2wBcD3eF5gH6jK8mN1pQ2rS3tUvW"
+Q = "Prog2xQmP4sN9kR2wBcD3eF5gH6jK8mN1pQ2rS3tU"
+TOK = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+U64 = 2**64 - 1
+def tx(sig, meta=None, keys=None, ixs=None, extra=None):
+    t = {"meta": dict({"err": None, "fee": 5000}, **(meta or {})),
+         "transaction": {"signatures": [sig], "message": {"accountKeys": keys if keys is not None else ["Payer1"],
+                                                          "instructions": ixs if ixs is not None else []}}}
+    t.update(extra or {})
+    return t
+def write(name, lines):
+    with open(os.path.join(d, name), "wb") as f:
+        for line in lines:
+            f.write((line if isinstance(line, bytes) else json.dumps(line, ensure_ascii=False).encode()) + b"\n")
+big = [
+    tx("SigBig1", {"fee": 5000, "preBalances": [U64, 2**53 + 1, 2**63], "postBalances": [U64 - 4999, 2**53, 2**63 + 2**62]},
+       ["PayerBig", "AcctBig", "Acct63"]),
+    tx("SigBig2", {"fee": 2**63, "preBalances": [U64, 7], "postBalances": [U64 - 2**63, 7]}, ["PayerFee", "Same"]),
+    tx("SigBig4", {"preTokenBalances": [
+        {"accountIndex": 1, "mint": "MintA", "owner": "Vault", "uiTokenAmount": {"amount": str(U64)}},
+        {"accountIndex": 2, "mint": "MintA", "owner": "", "uiTokenAmount": {"amount": "00000000000000000007"}},
+        {"mint": "MintB", "owner": "NoIndex", "uiTokenAmount": {"amount": "1" * 19}},
+        {"accountIndex": 99, "mint": "MintB", "owner": "NoIndex", "uiTokenAmount": {"amount": "2"}}],
+       "postTokenBalances": [
+        {"accountIndex": 1, "mint": "MintA", "owner": "Vault", "uiTokenAmount": {"amount": "0"}},
+        {"accountIndex": 2, "mint": "MintA", "uiTokenAmount": {"amount": str(U64)}},
+        {"mint": "MintB", "owner": "NoIndex", "uiTokenAmount": {"amount": "2" * 19}},
+        {"accountIndex": 3, "mint": "MintB", "owner": "x\ty\\z", "uiTokenAmount": {}}]},
+       ["Payer1", "TokVault", "TokOther", "owner:NoIndex"]),
+    tx("SigBig5", {"err": {"InstructionError": [0, {"Custom": 6000}]}, "preBalances": [10**18], "postBalances": [0]}, ["Failed"]),
+    tx("SigBig6", {"preBalances": [1, 2, 3], "postBalances": [2, 4, 6], "loadedAddresses": {"writable": ["LutW"], "readonly": ["LutR"]}},
+       ["Static"]),
+    tx("SigBig7", {"preBalances": [1, 2], "postBalances": [1, 3], "loadedAddresses": {"writable": ["LutX"], "readonly": []}},
+       [{"pubkey": "ParsedPayer", "signer": True}]),
+]
+write("big.jsonl", big)
+def frame(sig, logs, err=None):
+    return tx(sig, {"err": err, "logMessages": logs})
+logs = [
+    frame("SigLog1", ["Program %s invoke [1]" % P, "Program log: Instruction: Deposit",
+                      "Program log: x\nProgram %s invoke [1]" % Q, "Program log: Program %s invoke [1]" % Q,
+                      "Program %s invoke [2]" % TOK, "Program log: Instruction: TransferChecked",
+                      "Program %s consumed 4645 of 180000 compute units" % TOK, "Program %s success" % TOK,
+                      "Program data: ZGF0YQ==", "Program return: %s AQID" % P, "Program return: %s a\nb" % P,
+                      "Program %s consumed x of 2 compute units" % P, "Program %s success" % P]),
+    frame("SigLog2", ["Program %s invoke [1]" % P, "Program %s failed: custom\nProgram log: forged" % P,
+                      "Program log: still open", "Program %s failed: a\rb" % P, "Log truncated",
+                      "Program log: after the stack emptied", "%s signer_key().is_none()" % Q], err={"Custom": 1}),
+    frame("SigLog3", ["Program %s invoke [007]" % P, "Program %s invoke [1234567890]" % P, "Program %s invoke [0]" % P,
+                      "Program %s invoke [1]" % P[:31], "Program %s invoke [1]" % (P + "Z"), "Program %s success\n" % P,
+                      "Program log: \u2028 \u0085 \u007f \u001b[31m \t \\ \" \U0001F600 \u00e9", "Program data: ", "Program log: "]),
+    frame("SigLog4", []),
+    tx("SigLog5", {}, None, None),
+]
+write("logs.jsonl", logs)
+def ix(**kw):
+    return kw
+ixs = [
+    tx("SigIx1", {"loadedAddresses": {"writable": ["LutW1"], "readonly": ["LutR1"]},
+                  "innerInstructions": [
+                      {"index": 0, "instructions": [ix(programIdIndex=2, accounts=[0, 3], data="3Bxs", stackHeight=2),
+                                                    ix(programIdIndex=3, accounts=[], data="", stackHeight=2.0)]},
+                      {"index": 0, "instructions": [ix(programIdIndex=1, accounts=[1], data="x", stackHeight=True)]},
+                      {"index": 10**19, "instructions": [ix(programIdIndex=1, data="huge")]},
+                      {"index": 1, "instructions": [ix(programIdIndex=2, data="s", stackHeight="2"),
+                                                    ix(programIdIndex=2, data="n"), ix(programIdIndex=2, data="z", stackHeight=0)]}],
+                  "logMessages": ["Program %s invoke [1]" % P, "Program LutW1111111111111111111111111111111111 invoke [2]",
+                                  "Program %s invoke [2]" % Q, "Program %s success" % Q, "Program %s success" % P,
+                                  "Program %s invoke [1]" % Q, "Program %s invoke [2]" % Q, "Program %s invoke [3]" % Q,
+                                  "Program %s failed: custom program error: 0x1" % Q]},
+       ["Payer1", P, Q, "LutW1111111111111111111111111111111111"],
+       [ix(programIdIndex=1, accounts=[0, 1, 2, 3, 4, 5, -1, 10**19, 1.5, None, {"k": [1e16, 1e-07]}], data="3Bxs4h24hBtQy9rw"),
+        ix(programIdIndex=2, accounts=[], data="")], {"version": 0}),
+    tx("SigIx2", {"loadedAddresses": {"writable": ["NotAppended"]}},
+       [{"pubkey": "ParsedPayer", "signer": True, "writable": True}, {"pubkey": P, "signer": False}],
+       [ix(programId="11111111111111111111111111111111", program="system",
+           parsed={"type": "transfer", "info": {"lamports": 2**64 + 1, "ratio": 0.1, "big": 1e22, "tiny": 5e-324,
+                                                "neg": -0.0, "whole": 100.0, "tie": 1365507272084322.25, "list": [1, "two", None, True]}},
+           accounts=None),
+        ix(programIdIndex=0, parsed=None, program=7),
+        ix(programIdIndex=1, parsed={"type": "x"}),
+        ix(programIdIndex=9, data="noprogram"),
+        ix(programIdIndex=2, accounts=[1])]),
+    b'{"meta":{"err":null,"innerInstructions":[{"index":0,"instructions":[{"programIdIndex":1,"stackHeight":2,"data":"d"}]}],'
+    b'"logMessages":["Program ' + P.encode() + b' invoke [1]","Program ' + P.encode() + b' invoke [2]"]},'
+    b'"transaction":{"signatures":["SigIx3"],"message":{"accountKeys":["Payer1","' + P.encode() + b'"],'
+    b'"instructions":[{"programIdIndex":1,"accounts":[0,1],"data":"a","parsed":{"a":1,"b":2,"a":3},"stackHeight":-0.0}]}}}',
+]
+write("instructions.jsonl", ixs)
+ties = []
+names = ["aaa", "AAA", "Bbb", "bBB", "\u00e9", "e", "z", "Z", "a b", "a", "ab", "a_", "Ab", "b", "B", "zz", "Zz", "zZ",
+         "m", "M", "n", "N", "\u00a0x", "x\u3000y", ""]
+for k, n in enumerate(names):
+    for c in range(2):
+        ties.append(tx("SigTie%d_%d" % (k, c), {"preBalances": [1], "postBalances": [1]}, [n, "Second" + str(k % 3)],
+                       [ix(programId=n or "?x"), ix(programIdIndex=0), ix(programIdIndex=1)],
+                       {"blockTime": 1700000000 + k}))
+for k in range(3):
+    ties.append(tx("SigTop%d" % k, {}, ["Top", "Top2"], [], {"blockTime": 1700000000}))
+for k, h in enumerate([0, 1, 2, 3, 10**19, None, 5]):
+    t = tx("SigHdr%d" % k, {}, ["Hdr1", "Hdr2", "Hdr3"], [])
+    t["transaction"]["message"]["header"] = {"numRequiredSignatures": h}
+    ties.append(t)
+for k, s in enumerate([True, False, 1, "true", None]):
+    ties.append(tx("SigSigner%d" % k, {}, [{"pubkey": "ObjSigner%d" % k, "signer": s}, {"pubkey": "ObjOther", "signer": True}], []))
+write("ties.jsonl", ties)
+# Keys that differ only in a character a UTF-8 collation ignores and the fixed list
+# does not hold (U+00A0, U+FFF9, U+2800), each its own key.
+write("lookalike.jsonl", [tx("SigLook%d" % k, {}, [n, "Second"], [ix(programId=n)])
+                          for k, n in enumerate(["Payer1", "Pay\u00a0er1", "Pay\ufff9er1", "Payer1\u2800", "Payer1"])])
+nums = [tx("SigNum0", {}, ["P"], [], {"version": "legacy", "blockTime": 1700000000}),
+        tx("SigNum1", {}, ["P"], [], {"version": "0", "blockTime": -5}),
+        tx("SigNum2", {}, ["P"], [], {"version": True}),
+        tx("SigNum3", {}, ["P"], [], {"version": False}),
+        tx("SigNum4", {}, ["P"], [], {"version": None}),
+        tx("SigNum5", {}, ["P"], [], {"version": [0, "\u007f"]}),
+        tx("SigNum6", {}, ["P"], [], {"version": "v\u00a0x"})]
+if literal:
+    nums += [b'{"version":1.0,"blockTime":0,"meta":null,"transaction":{"signatures":["SigNum7"]}}',
+             b'{"version":1E2,"blockTime":7,"transaction":{"signatures":["SigNum8"]}}',
+             b'{"version":{"a":[1.50,"\\u007f\\u2028"],"b":1e-7,"c":-0.0},"blockTime":10000000000000000001,"transaction":{"signatures":["SigNum9"]}}',
+             b'{"version":-1,"blockTime":-10000000000000000001,"transaction":{"signatures":["SigNum10"]}}']
+    # Exponents at the limits of jq's decNumber context: a zero's is clamped, and a
+    # number below the smallest exponent is rounded half up to it.
+    nums += [b'{"version":[%s],"transaction":{"signatures":["SigExp%d"]}}' % (e, k) for k, e in enumerate([
+        b"0e1000000000", b"-0e99999999999999999999999999999999999999999", b"0.0e-1999999998", b"1e-1999999998",
+        b"1e-99999999999999999999999999999999999999999", b"1e-02000000000", b"1e-1000000000", b"10e-1000000000",
+        b"4e-1147483647", b"5e-1147483647", b"-5e-1147483647", b"95e-1147483647", b"123456e-1147483648"])]
+write("numbers.jsonl", nums)
+PY
+for f in big logs instructions ties numbers lookalike; do
+  same_all "own case $f.jsonl" "incident_1/crafted/$f.jsonl"
+done
+same_all "own cases, all files at once" incident_1/crafted/big.jsonl incident_1/crafted/logs.jsonl \
+  incident_1/crafted/instructions.jsonl incident_1/crafted/ties.jsonl incident_1/crafted/numbers.jsonl \
+  incident_1/crafted/lookalike.jsonl
+agree lamports -- incident_1/crafted/big.jsonl
+eq "own cases: lamport deltas above 2^53, up to 2^64 - 1, are exact" \
+  "$(awk -F'\t' '$1 == "SigBig1" { printf "%s=%s ", $2, $3 }' "$T/b.out")" "PayerBig=1 AcctBig=-1 Acct63=4611686018427387904 "
+agree tokens -- incident_1/crafted/big.jsonl
+eq "own cases: token deltas near 2^64 are exact, keyed by account and mint; a balance with no accountIndex is a #? row of each side, an index with no account key a #<index> row, both counted on stderr" \
+  "$(awk -F'\t' '$1 == "SigBig4" { printf "%s:%s:%s ", $5, $3, $4 }' "$T/b.out")|$(grep -c '^audit-logs: 1 row(s) name a balance index that has no account key, as #<index>' "$T/b.err")|$(grep -c '^audit-logs: 2 row(s) name a token balance that has no accountIndex, as #?' "$T/b.err")" \
+  "TokVault:MintA:-18446744073709551615 TokOther:MintA:18446744073709551608 #?:MintB:-1111111111111111111 #99:MintB:-2 #?:MintB:2222222222222222222 |1|1"
+agree profile -- incident_1/crafted/ties.jsonl
+eq "own cases: the top-20 cut falls inside a tie of 25, broken by descending byte order" \
+  "$(LC_ALL=C awk '/^-- fee payers/ { f = 1; next } /^--/ { f = 0 } f { n++; if (n == 1 || n == 20) printf "%s|", $0 }' "$T/b.out")" \
+  "      7 Hdr1|      2 Z|"
+for f in ties lookalike; do
+  LC_ALL=en_US.UTF-8 agree profile -- "incident_1/crafted/$f.jsonl"
+  eq "own cases: profile.sh under en_US.UTF-8 counts and orders $f.jsonl as audit-logs does" "$(tr '\n' ' ' < "$T/diff")" ""
+done
+eq "own cases: keys that differ only in a character a collation ignores are four fee payers" \
+  "$(awk '/^-- fee payers/ { f = 1; next } /^--/ { f = 0 } f' "$T/b.out" | tr -s ' ' | tr '\n' '|')" \
+  "$(printf ' 2 Payer1| 1 Pay\357\277\271er1| 1 Pay\302\240er1| 1 Payer1\342\240\200|')"
+if [[ "$literal" == 1 ]]; then
+  agree profile -- incident_1/crafted/numbers.jsonl
+  if grep -q '^      1 1E+2$' "$T/b.out" && grep -q 'first=-10000000000000000001  last=10000000000000000001' "$T/b.out" \
+     && grep -q '^      1 \[0E+999999999\]$' "$T/b.out" && grep -q '^      5 \[0E-1147483646\]$' "$T/b.out" \
+     && grep -q '^      1 \[1.235E-1147483643\]$' "$T/b.out"; then
+    ok "own cases: versions and blockTimes print as jq writes them (1E+2, 20 digits, exponents at jq's limits)"
+  else
+    bad "own cases: the jq number forms are missing from the profile"
+  fi
+fi
+
+# The recipes' bounds, each case next to a clean line: balances whose lists differ
+# in length or name more indexes than there are keys, nesting past 128 levels
+# (counted on the text, objects and arrays alike, a value a later duplicate key
+# replaces included), integers outside u64, negative indexes, an empty program id,
+# integer literals of more than 20 digits or -0 anywhere in a line, and the
+# characters a key, program id or version may not hold, which deltas and frames
+# print escaped, as profile does in a version that is not a string (one case per
+# character of profile.sh's own _UNSAFE list). deltas lamports prints a balance
+# with no account key as #<index>, and says so on stderr.
+python3 -I - "$WT/incident_1/rules" "$DNR/profile.sh" <<'PY'
+import json, os, re, sys
+d = sys.argv[1]
+os.makedirs(d)
+UNSAFE = re.compile(re.search(r'^_UNSAFE = re\.compile\(r"(.*)"\)$', open(sys.argv[2], encoding="utf-8").read(), re.M).group(1))
+CODE = [c for c in range(0x110000) if not 0xd800 <= c < 0xe000]
+LISTED = [c for c in CODE if UNSAFE.match(chr(c))]
+NEAR = sorted({n for c in LISTED for n in (c - 1, c + 1) if 0 <= n < 0x110000 and not 0xd800 <= n < 0xe000} - set(LISTED))
+U64 = 2**64 - 1
+def tx(sig, meta=None, message=None, extra=None):
+    t = {"meta": dict({"err": None, "fee": 0}, **(meta or {})),
+         "transaction": {"signatures": [sig], "message": message if message is not None else {"accountKeys": ["Payer1", "Acct1"]}}}
+    t.update(extra or {})
+    return json.dumps(t, ensure_ascii=False).encode()
+clean = tx("SigRulesClean", {"preBalances": [10, 20], "postBalances": [5, 25]})
+def deep(sig, n, prefix=b"", suffix=b""):
+    return (b'{"meta":{"x":' + prefix + b"[" * (n - 2) + b"]" * (n - 2) + suffix + b'},"transaction":{"signatures":["'
+            + sig.encode() + b'"]}}')
+def objects(sig, n, arrays=0):
+    """A line whose deepest bracket is at n: the line's object and meta, then n - 2 - arrays
+    nested objects, then arrays nested arrays."""
+    k = n - 2 - arrays
+    return (b'{"meta":{"x":' + b'{"a":' * k + b"[" * arrays + b"1" + b"]" * arrays + b"}" * k
+            + b'},"transaction":{"signatures":["' + sig.encode() + b'"]}}')
+cases = {
+    "balances": [
+        tx("SigLen1", {"preBalances": [1, 2], "postBalances": [1]}),
+        tx("SigLen2", {"preBalances": [1]}),
+        tx("SigKeyless", {"fee": 5, "preBalances": [10, 20, 30, 40], "postBalances": [5, 25, 31, 40]},
+           {"accountKeys": ["OnlyKey"]}),
+        tx("SigTokKeyless", {"preTokenBalances": [
+               {"accountIndex": 5, "mint": "MintK", "owner": "OwnK", "uiTokenAmount": {"amount": "10"}},
+               {"mint": "MintK", "owner": "OwnK", "uiTokenAmount": {"amount": "4"}},
+               {"mint": "MintK", "owner": "OwnK", "uiTokenAmount": {"amount": "4"}}],
+           "postTokenBalances": [
+               {"accountIndex": 5, "mint": "MintK", "owner": "OwnK", "uiTokenAmount": {"amount": "3"}},
+               {"mint": "MintK", "owner": "OwnK", "uiTokenAmount": {"amount": "4"}}]}),
+    ],
+    "depth": [
+        deep("SigDepth128", 128),
+        deep("SigDepth129", 129),
+        objects("SigObjects128", 128),
+        objects("SigObjects129", 129),
+        objects("SigMixed128", 128, arrays=28),
+        objects("SigMixed129", 129, arrays=29),
+        deep("SigDupDepth", 150, suffix=b',"x":1'),
+        b'{"meta":{"x":"' + b"[" * 300 + b'"},"transaction":{"signatures":["SigBracketsInAString"]}}',
+    ],
+    "bounds": [
+        tx("SigU64Max", {"preBalances": [U64, 0], "postBalances": [0, U64]}),
+        tx("SigOverU64", {"preBalances": [U64 + 1, 0], "postBalances": [0, 1]}),
+        tx("SigNegative", {"preBalances": [-1, 0], "postBalances": [0, 1]}),
+        tx("SigFeeOver", {"fee": U64 + 1, "preBalances": [1, 0], "postBalances": [0, 1]}),
+        tx("SigHuge", {"preBalances": [int("9" * 4300), 0], "postBalances": [0, 1]}),
+        tx("SigAmount21", {"postTokenBalances": [{"accountIndex": 1, "mint": "M", "uiTokenAmount": {"amount": "0" * 20 + "1"}}]}),
+        tx("SigAmountOver", {"postTokenBalances": [{"accountIndex": 1, "mint": "M", "uiTokenAmount": {"amount": str(U64 + 1)}}]}),
+        tx("SigAmountSum", {"postTokenBalances": [{"mint": "M", "owner": "O", "uiTokenAmount": {"amount": str(U64)}}] * 4}),
+    ],
+    "indexes": [
+        tx("SigPidx", message={"accountKeys": ["Payer1"], "instructions": [{"programIdIndex": -1}]}),
+        tx("SigAidx", {"postTokenBalances": [{"accountIndex": -1, "mint": "M", "uiTokenAmount": {"amount": "1"}}]}),
+        tx("SigGroup", {"innerInstructions": [{"index": -1, "instructions": []}]}),
+        tx("SigGroupNull", {"innerInstructions": [{"index": None, "instructions": []}]}),
+        tx("SigHeader", message={"accountKeys": ["Payer1"], "header": {"numRequiredSignatures": -1}}),
+        tx("SigEmptyId", message={"accountKeys": ["Payer1"], "instructions": [{"programId": ""}]}),
+        b'{"meta":{"err":null},"transaction":{"signatures":["SigZeroIdx"],"message":{"accountKeys":["Payer1"],'
+        b'"instructions":[{"programIdIndex":-0}]}}}',
+    ],
+    "integers": [
+        tx("SigInt20", extra={"slot": 99999999999999999999}),
+        tx("SigInt21", extra={"slot": 100000000000000000000}),
+        tx("SigIntNeg21", extra={"slot": -100000000000000000000}),
+        b'{"meta":{"err":null},"slot":-0,"transaction":{"signatures":["SigMinusZero"]}}',
+        b'{"meta":{"err":null},"x":-0,"x":1,"transaction":{"signatures":["SigMinusZeroReplaced"]}}',
+        b'{"meta":{"err":null},"x":-0.0,"transaction":{"signatures":["SigMinusZeroFloat"]}}',
+    ],
+    "chars": [tx("SigKeyChar%04x" % c, message={"accountKeys": ["Key" + chr(c)]})
+              for c in (0x00, 0x1b, 0x7f, 0x85, 0x2028, 0x2029, 0x202e, 0x2066, 0x200f, 0x061c, 0x200b, 0xfeff,
+                        0xad, 0x34f, 0x1160, 0x180e, 0x2060, 0x206f, 0x3164, 0xfe0f, 0xffa0, 0xfff8, 0x1bca3,
+                        0x1d173, 0xe0001, 0xe0fff)]
+             + [tx("SigProgChar", message={"accountKeys": ["P"], "instructions": [{"programId": "Prog\u202e"}]}),
+                tx("SigVersionChar", extra={"version": "0\u2028"}),
+                tx("SigSafeSpaces", {"preBalances": [1, 2], "postBalances": [2, 1]}, {"accountKeys": ["Key\u00a0A", "Key\u3000B"]}),
+                tx("SigOddText\u202e\u2028\x01", {"preBalances": [1, 2], "postBalances": [2, 1],
+                    "logMessages": ["Program log: x\u2066y\u0085z"],
+                    "loadedAddresses": {"writable": ["Lut\u200b"]},
+                    "postTokenBalances": [{"accountIndex": 1, "mint": "Mint\ufeff", "owner": "Own\x7f\u0085",
+                                           "uiTokenAmount": {"amount": "3"}}]})],
+    "versions": [tx("SigVer%x" % c, extra={"version": {"k": "a" + chr(c) + "b"}}) for c in LISTED + NEAR]
+                + [tx("SigVerKey", extra={"version": {"k\u2028": 1}}), tx("SigVerList", extra={"version": ["\u202e", 0]}),
+                   tx("SigVerDeep", extra={"version": {"a": [{"b": "\x85\ufeff\U000e0041"}]}})],
+}
+for name, lines in cases.items():
+    with open(os.path.join(d, name + ".jsonl"), "wb") as f:
+        f.write(clean + b"\n" + b"\n".join(lines) + b"\n")
+PY
+for f in balances depth bounds indexes integers chars versions; do
+  same_all "recipe bounds, $f.jsonl" "incident_1/rules/$f.jsonl"
+done
+# A string that never ends, 1 MiB of escaped quotes then 200 brackets, before and
+# after the clean line: the depth pre-scan reads it in one pass, so audit-logs ends
+# each recipe within 10 seconds, and it and the scripts count one malformed line.
+python3 -I - "$WT/incident_1/rules" <<'PY'
+import os, sys
+d = sys.argv[1]
+clean = open(os.path.join(d, "balances.jsonl"), "rb").read().split(b"\n")[0]
+line = b'{"note": "x ' + b'\\"' * (512 * 1024) + b"[" * 200
+with open(os.path.join(d, "long-first.jsonl"), "wb") as f:
+    f.write(line + b"\n" + clean + b"\n")
+with open(os.path.join(d, "long-last.jsonl"), "wb") as f:
+    f.write(clean + b"\n" + line + b"\n")
+PY
+for f in long-first long-last; do
+  slow=""
+  for r in profile frames "frames --instructions" "deltas lamports" "deltas tokens"; do
+    # $r is the subcommand, then its option or mode: separate words.
+    ( cd "$WT" && exec "$BIN" $r "incident_1/rules/$f.jsonl" ) > /dev/null 2>&1 &
+    pid=$!
+    n=0
+    while kill -0 "$pid" 2>/dev/null && [[ "$n" -lt 100 ]]; do sleep 0.1; n=$((n + 1)); done
+    if kill -0 "$pid" 2>/dev/null; then kill -KILL "$pid" 2>/dev/null; slow="$slow $r;"; fi
+    wait "$pid" 2>/dev/null
+  done
+  eq "recipe bounds, $f.jsonl: audit-logs reads a 1 MiB string that never ends in one pass" "$slow" ""
+  same_all "recipe bounds, $f.jsonl" "incident_1/rules/$f.jsonl"
+done
+agree lamports -- incident_1/rules/balances.jsonl
+eq "recipe bounds: a balance with no account key is a #<index> row, counted on stderr" \
+  "$(awk -F'\t' '$1 == "SigKeyless" { printf "%s=%s ", $2, $3 }' "$T/b.out")|$(grep -c 'row(s) name a balance index that has no account key' "$T/b.err")" \
+  "#1=5 #2=1 |1"
+agree tokens -- incident_1/rules/balances.jsonl
+eq "recipe bounds: a token balance whose index has no account key pairs by index; one with no accountIndex is a row of its own; each kind is counted on stderr" \
+  "$(awk -F'\t' '$1 == "SigTokKeyless" { printf "%s=%s ", $5, $4 }' "$T/b.out")|$(grep -c '^audit-logs: 1 row(s) name a balance index that has no account key' "$T/b.err")|$(grep -c '^audit-logs: 3 row(s) name a token balance that has no accountIndex' "$T/b.err")" \
+  "#5=-7 #?=-4 #?=-4 #?=4 |1|1"
+agree frames -- incident_1/rules/chars.jsonl
+eq "recipe bounds: frames writes an unsafe character in a signature or a log as a \\u escape" \
+  "$(grep -c '"sig": "SigOddText\\u202e\\u2028\\u0001".*"text": "x\\u2066y\\u0085z"' "$T/b.out")" "1"
+agree profile -- incident_1/rules/versions.jsonl
+python3 -I - "$DNR/profile.sh" "$WT/incident_1/rules/versions.jsonl" "$T/b.out" > "$T/versions.check" <<'PY'
+import json, re, sys
+unsafe = re.compile(re.search(r'^_UNSAFE = re\.compile\(r"(.*)"\)$', open(sys.argv[1], encoding="utf-8").read(), re.M).group(1))
+def escape(m):
+    o = ord(m.group())
+    if o < 0x10000:
+        return "\\u%04x" % o
+    o -= 0x10000
+    return "\\u%04x\\u%04x" % (0xd800 + (o >> 10), 0xdc00 + (o & 0x3ff))
+want = set()
+for line in open(sys.argv[2], encoding="utf-8"):
+    v = json.loads(line).get("version")
+    if v is not None:
+        want.add(unsafe.sub(escape, json.dumps(v, ensure_ascii=False, separators=(",", ":"))))
+out = open(sys.argv[3], encoding="utf-8").read()
+got = set(re.findall(r"(?m)^ *[0-9]+ (.*)$", out.split("-- version\n", 1)[1].split("\n-- ", 1)[0]))
+print("%d cases, %d not as expected|%d raw" % (len(want), len(want - got), len(unsafe.findall(out.replace("\n", "")))))
+PY
+eq "recipe bounds: profile writes each unsafe character of a version that is not a string as a \\u escape, and its neighbours as they are" \
+  "$(cat "$T/versions.check")" "4281 cases, 0 not as expected|0 raw"
+
+# ---------------------------------------------------------------------------
+# 4. A generated corpus: 6,000 transactions in two files, the second opening with
+#    150 copies from the first and holding a few malformed lines; both encodings,
+#    lookup tables, inner instructions, failures, values above 2^53, and fee payers
+#    and programs drawn from small pools, so the top-20 lists tie.
+# ---------------------------------------------------------------------------
+python3 -I - "$WT/incident_1/corpus" <<'PY'
+import json, random, sys
+R = random.Random(22)
+B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+def b58(n):
+    return "".join(R.choice(B58) for _ in range(n))
+payers = [b58(44) for _ in range(40)]
+progs = [b58(44) for _ in range(30)]
+accts = [b58(44) for _ in range(200)]
+mints = [b58(44) for _ in range(5)]
+def one(i):
+    parsed = R.random() < 0.5
+    names = [R.choice(payers)] + R.sample(accts, R.randint(1, 5)) + R.sample(progs, 2)
+    keys = [{"pubkey": n, "signer": j == 0, "writable": j < 3} for j, n in enumerate(names)] if parsed else names
+    loaded = {"writable": [R.choice(accts)], "readonly": [R.choice(accts)]} if not parsed and R.random() < 0.3 else {"writable": [], "readonly": []}
+    n = len(names) + len(loaded["writable"]) + len(loaded["readonly"])
+    pre = [R.choice([R.randint(10**9, 10**12), 2**53 + R.randint(0, 9), 2**63 + R.randint(10**9, 10**10)]) for _ in range(n)]
+    post = [p + R.choice([0, 0, 1, -1, R.randint(-10**9, 10**9)]) for p in pre]
+    p0, p1 = names[-2], names[-1]
+    tops = [({"programId": p0, "accounts": [names[1]], "data": b58(12)} if parsed else
+             {"programIdIndex": len(names) - 2, "accounts": [0, 1], "data": b58(12)})]
+    if R.random() < 0.3:
+        tops.append({"programId": "11111111111111111111111111111111", "program": "system",
+                     "parsed": {"type": "transfer", "info": {"lamports": R.randint(0, 2**64), "ratio": R.random()}}}
+                    if parsed else {"programIdIndex": len(names) - 1, "accounts": [], "data": ""})
+    inner = [{"index": 0, "instructions": [{"programIdIndex": len(names) - 1, "accounts": [1], "data": b58(8), "stackHeight": 2}]}]
+    logs = ["Program %s invoke [1]" % p0, "Program log: Instruction: Deposit", "Program %s invoke [2]" % p1,
+            "Program log: x\nProgram %s invoke [1]" % p1, "Program %s consumed 100 of 200 compute units" % p1,
+            "Program %s success" % p1, "Program data: " + b58(20), "Program %s success" % p0]
+    tb = lambda a: [{"accountIndex": 1, "mint": R.choice(mints), "owner": R.choice(payers),
+                     "uiTokenAmount": {"amount": str(a), "decimals": 6}}]
+    amount = R.choice([R.randint(10**6, 10**9), 2**63 + R.randint(10**6, 10**9)])
+    return {"slot": 1000 + i, "blockTime": 1700000000 + R.randint(0, 86400), "version": R.choice([0, "legacy", 0]),
+            "meta": {"err": None if R.random() < 0.9 else {"InstructionError": [0, {"Custom": 1}]},
+                     "fee": 5000, "preBalances": pre, "postBalances": post, "loadedAddresses": loaded,
+                     "innerInstructions": inner, "logMessages": logs,
+                     "preTokenBalances": tb(amount), "postTokenBalances": tb(amount + R.choice([0, 1, -1, 10**6]))},
+            "transaction": {"signatures": [b58(88)], "message": {"accountKeys": keys, "instructions": tops,
+                                                                 "header": {"numRequiredSignatures": 1}}}}
+txs = [json.dumps(one(i), ensure_ascii=False) for i in range(5850)]
+with open(sys.argv[1] + "/large-a.jsonl", "w") as f:
+    f.write("\n".join(txs[:3000]) + "\n")
+with open(sys.argv[1] + "/large-b.jsonl", "w") as f:
+    rows = txs[:150] + txs[3000:]
+    for k in range(0, len(rows), 600):
+        rows.insert(k, "{\"transaction\": \"malformed %d\"}" % k)
+    f.write("\n".join(rows) + "\n")
+PY
+eq "large corpus: the two files hold well over the 64 KiB pipe buffer" \
+  "$(( $(wc -c < "$WT/incident_1/corpus/large-a.jsonl") > 1048576 && $(wc -c < "$WT/incident_1/corpus/large-b.jsonl") > 1048576 ))" "1"
+same_all "large corpus of 6,000 transactions in two files" incident_1/corpus/large-a.jsonl incident_1/corpus/large-b.jsonl
+eq "large corpus: audit-logs read 150 copies once and counted the malformed lines" "$(tr '\n' '|' < "$T/b.notes")" \
+  "skipped 150 transaction(s) already read under the same signature|skipped 5 malformed line(s) in input 2 (incident_1/corpus/large-b.jsonl), the first at line 1 (not a getTransaction JSON object the recipes can read)|"
+
+# ---------------------------------------------------------------------------
+# 5. stdin, --out, and the exit statuses for inputs and outputs that cannot be used.
+# ---------------------------------------------------------------------------
+for r in frames ix lamports tokens; do
+  agree "$r" "$WT/incident_1/crafted/instructions.jsonl" --
+  if [[ -s "$T/diff" ]]; then bad "stdin: $r differs ($(tr '\n' ' ' < "$T/diff"))"; else ok "stdin: $r agrees when it reads stdin"; fi
+done
+# audit-logs writes an --out file only directly in the run directory, named
+# <name>.jsonl, .tsv or .txt; the scripts write to the same kind of path here.
+two=(incident_1/crafted/big.jsonl incident_1/crafted/logs.jsonl)
+for r in profile frames ix lamports tokens; do
+  binary "$r" "${two[@]}" > "$T/b.stdout" 2> /dev/null
+  script "$r" --out "incident_1/s-$r.txt" "${two[@]}" > "$T/s.out" 2> /dev/null; sc=$?
+  binary "$r" --out "incident_1/out-$r.txt" "${two[@]}" > "$T/b.out" 2> /dev/null; bc=$?
+  if [[ "$r" == profile ]]; then norm_counts < "$WT/incident_1/s-$r.txt" > "$T/s.file"; else cp "$WT/incident_1/s-$r.txt" "$T/s.file"; fi
+  if [[ "$sc$bc" == 00 && ! -s "$T/s.out" && ! -s "$T/b.out" ]] && cmp -s "$T/b.stdout" "$WT/incident_1/out-$r.txt" \
+     && cmp -s "$T/s.file" "$WT/incident_1/out-$r.txt"; then
+    ok "--out: audit-logs $r writes into the file what it prints on stdout, as the script does"
+  else
+    bad "--out: audit-logs $r -> exit $sc (script) / $bc, or the files differ"
+  fi
+done
+# An output never replaces a file: a second run to the same name is refused, by
+# audit-logs as by the script, and the file keeps the first output.
+cp "$WT/incident_1/out-frames.txt" "$T/first.out"
+agree frames -- --out incident_1/out-frames.txt incident_1/crafted/ties.jsonl
+if [[ ! -s "$T/diff" && ! -s "$T/b.out" ]] && grep -q '^audit-logs: refused: ' "$T/b.err" && cmp -s "$T/first.out" "$WT/incident_1/out-frames.txt"; then
+  ok "--out: a second run to the same name is refused, as by the script, and the file keeps its output"
+else
+  bad "--out: a second run to the same name -> $(tr '\n' ' ' < "$T/diff")"
+fi
+eq "--out: no temporary file is left beside the outputs" \
+  "$(find "$WT/incident_1" -name '.*' ! -name .gitignore 2>/dev/null | tr '\n' ' ')" ""
+mkdir -p "$WT/incident_1/unread" "$T/elsewhere"
+cp "$FIX/clean-mixed.jsonl" "$WT/incident_1/unread/c.jsonl"; chmod 000 "$WT/incident_1/unread/c.jsonl"
+cp "$FIX/clean-mixed.jsonl" "$T/elsewhere/c.jsonl"
+ln -s ../corpus/clean-mixed.jsonl "$WT/incident_1/link.jsonl"
+ln -s "$T/elsewhere" "$WT/incident_1/dirlink"
+mkfifo "$WT/incident_1/fifo"
+for c in "missing|incident_1/corpus/no-such.jsonl" "a directory|incident_1/corpus" "a link|incident_1/link.jsonl" \
+         "a path through a directory link|incident_1/dirlink/c.jsonl" "a FIFO|incident_1/fifo" \
+         "a good corpus, then a missing one|incident_1/corpus/clean-mixed.jsonl incident_1/corpus/no-such.jsonl" \
+         "unreadable|incident_1/unread/c.jsonl"; do
+  if [[ "${c%%|*}" == unreadable && -r "$WT/incident_1/unread/c.jsonl" ]]; then
+    echo "note: running as a user who can read a mode-000 file; the unreadable case is skipped"; continue
+  fi
+  differ=""
+  for r in profile frames ix lamports tokens; do
+    # The case's paths are separate words.
+    agree "$r" -- ${c#*|}
+    if [[ -s "$T/diff" || -s "$T/b.out" ]] || ! grep -q '^audit-logs: ' "$T/b.err"; then differ="$differ $r"; fi
+  done
+  if [[ -z "$differ" ]]; then ok "input that cannot be used, ${c%%|*}: same exit status as each script, nothing on stdout"
+  else bad "input that cannot be used, ${c%%|*}: differs in$differ"; fi
+done
+# An --out path the scripts refuse too, or cannot write: the same exit status. (One
+# in a subdirectory or a missing directory is a hostile-argument case below:
+# audit-logs refuses it before any check the scripts make.)
+printf 'previous\n' > "$WT/incident_1/kept.txt"
+ln -s "$T/elsewhere/out.txt" "$WT/incident_1/out-link.txt"
+mkdir "$WT/incident_1/adir.txt"
+for c in "a link|incident_1/out-link.txt" "a path through a directory link|incident_1/dirlink/out.txt" \
+         "a directory|incident_1/adir.txt"; do
+  differ=""
+  for r in profile frames lamports; do
+    agree "$r" -- --out "${c#*|}" incident_1/corpus/clean-mixed.jsonl
+    [[ -s "$T/diff" || -s "$T/b.out" ]] && differ="$differ $r"
+  done
+  if [[ -z "$differ" ]]; then ok "--out that cannot be used, ${c%%|*}: same exit status as each script"
+  else bad "--out that cannot be used, ${c%%|*}: differs in$differ"; fi
+done
+eq "--out: nothing was written through a link" "$(ls -A "$T/elsewhere" | tr '\n' ' ')" "c.jsonl "
+eq "--out: the files beside them are as they were" "$(cat "$WT/incident_1/kept.txt")" "previous"
+
+# A signal while audit-logs reads: stdin holds one transaction, then stays open until
+# the signal has been sent. TERM, INT and HUP leave no file under the --out name and
+# no temporary file, with the status of each script (128 + the signal); a signal the
+# caller ignores stays ignored, and the run completes. Each run starts with SIGINT at
+# its default (a background job inherits it ignored).
+partial() { local f; for f in "$WT"/incident_1/."$1".*.partial; do [[ -e "$f" ]] && return 0; done; return 1; }
+SIGDFL='import os, signal, sys
+signal.signal(signal.SIGINT, signal.SIG_DFL)
+os.execvp(sys.argv[1], sys.argv[1:])'
+for s in TERM:143 INT:130 HUP:129 HUP:ignored TERM:ignored; do
+  sig="${s%%:*}"; want="${s#*:}"; held="held-$sig-$want.txt"
+  rm -f "$T/release-sig"
+  ( sed -n 1p "$FIX/clean-mixed.jsonl"; n=0; while [[ ! -e "$T/release-sig" && "$n" -lt 200 ]]; do sleep 0.05; n=$((n + 1)); done ) \
+    | ( cd "$WT" || exit 99; [[ "$want" != ignored ]] || trap '' "$sig"
+        exec python3 -I -c "$SIGDFL" "$BIN" frames --out "incident_1/$held" ) &
+  pid=$!
+  n=0; while ! partial "$held" && [[ "$n" -lt 200 ]]; do sleep 0.05; n=$((n + 1)); done
+  kill -"$sig" "$pid" 2>/dev/null
+  if [[ "$want" == ignored ]]; then sleep 0.2; fi
+  touch "$T/release-sig"
+  wait "$pid"
+  code=$?
+  if [[ "$want" == ignored ]]; then
+    eq "SIG$sig ignored by the caller: the run completes (exit 0, the output under the --out name, no temporary file left)" \
+      "$code|$([[ -f "$WT/incident_1/$held" ]] && echo written)|$(partial "$held" && echo left)" "0|written|"
+  else
+    eq "SIG$sig: exit $want, nothing under the --out name, no temporary file left" \
+      "$code|$([[ -e "$WT/incident_1/$held" ]] && echo written)|$(partial "$held" && echo left)" "$want||"
+  fi
+done
+
+# With stdin closed and no corpus named, frames and deltas read nothing, as the
+# scripts do: exit 0, no output.
+res=""
+for r in frames lamports; do
+  script "$r" <&- > "$T/s.out" 2> "$T/s.err"; s=$?
+  binary "$r" <&- > "$T/b.out" 2> "$T/b.err"; b=$?
+  res="$res $s:$(cat "$T/s.out" "$T/s.err" | grep -c .)/$b:$(cat "$T/b.out" "$T/b.err" | grep -c .)"
+done
+eq "stdin closed: frames and deltas read nothing, as the scripts do" "${res# }" "0:0/0:0 0:0/0:0"
+
+# An input replaced by another file once every input has been checked: the run is
+# held writing what input 1 gives (the pipe is not read until input 2 has been
+# replaced), and then reads only the file it checked: exit 1 and one line naming
+# input 2, from audit-logs and from each script alike.
+python3 -I - "$WT/incident_1/many.jsonl" <<'PY'
+import json, sys
+logs = ["Program Prog1111111111111111111111111111111111111 invoke [1]"] + ["Program log: line %d" % i for i in range(8)] \
+    + ["Program Prog1111111111111111111111111111111111111 success"]
+with open(sys.argv[1], "w") as f:
+    for n in range(4000):
+        f.write(json.dumps({"meta": {"err": None, "fee": 5000, "preBalances": [10000] + [5] * 19,
+                                     "postBalances": [5000] + [10] * 19, "logMessages": logs},
+                            "transaction": {"signatures": ["SigMany%d" % n], "message": {
+                                "accountKeys": ["Payer%d" % n] + ["Acct%d.%d" % (n, k) for k in range(19)],
+                                "instructions": []}}}) + "\n")
+PY
+swapped() { # swapped script|binary <recipe>: "status|stderr less the program name"
+  rm -f "$T/swap.started" "$T/swap.release" "$T/swap.code"
+  cp "$FIX/clean-mixed.jsonl" "$WT/incident_1/second.jsonl"
+  { "$1" "$2" incident_1/many.jsonl incident_1/second.jsonl 2> "$T/swap.err"; echo "$?" > "$T/swap.code"; } \
+    | { dd bs=1 count=1 > /dev/null 2>&1; touch "$T/swap.started"
+        n=0; while [[ ! -e "$T/swap.release" && "$n" -lt 400 ]]; do sleep 0.05; n=$((n + 1)); done; cat > /dev/null; } &
+  local pid=$! n=0
+  while [[ ! -e "$T/swap.started" && "$n" -lt 400 ]]; do sleep 0.05; n=$((n + 1)); done
+  mv "$WT/incident_1/second.jsonl" "$WT/incident_1/second.old" && cp "$FIX/clean-mixed.jsonl" "$WT/incident_1/second.jsonl"
+  touch "$T/swap.release"
+  wait "$pid"
+  rm -f "$WT/incident_1/second.old" "$WT/incident_1/second.jsonl"
+  echo "$(cat "$T/swap.code")|$(sed 's/^[a-z][a-z.-]*: //' "$T/swap.err")"
+}
+for r in frames lamports; do
+  eq "input replaced once checked: $r -> audit-logs exits as the script does, naming input 2" \
+    "$(swapped binary "$r")/$(swapped script "$r")" \
+    "1|cannot read input 2 (incident_1/second.jsonl): it changed after it was checked/1|cannot read input 2 (incident_1/second.jsonl): it changed after it was checked"
+done
+
+# The run directory of --out is opened once and the temporary file is made, linked
+# and removed through it: a run directory moved aside mid-run, and replaced by a link
+# to a directory outside, gets the output in the directory opened, and nothing goes
+# through the link. (profile, which reads no stdin, opens its run directory only once
+# its report is whole, after checking --out again, as profile.sh does; the run below
+# holds frames and deltas on stdin.)
+mkdir -p "$WT/incident_7" "$T/outside7"
+printf '*\n' > "$WT/incident_7/.gitignore"
+partial7() { local f; for f in "$WT"/incident_7/.*.partial; do [[ -e "$f" ]] && return 0; done; return 1; }
+for r in frames "deltas lamports"; do
+  rm -f "$T/release7"
+  # $r is the subcommand, then its mode: separate words.
+  ( sed -n 1p "$FIX/clean-mixed.jsonl"; n=0; while [[ ! -e "$T/release7" && "$n" -lt 400 ]]; do sleep 0.05; n=$((n + 1)); done ) \
+    | ( cd "$WT" && exec "$BIN" $r --out incident_7/out.txt ) 2> /dev/null &
+  pid=$!
+  n=0; while ! partial7 && [[ "$n" -lt 200 ]]; do sleep 0.05; n=$((n + 1)); done
+  mv "$WT/incident_7" "$WT/moved7" && ln -s "$T/outside7" "$WT/incident_7"
+  touch "$T/release7"
+  wait "$pid"
+  code=$?
+  eq "--out: $r whose run directory is replaced by a link mid-run -> exit 0, the output in the directory it opened, nothing through the link" \
+    "$code|$(LC_ALL=C ls -A "$WT/moved7" | tr '\n' ' ')|$(ls -A "$T/outside7" | tr '\n' ' ')" "0|.gitignore out.txt |"
+  rm -f "$WT/incident_7" "$WT/moved7/out.txt"
+  mv "$WT/moved7" "$WT/incident_7"
+done
+
+# ---------------------------------------------------------------------------
+# 6. Confinement. The working directory reached through a link above it is the
+#    operator's and is followed. An installation inside the working directory, or
+#    under a path holding a quote, $, backtick, backslash or newline, is refused.
+# ---------------------------------------------------------------------------
+ln -s "$WT" "$T/wt-link"
+( cd "$T/wt-link" && "$BIN" frames incident_1/corpus/clean-mixed.jsonl ) > "$T/via-link.out" 2>&1
+code=$?
+( cd "$WT" && "$BIN" frames incident_1/corpus/clean-mixed.jsonl ) > "$T/direct.out" 2>&1
+if [[ "$code" == 0 ]] && cmp -s "$T/via-link.out" "$T/direct.out"; then
+  ok "confinement: a working directory reached through a link above it is followed"
+else
+  bad "confinement: a link above the working directory -> exit $code"
+fi
+mkdir -p "$WT/tools/auditor-tools/target/release" "$T/dollar\$dir" "$T/quote\"dir" "$T/plain-dir"
+cp "$BIN" "$WT/tools/auditor-tools/target/release/audit-logs"
+cp "$BIN" "$T/dollar\$dir/audit-logs"
+cp "$BIN" "$T/quote\"dir/audit-logs"
+cp "$BIN" "$T/plain-dir/audit-logs"
+ln -s "$T/plain-dir" "$T/link\$dir"
+for c in "inside the working directory|$WT/tools/auditor-tools/target/release/audit-logs" \
+         "under a path holding \$|$T/dollar\$dir/audit-logs" "under a path holding a quote|$T/quote\"dir/audit-logs" \
+         "reached through a link whose name holds \$|$T/link\$dir/audit-logs"; do
+  ( cd "$WT" && "${c#*|}" frames incident_1/corpus/clean-mixed.jsonl ) > "$T/c1.out" 2> "$T/c1.err"
+  code=$?
+  if [[ "$code" == 2 && ! -s "$T/c1.out" ]] && grep -q '^audit-logs: refused: ' "$T/c1.err"; then
+    ok "confinement: an installation ${c%%|*} is refused (exit 2, no output)"
+  else
+    bad "confinement: an installation ${c%%|*} -> exit $code ($(tr '\n' ' ' < "$T/c1.err"))"
+  fi
+done
+( cd "$WT" && "$WT/tools/auditor-tools/target/release/audit-logs" frames incident_1/corpus/clean-mixed.jsonl ) > /dev/null 2> "$T/c1.err"
+eq "confinement: an installation inside the working directory is refused in the words of scripts/lib/confine.sh" "$(cat "$T/c1.err")" \
+  "audit-logs: refused: the installation lies inside the working directory; install it outside the tree under audit, or run from a directory that does not contain it (Rule 11e)"
+
+# ---- hostile layout (fixtures/audit-logs/hostile-args.txt); the same block is in test-audit-logs.sh and test-dnr.sh
+# hostile_layout <dir> <a clean transaction line>: the working directory the case file
+# names, <dir>/wt, and a directory outside it, <dir>/outside, in which a canary
+# transaction holds the text $CANARY: one outside every run directory and one outside
+# the working directory, links to both from inside incident_1/, a linked run
+# directory, run directories without a proper .gitignore, a FIFO, a file with a
+# second name, a link where an output would go, and a corpus and a ledger an output
+# must not replace. hostile_snapshot <dir>: every path under <dir>, never following a
+# link: type, size, mtime, link target and a hash of each regular file.
+# hostile_expand <case file> <out dir>: one file per case, its name then each
+# argument, NUL-terminated, the placeholders filled in.
+CANARY="SEKRET4f1c9e2a"
+hostile_layout() {
+  local HW="$1/wt" HO="$1/outside" canary f
+  mkdir -p "$HW/incident_1/subdir" "$HW/incident_1/corpus" "$HW/incident_3" "$HW/incident_4" "$HW/audit_1" "$HO"
+  printf '*\n' > "$HW/incident_1/.gitignore"; printf '*\n' > "$HW/audit_1/.gitignore"
+  printf '!x\n' > "$HW/incident_4/.gitignore"; printf '*\n' > "$HO/.gitignore"
+  canary="{\"meta\":{\"err\":null,\"fee\":0,\"preBalances\":[1],\"postBalances\":[2],\"logMessages\":[\"Program log: $CANARY\"]},\"transaction\":{\"signatures\":[\"Sig$CANARY\"],\"message\":{\"accountKeys\":[\"Key$CANARY\"],\"instructions\":[{\"programId\":\"Prog$CANARY\",\"accounts\":[0],\"data\":\"x\"}]}}}"
+  for f in "$HW/canary.jsonl" "$HO/secret.jsonl" "$HW/incident_3/canary.jsonl" "$HW/incident_4/canary.jsonl" "$HW/audit_1/canary.jsonl"; do
+    printf '%s\n' "$canary" > "$f"
+  done
+  printf '%s\n' "$2" > "$HW/incident_1/corpus.jsonl"
+  printf '%s\n' "$2" > "$HW/incident_1/corpus/transactions.jsonl"
+  printf '# ledger\n' > "$HW/incident_1/LEDGER.md"
+  ln -s ../canary.jsonl "$HW/incident_1/link.jsonl"
+  ln -s "$HO" "$HW/incident_1/dlink"
+  ln -s "$HO" "$HW/incident_2"
+  mkfifo "$HW/incident_1/fifo"
+  printf 'protected\n' > "$HW/protected.txt"
+  ln "$HW/protected.txt" "$HW/incident_1/hard.txt"
+  ln -s ../protected.txt "$HW/incident_1/out-link.txt"
+  cp "$HW/incident_1/corpus.jsonl" "$HW/incident_1/twin.jsonl"
+  ln "$HW/incident_1/twin.jsonl" "$HW/incident_1/twin-2.jsonl"
+}
+hostile_snapshot() {
+  python3 -I - "$1" <<'PY'
+import hashlib, os, stat, sys
+root = sys.argv[1]
+for top, dirs, files in os.walk(root):
+    dirs.sort()
+    for name in sorted(dirs + files):
+        p = os.path.join(top, name)
+        st = os.lstat(p)
+        line = [os.path.relpath(p, root), oct(stat.S_IFMT(st.st_mode)), str(st.st_size), str(st.st_mtime_ns)]
+        if stat.S_ISLNK(st.st_mode):
+            line.append(os.readlink(p))
+        elif stat.S_ISREG(st.st_mode):
+            with open(p, "rb") as f:
+                line.append(hashlib.sha256(f.read()).hexdigest())
+        print("\t".join(line))
+PY
+}
+hostile_expand() {
+  mkdir "$2"
+  python3 -I - "$1" "$2" "$3/wt" "$3/outside" <<'PY'
+import os, re, sys
+cases, out, wt, outside = sys.argv[1:5]
+n = 0
+with open(cases, encoding="utf-8") as f:
+    for line in f:
+        line = line.rstrip("\n")
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split("\t")
+        def fill(a):
+            a = a.replace("@WT@", wt).replace("@OUT@", outside).replace("@NL@", "\n").replace("@ESC@", "\x1b")
+            return re.sub(r"@LONG:([0-9]+)@", lambda m: "a" * int(m.group(1)), a)
+        with open(os.path.join(out, "%03d" % n), "wb") as g:
+            for word in [fields[0]] + [fill(a) for a in fields[1:]]:
+                g.write(os.fsencode(word) + b"\0")
+        n += 1
+PY
+}
+# ---- end of hostile layout ----
+# A stale build: audit-logs carries a copy of the files it was built from (the three
+# recipes, scripts/lib/confine.sh, its Cargo.toml and src/) and compares it with the
+# installed ones before anything else. With one of them changed in the copy this suite
+# built, or missing, every subcommand writes nothing and exits 4 with one line naming
+# it; with the files as they were, it runs again.
+if [[ -n "${SRC:-}" ]]; then
+  stale() { # stale <file>: "status:stdout lines:stale lines" for profile, frames and deltas tokens
+    local res="" r
+    for r in profile frames "deltas tokens"; do
+      # $r is the subcommand, then its mode: separate words.
+      ( cd "$WT" && "$BIN" $r incident_1/corpus/clean-mixed.jsonl ) > "$T/stale.out" 2> "$T/stale.err"
+      res="$res $?:$(grep -c . "$T/stale.out"):$(grep -cxF "audit-logs: stale build: $1 is not the one it was built from; rebuild it (cargo build --release --locked in tools/auditor-tools) or run the scripts" "$T/stale.err")"
+    done
+    echo "${res# }"
+  }
+  for f in scripts/dnr/frames.py scripts/lib/confine.sh tools/auditor-tools/audit-logs/Cargo.toml \
+      tools/auditor-tools/audit-logs/src/num.rs; do
+    cp "$SRC/$f" "$T/stale.keep"
+    printf '\n' >> "$SRC/$f"
+    eq "stale build: $f changed since the build -> each subcommand exits 4, prints nothing, says to rebuild or run the scripts" \
+      "$(stale "$f")" "4:0:1 4:0:1 4:0:1"
+    cp "$T/stale.keep" "$SRC/$f"
+  done
+  mv "$SRC/scripts/dnr/deltas.py" "$T/deltas.py.away"
+  eq "stale build: a recipe missing -> the same" "$(stale scripts/dnr/deltas.py)" "4:0:1 4:0:1 4:0:1"
+  mv "$T/deltas.py.away" "$SRC/scripts/dnr/deltas.py"
+  ( cd "$WT" && "$BIN" frames incident_1/corpus/clean-mixed.jsonl ) > /dev/null 2>&1
+  eq "stale build: with the files as they were built, it runs again" "$?" "0"
+else
+  echo "note: AUDIT_LOGS names a binary built elsewhere; the stale-build cases are left out"
+fi
+
+# The hostile-argument cases, run by audit-logs and, for a case that names profile,
+# frames or deltas, by that script too, from the working directory hostile_layout
+# lays out, with stdin from /dev/null and a 30 s limit each. audit-logs must exit
+# non-zero, change no file outside the run directories, leave no temporary file and
+# print no canary text; the script must exit with the same status and the same
+# refusal line, less the program name and any "(usage: ...)".
+H="$T/hostile"
+hostile_layout "$H" "$(sed -n 1p "$FIX/clean-mixed.jsonl")"
+hostile_expand "$CASES" "$T/cases" "$H"
+hostile_snapshot "$H" > "$T/h.before"
+ncases=0
+nscripts=0
+for cf in "$T"/cases/*; do
+  args=(); name=""
+  while IFS= read -r -d '' word; do
+    if [[ -z "$name" ]]; then name="$word"; else args+=("$word"); fi
+  done < "$cf"
+  ( cd "$H/wt" && exec "$BIN" ${args[@]+"${args[@]}"} ) < /dev/null > "$T/h.out" 2> "$T/h.err" &
+  pid=$!
+  n=0
+  while kill -0 "$pid" 2>/dev/null && [[ "$n" -lt 300 ]]; do sleep 0.1; n=$((n + 1)); done
+  if kill -0 "$pid" 2>/dev/null; then kill -KILL "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; code=hung; else wait "$pid"; code=$?; fi
+  hostile_snapshot "$H" > "$T/h.after"
+  partials="$(find "$H" -name '*.partial' 2>/dev/null)"
+  why=""
+  [[ "$code" == hung ]] && why="$why still running after 30 s;"
+  [[ "$code" == 0 ]] && why="$why exit 0;"
+  cmp -s "$T/h.before" "$T/h.after" || why="$why changed files ($(diff "$T/h.before" "$T/h.after" | sed -n '2p'));"
+  [[ -z "$partials" ]] || why="$why left $partials;"
+  grep -q "$CANARY" "$T/h.out" "$T/h.err" && why="$why printed the canary;"
+  case "${args[0]-}" in
+    profile) set -- "$DNR/profile.sh" ;;
+    frames) set -- "$DNR/frames.py" ;;
+    deltas) set -- "$DNR/deltas.py" ;;
+    *) set -- ;;
+  esac
+  if [[ "$#" -gt 0 ]]; then
+    ( cd "$H/wt" && exec "$@" "${args[@]:1}" ) < /dev/null > "$T/hs.out" 2> "$T/hs.err"
+    scode=$?
+    said="$(sed -e 's/^[a-z][a-z.-]*: //' -e 's/ (usage: .*//' "$T/h.err")"
+    ssaid="$(sed -e 's/^[a-z][a-z.-]*: //' -e 's/ (usage: .*//' "$T/hs.err")"
+    [[ "$scode" == "$code" ]] || why="$why exit $code where the script exits $scode;"
+    [[ "$said" == "$ssaid" ]] || why="$why says '$said' where the script says '$ssaid';"
+    [[ -s "$T/hs.out" ]] && why="$why the script printed on stdout;"
+    grep -q "$CANARY" "$T/hs.err" && why="$why the script printed the canary;"
+    hostile_snapshot "$H" > "$T/hs.after"
+    cmp -s "$T/h.after" "$T/hs.after" || why="$why the script changed files;"
+    cp "$T/hs.after" "$T/h.after"
+    nscripts=$((nscripts + 1))
+  fi
+  if [[ -z "$why" ]]; then ok "hostile arguments: $name (exit $code)"; else bad "hostile arguments: $name:$why"; fi
+  cp "$T/h.after" "$T/h.before"
+  ncases=$((ncases + 1))
+done
+if [[ "$ncases" -ge 50 ]]; then ok "hostile arguments: $ncases cases from ${CASES##*/}"; else bad "hostile arguments: only $ncases cases read from ${CASES##*/}"; fi
+if [[ "$nscripts" -ge 40 ]]; then ok "hostile arguments: $nscripts of them run by the scripts too, refused alike"; else bad "hostile arguments: only $nscripts cases run by the scripts"; fi
+eq "hostile arguments: the protected file is unchanged" "$(cat "$H/wt/protected.txt")" "protected"
+
+finish

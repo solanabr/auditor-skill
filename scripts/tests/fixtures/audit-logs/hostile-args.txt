@@ -1,0 +1,116 @@
+# Hostile arguments for audit-logs and the three recipes it mirrors. test-audit-logs.sh
+# runs every case with audit-logs, and a case that names profile, frames or deltas with
+# that script too (the arguments after the subcommand), which must refuse it with the same
+# exit status and the same line; test-dnr.sh runs the scripts' cases on their own. Both
+# build the working directory with hostile_layout, the same block in both files. Each case
+# must exit non-zero, change no file, leave no temporary file, and print no canary text.
+#
+# One case per line: a name, then each argument, all separated by tabs. In an argument:
+#   @WT@       the working directory's absolute path
+#   @OUT@      an absolute directory outside the working directory
+#   @LONG:N@   N repetitions of "a"
+#   @NL@       a newline        @ESC@  an escape character (0x1b)
+#
+# grammar
+no arguments
+unknown subcommand	scan	incident_1/corpus.jsonl
+option before the subcommand	--out	incident_1/x.jsonl	profile	incident_1/corpus.jsonl
+profile with no corpus	profile
+profile with only --out	profile	--out	incident_1/x.txt
+deltas with no mode	deltas	incident_1/corpus.jsonl
+deltas with an unknown mode	deltas	balances	incident_1/corpus.jsonl
+--out with no value	frames	--out
+--out twice	frames	--out	incident_1/a.jsonl	--out	incident_1/b.jsonl	incident_1/corpus.jsonl
+--instructions twice	frames	--instructions	--instructions	incident_1/corpus.jsonl
+--instructions on profile	profile	--instructions	incident_1/corpus.jsonl
+--instructions on deltas	deltas	tokens	--instructions	incident_1/corpus.jsonl
+--by with no value	deltas	tokens	--by
+--by twice	deltas	tokens	--by	mint	--by	mint	incident_1/corpus.jsonl
+--by account on tokens	deltas	tokens	--by	account	incident_1/corpus.jsonl
+--by mint on lamports	deltas	lamports	--by	mint	incident_1/corpus.jsonl
+--by an unknown grouping	deltas	tokens	--by	owner	incident_1/corpus.jsonl
+--by=value form	deltas	tokens	--by=mint	incident_1/corpus.jsonl
+--by on frames	frames	--by	mint	incident_1/corpus.jsonl
+--by after a corpus	deltas	tokens	incident_1/corpus.jsonl	--by	mint
+--out after a corpus	frames	incident_1/corpus.jsonl	--out	incident_1/x.jsonl
+--out before the deltas mode	deltas	--out	incident_1/x.tsv	lamports	incident_1/corpus.jsonl
+--out=value form	frames	--out=incident_1/x.jsonl	incident_1/corpus.jsonl
+an option-shaped --out value	frames	--out	--instructions	incident_1/corpus.jsonl
+-h	frames	-h
+a lone dash for stdin	frames	-
+a double dash	deltas	lamports	--	incident_1/corpus.jsonl
+# input paths
+absolute input inside the working directory	frames	@WT@/incident_1/corpus.jsonl
+absolute input outside it	frames	@OUT@/secret.jsonl
+.. out of the run directory	frames	incident_1/../canary.jsonl
+.. out of the working directory	frames	../outside/secret.jsonl
+./.. out of the working directory	frames	./../outside/secret.jsonl
+home directory	frames	~/secret.jsonl
+a file outside every run directory	frames	canary.jsonl
+an audit run directory	frames	audit_1/canary.jsonl
+a file that is a link	frames	incident_1/link.jsonl
+a file reached through a directory link	frames	incident_1/dlink/secret.jsonl
+a run directory that is a link	frames	incident_2/secret.jsonl
+a run directory with no .gitignore	frames	incident_3/canary.jsonl
+a run directory whose .gitignore is not *	frames	incident_4/canary.jsonl
+a run directory named in capitals	frames	INCIDENT_1/corpus.jsonl
+a run directory number of seven digits	frames	incident_1234567/corpus.jsonl
+a run directory itself	frames	incident_1
+an empty component	frames	incident_1//corpus.jsonl
+a . component	frames	incident_1/./corpus.jsonl
+a trailing slash	frames	incident_1/corpus.jsonl/
+a FIFO	frames	incident_1/fifo
+a FIFO for profile	profile	incident_1/fifo
+a directory	deltas	tokens	incident_1/subdir
+a newline in the path	frames	incident_1/corpus.jsonl@NL@canary.jsonl
+an escape in the path	frames	incident_1/@ESC@[31mcorpus.jsonl
+a very long path	frames	incident_1/@LONG:5000@
+a long path component	frames	incident_1/@LONG:300@.jsonl
+a missing corpus	profile	incident_1/missing.jsonl
+a missing corpus after a good one	frames	incident_1/corpus.jsonl	incident_1/missing.jsonl
+a link after a good corpus	deltas	lamports	incident_1/corpus.jsonl	incident_1/link.jsonl
+an input with a second name	frames	incident_1/twin.jsonl
+the other name of that input	deltas	tokens	incident_1/twin-2.jsonl
+a hard link to a file outside every run directory	profile	incident_1/hard.txt
+a second ./	frames	././incident_1/corpus.jsonl
+an input under a file	frames	incident_1/corpus.jsonl/x
+a missing run directory	frames	incident_9/x.jsonl
+a run directory holding no file	profile	incident_1/
+--instructions after --out	frames	--out	incident_1/x.jsonl	--instructions	--instructions	incident_1/corpus.jsonl
+# --out paths
+--out absolute	frames	--out	@WT@/incident_1/x.jsonl	incident_1/corpus.jsonl
+--out outside the working directory	frames	--out	@OUT@/x.jsonl	incident_1/corpus.jsonl
+--out with ..	frames	--out	incident_1/../protected.txt	incident_1/corpus.jsonl
+--out outside every run directory	frames	--out	protected.txt	incident_1/corpus.jsonl
+--out that is a link	frames	--out	incident_1/out-link.txt	incident_1/corpus.jsonl
+--out through a directory link	frames	--out	incident_1/dlink/x.jsonl	incident_1/corpus.jsonl
+--out into a linked run directory	frames	--out	incident_2/x.jsonl	incident_1/corpus.jsonl
+--out with a second name	frames	--out	incident_1/hard.txt	incident_1/corpus.jsonl
+--out onto a directory	frames	--out	incident_1/subdir	incident_1/corpus.jsonl
+--out under a file	frames	--out	incident_1/corpus.jsonl/x	incident_1/corpus.jsonl
+--out in a missing directory	frames	--out	incident_1/no-such-dir/x.jsonl	incident_1/corpus.jsonl
+--out into a run directory with no .gitignore	frames	--out	incident_3/x.jsonl	incident_1/corpus.jsonl
+--out very long	frames	--out	incident_1/@LONG:5000@	incident_1/corpus.jsonl
+--out home	deltas	tokens	--out	~/x.tsv	incident_1/corpus.jsonl
+--out onto its own input	frames	--out	incident_1/corpus.jsonl	incident_1/corpus.jsonl
+--out onto its own input, spelled differently	deltas	lamports	--out	./incident_1/corpus.jsonl	incident_1/corpus.jsonl
+--out onto a collected corpus	frames	--out	incident_1/corpus/transactions.jsonl	incident_1/corpus.jsonl
+--out in a subdirectory	frames	--out	incident_1/subdir/x.jsonl	incident_1/corpus.jsonl
+--out onto the ledger	profile	--out	incident_1/LEDGER.md	incident_1/corpus.jsonl
+--out onto the run directory's .gitignore	profile	--out	incident_1/.gitignore	incident_1/corpus.jsonl
+--out hidden	frames	--out	incident_1/.x.txt	incident_1/corpus.jsonl
+--out with another extension	deltas	tokens	--out	incident_1/x.json	incident_1/corpus.jsonl
+--out with no name before the extension	frames	--out	incident_1/.jsonl	incident_1/corpus.jsonl
+--out into a missing run directory	frames	--out	incident_9/x.jsonl	incident_1/corpus.jsonl
+--out into an audit run directory	frames	--out	audit_1/x.jsonl	incident_1/corpus.jsonl
+--out into a run directory whose .gitignore is not *	deltas	tokens	--out	incident_4/x.tsv	incident_1/corpus.jsonl
+--out after a refused input	frames	--out	incident_1/x.jsonl	incident_1/link.jsonl
+--out with a . component	frames	--out	incident_1/./x.jsonl	incident_1/corpus.jsonl
+--out empty	frames	--out		incident_1/corpus.jsonl
+--out naming the run directory	frames	--out	incident_1	incident_1/corpus.jsonl
+--out naming the run directory with a slash	deltas	tokens	--out	incident_1/	incident_1/corpus.jsonl
+--out with a newline in its name	frames	--out	incident_1/x@NL@y.jsonl	incident_1/corpus.jsonl
+--out into a run directory named in capitals	frames	--out	INCIDENT_1/x.jsonl	incident_1/corpus.jsonl
+--out whose name starts with a dash	frames	--out	incident_1/-x.jsonl	incident_1/corpus.jsonl
+--out with a name of 129 bytes	profile	--out	incident_1/@LONG:125@.txt	incident_1/corpus.jsonl
+--out onto a FIFO	frames	--out	incident_1/fifo	incident_1/corpus.jsonl
