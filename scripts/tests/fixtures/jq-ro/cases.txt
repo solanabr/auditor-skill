@@ -1,0 +1,142 @@
+# Hostile argument vectors for scripts/dnr/jq-ro.sh. test-jq-ro.sh runs each one in its fixture working
+# directory, a git repository whose config names a program, which holds: the run directories incident_1
+# (data.json, corpus/transactions.jsonl) and audit_1 (data.json); notes/t.json and data.json outside
+# every run directory; incident_2, a symbolic link to incident_1; incident_3, a run directory holding a
+# symbolic link (link.json) beside data.json; incident_4, with no .gitignore; incident_5, tracked by git;
+# incident_7/hard.json, a second link to a file outside the working directory; incident_8/fifo, a named
+# pipe; incident_10/sub, a symbolic link to a directory outside the working directory; and
+# INCIDENT_9/data.json and incident_1234567/data.json, under names that are not run directories.
+# One case per line: <exit status><TAB><the one stderr line><TAB><argument>[<TAB><argument>...]. Each
+# case prints nothing on stdout, changes nothing in the working directory and starts no program the
+# repository's config names.
+# usage
+2	jq-ro: refused: usage: jq-ro.sh [-c] [-r] [-s] [-e] [-n] [--arg <name> <value>]... [--argjson <name> <json>]... <filter> <file>...	-c
+2	jq-ro: refused: usage: jq-ro.sh [-c] [-r] [-s] [-e] [-n] [--arg <name> <value>]... [--argjson <name> <json>]... <filter> <file>...	-c	-r	-s	-e	-n
+2	jq-ro: refused: usage: jq-ro.sh [-c] [-r] [-s] [-e] [-n] [--arg <name> <value>]... [--argjson <name> <json>]... <filter> <file>...	--arg	x	1
+# options that read a file, a module or the library path, and every option not passed on
+2	jq-ro: refused: --rawfile is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--rawfile	x	/etc/passwd	.	incident_1/data.json
+2	jq-ro: refused: --slurpfile is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--slurpfile	x	/etc/passwd	.	incident_1/data.json
+2	jq-ro: refused: -f is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	-f	/etc/passwd	incident_1/data.json
+2	jq-ro: refused: --from-file is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--from-file	/etc/passwd	incident_1/data.json
+2	jq-ro: refused: --from-file=/etc/passwd is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--from-file=/etc/passwd	incident_1/data.json
+2	jq-ro: refused: -L is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	-L	/tmp	.	incident_1/data.json
+2	jq-ro: refused: -L/tmp is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	-L/tmp	.	incident_1/data.json
+2	jq-ro: refused: --library-path is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--library-path	/tmp	.	incident_1/data.json
+2	jq-ro: refused: --args is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--args	.	incident_1/data.json
+2	jq-ro: refused: --jsonargs is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--jsonargs	.	incident_1/data.json
+2	jq-ro: refused: -R is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	-R	.	incident_1/data.json
+2	jq-ro: refused: --raw-input is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--raw-input	.	incident_1/data.json
+2	jq-ro: refused: -j is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	-j	.	incident_1/data.json
+2	jq-ro: refused: --join-output is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--join-output	.	incident_1/data.json
+2	jq-ro: refused: -a is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	-a	.	incident_1/data.json
+2	jq-ro: refused: --ascii-output is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--ascii-output	.	incident_1/data.json
+2	jq-ro: refused: -S is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	-S	.	incident_1/data.json
+2	jq-ro: refused: --sort-keys is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--sort-keys	.	incident_1/data.json
+2	jq-ro: refused: -C is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	-C	.	incident_1/data.json
+2	jq-ro: refused: --color-output is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--color-output	.	incident_1/data.json
+2	jq-ro: refused: -M is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	-M	.	incident_1/data.json
+2	jq-ro: refused: --monochrome-output is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--monochrome-output	.	incident_1/data.json
+2	jq-ro: refused: --tab is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--tab	.	incident_1/data.json
+2	jq-ro: refused: --indent is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--indent	.	incident_1/data.json
+2	jq-ro: refused: --seq is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--seq	.	incident_1/data.json
+2	jq-ro: refused: --stream is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--stream	.	incident_1/data.json
+2	jq-ro: refused: --stream-errors is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--stream-errors	.	incident_1/data.json
+2	jq-ro: refused: --unbuffered is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--unbuffered	.	incident_1/data.json
+2	jq-ro: refused: --raw-output0 is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--raw-output0	.	incident_1/data.json
+2	jq-ro: refused: -0 is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	-0	.	incident_1/data.json
+2	jq-ro: refused: --nul-output is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--nul-output	.	incident_1/data.json
+2	jq-ro: refused: -h is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	-h	.	incident_1/data.json
+2	jq-ro: refused: --help is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--help	.	incident_1/data.json
+2	jq-ro: refused: -V is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	-V	.	incident_1/data.json
+2	jq-ro: refused: --version is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--version	.	incident_1/data.json
+2	jq-ro: refused: --build-configuration is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--build-configuration	.	incident_1/data.json
+2	jq-ro: refused: --exit-status is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--exit-status	.	incident_1/data.json
+2	jq-ro: refused: --compact-output is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--compact-output	.	incident_1/data.json
+2	jq-ro: refused: --raw-output is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--raw-output	.	incident_1/data.json
+2	jq-ro: refused: --slurp is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--slurp	.	incident_1/data.json
+2	jq-ro: refused: --null-input is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--null-input	.	incident_1/data.json
+2	jq-ro: refused: --debug-dump-disasm is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--debug-dump-disasm	.	incident_1/data.json
+2	jq-ro: refused: --debug-trace is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--debug-trace	.	incident_1/data.json
+2	jq-ro: refused: --run-tests is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--run-tests	.	incident_1/data.json
+2	jq-ro: refused: - is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	-	.	incident_1/data.json
+2	jq-ro: refused: -- is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--	.	incident_1/data.json
+2	jq-ro: refused: -x is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	-x	.	incident_1/data.json
+2	jq-ro: refused: -c1 is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	-c1	.	incident_1/data.json
+2	jq-ro: refused: -rf is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	-rf	.	incident_1/data.json
+2	jq-ro: refused: -ce5 is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	-ce5	.	incident_1/data.json
+2	jq-ro: refused: -Ln is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	-Ln	.	incident_1/data.json
+2	jq-ro: refused: --ar is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--ar	.	incident_1/data.json
+2	jq-ro: refused: --arg=x is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--arg=x	.	incident_1/data.json
+2	jq-ro: refused: --argjson=x is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--argjson=x	.	incident_1/data.json
+2	jq-ro: refused: -C=always is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	-C=always	.	incident_1/data.json
+2	jq-ro: refused: --indent is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	--indent	2	.	incident_1/data.json
+2	jq-ro: refused: --rawfile is not an option jq-ro passes on; it takes -c, -r, -s, -e, -n, --arg and --argjson	-c	--rawfile	x	/etc/passwd	.	incident_1/data.json
+# several short options in one word
+2	jq-ro: refused: give -c, -r, -s, -e and -n as separate words, not -rc	-rc	.	incident_1/data.json
+2	jq-ro: refused: give -c, -r, -s, -e and -n as separate words, not -nr	-nr	.	incident_1/data.json
+2	jq-ro: refused: give -c, -r, -s, -e and -n as separate words, not -ce	-ce	.	incident_1/data.json
+2	jq-ro: refused: give -c, -r, -s, -e and -n as separate words, not -sn	-sn	.	incident_1/data.json
+2	jq-ro: refused: give -c, -r, -s, -e and -n as separate words, not -ccc	-ccc	.	incident_1/data.json
+2	jq-ro: refused: give -c, -r, -s, -e and -n as separate words, not -rcsen	-rcsen	.	incident_1/data.json
+# --arg and --argjson
+2	jq-ro: refused: --arg takes a name and a value	--arg
+2	jq-ro: refused: --arg takes a name and a value	--arg	x
+2	jq-ro: refused: --argjson takes a name and a value	--argjson	x
+2	jq-ro: refused: --arg takes a name of letters, digits and _, not starting with a digit, not 1x	--arg	1x	v	.	incident_1/data.json
+2	jq-ro: refused: --arg takes a name of letters, digits and _, not starting with a digit, not a-b	--arg	a-b	v	.	incident_1/data.json
+2	jq-ro: refused: --arg takes a name of letters, digits and _, not starting with a digit, not a b	--arg	a b	v	.	incident_1/data.json
+2	jq-ro: refused: --arg takes a name of letters, digits and _, not starting with a digit, not $x	--arg	$x	v	.	incident_1/data.json
+2	jq-ro: refused: --arg takes a name of letters, digits and _, not starting with a digit, not x.y	--arg	x.y	v	.	incident_1/data.json
+2	jq-ro: refused: --arg takes a name of letters, digits and _, not starting with a digit, not é	--arg	é	v	.	incident_1/data.json
+2	jq-ro: refused: --arg takes a name of letters, digits and _, not starting with a digit, not -n	--arg	-n	v	.	incident_1/data.json
+2	jq-ro: refused: --argjson takes a name of letters, digits and _, not starting with a digit, not 9	--argjson	9	1	.	incident_1/data.json
+2	jq-ro: refused: --arg takes a name of at most 64 bytes	--arg	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	v	.	incident_1/data.json
+2	jq-ro: refused: $x is bound twice	--arg	x	1	--arg	x	2	$x	incident_1/data.json
+2	jq-ro: refused: $x is bound twice	--arg	x	1	--argjson	x	2	$x	incident_1/data.json
+2	jq-ro: refused: $ENV is bound twice	--argjson	ENV	{}	--arg	ENV	x	$ENV	incident_1/data.json
+# the filter
+2	jq-ro: refused: the filter holds import, include or modulemeta, which read jq modules from outside the run directory	import "a" as a; .	incident_1/data.json
+2	jq-ro: refused: the filter holds import, include or modulemeta, which read jq modules from outside the run directory	include "a"; .	incident_1/data.json
+2	jq-ro: refused: the filter holds import, include or modulemeta, which read jq modules from outside the run directory	"a" | modulemeta	incident_1/data.json
+2	jq-ro: refused: the filter holds import, include or modulemeta, which read jq modules from outside the run directory	.[] | select(. == "include")	incident_1/data.json
+2	jq-ro: refused: the filter holds import, include or modulemeta, which read jq modules from outside the run directory	.importer	incident_1/data.json
+2	jq-ro: refused: the filter holds import, include or modulemeta, which read jq modules from outside the run directory	import "data" as $d; $d	incident_1/data.json
+2	jq-ro: refused: the filter holds import, include or modulemeta, which read jq modules from outside the run directory	-c	import "a" as a; .	incident_1/data.json
+# the inputs
+2	jq-ro: refused: name at least one file inside a run directory; jq-ro never reads standard input	.
+2	jq-ro: refused: name at least one file inside a run directory; jq-ro never reads standard input	-n	input
+2	jq-ro: refused: name at least one file inside a run directory; jq-ro never reads standard input	--arg	x	1	$x
+2	jq-ro: refused: the input must be relative to the working directory: /etc/passwd	.	/etc/passwd
+2	jq-ro: refused: the input must be relative to the working directory: /etc/passwd	.	incident_1/data.json	/etc/passwd
+2	jq-ro: refused: the input may not start with - or ~: ~/x	.	~/x
+2	jq-ro: refused: the input may not start with - or ~: -	.	-
+2	jq-ro: refused: the input may not start with - or ~: --rawfile	.	--rawfile	x	/etc/passwd
+2	jq-ro: refused: the input may not start with - or ~: -r	.	incident_1/data.json	-r
+2	jq-ro: refused: the input has an empty, . or .. component: ../x	.	../x
+2	jq-ro: refused: the input has an empty, . or .. component: incident_1/../incident_1/data.json	.	incident_1/../incident_1/data.json
+2	jq-ro: refused: the input has an empty, . or .. component: ./incident_1/./data.json	.	./incident_1/./data.json
+2	jq-ro: refused: the input has an empty, . or .. component: incident_1//data.json	.	incident_1//data.json
+2	jq-ro: refused: the input has an empty, . or .. component: incident_1/data.json/	.	incident_1/data.json/
+2	jq-ro: refused: the input has an empty, . or .. component: incident_1/corpus/..	.	incident_1/corpus/..
+2	jq-ro: refused: the input has a component that is not a directory: incident_1/data.json/x	.	incident_1/data.json/x
+2	jq-ro: refused: the input passes through a symbolic link: incident_2/data.json	.	incident_2/data.json
+2	jq-ro: refused: the input passes through a symbolic link: incident_2	.	incident_2
+2	jq-ro: refused: the input passes through a symbolic link: incident_3/link.json	.	incident_3/link.json
+2	jq-ro: refused: the input passes through a symbolic link: incident_10/sub/secret.json	.	incident_10/sub/secret.json
+2	jq-ro: refused: the input has an empty, . or .. component: incident_1/../../outside/secret.json	.	incident_1/../../outside/secret.json
+2	jq-ro: refused: the input is not a regular file or a directory: incident_8/fifo	.	incident_8/fifo
+2	jq-ro: refused: the input is not an existing regular file: incident_1	.	incident_1
+2	jq-ro: refused: the input is not an existing regular file: incident_1/corpus	.	incident_1/corpus
+2	jq-ro: refused: the input is not an existing regular file: incident_1/missing.json	.	incident_1/missing.json
+2	jq-ro: refused: the input is not an existing regular file: incident_6/data.json	.	incident_6/data.json
+2	jq-ro: refused: the input has an empty, . or .. component: .	.	.
+2	jq-ro: refused: the input must lie inside a run directory, audit_<n>/ or incident_<n>/ in the working directory: notes/t.json	.	notes/t.json
+2	jq-ro: refused: the input must lie inside a run directory, audit_<n>/ or incident_<n>/ in the working directory: data.json	.	data.json
+2	jq-ro: refused: the input must lie inside a run directory, audit_<n>/ or incident_<n>/ in the working directory: INCIDENT_9/data.json	.	INCIDENT_9/data.json
+2	jq-ro: refused: the input must lie inside a run directory, audit_<n>/ or incident_<n>/ in the working directory: incident_1234567/data.json	.	incident_1234567/data.json
+2	jq-ro: refused: the input must lie inside a run directory, audit_<n>/ or incident_<n>/ in the working directory: notes/t.json	.	incident_1/data.json	notes/t.json
+2	jq-ro: refused: the run directory holds a symbolic link: incident_3	.	incident_3/data.json
+2	jq-ro: refused: the run directory has no .gitignore holding exactly *: incident_4	.	incident_4/data.json
+2	jq-ro: refused: the run directory is tracked by git: incident_5	.	incident_5/data.json
+2	jq-ro: refused: the run directory is tracked by git: incident_5	.	incident_1/data.json	incident_5/data.json
+2	jq-ro: refused: the input has another hard link, which can name a file outside the run directory: incident_7/hard.json	.	incident_7/hard.json
