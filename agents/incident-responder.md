@@ -87,8 +87,10 @@ write-up.
   - `audit-logs`, by the path the skill's list gives, run first, with the
     script's arguments after its subcommand: `profile`, `frames [--instructions]`,
     `deltas tokens|lamports`. It prints what the scripts print and exits the same
-    way. Run the script instead when audit-logs exits 126 or 127 (not built, or
-    not executable), dies by a signal (a status above 128), or exits 4 as a stale
+    way; the two places it differs (count padding, and a closed stdout or broken
+    pipe) are in `${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/README.md`. Run the
+    script instead when audit-logs exits 126 or 127 (not built, or not
+    executable), dies by a signal (a status above 128), or exits 4 as a stale
     build (its stderr starts `audit-logs: stale build:`: the installed recipes
     changed since it was built, and it writes nothing); any other result stands,
     a refusal (exit 2) included. Never look for it on `PATH`, and never build it
