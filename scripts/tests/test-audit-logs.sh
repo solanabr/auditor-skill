@@ -51,6 +51,7 @@ for tool in jq python3 awk sed cmp; do
 done
 T="$(mktemp -d "${TMPDIR:-/tmp}/audit_logs_test.XXXXXX")" || exit 1
 trap 'rm -rf "$T"' EXIT
+T="$(cd "$T" && pwd -P)" || exit 1
 
 # ---------------------------------------------------------------------------
 # 0. The binary: AUDIT_LOGS when given, else a release build of a copy of the
