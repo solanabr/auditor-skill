@@ -16,8 +16,7 @@
 #                   database already in CARGO_HOME, and nothing leaves the machine.
 #   cargo-outdated  --manifest <dir>/Cargo.toml, more Cargo.toml files of the workspace, and at most one
 #                   Cargo.lock beside the first: cargo outdated --workspace --exit-code 1 --color never
-#   cargo-tree      the same manifests: cargo tree --workspace --color never, with --locked when a
-#                   Cargo.lock is given
+#   cargo-tree      the same manifests: cargo tree --workspace --color never
 #   npm-audit       --manifest <dir>/package.json and --manifest <dir>/package-lock.json (or
 #                   npm-shrinkwrap.json): npm audit
 #   npm-view        <package> [<version>]: the npm registry's record of that version, the latest without one
@@ -37,10 +36,15 @@
 # never .npmrc, .yarnrc*, rust-toolchain* or anything under a .cargo directory. Only these files are
 # copied, each at the path it has under the working directory, into a scratch directory outside it. cargo
 # reads no manifest without a target, so cargo-outdated and cargo-tree put an empty file at src/lib.rs and
-# at each target path a copied package manifest names. The first Cargo.toml is the one cargo runs on. A
-# dependency from git or from a registry other than crates.io, and a path dependency outside the copies,
-# stop the run (cargo would fetch from a host the manifest chose); cargo is told to fetch git sources with
-# the git CLI, and the git on its PATH refuses every fetch. npm-audit runs npm with its own .npmrc in the
+# at each target path a copied package manifest names, then read it with cargo metadata --no-deps --offline
+# (which resolves and fetches nothing) and rebuild, in a second scratch directory, a workspace of only the
+# names, versions, editions, features and dependency entries metadata reports. cargo tree and cargo outdated
+# run on the rebuilt workspace, never on the copy, so no [patch], [replace] or other table of the copy
+# reaches the resolving cargo, whatever its spelling, and the reported tree is the un-patched one. A
+# dependency from git or from a registry other than crates.io, and a path dependency on a non-member, stop
+# the run (cargo would fetch from a host the manifest chose); cargo is told to fetch git sources with the git
+# CLI, and the git on its PATH refuses every fetch. A copied Cargo.lock that names a source other than
+# crates.io stops the run; the first Cargo.toml is the one cargo runs on. npm-audit runs npm with its own .npmrc in the
 # copy (registry https://registry.npmjs.org/, ignore-scripts, no fund or update notices), empty user and
 # global config files, and its cache and logs in the scratch directory: no auth reaches it.
 #
@@ -387,17 +391,27 @@ copy_manifests() {
   done
 }
 
-# What the cargo actions run with python3 -I. "stubs <top> <manifest>...": an empty file at src/lib.rs and at
-# each target path of each package manifest, read line by line (exit 3 with the reason for a path outside
-# its directory, or for a [patch] or [replace] table, which can name any host and which cargo metadata
-# --no-deps does not list). "vet <metadata> <top>": the dependencies cargo metadata lists come from crates.io or are
-# paths inside <top> (exit 3 with the first that is not).
+# What the cargo actions run with python3 -I, all from /. "backstop <top> <manifest>...": refuse a
+# [patch]/[replace] table in any spelling, section- and quote-aware, and a manifest that is not UTF-8 (the
+# second line after the rebuild). "locksource <lockfile>": refuse a Cargo.lock that names a source other
+# than crates.io, or a patch/replace table. "stubs <top> <manifest>...": an empty file at src/lib.rs and at
+# each target path of each package manifest, so cargo metadata parses it. "vet <metadata> <top>": the
+# dependencies cargo metadata lists come from crates.io or are paths inside <top> (exit 3 with the first that
+# is not). "rebuild <metadata> <top> <dest>": write under <dest> a workspace of only the package names,
+# versions, editions, features and dependency entries cargo metadata reports (a path dependency on a
+# non-member is refused), so no [patch], [replace] or other table of the copy reaches the resolving cargo,
+# whatever its spelling; prints the rebuilt root manifest path.
 CARGO_PY='import json, os, re, sys
 
 SECTION = re.compile(r"^\s*\[\[?\s*([A-Za-z0-9_.\-]+)\s*\]\]?\s*(#.*)?$")
-OVERRIDE = re.compile(r"^\s*(\[\s*(patch|replace)\b|(patch|replace)\s*[.=])")
 KEY = re.compile(r"^\s*(name|path|build)\s*=\s*\x22([^\x22\\]*)\x22\s*(#.*)?$")
 DEFAULT = {"bin": "src/bin/%s.rs", "example": "examples/%s.rs", "test": "tests/%s.rs", "bench": "benches/%s.rs"}
+OVR_HEADER = re.compile(r"^\s*\[\s*[\x22\x27]?(patch|replace)\b")
+OVR_ROOTKEY = re.compile(r"^\s*[\x22\x27]?(patch|replace)[\x22\x27]?\s*[.=]")
+OVR_OPEN = re.compile(r"^\s*\[")
+LOCK_PATCH = re.compile(r"^\s*\[\[?\s*[\x22\x27]?(patch|replace)\b")
+LOCK_SOURCE = re.compile(r"^\s*[\x22\x27]?source[\x22\x27]?\s*=\s*[\x22\x27]([^\x22\x27]*)")
+CRATES = ("registry+https://github.com/rust-lang/crates.io-index", "sparse+https://index.crates.io/")
 
 
 def fail(text):
@@ -405,18 +419,58 @@ def fail(text):
     sys.exit(3)
 
 
+def shown(text):
+    return re.sub(r"[\x00-\x1f\x7f]", "?", str(text))[:200]
+
+
 def relative(rel):
     return bool(rel) and not rel.startswith("/") and ".." not in rel.split("/")
+
+
+def read_lines(path):
+    with open(path, "rb") as f:
+        raw = f.read()
+    try:
+        return raw.decode("utf-8").splitlines()
+    except UnicodeDecodeError:
+        fail("%s is not UTF-8 text" % shown(path))
+
+
+def q(s):
+    return "\x22" + str(s).replace("\\", "\\\\").replace("\x22", "\\\x22") + "\x22"
+
+
+def backstop(top, manifests):
+    # The second line after the rebuild: refuse a [patch]/[replace] table in any spelling, section- and
+    # quote-aware, and an un-decodable manifest.
+    for rel in manifests:
+        lines = read_lines(os.path.join(top, rel))
+        root = True
+        for line in lines:
+            if OVR_HEADER.match(line):
+                fail("%s holds a [patch] or [replace] table, which can name any host; deps.sh does not resolve one" % shown(rel))
+            if OVR_OPEN.match(line):
+                root = False
+            elif root and OVR_ROOTKEY.match(line):
+                fail("%s sets a root patch or replace key, which can name any host; deps.sh does not resolve one" % shown(rel))
+
+
+def locksource(path):
+    # Refuse a Cargo.lock that names a source other than crates.io, or a patch/replace table: with the rebuilt
+    # manifest cargo re-resolves such an entry to crates.io, but refusing it keeps the lock to the same hosts.
+    for line in read_lines(path):
+        if LOCK_PATCH.match(line):
+            fail("the lockfile holds a patch or replace table")
+        m = LOCK_SOURCE.match(line)
+        if m and m.group(1) and m.group(1) not in CRATES:
+            fail("the lockfile names a source other than crates.io: %s" % shown(m.group(1)))
 
 
 def stubs(top, manifests):
     for rel in manifests:
         path = os.path.join(top, rel)
         base = os.path.dirname(path)
-        with open(path, encoding="utf-8", errors="replace") as f:
-            lines = f.read().splitlines()
-        if any(OVERRIDE.match(line) for line in lines):
-            fail("%s holds a [patch] or [replace] table, which deps.sh does not resolve: it can name any host" % rel)
+        lines = read_lines(path)
         if not any(re.match(r"^\s*\[package\]", line) for line in lines):
             continue
         want, cur, kind = ["src/lib.rs"], None, None
@@ -441,38 +495,128 @@ def stubs(top, manifests):
             else:
                 p = item
             if not relative(p):
-                fail("%s names a target outside its directory: %s" % (rel, re.sub(r"[\x00-\x1f\x7f]", "?", p)[:200]))
+                fail("%s names a target outside its directory: %s" % (shown(rel), shown(p)))
             target = os.path.join(base, p)
             os.makedirs(os.path.dirname(target), exist_ok=True)
             if not os.path.lexists(target):
-                fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
-                os.close(fd)
+                os.close(os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600))
 
 
 def vet(meta, top):
-    with open(meta, encoding="utf-8") as f:
-        data = json.load(f)
+    data = json.load(open(meta, encoding="utf-8"))
     top = os.path.realpath(top) + os.sep
     for pkg in data.get("packages", []):
         for dep in pkg.get("dependencies", []):
             name, source = dep.get("name", "?"), dep.get("source")
             if dep.get("registry"):
-                fail("%s depends on %s from another registry than crates.io (%s)" % (pkg.get("name"), name, dep["registry"]))
-            if source and not (source.startswith("registry+https://github.com/rust-lang/crates.io-index") or source.startswith("sparse+https://index.crates.io/")):
-                fail("%s depends on %s from %s, not crates.io" % (pkg.get("name"), name, source))
+                fail("%s depends on %s from another registry than crates.io (%s)" % (pkg.get("name"), name, shown(dep["registry"])))
+            if source and not (source.startswith(CRATES[0]) or source.startswith(CRATES[1])):
+                fail("%s depends on %s from %s, not crates.io" % (pkg.get("name"), name, shown(source)))
             if dep.get("path") and not (os.path.realpath(dep["path"]) + os.sep).startswith(top):
                 fail("%s depends on %s at a path outside the copied manifests" % (pkg.get("name"), name))
 
 
+def q_target(t):
+    if re.match(r"^[A-Za-z0-9_.\-]+$", t):
+        return t
+    if "\x27" not in t:
+        return "\x27" + t + "\x27"
+    return q(t)
+
+
+def toml_key(name):
+    return name if re.match(r"^[A-Za-z0-9_\-]+$", name) else q(name)
+
+
+def dep_table(deps, by, members, dest_dir, dest_root):
+    for d in deps:
+        key = d.get("rename") or d["name"]
+        parts = []
+        path = d.get("path")
+        if path is not None:
+            tgt = os.path.realpath(path)
+            if tgt not in members:
+                fail("%s is a path dependency on a crate that is not a workspace member" % d.get("name"))
+            parts.append("path = %s" % q(os.path.relpath(os.path.join(dest_root, members[tgt]), dest_dir)))
+            if d.get("req") and d["req"] != "*":
+                parts.append("version = %s" % q(d["req"]))
+        else:
+            parts.append("version = %s" % q(d.get("req") or "*"))
+        if d.get("rename"):
+            parts.append("package = %s" % q(d["name"]))
+        if d.get("optional"):
+            parts.append("optional = true")
+        if not d.get("uses_default_features", True):
+            parts.append("default-features = false")
+        if d.get("features"):
+            parts.append("features = [%s]" % ", ".join(q(f) for f in d["features"]))
+        table = {None: "dependencies", "dev": "dev-dependencies", "build": "build-dependencies"}.get(d.get("kind"), "dependencies")
+        by.setdefault((d.get("target"), table), []).append("%s = { %s }" % (toml_key(key), ", ".join(parts)))
+
+
+def member_dir(p):
+    return os.path.realpath(os.path.dirname(p["manifest_path"]))
+
+
+def rebuild(meta, top, dest):
+    data = json.load(open(meta, encoding="utf-8"))
+    root = os.path.realpath(data["workspace_root"])
+    ids = set(data.get("workspace_members") or [])
+    pkgs = [p for p in data.get("packages", []) if p.get("id") in ids]
+    if not pkgs:
+        fail("cargo metadata lists no workspace member to rebuild")
+    members = {}
+    for p in pkgs:
+        members[member_dir(p)] = os.path.relpath(member_dir(p), root)
+    rels = sorted(members.values())
+    have_root_pkg = False
+    for p in pkgs:
+        rel = members[member_dir(p)]
+        d = os.path.join(dest, rel)
+        os.makedirs(d, exist_ok=True)
+        os.close(os.open(os.path.join(d, "lib.rs"), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+        head = []
+        if rel == ".":
+            have_root_pkg = True
+            head = ["[workspace]", "members = [%s]" % ", ".join(q(r) for r in rels if r != "."), "resolver = \x224\x22".replace("4", "2"), ""]
+        lines = head + ["[package]", "name = %s" % q(p["name"]), "version = %s" % q(p.get("version") or "0.0.0"),
+                        "edition = %s" % q(p.get("edition") or "2021"), "", "[lib]", "path = %s" % q("lib.rs"), ""]
+        by = {}
+        dep_table(p.get("dependencies", []), by, members, d, dest)
+        for (target, table) in sorted(by, key=lambda t: ((t[0] or ""), t[1])):
+            lines.append("[%s]" % table if target is None else "[target.%s.%s]" % (q_target(target), table))
+            lines += by[(target, table)]
+            lines.append("")
+        feats = p.get("features") or {}
+        if feats:
+            lines.append("[features]")
+            for name in sorted(feats):
+                lines.append("%s = [%s]" % (toml_key(name), ", ".join(q(x) for x in feats[name])))
+            lines.append("")
+        with open(os.path.join(d, "Cargo.toml"), "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+    if not have_root_pkg:
+        with open(os.path.join(dest, "Cargo.toml"), "w", encoding="utf-8") as f:
+            f.write("[workspace]\nmembers = [%s]\nresolver = %s\n" % (", ".join(q(r) for r in rels), q("2")))
+    print(os.path.join(dest, "Cargo.toml"))
+
+
 try:
-    if sys.argv[1] == "stubs":
+    cmd = sys.argv[1]
+    if cmd == "stubs":
         stubs(sys.argv[2], sys.argv[3:])
-    elif sys.argv[1] == "vet":
+    elif cmd == "backstop":
+        backstop(sys.argv[2], sys.argv[3:])
+    elif cmd == "locksource":
+        locksource(sys.argv[2])
+    elif cmd == "vet":
         vet(sys.argv[2], sys.argv[3])
+    elif cmd == "rebuild":
+        rebuild(sys.argv[2], sys.argv[3], sys.argv[4])
 except SystemExit:
     raise
 except BaseException as why:
-    fail("cannot read the manifests: %s" % re.sub(r"[\x00-\x1f\x7f]", "?", str(why))[:200])
+    fail("cannot read or rebuild the manifests: %s" % shown(why))
 '
 cargo_py() { (cd / && exec python3 -I -c "$CARGO_PY" "$@"); }
 
@@ -694,31 +838,39 @@ case "$ACTION" in
     copy_manifests
     TOMLS=()
     for rel in "${MAN[@]}"; do case "$rel" in Cargo.toml|*/Cargo.toml) TOMLS+=("$rel") ;; esac; done
+    # Second line (the rebuild below is the first): refuse a [patch]/[replace] table in any spelling, and a
+    # lockfile that names a source other than crates.io.
+    why=$(cargo_py backstop "$S/w" "${TOMLS[@]}") || done_with 3 "${why:-cannot read the manifests}"
+    [ -z "$LOCK" ] || { why=$(cargo_py locksource "$S/w/$LOCK") || done_with 3 "${why:-cannot read the lockfile}"; }
     why=$(cargo_py stubs "$S/w" "${TOMLS[@]}") || done_with 3 "${why:-cannot prepare the copies}"
     STEP_OUT=$S/metadata.json
     step "$S" CARGO_NET_OFFLINE=true cargo metadata --no-deps --format-version 1 --offline --manifest-path "$S/w/$TOML"
     STEP_OUT=""
     [ "$STEP_END" = "exit 0" ] || done_with 3 "cargo cannot read the copied manifests ($STEP_END)"
     why=$(cargo_py vet "$S/metadata.json" "$S/w") || done_with 3 "${why:-cannot read cargo metadata}"
+    # Rebuild a workspace of only the names, versions and dependency entries cargo metadata reports, so no
+    # [patch], [replace] or other table of the copy reaches the resolving cargo (M1). cargo runs on it, never
+    # on the copy. The lockfile is a preference, not enforced: the rebuild drops any [patch] the lock reflects.
+    mkdir "$S/rebuilt" || done_with 3 "cannot create the rebuilt manifests in $S"
+    RTOML=$(cargo_py rebuild "$S/metadata.json" "$S/w" "$S/rebuilt") || done_with 3 "${RTOML:-cannot rebuild the manifests}"
+    [ -z "$LOCK" ] || iso_copy_new "$S/w/$LOCK" "$S/rebuilt/Cargo.lock" || done_with 3 "cannot copy the lockfile"
     mkdir "$S/nogit" && printf '#!/bin/sh\necho "deps.sh: git sources are not fetched" >&2\nexit 1\n' > "$S/nogit/git" && chmod 700 "$S/nogit/git" ||
       done_with 3 "cannot prepare the git that refuses fetches"
     disclose crates.io "the crate names and version requirements in these manifests ($ACTION resolves them with the crates.io index and downloads)" "${MAN[@]}"
     GITLESS=("PATH=$S/nogit:$PATH" CARGO_NET_GIT_FETCH_WITH_CLI=true)
     if [ "$ACTION" = cargo-tree ]; then
-      LOCKED=()
-      [ -z "$LOCK" ] || LOCKED=(--locked)
-      step "$S" ${NET[@]+"${NET[@]}"} "${GITLESS[@]}" cargo tree --workspace --color never ${LOCKED[@]+"${LOCKED[@]}"} --manifest-path "$S/w/$TOML"
+      step "$S" ${NET[@]+"${NET[@]}"} "${GITLESS[@]}" cargo tree --workspace --color never --manifest-path "$RTOML"
       why=$(stopped)
       [ -z "$why" ] || done_with 3 "cargo tree stopped: $why"
-      [ "$STEP_END" = "exit 0" ] && done_with 0 "the dependency tree (exit 0)"
+      [ "$STEP_END" = "exit 0" ] && done_with 0 "the dependency tree, from the rebuilt manifests (exit 0)"
       done_with 3 "cargo tree failed ($STEP_END)"
     fi
-    step "$S" ${NET[@]+"${NET[@]}"} "${GITLESS[@]}" cargo outdated --workspace --exit-code 1 --color never --manifest-path "$S/w/$TOML"
+    step "$S" ${NET[@]+"${NET[@]}"} "${GITLESS[@]}" cargo outdated --workspace --exit-code 1 --color never --manifest-path "$RTOML"
     why=$(stopped)
     [ -z "$why" ] || done_with 3 "cargo outdated stopped: $why"
     case "$STEP_END" in
-      'exit 0') done_with 0 "no outdated dependency (exit 0)" ;;
-      'exit 1') done_with 1 "outdated dependencies found (exit 1)" ;;
+      'exit 0') done_with 0 "no outdated dependency, from the rebuilt manifests (exit 0)" ;;
+      'exit 1') done_with 1 "outdated dependencies found, from the rebuilt manifests (exit 1)" ;;
       *) done_with 3 "cargo outdated failed ($STEP_END)" ;;
     esac ;;
   npm-audit)

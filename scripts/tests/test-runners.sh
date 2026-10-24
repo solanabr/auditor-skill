@@ -659,51 +659,103 @@ check "a lockfile of $(wc -c < "$WT/sub/Cargo.lock" | tr -d ' ') bytes is copied
   sh -c "[ '$RC' = 0 ] && tail -c +\$(( \$(wc -c < '$WT/audit_1/deps/cargo-audit-$n.txt') - \$(wc -c < '$WT/sub/Cargo.lock') + 1 )) '$WT/audit_1/deps/cargo-audit-$n.txt' | cmp -s - '$WT/sub/Cargo.lock'"
 settings
 
-# cargo-tree and cargo-outdated: stub targets, sources from crates.io only, and a git that fetches nothing.
-mkdir -p "$WT/stubs"
-printf '[package]\nname = "stubs"\nversion = "0.1.0"\nbuild = "build.rs"\n\n[lib]\npath = "lib/main.rs"\n\n[[bin]]\nname = "tool"\n\n[[test]]\nname = "it"\npath = "checks/it.rs"\n' > "$WT/stubs/Cargo.toml"
+# cargo-tree and cargo-outdated: metadata on the copy, then the manifests rebuilt and cargo run on them.
+# $WT/pkg is a crate with a crates.io dependency, a [profile] and a [workspace.metadata] table (neither a
+# host-steering vector, but tables the rebuild must drop), and a Cargo.lock.
+mkdir -p "$WT/pkg/src"
+# The copy carries a [profile] and a [workspace.metadata] table (neither surfaces in metadata), so the dump
+# of the manifest cargo actually ran on proves it is the metadata-derived rebuild, not the copy.
+printf '[package]\nname = "pkg"\nversion = "0.4.0"\nedition = "2021"\n\n[dependencies]\nanyhow = "1.2"\n\n[profile.release]\nopt-level = 3\n\n[workspace.metadata.x]\ny = 1\n' > "$WT/pkg/Cargo.toml"
+: > "$WT/pkg/src/lib.rs"
+printf 'version = 3\n\n[[package]]\nname = "anyhow"\nversion = "1.2.0"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\nchecksum = "00"\n\n[[package]]\nname = "pkg"\nversion = "0.4.0"\ndependencies = ["anyhow"]\n' > "$WT/pkg/Cargo.lock"
+ANYHOW_DEP='{"name":"anyhow","req":"^1.2","source":"registry+https://github.com/rust-lang/crates.io-index","kind":null,"optional":false,"uses_default_features":true,"features":[],"target":null,"rename":null}'
+settings SHIM_DUMP=1 FAKE_META_DEP="$ANYHOW_DEP"
 r0=$(rows)
-run "$DEPS" "$WT" HTTPS_PROXY="$PROXY" -- cargo-tree --run audit_1 --manifest Cargo.toml --manifest programs/demo/Cargo.toml --manifest Cargo.lock
-check "cargo-tree: cargo metadata offline on the copies, then cargo tree --workspace --color never --locked" calls_are \
-  "rustup default|cargo metadata --no-deps --format-version 1 --offline --manifest-path $S/w/Cargo.toml|cargo tree --workspace --color never --locked --manifest-path $S/w/Cargo.toml|"
-check "... on the named manifests, each package manifest with an empty src/lib.rs beside it" \
-  grep -qxF 'copies: ./Cargo.lock ./Cargo.toml ./programs/demo/Cargo.toml ./programs/demo/src/lib.rs ' "$T/calls"
-check "... cargo told to fetch git sources with a git that refuses them" \
+run "$DEPS" "$WT" HTTPS_PROXY="$PROXY" -- cargo-tree --run audit_1 --manifest pkg/Cargo.toml --manifest pkg/Cargo.lock
+headers > "$T/hdrs"
+check "cargo-tree: metadata on the copy, then cargo tree on the rebuilt manifest, never the copy" sh -c "
+  grep -qx 'rustup default' '$T/hdrs' &&
+  grep -qx 'cargo metadata --no-deps --format-version 1 --offline --manifest-path $S/w/pkg/Cargo.toml' '$T/hdrs' &&
+  grep -qE '^cargo tree --workspace --color never --manifest-path $S/rebuilt/.*Cargo.toml\$' '$T/hdrs' &&
+  ! grep -qE '^cargo (tree|outdated).*--manifest-path $S/w/' '$T/hdrs'"
+check "... the rebuilt manifest keeps the crates.io dependency and holds no table the copy had" sh -c "
+  grep -qxF 'rebuilt| anyhow = { version = \"^1.2\" }' '$T/calls' &&
+  grep -qxF 'rebuilt| [dependencies]' '$T/calls' &&
+  ! grep -qiE 'rebuilt[|].*(patch|replace|profile|metadata)' '$T/calls'"
+check "... the metadata read is offline, without the proxy" none_in_blocks '^== cargo metadata' '^env: [A-Za-z_]*[Pp][Rr][Oo][Xx][Yy]='
+check "... the tree step got the proxy and the git that refuses fetches" \
   sh -c "awk '/^== cargo tree/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'git: $S/nogit/git deps.sh: git sources are not fetched' '$T/blk' && grep -qxF 'env: CARGO_NET_GIT_FETCH_WITH_CLI=true' '$T/blk' && grep -qxF 'env: HTTPS_PROXY=$PROXY' '$T/blk'"
-check "... the metadata read offline, without the proxy" none_in_blocks '^== cargo metadata' '^env: [A-Za-z_]*[Pp][Rr][Oo][Xx][Yy]='
-check "... and one disclosure row naming the three manifests" \
-  sh -c "[ \$(( \$(wc -l < '$DT') - 1 - $r0 )) = 1 ] && sed -n '\$p' '$DT' | grep -q '	crates.io	the crate names and version requirements in these manifests (cargo-tree resolves them with the crates.io index and downloads): Cargo.toml programs/demo/Cargo.toml Cargo.lock	3\$'"
+check "... and one disclosure row naming the manifests" \
+  sh -c "[ \$(( \$(wc -l < '$DT') - 1 - $r0 )) = 1 ] && sed -n '\$p' '$DT' | grep -q '	crates.io	the crate names and version requirements in these manifests (cargo-tree resolves them with the crates.io index and downloads): pkg/Cargo.toml pkg/Cargo.lock	2\$'"
+check "... exit 0, the dependency tree from the rebuilt manifests" sh -c "[ '$RC' = 0 ] && grep -q '^>> cargo-tree: the dependency tree, from the rebuilt manifests (exit 0): ' '$T/out'"
+# S2: a dependency literally named patch or replace must resolve, not be refused.
+printf '[package]\nname = "dp"\nversion = "0.1.0"\nedition = "2021"\n\n[dependencies]\npatch = "1.0"\nreplace = "0.1"\n' > "$WT/pkg/Cargo.toml"
+PATCH_DEPS='[{"name":"patch","req":"^1.0","source":"registry+https://github.com/rust-lang/crates.io-index","kind":null,"optional":false,"uses_default_features":true,"features":[],"target":null,"rename":null},{"name":"replace","req":"^0.1","source":"registry+https://github.com/rust-lang/crates.io-index","kind":null,"optional":false,"uses_default_features":true,"features":[],"target":null,"rename":null}]'
+settings SHIM_DUMP=1 FAKE_META_DEP="$PATCH_DEPS"
+run "$DEPS" "$WT" -- cargo-tree --run audit_1 --manifest pkg/Cargo.toml
+check "a dependency named patch/replace resolves (not refused as a patch table)" sh -c "
+  [ '$RC' = 0 ] && grep -qxF 'rebuilt| patch = { version = \"^1.0\" }' '$T/calls' && grep -qxF 'rebuilt| replace = { version = \"^0.1\" }' '$T/calls'"
+settings
+# The stub targets still follow the manifest for the metadata read, and a target path outside its directory refuses.
+mkdir -p "$WT/stubs"
+printf '[package]\nname = "stubs"\nversion = "0.1.0"\nedition = "2021"\nbuild = "build.rs"\n\n[lib]\npath = "lib/main.rs"\n\n[[bin]]\nname = "tool"\n\n[[test]]\nname = "it"\npath = "checks/it.rs"\n' > "$WT/stubs/Cargo.toml"
 run "$DEPS" "$WT" -- cargo-tree --run audit_1 --manifest stubs/Cargo.toml
-check "the stub targets follow the manifest: its lib path, build script, bins and tests" \
-  grep -qxF 'copies: ./Cargo.toml ./build.rs ./checks/it.rs ./lib/main.rs ./src/bin/tool.rs ./src/lib.rs ' "$T/calls"
-check "... and without a Cargo.lock, no --locked" has_call "cargo tree --workspace --color never --manifest-path $S/w/stubs/Cargo.toml"
-printf '[package]\nname = "out"\nversion = "0.1.0"\n\n[lib]\npath = "../../outside.rs"\n' > "$WT/stubs/Cargo.toml"
+headers > "$T/hdrs"
+check "the stub targets let metadata parse a manifest with a lib path, build script, bin and test" \
+  sh -c "[ '$RC' = 0 ] && grep -q '^cargo metadata ' '$T/hdrs'"
+printf '[package]\nname = "out"\nversion = "0.1.0"\nedition = "2021"\n\n[lib]\npath = "../../outside.rs"\n' > "$WT/stubs/Cargo.toml"
 run "$DEPS" "$WT" -- cargo-tree --run audit_1 --manifest stubs/Cargo.toml
 check "a target path outside the manifest's directory: exit 3, cargo never runs" \
   sh -c "[ '$RC' = 3 ] && grep -q '^deps: blocker: stubs/Cargo.toml names a target outside its directory: ../../outside.rs' '$T/err' && ! grep -q '^== cargo' '$T/calls'"
-for table in '[patch.crates-io]\nserde = { version = "1", registry-index = "sparse+https://evil.invalid/" }' \
-  'patch.crates-io.serde = { git = "https://evil.invalid/serde" }' '[replace]\n"serde:1.0.0" = { path = "/tmp" }'; do
-  printf "[package]\nname = \"pt\"\nversion = \"0.1.0\"\n\n$table\n" > "$WT/stubs/Cargo.toml"
+# S1: a [patch]/[replace] table in every spelling is refused by the second-line backstop, before cargo runs.
+# Each form is placed before [package], so a header form defines a top-level [patch]/[replace] table and a
+# root key is a genuine top-level key (after [package] a dotted patch key would belong to [package]).
+while IFS='|' read -r form rest; do
+  [ -n "$form" ] || continue
+  { printf '%s\n' "$form"; [ -z "$rest" ] || printf '%s\n' "$rest"; printf '[package]\nname = "pt"\nversion = "0.1.0"\nedition = "2021"\n'; } > "$WT/stubs/Cargo.toml"
   r0=$(rows)
   run "$DEPS" "$WT" -- cargo-tree --run audit_1 --manifest stubs/Cargo.toml
-  check "a manifest with $(printf "$table" | sed -n 1p | cut -c1-40): exit 3, cargo never runs, nothing disclosed" \
-    sh -c "[ '$RC' = 3 ] && grep -qxF 'deps: blocker: stubs/Cargo.toml holds a [patch] or [replace] table, which deps.sh does not resolve: it can name any host; output audit_1/deps/cargo-tree-'\"\$(sed -n 's/.*cargo-tree-\([0-9]*\)[.]txt\$/\1/p' '$T/err')\"'.txt' '$T/err' && ! grep -q '^== cargo' '$T/calls' && [ \"\$(( \$(wc -l < '$DT') - 1 ))\" = '$r0' ]"
+  label=$(printf '%s' "$form" | cut -c1-36)
+  check "a [patch]/[replace] table as '$label': exit 3, cargo never runs, nothing disclosed" sh -c "
+    [ '$RC' = 3 ] && grep -qE '^deps: blocker: stubs/Cargo.toml (holds a \[patch\] or \[replace\] table|sets a root patch or replace key)' '$T/err' &&
+    ! grep -q '^== cargo' '$T/calls' && [ \"\$(( \$(wc -l < '$DT') - 1 ))\" = '$r0' ]"
+done <<'FORMS'
+[patch.crates-io]|serde = { version = "1", registry-index = "sparse+https://evil.invalid/" }
+["patch".crates-io]|serde = { git = "https://evil.invalid/serde" }
+['patch'.crates-io]|serde = {}
+[ "replace" ]|"serde:1.0.0" = { path = "/tmp" }
+["patch" . crates-io]|serde = {}
+patch.crates-io.serde = { registry-index = "sparse+https://evil.invalid/" }|
+"patch".crates-io.serde = { git = "https://evil.invalid/x" }|
+patch = { crates-io = { serde = { git = "https://evil.invalid/x" } } }|
+FORMS
+# A lockfile that names a source other than crates.io, or a patch table, is refused before cargo runs.
+printf '[package]\nname = "lp"\nversion = "0.1.0"\nedition = "2021"\n[dependencies]\nanyhow = "1"\n' > "$WT/stubs/Cargo.toml"
+for lock in 'git+https://evil.invalid/x' 'sparse+https://evil.invalid/'; do
+  printf 'version = 3\n\n[[package]]\nname = "anyhow"\nversion = "1.0.0"\nsource = "%s"\nchecksum = "00"\n' "$lock" > "$WT/stubs/Cargo.lock"
+  run "$DEPS" "$WT" -- cargo-tree --run audit_1 --manifest stubs/Cargo.toml --manifest stubs/Cargo.lock
+  check "a lockfile source '$lock' is refused before cargo runs" sh -c "[ '$RC' = 3 ] && grep -qxF 'deps: blocker: the lockfile names a source other than crates.io: $lock; output audit_1/deps/cargo-tree-'\"\$(sed -n 's/.*cargo-tree-\([0-9]*\)[.]txt\$/\1/p' '$T/err')\"'.txt' '$T/err' && ! grep -q '^== cargo' '$T/calls'"
 done
+printf 'version = 3\n\n[[patch.unused]]\nname = "x"\nversion = "1.0.0"\nsource = "git+https://evil.invalid/x"\n' > "$WT/stubs/Cargo.lock"
+run "$DEPS" "$WT" -- cargo-tree --run audit_1 --manifest stubs/Cargo.toml --manifest stubs/Cargo.lock
+check "a lockfile with a patch table is refused" sh -c "[ '$RC' = 3 ] && grep -q 'the lockfile holds a patch or replace table' '$T/err' && ! grep -q '^== cargo' '$T/calls'"
+# vet() still refuses a git, alt-registry or out-of-tree path dependency that metadata surfaces.
 for dep in '{"name":"evil","source":"git+https://evil.invalid/x","registry":null}|from git+https://evil.invalid/x, not crates.io' \
   '{"name":"alt","source":"registry+https://alt.invalid/index","registry":"https://alt.invalid/index"}|from another registry than crates.io' \
   '{"name":"far","source":null,"registry":null,"path":"/etc"}|at a path outside the copied manifests'; do
   settings FAKE_META_DEP="${dep%%|*}"
   r0=$(rows)
-  run "$DEPS" "$WT" -- cargo-tree --run audit_1 --manifest Cargo.toml --manifest programs/demo/Cargo.toml
+  run "$DEPS" "$WT" -- cargo-tree --run audit_1 --manifest pkg/Cargo.toml
   check "a dependency ${dep#*|}: exit 3, nothing resolved or disclosed" \
     sh -c "[ '$RC' = 3 ] && grep -q '${dep#*|}' '$T/err' && ! grep -q '^== cargo tree' '$T/calls' && [ \"\$(( \$(wc -l < '$DT') - 1 ))\" = '$r0' ]"
 done
-settings FAKE_OUTDATED_RC=1
-run "$DEPS" "$WT" -- cargo-outdated --run audit_1 --manifest Cargo.toml --manifest programs/demo/Cargo.toml --manifest Cargo.lock
-check "cargo-outdated: cargo outdated --workspace --exit-code 1 --color never, and outdated dependencies are exit 1" \
-  sh -c "[ '$RC' = 1 ] && grep -qx '== cargo outdated --workspace --exit-code 1 --color never --manifest-path $S/w/Cargo.toml' '$T/calls' && grep -q '^>> cargo-outdated: outdated dependencies found (exit 1): ' '$T/out'"
+settings SHIM_DUMP=1 FAKE_OUTDATED_RC=1
+run "$DEPS" "$WT" -- cargo-outdated --run audit_1 --manifest pkg/Cargo.toml --manifest pkg/Cargo.lock
+headers > "$T/hdrs"
+check "cargo-outdated: cargo outdated --workspace --exit-code 1 --color never on the rebuilt manifest, exit 1" \
+  sh -c "[ '$RC' = 1 ] && grep -qE '^cargo outdated --workspace --exit-code 1 --color never --manifest-path $S/rebuilt/.*Cargo.toml\$' '$T/hdrs' && ! grep -qE '^cargo outdated.*--manifest-path $S/w/' '$T/hdrs' && grep -q '^>> cargo-outdated: outdated dependencies found, from the rebuilt manifests (exit 1): ' '$T/out'"
 settings FAKE_OUTDATED_RC=2
-run "$DEPS" "$WT" -- cargo-outdated --run audit_1 --manifest Cargo.toml --manifest programs/demo/Cargo.toml
+run "$DEPS" "$WT" -- cargo-outdated --run audit_1 --manifest pkg/Cargo.toml
 check "cargo outdated that fails: exit 3" sh -c "[ '$RC' = 3 ] && grep -q '^deps: blocker: cargo outdated failed (exit 2)' '$T/err'"
 settings
 

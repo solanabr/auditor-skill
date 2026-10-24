@@ -136,12 +136,16 @@ for d, dirs, files in os.walk(top):
         text = open(os.path.join(d, "Cargo.toml")).read()
         m = re.search(r"(?ms)^\[package\].*?^name\s*=\s*\"([^\"]+)\"", text)
         if m:
-            pid = "path+file://%s#%s@0.1.0" % (d, m.group(1))
-            pkgs.append({"name": m.group(1), "id": pid, "manifest_path": os.path.join(d, "Cargo.toml"), "dependencies": []})
+            v = re.search(r"(?ms)^\[package\].*?^version\s*=\s*\"([^\"]+)\"", text)
+            ver = v.group(1) if v else "0.1.0"
+            pid = "path+file://%s#%s@%s" % (d, m.group(1), ver)
+            pkgs.append({"name": m.group(1), "version": ver, "edition": "2021", "id": pid,
+                         "manifest_path": os.path.join(d, "Cargo.toml"), "dependencies": [], "features": {}})
 extra = os.environ.get("FAKE_META_DEP", "")
 if extra and pkgs:
-    pkgs[0]["dependencies"].append(json.loads(extra))
-print(json.dumps({"packages": pkgs, "workspace_members": [p["id"] for p in pkgs]}))' "$mp"
+    val = json.loads(extra)
+    pkgs[0]["dependencies"].extend(val if isinstance(val, list) else [val])
+print(json.dumps({"packages": pkgs, "workspace_members": [p["id"] for p in pkgs], "workspace_root": top}))' "$mp"
     exit 0 ;;
   audit)
     say "files: $(ls -A | tr '\n' ' ')"
@@ -150,8 +154,12 @@ print(json.dumps({"packages": pkgs, "workspace_members": [p["id"] for p in pkgs]
     exit "${FAKE_AUDIT_RC:-0}" ;;
   tree|outdated)
     mp=$(arg_after --manifest-path "$@")
+    say "manifest: $mp"
     say "copies: $(cd "$(dirname "$mp")" && find . -type f -print | LC_ALL=C sort | tr '\n' ' ')"
     say "git: $(command -v git) $(git fetch 2>&1)"
+    # The manifests cargo was handed, one grepped line per interesting line of every Cargo.toml under them, so
+    # the suite can see what the rebuild produced.
+    [ -z "${SHIM_DUMP:-}" ] || find "$(dirname "$mp")" -name Cargo.toml -exec grep -hE '^\[|^[A-Za-z0-9_-]+ = ' {} + | sed 's/^/rebuilt| /' >> "$T/calls"
     echo "demo v0.1.0"
     [ "$1" = tree ] && exit "${FAKE_TREE_RC:-0}"
     exit "${FAKE_OUTDATED_RC:-0}" ;;
