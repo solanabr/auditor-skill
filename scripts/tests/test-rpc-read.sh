@@ -225,6 +225,13 @@ check "account: without --run, stderr names what went where, for the report" \
   test "$(cat "$T/err")" = "rpc-read: no --run, so no disclosures.tsv row: example.test received account address (getAccountInfo): $ADDR (Rule 11b; list it in the report)"
 tree "$W" > "$T/tree.after"
 check "account: without --run nothing is written in the working directory" cmp -s "$T/tree.before" "$T/tree.after"
+# A python3 that logs where it runs: every call runs from /, so nothing in the working directory (a
+# .python-version a pyenv shim reads) picks the interpreter.
+mkdir -p "$T/pycwd"; printf '#!/bin/sh\npwd -P >> "%s"\nexec "%s" "$@"\n' "$T/pycwd.log" "$PY" > "$T/pycwd/python3"; chmod +x "$T/pycwd/python3"
+: > "$T/pycwd.log"
+(cd "$W" && PATH="$T/pycwd:$T/sol:$PATH" "$READ" account "$ADDR") >"$T/out" 2>"$T/err"; RC=$?
+check "account: both python3 calls (the id check and the hash) run from /" \
+  sh -c "[ $RC = 0 ] && [ \"\$(grep -c . '$T/pycwd.log')\" = 2 ] && [ \"\$(sort -u '$T/pycwd.log')\" = / ]"
 run account "$ADDR" --run "$R"
 check "account --run: exit 0" test "$RC" = 0
 check "account --run: the data is kept in R/rpc/, byte for byte" cmp -s "$T/want.data" "$W/$R/rpc/account-$ADDR.data"

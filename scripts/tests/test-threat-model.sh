@@ -726,6 +726,15 @@ for tool in jq python3; do
     check "T-k ($tool): $bad is not copied" hasnt "$EX" "$bad"
   done
   check "T-k ($tool): another schema is recorded, not silently dropped" has "$OUT7/inputs.tsv" 'skipped: schema "something-else/2"'
+  if [ "$tool" = python3 ]; then
+    # A python3 that logs where it runs: the JSON helpers run from /, so nothing in the working
+    # directory (a .python-version a pyenv shim reads) picks the interpreter.
+    REALPY=$(python3 -I -c 'import sys; print(sys.executable)')
+    mkdir -p "$T/pycwd"; printf '#!/bin/sh\npwd -P >> "%s"\nexec "%s" "$@"\n' "$T/pycwd.log" "$REALPY" > "$T/pycwd/python3"; chmod +x "$T/pycwd/python3"
+    : > "$T/pycwd.log"
+    PATH="$T/pycwd:$PATH" TM_JSON_TOOL=python3 collect --offline --repo tgt --vulns other.json
+    check "T-k (python3): the JSON helpers run from /" sh -c "[ -s '$T/pycwd.log' ] && [ \"\$(sort -u '$T/pycwd.log')\" = / ]"
+  fi
   check "T-k ($tool): a CSV findings list is copied" has "$OUT7/inputs.tsv" "copied (list)"
   check "T-k ($tool): incidents count as trigger T4" has "$OUT7/history.md" "T4 yes incidents-json"
 done

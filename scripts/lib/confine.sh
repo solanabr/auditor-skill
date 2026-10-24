@@ -426,12 +426,13 @@ confine_disclose() {
 }
 
 # confine_b58_bytes <s>: print how many bytes the base58 text <s> (its alphabet already checked) decodes
-# to, each leading 1 counting as a zero byte; status 1 when python3 -I did not run.
+# to, each leading 1 counting as a zero byte; status 1 when python3 -I did not run. python3 runs from /,
+# so nothing in the working directory (a .python-version a pyenv shim reads) picks the interpreter.
 confine_b58_bytes() {
-  python3 -I -c 'import sys
+  (cd / && exec python3 -I -c 'import sys
 a = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 n = 0
 for c in sys.argv[1]:
     n = n * 58 + a.index(c)
-print(len(sys.argv[1]) - len(sys.argv[1].lstrip("1")) + (n.bit_length() + 7) // 8)' "$1" 2>/dev/null
+print(len(sys.argv[1]) - len(sys.argv[1].lstrip("1")) + (n.bit_length() + 7) // 8)' "$1") 2>/dev/null
 }

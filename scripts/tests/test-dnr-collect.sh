@@ -289,6 +289,12 @@ if cmp -s "$TT/evil/$EVR/corpus/transactions.jsonl" "$BIG" && [[ ! -e "$TT/shado
 else
   bad "exact: hostile working directory changed the result or loaded json.py"
 fi
+# A python3 that logs where it runs: every call runs from /, so nothing in the working directory (a
+# .python-version a pyenv shim reads) picks the interpreter.
+mkdir -p "$TT/pycwd"; printf '#!/bin/sh\npwd -P >> "%s"\nexec "%s" "$@"\n' "$TT/pycwd.log" "$PY" > "$TT/pycwd/python3"; chmod +x "$TT/pycwd/python3"
+: > "$TT/pycwd.log"
+( PATH="$TT/pycwd:$TT/jq16:$TT/bin:$PATH" run_collect "$TT/big-pycwd" -- "$A_ADDR" ) > "$TT/big-pycwd.out" 2>&1
+eq "exact: the python3 that writes the corpus runs from /" "$?|$(sort -u "$TT/pycwd.log" | tr '\n' ' ')" "0|/ "
 before="$(calls getSignaturesForAddress)"
 corpus_at "$TT/big-nopy"
 ( cd "$WT" && PATH="$TT/jq16:$TT/bin:$TT/nopy" "$DNR/collect.sh" --out "$(run_of "$TT/big-nopy")" --confirmed -- "$A_ADDR" ) > "$TT/big-nopy.out" 2>&1
@@ -1271,6 +1277,11 @@ G8="$(cd "$WT" && "$RUNDIR" new incident)"; mkdir "$WT/$G8/disclosures.tsv"
 before="$(cli_calls)"
 eq "snapshot disclosure: a disclosures.tsv that cannot take the row is refused (exit 2)" "$(rc_snap "$PID" "$G8")" "2"
 eq "snapshot disclosure: ... before any CLI call" "$(cli_calls)" "$before"
+G9="$(cd "$WT" && "$RUNDIR" new incident)"
+snap_pycwd() { rm -f "$FAKE_SOL_READS"; ( export FAKE_SOL_SLOTS=100; cd "$WT" && PATH="$TT/pycwd:$TT/sol:$TT/bin:$PATH" "$DNR/snapshot-program.sh" "$PID" "$G9" ) >/dev/null 2>&1; echo $?; }
+: > "$TT/pycwd.log"
+eq "snapshot: a first snapshot and a second, which hashes the kept one, exit 0" "$(snap_pycwd)|$(snap_pycwd)" "0|0"
+eq "snapshot: every python3 call (the id check and the hashes) runs from /" "$(sort -u "$TT/pycwd.log" | tr '\n' ' ')" "/ "
 mkdir -p "$WT/tmpin"
 eq "snapshot: a TMPDIR inside the working directory is a blocker (exit 3), with nothing made there" \
   "$(TMPDIR="$WT/tmpin" rc_snap "$PID" "$G7")|$(ls -A "$WT/tmpin")" "3|"

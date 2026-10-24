@@ -314,12 +314,16 @@ if [ "$magic" != "7f454c46" ]; then
   exit 3
 fi
 
-# hash_of <file>: "<sha256 of the bytes without trailing zeros> <their length> <padding length>"
+# hash_of <file>: "<sha256 of the bytes without trailing zeros> <their length> <padding length>". python3
+# runs from /, so nothing in the working directory (a .python-version a pyenv shim reads) picks the
+# interpreter; a relative <file> is named from the working directory.
 hash_of() {
-  python3 -I -c 'import hashlib, sys
+  local f=$1
+  case "$f" in /*) ;; *) f=$CONFINE_WT/$f ;; esac
+  (cd / && exec python3 -I -c 'import hashlib, sys
 raw = open(sys.argv[1], "rb").read()
 trimmed = raw.rstrip(b"\0")
-print(hashlib.sha256(trimmed).hexdigest(), len(trimmed), len(raw) - len(trimmed))' "$1" 2>/dev/null
+print(hashlib.sha256(trimmed).hexdigest(), len(trimmed), len(raw) - len(trimmed))' "$f") 2>/dev/null
 }
 re='^[0-9a-f]{64} [0-9]+ [0-9]+$'
 hashed() {  # hashed <file>: hash_of, or a blocker

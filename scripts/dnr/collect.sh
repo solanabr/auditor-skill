@@ -277,13 +277,14 @@ want='{"n":[18446744073709551615,-9007199254740993]}'
 if [ "$(printf '%s' "$probe" | jq -c '.result' 2>/dev/null)" = "$want" ]; then
   result_line() { jq -c '.result'; }
 else
+  # From /: nothing in the working directory (a .python-version a pyenv shim reads) picks the interpreter.
   result_line() {
-    python3 -I -c 'import json, sys
+    (cd / && exec python3 -I -c 'import json, sys
 r = json.loads(sys.stdin.buffer.read().decode("utf-8", "replace"))["result"]
 if not isinstance(r, dict):
     sys.exit(1)
 out = json.dumps(r, ensure_ascii=False, separators=(",", ":"))
-sys.stdout.buffer.write(out.encode("utf-8", "backslashreplace") + b"\n")' 2>/dev/null
+sys.stdout.buffer.write(out.encode("utf-8", "backslashreplace") + b"\n")') 2>/dev/null
   }
   if [ "$(printf '%s' "$probe" | result_line)" != "$want" ]; then
     echo "[blocker] this jq rounds integers above 2^53 (jq < 1.7) and python3 -I is not available to write the corpus instead; install jq >= 1.7 or python3." >&2

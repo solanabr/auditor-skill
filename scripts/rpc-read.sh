@@ -171,7 +171,8 @@ case "$what" in
     solana -C "$cfg" account "$id" --lamports --output-file "$data" > "$tmp/account.txt" 2> "$err" ||
       failed "the solana CLI could not read the account $id"
     [ -f "$data" ] || : > "$data"
-    sum=$(python3 -I -c 'import hashlib, sys
+    # From /, as every python3 call here: nothing in the working directory picks the interpreter.
+    sum=$(cd / && python3 -I -c 'import hashlib, sys
 d = open(sys.argv[1], "rb").read()
 print(len(d), hashlib.sha256(d).hexdigest())' "$data" 2>/dev/null)
     [[ "$sum" =~ ^[0-9]+\ [0-9a-f]{64}$ ]] || { echo "[blocker] python3 -I did not hash the account data." >&2; exit 3; }

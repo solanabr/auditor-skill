@@ -833,7 +833,9 @@ record() { # record <source> <format> <sha256> <stored_as> <status>
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$INPUT_N" "$(clean "$(redact "$1")")" "$2" "$3" "$4" "$(clean "$5")" >> "$STAGE/inputs.tsv"
 }
 # JSON tools in order of preference. When jq is missing, too old, or fails on a file, python3 takes
-# over; with neither, JSON inputs are recorded but never copied. TM_JSON_TOOL (jq | python3 | none)
+# over, run from / (its arguments are absolute, its program an argument rather than a here-document)
+# so nothing in the working directory picks the interpreter; with neither, JSON inputs are recorded but
+# never copied. TM_JSON_TOOL (jq | python3 | none)
 # pins the choice for tests.
 case "${TM_JSON_TOOL:-}" in
   jq) JSON_TOOLS="jq" ;; python3) JSON_TOOLS="python3" ;; none) JSON_TOOLS="" ;;
@@ -847,13 +849,10 @@ json_schema() {
   for tool in $JSON_TOOLS; do
     case "$tool" in
       jq) out=$(jq -r 'if type == "object" and (.schema | type) == "string" then .schema else empty end' "$1" 2>/dev/null) || continue ;;
-      python3) out=$(python3 -I - "$1" 2>/dev/null <<'PY'
-import json, sys
+      python3) out=$(cd / && python3 -I -c 'import json, sys
 d = json.load(open(sys.argv[1], encoding="utf-8"))
 if isinstance(d, dict) and isinstance(d.get("schema"), str):
-    print(d["schema"])
-PY
-) || continue ;;
+    print(d["schema"])' "$1" 2>/dev/null) || continue ;;
     esac
     printf '%s' "$out"; return 0
   done
@@ -882,8 +881,7 @@ extract_incidents() { # extract_incidents <in> <out>
            + {vuln: (.vuln | keep(["program", "instruction", "file", "function", "line", "mechanism", "kv", "checklist"]))}
            + {poc: (.poc | keep(["tier"]))} ]}' "$1" > "$2" 2>/dev/null || continue
           INCIDENTS_TYPE=$(jq -r '.incidents | type' "$1" 2>/dev/null) || continue ;;
-      python3) INCIDENTS_TYPE=$(python3 -I - "$1" "$2" 2>/dev/null <<'PY'
-import json, sys
+      python3) INCIDENTS_TYPE=$(cd / && python3 -I -c 'import json, sys
 def t(v):
     if isinstance(v, str): return v[:500]
     if isinstance(v, list): return [x[:500] for x in v if isinstance(x, str)]
@@ -901,9 +899,7 @@ for i in inc if isinstance(inc, list) else []:
         out["incidents"].append(r)
 json.dump(out, open(sys.argv[2], "w", encoding="utf-8"), indent=2)
 kinds = ((bool, "boolean"), (int, "number"), (float, "number"), (str, "string"), (list, "array"), (dict, "object"))
-print(next((name for cls, name in kinds if isinstance(inc, cls)), "null"))
-PY
-) || continue ;;
+print(next((name for cls, name in kinds if isinstance(inc, cls)), "null"))' "$1" "$2" 2>/dev/null) || continue ;;
     esac
     EXTRACTED_WITH=$tool; return 0
   done
