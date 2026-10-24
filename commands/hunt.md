@@ -136,11 +136,13 @@ directory.
    `-3`, … added once that is taken), so no earlier copy is written over
    (`rundir.sh new` made `logs/`; in a reused directory without one,
    `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" sub incident_<n> logs` makes it). The
-   copy asks for approval, by design for a path outside the working directory; if it
-   is denied, stop and tell the human, since nothing can read the export where it
-   is. Then check the copy, inside the working directory, where neither check asks:
-   `find incident_<n>/logs/<name> -type l` must print nothing (a copied symbolic
-   link makes the tools refuse the whole run directory), and
+   copy is the only step of getting a `--logs` corpus that asks: Claude Code asks
+   about a `cp` with flags from outside the working directory whatever the rules
+   say, so an interactive run prompts once for it, and a `claude -p` run is refused
+   it. If it is refused, stop and tell the human, since nothing can read the export
+   where it is. Then check the copy, inside the working directory, where neither
+   check asks: `find incident_<n>/logs/<name> -type l` must print nothing (a copied
+   symbolic link makes the tools refuse the whole run directory), and
    `"${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh"`, run again, refuses a copy that
    brought Claude Code project config into the working tree, such as a `.claude/` or
    a `.mcp.json` in the export. When either finds something, stop: show what it
@@ -154,9 +156,10 @@ directory.
    - Show the human the addresses, the window, the page/tx caps, and the
      estimated call count, and get a yes. In a non-interactive run, collection
      happens only if `--collect` was passed. It stands in for that yes, not for
-     permission prompts: in `claude -p` the snapshot, the collector and the
-     `--logs` copy are denied unless the permission mode or the run's rules allow
-     them; say so when one is denied, and stop.
+     permission prompts: in `claude -p` the snapshot and the collector are denied
+     unless the permission mode or the run's rules allow them, and the `--logs`
+     copy is refused (step 2's first paragraph); say so when one is denied, and
+     stop.
    - Pass exactly the approved values; collect.sh has no `--window` (it refuses an
      unknown argument), so never pass one. `--window <fromUnix>..<toUnix>` becomes
      `--since <fromUnix> --until <toUnix>` (an open end is left out); the page cap

@@ -151,7 +151,9 @@ directory.
 3. **Scope (Phase 1).** Corpus: `--logs`, copied into `incident_<n>/logs/` unopened
    as in `/auditor:hunt` step 2 (the analysis gets the `--logs` copies in
    `incident_<n>/logs/`, never the export's own path), or the gated collection,
-   which this command runs as there.
+   which this command runs as there. The copy is the only step of getting a
+   `--logs` corpus that asks: an interactive run prompts once for it, and a
+   `claude -p` run is refused it, whatever the rules say.
    Show the human the addresses, the window the agent proposed around the lead,
    the caps and the estimated call count, get a yes, and pass exactly those
    values: the window as `--since <fromUnix> --until <toUnix>`, the caps as

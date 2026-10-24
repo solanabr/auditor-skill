@@ -39,22 +39,26 @@ Telegram bot (`@seal_911_bot`). These commands are the after-the-fact workup.
 - **Your own corpus** (preferred): point `--logs` at a directory of
   `getTransaction` JSONL, a Geyser/indexer export, or service logs. The command
   copies it into `incident_<n>/logs/` first, since the analysis tools read only
-  files inside the run directory. The copy asks for your approval; a copy that
-  is or holds a symbolic link, or that brings Claude Code project config in
-  (`preflight.sh` runs again on it), stops the run. A
-  line the recipes cannot read is skipped and counted as a collection gap, never
-  guessed at: a non-integer amount, for example, is never rounded.
+  files inside the run directory. The copy is the only step of getting your
+  corpus that asks: Claude Code asks about a `cp` with flags from outside the
+  working directory whatever the rules say, so an interactive run prompts you
+  once for it, and a `claude -p` run is refused it. A copy that is or holds a
+  symbolic link, or that brings Claude Code project config in (`preflight.sh`
+  runs again on it), stops the run. A line the recipes cannot read is skipped and
+  counted as a collection gap, never guessed at: a non-integer amount, for
+  example, is never rounded.
 - **Collected from RPC** (gated): with no `--logs`, the command shows you the
   addresses, window, caps and estimated call count and asks before the one shipped
   collector runs. Set `RPC_URL` in the environment (never on the command line);
   the collector finalizes and passes `maxSupportedTransactionVersion: 1`, which is
   mandatory now that v1 transactions are live on mainnet. Non-interactive runs
   collect only with `--collect`, which stands in for your yes to the addresses,
-  window and caps, not for permission prompts: in `claude -p` the snapshot, the
-  collector and the `--logs` copy are denied unless the permission mode or the
-  run's rules allow them. A long collection runs in the background; one stopped by
-  INT, TERM or HUP, or by a failed write, records what it had not fetched as
-  collection gaps; for one killed outright, the agent records them from its files.
+  window and caps, not for permission prompts: in `claude -p` the snapshot and the
+  collector are denied unless the permission mode or the run's rules allow them,
+  and the `--logs` copy is refused (above). A long collection runs in the
+  background; one stopped by INT, TERM or HUP, or by a failed write, records what
+  it had not fetched as collection gaps; for one killed outright, the agent
+  records them from its files.
 - **Source** (`--repo`): needed to confirm a flaw and to reach
   `confirmed_exploited`; without it, findings cap at `suspected`.
 
