@@ -191,17 +191,18 @@ states it is fixed (unverified)".
 
 ## Run directory: `incident_<n>/`
 
-`<n>` is the highest existing number + 1; create the dir with `mkdir` (not `-p`)
-and stop if it already exists. Reuse an existing `incident_*` only if git does not
-track it and it holds no symbolic links, and only after the human confirms which
-one. Never write into a tracked `incident_*`. Both checks must print nothing and
-exit 0:
-`GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false --icase-pathspecs ls-files -- incident_<k>`
-(Rule 11c; any letter case) and `find incident_<k> -type l`. `collect.sh` and `snapshot-program.sh`
-refuse, with exit 2 and before writing anything, a run directory that is a
-symbolic link, holds one, is tracked by git, or that git or find cannot check,
-and a path to it with a `.` or `..` component or a symbolic link on its way
-inside the working directory.
+Make one with `"<auditor-skill root>/scripts/rundir.sh" new incident`, which takes
+the highest existing `<n>` + 1, writes its `.gitignore` of `*` first and makes
+`bin/`, `poc/`, `patches/`, `exec/` and `logs/`. Reuse one only after the human
+confirms which, and only when
+`"<auditor-skill root>/scripts/rundir.sh" check incident_<k>` prints
+`ok incident_<k>`: a real directory directly in the working directory, holding no
+symbolic link, tracked by no repository in any letter case, whose `.gitignore`
+holds exactly `*`. Never write into a tracked `incident_*`. `collect.sh` and
+`snapshot-program.sh` refuse, with exit 2 and before writing anything, a run
+directory that fails those checks or that git or find cannot check, and a path
+to it with a `.` or `..` component or a symbolic link on its way inside the
+working directory.
 The **first** thing written in a new run directory is a `.gitignore` containing a
 single line, `*` (Rule 11d) — a raw transaction corpus and off-chain logs can
 carry PII and must never be committed; the repo `.gitignore` also ignores
@@ -212,7 +213,9 @@ incident_<n>/
 ├── .gitignore                 # "*" — nothing here is ever committed
 ├── LEDGER.md                  # the hypothesis ledger (templates/hunt-ledger.md)
 ├── bin/                       # step-1 program snapshots: <id>.so + <id>.show.txt (later: <id>@<slot>.*)
-├── corpus/                    # collected or user-supplied logs — may contain PII
+├── disclosures.tsv            # one row per networked run: the service and what it received (Rule 11b)
+├── logs/                      # the --logs copies, one per export — may contain PII
+├── corpus/                    # the collected corpus — may contain PII
 │   ├── signatures.jsonl
 │   ├── transactions.jsonl
 │   └── collection-gaps.tsv
@@ -221,7 +224,9 @@ incident_<n>/
 ├── INCIDENTS.json             # the structured result (incidents-schema.md)
 ├── INCIDENT_REPORT.md         # the hunt write-up (templates/incident-report.md)
 ├── RESPONSE-INC-<n>.<k>.md    # one proposed plan per lead (templates/response-plan.md)
+├── rpc/                       # what rpc-read.sh printed, and an account's data, one file per read
 ├── poc/INC-<n>.<k>/           # the executed PoC crate for an incident
+├── exec/                      # artifacts and logs a bundled runner copies out of its scratch build
 └── patches/INC-<n>.<k>.patch  # a proposed fix + VERIFICATION.md
 ```
 
