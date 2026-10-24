@@ -665,6 +665,9 @@ if git -C "$REPO" init -q >/dev/null 2>&1 && git -C "$REPO" add -f incident_4/LE
 else
   bad "run dir: could not set up the test repository"
 fi
+# On a case-sensitive file system incident_6 is a directory of its own, untracked; on a case-insensitive
+# one it is INCIDENT_6. Either way git tracks it in another letter case.
+mkrun incident_6 2>/dev/null || true
 tree_state() { find "$X" "$REPO" -path "$REPO/.git" -prune -o -print | LC_ALL=C sort; cat "$X/canary"; }
 state_before="$(tree_state)"
 calls_before="$(grep -c . "$FAKE_CURL_LOG" 2>/dev/null || true)"
@@ -673,7 +676,7 @@ for case in \
   "a run dir that is a symbolic link:incident_3:incident_3/corpus:the run directory is a symbolic link: incident_3" \
   "the same link with a trailing slash:incident_3/:incident_3/corpus/:the run directory is a symbolic link: incident_3" \
   "a run dir git tracks:incident_4:incident_4/corpus:the run directory is tracked by git: incident_4" \
-  "a run dir git tracks in another letter case:incident_6:incident_6/corpus:the run directory "; do
+  "a run dir git tracks in another letter case:incident_6:incident_6/corpus:the run directory is tracked by git: incident_6"; do
   label="${case%%:*}"; rest="${case#*:}"; snapdir="${rest%%:*}"; rest="${rest#*:}"; outdir="${rest%%:*}"; why="${rest#*:}"
   ( cd "$REPO" && PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
       "$DNR/collect.sh" --out "$outdir" --confirmed --max-pages 1 -- "$A_ADDR" ) > "$TT/rd.out" 2>&1
