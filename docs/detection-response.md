@@ -40,9 +40,10 @@ Telegram bot (`@seal_911_bot`). These commands are the after-the-fact workup.
   `getTransaction` JSONL, a Geyser/indexer export, or service logs. The command
   copies it into `incident_<n>/logs/` first, since the analysis tools read only
   files inside the run directory; it stops at an export that is or holds a
-  symbolic link, and the copy asks for your approval. A line the recipes cannot
-  read is skipped and counted as a collection gap, never guessed at: a
-  non-integer amount, for example, is never rounded.
+  symbolic link, the copy asks for your approval, and `preflight.sh` then runs
+  again, so a copy that brings Claude Code project config in stops the run. A
+  line the recipes cannot read is skipped and counted as a collection gap, never
+  guessed at: a non-integer amount, for example, is never rounded.
 - **Collected from RPC** (gated): with no `--logs`, the command shows you the
   addresses, window, caps and estimated call count and asks before the one shipped
   collector runs. Set `RPC_URL` in the environment (never on the command line);
