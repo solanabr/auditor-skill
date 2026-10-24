@@ -193,8 +193,9 @@ because `python3 -I` keeps a sibling module off `sys.path`;
 - **Entry points.** Each recipe refuses to run (exit 2) from an installation
   inside the working directory, or from a path, as it was invoked or with its
   links resolved, holding a quote, `$`, a backtick, a backslash or a control
-  character, which its quoted call could not match as written. Its options come before the corpus paths, each at most once;
-  an unknown or repeated option is refused (exit 2). `profile.sh` sources
+  character, which its quoted call could not match as written. Its options come
+  before the corpus paths, each at most once; an unknown or repeated option is
+  refused (exit 2). `profile.sh` sources
   `scripts/lib/confine.sh`, which sets `LC_ALL=C` and `umask 077` and keeps only
   `PATH` entries outside the working directory; its private temp directory must
   lie outside it too, and it runs `jq` with `HOME` set to a directory that does
@@ -244,12 +245,13 @@ account's current value — at `finalized`, not in log text. See
 
 These scripts run on the auditor's machine; `collect.sh` makes outbound RPC calls.
 The `auditor:dnr-analyze` skill pre-approves `profile.sh`, `frames.py`, `deltas.py`
-and `jq-ro.sh` inside its fork, each run directly by its path and reading only
-files inside a run directory; `collect.sh`, `snapshot-program.sh` and `redact.sh`
-still ask for approval. Those lists, and these recipes, shape intent and are not a
-security boundary (see
-`references/detection-response/README.md` § "allowed-tools is not a sandbox"). Confinement, when you need it, is an isolated
-run mode (`OUTPUT-RULES.md` Rule 11a).
+and `jq-ro.sh` inside its fork, and `audit-logs` from `tools/auditor-tools/`, each
+run directly by its path and reading only files inside a run directory;
+`collect.sh`, `snapshot-program.sh` and `redact.sh` still ask for approval. Those
+lists, and these recipes, shape intent and are not a security boundary (see
+`references/detection-response/README.md` § "allowed-tools is not a sandbox").
+Confinement, when you need it, is an isolated run mode
+(`OUTPUT-RULES.md` Rule 11a).
 
 ## Local tooling
 

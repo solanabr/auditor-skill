@@ -211,7 +211,7 @@ Full walkthrough — layout, framework matrix, tiers, the "executable outranks p
 
 ## Bundled scripts
 
-Shell and Python scripts that ship with auditor-skill; there is nothing to build. The commands run them by absolute path from the installation, never by a `scripts/` path relative to the audited repository ([Rule 11e](../OUTPUT-RULES.md#11e--bundled-paths)), and run the Python ones as `python3 -I`. The shell scripts run under bash 3.2 or later. The blocks below give each script's arguments, exit codes, network use and outputs.
+Shell and Python scripts that ship with auditor-skill; there is nothing to build. The commands run them by absolute path from the installation, never by a `scripts/` path relative to the audited repository ([Rule 11e](../OUTPUT-RULES.md#11e--bundled-paths)); the Python ones run directly by that path, their first line running them as `python3 -I`. The shell scripts run under bash 3.2 or later. The blocks below give each script's arguments, exit codes, network use and outputs.
 
 ### Detection & response recipes (`scripts/dnr/`)
 
@@ -445,7 +445,7 @@ Each option is given at most once, except the repeatable `--paths`, `--parent-pa
 "<auditor-skill root>/scripts/rpc-read.sh" program-show <program_id> [--run <R>] [--cluster mainnet-beta|devnet|testnet]
 ```
 
-One read-only read from the chain through the `solana` CLI: an account's current value (`getAccountInfo`), one transaction, or a program's metadata such as its upgrade authority. It packages the throwaway-config method of [`references/detection-response/log-sources.md`](../references/detection-response/log-sources.md): the CLI runs on a config in a private temp directory, the endpoint in its `json_rpc_url` and a keypair path that names no file, and the read runs only when `solana config get keypair` reports that path back. Run it directly by its path, from the working directory.
+One read-only read from the chain through the `solana` CLI: an account's current value (`getAccountInfo`), one transaction, or a program's metadata such as its upgrade authority. The CLI runs on a throwaway config in a private temp directory, the endpoint in its `json_rpc_url` and a keypair path that names no file, and the read runs only when `solana config get keypair` reports that path back. Run it directly by its path, from the working directory.
 
 - **Endpoint:** `$RPC_URL` from the environment, never an argument; with `--cluster`, one of the public endpoints fixed in the script: `https://api.mainnet-beta.solana.com`, `https://api.devnet.solana.com` or `https://api.testnet.solana.com`.
 - **Reads:** `account` runs `solana account <address> --lamports --output-file <temp file>` and prints the address, balance in lamports, owner, executable flag and rent epoch, then the data's length and sha256; the data itself is never printed. `confirm` runs `solana confirm -v <signature>` and drops the CLI's first lines, which name the endpoint and the keypair path. `program-show` runs `solana program show <id>`, or `program-v4 show` for a loader-v4 program, each with a fixed authority so the CLI never looks for a signer, and the output must name the id as its Program Id. The CLI's output and errors pass through `redact.sh`, since its text can name the endpoint, key included. Every control character in what is printed shows as `?`, except TAB and LF.

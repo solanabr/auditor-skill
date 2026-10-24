@@ -236,7 +236,8 @@ auditor-skill/
 │
 ├── tools/auditor-tools/     ← Rust CLIs (cargo build --release)
 │   ├── audit-scan           ← deterministic pre-scan → JSON risky-surface map (~$0)
-│   └── audit-mem            ← SQLite cross-audit memory (dedup · regression · FP-suppression)
+│   ├── audit-mem            ← SQLite cross-audit memory (dedup · regression · FP-suppression)
+│   └── audit-logs           ← the D&R analysis recipes as one offline binary (cargo build --release --locked)
 │
 ├── templates/               ← Output + deliverable templates
 │   ├── report-template.md   ← Internal item-by-item verdict report
@@ -248,7 +249,7 @@ auditor-skill/
 │   └── patch/               ← patch + VERIFICATION templates
 │
 ├── docs/                    ← Usage guides (start at docs/README.md)
-├── scripts/                 ← report-to-pdf.sh, the CI checks (check-*.sh), tob-delta-review.sh + the no-attribution commit hook
+├── scripts/                 ← preflight.sh, rundir.sh, report-to-pdf.sh, the CI checks (check-*.sh), tob-delta-review.sh + the no-attribution commit hook
 │   ├── dnr/                 ← detection & response recipes (gated RPC collector, program snapshot, corpus profile, log frames, balance deltas, jq-ro.sh)
 │   ├── threat-model/        ← collect.sh — the read-only threat-model bootstrap collector
 │   └── tests/               ← script self-tests (+ fixtures/gha/, workflows that are never executed)

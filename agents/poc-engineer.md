@@ -57,7 +57,7 @@ against the program's **real bytes**:
 
 - **Use the step-1 snapshot.** `/auditor:hunt` and `/auditor:respond` dump and hash
   every implicated program into `incident_<n>/bin/` before anything else
-  (`bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/snapshot-program.sh"`, run from the
+  (`"${CLAUDE_PLUGIN_ROOT}/scripts/dnr/snapshot-program.sh"`, run from the
   installation, never a relative `scripts/` path), because a hotfix erases the
   incident binary.
   Use that `bin/<id>.so` as `VULNERABLE_SO` when its last-deployed slot precedes the
