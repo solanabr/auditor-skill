@@ -190,15 +190,17 @@ output never replaces a file, a re-run names a new one (`frames-2.jsonl`).
 Program bytes and `solana program show` come only from `snapshot-program.sh`, and
 signature history and transactions only from `collect.sh`. Any other read — an
 account's current value (`getAccountInfo`, the account-data half of Leg 1) or one
-transaction (`solana confirm -v <signature>`) — runs the solana CLI on a throwaway
-config, in a single command line: the URL stays out of argv, the keypair path
-names a file that does not exist, the read runs only if the CLI loaded that config,
-the exit status survives the redaction, and the directory is removed afterwards.
-Never pass `--url`.
+transaction — goes through `rpc-read.sh`, which runs the solana CLI on a throwaway
+config: the URL stays out of argv, the keypair path names a file that does not
+exist, the read runs only if the CLI loaded that config, its output and errors are
+redacted, and the directory is removed afterwards. The account's data is kept in
+`incident_<n>/rpc/account-<address>.data`, never printed; decode it from there
+(`python3 -I`). Each read is recorded in `incident_<n>/disclosures.tsv`. Never
+pass `--url`.
 
 ```bash
-# swap "account <address> --output json" for "confirm -v <signature>" as needed
-set -o pipefail; d="$(mktemp -d "${TMPDIR:-/tmp}/dnr_cli.XXXXXX")" && printf 'json_rpc_url: "%s"\nwebsocket_url: ""\nkeypair_path: "%s/none.json"\n' "$RPC_URL" "$d" > "$d/cli.yml" && solana -C "$d/cli.yml" config get keypair | grep -F "$d/none.json" > /dev/null && solana -C "$d/cli.yml" account <address> --output json 2>&1 | bash "<auditor-skill root>/scripts/dnr/redact.sh"; s=$?; rm -rf "$d"; (exit $s)
+"<auditor-skill root>/scripts/rpc-read.sh" account <address> --run incident_<n>
+"<auditor-skill root>/scripts/rpc-read.sh" confirm <signature> --run incident_<n>
 ```
 
 Aggregate `deltas.py` output further in Python ints (`python3 -I`, which asks for
