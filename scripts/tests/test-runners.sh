@@ -825,6 +825,9 @@ put("https://registry.npmjs.org/left-pad/1.3.0", json.dumps({"name": "left-pad",
     "tarball": "https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz", "integrity": integrity}}))
 put("https://registry.npmjs.org/left-pad/1.4.0", json.dumps({"name": "left-pad", "version": "1.4.0", "dist": {
     "tarball": "https://evil.invalid/left-pad-1.4.0.tgz", "integrity": integrity}}))
+put("https://registry.npmjs.org/left-pad/-/left-pad-1.5.0.tgz", npm)
+put("https://registry.npmjs.org/left-pad/1.5.0", json.dumps({"name": "left-pad", "version": "1.5.0", "dist": {
+    "tarball": "https://registry.npmjs.org/left-pad/-/left-pad-1.5.0.tgz", "shasum": hashlib.sha1(npm).hexdigest()}}))
 put("https://registry.npmjs.org/@solana_2Fweb3.js/1.95.5", json.dumps({"name": "@solana/web3.js", "version": "1.95.5"}))
 put("https://registry.npmjs.org/left-pad/latest", json.dumps({"name": "left-pad", "version": "1.3.0"}))
 versions = {"1.%d.0" % i: {"version": "1.%d.0" % i, "readme": "x" * 400} for i in range(300)}
@@ -907,6 +910,10 @@ check "fetch-artifact npm: the tarball at the URL the registry's name gives, its
 run "$DEPS" "$WT" -- fetch-artifact --run audit_1 npm left-pad 1.4.0
 check "an npm record whose tarball is elsewhere: exit 3, nothing downloaded" \
   sh -c "[ '$RC' = 3 ] && grep -q 'names the tarball at https://evil.invalid/left-pad-1.4.0.tgz' '$T/err' && ! grep -q 'url: https://evil' '$T/calls'"
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 npm left-pad 1.5.0
+n=$(sed -n 's/.*fetch-artifact-\([0-9]*\)[.]txt$/\1/p' "$T/out")
+check "a version with only a sha1 shasum verifies but the output marks it weak" \
+  sh -c "[ '$RC' = 0 ] && grep -q '^digest: sha1 .* (weak: the npm registry offered no sha512 integrity' '$WT/audit_1/deps/fetch-artifact-$n.txt'"
 r0=$(rows)
 run "$DEPS" "$WT" -- fetch-artifact --run audit_1 pypi demo 1.0
 n=$(sed -n 's/.*fetch-artifact-\([0-9]*\)[.]txt$/\1/p' "$T/out")

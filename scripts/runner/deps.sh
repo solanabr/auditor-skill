@@ -25,7 +25,9 @@
 #   pypi-info       <project> [<version>]: PyPI's record of the project, or of that version
 #   fetch-artifact  crates|npm|pypi <package> <version>: the published artifact (a .crate, the npm tarball,
 #                   or the sdist, else a pure-Python wheel), its digest checked against the registry's
-#                   (crates.io's checksum, npm's integrity, PyPI's sha256), unpacked without running anything
+#                   (crates.io's sha256 checksum, npm's sha512 integrity, PyPI's sha256; npm's legacy sha1
+#                   shasum only when the version has no integrity, and the output then says it is weak),
+#                   unpacked without running anything
 #                   into <R>/deps/fetch-artifact-<n>/files/ next to the artifact itself (checklist 11 §11.11).
 #                   Only regular files and directories are unpacked, with modes 0600 and 0700; every other
 #                   entry, and every name that is absolute, has a .. component or a control character, is
@@ -709,7 +711,9 @@ def verify(archive, algo, expected):
 
 
 def unpack(archive, filename, algo, expected, dest):
-    print("digest: %s %s, as the registry gives it" % (algo, verify(archive, algo, expected)))
+    got = verify(archive, algo, expected)
+    weak = "" if algo != "sha1" else " (weak: the npm registry offered no sha512 integrity for this version, only a sha1 shasum; sha1 is collision-weak, so this is not a strong content check)"
+    print("digest: %s %s, as the registry gives it%s" % (algo, got, weak))
     entries, skipped = [], []
     if filename.endswith((".whl", ".zip")):
         z = zipfile.ZipFile(archive)
