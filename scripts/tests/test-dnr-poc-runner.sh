@@ -68,6 +68,9 @@
 #     call, no build script and no test binary; HOME is a throwaway one with a fresh
 #     Solana keypair, but for cargo build-sbf; only cargo's downloads see the proxy;
 #   * the resolved Cargo.lock comes back into the crate in place of a regular file only;
+#   * scripts/runner/probe.sh: fixed version queries from a scratch directory in the
+#     cleaned environment, the isolation line, --only and its case file
+#     fixtures/probe/cases.txt;
 #   * the patch verification recipe (templates/patch/VERIFICATION.md §1): its worktree
 #     is made in a Rule 11c copy, and no git runs in the client checkout.
 #
@@ -1009,6 +1012,7 @@ code="$(gate "$T/stop" "$NATIVE" "$VULN")"
 # ---------------------------------------------------------------------------
 ROOT="$(cd "$HERE/../.." && pwd -P)"
 RUNSH="$ROOT/templates/poc/run.sh"
+PROBE="$ROOT/scripts/runner/probe.sh"
 NT="$T/tmp-new"; NTC="$T/tmp-cache"; WT="$T/wt"; CLEANHOME="$T/home-clean"
 # The runs below get an empty HOME, so they name the real cargo and rustup homes.
 TOOL_HOMES=(CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}")
@@ -1462,6 +1466,83 @@ for sh in "${SHELLS[@]}"; do
     && [ -z "$(ls -A "$T/cfgparent/tmp")" ] && ok "iso_scratch ($sh): a scratch directory under a .cargo/config.toml -> refused" || bad "iso_scratch ($sh) under a cargo config: $rc '$out'"
 done
 
+# scripts/runner/probe.sh: fixed version queries from a scratch directory, in the cleaned environment
+# with the real HOME, the proxy at a closed port, standard input closed; absent and unusable tools; the
+# isolation line; --only; its case file; and where it refuses to run.
+[ "$(sed -n 1p "$PROBE")" = '#!/bin/bash' ] && [ -x "$PROBE" ] && ok "probe.sh starts with #!/bin/bash and is executable" || bad "probe.sh shebang or mode"
+if command -v git >/dev/null 2>&1 && mode="$(git -C "$ROOT" ls-files -s -- scripts/runner/probe.sh 2>/dev/null)" && [ -n "$mode" ]; then
+  [ "${mode%% *}" = 100755 ] && ok "git records probe.sh as 100755" || bad "git records probe.sh as ${mode%% *}"
+fi
+PB="$T/probe-bin"; PS="$T/probe-sys"; PH="$T/probe-home"; PT="$T/tmp-probe"; mkdir -p "$PB" "$PS" "$PH" "$PT"
+for tool in env mkdir mktemp rm; do p="$(command -v "$tool")" && ln -sf "$p" "$PS/$tool"; done
+ln -sf "$(python3 -I -c 'import sys; print(sys.executable)')" "$PS/python3"
+fake() {  # fake <name> <script body>: a stand-in tool that logs how it was run, then runs the body
+  printf '#!/bin/sh\n{ echo "== %s $*"; echo "PWD=$PWD"; if read -r x; then echo "stdin: data"; else echo "stdin: closed"; fi; /usr/bin/env; } >> "%s" 2>&1\n%s\n' \
+    "$1" "$T/probe.log" "$2" > "$PB/$1"
+  chmod +x "$PB/$1"
+}
+fake cargo 'case "$1" in build-sbf) echo "solana-cargo-build-sbf 9.9.9 (fake)" ;; *) echo "cargo 9.9.9 (fake)" ;; esac'
+fake cargo-build-sbf 'exit 0'
+fake rustup 'case "$1" in default) echo "fake-toolchain (default)" ;; *) echo "rustup 9.9.9 (fake)"; echo "info: more" >&2 ;; esac'
+fake anchor 'echo "anchor broke" >&2; exit 1'
+fake solana 'echo "solana-cli 9.9.9 (fake, on stderr)" >&2'
+fake surfpool 'echo "surfpool 9.9.9 (fake)"; i=0; while [ $i -lt 2000 ]; do echo "padding line $i of the long output a tool can print, past a pipe buffer"; i=$((i + 1)); done'
+fake semgrep 'exit 0'
+probe_run() {  # probe_run [VAR=val ...] -- <argument>... -> exit code; stdout in $T/out, stderr in $T/err
+  local -a vars=()
+  while [ $# -gt 0 ] && [ "$1" != -- ]; do vars+=("$1"); shift; done
+  [ $# -gt 0 ] && shift
+  rm -f "$T/probe.log"
+  ( cd "$WT" && env -i HOME="$PH" PATH="$PB:$PS" TMPDIR="$PT" ${vars[@]+"${vars[@]}"} "$PROBE" "$@" ) >"$T/out" 2>"$T/err" </dev/null
+  echo $?
+}
+code="$(probe_run GITHUB_TOKEN=canary-p1 HTTPS_PROXY=http://proxy.invalid:3128 AUDITOR_CANARY=canary-p2 --)"
+expect="$(printf '%s\n' 'cargo: cargo 9.9.9 (fake)' 'rustup: rustup 9.9.9 (fake)' 'cargo-build-sbf: solana-cargo-build-sbf 9.9.9 (fake)' \
+  'cargo-fuzz: absent' 'trident: absent' 'anchor: unusable (exit 1)' 'solana: solana-cli 9.9.9 (fake, on stderr)' 'surfpool: surfpool 9.9.9 (fake)' \
+  'semgrep: unusable (no version printed)' 'pandoc: absent')"
+got="$(sed -n '1,10p' "$T/out")"
+[ "$code" = 0 ] && [ "$got" = "$expect" ] && grep -q '^python3: Python 3\.' "$T/out" && grep -q '^isolation: ' "$T/out" && [ "$(wc -l < "$T/out" | tr -d ' ')" = 12 ] && [ ! -s "$T/err" ] \
+  && ok "probe.sh: one line per tool in order (a version, absent or unusable, stderr when stdout is empty, a long output read whole)" || { bad "probe.sh output: exit $code"; cat "$T/out" "$T/err" >&2; }
+if [ -s "$T/probe.log" ] && ! grep -q canary "$T/probe.log" && ! grep -q 'proxy.invalid' "$T/probe.log" \
+   && [ "$(grep -c '^HTTPS_PROXY=http://127.0.0.1:9$' "$T/probe.log")" = "$(grep -c '^== ' "$T/probe.log")" ] \
+   && [ "$(grep -c "^HOME=$PH\$" "$T/probe.log")" = "$(grep -c '^== ' "$T/probe.log")" ] \
+   && [ "$(grep -c '^stdin: closed$' "$T/probe.log")" = "$(grep -c '^== ' "$T/probe.log")" ] \
+   && [ "$(grep -c '^CARGO_NET_OFFLINE=true$' "$T/probe.log")" = "$(grep -c '^== ' "$T/probe.log")" ] \
+   && grep -q '^RUSTUP_TOOLCHAIN=fake-toolchain$' "$T/probe.log" \
+   && [ "$(grep -c "^PWD=$PT/auditor-probe\." "$T/probe.log")" -ge "$(grep -c '^== ' "$T/probe.log")" ] \
+   && [ -z "$(grep '^PWD=' "$T/probe.log" | grep -v "^PWD=$PT/auditor-probe\.")" ]; then
+  ok "probe.sh runs each query from its scratch directory in the cleaned environment: real HOME, closed proxy, offline cargo, pinned toolchain, stdin closed, no token"
+else
+  bad "probe.sh environment"; cat "$T/probe.log" >&2
+fi
+[ -z "$(ls -A "$PT")" ] && ok "probe.sh removes its scratch directory" || bad "probe.sh left $(ls -A "$PT")"
+code="$(probe_run -- --only solana,cargo)"
+[ "$code" = 0 ] && [ "$(cat "$T/out")" = "$(printf '%s\n%s' 'cargo: cargo 9.9.9 (fake)' 'solana: solana-cli 9.9.9 (fake, on stderr)')" ] \
+  && ok "probe.sh --only solana,cargo -> those two, in probe.sh's order" || { bad "probe.sh --only: exit $code"; cat "$T/out" >&2; }
+mkdir -p "$PH/.aws"; printf 'secret\n' > "$PH/.aws/credentials"
+code="$(probe_run -- --only isolation)"
+[ "$code" = 0 ] && case "$(cat "$T/out")" in "isolation: readable: $PH/.aws/credentials"*) true ;; *) false ;; esac \
+  && ok "probe.sh --only isolation names a readable credential" || { bad "probe.sh isolation line: exit $code"; cat "$T/out" >&2; }
+rm -rf "$PH/.aws"
+rm -f "$PS/python3"
+code="$(probe_run -- --only python3,isolation)"
+[ "$code" = 0 ] && [ "$(cat "$T/out")" = "$(printf '%s\n%s' 'python3: absent' 'isolation: not checked (python3 is not on PATH)')" ] \
+  && ok "probe.sh without python3: python3 absent, isolation not checked" || { bad "probe.sh without python3: exit $code"; cat "$T/out" >&2; }
+ln -sf "$(python3 -I -c 'import sys; print(sys.executable)')" "$PS/python3"
+mkdir -p "$WT/tmp-inside"
+code="$(probe_run TMPDIR="$WT/tmp-inside" --)"
+[ "$code" = 64 ] && grep -q "^probe: refused: the scratch directory $WT/tmp-inside/auditor-probe\..* lies inside the working directory; point TMPDIR outside it\$" "$T/err" \
+  && [ ! -s "$T/out" ] && [ -z "$(ls -A "$WT/tmp-inside")" ] && ok "probe.sh with TMPDIR inside the working directory -> 64, nothing left" || { bad "probe.sh TMPDIR inside WT: exit $code"; cat "$T/err" >&2; }
+rmdir "$WT/tmp-inside"
+code="$(probe_run TMPDIR="$T/cfgparent/tmp" --)"
+[ "$code" = 64 ] && grep -q "would inherit $T/cfgparent/.cargo/config.toml" "$T/err" && [ -z "$(ls -A "$T/cfgparent/tmp")" ] \
+  && ok "probe.sh with a scratch directory under a .cargo/config.toml -> 64" || { bad "probe.sh under a cargo config: exit $code"; cat "$T/err" >&2; }
+mkdir -p "$T/probe-copy"; cp "$PROBE" "$T/probe-copy/probe.sh"
+code="$( (cd "$WT" && env -i HOME="$PH" PATH="$PB:$PS" TMPDIR="$PT" /bin/bash "$T/probe-copy/probe.sh") >"$T/out" 2>"$T/err"; echo $?)"
+[ "$code" = 64 ] && [ "$(cat "$T/err")" = 'probe: refused: probe.sh runs from <auditor-skill root>/scripts/runner' ] \
+  && ok "a copy of probe.sh outside scripts/runner -> 64" || { bad "probe.sh copy: exit $code"; cat "$T/err" >&2; }
+case_file "$HERE/fixtures/probe/cases.txt" "$PROBE" "$WT"
+[ "$CASES_RUN" -gt 10 ] && ok "the probe.sh case file has cases ($CASES_RUN)" || bad "the probe.sh case file has $CASES_RUN cases"
 
 # ---------------------------------------------------------------------------
 # Real cargo and rustup, when present: the template's own tests and shared-test-utils,

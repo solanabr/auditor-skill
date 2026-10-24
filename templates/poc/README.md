@@ -67,6 +67,9 @@ default wallet reaches this crate's code; only `cargo build-sbf` keeps the real
 makes a new crate, the template's files byte for byte, and `--new-cache` makes a build
 cache (below) and prints its path.
 
+**Toolchains.** `"<auditor-skill root>/scripts/runner/probe.sh"` reports the
+toolchains these runs need and whether this machine passes the self-check.
+
 Build and test only through `run.sh`. It builds both arms with `cargo build-sbf`
 (platform-tools >= v1.54), builds each arm's test binary and runs it with
 `SBF_OUT_DIR` wired — never inside the audited repo. The crate is copied to a scratch
