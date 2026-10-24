@@ -1691,7 +1691,7 @@ eq "--out: 120 runs under a directory swap -> no file outside, no temporary file
 #     frames or deltas exits non-zero with one "refused" line, prints nothing on
 #     stdout, changes no file, leaves no temporary file and shows no canary text.
 #     A copy of the recipes inside the working directory, or under a path holding a
-#     quote or $, refuses to run (exit 2).
+#     quote or $, refuses to run (exit 2). profile.sh's jq reads no ~/.jq.
 # ---------------------------------------------------------------------------
 eq "entry points: the #! lines" \
   "$(head -n 1 "$DNR/profile.sh")|$(head -n 1 "$DNR/frames.py")|$(head -n 1 "$DNR/deltas.py")" \
@@ -1726,6 +1726,11 @@ for root in "$RW/inst" "$TT/q24\"x" "$TT/d24\$x"; do
 done
 eq "entry points: an installation inside the working directory, or under a path holding a quote or \$, is refused (exit 2, no output)" \
   "${res# }" "2 2 2 2 2 2 2 2 2"
+mkdir -p "$TT/home24"
+printf 'def tostring: "HOME-JQ";\n' > "$TT/home24/.jq"
+printf '%s\n' '{"version":7,"meta":{"err":null},"transaction":{"signatures":["SigVersion7"],"message":{"accountKeys":["Payer7"]}}}' > "$RW/incident_1/v24.jsonl"
+eq "entry points: profile.sh's jq reads no ~/.jq (the version histogram as jq prints it)" \
+  "$(cd "$RW" && HOME="$TT/home24" "$DNR/profile.sh" incident_1/v24.jsonl 2>&1 | sed -n '/^-- version/{n;p;}' | tr -s ' ')" " 1 7"
 # ---- hostile layout (fixtures/audit-logs/hostile-args.txt); the same block is in test-audit-logs.sh and test-dnr.sh
 # hostile_layout <dir> <a clean transaction line>: the working directory the case file
 # names, <dir>/wt, and a directory outside it, <dir>/outside, in which a canary

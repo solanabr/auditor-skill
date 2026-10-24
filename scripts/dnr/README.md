@@ -195,8 +195,9 @@ because `python3 -I` keeps a sibling module off `sys.path`;
   match as written. Its options come before the corpus paths, each at most once;
   an unknown or repeated option is refused (exit 2). `profile.sh` sources
   `scripts/lib/confine.sh`, which sets `LC_ALL=C` and `umask 077` and keeps only
-  `PATH` entries outside the working directory, and its private temp directory
-  must lie outside it too.
+  `PATH` entries outside the working directory; its private temp directory must
+  lie outside it too, and it runs `jq` with `HOME` set to a directory that does
+  not exist, so no `~/.jq` is read.
 - **audit-logs.** `tools/auditor-tools/audit-logs` is the same three recipes as
   one binary, and `scripts/tests/test-audit-logs.sh` fails when its output,
   notes, exit status or refusals differ from these scripts'. A change to what a

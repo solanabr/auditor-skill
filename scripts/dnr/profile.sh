@@ -62,6 +62,9 @@ here=$(cd -P -- "$here" 2>/dev/null && pwd -P) || { echo "profile.sh: refused: t
 # Every recipe refuses with exit 2 (README.md, Input contract), confine.sh with 64.
 confine_refuse() { printf '%s: refused: %s\n' "$CONFINE_TOOL" "$1" >&2; exit 2; }
 confine_init profile.sh "${here%/*/*}"
+# jq reads ~/.jq at start; nothing here needs HOME.
+HOME=/nonexistent
+export HOME
 for tool in jq python3; do
   command -v "$tool" >/dev/null 2>&1 || { echo "[blocker] $tool is not on PATH; profile.sh needs jq and python3." >&2; exit 3; }
 done
