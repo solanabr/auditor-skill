@@ -787,8 +787,9 @@ done
 # The run directory of --out is opened once and the temporary file is made, linked
 # and removed through it: a run directory moved aside mid-run, and replaced by a link
 # to a directory outside, gets the output in the directory opened, and nothing goes
-# through the link. profile writes nothing before its report is whole; it then checks
-# --out again and refuses the link, as profile.sh does.
+# through the link. (profile, which reads no stdin, opens its run directory only once
+# its report is whole, after checking --out again, as profile.sh does; the run below
+# holds frames and deltas on stdin.)
 mkdir -p "$WT/incident_7" "$T/outside7"
 printf '*\n' > "$WT/incident_7/.gitignore"
 partial7() { local f; for f in "$WT"/incident_7/.*.partial; do [[ -e "$f" ]] && return 0; done; return 1; }
