@@ -13,8 +13,8 @@ binaries:
   output.
 
 `audit-scan` and `audit-mem` are built from one library; `audit-logs` is its own
-package, `audit-logs/`, with no dependencies. These are plain synchronous CLIs — no
-async runtime, no network. Parsing uses `syn` with `proc-macro2`'s
+package, `audit-logs/`, with one dependency, `libc`. These are plain synchronous
+CLIs — no async runtime, no network. Parsing uses `syn` with `proc-macro2`'s
 `span-locations` feature, so every finding carries a real line number
 (`node.span().start().line`).
 
@@ -33,13 +33,16 @@ cargo test --locked          # the tests of both packages
 The `rusqlite` dependency uses the `bundled` feature — it compiles SQLite from
 source (`cc` required), so there is no system-library dependency.
 `cargo build --release --locked -p audit-logs` builds `audit-logs` alone: it
-compiles no dependency and needs no C compiler, though cargo still reads the
-crates.io index once for the workspace lockfile.
+compiles one dependency, `libc` (whose build script reads the `rustc` version and
+sets configuration flags), and needs no C compiler, though cargo still reads the
+crates.io index for the workspace lockfile.
 
 A plugin update installs auditor-skill into a new versioned directory, so the
 binaries have to be built again after each update. Until `audit-logs` is built
 there, `/auditor:hunt`, `/auditor:respond` and `incident-responder` run the scripts
-in `scripts/dnr/`.
+in `scripts/dnr/`. An update in place, such as a `git pull` of a clone, leaves the
+old `audit-logs` in `target/`, which then refuses to run (exit 4, below) until it is
+built again.
 
 ## `audit-scan`
 
@@ -229,53 +232,80 @@ Each subcommand prints what its script in `scripts/dnr/` prints, byte for byte:
 the rows of `deltas.py`, with the same `skipped …` notes on stderr and the same exit
 status. It reads its input under the same input contract
 (`scripts/dnr/README.md`, "Input contract"): a malformed line is counted and
-reported, never echoed and never fatal; a line nested more than 200 levels deep, or
-holding an integer literal of more than 20 digits or `-0`, is malformed; a lamport
-balance, the fee or a token amount that is not a u64 value (0 to 2^64 − 1) makes
-its line malformed and is never rounded; every total is exact; a transaction
-several corpora hold is read once. A key, program id or string version holding a
-character of the contract's fixed list (the C0 and C1 controls, DEL, the line and
-paragraph separators, the bidirectional controls, and the code points Unicode
-marks default-ignorable, U+00AD and U+E0000–U+E0FFF among them) is malformed, and
-no subcommand prints such a character raw: `frames` and `deltas` escape it, and so
-does `profile` in a version that is not a string. `deltas
-lamports` prints a balance whose index has no account key as `#<index>` and counts
-those rows on stderr. `scripts/tests/test-audit-logs.sh`
-checks the output against the scripts on every fixture in `scripts/dnr/fixtures/`,
-on the crafted input-contract cases of `test-dnr.sh`, and on a generated corpus of
-6,000 transactions. The scripts stay the reference implementation.
+reported, never echoed and never fatal; a line nested more than 128 levels deep,
+counted on its text before it is parsed, or holding an integer literal of more than
+20 digits or `-0`, is malformed; a lamport balance, the fee or a token amount that
+is not a u64 value (0 to 2^64 − 1) makes its line malformed and is never rounded;
+every total is exact; a transaction several corpora hold is read once. A key,
+program id or string version holding a character of the contract's fixed list (the
+C0 and C1 controls, DEL, the line and paragraph separators, the bidirectional
+controls, and the code points Unicode marks default-ignorable, U+00AD and
+U+E0000–U+E0FFF among them) is malformed, and no subcommand prints such a character
+raw: `frames` and `deltas` escape it, and so does `profile` in a version that is not
+a string. `deltas` prints a balance whose index has no account key as `#<index>`,
+and a token balance with no `accountIndex` as a row of its own, `#?`, and counts
+each kind on stderr; neither is merged with another account.
+`scripts/tests/test-audit-logs.sh` checks the output against the scripts on every
+fixture in `scripts/dnr/fixtures/`, on the crafted input-contract cases of
+`test-dnr.sh`, and on a generated corpus of 6,000 transactions. The scripts stay the
+reference implementation.
 
 The commands run it only by its absolute path in the installation, and only when
 that file exists and is executable:
 `"<auditor-skill root>/tools/auditor-tools/target/release/audit-logs"`.
 
+### A stale build
+
+`audit-logs` carries a copy of the three recipes it was built from (`include_bytes!`
+of `scripts/dnr/profile.sh`, `frames.py` and `deltas.py`, read from the installation
+it was built in). Before anything else it compares them with the installed ones;
+when one differs, or cannot be read, it writes nothing and exits 4 with one line:
+
+```
+audit-logs: stale build: <recipe> is not the one it was built from; rebuild it (cargo build --release --locked in tools/auditor-tools) or run the scripts
+```
+
+No recipe exits 4, so a caller that sees it runs the scripts.
+
 ### Where it reads and writes
 
 It is built to be pre-approved as one `Bash(…)` rule on its absolute path, so it
-must be safe whatever arguments follow:
+must be safe whatever arguments follow. It takes and refuses the same paths as the
+three recipes, in the same words (`scripts/dnr/README.md`, "Input contract"), and
+`test-audit-logs.sh` runs every case of
+`scripts/tests/fixtures/audit-logs/hostile-args.txt` with both:
 
 - Every path is relative to the working directory, has no `.`, `..` or empty
-  component, passes through no symbolic link, and names a file inside an
-  `incident_<n>/` run directory: a real directory, directly in the working
-  directory, holding a `.gitignore` of `*` (OUTPUT-RULES.md Rule 11d). Anything else
-  is refused, with exit 2, before any input is read. Run the scripts on a corpus
-  kept elsewhere, such as a `--logs` export.
-- An input is opened without following a link and must still be the regular file
-  that was checked. With no corpus named, `frames` and `deltas` read stdin.
+  component, passes through no symbolic link (each name on the way is checked with
+  `lstat`), and names a file inside an `incident_<n>/` run directory: a real
+  directory, directly in the working directory, holding a `.gitignore` of `*`
+  (OUTPUT-RULES.md Rule 11d). An input must be a regular file with one name: a
+  second name (a hard link) could be a file outside the run directory. Anything
+  else is refused, with exit 2, before any input is read. Copy a corpus kept
+  elsewhere, such as a `--logs` export, into the run directory first.
+- An input is opened through each directory on its way from the working directory
+  (`openat`, never following a link) and must still be the regular file with one
+  name that was checked. With no corpus named, `frames` and `deltas` read stdin.
 - `--out <file>` names a new file directly in the run directory, `<name>.jsonl`,
   `.tsv` or `.txt`; an output never replaces a file, so an existing `<file>` is
-  refused. It writes a new temporary file beside `<file>`, created exclusively and
-  never through a link, and links it to `<file>` once the output is whole, after
-  checking the path again; TERM, INT and HUP remove the temporary file.
+  refused. The run directory is opened once, without following a link, and must be
+  the directory checked; the temporary file is made in it
+  (`O_CREAT|O_EXCL|O_NOFOLLOW`, mode 0600), linked to `<file>` once the output is
+  whole (`linkat`, which never replaces a file) and removed (`unlinkat`), all
+  through that descriptor, so a run directory moved or replaced by a link mid-run
+  never moves the output elsewhere. TERM, INT and HUP remove the temporary file; they are held
+  off while it is made. `profile` checks `--out` again and opens its run directory
+  only once its report is whole, as `profile.sh` does.
 - Each option is given once, before the corpus paths.
 - It refuses to run from an installation inside the working directory, or from a
-  path holding a quote, `$`, a backtick, a backslash or a newline.
+  path holding a quote, `$`, a backtick, a backslash or a control character.
 - It opens no network connection, runs no other program and reads no environment
-  variable.
+  variable. It does not ask git whether it tracks the run directory, and on a
+  case-insensitive filesystem a directory named `INCIDENT_1` is read as
+  `incident_1/`; `scripts/rundir.sh` makes and checks run directories.
 
 Exit: 0 done · 1 an input that cannot be read, an `--out` that cannot be written,
-or a failed write · 2 usage, or a refused path. `profile` also exits 2 for an input
-that is missing or not a regular file, as `profile.sh` does.
+or a failed write · 2 usage, or a refused path · 4 a stale build.
 
 ### Where it differs from the scripts
 
@@ -284,11 +314,14 @@ that is missing or not a regular file, as `profile.sh` does.
   `uniq` under `LC_ALL=C`, so the counts and the order of ties are the same under
   every locale.
 - `profile` prints a number in the version or `blockTime` as jq 1.7 does, from the
-  literal (`1.0`, `1E+2`, every digit of a large integer). A jq built without
-  decNumber prints a rounded double there instead.
-- It takes only the paths above, each option once; the scripts also take absolute
-  paths, `-` for stdin, a repeated option, and an `--out` anywhere a new file can
-  be made.
+  literal (`1.0`, `1E+2`, every digit of a large integer), within jq's exponent
+  limits (`0e1000000000` as `0E+999999999`). A jq built without decNumber prints a
+  rounded double there instead.
+- With stdout closed, `audit-logs` writes to `/dev/null` and exits 0, where the
+  scripts exit 1. When the reader of a pipe closes it early, `audit-logs` exits 1
+  (`Broken pipe`), or 0 when its output was all written before, where `frames.py`
+  and `deltas.py` exit 120 and `profile.sh` 141. Read the exit status with stdout
+  on a file or a pipe read to the end, or use `--out`.
 
 ## How the auditor agents consume this
 
