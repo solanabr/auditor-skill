@@ -83,7 +83,8 @@
 #     offline (a cargo build-sbf without those options builds as before, and says so);
 #   * the resolved Cargo.lock comes back into the crate in place of a regular file only;
 #   * scripts/runner/probe.sh: fixed version queries from a scratch directory in the
-#     cleaned environment, the isolation line, --only and its case file
+#     cleaned environment, each killed when it gives no answer in PROBE_WAIT seconds,
+#     the isolation line (kinds, then at most 20 paths), --only and its case file
 #     fixtures/probe/cases.txt;
 #   * the patch verification recipe (templates/patch/VERIFICATION.md §1): its worktree
 #     is made in a Rule 11c copy, and no git runs in the client checkout.
@@ -1815,7 +1816,7 @@ if command -v git >/dev/null 2>&1 && mode="$(git -C "$ROOT" ls-files -s -- scrip
   [ "${mode%% *}" = 100755 ] && ok "git records probe.sh as 100755" || bad "git records probe.sh as ${mode%% *}"
 fi
 PB="$T/probe-bin"; PS="$T/probe-sys"; PH="$T/probe-home"; PT="$T/tmp-probe"; mkdir -p "$PB" "$PS" "$PH" "$PT"
-for tool in env mkdir mktemp rm; do p="$(command -v "$tool")" && ln -sf "$p" "$PS/$tool"; done
+for tool in env mkdir mktemp rm sleep; do p="$(command -v "$tool")" && ln -sf "$p" "$PS/$tool"; done
 ln -sf "$(python3 -I -c 'import sys; print(sys.executable)')" "$PS/python3"
 fake() {  # fake <name> <script body>: a stand-in tool that logs how it was run, then runs the body
   printf '#!/bin/sh\n{ echo "== %s $*"; echo "PWD=$PWD"; if read -r x; then echo "stdin: data"; else echo "stdin: closed"; fi; /usr/bin/env; } >> "%s" 2>&1\n%s\n' \
@@ -1860,6 +1861,20 @@ fi
 code="$(probe_run -- --only solana,cargo)"
 [ "$code" = 0 ] && [ "$(cat "$T/out")" = "$(printf '%s\n%s' 'cargo: cargo 9.9.9 (fake)' 'solana: solana-cli 9.9.9 (fake, on stderr)')" ] \
   && ok "probe.sh --only solana,cargo -> those two, in probe.sh's order" || { bad "probe.sh --only: exit $code"; cat "$T/out" >&2; }
+# A query that gives no answer within PROBE_WAIT seconds is killed, and the tool is unusable.
+fake trident "echo \$\$ > '$T/trident.pid'; exec sleep 60"
+start=$SECONDS
+code="$(probe_run PROBE_WAIT=2 -- --only trident,python3)"
+took=$((SECONDS - start))
+[ "$code" = 0 ] && [ "$(sed -n 1p "$T/out")" = 'trident: unusable (no answer in 2 seconds)' ] && grep -q '^python3: Python 3\.' "$T/out" \
+  && [ "$took" -ge 2 ] && [ "$took" -le 10 ] && ! kill -0 "$(cat "$T/trident.pid" 2>/dev/null || echo 0)" 2>/dev/null \
+  && ok "probe.sh: a query with no answer in PROBE_WAIT seconds is killed, and the next one runs (${took}s)" || { bad "probe.sh, a query that hangs: exit $code after ${took}s"; cat "$T/out" "$T/err" >&2; }
+rm -f "$PB/trident"
+for value in 0 601 030 abc 1.5; do
+  code="$(probe_run PROBE_WAIT="$value" --)"
+  [ "$code" = 64 ] && [ "$(cat "$T/err")" = "probe: refused: PROBE_WAIT is '$value', not a whole number of seconds from 1 to 600" ] && [ ! -s "$T/out" ] \
+    && ok "probe.sh with PROBE_WAIT=$value -> 64" || { bad "probe.sh, PROBE_WAIT=$value: exit $code"; cat "$T/err" >&2; }
+done
 mkdir -p "$PH/.aws"; printf 'secret\n' > "$PH/.aws/credentials"
 code="$(probe_run -- --only isolation)"
 [ "$code" = 0 ] && case "$(cat "$T/out")" in "isolation: readable: "*"cloud credentials ("*"; ~/.aws/credentials"*) true ;; *) false ;; esac \

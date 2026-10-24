@@ -10,7 +10,8 @@
 # audit. A refusal is one stderr line, "probe: refused: <reason>", with exit 64.
 #
 # One line per name, in this order: "<name>: <the first line its version query prints>", "<name>: absent"
-# when the program is not on PATH, or "<name>: unusable (<why>)" when its version query fails.
+# when the program is not on PATH, or "<name>: unusable (<why>)" when its version query fails or gives no
+# answer within PROBE_WAIT seconds (default 30, from 1 to 600), after which it is killed.
 #   cargo             cargo --version
 #   rustup            rustup --version
 #   cargo-build-sbf   cargo build-sbf --version
@@ -32,7 +33,7 @@
 # checks for no new version and keeps its settings in the scratch directory, and every proxy variable names
 # a closed local port, so a tool that honours them reaches no network.
 #
-# Exit: 0 · 64 refused. Needs bash >= 3.2, env, mkdir, mktemp and rm; python3 for the isolation line.
+# Exit: 0 · 64 refused. Needs bash >= 3.2, env, mkdir, mktemp, rm and sleep; python3 for the isolation line.
 
 set -uo pipefail
 unset CDPATH
@@ -45,7 +46,12 @@ esac
 . "$root/scripts/lib/confine.sh" || { printf 'probe: refused: scripts/lib/confine.sh cannot be read\n' >&2; exit 64; }
 . "$root/scripts/lib/isolation.sh" || { printf 'probe: refused: scripts/lib/isolation.sh cannot be read\n' >&2; exit 64; }
 confine_init probe "$root"
-confine_need env mkdir mktemp rm
+confine_need env mkdir mktemp rm sleep
+WAIT=${PROBE_WAIT:-30}
+case "$WAIT" in
+  [1-9]|[1-9][0-9]|[1-5][0-9][0-9]|600) ;;
+  *) confine_refuse "PROBE_WAIT is '$(confine_text "$WAIT")', not a whole number of seconds from 1 to 600" ;;
+esac
 
 NAMES='cargo rustup cargo-build-sbf cargo-fuzz trident anchor solana surfpool semgrep pandoc python3 isolation'
 USAGE="usage: probe.sh [--only <name>[,<name>...]], with names from: ${NAMES// /, }"
@@ -106,14 +112,27 @@ first_of() { # first_of <lines> <n>: the first <n> lines, joined with ", ", then
 }
 
 probe() { # probe <name> <program that must be on PATH> <query>...
-  local name=$1 rc=0 line
+  local name=$1 rc=0 line pid ticks=0
   shift
   if ! command -v "$1" >/dev/null 2>&1; then
     printf '%s: absent\n' "$name"
     return 0
   fi
   shift
-  (cd "$ISO_SCRATCH" && iso_run "$@") </dev/null >"$ISO_SCRATCH/out" 2>"$ISO_SCRATCH/err" || rc=$?
+  # The query runs in the background as one process (env replaces the subshell, and the query replaces
+  # env), so that it can be killed when it gives no answer in time.
+  (cd "$ISO_SCRATCH" && exec env -i "${ISO_ENV[@]}" "$@") </dev/null >"$ISO_SCRATCH/out" 2>"$ISO_SCRATCH/err" &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$ticks" -ge $((WAIT * 10)) ]; then
+      kill -9 "$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null
+      printf '%s: unusable (no answer in %s seconds)\n' "$name" "$WAIT"
+      return 0
+    fi
+    if sleep 0.1 2>/dev/null; then ticks=$((ticks + 1)); else sleep 1; ticks=$((ticks + 10)); fi
+  done
+  wait "$pid" 2>/dev/null || rc=$?
   if [ "$rc" -ne 0 ]; then
     printf '%s: unusable (exit %s)\n' "$name" "$rc"
   elif line=$(first_line "$ISO_SCRATCH/out") || line=$(first_line "$ISO_SCRATCH/err"); then
