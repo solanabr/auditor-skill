@@ -5,10 +5,10 @@
 # Builds audit-logs from a copy of its package, of the three recipes it mirrors and of
 # scripts/lib/confine.sh, the files it compares at start (its one dependency, libc, comes
 # from the cargo cache or crates.io), runs it and the scripts on the same corpora from the
-# same working directory,
-# and compares, for each of the five recipes (profile, frames, frames --instructions,
-# deltas lamports, deltas tokens), the exit status, stdout and the "skipped" notes on
-# stderr. The corpora:
+# same working directory, and compares, for each of the five recipes (profile, frames,
+# frames --instructions, deltas lamports, deltas tokens) and the three sums of deltas
+# (lamports --by account, tokens --by owner,mint and tokens --by mint), the exit status,
+# stdout and the "skipped" notes on stderr. The corpora:
 #   1. every committed fixture in scripts/dnr/fixtures/, one at a time and all at once;
 #   2. the crafted input-contract cases of test-dnr.sh §20, made by the code in that file;
 #   3. cases of its own: amounts and balances above 2^53, forged log lines, ties at the
@@ -137,6 +137,9 @@ script() {
     profile) ( cd "$WT" && bash "$DNR/profile.sh" "$@" ) ;;
     frames) ( cd "$WT" && LC_ALL=C python3 -I "$DNR/frames.py" "$@" ) ;;
     ix) ( cd "$WT" && LC_ALL=C python3 -I "$DNR/frames.py" --instructions "$@" ) ;;
+    by-account) ( cd "$WT" && LC_ALL=C python3 -I "$DNR/deltas.py" lamports --by account "$@" ) ;;
+    by-owner-mint) ( cd "$WT" && LC_ALL=C python3 -I "$DNR/deltas.py" tokens --by owner,mint "$@" ) ;;
+    by-mint) ( cd "$WT" && LC_ALL=C python3 -I "$DNR/deltas.py" tokens --by mint "$@" ) ;;
     *) ( cd "$WT" && LC_ALL=C python3 -I "$DNR/deltas.py" "$r" "$@" ) ;;
   esac
 }
@@ -146,6 +149,9 @@ binary() {
     profile) ( cd "$WT" && "$BIN" profile "$@" ) ;;
     frames) ( cd "$WT" && "$BIN" frames "$@" ) ;;
     ix) ( cd "$WT" && "$BIN" frames --instructions "$@" ) ;;
+    by-account) ( cd "$WT" && "$BIN" deltas lamports --by account "$@" ) ;;
+    by-owner-mint) ( cd "$WT" && "$BIN" deltas tokens --by owner,mint "$@" ) ;;
+    by-mint) ( cd "$WT" && "$BIN" deltas tokens --by mint "$@" ) ;;
     *) ( cd "$WT" && "$BIN" deltas "$r" "$@" ) ;;
   esac
 }
@@ -172,14 +178,14 @@ agree() {
   cmp -s "$T/s.notes" "$T/b.notes" || { echo "notes:"; diff "$T/s.notes" "$T/b.notes" | sed -n '1,4p'; } >> "$T/diff"
 }
 
-# same5 <what> <args...>: the five recipes agree on the same arguments.
-same5() {
+# same_all <what> <args...>: the five recipes and the three sums agree on the same arguments.
+same_all() {
   local what="$1" r differ=""; shift
-  for r in profile frames ix lamports tokens; do
+  for r in profile frames ix lamports tokens by-account by-owner-mint by-mint; do
     agree "$r" -- "$@"
     if [[ -s "$T/diff" ]]; then differ="$differ $r"; sed "s/^/  $r: /" "$T/diff" >&2; fi
   done
-  if [[ -z "$differ" ]]; then ok "$what: the five recipes agree"; else bad "$what: differs in$differ"; fi
+  if [[ -z "$differ" ]]; then ok "$what: the recipes and the sums agree"; else bad "$what: differs in$differ"; fi
 }
 
 # ---------------------------------------------------------------------------
@@ -189,10 +195,10 @@ same5() {
 cp "$FIX"/*.jsonl "$WT/incident_1/corpus/"
 fixtures=()
 for f in "$FIX"/*.jsonl; do
-  same5 "fixture ${f##*/}" "incident_1/corpus/${f##*/}"
+  same_all "fixture ${f##*/}" "incident_1/corpus/${f##*/}"
   fixtures+=("incident_1/corpus/${f##*/}")
 done
-same5 "all fixtures, each named twice" "${fixtures[@]}" "${fixtures[@]}"
+same_all "all fixtures, each named twice" "${fixtures[@]}" "${fixtures[@]}"
 ( cd "$WT" && "$BIN" frames "${fixtures[@]}" "${fixtures[@]}" ) > /dev/null 2> "$T/twice.err"
 if grep -q '^audit-logs: skipped [1-9][0-9]* transaction(s) already read under the same signature$' "$T/twice.err"; then
   ok "all fixtures twice: audit-logs reports the copies it skipped"
@@ -203,6 +209,16 @@ agree lamports -- incident_1/corpus/lamports-over-2-53.jsonl
 eq "fixture: a +1 lamport delta above 2^53 is exact in audit-logs" "$(awk -F'\t' '$2 == "BigOne" { print $3 }' "$T/b.out")" "1"
 agree tokens -- incident_1/corpus/token-amount-over-2-53.jsonl
 eq "fixture: token deltas of 1 above 2^53 are exact in audit-logs" "$(awk -F'\t' '{ printf "%s ", $4 }' "$T/b.out")" "1 1 "
+agree by-owner-mint -- incident_1/corpus/same-owner-drain.jsonl
+eq "fixture: audit-logs deltas tokens --by owner,mint nets an owner's two accounts" "$(tr '\t\n' ',|' < "$T/b.out")" \
+  "VaultPDA,MintM,-140,|Attacker,MintM,140,|"
+agree by-mint -- incident_1/corpus/same-owner-drain.jsonl
+eq "fixture: audit-logs deltas tokens --by mint gives the loss, the losers, the gain and the gainers" \
+  "$(tr '\t\n' ',|' < "$T/b.out")" "MintM,-140,1,140,1|"
+agree by-account -- incident_1/corpus/lamports-over-2-53.jsonl incident_1/corpus/clean-mixed.jsonl
+eq "fixture: audit-logs deltas lamports --by account sums exactly above 2^53, by net and then by name" \
+  "$(tr '\t\n' ',|' < "$T/b.out")" \
+  "PayerOne11111111111111111111111111111111111,-5000000|BigOne,1|BigTwo,1|Dest111111111111111111111111111111111111111,5000000|"
 agree frames -- incident_1/corpus/log-newline-injection.jsonl
 jq -c 'select(.program | test("Fake"))' "$T/b.out" > "$T/forged"
 eq "fixture: no frame is attributed to the program a log line forged" "$(grep -c . "$T/forged")" "0"
@@ -217,7 +233,7 @@ sed '1d;$d' "$T/c20.raw" > "$T/c20.py"
 if [[ "$(grep -c . "$T/c20.py")" -gt 20 ]] && python3 -I "$T/c20.py" "$WT/incident_1/c20" 2> "$T/c20.err"; then
   n=0
   for f in "$WT"/incident_1/c20/*.jsonl; do
-    same5 "test-dnr.sh contract case ${f##*/}" "incident_1/c20/${f##*/}"
+    same_all "test-dnr.sh contract case ${f##*/}" "incident_1/c20/${f##*/}"
     n=$((n + 1))
   done
   [[ "$n" -ge 30 ]] && ok "contract cases: $n files from test-dnr.sh §20" || bad "contract cases: only $n files from test-dnr.sh §20"
@@ -371,9 +387,9 @@ if literal:
 write("numbers.jsonl", nums)
 PY
 for f in big logs instructions ties numbers lookalike; do
-  same5 "own case $f.jsonl" "incident_1/crafted/$f.jsonl"
+  same_all "own case $f.jsonl" "incident_1/crafted/$f.jsonl"
 done
-same5 "own cases, all files at once" incident_1/crafted/big.jsonl incident_1/crafted/logs.jsonl \
+same_all "own cases, all files at once" incident_1/crafted/big.jsonl incident_1/crafted/logs.jsonl \
   incident_1/crafted/instructions.jsonl incident_1/crafted/ties.jsonl incident_1/crafted/numbers.jsonl \
   incident_1/crafted/lookalike.jsonl
 agree lamports -- incident_1/crafted/big.jsonl
@@ -511,7 +527,7 @@ for name, lines in cases.items():
         f.write(clean + b"\n" + b"\n".join(lines) + b"\n")
 PY
 for f in balances depth bounds indexes integers chars versions; do
-  same5 "recipe bounds, $f.jsonl" "incident_1/rules/$f.jsonl"
+  same_all "recipe bounds, $f.jsonl" "incident_1/rules/$f.jsonl"
 done
 # A string that never ends, 1 MiB of escaped quotes then 200 brackets, before and
 # after the clean line: the depth pre-scan reads it in one pass, so audit-logs ends
@@ -538,7 +554,7 @@ for f in long-first long-last; do
     wait "$pid" 2>/dev/null
   done
   eq "recipe bounds, $f.jsonl: audit-logs reads a 1 MiB string that never ends in one pass" "$slow" ""
-  same5 "recipe bounds, $f.jsonl" "incident_1/rules/$f.jsonl"
+  same_all "recipe bounds, $f.jsonl" "incident_1/rules/$f.jsonl"
 done
 agree lamports -- incident_1/rules/balances.jsonl
 eq "recipe bounds: a balance with no account key is a #<index> row, counted on stderr" \
@@ -629,7 +645,7 @@ with open(sys.argv[1] + "/large-b.jsonl", "w") as f:
 PY
 eq "large corpus: the two files hold well over the 64 KiB pipe buffer" \
   "$(( $(wc -c < "$WT/incident_1/corpus/large-a.jsonl") > 1048576 && $(wc -c < "$WT/incident_1/corpus/large-b.jsonl") > 1048576 ))" "1"
-same5 "large corpus of 6,000 transactions in two files" incident_1/corpus/large-a.jsonl incident_1/corpus/large-b.jsonl
+same_all "large corpus of 6,000 transactions in two files" incident_1/corpus/large-a.jsonl incident_1/corpus/large-b.jsonl
 eq "large corpus: audit-logs read 150 copies once and counted the malformed lines" "$(tr '\n' '|' < "$T/b.notes")" \
   "skipped 150 transaction(s) already read under the same signature|skipped 5 malformed line(s) in input 2 (incident_1/corpus/large-b.jsonl), the first at line 1 (not a getTransaction JSON object the recipes can read)|"
 

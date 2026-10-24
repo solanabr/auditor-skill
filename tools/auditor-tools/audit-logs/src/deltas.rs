@@ -1,11 +1,12 @@
-//! `audit-logs deltas lamports|tokens`: the TSV rows `scripts/dnr/deltas.py`
-//! prints, every total an exact integer, successful transactions only.
+//! `audit-logs deltas lamports|tokens [--by ...]`: the TSV rows, or the sums,
+//! `scripts/dnr/deltas.py` prints, every total an exact integer, successful
+//! transactions only.
 
 use std::collections::HashMap;
 
 use crate::contract::{escape_char, unsafe_char};
 use crate::json::Value;
-use crate::num::Int;
+use crate::num::{cmp_int_literals, Int};
 
 /// Escapes what could break a TSV row, or hide in one: backslash, tab, LF and CR
 /// as `\\`, `\t`, `\n`, `\r`, and every other unsafe character as Python's
@@ -18,6 +19,12 @@ fn clean(out: &mut String, s: &str) {
             out.push(c);
         }
     }
+}
+
+fn cleaned(s: &str) -> String {
+    let mut out = String::new();
+    clean(&mut out, s);
+    out
 }
 
 fn ok(tx: &Value) -> bool {
@@ -72,10 +79,36 @@ fn int(v: &Value) -> Int {
         .unwrap_or_else(Int::zero)
 }
 
+/// One movement: the signature, the token owner and mint (empty for lamports), the
+/// account as a row names it, whether that is an account key rather than
+/// `#<index>` or `#?`, and the delta.
+pub struct Row {
+    sig: String,
+    owner: String,
+    mint: String,
+    account: String,
+    keyed: bool,
+    delta: Int,
+}
+
 /// Per (signature, account): the non-zero lamport delta, with the fee added back
 /// for the fee payer. A balance whose index has no account key is printed as
 /// `#<index>`; returns how many rows name one.
 pub fn lamports(tx: &Value, out: &mut String) -> u64 {
+    let mut rows = Vec::new();
+    let keyless = lamport_rows(tx, &mut rows);
+    for r in &rows {
+        clean(out, &r.sig);
+        out.push('\t');
+        clean(out, &r.account);
+        out.push_str(&format!("\t{}\n", r.delta));
+    }
+    keyless
+}
+
+/// The movements `lamports` prints, added to `rows`; returns how many name a
+/// balance index that has no account key.
+pub fn lamport_rows(tx: &Value, rows: &mut Vec<Row>) -> u64 {
     if !ok(tx) {
         return 0;
     }
@@ -96,16 +129,21 @@ pub fn lamports(tx: &Value, out: &mut String) -> u64 {
             d = d.add(&fee);
         }
         if !d.is_zero() {
-            clean(out, sig);
-            out.push('\t');
-            match keys.get(i) {
-                Some(k) => clean(out, k),
+            let (account, keyed) = match keys.get(i) {
+                Some(k) => (k.to_string(), true),
                 None => {
-                    out.push_str(&format!("#{i}"));
                     keyless += 1;
+                    (format!("#{i}"), false)
                 }
-            }
-            out.push_str(&format!("\t{d}\n"));
+            };
+            rows.push(Row {
+                sig: sig.to_string(),
+                owner: String::new(),
+                mint: String::new(),
+                account,
+                keyed,
+                delta: d,
+            });
         }
     }
     keyless
@@ -126,6 +164,24 @@ enum Bucket {
 /// `#<index>`, and one with no accountIndex as `#?`, a row of its own; neither is
 /// ever merged with another account. Returns how many rows name each.
 pub fn tokens(tx: &Value, out: &mut String) -> (u64, u64) {
+    let mut rows = Vec::new();
+    let counts = token_rows(tx, &mut rows);
+    for r in &rows {
+        clean(out, &r.sig);
+        out.push('\t');
+        clean(out, &r.owner);
+        out.push('\t');
+        clean(out, &r.mint);
+        out.push_str(&format!("\t{}\t", r.delta));
+        clean(out, &r.account);
+        out.push('\n');
+    }
+    counts
+}
+
+/// The movements `tokens` prints, added to `rows`; returns how many name each kind
+/// of placeholder account.
+pub fn token_rows(tx: &Value, rows: &mut Vec<Row>) -> (u64, u64) {
     if !ok(tx) {
         return (0, 0);
     }
@@ -189,17 +245,120 @@ pub fn tokens(tx: &Value, out: &mut String) -> (u64, u64) {
                 Bucket::Entry(..) => indexless += 1,
                 Bucket::Key(_) => {}
             }
-            clean(out, sig);
-            out.push('\t');
-            clean(out, owner);
-            out.push('\t');
-            clean(out, &key.1);
-            out.push_str(&format!("\t{d}\t"));
-            clean(out, account);
-            out.push('\n');
+            rows.push(Row {
+                sig: sig.to_string(),
+                owner: owner.clone(),
+                mint: key.1.clone(),
+                account: account.clone(),
+                keyed: matches!(key.0, Bucket::Key(_)),
+                delta: d,
+            });
         }
     }
     (keyless, indexless)
+}
+
+/// What `--by` sums the rows by: `lamports --by account`, `tokens --by owner,mint`,
+/// `tokens --by mint`.
+#[derive(Clone, Copy, PartialEq)]
+pub enum By {
+    Account,
+    OwnerMint,
+    Mint,
+}
+
+/// Per mint, over the owners' nets: the sum of the negative ones and how many,
+/// then the sum of the positive ones and how many.
+struct MintSums {
+    loss: Int,
+    losers: u64,
+    gain: Int,
+    gainers: u64,
+}
+
+/// The nets `--by` prints, keyed by names as `clean` writes them: (account) for
+/// lamports, (owner, mint) for tokens, with the token account as well for a balance
+/// the RPC gave no owner (`?`), which is summed per token account.
+#[derive(Default)]
+pub struct Sums {
+    nets: HashMap<(String, String, String), Int>,
+    /// Rows no sum holds: a lamport row named `#<index>`, or a token row named
+    /// `#<index>` or `#?` that also has no owner, whose account stands for one only
+    /// within its own transaction.
+    pub left_out: u64,
+}
+
+impl Sums {
+    pub fn add(&mut self, by: By, rows: &[Row]) {
+        for r in rows {
+            let key = match by {
+                By::Account => r
+                    .keyed
+                    .then(|| (cleaned(&r.account), String::new(), String::new())),
+                _ if r.owner != "?" => Some((cleaned(&r.owner), cleaned(&r.mint), String::new())),
+                _ => r
+                    .keyed
+                    .then(|| ("?".to_string(), cleaned(&r.mint), cleaned(&r.account))),
+            };
+            match key {
+                Some(k) => {
+                    let net = self.nets.entry(k).or_insert_with(Int::zero);
+                    *net = net.add(&r.delta);
+                }
+                None => self.left_out += 1,
+            }
+        }
+    }
+
+    /// One TSV row per sum, as deltas.py writes them: the most negative first, then
+    /// by name in byte order; a sum of 0 prints no row.
+    pub fn write(&self, by: By, out: &mut String) {
+        if by == By::Mint {
+            let mut mints: HashMap<&str, MintSums> = HashMap::new();
+            for ((_, mint, _), net) in &self.nets {
+                let m = mints.entry(mint.as_str()).or_insert_with(|| MintSums {
+                    loss: Int::zero(),
+                    losers: 0,
+                    gain: Int::zero(),
+                    gainers: 0,
+                });
+                if net.to_string().starts_with('-') {
+                    m.loss = m.loss.add(net);
+                    m.losers += 1;
+                } else if !net.is_zero() {
+                    m.gain = m.gain.add(net);
+                    m.gainers += 1;
+                }
+            }
+            let mut list: Vec<(String, &str, &MintSums)> = mints
+                .iter()
+                .filter(|(_, m)| m.losers > 0 || m.gainers > 0)
+                .map(|(mint, m)| (m.loss.to_string(), *mint, m))
+                .collect();
+            list.sort_by(|a, b| cmp_int_literals(&a.0, &b.0).then_with(|| a.1.cmp(b.1)));
+            for (loss, mint, m) in list {
+                out.push_str(&format!(
+                    "{mint}\t{loss}\t{}\t{}\t{}\n",
+                    m.losers, m.gain, m.gainers
+                ));
+            }
+            return;
+        }
+        let mut list: Vec<(String, &(String, String, String))> = self
+            .nets
+            .iter()
+            .filter(|(_, net)| !net.is_zero())
+            .map(|(key, net)| (net.to_string(), key))
+            .collect();
+        list.sort_by(|a, b| cmp_int_literals(&a.0, &b.0).then_with(|| a.1.cmp(b.1)));
+        for (net, (name, mint, account)) in list {
+            if by == By::Account {
+                out.push_str(&format!("{name}\t{net}\n"));
+            } else {
+                out.push_str(&format!("{name}\t{mint}\t{net}\t{account}\n"));
+            }
+        }
+    }
 }
 
 #[cfg(test)]

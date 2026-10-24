@@ -24,6 +24,14 @@ deltas with an unknown mode	deltas	balances	incident_1/corpus.jsonl
 --instructions twice	frames	--instructions	--instructions	incident_1/corpus.jsonl
 --instructions on profile	profile	--instructions	incident_1/corpus.jsonl
 --instructions on deltas	deltas	tokens	--instructions	incident_1/corpus.jsonl
+--by with no value	deltas	tokens	--by
+--by twice	deltas	tokens	--by	mint	--by	mint	incident_1/corpus.jsonl
+--by account on tokens	deltas	tokens	--by	account	incident_1/corpus.jsonl
+--by mint on lamports	deltas	lamports	--by	mint	incident_1/corpus.jsonl
+--by an unknown grouping	deltas	tokens	--by	owner	incident_1/corpus.jsonl
+--by=value form	deltas	tokens	--by=mint	incident_1/corpus.jsonl
+--by on frames	frames	--by	mint	incident_1/corpus.jsonl
+--by after a corpus	deltas	tokens	incident_1/corpus.jsonl	--by	mint
 --out after a corpus	frames	incident_1/corpus.jsonl	--out	incident_1/x.jsonl
 --out before the deltas mode	deltas	--out	incident_1/x.tsv	lamports	incident_1/corpus.jsonl
 --out=value form	frames	--out=incident_1/x.jsonl	incident_1/corpus.jsonl

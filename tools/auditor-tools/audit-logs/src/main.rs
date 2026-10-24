@@ -5,7 +5,7 @@
 //! ```text
 //! audit-logs profile [--out <file>] <corpus.jsonl>...
 //! audit-logs frames [--instructions] [--out <file>] [<corpus.jsonl>...]
-//! audit-logs deltas lamports|tokens [--out <file>] [<corpus.jsonl>...]
+//! audit-logs deltas lamports|tokens [--by account|owner,mint|mint] [--out <file>] [<corpus.jsonl>...]
 //! ```
 //!
 //! Every path is relative to the working directory and names a regular file with
@@ -38,7 +38,7 @@ use contract::{for_each_record, shown, Input, Source, Stats};
 
 const USAGE: &str = "usage: audit-logs profile [--out <file>] <corpus.jsonl>... | \
 frames [--instructions] [--out <file>] [<corpus.jsonl>...] | \
-deltas lamports|tokens [--out <file>] [<corpus.jsonl>...]";
+deltas lamports|tokens [--by account|owner,mint|mint] [--out <file>] [<corpus.jsonl>...]";
 
 /// The installation audit-logs was built in.
 const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../..");
@@ -103,6 +103,7 @@ enum Recipe {
 
 struct Call {
     recipe: Recipe,
+    by: Option<deltas::By>,
     out: Option<OsString>,
     files: Vec<OsString>,
 }
@@ -134,12 +135,26 @@ fn parse(args: &[OsString]) -> Result<Call, Stop> {
         other => return Err(usage(&format!("unknown subcommand {}", shown(other)))),
     };
     let mut out = None;
+    let mut by = None;
     let mut instructions = false;
     while let Some(word) = rest.first().map(|a| a.as_bytes()) {
         match word {
             b"--out" if out.is_none() => {
                 let value = rest.get(1).ok_or_else(|| usage("--out needs a file"))?;
                 out = Some(value.clone());
+                rest = &rest[2..];
+            }
+            b"--by" if matches!(recipe, Recipe::Lamports | Recipe::Tokens) && by.is_none() => {
+                let value = rest.get(1).ok_or_else(|| usage("--by needs a grouping"))?;
+                by =
+                    Some(match (recipe, value.as_bytes()) {
+                        (Recipe::Lamports, b"account") => deltas::By::Account,
+                        (Recipe::Tokens, b"owner,mint") => deltas::By::OwnerMint,
+                        (Recipe::Tokens, b"mint") => deltas::By::Mint,
+                        _ => return Err(usage(
+                            "--by takes account for lamports, and owner,mint or mint for tokens",
+                        )),
+                    });
                 rest = &rest[2..];
             }
             b"--instructions" if recipe == Recipe::Frames && !instructions => {
@@ -163,6 +178,7 @@ fn parse(args: &[OsString]) -> Result<Call, Stop> {
     }
     Ok(Call {
         recipe,
+        by,
         out,
         files: rest.to_vec(),
     })
@@ -245,21 +261,39 @@ fn run(args: &[OsString]) -> Result<(), Stop> {
             let mut sink = sink(out.as_ref().map(|(_, checked)| checked))?;
             let mut buf = String::new();
             let (mut keyless, mut indexless) = (0, 0);
+            let mut sums = deltas::Sums::default();
+            let mut rows = Vec::new();
             for_each_record(inputs, &mut stats, |tx| {
                 buf.clear();
-                match recipe {
-                    Recipe::Frames => frames::rows(tx, &mut buf),
-                    Recipe::Instructions => frames::instruction_rows(tx, &mut buf),
-                    Recipe::Lamports => keyless += deltas::lamports(tx, &mut buf),
-                    _ => {
+                rows.clear();
+                match (recipe, call.by) {
+                    (Recipe::Frames, _) => frames::rows(tx, &mut buf),
+                    (Recipe::Instructions, _) => frames::instruction_rows(tx, &mut buf),
+                    (Recipe::Lamports, None) => keyless += deltas::lamports(tx, &mut buf),
+                    (Recipe::Lamports, Some(by)) => {
+                        keyless += deltas::lamport_rows(tx, &mut rows);
+                        sums.add(by, &rows);
+                    }
+                    (_, None) => {
                         let (k, i) = deltas::tokens(tx, &mut buf);
                         keyless += k;
                         indexless += i;
+                    }
+                    (_, Some(by)) => {
+                        let (k, i) = deltas::token_rows(tx, &mut rows);
+                        keyless += k;
+                        indexless += i;
+                        sums.add(by, &rows);
                     }
                 }
                 sink.write_all(buf.as_bytes())
             })
             .map_err(failed)?;
+            if let Some(by) = call.by {
+                buf.clear();
+                sums.write(by, &mut buf);
+                sink.write_all(buf.as_bytes()).map_err(failed)?;
+            }
             sink.finish().map_err(failed)?;
             for note in stats.notes() {
                 eprintln!("audit-logs: skipped {note}");
@@ -276,6 +310,17 @@ fn run(args: &[OsString]) -> Result<(), Stop> {
                     "audit-logs: {indexless} row(s) name a token balance that has no accountIndex, as #?: \
                      nothing pairs it with its other side, so a pre balance is a row of its own with a \
                      negative delta, and a post balance one with a positive delta"
+                );
+            }
+            if sums.left_out > 0 {
+                let what = if recipe == Recipe::Lamports {
+                    "no account key"
+                } else {
+                    "neither an owner nor an account key"
+                };
+                eprintln!(
+                    "audit-logs: {} row(s) name {what}, so no sum holds them; run without --by to see them",
+                    sums.left_out
                 );
             }
         }
