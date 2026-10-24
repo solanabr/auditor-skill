@@ -210,8 +210,58 @@ fm commands/plugin-root-items.md pass "$C" "allowed-tools:" "  - Read" "  - Grep
 fm skill/SKILL.md pass "name: s" 'description: "A skill."'
 fm skill-no-name/SKILL.md fail 'description: "A skill."'
 fm skills/agents/SKILL.md pass "name: a" 'description: "A skill in a directory named agents."'
-fm skills/forked/SKILL.md fail "name: f" 'description: "A forked skill."' "context: fork"
-fm skills/with-tools/SKILL.md fail "name: t" 'description: "A skill."' "allowed-tools: Read"
+# a SKILL.md under skills/ may also have context: fork with an agent of the plugin, background and
+# user-invocable, and allowed-tools under a command's rules; one outside skills/ has name and description only
+fm agents/responder.md pass "name: responder" "$D" "$TL"
+fm agents/misnamed.md pass "name: someone-else" "$D" "$TL"
+F="context: fork"; A="agent: auditor:responder"; S='description: "A forked skill."'
+fm skills/forked/SKILL.md pass "name: f" "$S" "$F" "$A" "background: false" "user-invocable: false" "allowed-tools:" \
+  "  - Read" "  - Edit(incident_*/**)" "  - 'Bash(\"\${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh\" *)'"
+fm skills/fork-one-line/SKILL.md pass "name: f1" "$S" "context: 'fork'" 'agent: "auditor:responder"' "background: true" \
+  "user-invocable: true" 'allowed-tools: Read, Grep, Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh *)'
+fm Skills/upper-case/SKILL.md pass "name: f2" "$S" "$F" "$A"
+fm skills/with-tools/SKILL.md pass "name: t" 'description: "A skill."' "allowed-tools: Read"
+fm skills/invocable/SKILL.md pass "name: i" 'description: "A skill."' "user-invocable: false"
+fm skills/context-inline/SKILL.md fail "name: c1" "$S" "context: inline" "$A"
+fm skills/context-empty/SKILL.md fail "name: c2" "$S" "context: ''" "$A"
+fm skills/fork-no-agent/SKILL.md fail "name: c3" "$S" "$F"
+fm skills/agent-no-fork/SKILL.md fail "name: c4" "$S" "$A"
+fm skills/background-no-fork/SKILL.md fail "name: c5" "$S" "background: false"
+fm skills/background-yes/SKILL.md fail "name: c6" "$S" "$F" "$A" "background: yes"
+fm skills/invocable-no/SKILL.md fail "name: c7" "$S" "user-invocable: no"
+fm skills/invocable-quoted/SKILL.md fail "name: c8" "$S" 'user-invocable: "false"'
+fm skills/agent-twice/SKILL.md fail "name: c9" "$S" "$F" "$A" "$A"
+i=0
+for ag in Explore general-purpose other:responder auditor:Responder auditor: auditor:../responder auditor:a/b \
+  auditor:-x auditor:x- auditor:a--b 'auditor:responder #' auditor:nobody auditor:misnamed; do
+  i=$((i + 1)); fm "skills/agent-$i/SKILL.md" fail "name: g$i" "$S" "$F" "agent: $ag"
+done
+for said in "skills/agent-12/SKILL.md:5: agent auditor:nobody names no agent of this plugin: $T/fm/agents/nobody.md is not a file" \
+  "skills/agent-13/SKILL.md:5: agent auditor:misnamed: the frontmatter of $T/fm/agents/misnamed.md does not name it misnamed" \
+  "skills/fork-no-agent/SKILL.md:4: context: fork needs an agent" "skills/agent-no-fork/SKILL.md:4: agent applies only with context: fork" \
+  "skills/background-no-fork/SKILL.md:4: background applies only with context: fork"; do
+  file=${said%%:*}
+  out=$(bash "$ROOT/scripts/check-frontmatter.sh" "$T/fm/$file" 2>&1)
+  case "$out" in *"$T/fm/$said"*) pass=$((pass + 1)); echo "PASS frontmatter: ... $said";;
+    *) failn=$((failn + 1)); echo "FAIL frontmatter: not reported: $said"; echo "$out";; esac
+done
+fm skills/tools-star/SKILL.md fail "name: t1" "$S" "allowed-tools: Read, *"
+fm skills/tools-nested/SKILL.md fail "name: t2" "$S" "allowed-tools: Read, Bash(echo (x) *)"
+fm skills/tools-empty-entry/SKILL.md fail "name: t3" "$S" "allowed-tools: Read, , Grep"
+fm skills/tools-two-in-item/SKILL.md fail "name: t4" "$S" "allowed-tools:" "  - 'Read, Bash'"
+fm skills/tools-empty-list/SKILL.md fail "name: t5" "$S" "allowed-tools:"
+fm skills/tools-dashes/SKILL.md fail "name: t6" "$S" "allowed-tools:" "  - 'Bash(echo --- *)'"
+fm skill-tools/SKILL.md fail "name: r1" 'description: "A skill."' "allowed-tools: Read"
+fm skill-fork/SKILL.md fail "name: r2" "$S" "$F" "$A"
+fm skill-invocable/SKILL.md fail "name: r3" 'description: "A skill."' "user-invocable: false"
+# the agent is looked up at the plugin root, the path before skills/, however the skill is named
+for at in "$T/fm|skills/forked/SKILL.md" "$T/fm/agents|../skills/forked/SKILL.md" "$ROOT|$T/fm/skills/forked/SKILL.md"; do
+  expect "frontmatter: an agent found from ${at%%|*} for ${at#*|}" 0 sh -c 'cd "$1" && bash "$2" "$3"' sh \
+    "${at%%|*}" "$ROOT/scripts/check-frontmatter.sh" "${at#*|}"
+done
+mkdir -p "$T/fm-noagents/skills/forked"; cp "$T/fm/skills/forked/SKILL.md" "$T/fm-noagents/skills/forked/"
+expect "frontmatter: an agent of another plugin root does not count" 1 bash "$ROOT/scripts/check-frontmatter.sh" \
+  "$T/fm-noagents/skills/forked/SKILL.md"
 # a .md under agents/ or commands/ is an agent or a command, also one named SKILL.md: the first of agents/,
 # commands/ and skills/ in the path gives the kind
 fm agents/skill.md fail "$N" "$D"
