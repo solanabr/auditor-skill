@@ -14,7 +14,8 @@
 //! run directory (`confine.rs`). With no corpus named, frames and deltas read
 //! stdin. Exit: 0 done · 1 an input that cannot be read, an `--out` that cannot be
 //! written, or a failed write · 2 usage, or a path the input contract refuses, as
-//! the recipes refuse it.
+//! the recipes refuse it · 4 a stale build: the installed recipes are not the ones
+//! it was built from, so it writes nothing and says to rebuild or run the scripts.
 
 mod confine;
 mod contract;
@@ -25,8 +26,10 @@ mod num;
 mod profile;
 
 use std::ffi::OsString;
+use std::fs;
 use std::io;
 use std::os::unix::ffi::OsStrExt;
+use std::path::Path;
 use std::process::ExitCode;
 
 use confine::{os_message, Confined, Output, Sink, Stop};
@@ -35,6 +38,53 @@ use contract::{for_each_record, shown, Input, Source, Stats};
 const USAGE: &str = "usage: audit-logs profile [--out <file>] <corpus.jsonl>... | \
 frames [--instructions] [--out <file>] [<corpus.jsonl>...] | \
 deltas lamports|tokens [--out <file>] [<corpus.jsonl>...]";
+
+/// The installation audit-logs was built in, and the recipes it mirrors there, as
+/// they were when it was built.
+const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../..");
+const RECIPES: [(&str, &[u8]); 3] = [
+    (
+        "scripts/dnr/profile.sh",
+        include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../scripts/dnr/profile.sh"
+        )),
+    ),
+    (
+        "scripts/dnr/frames.py",
+        include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../scripts/dnr/frames.py"
+        )),
+    ),
+    (
+        "scripts/dnr/deltas.py",
+        include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../scripts/dnr/deltas.py"
+        )),
+    ),
+];
+
+/// The exit status of a stale build; no recipe exits with it.
+const STALE: u8 = 4;
+
+/// Refuses to run when an installed recipe is not the one it was built from: its
+/// output would follow another contract than the scripts'.
+fn current() -> Result<(), Stop> {
+    for (name, built) in RECIPES {
+        if !fs::read(Path::new(ROOT).join(name)).is_ok_and(|now| now == built) {
+            return Err(Stop(
+                STALE,
+                format!(
+                    "stale build: {name} is not the one it was built from; rebuild it \
+                     (cargo build --release --locked in tools/auditor-tools) or run the scripts"
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
 
 #[derive(Clone, Copy, PartialEq)]
 enum Recipe {
@@ -115,6 +165,7 @@ fn parse(args: &[OsString]) -> Result<Call, Stop> {
 fn run(args: &[OsString]) -> Result<(), Stop> {
     let wt = confine::working_tree()?;
     confine::self_check(&wt)?;
+    current()?;
     let call = parse(args)?;
     // Every input, then --out, each checked in full before the next, as the recipes'
     // unusable() and unwritable() check them; nothing is read before all pass.
