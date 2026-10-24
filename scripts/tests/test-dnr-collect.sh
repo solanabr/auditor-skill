@@ -5,12 +5,18 @@
 # Runnable from the repo root with bash >= 3.2, using only jq / python3 / awk / sed.
 # No network. CI (corpus-check.yml) runs every scripts/tests/*.sh. test-dnr.sh
 # covers the offline recipes and the gating, redaction and run-directory checks;
-# this suite covers what the two scripts collect and keep.
+# this suite covers what the two scripts collect and keep, the run-directory
+# grammar, the environment caps and the disclosure rows. Both scripts run directly
+# by their paths from a working directory, $WT, into run directories rundir.sh
+# makes there; each check reads a run directory through a link in $TT. The
+# hostile-argument case files fixtures/dnr-collect/cases.txt and
+# fixtures/snapshot-program/cases.txt run under each bash on the machine.
 
 set -uo pipefail
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 DNR="$HERE/../dnr"
+RUNDIR="$HERE/../rundir.sh"
 FIX="$DNR/fixtures"
 fails=0
 ok()   { printf 'ok   %s\n' "$1"; }
@@ -21,7 +27,27 @@ for tool in jq python3 awk sed; do
   command -v "$tool" >/dev/null 2>&1 || { echo "test-dnr-collect: missing required tool: $tool" >&2; exit 3; }
 done
 TT="$(mktemp -d "${TMPDIR:-/tmp}/dnr_collect_test.XXXXXX")" || exit 3
-trap 'rm -rf "$TT"' EXIT
+TT="$(cd -P "$TT" && pwd -P)" || exit 3
+trap 'chmod -R u+rwx "$TT" 2>/dev/null; rm -rf "$TT"' EXIT
+WT="$TT/wt"; mkdir -p "$WT"
+# corpus_at <path>: a new run directory incident_<k> in $WT (rundir.sh new incident),
+# with <path> a link to its corpus/ (made by collect.sh); the --out to pass is in
+# <path>.run. incident_at <path>: the same, with <path> a link to incident_<k> itself,
+# whose name is in <path>.run. Each does nothing when <path>.run exists already.
+corpus_at() {
+  local r
+  [ -e "$1.run" ] && return 0
+  r="$(cd "$WT" && "$RUNDIR" new incident 2>/dev/null)" || { bad "rundir.sh new incident failed in $WT"; return 1; }
+  mkdir -p "$(dirname "$1")" && ln -s "$WT/$r/corpus" "$1" && printf '%s\n' "$r/corpus" > "$1.run"
+}
+incident_at() {
+  local r
+  [ -e "$1.run" ] && return 0
+  r="$(cd "$WT" && "$RUNDIR" new incident 2>/dev/null)" || { bad "rundir.sh new incident failed in $WT"; return 1; }
+  mkdir -p "$(dirname "$1")" && ln -s "$WT/$r" "$1" && printf '%s\n' "$r" > "$1.run"
+}
+run_of() { cat "$1.run"; }   # run_of <path>: the --out or run directory <path> stands for
+empty_dir() { [ -z "$(ls -A "$1" 2>/dev/null)" ]; }
 # The stand-ins run on the real interpreter by absolute path, so python3 can be
 # left off PATH for the scripts under test.
 PY="$(python3 -I -c 'import sys; print(sys.executable)')"
@@ -108,10 +134,17 @@ book() {
   "$PY" -I -c 'import json, sys
 print(json.dumps({"sigs": eval(sys.argv[1]), "tx": eval(sys.argv[2] or "{}")}))' "$1" "${2:-}" > "$FAKE_BOOK"
 }
-# collect <out dir> <args...>: run collect.sh against the stand-in, output in <out>.out.
+# run_collect <path> <args...>: collect.sh from $WT, with --out the corpus <path> stands
+# for (corpus_at), in the caller's environment. collect <path> <args...>: the same
+# against the stand-in RPC, output in <path>.out.
+run_collect() {
+  local out="$1"; shift
+  corpus_at "$out" || return 99
+  ( cd "$WT" && "$DNR/collect.sh" --out "$(run_of "$out")" --confirmed "$@" )
+}
 collect() {
   local out="$1"; shift
-  ( PATH="$TT/bin:$PATH" bash "$DNR/collect.sh" --out "$out" --confirmed "$@" ) > "$out.out" 2>&1
+  ( PATH="$TT/bin:$PATH" run_collect "$out" "$@" ) > "$out.out" 2>&1
 }
 calls() { if [[ -f "$FAKE_CURL_LOG" ]]; then grep -c "\"$1\"" "$FAKE_CURL_LOG"; else echo 0; fi; }
 sigs_of() { jq -r '.transaction.signatures[0]' "$1" 2>/dev/null | tr '\n' ' '; }
@@ -180,7 +213,7 @@ PY
 chmod +x "$TT/jq16/jq"
 # $TT/nopy: the tools the two scripts run, linked one by one, python3 left out.
 mkdir -p "$TT/nopy"
-for t in bash env dirname basename find git mkdir mktemp rm sed awk tr sort grep cat cut head od cmp cp mv ln ls chmod wc; do
+for t in bash env dirname basename find git mkdir mktemp rm sed awk tr sort grep cat cut head od cmp cp mv ln ls chmod wc date; do
   p="$(command -v "$t" 2>/dev/null)" && [[ "$p" == /* ]] && ln -s "$p" "$TT/nopy/$t"
 done
 if PATH="$TT/nopy" command -v python3 >/dev/null 2>&1; then
@@ -232,27 +265,39 @@ book '{"'"$A_ADDR"'": [{"signature": "SigBigLamports", "slot": 403, "err": None,
      '{"SigBigLamports": open("'"$BIG"'").read().strip()}'
 collect "$TT/big-jq" -- "$A_ADDR"
 if cmp -s "$TT/big-jq/transactions.jsonl" "$BIG"; then ok "exact: this jq writes the fixture byte for byte"; else bad "exact: this jq changed the fixture ($(cat "$TT/big-jq/transactions.jsonl"))"; fi
-( PATH="$TT/jq16:$TT/bin:$PATH" bash "$DNR/collect.sh" --out "$TT/big-16" --confirmed -- "$A_ADDR" ) > "$TT/big-16.out" 2>&1
+( PATH="$TT/jq16:$TT/bin:$PATH" run_collect "$TT/big-16" -- "$A_ADDR" ) > "$TT/big-16.out" 2>&1
 eq "exact: with jq 1.6 the run still exits 0" "$?" "0"
 if cmp -s "$TT/big-16/transactions.jsonl" "$BIG"; then
   ok "exact: with jq 1.6, python3 -I writes the fixture byte for byte"
 else
   bad "exact: the jq 1.6 path changed the fixture ($(cat "$TT/big-16/transactions.jsonl"))"
 fi
+# deltas.py reads only a file in a run directory, by a path relative to the working
+# directory (scripts/dnr/README.md, Input contract): a copy of the corpus in one.
+mkdir -p "$TT/wd16/incident_1" && printf '*\n' > "$TT/wd16/incident_1/.gitignore"
+cp "$TT/big-16/transactions.jsonl" "$TT/wd16/incident_1/transactions.jsonl"
 eq "exact: deltas.py on that corpus sees +1 for BigOne and BigTwo" \
-  "$(python3 -I "$DNR/deltas.py" lamports "$TT/big-16/transactions.jsonl" | awk -F'\t' '$2=="BigOne"||$2=="BigTwo"{print $2"="$3}' | tr '\n' ' ')" \
+  "$(cd "$TT/wd16" && python3 -I "$DNR/deltas.py" lamports incident_1/transactions.jsonl | awk -F'\t' '$2=="BigOne"||$2=="BigTwo"{print $2"="$3}' | tr '\n' ' ')" \
   "BigOne=1 BigTwo=1 "
 # The python3 that writes the corpus runs isolated: a json.py planted in the
 # working directory and on PYTHONPATH never loads.
 mkdir -p "$TT/evil"; printf 'open(%s, "a").write("json\\n")\n' "'$TT/shadow.marker'" > "$TT/evil/json.py"
-( cd "$TT/evil" && PATH="$TT/jq16:$TT/bin:$PATH" PYTHONPATH="$TT/evil" bash "$DNR/collect.sh" --out "$TT/big-iso" --confirmed -- "$A_ADDR" ) > "$TT/big-iso.out" 2>&1
-if cmp -s "$TT/big-iso/transactions.jsonl" "$BIG" && [[ ! -e "$TT/shadow.marker" ]]; then
+EVR="$(cd "$TT/evil" && "$RUNDIR" new incident)"
+( cd "$TT/evil" && PATH="$TT/jq16:$TT/bin:$PATH" PYTHONPATH="$TT/evil" "$DNR/collect.sh" --out "$EVR/corpus" --confirmed -- "$A_ADDR" ) > "$TT/big-iso.out" 2>&1
+if cmp -s "$TT/evil/$EVR/corpus/transactions.jsonl" "$BIG" && [[ ! -e "$TT/shadow.marker" ]]; then
   ok "exact: the python3 -I path ignores a json.py in the working directory and on PYTHONPATH"
 else
   bad "exact: hostile working directory changed the result or loaded json.py"
 fi
+# A python3 that logs where it runs: every call runs from /, so nothing in the working directory (a
+# .python-version a pyenv shim reads) picks the interpreter.
+mkdir -p "$TT/pycwd"; printf '#!/bin/sh\npwd -P >> "%s"\nexec "%s" "$@"\n' "$TT/pycwd.log" "$PY" > "$TT/pycwd/python3"; chmod +x "$TT/pycwd/python3"
+: > "$TT/pycwd.log"
+( PATH="$TT/pycwd:$TT/jq16:$TT/bin:$PATH" run_collect "$TT/big-pycwd" -- "$A_ADDR" ) > "$TT/big-pycwd.out" 2>&1
+eq "exact: the python3 that writes the corpus runs from /" "$?|$(sort -u "$TT/pycwd.log" | tr '\n' ' ')" "0|/ "
 before="$(calls getSignaturesForAddress)"
-( PATH="$TT/jq16:$TT/bin:$TT/nopy" bash "$DNR/collect.sh" --out "$TT/big-nopy" --confirmed -- "$A_ADDR" ) > "$TT/big-nopy.out" 2>&1
+corpus_at "$TT/big-nopy"
+( cd "$WT" && PATH="$TT/jq16:$TT/bin:$TT/nopy" "$DNR/collect.sh" --out "$(run_of "$TT/big-nopy")" --confirmed -- "$A_ADDR" ) > "$TT/big-nopy.out" 2>&1
 code=$?
 if [[ "$code" == 3 && ! -e "$TT/big-nopy" ]] && grep -q 'blocker.*rounds integers above 2^53.*python3' "$TT/big-nopy.out"; then
   ok "exact: jq 1.6 and no python3 -> named blocker (exit 3), nothing written"
@@ -268,7 +313,7 @@ eq "exact: that blocker comes before any RPC call" "$(calls getSignaturesForAddr
 # ---------------------------------------------------------------------------
 before="$(calls getSignaturesForAddress)"
 for f in transactions.jsonl signatures.jsonl collection-gaps.tsv; do
-  mkdir -p "$TT/keep-$f"; printf '{"kept":1}\n' > "$TT/keep-$f/$f"
+  corpus_at "$TT/keep-$f"; mkdir "$WT/$(run_of "$TT/keep-$f")"; printf '{"kept":1}\n' > "$TT/keep-$f/$f"
   collect "$TT/keep-$f" -- "$A_ADDR"
   code=$?
   if [[ "$code" == 2 && "$(cat "$TT/keep-$f/$f")" == '{"kept":1}' && "$(ls "$TT/keep-$f")" == "$f" ]] \
@@ -278,7 +323,7 @@ for f in transactions.jsonl signatures.jsonl collection-gaps.tsv; do
     bad "no clobber: --out holding $f -> exit $code, now '$(cat "$TT/keep-$f/$f")', dir: $(ls "$TT/keep-$f" | tr '\n' ' ')"
   fi
 done
-mkdir -p "$TT/keep-empty"; : > "$TT/keep-empty/signatures.jsonl"
+corpus_at "$TT/keep-empty"; mkdir "$WT/$(run_of "$TT/keep-empty")"; : > "$TT/keep-empty/signatures.jsonl"
 collect "$TT/keep-empty" -- "$A_ADDR"
 eq "no clobber: an empty signatures.jsonl is refused too (exit 2)" "$?" "2"
 eq "no clobber: refused runs made no RPC call" "$(calls getSignaturesForAddress)" "$before"
@@ -314,7 +359,7 @@ FAKE_TX_FAIL=null:2 collect "$TT/fail-alt" -- "$A_ADDR"
 eq "failing endpoint: failures that alternate with successes never stop the run (25 calls, 13 fetched, 12 gaps)" \
   "$(calls getTransaction)/$(grep -c . "$TT/fail-alt/transactions.jsonl")/$(grep -c . "$TT/fail-alt/collection-gaps.tsv")" "25/13/12"
 eq "failing endpoint: the summary gives the transactions fetched out of the calls made" \
-  "$(grep '^transactions fetched: ' "$TT/fail-alt.out")" "transactions fetched: 13 of 25 calls -> $TT/fail-alt/transactions.jsonl"
+  "$(grep '^transactions fetched: ' "$TT/fail-alt.out")" "transactions fetched: 13 of 25 calls -> $(run_of "$TT/fail-alt")/transactions.jsonl"
 rm -f "$FAKE_CURL_LOG"
 FAKE_TX_FAIL=null:2 collect "$TT/fail-alt-cap" --max-tx 5 -- "$A_ADDR"
 eq "failing endpoint: --max-tx 5 with every second call failing -> 5 calls, 3 fetched, cap row names S06" \
@@ -518,12 +563,14 @@ PY
 chmod +x "$TT/sol/solana"
 export FAKE_SOL_ARGV="$TT/sol.argv" FAKE_SOL_READS="$TT/sol.reads"
 PID="ProgTest11111111111111111111111111111111111"   # base58, 32 bytes
-# snap <dir> [var=value ...]: run snapshot-program.sh on a fresh read counter,
-# output in <dir>.out; extra variables go to the stand-in.
+# snap <path> [var=value ...]: run snapshot-program.sh from $WT on a fresh read
+# counter, into the run directory <path> stands for (incident_at), output in
+# <path>.out; extra variables go to the stand-in.
 snap() {
   local dir="$1"; shift
   rm -f "$FAKE_SOL_READS"
-  ( export "$@" PATH="$TT/sol:$TT/bin:$PATH"; bash "$DNR/snapshot-program.sh" "$PID" "$dir" ) > "$dir.out" 2>&1
+  incident_at "$dir" || return 99
+  ( export "$@" PATH="$TT/sol:$TT/bin:$PATH"; cd "$WT" && "$DNR/snapshot-program.sh" "$PID" "$(run_of "$dir")" ) > "$dir.out" 2>&1
 }
 cli_calls() { if [[ -f "$FAKE_SOL_ARGV" ]]; then grep -c . "$FAKE_SOL_ARGV"; else echo 0; fi; }
 names() { ls "$1" | LC_ALL=C sort | tr '\n' ' '; }   # a directory's entries, in byte order
@@ -534,9 +581,10 @@ names() { ls "$1" | LC_ALL=C sort | tr '\n' ' '; }   # a directory's entries, in
 #    nothing.
 # ---------------------------------------------------------------------------
 before="$(cli_calls)"
-( PATH="$TT/sol:$TT/nopy" bash "$DNR/snapshot-program.sh" "$PID" "$TT/nopy-inc" ) > "$TT/nopy-inc.out" 2>&1
+incident_at "$TT/nopy-inc"
+( cd "$WT" && PATH="$TT/sol:$TT/nopy" "$DNR/snapshot-program.sh" "$PID" "$(run_of "$TT/nopy-inc")" ) > "$TT/nopy-inc.out" 2>&1
 code=$?
-if [[ "$code" == 3 && ! -e "$TT/nopy-inc" ]] && grep -q '^\[blocker\] python3 not on PATH' "$TT/nopy-inc.out"; then
+if [[ "$code" == 3 ]] && empty_dir "$TT/nopy-inc/bin" && grep -q '^\[blocker\] python3 not on PATH' "$TT/nopy-inc.out"; then
   ok "snapshot: no python3 -> named blocker (exit 3), nothing written"
 else
   bad "snapshot: no python3 -> exit $code ($(tr '\n' ' ' < "$TT/nopy-inc.out"))"
@@ -671,7 +719,7 @@ code=$?
 eq "unchanged: the line gives the authority and status read now, and a notice names the change" \
   "$code|$(sed -n 1p "$K7.out" | cut -d' ' -f1)|$(grep -o 'authority=[^ ]* status=[^ ]*' "$K7.out")|$(grep -c '^  ! the authority or status of .* changed since bin/.*show.txt was kept (authority/status then: p2Yicb86aZig616Eav2VWG9vuXR5mEqhtzshZYBxzsV/deployed; now: NewAuth1111111111111111111111111111111111111/finalized)' "$K7.out")" \
   "0|unchanged:|authority=NewAuth1111111111111111111111111111111111111 status=finalized|1"
-K2="$TT/keep2/incident_1"; mkdir -p "$K2/bin"; printf 'partial\n' > "$K2/bin/$PID.show.txt"
+K2="$TT/keep2/incident_1"; incident_at "$K2"; printf 'partial\n' > "$K2/bin/$PID.show.txt"
 snap "$K2" FAKE_SOL_SLOTS=100
 code=$?
 if [[ "$code" == 3 && "$(cat "$K2/bin/$PID.show.txt")" == partial && ! -e "$K2/bin/$PID.so" ]]; then
@@ -713,7 +761,7 @@ snap "$L/v2" FAKE_SOL_LOADER=v2
 eq "immutable loader: a second run is 'unchanged'" "$?|$(sed -n 1p "$L/v2.out" | cut -d' ' -f1)" "0|unchanged:"
 snap "$L/none" FAKE_SOL_LOADER=none
 code=$?
-if [[ "$code" == 3 && ! -e "$L/none/bin" ]] && grep -q 'neither solana program show nor program-v4 show reads' "$L/none.out" \
+if [[ "$code" == 3 ]] && empty_dir "$L/none/bin" && grep -q 'neither solana program show nor program-v4 show reads' "$L/none.out" \
    && grep -q "Error: $PID is not an SBF program" "$L/none.out" && grep -q "Error: $PID is not owned by loader-v4" "$L/none.out"; then
   ok "no program: a blocker (exit 3) with both CLI errors, nothing written"
 else
@@ -727,7 +775,7 @@ eq "no program: the blocker names the account's owner, read with one more call" 
 # account of the loader, to check the id.
 snap "$L/show-fail" FAKE_SOL_SHOW_FAIL=1
 code=$?
-if [[ "$code" == 3 && ! -e "$L/show-fail/bin" ]] && ! grep -q 'is not a program' "$L/show-fail.out" \
+if [[ "$code" == 3 ]] && empty_dir "$L/show-fail/bin" && ! grep -q 'is not a program' "$L/show-fail.out" \
    && grep -q "^\[blocker\] the account of $PID is owned by BPFLoaderUpgradeab1e11111111111111111111111, a loader, yet neither show command read it as a program (see the errors above): .* Run the snapshot again" "$L/show-fail.out"; then
   ok "no show: a program the show commands failed to read -> blocker (exit 3) to run again, never 'not a program'"
 else
@@ -735,7 +783,7 @@ else
 fi
 snap "$L/v3data" FAKE_SOL_LOADER=v3data
 code=$?
-if [[ "$code" == 3 && ! -e "$L/v3data/bin" ]] \
+if [[ "$code" == 3 ]] && empty_dir "$L/v3data/bin" \
    && grep -q "^\[blocker\] $PID is not a program: it is a data account of BPFLoaderUpgradeab1e11111111111111111111111, a loader (a program's data account or a buffer). Check the id" "$L/v3data.out"; then
   ok "no program: a data account of the loader -> blocker (exit 3) to check the id"
 else
@@ -743,7 +791,7 @@ else
 fi
 snap "$L/missing" FAKE_SOL_LOADER=missing
 code=$?
-if [[ "$code" == 3 && ! -e "$L/missing/bin" ]] && grep -q "^\[blocker\] $PID is not a program, and its account could not be read either:$" "$L/missing.out" \
+if [[ "$code" == 3 ]] && empty_dir "$L/missing/bin" && grep -q "^\[blocker\] $PID is not a program, and its account could not be read either:$" "$L/missing.out" \
    && grep -q "Error: AccountNotFound: pubkey=$PID" "$L/missing.out"; then
   ok "no account: a blocker (exit 3) that says the account could not be read either, with the CLI's error"
 else
@@ -756,7 +804,7 @@ for case in "the first show|0|0" "the show after the dump|2|1"; do
   rm -f "$FAKE_SOL_ARGV"
   snap "$L/other-id-$from" FAKE_SOL_SHOWN_ID="OtherProg1111111111111111111111111111111111:$from"
   code=$?
-  if [[ "$code" == 3 && ! -e "$L/other-id-$from/bin" && "$(grep -c '"dump"' "$FAKE_SOL_ARGV")" == "$dumps" ]] \
+  if [[ "$code" == 3 && "$(grep -c '"dump"' "$FAKE_SOL_ARGV")" == "$dumps" ]] && empty_dir "$L/other-id-$from/bin" \
      && grep -q "^\[blocker\] the solana CLI's show output does not name $PID as its Program Id; nothing written.$" "$L/other-id-$from.out"; then
     ok "program id: another Program Id in $label -> blocker (exit 3), nothing written"
   else
@@ -764,9 +812,10 @@ for case in "the first show|0|0" "the show after the dump|2|1"; do
   fi
 done
 before="$(cli_calls)"
-( PATH="$TT/sol:$TT/bin:$PATH" bash "$DNR/snapshot-program.sh" "ProgTest1111111111111111111111111111111111" "$L/short" ) > "$L/short.out" 2>&1
+incident_at "$L/short"
+( cd "$WT" && PATH="$TT/sol:$TT/bin:$PATH" "$DNR/snapshot-program.sh" "ProgTest1111111111111111111111111111111111" "$(run_of "$L/short")" ) > "$L/short.out" 2>&1
 code=$?
-if [[ "$code" == 2 && ! -e "$L/short" ]] && grep -q 'does not decode to a 32-byte public key' "$L/short.out"; then
+if [[ "$code" == 2 ]] && empty_dir "$L/short/bin" && grep -q 'does not decode to a 32-byte public key' "$L/short.out"; then
   ok "id check: a base58 id of 31 bytes is refused (exit 2), nothing written"
 else
   bad "id check: 31-byte id -> exit $code ($(tr '\n' ' ' < "$L/short.out"))"
@@ -794,7 +843,7 @@ else
 fi
 snap "$R/twice" FAKE_SOL_SLOTS=100,200,300,400,500
 code=$?
-if [[ "$code" == 3 && ! -e "$R/twice/bin" ]] && grep -q "blocker.*moved during both dumps (100 -> 300 -> 500)" "$R/twice.out"; then
+if [[ "$code" == 3 ]] && empty_dir "$R/twice/bin" && grep -q "blocker.*moved during both dumps (100 -> 300 -> 500)" "$R/twice.out"; then
   ok "slot check: a slot that moves during both dumps is a blocker (exit 3), nothing written"
 else
   bad "slot check: deploys during both dumps -> exit $code ($(tr '\n' ' ' < "$R/twice.out"))"
@@ -832,19 +881,19 @@ else
   bad "temp dir: no temp dir -> exit $code, --out $( [[ -e "$TT/w-notmp" ]] && echo created || echo absent) ($(tr '\n' ' ' < "$TT/w-notmp.out"))"
 fi
 eq "temp dir: ... and no RPC call" "$(calls getSignaturesForAddress)" "$before"
-mkdir -p "$TT/w-ro"; chmod 0500 "$TT/w-ro"
-if [[ -w "$TT/w-ro" ]]; then
+corpus_at "$TT/w-ro"; mkdir "$WT/$(run_of "$TT/w-ro")"; chmod 0500 "$TT/w-ro/"
+if [[ -w "$TT/w-ro/" ]]; then
   ok "unwritable --out: skipped, this user can write into a 0500 directory"
 else
   collect "$TT/w-ro" -- "$A_ADDR"
   code=$?
-  if [[ "$code" == 2 ]] && grep -q "cannot create the corpus files in $TT/w-ro" "$TT/w-ro.out" && ! grep -q 'already holds' "$TT/w-ro.out"; then
+  if [[ "$code" == 2 ]] && grep -q "cannot create the corpus files in $(run_of "$TT/w-ro")" "$TT/w-ro.out" && ! grep -q 'already holds' "$TT/w-ro.out"; then
     ok "unwritable --out: exit 2, named as a directory it cannot create the corpus files in"
   else
     bad "unwritable --out: exit $code ($(tr '\n' ' ' < "$TT/w-ro.out"))"
   fi
 fi
-chmod 0700 "$TT/w-ro"
+chmod 0700 "$TT/w-ro/"
 printf 'outside\n' > "$TT/outside-tx"; printf 'outside\n' > "$TT/outside-gaps"
 printf '{"signature":"SForged","slot":999,"err":null,"blockTime":1700000999}\n' > "$TT/outside-sigs"
 cp "$TT/outside-sigs" "$TT/outside-sigs.before"
@@ -881,10 +930,11 @@ fi
 mkdir -p "$TT/link-out"
 for case in "bin|$TT/link-out" "LEDGER.md|$TT/link-out/ledger"; do
   name="${case%%|*}"; target="${case#*|}"
-  P="$TT/late-$name/incident_1"; mkdir -p "$P"
-  snap "$P" FAKE_SOL_LINK="$P/$name|$target"
+  P="$TT/late-$name/incident_1"; incident_at "$P"; rmdir "$P/bin"
+  snap "$P" FAKE_SOL_LINK="$WT/$(run_of "$P")/$name|$target"
   code=$?
-  if [[ "$code" == 2 && ! -e "$P/bin/$PID.so" && -z "$(ls -A "$TT/link-out")" ]] && grep -q "refusing $P" "$P.out"; then
+  if [[ "$code" == 2 && ! -e "$P/bin/$PID.so" && -z "$(ls -A "$TT/link-out")" ]] \
+     && grep -q "^snapshot-program.sh: refused: the run directory holds a symbolic link: $(run_of "$P")$" "$P.out"; then
     ok "re-check: a $name link that appears during the dump -> exit 2, nothing written inside or outside"
   else
     bad "re-check: $name link made during the dump -> exit $code, outside: $(ls -A "$TT/link-out" | tr '\n' ' ') ($(tr '\n' ' ' < "$P.out"))"
@@ -906,9 +956,10 @@ hold_run() {
   local out="$1" hold="$2" sig="$3" pid n=0
   shift 3
   mkdir -p "$TT/hold"; rm -f "$TT/hold/reached" "$TT/hold/release"
-  FAKE_HOLD="$hold|$TT/hold" PATH="$TT/bin:$PATH" "$PY" -c 'import os, signal, sys
+  corpus_at "$out"
+  ( cd "$WT" && exec env FAKE_HOLD="$hold|$TT/hold" PATH="$TT/bin:$PATH" "$PY" -c 'import os, signal, sys
 signal.signal(signal.SIGINT, signal.SIG_DFL)
-os.execvp("bash", ["bash"] + sys.argv[1:])' "$DNR/collect.sh" --out "$out" --confirmed "$@" > "$out.out" 2>&1 &
+os.execvp("bash", ["bash"] + sys.argv[1:])' "$DNR/collect.sh" --out "$(run_of "$out")" --confirmed "$@" ) > "$out.out" 2>&1 &
   pid=$!
   while [[ ! -e "$TT/hold/reached" && "$n" -lt 200 ]]; do sleep 0.05; n=$((n + 1)); done
   kill -"$sig" "$pid"
@@ -972,14 +1023,15 @@ grouprun() {
   local out="$1" hold="$2" pipe="$3" n=0 pg
   shift 3
   mkdir -p "$TT/hold"; rm -f "$TT/hold/reached" "$TT/hold/release" "$TT/pg"
-  FAKE_HOLD="$hold|$TT/hold" PATH="$TT/bin:$PATH" "$PY" -c 'import os, signal, sys
+  corpus_at "$out"
+  ( cd "$WT" && exec env FAKE_HOLD="$hold|$TT/hold" PATH="$TT/bin:$PATH" "$PY" -c 'import os, signal, sys
 if sys.argv[2] == "default":
     signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 os.setsid()
 open(sys.argv[1], "w").write(str(os.getpid()))
 os.execvp("bash", ["bash", "-c", sys.argv[3]] + sys.argv[4:])' "$TT/pg" "$pipe" \
-    'trap : TERM; ( trap : TERM; bash "$1" --out "$2" --confirmed "${@:3}" 2> "$2.err"; echo "$?" > "$2.status" ) | cat > "$2.out"' \
-    _ "$DNR/collect.sh" "$out" "$@" &
+    'trap : TERM; ( trap : TERM; bash "$1" --out "$3" --confirmed "${@:4}" 2> "$2.err"; echo "$?" > "$2.status" ) | cat > "$2.out"' \
+    _ "$DNR/collect.sh" "$out" "$(run_of "$out")" "$@" ) &
   while [[ ! -e "$TT/hold/reached" && "$n" -lt 200 ]]; do sleep 0.05; n=$((n + 1)); done
   pg="$(cat "$TT/pg")"
   kill -TERM -- "-$pg"
@@ -1001,9 +1053,10 @@ book '{"'"$A_ADDR"'": [{"signature": "S%02d" % k, "slot": 100 - k, "err": None, 
 for pipe in ignore default; do
   out="$TT/closed-$pipe"; rm -f "$TT/closed-reader"
   { n=0; while [[ ! -e "$TT/closed-reader" && "$n" -lt 200 ]]; do sleep 0.05; n=$((n + 1)); done; sleep 0.2
-    PATH="$TT/bin:$PATH" "$PY" -c 'import os, signal, sys
+    corpus_at "$out"
+    ( cd "$WT" && PATH="$TT/bin:$PATH" exec "$PY" -c 'import os, signal, sys
 signal.signal(signal.SIGPIPE, signal.SIG_IGN if sys.argv[1] == "ignore" else signal.SIG_DFL)
-os.execvp("bash", ["bash"] + sys.argv[2:])' "$pipe" "$DNR/collect.sh" --out "$out" --confirmed -- "$A_ADDR" 2> "$out.err"
+os.execvp("bash", ["bash"] + sys.argv[2:])' "$pipe" "$DNR/collect.sh" --out "$(run_of "$out")" --confirmed -- "$A_ADDR" ) 2> "$out.err"
     echo "$?" > "$out.status"; } | { exec 0<&-; touch "$TT/closed-reader"; }
   eq "closed stdout (SIGPIPE $pipe): the run completes, every signature listed and fetched, no gap row" \
     "$(cat "$out.status")|$(grep -c '"queried_address"' "$out/signatures.jsonl")|$(jq -r '.transaction.signatures[0]' "$out/transactions.jsonl" | tr '\n' ' ')|$(grep -c . "$out/collection-gaps.tsv")" \
@@ -1022,9 +1075,10 @@ done
 limited() {
   local out="$1" kib="$2" xfsz="$3"
   shift 3
-  ( ulimit -f "$kib" || exit 99
+  corpus_at "$out"
+  ( cd "$WT" && { ulimit -f "$kib" || exit 99; }
     [ "$xfsz" = default ] || trap '' XFSZ
-    PATH="$TT/bin:$PATH" bash "$DNR/collect.sh" --out "$out" --confirmed "$@"; echo "$?" > "$out.status" ) 2>&1 | cat > "$out.out"
+    PATH="$TT/bin:$PATH" "$DNR/collect.sh" --out "$(run_of "$out")" --confirmed "$@"; echo "$?" > "$out.status" ) 2>&1 | cat > "$out.out"
 }
 closing() { grep -c '^transactions fetched: \|^collection gaps: ' "$1"; }
 # Transactions of about 3 KB each: under an 8 KiB limit, the third one does not fit.
@@ -1039,7 +1093,7 @@ for xfsz in ignore default; do
     "$(cat "$out/collection-gaps.tsv")" \
     "S03$(printf '\t')not fetched: a write to transactions.jsonl failed; this and 2 older signatures in signatures.jsonl were not fetched"
   eq "failed write (SIGXFSZ $xfsz): the blocker names the file, and says the gap file records the rest" \
-    "$(grep -c "^\[blocker\] a write to transactions.jsonl failed (see the error above), so the run stopped, and the corpus in $out is incomplete: $out/collection-gaps.tsv records what it had not collected\." "$out.out")" "1"
+    "$(grep -c "^\[blocker\] a write to transactions.jsonl failed (see the error above), so the run stopped, and the corpus in $(run_of "$out") is incomplete: $(run_of "$out")/collection-gaps.tsv records what it had not collected\." "$out.out")" "1"
 done
 # Signature entries of about 3 KB each: the page does not fit in the private copy of
 # the signature list, which is written first; nothing is fetched.
@@ -1049,16 +1103,232 @@ limited "$out" 8 ignore -- "$A_ADDR"
 eq "failed write: a page that does not fit -> exit 3, no getTransaction call, no closing lines, the address row" \
   "$(cat "$out.status")|$(calls getTransaction)|$(closing "$out.out")|$(cat "$out/collection-gaps.tsv")" \
   "3|0|0|$A_ADDR$(printf '\t')getSignaturesForAddress page 0: a write to the private copy of the signature list failed; older history not collected"
-# The gap file itself fills up: twenty addresses and --max-pages 0 write a row each and
-# nothing else, past a 1 KiB limit. The blocker says the gap file is incomplete too.
-addrs20="$("$PY" -I -c 'print(" ".join("Addr%s%s" % (c, "1" * 39) for c in "ABCDEFGHJKLMNPQRSTUV"))')"
+# The gap file itself fills up: twenty-five addresses (the default cap) and --max-pages
+# 0 write a row each and nothing else, past a 2 KiB limit that the disclosure row (one
+# line naming every address) still fits under. The blocker says the gap file is
+# incomplete too.
+addrs25="$("$PY" -I -c 'print(" ".join("Addr%s%s" % (c, "1" * 39) for c in "ABCDEFGHJKLMNPQRSTUVWXYZa"))')"
 out="$TT/wf-gaps"; rm -f "$FAKE_CURL_LOG"
 # shellcheck disable=SC2086
-limited "$out" 1 ignore --max-pages 0 -- $addrs20
+limited "$out" 2 ignore --max-pages 0 -- $addrs25
 eq "failed write: a full gap file -> exit 3, no RPC call, no closing lines" \
   "$(cat "$out.status")|$(calls getSignaturesForAddress)|$(closing "$out.out")" "3|0|0"
 eq "failed write: ... and the blocker says the gap file is incomplete too" \
-  "$(grep -c "^\[blocker\] a write to collection-gaps.tsv failed (see the error above), so the run stopped, and the corpus in $out is incomplete, and so is $out/collection-gaps.tsv: record the gaps as for a run killed outright\." "$out.out")" "1"
+  "$(grep -c "^\[blocker\] a write to collection-gaps.tsv failed (see the error above), so the run stopped, and the corpus in $(run_of "$out") is incomplete, and so is $(run_of "$out")/collection-gaps.tsv: record the gaps as for a run killed outright\." "$out.out")" "1"
+
+# ---------------------------------------------------------------------------
+# 14. collect.sh's run directory: --out is incident_<n>/corpus or
+#     incident_<n>/corpus-<k>, relative, in a run directory of the working
+#     directory. Anything else is refused (exit 2, one line) before any write or call.
+# ---------------------------------------------------------------------------
+book '{"'"$A_ADDR"'": [{"signature": "S%02d" % k, "slot": 100 - k, "err": None, "blockTime": 1700000000 - k} for k in range(1, 4)]}'
+G1="$(cd "$WT" && "$RUNDIR" new incident)"
+# incident_0 and incident_00 never raise the number rundir.sh new gives next.
+mkdir "$WT/incident_0"; ln -s "$G1" "$WT/incident_00"
+# rc_collect <args...>: collect.sh's status from $WT against the stand-in, with --confirmed and the stderr in $TT/rc.err.
+rc_collect() { ( cd "$WT" && PATH="$TT/bin:$PATH" "$DNR/collect.sh" "$@" ) > "$TT/rc.out" 2> "$TT/rc.err"; echo $?; }
+refused_line() { [[ "$(cat "$TT/rc.err")" == "$1: refused: $2" && ! -s "$TT/rc.out" ]]; }
+rm -f "$FAKE_CURL_LOG"
+for out in "$WT/$G1/corpus" "/tmp/$G1/corpus" "../wt/$G1/corpus" "$G1" "$G1/logs" "$G1/corpus/x" "$G1/corpus-x" \
+           "$G1/corpus-12345" "$G1/corpus-" "$G1/./corpus" "$G1//corpus" "audit_1/corpus" "Incident_1/corpus" "nested/$G1/corpus"; do
+  eq "run dir: --out $out is refused (exit 2)" "$(rc_collect --out "$out" --confirmed -- "$A_ADDR")" "2"
+done
+if refused_line collect.sh "--out must be incident_<n>/corpus or incident_<n>/corpus-<k>, relative to the working directory: nested/$G1/corpus"; then
+  ok "run dir: ... saying what --out takes"
+else
+  bad "run dir: refusal line '$(cat "$TT/rc.err")'"
+fi
+eq "run dir: a run directory that does not exist is refused (exit 2)" "$(rc_collect --out incident_999/corpus --confirmed -- "$A_ADDR")" "2"
+eq "run dir: one without its .gitignore of * is refused (exit 2)" "$(rc_collect --out incident_0/corpus --confirmed -- "$A_ADDR")" "2"
+eq "run dir: one that is a symbolic link is refused (exit 2)" "$(rc_collect --out incident_00/corpus --confirmed -- "$A_ADDR")" "2"
+eq "run dir: refused runs made no RPC call" "$(calls getSignaturesForAddress)" "0"
+eq "run dir: ... and created nothing" "$(ls "$WT/$G1" | tr '\n' ' ')|$(ls -A "$WT/incident_0" | tr '\n' ' ')" "bin exec logs patches poc |"
+eq "run dir: incident_<n>/corpus-<k> is accepted (exit 0)" "$(rc_collect --out "./$G1/corpus-2/" --confirmed -- "$A_ADDR")" "0"
+eq "run dir: ... and the corpus lands there" "$(grep -c . "$WT/$G1/corpus-2/transactions.jsonl")" "3"
+eq "run dir: the closing line names the corpus by its path in the working directory" \
+  "$(grep '^transactions fetched: ' "$TT/rc.out")" "transactions fetched: 3 of 3 calls -> $G1/corpus-2/transactions.jsonl"
+eq "run dir: collect.sh writes no .gitignore of its own" "$(ls -A "$WT/$G1/corpus-2" | tr '\n' ' ')" "collection-gaps.tsv signatures.jsonl transactions.jsonl "
+eq "run dir: the installation inside the working directory is refused (exit 2)" \
+  "$( ( cd "$HERE/../.." && RPC_URL=https://rpc.example.test/ "$DNR/collect.sh" --out "$G1/corpus-3" --confirmed -- "$A_ADDR" ) >/dev/null 2>"$TT/rc.err"; echo $?)" "2"
+mkdir -p "$WT/tmpin"
+eq "run dir: a TMPDIR inside the working directory is a blocker (exit 3), with nothing made there" \
+  "$(TMPDIR="$WT/tmpin" rc_collect --out "$G1/corpus-4" --confirmed -- "$A_ADDR")|$(ls -A "$WT/tmpin")" "3|"
+
+# ---------------------------------------------------------------------------
+# 15. One closed argument grammar: each option at most once, an option-shaped word
+#     after a value option is that value, and the environment caps bound
+#     --max-pages, --max-tx and the addresses. Arguments cannot raise a cap; a
+#     value over its cap, or a cap that is not an integer, is refused (exit 2)
+#     naming the variable, before any call. A default over a cap set lower drops
+#     to the cap.
+# ---------------------------------------------------------------------------
+rm -f "$FAKE_CURL_LOG"
+G2="$(cd "$WT" && "$RUNDIR" new incident)"
+eq "grammar: --out given twice is refused (exit 2)" "$(rc_collect --out "$G2/corpus" --out "$G2/corpus-2" --confirmed -- "$A_ADDR")" "2"
+refused_line collect.sh "--out is given twice" && ok "grammar: ... saying so" || bad "grammar: line '$(cat "$TT/rc.err")'"
+eq "grammar: --confirmed given twice is refused (exit 2)" "$(rc_collect --out "$G2/corpus" --confirmed --confirmed -- "$A_ADDR")" "2"
+eq "grammar: --max-tx given twice is refused (exit 2)" "$(rc_collect --out "$G2/corpus" --confirmed --max-tx 1 --max-tx 2 -- "$A_ADDR")" "2"
+eq "grammar: an option with no value is refused (exit 2)" "$(rc_collect --out "$G2/corpus" --confirmed --max-tx)" "2"
+refused_line collect.sh "--max-tx needs a value" && ok "grammar: ... saying so" || bad "grammar: line '$(cat "$TT/rc.err")'"
+eq "grammar: --out swallowing --confirmed leaves --confirmed missing (exit 2)" "$(rc_collect --out --confirmed -- "$A_ADDR")" "2"
+eq "grammar: a 19-digit number is refused (exit 2)" "$(rc_collect --out "$G2/corpus" --confirmed --since 1234567890123456789 -- "$A_ADDR")" "2"
+eq "grammar: refused runs made no RPC call" "$(calls getSignaturesForAddress)" "0"
+addrs26="$("$PY" -I -c 'print(" ".join("Addr%s%s" % (c, "1" * 39) for c in "ABCDEFGHJKLMNPQRSTUVWXYZab"))')"
+# shellcheck disable=SC2086
+eq "caps: 26 addresses are over the default cap of 25 (exit 2)" "$(rc_collect --out "$G2/corpus" --confirmed --max-pages 0 -- $addrs26)" "2"
+refused_line collect.sh "26 addresses are over the cap of 25; to allow more, raise AUDITOR_RPC_MAX_ADDRESSES in the environment" \
+  && ok "caps: ... naming AUDITOR_RPC_MAX_ADDRESSES" || bad "caps: line '$(cat "$TT/rc.err")'"
+eq "caps: --max-pages 101 is over the default cap of 100 (exit 2)" "$(rc_collect --out "$G2/corpus" --confirmed --max-pages 101 -- "$A_ADDR")" "2"
+refused_line collect.sh "--max-pages 101 is over the cap of 100 pages per address; to allow more, raise AUDITOR_RPC_MAX_PAGES in the environment" \
+  && ok "caps: ... naming AUDITOR_RPC_MAX_PAGES" || bad "caps: line '$(cat "$TT/rc.err")'"
+eq "caps: --max-tx 10001 is over the default cap of 10000 (exit 2)" "$(rc_collect --out "$G2/corpus" --confirmed --max-tx 10001 -- "$A_ADDR")" "2"
+refused_line collect.sh "--max-tx 10001 is over the cap of 10000 getTransaction calls; to allow more, raise AUDITOR_RPC_MAX_TX in the environment" \
+  && ok "caps: ... naming AUDITOR_RPC_MAX_TX" || bad "caps: line '$(cat "$TT/rc.err")'"
+eq "caps: a lower cap in the environment holds (AUDITOR_RPC_MAX_PAGES=3, --max-pages 4: exit 2)" \
+  "$(AUDITOR_RPC_MAX_PAGES=3 rc_collect --out "$G2/corpus" --confirmed --max-pages 4 -- "$A_ADDR")" "2"
+eq "caps: ... AUDITOR_RPC_MAX_TX=1, --max-tx 2: exit 2" "$(AUDITOR_RPC_MAX_TX=1 rc_collect --out "$G2/corpus" --confirmed --max-tx 2 -- "$A_ADDR")" "2"
+eq "caps: ... AUDITOR_RPC_MAX_ADDRESSES=1, two addresses: exit 2" \
+  "$(AUDITOR_RPC_MAX_ADDRESSES=1 rc_collect --out "$G2/corpus" --confirmed -- "$A_ADDR" "AddrB111111111111111111111111111111111111111")" "2"
+for bad_cap in abc -1 1e3 "12 3" 1234567890123456789; do
+  eq "caps: AUDITOR_RPC_MAX_PAGES='$bad_cap' is refused (exit 2)" "$(AUDITOR_RPC_MAX_PAGES="$bad_cap" rc_collect --out "$G2/corpus" --confirmed -- "$A_ADDR")" "2"
+done
+refused_line collect.sh "AUDITOR_RPC_MAX_PAGES in the environment is not a plain integer: 1234567890123456789" \
+  && ok "caps: ... saying the cap is not a plain integer" || bad "caps: line '$(cat "$TT/rc.err")'"
+eq "caps: refused runs made no RPC call and wrote nothing" "$(calls getSignaturesForAddress)|$(ls -A "$WT/$G2" | tr '\n' ' ')" "0|.gitignore bin exec logs patches poc "
+eq "caps: a value at a raised cap is accepted (AUDITOR_RPC_MAX_PAGES=150, --max-pages 150: exit 0)" \
+  "$(AUDITOR_RPC_MAX_PAGES=150 rc_collect --out "$G2/corpus" --confirmed --max-pages 150 -- "$A_ADDR")" "0"
+eq "caps: an empty cap variable takes the default" "$(AUDITOR_RPC_MAX_TX= rc_collect --out "$G2/corpus-2" --confirmed --max-tx 10000 -- "$A_ADDR")" "0"
+eq "caps: caps set below the defaults lower them (AUDITOR_RPC_MAX_PAGES=3, AUDITOR_RPC_MAX_TX=1000, neither option: exit 0)" \
+  "$(AUDITOR_RPC_MAX_PAGES=3 AUDITOR_RPC_MAX_TX=1000 rc_collect --out "$G2/corpus-3" --confirmed -- "$A_ADDR")" "0"
+eq "caps: ... and the run prints the caps it used" "$(grep -c 'caps: max_pages=3 max_tx=1000$' "$TT/rc.out")" "1"
+
+# ---------------------------------------------------------------------------
+# 16. Disclosure (OUTPUT-RULES.md Rule 11b): before its first call collect.sh adds
+#     one row to incident_<n>/disclosures.tsv, under the header: the time, the
+#     tool, the provider domain, the addresses and their count. A disclosures.tsv
+#     that cannot take the row is refused before any call.
+# ---------------------------------------------------------------------------
+G3="$(cd "$WT" && "$RUNDIR" new incident)"
+B_ADDR="AddrB111111111111111111111111111111111111111"
+rm -f "$FAKE_CURL_LOG"
+( cd "$WT" && PATH="$TT/bin:$PATH" RPC_URL="https://key123.mainnet.provider.example/v2/SECRETKEY?api-key=QK" \
+    "$DNR/collect.sh" --out "$G3/corpus" --confirmed --max-pages 1 -- "$A_ADDR" "$B_ADDR" ) > "$TT/disc.out" 2>&1
+eq "disclosure: the collection exits 0" "$?" "0"
+D="$WT/$G3/disclosures.tsv"
+eq "disclosure: the header comes first" "$(sed -n 1p "$D")" "$(printf 'time\ttool\tservice\tsent\tcount')"
+eq "disclosure: one row, naming the tool, the provider domain, what was sent and the count" \
+  "$(sed -n 2p "$D" | cut -f2-)" \
+  "$(printf 'scripts/dnr/collect.sh\tprovider.example\taccount addresses (getSignaturesForAddress, then getTransaction for their signatures): %s %s\t2' "$A_ADDR" "$B_ADDR")"
+case "$(sed -n 2p "$D" | cut -f1)" in
+  [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) ok "disclosure: the time is UTC, YYYY-MM-DDTHH:MM:SSZ" ;;
+  *) bad "disclosure: time '$(sed -n 2p "$D" | cut -f1)'" ;;
+esac
+if grep -q 'SECRETKEY\|key123\|QK' "$D"; then bad "disclosure: a part of the URL reached disclosures.tsv"; else ok "disclosure: no part of the URL but the domain reaches it"; fi
+( cd "$WT" && PATH="$TT/bin:$PATH" "$DNR/collect.sh" --out "$G3/corpus-2" --confirmed --max-pages 1 -- "$A_ADDR" ) > /dev/null 2>&1
+eq "disclosure: a second collection adds a second row under the same header" "$(grep -c . "$D")|$(grep -c "^time$(printf '\t')tool" "$D")" "3|1"
+BEFORE_SIG="5h6xBEauJ3PK6SWCZ1PGjBvj8vDdWG3KpwATGy1ARAXFSDwt8GFXM7W5Ncn16wmqokgpiKRLuS83KUxyZyv2sUYv"
+( cd "$WT" && PATH="$TT/bin:$PATH" "$DNR/collect.sh" --out "$G3/corpus-3" --confirmed --max-pages 1 --before "$BEFORE_SIG" -- "$A_ADDR" ) > /dev/null 2>&1
+eq "disclosure: with --before, the row names the signature it pages from" \
+  "$(sed -n 4p "$D" | cut -f4-)" \
+  "$(printf 'account addresses (getSignaturesForAddress, then getTransaction for their signatures); before signature %s: %s\t1' "$BEFORE_SIG" "$A_ADDR")"
+eq "disclosure: the file is readable by its owner only" "$(ls -l "$D" | cut -c1-10)" "-rw-------"
+G4="$(cd "$WT" && "$RUNDIR" new incident)"; mkdir "$WT/$G4/disclosures.tsv"
+G5="$(cd "$WT" && "$RUNDIR" new incident)"; printf 'something else\n' > "$WT/$G5/disclosures.tsv"
+G6="$(cd "$WT" && "$RUNDIR" new incident)"; printf 'time\ttool\tservice\tsent\tcount\n' > "$TT/other-disclosures.tsv"
+ln "$TT/other-disclosures.tsv" "$WT/$G6/disclosures.tsv" 2>/dev/null || cp "$TT/other-disclosures.tsv" "$WT/$G6/disclosures.tsv"
+rm -f "$FAKE_CURL_LOG"
+for g in "$G4" "$G5" "$G6"; do
+  eq "disclosure: $g/disclosures.tsv that cannot take the row is refused (exit 2)" "$(rc_collect --out "$g/corpus" --confirmed -- "$A_ADDR")" "2"
+done
+refused_line collect.sh "$G6/disclosures.tsv is not a regular file of its own with the disclosure header, so the collection could not be recorded" \
+  && ok "disclosure: ... saying so" || bad "disclosure: line '$(cat "$TT/rc.err")'"
+eq "disclosure: those runs made no RPC call, and the other link is untouched" \
+  "$(calls getSignaturesForAddress)|$(grep -c . "$TT/other-disclosures.tsv")" "0|1"
+
+# ---------------------------------------------------------------------------
+# 17. snapshot-program.sh's run directory is exactly incident_<n>, relative, and it
+#     takes exactly two arguments. Before the CLI reads anything from the endpoint
+#     it adds one row to incident_<n>/disclosures.tsv.
+# ---------------------------------------------------------------------------
+G7="$(cd "$WT" && "$RUNDIR" new incident)"
+rc_snap() { ( cd "$WT" && PATH="$TT/sol:$TT/bin:$PATH" "$DNR/snapshot-program.sh" "$@" ) > "$TT/rc.out" 2> "$TT/rc.err"; echo $?; }
+before="$(cli_calls)"
+for d in "$WT/$G7" "/tmp/$G7" "../wt/$G7" "$G7/bin" "$G7/." "audit_1" "Incident_1" "nested/$G7" "incident_999" "incident_0" "incident_00"; do
+  eq "snapshot run dir: $d is refused (exit 2)" "$(rc_snap "$PID" "$d")" "2"
+done
+if refused_line snapshot-program.sh "the incident directory must be incident_<n>, relative to the working directory: nested/$G7" \
+   || refused_line snapshot-program.sh "the run directory has no .gitignore holding exactly *: incident_0" \
+   || refused_line snapshot-program.sh "the run directory is a symbolic link: incident_00"; then
+  ok "snapshot run dir: ... with one refusal line"
+else
+  bad "snapshot run dir: line '$(cat "$TT/rc.err")'"
+fi
+eq "snapshot: a third argument is refused (exit 2)" "$(rc_snap "$PID" "$G7" extra)" "2"
+refused_line snapshot-program.sh "usage: snapshot-program.sh <program_id> incident_<n>" && ok "snapshot: ... with the usage" || bad "snapshot: line '$(cat "$TT/rc.err")'"
+eq "snapshot: one argument is refused (exit 2)" "$(rc_snap "$PID")" "2"
+eq "snapshot: refused runs made no CLI call and wrote nothing" "$(cli_calls)|$(ls -A "$WT/$G7/bin")" "$before|"
+rm -f "$FAKE_SOL_READS"
+eq "snapshot: ./incident_<n>/ is accepted (exit 0)" "$( ( export FAKE_SOL_SLOTS=100; rc_snap "$PID" "./$G7/" ) )" "0"
+D="$WT/$G7/disclosures.tsv"
+eq "snapshot disclosure: the header, then one row with the tool, the provider domain, the program id and 1" \
+  "$(sed -n 1p "$D")|$(sed -n 2p "$D" | cut -f2-)" \
+  "$(printf 'time\ttool\tservice\tsent\tcount')|$(printf 'scripts/dnr/snapshot-program.sh\texample.test\tprogram id (solana program show and dump, or program-v4 show and download): %s\t1' "$PID")"
+G8="$(cd "$WT" && "$RUNDIR" new incident)"; mkdir "$WT/$G8/disclosures.tsv"
+before="$(cli_calls)"
+eq "snapshot disclosure: a disclosures.tsv that cannot take the row is refused (exit 2)" "$(rc_snap "$PID" "$G8")" "2"
+eq "snapshot disclosure: ... before any CLI call" "$(cli_calls)" "$before"
+G9="$(cd "$WT" && "$RUNDIR" new incident)"
+snap_pycwd() { rm -f "$FAKE_SOL_READS"; ( export FAKE_SOL_SLOTS=100; cd "$WT" && PATH="$TT/pycwd:$TT/sol:$TT/bin:$PATH" "$DNR/snapshot-program.sh" "$PID" "$G9" ) >/dev/null 2>&1; echo $?; }
+: > "$TT/pycwd.log"
+eq "snapshot: a first snapshot and a second, which hashes the kept one, exit 0" "$(snap_pycwd)|$(snap_pycwd)" "0|0"
+eq "snapshot: every python3 call (the id check and the hashes) runs from /" "$(sort -u "$TT/pycwd.log" | tr '\n' ' ')" "/ "
+mkdir -p "$WT/tmpin"
+eq "snapshot: a TMPDIR inside the working directory is a blocker (exit 3), with nothing made there" \
+  "$(TMPDIR="$WT/tmpin" rc_snap "$PID" "$G7")|$(ls -A "$WT/tmpin")" "3|"
+
+# ---------------------------------------------------------------------------
+# 18. The case files: hostile argument vectors, each refused with one stderr line,
+#     nothing on stdout, no RPC or CLI call, and nothing changed in the working
+#     directory. Each runs in $CW, which holds the run directory incident_1 (made by
+#     rundir.sh) and the link incident_2 (to incident_1), with
+#     RPC_URL=https://rpc.example.test/ and the stand-ins on PATH.
+# ---------------------------------------------------------------------------
+SHELLS=("$BASH")
+if [ -x /bin/bash ] && [ "$(/bin/bash -c 'printf %s "$BASH_VERSION"')" != "$BASH_VERSION" ]; then
+  SHELLS+=(/bin/bash)
+fi
+echo "# shells: ${SHELLS[*]}"
+CW="$TT/cases-wt"; mkdir -p "$CW"; (cd "$CW" && "$RUNDIR" new incident >/dev/null); ln -s incident_1 "$CW/incident_2"
+ctree() { (cd "$CW" && find . | LC_ALL=C sort); }
+run_cases() { # run_cases <entry point> <case file> <fewest cases>
+  local ep="$1" cases="$2" least="$3" line want_rc want_err rest sh got i n=0
+  local -a args
+  ctree > "$TT/ctree.before"
+  rm -f "$FAKE_CURL_LOG" "$FAKE_SOL_ARGV"
+  while IFS= read -r line; do
+    case "$line" in ''|'#'*) continue ;; esac
+    want_rc=${line%%$'\t'*}; rest=${line#*$'\t'}
+    want_err=${rest%%$'\t'*}; rest=${rest#*$'\t'}
+    IFS=$'\t' read -r -a args <<< "$rest"
+    n=$((n + 1)); i=0
+    for sh in "${SHELLS[@]}"; do
+      ( cd "$CW" && PATH="$TT/sol:$TT/bin:$PATH" RPC_URL=https://rpc.example.test/ "$sh" "$ep" "${args[@]}" ) > "$TT/case.out" 2> "$TT/case.err" < /dev/null
+      got=$?
+      if [[ "$got" == "$want_rc" && "$(cat "$TT/case.err")" == "$want_err" && ! -s "$TT/case.out" ]]; then
+        [ "$i" -gt 0 ] || ok "case: ${ep##*/} ${args[*]:0:6}"
+      else
+        bad "case ($sh): ${ep##*/} ${args[*]} -> status $got, stderr: $(cat "$TT/case.err")"
+      fi
+      i=$((i + 1))
+    done
+  done < "$cases"
+  eq "case file $cases has at least $least cases" "$([ "$n" -ge "$least" ] && echo yes || echo "no ($n)")" "yes"
+  ctree > "$TT/ctree.after"
+  if cmp -s "$TT/ctree.before" "$TT/ctree.after"; then ok "no case of ${ep##*/} changed anything in the working directory"; else bad "a case of ${ep##*/} changed the working directory"; fi
+  eq "no case of ${ep##*/} made an RPC or CLI call" "$( (cat "$FAKE_CURL_LOG" "$FAKE_SOL_ARGV" 2>/dev/null || true) | grep -c . || true)" "0"
+}
+run_cases "$DNR/collect.sh" "$HERE/fixtures/dnr-collect/cases.txt" 35
+run_cases "$DNR/snapshot-program.sh" "$HERE/fixtures/snapshot-program/cases.txt" 15
 
 if [[ "$fails" -ne 0 ]]; then
   echo "test-dnr-collect: $fails assertion(s) FAILED" >&2

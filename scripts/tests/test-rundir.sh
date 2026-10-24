@@ -310,7 +310,7 @@ check "store ran no configured program, hook or helper" nomarks
 # =================================================================================================
 run "$ROOT" check audit_1
 check "an installation inside the working directory is refused" \
-  refused 'the installation lies inside the working directory; install it outside the tree under audit (Rule 11e)'
+  refused 'the installation lies inside the working directory; install it outside the tree under audit, or run from a directory that does not contain it (Rule 11e)'
 mkdir -p "$T/fake/.bin"
 for p in git mkdir find env; do
   printf '#!/bin/sh\ntouch "%s/marks/wt-%s"\nexit 0\n' "$T" "$p" > "$T/fake/.bin/$p"

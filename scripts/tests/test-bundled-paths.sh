@@ -186,7 +186,7 @@ commands/triage.md	`"${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release/au
 commands/triage.md	`"${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release/audit-mem" put-finding
 commands/intake.md	`"${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release/audit-mem" warm
 commands/threat-model.md	`"${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release/audit-mem" warm
-commands/threat-model.md	bash "${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --repo <target> --out audit_<n>/bootstrap --pin <sha from intake> --offline
+commands/threat-model.md	"${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --offline --repo <target> --out audit_<n>/bootstrap --pin <sha from intake>
 commands/poc.md	`"${CLAUDE_PLUGIN_ROOT}/templates/poc/"`
 agents/poc-engineer.md	`"${CLAUDE_PLUGIN_ROOT}/templates/poc/"`
 agents/poc-engineer.md	`test -d "${CLAUDE_PLUGIN_ROOT}/vendor/trailofbits/plugins"`
@@ -216,7 +216,7 @@ OUTPUT-RULES.md	Corpus Markdown that command or agent text names by a relative p
 OUTPUT-RULES.md	GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false --icase-pathspecs ls-files -- .audit-memory
 docs/output-and-rigor.md	Corpus Markdown that command or agent text names by a relative path
 references/orchestration/pre-scan.md	GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false --icase-pathspecs ls-files -- .audit-memory
-scripts/threat-model/collect.sh	bash "${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --repo
+scripts/threat-model/collect.sh	"${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --offline --repo
 scripts/report-to-pdf.sh	"${CLAUDE_PLUGIN_ROOT}/scripts/report-to-pdf.sh" [path/to/REPORT.md]
 commands/hunt.md	`${CLAUDE_PLUGIN_ROOT}/references/detection-response/README.md`
 commands/respond.md	`${CLAUDE_PLUGIN_ROOT}/references/detection-response/README.md`
