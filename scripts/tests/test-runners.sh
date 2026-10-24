@@ -80,11 +80,6 @@ run() {
   S=$(sed -n "s#^cwd: \($NT/auditor-[a-z]*[.][A-Za-z0-9]\{6\}\).*#\1#p" "$T/calls" | sed -n 1p)
   [ -n "$S" ] || S=/nonexistent
 }
-last()       { local l=""; while IFS= read -r l; do :; done < "$T/out"; printf '%s' "$l"; }
-out_last()   { [ "$(last)" = "$1" ]; }
-err_is()     { [ "$(cat "$T/err")" = "$1" ]; }
-no_scratch() { [ -z "$(ls -A "$NT")" ]; }
-no_calls()   { [ ! -s "$T/calls" ]; }
 headers()    { sed -n 's/^== //p' "$T/calls"; }
 # in_blocks <header ERE> <line ERE>: every call block whose header matches (one at least) holds a matching
 # line. none_in_blocks: such blocks exist, and none holds one. Patterns are awk EREs.
@@ -99,7 +94,6 @@ calls_are() { [ "$(headers | tr '\n' '|')" = "$1" ]; }
 has_call() { headers > "$T/hdrs"; grep -qxF "$1" "$T/hdrs"; }
 tree_of() { (cd "$1" && find . -print | LC_ALL=C sort); }
 tgit() { git -c core.fsmonitor=false -c core.hooksPath=/dev/null "$@"; }
-in_text() { case "$1" in *"$2"*) return 0 ;; esac; return 1; }
 
 # ---- the fixture working directory --------------------------------------------------------------------
 # $T/wt is a repository with a cargo workspace (programs/demo), Anchor.toml, a package lock, the target's own
@@ -330,7 +324,7 @@ check "build-sbf: exit 0, the .so kept, and the last line says where" \
 check "build-sbf: the fixed command lines, in order" calls_are \
   "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|cargo build-sbf --help|cargo build-sbf --install-only|cargo build-sbf --skip-tools-install --offline --sbf-out-dir $S/out|"
 check "every step runs in the scratch directory, outside the working directory" \
-  sh -c "! grep '^cwd: ' '$T/calls' | grep -v '^cwd: $S' | grep -q ."
+  sh -c "grep -q '^cwd: ' '$T/calls' && ! grep '^cwd: ' '$T/calls' | grep -v '^cwd: $S' | grep -q ."
 check "the copy is the committed HEAD (v2)" in_blocks '^== cargo build-sbf --skip' '^show: // v2$'
 check "cargo fetch runs outside the copy, so the copy's .cargo/config is not read" in_blocks '^== cargo fetch' '^cargo-config-here: no$'
 check "cargo fetch gets the proxy variables" in_blocks '^== cargo fetch' "^env: HTTPS_PROXY=http://user:CANARY-proxy@127[.]0[.]0[.]1:9\$"
@@ -342,15 +336,15 @@ check "the build runs offline, without the proxy variables" in_blocks '^== cargo
 check "... and no proxy variable reaches it" none_in_blocks '^== cargo build-sbf --skip' '^env: [A-Za-z_]*[Pp][Rr][Oo][Xx][Yy]='
 check "the toolchain is pinned to rustup's default, and rustup installs nothing" \
   sh -c "awk '/^== cargo build-sbf --skip/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'env: RUSTUP_TOOLCHAIN=stable-fake' '$T/blk' && grep -qxF 'env: RUSTUP_AUTO_INSTALL=0' '$T/blk'"
-check "no canary variable reaches any step" sh -c "! grep -q 'canary' '$T/calls'"
+check "no canary variable reaches any step" sh -c "grep -q '^env: ' '$T/calls' && ! grep -q 'canary' '$T/calls'"
 check "every watched step has ulimit -f 4 GiB and ulimit -t of four times what is left of the limit" \
-  sh -c "! grep '^ulimit: ' '$T/calls' | grep -v '^ulimit: unlimited unlimited\$' | grep -vE '^ulimit: (7[0-9]{3}) 4194304\$' | grep -q ."
+  sh -c "grep -qE '^ulimit: 7[0-9]{3} 4194304\$' '$T/calls' && ! grep '^ulimit: ' '$T/calls' | grep -v '^ulimit: unlimited unlimited\$' | grep -vE '^ulimit: (7[0-9]{3}) 4194304\$' | grep -q ."
 check "the .so is the build's, and nothing else of the output is kept" \
   sh -c "[ \"\$(cat '$WT/audit_1/exec/build-sbf-1/demo.so')\" = \"\$(printf '\\177ELFdemo')\" ] && [ \"\$(ls '$WT/audit_1/exec/build-sbf-1')\" = demo.so ]"
 check "the log is kept, with every step, and without the proxy's token" \
   sh -c "grep -q '^>> cargo build-sbf --install-only\$' '$WT/audit_1/exec/build-sbf-1.log' && ! grep -q 'CANARY-proxy' '$WT/audit_1/exec/build-sbf-1.log'"
-check "the scratch directory is gone afterwards" no_scratch
-check "no program or hook the source repository's config names ran" test -z "$(ls -A "$T/marks")"
+check "the scratch directory is gone afterwards" sh -c "[ '$RC' = 0 ] && [ -z \"\$(ls -A '$NT')\" ]"
+check "no program or hook the source repository's config names ran during the clone and checkout" sh -c "[ '$RC' = 0 ] && [ -z \"\$(ls -A '$T/marks')\" ]"
 run "$TARGET" "$WT" -- build-sbf --run audit_1 --src . --rev "$V1"
 check "--rev checks out that commit" in_blocks '^== cargo build-sbf --skip' '^show: // v1$'
 check "... and the next run is numbered 2" test -f "$WT/audit_1/exec/build-sbf-2/demo.so"
@@ -431,7 +425,7 @@ run "$TARGET" "$WT" HTTPS_PROXY="$PROXY" -- anchor-test --run audit_1 --src .
 check "anchor-test: npm ci --ignore-scripts first, then the build, then anchor test against no validator and no deploy" \
   calls_are "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|cargo build-sbf --help|cargo build-sbf --install-only|npm ci --ignore-scripts --no-audit --no-fund|anchor build --ignore-keys -- --skip-tools-install --offline|anchor test --skip-build --skip-deploy --skip-local-validator --provider.cluster localnet --provider.wallet $S/home/.config/solana/id.json|"
 check "... npm ci gets the proxy, its own empty config files and the git on PATH" \
-  sh -c "awk '/^== npm ci/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'env: HTTPS_PROXY=$PROXY' '$T/blk' && grep -qxF 'env: npm_config_userconfig=$S/npm/userconfig' '$T/blk' && grep -qxF 'env: npm_config_globalconfig=$S/npm/globalconfig' '$T/blk' && grep -qxF 'env: npm_config_git=$(command -v git)' '$T/blk' && grep -qxF 'env: npm_config_ignore_scripts=true' '$T/blk' && [ ! -s '$S/npm/userconfig' ] 2>/dev/null; true"
+  sh -c "awk '/^== npm ci/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'env: HTTPS_PROXY=$PROXY' '$T/blk' && grep -qxF 'env: npm_config_userconfig=$S/npm/userconfig' '$T/blk' && grep -qxF 'env: npm_config_globalconfig=$S/npm/globalconfig' '$T/blk' && grep -qxF 'env: npm_config_git=$T/sys/git' '$T/blk' && grep -qxF 'env: npm_config_ignore_scripts=true' '$T/blk' && grep -qxF 'userconfig-bytes: 0' '$T/blk'"
 check "... anchor test runs without the proxy" none_in_blocks '^== anchor test' '^env: [A-Za-z_]*[Pp][Rr][Oo][Xx][Yy]='
 run "$TARGET" "$WT" -- anchor-test --run audit_1 --src . --dir app
 check "anchor-test where the lockfile is yarn's: no install, and a note says so" \
@@ -460,7 +454,7 @@ check "AUDITOR_RUN_TIMEOUT: a step past the limit is killed, exit 3 ($((t1 - t0)
   sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: cargo test: the run passed its 3-second limit (AUDITOR_RUN_TIMEOUT or --timeout) and was killed; log ' '$T/err' && [ $((t1 - t0)) -lt 30 ]"
 gc=$(cat "$T/grandchild.pid" 2>/dev/null)
 check "... and so is the process the step started in the background" sh -c "[ -n '$gc' ] && ! kill -0 '$gc' 2>/dev/null"
-check "... and the scratch directory is gone" no_scratch
+check "... and the scratch directory is gone" sh -c "[ '$RC' = 3 ] && [ -z \"\$(ls -A '$NT')\" ]"
 run "$TARGET" "$WT" -- cargo-test --run audit_1 --src . --timeout 2
 check "--timeout lowers the limit" sh -c "[ '$RC' = 3 ] && grep -q 'the run passed its 2-second limit' '$T/err'"
 check "... and ulimit -t follows it" in_blocks '^== cargo test' '^ulimit: [1-8] 4194304$'
@@ -720,7 +714,7 @@ run "$DEPS" "$WT" "${CANARIES[@]}" HTTPS_PROXY="$PROXY" -- npm-audit --run audit
 check "npm-audit: npm audit in the copy, exit 0" sh -c "[ '$RC' = 0 ] && grep -qx '== npm audit' '$T/calls' && grep -q '^>> npm-audit: no vulnerability found (exit 0): audit_1/deps/npm-audit-' '$T/out'"
 check "... with its own .npmrc, an empty user config, and only the two files copied" \
   sh -c "awk '/^== npm audit/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'npmrc: registry=https://registry.npmjs.org/|ignore-scripts=true|fund=false|update-notifier=false|' '$T/blk' && grep -qxF 'userconfig-bytes: 0' '$T/blk' && grep -qxF 'files: .npmrc package-lock.json package.json ' '$T/blk' && grep -qxF 'env: npm_config_registry=https://registry.npmjs.org/' '$T/blk'"
-check "... the target's .npmrc token reaches nothing, nor does any canary" sh -c "! grep -q 'canary' '$T/calls'"
+check "... the target's .npmrc token reaches nothing, nor does any canary" sh -c "grep -q '^== npm audit' '$T/calls' && ! grep -q 'canary' '$T/calls'"
 check "... and one disclosure row" sh -c "[ \$(( \$(wc -l < '$DT') - 1 - $r0 )) = 1 ] && sed -n '\$p' '$DT' | grep -q '	npmjs.org	every package name and version in this lockfile (npm audit.s bulk advisory request): package-lock.json	1\$'"
 settings FAKE_NPM_AUDIT_OUT="$T/npm-vuln.txt" FAKE_NPM_AUDIT_RC=1
 run "$DEPS" "$WT" -- npm-audit --run audit_1 --manifest package.json --manifest package-lock.json
@@ -845,10 +839,10 @@ FA=$WT/audit_1/deps/fetch-artifact-$n
 check "fetch-artifact crates: the record from crates.io, then the .crate from static.crates.io, digest checked, unpacked" \
   sh -c "[ '$RC' = 0 ] && grep -qxF 'url: https://crates.io/api/v1/crates/demo/1.0.0' '$T/calls' && grep -qxF 'url: https://static.crates.io/crates/demo/demo-1.0.0.crate' '$T/calls' && [ -f '$FA/demo-1.0.0.crate' ] && [ \"\$(cat '$FA/files/demo-1.0.0/src/lib.rs')\" = 'pub fn f() {}' ]"
 check "... only regular files and directories, modes 0600 and 0700, whatever the archive says" \
-  sh -c "[ -z \"\$(find '$FA' ! -type f ! -type d -print)\" ] && [ -z \"\$(find '$FA/files' -type f ! -perm 600 -print)\" ] && [ -z \"\$(find '$FA/files' -type d ! -perm 700 -print)\" ] && [ ! -e '$WT/audit_1/deps/escape.txt' ] && [ ! -e '$FA/escape.txt' ]"
+  sh -c "[ -d '$FA/files' ] && [ -z \"\$(find '$FA' ! -type f ! -type d -print)\" ] && [ -z \"\$(find '$FA/files' -type f ! -perm 600 -print)\" ] && [ -z \"\$(find '$FA/files' -type d ! -perm 700 -print)\" ] && [ ! -e '$WT/audit_1/deps/escape.txt' ] && [ ! -e '$FA/escape.txt' ]"
 check "... every entry left out is listed: unsafe names, links, special files, a name given twice, one too long to write" \
   sh -c "for w in 'demo-1.0.0/../escape.txt: unsafe name' '/abs.txt: unsafe name' 'demo-1.0.0/link: symbolic link' 'demo-1.0.0/hard: hard link' 'demo-1.0.0/fifo: special file' 'demo-1.0.0/dev: special file' 'demo-1.0.0/esc?name: unsafe name' 'demo-1.0.0/src/lib.rs: the name is taken' 'nnnnnnnnnn: cannot be written: '; do grep -qF \"\$w\" '$WT/audit_1/deps/fetch-artifact-$n.txt' || exit 1; done"
-check "... the run directory still passes its check (no link was made)" sh -c "(cd '$WT' && '$ROOT/scripts/rundir.sh' check audit_1) >/dev/null"
+check "... the run directory still passes its check (no link was made)" sh -c "[ -d '$FA/files' ] && (cd '$WT' && '$ROOT/scripts/rundir.sh' check audit_1) >/dev/null"
 check "... one disclosure row, before the first request" sh -c "[ \$(( \$(wc -l < '$DT') - 1 - $r0 )) = 1 ] && sed -n '\$p' '$DT' | grep -q '	crates.io	crate name and version (the crates.io API, then the .crate download): demo@1.0.0	1\$'"
 run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates demo 2.0.0
 n=$(sed -n 's/.*; output audit_1\/deps\/fetch-artifact-\([0-9]*\)[.]txt$/\1/p' "$T/err")

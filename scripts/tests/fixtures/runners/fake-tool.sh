@@ -72,6 +72,7 @@ json.dump({"version": "2.1.0", "runs": [{"results": [{"ruleId": "r%d" % i} for i
     case "$1" in
       ci)
         say "lock: $([ -f package-lock.json ] && echo yes || echo no)"
+        say "userconfig-bytes: $(wc -c < "${npm_config_userconfig:-/nonexistent}" 2>/dev/null | tr -d ' ')"
         exit "${FAKE_NPM_CI_RC:-0}" ;;
       audit)
         say "npmrc: $(tr '\n' '|' < .npmrc 2>/dev/null)"
