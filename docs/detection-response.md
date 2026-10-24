@@ -136,15 +136,18 @@ already captured.
   isolated run mode
   ([`OUTPUT-RULES.md` Rule 11](../OUTPUT-RULES.md#rule-11-operating-safety)); the
   RPC provider that received your addresses is disclosed under Rule 11b.
-- **One approval for the skill.** A command's pre-approvals last for the turn that
-  started it. When an analysis phase starts after you answer a question (a yes to
-  a collection, say), Manual mode asks once to run `auditor:dnr-analyze`. To skip
-  that, add `"Skill(auditor:dnr-analyze *)"` to `permissions.allow` in your user
-  settings (`~/.claude/settings.json`). Answering "don't ask again" at the prompt
-  saves the rule in the working directory's `.claude/settings.local.json`
-  instead, and `preflight.sh` refuses that file on the next run, since a
-  `permissions` key is not on its list. The fork keeps its own pre-approvals while
-  it runs, after your messages too.
+- **Approving the skill.** A command's pre-approvals last for the turn that
+  started it. For each analysis phase that starts after one of your replies (a
+  yes to a collection, say), Manual mode asks to run `auditor:dnr-analyze`. To
+  skip that, add `"Skill(auditor:dnr-analyze *)"` to `permissions.allow` in your
+  user settings (`~/.claude/settings.json`). Answering "don't ask again" at the
+  prompt saves the rule in a `.claude/settings.local.json` instead: at the root of
+  the git repository that holds the working directory (the main checkout's root,
+  for a worktree), or in the working directory itself outside a repository; and
+  `preflight.sh` refuses that file on the next run, since a `permissions` key is
+  not on its list. Move its `permissions.allow` entries to `~/.claude/settings.json`
+  and delete the file. The fork keeps its own pre-approvals while it runs, after
+  your messages too.
 - **Recipes:** [`scripts/dnr/`](../scripts/dnr/) — profiling, log-frame attribution,
   and exact balance deltas, each checked against adversarial fixtures by
   `scripts/tests/test-dnr.sh`. They share one input contract: a line they cannot
