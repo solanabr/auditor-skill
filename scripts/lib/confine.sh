@@ -1,6 +1,8 @@
 # confine.sh — shared confinement checks for the bundled entry points (scripts/git-ro.sh,
-# scripts/rundir.sh). Sourced, never run. Every check fails closed: one that cannot run is a refusal,
-# printed as the one stderr line "<tool>: refused: <reason>", with exit 64.
+# scripts/rundir.sh, scripts/rpc-read.sh, scripts/report-to-pdf.sh, the two collectors and
+# scripts/dnr/snapshot-program.sh). Sourced, never run. Every check fails closed: one that cannot run is
+# a refusal, printed as the one stderr line "<tool>: refused: <reason>", with exit 64, or with the status
+# the tool gave confine_init (the collectors and snapshot-program.sh keep their 2).
 #
 # WT is the physical working directory, taken once by confine_init.
 #   - A confined path is relative, non-empty, at most 1024 bytes and free of control characters. It
@@ -18,11 +20,16 @@
 # entries that resolve outside WT.
 # hgit is the hardened git call of OUTPUT-RULES.md Rule 11c. scripts/git-ro.sh's header lists what its
 # -c pins switch off and when to re-check them; keep the two in step.
-# Needs bash >= 3.2 and, on the cleaned PATH, env, git, find, wc and cat.
+# A tool that contacts an outside service records it in <R>/disclosures.tsv (OUTPUT-RULES.md Rule 11b;
+# the format is at confine_disclose).
+# Needs bash >= 3.2 and, on the cleaned PATH, env, git, find, wc and cat; confine_scratch needs mktemp,
+# confine_service sed, confine_disclose date, and confine_b58_bytes python3.
 
-confine_refuse() { # confine_refuse <reason>: the refusal line, then exit 64
-  printf '%s: refused: %s\n' "${CONFINE_TOOL:-confine}" "$1" >&2
-  exit 64
+# confine_refuse <reason>: the refusal line, then exit 64 (or the status confine_init was given). A tool
+# may set CONFINE_HINT around a check; the line then ends with "; <hint>".
+confine_refuse() {
+  printf '%s: refused: %s%s\n' "${CONFINE_TOOL:-confine}" "$1" "${CONFINE_HINT:+; $CONFINE_HINT}" >&2
+  exit "${CONFINE_STATUS:-64}"
 }
 
 confine_shown() { # confine_shown <s>: sets CONFINE_SHOWN to <s> for a message: control characters as ?, cut after 200 bytes
@@ -44,9 +51,10 @@ confine_phys() {
   return "$rc"
 }
 
-confine_init() { # confine_init <tool> <installation root, physical>
+confine_init() { # confine_init <tool> <installation root, physical> [<refusal status, default 64>]
   local root=$2 rest e clean=""
   CONFINE_TOOL=$1
+  CONFINE_STATUS=${3:-64}
   IFS=$' \t\n'
   unset CDPATH BASH_ENV ENV
   LC_ALL=C
@@ -115,6 +123,15 @@ hgit() {
     -c log.diffMerges=separate -c submodule.recurse=false -c diff.submodule=short \
     -c grep.patternType=basic -c grep.extendedRegexp=false -c log.showRoot=true \
     -c core.useReplaceRefs=false -c core.commitGraph=false "$@"
+}
+
+# hgit_text <dir> <git arguments>: hgit, plus the pins a parser of git's text output needs (the
+# threat-model collector's): grep prints no line or column number unless asked, and a diff keeps every
+# hunk apart.
+hgit_text() {
+  local d=$1
+  shift
+  hgit "$d" -c grep.lineNumber=false -c grep.column=false -c diff.interHunkContext=0 "$@"
 }
 
 # confine_repo_top <dir>: status 0 when <dir> (absolute) is the top level of its own repository, or a
@@ -321,4 +338,98 @@ confine_new_file() {
 
 confine_mkdir() { # confine_mkdir <path>: create one directory (never -p); status 1 when it cannot, or a link took its place
   mkdir -- "$1" 2>/dev/null && [ -d "$1" ] && [ ! -L "$1" ]
+}
+
+# confine_new_copy <file> <path>: create <path> as confine_new_file does and copy the bytes of <file>
+# into it through the descriptor opened at creation. Status 1 when it cannot.
+confine_new_copy() {
+  if [ -e "$2" ] || [ -L "$2" ]; then return 1; fi
+  ( set -C; exec 9>"$2" && cat -- "$1" >&9 ) 2>/dev/null
+}
+
+# confine_scratch <prefix>: make a private scratch directory, <TMPDIR>/<prefix>.XXXXXX (mode 0700), and
+# set CONFINE_SCRATCH to its physical path. Status 1 when it cannot be made, 2 when TMPDIR resolves
+# inside WT (nothing is made there).
+confine_scratch() {
+  local d
+  confine_phys "${TMPDIR:-/tmp}" || return 1
+  case "$CONFINE_PHYS/" in "${CONFINE_WT%/}/"*) return 2 ;; esac
+  d=$(mktemp -d "$CONFINE_PHYS/$1.XXXXXX" 2>/dev/null) || return 1
+  confine_phys "$d" || return 1
+  CONFINE_SCRATCH=$CONFINE_PHYS
+}
+
+# confine_one_link <absolute path>: status 0 when the path is a regular file, not a symbolic link, with one
+# link, so a tool may replace it as its own output or add a line to it.
+confine_one_link() {
+  local listed
+  [ ! -L "$1" ] && [ -f "$1" ] || return 1
+  listed=$(find "$1" -prune -type f -links 1 -print 2>/dev/null) || return 1
+  [ "$listed" = "$1" ]
+}
+
+# ---- outside services (OUTPUT-RULES.md Rule 11b) -------------------------------------------------------
+# confine_service <url>: sets CONFINE_SERVICE to the domain a request to <url> reaches, as a disclosure
+# names it: the host's last two DNS labels (an IP address, or a host of one or two labels, stays whole),
+# without scheme, userinfo, path, query or fragment; a port stays. Some providers put an endpoint token
+# in a subdomain, so no more of the host is kept.
+confine_service() {
+  CONFINE_SERVICE=$(printf '%s\n' "$1" | sed -E -e 's|^[A-Za-z][A-Za-z0-9+.-]*://||' -e 's|^[^/?#]*@||' \
+    -e 's|[/?#].*$||' -e 's|^.*\.([^.]+\.[A-Za-z][^.:]*)\.?(:[0-9]*)?$|\1\2|')
+  CONFINE_SERVICE=${CONFINE_SERVICE//[[:cntrl:]]/?}
+}
+
+# <R>/disclosures.tsv holds one row for each run of a bundled tool that sent something to an outside
+# service, under one header line; the report's list of outside services is built from it.
+#   time<TAB>tool<TAB>service<TAB>sent<TAB>count
+#   time     UTC, as YYYY-MM-DDTHH:MM:SSZ, taken just before the first request
+#   tool     the script, relative to the installation root, e.g. scripts/dnr/collect.sh
+#   service  the domain that received the requests (confine_service)
+#   sent     what the requests carried: "<kind>: <value> <value> ..."
+#   count    how many values
+# A cell holds no control character; each one prints as ?.
+CONFINE_DISCLOSURES_HEADER=$'time\ttool\tservice\tsent\tcount'
+
+# confine_disclosures_ok <R>: status 0 when <R>/disclosures.tsv is absent, or a regular file with one link
+# whose first line is the header, so a row can be added to it.
+confine_disclosures_ok() {
+  local f=$CONFINE_WT/$1/disclosures.tsv first
+  if [ ! -e "$f" ] && [ ! -L "$f" ]; then return 0; fi
+  confine_one_link "$f" || return 1
+  IFS= read -r first < "$f" || return 1
+  [ "$first" = "$CONFINE_DISCLOSURES_HEADER" ]
+}
+
+# confine_disclose <R> <tool> <service> <kind> <value>...: add one row to <R>/disclosures.tsv (R a run
+# directory already checked). An absent file is created, header first, with noclobber; a row is added
+# only to a file confine_disclosures_ok accepts, re-tested just before. Status 1 when it cannot.
+confine_disclose() {
+  local r=$1 tool=$2 service=$3 kind=$4 f now row v sent="" n=0
+  shift 4
+  for v in "$@"; do
+    sent=${sent:+$sent }$v
+    n=$((n + 1))
+  done
+  now=$(date -u +%Y-%m-%dT%H:%M:%SZ) || return 1
+  sent="$kind: $sent"
+  row=${now//[[:cntrl:]]/?}$'\t'${tool//[[:cntrl:]]/?}$'\t'${service//[[:cntrl:]]/?}$'\t'${sent//[[:cntrl:]]/?}$'\t'$n
+  f=$CONFINE_WT/$r/disclosures.tsv
+  confine_disclosures_ok "$r" || return 1
+  if [ ! -e "$f" ] && [ ! -L "$f" ]; then
+    confine_new_file "$f" "$CONFINE_DISCLOSURES_HEADER"$'\n'"$row"$'\n' && return 0
+    confine_disclosures_ok "$r" || return 1
+  fi
+  confine_one_link "$f" || return 1
+  printf '%s\n' "$row" 2>/dev/null >> "$f"
+}
+
+# confine_b58_bytes <s>: print how many bytes the base58 text <s> (its alphabet already checked) decodes
+# to, each leading 1 counting as a zero byte; status 1 when python3 -I did not run.
+confine_b58_bytes() {
+  python3 -I -c 'import sys
+a = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+n = 0
+for c in sys.argv[1]:
+    n = n * 58 + a.index(c)
+print(len(sys.argv[1]) - len(sys.argv[1].lstrip("1")) + (n.bit_length() + 7) // 8)' "$1" 2>/dev/null
 }
