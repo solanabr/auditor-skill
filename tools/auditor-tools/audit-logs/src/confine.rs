@@ -109,59 +109,70 @@ mod sys {
     pub const SIGTERM: c_int = 15;
 }
 
-/// Why a path is refused (exit 2).
-pub struct Refusal(pub String);
+/// Ends a run with an exit status and one stderr line: 2 for a refusal, 1 for a
+/// file that cannot be read or written.
+pub struct Stop(pub u8, pub String);
+
+/// A refusal (exit 2): `refused: <why>`.
+pub fn refuse(why: String) -> Stop {
+    Stop(2, format!("refused: {why}"))
+}
 
 /// The physical working directory, resolved once (a link above it is the
 /// operator's and is followed here, and only here).
-pub fn working_tree() -> Result<PathBuf, Refusal> {
+pub fn working_tree() -> Result<PathBuf, Stop> {
     std::env::current_dir()
         .and_then(|d| d.canonicalize())
         .map_err(|e| {
-            Refusal(format!(
+            refuse(format!(
                 "cannot resolve the working directory: {}",
                 os_message(&e)
             ))
         })
 }
 
-/// Refuses to run from an installation inside the working directory, or from a
-/// path that a quoted `Bash("<root>/…")` rule could not match as written.
-pub fn self_check(wt: &Path) -> Result<(), Refusal> {
+/// Refuses to run from a path that a quoted `Bash("<root>/…")` rule could not match
+/// as written, or from an installation inside the working directory (Rule 11e),
+/// in the words of `scripts/lib/confine.sh`.
+pub fn self_check(wt: &Path) -> Result<(), Stop> {
     let exe = std::env::current_exe()
-        .map_err(|e| Refusal(format!("cannot resolve its own path: {}", os_message(&e))))?;
+        .map_err(|e| refuse(format!("cannot resolve its own path: {}", os_message(&e))))?;
     let real = exe
         .canonicalize()
-        .map_err(|e| Refusal(format!("cannot resolve its own path: {}", os_message(&e))))?;
+        .map_err(|e| refuse(format!("cannot resolve its own path: {}", os_message(&e))))?;
     for p in [&exe, &real] {
         if p.as_os_str()
             .as_bytes()
             .iter()
-            .any(|c| matches!(c, b'"' | b'$' | b'`' | b'\\' | b'\n'))
+            .any(|&c| matches!(c, b'"' | b'$' | b'`' | b'\\') || c < 0x20 || c == 0x7F)
         {
-            return Err(Refusal(format!(
-                "its installation path {} holds a quote, $, backtick, backslash or newline",
-                shown(p.as_os_str().as_bytes())
-            )));
+            return Err(refuse(
+                "the installation path holds a quote, $, a backtick, a backslash or a control \
+                 character, so its quoted call cannot match as written"
+                    .into(),
+            ));
         }
     }
     if real.starts_with(wt) {
-        return Err(Refusal(
-            "it is installed inside the working directory; run it from an installation outside the tree under audit".into(),
+        return Err(refuse(
+            "the installation lies inside the working directory; install it outside the tree \
+             under audit (Rule 11e)"
+                .into(),
         ));
     }
     Ok(())
 }
 
-/// A path argument that passed the grammar: its components, relative to WT.
+/// A path argument that passed the grammar: its components, relative to WT, and
+/// how messages name it (`input N (<path>)` or `--out <path>`).
 pub struct Confined {
-    arg: Vec<u8>,
+    label: String,
     parts: Vec<Vec<u8>>,
 }
 
 impl Confined {
-    pub fn shown(&self) -> String {
-        shown(&self.arg)
+    pub fn label(&self) -> &str {
+        &self.label
     }
 
     fn prefix(&self, wt: &Path, n: usize) -> PathBuf {
@@ -176,13 +187,8 @@ impl Confined {
         self.prefix(wt, self.parts.len())
     }
 
-    /// The number of components.
-    pub fn depth(&self) -> usize {
-        self.parts.len()
-    }
-
-    /// An output audit-logs may create or regenerate: a file directly in the run
-    /// directory, named `[A-Za-z0-9][A-Za-z0-9._-]*` with a `.jsonl`, `.tsv` or `.txt`
+    /// An output audit-logs may create: a file directly in the run directory,
+    /// named `[A-Za-z0-9][A-Za-z0-9._-]*` with a `.jsonl`, `.tsv` or `.txt`
     /// extension, at most 128 bytes. A corpus in `corpus*/`, a snapshot in `bin/`,
     /// the ledger and the run directory's own files are never outputs.
     pub fn is_output(&self) -> bool {
@@ -197,7 +203,7 @@ impl Confined {
         stem_ok
             && [&b".jsonl"[..], b".tsv", b".txt"]
                 .iter()
-                .any(|ext| name.ends_with(ext))
+                .any(|ext| name.ends_with(ext) && name.len() > ext.len())
     }
 }
 
@@ -208,95 +214,64 @@ fn run_dir_name(part: &[u8]) -> bool {
     }
 }
 
-/// The grammar every path argument must meet before anything is opened.
-pub fn confine(what: &str, arg: &OsStr) -> Result<Confined, Refusal> {
+/// The grammar every path argument must meet before anything is opened, as the
+/// recipes' `_parts()`: relative, inside an `incident_<n>/` run directory, with no
+/// empty, `.` or `..` component. `what` is `input N` or `--out`.
+pub fn confine(what: &str, arg: &OsStr) -> Result<Confined, Stop> {
     let raw = arg.as_bytes();
-    // An input is named as the scripts name it, "input N (path)"; --out as "--out path".
-    let name = if what == "--out" {
+    let label = if what == "--out" {
         format!("--out {}", shown(raw))
     } else {
         format!("{what} ({})", shown(raw))
     };
-    let refuse = |why: &str| Err(Refusal(format!("{name} {why}")));
-    if raw.is_empty() || raw.len() > MAX_PATH {
-        return refuse(&format!("is empty or longer than {MAX_PATH} bytes"));
-    }
-    if raw.iter().any(|&c| c < 0x20 || c == 0x7F) {
-        return refuse("holds a control character");
-    }
-    if matches!(raw[0], b'/' | b'-' | b'~') {
-        return refuse("is not a relative path inside the working directory");
-    }
     let rel = raw.strip_prefix(b"./").unwrap_or(raw);
     let parts: Vec<Vec<u8>> = rel.split(|&c| c == b'/').map(<[u8]>::to_vec).collect();
-    if parts
+    let why = if raw.is_empty() || raw.len() > MAX_PATH {
+        format!("is empty or longer than {MAX_PATH} bytes")
+    } else if raw.iter().any(|&c| c < 0x20 || c == 0x7F) {
+        "holds a control character".into()
+    } else if matches!(raw[0], b'/' | b'-' | b'~') {
+        "is not a relative path inside the working directory".into()
+    } else if parts
         .iter()
         .any(|p| p.is_empty() || p == b"." || p == b"..")
     {
-        return refuse("has an empty, . or .. component");
-    }
-    if parts.len() < 2 || !run_dir_name(&parts[0]) {
-        return refuse("is not a file inside an incident_<n>/ run directory");
-    }
-    Ok(Confined {
-        arg: raw.to_vec(),
-        parts,
-    })
+        "has an empty, . or .. component".into()
+    } else if parts.len() < 2 || !run_dir_name(&parts[0]) {
+        "is not a file inside an incident_<n>/ run directory".into()
+    } else {
+        return Ok(Confined { label, parts });
+    };
+    Err(refuse(format!("{label} {why}")))
 }
 
-/// What `lstat` found along a path.
-pub enum Found {
-    /// Every component exists and none is a link; the last one's metadata.
-    File(Metadata),
-    /// A component does not exist (the index of the first missing one).
-    Missing(usize),
-    /// A component is a symbolic link.
-    Link,
-    /// A component could not be checked.
-    Unreadable(io::Error),
-}
-
-/// Walks the path from WT one component at a time with `lstat`.
-pub fn walk(wt: &Path, c: &Confined) -> Found {
-    let mut last = None;
-    for n in 1..=c.parts.len() {
-        match fs::symlink_metadata(c.prefix(wt, n)) {
-            Ok(md) if md.file_type().is_symlink() => return Found::Link,
-            Ok(md) => last = Some(md),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => return Found::Missing(n - 1),
-            Err(e) => return Found::Unreadable(e),
-        }
-    }
-    match last {
-        Some(md) => Found::File(md),
-        None => Found::Missing(0),
-    }
-}
-
-/// The run directory a path is inside: a real directory, not a link, holding a
-/// regular `.gitignore` of `*` (Rule 11d).
-pub fn check_run_dir(wt: &Path, c: &Confined) -> Result<(), Refusal> {
+/// The run directory a path is in: a real directory, not a link, holding a
+/// regular `.gitignore` of `*` (Rule 11d). Returns its lstat.
+fn run_dir(wt: &Path, c: &Confined) -> Result<Metadata, Stop> {
     let dir = c.prefix(wt, 1);
-    let name = shown(&c.parts[0]);
-    match fs::symlink_metadata(&dir) {
-        Ok(md) if md.file_type().is_dir() => {}
+    let where_ = format!("{} is in {}, which", c.label, shown(&c.parts[0]));
+    let md = match fs::symlink_metadata(&dir) {
+        Ok(md) if md.file_type().is_dir() => md,
         Ok(_) => {
-            return Err(Refusal(format!(
-                "{name} is not a directory (a symbolic link is not one)"
+            return Err(refuse(format!(
+                "{where_} is not a real directory (a symbolic link is not one)"
             )))
         }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            return Err(refuse(format!("{where_} does not exist")))
+        }
         Err(e) => {
-            return Err(Refusal(format!(
-                "{name} cannot be checked: {}",
+            return Err(refuse(format!(
+                "{where_} cannot be checked: {}",
                 os_message(&e)
             )))
         }
-    }
+    };
     let gi = dir.join(".gitignore");
     let ok = match fs::symlink_metadata(&gi) {
-        Ok(md) if md.file_type().is_file() => {
+        Ok(gmd) if gmd.file_type().is_file() => {
             let mut text = Vec::new();
-            open_checked(&gi, &md)
+            open_checked(&gi, &gmd, false)
                 .and_then(|f| f.take(16).read_to_end(&mut text))
                 .is_ok()
                 && (text == b"*" || text == b"*\n")
@@ -304,26 +279,115 @@ pub fn check_run_dir(wt: &Path, c: &Confined) -> Result<(), Refusal> {
         _ => false,
     };
     if ok {
-        Ok(())
+        Ok(md)
     } else {
-        Err(Refusal(format!(
-            "{name} has no .gitignore holding * (OUTPUT-RULES.md Rule 11d)"
+        Err(refuse(format!(
+            "{} is in {}, whose .gitignore does not hold * (OUTPUT-RULES.md Rule 11d)",
+            c.label,
+            shown(&c.parts[0])
         )))
     }
 }
 
+/// Checks a named input as the recipes' `_confined()` and `unusable()` do, and
+/// returns its lstat: a regular file with one name in a run directory, every name
+/// on the way checked with lstat (so a link is refused before anything is read
+/// through it), resolving inside WT, and one that opens.
+pub fn input(wt: &Path, c: &Confined) -> Result<Metadata, Stop> {
+    run_dir(wt, c)?;
+    let label = &c.label;
+    let mut last = None;
+    for n in 2..=c.parts.len() {
+        if last
+            .as_ref()
+            .is_some_and(|md: &Metadata| !md.file_type().is_dir())
+        {
+            return Err(refuse(format!("{label} does not exist")));
+        }
+        match fs::symlink_metadata(c.prefix(wt, n)) {
+            Ok(md) if md.file_type().is_symlink() => {
+                return Err(refuse(format!(
+                    "{label} is a symbolic link, or is reached through one inside the working directory"
+                )))
+            }
+            Ok(md) => last = Some(md),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                return Err(refuse(format!("{label} does not exist")))
+            }
+            Err(e) => {
+                return Err(refuse(format!(
+                    "{label} cannot be checked: {}",
+                    os_message(&e)
+                )))
+            }
+        }
+    }
+    let Some(md) = last else {
+        return Err(refuse(format!("{label} does not exist")));
+    };
+    if !md.file_type().is_file() {
+        return Err(refuse(format!("{label} is not a regular file")));
+    }
+    if md.nlink() != 1 {
+        return Err(refuse(format!(
+            "{label} has more than one name (a hard link)"
+        )));
+    }
+    let full = c.full(wt);
+    if !stays_inside(wt, &full) {
+        return Err(refuse(format!(
+            "{label} resolves outside the working directory"
+        )));
+    }
+    open_checked(&full, &md, true)
+        .map_err(|e| Stop(1, format!("cannot read {label}: {}", os_message(&e))))?;
+    Ok(md)
+}
+
+/// Checks the `--out` path as the recipes' `unwritable()` does: a new `.jsonl`,
+/// `.tsv` or `.txt` name directly in a run directory, which resolves inside WT.
+pub fn output(wt: &Path, c: &Confined) -> Result<PathBuf, Stop> {
+    let label = &c.label;
+    if !c.is_output() {
+        return Err(refuse(format!(
+            "{label} is not a .jsonl, .tsv or .txt file directly in the run directory"
+        )));
+    }
+    run_dir(wt, c)?;
+    let full = c.full(wt);
+    match fs::symlink_metadata(&full) {
+        Ok(md) if md.file_type().is_symlink() => {
+            return Err(refuse(format!("{label} is a symbolic link")))
+        }
+        Ok(_) => {
+            return Err(refuse(format!(
+                "{label} already exists, and an output never replaces a file: name a new one"
+            )))
+        }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => return Err(Stop(1, format!("cannot write {label}: {}", os_message(&e)))),
+    }
+    if !stays_inside(wt, &c.prefix(wt, 1)) {
+        return Err(refuse(format!(
+            "{label} resolves outside the working directory"
+        )));
+    }
+    Ok(full)
+}
+
 /// Opens a file for reading without following a final link and without blocking
-/// on a FIFO, then makes sure it is the regular file `md` describes.
-pub fn open_checked(path: &Path, md: &Metadata) -> io::Result<File> {
+/// on a FIFO, then makes sure it is the regular file `md` describes, and, for an
+/// input (`one_name`), that it has one name.
+pub fn open_checked(path: &Path, md: &Metadata, one_name: bool) -> io::Result<File> {
     let file = OpenOptions::new()
         .read(true)
         .custom_flags(flags::O_NOFOLLOW | flags::O_NONBLOCK)
         .open(path)?;
     let now = file.metadata()?;
-    if !now.file_type().is_file() {
+    if !now.file_type().is_file() || (one_name && now.nlink() != 1) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "not a regular file",
+            "not a regular file with one name",
         ));
     }
     if now.dev() != md.dev() || now.ino() != md.ino() {

@@ -186,7 +186,7 @@ eq "fixture: no frame is attributed to the program a log line forged" "$(grep -c
 #    each malformed line is counted, never echoed, by both, and each well-formed
 #    one read the same way.
 # ---------------------------------------------------------------------------
-sed -n "/^python3 -I - \"\$TT\/c20\" <<'PY'\$/,/^PY\$/p" "$HERE/test-dnr.sh" > "$T/c20.raw"
+sed -n "/^python3 -I - \"\$RW\/incident_1\/c20\" <<'PY'\$/,/^PY\$/p" "$HERE/test-dnr.sh" > "$T/c20.raw"
 sed '1d;$d' "$T/c20.raw" > "$T/c20.py"
 if [[ "$(grep -c . "$T/c20.py")" -gt 20 ]] && python3 -I "$T/c20.py" "$WT/incident_1/c20" 2> "$T/c20.err"; then
   n=0
@@ -723,35 +723,42 @@ for c in "inside the working directory|$WT/tools/auditor-tools/target/release/au
   fi
 done
 
-# The hostile-argument cases, from a working directory laid out for them: a
-# canary file outside every run directory and one outside the working directory,
-# links to both from inside incident_1/, a linked run directory, run directories
-# without a proper .gitignore, a FIFO, a file with a second name, a link where an
-# output would go, and a corpus and a ledger an output must not replace. Each case
-# runs with stdin from /dev/null and a 30 s limit.
-H="$T/hostile"; HW="$H/wt"; HO="$H/outside"
-mkdir -p "$HW/incident_1/subdir" "$HW/incident_1/corpus" "$HW/incident_3" "$HW/incident_4" "$HW/audit_1" "$HO"
-printf '*\n' > "$HW/incident_1/.gitignore"; printf '*\n' > "$HW/audit_1/.gitignore"
-printf '!x\n' > "$HW/incident_4/.gitignore"; printf '*\n' > "$HO/.gitignore"
+# ---- hostile layout (fixtures/audit-logs/hostile-args.txt); the same block is in test-audit-logs.sh and test-dnr.sh
+# hostile_layout <dir> <a clean transaction line>: the working directory the case file
+# names, <dir>/wt, and a directory outside it, <dir>/outside, in which a canary
+# transaction holds the text $CANARY: one outside every run directory and one outside
+# the working directory, links to both from inside incident_1/, a linked run
+# directory, run directories without a proper .gitignore, a FIFO, a file with a
+# second name, a link where an output would go, and a corpus and a ledger an output
+# must not replace. hostile_snapshot <dir>: every path under <dir>, never following a
+# link: type, size, mtime, link target and a hash of each regular file.
+# hostile_expand <case file> <out dir>: one file per case, its name then each
+# argument, NUL-terminated, the placeholders filled in.
 CANARY="SEKRET4f1c9e2a"
-canary="{\"meta\":{\"err\":null,\"fee\":0,\"preBalances\":[1],\"postBalances\":[2],\"logMessages\":[\"Program log: $CANARY\"]},\"transaction\":{\"signatures\":[\"Sig$CANARY\"],\"message\":{\"accountKeys\":[\"Key$CANARY\"],\"instructions\":[{\"programId\":\"Prog$CANARY\",\"accounts\":[0],\"data\":\"x\"}]}}}"
-for f in "$HW/canary.jsonl" "$HO/secret.jsonl" "$HW/incident_3/canary.jsonl" "$HW/incident_4/canary.jsonl" "$HW/audit_1/canary.jsonl"; do
-  printf '%s\n' "$canary" > "$f"
-done
-sed -n 1p "$FIX/clean-mixed.jsonl" > "$HW/incident_1/corpus.jsonl"
-sed -n 2p "$FIX/clean-mixed.jsonl" > "$HW/incident_1/corpus/transactions.jsonl"
-printf '# ledger\n' > "$HW/incident_1/LEDGER.md"
-ln -s ../canary.jsonl "$HW/incident_1/link.jsonl"
-ln -s "$HO" "$HW/incident_1/dlink"
-ln -s "$HO" "$HW/incident_2"
-mkfifo "$HW/incident_1/fifo"
-printf 'protected\n' > "$HW/protected.txt"
-ln "$HW/protected.txt" "$HW/incident_1/hard.txt"
-ln -s ../protected.txt "$HW/incident_1/out-link.txt"
-# snapshot: every path under $H, never following a link: type, size, mtime, link
-# target and a hash of each regular file.
-snapshot() {
-  python3 -I - "$H" <<'PY'
+hostile_layout() {
+  local HW="$1/wt" HO="$1/outside" canary f
+  mkdir -p "$HW/incident_1/subdir" "$HW/incident_1/corpus" "$HW/incident_3" "$HW/incident_4" "$HW/audit_1" "$HO"
+  printf '*\n' > "$HW/incident_1/.gitignore"; printf '*\n' > "$HW/audit_1/.gitignore"
+  printf '!x\n' > "$HW/incident_4/.gitignore"; printf '*\n' > "$HO/.gitignore"
+  canary="{\"meta\":{\"err\":null,\"fee\":0,\"preBalances\":[1],\"postBalances\":[2],\"logMessages\":[\"Program log: $CANARY\"]},\"transaction\":{\"signatures\":[\"Sig$CANARY\"],\"message\":{\"accountKeys\":[\"Key$CANARY\"],\"instructions\":[{\"programId\":\"Prog$CANARY\",\"accounts\":[0],\"data\":\"x\"}]}}}"
+  for f in "$HW/canary.jsonl" "$HO/secret.jsonl" "$HW/incident_3/canary.jsonl" "$HW/incident_4/canary.jsonl" "$HW/audit_1/canary.jsonl"; do
+    printf '%s\n' "$canary" > "$f"
+  done
+  printf '%s\n' "$2" > "$HW/incident_1/corpus.jsonl"
+  printf '%s\n' "$2" > "$HW/incident_1/corpus/transactions.jsonl"
+  printf '# ledger\n' > "$HW/incident_1/LEDGER.md"
+  ln -s ../canary.jsonl "$HW/incident_1/link.jsonl"
+  ln -s "$HO" "$HW/incident_1/dlink"
+  ln -s "$HO" "$HW/incident_2"
+  mkfifo "$HW/incident_1/fifo"
+  printf 'protected\n' > "$HW/protected.txt"
+  ln "$HW/protected.txt" "$HW/incident_1/hard.txt"
+  ln -s ../protected.txt "$HW/incident_1/out-link.txt"
+  cp "$HW/incident_1/corpus.jsonl" "$HW/incident_1/twin.jsonl"
+  ln "$HW/incident_1/twin.jsonl" "$HW/incident_1/twin-2.jsonl"
+}
+hostile_snapshot() {
+  python3 -I - "$1" <<'PY'
 import hashlib, os, stat, sys
 root = sys.argv[1]
 for top, dirs, files in os.walk(root):
@@ -768,10 +775,9 @@ for top, dirs, files in os.walk(root):
         print("\t".join(line))
 PY
 }
-# expand: the case file's cases, one file per case in $T/cases: its name, then each
-# argument, NUL-terminated, with the placeholders filled in.
-mkdir "$T/cases"
-python3 -I - "$CASES" "$T/cases" "$HW" "$HO" <<'PY'
+hostile_expand() {
+  mkdir "$2"
+  python3 -I - "$1" "$2" "$3/wt" "$3/outside" <<'PY'
 import os, re, sys
 cases, out, wt, outside = sys.argv[1:5]
 n = 0
@@ -789,19 +795,31 @@ with open(cases, encoding="utf-8") as f:
                 g.write(os.fsencode(word) + b"\0")
         n += 1
 PY
-snapshot > "$T/h.before"
+}
+# ---- end of hostile layout ----
+# The hostile-argument cases, run by audit-logs and, for a case that names profile,
+# frames or deltas, by that script too, from the working directory hostile_layout
+# lays out, with stdin from /dev/null and a 30 s limit each. audit-logs must exit
+# non-zero, change no file outside the run directories, leave no temporary file and
+# print no canary text; the script must exit with the same status and the same
+# refusal line, less the program name and any "(usage: ...)".
+H="$T/hostile"
+hostile_layout "$H" "$(sed -n 1p "$FIX/clean-mixed.jsonl")"
+hostile_expand "$CASES" "$T/cases" "$H"
+hostile_snapshot "$H" > "$T/h.before"
 ncases=0
+nscripts=0
 for cf in "$T"/cases/*; do
   args=(); name=""
   while IFS= read -r -d '' word; do
     if [[ -z "$name" ]]; then name="$word"; else args+=("$word"); fi
   done < "$cf"
-  ( cd "$HW" && exec "$BIN" ${args[@]+"${args[@]}"} ) < /dev/null > "$T/h.out" 2> "$T/h.err" &
+  ( cd "$H/wt" && exec "$BIN" ${args[@]+"${args[@]}"} ) < /dev/null > "$T/h.out" 2> "$T/h.err" &
   pid=$!
   n=0
   while kill -0 "$pid" 2>/dev/null && [[ "$n" -lt 300 ]]; do sleep 0.1; n=$((n + 1)); done
   if kill -0 "$pid" 2>/dev/null; then kill -KILL "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; code=hung; else wait "$pid"; code=$?; fi
-  snapshot > "$T/h.after"
+  hostile_snapshot "$H" > "$T/h.after"
   partials="$(find "$H" -name '*.partial' 2>/dev/null)"
   why=""
   [[ "$code" == hung ]] && why="$why still running after 30 s;"
@@ -809,11 +827,32 @@ for cf in "$T"/cases/*; do
   cmp -s "$T/h.before" "$T/h.after" || why="$why changed files ($(diff "$T/h.before" "$T/h.after" | sed -n '2p'));"
   [[ -z "$partials" ]] || why="$why left $partials;"
   grep -q "$CANARY" "$T/h.out" "$T/h.err" && why="$why printed the canary;"
+  case "${args[0]-}" in
+    profile) set -- "$DNR/profile.sh" ;;
+    frames) set -- "$DNR/frames.py" ;;
+    deltas) set -- "$DNR/deltas.py" ;;
+    *) set -- ;;
+  esac
+  if [[ "$#" -gt 0 ]]; then
+    ( cd "$H/wt" && exec "$@" "${args[@]:1}" ) < /dev/null > "$T/hs.out" 2> "$T/hs.err"
+    scode=$?
+    said="$(sed -e 's/^[a-z][a-z.-]*: //' -e 's/ (usage: .*//' "$T/h.err")"
+    ssaid="$(sed -e 's/^[a-z][a-z.-]*: //' -e 's/ (usage: .*//' "$T/hs.err")"
+    [[ "$scode" == "$code" ]] || why="$why exit $code where the script exits $scode;"
+    [[ "$said" == "$ssaid" ]] || why="$why says '$said' where the script says '$ssaid';"
+    [[ -s "$T/hs.out" ]] && why="$why the script printed on stdout;"
+    grep -q "$CANARY" "$T/hs.err" && why="$why the script printed the canary;"
+    hostile_snapshot "$H" > "$T/hs.after"
+    cmp -s "$T/h.after" "$T/hs.after" || why="$why the script changed files;"
+    cp "$T/hs.after" "$T/h.after"
+    nscripts=$((nscripts + 1))
+  fi
   if [[ -z "$why" ]]; then ok "hostile arguments: $name (exit $code)"; else bad "hostile arguments: $name:$why"; fi
   cp "$T/h.after" "$T/h.before"
   ncases=$((ncases + 1))
 done
 if [[ "$ncases" -ge 50 ]]; then ok "hostile arguments: $ncases cases from ${CASES##*/}"; else bad "hostile arguments: only $ncases cases read from ${CASES##*/}"; fi
-eq "hostile arguments: the protected file is unchanged" "$(cat "$HW/protected.txt")" "protected"
+if [[ "$nscripts" -ge 40 ]]; then ok "hostile arguments: $nscripts of them run by the scripts too, refused alike"; else bad "hostile arguments: only $nscripts cases run by the scripts"; fi
+eq "hostile arguments: the protected file is unchanged" "$(cat "$H/wt/protected.txt")" "protected"
 
 finish

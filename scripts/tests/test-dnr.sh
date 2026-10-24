@@ -25,13 +25,27 @@ done
 A_ADDR="AddrA111111111111111111111111111111111111111"
 B_ADDR="AddrB111111111111111111111111111111111111111"
 CURSOR="SigStart111111111111111111111111111111111111111111111111111111111111111111111111111"
+TT="$(mktemp -d "${TMPDIR:-/tmp}/dnr_test.XXXXXX")" || exit 3
+TT="$(cd -P "$TT" && pwd -P)"
+trap 'chmod -R u+rwx "$TT" 2>/dev/null; rm -rf "$TT"' EXIT
+# The recipes read and write only in a run directory incident_<n>/ of the working
+# directory, by paths relative to it, and refuse to run from an installation inside it
+# (README.md, Input contract). RW is the working directory of the checks below: its
+# incident_1/ holds the fixtures (fix/, $F) and the corpora the checks make. frames,
+# deltas and profile run a recipe from RW.
+RW="$TT/rw"
+F=incident_1/fix
+mkdir -p "$RW/$F" && printf '*\n' > "$RW/incident_1/.gitignore" && cp "$FIX"/*.jsonl "$RW/$F/" || exit 3
+frames() { ( cd "$RW" && python3 -I "$DNR/frames.py" "$@" ); }
+deltas() { ( cd "$RW" && python3 -I "$DNR/deltas.py" "$@" ); }
+profile() { ( cd "$RW" && bash "$DNR/profile.sh" "$@" ); }
 
 # ---------------------------------------------------------------------------
 # 1. frames.py attributes program logs by frame and never splits on an embedded
 #    newline. The newline-injection fixture carries a forged "invoke [1]" inside
 #    a Program log: payload.
 # ---------------------------------------------------------------------------
-logs="$(python3 -I "$DNR/frames.py" "$FIX/log-newline-injection.jsonl")"
+logs="$(frames "$F/log-newline-injection.jsonl")"
 n_log="$(printf '%s\n' "$logs" | jq -c 'select(.kind=="log")' | grep -c . || true)"
 eq "frames: exactly the 2 real Program-log lines survive" "$n_log" "2"
 n_forged="$(printf '%s\n' "$logs" | jq -rc 'select(.program|test("Fake"))' | grep -c . || true)"
@@ -46,7 +60,7 @@ eq "frames: naive flatten would forge an extra invoke (hazard present in fixture
 # ---------------------------------------------------------------------------
 # 2. deltas.py tokens is exact above 2^53, where jq doubles are not.
 # ---------------------------------------------------------------------------
-tok="$(python3 -I "$DNR/deltas.py" tokens "$FIX/token-amount-over-2-53.jsonl")"
+tok="$(deltas tokens "$F/token-amount-over-2-53.jsonl")"
 d1="$(printf '%s\n' "$tok" | awk -F'\t' '$2 ~ /^OwnerOne/ {print $4}')"
 d2="$(printf '%s\n' "$tok" | awk -F'\t' '$2 ~ /^OwnerTwo/ {print $4}')"
 eq "deltas tokens: true delta 1 preserved (jq doubles drop it to 0)" "$d1" "1"
@@ -64,7 +78,7 @@ esac
 # ---------------------------------------------------------------------------
 # 3. deltas.py skips failed transactions (atomic revert, FP-4).
 # ---------------------------------------------------------------------------
-lam="$(python3 -I "$DNR/deltas.py" lamports "$FIX/clean-mixed.jsonl")"
+lam="$(deltas lamports "$F/clean-mixed.jsonl")"
 n_failrows="$(printf '%s\n' "$lam" | grep -c 'SigCleanFail' || true)"
 eq "deltas lamports: no rows from the failed tx" "$n_failrows" "0"
 n_okrows="$(printf '%s\n' "$lam" | grep -c 'SigCleanOkV0' || true)"
@@ -73,7 +87,7 @@ eq "deltas lamports: movement rows from the successful tx present" "$n_okrows" "
 # ---------------------------------------------------------------------------
 # 4. profile.sh baselines without touching logMessages.
 # ---------------------------------------------------------------------------
-prof="$(bash "$DNR/profile.sh" "$FIX/clean-mixed.jsonl")"
+prof="$(profile "$F/clean-mixed.jsonl")"
 v1="$(printf '%s\n' "$prof" | awk '/^-- version/{f=1;next} /^--/{f=0} f && $2=="1"{print $1}')"
 eq "profile: v1 transaction counted in the version histogram" "$v1" "1"
 
@@ -187,11 +201,11 @@ owner_sum() {  # owner_sum <owner> < deltas tokens output: that owner's net, in 
   python3 -I -c 'import sys
 print(sum(int(r.split("\t")[3]) for r in sys.stdin if r.split("\t")[1] == sys.argv[1]))' "$1"
 }
-mvrows="$(python3 -I "$DNR/deltas.py" tokens "$FIX/same-owner-move.jsonl")"
+mvrows="$(deltas tokens "$F/same-owner-move.jsonl")"
 eq "deltas tokens: an internal move shows both legs (two token accounts)" \
   "$(printf '%s\n' "$mvrows" | awk -F'\t' '{printf "%s:%s ", $5, $4}')" "TA1:-100 TA2:100 "
 eq "deltas tokens: ... and nets to zero for the owner" "$(printf '%s\n' "$mvrows" | owner_sum VaultPDA)" "0"
-dr="$(python3 -I "$DNR/deltas.py" tokens "$FIX/same-owner-drain.jsonl")"
+dr="$(deltas tokens "$F/same-owner-drain.jsonl")"
 eq "deltas tokens: a two-account drain sums to -140 for the owner" "$(printf '%s\n' "$dr" | owner_sum VaultPDA)" "-140"
 eq "deltas tokens: attacker receives +140" "$(printf '%s\n' "$dr" | owner_sum Attacker)" "140"
 nrows="$(python3 -I -c 'import json
@@ -200,7 +214,7 @@ print(json.dumps({"meta": {"err": None, "preTokenBalances": [bal(1, 100), bal(2,
     "postTokenBalances": [bal(1, 60), bal(2, 40)]},
     "transaction": {"signatures": ["SigNoOwner"], "message": {"accountKeys": [
         {"pubkey": "Payer"}, {"pubkey": "TokAcctA"}, {"pubkey": "TokAcctB"}]}}}))' \
-  | python3 -I "$DNR/deltas.py" tokens)"
+  | deltas tokens)"
 eq "deltas tokens: two owner-less accounts that transfer to each other show both legs" \
   "$(printf '%s\n' "$nrows" | awk -F'\t' '{printf "%s %s %s; ", $2, $5, $4}')" "? TokAcctA -40; ? TokAcctB 40; "
 # A balance whose index has no account key is keyed, and printed, as #<index>, as in
@@ -220,7 +234,7 @@ def tx(sig, pre, post):
 tx("SigKeyless", [bal(1, 100), bal(2, 0)], [bal(1, 60), bal(2, 40)])
 tx("SigKeylessVault", [bal(1, 100, "VaultPDA"), bal(2, 0, "VaultPDA")], [bal(1, 60, "VaultPDA"), bal(2, 40, "VaultPDA")])
 tx("SigNoIndex", [bal(None, 100), bal(None, 0)], [bal(None, 60), bal(None, 40)])' \
-  | python3 -I "$DNR/deltas.py" tokens 2>&1)"
+  | deltas tokens 2>&1)"
 eq "deltas tokens: balances whose index has no account key are rows #<index>, never merged, owner or none" \
   "$(printf '%s\n' "$krows" | awk -F'\t' '$1 ~ /^SigKeyless/ {printf "%s %s %s %s; ", $1, $2, $5, $4}')" \
   "SigKeyless ? #1 -40; SigKeyless ? #2 40; SigKeylessVault VaultPDA #1 -40; SigKeylessVault VaultPDA #2 40; "
@@ -228,7 +242,7 @@ eq "deltas tokens: balances with no accountIndex are rows of their own, #?, pre 
   "$(printf '%s\n' "$krows" | awk -F'\t' '$1 == "SigNoIndex" {printf "%s %s; ", $5, $4}')" "#? -100; #? 60; #? 40; "
 eq "deltas tokens: a note on stderr counts each kind of row" \
   "$(printf '%s\n' "$krows" | grep -c '^deltas.py: 4 row(s) name a balance index that has no account key, as #<index>: ')|$(printf '%s\n' "$krows" | grep -c '^deltas.py: 3 row(s) name a token balance that has no accountIndex, as #?: ')" "1|1"
-bl="$(python3 -I "$DNR/deltas.py" lamports "$FIX/lamports-over-2-53.jsonl")"
+bl="$(deltas lamports "$F/lamports-over-2-53.jsonl")"
 eq "deltas lamports: +1 above 2^53 is exact (BigOne)" "$(printf '%s\n' "$bl" | awk -F'\t' '$2=="BigOne"{print $3}')" "1"
 eq "deltas lamports: +1 above 2^53 is exact (BigTwo)" "$(printf '%s\n' "$bl" | awk -F'\t' '$2=="BigTwo"{print $3}')" "1"
 
@@ -236,7 +250,7 @@ eq "deltas lamports: +1 above 2^53 is exact (BigTwo)" "$(printf '%s\n' "$bl" | a
 # 8. frames.py: a tab-separated forged record plus a newline-forged invoke inside
 #    Program log payloads yields valid JSONL, attributed to the real invoker only.
 # ---------------------------------------------------------------------------
-tabrows="$(python3 -I "$DNR/frames.py" "$FIX/log-tab-injection.jsonl")"
+tabrows="$(frames "$F/log-tab-injection.jsonl")"
 eq "frames: tab/newline payloads stay 2 records" "$(printf '%s\n' "$tabrows" | grep -c . || true)" "2"
 bad_json="$(printf '%s\n' "$tabrows" | python3 -I -c 'import sys,json
 n=0
@@ -251,9 +265,6 @@ eq "frames: nothing attributed to the forged victim program" \
 # ---------------------------------------------------------------------------
 # 9. profile.sh resolves programIdIndex (encoding: json) as well as programId.
 # ---------------------------------------------------------------------------
-TT="$(mktemp -d "${TMPDIR:-/tmp}/dnr_test.XXXXXX")"
-TT="$(cd -P "$TT" && pwd -P)"
-trap 'chmod -R u+rwx "$TT" 2>/dev/null; rm -rf "$TT"' EXIT
 # collect.sh and snapshot-program.sh run directly from a working directory, $WT, into
 # run directories rundir.sh makes there. corpus_at <path>: a new incident_<k> in $WT,
 # with <path> a link to its corpus/ (made by collect.sh); incident_at <path>: the
@@ -285,8 +296,8 @@ run_snap() {
   incident_at "$1" || return 99
   ( cd "$WT" && "$DNR/snapshot-program.sh" "${2:-$PID}" "$(run_of "$1")" )
 }
-printf '%s\n' '{"slot":1,"version":0,"meta":{"err":null},"transaction":{"signatures":["S"],"message":{"accountKeys":["Payer1","ProgIdx111"],"instructions":[{"programIdIndex":1}]}}}' > "$TT/json-enc.jsonl"
-pidx="$(bash "$DNR/profile.sh" "$TT/json-enc.jsonl" | awk '/^-- top-level programs/{f=1;next} f && $2=="ProgIdx111"{print $1}')"
+printf '%s\n' '{"slot":1,"version":0,"meta":{"err":null},"transaction":{"signatures":["S"],"message":{"accountKeys":["Payer1","ProgIdx111"],"instructions":[{"programIdIndex":1}]}}}' > "$RW/incident_1/json-enc.jsonl"
+pidx="$(profile incident_1/json-enc.jsonl | awk '/^-- top-level programs/{f=1;next} f && $2=="ProgIdx111"{print $1}')"
 eq "profile: programIdIndex resolved through accountKeys" "$pidx" "1"
 
 # ---------------------------------------------------------------------------
@@ -569,22 +580,29 @@ eq "snapshot: a directory not named incident_<n> is refused (exit 2), nothing wr
 #     that an audited repo ships in the working directory, or puts on PYTHONPATH,
 #     must never load — not in frames.py / deltas.py, and not in the hash that
 #     snapshot-program.sh computes with `python3 -I -`. The two controls show the
-#     planted modules DO load once -I is left out, so the checks are not vacuous.
+#     planted modules DO load once -I is left out, so the checks are not vacuous. Run
+#     directly, frames.py and deltas.py are isolated by their #! line.
 # ---------------------------------------------------------------------------
-EVIL="$TT/evil"; MARK="$TT/shadow.marker"; mkdir -p "$EVIL"
+EVIL="$TT/evil"; MARK="$TT/shadow.marker"; mkdir -p "$EVIL/incident_1"
+printf '*\n' > "$EVIL/incident_1/.gitignore"
+cp "$FIX/same-owner-drain.jsonl" "$FIX/log-newline-injection.jsonl" "$EVIL/incident_1/"
 for m in json re hashlib; do
   printf 'open(%s, "a").write("%s\\n")\n' "'$MARK'" "$m" > "$EVIL/$m.py"
 done
 ( cd "$EVIL" && printf 'import json\n' | python3 - >/dev/null 2>&1 )
 if grep -q json "$MARK" 2>/dev/null; then ok "isolation control: without -I, a json.py in the working directory replaces the stdlib (python3 -)"; else bad "isolation control: the planted json.py did not load, so the checks below prove nothing"; fi
 rm -f "$MARK"
-( cd "$EVIL" && PYTHONPATH="$EVIL" python3 "$DNR/deltas.py" tokens "$FIX/same-owner-drain.jsonl" >/dev/null 2>&1 )
+( cd "$EVIL" && PYTHONPATH="$EVIL" python3 "$DNR/deltas.py" tokens incident_1/same-owner-drain.jsonl >/dev/null 2>&1 )
 if grep -q json "$MARK" 2>/dev/null; then ok "isolation control: without -I, PYTHONPATH loads a planted json.py even for a script file"; else bad "isolation control: PYTHONPATH did not load the planted json.py"; fi
 rm -f "$MARK"
-iso="$(cd "$EVIL" && PYTHONPATH="$EVIL" python3 -I "$DNR/frames.py" "$FIX/log-newline-injection.jsonl" 2>&1)"
+iso="$(cd "$EVIL" && PYTHONPATH="$EVIL" python3 -I "$DNR/frames.py" incident_1/log-newline-injection.jsonl 2>&1)"
 if [[ "$iso" == "$logs" ]]; then ok "isolation: frames.py output unchanged from a hostile cwd + PYTHONPATH"; else bad "isolation: frames.py output changed under a hostile cwd + PYTHONPATH"; fi
-iso="$(cd "$EVIL" && PYTHONPATH="$EVIL" python3 -I "$DNR/deltas.py" tokens "$FIX/same-owner-drain.jsonl" 2>&1)"
+iso="$(cd "$EVIL" && PYTHONPATH="$EVIL" python3 -I "$DNR/deltas.py" tokens incident_1/same-owner-drain.jsonl 2>&1)"
 if [[ "$iso" == "$dr" ]]; then ok "isolation: deltas.py output unchanged from a hostile cwd + PYTHONPATH"; else bad "isolation: deltas.py output changed under a hostile cwd + PYTHONPATH"; fi
+iso="$(cd "$EVIL" && PYTHONPATH="$EVIL" "$DNR/frames.py" incident_1/log-newline-injection.jsonl 2>&1)"
+if [[ "$iso" == "$logs" ]]; then ok "isolation: frames.py run directly, by its #! line, unchanged from a hostile cwd + PYTHONPATH"; else bad "isolation: frames.py run directly changed under a hostile cwd + PYTHONPATH ($iso)"; fi
+iso="$(cd "$EVIL" && PYTHONPATH="$EVIL" "$DNR/deltas.py" tokens incident_1/same-owner-drain.jsonl 2>&1)"
+if [[ "$iso" == "$dr" ]]; then ok "isolation: deltas.py run directly, by its #! line, unchanged from a hostile cwd + PYTHONPATH"; else bad "isolation: deltas.py run directly changed under a hostile cwd + PYTHONPATH ($iso)"; fi
 GEV="$(cd "$EVIL" && "$RUNDIR" new incident)"
 iso="$(cd "$EVIL" && PATH="$TT/bin:$PATH" PYTHONPATH="$EVIL" RPC_URL="https://rpc.example.test/" "$DNR/snapshot-program.sh" "$PID" "$GEV" 2>&1)"
 case "$iso" in
@@ -605,22 +623,22 @@ for i in range(5000):
     print(json.dumps({"slot": i, "version": 0, "meta": {"err": None},
         "transaction": {"signatures": ["S%d" % i], "message": {
             "accountKeys": [{"pubkey": payer, "signer": True}, {"pubkey": prog, "signer": False}],
-            "instructions": [{"programId": prog}]}}}))' > "$TT/big.jsonl"
-bash "$DNR/profile.sh" "$TT/big.jsonl" > "$TT/big.out" 2>&1
+            "instructions": [{"programId": prog}]}}}))' > "$RW/incident_1/big.jsonl"
+profile incident_1/big.jsonl > "$TT/big.out" 2>&1
 eq "profile: a 5,000-payer corpus completes (no SIGPIPE exit)" "$?" "0"
 eq "profile: the last section still prints its 20 rows" \
   "$(awk '/^-- top-level programs/{f=1;next} f' "$TT/big.out" | grep -c .)" "20"
 
 # ---------------------------------------------------------------------------
 # 14. deltas.py streams its corpus and checks every input before the first row:
-#     a missing or unreadable later file exits 1 with no output, and a 20,000-
-#     transaction corpus split over two files sums exactly.
+#     a missing later file, or a directory, is refused (exit 2) with no output, and a
+#     20,000-transaction corpus split over two files sums exactly.
 # ---------------------------------------------------------------------------
-for later in "a missing file:$TT/no-such-corpus.jsonl" "a directory:$TT"; do
-  python3 -I "$DNR/deltas.py" tokens "$FIX/same-owner-drain.jsonl" "${later#*:}" > "$TT/d.out" 2> "$TT/d.err"
+for later in "a missing file:incident_1/no-such-corpus.jsonl" "a directory:$F"; do
+  deltas tokens "$F/same-owner-drain.jsonl" "${later#*:}" > "$TT/d.out" 2> "$TT/d.err"
   code=$?
-  if [[ "$code" == 1 && ! -s "$TT/d.out" ]] && grep -q 'cannot read' "$TT/d.err"; then
-    ok "deltas: ${later%%:*} as a later input exits 1 before any row"
+  if [[ "$code" == 2 && ! -s "$TT/d.out" ]] && grep -q '^deltas.py: refused: input 2 ' "$TT/d.err"; then
+    ok "deltas: ${later%%:*} as a later input is refused (exit 2) before any row"
   else
     bad "deltas: ${later%%:*} as a later input -> exit $code, $(grep -c . "$TT/d.out") row(s)"
   fi
@@ -635,8 +653,8 @@ for part, rng in ((sys.argv[1], range(0, 10000)), (sys.argv[2], range(10000, 200
                 "preTokenBalances": [bal(1, "Vault", 2**64 - 1), bal(2, "Attacker", 0)],
                 "postTokenBalances": [bal(1, "Vault", 2**64 - 1 - amt), bal(2, "Attacker", amt)]},
                 "transaction": {"signatures": ["S%d" % i], "message": {
-                    "accountKeys": ["Payer", "VaultTok", "AttackerTok"]}}}) + "\n")' "$TT/big-a.jsonl" "$TT/big-b.jsonl"
-python3 -I "$DNR/deltas.py" tokens "$TT/big-a.jsonl" "$TT/big-b.jsonl" > "$TT/big-d.tsv"
+                    "accountKeys": ["Payer", "VaultTok", "AttackerTok"]}}}) + "\n")' "$RW/incident_1/big-a.jsonl" "$RW/incident_1/big-b.jsonl"
+deltas tokens incident_1/big-a.jsonl incident_1/big-b.jsonl > "$TT/big-d.tsv"
 eq "deltas: a 20,000-transaction corpus over two files completes" "$?" "0"
 eq "deltas: two rows per transaction" "$(grep -c . "$TT/big-d.tsv")" "40000"
 eq "deltas: the attacker total is exact (Python ints)" \
@@ -755,7 +773,7 @@ for c in corpus corpus-2; do
       "$DNR/collect.sh" --out "$G21/$c" --confirmed --max-pages 1 -- "$A_ADDR" ) > "$TT/incident_21.$c.out" 2>&1
   eq "two corpora: collecting into $G21/$c succeeds" "$?" "0"
 done
-python3 -I "$DNR/deltas.py" lamports "$WT/$G21"/corpus*/transactions.jsonl > /dev/null 2> "$TT/both.err"
+( cd "$WT" && python3 -I "$DNR/deltas.py" lamports "$G21"/corpus*/transactions.jsonl ) > /dev/null 2> "$TT/both.err"
 if grep -q '^deltas.py: skipped 2 transaction(s) already read under the same signature$' "$TT/both.err"; then
   ok "two corpora: what both collections fetched is read once (2 copies skipped)"
 else
@@ -763,20 +781,21 @@ else
 fi
 mkdir -p "$TT/incident_22/corpus" "$TT/incident_22/corpus-2"
 for c in corpus corpus-2; do cp "$FIX/same-owner-drain.jsonl" "$TT/incident_22/$c/transactions.jsonl"; done
-both="$(python3 -I "$DNR/deltas.py" tokens "$TT"/incident_22/corpus*/transactions.jsonl 2>/dev/null)"
+printf '*\n' > "$TT/incident_22/.gitignore"
+both="$(cd "$TT" && python3 -I "$DNR/deltas.py" tokens incident_22/corpus*/transactions.jsonl 2>/dev/null)"
 eq "two corpora: a drain held by both is counted once (3 rows, VaultPDA -140)" \
   "$(printf '%s\n' "$both" | grep -c .)/$(printf '%s\n' "$both" | owner_sum VaultPDA)" "3/-140"
 for mode in tokens lamports; do
   eq "dedupe: deltas $mode over two fixtures given twice equals them once" \
-    "$(python3 -I "$DNR/deltas.py" $mode "$FIX/same-owner-drain.jsonl" "$FIX/lamports-over-2-53.jsonl" "$FIX/same-owner-drain.jsonl" "$FIX/lamports-over-2-53.jsonl" 2>/dev/null)" \
-    "$(python3 -I "$DNR/deltas.py" $mode "$FIX/same-owner-drain.jsonl" "$FIX/lamports-over-2-53.jsonl")"
+    "$(deltas "$mode" "$F/same-owner-drain.jsonl" "$F/lamports-over-2-53.jsonl" "$F/same-owner-drain.jsonl" "$F/lamports-over-2-53.jsonl" 2>/dev/null)" \
+    "$(deltas "$mode" "$F/same-owner-drain.jsonl" "$F/lamports-over-2-53.jsonl")"
 done
 eq "dedupe: frames over a fixture given twice equals the fixture once" \
-  "$(python3 -I "$DNR/frames.py" "$FIX/log-newline-injection.jsonl" "$FIX/log-newline-injection.jsonl" 2>/dev/null)" "$logs"
-prof2="$(bash "$DNR/profile.sh" "$FIX/clean-mixed.jsonl" "$FIX/clean-mixed.jsonl")"
+  "$(frames "$F/log-newline-injection.jsonl" "$F/log-newline-injection.jsonl" 2>/dev/null)" "$logs"
+prof2="$(profile "$F/clean-mixed.jsonl" "$F/clean-mixed.jsonl")"
 eq "dedupe: profile over a corpus given twice counts each transaction once" \
   "$(printf '%s\n' "$prof2" | sed -n '/^-- transactions/,/^-- version/p' | tr -s ' ' | tr '\n' '|')" \
-  "$(bash "$DNR/profile.sh" "$FIX/clean-mixed.jsonl" | sed -n '/^-- transactions/,/^-- version/p' | tr -s ' ' | tr '\n' '|')"
+  "$(profile "$F/clean-mixed.jsonl" | sed -n '/^-- transactions/,/^-- version/p' | tr -s ' ' | tr '\n' '|')"
 if grep -q '^-- skipped: 3 transaction(s) already read under the same signature$' <<< "$prof2"; then
   ok "dedupe: profile reports the copies it skipped"
 else
@@ -789,12 +808,12 @@ fi
 #     its three good transactions, exits 0, and reports the two lines it skipped.
 #     A missing python3 is a named blocker.
 # ---------------------------------------------------------------------------
-{ sed -n 1p "$FIX/clean-mixed.jsonl"; echo 'not json {'; echo '{"transaction": "not an object"}'; sed -n '2,$p' "$FIX/clean-mixed.jsonl"; } > "$TT/malformed.jsonl"
-bash "$DNR/profile.sh" "$TT/malformed.jsonl" > "$TT/malformed.out" 2>&1
+{ sed -n 1p "$FIX/clean-mixed.jsonl"; echo 'not json {'; echo '{"transaction": "not an object"}'; sed -n '2,$p' "$FIX/clean-mixed.jsonl"; } > "$RW/incident_1/malformed.jsonl"
+profile incident_1/malformed.jsonl > "$TT/malformed.out" 2>&1
 eq "profile: a corpus with malformed lines still completes" "$?" "0"
 eq "profile: the good transactions are all counted" \
   "$(sed -n '/^-- transactions/,/^-- version/p' "$TT/malformed.out" | tr -s ' ' | tr '\n' '|')" \
-  "$(bash "$DNR/profile.sh" "$FIX/clean-mixed.jsonl" | sed -n '/^-- transactions/,/^-- version/p' | tr -s ' ' | tr '\n' '|')"
+  "$(profile "$F/clean-mixed.jsonl" | sed -n '/^-- transactions/,/^-- version/p' | tr -s ' ' | tr '\n' '|')"
 if grep -q '^-- skipped: 2 malformed line(s)' "$TT/malformed.out" && grep -q '^-- top-level programs' "$TT/malformed.out"; then
   ok "profile: the two malformed lines are counted at the end, and every section printed"
 else
@@ -809,7 +828,7 @@ done
 if PATH="$TT/prof-nopy" "$(command -v bash)" -c 'command -v python3' >/dev/null 2>&1; then
   bad "profile: setup, python3 is still reachable through $TT/prof-nopy"
 fi
-PATH="$TT/prof-nopy" "$(command -v bash)" "$DNR/profile.sh" "$FIX/clean-mixed.jsonl" > "$TT/prof-nopy.out" 2> "$TT/prof-nopy.err"
+( cd "$RW" && PATH="$TT/prof-nopy" "$(command -v bash)" "$DNR/profile.sh" "$F/clean-mixed.jsonl" ) > "$TT/prof-nopy.out" 2> "$TT/prof-nopy.err"
 code=$?
 if [[ "$code" == 3 && ! -s "$TT/prof-nopy.out" ]] && grep -q '^\[blocker\] python3 is not on PATH' "$TT/prof-nopy.err"; then
   ok "profile: without python3 on PATH, a named blocker (exit 3) and no profile"
@@ -824,7 +843,7 @@ fi
 #     an Anchor program's "Instruction: X" from a lying program's; the ix records
 #     can: their data is decoded here against the Anchor discriminator.
 # ---------------------------------------------------------------------------
-ixr() { python3 -I "$DNR/frames.py" --instructions "$FIX/$1.jsonl"; }
+ixr() { frames --instructions "$F/$1.jsonl"; }
 # disc8 <ix-record query>: the first 8 bytes (hex) of the selected record's base58 data
 disc8() { python3 -I -c 'import json, sys
 B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
@@ -837,9 +856,9 @@ raw = n.to_bytes((n.bit_length() + 7) // 8, "big")
 print(raw[:8].hex())' "$1"; }
 anchor_disc() { python3 -I -c 'import hashlib, sys; print(hashlib.sha256(("global:" + sys.argv[1]).encode()).digest()[:8].hex())' "$1"; }
 eq "instructions: control, the default mode yields no record for a program that logs nothing or one reached by CPI" \
-  "$(python3 -I "$DNR/frames.py" "$FIX/ix-native-no-logs.jsonl" "$FIX/ix-cpi-victim.jsonl" | grep -c . || true)" "0"
+  "$(frames "$F/ix-native-no-logs.jsonl" "$F/ix-cpi-victim.jsonl" | grep -c . || true)" "0"
 eq "instructions: control, a lying program's log line equals the Anchor victim's" \
-  "$(python3 -I "$DNR/frames.py" "$FIX/ix-lying-log.jsonl" | jq -r .text)" "$(python3 -I "$DNR/frames.py" "$FIX/ix-anchor-victim.jsonl" | jq -r .text)"
+  "$(frames "$F/ix-lying-log.jsonl" | jq -r .text)" "$(frames "$F/ix-anchor-victim.jsonl" | jq -r .text)"
 nat="$(ixr ix-native-no-logs)"
 eq "instructions: a program that logs nothing still has its ix record, data exactly as given" \
   "$(printf '%s\n' "$nat" | jq -r 'select(.kind=="ix" and .seq==0) | "\(.program) \(.data)"')" \
@@ -937,7 +956,7 @@ else
 fi
 # Each case is one crafted line (holding the word CRAFTED, so an echo would show)
 # followed by one clean transaction, which must always come through.
-python3 -I - "$TT/c20" <<'PY'
+python3 -I - "$RW/incident_1/c20" <<'PY'
 import json, os, sys
 d = sys.argv[1]
 os.makedirs(d)
@@ -1093,10 +1112,10 @@ runs20() {
   local f="$1" out="" rc n
   for r in profile frames ix lamports tokens; do
     case "$r" in
-      profile) bash "$DNR/profile.sh" "$f" > "$TT/r20.out" 2> "$TT/r20.err" ;;
-      frames) python3 -I "$DNR/frames.py" "$f" > "$TT/r20.out" 2> "$TT/r20.err" ;;
-      ix) python3 -I "$DNR/frames.py" --instructions "$f" > "$TT/r20.out" 2> "$TT/r20.err" ;;
-      *) python3 -I "$DNR/deltas.py" "$r" "$f" > "$TT/r20.out" 2> "$TT/r20.err" ;;
+      profile) profile "$f" > "$TT/r20.out" 2> "$TT/r20.err" ;;
+      frames) frames "$f" > "$TT/r20.out" 2> "$TT/r20.err" ;;
+      ix) frames --instructions "$f" > "$TT/r20.out" 2> "$TT/r20.err" ;;
+      *) deltas "$r" "$f" > "$TT/r20.out" 2> "$TT/r20.err" ;;
     esac
     rc=$?
     n="$(sed -n 's/^[a-z]*\.[a-z]*: skipped \([0-9]*\) malformed line.*/\1/p' "$TT/r20.err")"
@@ -1110,18 +1129,18 @@ runs20() {
   done
   echo "${out# }"
 }
-for f in "$TT"/c20/bad-*.jsonl; do
+for f in "$RW"/incident_1/c20/bad-*.jsonl; do
   name="${f##*/bad-}"; name="${name%.jsonl}"
   : > "$TT/r20.all"; rm -f "$TT/r20.lost"
-  eq "contract: $name is one malformed line for every recipe, which carries on" "$(runs20 "$f")" "0:1 0:1 0:1 0:1 0:1"
+  eq "contract: $name is one malformed line for every recipe, which carries on" "$(runs20 "incident_1/c20/${f##*/}")" "0:1 0:1 0:1 0:1 0:1"
   if grep -q 'CRAFTED\|Traceback\|^jq: ' "$TT/r20.all" || [[ -e "$TT/r20.lost" ]]; then
     bad "contract: $name was echoed, raised, failed a query, or lost the clean transaction ($(cat "$TT/r20.lost" 2>/dev/null))"
   fi
 done
-for f in "$TT"/c20/good-*.jsonl; do
+for f in "$RW"/incident_1/c20/good-*.jsonl; do
   name="${f##*/good-}"; name="${name%.jsonl}"
   : > "$TT/r20.all"; rm -f "$TT/r20.lost"
-  eq "contract: $name is read as a transaction by every recipe" "$(runs20 "$f")" "0:0 0:0 0:0 0:0 0:0"
+  eq "contract: $name is read as a transaction by every recipe" "$(runs20 "incident_1/c20/${f##*/}")" "0:0 0:0 0:0 0:0 0:0"
   if grep -q 'Traceback\|^jq: ' "$TT/r20.all" || [[ -e "$TT/r20.lost" ]]; then
     bad "contract: $name raised, failed a query, or lost the clean transaction ($(cat "$TT/r20.lost" 2>/dev/null))"
   fi
@@ -1135,8 +1154,8 @@ done
 # echoed line, a traceback or a lost clean transaction.
 cat > "$TT/long20.py" <<'PY'
 import os, re, signal, subprocess, sys
-dnr, d = sys.argv[1], sys.argv[2]
-clean = open(os.path.join(d, "bad-a-JSON-array.jsonl"), "rb").read().split(b"\n")[1]
+dnr, wt, d = sys.argv[1:4]
+clean = open(os.path.join(wt, d, "bad-a-JSON-array.jsonl"), "rb").read().split(b"\n")[1]
 runs = (("profile", ["bash", dnr + "/profile.sh"], b"PayerClean"),
         ("frames", ["python3", "-I", dnr + "/frames.py"], b'"sig": "SigClean"'),
         ("ix", ["python3", "-I", dnr + "/frames.py", "--instructions"], b'"sig": "SigClean"'),
@@ -1147,11 +1166,11 @@ for size, k in (("80KiB", 40 * 1024), ("1MiB", 512 * 1024)):
     for pos in ("first", "last"):
         name = "unterminated-string-%s-%s" % (size, pos)
         path = os.path.join(d, name + ".jsonl")
-        with open(path, "wb") as f:
+        with open(os.path.join(wt, path), "wb") as f:
             f.write(line + b"\n" + clean + b"\n" if pos == "first" else clean + b"\n" + line + b"\n")
         got = []
         for label, cmd, mark in runs:
-            p = subprocess.Popen(cmd + [path], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            p = subprocess.Popen(cmd + [path], cwd=wt, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                  stderr=subprocess.PIPE, start_new_session=True)
             try:
                 out, err = p.communicate(timeout=10)
@@ -1166,7 +1185,7 @@ for size, k in (("80KiB", 40 * 1024), ("1MiB", 512 * 1024)):
                 print("PROBLEM %s %s: echoed the line, raised, or lost the clean transaction" % (name, label))
         print(name + " " + " ".join(got))
 PY
-long20="$(python3 -I "$TT/long20.py" "$DNR" "$TT/c20")"
+long20="$(python3 -I "$TT/long20.py" "$DNR" "$RW" incident_1/c20)"
 for size in 80KiB 1MiB; do
   for pos in first last; do
     eq "contract: a string that never ends ($size, $pos) is one malformed line for every recipe, each within 10 s" \
@@ -1175,21 +1194,21 @@ for size in 80KiB 1MiB; do
 done
 case "$long20" in *PROBLEM*) bad "contract: strings that never end: $(printf '%s\n' "$long20" | sed -n 's/^PROBLEM //p' | tr '\n' ';')" ;; esac
 eq "contract: a raw CR between JSON tokens is not a line break: deltas keeps that transaction's rows" \
-  "$(python3 -I "$DNR/deltas.py" lamports "$TT/c20/good-raw-CR-between-tokens.jsonl" | cut -f1 | sort -u | tr '\n' ' ')" "SigClean SigGood1 "
+  "$(deltas lamports incident_1/c20/good-raw-CR-between-tokens.jsonl | cut -f1 | sort -u | tr '\n' ' ')" "SigClean SigGood1 "
 eq "contract: a balance whose index has no account key is a row named #<index>, with a note" \
-  "$(python3 -I "$DNR/deltas.py" lamports "$TT/c20/good-fewer-keys-than-balances.jsonl" 2> "$TT/k20.err" | grep '^SigGood7' | tr '\t\n' ' |')$(grep -c '^deltas.py: 1 row(s) name a balance index that has no account key, as #<index>' "$TT/k20.err")" \
+  "$(deltas lamports incident_1/c20/good-fewer-keys-than-balances.jsonl 2> "$TT/k20.err" | grep '^SigGood7' | tr '\t\n' ' |')$(grep -c '^deltas.py: 1 row(s) name a balance index that has no account key, as #<index>' "$TT/k20.err")" \
   "SigGood7 TokAcct11111111111111111111111111111111111 5|SigGood7 #2 -9000000000|1"
 # unsafe20 <file>: how many characters of the contract's fixed list (deltas.py's
 # _UNSAFE), tab and newline aside, <file> holds.
 unsafe20() { python3 -I -c 'import re, sys
 unsafe = re.compile(re.search(r"^_UNSAFE = re\.compile\(r\"(.*)\"\)$", open(sys.argv[1], encoding="utf-8").read(), re.M).group(1))
 print(sum(1 for c in open(sys.argv[2], encoding="utf-8").read() if c not in "\t\n" and unsafe.match(c)))' "$DNR/deltas.py" "$1"; }
-python3 -I "$DNR/deltas.py" tokens "$TT/c20/good-control-characters-in-owner-mint-and-signature.jsonl" > "$TT/u20.tokens"
-python3 -I "$DNR/deltas.py" tokens "$TT/c20/good-bidi-and-zero-width-characters-in-owner-mint-and-a-log.jsonl" >> "$TT/u20.tokens"
+deltas tokens incident_1/c20/good-control-characters-in-owner-mint-and-signature.jsonl > "$TT/u20.tokens"
+deltas tokens incident_1/c20/good-bidi-and-zero-width-characters-in-owner-mint-and-a-log.jsonl >> "$TT/u20.tokens"
 eq "contract: deltas escapes each character of the fixed list, in every column" \
-  "$(grep -c '^Sig\\x0bGood9	Own\\x00er\\u2028X	Mi\\x1e\\x85nt	5	TokAcct' "$TT/u20.tokens")|$(grep -c '^SigGood12	Own\\u202eer\\u200bX\\ufeff	Mi\\u061cnt\\u2066\\x7f	5	TokAcct' "$TT/u20.tokens")|$(python3 -I "$DNR/deltas.py" lamports "$TT/c20/good-control-characters-in-owner-mint-and-signature.jsonl" | grep -c '^Sig\\x0bGood9	')|$(unsafe20 "$TT/u20.tokens")" \
+  "$(grep -c '^Sig\\x0bGood9	Own\\x00er\\u2028X	Mi\\x1e\\x85nt	5	TokAcct' "$TT/u20.tokens")|$(grep -c '^SigGood12	Own\\u202eer\\u200bX\\ufeff	Mi\\u061cnt\\u2066\\x7f	5	TokAcct' "$TT/u20.tokens")|$(deltas lamports incident_1/c20/good-control-characters-in-owner-mint-and-signature.jsonl | grep -c '^Sig\\x0bGood9	')|$(unsafe20 "$TT/u20.tokens")" \
   "1|1|1|0"
-python3 -I "$DNR/frames.py" "$TT/c20/good-bidi-and-zero-width-characters-in-owner-mint-and-a-log.jsonl" > "$TT/u20.frames"
+frames incident_1/c20/good-bidi-and-zero-width-characters-in-owner-mint-and-a-log.jsonl > "$TT/u20.frames"
 eq "contract: frames writes those characters as \\u escapes, and the text reads back the same" \
   "$(grep -c -F '"text": "a\u202eb\u0085c\u007fd\u200be\ufefff"' "$TT/u20.frames")|$(unsafe20 "$TT/u20.frames")|$(python3 -I -c 'import json, sys
 print(any(json.loads(l).get("text") == "a\u202eb\x85c\x7fd\u200be\ufefff" for l in open(sys.argv[1], encoding="utf-8")))' "$TT/u20.frames")" \
@@ -1197,8 +1216,8 @@ print(any(json.loads(l).get("text") == "a\u202eb\x85c\x7fd\u200be\ufefff" for l 
 # The default-ignorable code points of the list where the recipes print text: deltas
 # writes \xNN, \uNNNN or \UNNNNNNNN, frames a \uNNNN escape (a surrogate pair above
 # U+FFFF), and the text frames writes reads back the same.
-python3 -I "$DNR/deltas.py" tokens "$TT/c20/good-default-ignorable-characters-in-owner-mint-and-a-log.jsonl" > "$TT/d20.tokens"
-python3 -I "$DNR/frames.py" "$TT/c20/good-default-ignorable-characters-in-owner-mint-and-a-log.jsonl" > "$TT/d20.frames"
+deltas tokens incident_1/c20/good-default-ignorable-characters-in-owner-mint-and-a-log.jsonl > "$TT/d20.tokens"
+frames incident_1/c20/good-default-ignorable-characters-in-owner-mint-and-a-log.jsonl > "$TT/d20.frames"
 python3 -I - "$TT/d20.tokens" "$TT/d20.frames" > "$TT/d20.check" <<'PY'
 import json, sys
 rows = [line.rstrip("\n").split("\t") for line in open(sys.argv[1], encoding="utf-8")]
@@ -1216,7 +1235,7 @@ eq "contract: deltas and frames escape the default-ignorable code points, frames
 # not on it, holds that character in an object value; one each holds a character in
 # a key, an array and a nested object. Each version line must be the JSON text with
 # every listed character escaped (a surrogate pair above U+FFFF), and none raw.
-python3 -I - "$DNR/profile.sh" "$TT/v20.jsonl" <<'PY'
+python3 -I - "$DNR/profile.sh" "$RW/incident_1/v20.jsonl" <<'PY'
 import json, re, sys
 unsafe = re.compile(re.search(r'^_UNSAFE = re\.compile\(r"(.*)"\)$', open(sys.argv[1], encoding="utf-8").read(), re.M).group(1))
 def tx(sig, version):
@@ -1233,8 +1252,8 @@ with open(sys.argv[2], "w", encoding="utf-8") as f:
     for row in rows:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
 PY
-bash "$DNR/profile.sh" "$TT/v20.jsonl" > "$TT/v20.out" 2>&1
-python3 -I - "$DNR/profile.sh" "$TT/v20.jsonl" "$TT/v20.out" > "$TT/v20.check" <<'PY'
+profile incident_1/v20.jsonl > "$TT/v20.out" 2>&1
+python3 -I - "$DNR/profile.sh" "$RW/incident_1/v20.jsonl" "$TT/v20.out" > "$TT/v20.check" <<'PY'
 import json, re, sys
 unsafe = re.compile(re.search(r'^_UNSAFE = re\.compile\(r"(.*)"\)$', open(sys.argv[1], encoding="utf-8").read(), re.M).group(1))
 def escape(m):
@@ -1258,7 +1277,7 @@ eq "contract: profile writes each listed character of a version that is not a st
 # differ only in a character a UTF-8 collation ignores, and that is not on the fixed
 # list (U+00A0, U+FFF9, U+2800), stay separate lines, in the same order under
 # en_US.UTF-8 as under C.
-python3 -I - "$TT/l20.jsonl" <<'PY'
+python3 -I - "$RW/incident_1/l20.jsonl" <<'PY'
 import json, sys
 def tx(sig, payer):
     return {"blockTime": 1700000000, "version": 0,
@@ -1269,8 +1288,8 @@ with open(sys.argv[1], "w", encoding="utf-8") as f:
     for k, payer in enumerate(payers):
         f.write(json.dumps(tx("SigLook%d" % k, payer), ensure_ascii=False) + "\n")
 PY
-LC_ALL=en_US.UTF-8 bash "$DNR/profile.sh" "$TT/l20.jsonl" > "$TT/l20.en" 2> /dev/null
-LC_ALL=C bash "$DNR/profile.sh" "$TT/l20.jsonl" > "$TT/l20.c" 2> /dev/null
+LC_ALL=en_US.UTF-8 profile incident_1/l20.jsonl > "$TT/l20.en" 2> /dev/null
+LC_ALL=C profile incident_1/l20.jsonl > "$TT/l20.c" 2> /dev/null
 eq "contract: profile counts keys byte by byte, the same under every locale" \
   "$(sed -n '/^-- fee payers/,/^-- signers/p' "$TT/l20.en" | grep -c '^ *[12] Pay')|$(cmp -s "$TT/l20.en" "$TT/l20.c" && echo same)" "4|same"
 # U+1FAE8 is new in Unicode 15: Python 3.9 (Unicode 13) and 3.11 (Unicode 14) do not
@@ -1278,127 +1297,143 @@ eq "contract: profile counts keys byte by byte, the same under every locale" \
 # space). The fixed list makes no difference between them: both print as themselves.
 u15="$(python3 -I -c 'print("\U0001fae8")')"; nbsp="$(python3 -I -c 'print("\u00a0")')"
 eq "contract: a character new in Unicode 15 is printed as itself by profile and deltas, under any Python" \
-  "$(bash "$DNR/profile.sh" "$TT/c20/good-a-key-holding-a-character-new-in-Unicode-15.jsonl" 2>/dev/null | grep -c "Payer${u15}111")|$(python3 -I "$DNR/deltas.py" lamports "$TT/c20/good-a-key-holding-a-character-new-in-Unicode-15.jsonl" | grep -c "^SigGood11	TokAcct${u15}${nbsp}111")|$(python3 -I "$DNR/deltas.py" tokens "$TT/c20/good-a-key-holding-a-character-new-in-Unicode-15.jsonl" | grep -c "^SigGood11	Own${u15}er	")" \
+  "$(profile incident_1/c20/good-a-key-holding-a-character-new-in-Unicode-15.jsonl 2>/dev/null | grep -c "Payer${u15}111")|$(deltas lamports incident_1/c20/good-a-key-holding-a-character-new-in-Unicode-15.jsonl | grep -c "^SigGood11	TokAcct${u15}${nbsp}111")|$(deltas tokens incident_1/c20/good-a-key-holding-a-character-new-in-Unicode-15.jsonl | grep -c "^SigGood11	Own${u15}er	")" \
   "2|1|1"
 eq "contract: the u64 maximum stays exact" \
-  "$(python3 -I "$DNR/deltas.py" tokens "$TT/c20/good-an-amount-of-u64-max.jsonl" | awk -F'\t' '$1 == "SigGood5" { print $4 }')" "18446744073709551615"
+  "$(deltas tokens incident_1/c20/good-an-amount-of-u64-max.jsonl | awk -F'\t' '$1 == "SigGood5" { print $4 }')" "18446744073709551615"
 eq "contract: malformed lines are counted per input, named by path and line, not echoed; copies are counted apart" \
-  "$(cd "$TT/c20" && python3 -I "$DNR/frames.py" good-a-duplicate-key.jsonl bad-meta-is-a-list.jsonl bad-a-JSON-array.jsonl 2>&1 >/dev/null | tr '\n' '|')" \
-  "frames.py: skipped 2 transaction(s) already read under the same signature|frames.py: skipped 1 malformed line(s) in input 2 (bad-meta-is-a-list.jsonl), the first at line 1 (not a getTransaction JSON object the recipes can read)|frames.py: skipped 1 malformed line(s) in input 3 (bad-a-JSON-array.jsonl), the first at line 1 (not a getTransaction JSON object the recipes can read)|"
+  "$(frames incident_1/c20/good-a-duplicate-key.jsonl incident_1/c20/bad-meta-is-a-list.jsonl incident_1/c20/bad-a-JSON-array.jsonl 2>&1 >/dev/null | tr '\n' '|')" \
+  "frames.py: skipped 2 transaction(s) already read under the same signature|frames.py: skipped 1 malformed line(s) in input 2 (incident_1/c20/bad-meta-is-a-list.jsonl), the first at line 1 (not a getTransaction JSON object the recipes can read)|frames.py: skipped 1 malformed line(s) in input 3 (incident_1/c20/bad-a-JSON-array.jsonl), the first at line 1 (not a getTransaction JSON object the recipes can read)|"
 eq "contract: on stdin, the same note names stdin" \
-  "$(python3 -I "$DNR/deltas.py" lamports < "$TT/c20/bad-meta-is-a-list.jsonl" 2>&1 >/dev/null)" \
+  "$(deltas lamports < "$RW/incident_1/c20/bad-meta-is-a-list.jsonl" 2>&1 >/dev/null)" \
   "deltas.py: skipped 1 malformed line(s) in stdin, the first at line 1 (not a getTransaction JSON object the recipes can read)"
-prof20="$(cd "$TT/c20" && bash "$DNR/profile.sh" bad-meta-is-a-list.jsonl 2> "$TT/p20.err")"
+prof20="$(profile incident_1/c20/bad-meta-is-a-list.jsonl 2> "$TT/p20.err")"
 eq "contract: profile.sh closes its report with the note, and prints it on stderr too" \
   "$(printf '%s\n' "$prof20" | grep '^-- skipped:')|$(cat "$TT/p20.err")" \
-  "-- skipped: 1 malformed line(s) in input 1 (bad-meta-is-a-list.jsonl), the first at line 1 (not a getTransaction JSON object the recipes can read)|profile.sh: skipped 1 malformed line(s) in input 1 (bad-meta-is-a-list.jsonl), the first at line 1 (not a getTransaction JSON object the recipes can read)"
+  "-- skipped: 1 malformed line(s) in input 1 (incident_1/c20/bad-meta-is-a-list.jsonl), the first at line 1 (not a getTransaction JSON object the recipes can read)|profile.sh: skipped 1 malformed line(s) in input 1 (incident_1/c20/bad-meta-is-a-list.jsonl), the first at line 1 (not a getTransaction JSON object the recipes can read)"
 
 # ---------------------------------------------------------------------------
-# 21. The recipes refuse a corpus path that is a symbolic link, or that passes
-#     through a directory link inside the working directory (exit 2, no output),
-#     and show a path they cannot use only escaped and capped. A link above the
-#     working directory, the operator's own, is followed.
+# 21. A named input must be a regular file with one name in a run directory
+#     incident_<n>/ of the working directory, named relative to it and reached
+#     through no symbolic link: any other is refused (exit 2, no output) before any
+#     input is read, by each recipe in the same words, the path shown escaped and
+#     capped. A directory link above the working directory, the operator's own, is
+#     followed. A file the recipe cannot open is exit 1.
 # ---------------------------------------------------------------------------
-W21="$TT/wd21"; mkdir -p "$W21/real" "$TT/op21"
-cp "$FIX/same-owner-drain.jsonl" "$W21/real/corpus.jsonl"
-cp "$FIX/same-owner-drain.jsonl" "$TT/op21/corpus.jsonl"
-ln -s "$W21/real/corpus.jsonl" "$W21/file-link.jsonl"
-ln -s "$W21/real" "$W21/dir-link"
+W21="$TT/wd21"; mkdir -p "$W21/incident_1/real" "$W21/incident_2" "$W21/incident_3" "$W21/audit_1" "$TT/op21/incident_1" "$TT/out21"
+printf '*\n' > "$W21/incident_1/.gitignore"; printf '*\n' > "$W21/audit_1/.gitignore"; printf '*\n' > "$TT/op21/incident_1/.gitignore"
+printf '!corpus.jsonl\n' > "$W21/incident_3/.gitignore"
+for d in "$W21" "$W21/incident_1/real" "$W21/incident_2" "$W21/incident_3" "$W21/audit_1" "$TT/op21/incident_1" "$TT/out21"; do
+  cp "$FIX/same-owner-drain.jsonl" "$d/corpus.jsonl"
+done
+cp "$FIX/same-owner-drain.jsonl" "$W21/incident_1/one.jsonl"
+ln "$W21/incident_1/one.jsonl" "$W21/incident_1/second-name.jsonl"
+ln -s real/corpus.jsonl "$W21/incident_1/file-link.jsonl"
+ln -s real "$W21/incident_1/dir-link"
+ln -s "$TT/out21" "$W21/incident_4"
 ln -s "$TT/op21" "$TT/op-link21"
-# runs21 <path>: "status:output lines:refusal lines" for profile, frames and deltas,
-# each run from $W21.
+mkfifo "$W21/incident_1/fifo.jsonl"
+# runs21 <dir> <path>...: "status:output lines" for profile, frames and deltas tokens,
+# each run from <dir>, then "|" and the stderr line less the program name when all
+# three print the same one line, "differ" otherwise. A run still going after 10 s
+# (waiting on a FIFO, say) is stopped and reads "T".
 runs21() {
-  local res="" r
+  local dir="$1" res="" r msgs="" one pid n
+  shift
   for r in profile frames tokens; do
     case "$r" in
-      profile) ( cd "$W21" && bash "$DNR/profile.sh" "$1" ) > "$TT/r21.out" 2> "$TT/r21.err" ;;
-      frames) ( cd "$W21" && python3 -I "$DNR/frames.py" "$1" ) > "$TT/r21.out" 2> "$TT/r21.err" ;;
-      tokens) ( cd "$W21" && python3 -I "$DNR/deltas.py" tokens "$1" ) > "$TT/r21.out" 2> "$TT/r21.err" ;;
+      profile) ( cd "$dir" && exec bash "$DNR/profile.sh" "$@" ) < /dev/null > "$TT/r21.out" 2> "$TT/r21.err" & ;;
+      frames) ( cd "$dir" && exec python3 -I "$DNR/frames.py" "$@" ) < /dev/null > "$TT/r21.out" 2> "$TT/r21.err" & ;;
+      tokens) ( cd "$dir" && exec python3 -I "$DNR/deltas.py" tokens "$@" ) < /dev/null > "$TT/r21.out" 2> "$TT/r21.err" & ;;
     esac
-    res="$res $?:$(grep -c . "$TT/r21.out"):$(grep -c 'is a symbolic link, or is reached through one inside the working directory; refusing it$' "$TT/r21.err")"
-  done
-  echo "${res# }"
-}
-for case in "a file that is a link|file-link.jsonl" "a path through a directory link in the working directory|dir-link/corpus.jsonl" \
-  "the same path, absolute|$W21/dir-link/corpus.jsonl"; do
-  eq "input links: ${case%%|*} -> profile, frames and deltas refuse it (exit 2, no output)" "$(runs21 "${case#*|}")" "2:0:1 2:0:1 2:0:1"
-done
-got="$(runs21 "$TT/op-link21/corpus.jsonl")"
-case "$got" in
-  0:[1-9]*:0\ 0:*:0\ 0:[1-9]*:0) ok "input links: a directory link above the working directory is followed ($got)" ;;
-  *) bad "input links: the operator's directory link was refused ($got)" ;;
-esac
-oddp="$TT/no such"$'\n'"line"$'\033'"[31m.jsonl"
-longp="$TT/$(python3 -I -c 'print("x" * 400)').jsonl"
-for r in frames lamports; do
-  for p in "$oddp" "$longp"; do
-    case "$r" in
-      frames) python3 -I "$DNR/frames.py" "$p" > "$TT/r21.out" 2> "$TT/r21.err" ;;
-      lamports) python3 -I "$DNR/deltas.py" lamports "$p" > "$TT/r21.out" 2> "$TT/r21.err" ;;
-    esac
-    code=$?
-    msg="$(cat "$TT/r21.err")"
-    if [[ "$code" == 1 && ! -s "$TT/r21.out" && "$(grep -c . "$TT/r21.err")" == 1 && "$msg" == *"cannot read input 1 ("* \
-          && "$msg" != *$'\033'* && ${#msg} -lt 260 ]] \
-       && { [[ "$p" == "$longp" && "$msg" == *"...)"* ]] || [[ "$p" == "$oddp" && "$msg" == *'such\nline\x1b[31m.jsonl'* ]]; }; then
-      ok "input paths: $r shows an unreadable path escaped and capped, on one line (exit 1)"
+    pid=$!; n=0
+    while kill -0 "$pid" 2>/dev/null && [[ "$n" -lt 200 ]]; do sleep 0.05; n=$((n + 1)); done
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -KILL "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+      res="$res T"
     else
-      bad "input paths: $r unreadable path -> exit $code, message '$msg'"
+      wait "$pid"
+      res="$res $?:$(grep -c . "$TT/r21.out")"
     fi
+    one="$(sed 's/^[a-z]*\.[a-z]*: //' "$TT/r21.err")"
+    [[ "$(grep -c . "$TT/r21.err")" == 1 ]] || one="(lines: $(grep -c . "$TT/r21.err"))"
+    msgs="$msgs$one"$'\n'
   done
-done
-# A FIFO named as a corpus is not a regular file: each recipe refuses it at once,
-# never waiting for a writer (a run still going after 10 s is stopped and fails).
-mkfifo "$TT/in21.fifo"
-res=""
-for r in profile frames lamports; do
-  case "$r" in
-    profile) ( bash "$DNR/profile.sh" "$TT/in21.fifo" > /dev/null 2> "$TT/f21.err"; echo "$?" > "$TT/f21.code" ) & ;;
-    frames) ( python3 -I "$DNR/frames.py" "$TT/in21.fifo" > /dev/null 2> "$TT/f21.err"; echo "$?" > "$TT/f21.code" ) & ;;
-    lamports) ( python3 -I "$DNR/deltas.py" lamports "$TT/in21.fifo" > /dev/null 2> "$TT/f21.err"; echo "$?" > "$TT/f21.code" ) & ;;
-  esac
-  pid=$!; n=0
-  while kill -0 "$pid" 2>/dev/null && [[ "$n" -lt 200 ]]; do sleep 0.05; n=$((n + 1)); done
-  if kill -0 "$pid" 2>/dev/null; then
-    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
-    res="$res $r:waiting"
+  if [[ "$(printf '%s' "$msgs" | sort -u | grep -c .)" == 1 ]]; then
+    echo "${res# }|$(printf '%s' "$msgs" | sed -n 1p)"
   else
-    wait "$pid"
-    res="$res $(cat "$TT/f21.code"):$(grep -c 'usage: profile.sh\|cannot read input 1 (.*): not a regular file$' "$TT/f21.err")"
+    echo "${res# }|differ: $(printf '%s' "$msgs" | tr '\n' ' ')"
+  fi
+}
+for case in "an absolute path|/tmp/incident_1/corpus.jsonl|input 1 (/tmp/incident_1/corpus.jsonl) is not a relative path inside the working directory" \
+  "a .. component|incident_1/../corpus.jsonl|input 1 (incident_1/../corpus.jsonl) has an empty, . or .. component" \
+  "a second ./|././incident_1/real/corpus.jsonl|input 1 (././incident_1/real/corpus.jsonl) has an empty, . or .. component" \
+  "a file outside every run directory|corpus.jsonl|input 1 (corpus.jsonl) is not a file inside an incident_<n>/ run directory" \
+  "an audit run directory|audit_1/corpus.jsonl|input 1 (audit_1/corpus.jsonl) is not a file inside an incident_<n>/ run directory" \
+  "a run directory with no .gitignore|incident_2/corpus.jsonl|input 1 (incident_2/corpus.jsonl) is in incident_2, whose .gitignore does not hold * (OUTPUT-RULES.md Rule 11d)" \
+  "a run directory whose .gitignore is not *|incident_3/corpus.jsonl|input 1 (incident_3/corpus.jsonl) is in incident_3, whose .gitignore does not hold * (OUTPUT-RULES.md Rule 11d)" \
+  "a run directory that is a link|incident_4/corpus.jsonl|input 1 (incident_4/corpus.jsonl) is in incident_4, which is not a real directory (a symbolic link is not one)" \
+  "a missing run directory|incident_9/corpus.jsonl|input 1 (incident_9/corpus.jsonl) is in incident_9, which does not exist" \
+  "a file that is a link|incident_1/file-link.jsonl|input 1 (incident_1/file-link.jsonl) is a symbolic link, or is reached through one inside the working directory" \
+  "a path through a directory link|incident_1/dir-link/corpus.jsonl|input 1 (incident_1/dir-link/corpus.jsonl) is a symbolic link, or is reached through one inside the working directory" \
+  "a file with a second name|incident_1/second-name.jsonl|input 1 (incident_1/second-name.jsonl) has more than one name (a hard link)" \
+  "the other name of that file|incident_1/one.jsonl|input 1 (incident_1/one.jsonl) has more than one name (a hard link)" \
+  "a FIFO|incident_1/fifo.jsonl|input 1 (incident_1/fifo.jsonl) is not a regular file" \
+  "a directory|incident_1/real|input 1 (incident_1/real) is not a regular file" \
+  "a missing file|incident_1/no-such.jsonl|input 1 (incident_1/no-such.jsonl) does not exist" \
+  "a path under a file|incident_1/real/corpus.jsonl/x|input 1 (incident_1/real/corpus.jsonl/x) does not exist"; do
+  rest="${case#*|}"
+  eq "input paths: ${case%%|*} -> profile, frames and deltas refuse it at once, in the same words (exit 2, no output)" \
+    "$(runs21 "$W21" "${rest%%|*}")" "2:0 2:0 2:0|refused: ${rest#*|}"
+done
+eq "input paths: a good corpus, then a link -> refused before anything is read (exit 2, no output)" \
+  "$(runs21 "$W21" incident_1/real/corpus.jsonl incident_1/file-link.jsonl)" \
+  "2:0 2:0 2:0|refused: input 2 (incident_1/file-link.jsonl) is a symbolic link, or is reached through one inside the working directory"
+got="$(runs21 "$W21" incident_1/real/corpus.jsonl)"
+case "$got" in
+  0:[1-9]*\ 0:*\ 0:[1-9]*) ok "input paths: a regular file with one name in a run directory is read ($got)" ;;
+  *) bad "input paths: a good corpus was not read ($got)" ;;
+esac
+got="$(runs21 "$TT/op-link21" incident_1/corpus.jsonl)"
+case "$got" in
+  0:[1-9]*\ 0:*\ 0:[1-9]*) ok "input paths: a working directory reached through a link above it is followed ($got)" ;;
+  *) bad "input paths: the operator's directory link was refused ($got)" ;;
+esac
+oddp="incident_1/no such"$'\n'"line"$'\033'"[31m.jsonl"
+longp="incident_1/$(python3 -I -c 'print("x" * 200)').jsonl"
+for p in "$oddp" "$longp"; do
+  got="$(runs21 "$W21" "$p")"
+  if [[ "$got" == "2:0 2:0 2:0|refused: input 1 ("* && "$got" != *$'\033'* && ${#got} -lt 280 ]] \
+     && { [[ "$p" == "$longp" && "$got" == *"...) does not exist" ]] || [[ "$p" == "$oddp" && "$got" == *'such\nline\x1b[31m.jsonl) holds a control character' ]]; }; then
+    ok "input paths: a path that cannot be used is shown escaped and capped, on one line (exit 2)"
+  else
+    bad "input paths: unusable path -> '$got'"
   fi
 done
-eq "input paths: a FIFO is refused at once by profile (usage, exit 2), frames and deltas (exit 1)" "${res# }" "2:1 1:1 1:1"
-# The README's exit statuses for an input: profile.sh refuses a missing file or a
-# directory as a usage error (exit 2); a regular file it cannot read is exit 1, and
-# frames.py and deltas.py give exit 1 for all three.
-cp "$FIX/clean-mixed.jsonl" "$TT/unread21.jsonl"; chmod 000 "$TT/unread21.jsonl"
-if [[ -r "$TT/unread21.jsonl" ]]; then
+cp "$FIX/clean-mixed.jsonl" "$W21/incident_1/unread.jsonl"; chmod 000 "$W21/incident_1/unread.jsonl"
+if [[ -r "$W21/incident_1/unread.jsonl" ]]; then
   ok "input paths: skipped, this user can read a 000 file"
 else
-  res=""
-  for p in "$TT/no-such21.jsonl" "$TT" "$TT/unread21.jsonl"; do
-    bash "$DNR/profile.sh" "$p" > /dev/null 2>&1; s1=$?
-    python3 -I "$DNR/frames.py" "$p" > /dev/null 2>&1; s2=$?
-    python3 -I "$DNR/deltas.py" lamports "$p" > /dev/null 2>&1; s3=$?
-    res="$res $s1:$s2:$s3"
-  done
-  eq "input paths: a missing file, a directory and an unreadable file -> profile 2, 2, 1; frames and deltas 1" "${res# }" "2:1:1 2:1:1 1:1:1"
+  eq "input paths: a regular file that cannot be opened -> exit 1 from each recipe" \
+    "$(runs21 "$W21" incident_1/unread.jsonl)" "1:0 1:0 1:0|cannot read input 1 (incident_1/unread.jsonl): Permission denied"
 fi
-chmod 0600 "$TT/unread21.jsonl"
+chmod 0600 "$W21/incident_1/unread.jsonl"
 
 # ---------------------------------------------------------------------------
-# 22. --out writes a recipe's output to a temporary file beside <file> and gives
-#     it that name only once it is whole: <file> then holds what stdout would have,
-#     and no temporary file is left. An output never replaces a file: an --out that
-#     exists, the input corpus among them, is refused (exit 2) and left as it was,
-#     and so is one that is a symbolic link, or reached through one inside the
-#     working directory. A run stopped by SIGTERM leaves no <file> and no
-#     temporary file.
+# 22. --out names a new .jsonl, .tsv or .txt file directly in a run directory: the
+#     recipe writes to a temporary file beside it and gives it that name only once
+#     the output is whole, so <file> holds what stdout would have, and no temporary
+#     file is left. Any other --out is refused (exit 2) and nothing is written: one
+#     that exists, the input corpus among them; a symbolic link; one in a
+#     subdirectory, through a link, in a linked run directory, outside every run
+#     directory, absolute, or of another kind. A run stopped by SIGTERM leaves no
+#     <file> and no temporary file.
 # ---------------------------------------------------------------------------
-W22="$TT/wd22"; mkdir -p "$W22/out" "$TT/elsewhere22"
-cat "$FIX/clean-mixed.jsonl" "$FIX/same-owner-drain.jsonl" "$FIX/ix-cpi-victim.jsonl" "$FIX/log-tab-injection.jsonl" > "$W22/corpus.jsonl"
-cp "$W22/corpus.jsonl" "$TT/corpus22.before"
-printf 'previous\n' > "$W22/out/taken.txt"
+W22="$TT/wd22"; mkdir -p "$W22/incident_1/sub" "$TT/elsewhere22"
+printf '*\n' > "$W22/incident_1/.gitignore"
+cat "$FIX/clean-mixed.jsonl" "$FIX/same-owner-drain.jsonl" "$FIX/ix-cpi-victim.jsonl" "$FIX/log-tab-injection.jsonl" > "$W22/incident_1/corpus.jsonl"
+cp "$W22/incident_1/corpus.jsonl" "$TT/corpus22.before"
+printf 'previous\n' > "$W22/incident_1/taken.txt"
 for r in profile frames ix lamports tokens; do
   case "$r" in
     profile) set -- bash "$DNR/profile.sh" ;;
@@ -1406,52 +1441,64 @@ for r in profile frames ix lamports tokens; do
     ix) set -- python3 -I "$DNR/frames.py" --instructions ;;
     *) set -- python3 -I "$DNR/deltas.py" "$r" ;;
   esac
-  "$@" "$W22/corpus.jsonl" > "$TT/o22.stdout" 2>/dev/null
-  "$@" --out "$W22/out/$r.txt" "$W22/corpus.jsonl" > "$TT/o22.out" 2>/dev/null
+  ( cd "$W22" && "$@" incident_1/corpus.jsonl ) > "$TT/o22.stdout" 2>/dev/null
+  ( cd "$W22" && "$@" --out "incident_1/$r.txt" incident_1/corpus.jsonl ) > "$TT/o22.out" 2>/dev/null
   code=$?
-  if [[ "$code" == 0 && -s "$TT/o22.stdout" && ! -s "$TT/o22.out" ]] && cmp -s "$TT/o22.stdout" "$W22/out/$r.txt"; then
+  if [[ "$code" == 0 && -s "$TT/o22.stdout" && ! -s "$TT/o22.out" ]] && cmp -s "$TT/o22.stdout" "$W22/incident_1/$r.txt"; then
     ok "--out: $r writes what it prints on stdout into the file, and nothing on stdout"
   else
     bad "--out: $r -> exit $code, file and stdout differ"
   fi
-  "$@" --out "$W22/corpus.jsonl" "$W22/corpus.jsonl" > /dev/null 2> "$TT/o22.err"
+  ( cd "$W22" && "$@" --out incident_1/corpus.jsonl incident_1/corpus.jsonl ) > /dev/null 2> "$TT/o22.err"
   c1=$?
-  "$@" --out "$W22/out/taken.txt" "$W22/corpus.jsonl" > /dev/null 2>> "$TT/o22.err"
+  ( cd "$W22" && "$@" --out incident_1/taken.txt incident_1/corpus.jsonl ) > /dev/null 2>> "$TT/o22.err"
   c2=$?
-  if [[ "$c1" == 2 && "$c2" == 2 && "$(cat "$W22/out/taken.txt")" == previous \
+  if [[ "$c1" == 2 && "$c2" == 2 && "$(cat "$W22/incident_1/taken.txt")" == previous \
         && "$(grep -c 'already exists, and an output never replaces a file: name a new one$' "$TT/o22.err")" == 2 ]] \
-     && cmp -s "$W22/corpus.jsonl" "$TT/corpus22.before"; then
+     && cmp -s "$W22/incident_1/corpus.jsonl" "$TT/corpus22.before"; then
     ok "--out: $r refuses an --out that exists, its own input corpus too (exit 2, both left as they were)"
   else
     bad "--out: $r with an existing --out -> exit $c1 / $c2 ($(tr '\n' ' ' < "$TT/o22.err"))"
   fi
 done
-eq "--out: no temporary file is left beside the outputs" "$(ls -A "$W22/out" | tr '\n' ' ')" "frames.txt ix.txt lamports.txt profile.txt taken.txt tokens.txt "
-ln -s "$TT/elsewhere22/out.txt" "$W22/out-link.txt"
-ln -s "$TT/elsewhere22" "$W22/dir-link"
-for case in "a link|out-link.txt" "a path through a directory link in the working directory|dir-link/out.txt"; do
+eq "--out: no temporary file is left beside the outputs" "$(LC_ALL=C ls -A "$W22/incident_1" | tr '\n' ' ')" \
+  ".gitignore corpus.jsonl frames.txt ix.txt lamports.txt profile.txt sub taken.txt tokens.txt "
+ln -s "$TT/elsewhere22/out.txt" "$W22/incident_1/out-link.txt"
+ln -s "$TT/elsewhere22" "$W22/incident_1/dir-link"
+ln -s "$TT/elsewhere22" "$W22/incident_2"
+for case in "a link|incident_1/out-link.txt|is a symbolic link" \
+  "a path through a directory link|incident_1/dir-link/out.txt|is not a .jsonl, .tsv or .txt file directly in the run directory" \
+  "a subdirectory of the run directory|incident_1/sub/out.txt|is not a .jsonl, .tsv or .txt file directly in the run directory" \
+  "another kind of file|incident_1/out.json|is not a .jsonl, .tsv or .txt file directly in the run directory" \
+  "a hidden name|incident_1/.out.txt|is not a .jsonl, .tsv or .txt file directly in the run directory" \
+  "a run directory that is a link|incident_2/out.txt|is in incident_2, which is not a real directory (a symbolic link is not one)" \
+  "a file outside every run directory|out.txt|is not a file inside an incident_<n>/ run directory" \
+  "an absolute path|/tmp/incident_1/abs.txt|is not a relative path inside the working directory"; do
+  rest="${case#*|}"; path="${rest%%|*}"; why="${rest#*|}"
   res=""
   for r in profile frames lamports; do
     case "$r" in
-      profile) ( cd "$W22" && bash "$DNR/profile.sh" --out "${case#*|}" corpus.jsonl ) > /dev/null 2> "$TT/o22.err" ;;
-      frames) ( cd "$W22" && python3 -I "$DNR/frames.py" --out "${case#*|}" corpus.jsonl ) > /dev/null 2> "$TT/o22.err" ;;
-      lamports) ( cd "$W22" && python3 -I "$DNR/deltas.py" lamports --out "${case#*|}" corpus.jsonl ) > /dev/null 2> "$TT/o22.err" ;;
+      profile) ( cd "$W22" && bash "$DNR/profile.sh" --out "$path" incident_1/corpus.jsonl ) > /dev/null 2> "$TT/o22.err" ;;
+      frames) ( cd "$W22" && python3 -I "$DNR/frames.py" --out "$path" incident_1/corpus.jsonl ) > /dev/null 2> "$TT/o22.err" ;;
+      lamports) ( cd "$W22" && python3 -I "$DNR/deltas.py" lamports --out "$path" incident_1/corpus.jsonl ) > /dev/null 2> "$TT/o22.err" ;;
     esac
-    res="$res $?:$(grep -c 'is a symbolic link, or is reached through one inside the working directory; refusing it$' "$TT/o22.err")"
+    code=$?
+    [[ "$(sed 's/^[a-z]*\.[a-z]*: //' "$TT/o22.err")" == "refused: --out $path $why" ]] && res="$res $code:said" || res="$res $code:-"
   done
-  eq "--out: ${case%%|*} -> profile, frames and deltas refuse it (exit 2)" "${res# }" "2:1 2:1 2:1"
+  eq "--out: ${case%%|*} -> profile, frames and deltas refuse it (exit 2)" "${res# }" "2:said 2:said 2:said"
 done
-eq "--out: nothing was written through those links" "$(ls -A "$TT/elsewhere22" | tr '\n' ' ')" ""
+eq "--out: nothing was written through those links, or anywhere but the outputs" \
+  "$(ls -A "$TT/elsewhere22" | tr '\n' ' ')|$(ls -A "$W22/incident_1/sub" | tr '\n' ' ')|$(ls -A "$W22" | tr '\n' ' ')" "||incident_1 incident_2 "
 # A run stopped by SIGTERM while it reads: stdin holds one transaction, then stays
 # open until the test has stopped the run and lets the writer go.
-partial22() { local f; for f in "$W22"/out/."$1".*.partial; do [[ -e "$f" ]] && return 0; done; return 1; }
+partial22() { local f; for f in "$W22"/incident_1/."$1".*.partial; do [[ -e "$f" ]] && return 0; done; return 1; }
 for r in frames deltas; do
   rm -f "$TT/release22"
   case "$r" in
     frames) ( sed -n 1p "$FIX/clean-mixed.jsonl"; n=0; while [[ ! -e "$TT/release22" && "$n" -lt 400 ]]; do sleep 0.05; n=$((n + 1)); done ) \
-              | python3 -I "$DNR/frames.py" --out "$W22/out/held-$r.txt" & ;;
+              | ( cd "$W22" && exec python3 -I "$DNR/frames.py" --out "incident_1/held-$r.txt" ) & ;;
     deltas) ( sed -n 1p "$FIX/clean-mixed.jsonl"; n=0; while [[ ! -e "$TT/release22" && "$n" -lt 400 ]]; do sleep 0.05; n=$((n + 1)); done ) \
-              | python3 -I "$DNR/deltas.py" lamports --out "$W22/out/held-$r.txt" & ;;
+              | ( cd "$W22" && exec python3 -I "$DNR/deltas.py" lamports --out "incident_1/held-$r.txt" ) & ;;
   esac
   pid=$!
   n=0; while ! partial22 "held-$r.txt" && [[ "$n" -lt 200 ]]; do sleep 0.05; n=$((n + 1)); done
@@ -1460,52 +1507,54 @@ for r in frames deltas; do
   code=$?
   touch "$TT/release22"
   eq "--out: $r stopped by SIGTERM -> exit 143, no file under the --out name, no temporary file left" \
-    "$code|$([[ -e "$W22/out/held-$r.txt" ]] && echo written)|$(partial22 "held-$r.txt" && echo left)" "143||"
+    "$code|$([[ -e "$W22/incident_1/held-$r.txt" ]] && echo written)|$(partial22 "held-$r.txt" && echo left)" "143||"
 done
 
 # ---------------------------------------------------------------------------
-# 23. The --out directory is opened once, one name at a time from the working
-#     directory, and the temporary file is made, linked and removed through it. A run
-#     directory moved aside and replaced by a link to a directory outside, mid-run,
-#     never receives the output through that link, and no temporary file is left:
-#     frames.py and deltas.py finish in the directory they opened; profile.sh, which
-#     writes its report to its private temp directory first, opens the --out
-#     directory only then, and refuses the link (exit 2). A swap that keeps
-#     alternating while each recipe runs many times changes nothing either.
+# 23. The run directory of --out is opened once from the working directory, never
+#     through a symbolic link, and the temporary file is made, linked and removed
+#     through it. A run directory moved aside and replaced by a link to a directory
+#     outside, mid-run, never receives the output through that link, and no
+#     temporary file is left: frames.py and deltas.py finish in the directory they
+#     opened; profile.sh, which writes its report to its private temp directory
+#     first, checks --out again and opens its run directory only then, and refuses
+#     the link (exit 2). A swap that keeps alternating while each recipe runs many
+#     times changes nothing either.
 # ---------------------------------------------------------------------------
-W23="$TT/wd23"; mkdir -p "$W23" "$TT/outside23"
+W23="$TT/wd23"; mkdir -p "$W23/incident_30" "$TT/outside23"
+printf '*\n' > "$W23/incident_30/.gitignore"; cp "$FIX/clean-mixed.jsonl" "$W23/incident_30/corpus.jsonl"
 partial23() { local f; for f in "$1"/.*.partial; do [[ -e "$f" ]] && return 0; done; return 1; }
 for r in frames deltas; do
   case "$r" in
-    frames) set -- python3 -I "$DNR/frames.py" ;;
-    deltas) set -- python3 -I "$DNR/deltas.py" lamports ;;
+    frames) n23=31; set -- python3 -I "$DNR/frames.py" ;;
+    deltas) n23=32; set -- python3 -I "$DNR/deltas.py" lamports ;;
   esac
-  mkdir -p "$W23/incident_$r"; rm -f "$TT/release23"
+  mkdir -p "$W23/incident_$n23"; printf '*\n' > "$W23/incident_$n23/.gitignore"; rm -f "$TT/release23"
   ( sed -n 1p "$FIX/clean-mixed.jsonl"; n=0; while [[ ! -e "$TT/release23" && "$n" -lt 400 ]]; do sleep 0.05; n=$((n + 1)); done ) \
-    | ( cd "$W23" && exec "$@" --out "incident_$r/out.txt" ) 2> /dev/null &
+    | ( cd "$W23" && exec "$@" --out "incident_$n23/out.txt" ) 2> /dev/null &
   pid=$!
-  n=0; while ! partial23 "$W23/incident_$r" && [[ "$n" -lt 200 ]]; do sleep 0.05; n=$((n + 1)); done
-  mv "$W23/incident_$r" "$W23/moved-$r" && ln -s "$TT/outside23" "$W23/incident_$r"
+  n=0; while ! partial23 "$W23/incident_$n23" && [[ "$n" -lt 200 ]]; do sleep 0.05; n=$((n + 1)); done
+  mv "$W23/incident_$n23" "$W23/moved-$n23" && ln -s "$TT/outside23" "$W23/incident_$n23"
   touch "$TT/release23"
   wait "$pid"
   code=$?
   eq "--out: $r whose run directory is replaced by a link mid-run -> exit 0, the output in the directory it opened, nothing through the link" \
-    "$code|$(ls -A "$W23/moved-$r" | tr '\n' ' ')|$(ls -A "$TT/outside23" | tr '\n' ' ')" "0|out.txt |"
+    "$code|$(LC_ALL=C ls -A "$W23/moved-$n23" | tr '\n' ' ')|$(ls -A "$TT/outside23" | tr '\n' ' ')" "0|.gitignore out.txt |"
 done
-mkdir -p "$TT/jq23" "$W23/incident_profile"; rm -f "$TT/release23"
+mkdir -p "$TT/jq23" "$W23/incident_33"; printf '*\n' > "$W23/incident_33/.gitignore"; rm -f "$TT/release23"
 printf '#!/bin/sh\n[ -e "%s/held" ] || { : > "%s/held"; n=0; while [ ! -e "%s" ] && [ "$n" -lt 400 ]; do sleep 0.05; n=$((n + 1)); done; }\nexec "%s" "$@"\n' \
   "$TT/jq23" "$TT/jq23" "$TT/release23" "$(command -v jq)" > "$TT/jq23/jq"
 chmod +x "$TT/jq23/jq"
-( cd "$W23" && PATH="$TT/jq23:$PATH" exec bash "$DNR/profile.sh" --out incident_profile/out.txt "$FIX/clean-mixed.jsonl" ) > /dev/null 2> "$TT/p23.err" &
+( cd "$W23" && PATH="$TT/jq23:$PATH" exec bash "$DNR/profile.sh" --out incident_33/out.txt incident_30/corpus.jsonl ) > /dev/null 2> "$TT/p23.err" &
 pid=$!
 n=0; while [[ ! -e "$TT/jq23/held" && "$n" -lt 200 ]]; do sleep 0.05; n=$((n + 1)); done
-mv "$W23/incident_profile" "$W23/moved-profile" && ln -s "$TT/outside23" "$W23/incident_profile"
+mv "$W23/incident_33" "$W23/moved-33" && ln -s "$TT/outside23" "$W23/incident_33"
 touch "$TT/release23"
 wait "$pid"
 code=$?
 eq "--out: profile whose run directory is replaced by a link while its queries run -> refused (exit 2), nothing written inside or outside" \
-  "$code|$(grep -c 'is a symbolic link, or is reached through one inside the working directory; refusing it$' "$TT/p23.err")|$(ls -A "$W23/moved-profile" | tr '\n' ' ')|$(ls -A "$TT/outside23" | tr '\n' ' ')" \
-  "2|1||"
+  "$code|$(grep -c '^profile.sh: refused: --out incident_33/out.txt is in incident_33, which is not a real directory (a symbolic link is not one)$' "$TT/p23.err")|$(LC_ALL=C ls -A "$W23/moved-33" | tr '\n' ' ')|$(ls -A "$TT/outside23" | tr '\n' ' ')" \
+  "2|1|.gitignore |"
 # race23.py: each recipe runs 40 times with --out incident_1/o-<recipe>-<k>.txt while
 # a thread keeps moving incident_1 aside and putting a link to a directory outside in
 # its place, then moving it back. Prints the files outside, the temporary files left,
@@ -1514,8 +1563,13 @@ cat > "$TT/race23.py" <<'PY'
 import os, subprocess, sys, threading, time
 base, dnr, corpus = sys.argv[1:4]
 wt, outside, real = base + "/wt", base + "/outside", base + "/wt/incident_1.real"
-os.makedirs(wt + "/incident_1")
+for d in ("incident_1", "incident_2"):
+    os.makedirs(wt + "/" + d)
+    with open(wt + "/" + d + "/.gitignore", "w") as f:
+        f.write("*\n")
 os.makedirs(outside)
+with open(corpus, "rb") as f, open(wt + "/incident_2/c.jsonl", "wb") as g:
+    g.write(f.read())
 stop = []
 def swap():
     while not stop:
@@ -1536,7 +1590,7 @@ t.start()
 try:
     for name, cmd in runs.items():
         for k in range(40):
-            p = subprocess.run(cmd + ["--out", "incident_1/o-%s-%d.txt" % (name, k), corpus], cwd=wt,
+            p = subprocess.run(cmd + ["--out", "incident_1/o-%s-%d.txt" % (name, k), "incident_2/c.jsonl"], cwd=wt,
                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             done += p.returncode == 0
 finally:
@@ -1546,11 +1600,170 @@ finally:
         os.unlink(wt + "/incident_1")
     if os.path.isdir(real):
         os.rename(real, wt + "/incident_1")
-left = [n for n in os.listdir(wt + "/incident_1") if not n.startswith("o-")]
+left = [n for n in os.listdir(wt + "/incident_1") if not n.startswith("o-") and n != ".gitignore"]
 print("%d|%d|%s" % (len(os.listdir(outside)), len(left), "some" if done else "none"))
 PY
 race23="$(python3 -I "$TT/race23.py" "$TT/race23" "$DNR" "$FIX/clean-mixed.jsonl")"
 eq "--out: 120 runs under a directory swap -> no file outside, no temporary file left, and some runs completed" "$race23" "0|0|some"
+
+# ---------------------------------------------------------------------------
+# 24. The recipes as pre-approved entry points: each runs directly by its quoted
+#     absolute path (#!/bin/bash; #!/usr/bin/env -S python3 -I), mode 100755. Each
+#     hostile case of fixtures/audit-logs/hostile-args.txt that names profile,
+#     frames or deltas exits non-zero with one "refused" line, prints nothing on
+#     stdout, changes no file, leaves no temporary file and shows no canary text.
+#     A copy of the recipes inside the working directory, or under a path holding a
+#     quote or $, refuses to run (exit 2).
+# ---------------------------------------------------------------------------
+eq "entry points: the #! lines" \
+  "$(head -n 1 "$DNR/profile.sh")|$(head -n 1 "$DNR/frames.py")|$(head -n 1 "$DNR/deltas.py")" \
+  "#!/bin/bash|#!/usr/bin/env -S python3 -I|#!/usr/bin/env -S python3 -I"
+if git -C "$HERE/../.." rev-parse --is-inside-work-tree > /dev/null 2>&1; then
+  eq "entry points: committed as executables (mode 100755)" \
+    "$(git -C "$HERE/../.." ls-files -s -- scripts/dnr/profile.sh scripts/dnr/frames.py scripts/dnr/deltas.py | awk '{ printf "%s ", $1 }')" \
+    "100755 100755 100755 "
+fi
+direct=""
+for r in profile frames lamports; do
+  case "$r" in
+    profile) ( cd "$RW" && "$DNR/profile.sh" "$F/clean-mixed.jsonl" ) > "$TT/x24.out" 2>&1; c=$?; cmp -s "$TT/x24.out" <(printf '%s\n' "$prof") || c="$c:differs" ;;
+    frames) ( cd "$RW" && "$DNR/frames.py" "$F/log-newline-injection.jsonl" ) > "$TT/x24.out" 2>&1; c=$?; cmp -s "$TT/x24.out" <(printf '%s\n' "$logs") || c="$c:differs" ;;
+    lamports) ( cd "$RW" && "$DNR/deltas.py" lamports "$F/clean-mixed.jsonl" ) > "$TT/x24.out" 2>&1; c=$?; cmp -s "$TT/x24.out" <(printf '%s\n' "$lam") || c="$c:differs" ;;
+  esac
+  direct="$direct $c"
+done
+eq "entry points: run directly, each prints what it prints under bash or python3 -I" "${direct# }" "0 0 0"
+mkdir -p "$RW/inst/scripts" "$TT/q24\"x/scripts" "$TT/d24\$x/scripts"
+for d in "$RW/inst/scripts" "$TT/q24\"x/scripts" "$TT/d24\$x/scripts"; do
+  cp -R "$DNR" "$HERE/../lib" "$d/"
+done
+res=""
+for root in "$RW/inst" "$TT/q24\"x" "$TT/d24\$x"; do
+  for r in profile.sh frames.py deltas.py; do
+    if [[ "$r" == deltas.py ]]; then set -- lamports "$F/clean-mixed.jsonl"; else set -- "$F/clean-mixed.jsonl"; fi
+    ( cd "$RW" && "$root/scripts/dnr/$r" "$@" ) > "$TT/i24.out" 2> "$TT/i24.err"
+    c=$?
+    [[ ! -s "$TT/i24.out" ]] && grep -q "^$r: refused: the installation" "$TT/i24.err" && res="$res $c" || res="$res $c:$(tr '\n' ' ' < "$TT/i24.err")"
+  done
+done
+eq "entry points: an installation inside the working directory, or under a path holding a quote or \$, is refused (exit 2, no output)" \
+  "${res# }" "2 2 2 2 2 2 2 2 2"
+# ---- hostile layout (fixtures/audit-logs/hostile-args.txt); the same block is in test-audit-logs.sh and test-dnr.sh
+# hostile_layout <dir> <a clean transaction line>: the working directory the case file
+# names, <dir>/wt, and a directory outside it, <dir>/outside, in which a canary
+# transaction holds the text $CANARY: one outside every run directory and one outside
+# the working directory, links to both from inside incident_1/, a linked run
+# directory, run directories without a proper .gitignore, a FIFO, a file with a
+# second name, a link where an output would go, and a corpus and a ledger an output
+# must not replace. hostile_snapshot <dir>: every path under <dir>, never following a
+# link: type, size, mtime, link target and a hash of each regular file.
+# hostile_expand <case file> <out dir>: one file per case, its name then each
+# argument, NUL-terminated, the placeholders filled in.
+CANARY="SEKRET4f1c9e2a"
+hostile_layout() {
+  local HW="$1/wt" HO="$1/outside" canary f
+  mkdir -p "$HW/incident_1/subdir" "$HW/incident_1/corpus" "$HW/incident_3" "$HW/incident_4" "$HW/audit_1" "$HO"
+  printf '*\n' > "$HW/incident_1/.gitignore"; printf '*\n' > "$HW/audit_1/.gitignore"
+  printf '!x\n' > "$HW/incident_4/.gitignore"; printf '*\n' > "$HO/.gitignore"
+  canary="{\"meta\":{\"err\":null,\"fee\":0,\"preBalances\":[1],\"postBalances\":[2],\"logMessages\":[\"Program log: $CANARY\"]},\"transaction\":{\"signatures\":[\"Sig$CANARY\"],\"message\":{\"accountKeys\":[\"Key$CANARY\"],\"instructions\":[{\"programId\":\"Prog$CANARY\",\"accounts\":[0],\"data\":\"x\"}]}}}"
+  for f in "$HW/canary.jsonl" "$HO/secret.jsonl" "$HW/incident_3/canary.jsonl" "$HW/incident_4/canary.jsonl" "$HW/audit_1/canary.jsonl"; do
+    printf '%s\n' "$canary" > "$f"
+  done
+  printf '%s\n' "$2" > "$HW/incident_1/corpus.jsonl"
+  printf '%s\n' "$2" > "$HW/incident_1/corpus/transactions.jsonl"
+  printf '# ledger\n' > "$HW/incident_1/LEDGER.md"
+  ln -s ../canary.jsonl "$HW/incident_1/link.jsonl"
+  ln -s "$HO" "$HW/incident_1/dlink"
+  ln -s "$HO" "$HW/incident_2"
+  mkfifo "$HW/incident_1/fifo"
+  printf 'protected\n' > "$HW/protected.txt"
+  ln "$HW/protected.txt" "$HW/incident_1/hard.txt"
+  ln -s ../protected.txt "$HW/incident_1/out-link.txt"
+  cp "$HW/incident_1/corpus.jsonl" "$HW/incident_1/twin.jsonl"
+  ln "$HW/incident_1/twin.jsonl" "$HW/incident_1/twin-2.jsonl"
+}
+hostile_snapshot() {
+  python3 -I - "$1" <<'PY'
+import hashlib, os, stat, sys
+root = sys.argv[1]
+for top, dirs, files in os.walk(root):
+    dirs.sort()
+    for name in sorted(dirs + files):
+        p = os.path.join(top, name)
+        st = os.lstat(p)
+        line = [os.path.relpath(p, root), oct(stat.S_IFMT(st.st_mode)), str(st.st_size), str(st.st_mtime_ns)]
+        if stat.S_ISLNK(st.st_mode):
+            line.append(os.readlink(p))
+        elif stat.S_ISREG(st.st_mode):
+            with open(p, "rb") as f:
+                line.append(hashlib.sha256(f.read()).hexdigest())
+        print("\t".join(line))
+PY
+}
+hostile_expand() {
+  mkdir "$2"
+  python3 -I - "$1" "$2" "$3/wt" "$3/outside" <<'PY'
+import os, re, sys
+cases, out, wt, outside = sys.argv[1:5]
+n = 0
+with open(cases, encoding="utf-8") as f:
+    for line in f:
+        line = line.rstrip("\n")
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split("\t")
+        def fill(a):
+            a = a.replace("@WT@", wt).replace("@OUT@", outside).replace("@NL@", "\n").replace("@ESC@", "\x1b")
+            return re.sub(r"@LONG:([0-9]+)@", lambda m: "a" * int(m.group(1)), a)
+        with open(os.path.join(out, "%03d" % n), "wb") as g:
+            for word in [fields[0]] + [fill(a) for a in fields[1:]]:
+                g.write(os.fsencode(word) + b"\0")
+        n += 1
+PY
+}
+# ---- end of hostile layout ----
+layout() { sed -n '/^# ---- hostile layout/,/^# ---- end of hostile layout/p' "$1"; }
+if [[ -n "$(layout "$HERE/test-dnr.sh")" && "$(layout "$HERE/test-dnr.sh")" == "$(layout "$HERE/test-audit-logs.sh")" ]]; then
+  ok "entry points: the hostile layout is the same in test-dnr.sh and test-audit-logs.sh"
+else
+  bad "entry points: the hostile layout differs between test-dnr.sh and test-audit-logs.sh"
+fi
+H24="$TT/hostile"
+hostile_layout "$H24" "$(sed -n 1p "$FIX/clean-mixed.jsonl")"
+hostile_expand "$HERE/fixtures/audit-logs/hostile-args.txt" "$TT/cases24" "$H24"
+hostile_snapshot "$H24" > "$TT/h24.before"
+n24=0
+for cf in "$TT"/cases24/*; do
+  args=(); name=""
+  while IFS= read -r -d '' word; do
+    if [[ -z "$name" ]]; then name="$word"; else args+=("$word"); fi
+  done < "$cf"
+  case "${args[0]-}" in
+    profile) set -- "$DNR/profile.sh" ;;
+    frames) set -- "$DNR/frames.py" ;;
+    deltas) set -- "$DNR/deltas.py" ;;
+    *) continue ;;
+  esac
+  ( cd "$H24/wt" && exec "$@" "${args[@]:1}" ) < /dev/null > "$TT/h24.out" 2> "$TT/h24.err" &
+  pid=$!
+  n=0
+  while kill -0 "$pid" 2>/dev/null && [[ "$n" -lt 300 ]]; do sleep 0.1; n=$((n + 1)); done
+  if kill -0 "$pid" 2>/dev/null; then kill -KILL "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; code=hung; else wait "$pid"; code=$?; fi
+  hostile_snapshot "$H24" > "$TT/h24.after"
+  why=""
+  [[ "$code" == hung ]] && why="$why still running after 30 s;"
+  [[ "$code" == 0 ]] && why="$why exit 0;"
+  [[ -s "$TT/h24.out" ]] && why="$why printed on stdout;"
+  [[ "$(grep -c . "$TT/h24.err")" == 1 ]] && grep -q '^[a-z]*\.[a-z]*: refused: ' "$TT/h24.err" || why="$why no one refusal line;"
+  cmp -s "$TT/h24.before" "$TT/h24.after" || why="$why changed files ($(diff "$TT/h24.before" "$TT/h24.after" | sed -n '2p'));"
+  [[ -z "$(find "$H24" -name '*.partial' 2>/dev/null)" ]] || why="$why left a temporary file;"
+  grep -q "$CANARY" "$TT/h24.out" "$TT/h24.err" && why="$why printed the canary;"
+  if [[ -z "$why" ]]; then ok "entry points: hostile case $name (exit $code)"; else bad "entry points: hostile case $name:$why"; fi
+  cp "$TT/h24.after" "$TT/h24.before"
+  n24=$((n24 + 1))
+done
+if [[ "$n24" -ge 50 ]]; then ok "entry points: $n24 hostile cases run against the recipes"; else bad "entry points: only $n24 hostile cases run against the recipes"; fi
+eq "entry points: the protected file is unchanged" "$(cat "$H24/wt/protected.txt")" "protected"
 
 if [[ "$fails" -ne 0 ]]; then
   echo "test-dnr: $fails assertion(s) FAILED" >&2

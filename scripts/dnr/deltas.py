@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S python3 -I
 """deltas.py — compute balance movements from a getTransaction JSONL corpus, with
 every total done in Python integers.
 
@@ -10,10 +10,12 @@ line, an amount or balance that is not an exact integer among them, is skipped a
 counted, never echoed. A transaction is counted once however many inputs hold it:
 the first occurrence of each signature wins. Both counts are reported on stderr,
 the malformed lines per input, as collection gaps. The corpus is streamed one
-transaction at a time, and every named file (and the --out path) is checked
-before the first row is written: one that cannot be read or written exits 1, and
-one that is a symbolic link, or reached through one inside the working directory,
-or an --out that already exists, exits 2, with no output either way.
+transaction at a time. A named file must be a regular file with one name in a run
+directory incident_<n>/ of the working directory, named relative to it and reached
+through no symbolic link, and --out a new .jsonl, .tsv or .txt name directly in
+such a directory. Each is checked before the first row is written: one that breaks
+a rule exits 2, and one that cannot be read or written 1, with no output either
+way.
 
 Two modes:
   deltas.py lamports [--out <file>] [files...]
@@ -30,9 +32,10 @@ Two modes:
                                   key is printed as #<index>, and one with no
                                   accountIndex as #?, each counted in a note.
 
-Output: TSV on stdout, or with `--out <file>` (a new name) in a temporary file
-beside it that becomes <file> only once the run is complete, both made through
-the directory of <file>, opened once; UTF-8 whatever the locale.
+Output: TSV on stdout, or with `--out <file>` (a new name directly in the run
+directory) in a temporary file beside it that becomes <file> only once the run is
+complete, both made through the run directory, opened once; UTF-8 whatever the
+locale.
 Signatures, owners and mints are base58 in real RPC data and deltas are decimal
 integers; any tab, newline, carriage return or backslash in a string field is
 escaped (`\\t`, `\\n`, `\\r`, `\\\\`), so a crafted corpus cannot forge a row, and so
@@ -68,10 +71,11 @@ lookup-table-loaded addresses, so it lines up 1:1 with pre/postBalances. With
 `encoding: json`, append `meta.loadedAddresses.writable` then `.readonly` to the
 static keys before indexing; this script handles both.
 
-Run it as `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/deltas.py" tokens|lamports
-<corpus.jsonl>`. Isolated mode keeps the working directory (usually the audited
-repo) and PYTHONPATH off sys.path, so it imports nothing beyond the stdlib — keep
-it that way: no sibling modules.
+Run it directly by its quoted absolute path, from the working directory under
+audit: `"${CLAUDE_PLUGIN_ROOT}/scripts/dnr/deltas.py" tokens|lamports
+<corpus.jsonl>`; its first line runs it as `python3 -I`. Isolated mode keeps the
+working directory (usually the audited repo) and PYTHONPATH off sys.path, so it
+imports nothing beyond the stdlib — keep it that way: no sibling modules.
 
 No network. python3 stdlib only.
 """
@@ -264,119 +268,211 @@ def shown(text, cap=120):
     return s if len(s) <= cap else s[:cap] + "..."
 
 
-def linked(path):
-    """True when path is a symbolic link, or reaches its file through a directory that
-    is a symbolic link inside the working directory. Links above it are followed."""
-    if os.path.islink(path):
-        return True
-    here = os.getcwd()
-    cur = os.sep if os.path.isabs(path) else here
-    for part in path.split(os.sep)[:-1]:
-        if not part:
-            continue
-        step = os.path.join(cur, part)
-        if os.path.islink(step):
-            parent = os.path.realpath(cur)
-            if parent == here or parent.startswith(here.rstrip(os.sep) + os.sep):
-                return True
-        cur = step
-    return False
+def installed(path):
+    """None when the recipe at path may run, else (2, message): its path holds a quote,
+    $, a backtick, a backslash or a control character, so its quoted call cannot match
+    as written, or it lies inside the working directory (OUTPUT-RULES.md Rule 11e)."""
+    try:
+        here, real, given = os.getcwd(), os.path.realpath(path), os.path.abspath(path)
+    except OSError as e:
+        return 2, "refused: cannot resolve the working directory: %s" % shown(e.strerror or e)
+    for p in (given, real):
+        if any(c in "\"$`\\" or ord(c) < 0x20 or ord(c) == 0x7f for c in p):
+            return 2, ("refused: the installation path holds a quote, $, a backtick, a backslash or a"
+                       " control character, so its quoted call cannot match as written")
+    if real.startswith(here.rstrip(os.sep) + os.sep):
+        return 2, ("refused: the installation lies inside the working directory; install it outside the"
+                   " tree under audit (Rule 11e)")
+    return None
+
+
+def refusal(why, usage):
+    """(2, message) for arguments outside a recipe grammar."""
+    return 2, "refused: %s (usage: %s)" % (why, usage)
+
+
+# Where a recipe reads and writes: a path names a file in a run directory incident_<n>/
+# of the working directory, relative to it, with no empty, . or .. component and no
+# symbolic link on the way. An --out file is a new name directly in the run directory,
+# of the kinds a recipe writes.
+_RUN_DIR = re.compile(rb"incident_[0-9]{1,6}")
+_OUT_NAME = re.compile(rb"[A-Za-z0-9][A-Za-z0-9._-]*[.](?:jsonl|tsv|txt)")
+# The run directory of each --out path that unwritable() passed, as lstat found it.
+_CHECKED = {}
+
+
+def _parts(path, label):
+    """(the components of path as bytes, None) when it has the shape of a path in a run
+    directory, else (None, (2, the refusal))."""
+    raw = os.fsencode(path)
+    parts = (raw[2:] if raw.startswith(b"./") else raw).split(b"/")
+    if not raw or len(raw) > 1024:
+        why = "is empty or longer than 1024 bytes"
+    elif any(c < 0x20 or c == 0x7f for c in raw):
+        why = "holds a control character"
+    elif raw[:1] in (b"/", b"-", b"~"):
+        why = "is not a relative path inside the working directory"
+    elif any(p in (b"", b".", b"..") for p in parts):
+        why = "has an empty, . or .. component"
+    elif len(parts) < 2 or not _RUN_DIR.fullmatch(parts[0]):
+        why = "is not a file inside an incident_<n>/ run directory"
+    else:
+        return parts, None
+    return None, (2, "refused: %s %s" % (label, why))
+
+
+def _inside(path):
+    """True when path (bytes, relative) resolves inside the working directory."""
+    return os.path.realpath(path).startswith(os.fsencode(os.getcwd()).rstrip(b"/") + b"/")
+
+
+def _run_dir(name, label):
+    """(its lstat, None) when the run directory name (bytes) is a real directory whose
+    .gitignore holds * (OUTPUT-RULES.md Rule 11d), else (None, (2, the refusal))."""
+    where = "refused: %s is in %s, which" % (label, shown(os.fsdecode(name)))
+    try:
+        st = os.lstat(name)
+    except FileNotFoundError:
+        return None, (2, where + " does not exist")
+    except OSError as e:
+        return None, (2, "%s cannot be checked: %s" % (where, shown(e.strerror or e)))
+    if not stat.S_ISDIR(st.st_mode):
+        return None, (2, where + " is not a real directory (a symbolic link is not one)")
+    text = None
+    try:
+        if stat.S_ISREG(os.lstat(name + b"/.gitignore").st_mode):
+            fd = os.open(name + b"/.gitignore", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            try:
+                if stat.S_ISREG(os.fstat(fd).st_mode):
+                    text = os.read(fd, 16)
+            finally:
+                os.close(fd)
+    except OSError:
+        pass
+    if text not in (b"*", b"*\n"):
+        return None, (2, "refused: %s is in %s, whose .gitignore does not hold * (OUTPUT-RULES.md Rule 11d)"
+                      % (label, shown(os.fsdecode(name))))
+    return st, None
+
+
+def _confined(path, label):
+    """None when path names a regular file with one name in a run directory, reached
+    through no symbolic link and resolving inside the working directory, else (2, the
+    refusal). Each name on the way is checked with lstat, so a link is refused before
+    anything is read through it."""
+    parts, problem = _parts(path, label)
+    if problem is None:
+        problem = _run_dir(parts[0], label)[1]
+    if problem is not None:
+        return problem
+    cur = parts[0]
+    for part in parts[1:]:
+        cur += b"/" + part
+        try:
+            st = os.lstat(cur)
+        except (FileNotFoundError, NotADirectoryError):
+            return 2, "refused: %s does not exist" % label
+        except OSError as e:
+            return 2, "refused: %s cannot be checked: %s" % (label, shown(e.strerror or e))
+        if stat.S_ISLNK(st.st_mode):
+            return 2, "refused: %s is a symbolic link, or is reached through one inside the working directory" % label
+    if not stat.S_ISREG(st.st_mode):
+        return 2, "refused: %s is not a regular file" % label
+    if st.st_nlink != 1:
+        return 2, "refused: %s has more than one name (a hard link)" % label
+    if not _inside(cur):
+        return 2, "refused: %s resolves outside the working directory" % label
+    return None
 
 
 def opened(path):
-    """One named input, opened for reading: never through a final symbolic link, and
-    only a regular file (a FIFO or a device is not opened for a blocking read)."""
-    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    """One named input, opened for reading through each directory on its way from the
+    working directory, none of them followed if it is a symbolic link, and only a
+    regular file with one name (a FIFO or a device is not opened for a blocking read)."""
+    raw = os.fsencode(path)
+    parts = (raw[2:] if raw.startswith(b"./") else raw).split(b"/")
+    fd = os.open(".", os.O_RDONLY | os.O_DIRECTORY)
     try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
-            raise OSError(errno.EINVAL, "not a regular file")
-        return os.fdopen(fd, "rb")
-    except BaseException:
+        for part in parts[:-1]:
+            step = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = step
+        f = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+    finally:
         os.close(fd)
+    try:
+        st = os.fstat(f)
+        if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
+            raise OSError(errno.EINVAL, "not a regular file with one name")
+        return os.fdopen(f, "rb")
+    except BaseException:
+        os.close(f)
         raise
 
 
 def unusable(paths):
     """None when every named input can be read, else (exit status, message) for the
-    first one that cannot: 2 for a symbolic link, 1 for anything else."""
+    first one that cannot: 2 for a path the contract refuses, 1 for a file that cannot
+    be opened."""
     for n, path in enumerate(paths, 1):
-        if path == "-":
-            continue
+        label = "input %d (%s)" % (n, shown(path))
+        problem = _confined(path, label)
+        if problem is not None:
+            return problem
         try:
-            if linked(path):
-                return 2, ("input %d (%s) is a symbolic link, or is reached through one inside the"
-                           " working directory; refusing it" % (n, shown(path)))
             opened(path).close()
         except OSError as e:
-            return 1, "cannot read input %d (%s): %s" % (n, shown(path), shown(e.strerror or e))
+            return 1, "cannot read %s: %s" % (label, shown(e.strerror or e))
     return None
 
 
 def unwritable(path):
     """None when --out path can take a new output file, else (exit status, message): 2
-    for a symbolic link, a path reached through one inside the working directory, or
-    a path that exists (an output never replaces a file, an input corpus least of
-    all), 1 for a path whose directory does not exist."""
+    for a path that is not a new .jsonl, .tsv or .txt name directly in a run directory
+    (an output never replaces a file, an input corpus least of all), 1 for one that
+    cannot be checked."""
+    label = "--out " + shown(path)
+    parts, problem = _parts(path, label)
+    if problem is not None:
+        return problem
+    if len(parts) != 2 or len(parts[1]) > 128 or not _OUT_NAME.fullmatch(parts[1]):
+        return 2, "refused: %s is not a .jsonl, .tsv or .txt file directly in the run directory" % label
+    st, problem = _run_dir(parts[0], label)
+    if problem is not None:
+        return problem
     try:
-        if linked(path):
-            return 2, ("--out %s is a symbolic link, or is reached through one inside the working"
-                       " directory; refusing it" % shown(path))
-        if os.path.lexists(path):
-            return 2, "--out %s already exists, and an output never replaces a file: name a new one" % shown(path)
-        if not os.path.isdir(os.path.dirname(path) or "."):
-            return 1, "cannot write --out %s: its directory does not exist" % shown(path)
+        found = os.lstat(parts[0] + b"/" + parts[1])
+    except FileNotFoundError:
+        found = None
     except OSError as e:
-        return 1, "cannot write --out %s: %s" % (shown(path), shown(e.strerror or e))
+        return 1, "cannot write %s: %s" % (label, shown(e.strerror or e))
+    if found is not None and stat.S_ISLNK(found.st_mode):
+        return 2, "refused: %s is a symbolic link" % label
+    if found is not None:
+        return 2, "refused: %s already exists, and an output never replaces a file: name a new one" % label
+    if not _inside(parts[0]):
+        return 2, "refused: %s resolves outside the working directory" % label
+    _CHECKED[path] = st
     return None
 
 
-def _within(fd, here):
-    """True when the directory open on fd is the working directory (here, its stat) or
-    below it, found by walking up through its parents."""
-    cur = os.dup(fd)
-    try:
-        while True:
-            st = os.fstat(cur)
-            if os.path.samestat(st, here):
-                return True
-            up = os.open("..", os.O_RDONLY | os.O_DIRECTORY, dir_fd=cur)
-            os.close(cur)
-            cur = up
-            if os.path.samestat(os.fstat(cur), st):
-                return False
-    finally:
-        os.close(cur)
-
-
 def pinned(path):
-    """The directory of --out path, opened one name at a time from the working directory
-    (or the root): a name that is a symbolic link is followed only outside the working
-    directory, as linked() allows, so the directory is the one that check passed. The
-    output is made, named and removed through this descriptor, so a name on its way
-    that is later moved or replaced by a link never moves the output elsewhere."""
-    here = os.stat(".")
-    flags = os.O_RDONLY | os.O_DIRECTORY
-    fd = os.open(os.sep if os.path.isabs(path) else ".", flags)
+    """The run directory of --out path, opened from the working directory without
+    following a symbolic link, and the directory unwritable() checked. The output is
+    made, named and removed through this descriptor, so a name on its way that is later
+    moved or replaced by a link never moves the output elsewhere."""
+    raw = os.fsencode(path)
+    name = (raw[2:] if raw.startswith(b"./") else raw).split(b"/")[0]
+    here = os.open(".", os.O_RDONLY | os.O_DIRECTORY)
     try:
-        for part in os.path.dirname(path).split(os.sep):
-            if part in ("", "."):
-                continue
-            try:
-                step = os.open(part, flags | os.O_NOFOLLOW, dir_fd=fd)
-            except OSError as e:
-                if e.errno not in (errno.ELOOP, errno.ENOTDIR):
-                    raise
-                if not stat.S_ISLNK(os.stat(part, dir_fd=fd, follow_symlinks=False).st_mode):
-                    raise
-                if _within(fd, here):
-                    raise OSError(errno.ELOOP, "a symbolic link inside the working directory is on the way to --out")
-                step = os.open(part, flags, dir_fd=fd)
-            os.close(fd)
-            fd = step
-        return fd
-    except BaseException:
+        fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=here)
+    finally:
+        os.close(here)
+    st, want = os.fstat(fd), _CHECKED.get(path)
+    if want is None or (st.st_dev, st.st_ino) != (want.st_dev, want.st_ino):
         os.close(fd)
-        raise
+        raise OSError(errno.EINVAL, "the run directory changed after it was checked")
+    return fd
 
 
 class Output:
@@ -628,17 +724,21 @@ def skipped(stats):
 
 
 def main(argv: list[str]) -> int:
-    usage = "usage: deltas.py lamports|tokens [--out <file>] [<corpus.jsonl> ...]"
-    if not argv or argv[0] not in ("lamports", "tokens"):
-        print(usage, file=sys.stderr)
-        return 2
-    mode, files, out_path = argv[0], argv[1:], None
-    if files[:1] == ["--out"]:
-        if len(files) < 2:
-            print(usage, file=sys.stderr)
-            return 2
-        out_path, files = files[1], files[2:]
-    problem = unusable(files)
+    usage = "deltas.py lamports|tokens [--out <file>] [<corpus.jsonl> ...]"
+    problem = installed(__file__)
+    mode, files, out_path = (argv[:1] or [""])[0], argv[1:], None
+    if problem is None and mode not in ("lamports", "tokens"):
+        problem = refusal("deltas takes lamports or tokens", usage)
+    while problem is None and files[:1] and files[0].startswith("-"):
+        if files[0] == "--out" and out_path is None:
+            if len(files) < 2:
+                problem = refusal("--out needs a file", usage)
+                break
+            out_path, files = files[1], files[2:]
+        else:
+            problem = refusal("option %s is unknown here or given twice" % shown(files[0]), usage)
+    if problem is None:
+        problem = unusable(files)
     if problem is None and out_path is not None:
         problem = unwritable(out_path)
     if problem:

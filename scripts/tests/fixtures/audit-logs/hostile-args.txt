@@ -1,6 +1,9 @@
-# Hostile arguments for audit-logs, run by scripts/tests/test-audit-logs.sh from a working
-# directory it builds (layout in that file). Each case must exit non-zero, change no file
-# outside the run directories, leave no temporary file, and print no canary text.
+# Hostile arguments for audit-logs and the three recipes it mirrors. test-audit-logs.sh
+# runs every case with audit-logs, and a case that names profile, frames or deltas with
+# that script too (the arguments after the subcommand), which must refuse it with the same
+# exit status and the same line; test-dnr.sh runs the scripts' cases on their own. Both
+# build the working directory with hostile_layout, the same block in both files. Each case
+# must exit non-zero, change no file, leave no temporary file, and print no canary text.
 #
 # One case per line: a name, then each argument, all separated by tabs. In an argument:
 #   @WT@       the working directory's absolute path
@@ -58,6 +61,14 @@ a long path component	frames	incident_1/@LONG:300@.jsonl
 a missing corpus	profile	incident_1/missing.jsonl
 a missing corpus after a good one	frames	incident_1/corpus.jsonl	incident_1/missing.jsonl
 a link after a good corpus	deltas	lamports	incident_1/corpus.jsonl	incident_1/link.jsonl
+an input with a second name	frames	incident_1/twin.jsonl
+the other name of that input	deltas	tokens	incident_1/twin-2.jsonl
+a hard link to a file outside every run directory	profile	incident_1/hard.txt
+a second ./	frames	././incident_1/corpus.jsonl
+an input under a file	frames	incident_1/corpus.jsonl/x
+a missing run directory	frames	incident_9/x.jsonl
+a run directory holding no file	profile	incident_1/
+--instructions after --out	frames	--out	incident_1/x.jsonl	--instructions	--instructions	incident_1/corpus.jsonl
 # --out paths
 --out absolute	frames	--out	@WT@/incident_1/x.jsonl	incident_1/corpus.jsonl
 --out outside the working directory	frames	--out	@OUT@/x.jsonl	incident_1/corpus.jsonl
@@ -82,3 +93,7 @@ a link after a good corpus	deltas	lamports	incident_1/corpus.jsonl	incident_1/li
 --out hidden	frames	--out	incident_1/.x.txt	incident_1/corpus.jsonl
 --out with another extension	deltas	tokens	--out	incident_1/x.json	incident_1/corpus.jsonl
 --out with no name before the extension	frames	--out	incident_1/.jsonl	incident_1/corpus.jsonl
+--out into a missing run directory	frames	--out	incident_9/x.jsonl	incident_1/corpus.jsonl
+--out into an audit run directory	frames	--out	audit_1/x.jsonl	incident_1/corpus.jsonl
+--out into a run directory whose .gitignore is not *	deltas	tokens	--out	incident_4/x.tsv	incident_1/corpus.jsonl
+--out after a refused input	frames	--out	incident_1/x.jsonl	incident_1/link.jsonl

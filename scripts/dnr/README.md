@@ -25,15 +25,17 @@ Always from the auditor-skill installation, by absolute path —
 `<auditor-skill root>/scripts/dnr/…`, the root the invoking command gave you
 (`OUTPUT-RULES.md` Rule 11e) — and never as a `scripts/…` path relative to the
 working directory, which during an incident is usually the
-audited repo and may ship a same-named file. The python recipes run as
+audited repo and may ship a same-named file. Run the three analysis recipes
+directly by that quoted path, from the working directory under audit: their
+first lines run `profile.sh` under `/bin/bash` and the python recipes as
 `python3 -I` (isolated: neither the working directory nor `PYTHONPATH` reaches
 `sys.path`), so they import only the stdlib and never a sibling module.
 `snapshot-program.sh` hashes with `python3 -I` for the same reason.
 
 ```bash
-bash "<auditor-skill root>/scripts/dnr/profile.sh" [--out <file>] <corpus.jsonl>...
-python3 -I "<auditor-skill root>/scripts/dnr/frames.py" [--instructions] [--out <file>] <corpus.jsonl>...
-python3 -I "<auditor-skill root>/scripts/dnr/deltas.py" tokens|lamports [--out <file>] <corpus.jsonl>...
+"<auditor-skill root>/scripts/dnr/profile.sh" [--out <file>] <corpus.jsonl>...
+"<auditor-skill root>/scripts/dnr/frames.py" [--instructions] [--out <file>] <corpus.jsonl>...
+"<auditor-skill root>/scripts/dnr/deltas.py" tokens|lamports [--out <file>] <corpus.jsonl>...
 ```
 
 Each takes every corpus of an incident at once
@@ -66,14 +68,25 @@ one block of code that is the same in all three files. It is copied, not shared,
 because `python3 -I` keeps a sibling module off `sys.path`;
 `scripts/tests/test-dnr.sh` fails when the copies differ.
 
-- **Inputs.** Every named file is checked before anything is printed. A file
-  that is a symbolic link, or that is reached through a directory link inside
-  the working directory, is refused (exit 2), since an approval prompt shows the
-  path, not where it leads. A file that cannot be read, or is not a regular file,
-  is an error (exit 1); `profile.sh` refuses a missing or non-regular file as a
-  usage error (exit 2). With no file named, `frames.py` and `deltas.py` read
-  stdin. A message shows a path escaped to printable ASCII and cut at 120
-  characters, never raw.
+- **Inputs.** A named file must be a regular file with one name in a run
+  directory `incident_<n>/` of the working directory: named by a path relative
+  to it, with no empty, `.` or `..` component, reached through no symbolic link,
+  in a run directory that is a real directory whose `.gitignore` holds `*`
+  (`OUTPUT-RULES.md` Rule 11d). Every named file is checked before anything is
+  read, and any other is refused (exit 2): a missing file, a directory or a FIFO,
+  a file with a second name (a hard link), a link or a path through one, an
+  absolute path, a file outside every run directory or in `audit_<n>/`. An
+  approval prompt shows the path, not where it leads or what else names it. A
+  regular file that cannot be opened is an error (exit 1). With no file named,
+  `frames.py` and `deltas.py` read stdin. Copy a corpus kept elsewhere, such as a
+  `--logs` export, into the run directory (`incident_<n>/logs/`) before a recipe
+  reads it. A refusal is one line on stderr, `<recipe>: refused: <reason>`, and
+  shows a path escaped to printable ASCII and cut at 120 characters, never raw.
+  The recipes do not ask git whether it tracks the run directory, and on a
+  case-insensitive filesystem a directory named `INCIDENT_1` is read as
+  `incident_1/`: make run directories with
+  `"<auditor-skill root>/scripts/rundir.sh" new incident`, and check one before
+  reusing it with `"<auditor-skill root>/scripts/rundir.sh" check incident_<n>`.
 - **Lines.** Input is read as bytes and split on LF only, so a CR is not a line
   break. Surrounding ASCII whitespace is stripped (a CRLF line end is fine), and
   a blank line is skipped without being counted.
@@ -154,21 +167,30 @@ because `python3 -I` keeps a sibling module off `sys.path`;
   `uniq` run under `LC_ALL=C`), so two keys that differ only in a character a
   locale's collation ignores stay two lines, and ties fall in the same order under
   every locale.
-- **Saved output.** To keep an output, pass `--out <file>` with a new name,
+- **Saved output.** To keep an output, pass `--out <file>`, a new `.jsonl`,
+  `.tsv` or `.txt` name directly in a run directory (`incident_<n>/<name>`),
   never a shell redirection into `incident_<n>/`. The recipe writes a temporary
   file beside `<file>` and gives it that name only when the run completes, so a
   run that is cut short never leaves a partial output under the final name, and
   one stopped by TERM removes its temporary file. An output never replaces a
   file: an `--out` that already exists (an input corpus among them) is refused
-  (exit 2), and so is one that is a symbolic link or reached through one inside
-  the working directory; one whose directory is missing is an error (exit 1).
-  The recipe opens the directory of `<file>` once, one name at a time, following
-  a symbolic link only above the working directory, and makes, names and removes
-  its files through it: a directory on the way that is moved, or replaced by a
-  link, while the recipe runs never moves the output elsewhere. `profile.sh`
-  writes its report into its private temp directory first and opens the
-  directory of `<file>` only once the report is whole, so a link that is there
-  by then is refused.
+  (exit 2), and so is one that is a symbolic link, in a subdirectory, in a run
+  directory that is a link or has no `.gitignore` of `*`, outside every run
+  directory, or of another kind. The recipe opens the run directory once, from
+  the working directory and never through a symbolic link, makes sure it is the
+  directory it checked, and makes, names and removes its files through it: a run
+  directory that is moved, or replaced by a link, while the recipe runs never
+  moves the output elsewhere. `profile.sh` writes its report into its private
+  temp directory first, then checks `--out` again and opens the run directory
+  only once the report is whole, so a link that is there by then is refused.
+- **Entry points.** Each recipe refuses to run (exit 2) from an installation
+  inside the working directory, or from a path holding a quote, `$`, a
+  backtick, a backslash or a control character, which its quoted call could not
+  match as written. Its options come before the corpus paths, each at most once;
+  an unknown or repeated option is refused (exit 2). `profile.sh` sources
+  `scripts/lib/confine.sh`, which sets `LC_ALL=C` and `umask 077` and keeps only
+  `PATH` entries outside the working directory, and its private temp directory
+  must lie outside it too.
 
 ## Two hazards these encode, and why
 

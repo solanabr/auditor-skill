@@ -324,9 +324,10 @@ where
     for input in inputs {
         let mut reader: Box<dyn BufRead> = match &input.source {
             Source::Stdin => Box::new(io::stdin().lock()),
-            Source::File(path, md) => {
-                Box::new(BufReader::with_capacity(1 << 16, open_checked(path, md)?))
-            }
+            Source::File(path, md) => Box::new(BufReader::with_capacity(
+                1 << 16,
+                open_checked(path, md, true)?,
+            )),
         };
         let mut bad: Option<usize> = None;
         let mut lineno: u64 = 0;
