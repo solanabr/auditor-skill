@@ -62,8 +62,12 @@
 #     stricter of <R>/exec-mode and AUDITOR_EXEC_MODE, and --mode must match it; the
 #     installation's template never builds itself;
 #   * the isolation self-check (scripts/lib/isolation.sh): in isolated mode, a fake HOME
-#     holding any credential it reads stops the run before anything is copied; in
-#     native mode it is a warning;
+#     holding any credential it reads stops the run before anything is copied, and so
+#     does a check that cannot finish; in native mode it is a warning. Through a driver,
+#     on the homes it is given: the Solana CLI's keypair, linked and deep directories,
+#     the entry budget, the places the environment names, the variable names that look
+#     like credentials, and agent sockets (serving one needs a machine that allows it;
+#     on CI, or with REQUIRE_TOOLCHAIN=1, a machine that does not fails the run);
 #   * environment cleaning: canary variables in the caller's environment reach no cargo
 #     call, no build script and no test binary; HOME is a throwaway one with a fresh
 #     Solana keypair, but for cargo build-sbf; only cargo's downloads see the proxy;
@@ -1075,7 +1079,10 @@ root=$1; shift
 confine_init iso-driver "$root"
 case "$1" in
   homes) iso_homes ;;
-  creds) shift; iso_credentials "$@"; rc=$?; printf '%s\n' "$ISO_READABLE"; exit "$rc" ;;
+  creds) shift; iso_credentials "$@"; rc=$?
+         if [ "$rc" = 2 ]; then printf 'why: %s\n' "$ISO_WHY"; else printf '%s\n' "$ISO_READABLE"; fi
+         exit "$rc" ;;
+  names) iso_cred_names; printf '%s\n' "$ISO_NAMES" ;;
   run-eq) mkdir -p "$2"; iso_env "$2" keep-home || exit 9; iso_run A=1 "$3/x=y/prog"; echo "rc=$?" ;;
   env) iso_env "$2" || exit 9; printf '%s\n' "${ISO_ENV[@]}"; printf 'net %s\n' ${ISO_NET[@]+"${ISO_NET[@]}"}
        printf 'home %s\n' "$ISO_HOME" ;;
@@ -1246,7 +1253,8 @@ code="$(ngate AUDITOR_EXEC_MODE=yes -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
   && ok "AUDITOR_EXEC_MODE=yes -> refused, even with a recorded mode" || { bad "AUDITOR_EXEC_MODE=yes: exit $code"; cat "$T/out" >&2; }
 
 # The isolation self-check. In isolated mode, a fake HOME holding any one credential the check reads
-# stops the run before anything is copied, naming it; in native mode it is a warning.
+# stops the run before anything is copied, naming it, and so does a check that cannot finish; in native
+# mode it is a warning.
 printf 'isolated\n' > "$WT/audit_1/exec-mode"
 n=0
 while IFS= read -r cred; do
@@ -1258,8 +1266,13 @@ while IFS= read -r cred; do
 done <<'CREDS'
 .ssh/id_ed25519
 .ssh/work/deploy_key
+.ssh/a/b/c/id_rsa
 .config/solana/id.json
+.config/solana/deployer.json
+.config/solana/cli/config.yml
 .aws/credentials
+.aws/sso/cache/0123abcd.json
+.aws/cli/cache/0123abcd.json
 .config/gcloud/credentials.db
 .config/gcloud/access_tokens.db
 .config/gcloud/application_default_credentials.json
@@ -1272,55 +1285,146 @@ done <<'CREDS'
 .kube/config
 .docker/config.json
 .npmrc
+.yarnrc.yml
+.gem/credentials
+.pypirc
 .cargo/credentials
 .cargo/credentials.toml
 .git-credentials
+.config/git/credentials
 .netrc
 .config/gh/hosts.yml
-.pypirc
 .gnupg/private-keys-v1.d/0123456789ABCDEF.key
+.claude/.credentials.json
 CREDS
+FH="$T/fh-many"; mkdir -p "$FH/.ssh" "$FH/.gnupg/private-keys-v1.d"; printf 'secret\n' > "$FH/.gnupg/private-keys-v1.d/ABC.key"
+i=0; while [ "$i" -le 5000 ]; do : > "$FH/.ssh/known_hosts.$i"; i=$((i + 1)); done
+code="$(ngate HOME="$FH" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+[ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: isolated mode, but the credential self-check could not finish (more than 5000 entries in the directories it lists), so run.sh cannot tell that this is the isolated runner (Rule 11a) — nothing was copied or built." "$T/out" \
+  && new_nothing_ran && one_blocker && ok "isolated mode with more than 5000 entries to list -> exit 3: the check cannot tell, nothing copied" || { bad "isolated, a check that cannot finish: exit $code"; cat "$T/out" >&2; }
 FH="$T/fh-native"; mkdir -p "$FH/.aws"; printf 'secret\n' > "$FH/.aws/credentials"
 printf 'native\n' > "$WT/audit_1/exec-mode"
 code="$(ngate HOME="$FH" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
 [ "$code" = 0 ] && grep -qF ">> warning: native mode, and these are readable here, to the code this run builds and runs too: $FH/.aws/credentials" "$T/out" \
   && ok "native mode with a readable credential -> a warning naming it, and the run goes on" || { bad "native with a credential: exit $code"; cat "$T/out" >&2; }
-printf 'isolated\n' > "$WT/audit_1/exec-mode"
+
+# The check on its own, through the driver: the homes it is given (never the passwd home) and the places
+# the environment names.
+# dcreds [VAR=val ...] -- <home>...: iso_credentials on those homes, with only an empty HOME, PATH and the
+# variables given in the environment -> its status; what the driver printed in $T/creds.out
+dcreds() {
+  local -a vars=()
+  while [ $# -gt 0 ] && [ "$1" != -- ]; do vars+=("$1"); shift; done
+  [ $# -gt 0 ] && shift
+  (cd "$WT" && env -i HOME="$CLEANHOME" PATH="$PATH" ${vars[@]+"${vars[@]}"} "$BASH" "$T/iso-driver.sh" "$ROOT" creds "$@") >"$T/creds.out" 2>&1
+  echo $?
+}
+lines_are() {  # lines_are <line>...: $T/creds.out holds exactly these lines, in any order
+  local line
+  [ "$(grep -c . "$T/creds.out")" = "$#" ] || return 1
+  for line in "$@"; do grep -qxF -- "$line" "$T/creds.out" || return 1; done
+}
+X="$T/fx"; mkdir -p "$X/sol/.config/solana/cli" "$X/keys" "$X/sol2/.config/solana/cli" "$X/sol2/wallets"
+printf 'k\n' > "$X/keys/deploy.json"; printf 'k\n' > "$X/sol2/wallets/main.json"
+printf 'json_rpc_url: "https://rpc.invalid/key"\nkeypair_path: %s/keys/deploy.json # the deployer\n' "$X" > "$X/sol/.config/solana/cli/config.yml"
+printf "keypair_path: '~/wallets/main.json'\n" > "$X/sol2/.config/solana/cli/config.yml"
+code="$(dcreds -- "$X/sol" "$X/sol2")"
+[ "$code" = 1 ] && lines_are "$X/sol/.config/solana/cli/config.yml" "$X/keys/deploy.json" "$X/sol2/.config/solana/cli/config.yml" "$X/sol2/wallets/main.json" \
+  && ok "the keypair the Solana CLI config names counts wherever it is ('~' being that home), and so does the config" || { bad "the CLI config's keypair: $code"; cat "$T/creds.out" >&2; }
+mkdir -p "$X/lnk/.ssh" "$X/keys-elsewhere"; printf 'k\n' > "$X/keys-elsewhere/deploy_key"
+ln -s "$X/keys-elsewhere" "$X/lnk/.ssh/work"; ln -s . "$X/lnk/.ssh/loop"; printf 'public\n' > "$X/lnk/.ssh/known_hosts"
+code="$(dcreds -- "$X/lnk")"
+[ "$code" = 1 ] && lines_are "$X/lnk/.ssh/work/deploy_key" \
+  && ok "a key in a directory a link in ~/.ssh names counts, and a link back to ~/.ssh is listed once" || { bad "linked directories: $code"; cat "$T/creds.out" >&2; }
+code="$(dcreds -- "$T/fh-many")"
+[ "$code" = 2 ] && [ "$(cat "$T/creds.out")" = "why: more than 5000 entries in the directories it lists" ] \
+  && ok "past 5000 entries in the directories it lists, the check stops and cannot tell (status 2)" || { bad "the entry budget: $code"; cat "$T/creds.out" >&2; }
+E="$T/fe"; mkdir -p "$E/aws" "$E/kube" "$E/docker" "$E/gcloud/legacy_credentials/me@example.invalid" "$E/azure" \
+  "$E/gnupg/private-keys-v1.d" "$E/xdg/gh" "$E/xdg/git" "$E/ghdir" "$E/cargo"
+for f in aws/creds kube/a kube/b docker/config.json gcloud/credentials.db gcloud/legacy_credentials/me@example.invalid/adc.json \
+  azure/msal_token_cache.json gnupg/private-keys-v1.d/K.key xdg/gh/hosts.yml xdg/git/credentials ghdir/hosts.yml \
+  cargo/credentials.toml npmrc-upper npmrc-lower netrc service-account.json; do printf 'secret\n' > "$E/$f"; done
+code="$(dcreds AWS_SHARED_CREDENTIALS_FILE="$E/aws/creds" KUBECONFIG="$E/kube/a:$E/kube/b" DOCKER_CONFIG="$E/docker" \
+  CLOUDSDK_CONFIG="$E/gcloud" AZURE_CONFIG_DIR="$E/azure" GNUPGHOME="$E/gnupg" XDG_CONFIG_HOME="$E/xdg" GH_CONFIG_DIR="$E/ghdir" \
+  CARGO_HOME="$E/cargo" NPM_CONFIG_USERCONFIG="$E/npmrc-upper" npm_config_userconfig="$E/npmrc-lower" NETRC="$E/netrc" \
+  GOOGLE_APPLICATION_CREDENTIALS="$E/service-account.json" -- "$CLEANHOME")"
+[ "$code" = 1 ] && lines_are "$E/aws/creds" "$E/kube/a" "$E/kube/b" "$E/docker/config.json" "$E/gcloud/credentials.db" \
+  "$E/gcloud/legacy_credentials/me@example.invalid/adc.json" "$E/azure/msal_token_cache.json" "$E/gnupg/private-keys-v1.d/K.key" \
+  "$E/xdg/gh/hosts.yml" "$E/xdg/git/credentials" "$E/ghdir/hosts.yml" "$E/cargo/credentials.toml" "$E/npmrc-upper" "$E/npmrc-lower" \
+  "$E/netrc" "$E/service-account.json" \
+  && ok "the credential files the environment's variables name count (KUBECONFIG, CLOUDSDK_CONFIG, GNUPGHOME, CARGO_HOME and the rest)" || { bad "credentials the environment names: $code"; cat "$T/creds.out" >&2; }
+# What does not count: the public parts of ~/.ssh, a file this user cannot read, an empty file, a FIFO
+# (which must not stall the check) and an SSH_AUTH_SOCK that names no socket.
+FH="$T/fh-clean"; mkdir -p "$FH/.ssh" "$FH/.aws" "$FH/.kube"
+for f in known_hosts known_hosts.old config id_ed25519.pub authorized_keys authorized_keys2; do printf 'public\n' > "$FH/.ssh/$f"; done
+: > "$FH/.aws/credentials"; printf 'secret\n' > "$FH/.kube/config"; chmod 000 "$FH/.kube/config"
+mkfifo "$FH/.npmrc" 2>/dev/null || true
+printf 'x\n' > "$T/not-a-socket"
+if [ -r "$FH/.kube/config" ]; then echo "note: cannot drop read permission here (running as root?); the unreadable credential is left out"; rm -f "$FH/.kube/config"; fi
+code="$(dcreds SSH_AUTH_SOCK="$T/not-a-socket" -- "$FH")"
+[ "$code" = 0 ] && [ -z "$(cat "$T/creds.out")" ] \
+  && ok "public ~/.ssh files, an unreadable or empty credential, a FIFO and a non-socket SSH_AUTH_SOCK do not count" || { bad "nothing readable: $code"; cat "$T/creds.out" >&2; }
+chmod 600 "$FH/.kube/config" 2>/dev/null || true
+FH="$T/fh-link"; mkdir -p "$FH"; printf 'secret\n' > "$T/npmrc-elsewhere"; ln -s "$T/npmrc-elsewhere" "$FH/.npmrc"
+code="$(dcreds -- "$FH")"
+[ "$code" = 1 ] && lines_are "$FH/.npmrc" && ok "a symbolic link to a readable file counts" || { bad "a linked credential: $code"; cat "$T/creds.out" >&2; }
+out="$(cd "$WT" && env -i HOME="$CLEANHOME" PATH="$PATH" GITHUB_TOKEN=x AWS_SECRET_ACCESS_KEY=x HELIUS_API_KEY=x SOLANA_RPC_URL=x \
+  DB_PASSWORD=x MAX_MCP_OUTPUT_TOKENS=1 TOKENIZER_PATH=x SSH_AUTH_SOCK=x "$BASH" "$T/iso-driver.sh" "$ROOT" names)"
+[ "$out" = "AWS_SECRET_ACCESS_KEY, DB_PASSWORD, GITHUB_TOKEN, HELIUS_API_KEY, SOLANA_RPC_URL" ] \
+  && ok "iso_cred_names names the variables that look like credentials, and no others" || bad "iso_cred_names: '$out'"
+# Agent sockets count when they accept a connection: SSH_AUTH_SOCK, sockets in ~/.ssh and ~/.gnupg, in
+# GNUPGHOME, ssh-*/agent.* under TMPDIR, and in the runtime directory's gnupg/. A socket nothing listens on
+# does not. Serving one needs a machine that allows it; on CI, and with REQUIRE_TOOLCHAIN=1, a machine that
+# does not fails the run.
+SK="$T/k"; mkdir -p "$SK/.ssh" "$SK/.gnupg" "$T/g" "$T/t/ssh-a" "$T/r/gnupg" "$T/q/.ssh"
+python3 -I -c 'import socket, sys, time
+keep = []
+for path in sys.argv[1:]:
+    s = socket.socket(socket.AF_UNIX)
+    s.bind(path)
+    s.listen(5)
+    keep.append(s)
+s = socket.socket(socket.AF_UNIX)
+s.bind(sys.argv[1] + "-stale")
+s.close()
+time.sleep(120)' "$T/a" "$SK/.ssh/agent" "$SK/.gnupg/S.gpg-agent" "$T/g/S.gpg-agent.ssh" "$T/t/ssh-a/agent.1" "$T/r/gnupg/S.gpg-agent" 2>/dev/null &
+agent=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -S "$T/a-stale" ] && break; kill -0 "$agent" 2>/dev/null || break; sleep 1; done
+if [ -S "$T/a-stale" ] && python3 -I -c 'import socket, sys; socket.socket(socket.AF_UNIX).connect(sys.argv[1])' "$T/a" 2>/dev/null; then
+  code="$(dcreds SSH_AUTH_SOCK="$T/a" -- "$CLEANHOME")"
+  [ "$code" = 1 ] && lines_are "$T/a (SSH_AUTH_SOCK)" && ok "an SSH_AUTH_SOCK that accepts a connection counts" || { bad "SSH_AUTH_SOCK: $code"; cat "$T/creds.out" >&2; }
+  code="$(dcreds SSH_AUTH_SOCK="$T/a-stale" -- "$CLEANHOME")"
+  [ "$code" = 0 ] && ok "an SSH_AUTH_SOCK nothing listens on does not count" || { bad "a stale SSH_AUTH_SOCK: $code"; cat "$T/creds.out" >&2; }
+  code="$(dcreds GNUPGHOME="$T/g" TMPDIR="$T/t" XDG_RUNTIME_DIR="$T/r" -- "$SK")"
+  [ "$code" = 1 ] && lines_are "$SK/.ssh/agent" "$SK/.gnupg/S.gpg-agent" "$T/g/S.gpg-agent.ssh" "$T/t/ssh-a/agent.1" "$T/r/gnupg/S.gpg-agent" \
+    && ok "agent sockets in ~/.ssh, ~/.gnupg, GNUPGHOME, TMPDIR/ssh-*/ and the runtime directory count" || { bad "agent sockets: $code"; cat "$T/creds.out" >&2; }
+  if [ "$ISOLATED_OK" = 1 ]; then
+    printf 'isolated\n' > "$WT/audit_1/exec-mode"
+    code="$(ngate HOME="$CLEANHOME" SSH_AUTH_SOCK="$T/a" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+    [ "$code" = 3 ] && grep -qF "isolated mode, but $T/a (SSH_AUTH_SOCK) is readable" "$T/out" && new_nothing_ran \
+      && ok "isolated mode with an SSH agent that accepts a connection -> exit 3 naming SSH_AUTH_SOCK" || { bad "isolated, SSH agent: exit $code"; cat "$T/out" >&2; }
+    printf 'native\n' > "$WT/audit_1/exec-mode"
+  fi
+elif [ "${CI:-}" = true ] || [ "${REQUIRE_TOOLCHAIN:-}" = 1 ]; then
+  bad "the agent socket checks cannot run: this machine does not let the suite serve a Unix socket"
+else
+  echo "note: this machine does not let the suite serve a Unix socket; the agent socket checks are skipped"
+fi
+kill "$agent" 2>/dev/null; wait "$agent" 2>/dev/null
+
+# Isolated runs that pass the check, where nothing the check reads is readable on this machine.
 if [ "$ISOLATED_OK" = 1 ]; then
+  printf 'isolated\n' > "$WT/audit_1/exec-mode"
   FH="$T/fh-cargo-home"; mkdir -p "$FH" "$T/other-cargo-home"; printf 'token\n' > "$T/other-cargo-home/credentials.toml"
   code="$(ngate HOME="$FH" CARGO_HOME="$T/other-cargo-home" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
   [ "$code" = 3 ] && grep -qF "isolated mode, but $T/other-cargo-home/credentials.toml is readable" "$T/out" && new_nothing_ran \
     && ok "isolated mode with a readable \$CARGO_HOME/credentials.toml -> exit 3 naming it" || { bad "isolated, CARGO_HOME credentials: exit $code"; cat "$T/out" >&2; }
-  # What does not count: the public parts of ~/.ssh, a file this user cannot read, an empty file, a FIFO
-  # (which must not stall the check) and an SSH_AUTH_SOCK that names no socket.
-  FH="$T/fh-clean"; mkdir -p "$FH/.ssh" "$FH/.aws" "$FH/.kube"
-  for f in known_hosts known_hosts.old config id_ed25519.pub authorized_keys authorized_keys2; do printf 'public\n' > "$FH/.ssh/$f"; done
-  : > "$FH/.aws/credentials"; printf 'secret\n' > "$FH/.kube/config"; chmod 000 "$FH/.kube/config"
-  mkfifo "$FH/.npmrc" 2>/dev/null || true
-  printf 'x\n' > "$T/not-a-socket"
-  if [ -r "$FH/.kube/config" ]; then echo "note: cannot drop read permission here (running as root?); the unreadable credential is left out"; rm -f "$FH/.kube/config"; fi
-  code="$(ngate HOME="$FH" SSH_AUTH_SOCK="$T/not-a-socket" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+  chmod 000 "$T/fh-clean/.kube/config" 2>/dev/null || true
+  code="$(ngate HOME="$T/fh-clean" SSH_AUTH_SOCK="$T/not-a-socket" GITHUB_TOKEN=canary-n1 -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+  chmod 600 "$T/fh-clean/.kube/config" 2>/dev/null || true
   [ "$code" = 0 ] && grep -q '^>> execution mode: isolated ' "$T/out" \
-    && ok "isolated mode: public ~/.ssh files, an unreadable or empty credential, a FIFO and a non-socket SSH_AUTH_SOCK do not count" || { bad "isolated, nothing readable: exit $code"; cat "$T/out" >&2; }
-  chmod 600 "$FH/.kube/config" 2>/dev/null || true
-  # A link to a readable file counts.
-  FH="$T/fh-link"; mkdir -p "$FH"; printf 'secret\n' > "$T/npmrc-elsewhere"; ln -s "$T/npmrc-elsewhere" "$FH/.npmrc"
-  code="$(ngate HOME="$FH" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
-  [ "$code" = 3 ] && grep -qF "isolated mode, but $FH/.npmrc is readable" "$T/out" && ok "isolated mode: a symbolic link to a readable file counts as readable" || { bad "isolated, linked credential: exit $code"; cat "$T/out" >&2; }
-  # An SSH agent that accepts a connection counts; this machine may not allow a Unix socket to be served.
-  SOCK="$T/agent.sock"
-  python3 -I -c 'import socket, sys, time
-s = socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.listen(5); time.sleep(60)' "$SOCK" 2>/dev/null &
-  agent=$!
-  for _ in 1 2 3 4 5 6 7 8 9 10; do [ -S "$SOCK" ] && break; kill -0 "$agent" 2>/dev/null || break; sleep 1; done
-  if [ -S "$SOCK" ] && python3 -I -c 'import socket, sys; socket.socket(socket.AF_UNIX).connect(sys.argv[1])' "$SOCK" 2>/dev/null; then
-    code="$(ngate HOME="$CLEANHOME" SSH_AUTH_SOCK="$SOCK" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
-    [ "$code" = 3 ] && grep -qF "isolated mode, but $SOCK (SSH_AUTH_SOCK) is readable" "$T/out" && new_nothing_ran \
-      && ok "isolated mode with an SSH agent that accepts a connection -> exit 3 naming SSH_AUTH_SOCK" || { bad "isolated, SSH agent: exit $code"; cat "$T/out" >&2; }
-  else
-    echo "note: this machine does not let the suite serve a Unix socket; the SSH agent check is skipped"
-  fi
-  kill "$agent" 2>/dev/null; wait "$agent" 2>/dev/null
+    && grep -qxF ">> warning: isolated mode, and these variables of run.sh's own environment look like credentials: GITHUB_TOKEN. No child of run.sh gets them, but code running as this user can read another process's environment (on Linux, in /proc/<pid>/environ) (Rule 11a)" "$T/out" \
+    && ok "isolated mode with nothing readable runs, and names the variables of its environment that look like credentials" || { bad "isolated, nothing readable: exit $code"; cat "$T/out" >&2; }
 fi
 printf 'native\n' > "$WT/audit_1/exec-mode"
 

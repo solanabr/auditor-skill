@@ -4,24 +4,44 @@
 #
 # The self-check. The isolated runner is a container, VM or sandbox with no credentials in reach. In
 # $HOME, and in the account's home directory from the passwd database when that differs, it tries to read
-# one byte of each file below, and lists the directories:
-#   ~/.ssh: every entry but known_hosts*, config, *.pub and authorized_keys*, subdirectories included; when
-#     the directory cannot be listed, id_rsa, id_dsa, id_ecdsa, id_ed25519, id_ecdsa_sk, id_ed25519_sk and
-#     identity;
-#   ~/.config/solana/id.json and ~/.aws/credentials;
+# one byte of each file below, and lists the directories, through their subdirectories and the links in
+# them, each directory once:
+#   ~/.ssh: every entry but known_hosts*, config, *.pub and authorized_keys*; when the directory cannot be
+#     listed, id_rsa, id_dsa, id_ecdsa, id_ed25519, id_ecdsa_sk, id_ed25519_sk and identity;
+#   ~/.config/solana: every entry (cli/config.yml can hold an RPC URL with a key), and the keypair the
+#     keypair_path line of cli/config.yml names, wherever it is;
+#   ~/.aws/credentials, and the files in ~/.aws/sso/cache/ and ~/.aws/cli/cache/;
 #   ~/.config/gcloud/credentials.db, access_tokens.db and application_default_credentials.json, and the
 #     files in ~/.config/gcloud/legacy_credentials/;
 #   ~/.azure/accessTokens.json, msal_token_cache.json, msal_token_cache.bin, service_principal_entries.json
 #     and service_principal_entries.bin;
-#   ~/.kube/config, ~/.docker/config.json, ~/.npmrc, ~/.cargo/credentials and ~/.cargo/credentials.toml
-#     (and both in $CARGO_HOME when it is set);
-#   ~/.git-credentials, ~/.netrc, ~/.config/gh/hosts.yml and ~/.pypirc;
-#   the files in ~/.gnupg/private-keys-v1.d/.
+#   ~/.kube/config and ~/.docker/config.json;
+#   ~/.npmrc, ~/.yarnrc.yml, ~/.gem/credentials, ~/.pypirc, ~/.cargo/credentials and
+#     ~/.cargo/credentials.toml;
+#   ~/.git-credentials, ~/.config/git/credentials, ~/.netrc and ~/.config/gh/hosts.yml;
+#   the files in ~/.gnupg/private-keys-v1.d/, and the gpg-agent sockets ~/.gnupg/S.gpg-agent,
+#     S.gpg-agent.ssh, S.gpg-agent.extra and S.gpg-agent.browser;
+#   ~/.claude/.credentials.json;
+#   1Password's agent socket: ~/.1password/agent.sock, and on macOS
+#     ~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock.
+# It reads the places these variables name as well, when they are set: SSH_AUTH_SOCK; CARGO_HOME
+# (credentials and credentials.toml); XDG_CONFIG_HOME (gh/hosts.yml and git/credentials); GH_CONFIG_DIR
+# (hosts.yml); AWS_SHARED_CREDENTIALS_FILE, GOOGLE_APPLICATION_CREDENTIALS, NETRC and NPM_CONFIG_USERCONFIG
+# (in either case), each a file; KUBECONFIG, a list of files; DOCKER_CONFIG (config.json); CLOUDSDK_CONFIG
+# and AZURE_CONFIG_DIR (the gcloud and azure files above); GNUPGHOME (its private-keys-v1.d/ and gpg-agent
+# sockets); TMPDIR (ssh-*/agent.*) and XDG_RUNTIME_DIR (ssh-agent.socket, vscode-ssh-auth-*.sock and
+# everything in gnupg/, keyring/ and gcr/). And the agent sockets anyone on the machine can name:
+# /tmp/ssh-*/agent.*, /tmp/vscode-ssh-auth-*.sock, macOS's /private/tmp/com.apple.launchd.*/Listeners,
+# and /run/user/<uid> as for XDG_RUNTIME_DIR.
 # A path counts when it is a regular file, or a link to one, whose first byte can be read, or a socket that
-# accepts a connection. The SSH agent counts when SSH_AUTH_SOCK names a socket that accepts a connection: a
-# sandbox that blocks Unix sockets leaves the variable and the socket in place, out of reach. A sandbox that
-# denies reads of these paths passes, so its credentials block must list them all; an unsandboxed retry, a
-# sandbox without those deny rules and a host session that recorded "isolated" do not pass.
+# accepts a connection: a sandbox that blocks Unix sockets leaves SSH_AUTH_SOCK and its socket in place, out
+# of reach. Past 5000 entries in the directories it lists, the check stops: it cannot tell (status 2). A
+# sandbox that denies reads of these paths passes, so its credentials block must list them all; an
+# unsandboxed retry, a sandbox without those deny rules and a host session that recorded "isolated" do not
+# pass. The check also names the variables of its own environment whose names look like credentials (a
+# part TOKEN, SECRET, PASSWORD, PASSWD or APIKEY, or API_KEY, ACCESS_KEY, PRIVATE_KEY or RPC_URL): no child
+# gets them, but code running as the same user can read another process's environment (on Linux, in
+# /proc/<pid>/environ).
 #
 # Environment cleaning, in every mode. A child runs under env -i with only these variables: PATH as
 # confine_init cleaned it; HOME, a throwaway directory holding a fresh Solana keypair at
@@ -37,9 +57,14 @@
 #   iso_homes                    prints the home directories the self-check reads, one per line.
 #   iso_credentials [<home>...]  sets ISO_READABLE to the readable paths, one per line, with control
 #                                characters printed as ?; status 0 when none is readable, 1 when some are,
-#                                2 when the check cannot run. With no <home>, it reads the homes iso_homes
-#                                prints. A caller in isolated mode stops on status 1 or 2; in native mode
-#                                it prints what is readable and goes on.
+#                                2 when the check cannot run or finish, with ISO_WHY saying why. With no
+#                                <home>, it reads the homes iso_homes prints and the machine-wide sockets;
+#                                with <home>s, those homes and the places the environment names only. A
+#                                caller in isolated mode stops on status 1 or 2; in native mode it prints
+#                                what is readable and goes on.
+#   iso_cred_names               sets ISO_NAMES to the variables of this environment whose names look like
+#                                credentials, separated by ", "; empty when there are none or python3 is
+#                                missing.
 #   iso_scratch <tool>           sets ISO_SCRATCH to a new directory, mktemp -d
 #                                "${TMPDIR:-/tmp}/auditor-<tool>.XXXXXX", resolved physically. It refuses
 #                                (confine_refuse) a scratch directory inside WT, or one where cargo or rustup
@@ -60,40 +85,58 @@
 #                                the same, with the proxy words of ISO_NET as well: for a download.
 # Needs bash >= 3.2, python3 (the self-check and the keypair), env, mkdir and mktemp.
 
-# What iso_credentials, iso_homes and iso_env run, with python3 -I so that no module comes from the working
-# directory or PYTHONPATH. "creds <socket> <cargo home> given|default [<home>...]" prints the readable paths
-# (exit 1) or nothing (exit 0); "homes <home>" prints the homes; "wallet <path>" writes a fresh keypair,
-# RFC 8032 key generation from 32 random bytes, as the 64-number array solana-keygen writes. Exit 2 on
-# anything unexpected.
-ISO_PY='import hashlib, json, os, pwd, re, socket, stat, sys
+# What iso_credentials, iso_cred_names, iso_homes and iso_env run, with python3 -I so that no module comes
+# from the working directory or PYTHONPATH. "creds given|default [<home>...]" prints the readable paths
+# (exit 1) or nothing (exit 0), and why the check could not finish (exit 2); "names" prints the variable
+# names that look like credentials; "homes <home>" prints the homes; "wallet <path>" writes a fresh
+# keypair, RFC 8032 key generation from 32 random bytes, as the 64-number array solana-keygen writes. Exit 2
+# on anything unexpected.
+ISO_PY='import glob, hashlib, json, os, pwd, re, socket, stat, sys
 
-FILES = (".config/solana/id.json", ".aws/credentials", ".config/gcloud/credentials.db",
-         ".config/gcloud/access_tokens.db", ".config/gcloud/application_default_credentials.json",
-         ".azure/accessTokens.json", ".azure/msal_token_cache.json", ".azure/msal_token_cache.bin",
-         ".azure/service_principal_entries.json", ".azure/service_principal_entries.bin", ".kube/config",
-         ".docker/config.json", ".npmrc", ".cargo/credentials", ".cargo/credentials.toml", ".git-credentials",
-         ".netrc", ".config/gh/hosts.yml", ".pypirc")
-DIRS = (".config/gcloud/legacy_credentials", ".gnupg/private-keys-v1.d")
+GCLOUD = ("credentials.db", "access_tokens.db", "application_default_credentials.json")
+AZURE = ("accessTokens.json", "msal_token_cache.json", "msal_token_cache.bin", "service_principal_entries.json",
+         "service_principal_entries.bin")
+FILES = ((".config/solana/id.json", ".aws/credentials") + tuple(".config/gcloud/" + f for f in GCLOUD)
+         + tuple(".azure/" + f for f in AZURE)
+         + (".kube/config", ".docker/config.json", ".npmrc", ".yarnrc.yml", ".gem/credentials", ".pypirc",
+            ".cargo/credentials", ".cargo/credentials.toml", ".git-credentials", ".config/git/credentials", ".netrc",
+            ".config/gh/hosts.yml", ".claude/.credentials.json"))
+DIRS = (".config/solana", ".aws/sso/cache", ".aws/cli/cache", ".config/gcloud/legacy_credentials",
+        ".gnupg/private-keys-v1.d")
+GPG_SOCKETS = ("S.gpg-agent", "S.gpg-agent.ssh", "S.gpg-agent.extra", "S.gpg-agent.browser")
+SOCKETS = tuple(".gnupg/" + s for s in GPG_SOCKETS) + (
+    ".1password/agent.sock", "Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock")
 SSH_KEEP = re.compile(r"^(known_hosts.*|config|.*\.pub|authorized_keys.*)$")
 SSH_KEYS = ("id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "id_ecdsa_sk", "id_ed25519_sk", "identity")
+BUDGET = 5000
+KEYPAIR = re.compile(r"^keypair_path:[ \t]*(?:\"([^\"]*)\"|\x27([^\x27]*)\x27|(.*?))(?:[ \t]+#.*)?[ \t]*$")
+
+
+class Unfinished(Exception):
+    pass
 
 
 def shown(path):
     return re.sub(r"[\x00-\x1f\x7f]", "?", path)[:300]
 
 
-def first_byte(path):
-    # Opened without blocking, so a FIFO in place of a file cannot stall the check.
+def start(path, size):
+    # The first <size> bytes of a regular file, or of a link to one, opened without blocking so that a FIFO in
+    # its place cannot stall the check; None when it cannot be read.
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOCTTY", 0))
     except OSError:
-        return False
+        return None
     try:
-        return stat.S_ISREG(os.fstat(fd).st_mode) and len(os.read(fd, 1)) == 1
+        return os.read(fd, size) if stat.S_ISREG(os.fstat(fd).st_mode) else None
     except OSError:
-        return False
+        return None
     finally:
         os.close(fd)
+
+
+def first_byte(path):
+    return len(start(path, 1) or b"") == 1
 
 
 def accepts(path):
@@ -108,31 +151,105 @@ def accepts(path):
         s.close()
 
 
-def walk(top, keep, found, budget, depth=0):
+def readable(found, paths):
+    found.extend(p for p in paths if p and first_byte(p))
+
+
+def sockets(found, paths):
+    for path in paths:
+        try:
+            if stat.S_ISSOCK(os.stat(path).st_mode) and accepts(path):
+                found.append(path)
+        except OSError:
+            pass
+
+
+def enter(path, stack, seen):
+    # Queue a directory for listing, once: a link to one already listed adds nothing.
     try:
-        names = sorted(os.listdir(top))
+        st = os.stat(path)
+        if not stat.S_ISDIR(st.st_mode):
+            return False
+        names = sorted(os.listdir(path), reverse=True)
     except OSError:
         return False
-    for name in names:
-        if budget[0] <= 0:
-            break
-        budget[0] -= 1
+    if (st.st_dev, st.st_ino) not in seen:
+        seen.add((st.st_dev, st.st_ino))
+        stack.append((path, names))
+    return True
+
+
+def walk(top, keep, found, state):
+    # Every entry under <top> but the names <keep> matches, through subdirectories and links to them. False
+    # when <top> cannot be listed; past BUDGET entries in all the walks, the check cannot finish.
+    stack = []
+    if not enter(top, stack, state["seen"]):
+        return False
+    while stack:
+        directory, names = stack[-1]
+        if not names:
+            stack.pop()
+            continue
+        name = names.pop()
+        state["left"] -= 1
+        if state["left"] < 0:
+            raise Unfinished("more than %d entries in the directories it lists" % BUDGET)
         if keep and keep.match(name):
             continue
-        path = os.path.join(top, name)
+        path = os.path.join(directory, name)
         try:
-            mode = os.lstat(path).st_mode
+            mode = os.stat(path).st_mode
         except OSError:
             continue
         if stat.S_ISDIR(mode):
-            if depth < 2:
-                walk(path, keep, found, budget, depth + 1)
+            enter(path, stack, state["seen"])
         elif stat.S_ISSOCK(mode):
             if accepts(path):
                 found.append(path)
         elif first_byte(path):
             found.append(path)
     return True
+
+
+def keypair(home):
+    # The keypair the keypair_path line of the Solana CLI config in <home> names, "~" standing for <home>.
+    text = (start(os.path.join(home, ".config/solana/cli/config.yml"), 65536) or b"").decode("utf-8", "replace")
+    for line in text.splitlines():
+        m = KEYPAIR.match(line)
+        if m:
+            value = next((g for g in m.groups() if g is not None), "")
+            if value == "~" or value.startswith("~/"):
+                value = home + value[1:]
+            return os.path.join(home, value) if value else ""
+    return ""
+
+
+def runtime(directory, dirs, socks):
+    dirs.extend(os.path.join(directory, d) for d in ("gnupg", "keyring", "gcr"))
+    socks.append(os.path.join(directory, "ssh-agent.socket"))
+    socks.extend(glob.glob(os.path.join(glob.escape(directory), "vscode-ssh-auth-*.sock")))
+
+
+def named(env, files, dirs, socks):
+    # The places the environment names.
+    for name in ("AWS_SHARED_CREDENTIALS_FILE", "GOOGLE_APPLICATION_CREDENTIALS", "NETRC", "NPM_CONFIG_USERCONFIG",
+                 "npm_config_userconfig"):
+        files.append(env.get(name, ""))
+    files.extend(env.get("KUBECONFIG", "").split(os.pathsep))
+    for name, under in (("CARGO_HOME", ("credentials", "credentials.toml")), ("XDG_CONFIG_HOME", ("gh/hosts.yml", "git/credentials")),
+                        ("GH_CONFIG_DIR", ("hosts.yml",)), ("DOCKER_CONFIG", ("config.json",)), ("CLOUDSDK_CONFIG", GCLOUD),
+                        ("AZURE_CONFIG_DIR", AZURE)):
+        if env.get(name):
+            files.extend(os.path.join(env[name], f) for f in under)
+    if env.get("CLOUDSDK_CONFIG"):
+        dirs.append(os.path.join(env["CLOUDSDK_CONFIG"], "legacy_credentials"))
+    if env.get("GNUPGHOME"):
+        dirs.append(os.path.join(env["GNUPGHOME"], "private-keys-v1.d"))
+        socks.extend(os.path.join(env["GNUPGHOME"], s) for s in GPG_SOCKETS)
+    if env.get("TMPDIR"):
+        socks.extend(glob.glob(os.path.join(glob.escape(env["TMPDIR"]), "ssh-*", "agent.*")))
+    if env.get("XDG_RUNTIME_DIR"):
+        runtime(env["XDG_RUNTIME_DIR"], dirs, socks)
 
 
 def homes(home):
@@ -146,25 +263,35 @@ def homes(home):
     return out
 
 
-def creds(sock, cargo_home, which, given):
-    found, budget = [], [2000]
-    for home in (given if which == "given" else homes(os.environ.get("HOME", ""))):
+def creds(which, given):
+    env = os.environ
+    found, state, files, dirs, socks = [], {"left": BUDGET, "seen": set()}, [], [], []
+    for home in (given if which == "given" else homes(env.get("HOME", ""))):
         if not home:
             continue
         ssh = os.path.join(home, ".ssh")
-        if not walk(ssh, SSH_KEEP, found, budget):
-            found.extend(p for p in (os.path.join(ssh, k) for k in SSH_KEYS) if first_byte(p))
-        found.extend(p for p in (os.path.join(home, f) for f in FILES) if first_byte(p))
+        if not walk(ssh, SSH_KEEP, found, state):
+            readable(found, (os.path.join(ssh, k) for k in SSH_KEYS))
+        readable(found, (os.path.join(home, f) for f in FILES))
         for d in DIRS:
-            walk(os.path.join(home, d), None, found, budget)
-    if cargo_home:
-        found.extend(p for p in (os.path.join(cargo_home, f) for f in ("credentials", "credentials.toml")) if first_byte(p))
+            walk(os.path.join(home, d), None, found, state)
+        sockets(found, (os.path.join(home, s) for s in SOCKETS))
+        readable(found, [keypair(home)])
+    named(env, files, dirs, socks)
+    if which == "default":
+        # The agent sockets anyone on the machine can name.
+        socks.extend(glob.glob("/tmp/ssh-*/agent.*") + glob.glob("/tmp/vscode-ssh-auth-*.sock")
+                     + glob.glob("/private/tmp/com.apple.launchd.*/Listeners"))
+        runtime("/run/user/%d" % os.getuid(), dirs, socks)
+    readable(found, files)
+    for d in dirs:
+        walk(d, None, found, state)
+    sockets(found, socks)
+    sock = env.get("SSH_AUTH_SOCK", "")
     if sock:
-        try:
-            if stat.S_ISSOCK(os.stat(sock).st_mode) and accepts(sock):
-                found.append(sock + " (SSH_AUTH_SOCK)")
-        except OSError:
-            pass
+        mark = []
+        sockets(mark, [sock])
+        found.extend(p + " (SSH_AUTH_SOCK)" for p in mark)
     seen = set()
     for path in found:
         key = os.path.realpath(path.rsplit(" (SSH_AUTH_SOCK)", 1)[0])
@@ -172,6 +299,19 @@ def creds(sock, cargo_home, which, given):
             seen.add(key)
             print(shown(path))
     return 1 if found else 0
+
+
+def names(env):
+    # The variables whose names look like credentials: a part TOKEN, SECRET, PASSWORD, PASSWD or APIKEY, or
+    # API_KEY, ACCESS_KEY, PRIVATE_KEY or RPC_URL.
+    out = []
+    for name in sorted(env):
+        parts = name.upper().split("_")
+        if (set(parts) & {"TOKEN", "SECRET", "PASSWORD", "PASSWD", "APIKEY"}
+                or set(zip(parts, parts[1:])) & {("API", "KEY"), ("ACCESS", "KEY"), ("PRIVATE", "KEY"), ("RPC", "URL")}):
+            out.append(shown(name))
+    print(", ".join(out))
+    return 0
 
 
 P = 2 ** 255 - 19
@@ -210,7 +350,9 @@ def wallet(path):
 try:
     command, args = sys.argv[1], sys.argv[2:]
     if command == "creds":
-        sys.exit(creds(args[0], args[1], args[2], args[3:]))
+        sys.exit(creds(args[0], args[1:]))
+    if command == "names":
+        sys.exit(names(os.environ))
     if command == "homes":
         for home in homes(args[0]):
             print(home)
@@ -219,7 +361,9 @@ try:
         sys.exit(wallet(args[0]))
 except SystemExit:
     raise
-except Exception:
+except Unfinished as why:
+    print(why)
+except BaseException:
     pass
 sys.exit(2)
 '
@@ -229,16 +373,23 @@ iso_homes() {
 }
 
 iso_credentials() { # iso_credentials [<home>...]
-  local rc=0 which=given
-  ISO_READABLE=""
-  command -v python3 >/dev/null 2>&1 || return 2
+  local rc=0 which=given out
+  ISO_READABLE="" ISO_WHY=""
+  command -v python3 >/dev/null 2>&1 || { ISO_WHY="python3 is not on PATH"; return 2; }
   [ $# -gt 0 ] || which=default
-  ISO_READABLE=$(python3 -I -c "$ISO_PY" creds "${SSH_AUTH_SOCK:-}" "${CARGO_HOME:-}" "$which" "$@") || rc=$?
+  out=$(python3 -I -c "$ISO_PY" creds "$which" "$@") || rc=$?
   case "$rc" in
-    0|1) return "$rc" ;;
+    0|1) ISO_READABLE=$out; return "$rc" ;;
   esac
-  ISO_READABLE=""
+  ISO_WHY=${out%%$'\n'*}
+  [ -n "$ISO_WHY" ] || ISO_WHY="the check stopped on an error"
   return 2
+}
+
+iso_cred_names() { # iso_cred_names
+  ISO_NAMES=""
+  command -v python3 >/dev/null 2>&1 || return 0
+  ISO_NAMES=$(python3 -I -c "$ISO_PY" names 2>/dev/null) || ISO_NAMES=""
 }
 
 iso_inherited() { # iso_inherited <dir>

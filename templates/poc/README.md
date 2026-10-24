@@ -58,14 +58,14 @@ argument before it copies anything, and refuses what does not fit (exit `3`, on 
 and `--fixed-so` a file under a run directory's `bin/` or `exec/`, `--update-pins` the
 pins in one argument, and `--cache` only a directory `--new-cache` made. In isolated
 mode it first runs the credential self-check of `scripts/lib/isolation.sh`: a readable
-key, cloud or registry credential, or a reachable SSH agent stops the run, since this
-is then not the isolated runner; in native mode it prints what is readable as a
-warning. Every cargo call and test binary runs in a cleaned environment, with a
-throwaway `HOME` holding a fresh Solana keypair, so no token, `RPC_URL`, SSH agent or
-default wallet reaches this crate's code; only `cargo build-sbf` keeps the real
-`HOME`, where its platform tools live. Two more forms help: `--init <R>/poc/<ID>`
-makes a new crate, the template's files byte for byte, and `--new-cache` makes a build
-cache (below) and prints its path.
+key, cloud or registry credential, or a reachable agent socket stops the run, since
+this is then not the isolated runner, and so does a check that cannot finish; in
+native mode it prints what is readable as a warning. Every cargo call and test binary
+runs in a cleaned environment, with a throwaway `HOME` holding a fresh Solana keypair,
+so no token, `RPC_URL`, SSH agent or default wallet reaches this crate's code; only
+`cargo build-sbf` keeps the real `HOME`, where its platform tools live. Two more forms
+help: `--init <R>/poc/<ID>` makes a new crate, the template's files byte for byte, and
+`--new-cache` makes a build cache (below) and prints its path.
 
 **Toolchains.** `"<auditor-skill root>/scripts/runner/probe.sh"` reports the
 toolchains these runs need and whether this machine passes the self-check.

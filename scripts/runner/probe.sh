@@ -121,8 +121,7 @@ for name in $NAMES; do
       case "$rc" in
         0) printf 'isolation: none of the credentials the self-check reads is readable\n' ;;
         1) printf 'isolation: readable: %s\n' "${ISO_READABLE//$'\n'/, }" ;;
-        *) if command -v python3 >/dev/null 2>&1; then printf 'isolation: not checked (the check could not run)\n'
-           else printf 'isolation: not checked (python3 is not on PATH)\n'; fi ;;
+        *) printf 'isolation: not checked (%s)\n' "$ISO_WHY" ;;
       esac ;;
     *) probe "$name" "$name" "$name" --version ;;
   esac
