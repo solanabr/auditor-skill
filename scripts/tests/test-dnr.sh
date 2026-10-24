@@ -153,24 +153,30 @@ done
 
 # ---------------------------------------------------------------------------
 # 6. collect.sh is gated: it refuses without --confirmed, and without $RPC_URL,
-#    before any network call. The --confirmed case runs with $RPC_URL set and a
-#    curl on PATH that records every call, so only the gate can stop it.
+#    before any network call. Each case runs directly from a working directory
+#    that holds a run directory made by rundir.sh; the --confirmed case runs with
+#    $RPC_URL set and a curl on PATH that records every call, so only the gate can
+#    stop it.
 # ---------------------------------------------------------------------------
-GATE="$(mktemp -d "${TMPDIR:-/tmp}/dnr_gate.XXXXXX")"
-printf '#!/bin/sh\necho "$*" >> "%s/calls"\n' "$GATE" > "$GATE/curl"; chmod +x "$GATE/curl"
-( PATH="$GATE:$PATH" RPC_URL="https://rpc.example.test/" bash "$DNR/collect.sh" --out "$GATE/out" -- "$A_ADDR" ) >/dev/null 2>&1
+GATE="$(mktemp -d "${TMPDIR:-/tmp}/dnr_gate.XXXXXX")"; GATE="$(cd -P "$GATE" && pwd -P)"
+mkdir -p "$GATE/bin" "$GATE/wt"
+printf '#!/bin/sh\necho "$*" >> "%s/calls"\n' "$GATE" > "$GATE/bin/curl"; chmod +x "$GATE/bin/curl"
+GR="$(cd "$GATE/wt" && "$HERE/../rundir.sh" new incident)"
+( cd "$GATE/wt" && PATH="$GATE/bin:$PATH" RPC_URL="https://rpc.example.test/" "$DNR/collect.sh" --out "$GR/corpus" -- "$A_ADDR" ) >/dev/null 2>"$GATE/err"
 code=$?
-if [[ "$code" == 2 && ! -e "$GATE/calls" && ! -e "$GATE/out" ]]; then
+if [[ "$code" == 2 && ! -e "$GATE/calls" && ! -e "$GATE/wt/$GR/corpus" ]] && grep -q 'refused: pass --confirmed' "$GATE/err"; then
   ok "collect: refuses without --confirmed, \$RPC_URL set (exit 2, no curl call, nothing written)"
 else
-  bad "collect: without --confirmed -> exit $code, curl calls: $(grep -c . "$GATE/calls" 2>/dev/null || echo 0)"
+  bad "collect: without --confirmed -> exit $code, curl calls: $(grep -c . "$GATE/calls" 2>/dev/null || echo 0) ($(cat "$GATE/err"))"
+fi
+( cd "$GATE/wt" && unset RPC_URL; PATH="$GATE/bin:$PATH" "$DNR/collect.sh" --out "$GR/corpus" --confirmed -- "$A_ADDR" ) >/dev/null 2>"$GATE/err"
+code=$?
+if [[ "$code" == 2 && ! -e "$GATE/calls" ]] && grep -q 'refused: set \$RPC_URL in the environment' "$GATE/err"; then
+  ok "collect: refuses without \$RPC_URL"
+else
+  bad "collect: ran without \$RPC_URL (must refuse): exit $code ($(cat "$GATE/err"))"
 fi
 rm -rf "$GATE"
-if ( unset RPC_URL; bash "$DNR/collect.sh" --out "${TMPDIR:-/tmp}/dnr_ct.$$" --confirmed -- "$A_ADDR" ) >/dev/null 2>&1; then
-  bad "collect: ran without \$RPC_URL (must refuse)"
-else
-  ok "collect: refuses without \$RPC_URL"
-fi
 
 # ---------------------------------------------------------------------------
 # 7. deltas.py keys token movement by token account and mint, with the owner as a
@@ -246,7 +252,39 @@ eq "frames: nothing attributed to the forged victim program" \
 # 9. profile.sh resolves programIdIndex (encoding: json) as well as programId.
 # ---------------------------------------------------------------------------
 TT="$(mktemp -d "${TMPDIR:-/tmp}/dnr_test.XXXXXX")"
-trap 'rm -rf "$TT"' EXIT
+TT="$(cd -P "$TT" && pwd -P)"
+trap 'chmod -R u+rwx "$TT" 2>/dev/null; rm -rf "$TT"' EXIT
+# collect.sh and snapshot-program.sh run directly from a working directory, $WT, into
+# run directories rundir.sh makes there. corpus_at <path>: a new incident_<k> in $WT,
+# with <path> a link to its corpus/ (made by collect.sh); incident_at <path>: the
+# same, with <path> a link to incident_<k> itself. run_of <path> is the --out or run
+# directory <path> stands for. run_collect <path> <args...> and run_snap <path>
+# [<id>] run the two scripts from $WT into it, in the caller's environment.
+WT="$TT/wt"; mkdir -p "$WT"
+RUNDIR="$HERE/../rundir.sh"
+corpus_at() {
+  local r
+  [[ -e "$1.run" ]] && return 0
+  r="$(cd "$WT" && "$RUNDIR" new incident 2>/dev/null)" || { bad "rundir.sh new incident failed in $WT"; return 1; }
+  mkdir -p "$(dirname "$1")" && ln -s "$WT/$r/corpus" "$1" && printf '%s\n' "$r/corpus" > "$1.run"
+}
+incident_at() {
+  local r
+  [[ -e "$1.run" ]] && return 0
+  r="$(cd "$WT" && "$RUNDIR" new incident 2>/dev/null)" || { bad "rundir.sh new incident failed in $WT"; return 1; }
+  mkdir -p "$(dirname "$1")" && ln -s "$WT/$r" "$1" && printf '%s\n' "$r" > "$1.run"
+}
+run_of() { cat "$1.run"; }
+empty_dir() { [[ -z "$(ls -A "$1" 2>/dev/null)" ]]; }
+run_collect() {
+  local out="$1"; shift
+  corpus_at "$out" || return 99
+  ( cd "$WT" && "$DNR/collect.sh" --out "$(run_of "$out")" "$@" )
+}
+run_snap() {
+  incident_at "$1" || return 99
+  ( cd "$WT" && "$DNR/snapshot-program.sh" "${2:-$PID}" "$(run_of "$1")" )
+}
 printf '%s\n' '{"slot":1,"version":0,"meta":{"err":null},"transaction":{"signatures":["S"],"message":{"accountKeys":["Payer1","ProgIdx111"],"instructions":[{"programIdIndex":1}]}}}' > "$TT/json-enc.jsonl"
 pidx="$(bash "$DNR/profile.sh" "$TT/json-enc.jsonl" | awk '/^-- top-level programs/{f=1;next} f && $2=="ProgIdx111"{print $1}')"
 eq "profile: programIdIndex resolved through accountKeys" "$pidx" "1"
@@ -309,7 +347,7 @@ PY
 chmod +x "$TT/bin/curl"
 export FAKE_CURL_LOG="$TT/curl.log" FAKE_CURL_ARGV="$TT/curl.argv"
 ( PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/?api-key=LEAKME42" \
-    bash "$DNR/collect.sh" --out "$TT/c" --confirmed --since 1 --max-pages 1 --before "$CURSOR" -- "$A_ADDR" ) > "$TT/c.out" 2>&1
+    run_collect "$TT/c" --confirmed --since 1 --max-pages 1 --before "$CURSOR" -- "$A_ADDR" ) > "$TT/c.out" 2>&1
 code=$?
 eq "collect: exits 0 against the fake RPC (system bash)" "$code" "0"
 eq "collect: fetched both the successful AND the failed transaction" \
@@ -326,7 +364,7 @@ if grep -q 'provider: example.test ' "$TT/c.out"; then ok "collect: provider dis
 if grep -q LEAKME42 "$FAKE_CURL_ARGV"; then bad "collect: the key reached curl's argv"; else ok "collect: the key never reaches curl's argv (URL via -K - on stdin)"; fi
 eq "collect: every curl call starts with -q (no ~/.curlrc)" "$(grep -vc '^\["-q", "-K", "-",' "$FAKE_CURL_ARGV")" "0"
 ( PATH="$TT/bin:$PATH" RPC_URL="https://TOKSUB42.rpc.example.test/v2/LEAKME42" \
-    bash "$DNR/collect.sh" --out "$TT/c-sub" --confirmed --max-pages 1 -- "$A_ADDR" ) > "$TT/c-sub.out" 2>&1
+    run_collect "$TT/c-sub" --confirmed --max-pages 1 -- "$A_ADDR" ) > "$TT/c-sub.out" 2>&1
 if grep -q 'provider: example.test ' "$TT/c-sub.out" && ! grep -q 'TOKSUB42\|LEAKME42' "$TT/c-sub.out"; then
   ok "collect: a subdomain token never reaches the output"
 else
@@ -340,7 +378,7 @@ eq "collect: a clean run reports no collection gaps" \
   "$(grep -c '^collection gaps: 0 (see .*collection-gaps.tsv)$' "$TT/c-sub.out")/$(grep -c . "$TT/c-sub/collection-gaps.tsv")" "1/0"
 for mode in "transport:transport error (curl exit 7)" "rpc:RPC error -32009" "null:null result"; do
   ( PATH="$TT/bin:$PATH" FAKE_CURL_TX_FAIL="SigOK=${mode%%:*}" RPC_URL="https://TOKSUB42.rpc.example.test/v2/LEAKME42" \
-      bash "$DNR/collect.sh" --out "$TT/g-${mode%%:*}" --confirmed --max-pages 1 -- "$A_ADDR" ) > "$TT/g.out" 2>&1
+      run_collect "$TT/g-${mode%%:*}" --confirmed --max-pages 1 -- "$A_ADDR" ) > "$TT/g.out" 2>&1
   code=$?
   row="$(cat "$TT/g-${mode%%:*}/collection-gaps.tsv" 2>/dev/null)"
   if [[ "$code" == 0 && "$row" == "SigOK$(printf '\t')getTransaction: ${mode#*:}" ]] \
@@ -353,12 +391,12 @@ for mode in "transport:transport error (curl exit 7)" "rpc:RPC error -32009" "nu
 done
 if grep -q 'TOKSUB42\|LEAKME42' "$TT/g.out"; then bad "collect: curl's error leaked the endpoint"; else ok "collect: curl's own error is redacted (no subdomain token, no key)"; fi
 ( PATH="$TT/bin:$PATH" FAKE_CURL_PAGE_FAIL=1 RPC_URL="https://rpc.example.test/" \
-    bash "$DNR/collect.sh" --out "$TT/g-page" --confirmed --max-pages 1 -- "$A_ADDR" ) > "$TT/g.out" 2>&1
+    run_collect "$TT/g-page" --confirmed --max-pages 1 -- "$A_ADDR" ) > "$TT/g.out" 2>&1
 eq "collect: a failed signature page is a gap row" "$(cat "$TT/g-page/collection-gaps.tsv")" \
   "$A_ADDR$(printf '\t')getSignaturesForAddress page 0: RPC error -32005; older history not collected"
 calls_before="$(grep -c . "$FAKE_CURL_LOG" 2>/dev/null || true)"
 for url in 'a space:https://rpc.example.test/?k=a b' 'a quote:https://rpc.example.test/"x' 'a backslash:https://rpc.example.test/\x'; do
-  ( PATH="$TT/bin:$PATH" RPC_URL="${url#*:}" bash "$DNR/collect.sh" --out "$TT/c-bad" --confirmed -- "$A_ADDR" ) > /dev/null 2>&1
+  ( PATH="$TT/bin:$PATH" RPC_URL="${url#*:}" run_collect "$TT/c-bad" --confirmed -- "$A_ADDR" ) > /dev/null 2>&1
   code=$?
   if [[ "$code" == 2 && ! -e "$TT/c-bad" ]]; then ok "collect: refuses an \$RPC_URL holding ${url%%:*} (exit 2)"; else bad "collect: \$RPC_URL holding ${url%%:*} -> exit $code"; fi
 done
@@ -366,13 +404,13 @@ eq "collect: a refused \$RPC_URL made no RPC call" "$(grep -c . "$FAKE_CURL_LOG"
 # --max-tx keeps the newest signatures across addresses (by slot), not the first
 # address's or the alphabetically first ones.
 ( PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
-    bash "$DNR/collect.sh" --out "$TT/c2" --confirmed --max-pages 1 --max-tx 2 -- "$A_ADDR" "$B_ADDR" ) > "$TT/c2.out" 2>&1
+    run_collect "$TT/c2" --confirmed --max-pages 1 --max-tx 2 -- "$A_ADDR" "$B_ADDR" ) > "$TT/c2.out" 2>&1
 got="$(jq -r '.transaction.signatures[0]' "$TT/c2/transactions.jsonl" 2>/dev/null | tr '\n' ' ')"
 eq "collect: --max-tx 2 fetches the two newest signatures across both addresses" "$got" "SigZnewest SigOK "
 # With only --until set, a short page on the cap's last page still ends the history,
 # so there is no notice and no gap row.
 ( PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
-    bash "$DNR/collect.sh" --out "$TT/c3" --confirmed --until 100 --max-pages 1 -- "$A_ADDR" ) > "$TT/c3.out" 2>&1
+    run_collect "$TT/c3" --confirmed --until 100 --max-pages 1 -- "$A_ADDR" ) > "$TT/c3.out" 2>&1
 eq "collect: --until only, a short last page at the cap is the end of history (no notice, no gap row)" \
   "$(grep -c '^  ! ' "$TT/c3.out")/$(grep -c . "$TT/c3/collection-gaps.tsv")" "0/0"
 eq "collect: the --max-tx cap is one gap row naming the first signature not fetched" \
@@ -381,7 +419,7 @@ eq "collect: the --max-tx cap is one gap row naming the first signature not fetc
 # pass survives.
 cp "$TT/c/signatures.jsonl" "$TT/c.sig.before"
 ( PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
-    bash "$DNR/collect.sh" --out "$TT/c" --confirmed --max-pages 1 -- "$A_ADDR" ) > "$TT/c4.out" 2>&1
+    run_collect "$TT/c" --confirmed --max-pages 1 -- "$A_ADDR" ) > "$TT/c4.out" 2>&1
 code=$?
 if [[ "$code" == 2 ]] && grep -q 'use a new --out' "$TT/c4.out" && cmp -s "$TT/c/signatures.jsonl" "$TT/c.sig.before"; then
   ok "collect: refuses to reuse an --out that holds a corpus (exit 2, corpus intact)"
@@ -394,20 +432,21 @@ calls_before="$(grep -c . "$FAKE_CURL_LOG" 2>/dev/null || true)"
 for args in "-- AddrA" "-- ../../x" "--before not/a/sig -- $A_ADDR" "--max-tx 2x -- $A_ADDR"; do
   # shellcheck disable=SC2086
   ( PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
-      bash "$DNR/collect.sh" --out "$TT/c5" --confirmed $args ) > /dev/null 2>&1
+      run_collect "$TT/c5" --confirmed $args ) > /dev/null 2>&1
   code=$?
   if [[ "$code" == 2 && ! -e "$TT/c5" ]]; then ok "collect: refuses '$args' (exit 2, nothing written)"; else bad "collect: '$args' -> exit $code"; fi
 done
 eq "collect: refused inputs made no RPC call" "$(grep -c . "$FAKE_CURL_LOG" 2>/dev/null || true)" "$calls_before"
-# Rule 11d: an incident_<n>/ that the corpus lands in ignores itself; an existing
-# .gitignore is left alone.
-( PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
-    bash "$DNR/collect.sh" --out "$TT/incident_7/corpus" --confirmed --max-pages 1 -- "$A_ADDR" ) > /dev/null 2>&1
-eq "collect: incident_<n>/.gitignore holds '*'" "$(cat "$TT/incident_7/.gitignore" 2>/dev/null)" "*"
-mkdir -p "$TT/incident_9"; printf 'keep-me\n' > "$TT/incident_9/.gitignore"
-( PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
-    bash "$DNR/collect.sh" --out "$TT/incident_9/corpus" --confirmed --max-pages 1 -- "$A_ADDR" ) > /dev/null 2>&1
-eq "collect: an existing incident_<n>/.gitignore is not overwritten" "$(cat "$TT/incident_9/.gitignore")" "keep-me"
+# Rule 11d: the run directory's own .gitignore (rundir.sh writes it first) keeps the
+# corpus out of git status; collect.sh writes none, and refuses a run directory
+# without one.
+eq "collect: the run directory's .gitignore holds '*', and the corpus directory has none" \
+  "$(cat "$TT/c/../.gitignore")|$(ls -A "$TT/c" | tr '\n' ' ')" "*|collection-gaps.tsv signatures.jsonl transactions.jsonl "
+mkdir "$WT/incident_0"; printf 'keep-me\n' > "$WT/incident_0/.gitignore"
+( cd "$WT" && PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
+    "$DNR/collect.sh" --out incident_0/corpus --confirmed --max-pages 1 -- "$A_ADDR" ) > /dev/null 2>&1
+eq "collect: a run directory whose .gitignore is not '*' is refused (exit 2), the file left as it was" \
+  "$?|$(cat "$WT/incident_0/.gitignore")" "2|keep-me"
 
 # ---------------------------------------------------------------------------
 # 11. snapshot-program.sh against a fake `solana`: writes bin/<id>.so, prints the
@@ -471,7 +510,7 @@ PY
 chmod +x "$TT/bin/solana"
 export FAKE_SOLANA_ARGV="$TT/solana.argv" FAKE_SOLANA_SEEN="$TT/solana.seen"
 PID="ProgTest11111111111111111111111111111111111"   # base58, decodes to 32 bytes
-snap="$(PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/v2/LEAKME42" bash "$DNR/snapshot-program.sh" "$PID" "$TT/inc" 2>&1)"
+snap="$(PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/v2/LEAKME42" run_snap "$TT/inc" 2>&1)"
 code=$?
 eq "snapshot: exits 0 with the fake CLI" "$code" "0"
 want="$(python3 -I -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read().rstrip(b"\x00")).hexdigest())' "$TT/inc/bin/$PID.so" 2>/dev/null)"
@@ -479,7 +518,7 @@ case "$snap" in
   *"last_deployed_slot=12345"*"sha256_zero_trimmed=$want"*"padding_bytes=500"*) ok "snapshot: ledger line carries slot, zero-trimmed hash and padding" ;;
   *) bad "snapshot: unexpected ledger line ($snap)" ;;
 esac
-snapfail="$(PATH="$TT/bin:$PATH" FAKE_SOLANA_FAIL=1 RPC_URL="https://rpc.example.test/v2/LEAKME42" bash "$DNR/snapshot-program.sh" "$PID" "$TT/inc2" 2>&1)"
+snapfail="$(PATH="$TT/bin:$PATH" FAKE_SOLANA_FAIL=1 RPC_URL="https://rpc.example.test/v2/LEAKME42" run_snap "$TT/inc2" 2>&1)"
 code=$?
 eq "snapshot: CLI failure -> exit 3" "$code" "3"
 case "$snapfail" in *LEAKME42*) bad "snapshot: key leaked from the CLI error" ;; *REDACTED*) ok "snapshot: CLI error redacted" ;; *) bad "snapshot: error text not shown ($snapfail)" ;; esac
@@ -492,18 +531,18 @@ eq "snapshot: the CLI is given a keypair path that does not exist, in a 0700 dir
 gone=1; while IFS="$(printf '\t')" read -r kp _ _; do [[ -e "$(dirname "$kp")" ]] && gone=0; done < "$FAKE_SOLANA_SEEN"
 if [[ "$gone" == 1 ]]; then ok "snapshot: the temp config directory is removed on exit"; else bad "snapshot: a temp config directory was left behind"; fi
 calls_before="$(grep -c '"program"' "$FAKE_SOLANA_ARGV")"
-PATH="$TT/bin:$PATH" FAKE_SOLANA_IGNORE_CONFIG=1 RPC_URL="https://rpc.example.test/" bash "$DNR/snapshot-program.sh" "$PID" "$TT/inc6" > "$TT/inc6.out" 2>&1
+PATH="$TT/bin:$PATH" FAKE_SOLANA_IGNORE_CONFIG=1 RPC_URL="https://rpc.example.test/" run_snap "$TT/inc6" > "$TT/inc6.out" 2>&1
 code=$?
-if [[ "$code" == 3 && ! -e "$TT/inc6/bin" ]] && grep -q 'did not load the keyless config' "$TT/inc6.out"; then
+if [[ "$code" == 3 ]] && empty_dir "$TT/inc6/bin" && grep -q 'did not load the keyless config' "$TT/inc6.out"; then
   ok "snapshot: a CLI that ignores the config stops with a blocker before show or dump (exit 3)"
 else
   bad "snapshot: CLI ignoring the config -> exit $code"
 fi
 eq "snapshot: no program call after the config check failed" "$(grep -c '"program"' "$FAKE_SOLANA_ARGV")" "$calls_before"
-PATH="$TT/bin:$PATH" RPC_URL='https://rpc.example.test/"x' bash "$DNR/snapshot-program.sh" "$PID" "$TT/inc7" >/dev/null 2>&1
+PATH="$TT/bin:$PATH" RPC_URL='https://rpc.example.test/"x' run_snap "$TT/inc7" >/dev/null 2>&1
 code=$?
-if [[ "$code" == 2 && ! -e "$TT/inc7" ]]; then ok "snapshot: refuses an \$RPC_URL holding a quote (exit 2, nothing written)"; else bad "snapshot: quoted \$RPC_URL -> exit $code"; fi
-v4snap="$(PATH="$TT/bin:$PATH" FAKE_SOLANA_V4=1 RPC_URL="https://rpc.example.test/" bash "$DNR/snapshot-program.sh" "$PID" "$TT/inc3" 2>&1)"
+if [[ "$code" == 2 ]] && empty_dir "$TT/inc7/bin" && [[ ! -e "$TT/inc7/disclosures.tsv" ]]; then ok "snapshot: refuses an \$RPC_URL holding a quote (exit 2, nothing written)"; else bad "snapshot: quoted \$RPC_URL -> exit $code"; fi
+v4snap="$(PATH="$TT/bin:$PATH" FAKE_SOLANA_V4=1 RPC_URL="https://rpc.example.test/" run_snap "$TT/inc3" 2>&1)"
 code=$?
 case "$code|$v4snap" in
   "0|program=$PID owner=LoaderV411111111111111111111111111111111111 last_deployed_slot=12345 authority=Auth111 status=deployed sha256_zero_trimmed="*" file=bin/$PID.so")
@@ -512,15 +551,18 @@ case "$code|$v4snap" in
 esac
 # The id is used in file names: anything but a base58 key is refused before any write.
 for badid in '../../escape' 'Prog111' 'ProgTest111111111111111111111111111111111/x' 'Prog0OIl1111111111111111111111111111111111'; do
-  PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" bash "$DNR/snapshot-program.sh" "$badid" "$TT/inc5" >/dev/null 2>&1
+  PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" run_snap "$TT/inc5" "$badid" >/dev/null 2>&1
   code=$?
-  if [[ "$code" == 2 && ! -e "$TT/inc5" ]]; then ok "snapshot: refuses the id '$badid' (exit 2, nothing written)"; else bad "snapshot: id '$badid' -> exit $code"; fi
+  if [[ "$code" == 2 ]] && empty_dir "$TT/inc5/bin"; then ok "snapshot: refuses the id '$badid' (exit 2, nothing written)"; else bad "snapshot: id '$badid' -> exit $code"; fi
 done
-# Rule 11d: snapshotting into incident_<n>/ makes it ignore itself; a directory with
-# another name gets no .gitignore from the script.
-PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" bash "$DNR/snapshot-program.sh" "$PID" "$TT/incident_8" >/dev/null 2>&1
-eq "snapshot: incident_<n>/.gitignore holds '*'" "$(cat "$TT/incident_8/.gitignore" 2>/dev/null)" "*"
-if [[ ! -e "$TT/inc/.gitignore" ]]; then ok "snapshot: no .gitignore written into a directory not named incident_*"; else bad "snapshot: wrote a .gitignore outside an incident_* directory"; fi
+# Rule 11d: the run directory's own .gitignore (rundir.sh writes it first) keeps the
+# snapshot out of git status; the script writes none, and takes no directory but
+# incident_<n>.
+eq "snapshot: the run directory's .gitignore holds '*', and bin/ has none" \
+  "$(cat "$TT/inc/.gitignore")|$(ls -A "$TT/inc/bin" | tr '\n' ' ')" "*|$PID.show.txt $PID.so "
+mkdir -p "$WT/snapdir"
+( cd "$WT" && PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" "$DNR/snapshot-program.sh" "$PID" snapdir ) >/dev/null 2>&1
+eq "snapshot: a directory not named incident_<n> is refused (exit 2), nothing written" "$?|$(ls -A "$WT/snapdir")" "2|"
 
 # ---------------------------------------------------------------------------
 # 12. Bundled python runs isolated (`python3 -I`). A json.py / re.py / hashlib.py
@@ -543,7 +585,8 @@ iso="$(cd "$EVIL" && PYTHONPATH="$EVIL" python3 -I "$DNR/frames.py" "$FIX/log-ne
 if [[ "$iso" == "$logs" ]]; then ok "isolation: frames.py output unchanged from a hostile cwd + PYTHONPATH"; else bad "isolation: frames.py output changed under a hostile cwd + PYTHONPATH"; fi
 iso="$(cd "$EVIL" && PYTHONPATH="$EVIL" python3 -I "$DNR/deltas.py" tokens "$FIX/same-owner-drain.jsonl" 2>&1)"
 if [[ "$iso" == "$dr" ]]; then ok "isolation: deltas.py output unchanged from a hostile cwd + PYTHONPATH"; else bad "isolation: deltas.py output changed under a hostile cwd + PYTHONPATH"; fi
-iso="$(cd "$EVIL" && PATH="$TT/bin:$PATH" PYTHONPATH="$EVIL" RPC_URL="https://rpc.example.test/" bash "$DNR/snapshot-program.sh" "$PID" "$TT/inc4" 2>&1)"
+GEV="$(cd "$EVIL" && "$RUNDIR" new incident)"
+iso="$(cd "$EVIL" && PATH="$TT/bin:$PATH" PYTHONPATH="$EVIL" RPC_URL="https://rpc.example.test/" "$DNR/snapshot-program.sh" "$PID" "$GEV" 2>&1)"
 case "$iso" in
   *"sha256_zero_trimmed=$want "*) ok "isolation: snapshot-program.sh hashes correctly from a hostile cwd + PYTHONPATH" ;;
   *) bad "isolation: snapshot hash wrong or missing ($iso)" ;;
@@ -605,38 +648,39 @@ print(sum(int(l.split("\t")[3]) for l in open(sys.argv[1]) if l.split("\t")[1] =
 # 15. collect.sh and snapshot-program.sh refuse a run directory that holds a
 #     symbolic link, is one, or is tracked by git (in any letter case): exit 2,
 #     nothing written inside it or outside it, no RPC call. An untracked,
-#     link-free incident_<n>/ in the same repository is still accepted.
+#     link-free incident_<n>/ in the same repository is still accepted. Here the
+#     working directory is a repository, as when the audit runs inside the target.
 # ---------------------------------------------------------------------------
 X="$TT/outside"; mkdir -p "$X/bin" "$X/corpus" "$X/b3"; printf 'canary\n' > "$X/canary"
-mkdir -p "$TT/pl-a/incident_2" "$TT/pl-b"
-ln -s "$X/canary" "$TT/pl-a/incident_2/LEDGER.md"
-ln -s "$X/gitignore" "$TT/pl-a/incident_2/.gitignore"   # dangling: a write would create it outside
-ln -s "$X/bin" "$TT/pl-a/incident_2/bin"
-ln -s "$X/corpus" "$TT/pl-a/incident_2/corpus"
-ln -s "$X/b3" "$TT/pl-b/incident_3"
-REPO="$TT/repo"; mkdir -p "$REPO/incident_4" "$REPO/INCIDENT_6" "$REPO/incident_5"
+REPO="$TT/repo"; mkdir -p "$REPO"
+mkrun() { mkdir "$REPO/$1" && printf '*\n' > "$REPO/$1/.gitignore"; }   # mkrun <name>: a run directory by hand
+mkrun incident_2; mkrun incident_4; mkrun INCIDENT_6; mkrun incident_5
+ln -s "$X/canary" "$REPO/incident_2/LEDGER.md"
+ln -s "$X/bin" "$REPO/incident_2/bin"
+ln -s "$X/corpus" "$REPO/incident_2/corpus"
+ln -s "$X/b3" "$REPO/incident_3"
 for f in incident_4/LEDGER.md INCIDENT_6/LEDGER.md incident_5/LEDGER.md; do printf 'prior\n' > "$REPO/$f"; done
-if git -C "$REPO" init -q >/dev/null 2>&1 && git -C "$REPO" add incident_4/LEDGER.md INCIDENT_6/LEDGER.md; then
+if git -C "$REPO" init -q >/dev/null 2>&1 && git -C "$REPO" add -f incident_4/LEDGER.md INCIDENT_6/LEDGER.md; then
   ok "run dir: test repository tracks incident_4/ and INCIDENT_6/"
 else
   bad "run dir: could not set up the test repository"
 fi
-tree_state() { find "$X" "$TT/pl-a" "$TT/pl-b" "$REPO" -path "$REPO/.git" -prune -o -print | LC_ALL=C sort; cat "$X/canary"; }
+tree_state() { find "$X" "$REPO" -path "$REPO/.git" -prune -o -print | LC_ALL=C sort; cat "$X/canary"; }
 state_before="$(tree_state)"
 calls_before="$(grep -c . "$FAKE_CURL_LOG" 2>/dev/null || true)"
 for case in \
-  "a symbolic link inside the run dir:$TT/pl-a/incident_2:$TT/pl-a/incident_2/corpus2" \
-  "a run dir that is a symbolic link:$TT/pl-b/incident_3:$TT/pl-b/incident_3/corpus" \
-  "the same link with a trailing slash:$TT/pl-b/incident_3/:$TT/pl-b/incident_3/" \
-  "a run dir git tracks:$REPO/incident_4:$REPO/incident_4/corpus" \
-  "a run dir git tracks in another letter case:$REPO/incident_6:$REPO/incident_6/corpus"; do
-  label="${case%%:*}"; rest="${case#*:}"; snapdir="${rest%%:*}"; outdir="${rest#*:}"
-  ( PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
-      bash "$DNR/collect.sh" --out "$outdir" --confirmed --max-pages 1 -- "$A_ADDR" ) > "$TT/rd.out" 2>&1
+  "a symbolic link inside the run dir:incident_2:incident_2/corpus-2:the run directory holds a symbolic link: incident_2" \
+  "a run dir that is a symbolic link:incident_3:incident_3/corpus:the run directory is a symbolic link: incident_3" \
+  "the same link with a trailing slash:incident_3/:incident_3/corpus/:the run directory is a symbolic link: incident_3" \
+  "a run dir git tracks:incident_4:incident_4/corpus:the run directory is tracked by git: incident_4" \
+  "a run dir git tracks in another letter case:incident_6:incident_6/corpus:the run directory "; do
+  label="${case%%:*}"; rest="${case#*:}"; snapdir="${rest%%:*}"; rest="${rest#*:}"; outdir="${rest%%:*}"; why="${rest#*:}"
+  ( cd "$REPO" && PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
+      "$DNR/collect.sh" --out "$outdir" --confirmed --max-pages 1 -- "$A_ADDR" ) > "$TT/rd.out" 2>&1
   c1=$?
-  PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" bash "$DNR/snapshot-program.sh" "$PID" "$snapdir" >> "$TT/rd.out" 2>&1
+  ( cd "$REPO" && PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" "$DNR/snapshot-program.sh" "$PID" "$snapdir" ) >> "$TT/rd.out" 2>&1
   c2=$?
-  if [[ "$c1" == 2 && "$c2" == 2 ]] && [[ "$(grep -c 'refusing' "$TT/rd.out")" == 2 ]]; then
+  if [[ "$c1" == 2 && "$c2" == 2 ]] && [[ "$(grep -c "refused: $why" "$TT/rd.out")" == 2 ]]; then
     ok "run dir: $label -> collect and snapshot refuse (exit 2)"
   else
     bad "run dir: $label -> collect exit $c1, snapshot exit $c2 ($(tr '\n' ' ' < "$TT/rd.out"))"
@@ -644,10 +688,10 @@ for case in \
 done
 if [[ "$(tree_state)" == "$state_before" ]]; then ok "run dir: refused runs wrote nothing, inside or outside"; else bad "run dir: a refused run changed the tree"; fi
 eq "run dir: refused runs made no RPC call" "$(grep -c . "$FAKE_CURL_LOG" 2>/dev/null || true)" "$calls_before"
-( PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
-    bash "$DNR/collect.sh" --out "$REPO/incident_5/corpus" --confirmed --max-pages 1 -- "$A_ADDR" ) > /dev/null 2>&1
+( cd "$REPO" && PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
+    "$DNR/collect.sh" --out incident_5/corpus --confirmed --max-pages 1 -- "$A_ADDR" ) > /dev/null 2>&1
 c1=$?
-PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" bash "$DNR/snapshot-program.sh" "$PID" "$REPO/incident_5" > /dev/null 2>&1
+( cd "$REPO" && PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" "$DNR/snapshot-program.sh" "$PID" incident_5 ) > /dev/null 2>&1
 c2=$?
 if [[ "$c1" == 0 && "$c2" == 0 && -s "$REPO/incident_5/corpus/transactions.jsonl" && -s "$REPO/incident_5/bin/$PID.so" ]]; then
   ok "run dir: an untracked, link-free incident_<n>/ in a repository is accepted (control)"
@@ -655,39 +699,41 @@ else
   bad "run dir: the untracked control dir -> collect exit $c1, snapshot exit $c2"
 fi
 # A check that cannot run refuses instead of passing. Git refusing the repository
-# (owned by another user, as with a checkout mounted into a container), git missing
-# or failing, and a run directory find cannot read (here hiding a link to the
-# outside) each mean exit 2, nothing written and no RPC call. The ownership cases run
-# with no global or system git config: a machine-wide safe.directory (CI runners set
-# one) would otherwise make git trust the repository. A repository named in the
-# environment (GIT_DIR, GIT_WORK_TREE) never stands in for the one the run directory
-# is in: the tracked directory is still refused.
-mkdir -p "$TT/gitfail" "$TT/pl-c/incident_9"
+# (owned by another user, as with a checkout mounted into a container; a stand-in
+# git gives git's own error), git missing or failing, and a run directory find
+# cannot read (here hiding a link to the outside) each mean exit 2, nothing written
+# and no RPC call. A repository named in the environment (GIT_DIR, GIT_WORK_TREE)
+# never stands in for the one the run directory is in: the tracked directory is
+# still refused.
+REALGIT="$(command -v git)"
+mkdir -p "$TT/gitfail" "$TT/gitowner"
 git init -q "$TT/other-repo" >/dev/null 2>&1
 printf '#!/bin/sh\nexit 127\n' > "$TT/gitfail/git"; chmod +x "$TT/gitfail/git"
-ln -s "$X/bin" "$TT/pl-c/incident_9/bin"; chmod 0300 "$TT/pl-c/incident_9"
+printf '#!/bin/sh\nfor a in "$@"; do case "$a" in --is-inside-work-tree|ls-files) echo "fatal: detected dubious ownership in repository" >&2; exit 128 ;; esac; done\nexec "%s" "$@"\n' "$REALGIT" > "$TT/gitowner/git"
+chmod +x "$TT/gitowner/git"
+mkrun incident_9; ln -s "$X/bin" "$REPO/incident_9/bin"
 state_before="$(tree_state)"
+chmod 0300 "$REPO/incident_9"
 calls_before="$(grep -c . "$FAKE_CURL_LOG" 2>/dev/null || true)"
 for case in \
-  "git does not trust the repository|GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TEST_ASSUME_DIFFERENT_OWNER=1 PATH=$TT/bin:$PATH|$REPO/incident_4|$REPO/incident_4/corpus" \
-  "git does not trust the repository, untracked dir|GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TEST_ASSUME_DIFFERENT_OWNER=1 PATH=$TT/bin:$PATH|$REPO/incident_5|$REPO/incident_5/corpus-2" \
-  "git missing or failing|PATH=$TT/gitfail:$TT/bin:$PATH|$REPO/incident_4|$REPO/incident_4/corpus" \
-  "a repository named in the environment|GIT_DIR=$TT/other-repo/.git GIT_WORK_TREE=$TT/other-repo PATH=$TT/bin:$PATH|$REPO/incident_4|$REPO/incident_4/corpus" \
-  "a run dir find cannot read|PATH=$TT/bin:$PATH|$TT/pl-c/incident_9|$TT/pl-c/incident_9/corpus"; do
+  "git does not trust the repository|PATH=$TT/gitowner:$TT/bin:$PATH|incident_5|incident_5/corpus-2" \
+  "git missing or failing|PATH=$TT/gitfail:$TT/bin:$PATH|incident_5|incident_5/corpus-2" \
+  "a repository named in the environment|GIT_DIR=$TT/other-repo/.git GIT_WORK_TREE=$TT/other-repo PATH=$TT/bin:$PATH|incident_4|incident_4/corpus" \
+  "a run dir find cannot read|PATH=$TT/bin:$PATH|incident_9|incident_9/corpus"; do
   label="${case%%|*}"; rest="${case#*|}"; envs="${rest%%|*}"; rest="${rest#*|}"; snapdir="${rest%%|*}"; outdir="${rest#*|}"
-  ( export RPC_URL="https://rpc.example.test/" ${envs%% PATH=*} PATH="${envs##*PATH=}"
-    bash "$DNR/collect.sh" --out "$outdir" --confirmed --max-pages 1 -- "$A_ADDR" ) > "$TT/rd.out" 2>&1
+  ( cd "$REPO" && export RPC_URL="https://rpc.example.test/" ${envs%% PATH=*} PATH="${envs##*PATH=}"
+    "$DNR/collect.sh" --out "$outdir" --confirmed --max-pages 1 -- "$A_ADDR" ) > "$TT/rd.out" 2>&1
   c1=$?
-  ( export RPC_URL="https://rpc.example.test/" ${envs%% PATH=*} PATH="${envs##*PATH=}"
-    bash "$DNR/snapshot-program.sh" "$PID" "$snapdir" ) >> "$TT/rd.out" 2>&1
+  ( cd "$REPO" && export RPC_URL="https://rpc.example.test/" ${envs%% PATH=*} PATH="${envs##*PATH=}"
+    "$DNR/snapshot-program.sh" "$PID" "$snapdir" ) >> "$TT/rd.out" 2>&1
   c2=$?
-  if [[ "$c1" == 2 && "$c2" == 2 ]] && [[ "$(grep -c 'refusing' "$TT/rd.out")" == 2 ]]; then
+  if [[ "$c1" == 2 && "$c2" == 2 ]] && [[ "$(grep -c 'refused: ' "$TT/rd.out")" == 2 ]]; then
     ok "run dir: $label -> collect and snapshot refuse (exit 2)"
   else
     bad "run dir: $label -> collect exit $c1, snapshot exit $c2 ($(tr '\n' ' ' < "$TT/rd.out"))"
   fi
 done
-chmod 0700 "$TT/pl-c/incident_9"
+chmod 0700 "$REPO/incident_9"
 if [[ "$(tree_state)" == "$state_before" && -z "$(ls -A "$X/bin")" ]]; then
   ok "run dir: unverifiable runs wrote nothing, inside or outside"
 else
@@ -700,13 +746,13 @@ eq "run dir: unverifiable runs made no RPC call" "$(grep -c . "$FAKE_CURL_LOG" 2
 #     is accepted; the recipes then read corpus*/ and count a transaction held by
 #     both corpora once (first occurrence wins), so damage figures are not doubled.
 # ---------------------------------------------------------------------------
-mkdir "$TT/incident_21"
+G21="$(cd "$WT" && "$RUNDIR" new incident)"
 for c in corpus corpus-2; do
-  ( PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
-      bash "$DNR/collect.sh" --out "$TT/incident_21/$c" --confirmed --max-pages 1 -- "$A_ADDR" ) > "$TT/incident_21.$c.out" 2>&1
-  eq "two corpora: collecting into incident_21/$c succeeds" "$?" "0"
+  ( cd "$WT" && PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
+      "$DNR/collect.sh" --out "$G21/$c" --confirmed --max-pages 1 -- "$A_ADDR" ) > "$TT/incident_21.$c.out" 2>&1
+  eq "two corpora: collecting into $G21/$c succeeds" "$?" "0"
 done
-python3 -I "$DNR/deltas.py" lamports "$TT"/incident_21/corpus*/transactions.jsonl > /dev/null 2> "$TT/both.err"
+python3 -I "$DNR/deltas.py" lamports "$WT/$G21"/corpus*/transactions.jsonl > /dev/null 2> "$TT/both.err"
 if grep -q '^deltas.py: skipped 2 transaction(s) already read under the same signature$' "$TT/both.err"; then
   ok "two corpora: what both collections fetched is read once (2 copies skipped)"
 else
@@ -811,38 +857,37 @@ eq "instructions: no ix record carries a log-derived field" \
   "$(for f in ix-native-no-logs ix-cpi-victim ix-anchor-victim ix-lying-log; do ixr "$f"; done | jq -r 'select(.kind=="ix") | keys - ["sig","ok","kind","seq","top","inner","stack_height","program","data","data_status","accounts","program_name","parsed"] | length' | sort -u)" "0"
 
 # ---------------------------------------------------------------------------
-# 19. Run-directory paths. collect.sh and snapshot-program.sh take a plain path:
-#     a . or .. component is refused, and so is a path whose way passes through a
-#     symbolic link inside the working directory (the tree under audit), whether
-#     the path is relative or absolute, and even when an outside link leads into
-#     that directory. A link above the working directory is the operator's and is
-#     followed. When --out is itself an incident_* directory, collect.sh checks the
-#     incident_* directory above it too, since it writes a .gitignore there.
-#     Refusals exit 2 before any write or RPC / CLI call.
+# 19. Run-directory paths. collect.sh takes --out incident_<n>/corpus[-<k>] and
+#     snapshot-program.sh incident_<n>, relative, with the run directory directly
+#     in the working directory: a . or .. component, an absolute path, a nested
+#     directory and a path through a symbolic link are refused (exit 2) before any
+#     write or RPC / CLI call. A working directory reached through a link above it,
+#     the operator's own, is resolved once and used.
 # ---------------------------------------------------------------------------
 WD="$TT/wd19"; Y="$TT/elsewhere19"; OP="$TT/opdir19"
-mkdir -p "$WD/real" "$WD/incident_30" "$Y" "$OP"
+mkdir -p "$WD/real" "$Y" "$OP"
+G30="$(cd "$WD" && "$RUNDIR" new incident)"
 printf 'canary\n' > "$Y/canary"
 ln -s "$Y" "$WD/linked"                      # a link inside the working directory
 ln -s "$WD" "$TT/to-wd19"                    # an outside link into the working directory
-ln -s "$OP" "$TT/op-link19"                  # an outside link to an outside directory
-ln -s "$Y/canary" "$WD/incident_30/LEDGER.md"
 y_state() { find "$Y" "$WD" | LC_ALL=C sort; cat "$Y/canary"; }
 state_before="$(y_state)"
 calls_before="$(grep -c . "$FAKE_CURL_LOG" 2>/dev/null || true)"
 cli_before="$(grep -c . "$FAKE_SOLANA_ARGV" 2>/dev/null || true)"
 for case in \
-  "a .. component|real/../incident_31" \
-  "a . component|real/./incident_32" \
+  "a .. component|real/../$G30" \
+  "a . component|./$G30/." \
+  "a nested run directory|real/incident_33" \
   "a relative path through a link in the working directory|linked/incident_33" \
+  "an absolute path|$WD/$G30" \
   "an absolute path through a link in the working directory|$WD/linked/incident_34" \
-  "an outside link into the working directory, then a link in it|$TT/to-wd19/linked/incident_35"; do
+  "an outside link into the working directory|$TT/to-wd19/$G30"; do
   label="${case%%|*}"; d="${case#*|}"
   ( cd "$WD" && PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
-      bash "$DNR/collect.sh" --out "$d/corpus" --confirmed --max-pages 1 -- "$A_ADDR" ) > "$TT/p19.out" 2>&1
+      "$DNR/collect.sh" --out "$d/corpus" --confirmed --max-pages 1 -- "$A_ADDR" ) > "$TT/p19.out" 2>&1
   c1=$?
   ( cd "$WD" && PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
-      bash "$DNR/snapshot-program.sh" "$PID" "$d" ) >> "$TT/p19.out" 2>&1
+      "$DNR/snapshot-program.sh" "$PID" "$d" ) >> "$TT/p19.out" 2>&1
   c2=$?
   if [[ "$c1" == 2 && "$c2" == 2 ]]; then
     ok "run-dir path: $label -> collect and snapshot refuse (exit 2)"
@@ -850,29 +895,22 @@ for case in \
     bad "run-dir path: $label -> collect exit $c1, snapshot exit $c2 ($(tr '\n' ' ' < "$TT/p19.out"))"
   fi
 done
-( cd "$WD" && PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
-    bash "$DNR/collect.sh" --out incident_30/incident_36 --confirmed --max-pages 1 -- "$A_ADDR" ) > "$TT/p19.out" 2>&1
-code=$?
-if [[ "$code" == 2 ]] && grep -q 'refusing incident_30' "$TT/p19.out"; then
-  ok "run-dir path: an incident_* --out inside an incident_* directory that holds a link -> collect refuses (exit 2)"
-else
-  bad "run-dir path: incident_* in incident_* -> exit $code ($(tr '\n' ' ' < "$TT/p19.out"))"
-fi
 if [[ "$(y_state)" == "$state_before" ]]; then ok "run-dir path: refused runs wrote nothing, inside or outside"; else bad "run-dir path: a refused run changed the tree"; fi
 eq "run-dir path: refused runs made no RPC call" "$(grep -c . "$FAKE_CURL_LOG" 2>/dev/null || true)" "$calls_before"
 eq "run-dir path: refused runs made no CLI call" "$(grep -c . "$FAKE_SOLANA_ARGV" 2>/dev/null || true)" "$cli_before"
 for case in \
-  "a plain relative path|real/incident_37|$WD/real/incident_37" \
-  "a leading ./|./real/incident_38|$WD/real/incident_38" \
-  "an absolute path through the operator's link above the working directory|$TT/op-link19/incident_39|$OP/incident_39"; do
-  label="${case%%|*}"; rest="${case#*|}"; d="${rest%%|*}"; landed="${rest#*|}"
-  ( cd "$WD" && PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
-      bash "$DNR/collect.sh" --out "$d/corpus" --confirmed --max-pages 1 -- "$A_ADDR" ) > "$TT/p19.out" 2>&1
+  "a run directory of the working directory|$WD|" \
+  "a leading ./ and a trailing /|$WD|./" \
+  "a working directory reached through the operator's link above it|$TT/to-wd19|"; do
+  label="${case%%|*}"; rest="${case#*|}"; from="${rest%%|*}"; pre="${rest#*|}"
+  g="$(cd "$WD" && "$RUNDIR" new incident)"; d="$pre$g${pre:+/}"
+  ( cd "$from" && PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
+      "$DNR/collect.sh" --out "${d%/}/corpus" --confirmed --max-pages 1 -- "$A_ADDR" ) > "$TT/p19.out" 2>&1
   c1=$?
-  ( cd "$WD" && PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
-      bash "$DNR/snapshot-program.sh" "$PID" "$d" ) >> "$TT/p19.out" 2>&1
+  ( cd "$from" && PATH="$TT/bin:$PATH" RPC_URL="https://rpc.example.test/" \
+      "$DNR/snapshot-program.sh" "$PID" "$d" ) >> "$TT/p19.out" 2>&1
   c2=$?
-  if [[ "$c1" == 0 && "$c2" == 0 && -s "$landed/corpus/transactions.jsonl" && -s "$landed/bin/$PID.so" ]]; then
+  if [[ "$c1" == 0 && "$c2" == 0 && -s "$WD/$g/corpus/transactions.jsonl" && -s "$WD/$g/bin/$PID.so" ]]; then
     ok "run-dir path: $label is accepted (control)"
   else
     bad "run-dir path: $label -> collect exit $c1, snapshot exit $c2 ($(tr '\n' ' ' < "$TT/p19.out"))"
