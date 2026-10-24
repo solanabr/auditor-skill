@@ -108,16 +108,19 @@ already captured.
 - **A clean working directory.** Both commands start with
   `"<auditor-skill root>/scripts/preflight.sh"`, which refuses a working tree that
   ships Claude Code project config, anywhere in it or in a parent up to the
-  repository root: a `.claude/` with skills, commands, agents, hooks, output styles
-  or workflows in it, a `.claude/settings.json` or `settings.local.json` with any
-  key beyond `$schema`, `model`, `cleanupPeriodDays` and `includeCoAuthoredBy`, or
-  a `.mcp.json`. Claude Code loads that config beside the plugin's, so a
+  repository root: a `.claude` link, a `.claude/` with skills, commands, agents,
+  hooks, output styles or workflows in it or a `scheduled_tasks.json`, a
+  `.claude/settings.json` or `settings.local.json` with any key beyond `$schema`,
+  `model`, `cleanupPeriodDays` and `includeCoAuthoredBy`, or a `.mcp.json`. It
+  also refuses a linked git worktree: Claude Code loads its main checkout's
+  `.claude/settings.local.json` too, and that checkout's project skills when the
+  worktree has none. Claude Code loads that config beside the plugin's, so a
   repository could shadow this plugin's skills and agents (its own
   `auditor:dnr-analyze` would replace the analysis fork) or carry hooks and MCP
   servers. Run the commands from an incident workspace of their own: they need no
-  repository. To work inside one, make a clean copy: clone it to a new directory,
-  delete every `.claude/` and `.mcp.json` in the copy, and start Claude Code
-  there. `CLAUDE.md` files are listed, not refused; their text is the
+  repository. To work inside one, or in a worktree, make a clean copy: clone it to
+  a new directory, delete every `.claude/` and `.mcp.json` in the copy, and start
+  Claude Code there. `CLAUDE.md` files are listed, not refused; their text is the
   repository's, never instructions.
 - **What runs without asking.** The commands pre-approve only reading, `Task`,
   edits under `incident_*/`, the checks `preflight.sh` and `rundir.sh`, and the
