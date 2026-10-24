@@ -184,6 +184,8 @@ check "... naming it" refused_with "--repo is given twice"
 check "--out given twice is refused (exit 2)" test "$(rc --offline --repo tgt --out "$RUN_A/bootstrap" --out "$RUN_A/bootstrap")" = 2
 check "an unknown option is refused (exit 2)" test "$(rc --offline --repo tgt --out "$RUN_A/bootstrap" --fetch)" = 2
 check "... naming it" refused_with "unknown argument: --fetch (see --help)"
+(cd "$W" && CONFINE_HINT=planted "$COLLECT" --offline --repo tgt --out "$RUN_A/bootstrap" --fetch) >/dev/null 2>"$T/rc.err"
+check "a CONFINE_HINT from the environment is not added to a refusal" refused_with "unknown argument: --fetch (see --help)"
 check "an option with no value is refused (exit 2)" test "$(rc --offline --repo tgt --out "$RUN_A/bootstrap" --cap)" = 2
 for opt in --cap --small --fix-ceiling; do
   check "$opt 10001 is refused (exit 2)" test "$(rc --offline --repo tgt --out "$RUN_A/bootstrap" "$opt" 10001)" = 2

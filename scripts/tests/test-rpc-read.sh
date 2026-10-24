@@ -153,6 +153,8 @@ run account "$ADDR" -u mainnet-beta
 check "... nor -u" refused "unknown argument: -u"
 run account "$ADDR" --cluster localhost
 check "--cluster takes only the three public clusters" refused "--cluster takes mainnet-beta, devnet or testnet, not localhost"
+(cd "$W" && CONFINE_HINT=planted PATH="$T/sol:$PATH" "$READ" account "$ADDR" --cluster localhost) >"$T/out" 2>"$T/err"; RC=$?
+check "a CONFINE_HINT from the environment is not added to a refusal" refused "--cluster takes mainnet-beta, devnet or testnet, not localhost"
 run account "$ADDR" --cluster "https://evil.example/"
 check "--cluster never takes a URL" refused "--cluster takes mainnet-beta, devnet or testnet, not https://evil.example/"
 for bad in -x ../../etc/passwd "$HOME/.config/solana/id.json" ASK usb://ledger - "$ADDR;id" "0OIl$ADDR" short; do

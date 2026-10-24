@@ -26,7 +26,8 @@
 # confine_service sed, confine_disclose date, and confine_b58_bytes python3.
 
 # confine_refuse <reason>: the refusal line, then exit 64 (or the status confine_init was given). A tool
-# may set CONFINE_HINT around a check; the line then ends with "; <hint>".
+# may set CONFINE_HINT around a check; the line then ends with "; <hint>". confine_init clears one the
+# environment passed in.
 confine_refuse() {
   printf '%s: refused: %s%s\n' "${CONFINE_TOOL:-confine}" "$1" "${CONFINE_HINT:+; $CONFINE_HINT}" >&2
   exit "${CONFINE_STATUS:-64}"
@@ -55,6 +56,7 @@ confine_init() { # confine_init <tool> <installation root, physical> [<refusal s
   local root=$2 rest e clean=""
   CONFINE_TOOL=$1
   CONFINE_STATUS=${3:-64}
+  CONFINE_HINT=""
   IFS=$' \t\n'
   unset CDPATH BASH_ENV ENV
   LC_ALL=C
