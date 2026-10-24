@@ -1061,10 +1061,18 @@ bad = {
     "a-program-id-holding-a-word-joiner": enc(tx("SigBad63", ixs=[{"programId": "Prog\u2060Forged", "accounts": []}])),
     "a-version-holding-a-variation-selector": enc(dict(tx("SigBad64"), version="0\ufe0f")),
     "a-key-holding-a-tag-character": enc(tx("SigBad65", keys=["Payer\U000e0041111111111111111111111111111111111", "Two1111111111111111111111111111111111111111"])),
+    "a-lone-surrogate-under-a-key-repeated-later": enc(tx("SigBad66", meta_extra={"x": "PLACE"})).replace(
+        b'"PLACE"', b'"\\ud800", "x": 1'),
+    "a-high-surrogate-then-another-escape-under-a-key-repeated-later": enc(tx("SigBad67", meta_extra={"x": "PLACE"})).replace(
+        b'"PLACE"', b'"\\udbff\\u0041", "x": 1'),
+    "a-lone-surrogate-in-a-key-of-an-object-replaced-later": enc(tx("SigBad68", meta_extra={"x": "PLACE"})).replace(
+        b'"PLACE"', b'{"a": [{"\\ud800": 1}]}, "x": {}'),
+    "a-lone-low-surrogate-under-a-top-level-key-repeated-later": b'{"note": "\\udc00", "note": "CRAFTED", ' + enc(tx("SigBad69"))[1:],
 }
 last = ("instruction-a-string", "keys-strings-and-objects", "header-count-a-string", "a-pubkey-that-is-an-object",
         "a-truncated-line-holding-a-drain", "nesting-300-deep", "nesting-300-deep-under-a-key-repeated-later",
-        "objects-nested-129-deep", "objects-nested-200-deep", "arrays-nested-129-deep")
+        "objects-nested-129-deep", "objects-nested-200-deep", "arrays-nested-129-deep",
+        "a-lone-surrogate-under-a-key-repeated-later")
 good = {
     "raw-CR-between-tokens": enc(tx("SigGood1", mark=False)).replace(b', "transaction"', b',\r"transaction"'),
     "CRLF-line-end": enc(tx("SigGood2", mark=False)) + b"\r",

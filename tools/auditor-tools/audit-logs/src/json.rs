@@ -5,12 +5,13 @@
 //! Python rules kept here: whitespace is space, tab, LF and CR; `NaN`,
 //! `Infinity` and a float that overflows are refused; a control character inside
 //! a string is refused; a repeated key keeps its first position and its last
-//! value; and a lone surrogate left by a `\u` escape refuses the line, unless a
-//! later copy of its key replaced it. The recipes' own bounds are kept too: an
-//! integer literal of more than 20 digits, or `-0`, anywhere in the line, refuses
-//! it, and so does nesting deeper than 128 levels anywhere in the text (jq gives an
-//! object two of its 256 parser slots), counted on the text before it is parsed,
-//! so a value a later duplicate key replaces counts too ([`too_deep`]).
+//! value; and a lone surrogate left by a `\u` escape refuses the line wherever it
+//! is, in a value a later copy of its key replaces too (jq refuses a lone high
+//! one anywhere in the line). The recipes' own bounds are kept too: an integer
+//! literal of more than 20 digits, or `-0`, anywhere in the line, refuses it, and
+//! so does nesting deeper than 128 levels anywhere in the text (jq gives an object
+//! two of its 256 parser slots), counted on the text before it is parsed, so a
+//! value a later duplicate key replaces counts too ([`too_deep`]).
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -169,7 +170,8 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// One value. The flag is true when a lone surrogate is still in it.
+    /// One value. The flag is true when a `\u` escape anywhere in its text left a
+    /// lone surrogate, in a value a later copy of its key replaced too.
     fn value(&mut self) -> Parsed<'a> {
         match self.b.get(self.pos) {
             Some(b'"') => {
@@ -394,7 +396,7 @@ impl<'a> Parser<'a> {
             match found {
                 Some(i) => {
                     entries[i].1 = v;
-                    value_lone[i] = vl;
+                    value_lone[i] |= vl;
                 }
                 None => {
                     if let Some(map) = index.as_mut() {
@@ -594,10 +596,6 @@ mod tests {
             "[\"\u{1F600}\", \"\\\\ud800\"]"
         );
         assert_eq!(
-            py(r#"{"a": "\ud800", "a": "ok"}"#).unwrap(),
-            r#"{"a": "ok"}"#
-        );
-        assert_eq!(
             py(r#"[1e-400, 1e16, 1e-7]"#).unwrap(),
             "[0.0, 1e+16, 1e-07]"
         );
@@ -645,6 +643,13 @@ mod tests {
         assert!(py(&format!("[-{}]", "1".repeat(21))).is_none());
         assert!(py("[-0]").is_none());
         assert!(py(r#"{"a": -0, "a": 1}"#).is_none());
+        for replaced in [
+            r#"{"a": "\ud800", "a": "ok"}"#,
+            r#"{"a": {"\udc00": 1}, "a": 1}"#,
+            r#"{"a": ["\udbff\u0041"], "b": 1, "a": 2}"#,
+        ] {
+            assert!(py(replaced).is_none(), "{replaced:?}");
+        }
         let deep = format!("{}{}", "[".repeat(MAX_DEPTH + 1), "]".repeat(MAX_DEPTH + 1));
         assert!(py(&deep).is_none());
     }

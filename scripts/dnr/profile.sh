@@ -409,20 +409,18 @@ class Output:
             self.dir = None
 
 
-def _lone_surrogate(obj):
-    stack = [obj]
-    while stack:
-        v = stack.pop()
-        if isinstance(v, str):
-            if _LONE_SURROGATE.search(v):
-                return True
-        elif isinstance(v, dict):
-            for k, x in v.items():
-                if _LONE_SURROGATE.search(k):
+def _lone_surrogate(text):
+    """True when a string of the line, a key or a value (one a later duplicate key
+    replaces too), holds a \\u escape that leaves a lone surrogate: jq refuses a lone
+    high one wherever it is."""
+    for m in _TOKEN.finditer(text):
+        s = m.group()
+        if s[:1] == "\"" and _SURROGATE_ESCAPE.search(s):
+            try:
+                if _LONE_SURROGATE.search(_DECODER.decode(s)):
                     return True
-                stack.append(x)
-        elif isinstance(v, list):
-            stack.extend(v)
+            except ValueError:
+                return True
     return False
 
 
@@ -544,7 +542,7 @@ def parsed(line):
         tx = _DECODER.decode(text)
     except (ValueError, RecursionError):
         return None
-    if _SURROGATE_ESCAPE.search(text) and _lone_surrogate(tx):
+    if _SURROGATE_ESCAPE.search(text) and _lone_surrogate(text):
         return None
     return tx if shaped(tx) else None
 
