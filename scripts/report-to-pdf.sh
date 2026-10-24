@@ -32,9 +32,9 @@
 # TeX engine as TeX. Raw HTML is still parsed, so the HTML comments of the report
 # templates drop out with it rather than printing as text. The engine gets kpathsea's
 # paranoid settings (openin_any=p, openout_any=p: no absolute path outside pandoc's
-# own temp directory, no "..", no dotfile) and shell_escape=f, with TEXMFOUTPUT
-# removed from the environment pandoc passes on. The PDF is copied into a new file
-# beside the report and renamed into place.
+# own temp directory, no "..", no dotfile) and shell_escape=f; the caller's
+# TEXMFOUTPUT is dropped, and pandoc sets its own temp directory. The PDF is copied
+# into a new file beside the report and renamed into place.
 #
 # Exit: 0 rendered or skipped (no report, no pandoc, a pandoc older than 2.15, no
 # engine, or a render that failed) · 2 refused.

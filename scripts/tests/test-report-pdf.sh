@@ -188,7 +188,7 @@ check "render: ... which is removed afterwards" test ! -e "$SCRATCH"
 check "render: the call is pandoc --sandbox with raw TeX and raw attributes off, the filter and the first engine found" \
   test "$PLINE" = "pandoc [--sandbox] [-f] [markdown-raw_tex-raw_attribute] [--lua-filter] [$FILTER] [--pdf-engine=xelatex] [--pdf-engine-opt=-no-shell-escape] [-o] [$SCRATCH/report.pdf] [report.md]"
 check "render: pandoc reads a copy of the report, in scratch" has "$FAKE_LOG" "input # Audit report"
-check "render: the engine's settings are paranoid, TEXMFOUTPUT removed, TMPDIR the scratch directory" \
+check "render: the engine's settings are paranoid, the caller's TEXMFOUTPUT dropped, TMPDIR the scratch directory" \
   has "$FAKE_LOG" "env openin_any=p openout_any=p shell_escape=f TEXMFOUTPUT=unset TMPDIR=$SCRATCH"
 check "render: the filter ships beside the script" test -s "$FILTER"
 run "$FAKE_PATH" "$R/REPORT.md"
