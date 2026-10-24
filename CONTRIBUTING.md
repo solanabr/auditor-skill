@@ -195,8 +195,11 @@ It reads every file whose frontmatter Claude Code loads: each `.md` file at any 
   holds no tab, CR or other control character, and no U+0085, U+2028 or U+2029.
 - One `key: value` per line, each key once, written exactly as the check lists it. Agents need `name`,
   `description` and `tools`; commands need `description` and `allowed-tools`; a `SKILL.md` needs `name` and
-  `description` and, for now, has no other key. A new key is added to the check's list when it is first
-  used.
+  `description`. One under `skills/` may also have `context: fork`, which then needs
+  `agent: auditor:<name>` naming the plugin agent `agents/<name>.md` (its frontmatter names it `<name>`);
+  `background` (with `context: fork`) and `user-invocable`, each `true` or `false`; and `allowed-tools`,
+  read as a command's. The root `SKILL.md` has no other key. A new key is added to the check's list when
+  it is first used.
 - Quote a value that starts with a YAML indicator (`-`, `?`, `:`, `,`, `[`, `]`, `{`, `}`, `#`, `&`, `*`,
   `!`, `|`, `>`, `%`, `@` or a backtick), holds `: `, ` #` or `...`, ends in `:`, or would read as a number,
   a boolean or null (`3000`, `++7`, `yes`, `null`). Double quotes escape only `\"` and `\\`; single quotes
