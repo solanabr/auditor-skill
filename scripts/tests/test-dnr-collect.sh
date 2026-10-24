@@ -1216,6 +1216,11 @@ esac
 if grep -q 'SECRETKEY\|key123\|QK' "$D"; then bad "disclosure: a part of the URL reached disclosures.tsv"; else ok "disclosure: no part of the URL but the domain reaches it"; fi
 ( cd "$WT" && PATH="$TT/bin:$PATH" "$DNR/collect.sh" --out "$G3/corpus-2" --confirmed --max-pages 1 -- "$A_ADDR" ) > /dev/null 2>&1
 eq "disclosure: a second collection adds a second row under the same header" "$(grep -c . "$D")|$(grep -c "^time$(printf '\t')tool" "$D")" "3|1"
+BEFORE_SIG="5h6xBEauJ3PK6SWCZ1PGjBvj8vDdWG3KpwATGy1ARAXFSDwt8GFXM7W5Ncn16wmqokgpiKRLuS83KUxyZyv2sUYv"
+( cd "$WT" && PATH="$TT/bin:$PATH" "$DNR/collect.sh" --out "$G3/corpus-3" --confirmed --max-pages 1 --before "$BEFORE_SIG" -- "$A_ADDR" ) > /dev/null 2>&1
+eq "disclosure: with --before, the row names the signature it pages from" \
+  "$(sed -n 4p "$D" | cut -f4-)" \
+  "$(printf 'account addresses (getSignaturesForAddress, then getTransaction for their signatures); before signature %s: %s\t1' "$BEFORE_SIG" "$A_ADDR")"
 eq "disclosure: the file is readable by its owner only" "$(ls -l "$D" | cut -c1-10)" "-rw-------"
 G4="$(cd "$WT" && "$RUNDIR" new incident)"; mkdir "$WT/$G4/disclosures.tsv"
 G5="$(cd "$WT" && "$RUNDIR" new incident)"; printf 'something else\n' > "$WT/$G5/disclosures.tsv"

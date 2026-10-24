@@ -34,8 +34,9 @@
 #     cap that is not a plain integer is refused too.
 #   * DISCLOSED: before the first call, one row goes into
 #     incident_<n>/disclosures.tsv (OUTPUT-RULES.md Rule 11b; the format is in
-#     scripts/lib/confine.sh): the provider domain and the addresses queried. A run
-#     directory whose disclosures.tsv cannot take the row is refused before any call.
+#     scripts/lib/confine.sh): the provider domain and the addresses queried, with
+#     the --before signature when one is given. A run directory whose
+#     disclosures.tsv cannot take the row is refused before any call.
 #   * STOPS ON A FAILING ENDPOINT: after 10 getTransaction calls in a row fail
 #     (rate limit, outage, or history the endpoint does not serve), it fetches
 #     nothing more and records the stop as a collection gap.
@@ -335,7 +336,8 @@ confine_service "$RPC_URL"
 provider=$CONFINE_SERVICE
 # Rule 11b: the row goes into incident_<n>/disclosures.tsv before the first call.
 if ! confine_disclose "$run_dir" scripts/dnr/collect.sh "$provider" \
-     "account addresses (getSignaturesForAddress, then getTransaction for their signatures)" "${addrs[@]}"; then
+     "account addresses (getSignaturesForAddress, then getTransaction for their signatures)${before_start:+; before signature $before_start}" \
+     "${addrs[@]}"; then
   echo "[blocker] cannot add the collection's row to $run_dir/disclosures.tsv, so nothing was sent; the corpus files in $out are empty: collect into a new --out once the file is fixed." >&2
   exit 3
 fi
