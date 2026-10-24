@@ -1,16 +1,19 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # collect.sh — the ONE gated collector for the detection & response track. Pages
 # signature history for one or more addresses and fetches each transaction, into a
 # local JSONL corpus. Besides snapshot-program.sh (one program account, via the
-# solana CLI), it is the only recipe in the track that touches the network.
+# solana CLI) and scripts/rpc-read.sh (single reads), it is the only recipe in the
+# track that touches the network.
 #
-#   bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/collect.sh" --out <dir> --confirmed \
+#   "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/collect.sh" --out incident_<n>/corpus[-<k>] --confirmed \
 #        [--since <unix>] [--until <unix>] [--before <signature>] \
 #        [--max-pages N] [--max-tx N] -- <address> [<address> ...]
 #
 # $RPC_URL must already be exported; never type the URL on the command line. Run it
-# from the installation, never as a relative scripts/ path: the audited repo may
-# ship a same-named file.
+# directly by its quoted path in the installation, from the working directory,
+# never as a relative scripts/ path: the audited repo may ship a same-named file.
+# Each option is given at most once, and an option-shaped word after one that takes
+# a value is that value.
 #
 # GATING (do not relax — this is how "plans only, no actions" stays true for the
 # corpus collection):
@@ -23,7 +26,15 @@
 #   * CAPPED: --max-pages (default 20 → up to 20000 signatures per address) and
 #     --max-tx (default 2000) bound the work and the spend. Raise them deliberately.
 #     --max-tx counts getTransaction calls, failed ones included, so a run makes at
-#     most addresses × max-pages + max-tx calls.
+#     most addresses × max-pages + max-tx calls. No argument can go past the caps
+#     the user sets in the environment: AUDITOR_RPC_MAX_PAGES (default 100),
+#     AUDITOR_RPC_MAX_TX (default 10000) and AUDITOR_RPC_MAX_ADDRESSES (default 25,
+#     the addresses after --). A value over its cap is refused (exit 2) with the
+#     variable to raise; a cap that is not a plain integer is refused too.
+#   * DISCLOSED: before the first call, one row goes into
+#     incident_<n>/disclosures.tsv (OUTPUT-RULES.md Rule 11b; the format is in
+#     scripts/lib/confine.sh): the provider domain and the addresses queried. A run
+#     directory whose disclosures.tsv cannot take the row is refused before any call.
 #   * STOPS ON A FAILING ENDPOINT: after 10 getTransaction calls in a row fail
 #     (rate limit, outage, or history the endpoint does not serve), it fetches
 #     nothing more and records the stop as a collection gap.
@@ -33,11 +44,14 @@
 # success, or a `suspected` incident whose attack has not landed yet. Filtering
 # failures out would make those undetectable. Use `meta.err` downstream.
 #
-# RUN DIRECTORY: --out is a plain path, with no . or .. component, and no directory on
-# its way may be a symbolic link inside the working directory (a link above it, such
-# as /tmp on macOS, is the operator's). --out, and the nearest incident_* directory
-# above it, must be a directory this run may write into: either one that is a symbolic
-# link, holds a symbolic link, is tracked by git, or that git or find cannot check is
+# RUN DIRECTORY: --out is incident_<n>/corpus or incident_<n>/corpus-<k> (k of 1 to 4
+# digits), relative to the working directory (a leading ./ and trailing slashes are
+# dropped). incident_<n> (OUTPUT-RULES.md Rule 11d) sits directly in the working
+# directory, is a real directory holding no symbolic link, is tracked by no
+# repository in any letter case, and has a .gitignore holding exactly "*"
+# ("${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" new incident makes one). The corpus
+# directory is made in it when missing. Any other --out, an absolute one included,
+# and a run directory that fails these checks or that git or find cannot check, is
 # refused with exit 2 before anything is written or sent.
 #
 # --before <sig> starts paging just older than that signature (resume a capped run,
@@ -111,14 +125,16 @@
 # integers exact), one compact JSON object per line either way. Signature pages
 # carry only slots, block times and small error codes, and jq writes them.
 #
-# Exit: 0 done (collection gaps included) · 2 usage, a refused input, $RPC_URL, run
-# directory, or an --out that holds a corpus file or where they cannot be created · 3
+# Exit: 0 done (collection gaps included) · 2 refused, one stderr line "collect.sh:
+# refused: <reason>": usage, an input or cap, $RPC_URL, the run directory or its
+# disclosures.tsv, or an --out that holds a corpus file or where they cannot be created · 3
 # named blocker (no curl or jq; a jq that rounds large integers and no working
 # python3; no private temp directory, which is made before anything is written; a
 # write that failed, which ends the run without its closing lines) · 128 + N stopped
 # by signal N (INT, TERM or HUP), with what was left recorded as gaps.
 # bash >= 3.2, curl, jq (and python3 with jq < 1.7). Output: <dir>/signatures.jsonl,
-# <dir>/transactions.jsonl, <dir>/collection-gaps.tsv.
+# <dir>/transactions.jsonl, <dir>/collection-gaps.tsv, and a row of
+# incident_<n>/disclosures.tsv.
 
 # -C (noclobber): no redirection in this script replaces an existing file.
 set -Cuo pipefail
@@ -127,137 +143,113 @@ export LC_ALL=C
 # environment instead of the directory it is pointed at.
 unset CDPATH GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+case "$0" in */*) HERE=${0%/*} ;; *) HERE=. ;; esac
+HERE=$(cd -P -- "$HERE" 2>/dev/null && pwd -P) || { printf 'collect.sh: refused: the installation cannot be resolved\n' >&2; exit 2; }
+SCRIPTS=${HERE%/*}
+. "$SCRIPTS/lib/confine.sh" || { printf 'collect.sh: refused: scripts/lib/confine.sh cannot be read\n' >&2; exit 2; }
+# The checks of the working directory, the installation and PATH, and every refusal: exit 2.
+confine_init collect.sh "${SCRIPTS%/*}" 2
+confine_need env git find wc cat sed awk sort grep tr mktemp rm mkdir date
 REDACT="$HERE/redact.sh"
+exec </dev/null
 
+USAGE='usage: collect.sh --out incident_<n>/corpus[-<k>] --confirmed [--since U] [--until U] [--before SIG] [--max-pages N] [--max-tx N] -- <address>...'
 out=""; confirmed=0; since=0; until=0; before_start=""; max_pages=20; max_tx=2000
-addrs=()
+addrs=(); seen=" "
+# once <option>: refuse an option given before. take <option> <args...>: the value
+# after the option; an absent one is refused.
+once() {
+  case "$seen" in *" $1 "*) confine_refuse "$1 is given twice" ;; esac
+  seen="$seen$1 "
+}
+take() { [ $# -ge 2 ] || confine_refuse "$1 needs a value"; once "$1"; V=$2; }
 while [ $# -gt 0 ]; do
   case "$1" in
-    --out) out="$2"; shift 2 ;;
-    --confirmed) confirmed=1; shift ;;
-    --since) since="$2"; shift 2 ;;
-    --until) until="$2"; shift 2 ;;
-    --before) before_start="$2"; shift 2 ;;
-    --max-pages) max_pages="$2"; shift 2 ;;
-    --max-tx) max_tx="$2"; shift 2 ;;
+    --out) take "$@"; out=$V; shift 2 ;;
+    --confirmed) once "$1"; confirmed=1; shift ;;
+    --since) take "$@"; since=$V; shift 2 ;;
+    --until) take "$@"; until=$V; shift 2 ;;
+    --before) take "$@"; before_start=$V; shift 2 ;;
+    --max-pages) take "$@"; max_pages=$V; shift 2 ;;
+    --max-tx) take "$@"; max_tx=$V; shift 2 ;;
     --) shift; addrs=("$@"); break ;;
-    *) echo "collect.sh: unknown arg '$1'" >&2; exit 2 ;;
+    *) confine_refuse "unknown argument: $(confine_text "$1")" ;;
   esac
 done
 
 if [ "$confirmed" -ne 1 ]; then
-  echo "collect.sh: refusing — pass --confirmed (the command confirms addresses, window and caps with the human first)." >&2
-  exit 2
+  confine_refuse "pass --confirmed (the command confirms addresses, window and caps with the human first)"
 fi
 if [ -z "$out" ] || [ ${#addrs[@]} -eq 0 ]; then
-  echo "usage: collect.sh --out <dir> --confirmed [--since U] [--until U] [--before SIG] [--max-pages N] [--max-tx N] -- <address>..." >&2
-  exit 2
+  confine_refuse "$USAGE"
 fi
 if [ -z "${RPC_URL:-}" ]; then
-  echo "collect.sh: set \$RPC_URL in the environment (never on the command line, so it stays out of history and ledgers)." >&2
-  exit 2
+  confine_refuse "set \$RPC_URL in the environment (never on the command line, so it stays out of history and ledgers)"
 fi
 # The URL goes into a quoted curl config line: refuse what could end or escape it.
 case "$RPC_URL" in
   *[[:space:][:cntrl:]\"\\]*)
-    echo "collect.sh: \$RPC_URL holds a quote, a backslash, whitespace or a control character; refusing it." >&2
-    exit 2 ;;
+    confine_refuse "\$RPC_URL holds a quote, a backslash, whitespace or a control character" ;;
 esac
 # Addresses and --before are spliced into JSON request bodies and usually come from
 # target content (declare_id!, Anchor.toml): accept base58 only.
 for addr in "${addrs[@]}"; do
   if ! [[ "$addr" =~ ^[1-9A-HJ-NP-Za-km-z]{32,44}$ ]]; then
-    echo "collect.sh: '$addr' is not a base58 address (32-44 characters of [1-9A-HJ-NP-Za-km-z])." >&2
-    exit 2
+    confine_refuse "'$(confine_text "$addr")' is not a base58 address (32-44 characters of [1-9A-HJ-NP-Za-km-z])"
   fi
 done
 if [ -n "$before_start" ] && ! [[ "$before_start" =~ ^[1-9A-HJ-NP-Za-km-z]{32,88}$ ]]; then
-  echo "collect.sh: --before '$before_start' is not a base58 signature." >&2
-  exit 2
+  confine_refuse "--before '$(confine_text "$before_start")' is not a base58 signature"
 fi
 for n in "$since" "$until" "$max_pages" "$max_tx"; do
-  if ! [[ "$n" =~ ^[0-9]+$ ]]; then
-    echo "collect.sh: '$n' is not a non-negative integer (--since, --until, --max-pages, --max-tx)." >&2
-    exit 2
+  if ! [[ "$n" =~ ^[0-9]{1,18}$ ]]; then
+    confine_refuse "'$(confine_text "$n")' is not a non-negative integer of at most 18 digits (--since, --until, --max-pages, --max-tx)"
   fi
 done
-case "$out" in */) out="${out%"${out##*[!/]}"}"; [ -n "$out" ] || out=/ ;; esac
-# The run directory is checked by name and component by component below, so --out is a
-# plain path: no "." or ".." component (a leading "./" aside).
-out="${out#./}"
-case "/$out/" in
-  */./*|*/../*) echo "collect.sh: --out takes a plain path without . or .. components: $out" >&2; exit 2 ;;
-esac
-
-# The working directory is usually the audited repository: a symbolic link below it
-# belongs to that tree.
-if ! here="$(pwd -P)"; then
-  echo "collect.sh: cannot resolve the working directory." >&2; exit 2
-fi
-# linked_on_way <path>: status 0 when a directory on the way to <path> is a symbolic
-# link inside the working directory, or one whose place cannot be resolved. A link
-# above the working directory (/tmp on macOS, say) is the operator's, and is followed.
-linked_on_way() {
-  local rest="$1" cur comp phys
-  case "$rest" in /*) cur=""; rest="${rest#/}" ;; *) cur="$here" ;; esac
-  while :; do
-    case "$rest" in */*) comp="${rest%%/*}"; rest="${rest#*/}" ;; *) return 1 ;; esac
-    [ -n "$comp" ] || continue
-    if [ -L "$cur/$comp" ]; then
-      phys="$(cd "${cur:-/}" 2>/dev/null && pwd -P)" || return 0
-      case "$phys/" in "${here%/}"/*) return 0 ;; esac
-    fi
-    cur="$cur/$comp"
-  done
+since=$((10#$since)); until=$((10#$until)); max_pages=$((10#$max_pages)); max_tx=$((10#$max_tx))
+# cap <variable> <default>: sets CAP to the cap the user set in the environment, or
+# the default; one that is not a plain integer is refused.
+cap() {
+  CAP=$(eval "printf '%s' \"\${$1:-}\"")
+  [ -n "$CAP" ] || CAP=$2
+  [[ "$CAP" =~ ^[0-9]{1,18}$ ]] || confine_refuse "$1 in the environment is not a plain integer: $(confine_text "$CAP")"
+  CAP=$((10#$CAP))
 }
+cap AUDITOR_RPC_MAX_PAGES 100
+[ "$max_pages" -le "$CAP" ] ||
+  confine_refuse "--max-pages $max_pages is over the cap of $CAP pages per address; to allow more, raise AUDITOR_RPC_MAX_PAGES in the environment"
+cap AUDITOR_RPC_MAX_TX 10000
+[ "$max_tx" -le "$CAP" ] ||
+  confine_refuse "--max-tx $max_tx is over the cap of $CAP getTransaction calls; to allow more, raise AUDITOR_RPC_MAX_TX in the environment"
+cap AUDITOR_RPC_MAX_ADDRESSES 25
+[ "${#addrs[@]}" -le "$CAP" ] ||
+  confine_refuse "${#addrs[@]} addresses are over the cap of $CAP; to allow more, raise AUDITOR_RPC_MAX_ADDRESSES in the environment"
 
-# refuse_planted <dir>: exit 2 unless <dir> is safe to write into — not a symbolic
-# link, holding none, and not tracked by git. The git calls carry the Rule 11c flags,
-# because the tree is usually the audited one. Outside a work tree nothing is tracked;
-# inside one, a path git cannot classify is refused, and so is a directory find
-# cannot read: a check that cannot run never counts as a pass.
-refuse_planted() {
-  local listed top
-  if [ -L "$1" ]; then
-    echo "${0##*/}: refusing $1: it is a symbolic link — use a new run directory." >&2; exit 2
-  fi
-  if [ -d "$1" ] && { listed="$(find "$1" -type l -print -quit 2>/dev/null)"; [ $? -ne 0 ] || [ -n "$listed" ]; }; then
-    echo "${0##*/}: refusing $1: it contains a symbolic link, or a directory find cannot read — use a new run directory." >&2; exit 2
-  fi
-  [ -d "$(dirname "$1")" ] || return 0
-  # A .git at or above the directory means git must answer; with none, nothing is tracked.
-  if ! top="$(cd "$(dirname "$1")" && pwd -P)"; then
-    echo "${0##*/}: refusing $1: its parent directory cannot be resolved." >&2; exit 2
-  fi
-  while [ ! -e "$top/.git" ]; do [ "$top" = / ] && return 0; top="$(dirname "$top")"; done
-  if ! listed="$(GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -C "$(dirname "$1")" --icase-pathspecs \
-        ls-files -- ":(literal,icase)$(basename "$1")" 2>/dev/null)"; then
-    echo "${0##*/}: refusing $1: it is inside a git work tree and git cannot tell whether it is tracked (git missing, or it does not trust this repository)." >&2; exit 2
-  fi
-  if [ -n "$listed" ]; then
-    echo "${0##*/}: refusing $1: git tracks it, so it is not a run directory to write into." >&2; exit 2
-  fi
-  return 0
-}
-# Every directory on the way to --out; then --out, and the nearest incident_* directory
-# above it (where a .gitignore may be written too), each checked as a whole.
-if linked_on_way "$out"; then
-  echo "collect.sh: refusing $out: a directory on its way is a symbolic link inside the working directory — use a run directory reached without one." >&2
-  exit 2
+# --out: incident_<n>/corpus or incident_<n>/corpus-<k>, relative. The run directory
+# is checked as a whole (scripts/lib/confine.sh: no link in it, untracked in any
+# letter case, a .gitignore of "*"), and so is every directory on the way to --out.
+out=${out#./}
+while [ "${out%/}" != "$out" ]; do out=${out%/}; done
+run_dir=${out%%/*}
+corpus=${out#*/}
+ok=0
+case "$run_dir" in incident_*) ;; *) run_dir="" ;; esac
+if [ -n "$run_dir" ] && [ "$run_dir" != "$out" ] && confine_rundir_name "$run_dir"; then
+  case "$corpus" in
+    corpus) ok=1 ;;
+    corpus-*) case "${corpus#corpus-}" in ''|*[!0-9]*) ;; *) [ "${#corpus}" -le 11 ] && ok=1 ;; esac ;;
+  esac
 fi
-refuse_planted "$out"
-run_dir="$(dirname "$out")"
-while :; do
-  case "$(basename "$run_dir")" in incident_*) refuse_planted "$run_dir"; break ;; esac
-  case "$run_dir" in .|/) break ;; esac
-  run_dir="$(dirname "$run_dir")"
-done
+[ "$ok" -eq 1 ] || confine_refuse "--out must be incident_<n>/corpus or incident_<n>/corpus-<k>, relative to the working directory: $(confine_text "$out")"
+confine_rundir "$run_dir" "the run directory"
+confine_path "$out" --out any
+case "$CONFINE_TYPE" in file) confine_refuse "--out is not a directory: $(confine_text "$out")" ;; esac
+confine_disclosures_ok "$run_dir" ||
+  confine_refuse "$run_dir/disclosures.tsv is not a regular file of its own with the disclosure header, so the collection could not be recorded"
 # A second pass into the same --out would mix into, or truncate, the first one's corpus.
 for f in signatures.jsonl transactions.jsonl collection-gaps.tsv; do
   if [ -e "$out/$f" ] || [ -L "$out/$f" ]; then
-    echo "collect.sh: $out already holds a collected corpus ($f) — use a new --out (resume there with --before)." >&2
-    exit 2
+    confine_refuse "$out already holds a collected corpus ($f); use a new --out (resume there with --before)"
   fi
 done
 
@@ -291,27 +283,26 @@ fi
 # mktemp -d creates the directory with mode 0700, before anything is written; curl's
 # stderr, a copy of the signature list (written through descriptor 6) and the fetch
 # list live there.
-tmp="$(mktemp -d "${TMPDIR:-/tmp}/dnr_collect.XXXXXX")" || {
-  echo "[blocker] cannot create a private temp directory." >&2; exit 3; }
+if confine_scratch dnr_collect; then
+  tmp=$CONFINE_SCRATCH
+elif [ $? -eq 2 ]; then
+  echo "[blocker] cannot create a private temp directory: TMPDIR lies inside the working directory; set it to a directory outside the tree." >&2; exit 3
+else
+  echo "[blocker] cannot create a private temp directory." >&2; exit 3
+fi
 trap 'rm -rf "$tmp"' EXIT
 errf="$tmp/stderr"; sig_copy="$tmp/signatures.jsonl"; todo="$tmp/signatures.todo"
 exec 6>"$sig_copy"
 
-mkdir -p "$out" || exit 2
-# Rule 11d: an incident_<n>/ directory (the --out itself or its parent) ignores itself
-# when it has no .gitignore of its own, so the corpus never shows in git status.
-for d in "$out" "$(dirname "$out")"; do
-  case "$(basename "$d")" in
-    incident_*) [ -e "$d/.gitignore" ] || printf '*\n' > "$d/.gitignore" ;;
-  esac
-done
+if [ ! -d "$out" ]; then
+  confine_mkdir "$out" || confine_refuse "cannot create $out"
+fi
 # The corpus files are created here (set -C: never over an existing file) and written
 # only through these descriptors (3: signatures, 4: transactions, 5: gaps), never
 # reopened by name.
 sig_file="$out/signatures.jsonl"; tx_file="$out/transactions.jsonl"; gaps="$out/collection-gaps.tsv"
 if ! { exec 3>"$sig_file" 4>"$tx_file" 5>"$gaps"; } 2>/dev/null; then
-  echo "collect.sh: cannot create the corpus files in $out (it is not writable, or one of them appeared after the check) — use a new --out." >&2
-  exit 2
+  confine_refuse "cannot create the corpus files in $out (it is not writable, or one of them appeared after the check); use a new --out"
 fi
 ngaps=0; gaps_whole=1; wfail=""
 # say <text>: one line on stdout, or where the caller sends it, written by a subshell.
@@ -327,11 +318,17 @@ say() { ( printf '%s\n' "$*" ) 2>/dev/null; }
 # with the subshell, never in another file.
 put() { ( trap '' INT TERM HUP; printf '%s\n' "$2" ) >&"$1"; }
 
-# Provider domain, for disclosure under OUTPUT-RULES.md Rule 11b: strip the scheme,
-# any userinfo, path, query and fragment, then keep the host's last two DNS labels (an
-# IP address, or a host of one or two labels, is kept whole).
-provider="$(printf '%s' "$RPC_URL" | sed -E -e 's|^[A-Za-z][A-Za-z0-9+.-]*://||' -e 's|^[^/?#]*@||' \
-  -e 's|[/?#].*$||' -e 's|^.*\.([^.]+\.[A-Za-z][^.:]*)\.?(:[0-9]*)?$|\1\2|')"
+# Provider domain, for disclosure under OUTPUT-RULES.md Rule 11b: the host's last two
+# DNS labels (an IP address, or a host of one or two labels, is kept whole), with no
+# scheme, userinfo, path, query or fragment.
+confine_service "$RPC_URL"
+provider=$CONFINE_SERVICE
+# Rule 11b: the row goes into incident_<n>/disclosures.tsv before the first call.
+if ! confine_disclose "$run_dir" scripts/dnr/collect.sh "$provider" \
+     "account addresses (getSignaturesForAddress, then getTransaction for their signatures)" "${addrs[@]}"; then
+  echo "[blocker] cannot add the collection's row to $run_dir/disclosures.tsv, so nothing was sent; the corpus files in $out are empty: collect into a new --out once the file is fixed." >&2
+  exit 3
+fi
 say "provider: $provider   (Rule 11b: this provider received the queried addresses)"
 say "addresses: ${#addrs[@]}   window: since=$since until=$until before=${before_start:-<newest>}   caps: max_pages=$max_pages max_tx=$max_tx"
 
