@@ -8,8 +8,9 @@
 //! value; and a lone surrogate left by a `\u` escape refuses the line, unless a
 //! later copy of its key replaced it. The recipes' own bounds are kept too: an
 //! integer literal of more than 20 digits, or `-0`, anywhere in the line, refuses
-//! it, and so does nesting deeper than 200 levels anywhere in the text (jq parses
-//! at most 256), a value a later duplicate key replaces included.
+//! it, and so does nesting deeper than 128 levels anywhere in the text (jq gives an
+//! object two of its 256 parser slots), counted on the text before it is parsed,
+//! so a value a later duplicate key replaces counts too ([`too_deep`]).
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -19,7 +20,43 @@ use crate::num::{jq_number, py_float_repr, MAX_INT_DIGITS};
 
 /// The deepest nesting a line may have, the top-level object being 1; one more
 /// `[` or `{` makes the line malformed.
-pub const MAX_DEPTH: usize = 200;
+pub const MAX_DEPTH: usize = 128;
+
+/// The recipes' `_too_deep`: true when the brackets outside strings in a line nest
+/// deeper than [`MAX_DEPTH`]. A string, its escapes included, is one token, as is
+/// one that never ends, which runs to the end of the line: one pass, whatever the
+/// line holds. Unmatched closing brackets count down, as in the recipes.
+pub fn too_deep(text: &[u8]) -> bool {
+    if text.iter().filter(|&&c| c == b'[' || c == b'{').count() <= MAX_DEPTH {
+        return false;
+    }
+    let mut depth: i64 = 0;
+    let mut i = 0;
+    while i < text.len() {
+        match text[i] {
+            b'"' => {
+                i += 1;
+                while i < text.len() && text[i] != b'"' {
+                    i += if text[i] == b'\\' { 2 } else { 1 };
+                }
+                i += 1;
+            }
+            b'[' | b'{' => {
+                depth += 1;
+                if depth > MAX_DEPTH as i64 {
+                    return true;
+                }
+                i += 1;
+            }
+            b']' | b'}' => {
+                depth -= 1;
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    false
+}
 
 /// Objects with more keys than this look up repeated keys through a map.
 const INDEXED_KEYS: usize = 32;
@@ -610,6 +647,45 @@ mod tests {
         assert!(py(r#"{"a": -0, "a": 1}"#).is_none());
         let deep = format!("{}{}", "[".repeat(MAX_DEPTH + 1), "]".repeat(MAX_DEPTH + 1));
         assert!(py(&deep).is_none());
+    }
+
+    fn objects(n: usize) -> String {
+        format!("{}1{}", "{\"a\":".repeat(n), "}".repeat(n))
+    }
+
+    #[test]
+    fn depth_is_counted_on_the_text() {
+        assert!(!too_deep(objects(128).as_bytes()));
+        assert!(py(&objects(128)).is_some());
+        assert!(too_deep(objects(129).as_bytes()));
+        let mixed = format!(
+            "{}{}{}",
+            "{\"a\":".repeat(100),
+            "[".repeat(29),
+            "]".repeat(29)
+        );
+        assert!(too_deep(mixed.as_bytes()));
+        // A replaced value counts; brackets inside a string, escaped quotes included, do not.
+        let replaced = format!("{{\"x\":{},\"x\":1}}", "[".repeat(150) + &"]".repeat(150));
+        assert!(too_deep(replaced.as_bytes()));
+        let quoted = format!("{{\"x\":\"\\\"{}\"}}", "[".repeat(300));
+        assert!(!too_deep(quoted.as_bytes()));
+        // Closing brackets first count down.
+        let down = format!("{}{}", "]".repeat(200), "[".repeat(200));
+        assert!(!too_deep(down.as_bytes()));
+        // A string that never ends is one token to the end of the line, read once:
+        // the brackets after its opening quote are inside it.
+        let open = format!(
+            "{{\"note\": \"x{}{}",
+            "\\\"".repeat(512 * 1024),
+            "[".repeat(200)
+        );
+        assert!(!too_deep(open.as_bytes()));
+        assert!(py(&open).is_none());
+        let after = format!("{}\"{}", "[".repeat(129), "\\\"".repeat(512 * 1024));
+        assert!(too_deep(after.as_bytes()));
+        // A backslash that ends the line ends the string before it.
+        assert!(!too_deep(format!("\"{}\\", "[".repeat(200)).as_bytes()));
     }
 
     #[test]

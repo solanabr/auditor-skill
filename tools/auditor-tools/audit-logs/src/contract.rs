@@ -9,7 +9,7 @@ use std::io::{self, BufRead, BufReader};
 use std::path::PathBuf;
 
 use crate::confine::open_checked;
-use crate::json::{parse_line, Value};
+use crate::json::{parse_line, too_deep, Value};
 
 /// What one pass skipped: later copies of a transaction, and per input the
 /// malformed lines (label, count, first line number).
@@ -312,8 +312,9 @@ pub struct Input {
 }
 
 /// Calls `each` with every well-formed transaction of the inputs, in order, once
-/// per signature: lines split on LF only, stripped, UTF-8, one JSON object of
-/// the right shape. Malformed lines and later copies are counted in `stats`.
+/// per signature: lines split on LF only, stripped, UTF-8, nested at most 128 deep
+/// on their text, one JSON object of the right shape. Malformed lines and later
+/// copies are counted in `stats`.
 pub fn for_each_record<F>(inputs: Vec<Input>, stats: &mut Stats, mut each: F) -> io::Result<()>
 where
     F: FnMut(&Value) -> io::Result<()>,
@@ -341,6 +342,7 @@ where
             }
             let tx = std::str::from_utf8(line)
                 .ok()
+                .filter(|text| !too_deep(text.as_bytes()))
                 .and_then(parse_line)
                 .filter(shaped);
             let Some(tx) = tx else {

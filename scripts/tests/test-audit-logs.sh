@@ -372,14 +372,14 @@ if [[ "$literal" == 1 ]]; then
 fi
 
 # The recipes' bounds, each case next to a clean line: balances whose lists differ
-# in length or name more indexes than there are keys, nesting past 200 levels
-# (counted on the text, a value a later duplicate key replaces included),
-# integers outside u64, negative indexes, an empty program id, integer literals of
-# more than 20 digits or -0 anywhere in a line, and the characters a key, program
-# id or version may not hold, which deltas and frames print escaped, as profile does
-# in a version that is not a string (one case per character of profile.sh's own
-# _UNSAFE list). deltas lamports prints a balance with no account key as #<index>,
-# and says so on stderr.
+# in length or name more indexes than there are keys, nesting past 128 levels
+# (counted on the text, objects and arrays alike, a value a later duplicate key
+# replaces included), integers outside u64, negative indexes, an empty program id,
+# integer literals of more than 20 digits or -0 anywhere in a line, and the
+# characters a key, program id or version may not hold, which deltas and frames
+# print escaped, as profile does in a version that is not a string (one case per
+# character of profile.sh's own _UNSAFE list). deltas lamports prints a balance
+# with no account key as #<index>, and says so on stderr.
 python3 -I - "$WT/incident_1/rules" "$DNR/profile.sh" <<'PY'
 import json, os, re, sys
 d = sys.argv[1]
@@ -398,6 +398,12 @@ clean = tx("SigRulesClean", {"preBalances": [10, 20], "postBalances": [5, 25]})
 def deep(sig, n, prefix=b"", suffix=b""):
     return (b'{"meta":{"x":' + prefix + b"[" * (n - 2) + b"]" * (n - 2) + suffix + b'},"transaction":{"signatures":["'
             + sig.encode() + b'"]}}')
+def objects(sig, n, arrays=0):
+    """A line whose deepest bracket is at n: the line's object and meta, then n - 2 - arrays
+    nested objects, then arrays nested arrays."""
+    k = n - 2 - arrays
+    return (b'{"meta":{"x":' + b'{"a":' * k + b"[" * arrays + b"1" + b"]" * arrays + b"}" * k
+            + b'},"transaction":{"signatures":["' + sig.encode() + b'"]}}')
 cases = {
     "balances": [
         tx("SigLen1", {"preBalances": [1, 2], "postBalances": [1]}),
@@ -406,9 +412,13 @@ cases = {
            {"accountKeys": ["OnlyKey"]}),
     ],
     "depth": [
-        deep("SigDepth200", 200),
-        deep("SigDepth201", 201),
-        deep("SigDupDepth", 250, suffix=b',"x":1'),
+        deep("SigDepth128", 128),
+        deep("SigDepth129", 129),
+        objects("SigObjects128", 128),
+        objects("SigObjects129", 129),
+        objects("SigMixed128", 128, arrays=28),
+        objects("SigMixed129", 129, arrays=29),
+        deep("SigDupDepth", 150, suffix=b',"x":1'),
         b'{"meta":{"x":"' + b"[" * 300 + b'"},"transaction":{"signatures":["SigBracketsInAString"]}}',
     ],
     "bounds": [
@@ -460,6 +470,33 @@ for name, lines in cases.items():
         f.write(clean + b"\n" + b"\n".join(lines) + b"\n")
 PY
 for f in balances depth bounds indexes integers chars versions; do
+  same5 "recipe bounds, $f.jsonl" "incident_1/rules/$f.jsonl"
+done
+# A string that never ends, 1 MiB of escaped quotes then 200 brackets, before and
+# after the clean line: the depth pre-scan reads it in one pass, so audit-logs ends
+# each recipe within 10 seconds, and it and the scripts count one malformed line.
+python3 -I - "$WT/incident_1/rules" <<'PY'
+import os, sys
+d = sys.argv[1]
+clean = open(os.path.join(d, "balances.jsonl"), "rb").read().split(b"\n")[0]
+line = b'{"note": "x ' + b'\\"' * (512 * 1024) + b"[" * 200
+with open(os.path.join(d, "long-first.jsonl"), "wb") as f:
+    f.write(line + b"\n" + clean + b"\n")
+with open(os.path.join(d, "long-last.jsonl"), "wb") as f:
+    f.write(clean + b"\n" + line + b"\n")
+PY
+for f in long-first long-last; do
+  slow=""
+  for r in profile frames "frames --instructions" "deltas lamports" "deltas tokens"; do
+    # $r is the subcommand, then its option or mode: separate words.
+    ( cd "$WT" && exec "$BIN" $r "incident_1/rules/$f.jsonl" ) > /dev/null 2>&1 &
+    pid=$!
+    n=0
+    while kill -0 "$pid" 2>/dev/null && [[ "$n" -lt 100 ]]; do sleep 0.1; n=$((n + 1)); done
+    if kill -0 "$pid" 2>/dev/null; then kill -KILL "$pid" 2>/dev/null; slow="$slow $r;"; fi
+    wait "$pid" 2>/dev/null
+  done
+  eq "recipe bounds, $f.jsonl: audit-logs reads a 1 MiB string that never ends in one pass" "$slow" ""
   same5 "recipe bounds, $f.jsonl" "incident_1/rules/$f.jsonl"
 done
 agree lamports -- incident_1/rules/balances.jsonl
