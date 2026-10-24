@@ -12,7 +12,8 @@ name = "audit-logs"
 path = "src/main.rs"
 
 # One dependency, libc, already in the workspace lockfile, for openat, linkat and
-# unlinkat. The JSON reader, the number formats and the exact integers are written
-# here, so the output matches the scripts byte for byte.
+# unlinkat, without its default features, as audit-scan and audit-mem get it (through
+# sha2 and cpufeatures). The JSON reader, the number formats and the exact integers
+# are written here, so the output matches the scripts byte for byte.
 [dependencies]
-libc = "0.2"
+libc = { version = "0.2", default-features = false }

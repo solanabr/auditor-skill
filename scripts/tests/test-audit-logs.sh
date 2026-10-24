@@ -59,8 +59,10 @@ T="$(cd "$T" && pwd -P)" || exit 1
 #    package laid out as in the repository, beside a copy of the three recipes and of
 #    scripts/lib/confine.sh (SRC), a workspace of its own with the release profile of
 #    tools/auditor-tools and a lockfile of its two packages, audit-logs and libc,
-#    taken from tools/auditor-tools/Cargo.lock. The package has one dependency, libc, no build
-#    script, and no code that opens a socket, runs a program or reads the environment.
+#    taken from tools/auditor-tools/Cargo.lock. The package has one dependency, libc,
+#    without its default features (so a workspace build gives the libc of audit-scan and
+#    audit-mem no other feature), no build script, and no code that opens a socket, runs
+#    a program or reads the environment.
 #    The files it compares at start, to refuse a stale build, are the recipes,
 #    scripts/lib/confine.sh, its Cargo.toml and every file of its src/.
 # ---------------------------------------------------------------------------
@@ -71,8 +73,9 @@ else
   ok "source: audit-logs names no network, process or environment API"
 fi
 deps="$(awk '/^\[/ { d = ($0 ~ /dependencies\]$/) } d && /=/' "$PKG/Cargo.toml")"
-if [[ "$deps" == 'libc = "0.2"' && ! -e "$PKG/build.rs" ]]; then ok "source: audit-logs has one dependency, libc, and no build script"
-else bad "source: audit-logs has other dependencies, or a build script ($deps)"; fi
+if [[ "$deps" == 'libc = { version = "0.2", default-features = false }' && ! -e "$PKG/build.rs" ]]; then
+  ok "source: audit-logs has one dependency, libc without its default features, and no build script"
+else bad "source: audit-logs has other dependencies, libc with its default features, or a build script ($deps)"; fi
 unlisted=""
 for f in scripts/dnr/profile.sh scripts/dnr/frames.py scripts/dnr/deltas.py scripts/lib/confine.sh \
     tools/auditor-tools/audit-logs/Cargo.toml "$PKG"/src/*.rs; do
