@@ -1,0 +1,88 @@
+# Hostile argument vectors for scripts/runner/target.sh. test-runners.sh runs each one under each bash on
+# the machine, from a working directory that is a git repository (a cargo workspace, Anchor.toml and a
+# package lock) holding the run directories audit_1, whose exec-mode is native, with patches/F-1.patch,
+# F-3.patch, F-2.patch of 16 MiB and one byte, and src.git, a copy git-ro.sh copy made, and incident_1, with no
+# exec-mode; the file a.rs; the directory src/; and linkdir, a symbolic link to audit_1. AUDITOR_EXEC_MODE,
+# AUDITOR_RUN_TIMEOUT and TOOLS_VERSION are not set.
+# One case per line: <exit status><TAB><the one stderr line><TAB><argument>[<TAB><argument>...]. Each
+# case prints nothing on stdout, makes no scratch directory and changes nothing in the working directory.
+64	target: refused: usage: target.sh <action> --run <R> --src <dir> [--rev <commit>] [--dir <path>] [--patch <R>/patches/<ID>.patch] [--package <name>] [--program <name>] [--timeout <seconds>] [--mode <mode>], with the actions anchor-build, anchor-test, build-sbf, cargo-test, clippy and npm-ci	nope
+64	target: refused: usage: target.sh <action> --run <R> --src <dir> [--rev <commit>] [--dir <path>] [--patch <R>/patches/<ID>.patch] [--package <name>] [--program <name>] [--timeout <seconds>] [--mode <mode>], with the actions anchor-build, anchor-test, build-sbf, cargo-test, clippy and npm-ci	--help
+64	target: refused: usage: target.sh <action> --run <R> --src <dir> [--rev <commit>] [--dir <path>] [--patch <R>/patches/<ID>.patch] [--package <name>] [--program <name>] [--timeout <seconds>] [--mode <mode>], with the actions anchor-build, anchor-test, build-sbf, cargo-test, clippy and npm-ci	BUILD-SBF
+64	target: refused: give --run <R>, the run directory (usage: target.sh <action> --run <R> --src <dir> [--rev <commit>] [--dir <path>] [--patch <R>/patches/<ID>.patch] [--package <name>] [--program <name>] [--timeout <seconds>] [--mode <mode>], with the actions anchor-build, anchor-test, build-sbf, cargo-test, clippy and npm-ci)	build-sbf
+64	target: refused: --run needs a value	build-sbf	--run
+64	target: refused: give --src, the source to copy (usage: target.sh <action> --run <R> --src <dir> [--rev <commit>] [--dir <path>] [--patch <R>/patches/<ID>.patch] [--package <name>] [--program <name>] [--timeout <seconds>] [--mode <mode>], with the actions anchor-build, anchor-test, build-sbf, cargo-test, clippy and npm-ci)	build-sbf	--run	audit_1
+64	target: refused: give --run once	build-sbf	--run	audit_1	--run	audit_1	--src	.
+64	target: refused: --run=audit_1 is not an argument target.sh takes (usage: target.sh <action> --run <R> --src <dir> [--rev <commit>] [--dir <path>] [--patch <R>/patches/<ID>.patch] [--package <name>] [--program <name>] [--timeout <seconds>] [--mode <mode>], with the actions anchor-build, anchor-test, build-sbf, cargo-test, clippy and npm-ci)	build-sbf	--run=audit_1	--src	.
+64	target: refused: -x is not an argument target.sh takes (usage: target.sh <action> --run <R> --src <dir> [--rev <commit>] [--dir <path>] [--patch <R>/patches/<ID>.patch] [--package <name>] [--program <name>] [--timeout <seconds>] [--mode <mode>], with the actions anchor-build, anchor-test, build-sbf, cargo-test, clippy and npm-ci)	build-sbf	-x
+64	target: refused: extra is not an argument target.sh takes (usage: target.sh <action> --run <R> --src <dir> [--rev <commit>] [--dir <path>] [--patch <R>/patches/<ID>.patch] [--package <name>] [--program <name>] [--timeout <seconds>] [--mode <mode>], with the actions anchor-build, anchor-test, build-sbf, cargo-test, clippy and npm-ci)	build-sbf	--run	audit_1	--src	.	extra
+64	target: refused: -- is not an argument target.sh takes (usage: target.sh <action> --run <R> --src <dir> [--rev <commit>] [--dir <path>] [--patch <R>/patches/<ID>.patch] [--package <name>] [--program <name>] [--timeout <seconds>] [--mode <mode>], with the actions anchor-build, anchor-test, build-sbf, cargo-test, clippy and npm-ci)	build-sbf	--run	audit_1	--src	.	--
+64	target: refused: --rev needs a value	build-sbf	--run	audit_1	--src	.	--rev
+64	target: refused: --RUN is not an argument target.sh takes (usage: target.sh <action> --run <R> --src <dir> [--rev <commit>] [--dir <path>] [--patch <R>/patches/<ID>.patch] [--package <name>] [--program <name>] [--timeout <seconds>] [--mode <mode>], with the actions anchor-build, anchor-test, build-sbf, cargo-test, clippy and npm-ci)	build-sbf	--run	audit_1	--src	.	--RUN	audit_1
+64	target: refused: --run must be a run directory named audit_<n> or incident_<n> in the working directory: audit_	build-sbf	--run	audit_	--src	.
+64	target: refused: --run must be a run directory named audit_<n> or incident_<n> in the working directory: audit_1/	build-sbf	--run	audit_1/	--src	.
+64	target: refused: --run must be a run directory named audit_<n> or incident_<n> in the working directory: ../audit_1	build-sbf	--run	../audit_1	--src	.
+64	target: refused: --run must be a run directory named audit_<n> or incident_<n> in the working directory: /tmp/audit_1	build-sbf	--run	/tmp/audit_1	--src	.
+64	target: refused: --run must be a run directory named audit_<n> or incident_<n> in the working directory: linkdir	build-sbf	--run	linkdir	--src	.
+64	target: refused: --run is not an existing directory: audit_9	build-sbf	--run	audit_9	--src	.
+64	target: refused: --run must be a run directory named audit_<n> or incident_<n> in the working directory: src	build-sbf	--run	src	--src	.
+64	target: refused: --run must be a run directory named audit_<n> or incident_<n> in the working directory: --src	build-sbf	--run	--src	--src	.
+64	target: refused: --src must be relative to the working directory: /tmp	build-sbf	--run	audit_1	--src	/tmp
+64	target: refused: --src has an empty, . or .. component: ../wt	build-sbf	--run	audit_1	--src	../wt
+64	target: refused: --src may not start with - or ~: -x	build-sbf	--run	audit_1	--src	-x
+64	target: refused: --src may not start with - or ~: ~/x	build-sbf	--run	audit_1	--src	~/x
+64	target: refused: --src passes through a symbolic link: linkdir	build-sbf	--run	audit_1	--src	linkdir
+64	target: refused: --src is not an existing directory: missing	build-sbf	--run	audit_1	--src	missing
+64	target: refused: --src is not an existing directory: a.rs	build-sbf	--run	audit_1	--src	a.rs
+64	target: refused: --src has an empty, . or .. component: src/../src	build-sbf	--run	audit_1	--src	src/../src
+64	target: refused: --src is a run directory; give the source tree, or a copy git-ro.sh copy made: audit_1	build-sbf	--run	audit_1	--src	audit_1
+64	target: refused: --src in a run directory takes only <R>/src.git or <R>/src-<k>.git, a copy git-ro.sh copy made: audit_1/poc	build-sbf	--run	audit_1	--src	audit_1/poc
+64	target: refused: --src in a run directory takes only <R>/src.git or <R>/src-<k>.git, a copy git-ro.sh copy made: audit_1/src-x.git	build-sbf	--run	audit_1	--src	audit_1/src-x.git
+64	target: refused: --src names no copy that git-ro.sh copy made: audit_1/src-2.git	build-sbf	--run	audit_1	--src	audit_1/src-2.git
+64	target: refused: --src names a copy in incident_1, not in --run's audit_1: incident_1/src.git	build-sbf	--run	audit_1	--src	incident_1/src.git
+64	target: refused: --src is the audit-mem store, not a source tree: .audit-memory	build-sbf	--run	audit_1	--src	.audit-memory
+64	target: refused: --rev needs a repository --src, and src is not the top level of one	build-sbf	--run	audit_1	--src	src	--rev	HEAD
+64	target: refused: --rev takes a commit, a branch or a tag name (letters, digits and ._/~^+-, at most 255), not -x	build-sbf	--run	audit_1	--src	.	--rev	-x
+64	target: refused: --rev takes a commit, a branch or a tag name (letters, digits and ._/~^+-, at most 255), not HEAD..main	build-sbf	--run	audit_1	--src	.	--rev	HEAD..main
+64	target: refused: --rev takes a commit, a branch or a tag name (letters, digits and ._/~^+-, at most 255), not HEAD@{1}	build-sbf	--run	audit_1	--src	.	--rev	HEAD@{1}
+64	target: refused: --rev takes a commit, a branch or a tag name (letters, digits and ._/~^+-, at most 255), not a b	build-sbf	--run	audit_1	--src	.	--rev	a b
+64	target: refused: --rev takes a commit, a branch or a tag name (letters, digits and ._/~^+-, at most 255), not ;x	build-sbf	--run	audit_1	--src	.	--rev	;x
+64	target: refused: --rev takes a commit, a branch or a tag name (letters, digits and ._/~^+-, at most 255), not :/fix	build-sbf	--run	audit_1	--src	.	--rev	:/fix
+64	target: refused: --dir takes a relative path inside the source, of letters, digits and ._-, not /x	build-sbf	--run	audit_1	--src	.	--dir	/x
+64	target: refused: --dir has a . or .. component: ../x	build-sbf	--run	audit_1	--src	.	--dir	../x
+64	target: refused: --dir has a . or .. component: a/../b	build-sbf	--run	audit_1	--src	.	--dir	a/../b
+64	target: refused: --dir takes a relative path inside the source, of letters, digits and ._-, not a//b	build-sbf	--run	audit_1	--src	.	--dir	a//b
+64	target: refused: --dir takes a relative path inside the source, of letters, digits and ._-, not a/	build-sbf	--run	audit_1	--src	.	--dir	a/
+64	target: refused: --dir takes a relative path inside the source, of letters, digits and ._-, not -x	build-sbf	--run	audit_1	--src	.	--dir	-x
+64	target: refused: --dir has a . or .. component: .	build-sbf	--run	audit_1	--src	.	--dir	.
+64	target: refused: --dir takes a relative path inside the source, of letters, digits and ._-, not a b	build-sbf	--run	audit_1	--src	.	--dir	a b
+64	target: refused: --patch takes audit_1/patches/<ID>.patch, <ID> F-<n> or INC-<n>.<k>, not audit_1/patches/x.patch	build-sbf	--run	audit_1	--src	.	--patch	audit_1/patches/x.patch
+64	target: refused: --patch takes audit_1/patches/<ID>.patch, <ID> F-<n> or INC-<n>.<k>, not audit_1/patches/F-1.diff	build-sbf	--run	audit_1	--src	.	--patch	audit_1/patches/F-1.diff
+64	target: refused: --patch takes audit_1/patches/<ID>.patch, <ID> F-<n> or INC-<n>.<k>, not incident_1/patches/INC-1.1.patch	build-sbf	--run	audit_1	--src	.	--patch	incident_1/patches/INC-1.1.patch
+64	target: refused: --patch is not an existing regular file: audit_1/patches/F-9.patch	build-sbf	--run	audit_1	--src	.	--patch	audit_1/patches/F-9.patch
+64	target: refused: --patch is larger than 16 MiB: audit_1/patches/F-2.patch	build-sbf	--run	audit_1	--src	.	--patch	audit_1/patches/F-2.patch
+64	target: refused: --patch passes through a symbolic link: linkdir/patches/F-1.patch	build-sbf	--run	audit_1	--src	.	--patch	linkdir/patches/F-1.patch
+64	target: refused: --patch must be relative to the working directory: /tmp/F-1.patch	build-sbf	--run	audit_1	--src	.	--patch	/tmp/F-1.patch
+64	target: refused: --patch needs a repository --src, and src is not the top level of one	build-sbf	--run	audit_1	--src	src	--patch	audit_1/patches/F-1.patch
+64	target: refused: --package is for build-sbf, cargo-test and clippy; anchor-build takes --program	anchor-build	--run	audit_1	--src	.	--package	demo
+64	target: refused: --program is for anchor-build and anchor-test	build-sbf	--run	audit_1	--src	.	--program	demo
+64	target: refused: --package is for build-sbf, cargo-test and clippy	npm-ci	--run	audit_1	--src	.	--package	demo
+64	target: refused: --package takes a package name (letters, digits, _ and -, at most 64), not ../x	build-sbf	--run	audit_1	--src	.	--package	../x
+64	target: refused: --package takes a package name (letters, digits, _ and -, at most 64), not -demo	build-sbf	--run	audit_1	--src	.	--package	-demo
+64	target: refused: --program takes a program name (letters, digits, _ and -, at most 64), not a.b	anchor-test	--run	audit_1	--src	.	--program	a.b
+64	target: refused: --timeout takes a whole number of seconds, not 0	build-sbf	--run	audit_1	--src	.	--timeout	0
+64	target: refused: --timeout takes a whole number of seconds, not x	build-sbf	--run	audit_1	--src	.	--timeout	x
+64	target: refused: --timeout takes a whole number of seconds, not -1	build-sbf	--run	audit_1	--src	.	--timeout	-1
+64	target: refused: --timeout is 1801 seconds, more than AUDITOR_RUN_TIMEOUT (1800); the user raises AUDITOR_RUN_TIMEOUT where Claude Code runs	build-sbf	--run	audit_1	--src	.	--timeout	1801
+64	target: refused: --timeout takes a whole number of seconds, not 999999	build-sbf	--run	audit_1	--src	.	--timeout	999999
+64	target: refused: --mode takes none, isolated or native, not 'fast'	build-sbf	--run	audit_1	--src	.	--mode	fast
+64	target: refused: --mode takes none, isolated or native, not 'NATIVE'	build-sbf	--run	audit_1	--src	.	--mode	NATIVE
+3	target: blocker: --mode is isolated, but the recorded execution mode is native (audit_1/exec-mode: native; AUDITOR_EXEC_MODE: unset); the mode changes only when the human answers again — nothing was copied or built.	build-sbf	--run	audit_1	--src	.	--mode	isolated
+3	target: blocker: --mode is none, but the recorded execution mode is native (audit_1/exec-mode: native; AUDITOR_EXEC_MODE: unset); the mode changes only when the human answers again — nothing was copied or built.	build-sbf	--run	audit_1	--src	.	--mode	none
+3	target: blocker: no recorded mode: incident_1/exec-mode is missing and AUDITOR_EXEC_MODE is not set (OUTPUT-RULES.md Rule 11a, QUESTIONS.md Q46). Record the human's answer in incident_1/exec-mode and run this again — nothing was copied or built.	cargo-test	--run	incident_1	--src	.
+64	target: refused: --src is longer than 1024 bytes	build-sbf	--run	audit_1	--src	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+64	target: refused: --src holds a control character: ?x	build-sbf	--run	audit_1	--src	x
+64	target: refused: --rev takes a commit, a branch or a tag name (letters, digits and ._/~^+-, at most 255), not aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...	build-sbf	--run	audit_1	--src	.	--rev	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+64	target: refused: --rev takes a commit, a branch or a tag name (letters, digits and ._/~^+-, at most 255), not main?	build-sbf	--run	audit_1	--src	.	--rev	main
+64	target: refused: --dir is longer than 1024 bytes	build-sbf	--run	audit_1	--src	.	--dir	d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d
+64	target: refused: --package takes a package name (letters, digits, _ and -, at most 64), not ppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp	build-sbf	--run	audit_1	--src	.	--package	ppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
