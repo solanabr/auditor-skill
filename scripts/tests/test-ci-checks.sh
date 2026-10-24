@@ -16,9 +16,10 @@
 #      credentials;
 #   5. scripts/check-hygiene.sh fails on each kind of file it names, and on a top-level directory named
 #      commands, agents, skills, hooks, bin, monitors or .claude-plugin in another letter case, also when it
-#      is the last of 3,000 tracked paths; on each load surface at the plugin root unless the allow list
-#      names it; and on a manifest key beyond its list, also at the end of a 1 MiB manifest. It passes the
-#      repository itself, and fails outside a checkout and without jq.
+#      is the last of 3,000 tracked paths; on each load surface at the plugin root, and on a SKILL.md other
+#      than SKILL.md and skills/<name>/SKILL.md in any letter case, unless the allow list names it; and on a
+#      manifest key beyond its list, also at the end of a 1 MiB manifest. It passes the repository itself,
+#      and fails outside a checkout and without jq.
 # Usage (from the repo root): bash scripts/tests/test-ci-checks.sh   (VERBOSE=1 shows each check's output)
 # Builds throwaway files and git repos under ${TMPDIR:-/tmp}; no network; bash >= 3.2.
 set -uo pipefail
@@ -532,6 +533,19 @@ for p in hooks/hooks.json monitors/monitors.json bin/git .mcp.json .LSP.json set
 done
 hysaid "list it in ALLOWED_LOAD_SURFACES"
 hy not-surfaces pass docs/hooks/README.md scripts/bin/tool docs/settings.json tools/x/.mcp.json docs/monitors/x.md
+# a SKILL.md other than SKILL.md and skills/<name>/SKILL.md, in any letter case: with "skills": "./" in the
+# manifest, Claude Code loads <dir>/SKILL.md when the root holds none, and skills/SKILL.md makes skills/ one skill
+hy skill-md-places pass SKILL.md skills/a/SKILL.md skills/B-c/SKILL.md docs/SKILL.md.txt docs/skill-md.md
+for p in decoy/SKILL.md references/decoy/SKILL.md templates/a/b/SKILL.md skills/SKILL.md skills/a/b/SKILL.md \
+         skills/a/skill.md docs/Skill.MD skill.md vendor/x/skills/y/SKILL.md; do
+  hy "skill-md-$(printf '%s' "$p" | tr '/' '_')" fail SKILL.md "$p"
+done
+hysaid "vendor/x/skills/y/SKILL.md: a SKILL.md other than SKILL.md and skills/<name>/SKILL.md"
+sed "s#^ALLOWED_LOAD_SURFACES=''\$#ALLOWED_LOAD_SURFACES='templates/a/b/SKILL.md'#" "$ROOT/scripts/check-hygiene.sh" \
+  > "$T/hyg-allow-skill.sh"
+HYG="$T/hyg-allow-skill.sh"
+hy allow-skill-md pass SKILL.md templates/a/b/SKILL.md; hy allow-skill-md-other fail SKILL.md templates/a/c/SKILL.md
+HYG="$ROOT/scripts/check-hygiene.sh"
 # ALLOWED_LOAD_SURFACES lets a listed path through, in its exact letter case; a path with a space never matches
 sed "s#^ALLOWED_LOAD_SURFACES=''\$#ALLOWED_LOAD_SURFACES='hooks/hooks.json .mcp.json hooks/a hooks/b'#" "$ROOT/scripts/check-hygiene.sh" \
   > "$T/hyg-allow.sh"

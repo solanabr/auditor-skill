@@ -212,8 +212,11 @@ It reads every file whose frontmatter Claude Code loads: each `.md` file at any 
 
 `scripts/check-hygiene.sh` fails when the plugin root gains a path Claude Code loads beyond those commands,
 agents and `SKILL.md` files: `hooks/`, `monitors/` or `bin/`, or `.mcp.json`, `.lsp.json` or `settings*.json`,
-at the root and in any letter case, or a `.claude/` directory below it. Read such a path like code before you
-add it to `ALLOWED_LOAD_SURFACES` in the script (empty today). `.claude-plugin/` holds only `plugin.json` and
+at the root and in any letter case, or a `.claude/` directory below it. It fails too on a `SKILL.md`, in any
+letter case, other than the root's and `skills/<name>/SKILL.md`: with `"skills": "./"` in `plugin.json`,
+Claude Code loads `<dir>/SKILL.md` one level down when the root holds none, and a `skills/SKILL.md` makes all
+of `skills/` one skill. Read such a path like code before you add it to `ALLOWED_LOAD_SURFACES` in the script
+(empty today). `.claude-plugin/` holds only `plugin.json` and
 `marketplace.json`, and each of their keys is on the script's list; add a key there only once you know what
 Claude Code loads from it. A top-level `commands`, `agents`, `skills`, `hooks`, `bin`, `monitors` or
 `.claude-plugin` directory named in another letter case fails too: a case-insensitive file system loads it
