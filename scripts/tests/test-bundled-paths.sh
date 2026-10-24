@@ -16,7 +16,7 @@
 #   6. the .audit-memory store check runs case-insensitively everywhere: no line pairs `ls-files` with
 #      `.audit-memory` without --icase-pathspecs (the canonical form is pinned in OUTPUT-RULES.md and
 #      pre-scan.md), since on a case-insensitive filesystem a tracked .AUDIT-MEMORY/ is the same directory;
-#   7. /auditor:hunt, /auditor:respond and incident-responder name every corpus file they read (references/,
+#   7. /auditor:hunt, /auditor:respond, incident-responder and auditor:dnr-analyze name every corpus file they read (references/,
 #      templates/, checklists/, discovery/, OUTPUT-RULES.md, …) from ${CLAUDE_PLUGIN_ROOT}: no relative corpus
 #      directory and no bare corpus file name. Run-directory outputs (audit_<n>/threat-model.md,
 #      INCIDENT_REPORT.md) are not corpus files.
@@ -285,7 +285,7 @@ done
 [ "$store_bad" -eq 0 ] && ok "no case-sensitive .audit-memory store check anywhere"
 
 # ---- 7. the D&R commands and agent read the corpus from the root ----------------------------------------
-CORPUS_FILES="commands/hunt.md commands/respond.md agents/incident-responder.md"
+CORPUS_FILES="commands/hunt.md commands/respond.md agents/incident-responder.md skills/dnr-analyze/SKILL.md"
 # Every corpus file name (escaped for ERE), so a bare `log-sources.md` or `OUTPUT-RULES.md` counts as well.
 CORPUS_NAMES=$( { find references templates checklists discovery -name '*.md'
   printf '%s\n' OUTPUT-RULES.md QUESTIONS.md SKILL.md FULL-AUDIT.md; } | sed -e 's#.*/##' -e 's#[.]#\\.#g' | sort -u \
