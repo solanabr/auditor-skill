@@ -226,6 +226,9 @@ under the lowercase name.
 - **`corpus-check`, job "macOS, bash 3.2 and BSD tools (advisory)"**: the same checks, except the
   pull-request attribution check, on `macos-26`, with a stock PATH plus `~/.cargo/bin` that its first step
   asserts. It is not a required check. A newer push to the same ref cancels its older run.
+- **`corpus-check`, job "auditor-tools build and audit-logs parity"**: builds `tools/auditor-tools` as a
+  user does (`cargo build --release --locked`) with warnings denied, runs the unit tests, and runs
+  `scripts/tests/test-audit-logs.sh` against that release binary. It is not a required check.
 - **`plugin-validate`**: weekly and on demand, `claude plugin validate --strict` over the repository
   directory. Advisory. Claude Code comes from `.github/plugin-validate/`: an exact version in `package.json`,
   every package's integrity hash in `package-lock.json`, installed with `npm ci --ignore-scripts`. The native
