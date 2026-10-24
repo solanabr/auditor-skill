@@ -104,7 +104,61 @@ exploit earns `[FIX-VERIFIED]`. If there is no executable PoC to run, stop at
   `/auditor:re-audit` step 4b.
   - [ ] No adjacent path regressed.
 
-## 4. Verdict → report's Auditor Verification field
+## 4. Post-patch validation (opt-in, isolated mode only)
+
+Only with `/auditor:patch --post-patch-validation`. Trail of Bits `post-patch-validation` checks the patch
+against the finding, variants of its root cause and behavior that should not change. Its runner creates, locks
+and prunes git worktrees in the repository it is given, and its checks build and run the target with the
+caller's privileges and an open network. So it runs only in Rule 11a **isolated** mode, inside the isolated
+runner, on a disposable clone of its own: never on the client checkout and never on the §1 copy. In any other
+mode the first block prints the line to record and runs nothing. `{MODE}` is the recorded mode;
+`{ROOT_CAUSE}` is the finding's root cause and impact in one sentence, without a single quote; `{LEVEL}` is the
+highest evidence level the checks will honestly reach (`source`, `build` or `runtime`, as the skill defines them).
+
+```bash
+PPV_RUNNER="<auditor-skill root>/vendor/trailofbits/plugins/post-patch-validation/skills/post-patch-validation/scripts/post_patch_validation.py"
+if [ "{MODE}" != isolated ]; then
+  echo "post-patch validation: not run: needs isolated mode"
+elif [ ! -f "$PPV_RUNNER" ] || ! command -v uv >/dev/null 2>&1; then
+  echo "post-patch validation: not run: needs the vendored post-patch-validation skill and uv"
+else
+  PPV="$(mktemp -d "${TMPDIR:-/tmp}/ppv-{FINDING_ID}.XXXXXX")" &&        # a fresh directory at an unpredictable path
+    cd "$PPV" &&                                                         # out of the client checkout before any git
+    GIT_NO_LAZY_FETCH=1 git clone --no-local {CHECKOUT} "$PPV/repo" &&   # the disposable clone (Rule 11c), the only repository it touches
+    mkdir "$PPV/plan" &&
+    uv run "$PPV_RUNNER" scaffold --repo "$PPV/repo" --base-ref {COMMIT} \
+      --patch-file {PATH_TO}/{FINDING_ID}.patch --finding-id {FINDING_ID} --finding-summary '{ROOT_CAUSE}' \
+      --evidence-level {LEVEL} --output "$PPV/plan/plan.json" &&
+    echo "post-patch validation: plan at $PPV/plan/plan.json"
+fi
+```
+
+Fill in the plan's checks as the skill's `SKILL.md` describes, at least one of every kind, with any helper
+files under `{PPV}/plan/checks/`; `{PPV}` is the directory the first block printed. Run the runner only
+through these two blocks: the skill's own examples pass `--repo .`, which during an audit is the client
+checkout. Then run the plan:
+
+```bash
+PPV_RUNNER="<auditor-skill root>/vendor/trailofbits/plugins/post-patch-validation/skills/post-patch-validation/scripts/post_patch_validation.py"
+cd "{PPV}" &&                                                          # outside the target tree, as above
+  uv run "$PPV_RUNNER" validate-plan --plan "{PPV}/plan/plan.json" &&
+  uv run "$PPV_RUNNER" run --plan "{PPV}/plan/plan.json" --output "{PPV}/results"   # exit 0, 1 or 10 leaves results/result.json
+```
+
+**Post-patch validation:** {not run: needs isolated mode | not run: <what is missing> | ran: evidence level <source / build / runtime>, assessment <complete / incomplete>}
+- **Findings:** {each `check_id` (kind): message, as `results/result.json` gives it | none}
+- **Gaps:** {each `check_id`: reason | none}
+- **Effect on the verdict:** {none | lowered to `[FIX-INSUFFICIENT]` by `check_id` (kind)}
+
+The result is optional evidence and can only lower the verdict. A finding, a failure it attributes to the
+patched revision (a root-cause variant the patch leaves open, a behavior it changes, a regression it brings
+in), makes a `[FIX-VERIFIED]` or `[FIX-PROPOSED]` verdict `[FIX-INSUFFICIENT]`, with that check as what remains
+open. Read the check and its saved logs first: the runner shows that a check behaved as written, not that it
+is the right check. Passing checks and gaps change nothing, and a passing run never stands in for §2's executed
+revert. List what its checks contacted (package registries, toolchain downloads, hosts the target's code or
+tests reach) under outside services in the report (Rule 11b). Discard `{PPV}` once this section is filled in.
+
+## 5. Verdict → report's Auditor Verification field
 
 Emit exactly one, and write it to the finding's **Auditor Verification** line:
 
@@ -113,6 +167,8 @@ Emit exactly one, and write it to the finding's **Auditor Verification** line:
 | `[FIX-VERIFIED]` | Patch applied to a scratch worktree, rebuilt, and the finding's PoC **re-ran and now reverts**. Optional mutation/blast-radius clean. |
 | `[FIX-INSUFFICIENT]` | The PoC still exploits a residual path, a mutant survives on the patched line, or an adjacent path regressed (blast-radius). State exactly what remains open. |
 | `[FIX-PROPOSED]` | A minimal idiomatic diff re-derived from the code closes the cited bound, but **no executable PoC was available** to run the revert. Verified by reasoning, flagged not-yet-executed — never silently promoted. |
+
+Opt-in Trail of Bits `post-patch-validation` (`/auditor:patch --post-patch-validation`, isolated mode only, on a disposable clone) is optional evidence that can only lower a tier: a finding in its result turns `[FIX-VERIFIED]` or `[FIX-PROPOSED]` into `[FIX-INSUFFICIENT]`, with that check as the reason, and nothing else in its result changes a tier.
 
 **Verdict:** `{FIX-VERIFIED | FIX-INSUFFICIENT | FIX-PROPOSED}`
 **What a maintainer must do to apply:** {e.g. `git am < {FINDING_ID}.patch` on `{COMMIT}`, `cargo build-sbf`, run the crate's own tests.}

@@ -1,7 +1,7 @@
 ---
 name: auditor:patch
-description: Draft and verify a fix for a confirmed finding — a MINIMAL idiomatic unified diff against the pinned audited commit, applied to a scratch worktree and proven by re-running the finding's PoC (it must now revert). Proposal only; the auditor stays read-only on the client tree. Optional mutation + blast-radius evidence. Emits [FIX-VERIFIED] / [FIX-INSUFFICIENT] / [FIX-PROPOSED].
-argument-hint: "<finding-id | INC-n.k> [--verify-with-mutation]"
+description: Draft and verify a fix for a confirmed finding — a MINIMAL idiomatic unified diff against the pinned audited commit, applied to a scratch worktree and proven by re-running the finding's PoC (it must now revert). Proposal only; the auditor stays read-only on the client tree. Optional mutation + blast-radius evidence; opt-in post-patch validation, in isolated mode only, can only lower the tier. Emits [FIX-VERIFIED] / [FIX-INSUFFICIENT] / [FIX-PROPOSED].
+argument-hint: "<finding-id | INC-n.k> [--verify-with-mutation] [--post-patch-validation]"
 allowed-tools: Read, Grep, Glob, Bash, Task
 ---
 
@@ -23,9 +23,11 @@ Produce a *verified fix proposal* for a confirmed finding. Read `OUTPUT-RULES.md
 
 4. **Mutation + blast-radius (optional).** With `--verify-with-mutation`, run **`mewt` mutation** on the patched line(s) via Trail of Bits `mutation-testing` (`references/orchestration/boundary-map.md`) — an uncaught mutant on the fix means the guard is under-tested, so record it and do not overstate the verification. The real interface lives in `templates/patch/VERIFICATION.md` §3: `mewt mutate <path>` (optional) → `mewt run <path>` → `mewt results --target '<path>' --line N`. Always run a **`differential-review` blast-radius check** (Trail of Bits): apply the *same* diff-vs-behavior comparison to confirm the fix closes the exploit path and leaves every other path unchanged — a fix that breaks an adjacent instruction is `[FIX-INSUFFICIENT]`. Without the vendored tooling, use the native fallback in `references/orchestration/boundary-map.md` ("Fix blast-radius": the `/auditor:re-audit` 4b differential execution).
 
-5. **Emit outputs** under `audit_<n>/patches/` (or `incident_<n>/patches/` for an `INC-<n>.<k>`):
+5. **Post-patch validation (opt-in, isolated mode only).** With `--post-patch-validation`, Trail of Bits `post-patch-validation` (`references/orchestration/boundary-map.md`) also checks the patch against the finding, variants of its root cause and behavior that should not change; hand the flag to `patch-engineer` with the mode. It runs only when the execution mode is **isolated** (Rule 11a), never natively. In any other mode, or without the vendored skill or `uv`, `VERIFICATION.md` §4 records "not run: needs isolated mode" (or what is missing) and the command carries on. Its runner creates, locks and prunes git worktrees in the repository it is given, and its checks build and run the target with the caller's privileges and an open network. So it runs inside the isolated runner, on a disposable clone of its own made outside the target tree with `GIT_NO_LAZY_FETCH=1 git clone --no-local <checkout> <scratch copy>` (Rule 11c), never on the client checkout or step 3's copy; the recipe is in `templates/patch/VERIFICATION.md` §4. The report lists what its checks contacted under outside services (Rule 11b). Its result is optional evidence and can only lower the tier. A finding in it, a failure it attributes to the patched revision, makes a `[FIX-VERIFIED]` or `[FIX-PROPOSED]` tier `[FIX-INSUFFICIENT]`, with that check as what remains open, once the check and its saved logs have been read. Passing checks, gaps and anything else in its result change nothing.
+
+6. **Emit outputs** under `audit_<n>/patches/` (or `incident_<n>/patches/` for an `INC-<n>.<k>`):
    - `F-xxx.patch` — the minimal unified diff (deliverable),
-   - `VERIFICATION.md` — per-patch: the tier below, the executed revert result (pre-fix exploit succeeded → post-fix reverted) including its *Re-detonated against* field, any mutation/blast-radius evidence, and what a maintainer must do to apply it,
+   - `VERIFICATION.md` — per-patch: the tier below, the executed revert result (pre-fix exploit succeeded → post-fix reverted) including its *Re-detonated against* field, any mutation/blast-radius evidence, the post-patch-validation result or the reason it did not run (with `--post-patch-validation`), and what a maintainer must do to apply it,
    - update the report's **Auditor Verification** line for the finding to reflect the tier.
 
 ## Evidence tiers (emit exactly one)
@@ -35,6 +37,8 @@ Produce a *verified fix proposal* for a confirmed finding. Read `OUTPUT-RULES.md
 | `[FIX-VERIFIED]` | Diff applied to a scratch worktree, rebuilt, and the finding's PoC **re-ran and now reverts** — closure demonstrated by execution. Optional mutation/blast-radius clean. |
 | `[FIX-INSUFFICIENT]` | The diff does **not** fully close the bound — the PoC still exploits a residual path, an uncaught mutant survives on the patched line, or the change breaks an adjacent path (blast-radius regression). State exactly what remains open. |
 | `[FIX-PROPOSED]` | A minimal idiomatic diff re-derived from the code closes the cited bound, but **no executable PoC was available** to run the revert. Verified by reasoning, flagged as not-yet-executed — never silently promoted to `[FIX-VERIFIED]`. |
+
+Opt-in Trail of Bits `post-patch-validation` (`/auditor:patch --post-patch-validation`, isolated mode only, on a disposable clone) is optional evidence that can only lower a tier: a finding in its result turns `[FIX-VERIFIED]` or `[FIX-PROPOSED]` into `[FIX-INSUFFICIENT]`, with that check as the reason, and nothing else in its result changes a tier.
 
 ## Discipline (reuse /auditor:re-audit's rule)
 
