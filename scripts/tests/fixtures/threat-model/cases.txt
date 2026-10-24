@@ -69,7 +69,7 @@
 2	collect.sh: refused: --audit-mem-db must be .audit-memory/audit.db or audit_<n>/audit-mem.db: /tmp/x.db	--offline	--repo	tgt	--out	audit_1/bootstrap	--audit-mem-db	/tmp/x.db
 2	collect.sh: refused: --audit-mem-db must be .audit-memory/audit.db or audit_<n>/audit-mem.db: ../.audit-memory/audit.db	--offline	--repo	tgt	--out	audit_1/bootstrap	--audit-mem-db	../.audit-memory/audit.db
 2	collect.sh: refused: --audit-mem-db must be .audit-memory/audit.db or audit_<n>/audit-mem.db: .audit-memory/other.db	--offline	--repo	tgt	--out	audit_1/bootstrap	--audit-mem-db	.audit-memory/other.db
-2	collect.sh: refused: --audit-mem-db passes through a symbolic link: audit_2/audit-mem.db	--offline	--repo	tgt	--out	audit_1/bootstrap	--audit-mem-db	audit_2/audit-mem.db
+2	collect.sh: refused: --audit-mem-db is a symbolic link: audit_2	--offline	--repo	tgt	--out	audit_1/bootstrap	--audit-mem-db	audit_2/audit-mem.db
 2	collect.sh: refused: --audit-mem-db must be .audit-memory/audit.db or audit_<n>/audit-mem.db: incident_1/audit-mem.db	--offline	--repo	tgt	--out	audit_1/bootstrap	--audit-mem-db	incident_1/audit-mem.db
 2	collect.sh: refused: --audit-mem-db must be .audit-memory/audit.db or audit_<n>/audit-mem.db: /tmp/x.db	--network	--repo	tgt	--out	audit_1/bootstrap	--audit-mem-db	/tmp/x.db
 2	collect.sh: refused: --out must be audit_<n>/bootstrap, in a run directory audit_<n> directly in the working directory: /tmp/audit_1/bootstrap	--network	--repo	tgt	--out	/tmp/audit_1/bootstrap

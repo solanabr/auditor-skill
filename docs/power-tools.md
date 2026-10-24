@@ -376,7 +376,7 @@ In `--detect` and `--offline`, `--repo` and a local `--parent` or `--vulns` are 
 | `--import <rev>` | the target commit that brought the parent's code in (default: the root commit). Pass it when the code arrived after the root commit (a README-only first commit, say), or R5 reports `NOT FOUND`. It must resolve to a commit, else the run exits 2 |
 | `--vulns <file\|https-url>` | a prior-vulnerability input, repeatable: PDF, Markdown, text, CSV, JSON, or an `INCIDENTS.json` (allowlisted fields only) |
 | `--program-id <id>` | the program id for R8's `audit-mem warm` (needs the built tool and `--audit-mem-db`); at most 200 characters |
-| `--audit-mem-db <path>` | the audit-mem store R8 reads: `.audit-memory/audit.db` or `audit_<n>/audit-mem.db`, read from the working directory with `audit-mem warm`. There is no default: without it no store is read, and the collector never looks in the target tree. Pass only a store that passes the Rule 11d check |
+| `--audit-mem-db <path>` | the audit-mem store R8 reads: `.audit-memory/audit.db` or `audit_<n>/audit-mem.db`, its `audit_<n>` passing the same checks as `--out`'s run directory, read from the working directory with `audit-mem warm`. There is no default: without it no store is read, and the collector never looks in the target tree. Pass only a store that passes the Rule 11d check |
 | `--keywords <ere>` | extra commit-message keywords, as an ERE alternation such as `drain\|bypass`; at most 200 characters |
 | `--cap <n>` | rows per section before `TRUNCATED` (default 60); re-run with a higher value when a section is truncated |
 | `--small <n>` | changed-line ceiling for an `ADDED-QUIET` (quiet-fix) commit (default 40) |

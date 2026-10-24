@@ -47,8 +47,8 @@
 #   --program-id <id>         save `audit-mem warm --program-id <id>` from the --audit-mem-db store
 #                             (needs the built tool); at most 200 characters
 #   --audit-mem-db <path>     the store --program-id reads: .audit-memory/audit.db or
-#                             audit_<n>/audit-mem.db; nothing is read without it (the collector never
-#                             looks for a store on its own)
+#                             audit_<n>/audit-mem.db, in a run directory (below); nothing is read
+#                             without it (the collector never looks for a store on its own)
 #   --keywords <ere>          extra commit-message keywords, an ERE alternation such as 'drain|bypass';
 #                             at most 200 characters
 #   --cap <n>                 rows per section before TRUNCATED (default 60)
@@ -211,6 +211,7 @@ if [ -n "$AUDIT_MEM_DB" ]; then
     *) DB_REL="" ;;
   esac
   [ -n "$DB_REL" ] || die "--audit-mem-db must be .audit-memory/audit.db or audit_<n>/audit-mem.db: $(confine_text "$AUDIT_MEM_DB")"
+  case "$DB_REL" in audit_*) confine_rundir "${DB_REL%/audit-mem.db}" --audit-mem-db ;; esac
   confine_path "$DB_REL" --audit-mem-db any
 fi
 

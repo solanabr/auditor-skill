@@ -925,6 +925,19 @@ fake_collect --audit-mem-db .audit-memory/audit.db
 check "T-m: a store reached through a symbolic link is refused, and nothing is read" \
   sh -c "[ ! -e '$T/marks/audit-mem' ] && grep -q 'audit-mem-db passes through a symbolic link' '$T/fake.err'"
 rm "$MEMT/.audit-memory"; mv "$T/moved-memory" "$MEMT/.audit-memory"
+mkdir "$MEMT/audit_50"; printf 'db\n' > "$MEMT/audit_50/audit-mem.db"
+fake_collect --audit-mem-db audit_50/audit-mem.db
+check "T-m: an audit_<n>/audit-mem.db in a directory with no .gitignore of * is refused, and nothing is read" \
+  sh -c "[ ! -e '$T/marks/audit-mem' ] && [ \"\$(cat '$T/fake.err')\" = 'collect.sh: refused: --audit-mem-db has no .gitignore holding exactly *: audit_50' ]"
+# (rundir.sh makes no run directory while the repository tracks one, so --out's comes first.)
+o=$(newrun "$MEMT"); r=$(newrun "$MEMT"); printf 'db\n' > "$MEMT/$r/audit-mem.db"
+git -C "$MEMT" add -f -- "$r/audit-mem.db"; commit "$MEMT" -m "track a store"
+rm -f "$T/marks/audit-mem"
+(cd "$MEMT" && "$FAKE/scripts/threat-model/collect.sh" --offline --repo . --out "$o/bootstrap" --program-id Demo1111 \
+   --audit-mem-db "$r/audit-mem.db") >/dev/null 2>"$T/fake.err"
+check "T-m: ... and so is one in a run directory git tracks" \
+  sh -c "[ ! -e '$T/marks/audit-mem' ] && [ \"\$(cat '$T/fake.err')\" = 'collect.sh: refused: --audit-mem-db is tracked by git: $r' ]"
+git -C "$MEMT" rm -q --cached -- "$r/audit-mem.db"; commit "$MEMT" -m "untrack the store"
 
 # =================================================================================================
 # T-n: the collector writes only into a run directory this audit made (Rule 11d): never through a
