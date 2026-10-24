@@ -323,32 +323,119 @@ fn tie_to_even(x: f64, digits: String, exp: i64) -> String {
     }
 }
 
+/// jq 1.7's decNumber context (jv.c): its precision, and the largest and smallest
+/// exponents of a normal number.
+const JQ_DIGITS: usize = 147_483_648;
+const JQ_EMAX: i64 = 999_999_999;
+const JQ_EMIN: i64 = -999_999_999;
+/// The smallest exponent jq keeps; a smaller one is rounded to it.
+const JQ_ETINY: i64 = JQ_EMIN - (JQ_DIGITS as i64 - 1);
+
+/// The exponent of a literal as decNumber reads it: one of more than ten digits, or
+/// of ten from 2000000000 up, is read as 1999999998, with its sign.
+fn jq_exponent(text: &str) -> i64 {
+    let (neg, digits) = match text.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, text.strip_prefix('+').unwrap_or(text)),
+    };
+    let digits = digits.trim_start_matches('0');
+    let e = if digits.len() > 10 || (digits.len() == 10 && digits.as_bytes()[0] > b'1') {
+        1_999_999_998
+    } else {
+        digits.parse::<i64>().unwrap_or(0)
+    };
+    if neg {
+        -e
+    } else {
+        e
+    }
+}
+
+/// Drops the last `drop` digits of a coefficient, rounding half up as jq's context
+/// does: a carry may add a digit (`95` less one digit is `10`); all dropped is `0`.
+fn round_off(coeff: &str, drop: usize) -> String {
+    if drop > coeff.len() {
+        return "0".to_string();
+    }
+    let keep = coeff.len() - drop;
+    let up = coeff.as_bytes()[keep] >= b'5';
+    let mut digits = coeff.as_bytes()[..keep].to_vec();
+    if up {
+        let mut i = digits.len();
+        loop {
+            if i == 0 {
+                digits.insert(0, b'1');
+                break;
+            }
+            i -= 1;
+            if digits[i] == b'9' {
+                digits[i] = b'0';
+            } else {
+                digits[i] += 1;
+                break;
+            }
+        }
+    }
+    if digits.is_empty() {
+        return "0".to_string();
+    }
+    String::from_utf8(digits).unwrap_or_else(|_| "0".to_string())
+}
+
 /// jq 1.7's canonical text of a JSON number literal: its decNumber
 /// to-scientific-string, which keeps trailing zeros (`1.50`), writes an
-/// exponent as `E+2` / `E-7`, and keeps the sign of a zero (`-0`).
+/// exponent as `E+2` / `E-7`, and keeps the sign of a zero (`-0`). The context's
+/// limits apply: a zero's exponent is clamped to them, and a number below the
+/// smallest exponent is rounded to it (`1e-1999999998` prints `0E-1147483646`).
 pub fn jq_number(lit: &str) -> String {
     let (neg, rest) = match lit.strip_prefix('-') {
         Some(r) => (true, r),
         None => (false, lit),
     };
     let (mantissa, exp) = match rest.find(['e', 'E']) {
-        Some(i) => (&rest[..i], rest[i + 1..].parse::<i128>().unwrap_or(0)),
+        Some(i) => (&rest[..i], jq_exponent(&rest[i + 1..])),
         None => (rest, 0),
     };
     let (int_part, frac) = mantissa.split_once('.').unwrap_or((mantissa, ""));
     let all = format!("{int_part}{frac}");
-    let coeff = all.trim_start_matches('0');
-    let coeff = if coeff.is_empty() { "0" } else { coeff };
-    let exponent = exp - frac.len() as i128;
-    let n = coeff.len() as i128;
-    let adjusted = exponent + n - 1;
+    let mut coeff = all.trim_start_matches('0').to_string();
+    if coeff.is_empty() {
+        coeff.push('0');
+    }
+    let mut exponent = exp - frac.len() as i64;
     let mut out = String::new();
     if neg {
         out.push('-');
     }
+    if coeff == "0" {
+        exponent = exponent.clamp(JQ_ETINY, JQ_EMAX);
+    } else {
+        if coeff.len() > JQ_DIGITS {
+            let drop = coeff.len() - JQ_DIGITS;
+            let rounded = round_off(&coeff, drop);
+            exponent += drop as i64;
+            if rounded.len() > JQ_DIGITS {
+                exponent += 1;
+                coeff = rounded[..JQ_DIGITS].to_string();
+            } else {
+                coeff = rounded;
+            }
+        }
+        if exponent < JQ_ETINY {
+            coeff = round_off(&coeff, (JQ_ETINY - exponent) as usize);
+            exponent = JQ_ETINY;
+        }
+        if exponent + coeff.len() as i64 - 1 > JQ_EMAX {
+            // Infinite in jq's context, which prints the largest double instead.
+            out.push_str("1.7976931348623157e+308");
+            return out;
+        }
+    }
+    let n = coeff.len() as i64;
+    let adjusted = exponent + n - 1;
     if exponent <= 0 && adjusted >= -6 {
         if exponent == 0 {
-            out.push_str(coeff);
+            out.push_str(&coeff);
         } else if n > -exponent {
             let point = (n + exponent) as usize;
             out.push_str(&coeff[..point]);
@@ -357,7 +444,7 @@ pub fn jq_number(lit: &str) -> String {
         } else {
             out.push_str("0.");
             out.push_str(&"0".repeat((-exponent - n) as usize));
-            out.push_str(coeff);
+            out.push_str(&coeff);
         }
     } else {
         out.push_str(&coeff[..1]);
@@ -476,5 +563,52 @@ mod tests {
         ] {
             assert_eq!(jq_number(lit), want, "{lit}");
         }
+    }
+
+    #[test]
+    fn jq_number_limits() {
+        // As jq 1.7.1 prints them: a zero's exponent clamped to -1147483646 and
+        // 999999999, a smaller number rounded half up to the smallest exponent.
+        for (lit, want) in [
+            ("0e1000000000", "0E+999999999"),
+            (
+                "0e99999999999999999999999999999999999999999",
+                "0E+999999999",
+            ),
+            ("-0e1000000000", "-0E+999999999"),
+            ("0e-1000000000", "0E-1000000000"),
+            ("0.0e-1999999998", "0E-1147483646"),
+            ("-0.0e-1999999998", "-0E-1147483646"),
+            ("0e00000000000000000000001", "0E+1"),
+            ("1e-1999999998", "0E-1147483646"),
+            ("1e-2000000000", "0E-1147483646"),
+            ("1e-2147483648", "0E-1147483646"),
+            ("1e-02000000000", "0E-1147483646"),
+            ("1e-0000000001999999999", "0E-1147483646"),
+            (
+                "1e-99999999999999999999999999999999999999999",
+                "0E-1147483646",
+            ),
+            ("1e-1000000000", "1E-1000000000"),
+            ("10e-1000000000", "1.0E-999999999"),
+            ("0.1e-999999999", "1E-1000000000"),
+            ("1e-1147483646", "1E-1147483646"),
+            ("12e-1147483647", "1E-1147483646"),
+            ("4e-1147483647", "0E-1147483646"),
+            ("5e-1147483647", "1E-1147483646"),
+            ("-5e-1147483647", "-1E-1147483646"),
+            ("15e-1147483648", "0E-1147483646"),
+            ("95e-1147483647", "1.0E-1147483645"),
+            ("999e-1147483648", "1.0E-1147483645"),
+            ("123456e-1147483648", "1.235E-1147483643"),
+        ] {
+            assert_eq!(jq_number(lit), want, "{lit}");
+        }
+        assert_eq!(round_off("1234", 2), "12");
+        assert_eq!(round_off("1250", 2), "13");
+        assert_eq!(round_off("999", 1), "100");
+        assert_eq!(round_off("4", 1), "0");
+        assert_eq!(round_off("5", 1), "1");
+        assert_eq!(round_off("9", 2), "0");
     }
 }

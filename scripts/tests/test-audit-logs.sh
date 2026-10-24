@@ -336,6 +336,12 @@ if literal:
              b'{"version":1E2,"blockTime":7,"transaction":{"signatures":["SigNum8"]}}',
              b'{"version":{"a":[1.50,"\\u007f\\u2028"],"b":1e-7,"c":-0.0},"blockTime":10000000000000000001,"transaction":{"signatures":["SigNum9"]}}',
              b'{"version":-1,"blockTime":-10000000000000000001,"transaction":{"signatures":["SigNum10"]}}']
+    # Exponents at the limits of jq's decNumber context: a zero's is clamped, and a
+    # number below the smallest exponent is rounded half up to it.
+    nums += [b'{"version":[%s],"transaction":{"signatures":["SigExp%d"]}}' % (e, k) for k, e in enumerate([
+        b"0e1000000000", b"-0e99999999999999999999999999999999999999999", b"0.0e-1999999998", b"1e-1999999998",
+        b"1e-99999999999999999999999999999999999999999", b"1e-02000000000", b"1e-1000000000", b"10e-1000000000",
+        b"4e-1147483647", b"5e-1147483647", b"-5e-1147483647", b"95e-1147483647", b"123456e-1147483648"])]
 write("numbers.jsonl", nums)
 PY
 for f in big logs instructions ties numbers lookalike; do
@@ -364,8 +370,10 @@ eq "own cases: keys that differ only in a character a collation ignores are four
   "$(printf ' 2 Payer1| 1 Pay\357\277\271er1| 1 Pay\302\240er1| 1 Payer1\342\240\200|')"
 if [[ "$literal" == 1 ]]; then
   agree profile -- incident_1/crafted/numbers.jsonl
-  if grep -q '^      1 1E+2$' "$T/b.out" && grep -q 'first=-10000000000000000001  last=10000000000000000001' "$T/b.out"; then
-    ok "own cases: versions and blockTimes print as jq writes them (1E+2, 20 digits)"
+  if grep -q '^      1 1E+2$' "$T/b.out" && grep -q 'first=-10000000000000000001  last=10000000000000000001' "$T/b.out" \
+     && grep -q '^      1 \[0E+999999999\]$' "$T/b.out" && grep -q '^      5 \[0E-1147483646\]$' "$T/b.out" \
+     && grep -q '^      1 \[1.235E-1147483643\]$' "$T/b.out"; then
+    ok "own cases: versions and blockTimes print as jq writes them (1E+2, 20 digits, exponents at jq's limits)"
   else
     bad "own cases: the jq number forms are missing from the profile"
   fi
