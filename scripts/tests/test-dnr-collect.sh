@@ -272,8 +272,12 @@ if cmp -s "$TT/big-16/transactions.jsonl" "$BIG"; then
 else
   bad "exact: the jq 1.6 path changed the fixture ($(cat "$TT/big-16/transactions.jsonl"))"
 fi
+# deltas.py reads only a file in a run directory, by a path relative to the working
+# directory (scripts/dnr/README.md, Input contract): a copy of the corpus in one.
+mkdir -p "$TT/wd16/incident_1" && printf '*\n' > "$TT/wd16/incident_1/.gitignore"
+cp "$TT/big-16/transactions.jsonl" "$TT/wd16/incident_1/transactions.jsonl"
 eq "exact: deltas.py on that corpus sees +1 for BigOne and BigTwo" \
-  "$(python3 -I "$DNR/deltas.py" lamports "$TT/big-16/transactions.jsonl" | awk -F'\t' '$2=="BigOne"||$2=="BigTwo"{print $2"="$3}' | tr '\n' ' ')" \
+  "$(cd "$TT/wd16" && python3 -I "$DNR/deltas.py" lamports incident_1/transactions.jsonl | awk -F'\t' '$2=="BigOne"||$2=="BigTwo"{print $2"="$3}' | tr '\n' ' ')" \
   "BigOne=1 BigTwo=1 "
 # The python3 that writes the corpus runs isolated: a json.py planted in the
 # working directory and on PYTHONPATH never loads.
