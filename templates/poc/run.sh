@@ -62,7 +62,8 @@
 #     BYTES below). Each names a regular file under a run directory's bin/ or exec/ (a
 #     snapshot, or a build a runner made), by a relative path with no symbolic link.
 #   * --update-pins stands for UPDATE_PINS (DEPENDENCY PINS below): one argument, the
-#     pins separated by spaces. --keep stands for KEEP_POC_BUILD=1.
+#     pins separated by spaces, at most 32 of them in 1024 bytes. --keep stands for
+#     KEEP_POC_BUILD=1.
 #   * --cache stands for CARGO_TARGET_DIR (the build cache below) and takes only a
 #     directory --new-cache made: $TMPDIR/auditor-poc-target.XXXXXX, outside the
 #     working directory, yours, mode 0700, holding the marker file .auditor-poc-cache.
@@ -360,6 +361,7 @@ tmp_base() {  # tmp_base: TMP_BASE is TMPDIR (else /tmp), physical, and outside 
 cache_arg() {
   local v="$1" shown name parent size
   confine_shown "${v}"; shown="${CONFINE_SHOWN}"
+  [[ "${#v}" -le 1024 ]] || refuse "--cache takes a directory --new-cache made, \$TMPDIR/auditor-poc-target.XXXXXX, not ${shown}"
   name="${v##*/}"; parent="${v%/*}"
   case "${v}:${name}" in
     *[[:cntrl:]]*) refuse "--cache holds a control character: ${shown}" ;;
@@ -611,11 +613,13 @@ take_args() {
   case "${seen}" in *" --fixed-so "*) so_arg --fixed-so "${fso}"; FIXED_SO="${SO_PATH}"; FSO_RUN="${SO_RUN}" ;; esac
   case "${seen}" in
     *" --update-pins "*)
+      [[ "${#pins}" -le 1024 ]] || refuse "--update-pins holds more than 1024 bytes"
       case "${pins}" in *[[:cntrl:]]*) refuse "--update-pins holds a control character" ;; esac
       set -f
       for spec in ${pins}; do
         [[ "${spec}" =~ ${PIN_SPEC} ]] || refuse "--update-pins entry '$(confine_text "${spec}")' is not <crate> or <crate>@<pinned version>"
         n=$((n + 1))
+        [[ "${n}" -le 32 ]] || refuse "--update-pins names more than 32 pins"
       done
       set +f
       [[ "${n}" -gt 0 ]] || refuse "--update-pins names no pin" ;;

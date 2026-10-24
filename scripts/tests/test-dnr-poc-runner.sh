@@ -57,11 +57,13 @@
 #   * run.sh holds no placeholder, so a PoC's copy is the installation's byte for byte;
 #   * the installation's copy, run by its path with the crate as an argument (--crate,
 #     --init, --new-cache): every argument is checked before anything is copied, by the
-#     case file fixtures/poc-run/cases.txt among others; --init copies the template
-#     byte for byte; --cache takes only a directory --new-cache made; the mode is the
-#     stricter of AUDITOR_EXEC_MODE and the exec-mode of every run directory an
-#     argument names, and --mode must match it; ./run.sh in a crate at <R>/poc/<ID>
-#     reads <R>/exec-mode as well; the installation's template never builds itself;
+#     case file fixtures/poc-run/cases.txt among others, and long values (a --cache
+#     over 1024 bytes, --update-pins over 1024 bytes or 32 pins) are refused at once;
+#     --init copies the template byte for byte; --cache takes only a directory
+#     --new-cache made; the mode is the stricter of AUDITOR_EXEC_MODE and the
+#     exec-mode of every run directory an argument names, and --mode must match it;
+#     ./run.sh in a crate at <R>/poc/<ID> reads <R>/exec-mode as well; the
+#     installation's template never builds itself;
 #   * an incident's crate runs only once incident_<n>/INCIDENTS.json records its
 #     root_cause_class (a file, an incident or a class that cannot be read stops it,
 #     a nested or large file included); supply_chain_or_ci refuses native mode, a run
@@ -1201,6 +1203,19 @@ $NTC/auditor-poc-target.abc-ef|--cache takes a directory --new-cache made
 $CACHE/|--cache takes a directory --new-cache made
 $NTC|--cache takes a directory --new-cache made
 CASES
+# Long values are refused at once, before anything reads them whole: a --cache over 1024 bytes, and
+# --update-pins over 1024 bytes or with more than 32 pins.
+long="$(python3 -I -c 'print("/" + "a" * 120000)')"
+pins="$(python3 -I -c 'print("b" * 2000)')"
+for spec in "--cache|$long|--cache takes a directory --new-cache made, \$TMPDIR/auditor-poc-target.XXXXXX, not /aaaa" \
+  "--update-pins|$pins|--update-pins holds more than 1024 bytes"; do
+  opt="${spec%%|*}"; rest="${spec#*|}"; value="${rest%%|*}"; text="${rest#*|}"
+  start=$SECONDS
+  code="$(ngate -- --crate audit_1/poc/F-1 "${NVULN[@]}" "$opt" "$value")"
+  took=$((SECONDS - start))
+  [ "$code" = 3 ] && grep -qF "run.sh refused: $text" "$T/out" && new_nothing_ran && [ "$took" -le 2 ] \
+    && ok "$opt with a value of ${#value} bytes -> refused in ${took}s" || { bad "$opt, a long value: exit $code after ${took}s"; cut -c1-300 "$T/out" >&2; }
+done
 
 # The execution mode: the stricter of <R>/exec-mode and AUDITOR_EXEC_MODE (none, then isolated, then
 # native). Missing or none exits 3 before anything is copied, and so does a --mode that is not it.

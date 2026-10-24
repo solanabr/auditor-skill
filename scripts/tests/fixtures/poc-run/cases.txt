@@ -81,6 +81,7 @@
 3	[PoC-ATTEMPTED] blocker: run.sh refused: --update-pins entry 'b*' is not <crate> or <crate>@<pinned version> — nothing was copied or built.	--crate	audit_1/poc/F-1	--update-pins	borsh b*
 3	[PoC-ATTEMPTED] blocker: run.sh refused: --update-pins entry 'borsh@' is not <crate> or <crate>@<pinned version> — nothing was copied or built.	--crate	audit_1/poc/F-1	--update-pins	borsh@
 3	[PoC-ATTEMPTED] blocker: run.sh refused: --update-pins entry 'borsh@=3.0.0' is not <crate> or <crate>@<pinned version> — nothing was copied or built.	--crate	audit_1/poc/F-1	--update-pins	borsh@=3.0.0
+3	[PoC-ATTEMPTED] blocker: run.sh refused: --update-pins names more than 32 pins — nothing was copied or built.	--crate	audit_1/poc/F-1	--update-pins	p0 p1 p2 p3 p4 p5 p6 p7 p8 p9 p10 p11 p12 p13 p14 p15 p16 p17 p18 p19 p20 p21 p22 p23 p24 p25 p26 p27 p28 p29 p30 p31 p32
 3	[PoC-ATTEMPTED] blocker: run.sh refused: --update-pins entry '-p' is not <crate> or <crate>@<pinned version> — nothing was copied or built.	--crate	audit_1/poc/F-1	--update-pins	-p
 3	[PoC-ATTEMPTED] blocker: run.sh refused: --update-pins names no pin — nothing was copied or built.	--crate	audit_1/poc/F-1	--update-pins	 	--keep
 3	[PoC-ATTEMPTED] blocker: run.sh refused: --cache takes a directory --new-cache made, $TMPDIR/auditor-poc-target.XXXXXX, not /tmp — nothing was copied or built.	--crate	audit_1/poc/F-1	--cache	/tmp
