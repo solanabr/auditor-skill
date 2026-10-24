@@ -208,13 +208,13 @@ gives exact deduplication across audits.
 
 | Subcommand | Purpose |
 |---|---|
-| `init` | Make the store: for `.audit-memory/audit.db` with no `.audit-memory/`, the directory, its `.gitignore` of `*` first, then the database; in a run directory, the database. On a store that exists, add the tables it lacks. Prints `initialized <store>`. |
+| `init` | Make the store: for `.audit-memory/audit.db` with no `.audit-memory/`, the directory, its `.gitignore` of `*` first, then the database; in a run directory, the database. On a store that exists, add the tables and columns it lacks. Prints `initialized <store>`. |
 | `put-finding` | Upsert a finding + append an occurrence. Prints `<STATUS> <finding_id>`, or `REGRESSED <finding_id>` on regression. |
 | `set-status` | Set a finding's status (`FIXED` \| `OPEN` \| `ACKNOWLEDGED` \| `DISPUTED`). |
-| `rule` | Record a `FALSE_POSITIVE` \| `ACCEPTED_RISK` ruling with a timestamp. |
-| `check` | Print `{"suppressed":bool,"ruling":..}`; exit 0 if suppressed by a `FALSE_POSITIVE` ruling, else exit 1. |
+| `rule` | Record a `FALSE_POSITIVE` \| `ACCEPTED_RISK` ruling with a timestamp and its anchor: the commit it is made at and the guard it cites (below). A `FALSE_POSITIVE` ruling needs `--guard`. |
+| `check` | Print `{"suppressed":bool,"ruling":..}`; exit 0 when the newest `FALSE_POSITIVE` ruling for the signature still holds, else exit 1. A ruling that no longer holds is printed with `"stale":"<why>"` and suppresses nothing. |
 | `regressions` | JSON list of findings with status `REGRESSED`. |
-| `warm` | JSON `{profile, invariants[], open_fp_rulings[]}` — the warm-start context block for a re-audit: what `profile` and `invariant` recorded, and the standing rulings. |
+| `warm` | JSON `{profile, invariants[], open_fp_rulings[]}` — the warm-start context block for a re-audit: what `profile` and `invariant` recorded, and the rulings with their anchors. |
 | `profile` | Record the program's protocol profile. Fields not given keep what the profile holds. Prints `profile <program_id> recorded`. |
 | `invariant` | Record an invariant of the program, one per statement: the same statement again updates the fields given. Prints `invariant <id> recorded` or `invariant <id> updated`. |
 
@@ -230,8 +230,8 @@ put-finding     --program-id <PID> --signature <SIG> --root-cause <RC> --title <
                 [--commit <SHA>] [--audit-n <N>] [--file <PATH>] [--line <N>] [--verdict <V>]
 set-status      --program-id <PID> --signature <SIG> --root-cause <RC> --status <STATUS>
 rule            --program-id <PID> --signature <SIG> --ruling <RULING> --rationale <R> --by <WHO>
-                [--scope <S>]
-check           --program-id <PID> --signature <SIG>
+                [--scope <S>] [--commit <SHA>] [--guard <FILE>:<LINE> | <FILE>:<FIRST>-<LAST>]
+check           --program-id <PID> --signature <SIG> [--commit <SHA>]
 regressions     --program-id <PID>
 warm            --program-id <PID>
 profile         --program-id <PID>, and at least one of [--protocol-class <C>]
@@ -245,7 +245,29 @@ Each option is given once, as `--name <value>` or `--name=<value>`; the word aft
 bytes, and holds no control or formatting character: the C0 and C1 controls, DEL,
 the line and paragraph separators, the bidirectional controls, and the code points
 Unicode marks default-ignorable (audit-logs' list). `--severity` is a whole number
-from 1 to 10 and `--line` one from 1. `--trust-assumptions-json` must be JSON.
+from 1 to 10 and `--line` one from 1. The `--commit` of `rule` and `check` is 7 to 64
+hexadecimal digits, kept in lowercase; `put-finding`'s is free text.
+`--trust-assumptions-json` must be JSON.
+
+### Anchored rulings
+
+A false-positive ruling holds for the code it was made on. `rule` records:
+
+- the commit, `--commit`;
+- the guard, `--guard <file>:<line>` or `<file>:<first>-<last>` (at most 200 lines):
+  a file of the working tree, read under the confined path rules (relative, no `.`
+  or `..`, no symbolic link on the way, a regular file with one name, at most 4 MiB),
+  and the sha256 of those lines, each with the newline that ends it.
+
+`check` suppresses only while the newest `FALSE_POSITIVE` ruling for the signature
+holds: `--commit` names its commit (two commits are the same when one is a prefix of
+the other; a ruling made with no commit holds only for a check with none), and the
+guard's lines, read again under the same rules, hash as they did. Otherwise it
+prints the ruling with `stale`, the reasons joined by `; `, and exits 1: a stale
+ruling is a finding to check again. A ruling recorded before rulings had anchors
+has none: it is `"stale":"no anchor"` and never suppresses. `init`, or any
+subcommand that writes, adds the anchor columns to a store made before them;
+`warm`, `check` and `regressions` read such a store as it is.
 
 ### Where it reads and writes
 
@@ -322,11 +344,14 @@ audit-mem profile --program-id VaultProg... --protocol-class vault \
 audit-mem invariant --program-id VaultProg... --statement 'total_shares == shares_mint.supply' \
   --status 'Manually verified' --cited-line src/vault.rs:88
 
-# suppress a known false positive, then gate on it
+# rule a known false positive at the audited commit, citing its guard, then gate on it
 audit-mem rule --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
-  --ruling FALSE_POSITIVE --rationale 'guarded by prior require!' --by auditor
-audit-mem check --program-id VaultProg... --signature 'unchecked_sub@vault.balance'
+  --ruling FALSE_POSITIVE --rationale 'guarded by the require! on line 40' --by auditor \
+  --commit c0ffee3 --guard src/withdraw.rs:40
+audit-mem check --program-id VaultProg... --signature 'unchecked_sub@vault.balance' --commit c0ffee3
 #   -> {"suppressed":true,"ruling":{...}}   (exit 0)
+audit-mem check --program-id VaultProg... --signature 'unchecked_sub@vault.balance' --commit c0ffee4
+#   -> {"suppressed":false,"stale":"ruled at commit c0ffee3, checked at c0ffee4","ruling":{...}}   (exit 1)
 
 # a store for one run
 audit-mem init --db audit_1/audit-mem.db
@@ -341,7 +366,8 @@ findings(finding_id PK, program_id, first_seen_commit, last_seen_commit,
          first_audit_n, last_audit_n)
 occurrences(finding_id, audit_n, commit_sha, file, line, verdict, rule5b_json)
 fp_rulings(ruling_id PK, program_id, code_signature, ruling, rationale,
-           ruled_by, ruled_at, scope)
+           ruled_by, ruled_at, scope,
+           anchor_commit, guard_file, guard_line, guard_end, guard_hash)
 invariants(inv_id PK, program_id, protocol_class, statement, source_fn,
            cited_line, status)
 protocol_profile(program_id PK, protocol_class, trust_assumptions_json,
@@ -487,7 +513,9 @@ gracefully — it works without them; they just save context and add memory.
   figures.
 - **`audit-mem` warm-starts re-audits.** On a repeat audit of the same program,
   `warm --program-id` returns the protocol profile and invariants that `profile`
-  and `invariant` recorded, and any standing false-positive/accepted-risk rulings,
-  so prior context is not re-derived. `check` auto-suppresses findings previously
-  ruled `FALSE_POSITIVE`, and `put-finding` + `regressions` surface anything that
-  was fixed and has since regressed.
+  and `invariant` recorded, and the standing false-positive/accepted-risk rulings
+  with their anchors, so prior context is not re-derived. `check --commit`
+  suppresses a finding ruled `FALSE_POSITIVE` while the ruling's commit and guard
+  lines still hold, and reports it stale, to check again, once either changed.
+  `put-finding` + `regressions` surface anything that was fixed and has since
+  regressed.

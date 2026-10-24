@@ -2,12 +2,17 @@
 
 use auditor_tools::mem;
 
+const PROG: &str = "Prog1111111111111111111111111111111111111111";
+const SIG: &str = "checked_sub@vault.balance";
+const GUARDED: &[u8] =
+    b"fn withdraw() {\n    require!(vault.balance >= amount);\n    vault.balance -= amount;\n}\n";
+
 fn put(conn: &rusqlite::Connection, verdict: &str) -> mem::PutOutcome {
     mem::put_finding(
         conn,
         &mem::PutFinding {
-            program_id: "Prog1111111111111111111111111111111111111111",
-            signature: "checked_sub@vault.balance",
+            program_id: PROG,
+            signature: SIG,
             root_cause: "unchecked subtraction can underflow vault balance",
             title: "Vault balance underflow",
             severity: 3,
@@ -19,6 +24,15 @@ fn put(conn: &rusqlite::Connection, verdict: &str) -> mem::PutOutcome {
         },
     )
     .expect("put_finding should succeed")
+}
+
+fn guard(text: &[u8], first: u32, last: u32) -> mem::Guard {
+    mem::Guard {
+        file: "src/withdraw.rs".into(),
+        first,
+        last,
+        hash: mem::guard_hash(text, first, last).expect("the lines exist"),
+    }
 }
 
 #[test]
@@ -47,8 +61,8 @@ fn dedup_regression_and_suppression() {
     // Mark FIXED, then re-observe -> REGRESSED.
     let changed = mem::set_status(
         &conn,
-        "Prog1111111111111111111111111111111111111111",
-        "checked_sub@vault.balance",
+        PROG,
+        SIG,
         "unchecked subtraction can underflow vault balance",
         "FIXED",
     )
@@ -59,44 +73,136 @@ fn dedup_regression_and_suppression() {
     assert!(third.regressed, "re-observing a FIXED finding regresses it");
     assert_eq!(third.status, "REGRESSED");
 
-    let regs = mem::regressions(&conn, "Prog1111111111111111111111111111111111111111").unwrap();
+    let regs = mem::regressions(&conn, PROG).unwrap();
     assert_eq!(regs.len(), 1, "one regressed finding listed");
     assert_eq!(regs[0].status, "REGRESSED");
 
-    // Rule the signature a FALSE_POSITIVE, then check -> suppressed.
+    // Rule the signature a FALSE_POSITIVE, anchored to its commit and guard, then
+    // check at that commit with the guard unchanged -> suppressed.
+    let g = guard(GUARDED, 2, 2);
     mem::add_ruling(
         &conn,
-        "Prog1111111111111111111111111111111111111111",
-        "checked_sub@vault.balance",
-        "FALSE_POSITIVE",
-        "subtraction is guarded by a prior require! on balance",
-        "auditor",
-        None,
+        &mem::NewRuling {
+            program_id: PROG,
+            signature: SIG,
+            ruling: "FALSE_POSITIVE",
+            rationale: "subtraction is guarded by a prior require! on balance",
+            by: "auditor",
+            scope: None,
+            commit: Some("c0ffee1"),
+            guard: Some(&g),
+        },
     )
     .unwrap();
 
-    let check = mem::check(
-        &conn,
-        "Prog1111111111111111111111111111111111111111",
-        "checked_sub@vault.balance",
-    )
-    .unwrap();
+    let unchanged = |_: &str| -> Result<Vec<u8>, String> { Ok(GUARDED.to_vec()) };
+    let check = mem::check(&conn, PROG, SIG, Some("c0ffee1"), &unchanged).unwrap();
     assert!(check.suppressed, "FALSE_POSITIVE ruling suppresses");
-    assert!(check.ruling.is_some());
+    assert!(check.stale.is_none());
+    let ruling = check.ruling.expect("the ruling");
+    assert_eq!(ruling.guard.as_deref(), Some("src/withdraw.rs:2"));
+    assert_eq!(ruling.commit.as_deref(), Some("c0ffee1"));
 
     // A different signature is not suppressed.
     let miss = mem::check(
         &conn,
-        "Prog1111111111111111111111111111111111111111",
+        PROG,
         "some_other_signature",
+        Some("c0ffee1"),
+        &unchanged,
     )
     .unwrap();
     assert!(!miss.suppressed);
+    assert!(miss.ruling.is_none() && miss.stale.is_none());
 
     // Warm context surfaces the ruling.
-    let warm = mem::warm(&conn, "Prog1111111111111111111111111111111111111111").unwrap();
+    let warm = mem::warm(&conn, PROG).unwrap();
     assert_eq!(warm.open_fp_rulings.len(), 1);
     assert!(warm.profile.is_none(), "no profile inserted in this test");
+}
+
+#[test]
+fn a_ruling_goes_stale_when_its_commit_or_guard_changes() {
+    let conn = mem::open_in_memory().expect("open in-memory db");
+    let g = guard(GUARDED, 2, 3);
+    mem::add_ruling(
+        &conn,
+        &mem::NewRuling {
+            program_id: PROG,
+            signature: SIG,
+            ruling: "FALSE_POSITIVE",
+            rationale: "guarded",
+            by: "auditor",
+            scope: None,
+            commit: Some("c0ffee1aa"),
+            guard: Some(&g),
+        },
+    )
+    .unwrap();
+    let stale = |commit: Option<&str>, text: &'static [u8]| {
+        let read = move |_: &str| -> Result<Vec<u8>, String> { Ok(text.to_vec()) };
+        let r = mem::check(&conn, PROG, SIG, commit, &read).unwrap();
+        assert_eq!(r.suppressed, r.stale.is_none());
+        r.stale
+    };
+    assert_eq!(stale(Some("c0ffee1aa"), GUARDED), None);
+    assert_eq!(
+        stale(Some("c0ffee1"), GUARDED),
+        None,
+        "an abbreviation names the same commit"
+    );
+    assert_eq!(stale(Some("c0ffee1aa00"), GUARDED), None);
+    assert_eq!(
+        stale(Some("deadbeef"), GUARDED).as_deref(),
+        Some("ruled at commit c0ffee1aa, checked at deadbeef")
+    );
+    assert_eq!(
+        stale(None, GUARDED).as_deref(),
+        Some("ruled at commit c0ffee1aa, and no --commit was given to compare")
+    );
+    let edited: &[u8] = b"fn withdraw() {\n    require!(vault.balance > amount);\n    vault.balance -= amount;\n}\n";
+    assert_eq!(
+        stale(Some("c0ffee1aa"), edited).as_deref(),
+        Some("the guard at src/withdraw.rs:2-3 no longer holds the lines ruled on")
+    );
+    let moved: &[u8] = b"// moved\nfn withdraw() {\n    require!(vault.balance >= amount);\n    vault.balance -= amount;\n}\n";
+    assert!(
+        stale(Some("c0ffee1aa"), moved).is_some(),
+        "lines that moved are a change"
+    );
+    assert_eq!(
+        stale(Some("deadbeef"), b"fn x() {}\n").as_deref(),
+        Some("ruled at commit c0ffee1aa, checked at deadbeef; the guard at src/withdraw.rs:2-3 cannot be read: names line 3, and the file has 1 line(s)")
+    );
+    let gone = |_: &str| -> Result<Vec<u8>, String> { Err("it does not exist".to_string()) };
+    let r = mem::check(&conn, PROG, SIG, Some("c0ffee1aa"), &gone).unwrap();
+    assert!(!r.suppressed);
+    assert_eq!(
+        r.stale.as_deref(),
+        Some("the guard at src/withdraw.rs:2-3 cannot be read: it does not exist")
+    );
+}
+
+#[test]
+fn guard_lines_hash_with_their_newlines() {
+    let text = b"a\nb\r\nc";
+    assert!(mem::guard_hash(text, 1, 3).is_ok());
+    assert_ne!(
+        mem::guard_hash(text, 2, 2),
+        mem::guard_hash(b"a\nb\nc", 2, 2)
+    );
+    assert_eq!(
+        mem::guard_hash(text, 4, 4),
+        Err("names line 4, and the file has 3 line(s)".to_string())
+    );
+    assert_eq!(
+        mem::guard_hash(text, 0, 1),
+        Err("is not a range of lines".to_string())
+    );
+    assert_eq!(
+        mem::guard_hash(text, 2, 1),
+        Err("is not a range of lines".to_string())
+    );
 }
 
 #[test]
@@ -104,7 +210,7 @@ fn profile_and_invariants_reach_warm() {
     let conn = mem::open_in_memory().expect("open in-memory db");
     mem::put_profile(
         &conn,
-        "Prog1111111111111111111111111111111111111111",
+        PROG,
         &mem::ProfileFields {
             protocol_class: Some("vault"),
             notes: Some("first pass"),
@@ -114,7 +220,7 @@ fn profile_and_invariants_reach_warm() {
     .unwrap();
     mem::put_profile(
         &conn,
-        "Prog1111111111111111111111111111111111111111",
+        PROG,
         &mem::ProfileFields {
             oracle_set: Some("pyth SOL/USD"),
             ..Default::default()
@@ -123,7 +229,7 @@ fn profile_and_invariants_reach_warm() {
     .unwrap();
     let (id, new) = mem::put_invariant(
         &conn,
-        "Prog1111111111111111111111111111111111111111",
+        PROG,
         "total_shares == shares_mint.supply",
         &mem::InvariantFields {
             status: Some("Unproven"),
@@ -134,7 +240,7 @@ fn profile_and_invariants_reach_warm() {
     assert!(new);
     let (again, new) = mem::put_invariant(
         &conn,
-        "Prog1111111111111111111111111111111111111111",
+        PROG,
         "total_shares == shares_mint.supply",
         &mem::InvariantFields {
             status: Some("Manually verified"),
@@ -148,7 +254,7 @@ fn profile_and_invariants_reach_warm() {
         (id, false),
         "the same statement is one invariant"
     );
-    let warm = mem::warm(&conn, "Prog1111111111111111111111111111111111111111").unwrap();
+    let warm = mem::warm(&conn, PROG).unwrap();
     let profile = warm.profile.expect("the profile");
     assert_eq!(profile.protocol_class, "vault");
     assert_eq!(profile.oracle_set, "pyth SOL/USD");

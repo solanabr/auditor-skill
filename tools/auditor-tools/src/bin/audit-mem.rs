@@ -36,7 +36,7 @@ use std::os::unix::fs::{DirBuilderExt, MetadataExt};
 use std::path::Path;
 use std::process::ExitCode;
 
-use auditor_tools::confine::{self, os_message, refuse, shown, unsafe_char, Dir, Git, Stop};
+use auditor_tools::confine::{self, os_message, refuse, shown, unsafe_char, Dir, Git, Kind, Stop};
 use auditor_tools::mem;
 use rusqlite::Connection;
 
@@ -104,9 +104,9 @@ impl Sub {
             Sub::SetStatus => (&["program-id", "signature", "root-cause", "status"], &[]),
             Sub::Rule => (
                 &["program-id", "signature", "ruling", "rationale", "by"],
-                &["scope"],
+                &["scope", "commit", "guard"],
             ),
-            Sub::Check => (&["program-id", "signature"], &[]),
+            Sub::Check => (&["program-id", "signature"], &["commit"]),
             Sub::Regressions | Sub::Warm => (&["program-id"], &[]),
             Sub::Profile => (
                 &["program-id"],
@@ -213,6 +213,21 @@ impl Call {
                 shown(v.as_bytes())
             ))
         })
+    }
+
+    /// A commit id, 7 to 64 hexadecimal digits, in lowercase.
+    fn commit(&self) -> Result<Option<String>, Stop> {
+        let Some(v) = self.text("commit")? else {
+            return Ok(None);
+        };
+        if (7..=64).contains(&v.len()) && v.bytes().all(|c| c.is_ascii_hexdigit()) {
+            Ok(Some(v.to_ascii_lowercase()))
+        } else {
+            Err(refuse(format!(
+                "--commit must be a commit id of 7 to 64 hexadecimal digits: {}",
+                shown(v.as_bytes())
+            )))
+        }
     }
 }
 
@@ -530,6 +545,70 @@ fn store_error(store: &Store) -> impl Fn(anyhow::Error) -> Stop + '_ {
     }
 }
 
+/// The text of a guard file under the confined path rules, for `check`: a
+/// relative path inside WT, through no symbolic link, to a regular file with one
+/// name of at most 4 MiB; `Err` says why it cannot be read.
+fn guard_text(wt: &Path, file: &str) -> Result<Vec<u8>, String> {
+    let reason = |Stop(_, m): Stop| m.trim_start_matches("refused: ").to_string();
+    let r = confine::rel("it", OsStr::new(file), false).map_err(reason)?;
+    match confine::check(wt, &r, "it").map_err(reason)? {
+        Kind::File => confine::read_file(&r),
+        Kind::Dir => Err("it is not a regular file".into()),
+        Kind::Absent => Err("it does not exist".into()),
+    }
+}
+
+/// `--guard <file>:<line>` or `<file>:<first>-<last>` (at most 200 lines), its
+/// file read under the confined path rules and its lines hashed.
+fn guard(wt: &Path, call: &Call) -> Result<Option<mem::Guard>, Stop> {
+    let Some(v) = call.text("guard")? else {
+        return Ok(None);
+    };
+    let shape = || {
+        refuse(format!(
+            "--guard must be <file>:<line> or <file>:<first>-<last>, at most 200 lines: {}",
+            shown(v.as_bytes())
+        ))
+    };
+    let (file, lines) = v.rsplit_once(':').ok_or_else(shape)?;
+    let number = |s: &str| {
+        (s.len() <= 9 && s.bytes().all(|c| c.is_ascii_digit()) && !s.starts_with('0'))
+            .then(|| s.parse::<u32>().ok())
+            .flatten()
+    };
+    let (first, last) = match lines.split_once('-') {
+        Some((a, b)) => (number(a), number(b)),
+        None => (number(lines), number(lines)),
+    };
+    let (Some(first), Some(last)) = (first, last) else {
+        return Err(shape());
+    };
+    if last < first || last - first >= 200 {
+        return Err(shape());
+    }
+    let what = "--guard's file";
+    let r = confine::rel(what, OsStr::new(file), false)?;
+    match confine::check(wt, &r, what)? {
+        Kind::File => {}
+        _ => {
+            return Err(refuse(format!(
+                "{what} is not an existing regular file: {}",
+                r.shown()
+            )))
+        }
+    }
+    let text = confine::read_file(&r)
+        .map_err(|e| refuse(format!("{what} cannot be read ({e}): {}", r.shown())))?;
+    let hash = mem::guard_hash(&text, first, last)
+        .map_err(|e| refuse(format!("--guard {e}: {}", shown(v.as_bytes()))))?;
+    Ok(Some(mem::Guard {
+        file: String::from_utf8_lossy(&r.raw).into_owned(),
+        first,
+        last,
+        hash,
+    }))
+}
+
 /// A subcommand with every value it takes checked.
 enum Action {
     Init,
@@ -555,9 +634,12 @@ enum Action {
         rationale: String,
         by: String,
         scope: Option<String>,
+        commit: Option<String>,
+        guard: Option<mem::Guard>,
     },
     Check {
         signature: String,
+        commit: Option<String>,
     },
     Regressions,
     Warm,
@@ -578,7 +660,7 @@ enum Action {
 }
 
 /// Checks every value of the call, before the store is looked at.
-fn action(call: &Call) -> Result<Action, Stop> {
+fn action(wt: &Path, call: &Call) -> Result<Action, Stop> {
     Ok(match call.sub {
         Sub::Init => Action::Init,
         Sub::PutFinding => Action::PutFinding {
@@ -599,15 +681,35 @@ fn action(call: &Call) -> Result<Action, Stop> {
             root_cause: call.need("root-cause")?,
             status: call.word("status", &["FIXED", "OPEN", "ACKNOWLEDGED", "DISPUTED"])?,
         },
-        Sub::Rule => Action::Rule {
-            signature: call.need("signature")?,
-            ruling: call.word("ruling", &["FALSE_POSITIVE", "ACCEPTED_RISK"])?,
-            rationale: call.need("rationale")?,
-            by: call.need("by")?,
-            scope: call.text("scope")?,
-        },
+        Sub::Rule => {
+            let signature = call.need("signature")?;
+            let ruling = call.word("ruling", &["FALSE_POSITIVE", "ACCEPTED_RISK"])?;
+            let rationale = call.need("rationale")?;
+            let by = call.need("by")?;
+            let scope = call.text("scope")?;
+            let commit = call.commit()?;
+            let guard = guard(wt, call)?;
+            if ruling == "FALSE_POSITIVE" && guard.is_none() {
+                return Err(refuse(
+                    "a FALSE_POSITIVE ruling needs --guard, the <file>:<line> or \
+                     <file>:<first>-<last> that makes it one, so that check can tell when it \
+                     goes stale"
+                        .into(),
+                ));
+            }
+            Action::Rule {
+                signature,
+                ruling,
+                rationale,
+                by,
+                scope,
+                commit,
+                guard,
+            }
+        }
         Sub::Check => Action::Check {
             signature: call.need("signature")?,
+            commit: call.commit()?,
         },
         Sub::Regressions => Action::Regressions,
         Sub::Warm => Action::Warm,
@@ -657,7 +759,7 @@ fn out(line: &str) -> Result<(), Stop> {
 
 /// `warm`, `check` and `regressions`: the store opened read-only, or the empty
 /// answer when there is none.
-fn read(store: &Store, pid: &str, action: &Action) -> Result<ExitCode, Stop> {
+fn read(wt: &Path, store: &Store, pid: &str, action: &Action) -> Result<ExitCode, Stop> {
     if store.db == Db::Empty {
         return Err(refuse(format!(
             "{} is empty; audit-mem init makes the store",
@@ -678,8 +780,10 @@ fn read(store: &Store, pid: &str, action: &Action) -> Result<ExitCode, Stop> {
             out(r#"{"suppressed":false,"store":"absent"}"#)?;
             return Ok(ExitCode::FAILURE);
         }
-        (Action::Check { signature }, Some(c)) => {
-            let result = mem::check(&c, pid, signature).map_err(&failed)?;
+        (Action::Check { signature, commit }, Some(c)) => {
+            let read = |file: &str| guard_text(wt, file);
+            let result =
+                mem::check(&c, pid, signature, commit.as_deref(), &read).map_err(&failed)?;
             print_json(&result)?;
             if !result.suppressed {
                 return Ok(ExitCode::FAILURE);
@@ -752,15 +856,21 @@ fn write(wt: &Path, store: &Store, pid: &str, action: Action) -> Result<String, 
             rationale,
             by,
             scope,
+            commit,
+            guard,
         } => {
             let id = mem::add_ruling(
                 &conn,
-                pid,
-                &signature,
-                &ruling,
-                &rationale,
-                &by,
-                scope.as_deref(),
+                &mem::NewRuling {
+                    program_id: pid,
+                    signature: &signature,
+                    ruling: &ruling,
+                    rationale: &rationale,
+                    by: &by,
+                    scope: scope.as_deref(),
+                    commit: commit.as_deref(),
+                    guard: guard.as_ref(),
+                },
             )
             .map_err(&failed)?;
             format!("ruling {} recorded ({})", id, ruling)
@@ -826,10 +936,10 @@ fn run(args: &[OsString]) -> Result<ExitCode, Stop> {
         Sub::Init => String::new(),
         _ => call.need("program-id")?,
     };
-    let action = action(&call)?;
+    let action = action(&wt, &call)?;
     let store = check_store(&wt, &call.db)?;
     if call.sub.reads_only() {
-        return read(&store, &pid, &action);
+        return read(&wt, &store, &pid, &action);
     }
     out(&write(&wt, &store, &pid, action)?)?;
     Ok(ExitCode::SUCCESS)
