@@ -18,7 +18,7 @@ cd "$(dirname "$0")/.." || exit 2
 ALLOWED_LOAD_SURFACES=''
 # The keys each manifest may hold, as dotted paths ([] is an array element). A key is added when it is first
 # used, once what Claude Code loads from it is known.
-PLUGIN_KEYS='name version description author author.name author.url'
+PLUGIN_KEYS='name version description author author.name author.url skills'
 MARKETPLACE_KEYS="name owner owner.name owner.url metadata metadata.version metadata.description plugins plugins.[] \
 plugins.[].name plugins.[].version plugins.[].description plugins.[].author plugins.[].author.name plugins.[].author.url \
 plugins.[].source"
