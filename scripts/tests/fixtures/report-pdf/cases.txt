@@ -1,0 +1,34 @@
+# Hostile argument vectors for scripts/report-to-pdf.sh. test-report-pdf.sh runs each one in a working directory
+# that holds the run directories audit_1 (with a REPORT.md) and incident_1 (made by rundir.sh), the symbolic
+# link audit_2 (to audit_1), and audit_3, a directory with a REPORT.md but no .gitignore, with stand-ins for
+# pandoc and the TeX engines on PATH.
+# One case per line: <exit status><TAB><the one stderr line><TAB><argument>[<TAB><argument>...]. Each case prints
+# nothing on stdout, runs no pandoc and changes nothing in the working directory.
+2	report-to-pdf: refused: the report must be audit_<n>/REPORT.md, audit_<n>/RE-AUDIT.md, audit_<n>/PR-REPORT.md or incident_<n>/INCIDENT_REPORT.md, relative to the working directory: /tmp/audit_1/REPORT.md	/tmp/audit_1/REPORT.md
+2	report-to-pdf: refused: the report must be audit_<n>/REPORT.md, audit_<n>/RE-AUDIT.md, audit_<n>/PR-REPORT.md or incident_<n>/INCIDENT_REPORT.md, relative to the working directory: /etc/passwd	/etc/passwd
+2	report-to-pdf: refused: the report must be audit_<n>/REPORT.md, audit_<n>/RE-AUDIT.md, audit_<n>/PR-REPORT.md or incident_<n>/INCIDENT_REPORT.md, relative to the working directory: ../audit_1/REPORT.md	../audit_1/REPORT.md
+2	report-to-pdf: refused: the report must be audit_<n>/REPORT.md, audit_<n>/RE-AUDIT.md, audit_<n>/PR-REPORT.md or incident_<n>/INCIDENT_REPORT.md, relative to the working directory: audit_1/../audit_1/REPORT.md	audit_1/../audit_1/REPORT.md
+2	report-to-pdf: refused: the report must be audit_<n>/REPORT.md, audit_<n>/RE-AUDIT.md, audit_<n>/PR-REPORT.md or incident_<n>/INCIDENT_REPORT.md, relative to the working directory: audit_1/./REPORT.md	audit_1/./REPORT.md
+2	report-to-pdf: refused: the report must be audit_<n>/REPORT.md, audit_<n>/RE-AUDIT.md, audit_<n>/PR-REPORT.md or incident_<n>/INCIDENT_REPORT.md, relative to the working directory: audit_1//REPORT.md	audit_1//REPORT.md
+2	report-to-pdf: refused: the report must be audit_<n>/REPORT.md, audit_<n>/RE-AUDIT.md, audit_<n>/PR-REPORT.md or incident_<n>/INCIDENT_REPORT.md, relative to the working directory: audit_1/notes.md	audit_1/notes.md
+2	report-to-pdf: refused: the report must be audit_<n>/REPORT.md, audit_<n>/RE-AUDIT.md, audit_<n>/PR-REPORT.md or incident_<n>/INCIDENT_REPORT.md, relative to the working directory: audit_1/REPORT.markdown	audit_1/REPORT.markdown
+2	report-to-pdf: refused: the report must be audit_<n>/REPORT.md, audit_<n>/RE-AUDIT.md, audit_<n>/PR-REPORT.md or incident_<n>/INCIDENT_REPORT.md, relative to the working directory: audit_1/report.md	audit_1/report.md
+2	report-to-pdf: refused: the report must be audit_<n>/REPORT.md, audit_<n>/RE-AUDIT.md, audit_<n>/PR-REPORT.md or incident_<n>/INCIDENT_REPORT.md, relative to the working directory: audit_1/REPORT.MD	audit_1/REPORT.MD
+2	report-to-pdf: refused: the report must be audit_<n>/REPORT.md, audit_<n>/RE-AUDIT.md, audit_<n>/PR-REPORT.md or incident_<n>/INCIDENT_REPORT.md, relative to the working directory: audit_1/sub/REPORT.md	audit_1/sub/REPORT.md
+2	report-to-pdf: refused: the report must be audit_<n>/REPORT.md, audit_<n>/RE-AUDIT.md, audit_<n>/PR-REPORT.md or incident_<n>/INCIDENT_REPORT.md, relative to the working directory: audit_1/REPORT.md/x	audit_1/REPORT.md/x
+2	report-to-pdf: refused: the report must be audit_<n>/REPORT.md, audit_<n>/RE-AUDIT.md, audit_<n>/PR-REPORT.md or incident_<n>/INCIDENT_REPORT.md, relative to the working directory: REPORT.md	REPORT.md
+2	report-to-pdf: refused: the report must be audit_<n>/REPORT.md, audit_<n>/RE-AUDIT.md, audit_<n>/PR-REPORT.md or incident_<n>/INCIDENT_REPORT.md, relative to the working directory: incident_1/REPORT.md	incident_1/REPORT.md
+2	report-to-pdf: refused: the report must be audit_<n>/REPORT.md, audit_<n>/RE-AUDIT.md, audit_<n>/PR-REPORT.md or incident_<n>/INCIDENT_REPORT.md, relative to the working directory: audit_1/INCIDENT_REPORT.md	audit_1/INCIDENT_REPORT.md
+2	report-to-pdf: refused: the report must be audit_<n>/REPORT.md, audit_<n>/RE-AUDIT.md, audit_<n>/PR-REPORT.md or incident_<n>/INCIDENT_REPORT.md, relative to the working directory: incident_1/PR-REPORT.md	incident_1/PR-REPORT.md
+2	report-to-pdf: refused: the report must be audit_<n>/REPORT.md, audit_<n>/RE-AUDIT.md, audit_<n>/PR-REPORT.md or incident_<n>/INCIDENT_REPORT.md, relative to the working directory: audit_x/REPORT.md	audit_x/REPORT.md
+2	report-to-pdf: refused: the report must be audit_<n>/REPORT.md, audit_<n>/RE-AUDIT.md, audit_<n>/PR-REPORT.md or incident_<n>/INCIDENT_REPORT.md, relative to the working directory: Audit_1/REPORT.md	Audit_1/REPORT.md
+2	report-to-pdf: refused: the report must be audit_<n>/REPORT.md, audit_<n>/RE-AUDIT.md, audit_<n>/PR-REPORT.md or incident_<n>/INCIDENT_REPORT.md, relative to the working directory: audit_1234567/REPORT.md	audit_1234567/REPORT.md
+2	report-to-pdf: refused: the report must be audit_<n>/REPORT.md, audit_<n>/RE-AUDIT.md, audit_<n>/PR-REPORT.md or incident_<n>/INCIDENT_REPORT.md, relative to the working directory: -audit_1/REPORT.md	-audit_1/REPORT.md
+2	report-to-pdf: refused: the report must be audit_<n>/REPORT.md, audit_<n>/RE-AUDIT.md, audit_<n>/PR-REPORT.md or incident_<n>/INCIDENT_REPORT.md, relative to the working directory: --help	--help
+2	report-to-pdf: refused: the report must be audit_<n>/REPORT.md, audit_<n>/RE-AUDIT.md, audit_<n>/PR-REPORT.md or incident_<n>/INCIDENT_REPORT.md, relative to the working directory: -o	-o
+2	report-to-pdf: refused: the report must be audit_<n>/REPORT.md, audit_<n>/RE-AUDIT.md, audit_<n>/PR-REPORT.md or incident_<n>/INCIDENT_REPORT.md, relative to the working directory: ~/audit_1/REPORT.md	~/audit_1/REPORT.md
+2	report-to-pdf: refused: the run directory is a symbolic link: audit_2	audit_2/REPORT.md
+2	report-to-pdf: refused: the run directory has no .gitignore holding exactly *: audit_3	audit_3/REPORT.md
+2	report-to-pdf: refused: the report must be audit_<n>/REPORT.md, audit_<n>/RE-AUDIT.md, audit_<n>/PR-REPORT.md or incident_<n>/INCIDENT_REPORT.md, relative to the working directory: audit_1/REPORT.md;id	audit_1/REPORT.md;id
+2	report-to-pdf: refused: usage: report-to-pdf.sh [path/to/REPORT.md], one of audit_<n>/REPORT.md, audit_<n>/RE-AUDIT.md, audit_<n>/PR-REPORT.md or incident_<n>/INCIDENT_REPORT.md	audit_1/REPORT.md	audit_1/REPORT.md
+2	report-to-pdf: refused: usage: report-to-pdf.sh [path/to/REPORT.md], one of audit_<n>/REPORT.md, audit_<n>/RE-AUDIT.md, audit_<n>/PR-REPORT.md or incident_<n>/INCIDENT_REPORT.md	audit_1/REPORT.md	-o
