@@ -129,11 +129,11 @@ hgit() {
 
 # hgit_text <dir> <git arguments>: hgit, plus the pins a parser of git's text output needs (the
 # threat-model collector's): grep prints no line or column number unless asked, and a diff keeps every
-# hunk apart.
+# hunk apart, with three lines of context.
 hgit_text() {
   local d=$1
   shift
-  hgit "$d" -c grep.lineNumber=false -c grep.column=false -c diff.interHunkContext=0 "$@"
+  hgit "$d" -c grep.lineNumber=false -c grep.column=false -c diff.interHunkContext=0 -c diff.context=3 "$@"
 }
 
 # confine_repo_top <dir>: status 0 when <dir> (absolute) is the top level of its own repository, or a

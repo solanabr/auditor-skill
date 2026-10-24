@@ -221,7 +221,7 @@ fi
 # system and global config dropped, never pages, never runs fsmonitor, hooks, signature helpers or
 # external diffs, allows no transport protocol, and pins the output-shaping settings (grep line
 # numbers and columns, pattern type, colour, path quoting, log encoding, the big-file threshold, hunk
-# fusing, root-commit diffs, replace refs) so the parsers below see plain text. Every log/show gets
+# fusing and context, root-commit diffs, replace refs) so the parsers below see plain text. Every log/show gets
 # --no-textconv --no-ext-diff with fixed diff prefixes. Nothing is ever checked out, so no smudge or
 # clean filter can run, and no remote the target configures is ever contacted (the one https clone of
 # a user-given --parent URL below allows https for that call only). Every diff runs with --text and
@@ -628,7 +628,7 @@ while IFS= read -r p; do [ -n "$p" ] && PPATHS+=("$p"); done <<< "$PPATHS_NL"
   echo "| Collector | scripts/threat-model/collect.sh v$COLLECTOR_VERSION, cap $CAP rows, quiet-fix ceiling $SMALL lines, fix ceiling $FIX_CEILING lines |"
   echo
   echo "Leads, not findings: every row points at history to re-derive from the code at the pinned commit."
-  echo "Git ran with the system and global config dropped and without pager, fsmonitor, hooks, signature helpers, textconv or external diff (OUTPUT-RULES.md Rule 11c), with lazy fetching and every transport protocol off (a partial clone is refused), and with its grep, colour, path-quoting, log-encoding, big-file, hunk-fusing and root-commit settings pinned."
+  echo "Git ran with the system and global config dropped and without pager, fsmonitor, hooks, signature helpers, textconv or external diff (OUTPUT-RULES.md Rule 11c), with lazy fetching and every transport protocol off (a partial clone is refused), and with its grep, colour, path-quoting, log-encoding, big-file, hunk-fusing, diff-context and root-commit settings pinned."
   if [ "$SHALLOW" = true ]; then
     echo "Shallow clone: history before the shallow boundary is missing, so a NOT FOUND or a short list below may only mean that history is cut."
   fi

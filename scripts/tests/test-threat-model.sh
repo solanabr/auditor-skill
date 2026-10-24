@@ -521,6 +521,26 @@ check "T-o (R4): both function names survive a redefined rust driver and fused h
 check "T-o (R4): log.showRoot=false does not hide the root commit" grep -qE '^ *2 programs/f/src/lib.rs$' "$R4S"
 check "T-o (R4): no note when every .rs file uses the pinned driver" hasnt "$R4S" "note:"
 check "T-o: history.md says what is pinned and what is not" has "$OUTR4/history.md" "rust hunk-header pattern, pinned"
+# A target that sets diff.context 0 still gets saved diffs with three lines of context.
+CX="$W/ctx0"; mkrepo "$CX"
+put "$CX" programs/x/src/lib.rs 'pub fn f(ctx: Context) -> Result<()> {
+    let a = 1;
+    require!(ctx.accounts.a.is_signer, E::X);
+    let b = 2;
+    Ok(())
+}'
+commit "$CX" -m "initial"
+put "$CX" programs/x/src/lib.rs 'pub fn f(ctx: Context) -> Result<()> {
+    let a = 1;
+    let b = 2;
+    Ok(())
+}'
+commit "$CX" -m "Tidy f"
+C_CX=$(short "$CX" HEAD)
+git -C "$CX" config diff.context 0
+collect --offline --repo ctx0
+check "T-o: diff.context=0 in the target: the saved diff keeps three lines of context" \
+  sh -c "grep -qx ' pub fn f(ctx: Context) -> Result<()> {' '$OUT/diffs/target-$C_CX.diff' && grep -qx '     Ok(())' '$OUT/diffs/target-$C_CX.diff'"
 mkdir -p "$R4T/.git/info"; printf '*.rs diff=other\n' > "$R4T/.git/info/attributes"
 collect --offline --repo shape-r4
 check "T-o (R4): .rs files that .git/info/attributes sends to another driver are counted in a note" \
