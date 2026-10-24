@@ -295,14 +295,18 @@ fn run(args: &[OsString]) -> Result<(), Stop> {
         }
         recipe => {
             let mut buf = String::new();
-            let mut keyless = 0;
+            let (mut keyless, mut indexless) = (0, 0);
             for_each_record(inputs, &mut stats, |tx| {
                 buf.clear();
                 match recipe {
                     Recipe::Frames => frames::rows(tx, &mut buf),
                     Recipe::Instructions => frames::instruction_rows(tx, &mut buf),
                     Recipe::Lamports => keyless += deltas::lamports(tx, &mut buf),
-                    _ => deltas::tokens(tx, &mut buf),
+                    _ => {
+                        let (k, i) = deltas::tokens(tx, &mut buf);
+                        keyless += k;
+                        indexless += i;
+                    }
                 }
                 sink.write_all(buf.as_bytes())
             })
@@ -317,6 +321,13 @@ fn run(args: &[OsString]) -> Result<(), Stop> {
                     "audit-logs: {keyless} row(s) name a balance index that has no account key, as #<index>: \
                      the transaction lists fewer keys than balances (an encoding json export without \
                      meta.loadedAddresses, say)"
+                );
+            }
+            if indexless > 0 {
+                eprintln!(
+                    "audit-logs: {indexless} row(s) name a token balance that has no accountIndex, as #?: \
+                     nothing pairs it with its other side, so a pre balance is a row of its own with a \
+                     negative delta, and a post balance one with a positive delta"
                 );
             }
         }

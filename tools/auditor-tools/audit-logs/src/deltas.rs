@@ -111,20 +111,32 @@ pub fn lamports(tx: &Value, out: &mut String) -> u64 {
     keyless
 }
 
+/// What a token balance is summed under, with its mint: its account key; an index
+/// that has no account key; or, with no accountIndex, the balance itself (its side
+/// and place), which nothing pairs with its other side.
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum Bucket {
+    Key(String),
+    Index(String),
+    Entry(usize, usize),
+}
+
 /// Per (signature, token account, mint): the non-zero raw-unit delta, with the
-/// owner as a label. Without a usable accountIndex the owner is the bucket.
-pub fn tokens(tx: &Value, out: &mut String) {
+/// owner as a label. A balance whose index has no account key is printed as
+/// `#<index>`, and one with no accountIndex as `#?`, a row of its own; neither is
+/// ever merged with another account. Returns how many rows name each.
+pub fn tokens(tx: &Value, out: &mut String) -> (u64, u64) {
     if !ok(tx) {
-        return;
+        return (0, 0);
     }
     let meta = tx.field("meta");
     let sig = sig(tx);
     let keys = account_keys(tx);
-    let mut order: Vec<(String, String)> = Vec::new();
-    let mut acc: HashMap<(String, String), [Int; 2]> = HashMap::new();
-    let mut labels: HashMap<(String, String), (String, String)> = HashMap::new();
+    let mut order: Vec<(Bucket, String)> = Vec::new();
+    let mut acc: HashMap<(Bucket, String), [Int; 2]> = HashMap::new();
+    let mut labels: HashMap<(Bucket, String), (String, String)> = HashMap::new();
     for (slot, name) in [(0, "preTokenBalances"), (1, "postTokenBalances")] {
-        for b in list(meta.and_then(|m| m.field(name))) {
+        for (n, b) in list(meta.and_then(|m| m.field(name))).iter().enumerate() {
             let owner = match b.field("owner").and_then(Value::as_str) {
                 Some(o) if !o.is_empty() => o,
                 _ => "?",
@@ -139,16 +151,15 @@ pub fn tokens(tx: &Value, out: &mut String) {
                 .and_then(Value::as_str)
                 .and_then(Int::parse)
                 .unwrap_or_else(Int::zero);
-            let account = b
-                .field("accountIndex")
-                .and_then(Value::as_int_lit)
-                .and_then(|l| l.parse::<i128>().ok())
-                .and_then(|i| usize::try_from(i).ok())
-                .and_then(|i| keys.get(i).copied());
-            let key = (
-                account.map_or_else(|| format!("owner:{owner}"), str::to_string),
-                mint.to_string(),
-            );
+            // The input contract makes accountIndex null or an integer from 0.
+            let (bucket, account) = match b.field("accountIndex").and_then(Value::as_int_lit) {
+                Some(lit) => match lit.parse::<usize>().ok().and_then(|i| keys.get(i)) {
+                    Some(k) => (Bucket::Key(k.to_string()), k.to_string()),
+                    None => (Bucket::Index(lit.to_string()), format!("#{lit}")),
+                },
+                None => (Bucket::Entry(slot, n), "#?".to_string()),
+            };
+            let key = (bucket, mint.to_string());
             let sums = match acc.get_mut(&key) {
                 Some(sums) => sums,
                 None => {
@@ -162,20 +173,22 @@ pub fn tokens(tx: &Value, out: &mut String) {
                 .and_then(Value::as_str)
                 .is_some_and(|o| !o.is_empty());
             if !labels.contains_key(&key) || has_owner {
-                let account = match account {
-                    Some(a) if !a.is_empty() => a,
-                    _ => "?",
-                };
-                labels.insert(key, (owner.to_string(), account.to_string()));
+                labels.insert(key, (owner.to_string(), account));
             }
         }
     }
+    let (mut keyless, mut indexless) = (0, 0);
     for key in &order {
         let (Some([p, q]), Some((owner, account))) = (acc.get(key), labels.get(key)) else {
             continue;
         };
         let d = q.sub(p);
         if !d.is_zero() {
+            match key.0 {
+                Bucket::Index(_) => keyless += 1,
+                Bucket::Entry(..) => indexless += 1,
+                Bucket::Key(_) => {}
+            }
             clean(out, sig);
             out.push('\t');
             clean(out, owner);
@@ -186,6 +199,7 @@ pub fn tokens(tx: &Value, out: &mut String) {
             out.push('\n');
         }
     }
+    (keyless, indexless)
 }
 
 #[cfg(test)]

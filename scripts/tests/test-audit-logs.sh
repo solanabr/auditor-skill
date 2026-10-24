@@ -348,9 +348,9 @@ agree lamports -- incident_1/crafted/big.jsonl
 eq "own cases: lamport deltas above 2^53, up to 2^64 - 1, are exact" \
   "$(awk -F'\t' '$1 == "SigBig1" { printf "%s=%s ", $2, $3 }' "$T/b.out")" "PayerBig=1 AcctBig=-1 Acct63=4611686018427387904 "
 agree tokens -- incident_1/crafted/big.jsonl
-eq "own cases: token deltas near 2^64 are exact, keyed by account and mint (an account named owner:X shares the owner's bucket)" \
-  "$(awk -F'\t' '$1 == "SigBig4" { printf "%s:%s:%s ", $5, $3, $4 }' "$T/b.out")" \
-  "TokVault:MintA:-18446744073709551615 TokOther:MintA:18446744073709551608 owner:NoIndex:MintB:1111111111111111109 "
+eq "own cases: token deltas near 2^64 are exact, keyed by account and mint; a balance with no accountIndex is a #? row of each side, an index with no account key a #<index> row, both counted on stderr" \
+  "$(awk -F'\t' '$1 == "SigBig4" { printf "%s:%s:%s ", $5, $3, $4 }' "$T/b.out")|$(grep -c '^audit-logs: 1 row(s) name a balance index that has no account key, as #<index>' "$T/b.err")|$(grep -c '^audit-logs: 2 row(s) name a token balance that has no accountIndex, as #?' "$T/b.err")" \
+  "TokVault:MintA:-18446744073709551615 TokOther:MintA:18446744073709551608 #?:MintB:-1111111111111111111 #99:MintB:-2 #?:MintB:2222222222222222222 |1|1"
 agree profile -- incident_1/crafted/ties.jsonl
 eq "own cases: the top-20 cut falls inside a tie of 25, broken by descending byte order" \
   "$(LC_ALL=C awk '/^-- fee payers/ { f = 1; next } /^--/ { f = 0 } f { n++; if (n == 1 || n == 20) printf "%s|", $0 }' "$T/b.out")" \
@@ -410,6 +410,13 @@ cases = {
         tx("SigLen2", {"preBalances": [1]}),
         tx("SigKeyless", {"fee": 5, "preBalances": [10, 20, 30, 40], "postBalances": [5, 25, 31, 40]},
            {"accountKeys": ["OnlyKey"]}),
+        tx("SigTokKeyless", {"preTokenBalances": [
+               {"accountIndex": 5, "mint": "MintK", "owner": "OwnK", "uiTokenAmount": {"amount": "10"}},
+               {"mint": "MintK", "owner": "OwnK", "uiTokenAmount": {"amount": "4"}},
+               {"mint": "MintK", "owner": "OwnK", "uiTokenAmount": {"amount": "4"}}],
+           "postTokenBalances": [
+               {"accountIndex": 5, "mint": "MintK", "owner": "OwnK", "uiTokenAmount": {"amount": "3"}},
+               {"mint": "MintK", "owner": "OwnK", "uiTokenAmount": {"amount": "4"}}]}),
     ],
     "depth": [
         deep("SigDepth128", 128),
@@ -503,6 +510,10 @@ agree lamports -- incident_1/rules/balances.jsonl
 eq "recipe bounds: a balance with no account key is a #<index> row, counted on stderr" \
   "$(awk -F'\t' '$1 == "SigKeyless" { printf "%s=%s ", $2, $3 }' "$T/b.out")|$(grep -c 'row(s) name a balance index that has no account key' "$T/b.err")" \
   "#1=5 #2=1 |1"
+agree tokens -- incident_1/rules/balances.jsonl
+eq "recipe bounds: a token balance whose index has no account key pairs by index; one with no accountIndex is a row of its own; each kind is counted on stderr" \
+  "$(awk -F'\t' '$1 == "SigTokKeyless" { printf "%s=%s ", $5, $4 }' "$T/b.out")|$(grep -c '^audit-logs: 1 row(s) name a balance index that has no account key' "$T/b.err")|$(grep -c '^audit-logs: 3 row(s) name a token balance that has no accountIndex' "$T/b.err")" \
+  "#5=-7 #?=-4 #?=-4 #?=4 |1|1"
 agree frames -- incident_1/rules/chars.jsonl
 eq "recipe bounds: frames writes an unsafe character in a signature or a log as a \\u escape" \
   "$(grep -c '"sig": "SigOddText\\u202e\\u2028\\u0001".*"text": "x\\u2066y\\u0085z"' "$T/b.out")" "1"
