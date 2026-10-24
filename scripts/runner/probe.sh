@@ -22,8 +22,9 @@
 #   semgrep           semgrep --version
 #   pandoc            pandoc --version
 #   python3           python3 --version
-#   isolation         "none of the credentials the self-check reads is readable", "readable: <path>, ...",
-#                     or "not checked (<why>)": the check of scripts/lib/isolation.sh
+#   isolation         "none of the credentials the self-check reads is readable", "readable: <kinds, each
+#                     with a count>; <path>, ..." (the first 20 paths, ~ standing for a home, then how
+#                     many more), or "not checked (<why>)": the check of scripts/lib/isolation.sh
 # Each query runs from the scratch directory, outside the working directory and with no .cargo/config or
 # rust-toolchain file at or above it, with standard input closed and RUSTUP_TOOLCHAIN pinned to the caller's
 # value or rustup's default. Its environment is the cleaned one of scripts/lib/isolation.sh, with the real
@@ -92,6 +93,18 @@ first_line() { # first_line <file>: its first line that is not blank; status 1 w
   return 1
 }
 
+first_of() { # first_of <lines> <n>: the first <n> lines, joined with ", ", then how many more there are
+  local IFS=$'\n' line out="" n=0
+  set -f
+  for line in $1; do
+    n=$((n + 1))
+    [ "$n" -gt "$2" ] || out=${out:+$out, }$line
+  done
+  set +f
+  [ "$n" -le "$2" ] || out="$out, and $((n - $2)) more"
+  printf '%s' "$out"
+}
+
 probe() { # probe <name> <program that must be on PATH> <query>...
   local name=$1 rc=0 line
   shift
@@ -120,7 +133,7 @@ for name in $NAMES; do
       iso_credentials || rc=$?
       case "$rc" in
         0) printf 'isolation: none of the credentials the self-check reads is readable\n' ;;
-        1) printf 'isolation: readable: %s\n' "${ISO_READABLE//$'\n'/, }" ;;
+        1) printf 'isolation: readable: %s; %s\n' "$ISO_KINDS" "$(first_of "$ISO_READABLE" 20)" ;;
         *) printf 'isolation: not checked (%s)\n' "$ISO_WHY" ;;
       esac ;;
     *) probe "$name" "$name" "$name" --version ;;

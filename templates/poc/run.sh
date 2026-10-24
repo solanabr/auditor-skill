@@ -76,7 +76,8 @@
 #     means this is not the isolated runner, and the run stops with exit 3, as it does
 #     when the check cannot finish. Variables of run.sh's own environment whose names
 #     look like credentials get a warning line. In native mode the same check prints,
-#     as a warning, what the code this run builds can read.
+#     as a warning, what the code this run builds can read, by kind and count; neither
+#     line names a path.
 #   * every cargo call and test binary runs under env -i with only what
 #     scripts/lib/isolation.sh passes: a throwaway HOME holding a fresh Solana keypair,
 #     TMPDIR in the scratch copy, the cleaned PATH and the user's CARGO_HOME and
@@ -404,9 +405,9 @@ self_check() {
   iso_credentials || rc=$?
   case "${MODE}:${rc}" in
     *:0) ;;
-    isolated:1) blocker "isolated mode, but ${ISO_READABLE%%$'\n'*} is readable: this is not the isolated runner (Rule 11a) — nothing was copied or built." ;;
+    isolated:1) blocker "isolated mode, but these are readable here: ${ISO_KINDS}; this is not the isolated runner (Rule 11a), and scripts/runner/probe.sh --only isolation lists them — nothing was copied or built." ;;
     isolated:*) blocker "isolated mode, but the credential self-check could not finish (${ISO_WHY}), so run.sh cannot tell that this is the isolated runner (Rule 11a) — nothing was copied or built." ;;
-    *:1) echo ">> warning: native mode, and these are readable here, to the code this run builds and runs too: ${ISO_READABLE//$'\n'/, } (Rule 11a)" ;;
+    *:1) echo ">> warning: native mode, and these are readable here, to the code this run builds and runs too: ${ISO_KINDS} (Rule 11a)" ;;
     *) echo ">> warning: native mode, and the credential check could not finish (${ISO_WHY}), so what the code this run builds can read here is not known (Rule 11a)" ;;
   esac
   [[ "${MODE}" == isolated ]] || return 0

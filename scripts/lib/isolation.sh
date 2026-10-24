@@ -55,13 +55,17 @@
 #
 # Functions:
 #   iso_homes                    prints the home directories the self-check reads, one per line.
-#   iso_credentials [<home>...]  sets ISO_READABLE to the readable paths, one per line, with control
-#                                characters printed as ?; status 0 when none is readable, 1 when some are,
-#                                2 when the check cannot run or finish, with ISO_WHY saying why. With no
-#                                <home>, it reads the homes iso_homes prints and the machine-wide sockets;
-#                                with <home>s, those homes and the places the environment names only. A
-#                                caller in isolated mode stops on status 1 or 2; in native mode it prints
-#                                what is readable and goes on.
+#   iso_credentials [<home>...]  sets ISO_KINDS to what is readable, by kind and count ("SSH keys (2),
+#                                cloud credentials (1)"), and ISO_READABLE to the readable paths, one per
+#                                line: a path under a home it reads starts with ~, the gcloud account in
+#                                legacy_credentials/ is <account>, and control characters are printed as ?.
+#                                Status 0 when none is readable, 1 when some are, 2 when the check cannot
+#                                run or finish, with ISO_WHY saying why. With no <home>, it reads the homes
+#                                iso_homes prints, the places the environment names and the machine-wide
+#                                sockets; with <home>s, those homes and the places the environment names
+#                                only. A caller in isolated mode stops on status 1 or 2; in native mode it
+#                                prints what is readable and goes on. What a report may carry is
+#                                ISO_KINDS, never the paths.
 #   iso_cred_names               sets ISO_NAMES to the variables of this environment whose names look like
 #                                credentials, separated by ", "; empty when there are none or python3 is
 #                                missing.
@@ -86,23 +90,28 @@
 # Needs bash >= 3.2, python3 (the self-check and the keypair), env, mkdir and mktemp.
 
 # What iso_credentials, iso_cred_names, iso_homes and iso_env run, with python3 -I so that no module comes
-# from the working directory or PYTHONPATH. "creds given|default [<home>...]" prints the readable paths
-# (exit 1) or nothing (exit 0), and why the check could not finish (exit 2); "names" prints the variable
-# names that look like credentials; "homes <home>" prints the homes; "wallet <path>" writes a fresh
-# keypair, RFC 8032 key generation from 32 random bytes, as the 64-number array solana-keygen writes. Exit 2
-# on anything unexpected.
+# from the working directory or PYTHONPATH. "creds given|default [<home>...]" prints what is readable by
+# kind and count on its first line and the readable paths after it (exit 1), nothing (exit 0), or why the
+# check could not finish (exit 2); "names" prints the variable names that look like credentials; "homes
+# <home>" prints the homes; "wallet <path>" writes a fresh keypair, RFC 8032 key generation from 32 random
+# bytes, as the 64-number array solana-keygen writes. Exit 2 on anything unexpected.
 ISO_PY='import glob, hashlib, json, os, pwd, re, socket, stat, sys
 
+KINDS = ("SSH keys", "agent sockets", "Solana keypairs or CLI config", "cloud credentials",
+         "Kubernetes or Docker config", "package registry tokens", "git or HTTP credentials", "GnuPG private keys",
+         "Claude Code credentials")
+SSH, AGENT, SOLANA, CLOUD, CLUSTER, REGISTRY, GIT, GPG, CLAUDE = KINDS
 GCLOUD = ("credentials.db", "access_tokens.db", "application_default_credentials.json")
 AZURE = ("accessTokens.json", "msal_token_cache.json", "msal_token_cache.bin", "service_principal_entries.json",
          "service_principal_entries.bin")
-FILES = ((".config/solana/id.json", ".aws/credentials") + tuple(".config/gcloud/" + f for f in GCLOUD)
-         + tuple(".azure/" + f for f in AZURE)
-         + (".kube/config", ".docker/config.json", ".npmrc", ".yarnrc.yml", ".gem/credentials", ".pypirc",
-            ".cargo/credentials", ".cargo/credentials.toml", ".git-credentials", ".config/git/credentials", ".netrc",
-            ".config/gh/hosts.yml", ".claude/.credentials.json"))
-DIRS = (".config/solana", ".aws/sso/cache", ".aws/cli/cache", ".config/gcloud/legacy_credentials",
-        ".gnupg/private-keys-v1.d")
+FILES = (((SOLANA, ".config/solana/id.json"), (CLOUD, ".aws/credentials"))
+         + tuple((CLOUD, ".config/gcloud/" + f) for f in GCLOUD) + tuple((CLOUD, ".azure/" + f) for f in AZURE)
+         + ((CLUSTER, ".kube/config"), (CLUSTER, ".docker/config.json"), (REGISTRY, ".npmrc"), (REGISTRY, ".yarnrc.yml"),
+            (REGISTRY, ".gem/credentials"), (REGISTRY, ".pypirc"), (REGISTRY, ".cargo/credentials"),
+            (REGISTRY, ".cargo/credentials.toml"), (GIT, ".git-credentials"), (GIT, ".config/git/credentials"), (GIT, ".netrc"),
+            (GIT, ".config/gh/hosts.yml"), (CLAUDE, ".claude/.credentials.json")))
+DIRS = ((SOLANA, ".config/solana"), (CLOUD, ".aws/sso/cache"), (CLOUD, ".aws/cli/cache"),
+        (CLOUD, ".config/gcloud/legacy_credentials"), (GPG, ".gnupg/private-keys-v1.d"))
 GPG_SOCKETS = ("S.gpg-agent", "S.gpg-agent.ssh", "S.gpg-agent.extra", "S.gpg-agent.browser")
 SOCKETS = tuple(".gnupg/" + s for s in GPG_SOCKETS) + (
     ".1password/agent.sock", "Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock")
@@ -116,7 +125,14 @@ class Unfinished(Exception):
     pass
 
 
-def shown(path):
+def shown(path, bases=()):
+    # A path under a home the check reads starts with ~, and the gcloud account in legacy_credentials/ is
+    # <account>: the paths name kinds of credentials, not the user.
+    for base in [b.rstrip("/") for b in bases] + [os.path.realpath(b) for b in bases]:
+        if base and base != "/" and (path == base or path.startswith(base + "/")):
+            path = "~" + path[len(base):]
+            break
+    path = re.sub(r"(legacy_credentials/)[^/]+", r"\1<account>", path)
     return re.sub(r"[\x00-\x1f\x7f]", "?", path)[:300]
 
 
@@ -151,15 +167,15 @@ def accepts(path):
         s.close()
 
 
-def readable(found, paths):
-    found.extend(p for p in paths if p and first_byte(p))
+def readable(found, kind, paths):
+    found.extend((kind, p) for p in paths if p and first_byte(p))
 
 
 def sockets(found, paths):
     for path in paths:
         try:
             if stat.S_ISSOCK(os.stat(path).st_mode) and accepts(path):
-                found.append(path)
+                found.append((AGENT, path))
         except OSError:
             pass
 
@@ -179,9 +195,10 @@ def enter(path, stack, seen):
     return True
 
 
-def walk(top, keep, found, state):
-    # Every entry under <top> but the names <keep> matches, through subdirectories and links to them. False
-    # when <top> cannot be listed; past BUDGET entries in all the walks, the check cannot finish.
+def walk(top, keep, found, state, kind):
+    # Every entry under <top> but the names <keep> matches, through subdirectories and links to them: a file
+    # counts as <kind>, a socket as an agent. False when <top> cannot be listed; past BUDGET entries in all
+    # the walks, the check cannot finish.
     stack = []
     if not enter(top, stack, state["seen"]):
         return False
@@ -205,9 +222,9 @@ def walk(top, keep, found, state):
             enter(path, stack, state["seen"])
         elif stat.S_ISSOCK(mode):
             if accepts(path):
-                found.append(path)
+                found.append((AGENT, path))
         elif first_byte(path):
-            found.append(path)
+            found.append((kind, path))
     return True
 
 
@@ -225,26 +242,27 @@ def keypair(home):
 
 
 def runtime(directory, dirs, socks):
-    dirs.extend(os.path.join(directory, d) for d in ("gnupg", "keyring", "gcr"))
+    dirs.extend((AGENT, os.path.join(directory, d)) for d in ("gnupg", "keyring", "gcr"))
     socks.append(os.path.join(directory, "ssh-agent.socket"))
     socks.extend(glob.glob(os.path.join(glob.escape(directory), "vscode-ssh-auth-*.sock")))
 
 
 def named(env, files, dirs, socks):
     # The places the environment names.
-    for name in ("AWS_SHARED_CREDENTIALS_FILE", "GOOGLE_APPLICATION_CREDENTIALS", "NETRC", "NPM_CONFIG_USERCONFIG",
-                 "npm_config_userconfig"):
-        files.append(env.get(name, ""))
-    files.extend(env.get("KUBECONFIG", "").split(os.pathsep))
-    for name, under in (("CARGO_HOME", ("credentials", "credentials.toml")), ("XDG_CONFIG_HOME", ("gh/hosts.yml", "git/credentials")),
-                        ("GH_CONFIG_DIR", ("hosts.yml",)), ("DOCKER_CONFIG", ("config.json",)), ("CLOUDSDK_CONFIG", GCLOUD),
-                        ("AZURE_CONFIG_DIR", AZURE)):
+    for kind, name in ((CLOUD, "AWS_SHARED_CREDENTIALS_FILE"), (CLOUD, "GOOGLE_APPLICATION_CREDENTIALS"), (GIT, "NETRC"),
+                       (REGISTRY, "NPM_CONFIG_USERCONFIG"), (REGISTRY, "npm_config_userconfig")):
+        files.append((kind, env.get(name, "")))
+    files.extend((CLUSTER, p) for p in env.get("KUBECONFIG", "").split(os.pathsep))
+    for kind, name, under in ((REGISTRY, "CARGO_HOME", ("credentials", "credentials.toml")),
+                              (GIT, "XDG_CONFIG_HOME", ("gh/hosts.yml", "git/credentials")), (GIT, "GH_CONFIG_DIR", ("hosts.yml",)),
+                              (CLUSTER, "DOCKER_CONFIG", ("config.json",)), (CLOUD, "CLOUDSDK_CONFIG", GCLOUD),
+                              (CLOUD, "AZURE_CONFIG_DIR", AZURE)):
         if env.get(name):
-            files.extend(os.path.join(env[name], f) for f in under)
+            files.extend((kind, os.path.join(env[name], f)) for f in under)
     if env.get("CLOUDSDK_CONFIG"):
-        dirs.append(os.path.join(env["CLOUDSDK_CONFIG"], "legacy_credentials"))
+        dirs.append((CLOUD, os.path.join(env["CLOUDSDK_CONFIG"], "legacy_credentials")))
     if env.get("GNUPGHOME"):
-        dirs.append(os.path.join(env["GNUPGHOME"], "private-keys-v1.d"))
+        dirs.append((GPG, os.path.join(env["GNUPGHOME"], "private-keys-v1.d")))
         socks.extend(os.path.join(env["GNUPGHOME"], s) for s in GPG_SOCKETS)
     if env.get("TMPDIR"):
         socks.extend(glob.glob(os.path.join(glob.escape(env["TMPDIR"]), "ssh-*", "agent.*")))
@@ -266,39 +284,46 @@ def homes(home):
 def creds(which, given):
     env = os.environ
     found, state, files, dirs, socks = [], {"left": BUDGET, "seen": set()}, [], [], []
-    for home in (given if which == "given" else homes(env.get("HOME", ""))):
-        if not home:
-            continue
+    read = [h for h in (given if which == "given" else homes(env.get("HOME", ""))) if h]
+    for home in read:
         ssh = os.path.join(home, ".ssh")
-        if not walk(ssh, SSH_KEEP, found, state):
-            readable(found, (os.path.join(ssh, k) for k in SSH_KEYS))
-        readable(found, (os.path.join(home, f) for f in FILES))
-        for d in DIRS:
-            walk(os.path.join(home, d), None, found, state)
+        if not walk(ssh, SSH_KEEP, found, state, SSH):
+            readable(found, SSH, (os.path.join(ssh, k) for k in SSH_KEYS))
+        for kind, f in FILES:
+            readable(found, kind, [os.path.join(home, f)])
+        for kind, d in DIRS:
+            walk(os.path.join(home, d), None, found, state, kind)
         sockets(found, (os.path.join(home, s) for s in SOCKETS))
-        readable(found, [keypair(home)])
+        readable(found, SOLANA, [keypair(home)])
     named(env, files, dirs, socks)
     if which == "default":
         # The agent sockets anyone on the machine can name.
         socks.extend(glob.glob("/tmp/ssh-*/agent.*") + glob.glob("/tmp/vscode-ssh-auth-*.sock")
                      + glob.glob("/private/tmp/com.apple.launchd.*/Listeners"))
         runtime("/run/user/%d" % os.getuid(), dirs, socks)
-    readable(found, files)
-    for d in dirs:
-        walk(d, None, found, state)
+    for kind, f in files:
+        readable(found, kind, [f])
+    for kind, d in dirs:
+        walk(d, None, found, state, kind)
     sockets(found, socks)
     sock = env.get("SSH_AUTH_SOCK", "")
     if sock:
         mark = []
         sockets(mark, [sock])
-        found.extend(p + " (SSH_AUTH_SOCK)" for p in mark)
-    seen = set()
-    for path in found:
+        found.extend((kind, p + " (SSH_AUTH_SOCK)") for kind, p in mark)
+    seen, out, count = set(), [], dict.fromkeys(KINDS, 0)
+    for kind, path in found:
         key = os.path.realpath(path.rsplit(" (SSH_AUTH_SOCK)", 1)[0])
         if key not in seen:
             seen.add(key)
-            print(shown(path))
-    return 1 if found else 0
+            count[kind] += 1
+            out.append(shown(path, read))
+    if not out:
+        return 0
+    print(", ".join("%s (%d)" % (kind, count[kind]) for kind in KINDS if count[kind]))
+    for path in out:
+        print(path)
+    return 1
 
 
 def names(env):
@@ -374,12 +399,13 @@ iso_homes() {
 
 iso_credentials() { # iso_credentials [<home>...]
   local rc=0 which=given out
-  ISO_READABLE="" ISO_WHY=""
+  ISO_KINDS="" ISO_READABLE="" ISO_WHY=""
   command -v python3 >/dev/null 2>&1 || { ISO_WHY="python3 is not on PATH"; return 2; }
   [ $# -gt 0 ] || which=default
   out=$(python3 -I -c "$ISO_PY" creds "$which" "$@") || rc=$?
   case "$rc" in
-    0|1) ISO_READABLE=$out; return "$rc" ;;
+    0) return 0 ;;
+    1) ISO_KINDS=${out%%$'\n'*}; ISO_READABLE=${out#*$'\n'}; return 1 ;;
   esac
   ISO_WHY=${out%%$'\n'*}
   [ -n "$ISO_WHY" ] || ISO_WHY="the check stopped on an error"
