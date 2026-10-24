@@ -565,14 +565,18 @@ eval_triggers() {
     [ -n "$s" ] || continue
     grep -qxF -- "$(printf '%s' "$s" | norm_url)" <<< "$remotes" || { t3="${t3:+$t3,}security_txt-source_code"; break; }
   done <<< "$src"
-  for d in "$REPO_ABS"/audit_*/; do
-    [ -f "$d/REPORT.md" ] || continue
-    [ -n "$CUR_RUN" ] && [ "$(cd "$d" && pwd -P)" = "$CUR_RUN" ] && continue
+  # Nothing counts through a symbolic link: what one points at is never tested.
+  for d in "$REPO_ABS"/audit_*; do
+    [ ! -L "$d" ] && [ -d "$d" ] && [ ! -L "$d/REPORT.md" ] && [ -f "$d/REPORT.md" ] || continue
+    [ "$d" != "$CUR_RUN" ] || continue
     t4="prior-audit-dir"; break
   done
   n=$(G "$REPO" ls-tree -r --name-only "$PIN_SHA" 2>/dev/null | grep -iE '\.(pdf|md)$' | grep -ciE "$REPORT_RE")
   if [ "${n:-0}" -gt 0 ]; then t4="${t4:+$t4,}in-tree-report"; fi
-  if ls "$REPO_ABS"/incident_*/INCIDENTS.json >/dev/null 2>&1; then t4="${t4:+$t4,}incidents-json"; fi
+  for d in "$REPO_ABS"/incident_*; do
+    [ ! -L "$d" ] && [ ! -L "$d/INCIDENTS.json" ] && [ -f "$d/INCIDENTS.json" ] || continue
+    t4="${t4:+$t4,}incidents-json"; break
+  done
   echo "T3 $([ -n "$t3" ] && echo yes || echo no) ${t3:-none}"
   echo "T4 $([ -n "$t4" ] && echo yes || echo no) ${t4:-none}"
 }
@@ -805,9 +809,18 @@ R4_OTHER=$(sed -E 's/^ *[0-9]+ //' "$TMPD/r4a" | grep -E '\.rs"?$' |
   G "$REPO" ls-tree -r --name-only "$PIN_SHA" 2>/dev/null | grep -iE '\.(pdf|md)$' | grep -iE "$REPORT_RE" > "$TMPD/r6f"
   emit_capped "$TMPD/r6f" "no audit, post-mortem or incident file"
   echo "--- auditor-skill outputs next to the target ---"
-  for d in "$REPO_ABS"/audit_*/ "$REPO_ABS"/incident_*/INCIDENTS.json; do
-    [ "$d" != "$CUR_RUN/" ] || continue
-    if [ -e "$d" ] || [ -L "$d" ]; then clean "$d"; echo; fi
+  # A symbolic link is listed as one and never followed, so what it points at is never tested.
+  for d in "$REPO_ABS"/audit_* "$REPO_ABS"/incident_*; do
+    [ "$d" != "$CUR_RUN" ] || continue
+    if [ -L "$d" ]; then
+      clean "$d"; echo " (symbolic link, not followed)"
+    elif [ -d "$d" ]; then
+      case "${d##*/}" in
+        audit_*) clean "$d/"; echo ;;
+        *) if [ -L "$d/INCIDENTS.json" ]; then clean "$d/INCIDENTS.json"; echo " (symbolic link, not followed)"
+           elif [ -e "$d/INCIDENTS.json" ]; then clean "$d/INCIDENTS.json"; echo; fi ;;
+      esac
+    fi
   done > "$TMPD/r6g"
   emit_capped "$TMPD/r6g" "no audit_*/ or incident_*/INCIDENTS.json"
   endsec
@@ -970,11 +983,14 @@ while IFS= read -r v; do
   fi
 done <<< "$VULNS_NL"
 # An incident file counts only where an auditor run wrote it: not a symbolic link, not inside a linked
-# directory, and not in an incident_* directory the target tracks.
+# directory, and not in an incident_* directory the target tracks. A link is recorded as one and never
+# followed, so what it points at is never tested.
 ii=0
-for f in "$REPO_ABS"/incident_*/INCIDENTS.json; do
-  d=$(dirname "$f")
-  if [ -L "$f" ] || [ -L "$d" ]; then record "$f" "-" "-" "-" "skipped: symbolic link (file or directory)"; continue; fi
+for d in "$REPO_ABS"/incident_*; do
+  f=$d/INCIDENTS.json
+  if [ -L "$d" ]; then record "$d" "-" "-" "-" "skipped: symbolic link (directory), not followed"; continue; fi
+  [ -d "$d" ] || continue
+  if [ -L "$f" ]; then record "$f" "-" "-" "-" "skipped: symbolic link (file), not followed"; continue; fi
   [ -f "$f" ] || continue
   if ! listed=$(G "$REPO_ABS" --icase-pathspecs ls-files -- "$(basename "$d")" 2>/dev/null) || [ -n "$listed" ]; then
     record "$f" "-" "-" "-" "skipped: tracked by the target, not written by an auditor run"; continue

@@ -133,7 +133,8 @@ clone or git cannot read its config.
   that reaches its file through a directory link inside the target tree, is skipped and noted there.
 - **Incidents.** `incident_*/INCIDENTS.json` next to the target is picked up automatically, except one that is a
   symbolic link, sits in a linked directory, or lies in an `incident_*` directory the target tracks: those are skipped
-  and noted in `inputs.tsv`. Only files whose `schema` is `auditor-incidents/1` are read, and only the schema's stable
+  and noted in `inputs.tsv`. No symbolic link in the target's tree is followed (T4 counts nothing through one, and R6
+  and `inputs.tsv` name one as a link), so a planted link cannot test what exists outside the tree. Only files whose `schema` is `auditor-incidents/1` are read, and only the schema's stable
   read surface: per entry of `incidents[]`, `id` (`INC-<n>.<k>`), `verdict`, `outcome`, `root_cause_class`,
   `vuln.{program, instruction, file, function, line, mechanism, kv, checklist}` and `poc.tier`. Strings are cut at
   500 characters and `kv` / `checklist` keep their string ids only. `attacker`, `transactions`, `blast_radius`,

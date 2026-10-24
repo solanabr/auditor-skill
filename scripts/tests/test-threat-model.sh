@@ -810,6 +810,37 @@ D2=$(cd "$TGT" && "$COLLECT" --detect --repo . --out audit_1/bootstrap 2>/dev/nu
 check "--detect: the current audit dir is not a prior audit" sh -c "printf '%s\n' '$D2' | grep -q '^T4 yes in-tree-report$'"
 rm -rf "$TGT/audit_1"
 
+# Links planted in the target's tree (an archive or a checkout can carry them) are never followed: T4,
+# R6 and the incident files read the same whether what they point at exists or not.
+LNK="$W/linked"; mkrepo "$LNK"; put "$LNK" programs/l/src/lib.rs 'pub fn l() {}'; commit "$LNK" -m "initial"
+OUTL="$T/outside-links"; mkdir -p "$OUTL/proj" "$OUTL/incdir"
+printf '# report kept elsewhere\n' > "$OUTL/proj/REPORT.md"; printf '# report kept elsewhere\n' > "$OUTL/report.md"
+printf '{"schema": "auditor-incidents/1", "incidents": [{"id": "INC-OUTSIDE"}]}\n' > "$OUTL/INCIDENTS.json"
+cp "$OUTL/INCIDENTS.json" "$OUTL/incdir/INCIDENTS.json"
+ln -s "$OUTL/proj" "$LNK/audit_9"
+mkdir "$LNK/audit_8"; ln -s "$OUTL/report.md" "$LNK/audit_8/REPORT.md"
+mkdir "$LNK/incident_7"; ln -s "$OUTL/INCIDENTS.json" "$LNK/incident_7/INCIDENTS.json"
+ln -s "$OUTL/incdir" "$LNK/incident_6"
+ln -s "$OUTL/gone" "$LNK/incident_5"
+DL=$(cd "$W" && "$COLLECT" --detect --repo linked --out audit_900/bootstrap 2>/dev/null)
+check "--detect: T4 counts nothing through a link in the target's tree" sh -c "printf '%s\n' '$DL' | grep -qx 'T4 no none'"
+links_seen() { # links_seen <out>: what R6 and inputs.tsv say about the target's audit_* and incident_* entries
+  { section_of "$1/history.md" "R0"; section_of "$1/history.md" "R6"; grep -E 'audit_|incident_' "$1/inputs.tsv" | cut -f2-; } > "$2"
+}
+collect --offline --repo linked; links_seen "$OUT" "$T/links.present"
+check "--offline: R6 lists a linked audit_<n> as a link, not followed" \
+  has "$OUT/history.md" "$LNK/audit_9 (symbolic link, not followed)"
+check "--offline: ... and a linked incident directory the same way, whether its target exists or not" \
+  sh -c "grep -qF '$LNK/incident_6 (symbolic link, not followed)' '$OUT/history.md' && grep -qF '$LNK/incident_5 (symbolic link, not followed)' '$OUT/history.md'"
+check "--offline: ... and a linked INCIDENTS.json" has "$OUT/history.md" "$LNK/incident_7/INCIDENTS.json (symbolic link, not followed)"
+check "--offline: nothing behind a link is read" sh -c "! grep -rq 'INC-OUTSIDE\|kept elsewhere' '$OUT/'"
+mv "$OUTL" "$OUTL.away"
+collect --offline --repo linked; links_seen "$OUT" "$T/links.absent"
+DL2=$(cd "$W" && "$COLLECT" --detect --repo linked --out audit_900/bootstrap 2>/dev/null)
+mv "$OUTL.away" "$OUTL"
+check "--offline: R0, R6 and inputs.tsv read the same with the links' targets gone" cmp -s "$T/links.present" "$T/links.absent"
+check "--detect: ... and so does T4" test "$DL2" = "$DL"
+
 # =================================================================================================
 # Large inputs: under pipefail an early-exit reader (grep -q) can report the writer's SIGPIPE instead of
 # the match. Every detection whose status matters must survive trees and configs far above a pipe buffer.
@@ -954,8 +985,8 @@ if command -v jq >/dev/null 2>&1 || command -v python3 >/dev/null 2>&1; then
   done
   check "T-n: inputs.tsv records the linked incident file as skipped" \
     sh -c "grep -F 'incident_7/INCIDENTS.json' '$RD/audit_5/bootstrap/inputs.tsv' | grep -q 'skipped: symbolic link'"
-  check "T-n: inputs.tsv records the incident file in a linked dir as skipped" \
-    sh -c "grep -F 'incident_8/INCIDENTS.json' '$RD/audit_5/bootstrap/inputs.tsv' | grep -q 'skipped: symbolic link'"
+  check "T-n: inputs.tsv records a linked incident dir as skipped, not followed" \
+    sh -c "grep -F 'incident_8' '$RD/audit_5/bootstrap/inputs.tsv' | grep -q 'skipped: symbolic link (directory), not followed'"
   check "T-n: inputs.tsv records the tracked incident file as skipped" \
     sh -c "grep -F 'incident_9/INCIDENTS.json' '$RD/audit_5/bootstrap/inputs.tsv' | grep -q 'skipped: tracked'"
 else
