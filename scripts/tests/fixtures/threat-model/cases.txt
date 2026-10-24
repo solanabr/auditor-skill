@@ -1,0 +1,77 @@
+# Hostile argument vectors for scripts/threat-model/collect.sh. test-threat-model.sh runs each one in a working
+# directory that holds the git repository tgt, the run directory audit_1 (made by rundir.sh new audit), and the
+# symbolic links tgt-link (to tgt) and audit_2 (to audit_1).
+# One case per line: <exit status><TAB><the one stderr line><TAB><argument>[<TAB><argument>...]. Each
+# case prints nothing on stdout and changes nothing in the working directory.
+2	collect.sh: refused: the mode comes first: --detect, --offline or --network, then --repo <dir> --out audit_<n>/bootstrap [options] (see --help)	--help	--offline
+2	collect.sh: refused: the mode comes first: --detect, --offline or --network, then --repo <dir> --out audit_<n>/bootstrap [options] (see --help)	-h	x
+2	collect.sh: refused: the mode comes first: --detect, --offline or --network, then --repo <dir> --out audit_<n>/bootstrap [options] (see --help)	--repo	tgt	--out	audit_1/bootstrap	--offline
+2	collect.sh: refused: the mode comes first: --detect, --offline or --network, then --repo <dir> --out audit_<n>/bootstrap [options] (see --help)	--repo	tgt	--out	audit_1/bootstrap	--detect
+2	collect.sh: refused: the mode comes first: --detect, --offline or --network, then --repo <dir> --out audit_<n>/bootstrap [options] (see --help)	--repo	tgt	--out	audit_1/bootstrap	--network
+2	collect.sh: refused: the mode comes first: --detect, --offline or --network, then --repo <dir> --out audit_<n>/bootstrap [options] (see --help)	--OFFLINE	--repo	tgt	--out	audit_1/bootstrap
+2	collect.sh: refused: the mode comes first: --detect, --offline or --network, then --repo <dir> --out audit_<n>/bootstrap [options] (see --help)	offline	--repo	tgt	--out	audit_1/bootstrap
+2	collect.sh: refused: the mode comes first: --detect, --offline or --network, then --repo <dir> --out audit_<n>/bootstrap [options] (see --help)	--offline=1	--repo	tgt	--out	audit_1/bootstrap
+2	collect.sh: refused: the mode is given once, as the first argument: --detect	--offline	--repo	tgt	--out	audit_1/bootstrap	--detect
+2	collect.sh: refused: the mode is given once, as the first argument: --detect	--detect	--detect	--repo	tgt	--out	audit_1/bootstrap
+2	collect.sh: refused: the mode is given once, as the first argument: --offline	--network	--repo	tgt	--out	audit_1/bootstrap	--offline
+2	collect.sh: refused: --repo is required	--offline
+2	collect.sh: refused: --out is required	--offline	--repo	tgt
+2	collect.sh: refused: --repo is required	--offline	--out	audit_1/bootstrap
+2	collect.sh: refused: --repo needs a value	--offline	--repo
+2	collect.sh: refused: --out needs a value	--offline	--repo	tgt	--out
+2	collect.sh: refused: --repo is given twice	--offline	--repo	tgt	--repo	tgt	--out	audit_1/bootstrap
+2	collect.sh: refused: --pin is given twice	--offline	--repo	tgt	--out	audit_1/bootstrap	--pin	HEAD	--pin	HEAD
+2	collect.sh: refused: --cap is given twice	--offline	--repo	tgt	--out	audit_1/bootstrap	--cap	1	--cap	2
+2	collect.sh: refused: unknown argument: --fetch (see --help)	--offline	--repo	tgt	--out	audit_1/bootstrap	--fetch
+2	collect.sh: refused: unknown argument: -c (see --help)	--offline	--repo	tgt	--out	audit_1/bootstrap	-c	core.pager=sh
+2	collect.sh: refused: unknown argument: -- (see --help)	--offline	--repo	tgt	--out	audit_1/bootstrap	--	x
+2	collect.sh: refused: --cap must be a number from 0 to 10000	--offline	--repo	tgt	--out	audit_1/bootstrap	--cap	10001
+2	collect.sh: refused: --cap must be a number from 0 to 10000	--offline	--repo	tgt	--out	audit_1/bootstrap	--cap	-5
+2	collect.sh: refused: --small must be a number from 0 to 10000	--offline	--repo	tgt	--out	audit_1/bootstrap	--small	0x10
+2	collect.sh: refused: --fix-ceiling must be a number from 0 to 10000	--offline	--repo	tgt	--out	audit_1/bootstrap	--fix-ceiling	1e9
+2	collect.sh: refused: --fix-ceiling must be a number from 0 to 10000	--offline	--repo	tgt	--out	audit_1/bootstrap	--fix-ceiling	123456
+2	collect.sh: refused: --pin takes a revision, not an option: --output=/tmp/tm-case-pwned	--offline	--repo	tgt	--out	audit_1/bootstrap	--pin	--output=/tmp/tm-case-pwned
+2	collect.sh: refused: --import takes a revision, not an option: -p	--offline	--repo	tgt	--out	audit_1/bootstrap	--import	-p
+2	collect.sh: refused: --import does not resolve to a commit: no-such-commit	--offline	--repo	tgt	--out	audit_1/bootstrap	--import	no-such-commit
+2	collect.sh: refused: --out must be audit_<n>/bootstrap, in a run directory audit_<n> directly in the working directory: audit_1	--offline	--repo	tgt	--out	audit_1
+2	collect.sh: refused: --out must be audit_<n>/bootstrap, in a run directory audit_<n> directly in the working directory: audit_1/bootstrap/inputs	--offline	--repo	tgt	--out	audit_1/bootstrap/inputs
+2	collect.sh: refused: --out must be audit_<n>/bootstrap, in a run directory audit_<n> directly in the working directory: incident_1/bootstrap	--offline	--repo	tgt	--out	incident_1/bootstrap
+2	collect.sh: refused: --out must be audit_<n>/bootstrap, in a run directory audit_<n> directly in the working directory: audit_x/bootstrap	--offline	--repo	tgt	--out	audit_x/bootstrap
+2	collect.sh: refused: --out must be audit_<n>/bootstrap, in a run directory audit_<n> directly in the working directory: audit_1234567/bootstrap	--offline	--repo	tgt	--out	audit_1234567/bootstrap
+2	collect.sh: refused: --out must be audit_<n>/bootstrap, in a run directory audit_<n> directly in the working directory: /tmp/audit_1/bootstrap	--offline	--repo	tgt	--out	/tmp/audit_1/bootstrap
+2	collect.sh: refused: --out must be audit_<n>/bootstrap, in a run directory audit_<n> directly in the working directory: ../audit_1/bootstrap	--offline	--repo	tgt	--out	../audit_1/bootstrap
+2	collect.sh: refused: --out must be audit_<n>/bootstrap, in a run directory audit_<n> directly in the working directory: audit_1/../audit_1/bootstrap	--offline	--repo	tgt	--out	audit_1/../audit_1/bootstrap
+2	collect.sh: refused: --out must be audit_<n>/bootstrap, in a run directory audit_<n> directly in the working directory: tgt/audit_1/bootstrap	--offline	--repo	tgt	--out	tgt/audit_1/bootstrap
+2	collect.sh: refused: --out must be audit_<n>/bootstrap, in a run directory audit_<n> directly in the working directory: ~/audit_1/bootstrap	--offline	--repo	tgt	--out	~/audit_1/bootstrap
+2	collect.sh: refused: --out passes through a symbolic link: audit_2/bootstrap	--offline	--repo	tgt	--out	audit_2/bootstrap
+2	collect.sh: refused: the run directory is not an existing directory: audit_3	--offline	--repo	tgt	--out	audit_3/bootstrap
+2	collect.sh: refused: --repo must be relative to the working directory: /etc; only --network reads outside the working directory or through a symbolic link	--offline	--repo	/etc	--out	audit_1/bootstrap
+2	collect.sh: refused: --repo has an empty, . or .. component: ..; only --network reads outside the working directory or through a symbolic link	--offline	--repo	..	--out	audit_1/bootstrap
+2	collect.sh: refused: --repo has an empty, . or .. component: ../tgt; only --network reads outside the working directory or through a symbolic link	--offline	--repo	../tgt	--out	audit_1/bootstrap
+2	collect.sh: refused: --repo passes through a symbolic link: tgt-link; only --network reads outside the working directory or through a symbolic link	--offline	--repo	tgt-link	--out	audit_1/bootstrap
+2	collect.sh: refused: --repo may not start with - or ~: ~; only --network reads outside the working directory or through a symbolic link	--offline	--repo	~	--out	audit_1/bootstrap
+2	collect.sh: refused: --repo may not start with - or ~: -x; only --network reads outside the working directory or through a symbolic link	--offline	--repo	-x	--out	audit_1/bootstrap
+2	collect.sh: refused: --repo has an empty, . or .. component: tgt/./.; only --network reads outside the working directory or through a symbolic link	--offline	--repo	tgt/./.	--out	audit_1/bootstrap
+2	collect.sh: refused: --repo must be relative to the working directory: /; only --network reads outside the working directory or through a symbolic link	--detect	--repo	/	--out	audit_1/bootstrap
+2	collect.sh: refused: --parent must be relative to the working directory: /etc; only --network reads outside the working directory or through a symbolic link	--offline	--repo	tgt	--out	audit_1/bootstrap	--parent	/etc
+2	collect.sh: refused: --parent passes through a symbolic link: tgt-link; only --network reads outside the working directory or through a symbolic link	--offline	--repo	tgt	--out	audit_1/bootstrap	--parent	tgt-link
+2	collect.sh: refused: --parent has an empty, . or .. component: ../x; only --network reads outside the working directory or through a symbolic link	--offline	--repo	tgt	--out	audit_1/bootstrap	--parent	../x
+2	collect.sh: refused: --parent accepts an https:// URL or a local path, not: http://example.invalid/p.git	--offline	--repo	tgt	--out	audit_1/bootstrap	--parent	http://example.invalid/p.git
+2	collect.sh: refused: --parent accepts an https:// URL or a local path, not: ssh://example.invalid/p.git	--offline	--repo	tgt	--out	audit_1/bootstrap	--parent	ssh://example.invalid/p.git
+2	collect.sh: refused: --parent accepts an https:// URL or a local path, not: git@example.invalid:o/p.git	--offline	--repo	tgt	--out	audit_1/bootstrap	--parent	git@example.invalid:o/p.git
+2	collect.sh: refused: --parent accepts an https:// URL or a local path, not: file:///etc	--offline	--repo	tgt	--out	audit_1/bootstrap	--parent	file:///etc
+2	collect.sh: refused: --parent accepts an https:// URL or a local path, not: ext::sh -c touch% /tmp/tm-case-pwned	--offline	--repo	tgt	--out	audit_1/bootstrap	--parent	ext::sh -c touch% /tmp/tm-case-pwned
+2	collect.sh: refused: --vulns must be relative to the working directory: /etc/hosts; only --network reads outside the working directory or through a symbolic link	--offline	--repo	tgt	--out	audit_1/bootstrap	--vulns	/etc/hosts
+2	collect.sh: refused: --vulns has an empty, . or .. component: ../../etc/hosts; only --network reads outside the working directory or through a symbolic link	--offline	--repo	tgt	--out	audit_1/bootstrap	--vulns	../../etc/hosts
+2	collect.sh: refused: --vulns passes through a symbolic link: tgt-link/programs/c/src/lib.rs; only --network reads outside the working directory or through a symbolic link	--offline	--repo	tgt	--out	audit_1/bootstrap	--vulns	tgt-link/programs/c/src/lib.rs
+2	collect.sh: refused: --vulns accepts a file or an https:// URL, not: file:///etc/hosts	--offline	--repo	tgt	--out	audit_1/bootstrap	--vulns	file:///etc/hosts
+2	collect.sh: refused: --vulns accepts a file or an https:// URL, not: ftp://example.invalid/r.pdf	--offline	--repo	tgt	--out	audit_1/bootstrap	--vulns	ftp://example.invalid/r.pdf
+2	collect.sh: refused: --audit-mem-db must be .audit-memory/audit.db or audit_<n>/audit-mem.db: /tmp/x.db	--offline	--repo	tgt	--out	audit_1/bootstrap	--audit-mem-db	/tmp/x.db
+2	collect.sh: refused: --audit-mem-db must be .audit-memory/audit.db or audit_<n>/audit-mem.db: ../.audit-memory/audit.db	--offline	--repo	tgt	--out	audit_1/bootstrap	--audit-mem-db	../.audit-memory/audit.db
+2	collect.sh: refused: --audit-mem-db must be .audit-memory/audit.db or audit_<n>/audit-mem.db: .audit-memory/other.db	--offline	--repo	tgt	--out	audit_1/bootstrap	--audit-mem-db	.audit-memory/other.db
+2	collect.sh: refused: --audit-mem-db passes through a symbolic link: audit_2/audit-mem.db	--offline	--repo	tgt	--out	audit_1/bootstrap	--audit-mem-db	audit_2/audit-mem.db
+2	collect.sh: refused: --audit-mem-db must be .audit-memory/audit.db or audit_<n>/audit-mem.db: incident_1/audit-mem.db	--offline	--repo	tgt	--out	audit_1/bootstrap	--audit-mem-db	incident_1/audit-mem.db
+2	collect.sh: refused: --audit-mem-db must be .audit-memory/audit.db or audit_<n>/audit-mem.db: /tmp/x.db	--network	--repo	tgt	--out	audit_1/bootstrap	--audit-mem-db	/tmp/x.db
+2	collect.sh: refused: --out must be audit_<n>/bootstrap, in a run directory audit_<n> directly in the working directory: /tmp/audit_1/bootstrap	--network	--repo	tgt	--out	/tmp/audit_1/bootstrap
+2	collect.sh: refused: --out passes through a symbolic link: audit_2/bootstrap	--network	--repo	tgt	--out	audit_2/bootstrap
+3	collect.sh: not the top level of a git repository that git can read (none there, or another user owns it: collect from a copy you made), nor a bare repository: /nonexistent-tm-case	--network	--repo	/nonexistent-tm-case	--out	audit_1/bootstrap

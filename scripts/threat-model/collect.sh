@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # collect.sh — threat-model bootstrap collector (read-only on the target repository).
 #
 # Gathers history-derived leads for /auditor:threat-model: security-keyword commits, reverts, removed
@@ -6,94 +6,173 @@
 # prior-vulnerability inputs and the audit-mem warm block. It never checks out, builds, runs, fetches
 # into or modifies the target: lazy fetching and transport protocols are off, and a partial clone is
 # refused. Output contract: references/audit-lifecycle/threat-model-bootstrap.md.
-# Git hardening follows OUTPUT-RULES.md Rule 11c; the output directory follows Rule 11d.
+# Git hardening follows OUTPUT-RULES.md Rule 11c (the hardened call in scripts/lib/confine.sh); the
+# output directory follows Rule 11d.
 #
-# Usage (from the installation, never as a scripts/ path relative to the working directory):
-#   bash "${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --repo <dir> --out <audit_n>/bootstrap [options]
-#   bash "${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --repo <dir> --out <audit_n>/bootstrap --detect
+# Usage: run it directly by its quoted path in the installation, from the working directory, never as a
+# scripts/ path relative to the working directory. The mode comes first:
+#   "${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --detect --repo <dir> --out audit_<n>/bootstrap [--pin <rev>]
+#   "${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --offline --repo <dir> --out audit_<n>/bootstrap [options]
+#   "${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --network --repo <dir> --out audit_<n>/bootstrap [options]
+# A mode after other options is refused (exit 2), as in the older form
+#   bash "${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --repo <dir> --out audit_<n>/bootstrap --offline
 #
-# Options:
+# Modes:
+#   --detect    only evaluate triggers T3 and T4, print them and exit (writes nothing)
+#   --offline   collect without the network: --parent / --vulns URLs are recorded, not fetched
+#   --network   collect, fetching the https URLs given in --parent and --vulns; the only mode that reads
+#               a --repo, --parent or --vulns outside the working directory or through a symbolic link
+# In --detect and --offline, --repo and a local --parent or --vulns are relative to the working
+# directory, with no "." or ".." component, and reach nothing through a symbolic link; --repo, and a
+# --parent, is the top level of a repository whose git directory lies inside the working directory,
+# holds no symbolic link and borrows no objects (alternates) or parents (info/grafts). A local path that
+# fails this is refused (exit 2), naming --network.
+#
+# Options (each at most once, except the repeatable --paths, --parent-paths and --vulns; a value is
+# at most 1024 bytes, with no control character):
+#   --repo <dir>              (required) the target: the top level of its repository, or a bare one
+#   --out audit_<n>/bootstrap (required) the output directory, in the run directory audit_<n> (below)
 #   --pin <rev>               commit to analyse (default HEAD); only its ancestry is mined
 #   --paths <pathspec>        target pathspec, repeatable (default 'programs/*.rs' when the commit has
 #                             a programs/ dir, else '*.rs'); pass the in-scope program dirs
-#   --parent <https-url|dir>  fork parent: https URL (bare clone into a temp dir) or the top level of a
-#                             local repository
+#   --parent <https-url|dir>  fork parent: https URL (bare clone into a temp dir, --network only) or the
+#                             top level of a local repository
 #   --parent-paths <spec>     parent pathspec, repeatable (default: the same rule, applied to the parent)
 #   --import <rev>            target commit that imported the parent code (default: the root commit);
 #                             pass it when the code arrived after the root commit, or R5 finds no match
 #   --vulns <file|https-url>  prior-vulnerability input, repeatable: PDF, Markdown, text, CSV, JSON,
-#                             or INCIDENTS.json (schema auditor-incidents/1; allowlisted fields only); a
-#                             local path that is a symbolic link, or passes through a directory link in
-#                             the target tree, is skipped
+#                             or INCIDENTS.json (schema auditor-incidents/1; allowlisted fields only); in
+#                             --network, a local path that is a symbolic link, or passes through a
+#                             directory link in the target tree, is skipped
 #   --program-id <id>         save `audit-mem warm --program-id <id>` from the --audit-mem-db store
-#                             (needs the built tool)
-#   --audit-mem-db <path>     audit-mem store that --program-id reads; nothing is read without it (the
-#                             collector never looks for a store in the target tree)
-#   --keywords <ere>          extra commit-message keywords, an ERE alternation such as 'drain|bypass'
-#   --offline                 never use the network; --parent / --vulns URLs are recorded, not fetched
-#   --detect                  only evaluate triggers T3 and T4, print them and exit (writes nothing)
+#                             (needs the built tool); at most 200 characters
+#   --audit-mem-db <path>     the store --program-id reads: .audit-memory/audit.db or
+#                             audit_<n>/audit-mem.db; nothing is read without it (the collector never
+#                             looks for a store on its own)
+#   --keywords <ere>          extra commit-message keywords, an ERE alternation such as 'drain|bypass';
+#                             at most 200 characters
 #   --cap <n>                 rows per section before TRUNCATED (default 60)
 #   --small <n>               changed-line ceiling for a quiet-fix candidate commit (default 40)
 #   --fix-ceiling <n>         changed-line ceiling for a keyword commit's ADDED rows (default 300)
+#                             (--cap, --small and --fix-ceiling: 0 to 10000)
+#   -h, --help                print this header (as the only argument)
 #
-# Exit status: 0 done (sections may print NOT FOUND), 2 usage error or rejected input (including an
-#              --import that is not a commit, and a run directory that is or holds a symbolic link,
-#              that is reached through one inside the working directory or the target tree, that git
-#              tracks, or that git or find cannot check),
-#              3 --repo is not the top level of a git repository (or a bare repository), the pin
-#              does not resolve, or the target is a partial clone (reading it could fetch from its
-#              promisor remote) or git cannot read its config.
+# Run directory (OUTPUT-RULES.md Rule 11d): audit_<n> sits directly in the working directory, is a real
+# directory holding no symbolic link, is tracked by no repository in any letter case, and has a
+# .gitignore holding exactly "*" ("${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" new audit makes one).
+# bootstrap/ is made in it when missing. The output is built in a temporary directory and copied in at
+# the end, after the run directory is checked again: every file is created anew with noclobber and
+# written through the descriptor opened at creation, and a re-run replaces the outputs of the run before.
+# In --network, each URL is recorded in audit_<n>/disclosures.tsv before it is fetched (OUTPUT-RULES.md
+# Rule 11b; the format is in scripts/lib/confine.sh).
+#
+# Exit status: 0 done (sections may print NOT FOUND), 2 usage error or rejected input (one line,
+#              "collect.sh: refused: <reason>": a mode that is not first, an unknown or repeated option,
+#              a value out of bounds, a path the mode does not take, an --import that is not a commit, a
+#              run directory that fails the checks above or that git or find cannot check, a disclosure
+#              that cannot be recorded, or an output that cannot be written),
+#              3 --repo is not the top level of a git repository that git can read (or a bare
+#              repository), the pin does not resolve, or the target is a partial clone (reading it could
+#              fetch from its promisor remote) or git cannot read its config.
 
 set -uo pipefail
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES CDPATH
 # No git call may fetch a missing object from a promisor remote (partial clones are refused below too).
 export GIT_NO_LAZY_FETCH=1 LC_ALL=C
 
-SELF_DIR=$(cd "$(dirname "$0")" && pwd)
-SKILL_ROOT=$(cd "$SELF_DIR/../.." && pwd)
+case "$0" in */*) here=${0%/*} ;; *) here=. ;; esac
+here=$(cd -P -- "$here" 2>/dev/null && pwd -P) || { printf 'collect.sh: refused: the installation cannot be resolved\n' >&2; exit 2; }
+SCRIPTS=${here%/*}
+SKILL_ROOT=${SCRIPTS%/*}
+. "$SCRIPTS/lib/confine.sh" || { printf 'collect.sh: refused: scripts/lib/confine.sh cannot be read\n' >&2; exit 2; }
+confine_init collect.sh "$SKILL_ROOT" 2
+confine_need env git find wc cat sed awk sort uniq cut tr head tail grep mktemp rm mkdir date
+WT=$CONFINE_WT
 COLLECTOR_VERSION=1
+exec </dev/null
 
-die() { echo "collect.sh: $*" >&2; exit 2; }
+die() { confine_refuse "$*"; }
 
 # ---- arguments ------------------------------------------------------------------------------------
-REPO="" OUT="" PIN="HEAD" PARENT="" IMPORT="" PROGRAM_ID="" AUDIT_MEM_DB="" EXTRA_KW=""
-OFFLINE=0 DETECT=0 CAP=60 SMALL=40 FIX_CEILING=300
-TPATHS_NL="" PPATHS_NL="" VULNS_NL=""
+if [ $# -eq 1 ]; then case "$1" in -h|--help) sed -n '2,/^$/p' "$0"; exit 0 ;; esac; fi
+MODE=${1-}
+case "$MODE" in
+  --detect|--offline|--network) shift ;;
+  *) die "the mode comes first: --detect, --offline or --network, then --repo <dir> --out audit_<n>/bootstrap [options] (see --help)" ;;
+esac
+OFFLINE=1
+[ "$MODE" = --network ] && OFFLINE=0
+# In --detect and --offline a refused local path names the mode that may read it.
+NET_HINT="only --network reads outside the working directory or through a symbolic link"
+
+REPO="" OUT="" PIN="" PARENT="" IMPORT="" PROGRAM_ID="" AUDIT_MEM_DB="" EXTRA_KW="" CAP="" SMALL="" FIX_CEILING=""
+TPATHS_NL="" PPATHS_NL="" VULNS_NL="" SEEN=" "
 nl=$'\n'
 
-need() { [ $# -ge 2 ] && [ -n "$2" ] || die "$1 needs a value"; }
+value() { # value <option> <args...>: sets V to the option's value; an absent or empty one, a control character or more than 1024 bytes is refused
+  [ $# -ge 2 ] && [ -n "$2" ] || die "$1 needs a value"
+  case "$2" in *[[:cntrl:]]*) die "$1 takes no control character: $(confine_text "$2")" ;; esac
+  [ "${#2}" -le 1024 ] || die "$1 is longer than 1024 bytes"
+  V=$2
+}
+once() { # once <option>: refuse an option given before
+  case "$SEEN" in *" $1 "*) die "$1 is given twice" ;; esac
+  SEEN="$SEEN$1 "
+}
 while [ $# -gt 0 ]; do
   case "$1" in
-    --repo)          need "$@"; REPO=$2; shift 2 ;;
-    --out)           need "$@"; OUT=$2; shift 2 ;;
-    --pin)           need "$@"; PIN=$2; shift 2 ;;
-    --paths)         need "$@"; TPATHS_NL="$TPATHS_NL$2$nl"; shift 2 ;;
-    --parent)        need "$@"; PARENT=$2; shift 2 ;;
-    --parent-paths)  need "$@"; PPATHS_NL="$PPATHS_NL$2$nl"; shift 2 ;;
-    --import)        need "$@"; IMPORT=$2; shift 2 ;;
-    --vulns)         need "$@"; VULNS_NL="$VULNS_NL$2$nl"; shift 2 ;;
-    --program-id)    need "$@"; PROGRAM_ID=$2; shift 2 ;;
-    --audit-mem-db)  need "$@"; AUDIT_MEM_DB=$2; shift 2 ;;
-    --keywords)      need "$@"; EXTRA_KW=$2; shift 2 ;;
-    --offline)       OFFLINE=1; shift ;;
-    --detect)        DETECT=1; shift ;;
-    --cap)           need "$@"; CAP=$2; shift 2 ;;
-    --small)         need "$@"; SMALL=$2; shift 2 ;;
-    --fix-ceiling)   need "$@"; FIX_CEILING=$2; shift 2 ;;
-    -h|--help)       sed -n '2,/^$/p' "$0"; exit 0 ;;
-    *)               die "unknown argument: $1 (see --help)" ;;
+    --repo)          once "$1"; value "$@"; REPO=$V; shift 2 ;;
+    --out)           once "$1"; value "$@"; OUT=$V; shift 2 ;;
+    --pin)           once "$1"; value "$@"; PIN=$V; shift 2 ;;
+    --paths)         value "$@"; TPATHS_NL="$TPATHS_NL$V$nl"; shift 2 ;;
+    --parent)        once "$1"; value "$@"; PARENT=$V; shift 2 ;;
+    --parent-paths)  value "$@"; PPATHS_NL="$PPATHS_NL$V$nl"; shift 2 ;;
+    --import)        once "$1"; value "$@"; IMPORT=$V; shift 2 ;;
+    --vulns)         value "$@"; VULNS_NL="$VULNS_NL$V$nl"; shift 2 ;;
+    --program-id)    once "$1"; value "$@"; PROGRAM_ID=$V; shift 2 ;;
+    --audit-mem-db)  once "$1"; value "$@"; AUDIT_MEM_DB=$V; shift 2 ;;
+    --keywords)      once "$1"; value "$@"; EXTRA_KW=$V; shift 2 ;;
+    --cap)           once "$1"; value "$@"; CAP=$V; shift 2 ;;
+    --small)         once "$1"; value "$@"; SMALL=$V; shift 2 ;;
+    --fix-ceiling)   once "$1"; value "$@"; FIX_CEILING=$V; shift 2 ;;
+    --detect|--offline|--network) die "the mode is given once, as the first argument: $1" ;;
+    *)               die "unknown argument: $(confine_text "$1") (see --help)" ;;
   esac
 done
 [ -n "$REPO" ] || die "--repo is required"
 [ -n "$OUT" ]  || die "--out is required"
-# The run directory and its audit_<n> parent are checked by name below, so --out is a plain path: no "."
-# or ".." component (a leading "./" aside) and no trailing slash, which would resolve a final link.
-OUT=${OUT#./}
-case "/$OUT/" in */./*|*/../*) die "--out takes a plain path without . or .. components: $OUT" ;; esac
-while [ "${OUT%/}" != "$OUT" ] && [ "$OUT" != / ]; do OUT=${OUT%/}; done
-case "$CAP" in ''|*[!0-9]*) die "--cap must be a number" ;; esac
-case "$SMALL" in ''|*[!0-9]*) die "--small must be a number" ;; esac
-case "$FIX_CEILING" in ''|*[!0-9]*) die "--fix-ceiling must be a number" ;; esac
+bound() { # bound <option> <value> <default>: sets B to the value, or the default when none was given: 0 to 10000
+  local v=${2:-$3}
+  case "$v" in ''|*[!0-9]*) die "$1 must be a number from 0 to 10000" ;; esac
+  [ "${#v}" -le 5 ] && [ "$((10#$v))" -le 10000 ] || die "$1 must be a number from 0 to 10000"
+  B=$((10#$v))
+}
+bound --cap "$CAP" 60; CAP=$B
+bound --small "$SMALL" 40; SMALL=$B
+bound --fix-ceiling "$FIX_CEILING" 300; FIX_CEILING=$B
+[ "${#EXTRA_KW}" -le 200 ] || die "--keywords is longer than 200 characters"
+[ "${#PROGRAM_ID}" -le 200 ] || die "--program-id is longer than 200 characters"
+PIN=${PIN:-HEAD}
+# A revision reaches git only after the subcommand and its options, as "<rev>^{commit}"; one that looks
+# like an option is refused here.
+case "$PIN" in -*) die "--pin takes a revision, not an option: $(confine_text "$PIN")" ;; esac
+case "$IMPORT" in -*) die "--import takes a revision, not an option: $(confine_text "$IMPORT")" ;; esac
+
+# --out is audit_<n>/bootstrap, relative (a leading ./ and trailing slashes are dropped).
+OUT_REL=${OUT#./}
+while [ "${OUT_REL%/}" != "$OUT_REL" ]; do OUT_REL=${OUT_REL%/}; done
+RUN=""
+case "$OUT_REL" in */bootstrap) RUN=${OUT_REL%/bootstrap} ;; esac
+if [ -z "$RUN" ] || ! confine_rundir_name "$RUN"; then
+  die "--out must be audit_<n>/bootstrap, in a run directory audit_<n> directly in the working directory: $(confine_text "$OUT")"
+fi
+case "$RUN" in audit_*) ;; *) die "--out must be audit_<n>/bootstrap, in a run directory audit_<n> directly in the working directory: $(confine_text "$OUT")" ;; esac
+# --detect writes nothing, so its --out only names the current run; the others check the run directory.
+confine_path "$OUT_REL" --out any
+case "$CONFINE_TYPE" in file) die "--out is not a directory: $(confine_text "$OUT")" ;; esac
+if [ "$MODE" != --detect ]; then
+  confine_rundir "$RUN" "the run directory"
+fi
 
 # Only https URLs are ever fetched, and only when the user passed them explicitly. Any other scheme,
 # and scp-style "host:path" (a colon before the first slash), is rejected. Anything else is a local
@@ -121,82 +200,151 @@ while IFS= read -r v; do
   [ -z "$v" ] && continue
   [ "$(classify_source "$v")" = rejected ] && die "--vulns accepts a file or an https:// URL, not: $(redact "$v")"
 done <<< "$VULNS_NL"
-# Every caller-supplied path becomes absolute here: the collector later leaves the caller's working
-# directory (usually the audited repository) so no tool can pick up a module or config file from it.
-WD_PHYS=$(pwd -P) || die "cannot resolve the working directory"
-abspath() { case "$1" in /*) printf '%s' "$1" ;; *) printf '%s/%s' "$PWD" "$1" ;; esac; }
-OUT=$(abspath "$OUT")
-[ -n "$AUDIT_MEM_DB" ] && AUDIT_MEM_DB=$(abspath "$AUDIT_MEM_DB")
-[ -n "$PARENT" ] && [ "$(classify_source "$PARENT")" = path ] && PARENT=$(abspath "$PARENT")
-abs_vulns=""
-while IFS= read -r v; do
-  [ -z "$v" ] && continue
-  if [ "$(classify_source "$v")" = path ]; then v=$(abspath "$v"); fi
-  abs_vulns="$abs_vulns$v$nl"
-done <<< "$VULNS_NL"
-VULNS_NL=$abs_vulns
 
-# ---- hardened git (OUTPUT-RULES.md Rule 11c) --------------------------------------------------------
-# The target's .git/config, attributes and hooks are attacker-controlled: never page, never run
-# fsmonitor or signature helpers, and give every log/show --no-textconv --no-ext-diff with fixed diff
-# prefixes. Nothing is ever checked out, so no smudge or clean filter can run, and no transport
-# protocol is allowed, so no remote the target configures is ever contacted (the one https clone of a
-# user-given --parent URL below allows https for that call only). Output-shaping settings
-# (grep line numbers and columns, colour, path quoting, log encoding, the big-file threshold, hunk
-# fusing, root-commit diffs) are pinned as well, from the target's config and from the auditor's own
-# ~/.gitconfig alike, so the parsers below see plain text. Every diff runs with --text and every
-# git grep with -a, so neither an attribute (-diff, diff=<driver> with binary set) nor a size
+# --audit-mem-db names the in-tree store or a store for one run, and is read from the working directory.
+DB_REL=""
+if [ -n "$AUDIT_MEM_DB" ]; then
+  DB_REL=${AUDIT_MEM_DB#./}
+  case "$DB_REL" in
+    .audit-memory/audit.db) ;;
+    audit_*/audit-mem.db) confine_rundir_name "${DB_REL%/audit-mem.db}" || DB_REL="" ;;
+    *) DB_REL="" ;;
+  esac
+  [ -n "$DB_REL" ] || die "--audit-mem-db must be .audit-memory/audit.db or audit_<n>/audit-mem.db: $(confine_text "$AUDIT_MEM_DB")"
+  confine_path "$DB_REL" --audit-mem-db any
+fi
+
+# ---- the target, and the local parent and inputs -------------------------------------------------
+# hgit_text is the hardened git call (scripts/lib/confine.sh): the target's .git/config, attributes and
+# hooks are attacker-controlled, so it runs git with no environment of the caller's and with the
+# system and global config dropped, never pages, never runs fsmonitor, hooks, signature helpers or
+# external diffs, allows no transport protocol, and pins the output-shaping settings (grep line
+# numbers and columns, pattern type, colour, path quoting, log encoding, the big-file threshold, hunk
+# fusing, root-commit diffs, replace refs) so the parsers below see plain text. Every log/show gets
+# --no-textconv --no-ext-diff with fixed diff prefixes. Nothing is ever checked out, so no smudge or
+# clean filter can run, and no remote the target configures is ever contacted (the one https clone of
+# a user-given --parent URL below allows https for that call only). Every diff runs with --text and
+# every git grep with -a, so neither an attribute (-diff, diff=<driver> with binary set) nor a size
 # threshold turns a change into "Binary files differ" or hides a file from a search.
-G() {
-  local d=$1; shift
-  git --no-pager -C "$d" -c core.fsmonitor=false -c core.pager=cat -c log.showSignature=false \
-      -c gpg.program=false -c gpg.ssh.program=false -c protocol.allow=never \
-      -c grep.lineNumber=false -c grep.column=false -c grep.patternType=basic -c grep.extendedRegexp=false \
-      -c color.ui=never -c color.grep=never -c color.diff=never -c core.quotePath=false \
-      -c i18n.logOutputEncoding=UTF-8 -c core.bigFileThreshold=512m -c diff.interHunkContext=0 \
-      -c log.showRoot=true "$@"
-}
+G() { hgit_text "$@"; }
 DIFFSAFE=(--text --no-textconv --no-ext-diff --no-color --src-prefix=a/ --dst-prefix=b/)
-
-# repo_top <dir>: status 0 when <dir> is the top level of its own repository (or a bare repository
-# itself), compared with symbolic links resolved on both sides. A plain directory inside another
-# repository fails, so that outer repository is never mined in its place.
-repo_top() {
-  local top
-  if [ "$(G "$1" rev-parse --is-bare-repository 2>/dev/null)" = true ]; then
-    top=$(G "$1" rev-parse --absolute-git-dir 2>/dev/null) || return 1
-  else
-    top=$(G "$1" rev-parse --show-toplevel 2>/dev/null) || return 1
-  fi
-  [ -n "$top" ] && [ "$(cd "$top" 2>/dev/null && pwd -P)" = "$(cd "$1" 2>/dev/null && pwd -P)" ]
+abspath() { case "$1" in /*) printf '%s' "$1" ;; *) printf '%s/%s' "$WT" "$1" ;; esac; }
+not_a_repo() {
+  echo "collect.sh: not the top level of a git repository that git can read (none there, or another user owns it: collect from a copy you made), nor a bare repository: $(confine_text "$REPO")" >&2
+  exit 3
 }
-repo_top "$REPO" || { echo "collect.sh: not a git repository (or not its top level): $REPO" >&2; exit 3; }
-# partial_clone <dir>: status 0 for a partial clone (extensions.partialClone, or a remote.<name>.promisor
-# key), where reading a missing object would fetch it from the promisor remote; 1 for none; 2 when git
-# cannot read the config (git config exits 1 only for "no match"). Reading config runs nothing.
-partial_clone() {
-  local keys rc
-  keys=$(G "$1" config --get-regexp '^(extensions\.partialclone|remote\..*\.promisor)$' 2>/dev/null); rc=$?
-  if [ "$rc" -eq 0 ] && [ -n "$keys" ]; then return 0; fi
-  if [ "$rc" -le 1 ]; then return 1; fi
-  return 2
-}
-partial_clone "$REPO"
+# REPO_ABS is the target's physical path; REPO_REL its path inside the working directory ("" outside it).
+if [ "$OFFLINE" -eq 1 ]; then
+  CONFINE_HINT=$NET_HINT
+  confine_path "$REPO" --repo dir
+  CONFINE_HINT=""
+  REPO_REL=$CONFINE_REL
+  if [ "$REPO_REL" = . ]; then REPO_ABS=$WT; else REPO_ABS=$WT/$REPO_REL; fi
+  confine_phys "$REPO_ABS" || not_a_repo
+  REPO_ABS=$CONFINE_PHYS
+else
+  confine_phys "$(abspath "$REPO")" || not_a_repo
+  REPO_ABS=$CONFINE_PHYS
+  REPO_REL=""
+  case "$REPO_ABS" in
+    "$WT") REPO_REL=. ;;
+    "$WT"/*) REPO_REL=${REPO_ABS#"$WT"/} ;;
+  esac
+fi
+confine_repo_top "$REPO_ABS" || not_a_repo
+confine_partial_clone "$REPO_ABS" >/dev/null
 case $? in
   0) echo "collect.sh: the target is a partial clone: reading missing objects would fetch from its promisor remote. Make a full copy you control first (OUTPUT-RULES Rule 11c)." >&2
      exit 3 ;;
-  2) echo "collect.sh: git cannot read the target's config, so a partial clone cannot be ruled out: $REPO" >&2
+  2) echo "collect.sh: git cannot read the target's config, so a partial clone cannot be ruled out: $(confine_text "$REPO")" >&2
      exit 3 ;;
 esac
-PIN_SHA=$(G "$REPO" rev-parse --verify --quiet "$PIN^{commit}") || { echo "collect.sh: pin does not resolve: $PIN" >&2; exit 3; }
+if [ "$OFFLINE" -eq 1 ]; then
+  CONFINE_HINT=$NET_HINT
+  confine_repo "$REPO_REL" --repo
+  CONFINE_HINT=""
+fi
+REPO=$REPO_ABS
+REPO_PHYS=$REPO_ABS
+PIN_SHA=$(G "$REPO" rev-parse --verify --quiet "$PIN^{commit}") || { echo "collect.sh: pin does not resolve: $(confine_text "$PIN")" >&2; exit 3; }
 # --import reaches git only as the full commit id it resolves to, never as the string given.
 if [ -n "$IMPORT" ]; then
-  IMPORT_SHA=$(G "$REPO" rev-parse --verify --quiet "$IMPORT^{commit}") || die "--import does not resolve to a commit: $IMPORT"
+  IMPORT_SHA=$(G "$REPO" rev-parse --verify --quiet "$IMPORT^{commit}") || die "--import does not resolve to a commit: $(confine_text "$IMPORT")"
   IMPORT=$IMPORT_SHA
 fi
-REPO_ABS=$(cd "$REPO" && pwd)
-REPO=$REPO_ABS
-REPO_PHYS=$(cd "$REPO_ABS" && pwd -P)
+
+# A local --parent: in --detect and --offline a confined path, whose git directory, at a top level,
+# passes the same checks as the target's; in --network any directory. One that is not a top level, is a
+# partial clone, or whose config git cannot read is recorded as not used, and the run goes on.
+PDIR="" PARENT_STATUS="none" PARENT_REL="" pphys=""
+if [ -n "$PARENT" ] && [ "$(classify_source "$PARENT")" = path ]; then
+  if [ "$OFFLINE" -eq 1 ]; then
+    CONFINE_HINT=$NET_HINT
+    confine_path "$PARENT" --parent any
+    CONFINE_HINT=""
+    PARENT_REL=$CONFINE_REL
+    PARENT=$(abspath "$PARENT_REL")
+  else
+    PARENT=$(abspath "$PARENT")
+  fi
+  if confine_phys "$PARENT"; then pphys=$CONFINE_PHYS; fi
+  if [ -z "$pphys" ] || ! confine_repo_top "$pphys"; then
+    PARENT_STATUS="not a git repository (or not its top level)"
+  else
+    PARENT=$pphys
+    confine_partial_clone "$PARENT" >/dev/null
+    case $? in
+      0) PARENT_STATUS="the parent is a partial clone, not used (reading it could fetch from its promisor remote)" ;;
+      2) PARENT_STATUS="git cannot read the parent's config, not used" ;;
+      *) if [ "$OFFLINE" -eq 1 ]; then
+           CONFINE_HINT=$NET_HINT
+           confine_repo "$PARENT_REL" --parent
+           CONFINE_HINT=""
+         fi
+         PDIR=$PARENT; PARENT_STATUS="local repository" ;;
+    esac
+  fi
+  if [ "$OFFLINE" -eq 0 ]; then
+    case "$PARENT" in
+      "$WT") PARENT_REL=. ;;
+      "$WT"/*) PARENT_REL=${PARENT#"$WT"/} ;;
+    esac
+  fi
+fi
+# Local --vulns paths: in --detect and --offline, confined (a regular file, a directory or nothing:
+# R7 records what is not a readable file); in --network, absolute paths, checked for links in R7.
+abs_vulns=""
+while IFS= read -r v; do
+  [ -z "$v" ] && continue
+  if [ "$(classify_source "$v")" = path ]; then
+    if [ "$OFFLINE" -eq 1 ]; then
+      CONFINE_HINT=$NET_HINT
+      confine_path "$v" --vulns any
+      CONFINE_HINT=""
+      v=$WT/$CONFINE_REL
+    else
+      v=$(abspath "$v")
+    fi
+  fi
+  abs_vulns="$abs_vulns$v$nl"
+done <<< "$VULNS_NL"
+VULNS_NL=$abs_vulns
+# Every URL --network fetches is first recorded in audit_<n>/disclosures.tsv.
+if [ "$MODE" = --network ] && ! confine_disclosures_ok "$RUN"; then
+  die "$RUN/disclosures.tsv is not a regular file of its own with the disclosure header, so no fetch could be recorded"
+fi
+# disclose <url> <how>: the row for one URL, before it is fetched.
+disclose() {
+  confine_service "$1"
+  confine_disclose "$RUN" scripts/threat-model/collect.sh "$CONFINE_SERVICE" "https URL ($2)" "$(redact "$1")" ||
+    die "cannot record the fetch of a URL in $RUN/disclosures.tsv, so it was not fetched"
+}
+
+# The current run directory, physical, when it exists: --detect does not count it as a prior audit, and
+# R6 does not list it.
+CUR_RUN=""
+if [ -d "$WT/$RUN" ]; then CUR_RUN=$WT/$RUN; fi
+
 SHALLOW=$(G "$REPO" rev-parse --is-shallow-repository 2>/dev/null)
 EMPTY_TREE=$(G "$REPO" hash-object -t tree /dev/null)
 # Where this git has --attr-source, R4 reads gitattributes from the empty tree instead of the target's
@@ -212,8 +360,17 @@ default_paths() { # default_paths <repo> <commit>
 TPATHS=()
 while IFS= read -r p; do [ -n "$p" ] && TPATHS+=("$p"); done <<< "$TPATHS_NL"
 
-TMPD=$(mktemp -d "${TMPDIR:-/tmp}/tm-collect.XXXXXX") || die "cannot create a temp dir"
+# The collector works from a private temporary directory outside the working directory, so no tool picks
+# up a module or config file from the tree; the output is staged there and copied into --out at the end.
+confine_scratch tm-collect
+case $? in
+  0) TMPD=$CONFINE_SCRATCH ;;
+  2) die "TMPDIR lies inside the working directory; set it to a directory outside the tree" ;;
+  *) die "cannot create a temp dir" ;;
+esac
 trap 'rm -rf "$TMPD"' EXIT
+STAGE="$TMPD/stage"
+mkdir "$STAGE" "$STAGE/inputs" "$STAGE/diffs" || die "cannot create a temp dir"
 cd "$TMPD" || die "cannot enter the temp dir"
 
 # ---- vocabulary -----------------------------------------------------------------------------------
@@ -330,18 +487,30 @@ guard_rows() {
     END { flush() }' | sort -k1,1n -k6 | cut -d' ' -f"$([ "${GR_SIZE:-0}" = 1 ] && echo 2- || echo 2,4-)"
 }
 
-# The command a TRUNCATED line names for the rest of a saved diff: Rule 11c's git, run in a scratch copy.
-SHOW_REST="GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false show --no-textconv --no-ext-diff"
 # shell_word <text>: the text as one shell word that runs nothing when pasted: escaped and cut like any
 # other target text, then single-quoted.
 shell_word() { printf "'%s'" "$(clean "$1" | sed "s/'/'\\\\''/g")"; }
+# The command a TRUNCATED line names for the rest of a saved diff: scripts/git-ro.sh, the read-only git of
+# Rule 11c, by its quoted path in this installation. git_ro_for <repository path inside the working
+# directory, or "">: sets SHOW_REST to its show call for that repository; one outside the working
+# directory (read in --network) or cloned from a URL is read from a copy made inside it.
+GIT_RO="\"$SKILL_ROOT/scripts/git-ro.sh\""
+git_ro_for() {
+  case "$1" in
+    .)  SHOW_REST="the rest: $GIT_RO show" ;;
+    '') SHOW_REST="the rest, from a copy of the repository inside the working directory, named with --repo: $GIT_RO show" ;;
+    *)  SHOW_REST="the rest: $GIT_RO --repo $(shell_word "$1") show" ;;
+  esac
+}
 
-# save_diff <repo> <full id> <out file> <path list> <fallback pathspec...>
+# save_diff <repo> <its path inside the working directory, or ""> <full id> <out file> <path list> <fallback pathspec...>
 # Writes the commit's id, date, subject and at most 20 body lines, then its diff limited to the paths in
 # <path list> (one per line; the fallback pathspec when it is empty), at most 400 lines. Each cut ends in a
-# TRUNCATED line that names the git show call for the rest, with every path as a quoted shell word.
+# TRUNCATED line that names the git-ro.sh show call for the rest, with every path as a quoted shell word.
 save_diff() {
-  local repo=$1 c=$2 out=$3 plist=$4 p n shown="" specs nspec=0; shift 4
+  local repo=$1 c=$3 out=$4 plist=$5 p n shown="" specs nspec=0
+  git_ro_for "$2"
+  shift 5
   specs=()
   while IFS= read -r p; do
     [ -n "$p" ] || continue
@@ -357,14 +526,14 @@ save_diff() {
     n=$(wc -l < "$TMPD/save.body" | tr -d ' ')
     if [ "$n" -gt 0 ]; then echo; head -n 20 "$TMPD/save.body"; fi
     if [ "$n" -gt 20 ]; then
-      echo "TRUNCATED ($((n - 20)) more message lines; the whole message, from a Rule 11c scratch copy: $SHOW_REST --no-patch $c)"
+      echo "TRUNCATED ($((n - 20)) more message lines; ${SHOW_REST/#the rest/the whole message} --no-patch $c)"
     fi
     echo
     G "$repo" show "${DIFFSAFE[@]}" --format= "$c" -- "${specs[@]}" 2>/dev/null | sed '/./,$!d' > "$TMPD/save.diff"
     n=$(wc -l < "$TMPD/save.diff" | tr -d ' ')
     head -n 400 "$TMPD/save.diff"
     if [ "$n" -gt 400 ]; then
-      echo "TRUNCATED ($((n - 400)) more lines; the rest, from a Rule 11c scratch copy: $SHOW_REST $c --$shown)"
+      echo "TRUNCATED ($((n - 400)) more lines; $SHOW_REST $c --$shown)"
     fi
   } > "$out"
 }
@@ -386,7 +555,7 @@ norm_url() { tr 'A-Z' 'a-z' | sed -E 's#^[a-z+]+://##; s#^git@##; s#:#/#; s#\.gi
 # Under pipefail a pipeline that ends in an early-exit reader (grep -q, head) can report the writer's
 # SIGPIPE instead of the match, so every check whose status matters here counts, or reads a string.
 eval_triggers() {
-  local t3="" t4="" cur="" src remotes s d n
+  local t3="" t4="" src remotes s d n
   G "$REPO" grep -a -i -q -E "$FORK_PHRASES" "$PIN_SHA" -- 'README*' '*/README*' 'docs/*' 2>/dev/null && t3="readme-phrase"
   src=$(G "$REPO" grep -h -a -E 'source_code[[:space:]]*:' "$PIN_SHA" -- '*.rs' 2>/dev/null |
         sed -nE 's/.*source_code[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' | sed -n '1,3p')
@@ -396,10 +565,9 @@ eval_triggers() {
     [ -n "$s" ] || continue
     grep -qxF -- "$(printf '%s' "$s" | norm_url)" <<< "$remotes" || { t3="${t3:+$t3,}security_txt-source_code"; break; }
   done <<< "$src"
-  [ -d "$(dirname "$OUT")" ] && cur=$(cd "$(dirname "$OUT")" && pwd)
   for d in "$REPO_ABS"/audit_*/; do
     [ -f "$d/REPORT.md" ] || continue
-    [ "$(cd "$d" && pwd)" = "$cur" ] && continue
+    [ -n "$CUR_RUN" ] && [ "$(cd "$d" && pwd -P)" = "$CUR_RUN" ] && continue
     t4="prior-audit-dir"; break
   done
   n=$(G "$REPO" ls-tree -r --name-only "$PIN_SHA" 2>/dev/null | grep -iE '\.(pdf|md)$' | grep -ciE "$REPORT_RE")
@@ -409,87 +577,28 @@ eval_triggers() {
   echo "T4 $([ -n "$t4" ] && echo yes || echo no) ${t4:-none}"
 }
 
-if [ "$DETECT" -eq 1 ]; then eval_triggers; exit 0; fi
+if [ "$MODE" = --detect ]; then eval_triggers; exit 0; fi
 
-# ---- output dir (OUTPUT-RULES.md Rule 11d) -----------------------------------------------------------
-# Only a run directory this audit made is written to: never one that is or holds a symbolic link, and
-# never one git tracks, where the output would become changes to tracked files. Checked before the first
-# write or removal, for the output dir and its audit_<n>/ parent. The check fails closed: a directory
-# find cannot fully read, or one git cannot answer for (another owner, an unreadable config), is refused.
-# The only git error that passes is "not a git repository" from discovery: the directory is outside
-# every repository, so nothing there can be tracked. As in the detection-response collectors, every
-# directory on the way to the run directory is checked too.
-# run_path_link <absolute path>: status 0 when a directory on the way to the path is a symbolic link inside
-# the working directory or the target tree, or one whose place cannot be resolved. A link above both (such
-# as /tmp on macOS) is the operator's, and is followed.
-run_path_link() {
-  local rest=${1#/} cur="" comp phys
-  while :; do
-    case "$rest" in */*) comp=${rest%%/*}; rest=${rest#*/} ;; *) return 1 ;; esac
-    if [ -n "$comp" ] && [ -L "$cur/$comp" ]; then
-      phys=$(cd "${cur:-/}" 2>/dev/null && pwd -P) || return 0
-      case "$phys/" in "${WD_PHYS%/}"/*|"${REPO_PHYS%/}"/*) return 0 ;; esac
-    fi
-    cur="$cur/$comp"
-  done
-}
-check_run_dir() { # check_run_dir <dir>
-  local d=$1 up links inside listed
-  run_path_link "$d" && die "refusing a run directory reached through a symbolic link inside the working directory or the target tree: $d (use a new audit_<n>)"
-  [ -L "$d" ] && die "refusing a run directory that is a symbolic link: $d (use a new audit_<n>)"
-  if [ -d "$d" ]; then
-    links=$(find "$d" -type l -print 2>/dev/null) || die "refusing a run directory that cannot be fully read: $d (use a new audit_<n>)"
-    [ -z "$links" ] || die "refusing a run directory that holds symbolic links: $d (use a new audit_<n>)"
-  fi
-  up=$(dirname "$d")
-  [ -d "$up" ] || return 0
-  if ! inside=$(G "$up" rev-parse --is-inside-work-tree 2>"$TMPD/run-dir.err"); then
-    grep -qi 'not a git repository (or any' "$TMPD/run-dir.err" && return 0
-    die "refusing a run directory that git cannot check: $d (use a new audit_<n>)"
-  fi
-  [ "$inside" = true ] || return 0
-  listed=$(G "$up" --icase-pathspecs ls-files -- "$(basename "$d")" 2>/dev/null) ||
-    die "refusing a run directory that git cannot check: $d (use a new audit_<n>)"
-  [ -z "$listed" ] || die "refusing a run directory that git tracks: $d (use a new audit_<n>)"
-}
-AUD_DIR=$(dirname "$OUT")
-case "$(basename "$AUD_DIR")" in audit_*) check_run_dir "$AUD_DIR" ;; esac
-check_run_dir "$OUT"
-mkdir -p "$OUT" || die "cannot create $OUT"
-# Working material never lands in the client's git status: the output dir ignores itself, and so does
-# its audit_<n>/ parent when it has no .gitignore of its own (only for a dir named audit_*).
-[ -e "$OUT/.gitignore" ] || printf '*\n' > "$OUT/.gitignore"
-case "$(basename "$AUD_DIR")" in
-  audit_*) [ -e "$AUD_DIR/.gitignore" ] || printf '*\n' > "$AUD_DIR/.gitignore" ;;
-esac
-if [ -f "$OUT/inputs.tsv" ]; then rm -rf "$OUT/inputs" "$OUT/diffs"; fi
-rm -f "$OUT/history.md" "$OUT/inputs.tsv" "$OUT/audit-mem-warm.json"
-mkdir -p "$OUT/inputs" "$OUT/diffs"
-H="$OUT/history.md"
-printf 'n\tsource\tformat\tsha256\tstored_as\tstatus\n' > "$OUT/inputs.tsv"
+# ---- staged output -----------------------------------------------------------------------------------
+# Everything is written into $STAGE first and copied into --out at the end (publish, below).
+H="$STAGE/history.md"
+printf 'n\tsource\tformat\tsha256\tstored_as\tstatus\n' > "$STAGE/inputs.tsv"
 
 # ---- R5 parent acquisition (before the header, which names it) ----------------------------------------
-PDIR="" PARENT_STATUS="none" PHEAD=""
+# A local parent was checked with the target, above; a URL is cloned only in --network, once it is recorded
+# in disclosures.tsv.
+PHEAD=""
 if [ -n "$PARENT" ]; then
   if [ "$(classify_source "$PARENT")" = url ]; then
     if [ "$OFFLINE" -eq 1 ]; then
       PARENT_STATUS="given, not cloned (offline)"
-    elif GIT_ASKPASS= SSH_ASKPASS= GIT_TERMINAL_PROMPT=0 git -c protocol.allow=never -c protocol.https.allow=always \
+    elif disclose "$PARENT" "git clone" && GIT_ASKPASS= SSH_ASKPASS= GIT_TERMINAL_PROMPT=0 git -c protocol.allow=never -c protocol.https.allow=always \
            -c protocol.file.allow=never -c credential.helper= -c http.extraHeader= -c core.askPass= -c core.fsmonitor=false \
            clone --quiet --bare --no-recurse-submodules -- "$PARENT" "$TMPD/parent.git" >/dev/null 2>&1; then
       PDIR="$TMPD/parent.git"; PARENT_STATUS="cloned (bare, temp dir, deleted on exit)"
     else
       PARENT_STATUS="clone failed"
     fi
-  elif ! repo_top "$PARENT"; then
-    PARENT_STATUS="not a git repository (or not its top level)"
-  else
-    partial_clone "$PARENT"
-    case $? in
-      0) PARENT_STATUS="the parent is a partial clone, not used (reading it could fetch from its promisor remote)" ;;
-      2) PARENT_STATUS="git cannot read the parent's config, not used" ;;
-      *) PDIR="$PARENT"; PARENT_STATUS="local repository" ;;
-    esac
   fi
   if [ -n "$PDIR" ]; then PHEAD=$(G "$PDIR" rev-parse --verify --quiet 'HEAD^{commit}'); fi
 fi
@@ -510,11 +619,11 @@ while IFS= read -r p; do [ -n "$p" ] && PPATHS+=("$p"); done <<< "$PPATHS_NL"
   echo "| Target paths | \`$(clean "${TPATHS[*]}")\` |"
   if [ -n "$PARENT" ]; then echo "| Parent | $(clean "$(redact "$PARENT")") — $PARENT_STATUS${PHEAD:+ @ \`$PHEAD\`} |"; else echo "| Parent | none |"; fi
   echo "| Parent paths | \`$(clean "${PPATHS[*]}")\` |"
-  echo "| Network | $([ "$OFFLINE" -eq 1 ] && echo 'offline' || echo 'explicit https URLs only') |"
+  echo "| Network | $([ "$OFFLINE" -eq 1 ] && echo 'offline' || echo 'explicit https URLs only, each recorded in disclosures.tsv') |"
   echo "| Collector | scripts/threat-model/collect.sh v$COLLECTOR_VERSION, cap $CAP rows, quiet-fix ceiling $SMALL lines, fix ceiling $FIX_CEILING lines |"
   echo
   echo "Leads, not findings: every row points at history to re-derive from the code at the pinned commit."
-  echo "Git ran without pager, fsmonitor, signature helpers, textconv or external diff (OUTPUT-RULES.md Rule 11c), with lazy fetching and every transport protocol off (a partial clone is refused), and with its grep, colour, path-quoting, log-encoding, big-file, hunk-fusing and root-commit settings pinned."
+  echo "Git ran with the system and global config dropped and without pager, fsmonitor, hooks, signature helpers, textconv or external diff (OUTPUT-RULES.md Rule 11c), with lazy fetching and every transport protocol off (a partial clone is refused), and with its grep, colour, path-quoting, log-encoding, big-file, hunk-fusing and root-commit settings pinned."
   if [ "$SHALLOW" = true ]; then
     echo "Shallow clone: history before the shallow boundary is missing, so a NOT FOUND or a short list below may only mean that history is cut."
   fi
@@ -570,7 +679,7 @@ grep -E ' ADDED x' "$TMPD/r3" > "$TMPD/r3c"
 grep -E ' (REMOVED|ADDED-QUIET) x' "$TMPD/r3ids" | awk '!s[$1]++ { print $1, $2 }' | sed -n '1,20p' |
 while read -r full c; do
   awk -F '\t' -v c="$full" '$1 == c && !s[$2]++ { print $2 }' "$TMPD/r3.paths" > "$TMPD/save.paths"
-  save_diff "$REPO" "$full" "$OUT/diffs/target-$c.diff" "$TMPD/save.paths" "${TPATHS[@]}"
+  save_diff "$REPO" "$REPO_REL" "$full" "$STAGE/diffs/target-$c.diff" "$TMPD/save.paths" "${TPATHS[@]}"
 done
 
 # ---- R4 churn --------------------------------------------------------------------------------------
@@ -667,7 +776,7 @@ R4_OTHER=$(sed -E 's/^ *[0-9]+ //' "$TMPD/r4a" | grep -E '\.rs"?$' |
       awk '/text absent from target/ && !s[$1]++ { print $1, $2 }' "$TMPD/r5dids" | sed -n '1,20p' |
       while read -r full c; do
         awk -F '\t' -v c="$full" '$1 == c && !s[$2]++ { print $2 }' "$TMPD/r5.paths" > "$TMPD/save.paths"
-        save_diff "$PDIR" "$full" "$OUT/diffs/parent-$c.diff" "$TMPD/save.paths" "${PPATHS[@]}"
+        save_diff "$PDIR" "$PARENT_REL" "$full" "$STAGE/diffs/parent-$c.diff" "$TMPD/save.paths" "${PPATHS[@]}"
       done
     fi
   fi
@@ -697,6 +806,7 @@ R4_OTHER=$(sed -E 's/^ *[0-9]+ //' "$TMPD/r4a" | grep -E '\.rs"?$' |
   emit_capped "$TMPD/r6f" "no audit, post-mortem or incident file"
   echo "--- auditor-skill outputs next to the target ---"
   for d in "$REPO_ABS"/audit_*/ "$REPO_ABS"/incident_*/INCIDENTS.json; do
+    [ "$d" != "$CUR_RUN/" ] || continue
     if [ -e "$d" ] || [ -L "$d" ]; then clean "$d"; echo; fi
   done > "$TMPD/r6g"
   emit_capped "$TMPD/r6g" "no audit_*/ or incident_*/INCIDENTS.json"
@@ -707,7 +817,7 @@ R4_OTHER=$(sed -E 's/^ *[0-9]+ //' "$TMPD/r4a" | grep -E '\.rs"?$' |
 INPUT_N=0
 record() { # record <source> <format> <sha256> <stored_as> <status>
   INPUT_N=$((INPUT_N + 1))
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$INPUT_N" "$(clean "$(redact "$1")")" "$2" "$3" "$4" "$(clean "$5")" >> "$OUT/inputs.tsv"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$INPUT_N" "$(clean "$(redact "$1")")" "$2" "$3" "$4" "$(clean "$5")" >> "$STAGE/inputs.tsv"
 }
 # JSON tools in order of preference. When jq is missing, too old, or fails on a file, python3 takes
 # over; with neither, JSON inputs are recorded but never copied. TM_JSON_TOOL (jq | python3 | none)
@@ -792,7 +902,7 @@ ingest() { # ingest <source label> <local file> <dest base name>
   sum=$(sha256_of "$f")
   magic=$(head -c 5 "$f" 2>/dev/null | tr -d '\000')
   if [ "$magic" = "%PDF-" ]; then
-    if command -v pdftotext >/dev/null 2>&1 && pdftotext -layout -enc UTF-8 "$f" "$OUT/$dest.txt" 2>/dev/null; then
+    if command -v pdftotext >/dev/null 2>&1 && pdftotext -layout -enc UTF-8 "$f" "$STAGE/$dest.txt" 2>/dev/null; then
       record "$src" pdf "$sum" "$dest.txt" "converted (pdftotext -layout)"
     else
       record "$src" pdf "$sum" "-" "not converted: read the PDF with Read (<= 20 pages per call) or ask for a Markdown/text export"
@@ -804,7 +914,7 @@ ingest() { # ingest <source label> <local file> <dest base name>
       if ! schema=$(json_schema "$f"); then
         record "$src" json "$sum" "-" "not copied: no working jq or python3 parsed it (or invalid JSON)"
       elif [ "$schema" = "auditor-incidents/1" ]; then
-        if ! extract_incidents "$f" "$OUT/$dest"; then record "$src" incidents "$sum" "-" "not extracted: no working jq or python3"
+        if ! extract_incidents "$f" "$STAGE/$dest"; then record "$src" incidents "$sum" "-" "not extracted: no working jq or python3"
         elif [ "$INCIDENTS_TYPE" = array ]; then record "$src" incidents "$sum" "$dest" "allowlisted fields extracted ($EXTRACTED_WITH)"
         else record "$src" incidents "$sum" "$dest" "malformed: incidents is $INCIDENTS_TYPE, not an array; empty extract ($EXTRACTED_WITH)"; fi
       elif [ -n "$schema" ]; then
@@ -812,11 +922,11 @@ ingest() { # ingest <source label> <local file> <dest base name>
       elif lsrc=$(printf '%s' "$src" | tr 'A-Z' 'a-z'); [ "${lsrc#*incident}" != "$lsrc" ]; then
         record "$src" json "$sum" "-" "not copied: could not confirm it is not an incident file"
       else
-        cp "$f" "$OUT/$dest" && record "$src" json "$sum" "$dest" "copied (list)"
+        cp "$f" "$STAGE/$dest" && record "$src" json "$sum" "$dest" "copied (list)"
       fi ;;
-    *.csv|*.CSV)          cp "$f" "$OUT/$dest" && record "$src" csv "$sum" "$dest" "copied (list)" ;;
-    *.md|*.MD|*.markdown) cp "$f" "$OUT/$dest" && record "$src" markdown "$sum" "$dest" "copied" ;;
-    *.txt|*.TXT|*.lst)    cp "$f" "$OUT/$dest" && record "$src" text "$sum" "$dest" "copied" ;;
+    *.csv|*.CSV)          cp "$f" "$STAGE/$dest" && record "$src" csv "$sum" "$dest" "copied (list)" ;;
+    *.md|*.MD|*.markdown) cp "$f" "$STAGE/$dest" && record "$src" markdown "$sum" "$dest" "copied" ;;
+    *.txt|*.TXT|*.lst)    cp "$f" "$STAGE/$dest" && record "$src" text "$sum" "$dest" "copied" ;;
     *)                    record "$src" unknown "$sum" "-" "unsupported format; supply PDF, Markdown, text, CSV or JSON" ;;
   esac
 }
@@ -846,6 +956,7 @@ while IFS= read -r v; do
     if ! command -v curl >/dev/null 2>&1; then record "$v" url "-" "-" "not fetched: curl unavailable"; continue; fi
     name=$(safe_name "$(printf '%s' "${v%%[?#]*}" | sed 's#.*/##')")
     [ -n "$name" ] || name=download
+    disclose "$v" "download"
     if curl -q --proto '=https' --proto-redir '=https' -fsSL --max-time 60 --max-filesize 52428800 \
          -A 'auditor-skill-threat-model' -o "$TMPD/fetch-$vi-$name" "$v" 2>/dev/null; then
       ingest "$v" "$TMPD/fetch-$vi-$name" "v$vi-$name"
@@ -881,29 +992,54 @@ while IFS= read -r p; do
 done < "$TMPD/r6f.newest"
 {
   section "R7 Inputs" "Every --vulns source, incident_*/INCIDENTS.json and in-tree report; the full manifest is inputs.tsv."
-  awk -F '\t' 'NR > 1 { printf "%s. %s [%s] -> %s: %s\n", $1, $2, $3, $5, $6 }' "$OUT/inputs.tsv" > "$TMPD/r7"
+  awk -F '\t' 'NR > 1 { printf "%s. %s [%s] -> %s: %s\n", $1, $2, $3, $5, $6 }' "$STAGE/inputs.tsv" > "$TMPD/r7"
   emit_capped "$TMPD/r7" "no prior-vulnerability input"
   endsec
 } >> "$H"
 
 # ---- R8 audit-mem warm ------------------------------------------------------------------------------
-# Only a store passed with --audit-mem-db is read. The collector never looks for one in the target tree:
-# whether a store there can be trusted (OUTPUT-RULES.md Rule 11d) is the caller's check.
+# Only a store passed with --audit-mem-db is read, through audit-mem warm, run from the working directory.
+# The collector never looks for one in the target tree: whether a store there can be trusted
+# (OUTPUT-RULES.md Rule 11d) is the caller's check.
 {
   section "R8 audit-mem warm" "Standing rulings for this program id from the findings store passed with --audit-mem-db."
   BIN="$SKILL_ROOT/tools/auditor-tools/target/release/audit-mem"
-  DB=$AUDIT_MEM_DB
   if [ -z "$PROGRAM_ID" ]; then echo "NOT FOUND (no --program-id given)"
-  elif [ -z "$DB" ]; then echo "NOT FOUND (no --audit-mem-db given; the collector never looks for a store on its own)"
+  elif [ -z "$DB_REL" ]; then echo "NOT FOUND (no --audit-mem-db given; the collector never looks for a store on its own)"
   elif [ ! -x "$BIN" ]; then echo "NOT FOUND (tools/auditor-tools is not built)"
-  elif [ ! -f "$DB" ]; then echo "NOT FOUND (no database at $(clean "$DB"))"
-  elif "$BIN" --db "$DB" warm --program-id "$PROGRAM_ID" > "$OUT/audit-mem-warm.json" 2>/dev/null; then
+  elif [ -L "$WT/$DB_REL" ] || [ ! -f "$WT/$DB_REL" ]; then echo "NOT FOUND (no database at $(clean "$DB_REL"))"
+  elif (cd "$WT" && "$BIN" warm --db "$DB_REL" --program-id="$PROGRAM_ID") > "$STAGE/audit-mem-warm.json" 2>/dev/null; then
     echo "saved: audit-mem-warm.json"
   else
-    rm -f "$OUT/audit-mem-warm.json"; echo "NOT FOUND (audit-mem warm failed)"
+    rm -f "$STAGE/audit-mem-warm.json"; echo "NOT FOUND (audit-mem warm failed)"
   fi
   endsec
 } >> "$H"
 
-echo "collect.sh: wrote $H" >&2
+# ---- publish (OUTPUT-RULES.md Rule 11d) ---------------------------------------------------------------
+# The run directory is checked again, since the run takes a while, and the staged output is copied into
+# --out: every file is created anew with noclobber and written through the descriptor opened at creation.
+# A re-run first removes the outputs of the run before: history.md, inputs.tsv and audit-mem-warm.json,
+# and inputs/ and diffs/ where an inputs.tsv marks them as this collector's.
+confine_rundir "$RUN" "the run directory"
+confine_path "$OUT_REL" --out any
+DEST=$WT/$OUT_REL
+case "$CONFINE_TYPE" in
+  file) die "--out is not a directory: $(confine_text "$OUT")" ;;
+  none) confine_mkdir "$DEST" || die "cannot create $OUT_REL" ;;
+esac
+if [ -f "$DEST/inputs.tsv" ]; then
+  rm -rf "$DEST/inputs" "$DEST/diffs" || die "cannot remove the inputs/ and diffs/ of the run before in $OUT_REL"
+fi
+rm -f "$DEST/history.md" "$DEST/inputs.tsv" "$DEST/audit-mem-warm.json" || die "cannot remove the output of the run before in $OUT_REL"
+for d in inputs diffs; do
+  if [ -L "$DEST/$d" ] || { [ -e "$DEST/$d" ] && [ ! -d "$DEST/$d" ]; }; then die "$OUT_REL/$d is not a directory of its own"; fi
+  [ -d "$DEST/$d" ] || confine_mkdir "$DEST/$d" || die "cannot create $OUT_REL/$d"
+done
+for f in "$STAGE"/inputs/* "$STAGE"/diffs/* "$STAGE/inputs.tsv" "$STAGE/audit-mem-warm.json" "$STAGE/history.md"; do
+  [ -f "$f" ] || continue
+  rel=${f#"$STAGE"/}
+  confine_new_copy "$f" "$DEST/$rel" || die "cannot write $OUT_REL/$rel (a file of that name appeared, or the directory is not writable)"
+done
+echo "collect.sh: wrote $OUT_REL/history.md" >&2
 exit 0
