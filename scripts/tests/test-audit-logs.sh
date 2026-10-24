@@ -14,8 +14,8 @@
 #   3. cases of its own: amounts and balances above 2^53, forged log lines, ties at the
 #      top-20 cut, jq's number forms, odd indices and stack heights, floats Python rounds;
 #   4. a generated corpus of 6,000 transactions in two files, well past the pipe buffer;
-#   5. stdin, --out, and the exit statuses for a missing, unreadable, linked or
-#      non-regular input or --out, and for an input replaced once checked.
+#   5. stdin, a closed stdin, --out, and the exit statuses for a missing, unreadable,
+#      linked or non-regular input or --out, and for an input replaced once checked.
 # Then confinement: every case in fixtures/audit-logs/hostile-args.txt exits non-zero,
 # changes no file, leaves no temporary file and prints no canary text; an installation
 # inside the working directory, or under a path a quoted rule cannot match, is refused;
@@ -719,6 +719,16 @@ wait "$pid"
 code=$?
 eq "SIGTERM: exit 143, nothing under the --out name, no temporary file left" \
   "$code|$([[ -e "$WT/incident_1/held.txt" ]] && echo written)|$(partial && echo left)" "143||"
+
+# With stdin closed and no corpus named, frames and deltas read nothing, as the
+# scripts do: exit 0, no output.
+res=""
+for r in frames lamports; do
+  script "$r" <&- > "$T/s.out" 2> "$T/s.err"; s=$?
+  binary "$r" <&- > "$T/b.out" 2> "$T/b.err"; b=$?
+  res="$res $s:$(cat "$T/s.out" "$T/s.err" | grep -c .)/$b:$(cat "$T/b.out" "$T/b.err" | grep -c .)"
+done
+eq "stdin closed: frames and deltas read nothing, as the scripts do" "${res# }" "0:0/0:0 0:0/0:0"
 
 # An input replaced by another file once every input has been checked: the run is
 # held writing what input 1 gives (the pipe is not read until input 2 has been

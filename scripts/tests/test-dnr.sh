@@ -1437,6 +1437,15 @@ else
     "$(runs21 "$W21" incident_1/unread.jsonl)" "1:0 1:0 1:0|cannot read input 1 (incident_1/unread.jsonl): Permission denied"
 fi
 chmod 0600 "$W21/incident_1/unread.jsonl"
+res=""
+for r in frames lamports; do
+  case "$r" in
+    frames) ( cd "$W21" && exec python3 -I "$DNR/frames.py" ) <&- > "$TT/r21.out" 2> "$TT/r21.err" ;;
+    *) ( cd "$W21" && exec python3 -I "$DNR/deltas.py" lamports ) <&- > "$TT/r21.out" 2> "$TT/r21.err" ;;
+  esac
+  res="$res $?:$(cat "$TT/r21.out" "$TT/r21.err" | grep -c .)"
+done
+eq "input paths: with stdin closed and no file named, frames and deltas read nothing (exit 0, no output)" "${res# }" "0:0 0:0"
 # An input replaced by another file once every input has been checked: the recipe is
 # held writing what input 1 gives (the pipe is not read until input 2 has been
 # replaced) and reads only the file it checked, so it stops with exit 1 and one line

@@ -577,15 +577,15 @@ def _lines(fh):
 
 def records(paths, stats):
     """Yield (line, tx) for each well-formed line of the named inputs, which unusable()
-    has checked (stdin when none is named), once per signature. stats["dupes"] counts
-    the later copies skipped, and stats["bad"] gets [input, count, first line] for each
-    input that had malformed lines. An input that cannot be opened again raises an
-    OSError whose strerror names it."""
+    has checked (stdin when none is named; a closed stdin reads as empty), once per
+    signature. stats["dupes"] counts the later copies skipped, and stats["bad"] gets
+    [input, count, first line] for each input that had malformed lines. An input that
+    cannot be opened again raises an OSError whose strerror names it."""
     seen = set()
     for n, path in enumerate(paths or ["-"], 1):
         label = "stdin" if path == "-" else "input %d (%s)" % (n, shown(path))
         if path == "-":
-            fh = sys.stdin.buffer
+            fh = sys.stdin.buffer if sys.stdin is not None else None
         else:
             try:
                 fh = opened(path)
@@ -593,7 +593,7 @@ def records(paths, stats):
                 raise OSError(e.errno, "cannot read %s: %s" % (label, shown(e.strerror or e))) from None
         bad = None
         try:
-            for i, raw in enumerate(_lines(fh), 1):
+            for i, raw in enumerate(_lines(fh) if fh is not None else (), 1):
                 line = raw.strip() if raw is not None else None
                 if line == b"":
                     continue
