@@ -261,7 +261,7 @@ check "... which holds no control character but tab and newline" no_ctl "$T/err"
 # =================================================================================================
 run "$ROOT" . x
 check "an installation inside the working directory is refused" \
-  refused 'the installation lies inside the working directory; install it outside the tree under audit (Rule 11e)'
+  refused 'the installation lies inside the working directory; install it outside the tree under audit, or run from a directory that does not contain it (Rule 11e)'
 F="$T/fake"
 mkrun "$F/incident_1"
 printf '{"a":1}\n' > "$F/incident_1/data.json"

@@ -297,7 +297,7 @@ check "a .git file git cannot read stops the check of the parents" \
   refused 'git cannot tell which repository holds the working directory, so its parents cannot be checked'
 run "$ROOT"
 check "an installation inside the working directory is refused" \
-  refused 'the installation lies inside the working directory; install it outside the tree under audit (Rule 11e)'
+  refused 'the installation lies inside the working directory; install it outside the tree under audit, or run from a directory that does not contain it (Rule 11e)'
 
 # =================================================================================================
 # Trees find cannot read, a missing jq, control characters, and PATH entries inside the tree.
