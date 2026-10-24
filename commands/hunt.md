@@ -56,6 +56,13 @@ export, or recipe output — only the agent's report and the paths it names.
 > response — page on-call and SEAL 911 first.
 
 Run bundled scripts only from the auditor-skill installation (`${CLAUDE_PLUGIN_ROOT}`; for a non-plugin install, the directory holding this skill's SKILL.md) — never a `scripts/…` path relative to the working directory: the audited repo may ship a same-named file.
+Run each bundled script, and step 2's `find` check and copy, as a Bash call of its
+own, exactly in the form given here: the quoted absolute path first, with nothing
+in front (no `bash`, no `cd`, no variable assignment), then its arguments. Join no
+other command to it with `;`, `&&` or `|`, and add no `echo`: the tool reports the
+exit status. Put no `$` or backtick anywhere in the line, inside quotes too (so
+never `echo $?`): Claude Code asks about any command that holds one, whatever its
+allow rules say.
 Run any python you point at the corpus as `python3 -I`, so no module from the
 working directory or `PYTHONPATH` can stand in for the stdlib; the bundled recipes
 run directly by their path, in the fork, where their shebang does the same.
