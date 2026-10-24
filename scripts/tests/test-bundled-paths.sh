@@ -230,7 +230,7 @@ PINS
 
 # ---- 4. every rooted path names something that ships --------------------------------------------------
 bins=$(awk '/^\[\[bin\]\]/ { b = 1; next } b && /^name *=/ { gsub(/.*= *"|".*/, ""); print; b = 0 }' \
-  tools/auditor-tools/Cargo.toml)
+  tools/auditor-tools/Cargo.toml tools/auditor-tools/*/Cargo.toml)
 [ -n "$bins" ] && ok "crate binaries: $(echo $bins)" || bad "no [[bin]] names in tools/auditor-tools/Cargo.toml"
 for p in $(grep -ohE '([$][{]CLAUDE_(PLUGIN_ROOT|SKILL_DIR)[}]|<auditor-skill root>)/[A-Za-z0-9_./-]*' \
     $STRICT_FILES $RUN_FILES | sed -E 's#^[^/]*/##; s#\.+$##' | sort -u); do
