@@ -54,14 +54,27 @@
 #   * dependency pins: the crate's Cargo.lock is what resolves; a crate without one
 #     gets a line saying so; UPDATE_PINS moves only the named pins, with cargo update
 #     -p in the scratch copy before anything is built, and refuses any other entry;
-#   * the resolved Cargo.lock comes back into the crate in place of a regular file only;
 #   * run.sh holds no placeholder, so a PoC's copy is the installation's byte for byte;
+#   * the installation's copy, run by its path with the crate as an argument (--crate,
+#     --init, --new-cache): every argument is checked before anything is copied, by the
+#     case file fixtures/poc-run/cases.txt among others; --init copies the template
+#     byte for byte; --cache takes only a directory --new-cache made; the mode is the
+#     stricter of <R>/exec-mode and AUDITOR_EXEC_MODE, and --mode must match it; the
+#     installation's template never builds itself;
+#   * the isolation self-check (scripts/lib/isolation.sh): in isolated mode, a fake HOME
+#     holding any credential it reads stops the run before anything is copied; in
+#     native mode it is a warning;
+#   * environment cleaning: canary variables in the caller's environment reach no cargo
+#     call, no build script and no test binary; HOME is a throwaway one with a fresh
+#     Solana keypair, but for cargo build-sbf; only cargo's downloads see the proxy;
+#   * the resolved Cargo.lock comes back into the crate in place of a regular file only;
 #   * the patch verification recipe (templates/patch/VERIFICATION.md §1): its worktree
 #     is made in a Rule 11c copy, and no git runs in the client checkout.
 #
 # No Solana toolchain and no network needed. A temp copy of run.sh runs with a `cargo`
 # shim, whose `--no-run` build reports a stand-in test binary, or with a PATH that has
-# no cargo at all. When real cargo and rustup are present, the template's own
+# no cargo at all; the installation's copy runs with the same shim. When real cargo and
+# rustup are present, the template's own
 # tests/exploit.rs and tests/fixed_blocked.rs and its shared-test-utils are built and
 # run through run.sh against small stand-in crates (mollusk-svm, litesvm, solana-sdk,
 # borsh, ...) whose program behaviour is the text after the ELF magic in the prebuilt
@@ -144,9 +157,20 @@ PY
 # name SHIM_RELOCK_PID; `relink` puts a symbolic link to SHIM_RELINK_TO at SHIM_RELINK;
 # `relocate` moves the directory SHIM_RELOCATE aside and puts a link to SHIM_RELOCATE_TO there.
 # SHIM_FAIL=<test> makes that test binary fail.
+#
+# The installation's copy of run.sh hands the shim and the test binaries a cleaned
+# environment, with no SHIM_ variable in it. So each of them first records the
+# environment it was given (to SHIM_ENV_DUMP, a block per call headed "== <what> <its
+# arguments>"), then reads $T/shim/settings.env, where shim_settings puts the settings
+# for such runs. SHIM_WALLET_COPY=<prefix> has each test binary copy the Solana keypair
+# in its HOME to <prefix>.<test>.
 mkdir -p "$T/shim/bin"
 cat > "$T/shim/cargo" <<'SH'
 #!/bin/sh
+here="$(cd "$(dirname "$0")" && pwd)"
+start_env="$(env)"
+if [ -f "$here/settings.env" ]; then . "$here/settings.env"; fi
+if [ -n "${SHIM_ENV_DUMP:-}" ]; then printf '== cargo %s\n%s\n' "$*" "$start_env" >> "$SHIM_ENV_DUMP"; fi
 if [ -n "${SHIM_CALLS:-}" ]; then
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$PWD" "${CARGO_TARGET_DIR:-}" "${SBF_OUT_DIR:-}" \
     "${BPF_OUT_DIR:-}" "${AUDITOR_POC_MARKERS:-}" "$*" >> "$SHIM_CALLS"
@@ -162,7 +186,6 @@ while :; do
   [ "$d" = / ] && break
   d="$(dirname "$d")"
 done
-here="$(cd "$(dirname "$0")" && pwd)"
 manifest="$PWD/Cargo.toml"; out=""; features=""; prev=""
 for a in "$@"; do
   case "$prev" in --manifest-path) manifest="$a" ;; --sbf-out-dir) out="$a" ;; --features) features="$a" ;; esac
@@ -248,6 +271,13 @@ PY
 cat > "$T/shim/bin/exploit" <<'SH'
 #!/bin/sh
 t="$(basename "$0")"
+here="$(cd "$(dirname "$0")/.." && pwd)"
+start_env="$(env)"
+if [ -f "$here/settings.env" ]; then . "$here/settings.env"; fi
+if [ -n "${SHIM_ENV_DUMP:-}" ]; then printf '== testbin %s %s\n%s\n' "$t" "$*" "$start_env" >> "$SHIM_ENV_DUMP"; fi
+if [ -n "${SHIM_WALLET_COPY:-}" ] && [ -f "${HOME:-/nonexistent}/.config/solana/id.json" ]; then
+  cp "$HOME/.config/solana/id.json" "$SHIM_WALLET_COPY.$t"
+fi
 if [ -n "${SHIM_CALLS:-}" ]; then
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$PWD" "${CARGO_TARGET_DIR:-}" "${SBF_OUT_DIR:-}" \
     "${BPF_OUT_DIR:-}" "${AUDITOR_POC_MARKERS:-}" "testbin $t $*" >> "$SHIM_CALLS"
@@ -966,6 +996,472 @@ python3 -I -c 'import sys; p = sys.argv[1]; s = open(p).read(); a = "\n# Depende
 code="$(gate "$T/stop" "$NATIVE" "$VULN")"
 [ "$code" = 3 ] && grep -q 'stopped before a verdict' "$T/out" && ! grep -q '^OK' "$T/out" && [ -z "$(ls -A "$T/tmp-gate")" ] \
   && ok "a run that stops on an unset variable -> exit 3 with a blocker line, the scratch copy removed" || { bad "stop on an unset variable: exit $code"; cat "$T/out" >&2; }
+
+# ---------------------------------------------------------------------------
+# The installation's copy, with the crate as an argument: run.sh --crate, --init and
+# --new-cache. Every argument is checked before anything is copied; the mode is the
+# stricter of <R>/exec-mode and AUDITOR_EXEC_MODE; isolated mode runs the credential
+# self-check first; and every child runs in the cleaned environment of
+# scripts/lib/isolation.sh. The fixture working directory $WT holds the run
+# directories audit_1 and incident_1 (made by rundir.sh), the shim crate
+# audit_1/poc/F-1, prebuilt bytes in audit_1/exec/build-sbf-1/ and incident_1/bin/, a
+# file a.rs, a directory src/ and a symbolic link linkdir to audit_1.
+# ---------------------------------------------------------------------------
+ROOT="$(cd "$HERE/../.." && pwd -P)"
+RUNSH="$ROOT/templates/poc/run.sh"
+NT="$T/tmp-new"; NTC="$T/tmp-cache"; WT="$T/wt"; CLEANHOME="$T/home-clean"
+# The runs below get an empty HOME, so they name the real cargo and rustup homes.
+TOOL_HOMES=(CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}")
+mkdir -p "$NT" "$WT/src" "$CLEANHOME"
+( cd "$WT" && "$ROOT/scripts/rundir.sh" new audit && "$ROOT/scripts/rundir.sh" new incident ) >/dev/null || bad "rundir.sh could not make the fixture's run directories"
+mk_crate "$WT/audit_1/poc/F-1"
+mkdir -p "$WT/audit_1/exec/build-sbf-1"
+cp "$T/vuln.so" "$T/fixed.so" "$WT/audit_1/exec/build-sbf-1/"
+cp "$T/vuln.so" "$WT/incident_1/bin/program.so"
+printf 'notes\n' > "$WT/audit_1/exec/build-sbf-1/notes.txt"
+printf 'fn a() {}\n' > "$WT/a.rs"
+ln -s audit_1 "$WT/linkdir"
+printf 'native\n' > "$WT/audit_1/exec-mode"
+NVULN=(--vulnerable-so audit_1/exec/build-sbf-1/vuln.so)
+NFIX=(--fixed-so audit_1/exec/build-sbf-1/fixed.so)
+SHIM_EXTRA=()
+
+shim_settings() {  # shim_settings [VAR=val ...]: the settings the shim and its test binaries read in a cleaned environment
+  local kv
+  : > "$T/shim/settings.env"
+  for kv in "$@"; do
+    case "$kv" in *"'"*) bad "a shim setting holds a quote: $kv" ;; esac
+    printf "export %s='%s'\n" "${kv%%=*}" "${kv#*=}" >> "$T/shim/settings.env"
+  done
+}
+# nrun <dir> [VAR=val ...] -- <argument>...: the installation's run.sh, run directly by its path from
+# <dir> with the shim first on PATH and an empty HOME -> exit code; output in $T/out
+nrun() {
+  local dir="$1"; shift
+  local -a vars=()
+  while [ $# -gt 0 ] && [ "$1" != -- ]; do vars+=("$1"); shift; done
+  [ $# -gt 0 ] && shift
+  ( cd "$dir" && env -i HOME="$CLEANHOME" "${TOOL_HOMES[@]}" PATH="$SP" TMPDIR="$NT" ${vars[@]+"${vars[@]}"} "$RUNSH" "$@" ) >"$T/out" 2>&1 </dev/null
+  echo $?
+}
+# ngate [VAR=val ...] -- <argument>...: nrun in $WT, with the call log and the environment dumps on and
+# an empty TMPDIR, so new_nothing_ran can tell that no cargo command started and no scratch appeared.
+ngate() {
+  rm -rf "$T/calls" "$T/calls.env" "$T/envdump" "$NT"; mkdir -p "$NT"
+  shim_settings SHIM_CALLS="$T/calls" SHIM_ENV_DUMP="$T/envdump" ${SHIM_EXTRA[@]+"${SHIM_EXTRA[@]}"}
+  nrun "$WT" "$@"
+}
+new_nothing_ran() { [ ! -e "$T/calls" ] && [ -z "$(ls -A "$NT")" ] && ! grep -q '^>> build dir' "$T/out"; }
+new_build_dir() { sed -n 's/^>> build dir: \([^ ]*\).*/\1/p' "$T/out" | sed -n 1p; }
+# in_blocks <header ERE> <line ERE>: every environment-dump block whose header matches (one at least)
+# holds a matching line. none_in_blocks: none of those blocks does.
+in_blocks() {
+  awk -v h="$1" -v w="$2" '/^== / { if (on && !f) bad = 1; on = ($0 ~ h); f = 0; n += on; next } on && $0 ~ w { f = 1 } END { if (on && !f) bad = 1; exit (bad || n == 0) }' "$T/envdump"
+}
+none_in_blocks() {
+  awk -v h="$1" -v w="$2" '/^== / { on = ($0 ~ h); n += on; next } on && $0 ~ w { bad = 1 } END { exit (bad || n == 0) }' "$T/envdump"
+}
+tree_of() { (cd "$1" && find . -print | LC_ALL=C sort); }
+# A driver for scripts/lib/isolation.sh's functions, sourced as the runners source them.
+cat > "$T/iso-driver.sh" <<'SH'
+set -uo pipefail
+root=$1; shift
+. "$root/scripts/lib/confine.sh"
+. "$root/scripts/lib/isolation.sh"
+confine_init iso-driver "$root"
+case "$1" in
+  homes) iso_homes ;;
+  creds) shift; iso_credentials "$@"; rc=$?; printf '%s\n' "$ISO_READABLE"; exit "$rc" ;;
+  run-eq) mkdir -p "$2"; iso_env "$2" keep-home || exit 9; iso_run A=1 "$3/x=y/prog"; echo "rc=$?" ;;
+  env) iso_env "$2" || exit 9; printf '%s\n' "${ISO_ENV[@]}"; printf 'net %s\n' ${ISO_NET[@]+"${ISO_NET[@]}"}
+       printf 'home %s\n' "$ISO_HOME" ;;
+  keep) iso_env "$2" keep-home || exit 9; printf 'home %s\n' "$ISO_HOME" ;;
+  scratch) trap 'case "${ISO_SCRATCH:-}" in */auditor-driver.*) rm -rf "$ISO_SCRATCH" ;; esac' EXIT; iso_scratch driver; printf '%s\n' "$ISO_SCRATCH" ;;
+esac
+SH
+
+# The entry point: run directly by its path, with a #!/bin/bash shebang.
+[ "$(sed -n 1p "$RUNSH")" = '#!/bin/bash' ] && [ -x "$RUNSH" ] && ok "run.sh starts with #!/bin/bash and is executable" || bad "run.sh shebang or mode"
+if command -v git >/dev/null 2>&1 && mode="$(git -C "$ROOT" ls-files -s -- templates/poc/run.sh 2>/dev/null)" && [ -n "$mode" ]; then
+  [ "${mode%% *}" = 100755 ] && ok "git records run.sh as 100755" || bad "git records run.sh as ${mode%% *}"
+fi
+
+# A copy that is not the installation's takes no arguments, and the installation's template does not
+# build itself: each exits 3 before anything is copied.
+code="$( (cd "$T/inc" && env -i HOME="$HOME" PATH="$SP" TMPDIR="$T/tmp-gate" "$NATIVE" bash ./run.sh --crate audit_1/poc/F-1) >"$T/out" 2>&1; echo $?)"
+[ "$code" = 3 ] && grep -q "^\[PoC-ATTEMPTED\] blocker: run.sh refused: only the installation's copy, <auditor-skill root>/templates/poc/run.sh, takes arguments; in a crate, run ./run.sh — nothing was copied or built.$" "$T/out" && one_blocker \
+  && ok "a crate's own run.sh with arguments -> exit 3: only the installation's copy takes them" || { bad "crate copy with arguments: exit $code"; cat "$T/out" >&2; }
+rm -rf "$NT"; mkdir -p "$NT"
+code="$(nrun "$WT" AUDITOR_EXEC_MODE=native VULNERABLE_SO="$T/vuln.so" --)"
+[ "$code" = 3 ] && grep -q "is the installation's template, not a PoC crate" "$T/out" && one_blocker && [ -z "$(ls -A "$NT")" ] \
+  && ok "the installation's run.sh with no arguments -> exit 3, it never builds its own template" || { bad "installation run.sh with no arguments: exit $code"; cat "$T/out" >&2; }
+
+# --init: the template's files, byte for byte, in a new run subpath, and nothing else.
+rm -rf "$NT"; mkdir -p "$NT"
+code="$(nrun "$WT" -- --init incident_1/poc/INC-1.2)"
+C="$WT/incident_1/poc/INC-1.2"
+if command -v git >/dev/null 2>&1 && files="$(git -C "$ROOT" ls-files -- templates/poc 2>/dev/null)" && [ -n "$files" ]; then
+  files="$(printf '%s\n' "$files" | sed 's#^templates/poc/##' | LC_ALL=C sort)"
+else
+  files="$(cd "$ROOT/templates/poc" && find . -type f ! -path './target/*' | sed 's#^\./##' | LC_ALL=C sort)"
+fi
+made="$(cd "$C" 2>/dev/null && find . -type f | sed 's#^\./##' | LC_ALL=C sort)"
+same=1; for f in $files; do cmp -s "$ROOT/templates/poc/$f" "$C/$f" || same=0; done
+[ "$code" = 0 ] && [ "$(cat "$T/out")" = incident_1/poc/INC-1.2 ] && [ "$made" = "$files" ] && [ "$same" = 1 ] && [ -x "$C/run.sh" ] \
+  && [ -z "$(ls -A "$NT")" ] && ok "--init copies exactly the template's files, byte for byte, prints the crate, exit 0" || { bad "--init: exit $code"; cat "$T/out" >&2; }
+before="$(tree_of "$WT")"
+code="$(nrun "$WT" -- --init incident_1/poc/INC-1.2)"
+[ "$code" = 3 ] && grep -q 'run.sh refused: --init makes a crate in a new or empty directory, and incident_1/poc/INC-1.2 holds files' "$T/out" && [ "$(tree_of "$WT")" = "$before" ] \
+  && ok "--init into a crate that exists -> exit 3, nothing changed" || { bad "--init twice: exit $code"; cat "$T/out" >&2; }
+( cd "$WT" && "$ROOT/scripts/rundir.sh" sub audit_1 poc/F-7 ) >/dev/null
+code="$(nrun "$WT" -- --init audit_1/poc/F-7)"
+[ "$code" = 0 ] && [ -f "$WT/audit_1/poc/F-7/tests/exploit.rs" ] && ok "--init into the empty directory rundir.sh sub made -> the crate" || { bad "--init into an empty directory: exit $code"; cat "$T/out" >&2; }
+rm -rf "$WT/audit_1/poc/F-7"
+
+# --new-cache: a directory in TMPDIR, mode 0700, with its marker; --cache takes only such a one.
+for tmp in "$NT" "$NT/"; do
+  rm -rf "$NT"; mkdir -p "$NT"
+  code="$( (cd "$WT" && env -i HOME="$CLEANHOME" PATH="$SP" TMPDIR="$tmp" "$RUNSH" --new-cache) 2>"$T/err")"
+  case "$code" in "$NT"/auditor-poc-target.??????) cache="$code" ;; *) cache="" ;; esac
+  if [ -n "$cache" ] && [ -d "$cache" ] && [ -n "$(find "$cache" -prune -perm 0700 -print)" ] \
+     && [ "$(cat "$cache/.auditor-poc-cache")" = auditor-poc-target ] && [ ! -s "$T/err" ]; then
+    ok "--new-cache (TMPDIR '$tmp') prints a new physical \$TMPDIR/auditor-poc-target.XXXXXX, mode 0700, with its marker"
+  else
+    bad "--new-cache with TMPDIR '$tmp': printed '$code'"; cat "$T/err" >&2
+  fi
+done
+mkdir -p "$NTC"
+CACHE="$( (cd "$WT" && env -i HOME="$CLEANHOME" PATH="$SP" TMPDIR="$NTC" "$RUNSH" --new-cache) 2>/dev/null)"
+code="$(ngate TMPDIR="$NTC" -- --crate audit_1/poc/F-1 "${NVULN[@]}" --cache "$CACHE")"
+if [ "$code" = 0 ] && awk -F'\t' -v t="$CACHE" '{ n++ } $2 == t { g++ } END { exit !(n > 0 && n == g) }' "$T/calls" \
+   && grep -qF ">> target dir: $CACHE " "$T/out" && [ ! -e "$CACHE/.auditor-poc-build.lock" ]; then
+  ok "--cache <a --new-cache directory> -> every cargo call builds into it, and the build lock is there and gone"
+else
+  bad "--cache: exit $code"; cat "$T/out" >&2
+fi
+mkdir -p "$NTC/auditor-poc-target.nomark" "$NTC/auditor-poc-target.mode75" "$NTC/auditor-poc-target.badmrk"
+chmod 700 "$NTC/auditor-poc-target.nomark" "$NTC/auditor-poc-target.badmrk"; chmod 755 "$NTC/auditor-poc-target.mode75"
+printf 'auditor-poc-target\n' > "$NTC/auditor-poc-target.mode75/.auditor-poc-cache"
+printf 'something else\n' > "$NTC/auditor-poc-target.badmrk/.auditor-poc-cache"
+ln -s "$CACHE" "$NTC/auditor-poc-target.linked"
+mkdir -p "$T/elsewhere"; cp -R "$CACHE" "$T/elsewhere/"
+cache_nothing_ran() { [ ! -e "$T/calls" ] && [ -z "$(find "$NTC" -name 'auditor-poc.*' -prune -print)" ] && ! grep -q '^>> build dir' "$T/out"; }
+while IFS='|' read -r value text; do
+  [ -n "$value" ] || continue
+  code="$(ngate TMPDIR="$NTC" -- --crate audit_1/poc/F-1 "${NVULN[@]}" --cache "$value")"
+  [ "$code" = 3 ] && grep -qF "run.sh refused: $text" "$T/out" && cache_nothing_ran && one_blocker \
+    && ok "--cache $value -> refused before anything is copied: $text" || { bad "--cache $value: exit $code"; cat "$T/out" >&2; }
+done <<CASES
+$NTC/auditor-poc-target.nomark|--cache holds no .auditor-poc-cache marker, so --new-cache did not make it
+$NTC/auditor-poc-target.badmrk|--cache holds no .auditor-poc-cache marker, so --new-cache did not make it
+$NTC/auditor-poc-target.mode75|--cache is not mode 0700
+$NTC/auditor-poc-target.linked|--cache is not a directory --new-cache made
+$T/elsewhere/${CACHE##*/}|--cache is not in TMPDIR, where --new-cache makes it
+${CACHE#/}|--cache takes a directory --new-cache made
+$NTC/auditor-poc-target.ab|--cache takes a directory --new-cache made
+$NTC/auditor-poc-target.abc-ef|--cache takes a directory --new-cache made
+$CACHE/|--cache takes a directory --new-cache made
+$NTC|--cache takes a directory --new-cache made
+CASES
+
+# The execution mode: the stricter of <R>/exec-mode and AUDITOR_EXEC_MODE (none, then isolated, then
+# native). Missing or none exits 3 before anything is copied, and so does a --mode that is not it.
+# Isolated runs can pass only where no credential the self-check reads is readable, here in an empty
+# HOME and the account's home directory; the driver says whether this machine's is.
+readable="$(cd "$WT" && env -i HOME="$CLEANHOME" "${TOOL_HOMES[@]}" PATH="$PATH" bash "$T/iso-driver.sh" "$ROOT" creds 2>&1)"; rc=$?
+ISOLATED_OK=0
+if [ "$rc" = 0 ]; then ISOLATED_OK=1
+else echo "note: this machine is not an isolated runner (readable: $(printf '%s' "$readable" | tr '\n' ' ')); the checks that isolated mode passes are skipped"
+fi
+while IFS='|' read -r file env expect_mode; do
+  [ -n "$expect_mode" ] || continue
+  if [ -n "$file" ]; then printf '%s\n' "$file" > "$WT/audit_1/exec-mode"; else rm -f "$WT/audit_1/exec-mode"; fi
+  set -- ; [ -n "$env" ] && set -- "AUDITOR_EXEC_MODE=$env"
+  code="$(ngate "$@" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+  label="exec-mode '${file:-absent}', AUDITOR_EXEC_MODE '${env:-unset}'"
+  case "$expect_mode" in
+    isolated|native)
+      if [ "$expect_mode" = isolated ] && [ "$ISOLATED_OK" = 0 ]; then continue; fi
+      [ "$code" = 0 ] && grep -q "^>> execution mode: $expect_mode (the stricter of audit_1/exec-mode: ${file:-absent}; AUDITOR_EXEC_MODE: ${env:-unset})$" "$T/out" \
+        && grep -q "^>> build dir: .*AUDITOR_EXEC_MODE=$expect_mode;" "$T/out" \
+        && ok "$label -> runs in $expect_mode mode" || { bad "$label: exit $code, want $expect_mode"; cat "$T/out" >&2; } ;;
+    none)
+      [ "$code" = 3 ] && grep -q 'blocker: the recorded execution mode is none' "$T/out" && new_nothing_ran && one_blocker \
+        && ok "$label -> none: exit 3, nothing copied or built" || { bad "$label: exit $code, want none"; cat "$T/out" >&2; } ;;
+    missing)
+      [ "$code" = 3 ] && grep -q 'blocker: no recorded mode: audit_1/exec-mode is missing and AUDITOR_EXEC_MODE is not set' "$T/out" && new_nothing_ran && one_blocker \
+        && ok "$label -> no recorded mode: exit 3, nothing copied or built" || { bad "$label: exit $code, want missing"; cat "$T/out" >&2; } ;;
+  esac
+done <<'CASES'
+native||native
+isolated||isolated
+|native|native
+|isolated|isolated
+native|isolated|isolated
+isolated|native|isolated
+none||none
+|none|none
+none|native|none
+native|none|none
+none|isolated|none
+||missing
+CASES
+printf 'native\n' > "$WT/audit_1/exec-mode"
+for spec in 'native|native|0' 'native|isolated|3' 'native|none|3' 'isolated|native|3'; do
+  file="${spec%%|*}"; rest="${spec#*|}"; mode="${rest%%|*}"; expect_rc="${rest#*|}"
+  printf '%s\n' "$file" > "$WT/audit_1/exec-mode"
+  code="$(ngate -- --crate audit_1/poc/F-1 "${NVULN[@]}" --mode "$mode")"
+  if [ "$expect_rc" = 0 ]; then
+    [ "$code" = 0 ] && ok "--mode $mode with the recorded mode $file -> runs" || { bad "--mode $mode, recorded $file: exit $code"; cat "$T/out" >&2; }
+  else
+    [ "$code" = 3 ] && grep -q "blocker: --mode is $mode, but the recorded execution mode is $file " "$T/out" && new_nothing_ran && one_blocker \
+      && ok "--mode $mode with the recorded mode $file -> exit 3 before anything is copied" || { bad "--mode $mode, recorded $file: exit $code"; cat "$T/out" >&2; }
+  fi
+done
+while IFS='|' read -r content text; do
+  [ -n "$text" ] || continue
+  printf "$content" > "$WT/audit_1/exec-mode"
+  code="$(ngate -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+  [ "$code" = 3 ] && grep -qF "run.sh refused: $text" "$T/out" && new_nothing_ran && one_blocker \
+    && ok "exec-mode holding '$content' -> refused before anything is copied" || { bad "exec-mode '$content': exit $code"; cat "$T/out" >&2; }
+done <<'CASES'
+yes\n|audit_1/exec-mode holds something other than one word, none, isolated or native
+Native\n|audit_1/exec-mode holds something other than one word, none, isolated or native
+native\n\n|audit_1/exec-mode holds something other than one word, none, isolated or native
+native isolated\n|audit_1/exec-mode holds something other than one word, none, isolated or native
+\n|audit_1/exec-mode holds something other than one word, none, isolated or native
+native\r\n|audit_1/exec-mode holds something other than one word, none, isolated or native
+CASES
+rm -f "$WT/audit_1/exec-mode"; mkdir "$WT/audit_1/exec-mode"
+code="$(ngate -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+[ "$code" = 3 ] && grep -qF 'run.sh refused: audit_1/exec-mode is not a regular file' "$T/out" && new_nothing_ran \
+  && ok "an exec-mode that is a directory -> refused" || { bad "exec-mode directory: exit $code"; cat "$T/out" >&2; }
+rmdir "$WT/audit_1/exec-mode"; printf 'native\n' > "$WT/audit_1/exec-mode"
+code="$(ngate AUDITOR_EXEC_MODE=yes -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+[ "$code" = 3 ] && grep -qF "run.sh refused: AUDITOR_EXEC_MODE is 'yes', not none, isolated or native" "$T/out" && new_nothing_ran \
+  && ok "AUDITOR_EXEC_MODE=yes -> refused, even with a recorded mode" || { bad "AUDITOR_EXEC_MODE=yes: exit $code"; cat "$T/out" >&2; }
+
+# The isolation self-check. In isolated mode, a fake HOME holding any one credential the check reads
+# stops the run before anything is copied, naming it; in native mode it is a warning.
+printf 'isolated\n' > "$WT/audit_1/exec-mode"
+n=0
+while IFS= read -r cred; do
+  [ -n "$cred" ] || continue
+  n=$((n + 1)); FH="$T/fh-$n"; mkdir -p "$(dirname "$FH/$cred")"; printf 'secret\n' > "$FH/$cred"
+  code="$(ngate HOME="$FH" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+  [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: isolated mode, but $FH/$cred is readable: this is not the isolated runner (Rule 11a) — nothing was copied or built." "$T/out" \
+    && new_nothing_ran && one_blocker && ok "isolated mode with a readable ~/$cred -> exit 3 naming it, nothing copied" || { bad "isolated, ~/$cred: exit $code"; cat "$T/out" >&2; }
+done <<'CREDS'
+.ssh/id_ed25519
+.ssh/work/deploy_key
+.config/solana/id.json
+.aws/credentials
+.config/gcloud/credentials.db
+.config/gcloud/access_tokens.db
+.config/gcloud/application_default_credentials.json
+.config/gcloud/legacy_credentials/me@example.invalid/adc.json
+.azure/accessTokens.json
+.azure/msal_token_cache.json
+.azure/msal_token_cache.bin
+.azure/service_principal_entries.json
+.azure/service_principal_entries.bin
+.kube/config
+.docker/config.json
+.npmrc
+.cargo/credentials
+.cargo/credentials.toml
+.git-credentials
+.netrc
+.config/gh/hosts.yml
+.pypirc
+.gnupg/private-keys-v1.d/0123456789ABCDEF.key
+CREDS
+FH="$T/fh-native"; mkdir -p "$FH/.aws"; printf 'secret\n' > "$FH/.aws/credentials"
+printf 'native\n' > "$WT/audit_1/exec-mode"
+code="$(ngate HOME="$FH" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+[ "$code" = 0 ] && grep -qF ">> warning: native mode, and these are readable here, to the code this run builds and runs too: $FH/.aws/credentials" "$T/out" \
+  && ok "native mode with a readable credential -> a warning naming it, and the run goes on" || { bad "native with a credential: exit $code"; cat "$T/out" >&2; }
+printf 'isolated\n' > "$WT/audit_1/exec-mode"
+if [ "$ISOLATED_OK" = 1 ]; then
+  FH="$T/fh-cargo-home"; mkdir -p "$FH" "$T/other-cargo-home"; printf 'token\n' > "$T/other-cargo-home/credentials.toml"
+  code="$(ngate HOME="$FH" CARGO_HOME="$T/other-cargo-home" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+  [ "$code" = 3 ] && grep -qF "isolated mode, but $T/other-cargo-home/credentials.toml is readable" "$T/out" && new_nothing_ran \
+    && ok "isolated mode with a readable \$CARGO_HOME/credentials.toml -> exit 3 naming it" || { bad "isolated, CARGO_HOME credentials: exit $code"; cat "$T/out" >&2; }
+  # What does not count: the public parts of ~/.ssh, a file this user cannot read, an empty file, a FIFO
+  # (which must not stall the check) and an SSH_AUTH_SOCK that names no socket.
+  FH="$T/fh-clean"; mkdir -p "$FH/.ssh" "$FH/.aws" "$FH/.kube"
+  for f in known_hosts known_hosts.old config id_ed25519.pub authorized_keys authorized_keys2; do printf 'public\n' > "$FH/.ssh/$f"; done
+  : > "$FH/.aws/credentials"; printf 'secret\n' > "$FH/.kube/config"; chmod 000 "$FH/.kube/config"
+  mkfifo "$FH/.npmrc" 2>/dev/null || true
+  printf 'x\n' > "$T/not-a-socket"
+  if [ -r "$FH/.kube/config" ]; then echo "note: cannot drop read permission here (running as root?); the unreadable credential is left out"; rm -f "$FH/.kube/config"; fi
+  code="$(ngate HOME="$FH" SSH_AUTH_SOCK="$T/not-a-socket" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+  [ "$code" = 0 ] && grep -q '^>> execution mode: isolated ' "$T/out" \
+    && ok "isolated mode: public ~/.ssh files, an unreadable or empty credential, a FIFO and a non-socket SSH_AUTH_SOCK do not count" || { bad "isolated, nothing readable: exit $code"; cat "$T/out" >&2; }
+  chmod 600 "$FH/.kube/config" 2>/dev/null || true
+  # A link to a readable file counts.
+  FH="$T/fh-link"; mkdir -p "$FH"; printf 'secret\n' > "$T/npmrc-elsewhere"; ln -s "$T/npmrc-elsewhere" "$FH/.npmrc"
+  code="$(ngate HOME="$FH" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+  [ "$code" = 3 ] && grep -qF "isolated mode, but $FH/.npmrc is readable" "$T/out" && ok "isolated mode: a symbolic link to a readable file counts as readable" || { bad "isolated, linked credential: exit $code"; cat "$T/out" >&2; }
+  # An SSH agent that accepts a connection counts; this machine may not allow a Unix socket to be served.
+  SOCK="$T/agent.sock"
+  python3 -I -c 'import socket, sys, time
+s = socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.listen(5); time.sleep(60)' "$SOCK" 2>/dev/null &
+  agent=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10; do [ -S "$SOCK" ] && break; kill -0 "$agent" 2>/dev/null || break; sleep 1; done
+  if [ -S "$SOCK" ] && python3 -I -c 'import socket, sys; socket.socket(socket.AF_UNIX).connect(sys.argv[1])' "$SOCK" 2>/dev/null; then
+    code="$(ngate HOME="$CLEANHOME" SSH_AUTH_SOCK="$SOCK" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+    [ "$code" = 3 ] && grep -qF "isolated mode, but $SOCK (SSH_AUTH_SOCK) is readable" "$T/out" && new_nothing_ran \
+      && ok "isolated mode with an SSH agent that accepts a connection -> exit 3 naming SSH_AUTH_SOCK" || { bad "isolated, SSH agent: exit $code"; cat "$T/out" >&2; }
+  else
+    echo "note: this machine does not let the suite serve a Unix socket; the SSH agent check is skipped"
+  fi
+  kill "$agent" 2>/dev/null; wait "$agent" 2>/dev/null
+fi
+printf 'native\n' > "$WT/audit_1/exec-mode"
+
+# Environment cleaning. Canary variables in the caller's environment reach no cargo call and no test
+# binary; neither do the inputs ./run.sh reads from it (here VULNERABLE_SO, KEEP_POC_BUILD, UPDATE_PINS,
+# CARGO_TARGET_DIR: the run builds both arms, moves no pin and leaves nothing behind). HOME is the
+# throwaway one with a fresh Solana keypair, but for cargo build-sbf; only cargo's downloads see the
+# proxy; and a cargo on PATH inside the working directory never runs.
+mkdir -p "$WT/.bin"; printf '#!/bin/sh\necho ran > "%s"\nexit 0\n' "$T/wt-cargo.marker" > "$WT/.bin/cargo"; chmod +x "$WT/.bin/cargo"
+: > "$T/canary-v17"
+SHIM_EXTRA=(SHIM_WALLET_COPY="$T/wallet")
+rm -f "$T"/wallet.* "$T/wt-cargo.marker"
+code="$(ngate PATH="$WT/.bin:$SP" AUDITOR_CANARY=canary-v01 GITHUB_TOKEN=canary-v02 RPC_URL=https://rpc.invalid/canary-v03 \
+  AWS_SECRET_ACCESS_KEY=canary-v04 CARGO_REGISTRY_TOKEN=canary-v05 SSH_AUTH_SOCK="$T/canary-v06.sock" RUSTC_WRAPPER="$T/canary-v07" \
+  RUSTFLAGS=--cfg=canary_v08 CARGO_BUILD_RUSTC_WRAPPER="$T/canary-v09" GIT_SSH_COMMAND=canary-v10 CARGO_TARGET_DIR="$T/canary-v11" \
+  CARGO_BUILD_TARGET_DIR="$T/canary-v12" BPF_OUT_DIR="$T/canary-v13" RUSTC="$T/canary-v14" LD_PRELOAD="$T/canary-v15.so" \
+  DYLD_INSERT_LIBRARIES="$T/canary-v16.dylib" BASH_ENV="$T/canary-v17" XDG_CONFIG_HOME="$T/canary-v18" GH_TOKEN=canary-v19 \
+  HTTPS_PROXY=http://proxy.invalid:3128 VULNERABLE_SO="$T/vuln.so" KEEP_POC_BUILD=1 UPDATE_PINS=borsh -- --crate audit_1/poc/F-1)"
+SHIM_EXTRA=()
+bd="$(new_build_dir)"
+[ "$code" = 0 ] && grep -q "building 'vulnerable' arm" "$T/out" && grep -q '^OK: exploit reproduces' "$T/out" \
+  && ok "the environment's VULNERABLE_SO is not read: the run builds the crate's own arms" || { bad "environment cleaning run: exit $code"; cat "$T/out" >&2; }
+[ -s "$T/envdump" ] && ! grep -q canary "$T/envdump" && ok "no canary variable reaches any cargo call or test binary" || { bad "a canary reached a child"; grep -n canary "$T/envdump" >&2; }
+[ -n "$bd" ] && [ ! -e "$bd" ] && [ -z "$(ls -A "$NT")" ] && ok "the environment's KEEP_POC_BUILD is not read: the scratch copy is gone" || bad "KEEP_POC_BUILD from the environment kept '$bd'"
+! awk -F'\t' '$6 ~ /^update / { f = 1 } END { exit !f }' "$T/calls" && ok "the environment's UPDATE_PINS is not read: no cargo update" || bad "UPDATE_PINS from the environment ran cargo update"
+none_in_blocks '.' '^CARGO_TARGET_DIR=' && [ ! -e "$T/canary-v11" ] && ok "the environment's CARGO_TARGET_DIR reaches no child" || bad "CARGO_TARGET_DIR reached a child"
+in_blocks '^== (cargo (metadata|test)|testbin)' "^HOME=$bd/markers/home\$" && in_blocks '^== cargo build-sbf' "^HOME=$CLEANHOME\$" \
+  && ok "HOME is the throwaway $bd/markers/home, but for cargo build-sbf, which keeps the real one" || { bad "HOME in the children"; grep -n '^== \|^HOME=' "$T/envdump" >&2; }
+in_blocks '.' "^TMPDIR=$bd/markers/tmp\$" && in_blocks '.' '^LC_ALL=C$' && none_in_blocks '.' '^SBF_OUT_DIR=$' \
+  && in_blocks '^== (cargo (build-sbf|test)|testbin)' "^SBF_OUT_DIR=$bd/target/deploy\$" \
+  && ok "every child gets TMPDIR in the scratch copy, LC_ALL=C and the SBF_OUT_DIR run.sh set" || { bad "TMPDIR, LC_ALL or SBF_OUT_DIR in the children"; cat "$T/envdump" >&2; }
+in_blocks '^== cargo (test|build-sbf)' '^HTTPS_PROXY=http://proxy.invalid:3128$' && none_in_blocks '^== (testbin|cargo metadata)' '^HTTPS_PROXY=' \
+  && ok "the proxy reaches cargo's downloads, never cargo metadata or a test binary" || { bad "proxy variables in the children"; grep -n '^== \|PROXY' "$T/envdump" >&2; }
+none_in_blocks '.' "$WT/.bin" && [ ! -e "$T/wt-cargo.marker" ] && ok "a cargo on PATH inside the working directory never runs, and that PATH entry reaches no child" || bad "PATH inside the working directory"
+w="$T/wallet.exploit"
+if [ -f "$w" ] && python3 -I -c 'import json, sys; k = json.load(open(sys.argv[1])); sys.exit(not (isinstance(k, list) and len(k) == 64 and all(isinstance(b, int) and 0 <= b < 256 for b in k)))' "$w"; then
+  ok "the test binary's HOME holds a throwaway Solana keypair, 64 bytes as solana-keygen writes it"
+  if command -v solana-keygen >/dev/null 2>&1 && pub="$(solana-keygen pubkey "$w" 2>/dev/null)"; then
+    solana-keygen verify "$pub" "$w" >/dev/null 2>&1 && ok "solana-keygen verifies the throwaway keypair ($pub)" || bad "solana-keygen does not verify the throwaway keypair"
+  fi
+else
+  bad "no throwaway keypair in the test binary's HOME"
+fi
+rm -rf "$WT/.bin"
+
+# The resolved Cargo.lock comes back into the crate in place of a regular file only: a symbolic link
+# planted there while the test ran is left as it is, and its target untouched.
+printf 'kept\n' > "$T/lock-target"
+SHIM_EXTRA=(SHIM_MARKERS="$EV exploit:relink" SHIM_RELINK="$WT/audit_1/poc/F-1/Cargo.lock" SHIM_RELINK_TO="$T/lock-target")
+code="$(ngate -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+SHIM_EXTRA=()
+[ "$code" = 0 ] && [ -L "$WT/audit_1/poc/F-1/Cargo.lock" ] && [ "$(cat "$T/lock-target")" = kept ] \
+  && ok "a Cargo.lock that became a symbolic link during the run is not written through" || { bad "Cargo.lock link: exit $code"; cat "$T/out" >&2; }
+rm -f "$WT/audit_1/poc/F-1/Cargo.lock"
+code="$(ngate -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+[ "$code" = 0 ] && [ -f "$WT/audit_1/poc/F-1/Cargo.lock" ] && [ ! -L "$WT/audit_1/poc/F-1/Cargo.lock" ] && [ -z "$(ls -a "$WT/audit_1/poc/F-1" | grep '^\.Cargo\.lock\.')" ] \
+  && ok "the resolved Cargo.lock comes back into the crate, with no temporary file left" || { bad "Cargo.lock back into the crate: exit $code"; cat "$T/out" >&2; }
+
+# Prebuilt bytes from incident_1/bin, a cache, a pin and --keep: the arguments become the inputs.
+code="$(ngate -- --crate audit_1/poc/F-1 --vulnerable-so incident_1/bin/program.so "${NFIX[@]}" --update-pins 'solana-program@3.0.0 borsh' --keep)"
+bd="$(new_build_dir)"
+if [ "$code" = 0 ] && grep -qx "${LEG3}${want} fixed sha256=${wantf} (rejected with the pinned error) → \[PoC-REPRODUCED\]" "$T/out" \
+   && awk -F'\t' '$6 ~ /^update / { u++ } END { exit !(u == 2) }' "$T/calls" && [ -n "$bd" ] && [ -d "$bd" ]; then
+  ok "--vulnerable-so incident_1/bin/…, --fixed-so audit_1/exec/…, --update-pins and --keep -> the Leg 3 line, two pins moved, the scratch copy kept"
+else
+  bad "arguments as inputs: exit $code"; cat "$T/out" >&2
+fi
+[ -n "$bd" ] && rm -rf "$bd"
+
+# Every refusal in the case file, under each bash on the machine: one stderr line, exit 3, nothing on
+# stdout, nothing copied, nothing changed in the working directory, and the same under each shell.
+SHELLS=("$BASH"); if [ -x /bin/bash ] && [ "$(/bin/bash -c 'printf %s "$BASH_VERSION"')" != "$BASH_VERSION" ]; then SHELLS+=(/bin/bash); fi
+case_file() {  # case_file <cases.txt> <program> <dir>: run every case under each shell
+  local file="$1" prog="$2" dir="$3" line want_rc want_err rest sh i ncase=0
+  local -a args
+  while IFS= read -r line; do
+    case "$line" in ''|'#'*) continue ;; esac
+    want_rc=${line%%$'\t'*}; rest=${line#*$'\t'}; want_err=${rest%%$'\t'*}; rest=${rest#*$'\t'}
+    IFS=$'\t' read -r -a args <<< "$rest"
+    ncase=$((ncase + 1)); i=0
+    for sh in "${SHELLS[@]}"; do
+      rm -rf "$NT"; mkdir -p "$NT"; rm -f "$T/shim/settings.env"
+      ( cd "$dir" && env -i HOME="$CLEANHOME" PATH="$SP" TMPDIR="$NT" "$sh" "$prog" "${args[@]}" ) >"$T/case.out.$i" 2>"$T/case.err.$i" </dev/null
+      echo $? > "$T/case.rc.$i"
+      i=$((i + 1))
+    done
+    if [ "$(cat "$T/case.rc.0")" = "$want_rc" ] && [ "$(cat "$T/case.err.0")" = "$want_err" ] && [ ! -s "$T/case.out.0" ] && [ -z "$(ls -A "$NT")" ]; then
+      ok "case: ${prog##*/} ${args[*]}"
+    else
+      bad "case: ${prog##*/} ${args[*]} -> status $(cat "$T/case.rc.0"), stderr: $(cat "$T/case.err.0"), stdout: $(cat "$T/case.out.0")"
+    fi
+    if [ "$i" -gt 1 ] && { ! cmp -s "$T/case.rc.0" "$T/case.rc.1" || ! cmp -s "$T/case.err.0" "$T/case.err.1" || ! cmp -s "$T/case.out.0" "$T/case.out.1"; }; then
+      bad "case: ${prog##*/} ${args[*]} prints differently under ${SHELLS[0]} and ${SHELLS[1]}"
+    fi
+  done < "$file"
+  CASES_RUN=$ncase
+}
+printf 'native\n' > "$WT/audit_1/exec-mode"
+before="$(tree_of "$WT")"
+case_file "$HERE/fixtures/poc-run/cases.txt" "$RUNSH" "$WT"
+[ "$CASES_RUN" -gt 50 ] && ok "the run.sh case file has cases ($CASES_RUN)" || bad "the run.sh case file has $CASES_RUN cases"
+[ "$(tree_of "$WT")" = "$before" ] && ok "no run.sh case changed anything in the working directory" || bad "a run.sh case changed the working directory"
+rm -f "$T/shim/settings.env"
+
+# scripts/lib/isolation.sh on its own: the homes it reads, iso_run's refusal of a program path holding
+# "=", the throwaway HOME (a keypair of mode 0600) and keep-home, and the scratch directory rules.
+for sh in "${SHELLS[@]}"; do
+  out="$(cd "$WT" && env -i HOME="$T/fake-home" PATH="$PATH" "$sh" "$T/iso-driver.sh" "$ROOT" homes)"
+  account="$(python3 -I -c 'import os, pwd; print(pwd.getpwuid(os.getuid()).pw_dir)')"
+  [ "$out" = "$(printf '%s\n%s' "$T/fake-home" "$account")" ] && ok "iso_homes ($sh): \$HOME, then the passwd home" || bad "iso_homes ($sh): '$out'"
+  FH="$T/fh-a"; FH2="$T/fh-b"; mkdir -p "$FH/.aws" "$FH2/.docker"; printf 'a\n' > "$FH/.aws/credentials"; printf 'b\n' > "$FH2/.docker/config.json"
+  out="$(cd "$WT" && env -i HOME="$CLEANHOME" PATH="$PATH" "$sh" "$T/iso-driver.sh" "$ROOT" creds "$FH" "$FH2")"; rc=$?
+  [ "$rc" = 1 ] && [ "$out" = "$(printf '%s\n%s' "$FH/.aws/credentials" "$FH2/.docker/config.json")" ] && ok "iso_credentials ($sh) reads every home it is given" || bad "iso_credentials ($sh): $rc '$out'"
+  mkdir -p "$T/fh-odd/.ssh"; printf 'k\n' > "$T/fh-odd/.ssh/$(printf 'id\tx\001y')"
+  out="$(cd "$WT" && env -i HOME="$CLEANHOME" PATH="$PATH" "$sh" "$T/iso-driver.sh" "$ROOT" creds "$T/fh-odd")"
+  [ "$out" = "$T/fh-odd/.ssh/id?x?y" ] && ok "iso_credentials ($sh) prints a path's control characters as ?" || bad "iso_credentials ($sh), control characters: '$out'"
+  rm -rf "$T/fh-odd"
+  rm -rf "$T/iso-env" "$T/eq-marker"; mkdir -p "$T/iso-env"
+  out="$(cd "$WT" && env -i HOME="$CLEANHOME" PATH="$PATH" "$sh" "$T/iso-driver.sh" "$ROOT" run-eq "$T/iso-env" "$T")"
+  [ "$out" = "rc=126" ] && ok "iso_run ($sh): a program path holding '=' -> 126, nothing run" || bad "iso_run ($sh) with '=': '$out'"
+  rm -rf "$T/iso-env"; mkdir -p "$T/iso-env"
+  out="$(cd "$WT" && env -i HOME="$CLEANHOME" PATH="$PATH" TMPDIR="$NT" USER=u LANG=C.UTF-8 HTTPS_PROXY=http://p.invalid:1 GITHUB_TOKEN=canary-i1 "$sh" "$T/iso-driver.sh" "$ROOT" env "$T/iso-env")"
+  key="$T/iso-env/home/.config/solana/id.json"
+  if grep -qx "HOME=$T/iso-env/home" <<< "$out" && grep -qx "TMPDIR=$T/iso-env/tmp" <<< "$out" \
+     && grep -qx 'net HTTPS_PROXY=http://p.invalid:1' <<< "$out" && ! grep -q '^HTTPS_PROXY=' <<< "$out" \
+     && ! grep -q canary <<< "$out" && grep -qx 'USER=u' <<< "$out" \
+     && [ -n "$(find "$key" -prune -perm 0600 -type f -print 2>/dev/null)" ]; then
+    ok "iso_env ($sh): a throwaway HOME with a keypair of mode 0600, TMPDIR, the proxy apart, no token"
+  else
+    bad "iso_env ($sh)"; printf '%s\n' "$out" >&2
+  fi
+  rm -rf "$T/iso-env"; mkdir -p "$T/iso-env"
+  out="$(cd "$WT" && env -i HOME="$CLEANHOME" PATH="$PATH" "$sh" "$T/iso-driver.sh" "$ROOT" keep "$T/iso-env")"
+  [ "$out" = "home $CLEANHOME" ] && [ ! -e "$T/iso-env/home" ] && ok "iso_env keep-home ($sh): the real HOME, no throwaway one made" || bad "iso_env keep-home ($sh): '$out'"
+  mkdir -p "$WT/tmp-inside"
+  out="$(cd "$WT" && env -i HOME="$CLEANHOME" PATH="$PATH" TMPDIR="$WT/tmp-inside" "$sh" "$T/iso-driver.sh" "$ROOT" scratch 2>&1)"; rc=$?
+  [ "$rc" = 64 ] && case "$out" in "iso-driver: refused: the scratch directory $WT/tmp-inside/auditor-driver."*" lies inside the working directory; point TMPDIR outside it") true ;; *) false ;; esac \
+    && [ -z "$(ls -A "$WT/tmp-inside")" ] && ok "iso_scratch ($sh): a TMPDIR inside the working directory -> refused, and the scratch directory removed" || bad "iso_scratch ($sh) inside WT: $rc '$out'"
+  rmdir "$WT/tmp-inside"
+  mkdir -p "$T/cfgparent/.cargo" "$T/cfgparent/tmp"; printf '[build]\n' > "$T/cfgparent/.cargo/config.toml"
+  out="$(cd "$WT" && env -i HOME="$CLEANHOME" PATH="$PATH" TMPDIR="$T/cfgparent/tmp" "$sh" "$T/iso-driver.sh" "$ROOT" scratch 2>&1)"; rc=$?
+  [ "$rc" = 64 ] && case "$out" in *"would inherit $T/cfgparent/.cargo/config.toml; point TMPDIR outside any repository") true ;; *) false ;; esac \
+    && [ -z "$(ls -A "$T/cfgparent/tmp")" ] && ok "iso_scratch ($sh): a scratch directory under a .cargo/config.toml -> refused" || bad "iso_scratch ($sh) under a cargo config: $rc '$out'"
+done
+
 
 # ---------------------------------------------------------------------------
 # Real cargo and rustup, when present: the template's own tests and shared-test-utils,
@@ -1971,6 +2467,66 @@ path = \"$T/e-oot-outside/lib.rs\"
   else
     bad "real cargo, out-of-tree sources: exit $code"; grep 'non-registry' "$T/out" >&2
   fi
+
+  # The installation's copy with real cargo. The crate sits in a run directory, its prebuilt bytes under
+  # exec/, and it depends on a path crate outside it whose build script records the environment it is
+  # built in; the caller's environment holds canary variables. The build gets none of them, a
+  # throwaway HOME and TMPDIR in the scratch copy, and the real CARGO_HOME; an inherited
+  # CARGO_TARGET_DIR, RUSTFLAGS and RUSTC_WRAPPER are not used.
+  RW="$T/wt-real"; mkdir -p "$RW"
+  ( cd "$RW" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null || bad "rundir.sh new audit for the real-cargo fixture"
+  printf 'native\n' > "$RW/audit_1/exec-mode"
+  mk_e2e "$RW/audit_1/poc/F-1"
+  mkdir -p "$RW/audit_1/exec/sb"; cp "$SB-takeover.so" "$SB-reject-MissingRequiredSignature.so" "$RW/audit_1/exec/sb/"
+  mkdir -p "$T/envdep/src"; printf 'pub fn note() {}\n' > "$T/envdep/src/lib.rs"
+  printf '[package]\nname = "envdep"\nversion = "0.1.0"\nedition = "2021"\npublish = false\n' > "$T/envdep/Cargo.toml"
+  printf 'fn main() {\n    let mut text = String::new();\n    for (k, v) in std::env::vars() {\n        text.push_str(&format!("{k}={v}\\n"));\n    }\n    std::fs::write("%s", text).expect("record the environment");\n}\n' "$T/envdep.env" > "$T/envdep/build.rs"
+  printf 'envdep = { path = "%s" }\n' "$T/envdep" >> "$RW/audit_1/poc/F-1/Cargo.toml"
+  REAL=(HOME="$CLEANHOME" "${TOOL_HOMES[@]}" PATH="$PATH" TMPDIR="$NT" CARGO_NET_OFFLINE=true)
+  rr() {  # rr [VAR=val ...] -- <argument>...: the installation's run.sh with real cargo, from $RW -> exit code
+    local -a vars=()
+    while [ $# -gt 0 ] && [ "$1" != -- ]; do vars+=("$1"); shift; done
+    [ $# -gt 0 ] && shift
+    rm -rf "$NT"; mkdir -p "$NT"
+    ( cd "$RW" && env -i "${REAL[@]}" ${vars[@]+"${vars[@]}"} "$RUNSH" "$@" ) >"$T/out" 2>&1 </dev/null
+    echo $?
+  }
+  RSO=(--vulnerable-so audit_1/exec/sb/sb-takeover.so --fixed-so audit_1/exec/sb/sb-reject-MissingRequiredSignature.so)
+  rm -f "$T/envdep.env"
+  code="$(rr AUDITOR_CANARY=canary-r1 GITHUB_TOKEN=canary-r2 CARGO_TARGET_DIR="$T/canary-r3" RUSTFLAGS=--cfg=canary_r4 \
+    RUSTC_WRAPPER="$T/canary-r5" CARGO_REGISTRY_TOKEN=canary-r6 RPC_URL=https://rpc.invalid/canary-r7 -- --crate audit_1/poc/F-1 "${RSO[@]}")"
+  if [ "$code" = 0 ] && grep -qx "${LEG3}$(zhash "$SB-takeover.so") fixed sha256=$(zhash "$SB-reject-MissingRequiredSignature.so") (rejected with the pinned error) → \[PoC-REPRODUCED\]" "$T/out"; then
+    ok "real cargo, the installation's copy: --crate with prebuilt bytes under exec/ reaches the Leg 3 line"
+  else
+    bad "real cargo, --crate: exit $code"; cat "$T/out" >&2
+  fi
+  if [ -s "$T/envdep.env" ] && ! grep -q canary "$T/envdep.env" && [ ! -e "$T/canary-r3" ] \
+     && grep -q "^HOME=$NT/auditor-poc\.[A-Za-z0-9]*/markers/home\$" "$T/envdep.env" \
+     && grep -q "^TMPDIR=$NT/auditor-poc\.[A-Za-z0-9]*/markers/tmp\$" "$T/envdep.env" \
+     && grep -qx "CARGO_HOME=${CARGO_HOME:-$HOME/.cargo}" "$T/envdep.env" && ! grep -q '^RUSTC_WRAPPER=' "$T/envdep.env"; then
+    ok "real cargo: a build script in the build sees no canary, the throwaway HOME and TMPDIR, the real CARGO_HOME"
+  else
+    bad "real cargo: the build script's environment"; cat "$T/envdep.env" >&2
+  fi
+  grep -q "^   non-registry code: .*envdep 0.1.0 (path $T/envdep)" "$T/out" && [ -f "$RW/audit_1/poc/F-1/Cargo.lock" ] \
+    && ok "real cargo: the non-registry line names the path crate, and the resolved Cargo.lock is back in the crate" || { bad "real cargo: non-registry line or Cargo.lock"; grep 'non-registry' "$T/out" >&2; }
+  # A build cache from --new-cache, in a TMPDIR of its own: the second run builds into it as well.
+  mkdir -p "$NTC"
+  RCACHE="$( (cd "$RW" && env -i "${REAL[@]}" TMPDIR="$NTC" "$RUNSH" --new-cache) 2>/dev/null)"
+  code="$(rr TMPDIR="$NTC" -- --crate audit_1/poc/F-1 "${RSO[@]}" --cache "$RCACHE")"
+  code2="$(rr TMPDIR="$NTC" -- --crate audit_1/poc/F-1 "${RSO[@]}" --cache "$RCACHE")"
+  [ "$code" = 0 ] && [ "$code2" = 0 ] && [ -d "$RCACHE/debug" ] && grep -qF ">> target dir: $RCACHE " "$T/out" && [ ! -e "$RCACHE/.auditor-poc-build.lock" ] \
+    && ok "real cargo: --cache <a --new-cache directory> -> both runs build into it, and its lock is gone" || { bad "real cargo, --cache: exit $code then $code2"; cat "$T/out" >&2; }
+  # A model run: the crate's own arms, built by a stand-in cargo-build-sbf that records its
+  # environment. cargo build-sbf alone keeps the real HOME, and gets no canary either.
+  mkdir -p "$T/sbf-env"
+  printf '#!/bin/sh\n/usr/bin/env > "%s"\nout=""; features=""; prev=""\nfor a in "$@"; do\n  case "$prev" in --sbf-out-dir) out="$a" ;; --features) features="$a" ;; esac\n  prev="$a"\ndone\ncase "$features" in vulnerable) b=takeover ;; *) b=reject:MissingRequiredSignature ;; esac\nprintf '"'"'\\177ELF%%s'"'"' "$b" > "$out/poc_e2e.so"\n' "$T/sbf-env.env" > "$T/sbf-env/cargo-build-sbf"
+  chmod +x "$T/sbf-env/cargo-build-sbf"
+  REAL=(HOME="$CLEANHOME" "${TOOL_HOMES[@]}" PATH="$T/sbf-env:$PATH" TMPDIR="$NT" CARGO_NET_OFFLINE=true)
+  rm -f "$T/sbf-env.env"
+  code="$(rr TMPDIR="$NTC" AUDITOR_CANARY=canary-r8 -- --crate audit_1/poc/F-1 --cache "$RCACHE")"
+  [ "$code" = 0 ] && grep -q "^$MODEL" "$T/out" && grep -qx "HOME=$CLEANHOME" "$T/sbf-env.env" && ! grep -q canary "$T/sbf-env.env" \
+    && ok "real cargo, model run: the crate's own arms reproduce; cargo build-sbf gets the real HOME and no canary" || { bad "real cargo, model run, the installation's copy: exit $code"; cat "$T/out" "$T/sbf-env.env" >&2; }
 elif [ "${REQUIRE_TOOLCHAIN:-}" = 1 ]; then
   bad "REQUIRE_TOOLCHAIN=1, but cargo or rustup is not on PATH: the real-toolchain checks cannot run"
 else
