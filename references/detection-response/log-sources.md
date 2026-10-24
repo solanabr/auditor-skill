@@ -28,7 +28,7 @@ Classify every datum by how much it can be trusted, because the verdict legs
 ## Collecting from RPC (gated)
 
 The user's own corpus comes first. When there is none,
-`bash "<auditor-skill root>/scripts/dnr/collect.sh"` is the only path, and it is
+`"<auditor-skill root>/scripts/dnr/collect.sh"` is the only path, and it is
 gated (README rule 3; the command confirms addresses, window, caps and estimated
 call count with the human first):
 
@@ -55,16 +55,17 @@ call count with the human first):
 - **Reruns go to a new `--out`.** The first collection of an incident lands in
   `incident_<n>/corpus/`; a resume, or a later collection (respond's widened ring),
   goes to the next `incident_<n>/corpus-<k>/` (`<k>` = highest existing + 1,
-  `corpus/` counting as 1, made with `mkdir`). The recipes read every one through
-  the glob `incident_<n>/corpus*/transactions.jsonl` and count each transaction
-  once, by signature. After a page cap, resume with `--before` into such a fresh
-  directory; an `--out` that already holds `signatures.jsonl`,
+  `corpus/` counting as 1; `collect.sh` makes it). The recipes read every one
+  through the glob `incident_<n>/corpus*/transactions.jsonl` and count each
+  transaction once, by signature. After a page cap, resume with `--before` into
+  such a fresh directory; an `--out` that already holds `signatures.jsonl`,
   `transactions.jsonl` or `collection-gaps.tsv`, even an empty one, is refused
   rather than overwritten, and so is one with a `.` or `..` component, one reached
   through a symbolic link inside the working directory, and one that — or whose
   `incident_*` directory — is a symbolic link, holds one, is tracked by git, or
-  cannot be checked by git or find (README § Run directory). An `incident_<n>/`
-  that the corpus lands in gets a `.gitignore` of `*` if it has none (Rule 11d).
+  cannot be checked by git or find, and one whose `incident_*` directory has no
+  `.gitignore` holding exactly `*` (README § Run directory;
+  `rundir.sh new incident` writes it first).
 - **Gaps are written down.** A `getTransaction` that failed (transport error, RPC
   error or null result), a signature page that failed, a page cap that stopped on
   a full page of 1,000 (older history may exist), the `--max-tx` cap, a stop
