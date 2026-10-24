@@ -62,6 +62,11 @@
 #     stricter of AUDITOR_EXEC_MODE and the exec-mode of every run directory an
 #     argument names, and --mode must match it; ./run.sh in a crate at <R>/poc/<ID>
 #     reads <R>/exec-mode as well; the installation's template never builds itself;
+#   * an incident's crate runs only once incident_<n>/INCIDENTS.json records its
+#     root_cause_class (a file, an incident or a class that cannot be read stops it,
+#     a nested or large file included); supply_chain_or_ci refuses native mode, a run
+#     without --vulnerable-so, path and git dependencies and sources outside the crate,
+#     and a build that compiled code from outside it;
 #   * the isolation self-check (scripts/lib/isolation.sh): in isolated mode, a fake HOME
 #     holding any credential it reads stops the run before anything is copied, and so
 #     does a check that cannot finish; in native mode it is a warning. Through a driver,
@@ -144,7 +149,8 @@ PY
 # Cargo.toml under the crate as a member, the root package named SHIM_CRATE (poc_shim),
 # with a dependency on the crate's own shared-test-utils/ (SHIM_STU=none drops it, and
 # SHIM_STU=<name>,<rename>,<path> sets another, @copy standing for that directory);
-# SHIM_META=build-script gives the root a build script and SHIM_META=proc-macro makes
+# SHIM_DEP=<name>,<path or git+ source> adds a dependency, SHIM_LIB_SRC sets the root lib's
+# source; SHIM_META=build-script gives the root a build script and SHIM_META=proc-macro makes
 # its lib a proc-macro. `build-sbf` writes the arm's .so; `build-sbf --help` lists
 # --install-only, --offline and --skip-tools-install (none of them with
 # SHIM_SBF_HELP=old), and `build-sbf --install-only` builds nothing. `test --no-run` writes a
@@ -231,6 +237,10 @@ if stu != "none":
     path = os.path.join(root, "shared-test-utils") if path == "@copy" else path
     deps.append({"name": name, "rename": rename or None, "path": path or None, "kind": "dev",
                  "source": None if path else "registry+https://github.com/rust-lang/crates.io-index"})
+if os.environ.get("SHIM_DEP"):
+    name, spec = os.environ["SHIM_DEP"].split(",", 1)
+    git = spec.startswith("git+")
+    deps.append({"name": name, "rename": None, "path": None if git else spec, "kind": None, "source": spec if git else None})
 packages = []
 for top, dirs, files in os.walk(root):
     dirs[:] = sorted(d for d in dirs if not (top == root and d in ("target", "markers")))
@@ -238,7 +248,8 @@ for top, dirs, files in os.walk(root):
         continue
     name = crate if top == root else os.path.basename(top)
     kind = ["lib"] if top != root else ["proc-macro"] if meta == "proc-macro" else ["cdylib", "lib"]
-    targets = [{"name": name.replace("-", "_"), "kind": kind, "crate_types": kind, "src_path": os.path.join(top, "src", "lib.rs")}]
+    src = os.environ.get("SHIM_LIB_SRC") if top == root and os.environ.get("SHIM_LIB_SRC") else os.path.join(top, "src", "lib.rs")
+    targets = [{"name": name.replace("-", "_"), "kind": kind, "crate_types": kind, "src_path": src}]
     if top == root and meta == "build-script":
         targets.append({"name": "build-script-build", "kind": ["custom-build"], "crate_types": ["bin"], "src_path": os.path.join(top, "build.rs")})
     packages.append({"name": name, "version": "0.1.0", "id": "path+file://%s#%s@0.1.0" % (top, name), "manifest_path": os.path.join(top, "Cargo.toml"),
@@ -1610,6 +1621,99 @@ else
   bad "arguments as inputs: exit $code"; cat "$T/out" >&2
 fi
 [ -n "$bd" ] && rm -rf "$bd"
+
+# An incident's crate runs only once incident_<n>/INCIDENTS.json records its root_cause_class: a file, an
+# incident or a class that cannot be read stops the run before anything is copied. supply_chain_or_ci
+# refuses native mode and a run without --vulnerable-so; in isolated mode it refuses a dependency on a path
+# outside the crate or on git, a target built from outside the crate, and a build that compiled code from
+# outside the crate, before its test runs.
+mk_crate "$WT/incident_1/poc/INC-1.1"
+IJ="$WT/incident_1/INCIDENTS.json"
+IVULN=(--vulnerable-so incident_1/bin/program.so)
+incidents() {  # incidents <class> [<id>...]: an INCIDENTS.json whose incidents have those ids (INC-1.1 by default) and that class
+  local class="$1" id sep="" list=""
+  shift
+  [ $# -gt 0 ] || set -- INC-1.1
+  for id in "$@"; do list="$list$sep{\"id\": \"$id\", \"verdict\": \"confirmed_exploited\", \"root_cause_class\": \"$class\"}"; sep=", "; done
+  printf '{"schema": "auditor-incidents/1", "target": "t", "incidents": [%s]}\n' "$list" > "$IJ"
+}
+while IFS='|' read -r how reason; do
+  [ -n "$how" ] || continue
+  rm -rf "$IJ"
+  case "$how" in
+    missing) ;;
+    directory) mkdir "$IJ" ;;
+    not-json) printf '{"incidents": [\n' > "$IJ" ;;
+    no-list) printf '{"incidents": {"id": "INC-1.1"}}\n' > "$IJ" ;;
+    other) incidents code_flaw INC-1.2 ;;
+    twice) incidents code_flaw INC-1.1 INC-1.1 ;;
+    bad-class) incidents bogus ;;
+    no-class) printf '{"incidents": [{"id": "INC-1.1"}]}\n' > "$IJ" ;;
+    nested) python3 -I -c 'import sys; open(sys.argv[1], "w").write("[" * 200000 + "]" * 200000)' "$IJ" ;;
+    large) python3 -I -c 'import sys; open(sys.argv[1], "w").write("{\"incidents\": []}" + " " * (4 * 1024 * 1024))' "$IJ" ;;
+  esac
+  code="$(ngate AUDITOR_EXEC_MODE=native -- --crate incident_1/poc/INC-1.1 "${IVULN[@]}")"
+  [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: incident_1/INCIDENTS.json $reason: an incident's PoC runs only once incident_1/INCIDENTS.json records its root_cause_class (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built." "$T/out" \
+    && new_nothing_ran && one_blocker && ok "an incident crate with an INCIDENTS.json that $reason -> exit 3, nothing copied" || { bad "INCIDENTS.json $how: exit $code"; cat "$T/out" >&2; }
+done <<'CASES'
+missing|is missing
+directory|is not a regular file
+not-json|cannot be read as JSON
+no-list|holds no incidents list
+other|records no incident INC-1.1
+twice|records INC-1.1 more than once
+bad-class|gives INC-1.1 no root_cause_class from incidents-schema.md
+no-class|gives INC-1.1 no root_cause_class from incidents-schema.md
+nested|cannot be read as JSON
+large|is larger than 4 MiB
+CASES
+rm -rf "$IJ"; incidents code_flaw
+code="$(ngate AUDITOR_EXEC_MODE=native -- --crate incident_1/poc/INC-1.1 "${IVULN[@]}")"
+[ "$code" = 0 ] && grep -qxF '>> incident INC-1.1: root_cause_class code_flaw (incident_1/INCIDENTS.json)' "$T/out" && grep -q "^$LEG3" "$T/out" \
+  && ok "an incident crate whose root_cause_class is code_flaw runs on its dumped bytes, and says so" || { bad "incident, code_flaw: exit $code"; cat "$T/out" >&2; }
+code="$(ngate AUDITOR_EXEC_MODE=native -- --crate incident_1/poc/INC-1.1)"
+[ "$code" = 0 ] && grep -q '^OK: exploit reproduces' "$T/out" && ok "an incident crate whose root_cause_class is code_flaw may run its own arms" || { bad "incident, code_flaw, a model run: exit $code"; cat "$T/out" >&2; }
+incidents supply_chain_or_ci
+code="$(ngate AUDITOR_EXEC_MODE=native -- --crate incident_1/poc/INC-1.1 "${IVULN[@]}")"
+[ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: the root_cause_class of INC-1.1 is supply_chain_or_ci, and such an incident is never built natively (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built." "$T/out" \
+  && new_nothing_ran && one_blocker && ok "supply_chain_or_ci in native mode -> exit 3, nothing copied" || { bad "supply_chain_or_ci, native: exit $code"; cat "$T/out" >&2; }
+code="$(ngate AUDITOR_EXEC_MODE=isolated -- --crate incident_1/poc/INC-1.1)"
+[ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: the root_cause_class of INC-1.1 is supply_chain_or_ci, so its PoC runs only on the dumped program bytes (OUTPUT-RULES.md Rule 11a): give --vulnerable-so incident_1/bin/<program>.so — nothing was copied or built." "$T/out" \
+  && new_nothing_ran && one_blocker && ok "supply_chain_or_ci without --vulnerable-so -> exit 3, nothing copied" || { bad "supply_chain_or_ci, a model run: exit $code"; cat "$T/out" >&2; }
+# The crate check on its own, run from run.sh's harness code: under supply_chain_or_ci it refuses what
+# the target's crates could come through, and without the rule it accepts the same crate.
+python3 -I -c 'import sys; src = open(sys.argv[1], encoding="utf-8").read(); sys.stdout.write(src.split("\nHARNESS_PY=\x27", 1)[1].split("\n\x27\n", 1)[0])' "$RUNSH" > "$T/harness.py"
+SC="$T/sc-crate"; mk_crate "$SC"; mkdir -p "$T/target-crates/vault/src"
+while IFS='|' read -r setting reason; do
+  [ -n "$setting" ] || continue
+  ( cd "$SC" && env -i PATH="$PATH" "$setting" python3 -I "$T/shim/meta.py" "$SC" ) > "$T/sc-meta.json"
+  out="$(python3 -I "$T/harness.py" crate "$T/sc-meta.json" "$SC" supply-chain)"; rc=$?
+  out2="$(python3 -I "$T/harness.py" crate "$T/sc-meta.json" "$SC" "")"; rc2=$?
+  [ "$rc" = 3 ] && case "$out" in *"$reason"*"supply_chain_or_ci"*) true ;; *) false ;; esac && [ "$rc2" = 0 ] && [ "$out2" = poc_shim ] \
+    && ok "under supply_chain_or_ci the crate check refuses $setting, which it accepts otherwise" || bad "the crate check, $setting: $rc '$out', without the rule $rc2 '$out2'"
+done <<CASES
+SHIM_DEP=vault,$T/target-crates/vault|poc_shim depends on vault at $T/target-crates/vault, outside the crate
+SHIM_DEP=vault,git+https://example.invalid/vault|poc_shim depends on vault from git+https://example.invalid/vault
+SHIM_LIB_SRC=$T/target-crates/lib.rs|poc_shim builds poc_shim from $T/target-crates/lib.rs, outside the crate
+CASES
+if [ "$ISOLATED_OK" = 1 ]; then
+  code="$(ngate AUDITOR_EXEC_MODE=isolated -- --crate incident_1/poc/INC-1.1 "${IVULN[@]}")"
+  [ "$code" = 0 ] && grep -q "^$LEG3" "$T/out" && ok "supply_chain_or_ci in isolated mode on the dumped bytes runs" || { bad "supply_chain_or_ci, isolated: exit $code"; cat "$T/out" >&2; }
+  SHIM_EXTRA=("SHIM_DEP=vault,$T/target-crates/vault")
+  code="$(ngate AUDITOR_EXEC_MODE=isolated -- --crate incident_1/poc/INC-1.1 "${IVULN[@]}")"
+  SHIM_EXTRA=()
+  [ "$code" = 3 ] && grep -qF "poc_shim depends on vault at $T/target-crates/vault, outside the crate" "$T/out" && [ -z "$(ls -A "$NT")" ] \
+    && awk -F'\t' '$6 !~ /^metadata / { b = 1 } END { exit b }' "$T/calls" \
+    && ok "supply_chain_or_ci with a path dependency outside the crate -> exit 3 before anything compiles" || { bad "supply_chain_or_ci, a path dependency: exit $code"; cat "$T/out" >&2; }
+  rm -f "$WT/incident_1/poc/INC-1.1/Cargo.lock"
+  SHIM_EXTRA=("SHIM_LOCK=vault@0.1.0@path")
+  code="$(ngate AUDITOR_EXEC_MODE=isolated -- --crate incident_1/poc/INC-1.1 "${IVULN[@]}")"
+  SHIM_EXTRA=()
+  [ "$code" = 3 ] && grep -q '^\[PoC-ATTEMPTED\] blocker: the build compiled code from outside the crate (vault 0.1.0 (path))' "$T/out" \
+    && ! awk -F'\t' '$6 ~ /^testbin / { f = 1 } END { exit !f }' "$T/calls" \
+    && ok "supply_chain_or_ci with code from outside the crate in the build -> exit 3, the test never runs" || { bad "supply_chain_or_ci, a build with outside code: exit $code"; cat "$T/out" >&2; }
+fi
+rm -rf "$IJ" "$WT/incident_1/poc/INC-1.1"
 
 # Every refusal in the case file, under each bash on the machine: one stderr line, exit 3, nothing on
 # stdout, nothing copied, nothing changed in the working directory, and the same under each shell.

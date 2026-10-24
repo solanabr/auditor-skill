@@ -217,7 +217,14 @@
 #   * an incident whose root cause is supply chain / CI is never built natively, and
 #     its PoC never builds or links the target's crates in any mode (they may be the
 #     payload): it runs on the dumped ELF here, with the template's own crates
-#     (OUTPUT-RULES.md Rule 11a).
+#     (OUTPUT-RULES.md Rule 11a). The installation's copy holds a crate at
+#     incident_<n>/poc/INC-<n>.<k> to it: it reads that incident's root_cause_class
+#     from incident_<n>/INCIDENTS.json (a regular file of at most 4 MiB) and stops
+#     (exit 3) when the file, the incident or its class cannot be read. For
+#     supply_chain_or_ci it refuses native mode, a run without --vulnerable-so, a
+#     dependency on a path outside the crate or on git, and a target whose source lies
+#     outside the crate, and it stops before a test runs when the build compiled code
+#     from outside the crate. ./run.sh does not read INCIDENTS.json.
 
 set -Eeuo pipefail
 # Only an assertion that ran and did not hold gives a verdict (exit 1 or 2). Any
@@ -269,6 +276,8 @@ trap 'on_exit "$?"' EXIT
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # 1 for the installation's copy: every child runs in the cleaned environment.
 CLEAN=0
+# 1 for an incident whose root_cause_class is supply_chain_or_ci (incident_rule).
+SUPPLY_CHAIN=0
 PINS_FROM=UPDATE_PINS
 CACHE_MARK=.auditor-poc-cache
 # The template's files, the ones --init copies.
@@ -424,6 +433,76 @@ exec_mode() {
   fi
 }
 
+# What incident_rule runs, with python3 -I: the root_cause_class incident_<n>/INCIDENTS.json
+# records for one incident (references/detection-response/incidents-schema.md), or, with
+# exit 3, why it cannot say.
+INCIDENT_PY='import json, os, stat, sys
+
+CLASSES = ("code_flaw", "key_compromise", "oracle_or_dependency", "economic_design", "off_chain",
+           "supply_chain_or_ci", "unknown")
+LIMIT = 4 * 1024 * 1024
+
+
+def say(text, status):
+    print(text)
+    sys.exit(status)
+
+
+path, wanted = sys.argv[1], sys.argv[2]
+try:
+    st = os.lstat(path)
+except FileNotFoundError:
+    say("is missing", 3)
+except OSError:
+    say("cannot be read", 3)
+if not stat.S_ISREG(st.st_mode):
+    say("is not a regular file", 3)
+if st.st_size > LIMIT:
+    say("is larger than 4 MiB", 3)
+try:
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NOCTTY", 0))
+    with os.fdopen(fd, "rb") as f:
+        data = json.loads(f.read(LIMIT + 1).decode("utf-8"))
+except (OSError, UnicodeDecodeError, ValueError, RecursionError):
+    say("cannot be read as JSON", 3)
+incidents = data.get("incidents") if isinstance(data, dict) else None
+if not isinstance(incidents, list):
+    say("holds no incidents list", 3)
+found = [i for i in incidents if isinstance(i, dict) and i.get("id") == wanted]
+if not found:
+    say("records no incident %s" % wanted, 3)
+if len(found) > 1:
+    say("records %s more than once" % wanted, 3)
+if found[0].get("root_cause_class") not in CLASSES:
+    say("gives %s no root_cause_class from incidents-schema.md" % wanted, 3)
+say(found[0]["root_cause_class"], 0)
+'
+
+# incident_rule: a crate at incident_<n>/poc/INC-<n>.<k> runs only once incident_<n>/INCIDENTS.json
+# records that incident's root_cause_class (OUTPUT-RULES.md Rule 11a). supply_chain_or_ci refuses
+# native mode and a run without --vulnerable-so, and sets SUPPLY_CHAIN for the checks of the
+# crate and of each build (see PREBUILT BYTES above).
+incident_rule() {
+  local id="${CRATE_REL##*/}" json="${CRATE_RUN}/INCIDENTS.json" out rc=0
+  case "${CRATE_RUN}" in incident_*) ;; *) return 0 ;; esac
+  command -v python3 >/dev/null 2>&1 ||
+    blocker "python3 is not on PATH, so run.sh cannot read the root_cause_class of ${id} in ${json} (OUTPUT-RULES.md Rule 11a) — nothing was copied or built."
+  out="$(python3 -I -c "${INCIDENT_PY}" "${WT}/${json}" "${id}")" || rc=$?
+  if [[ "${rc}" -ne 0 ]]; then
+    [[ "${rc}" -eq 3 && -n "${out}" ]] || out="cannot be read"
+    blocker "${json} ${out}: an incident's PoC runs only once ${json} records its root_cause_class (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built."
+  fi
+  echo ">> incident ${id}: root_cause_class ${out} (${json})"
+  [[ "${out}" == supply_chain_or_ci ]] || return 0
+  if [[ "${MODE}" == native ]]; then
+    blocker "the root_cause_class of ${id} is supply_chain_or_ci, and such an incident is never built natively (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built."
+  fi
+  if [[ -z "${VULNERABLE_SO}" ]]; then
+    blocker "the root_cause_class of ${id} is supply_chain_or_ci, so its PoC runs only on the dumped program bytes (OUTPUT-RULES.md Rule 11a): give --vulnerable-so ${CRATE_RUN}/bin/<program>.so — nothing was copied or built."
+  fi
+  SUPPLY_CHAIN=1
+}
+
 # self_check: in isolated mode nothing the credential check reads may be readable, and
 # variables of run.sh's own environment that look like credentials are named; in native
 # mode what is readable is printed as a warning.
@@ -555,6 +634,7 @@ take_args() {
   fi
   exec_mode "${mode}"
   echo ">> execution mode: ${MODE} (the stricter of ${MODE_SOURCES})"
+  incident_rule
   self_check
   HERE="${WT}/${CRATE_REL}"
   AUDITOR_EXEC_MODE="${MODE}"
@@ -771,10 +851,23 @@ def under(path, root):
     return path == root or path.startswith(root + os.sep)
 
 
-def crate(meta_path, root):
+def crate(meta_path, root, rule=""):
     root = os.path.realpath(root)
     with open(meta_path, encoding="utf-8") as f:
         meta = json.load(f)
+    if rule == "supply-chain":
+        # The target crates may be the payload: no dependency on a path outside the crate or
+        # on git, and no target built from a source outside it.
+        for pkg in meta.get("packages", []):
+            for dep in pkg.get("dependencies", []):
+                path, source = dep.get("path"), dep.get("source") or ""
+                if path and not under(path, root):
+                    refuse("%s depends on %s at %s, outside the crate: the PoC of an incident whose root_cause_class is supply_chain_or_ci builds none of the target crates (OUTPUT-RULES.md Rule 11a)." % (pkg["name"], dep.get("name"), path))
+                if source.startswith("git+"):
+                    refuse("%s depends on %s from %s: the PoC of an incident whose root_cause_class is supply_chain_or_ci builds no git dependency (OUTPUT-RULES.md Rule 11a)." % (pkg["name"], dep.get("name"), source))
+            for target in pkg.get("targets", []):
+                if not under(target.get("src_path", root), root):
+                    refuse("%s builds %s from %s, outside the crate: the PoC of an incident whose root_cause_class is supply_chain_or_ci builds none of the target crates (OUTPUT-RULES.md Rule 11a)." % (pkg["name"], target.get("name", "?"), target.get("src_path")))
     members, lib, root_pkg = {}, None, None
     for pkg in meta.get("packages", []):
         manifest = os.path.realpath(pkg["manifest_path"])
@@ -1250,7 +1343,9 @@ if ! child cargo metadata --no-deps --format-version 1 --manifest-path "${BUILD_
   exit 3
 fi
 rc=0
-CRATE="$(harness crate "${RUN_DIR}/metadata.json" "${BUILD_DIR}")" || rc=$?
+crate_rule=""
+if [[ "${SUPPLY_CHAIN}" == 1 ]]; then crate_rule=supply-chain; fi
+CRATE="$(harness crate "${RUN_DIR}/metadata.json" "${BUILD_DIR}" "${crate_rule}")" || rc=$?
 if [[ "${rc}" -ne 0 ]]; then
   if [[ "${rc}" -ne 3 ]]; then CRATE="could not read cargo metadata for the crate."; fi
   echo "[PoC-ATTEMPTED] blocker: ${CRATE}" >&2
@@ -1431,6 +1526,10 @@ NONREG=""
 capture_nonreg() {  # the non-registry code, read right after a build (before a test can rewrite the lock)
   NONREG="$(harness nonregistry "${BUILD_DIR}" "${BUILD_DIR}/Cargo.lock" "${RUN_DIR}/metadata.json" "${RUN_DIR}"/build-*.json 2>/dev/null)" \
     || NONREG="unknown — ${BUILD_DIR}/Cargo.lock could not be read"
+  if [[ "${SUPPLY_CHAIN}" == 1 && "${NONREG}" != "none: every dependency comes from a registry" ]]; then
+    echo "[PoC-ATTEMPTED] blocker: the build compiled code from outside the crate (${NONREG}), and the PoC of an incident whose root_cause_class is supply_chain_or_ci builds none of the target crates (OUTPUT-RULES.md Rule 11a); its test does not run." >&2
+    exit 3
+  fi
 }
 nonregistry() {  # the path and git dependencies and out-of-tree sources the build pulled in
   echo "   non-registry code: ${NONREG:-unknown — no build was read}"

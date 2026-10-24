@@ -125,7 +125,8 @@ from the target's manifest runs its build script in the recorded mode, so add on
 only when the PoC needs it, and read what the manifest pulls in. A `path`
 dependency on target crates must be an absolute path: the build runs from the
 scratch copy, not from this directory. Such a dependency is not refused: its build
-script runs in the recorded mode, and the non-registry line names it.
+script runs in the recorded mode, and the non-registry line names it. The exception is
+an incident whose root cause is `supply_chain_or_ci` (below).
 
 **Pins.** `Cargo.lock` pins the whole dependency graph at releases published at
 least 14 days before the template shipped, so an unmodified crate resolves to the
@@ -228,6 +229,15 @@ With `FIXED_SO`, the line also names `fixed sha256=<…>` and how the fixed arm 
 PoC reaches the same line when it loads the program through `litesvm_for!` and asserts
 with the macros' LiteSVM forms. A run of this crate's own arms prints a different
 line: a model is never Leg 3.
+
+For an incident's crate (`incident_<n>/poc/INC-<n>.<k>`), the installation's copy first
+reads the incident's `root_cause_class` from `incident_<n>/INCIDENTS.json`, and stops
+(exit `3`) when the file, the incident or its class cannot be read. When the class is
+`supply_chain_or_ci` the target's crates may be the payload (`OUTPUT-RULES.md` Rule
+11a): the run must be isolated and on prebuilt bytes (`--vulnerable-so`), and a
+dependency on a path outside the crate or on git, a target built from outside it, or a
+build that compiled code from outside it stops the run before its test runs.
+`./run.sh` does not read `INCIDENTS.json`.
 
 ## Evidence tier
 
