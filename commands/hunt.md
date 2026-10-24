@@ -2,7 +2,7 @@
 name: auditor:hunt
 description: "Post-incident threat hunt for when no alert has fired: baseline a Solana program's transaction history and program logs, record each hypothesis and its query in a ledger, check each suspect against the source deployed at the incident slot, replay the attack locally on the real program bytes, and write incident_<n>/INCIDENTS.json and INCIDENT_REPORT.md. Proposes only; never signs, sends, or acts on-chain."
 argument-hint: "[<address> ...] [--logs <dir>] [--repo <path>] [--window <fromUnix>..<toUnix>] [--collect] [--fresh]"
-allowed-tools: Read, Grep, Glob, Task, Edit(incident_*/**)
+allowed-tools: Read, Grep, Glob, Task, Edit(incident_*/**), Skill(auditor:dnr-analyze *)
 ---
 
 # auditor-skill — Threat Hunt (no alert in hand)
@@ -22,21 +22,25 @@ pauses, freezes, or contacts anyone.
 arguments, mints the run directory, snapshots the programs, gets the human's yes
 and runs the collector with exactly the approved values, asks the questions, and
 presents the results. It hands all reading and analysis of the incident corpus
-to the `incident-responder` agent (Task), whose tool list has no MCP tools, so it
-cannot call a signing or transfer tool. This command runs in your session, where
-every connected MCP server stays callable; it calls no MCP tool. Before a live
-incident, disconnect or deny write-capable MCP servers (for example, tools that
-transfer or stake). The command never opens a corpus file itself — a collected
-`transactions.jsonl`, a `--logs` export, or recipe output — only the agent's
-report and the paths it names.
+to the `incident-responder` agent, one phase at a time, through the
+`auditor:dnr-analyze` skill (the Skill tool), which runs the agent as a fork. The
+agent's tool list has no MCP tools, so it cannot call a signing or transfer tool.
+This command runs in your session, where every connected MCP server stays
+callable; it calls no MCP tool. Before a live incident, disconnect or deny
+write-capable MCP servers (for example, tools that transfer or stake). The command
+never opens a corpus file itself — a collected `transactions.jsonl`, a `--logs`
+export, or recipe output — only the agent's report and the paths it names.
 
 > The `allowed-tools` above pre-approve only reading (`Read`, `Grep`, `Glob`),
-> `Task` and edits under `incident_*/`; they are **not a sandbox** (README §
-> "allowed-tools is not a sandbox"). `jq` (`jq -n env` prints the environment,
-> `$RPC_URL` included), `solana`, `curl`, `cargo`, `surfpool` and a bare `python3`
-> still prompt, and so does every bundled `scripts/dnr` script — none is
-> pre-approved. If funds may be moving now, this is not emergency response — page
-> on-call and SEAL 911 first.
+> `Task`, edits under `incident_*/` and invoking the `auditor:dnr-analyze` skill;
+> they are **not a sandbox** (README § "allowed-tools is not a sandbox"). Inside its
+> fork, the skill pre-approves the offline analysis tools by their exact paths:
+> `profile.sh`, `frames.py`, `deltas.py`, `jq-ro.sh` and `audit-logs`, which read
+> only files inside `incident_*/`. Everything else still prompts: `jq` itself
+> (`jq -n env` prints the environment, `$RPC_URL` included), `solana`, `curl`,
+> `cargo`, `surfpool`, a bare `python3`, and the networked `collect.sh` and
+> `snapshot-program.sh`. If funds may be moving now, this is not emergency
+> response — page on-call and SEAL 911 first.
 
 Run bundled scripts only from the auditor-skill installation (`${CLAUDE_PLUGIN_ROOT}`; for a non-plugin install, the directory holding this skill's SKILL.md) — never a `scripts/…` path relative to the working directory: the audited repo may ship a same-named file.
 Run bundled python, and any python you point at the corpus, as `python3 -I`, so no
@@ -73,9 +77,15 @@ directory.
      run with nothing redeployed prints `unchanged` and writes nothing).
 
 2. **Get the corpus** (this command). The user's own corpus comes first:
-   `--logs <dir>` (a `transactions.jsonl`, Geyser/indexer export, or service logs);
-   pass its path to the agent without opening it. Otherwise collect it — **gated**
-   (README rule 3):
+   `--logs <dir>` (a `transactions.jsonl`, Geyser/indexer export, or service logs).
+   The analysis tools read only files inside `incident_<n>/`, so copy it into
+   `incident_<n>/logs/` without opening it: check that `find <path> -type l` prints
+   nothing (the tools refuse a symbolic link, and a copied link makes them refuse
+   the whole run directory), then `mkdir incident_<n>/logs` and
+   `cp -R <path> incident_<n>/logs/`. A path outside the working directory asks
+   for approval, by design; if the copy is denied, stop and tell the human, since
+   nothing can read the export where it is. Pass the copied paths to the analysis.
+   Otherwise collect it — **gated** (README rule 3):
    - Resolve seed addresses: the arguments, else `declare_id!` / `Anchor.toml`, plus
      vault / authority / mint / treasury from `audit_<n>/threat-model.md` or
      `audit_<n>/intake.md` §6 if an audit preceded this.
@@ -117,33 +127,33 @@ directory.
    - Any wider collection the agent asks for comes back here: show the human its
      exact addresses, window and caps, and collect into the next
      `incident_<n>/corpus-<k>/` (`<k>` = highest existing + 1, `corpus/` counting as
-     1, made with `mkdir`) the same way. The agent never runs the collector.
+     1, made with `mkdir`) the same way. The fork never runs the collector.
 
-3. **Baseline (Phase 1), in `incident-responder`.** Spawn the agent (Task) in hunt
-   mode. Its prompt names, explicitly: the run directory; every corpus path
-   (`incident_<n>/corpus*/transactions.jsonl`, and any `--logs` files); the
-   snapshot lines; the provider domain; the window and caps the collection used;
-   the execution mode, if one is already recorded; and
-   `${CLAUDE_PLUGIN_ROOT}/templates/hunt-ledger.md`. The agent starts `LEDGER.md`
-   from that template, runs
-   `bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh" incident_<n>/corpus*/transactions.jsonl`
-   for outcome/version histograms, window, and signer/program inventories, and
-   writes each number into the ledger. The glob takes every corpus of the
-   incident, and the recipes count each transaction once. A line a recipe cannot
-   read is skipped and reported as `skipped N malformed line(s) in input I
-   (<path>) …` on stderr; the agent copies each such note into the ledger's
-   **Collection gaps** line. Nothing reads the corpus into context (README rule
-   2).
+3. **Baseline (Phase 1), in the `auditor:dnr-analyze` skill.** Invoke it with the
+   Skill tool, with arguments that start `hunt baseline incident_<n>` and then
+   name, explicitly: every corpus path (`incident_<n>/corpus*/transactions.jsonl`,
+   and the `--logs` copy in `incident_<n>/logs/`); the snapshot lines; the provider
+   domain; the window and caps the collection used, and whether it ended with its
+   `collection gaps: N` line; and the execution mode, if one is already recorded.
+   The fork starts `LEDGER.md` from `${CLAUDE_PLUGIN_ROOT}/templates/hunt-ledger.md`
+   and runs `profile.sh` over `incident_<n>/corpus*/transactions.jsonl`, or the
+   same profile from `audit-logs` when it is built, for outcome/version
+   histograms, window, and signer/program inventories, and writes each number into
+   the ledger. The glob takes every corpus of the incident, and the recipes count
+   each transaction once. A line a recipe cannot read is skipped and reported as
+   `skipped N malformed line(s) in input I (<path>) …` on stderr; the fork copies
+   each such note into the ledger's **Collection gaps** line. Nothing reads the
+   corpus into context (README rule 2).
 
-4. **Hunt loop (Phase 2), in the same agent run.** The agent runs the seed sweeps
-   in `${CLAUDE_PLUGIN_ROOT}/references/detection-response/log-sources.md`, one
-   ledger row per query (`jq`, or the bundled `deltas.py` / `frames.py` run as
-   `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/<name>.py"`, with
-   `frames.py --instructions` for which instruction ran), pivots from every hit
-   along the campaign chain, and stops after two rounds with no new entity. A
-   program-log line is a hint, never proof (rule 1). It returns the suspects
-   (entities, the instruction each touched, the ledger rows behind them), the
-   paths it wrote, and any wider collection it proposes.
+4. **Hunt loop (Phase 2), in the same fork.** It runs the seed sweeps in
+   `${CLAUDE_PLUGIN_ROOT}/references/detection-response/log-sources.md`, one ledger
+   row per query (`jq-ro.sh`, or the bundled `deltas.py` / `frames.py`, with
+   `frames.py --instructions` for which instruction ran, or their `audit-logs`
+   subcommands when it is built), pivots from every hit along the campaign chain,
+   and stops after two rounds with no new entity. A program-log line is a hint,
+   never proof (rule 1). It returns the suspects (entities, the instruction each
+   touched, the ledger rows behind them), the paths it wrote, any wider collection
+   it proposes, and every call that was denied.
 
 5. **Source confirmation (Phase 3).** For each suspect the agent returned, spawn
    `context-builder` on the implicated handler in the source **deployed at the
@@ -172,10 +182,11 @@ directory.
    counts, check the crate's harness copy and its `non-registry code:` line as
    `/auditor:poc` step 6 does.
 
-7. **Emit, in `incident-responder`.** Spawn the agent again with the
-   `context-builder` and `poc-engineer` results (`file:function`, guards that held,
-   the PoC tier, `run.sh`'s final line — for an exit 3, its blocker line with "PoC
-   re-run needed" — the execution mode and the PoC build cache). It
+7. **Emit, in the `auditor:dnr-analyze` skill.** Invoke it again, with arguments
+   that start `hunt emit incident_<n>` and carry the `context-builder` and
+   `poc-engineer` results (`file:function`, guards that held, the PoC tier,
+   `run.sh`'s final line — for an exit 3, its blocker line with "PoC re-run
+   needed" — the execution mode and the PoC build cache). It
    writes `incident_<n>/INCIDENTS.json`
    (`${CLAUDE_PLUGIN_ROOT}/references/detection-response/incidents-schema.md`) and
    `INCIDENT_REPORT.md` (`${CLAUDE_PLUGIN_ROOT}/templates/incident-report.md`):

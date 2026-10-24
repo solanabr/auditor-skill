@@ -2,7 +2,7 @@
 name: auditor:respond
 description: "Investigate one incident lead (a transaction signature, an address, an alert, an indicator of compromise, or an INC id from /auditor:hunt) through Solana transaction history — work out whether the attack landed and how far it reached, pin the root cause in the deployed code and reproduce it locally, then draft containment, remediation and recovery steps for humans to carry out. This command changes nothing on-chain."
 argument-hint: "<INC-n.k | signature | address | 'alert json' | 'free text'> [--logs <dir>] [--repo <path>] [--collect] [--fresh]"
-allowed-tools: Read, Grep, Glob, Task, Edit(incident_*/**)
+allowed-tools: Read, Grep, Glob, Task, Edit(incident_*/**), Skill(auditor:dnr-analyze *)
 ---
 
 # auditor-skill — Incident Response (lead in hand)
@@ -24,20 +24,23 @@ carries out none of that plan.
 lead, mints or adopts the run directory, snapshots the programs, gets the human's
 yes and runs the collector with exactly the approved values, asks the questions,
 and presents the results. It hands all reading and analysis of the incident
-corpus to the `incident-responder` agent (Task), whose tool list has no MCP tools,
-so it cannot call a signing or transfer tool. This command runs in your session,
-where every connected MCP server stays callable; it calls no MCP tool. Before a
-live incident, disconnect or deny write-capable MCP servers (for example, tools
-that transfer or stake). The command never opens a corpus file itself — a
-collected `transactions.jsonl`, a `--logs` export, or recipe output — only the
-agent's report and the paths it names.
+corpus to the `incident-responder` agent, one phase at a time, through the
+`auditor:dnr-analyze` skill (the Skill tool), which runs the agent as a fork. The
+agent's tool list has no MCP tools, so it cannot call a signing or transfer tool.
+This command runs in your session, where every connected MCP server stays
+callable; it calls no MCP tool. Before a live incident, disconnect or deny
+write-capable MCP servers (for example, tools that transfer or stake). The command
+never opens a corpus file itself — a collected `transactions.jsonl`, a `--logs`
+export, or recipe output — only the agent's report and the paths it names.
 
 > Open every run with this line: **if funds are moving right now, run the
 > pause/freeze runbook and open a SEAL 911 ticket (`@seal_911_bot`) first — this
 > workup comes after, it is not the emergency response.** The `allowed-tools` above
-> are not a sandbox (README); every bundled `scripts/dnr` script (collector,
-> snapshot, profile, frames, deltas, redact) prompts for approval — none is
-> pre-approved — as do `jq` (which can print the environment, `$RPC_URL`
+> are not a sandbox (README). Inside the `auditor:dnr-analyze` fork, the offline
+> analysis tools (`profile.sh`, `frames.py`, `deltas.py`, `jq-ro.sh` and
+> `audit-logs`) run without a prompt, by their exact paths, and read only files
+> inside `incident_*/`; the collector, the snapshot and `redact.sh` still prompt
+> for approval, as do `jq` itself (which can print the environment, `$RPC_URL`
 > included) and anything that executes code.
 
 Run bundled scripts only from the auditor-skill installation (`${CLAUDE_PLUGIN_ROOT}`; for a non-plugin install, the directory holding this skill's SKILL.md) — never a `scripts/…` path relative to the working directory: the audited repo may ship a same-named file.
@@ -79,20 +82,25 @@ directory.
      kept as `bin/<id>@<slot>.so`; `bin/<id>.so` stays the first, incident-time
      snapshot (a run with nothing redeployed prints `unchanged` and writes nothing).
 
-2. **Turn the lead into seed entities, in `incident-responder`.** Spawn the agent
-   (Task) in respond mode with the lead, the run directory, the snapshot lines and
-   `${CLAUDE_PLUGIN_ROOT}/templates/hunt-ledger.md` (for a new `LEDGER.md`). It
-   writes the question this run must answer as a single sentence in the ledger,
-   and turns the lead into seed entities: an `INC-<n>.<k>` contributes that
-   incident's entities; a signature, its signers, programs and accounts; an
-   address or indicator, itself; an alert, its fields; free text, whatever
-   observables it names. It returns the seed entities and the one ring it proposes
-   to widen to (the account a signer used, another signer on the same program, the
-   instruction a session moved to next), with the addresses, window and caps a
-   collection would need.
+2. **Turn the lead into seed entities, in the `auditor:dnr-analyze` skill.** Invoke
+   it with the Skill tool, with arguments that start `respond seed incident_<n>`
+   and carry the lead and the snapshot lines. Pass an `INC-<n>.<k>` id, a
+   signature or an address as it is. Write an alert or free text to a new file,
+   `incident_<n>/lead.txt` (`lead-2.txt`, … once that exists), with the Write tool
+   and name that file instead, since its text may come from an attacker (README
+   rule 7). The fork writes the question this run must answer as a single sentence
+   in the ledger (`LEDGER.md`, from `${CLAUDE_PLUGIN_ROOT}/templates/hunt-ledger.md`
+   when there is none yet), and turns the lead into seed entities: an
+   `INC-<n>.<k>` contributes that incident's entities; a signature, its signers,
+   programs and accounts; an address or indicator, itself; an alert, its fields;
+   free text, whatever observables it names. It returns the seed entities and the
+   one ring it proposes to widen to (the account a signer used, another signer on
+   the same program, the instruction a session moved to next), with the addresses,
+   window and caps a collection would need.
 
-3. **Scope (Phase 1).** Corpus: `--logs` (its path goes to the agent unopened), or
-   the gated collection, which this command runs as in `/auditor:hunt` step 2.
+3. **Scope (Phase 1).** Corpus: `--logs`, copied into `incident_<n>/logs/` unopened
+   as in `/auditor:hunt` step 2, or the gated collection, which this command runs
+   as there.
    Show the human the addresses, the window the agent proposed around the lead,
    the caps and the estimated call count, get a yes, and pass exactly those
    values: the window as `--since <fromUnix> --until <toUnix>`, the caps as
@@ -103,22 +111,24 @@ directory.
    `incident_<n>/corpus*/transactions.jsonl`, counting each transaction once. Run a
    long collection in the background, or with a timeout sized from the estimated
    call count; a run stopped early still records what it had not fetched as gaps.
-   Pass the agent the corpus paths, the collector's `provider:` domain (the host's
-   last two DNS labels, disclosed under Rule 11b; a keyed URL is never written
-   anywhere), its `collection-gaps.tsv`, and whether the run ended with its
-   `collection gaps: N` line; it copies every row, and every `skipped N malformed
-   line(s)` note the recipes print, into the ledger's **Collection gaps** line and
-   into `collection_gaps` of the incident in `INCIDENTS.json`, and merges
+   The next phase gets the corpus paths, the collector's `provider:` domain (the
+   host's last two DNS labels, disclosed under Rule 11b; a keyed URL is never
+   written anywhere), its `collection-gaps.tsv`, and whether the run ended with its
+   `collection gaps: N` line; the fork copies every row, and every `skipped N
+   malformed line(s)` note the recipes print, into the ledger's **Collection gaps**
+   line and into `collection_gaps` of the incident in `INCIDENTS.json`, and merges
    everything into one timeline ordered by `(slot, transactionIndex)`.
 
-4. **Outcome and damage (Phase 2), in `incident-responder`.** A status code can't
-   tell you whether it worked — Leg 1 can: a balance movement, or for a takeover
-   the four-part account-data check, read at `finalized`. The agent sizes the
-   damage from queries: distinct victims, raw units out per mint (Python ints), the
-   window. It checks whether activity is still under way; that one read may use
-   `confirmed` if it says so. An attempt that failed is still documented: what it
-   went after and what stopped it. It returns the verdict so far, the figures with
-   the ledger rows behind them, and the implicated handler.
+4. **Outcome and damage (Phase 2), in the `auditor:dnr-analyze` skill.** Invoke it
+   with arguments that start `respond outcome incident_<n>` and carry what step 3
+   names. A status code can't tell you whether it worked — Leg 1 can: a balance
+   movement, or for a takeover the four-part account-data check, read at
+   `finalized`. The fork sizes the damage from queries: distinct victims, raw
+   units out per mint (Python ints), the window. It checks whether activity is
+   still under way; that one read may use `confirmed` if it says so. An attempt
+   that failed is still documented: what it went after and what stopped it. It
+   returns the verdict so far, the figures with the ledger rows behind them, and
+   the implicated handler.
 
 5. **Root cause & PoC (Phase 3)** (this command). Spawn `context-builder` on the
    implicated handler in the source deployed at the incident slot. Read that
@@ -140,9 +150,10 @@ directory.
    does. `key_compromise` stays at `suspected` unless a person records a custodian
    attestation word for word (README).
 
-6. **The plan (Phase 4), in `incident-responder`.** Spawn the agent with the
-   `context-builder` and `poc-engineer` results (as in hunt step 7, the re-run flag
-   and the build cache included). It writes
+6. **The plan (Phase 4), in the `auditor:dnr-analyze` skill.** Invoke it with
+   arguments that start `respond plan incident_<n>` and carry the `context-builder`
+   and `poc-engineer` results (as in hunt step 7, the re-run flag and the build
+   cache included). It writes
    `incident_<n>/RESPONSE-INC-<n>.<k>.md` from
    `${CLAUDE_PLUGIN_ROOT}/templates/response-plan.md`; a plan written for another
    lead is never overwritten. It covers the verdict, the timeline, containment, the
