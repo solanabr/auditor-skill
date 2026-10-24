@@ -202,10 +202,11 @@ check "--argjson text jq cannot parse: jq's own status 2 and message" sh -c "[ $
 # =================================================================================================
 # The environment jq sees.
 # =================================================================================================
-run "$W" -n -c '$ENV' incident_1/data.json
-check "\$ENV holds HOME=/nonexistent and the fixed PATH, and nothing else" out_is '{"HOME":"/nonexistent","PATH":"/usr/bin:/bin"}'
-run "$W" -n -c 'env' incident_1/data.json
-check "... and so does env" out_is '{"HOME":"/nonexistent","PATH":"/usr/bin:/bin"}'
+# keys sorted, since env -i sets the two variables in another order under GNU env
+run "$W" -n -c '$ENV | [keys, .HOME, .PATH]' incident_1/data.json
+check "\$ENV holds HOME=/nonexistent and the fixed PATH, and nothing else" out_is '[["HOME","PATH"],"/nonexistent","/usr/bin:/bin"]'
+run "$W" -n -c 'env | [keys, .HOME, .PATH]' incident_1/data.json
+check "... and so does env" out_is '[["HOME","PATH"],"/nonexistent","/usr/bin:/bin"]'
 for f in '$ENV' 'env' '$ENV.JQ_RO_CANARY' 'env.RPC_URL' '[env[]]' '$__loc__' 'input_filename' '$ARGS' \
   'env | tostring | error' '[inputs]' 'builtins | length'; do
   run "$W" -n -c "$f" incident_1/data.json
