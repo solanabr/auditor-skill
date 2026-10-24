@@ -36,10 +36,12 @@ export RPC_URL="https://key9.rpc.example.test/v2/SECRETKEY?api-key=QKEY"
 # ---------------------------------------------------------------------------------------------------
 # A solana CLI stand-in that answers like solana-cli 3.1.10: a config without websocket_url is ignored
 # (defaults: mainnet-beta and id.json); `account` prints a hex dump of the data unless --output-file names a
-# file for it; `program show` rejects a loader-v4 program; errors name the endpoint, key included, as the
-# real CLI's do. FAKE_ACCOUNT=missing, FAKE_CONFIRM=missing, FAKE_LOADER=v4|none and FAKE_SHOWN_ID=<id>
-# shape the answers; FAKE_IGNORE_CONFIG=1 makes it ignore every config. Every call is appended to
-# $FAKE_ARGV as JSON: the arguments and the endpoint and keypair path it used.
+# file for it; `confirm -v` starts with the endpoint, key included, and the keypair path; `program show`
+# rejects a loader-v4 program; errors name the endpoint, key included, as the real CLI's do.
+# FAKE_ACCOUNT=missing, FAKE_CONFIRM=missing|url-in-text, FAKE_LOADER=v4|none, FAKE_SHOW=url-in-text and
+# FAKE_SHOWN_ID=<id> shape the answers (url-in-text: the endpoint in the text of an answer that succeeds);
+# FAKE_IGNORE_CONFIG=1 makes it ignore every config. Every call is appended to $FAKE_ARGV as JSON: the
+# arguments and the endpoint and keypair path it used.
 # ---------------------------------------------------------------------------------------------------
 printf '#!/bin/sh\nexec "%s" -I "$0.py" "$@"\n' "$PY" > "$T/sol/solana"
 cat > "$T/sol/solana.py" <<'PY'
@@ -79,9 +81,14 @@ if a[0] == "account":
 if a[0] == "confirm":
     if os.environ.get("FAKE_CONFIRM") == "missing":
         fail("Signature not found")
+    if "-v" in a:
+        print(f"RPC URL: {url}\nDefault Signer Path: {kp}\nCommitment: confirmed")
+    sig = a[a.index("-v") + 1] if "-v" in a else a[1]
     print(f"Transaction executed in slot 123:\n  Block Time: 2026-10-23T10:00:00Z\n  Recent Blockhash: 11111111111111111111111111111111\n"
-          f"  Signature 0: {a[2]}\n  Log Messages:\n    Program log: hi\x1b[31m red\x07 bell\ttab\r carriage\n"
-          "Finalized")
+          f"  Signature 0: {sig}\n  Log Messages:\n    Program log: hi\x1b[31m red\x07 bell\ttab\r carriage")
+    if os.environ.get("FAKE_CONFIRM") == "url-in-text":
+        print(f"  Status: unavailable (error sending request for url ({url}))")
+    print("Finalized")
     sys.exit(0)
 loader = os.environ.get("FAKE_LOADER", "v3")
 pid = a[2] if a[0] == "program" else opt("--program-id")
@@ -93,6 +100,8 @@ if a[:2] == ["program", "show"]:
         fail(f"{pid} is not an SBF program")
     print(f"\nProgram Id: {shown}\nOwner: BPFLoaderUpgradeab1e11111111111111111111111\nProgramData Address: YMN9Qj5jPNp7j14VPcML1B6xGgcPWVZUGLFU3Mnyfaf\n"
           f"Authority: p2Yicb86aZig616Eav2VWG9vuXR5mEqhtzshZYBxzsV\nLast Deployed In Slot: 12345\nData Length: 351 (0x15f) bytes\nBalance: 0.00114144 SOL\n")
+    if os.environ.get("FAKE_SHOW") == "url-in-text":
+        print(f"Read from {url}")
     sys.exit(0)
 if a[:2] == ["program-v4", "show"]:
     if opt("--authority") is None and not os.path.exists(kp):
@@ -262,6 +271,14 @@ check "confirm: the transaction's text, ESC, BEL and CR shown as ?, TAB kept" \
 check "confirm: no raw control character reaches stdout" \
   sh -c "! LC_ALL=C grep -q \"\$(printf '[\\001-\\010\\013-\\037\\177]')\" '$T/out'"
 check "confirm: kept as R/rpc/confirm-<signature>.txt" cmp -s "$T/out" "$W/$R/rpc/confirm-$SIG.txt"
+check "confirm: the CLI's lines naming the endpoint and the keypair path are dropped" \
+  sh -c "[ -s '$T/out' ] && ! grep -q '^RPC URL:\|^Default Signer Path:\|no-keypair' '$T/out'"
+check "confirm: the rest of its header stays" has "$T/out" "Commitment: confirmed"
+check "confirm: no part of the endpoint but its domain reaches stdout or the kept file" \
+  sh -c "[ -s '$W/$R/rpc/confirm-$SIG.txt' ] && ! grep -q 'SECRETKEY\|QKEY\|key9' '$T/out' '$W/$R/rpc/confirm-$SIG.txt'"
+FAKE_CONFIRM=url-in-text run confirm "$SIG" --run "$R"
+check "confirm: an endpoint named in the transaction's text is redacted, on stdout and in the kept file" \
+  sh -c "[ $RC = 0 ] && grep -q 'error sending request for url' '$T/out' && [ -s '$W/$R/rpc/confirm-$SIG-2.txt' ] && ! grep -q 'SECRETKEY\|QKEY\|key9' '$T/out' '$W/$R/rpc/confirm-$SIG-2.txt'"
 check "confirm: the row names the signature" \
   sh -c "tail -n 1 '$D' | cut -f2- | grep -qxF \"\$(printf 'scripts/rpc-read.sh\texample.test\ttransaction signature (getSignatureStatuses, getTransaction): %s\t1' '$SIG')\""
 FAKE_CONFIRM=missing run confirm "$SIG"
@@ -273,6 +290,9 @@ check "program-show: exit 0, the show output" sh -c "[ $RC = 0 ] && grep -qx 'Pr
 check "program-show: with a fixed buffer authority, so no signer is looked for" \
   sh -c "grep '\"program\", \"show\"' '$FAKE_ARGV' | grep -q '\"--buffer-authority\", \"11111111111111111111111111111111\"'"
 check "program-show: kept as R/rpc/program-show-<id>.txt" cmp -s "$T/out" "$W/$R/rpc/program-show-$PID.txt"
+FAKE_SHOW=url-in-text run program-show "$PID" --run "$R"
+check "program-show: an endpoint named in the show output is redacted, on stdout and in the kept file" \
+  sh -c "[ $RC = 0 ] && grep -q '^Read from' '$T/out' && [ -s '$W/$R/rpc/program-show-$PID-2.txt' ] && ! grep -q 'SECRETKEY\|QKEY\|key9' '$T/out' '$W/$R/rpc/program-show-$PID-2.txt'"
 FAKE_LOADER=v4 run program-show "$PID"
 check "program-show: a loader-v4 program is read with program-v4 show" \
   sh -c "[ $RC = 0 ] && grep -qx 'Owner: LoaderV411111111111111111111111111111111111' '$T/out' && tail -n 1 '$FAKE_ARGV' | grep -q '\"program-v4\", \"show\", \"--program-id\", \"$PID\", \"--authority\"'"
@@ -282,7 +302,7 @@ check "program-show: an id neither show reads exits 1 with both errors, redacted
 FAKE_SHOWN_ID=OtherProg1111111111111111111111111111111111 run program-show "$PID" --run "$R"
 check "program-show: output naming another Program Id is a blocker (exit 3)" \
   sh -c "[ $RC = 3 ] && grep -q 'does not name $PID as its Program Id' '$T/err'"
-check "... and nothing is kept" test ! -e "$W/$R/rpc/program-show-$PID-2.txt"
+check "... and nothing is kept" test ! -e "$W/$R/rpc/program-show-$PID-3.txt"
 
 # =================================================================================================
 # Blockers and the run directory's checks.

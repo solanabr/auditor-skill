@@ -17,15 +17,16 @@
 # json_rpc_url is the endpoint, so the URL never appears in argv, and keypair_path names a file that does
 # not exist. `solana config get keypair` must report that path back, or the CLI fell back to its defaults
 # (public mainnet-beta and the default keypair) and the read stops with a blocker. An $RPC_URL holding a
-# quote, a backslash, whitespace or a control character is refused. CLI errors pass through
-# scripts/dnr/redact.sh.
+# quote, a backslash, whitespace or a control character is refused. The CLI's output and errors pass
+# through scripts/dnr/redact.sh, since its text can name the endpoint, key included.
 #
 # Reads, with read-only RPC methods only (nothing is signed or sent):
 #   account <address>      `solana account <address> --lamports --output-file <temp file>`: prints the
 #                          address, balance in lamports, owner, executable flag and rent epoch, then the
 #                          data's length and sha256. The data itself is never printed; with --run it is
 #                          kept as R/rpc/account-<address>.data.
-#   confirm <signature>    `solana confirm -v <signature>`: the transaction's status and details.
+#   confirm <signature>    `solana confirm -v <signature>`: the transaction's status and details, without
+#                          the CLI's first lines, which name the endpoint and the keypair path.
 #   program-show <id>      `solana program show <id>`, or `program-v4 show` for a loader-v4 program (both
 #                          with a fixed authority, so the CLI never looks for a signer); the output must
 #                          name <id> as its Program Id.
@@ -131,7 +132,7 @@ else
   echo "[blocker] cannot create a private temp directory for the CLI config." >&2; exit 3
 fi
 trap 'rm -rf "$tmp"' EXIT
-err="$tmp/stderr" cfg="$tmp/cli.yml" nokey="$tmp/no-keypair.json" out="$tmp/out.txt" data="$tmp/account.data"
+err="$tmp/stderr" cfg="$tmp/cli.yml" nokey="$tmp/no-keypair.json" cli="$tmp/cli.txt" out="$tmp/out.txt" data="$tmp/account.data"
 printf 'json_rpc_url: "%s"\nwebsocket_url: ""\nkeypair_path: "%s"\n' "$url" "$nokey" > "$cfg" ||
   { echo "[blocker] cannot write the CLI config." >&2; exit 3; }
 case "$(solana -C "$cfg" config get keypair 2>/dev/null)" in
@@ -175,25 +176,30 @@ d = open(sys.argv[1], "rb").read()
 print(len(d), hashlib.sha256(d).hexdigest())' "$data" 2>/dev/null)
     [[ "$sum" =~ ^[0-9]+\ [0-9a-f]{64}$ ]] || { echo "[blocker] python3 -I did not hash the account data." >&2; exit 3; }
     { awk '/^(Public Key|Balance|Owner|Executable|Rent Epoch): / { print }' "$tmp/account.txt"
-      printf 'Data Length: %s bytes\nData SHA-256: %s\n' "${sum%% *}" "${sum#* }"; } > "$out" ;;
+      printf 'Data Length: %s bytes\nData SHA-256: %s\n' "${sum%% *}" "${sum#* }"; } > "$cli" ;;
   confirm)
-    solana -C "$cfg" confirm -v "$id" > "$out" 2> "$err" ||
-      failed "the solana CLI could not read the transaction $id" ;;
+    # In verbose mode the CLI's text starts with the endpoint, URL and key included, and the keypair path.
+    solana -C "$cfg" confirm -v "$id" > "$tmp/confirm.txt" 2> "$err" ||
+      failed "the solana CLI could not read the transaction $id"
+    sed -e '/^RPC URL: /d' -e '/^Default Signer Path: /d' "$tmp/confirm.txt" > "$cli" ||
+      { echo "[blocker] the CLI's output could not be read back." >&2; exit 3; } ;;
   program-show)
-    if ! solana -C "$cfg" program show "$id" --buffer-authority "$SYSTEM_ID" > "$out" 2> "$err"; then
+    if ! solana -C "$cfg" program show "$id" --buffer-authority "$SYSTEM_ID" > "$cli" 2> "$err"; then
       mv "$err" "$tmp/stderr.show"
-      if ! solana -C "$cfg" program-v4 show --program-id "$id" --authority "$SYSTEM_ID" > "$out" 2> "$err"; then
+      if ! solana -C "$cfg" program-v4 show --program-id "$id" --authority "$SYSTEM_ID" > "$cli" 2> "$err"; then
         echo "rpc-read: neither solana program show nor program-v4 show reads $id as a program:" >&2
         "$REDACT" < "$tmp/stderr.show" >&2
         "$REDACT" < "$err" >&2
         exit 1
       fi
     fi
-    if [ "$(field "Program Id" "$out")" != "$id" ]; then
+    if [ "$(field "Program Id" "$cli")" != "$id" ]; then
       echo "[blocker] the solana CLI's show output does not name $id as its Program Id." >&2
       exit 3
     fi ;;
 esac
+# What the CLI printed passes through redact.sh, as its errors do, before it is shown or kept.
+"$REDACT" < "$cli" > "$out" || { echo "[blocker] the CLI's output could not be redacted." >&2; exit 3; }
 
 # keep_stem <stem>: sets STEM to the first free R/rpc/<stem>[-<k>] name, for the .txt and the .data file alike.
 keep_stem() {
