@@ -2,10 +2,11 @@
 # test-preflight.sh — self-test for scripts/preflight.sh: the case file fixtures/preflight/cases.txt (every
 # refused shape, links, letter cases, depths, the settings allowlist, the .git directories it skips), its
 # arguments and the entry limit, the notes, the parents up to the repository root and the user's own
-# configuration directory, a large tree, trees find cannot read, a missing jq, control characters in a
-# path, and the installation or PATH entries inside the working directory. Every run goes under each bash
-# on the machine (/bin/bash and the bash running this suite, when they differ) and must print the same
-# under each. Needs git and jq; no network. Usage (from the repo root): bash scripts/tests/test-preflight.sh
+# configuration directory, linked worktrees and submodule checkouts, a large tree, trees find cannot read,
+# a missing jq, control characters in a path, and the installation or PATH entries inside the working
+# directory. Every run goes under each bash on the machine (/bin/bash and the bash running this suite,
+# when they differ) and must print the same under each. Needs git and jq; no network. Usage (from the
+# repo root): bash scripts/tests/test-preflight.sh
 set -uo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd -P)
 PF="$ROOT/scripts/preflight.sh"
@@ -263,17 +264,45 @@ run "$H/w/inc" "HOME=$T/home"
 check "... and refused for another HOME, the first hit in byte order" above ../../.claude/agents
 run "$H" "HOME=$H"
 check "the user's own ~/.claude in the working directory itself is refused (run from a workspace)" ships .claude/agents
-# A linked worktree inside the main repository's directory: Claude Code searches parents only up to the
-# worktree root, so the main repository's .claude above it is not read.
+# A linked worktree: Claude Code also loads its main checkout's .claude/settings.local.json, and that
+# checkout's project skills when the worktree has none, so one is refused wherever it lies. The main
+# checkout, a plain repository, a submodule checkout (its git directory inside the superproject's) and a
+# directory in each pass; so does a directory outside any repository (above).
+WTREE='the working directory is in a linked worktree, and Claude Code also loads the project config of its main checkout; run from a clone or a workspace of its own (Rule 11e)'
+gitc() { git -c user.name=t -c user.email=t@example.invalid -c protocol.file.allow=always "$@"; }
 G=$(newdir)
-build "$G" d:main/.claude/skills f:main/a.txt
-git init -q "$G/main" && git -C "$G/main" add a.txt && git -C "$G/main" -c user.name=t -c user.email=t@example.invalid commit -q -m a &&
-  git -C "$G/main" worktree add -q "$G/main/wts/wt" 2>/dev/null && mkdir -p "$G/main/wts/wt/inc"
-if [ -d "$G/main/wts/wt/inc" ]; then
+build "$G" f:main/a.txt d:main/sub/inc
+if git init -q "$G/main" && git -C "$G/main" add a.txt && gitc -C "$G/main" commit -q -m a &&
+  git -C "$G/main" worktree add -q "$G/main/wts/wt" 2>/dev/null && git -C "$G/main" worktree add -q "$G/beside" 2>/dev/null &&
+  mkdir -p "$G/main/wts/wt/inc"; then
+  run "$G/main/wts/wt"
+  check "a linked worktree is refused" refused "$WTREE"
   run "$G/main/wts/wt/inc"
-  check "in a linked worktree, the parents stop at the worktree root" just_ok
+  check "... and a directory in one" refused "$WTREE"
+  run "$G/beside"
+  check "... and one outside its main checkout's directory" refused "$WTREE"
+  run "$G/main"
+  check "the main checkout of a linked worktree passes" just_ok
+  run "$G/main/sub/inc"
+  check "... and a directory in it" just_ok
 else
   skp "git worktree add is not available"
+fi
+M=$(newdir)
+build "$M" f:child/c.txt f:super/s.txt d:super/doc/inc
+if git init -q "$M/child" && git -C "$M/child" add c.txt && gitc -C "$M/child" commit -q -m c &&
+  git init -q "$M/super" && git -C "$M/super" add s.txt && gitc -C "$M/super" commit -q -m s &&
+  gitc -C "$M/super" submodule add -q "$M/child" mod >/dev/null 2>&1 && mkdir -p "$M/super/mod/inc"; then
+  run "$M/super"
+  check "a plain repository passes" just_ok
+  run "$M/super/doc/inc"
+  check "... and a directory in it" just_ok
+  run "$M/super/mod"
+  check "a submodule checkout passes" just_ok
+  run "$M/super/mod/inc"
+  check "... and a directory in it" just_ok
+else
+  skp "git submodule add is not available"
 fi
 
 # =================================================================================================

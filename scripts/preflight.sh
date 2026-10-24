@@ -27,6 +27,8 @@
 #
 # It also refuses:
 #   - a working directory inside a .claude directory or a git directory;
+#   - a working directory in a linked git worktree: Claude Code also loads its main checkout's
+#     .claude/settings.local.json, and that checkout's project skills when the worktree has none;
 #   - a tree of more than AUDITOR_PREFLIGHT_MAX_ENTRIES entries outside .git (default 200000);
 #   - a tree find cannot read in full;
 #   - a repository git cannot place.
@@ -136,6 +138,17 @@ if err=$(CONFINE_CEILING='' hgit "$WT" rev-parse --is-inside-work-tree 2>&1); th
     refuse "git cannot tell which repository holds the working directory, so its parents cannot be checked"
   top=$CONFINE_PHYS
   case "$WT/" in "${top%/}/"*) ;; *) refuse "git places the working directory outside its repository's top level" ;; esac
+  # A linked worktree: Claude Code also reads its main checkout's .claude/settings.local.json, and that
+  # checkout's project skills when the worktree has no .claude/skills at its top level.
+  gd=$(CONFINE_CEILING='' hgit "$WT" rev-parse --absolute-git-dir 2>/dev/null) &&
+    common=$(CONFINE_CEILING='' hgit "$WT" rev-parse --git-common-dir 2>/dev/null) && [ -n "$gd" ] && [ -n "$common" ] ||
+    refuse "git cannot tell which repository holds the working directory, so its parents cannot be checked"
+  case "$common" in /*) ;; *) common=$WT/$common ;; esac
+  confine_phys "$gd" && gd=$CONFINE_PHYS && confine_phys "$common" ||
+    refuse "git cannot tell which repository holds the working directory, so its parents cannot be checked"
+  [ "$CONFINE_PHYS" = "$gd" ] ||
+    refuse "the working directory is in a linked worktree, and Claude Code also loads the project config of its" \
+      "main checkout; run from a clone or a workspace of its own (Rule 11e)"
 else
   case "$err" in
     *'not a git repository'*) top=$WT ;;
