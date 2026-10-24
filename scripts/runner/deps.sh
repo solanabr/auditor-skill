@@ -389,11 +389,13 @@ copy_manifests() {
 
 # What the cargo actions run with python3 -I. "stubs <top> <manifest>...": an empty file at src/lib.rs and at
 # each target path of each package manifest, read line by line (exit 3 with the reason for a path outside
-# its directory). "vet <metadata> <top>": the dependencies cargo metadata lists come from crates.io or are
+# its directory, or for a [patch] or [replace] table, which can name any host and which cargo metadata
+# --no-deps does not list). "vet <metadata> <top>": the dependencies cargo metadata lists come from crates.io or are
 # paths inside <top> (exit 3 with the first that is not).
 CARGO_PY='import json, os, re, sys
 
 SECTION = re.compile(r"^\s*\[\[?\s*([A-Za-z0-9_.\-]+)\s*\]\]?\s*(#.*)?$")
+OVERRIDE = re.compile(r"^\s*(\[\s*(patch|replace)\b|(patch|replace)\s*[.=])")
 KEY = re.compile(r"^\s*(name|path|build)\s*=\s*\x22([^\x22\\]*)\x22\s*(#.*)?$")
 DEFAULT = {"bin": "src/bin/%s.rs", "example": "examples/%s.rs", "test": "tests/%s.rs", "bench": "benches/%s.rs"}
 
@@ -413,6 +415,8 @@ def stubs(top, manifests):
         base = os.path.dirname(path)
         with open(path, encoding="utf-8", errors="replace") as f:
             lines = f.read().splitlines()
+        if any(OVERRIDE.match(line) for line in lines):
+            fail("%s holds a [patch] or [replace] table, which deps.sh does not resolve: it can name any host" % rel)
         if not any(re.match(r"^\s*\[package\]", line) for line in lines):
             continue
         want, cur, kind = ["src/lib.rs"], None, None

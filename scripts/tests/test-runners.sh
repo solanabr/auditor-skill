@@ -652,6 +652,14 @@ printf '[package]\nname = "out"\nversion = "0.1.0"\n\n[lib]\npath = "../../outsi
 run "$DEPS" "$WT" -- cargo-tree --run audit_1 --manifest stubs/Cargo.toml
 check "a target path outside the manifest's directory: exit 3, cargo never runs" \
   sh -c "[ '$RC' = 3 ] && grep -q '^deps: blocker: stubs/Cargo.toml names a target outside its directory: ../../outside.rs' '$T/err' && ! grep -q '^== cargo' '$T/calls'"
+for table in '[patch.crates-io]\nserde = { version = "1", registry-index = "sparse+https://evil.invalid/" }' \
+  'patch.crates-io.serde = { git = "https://evil.invalid/serde" }' '[replace]\n"serde:1.0.0" = { path = "/tmp" }'; do
+  printf "[package]\nname = \"pt\"\nversion = \"0.1.0\"\n\n$table\n" > "$WT/stubs/Cargo.toml"
+  r0=$(rows)
+  run "$DEPS" "$WT" -- cargo-tree --run audit_1 --manifest stubs/Cargo.toml
+  check "a manifest with $(printf "$table" | sed -n 1p | cut -c1-40): exit 3, cargo never runs, nothing disclosed" \
+    sh -c "[ '$RC' = 3 ] && grep -qxF 'deps: blocker: stubs/Cargo.toml holds a [patch] or [replace] table, which deps.sh does not resolve: it can name any host; output audit_1/deps/cargo-tree-'\"\$(sed -n 's/.*cargo-tree-\([0-9]*\)[.]txt\$/\1/p' '$T/err')\"'.txt' '$T/err' && ! grep -q '^== cargo' '$T/calls' && [ \"\$(( \$(wc -l < '$DT') - 1 ))\" = '$r0' ]"
+done
 for dep in '{"name":"evil","source":"git+https://evil.invalid/x","registry":null}|from git+https://evil.invalid/x, not crates.io' \
   '{"name":"alt","source":"registry+https://alt.invalid/index","registry":"https://alt.invalid/index"}|from another registry than crates.io' \
   '{"name":"far","source":null,"registry":null,"path":"/etc"}|at a path outside the copied manifests'; do
