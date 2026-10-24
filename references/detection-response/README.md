@@ -289,9 +289,10 @@ the networked `collect.sh` and `snapshot-program.sh`, `redact.sh`, `jq` itself
 (`jq -n env` or `$ENV` prints every environment variable, `$RPC_URL` included), a
 line that holds a `$`, and everything that touches the chain or executes code:
 `solana`, `curl`, `cargo`, `surfpool`, a bare `python3`, `sqlite3`, `awk`. Claude
-Code's own read-only commands (`cat`, `grep`, `ls`, …) run without a prompt in
-every mode, outside the working directory too, unless
-`permissions.blockReadsOutsideWorkingDirectories` is on.
+Code's own read-only commands (`cat`, `grep`, `ls`, …) run without a prompt, in
+every mode, on paths inside the working directory, outside the run directory too;
+one that reaches outside the working directory, such as a `find` over a `--logs`
+export, asks unless a `Read` rule covers that path.
 
 **MCP servers.** `/auditor:hunt` and `/auditor:respond` hand all reading and
 analysis of the incident corpus to the `incident-responder` agent, as the fork of

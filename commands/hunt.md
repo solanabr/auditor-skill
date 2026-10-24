@@ -131,21 +131,22 @@ directory.
 2. **Get the corpus** (this command). The user's own corpus comes first:
    `--logs <dir>` (a `transactions.jsonl`, Geyser/indexer export, or service logs).
    The analysis tools read only files inside `incident_<n>/`, so copy it into
-   `incident_<n>/logs/` without opening it: check that `find <path> -type l` prints
-   nothing (the tools refuse a symbolic link, and a copied link makes them refuse
-   the whole run directory), then `cp -R <path> incident_<n>/logs/<name>`, with a
-   `<name>` that `logs/` does not hold yet (the export's own name, with `-2`, `-3`,
-   … added once that is taken), so no earlier copy is written over (`rundir.sh new`
-   made `logs/`; in a reused directory without one,
+   `incident_<n>/logs/` without opening it: `cp -R <path> incident_<n>/logs/<name>`,
+   with a `<name>` that `logs/` does not hold yet (the export's own name, with `-2`,
+   `-3`, … added once that is taken), so no earlier copy is written over
+   (`rundir.sh new` made `logs/`; in a reused directory without one,
    `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" sub incident_<n> logs` makes it). The
    copy asks for approval, by design for a path outside the working directory; if it
    is denied, stop and tell the human, since nothing can read the export where it
-   is. Then run `"${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh"` again: it refuses a
-   copy that brought Claude Code project config into the working tree, such as a
-   `.claude/` or a `.mcp.json` in the export. On a refusal, stop: show the line, and
-   tell the human to delete the copy and copy the export again without that config.
-   Pass the analysis the `--logs` copies in `incident_<n>/logs/`, never the export's
-   own path.
+   is. Then check the copy, inside the working directory, where neither check asks:
+   `find incident_<n>/logs/<name> -type l` must print nothing (a copied symbolic
+   link makes the tools refuse the whole run directory), and
+   `"${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh"`, run again, refuses a copy that
+   brought Claude Code project config into the working tree, such as a `.claude/` or
+   a `.mcp.json` in the export. When either finds something, stop: show what it
+   printed, and tell the human to delete the copy and copy the export again without
+   it. Pass the analysis the `--logs` copies in `incident_<n>/logs/`, never the
+   export's own path.
    Otherwise collect it — **gated** (README rule 3):
    - Resolve seed addresses: the arguments, else `declare_id!` / `Anchor.toml`, plus
      vault / authority / mint / treasury from `audit_<n>/threat-model.md` or

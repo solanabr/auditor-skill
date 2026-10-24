@@ -39,9 +39,9 @@ Telegram bot (`@seal_911_bot`). These commands are the after-the-fact workup.
 - **Your own corpus** (preferred): point `--logs` at a directory of
   `getTransaction` JSONL, a Geyser/indexer export, or service logs. The command
   copies it into `incident_<n>/logs/` first, since the analysis tools read only
-  files inside the run directory; it stops at an export that is or holds a
-  symbolic link, the copy asks for your approval, and `preflight.sh` then runs
-  again, so a copy that brings Claude Code project config in stops the run. A
+  files inside the run directory. The copy asks for your approval; a copy that
+  is or holds a symbolic link, or that brings Claude Code project config in
+  (`preflight.sh` runs again on it), stops the run. A
   line the recipes cannot read is skipped and counted as a collection gap, never
   guessed at: a non-integer amount, for example, is never rounded.
 - **Collected from RPC** (gated): with no `--logs`, the command shows you the
