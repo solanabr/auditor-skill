@@ -66,7 +66,9 @@ with the reason.
 
 It is built to be pre-approved as one `Bash(…)` rule on its absolute path, so it
 must be safe whatever arguments follow. Its rules are those of
-`scripts/lib/confine.sh`, in `src/confine.rs`:
+`scripts/lib/confine.sh`, in `src/confine.rs`, and
+`scripts/tests/test-auditor-tools.sh` runs every case of
+`scripts/tests/fixtures/audit-scan/cases.txt`:
 
 - `<dir>` is `.` or a relative path inside the working directory: at most 1024
   bytes, no control character, no leading `-` or `~`, no empty, `.` or `..`
@@ -277,7 +279,8 @@ each be pre-approved as one `Bash(…)` rule on its absolute path and subcommand
 arguments follow; `profile` and `invariant` follow the same rules. `rule` and
 `set-status` decide what later audits suppress, and are never pre-approved. Its
 rules are those of `scripts/lib/confine.sh` and `scripts/rundir.sh`, in
-`src/confine.rs`:
+`src/confine.rs`, and `scripts/tests/test-auditor-tools.sh` runs every case of
+`scripts/tests/fixtures/audit-mem/cases.txt`:
 
 - `--db` is `.audit-memory/audit.db` or `<R>/audit-mem.db`, relative to the working
   directory (one leading `./` allowed), where `<R>` passes `scripts/rundir.sh check`:
