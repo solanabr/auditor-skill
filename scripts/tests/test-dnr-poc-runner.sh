@@ -54,6 +54,7 @@
 #   * dependency pins: the crate's Cargo.lock is what resolves; a crate without one
 #     gets a line saying so; UPDATE_PINS moves only the named pins, with cargo update
 #     -p in the scratch copy before anything is built, and refuses any other entry;
+#   * the resolved Cargo.lock comes back into the crate in place of a regular file only;
 #   * run.sh holds no placeholder, so a PoC's copy is the installation's byte for byte;
 #   * the patch verification recipe (templates/patch/VERIFICATION.md §1): its worktree
 #     is made in a Rule 11c copy, and no git runs in the client checkout.
@@ -140,7 +141,9 @@ PY
 # (<test>_case unless @ gives one). Marker `loaded` records the zero-trimmed hash
 # of the .so in SBF_OUT_DIR, as mollusk_for does; `loaded-other` records other bytes;
 # `tamper` changes the placed .so; `relock` makes the build lock in CARGO_TARGET_DIR
-# name SHIM_RELOCK_PID. SHIM_FAIL=<test> makes that test binary fail.
+# name SHIM_RELOCK_PID; `relink` puts a symbolic link to SHIM_RELINK_TO at SHIM_RELINK;
+# `relocate` moves the directory SHIM_RELOCATE aside and puts a link to SHIM_RELOCATE_TO there.
+# SHIM_FAIL=<test> makes that test binary fail.
 mkdir -p "$T/shim/bin"
 cat > "$T/shim/cargo" <<'SH'
 #!/bin/sh
@@ -267,6 +270,8 @@ for m in ${SHIM_MARKERS-exploit:attempted exploit:held exploit:effect exploit:lo
     loaded-other) printf '%s\t%064d %s\n' "$tag" 0 /elsewhere/other.so >> "$AUDITOR_POC_MARKERS/loaded" ;;
     tamper) for so in "${SBF_OUT_DIR:-/nonexistent}"/*.so; do [ -f "$so" ] && printf 'x' >> "$so"; done ;;
     relock) printf '%s\n' "${SHIM_RELOCK_PID:-}" > "${CARGO_TARGET_DIR:-/nonexistent}/.auditor-poc-build.lock/pid" ;;
+    relink) rm -f "$SHIM_RELINK" && ln -s "$SHIM_RELINK_TO" "$SHIM_RELINK" ;;
+    relocate) mv "$SHIM_RELOCATE" "$SHIM_RELOCATE.moved" && ln -s "$SHIM_RELOCATE_TO" "$SHIM_RELOCATE" ;;
     attempted) printf '%s\t%s (shim)\n' "$tag" "$assertion" >> "$AUDITOR_POC_MARKERS/attempted" ;;
     held) printf '%s\t%s: shim\n' "$tag" "$assertion" >> "$AUDITOR_POC_MARKERS/held" ;;
     failed) printf '%s\t%s: shim did not hold\n' "$tag" "$(printf '%s' "$assertion" | tr '+' ' ')" >> "$AUDITOR_POC_MARKERS/failed" ;;
@@ -912,6 +917,17 @@ for spec in '--config=build.rustc-wrapper="x"' 'borsh;true' '../borsh' 'b*' 'bor
   code="$(gate "$T/locked" "$NATIVE" "$VULN" "UPDATE_PINS=borsh $spec")"
   [ "$code" = 3 ] && grep -q 'UPDATE_PINS entry' "$T/out" && nothing_ran && ok "UPDATE_PINS entry '$spec' -> refused before anything is copied" || bad "UPDATE_PINS '$spec': exit $code"
 done
+
+# The resolved Cargo.lock comes back into the crate in place of a regular file only: a symbolic link put
+# there while the test ran is left as it is, and its target is untouched.
+mk_crate "$T/relink"; printf 'kept\n' > "$T/relink-target"
+code="$(gate "$T/relink" "$NATIVE" "$VULN" SHIM_MARKERS="$EV exploit:relink" SHIM_RELINK="$T/relink/Cargo.lock" SHIM_RELINK_TO="$T/relink-target")"
+[ "$code" = 0 ] && [ -L "$T/relink/Cargo.lock" ] && [ "$(cat "$T/relink-target")" = kept ] \
+  && ok "a Cargo.lock that became a symbolic link during the run is not written through" || { bad "Cargo.lock turned into a link: exit $code, target holds '$(cat "$T/relink-target")'"; cat "$T/out" >&2; }
+mk_crate "$T/relocate"; mkdir -p "$T/relocate-elsewhere"
+code="$(gate "$T/relocate" "$NATIVE" "$VULN" SHIM_MARKERS="$EV exploit:relocate" SHIM_RELOCATE="$T/relocate" SHIM_RELOCATE_TO="$T/relocate-elsewhere")"
+[ "$code" = 0 ] && [ -z "$(ls -A "$T/relocate-elsewhere")" ] \
+  && ok "a crate directory replaced by a symbolic link during the run gets no Cargo.lock through it" || { bad "crate directory turned into a link: exit $code, elsewhere holds '$(ls -A "$T/relocate-elsewhere")'"; cat "$T/out" >&2; }
 
 # Exit codes: a build that fails is a blocker (3); only the test verdicts are 1 and 2.
 code="$(run "$T/inc" "$SP" "$NATIVE" SHIM_FAIL=build-sbf)"

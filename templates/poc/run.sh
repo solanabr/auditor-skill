@@ -55,8 +55,9 @@
 #     `mktemp -d "${TMPDIR:-/tmp}/auditor-poc.XXXXXX"`, and built and tested there
 #     with RUSTUP_TOOLCHAIN pinned to the caller's value, else rustup's default. The
 #     directory is printed, and removed on exit unless KEEP_POC_BUILD=1; the resolved
-#     Cargo.lock is copied back next to this file. A `path` dependency that leaves
-#     the crate must therefore be absolute.
+#     Cargo.lock is copied back next to this file, in place of a regular file only,
+#     never through a link. A `path` dependency that leaves the crate must therefore
+#     be absolute.
 #   * the crate's own build-time code is refused (exit 3) before anything compiles:
 #     `cargo metadata --no-deps`, run in the scratch copy, lists the crate's packages
 #     (the crate, shared-test-utils, any other member), and a build script (`build =
@@ -163,13 +164,24 @@ trap 'rc=$?; [ "${BASH_SUBSHELL:-0}" -gt 0 ] && exit "${rc}"; echo "[PoC-ATTEMPT
 VERDICT=""
 BUILD_DIR=""
 LOCK_HELD=0
+# keep_lock: the resolved Cargo.lock goes back next to the crate's manifest, written to a
+# new file and renamed over the old one, and only in place of a regular file: a link or
+# a directory there is left as it is, and so is a crate directory that no longer
+# resolves to where it was.
+keep_lock() {
+  local dst="${HERE}/Cargo.lock" tmp="${HERE}/.Cargo.lock.$$"
+  [[ "$(cd "${HERE}" 2>/dev/null && pwd -P)" == "${HERE}" ]] || return 0
+  if [[ -L "${dst}" ]] || { [[ -e "${dst}" ]] && [[ ! -f "${dst}" ]]; }; then return 0; fi
+  if ( set -C; cat "${BUILD_DIR}/Cargo.lock" > "${tmp}" ) 2>/dev/null; then
+    mv -f "${tmp}" "${dst}" 2>/dev/null || rm -f "${tmp}" 2>/dev/null || true
+  fi
+  return 0
+}
 on_exit() {
   local rc="$1"
   if [[ "${LOCK_HELD}" == 1 ]]; then release_lock; fi
   if [[ -n "${BUILD_DIR}" ]]; then
-    if [[ -f "${BUILD_DIR}/Cargo.lock" ]]; then
-      cp -p "${BUILD_DIR}/Cargo.lock" "${HERE}/Cargo.lock" 2>/dev/null || true
-    fi
+    if [[ -f "${BUILD_DIR}/Cargo.lock" ]]; then keep_lock; fi
     case "${BUILD_DIR}" in
       */auditor-poc.*) if [[ "${KEEP_POC_BUILD:-0}" != 1 ]]; then rm -rf "${BUILD_DIR}" || true; fi ;;
     esac
