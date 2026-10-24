@@ -26,13 +26,15 @@
 #          --pdf-engine=<xelatex|lualatex|pdflatex, the first found> --pdf-engine-opt=-no-shell-escape
 # --sandbox keeps pandoc from reading any file but its input and from fetching
 # anything. The filter turns every image into its alt text, drops every raw block and
-# raw inline, and shows math as code, so no text of the report reaches the TeX engine
-# as TeX. Raw HTML is still parsed, so the HTML comments of the report templates drop
-# out with it rather than printing as text. The engine gets kpathsea's paranoid
-# settings (openin_any=p, openout_any=p: no absolute path outside pandoc's own temp
-# directory, no "..", no dotfile) and shell_escape=f, with TEXMFOUTPUT removed from
-# the environment pandoc passes on. The PDF is copied into a new file beside the
-# report and renamed into place.
+# raw inline, shows math as code, and leaves every element its identifier and classes
+# but no key=value attribute (the LaTeX writer passes some, such as a figure's
+# latex-placement, to the engine as written), so no text of the report reaches the
+# TeX engine as TeX. Raw HTML is still parsed, so the HTML comments of the report
+# templates drop out with it rather than printing as text. The engine gets kpathsea's
+# paranoid settings (openin_any=p, openout_any=p: no absolute path outside pandoc's
+# own temp directory, no "..", no dotfile) and shell_escape=f, with TEXMFOUTPUT
+# removed from the environment pandoc passes on. The PDF is copied into a new file
+# beside the report and renamed into place.
 #
 # Exit: 0 rendered or skipped (no report, no pandoc, a pandoc older than 2.15, no
 # engine, or a render that failed) · 2 refused.

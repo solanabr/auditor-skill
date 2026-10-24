@@ -223,9 +223,9 @@ EMPTYW="$T/empty-wt"; mkdir -p "$EMPTYW"
 check "no argument and no report: skipped (exit 0)" sh -c "[ $RC = 0 ] && grep -q 'no input given and no audit_\*/REPORT.md found' '$T/err'"
 
 # =================================================================================================
-# The filter, in the real pandoc: images become their alt text, raw blocks and inlines are dropped and
-# math shows as code, in the body and in the metadata alike, so neither a remote image nor raw TeX
-# reaches the engine.
+# The filter, in the real pandoc: images become their alt text, raw blocks and inlines are dropped,
+# math shows as code, in the body and in the metadata alike, and every element keeps its identifier and
+# classes but no key=value attribute, so neither a remote image nor raw TeX reaches the engine.
 # =================================================================================================
 REALPANDOC=$(command -v pandoc 2>/dev/null)
 pv=""; [ -n "$REALPANDOC" ] && pv=$("$REALPANDOC" --version 2>/dev/null | sed -n '1s/^[^ ]* //p')
@@ -261,6 +261,20 @@ header-includes: '$\input{/etc/passwd}$'
 `\special{pdf:inline}`{=latex} and $\input{/etc/shells}$ and $$\openin1=/etc/hosts$$
 
 <div>inner *text*</div>
+
+![placed figure](x.png){#fig:placed latex-placement="htbp]\input{/etc/hosts}"}
+
+```{#cb1 .haskell .numberLines startFrom="1]\input{/etc/hosts}"}
+main = pure ()
+```
+
+::: {#d1 .note lang="en]\input{/etc/hosts}" dir="rtl"}
+div text
+:::
+
+[span text]{#s1 .mark lang="de]\input{/etc/hosts}"} and `code`{.c key="v1"} and [a link](https://example.invalid/){key="v2"}
+
+## A heading {#h2 data-x="v3"}
 EOF
   "$REALPANDOC" --sandbox -f markdown-raw_tex-raw_attribute --lua-filter "$FILTER" -t native -s "$F" > "$T/native.txt" 2>"$T/native.err"
   check "real pandoc: the filtered document parses (exit 0)" test "$?" = 0
@@ -272,8 +286,14 @@ EOF
   check "real pandoc: math in the metadata is code too" has "$T/native.txt" 'Code ( "" , [] , [] ) "\\special{pdf:title}"'
   check "real pandoc: an HTML comment drops out rather than printing" hasnt "$T/native.txt" "template comment"
   check "real pandoc: no URL of an image survives" sh -c "! grep -q 'track.png\|figure.png\|raw.png' '$T/native.txt'"
+  check "real pandoc: no key=value attribute is left on any element" \
+    sh -c "! grep -q -e 'latex-placement' -e 'startFrom' -e '\"lang\"' -e '\"dir\"' -e '\"key\"' -e 'data-x' '$T/native.txt'"
+  check "real pandoc: identifiers and classes stay" \
+    sh -c "grep -q '\"fig:placed\"' '$T/native.txt' && grep -q '\"numberLines\"' '$T/native.txt' && grep -q '\"mark\"' '$T/native.txt' && grep -q '\"h2\"' '$T/native.txt'"
   "$REALPANDOC" --sandbox -f markdown-raw_tex-raw_attribute --lua-filter "$FILTER" -t latex -s "$F" > "$T/out.tex" 2>/dev/null
   check "real pandoc: the LaTeX has no \\includegraphics" hasnt "$T/out.tex" '\includegraphics'
+  check "real pandoc: a figure gets no placement option" sh -c "grep -q 'begin{figure}' '$T/out.tex' && ! grep -qF '\\begin{figure}[' '$T/out.tex'"
+  check "real pandoc: ... and keeps its label" has "$T/out.tex" '\label{fig:placed}'
   check "real pandoc: no raw \\input, \\write18, \\special or \\openin reaches the LaTeX" \
     sh -c "! grep -qF -e '\\input{/etc' -e '\\write18' -e '\\special{' -e '\\openin1' '$T/out.tex'"
   check "real pandoc: the text of the raw TeX prints as text" has "$T/out.tex" '\textbackslash{}input\{/etc/passwd\}'
