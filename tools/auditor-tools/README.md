@@ -49,13 +49,53 @@ recipes, `scripts/lib/confine.sh`, or its own `Cargo.toml` or `src/`.
 ## `audit-scan`
 
 ```
-audit-scan <path> [--out FILE] [--pretty]
+audit-scan <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty]
 ```
 
-Recursively walks `*.rs` files under `<path>` (skipping `target/`, `.git/`,
-`node_modules/`), parses each with `syn::parse_file`, and prints one JSON object
-to stdout (or to `--out FILE`). `--pretty` uses `serde_json::to_string_pretty`.
-Files that fail to parse are skipped (best-effort).
+Recursively walks the `*.rs` files under `<dir>`, parses each with
+`syn::parse_file`, and prints one JSON object to stdout (or writes it to `--out`).
+`--pretty` uses `serde_json::to_string_pretty`. The walk skips `target/`, `.git/`
+and `node_modules/` below `<dir>`, and, when `<dir>` is `.`, the run directories and
+`.audit-memory/`, which hold an audit's own output. It follows no symbolic link and
+parses only regular files of at most 4 MiB, in byte order of their names; every link
+it meets, and every `*.rs` file it does not parse (not a regular file, larger than
+4 MiB, unreadable, not UTF-8, or not Rust that `syn` parses), is listed in `skipped`
+with the reason.
+
+### Where it reads and writes
+
+It is built to be pre-approved as one `Bash(…)` rule on its absolute path, so it
+must be safe whatever arguments follow. Its rules are those of
+`scripts/lib/confine.sh`, in `src/confine.rs`:
+
+- `<dir>` is `.` or a relative path inside the working directory: at most 1024
+  bytes, no control character, no leading `-` or `~`, no empty, `.` or `..`
+  component once one leading `./` is dropped, no symbolic link on the way (each name
+  is checked with `lstat`), resolving inside the working directory.
+- `--out` is `prescan.json`, or `prescan-<slug>.json` with a slug of 1 to 32 of
+  `a-z`, `0-9` and `-`, directly in a run directory, `audit_<n>/` or `incident_<n>/`,
+  that passes `scripts/rundir.sh check`: a real directory in the working directory,
+  holding no symbolic link, tracked by no repository in any letter case, with a
+  `.gitignore` of exactly `*`. The file is made new (`O_CREAT|O_EXCL|O_NOFOLLOW`, mode
+  0600) through the run directory, opened once without following a link; a file
+  already there is replaced only when it is a regular file with one name, as
+  audit-scan's own earlier output is.
+- Each option is given once, `--out <file>` or `--out=<file>`; the word after
+  `--out` is its value whatever it looks like. Any other word that starts with `-` is
+  refused.
+- It asks git whether a run directory is tracked as confine.sh's `hgit` asks it: git
+  from a `PATH` with every entry inside the working directory removed, with an
+  environment of its own and the repository's config pinned off. When git cannot
+  answer, `--out` is refused; with no `--out`, git is not run.
+- It refuses to run from an installation inside the working directory, or from a
+  path, as it was invoked or with its links resolved, holding a quote, `$`, a
+  backtick, a backslash or a control character.
+- It opens no network connection and runs no other program. A control,
+  bidirectional or invisible character in a name or snippet is written as a `\u`
+  escape.
+
+Exit: 0 done · 1 the output cannot be written · 2 refused, with one stderr line,
+`audit-scan: refused: <reason>`.
 
 ### JSON schema
 
@@ -129,6 +169,12 @@ Files that fail to parse are skipped (best-effort).
   // every `ItemFn` and `ImplItemFn`.
   "functions": [
     { "name": "string", "file": "string", "line": 0, "pub": false }
+  ],
+
+  // every symbolic link the walk did not follow, and every `*.rs` file it did
+  // not parse, with why.
+  "skipped": [
+    { "file": "string", "reason": "string" }
   ]
 }
 ```
@@ -139,7 +185,7 @@ truncated to ~80 characters.
 ### Example
 
 ```bash
-audit-scan ./programs/my-program/src --pretty --out surface.json
+audit-scan ./programs/my-program/src --pretty --out audit_1/prescan.json
 ```
 
 ## `audit-mem`

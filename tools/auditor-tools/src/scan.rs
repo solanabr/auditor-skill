@@ -5,13 +5,19 @@
 //! with a [`syn::visit::Visit`] implementation to enumerate the risky surface an
 //! auditor would otherwise have to find by hand.
 
+use std::fs::OpenOptions;
+use std::io::Read;
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
 use quote::ToTokens;
 use serde::Serialize;
 use syn::spanned::Spanned;
 use syn::visit::Visit;
-use walkdir::WalkDir;
+use walkdir::{DirEntry, WalkDir};
+
+use crate::confine::{is_run_dir_name, os_message, MAX_FILE};
 
 const SNIPPET_MAX: usize = 80;
 
@@ -29,6 +35,15 @@ pub struct ScanReport {
     pub cpi_sites: Vec<CpiSite>,
     pub remaining_accounts_sites: Vec<RemainingAccountsSite>,
     pub functions: Vec<FunctionDef>,
+    /// Every symbolic link the walk did not follow, and every `*.rs` file it did
+    /// not parse, with the reason.
+    pub skipped: Vec<Skipped>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Skipped {
+    pub file: String,
+    pub reason: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -136,48 +151,93 @@ pub struct FunctionDef {
     pub is_pub: bool,
 }
 
-/// Scan every `*.rs` file under `root`, returning one merged report.
-///
-/// Files that fail to parse are skipped (best-effort). Directories named
-/// `target`, `.git`, and `node_modules` are pruned.
-pub fn scan_path(root: &Path) -> ScanReport {
-    let mut report = ScanReport {
-        root: root.display().to_string(),
-        files_scanned: 0,
-        instructions: Vec::new(),
-        accounts_structs: Vec::new(),
-        pdas: Vec::new(),
-        arithmetic_sites: Vec::new(),
-        panic_sites: Vec::new(),
-        unsafe_blocks: Vec::new(),
-        cpi_sites: Vec::new(),
-        remaining_accounts_sites: Vec::new(),
-        functions: Vec::new(),
-    };
+impl ScanReport {
+    fn new(root: String, files_scanned: usize) -> Self {
+        Self {
+            root,
+            files_scanned,
+            instructions: Vec::new(),
+            accounts_structs: Vec::new(),
+            pdas: Vec::new(),
+            arithmetic_sites: Vec::new(),
+            panic_sites: Vec::new(),
+            unsafe_blocks: Vec::new(),
+            cpi_sites: Vec::new(),
+            remaining_accounts_sites: Vec::new(),
+            functions: Vec::new(),
+            skipped: Vec::new(),
+        }
+    }
+}
 
-    for entry in WalkDir::new(root)
+/// Scan every `*.rs` file under the directory `root`, returning one merged report.
+///
+/// The walk follows no symbolic link and reads only regular files of at most
+/// 4 MiB, each opened without following a link; every link it meets, and every
+/// `*.rs` file it does not parse (not regular, too large, unreadable, not UTF-8
+/// or not Rust that `syn` parses), is listed in `skipped`. Directories named
+/// `target`, `.git` and `node_modules` below `root` are pruned, and so are the
+/// run directories and `.audit-memory/` when `root` is the working directory.
+/// Entries are visited in byte order of their names.
+pub fn scan_path(root: &Path) -> ScanReport {
+    let mut report = ScanReport::new(root.display().to_string(), 0);
+    let top = root == Path::new(".");
+    let walk = WalkDir::new(root)
+        .follow_links(false)
+        .sort_by_file_name()
         .into_iter()
-        .filter_entry(|e| !is_pruned_dir(e.path()))
-        .filter_map(Result::ok)
-    {
+        .filter_entry(|e| !is_pruned_dir(e, top));
+    for entry in walk {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) => {
+                let file = e
+                    .path()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default();
+                let reason = match e.io_error() {
+                    Some(io) => format!("cannot be read: {}", os_message(io)),
+                    None => "cannot be read".to_string(),
+                };
+                report.skipped.push(Skipped { file, reason });
+                continue;
+            }
+        };
         let path = entry.path();
-        if !path.is_file() {
+        let label = path.display().to_string();
+        let kind = entry.file_type();
+        if kind.is_symlink() {
+            report.skipped.push(Skipped {
+                file: label,
+                reason: "a symbolic link, not followed".to_string(),
+            });
             continue;
         }
-        if path.extension().and_then(|s| s.to_str()) != Some("rs") {
+        if kind.is_dir() || path.extension().and_then(|s| s.to_str()) != Some("rs") {
             continue;
         }
-        let source = match std::fs::read_to_string(path) {
+        let source = match read_source(path, kind.is_file()) {
             Ok(s) => s,
-            Err(_) => continue,
+            Err(reason) => {
+                report.skipped.push(Skipped {
+                    file: label,
+                    reason,
+                });
+                continue;
+            }
         };
         let ast = match syn::parse_file(&source) {
             Ok(a) => a,
-            Err(_) => continue,
+            Err(_) => {
+                report.skipped.push(Skipped {
+                    file: label,
+                    reason: "does not parse as Rust".to_string(),
+                });
+                continue;
+            }
         };
         report.files_scanned += 1;
-        let file_label = path.display().to_string();
-        let mut visitor = FileVisitor::new(&file_label);
+        let mut visitor = FileVisitor::new(&label);
         visitor.visit_file(&ast);
         visitor.drain_into(&mut report);
     }
@@ -185,35 +245,55 @@ pub fn scan_path(root: &Path) -> ScanReport {
     report
 }
 
+/// A `*.rs` file's text: a regular file of at most 4 MiB, opened without
+/// following a link or blocking on a FIFO, and UTF-8.
+fn read_source(path: &Path, regular: bool) -> Result<String, String> {
+    if !regular {
+        return Err("not a regular file".to_string());
+    }
+    let unreadable = |e: std::io::Error| format!("cannot be read: {}", os_message(&e));
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+        .map_err(unreadable)?;
+    let md = file.metadata().map_err(unreadable)?;
+    if !md.file_type().is_file() {
+        return Err("not a regular file".to_string());
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_FILE + 1)
+        .read_to_end(&mut bytes)
+        .map_err(unreadable)?;
+    if md.len() > MAX_FILE || bytes.len() as u64 > MAX_FILE {
+        return Err("larger than 4 MiB".to_string());
+    }
+    String::from_utf8(bytes).map_err(|_| "not UTF-8".to_string())
+}
+
 /// Scan a single in-memory source string (used by tests and the demo path).
 ///
 /// Returns `None` if the source does not parse.
 pub fn scan_source(file_label: &str, source: &str) -> Option<ScanReport> {
     let ast = syn::parse_file(source).ok()?;
-    let mut report = ScanReport {
-        root: file_label.to_string(),
-        files_scanned: 1,
-        instructions: Vec::new(),
-        accounts_structs: Vec::new(),
-        pdas: Vec::new(),
-        arithmetic_sites: Vec::new(),
-        panic_sites: Vec::new(),
-        unsafe_blocks: Vec::new(),
-        cpi_sites: Vec::new(),
-        remaining_accounts_sites: Vec::new(),
-        functions: Vec::new(),
-    };
+    let mut report = ScanReport::new(file_label.to_string(), 1);
     let mut visitor = FileVisitor::new(file_label);
     visitor.visit_file(&ast);
     visitor.drain_into(&mut report);
     Some(report)
 }
 
-fn is_pruned_dir(path: &Path) -> bool {
-    matches!(
-        path.file_name().and_then(|s| s.to_str()),
-        Some("target") | Some(".git") | Some("node_modules")
-    )
+/// A directory the walk does not enter: build output, git's own directory and
+/// installed packages below the root, and, when the root is the working
+/// directory, its run directories and `.audit-memory/`, which hold an audit's
+/// own output.
+fn is_pruned_dir(e: &DirEntry, top: bool) -> bool {
+    if e.depth() == 0 || !e.file_type().is_dir() {
+        return false;
+    }
+    let name = e.file_name().as_bytes();
+    matches!(name, b"target" | b".git" | b"node_modules")
+        || (top && e.depth() == 1 && (name == b".audit-memory" || is_run_dir_name(name)))
 }
 
 fn truncate_snippet(s: &str) -> String {
