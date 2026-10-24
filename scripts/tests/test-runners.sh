@@ -577,6 +577,41 @@ rm -rf "$WT/.bin"
 check "no target.sh run ran a program or hook the source repository's config names" test -z "$(ls -A "$T/marks")"
 
 # =================================================================================================
+# target.sh in an incident's run directory: INCIDENTS.json must give the root cause, and
+# supply_chain_or_ci is never built natively.
+# =================================================================================================
+IJ=$WT/incident_1/INCIDENTS.json
+printf 'native\n' > "$WT/incident_1/exec-mode"
+cp "$WT/audit_1/patches/F-1.patch" "$WT/incident_1/patches/INC-1.2.patch"
+cp "$WT/audit_1/patches/F-1.patch" "$WT/incident_1/patches/INC-1.1.patch"
+run "$TARGET" "$WT" -- build-sbf --run incident_1 --src .
+check "an incident run without INCIDENTS.json: exit 3, nothing copied" \
+  sh -c "[ '$RC' = 3 ] && grep -qxF \"target: blocker: incident_1/INCIDENTS.json is missing: an incident's code is built only once incident_1/INCIDENTS.json records its root_cause_class (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built.\" '$T/err' && [ ! -s '$T/calls' ] && [ -z \"\$(ls -A '$NT')\" ]"
+for bad in 'not json|cannot be read as JSON' '{"incidents": {}}|holds no incidents list' '{"incidents": []}|records no incident' \
+  '{"incidents": [{"id": "INC-1.1"}]}|gives an incident no root_cause_class from incidents-schema.md'; do
+  printf '%s\n' "${bad%%|*}" > "$IJ"
+  run "$TARGET" "$WT" -- build-sbf --run incident_1 --src .
+  check "INCIDENTS.json that ${bad#*|}: exit 3, nothing copied" sh -c "[ '$RC' = 3 ] && grep -qF 'incident_1/INCIDENTS.json ${bad#*|}: ' '$T/err' && [ ! -s '$T/calls' ]"
+done
+printf '{"incidents": [{"id": "INC-1.1", "root_cause_class": "code_flaw"}]}\n' > "$IJ"
+run "$TARGET" "$WT" -- build-sbf --run incident_1 --src .
+check "an incident whose root cause is a code flaw builds natively" test "$RC" = 0
+printf '{"incidents": [{"id": "INC-1.1", "root_cause_class": "supply_chain_or_ci"}, {"id": "INC-1.2", "root_cause_class": "code_flaw"}]}\n' > "$IJ"
+run "$TARGET" "$WT" -- build-sbf --run incident_1 --src .
+check "native mode where an incident's root cause is supply_chain_or_ci: exit 3, nothing copied" \
+  sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: incident_1/INCIDENTS.json records an incident whose root_cause_class is supply_chain_or_ci, and such an incident.s code is never built natively' '$T/err' && [ ! -s '$T/calls' ]"
+run "$TARGET" "$WT" -- build-sbf --run incident_1 --src . --patch incident_1/patches/INC-1.1.patch
+check "--patch of that incident: exit 3 as well" sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: the root_cause_class of INC-1.1 is supply_chain_or_ci' '$T/err'"
+run "$TARGET" "$WT" -- build-sbf --run incident_1 --src . --patch incident_1/patches/INC-1.2.patch
+check "--patch of another incident of the run, a code flaw: only its class counts, and it builds" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF '>> incident INC-1.2: root_cause_class code_flaw (incident_1/INCIDENTS.json)' '$T/out'"
+if [ "$ISOLATED_OK" = 1 ]; then
+  run "$TARGET" "$WT" AUDITOR_EXEC_MODE=isolated -- build-sbf --run incident_1 --src .
+  check "isolated mode builds a supply_chain_or_ci incident's code" test "$RC" = 0
+fi
+rm -f "$IJ" "$WT/incident_1/exec-mode" "$WT/incident_1/patches/INC-1.1.patch" "$WT/incident_1/patches/INC-1.2.patch"
+
+# =================================================================================================
 # deps.sh: the cargo and npm audits, on copies of the named files only.
 # =================================================================================================
 DT=$WT/audit_1/disclosures.tsv

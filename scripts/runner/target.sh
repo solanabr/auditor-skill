@@ -31,7 +31,10 @@
 # --mode that names another mode, target.sh stops (exit 3) before it copies anything. In isolated mode the
 # credential self-check of scripts/lib/isolation.sh runs first: something it reads that is readable, or a
 # check that cannot finish, stops the run. In native mode the same check prints, as a warning, what the code
-# the run builds can read, by kind and count, never a path.
+# the run builds can read, by kind and count, never a path. An incident's code (--run incident_<n>) is built
+# only once incident_<n>/INCIDENTS.json (a regular file of at most 4 MiB) records the root_cause_class of the
+# incident --patch names (INC-<n>.<k>), or of every incident without one; supply_chain_or_ci is never built
+# natively (OUTPUT-RULES.md Rule 11a).
 #
 # The copy, in a scratch directory outside the working directory. A --src that is the top level of a git
 # repository (its git directory inside the working directory, holding no symbolic link, borrowing no objects
@@ -67,7 +70,8 @@
 #
 # Exit: 0 the action succeeded · 1 it ran and failed · 3 blocker (no mode or mode none, the self-check, a tool
 # missing, a revision or package not found, a patch that does not apply, submodules, a download that failed,
-# the watchdog) · 64 refused. Needs bash >= 3.2, git, python3, env, find, grep, mkdir, mktemp, rm, chmod, cp,
+# the watchdog, an incident whose root cause INCIDENTS.json does not give or that may not build natively) ·
+# 64 refused. Needs bash >= 3.2, git, python3, env, find, grep, mkdir, mktemp, rm, chmod, cp,
 # ln, cat, wc, tail and date; cargo, cargo-build-sbf, anchor or npm as the action needs.
 
 set -uo pipefail
@@ -302,6 +306,77 @@ if [ -n "$MODE_ARG" ] && [ "$MODE_ARG" != "$MODE" ]; then
   blocker "--mode is $MODE_ARG, but the recorded execution mode is $MODE ($SOURCES); the mode changes only when the human answers again — nothing was copied or built."
 fi
 echo ">> execution mode: $MODE (the stricter of $SOURCES)"
+
+# What the incident check runs with python3 -I: "<INCIDENTS.json> [<INC-n.k>]" prints that incident's
+# root_cause_class, or with no id supply_chain_or_ci when any incident has it and "other" otherwise; exit 3
+# with the reason when the file, an incident or a class cannot be read.
+INCIDENT_PY='import json, os, stat, sys
+
+CLASSES = ("code_flaw", "key_compromise", "oracle_or_dependency", "economic_design", "off_chain",
+           "supply_chain_or_ci", "unknown")
+LIMIT = 4 * 1024 * 1024
+
+
+def say(text, status):
+    print(text)
+    sys.exit(status)
+
+
+path, wanted = sys.argv[1], sys.argv[2]
+try:
+    st = os.lstat(path)
+except FileNotFoundError:
+    say("is missing", 3)
+except OSError:
+    say("cannot be read", 3)
+if not stat.S_ISREG(st.st_mode):
+    say("is not a regular file", 3)
+if st.st_size > LIMIT:
+    say("is larger than 4 MiB", 3)
+try:
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NOCTTY", 0))
+    with os.fdopen(fd, "rb") as f:
+        data = json.loads(f.read(LIMIT + 1).decode("utf-8"))
+except (OSError, UnicodeDecodeError, ValueError, RecursionError):
+    say("cannot be read as JSON", 3)
+incidents = data.get("incidents") if isinstance(data, dict) else None
+if not isinstance(incidents, list):
+    say("holds no incidents list", 3)
+incidents = [i for i in incidents if isinstance(i, dict)]
+if wanted:
+    incidents = [i for i in incidents if i.get("id") == wanted]
+    if not incidents:
+        say("records no incident %s" % wanted, 3)
+    if len(incidents) > 1:
+        say("records %s more than once" % wanted, 3)
+if not incidents:
+    say("records no incident", 3)
+for i in incidents:
+    if i.get("root_cause_class") not in CLASSES:
+        say("gives %s no root_cause_class from incidents-schema.md" % (wanted or "an incident"), 3)
+if wanted:
+    say(incidents[0]["root_cause_class"], 0)
+say("supply_chain_or_ci" if any(i["root_cause_class"] == "supply_chain_or_ci" for i in incidents) else "other", 0)
+'
+case "$R" in
+  incident_*)
+    inc=""
+    case "$PATCH_REL" in */INC-*.patch) inc=${PATCH_REL##*/}; inc=${inc%.patch} ;; esac
+    json=$R/INCIDENTS.json
+    command -v python3 >/dev/null 2>&1 ||
+      blocker "python3 is not on PATH, so target.sh cannot read the root_cause_class in $json (OUTPUT-RULES.md Rule 11a) — nothing was copied or built."
+    rc=0
+    cls=$( (cd / && exec python3 -I -c "$INCIDENT_PY" "$WT/$json" "$inc") ) || rc=$?
+    if [ "$rc" != 0 ]; then
+      [ "$rc" = 3 ] && [ -n "$cls" ] || cls="cannot be read"
+      blocker "$json $cls: an incident's code is built only once $json records its root_cause_class (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built."
+    fi
+    if [ -n "$inc" ]; then echo ">> incident $inc: root_cause_class $cls ($json)"; fi
+    if [ "$cls" = supply_chain_or_ci ] && [ "$MODE" = native ]; then
+      if [ -n "$inc" ]; then what="the root_cause_class of $inc is supply_chain_or_ci"; else what="$json records an incident whose root_cause_class is supply_chain_or_ci"; fi
+      blocker "$what, and such an incident's code is never built natively (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built."
+    fi ;;
+esac
 # python3 starts from /, so nothing in the working directory picks the interpreter.
 cd / || blocker "cannot leave the working directory for /"
 rc=0
