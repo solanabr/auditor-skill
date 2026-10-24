@@ -125,7 +125,8 @@ directory.
    `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" sub incident_<n> logs` makes it). The
    copy asks for approval, by design for a path outside the working directory; if
    it is denied, stop and tell the human, since nothing can read the export where
-   it is. Pass the copied paths to the analysis.
+   it is. Pass the analysis the `--logs` copies in `incident_<n>/logs/`, never the
+   export's own path.
    Otherwise collect it — **gated** (README rule 3):
    - Resolve seed addresses: the arguments, else `declare_id!` / `Anchor.toml`, plus
      vault / authority / mint / treasury from `audit_<n>/threat-model.md` or
@@ -178,7 +179,7 @@ directory.
    Skill tool, with arguments that start `hunt baseline incident_<n>` (the step-1
    directory) and then
    name, explicitly: every corpus path (`incident_<n>/corpus*/transactions.jsonl`,
-   and the `--logs` copy in `incident_<n>/logs/`); the snapshot lines; the provider
+   and the `--logs` copies in `incident_<n>/logs/`); the snapshot lines; the provider
    domain; the window and caps the collection used, and whether it ended with its
    `collection gaps: N` line; and the execution mode, if one is already recorded.
    The fork starts `LEDGER.md` from `${CLAUDE_PLUGIN_ROOT}/templates/hunt-ledger.md`

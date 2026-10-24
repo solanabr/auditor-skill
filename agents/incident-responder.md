@@ -35,8 +35,9 @@ pause, freeze, rotate, or contact anyone.
 ## Inputs
 
 The phase brief names everything you work from: the run directory, the corpus
-paths (`incident_<n>/corpus*/transactions.jsonl`, and the copy of any `--logs`
-export in `incident_<n>/logs/`), the snapshot lines from `snapshot-program.sh`, the
+paths (`incident_<n>/corpus*/transactions.jsonl`, and the `--logs` copies in
+`incident_<n>/logs/`, never the export's own path), the snapshot lines from
+`snapshot-program.sh`, the
 provider domain, the window and caps the human approved for each collection, the
 execution mode and the PoC build cache once they are recorded, and, later, the
 `context-builder` and `poc-engineer` results. Work from exactly those. Copy the
@@ -87,12 +88,12 @@ write-up.
   - `audit-logs`, by the path the skill's list gives, run first, with the
     script's arguments after its subcommand: `profile`, `frames [--instructions]`,
     `deltas tokens|lamports`. It prints what the scripts print and exits the same
-    way; the two places it differs (count padding, and a closed stdout or broken
-    pipe) are in `${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/README.md`. Run the
+    way, except where the "Where it differs" list in
+    `${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/README.md` says otherwise. Run the
     script instead when audit-logs exits 126 or 127 (not built, or not
     executable), dies by a signal (a status above 128), or exits 4 as a stale
-    build (its stderr starts `audit-logs: stale build:`: the installed recipes
-    changed since it was built, and it writes nothing); any other result stands,
+    build (its stderr starts `audit-logs: stale build:`: a file it was built from
+    has changed, and it writes nothing); any other result stands,
     a refusal (exit 2) included. Never look for it on `PATH`, and never build it
     in the audited repository
 - **Recipe inputs and outputs.**
@@ -107,8 +108,10 @@ write-up.
     (…)`: copy each such note into `LEDGER.md`'s **Collection gaps** line and into
     `collection_gaps`. Keep an output in `incident_<n>/` under a new name, with a
     `>` at the end of the call or a recipe's own `--out` (a new `.jsonl`, `.tsv`
-    or `.txt` name directly in the run directory), which never leaves a partial
-    file; the Write and Edit tools write everything else you keep there
+    or `.txt` name directly in the run directory, of at most 128 bytes of
+    letters, digits, `.`, `_` and `-`, starting with a letter or digit), which
+    never leaves a partial file; the Write and Edit tools write everything else you
+    keep there
   - a collection the command reports as ended without its `collection gaps: N` line
     was killed, or stopped on a failed write: record as gaps each signature in its
     `signatures.jsonl` with no transaction in `transactions.jsonl`, and every

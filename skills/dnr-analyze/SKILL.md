@@ -79,7 +79,9 @@ These forms, and only these, are pre-approved for this phase:
   `$` or backtick anywhere in the line, inside quotes too: Claude Code asks about
   any command that holds one. Keep an output with `> incident_<n>/<new name>` at
   the end, or a recipe's own `--out incident_<n>/<name>.jsonl` (or `.tsv`, `.txt`:
-  a new name directly in the run directory), which never leaves a partial file.
+  a new name directly in the run directory, of at most 128 bytes of letters,
+  digits, `.`, `_` and `-`, starting with a letter or digit), which never leaves a
+  partial file.
   These forms replace the `bash …` and `python3 -I …` spellings in the references.
 - **audit-logs first.** It runs the three recipes as subcommands (`profile`,
   `frames [--instructions]`, `deltas tokens|lamports`) with the same arguments

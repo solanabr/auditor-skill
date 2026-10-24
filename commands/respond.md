@@ -136,8 +136,9 @@ directory.
    window and caps a collection would need.
 
 3. **Scope (Phase 1).** Corpus: `--logs`, copied into `incident_<n>/logs/` unopened
-   as in `/auditor:hunt` step 2, or the gated collection, which this command runs
-   as there.
+   as in `/auditor:hunt` step 2 (the analysis gets the `--logs` copies in
+   `incident_<n>/logs/`, never the export's own path), or the gated collection,
+   which this command runs as there.
    Show the human the addresses, the window the agent proposed around the lead,
    the caps and the estimated call count, get a yes, and pass exactly those
    values: the window as `--since <fromUnix> --until <toUnix>`, the caps as
@@ -148,7 +149,8 @@ directory.
    `incident_<n>/corpus*/transactions.jsonl`, counting each transaction once. Run a
    long collection in the background, or with a timeout sized from the estimated
    call count; a run stopped early still records what it had not fetched as gaps.
-   The next phase gets the corpus paths, the collector's `provider:` domain (the
+   The next phase gets the corpus paths (each `corpus*/transactions.jsonl` and the
+   `--logs` copies in `incident_<n>/logs/`), the collector's `provider:` domain (the
    host's last two DNS labels, disclosed under Rule 11b; a keyed URL is never
    written anywhere), its `collection-gaps.tsv`, and whether the run ended with its
    `collection gaps: N` line; the fork copies every row, and every `skipped N
