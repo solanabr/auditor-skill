@@ -1,0 +1,50 @@
+# Hostile argument vectors for scripts/rpc-read.sh. test-rpc-read.sh runs each one in a working directory that
+# holds the run directory incident_1 (made by rundir.sh new incident) and the symbolic link incident_2 (to
+# incident_1), with RPC_URL=https://rpc.example.test/ in the environment and a stand-in for solana on PATH.
+# One case per line: <exit status><TAB><the one stderr line><TAB><argument>[<TAB><argument>...]. Each case prints
+# nothing on stdout, runs no CLI and changes nothing in the working directory.
+64	rpc-read: refused: usage: rpc-read.sh account <address> | confirm <signature> | program-show <program_id> [--run <R>] [--cluster mainnet-beta|devnet|testnet]	account
+64	rpc-read: refused: usage: rpc-read.sh account <address> | confirm <signature> | program-show <program_id> [--run <R>] [--cluster mainnet-beta|devnet|testnet]	--help
+64	rpc-read: refused: usage: rpc-read.sh account <address> | confirm <signature> | program-show <program_id> [--run <R>] [--cluster mainnet-beta|devnet|testnet]	balance	AddrA111111111111111111111111111111111111111
+64	rpc-read: refused: usage: rpc-read.sh account <address> | confirm <signature> | program-show <program_id> [--run <R>] [--cluster mainnet-beta|devnet|testnet]	ACCOUNT	AddrA111111111111111111111111111111111111111
+64	rpc-read: refused: usage: rpc-read.sh account <address> | confirm <signature> | program-show <program_id> [--run <R>] [--cluster mainnet-beta|devnet|testnet]	send	AddrA111111111111111111111111111111111111111
+64	rpc-read: refused: usage: rpc-read.sh account <address> | confirm <signature> | program-show <program_id> [--run <R>] [--cluster mainnet-beta|devnet|testnet]	transfer	AddrA111111111111111111111111111111111111111
+64	rpc-read: refused: '-x' is not a base58 address (32-44 characters of [1-9A-HJ-NP-Za-km-z])	account	-x
+64	rpc-read: refused: '../../etc/passwd' is not a base58 address (32-44 characters of [1-9A-HJ-NP-Za-km-z])	account	../../etc/passwd
+64	rpc-read: refused: '/etc/hosts' is not a base58 address (32-44 characters of [1-9A-HJ-NP-Za-km-z])	account	/etc/hosts
+64	rpc-read: refused: '~/.config/solana/id.json' is not a base58 address (32-44 characters of [1-9A-HJ-NP-Za-km-z])	account	~/.config/solana/id.json
+64	rpc-read: refused: 'ASK' is not a base58 address (32-44 characters of [1-9A-HJ-NP-Za-km-z])	account	ASK
+64	rpc-read: refused: 'usb://ledger' is not a base58 address (32-44 characters of [1-9A-HJ-NP-Za-km-z])	account	usb://ledger
+64	rpc-read: refused: '-' is not a base58 address (32-44 characters of [1-9A-HJ-NP-Za-km-z])	account	-
+64	rpc-read: refused: 'AddrA111111111111111111111111111111111111111;id' is not a base58 address (32-44 characters of [1-9A-HJ-NP-Za-km-z])	account	AddrA111111111111111111111111111111111111111;id
+64	rpc-read: refused: '0OIlAddrA111111111111111111111111111111111111111' is not a base58 address (32-44 characters of [1-9A-HJ-NP-Za-km-z])	account	0OIlAddrA111111111111111111111111111111111111111
+64	rpc-read: refused: 'short' is not a base58 address (32-44 characters of [1-9A-HJ-NP-Za-km-z])	account	short
+64	rpc-read: refused: 'ProgTest1111111111111111111111111111111111' does not decode to 32 bytes	account	ProgTest1111111111111111111111111111111111
+64	rpc-read: refused: '-v' is not a base58 signature (32-88 characters of [1-9A-HJ-NP-Za-km-z])	confirm	-v
+64	rpc-read: refused: 'AddrA111111111111111111111111111111111111111' does not decode to 64 bytes	confirm	AddrA111111111111111111111111111111111111111
+64	rpc-read: refused: '5h6xBEauJ3PK6SWCZ1PGjBvj8vDdWG3KpwATGy1ARAXFSDwt8GFXM7W5Ncn16wmqokgpiKRLuS83KUxyZyv2sUYv' is not a base58 address (32-44 characters of [1-9A-HJ-NP-Za-km-z])	program-show	5h6xBEauJ3PK6SWCZ1PGjBvj8vDdWG3KpwATGy1ARAXFSDwt8GFXM7W5Ncn16wmqokgpiKRLuS83KUxyZyv2sUYv
+64	rpc-read: refused: '--program-id' is not a base58 address (32-44 characters of [1-9A-HJ-NP-Za-km-z])	program-show	--program-id
+64	rpc-read: refused: unknown argument: --url	account	AddrA111111111111111111111111111111111111111	--url
+64	rpc-read: refused: unknown argument: -u	account	AddrA111111111111111111111111111111111111111	-u
+64	rpc-read: refused: --run needs a value	account	AddrA111111111111111111111111111111111111111	--run
+64	rpc-read: refused: --cluster needs a value	account	AddrA111111111111111111111111111111111111111	--cluster
+64	rpc-read: refused: unknown argument: --keypair	account	AddrA111111111111111111111111111111111111111	--keypair
+64	rpc-read: refused: unknown argument: --output-file	account	AddrA111111111111111111111111111111111111111	--output-file
+64	rpc-read: refused: unknown argument: --url	account	AddrA111111111111111111111111111111111111111	--url	https://evil.example/
+64	rpc-read: refused: unknown argument: -u	account	AddrA111111111111111111111111111111111111111	-u	mainnet-beta
+64	rpc-read: refused: --cluster takes mainnet-beta, devnet or testnet, not localhost	account	AddrA111111111111111111111111111111111111111	--cluster	localhost
+64	rpc-read: refused: --cluster takes mainnet-beta, devnet or testnet, not https://evil.example/	account	AddrA111111111111111111111111111111111111111	--cluster	https://evil.example/
+64	rpc-read: refused: --run must be a run directory named audit_<n> or incident_<n> in the working directory: /tmp/incident_1	account	AddrA111111111111111111111111111111111111111	--run	/tmp/incident_1
+64	rpc-read: refused: --run must be a run directory named audit_<n> or incident_<n> in the working directory: ../incident_1	account	AddrA111111111111111111111111111111111111111	--run	../incident_1
+64	rpc-read: refused: --run must be a run directory named audit_<n> or incident_<n> in the working directory: incident_1/rpc	account	AddrA111111111111111111111111111111111111111	--run	incident_1/rpc
+64	rpc-read: refused: --run must be a run directory named audit_<n> or incident_<n> in the working directory: incident_1/	account	AddrA111111111111111111111111111111111111111	--run	incident_1/
+64	rpc-read: refused: --run is a symbolic link: incident_2	account	AddrA111111111111111111111111111111111111111	--run	incident_2
+64	rpc-read: refused: --run is not an existing directory: incident_3	account	AddrA111111111111111111111111111111111111111	--run	incident_3
+64	rpc-read: refused: --run must be a run directory named audit_<n> or incident_<n> in the working directory: audit_x	account	AddrA111111111111111111111111111111111111111	--run	audit_x
+64	rpc-read: refused: --run must be a run directory named audit_<n> or incident_<n> in the working directory: Incident_1	account	AddrA111111111111111111111111111111111111111	--run	Incident_1
+64	rpc-read: refused: unknown argument: --output-file	account	AddrA111111111111111111111111111111111111111	--output-file	/tmp/x
+64	rpc-read: refused: unknown argument: --keypair	account	AddrA111111111111111111111111111111111111111	--keypair	/tmp/k.json
+64	rpc-read: refused: --run is given twice	account	AddrA111111111111111111111111111111111111111	--run	incident_1	--run	incident_1
+64	rpc-read: refused: --cluster is given twice	account	AddrA111111111111111111111111111111111111111	--cluster	devnet	--cluster	testnet
+64	rpc-read: refused: --run must be a run directory named audit_<n> or incident_<n> in the working directory: /tmp/incident_1	confirm	5h6xBEauJ3PK6SWCZ1PGjBvj8vDdWG3KpwATGy1ARAXFSDwt8GFXM7W5Ncn16wmqokgpiKRLuS83KUxyZyv2sUYv	--run	/tmp/incident_1
+64	rpc-read: refused: --run must be a run directory named audit_<n> or incident_<n> in the working directory: ../incident_1	program-show	ProgTest11111111111111111111111111111111111	--run	../incident_1
