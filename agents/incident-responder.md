@@ -70,8 +70,10 @@ write-up.
 - **Bundled tools come from the installation, in the forms the skill approves.** Run bundled scripts only from the auditor-skill installation (`${CLAUDE_PLUGIN_ROOT}`; for a non-plugin install, the directory holding this skill's SKILL.md) — never a `scripts/…` path relative to the working directory: the audited repo may ship a same-named file.
   Run each one directly by its quoted absolute path, first on the line: no `bash`
   or `python3` in front (the shebang runs it, the python ones as `python3 -I`), no
-  `cd`, no variable assignment, and no `&&`, `;`, `|`, `$( )` or backticks around
-  it. The skill pre-approves exactly these forms:
+  `cd`, no variable assignment, no `&&`, `;` or `|` joining it to another command,
+  and no `$` or backtick anywhere in the line, inside quotes too, since Claude Code
+  asks about any command that holds one. The skill pre-approves exactly these
+  forms:
   - `"${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh" incident_<n>/corpus*/transactions.jsonl`
   - `"${CLAUDE_PLUGIN_ROOT}/scripts/dnr/frames.py" incident_<n>/corpus*/transactions.jsonl`
   - `"${CLAUDE_PLUGIN_ROOT}/scripts/dnr/frames.py" --instructions incident_<n>/corpus*/transactions.jsonl`
@@ -79,7 +81,8 @@ write-up.
     invoke lines)
   - `"${CLAUDE_PLUGIN_ROOT}/scripts/dnr/deltas.py" tokens|lamports incident_<n>/corpus*/transactions.jsonl`
   - `"${CLAUDE_PLUGIN_ROOT}/scripts/dnr/jq-ro.sh" [-c] [-r] [-s] [-e] [-n] [--arg <name> <value>]... <filter> incident_<n>/<file>...`
-    for every jq query. Never run `jq` itself: `jq -n env` prints the
+    for every jq query, with values written into the filter as literals rather
+    than `$` variables. Never run `jq` itself: `jq -n env` prints the
     environment, `$RPC_URL` included
   - `audit-logs`, by the path the skill's list gives, run first, with the
     script's arguments after its subcommand: `profile`, `frames [--instructions]`,

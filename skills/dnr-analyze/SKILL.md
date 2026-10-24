@@ -72,10 +72,12 @@ These forms, and only these, are pre-approved for this phase:
 
 - **As written.** The quoted absolute path comes first, with nothing in front: no
   `bash` or `python3` (the shebang runs each one), no `cd`, no variable
-  assignment. One tool per call, with no `&&`, `;`, `|`, `$( )` or backticks.
-  Keep an output with `> incident_<n>/<new name>` at the end, or a recipe's own
-  `--out incident_<n>/<new name>`, which never leaves a partial file. These forms
-  replace the `bash …` and `python3 -I …` spellings in the references.
+  assignment. One tool per call, with no `&&`, `;` or `|` between commands, and no
+  `$` or backtick anywhere in the line, inside quotes too: Claude Code asks about
+  any command that holds one. Keep an output with `> incident_<n>/<new name>` at
+  the end, or a recipe's own `--out incident_<n>/<new name>`, which never leaves a
+  partial file. These forms replace the `bash …` and `python3 -I …` spellings in
+  the references.
 - **audit-logs first.** It runs the three recipes as subcommands (`profile`,
   `frames [--instructions]`, `deltas tokens|lamports`) with the same arguments
   after the subcommand, and prints what they print. Run the script with those
@@ -85,9 +87,11 @@ These forms, and only these, are pre-approved for this phase:
   refusal (exit 2) means the scripts would refuse the same input. Each ledger row
   names the tool that produced it.
 - **jq only through `jq-ro.sh`.** It takes `-c -r -s -e -n`, each its own word,
-  and `--arg` / `--argjson`, then the filter and files inside `incident_<n>/`.
-  Never sum u64 amounts in it (doubles; use `deltas.py`), and never flatten log
-  arrays with it (use `frames.py`).
+  and `--arg` / `--argjson`, then the filter and files inside `incident_<n>/`. A
+  jq variable (`$name`, `$ENV`) puts a `$` in the line, so write values into the
+  filter as literals instead (`select(.slot == 301)`). Never sum u64 amounts in it
+  (doubles; use `deltas.py`), and never flatten log arrays with it (use
+  `frames.py`).
 - **Anything else** prompts the human or is denied: `jq` itself, a bare
   `python3`, `solana`, `curl`, a compound command. A read outside these forms that
   the work needs, such as the keyless `getAccountInfo` recipe in the log-sources
