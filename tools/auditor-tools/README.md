@@ -39,12 +39,12 @@ crates.io index for the workspace lockfile.
 
 A plugin update installs auditor-skill into a new versioned directory, so the
 binaries have to be built again after each update. Until `audit-logs` is built
-there, `/auditor:hunt`, `/auditor:respond` and `incident-responder` run the scripts
-in `scripts/dnr/`. An update in place, such as a `git pull` of a clone, leaves the
-old `audit-logs` in `target/`, so build it again after any update: the old binary
-refuses to run (exit 4, below) only when the update changed a file it was built
-from, that is one of the three recipes, `scripts/lib/confine.sh`, or its own
-`Cargo.toml` or `src/`.
+there, the `auditor:dnr-analyze` fork, where `/auditor:hunt` and `/auditor:respond`
+run `incident-responder`, runs the scripts in `scripts/dnr/` in its place. An update
+in place, such as a `git pull` of a clone, leaves the old `audit-logs` in `target/`,
+so build it again after any update: the old binary refuses to run (exit 4, below)
+only when the update changed a file it was built from, that is one of the three
+recipes, `scripts/lib/confine.sh`, or its own `Cargo.toml` or `src/`.
 
 ## `audit-scan`
 
@@ -253,9 +253,10 @@ fixture in `scripts/dnr/fixtures/`, on the crafted input-contract cases of
 `test-dnr.sh`, and on a generated corpus of 6,000 transactions. The scripts stay the
 reference implementation.
 
-The commands run it only by its absolute path in the installation, and only when
-that file exists and is executable:
-`"<auditor-skill root>/tools/auditor-tools/target/release/audit-logs"`.
+The `auditor:dnr-analyze` fork runs it by its absolute path in the installation,
+`"<auditor-skill root>/tools/auditor-tools/target/release/audit-logs"`, and runs the
+script in its place when it exits 126 or 127 (not built, or not runnable), or 4 (a
+stale build), or is stopped by a signal.
 
 ### A stale build
 
@@ -333,6 +334,15 @@ or a failed write · 2 usage, or a refused path · 4 a stale build.
   (`Broken pipe`), or 0 when its output was all written before, where `frames.py`
   and `deltas.py` exit 120 and `profile.sh` 141. Read the exit status with stdout
   on a file or a pipe read to the end, or use `--out`.
+- With stdin a directory, Python stops as it starts, so the three scripts exit 1
+  even when their inputs are named; `audit-logs` reads stdin only when no corpus is
+  named, and then exits 1 too.
+- `profile.sh` runs `jq` and `python3` and keeps its report in a private temp
+  directory, so it alone refuses to run (exit 2) when `TMPDIR` lies inside the
+  working directory, when no `PATH` entry is left outside it, or when the working
+  directory's path holds a control character, and stops when `TMPDIR` does not
+  exist (exit 1) or `jq` or `python3` is missing (exit 3). `audit-logs` needs none
+  of these.
 
 ## How the auditor agents consume this
 
@@ -343,9 +353,10 @@ gracefully — it works without them; they just save context and add memory.
   feed the JSON to the auditor as the initial map of instructions, account
   constraints, PDAs, arithmetic, panics, and CPIs. The model then reasons about
   reachability and severity instead of grepping the tree.
-- **`audit-logs` profiles an incident corpus.** `/auditor:hunt`, `/auditor:respond`
-  and `incident-responder` run it on `incident_<n>/corpus*/transactions.jsonl` when
-  it is built, and the scripts in `scripts/dnr/` when it is not; both give the same
+- **`audit-logs` profiles an incident corpus.** In the `auditor:dnr-analyze` fork,
+  where `/auditor:hunt` and `/auditor:respond` run `incident-responder`, it runs first
+  on `incident_<n>/corpus*/transactions.jsonl`, and the scripts in `scripts/dnr/` run
+  in its place when it is not built or reports a stale build; both give the same
   figures.
 - **`audit-mem` warm-starts re-audits.** On a repeat audit of the same program,
   `warm --program-id` returns the protocol profile, recorded invariants, and any

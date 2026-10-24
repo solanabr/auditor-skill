@@ -122,9 +122,11 @@ call count with the human first):
 ## Recipes (bundled `scripts/dnr/`)
 
 Run them from the installation, never as a `scripts/…` path relative to the
-working directory, and run the three analysis recipes directly by their quoted
-path, from the working directory: their first lines run `profile.sh` under
-`/bin/bash` and the python ones as `python3 -I` (README rule 8).
+working directory: run the three analysis recipes directly by their quoted
+absolute path, from the working directory, with nothing in front, since their
+first lines run `profile.sh` under `/bin/bash` and the python ones as `python3 -I`
+(README rule 8). That is the form the `auditor:dnr-analyze` skill pre-approves;
+`bash` or `python3` in front, or a `$` anywhere in the line, makes Claude Code ask.
 `<auditor-skill root>` below is the absolute installation root the invoking command
 gave you (`OUTPUT-RULES.md` Rule 11e).
 
@@ -156,16 +158,17 @@ networked ones against fake `curl` / `solana` binaries, with no network.
 "<auditor-skill root>/scripts/dnr/deltas.py" lamports incident_<n>/corpus*/transactions.jsonl
 ```
 
-When `audit-logs` is built (an executable file at
-`<auditor-skill root>/tools/auditor-tools/target/release/audit-logs`), run it by
-that path in place of the three analysis recipes, with the same arguments after its
-subcommand: `profile`, `frames [--instructions]`, `deltas tokens|lamports`. It prints
-the same output and notes, reads and refuses the same paths and exits the same
-way, but for the differences `tools/auditor-tools/README.md` lists;
-`scripts/tests/test-audit-logs.sh` checks it against the scripts. Run the scripts
-instead when it exits 4 (`audit-logs: stale build: …`: a file it was built from has
-changed since), cannot run, or dies on a signal. Never look for it on `PATH`, and
-never build it in the audited repository.
+Run `audit-logs` first, by its path in the installation,
+`<auditor-skill root>/tools/auditor-tools/target/release/audit-logs`, in place of
+the three analysis recipes, with the same arguments after its subcommand:
+`profile`, `frames [--instructions]`, `deltas tokens|lamports`. It prints the same
+output and notes, reads and refuses the same paths and exits the same way, but for
+the differences `tools/auditor-tools/README.md` lists;
+`scripts/tests/test-audit-logs.sh` checks it against the scripts. Run the script
+instead when it exits 126 or 127 (not built, or not runnable), 4
+(`audit-logs: stale build: …`: a file it was built from has changed since), or dies
+on a signal. Never look for it on `PATH`, and never build it in the audited
+repository.
 
 The three analysis recipes share one input contract (`scripts/dnr/README.md`).
 They read only regular files with one name in `incident_<n>/`, by paths relative
@@ -177,9 +180,9 @@ skipped and counted, never echoed, and each recipe prints a
 input on stderr. Copy every such note into the ledger's **Collection
 gaps** line: those transactions are missing from every figure. Keep a recipe's
 output with `--out <file>`, a new `.jsonl`, `.tsv` or `.txt` name directly in the
-run directory, as above, never with a shell redirection: the file appears under its
-name only once the run is complete, and since an output never replaces a file, a
-re-run names a new one (`frames-2.jsonl`).
+run directory, as above, or with a `>` into a new name in `incident_<n>/`: with
+`--out` the file appears under its name only once the run is complete, and since an
+output never replaces a file, a re-run names a new one (`frames-2.jsonl`).
 
 Program bytes and `solana program show` come only from `snapshot-program.sh`, and
 signature history and transactions only from `collect.sh`. Any other read — an
@@ -195,9 +198,11 @@ Never pass `--url`.
 set -o pipefail; d="$(mktemp -d "${TMPDIR:-/tmp}/dnr_cli.XXXXXX")" && printf 'json_rpc_url: "%s"\nwebsocket_url: ""\nkeypair_path: "%s/none.json"\n' "$RPC_URL" "$d" > "$d/cli.yml" && solana -C "$d/cli.yml" config get keypair | grep -F "$d/none.json" > /dev/null && solana -C "$d/cli.yml" account <address> --output json 2>&1 | bash "<auditor-skill root>/scripts/dnr/redact.sh"; s=$?; rm -rf "$d"; (exit $s)
 ```
 
-Aggregate `deltas.py` output further in Python ints (`python3 -I`). `awk` and
-`jq` are fine for grouping and counting keys, but **never for summing amounts**:
-both store numbers as doubles, so a u64 total above 2^53 silently loses precision.
+Aggregate `deltas.py` output further in Python ints (`python3 -I`, which asks for
+approval). `jq-ro.sh` and `awk` are fine for grouping and counting keys, but
+**never for summing amounts**: both store numbers as doubles, so a u64 total above
+2^53 silently loses precision. Write a `jq-ro.sh` filter's values as literals: a
+`$` variable makes Claude Code ask.
 For a corpus too large for these passes, the same queries become DuckDB SQL over
 the JSONL; DuckDB is optional.
 

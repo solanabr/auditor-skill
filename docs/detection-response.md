@@ -5,9 +5,10 @@
 Everything else in auditor-skill is pre-deployment — find the flaw before an
 attacker does. This track is for the morning after: a protocol may already have
 been attacked, and the evidence is in the chain's transaction history. It ships
-two commands, `/auditor:hunt` and `/auditor:respond`, and one agent,
-`incident-responder`: the commands keep you in the loop (arguments, approvals, the
-collector, results), and the agent does all reading and analysis of the corpus.
+two commands, `/auditor:hunt` and `/auditor:respond`, one agent,
+`incident-responder`, and one skill, `auditor:dnr-analyze`: the commands keep you in
+the loop (arguments, approvals, the collector, results), and the agent does all
+reading and analysis of the corpus, one phase at a time, as the skill's fork.
 Back to the [docs index](README.md).
 
 The normative contract — the hard rules, the verdict ladder, the `incident_<n>/`
@@ -36,9 +37,12 @@ Telegram bot (`@seal_911_bot`). These commands are the after-the-fact workup.
 ## Inputs
 
 - **Your own corpus** (preferred): point `--logs` at a directory of
-  `getTransaction` JSONL, a Geyser/indexer export, or service logs. A line the
-  recipes cannot read is skipped and counted as a collection gap, never guessed
-  at: a non-integer amount, for example, is never rounded.
+  `getTransaction` JSONL, a Geyser/indexer export, or service logs. The command
+  copies it into `incident_<n>/logs/` first, since the analysis tools read only
+  files inside the run directory; it stops at an export that is or holds a
+  symbolic link, and the copy asks for your approval. A line the recipes cannot
+  read is skipped and counted as a collection gap, never guessed at: a
+  non-integer amount, for example, is never rounded.
 - **Collected from RPC** (gated): with no `--logs`, the command shows you the
   addresses, window, caps and estimated call count and asks before the one shipped
   collector runs. Set `RPC_URL` in the environment (never on the command line);
@@ -95,17 +99,32 @@ already captured.
   to or simulates against a public cluster.
 - **MCP servers stay callable in your session.** `/auditor:hunt` and
   `/auditor:respond` hand all reading and analysis of the incident corpus to the
-  `incident-responder` agent, whose tool list has no MCP tools, so it cannot call
-  a signing or transfer tool. The commands themselves run in your session, where
+  `incident-responder` agent, as the fork of the `auditor:dnr-analyze` skill; its
+  tool list has no MCP tools, so it cannot call a signing or transfer tool. The
+  commands themselves run in your session, where
   every connected MCP server stays callable. They call no MCP tool. Before a live
   incident, disconnect or deny write-capable MCP servers (for example, tools that
   transfer or stake).
-- **Not a sandbox.** The commands' `allowed-tools` pre-approve only reading, `Task`
-  and edits under `incident_*/`; they are intent, not confinement. No bundled script
-  is pre-approved, and neither is `jq` (it can print the environment), so each
-  `scripts/dnr/` run and each `jq` query asks for your approval. Real confinement is an isolated run mode
+- **What runs without asking.** The commands pre-approve only reading, `Task`,
+  edits under `incident_*/`, the checks `preflight.sh` and `rundir.sh`, and the
+  `auditor:dnr-analyze` skill. Inside the skill's
+  fork, the offline analysis tools run without a prompt: `profile.sh`, `frames.py`,
+  `deltas.py`, `jq-ro.sh` (jq over run-directory files, with an empty environment)
+  and `audit-logs`, each run directly by its path in the installation and reading
+  only files inside a run directory. The collector, the program snapshot, `jq`
+  itself and anything that executes code still ask. Pre-approval is not a sandbox:
+  real confinement is an isolated run mode
   ([`OUTPUT-RULES.md` Rule 11](../OUTPUT-RULES.md#rule-11-operating-safety)); the
   RPC provider that received your addresses is disclosed under Rule 11b.
+- **One approval for the skill.** A command's pre-approvals last for the turn that
+  started it. When an analysis phase starts after you answer a question (a yes to
+  a collection, say), Manual mode asks once to run `auditor:dnr-analyze`. To skip
+  that, add `"Skill(auditor:dnr-analyze *)"` to `permissions.allow` in your user
+  settings (`~/.claude/settings.json`). Answering "don't ask again" at the prompt
+  saves the rule in the working directory's `.claude/settings.local.json`
+  instead, and `preflight.sh` refuses that file on the next run, since a
+  `permissions` key is not on its list. The fork keeps its own pre-approvals while
+  it runs, after your messages too.
 - **Recipes:** [`scripts/dnr/`](../scripts/dnr/) — profiling, log-frame attribution,
   and exact balance deltas, each checked against adversarial fixtures by
   `scripts/tests/test-dnr.sh`. They share one input contract: a line they cannot
@@ -113,11 +132,12 @@ already captured.
   `incident_<n>/`, by paths relative to the working directory with no symbolic
   link on the way, refusing any other before they read anything. When
   [`audit-logs`](power-tools.md#audit-logs) is built in the installation, the
-  commands run it in place of the three analysis scripts: the same figures from
-  one offline binary, checked against the scripts by
-  `scripts/tests/test-audit-logs.sh`. Build it again after every update. Without
-  it, or when it reports a stale build, they run the scripts.
-- **Scripts run from the installation, never from the audited repo.** The commands
-  invoke them by absolute path, `"<auditor-skill root>/scripts/dnr/…"`, and run
-  python as `python3 -I`, so a same-named script, or a `json.py` the repo ships in
-  the working directory or on `PYTHONPATH`, never runs in their place.
+  fork runs it first: the same figures from one offline binary, checked against
+  the scripts by `scripts/tests/test-audit-logs.sh`. Build it again after every
+  update. Without it, or when it reports a stale build, the fork runs the
+  scripts.
+- **Scripts run from the installation, never from the audited repo.** The fork
+  runs them by absolute path, `"<auditor-skill root>/scripts/dnr/…"`, with nothing
+  in front, and the python ones' shebang is `python3 -I`, so a same-named script,
+  or a `json.py` the repo ships in the working directory or on `PYTHONPATH`, never
+  runs in their place.

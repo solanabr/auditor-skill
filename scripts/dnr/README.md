@@ -173,12 +173,12 @@ because `python3 -I` keeps a sibling module off `sys.path`;
   locale's collation ignores stay two lines, and ties fall in the same order under
   every locale.
 - **Saved output.** To keep an output, pass `--out <file>`, a new `.jsonl`,
-  `.tsv` or `.txt` name directly in a run directory (`incident_<n>/<name>`),
-  never a shell redirection into `incident_<n>/`. The recipe writes a temporary
-  file beside `<file>` and gives it that name only when the run completes, so a
-  run that is cut short never leaves a partial output under the final name, and
-  one stopped by TERM, INT or HUP removes its temporary file (a signal the caller
-  ignores stays ignored). An output never replaces a
+  `.tsv` or `.txt` name directly in a run directory (`incident_<n>/<name>`), or
+  send stdout with `>` to a new name there. With `--out`, the recipe writes a
+  temporary file beside `<file>` and gives it that name only when the run
+  completes, so a run that is cut short never leaves a partial output under the
+  final name, and one stopped by TERM, INT or HUP removes its temporary file (a
+  signal the caller ignores stays ignored). An output never replaces a
   file: an `--out` that already exists (an input corpus among them) is refused
   (exit 2), and so is one that is a symbolic link, in a subdirectory, in a run
   directory that is a link or has no `.gitignore` of `*`, outside every run
@@ -197,7 +197,9 @@ because `python3 -I` keeps a sibling module off `sys.path`;
   `scripts/lib/confine.sh`, which sets `LC_ALL=C` and `umask 077` and keeps only
   `PATH` entries outside the working directory; its private temp directory must
   lie outside it too, and it runs `jq` with `HOME` set to a directory that does
-  not exist, so no `~/.jq` is read.
+  not exist, so no `~/.jq` is read. `frames.py` and `deltas.py` take `python3`
+  from `PATH` as it is (their `#!/usr/bin/env -S python3 -I` line): keep `PATH`
+  free of empty, relative and working-directory entries.
 - **audit-logs.** `tools/auditor-tools/audit-logs` is the same three recipes as
   one binary, and `scripts/tests/test-audit-logs.sh` fails when its output,
   notes, exit status or refusals differ from these scripts'. A change to what a
@@ -239,10 +241,12 @@ account's current value — at `finalized`, not in log text. See
 
 ## Not a sandbox
 
-These scripts run on the auditor's machine and read whatever corpus they are
-pointed at; `collect.sh` makes outbound RPC calls. None of them is pre-approved by
-the commands' `allowed-tools`, so each run asks for approval; those lists, and these
-recipes, shape intent and are not a security boundary (see
+These scripts run on the auditor's machine; `collect.sh` makes outbound RPC calls.
+The `auditor:dnr-analyze` skill pre-approves `profile.sh`, `frames.py`, `deltas.py`
+and `jq-ro.sh` inside its fork, each run directly by its path and reading only
+files inside a run directory; `collect.sh`, `snapshot-program.sh` and `redact.sh`
+still ask for approval. Those lists, and these recipes, shape intent and are not a
+security boundary (see
 `references/detection-response/README.md` § "allowed-tools is not a sandbox"). Confinement, when you need it, is an isolated
 run mode (`OUTPUT-RULES.md` Rule 11a).
 
