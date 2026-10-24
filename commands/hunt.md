@@ -43,8 +43,9 @@ export, or recipe output — only the agent's report and the paths it names.
 > response — page on-call and SEAL 911 first.
 
 Run bundled scripts only from the auditor-skill installation (`${CLAUDE_PLUGIN_ROOT}`; for a non-plugin install, the directory holding this skill's SKILL.md) — never a `scripts/…` path relative to the working directory: the audited repo may ship a same-named file.
-Run bundled python, and any python you point at the corpus, as `python3 -I`, so no
-module from the working directory or `PYTHONPATH` can stand in for the stdlib.
+Run any python you point at the corpus as `python3 -I`, so no module from the
+working directory or `PYTHONPATH` can stand in for the stdlib; the bundled recipes
+run directly by their path, in the fork, where their shebang does the same.
 Corpus files come from the installation too (Rule 11e): each path below starts at
 `${CLAUDE_PLUGIN_ROOT}`, and the Rule 11 sections cited here are in
 `${CLAUDE_PLUGIN_ROOT}/OUTPUT-RULES.md`. Never open a same-named file in the working
@@ -81,10 +82,11 @@ directory.
    The analysis tools read only files inside `incident_<n>/`, so copy it into
    `incident_<n>/logs/` without opening it: check that `find <path> -type l` prints
    nothing (the tools refuse a symbolic link, and a copied link makes them refuse
-   the whole run directory), then `mkdir incident_<n>/logs` and
-   `cp -R <path> incident_<n>/logs/`. A path outside the working directory asks
-   for approval, by design; if the copy is denied, stop and tell the human, since
-   nothing can read the export where it is. Pass the copied paths to the analysis.
+   the whole run directory), then `mkdir incident_<n>/logs` when it is missing and
+   `cp -R <path> incident_<n>/logs/`. The copy asks for approval, by design for a
+   path outside the working directory; if it is denied, stop and tell the human,
+   since nothing can read the export where it is. Pass the copied paths to the
+   analysis.
    Otherwise collect it — **gated** (README rule 3):
    - Resolve seed addresses: the arguments, else `declare_id!` / `Anchor.toml`, plus
      vault / authority / mint / treasury from `audit_<n>/threat-model.md` or

@@ -44,8 +44,9 @@ export, or recipe output — only the agent's report and the paths it names.
 > included) and anything that executes code.
 
 Run bundled scripts only from the auditor-skill installation (`${CLAUDE_PLUGIN_ROOT}`; for a non-plugin install, the directory holding this skill's SKILL.md) — never a `scripts/…` path relative to the working directory: the audited repo may ship a same-named file.
-Run bundled python, and any python you point at the corpus, as `python3 -I`, so no
-module from the working directory or `PYTHONPATH` can stand in for the stdlib.
+Run any python you point at the corpus as `python3 -I`, so no module from the
+working directory or `PYTHONPATH` can stand in for the stdlib; the bundled recipes
+run directly by their path, in the fork, where their shebang does the same.
 Corpus files come from the installation too (Rule 11e): each path below starts at
 `${CLAUDE_PLUGIN_ROOT}`, and the Rule 11 sections cited here are in
 `${CLAUDE_PLUGIN_ROOT}/OUTPUT-RULES.md`. Never open a same-named file in the working
