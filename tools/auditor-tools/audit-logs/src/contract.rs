@@ -6,7 +6,7 @@
 use std::collections::HashSet;
 use std::io::{self, BufRead, BufReader};
 
-use crate::confine::Checked;
+use crate::confine::{os_message, Checked};
 use crate::json::{parse_line, too_deep, Value};
 
 /// The longest line read as a transaction, in bytes, its LF left out. A longer one
@@ -361,7 +361,15 @@ where
     for input in inputs {
         let mut reader: Box<dyn BufRead> = match &input.source {
             Source::Stdin => Box::new(io::stdin().lock()),
-            Source::File(checked) => Box::new(BufReader::with_capacity(1 << 16, checked.open()?)),
+            Source::File(checked) => {
+                let file = checked.open().map_err(|e| {
+                    io::Error::new(
+                        e.kind(),
+                        format!("cannot read {}: {}", input.label, os_message(&e)),
+                    )
+                })?;
+                Box::new(BufReader::with_capacity(1 << 16, file))
+            }
         };
         let mut bad: Option<usize> = None;
         let mut lineno: u64 = 0;

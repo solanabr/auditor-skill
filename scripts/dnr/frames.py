@@ -333,6 +333,9 @@ _RUN_DIR = re.compile(rb"incident_[0-9]{1,6}")
 _OUT_NAME = re.compile(rb"[A-Za-z0-9][A-Za-z0-9._-]*[.](?:jsonl|tsv|txt)")
 # The run directory of each --out path that unwritable() passed, as lstat found it.
 _CHECKED = {}
+# The device and inode of each input _confined() passed, as lstat found it: opened()
+# reads only that file.
+_INPUTS = {}
 
 
 def _parts(path, label):
@@ -416,13 +419,15 @@ def _confined(path, label):
         return 2, "refused: %s has more than one name (a hard link)" % label
     if not _inside(cur):
         return 2, "refused: %s resolves outside the working directory" % label
+    _INPUTS[path] = (st.st_dev, st.st_ino)
     return None
 
 
 def opened(path):
     """One named input, opened for reading through each directory on its way from the
-    working directory, none of them followed if it is a symbolic link, and only a
-    regular file with one name (a FIFO or a device is not opened for a blocking read)."""
+    working directory, none of them followed if it is a symbolic link, and only the
+    regular file with one name that _confined() checked (a FIFO or a device is not
+    opened for a blocking read)."""
     raw = os.fsencode(path)
     parts = (raw[2:] if raw.startswith(b"./") else raw).split(b"/")
     fd = os.open(".", os.O_RDONLY | os.O_DIRECTORY)
@@ -438,6 +443,8 @@ def opened(path):
         st = os.fstat(f)
         if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
             raise OSError(errno.EINVAL, "not a regular file with one name")
+        if _INPUTS.get(path) != (st.st_dev, st.st_ino):
+            raise OSError(errno.EINVAL, "it changed after it was checked")
         return os.fdopen(f, "rb")
     except BaseException:
         os.close(f)
@@ -733,11 +740,18 @@ def records(paths, stats):
     """Yield (line, tx) for each well-formed line of the named inputs, which unusable()
     has checked (stdin when none is named), once per signature. stats["dupes"] counts
     the later copies skipped, and stats["bad"] gets [input, count, first line] for each
-    input that had malformed lines."""
+    input that had malformed lines. An input that cannot be opened again raises an
+    OSError whose strerror names it."""
     seen = set()
     for n, path in enumerate(paths or ["-"], 1):
         label = "stdin" if path == "-" else "input %d (%s)" % (n, shown(path))
-        fh = sys.stdin.buffer if path == "-" else opened(path)
+        if path == "-":
+            fh = sys.stdin.buffer
+        else:
+            try:
+                fh = opened(path)
+            except OSError as e:
+                raise OSError(e.errno, "cannot read %s: %s" % (label, shown(e.strerror or e))) from None
         bad = None
         try:
             for i, raw in enumerate(_lines(fh), 1):
@@ -802,13 +816,17 @@ def main(argv: list[str]) -> int:
     stats = {"dupes": 0, "bad": []}
     out = None
     try:
-        out = Output(out_path)
+        try:
+            out = Output(out_path)
+        except OSError as e:
+            print("frames.py: cannot write --out: " + (e.strerror or shown(e)), file=sys.stderr)
+            return 1
         for _line, tx in records(argv, stats):
             for row in rows(tx):
                 out.write(_json_line(row))
         out.done()
     except OSError as e:
-        print("frames.py: " + shown(e), file=sys.stderr)
+        print("frames.py: " + (e.strerror or shown(e)), file=sys.stderr)
         return 1
     finally:
         if out is not None:

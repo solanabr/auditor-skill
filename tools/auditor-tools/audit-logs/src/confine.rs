@@ -246,7 +246,7 @@ impl Checked {
             return Err(invalid("not a regular file with one name"));
         }
         if now.dev() != self.md.dev() || now.ino() != self.md.ino() {
-            return Err(invalid("changed while it was checked"));
+            return Err(invalid("it changed after it was checked"));
         }
         Ok(file)
     }

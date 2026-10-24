@@ -15,7 +15,7 @@
 #      top-20 cut, jq's number forms, odd indices and stack heights, floats Python rounds;
 #   4. a generated corpus of 6,000 transactions in two files, well past the pipe buffer;
 #   5. stdin, --out, and the exit statuses for a missing, unreadable, linked or
-#      non-regular input or --out.
+#      non-regular input or --out, and for an input replaced once checked.
 # Then confinement: every case in fixtures/audit-logs/hostile-args.txt exits non-zero,
 # changes no file, leaves no temporary file and prints no canary text; an installation
 # inside the working directory, or under a path a quoted rule cannot match, is refused;
@@ -719,6 +719,42 @@ wait "$pid"
 code=$?
 eq "SIGTERM: exit 143, nothing under the --out name, no temporary file left" \
   "$code|$([[ -e "$WT/incident_1/held.txt" ]] && echo written)|$(partial && echo left)" "143||"
+
+# An input replaced by another file once every input has been checked: the run is
+# held writing what input 1 gives (the pipe is not read until input 2 has been
+# replaced), and then reads only the file it checked: exit 1 and one line naming
+# input 2, from audit-logs and from each script alike.
+python3 -I - "$WT/incident_1/many.jsonl" <<'PY'
+import json, sys
+logs = ["Program Prog1111111111111111111111111111111111111 invoke [1]"] + ["Program log: line %d" % i for i in range(8)] \
+    + ["Program Prog1111111111111111111111111111111111111 success"]
+with open(sys.argv[1], "w") as f:
+    for n in range(4000):
+        f.write(json.dumps({"meta": {"err": None, "fee": 5000, "preBalances": [10000] + [5] * 19,
+                                     "postBalances": [5000] + [10] * 19, "logMessages": logs},
+                            "transaction": {"signatures": ["SigMany%d" % n], "message": {
+                                "accountKeys": ["Payer%d" % n] + ["Acct%d.%d" % (n, k) for k in range(19)],
+                                "instructions": []}}}) + "\n")
+PY
+swapped() { # swapped script|binary <recipe>: "status|stderr less the program name"
+  rm -f "$T/swap.started" "$T/swap.release" "$T/swap.code"
+  cp "$FIX/clean-mixed.jsonl" "$WT/incident_1/second.jsonl"
+  { "$1" "$2" incident_1/many.jsonl incident_1/second.jsonl 2> "$T/swap.err"; echo "$?" > "$T/swap.code"; } \
+    | { dd bs=1 count=1 > /dev/null 2>&1; touch "$T/swap.started"
+        n=0; while [[ ! -e "$T/swap.release" && "$n" -lt 400 ]]; do sleep 0.05; n=$((n + 1)); done; cat > /dev/null; } &
+  local pid=$! n=0
+  while [[ ! -e "$T/swap.started" && "$n" -lt 400 ]]; do sleep 0.05; n=$((n + 1)); done
+  mv "$WT/incident_1/second.jsonl" "$WT/incident_1/second.old" && cp "$FIX/clean-mixed.jsonl" "$WT/incident_1/second.jsonl"
+  touch "$T/swap.release"
+  wait "$pid"
+  rm -f "$WT/incident_1/second.old" "$WT/incident_1/second.jsonl"
+  echo "$(cat "$T/swap.code")|$(sed 's/^[a-z][a-z.-]*: //' "$T/swap.err")"
+}
+for r in frames lamports; do
+  eq "input replaced once checked: $r -> audit-logs exits as the script does, naming input 2" \
+    "$(swapped binary "$r")/$(swapped script "$r")" \
+    "1|cannot read input 2 (incident_1/second.jsonl): it changed after it was checked/1|cannot read input 2 (incident_1/second.jsonl): it changed after it was checked"
+done
 
 # The run directory of --out is opened once and the temporary file is made, linked
 # and removed through it: a run directory moved aside mid-run, and replaced by a link

@@ -77,11 +77,12 @@ because `python3 -I` keeps a sibling module off `sys.path`;
   a file with a second name (a hard link), a link or a path through one, an
   absolute path, a file outside every run directory or in `audit_<n>/`. An
   approval prompt shows the path, not where it leads or what else names it. A
-  regular file that cannot be opened is an error (exit 1). With no file named,
-  `frames.py` and `deltas.py` read stdin. Copy a corpus kept elsewhere, such as a
-  `--logs` export, into the run directory (`incident_<n>/logs/`) before a recipe
-  reads it. A refusal is one line on stderr, `<recipe>: refused: <reason>`, and
-  shows a path escaped to printable ASCII and cut at 120 characters, never raw.
+  regular file that cannot be opened, or that another file has replaced since it
+  was checked, is an error (exit 1). With no file named, `frames.py` and
+  `deltas.py` read stdin. Copy a corpus kept elsewhere, such as a `--logs`
+  export, into the run directory (`incident_<n>/logs/`) before a recipe reads it.
+  A refusal is one line on stderr, `<recipe>: refused: <reason>`, and shows a path
+  escaped to printable ASCII and cut at 120 characters, never raw.
   The recipes do not ask git whether it tracks the run directory, and on a
   case-insensitive filesystem a directory named `INCIDENT_1` is read as
   `incident_1/`: make run directories with

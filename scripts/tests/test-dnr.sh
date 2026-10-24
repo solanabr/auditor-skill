@@ -1437,6 +1437,42 @@ else
     "$(runs21 "$W21" incident_1/unread.jsonl)" "1:0 1:0 1:0|cannot read input 1 (incident_1/unread.jsonl): Permission denied"
 fi
 chmod 0600 "$W21/incident_1/unread.jsonl"
+# An input replaced by another file once every input has been checked: the recipe is
+# held writing what input 1 gives (the pipe is not read until input 2 has been
+# replaced) and reads only the file it checked, so it stops with exit 1 and one line
+# naming input 2.
+python3 -I - "$W21/incident_1/many.jsonl" <<'PY'
+import json, sys
+logs = ["Program Prog1111111111111111111111111111111111111 invoke [1]"] + ["Program log: line %d" % i for i in range(8)] \
+    + ["Program Prog1111111111111111111111111111111111111 success"]
+with open(sys.argv[1], "w") as f:
+    for n in range(4000):
+        f.write(json.dumps({"meta": {"err": None, "fee": 5000, "preBalances": [10000] + [5] * 19,
+                                     "postBalances": [5000] + [10] * 19, "logMessages": logs},
+                            "transaction": {"signatures": ["SigMany%d" % n], "message": {
+                                "accountKeys": ["Payer%d" % n] + ["Acct%d.%d" % (n, k) for k in range(19)],
+                                "instructions": []}}}) + "\n")
+PY
+for r in frames lamports; do
+  rm -f "$TT/swap21.started" "$TT/swap21.release" "$TT/swap21.code"
+  cp "$FIX/clean-mixed.jsonl" "$W21/incident_1/second.jsonl"
+  { case "$r" in
+      frames) ( cd "$W21" && exec python3 -I "$DNR/frames.py" incident_1/many.jsonl incident_1/second.jsonl ) 2> "$TT/swap21.err" ;;
+      *) ( cd "$W21" && exec python3 -I "$DNR/deltas.py" lamports incident_1/many.jsonl incident_1/second.jsonl ) 2> "$TT/swap21.err" ;;
+    esac
+    echo "$?" > "$TT/swap21.code"; } \
+    | { dd bs=1 count=1 > /dev/null 2>&1; touch "$TT/swap21.started"
+        n=0; while [[ ! -e "$TT/swap21.release" && "$n" -lt 400 ]]; do sleep 0.05; n=$((n + 1)); done; cat > /dev/null; } &
+  pid=$!
+  n=0; while [[ ! -e "$TT/swap21.started" && "$n" -lt 400 ]]; do sleep 0.05; n=$((n + 1)); done
+  mv "$W21/incident_1/second.jsonl" "$W21/incident_1/second.old" && cp "$FIX/clean-mixed.jsonl" "$W21/incident_1/second.jsonl"
+  touch "$TT/swap21.release"
+  wait "$pid"
+  eq "input paths: $r, input 2 replaced by another file once the inputs were checked -> exit 1, it is named, nothing read from it" \
+    "$(cat "$TT/swap21.code")|$(sed 's/^[a-z]*\.[a-z]*: //' "$TT/swap21.err")" \
+    "1|cannot read input 2 (incident_1/second.jsonl): it changed after it was checked"
+  rm -f "$W21/incident_1/second.old" "$W21/incident_1/second.jsonl"
+done
 
 # ---------------------------------------------------------------------------
 # 22. --out names a new .jsonl, .tsv or .txt file directly in a run directory: the

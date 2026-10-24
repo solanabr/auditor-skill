@@ -232,9 +232,14 @@ fn run(args: &[OsString]) -> Result<(), Stop> {
                 Some((c, _)) => Some(confine::output(&wt, c)?),
                 None => None,
             };
+            // profile.sh names --out in any error of its last step, as here.
+            let unwritten = |e: io::Error| match &again {
+                Some(_) => Stop(1, format!("cannot write --out: {}", os_message(&e))),
+                None => failed(e),
+            };
             let mut sink = sink(again.as_ref())?;
-            sink.write_all(report.as_bytes()).map_err(failed)?;
-            sink.finish().map_err(failed)?;
+            sink.write_all(report.as_bytes()).map_err(unwritten)?;
+            sink.finish().map_err(unwritten)?;
         }
         recipe => {
             let mut sink = sink(out.as_ref().map(|(_, checked)| checked))?;
