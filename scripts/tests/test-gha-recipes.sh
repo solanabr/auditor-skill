@@ -6,10 +6,11 @@
 #   K139-1   KV-139 Step 1 (externally triggerable workflows);
 #   K140-6   KV-140 Step 6 (Actions cache writers and restorers).
 # A recipe of two commands (R1) flags what the first lists and the second does not; every other line of an R
-# recipe must be an echo of a quoted marker, which the suite does not run. The suite also checks that
-# every known-vector step that repeats an R recipe carries its lines byte for byte, as one block in the same
-# order, and that no recipe flags a fixture's comment lines. It runs R1 over file names that hold a space or a quote, and over large
-# inputs: 2,000 workflows, and two of about 1 MiB.
+# recipe must be an echo of a quoted marker, which the suite does not run. The suite also checks that every
+# known-vector step that repeats an R recipe carries its lines byte for byte, as one block in the same order,
+# and that no recipe flags a fixture's comment lines. It runs R1 and K139-1 over trigger spellings built at run
+# time, R1 over file names that hold a space or a quote, and R1 over large inputs: 2,000 workflows, and two of
+# about 1 MiB.
 #
 # Usage (from the repo root): bash scripts/tests/test-gha-recipes.sh
 # Needs bash >= 3.2, grep, awk. No network. The fixtures are copied into a temp dir as .github/workflows/, and
@@ -255,6 +256,37 @@ else
   fail=1
 fi
 
+# Trigger spellings, one workflow each: a space before a colon, an event key holding null, ~, [], an anchor or an
+# alias, a flow list wrapped over lines, a byte-order mark before on:, a JSON document and an indented document.
+# None has an author gate, so R1 and K139-1 must list every one.
+spell="$work/spellings"; mkdir -p "$spell/.github/workflows"
+ns=0
+while IFS= read -r t; do
+  ns=$((ns + 1)); printf '%b\n' "$t" > "$spell/.github/workflows/spelling-$ns.yml"
+done <<'SPELLINGS'
+on:\n  issue_comment :\n    types: [created]
+on : issue_comment
+"on" : [issues]
+on:\n  issue_comment: null
+on:\n  issue_comment: ~
+on:\n  issue_comment: []
+on:\n  issues: &t\n    types: [opened]
+on:\n  workflow_dispatch: &t\n  issue_comment: *t
+on: [push,\n  issue_comment,\n  workflow_dispatch]
+on: [push,\n  issues]
+\0357\0273\0277on: issue_comment
+{"on": {"issue_comment": {"types": ["created"]}}, "jobs": {"a": {"runs-on": "ubuntu-latest"}}}
+  on: issue_comment\n  jobs:\n    a:\n      runs-on: ubuntu-latest
+SPELLINGS
+want=""; i=0
+while [ "$i" -lt "$ns" ]; do i=$((i + 1)); want="$want $i"; done; want=${want# }
+for id in R1 K139-1; do
+  got=$(run_recipe "$spell" "$(recipe_lines "$id")" | sed 's#^\.github/workflows/spelling-##; s#\.yml$##' | sort -n | tr '\n' ' ' \
+    | sed 's/ $//')
+  if [ "$got" = "$want" ]; then echo "ok   $id on $ns trigger spellings: every one listed"
+  else echo "FAIL $id on trigger spellings: got [$got] want [$want]"; fail=1; fi
+done
+
 # Large inputs: 2,000 gated workflows (each of R1's two lists runs over 64 KiB) and two of about 1 MiB with the
 # trigger on their first lines; one has its author_association gate on its last line. R1 must read each file
 # whole and flag only the ungated one.
@@ -278,4 +310,4 @@ fi
 
 if [ "$fail" -ne 0 ]; then echo "gha recipe test FAILED" >&2; exit 1; fi
 nfix=$(ls "$fixtures"/*.yml "$fixtures"/*.yaml "$fixtures"/actions/*.yml | wc -l | tr -d ' ')
-echo "gha recipe test passed: $nrec recipes, $nfix fixtures, $ncopy copies, comment lines, file names, large inputs"
+echo "gha recipe test passed: $nrec recipes, $nfix fixtures, $ncopy copies, comment lines, trigger spellings, file names, large inputs"
