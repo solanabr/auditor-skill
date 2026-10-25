@@ -274,9 +274,10 @@ recorded value is not empty and not the one given, the value it held is kept in 
 `history` table, an erased one (`--notes ''`) too, and `warm` lists it under that
 profile's or invariant's `changed`, newest first, as
 `{"field", "previous", "recorded_at"}`: the field (`notes`, `status`, …), what it
-held, and when it was replaced, in unix seconds as `ruled_at`. A field set for the
-first time replaces nothing. A later audit sees what a trust assumption or an
-invariant's status was before, and that it changed.
+held, and when it was replaced, in unix seconds as `ruled_at`: the newest 200, as
+each of `warm`'s lists holds, with `truncated` counting the rest, which the store
+keeps. A field set for the first time replaces nothing. A later audit sees what a
+trust assumption or an invariant's status was before, and that it changed.
 
 ### Options
 
