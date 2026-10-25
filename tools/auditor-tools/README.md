@@ -57,10 +57,12 @@ place, the call runs as it does without it. Any other word that starts with
 `--contract` is refused.
 
 A build made before the contract, which writes wherever `--db` and `--out` say,
-refuses the marker (`error: unexpected argument '--contract' found`, exit 2) before it
-does anything, so a rule that names the marker never runs it. An installation updated
-in place, such as a `git pull` of a clone, keeps its old binaries in
-`target/release/` until they are built again, and the calls fail until then. Rebuild:
+refuses the marker with a usage error and exit 2 before it does anything (`error:
+unexpected argument '--contract' found`, or `error: unrecognized subcommand` for
+`profile` and `invariant`, which it lacks), so a rule that names the marker never
+runs it. An installation updated in place, such as a `git pull` of a clone, keeps its
+old binaries in `target/release/` until they are built again, and the calls fail
+until then. Rebuild:
 
 ```bash
 cd "<auditor-skill root>/tools/auditor-tools" && cargo build --release --locked
