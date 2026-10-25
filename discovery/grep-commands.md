@@ -435,7 +435,7 @@ grep -rnE --include='*.yml' --include='*.yaml' 'github\.event\.(issue|pull_reque
 # R3 — unsound gate comparisons: string contains(), deny-lists, untrusted association values, app/<slug> strings, actor gates
 grep -rnE --include='*.yml' --include='*.yaml' -e "contains\([[:space:]]*'[^']*(OWNER|MEMBER|COLLABORATOR)" -e 'author_association[[:space:]]*!=' -e '!=[[:space:]]*github\.event\.[a-z_]+\.author_association' -e '![[:space:]]*contains\([[:space:]]*from(JSON|Json|json)' -e 'github\.(actor|triggering_actor|event\.sender\.login)[[:space:]]*[!=]=' -e '[!=]=[[:space:]]*github\.(actor|triggering_actor|event\.sender\.login)' -e 'contains\(.*github\.(actor|triggering_actor|event\.sender\.login)' -e "[\"'](CONTRIBUTOR|FIRST_TIMER|FIRST_TIME_CONTRIBUTOR|MANNEQUIN)[\"']" -e "app/[A-Za-z0-9_-]+'" .github/
 ```
-> An actor comparison is a sound allowlist on `issue_comment` (the actor is the commenter) and unsound on PR-family and `workflow_run` events (DEP-091). `github.event.sender.login`, the account that triggered the event, is judged like `github.actor`, and a comparison counts with either operand first (`'x' == github.actor`, `'NONE' != …author_association`). `contains(github.actor, …)` is a substring test and unsound on every event. Function names are case-insensitive, so `fromJson` and `fromjson` count the same as `fromJSON`.
+> An actor comparison is a sound allowlist on `issue_comment` (the actor is the commenter) and unsound on PR-family and `workflow_run` events (DEP-091). `github.event.sender.login`, the account that triggered the event, is judged like `github.actor`, and a comparison counts with either operand first (`'x' == github.actor`, `'NONE' != …author_association`). `contains(github.actor, …)` is a substring test and unsound on every event. Function names are case-insensitive; R3 matches the spellings `fromJSON`, `fromJson` and `fromjson`.
 
 ```bash
 # R4 — workflow_run consumers: head fields and artifact downloads
@@ -453,7 +453,7 @@ grep -rnE --include='*.yml' --include='*.yaml' '(>>|tee[[:space:]]+(-a|--append)
 # R6 — attacker-controlled expressions (confirm the sink: run:, script:, an agent prompt field, an env file)
 grep -rnE --include='*.yml' --include='*.yaml' '\$\{\{.*(github\.event\.[a-z_.]*(body|default_branch|email|head_ref|label|message|name|page_name|ref|title|head_branch|display_title)|github\.head_ref|github\.event\.(commits|pages)\[|to(JSON|Json|json)\(github(\)|\.event[).]))' .github/
 ```
-> Matches inside `env:` are the safe shell pattern but still taint agent prompts and env files (DEP-069, AI-023/024). Whole-context dumps count: `toJSON(github)` and `toJson(github.event…)` carry every attacker-controlled field, and `tojson` matches too.
+> Matches inside `env:` are the safe shell pattern but still taint agent prompts and env files (DEP-069, AI-023/024). Whole-context dumps count: `toJSON(github)` and `toJson(github.event…)` carry every attacker-controlled field. R6 matches the spellings `toJSON`, `toJson` and `tojson`.
 
 ```bash
 # R7 — checkouts and fetches of PR or run heads, and the checkout-guard opt-out
@@ -465,7 +465,7 @@ grep -rnE --include='*.yml' --include='*.yaml' 'ref:[[:space:]]*.?\$\{\{[[:space
 # R8 — AI agents in CI, their gates, and pre-v1 claude-code-action input names
 grep -rnE --include='*.yml' --include='*.yaml' 'anthropics/claude-code-(base-)?action|run-gemini-cli|gemini-cli-action|openai/codex-action|actions/ai-inference|claude ([^|;&#]* )?(-p|--print)|@anthropic-ai/claude-code|codex exec|gemini -p|allowed_non_write_users|allowed_bots|allow-users|allow-bots|include_comments_by_actor|direct_prompt|override_prompt|custom_instructions|allowed_tools|disallowed_tools|allowedTools|show_full_output|additional_permissions' .github/
 ```
-> AI-023..031, AI-034..035, KV-116. An agent CLI counts with options before `-p` or `--print` (`claude --model x -p`). Pre-v1 names (`direct_prompt`, `override_prompt`, `custom_instructions`, `allowed_tools`, `disallowed_tools`) can remain after a workflow's `uses:` line moves to `@v1` or a SHA, so judge each step by the keys it sets.
+> AI-023..031, AI-034..035, KV-116. `claude` counts with options before `-p` or `--print` (`claude --model x -p`), as long as no `|`, `;`, `&` or `#` comes between them. Pre-v1 names (`direct_prompt`, `override_prompt`, `custom_instructions`, `allowed_tools`, `disallowed_tools`) can remain after a workflow's `uses:` line moves to `@v1` or a SHA, so judge each step by the keys it sets.
 
 **Tool cross-check (optional, static).** `zizmor --offline --persona=auditor .github/workflows/` and CodeQL's `actions` language cover template injection, env-file writes, dangerous triggers and bot conditions. Neither replaces R1–R3, R7 or R8: on fixtures 01–17 in `scripts/tests/fixtures/gha/`, zizmor 1.30.1 did not flag a mention-only gate, the cross-object OR, a deny-list, event text in an agent prompt input, `allowed_non_write_users: "*"` or `allow-unsafe-pr-checkout: true` (details in `references/vuln-classes/github-actions.md` §9).
 
