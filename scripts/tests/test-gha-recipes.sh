@@ -6,8 +6,8 @@
 #   K139-1   KV-139 Step 1 (externally triggerable workflows);
 #   K140-6   KV-140 Step 6 (Actions cache writers and restorers).
 # A recipe of two commands (R1) flags what the first lists and the second does not. The suite also checks that
-# every known-vector step that repeats an R recipe carries each of its lines byte for byte, and that no recipe
-# flags a fixture's comment lines. It runs R1 over file names that hold a space or a quote, and over large
+# every known-vector step that repeats an R recipe carries its lines byte for byte, as one block in the same
+# order, and that no recipe flags a fixture's comment lines. It runs R1 over file names that hold a space or a quote, and over large
 # inputs: 2,000 workflows, and two of about 1 MiB.
 #
 # Usage (from the repo root): bash scripts/tests/test-gha-recipes.sh
@@ -48,12 +48,33 @@ recipe() {
   ' "$doc"
 }
 
+# Every line of that code block after the comment, the grep lines and any other.
+recipe_block() {
+  awk -v id="$1" '
+    /^## GitHub Actions \(CI trigger trust\)/ { sec = 1; next }
+    sec && /^## / { exit }
+    sec && index($0, "# " id " ") == 1 { grab = 1; next }
+    sec && grab && /^```/ { exit }
+    sec && grab { print }
+  ' "$doc"
+}
+
 # The `grep` lines inside a known vector's "**Step <n>:" block, in order.
 kv_step() { # kv_step <vector file> <step>
   awk -v n="$2" '
     index($0, "**Step " n ":") == 1 { s = 1; next }
     s && /^\*\*Step / { exit }
     s && /^grep / { print }
+  ' "$kv/$1"
+}
+
+# Every line inside the code blocks of that step, in order.
+kv_block() { # kv_block <vector file> <step>
+  awk -v n="$2" '
+    index($0, "**Step " n ":") == 1 { s = 1; next }
+    s && /^\*\*Step / { exit }
+    s && /^```/ { code = !code; next }
+    s && code { print }
   ' "$kv/$1"
 }
 
@@ -127,9 +148,16 @@ prefixes() {
 
 fail=0; nrec=0
 check() { # check <id> <command lines>
+  local n=0 l
   nrec=$((nrec + 1))
   if [ -z "$2" ]; then
     echo "FAIL $1: no recipe line found"
+    fail=1
+    return
+  fi
+  while IFS= read -r l; do n=$((n + 1)); done <<< "$2"
+  if [ "$n" -gt 2 ]; then
+    echo "FAIL $1: $n command lines; a recipe has one or two"
     fail=1
     return
   fi
@@ -147,18 +175,20 @@ for id in $IDS; do
   check "$id" "$(recipe_lines "$id")"
 done
 
+# A copy is the recipe's code lines as one run of whole lines, in order. The step may hold other commands
+# around a recipe of one command; a recipe of two is the whole code of its step, so "the first" and "the second"
+# name the same lines in both files.
+nl='
+'
 ncopy=0
 while read -r id file step; do
   ncopy=$((ncopy + 1))
-  want=$(recipe "$id")
-  steps=$(kv_step "$file" "$step")
+  want=$(recipe_block "$id")
+  have=$(kv_block "$file" "$step")
   same=0
-  if [ -n "$want" ]; then
-    same=1
-    while IFS= read -r line; do
-      grep -qxF -- "$line" <<< "$steps" || same=0
-    done <<< "$want"
-  fi
+  case "$nl$have$nl" in *"$nl$want$nl"*) same=1 ;; esac
+  if [ -z "$(recipe "$id")" ]; then same=0; fi
+  if [ "$(recipe "$id" | wc -l | tr -d ' ')" -gt 1 ] && [ "$have" != "$want" ]; then same=0; fi
   if [ "$same" -eq 1 ]; then
     echo "ok   copy of $id in $file step $step"
   else
