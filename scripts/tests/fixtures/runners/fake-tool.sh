@@ -6,7 +6,7 @@
 #   == <name> <arguments>
 #   cwd: <working directory>
 #   home: <HOME>
-#   ulimit: <ulimit -t> <ulimit -f>
+#   ulimit: <ulimit -t> <ulimit -f, in 1024-byte blocks as bash counts them; dash, ubuntu's /bin/sh, counts 512>
 #   env: <NAME=value>       one line per variable, sorted
 # followed by the lines each behaviour below adds. FAKE_* settings choose the behaviour: exit statuses, what a
 # build writes, files to show, a listing of the working directory, output to print, time to sleep.
@@ -17,7 +17,7 @@ name=${0##*/}
   printf '== %s %s\n' "$name" "$*"
   printf 'cwd: %s\n' "$PWD"
   printf 'home: %s\n' "${HOME:-}"
-  printf 'ulimit: %s %s\n' "$(ulimit -t)" "$(ulimit -f)"
+  printf 'ulimit: %s %s\n' "$(ulimit -t)" "$(/bin/bash -c 'ulimit -f' 2>/dev/null || ulimit -f)"
   env | LC_ALL=C sort | sed 's/^/env: /'
 } >> "$T/calls"
 say() { printf '%s\n' "$*" >> "$T/calls"; }
