@@ -20,7 +20,9 @@
 #     worktree of a clone without the attributes line runs the caller's git-lfs filter;
 #   - the rule text: one sentence on the tier effect, word for word in the five files that describe the fix
 #     tiers; the --post-patch-validation hint; the gate and the copy as /auditor:patch, patch-engineer and both
-#     rows name them, with the 11a and 11b notes.
+#     rows name them, with the 11a and 11b notes; one phrase for a finding on any other tier;
+#   - the gate's input: /auditor:intake writes the Q46 answer as one word to audit_<n>/exec-mode.
+# Without the May-2024 git fixes the copy cases are skipped with a note, and fail on CI (CI=true).
 # The real runner is never run, and nothing reaches the network.
 # Usage (from the repo root): bash scripts/tests/test-post-patch-validation-recipe.sh
 # Needs bash >= 3.2, git with the May-2024 clone fixes (2.45.1 or a matching maintenance release; older git
@@ -265,6 +267,8 @@ if [ "$copy_ok" = 1 ]; then
   if [ -z "$extra" ] && [ -d "$C/audit_1/src.git" ] && [ -d "$C/audit_1/src-2.git" ]; then
     ok "audit_1 holds only its own files and git-ro.sh's two copies"
   else bad "audit_1 holds more: $extra"; fi
+elif [ "${CI:-}" = true ]; then
+  bad "git $v lacks the May-2024 clone fixes, which git-ro.sh copy needs; on CI the copy cases must run"
 else
   echo "note: git $v lacks the May-2024 clone fixes, which git-ro.sh copy needs; the copy cases are skipped"
 fi
@@ -318,7 +322,7 @@ for f in OUTPUT-RULES.md docs/poc-and-patches.md agents/patch-engineer.md comman
   if grep -qF -- "$S" "$ROOT/$f"; then ok "$f states the tier effect in the shared sentence"
   else bad "$f does not carry the shared sentence on the tier effect"; fi
 done
-LOWER='makes a `[FIX-VERIFIED]` tier `[FIX-INSUFFICIENT]` (a `[FIX-PROPOSED]` one keeps its tier and lists it as residual)'
+LOWER='makes a `[FIX-VERIFIED]` tier `[FIX-INSUFFICIENT]` (a `[FIX-PROPOSED]` one keeps its tier and records the finding under Residual)'
 COPY='a no-checkout clone, outside the target tree, of the copy `git-ro.sh copy` makes in `<R>`'
 GATE='the stricter of `<R>/exec-mode` and `AUDITOR_EXEC_MODE` is'
 for f in commands/patch.md agents/patch-engineer.md; do
@@ -329,7 +333,7 @@ for f in commands/patch.md agents/patch-engineer.md; do
 done
 # Section 4 as one line, so wording that wraps still matches.
 sec4=$(awk '/^## 4\. Post-patch validation/ {s = 1} /^## 5\. / {s = 0} s' "$VER" | tr '\n' ' ')
-if has "$sec4" 'lowered from `[FIX-VERIFIED]` to `[FIX-INSUFFICIENT]` by `check_id` (kind) | residual, tier unchanged: `check_id` (kind)' \
+if has "$sec4" 'lowered from `[FIX-VERIFIED]` to `[FIX-INSUFFICIENT]` by `check_id` (kind) | recorded under Residual, tier unchanged: `check_id` (kind)' \
    && has "$sec4" "$LOWER" && has "$sec4" 'change nothing else in `plan.json`' \
    && has "$sec4" 'which the disposable clone does not hold". Never fetch or initialize submodules in the clone.' \
    && has "$sec4" 'record "not run: <its first error line>"' && ! has "$sec4" '§1 copy' && ! has "$sec4" '{CHECKOUT}' \
@@ -344,10 +348,19 @@ for f in references/orchestration/boundary-map.md docs/power-tools.md; do
   if [ -n "$row" ] && has "$row" 'ToB plugin installed' && has "$row" 'Isolated mode only' && has "$row" "$COPY" \
      && has "$row" "$GATE isolated and \`probe.sh --only isolation\` finds nothing readable" && has "$row" 'open network' \
      && has "$row" 'git-lfs filter in the caller' && has "$row" '`* !filter`' && has "$row" '11a' && has "$row" '11b' \
-     && has "$row" 'turns `[FIX-VERIFIED]` into `[FIX-INSUFFICIENT]`'; then
+     && has "$row" 'turns `[FIX-VERIFIED]` into `[FIX-INSUFFICIENT]`' && has "$row" 'keeps its tier and records the finding under Residual' \
+     && ! has "$row" 'as residual'; then
     ok "$f has the post-patch-validation row: entry point, the gate (11a), the copy, the open network and git-lfs (11b), the tier"
   else bad "$f lacks the post-patch-validation row or one of its notes"; fi
 done
+
+# ---- the gate's input: intake writes <R>/exec-mode -----------------------------------------------------------------
+if grep -qF 'Also write the answer with the Write tool, as one word, `isolated` or `native`, to `audit_<n>/exec-mode`' "$ROOT/commands/intake.md" \
+   && grep -qF 'and `audit_<n>/exec-mode` holds `native`' "$ROOT/commands/intake.md" \
+   && grep -qF 'the answer is also written as one word to audit_<n>/exec-mode, where' "$ROOT/templates/intake.md" \
+   && grep -qF 'templates/poc/run.sh --crate reads it (the stricter of it and AUDITOR_EXEC_MODE)' "$ROOT/templates/intake.md"
+then ok "/auditor:intake writes the Q46 answer as one word to audit_<n>/exec-mode (native under --auto), as §8 says"
+else bad "/auditor:intake does not write audit_<n>/exec-mode as one word, or §8 does not say where run.sh reads it"; fi
 
 echo "---- post-patch validation recipe: $pass passed, $failn failed"
 [ "$failn" -eq 0 ]
