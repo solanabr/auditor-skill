@@ -632,6 +632,29 @@ run "$DEPS" "$WT" -- cargo-audit --run audit_1 --manifest Cargo.lock --no-fetch
 r1=$(rows)
 check "cargo-audit --no-fetch: --no-fetch --no-yanked, and nothing disclosed" \
   sh -c "[ '$RC' = 0 ] && grep -qx '== cargo audit --color never --no-fetch --no-yanked' '$T/calls' && [ '$r1' = '$r0' ]"
+# cargo-audit reads the lockfile itself, so it gets the lockfile check too: when it asks a registry which
+# releases were yanked, a lockfile naming a registry other than crates.io stops the run before anything is
+# sent; offline (--no-fetch) such a lockfile is audited. Git sources pass either way, and an escape never does.
+mkdir -p "$WT/la"
+for lock in 'sparse+https://evil.invalid/' 'registry+https://evil.invalid/index'; do
+  printf 'version = 3\n\n[[package]]\nname = "anyhow"\nversion = "1.0.0"\nsource = "%s"\nchecksum = "00"\n' "$lock" > "$WT/la/Cargo.lock"
+  r0=$(rows)
+  run "$DEPS" "$WT" -- cargo-audit --run audit_1 --manifest la/Cargo.lock
+  check "cargo-audit of a lockfile naming the registry $lock: exit 3 before cargo audit runs, nothing disclosed" \
+    sh -c "[ '$RC' = 3 ] && grep -q '^deps: blocker: the lockfile names a registry other than crates.io, $lock, which a check for yanked releases could ask; --no-fetch audits it offline' '$T/err' &&
+      ! grep -q '^== cargo audit' '$T/calls' && [ \"\$(( \$(wc -l < '$DT') - 1 ))\" = '$r0' ]"
+  run "$DEPS" "$WT" -- cargo-audit --run audit_1 --manifest la/Cargo.lock --no-fetch
+  check "... and with --no-fetch it is audited offline, exit 0" sh -c "[ '$RC' = 0 ] && grep -qx '== cargo audit --color never --no-fetch --no-yanked' '$T/calls'"
+done
+printf 'version = 3\n\n[[package]]\nname = "anchor-lang"\nversion = "0.30.1"\nsource = "git+https://github.com/coral-xyz/anchor?rev=0123#0123"\n\n[[patch.unused]]\nname = "x"\nversion = "1.0.0"\nsource = "git+https://evil.invalid/x#0123"\n' > "$WT/la/Cargo.lock"
+run "$DEPS" "$WT" -- cargo-audit --run audit_1 --manifest la/Cargo.lock
+check "cargo-audit of a lockfile with git sources and [[patch.unused]] runs, exit 0" sh -c "[ '$RC' = 0 ] && grep -qx '== cargo audit --color never' '$T/calls'"
+printf 'version = 3\n\n[[package]]\nname = "anyhow"\nversion = "1.0.0"\n"\\u0073ource" = "sparse+https://evil.invalid/"\n' > "$WT/la/Cargo.lock"
+for flag in "" --no-fetch; do
+  run "$DEPS" "$WT" -- cargo-audit --run audit_1 --manifest la/Cargo.lock $flag
+  check "cargo-audit ${flag:-with fetching} of a lockfile with a unicode escape: exit 3, cargo audit never runs" \
+    sh -c "[ '$RC' = 3 ] && grep -q 'the lockfile has a .u, .U or .x escape' '$T/err' && ! grep -q '^== cargo audit' '$T/calls'"
+done
 settings FAKE_AUDIT_OUT="$T/audit-vuln.txt" FAKE_AUDIT_RC=1
 run "$DEPS" "$WT" -- cargo-audit --run audit_1 --manifest Cargo.lock
 check "cargo-audit with a vulnerability: exit 1" sh -c "[ '$RC' = 1 ] && grep -q '^>> cargo-audit: vulnerabilities found (exit 1): audit_1/deps/cargo-audit-[0-9]*[.]txt\$' '$T/out'"

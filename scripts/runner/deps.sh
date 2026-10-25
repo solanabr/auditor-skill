@@ -12,8 +12,9 @@
 # The actions:
 #   cargo-audit     --manifest <dir>/Cargo.lock [--no-fetch]: cargo audit --color never. The advisory
 #                   database comes from GitHub (RustSec) into CARGO_HOME, and cargo audit asks the crates.io
-#                   index which releases were yanked. With --no-fetch it adds --no-fetch --no-yanked: the
-#                   database already in CARGO_HOME, and nothing leaves the machine.
+#                   index which releases were yanked; a lockfile that names a registry other than crates.io
+#                   stops that run, since a check for yanked releases could ask it. With --no-fetch it adds
+#                   --no-fetch --no-yanked: the database already in CARGO_HOME, and nothing leaves the machine.
 #   cargo-outdated  --manifest <dir>/Cargo.toml, more Cargo.toml files of the workspace, and at most one
 #                   Cargo.lock beside the first: cargo outdated --workspace --exit-code 1 --color never
 #   cargo-tree      the same manifests: cargo tree --workspace --color never
@@ -406,8 +407,9 @@ copy_manifests() {
 # header but comments and a one-line cargo-features (a root key, or a multi-line string that can hide one), and
 # text that is not UTF-8; print one ">> note:" line for each manifest that holds a plainly spelled table, with
 # the crate names it patches that match <crate spec> (at most 20) and never a value. "locksource <top>
-# <lockfile>": refuse a Cargo.lock with such an escape (cargo writes none) or that is not UTF-8; git and
-# other-registry sources and [[patch.unused]] pass. "stubs <top> <manifest>...": an empty file at src/lib.rs and at
+# <lockfile> [registries]": refuse a Cargo.lock with such an escape (cargo writes none) or that is not UTF-8,
+# and with "registries" one that names a registry other than crates.io (registry+ or sparse+); git and path
+# sources and [[patch.unused]] pass. "stubs <top> <manifest>...": an empty file at src/lib.rs and at
 # each target path of each package manifest, so cargo metadata parses it. "vet <metadata> <top>": the
 # dependencies cargo metadata lists come from crates.io or are paths inside <top> (exit 3 with the first that
 # is not). "rebuild <metadata> <top> <dest>": write under <dest> a workspace of only the package names,
@@ -424,6 +426,7 @@ OVR_ROOTKEY = re.compile(r"^\s*[\x22\x27]?(patch|replace)[\x22\x27]?\s*[.=]")
 OVR_OPEN = re.compile(r"^\s*\[")
 ESCAPE = re.compile(r"\\[uUx]")
 CARGO_FEATURES = re.compile(r"cargo-features[ \t]*=[ \t]*\[[A-Za-z0-9_\x22, \t-]*\][ \t]*(#.*)?")
+LOCK_SOURCE = re.compile(r"^\s*[\x22\x27]?source[\x22\x27]?\s*=\s*[\x22\x27]([^\x22\x27]*)")
 CRATES = ("registry+https://github.com/rust-lang/crates.io-index", "sparse+https://index.crates.io/")
 SEG = r"(?:[A-Za-z0-9_-]+|\x22[^\x22\\]*\x22|\x27[^\x27]*\x27)"
 PLAIN_PATCH = re.compile(r"\s*\[\s*patch\s*\.\s*(" + SEG + r")\s*(?:\.\s*(" + SEG + r")\s*)?\]\s*(?:#.*)?")
@@ -542,12 +545,18 @@ def backstop(crate_spec, top, manifests):
         print(note)
 
 
-def locksource(top, rel):
-    # cargo writes no \u, \U or \x escape into a Cargo.lock, so one is refused. Git and other-registry sources
-    # and [[patch.unused]] pass: cargo resolves the rebuilt workspace from crates.io and fetches none of them.
+def locksource(top, rel, registries):
+    # cargo writes no \u, \U or \x escape into a Cargo.lock, so one is refused. With registries (cargo audit,
+    # when it asks a registry which releases were yanked), so is a source from a registry other than
+    # crates.io, the one kind of source such a check could ask. Git and path sources and [[patch.unused]]
+    # pass: cargo resolves the rebuilt workspace from crates.io and fetches none of them, and cargo audit
+    # does not query them.
     for line in read_lines(os.path.join(top, rel), rel):
         if ESCAPE.search(line):
             fail("the lockfile has a \\u, \\U or \\x escape, which cargo never writes; deps.sh does not read one")
+        m = LOCK_SOURCE.match(line)
+        if registries and m and m.group(1).startswith(("registry+", "sparse+")) and m.group(1) not in CRATES:
+            fail("the lockfile names a registry other than crates.io, %s, which a check for yanked releases could ask; --no-fetch audits it offline" % shown(m.group(1)))
 
 
 def stubs(top, manifests):
@@ -692,7 +701,7 @@ try:
     elif cmd == "backstop":
         backstop(sys.argv[2], sys.argv[3], sys.argv[4:])
     elif cmd == "locksource":
-        locksource(sys.argv[2], sys.argv[3])
+        locksource(sys.argv[2], sys.argv[3], sys.argv[4:] == ["registries"])
     elif cmd == "vet":
         vet(sys.argv[2], sys.argv[3])
     elif cmd == "rebuild":
@@ -907,8 +916,10 @@ case "$ACTION" in
     copy_manifests
     AUD=(cargo audit --color never)
     if [ "$NO_FETCH" = 1 ]; then
+      why=$(cargo_py locksource "$S/w" "$LOCK") || done_with 3 "${why:-cannot read the lockfile}"
       AUD+=(--no-fetch --no-yanked)
     else
+      why=$(cargo_py locksource "$S/w" "$LOCK" registries) || done_with 3 "${why:-cannot read the lockfile}"
       disclose github.com "advisory database (git fetch of the RustSec database)" https://github.com/RustSec/advisory-db
       disclose crates.io "every crates.io package name in this lockfile (cargo audit's check for yanked releases, the crates.io index)" "$LOCK"
     fi
