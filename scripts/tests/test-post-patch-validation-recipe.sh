@@ -262,7 +262,8 @@ if [ "$copy_ok" = 1 ]; then
   isolated "exec-mode isolated" isolated "" "$T/tmp"
   isolated "exec-mode native, AUDITOR_EXEC_MODE isolated, TMPDIR ending in /" native isolated "$T/tmp/"
   extra=$(ls -A "$C/audit_1" | grep -v -x -e .gitignore -e exec-mode -e patches -e src.git -e src-2.git || true)
-  if [ -z "$extra" ]; then ok "audit_1 holds only its own files and git-ro.sh's copies"
+  if [ -z "$extra" ] && [ -d "$C/audit_1/src.git" ] && [ -d "$C/audit_1/src-2.git" ]; then
+    ok "audit_1 holds only its own files and git-ro.sh's two copies"
   else bad "audit_1 holds more: $extra"; fi
 else
   echo "note: git $v lacks the May-2024 clone fixes, which git-ro.sh copy needs; the copy cases are skipped"
