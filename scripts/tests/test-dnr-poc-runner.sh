@@ -1232,6 +1232,7 @@ if [ "$rc" = 0 ]; then
   ok "this machine passes the isolation self-check, so the checks that isolated mode passes run"
 elif [ "${CI:-}" = true ]; then
   bad "this CI runner does not pass the isolation self-check (${readable%%$'\n'*}), so the checks that isolated mode passes cannot run"
+  printf '%s\n' "${readable#*$'\n'}" | sed 's/^/  found: /' >&2
 else
   echo "note: this machine is not an isolated runner (${readable%%$'\n'*}); the checks that isolated mode passes are skipped"
 fi
