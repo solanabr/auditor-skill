@@ -178,10 +178,11 @@ printf '*\n' > "$WT/gi/nl"
 printf '*\r\n' > "$WT/gi/crlf"
 printf '\n*' > "$WT/gi/lead"
 printf '*\n\n' > "$WT/gi/two"
+printf '*\000' > "$WT/gi/nul"
 mkdir -p "$WT/gi/dir"
 ln -s nl "$WT/gi/link"
-lib "$WT" 'for f in f1 nl f2 f3 f4 f5 f6 f7 crlf lead two dir link absent; do confine_ignore_all "$CONFINE_WT/gi/$f" && printf "%s " "$f"; done; :'
-check "a .gitignore must hold exactly * (one newline may follow), as a regular file" out_is 'f1 nl '
+lib "$WT" 'for f in f1 nl f2 f3 f4 f5 f6 f7 crlf lead two nul dir link absent; do confine_ignore_all "$CONFINE_WT/gi/$f" && printf "%s " "$f"; done; :'
+check "a .gitignore must hold exactly * (one newline may follow), as a regular file, its bytes compared" out_is 'f1 nl '
 
 mkdir -p "$WT/audit_1/poc" "$WT/audit_2" "$WT/audit_3/x" "$WT/audit_4"
 printf '*\n' > "$WT/audit_1/.gitignore"
