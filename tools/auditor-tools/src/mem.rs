@@ -87,10 +87,20 @@ fn now_ts() -> String {
     secs.to_string()
 }
 
-/// SQLite's defensive mode, with triggers, views and `trusted_schema` off and
-/// temporary tables in memory: what a store's schema holds can run nothing, and
-/// no file is made outside the store.
+/// The longest string or row SQLite reads or writes for audit-mem, in bytes: far
+/// above what the writers store (4096 bytes a field), so only a crafted store
+/// meets it.
+const MAX_VALUE: i32 = 1 << 20;
+
+/// SQLite's defensive mode, with triggers, views and `trusted_schema` off,
+/// temporary tables in memory and values of at most `MAX_VALUE` bytes: what a
+/// store's schema holds can run nothing, no file is made outside the store, and
+/// no value it holds can flood the output.
 fn harden(conn: &Connection) -> Result<()> {
+    // SAFETY: the handle is this connection's own, open for the whole call.
+    unsafe {
+        rusqlite::ffi::sqlite3_limit(conn.handle(), rusqlite::ffi::SQLITE_LIMIT_LENGTH, MAX_VALUE);
+    }
     conn.set_db_config(DbConfig::SQLITE_DBCONFIG_DEFENSIVE, true)?;
     conn.set_db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_TRIGGER, false)?;
     conn.set_db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_VIEW, false)?;
@@ -101,8 +111,9 @@ fn harden(conn: &Connection) -> Result<()> {
 }
 
 /// Refuses a store holding anything but audit-mem's tables, their automatic
-/// indexes and `sqlite_sequence`: a view, a trigger, a virtual table, an index of
-/// its own or another table. Returns the tables of audit-mem's it holds.
+/// indexes and `sqlite_sequence` as SQLite itself makes it: a view, a trigger, a
+/// virtual table, an index of its own or another table. Returns the tables of
+/// audit-mem's it holds.
 fn verify_schema(conn: &Connection) -> Result<Vec<String>> {
     let mut stmt = conn.prepare("SELECT type, name, tbl_name, sql FROM sqlite_schema")?;
     let rows = stmt.query_map([], |r| {
@@ -122,7 +133,10 @@ fn verify_schema(conn: &Connection) -> Result<Vec<String>> {
                 .is_some_and(|head| head.eq_ignore_ascii_case("CREATE TABLE "))
         });
         let ok = match kind.as_str() {
-            "table" => (ours && name == table && plain_table) || name == "sqlite_sequence",
+            "table" if name == "sqlite_sequence" => {
+                table == name && sql.as_deref() == Some("CREATE TABLE sqlite_sequence(name,seq)")
+            }
+            "table" => ours && name == table && plain_table,
             "index" => ours && name.starts_with("sqlite_autoindex_") && sql.is_none(),
             _ => false,
         };

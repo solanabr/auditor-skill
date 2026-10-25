@@ -299,10 +299,11 @@ rules are those of `scripts/lib/confine.sh` and `scripts/rundir.sh`, in
   `-wal` or `-shm` file may sit beside it (audit-mem never makes one, and SQLite would
   open them even to read), and a `-journal`, left by a write that stopped, must be a
   regular file with one name. It holds only audit-mem's tables, their automatic
-  indexes and `sqlite_sequence`; a view, a trigger, a virtual table or any other
-  object is refused. SQLite never follows a link (`SQLITE_OPEN_NOFOLLOW`) and runs in
-  its defensive mode (`SQLITE_DBCONFIG_DEFENSIVE`), with triggers and views off,
-  `trusted_schema` off and temporary tables in memory.
+  indexes and `sqlite_sequence` as SQLite makes it; a view, a trigger, a virtual table
+  or any other object is refused. SQLite never follows a link (`SQLITE_OPEN_NOFOLLOW`)
+  and runs in its defensive mode (`SQLITE_DBCONFIG_DEFENSIVE`), with triggers and views
+  off, `trusted_schema` off, temporary tables in memory and no value read or written
+  past 1 MiB (`SQLITE_LIMIT_LENGTH`; the writers store at most 4096 bytes a field).
 - `warm`, `check` and `regressions` open the store read-only (`SQLITE_OPEN_READ_ONLY`,
   `PRAGMA query_only=ON`) and immutable (`file:<store>?mode=ro&immutable=1`: SQLite
   takes no lock and opens no file beside it), and never make the file or write the

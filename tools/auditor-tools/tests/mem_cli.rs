@@ -864,6 +864,62 @@ fn refuses_a_crafted_store() {
 }
 
 #[test]
+fn refuses_a_crafted_sqlite_sequence_and_reads_no_value_past_a_mebibyte() {
+    let wt = Wt::repo();
+    wt.run_dir("audit_1");
+    wt.run_dir("audit_2");
+    ok(&mem(&wt, &["init", "--db", "audit_1/audit-mem.db"]));
+    ok(&mem(&wt, &["init", "--db", "audit_2/audit-mem.db"]));
+    // sqlite_sequence under another definition, written with writable_schema.
+    let conn = rusqlite::Connection::open(wt.path("audit_1/audit-mem.db")).expect("open");
+    conn.execute_batch(
+        "INSERT INTO fp_rulings (program_id) VALUES ('p'); PRAGMA writable_schema = ON; \
+         UPDATE sqlite_schema SET sql = 'CREATE TABLE sqlite_sequence(name,seq,extra)' \
+         WHERE name = 'sqlite_sequence'; PRAGMA writable_schema = OFF;",
+    )
+    .expect("craft");
+    drop(conn);
+    for args in [
+        vec!["warm", "--db", "audit_1/audit-mem.db", "--program-id", P],
+        vec![
+            "invariant",
+            "--db",
+            "audit_1/audit-mem.db",
+            "--program-id",
+            P,
+            "--statement",
+            "s",
+        ],
+    ] {
+        refused(
+            &mem(&wt, &args),
+            "audit-mem",
+            "audit_1/audit-mem.db: it holds the table sqlite_sequence, which audit-mem never makes, so it is not a store audit-mem wrote",
+        );
+    }
+    // A value of 2 MiB, which no writer stores, is not read.
+    let conn = rusqlite::Connection::open(wt.path("audit_2/audit-mem.db")).expect("open");
+    conn.execute(
+        "INSERT INTO fp_rulings (program_id, code_signature, ruling, rationale, ruled_by, ruled_at, scope) \
+         VALUES (?1, ?2, 'FALSE_POSITIVE', ?3, 'a', '1', 'program')",
+        rusqlite::params![P, SIG, "x".repeat(2 << 20)],
+    )
+    .expect("craft");
+    drop(conn);
+    let o = mem(
+        &wt,
+        &["warm", "--db", "audit_2/audit-mem.db", "--program-id", P],
+    );
+    assert_eq!(o.status.code(), Some(2));
+    assert_eq!(stdout(&o), "");
+    assert!(
+        stderr(&o).starts_with("audit-mem: error: audit_2/audit-mem.db: string or blob too big"),
+        "{}",
+        stderr(&o)
+    );
+}
+
+#[test]
 fn refuses_a_store_with_sqlite_files_beside_it() {
     let wt = store();
     wt.run_dir("audit_1");
