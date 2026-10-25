@@ -18,4 +18,4 @@ jobs:
         with:
           image-ref: ${{ env.IMAGE }}
       - run: echo '${{ tojson(steps) }}'
-      - run: echo "ask claude later" && mkdir -p out
+      - run: echo "ask claude or gemini later" && mkdir -p out
