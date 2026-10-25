@@ -665,7 +665,8 @@ settings
 mkdir -p "$WT/pkg/src"
 # The copy carries a [profile] and a [workspace.metadata] table (neither surfaces in metadata), so the dump
 # of the manifest cargo actually ran on proves it is the metadata-derived rebuild, not the copy.
-printf '[package]\nname = "pkg"\nversion = "0.4.0"\nedition = "2021"\n\n[dependencies]\nanyhow = "1.2"\n\n[profile.release]\nopt-level = 3\n\n[workspace.metadata.x]\ny = 1\n' > "$WT/pkg/Cargo.toml"
+PKG_TOML='[package]\nname = "pkg"\nversion = "0.4.0"\nedition = "2021"\n\n[dependencies]\nanyhow = "1.2"\n\n[profile.release]\nopt-level = 3\n\n[workspace.metadata.x]\ny = 1\n'
+printf '%b' "$PKG_TOML" > "$WT/pkg/Cargo.toml"
 : > "$WT/pkg/src/lib.rs"
 printf 'version = 3\n\n[[package]]\nname = "anyhow"\nversion = "1.2.0"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\nchecksum = "00"\n\n[[package]]\nname = "pkg"\nversion = "0.4.0"\ndependencies = ["anyhow"]\n' > "$WT/pkg/Cargo.lock"
 ANYHOW_DEP='{"name":"anyhow","req":"^1.2","source":"registry+https://github.com/rust-lang/crates.io-index","kind":null,"optional":false,"uses_default_features":true,"features":[],"target":null,"rename":null}'
@@ -760,7 +761,9 @@ check "a lockfile with a patch table is refused" sh -c "[ '$RC' = 3 ] && grep -q
 printf 'version = 3\n\n[[package]]\nname = "anyhow"\nversion = "1.0.0"\n"\\u0073ource" = "git+https://evil.invalid/x"\n' > "$WT/stubs/Cargo.lock"
 run "$DEPS" "$WT" -- cargo-tree --run audit_1 --manifest stubs/Cargo.toml --manifest stubs/Cargo.lock
 check "a lockfile with a unicode escape (cargo writes none) is refused" sh -c "[ '$RC' = 3 ] && grep -q 'the lockfile has a .u, .U or .x escape' '$T/err' && ! grep -q '^== cargo' '$T/calls'"
-# vet() still refuses a git, alt-registry or out-of-tree path dependency that metadata surfaces.
+# vet() still refuses a git, alt-registry or out-of-tree path dependency that metadata surfaces. These and the
+# cargo-outdated cases run on the plain pkg manifest again, so they do not depend on the named-patch case.
+printf '%b' "$PKG_TOML" > "$WT/pkg/Cargo.toml"
 for dep in '{"name":"evil","source":"git+https://evil.invalid/x","registry":null}|from git+https://evil.invalid/x, not crates.io' \
   '{"name":"alt","source":"registry+https://alt.invalid/index","registry":"https://alt.invalid/index"}|from another registry than crates.io' \
   '{"name":"far","source":null,"registry":null,"path":"/etc"}|at a path outside the copied manifests'; do
