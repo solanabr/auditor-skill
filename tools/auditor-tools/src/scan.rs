@@ -1,25 +1,54 @@
 //! Static-analysis scanner for Solana/Anchor Rust codebases.
 //!
-//! Parses each `*.rs` file with `syn::parse_file` (which yields real line numbers
-//! when `proc-macro2`'s `span-locations` feature is enabled) and walks the AST
-//! with a [`syn::visit::Visit`] implementation to enumerate the risky surface an
-//! auditor would otherwise have to find by hand.
+//! Each `*.rs` file is lexed with `proc-macro2` (whose lexer and drop do not
+//! recurse, and whose `span-locations` feature yields real line numbers), checked
+//! for nesting and chains deeper than [`MAX_DEPTH`] and [`MAX_CHAIN`] allow, then
+//! parsed with `syn` and walked with a [`syn::visit::Visit`] implementation to
+//! enumerate the risky surface an auditor would otherwise have to find by hand. A
+//! snippet is rendered from the file's tokens, a token at a time, up to
+//! `SNIPPET_MAX` characters.
 
-use std::fs::OpenOptions;
-use std::io::Read;
+use std::collections::HashMap;
+use std::ffi::OsStr;
+use std::io::{self, Read};
+use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
+use proc_macro2::{Delimiter, LineColumn, Spacing, Span, TokenStream, TokenTree};
 use quote::ToTokens;
 use serde::Serialize;
+use syn::punctuated::{Pair, Punctuated};
 use syn::spanned::Spanned;
 use syn::visit::Visit;
-use walkdir::{DirEntry, WalkDir};
+use syn::{Expr, Type};
 
-use crate::confine::{is_run_dir_name, os_message, MAX_FILE};
+use crate::confine::{self, is_run_dir_name, os_message, MAX_FILE};
 
 const SNIPPET_MAX: usize = 80;
+
+/// Group nesting (`(`, `[` and `{`) past which a file is not parsed.
+pub const MAX_DEPTH: usize = 256;
+
+/// The longest chain of tokens a file may hold before it is not parsed: the
+/// tokens since the last `;`, the last `,` outside an unclosed `<`, an inner
+/// attribute, or the start of an item or statement after a block, counted on
+/// through every group they are nested in. syn's tree nests at most one level a
+/// token along such a chain.
+pub const MAX_CHAIN: usize = 20_000;
+
+/// Directory nesting below the scanned directory past which the walk does not go:
+/// it holds a descriptor open for each level.
+pub const MAX_WALK: usize = 128;
+
+/// The stacks the scan runs on, the first the system grants: syn's parser, the
+/// visit and the drop of a tree recurse on it, one level for each level the tree
+/// nests. The first holds the deepest tree `MAX_DEPTH` and `MAX_CHAIN` let through
+/// several times over (20,000 nested `break`, the deepest shape measured, need
+/// more than 64 MiB and less than 128); the second, for a system that grants no
+/// more, holds any tree real code nests.
+const STACKS: [usize; 2] = [512 << 20, 64 << 20];
 
 /// Top-level scan report — serialized to a single JSON object.
 #[derive(Debug, Serialize)]
@@ -35,8 +64,8 @@ pub struct ScanReport {
     pub cpi_sites: Vec<CpiSite>,
     pub remaining_accounts_sites: Vec<RemainingAccountsSite>,
     pub functions: Vec<FunctionDef>,
-    /// Every symbolic link the walk did not follow, and every `*.rs` file it did
-    /// not parse, with the reason.
+    /// Every symbolic link the walk did not follow, every directory it did not
+    /// enter, and every `*.rs` file it did not parse, with the reason.
     pub skipped: Vec<Skipped>,
 }
 
@@ -170,96 +199,154 @@ impl ScanReport {
     }
 }
 
-/// Scan every `*.rs` file under the directory `root`, returning one merged report.
+/// Scan every `*.rs` file under the directory `root`, a path relative to the
+/// working directory, returning one merged report.
 ///
-/// The walk follows no symbolic link and reads only regular files of at most
-/// 4 MiB, each opened without following a link; every link it meets, and every
-/// `*.rs` file it does not parse (not regular, too large, unreadable, not UTF-8
-/// or not Rust that `syn` parses), is listed in `skipped`. Directories named
-/// `target`, `.git` and `node_modules` below `root` are pruned, and so are the
-/// run directories and `.audit-memory/` when `root` is the working directory.
-/// Entries are visited in byte order of their names, and the spans of each file
-/// are released once it is visited, so the total source read has no limit.
-pub fn scan_path(root: &Path) -> ScanReport {
-    let mut report = ScanReport::new(root.display().to_string(), 0);
-    let top = root == Path::new(".");
-    let walk = WalkDir::new(root)
-        .follow_links(false)
-        .sort_by_file_name()
-        .into_iter()
-        .filter_entry(|e| !is_pruned_dir(e, top));
-    for entry in walk {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(e) => {
-                let file = e
-                    .path()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_default();
-                let reason = match e.io_error() {
-                    Some(io) => format!("cannot be read: {}", os_message(io)),
-                    None => "cannot be read".to_string(),
-                };
-                report.skipped.push(Skipped { file, reason });
-                continue;
+/// The walk opens each directory from its parent's descriptor without following a
+/// link, so a name swapped for a link while it runs is not entered, and reads only
+/// regular files with one name of at most 4 MiB, each opened the same way. Every
+/// link it meets, every directory nested more than `MAX_WALK` levels down, and
+/// every `*.rs` file it does not parse (not regular, too large, unreadable, not
+/// UTF-8, nested or chained too deeply, or not Rust that `syn` parses) is listed
+/// in `skipped`. Directories named `target`, `.git` and `node_modules` below
+/// `root` are pruned, and so are the run directories and `.audit-memory/` when
+/// `root` is the working directory. Entries are visited in byte order of their
+/// names, and the spans of each file are released once it is visited, so the
+/// total source read has no limit. The scan runs on a thread of its own, on the
+/// first of `STACKS` the system grants.
+pub fn scan_path(root: &Path) -> io::Result<ScanReport> {
+    let mut refused = None;
+    for stack in STACKS {
+        let root = root.to_path_buf();
+        match std::thread::Builder::new()
+            .name("audit-scan".into())
+            .stack_size(stack)
+            .spawn(move || walk(&root))
+        {
+            Ok(scan) => {
+                return match scan.join() {
+                    Ok(report) => Ok(report),
+                    Err(panic) => std::panic::resume_unwind(panic),
+                }
             }
+            Err(e) => refused = Some(e),
+        }
+    }
+    Err(refused.unwrap_or_else(|| io::Error::other("no stack to scan on")))
+}
+
+fn walk(root: &Path) -> ScanReport {
+    let mut scan = Scan {
+        report: ScanReport::new(root.display().to_string(), 0),
+        top: root == Path::new("."),
+    };
+    match open_root(root) {
+        Ok(dir) => scan.dir(&dir, root, 0),
+        Err(e) => scan.skip(root, format!("cannot be read: {}", os_message(&e))),
+    }
+    scan.report
+}
+
+/// The directory to scan, each name on its way opened from the one before
+/// without following a link.
+fn open_root(root: &Path) -> io::Result<OwnedFd> {
+    let mut dir = confine::open_dir(libc::AT_FDCWD, b".")?;
+    if root != Path::new(".") {
+        for part in root.as_os_str().as_bytes().split(|&c| c == b'/') {
+            dir = confine::open_dir(dir.as_raw_fd(), part)?;
+        }
+    }
+    Ok(dir)
+}
+
+/// A scan under way: the report so far, and whether the root is the working
+/// directory.
+struct Scan {
+    report: ScanReport,
+    top: bool,
+}
+
+impl Scan {
+    fn skip(&mut self, path: &Path, reason: impl Into<String>) {
+        self.report.skipped.push(Skipped {
+            file: path.display().to_string(),
+            reason: reason.into(),
+        });
+    }
+
+    /// The entries of the directory `dir`, named `path`, `depth` levels below the
+    /// root.
+    fn dir(&mut self, dir: &OwnedFd, path: &Path, depth: usize) {
+        let names = match confine::names(dir) {
+            Ok(names) => names,
+            Err(e) => return self.skip(path, format!("cannot be read: {}", os_message(&e))),
         };
-        let path = entry.path();
+        for name in names {
+            let child = path.join(OsStr::from_bytes(&name));
+            let kind = match confine::kind_at(dir.as_raw_fd(), &name) {
+                Ok(kind) => kind,
+                Err(e) => {
+                    self.skip(&child, format!("cannot be read: {}", os_message(&e)));
+                    continue;
+                }
+            };
+            match kind {
+                libc::S_IFLNK => self.skip(&child, "a symbolic link, not followed"),
+                libc::S_IFDIR => self.subdir(dir, &name, &child, depth + 1),
+                _ if !name.ends_with(b".rs") => {}
+                libc::S_IFREG => self.file(dir, &name, &child),
+                _ => self.skip(&child, "not a regular file"),
+            }
+        }
+    }
+
+    /// A directory in `dir`: build output, git's own directory, installed
+    /// packages and, when the root is the working directory, its run directories
+    /// and `.audit-memory/` (an audit's own output) are not entered.
+    fn subdir(&mut self, dir: &OwnedFd, name: &[u8], path: &Path, depth: usize) {
+        if matches!(name, b"target" | b".git" | b"node_modules")
+            || (self.top && depth == 1 && (name == b".audit-memory" || is_run_dir_name(name)))
+        {
+            return;
+        }
+        if depth > MAX_WALK {
+            return self.skip(path, "nested too deeply to walk");
+        }
+        match confine::open_dir(dir.as_raw_fd(), name) {
+            Ok(sub) => self.dir(&sub, path, depth),
+            Err(e) => match confine::kind_at(dir.as_raw_fd(), name) {
+                Ok(libc::S_IFLNK) => self.skip(path, "a symbolic link, not followed"),
+                _ => self.skip(path, format!("cannot be read: {}", os_message(&e))),
+            },
+        }
+    }
+
+    fn file(&mut self, dir: &OwnedFd, name: &[u8], path: &Path) {
         let label = path.display().to_string();
-        let kind = entry.file_type();
-        if kind.is_symlink() {
-            report.skipped.push(Skipped {
-                file: label,
-                reason: "a symbolic link, not followed".to_string(),
-            });
-            continue;
-        }
-        if kind.is_dir() || path.extension().and_then(|s| s.to_str()) != Some("rs") {
-            continue;
-        }
-        let source = match read_source(path, kind.is_file()) {
-            Ok(s) => s,
-            Err(reason) => {
-                report.skipped.push(Skipped {
-                    file: label,
-                    reason,
-                });
-                continue;
-            }
-        };
-        match syn::parse_file(&source) {
-            Ok(ast) => {
-                report.files_scanned += 1;
-                let mut visitor = FileVisitor::new(&label);
+        match read_source(dir.as_raw_fd(), name).and_then(|source| parse(&source)) {
+            Ok((ast, tokens)) => {
+                self.report.files_scanned += 1;
+                let mut visitor = FileVisitor::new(&label, &tokens);
                 visitor.visit_file(&ast);
-                visitor.drain_into(&mut report);
+                visitor.drain_into(&mut self.report);
             }
-            Err(_) => report.skipped.push(Skipped {
+            Err(reason) => self.report.skipped.push(Skipped {
                 file: label,
-                reason: "does not parse as Rust".to_string(),
+                reason,
             }),
         }
         // No span of this file is left: free proc-macro2's map of the source parsed on
         // this thread, whose 32-bit offsets would wrap past 4 GiB of source.
         proc_macro2::extra::invalidate_current_thread_spans();
     }
-
-    report
 }
 
 /// A `*.rs` file's text: a regular file with one name (a second name could be a
-/// file outside the tree) of at most 4 MiB, opened without following a link or
-/// blocking on a FIFO, and UTF-8.
-fn read_source(path: &Path, regular: bool) -> Result<String, String> {
-    if !regular {
-        return Err("not a regular file".to_string());
-    }
-    let unreadable = |e: std::io::Error| format!("cannot be read: {}", os_message(&e));
-    let file = OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-        .open(path)
-        .map_err(unreadable)?;
+/// file outside the tree) of at most 4 MiB, opened from its directory without
+/// following a link or blocking on a FIFO, and UTF-8.
+fn read_source(dir: RawFd, name: &[u8]) -> Result<String, String> {
+    let unreadable = |e: io::Error| format!("cannot be read: {}", os_message(&e));
+    let file = confine::open_file(dir, name).map_err(unreadable)?;
     let md = file.metadata().map_err(unreadable)?;
     if !md.file_type().is_file() {
         return Err("not a regular file".to_string());
@@ -277,29 +364,114 @@ fn read_source(path: &Path, regular: bool) -> Result<String, String> {
     String::from_utf8(bytes).map_err(|_| "not UTF-8".to_string())
 }
 
-/// Scan a single in-memory source string (used by tests and the demo path).
+/// A source's syntax tree and its tokens, laid out for snippets, as
+/// `syn::parse_file` reads it (a byte order mark and a `#!` line left out), or why
+/// it is not parsed. syn's parser, the visit and the drop of the tree recurse once
+/// for each level the tree nests, so a file whose tokens could nest it deeper than
+/// the scan's stack holds (`Tokens::lay_out`) is not handed to syn.
+fn parse(source: &str) -> Result<(syn::File, Tokens), String> {
+    let (shebang, content) = split_shebang(source);
+    let stream: TokenStream = content
+        .parse()
+        .map_err(|_| "does not parse as Rust".to_string())?;
+    let tokens = Tokens::lay_out(stream.clone())
+        .ok_or_else(|| "nested or chained too deeply to parse".to_string())?;
+    let mut file: syn::File =
+        syn::parse2(stream).map_err(|_| "does not parse as Rust".to_string())?;
+    file.shebang = shebang;
+    Ok((file, tokens))
+}
+
+/// The `#!` line `syn::parse_file` leaves out of a file (one not followed by `[`,
+/// which starts an inner attribute), and the text after it and a byte order mark;
+/// the newline that ends the line stays, so line numbers hold.
+fn split_shebang(source: &str) -> (Option<String>, &str) {
+    let content = source.strip_prefix('\u{feff}').unwrap_or(source);
+    if let Some(rest) = content.strip_prefix("#!") {
+        if !skip_space(rest).starts_with('[') {
+            return match content.find('\n') {
+                Some(i) => (Some(content[..i].to_string()), &content[i..]),
+                None => (Some(content.to_string()), ""),
+            };
+        }
+    }
+    (None, content)
+}
+
+/// `s` past its leading whitespace and its comments that are not doc comments, as
+/// syn's `whitespace::skip` reads it.
+fn skip_space(mut s: &str) -> &str {
+    'skip: while !s.is_empty() {
+        let byte = s.as_bytes()[0];
+        if byte == b'/' {
+            if s.starts_with("//")
+                && (!s.starts_with("///") || s.starts_with("////"))
+                && !s.starts_with("//!")
+            {
+                match s.find('\n') {
+                    Some(i) => {
+                        s = &s[i + 1..];
+                        continue;
+                    }
+                    None => return "",
+                }
+            } else if s.starts_with("/**/") {
+                s = &s[4..];
+                continue;
+            } else if s.starts_with("/*")
+                && (!s.starts_with("/**") || s.starts_with("/***"))
+                && !s.starts_with("/*!")
+            {
+                let bytes = s.as_bytes();
+                let (mut depth, mut i) = (0usize, 0usize);
+                while i + 1 < bytes.len() {
+                    if bytes[i] == b'/' && bytes[i + 1] == b'*' {
+                        depth += 1;
+                        i += 1;
+                    } else if bytes[i] == b'*' && bytes[i + 1] == b'/' {
+                        depth = depth.saturating_sub(1);
+                        if depth == 0 {
+                            s = &s[i + 2..];
+                            continue 'skip;
+                        }
+                        i += 1;
+                    }
+                    i += 1;
+                }
+                return s;
+            }
+        }
+        match byte {
+            b' ' | 0x09..=0x0D => {
+                s = &s[1..];
+                continue;
+            }
+            b if b <= 0x7F => {}
+            _ => {
+                if let Some(c) = s.chars().next() {
+                    if c.is_whitespace() || c == '\u{200e}' || c == '\u{200f}' {
+                        s = &s[c.len_utf8()..];
+                        continue;
+                    }
+                }
+            }
+        }
+        return s;
+    }
+    s
+}
+
+/// Scan a single in-memory source string (used by tests and the demo path), on
+/// the calling thread's stack.
 ///
-/// Returns `None` if the source does not parse.
+/// Returns `None` if the source is not parsed.
 pub fn scan_source(file_label: &str, source: &str) -> Option<ScanReport> {
-    let ast = syn::parse_file(source).ok()?;
+    let (ast, tokens) = parse(source).ok()?;
     let mut report = ScanReport::new(file_label.to_string(), 1);
-    let mut visitor = FileVisitor::new(file_label);
+    let mut visitor = FileVisitor::new(file_label, &tokens);
     visitor.visit_file(&ast);
     visitor.drain_into(&mut report);
     Some(report)
-}
-
-/// A directory the walk does not enter: build output, git's own directory and
-/// installed packages below the root, and, when the root is the working
-/// directory, its run directories and `.audit-memory/`, which hold an audit's
-/// own output.
-fn is_pruned_dir(e: &DirEntry, top: bool) -> bool {
-    if e.depth() == 0 || !e.file_type().is_dir() {
-        return false;
-    }
-    let name = e.file_name().as_bytes();
-    matches!(name, b"target" | b".git" | b"node_modules")
-        || (top && e.depth() == 1 && (name == b".audit-memory" || is_run_dir_name(name)))
 }
 
 fn truncate_snippet(s: &str) -> String {
@@ -318,9 +490,679 @@ fn tokens_string<T: ToTokens>(node: &T) -> String {
     node.to_token_stream().to_string()
 }
 
+/// One file's tokens in source order, a group laid out as its opening, its
+/// tokens and its closing, each where it starts: what snippets are rendered from.
+struct Tokens {
+    atoms: Vec<Atom>,
+    /// The text of every token, one after another.
+    text: String,
+}
+
+#[derive(Clone, Copy)]
+struct Atom {
+    line: u32,
+    column: u32,
+    piece: Piece,
+}
+
+#[derive(Clone, Copy)]
+enum Piece {
+    Open(Delimiter),
+    Close(Delimiter),
+    /// A token: its text in `Tokens::text`, and whether it is punctuation joined
+    /// to the token after it.
+    Token {
+        at: u32,
+        len: u32,
+        joint: bool,
+    },
+}
+
+impl Atom {
+    fn at(&self) -> (u32, u32) {
+        (self.line, self.column)
+    }
+}
+
+fn place(at: LineColumn) -> (u32, u32) {
+    (
+        u32::try_from(at.line).unwrap_or(u32::MAX),
+        u32::try_from(at.column).unwrap_or(u32::MAX),
+    )
+}
+
+/// What a group level of `Tokens::lay_out` counts.
+struct Level {
+    rest: proc_macro2::token_stream::IntoIter,
+    /// Where the group closes, and with what (none for the file itself).
+    close: Option<(LineColumn, Delimiter)>,
+    /// The chain of the levels around it when the group opened.
+    base: usize,
+    /// The chain at this level since its last end.
+    run: usize,
+    /// `<` at this level that no `>` has closed since the chain's last end.
+    angle: usize,
+    /// The last token, when it is punctuation joined to this one.
+    joint: Option<char>,
+    /// Whether the last token was a brace group.
+    after_brace: bool,
+    /// How much of an inner attribute's `#!` the last tokens were: 1 for `#`, 2
+    /// for `#` then `!`.
+    attr: u8,
+    /// Whether the group is an inner attribute's `[…]`, which ends the chain of
+    /// the level around it.
+    ends_chain: bool,
+}
+
+impl Level {
+    fn new(
+        rest: proc_macro2::token_stream::IntoIter,
+        close: Option<(LineColumn, Delimiter)>,
+        base: usize,
+    ) -> Level {
+        Level {
+            rest,
+            close,
+            base,
+            run: 0,
+            angle: 0,
+            joint: None,
+            after_brace: false,
+            attr: 0,
+            ends_chain: false,
+        }
+    }
+}
+
+/// After a block, a token that can only start another item or statement: a name
+/// other than `else` and `as`, a literal, or the `#` of an attribute.
+fn starts_anew(tt: &TokenTree) -> bool {
+    match tt {
+        TokenTree::Ident(i) => i != "else" && i != "as",
+        TokenTree::Literal(_) => true,
+        TokenTree::Punct(p) => p.as_char() == '#',
+        TokenTree::Group(_) => false,
+    }
+}
+
+impl Tokens {
+    /// The stream laid out flat, or `None` when a group nests deeper than
+    /// `MAX_DEPTH` or a chain runs past `MAX_CHAIN` tokens. A chain ends at `;`,
+    /// at `,` with no `<` open since its start (inside `<…>`, a `,` separates
+    /// generic arguments that nest on), after an inner attribute (`#![…]`, found
+    /// only before items and statements), and, after a block, at a token that can
+    /// only start another item or statement (`starts_anew`); `->` closes no `<`,
+    /// `=>` closes every one, and `<=` opens none. Each token of a group counts
+    /// toward the chain of every group around it, from where that group opened.
+    fn lay_out(stream: TokenStream) -> Option<Tokens> {
+        let mut tokens = Tokens {
+            atoms: Vec::new(),
+            text: String::new(),
+        };
+        let mut around: Vec<Level> = Vec::new();
+        let mut level = Level::new(stream.into_iter(), None, 0);
+        loop {
+            let Some(tt) = level.rest.next() else {
+                let (close, ends_chain) = (level.close, level.ends_chain);
+                let Some(parent) = around.pop() else {
+                    return Some(tokens);
+                };
+                if let Some((at, delim)) = close {
+                    tokens.push(at, Piece::Close(delim));
+                }
+                level = parent;
+                level.after_brace = matches!(close, Some((_, Delimiter::Brace)));
+                if ends_chain {
+                    level.run = 0;
+                    level.angle = 0;
+                }
+                continue;
+            };
+            if std::mem::take(&mut level.after_brace) && starts_anew(&tt) {
+                level.run = 0;
+                level.angle = 0;
+            }
+            let joint = level.joint.take();
+            let attr = std::mem::take(&mut level.attr);
+            if let TokenTree::Punct(p) = &tt {
+                let c = p.as_char();
+                tokens.push_token(&tt);
+                if p.spacing() == Spacing::Joint {
+                    level.joint = Some(c);
+                }
+                level.attr = match (c, attr) {
+                    ('#', _) => 1,
+                    ('!', 1) => 2,
+                    _ => 0,
+                };
+                match c {
+                    ';' => {
+                        level.run = 0;
+                        level.angle = 0;
+                        continue;
+                    }
+                    ',' if level.angle == 0 => {
+                        level.run = 0;
+                        continue;
+                    }
+                    '<' => level.angle += 1,
+                    '=' if joint == Some('<') => level.angle = level.angle.saturating_sub(1),
+                    '>' => match joint {
+                        Some('-') => {}
+                        Some('=') => level.angle = 0,
+                        _ => level.angle = level.angle.saturating_sub(1),
+                    },
+                    _ => {}
+                }
+            }
+            level.run += 1;
+            if level.base + level.run > MAX_CHAIN {
+                return None;
+            }
+            match tt {
+                TokenTree::Group(g) => {
+                    if around.len() >= MAX_DEPTH {
+                        return None;
+                    }
+                    tokens.push(g.span_open().start(), Piece::Open(g.delimiter()));
+                    let mut inner = Level::new(
+                        g.stream().into_iter(),
+                        Some((g.span_close().start(), g.delimiter())),
+                        level.base + level.run,
+                    );
+                    inner.ends_chain = attr == 2 && g.delimiter() == Delimiter::Bracket;
+                    around.push(std::mem::replace(&mut level, inner));
+                }
+                TokenTree::Punct(_) => {}
+                other => tokens.push_token(&other),
+            }
+        }
+    }
+
+    fn push(&mut self, at: LineColumn, piece: Piece) {
+        let (line, column) = place(at);
+        self.atoms.push(Atom {
+            line,
+            column,
+            piece,
+        });
+    }
+
+    fn push_token(&mut self, tt: &TokenTree) {
+        use std::fmt::Write;
+        let start = self.text.len();
+        let _ = write!(self.text, "{tt}");
+        let joint = matches!(tt, TokenTree::Punct(p) if p.spacing() == Spacing::Joint);
+        let at = u32::try_from(start).unwrap_or(u32::MAX);
+        let len = u32::try_from(self.text.len() - start).unwrap_or(0);
+        self.push(tt.span().start(), Piece::Token { at, len, joint });
+    }
+
+    /// The first token that starts at `at`.
+    fn first_at(&self, at: LineColumn) -> Option<usize> {
+        let key = place(at);
+        let i = self.atoms.partition_point(|a| a.at() < key);
+        (i < self.atoms.len() && self.atoms[i].at() == key).then_some(i)
+    }
+
+    /// The last token that starts before `end`: the last of a span that ends
+    /// there, whether it covers one token or several (a negative literal).
+    fn last_before(&self, end: LineColumn) -> Option<usize> {
+        let key = place(end);
+        self.atoms.partition_point(|a| a.at() < key).checked_sub(1)
+    }
+
+    /// The tokens from `first` to `last` as proc-macro2 prints a token stream (a
+    /// space between two tokens unless the first is joined punctuation, `{ … }`
+    /// around the tokens of a brace group), as `truncate_snippet` collapses and cuts
+    /// them, printing no more than it keeps. `None` when the tokens are not whole
+    /// groups, so not an expression's.
+    fn render(&self, first: usize, last: usize) -> Option<String> {
+        let mut out = Snippet::default();
+        // For each open group: whether a token is printed in it, and whether the
+        // last is joined punctuation.
+        let mut open = vec![(false, false)];
+        for atom in self.atoms.get(first..=last)? {
+            match atom.piece {
+                Piece::Open(delimiter) => {
+                    let top = open.last_mut()?;
+                    if top.0 && !top.1 {
+                        out.push(" ");
+                    }
+                    *top = (true, false);
+                    out.push(match delimiter {
+                        Delimiter::Parenthesis => "(",
+                        Delimiter::Bracket => "[",
+                        Delimiter::Brace => "{ ",
+                        Delimiter::None => "",
+                    });
+                    open.push((false, false));
+                }
+                Piece::Close(delimiter) => {
+                    if open.len() < 2 {
+                        return None;
+                    }
+                    let (printed, _) = open.pop()?;
+                    if delimiter == Delimiter::Brace && printed {
+                        out.push(" ");
+                    }
+                    out.push(match delimiter {
+                        Delimiter::Parenthesis => ")",
+                        Delimiter::Bracket => "]",
+                        Delimiter::Brace => "}",
+                        Delimiter::None => "",
+                    });
+                }
+                Piece::Token { at, len, joint } => {
+                    let top = open.last_mut()?;
+                    if top.0 && !top.1 {
+                        out.push(" ");
+                    }
+                    *top = (true, joint);
+                    let start = at as usize;
+                    out.push(self.text.get(start..start + len as usize)?);
+                }
+            }
+            if out.full() {
+                return Some(out.finish());
+            }
+        }
+        (open.len() == 1).then(|| out.finish())
+    }
+}
+
+/// Text collapsed as `truncate_snippet` collapses it (each run of whitespace one
+/// space, none at either end), held only up to one character past `SNIPPET_MAX`.
+#[derive(Default)]
+struct Snippet {
+    text: String,
+    chars: usize,
+    space: bool,
+}
+
+impl Snippet {
+    fn push(&mut self, s: &str) {
+        for c in s.chars() {
+            if self.full() {
+                return;
+            }
+            if c.is_whitespace() {
+                self.space = self.chars > 0;
+                continue;
+            }
+            if std::mem::take(&mut self.space) {
+                self.put(' ');
+                if self.full() {
+                    return;
+                }
+            }
+            self.put(c);
+        }
+    }
+
+    fn put(&mut self, c: char) {
+        self.text.push(c);
+        self.chars += 1;
+    }
+
+    /// More than `SNIPPET_MAX` characters are in, so the rest is cut.
+    fn full(&self) -> bool {
+        self.chars > SNIPPET_MAX
+    }
+
+    fn finish(mut self) -> String {
+        if self.full() {
+            let cut = self
+                .text
+                .char_indices()
+                .nth(SNIPPET_MAX)
+                .map_or(self.text.len(), |(i, _)| i);
+            self.text.truncate(cut);
+            self.text.push_str("...");
+        }
+        self.text
+    }
+}
+
+/// One step toward an expression's first or last token: the token, or the
+/// expression on that side whose token it is.
+enum Step<'a> {
+    At(Span),
+    Expr(&'a Expr),
+}
+
+fn expr_attrs(e: &Expr) -> &[syn::Attribute] {
+    match e {
+        Expr::Array(x) => &x.attrs,
+        Expr::Assign(x) => &x.attrs,
+        Expr::Async(x) => &x.attrs,
+        Expr::Await(x) => &x.attrs,
+        Expr::Binary(x) => &x.attrs,
+        Expr::Block(x) => &x.attrs,
+        Expr::Break(x) => &x.attrs,
+        Expr::Call(x) => &x.attrs,
+        Expr::Cast(x) => &x.attrs,
+        Expr::Closure(x) => &x.attrs,
+        Expr::Const(x) => &x.attrs,
+        Expr::Continue(x) => &x.attrs,
+        Expr::Field(x) => &x.attrs,
+        Expr::ForLoop(x) => &x.attrs,
+        Expr::Group(x) => &x.attrs,
+        Expr::If(x) => &x.attrs,
+        Expr::Index(x) => &x.attrs,
+        Expr::Infer(x) => &x.attrs,
+        Expr::Let(x) => &x.attrs,
+        Expr::Lit(x) => &x.attrs,
+        Expr::Loop(x) => &x.attrs,
+        Expr::Macro(x) => &x.attrs,
+        Expr::Match(x) => &x.attrs,
+        Expr::MethodCall(x) => &x.attrs,
+        Expr::Paren(x) => &x.attrs,
+        Expr::Path(x) => &x.attrs,
+        Expr::Range(x) => &x.attrs,
+        Expr::RawAddr(x) => &x.attrs,
+        Expr::Reference(x) => &x.attrs,
+        Expr::Repeat(x) => &x.attrs,
+        Expr::Return(x) => &x.attrs,
+        Expr::Struct(x) => &x.attrs,
+        Expr::Try(x) => &x.attrs,
+        Expr::TryBlock(x) => &x.attrs,
+        Expr::Tuple(x) => &x.attrs,
+        Expr::Unary(x) => &x.attrs,
+        Expr::Unsafe(x) => &x.attrs,
+        Expr::While(x) => &x.attrs,
+        Expr::Yield(x) => &x.attrs,
+        _ => &[],
+    }
+}
+
+/// The first outer attribute: syn prints those before the node, and its inner
+/// ones (`#![…]`) inside its braces.
+fn attrs_first(attrs: &[syn::Attribute]) -> Option<Span> {
+    attrs
+        .iter()
+        .find(|a| matches!(a.style, syn::AttrStyle::Outer))
+        .map(|a| a.pound_token.span())
+}
+
+fn label_first(label: &Option<syn::Label>, keyword: Span) -> Span {
+    label.as_ref().map_or(keyword, |l| l.name.apostrophe)
+}
+
+fn path_first(path: &syn::Path) -> Span {
+    match (&path.leading_colon, path.segments.first()) {
+        (Some(colons), _) => colons.spans[0],
+        (None, Some(segment)) => segment.ident.span(),
+        (None, None) => path.span(),
+    }
+}
+
+fn qpath_first(qself: &Option<syn::QSelf>, path: &syn::Path) -> Span {
+    qself
+        .as_ref()
+        .map_or_else(|| path_first(path), |q| q.lt_token.span())
+}
+
+fn closure_first(x: &syn::ExprClosure) -> Span {
+    if let Some(l) = &x.lifetimes {
+        return l.for_token.span();
+    }
+    if let Some(t) = &x.constness {
+        return t.span();
+    }
+    if let Some(t) = &x.movability {
+        return t.span();
+    }
+    if let Some(t) = &x.asyncness {
+        return t.span();
+    }
+    if let Some(t) = &x.capture {
+        return t.span();
+    }
+    x.or1_token.span()
+}
+
+/// The first token of a stream, a group by its opening.
+fn stream_first(tokens: TokenStream) -> Span {
+    match tokens.into_iter().next() {
+        Some(TokenTree::Group(g)) => g.span_open(),
+        Some(t) => t.span(),
+        None => Span::call_site(),
+    }
+}
+
+/// The last token of a stream, a group by its closing.
+fn stream_last(tokens: TokenStream) -> Span {
+    match tokens.into_iter().last() {
+        Some(TokenTree::Group(g)) => g.span_close(),
+        Some(t) => t.span(),
+        None => Span::call_site(),
+    }
+}
+
+/// The step from an expression toward its first token, as syn prints it: outer
+/// attributes first, then down the left operand of the expressions that start
+/// with one.
+fn first_step(e: &Expr) -> Step<'_> {
+    if let Some(at) = attrs_first(expr_attrs(e)) {
+        return Step::At(at);
+    }
+    match e {
+        Expr::Array(x) => Step::At(x.bracket_token.span.open()),
+        Expr::Assign(x) => Step::Expr(&x.left),
+        Expr::Async(x) => Step::At(x.async_token.span()),
+        Expr::Await(x) => Step::Expr(&x.base),
+        Expr::Binary(x) => Step::Expr(&x.left),
+        Expr::Block(x) => Step::At(label_first(&x.label, x.block.brace_token.span.open())),
+        Expr::Break(x) => Step::At(x.break_token.span()),
+        Expr::Call(x) => Step::Expr(&x.func),
+        Expr::Cast(x) => Step::Expr(&x.expr),
+        Expr::Closure(x) => Step::At(closure_first(x)),
+        Expr::Const(x) => Step::At(x.const_token.span()),
+        Expr::Continue(x) => Step::At(x.continue_token.span()),
+        Expr::Field(x) => Step::Expr(&x.base),
+        Expr::ForLoop(x) => Step::At(label_first(&x.label, x.for_token.span())),
+        Expr::Group(x) => Step::Expr(&x.expr),
+        Expr::If(x) => Step::At(x.if_token.span()),
+        Expr::Index(x) => Step::Expr(&x.expr),
+        Expr::Infer(x) => Step::At(x.underscore_token.span()),
+        Expr::Let(x) => Step::At(x.let_token.span()),
+        Expr::Lit(x) => Step::At(x.lit.span()),
+        Expr::Loop(x) => Step::At(label_first(&x.label, x.loop_token.span())),
+        Expr::Macro(x) => Step::At(path_first(&x.mac.path)),
+        Expr::Match(x) => Step::At(x.match_token.span()),
+        Expr::MethodCall(x) => Step::Expr(&x.receiver),
+        Expr::Paren(x) => Step::At(x.paren_token.span.open()),
+        Expr::Path(x) => Step::At(qpath_first(&x.qself, &x.path)),
+        Expr::Range(x) => match &x.start {
+            Some(start) => Step::Expr(start),
+            None => Step::At(x.limits.span()),
+        },
+        Expr::RawAddr(x) => Step::At(x.and_token.span()),
+        Expr::Reference(x) => Step::At(x.and_token.span()),
+        Expr::Repeat(x) => Step::At(x.bracket_token.span.open()),
+        Expr::Return(x) => Step::At(x.return_token.span()),
+        Expr::Struct(x) => Step::At(qpath_first(&x.qself, &x.path)),
+        Expr::Try(x) => Step::Expr(&x.expr),
+        Expr::TryBlock(x) => Step::At(x.try_token.span()),
+        Expr::Tuple(x) => Step::At(x.paren_token.span.open()),
+        Expr::Unary(x) => Step::At(x.op.span()),
+        Expr::Unsafe(x) => Step::At(x.unsafe_token.span()),
+        Expr::Verbatim(tokens) => Step::At(stream_first(tokens.clone())),
+        Expr::While(x) => Step::At(label_first(&x.label, x.while_token.span())),
+        Expr::Yield(x) => Step::At(x.yield_token.span()),
+        other => Step::At(stream_first(other.to_token_stream())),
+    }
+}
+
+/// The step from an expression toward its last token, as syn prints it: down the
+/// right operand of the expressions that end with one.
+fn last_step(e: &Expr) -> Step<'_> {
+    match e {
+        Expr::Array(x) => Step::At(x.bracket_token.span.close()),
+        Expr::Assign(x) => Step::Expr(&x.right),
+        Expr::Async(x) => Step::At(x.block.brace_token.span.close()),
+        Expr::Await(x) => Step::At(x.await_token.span()),
+        Expr::Binary(x) => Step::Expr(&x.right),
+        Expr::Block(x) => Step::At(x.block.brace_token.span.close()),
+        Expr::Break(x) => match (&x.expr, &x.label) {
+            (Some(value), _) => Step::Expr(value),
+            (None, Some(label)) => Step::At(label.ident.span()),
+            (None, None) => Step::At(x.break_token.span()),
+        },
+        Expr::Call(x) => Step::At(x.paren_token.span.close()),
+        Expr::Cast(x) => Step::At(type_last(&x.ty)),
+        Expr::Closure(x) => Step::Expr(&x.body),
+        Expr::Const(x) => Step::At(x.block.brace_token.span.close()),
+        Expr::Continue(x) => Step::At(
+            x.label
+                .as_ref()
+                .map_or_else(|| x.continue_token.span(), |l| l.ident.span()),
+        ),
+        Expr::Field(x) => Step::At(match &x.member {
+            syn::Member::Named(name) => name.span(),
+            syn::Member::Unnamed(index) => index.span,
+        }),
+        Expr::ForLoop(x) => Step::At(x.body.brace_token.span.close()),
+        Expr::Group(x) => Step::Expr(&x.expr),
+        Expr::If(x) => match &x.else_branch {
+            Some((_, branch)) => Step::Expr(branch),
+            None => Step::At(x.then_branch.brace_token.span.close()),
+        },
+        Expr::Index(x) => Step::At(x.bracket_token.span.close()),
+        Expr::Infer(x) => Step::At(x.underscore_token.span()),
+        Expr::Let(x) => Step::Expr(&x.expr),
+        Expr::Lit(x) => Step::At(x.lit.span()),
+        Expr::Loop(x) => Step::At(x.body.brace_token.span.close()),
+        Expr::Macro(x) => Step::At(delimiter_close(&x.mac.delimiter)),
+        Expr::Match(x) => Step::At(x.brace_token.span.close()),
+        Expr::MethodCall(x) => Step::At(x.paren_token.span.close()),
+        Expr::Paren(x) => Step::At(x.paren_token.span.close()),
+        Expr::Path(x) => match path_tail(&x.path) {
+            Tail::At(at) => Step::At(at),
+            Tail::Ty(ty) => Step::At(type_last(ty)),
+        },
+        Expr::Range(x) => match (&x.end, &x.limits) {
+            (Some(end), _) => Step::Expr(end),
+            (None, syn::RangeLimits::HalfOpen(dots)) => Step::At(dots.spans[1]),
+            (None, syn::RangeLimits::Closed(dots)) => Step::At(dots.spans[2]),
+        },
+        Expr::RawAddr(x) => Step::Expr(&x.expr),
+        Expr::Reference(x) => Step::Expr(&x.expr),
+        Expr::Repeat(x) => Step::At(x.bracket_token.span.close()),
+        Expr::Return(x) => match &x.expr {
+            Some(value) => Step::Expr(value),
+            None => Step::At(x.return_token.span()),
+        },
+        Expr::Struct(x) => Step::At(x.brace_token.span.close()),
+        Expr::Try(x) => Step::At(x.question_token.span()),
+        Expr::TryBlock(x) => Step::At(x.block.brace_token.span.close()),
+        Expr::Tuple(x) => Step::At(x.paren_token.span.close()),
+        Expr::Unary(x) => Step::Expr(&x.expr),
+        Expr::Unsafe(x) => Step::At(x.block.brace_token.span.close()),
+        Expr::Verbatim(tokens) => Step::At(stream_last(tokens.clone())),
+        Expr::While(x) => Step::At(x.body.brace_token.span.close()),
+        Expr::Yield(x) => match &x.expr {
+            Some(value) => Step::Expr(value),
+            None => Step::At(x.yield_token.span()),
+        },
+        other => Step::At(stream_last(other.to_token_stream())),
+    }
+}
+
+fn delimiter_close(delimiter: &syn::MacroDelimiter) -> Span {
+    match delimiter {
+        syn::MacroDelimiter::Paren(p) => p.span.close(),
+        syn::MacroDelimiter::Brace(b) => b.span.close(),
+        syn::MacroDelimiter::Bracket(b) => b.span.close(),
+    }
+}
+
+/// Where a path or bound ends: at a token, or with a type, whose last token is
+/// its own.
+enum Tail<'a> {
+    At(Span),
+    Ty(&'a Type),
+}
+
+fn path_tail(path: &syn::Path) -> Tail<'_> {
+    let Some(segment) = path.segments.last() else {
+        return Tail::At(stream_last(path.to_token_stream()));
+    };
+    match &segment.arguments {
+        syn::PathArguments::None => Tail::At(segment.ident.span()),
+        syn::PathArguments::AngleBracketed(args) => Tail::At(args.gt_token.span()),
+        syn::PathArguments::Parenthesized(args) => match &args.output {
+            syn::ReturnType::Default => Tail::At(args.paren_token.span.close()),
+            syn::ReturnType::Type(_, ty) => Tail::Ty(ty),
+        },
+    }
+}
+
+fn bounds_tail<'a>(
+    bounds: &'a Punctuated<syn::TypeParamBound, syn::Token![+]>,
+    whole: Span,
+) -> Tail<'a> {
+    match bounds.pairs().next_back() {
+        None => Tail::At(whole),
+        Some(Pair::Punctuated(_, plus)) => Tail::At(plus.span()),
+        Some(Pair::End(bound)) => match bound {
+            syn::TypeParamBound::Trait(t) => match &t.paren_token {
+                Some(paren) => Tail::At(paren.span.close()),
+                None => path_tail(&t.path),
+            },
+            syn::TypeParamBound::Lifetime(l) => Tail::At(l.ident.span()),
+            syn::TypeParamBound::PreciseCapture(c) => Tail::At(c.gt_token.span()),
+            syn::TypeParamBound::Verbatim(tokens) => Tail::At(stream_last(tokens.clone())),
+            other => Tail::At(stream_last(other.to_token_stream())),
+        },
+    }
+}
+
+/// The last token of a type, found down its last parts.
+fn type_last(mut ty: &Type) -> Span {
+    loop {
+        let tail = match ty {
+            Type::Array(x) => Tail::At(x.bracket_token.span.close()),
+            Type::BareFn(x) => match &x.output {
+                syn::ReturnType::Type(_, ret) => Tail::Ty(ret),
+                syn::ReturnType::Default => Tail::At(x.paren_token.span.close()),
+            },
+            Type::Group(x) => Tail::Ty(&x.elem),
+            Type::ImplTrait(x) => bounds_tail(&x.bounds, x.impl_token.span()),
+            Type::Infer(x) => Tail::At(x.underscore_token.span()),
+            Type::Macro(x) => Tail::At(delimiter_close(&x.mac.delimiter)),
+            Type::Never(x) => Tail::At(x.bang_token.span()),
+            Type::Paren(x) => Tail::At(x.paren_token.span.close()),
+            Type::Path(x) => path_tail(&x.path),
+            Type::Ptr(x) => Tail::Ty(&x.elem),
+            Type::Reference(x) => Tail::Ty(&x.elem),
+            Type::Slice(x) => Tail::At(x.bracket_token.span.close()),
+            Type::TraitObject(x) => bounds_tail(
+                &x.bounds,
+                x.dyn_token
+                    .as_ref()
+                    .map_or_else(Span::call_site, |t| t.span()),
+            ),
+            Type::Tuple(x) => Tail::At(x.paren_token.span.close()),
+            Type::Verbatim(tokens) => Tail::At(stream_last(tokens.clone())),
+            other => Tail::At(stream_last(other.to_token_stream())),
+        };
+        match tail {
+            Tail::At(at) => return at,
+            Tail::Ty(next) => ty = next,
+        }
+    }
+}
+
 /// Per-file AST visitor. Accumulates findings, then `drain_into` merges them.
-struct FileVisitor {
+struct FileVisitor<'t> {
     file: String,
+    tokens: &'t Tokens,
+    /// The first and the last token of each expression looked up, by its address:
+    /// a chain's are found once for all its links.
+    firsts: HashMap<usize, Span>,
+    lasts: HashMap<usize, Span>,
     /// Depth of `#[program]` module nesting we are currently inside.
     program_depth: usize,
     instructions: Vec<Instruction>,
@@ -334,10 +1176,13 @@ struct FileVisitor {
     functions: Vec<FunctionDef>,
 }
 
-impl FileVisitor {
-    fn new(file: &str) -> Self {
+impl<'t> FileVisitor<'t> {
+    fn new(file: &str, tokens: &'t Tokens) -> Self {
         Self {
             file: file.to_string(),
+            tokens,
+            firsts: HashMap::new(),
+            lasts: HashMap::new(),
             program_depth: 0,
             instructions: Vec::new(),
             accounts_structs: Vec::new(),
@@ -363,6 +1208,48 @@ impl FileVisitor {
             .remaining_accounts_sites
             .extend(self.remaining_accounts_sites);
         report.functions.extend(self.functions);
+    }
+
+    /// The first token of `e`, found down its left operands; every expression on
+    /// the way is remembered with it.
+    fn first(&mut self, e: &Expr) -> Span {
+        Self::end_of(&mut self.firsts, e, first_step)
+    }
+
+    /// The last token of `e`, found down its right operands, the same way.
+    fn last(&mut self, e: &Expr) -> Span {
+        Self::end_of(&mut self.lasts, e, last_step)
+    }
+
+    fn end_of(known: &mut HashMap<usize, Span>, e: &Expr, step: fn(&Expr) -> Step<'_>) -> Span {
+        let mut on_the_way = Vec::new();
+        let mut e = e;
+        let at = loop {
+            let key = e as *const Expr as usize;
+            if let Some(&at) = known.get(&key) {
+                break at;
+            }
+            on_the_way.push(key);
+            match step(e) {
+                Step::At(at) => break at,
+                Step::Expr(next) => e = next,
+            }
+        };
+        for key in on_the_way {
+            known.insert(key, at);
+        }
+        at
+    }
+
+    /// The snippet of `node`, whose tokens run from `first` to `last`, rendered
+    /// from the file's tokens; from the node itself when they are not found there.
+    fn snippet<T: ToTokens>(&self, node: &T, first: Span, last: Span) -> String {
+        self.tokens
+            .first_at(first.start())
+            .zip(self.tokens.last_before(last.end()))
+            .filter(|(a, b)| a <= b)
+            .and_then(|(a, b)| self.tokens.render(a, b))
+            .unwrap_or_else(|| truncate_snippet(&tokens_string(node)))
     }
 
     fn record_instruction(&mut self, func: &syn::ItemFn) {
@@ -419,7 +1306,7 @@ impl FileVisitor {
     }
 }
 
-impl<'ast> Visit<'ast> for FileVisitor {
+impl<'ast> Visit<'ast> for FileVisitor<'_> {
     fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {
         let is_program = has_attr_path(&node.attrs, "program");
         if is_program {
@@ -481,11 +1368,14 @@ impl<'ast> Visit<'ast> for FileVisitor {
             _ => None,
         };
         if let Some(op) = op {
+            let first = attrs_first(&node.attrs).unwrap_or_else(|| self.first(&node.left));
+            let last = self.last(&node.right);
+            let snippet = self.snippet(node, first, last);
             self.arithmetic_sites.push(ArithmeticSite {
                 file: self.file.clone(),
-                line: node.span().start().line,
+                line: first.start().line,
                 op: op.to_string(),
-                snippet: truncate_snippet(&tokens_string(node)),
+                snippet,
             });
         }
         syn::visit::visit_expr_binary(self, node);
@@ -493,30 +1383,27 @@ impl<'ast> Visit<'ast> for FileVisitor {
 
     fn visit_expr_method_call(&mut self, node: &'ast syn::ExprMethodCall) {
         let method = node.method.to_string();
-        if method == "unwrap" {
+        if method == "unwrap" || method == "expect" {
+            let first = attrs_first(&node.attrs).unwrap_or_else(|| self.first(&node.receiver));
+            let snippet = self.snippet(node, first, node.paren_token.span.close());
             self.panic_sites.push(PanicSite {
                 file: self.file.clone(),
                 line: node.method.span().start().line,
-                kind: "unwrap".to_string(),
-                snippet: truncate_snippet(&tokens_string(node)),
-            });
-        } else if method == "expect" {
-            self.panic_sites.push(PanicSite {
-                file: self.file.clone(),
-                line: node.method.span().start().line,
-                kind: "expect".to_string(),
-                snippet: truncate_snippet(&tokens_string(node)),
+                kind: method,
+                snippet,
             });
         }
         syn::visit::visit_expr_method_call(self, node);
     }
 
     fn visit_expr_index(&mut self, node: &'ast syn::ExprIndex) {
+        let first = attrs_first(&node.attrs).unwrap_or_else(|| self.first(&node.expr));
+        let snippet = self.snippet(node, first, node.bracket_token.span.close());
         self.panic_sites.push(PanicSite {
             file: self.file.clone(),
-            line: node.span().start().line,
+            line: first.start().line,
             kind: "index".to_string(),
-            snippet: truncate_snippet(&tokens_string(node)),
+            snippet,
         });
         syn::visit::visit_expr_index(self, node);
     }
@@ -525,11 +1412,13 @@ impl<'ast> Visit<'ast> for FileVisitor {
         if let Some(seg) = node.path.segments.last() {
             let name = seg.ident.to_string();
             if matches!(name.as_str(), "panic" | "unreachable" | "unwrap") {
+                let first = path_first(&node.path);
+                let snippet = self.snippet(node, first, delimiter_close(&node.delimiter));
                 self.panic_sites.push(PanicSite {
                     file: self.file.clone(),
-                    line: node.path.span().start().line,
+                    line: first.start().line,
                     kind: "panic".to_string(),
-                    snippet: truncate_snippet(&tokens_string(node)),
+                    snippet,
                 });
             }
         }
@@ -547,10 +1436,12 @@ impl<'ast> Visit<'ast> for FileVisitor {
     fn visit_expr_field(&mut self, node: &'ast syn::ExprField) {
         if let syn::Member::Named(ident) = &node.member {
             if ident == "remaining_accounts" {
+                let first = attrs_first(&node.attrs).unwrap_or_else(|| self.first(&node.base));
+                let snippet = self.snippet(node, first, ident.span());
                 self.remaining_accounts_sites.push(RemainingAccountsSite {
                     file: self.file.clone(),
                     line: ident.span().start().line,
-                    snippet: truncate_snippet(&tokens_string(node)),
+                    snippet,
                 });
             }
         }
@@ -567,11 +1458,13 @@ impl<'ast> Visit<'ast> for FileVisitor {
                     _ => None,
                 };
                 if let Some(kind) = kind {
+                    let first = attrs_first(&node.attrs).unwrap_or_else(|| self.first(&node.func));
+                    let snippet = self.snippet(node, first, node.paren_token.span.close());
                     self.cpi_sites.push(CpiSite {
                         file: self.file.clone(),
                         line: seg.ident.span().start().line,
                         kind: kind.to_string(),
-                        snippet: truncate_snippet(&tokens_string(node)),
+                        snippet,
                     });
                 }
             }
@@ -887,4 +1780,212 @@ fn parse_seed_array(tokens: proc_macro2::TokenStream) -> Vec<String> {
         elems.push(s);
     }
     elems
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn laid_out(source: &str) -> bool {
+        Tokens::lay_out(source.parse().expect("the source lexes")).is_some()
+    }
+
+    #[test]
+    fn groups_nest_up_to_the_limit() {
+        let nest = |n: usize| format!("const X: u8 = {}1{};", "(".repeat(n), ")".repeat(n));
+        assert!(laid_out(&nest(MAX_DEPTH)));
+        assert!(!laid_out(&nest(MAX_DEPTH + 1)));
+    }
+
+    #[test]
+    fn a_chain_runs_up_to_the_limit() {
+        // `const X : bool =` and `true` are 6 tokens of the chain; `;` ends it.
+        let chain = |n: usize| format!("const X: bool = {}true;", "!".repeat(n));
+        assert!(laid_out(&chain(MAX_CHAIN - 6)));
+        assert!(!laid_out(&chain(MAX_CHAIN - 5)));
+        // A chain counts on through the groups it is nested in.
+        let inner = "!".repeat(MAX_CHAIN / 2);
+        assert!(!laid_out(&format!("const X: bool = {inner}({inner}true);")));
+        assert!(!laid_out(&format!(
+            "const X: bool = {inner}{{ {inner}true }};"
+        )));
+    }
+
+    #[test]
+    fn chains_end_only_where_the_tree_cannot_nest_on() {
+        let half = "!".repeat(MAX_CHAIN * 3 / 4);
+        let two = |sep: &str| format!("fn f() {{ let x = {half}true{sep} let y = {half}true; }}");
+        assert!(laid_out(&two(";")), "a statement ends at ;");
+        let ones = vec!["1"; MAX_CHAIN * 2].join(", ");
+        assert!(
+            laid_out(&format!("const X: [u8; 2] = [{ones}];")),
+            "elements end at ,"
+        );
+        let args = vec!["B"; MAX_CHAIN].join(", ");
+        assert!(
+            !laid_out(&format!("type T = A<{args}>;")),
+            "inside <…>, a , ends nothing"
+        );
+        let arrows = "fn() -> B, ".repeat(MAX_CHAIN / 5);
+        assert!(
+            !laid_out(&format!("type T = A<{arrows}u8>;")),
+            "-> closes no <"
+        );
+        let items = "fn a() {} ".repeat(MAX_CHAIN / 2);
+        assert!(laid_out(&items), "an item after a block starts anew");
+        let docs = "#![doc = \"x\"]\n".repeat(MAX_CHAIN);
+        assert!(laid_out(&docs), "an inner attribute ends a chain");
+        let blocks = " + {1}".repeat(MAX_CHAIN);
+        assert!(
+            !laid_out(&format!("const X: u8 = {{1}}{blocks};")),
+            "an operator after a block goes on"
+        );
+        let calls = "(1)".repeat(MAX_CHAIN);
+        assert!(
+            !laid_out(&format!("const X: u8 = {{f}}{calls};")),
+            "a call after a block goes on"
+        );
+        let elses = " else if a {}".repeat(MAX_CHAIN / 4);
+        assert!(
+            !laid_out(&format!("fn f() {{ if a {{}}{elses} }}")),
+            "else after a block goes on"
+        );
+        let outer = "#[doc = \"x\"] 1 + ".repeat(MAX_CHAIN / 3);
+        assert!(
+            !laid_out(&format!("const X: u8 = {outer}1;")),
+            "an outer attribute ends nothing"
+        );
+    }
+
+    #[test]
+    fn a_file_nested_too_deeply_is_not_parsed() {
+        let deep = format!("fn f() {{ let x = {}true; }}", "!".repeat(MAX_CHAIN));
+        assert_eq!(
+            parse(&deep).err().as_deref(),
+            Some("nested or chained too deeply to parse")
+        );
+        assert!(scan_source("deep.rs", &deep).is_none());
+        assert_eq!(
+            parse("fn f( {").err().as_deref(),
+            Some("does not parse as Rust")
+        );
+    }
+
+    #[test]
+    fn a_byte_order_mark_and_a_shebang_are_left_out_as_syn_leaves_them() {
+        let (ast, _) =
+            parse("\u{feff}#!/usr/bin/env run-cargo-script\nfn main() {}\n").expect("parses");
+        assert_eq!(
+            ast.shebang.as_deref(),
+            Some("#!/usr/bin/env run-cargo-script")
+        );
+        let (ast, _) = parse("#![allow(dead_code)]\nfn main() {}\n").expect("parses");
+        assert_eq!(ast.shebang, None);
+        let report = scan_source("s.rs", "#!/bin/x\nfn f() { let y = a + b; }\n").expect("parses");
+        assert_eq!(report.arithmetic_sites[0].line, 2);
+    }
+
+    /// Checks every expression outside an attribute: its first and last tokens, as
+    /// found down its operands, are where syn's span of it starts and ends.
+    struct Ends<'t> {
+        visitor: FileVisitor<'t>,
+        checked: usize,
+    }
+
+    impl<'ast> Visit<'ast> for Ends<'_> {
+        fn visit_attribute(&mut self, _: &'ast syn::Attribute) {}
+
+        fn visit_expr(&mut self, e: &'ast Expr) {
+            let whole = e.span();
+            let (first, last) = (self.visitor.first(e), self.visitor.last(e));
+            assert_eq!(
+                (first.start(), last.end()),
+                (whole.start(), whole.end()),
+                "{}",
+                tokens_string(e)
+            );
+            self.checked += 1;
+            syn::visit::visit_expr(self, e);
+        }
+    }
+
+    const SHAPES: &str = r#"
+        fn shapes() {
+            let a = x.checked_add(y).unwrap().pow(2) as u64 + b[i][j] * -c;
+            let b = 'outer: loop { break 'outer 1; };
+            let c = move |p: u8| -> u8 { p + 1 };
+            let d = async move { f().await? };
+            let e = <T as Trait>::f::<u8>(1) + S::<u8> { a: 1, ..d };
+            let f = if a { 1 } else if b { 2 } else { 3 };
+            let g = match x { #![allow(x)] 1..=-1 => 0, _ => 1 };
+            let h = &mut *p as *const dyn Fn(u8) -> u8 as usize;
+            let i = (1, 2).0 + t.0.1 + [0u8; 4][..2].len() + (a..).len() + (..=b).len();
+            let j = #[cfg(x)] unsafe { g() } + const { 1 } + 'b: { 2 };
+            let k = x as fn() -> u8 as Box<dyn Fn() -> u8 + Send>;
+            let l = return;
+            let m = || continue;
+            let n = vec![1, 2] + m!{} + n![];
+            let o = || yield 1;
+            let p = a = b;
+            let q = while x {} == for _ in y {};
+            let r = x as Box<dyn A<B> + 'a>;
+            let s = &raw const x;
+        }
+    "#;
+
+    #[test]
+    fn an_expressions_ends_are_where_syns_span_of_it_ends() {
+        let mut checked = 0;
+        for source in [
+            SHAPES,
+            include_str!("scan.rs"),
+            include_str!("mem.rs"),
+            include_str!("confine.rs"),
+            include_str!("bin/audit-mem.rs"),
+            include_str!("bin/audit-scan.rs"),
+        ] {
+            let (ast, tokens) = parse(source).expect("parses");
+            let mut ends = Ends {
+                visitor: FileVisitor::new("x.rs", &tokens),
+                checked: 0,
+            };
+            ends.visit_file(&ast);
+            checked += ends.checked;
+            proc_macro2::extra::invalidate_current_thread_spans();
+        }
+        assert!(checked > 5_000, "{checked} expressions");
+    }
+
+    #[test]
+    fn a_snippet_is_the_expressions_tokens_collapsed_and_cut() {
+        let source = "fn f() {\n    let v = ctx.accounts\n        .vault.amount.checked_add(x).unwrap();\n    \
+                      let w = a + b;\n    let s = msg(\"a   b\").expect(\"e\");\n    let t = g(|| {}).unwrap();\n    \
+                      let long = aaaaaaaaaa + bbbbbbbbbb + cccccccccc + dddddddddd + eeeeeeeeee + ffffffffff + gggggggggg;\n}\n";
+        let report = scan_source("f.rs", source).expect("parses");
+        let panics: Vec<&str> = report
+            .panic_sites
+            .iter()
+            .map(|p| p.snippet.as_str())
+            .collect();
+        assert_eq!(
+            panics,
+            [
+                "ctx . accounts . vault . amount . checked_add (x) . unwrap ()",
+                "msg (\"a b\") . expect (\"e\")",
+                "g (|| { }) . unwrap ()",
+            ]
+        );
+        let sums: Vec<&str> = report
+            .arithmetic_sites
+            .iter()
+            .map(|a| a.snippet.as_str())
+            .collect();
+        assert_eq!(sums[0], "a + b");
+        assert_eq!(
+            sums[1],
+            "aaaaaaaaaa + bbbbbbbbbb + cccccccccc + dddddddddd + eeeeeeeeee + ffffffffff + gg..."
+        );
+        assert_eq!(report.panic_sites[0].line, 3);
+        assert_eq!(report.arithmetic_sites[0].line, 4);
+    }
 }

@@ -179,7 +179,8 @@ fn run(args: &[OsString]) -> Result<(), Stop> {
         None => None,
     };
 
-    let report = scan::scan_path(dir.path());
+    let report = scan::scan_path(dir.path())
+        .map_err(|e| Stop(1, format!("cannot start the scan: {}", os_message(&e))))?;
     let json = if call.pretty {
         serde_json::to_string_pretty(&report)
     } else {

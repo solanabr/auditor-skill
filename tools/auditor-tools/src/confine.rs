@@ -27,6 +27,17 @@ use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+#[cfg(any(target_os = "android", target_os = "netbsd", target_os = "openbsd"))]
+use libc::__errno as errno_location;
+#[cfg(any(target_os = "linux", target_os = "emscripten"))]
+use libc::__errno_location as errno_location;
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "freebsd",
+    target_os = "dragonfly"
+))]
+use libc::__error as errno_location;
 use walkdir::WalkDir;
 
 /// The longest path argument accepted, in bytes.
@@ -681,6 +692,96 @@ impl Dir {
         }
         Ok(file)
     }
+}
+
+/// A directory in the directory `dir` (a descriptor, or `libc::AT_FDCWD` for the
+/// working directory), opened without following a link.
+pub fn open_dir(dir: RawFd, name: &[u8]) -> io::Result<OwnedFd> {
+    open_at(
+        dir,
+        name,
+        libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW,
+        0,
+    )
+}
+
+/// A file in the directory `dir`, opened read-only without following a link or
+/// blocking on a FIFO.
+pub fn open_file(dir: RawFd, name: &[u8]) -> io::Result<File> {
+    open_at(
+        dir,
+        name,
+        libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK,
+        0,
+    )
+    .map(File::from)
+}
+
+/// The file type (`S_IFMT` bits) of a name in the directory `dir`, a link read
+/// as a link.
+pub fn kind_at(dir: RawFd, name: &[u8]) -> io::Result<libc::mode_t> {
+    let name = c_name(name)?;
+    let mut st = std::mem::MaybeUninit::<libc::stat>::uninit();
+    // SAFETY: `name` is NUL-terminated, `st` is room for one stat, and `dir` is a
+    // descriptor the caller holds open.
+    let r = unsafe {
+        libc::fstatat(
+            dir,
+            name.as_ptr(),
+            st.as_mut_ptr(),
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    };
+    if r != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: fstatat succeeded, so it filled `st`.
+    Ok(unsafe { st.assume_init() }.st_mode & libc::S_IFMT)
+}
+
+/// The names in the directory `dir`, but `.` and `..`, in byte order, read
+/// through a second descriptor so that `dir` stays open for the names below it.
+pub fn names(dir: &OwnedFd) -> io::Result<Vec<Vec<u8>>> {
+    // SAFETY: dup only copies a descriptor the caller holds open.
+    let fd = unsafe { libc::dup(dir.as_raw_fd()) };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `fd` is a descriptor dup just returned; fdopendir takes it over.
+    let stream = unsafe { libc::fdopendir(fd) };
+    if stream.is_null() {
+        let e = io::Error::last_os_error();
+        // SAFETY: fdopendir failed, so `fd` is still this function's to close.
+        unsafe { libc::close(fd) };
+        return Err(e);
+    }
+    let mut names = Vec::new();
+    let result = loop {
+        // SAFETY: errno is this thread's; it is cleared to tell the end of the
+        // directory (NULL, errno untouched) from an error (NULL, errno set).
+        unsafe { *errno_location() = 0 };
+        // SAFETY: `stream` is open until the closedir below.
+        let entry = unsafe { libc::readdir(stream) };
+        if entry.is_null() {
+            let e = io::Error::last_os_error();
+            break if e.raw_os_error() == Some(0) {
+                Ok(())
+            } else {
+                Err(e)
+            };
+        }
+        // SAFETY: readdir returned an entry whose name is NUL-terminated, valid
+        // until the next readdir on this stream.
+        let name = unsafe { std::ffi::CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
+        if name != b"." && name != b".." {
+            names.push(name.to_vec());
+        }
+    };
+    // SAFETY: `stream` came from fdopendir and is closed once, with its descriptor.
+    unsafe { libc::closedir(stream) };
+    result?;
+    names.sort();
+    Ok(names)
 }
 
 /// A file inside WT read whole, at most `MAX_FILE` bytes: `r` passed `rel`, and

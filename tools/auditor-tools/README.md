@@ -15,8 +15,8 @@ binaries:
 `audit-scan` and `audit-mem` are built from one library; `audit-logs` is its own
 package, `audit-logs/`, with one dependency, `libc`. These are plain synchronous
 CLIs — no async runtime, no network. Parsing uses `syn` with `proc-macro2`'s
-`span-locations` feature, so every finding carries a real line number
-(`node.span().start().line`).
+`span-locations` feature, so every finding carries a real line number (the line of
+its first token).
 
 ## Build
 
@@ -52,15 +52,30 @@ recipes, `scripts/lib/confine.sh`, or its own `Cargo.toml` or `src/`.
 audit-scan <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty]
 ```
 
-Recursively walks the `*.rs` files under `<dir>`, parses each with
-`syn::parse_file`, and prints one JSON object to stdout (or writes it to `--out`).
-`--pretty` uses `serde_json::to_string_pretty`. The walk skips `target/`, `.git/`
-and `node_modules/` below `<dir>`, and, when `<dir>` is `.`, the run directories and
-`.audit-memory/`, which hold an audit's own output. It follows no symbolic link and
-parses only regular files with one name, of at most 4 MiB, in byte order of their
-names; every link it meets, and every `*.rs` file it does not parse (not a regular
-file, a second name, larger than 4 MiB, unreadable, not UTF-8, or not Rust that
-`syn` parses), is listed in `skipped` with the reason.
+Recursively walks the `*.rs` files under `<dir>`, parses each as
+`syn::parse_file` does, and prints one JSON object to stdout (or writes it to
+`--out`). `--pretty` uses `serde_json::to_string_pretty`. The walk skips `target/`,
+`.git/` and `node_modules/` below `<dir>`, and, when `<dir>` is `.`, the run
+directories and `.audit-memory/`, which hold an audit's own output. It follows no
+symbolic link, goes no deeper than 128 directories below `<dir>`, and parses only
+regular files with one name, of at most 4 MiB, in byte order of their names; every
+link it meets, every directory it does not enter for its depth, and every `*.rs`
+file it does not parse (not a regular file, a second name, larger than 4 MiB,
+unreadable, not UTF-8, nested or chained too deeply, or not Rust that `syn`
+parses), is listed in `skipped` with the reason.
+
+syn's parser, and the walk of its tree, recurse once for each level the tree
+nests, so a file is lexed first (`proc-macro2`'s lexer does not recurse) and is not
+parsed, but listed as `nested or chained too deeply to parse`, when its groups
+(`(`, `[`, `{`) nest more than 256 deep or it holds a chain of more than 20,000
+tokens: the tokens since the last `;`, the last `,` outside an unclosed `<`, an
+inner attribute, or the start of an item or statement after a block, counted on
+through every group they are nested in. The scan runs on a stack of 512 MiB (64 MiB
+where the system grants no more); the deepest tree measured that those limits let
+through, 20,000 nested `break`, needs more than 64 MiB and less than 128. Real code
+stays far below the limits: in 16,000 files of published crates and the Rust
+standard library, the longest chain is 1,714 tokens and the deepest nesting 44
+groups.
 
 ### Where it reads and writes
 
@@ -93,6 +108,9 @@ must be safe whatever arguments follow. Its rules are those of
   path, as it was invoked or with its links resolved, holding a quote, `$`, a
   backtick, a backslash or a control character, and in a working directory whose
   path holds a control character.
+- The walk opens each directory from its parent's descriptor, and each file from
+  its directory's, never following a link (`openat` with `O_NOFOLLOW`), so a
+  directory swapped for a link while the walk runs is not entered.
 - It opens no network connection and runs no other program. A control,
   bidirectional or invisible character in a name or snippet is written as a `\u`
   escape.
@@ -174,16 +192,18 @@ Exit: 0 done · 1 the output cannot be written · 2 refused, with one stderr lin
     { "name": "string", "file": "string", "line": 0, "pub": false }
   ],
 
-  // every symbolic link the walk did not follow, and every `*.rs` file it did
-  // not parse, with why.
+  // every symbolic link the walk did not follow, every directory it did not
+  // enter for its depth, and every `*.rs` file it did not parse, with why.
   "skipped": [
     { "file": "string", "reason": "string" }
   ]
 }
 ```
 
-Snippets are the pretty-printed token stream of the node, whitespace-collapsed and
-truncated to ~80 characters.
+A snippet is the node's tokens as `proc-macro2` prints the file's own (a space
+between two tokens unless the source joins punctuation, as in `::<` or `?;`),
+whitespace collapsed and cut after 80 characters with `...`; only what is kept is
+rendered, so a long chain costs no more than a short one.
 
 ### Example
 

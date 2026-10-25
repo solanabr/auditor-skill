@@ -66,6 +66,139 @@ fn scans_a_confined_directory_and_follows_no_link() {
     assert!(!stdout(&run(BIN, &wt.dir, &["."])).contains("secret"));
 }
 
+/// What `skipped` says of each file, by name.
+fn skipped(report: &Value) -> Vec<(String, String)> {
+    let mut seen: Vec<(String, String)> = report["skipped"]
+        .as_array()
+        .expect("skipped")
+        .iter()
+        .map(|s| {
+            (
+                s["file"].as_str().unwrap_or_default().into(),
+                s["reason"].as_str().unwrap_or_default().into(),
+            )
+        })
+        .collect();
+    seen.sort();
+    seen
+}
+
+#[test]
+fn skips_a_file_nested_or_chained_too_deeply_and_scans_the_rest_in_time() {
+    let wt = Wt::repo();
+    let parens = format!(
+        "fn f() {{ let x = {}1{}; }}\n",
+        "(".repeat(5000),
+        ")".repeat(5000)
+    );
+    let nots = format!("fn f() {{ let x = {}true; }}\n", "!".repeat(20000));
+    let sum = format!("fn f() {{ let x = 1{}; }}\n", " + 1".repeat(20000));
+    wt.write("src/parens.rs", parens.as_bytes());
+    wt.write("src/nots.rs", nots.as_bytes());
+    wt.write("src/sum.rs", sum.as_bytes());
+    wt.write("src/lib.rs", b"fn ok() { let y = a + b; }\n");
+    let started = std::time::Instant::now();
+    let report = json(&run(BIN, &wt.dir, &["src"]));
+    let took = started.elapsed();
+    assert!(took.as_secs_f64() < 2.0, "took {took:?}");
+    assert_eq!(report["files_scanned"], 1);
+    assert_eq!(files(&report, "functions"), vec!["src/lib.rs"]);
+    let why = "nested or chained too deeply to parse";
+    assert_eq!(
+        skipped(&report),
+        [
+            ("src/nots.rs".into(), why.into()),
+            ("src/parens.rs".into(), why.into()),
+            ("src/sum.rs".into(), why.into()),
+        ]
+    );
+}
+
+#[test]
+fn renders_the_snippets_of_a_long_chain_in_time() {
+    let wt = Wt::repo();
+    let sum = format!("fn f() {{ let x = 1{}; }}\n", " + 1".repeat(9000));
+    wt.write("src/sum.rs", sum.as_bytes());
+    let started = std::time::Instant::now();
+    let report = json(&run(BIN, &wt.dir, &["src"]));
+    let took = started.elapsed();
+    assert!(took.as_secs_f64() < 2.0, "took {took:?}");
+    let sites = report["arithmetic_sites"].as_array().expect("sites");
+    assert_eq!(sites.len(), 9000);
+    let first =
+        "1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + ...";
+    assert_eq!(sites[0]["snippet"], first);
+    assert_eq!(sites[8999]["snippet"], "1 + 1");
+}
+
+#[test]
+fn does_not_walk_below_its_depth_limit() {
+    let wt = Wt::repo();
+    let mut deep = String::from("src");
+    for _ in 0..129 {
+        deep.push_str("/d");
+    }
+    wt.write(&format!("{deep}/deep.rs"), b"fn deep() {}\n");
+    wt.write("src/d/near.rs", b"fn near() {}\n");
+    let report = json(&run(BIN, &wt.dir, &["src"]));
+    assert_eq!(files(&report, "functions"), vec!["src/d/near.rs"]);
+    assert_eq!(
+        skipped(&report),
+        [(deep.clone(), "nested too deeply to walk".into())]
+    );
+}
+
+#[test]
+fn enters_no_directory_swapped_for_a_link_while_it_walks() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    let wt = Wt::repo();
+    // Files the walk parses before it reaches sub/, while sub/ is swapped.
+    for i in 0..300 {
+        wt.write(
+            &format!("src/a{i:03}.rs"),
+            format!("fn a{i}() {{}}\n").as_bytes(),
+        );
+    }
+    wt.write("src/sub/inside.rs", b"fn inside_fn() {}\n");
+    wt.write(
+        "../outside/target/outside.rs",
+        b"fn outside_marker_fn() {}\n",
+    );
+    wt.link(&wt.outside().join("target"), "src/sublink");
+    let stop = Arc::new(AtomicBool::new(false));
+    let src = wt.path("src");
+    let swapper = {
+        let stop = Arc::clone(&stop);
+        std::thread::spawn(move || {
+            while !stop.load(Ordering::Relaxed) {
+                let _ = fs::rename(src.join("sub"), src.join("subreal"));
+                let _ = fs::rename(src.join("sublink"), src.join("sub"));
+                let _ = fs::rename(src.join("sub"), src.join("sublink"));
+                let _ = fs::rename(src.join("subreal"), src.join("sub"));
+            }
+        })
+    };
+    let started = std::time::Instant::now();
+    let mut scans = 0;
+    let mut leaked = 0;
+    while scans < 300 && started.elapsed().as_secs() < 6 {
+        let out = run(BIN, &wt.dir, &["src"]);
+        assert_eq!(out.status.code(), Some(0), "{}", common::stderr(&out));
+        if stdout(&out).contains("outside_marker_fn") {
+            leaked += 1;
+        }
+        scans += 1;
+    }
+    stop.store(true, Ordering::Relaxed);
+    swapper.join().expect("the swapper stops");
+    assert!(scans >= 30, "only {scans} scans ran");
+    assert_eq!(
+        leaked, 0,
+        "{leaked} of {scans} scans read the directory outside"
+    );
+}
+
 #[test]
 fn skips_large_irregular_and_unparsable_files() {
     let wt = Wt::new();
