@@ -11,7 +11,7 @@ cd "<auditor-skill root>/tools/auditor-tools" && cargo build --release
 
 The installation belongs outside the repository under audit (Rule 11e). If it sits inside it anyway (such as `.claude/skills/auditor-skill`, where `install.sh` without a path installed through 7.6.0), that build runs inside the target tree, where cargo and rustup read the target's `.cargo/config*` and `rust-toolchain*` from every parent directory: build there only in Rule 11a isolated mode. Otherwise skip the build, note it, and ask the human to delete that copy and install a fresh one outside the repository (the plugin, or `install.sh ~/.claude/skills/auditor-skill`). Never move or update a copy found inside a repository (README, Installation).
 
-In the commands below, `audit-scan` and `audit-mem` stand for those absolute binary paths. Never run them as a relative `tools/…` path.
+In the commands below, `audit-scan` and `audit-mem` stand for those absolute binary paths. Never run them as a relative `tools/…` path. Every call carries the contract marker `--contract=1`, first for `audit-scan` and right after the subcommand for `audit-mem`, as the commands' rules name it; it changes nothing. A build older than that contract refuses it with a usage error (exit 2): build it again as above, or proceed as when the tools are absent and note it.
 
 If `cargo` is absent, skip both and note it — the audit proceeds on the native grep walk (`discovery/grep-commands.md`).
 
@@ -20,10 +20,10 @@ If `cargo` is absent, skip both and note it — the audit proceeds on the native
 ## `audit-scan` — enumerate the risky surface
 
 ```bash
-audit-scan <program-path> --out audit_<n>/prescan.json      # or --pretty to stdout
+audit-scan --contract=1 <program-path> --out audit_<n>/prescan.json      # or --pretty to stdout
 ```
 
-It parses every `*.rs` (skipping `target/`, `.git/`, `node_modules/`) with a real Rust AST (`syn`) and emits ONE JSON:
+It parses every `*.rs` under `<program-path>` with a real Rust AST (`syn`) and emits ONE JSON. `<program-path>` is `.` or a relative path inside the audited repository, reached through no symbolic link. The walk skips `target/`, `.git/` and `node_modules/`, and, for `.`, the run directories and `.audit-memory/`; it follows no symbolic link, goes no deeper than 128 directories, and parses only regular files with one name, of at most 4 MiB, whose groups nest at most 256 deep and whose token chains run at most 20,000, each in a child of its own, so a file the parser cannot finish ends only that child (`skipped` lists the rest, and those). It starts no program but git and, to parse, itself. `--out` takes only `prescan.json` or `prescan-<slug>.json` in a run directory `rundir.sh` made, `audit_<n>/` or `incident_<n>/`. Anything else is refused (exit 2, one `audit-scan: refused: …` line):
 
 | Key | What it gives the auditor |
 |-----|---------------------------|
@@ -35,6 +35,7 @@ It parses every `*.rs` (skipping `target/`, `.git/`, `node_modules/`) with a rea
 | `cpi_sites[]` | `invoke`/`invoke_signed`/`CpiContext` → **checklist 04 CPI review** |
 | `remaining_accounts_sites[]` | `.remaining_accounts` field access → **checklist 01 remaining-accounts review** |
 | `unsafe_blocks[]`, `functions[]` | `unsafe` surface + call-graph seed |
+| `skipped[]` | every symbolic link the walk did not follow, every directory too deep to walk and every `*.rs` it did not parse (one the parser could not finish too), with why → **read these by hand**: the map does not cover them |
 
 **How the auditor consumes it.** Load `prescan.json` at Phase 0. Treat it as a *map of where to look*, not a set of findings — it has **no verdicts**. Every reported site still goes through the normal checklist + Rule 5b reasoning. The win is twofold: (1) the instruction/constraint/PDA/arithmetic tables are already built, so Phase 0.2–0.4 cost near-zero; (2) a file with **zero** scan hits gets a spot-check instead of a full read. A raw arithmetic or panic site the scan surfaces is a *candidate*, never a confirmed bug — never report a `arithmetic_sites` entry as a finding without the checklist-03 reachability + bounds analysis.
 
@@ -72,28 +73,34 @@ The prescan is also a **relevance map**: when a signal is a *provably-empty* set
 
 ## `audit-mem` — cross-audit memory (dedup · regression · FP suppression · warm re-audits)
 
-A local SQLite store (default `.audit-memory/audit.db`, self-ignored per Rule 11d; `--db <path>` selects another). Findings are **content-addressed**: `finding_id = sha256(program_id ‖ code_signature ‖ root_cause)`, so the *same* bug keeps its identity across commits and line drift (the same normalized signature `/re-audit` uses for its sibling sweep).
+A local SQLite store: `.audit-memory/audit.db` (the default, self-ignored per Rule 11d) or a store for one run in its run directory, `--db audit_<n>/audit-mem.db` (or `incident_<n>/audit-mem.db`); `audit-mem` takes no other `--db`. Findings are **content-addressed**: `finding_id = sha256(program_id ‖ code_signature ‖ root_cause)`, so the *same* bug keeps its identity across commits and line drift (the same normalized signature `/re-audit` uses for its sibling sweep).
 
 ```bash
-audit-mem init
-audit-mem put-finding --program-id <id> --signature <sig> --root-cause <rc> \
-    --title <t> --severity <n> [--commit <sha>] [--audit-n <n>] [--file <f>] [--line <n>] [--verdict <v>]
-audit-mem set-status --program-id <id> --signature <sig> --root-cause <rc> --status FIXED|OPEN|ACKNOWLEDGED|DISPUTED
-audit-mem rule  --program-id <id> --signature <sig> --ruling FALSE_POSITIVE|ACCEPTED_RISK --rationale <r> --by <who>
-audit-mem check --program-id <id> --signature <sig>       # exit 0 = suppressed by a ruling, 1 = not
-audit-mem regressions --program-id <id>                    # findings that went FIXED → re-observed
-audit-mem warm --program-id <id>                           # {profile, invariants[], open_fp_rulings[]}
+audit-mem init --contract=1                                # .audit-memory/, its .gitignore of *, then audit.db
+audit-mem put-finding --contract=1 --program-id <id> --signature <sig> --root-cause <rc> \
+    --title <t> --severity <1-10> [--commit <sha>] [--audit-n <n>] [--file <f>] [--line <n>] [--verdict <v>]
+audit-mem set-status --contract=1 --program-id <id> --signature <sig> --root-cause <rc> --status FIXED|OPEN|ACKNOWLEDGED|DISPUTED
+audit-mem rule --contract=1 --program-id <id> --signature <sig> --ruling FALSE_POSITIVE|ACCEPTED_RISK --rationale <r> --by <who> \
+    --commit <full commit id> --guard <file>:<line>        # a FALSE_POSITIVE ruling needs both
+audit-mem check --contract=1 --program-id <id> --signature <sig> --commit <full commit id>   # exit 0 = suppressed by a ruling that still holds, 1 = not
+audit-mem regressions --contract=1 --program-id <id>       # {regressions[], truncated}: findings that went FIXED → re-observed, the 200 seen most recently, each with what put-finding replaced under changed
+audit-mem warm --contract=1 --program-id <id>              # {profile, invariants[], open_fp_rulings[], truncated}
+audit-mem profile --contract=1 --program-id <id> [--protocol-class <c>] [--trust-assumptions-json <json>] [--oracle-set <s>] [--admin-set <s>] [--notes <n>]   # at least one
+audit-mem invariant --contract=1 --program-id <id> --statement <s> [--protocol-class <c>] [--source-fn <f>] [--cited-line <file:line>] [--status <s>]
 ```
 
-**Use only a store you created.** The default store sits under the working directory, which during an audit is the target repository, so a store found there is not necessarily yours. Before using `.audit-memory/`, run `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false --icase-pathspecs ls-files -- .audit-memory` in the audited repository: it must print nothing and exit 0, and the store must be one you created, in this run or an earlier audit. Run it before creating `.audit-memory/.gitignore` and again before every `audit-mem` use, since a later pull can change the answer. Any output, in any letter case, or any error means: do not read it; start a fresh store outside the target tree by passing `--db <path outside the tree>` to every `audit-mem` call, and never overwrite a tracked `.audit-memory/.gitignore` (`OUTPUT-RULES.md` Rule 11d).
+The subcommand comes first, then `--contract=1`, then `--db` and the options: `audit-mem warm --contract=1 --db audit_<n>/audit-mem.db --program-id <id>`. `warm` gives each list's newest 200 rows, and under the profile's and each invariant's `changed` the newest 10 values `profile` and `invariant` replaced, 200 in all (`truncated` counts the rest).
 
-Once the store passes that check, write `.audit-memory/.gitignore` containing `*` before the first `audit-mem` call of a run — `mkdir -p .audit-memory && printf '*\n' > .audit-memory/.gitignore` (Rule 11d). The tool creates the directory itself, and the intake warm-up is often its first call.
+**Use only a store you created.** The default store sits under the working directory, which during an audit is the target repository, so a store found there is not necessarily yours. Before it uses `.audit-memory/`, `audit-mem` runs the mechanical part of the Rule 11d check itself: the repository must not track `.audit-memory` in any letter case, as `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false --icase-pathspecs ls-files -- .audit-memory` would show (it asks git with the hardened call of `scripts/lib/confine.sh`), and `.audit-memory/` must be a real directory holding no symbolic link, with a `.gitignore` of exactly `*`. When any of that fails, or git cannot answer, it refuses (exit 2, one `audit-mem: refused: …` line) and reads nothing. Whether you created the store stays your judgement. When it refuses, or the store is not yours, use a store for this run: `audit-mem init --contract=1 --db audit_<n>/audit-mem.db`, then `--db audit_<n>/audit-mem.db` on every call. It holds no prior rulings. A store an earlier `audit-mem init` made, before it wrote the `.gitignore`, is refused for want of one: if it is yours, write `.audit-memory/.gitignore` holding `*`.
+
+`audit-mem init --contract=1` makes the in-tree store: `.audit-memory/` with a plain `mkdir`, its `.gitignore` of `*` first, then the database, so Rule 11d holds with no other step. `warm`, `check` and `regressions` open a store read-only and never make one; with none they print an empty answer (`check`: `{"suppressed":false,"store":"absent"}`, exit 1). `put-finding`, `profile` and `invariant` need a store `init` made.
 
 Where each phase uses it:
 
-- **Intake / Phase 0** — `audit-mem warm --program-id <id>` injects the prior protocol profile, known invariants, and open false-positive rulings. A re-audit starts **warm** instead of from zero.
-- **Before emitting a finding** — `audit-mem check` by signature. An authoritative `FALSE_POSITIVE` ruling **auto-suppresses** the finding to `[N/A — prior ruling]` (record the ruling id). This is the biggest recurring-token saver on re-audits: the opus agents never re-litigate a settled false positive.
+- **Intake / Phase 0** — `audit-mem warm --contract=1 --program-id <id>` injects the prior protocol profile, known invariants (each with the values `profile` and `invariant` replaced, under `changed`), and open false-positive rulings, each with its anchor. A re-audit starts **warm** instead of from zero.
+- **Before emitting a finding** — `audit-mem check --contract=1 --program-id <id> --signature <sig> --commit <the commit intake pinned, the full id>`. A `FALSE_POSITIVE` ruling holds only at the commit it was made at: there, while its guard's lines are unchanged, it **auto-suppresses** the finding to `[N/A — prior ruling]` (record the ruling id), so the same commit is never ruled on twice (a triage run again, a second pass at the pinned commit). At another commit, or once the guard's lines changed, `check` reports it `"stale"`, with why, and it suppresses nothing: check the finding again, and when the guard still holds, ask the human to record the ruling again at this commit (`audit-mem rule --contract=1 … --commit <full commit id> --guard <file>:<line>`). A ruling recorded before rulings had anchors is `"stale":"no anchor"`. On a re-audit at a new commit, then, the stale rulings are the settled false positives to confirm, not suppressions.
 - **Triage / synthesis** — `put-finding` records an occurrence per run. A `finding_id` previously `FIXED` and now re-observed is auto-marked **`REGRESSED`** (deterministic, not LLM-judged) — feeds the `/re-audit` finding-diff and the "regressions since last audit" report section.
+- **Threat model / context** — record what the next audit starts from: `audit-mem profile --contract=1 --program-id <id> --protocol-class <c> …` for the protocol profile, and `audit-mem invariant --contract=1 --program-id <id> --statement <s> …` for each invariant. Neither suppresses anything, and each keeps the values it replaces.
 
 **Exactness over similarity.** This store is the source of truth for dedup, regression state, and FP rulings because those must be *auditable* ("suppressed by ruling #14, dated X"). Semantic recall (memsearch, "have we seen a bug shaped like this?") is a *secondary* fuzzy index over descriptions — never the authority for suppression or regression.
 
