@@ -1009,7 +1009,10 @@ fn write(wt: &Path, store: &Store, pid: &str, action: Action) -> Result<String, 
                 replacing(&replaced)
             )
         }
-        Action::Init => format!("initialized {}", store.shown()),
+        Action::Init => {
+            mem::ensure_schema(&conn).map_err(&failed)?;
+            format!("initialized {}", store.shown())
+        }
         Action::Check { .. } | Action::Regressions | Action::Warm => {
             return Err(refuse("this subcommand does not write the store".into()))
         }

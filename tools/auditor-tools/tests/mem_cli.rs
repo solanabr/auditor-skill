@@ -1538,6 +1538,30 @@ fn refuses_a_status_audit_mem_never_sets_and_prints_none() {
          never sets, so it is not a store audit-mem wrote",
     );
     assert_eq!(wt.snapshot(), before, "nothing is written");
+
+    // A store made before the anchors and the history is refused as it is: the
+    // tables it lacks are not added first.
+    wt.run_dir("audit_1");
+    let db = wt.path("audit_1/audit-mem.db");
+    craft(&db, OLD_SCHEMA);
+    let conn = rusqlite::Connection::open(&db).expect("open");
+    conn.execute(
+        "INSERT INTO findings (finding_id, program_id, code_signature, root_cause, title, severity, \
+         status) VALUES (?1, ?2, ?3, 'rc', 't', 3, 'WEIRD')",
+        rusqlite::params![id, P, SIG],
+    )
+    .expect("an old finding");
+    drop(conn);
+    let before = wt.snapshot();
+    let mut old = finding.to_vec();
+    old.splice(1..1, ["--db", "audit_1/audit-mem.db"]);
+    refused(
+        &mem(&wt, &old),
+        "audit-mem",
+        "audit_1/audit-mem.db: it holds the status WEIRD for this finding, which audit-mem never sets, \
+         so it is not a store audit-mem wrote",
+    );
+    assert_eq!(wt.snapshot(), before, "an old store is left as it was");
 }
 
 #[test]

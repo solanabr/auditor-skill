@@ -256,7 +256,7 @@ gives exact deduplication across audits.
 | Subcommand | Purpose |
 |---|---|
 | `init` | Make the store: for `.audit-memory/audit.db` with no `.audit-memory/`, the directory, its `.gitignore` of `*` first, then the database; in a run directory, the database. On a store that exists, add the tables and columns it lacks. Prints `initialized <store>`. |
-| `put-finding` | Upsert a finding + append an occurrence. Prints `<STATUS> <finding_id>`, or `REGRESSED <finding_id>` on regression. A store holding a status audit-mem never sets for the finding is refused, before anything is written. |
+| `put-finding` | Upsert a finding + append an occurrence. Prints `<STATUS> <finding_id>`, or `REGRESSED <finding_id>` on regression. A store holding a status audit-mem never sets for the finding is refused, and left as it was. |
 | `set-status` | Set a finding's status (`FIXED` \| `OPEN` \| `ACKNOWLEDGED` \| `DISPUTED`). |
 | `rule` | Record a `FALSE_POSITIVE` \| `ACCEPTED_RISK` ruling with a timestamp and its anchor: the commit it is made at and the guard it cites (below). A `FALSE_POSITIVE` ruling needs `--commit` and `--guard`. |
 | `check` | Print `{"suppressed":bool,"ruling":..}`; exit 0 when the newest `FALSE_POSITIVE` ruling for the signature still holds, else exit 1. A ruling that no longer holds is printed with `"stale":"<why>"` and suppresses nothing. |
@@ -327,7 +327,8 @@ anchors has none: it is `"stale":"no anchor"` and never suppresses. `warm` lists
 rulings as they were recorded, anchors included; only `check` says whether one still
 holds. `init`, or any
 subcommand that writes, adds the anchor columns to a store made before them (a new
-store is made the same way, so the two read alike); `warm`, `check` and
+store is made the same way, so the two read alike), in the transaction it writes
+in: one that fails or refuses leaves the store as it was. `warm`, `check` and
 `regressions` read such a store as it is.
 
 ### Where it reads and writes

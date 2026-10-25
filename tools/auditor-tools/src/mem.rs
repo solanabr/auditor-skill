@@ -312,8 +312,9 @@ pub fn open_read_only(path: &Path) -> Result<Connection> {
 
 /// Opens a store that exists for reading and writing, through no symbolic link
 /// and never making the file, hardened as `harden` does; it must hold nothing but
-/// audit-mem's tables, and gets every table and column it lacks
-/// (`ensure_schema`).
+/// audit-mem's tables. Each writer adds the tables and columns it lacks
+/// (`migrate`) in the transaction it writes in, so a writer that fails or refuses
+/// leaves the store as it was.
 pub fn open_read_write(path: &Path) -> Result<Connection> {
     let conn = Connection::open_with_flags(
         path,
@@ -323,7 +324,6 @@ pub fn open_read_write(path: &Path) -> Result<Connection> {
     )?;
     harden(&conn)?;
     verify_schema(&conn)?;
-    ensure_schema(&conn)?;
     Ok(conn)
 }
 
@@ -350,10 +350,17 @@ fn ruling_columns(conn: &Connection) -> Result<Vec<String>> {
 /// repeatedly; one transaction.
 pub fn ensure_schema(conn: &Connection) -> Result<()> {
     let tx = conn.unchecked_transaction()?;
+    migrate(&tx)?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// What `ensure_schema` does, in the transaction a writer writes in.
+fn migrate(tx: &Connection) -> Result<()> {
     for (_, text) in SCHEMA {
         tx.execute_batch(&format!("CREATE TABLE IF NOT EXISTS {text};"))?;
     }
-    let have = ruling_columns(&tx)?;
+    let have = ruling_columns(tx)?;
     for (column, kind) in ANCHOR_COLUMNS {
         if !have.iter().any(|c| c == column) {
             tx.execute_batch(&format!(
@@ -361,7 +368,6 @@ pub fn ensure_schema(conn: &Connection) -> Result<()> {
             ))?;
         }
     }
-    tx.commit()?;
     Ok(())
 }
 
@@ -395,13 +401,15 @@ pub struct PutOutcome {
 /// Regression rule: if the finding already existed with status `FIXED` and this
 /// call re-observes it, the status transitions to `REGRESSED`. Brand-new
 /// findings start `OPEN`. A store holding a status audit-mem never sets is
-/// refused (a `Refusal`), before anything is written.
+/// refused (a `Refusal`), and is left as it was. One transaction.
 pub fn put_finding(conn: &Connection, f: &PutFinding) -> Result<PutOutcome> {
     let id = finding_id(f.program_id, f.signature, f.root_cause);
     let commit = f.commit.unwrap_or("");
     let audit_n = f.audit_n.unwrap_or("");
 
-    let existing_status: Option<String> = conn
+    let tx = conn.unchecked_transaction()?;
+    migrate(&tx)?;
+    let existing_status: Option<String> = tx
         .query_row(
             "SELECT status FROM findings WHERE finding_id = ?1",
             params![id],
@@ -422,7 +430,7 @@ pub fn put_finding(conn: &Connection, f: &PutFinding) -> Result<PutOutcome> {
     };
 
     if existing_status.is_none() {
-        conn.execute(
+        tx.execute(
             "INSERT INTO findings (finding_id, program_id, first_seen_commit, last_seen_commit, \
              severity, root_cause, code_signature, title, status, first_audit_n, last_audit_n) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
@@ -441,14 +449,14 @@ pub fn put_finding(conn: &Connection, f: &PutFinding) -> Result<PutOutcome> {
             ],
         )?;
     } else {
-        conn.execute(
+        tx.execute(
             "UPDATE findings SET last_seen_commit = ?2, last_audit_n = ?3, status = ?4, \
              severity = ?5, title = ?6 WHERE finding_id = ?1",
             params![id, commit, audit_n, new_status, f.severity, f.title],
         )?;
     }
 
-    conn.execute(
+    tx.execute(
         "INSERT INTO occurrences (finding_id, audit_n, commit_sha, file, line, verdict, rule5b_json) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![
@@ -461,6 +469,7 @@ pub fn put_finding(conn: &Connection, f: &PutFinding) -> Result<PutOutcome> {
             "",
         ],
     )?;
+    tx.commit()?;
 
     Ok(PutOutcome {
         finding_id: id,
@@ -470,7 +479,7 @@ pub fn put_finding(conn: &Connection, f: &PutFinding) -> Result<PutOutcome> {
 }
 
 /// Update the status of a finding identified by (program_id, signature, root_cause).
-/// Returns the number of rows changed.
+/// Returns the number of rows changed. One transaction.
 pub fn set_status(
     conn: &Connection,
     program_id: &str,
@@ -479,10 +488,13 @@ pub fn set_status(
     status: &str,
 ) -> Result<usize> {
     let id = finding_id(program_id, signature, root_cause);
-    let changed = conn.execute(
+    let tx = conn.unchecked_transaction()?;
+    migrate(&tx)?;
+    let changed = tx.execute(
         "UPDATE findings SET status = ?2 WHERE finding_id = ?1",
         params![id, status],
     )?;
+    tx.commit()?;
     Ok(changed)
 }
 
@@ -546,9 +558,11 @@ pub struct NewRuling<'a> {
 }
 
 /// Insert a false-positive / accepted-risk ruling with a timestamp and its
-/// anchor: the commit, and the guard's file, lines and hash.
+/// anchor: the commit, and the guard's file, lines and hash. One transaction.
 pub fn add_ruling(conn: &Connection, r: &NewRuling) -> Result<i64> {
-    conn.execute(
+    let tx = conn.unchecked_transaction()?;
+    migrate(&tx)?;
+    tx.execute(
         "INSERT INTO fp_rulings (program_id, code_signature, ruling, rationale, ruled_by, ruled_at, scope, \
          anchor_commit, guard_file, guard_line, guard_end, guard_hash) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
@@ -567,7 +581,9 @@ pub fn add_ruling(conn: &Connection, r: &NewRuling) -> Result<i64> {
             r.guard.map(|g| g.hash.as_str()),
         ],
     )?;
-    Ok(conn.last_insert_rowid())
+    let id = tx.last_insert_rowid();
+    tx.commit()?;
+    Ok(id)
 }
 
 /// Result of a suppression [`check`]: suppressed only by a `FALSE_POSITIVE`
@@ -899,6 +915,7 @@ pub fn put_profile(
     f: &ProfileFields,
 ) -> Result<Vec<&'static str>> {
     let tx = conn.unchecked_transaction()?;
+    migrate(&tx)?;
     let old: Option<[String; 5]> = tx
         .query_row(
             "SELECT protocol_class, trust_assumptions_json, oracle_set, admin_set, notes \
@@ -986,6 +1003,7 @@ pub fn put_invariant(
     f: &InvariantFields,
 ) -> Result<(i64, bool, Vec<&'static str>)> {
     let tx = conn.unchecked_transaction()?;
+    migrate(&tx)?;
     let existing: Option<(i64, [String; 4])> = tx
         .query_row(
             "SELECT inv_id, protocol_class, source_fn, cited_line, status FROM invariants \
