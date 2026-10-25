@@ -57,10 +57,10 @@ Recursively walks the `*.rs` files under `<dir>`, parses each with
 `--pretty` uses `serde_json::to_string_pretty`. The walk skips `target/`, `.git/`
 and `node_modules/` below `<dir>`, and, when `<dir>` is `.`, the run directories and
 `.audit-memory/`, which hold an audit's own output. It follows no symbolic link and
-parses only regular files of at most 4 MiB, in byte order of their names; every link
-it meets, and every `*.rs` file it does not parse (not a regular file, larger than
-4 MiB, unreadable, not UTF-8, or not Rust that `syn` parses), is listed in `skipped`
-with the reason.
+parses only regular files with one name, of at most 4 MiB, in byte order of their
+names; every link it meets, and every `*.rs` file it does not parse (not a regular
+file, a second name, larger than 4 MiB, unreadable, not UTF-8, or not Rust that
+`syn` parses), is listed in `skipped` with the reason.
 
 ### Where it reads and writes
 

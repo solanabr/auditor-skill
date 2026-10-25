@@ -8,7 +8,7 @@
 use std::fs::OpenOptions;
 use std::io::Read;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::Path;
 
 use quote::ToTokens;
@@ -245,8 +245,9 @@ pub fn scan_path(root: &Path) -> ScanReport {
     report
 }
 
-/// A `*.rs` file's text: a regular file of at most 4 MiB, opened without
-/// following a link or blocking on a FIFO, and UTF-8.
+/// A `*.rs` file's text: a regular file with one name (a second name could be a
+/// file outside the tree) of at most 4 MiB, opened without following a link or
+/// blocking on a FIFO, and UTF-8.
 fn read_source(path: &Path, regular: bool) -> Result<String, String> {
     if !regular {
         return Err("not a regular file".to_string());
@@ -260,6 +261,9 @@ fn read_source(path: &Path, regular: bool) -> Result<String, String> {
     let md = file.metadata().map_err(unreadable)?;
     if !md.file_type().is_file() {
         return Err("not a regular file".to_string());
+    }
+    if md.nlink() != 1 {
+        return Err("has more than one name (a hard link)".to_string());
     }
     let mut bytes = Vec::new();
     file.take(MAX_FILE + 1)

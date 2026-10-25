@@ -76,6 +76,8 @@ fn skips_large_irregular_and_unparsable_files() {
     );
     wt.write("bad.rs", b"fn (");
     wt.write("latin1.rs", b"// \xe9\nfn l() {}\n");
+    wt.write("../outside/private.rs", b"fn private() {}\n");
+    fs::hard_link(wt.outside().join("private.rs"), wt.path("linked.rs")).expect("ln");
     let fifo = wt.path("pipe.rs");
     let status = std::process::Command::new("mkfifo")
         .arg(&fifo)
@@ -105,6 +107,7 @@ fn skips_large_irregular_and_unparsable_files() {
             "./bad.rs does not parse as Rust",
             "./big.rs larger than 4 MiB",
             "./latin1.rs not UTF-8",
+            "./linked.rs has more than one name (a hard link)",
             "./pipe.rs not a regular file",
         ]
     );
