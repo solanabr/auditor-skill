@@ -267,16 +267,18 @@ printf 'fn withdraw() {\n    require!(vault.balance >= amount);\n    vault.balan
   && "$MEM" rule --program-id VaultProg1111 --signature unchecked_sub@vault.balance --ruling FALSE_POSITIVE \
     --rationale guarded --by auditor --commit c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe --guard src/withdraw.rs:2 ) > "$T/mem.setup" 2>&1 \
   || { cat "$T/mem.setup" >&2; bad "audit-mem: the fixture store cannot be made"; finish; }
-for d in audit_1 audit_4 audit_5 audit_6 audit_7 audit_8 audit_10 audit_11 audit_12 incident_1 incident_2; do run_dir "$W/$d"; done
+for d in audit_1 audit_4 audit_5 audit_6 audit_7 audit_8 audit_10 audit_11 audit_12 audit_13 incident_1 incident_2; do run_dir "$W/$d"; done
 mkdir "$W/audit_2"
 ln -s audit_1 "$W/audit_3"
 fgit -C "$W" add -f audit_4/.gitignore
 ln -s ../../outside "$W/audit_5/out"
 mkdir "$W/audit_6/audit-mem.db"
 ln "$H/outside/protected" "$W/audit_7/audit-mem.db"
-for d in audit_1 audit_10 audit_12; do
+for d in audit_1 audit_10 audit_12 audit_13; do
   ( cd "$W" && "$MEM" init --db "$d/audit-mem.db" ) > /dev/null || bad "audit-mem: init --db $d/audit-mem.db"
 done
+( cd "$W" && "$MEM" put-finding --db audit_13/audit-mem.db --program-id VaultProg1111 --signature s --root-cause r \
+    --title t --severity 3 ) > /dev/null || bad "audit-mem: put-finding --db audit_13/audit-mem.db"
 python3 -I - "$W" <<'PY'
 import os, sqlite3, sys
 wt = sys.argv[1]
@@ -293,6 +295,10 @@ for side in ("-wal", "-shm"):
 open(wt + "/audit_12/audit-mem.db-wal", "w").close()
 c = sqlite3.connect(wt + "/audit_10/audit-mem.db")
 c.execute("CREATE VIEW v AS SELECT 1")
+c.commit()
+c.close()
+c = sqlite3.connect(wt + "/audit_13/audit-mem.db")
+c.execute("UPDATE findings SET status = ?", ("\x1b]0;x\x07",))
 c.commit()
 c.close()
 with open(wt + "/audit_11/audit-mem.db", "w") as f:

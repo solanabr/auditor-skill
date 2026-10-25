@@ -256,7 +256,7 @@ gives exact deduplication across audits.
 | Subcommand | Purpose |
 |---|---|
 | `init` | Make the store: for `.audit-memory/audit.db` with no `.audit-memory/`, the directory, its `.gitignore` of `*` first, then the database; in a run directory, the database. On a store that exists, add the tables and columns it lacks. Prints `initialized <store>`. |
-| `put-finding` | Upsert a finding + append an occurrence. Prints `<STATUS> <finding_id>`, or `REGRESSED <finding_id>` on regression. |
+| `put-finding` | Upsert a finding + append an occurrence. Prints `<STATUS> <finding_id>`, or `REGRESSED <finding_id>` on regression. A store holding a status audit-mem never sets for the finding is refused, before anything is written. |
 | `set-status` | Set a finding's status (`FIXED` \| `OPEN` \| `ACKNOWLEDGED` \| `DISPUTED`). |
 | `rule` | Record a `FALSE_POSITIVE` \| `ACCEPTED_RISK` ruling with a timestamp and its anchor: the commit it is made at and the guard it cites (below). A `FALSE_POSITIVE` ruling needs `--commit` and `--guard`. |
 | `check` | Print `{"suppressed":bool,"ruling":..}`; exit 0 when the newest `FALSE_POSITIVE` ruling for the signature still holds, else exit 1. A ruling that no longer holds is printed with `"stale":"<why>"` and suppresses nothing. |
@@ -303,7 +303,10 @@ the line and paragraph separators, the bidirectional controls, and the code poin
 Unicode marks default-ignorable (audit-logs' list). `--severity` is a whole number
 from 1 to 10 and `--line` one from 1. The `--commit` of `rule` and `check` is a full
 commit id, 40 or 64 hexadecimal digits, kept in lowercase: an abbreviation could name
-another commit. `put-finding`'s is free text. `--trust-assumptions-json` must be JSON.
+another commit. `put-finding`'s is free text. `--trust-assumptions-json` must be JSON,
+and each of its keys and strings, its escapes read, is held to the same rule: a
+`\u001b` that the rule reads as six characters is the escape character to whoever
+reads the JSON.
 
 ### Anchored rulings
 
@@ -346,7 +349,10 @@ rules are those of `scripts/lib/confine.sh` and `scripts/rundir.sh`, in
   the repository tracks no `.audit-memory` in any letter case, and `.audit-memory/`
   is a real directory holding no symbolic link, with a `.gitignore` of exactly `*`.
   Whether you made the store yourself stays your judgement (OUTPUT-RULES.md
-  Rule 11d).
+  Rule 11d). A store an earlier `init` made, before it wrote the `.gitignore`, has
+  none and is refused: if the store is yours, write `.audit-memory/.gitignore`
+  holding `*` (`printf '*\n' > .audit-memory/.gitignore`), and audit-mem uses it
+  again.
 - It asks git what is tracked as confine.sh's `hgit` asks it: git from a `PATH` with
   every entry inside the working directory removed, with an environment of its own
   and the repository's config pinned off. When git cannot answer, it refuses.

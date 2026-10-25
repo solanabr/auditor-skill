@@ -1506,6 +1506,78 @@ fn profile_and_invariant_record_what_warm_returns() {
 }
 
 #[test]
+fn refuses_a_status_audit_mem_never_sets_and_prints_none() {
+    let wt = store();
+    let finding = [
+        "put-finding",
+        "--program-id",
+        P,
+        "--signature",
+        SIG,
+        "--root-cause",
+        "rc",
+        "--title",
+        "t",
+        "--severity",
+        "3",
+    ];
+    ok(&mem(&wt, &finding));
+    let id = auditor_tools::mem::finding_id(P, SIG, "rc");
+    let conn = rusqlite::Connection::open(wt.path(".audit-memory/audit.db")).expect("open");
+    conn.execute(
+        "UPDATE findings SET status = ?1 WHERE finding_id = ?2",
+        rusqlite::params!["\u{1b}]0;x\u{7}\u{1b}[31m\n", id],
+    )
+    .expect("craft a status");
+    drop(conn);
+    let before = wt.snapshot();
+    refused(
+        &mem(&wt, &finding),
+        "audit-mem",
+        ".audit-memory/audit.db: it holds the status ?]0;x??[31m? for this finding, which audit-mem \
+         never sets, so it is not a store audit-mem wrote",
+    );
+    assert_eq!(wt.snapshot(), before, "nothing is written");
+}
+
+#[test]
+fn reads_the_escapes_of_trust_assumptions_json_before_the_field_rule() {
+    let wt = store();
+    for json in [
+        r#"{"a":"\u001b]0;x\u0007"}"#,
+        r#"{"\u202e":1}"#,
+        r#"{"a":["ok",{"b":"\u2028"}]}"#,
+        r#"["\u007f"]"#,
+        r#"{"a":"tab\there"}"#,
+    ] {
+        refused(
+            &mem(
+                &wt,
+                &["profile", "--program-id", P, "--trust-assumptions-json", json],
+            ),
+            "audit-mem",
+            &format!(
+                "--trust-assumptions-json holds a control or formatting character once its escapes are \
+                 read: {json}"
+            ),
+        );
+    }
+    assert_eq!(
+        ok(&mem(
+            &wt,
+            &[
+                "profile",
+                "--program-id",
+                P,
+                "--trust-assumptions-json",
+                r#"{"admin":"A 3-of-5 multisig"}"#
+            ]
+        )),
+        format!("profile {P} recorded\n")
+    );
+}
+
+#[test]
 fn a_ruling_is_anchored_and_check_reports_it_stale_when_the_anchor_changes() {
     let wt = store();
     // A FALSE_POSITIVE ruling needs its commit and the guard that makes it one.

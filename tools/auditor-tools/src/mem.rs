@@ -365,6 +365,10 @@ pub fn ensure_schema(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// The statuses a finding can hold: the ones `set-status` takes, `OPEN` for a new
+/// one and `REGRESSED` for a `FIXED` one seen again.
+const STATUSES: [&str; 5] = ["OPEN", "FIXED", "ACKNOWLEDGED", "DISPUTED", "REGRESSED"];
+
 /// Arguments for [`put_finding`].
 pub struct PutFinding<'a> {
     pub program_id: &'a str,
@@ -390,7 +394,8 @@ pub struct PutOutcome {
 ///
 /// Regression rule: if the finding already existed with status `FIXED` and this
 /// call re-observes it, the status transitions to `REGRESSED`. Brand-new
-/// findings start `OPEN`.
+/// findings start `OPEN`. A store holding a status audit-mem never sets is
+/// refused (a `Refusal`), before anything is written.
 pub fn put_finding(conn: &Connection, f: &PutFinding) -> Result<PutOutcome> {
     let id = finding_id(f.program_id, f.signature, f.root_cause);
     let commit = f.commit.unwrap_or("");
@@ -407,7 +412,13 @@ pub fn put_finding(conn: &Connection, f: &PutFinding) -> Result<PutOutcome> {
     let (new_status, regressed) = match existing_status.as_deref() {
         None => ("OPEN".to_string(), false),
         Some("FIXED") => ("REGRESSED".to_string(), true),
-        Some(other) => (other.to_string(), false),
+        Some(kept) if STATUSES.contains(&kept) => (kept.to_string(), false),
+        Some(other) => {
+            return Err(refusal(format!(
+                "it holds the status {} for this finding, which audit-mem never sets, so it is not a store audit-mem wrote",
+                shown(other.as_bytes())
+            )))
+        }
     };
 
     if existing_status.is_none() {

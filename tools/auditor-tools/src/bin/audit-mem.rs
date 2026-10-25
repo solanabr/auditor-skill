@@ -705,6 +705,28 @@ enum Action {
     },
 }
 
+/// Whether every key and string of a JSON value, its escapes read, is free of the
+/// characters the field rule refuses (`confine::unsafe_char`): `\u001b` is text
+/// to the field rule, and an escape to whoever reads the JSON.
+fn plain_json(value: &serde_json::Value) -> bool {
+    let plain = |s: &str| !s.chars().any(unsafe_char);
+    let mut todo = vec![value];
+    while let Some(v) = todo.pop() {
+        match v {
+            serde_json::Value::String(s) if !plain(s) => return false,
+            serde_json::Value::Array(items) => todo.extend(items),
+            serde_json::Value::Object(map) => {
+                if !map.keys().all(|k| plain(k)) {
+                    return false;
+                }
+                todo.extend(map.values());
+            }
+            _ => {}
+        }
+    }
+    true
+}
+
 /// Checks every value of the call, before the store is looked at.
 fn action(wt: &Path, call: &Call) -> Result<Action, Stop> {
     Ok(match call.sub {
@@ -762,8 +784,14 @@ fn action(wt: &Path, call: &Call) -> Result<Action, Stop> {
         Sub::Profile => {
             let trust_assumptions_json = call.text("trust-assumptions-json")?;
             if let Some(json) = &trust_assumptions_json {
-                if serde_json::from_str::<serde_json::Value>(json).is_err() {
-                    return Err(refuse("--trust-assumptions-json is not JSON".into()));
+                let value: serde_json::Value = serde_json::from_str(json)
+                    .map_err(|_| refuse("--trust-assumptions-json is not JSON".into()))?;
+                if !plain_json(&value) {
+                    return Err(refuse(format!(
+                        "--trust-assumptions-json holds a control or formatting character once its \
+                         escapes are read: {}",
+                        shown(json.as_bytes())
+                    )));
                 }
             }
             Action::Profile {

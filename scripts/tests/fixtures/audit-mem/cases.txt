@@ -6,7 +6,8 @@
 #   audit_4 (its .gitignore tracked), audit_5 (holding a link), audit_6 (audit-mem.db a directory), audit_7
 #   (audit-mem.db a second name of a file outside), audit_8 (a database in WAL mode), audit_10 (a store init
 #   made, holding a view), audit_11 (audit-mem.db not a database), audit_12 (a store init made, with a -wal file
-#   beside it), incident_1 (an empty audit-mem.db), incident_2 (no store).
+#   beside it), audit_13 (a store init made, holding a finding whose status audit-mem never sets), incident_1
+#   (an empty audit-mem.db), incident_2 (no store).
 # The directory outside holds a canary no case may print.
 # One case per line: <exit status><TAB><the one stderr line><TAB><argument>[<TAB><argument>...]. Each case prints
 # nothing on stdout and changes nothing in the working directory or outside it. In a field:
@@ -31,6 +32,12 @@
 2	audit-mem: refused: --severity must be a whole number from 1 to 10: 11	put-finding	--contract=1	--program-id	VaultProg1111	--signature	s	--root-cause	r	--title	t	--severity	11
 2	audit-mem: refused: warm needs --program-id	warm	--contract=1
 2	audit-mem: refused: --program-id needs a value	warm	--contract=1	--program-id
+# values a JSON escape decodes, and a stored status audit-mem never sets
+2	audit-mem: refused: --trust-assumptions-json holds a control or formatting character once its escapes are read: {"a":"\u001b]0;x\u0007"}	profile	--program-id	VaultProg1111	--trust-assumptions-json	{"a":"\u001b]0;x\u0007"}
+2	audit-mem: refused: --trust-assumptions-json holds a control or formatting character once its escapes are read: {"\u202e":1}	profile	--program-id	VaultProg1111	--trust-assumptions-json	{"\u202e":1}
+2	audit-mem: refused: --trust-assumptions-json holds a control or formatting character once its escapes are read: ["ok",{"b":"\u2028"}]	profile	--program-id	VaultProg1111	--trust-assumptions-json	["ok",{"b":"\u2028"}]
+2	audit-mem: refused: --trust-assumptions-json holds a control or formatting character once its escapes are read: {"a":"tab\there"}	profile	--program-id	VaultProg1111	--trust-assumptions-json	{"a":"tab\there"}
+2	audit-mem: refused: audit_13/audit-mem.db: it holds the status ?]0;x? for this finding, which audit-mem never sets, so it is not a store audit-mem wrote	put-finding	--db	audit_13/audit-mem.db	--program-id	VaultProg1111	--signature	s	--root-cause	r	--title	t	--severity	3
 # grammar
 2	audit-mem: refused: no subcommand (usage: audit-mem <subcommand> [--contract=1] [--db <store>] [options], the subcommand being init, put-finding, set-status, rule, check, regressions, warm, profile or invariant)
 2	audit-mem: refused: --db is not a subcommand, and the subcommand comes first (usage: audit-mem <subcommand> [--contract=1] [--db <store>] [options], the subcommand being init, put-finding, set-status, rule, check, regressions, warm, profile or invariant)	--db	.audit-memory/audit.db	warm	--program-id	VaultProg1111
