@@ -197,9 +197,11 @@ while read -r id file step; do
   fi
 done <<< "$COPIES"
 
-# The negative control must stay silent for every recipe.
+# The negative controls must stay silent for every recipe.
 for id in $IDS; do
-  case " $(expected "$id") " in *" 09 "*) echo "FAIL $id: negative control 09 is expected"; fail=1 ;; esac
+  for neg in 09 60; do
+    case " $(expected "$id") " in *" $neg "*) echo "FAIL $id: negative control $neg is expected"; fail=1 ;; esac
+  done
 done
 
 # Every expected hit comes from a workflow line: no recipe flags the fixtures' comment lines on their own.

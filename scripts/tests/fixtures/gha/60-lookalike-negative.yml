@@ -1,0 +1,21 @@
+# Fixture (negative control): unprivileged workflow whose lines resemble what the recipes look for but hold none
+# of it; every recipe must stay silent.
+name: f60-lookalike-negative
+"on": [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  scan:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    env:
+      IMAGE: ghcr.io/example/app:latest
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ github.sha }}
+      - uses: example/image-scan-action@v1
+        with:
+          image-ref: ${{ env.IMAGE }}
+      - run: echo '${{ tojson(steps) }}'
+      - run: echo "ask claude later" && mkdir -p out
