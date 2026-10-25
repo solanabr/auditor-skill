@@ -78,6 +78,9 @@
 #                                rust-toolchain.toml at or above it (the user's CARGO_HOME excepted). Set
 #                                the EXIT trap that removes ISO_SCRATCH first.
 #   iso_inherited <dir>          prints the first such file at or above <dir>; nothing when there is none.
+#   iso_tmp_outside              refuses (confine_refuse) a TMPDIR (else /tmp) that cannot be resolved or
+#                                resolves inside WT, before anything is made there; iso_scratch checks the
+#                                directory it made as well.
 #   iso_env <dir> [keep-home]    makes <dir>/home, with the throwaway keypair, and <dir>/tmp, and sets
 #                                ISO_ENV (an array of NAME=value words), ISO_NET (the proxy words, maybe
 #                                none), ISO_HOME, ISO_TMP and ISO_REAL_HOME (the HOME it replaces); status 1
@@ -90,7 +93,34 @@
 #   iso_net [NAME=value...] <program> [<arg>...]
 #                                the same, with the proxy words of ISO_NET as well: for a download that
 #                                runs no code from the build.
-# Needs bash >= 3.2, python3 (the self-check and the keypair), env, mkdir and mktemp.
+#   iso_watch <seconds> <report> <dir> [NAME=value...] <program> [<arg>...]
+#                                runs <program> as iso_run does, in <dir>, with standard input closed, in a
+#                                session of its own, under ulimit -t of four times <seconds> and ulimit -f of
+#                                4194304 (ulimit -f counts 1024-byte blocks, so 4 GiB). After <seconds> of
+#                                wall-clock time every process of that session's
+#                                group gets SIGTERM, then SIGKILL five seconds later, and so does every one
+#                                left when <program> exits. python3 starts from /, so nothing in the working
+#                                directory picks the interpreter. It writes one line to <report>, a new file:
+#                                "exit <n>", "signal <n>" (the program died of signal <n>), "timeout",
+#                                "stopped by signal <n>" (the watchdog itself got it) or "cannot start:
+#                                <why>". Its status is the program's, 128+<n> for a signal, 124 on a timeout.
+#                                ISO_WATCH_PID names the watchdog while it runs, for a caller's signal trap.
+#   iso_copy_new <file> <path>   copies the regular file <file>, never a symbolic link, into <path>, which
+#                                must not exist (a link counts), through the descriptor opened at its
+#                                creation; status 1 when it cannot.
+#   iso_disclosures_ok <R>       status 0 when <R>/disclosures.tsv is absent, or a regular file with one link
+#                                whose first line is the header.
+#   iso_disclose <R> <tool> <service> <kind> <value>...
+#                                adds one row to <R>/disclosures.tsv (OUTPUT-RULES.md Rule 11b), creating it,
+#                                header first, with noclobber when it is absent; status 1 when it cannot.
+#                                The row is time (UTC, YYYY-MM-DDTHH:MM:SSZ), tool (the script, relative to
+#                                the installation root), service (the domain that received the requests),
+#                                sent ("<kind>: <value> <value> ...") and count (how many values), separated
+#                                by tabs, each control character in a cell printed as ?. This is the row
+#                                confine_disclose writes in the collectors' branch of scripts/lib/confine.sh;
+#                                once both are in one tree, the runners call that one and this goes.
+# Needs bash >= 3.2, python3 (the self-check, the keypair and the watchdog), env, mkdir, mktemp, find, cat and
+# date.
 
 # What iso_credentials, iso_cred_names, iso_homes and iso_env run, with python3 -I so that no module comes
 # from the working directory or PYTHONPATH. "creds given|default [<home>...]" prints what is readable by
@@ -436,6 +466,14 @@ iso_inherited() { # iso_inherited <dir>
   done
 }
 
+iso_tmp_outside() { # iso_tmp_outside
+  local base=${TMPDIR:-/tmp}
+  confine_phys "$base" || confine_refuse "TMPDIR cannot be resolved: $(confine_text "$base")"
+  case "$CONFINE_PHYS/" in
+    "${CONFINE_WT%/}/"*) confine_refuse "TMPDIR lies inside the working directory; point it outside the tree under audit" ;;
+  esac
+}
+
 iso_scratch() { # iso_scratch <tool>
   local base=${TMPDIR:-/tmp} dir found
   ISO_SCRATCH=""
@@ -491,4 +529,135 @@ iso_run() { # iso_run [NAME=value...] <program> [<arg>...]
 
 iso_net() { # iso_net [NAME=value...] <program> [<arg>...]
   iso_run ${ISO_NET[@]+"${ISO_NET[@]}"} "$@"
+}
+
+# What iso_watch runs, with python3 -I: "<report> <seconds> <dir> <program> [<arg>...]".
+ISO_WATCH_PY='import os, signal, subprocess, sys
+
+report, limit, where, argv = sys.argv[1], float(sys.argv[2]), sys.argv[3], sys.argv[4:]
+
+
+def say(text):
+    fd = os.open(report, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(text + "\n")
+
+
+def end(group, leader=None):
+    # SIGTERM to every process of the group, five seconds for the leader to go, then SIGKILL.
+    try:
+        os.killpg(group, signal.SIGTERM)
+    except OSError:
+        return
+    if leader is not None:
+        try:
+            leader.wait(5)
+        except subprocess.TimeoutExpired:
+            pass
+    try:
+        os.killpg(group, signal.SIGKILL)
+    except OSError:
+        pass
+
+
+try:
+    child = subprocess.Popen(argv, cwd=where, stdin=subprocess.DEVNULL, start_new_session=True)
+except OSError as why:
+    say("cannot start: %s" % (why.strerror or why))
+    sys.exit(127)
+
+
+def stop(signum, frame):
+    end(child.pid, child)
+    say("stopped by signal %d" % signum)
+    os._exit(128 + signum)
+
+
+for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+    signal.signal(s, stop)
+try:
+    rc = child.wait(limit)
+except subprocess.TimeoutExpired:
+    end(child.pid, child)
+    child.wait()
+    say("timeout")
+    sys.exit(124)
+end(child.pid)
+if rc < 0:
+    say("signal %d" % -rc)
+    sys.exit(128 - rc)
+say("exit %d" % rc)
+sys.exit(rc)
+'
+
+iso_limit() { # iso_limit -t|-f <value>: that ulimit, soft and hard, at <value>, or at the hard limit when it is lower
+  local hard
+  hard=$(ulimit -H "$1") || return 1
+  case "$hard" in
+    unlimited) ;;
+    ''|*[!0-9]*) return 1 ;;
+    *) [ "$hard" -ge "$2" ] || set -- "$1" "$hard" ;;
+  esac
+  ulimit "$1" "$2"
+}
+
+iso_watch() { # iso_watch <seconds> <report> <dir> [NAME=value...] <program> [<arg>...]
+  local secs=$1 report=$2 dir=$3 n=0 w rc
+  shift 3
+  for w in "$@"; do
+    case "$w" in
+      [A-Za-z_]*=*) case "${w%%=*}" in *[!A-Za-z0-9_]*) break ;; esac ;;
+      *) break ;;
+    esac
+    n=$((n + 1))
+  done
+  [ "$n" -lt $# ] || return 126
+  # The watchdog runs in the background and is waited for, so that a signal trap of the caller runs at once
+  # and can stop it (ISO_WATCH_PID); exec makes that pid the watchdog's own.
+  (
+    cd / || exit 126
+    iso_limit -t $((secs * 4)) && iso_limit -f 4194304 || exit 126
+    exec env -i "${ISO_ENV[@]}" "${@:1:n}" python3 -I -c "$ISO_WATCH_PY" "$report" "$secs" "$dir" "${@:n+1}"
+  ) &
+  ISO_WATCH_PID=$!
+  wait "$ISO_WATCH_PID"
+  rc=$?
+  ISO_WATCH_PID=""
+  return "$rc"
+}
+
+iso_copy_new() { # iso_copy_new <file> <path>
+  [ -f "$1" ] && [ ! -L "$1" ] || return 1
+  if [ -e "$2" ] || [ -L "$2" ]; then return 1; fi
+  ( set -C; exec 9>"$2" && cat -- "$1" >&9 ) 2>/dev/null
+}
+
+ISO_DISCLOSURES_HEADER=$'time\ttool\tservice\tsent\tcount'
+
+iso_disclosures_ok() { # iso_disclosures_ok <R>
+  local f=$CONFINE_WT/$1/disclosures.tsv listed first
+  if [ ! -e "$f" ] && [ ! -L "$f" ]; then return 0; fi
+  [ -f "$f" ] && [ ! -L "$f" ] || return 1
+  listed=$(find "$f" -prune -type f -links 1 -print 2>/dev/null) && [ "$listed" = "$f" ] || return 1
+  IFS= read -r first < "$f" || return 1
+  [ "$first" = "$ISO_DISCLOSURES_HEADER" ]
+}
+
+iso_disclose() { # iso_disclose <R> <tool> <service> <kind> <value>...
+  local r=$1 tool=$2 service=$3 kind=$4 f now row v sent="" n=0
+  shift 4
+  for v in "$@"; do
+    sent=${sent:+$sent }$v
+    n=$((n + 1))
+  done
+  now=$(date -u +%Y-%m-%dT%H:%M:%SZ) || return 1
+  sent="$kind: $sent"
+  row=${now//[[:cntrl:]]/?}$'\t'${tool//[[:cntrl:]]/?}$'\t'${service//[[:cntrl:]]/?}$'\t'${sent//[[:cntrl:]]/?}$'\t'$n
+  f=$CONFINE_WT/$r/disclosures.tsv
+  iso_disclosures_ok "$r" || return 1
+  if [ ! -e "$f" ] && [ ! -L "$f" ]; then
+    confine_new_file "$f" "$ISO_DISCLOSURES_HEADER"$'\n'"$row"$'\n' && return 0
+    iso_disclosures_ok "$r" || return 1
+  fi
+  printf '%s\n' "$row" 2>/dev/null >> "$f"
 }
