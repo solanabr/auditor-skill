@@ -31,7 +31,7 @@ Read-only: never comment, review, label or open issues on the target to test a g
 
 **Step 1: Inventory externally triggerable comment, review, issue, discussion and wiki workflows**
 ```
-grep -rlE --include='*.yml' --include='*.yaml' '^[[:space:]]*-?[[:space:]]*(issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues|gollum):?[[:space:]]*(#.*)?$|^[[:space:]]*(issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues|gollum):[[:space:]]*\{|^on:.*(issue_comment|pull_request_review|discussion|issues|gollum)' .github/
+grep -rlE --include='*.yml' --include='*.yaml' -e '^[[:space:]]*-?[[:space:]]*(issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues|gollum):?[[:space:]]*(#.*)?$|^[[:space:]]*(issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues|gollum):[[:space:]]*\{' -e "^[\"']?on[\"']?:.*(issue_comment|pull_request_review|discussion|issues|gollum)" .github/
 ```
 - Record per job: triggers, job-level `if:`, `permissions:`, secrets referenced, `id-token: write`, AI-agent steps (`anthropics/claude-code-action`, `run-gemini-cli`, `openai/codex-action`, `claude -p`, `codex exec`), and any checkout or fetch of PR code
 - If no such job holds write scopes, secrets, `id-token: write`, an agent or PR code, the vector is N/A (record it; a labeler with only `issues: write` is informational)

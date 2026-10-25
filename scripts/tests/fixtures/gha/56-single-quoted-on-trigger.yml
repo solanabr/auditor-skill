@@ -1,0 +1,12 @@
+# Fixture: one-line list-form trigger under a single-quoted 'on' key, title match only, no author gate.
+name: f56-single-quoted-on-trigger
+'on': [issues]
+permissions:
+  contents: write
+  issues: write
+jobs:
+  triage:
+    if: contains(github.event.issue.title, '[bug]')
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo triage
