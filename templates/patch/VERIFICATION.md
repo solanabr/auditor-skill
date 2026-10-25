@@ -149,12 +149,12 @@ cd "{PPV}" &&                                                          # outside
 **Post-patch validation:** {not run: needs isolated mode | not run: <what is missing> | ran: evidence level <source / build / runtime>, assessment <complete / incomplete>}
 - **Findings:** {each `check_id` (kind): message, as `results/result.json` gives it | none}
 - **Gaps:** {each `check_id`: reason | none}
-- **Effect on the verdict:** {none | lowered to `[FIX-INSUFFICIENT]` by `check_id` (kind)}
+- **Effect on the verdict:** {none | lowered from `[FIX-VERIFIED]` to `[FIX-INSUFFICIENT]` by `check_id` (kind) | residual, tier unchanged: `check_id` (kind)}
 
 The result is optional evidence and can only lower the verdict. A finding, a failure it attributes to the
 patched revision (a root-cause variant the patch leaves open, a behavior it changes, a regression it brings
-in), makes a `[FIX-VERIFIED]` or `[FIX-PROPOSED]` verdict `[FIX-INSUFFICIENT]`, with that check as what remains
-open. Read the check and its saved logs first: the runner shows that a check behaved as written, not that it
+in), makes a `[FIX-VERIFIED]` tier `[FIX-INSUFFICIENT]` (a `[FIX-PROPOSED]` one keeps its tier and lists it as
+residual), with that check as what remains open. Read the check and its saved logs first: the runner shows that a check behaved as written, not that it
 is the right check. Passing checks and gaps change nothing, and a passing run never stands in for §2's executed
 revert. List what its checks contacted (package registries, toolchain downloads, hosts the target's code or
 tests reach) under outside services in the report (Rule 11b). Discard `{PPV}` once this section is filled in.
@@ -169,11 +169,11 @@ Emit exactly one, and write it to the finding's **Auditor Verification** line:
 | `[FIX-INSUFFICIENT]` | The PoC still exploits a residual path, a mutant survives on the patched line, or an adjacent path regressed (blast-radius). State exactly what remains open. |
 | `[FIX-PROPOSED]` | A minimal idiomatic diff re-derived from the code closes the cited bound, but **no executable PoC was available** to run the revert. Verified by reasoning, flagged not-yet-executed — never silently promoted. |
 
-Opt-in Trail of Bits `post-patch-validation` (`/auditor:patch --post-patch-validation`, isolated mode only, on a disposable clone) is optional evidence that can only lower a tier: a finding in its result turns `[FIX-VERIFIED]` or `[FIX-PROPOSED]` into `[FIX-INSUFFICIENT]`, with that check as the reason, and nothing else in its result changes a tier.
+Opt-in Trail of Bits `post-patch-validation` (`/auditor:patch --post-patch-validation`, isolated mode only, on a disposable clone) is optional evidence that can only lower a tier: a finding in its result turns `[FIX-VERIFIED]` into `[FIX-INSUFFICIENT]`, with that check as the reason; a `[FIX-PROPOSED]` or `[FIX-INSUFFICIENT]` patch keeps its tier and records the finding under Residual, and nothing else in its result changes a tier.
 
 **Verdict:** `{FIX-VERIFIED | FIX-INSUFFICIENT | FIX-PROPOSED}`
 **What a maintainer must do to apply:** {e.g. `git am < {FINDING_ID}.patch` on `{COMMIT}`, `cargo build-sbf`, run the crate's own tests.}
-**Residual (if any):** {what is still open, for INSUFFICIENT — else "none".}
+**Residual (if any):** {what is still open, for INSUFFICIENT or a post-patch-validation finding — else "none".}
 
 ---
 
