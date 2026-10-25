@@ -20,7 +20,7 @@ This vector fuses two conditions that must BOTH be false: (a) the agent can reac
 **Step 1: Inventory workflows and locate AI agent steps**
 ```
 ls -la .github/workflows/ 2>/dev/null
-grep -rn -iE "anthropics/claude-code-(base-)?action|run-gemini-cli|gemini-cli-action|openai/codex-action|actions/ai-inference|claude (-p|--print)|@anthropic-ai/claude-code|codex exec|gemini -p" .github/workflows/
+grep -rn -iE "anthropics/claude-code-(base-)?action|run-gemini-cli|gemini-cli-action|openai/codex-action|actions/ai-inference|claude ([^|;&#]* )?(-p|--print)|@anthropic-ai/claude-code|codex exec|gemini -p" .github/workflows/
 ```
 - Record: each workflow, its `on:` triggers, and every AI-agent step, including agent CLIs started from a `run:` step (they have no built-in actor check)
 
