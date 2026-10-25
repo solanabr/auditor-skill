@@ -742,6 +742,10 @@ run "$DEPS" "$WT" -- cargo-tree --run audit_1 --manifest stubs/Cargo.toml
 check "a root key hidden after a multi-line string: exit 3, cargo never runs, nothing disclosed" sh -c "
   [ '$RC' = 3 ] && grep -q '^deps: blocker: stubs/Cargo.toml has a key before its first table header' '$T/err' &&
   ! grep -q '^== cargo' '$T/calls' && [ \"\$(( \$(wc -l < '$DT') - 1 ))\" = '$r0' ]"
+# A manifest whose first line is cargo-features, the one key a Cargo.toml has before its first table header.
+printf 'cargo-features = ["edition2024"]\n[package]\nname = "cf"\nversion = "0.1.0"\nedition = "2021"\n' > "$WT/stubs/Cargo.toml"
+run "$DEPS" "$WT" -- cargo-tree --run audit_1 --manifest stubs/Cargo.toml
+check "a manifest starting with cargo-features = [\"edition2024\"] runs" sh -c "[ '$RC' = 0 ] && grep -q '^== cargo tree ' '$T/calls'"
 # What the second line must not refuse: a byte-order mark, a comment and a one-line cargo-features before the
 # first header, a cfg target header with escaped quotes, and dependency keys named, or escaped to, patch.
 printf '\357\273\277# a comment\n\ncargo-features = ["edition2024"]\n[package]\nname = "ok"\nversion = "0.1.0"\nedition = "2021"\n[target."cfg(target_os = \\"linux\\")".dependencies]\nlibc = "0.2"\n[dependencies]\npatch = "1.0"\n"\\u0070atch2" = "1"\n' > "$WT/stubs/Cargo.toml"
