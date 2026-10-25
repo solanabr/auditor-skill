@@ -89,8 +89,8 @@ Turns a *confirmed* finding into a runnable exploit: resolve the finding + its c
 **When:** demonstrate a High/Critical finding executably. **Emits:** `audit_<n>/poc/F-xxx/` (crate + one-command `run.sh`) + the earned `[PoC-*]` tier. Never hard-fails — toolchain absence → `[PoC-ATTEMPTED]` + the prose PoC is kept. Full detail: [poc-and-patches.md](poc-and-patches.md).
 
 ### `/auditor:patch`
-**Arg:** `<finding-id | INC-n.k> [--verify-with-mutation]`
-Drafts and verifies a fix: `patch-engineer` writes a **minimal idiomatic** unified diff against the pinned commit that closes *exactly* the cited bound (obeys the Rust/Anchor/Pinocchio rules), applies it to a **scratch worktree** (never the client tree), rebuilds, and **re-runs the finding's PoC** — which must now revert. `--verify-with-mutation` adds `mewt` mutation + a blast-radius check.
+**Arg:** `<finding-id | INC-n.k> [--verify-with-mutation] [--post-patch-validation]`
+Drafts and verifies a fix: `patch-engineer` writes a **minimal idiomatic** unified diff against the pinned commit that closes *exactly* the cited bound (obeys the Rust/Anchor/Pinocchio rules), applies it to a **scratch worktree** (never the client tree), rebuilds, and **re-runs the finding's PoC** — which must now revert. `--verify-with-mutation` adds `mewt` mutation + a blast-radius check. `--post-patch-validation` (opt-in) also runs Trail of Bits `post-patch-validation`, only in isolated mode and on a disposable clone; a finding in its result turns `[FIX-VERIFIED]` into `[FIX-INSUFFICIENT]`, or is recorded under Residual on any other tier, and nothing else in it changes a tier.
 **When:** hand the client a proven fix. **Emits:** `audit_<n>/patches/F-xxx.patch` + `VERIFICATION.md` + the `[FIX-*]` tier. Proposal only — `[FIX-VERIFIED]` requires an *executed* revert; no PoC → `[FIX-PROPOSED]` ceiling. Detail: [poc-and-patches.md](poc-and-patches.md).
 
 ---
