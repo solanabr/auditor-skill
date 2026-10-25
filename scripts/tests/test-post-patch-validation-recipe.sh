@@ -324,7 +324,7 @@ for f in OUTPUT-RULES.md docs/poc-and-patches.md agents/patch-engineer.md comman
 done
 LOWER='makes a `[FIX-VERIFIED]` tier `[FIX-INSUFFICIENT]` (a `[FIX-PROPOSED]` one keeps its tier and records the finding under Residual)'
 COPY='a no-checkout clone, outside the target tree, of the copy `git-ro.sh copy` makes in `<R>`'
-GATE='the stricter of `<R>/exec-mode` and `AUDITOR_EXEC_MODE` is'
+GATE='the stricter of the recorded mode (`<R>/exec-mode`, or `intake.md` §8 without it) and `AUDITOR_EXEC_MODE` is'
 for f in commands/patch.md agents/patch-engineer.md; do
   if grep -qF -- "$LOWER" "$ROOT/$f" && grep -qF -- "$COPY" "$ROOT/$f" && grep -qF -- "$GATE" "$ROOT/$f" \
      && grep -qF -- '"${CLAUDE_PLUGIN_ROOT}/scripts/runner/probe.sh" --only isolation` finds nothing readable' "$ROOT/$f"; then
@@ -337,9 +337,11 @@ if has "$sec4" 'lowered from `[FIX-VERIFIED]` to `[FIX-INSUFFICIENT]` by `check_
    && has "$sec4" "$LOWER" && has "$sec4" 'change nothing else in `plan.json`' \
    && has "$sec4" 'which the disposable clone does not hold". Never fetch or initialize submodules in the clone.' \
    && has "$sec4" 'record "not run: <its first error line>"' && ! has "$sec4" '§1 copy' && ! has "$sec4" '{CHECKOUT}' \
+   && has "$sec4" 'unless the stricter of the recorded mode (`{R}/exec-mode`, or `intake.md` §8 without it) and `AUDITOR_EXEC_MODE` is isolated' \
+   && has "$sec4" '`{MODE}` is the word `{R}/exec-mode` holds or, when there is no such file, the mode `{R}/intake.md` §8 records (for an incident, the mode in its ledger header);' \
    && ! has "$sec4" '{PATH_TO}' \
    && grep -qF '**Residual (if any):** {what is still open, for INSUFFICIENT or a post-patch-validation finding — else "none".}' "$VER"
-then ok "VERIFICATION.md §4: its own placeholders, the effect record, the plan rule, the submodule and error lines; §5's Residual"
+then ok "VERIFICATION.md §4: the gate with its intake.md fallback, its own placeholders, the effect record, the plan rule, the submodule and error lines; §5's Residual"
 else bad "VERIFICATION.md §4 or §5 lacks part of its wording"; fi
 if grep -qxF 'argument-hint: "<finding-id | INC-n.k> [--verify-with-mutation] [--post-patch-validation]"' "$ROOT/commands/patch.md"
 then ok "/auditor:patch offers --post-patch-validation"; else bad "/auditor:patch's argument-hint lacks --post-patch-validation"; fi
