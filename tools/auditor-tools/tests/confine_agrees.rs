@@ -35,6 +35,45 @@ fn tree() -> Wt {
     wt
 }
 
+/// A field of the case file with its placeholders filled in (its header lists
+/// them), as test-confine.sh fills them.
+fn fill(field: &str) -> String {
+    if field == "@EMPTY@" {
+        return String::new();
+    }
+    let mut out = String::new();
+    let mut rest = field;
+    while let Some(start) = rest.find('@') {
+        let after = &rest[start + 1..];
+        let Some(end) = after.find('@') else {
+            break;
+        };
+        out.push_str(&rest[..start]);
+        let name = &after[..end];
+        match name {
+            "SOH" => out.push('\u{1}'),
+            "TAB" => out.push('\t'),
+            "NL" => out.push('\n'),
+            "ESC" => out.push('\u{1b}'),
+            "DEL" => out.push('\u{7f}'),
+            _ => match name
+                .strip_prefix("LONG:")
+                .and_then(|n| n.parse::<usize>().ok())
+            {
+                Some(n) => out.push_str(&"a".repeat(n)),
+                None => {
+                    out.push('@');
+                    out.push_str(name);
+                    out.push('@');
+                }
+            },
+        }
+        rest = &after[end + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
 /// What `confine_path <path> "the path" <want>` prints, by way of confine.rs: on
 /// success `CONFINE_REL CONFINE_TYPE`, else its refusal line. What `want` adds to
 /// the path rules (a directory, or a name not yet taken) is the caller's, as it
@@ -82,7 +121,8 @@ fn confine_rs_reads_every_path_case_as_confine_sh_does() {
             panic!("a case line has four fields: {line:?}");
         };
         n += 1;
-        let (got_status, got) = confined(&wt, want, path);
+        let (path, expect) = (fill(path), fill(expect));
+        let (got_status, got) = confined(&wt, want, &path);
         if got_status.to_string() != status || got != expect {
             differ.push(format!(
                 "{want} {path:?}: confine.sh {status} {expect:?}, confine.rs {got_status} {got:?}"

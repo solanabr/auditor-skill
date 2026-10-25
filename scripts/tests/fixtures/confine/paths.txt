@@ -2,6 +2,9 @@
 # src/deep/x.rs), link (a symbolic link to a.rs), linkdir (to src), dangling (to nothing), out (to a
 # directory outside the tree), fifo (a named pipe) and src/inner (a symbolic link to ../a.rs).
 # One case per line: <want><TAB><path><TAB><status><TAB><stdout "CONFINE_REL CONFINE_TYPE", or the stderr line>.
+# In a field: @EMPTY@ (a whole field) the empty path, @LONG:N@ N repetitions of "a", and @SOH@, @TAB@, @NL@,
+# @ESC@ and @DEL@ the control characters 0x01, 0x09, 0x0a, 0x1b and 0x7f; both test-confine.sh and
+# tools/auditor-tools/tests/confine_agrees.rs fill them in.
 dir	.	0	. dir
 dir	src	0	src dir
 dir	./src	0	src dir
@@ -43,3 +46,11 @@ dir	a.rs	64	test: refused: the path is not an existing directory: a.rs
 dir	absent	64	test: refused: the path is not an existing directory: absent
 new	a.rs	64	test: refused: the path already exists: a.rs
 new	src	64	test: refused: the path already exists: src
+any	@EMPTY@	64	test: refused: the path is empty
+any	@LONG:1025@	64	test: refused: the path is longer than 1024 bytes
+any	@LONG:1024@	0	@LONG:1024@ none
+any	src/a@SOH@b	64	test: refused: the path holds a control character: src/a?b
+any	src/a@NL@b	64	test: refused: the path holds a control character: src/a?b
+any	src/a@TAB@b	64	test: refused: the path holds a control character: src/a?b
+any	src/a@ESC@b	64	test: refused: the path holds a control character: src/a?b
+any	src/a@DEL@b	64	test: refused: the path holds a control character: src/a?b

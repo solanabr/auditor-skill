@@ -348,8 +348,9 @@ pub enum Kind {
 /// every name on the way is checked with lstat and must not be a symbolic link,
 /// every name before the last must be a directory, an existing last name must be a
 /// regular file or a directory, and what it names (or, when absent, the directory
-/// it would be made in) must resolve inside WT. A name that cannot be checked is a
-/// refusal.
+/// it would be made in) must resolve inside WT. A name lstat cannot find or
+/// cannot name (one longer than a name may be, say) is absent, as `[ -e ]` reads
+/// it.
 pub fn check(wt: &Path, r: &Rel, what: &str) -> Result<Kind, Stop> {
     let s = r.shown();
     let mut kind = Kind::Dir;
@@ -382,15 +383,9 @@ pub fn check(wt: &Path, r: &Rel, what: &str) -> Result<Kind, Stop> {
                     )));
                 }
             }
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            Err(_) => {
                 kind = Kind::Absent;
                 break;
-            }
-            Err(e) => {
-                return Err(refuse(format!(
-                    "{what} cannot be checked ({}): {s}",
-                    os_message(&e)
-                )))
             }
         }
     }
