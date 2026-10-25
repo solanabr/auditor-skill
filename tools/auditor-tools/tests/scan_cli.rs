@@ -132,6 +132,31 @@ fn prunes_run_directories_and_the_store_at_the_top_only() {
 }
 
 #[test]
+fn gives_each_file_its_own_line_numbers() {
+    let wt = Wt::new();
+    for name in ["a", "b", "c"] {
+        wt.write(
+            &format!("src/{name}.rs"),
+            b"// one\n// two\nfn f(x: u64) -> u64 { x + 1 }\n",
+        );
+    }
+    wt.write("src/d.rs", b"fn (");
+    wt.write("src/e.rs", b"\n\n\n\nfn g() { y.unwrap(); }\n");
+    let report = json(&run(BIN, &wt.dir, &["src"]));
+    let lines: Vec<String> = report["arithmetic_sites"]
+        .as_array()
+        .expect("sites")
+        .iter()
+        .chain(report["panic_sites"].as_array().expect("sites"))
+        .map(|s| format!("{}:{}", s["file"].as_str().unwrap_or(""), s["line"]))
+        .collect();
+    assert_eq!(
+        lines,
+        vec!["src/a.rs:3", "src/b.rs:3", "src/c.rs:3", "src/e.rs:5"]
+    );
+}
+
+#[test]
 fn refuses_paths_outside_the_working_tree() {
     let wt = Wt::new();
     wt.write("src/lib.rs", b"fn a() {}\n");

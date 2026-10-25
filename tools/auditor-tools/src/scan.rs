@@ -178,7 +178,8 @@ impl ScanReport {
 /// or not Rust that `syn` parses), is listed in `skipped`. Directories named
 /// `target`, `.git` and `node_modules` below `root` are pruned, and so are the
 /// run directories and `.audit-memory/` when `root` is the working directory.
-/// Entries are visited in byte order of their names.
+/// Entries are visited in byte order of their names, and the spans of each file
+/// are released once it is visited, so the total source read has no limit.
 pub fn scan_path(root: &Path) -> ScanReport {
     let mut report = ScanReport::new(root.display().to_string(), 0);
     let top = root == Path::new(".");
@@ -226,20 +227,21 @@ pub fn scan_path(root: &Path) -> ScanReport {
                 continue;
             }
         };
-        let ast = match syn::parse_file(&source) {
-            Ok(a) => a,
-            Err(_) => {
-                report.skipped.push(Skipped {
-                    file: label,
-                    reason: "does not parse as Rust".to_string(),
-                });
-                continue;
+        match syn::parse_file(&source) {
+            Ok(ast) => {
+                report.files_scanned += 1;
+                let mut visitor = FileVisitor::new(&label);
+                visitor.visit_file(&ast);
+                visitor.drain_into(&mut report);
             }
-        };
-        report.files_scanned += 1;
-        let mut visitor = FileVisitor::new(&label);
-        visitor.visit_file(&ast);
-        visitor.drain_into(&mut report);
+            Err(_) => report.skipped.push(Skipped {
+                file: label,
+                reason: "does not parse as Rust".to_string(),
+            }),
+        }
+        // No span of this file is left: free proc-macro2's map of the source parsed on
+        // this thread, whose 32-bit offsets would wrap past 4 GiB of source.
+        proc_macro2::extra::invalidate_current_thread_spans();
     }
 
     report
