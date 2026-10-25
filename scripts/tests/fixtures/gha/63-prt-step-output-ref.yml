@@ -1,0 +1,19 @@
+# Fixture: pull_request_target copies the PR head SHA into a step output named sha and checks that output out.
+name: f63-prt-step-output-ref
+on:
+  pull_request_target:
+    types: [opened, synchronize]
+permissions:
+  contents: write
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - id: meta
+        uses: actions/github-script@v7
+        with:
+          script: core.setOutput('sha', context.payload.pull_request.head.sha)
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ steps.meta.outputs.sha }}
+      - run: npm ci && npm test
