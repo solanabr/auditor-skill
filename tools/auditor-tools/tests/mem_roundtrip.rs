@@ -407,11 +407,12 @@ fn warm_and_regressions_hold_the_newest_rows_and_count_the_rest() {
         "newest first"
     );
     let profile = warm.profile.expect("the profile");
-    assert_eq!(profile.changed.len(), 200);
+    assert_eq!(profile.changed.len(), 10, "the newest ten");
     assert_eq!(profile.changed[0].previous, "notes 203");
+    assert_eq!(profile.changed[9].previous, "notes 194");
     assert_eq!(
         warm.truncated,
-        50 + 10 + 4,
+        50 + 10 + 194,
         "invariants, rulings and replaced values left out"
     );
     for i in 0..230 {
@@ -515,5 +516,52 @@ fn a_replaced_severity_and_title_are_kept_and_regressions_lists_them() {
             .len(),
         2,
         "the same values replace nothing"
+    );
+}
+
+#[test]
+fn each_answer_lists_ten_changes_an_item_and_two_hundred_in_all() {
+    let conn = mem::open_in_memory().expect("open in-memory db");
+    for i in 0..30 {
+        let statement = format!("invariant {i}");
+        for round in 0..16 {
+            mem::put_invariant(
+                &conn,
+                PROG,
+                &statement,
+                &mem::InvariantFields {
+                    status: Some(&format!("status {round}")),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        }
+    }
+    let warm = mem::warm(&conn, PROG).unwrap();
+    let counts: Vec<usize> = warm.invariants.iter().map(|i| i.changed.len()).collect();
+    assert_eq!(counts, [[10; 20].as_slice(), &[0; 10]].concat());
+    assert_eq!(warm.invariants[0].changed[0].previous, "status 14");
+    assert_eq!(
+        warm.truncated,
+        30 * 15 - 200,
+        "the replaced values left out"
+    );
+
+    for i in 0..25 {
+        let sig = format!("sig {i}");
+        put_one(&conn, &sig, 1, "t0");
+        mem::set_status(&conn, PROG, &sig, "rc", "FIXED").unwrap();
+        for round in 1..=6 {
+            put_one(&conn, &sig, 1 + round % 2, &format!("t{round}"));
+        }
+    }
+    let regs = mem::regressions(&conn, PROG).unwrap();
+    let counts: Vec<usize> = regs.regressions.iter().map(|r| r.changed.len()).collect();
+    assert_eq!(counts.iter().sum::<usize>(), 200);
+    assert!(counts.iter().all(|&n| n <= 10));
+    assert_eq!(
+        regs.truncated,
+        25 * 12 - 200,
+        "the replaced values left out"
     );
 }

@@ -121,6 +121,12 @@ const SCHEMA: [(&str, &str); 6] = [
 /// with `truncated` counting the rest.
 const ROWS: u32 = 200;
 
+/// The most replaced values listed under one profile's, invariant's or
+/// finding's `changed`, the newest, and in all the lists of one answer; `truncated`
+/// counts the rest.
+const CHANGES_EACH: usize = 10;
+const CHANGES: usize = 200;
+
 /// The indexes SQLite makes for the tables' primary keys, by name and table.
 const AUTO_INDEXES: [(&str, &str); 2] = [
     ("sqlite_autoindex_findings_1", "findings"),
@@ -823,8 +829,14 @@ pub fn regressions(conn: &Connection, program_id: &str) -> Result<Regressions> {
     let mut rows = rows;
     let mut truncated = left(total, rows.len());
     if has_history(conn)? {
+        let mut budget = CHANGES;
         for row in &mut rows {
-            let (changed, more) = changes(conn, program_id, Owner::Finding(&row.finding_id))?;
+            let (changed, more) = changes(
+                conn,
+                program_id,
+                Owner::Finding(&row.finding_id),
+                &mut budget,
+            )?;
             row.changed = changed;
             truncated += more;
         }
@@ -882,9 +894,14 @@ impl Owner<'_> {
     }
 }
 
-/// The values replaced in one owner, newest first, at most `ROWS`, and how many
-/// more there are.
-fn changes(conn: &Connection, program_id: &str, owner: Owner) -> Result<(Vec<Change>, u64)> {
+/// The values replaced in one owner, newest first: at most `CHANGES_EACH`, and no
+/// more than `budget`, which they use up; and how many more there are.
+fn changes(
+    conn: &Connection,
+    program_id: &str,
+    owner: Owner,
+    budget: &mut usize,
+) -> Result<(Vec<Change>, u64)> {
     let (inv_id, finding_id) = owner.ids();
     let total: i64 = conn.query_row(
         "SELECT count(*) FROM history WHERE program_id = ?1 AND inv_id IS ?2 AND finding_id IS ?3",
@@ -899,8 +916,9 @@ fn changes(conn: &Connection, program_id: &str, owner: Owner) -> Result<(Vec<Cha
     let text = |r: &rusqlite::Row, i: usize| -> rusqlite::Result<String> {
         Ok(r.get::<_, Option<String>>(i)?.unwrap_or_default())
     };
+    let limit = i64::try_from(CHANGES_EACH.min(*budget)).unwrap_or(0);
     let rows = stmt
-        .query_map(params![program_id, inv_id, finding_id, ROWS], |r| {
+        .query_map(params![program_id, inv_id, finding_id, limit], |r| {
             Ok(Change {
                 field: text(r, 0)?,
                 previous: text(r, 1)?,
@@ -908,6 +926,7 @@ fn changes(conn: &Connection, program_id: &str, owner: Owner) -> Result<(Vec<Cha
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
+    *budget -= rows.len();
     let more = left(total, rows.len());
     Ok((rows, more))
 }
@@ -1115,7 +1134,8 @@ pub fn put_invariant(
 }
 
 /// The warm-start context block returned for a re-audit. Each list holds at most
-/// `ROWS` rows, the newest; `truncated` counts the rows left out of all of them.
+/// `ROWS` rows, the newest, and each `changed` at most `CHANGES_EACH`, `CHANGES` in
+/// all; `truncated` counts the rows left out of all of them.
 #[derive(Debug, Serialize, Default)]
 pub struct WarmContext {
     pub profile: Option<ProtocolProfile>,
@@ -1149,8 +1169,9 @@ pub fn warm(conn: &Connection, program_id: &str) -> Result<WarmContext> {
             },
         )
         .optional()?;
+    let mut budget = CHANGES;
     if let (Some(p), true) = (profile.as_mut(), history) {
-        let (changed, more) = changes(conn, program_id, Owner::Profile)?;
+        let (changed, more) = changes(conn, program_id, Owner::Profile, &mut budget)?;
         p.changed = changed;
         truncated += more;
     }
@@ -1182,7 +1203,12 @@ pub fn warm(conn: &Connection, program_id: &str) -> Result<WarmContext> {
     truncated += left(total, invariants.len());
     if history {
         for invariant in &mut invariants {
-            let (changed, more) = changes(conn, program_id, Owner::Invariant(invariant.inv_id))?;
+            let (changed, more) = changes(
+                conn,
+                program_id,
+                Owner::Invariant(invariant.inv_id),
+                &mut budget,
+            )?;
             invariant.changed = changed;
             truncated += more;
         }
