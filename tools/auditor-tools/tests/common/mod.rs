@@ -168,6 +168,20 @@ pub fn stderr(o: &Output) -> String {
     String::from_utf8_lossy(&o.stderr).into_owned()
 }
 
+/// A path as the binaries show a value in a message: cut after 200 bytes, then
+/// `...`. A temporary directory with a long path makes the trees' paths long.
+pub fn shown(s: &str) -> String {
+    let mut out = String::new();
+    for c in s.chars() {
+        if out.len() + c.len_utf8() > 200 {
+            out.push_str("...");
+            break;
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// The call was refused: exit 2, nothing on stdout, and one stderr line
 /// `<tool>: refused: <why>`.
 pub fn refused(o: &Output, tool: &str, why: &str) {

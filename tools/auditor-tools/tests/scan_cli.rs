@@ -5,7 +5,7 @@ mod common;
 use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
-use common::{refused, refused_with, run, stdout, Wt};
+use common::{refused, refused_with, run, shown, stdout, Wt};
 use serde_json::Value;
 
 const BIN: &str = env!("CARGO_BIN_EXE_audit-scan");
@@ -167,7 +167,10 @@ fn refuses_paths_outside_the_working_tree() {
     for (arg, why) in [
         (
             outside.as_str(),
-            format!("{d} must be relative to the working directory: {outside}"),
+            format!(
+                "{d} must be relative to the working directory: {}",
+                shown(&outside)
+            ),
         ),
         (
             "../outside",
@@ -306,7 +309,10 @@ fn refuses_an_out_it_may_not_write() {
     for (out, why) in [
         (
             abs.as_str(),
-            format!("--out must be relative to the working directory: {abs}"),
+            format!(
+                "--out must be relative to the working directory: {}",
+                shown(&abs)
+            ),
         ),
         ("prescan.json", format!("{shape}: prescan.json")),
         (

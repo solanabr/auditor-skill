@@ -13,6 +13,7 @@
 #   @WT@ the working directory's absolute path   @OUT@ the directory outside it   @LONG:N@ N repetitions of "a"
 #   @NL@ a newline   @ESC@ an escape character (0x1b)   @TAB@ a tab   @DEL@ DEL (0x7f)   @RLO@ U+202E
 #   @ZWSP@ U+200B   @EMPTY@ (a whole field) an empty argument
+#   @SHOWN(x)@ x as the binary shows a value in a message: cut after 200 bytes, then ...
 # grammar
 2	audit-mem: refused: no subcommand (usage: audit-mem <subcommand> [--db <store>] [options], the subcommand being init, put-finding, set-status, rule, check, regressions, warm, profile or invariant)
 2	audit-mem: refused: --db is not a subcommand, and the subcommand comes first (usage: audit-mem <subcommand> [--db <store>] [options], the subcommand being init, put-finding, set-status, rule, check, regressions, warm, profile or invariant)	--db	.audit-memory/audit.db	warm	--program-id	VaultProg1111
@@ -118,8 +119,8 @@
 2	audit-mem: refused: --guard must be <file>:<line> or <file>:<first>-<last>, at most 200 lines: src/withdraw.rs:1234567890	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe	--guard	src/withdraw.rs:1234567890
 2	audit-mem: refused: --guard names line 9, and the file has 4 line(s): src/withdraw.rs:9	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe	--guard	src/withdraw.rs:9
 2	audit-mem: refused: --guard names line 5, and the file has 4 line(s): src/withdraw.rs:2-5	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe	--guard	src/withdraw.rs:2-5
-2	audit-mem: refused: --guard's file must be relative to the working directory: @WT@/src/withdraw.rs	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe	--guard	@WT@/src/withdraw.rs:2
-2	audit-mem: refused: --guard's file must be relative to the working directory: @OUT@/secret.rs	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe	--guard	@OUT@/secret.rs:1
+2	audit-mem: refused: --guard's file must be relative to the working directory: @SHOWN(@WT@/src/withdraw.rs)@	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe	--guard	@WT@/src/withdraw.rs:2
+2	audit-mem: refused: --guard's file must be relative to the working directory: @SHOWN(@OUT@/secret.rs)@	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe	--guard	@OUT@/secret.rs:1
 2	audit-mem: refused: --guard's file has an empty, . or .. component: ../outside/secret.rs	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe	--guard	../outside/secret.rs:1
 2	audit-mem: refused: --guard's file has an empty, . or .. component: src/../src/withdraw.rs	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe	--guard	src/../src/withdraw.rs:2
 2	audit-mem: refused: --guard's file may not start with - or ~: ~/secret.rs	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe	--guard	~/secret.rs:1
@@ -130,8 +131,8 @@
 2	audit-mem: refused: --guard's file is not an existing regular file: src/missing.rs	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe	--guard	src/missing.rs:1
 2	audit-mem: refused: --guard's file is not a regular file or a directory: fifo	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe	--guard	fifo:1
 # --db
-2	audit-mem: refused: --db must be .audit-memory/audit.db, audit_<n>/audit-mem.db or incident_<n>/audit-mem.db: @WT@/.audit-memory/audit.db	warm	--program-id	VaultProg1111	--db	@WT@/.audit-memory/audit.db
-2	audit-mem: refused: --db must be .audit-memory/audit.db, audit_<n>/audit-mem.db or incident_<n>/audit-mem.db: @OUT@/audit.db	warm	--program-id	VaultProg1111	--db	@OUT@/audit.db
+2	audit-mem: refused: --db must be .audit-memory/audit.db, audit_<n>/audit-mem.db or incident_<n>/audit-mem.db: @SHOWN(@WT@/.audit-memory/audit.db)@	warm	--program-id	VaultProg1111	--db	@WT@/.audit-memory/audit.db
+2	audit-mem: refused: --db must be .audit-memory/audit.db, audit_<n>/audit-mem.db or incident_<n>/audit-mem.db: @SHOWN(@OUT@/audit.db)@	warm	--program-id	VaultProg1111	--db	@OUT@/audit.db
 2	audit-mem: refused: --db must be .audit-memory/audit.db, audit_<n>/audit-mem.db or incident_<n>/audit-mem.db: ../outside/audit.db	warm	--program-id	VaultProg1111	--db	../outside/audit.db
 2	audit-mem: refused: --db must be .audit-memory/audit.db, audit_<n>/audit-mem.db or incident_<n>/audit-mem.db: .audit-memory/other.db	warm	--program-id	VaultProg1111	--db	.audit-memory/other.db
 2	audit-mem: refused: --db must be .audit-memory/audit.db, audit_<n>/audit-mem.db or incident_<n>/audit-mem.db: .audit-memory/audit.db/	warm	--program-id	VaultProg1111	--db	.audit-memory/audit.db/

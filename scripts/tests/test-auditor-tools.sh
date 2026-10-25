@@ -157,13 +157,24 @@ expand() {
   python3 -I - "$1" "$2" "$3" "$4" <<'PY'
 import os, re, sys
 cases, out, wt, outside = sys.argv[1:5]
+def plain(a):
+    for k, v in (("@WT@", wt), ("@OUT@", outside), ("@NL@", "\n"), ("@ESC@", "\x1b"), ("@TAB@", "\t"),
+                 ("@DEL@", "\x7f"), ("@RLO@", "\u202e"), ("@ZWSP@", "\u200b")):
+        a = a.replace(k, v)
+    return re.sub(r"@LONG:([0-9]+)@", lambda m: "a" * int(m.group(1)), a)
+def shown(s):
+    # As the binaries show a value in a message: cut after 200 bytes, then "...".
+    t = ""
+    for c in s:
+        if len((t + c).encode("utf-8")) > 200:
+            return t + "..."
+        t += c
+    return t
 def fill(a):
     if a == "@EMPTY@":
         return ""
-    for k, v in (("@WT@", wt), ("@OUT@", outside), ("@NL@", "\n"), ("@ESC@", "\x1b"), ("@TAB@", "\t"),
-                 ("@DEL@", "\x7f"), ("@RLO@", "‮"), ("@ZWSP@", "​")):
-        a = a.replace(k, v)
-    return re.sub(r"@LONG:([0-9]+)@", lambda m: "a" * int(m.group(1)), a)
+    parts = re.split(r"@SHOWN\((.*?)\)@", a)
+    return "".join(shown(plain(p)) if i % 2 else plain(p) for i, p in enumerate(parts))
 n = 0
 with open(cases, encoding="utf-8") as f:
     for line in f:

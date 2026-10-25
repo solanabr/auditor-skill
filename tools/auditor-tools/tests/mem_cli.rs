@@ -10,7 +10,7 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
-use common::{refused, run, run_env, stderr, stdout, Wt};
+use common::{refused, run, run_env, shown, stderr, stdout, Wt};
 use serde_json::Value;
 
 const BIN: &str = env!("CARGO_BIN_EXE_audit-mem");
@@ -399,8 +399,8 @@ fn takes_db_only_as_one_of_two_stores() {
     let abs = wt.path(".audit-memory/audit.db").display().to_string();
     let outside = wt.outside().join("x.db").display().to_string();
     for (db, why) in [
-        (abs.as_str(), format!("{shape}: {abs}")),
-        (outside.as_str(), format!("{shape}: {outside}")),
+        (abs.as_str(), format!("{shape}: {}", shown(&abs))),
+        (outside.as_str(), format!("{shape}: {}", shown(&outside))),
         ("../outside/x.db", format!("{shape}: ../outside/x.db")),
         (
             ".audit-memory/other.db",
@@ -1205,7 +1205,7 @@ fn a_ruling_is_anchored_and_check_reports_it_stale_when_the_anchor_changes() {
         ("src/withdraw.rs:1-201", "--guard must be <file>:<line> or <file>:<first>-<last>, at most 200 lines: src/withdraw.rs:1-201".into()),
         ("src/withdraw.rs:x", "--guard must be <file>:<line> or <file>:<first>-<last>, at most 200 lines: src/withdraw.rs:x".into()),
         ("src/withdraw.rs:9", "--guard names line 9, and the file has 4 line(s): src/withdraw.rs:9".into()),
-        (&format!("{abs}:2"), format!("{g} must be relative to the working directory: {abs}")),
+        (&format!("{abs}:2"), format!("{g} must be relative to the working directory: {}", shown(&abs))),
         ("../outside/x.rs:1", format!("{g} has an empty, . or .. component: ../outside/x.rs")),
         ("outlink/x.rs:1", format!("{g} passes through a symbolic link: outlink/x.rs")),
         ("src:1", format!("{g} is not an existing regular file: src")),
