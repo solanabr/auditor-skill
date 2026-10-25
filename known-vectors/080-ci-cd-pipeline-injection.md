@@ -64,7 +64,7 @@ grep -rn --include="*.yml" --include="*.yaml" "uses.*/" .github/workflows/ | gre
 **Step 7: Check comment- and issue-triggered jobs for an author gate**
 ```
 grep -rlE --include='*.yml' --include='*.yaml' -e '^[[:space:]]*-?[[:space:]]*(issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues):?[[:space:]]*(#.*)?$|^[[:space:]]*(issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues):[[:space:]]*\{' -e "^[\"']?on[\"']?:.*(issue_comment|pull_request_review|discussion|issues)" -e "^[[:space:]]*-?[[:space:]]*[\"'](issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues)[\"']" .github/
-echo 'second list (files that mention author_association):'
+echo 'second list: files under .github/ that mention author_association'
 grep -rl --include='*.yml' --include='*.yaml' '^[^#]*author_association' .github/
 ```
 - Read each file in the first list and not in the second: it has one of these triggers and never mentions `author_association` outside a comment

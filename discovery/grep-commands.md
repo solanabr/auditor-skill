@@ -420,10 +420,10 @@ npx license-checker --summary
 ```bash
 # R1 — files with a comment / review / issue / discussion trigger and no author_association outside a comment (the first list minus the second)
 grep -rlE --include='*.yml' --include='*.yaml' -e '^[[:space:]]*-?[[:space:]]*(issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues):?[[:space:]]*(#.*)?$|^[[:space:]]*(issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues):[[:space:]]*\{' -e "^[\"']?on[\"']?:.*(issue_comment|pull_request_review|discussion|issues)" -e "^[[:space:]]*-?[[:space:]]*[\"'](issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues)[\"']" .github/
-echo 'second list (files that mention author_association):'
+echo 'second list: files under .github/ that mention author_association'
 grep -rl --include='*.yml' --include='*.yaml' '^[^#]*author_association' .github/
 ```
-> R1 is every file in the first list and not in the second; the `echo` line marks where the second starts, so the block can run as one command. Both lists come from plain `grep` calls, so a file name with a space or a quote is listed like any other. The two calls take the same `--include` options and root, so a file leaves R1 only by mentioning `author_association` before any `#` on a line; a gate that is commented out does not count. Works per file: a file that gates one job and leaves another open is not listed, so read every job's `if:` (DEP-090, KV-139). A job id named like an event can show up as noise.
+> R1 is every file in the first list and not in the second; the `echo` line marks where the second starts, so the block can run as one command. Both lists come from plain `grep` calls, so a file name with a space or a quote is listed like any other. The two calls take the same `--include` options and root, so a file leaves R1 only by mentioning `author_association` before any `#` on a line; a gate that is commented out does not count. A listed line that starts with neither `.github/` nor the marker comes from a name with a newline; find such names with `find .github -name '*[[:cntrl:]]*'`. Works per file: a file that gates one job and leaves another open is not listed, so read every job's `if:` (DEP-090, KV-139). A job id named like an event can show up as noise.
 
 ```bash
 # R2 — association read from the opener object (correct only on that object's own event branch)
