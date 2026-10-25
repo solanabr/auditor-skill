@@ -1,0 +1,15 @@
+# Fixture: composite action that starts an agent CLI from run:. The suite installs each file in this directory as
+# .github/actions/<name>/action.yml.
+name: f57-agent-composite-action
+description: Review a change with an agent CLI.
+inputs:
+  anthropic_api_key:
+    description: API key for the agent CLI
+    required: true
+runs:
+  using: composite
+  steps:
+    - run: claude -p "Review the change in this pull request"
+      shell: bash
+      env:
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic_api_key }}

@@ -11,8 +11,9 @@
 # inputs: 2,000 workflows, and two of about 1 MiB.
 #
 # Usage (from the repo root): bash scripts/tests/test-gha-recipes.sh
-# Needs bash >= 3.2, grep, awk. No network. The fixtures are copied into a temp dir as
-# .github/workflows/ for the run; nothing is written under the repository's own .github/.
+# Needs bash >= 3.2, grep, awk. No network. The fixtures are copied into a temp dir as .github/workflows/, and
+# those under actions/ as .github/actions/<name>/action.yml, for the run; nothing is written under the
+# repository's own .github/.
 set -uo pipefail
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -22,8 +23,18 @@ fixtures="$root/scripts/tests/fixtures/gha"
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/gha-recipes.XXXXXX") || exit 1
 trap 'rm -rf "$work"' EXIT
-mkdir -p "$work/.github/workflows"
-cp "$fixtures"/*.yml "$work/.github/workflows/" || exit 1
+
+# install_fixtures <fixture dir> <tree>: the workflows into <tree>/.github/workflows/, and each composite action
+# in <fixture dir>/actions/ as <tree>/.github/actions/<name>/action.yml.
+install_fixtures() {
+  local a n
+  mkdir -p "$2/.github/workflows" && cp "$1"/*.yml "$2/.github/workflows/" || return 1
+  for a in "$1"/actions/*.yml; do
+    n=${a##*/}; n=${n%.yml}
+    mkdir -p "$2/.github/actions/$n" && cp "$a" "$2/.github/actions/$n/action.yml" || return 1
+  done
+}
+install_fixtures "$fixtures" "$work" || exit 1
 
 # The command lines of the code block that follows the "# Rn — …" comment inside the GitHub Actions section of
 # the doc.
@@ -77,8 +88,8 @@ expected() {
     R5) echo "06 07 15" ;;
     R6) echo "05 07 08 14 15 16 20 31 32 50" ;;
     R7) echo "05 07 11 12 15 18 19 20 21 22 23 24 51 52 53" ;;
-    R8) echo "01 08 11 14 33 34 54" ;;
-    K116-1) echo "01 08 11 14 33 34 54" ;;
+    R8) echo "01 08 11 14 33 34 54 57" ;;
+    K116-1) echo "01 08 11 14 33 34 54 57" ;;
     K139-1) echo "01 02 03 04 08 10 11 14 16 17 22 23 25 26 33 40 48 49 53 55 56" ;;
     K140-6) echo "35 36 37 38 39 42 43 44 45" ;;
   esac
@@ -111,7 +122,7 @@ run_recipe() {
 
 # The two-digit fixture prefixes in a recipe's output, ascending, on one line.
 prefixes() {
-  sed -E 's#^\.github/workflows/##; s#^([0-9][0-9])-.*#\1#' | sort -u | tr '\n' ' ' | sed 's/ $//'
+  sed -E 's#^\.github/(workflows|actions)/##; s#^([0-9][0-9])-.*#\1#' | sort -u | tr '\n' ' ' | sed 's/ $//'
 }
 
 fail=0; nrec=0
@@ -162,10 +173,11 @@ for id in $IDS; do
 done
 
 # Every expected hit comes from a workflow line: no recipe flags the fixtures' comment lines on their own.
-mkdir -p "$work/comments/.github/workflows"
-for f in "$fixtures"/*.yml; do
-  sed -n '/^[[:space:]]*#/p' "$f" > "$work/comments/.github/workflows/${f##*/}"
+mkdir -p "$work/comment-lines/actions"
+for f in "$fixtures"/*.yml "$fixtures"/actions/*.yml; do
+  sed -n '/^[[:space:]]*#/p' "$f" > "$work/comment-lines/${f#"$fixtures"/}"
 done
+install_fixtures "$work/comment-lines" "$work/comments" || exit 1
 quiet=1
 for id in $IDS; do
   got=$(run_recipe "$work/comments" "$(recipe_lines "$id")" | prefixes)
@@ -214,5 +226,5 @@ else
 fi
 
 if [ "$fail" -ne 0 ]; then echo "gha recipe test FAILED" >&2; exit 1; fi
-nfix=$(ls "$fixtures"/*.yml | wc -l | tr -d ' ')
+nfix=$(ls "$fixtures"/*.yml "$fixtures"/actions/*.yml | wc -l | tr -d ' ')
 echo "gha recipe test passed: $nrec recipes, $nfix fixtures, $ncopy copies, comment lines, file names, large inputs"
