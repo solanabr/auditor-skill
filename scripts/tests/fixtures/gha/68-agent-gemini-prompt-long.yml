@@ -1,0 +1,14 @@
+# Fixture: Google's agent CLI started from run: with the long form of its prompt flag; it has no actor check of its own.
+name: f68-agent-gemini-prompt-long
+on:
+  pull_request_target:
+    types: [opened]
+permissions:
+  contents: read
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - run: gemini --model gemini-2.5-flash --prompt "Review the change in this pull request"
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}

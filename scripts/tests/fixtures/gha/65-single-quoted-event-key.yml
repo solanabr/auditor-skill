@@ -1,0 +1,13 @@
+# Fixture: issue trigger written as a single-quoted event key holding a flow mapping, title match only, no author gate.
+name: f65-single-quoted-event-key
+on:
+  'issues': {types: [opened]}
+permissions:
+  contents: write
+  issues: write
+jobs:
+  triage:
+    if: contains(github.event.issue.title, '[bug]')
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo triage
