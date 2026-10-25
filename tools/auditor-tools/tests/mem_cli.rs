@@ -364,6 +364,22 @@ fn checks_the_in_tree_store_with_git() {
 }
 
 #[test]
+fn refuses_a_working_directory_whose_path_holds_a_control_character() {
+    let wt = Wt::new();
+    for name in ["a\nb", "a\u{7f}b"] {
+        wt.mkdir(name);
+        for args in [vec!["warm", "--program-id", P], vec!["init"]] {
+            refused(
+                &run(BIN, &wt.path(name), &args),
+                "audit-mem",
+                "the working directory path holds a control character",
+            );
+        }
+        assert!(!wt.exists(&format!("{name}/.audit-memory")));
+    }
+}
+
+#[test]
 fn takes_db_only_as_one_of_two_stores() {
     let wt = Wt::repo();
     wt.run_dir("audit_1");

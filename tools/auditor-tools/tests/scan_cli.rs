@@ -393,6 +393,19 @@ fn refuses_to_run_from_inside_the_working_tree() {
 }
 
 #[test]
+fn refuses_a_working_directory_whose_path_holds_a_control_character() {
+    let wt = Wt::new();
+    for name in ["a\nb", "a\tb", "a\u{1b}b"] {
+        wt.mkdir(name);
+        refused(
+            &run(BIN, &wt.path(name), &["."]),
+            "audit-scan",
+            "the working directory path holds a control character",
+        );
+    }
+}
+
+#[test]
 fn escapes_formatting_characters_in_its_output() {
     let wt = Wt::new();
     wt.write(

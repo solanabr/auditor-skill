@@ -959,6 +959,7 @@ fn write(wt: &Path, store: &Store, pid: &str, action: Action) -> Result<String, 
 
 fn run(args: &[OsString]) -> Result<ExitCode, Stop> {
     let wt = confine::working_tree()?;
+    confine::plain_working_tree(&wt)?;
     confine::self_check(&wt)?;
     let call = parse(args)?;
     let pid = match call.sub {

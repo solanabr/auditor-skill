@@ -91,7 +91,8 @@ must be safe whatever arguments follow. Its rules are those of
   answer, `--out` is refused; with no `--out`, git is not run.
 - It refuses to run from an installation inside the working directory, or from a
   path, as it was invoked or with its links resolved, holding a quote, `$`, a
-  backtick, a backslash or a control character.
+  backtick, a backslash or a control character, and in a working directory whose
+  path holds a control character.
 - It opens no network connection and runs no other program. A control,
   bidirectional or invisible character in a name or snippet is written as a `\u`
   escape.
@@ -317,8 +318,9 @@ rules are those of `scripts/lib/confine.sh` and `scripts/rundir.sh`, in
   check above. The other subcommands that write refuse when there is no store.
 - It refuses to run from an installation inside the working directory, or from a
   path, as it was invoked or with its links resolved, holding a quote, `$`, a
-  backtick, a backslash or a control character. It opens no network connection
-  and runs no program but git. Its JSON writes a control, bidirectional or invisible
+  backtick, a backslash or a control character, and in a working directory whose
+  path holds a control character. It opens no network connection and runs no
+  program but git. Its JSON writes a control, bidirectional or invisible
   character as a `\u` escape.
 
 Exit: 0 done (`check`: suppressed) · 1 `check`: not suppressed · 2 refused, with

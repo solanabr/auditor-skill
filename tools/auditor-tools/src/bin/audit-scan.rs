@@ -164,6 +164,7 @@ fn write_out(out: &Out, bytes: &[u8]) -> io::Result<()> {
 
 fn run(args: &[OsString]) -> Result<(), Stop> {
     let wt = confine::working_tree()?;
+    confine::plain_working_tree(&wt)?;
     confine::self_check(&wt)?;
     let call = parse(args)?;
     let dir = confine::rel("the directory to scan", &call.dir, true)?;

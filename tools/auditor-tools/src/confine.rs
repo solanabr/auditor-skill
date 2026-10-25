@@ -58,6 +58,22 @@ pub fn working_tree() -> Result<PathBuf, Stop> {
         })
 }
 
+/// Refuses a working directory whose physical path holds a control character,
+/// in the words of `scripts/lib/confine.sh`, which refuses it too.
+pub fn plain_working_tree(wt: &Path) -> Result<(), Stop> {
+    if wt
+        .as_os_str()
+        .as_bytes()
+        .iter()
+        .any(|&c| c < 0x20 || c == 0x7F)
+    {
+        return Err(refuse(
+            "the working directory path holds a control character".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Refuses to run from a path that a quoted `Bash("<root>/…")` rule could not match
 /// as written, or from an installation inside the working directory (Rule 11e),
 /// in the words of `scripts/lib/confine.sh`. The path is checked as it was invoked
