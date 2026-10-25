@@ -182,12 +182,12 @@ clone does not hold". Never fetch or initialize submodules in the clone.
 **Post-patch validation:** {not run: <the line a block printed, or its first error line> | ran: evidence level <source / build / runtime>, assessment <complete / incomplete>}
 - **Findings:** {each `check_id` (kind): message, as `results/result.json` gives it | none}
 - **Gaps:** {each `check_id`: reason | none}
-- **Effect on the verdict:** {none | lowered from `[FIX-VERIFIED]` to `[FIX-INSUFFICIENT]` by `check_id` (kind) | residual, tier unchanged: `check_id` (kind)}
+- **Effect on the verdict:** {none | lowered from `[FIX-VERIFIED]` to `[FIX-INSUFFICIENT]` by `check_id` (kind) | recorded under Residual, tier unchanged: `check_id` (kind)}
 
 The result is optional evidence and can only lower the verdict. A finding, a failure it attributes to the
 patched revision (a root-cause variant the patch leaves open, a behavior it changes, a regression it brings
-in), makes a `[FIX-VERIFIED]` tier `[FIX-INSUFFICIENT]` (a `[FIX-PROPOSED]` one keeps its tier and lists it as
-residual), with that check as what remains open. Read the check and its saved logs first: the runner shows
+in), makes a `[FIX-VERIFIED]` tier `[FIX-INSUFFICIENT]` (a `[FIX-PROPOSED]` one keeps its tier and records the
+finding under Residual), with that check as what remains open. Read the check and its saved logs first: the runner shows
 that a check behaved as written, not that it is the right check. Passing checks and gaps change nothing, and a
 passing run never stands in for §2's executed revert. List what its checks contacted (package registries,
 toolchain downloads, hosts the target's code or tests reach) under outside services in the report (Rule 11b).
