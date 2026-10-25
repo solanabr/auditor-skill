@@ -27,27 +27,70 @@ Fill every field. This is the prose the executable proves — it must map 1:1 on
 
 ## Reproduce
 
+From the working directory under audit, with the installation's copy and this crate
+as an argument:
+
+```bash
+# <R>: the run directory, audit_<n> or incident_<n>
+"<auditor-skill root>/templates/poc/run.sh" --crate <R>/poc/{FINDING_ID}
+```
+
+or, inside this crate, with its inputs in the environment:
+
 ```bash
 AUDITOR_EXEC_MODE=isolated ./run.sh   # or native: the execution mode recorded for the run
 ```
 
 Building this crate runs code — dependency build scripts and proc-macros, then the
-tests — so every run needs `AUDITOR_EXEC_MODE` set to the execution mode recorded
-at intake (`OUTPUT-RULES.md` Rule 11a): `isolated` inside a container, VM or
-sandbox with no keys mounted, or `native` on this machine, which the report then
-states. Without it, `run.sh` exits `3` before it copies or compiles anything.
+tests — so every run needs the execution mode recorded at intake (`OUTPUT-RULES.md`
+Rule 11a): `isolated` inside a container, VM or sandbox with no keys mounted, or
+`native` on this machine, which the report then states. `run.sh` takes the stricter
+of `AUDITOR_EXEC_MODE` and `<R>/exec-mode`, the one word recorded when the human
+answered (`none`, `isolated` or `native`), `none` being the strictest. The
+installation's copy reads the `exec-mode` of every run directory its arguments name,
+and `./run.sh` that of the run directory this crate sits in; a `--mode <mode>` must
+name the mode that results. With no mode, with `none`, or with a `--mode` that names
+another, `run.sh` exits `3` before it copies or compiles anything. The agent writes
+`<R>/exec-mode` and could write another word there, so if you chose `isolated`, also
+set `AUDITOR_EXEC_MODE=isolated` in the environment Claude Code runs in: the stricter
+mode then holds whatever the file says. `--mode` catches a mode that changed without
+you, not an agent that writes both.
+
+**The installation's copy** is the form a command pre-approves, so it checks every
+argument before it copies anything, and refuses what does not fit (exit `3`, on one
+`run.sh refused:` line). `--crate` takes `<R>/poc/<ID>` in a run directory
+(`audit_<n>` or `incident_<n>`, as `scripts/rundir.sh` makes it), `--vulnerable-so`
+and `--fixed-so` a file under a run directory's `bin/` or `exec/`, `--update-pins` the
+pins in one argument, and `--cache` only a directory `--new-cache` made. In isolated
+mode it first runs the credential self-check of `scripts/lib/isolation.sh`: a readable
+key, cloud or registry credential, or a reachable agent socket stops the run, since
+this is then not the isolated runner, and so does a check that cannot finish; in
+native mode it prints, as a warning, what is readable by kind and count, never a path.
+Every cargo call and test binary runs in a cleaned environment, with a throwaway
+`HOME` holding a fresh Solana keypair, so no token, `RPC_URL`, SSH agent or default
+wallet reaches this crate's code. The dependencies are downloaded first
+(`cargo fetch`, and `cargo update` for a pin), which run no build script, and every
+build and test after them runs offline, without the proxy variables.
+`cargo build-sbf` installs its platform tools once, building nothing, with the real
+`HOME`, where they live, and the proxy, then builds each arm in the throwaway one. Two
+more forms help: `--init <R>/poc/<ID>` makes a new crate, the template's files byte
+for byte, and `--new-cache` makes a build cache (below) and prints its path.
+
+**Toolchains.** `"<auditor-skill root>/scripts/runner/probe.sh"` reports the
+toolchains these runs need and whether this machine passes the self-check.
 
 Build and test only through `run.sh`. It builds both arms with `cargo build-sbf`
 (platform-tools >= v1.54), builds each arm's test binary and runs it with
 `SBF_OUT_DIR` wired — never inside the audited repo. The crate is copied to a scratch
-directory under `$TMPDIR` (printed; `KEEP_POC_BUILD=1` keeps it) and built there with
-the toolchain pinned, so the target's `.cargo/config*` and `rust-toolchain*` never
-apply. Refused before anything compiles, in either mode: a symbolic link, a `.cargo/`
-directory or a `rust-toolchain*` file in the crate; build-time code of the crate's
-own — a build script (`build = false` turns one off), a proc-macro package, a
-`Cargo.toml` inside the crate that is not a member of its workspace, a `[patch]` or
-`[replace]` table — so check generated code into the crate instead; and a
-`tests/fixtures/{PROGRAM_NAME}.so`, which mollusk would load in place of the arm.
+directory under `$TMPDIR` (printed; `--keep`, or `KEEP_POC_BUILD=1` for `./run.sh`,
+keeps it) and built there with the toolchain pinned, so the target's `.cargo/config*`
+and `rust-toolchain*` never apply. Refused before anything compiles, in either mode:
+a symbolic link, a `.cargo/` directory or a `rust-toolchain*` file in the crate;
+build-time code of the crate's own — a build script (`build = false` turns one off), a
+proc-macro package, a `Cargo.toml` inside the crate that is not a member of its
+workspace, a `[patch]` or `[replace]` table — so check generated code into the crate
+instead; and a `tests/fixtures/{PROGRAM_NAME}.so`, which mollusk would load in place of
+the arm.
 
 Exit `0` means the exploit reproduced on `vulnerable` **and**, when the fixed arm
 runs, was blocked on `fixed`; `1` / `2` mean a contract assertion of that arm ran and
@@ -71,42 +114,48 @@ crate.
 are. Before a command trusts an `OK` line it compares them with the installation's
 `templates/poc/` (only the version requirements in `shared-test-utils/Cargo.toml` may
 differ), and a re-run first refreshes `run.sh` and `shared-test-utils/src/` from it.
-`run.sh` itself refuses a crate that does not depend on its own `shared-test-utils/`
-under the import name `shared_test_utils`, one where another dependency takes that
-import name (spelled with `-` or `_`), and a build that compiles a `shared_test_utils`
-from anywhere else.
+The installation's copy runs its own `run.sh`, so for it only `shared-test-utils/`
+needs that check. `run.sh` itself refuses a crate that does not depend on its own
+`shared-test-utils/` under the import name `shared_test_utils`, one where another
+dependency takes that import name (spelled with `-` or `_`), and a build that compiles
+a `shared_test_utils` from anywhere else.
 
 **Dependencies.** Framework crates by default, as in the template. A crate copied
 from the target's manifest runs its build script in the recorded mode, so add one
 only when the PoC needs it, and read what the manifest pulls in. A `path`
 dependency on target crates must be an absolute path: the build runs from the
 scratch copy, not from this directory. Such a dependency is not refused: its build
-script runs in the recorded mode, and the non-registry line names it.
+script runs in the recorded mode, and the non-registry line names it. The exception is
+an incident whose root cause is `supply_chain_or_ci` (below).
 
 **Pins.** `Cargo.lock` pins the whole dependency graph at releases published at
 least 14 days before the template shipped, so an unmodified crate resolves to the
 same versions on every run. Keep it with the crate; `run.sh` prints a line when it
 is missing. A crate you add keeps every pin it does not need to move. When cargo
 reports a conflict with a pinned release, move that pin alone:
-`AUDITOR_EXEC_MODE=<mode> UPDATE_PINS="<crate>@<pinned version>" ./run.sh` runs
+`--update-pins "<crate>@<pinned version>"`, or
+`AUDITOR_EXEC_MODE=<mode> UPDATE_PINS="<crate>@<pinned version>" ./run.sh`, runs
 `cargo update -p` in the scratch copy and brings the moved lock back. Never run
 `cargo update` in this directory: inside the target tree it would read the target's
 `.cargo/config*`.
 
 **Build cache.** Each run compiles every dependency from cold in its fresh scratch
 directory. To reuse compiled dependencies between runs of one engagement, create the
-cache once per engagement with `mktemp -d "${TMPDIR:-/tmp}/auditor-poc-target.XXXXXX"`
-— inside the isolated runner in isolated mode — record its path next to the execution
-mode, pass it to every run as `CARGO_TARGET_DIR`, and delete it when the engagement
-ends. Never point `CARGO_TARGET_DIR` or `CARGO_BUILD_TARGET_DIR` inside the target tree
-or at a directory you did not create: cargo trusts the build outputs it finds there.
-PoC crates of one engagement often share a package name, so their artifacts land on
-the same paths in the cache: `run.sh` holds a lock inside the directory cargo builds
-into (a `target-dir` in your own cargo config counts too) around each arm's build and
-test, and re-stamps its scratch copy under the lock so cargo rebuilds the crate's own
-code. A run waits up to `POC_LOCK_WAIT` seconds (default 900) for the lock, then stops
-with exit 3. A run that still finds one of its own units reported as already built,
-without having built it, stops with exit 3 instead of running it.
+cache once per engagement with `run.sh --new-cache`, or for `./run.sh` with
+`mktemp -d "${TMPDIR:-/tmp}/auditor-poc-target.XXXXXX"` — inside the isolated runner in
+isolated mode — record its path next to the execution mode, pass it to every run as
+`--cache` (`CARGO_TARGET_DIR` for `./run.sh`), and delete it when the engagement ends.
+`--cache` takes only a directory `--new-cache` made: in `$TMPDIR`, yours, mode `0700`,
+holding its marker file. Never point `CARGO_TARGET_DIR` or `CARGO_BUILD_TARGET_DIR`
+inside the target tree or at a directory you did not create: cargo trusts the build
+outputs it finds there. PoC crates of one engagement often share a package name, so
+their artifacts land on the same paths in the cache: `run.sh` holds a lock inside the
+directory cargo builds into (a `target-dir` in your own cargo config counts too) around
+each arm's build and test, and re-stamps its scratch copy under the lock so cargo
+rebuilds the crate's own code. A run waits up to `POC_LOCK_WAIT` seconds (default 900)
+for the lock, then stops with exit 3. A run that still finds one of its own units
+reported as already built, without having built it, stops with exit 3 instead of
+running it.
 
 ## Contract
 
@@ -164,8 +213,10 @@ assertion ran (the program did not load, the setup panicked) exits `3`
 assertion all the same.
 
 **Prebuilt bytes.** `VULNERABLE_SO=<.so>` runs the exploit arm alone on those bytes;
-adding `FIXED_SO=<.so>` runs the fixed arm on others. On prebuilt bytes the vulnerable
-arm counts only on `assert_exploit_effect!`, and the fixed arm only on
+adding `FIXED_SO=<.so>` runs the fixed arm on others. The installation's copy takes
+them as `--vulnerable-so` and `--fixed-so`, for example the snapshot in
+`incident_<n>/bin/` or a build a runner put in `<R>/exec/`. On prebuilt bytes the
+vulnerable arm counts only on `assert_exploit_effect!`, and the fixed arm only on
 `assert_exploit_rejected_with!` or `assert_exploit_blocked!`. Success prints the only
 line that can stand for Leg 3 of an incident, naming the bytes that ran:
 
@@ -179,9 +230,18 @@ PoC reaches the same line when it loads the program through `litesvm_for!` and a
 with the macros' LiteSVM forms. A run of this crate's own arms prints a different
 line: a model is never Leg 3.
 
+For an incident's crate (`incident_<n>/poc/INC-<n>.<k>`), the installation's copy first
+reads the incident's `root_cause_class` from `incident_<n>/INCIDENTS.json`, and stops
+(exit `3`) when the file, the incident or its class cannot be read. When the class is
+`supply_chain_or_ci` the target's crates may be the payload (`OUTPUT-RULES.md` Rule
+11a): the run must be isolated and on prebuilt bytes (`--vulnerable-so`), and a
+dependency on a path outside the crate or on git, a target built from outside it, or a
+build that compiled code from outside it stops the run before its test runs.
+`./run.sh` does not read `INCIDENTS.json`.
+
 ## Evidence tier
 
-A green `./run.sh` earns **`[PoC-REPRODUCED]`** for this finding (Mollusk, one
+A green run earns **`[PoC-REPRODUCED]`** for this finding (Mollusk, one
 instruction; or LiteSVM, one transaction). Record it on the finding block. An exit `3`
 is `[PoC-ATTEMPTED]` with `run.sh`'s blocker line and "PoC re-run needed". Other tiers
 and the fallback ladder — Surfpool `[PoC-SIM-REPRODUCED]`, fuzz `[PoC-FUZZ-REPRODUCED]`, `[PoC-ATTEMPTED]`,
