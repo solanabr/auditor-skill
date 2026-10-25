@@ -111,7 +111,8 @@ against the finding, variants of its root cause and behavior that should not cha
 and prunes git worktrees in the repository it is given, and its checks build and run the target with the
 caller's privileges and an open network. So it runs only in Rule 11a **isolated** mode, inside the isolated
 runner, on a disposable clone of its own: never on the client checkout and never on the §1 copy. In any other
-mode the first block prints the line to record and runs nothing. `{MODE}` is the recorded mode;
+mode, or without the vendored skill or `uv`, the first block prints the line to record and runs nothing.
+`{MODE}` is the recorded mode;
 `{ROOT_CAUSE}` is the finding's root cause and impact in one sentence, without a single quote; `{LEVEL}` is the
 highest evidence level the checks will honestly reach (`source`, `build` or `runtime`, as the skill defines them).
 
