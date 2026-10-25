@@ -795,16 +795,21 @@ printf '\357\273\277# a comment\n\ncargo-features = ["edition2024"]\n[package]\n
 run "$DEPS" "$WT" -- cargo-tree --run audit_1 --manifest stubs/Cargo.toml
 check "the second line passes a BOM, comments, cargo-features, an escaped-quote cfg header and keys named patch" \
   sh -c "[ '$RC' = 0 ] && grep -q '^== cargo tree ' '$T/calls'"
-# A lockfile that names a source other than crates.io, or a patch table, is refused before cargo runs.
+# A lockfile's git and other-registry sources and its [[patch.unused]] entries, as a git- or registry-index
+# [patch] leaves them, do not stop cargo-tree: cargo resolves the rebuilt workspace from crates.io and fetches
+# none of them, and the rebuilt manifest cargo runs on names none of them.
 printf '[package]\nname = "lp"\nversion = "0.1.0"\nedition = "2021"\n[dependencies]\nanyhow = "1"\n' > "$WT/stubs/Cargo.toml"
-for lock in 'git+https://evil.invalid/x' 'sparse+https://evil.invalid/'; do
+settings SHIM_DUMP=1
+for lock in 'git+https://evil.invalid/x#0123' 'sparse+https://evil.invalid/' 'registry+https://evil.invalid/index'; do
   printf 'version = 3\n\n[[package]]\nname = "anyhow"\nversion = "1.0.0"\nsource = "%s"\nchecksum = "00"\n' "$lock" > "$WT/stubs/Cargo.lock"
   run "$DEPS" "$WT" -- cargo-tree --run audit_1 --manifest stubs/Cargo.toml --manifest stubs/Cargo.lock
-  check "a lockfile source '$lock' is refused before cargo runs" sh -c "[ '$RC' = 3 ] && grep -qxF 'deps: blocker: the lockfile names a source other than crates.io: $lock; output audit_1/deps/cargo-tree-'\"\$(sed -n 's/.*cargo-tree-\([0-9]*\)[.]txt\$/\1/p' '$T/err')\"'.txt' '$T/err' && ! grep -q '^== cargo' '$T/calls'"
+  check "a lockfile source '$lock' does not stop cargo-tree, and the rebuilt manifest names no such host" \
+    sh -c "[ '$RC' = 0 ] && grep -q '^== cargo tree ' '$T/calls' && ! grep -q 'rebuilt|.*evil' '$T/calls'"
 done
-printf 'version = 3\n\n[[patch.unused]]\nname = "x"\nversion = "1.0.0"\nsource = "git+https://evil.invalid/x"\n' > "$WT/stubs/Cargo.lock"
+printf 'version = 3\n\n[[package]]\nname = "lp"\nversion = "0.1.0"\n\n[[patch.unused]]\nname = "x"\nversion = "1.0.0"\nsource = "git+https://evil.invalid/x#0123"\n' > "$WT/stubs/Cargo.lock"
 run "$DEPS" "$WT" -- cargo-tree --run audit_1 --manifest stubs/Cargo.toml --manifest stubs/Cargo.lock
-check "a lockfile with a patch table is refused" sh -c "[ '$RC' = 3 ] && grep -q 'the lockfile holds a patch or replace table' '$T/err' && ! grep -q '^== cargo' '$T/calls'"
+check "a lockfile with [[patch.unused]], as an unused [patch] leaves it, does not stop cargo-tree" sh -c "[ '$RC' = 0 ] && grep -q '^== cargo tree ' '$T/calls'"
+settings
 printf 'version = 3\n\n[[package]]\nname = "anyhow"\nversion = "1.0.0"\n"\\u0073ource" = "git+https://evil.invalid/x"\n' > "$WT/stubs/Cargo.lock"
 run "$DEPS" "$WT" -- cargo-tree --run audit_1 --manifest stubs/Cargo.toml --manifest stubs/Cargo.lock
 check "a lockfile with a unicode escape (cargo writes none) is refused" sh -c "[ '$RC' = 3 ] && grep -q 'the lockfile has a .u, .U or .x escape' '$T/err' && ! grep -q '^== cargo' '$T/calls'"

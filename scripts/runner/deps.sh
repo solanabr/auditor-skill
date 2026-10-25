@@ -50,8 +50,9 @@
 # unpatched). As a second line, a manifest spelled as no Cargo.toml needs stops the run: a [patch] or
 # [replace] table header with a quoted first key or as an array of tables, a table header with a \u, \U or
 # \x escape, or anything before the first table header but comments and a one-line cargo-features; and so
-# does a copied Cargo.lock that names a source other than crates.io, holds a patch table or has such an
-# escape. The first Cargo.toml is the one cargo runs on. npm-audit runs npm with its own .npmrc in the
+# does a copied Cargo.lock with such an escape. A lockfile's git or other-registry sources and its
+# [[patch.unused]] entries do not stop the run: cargo resolves the rebuilt workspace from crates.io and
+# fetches none of them. The first Cargo.toml is the one cargo runs on. npm-audit runs npm with its own .npmrc in the
 # copy (registry https://registry.npmjs.org/, ignore-scripts, no fund or update notices), empty user and
 # global config files, and its cache and logs in the scratch directory: no auth reaches it.
 #
@@ -405,8 +406,8 @@ copy_manifests() {
 # header but comments and a one-line cargo-features (a root key, or a multi-line string that can hide one), and
 # text that is not UTF-8; print one ">> note:" line for each manifest that holds a plainly spelled table, with
 # the crate names it patches that match <crate spec> (at most 20) and never a value. "locksource <top>
-# <lockfile>": refuse a Cargo.lock that names a source other than crates.io, holds a patch/replace table, or
-# has such an escape. "stubs <top> <manifest>...": an empty file at src/lib.rs and at
+# <lockfile>": refuse a Cargo.lock with such an escape (cargo writes none) or that is not UTF-8; git and
+# other-registry sources and [[patch.unused]] pass. "stubs <top> <manifest>...": an empty file at src/lib.rs and at
 # each target path of each package manifest, so cargo metadata parses it. "vet <metadata> <top>": the
 # dependencies cargo metadata lists come from crates.io or are paths inside <top> (exit 3 with the first that
 # is not). "rebuild <metadata> <top> <dest>": write under <dest> a workspace of only the package names,
@@ -423,8 +424,6 @@ OVR_ROOTKEY = re.compile(r"^\s*[\x22\x27]?(patch|replace)[\x22\x27]?\s*[.=]")
 OVR_OPEN = re.compile(r"^\s*\[")
 ESCAPE = re.compile(r"\\[uUx]")
 CARGO_FEATURES = re.compile(r"cargo-features[ \t]*=[ \t]*\[[A-Za-z0-9_\x22, \t-]*\][ \t]*(#.*)?")
-LOCK_PATCH = re.compile(r"^\s*\[\[?\s*[\x22\x27]?(patch|replace)\b")
-LOCK_SOURCE = re.compile(r"^\s*[\x22\x27]?source[\x22\x27]?\s*=\s*[\x22\x27]([^\x22\x27]*)")
 CRATES = ("registry+https://github.com/rust-lang/crates.io-index", "sparse+https://index.crates.io/")
 SEG = r"(?:[A-Za-z0-9_-]+|\x22[^\x22\\]*\x22|\x27[^\x27]*\x27)"
 PLAIN_PATCH = re.compile(r"\s*\[\s*patch\s*\.\s*(" + SEG + r")\s*(?:\.\s*(" + SEG + r")\s*)?\]\s*(?:#.*)?")
@@ -544,17 +543,11 @@ def backstop(crate_spec, top, manifests):
 
 
 def locksource(top, rel):
-    # Refuse a Cargo.lock that names a source other than crates.io, holds a patch/replace table, or has a \u,
-    # \U or \x escape (cargo writes none): with the rebuilt manifest cargo re-resolves such an entry to
-    # crates.io, but refusing it keeps the lock to the same hosts.
+    # cargo writes no \u, \U or \x escape into a Cargo.lock, so one is refused. Git and other-registry sources
+    # and [[patch.unused]] pass: cargo resolves the rebuilt workspace from crates.io and fetches none of them.
     for line in read_lines(os.path.join(top, rel), rel):
         if ESCAPE.search(line):
             fail("the lockfile has a \\u, \\U or \\x escape, which cargo never writes; deps.sh does not read one")
-        if LOCK_PATCH.match(line):
-            fail("the lockfile holds a patch or replace table")
-        m = LOCK_SOURCE.match(line)
-        if m and m.group(1) and m.group(1) not in CRATES:
-            fail("the lockfile names a source other than crates.io: %s" % shown(m.group(1)))
 
 
 def stubs(top, manifests):
