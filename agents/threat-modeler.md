@@ -13,7 +13,7 @@ You fill `templates/threat-model.md` → `audit_<n>/threat-model.md`, reconstruc
 - the in-scope **code** (instructions, accounts, PDAs, CPIs, arithmetic),
 - `audit_<n>/worksheets/context/*` (invariants, assumptions, external-interaction risks from `context-builder`),
 - `audit_<n>/intake.md` §6 (the human/default trust-model inputs — the actor list to expand),
-- `audit-mem warm --program-id <id>` prior invariants + open FP rulings, **if** present (skip cleanly if not),
+- `audit-mem warm --contract=1 --program-id <id>` prior protocol profile, invariants + open FP rulings, **if** present (skip cleanly if not),
 - in bootstrap mode, `audit_<n>/bootstrap/`, written by the bundled collector `${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh` (you run no git or script yourself):
   - `history.md`: keyword commits, reverts, removed / quietly added guards, churn, fork-parent hints, provenance strings;
   - `diffs/`: the diffs behind those rows;

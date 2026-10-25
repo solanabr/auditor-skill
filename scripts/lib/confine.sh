@@ -303,13 +303,13 @@ confine_rundir_name() { # confine_rundir_name <name>: status 0 for audit_<n> or 
 }
 
 confine_ignore_all() { # confine_ignore_all <file>: status 0 when <file> is a regular file holding exactly "*" (one newline may follow)
-  local size text
+  local size hex
   [ -f "$1" ] && [ ! -L "$1" ] || return 1
   size=$(wc -c < "$1") || return 1
   size=${size//[!0-9]/}
   case "$size" in 1|2) ;; *) return 1 ;; esac
-  text=$(cat -- "$1") || return 1
-  [ "$text" = '*' ]
+  hex=$(od -An -tx1 < "$1" | tr -d ' \n') || return 1
+  [ "$hex" = 2a ] || [ "$hex" = 2a0a ]
 }
 
 # confine_rundir <R> <what>: refuse <R> unless it is a run directory (see the top). Sets CONFINE_RUN to

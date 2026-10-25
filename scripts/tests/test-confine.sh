@@ -124,7 +124,7 @@ check "confine_text shows control characters as ? and cuts after 200 bytes" \
   out_is "a?b?c?d?e|$(printf '%0200d' 0)..."
 
 # =================================================================================================
-# confine_path: the case file, then lengths and control characters.
+# confine_path: the case file, lengths and control characters among its cases.
 # =================================================================================================
 printf 'fn a() {}\n' > "$WT/a.rs"
 printf 'fn lib() {}\n' > "$WT/src/lib.rs"
@@ -135,27 +135,47 @@ ln -s nowhere "$WT/dangling"
 ln -s "$T/outside" "$WT/out"
 ln -s ../a.rs "$WT/src/inner"
 if ! mkfifo "$WT/fifo" 2>/dev/null; then skp "mkfifo is not available: the FIFO case fails below"; fi
+mkdir "$WT/src/locked" && chmod 000 "$WT/src/locked"
+# fill <var> <field>: <var> set to a field of the case file with its placeholders filled in (its header
+# lists them), as tools/auditor-tools/tests/confine_agrees.rs fills them.
+fill() {
+  local rest=$2 out='' name a
+  [ "$rest" = @EMPTY@ ] && rest=''
+  while [[ $rest == *@*@* ]]; do
+    out=$out${rest%%@*}
+    rest=${rest#*@}
+    name=${rest%%@*}
+    rest=${rest#*@}
+    case $name in
+      SOH) out=$out$'\001' ;;
+      TAB) out=$out$'\t' ;;
+      NL) out=$out$'\n' ;;
+      ESC) out=$out$'\033' ;;
+      DEL) out=$out$'\177' ;;
+      LONG:*) printf -v a '%*s' "${name#LONG:}" ''; out=$out${a// /a} ;;
+      *) out=$out@$name@ ;;
+    esac
+  done
+  printf -v "$1" '%s' "$out$rest"
+}
 ncase=0
 while IFS= read -r line; do
   case "$line" in ''|'#'*) continue ;; esac
   IFS=$'\t' read -r want p status expect <<< "$line"
+  case "$want" in
+    noroot:*)
+      want=${want#noroot:}
+      if [ "$(id -u)" -eq 0 ]; then skp "confine_path $want $p: root may search any directory"; continue; fi ;;
+  esac
+  fill p "$p"
+  fill expect "$expect"
   ncase=$((ncase + 1))
   P="$p" W="$want" lib "$WT" 'confine_path "$P" "the path" "$W"; printf "%s %s" "$CONFINE_REL" "$CONFINE_TYPE"'
   if [ "$status" = 0 ]; then check "confine_path $want $p" out_is "$expect"
   else check "confine_path $want $p refused" refused "${expect#test: refused: }"; fi
 done < "$CASES"
 check "the path case file has cases ($ncase)" test "$ncase" -gt 40
-long=$(awk 'BEGIN { for (i = 0; i < 1025; i++) printf "a" }')
-P="$long" lib "$WT" 'confine_path "$P" "the path" any'
-check "a path longer than 1024 bytes is refused" refused 'the path is longer than 1024 bytes'
-P="${long%a}" lib "$WT" 'confine_path "$P" "the path" any; printf "%s" "$CONFINE_TYPE"'
-check "a path of 1024 bytes is accepted" out_is none
-P='' lib "$WT" 'confine_path "$P" "the path" any'
-check "an empty path is refused" refused 'the path is empty'
-for c in $'\001' $'\n' $'\t' $'\033' $'\177'; do
-  P="src/a${c}b" lib "$WT" 'confine_path "$P" "the path" any'
-  check "a path holding $(printf '%s' "$c" | od -An -c | tr -d ' \n') is refused" refused 'the path holds a control character: src/a?b'
-done
+chmod 700 "$WT/src/locked" && rmdir "$WT/src/locked"
 
 # =================================================================================================
 # Run directories: names, .gitignore, and the whole check.
@@ -178,10 +198,11 @@ printf '*\n' > "$WT/gi/nl"
 printf '*\r\n' > "$WT/gi/crlf"
 printf '\n*' > "$WT/gi/lead"
 printf '*\n\n' > "$WT/gi/two"
+printf '*\000' > "$WT/gi/nul"
 mkdir -p "$WT/gi/dir"
 ln -s nl "$WT/gi/link"
-lib "$WT" 'for f in f1 nl f2 f3 f4 f5 f6 f7 crlf lead two dir link absent; do confine_ignore_all "$CONFINE_WT/gi/$f" && printf "%s " "$f"; done; :'
-check "a .gitignore must hold exactly * (one newline may follow), as a regular file" out_is 'f1 nl '
+lib "$WT" 'for f in f1 nl f2 f3 f4 f5 f6 f7 crlf lead two nul dir link absent; do confine_ignore_all "$CONFINE_WT/gi/$f" && printf "%s " "$f"; done; :'
+check "a .gitignore must hold exactly * (one newline may follow), as a regular file, its bytes compared" out_is 'f1 nl '
 
 mkdir -p "$WT/audit_1/poc" "$WT/audit_2" "$WT/audit_3/x" "$WT/audit_4"
 printf '*\n' > "$WT/audit_1/.gitignore"

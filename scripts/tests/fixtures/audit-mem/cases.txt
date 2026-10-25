@@ -1,0 +1,196 @@
+# Hostile argument vectors for tools/auditor-tools' audit-mem. test-auditor-tools.sh runs each one in a working
+# directory that is a git repository holding:
+#   src/withdraw.rs (four lines), src/link.rs (a link to a file outside), linkdir (a link to the directory outside),
+#   fifo (a FIFO), and .audit-memory/, a store audit-mem init made, with a finding and an anchored ruling;
+#   audit_1 (a run directory holding a store init made), audit_2 (no .gitignore), audit_3 (a link to audit_1),
+#   audit_4 (its .gitignore tracked), audit_5 (holding a link), audit_6 (audit-mem.db a directory), audit_7
+#   (audit-mem.db a second name of a file outside), audit_8 (a database in WAL mode), audit_10 (a store init
+#   made, holding a view), audit_11 (audit-mem.db not a database), audit_12 (a store init made, with a -wal file
+#   beside it), audit_13 (a store init made, holding a finding whose status audit-mem never sets), incident_1
+#   (an empty audit-mem.db), incident_2 (no store).
+# The directory outside holds a canary no case may print.
+# One case per line: <exit status><TAB><the one stderr line><TAB><argument>[<TAB><argument>...]. Each case prints
+# nothing on stdout and changes nothing in the working directory or outside it. In a field:
+#   @WT@ the working directory's absolute path   @OUT@ the directory outside it   @LONG:N@ N repetitions of "a"
+#   @NL@ a newline   @ESC@ an escape character (0x1b)   @TAB@ a tab   @DEL@ DEL (0x7f)   @RLO@ U+202E
+#   @ZWSP@ U+200B   @EMPTY@ (a whole field) an empty argument
+#   @SHOWN(x)@ x as the binary shows a value in a message: cut after 200 bytes, then ...
+# the contract marker: --contract=1 alone, in its place, and once, changes nothing; any other --contract word is refused
+2	audit-mem: refused: --contract=1 comes right after the subcommand, once (usage: audit-mem <subcommand> [--contract=1] [--db <store>] [options], the subcommand being init, put-finding, set-status, rule, check, regressions, warm, profile or invariant)	--contract=1	warm	--program-id	VaultProg1111
+2	audit-mem: refused: --contract=2 names a contract this build does not keep (it keeps --contract=1); rebuild it with cargo build --release --locked in tools/auditor-tools (usage: audit-mem <subcommand> [--contract=1] [--db <store>] [options], the subcommand being init, put-finding, set-status, rule, check, regressions, warm, profile or invariant)	--contract=2	warm	--program-id	VaultProg1111
+2	audit-mem: refused: --contract=1 comes right after the subcommand, once	warm	--program-id	VaultProg1111	--contract=1
+2	audit-mem: refused: --contract=1 comes right after the subcommand, once	warm	--contract=1	--contract=1	--program-id	VaultProg1111
+2	audit-mem: refused: --contract=1 comes right after the subcommand, once	warm	--db	audit_1/audit-mem.db	--contract=1	--program-id	VaultProg1111
+2	audit-mem: refused: --contract=2 names a contract this build does not keep (it keeps --contract=1); rebuild it with cargo build --release --locked in tools/auditor-tools	warm	--contract=2	--program-id	VaultProg1111
+2	audit-mem: refused: --contract names a contract this build does not keep (it keeps --contract=1); rebuild it with cargo build --release --locked in tools/auditor-tools	check	--contract	--program-id	VaultProg1111	--signature	s
+2	audit-mem: refused: --contract= names a contract this build does not keep (it keeps --contract=1); rebuild it with cargo build --release --locked in tools/auditor-tools	regressions	--contract=	--program-id	VaultProg1111
+2	audit-mem: refused: --contract=one names a contract this build does not keep (it keeps --contract=1); rebuild it with cargo build --release --locked in tools/auditor-tools	init	--contract=one
+2	audit-mem: refused: --contractual names a contract this build does not keep (it keeps --contract=1); rebuild it with cargo build --release --locked in tools/auditor-tools	put-finding	--contractual	--program-id	VaultProg1111	--signature	s	--root-cause	r	--title	t	--severity	3
+2	audit-mem: refused: --db must be .audit-memory/audit.db, audit_<n>/audit-mem.db or incident_<n>/audit-mem.db: @SHOWN(@OUT@/made-by-warm/x.db)@	warm	--contract=1	--db	@OUT@/made-by-warm/x.db	--program-id	VaultProg1111
+2	audit-mem: refused: --db must be .audit-memory/audit.db, audit_<n>/audit-mem.db or incident_<n>/audit-mem.db: @SHOWN(@OUT@/elsewhere/deep/x.db)@	put-finding	--contract=1	--db	@OUT@/elsewhere/deep/x.db	--program-id	VaultProg1111	--signature	s	--root-cause	r	--title	t	--severity	3
+2	audit-mem: refused: --db must be .audit-memory/audit.db, audit_<n>/audit-mem.db or incident_<n>/audit-mem.db: @SHOWN(@OUT@/made-by-init/x.db)@	init	--contract=1	--db	@OUT@/made-by-init/x.db
+2	audit-mem: refused: --severity must be a whole number from 1 to 10: 11	put-finding	--contract=1	--program-id	VaultProg1111	--signature	s	--root-cause	r	--title	t	--severity	11
+2	audit-mem: refused: warm needs --program-id	warm	--contract=1
+2	audit-mem: refused: --program-id needs a value	warm	--contract=1	--program-id
+# values a JSON escape decodes, and a stored status audit-mem never sets
+2	audit-mem: refused: --trust-assumptions-json holds a control or formatting character once its escapes are read: {"a":"\u001b]0;x\u0007"}	profile	--program-id	VaultProg1111	--trust-assumptions-json	{"a":"\u001b]0;x\u0007"}
+2	audit-mem: refused: --trust-assumptions-json holds a control or formatting character once its escapes are read: {"\u202e":1}	profile	--program-id	VaultProg1111	--trust-assumptions-json	{"\u202e":1}
+2	audit-mem: refused: --trust-assumptions-json holds a control or formatting character once its escapes are read: ["ok",{"b":"\u2028"}]	profile	--program-id	VaultProg1111	--trust-assumptions-json	["ok",{"b":"\u2028"}]
+2	audit-mem: refused: --trust-assumptions-json holds a control or formatting character once its escapes are read: {"a":"tab\there"}	profile	--program-id	VaultProg1111	--trust-assumptions-json	{"a":"tab\there"}
+2	audit-mem: refused: audit_13/audit-mem.db: it holds the status ?]0;x? for this finding, which audit-mem never sets, so it is not a store audit-mem wrote	put-finding	--db	audit_13/audit-mem.db	--program-id	VaultProg1111	--signature	s	--root-cause	r	--title	t	--severity	3
+# grammar
+2	audit-mem: refused: no subcommand (usage: audit-mem <subcommand> [--contract=1] [--db <store>] [options], the subcommand being init, put-finding, set-status, rule, check, regressions, warm, profile or invariant)
+2	audit-mem: refused: --db is not a subcommand, and the subcommand comes first (usage: audit-mem <subcommand> [--contract=1] [--db <store>] [options], the subcommand being init, put-finding, set-status, rule, check, regressions, warm, profile or invariant)	--db	.audit-memory/audit.db	warm	--program-id	VaultProg1111
+2	audit-mem: refused: --program-id is not a subcommand, and the subcommand comes first (usage: audit-mem <subcommand> [--contract=1] [--db <store>] [options], the subcommand being init, put-finding, set-status, rule, check, regressions, warm, profile or invariant)	--program-id	VaultProg1111	warm
+2	audit-mem: refused: WARM is not a subcommand, and the subcommand comes first (usage: audit-mem <subcommand> [--contract=1] [--db <store>] [options], the subcommand being init, put-finding, set-status, rule, check, regressions, warm, profile or invariant)	WARM
+2	audit-mem: refused: Warm is not a subcommand, and the subcommand comes first (usage: audit-mem <subcommand> [--contract=1] [--db <store>] [options], the subcommand being init, put-finding, set-status, rule, check, regressions, warm, profile or invariant)	Warm
+2	audit-mem: refused: help is not a subcommand, and the subcommand comes first (usage: audit-mem <subcommand> [--contract=1] [--db <store>] [options], the subcommand being init, put-finding, set-status, rule, check, regressions, warm, profile or invariant)	help
+2	audit-mem: refused: --help is not a subcommand, and the subcommand comes first (usage: audit-mem <subcommand> [--contract=1] [--db <store>] [options], the subcommand being init, put-finding, set-status, rule, check, regressions, warm, profile or invariant)	--help
+2	audit-mem: refused: -h is not a subcommand, and the subcommand comes first (usage: audit-mem <subcommand> [--contract=1] [--db <store>] [options], the subcommand being init, put-finding, set-status, rule, check, regressions, warm, profile or invariant)	-h
+2	audit-mem: refused: --version is not a subcommand, and the subcommand comes first (usage: audit-mem <subcommand> [--contract=1] [--db <store>] [options], the subcommand being init, put-finding, set-status, rule, check, regressions, warm, profile or invariant)	--version
+2	audit-mem: refused: status is not a subcommand, and the subcommand comes first (usage: audit-mem <subcommand> [--contract=1] [--db <store>] [options], the subcommand being init, put-finding, set-status, rule, check, regressions, warm, profile or invariant)	status
+2	audit-mem: refused: rules is not a subcommand, and the subcommand comes first (usage: audit-mem <subcommand> [--contract=1] [--db <store>] [options], the subcommand being init, put-finding, set-status, rule, check, regressions, warm, profile or invariant)	rules
+2	audit-mem: refused: warm-up is not a subcommand, and the subcommand comes first (usage: audit-mem <subcommand> [--contract=1] [--db <store>] [options], the subcommand being init, put-finding, set-status, rule, check, regressions, warm, profile or invariant)	warm-up
+2	audit-mem: refused: check-all is not a subcommand, and the subcommand comes first (usage: audit-mem <subcommand> [--contract=1] [--db <store>] [options], the subcommand being init, put-finding, set-status, rule, check, regressions, warm, profile or invariant)	check-all
+2	audit-mem: refused: ?[2J is not a subcommand, and the subcommand comes first (usage: audit-mem <subcommand> [--contract=1] [--db <store>] [options], the subcommand being init, put-finding, set-status, rule, check, regressions, warm, profile or invariant)	@ESC@[2J
+2	audit-mem: refused: warm needs --program-id	warm
+2	audit-mem: refused: warm takes no argument extra	warm	--program-id	VaultProg1111	extra
+2	audit-mem: refused: warm takes no argument rule	warm	--program-id	VaultProg1111	rule	--program-id	VaultProg1111
+2	audit-mem: refused: warm takes no argument --	warm	--program-id	VaultProg1111	--
+2	audit-mem: refused: warm takes no argument -x	warm	--program-id	VaultProg1111	-x
+2	audit-mem: refused: warm takes no argument -	warm	-	--program-id	VaultProg1111
+2	audit-mem: refused: warm takes no option --signature	warm	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance
+2	audit-mem: refused: warm takes no option --program-i	warm	--program-i	VaultProg1111
+2	audit-mem: refused: warm takes no option --PROGRAM-ID	warm	--PROGRAM-ID	VaultProg1111
+2	audit-mem: refused: warm takes no option --out	warm	--program-id	VaultProg1111	--out	audit_1/x.json
+2	audit-mem: refused: --program-id is given more than once	warm	--program-id	VaultProg1111	--program-id	VaultProg1111
+2	audit-mem: refused: --program-id is given more than once	warm	--program-id=VaultProg1111	--program-id	Other
+2	audit-mem: refused: --db is given more than once	warm	--db	.audit-memory/audit.db	--db=.audit-memory/audit.db	--program-id	VaultProg1111
+2	audit-mem: refused: --program-id needs a value	warm	--program-id
+2	audit-mem: refused: --db needs a value	warm	--program-id	VaultProg1111	--db
+2	audit-mem: refused: init takes no option --program-id	init	--program-id	VaultProg1111
+2	audit-mem: refused: init takes no argument extra	init	extra
+2	audit-mem: refused: check needs --signature	check	--program-id	VaultProg1111
+2	audit-mem: refused: check needs --program-id	check	--signature	unchecked_sub@vault.balance
+2	audit-mem: refused: regressions takes no option --commit	regressions	--program-id	VaultProg1111	--commit	c0ffee1
+2	audit-mem: refused: put-finding needs --severity	put-finding	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--root-cause	r	--title	t
+2	audit-mem: refused: rule needs --by	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	r
+2	audit-mem: refused: set-status needs --status	set-status	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--root-cause	r
+2	audit-mem: refused: profile needs at least one of --protocol-class, --trust-assumptions-json, --oracle-set, --admin-set, --notes	profile	--program-id	VaultProg1111
+2	audit-mem: refused: profile takes no option --statement	profile	--program-id	VaultProg1111	--statement	x
+2	audit-mem: refused: invariant needs --statement	invariant	--program-id	VaultProg1111
+2	audit-mem: refused: invariant takes no option --guard	invariant	--program-id	VaultProg1111	--statement	x	--guard	src/withdraw.rs:2
+# values
+2	audit-mem: refused: --program-id is empty	warm	--program-id	@EMPTY@
+2	audit-mem: refused: --program-id is empty	warm	--program-id=
+2	audit-mem: refused: --program-id holds a control or formatting character: Prog?x	warm	--program-id	Prog@NL@x
+2	audit-mem: refused: --program-id holds a control or formatting character: ?[2J	warm	--program-id	@ESC@[2J
+2	audit-mem: refused: --program-id holds a control or formatting character: a?b	warm	--program-id	a@TAB@b
+2	audit-mem: refused: --program-id holds a control or formatting character: a?b	warm	--program-id	a@DEL@b
+2	audit-mem: refused: --program-id holds a control or formatting character: a?b	warm	--program-id	a@RLO@b
+2	audit-mem: refused: --program-id holds a control or formatting character: a?b	warm	--program-id	a@ZWSP@b
+2	audit-mem: refused: --program-id is longer than 4096 bytes	warm	--program-id	@LONG:4097@
+2	audit-mem: refused: --signature holds a control or formatting character: s?	check	--program-id	VaultProg1111	--signature	s@NL@
+2	audit-mem: refused: --title is longer than 4096 bytes	put-finding	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--root-cause	r	--title	@LONG:4097@	--severity	3
+2	audit-mem: refused: --root-cause holds a control or formatting character: ?x	put-finding	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--root-cause	@RLO@x	--title	t	--severity	3
+2	audit-mem: refused: --severity must be a whole number from 1 to 10: 0	put-finding	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--root-cause	r	--title	t	--severity	0
+2	audit-mem: refused: --severity must be a whole number from 1 to 10: 11	put-finding	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--root-cause	r	--title	t	--severity	11
+2	audit-mem: refused: --severity must be a whole number from 1 to 10: -1	put-finding	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--root-cause	r	--title	t	--severity	-1
+2	audit-mem: refused: --severity must be a whole number from 1 to 10: +3	put-finding	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--root-cause	r	--title	t	--severity	+3
+2	audit-mem: refused: --severity must be a whole number from 1 to 10: 3.0	put-finding	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--root-cause	r	--title	t	--severity	3.0
+2	audit-mem: refused: --severity must be a whole number from 1 to 10: 1e1	put-finding	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--root-cause	r	--title	t	--severity	1e1
+2	audit-mem: refused: --severity must be a whole number from 1 to 10: abc	put-finding	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--root-cause	r	--title	t	--severity	abc
+2	audit-mem: refused: --severity must be a whole number from 1 to 10:  3	put-finding	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--root-cause	r	--title	t	--severity	 3
+2	audit-mem: refused: --severity must be a whole number from 1 to 10: 0x3	put-finding	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--root-cause	r	--title	t	--severity	0x3
+2	audit-mem: refused: --severity must be a whole number from 1 to 10: aaaaaaaaaaa	put-finding	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--root-cause	r	--title	t	--severity	@LONG:11@
+2	audit-mem: refused: --severity is empty	put-finding	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--root-cause	r	--title	t	--severity	@EMPTY@
+2	audit-mem: refused: --line must be a whole number from 1 to 999999999: 0	put-finding	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--root-cause	r	--title	t	--severity	3	--line	0
+2	audit-mem: refused: --line must be a whole number from 1 to 999999999: -1	put-finding	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--root-cause	r	--title	t	--severity	3	--line	-1
+2	audit-mem: refused: --line must be a whole number from 1 to 999999999: 1000000000	put-finding	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--root-cause	r	--title	t	--severity	3	--line	1000000000
+2	audit-mem: refused: --line must be a whole number from 1 to 999999999: x	put-finding	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--root-cause	r	--title	t	--severity	3	--line	x
+2	audit-mem: refused: --commit holds a control or formatting character: c0ffee1?	put-finding	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--root-cause	r	--title	t	--severity	3	--commit	c0ffee1@NL@
+2	audit-mem: refused: --file is longer than 4096 bytes	put-finding	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--root-cause	r	--title	t	--severity	3	--file	@LONG:4097@
+2	audit-mem: refused: --commit must be a full commit id, 40 or 64 hexadecimal digits: xyz1234	check	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--commit	xyz1234
+2	audit-mem: refused: --commit must be a full commit id, 40 or 64 hexadecimal digits: abc123	check	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--commit	abc123
+2	audit-mem: refused: --commit must be a full commit id, 40 or 64 hexadecimal digits: c0ffee 1	check	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--commit	c0ffee 1
+2	audit-mem: refused: --commit must be a full commit id, 40 or 64 hexadecimal digits: HEAD	check	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--commit	HEAD
+2	audit-mem: refused: --commit must be a full commit id, 40 or 64 hexadecimal digits: c0ffee1	check	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--commit	c0ffee1
+2	audit-mem: refused: --commit must be a full commit id, 40 or 64 hexadecimal digits: c0ffee1	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1	--guard	src/withdraw.rs:2
+2	audit-mem: refused: --commit must be a full commit id, 40 or 64 hexadecimal digits: c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ff	check	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ff
+2	audit-mem: refused: --commit must be a full commit id, 40 or 64 hexadecimal digits: c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ff	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ff	--guard	src/withdraw.rs:2
+2	audit-mem: refused: --commit must be a full commit id, 40 or 64 hexadecimal digits: c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffec	check	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffec
+2	audit-mem: refused: --commit must be a full commit id, 40 or 64 hexadecimal digits: c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffec	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffec	--guard	src/withdraw.rs:2
+2	audit-mem: refused: a FALSE_POSITIVE ruling needs --commit, the commit it is made at, and --guard, the <file>:<line> or <file>:<first>-<last> that makes it one, so that check can tell when it goes stale	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--guard	src/withdraw.rs:2
+2	audit-mem: refused: --commit must be a full commit id, 40 or 64 hexadecimal digits: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	check	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--commit	@LONG:65@
+2	audit-mem: refused: --status must be one of FIXED, OPEN, ACKNOWLEDGED, DISPUTED: REGRESSED	set-status	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--root-cause	r	--status	REGRESSED
+2	audit-mem: refused: --status must be one of FIXED, OPEN, ACKNOWLEDGED, DISPUTED: fixed	set-status	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--root-cause	r	--status	fixed
+2	audit-mem: refused: --ruling must be one of FALSE_POSITIVE, ACCEPTED_RISK: fp	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	fp	--rationale	r	--by	a
+2	audit-mem: refused: a FALSE_POSITIVE ruling needs --commit, the commit it is made at, and --guard, the <file>:<line> or <file>:<first>-<last> that makes it one, so that check can tell when it goes stale	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe
+2	audit-mem: refused: --trust-assumptions-json is not JSON	profile	--program-id	VaultProg1111	--trust-assumptions-json	the admin is trusted
+2	audit-mem: refused: --notes holds a control or formatting character: a?b	profile	--program-id	VaultProg1111	--notes	a@NL@b
+2	audit-mem: refused: --statement is longer than 4096 bytes	invariant	--program-id	VaultProg1111	--statement	@LONG:4097@
+2	audit-mem: refused: --status holds a control or formatting character: ?	invariant	--program-id	VaultProg1111	--statement	x	--status	@ZWSP@
+# --guard
+2	audit-mem: refused: --guard must be <file>:<line> or <file>:<first>-<last>, at most 200 lines: src/withdraw.rs	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe	--guard	src/withdraw.rs
+2	audit-mem: refused: --guard must be <file>:<line> or <file>:<first>-<last>, at most 200 lines: src/withdraw.rs:	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe	--guard	src/withdraw.rs:
+2	audit-mem: refused: --guard must be <file>:<line> or <file>:<first>-<last>, at most 200 lines: src/withdraw.rs:0	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe	--guard	src/withdraw.rs:0
+2	audit-mem: refused: --guard must be <file>:<line> or <file>:<first>-<last>, at most 200 lines: src/withdraw.rs:01	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe	--guard	src/withdraw.rs:01
+2	audit-mem: refused: --guard must be <file>:<line> or <file>:<first>-<last>, at most 200 lines: src/withdraw.rs:3-2	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe	--guard	src/withdraw.rs:3-2
+2	audit-mem: refused: --guard must be <file>:<line> or <file>:<first>-<last>, at most 200 lines: src/withdraw.rs:1-201	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe	--guard	src/withdraw.rs:1-201
+2	audit-mem: refused: --guard must be <file>:<line> or <file>:<first>-<last>, at most 200 lines: src/withdraw.rs:x	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe	--guard	src/withdraw.rs:x
+2	audit-mem: refused: --guard must be <file>:<line> or <file>:<first>-<last>, at most 200 lines: src/withdraw.rs:2-	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe	--guard	src/withdraw.rs:2-
+2	audit-mem: refused: --guard must be <file>:<line> or <file>:<first>-<last>, at most 200 lines: src/withdraw.rs:-2	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe	--guard	src/withdraw.rs:-2
+2	audit-mem: refused: --guard must be <file>:<line> or <file>:<first>-<last>, at most 200 lines: src/withdraw.rs:1234567890	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe	--guard	src/withdraw.rs:1234567890
+2	audit-mem: refused: --guard names line 9, and the file has 4 line(s): src/withdraw.rs:9	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe	--guard	src/withdraw.rs:9
+2	audit-mem: refused: --guard names line 5, and the file has 4 line(s): src/withdraw.rs:2-5	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe	--guard	src/withdraw.rs:2-5
+2	audit-mem: refused: --guard's file must be relative to the working directory: @SHOWN(@WT@/src/withdraw.rs)@	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe	--guard	@WT@/src/withdraw.rs:2
+2	audit-mem: refused: --guard's file must be relative to the working directory: @SHOWN(@OUT@/secret.rs)@	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe	--guard	@OUT@/secret.rs:1
+2	audit-mem: refused: --guard's file has an empty, . or .. component: ../outside/secret.rs	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe	--guard	../outside/secret.rs:1
+2	audit-mem: refused: --guard's file has an empty, . or .. component: src/../src/withdraw.rs	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe	--guard	src/../src/withdraw.rs:2
+2	audit-mem: refused: --guard's file may not start with - or ~: ~/secret.rs	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe	--guard	~/secret.rs:1
+2	audit-mem: refused: --guard's file is empty	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe	--guard	:1
+2	audit-mem: refused: --guard's file passes through a symbolic link: src/link.rs	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe	--guard	src/link.rs:1
+2	audit-mem: refused: --guard's file passes through a symbolic link: linkdir/secret.rs	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe	--guard	linkdir/secret.rs:1
+2	audit-mem: refused: --guard's file is not an existing regular file: src	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe	--guard	src:1
+2	audit-mem: refused: --guard's file is not an existing regular file: src/missing.rs	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe	--guard	src/missing.rs:1
+2	audit-mem: refused: --guard's file is not a regular file or a directory: fifo	rule	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--ruling	FALSE_POSITIVE	--rationale	guarded	--by	auditor	--commit	c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe	--guard	fifo:1
+# --db
+2	audit-mem: refused: --db must be .audit-memory/audit.db, audit_<n>/audit-mem.db or incident_<n>/audit-mem.db: @SHOWN(@WT@/.audit-memory/audit.db)@	warm	--program-id	VaultProg1111	--db	@WT@/.audit-memory/audit.db
+2	audit-mem: refused: --db must be .audit-memory/audit.db, audit_<n>/audit-mem.db or incident_<n>/audit-mem.db: @SHOWN(@OUT@/audit.db)@	warm	--program-id	VaultProg1111	--db	@OUT@/audit.db
+2	audit-mem: refused: --db must be .audit-memory/audit.db, audit_<n>/audit-mem.db or incident_<n>/audit-mem.db: ../outside/audit.db	warm	--program-id	VaultProg1111	--db	../outside/audit.db
+2	audit-mem: refused: --db must be .audit-memory/audit.db, audit_<n>/audit-mem.db or incident_<n>/audit-mem.db: .audit-memory/other.db	warm	--program-id	VaultProg1111	--db	.audit-memory/other.db
+2	audit-mem: refused: --db must be .audit-memory/audit.db, audit_<n>/audit-mem.db or incident_<n>/audit-mem.db: .audit-memory/audit.db/	warm	--program-id	VaultProg1111	--db	.audit-memory/audit.db/
+2	audit-mem: refused: --db must be .audit-memory/audit.db, audit_<n>/audit-mem.db or incident_<n>/audit-mem.db: ./.audit-memory/../.audit-memory/audit.db	warm	--program-id	VaultProg1111	--db	./.audit-memory/../.audit-memory/audit.db
+2	audit-mem: refused: --db must be .audit-memory/audit.db, audit_<n>/audit-mem.db or incident_<n>/audit-mem.db: .AUDIT-MEMORY/audit.db	warm	--program-id	VaultProg1111	--db	.AUDIT-MEMORY/audit.db
+2	audit-mem: refused: --db must be .audit-memory/audit.db, audit_<n>/audit-mem.db or incident_<n>/audit-mem.db: audit.db	warm	--program-id	VaultProg1111	--db	audit.db
+2	audit-mem: refused: --db must be .audit-memory/audit.db, audit_<n>/audit-mem.db or incident_<n>/audit-mem.db: audit-mem.db	warm	--program-id	VaultProg1111	--db	audit-mem.db
+2	audit-mem: refused: --db must be .audit-memory/audit.db, audit_<n>/audit-mem.db or incident_<n>/audit-mem.db: audit_1/other.db	warm	--program-id	VaultProg1111	--db	audit_1/other.db
+2	audit-mem: refused: --db must be .audit-memory/audit.db, audit_<n>/audit-mem.db or incident_<n>/audit-mem.db: audit_1/audit.db	warm	--program-id	VaultProg1111	--db	audit_1/audit.db
+2	audit-mem: refused: --db must be .audit-memory/audit.db, audit_<n>/audit-mem.db or incident_<n>/audit-mem.db: audit_1/x/audit-mem.db	warm	--program-id	VaultProg1111	--db	audit_1/x/audit-mem.db
+2	audit-mem: refused: --db must be .audit-memory/audit.db, audit_<n>/audit-mem.db or incident_<n>/audit-mem.db: audit_1//audit-mem.db	warm	--program-id	VaultProg1111	--db	audit_1//audit-mem.db
+2	audit-mem: refused: --db must be .audit-memory/audit.db, audit_<n>/audit-mem.db or incident_<n>/audit-mem.db: src/audit-mem.db	warm	--program-id	VaultProg1111	--db	src/audit-mem.db
+2	audit-mem: refused: --db must be .audit-memory/audit.db, audit_<n>/audit-mem.db or incident_<n>/audit-mem.db: AUDIT_1/audit-mem.db	warm	--program-id	VaultProg1111	--db	AUDIT_1/audit-mem.db
+2	audit-mem: refused: --db must be .audit-memory/audit.db, audit_<n>/audit-mem.db or incident_<n>/audit-mem.db: audit_1234567/audit-mem.db	warm	--program-id	VaultProg1111	--db	audit_1234567/audit-mem.db
+2	audit-mem: refused: --db must be .audit-memory/audit.db, audit_<n>/audit-mem.db or incident_<n>/audit-mem.db: audit_/audit-mem.db	warm	--program-id	VaultProg1111	--db	audit_/audit-mem.db
+2	audit-mem: refused: --db must be .audit-memory/audit.db, audit_<n>/audit-mem.db or incident_<n>/audit-mem.db: ~/audit-mem.db	warm	--program-id	VaultProg1111	--db	~/audit-mem.db
+2	audit-mem: refused: --db must be .audit-memory/audit.db, audit_<n>/audit-mem.db or incident_<n>/audit-mem.db: -x	warm	--program-id	VaultProg1111	--db	-x
+2	audit-mem: refused: --db must be .audit-memory/audit.db, audit_<n>/audit-mem.db or incident_<n>/audit-mem.db: 	warm	--program-id	VaultProg1111	--db	@EMPTY@
+2	audit-mem: refused: --db must be .audit-memory/audit.db, audit_<n>/audit-mem.db or incident_<n>/audit-mem.db: audit_1/audit-mem.db?	warm	--program-id	VaultProg1111	--db	audit_1/audit-mem.db@NL@
+2	audit-mem: refused: --db is not an existing directory: audit_99	warm	--program-id	VaultProg1111	--db	audit_99/audit-mem.db
+2	audit-mem: refused: --db has no .gitignore holding exactly *: audit_2	warm	--program-id	VaultProg1111	--db	audit_2/audit-mem.db
+2	audit-mem: refused: --db is a symbolic link: audit_3	warm	--program-id	VaultProg1111	--db	audit_3/audit-mem.db
+2	audit-mem: refused: --db is tracked by git: audit_4	warm	--program-id	VaultProg1111	--db	audit_4/audit-mem.db
+2	audit-mem: refused: --db holds a symbolic link: audit_5	warm	--program-id	VaultProg1111	--db	audit_5/audit-mem.db
+2	audit-mem: refused: audit_6/audit-mem.db is not a regular file	warm	--program-id	VaultProg1111	--db	audit_6/audit-mem.db
+2	audit-mem: refused: audit_7/audit-mem.db has more than one name (a hard link)	warm	--program-id	VaultProg1111	--db	audit_7/audit-mem.db
+2	audit-mem: refused: audit_8/audit-mem.db is not in rollback-journal mode (a WAL database, say), which audit-mem never sets	warm	--program-id	VaultProg1111	--db	audit_8/audit-mem.db
+2	audit-mem: refused: audit_12/audit-mem.db has a -wal file beside it, which audit-mem never makes	warm	--program-id	VaultProg1111	--db	audit_12/audit-mem.db
+2	audit-mem: refused: audit_12/audit-mem.db has a -wal file beside it, which audit-mem never makes	init	--db	audit_12/audit-mem.db
+2	audit-mem: refused: audit_12/audit-mem.db has a -wal file beside it, which audit-mem never makes	put-finding	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--root-cause	r	--title	t	--severity	3	--db	audit_12/audit-mem.db
+2	audit-mem: refused: audit_10/audit-mem.db: it holds the view v, which audit-mem never makes, so it is not a store audit-mem wrote	warm	--program-id	VaultProg1111	--db	audit_10/audit-mem.db
+2	audit-mem: refused: audit_11/audit-mem.db is not a SQLite database, so it is not a store audit-mem wrote	check	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--db	audit_11/audit-mem.db
+2	audit-mem: refused: incident_1/audit-mem.db is empty; audit-mem init makes the store	regressions	--program-id	VaultProg1111	--db	incident_1/audit-mem.db
+2	audit-mem: refused: there is no store at incident_2/audit-mem.db; audit-mem init makes it	put-finding	--program-id	VaultProg1111	--signature	unchecked_sub@vault.balance	--root-cause	r	--title	t	--severity	3	--db	incident_2/audit-mem.db
+2	audit-mem: refused: --db is a symbolic link: audit_3	init	--db	audit_3/audit-mem.db
+2	audit-mem: refused: --db has no .gitignore holding exactly *: audit_2	init	--db	./audit_2/audit-mem.db
+2	audit-mem: refused: audit_8/audit-mem.db is not in rollback-journal mode (a WAL database, say), which audit-mem never sets	init	--db	audit_8/audit-mem.db
