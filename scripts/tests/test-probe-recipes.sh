@@ -4,13 +4,15 @@
 #   - every command an item quotes is one plain command (quoted &, $ and the like allowed), starts with its
 #     tool's bare name, and appears word for word in the block;
 #   - the block, run with PATH holding only the stand-ins and env, mkdir and grep, calls the stand-in aws with
-#     exactly `s3 ls s3://<bucket> --no-sign-request --region us-east-1`, the AWS profile, endpoint and CA
-#     variables cleared and the config and credentials files /dev/null (canary values are set beforehand), and
+#     exactly `s3api list-objects-v2 --bucket <bucket> --max-keys 1 --query KeyCount --output text
+#     --no-sign-request --region us-east-1`, the AWS profile, endpoint and CA variables cleared and the config
+#     and credentials files /dev/null (canary values are set beforehand), and
 #     the stand-in curl with exactly the GCS, Azure, .git/HEAD and made-up-path requests the block writes, each
 #     with -q first and --max-time 30;
-#   - a host or bucket outside the grammar (a user, a port, a path, IPv6, a non-ASCII or uppercase name, an
-#     underscore, a space, a semicolon, too short or too long) is refused, and its probe never runs;
-#   - the verdict line prints 1 only for a git HEAD body (ref: refs/…, a 40 or 64 hex id);
+#   - a host, bucket, Azure account or container outside the grammar (a user, a port, a path, IPv6, a non-ASCII
+#     or uppercase name, an underscore, a space, a semicolon, $( ), a leading or trailing . or -, .., a - in an
+#     account, a . in a container, too short or too long) is refused, and its probe never runs;
+#   - the verdict line prints 1 only for a git HEAD body (ref: refs/…, a 40 or 64 hex id), its anchors pinned;
 #   - a real curl given DEP-073's command, with a host its URL parser rejects before any lookup, reads no planted
 #     ~/.curlrc, while the same command without -q does (the control);
 #   - QUESTIONS.md asks Q47 right after Q46, counts an unanswered Q47 and --auto as no, states the grammar and
@@ -118,7 +120,7 @@ cat > "$T/bin/aws" <<EOF
   for v in AWS_PROFILE AWS_DEFAULT_PROFILE AWS_ENDPOINT_URL AWS_ENDPOINT_URL_S3 AWS_CA_BUNDLE AWS_CONFIG_FILE AWS_SHARED_CREDENTIALS_FILE; do
     eval "printf 'env %s=%s\n' \$v \"\\\${\$v-unset}\""
   done; } >> "$T/calls.log"
-printf '2026-10-24 00:00:00 PRE dir/\n'
+printf '0\n'
 EOF
 cat > "$T/bin/curl" <<EOF
 #!/bin/sh
@@ -147,7 +149,8 @@ fill example-bucket app.example.invalid examplestore assets > "$T/good.sh"
 canary "$T/good.sh"
 {
   printf 'call aws\n'
-  printf 'arg=%s\n' s3 ls s3://example-bucket --no-sign-request --region us-east-1
+  printf 'arg=%s\n' s3api list-objects-v2 --bucket example-bucket --max-keys 1 --query KeyCount --output text \
+    --no-sign-request --region us-east-1
   printf 'env %s\n' AWS_PROFILE=unset AWS_DEFAULT_PROFILE=unset AWS_ENDPOINT_URL=unset AWS_ENDPOINT_URL_S3=unset \
     AWS_CA_BUNDLE=unset AWS_CONFIG_FILE=/dev/null AWS_SHARED_CREDENTIALS_FILE=/dev/null
   printf 'call curl\n'
@@ -190,15 +193,20 @@ refused() { # refused LABEL BUCKET HOST ACCOUNT CONTAINER MUST-NOT-CALL...
   else bad "$label: no refusal printed: $(cat "$T/out")"; fi
 }
 G=example-bucket; H=app.example.invalid; A=examplestore; K=assets
-for b in Example_Bucket 'bucket/prefix' ab "$(printf '%064d' 0 | tr 0 b)" 'my bucket' 'x;y' 'x$(id)' ''; do
-  refused "bucket '$b'" "$b" "$H" "$A" "$K" "arg=s3://$b" "storage/v1/b/$b/o"
+for b in Example_Bucket 'bucket/prefix' ab "$(printf '%064d' 0 | tr 0 b)" 'my bucket' 'x;y' 'x$(id)' '' \
+         .lead trail. -lead trail- 'a..b'; do
+  refused "bucket '$b'" "$b" "$H" "$A" "$K" "call aws" "storage/v1/b/$b/o"
 done
 for h in 'user@app.example.invalid' 'app.example.invalid:8443' '[2001:db8::1]' 'bücher.example' 'app.example.invalid/x' \
          'a b' 'x;y' 'x$(id)' ''; do
   refused "host '$h'" "$G" "$h" "$A" "$K" "arg=https://$h/.git/HEAD" "arg=https://$h/.git/no-such-file-a7f3"
 done
-refused "Azure account 'Bad_Account'" "$G" "$H" "Bad_Account" "$K" "Bad_Account.blob.core.windows.net"
-refused "Azure container 'Up'" "$G" "$H" "$A" "Up" "/Up?restype"
+for a in Bad_Account ExampleStore ab "$(printf '%025d' 0 | tr 0 a)" ex-store ex.store; do
+  refused "Azure account '$a'" "$G" "$H" "$a" "$K" "$a.blob.core.windows.net"
+done
+for k in Up ab a.b 'a b'; do
+  refused "Azure container '$k'" "$G" "$H" "$A" "$k" "/$k?restype"
+done
 
 # ---- the verdict line ------------------------------------------------------------------------------------------
 verdict=$(printf '%s\n' "$B" | grep -F 'LC_ALL=C grep -cE ' | sed 's/^host_ok .* && //')
@@ -211,10 +219,12 @@ v_all=1
 for body in 'ref: refs/heads/main' "$(printf '%040d' 0 | tr 0 a)" "$(printf '%064d' 7)"; do
   v_check "$body" 1 || { v_all=0; bad "verdict: a git HEAD body ($body) does not print 1"; }
 done
-for body in '<html><body>Welcome</body></html>' 'refs/heads/main' "$(printf '%039d' 0 | tr 0 a)" 'REF: refs/heads/main'; do
+for body in '<html><body>Welcome</body></html>' 'refs/heads/main' "$(printf '%039d' 0 | tr 0 a)" 'REF: refs/heads/main' \
+            '<p>ref: refs/heads/main</p>' "build $(printf '%040d' 0 | tr 0 a)" "$(printf '%040d' 0 | tr 0 a)x" \
+            "$(printf '%064d' 0 | tr 0 a)x"; do
   v_check "$body" 0 || { v_all=0; bad "verdict: a body that is not a git HEAD ($body) does not print 0"; }
 done
-[ -n "$verdict" ] && [ "$v_all" = 1 ] && ok "verdict: 1 only for ref: refs/… or a 40 or 64 hex id"
+[ -n "$verdict" ] && [ "$v_all" = 1 ] && ok "verdict: 1 only for ref: refs/… or a 40 or 64 hex id, from the start of a line to its end"
 
 # ---- a real curl keeps ~/.curlrc out ------------------------------------------------------------------------
 # The planted ~/.curlrc sends curl's error output to a file. The host holds a % sign, which curl's URL parser
@@ -250,7 +260,8 @@ else
 fi
 
 # ---- the rule of engagement ----------------------------------------------------------------------------------
-GRAMMAR='`<host>` is a DNS name or IPv4 address exactly as `intake.md` §8 lists it: ASCII letters, digits, `-` and `.` only (an IDN in its `xn--` form), with no user, port or path. `<bucket>` is 3–63 lowercase letters, digits, `-` and `.`. Refuse anything else.'
+GRAMMAR='`<host>` is a DNS name or IPv4 address exactly as `intake.md` §8 lists it: ASCII letters, digits, `-` and `.` only (an IDN in its `xn--` form), with no user, port or path. `<bucket>` is 3–63 lowercase letters, digits, `-` and `.`, beginning and ending with a letter or digit, with no `..`. Refuse anything else.'
+AZURE='An Azure `<account>` is 3–24 lowercase letters and digits, and its `<container>` 3–63 lowercase letters, digits and `-`.'
 FOUND="show each host or bucket found in the repository's deployment config with its file and line, and list only those the client confirms; nothing found later is added"
 NEVER='the item is never `[PASS]`: it is `[PARTIAL]`, or `[FAIL-N]` when the IaC or server config already shows the exposure'
 q46=$(grep -n '^### Q46\. ' "$Q" | cut -d: -f1)
@@ -278,8 +289,15 @@ for id in DEP-072 DEP-073; do
     ok "$id: probes only under Q47 for what §8 lists, as an outside contact, within the grammar; owner-run otherwise; never [PASS]"
   else bad "$id lacks part of the rule of engagement: $line"; fi
 done
-has "$(item DEP-072)" 'how the CLI follows a bucket in another region was not verified offline' \
-  && ok "DEP-072 says the region redirect was not verified offline" || bad "DEP-072 does not say the region redirect is unverified"
+if has "$(item DEP-072)" 'neither how the CLI follows a bucket in another region nor how it pages under `--max-keys` was verified offline' \
+   && has "$(item DEP-072)" 'prints only a count of keys' && has "$(item DEP-072)" "$AZURE"; then
+  ok "DEP-072: only a key count; the Azure names rule; the region redirect and paging are unverified offline"
+else bad "DEP-072 lacks the count, the Azure names rule or the unverified-offline note"; fi
+pre=$(awk 'index($0, "> **Live probes (DEP-072, DEP-073).**") == 1 { print; exit }' "$CL")
+if has "$pre" "$GRAMMAR" && has "$pre" "$AZURE" \
+   && has "$pre" 'a value holding a single quote would end the quotes it is written in, and only this first check catches that; each probe below checks every other value again'; then
+  ok "the Live probes block states the grammar, the Azure rule and what only the check before filling catches"
+else bad "the Live probes block lacks the grammar, the Azure rule or the single-quote sentence"; fi
 line=$(item DEP-073)
 if has "$line" 'It is exposed only when the status is `200`' && has "$line" 'confirm it with a made-up path' \
    && has "$line" 'A `3xx` is recorded, and its target is probed only when §8 lists that host too' \
@@ -292,7 +310,8 @@ then ok "templates/intake.md has the Q47 slot, with the grammar and file and lin
 else bad "templates/intake.md lacks the Q47 slot, its grammar or its default"; fi
 if grep -qF 'Live probes (`Q47`) are always **no** in this mode.' "$ROOT/commands/intake.md" \
    && grep -qF '**Live probes (`Q47`).** Ask once' "$ROOT/commands/intake.md" \
-   && grep -qF "$FOUND" "$ROOT/commands/intake.md" && grep -qF 'do not dump all 47 at once' "$ROOT/commands/intake.md"
+   && grep -qF "${FOUND/the client confirms/the human confirms}" "$ROOT/commands/intake.md" \
+   && grep -qF 'do not dump all 47 at once' "$ROOT/commands/intake.md"
 then ok "/auditor:intake asks Q47, lists only confirmed hosts and buckets, and --auto records no"
 else bad "/auditor:intake does not ask Q47, list confirmed hosts and buckets, or record no under --auto"; fi
 if grep -qF 'each live probe (Q47)' "$ROOT/templates/report-template.md" \
