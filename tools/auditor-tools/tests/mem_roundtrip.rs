@@ -121,12 +121,13 @@ fn dedup_regression_and_suppression() {
     assert!(warm.profile.is_none(), "no profile inserted in this test");
 }
 
-#[test]
-fn a_ruling_goes_stale_when_its_commit_or_guard_changes() {
-    let conn = mem::open_in_memory().expect("open in-memory db");
-    let g = guard(GUARDED, 2, 3);
+/// A full commit id, as the CLI takes them, and another.
+const C1: &str = "c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe";
+const C2: &str = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+
+fn rule_at(conn: &rusqlite::Connection, commit: Option<&str>, g: &mem::Guard) {
     mem::add_ruling(
-        &conn,
+        conn,
         &mem::NewRuling {
             program_id: PROG,
             signature: SIG,
@@ -134,53 +135,83 @@ fn a_ruling_goes_stale_when_its_commit_or_guard_changes() {
             rationale: "guarded",
             by: "auditor",
             scope: None,
-            commit: Some("c0ffee1aa"),
-            guard: Some(&g),
+            commit,
+            guard: Some(g),
         },
     )
     .unwrap();
+}
+
+#[test]
+fn a_ruling_goes_stale_when_its_commit_or_guard_changes() {
+    let conn = mem::open_in_memory().expect("open in-memory db");
+    rule_at(&conn, Some(C1), &guard(GUARDED, 2, 3));
     let stale = |commit: Option<&str>, text: &'static [u8]| {
         let read = move |_: &str| -> Result<Vec<u8>, String> { Ok(text.to_vec()) };
         let r = mem::check(&conn, PROG, SIG, commit, &read).unwrap();
         assert_eq!(r.suppressed, r.stale.is_none());
         r.stale
     };
-    assert_eq!(stale(Some("c0ffee1aa"), GUARDED), None);
+    assert_eq!(stale(Some(C1), GUARDED), None);
+    for other in [
+        &C1[..7],
+        &C1[..39],
+        "c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe00",
+        C2,
+    ] {
+        assert_eq!(
+            stale(Some(other), GUARDED),
+            Some(format!("ruled at commit {C1}, checked at {other}")),
+            "only the same full id is the same commit"
+        );
+    }
     assert_eq!(
-        stale(Some("c0ffee1"), GUARDED),
-        None,
-        "an abbreviation names the same commit"
-    );
-    assert_eq!(stale(Some("c0ffee1aa00"), GUARDED), None);
-    assert_eq!(
-        stale(Some("deadbeef"), GUARDED).as_deref(),
-        Some("ruled at commit c0ffee1aa, checked at deadbeef")
-    );
-    assert_eq!(
-        stale(None, GUARDED).as_deref(),
-        Some("ruled at commit c0ffee1aa, and no --commit was given to compare")
+        stale(None, GUARDED),
+        Some(format!(
+            "ruled at commit {C1}, and no --commit was given to compare"
+        ))
     );
     let edited: &[u8] = b"fn withdraw() {\n    require!(vault.balance > amount);\n    vault.balance -= amount;\n}\n";
     assert_eq!(
-        stale(Some("c0ffee1aa"), edited).as_deref(),
+        stale(Some(C1), edited).as_deref(),
         Some("the guard at src/withdraw.rs:2-3 no longer holds the lines ruled on")
     );
     let moved: &[u8] = b"// moved\nfn withdraw() {\n    require!(vault.balance >= amount);\n    vault.balance -= amount;\n}\n";
     assert!(
-        stale(Some("c0ffee1aa"), moved).is_some(),
+        stale(Some(C1), moved).is_some(),
         "lines that moved are a change"
     );
     assert_eq!(
-        stale(Some("deadbeef"), b"fn x() {}\n").as_deref(),
-        Some("ruled at commit c0ffee1aa, checked at deadbeef; the guard at src/withdraw.rs:2-3 cannot be read: names line 3, and the file has 1 line(s)")
+        stale(Some(C2), b"fn x() {}\n"),
+        Some(format!("ruled at commit {C1}, checked at {C2}; the guard at src/withdraw.rs:2-3 cannot be read: names line 3, and the file has 1 line(s)"))
     );
     let gone = |_: &str| -> Result<Vec<u8>, String> { Err("it does not exist".to_string()) };
-    let r = mem::check(&conn, PROG, SIG, Some("c0ffee1aa"), &gone).unwrap();
+    let r = mem::check(&conn, PROG, SIG, Some(C1), &gone).unwrap();
     assert!(!r.suppressed);
     assert_eq!(
         r.stale.as_deref(),
         Some("the guard at src/withdraw.rs:2-3 cannot be read: it does not exist")
     );
+}
+
+#[test]
+fn a_ruling_without_a_commit_never_holds() {
+    let read = |_: &str| -> Result<Vec<u8>, String> { Ok(GUARDED.to_vec()) };
+    let conn = mem::open_in_memory().expect("open in-memory db");
+    rule_at(&conn, None, &guard(GUARDED, 2, 2));
+    for commit in [None, Some(C1)] {
+        let r = mem::check(&conn, PROG, SIG, commit, &read).unwrap();
+        assert!(!r.suppressed);
+        assert_eq!(r.stale.as_deref(), Some("ruled with no commit"));
+    }
+    // A stored commit that is not the id given, an empty one included, never holds.
+    let conn = mem::open_in_memory().expect("open in-memory db");
+    rule_at(&conn, Some(C1), &guard(GUARDED, 2, 2));
+    conn.execute("UPDATE fp_rulings SET anchor_commit = ''", [])
+        .unwrap();
+    let r = mem::check(&conn, PROG, SIG, Some(C1), &read).unwrap();
+    assert!(!r.suppressed);
+    assert_eq!(r.stale, Some(format!("ruled at commit , checked at {C1}")));
 }
 
 #[test]

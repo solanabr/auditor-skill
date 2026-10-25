@@ -10,13 +10,16 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
-use common::{refused, refused_with, run, run_env, stderr, stdout, Wt};
+use common::{refused, run, run_env, stderr, stdout, Wt};
 use serde_json::Value;
 
 const BIN: &str = env!("CARGO_BIN_EXE_audit-mem");
 const P: &str = "VaultProg1111";
 const SIG: &str = "unchecked_sub@vault.balance";
 const USE_R: &str = "; use <R>/audit-mem.db";
+/// Full commit ids, as rule and check take them.
+const C1: &str = "c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe";
+const C2: &str = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
 
 fn mem(wt: &Wt, args: &[&str]) -> Output {
     run(BIN, &wt.dir, args)
@@ -535,11 +538,11 @@ fn refuses_options_before_the_subcommand_and_any_it_does_not_take() {
                 "--commit",
                 "xyz1234",
             ],
-            "--commit must be a commit id of 7 to 64 hexadecimal digits: xyz1234".into(),
+            "--commit must be a full commit id, 40 or 64 hexadecimal digits: xyz1234".into(),
         ),
         (
             vec!["check", "--program-id", P, "--signature", SIG, "--commit", "abc123"],
-            "--commit must be a commit id of 7 to 64 hexadecimal digits: abc123".into(),
+            "--commit must be a full commit id, 40 or 64 hexadecimal digits: abc123".into(),
         ),
         (
             vec![
@@ -769,7 +772,7 @@ fn opens_a_store_read_only_for_warm_check_and_regressions() {
     ));
     ok(&rule(
         &wt,
-        &["--commit", "c0ffee1", "--guard", "src/withdraw.rs:2"],
+        &["--commit", C1, "--guard", "src/withdraw.rs:2"],
     ));
     ok(&mem(
         &wt,
@@ -781,7 +784,7 @@ fn opens_a_store_read_only_for_warm_check_and_regressions() {
     let mtime = fs::metadata(&db).expect("stat").mtime_nsec();
     ok(&mem(&wt, &["warm", "--program-id", P]));
     ok(&mem(&wt, &["regressions", "--program-id", P]));
-    let (code, _) = check(&wt, &["--commit", "c0ffee1"]);
+    let (code, _) = check(&wt, &["--commit", C1]);
     assert_eq!(code, Some(0));
     assert_eq!(
         wt.snapshot(),
@@ -1126,7 +1129,7 @@ fn profile_and_invariant_record_what_warm_returns() {
         "only the authority moves funds"
     );
     // Neither writer suppresses anything.
-    let (code, result) = check(&wt, &["--commit", "c0ffee1"]);
+    let (code, result) = check(&wt, &["--commit", C1]);
     assert_eq!(
         (code, result["suppressed"].clone()),
         (Some(1), Value::Bool(false))
@@ -1153,12 +1156,44 @@ fn profile_and_invariant_record_what_warm_returns() {
 #[test]
 fn a_ruling_is_anchored_and_check_reports_it_stale_when_the_anchor_changes() {
     let wt = store();
-    // A FALSE_POSITIVE ruling needs the guard that makes it one.
-    refused_with(
-        &rule(&wt, &["--commit", "c0ffee1"]),
+    // A FALSE_POSITIVE ruling needs its commit and the guard that makes it one.
+    let needs = "a FALSE_POSITIVE ruling needs --commit, the commit it is made at, and --guard, the <file>:<line> or <file>:<first>-<last> that makes it one, so that check can tell when it goes stale";
+    refused(&rule(&wt, &["--commit", C1]), "audit-mem", needs);
+    refused(
+        &rule(&wt, &["--guard", "src/withdraw.rs:2"]),
         "audit-mem",
-        "a FALSE_POSITIVE ruling needs --guard",
+        needs,
     );
+    // Only a full commit id: an abbreviation could name another commit.
+    for abbreviated in [
+        "c0ffee1",
+        &C1[..39],
+        "c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe1",
+    ] {
+        refused(
+            &rule(
+                &wt,
+                &["--commit", abbreviated, "--guard", "src/withdraw.rs:2"],
+            ),
+            "audit-mem",
+            &format!(
+                "--commit must be a full commit id, 40 or 64 hexadecimal digits: {abbreviated}"
+            ),
+        );
+        let o = mem(
+            &wt,
+            &[
+                "check",
+                "--program-id",
+                P,
+                "--signature",
+                SIG,
+                "--commit",
+                abbreviated,
+            ],
+        );
+        assert_eq!(o.status.code(), Some(2), "{abbreviated}");
+    }
     wt.link(&wt.outside(), "outlink");
     wt.write("../outside/x.rs", b"x\n");
     let abs = wt.path("src/withdraw.rs").display().to_string();
@@ -1176,40 +1211,45 @@ fn a_ruling_is_anchored_and_check_reports_it_stale_when_the_anchor_changes() {
         ("src:1", format!("{g} is not an existing regular file: src")),
         ("src/missing.rs:1", format!("{g} is not an existing regular file: src/missing.rs")),
     ] {
-        refused(&rule(&wt, &["--commit", "c0ffee1", "--guard", guard]), "audit-mem", &why);
+        refused(&rule(&wt, &["--commit", C1, "--guard", guard]), "audit-mem", &why);
     }
     // Recorded at a commit, with the guard's lines hashed.
     assert_eq!(
         ok(&rule(
             &wt,
-            &["--commit", "C0FFEE1AA", "--guard", "src/withdraw.rs:2"]
+            &[
+                "--commit",
+                "C0FFEE1C0FFEE1C0FFEE1C0FFEE1C0FFEE1C0FFE",
+                "--guard",
+                "src/withdraw.rs:2"
+            ]
         )),
         "ruling 1 recorded (FALSE_POSITIVE)\n"
     );
-    let (code, r) = check(&wt, &["--commit", "c0ffee1aa"]);
+    let (code, r) = check(&wt, &["--commit", C1]);
     assert_eq!(code, Some(0), "{r}");
     assert_eq!(r["suppressed"], true);
     assert!(r.get("stale").is_none());
-    assert_eq!(r["ruling"]["commit"], "c0ffee1aa");
+    assert_eq!(r["ruling"]["commit"], C1);
     assert_eq!(r["ruling"]["guard"], "src/withdraw.rs:2");
     assert_eq!(r["ruling"]["guard_hash"].as_str().map(str::len), Some(64));
     // The commit changes: stale, not suppressed.
-    let (code, r) = check(&wt, &["--commit", "deadbeef"]);
+    let (code, r) = check(&wt, &["--commit", C2]);
     assert_eq!(
         (code, r["suppressed"].clone()),
         (Some(1), Value::Bool(false))
     );
-    assert_eq!(r["stale"], "ruled at commit c0ffee1aa, checked at deadbeef");
+    assert_eq!(r["stale"], format!("ruled at commit {C1}, checked at {C2}"));
     let (code, r) = check(&wt, &[]);
     assert_eq!(code, Some(1));
     assert_eq!(
         r["stale"],
-        "ruled at commit c0ffee1aa, and no --commit was given to compare"
+        format!("ruled at commit {C1}, and no --commit was given to compare")
     );
     // The guard's lines change, or move.
     let original = wt.read("src/withdraw.rs");
     wt.write("src/withdraw.rs", b"fn withdraw() {\n    require!(vault.balance > amount);\n    vault.balance -= amount;\n}\n");
-    let (code, r) = check(&wt, &["--commit", "c0ffee1aa"]);
+    let (code, r) = check(&wt, &["--commit", C1]);
     assert_eq!(code, Some(1));
     assert_eq!(
         r["stale"],
@@ -1219,23 +1259,23 @@ fn a_ruling_is_anchored_and_check_reports_it_stale_when_the_anchor_changes() {
         "src/withdraw.rs",
         &[b"// a new first line\n".to_vec(), original.clone()].concat(),
     );
-    assert_eq!(check(&wt, &["--commit", "c0ffee1aa"]).0, Some(1));
+    assert_eq!(check(&wt, &["--commit", C1]).0, Some(1));
     // The guard's file is gone, or replaced by a link: never read through it.
     fs::remove_file(wt.path("src/withdraw.rs")).expect("rm");
-    let (_, r) = check(&wt, &["--commit", "c0ffee1aa"]);
+    let (_, r) = check(&wt, &["--commit", C1]);
     assert_eq!(
         r["stale"],
         "the guard at src/withdraw.rs:2 cannot be read: it does not exist"
     );
     wt.write("../outside/withdraw.rs", &original);
     wt.link(&wt.outside().join("withdraw.rs"), "src/withdraw.rs");
-    let (code, r) = check(&wt, &["--commit", "c0ffee1aa"]);
+    let (code, r) = check(&wt, &["--commit", C1]);
     assert_eq!(code, Some(1));
     assert_eq!(r["stale"], "the guard at src/withdraw.rs:2 cannot be read: it passes through a symbolic link: src/withdraw.rs");
     fs::remove_file(wt.path("src/withdraw.rs")).expect("rm");
     wt.write("src/withdraw.rs", &original);
     assert_eq!(
-        check(&wt, &["--commit", "c0ffee1aa"]).0,
+        check(&wt, &["--commit", C1]).0,
         Some(0),
         "as it was, it holds again"
     );
@@ -1256,18 +1296,23 @@ fn a_ruling_is_anchored_and_check_reports_it_stale_when_the_anchor_changes() {
             "a",
         ],
     ));
-    assert_eq!(check(&wt, &["--commit", "c0ffee1aa"]).0, Some(0));
+    assert_eq!(check(&wt, &["--commit", C1]).0, Some(0));
     ok(&rule(
         &wt,
-        &["--commit", "c0ffee2", "--guard", "src/withdraw.rs:2-3"],
+        &[
+            "--commit",
+            "c0ffee2c0ffee2c0ffee2c0ffee2c0ffee2c0ffe",
+            "--guard",
+            "src/withdraw.rs:2-3",
+        ],
     ));
-    let (code, r) = check(&wt, &["--commit", "c0ffee1aa"]);
+    let (code, r) = check(&wt, &["--commit", C1]);
     assert_eq!(code, Some(1));
     assert_eq!(r["ruling"]["ruling_id"], 3);
     assert_eq!(r["ruling"]["guard"], "src/withdraw.rs:2-3");
     let warm = json(&mem(&wt, &["warm", "--program-id", P]));
     assert_eq!(warm["open_fp_rulings"].as_array().map(Vec::len), Some(3));
-    assert_eq!(warm["open_fp_rulings"][2]["commit"], "c0ffee1aa");
+    assert_eq!(warm["open_fp_rulings"][2]["commit"], C1);
 }
 
 #[test]
@@ -1287,7 +1332,7 @@ fn a_store_made_before_anchors_reports_its_rulings_stale_and_migrates() {
     );
     let before = wt.read(".audit-memory/audit.db");
     // Read-only: the old ruling has no anchor, so it is stale and suppresses nothing.
-    let (code, r) = check(&wt, &["--commit", "c0ffee1"]);
+    let (code, r) = check(&wt, &["--commit", C1]);
     assert_eq!(code, Some(1));
     assert_eq!(r["suppressed"], false);
     assert_eq!(r["stale"], "no anchor");
@@ -1317,7 +1362,7 @@ fn a_store_made_before_anchors_reports_its_rulings_stale_and_migrates() {
         assert!(columns.iter().any(|x| x == c), "{c} in {columns:?}");
     }
     drop(conn);
-    assert_eq!(check(&wt, &["--commit", "c0ffee1"]).1["stale"], "no anchor");
+    assert_eq!(check(&wt, &["--commit", C1]).1["stale"], "no anchor");
     // rule migrates a store too, and a new anchored ruling suppresses.
     let wt2 = Wt::repo();
     wt2.write("src/withdraw.rs", b"fn w() {\n    require!(ok);\n}\n");
@@ -1340,7 +1385,7 @@ fn a_store_made_before_anchors_reports_its_rulings_stale_and_migrates() {
             "--by",
             "a",
             "--commit",
-            "c0ffee1",
+            C1,
             "--guard",
             "src/withdraw.rs:2",
         ],
@@ -1357,7 +1402,7 @@ fn a_store_made_before_anchors_reports_its_rulings_stale_and_migrates() {
             "--signature",
             SIG,
             "--commit",
-            "c0ffee1",
+            C1,
         ],
     );
     assert_eq!(o.status.code(), Some(0), "{}", stdout(&o));

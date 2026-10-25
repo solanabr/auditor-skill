@@ -586,15 +586,10 @@ fn rulings(
     Ok(rows)
 }
 
-/// Two commit ids name the same commit when one is a prefix of the other (both
-/// are 7 to 64 lowercase hexadecimal digits, as the CLI takes them).
-fn same_commit(a: &str, b: &str) -> bool {
-    a.starts_with(b) || b.starts_with(a)
-}
-
 /// Why a ruling's anchor no longer holds, given the commit the check is made at
 /// and a reader of a guard file's current text; empty when it holds. A ruling
-/// with no guard has no anchor.
+/// with no guard has no anchor; one with no commit, or checked with none, or at
+/// another commit (the full ids compared, as the CLI takes them), is stale.
 pub fn staleness(
     r: &RulingRow,
     commit: Option<&str>,
@@ -605,17 +600,16 @@ pub fn staleness(
     };
     let mut why = Vec::new();
     match (r.commit.as_deref(), commit) {
-        (None, None) => {}
-        (Some(was), Some(now)) if same_commit(was, now) => {}
-        (Some(was), None) => why.push(format!(
-            "ruled at commit {}, and no --commit was given to compare",
-            shown(was.as_bytes())
-        )),
-        (None, Some(now)) => why.push(format!("ruled with no commit, checked at {now}")),
+        (Some(was), Some(now)) if was == now => {}
         (Some(was), Some(now)) => why.push(format!(
             "ruled at commit {}, checked at {now}",
             shown(was.as_bytes())
         )),
+        (Some(was), None) => why.push(format!(
+            "ruled at commit {}, and no --commit was given to compare",
+            shown(was.as_bytes())
+        )),
+        (None, _) => why.push("ruled with no commit".to_string()),
     }
     let label = shown(guard_label(file, *first, *last).as_bytes());
     let (Ok(first), Ok(last)) = (u32::try_from(*first), u32::try_from(*last)) else {

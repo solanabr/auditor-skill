@@ -215,16 +215,17 @@ impl Call {
         })
     }
 
-    /// A commit id, 7 to 64 hexadecimal digits, in lowercase.
+    /// A full commit id, 40 or 64 hexadecimal digits (SHA-1 or SHA-256), in
+    /// lowercase: an abbreviation could name another commit.
     fn commit(&self) -> Result<Option<String>, Stop> {
         let Some(v) = self.text("commit")? else {
             return Ok(None);
         };
-        if (7..=64).contains(&v.len()) && v.bytes().all(|c| c.is_ascii_hexdigit()) {
+        if matches!(v.len(), 40 | 64) && v.bytes().all(|c| c.is_ascii_hexdigit()) {
             Ok(Some(v.to_ascii_lowercase()))
         } else {
             Err(refuse(format!(
-                "--commit must be a commit id of 7 to 64 hexadecimal digits: {}",
+                "--commit must be a full commit id, 40 or 64 hexadecimal digits: {}",
                 shown(v.as_bytes())
             )))
         }
@@ -718,11 +719,11 @@ fn action(wt: &Path, call: &Call) -> Result<Action, Stop> {
             let scope = call.text("scope")?;
             let commit = call.commit()?;
             let guard = guard(wt, call)?;
-            if ruling == "FALSE_POSITIVE" && guard.is_none() {
+            if ruling == "FALSE_POSITIVE" && (commit.is_none() || guard.is_none()) {
                 return Err(refuse(
-                    "a FALSE_POSITIVE ruling needs --guard, the <file>:<line> or \
-                     <file>:<first>-<last> that makes it one, so that check can tell when it \
-                     goes stale"
+                    "a FALSE_POSITIVE ruling needs --commit, the commit it is made at, and \
+                     --guard, the <file>:<line> or <file>:<first>-<last> that makes it one, so \
+                     that check can tell when it goes stale"
                         .into(),
                 ));
             }

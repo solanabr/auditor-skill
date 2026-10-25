@@ -214,7 +214,7 @@ gives exact deduplication across audits.
 | `init` | Make the store: for `.audit-memory/audit.db` with no `.audit-memory/`, the directory, its `.gitignore` of `*` first, then the database; in a run directory, the database. On a store that exists, add the tables and columns it lacks. Prints `initialized <store>`. |
 | `put-finding` | Upsert a finding + append an occurrence. Prints `<STATUS> <finding_id>`, or `REGRESSED <finding_id>` on regression. |
 | `set-status` | Set a finding's status (`FIXED` \| `OPEN` \| `ACKNOWLEDGED` \| `DISPUTED`). |
-| `rule` | Record a `FALSE_POSITIVE` \| `ACCEPTED_RISK` ruling with a timestamp and its anchor: the commit it is made at and the guard it cites (below). A `FALSE_POSITIVE` ruling needs `--guard`. |
+| `rule` | Record a `FALSE_POSITIVE` \| `ACCEPTED_RISK` ruling with a timestamp and its anchor: the commit it is made at and the guard it cites (below). A `FALSE_POSITIVE` ruling needs `--commit` and `--guard`. |
 | `check` | Print `{"suppressed":bool,"ruling":..}`; exit 0 when the newest `FALSE_POSITIVE` ruling for the signature still holds, else exit 1. A ruling that no longer holds is printed with `"stale":"<why>"` and suppresses nothing. |
 | `regressions` | JSON list of findings with status `REGRESSED`. |
 | `warm` | JSON `{profile, invariants[], open_fp_rulings[]}` — the warm-start context block for a re-audit: what `profile` and `invariant` recorded, and the rulings with their anchors. |
@@ -248,27 +248,28 @@ Each option is given once, as `--name <value>` or `--name=<value>`; the word aft
 bytes, and holds no control or formatting character: the C0 and C1 controls, DEL,
 the line and paragraph separators, the bidirectional controls, and the code points
 Unicode marks default-ignorable (audit-logs' list). `--severity` is a whole number
-from 1 to 10 and `--line` one from 1. The `--commit` of `rule` and `check` is 7 to 64
-hexadecimal digits, kept in lowercase; `put-finding`'s is free text.
-`--trust-assumptions-json` must be JSON.
+from 1 to 10 and `--line` one from 1. The `--commit` of `rule` and `check` is a full
+commit id, 40 or 64 hexadecimal digits, kept in lowercase: an abbreviation could name
+another commit. `put-finding`'s is free text. `--trust-assumptions-json` must be JSON.
 
 ### Anchored rulings
 
 A false-positive ruling holds for the code it was made on. `rule` records:
 
-- the commit, `--commit`;
+- the commit, `--commit`, a full id;
 - the guard, `--guard <file>:<line>` or `<file>:<first>-<last>` (at most 200 lines):
   a file of the working tree, read under the confined path rules (relative, no `.`
   or `..`, no symbolic link on the way, a regular file with one name, at most 4 MiB),
   and the sha256 of those lines, each with the newline that ends it.
 
 `check` suppresses only while the newest `FALSE_POSITIVE` ruling for the signature
-holds: `--commit` names its commit (two commits are the same when one is a prefix of
-the other; a ruling made with no commit holds only for a check with none), and the
-guard's lines, read again under the same rules, hash as they did. Otherwise it
-prints the ruling with `stale`, the reasons joined by `; `, and exits 1: a stale
-ruling is a finding to check again. A ruling recorded before rulings had anchors
-has none: it is `"stale":"no anchor"` and never suppresses. `init`, or any
+holds: `--commit` is its commit, the same full id, and the guard's lines, read again
+under the same rules, hash as they did. Otherwise it prints the ruling with `stale`,
+the reasons joined by `; `, and exits 1: a stale ruling is a finding to check again.
+A check with no `--commit` never suppresses. A ruling recorded before rulings had
+anchors has none: it is `"stale":"no anchor"` and never suppresses. `warm` lists the
+rulings as they were recorded, anchors included; only `check` says whether one still
+holds. `init`, or any
 subcommand that writes, adds the anchor columns to a store made before them;
 `warm`, `check` and `regressions` read such a store as it is.
 
@@ -356,11 +357,13 @@ audit-mem invariant --program-id VaultProg... --statement 'total_shares == share
 # rule a known false positive at the audited commit, citing its guard, then gate on it
 audit-mem rule --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
   --ruling FALSE_POSITIVE --rationale 'guarded by the require! on line 40' --by auditor \
-  --commit c0ffee3 --guard src/withdraw.rs:40
-audit-mem check --program-id VaultProg... --signature 'unchecked_sub@vault.balance' --commit c0ffee3
+  --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe --guard src/withdraw.rs:40
+audit-mem check --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
+  --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe
 #   -> {"suppressed":true,"ruling":{...}}   (exit 0)
-audit-mem check --program-id VaultProg... --signature 'unchecked_sub@vault.balance' --commit c0ffee4
-#   -> {"suppressed":false,"stale":"ruled at commit c0ffee3, checked at c0ffee4","ruling":{...}}   (exit 1)
+audit-mem check --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
+  --commit c0ffee4c0ffee4c0ffee4c0ffee4c0ffee4c0ffe
+#   -> {"suppressed":false,"stale":"ruled at commit c0ffee3…, checked at c0ffee4…","ruling":{...}}   (exit 1)
 
 # a store for one run
 audit-mem init --db audit_1/audit-mem.db

@@ -251,24 +251,32 @@ printf 'fn withdraw() {\n    require!(vault.balance >= amount);\n    vault.balan
 ( cd "$W" && "$MEM" init && "$MEM" put-finding --program-id VaultProg1111 --signature unchecked_sub@vault.balance \
     --root-cause 'unchecked subtraction' --title 'Vault underflow' --severity 3 \
   && "$MEM" rule --program-id VaultProg1111 --signature unchecked_sub@vault.balance --ruling FALSE_POSITIVE \
-    --rationale guarded --by auditor --commit c0ffee1 --guard src/withdraw.rs:2 ) > "$T/mem.setup" 2>&1 \
+    --rationale guarded --by auditor --commit c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe --guard src/withdraw.rs:2 ) > "$T/mem.setup" 2>&1 \
   || { cat "$T/mem.setup" >&2; bad "audit-mem: the fixture store cannot be made"; finish; }
-for d in audit_1 audit_4 audit_5 audit_6 audit_7 audit_8 audit_10 audit_11 incident_1 incident_2; do run_dir "$W/$d"; done
+for d in audit_1 audit_4 audit_5 audit_6 audit_7 audit_8 audit_10 audit_11 audit_12 incident_1 incident_2; do run_dir "$W/$d"; done
 mkdir "$W/audit_2"
 ln -s audit_1 "$W/audit_3"
 fgit -C "$W" add -f audit_4/.gitignore
 ln -s ../../outside "$W/audit_5/out"
 mkdir "$W/audit_6/audit-mem.db"
 ln "$H/outside/protected" "$W/audit_7/audit-mem.db"
-( cd "$W" && "$MEM" init --db audit_1/audit-mem.db ) > /dev/null || bad "audit-mem: init --db audit_1/audit-mem.db"
+for d in audit_1 audit_12; do
+  ( cd "$W" && "$MEM" init --db "$d/audit-mem.db" ) > /dev/null || bad "audit-mem: init --db $d/audit-mem.db"
+done
 python3 -I - "$W" <<'PY'
-import sqlite3, sys
+import os, sqlite3, sys
 wt = sys.argv[1]
 c = sqlite3.connect(wt + "/audit_8/audit-mem.db")
 c.execute("PRAGMA journal_mode=WAL")
 c.execute("CREATE TABLE findings (finding_id TEXT PRIMARY KEY)")
 c.commit()
 c.close()
+# A system SQLite may keep the WAL files after the close; this database is the
+# header case only.
+for side in ("-wal", "-shm"):
+    if os.path.exists(wt + "/audit_8/audit-mem.db" + side):
+        os.remove(wt + "/audit_8/audit-mem.db" + side)
+open(wt + "/audit_12/audit-mem.db-wal", "w").close()
 c = sqlite3.connect(wt + "/audit_10/audit-mem.db")
 for t in ("findings", "occurrences", "fp_rulings", "invariants", "protocol_profile"):
     c.execute("CREATE TABLE %s (x)" % t)
@@ -334,17 +342,17 @@ eq "audit-mem: invariant records an invariant" \
   "$(mem invariant --program-id "$P" --statement 'total_shares == shares_mint.supply' --status Unproven --cited-line src/vault.rs:88)" \
   "invariant 1 recorded"
 eq "audit-mem: rule records an anchored ruling" \
-  "$(mem rule --program-id "$P" --signature "$S" --ruling FALSE_POSITIVE --rationale 'guarded by the require! above it' --by auditor --commit c0ffee3 --guard src/withdraw.rs:2)" \
+  "$(mem rule --program-id "$P" --signature "$S" --ruling FALSE_POSITIVE --rationale 'guarded by the require! above it' --by auditor --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe --guard src/withdraw.rs:2)" \
   "ruling 1 recorded (FALSE_POSITIVE)"
-( cd "$W" && "$MEM" check --program-id "$P" --signature "$S" --commit c0ffee3 ) > "$T/check.out" 2>&1
+( cd "$W" && "$MEM" check --program-id "$P" --signature "$S" --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe ) > "$T/check.out" 2>&1
 eq "audit-mem: check at the ruling's commit, the guard unchanged: suppressed (exit 0)" \
   "$?:$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["suppressed"])' "$T/check.out")" "0:True"
-( cd "$W" && "$MEM" check --program-id "$P" --signature "$S" --commit c0ffee4 ) > "$T/check.out" 2>&1
+( cd "$W" && "$MEM" check --program-id "$P" --signature "$S" --commit c0ffee4c0ffee4c0ffee4c0ffee4c0ffee4c0ffe ) > "$T/check.out" 2>&1
 eq "audit-mem: check at another commit: stale, not suppressed (exit 1)" \
   "$?:$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["stale"])' "$T/check.out")" \
-  "1:ruled at commit c0ffee3, checked at c0ffee4"
+  "1:ruled at commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe, checked at c0ffee4c0ffee4c0ffee4c0ffee4c0ffee4c0ffe"
 printf 'fn withdraw() {\n    require!(vault.balance > amount);\n    vault.balance -= amount;\n}\n' > "$W/src/withdraw.rs"
-( cd "$W" && "$MEM" check --program-id "$P" --signature "$S" --commit c0ffee3 ) > "$T/check.out" 2>&1
+( cd "$W" && "$MEM" check --program-id "$P" --signature "$S" --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe ) > "$T/check.out" 2>&1
 eq "audit-mem: check after the guard changed: stale, not suppressed (exit 1)" \
   "$?:$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["stale"])' "$T/check.out")" \
   "1:the guard at src/withdraw.rs:2 no longer holds the lines ruled on"
