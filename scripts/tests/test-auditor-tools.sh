@@ -3,24 +3,25 @@
 # a command pre-approve them by their absolute path, whatever arguments follow.
 #   1. The sources: no network API; git, run only by src/confine.rs, is the one program either binary starts, and
 #      confine.rs alone reads the environment (PATH, HOME, TMPDIR and TZ, for git); the items confine.rs copies
-#      from audit-logs (Stop, refuse, working_tree, self_check, stays_inside, os_message, invalid, c_name, open_at,
-#      and unsafe_char from its contract.rs) are unchanged copies; and hgit's -c pins are those of
-#      scripts/lib/confine.sh's hgit, in its order.
-#   2. Every case in fixtures/audit-scan/cases.txt and fixtures/audit-mem/cases.txt, in the working directory each
+#      from audit-logs (Stop, refuse, working_tree, self_check, stays_inside, os_message, invalid, c_name and
+#      open_at) are unchanged copies, doc comments and attributes included, and unsafe_char's list of characters is
+#      its contract.rs's; and hgit's -c pins are those of scripts/lib/confine.sh's hgit, in its order.
+#   2. The binaries: the ones in AUDITOR_TOOLS_BIN=<dir> (CI's release build), else both built from
+#      tools/auditor-tools (cargo build --release --locked, into a temporary target directory) with no warning.
+#      Without cargo the suite is skipped, loudly; with REQUIRE_TOOLCHAIN=1 (CI) that is a failure.
+#   3. Every case in fixtures/audit-scan/cases.txt and fixtures/audit-mem/cases.txt, in the working directory each
 #      header describes: the exit status and the one stderr line as written, nothing on stdout, no file changed
-#      inside or outside the working directory, and no canary text printed. Then scripts/rundir.sh and the binaries
-#      over the same run directories and stores: rundir.sh check and audit-scan --out, and rundir.sh store and
-#      audit-mem, accept the same ones and refuse the others in the same words.
-#   3. The documented forms work, each with the contract marker --contract=1 where a rule names it: audit-scan to
+#      inside or outside the working directory, and no canary text printed.
+#   3b. scripts/rundir.sh and the binaries over the same run directories and stores: rundir.sh check and
+#      audit-scan --out, and rundir.sh store and audit-mem, accept the same ones and refuse the others in the same
+#      words.
+#   4. The documented forms work, each with the contract marker --contract=1 where a rule names it: audit-scan to
 #      stdout and into a run directory (an output of more than 64 KiB, the same both ways), and audit-mem's lifecycle
 #      from init to warm, with the profile, an invariant and an anchored ruling, a ruling going stale, and init's
 #      .gitignore. A call without the marker works as it did.
-#   4. An installation inside the working directory, or under a path a quoted rule cannot match, is refused.
-#   5. With AUDITOR_TOOLS_OLD_BIN=<dir> naming a build made before the contract (82edf43's target/release), that
+#   5. An installation inside the working directory, or under a path a quoted rule cannot match, is refused.
+#   6. With AUDITOR_TOOLS_OLD_BIN=<dir> naming a build made before the contract (82edf43's target/release), that
 #      build refuses --contract=1 in every form a rule pre-approves, before any effect; without it, a loud SKIP.
-# Builds both binaries from tools/auditor-tools (cargo build --release --locked, into a temporary target
-# directory), or tests the ones in AUDITOR_TOOLS_BIN=<dir> (CI's release build). Without cargo the suite is
-# skipped, loudly; with REQUIRE_TOOLCHAIN=1 (CI) that is a failure.
 # bash >= 3.2, git, python3, cmp. No network beyond cargo's own fetch of the locked crates.
 set -uo pipefail
 
