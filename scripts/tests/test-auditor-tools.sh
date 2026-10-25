@@ -8,7 +8,9 @@
 #      scripts/lib/confine.sh's hgit, in its order.
 #   2. Every case in fixtures/audit-scan/cases.txt and fixtures/audit-mem/cases.txt, in the working directory each
 #      header describes: the exit status and the one stderr line as written, nothing on stdout, no file changed
-#      inside or outside the working directory, and no canary text printed.
+#      inside or outside the working directory, and no canary text printed. Then scripts/rundir.sh and the binaries
+#      over the same run directories and stores: rundir.sh check and audit-scan --out, and rundir.sh store and
+#      audit-mem, accept the same ones and refuse the others in the same words.
 #   3. The documented forms work, each with the contract marker --contract=1 where a rule names it: audit-scan to
 #      stdout and into a run directory (an output of more than 64 KiB, the same both ways), and audit-mem's lifecycle
 #      from init to warm, with the profile, an invariant and an anchored ruling, a ruling going stale, and init's
@@ -308,6 +310,78 @@ PY
 run_cases "$MEM" "$HERE/fixtures/audit-mem/cases.txt" "$H"
 if [ "$NCASES" -ge 120 ]; then ok "audit-mem: $NCASES cases"; else bad "audit-mem: only $NCASES cases read"; fi
 eq "audit-mem: the file outside with a second name in the working tree is unchanged" "$(cat "$H/outside/protected")" protected
+
+# ---------------------------------------------------------------------------
+# 3b. Run directories and stores as scripts/rundir.sh sees them: rundir.sh
+#     check <R> and audit-scan --out <R>/prescan.json accept the same run
+#     directories and refuse the others for the same reason, in the same words;
+#     so do rundir.sh store and audit-mem warm, for the in-tree store.
+# ---------------------------------------------------------------------------
+RUNDIR="$ROOT/scripts/rundir.sh"
+H="$T/rundirs"
+mkdir -p "$H/wt" "$H/outside"
+fgit init -q "$H/wt"
+W="$H/wt"
+for d in audit_1 audit_3 audit_4 audit_5 audit_6 audit_7 audit_8 audit_9 audit_10 audit_13 audit_15 audit_16 incident_1; do
+  mkdir "$W/$d"
+done
+mkdir "$W/audit_2"
+printf '*\n' > "$W/audit_1/.gitignore"
+printf '*' > "$W/audit_3/.gitignore"
+printf '*\000' > "$W/audit_4/.gitignore"
+printf '**' > "$W/audit_5/.gitignore"
+printf '* ' > "$W/audit_6/.gitignore"
+printf '*\r\n' > "$W/audit_7/.gitignore"
+printf '*\n\n' > "$W/audit_8/.gitignore"
+printf '*\n' > "$H/outside/gitignore"
+ln -s ../../outside/gitignore "$W/audit_9/.gitignore"
+printf '*\n' > "$W/audit_10/.gitignore"
+ln -s ../../outside "$W/audit_10/out"
+ln -s audit_1 "$W/audit_11"
+printf 'x\n' > "$W/audit_12"
+printf '*\n' > "$W/audit_13/.gitignore"
+fgit -C "$W" add -f audit_13/.gitignore
+mkdir "$W/audit_15/.gitignore"
+printf '*\n' > "$W/audit_16/.gitignore"
+printf '*\n' > "$W/incident_1/.gitignore"
+dirs="audit_1 audit_2 audit_3 audit_4 audit_5 audit_6 audit_7 audit_8 audit_9 audit_10 audit_11 audit_12 audit_13 audit_14 audit_15 incident_1"
+if [ "$(id -u)" -ne 0 ]; then
+  mkdir "$W/audit_16/locked"
+  chmod 000 "$W/audit_16/locked"
+  dirs="$dirs audit_16"
+fi
+# said <file> <prefix>: the refusal line with its tool's prefix taken off, or "ok".
+said() { if [ -s "$1" ]; then sed -e "s/^$2//" "$1"; else printf 'ok'; fi; }
+for r in $dirs; do
+  ( cd "$W" && "$RUNDIR" check "$r" ) > "$T/a.out" 2> "$T/a.err" < /dev/null
+  [ $? -eq 0 ] && [ "$(cat "$T/a.out")" != "ok $r" ] && printf 'odd: %s\n' "$(cat "$T/a.out")" > "$T/a.err"
+  ( cd "$W" && "$SCAN" --contract=1 . --out "$r/prescan.json" ) > /dev/null 2> "$T/b.err" < /dev/null
+  eq "rundir.sh check and audit-scan --out agree on $r" \
+    "$(said "$T/b.err" 'audit-scan: refused: --out ')" "$(said "$T/a.err" 'rundir: refused: the run directory ')"
+done
+[ "$(id -u)" -ne 0 ] && chmod 700 "$W/audit_16/locked"
+for c in absent ok no-gitignore nul-gitignore link holds-link not-a-directory tracked database-a-directory; do
+  S="$T/store-$c"
+  mkdir -p "$S/wt" "$S/real"
+  fgit init -q "$S/wt"
+  case $c in
+    link) printf '*\n' > "$S/real/.gitignore"; ln -s ../real "$S/wt/.audit-memory" ;;
+    not-a-directory) printf 'x\n' > "$S/wt/.audit-memory" ;;
+    absent) ;;
+    *) mkdir "$S/wt/.audit-memory" ;;
+  esac
+  case $c in ok|holds-link|tracked|database-a-directory) printf '*\n' > "$S/wt/.audit-memory/.gitignore" ;; esac
+  case $c in
+    nul-gitignore) printf '*\000' > "$S/wt/.audit-memory/.gitignore" ;;
+    holds-link) ln -s ../../real "$S/wt/.audit-memory/out" ;;
+    tracked) fgit -C "$S/wt" add -f .audit-memory/.gitignore ;;
+    database-a-directory) mkdir "$S/wt/.audit-memory/audit.db" ;;
+  esac
+  ( cd "$S/wt" && "$RUNDIR" store ) > /dev/null 2> "$T/a.err" < /dev/null
+  ( cd "$S/wt" && "$MEM" warm --contract=1 --program-id VaultProg1111 ) > /dev/null 2> "$T/b.err" < /dev/null
+  eq "rundir.sh store and audit-mem agree on an in-tree store: $c" \
+    "$(said "$T/b.err" 'audit-mem: refused: ')" "$(said "$T/a.err" 'rundir: refused: ')"
+done
 
 # ---------------------------------------------------------------------------
 # 4. The documented forms.
