@@ -24,11 +24,11 @@ fixtures="$root/scripts/tests/fixtures/gha"
 work=$(mktemp -d "${TMPDIR:-/tmp}/gha-recipes.XXXXXX") || exit 1
 trap 'rm -rf "$work"' EXIT
 
-# install_fixtures <fixture dir> <tree>: the workflows into <tree>/.github/workflows/, and each composite action
-# in <fixture dir>/actions/ as <tree>/.github/actions/<name>/action.yml.
+# install_fixtures <fixture dir> <tree>: the workflows (.yml and .yaml) into <tree>/.github/workflows/, and each
+# composite action in <fixture dir>/actions/ as <tree>/.github/actions/<name>/action.yml.
 install_fixtures() {
   local a n
-  mkdir -p "$2/.github/workflows" && cp "$1"/*.yml "$2/.github/workflows/" || return 1
+  mkdir -p "$2/.github/workflows" && cp "$1"/*.yml "$1"/*.yaml "$2/.github/workflows/" || return 1
   for a in "$1"/actions/*.yml; do
     n=${a##*/}; n=${n%.yml}
     mkdir -p "$2/.github/actions/$n" && cp "$a" "$2/.github/actions/$n/action.yml" || return 1
@@ -102,7 +102,7 @@ IDS="R1 R2 R3 R4 R5 R6 R7 R8 K116-1 K139-1 K140-6"
 # Fixtures each recipe must flag (two-digit prefixes, ascending). Anything else is a mismatch.
 expected() {
   case "$1" in
-    R1) echo "01 08 10 16 40 55 56" ;;
+    R1) echo "01 08 10 16 40 55 56 58" ;;
     R2) echo "02 04" ;;
     R3) echo "03 12 13 17 25 26 27 28 46 47 48 49" ;;
     R4) echo "05 06 21 29 30 41" ;;
@@ -111,7 +111,7 @@ expected() {
     R7) echo "05 07 11 12 15 18 19 20 21 22 23 24 51 52 53" ;;
     R8) echo "01 08 11 14 33 34 54 57" ;;
     K116-1) echo "01 08 11 14 33 34 54 57" ;;
-    K139-1) echo "01 02 03 04 08 10 11 14 16 17 22 23 25 26 33 40 48 49 53 55 56" ;;
+    K139-1) echo "01 02 03 04 08 10 11 14 16 17 22 23 25 26 33 40 48 49 53 55 56 58 59" ;;
     K140-6) echo "35 36 37 38 39 42 43 44 45" ;;
   esac
 }
@@ -204,7 +204,7 @@ done
 
 # Every expected hit comes from a workflow line: no recipe flags the fixtures' comment lines on their own.
 mkdir -p "$work/comment-lines/actions"
-for f in "$fixtures"/*.yml "$fixtures"/actions/*.yml; do
+for f in "$fixtures"/*.yml "$fixtures"/*.yaml "$fixtures"/actions/*.yml; do
   sed -n '/^[[:space:]]*#/p' "$f" > "$work/comment-lines/${f#"$fixtures"/}"
 done
 install_fixtures "$work/comment-lines" "$work/comments" || exit 1
@@ -256,5 +256,5 @@ else
 fi
 
 if [ "$fail" -ne 0 ]; then echo "gha recipe test FAILED" >&2; exit 1; fi
-nfix=$(ls "$fixtures"/*.yml "$fixtures"/actions/*.yml | wc -l | tr -d ' ')
+nfix=$(ls "$fixtures"/*.yml "$fixtures"/*.yaml "$fixtures"/actions/*.yml | wc -l | tr -d ' ')
 echo "gha recipe test passed: $nrec recipes, $nfix fixtures, $ncopy copies, comment lines, file names, large inputs"
