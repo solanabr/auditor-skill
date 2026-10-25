@@ -446,22 +446,36 @@ settings
 # =================================================================================================
 # target.sh: the watchdog, signals and large output.
 # =================================================================================================
+# gone <pid>: that process is gone within 5 s. A killed process stays in the process table, and kill -0
+# still finds it, until it is reaped, which can lag on a loaded machine.
+gone() {
+  local i=0
+  [ -n "$1" ] || return 1
+  while kill -0 "$1" 2>/dev/null; do
+    [ "$i" -lt 50 ] || return 1
+    sleep 0.1
+    i=$((i + 1))
+  done
+}
+# The limits leave the stand-in a few seconds to start and fork its background process on a loaded machine.
 settings FAKE_SLEEP=60
+rm -f "$T/grandchild.pid"
 t0=$(date +%s)
-run "$TARGET" "$WT" AUDITOR_RUN_TIMEOUT=3 -- cargo-test --run audit_1 --src .
+run "$TARGET" "$WT" AUDITOR_RUN_TIMEOUT=5 -- cargo-test --run audit_1 --src .
 t1=$(date +%s)
 check "AUDITOR_RUN_TIMEOUT: a step past the limit is killed, exit 3 ($((t1 - t0)) s)" \
-  sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: cargo test: the run passed its 3-second limit (AUDITOR_RUN_TIMEOUT or --timeout) and was killed; log ' '$T/err' && [ $((t1 - t0)) -lt 30 ]"
+  sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: cargo test: the run passed its 5-second limit (AUDITOR_RUN_TIMEOUT or --timeout) and was killed; log ' '$T/err' && [ $((t1 - t0)) -lt 30 ]"
 gc=$(cat "$T/grandchild.pid" 2>/dev/null)
-check "... and so is the process the step started in the background" sh -c "[ -n '$gc' ] && ! kill -0 '$gc' 2>/dev/null"
+check "... and so is the process the step started in the background" gone "$gc"
 check "... and the scratch directory is gone" sh -c "[ '$RC' = 3 ] && [ -z \"\$(ls -A '$NT')\" ]"
-run "$TARGET" "$WT" -- cargo-test --run audit_1 --src . --timeout 2
-check "--timeout lowers the limit" sh -c "[ '$RC' = 3 ] && grep -q 'the run passed its 2-second limit' '$T/err'"
-check "... and ulimit -t follows it" in_blocks '^== cargo test' '^ulimit: [1-8] 4194304$'
+run "$TARGET" "$WT" -- cargo-test --run audit_1 --src . --timeout 4
+check "--timeout lowers the limit" sh -c "[ '$RC' = 3 ] && grep -q 'the run passed its 4-second limit' '$T/err'"
+check "... and ulimit -t follows it" in_blocks '^== cargo test' '^ulimit: ([1-9]|1[0-6]) 4194304$'
 settings FAKE_LEFTOVER=1
 run "$TARGET" "$WT" -- cargo-test --run audit_1 --src .
 lo=$(cat "$T/leftover.pid" 2>/dev/null)
-check "a process a step leaves behind is killed when the step ends" sh -c "[ '$RC' = 0 ] && [ -n '$lo' ] && sleep 1 && ! kill -0 '$lo' 2>/dev/null"
+gone "$lo"; lorc=$?
+check "a process a step leaves behind is killed when the step ends" sh -c "[ '$RC' = 0 ] && [ '$lorc' = 0 ]"
 settings FAKE_SLEEP=60
 rm -rf "$NT" "$T/calls" "$T/grandchild.pid"; mkdir -p "$NT"; : > "$T/calls"
 ( cd "$WT" && exec env -i HOME="$CLEANHOME" PATH="$FPATH" TMPDIR="$NT" "${SHELLS[0]}" "$TARGET" cargo-test --run audit_1 --src . ) \
@@ -475,8 +489,9 @@ wait "$bg"
 RC=$?
 t1=$(date +%s)
 gc=$(cat "$T/grandchild.pid" 2>/dev/null)
+gone "$gc"; gcrc=$?
 check "SIGTERM to target.sh stops the step at once ($((t1 - t0)) s), kills what it started, and removes the scratch directory" \
-  sh -c "[ '$RC' = 143 ] && [ $((t1 - t0)) -lt 15 ] && [ -n '$gc' ] && ! kill -0 '$gc' 2>/dev/null && [ -z \"\$(ls -A '$NT')\" ]"
+  sh -c "[ '$RC' = 143 ] && [ $((t1 - t0)) -lt 15 ] && [ '$gcrc' = 0 ] && [ -z \"\$(ls -A '$NT')\" ]"
 settings FAKE_BIG=17000000
 run "$TARGET" "$WT" -- cargo-test --run audit_1 --src .
 log=$(sed -n 's/.*; log \(audit_1\/exec\/cargo-test-[0-9]*[.]log\).*/\1/p' "$T/out")
