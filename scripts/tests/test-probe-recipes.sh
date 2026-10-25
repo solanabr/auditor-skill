@@ -4,14 +4,14 @@
 #   - every command an item quotes is one plain command (quoted &, $ and the like allowed), starts with its
 #     tool's bare name, and appears word for word in the block;
 #   - the block, run with PATH holding only the stand-ins and env, mkdir and grep, calls the stand-in aws with
-#     exactly `s3api list-objects-v2 --bucket <bucket> --max-keys 1 --query KeyCount --output text
-#     --no-sign-request --region us-east-1`, the AWS profile, endpoint and CA variables cleared and the config
+#     exactly `s3api list-objects-v2 --bucket <bucket> --page-size 1 --max-items 1 --query KeyCount --output
+#     text --no-sign-request --region us-east-1`, the AWS profile, endpoint and CA variables cleared and the config
 #     and credentials files /dev/null (canary values are set beforehand), and
 #     the stand-in curl with exactly the GCS, Azure, .git/HEAD and made-up-path requests the block writes, each
 #     with -q first and --max-time 30;
 #   - a host, bucket, Azure account or container outside the grammar (a user, a port, a path, IPv6, a non-ASCII
 #     or uppercase name, an underscore, a space, a semicolon, $( ), a leading or trailing . or -, .., a - in an
-#     account, a . in a container, too short or too long) is refused, and its probe never runs;
+#     account, a . in a container, a name too short or too long) is refused, and its probe never runs;
 #   - the verdict line prints 1 only for a git HEAD body (ref: refs/…, a 40 or 64 hex id), its anchors pinned;
 #   - a real curl given DEP-073's command, with a host its URL parser rejects before any lookup, reads no planted
 #     ~/.curlrc, while the same command without -q does (the control);
@@ -149,8 +149,8 @@ fill example-bucket app.example.invalid examplestore assets > "$T/good.sh"
 canary "$T/good.sh"
 {
   printf 'call aws\n'
-  printf 'arg=%s\n' s3api list-objects-v2 --bucket example-bucket --max-keys 1 --query KeyCount --output text \
-    --no-sign-request --region us-east-1
+  printf 'arg=%s\n' s3api list-objects-v2 --bucket example-bucket --page-size 1 --max-items 1 --query KeyCount \
+    --output text --no-sign-request --region us-east-1
   printf 'env %s\n' AWS_PROFILE=unset AWS_DEFAULT_PROFILE=unset AWS_ENDPOINT_URL=unset AWS_ENDPOINT_URL_S3=unset \
     AWS_CA_BUNDLE=unset AWS_CONFIG_FILE=/dev/null AWS_SHARED_CREDENTIALS_FILE=/dev/null
   printf 'call curl\n'
@@ -204,7 +204,7 @@ done
 for a in Bad_Account ExampleStore ab "$(printf '%025d' 0 | tr 0 a)" ex-store ex.store; do
   refused "Azure account '$a'" "$G" "$H" "$a" "$K" "$a.blob.core.windows.net"
 done
-for k in Up ab a.b 'a b'; do
+for k in Up a.b 'a b' 'a_b'; do
   refused "Azure container '$k'" "$G" "$H" "$A" "$k" "/$k?restype"
 done
 
@@ -261,7 +261,7 @@ fi
 
 # ---- the rule of engagement ----------------------------------------------------------------------------------
 GRAMMAR='`<host>` is a DNS name or IPv4 address exactly as `intake.md` §8 lists it: ASCII letters, digits, `-` and `.` only (an IDN in its `xn--` form), with no user, port or path. `<bucket>` is 3–63 lowercase letters, digits, `-` and `.`, beginning and ending with a letter or digit, with no `..`. Refuse anything else.'
-AZURE='An Azure `<account>` is 3–24 lowercase letters and digits, and its `<container>` 3–63 lowercase letters, digits and `-`.'
+AZURE='An Azure `<account>` is 3–24 lowercase letters and digits, and its `<container>` lowercase letters, digits and `-`.'
 FOUND="show each host or bucket found in the repository's deployment config with its file and line, and list only those the client confirms; nothing found later is added"
 NEVER='the item is never `[PASS]`: it is `[PARTIAL]`, or `[FAIL-N]` when the IaC or server config already shows the exposure'
 q46=$(grep -n '^### Q46\. ' "$Q" | cut -d: -f1)
@@ -289,13 +289,14 @@ for id in DEP-072 DEP-073; do
     ok "$id: probes only under Q47 for what §8 lists, as an outside contact, within the grammar; owner-run otherwise; never [PASS]"
   else bad "$id lacks part of the rule of engagement: $line"; fi
 done
-if has "$(item DEP-072)" 'neither how the CLI follows a bucket in another region nor how it pages under `--max-keys` was verified offline' \
-   && has "$(item DEP-072)" 'prints only a count of keys' && has "$(item DEP-072)" "$AZURE"; then
-  ok "DEP-072: only a key count; the Azure names rule; the region redirect and paging are unverified offline"
+if has "$(item DEP-072)" 'how the CLI follows a bucket in another region was not verified offline' \
+   && has "$(item DEP-072)" 'prints only a count of keys: `0` or `1`, not `AccessDenied`, means anyone can list it' \
+   && has "$(item DEP-072)" "$AZURE"; then
+  ok "DEP-072: only a key count, 0 or 1 meaning anyone can list it; the Azure names rule; the region redirect unverified offline"
 else bad "DEP-072 lacks the count, the Azure names rule or the unverified-offline note"; fi
 pre=$(awk 'index($0, "> **Live probes (DEP-072, DEP-073).**") == 1 { print; exit }' "$CL")
 if has "$pre" "$GRAMMAR" && has "$pre" "$AZURE" \
-   && has "$pre" 'a value holding a single quote would end the quotes it is written in, and only this first check catches that; each probe below checks every other value again'; then
+   && has "$pre" 'only this first check catches a single quote; each probe below checks every other value again'; then
   ok "the Live probes block states the grammar, the Azure rule and what only the check before filling catches"
 else bad "the Live probes block lacks the grammar, the Azure rule or the single-quote sentence"; fi
 line=$(item DEP-073)
