@@ -5,7 +5,8 @@
 #   K116-1   KV-116 Step 1 (AI-agent steps);
 #   K139-1   KV-139 Step 1 (externally triggerable workflows);
 #   K140-6   KV-140 Step 6 (Actions cache writers and restorers).
-# A recipe of two commands (R1) flags what the first lists and the second does not. The suite also checks that
+# A recipe of two commands (R1) flags what the first lists and the second does not; every other line of an R
+# recipe must be an echo of a quoted marker, which the suite does not run. The suite also checks that
 # every known-vector step that repeats an R recipe carries its lines byte for byte, as one block in the same
 # order, and that no recipe flags a fixture's comment lines. It runs R1 over file names that hold a space or a quote, and over large
 # inputs: 2,000 workflows, and two of about 1 MiB.
@@ -175,6 +176,10 @@ check() { # check <id> <command lines>
     fail=1
     return
   fi
+  case "$1" in R*)
+    bad=$(recipe_block "$1" | grep -v -e '^grep ' -e "^echo '[^'\$]*'\$" -e '^$')
+    if [ -n "$bad" ]; then echo "FAIL $1: a line that is neither a grep call nor an echo of a quoted marker: $bad"; fail=1; return; fi ;;
+  esac
   got=$(run_recipe "$work" "$2" | prefixes)
   want=$(expected "$1")
   if [ "$got" = "$want" ]; then
