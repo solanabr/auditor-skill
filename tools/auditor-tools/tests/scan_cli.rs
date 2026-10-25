@@ -115,6 +115,97 @@ fn skips_a_file_nested_or_chained_too_deeply_and_scans_the_rest_in_time() {
 }
 
 #[test]
+fn skips_each_closure_chain_in_time() {
+    let wt = Wt::repo();
+    let shapes = [
+        (
+            "pairs",
+            format!("pub fn f() {{ let x = {}1; }}\n", "|a, b| ".repeat(200_000)),
+        ),
+        (
+            "moves",
+            format!(
+                "pub fn f() {{ let x = {}1; }}\n",
+                "move |a, b| ".repeat(150_000)
+            ),
+        ),
+        (
+            "calls",
+            format!("pub fn f() {{ g({}1) }}\n", "|a, b| ".repeat(150_000)),
+        ),
+        (
+            "typed",
+            format!(
+                "pub fn f() {{ let x = {}1; }}\n",
+                "|a: u8, b: u8| ".repeat(100_000)
+            ),
+        ),
+        (
+            "tuples",
+            format!(
+                "pub fn f() {{ let x = {}1; }}\n",
+                "|(a, b), c| ".repeat(100_000)
+            ),
+        ),
+    ];
+    for (dir, text) in &shapes {
+        wt.write(&format!("src/{dir}/x.rs"), text.as_bytes());
+        let started = std::time::Instant::now();
+        let report = json(&run(BIN, &wt.dir, &[&format!("src/{dir}")]));
+        let took = started.elapsed();
+        assert!(took.as_secs_f64() < 2.0, "{dir} took {took:?}");
+        assert_eq!(report["files_scanned"], 0, "{dir}");
+        assert_eq!(
+            skipped(&report),
+            [(
+                format!("src/{dir}/x.rs"),
+                "nested or chained too deeply to parse".into()
+            )],
+            "{dir}"
+        );
+    }
+    wt.write(
+        "src/ok/x.rs",
+        b"fn ok() { let f = |a, b| a + b; let g = move |(a, b), c| a; h(|a, b| a, |c, d| d); }\n",
+    );
+    let report = json(&run(BIN, &wt.dir, &["src/ok"]));
+    assert_eq!(report["files_scanned"], 1);
+}
+
+#[test]
+fn reads_an_item_after_any_number_of_doc_comments_and_attributes() {
+    let wt = Wt::repo();
+    let docs = format!(
+        "{}pub fn documented() {{}}\n",
+        "/// a line of documentation\n".repeat(12_000)
+    );
+    let attrs = format!(
+        "{}pub fn attributed() {{}}\n",
+        "#[allow(dead_code)]\n".repeat(30_000)
+    );
+    // An attribute inside an expression starts no item: the chain goes on.
+    let inside = format!(
+        "fn f() {{ let x = 1{}; }}\n",
+        " + #[a] #[a] 1".repeat(5_000)
+    );
+    wt.write("src/docs.rs", docs.as_bytes());
+    wt.write("src/attrs.rs", attrs.as_bytes());
+    wt.write("src/inside.rs", inside.as_bytes());
+    let report = json(&run(BIN, &wt.dir, &["src"]));
+    assert_eq!(report["files_scanned"], 2);
+    let mut found = files(&report, "functions");
+    found.sort();
+    assert_eq!(found, ["src/attrs.rs", "src/docs.rs"]);
+    assert_eq!(
+        skipped(&report),
+        [(
+            "src/inside.rs".into(),
+            "nested or chained too deeply to parse".into()
+        )]
+    );
+}
+
+#[test]
 fn renders_the_snippets_of_a_long_chain_in_time() {
     let wt = Wt::repo();
     let sum = format!("fn f() {{ let x = 1{}; }}\n", " + 1".repeat(9000));

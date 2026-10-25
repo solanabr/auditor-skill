@@ -32,10 +32,11 @@ const SNIPPET_MAX: usize = 80;
 pub const MAX_DEPTH: usize = 256;
 
 /// The longest chain of tokens a file may hold before it is not parsed: the
-/// tokens since the last `;`, the last `,` outside an unclosed `<`, an inner
-/// attribute, or the start of an item or statement after a block, counted on
-/// through every group they are nested in. syn's tree nests at most one level a
-/// token along such a chain.
+/// tokens since the last `;`, the last `,` outside an unclosed `<` and outside a
+/// closure's parameters, an attribute that starts an item, a statement or a field,
+/// or the start of an item or statement after a block, counted on through every
+/// group they are nested in. syn's tree nests at most one level a token along such
+/// a chain.
 pub const MAX_CHAIN: usize = 20_000;
 
 /// Directory nesting below the scanned directory past which the walk does not go:
@@ -542,6 +543,10 @@ struct Level {
     run: usize,
     /// `<` at this level that no `>` has closed since the chain's last end.
     angle: usize,
+    /// Whether a closure's parameters are open: a `|` that is not the second of
+    /// `||` opens or closes them, `;` and `=>` close them. A `,` between them ends
+    /// no chain, since syn nests each closure in the one before it.
+    params: bool,
     /// The last token, when it is punctuation joined to this one.
     joint: Option<char>,
     /// Whether the last token was a brace group.
@@ -549,8 +554,13 @@ struct Level {
     /// How much of an inner attribute's `#!` the last tokens were: 1 for `#`, 2
     /// for `#` then `!`.
     attr: u8,
-    /// Whether the group is an inner attribute's `[…]`, which ends the chain of
-    /// the level around it.
+    /// Whether the last token was a `#` that started the chain: an attribute
+    /// there starts an item, a statement or a field.
+    lead: bool,
+    /// Whether the group is an inner attribute's `[…]`, or the `[…]` of an outer
+    /// one that starts the chain, either of which ends the chain of the level
+    /// around it: syn keeps an item's attributes in a list beside it, and does
+    /// not nest it in them.
     ends_chain: bool,
 }
 
@@ -566,9 +576,11 @@ impl Level {
             base,
             run: 0,
             angle: 0,
+            params: false,
             joint: None,
             after_brace: false,
             attr: 0,
+            lead: false,
             ends_chain: false,
         }
     }
@@ -589,11 +601,15 @@ impl Tokens {
     /// The stream laid out flat, or `None` when a group nests deeper than
     /// `MAX_DEPTH` or a chain runs past `MAX_CHAIN` tokens. A chain ends at `;`,
     /// at `,` with no `<` open since its start (inside `<…>`, a `,` separates
-    /// generic arguments that nest on), after an inner attribute (`#![…]`, found
-    /// only before items and statements), and, after a block, at a token that can
-    /// only start another item or statement (`starts_anew`); `->` closes no `<`,
-    /// `=>` closes every one, and `<=` opens none. Each token of a group counts
-    /// toward the chain of every group around it, from where that group opened.
+    /// generic arguments that nest on) and no closure's parameters open (`|a, b|
+    /// |a, b| …` nests each closure in the one before), after an inner attribute
+    /// (`#![…]`, found only before items and statements) and after an outer one
+    /// that starts the chain (`#[…]` or a doc comment before an item, a
+    /// statement or a field), and, after a block, at a token that can only start
+    /// another item or statement (`starts_anew`); `->` closes no `<`, `=>` closes
+    /// every one and the parameters, and `<=` opens none. Each token of a group
+    /// counts toward the chain of every group around it, from where that group
+    /// opened.
     fn lay_out(stream: TokenStream) -> Option<Tokens> {
         let mut tokens = Tokens {
             atoms: Vec::new(),
@@ -624,6 +640,7 @@ impl Tokens {
             }
             let joint = level.joint.take();
             let attr = std::mem::take(&mut level.attr);
+            let lead = std::mem::take(&mut level.lead);
             if let TokenTree::Punct(p) = &tt {
                 let c = p.as_char();
                 tokens.push_token(&tt);
@@ -635,21 +652,29 @@ impl Tokens {
                     ('!', 1) => 2,
                     _ => 0,
                 };
+                level.lead = c == '#' && level.run == 0;
                 match c {
                     ';' => {
                         level.run = 0;
                         level.angle = 0;
+                        level.params = false;
                         continue;
                     }
-                    ',' if level.angle == 0 => {
+                    ',' if level.angle == 0 && !level.params => {
                         level.run = 0;
                         continue;
+                    }
+                    '|' if p.spacing() == Spacing::Alone && joint != Some('|') => {
+                        level.params = !level.params;
                     }
                     '<' => level.angle += 1,
                     '=' if joint == Some('<') => level.angle = level.angle.saturating_sub(1),
                     '>' => match joint {
                         Some('-') => {}
-                        Some('=') => level.angle = 0,
+                        Some('=') => {
+                            level.angle = 0;
+                            level.params = false;
+                        }
                         _ => level.angle = level.angle.saturating_sub(1),
                     },
                     _ => {}
@@ -670,7 +695,8 @@ impl Tokens {
                         Some((g.span_close().start(), g.delimiter())),
                         level.base + level.run,
                     );
-                    inner.ends_chain = attr == 2 && g.delimiter() == Delimiter::Bracket;
+                    inner.ends_chain =
+                        g.delimiter() == Delimiter::Bracket && (attr == 2 || (attr == 1 && lead));
                     around.push(std::mem::replace(&mut level, inner));
                 }
                 TokenTree::Punct(_) => {}
@@ -1854,6 +1880,46 @@ mod tests {
         assert!(
             !laid_out(&format!("const X: u8 = {outer}1;")),
             "an outer attribute ends nothing"
+        );
+    }
+
+    #[test]
+    fn a_comma_in_a_closures_parameters_ends_no_chain() {
+        let pairs = "|a, b| ".repeat(MAX_CHAIN / 5 + 1);
+        assert!(
+            !laid_out(&format!("fn f() {{ let x = {pairs}1; }}")),
+            "each closure nests in the one before"
+        );
+        let closures = "|a, b| a, ".repeat(MAX_CHAIN);
+        assert!(
+            laid_out(&format!("const X: [u8; 1] = [{closures}];")),
+            "a , after a closure's body ends the chain"
+        );
+        let ors = "a || b, ".repeat(MAX_CHAIN);
+        assert!(
+            laid_out(&format!("const X: [bool; 1] = [{ors}];")),
+            "|| opens no parameters"
+        );
+        let arms = "A | B => 1, ".repeat(MAX_CHAIN / 2);
+        assert!(
+            laid_out(&format!("fn f() {{ match x {{ {arms} }} }}")),
+            "=> closes them"
+        );
+    }
+
+    #[test]
+    fn an_attribute_that_starts_an_item_ends_the_chain() {
+        let docs = "/// a line\n".repeat(MAX_CHAIN);
+        assert!(laid_out(&format!("{docs}fn f() {{}}")), "before an item");
+        let attrs = "#[allow(dead_code)] ".repeat(MAX_CHAIN);
+        assert!(laid_out(&format!("{attrs}fn f() {{}}")), "before an item");
+        assert!(
+            laid_out(&format!("fn f() {{ {attrs}let x = 1; }}")),
+            "before a statement"
+        );
+        assert!(
+            laid_out(&format!("struct S {{ a: u8, {attrs}b: u8 }}")),
+            "before a field"
         );
     }
 
