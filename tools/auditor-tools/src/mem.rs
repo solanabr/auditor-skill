@@ -762,9 +762,10 @@ pub struct FindingRow {
     pub status: String,
 }
 
-/// `regressions`' answer: the findings of a program whose status is
-/// `REGRESSED`, the most severe first and the newest first among equals, at most
-/// `ROWS` of them, and how many more there are.
+/// `regressions`' answer: of the findings of a program whose status is
+/// `REGRESSED`, the `ROWS` seen most recently (by their newest occurrence), the
+/// most severe first and the most recently seen first among equals, and how many
+/// more there are.
 #[derive(Debug, Serialize, Default)]
 pub struct Regressions {
     pub regressions: Vec<FindingRow>,
@@ -779,9 +780,13 @@ pub fn regressions(conn: &Connection, program_id: &str) -> Result<Regressions> {
         |r| r.get(0),
     )?;
     let mut stmt = conn.prepare(
-        "SELECT finding_id, program_id, severity, root_cause, code_signature, title, status \
-         FROM findings WHERE program_id = ?1 AND status = 'REGRESSED' \
-         ORDER BY severity DESC, rowid DESC LIMIT ?2",
+        "SELECT finding_id, program_id, severity, root_cause, code_signature, title, status FROM \
+         (SELECT f.finding_id, f.program_id, f.severity, f.root_cause, f.code_signature, f.title, \
+         f.status, max(o.rowid) AS seen, f.rowid AS made \
+         FROM findings f LEFT JOIN occurrences o ON o.finding_id = f.finding_id \
+         WHERE f.program_id = ?1 AND f.status = 'REGRESSED' \
+         GROUP BY f.rowid ORDER BY seen DESC, made DESC LIMIT ?2) \
+         ORDER BY severity DESC, seen DESC, made DESC",
     )?;
     let rows = stmt
         .query_map(params![program_id, ROWS], |r| {

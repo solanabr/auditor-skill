@@ -435,8 +435,26 @@ fn warm_and_regressions_hold_the_newest_rows_and_count_the_rest() {
     let regs = mem::regressions(&conn, PROG).unwrap();
     assert_eq!(regs.regressions.len(), 200);
     assert_eq!(regs.truncated, 30);
+    let kept: std::collections::BTreeSet<String> = regs
+        .regressions
+        .iter()
+        .map(|r| r.code_signature.clone())
+        .collect();
+    let newest: std::collections::BTreeSet<String> =
+        (30..230).map(|i| format!("sig {i}")).collect();
+    assert_eq!(
+        kept, newest,
+        "the 200 seen most recently, not the most severe"
+    );
     assert!(
-        regs.regressions[0].severity >= regs.regressions[199].severity,
+        regs.regressions
+            .windows(2)
+            .all(|w| w[0].severity >= w[1].severity),
         "the most severe first"
     );
+    assert_eq!(
+        regs.regressions[0].code_signature, "sig 229",
+        "the most recently seen first among equals"
+    );
+    assert_eq!(regs.regressions[199].code_signature, "sig 30");
 }
