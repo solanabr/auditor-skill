@@ -869,6 +869,10 @@ pub const PARSE_STDIN: &str = "--internal-parse-stdin";
 /// How long the child may take to answer for one file before it is killed.
 pub const PARSE_TIME: Duration = Duration::from_secs(10);
 
+/// The longest answer the child may give for one file; a longer one is refused,
+/// and the child killed.
+pub const MAX_ANSWER: usize = 32 << 20;
+
 /// The executable this process runs from, every link resolved: the binary a
 /// child of audit-scan is started from.
 pub fn own_exe() -> io::Result<PathBuf> {
@@ -975,7 +979,8 @@ fn stop(mut child: Child) {
 /// The child's answer to `frame`: `frame` written to its stdin while its stdout is
 /// read, each as it is ready, and the bytes after the answer's 8-byte length
 /// returned once they are all in. `None` past `deadline`, when its stdin or stdout
-/// closes first, or when it says more than its answer.
+/// closes first, when the answer would be longer than `MAX_ANSWER`, or when it
+/// says more than its answer.
 fn exchange(child: &mut Child, frame: &[u8], deadline: Instant) -> Option<Vec<u8>> {
     let stdin = child.stdin.as_mut()?;
     let stdout = child.stdout.as_mut()?;
@@ -985,6 +990,9 @@ fn exchange(child: &mut Child, frame: &[u8], deadline: Instant) -> Option<Vec<u8
     loop {
         if let Some(head) = got.get(..8) {
             let len = usize::try_from(u64::from_le_bytes(head.try_into().ok()?)).ok()?;
+            if len > MAX_ANSWER {
+                return None;
+            }
             let whole = len.checked_add(8)?;
             if got.len() > whole || (got.len() == whole && sent < frame.len()) {
                 return None;
@@ -1123,6 +1131,21 @@ mod tests {
             );
         }
         assert_eq!(answer("/nonexistent/parser", &[], b"x", ten), None);
+    }
+
+    #[test]
+    fn an_answer_longer_than_32_mib_is_refused_at_once() {
+        // 32 MiB + 1, then nothing: refused on its length, not at the deadline.
+        let script = r"printf '\001\000\000\002\000\000\000\000'; exec /bin/sleep 30";
+        let start = Instant::now();
+        let out = answer("/bin/sh", &["-c", script], b"x", Duration::from_secs(10));
+        assert_eq!(out, None);
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            start.elapsed()
+        );
+        assert_eq!(MAX_ANSWER, 32 << 20);
     }
 
     #[test]

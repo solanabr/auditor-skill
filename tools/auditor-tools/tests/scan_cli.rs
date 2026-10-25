@@ -267,6 +267,53 @@ fn its_child_answers_each_file_in_a_frame_and_names_none() {
 }
 
 #[test]
+#[cfg_attr(
+    debug_assertions,
+    ignore = "a debug build takes about the 10 s a file is given to parse this one"
+)]
+fn lists_at_most_twenty_thousand_items_a_file() {
+    let wt = Wt::repo();
+    // 69 statements of 19,990 indexes each: 4,138,988 bytes, 1,379,310 index sites.
+    let statement = format!("    let x = a{};\n", "[0]".repeat(19_990));
+    let amp = format!("pub fn f(a: &[u8]) {{\n{}}}\n", statement.repeat(69));
+    assert_eq!(amp.len(), 4_138_988);
+    wt.write("src/amp.rs", amp.as_bytes());
+    wt.write("src/lib.rs", b"fn ok() { let y = v[1]; }\n");
+    let out = run(BIN, &wt.dir, &["src"]);
+    let report = json(&out);
+    assert!(out.stdout.len() < 4 << 20, "{} bytes", out.stdout.len());
+    assert_eq!(report["files_scanned"], 2);
+    let from = |key: &str, file: &str| files(&report, key).iter().filter(|f| *f == file).count();
+    let listed: usize = [
+        "instructions",
+        "accounts_structs",
+        "pdas",
+        "arithmetic_sites",
+        "panic_sites",
+        "unsafe_blocks",
+        "cpi_sites",
+        "remaining_accounts_sites",
+        "functions",
+    ]
+    .iter()
+    .map(|key| from(key, "src/amp.rs"))
+    .sum();
+    assert_eq!(listed, 20_000);
+    assert_eq!(
+        from("panic_sites", "src/lib.rs"),
+        1,
+        "the next file is listed whole"
+    );
+    assert_eq!(
+        skipped(&report),
+        [(
+            "src/amp.rs".into(),
+            "lists only the first 20,000 sites".into()
+        )]
+    );
+}
+
+#[test]
 fn renders_the_snippets_of_a_long_chain_in_time() {
     let wt = Wt::repo();
     let sum = format!("fn f() {{ let x = 1{}; }}\n", " + 1".repeat(9000));

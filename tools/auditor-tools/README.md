@@ -98,6 +98,14 @@ a signal or takes more than 10 seconds, is listed as `the parser could not
 finish`; that child is killed, the next file goes to a new one, and the scan goes
 on. The child reads and writes nothing else.
 
+A report has bounds. One file lists at most 20,000 items (sites, functions,
+instructions with their arguments, accounts structs with their fields, PDAs); a
+file with more is in `skipped` as `lists only the first 20,000 sites`, after the
+ones listed. The child's answer for one file may be 32 MiB at most (a longer one is
+refused, and the file skipped as the parser could not finish), and the whole report
+about 256 MiB: the file that would take it past that, and each file after it, is in
+`skipped` as `not parsed: the report is full`.
+
 syn's parser, and the walk of its tree, recurse once for each level the tree
 nests, so the child lexes a file first (`proc-macro2`'s lexer does not recurse) and
 does not parse it, but answers `nested or chained too deeply to parse`, when its

@@ -1,6 +1,6 @@
 //! audit-scan's walk with parsers that die and hang: the file a parser does not
-//! finish is skipped, the next file goes to a new child, and the scan goes on.
-//! One test, since it enters the tree it scans.
+//! finish is skipped, the next file goes to a new child, and the scan goes on;
+//! and with a report that fills up. One test, since it enters the tree it scans.
 
 mod common;
 
@@ -31,15 +31,19 @@ fn a_file_whose_parser_dies_or_hangs_is_skipped_and_the_scan_goes_on() {
     );
     let mut hangs = Parser::with(Path::new("/bin/sleep"), &[OsStr::new("30")]);
     let started = Instant::now();
-    let report = scan_path_with(Path::new("src"), &mut |bytes| {
-        if bytes.starts_with(b"// dies") {
-            dies.parse(bytes, PARSE_TIME)
-        } else if bytes.starts_with(b"// hangs") {
-            hangs.parse(bytes, Duration::from_secs(1))
-        } else {
-            real.parse(bytes, PARSE_TIME)
-        }
-    });
+    let report = scan_path_with(
+        Path::new("src"),
+        auditor_tools::scan::MAX_REPORT,
+        &mut |bytes| {
+            if bytes.starts_with(b"// dies") {
+                dies.parse(bytes, PARSE_TIME)
+            } else if bytes.starts_with(b"// hangs") {
+                hangs.parse(bytes, Duration::from_secs(1))
+            } else {
+                real.parse(bytes, PARSE_TIME)
+            }
+        },
+    );
     let took = started.elapsed();
     assert!(
         took >= Duration::from_secs(1) && took < Duration::from_secs(8),
@@ -72,4 +76,24 @@ fn a_file_whose_parser_dies_or_hangs_is_skipped_and_the_scan_goes_on() {
         .collect();
     assert_eq!(panics, [("unwrap", "src/d.rs"), ("expect", "src/f.rs")]);
     assert_eq!(report.arithmetic_sites[0].file, "src/a.rs");
+
+    // A report has a cap: the file that would take it past the cap, and each file
+    // after it, is not parsed.
+    wt.write("cap/a.rs", b"fn a() {}\n");
+    let sums = format!("fn b() {{ {} }}\n", "let x = 1 + 2; ".repeat(1_000));
+    wt.write("cap/b.rs", sums.as_bytes());
+    wt.write("cap/c.rs", b"fn c() {}\n");
+    let report = scan_path_with(Path::new("cap"), 10_000, &mut |bytes| {
+        real.parse(bytes, PARSE_TIME)
+    });
+    assert_eq!(report.files_scanned, 1);
+    assert_eq!(report.functions.len(), 1);
+    assert_eq!(report.functions[0].file, "cap/a.rs");
+    let skipped: Vec<(&str, &str)> = report
+        .skipped
+        .iter()
+        .map(|s| (s.file.as_str(), s.reason.as_str()))
+        .collect();
+    let full = "not parsed: the report is full";
+    assert_eq!(skipped, [("cap/b.rs", full), ("cap/c.rs", full)]);
 }

@@ -32,6 +32,17 @@ use crate::confine::{self, is_run_dir_name, os_message, MAX_FILE};
 
 const SNIPPET_MAX: usize = 80;
 
+/// The most items one file may list (sites, functions, instructions with their
+/// arguments, accounts structs with their fields, PDAs); past them the file is in
+/// `skipped` as listing only the first ones.
+const MAX_SITES: usize = 20_000;
+const LISTS_ONLY_SOME: &str = "lists only the first 20,000 sites";
+const _: () = assert!(MAX_SITES == 20_000, "LISTS_ONLY_SOME names MAX_SITES");
+
+/// The most a scan's report may hold, about as it prints; past it each further
+/// file is in `skipped` as not parsed.
+pub const MAX_REPORT: usize = 256 << 20;
+
 /// Group nesting (`(`, `[` and `{`) past which a file is not parsed.
 pub const MAX_DEPTH: usize = 256;
 
@@ -187,6 +198,20 @@ pub struct FunctionDef {
 }
 
 impl ScanReport {
+    /// How many entries name their file: the report spells its name in each.
+    fn items(&self) -> usize {
+        self.instructions.len()
+            + self.accounts_structs.len()
+            + self.pdas.len()
+            + self.arithmetic_sites.len()
+            + self.panic_sites.len()
+            + self.unsafe_blocks.len()
+            + self.cpi_sites.len()
+            + self.remaining_accounts_sites.len()
+            + self.functions.len()
+            + self.skipped.len()
+    }
+
     /// Adds the report of one file, made with the file named `""`, under `label`.
     fn absorb(&mut self, one: ScanReport, label: &str) {
         self.files_scanned += one.files_scanned;
@@ -255,30 +280,39 @@ fn relabel<T>(into: &mut Vec<T>, from: Vec<T>, label: &str, file: fn(&mut T) -> 
 /// `confine::PARSE_TIME`.
 pub fn scan_path(root: &Path) -> io::Result<ScanReport> {
     let mut parser = confine::Parser::new(&confine::own_exe()?);
-    Ok(scan_path_with(root, &mut |bytes| {
+    Ok(scan_path_with(root, MAX_REPORT, &mut |bytes| {
         parser.parse(bytes, confine::PARSE_TIME)
     }))
 }
 
 /// Scan every `*.rs` file under the directory `root`, each file's bytes handed to
 /// `parse`, which gives the report of that one file as `parse_stdin` answers it,
-/// or `None` when the parser could not finish.
+/// or `None` when the parser could not finish. The report holds about `cap` bytes
+/// at most: the file that would take it past them, and each file after it, is in
+/// `skipped` as not parsed.
 ///
 /// The walk opens each directory from its parent's descriptor without following a
 /// link, so a name swapped for a link while it runs is not entered, and reads only
 /// regular files with one name of at most 4 MiB, each opened the same way. Every
 /// link it meets, every directory nested more than `MAX_WALK` levels down, and
 /// every `*.rs` file it does not parse (not regular, too large, unreadable, not
-/// UTF-8, nested or chained too deeply, not Rust that `syn` parses, or one the
-/// parser could not finish) is listed in `skipped`. Directories named `target`,
-/// `.git` and `node_modules` below `root` are pruned, and so are the run
-/// directories and `.audit-memory/` when `root` is the working directory. Entries
-/// are visited in byte order of their names.
-pub fn scan_path_with(root: &Path, parse: &mut dyn FnMut(&[u8]) -> Option<Vec<u8>>) -> ScanReport {
+/// UTF-8, nested or chained too deeply, not Rust that `syn` parses, one the parser
+/// could not finish, or one past the report's cap) is listed in `skipped`.
+/// Directories named `target`, `.git` and `node_modules` below `root` are pruned,
+/// and so are the run directories and `.audit-memory/` when `root` is the working
+/// directory. Entries are visited in byte order of their names.
+pub fn scan_path_with(
+    root: &Path,
+    cap: usize,
+    parse: &mut dyn FnMut(&[u8]) -> Option<Vec<u8>>,
+) -> ScanReport {
     let mut scan = Scan {
         report: ScanReport::new(root.display().to_string(), 0),
         top: root == Path::new("."),
         parse,
+        size: 0,
+        cap,
+        full: false,
     };
     match open_root(root) {
         Ok(dir) => scan.dir(&dir, root, 0),
@@ -300,11 +334,15 @@ fn open_root(root: &Path) -> io::Result<OwnedFd> {
 }
 
 /// A scan under way: the report so far, whether the root is the working
-/// directory, and what parses a file.
+/// directory, what parses a file, and the report's size, about as it prints,
+/// against its cap.
 struct Scan<'p> {
     report: ScanReport,
     top: bool,
     parse: &'p mut dyn FnMut(&[u8]) -> Option<Vec<u8>>,
+    size: usize,
+    cap: usize,
+    full: bool,
 }
 
 impl Scan<'_> {
@@ -362,15 +400,31 @@ impl Scan<'_> {
         }
     }
 
-    /// A `*.rs` file, its bytes parsed by `parse`, its report added under its path.
+    /// A `*.rs` file, its bytes parsed by `parse`, its report added under its path
+    /// while the report has room for it.
     fn file(&mut self, dir: &OwnedFd, name: &[u8], path: &Path) {
+        const FULL: &str = "not parsed: the report is full";
+        if self.full {
+            return self.skip(path, FULL);
+        }
         let one = read_bytes(dir.as_raw_fd(), name).and_then(|bytes| {
             (self.parse)(&bytes)
-                .and_then(|out| serde_json::from_slice::<ScanReport>(&out).ok())
+                .and_then(|out| Some((out.len(), serde_json::from_slice::<ScanReport>(&out).ok()?)))
                 .ok_or_else(|| "the parser could not finish".to_string())
         });
         match one {
-            Ok(one) => self.report.absorb(one, &path.display().to_string()),
+            Ok((len, one)) => {
+                let label = path.display().to_string();
+                let shown = serde_json::to_string(&label)
+                    .map_or(label.len(), |j| confine::json_text(j).len());
+                let size = len.saturating_add(one.items().saturating_mul(shown));
+                if self.size.saturating_add(size) > self.cap {
+                    self.full = true;
+                    return self.skip(path, FULL);
+                }
+                self.size += size;
+                self.report.absorb(one, &label);
+            }
             Err(reason) => self.skip(path, reason),
         }
     }
@@ -1300,6 +1354,9 @@ struct FileVisitor<'t> {
     /// a chain's are found once for all its links.
     firsts: HashMap<usize, Span>,
     lasts: HashMap<usize, Span>,
+    /// The items listed so far, and whether more were left out (`room`).
+    listed: usize,
+    full: bool,
     /// Depth of `#[program]` module nesting we are currently inside.
     program_depth: usize,
     instructions: Vec<Instruction>,
@@ -1320,6 +1377,8 @@ impl<'t> FileVisitor<'t> {
             tokens,
             firsts: HashMap::new(),
             lasts: HashMap::new(),
+            listed: 0,
+            full: false,
             program_depth: 0,
             instructions: Vec::new(),
             accounts_structs: Vec::new(),
@@ -1333,7 +1392,25 @@ impl<'t> FileVisitor<'t> {
         }
     }
 
+    /// Whether `n` more items may be listed: `MAX_SITES` a file. Past them
+    /// nothing more is listed, and the file is in `skipped` as listing only the
+    /// first ones.
+    fn room(&mut self, n: usize) -> bool {
+        if self.full || self.listed + n > MAX_SITES {
+            self.full = true;
+            return false;
+        }
+        self.listed += n;
+        true
+    }
+
     fn drain_into(self, report: &mut ScanReport) {
+        if self.full {
+            report.skipped.push(Skipped {
+                file: self.file.clone(),
+                reason: LISTS_ONLY_SOME.to_string(),
+            });
+        }
         report.instructions.extend(self.instructions);
         report.accounts_structs.extend(self.accounts_structs);
         report.pdas.extend(self.pdas);
@@ -1393,6 +1470,9 @@ impl<'t> FileVisitor<'t> {
         let name = func.sig.ident.to_string();
         let line = func.sig.ident.span().start().line;
         let args = collect_instruction_args(&func.sig);
+        if !self.room(1 + args.len()) {
+            return;
+        }
         self.instructions.push(Instruction {
             name,
             file: self.file.clone(),
@@ -1405,6 +1485,7 @@ impl<'t> FileVisitor<'t> {
         let struct_name = item.ident.to_string();
         let line = item.ident.span().start().line;
         let mut fields = Vec::new();
+        let mut pdas = Vec::new();
 
         if let syn::Fields::Named(named) = &item.fields {
             for field in &named.named {
@@ -1416,7 +1497,7 @@ impl<'t> FileVisitor<'t> {
                 let (constraints, seeds) = parse_account_attr(&field.attrs);
 
                 if !seeds.is_empty() {
-                    self.pdas.push(Pda {
+                    pdas.push(Pda {
                         struct_name: struct_name.clone(),
                         field: field_name.clone(),
                         seeds: seeds.clone(),
@@ -1434,6 +1515,10 @@ impl<'t> FileVisitor<'t> {
             }
         }
 
+        if !self.room(1 + fields.len() + pdas.len()) {
+            return;
+        }
+        self.pdas.extend(pdas);
         self.accounts_structs.push(AccountsStruct {
             name: struct_name,
             file: self.file.clone(),
@@ -1444,6 +1529,19 @@ impl<'t> FileVisitor<'t> {
 }
 
 impl<'ast> Visit<'ast> for FileVisitor<'_> {
+    // Once the file has listed all it may (`room`), nothing below is visited.
+    fn visit_item(&mut self, node: &'ast syn::Item) {
+        if !self.full {
+            syn::visit::visit_item(self, node);
+        }
+    }
+
+    fn visit_expr(&mut self, node: &'ast Expr) {
+        if !self.full {
+            syn::visit::visit_expr(self, node);
+        }
+    }
+
     fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {
         let is_program = has_attr_path(&node.attrs, "program");
         if is_program {
@@ -1471,22 +1569,26 @@ impl<'ast> Visit<'ast> for FileVisitor<'_> {
     }
 
     fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
-        self.functions.push(FunctionDef {
-            name: node.sig.ident.to_string(),
-            file: self.file.clone(),
-            line: node.sig.ident.span().start().line,
-            is_pub: matches!(node.vis, syn::Visibility::Public(_)),
-        });
+        if self.room(1) {
+            self.functions.push(FunctionDef {
+                name: node.sig.ident.to_string(),
+                file: self.file.clone(),
+                line: node.sig.ident.span().start().line,
+                is_pub: matches!(node.vis, syn::Visibility::Public(_)),
+            });
+        }
         syn::visit::visit_item_fn(self, node);
     }
 
     fn visit_impl_item_fn(&mut self, node: &'ast syn::ImplItemFn) {
-        self.functions.push(FunctionDef {
-            name: node.sig.ident.to_string(),
-            file: self.file.clone(),
-            line: node.sig.ident.span().start().line,
-            is_pub: matches!(node.vis, syn::Visibility::Public(_)),
-        });
+        if self.room(1) {
+            self.functions.push(FunctionDef {
+                name: node.sig.ident.to_string(),
+                file: self.file.clone(),
+                line: node.sig.ident.span().start().line,
+                is_pub: matches!(node.vis, syn::Visibility::Public(_)),
+            });
+        }
         syn::visit::visit_impl_item_fn(self, node);
     }
 
@@ -1504,7 +1606,7 @@ impl<'ast> Visit<'ast> for FileVisitor<'_> {
             syn::BinOp::DivAssign(_) => Some("/="),
             _ => None,
         };
-        if let Some(op) = op {
+        if let Some(op) = op.filter(|_| self.room(1)) {
             let first = attrs_first(&node.attrs).unwrap_or_else(|| self.first(&node.left));
             let last = self.last(&node.right);
             let snippet = self.snippet(node, first, last);
@@ -1520,7 +1622,7 @@ impl<'ast> Visit<'ast> for FileVisitor<'_> {
 
     fn visit_expr_method_call(&mut self, node: &'ast syn::ExprMethodCall) {
         let method = node.method.to_string();
-        if method == "unwrap" || method == "expect" {
+        if (method == "unwrap" || method == "expect") && self.room(1) {
             let first = attrs_first(&node.attrs).unwrap_or_else(|| self.first(&node.receiver));
             let snippet = self.snippet(node, first, node.paren_token.span.close());
             self.panic_sites.push(PanicSite {
@@ -1534,21 +1636,23 @@ impl<'ast> Visit<'ast> for FileVisitor<'_> {
     }
 
     fn visit_expr_index(&mut self, node: &'ast syn::ExprIndex) {
-        let first = attrs_first(&node.attrs).unwrap_or_else(|| self.first(&node.expr));
-        let snippet = self.snippet(node, first, node.bracket_token.span.close());
-        self.panic_sites.push(PanicSite {
-            file: self.file.clone(),
-            line: first.start().line,
-            kind: "index".to_string(),
-            snippet,
-        });
+        if self.room(1) {
+            let first = attrs_first(&node.attrs).unwrap_or_else(|| self.first(&node.expr));
+            let snippet = self.snippet(node, first, node.bracket_token.span.close());
+            self.panic_sites.push(PanicSite {
+                file: self.file.clone(),
+                line: first.start().line,
+                kind: "index".to_string(),
+                snippet,
+            });
+        }
         syn::visit::visit_expr_index(self, node);
     }
 
     fn visit_macro(&mut self, node: &'ast syn::Macro) {
         if let Some(seg) = node.path.segments.last() {
             let name = seg.ident.to_string();
-            if matches!(name.as_str(), "panic" | "unreachable" | "unwrap") {
+            if matches!(name.as_str(), "panic" | "unreachable" | "unwrap") && self.room(1) {
                 let first = path_first(&node.path);
                 let snippet = self.snippet(node, first, delimiter_close(&node.delimiter));
                 self.panic_sites.push(PanicSite {
@@ -1563,16 +1667,18 @@ impl<'ast> Visit<'ast> for FileVisitor<'_> {
     }
 
     fn visit_expr_unsafe(&mut self, node: &'ast syn::ExprUnsafe) {
-        self.unsafe_blocks.push(UnsafeBlock {
-            file: self.file.clone(),
-            line: node.unsafe_token.span().start().line,
-        });
+        if self.room(1) {
+            self.unsafe_blocks.push(UnsafeBlock {
+                file: self.file.clone(),
+                line: node.unsafe_token.span().start().line,
+            });
+        }
         syn::visit::visit_expr_unsafe(self, node);
     }
 
     fn visit_expr_field(&mut self, node: &'ast syn::ExprField) {
         if let syn::Member::Named(ident) = &node.member {
-            if ident == "remaining_accounts" {
+            if ident == "remaining_accounts" && self.room(1) {
                 let first = attrs_first(&node.attrs).unwrap_or_else(|| self.first(&node.base));
                 let snippet = self.snippet(node, first, ident.span());
                 self.remaining_accounts_sites.push(RemainingAccountsSite {
@@ -1594,7 +1700,7 @@ impl<'ast> Visit<'ast> for FileVisitor<'_> {
                     "invoke_signed" => Some("invoke_signed"),
                     _ => None,
                 };
-                if let Some(kind) = kind {
+                if let Some(kind) = kind.filter(|_| self.room(1)) {
                     let first = attrs_first(&node.attrs).unwrap_or_else(|| self.first(&node.func));
                     let snippet = self.snippet(node, first, node.paren_token.span.close());
                     self.cpi_sites.push(CpiSite {
@@ -1614,7 +1720,7 @@ impl<'ast> Visit<'ast> for FileVisitor<'_> {
         // reference to `CpiContext`.
         if let Some(seg) = node.segments.last() {
             let name = seg.ident.to_string();
-            if name == "CpiContext" {
+            if name == "CpiContext" && self.room(1) {
                 self.cpi_sites.push(CpiSite {
                     file: self.file.clone(),
                     line: seg.ident.span().start().line,
