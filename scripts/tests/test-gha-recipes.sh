@@ -10,7 +10,8 @@
 # known-vector step that repeats an R recipe carries its lines byte for byte, as one block in the same order,
 # and that no recipe flags a fixture's comment lines. It runs R1 and K139-1 over trigger spellings built at run
 # time, R1 over file names that hold a space or a quote, and R1 over large inputs: 2,000 workflows, and two of
-# about 1 MiB.
+# about 1 MiB. Every command of every recipe must end within 30 s on a workflow that holds one 1 MiB line of
+# near misses.
 #
 # Usage (from the repo root): bash scripts/tests/test-gha-recipes.sh
 # Needs bash >= 3.2, grep, awk. No network. The fixtures are copied into a temp dir as .github/workflows/, and
@@ -141,6 +142,20 @@ run_recipe() {
   (cd "$1" && eval "$second" </dev/null 2>/dev/null) > "$work/second.out"
   (cd "$1" && eval "$first" </dev/null 2>/dev/null) \
     | awk -v f="$work/second.out" 'BEGIN { while ((getline l < f) > 0) seen[l] = 1 } !($0 in seen)'
+}
+
+# within <seconds> <tree> <command>: run the command in <tree>, its output in $work/within.out. Fails, and stops
+# the command, when it is still running after <seconds>.
+within() {
+  local pid i=0
+  (cd "$2" && eval "exec $3" </dev/null > "$work/within.out" 2>/dev/null) &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$i" -ge "$(($1 * 10))" ]; then kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; return 1; fi
+    sleep 0.1; i=$((i + 1))
+  done
+  wait "$pid" 2>/dev/null
+  return 0
 }
 
 # same_files <command lines>: the two commands take the same --include options and the same root, so a file
@@ -305,6 +320,27 @@ if [ "$got" = "big-ungated.yml " ] && [ "$size" -gt 1048576 ]; then
   echo "ok   R1 on large inputs: 2,000 gated workflows and two of $size bytes, only the ungated one flagged"
 else
   echo "FAIL R1 on large inputs: got [$got] want [big-ungated.yml ] (big file: $size bytes)"
+  fail=1
+fi
+
+# One workflow holding a 1 MiB line that nearly matches R6 again and again. Each command of every recipe must end
+# within 30 s and flag nothing. GNU grep in a UTF-8 locale backtracks for minutes on such a line when a range such
+# as a-z follows .*, which is why R6 spells its letters out.
+long="$work/long"; mkdir -p "$long/.github/workflows"
+{ printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo "'
+  awk 'BEGIN { for (i = 0; i < 26000; i++) printf "${{ github.event.issue.x contains( ref: " }'
+  printf '"\n'; } > "$long/.github/workflows/long.yml"
+size=$(wc -c < "$long/.github/workflows/long.yml" | tr -d ' ')
+slow=""; noisy=""
+for id in $IDS; do
+  while IFS= read -r c; do
+    if ! within 30 "$long" "$c"; then slow="$slow $id"; elif [ -s "$work/within.out" ]; then noisy="$noisy $id"; fi
+  done <<< "$(recipe_lines "$id")"
+done
+if [ -z "$slow$noisy" ] && [ "$size" -gt 1000000 ]; then
+  echo "ok   every recipe on a line of $size bytes of near misses: each command done within 30 s, nothing flagged"
+else
+  echo "FAIL a line of $size bytes of near misses: still running after 30 s [$slow], flagged [$noisy]"
   fail=1
 fi
 

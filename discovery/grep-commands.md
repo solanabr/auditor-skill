@@ -451,7 +451,7 @@ grep -rnE --include='*.yml' --include='*.yaml' '(>>|tee[[:space:]]+(-a|--append)
 
 ```bash
 # R6 — attacker-controlled expressions (confirm the sink: run:, script:, an agent prompt field, an env file)
-grep -rnE --include='*.yml' --include='*.yaml' '\$\{\{.*(github\.event\.[a-z_.]*(body|default_branch|email|head_ref|label|message|name|page_name|ref|title|head_branch|display_title)|github\.head_ref|github\.event\.(commits|pages)\[|to(JSON|Json|json)\(github(\)|\.event[).]))' .github/
+grep -rnE --include='*.yml' --include='*.yaml' '\$\{\{.*(github\.event\.[abcdefghijklmnopqrstuvwxyz_.]*(body|default_branch|email|head_ref|label|message|name|page_name|ref|title|head_branch|display_title)|github\.head_ref|github\.event\.(commits|pages)\[|to(JSON|Json|json)\(github(\)|\.event[).]))' .github/
 ```
 > Matches inside `env:` are the safe shell pattern but still taint agent prompts and env files (DEP-069, AI-023/024). Whole-context dumps count: `toJSON(github)` and `toJson(github.event…)` carry every attacker-controlled field. R6 matches the spellings `toJSON`, `toJson` and `tojson`.
 
