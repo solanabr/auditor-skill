@@ -432,9 +432,9 @@ grep -rnE --include='*.yml' --include='*.yaml' 'github\.event\.(issue|pull_reque
 
 ```bash
 # R3 — unsound gate comparisons: string contains(), deny-lists, untrusted association values, app/<slug> strings, actor gates
-grep -rnE --include='*.yml' --include='*.yaml' -e "contains\([[:space:]]*'[^']*(OWNER|MEMBER|COLLABORATOR)" -e 'author_association[[:space:]]*!=' -e '!=[[:space:]]*github\.event\.[a-z_]+\.author_association' -e '![[:space:]]*contains\([[:space:]]*from(JSON|Json)' -e 'github\.(actor|triggering_actor|event\.sender\.login)[[:space:]]*[!=]=' -e '[!=]=[[:space:]]*github\.(actor|triggering_actor|event\.sender\.login)' -e 'contains\(.*github\.(actor|triggering_actor|event\.sender\.login)' -e "[\"'](CONTRIBUTOR|FIRST_TIMER|FIRST_TIME_CONTRIBUTOR|MANNEQUIN)[\"']" -e "app/[A-Za-z0-9_-]+'" .github/
+grep -rnE --include='*.yml' --include='*.yaml' -e "contains\([[:space:]]*'[^']*(OWNER|MEMBER|COLLABORATOR)" -e 'author_association[[:space:]]*!=' -e '!=[[:space:]]*github\.event\.[a-z_]+\.author_association' -e '![[:space:]]*contains\([[:space:]]*from(JSON|Json|json)' -e 'github\.(actor|triggering_actor|event\.sender\.login)[[:space:]]*[!=]=' -e '[!=]=[[:space:]]*github\.(actor|triggering_actor|event\.sender\.login)' -e 'contains\(.*github\.(actor|triggering_actor|event\.sender\.login)' -e "[\"'](CONTRIBUTOR|FIRST_TIMER|FIRST_TIME_CONTRIBUTOR|MANNEQUIN)[\"']" -e "app/[A-Za-z0-9_-]+'" .github/
 ```
-> An actor comparison is a sound allowlist on `issue_comment` (the actor is the commenter) and unsound on PR-family and `workflow_run` events (DEP-091). `github.event.sender.login`, the account that triggered the event, is judged like `github.actor`, and a comparison counts with either operand first (`'x' == github.actor`, `'NONE' != …author_association`). `contains(github.actor, …)` is a substring test and unsound on every event. Function names are case-insensitive, so `fromJson` counts the same as `fromJSON`.
+> An actor comparison is a sound allowlist on `issue_comment` (the actor is the commenter) and unsound on PR-family and `workflow_run` events (DEP-091). `github.event.sender.login`, the account that triggered the event, is judged like `github.actor`, and a comparison counts with either operand first (`'x' == github.actor`, `'NONE' != …author_association`). `contains(github.actor, …)` is a substring test and unsound on every event. Function names are case-insensitive, so `fromJson` and `fromjson` count the same as `fromJSON`.
 
 ```bash
 # R4 — workflow_run consumers: head fields and artifact downloads
@@ -450,15 +450,15 @@ grep -rnE --include='*.yml' --include='*.yaml' '(>>|tee[[:space:]]+(-a|--append)
 
 ```bash
 # R6 — attacker-controlled expressions (confirm the sink: run:, script:, an agent prompt field, an env file)
-grep -rnE --include='*.yml' --include='*.yaml' '\$\{\{.*(github\.event\.[a-z_.]*(body|default_branch|email|head_ref|label|message|name|page_name|ref|title|head_branch|display_title)|github\.head_ref|github\.event\.(commits|pages)\[|to(JSON|Json)\(github(\)|\.event[).]))' .github/
+grep -rnE --include='*.yml' --include='*.yaml' '\$\{\{.*(github\.event\.[a-z_.]*(body|default_branch|email|head_ref|label|message|name|page_name|ref|title|head_branch|display_title)|github\.head_ref|github\.event\.(commits|pages)\[|to(JSON|Json|json)\(github(\)|\.event[).]))' .github/
 ```
-> Matches inside `env:` are the safe shell pattern but still taint agent prompts and env files (DEP-069, AI-023/024). Whole-context dumps count: `toJSON(github)` and `toJson(github.event…)` carry every attacker-controlled field.
+> Matches inside `env:` are the safe shell pattern but still taint agent prompts and env files (DEP-069, AI-023/024). Whole-context dumps count: `toJSON(github)` and `toJson(github.event…)` carry every attacker-controlled field, and `tojson` matches too.
 
 ```bash
 # R7 — checkouts and fetches of PR or run heads, and the checkout-guard opt-out
-grep -rnE --include='*.yml' --include='*.yaml' 'ref:[[:space:]]*.?\$\{\{[[:space:]]*(github\.event\.(pull_request\.(head\.(sha|ref)|merge_commit_sha)|workflow_run\.head_(sha|branch))|github\.head_ref|steps\.[A-Za-z0-9_-]+\.outputs\.head_(sha|ref)|from(JSON|Json)\(steps\.[A-Za-z0-9_-]+\.outputs\.[A-Za-z0-9_]+\)\.head\.(sha|ref))|repository:[[:space:]]*.?\$\{\{[[:space:]]*github\.event\.pull_request\.head\.repo\.full_name|refs/pull/|gh pr checkout|git (fetch|pull|checkout)[^#]*(pull/|head_ref|head\.ref|head\.sha)|allow-unsafe-pr-checkout' .github/
+grep -rnE --include='*.yml' --include='*.yaml' 'ref:[[:space:]]*.?\$\{\{[[:space:]]*(github\.event\.(pull_request\.(head\.(sha|ref)|merge_commit_sha)|workflow_run\.head_(sha|branch))|github\.head_ref|steps\.[A-Za-z0-9_-]+\.outputs\.head_(sha|ref)|from(JSON|Json|json)\(steps\.[A-Za-z0-9_-]+\.outputs\.[A-Za-z0-9_]+\)\.head\.(sha|ref))|repository:[[:space:]]*.?\$\{\{[[:space:]]*github\.event\.pull_request\.head\.repo\.full_name|refs/pull/|gh pr checkout|git (fetch|pull|checkout)[^#]*(pull/|head_ref|head\.ref|head\.sha)|allow-unsafe-pr-checkout' .github/
 ```
-> DEP-092 (the commit that was approved) and DEP-093 (privileged triggers). Quoted expressions match too, and so do checkouts of a step output: `steps.<id>.outputs.head_sha` / `head_ref` and `fromJSON(steps.<id>.outputs.result).head.sha`. For a `ref:` fed by any other step output, read the step that sets it.
+> DEP-092 (the commit that was approved) and DEP-093 (privileged triggers). Quoted expressions match too, and so do checkouts of a step output: `steps.<id>.outputs.head_sha` / `head_ref` and `fromJSON(steps.<id>.outputs.result).head.sha`, also spelled `fromJson` or `fromjson`. For a `ref:` fed by any other step output, read the step that sets it.
 
 ```bash
 # R8 — AI agents in CI, their gates, and pre-v1 claude-code-action input names

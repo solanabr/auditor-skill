@@ -49,7 +49,7 @@ grep -rnE --include='*.yml' --include='*.yaml' 'github\.event\.(issue|pull_reque
 
 **Step 4: Is the comparison sound?** (recipe R3)
 ```
-grep -rnE --include='*.yml' --include='*.yaml' -e "contains\([[:space:]]*'[^']*(OWNER|MEMBER|COLLABORATOR)" -e 'author_association[[:space:]]*!=' -e '!=[[:space:]]*github\.event\.[a-z_]+\.author_association' -e '![[:space:]]*contains\([[:space:]]*from(JSON|Json)' -e 'github\.(actor|triggering_actor|event\.sender\.login)[[:space:]]*[!=]=' -e '[!=]=[[:space:]]*github\.(actor|triggering_actor|event\.sender\.login)' -e 'contains\(.*github\.(actor|triggering_actor|event\.sender\.login)' -e "[\"'](CONTRIBUTOR|FIRST_TIMER|FIRST_TIME_CONTRIBUTOR|MANNEQUIN)[\"']" -e "app/[A-Za-z0-9_-]+'" .github/
+grep -rnE --include='*.yml' --include='*.yaml' -e "contains\([[:space:]]*'[^']*(OWNER|MEMBER|COLLABORATOR)" -e 'author_association[[:space:]]*!=' -e '!=[[:space:]]*github\.event\.[a-z_]+\.author_association' -e '![[:space:]]*contains\([[:space:]]*from(JSON|Json|json)' -e 'github\.(actor|triggering_actor|event\.sender\.login)[[:space:]]*[!=]=' -e '[!=]=[[:space:]]*github\.(actor|triggering_actor|event\.sender\.login)' -e 'contains\(.*github\.(actor|triggering_actor|event\.sender\.login)' -e "[\"'](CONTRIBUTOR|FIRST_TIMER|FIRST_TIME_CONTRIBUTOR|MANNEQUIN)[\"']" -e "app/[A-Za-z0-9_-]+'" .github/
 ```
 - ✅ PASS:
   - membership is `==` or `contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), …)`, and the allowed set is those three only;
