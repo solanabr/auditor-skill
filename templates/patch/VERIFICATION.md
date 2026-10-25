@@ -109,25 +109,27 @@ exploit earns `[FIX-VERIFIED]`. If there is no executable PoC to run, stop at
 Only with `/auditor:patch --post-patch-validation`. Trail of Bits `post-patch-validation` checks the patch
 against the finding, variants of its root cause and behavior that should not change. Its runner creates, locks
 and prunes git worktrees in the repository it is given, and its checks build and run the target with the
-caller's privileges and an open network. So it runs only in Rule 11a **isolated** mode, on the isolated runner,
-and on a no-checkout clone, outside the target tree, of the copy `git-ro.sh copy` makes in `{R}`: never on the
-client checkout. Run the first block from the top level of the repository under audit. It runs nothing, and
-prints the line to record, unless the stricter of `{R}/exec-mode` and `AUDITOR_EXEC_MODE` is isolated (`none`
-stops it, as it stops `run.sh`), `probe.sh --only isolation` finds none of the credentials it checks readable,
-the vendored skill and `uv` are there, and `git-ro.sh copy` takes the checkout. That copy refuses a partial
-clone, a git without the May-2024 clone fixes, borrowed objects (alternates) and links. When a block stops on
-an error instead, record "not run: <its first error line>".
+caller's privileges and an open network. So it runs only in Rule 11a **isolated** mode, on the isolated
+runner, and on a no-checkout clone, outside the target tree, of the copy `git-ro.sh copy` makes in `{R}`:
+never on the client checkout. Run the first block from the top level of the repository under audit. It runs
+nothing, and prints the line to record, unless the stricter of the recorded mode (`{R}/exec-mode`, or
+`intake.md` §8 without it) and `AUDITOR_EXEC_MODE` is isolated (`none` stops it, as it stops `run.sh`),
+`probe.sh --only isolation` finds none of the credentials it checks readable, the vendored skill and `uv` are
+there, and `git-ro.sh copy` takes the checkout. That copy refuses a partial clone, a git without the May-2024
+clone fixes, borrowed objects (alternates) and links. When a block stops on an error instead, record "not run:
+<its first error line>".
 
 The placeholders here are this section's own. `{R}` is the run directory, `audit_<n>` or `incident_<n>`,
-relative to the working directory; `{MODE}` is the word `{R}/exec-mode` holds; `{FINDING_ID}` is the finding
-or incident id; `{COMMIT}` is the commit the patch targets; `{ROOT_CAUSE}` is the finding's root cause and
-impact in one sentence, without a single quote; `{LEVEL}` is the highest evidence level the checks will
+relative to the working directory; `{MODE}` is the word `{R}/exec-mode` holds or, when there is no such file,
+the mode `{R}/intake.md` §8 records (for an incident, the mode in its ledger header); `{FINDING_ID}` is the
+finding or incident id; `{COMMIT}` is the commit the patch targets; `{ROOT_CAUSE}` is the finding's root cause
+and impact in one sentence, without a single quote; `{LEVEL}` is the highest evidence level the checks will
 honestly reach (`source`, `build` or `runtime`, as the skill defines them).
 
 ```bash
 ROOT="<auditor-skill root>"
 PPV_RUNNER="$ROOT/vendor/trailofbits/plugins/post-patch-validation/skills/post-patch-validation/scripts/post_patch_validation.py"
-case " {MODE} ${AUDITOR_EXEC_MODE:-} " in       # the stricter of {R}/exec-mode and AUDITOR_EXEC_MODE, as run.sh takes it
+case " {MODE} ${AUDITOR_EXEC_MODE:-} " in       # the stricter of the recorded mode and AUDITOR_EXEC_MODE, as run.sh takes it
   *" none "*) PPV_MODE=none ;;
   *" isolated "*) PPV_MODE=isolated ;;
   *) PPV_MODE=native ;;
