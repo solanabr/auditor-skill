@@ -63,8 +63,10 @@ grep -rn --include="*.yml" --include="*.yaml" "uses.*/" .github/workflows/ | gre
 
 **Step 7: Check comment- and issue-triggered jobs for an author gate**
 ```
-grep -rlE --include='*.yml' --include='*.yaml' '^[[:space:]]*-?[[:space:]]*(issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues):?[[:space:]]*(#.*)?$|^[[:space:]]*(issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues):[[:space:]]*\{|^on:.*(issue_comment|pull_request_review|discussion|issues)' .github/ | xargs -r grep -L 'author_association'
+grep -rlE --include='*.yml' --include='*.yaml' '^[[:space:]]*-?[[:space:]]*(issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues):?[[:space:]]*(#.*)?$|^[[:space:]]*(issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues):[[:space:]]*\{|^on:.*(issue_comment|pull_request_review|discussion|issues)' .github/
+grep -rl --include='*.yml' --include='*.yaml' 'author_association' .github/
 ```
+- Read each file the first command lists and the second does not: it has one of these triggers and never mentions `author_association`
 - ✅ PASS: Every privileged job on these triggers gates on the triggering object's own `author_association`, paired per event
 - ❌ FAIL: A privileged job starts on a mention or command alone, or reads the opener's association on a comment event. Full procedure: KV-139
 

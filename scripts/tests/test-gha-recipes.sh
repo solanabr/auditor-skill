@@ -5,12 +5,13 @@
 #   K116-1   KV-116 Step 1 (AI-agent steps);
 #   K139-1   KV-139 Step 1 (externally triggerable workflows);
 #   K140-6   KV-140 Step 6 (Actions cache writers and restorers).
-# A recipe of two commands flags what the first lists and the second does not. The suite also checks that
+# A recipe of two commands (R1) flags what the first lists and the second does not. The suite also checks that
 # every known-vector step that repeats an R recipe carries each of its lines byte for byte, and that no recipe
-# flags a fixture's comment lines. It runs R1 over large inputs: 2,000 workflows, and two of about 1 MiB.
+# flags a fixture's comment lines. It runs R1 over file names that hold a space or a quote, and over large
+# inputs: 2,000 workflows, and two of about 1 MiB.
 #
 # Usage (from the repo root): bash scripts/tests/test-gha-recipes.sh
-# Needs bash >= 3.2, grep, awk, xargs. No network. The fixtures are copied into a temp dir as
+# Needs bash >= 3.2, grep, awk. No network. The fixtures are copied into a temp dir as
 # .github/workflows/ for the run; nothing is written under the repository's own .github/.
 set -uo pipefail
 
@@ -172,9 +173,28 @@ for id in $IDS; do
 done
 if [ "$quiet" -eq 1 ]; then echo "ok   no recipe flags the comment lines of a fixture"; fi
 
-# Large inputs: 2,000 gated workflows (a file list over 64 KiB) and two of about 1 MiB with the trigger on
-# their first lines; one has its author_association gate on its last line. R1 must read each file whole and
-# flag only the ungated one.
+# File names that hold a space, a single quote or a double quote: R1 flags each ungated workflow among them and
+# drops none, and the three gated ones, named the same way, stay out.
+names="$work/names"; mkdir -p "$names/.github/workflows"
+for n in "a space.yml" "b it's.yml" 'c say "hi".yml' "d plain.yml"; do
+  printf 'on: issue_comment\njobs:\n  a:\n    runs-on: ubuntu-latest\n' > "$names/.github/workflows/$n"
+done
+for n in "e gated space.yml" "f gated it's.yml" 'g gated "x".yml'; do
+  printf 'on: issue_comment\njobs:\n  a:\n    if: github.event.comment.author_association == %sOWNER%s\n' "'" "'" \
+    > "$names/.github/workflows/$n"
+done
+got=$(run_recipe "$names" "$(recipe R1)" | sed 's#^\.github/workflows/##' | sort | tr '\n' '|')
+want='a space.yml|b it'"'"'s.yml|c say "hi".yml|d plain.yml|'
+if [ "$got" = "$want" ]; then
+  echo "ok   R1 on file names with a space or a quote: the four ungated workflows flagged, the three gated ones not"
+else
+  echo "FAIL R1 on file names with a space or a quote: got [$got] want [$want]"
+  fail=1
+fi
+
+# Large inputs: 2,000 gated workflows (each of R1's two lists runs over 64 KiB) and two of about 1 MiB with the
+# trigger on their first lines; one has its author_association gate on its last line. R1 must read each file
+# whole and flag only the ungated one.
 large="$work/large"; mkdir -p "$large/.github/workflows"
 awk -v d="$large/.github/workflows" 'BEGIN { for (i = 0; i < 2000; i++) { f = sprintf("%s/small-gated-workflow-%04d.yml", d, i)
   printf "on: issue_comment\njobs:\n  a:\n    if: github.event.comment.author_association == %sOWNER%s\n", "\047", "\047" > f; close(f) } }'
@@ -195,4 +215,4 @@ fi
 
 if [ "$fail" -ne 0 ]; then echo "gha recipe test FAILED" >&2; exit 1; fi
 nfix=$(ls "$fixtures"/*.yml | wc -l | tr -d ' ')
-echo "gha recipe test passed: $nrec recipes, $nfix fixtures, $ncopy copies, comment lines, large inputs"
+echo "gha recipe test passed: $nrec recipes, $nfix fixtures, $ncopy copies, comment lines, file names, large inputs"
