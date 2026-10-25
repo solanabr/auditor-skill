@@ -45,7 +45,7 @@ Recursively walks the `*.rs` files under the directory it is given (`.` or a rel
 | `cpi_sites[]` | `invoke`/`invoke_signed`/`CpiContext` → checklist 04 CPI review |
 | `remaining_accounts_sites[]` | `.remaining_accounts` field access → checklist 01 remaining-accounts review |
 | `unsafe_blocks[]`, `functions[]` | unsafe surface + call-graph seed |
-| `skipped[]` | links not followed, directories too deep to walk, `*.rs` files not parsed (one the parser could not finish, or one after the report was full, too) and files listed only in part (past 20,000 sites), with why: read them by hand |
+| `skipped[]` | links not followed, directories too deep to walk, `*.rs` files not parsed (one the parser could not finish, or one after the report was full, too) and files listed only in part (past 20,000 sites, or 32 MiB), with why: read them by hand |
 
 ### The one rule: it is a map, not a verdict
 

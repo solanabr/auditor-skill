@@ -145,6 +145,17 @@ impl Wt {
     }
 }
 
+/// A `#[derive(Accounts)]` struct called `name` with `pdas` fields, each with
+/// seeds: each of its PDAs repeats `name` in a report.
+pub fn pda_struct(name: &str, pdas: usize) -> String {
+    let fields: String = (0..pdas)
+        .map(|i| {
+            format!("    #[account(seeds = [b\"x\"], bump)]\n    pub f{i}: AccountInfo<'info>,\n")
+        })
+        .collect();
+    format!("#[derive(Accounts)]\npub struct {name}<'info> {{\n{fields}}}\n")
+}
+
 /// A binary run from `dir`, with stdin from /dev/null and the caller's
 /// environment.
 pub fn run(bin: &str, dir: &Path, args: &[&str]) -> Output {

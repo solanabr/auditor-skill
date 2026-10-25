@@ -35,7 +35,7 @@ It parses every `*.rs` under `<program-path>` with a real Rust AST (`syn`) and e
 | `cpi_sites[]` | `invoke`/`invoke_signed`/`CpiContext` → **checklist 04 CPI review** |
 | `remaining_accounts_sites[]` | `.remaining_accounts` field access → **checklist 01 remaining-accounts review** |
 | `unsafe_blocks[]`, `functions[]` | `unsafe` surface + call-graph seed |
-| `skipped[]` | every symbolic link the walk did not follow, every directory too deep to walk, every `*.rs` it did not parse (one the parser could not finish, or one after the report was full, too) and every one it listed only in part (past 20,000 sites), with why → **read these by hand**: the map does not cover them |
+| `skipped[]` | every symbolic link the walk did not follow, every directory too deep to walk, every `*.rs` it did not parse (one the parser could not finish, or one after the report was full, too) and every one it listed only in part (past 20,000 sites, or 32 MiB), with why → **read these by hand**: the map does not cover them |
 
 **How the auditor consumes it.** Load `prescan.json` at Phase 0. Treat it as a *map of where to look*, not a set of findings — it has **no verdicts**. Every reported site still goes through the normal checklist + Rule 5b reasoning. The win is twofold: (1) the instruction/constraint/PDA/arithmetic tables are already built, so Phase 0.2–0.4 cost near-zero; (2) a file with **zero** scan hits gets a spot-check instead of a full read. A raw arithmetic or panic site the scan surfaces is a *candidate*, never a confirmed bug — never report a `arithmetic_sites` entry as a finding without the checklist-03 reachability + bounds analysis.
 

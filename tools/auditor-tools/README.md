@@ -102,12 +102,13 @@ its core-file limit to none: a child whose parent is gone, with no one left to k
 it, dies once a file has used that.
 
 A report has bounds. One file lists at most 20,000 items (sites, functions,
-instructions with their arguments, accounts structs with their fields, PDAs); a
-file with more is in `skipped` as `lists only the first 20,000 sites`, after the
-ones listed. The child's answer for one file may be 32 MiB at most (a longer one is
-refused, and the file skipped as the parser could not finish), and the whole report
-about 256 MiB: the file that would take it past that, and each file after it, is in
-`skipped` as `not parsed: the report is full`.
+instructions with their arguments, accounts structs with their fields, PDAs), and
+no more than fits in its answer of 32 MiB: a file with more is in `skipped` as
+`lists only the first 20,000 sites` or `lists only the sites that fit in 32 MiB`,
+after the ones listed, and the child builds nothing past them. A longer answer is
+refused, and the file skipped as the parser could not finish. The whole report
+holds about 256 MiB: the file that would take it past that, and each file after
+it, is in `skipped` as `not parsed: the report is full`.
 
 syn's parser, and the walk of its tree, recurse once for each level the tree
 nests, so the child lexes a file first (`proc-macro2`'s lexer does not recurse) and

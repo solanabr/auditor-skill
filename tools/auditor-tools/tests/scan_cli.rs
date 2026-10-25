@@ -314,6 +314,77 @@ fn lists_at_most_twenty_thousand_items_a_file() {
 }
 
 #[test]
+fn lists_only_what_fits_in_an_answer_of_32_mib_a_file() {
+    let wt = Wt::repo();
+    // A 1 MiB name that each of the struct's 40 PDAs repeats, about 41 MiB as JSON:
+    // neither the struct nor what follows it in the file is listed.
+    let name = format!("S{}", "a".repeat(1 << 20));
+    let pda = format!(
+        "fn before() {{}}\n{}fn after() {{}}\n",
+        common::pda_struct(&name, 40)
+    );
+    wt.write("src/pda.rs", pda.as_bytes());
+    wt.write("src/lib.rs", b"fn ok() { let y = v[1]; }\n");
+    let out = run(BIN, &wt.dir, &["src"]);
+    let report = json(&out);
+    assert!(out.stdout.len() < 64 << 10, "{} bytes", out.stdout.len());
+    assert_eq!(report["files_scanned"], 2);
+    let names: Vec<&str> = report["functions"]
+        .as_array()
+        .expect("functions")
+        .iter()
+        .map(|f| f["name"].as_str().expect("a name"))
+        .collect();
+    assert_eq!(names, ["ok", "before"]);
+    assert!(files(&report, "accounts_structs").is_empty());
+    assert!(files(&report, "pdas").is_empty());
+    assert_eq!(files(&report, "panic_sites"), ["src/lib.rs"]);
+    assert_eq!(
+        skipped(&report),
+        [(
+            "src/pda.rs".into(),
+            "lists only the sites that fit in 32 MiB".into()
+        )]
+    );
+}
+
+#[test]
+fn an_answer_near_32_mib_is_taken_whole() {
+    let wt = Wt::repo();
+    // Three structs, each a 1 MiB name and 14 PDAs, about 15 MiB as JSON: the first
+    // two fit in the answer, about 30 MiB, and the third does not.
+    let source: String = ["A", "B", "C"]
+        .iter()
+        .map(|c| common::pda_struct(&c.repeat(1 << 20), 14))
+        .collect();
+    assert!(source.len() < 4 << 20);
+    wt.write("src/three.rs", source.as_bytes());
+    let out = run(BIN, &wt.dir, &["src"]);
+    let report = json(&out);
+    assert!(out.stdout.len() > 30 << 20, "{} bytes", out.stdout.len());
+    let first: Vec<char> = report["accounts_structs"]
+        .as_array()
+        .expect("accounts_structs")
+        .iter()
+        .map(|s| {
+            s["name"]
+                .as_str()
+                .and_then(|n| n.chars().next())
+                .expect("a name")
+        })
+        .collect();
+    assert_eq!(first, ['A', 'B']);
+    assert_eq!(files(&report, "pdas").len(), 28);
+    assert_eq!(
+        skipped(&report),
+        [(
+            "src/three.rs".into(),
+            "lists only the sites that fit in 32 MiB".into()
+        )]
+    );
+}
+
+#[test]
 fn renders_the_snippets_of_a_long_chain_in_time() {
     let wt = Wt::repo();
     let sum = format!("fn f() {{ let x = 1{}; }}\n", " + 1".repeat(9000));
