@@ -36,8 +36,8 @@ pub const TABLES: [&str; 5] = [
 /// TABLE IF NOT EXISTS `: SQLite keeps it as the table's `sql`, after `CREATE TABLE `.
 /// The first five are the text audit-mem has made them with since its first
 /// release, so a store made then reads as it did. `history` keeps each value
-/// `profile` and `invariant` replace; a store made before it gains it when it is
-/// next written, and reads as having replaced none.
+/// `profile`, `invariant` and `put-finding` replace; a store made before it gains
+/// it when it is next written, and reads as having replaced none.
 const SCHEMA: [(&str, &str); 6] = [
     (
         "findings",
@@ -109,6 +109,7 @@ const SCHEMA: [(&str, &str); 6] = [
             history_id  INTEGER PRIMARY KEY AUTOINCREMENT,
             program_id  TEXT,
             inv_id      INTEGER,
+            finding_id  TEXT,
             field       TEXT,
             previous    TEXT,
             recorded_at TEXT
@@ -400,7 +401,8 @@ pub struct PutOutcome {
 ///
 /// Regression rule: if the finding already existed with status `FIXED` and this
 /// call re-observes it, the status transitions to `REGRESSED`. Brand-new
-/// findings start `OPEN`. A store holding a status audit-mem never sets is
+/// findings start `OPEN`. A severity or a title it replaces is kept in `history`,
+/// and `regressions` lists it under the finding's `changed`. A store holding a status audit-mem never sets is
 /// refused (a `Refusal`), and is left as it was. One transaction.
 pub fn put_finding(conn: &Connection, f: &PutFinding) -> Result<PutOutcome> {
     let id = finding_id(f.program_id, f.signature, f.root_cause);
@@ -409,15 +411,15 @@ pub fn put_finding(conn: &Connection, f: &PutFinding) -> Result<PutOutcome> {
 
     let tx = conn.unchecked_transaction()?;
     migrate(&tx)?;
-    let existing_status: Option<String> = tx
+    let existing: Option<(String, Option<i64>, Option<String>)> = tx
         .query_row(
-            "SELECT status FROM findings WHERE finding_id = ?1",
+            "SELECT status, severity, title FROM findings WHERE finding_id = ?1",
             params![id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .optional()?;
 
-    let (new_status, regressed) = match existing_status.as_deref() {
+    let (new_status, regressed) = match existing.as_ref().map(|e| e.0.as_str()) {
         None => ("OPEN".to_string(), false),
         Some("FIXED") => ("REGRESSED".to_string(), true),
         Some(kept) if STATUSES.contains(&kept) => (kept.to_string(), false),
@@ -429,7 +431,27 @@ pub fn put_finding(conn: &Connection, f: &PutFinding) -> Result<PutOutcome> {
         }
     };
 
-    if existing_status.is_none() {
+    if let Some((_, severity, title)) = existing {
+        let given = f.severity.to_string();
+        keep_replaced(
+            &tx,
+            f.program_id,
+            Owner::Finding(&id),
+            &[
+                (
+                    "severity",
+                    Some(&given),
+                    severity.map(|s| s.to_string()).unwrap_or_default(),
+                ),
+                ("title", Some(f.title), title.unwrap_or_default()),
+            ],
+        )?;
+        tx.execute(
+            "UPDATE findings SET last_seen_commit = ?2, last_audit_n = ?3, status = ?4, \
+             severity = ?5, title = ?6 WHERE finding_id = ?1",
+            params![id, commit, audit_n, new_status, f.severity, f.title],
+        )?;
+    } else {
         tx.execute(
             "INSERT INTO findings (finding_id, program_id, first_seen_commit, last_seen_commit, \
              severity, root_cause, code_signature, title, status, first_audit_n, last_audit_n) \
@@ -447,12 +469,6 @@ pub fn put_finding(conn: &Connection, f: &PutFinding) -> Result<PutOutcome> {
                 audit_n,
                 audit_n,
             ],
-        )?;
-    } else {
-        tx.execute(
-            "UPDATE findings SET last_seen_commit = ?2, last_audit_n = ?3, status = ?4, \
-             severity = ?5, title = ?6 WHERE finding_id = ?1",
-            params![id, commit, audit_n, new_status, f.severity, f.title],
         )?;
     }
 
@@ -760,12 +776,14 @@ pub struct FindingRow {
     pub code_signature: String,
     pub title: String,
     pub status: String,
+    /// The severities and titles `put-finding` replaced, newest first.
+    pub changed: Vec<Change>,
 }
 
 /// `regressions`' answer: of the findings of a program whose status is
 /// `REGRESSED`, the `ROWS` seen most recently (by their newest occurrence), the
-/// most severe first and the most recently seen first among equals, and how many
-/// more there are.
+/// most severe first and the most recently seen first among equals, each with the
+/// severities and titles replaced in it, and how many more rows there are.
 #[derive(Debug, Serialize, Default)]
 pub struct Regressions {
     pub regressions: Vec<FindingRow>,
@@ -798,11 +816,21 @@ pub fn regressions(conn: &Connection, program_id: &str) -> Result<Regressions> {
                 code_signature: r.get(4)?,
                 title: r.get(5)?,
                 status: r.get(6)?,
+                changed: Vec::new(),
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut rows = rows;
+    let mut truncated = left(total, rows.len());
+    if has_history(conn)? {
+        for row in &mut rows {
+            let (changed, more) = changes(conn, program_id, Owner::Finding(&row.finding_id))?;
+            row.changed = changed;
+            truncated += more;
+        }
+    }
     Ok(Regressions {
-        truncated: left(total, rows.len()),
+        truncated,
         regressions: rows,
     })
 }
@@ -814,8 +842,8 @@ fn left(total: i64, shown: usize) -> u64 {
         .saturating_sub(u64::try_from(shown).unwrap_or(u64::MAX))
 }
 
-/// A value `profile` or `invariant` replaced: the field, what it held, and when it
-/// was replaced (unix seconds, as `ruled_at`).
+/// A value `profile`, `invariant` or `put-finding` replaced: the field, what it
+/// held, and when it was replaced (unix seconds, as `ruled_at`).
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 pub struct Change {
     pub field: String,
@@ -834,23 +862,45 @@ fn has_history(conn: &Connection) -> Result<bool> {
     Ok(n > 0)
 }
 
-/// The values replaced in a program's profile (`inv_id` none) or in one of its
-/// invariants, newest first, at most `ROWS`, and how many more there are.
-fn changes(conn: &Connection, program_id: &str, inv_id: Option<i64>) -> Result<(Vec<Change>, u64)> {
+/// Whose values a `history` row keeps: the program's profile, one of its
+/// invariants, or one of its findings.
+#[derive(Clone, Copy)]
+enum Owner<'a> {
+    Profile,
+    Invariant(i64),
+    Finding(&'a str),
+}
+
+impl Owner<'_> {
+    /// The row's `inv_id` and `finding_id`.
+    fn ids(self) -> (Option<i64>, Option<String>) {
+        match self {
+            Owner::Profile => (None, None),
+            Owner::Invariant(id) => (Some(id), None),
+            Owner::Finding(id) => (None, Some(id.to_string())),
+        }
+    }
+}
+
+/// The values replaced in one owner, newest first, at most `ROWS`, and how many
+/// more there are.
+fn changes(conn: &Connection, program_id: &str, owner: Owner) -> Result<(Vec<Change>, u64)> {
+    let (inv_id, finding_id) = owner.ids();
     let total: i64 = conn.query_row(
-        "SELECT count(*) FROM history WHERE program_id = ?1 AND inv_id IS ?2",
-        params![program_id, inv_id],
+        "SELECT count(*) FROM history WHERE program_id = ?1 AND inv_id IS ?2 AND finding_id IS ?3",
+        params![program_id, inv_id, finding_id],
         |r| r.get(0),
     )?;
     let mut stmt = conn.prepare(
-        "SELECT field, previous, recorded_at FROM history WHERE program_id = ?1 AND inv_id IS ?2 \
-         ORDER BY history_id DESC LIMIT ?3",
+        "SELECT field, previous, recorded_at FROM history \
+         WHERE program_id = ?1 AND inv_id IS ?2 AND finding_id IS ?3 \
+         ORDER BY history_id DESC LIMIT ?4",
     )?;
     let text = |r: &rusqlite::Row, i: usize| -> rusqlite::Result<String> {
         Ok(r.get::<_, Option<String>>(i)?.unwrap_or_default())
     };
     let rows = stmt
-        .query_map(params![program_id, inv_id, ROWS], |r| {
+        .query_map(params![program_id, inv_id, finding_id, ROWS], |r| {
             Ok(Change {
                 field: text(r, 0)?,
                 previous: text(r, 1)?,
@@ -862,15 +912,16 @@ fn changes(conn: &Connection, program_id: &str, inv_id: Option<i64>) -> Result<(
     Ok((rows, more))
 }
 
-/// Keeps, in `history`, each value of `old` that `new` replaces: a field given
-/// (`Some`) whose recorded value is not empty and not the one given. Returns the
-/// names of those fields.
+/// Keeps, in `history`, each value of `old` that `new` replaces in `owner`: a
+/// field given (`Some`) whose recorded value is not empty and not the one given.
+/// Returns the names of those fields.
 fn keep_replaced(
     tx: &Connection,
     program_id: &str,
-    inv_id: Option<i64>,
+    owner: Owner,
     fields: &[(&'static str, Option<&str>, String)],
 ) -> Result<Vec<&'static str>> {
+    let (inv_id, finding_id) = owner.ids();
     let now = now_ts();
     let mut replaced = Vec::new();
     for (field, new, old) in fields {
@@ -879,9 +930,9 @@ fn keep_replaced(
             continue;
         }
         tx.execute(
-            "INSERT INTO history (program_id, inv_id, field, previous, recorded_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![program_id, inv_id, field, old, now],
+            "INSERT INTO history (program_id, inv_id, finding_id, field, previous, recorded_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![program_id, inv_id, finding_id, field, old, now],
         )?;
         replaced.push(*field);
     }
@@ -938,7 +989,7 @@ pub fn put_profile(
         Some([class, trust, oracles, admins, notes]) => keep_replaced(
             &tx,
             program_id,
-            None,
+            Owner::Profile,
             &[
                 ("protocol_class", f.protocol_class, class),
                 ("trust_assumptions_json", f.trust_assumptions_json, trust),
@@ -1027,7 +1078,7 @@ pub fn put_invariant(
             let replaced = keep_replaced(
                 &tx,
                 program_id,
-                Some(id),
+                Owner::Invariant(id),
                 &[
                     ("protocol_class", f.protocol_class, class),
                     ("source_fn", f.source_fn, source_fn),
@@ -1099,7 +1150,7 @@ pub fn warm(conn: &Connection, program_id: &str) -> Result<WarmContext> {
         )
         .optional()?;
     if let (Some(p), true) = (profile.as_mut(), history) {
-        let (changed, more) = changes(conn, program_id, None)?;
+        let (changed, more) = changes(conn, program_id, Owner::Profile)?;
         p.changed = changed;
         truncated += more;
     }
@@ -1131,7 +1182,7 @@ pub fn warm(conn: &Connection, program_id: &str) -> Result<WarmContext> {
     truncated += left(total, invariants.len());
     if history {
         for invariant in &mut invariants {
-            let (changed, more) = changes(conn, program_id, Some(invariant.inv_id))?;
+            let (changed, more) = changes(conn, program_id, Owner::Invariant(invariant.inv_id))?;
             invariant.changed = changed;
             truncated += more;
         }

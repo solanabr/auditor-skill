@@ -1855,3 +1855,67 @@ fn a_store_made_before_anchors_reports_its_rulings_stale_and_migrates() {
     );
     assert_eq!(o.status.code(), Some(0), "{}", stdout(&o));
 }
+
+#[test]
+fn put_finding_keeps_the_severity_and_title_it_replaces_and_regressions_lists_them() {
+    let wt = store();
+    let put = |severity: &str, title: &str| {
+        ok(&mem(
+            &wt,
+            &[
+                "put-finding",
+                "--program-id",
+                P,
+                "--signature",
+                SIG,
+                "--root-cause",
+                "rc",
+                "--title",
+                title,
+                "--severity",
+                severity,
+            ],
+        ))
+    };
+    let drained = "Vault drained through an unchecked withdraw";
+    assert!(put("9", drained).starts_with("OPEN "));
+    ok(&mem(
+        &wt,
+        &[
+            "set-status",
+            "--program-id",
+            P,
+            "--signature",
+            SIG,
+            "--root-cause",
+            "rc",
+            "--status",
+            "FIXED",
+        ],
+    ));
+    assert!(put("9", drained).starts_with("REGRESSED "));
+    assert!(put("1", "cosmetic: rename variable").starts_with("REGRESSED "));
+    let regs = json(&mem(&wt, &["regressions", "--program-id", P]));
+    let row = &regs["regressions"][0];
+    assert_eq!(row["severity"], 1);
+    assert_eq!(row["title"], "cosmetic: rename variable");
+    let changed: Vec<(String, String)> = row["changed"]
+        .as_array()
+        .expect("changed")
+        .iter()
+        .map(|c| {
+            (
+                c["field"].as_str().unwrap_or_default().into(),
+                c["previous"].as_str().unwrap_or_default().into(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        changed,
+        [
+            ("title".to_string(), drained.to_string()),
+            ("severity".to_string(), "9".to_string()),
+        ]
+    );
+    assert_eq!(regs["truncated"], 0);
+}

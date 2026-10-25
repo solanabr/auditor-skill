@@ -458,3 +458,62 @@ fn warm_and_regressions_hold_the_newest_rows_and_count_the_rest() {
     );
     assert_eq!(regs.regressions[199].code_signature, "sig 30");
 }
+
+/// The finding of `sig` put with `severity` and `title`.
+fn put_one(conn: &rusqlite::Connection, sig: &str, severity: i64, title: &str) -> mem::PutOutcome {
+    mem::put_finding(
+        conn,
+        &mem::PutFinding {
+            program_id: PROG,
+            signature: sig,
+            root_cause: "rc",
+            title,
+            severity,
+            commit: None,
+            audit_n: None,
+            file: None,
+            line: None,
+            verdict: None,
+        },
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_replaced_severity_and_title_are_kept_and_regressions_lists_them() {
+    let conn = mem::open_in_memory().expect("open in-memory db");
+    put_one(&conn, SIG, 9, "Vault drained through an unchecked withdraw");
+    mem::set_status(&conn, PROG, SIG, "rc", "FIXED").unwrap();
+    assert!(put_one(&conn, SIG, 9, "Vault drained through an unchecked withdraw").regressed);
+    // A later call with the same signature rewrites what the next audit reads.
+    put_one(&conn, SIG, 1, "cosmetic: rename variable");
+    let regs = mem::regressions(&conn, PROG).unwrap();
+    assert_eq!(regs.regressions.len(), 1);
+    let row = &regs.regressions[0];
+    assert_eq!(
+        (row.severity, row.title.as_str()),
+        (1, "cosmetic: rename variable")
+    );
+    let changed: Vec<(&str, &str)> = row
+        .changed
+        .iter()
+        .map(|c| (c.field.as_str(), c.previous.as_str()))
+        .collect();
+    assert_eq!(
+        changed,
+        [
+            ("title", "Vault drained through an unchecked withdraw"),
+            ("severity", "9"),
+        ],
+        "newest first"
+    );
+    assert_eq!(regs.truncated, 0);
+    put_one(&conn, SIG, 1, "cosmetic: rename variable");
+    assert_eq!(
+        mem::regressions(&conn, PROG).unwrap().regressions[0]
+            .changed
+            .len(),
+        2,
+        "the same values replace nothing"
+    );
+}
