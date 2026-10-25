@@ -9,10 +9,13 @@
 #   2. Every case in fixtures/audit-scan/cases.txt and fixtures/audit-mem/cases.txt, in the working directory each
 #      header describes: the exit status and the one stderr line as written, nothing on stdout, no file changed
 #      inside or outside the working directory, and no canary text printed.
-#   3. The documented forms work: audit-scan to stdout and into a run directory (an output of more than 64 KiB, the
-#      same both ways), and audit-mem's lifecycle from init to warm, with the profile, an invariant and an anchored
-#      ruling, a ruling going stale, and init's .gitignore.
+#   3. The documented forms work, each with the contract marker --contract=1 where a rule names it: audit-scan to
+#      stdout and into a run directory (an output of more than 64 KiB, the same both ways), and audit-mem's lifecycle
+#      from init to warm, with the profile, an invariant and an anchored ruling, a ruling going stale, and init's
+#      .gitignore. A call without the marker works as it did.
 #   4. An installation inside the working directory, or under a path a quoted rule cannot match, is refused.
+#   5. With AUDITOR_TOOLS_OLD_BIN=<dir> naming a build made before the contract (82edf43's target/release), that
+#      build refuses --contract=1 in every form a rule pre-approves, before any effect; without it, a loud SKIP.
 # Builds both binaries from tools/auditor-tools (cargo build --release --locked, into a temporary target
 # directory), or tests the ones in AUDITOR_TOOLS_BIN=<dir> (CI's release build). Without cargo the suite is
 # skipped, loudly; with REQUIRE_TOOLCHAIN=1 (CI) that is a failure.
@@ -315,17 +318,19 @@ with open(sys.argv[1], "w") as f:
         f.write("fn f%d(a: u64, b: u64) -> u64 { a + b * %d }\n" % (i, i))
 PY
 run_dir "$W/audit_1"
-( cd "$W" && "$SCAN" ./src ) > "$T/scan.stdout" 2> "$T/scan.err"
+( cd "$W" && "$SCAN" --contract=1 ./src ) > "$T/scan.stdout" 2> "$T/scan.err"
 eq "audit-scan: a directory to stdout, exit 0, nothing on stderr" "$?:$(cat "$T/scan.err")" "0:"
 size=$(wc -c < "$T/scan.stdout" | tr -d ' ')
 if [ "$size" -gt 65536 ]; then ok "audit-scan: the report is larger than a pipe buffer ($size bytes)"; else bad "audit-scan: the report is only $size bytes"; fi
-( cd "$W" && "$SCAN" ./src --out audit_1/prescan.json ) > "$T/scan.out2" 2>&1
+( cd "$W" && "$SCAN" --contract=1 ./src --out audit_1/prescan.json ) > "$T/scan.out2" 2>&1
 eq "audit-scan: --out audit_1/prescan.json, exit 0, prints nothing" "$?:$(cat "$T/scan.out2")" "0:"
 if cmp -s "$T/scan.stdout" "$W/audit_1/prescan.json"; then ok "audit-scan: --out holds what stdout printed"
 else bad "audit-scan: --out differs from stdout"; fi
-( cd "$W" && "$SCAN" ./src | cat ) > "$T/scan.piped" 2>&1
+( cd "$W" && "$SCAN" --contract=1 ./src | cat ) > "$T/scan.piped" 2>&1
 if cmp -s "$T/scan.stdout" "$T/scan.piped"; then ok "audit-scan: the whole report goes through a pipe"; else bad "audit-scan: the piped report differs"; fi
-( cd "$W" && "$SCAN" . --out audit_1/prescan.json --pretty ) > /dev/null 2>&1
+( cd "$W" && "$SCAN" ./src ) > "$T/scan.bare" 2>&1
+if cmp -s "$T/scan.stdout" "$T/scan.bare"; then ok "audit-scan: without --contract=1 it works as it did"; else bad "audit-scan: without --contract=1 the report differs"; fi
+( cd "$W" && "$SCAN" --contract=1 . --out audit_1/prescan.json --pretty ) > /dev/null 2>&1
 eq "audit-scan: its own output is replaced" "$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["files_scanned"])' "$W/audit_1/prescan.json")" 1
 eq "audit-scan: a link in the tree is listed, not followed" \
   "$(python3 -I -c 'import json,sys; print(" ".join(s["file"] for s in json.load(open(sys.argv[1]))["skipped"]))' "$W/audit_1/prescan.json")" \
@@ -334,8 +339,9 @@ eq "audit-scan: a link in the tree is listed, not followed" \
 P=VaultProg1111
 S=unchecked_sub@vault.balance
 printf 'fn withdraw() {\n    require!(vault.balance >= amount);\n    vault.balance -= amount;\n}\n' > "$W/src/withdraw.rs"
-mem() { ( cd "$W" && "$MEM" "$@" ) 2>&1; }
+mem() { local sub=$1; shift; ( cd "$W" && "$MEM" "$sub" --contract=1 "$@" ) 2>&1; }
 eq "audit-mem: warm with no store prints an empty context" "$(mem warm --program-id "$P")" '{"profile":null,"invariants":[],"open_fp_rulings":[]}'
+eq "audit-mem: ... and so it does without --contract=1" "$( ( cd "$W" && "$MEM" warm --program-id "$P" ) 2>&1)" '{"profile":null,"invariants":[],"open_fp_rulings":[]}'
 eq "audit-mem: init makes the store" "$(mem init)" "initialized .audit-memory/audit.db"
 eq "audit-mem: ... with its .gitignore of *" "$(cat "$W/.audit-memory/.gitignore")" "*"
 eq "audit-mem: ... which git ignores, with no other step" "$(fgit -C "$W" status --porcelain -- .audit-memory)" ""
@@ -355,15 +361,15 @@ eq "audit-mem: invariant records an invariant" \
 eq "audit-mem: rule records an anchored ruling" \
   "$(mem rule --program-id "$P" --signature "$S" --ruling FALSE_POSITIVE --rationale 'guarded by the require! above it' --by auditor --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe --guard src/withdraw.rs:2)" \
   "ruling 1 recorded (FALSE_POSITIVE)"
-( cd "$W" && "$MEM" check --program-id "$P" --signature "$S" --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe ) > "$T/check.out" 2>&1
+( cd "$W" && "$MEM" check --contract=1 --program-id "$P" --signature "$S" --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe ) > "$T/check.out" 2>&1
 eq "audit-mem: check at the ruling's commit, the guard unchanged: suppressed (exit 0)" \
   "$?:$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["suppressed"])' "$T/check.out")" "0:True"
-( cd "$W" && "$MEM" check --program-id "$P" --signature "$S" --commit c0ffee4c0ffee4c0ffee4c0ffee4c0ffee4c0ffe ) > "$T/check.out" 2>&1
+( cd "$W" && "$MEM" check --contract=1 --program-id "$P" --signature "$S" --commit c0ffee4c0ffee4c0ffee4c0ffee4c0ffee4c0ffe ) > "$T/check.out" 2>&1
 eq "audit-mem: check at another commit: stale, not suppressed (exit 1)" \
   "$?:$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["stale"])' "$T/check.out")" \
   "1:ruled at commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe, checked at c0ffee4c0ffee4c0ffee4c0ffee4c0ffee4c0ffe"
 printf 'fn withdraw() {\n    require!(vault.balance > amount);\n    vault.balance -= amount;\n}\n' > "$W/src/withdraw.rs"
-( cd "$W" && "$MEM" check --program-id "$P" --signature "$S" --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe ) > "$T/check.out" 2>&1
+( cd "$W" && "$MEM" check --contract=1 --program-id "$P" --signature "$S" --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe ) > "$T/check.out" 2>&1
 eq "audit-mem: check after the guard changed: stale, not suppressed (exit 1)" \
   "$?:$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["stale"])' "$T/check.out")" \
   "1:the guard at src/withdraw.rs:2 no longer holds the lines ruled on"
@@ -398,5 +404,64 @@ for b in audit-scan audit-mem; do
   eq "$b: an installation inside the working directory is refused in the words of scripts/lib/confine.sh" "$(cat "$T/c1.err")" \
     "$b: refused: the installation lies inside the working directory; install it outside the tree under audit, or run from a directory that does not contain it (Rule 11e)"
 done
+
+# ---------------------------------------------------------------------------
+# 6. A build made before the contract: AUDITOR_TOOLS_OLD_BIN=<dir> names one
+#    (82edf43's target/release, which writes wherever --db and --out say). In
+#    every form a rule pre-approves, with --contract=1 where the rule puts it and
+#    paths it would write outside the working directory, it refuses the marker:
+#    exit 2, nothing on stdout, nothing made or changed. This build makes or
+#    changes nothing either: it refuses each call that names such a path, and
+#    runs the one that names none (exit 0 here).
+# ---------------------------------------------------------------------------
+if [ -n "${AUDITOR_TOOLS_OLD_BIN:-}" ]; then
+  case "$AUDITOR_TOOLS_OLD_BIN" in /*) OLD="$AUDITOR_TOOLS_OLD_BIN" ;; *) OLD="$PWD/$AUDITOR_TOOLS_OLD_BIN" ;; esac
+  for b in audit-scan audit-mem; do
+    [ -f "$OLD/$b" ] && [ -x "$OLD/$b" ] || { bad "old build: $OLD/$b is not an executable file"; finish; }
+  done
+  H="$T/old"
+  layout_common "$H"
+  W="$H/wt"
+  run_dir "$W/audit_1"
+  printf 'kept\n' > "$H/outside/sentinel.txt"
+  nforms=0
+  while IFS='|' read -r b now form; do
+    [ -n "$b" ] || continue
+    form=${form//@OUT@/$H/outside}
+    read -r -a words <<< "$form"
+    snapshot "$H" > "$T/old.before"
+    ( cd "$W" && exec "$OLD/$b" "${words[@]}" ) < /dev/null > "$T/old.out" 2> "$T/old.err"
+    code=$?
+    snapshot "$H" > "$T/old.after"
+    if [ "$code" = 2 ] && [ ! -s "$T/old.out" ] && [ -s "$T/old.err" ] && cmp -s "$T/old.before" "$T/old.after"; then
+      ok "the build made before the contract refuses $b $form (exit 2, nothing made)"
+    else
+      bad "the build made before the contract: $b $form -> exit $code, $(wc -c < "$T/old.out" | tr -d ' ') bytes on stdout$(cmp -s "$T/old.before" "$T/old.after" || printf ', files changed')"
+    fi
+    ( cd "$W" && exec "$BIN/$b" "${words[@]}" ) < /dev/null > "$T/old.out" 2> "$T/old.err"
+    code=$?
+    snapshot "$H" > "$T/old.after"
+    if [ "$code" = "$now" ] && cmp -s "$T/old.before" "$T/old.after"; then
+      ok "this build: $b $form -> exit $now, nothing made"
+    else
+      bad "this build: $b $form -> exit $code, not $now$(cmp -s "$T/old.before" "$T/old.after" || printf ', files changed')"
+    fi
+    nforms=$((nforms + 1))
+  done <<'FORMS'
+audit-scan|2|--contract=1 . --out @OUT@/sentinel.txt
+audit-scan|0|--contract=1 .
+audit-mem|2|init --contract=1 --db @OUT@/made-by-init/x.db
+audit-mem|2|warm --contract=1 --db @OUT@/made-by-warm/x.db --program-id p
+audit-mem|2|check --contract=1 --db @OUT@/made-by-check/x.db --program-id p --signature s
+audit-mem|2|regressions --contract=1 --db @OUT@/made-by-regressions/x.db --program-id p
+audit-mem|2|put-finding --contract=1 --db @OUT@/elsewhere/deep/x.db --program-id p --signature s --root-cause r --title t --severity 3
+audit-mem|2|profile --contract=1 --db @OUT@/made-by-profile/x.db --program-id p --notes n
+audit-mem|2|invariant --contract=1 --db @OUT@/made-by-invariant/x.db --program-id p --statement s
+FORMS
+  eq "old build: the forms tried" "$nforms" 9
+  eq "old build: the file outside is unchanged" "$(cat "$H/outside/sentinel.txt")" kept
+else
+  echo "SKIP old build: AUDITOR_TOOLS_OLD_BIN is not set, so it is NOT checked that a build made before the contract refuses --contract=1 (build 82edf43 and name its tools/auditor-tools/target/release)"
+fi
 
 finish

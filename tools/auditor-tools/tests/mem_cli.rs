@@ -97,6 +97,142 @@ CREATE TABLE IF NOT EXISTS protocol_profile (program_id TEXT PRIMARY KEY, protoc
 "#;
 
 #[test]
+fn takes_the_contract_marker_right_after_the_subcommand() {
+    let wt = Wt::repo();
+    wt.write("src/withdraw.rs", b"fn withdraw() {\n    require!(x);\n}\n");
+    let c = "--contract=1";
+    assert_eq!(
+        ok(&mem(&wt, &["init", c])),
+        "initialized .audit-memory/audit.db\n"
+    );
+    let finding = [
+        "--program-id",
+        P,
+        "--signature",
+        SIG,
+        "--root-cause",
+        "rc",
+        "--title",
+        "t",
+        "--severity",
+        "3",
+    ];
+    let line = ok(&mem(&wt, &[&["put-finding", c][..], &finding].concat()));
+    assert!(line.starts_with("OPEN "), "{line}");
+    let status = [
+        "--program-id",
+        P,
+        "--signature",
+        SIG,
+        "--root-cause",
+        "rc",
+        "--status",
+        "FIXED",
+    ];
+    assert_eq!(
+        ok(&mem(&wt, &[&["set-status", c][..], &status].concat())),
+        "updated 1 row(s) -> FIXED\n"
+    );
+    let line = ok(&mem(&wt, &[&["put-finding", c][..], &finding].concat()));
+    assert!(line.starts_with("REGRESSED "), "{line}");
+    let ruling = [
+        "--program-id",
+        P,
+        "--signature",
+        SIG,
+        "--ruling",
+        "FALSE_POSITIVE",
+        "--rationale",
+        "r",
+        "--by",
+        "a",
+        "--commit",
+        C1,
+        "--guard",
+        "src/withdraw.rs:2",
+    ];
+    assert_eq!(
+        ok(&mem(&wt, &[&["rule", c][..], &ruling].concat())),
+        "ruling 1 recorded (FALSE_POSITIVE)\n"
+    );
+    assert_eq!(
+        ok(&mem(
+            &wt,
+            &["profile", c, "--program-id", P, "--notes", "n"]
+        )),
+        format!("profile {P} recorded\n")
+    );
+    assert_eq!(
+        ok(&mem(
+            &wt,
+            &["invariant", c, "--program-id", P, "--statement", "s"]
+        )),
+        "invariant 1 recorded\n"
+    );
+    let marked = mem(
+        &wt,
+        &[
+            "check",
+            c,
+            "--program-id",
+            P,
+            "--signature",
+            SIG,
+            "--commit",
+            C1,
+        ],
+    );
+    assert_eq!(marked.status.code(), Some(0), "{}", stderr(&marked));
+    for (sub, rest) in [
+        ("warm", vec!["--program-id", P]),
+        ("regressions", vec!["--program-id", P]),
+        (
+            "check",
+            vec!["--program-id", P, "--signature", SIG, "--commit", C1],
+        ),
+    ] {
+        let with = mem(&wt, &[&[sub, c][..], &rest].concat());
+        let without = mem(&wt, &[&[sub][..], &rest].concat());
+        assert_eq!(with.status.code(), without.status.code(), "{sub}");
+        assert_eq!(stdout(&with), stdout(&without), "{sub}");
+    }
+    let usage = "usage: audit-mem <subcommand> [--contract=1] [--db <store>] [options], the subcommand \
+                 being init, put-finding, set-status, rule, check, regressions, warm, profile or invariant";
+    let other =
+        "names a contract this build does not keep (it keeps --contract=1); rebuild it with \
+                 cargo build --release --locked in tools/auditor-tools";
+    let place = "--contract=1 comes right after the subcommand, once";
+    let before = wt.snapshot();
+    for (args, why) in [
+        (
+            vec![c, "warm", "--program-id", P],
+            format!("{place} ({usage})"),
+        ),
+        (
+            vec!["--contract=2", "warm", "--program-id", P],
+            format!("--contract=2 {other} ({usage})"),
+        ),
+        (vec!["warm", "--program-id", P, c], place.to_string()),
+        (vec!["warm", c, c, "--program-id", P], place.to_string()),
+        (
+            vec!["warm", "--contract=2", "--program-id", P],
+            format!("--contract=2 {other}"),
+        ),
+        (vec!["init", "--contract"], format!("--contract {other}")),
+        (
+            vec!["regressions", "--contract=1x", "--program-id", P],
+            format!("--contract=1x {other}"),
+        ),
+    ] {
+        refused(&mem(&wt, &args), "audit-mem", &why);
+    }
+    assert_eq!(wt.snapshot(), before);
+    // The word after an option is its value, whatever it looks like.
+    let o = mem(&wt, &["warm", "--program-id", c]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+}
+
+#[test]
 fn reads_no_store_as_empty_and_never_makes_one() {
     for wt in [Wt::new(), Wt::repo()] {
         assert_eq!(
@@ -465,7 +601,7 @@ fn takes_db_only_as_one_of_two_stores() {
 #[test]
 fn refuses_options_before_the_subcommand_and_any_it_does_not_take() {
     let wt = store();
-    let usage = "usage: audit-mem <subcommand> [--db <store>] [options], the subcommand being init, put-finding, set-status, rule, check, regressions, warm, profile or invariant";
+    let usage = "usage: audit-mem <subcommand> [--contract=1] [--db <store>] [options], the subcommand being init, put-finding, set-status, rule, check, regressions, warm, profile or invariant";
     for (args, why) in [
         (vec![], format!("no subcommand ({usage})")),
         (

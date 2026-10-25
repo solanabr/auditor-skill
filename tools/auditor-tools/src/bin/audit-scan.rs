@@ -1,10 +1,12 @@
-//! `audit-scan <dir> [--out <R>/prescan.json | <R>/prescan-<slug>.json] [--pretty]`
+//! `audit-scan [--contract=1] <dir> [--out <R>/prescan.json | <R>/prescan-<slug>.json] [--pretty]`
 //!
 //! Recursively parses `*.rs` files under `<dir>` and prints one JSON object
 //! describing the risky audit surface to stdout (or `--out`).
 //!
-//! It is built to be pre-approved as one rule on its absolute path, so it is safe
-//! whatever arguments follow (`confine.rs`): `<dir>` is `.` or a directory inside
+//! It is built to be pre-approved as one rule on its absolute path followed by
+//! `--contract=1`, the marker of its contract, which a build made before it
+//! refuses; the marker comes first and changes nothing. It is safe whatever
+//! arguments follow (`confine.rs`): `<dir>` is `.` or a directory inside
 //! the working directory, named by a relative path with no `.` or `..` component
 //! and reached through no symbolic link, and the walk follows no link. `--out` is
 //! `prescan.json` or `prescan-<slug>.json` (slug: 1 to 32 of `a-z`, `0-9`, `-`) in
@@ -22,8 +24,8 @@ use std::process::ExitCode;
 use auditor_tools::confine::{self, os_message, refuse, Dir, Git, Kind, Rel, Stop};
 use auditor_tools::scan;
 
-const USAGE: &str =
-    "usage: audit-scan <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty]";
+const USAGE: &str = "usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | \
+<run dir>/prescan-<slug>.json] [--pretty]";
 
 struct Call {
     dir: OsString,
@@ -35,16 +37,26 @@ fn usage(why: &str) -> Stop {
     refuse(format!("{why} ({USAGE})"))
 }
 
-/// The closed grammar: one directory, `--out <file>` or `--out=<file>` and
-/// `--pretty`, each at most once, in any order. The word after `--out` is its
-/// value whatever it looks like; any other word that starts with `-` is refused.
+/// The closed grammar: `--contract=1` first, or not at all, then one directory,
+/// `--out <file>` or `--out=<file>` and `--pretty`, each at most once, in any
+/// order. The word after `--out` is its value whatever it looks like; any other
+/// word that starts with `-` is refused, another `--contract…` word with it.
 fn parse(args: &[OsString]) -> Result<Call, Stop> {
     let mut dir = None;
     let mut out = None;
     let mut pretty = false;
     let mut rest = args;
+    if rest
+        .first()
+        .is_some_and(|w| w.as_bytes() == confine::CONTRACT.as_bytes())
+    {
+        rest = &rest[1..];
+    }
     while let Some(word) = rest.first() {
         let w = word.as_bytes();
+        if w.starts_with(b"--contract") {
+            return Err(usage(&confine::contract_word(w, "first")));
+        }
         let value = if w == b"--out" {
             let v = rest.get(1).ok_or_else(|| usage("--out needs a file"))?;
             rest = &rest[2..];

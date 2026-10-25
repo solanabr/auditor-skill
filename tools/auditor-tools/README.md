@@ -46,10 +46,33 @@ so build it again after any update: the old binary refuses to run (exit 4, below
 only when the update changed a file it was built from, that is one of the three
 recipes, `scripts/lib/confine.sh`, or its own `Cargo.toml` or `src/`.
 
+### The contract marker
+
+`audit-scan` and `audit-mem` keep a contract, the confinement described below, and
+mark it with `--contract=1`. Every rule that pre-approves them names the marker,
+right after the binary's path for `audit-scan` (`audit-scan --contract=1 <dir> …`)
+and right after the subcommand for `audit-mem` (`audit-mem warm --contract=1 …`), and
+so does every call the corpus makes. The marker changes nothing: given once in its
+place, the call runs as it does without it. Any other word that starts with
+`--contract` is refused.
+
+A build made before the contract, which writes wherever `--db` and `--out` say,
+refuses the marker (`error: unexpected argument '--contract' found`, exit 2) before it
+does anything, so a rule that names the marker never runs it. An installation updated
+in place, such as a `git pull` of a clone, keeps its old binaries in
+`target/release/` until they are built again, and the calls fail until then. Rebuild:
+
+```bash
+cd "<auditor-skill root>/tools/auditor-tools" && cargo build --release --locked
+```
+
+A later contract would take `--contract=2`, which this build refuses with a line that
+says to rebuild it.
+
 ## `audit-scan`
 
 ```
-audit-scan <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty]
+audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty]
 ```
 
 Recursively walks the `*.rs` files under `<dir>`, parses each as
@@ -79,8 +102,9 @@ groups.
 
 ### Where it reads and writes
 
-It is built to be pre-approved as one `Bash(…)` rule on its absolute path, so it
-must be safe whatever arguments follow. Its rules are those of
+It is built to be pre-approved as one `Bash(…)` rule on its absolute path and the
+contract marker (`"<root>/tools/auditor-tools/target/release/audit-scan" --contract=1 *`),
+so it must be safe whatever arguments follow. Its rules are those of
 `scripts/lib/confine.sh`, in `src/confine.rs`, and
 `scripts/tests/test-auditor-tools.sh` runs every case of
 `scripts/tests/fixtures/audit-scan/cases.txt`:
@@ -97,9 +121,9 @@ must be safe whatever arguments follow. Its rules are those of
   0600) through the run directory, opened once without following a link; a file
   already there is replaced only when it is a regular file with one name, as
   audit-scan's own earlier output is.
-- Each option is given once, `--out <file>` or `--out=<file>`; the word after
-  `--out` is its value whatever it looks like. Any other word that starts with `-` is
-  refused.
+- `--contract=1` comes first, or not at all. Each option is given once, `--out
+  <file>` or `--out=<file>`; the word after `--out` is its value whatever it looks
+  like. Any other word that starts with `-` is refused.
 - It asks git whether a run directory is tracked as confine.sh's `hgit` asks it: git
   from a `PATH` with every entry inside the working directory removed, with an
   environment of its own and the repository's config pinned off. When git cannot
@@ -208,16 +232,16 @@ rendered, so a long chain costs no more than a short one.
 ### Example
 
 ```bash
-audit-scan ./programs/my-program/src --pretty --out audit_1/prescan.json
+audit-scan --contract=1 ./programs/my-program/src --pretty --out audit_1/prescan.json
 ```
 
 ## `audit-mem`
 
 ```
-audit-mem <subcommand> [--db <store>] [options]
+audit-mem <subcommand> [--contract=1] [--db <store>] [options]
 ```
 
-The subcommand comes first, then its options. A store is `.audit-memory/audit.db`
+The subcommand comes first, then the contract marker (above), then its options. A store is `.audit-memory/audit.db`
 in the working directory (the default) or `<R>/audit-mem.db`, a store for one run in
 a run directory, `audit_<n>/` or `incident_<n>/`; nothing else. `init` makes it. The
 other subcommands use only a store `init` made, and `warm`, `check` and
@@ -248,7 +272,7 @@ was `FIXED`, the status transitions to `REGRESSED` and the command prints
 ### Options
 
 ```
-any subcommand  [--db .audit-memory/audit.db | <R>/audit-mem.db]
+any subcommand  [--contract=1, right after it] [--db .audit-memory/audit.db | <R>/audit-mem.db]
 put-finding     --program-id <PID> --signature <SIG> --root-cause <RC> --title <T> --severity <1-10>
                 [--commit <SHA>] [--audit-n <N>] [--file <PATH>] [--line <N>] [--verdict <V>]
 set-status      --program-id <PID> --signature <SIG> --root-cause <RC> --status <STATUS>
@@ -296,9 +320,9 @@ subcommand that writes, adds the anchor columns to a store made before them;
 ### Where it reads and writes
 
 It is built so that `warm`, `check`, `regressions`, `init` and `put-finding` can
-each be pre-approved as one `Bash(…)` rule on its absolute path and subcommand
-(`"<root>/tools/auditor-tools/target/release/audit-mem" warm *`), safe whatever
-arguments follow; `profile` and `invariant` follow the same rules. `rule` and
+each be pre-approved as one `Bash(…)` rule on its absolute path, subcommand and the
+contract marker (`"<root>/tools/auditor-tools/target/release/audit-mem" warm --contract=1 *`),
+safe whatever arguments follow; `profile` and `invariant` follow the same rules. `rule` and
 `set-status` decide what later audits suppress, and are never pre-approved. Its
 rules are those of `scripts/lib/confine.sh` and `scripts/rundir.sh`, in
 `src/confine.rs`, and `scripts/tests/test-auditor-tools.sh` runs every case of
@@ -351,43 +375,43 @@ write (`audit-mem: error: …`).
 ### Example lifecycle
 
 ```bash
-audit-mem init                    # .audit-memory/, its .gitignore of *, then audit.db
+audit-mem init --contract=1     # .audit-memory/, its .gitignore of *, then audit.db
 
 # first observation -> "OPEN <id>"
-audit-mem put-finding --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
+audit-mem put-finding --contract=1 --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
   --root-cause 'unchecked subtraction can underflow vault balance' \
   --title 'Vault balance underflow' --severity 3 \
   --commit c0ffee1 --audit-n audit-1 --file src/withdraw.rs --line 42 --verdict TRUE_POSITIVE
 
 # after the dev fixes it
-audit-mem set-status --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
+audit-mem set-status --contract=1 --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
   --root-cause 'unchecked subtraction can underflow vault balance' --status FIXED
 
 # next audit re-observes it -> "REGRESSED <id>"
-audit-mem put-finding --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
+audit-mem put-finding --contract=1 --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
   --root-cause 'unchecked subtraction can underflow vault balance' \
   --title 'Vault balance underflow' --severity 3 --commit c0ffee3 --audit-n audit-3
 
 # the protocol profile and an invariant, which warm returns
-audit-mem profile --program-id VaultProg... --protocol-class vault \
+audit-mem profile --contract=1 --program-id VaultProg... --protocol-class vault \
   --trust-assumptions-json '{"admin":"3-of-5 multisig"}' --oracle-set 'pyth SOL/USD'
-audit-mem invariant --program-id VaultProg... --statement 'total_shares == shares_mint.supply' \
+audit-mem invariant --contract=1 --program-id VaultProg... --statement 'total_shares == shares_mint.supply' \
   --status 'Manually verified' --cited-line src/vault.rs:88
 
 # rule a known false positive at the audited commit, citing its guard, then gate on it
-audit-mem rule --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
+audit-mem rule --contract=1 --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
   --ruling FALSE_POSITIVE --rationale 'guarded by the require! on line 40' --by auditor \
   --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe --guard src/withdraw.rs:40
-audit-mem check --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
+audit-mem check --contract=1 --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
   --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe
 #   -> {"suppressed":true,"ruling":{...}}   (exit 0)
-audit-mem check --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
+audit-mem check --contract=1 --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
   --commit c0ffee4c0ffee4c0ffee4c0ffee4c0ffee4c0ffe
 #   -> {"suppressed":false,"stale":"ruled at commit c0ffee3…, checked at c0ffee4…","ruling":{...}}   (exit 1)
 
 # a store for one run
-audit-mem init --db audit_1/audit-mem.db
-audit-mem warm --db audit_1/audit-mem.db --program-id VaultProg...
+audit-mem init --contract=1 --db audit_1/audit-mem.db
+audit-mem warm --contract=1 --db audit_1/audit-mem.db --program-id VaultProg...
 ```
 
 ### Schema

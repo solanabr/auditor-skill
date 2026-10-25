@@ -1,5 +1,5 @@
-//! `audit-mem <subcommand> [--db <store>] [options]` — SQLite findings store for
-//! cross-audit memory.
+//! `audit-mem <subcommand> [--contract=1] [--db <store>] [options]` — SQLite
+//! findings store for cross-audit memory.
 //!
 //! Subcommands: `init`, `put-finding`, `set-status`, `rule`, `check`,
 //! `regressions`, `warm`, `profile`, `invariant`. See the crate README for full
@@ -7,7 +7,9 @@
 //!
 //! It is built so that `warm`, `check`, `regressions`, `init` and `put-finding`
 //! (and `profile` and `invariant`) can be pre-approved, each as a rule on its
-//! absolute path and subcommand, safe whatever arguments follow (`confine.rs`):
+//! absolute path, subcommand and `--contract=1`, the marker of its contract, which
+//! a build made before it refuses; the marker comes right after the subcommand
+//! and changes nothing. Each is safe whatever arguments follow (`confine.rs`):
 //! - The subcommand comes first; each option is given once, as `--name <value>`
 //!   or `--name=<value>`, and the word after `--name` is its value whatever it
 //!   looks like. Every text value is UTF-8, at most 4096 bytes, and holds no
@@ -40,8 +42,8 @@ use auditor_tools::confine::{self, os_message, refuse, shown, unsafe_char, Dir, 
 use auditor_tools::mem;
 use rusqlite::Connection;
 
-const USAGE: &str = "usage: audit-mem <subcommand> [--db <store>] [options], the subcommand \
-being init, put-finding, set-status, rule, check, regressions, warm, profile or invariant";
+const USAGE: &str = "usage: audit-mem <subcommand> [--contract=1] [--db <store>] [options], the \
+subcommand being init, put-finding, set-status, rule, check, regressions, warm, profile or invariant";
 
 /// The longest text value accepted, in bytes.
 const MAX_FIELD: usize = 4096;
@@ -236,11 +238,16 @@ fn usage(why: &str) -> Stop {
     refuse(format!("{why} ({USAGE})"))
 }
 
-/// The closed grammar: the subcommand first, then its options, each once.
+/// The closed grammar: the subcommand first, `--contract=1` right after it or not
+/// at all, then its options, each once; another `--contract…` word is refused.
 fn parse(args: &[OsString]) -> Result<Call, Stop> {
+    let place = "right after the subcommand";
     let Some(first) = args.first() else {
         return Err(usage("no subcommand"));
     };
+    if first.as_bytes().starts_with(b"--contract") {
+        return Err(usage(&confine::contract_word(first.as_bytes(), place)));
+    }
     let sub = Sub::parse(first.as_bytes()).ok_or_else(|| {
         usage(&format!(
             "{} is not a subcommand, and the subcommand comes first",
@@ -251,8 +258,17 @@ fn parse(args: &[OsString]) -> Result<Call, Stop> {
     let mut db = None;
     let mut values: Vec<(&'static str, OsString)> = Vec::new();
     let mut rest = &args[1..];
+    if rest
+        .first()
+        .is_some_and(|w| w.as_bytes() == confine::CONTRACT.as_bytes())
+    {
+        rest = &rest[1..];
+    }
     while let Some(word) = rest.first() {
         let w = word.as_bytes();
+        if w.starts_with(b"--contract") {
+            return Err(refuse(confine::contract_word(w, place)));
+        }
         let Some(opt) = w.strip_prefix(b"--").filter(|o| !o.is_empty()) else {
             return Err(refuse(format!(
                 "{} takes no argument {}",

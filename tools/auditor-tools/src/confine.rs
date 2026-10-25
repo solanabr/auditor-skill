@@ -47,6 +47,28 @@ pub const MAX_PATH: usize = 1024;
 /// audit-mem hashes.
 pub const MAX_FILE: u64 = 4 << 20;
 
+/// The marker of the contract this build keeps. Every call a rule pre-approves
+/// names it (`audit-scan --contract=1 …`, `audit-mem <subcommand> --contract=1
+/// …`), and a build made before the contract refuses it, so such a rule never
+/// runs one. It changes nothing; a later contract would be `--contract=2`, which
+/// this build refuses.
+pub const CONTRACT: &str = "--contract=1";
+
+/// Why a word that starts with `--contract` is refused where it stands: this
+/// build's marker out of its place (`place` says where it goes), or a contract
+/// this build does not keep.
+pub fn contract_word(word: &[u8], place: &str) -> String {
+    if word == CONTRACT.as_bytes() {
+        format!("{CONTRACT} comes {place}, once")
+    } else {
+        format!(
+            "{} names a contract this build does not keep (it keeps {CONTRACT}); rebuild it with \
+             cargo build --release --locked in tools/auditor-tools",
+            shown(word)
+        )
+    }
+}
+
 /// Ends a run with an exit status and one stderr line: 2 for a refusal, 1 for a
 /// file that cannot be read or written.
 pub struct Stop(pub u8, pub String);

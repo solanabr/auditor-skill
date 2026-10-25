@@ -345,7 +345,7 @@ fn refuses_paths_outside_the_working_tree() {
 fn refuses_a_grammar_it_does_not_have() {
     let wt = Wt::new();
     wt.run_dir("audit_1");
-    let usage = "usage: audit-scan <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty]";
+    let usage = "usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty]";
     for (args, why) in [
         (vec![], "no directory to scan"),
         (vec![".", "."], "it takes one directory"),
@@ -380,6 +380,51 @@ fn refuses_a_grammar_it_does_not_have() {
         "audit-scan",
         "--out may not start with - or ~: --pretty",
     );
+}
+
+#[test]
+fn takes_the_contract_marker_first_and_refuses_any_other() {
+    let wt = Wt::repo();
+    wt.write("src/lib.rs", b"fn a() { let x = 1 + 2; }\n");
+    wt.run_dir("audit_1");
+    let plain = stdout(&run(BIN, &wt.dir, &["src"]));
+    assert_eq!(stdout(&run(BIN, &wt.dir, &["--contract=1", "src"])), plain);
+    let out = run(
+        BIN,
+        &wt.dir,
+        &["--contract=1", "src", "--out", "audit_1/prescan.json"],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", common::stderr(&out));
+    assert_eq!(wt.read("audit_1/prescan.json"), plain.as_bytes());
+    let usage = "usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty]";
+    let other =
+        "names a contract this build does not keep (it keeps --contract=1); rebuild it with \
+                 cargo build --release --locked in tools/auditor-tools";
+    let before = wt.snapshot();
+    for (args, why) in [
+        (
+            vec!["src", "--contract=1"],
+            "--contract=1 comes first, once".to_string(),
+        ),
+        (
+            vec!["--contract=1", "--contract=1", "src"],
+            "--contract=1 comes first, once".to_string(),
+        ),
+        (vec!["--contract=2", "src"], format!("--contract=2 {other}")),
+        (vec!["--contract", "src"], format!("--contract {other}")),
+        (
+            vec!["--contract=1 ", "src"],
+            format!("--contract=1  {other}"),
+        ),
+        (vec!["src", "--contracts"], format!("--contracts {other}")),
+    ] {
+        refused(
+            &run(BIN, &wt.dir, &args),
+            "audit-scan",
+            &format!("{why} ({usage})"),
+        );
+    }
+    assert_eq!(wt.snapshot(), before);
 }
 
 #[test]
