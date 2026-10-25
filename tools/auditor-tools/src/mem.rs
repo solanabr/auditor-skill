@@ -141,12 +141,24 @@ fn verify_schema(conn: &Connection) -> Result<Vec<String>> {
 }
 
 /// Opens a store that exists for reading only: read-only, through no symbolic
-/// link, never made or written (`query_only`), hardened as `harden` does. It must
-/// hold every table of audit-mem's and nothing else.
+/// link, never made or written (`query_only`), hardened as `harden` does. It is
+/// opened as immutable (`file:<path>?mode=ro&immutable=1`), so SQLite takes no
+/// lock and opens no `-wal`, `-shm` or `-journal` file beside it. It must hold
+/// every table of audit-mem's and nothing else. `path` is relative, of the
+/// letters, digits and `._/-` that a store's path holds.
 pub fn open_read_only(path: &Path) -> Result<Connection> {
+    let name = path
+        .to_str()
+        .filter(|p| {
+            !p.is_empty()
+                && p.bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'/' | b'-'))
+        })
+        .ok_or_else(|| refusal("its path cannot be written as a SQLite URI".to_string()))?;
     let conn = Connection::open_with_flags(
-        path,
+        format!("file:{name}?mode=ro&immutable=1"),
         OpenFlags::SQLITE_OPEN_READ_ONLY
+            | OpenFlags::SQLITE_OPEN_URI
             | OpenFlags::SQLITE_OPEN_NOFOLLOW
             | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;

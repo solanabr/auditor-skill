@@ -864,6 +864,101 @@ fn refuses_a_crafted_store() {
 }
 
 #[test]
+fn refuses_a_store_with_sqlite_files_beside_it() {
+    let wt = store();
+    wt.run_dir("audit_1");
+    ok(&mem(&wt, &["init", "--db", "audit_1/audit-mem.db"]));
+    for (db, tail) in [
+        (".audit-memory/audit.db", USE_R),
+        ("audit_1/audit-mem.db", ""),
+    ] {
+        let calls = [
+            vec!["warm", "--db", db, "--program-id", P],
+            vec!["check", "--db", db, "--program-id", P, "--signature", SIG],
+            vec!["regressions", "--db", db, "--program-id", P],
+            vec!["init", "--db", db],
+        ];
+        for suffix in ["-wal", "-shm"] {
+            let side = format!("{db}{suffix}");
+            wt.write(&side, b"");
+            let before = wt.snapshot();
+            for args in &calls {
+                refused(
+                    &mem(&wt, args),
+                    "audit-mem",
+                    &format!(
+                        "{db} has a {suffix} file beside it, which audit-mem never makes{tail}"
+                    ),
+                );
+            }
+            assert_eq!(wt.snapshot(), before, "{side}: nothing is made beside it");
+            fs::remove_file(wt.path(&side)).expect("rm");
+        }
+        // A -journal, left by a write that stopped, must be a regular file with one name.
+        let journal = format!("{db}-journal");
+        fs::hard_link(wt.path("src/withdraw.rs"), wt.path(&journal)).expect("ln");
+        refused(
+            &mem(&wt, &calls[0]),
+            "audit-mem",
+            &format!("{journal} is not a regular file with one name{tail}"),
+        );
+        fs::remove_file(wt.path(&journal)).expect("rm");
+        let status = Command::new("mkfifo")
+            .arg(wt.path(&journal))
+            .status()
+            .expect("mkfifo");
+        assert!(status.success());
+        refused(
+            &mem(&wt, &calls[3]),
+            "audit-mem",
+            &format!("{journal} is not a regular file with one name{tail}"),
+        );
+        fs::remove_file(wt.path(&journal)).expect("rm");
+        wt.write(&journal, b"");
+        let before = wt.snapshot();
+        ok(&mem(&wt, &calls[0]));
+        assert_eq!(wt.snapshot(), before, "a read leaves the journal as it was");
+        fs::remove_file(wt.path(&journal)).expect("rm");
+    }
+}
+
+#[test]
+fn a_read_only_open_is_immutable_and_opens_nothing_beside_the_store() {
+    let wt = store();
+    // A WAL file another database wrote, planted beside the store: a plain
+    // read-only open would apply it and make a -shm file.
+    let other = wt.outside().join("other.db");
+    let conn = rusqlite::Connection::open(&other).expect("open");
+    conn.execute_batch(
+        "PRAGMA journal_mode=WAL; CREATE TABLE planted(x); INSERT INTO planted VALUES (1);",
+    )
+    .expect("write the WAL");
+    fs::copy(
+        wt.outside().join("other.db-wal"),
+        wt.path(".audit-memory/audit.db-wal"),
+    )
+    .expect("copy the WAL");
+    drop(conn);
+    let before = wt.snapshot();
+    // The CLI refuses the store.
+    refused(
+        &mem(&wt, &["warm", "--program-id", P]),
+        "audit-mem",
+        &format!(
+            ".audit-memory/audit.db has a -wal file beside it, which audit-mem never makes{USE_R}"
+        ),
+    );
+    // The open itself, with that check left out, reads the store as it is.
+    let db = wt.path(".audit-memory/audit.db");
+    let conn = auditor_tools::mem::open_read_only(&db).expect("open read-only");
+    let warm = auditor_tools::mem::warm(&conn, P).expect("read");
+    assert!(warm.profile.is_none());
+    drop(conn);
+    assert!(!wt.exists(".audit-memory/audit.db-shm"), "no -shm is made");
+    assert_eq!(wt.snapshot(), before, "nothing changed beside the store");
+}
+
+#[test]
 fn profile_and_invariant_record_what_warm_returns() {
     let wt = store();
     assert_eq!(

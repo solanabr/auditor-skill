@@ -294,16 +294,19 @@ rules are those of `scripts/lib/confine.sh` and `scripts/rundir.sh`, in
 - It asks git what is tracked as confine.sh's `hgit` asks it: git from a `PATH` with
   every entry inside the working directory removed, with an environment of its own
   and the repository's config pinned off. When git cannot answer, it refuses.
-- The database is a regular file with one name, in rollback-journal mode: a
-  database in WAL mode is refused, since a read-only open of one makes a file beside
-  it. It holds only audit-mem's tables, their automatic indexes and
-  `sqlite_sequence`; a view, a trigger, a virtual table or any other object is
-  refused. SQLite never follows a link (`SQLITE_OPEN_NOFOLLOW`) and runs in its
-  defensive mode (`SQLITE_DBCONFIG_DEFENSIVE`), with triggers and views off,
+- The database is a regular file with one name, in rollback-journal mode: a database
+  in WAL mode is refused, since a read-only open of one makes a file beside it. No
+  `-wal` or `-shm` file may sit beside it (audit-mem never makes one, and SQLite would
+  open them even to read), and a `-journal`, left by a write that stopped, must be a
+  regular file with one name. It holds only audit-mem's tables, their automatic
+  indexes and `sqlite_sequence`; a view, a trigger, a virtual table or any other
+  object is refused. SQLite never follows a link (`SQLITE_OPEN_NOFOLLOW`) and runs in
+  its defensive mode (`SQLITE_DBCONFIG_DEFENSIVE`), with triggers and views off,
   `trusted_schema` off and temporary tables in memory.
-- `warm`, `check` and `regressions` open the store read-only
-  (`SQLITE_OPEN_READ_ONLY`, `PRAGMA query_only=ON`), and never make the file or
-  write the schema. With no store they print an empty answer: `warm`
+- `warm`, `check` and `regressions` open the store read-only (`SQLITE_OPEN_READ_ONLY`,
+  `PRAGMA query_only=ON`) and immutable (`file:<store>?mode=ro&immutable=1`: SQLite
+  takes no lock and opens no file beside it), and never make the file or write the
+  schema. With no store they print an empty answer: `warm`
   `{"profile":null,"invariants":[],"open_fp_rulings":[]}`, `check`
   `{"suppressed":false,"store":"absent"}` with exit 1, and `regressions` `[]`.
 - `init` makes `.audit-memory/` with a plain `mkdir` (mode 0700), its `.gitignore`

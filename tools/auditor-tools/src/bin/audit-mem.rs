@@ -450,7 +450,11 @@ fn in_tree_store(wt: &Path, git: &mut Git) -> Result<Store, Stop> {
 /// rollback-journal mode (the header's magic, and 1 in its bytes 18 and 19). A
 /// file that is not regular, has a second name, or holds anything else is
 /// refused; so is a database in WAL mode, which audit-mem never sets and whose
-/// read-only open would make a file beside it.
+/// read-only open would make a file beside it. Beside it, SQLite's own files
+/// are checked first: a `-wal` or `-shm` file, which audit-mem never makes and
+/// which SQLite would open (and a `-shm` write) even for a read, is refused, and
+/// a `-journal`, left by a write that stopped, must be a regular file with one
+/// name.
 fn database(wt: &Path, store: &Store, dir_md: &fs::Metadata) -> Result<Db, Stop> {
     let s = store.shown();
     let tail = if store.in_tree {
@@ -458,6 +462,31 @@ fn database(wt: &Path, store: &Store, dir_md: &fs::Metadata) -> Result<Db, Stop>
     } else {
         ""
     };
+    for suffix in ["-wal", "-shm", "-journal"] {
+        let side = wt.join(OsStr::from_bytes(
+            &[&store.path[..], suffix.as_bytes()].concat(),
+        ));
+        match fs::symlink_metadata(side) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(refuse(format!(
+                    "{s}{suffix} cannot be checked ({}){tail}",
+                    os_message(&e)
+                )))
+            }
+            Ok(_) if suffix != "-journal" => {
+                return Err(refuse(format!(
+                    "{s} has a {suffix} file beside it, which audit-mem never makes{tail}"
+                )))
+            }
+            Ok(md) if !md.file_type().is_file() || md.nlink() != 1 => {
+                return Err(refuse(format!(
+                    "{s}{suffix} is not a regular file with one name{tail}"
+                )))
+            }
+            Ok(_) => {}
+        }
+    }
     match fs::symlink_metadata(wt.join(store.path())) {
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Db::Absent),
         Err(e) => {
