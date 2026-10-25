@@ -101,7 +101,7 @@ want_spans DEP-072 'env -u ' 1
 want_spans DEP-072 'curl ' 2
 want_spans DEP-073 'curl ' 1
 want_spans DEP-073 'LC_ALL=C grep ' 1
-if [ -z "$(printf '%s\n' "$B" | grep -E '(^|[^A-Za-z0-9_-])/[^ ]*/(curl|aws|grep|env)( |$)')" ]; then
+if [ -n "$B" ] && [ -z "$(printf '%s\n' "$B" | grep -E '(^|[^A-Za-z0-9_-])/[^ ]*/(curl|aws|grep|env)( |$)')" ]; then
   ok "the block calls no tool by an absolute path, so the stand-ins below see every call"
 else bad "the block calls a tool by an absolute path"; fi
 
