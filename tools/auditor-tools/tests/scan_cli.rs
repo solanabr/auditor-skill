@@ -206,6 +206,67 @@ fn reads_an_item_after_any_number_of_doc_comments_and_attributes() {
 }
 
 #[test]
+fn its_child_answers_each_file_in_a_frame_and_names_none() {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let frame = |bytes: &[u8]| [&(bytes.len() as u64).to_le_bytes()[..], bytes].concat();
+    let input = [
+        frame(b"fn a() { let x = 1 + 2; }\n"),
+        frame(&[0xff, 0xfe]),
+        frame(b"fn (\n"),
+    ]
+    .concat();
+    let mut child = Command::new(BIN)
+        .arg("--internal-parse-stdin")
+        .env_clear()
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start the child");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(&input)
+        .expect("write the frames");
+    let out = child.wait_with_output().expect("the child ends");
+    assert_eq!(out.status.code(), Some(0));
+    assert!(out.stderr.is_empty());
+    let mut rest = &out.stdout[..];
+    let mut answers = Vec::new();
+    while !rest.is_empty() {
+        let len = u64::from_le_bytes(rest[..8].try_into().expect("a length")) as usize;
+        answers.push(serde_json::from_slice::<Value>(&rest[8..8 + len]).expect("JSON"));
+        rest = &rest[8 + len..];
+    }
+    assert_eq!(answers.len(), 3);
+    assert_eq!(answers[0]["files_scanned"], 1);
+    assert_eq!(answers[0]["arithmetic_sites"][0]["file"], "");
+    assert_eq!(answers[0]["arithmetic_sites"][0]["snippet"], "1 + 2");
+    assert_eq!(answers[1]["files_scanned"], 0);
+    assert_eq!(answers[1]["skipped"][0]["reason"], "not UTF-8");
+    assert_eq!(answers[2]["skipped"][0]["reason"], "does not parse as Rust");
+
+    // A frame longer than a file may be ends it, with nothing said.
+    let mut child = Command::new(BIN)
+        .arg("--internal-parse-stdin")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("start the child");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(&(5u64 << 20).to_le_bytes())
+        .expect("write the length");
+    let out = child.wait_with_output().expect("the child ends");
+    assert_eq!(out.status.code(), Some(1));
+    assert!(out.stdout.is_empty());
+}
+
+#[test]
 fn renders_the_snippets_of_a_long_chain_in_time() {
     let wt = Wt::repo();
     let sum = format!("fn f() {{ let x = 1{}; }}\n", " + 1".repeat(9000));

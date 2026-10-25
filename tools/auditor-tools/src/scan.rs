@@ -1,24 +1,28 @@
 //! Static-analysis scanner for Solana/Anchor Rust codebases.
 //!
-//! Each `*.rs` file is lexed with `proc-macro2` (whose lexer and drop do not
-//! recurse, and whose `span-locations` feature yields real line numbers), checked
-//! for nesting and chains deeper than [`MAX_DEPTH`] and [`MAX_CHAIN`] allow, then
-//! parsed with `syn` and walked with a [`syn::visit::Visit`] implementation to
-//! enumerate the risky surface an auditor would otherwise have to find by hand. A
-//! snippet is rendered from the file's tokens, a token at a time, up to
-//! `SNIPPET_MAX` characters.
+//! The walk reads each `*.rs` file and hands its bytes to a child of this binary
+//! (`parse_stdin`), which lexes them with `proc-macro2` (whose lexer and drop do
+//! not recurse, and whose `span-locations` feature yields real line numbers),
+//! checks them for nesting and chains deeper than [`MAX_DEPTH`] and [`MAX_CHAIN`]
+//! allow, then parses them with `syn` and walks the tree with a
+//! [`syn::visit::Visit`] implementation to enumerate the risky surface an auditor
+//! would otherwise have to find by hand. The limits are the fast path; a file the
+//! parser still cannot finish ends only its child, and the scan goes on. A snippet
+//! is rendered from the file's tokens, a token at a time, up to `SNIPPET_MAX`
+//! characters.
 
 use std::collections::HashMap;
 use std::ffi::OsStr;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
+use std::sync::Arc;
 
 use proc_macro2::{Delimiter, LineColumn, Spacing, Span, TokenStream, TokenTree};
 use quote::ToTokens;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use syn::punctuated::{Pair, Punctuated};
 use syn::spanned::Spanned;
 use syn::visit::Visit;
@@ -43,16 +47,17 @@ pub const MAX_CHAIN: usize = 20_000;
 /// it holds a descriptor open for each level.
 pub const MAX_WALK: usize = 128;
 
-/// The stacks the scan runs on, the first the system grants: syn's parser, the
-/// visit and the drop of a tree recurse on it, one level for each level the tree
-/// nests. The first holds the deepest tree `MAX_DEPTH` and `MAX_CHAIN` let through
-/// several times over (20,000 nested `break`, the deepest shape measured, need
-/// more than 64 MiB and less than 128); the second, for a system that grants no
-/// more, holds any tree real code nests.
+/// The stacks the child that parses a file runs on, the first the system grants:
+/// syn's parser, the visit and the drop of a tree recurse on it, one level for
+/// each level the tree nests. The first holds the deepest tree measured that
+/// `MAX_DEPTH` and `MAX_CHAIN` let through several times over (20,000 nested
+/// `break` need more than 64 MiB and less than 128); the second, for a system that
+/// grants no more, holds any tree real code nests. A tree deeper than its stack
+/// ends the child, and the file is skipped.
 const STACKS: [usize; 2] = [512 << 20, 64 << 20];
 
 /// Top-level scan report — serialized to a single JSON object.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ScanReport {
     pub root: String,
     pub files_scanned: usize,
@@ -70,19 +75,19 @@ pub struct ScanReport {
     pub skipped: Vec<Skipped>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Skipped {
     pub file: String,
     pub reason: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Arg {
     pub name: String,
     pub ty: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Instruction {
     pub name: String,
     pub file: String,
@@ -90,7 +95,7 @@ pub struct Instruction {
     pub args: Vec<Arg>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AccountsStruct {
     pub name: String,
     pub file: String,
@@ -98,7 +103,7 @@ pub struct AccountsStruct {
     pub fields: Vec<AccountField>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AccountField {
     pub name: String,
     pub ty: String,
@@ -107,7 +112,7 @@ pub struct AccountField {
     pub constraints: AccountConstraints,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AccountConstraints {
     pub init: bool,
     pub init_if_needed: bool,
@@ -125,7 +130,7 @@ pub struct AccountConstraints {
     pub raw: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Pda {
     #[serde(rename = "struct")]
     pub struct_name: String,
@@ -135,7 +140,7 @@ pub struct Pda {
     pub line: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ArithmeticSite {
     pub file: String,
     pub line: usize,
@@ -143,7 +148,7 @@ pub struct ArithmeticSite {
     pub snippet: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PanicSite {
     pub file: String,
     pub line: usize,
@@ -151,13 +156,13 @@ pub struct PanicSite {
     pub snippet: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct UnsafeBlock {
     pub file: String,
     pub line: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct CpiSite {
     pub file: String,
     pub line: usize,
@@ -165,14 +170,14 @@ pub struct CpiSite {
     pub snippet: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct RemainingAccountsSite {
     pub file: String,
     pub line: usize,
     pub snippet: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct FunctionDef {
     pub name: String,
     pub file: String,
@@ -182,6 +187,42 @@ pub struct FunctionDef {
 }
 
 impl ScanReport {
+    /// Adds the report of one file, made with the file named `""`, under `label`.
+    fn absorb(&mut self, one: ScanReport, label: &str) {
+        self.files_scanned += one.files_scanned;
+        relabel(&mut self.instructions, one.instructions, label, |x| {
+            &mut x.file
+        });
+        relabel(
+            &mut self.accounts_structs,
+            one.accounts_structs,
+            label,
+            |x| &mut x.file,
+        );
+        relabel(&mut self.pdas, one.pdas, label, |x| &mut x.file);
+        relabel(
+            &mut self.arithmetic_sites,
+            one.arithmetic_sites,
+            label,
+            |x| &mut x.file,
+        );
+        relabel(&mut self.panic_sites, one.panic_sites, label, |x| {
+            &mut x.file
+        });
+        relabel(&mut self.unsafe_blocks, one.unsafe_blocks, label, |x| {
+            &mut x.file
+        });
+        relabel(&mut self.cpi_sites, one.cpi_sites, label, |x| &mut x.file);
+        relabel(
+            &mut self.remaining_accounts_sites,
+            one.remaining_accounts_sites,
+            label,
+            |x| &mut x.file,
+        );
+        relabel(&mut self.functions, one.functions, label, |x| &mut x.file);
+        relabel(&mut self.skipped, one.skipped, label, |x| &mut x.file);
+    }
+
     fn new(root: String, files_scanned: usize) -> Self {
         Self {
             root,
@@ -200,46 +241,44 @@ impl ScanReport {
     }
 }
 
+/// `from` added to `into`, each item's file (`file` finds it) named `label`.
+fn relabel<T>(into: &mut Vec<T>, from: Vec<T>, label: &str, file: fn(&mut T) -> &mut String) {
+    into.extend(from.into_iter().map(|mut item| {
+        *file(&mut item) = label.to_string();
+        item
+    }));
+}
+
 /// Scan every `*.rs` file under the directory `root`, a path relative to the
-/// working directory, returning one merged report.
+/// working directory, returning one merged report, the files parsed in a child of
+/// this binary started by the path it runs from (`confine::Parser`), each given
+/// `confine::PARSE_TIME`.
+pub fn scan_path(root: &Path) -> io::Result<ScanReport> {
+    let mut parser = confine::Parser::new(&confine::own_exe()?);
+    Ok(scan_path_with(root, &mut |bytes| {
+        parser.parse(bytes, confine::PARSE_TIME)
+    }))
+}
+
+/// Scan every `*.rs` file under the directory `root`, each file's bytes handed to
+/// `parse`, which gives the report of that one file as `parse_stdin` answers it,
+/// or `None` when the parser could not finish.
 ///
 /// The walk opens each directory from its parent's descriptor without following a
 /// link, so a name swapped for a link while it runs is not entered, and reads only
 /// regular files with one name of at most 4 MiB, each opened the same way. Every
 /// link it meets, every directory nested more than `MAX_WALK` levels down, and
 /// every `*.rs` file it does not parse (not regular, too large, unreadable, not
-/// UTF-8, nested or chained too deeply, or not Rust that `syn` parses) is listed
-/// in `skipped`. Directories named `target`, `.git` and `node_modules` below
-/// `root` are pruned, and so are the run directories and `.audit-memory/` when
-/// `root` is the working directory. Entries are visited in byte order of their
-/// names, and the spans of each file are released once it is visited, so the
-/// total source read has no limit. The scan runs on a thread of its own, on the
-/// first of `STACKS` the system grants.
-pub fn scan_path(root: &Path) -> io::Result<ScanReport> {
-    let mut refused = None;
-    for stack in STACKS {
-        let root = root.to_path_buf();
-        match std::thread::Builder::new()
-            .name("audit-scan".into())
-            .stack_size(stack)
-            .spawn(move || walk(&root))
-        {
-            Ok(scan) => {
-                return match scan.join() {
-                    Ok(report) => Ok(report),
-                    Err(panic) => std::panic::resume_unwind(panic),
-                }
-            }
-            Err(e) => refused = Some(e),
-        }
-    }
-    Err(refused.unwrap_or_else(|| io::Error::other("no stack to scan on")))
-}
-
-fn walk(root: &Path) -> ScanReport {
+/// UTF-8, nested or chained too deeply, not Rust that `syn` parses, or one the
+/// parser could not finish) is listed in `skipped`. Directories named `target`,
+/// `.git` and `node_modules` below `root` are pruned, and so are the run
+/// directories and `.audit-memory/` when `root` is the working directory. Entries
+/// are visited in byte order of their names.
+pub fn scan_path_with(root: &Path, parse: &mut dyn FnMut(&[u8]) -> Option<Vec<u8>>) -> ScanReport {
     let mut scan = Scan {
         report: ScanReport::new(root.display().to_string(), 0),
         top: root == Path::new("."),
+        parse,
     };
     match open_root(root) {
         Ok(dir) => scan.dir(&dir, root, 0),
@@ -260,14 +299,15 @@ fn open_root(root: &Path) -> io::Result<OwnedFd> {
     Ok(dir)
 }
 
-/// A scan under way: the report so far, and whether the root is the working
-/// directory.
-struct Scan {
+/// A scan under way: the report so far, whether the root is the working
+/// directory, and what parses a file.
+struct Scan<'p> {
     report: ScanReport,
     top: bool,
+    parse: &'p mut dyn FnMut(&[u8]) -> Option<Vec<u8>>,
 }
 
-impl Scan {
+impl Scan<'_> {
     fn skip(&mut self, path: &Path, reason: impl Into<String>) {
         self.report.skipped.push(Skipped {
             file: path.display().to_string(),
@@ -322,30 +362,24 @@ impl Scan {
         }
     }
 
+    /// A `*.rs` file, its bytes parsed by `parse`, its report added under its path.
     fn file(&mut self, dir: &OwnedFd, name: &[u8], path: &Path) {
-        let label = path.display().to_string();
-        match read_source(dir.as_raw_fd(), name).and_then(|source| parse(&source)) {
-            Ok((ast, tokens)) => {
-                self.report.files_scanned += 1;
-                let mut visitor = FileVisitor::new(&label, &tokens);
-                visitor.visit_file(&ast);
-                visitor.drain_into(&mut self.report);
-            }
-            Err(reason) => self.report.skipped.push(Skipped {
-                file: label,
-                reason,
-            }),
+        let one = read_bytes(dir.as_raw_fd(), name).and_then(|bytes| {
+            (self.parse)(&bytes)
+                .and_then(|out| serde_json::from_slice::<ScanReport>(&out).ok())
+                .ok_or_else(|| "the parser could not finish".to_string())
+        });
+        match one {
+            Ok(one) => self.report.absorb(one, &path.display().to_string()),
+            Err(reason) => self.skip(path, reason),
         }
-        // No span of this file is left: free proc-macro2's map of the source parsed on
-        // this thread, whose 32-bit offsets would wrap past 4 GiB of source.
-        proc_macro2::extra::invalidate_current_thread_spans();
     }
 }
 
-/// A `*.rs` file's text: a regular file with one name (a second name could be a
+/// A `*.rs` file's bytes: a regular file with one name (a second name could be a
 /// file outside the tree) of at most 4 MiB, opened from its directory without
-/// following a link or blocking on a FIFO, and UTF-8.
-fn read_source(dir: RawFd, name: &[u8]) -> Result<String, String> {
+/// following a link or blocking on a FIFO.
+fn read_bytes(dir: RawFd, name: &[u8]) -> Result<Vec<u8>, String> {
     let unreadable = |e: io::Error| format!("cannot be read: {}", os_message(&e));
     let file = confine::open_file(dir, name).map_err(unreadable)?;
     let md = file.metadata().map_err(unreadable)?;
@@ -362,7 +396,84 @@ fn read_source(dir: RawFd, name: &[u8]) -> Result<String, String> {
     if md.len() > MAX_FILE || bytes.len() as u64 > MAX_FILE {
         return Err("larger than 4 MiB".to_string());
     }
-    String::from_utf8(bytes).map_err(|_| "not UTF-8".to_string())
+    Ok(bytes)
+}
+
+/// audit-scan started as its own child to parse files (`confine::PARSE_STDIN`):
+/// each file's bytes, at most `MAX_FILE`, come on stdin as a frame (their length
+/// in 8 bytes, little-endian, then the bytes), and the report of that one file goes
+/// to stdout the same way, as JSON with the file named `""` for the parent to name.
+/// It reads and writes nothing else, and ends at the end of its stdin. Each file is
+/// scanned on a thread of its own, on the first of `STACKS` the system grants: a
+/// tree deeper than that ends this process, and only that file is skipped.
+pub fn parse_stdin() -> io::Result<()> {
+    let mut input = io::stdin().lock();
+    let mut output = io::stdout().lock();
+    loop {
+        let mut head = [0u8; 8];
+        if input.read(&mut head[..1])? == 0 {
+            return Ok(());
+        }
+        input.read_exact(&mut head[1..])?;
+        let len = u64::from_le_bytes(head);
+        if len > MAX_FILE {
+            return Err(io::Error::other("a file larger than 4 MiB"));
+        }
+        let mut bytes = vec![0u8; len as usize];
+        input.read_exact(&mut bytes)?;
+        let json = serde_json::to_vec(&on_stack(bytes.into())?).map_err(io::Error::other)?;
+        output.write_all(&(json.len() as u64).to_le_bytes())?;
+        output.write_all(&json)?;
+        output.flush()?;
+    }
+}
+
+/// The report of one file's bytes (`one_file`), made on a thread of its own, on
+/// the first of `STACKS` the system grants.
+fn on_stack(bytes: Arc<[u8]>) -> io::Result<ScanReport> {
+    let mut refused = None;
+    for stack in STACKS {
+        let bytes = Arc::clone(&bytes);
+        match std::thread::Builder::new()
+            .name("audit-scan".into())
+            .stack_size(stack)
+            .spawn(move || one_file(&bytes))
+        {
+            Ok(scan) => {
+                return scan
+                    .join()
+                    .map_err(|_| io::Error::other("the parser stopped"))
+            }
+            Err(e) => refused = Some(e),
+        }
+    }
+    Err(refused.unwrap_or_else(|| io::Error::other("no stack to parse on")))
+}
+
+/// The report of one file's bytes, the file named `""`: parsed, or skipped with
+/// why.
+fn one_file(bytes: &[u8]) -> ScanReport {
+    let mut report = ScanReport::new(String::new(), 0);
+    let parsed = if bytes.len() as u64 > MAX_FILE {
+        Err("larger than 4 MiB".to_string())
+    } else {
+        std::str::from_utf8(bytes)
+            .map_err(|_| "not UTF-8".to_string())
+            .and_then(parse)
+    };
+    match parsed {
+        Ok((ast, tokens)) => {
+            report.files_scanned = 1;
+            let mut visitor = FileVisitor::new("", &tokens);
+            visitor.visit_file(&ast);
+            visitor.drain_into(&mut report);
+        }
+        Err(reason) => report.skipped.push(Skipped {
+            file: String::new(),
+            reason,
+        }),
+    }
+    report
 }
 
 /// A source's syntax tree and its tokens, laid out for snippets, as

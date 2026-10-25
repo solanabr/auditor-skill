@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # test-auditor-tools.sh — audit-scan and audit-mem (tools/auditor-tools) against the confinement contract that lets
 # a command pre-approve them by their absolute path, whatever arguments follow.
-#   1. The sources: no network API; git, run only by src/confine.rs, is the one program either binary starts, and
-#      confine.rs alone reads the environment (PATH, HOME, TMPDIR and TZ, for git); the items confine.rs copies
+#   1. The sources: no network API; only src/confine.rs starts a program, git and, to parse, audit-scan itself,
+#      and confine.rs alone reads the environment (PATH, HOME, TMPDIR and TZ, for git); the items confine.rs copies
 #      from audit-logs (Stop, refuse, working_tree, self_check, stays_inside, os_message, invalid, c_name and
 #      open_at) are unchanged copies, doc comments and attributes included, and unsafe_char's list of characters is
 #      its contract.rs's; and hgit's -c pins are those of scripts/lib/confine.sh's hgit, in its order.
@@ -59,7 +59,8 @@ else
 fi
 others="$(grep -lE 'process::Command|Command::new|env::var|set_var|env::vars|libc::(getenv|setenv|putenv)' \
   "$PKG"/src/*.rs "$PKG"/src/bin/*.rs | sed 's#.*/tools/auditor-tools/##' | tr '\n' ' ')"
-eq "source: only src/confine.rs starts a program (git) or reads the environment" "$others" "src/confine.rs "
+eq "source: only src/confine.rs starts a program (git, and audit-scan itself to parse) or reads the environment" \
+  "$others" "src/confine.rs "
 python3 -I - "$PKG/src/confine.rs" "$PKG/audit-logs/src/confine.rs" "$PKG/audit-logs/src/contract.rs" \
   "$ROOT/scripts/lib/confine.sh" > "$T/agree" 2>&1 <<'PY'
 import re, shlex, sys
@@ -409,6 +410,11 @@ else bad "audit-scan: --out differs from stdout"; fi
 if cmp -s "$T/scan.stdout" "$T/scan.piped"; then ok "audit-scan: the whole report goes through a pipe"; else bad "audit-scan: the piped report differs"; fi
 ( cd "$W" && "$SCAN" ./src ) > "$T/scan.bare" 2>&1
 if cmp -s "$T/scan.stdout" "$T/scan.bare"; then ok "audit-scan: without --contract=1 it works as it did"; else bad "audit-scan: without --contract=1 the report differs"; fi
+snapshot "$D" > "$T/child.before"
+( cd "$W" && "$SCAN" --internal-parse-stdin ) < /dev/null > "$T/child.out" 2>&1
+eq "audit-scan: the child it parses with, given no file, ends at once and says nothing" "$?:$(wc -c < "$T/child.out" | tr -d ' ')" "0:0"
+snapshot "$D" > "$T/child.after"
+if cmp -s "$T/child.before" "$T/child.after"; then ok "audit-scan: ... and touches nothing"; else bad "audit-scan: its child changed files"; fi
 ( cd "$W" && "$SCAN" --contract=1 . --out audit_1/prescan.json --pretty ) > /dev/null 2>&1
 eq "audit-scan: its own output is replaced" "$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["files_scanned"])' "$W/audit_1/prescan.json")" 1
 eq "audit-scan: a link in the tree is listed, not followed" \

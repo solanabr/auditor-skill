@@ -14,18 +14,22 @@
 //! no repository in any letter case, whose `.gitignore` holds exactly `*`, as
 //! `scripts/rundir.sh check` checks it. git runs only as `hgit` runs it: found on
 //! a PATH with every entry inside WT removed, with an environment of its own, and
-//! with the repository's config pinned off. A file is made through its
-//! directory's descriptor, never through a link and never over a name that exists.
+//! with the repository's config pinned off. The only other program started is
+//! audit-scan itself, by the path it runs from, to parse one file in a child: the
+//! file's bytes on its stdin, no environment, killed past a time limit. A file is
+//! made through its directory's descriptor, never through a link and never over a
+//! name that exists.
 
 use std::ffi::{CString, OsStr, OsString};
 use std::fs::{self, File, Metadata};
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::os::raw::c_int;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
+use std::time::{Duration, Instant};
 
 #[cfg(any(target_os = "android", target_os = "netbsd", target_os = "openbsd"))]
 use libc::__errno as errno_location;
@@ -764,8 +768,9 @@ pub fn kind_at(dir: RawFd, name: &[u8]) -> io::Result<libc::mode_t> {
 /// The names in the directory `dir`, but `.` and `..`, in byte order, read
 /// through a second descriptor so that `dir` stays open for the names below it.
 pub fn names(dir: &OwnedFd) -> io::Result<Vec<Vec<u8>>> {
-    // SAFETY: dup only copies a descriptor the caller holds open.
-    let fd = unsafe { libc::dup(dir.as_raw_fd()) };
+    // SAFETY: F_DUPFD_CLOEXEC only copies a descriptor the caller holds open, and
+    // keeps the copy out of a child this process starts.
+    let fd = unsafe { libc::fcntl(dir.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 0) };
     if fd < 0 {
         return Err(io::Error::last_os_error());
     }
@@ -861,9 +866,315 @@ pub fn read_file(r: &Rel) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+/// The word audit-scan starts itself with, as its only argument, to parse files
+/// in a child (`scan::parse_stdin`). Anywhere else the grammar refuses it, as an
+/// option it does not know.
+pub const PARSE_STDIN: &str = "--internal-parse-stdin";
+
+/// How long the child may take to answer for one file before it is killed.
+pub const PARSE_TIME: Duration = Duration::from_secs(10);
+
+/// The executable this process runs from, every link resolved: the binary a
+/// child of audit-scan is started from.
+pub fn own_exe() -> io::Result<PathBuf> {
+    std::env::current_exe()?.canonicalize()
+}
+
+/// The child that parses a scan's files, one at a time: audit-scan started by the
+/// path it runs from with `PARSE_STDIN`, no environment, `/` as its directory and
+/// its stderr discarded. Each file's bytes go to its stdin as a frame, their
+/// length in 8 bytes (little-endian) and then the bytes, and the report of that
+/// one file comes back on its stdout the same way. A child that does not answer
+/// in time, exits or dies on a signal is killed, and the next file starts another.
+pub struct Parser {
+    program: PathBuf,
+    args: Vec<OsString>,
+    child: Option<Child>,
+}
+
+impl Parser {
+    /// The parser of this binary, `exe` (`own_exe`).
+    pub fn new(exe: &Path) -> Parser {
+        Parser::with(exe, &[OsStr::new(PARSE_STDIN)])
+    }
+
+    /// A parser run as `program args`, answering as audit-scan's child does.
+    pub fn with(program: &Path, args: &[&OsStr]) -> Parser {
+        Parser {
+            program: program.to_path_buf(),
+            args: args.iter().map(|a| a.to_os_string()).collect(),
+            child: None,
+        }
+    }
+
+    /// The child's answer for one file's bytes, or `None` when it cannot be
+    /// started, does not answer within `limit`, or exits or dies before it
+    /// answers. It is then killed, and the next call starts another.
+    pub fn parse(&mut self, bytes: &[u8], limit: Duration) -> Option<Vec<u8>> {
+        let deadline = Instant::now() + limit;
+        let mut child = match self.child.take() {
+            Some(child) => child,
+            None => self.start()?,
+        };
+        let mut frame = Vec::with_capacity(8 + bytes.len());
+        frame.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
+        frame.extend_from_slice(bytes);
+        match exchange(&mut child, &frame, deadline) {
+            Some(answer) => {
+                self.child = Some(child);
+                Some(answer)
+            }
+            None => {
+                stop(child);
+                None
+            }
+        }
+    }
+
+    fn start(&self) -> Option<Child> {
+        let child = Command::new(&self.program)
+            .args(&self.args)
+            .env_clear()
+            .current_dir("/")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .ok()?;
+        let ready = child
+            .stdin
+            .as_ref()
+            .is_some_and(|i| nonblocking(i.as_raw_fd()))
+            && child
+                .stdout
+                .as_ref()
+                .is_some_and(|o| nonblocking(o.as_raw_fd()));
+        if ready {
+            Some(child)
+        } else {
+            stop(child);
+            None
+        }
+    }
+}
+
+impl Drop for Parser {
+    /// Closes the child's stdin, which ends it, and kills it if it still runs a
+    /// second later.
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            drop(child.stdin.take());
+            if wait_until(&mut child, Instant::now() + Duration::from_secs(1)).is_none() {
+                stop(child);
+            }
+        }
+    }
+}
+
+/// Kills a child and reaps it.
+fn stop(mut child: Child) {
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// The child's answer to `frame`: `frame` written to its stdin while its stdout is
+/// read, each as it is ready, and the bytes after the answer's 8-byte length
+/// returned once they are all in. `None` past `deadline`, when its stdin or stdout
+/// closes first, or when it says more than its answer.
+fn exchange(child: &mut Child, frame: &[u8], deadline: Instant) -> Option<Vec<u8>> {
+    let stdin = child.stdin.as_mut()?;
+    let stdout = child.stdout.as_mut()?;
+    let mut sent = 0;
+    let mut got = Vec::new();
+    let mut buf = vec![0u8; 1 << 16];
+    loop {
+        if let Some(head) = got.get(..8) {
+            let len = usize::try_from(u64::from_le_bytes(head.try_into().ok()?)).ok()?;
+            let whole = len.checked_add(8)?;
+            if got.len() > whole || (got.len() == whole && sent < frame.len()) {
+                return None;
+            }
+            if got.len() == whole {
+                return Some(got.split_off(8));
+            }
+        }
+        let wait = deadline.checked_duration_since(Instant::now())?;
+        let mut fds = [
+            libc::pollfd {
+                fd: stdout.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            },
+            libc::pollfd {
+                fd: if sent < frame.len() {
+                    stdin.as_raw_fd()
+                } else {
+                    -1
+                },
+                events: libc::POLLOUT,
+                revents: 0,
+            },
+        ];
+        let ms = c_int::try_from(wait.as_millis())
+            .unwrap_or(c_int::MAX)
+            .max(1);
+        // SAFETY: `fds` holds two pollfd structs, and poll skips the one whose
+        // descriptor is negative.
+        if unsafe { libc::poll(fds.as_mut_ptr(), 2, ms) } < 0 {
+            if io::Error::last_os_error().kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            return None;
+        }
+        if fds[1].revents != 0 {
+            match stdin.write(&frame[sent..]) {
+                Ok(n) => sent += n,
+                Err(e) if blocked(&e) => {}
+                Err(_) => return None,
+            }
+        }
+        if fds[0].revents != 0 {
+            match stdout.read(&mut buf) {
+                Ok(0) => return None,
+                Ok(n) => got.extend_from_slice(&buf[..n]),
+                Err(e) if blocked(&e) => {}
+                Err(_) => return None,
+            }
+        }
+    }
+}
+
+/// Whether an error on a non-blocking pipe only means it is not ready.
+fn blocked(e: &io::Error) -> bool {
+    matches!(
+        e.kind(),
+        io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+    )
+}
+
+/// The child's exit status once it exits; `None` when it still runs at
+/// `deadline`.
+fn wait_until(child: &mut Child, deadline: Instant) -> Option<ExitStatus> {
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Some(status),
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(1)),
+            _ => return None,
+        }
+    }
+}
+
+/// Sets `O_NONBLOCK` on a descriptor the caller holds open.
+fn nonblocking(fd: RawFd) -> bool {
+    // SAFETY: fcntl reads and sets the status flags of a descriptor the caller
+    // holds open.
+    unsafe {
+        let flags = libc::fcntl(fd, libc::F_GETFL);
+        flags >= 0 && libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) == 0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One answer of `program args` to `input`.
+    fn answer(program: &str, args: &[&str], input: &[u8], limit: Duration) -> Option<Vec<u8>> {
+        let args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
+        Parser::with(Path::new(program), &args).parse(input, limit)
+    }
+
+    /// The frame `printf` writes for a two-byte answer, "ok".
+    const OK: &str = r"printf '\002\000\000\000\000\000\000\000ok'";
+
+    #[test]
+    fn a_child_is_fed_one_file_and_read_to_the_end_of_its_answer() {
+        // cat answers with the frame it is sent: the file's bytes.
+        let input: Vec<u8> = (0..MAX_FILE as usize).map(|i| (i % 251) as u8).collect();
+        let mut cat = Parser::with(Path::new("/bin/cat"), &[]);
+        for input in [&input[..], b"fn a() {}", b""] {
+            let out = cat.parse(input, Duration::from_secs(60));
+            assert!(out.as_deref() == Some(input), "{} bytes", input.len());
+        }
+    }
+
+    #[test]
+    fn a_child_has_no_environment_and_runs_from_the_root() {
+        let script = format!(
+            "case \"$(/usr/bin/env)\" in *HOME=*|*PATH=*|*TMPDIR=*|*CARGO*) exit 1;; esac; \
+             [ \"$(/bin/pwd)\" = / ] || exit 1; {OK}; exec /bin/sleep 5"
+        );
+        let out = answer("/bin/sh", &["-c", &script], b"x", Duration::from_secs(10));
+        assert_eq!(out, Some(b"ok".to_vec()));
+    }
+
+    #[test]
+    fn a_child_that_exits_or_dies_on_a_signal_gives_nothing() {
+        let ten = Duration::from_secs(10);
+        for script in [
+            "exit 0",
+            "exit 3",
+            "kill -s SEGV $$",
+            "kill -s KILL $$",
+            "kill -s ABRT $$",
+            r"printf '\002\000\000\000\000\000\000\000o'; exit 0",
+            r"printf '\001\000\000\000\000\000\000\000oo'; exec /bin/sleep 5",
+            "exec 1>&-; exec /bin/sleep 30",
+        ] {
+            assert_eq!(
+                answer("/bin/sh", &["-c", script], b"x", ten),
+                None,
+                "{script}"
+            );
+        }
+        assert_eq!(answer("/nonexistent/parser", &[], b"x", ten), None);
+    }
+
+    #[test]
+    fn a_child_that_hangs_is_killed_at_its_limit() {
+        let big = vec![b'x'; 1 << 20];
+        for (script, input) in [
+            ("exec /bin/sleep 30", &big[..]),
+            ("exec /bin/sleep 30", b"x".as_slice()),
+        ] {
+            let start = Instant::now();
+            let out = answer("/bin/sh", &["-c", script], input, Duration::from_secs(1));
+            let took = start.elapsed();
+            assert_eq!(out, None, "{script}");
+            assert!(
+                took >= Duration::from_secs(1) && took < Duration::from_secs(5),
+                "{script}: {took:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_new_child_takes_the_next_file_after_one_fails() {
+        let dir = std::env::temp_dir().join(format!("parser-restart-{}", std::process::id()));
+        fs::create_dir_all(&dir).expect("a scratch directory");
+        let mark = dir.join("started");
+        let _ = fs::remove_file(&mark);
+        // The first child hangs; every child after it is cat.
+        let script = format!(
+            "if [ -e '{m}' ]; then exec /bin/cat; fi; : > '{m}'; exec /bin/sleep 30",
+            m = mark.display()
+        );
+        let mut parser = Parser::with(
+            Path::new("/bin/sh"),
+            &[OsStr::new("-c"), OsStr::new(&script)],
+        );
+        assert_eq!(parser.parse(b"one", Duration::from_secs(1)), None);
+        assert_eq!(
+            parser.parse(b"two", Duration::from_secs(10)),
+            Some(b"two".to_vec())
+        );
+        assert_eq!(
+            parser.parse(b"three", Duration::from_secs(10)),
+            Some(b"three".to_vec())
+        );
+        let _ = fs::remove_file(&mark);
+        let _ = fs::remove_dir(&dir);
+    }
 
     fn ok(s: &str) -> bool {
         rel("p", OsStr::new(s), true).is_ok()

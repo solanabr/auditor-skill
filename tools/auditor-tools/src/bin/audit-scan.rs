@@ -13,6 +13,10 @@
 //! a run directory, `audit_<n>/` or `incident_<n>/`, that passes
 //! `scripts/rundir.sh check`; it is made new, or replaces audit-scan's own earlier
 //! output there: a regular file with one name. Each option is given once.
+//! Each file is parsed in a child of this binary, started by the path it runs
+//! from with `confine::PARSE_STDIN` as its only argument: the file's bytes on its
+//! stdin, no environment, killed past `confine::PARSE_TIME`. A file whose child
+//! does not finish is skipped, and the scan goes on.
 //! Exit: 0 done · 1 the output cannot be written · 2 refused.
 
 use std::ffi::{OsStr, OsString};
@@ -220,11 +224,19 @@ fn run(args: &[OsString]) -> Result<(), Stop> {
 }
 
 fn main() -> ExitCode {
+    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    if let [word] = args.as_slice() {
+        if word.as_bytes() == confine::PARSE_STDIN.as_bytes() {
+            return match scan::parse_stdin() {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(_) => ExitCode::from(1),
+            };
+        }
+    }
     // SAFETY: umask only sets this process's file-mode mask.
     unsafe {
         libc::umask(0o077);
     }
-    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     match run(&args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(Stop(code, message)) => {

@@ -28,6 +28,12 @@
 2	audit-scan: refused: the directory to scan passes through a symbolic link: linkdir	--contract=1	linkdir
 2	audit-scan: refused: --out must be relative to the working directory: @SHOWN(@OUT@/sentinel.txt)@	--contract=1	.	--out	@OUT@/sentinel.txt
 2	audit-scan: refused: --out has more than one name (a hard link): audit_7/prescan.json	--contract=1	.	--out	audit_7/prescan.json
+# the word audit-scan starts itself with to parse, as its only argument; anywhere else an option it does not know
+2	audit-scan: refused: unknown option --internal-parse-stdin (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--internal-parse-stdin	.
+2	audit-scan: refused: unknown option --internal-parse-stdin (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	--internal-parse-stdin
+2	audit-scan: refused: unknown option --internal-parse-stdin (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--contract=1	--internal-parse-stdin
+2	audit-scan: refused: unknown option --internal-parse-stdin (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--internal-parse-stdin	--internal-parse-stdin
+2	audit-scan: refused: unknown option --internal-parse-stdin (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	src	--out	audit_1/prescan.json	--internal-parse-stdin
 # grammar
 2	audit-scan: refused: no directory to scan (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])
 2	audit-scan: refused: it takes one directory (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	src
