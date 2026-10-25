@@ -593,9 +593,11 @@ gracefully — it works without them; they just save context and add memory.
   figures.
 - **`audit-mem` warm-starts re-audits.** On a repeat audit of the same program,
   `warm --program-id` returns the protocol profile and invariants that `profile`
-  and `invariant` recorded, and the standing false-positive/accepted-risk rulings
-  with their anchors, so prior context is not re-derived. `check --commit`
-  suppresses a finding ruled `FALSE_POSITIVE` while the ruling's commit and guard
-  lines still hold, and reports it stale, to check again, once either changed.
-  `put-finding` + `regressions` surface anything that was fixed and has since
-  regressed.
+  and `invariant` recorded, with the values they replaced, and the standing
+  false-positive/accepted-risk rulings with their anchors, so prior context is not
+  re-derived. A ruling holds only at the commit it was made at: `check --commit`
+  suppresses a finding ruled `FALSE_POSITIVE` there while the guard's lines still
+  hold, which spares the same commit a second ruling (a triage run again, say), and
+  at any other commit reports the ruling stale, a finding to confirm and rule again
+  at that commit. `put-finding` + `regressions` surface anything that was fixed and
+  has since regressed.
