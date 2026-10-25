@@ -1561,7 +1561,9 @@ printf 'native\n' > "$WT/audit_1/exec-mode"
 # CARGO_TARGET_DIR: the run builds both arms, moves no pin and leaves nothing behind). HOME is the
 # throwaway one with a fresh Solana keypair, but for cargo build-sbf --install-only; only cargo fetch and
 # that install see the proxy, every build and test after them runs offline; and a cargo on PATH inside
-# the working directory never runs.
+# the working directory never runs. The dyld canary names a fallback path, not an inserted library: on
+# a macOS with SIP off, as on the CI runner, dyld acts on DYLD_INSERT_LIBRARIES in the first process
+# this starts, and a library that does not exist aborts it before run.sh cleans anything.
 mkdir -p "$WT/.bin"; printf '#!/bin/sh\necho ran > "%s"\nexit 0\n' "$T/wt-cargo.marker" > "$WT/.bin/cargo"; chmod +x "$WT/.bin/cargo"
 : > "$T/canary-v17"
 SHIM_EXTRA=(SHIM_WALLET_COPY="$T/wallet")
@@ -1570,7 +1572,7 @@ code="$(ngate PATH="$WT/.bin:$SP" AUDITOR_CANARY=canary-v01 GITHUB_TOKEN=canary-
   AWS_SECRET_ACCESS_KEY=canary-v04 CARGO_REGISTRY_TOKEN=canary-v05 SSH_AUTH_SOCK="$T/canary-v06.sock" RUSTC_WRAPPER="$T/canary-v07" \
   RUSTFLAGS=--cfg=canary_v08 CARGO_BUILD_RUSTC_WRAPPER="$T/canary-v09" GIT_SSH_COMMAND=canary-v10 CARGO_TARGET_DIR="$T/canary-v11" \
   CARGO_BUILD_TARGET_DIR="$T/canary-v12" BPF_OUT_DIR="$T/canary-v13" RUSTC="$T/canary-v14" LD_PRELOAD="$T/canary-v15.so" \
-  DYLD_INSERT_LIBRARIES="$T/canary-v16.dylib" BASH_ENV="$T/canary-v17" XDG_CONFIG_HOME="$T/canary-v18" GH_TOKEN=canary-v19 \
+  DYLD_FALLBACK_FRAMEWORK_PATH="$T/canary-v16" BASH_ENV="$T/canary-v17" XDG_CONFIG_HOME="$T/canary-v18" GH_TOKEN=canary-v19 \
   HTTPS_PROXY=http://proxy.invalid:3128 VULNERABLE_SO="$T/vuln.so" KEEP_POC_BUILD=1 UPDATE_PINS=borsh -- --crate audit_1/poc/F-1)"
 SHIM_EXTRA=()
 bd="$(new_build_dir)"
