@@ -173,7 +173,8 @@ text for report §4.6.}
 Q46. OUTPUT-RULES Rule 11a: where target-controlled code (builds, tests, installs,
 Anchor.toml [scripts], and every PoC build) may run. Asked once per audit;
 every later step that executes target code or builds a PoC uses this answer, and
-templates/poc/run.sh receives it as AUDITOR_EXEC_MODE. In the auto flow an
+the answer is also written as one word to audit_<n>/exec-mode, where
+templates/poc/run.sh --crate reads it (the stricter of it and AUDITOR_EXEC_MODE). In the auto flow an
 unanswered Q46 is "native" and goes in §9 with its basis. Outside services are not
 gated — they are listed in the report (Rule 11b).
 Q47: whether DEP-072 / DEP-073 may probe the project's own hosts and buckets,
