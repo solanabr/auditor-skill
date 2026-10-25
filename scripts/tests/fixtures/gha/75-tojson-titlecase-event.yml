@@ -1,0 +1,12 @@
+# Fixture: whole event payload dumped into a shell step through ToJSON (title case).
+name: f75-tojson-titlecase-event
+on:
+  pull_request_target:
+    types: [opened]
+permissions:
+  contents: read
+jobs:
+  log:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo '${{ ToJSON(github.event) }}' > event.json
