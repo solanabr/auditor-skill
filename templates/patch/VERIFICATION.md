@@ -109,44 +109,77 @@ exploit earns `[FIX-VERIFIED]`. If there is no executable PoC to run, stop at
 Only with `/auditor:patch --post-patch-validation`. Trail of Bits `post-patch-validation` checks the patch
 against the finding, variants of its root cause and behavior that should not change. Its runner creates, locks
 and prunes git worktrees in the repository it is given, and its checks build and run the target with the
-caller's privileges and an open network. So it runs only in Rule 11a **isolated** mode, inside the isolated
-runner, on a disposable clone of its own: never on the client checkout and never on the §1 copy. In any other
-mode, or without the vendored skill or `uv`, the first block prints the line to record and runs nothing.
-`{MODE}` is the recorded mode;
-`{ROOT_CAUSE}` is the finding's root cause and impact in one sentence, without a single quote; `{LEVEL}` is the
-highest evidence level the checks will honestly reach (`source`, `build` or `runtime`, as the skill defines them).
+caller's privileges and an open network. So it runs only in Rule 11a **isolated** mode, on the isolated runner,
+and on a no-checkout clone, outside the target tree, of the copy `git-ro.sh copy` makes in `{R}`: never on the
+client checkout. Run the first block from the top level of the repository under audit. It runs nothing, and
+prints the line to record, unless the stricter of `{R}/exec-mode` and `AUDITOR_EXEC_MODE` is isolated (`none`
+stops it, as it stops `run.sh`), `probe.sh --only isolation` finds none of the credentials it checks readable,
+the vendored skill and `uv` are there, and `git-ro.sh copy` takes the checkout. That copy refuses a partial
+clone, a git without the May-2024 clone fixes, borrowed objects (alternates) and links. When a block stops on
+an error instead, record "not run: <its first error line>".
+
+The placeholders here are this section's own. `{R}` is the run directory, `audit_<n>` or `incident_<n>`,
+relative to the working directory; `{MODE}` is the word `{R}/exec-mode` holds; `{FINDING_ID}` is the finding
+or incident id; `{COMMIT}` is the commit the patch targets; `{ROOT_CAUSE}` is the finding's root cause and
+impact in one sentence, without a single quote; `{LEVEL}` is the highest evidence level the checks will
+honestly reach (`source`, `build` or `runtime`, as the skill defines them).
 
 ```bash
-PPV_RUNNER="<auditor-skill root>/vendor/trailofbits/plugins/post-patch-validation/skills/post-patch-validation/scripts/post_patch_validation.py"
-if [ "{MODE}" != isolated ]; then
+ROOT="<auditor-skill root>"
+PPV_RUNNER="$ROOT/vendor/trailofbits/plugins/post-patch-validation/skills/post-patch-validation/scripts/post_patch_validation.py"
+case " {MODE} ${AUDITOR_EXEC_MODE:-} " in       # the stricter of {R}/exec-mode and AUDITOR_EXEC_MODE, as run.sh takes it
+  *" none "*) PPV_MODE=none ;;
+  *" isolated "*) PPV_MODE=isolated ;;
+  *) PPV_MODE=native ;;
+esac
+if [ "$PPV_MODE" != isolated ]; then
   echo "post-patch validation: not run: needs isolated mode"
+elif [ "$("$ROOT/scripts/runner/probe.sh" --only isolation 2>/dev/null)" != "isolation: none of the credentials the self-check reads is readable" ]; then
+  echo "post-patch validation: not run: this is not the isolated runner (scripts/runner/probe.sh --only isolation)"
 elif [ ! -f "$PPV_RUNNER" ] || ! command -v uv >/dev/null 2>&1; then
   echo "post-patch validation: not run: needs the vendored post-patch-validation skill and uv"
+elif ! PPV_SRC="$("$ROOT/scripts/git-ro.sh" copy . "{R}")"; then
+  echo "post-patch validation: not run: git-ro.sh copy refused the checkout"
 else
-  PPV="$(mktemp -d "${TMPDIR:-/tmp}/ppv-{FINDING_ID}.XXXXXX")" &&        # a fresh directory at an unpredictable path
-    cd "$PPV" &&                                                         # out of the client checkout before any git
-    GIT_NO_LAZY_FETCH=1 git clone --no-local {CHECKOUT} "$PPV/repo" &&   # the disposable clone (Rule 11c), the only repository it touches
+  PPV_SRC="$(pwd -P)/$PPV_SRC" && PPV_PATCH="$(pwd -P)/{R}/patches/{FINDING_ID}.patch" &&
+    PPV="$(mktemp -d "${TMPDIR:-/tmp}/ppv-{FINDING_ID}.XXXXXX")" &&
+    cd "$PPV" &&
+    GIT_NO_LAZY_FETCH=1 git clone -q --no-local --no-checkout --template= "$PPV_SRC" "$PPV/repo" &&
+    mkdir -p "$PPV/repo/.git/info" && printf '* !filter\n' > "$PPV/repo/.git/info/attributes" &&
     mkdir "$PPV/plan" &&
-    uv run "$PPV_RUNNER" scaffold --repo "$PPV/repo" --base-ref {COMMIT} \
-      --patch-file {PATH_TO}/{FINDING_ID}.patch --finding-id {FINDING_ID} --finding-summary '{ROOT_CAUSE}' \
+    uv run --no-config "$PPV_RUNNER" scaffold --repo "$PPV/repo" --base-ref {COMMIT} \
+      --patch-file "$PPV_PATCH" --finding-id {FINDING_ID} --finding-summary '{ROOT_CAUSE}' \
       --evidence-level {LEVEL} --output "$PPV/plan/plan.json" &&
     echo "post-patch validation: plan at $PPV/plan/plan.json"
 fi
 ```
 
+The clone has no work tree checked out. The `* !filter` line in its `info/attributes`, which the runner's
+worktrees read too, turns every clean and smudge filter off, so a git-lfs filter in the caller's own git config
+never runs on a checkout there and never contacts the LFS host the repository names. `uv run --no-config`
+reads no `uv.toml` or `pyproject.toml` above the scratch directory.
+
 Fill in the plan's checks as the skill's `SKILL.md` describes, at least one of every kind, with any helper
-files under `{PPV}/plan/checks/`; `{PPV}` is the directory the first block printed. Run the runner only
-through these two blocks: the skill's own examples pass `--repo .`, which during an audit is the client
-checkout. Then run the plan:
+files under `{PPV}/plan/checks/`, and change nothing else in `plan.json`; `{PPV}` is the directory the first
+block printed. Run the runner only through these two blocks: the skill's own examples pass `--repo .`, which
+during an audit is the client checkout. Then run the plan; nothing runs unless `plan.json` still names the
+clone:
 
 ```bash
 PPV_RUNNER="<auditor-skill root>/vendor/trailofbits/plugins/post-patch-validation/skills/post-patch-validation/scripts/post_patch_validation.py"
-cd "{PPV}" &&                                                          # outside the target tree, as above
-  uv run "$PPV_RUNNER" validate-plan --plan "{PPV}/plan/plan.json" &&
-  uv run "$PPV_RUNNER" run --plan "{PPV}/plan/plan.json" --output "{PPV}/results"   # exit 0, 1 or 10 leaves results/result.json
+cd "{PPV}" && if [ -d repo/.git ] &&                                   # outside the target tree, as above
+    [ "$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["repository"])' plan/plan.json 2>/dev/null)" = ../repo ]; then
+  uv run --no-config "$PPV_RUNNER" validate-plan --plan "{PPV}/plan/plan.json" &&
+    uv run --no-config "$PPV_RUNNER" run --plan "{PPV}/plan/plan.json" --output "{PPV}/results"   # exit 0, 1 or 10 leaves results/result.json
+else
+  echo "post-patch validation: not run: plan/plan.json must name ../repo, the disposable clone"
+fi
 ```
 
-**Post-patch validation:** {not run: needs isolated mode | not run: <what is missing> | ran: evidence level <source / build / runtime>, assessment <complete / incomplete>}
+If the runner stops on a submodule, record "not run: the patch touches submodule <path>, which the disposable
+clone does not hold". Never fetch or initialize submodules in the clone.
+
+**Post-patch validation:** {not run: <the line a block printed, or its first error line> | ran: evidence level <source / build / runtime>, assessment <complete / incomplete>}
 - **Findings:** {each `check_id` (kind): message, as `results/result.json` gives it | none}
 - **Gaps:** {each `check_id`: reason | none}
 - **Effect on the verdict:** {none | lowered from `[FIX-VERIFIED]` to `[FIX-INSUFFICIENT]` by `check_id` (kind) | residual, tier unchanged: `check_id` (kind)}
@@ -154,10 +187,11 @@ cd "{PPV}" &&                                                          # outside
 The result is optional evidence and can only lower the verdict. A finding, a failure it attributes to the
 patched revision (a root-cause variant the patch leaves open, a behavior it changes, a regression it brings
 in), makes a `[FIX-VERIFIED]` tier `[FIX-INSUFFICIENT]` (a `[FIX-PROPOSED]` one keeps its tier and lists it as
-residual), with that check as what remains open. Read the check and its saved logs first: the runner shows that a check behaved as written, not that it
-is the right check. Passing checks and gaps change nothing, and a passing run never stands in for §2's executed
-revert. List what its checks contacted (package registries, toolchain downloads, hosts the target's code or
-tests reach) under outside services in the report (Rule 11b). Discard `{PPV}` once this section is filled in.
+residual), with that check as what remains open. Read the check and its saved logs first: the runner shows
+that a check behaved as written, not that it is the right check. Passing checks and gaps change nothing, and a
+passing run never stands in for §2's executed revert. List what its checks contacted (package registries,
+toolchain downloads, hosts the target's code or tests reach) under outside services in the report (Rule 11b).
+Discard `{PPV}` once this section is filled in.
 
 ## 5. Verdict → report's Auditor Verification field
 
