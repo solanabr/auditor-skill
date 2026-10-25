@@ -181,3 +181,10 @@ jobs:
           REQUIRE_TOOLCHAIN: "1"
           AUDIT_LOGS: tools/auditor-tools/target/release/audit-logs
         run: bash scripts/tests/test-audit-logs.sh
+
+      - name: audit-scan and audit-mem against their hostile-argument cases
+        if: ${{ !cancelled() }}
+        env:
+          REQUIRE_TOOLCHAIN: "1"
+          AUDITOR_TOOLS_BIN: tools/auditor-tools/target/release
+        run: bash scripts/tests/test-auditor-tools.sh
