@@ -338,8 +338,8 @@ P=VaultProg1111
 S=unchecked_sub@vault.balance
 printf 'fn withdraw() {\n    require!(vault.balance >= amount);\n    vault.balance -= amount;\n}\n' > "$W/src/withdraw.rs"
 mem() { local sub=$1; shift; ( cd "$W" && "$MEM" "$sub" --contract=1 "$@" ) 2>&1; }
-eq "audit-mem: warm with no store prints an empty context" "$(mem warm --program-id "$P")" '{"profile":null,"invariants":[],"open_fp_rulings":[]}'
-eq "audit-mem: ... and so it does without --contract=1" "$( ( cd "$W" && "$MEM" warm --program-id "$P" ) 2>&1)" '{"profile":null,"invariants":[],"open_fp_rulings":[]}'
+eq "audit-mem: warm with no store prints an empty context" "$(mem warm --program-id "$P")" '{"profile":null,"invariants":[],"open_fp_rulings":[],"truncated":0}'
+eq "audit-mem: ... and so it does without --contract=1" "$( ( cd "$W" && "$MEM" warm --program-id "$P" ) 2>&1)" '{"profile":null,"invariants":[],"open_fp_rulings":[],"truncated":0}'
 eq "audit-mem: init makes the store" "$(mem init)" "initialized .audit-memory/audit.db"
 eq "audit-mem: ... with its .gitignore of *" "$(cat "$W/.audit-memory/.gitignore")" "*"
 eq "audit-mem: ... which git ignores, with no other step" "$(fgit -C "$W" status --porcelain -- .audit-memory)" ""
@@ -372,11 +372,17 @@ eq "audit-mem: check after the guard changed: stale, not suppressed (exit 1)" \
   "$?:$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["stale"])' "$T/check.out")" \
   "1:the guard at src/withdraw.rs:2 no longer holds the lines ruled on"
 eq "audit-mem: regressions lists the regressed finding" \
-  "$(mem regressions --program-id "$P" | python3 -I -c 'import json,sys; print(len(json.load(sys.stdin)))')" 1
+  "$(mem regressions --program-id "$P" | python3 -I -c 'import json,sys; r=json.load(sys.stdin); print(len(r["regressions"]), r["truncated"])')" "1 0"
+eq "audit-mem: profile keeps a value it replaces" \
+  "$(mem profile --program-id "$P" --trust-assumptions-json '{"admin":"fully trusted"}')" \
+  "profile $P recorded, replacing trust_assumptions_json (warm lists what it held under changed)"
 mem warm --db .audit-memory/audit.db --program-id "$P" > "$T/warm.out"
 eq "audit-mem: warm returns the profile, the invariant and the ruling" \
   "$(python3 -I -c 'import json,sys; w=json.load(open(sys.argv[1])); print(w["profile"]["protocol_class"], len(w["invariants"]), w["open_fp_rulings"][0]["guard"])' "$T/warm.out")" \
   "vault 1 src/withdraw.rs:2"
+eq "audit-mem: ... with the value the profile replaced" \
+  "$(python3 -I -c 'import json,sys; c=json.load(open(sys.argv[1]))["profile"]["changed"][0]; print(c["field"], c["previous"])' "$T/warm.out")" \
+  'trust_assumptions_json {"admin":"3-of-5 multisig"}'
 
 # ---------------------------------------------------------------------------
 # 5. Where it runs from: never from inside the working directory, nor from a

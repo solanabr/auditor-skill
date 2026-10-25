@@ -784,6 +784,19 @@ fn action(wt: &Path, call: &Call) -> Result<Action, Stop> {
     })
 }
 
+/// What a writer's line adds when it replaced recorded values: the fields, which
+/// `warm` lists with what they held.
+fn replacing(fields: &[&str]) -> String {
+    if fields.is_empty() {
+        String::new()
+    } else {
+        format!(
+            ", replacing {} (warm lists what it held under changed)",
+            fields.join(", ")
+        )
+    }
+}
+
 fn print_json<T: serde::Serialize>(value: &T) -> Result<(), Stop> {
     let json = serde_json::to_string(value).map_err(|e| Stop(2, format!("error: {e}")))?;
     out(&confine::json_text(json))
@@ -820,7 +833,7 @@ fn read(wt: &Path, store: &Store, pid: &str, action: &Action) -> Result<ExitCode
     match (action, conn) {
         (Action::Warm, None) => print_json(&mem::WarmContext::default())?,
         (Action::Warm, Some(c)) => print_json(&mem::warm(&c, pid).map_err(&failed)?)?,
-        (Action::Regressions, None) => out("[]")?,
+        (Action::Regressions, None) => print_json(&mem::Regressions::default())?,
         (Action::Regressions, Some(c)) => print_json(&mem::regressions(&c, pid).map_err(&failed)?)?,
         (Action::Check { .. }, None) => {
             out(r#"{"suppressed":false,"store":"absent"}"#)?;
@@ -928,7 +941,7 @@ fn write(wt: &Path, store: &Store, pid: &str, action: Action) -> Result<String, 
             admin_set,
             notes,
         } => {
-            mem::put_profile(
+            let replaced = mem::put_profile(
                 &conn,
                 pid,
                 &mem::ProfileFields {
@@ -940,7 +953,7 @@ fn write(wt: &Path, store: &Store, pid: &str, action: Action) -> Result<String, 
                 },
             )
             .map_err(&failed)?;
-            format!("profile {} recorded", pid)
+            format!("profile {} recorded{}", pid, replacing(&replaced))
         }
         Action::Invariant {
             statement,
@@ -949,7 +962,7 @@ fn write(wt: &Path, store: &Store, pid: &str, action: Action) -> Result<String, 
             cited_line,
             status,
         } => {
-            let (id, new) = mem::put_invariant(
+            let (id, new, replaced) = mem::put_invariant(
                 &conn,
                 pid,
                 &statement,
@@ -962,9 +975,10 @@ fn write(wt: &Path, store: &Store, pid: &str, action: Action) -> Result<String, 
             )
             .map_err(&failed)?;
             format!(
-                "invariant {} {}",
+                "invariant {} {}{}",
                 id,
-                if new { "recorded" } else { "updated" }
+                if new { "recorded" } else { "updated" },
+                replacing(&replaced)
             )
         }
         Action::Init => format!("initialized {}", store.shown()),

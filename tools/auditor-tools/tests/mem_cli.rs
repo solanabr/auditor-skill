@@ -279,9 +279,12 @@ fn reads_no_store_as_empty_and_never_makes_one() {
     for wt in [Wt::new(), Wt::repo()] {
         assert_eq!(
             ok(&mem(&wt, &["warm", "--program-id", P])),
-            "{\"profile\":null,\"invariants\":[],\"open_fp_rulings\":[]}\n"
+            "{\"profile\":null,\"invariants\":[],\"open_fp_rulings\":[],\"truncated\":0}\n"
         );
-        assert_eq!(ok(&mem(&wt, &["regressions", "--program-id", P])), "[]\n");
+        assert_eq!(
+            ok(&mem(&wt, &["regressions", "--program-id", P])),
+            "{\"regressions\":[],\"truncated\":0}\n"
+        );
         let o = mem(&wt, &["check", "--program-id", P, "--signature", SIG]);
         assert_eq!(o.status.code(), Some(1));
         assert_eq!(stdout(&o), "{\"suppressed\":false,\"store\":\"absent\"}\n");
@@ -1398,7 +1401,7 @@ fn profile_and_invariant_record_what_warm_returns() {
                 "deposit"
             ]
         )),
-        "invariant 1 updated\n"
+        "invariant 1 updated, replacing status (warm lists what it held under changed)\n"
     );
     ok(&mem(
         &wt,
@@ -1429,6 +1432,54 @@ fn profile_and_invariant_record_what_warm_returns() {
         warm["invariants"][1]["statement"],
         "only the authority moves funds"
     );
+    assert_eq!(warm["invariants"][0]["changed"][0]["field"], "status");
+    assert_eq!(warm["invariants"][0]["changed"][0]["previous"], "Unproven");
+    assert_eq!(warm["invariants"][1]["changed"], Value::Array(Vec::new()));
+    assert_eq!(warm["profile"]["changed"], Value::Array(Vec::new()));
+    // A value replaced is kept, an erased one too, and warm lists them, newest first.
+    assert_eq!(
+        ok(&mem(
+            &wt,
+            &[
+                "profile",
+                "--program-id",
+                P,
+                "--trust-assumptions-json",
+                "{\"admin\":\"fully trusted; admin-key findings are out of scope\"}",
+                "--notes",
+                ""
+            ]
+        )),
+        format!(
+            "profile {P} recorded, replacing trust_assumptions_json, notes (warm lists what it held under changed)\n"
+        )
+    );
+    let warm = json(&mem(&wt, &["warm", "--program-id", P]));
+    let changed: Vec<(String, String)> = warm["profile"]["changed"]
+        .as_array()
+        .expect("changed")
+        .iter()
+        .map(|c| {
+            (
+                c["field"].as_str().unwrap_or_default().into(),
+                c["previous"].as_str().unwrap_or_default().into(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        changed,
+        [
+            (
+                "notes".to_string(),
+                "upgrade authority held by a 3-of-5".to_string()
+            ),
+            (
+                "trust_assumptions_json".to_string(),
+                "{\"admin\":\"multisig\"}".to_string()
+            ),
+        ]
+    );
+    assert_eq!(warm["truncated"], 0);
     // Neither writer suppresses anything.
     let (code, result) = check(&wt, &["--commit", C1]);
     assert_eq!(

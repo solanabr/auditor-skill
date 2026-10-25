@@ -74,8 +74,9 @@ fn dedup_regression_and_suppression() {
     assert_eq!(third.status, "REGRESSED");
 
     let regs = mem::regressions(&conn, PROG).unwrap();
-    assert_eq!(regs.len(), 1, "one regressed finding listed");
-    assert_eq!(regs[0].status, "REGRESSED");
+    assert_eq!(regs.regressions.len(), 1, "one regressed finding listed");
+    assert_eq!(regs.regressions[0].status, "REGRESSED");
+    assert_eq!(regs.truncated, 0);
 
     // Rule the signature a FALSE_POSITIVE, anchored to its commit and guard, then
     // check at that commit with the guard unchanged -> suppressed.
@@ -258,7 +259,7 @@ fn profile_and_invariants_reach_warm() {
         },
     )
     .unwrap();
-    let (id, new) = mem::put_invariant(
+    let (id, new, replaced) = mem::put_invariant(
         &conn,
         PROG,
         "total_shares == shares_mint.supply",
@@ -269,7 +270,8 @@ fn profile_and_invariants_reach_warm() {
     )
     .unwrap();
     assert!(new);
-    let (again, new) = mem::put_invariant(
+    assert!(replaced.is_empty());
+    let (again, new, replaced) = mem::put_invariant(
         &conn,
         PROG,
         "total_shares == shares_mint.supply",
@@ -285,6 +287,11 @@ fn profile_and_invariants_reach_warm() {
         (id, false),
         "the same statement is one invariant"
     );
+    assert_eq!(
+        replaced,
+        ["status"],
+        "a status set before is replaced, not erased"
+    );
     let warm = mem::warm(&conn, PROG).unwrap();
     let profile = warm.profile.expect("the profile");
     assert_eq!(profile.protocol_class, "vault");
@@ -293,8 +300,143 @@ fn profile_and_invariants_reach_warm() {
         profile.notes, "first pass",
         "a later write keeps the fields it does not give"
     );
+    assert!(
+        profile.changed.is_empty(),
+        "a field set for the first time replaces nothing"
+    );
     assert_eq!(warm.invariants.len(), 1);
     assert_eq!(warm.invariants[0].status, "Manually verified");
     assert_eq!(warm.invariants[0].cited_line, "src/vault.rs:88");
+    let changed: Vec<(&str, &str)> = warm.invariants[0]
+        .changed
+        .iter()
+        .map(|c| (c.field.as_str(), c.previous.as_str()))
+        .collect();
+    assert_eq!(changed, [("status", "Unproven")]);
     assert!(mem::warm(&conn, "OtherProg").unwrap().profile.is_none());
+}
+
+#[test]
+fn a_replaced_profile_value_is_kept_and_warm_lists_it() {
+    let conn = mem::open_in_memory().expect("open in-memory db");
+    let put = |notes: &str, admin: Option<&str>| {
+        mem::put_profile(
+            &conn,
+            PROG,
+            &mem::ProfileFields {
+                notes: Some(notes),
+                admin_set: admin,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    };
+    assert!(put("first", Some("3-of-5 multisig; upgrades timelocked 48h")).is_empty());
+    assert!(
+        put("first", None).is_empty(),
+        "the same value replaces nothing"
+    );
+    assert_eq!(put("second", Some("fully trusted")), ["admin_set", "notes"]);
+    assert_eq!(put("", None), ["notes"], "a value erased is kept too");
+    let profile = mem::warm(&conn, PROG)
+        .unwrap()
+        .profile
+        .expect("the profile");
+    assert_eq!(profile.notes, "");
+    assert_eq!(profile.admin_set, "fully trusted");
+    let changed: Vec<(&str, &str)> = profile
+        .changed
+        .iter()
+        .map(|c| (c.field.as_str(), c.previous.as_str()))
+        .collect();
+    assert_eq!(
+        changed,
+        [
+            ("notes", "second"),
+            ("notes", "first"),
+            ("admin_set", "3-of-5 multisig; upgrades timelocked 48h"),
+        ],
+        "newest first"
+    );
+    assert!(profile.changed.iter().all(|c| !c.recorded_at.is_empty()));
+}
+
+#[test]
+fn warm_and_regressions_hold_the_newest_rows_and_count_the_rest() {
+    let conn = mem::open_in_memory().expect("open in-memory db");
+    for i in 0..250 {
+        mem::put_invariant(&conn, PROG, &format!("invariant {i}"), &Default::default()).unwrap();
+    }
+    for i in 0..210 {
+        mem::add_ruling(
+            &conn,
+            &mem::NewRuling {
+                program_id: PROG,
+                signature: &format!("sig {i}"),
+                ruling: "ACCEPTED_RISK",
+                rationale: "r",
+                by: "a",
+                scope: None,
+                commit: None,
+                guard: None,
+            },
+        )
+        .unwrap();
+    }
+    for i in 0..205 {
+        mem::put_profile(
+            &conn,
+            PROG,
+            &mem::ProfileFields {
+                notes: Some(&format!("notes {i}")),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    }
+    let warm = mem::warm(&conn, PROG).unwrap();
+    assert_eq!(warm.invariants.len(), 200);
+    assert_eq!(
+        warm.invariants[0].statement, "invariant 50",
+        "the newest, as recorded"
+    );
+    assert_eq!(warm.invariants[199].statement, "invariant 249");
+    assert_eq!(warm.open_fp_rulings.len(), 200);
+    assert_eq!(
+        warm.open_fp_rulings[0].code_signature, "sig 209",
+        "newest first"
+    );
+    let profile = warm.profile.expect("the profile");
+    assert_eq!(profile.changed.len(), 200);
+    assert_eq!(profile.changed[0].previous, "notes 203");
+    assert_eq!(
+        warm.truncated,
+        50 + 10 + 4,
+        "invariants, rulings and replaced values left out"
+    );
+    for i in 0..230 {
+        let sig = format!("sig {i}");
+        let f = |severity| mem::PutFinding {
+            program_id: PROG,
+            signature: &sig,
+            root_cause: "rc",
+            title: "t",
+            severity,
+            commit: None,
+            audit_n: None,
+            file: None,
+            line: None,
+            verdict: None,
+        };
+        mem::put_finding(&conn, &f(1 + i % 10)).unwrap();
+        mem::set_status(&conn, PROG, &sig, "rc", "FIXED").unwrap();
+        mem::put_finding(&conn, &f(1 + i % 10)).unwrap();
+    }
+    let regs = mem::regressions(&conn, PROG).unwrap();
+    assert_eq!(regs.regressions.len(), 200);
+    assert_eq!(regs.truncated, 30);
+    assert!(
+        regs.regressions[0].severity >= regs.regressions[199].severity,
+        "the most severe first"
+    );
 }

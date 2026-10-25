@@ -34,9 +34,11 @@ pub const TABLES: [&str; 5] = [
 
 /// Each table with the text `ensure_schema` makes it with, what follows `CREATE
 /// TABLE IF NOT EXISTS `: SQLite keeps it as the table's `sql`, after `CREATE TABLE `.
-/// It is the text audit-mem has made them with since its first release, so a store
-/// made then reads as it did.
-const SCHEMA: [(&str, &str); 5] = [
+/// The first five are the text audit-mem has made them with since its first
+/// release, so a store made then reads as it did. `history` keeps each value
+/// `profile` and `invariant` replace; a store made before it gains it when it is
+/// next written, and reads as having replaced none.
+const SCHEMA: [(&str, &str); 6] = [
     (
         "findings",
         "findings (
@@ -101,7 +103,22 @@ const SCHEMA: [(&str, &str); 5] = [
             notes                 TEXT
         )",
     ),
+    (
+        "history",
+        "history (
+            history_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+            program_id  TEXT,
+            inv_id      INTEGER,
+            field       TEXT,
+            previous    TEXT,
+            recorded_at TEXT
+        )",
+    ),
 ];
+
+/// The most rows a list of `warm`'s or `regressions`' answer holds: the newest,
+/// with `truncated` counting the rest.
+const ROWS: u32 = 200;
 
 /// The indexes SQLite makes for the tables' primary keys, by name and table.
 const AUTO_INDEXES: [(&str, &str); 2] = [
@@ -718,14 +735,29 @@ pub struct FindingRow {
     pub status: String,
 }
 
-/// List findings for a program whose status is `REGRESSED`.
-pub fn regressions(conn: &Connection, program_id: &str) -> Result<Vec<FindingRow>> {
+/// `regressions`' answer: the findings of a program whose status is
+/// `REGRESSED`, the most severe first and the newest first among equals, at most
+/// `ROWS` of them, and how many more there are.
+#[derive(Debug, Serialize, Default)]
+pub struct Regressions {
+    pub regressions: Vec<FindingRow>,
+    pub truncated: u64,
+}
+
+/// The findings of a program whose status is `REGRESSED`, as [`Regressions`].
+pub fn regressions(conn: &Connection, program_id: &str) -> Result<Regressions> {
+    let total: i64 = conn.query_row(
+        "SELECT count(*) FROM findings WHERE program_id = ?1 AND status = 'REGRESSED'",
+        params![program_id],
+        |r| r.get(0),
+    )?;
     let mut stmt = conn.prepare(
         "SELECT finding_id, program_id, severity, root_cause, code_signature, title, status \
-         FROM findings WHERE program_id = ?1 AND status = 'REGRESSED' ORDER BY severity DESC",
+         FROM findings WHERE program_id = ?1 AND status = 'REGRESSED' \
+         ORDER BY severity DESC, rowid DESC LIMIT ?2",
     )?;
     let rows = stmt
-        .query_map(params![program_id], |r| {
+        .query_map(params![program_id, ROWS], |r| {
             Ok(FindingRow {
                 finding_id: r.get(0)?,
                 program_id: r.get(1)?,
@@ -737,7 +769,91 @@ pub fn regressions(conn: &Connection, program_id: &str) -> Result<Vec<FindingRow
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
-    Ok(rows)
+    Ok(Regressions {
+        truncated: left(total, rows.len()),
+        regressions: rows,
+    })
+}
+
+/// How many of `total` rows a list of `shown` leaves out.
+fn left(total: i64, shown: usize) -> u64 {
+    u64::try_from(total)
+        .unwrap_or(0)
+        .saturating_sub(u64::try_from(shown).unwrap_or(u64::MAX))
+}
+
+/// A value `profile` or `invariant` replaced: the field, what it held, and when it
+/// was replaced (unix seconds, as `ruled_at`).
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct Change {
+    pub field: String,
+    pub previous: String,
+    pub recorded_at: String,
+}
+
+/// Whether a store holds `history` (one made before it holds none until it is
+/// next written).
+fn has_history(conn: &Connection) -> Result<bool> {
+    let n: i64 = conn.query_row(
+        "SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = 'history'",
+        [],
+        |r| r.get(0),
+    )?;
+    Ok(n > 0)
+}
+
+/// The values replaced in a program's profile (`inv_id` none) or in one of its
+/// invariants, newest first, at most `ROWS`, and how many more there are.
+fn changes(conn: &Connection, program_id: &str, inv_id: Option<i64>) -> Result<(Vec<Change>, u64)> {
+    let total: i64 = conn.query_row(
+        "SELECT count(*) FROM history WHERE program_id = ?1 AND inv_id IS ?2",
+        params![program_id, inv_id],
+        |r| r.get(0),
+    )?;
+    let mut stmt = conn.prepare(
+        "SELECT field, previous, recorded_at FROM history WHERE program_id = ?1 AND inv_id IS ?2 \
+         ORDER BY history_id DESC LIMIT ?3",
+    )?;
+    let text = |r: &rusqlite::Row, i: usize| -> rusqlite::Result<String> {
+        Ok(r.get::<_, Option<String>>(i)?.unwrap_or_default())
+    };
+    let rows = stmt
+        .query_map(params![program_id, inv_id, ROWS], |r| {
+            Ok(Change {
+                field: text(r, 0)?,
+                previous: text(r, 1)?,
+                recorded_at: text(r, 2)?,
+            })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let more = left(total, rows.len());
+    Ok((rows, more))
+}
+
+/// Keeps, in `history`, each value of `old` that `new` replaces: a field given
+/// (`Some`) whose recorded value is not empty and not the one given. Returns the
+/// names of those fields.
+fn keep_replaced(
+    tx: &Connection,
+    program_id: &str,
+    inv_id: Option<i64>,
+    fields: &[(&'static str, Option<&str>, String)],
+) -> Result<Vec<&'static str>> {
+    let now = now_ts();
+    let mut replaced = Vec::new();
+    for (field, new, old) in fields {
+        let Some(new) = new else { continue };
+        if old.is_empty() || old == new {
+            continue;
+        }
+        tx.execute(
+            "INSERT INTO history (program_id, inv_id, field, previous, recorded_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![program_id, inv_id, field, old, now],
+        )?;
+        replaced.push(*field);
+    }
+    Ok(replaced)
 }
 
 #[derive(Debug, Serialize)]
@@ -748,6 +864,8 @@ pub struct ProtocolProfile {
     pub oracle_set: String,
     pub admin_set: String,
     pub notes: String,
+    /// The values replaced since each field was first recorded, newest first.
+    pub changed: Vec<Change>,
 }
 
 /// The fields [`put_profile`] sets; `None` keeps what the profile holds.
@@ -762,9 +880,42 @@ pub struct ProfileFields<'a> {
 
 /// Record a program's protocol profile: a new profile takes the fields given and
 /// empty text for the rest; an existing one takes the fields given and keeps the
-/// others. One transaction.
-pub fn put_profile(conn: &Connection, program_id: &str, f: &ProfileFields) -> Result<()> {
+/// others, and each recorded value a field given replaces is kept in `history`,
+/// so none is lost. Returns the fields replaced. One transaction.
+pub fn put_profile(
+    conn: &Connection,
+    program_id: &str,
+    f: &ProfileFields,
+) -> Result<Vec<&'static str>> {
     let tx = conn.unchecked_transaction()?;
+    let old: Option<[String; 5]> = tx
+        .query_row(
+            "SELECT protocol_class, trust_assumptions_json, oracle_set, admin_set, notes \
+             FROM protocol_profile WHERE program_id = ?1",
+            params![program_id],
+            |r| {
+                let text = |i: usize| -> rusqlite::Result<String> {
+                    Ok(r.get::<_, Option<String>>(i)?.unwrap_or_default())
+                };
+                Ok([text(0)?, text(1)?, text(2)?, text(3)?, text(4)?])
+            },
+        )
+        .optional()?;
+    let replaced = match old {
+        Some([class, trust, oracles, admins, notes]) => keep_replaced(
+            &tx,
+            program_id,
+            None,
+            &[
+                ("protocol_class", f.protocol_class, class),
+                ("trust_assumptions_json", f.trust_assumptions_json, trust),
+                ("oracle_set", f.oracle_set, oracles),
+                ("admin_set", f.admin_set, admins),
+                ("notes", f.notes, notes),
+            ],
+        )?,
+        None => Vec::new(),
+    };
     tx.execute(
         "INSERT OR IGNORE INTO protocol_profile (program_id, protocol_class, trust_assumptions_json, \
          oracle_set, admin_set, notes) VALUES (?1, '', '', '', '', '')",
@@ -785,7 +936,7 @@ pub fn put_profile(conn: &Connection, program_id: &str, f: &ProfileFields) -> Re
         ],
     )?;
     tx.commit()?;
-    Ok(())
+    Ok(replaced)
 }
 
 #[derive(Debug, Serialize)]
@@ -797,6 +948,9 @@ pub struct InvariantRow {
     pub source_fn: String,
     pub cited_line: String,
     pub status: String,
+    /// The values replaced since each field was first recorded, newest first: a
+    /// status the invariant had, say.
+    pub changed: Vec<Change>,
 }
 
 /// The fields [`put_invariant`] sets besides the statement; `None` keeps what an
@@ -811,32 +965,49 @@ pub struct InvariantFields<'a> {
 
 /// Record an invariant of a program: one per (program_id, statement). A new one
 /// takes the fields given and empty text for the rest; recording the same
-/// statement again updates the fields given. Returns its id, and whether it is
-/// new. One transaction.
+/// statement again updates the fields given, and each recorded value a field
+/// given replaces, a status included, is kept in `history`. Returns its id,
+/// whether it is new, and the fields replaced. One transaction.
 pub fn put_invariant(
     conn: &Connection,
     program_id: &str,
     statement: &str,
     f: &InvariantFields,
-) -> Result<(i64, bool)> {
+) -> Result<(i64, bool, Vec<&'static str>)> {
     let tx = conn.unchecked_transaction()?;
-    let existing: Option<i64> = tx
+    let existing: Option<(i64, [String; 4])> = tx
         .query_row(
-            "SELECT inv_id FROM invariants WHERE program_id = ?1 AND statement = ?2 \
-             ORDER BY inv_id LIMIT 1",
+            "SELECT inv_id, protocol_class, source_fn, cited_line, status FROM invariants \
+             WHERE program_id = ?1 AND statement = ?2 ORDER BY inv_id LIMIT 1",
             params![program_id, statement],
-            |r| r.get(0),
+            |r| {
+                let text = |i: usize| -> rusqlite::Result<String> {
+                    Ok(r.get::<_, Option<String>>(i)?.unwrap_or_default())
+                };
+                Ok((r.get(0)?, [text(1)?, text(2)?, text(3)?, text(4)?]))
+            },
         )
         .optional()?;
     let outcome = match existing {
-        Some(id) => {
+        Some((id, [class, source_fn, cited_line, status])) => {
+            let replaced = keep_replaced(
+                &tx,
+                program_id,
+                Some(id),
+                &[
+                    ("protocol_class", f.protocol_class, class),
+                    ("source_fn", f.source_fn, source_fn),
+                    ("cited_line", f.cited_line, cited_line),
+                    ("status", f.status, status),
+                ],
+            )?;
             tx.execute(
                 "UPDATE invariants SET protocol_class = COALESCE(?2, protocol_class), \
                  source_fn = COALESCE(?3, source_fn), cited_line = COALESCE(?4, cited_line), \
                  status = COALESCE(?5, status) WHERE inv_id = ?1",
                 params![id, f.protocol_class, f.source_fn, f.cited_line, f.status],
             )?;
-            (id, false)
+            (id, false, replaced)
         }
         None => {
             tx.execute(
@@ -851,26 +1022,31 @@ pub fn put_invariant(
                     f.status.unwrap_or(""),
                 ],
             )?;
-            (tx.last_insert_rowid(), true)
+            (tx.last_insert_rowid(), true, Vec::new())
         }
     };
     tx.commit()?;
     Ok(outcome)
 }
 
-/// The warm-start context block returned for a re-audit.
+/// The warm-start context block returned for a re-audit. Each list holds at most
+/// `ROWS` rows, the newest; `truncated` counts the rows left out of all of them.
 #[derive(Debug, Serialize, Default)]
 pub struct WarmContext {
     pub profile: Option<ProtocolProfile>,
     pub invariants: Vec<InvariantRow>,
     pub open_fp_rulings: Vec<RulingRow>,
+    pub truncated: u64,
 }
 
-/// Assemble the warm-start context for `program_id`: its protocol profile,
-/// recorded invariants, and any standing false-positive/accepted-risk rulings,
-/// each with its anchor.
+/// Assemble the warm-start context for `program_id`: its protocol profile, its
+/// newest recorded invariants (in the order they were recorded), each with the
+/// values replaced in it, and its newest standing false-positive/accepted-risk
+/// rulings, each with its anchor.
 pub fn warm(conn: &Connection, program_id: &str) -> Result<WarmContext> {
-    let profile = conn
+    let history = has_history(conn)?;
+    let mut truncated = 0;
+    let mut profile = conn
         .query_row(
             "SELECT program_id, protocol_class, trust_assumptions_json, oracle_set, admin_set, notes \
              FROM protocol_profile WHERE program_id = ?1",
@@ -883,17 +1059,28 @@ pub fn warm(conn: &Connection, program_id: &str) -> Result<WarmContext> {
                     oracle_set: r.get(3)?,
                     admin_set: r.get(4)?,
                     notes: r.get(5)?,
+                    changed: Vec::new(),
                 })
             },
         )
         .optional()?;
+    if let (Some(p), true) = (profile.as_mut(), history) {
+        let (changed, more) = changes(conn, program_id, None)?;
+        p.changed = changed;
+        truncated += more;
+    }
 
+    let total: i64 = conn.query_row(
+        "SELECT count(*) FROM invariants WHERE program_id = ?1",
+        params![program_id],
+        |r| r.get(0),
+    )?;
     let mut inv_stmt = conn.prepare(
         "SELECT inv_id, program_id, protocol_class, statement, source_fn, cited_line, status \
-         FROM invariants WHERE program_id = ?1 ORDER BY inv_id",
+         FROM invariants WHERE program_id = ?1 ORDER BY inv_id DESC LIMIT ?2",
     )?;
-    let invariants = inv_stmt
-        .query_map(params![program_id], |r| {
+    let mut invariants = inv_stmt
+        .query_map(params![program_id, ROWS], |r| {
             Ok(InvariantRow {
                 inv_id: r.get(0)?,
                 program_id: r.get(1)?,
@@ -902,15 +1089,32 @@ pub fn warm(conn: &Connection, program_id: &str) -> Result<WarmContext> {
                 source_fn: r.get(4)?,
                 cited_line: r.get(5)?,
                 status: r.get(6)?,
+                changed: Vec::new(),
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
+    invariants.reverse();
+    truncated += left(total, invariants.len());
+    if history {
+        for invariant in &mut invariants {
+            let (changed, more) = changes(conn, program_id, Some(invariant.inv_id))?;
+            invariant.changed = changed;
+            truncated += more;
+        }
+    }
 
-    let open_fp_rulings = rulings(conn, "program_id = ?1", program_id, None, None)?;
+    let total: i64 = conn.query_row(
+        "SELECT count(*) FROM fp_rulings WHERE program_id = ?1",
+        params![program_id],
+        |r| r.get(0),
+    )?;
+    let open_fp_rulings = rulings(conn, "program_id = ?1", program_id, None, Some(ROWS))?;
+    truncated += left(total, open_fp_rulings.len());
 
     Ok(WarmContext {
         profile,
         invariants,
         open_fp_rulings,
+        truncated,
     })
 }

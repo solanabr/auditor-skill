@@ -260,14 +260,23 @@ gives exact deduplication across audits.
 | `set-status` | Set a finding's status (`FIXED` \| `OPEN` \| `ACKNOWLEDGED` \| `DISPUTED`). |
 | `rule` | Record a `FALSE_POSITIVE` \| `ACCEPTED_RISK` ruling with a timestamp and its anchor: the commit it is made at and the guard it cites (below). A `FALSE_POSITIVE` ruling needs `--commit` and `--guard`. |
 | `check` | Print `{"suppressed":bool,"ruling":..}`; exit 0 when the newest `FALSE_POSITIVE` ruling for the signature still holds, else exit 1. A ruling that no longer holds is printed with `"stale":"<why>"` and suppresses nothing. |
-| `regressions` | JSON list of findings with status `REGRESSED`. |
-| `warm` | JSON `{profile, invariants[], open_fp_rulings[]}` — the warm-start context block for a re-audit: what `profile` and `invariant` recorded, and the rulings with their anchors. |
-| `profile` | Record the program's protocol profile. Fields not given keep what the profile holds. Prints `profile <program_id> recorded`. |
-| `invariant` | Record an invariant of the program, one per statement: the same statement again updates the fields given. Prints `invariant <id> recorded` or `invariant <id> updated`. |
+| `regressions` | JSON `{regressions[], truncated}`: the findings with status `REGRESSED`, the most severe first and the newest first among equals, at most 200; `truncated` counts the rest. |
+| `warm` | JSON `{profile, invariants[], open_fp_rulings[], truncated}` — the warm-start context block for a re-audit: what `profile` and `invariant` recorded, each with the values they replaced (`changed`, below), and the rulings with their anchors. Each list holds at most 200 rows, the newest; `truncated` counts the rows left out of all of them. |
+| `profile` | Record the program's protocol profile. Fields not given keep what the profile holds; a recorded value a field given replaces is kept (below). Prints `profile <program_id> recorded`, then `, replacing <fields> (…)` when it replaced any. |
+| `invariant` | Record an invariant of the program, one per statement: the same statement again updates the fields given, and keeps each value it replaces, a status included. Prints `invariant <id> recorded` or `invariant <id> updated`, then `, replacing <fields> (…)` when it replaced any. |
 
 **Regression rule:** when `put-finding` re-observes a finding whose stored status
 was `FIXED`, the status transitions to `REGRESSED` and the command prints
 `REGRESSED <finding_id>`. Brand-new findings start `OPEN`.
+
+**No value is erased silently.** When `profile` or `invariant` gives a field whose
+recorded value is not empty and not the one given, the value it held is kept in the
+`history` table, an erased one (`--notes ''`) too, and `warm` lists it under that
+profile's or invariant's `changed`, newest first, as
+`{"field", "previous", "recorded_at"}`: the field (`notes`, `status`, …), what it
+held, and when it was replaced, in unix seconds as `ruled_at`. A field set for the
+first time replaces nothing. A later audit sees what a trust assumption or an
+invariant's status was before, and that it changed.
 
 ### Options
 
@@ -357,8 +366,9 @@ rules are those of `scripts/lib/confine.sh` and `scripts/rundir.sh`, in
   `PRAGMA query_only=ON`) and immutable (`file:<store>?mode=ro&immutable=1`: SQLite
   takes no lock and opens no file beside it), and never make the file or write the
   schema. With no store they print an empty answer: `warm`
-  `{"profile":null,"invariants":[],"open_fp_rulings":[]}`, `check`
-  `{"suppressed":false,"store":"absent"}` with exit 1, and `regressions` `[]`.
+  `{"profile":null,"invariants":[],"open_fp_rulings":[],"truncated":0}`, `check`
+  `{"suppressed":false,"store":"absent"}` with exit 1, and `regressions`
+  `{"regressions":[],"truncated":0}`.
 - `init` makes `.audit-memory/` with a plain `mkdir` (mode 0700), its `.gitignore`
   first, then an empty database, each file made exclusively
   (`O_CREAT|O_EXCL|O_NOFOLLOW`, mode 0600) through the directory, opened once
@@ -431,7 +441,12 @@ invariants(inv_id PK, program_id, protocol_class, statement, source_fn,
            cited_line, status)
 protocol_profile(program_id PK, protocol_class, trust_assumptions_json,
                  oracle_set, admin_set, notes)
+history(history_id PK, program_id, inv_id, field, previous, recorded_at)
 ```
+
+`history` holds each value `profile` (`inv_id` null) and `invariant` replaced; a
+store made before it gains it when it is next written, and reads as having replaced
+none.
 
 ## `audit-logs`
 
