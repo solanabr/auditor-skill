@@ -851,6 +851,25 @@ settings
 printf 'version = 3\n\n[[package]]\nname = "anyhow"\nversion = "1.0.0"\n"\\u0073ource" = "git+https://evil.invalid/x"\n' > "$WT/stubs/Cargo.lock"
 run "$DEPS" "$WT" -- cargo-tree --run audit_1 --manifest stubs/Cargo.toml --manifest stubs/Cargo.lock
 check "a lockfile with a unicode escape (cargo writes none) is refused" sh -c "[ '$RC' = 3 ] && grep -q 'the lockfile has a .u, .U or .x escape' '$T/err' && ! grep -q '^== cargo' '$T/calls'"
+run "$DEPS" "$WT" -- cargo-outdated --run audit_1 --manifest stubs/Cargo.toml --manifest stubs/Cargo.lock
+check "... and by cargo-outdated too" sh -c "[ '$RC' = 3 ] && grep -q 'the lockfile has a .u, .U or .x escape' '$T/err' && ! grep -q '^== cargo' '$T/calls'"
+# The Solana layout these lockfile rules are for: a git [patch] of curve25519-dalek, and the lockfile it
+# leaves, with a git source. cargo-tree and cargo-outdated run on the rebuilt manifest, with the note, and
+# cargo-audit audits the lockfile as it is (cargo audit does not query a git source).
+mkdir -p "$WT/sol"
+printf '[package]\nname = "sol-prog"\nversion = "0.1.0"\nedition = "2021"\n\n[dependencies]\nsolana-program = "1.17"\n\n[patch.crates-io]\ncurve25519-dalek = { git = "https://github.com/solana-labs/curve25519-dalek.git", rev = "b500cdc2a920cd5bff9e2dd974d7b97349d61464" }\n' > "$WT/sol/Cargo.toml"
+printf 'version = 3\n\n[[package]]\nname = "byteorder"\nversion = "1.5.0"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\nchecksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"\n\n[[package]]\nname = "curve25519-dalek"\nversion = "3.2.1"\nsource = "git+https://github.com/solana-labs/curve25519-dalek.git?rev=b500cdc2a920cd5bff9e2dd974d7b97349d61464#b500cdc2a920cd5bff9e2dd974d7b97349d61464"\ndependencies = [\n "byteorder",\n]\n\n[[package]]\nname = "sol-prog"\nversion = "0.1.0"\ndependencies = [\n "solana-program",\n]\n\n[[package]]\nname = "solana-program"\nversion = "1.17.34"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\nchecksum = "00"\ndependencies = [\n "curve25519-dalek",\n]\n' > "$WT/sol/Cargo.lock"
+NOTE_SOL='>> note: sol/Cargo.toml holds a [patch] or [replace] table, which this tree does not apply: curve25519-dalek'
+settings SHIM_DUMP=1
+for action in cargo-tree cargo-outdated; do
+  run "$DEPS" "$WT" -- "$action" --run audit_1 --manifest sol/Cargo.toml --manifest sol/Cargo.lock
+  check "$action on a Solana manifest with a git curve25519-dalek [patch] and its lockfile: exit 0, with the note" sh -c "
+    [ '$RC' = 0 ] && [ \"\$(cat '$T/err')\" = '$NOTE_SOL' ] && grep -q '^== cargo ${action#cargo-} .*--manifest-path .*/rebuilt/' '$T/calls' && ! grep -qiE 'rebuilt[|].*(github|patch)' '$T/calls'"
+done
+settings FAKE_AUDIT_OUT="$T/audit-clean.txt"
+run "$DEPS" "$WT" -- cargo-audit --run audit_1 --manifest sol/Cargo.lock
+check "cargo-audit of that lockfile, fetching: exit 0, cargo audit runs on it" sh -c "[ '$RC' = 0 ] && grep -qx '== cargo audit --color never' '$T/calls'"
+settings
 # vet() still refuses a git, alt-registry or out-of-tree path dependency that metadata surfaces. These and the
 # cargo-outdated cases run on the plain pkg manifest again, so they do not depend on the named-patch case.
 printf '%b' "$PKG_TOML" > "$WT/pkg/Cargo.toml"
