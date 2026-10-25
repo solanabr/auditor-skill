@@ -314,8 +314,9 @@ A check with no `--commit` never suppresses. A ruling recorded before rulings ha
 anchors has none: it is `"stale":"no anchor"` and never suppresses. `warm` lists the
 rulings as they were recorded, anchors included; only `check` says whether one still
 holds. `init`, or any
-subcommand that writes, adds the anchor columns to a store made before them;
-`warm`, `check` and `regressions` read such a store as it is.
+subcommand that writes, adds the anchor columns to a store made before them (a new
+store is made the same way, so the two read alike); `warm`, `check` and
+`regressions` read such a store as it is.
 
 ### Where it reads and writes
 
@@ -344,9 +345,11 @@ rules are those of `scripts/lib/confine.sh` and `scripts/rundir.sh`, in
   in WAL mode is refused, since a read-only open of one makes a file beside it. No
   `-wal` or `-shm` file may sit beside it (audit-mem never makes one, and SQLite would
   open them even to read), and a `-journal`, left by a write that stopped, must be a
-  regular file with one name. It holds only audit-mem's tables, their automatic
-  indexes and `sqlite_sequence` as SQLite makes it; a view, a trigger, a virtual table
-  or any other object is refused. SQLite never follows a link (`SQLITE_OPEN_NOFOLLOW`)
+  regular file with one name. It holds only audit-mem's tables, each `CREATE TABLE`
+  exactly as audit-mem writes it (a column, constraint, default or table option of
+  another's is refused), the indexes SQLite makes for their primary keys, and
+  `sqlite_sequence` as SQLite makes it; a view, a trigger, a virtual table or any
+  other object is refused. SQLite never follows a link (`SQLITE_OPEN_NOFOLLOW`)
   and runs in its defensive mode (`SQLITE_DBCONFIG_DEFENSIVE`), with triggers and views
   off, `trusted_schema` off, temporary tables in memory and no value read or written
   past 1 MiB (`SQLITE_LIMIT_LENGTH`; the writers store at most 4096 bytes a field).

@@ -81,19 +81,61 @@ fn craft(path: &Path, sql: &str) {
     conn.execute_batch(sql).expect("craft the database");
 }
 
-/// The schema audit-mem made before rulings had anchors.
+/// The schema audit-mem made before rulings had anchors, as it wrote it.
 const OLD_SCHEMA: &str = r#"
-CREATE TABLE IF NOT EXISTS findings (finding_id TEXT PRIMARY KEY, program_id TEXT, first_seen_commit TEXT,
-    last_seen_commit TEXT, severity INTEGER, root_cause TEXT, code_signature TEXT, title TEXT, status TEXT,
-    first_audit_n TEXT, last_audit_n TEXT);
-CREATE TABLE IF NOT EXISTS occurrences (finding_id TEXT, audit_n TEXT, commit_sha TEXT, file TEXT, line INTEGER,
-    verdict TEXT, rule5b_json TEXT);
-CREATE TABLE IF NOT EXISTS fp_rulings (ruling_id INTEGER PRIMARY KEY AUTOINCREMENT, program_id TEXT,
-    code_signature TEXT, ruling TEXT, rationale TEXT, ruled_by TEXT, ruled_at TEXT, scope TEXT);
-CREATE TABLE IF NOT EXISTS invariants (inv_id INTEGER PRIMARY KEY AUTOINCREMENT, program_id TEXT,
-    protocol_class TEXT, statement TEXT, source_fn TEXT, cited_line TEXT, status TEXT);
-CREATE TABLE IF NOT EXISTS protocol_profile (program_id TEXT PRIMARY KEY, protocol_class TEXT,
-    trust_assumptions_json TEXT, oracle_set TEXT, admin_set TEXT, notes TEXT);
+        CREATE TABLE IF NOT EXISTS findings (
+            finding_id        TEXT PRIMARY KEY,
+            program_id        TEXT,
+            first_seen_commit TEXT,
+            last_seen_commit  TEXT,
+            severity          INTEGER,
+            root_cause        TEXT,
+            code_signature    TEXT,
+            title             TEXT,
+            status            TEXT,
+            first_audit_n     TEXT,
+            last_audit_n      TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS occurrences (
+            finding_id TEXT,
+            audit_n    TEXT,
+            commit_sha TEXT,
+            file       TEXT,
+            line       INTEGER,
+            verdict    TEXT,
+            rule5b_json TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS fp_rulings (
+            ruling_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+            program_id     TEXT,
+            code_signature TEXT,
+            ruling         TEXT,
+            rationale      TEXT,
+            ruled_by       TEXT,
+            ruled_at       TEXT,
+            scope          TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS invariants (
+            inv_id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            program_id     TEXT,
+            protocol_class TEXT,
+            statement      TEXT,
+            source_fn      TEXT,
+            cited_line     TEXT,
+            status         TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS protocol_profile (
+            program_id            TEXT PRIMARY KEY,
+            protocol_class        TEXT,
+            trust_assumptions_json TEXT,
+            oracle_set            TEXT,
+            admin_set             TEXT,
+            notes                 TEXT
+        );
 "#;
 
 #[test]
@@ -945,7 +987,7 @@ fn refuses_a_crafted_store() {
         ("audit_1", "PRAGMA journal_mode=WAL; CREATE TABLE t(x);", "audit_1/audit-mem.db is not in rollback-journal mode (a WAL database, say), which audit-mem never sets"),
         ("audit_2", "CREATE TABLE IF NOT EXISTS x(y); CREATE VIEW v AS SELECT 1;", "audit_2/audit-mem.db: it holds the table x, which audit-mem never makes, so it is not a store audit-mem wrote"),
         ("audit_3", "CREATE VIEW findings AS SELECT 1 AS finding_id;", "audit_3/audit-mem.db: it holds the view findings, which audit-mem never makes, so it is not a store audit-mem wrote"),
-        ("audit_4", "CREATE VIRTUAL TABLE findings USING fts5(finding_id);", "audit_4/audit-mem.db: it holds the table findings, which audit-mem never makes, so it is not a store audit-mem wrote"),
+        ("audit_4", "CREATE VIRTUAL TABLE findings USING fts5(finding_id);", "audit_4/audit-mem.db: its findings table is not the one audit-mem makes, so it is not a store audit-mem wrote"),
         ("audit_5", "CREATE TRIGGER t AFTER INSERT ON fp_rulings BEGIN DELETE FROM fp_rulings; END;", "audit_5/audit-mem.db: it holds the trigger t, which audit-mem never makes, so it is not a store audit-mem wrote"),
         ("audit_6", "CREATE INDEX i ON findings(title);", "audit_6/audit-mem.db: it holds the index i, which audit-mem never makes, so it is not a store audit-mem wrote"),
         ("audit_7", "DROP TABLE invariants;", "audit_7/audit-mem.db: it has no invariants table, so it is not a store audit-mem wrote; audit-mem init makes the tables"),
@@ -1016,6 +1058,129 @@ fn refuses_a_crafted_store() {
             );
         }
     }
+}
+
+#[test]
+fn refuses_a_table_that_is_not_the_one_audit_mem_makes() {
+    let wt = Wt::repo();
+    let title = "            title             TEXT,\n";
+    let status = "            status            TEXT,\n";
+    let scope = "            scope          TEXT\n        );";
+    let cases: Vec<(&str, String)> = vec![
+        (
+            "findings",
+            OLD_SCHEMA.replace(
+                title,
+                &format!("{title}            loud TEXT GENERATED ALWAYS AS (upper(title)),\n"),
+            ),
+        ),
+        (
+            "findings",
+            OLD_SCHEMA.replace(
+                status,
+                "            status            TEXT CHECK (length(status) < 9),\n",
+            ),
+        ),
+        (
+            "findings",
+            OLD_SCHEMA.replace(
+                status,
+                "            status            TEXT DEFAULT 'OPEN',\n",
+            ),
+        ),
+        (
+            "findings",
+            OLD_SCHEMA.replace(
+                title,
+                &format!("{title}            extra TEXT DEFAULT 'x',\n"),
+            ),
+        ),
+        (
+            "findings",
+            OLD_SCHEMA.replacen(
+                "            last_audit_n      TEXT\n        );",
+                "            last_audit_n      TEXT\n        ) WITHOUT ROWID;",
+                1,
+            ),
+        ),
+        (
+            "findings",
+            OLD_SCHEMA.replace(
+                "finding_id        TEXT PRIMARY KEY",
+                "finding_id       TEXT PRIMARY KEY",
+            ),
+        ),
+        (
+            "fp_rulings",
+            format!("{OLD_SCHEMA}\nALTER TABLE fp_rulings ADD COLUMN anchor_commit TEXT;"),
+        ),
+        (
+            "fp_rulings",
+            OLD_SCHEMA.replace(
+                scope,
+                "            scope          TEXT,\n            anchor_commit  TEXT\n        );",
+            ),
+        ),
+    ];
+    for (n, (table, sql)) in cases.iter().enumerate() {
+        assert_ne!(sql, OLD_SCHEMA, "case {n} changes the schema");
+        let dir = format!("audit_{}", n + 1);
+        wt.run_dir(&dir);
+        let path = format!("{dir}/audit-mem.db");
+        craft(&wt.path(&path), sql);
+        let before = wt.snapshot();
+        let why = format!("{path}: its {table} table is not the one audit-mem makes, so it is not a store audit-mem wrote");
+        for args in [
+            vec!["warm", "--db", &path, "--program-id", P],
+            vec!["regressions", "--db", &path, "--program-id", P],
+            vec!["profile", "--db", &path, "--program-id", P, "--notes", "n"],
+        ] {
+            refused(&mem(&wt, &args), "audit-mem", &why);
+        }
+        assert_eq!(
+            wt.snapshot(),
+            before,
+            "case {n}: the store is left as it was"
+        );
+    }
+    // The schema as audit-mem made it before rulings had anchors reads, and gains them.
+    wt.run_dir("audit_20");
+    craft(&wt.path("audit_20/audit-mem.db"), OLD_SCHEMA);
+    ok(&mem(
+        &wt,
+        &["warm", "--db", "audit_20/audit-mem.db", "--program-id", P],
+    ));
+    ok(&mem(
+        &wt,
+        &[
+            "profile",
+            "--db",
+            "audit_20/audit-mem.db",
+            "--program-id",
+            P,
+            "--notes",
+            "n",
+        ],
+    ));
+    ok(&mem(
+        &wt,
+        &["warm", "--db", "audit_20/audit-mem.db", "--program-id", P],
+    ));
+    // A store init makes takes the form a migrated one has.
+    wt.run_dir("audit_21");
+    ok(&mem(&wt, &["init", "--db", "audit_21/audit-mem.db"]));
+    let made = |dir: &str| -> String {
+        rusqlite::Connection::open(wt.path(&format!("{dir}/audit-mem.db")))
+            .expect("open")
+            .query_row(
+                "SELECT sql FROM sqlite_schema WHERE name = 'fp_rulings'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("fp_rulings")
+    };
+    assert_eq!(made("audit_21"), made("audit_20"));
+    assert!(made("audit_21").ends_with("\n        , anchor_commit TEXT, guard_file TEXT, guard_line INTEGER, guard_end INTEGER, guard_hash TEXT)"));
 }
 
 #[test]

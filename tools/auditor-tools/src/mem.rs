@@ -32,6 +32,83 @@ pub const TABLES: [&str; 5] = [
     "protocol_profile",
 ];
 
+/// Each table with the text `ensure_schema` makes it with, what follows `CREATE
+/// TABLE IF NOT EXISTS `: SQLite keeps it as the table's `sql`, after `CREATE TABLE `.
+/// It is the text audit-mem has made them with since its first release, so a store
+/// made then reads as it did.
+const SCHEMA: [(&str, &str); 5] = [
+    (
+        "findings",
+        "findings (
+            finding_id        TEXT PRIMARY KEY,
+            program_id        TEXT,
+            first_seen_commit TEXT,
+            last_seen_commit  TEXT,
+            severity          INTEGER,
+            root_cause        TEXT,
+            code_signature    TEXT,
+            title             TEXT,
+            status            TEXT,
+            first_audit_n     TEXT,
+            last_audit_n      TEXT
+        )",
+    ),
+    (
+        "occurrences",
+        "occurrences (
+            finding_id TEXT,
+            audit_n    TEXT,
+            commit_sha TEXT,
+            file       TEXT,
+            line       INTEGER,
+            verdict    TEXT,
+            rule5b_json TEXT
+        )",
+    ),
+    (
+        "fp_rulings",
+        "fp_rulings (
+            ruling_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+            program_id     TEXT,
+            code_signature TEXT,
+            ruling         TEXT,
+            rationale      TEXT,
+            ruled_by       TEXT,
+            ruled_at       TEXT,
+            scope          TEXT
+        )",
+    ),
+    (
+        "invariants",
+        "invariants (
+            inv_id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            program_id     TEXT,
+            protocol_class TEXT,
+            statement      TEXT,
+            source_fn      TEXT,
+            cited_line     TEXT,
+            status         TEXT
+        )",
+    ),
+    (
+        "protocol_profile",
+        "protocol_profile (
+            program_id            TEXT PRIMARY KEY,
+            protocol_class        TEXT,
+            trust_assumptions_json TEXT,
+            oracle_set            TEXT,
+            admin_set             TEXT,
+            notes                 TEXT
+        )",
+    ),
+];
+
+/// The indexes SQLite makes for the tables' primary keys, by name and table.
+const AUTO_INDEXES: [(&str, &str); 2] = [
+    ("sqlite_autoindex_findings_1", "findings"),
+    ("sqlite_autoindex_protocol_profile_1", "protocol_profile"),
+];
+
 /// The columns that anchor a ruling, added to `fp_rulings` by `ensure_schema`
 /// when a store made before them is next written.
 const ANCHOR_COLUMNS: [(&str, &str); 5] = [
@@ -110,10 +187,30 @@ fn harden(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Refuses a store holding anything but audit-mem's tables, their automatic
-/// indexes and `sqlite_sequence` as SQLite itself makes it: a view, a trigger, a
-/// virtual table, an index of its own or another table. Returns the tables of
-/// audit-mem's it holds.
+/// The `sql` SQLite keeps for a table of audit-mem's: the text `ensure_schema`
+/// makes it with, and for `fp_rulings` that text with the anchor columns it adds
+/// as `ALTER TABLE … ADD COLUMN` (SQLite writes each one before the closing
+/// parenthesis), the form a store made since takes too. None for another table.
+fn table_sql(name: &str) -> Option<Vec<String>> {
+    let (_, text) = SCHEMA.iter().find(|(table, _)| *table == name)?;
+    let made = format!("CREATE TABLE {text}");
+    if name != "fp_rulings" {
+        return Some(vec![made]);
+    }
+    let added: Vec<String> = ANCHOR_COLUMNS
+        .iter()
+        .map(|(column, kind)| format!("{column} {kind}"))
+        .collect();
+    let anchored = format!("{}, {})", made.strip_suffix(')')?, added.join(", "));
+    Some(vec![made, anchored])
+}
+
+/// Refuses a store holding anything but audit-mem's tables as `ensure_schema`
+/// makes them, the text of each `CREATE TABLE` exactly, the indexes SQLite makes
+/// for their primary keys and `sqlite_sequence` as SQLite makes it: a table of
+/// its name with another column, constraint, default or option, a view, a
+/// trigger, a virtual table, an index of its own or another table. Returns the
+/// tables of audit-mem's it holds.
 fn verify_schema(conn: &Connection) -> Result<Vec<String>> {
     let mut stmt = conn.prepare("SELECT type, name, tbl_name, sql FROM sqlite_schema")?;
     let rows = stmt.query_map([], |r| {
@@ -127,17 +224,24 @@ fn verify_schema(conn: &Connection) -> Result<Vec<String>> {
     let mut tables = Vec::new();
     for row in rows {
         let (kind, name, table, sql) = row?;
-        let ours = TABLES.contains(&table.as_str());
-        let plain_table = sql.as_deref().is_some_and(|s| {
-            s.get(..13)
-                .is_some_and(|head| head.eq_ignore_ascii_case("CREATE TABLE "))
-        });
+        let forms = table_sql(&name);
         let ok = match kind.as_str() {
             "table" if name == "sqlite_sequence" => {
                 table == name && sql.as_deref() == Some("CREATE TABLE sqlite_sequence(name,seq)")
             }
-            "table" => ours && name == table && plain_table,
-            "index" => ours && name.starts_with("sqlite_autoindex_") && sql.is_none(),
+            "table" if forms.is_some() && name == table => {
+                if !forms
+                    .as_ref()
+                    .is_some_and(|f| sql.as_ref().is_some_and(|s| f.contains(s)))
+                {
+                    return Err(refusal(format!(
+                        "its {} table is not the one audit-mem makes, so it is not a store audit-mem wrote",
+                        shown(name.as_bytes())
+                    )));
+                }
+                true
+            }
+            "index" => AUTO_INDEXES.contains(&(name.as_str(), table.as_str())) && sql.is_none(),
             _ => false,
         };
         if !ok {
@@ -147,7 +251,7 @@ fn verify_schema(conn: &Connection) -> Result<Vec<String>> {
                 shown(name.as_bytes())
             )));
         }
-        if kind == "table" && ours {
+        if kind == "table" && forms.is_some() {
             tables.push(name);
         }
     }
@@ -224,72 +328,14 @@ fn ruling_columns(conn: &Connection) -> Result<Vec<String>> {
 }
 
 /// Create all tables if they do not already exist, and add the anchor columns to
-/// an `fp_rulings` made before them (its rulings then have no anchor). Safe to
-/// call repeatedly; one transaction.
+/// `fp_rulings` when it lacks them: a store made before them has rulings with no
+/// anchor, and a new one is made the same way, so both read alike. Safe to call
+/// repeatedly; one transaction.
 pub fn ensure_schema(conn: &Connection) -> Result<()> {
     let tx = conn.unchecked_transaction()?;
-    tx.execute_batch(
-        r#"
-        CREATE TABLE IF NOT EXISTS findings (
-            finding_id        TEXT PRIMARY KEY,
-            program_id        TEXT,
-            first_seen_commit TEXT,
-            last_seen_commit  TEXT,
-            severity          INTEGER,
-            root_cause        TEXT,
-            code_signature    TEXT,
-            title             TEXT,
-            status            TEXT,
-            first_audit_n     TEXT,
-            last_audit_n      TEXT
-        );
-
-        CREATE TABLE IF NOT EXISTS occurrences (
-            finding_id TEXT,
-            audit_n    TEXT,
-            commit_sha TEXT,
-            file       TEXT,
-            line       INTEGER,
-            verdict    TEXT,
-            rule5b_json TEXT
-        );
-
-        CREATE TABLE IF NOT EXISTS fp_rulings (
-            ruling_id      INTEGER PRIMARY KEY AUTOINCREMENT,
-            program_id     TEXT,
-            code_signature TEXT,
-            ruling         TEXT,
-            rationale      TEXT,
-            ruled_by       TEXT,
-            ruled_at       TEXT,
-            scope          TEXT,
-            anchor_commit  TEXT,
-            guard_file     TEXT,
-            guard_line     INTEGER,
-            guard_end      INTEGER,
-            guard_hash     TEXT
-        );
-
-        CREATE TABLE IF NOT EXISTS invariants (
-            inv_id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            program_id     TEXT,
-            protocol_class TEXT,
-            statement      TEXT,
-            source_fn      TEXT,
-            cited_line     TEXT,
-            status         TEXT
-        );
-
-        CREATE TABLE IF NOT EXISTS protocol_profile (
-            program_id            TEXT PRIMARY KEY,
-            protocol_class        TEXT,
-            trust_assumptions_json TEXT,
-            oracle_set            TEXT,
-            admin_set             TEXT,
-            notes                 TEXT
-        );
-        "#,
-    )?;
+    for (_, text) in SCHEMA {
+        tx.execute_batch(&format!("CREATE TABLE IF NOT EXISTS {text};"))?;
+    }
     let have = ruling_columns(&tx)?;
     for (column, kind) in ANCHOR_COLUMNS {
         if !have.iter().any(|c| c == column) {

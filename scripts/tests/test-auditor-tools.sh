@@ -274,7 +274,7 @@ fgit -C "$W" add -f audit_4/.gitignore
 ln -s ../../outside "$W/audit_5/out"
 mkdir "$W/audit_6/audit-mem.db"
 ln "$H/outside/protected" "$W/audit_7/audit-mem.db"
-for d in audit_1 audit_12; do
+for d in audit_1 audit_10 audit_12; do
   ( cd "$W" && "$MEM" init --db "$d/audit-mem.db" ) > /dev/null || bad "audit-mem: init --db $d/audit-mem.db"
 done
 python3 -I - "$W" <<'PY'
@@ -292,8 +292,6 @@ for side in ("-wal", "-shm"):
         os.remove(wt + "/audit_8/audit-mem.db" + side)
 open(wt + "/audit_12/audit-mem.db-wal", "w").close()
 c = sqlite3.connect(wt + "/audit_10/audit-mem.db")
-for t in ("findings", "occurrences", "fp_rulings", "invariants", "protocol_profile"):
-    c.execute("CREATE TABLE %s (x)" % t)
 c.execute("CREATE VIEW v AS SELECT 1")
 c.commit()
 c.close()

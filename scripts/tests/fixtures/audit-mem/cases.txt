@@ -4,9 +4,9 @@
 #   fifo (a FIFO), and .audit-memory/, a store audit-mem init made, with a finding and an anchored ruling;
 #   audit_1 (a run directory holding a store init made), audit_2 (no .gitignore), audit_3 (a link to audit_1),
 #   audit_4 (its .gitignore tracked), audit_5 (holding a link), audit_6 (audit-mem.db a directory), audit_7
-#   (audit-mem.db a second name of a file outside), audit_8 (a database in WAL mode), audit_10 (a database holding
-#   a view), audit_11 (audit-mem.db not a database), audit_12 (a store init made, with a -wal file beside it),
-#   incident_1 (an empty audit-mem.db), incident_2 (no store).
+#   (audit-mem.db a second name of a file outside), audit_8 (a database in WAL mode), audit_10 (a store init
+#   made, holding a view), audit_11 (audit-mem.db not a database), audit_12 (a store init made, with a -wal file
+#   beside it), incident_1 (an empty audit-mem.db), incident_2 (no store).
 # The directory outside holds a canary no case may print.
 # One case per line: <exit status><TAB><the one stderr line><TAB><argument>[<TAB><argument>...]. Each case prints
 # nothing on stdout and changes nothing in the working directory or outside it. In a field:
