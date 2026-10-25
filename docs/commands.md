@@ -21,7 +21,7 @@ Each entry lists the argument hint from the command's own frontmatter, when to r
 Alias `/scope`. **Arg:** `[path] [--auto]`
 Turns the passive `QUESTIONS.md` questionnaire into a persisted `audit_<n>/intake.md` — the durable intake artifact both `/auditor:audit-cycle` and `/auditor:audit-assist` read (fixes intake living only in conversation state). Pins the commit (`git rev-parse HEAD`), pre-fills languages/framework/monorepo shape from what the code shows, warms from prior audits via `audit-mem warm` if the tools are built, and captures scope, protocol class, compliance, severity calibration, and the trust-model inputs (who holds admin / upgrade authority / oracle / keeper / LP, and what the review trusts them NOT to do).
 **When:** before any serious audit. **Emits:** `audit_<n>/intake.md`.
-`--auto` records the applied default for every unanswered question (no-human pipelines); interactive mode asks sharp, answerable questions and skips what the repo already answers. It also asks once for the **execution mode** (`Q46`: isolated recommended / native — `OUTPUT-RULES.md` Rule 11a); `--auto` records native as an assumed default, and the report states it.
+`--auto` records the applied default for every unanswered question (no-human pipelines); interactive mode asks sharp, answerable questions and skips what the repo already answers. It also asks once for the **execution mode** (`Q46`: isolated recommended / native — `OUTPUT-RULES.md` Rule 11a); `--auto` records native as an assumed default, and the report states it. Then it asks whether DEP-072 / DEP-073 may **probe the project's own live hosts and buckets** (`Q47`: read-only and unauthenticated, never a third-party service); `--auto`, like an unanswered Q47, records no, and those items give the owner a command to run instead.
 
 ### `/auditor:threat-model`
 **Arg:** `[path] [--auto] [--bootstrap] [--vulns <file|https-url>] [--seed <threat-model.md>] [--design-doc <file>] [--parent <https-url|path>]`
@@ -89,8 +89,8 @@ Turns a *confirmed* finding into a runnable exploit: resolve the finding + its c
 **When:** demonstrate a High/Critical finding executably. **Emits:** `audit_<n>/poc/F-xxx/` (crate + one-command `run.sh`) + the earned `[PoC-*]` tier. Never hard-fails — toolchain absence → `[PoC-ATTEMPTED]` + the prose PoC is kept. Full detail: [poc-and-patches.md](poc-and-patches.md).
 
 ### `/auditor:patch`
-**Arg:** `<finding-id | INC-n.k> [--verify-with-mutation]`
-Drafts and verifies a fix: `patch-engineer` writes a **minimal idiomatic** unified diff against the pinned commit that closes *exactly* the cited bound (obeys the Rust/Anchor/Pinocchio rules), applies it to a **scratch worktree** (never the client tree), rebuilds, and **re-runs the finding's PoC** — which must now revert. `--verify-with-mutation` adds `mewt` mutation + a blast-radius check.
+**Arg:** `<finding-id | INC-n.k> [--verify-with-mutation] [--post-patch-validation]`
+Drafts and verifies a fix: `patch-engineer` writes a **minimal idiomatic** unified diff against the pinned commit that closes *exactly* the cited bound (obeys the Rust/Anchor/Pinocchio rules), applies it to a **scratch worktree** (never the client tree), rebuilds, and **re-runs the finding's PoC** — which must now revert. `--verify-with-mutation` adds `mewt` mutation + a blast-radius check. `--post-patch-validation` (opt-in) also runs Trail of Bits `post-patch-validation`, only in isolated mode and on a disposable clone; a finding in its result turns `[FIX-VERIFIED]` into `[FIX-INSUFFICIENT]`, or is recorded under Residual on any other tier, and nothing else in it changes a tier.
 **When:** hand the client a proven fix. **Emits:** `audit_<n>/patches/F-xxx.patch` + `VERIFICATION.md` + the `[FIX-*]` tier. Proposal only — `[FIX-VERIFIED]` requires an *executed* revert; no PoC → `[FIX-PROPOSED]` ceiling. Detail: [poc-and-patches.md](poc-and-patches.md).
 
 ---

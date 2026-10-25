@@ -484,7 +484,7 @@ OS:
 Cluster tested: devnet / mainnet-beta
 RPC Provider: 
 Execution mode: isolated (<how>) / native   (OUTPUT-RULES Rule 11a)
-Outside services: <tool → service → data sent> / none   (Rule 11b)
+Outside services: <tool → service → data sent; each live probe (Q47) → host or bucket → request> / none   (Rule 11b)
 ```
 
 ### C. Disclaimer
