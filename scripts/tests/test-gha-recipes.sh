@@ -141,6 +141,15 @@ run_recipe() {
     | awk -v f="$work/second.out" 'BEGIN { while ((getline l < f) > 0) seen[l] = 1 } !($0 in seen)'
 }
 
+# same_files <command lines>: the two commands take the same --include options and the same root, so a file
+# leaves the first list only by matching the second.
+same_files() {
+  local first second
+  { IFS= read -r first; IFS= read -r second; } <<< "$1"
+  [ "${first##* }" = "${second##* }" ] && [ "$(printf '%s\n' "$first" | grep -oE -- "--include='[^']*'")" = \
+    "$(printf '%s\n' "$second" | grep -oE -- "--include='[^']*'")" ]
+}
+
 # The two-digit fixture prefixes in a recipe's output, ascending, on one line.
 prefixes() {
   sed -E 's#^\.github/(workflows|actions)/##; s#^([0-9][0-9])-.*#\1#' | sort -u | tr '\n' ' ' | sed 's/ $//'
@@ -158,6 +167,11 @@ check() { # check <id> <command lines>
   while IFS= read -r l; do n=$((n + 1)); done <<< "$2"
   if [ "$n" -gt 2 ]; then
     echo "FAIL $1: $n command lines; a recipe has one or two"
+    fail=1
+    return
+  fi
+  if [ "$n" -eq 2 ] && ! same_files "$2"; then
+    echo "FAIL $1: its two commands search different files (--include options or root)"
     fail=1
     return
   fi
