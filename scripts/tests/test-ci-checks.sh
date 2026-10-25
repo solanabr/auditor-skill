@@ -11,9 +11,9 @@
 #      The check scripts, and the suites that test them, must pass it here; CI runs it over every tracked
 #      *.sh file;
 #   4. .github/workflows: the required job keeps its name; every workflow and job reads contents only; no
-#      workflow runs on pull_request_target or workflow_run, and no run: script holds a ${{ }} expression; every
-#      job has timeout-minutes, every action is pinned by full SHA with its version, and no checkout keeps
-#      credentials;
+#      workflow runs on pull_request_target or workflow_run (also under a quoted on key, in a flow mapping or
+#      before a comment), and no run: script holds a ${{ }} expression; every job has timeout-minutes, every
+#      action is pinned by full SHA with its version, and no checkout keeps credentials;
 #   5. scripts/check-hygiene.sh fails on each kind of file it names, and on a top-level directory named
 #      commands, agents, skills, hooks, bin, monitors or .claude-plugin in another letter case, also when it
 #      is the last of 3,000 tracked paths; on each load surface at the plugin root, and on a SKILL.md other
@@ -441,8 +441,8 @@ wfcheck() { # wfcheck FILE -> one line per problem
     /^    permissions:/ { if ($0 !~ /^    permissions:[ \t]*$/) print f ": job " job " permissions is not a block"; jperm = 1; next }
     jperm && /^      [^ ]/ { if ($0 !~ /^      contents: read[ \t]*$/) print f ": job " job " permissions grants more than contents: read"; next }
     jperm { jperm = 0 }
-    /^on:.*(pull_request_target|workflow_run)|^[ \t-]*(pull_request_target|workflow_run)[ \t]*:?[ \t]*$/ {
-      print f ": runs on pull_request_target or workflow_run" }
+    /^["\047]?on["\047]?:.*(pull_request_target|workflow_run)|^[ \t-]*(pull_request_target|workflow_run)[ \t]*:?[ \t]*(#.*)?$/ ||
+    /^[ \t]*(pull_request_target|workflow_run):[ \t]*\{/ { print f ": runs on pull_request_target or workflow_run" }
     # run: scripts, one-line or block: an expression there is pasted into the script before it runs
     inrun { match($0, /^[ \t]*/); if (RLENGTH > runind || $0 ~ /^[ \t]*$/) { if (index($0, "${{")) print f ": ${{ }} inside a run: script"; next } inrun = 0 }
     /^[ \t]*(- )?run:/ { match($0, /^[ \t]*(- )?/); runind = RLENGTH; inrun = 1; if (index($0, "${{")) print f ": ${{ }} inside a run: script"; next }
@@ -486,6 +486,18 @@ case "$probs" in *"job a permissions grants more"*"pull_request_target or workfl
         pass=$((pass + 1)); echo "PASS workflows: the checker flags job permissions, the trigger and both scripts";;
       *) failn=$((failn + 1)); echo "FAIL workflows: the checker missed a \${{ }} in a run: script"; echo "$probs";; esac;;
   *) failn=$((failn + 1)); echo "FAIL workflows: the checker missed job permissions or the trigger"; echo "$probs";; esac
+trig() { # trig WANT NAME LINE...  — a workflow whose trigger is LINE...; the checker must WANT (flag|pass) it
+  local want=$1 name=$2 got=pass; shift 2
+  { echo 'name: x'; printf '%s\n' "$@"; printf 'permissions:\n  contents: read\n'; } > "$T/trigger-$name.yml"
+  case "$(wfcheck "$T/trigger-$name.yml")" in *"pull_request_target or workflow_run"*) got=flag;; esac
+  if [ "$got" = "$want" ]; then pass=$((pass + 1)); echo "PASS workflows: the trigger check gives $want on $name"
+  else failn=$((failn + 1)); echo "FAIL workflows: the trigger check gives $got on $name, want $want"; fi
+}
+trig flag double-quoted-on '"on": [pull_request_target]'
+trig flag single-quoted-on "'on': workflow_run"
+trig flag flow-mapping 'on:' '  pull_request_target: {types: [opened]}'
+trig flag trailing-comment 'on:' '  workflow_run:   # after the build' '    workflows: [build]'
+trig pass quoted-on-other-events '"on": [push, pull_request]'
 
 # ---- 5. check-hygiene.sh ------------------------------------------------------------------------------
 HYG="$ROOT/scripts/check-hygiene.sh"
