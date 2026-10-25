@@ -77,8 +77,8 @@ says to rebuild it.
 audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty]
 ```
 
-Recursively walks the `*.rs` files under `<dir>`, parses each as
-`syn::parse_file` does, and prints one JSON object to stdout (or writes it to
+Recursively walks the `*.rs` files under `<dir>`, parses each as `syn::parse_file`
+does, in a child of its own, and prints one JSON object to stdout (or writes it to
 `--out`). `--pretty` uses `serde_json::to_string_pretty`. The walk skips `target/`,
 `.git/` and `node_modules/` below `<dir>`, and, when `<dir>` is `.`, the run
 directories and `.audit-memory/`, which hold an audit's own output. It follows no
@@ -86,21 +86,33 @@ symbolic link, goes no deeper than 128 directories below `<dir>`, and parses onl
 regular files with one name, of at most 4 MiB, in byte order of their names; every
 link it meets, every directory it does not enter for its depth, and every `*.rs`
 file it does not parse (not a regular file, a second name, larger than 4 MiB,
-unreadable, not UTF-8, nested or chained too deeply, or not Rust that `syn`
-parses), is listed in `skipped` with the reason.
+unreadable, not UTF-8, nested or chained too deeply, not Rust that `syn` parses, or
+one the parser could not finish), is listed in `skipped` with the reason.
+
+The files are parsed in a child: audit-scan starts itself, by the path it runs
+from, with `--internal-parse-stdin` as its only argument, no environment and `/`
+as its directory, and hands it one file's bytes at a time on its stdin, each with
+its length before it; the report of that one file comes back on the child's
+stdout the same way. A file the child does not finish, because it aborts, dies on
+a signal or takes more than 10 seconds, is listed as `the parser could not
+finish`; that child is killed, the next file goes to a new one, and the scan goes
+on. The child reads and writes nothing else.
 
 syn's parser, and the walk of its tree, recurse once for each level the tree
-nests, so a file is lexed first (`proc-macro2`'s lexer does not recurse) and is not
-parsed, but listed as `nested or chained too deeply to parse`, when its groups
-(`(`, `[`, `{`) nest more than 256 deep or it holds a chain of more than 20,000
-tokens: the tokens since the last `;`, the last `,` outside an unclosed `<`, an
-inner attribute, or the start of an item or statement after a block, counted on
-through every group they are nested in. The scan runs on a stack of 512 MiB (64 MiB
-where the system grants no more); the deepest tree measured that those limits let
-through, 20,000 nested `break`, needs more than 64 MiB and less than 128. Real code
-stays far below the limits: in 16,000 files of published crates and the Rust
-standard library, the longest chain is 1,714 tokens and the deepest nesting 44
-groups.
+nests, so the child lexes a file first (`proc-macro2`'s lexer does not recurse) and
+does not parse it, but answers `nested or chained too deeply to parse`, when its
+groups (`(`, `[`, `{`) nest more than 256 deep or it holds a chain of more than
+20,000 tokens: the tokens since the last `;`, the last `,` outside an unclosed `<`
+and outside a closure's parameters (`|a, b| |a, b| …` nests each closure in the one
+before), an inner attribute or an outer one that starts an item, a statement or a
+field (a doc comment is one), or the start of an item or statement after a block,
+counted on through every group they are nested in. These limits are the fast path:
+a tree they let through that is still too deep for the child's stack (512 MiB, or
+64 MiB where the system grants no more) ends only that child. Real code stays far
+below them: in 16,000 files of published crates and the Rust standard library, the
+longest chain is 1,434 tokens and the deepest nesting 44 groups. Parsed in the
+child, those files give the report a scan in one process gave, in 22 s against
+21.
 
 ### Where it reads and writes
 
@@ -137,9 +149,9 @@ so it must be safe whatever arguments follow. Its rules are those of
 - The walk opens each directory from its parent's descriptor, and each file from
   its directory's, never following a link (`openat` with `O_NOFOLLOW`), so a
   directory swapped for a link while the walk runs is not entered.
-- It opens no network connection and runs no other program. A control,
-  bidirectional or invisible character in a name or snippet is written as a `\u`
-  escape.
+- It opens no network connection, and runs no program but git and, to parse,
+  itself (above). A control, bidirectional or invisible character in a name or
+  snippet is written as a `\u` escape.
 
 Exit: 0 done · 1 the output cannot be written · 2 refused, with one stderr line,
 `audit-scan: refused: <reason>`.
@@ -258,12 +270,12 @@ gives exact deduplication across audits.
 | Subcommand | Purpose |
 |---|---|
 | `init` | Make the store: for `.audit-memory/audit.db` with no `.audit-memory/`, the directory, its `.gitignore` of `*` first, then the database; in a run directory, the database. On a store that exists, add the tables and columns it lacks. Prints `initialized <store>`. |
-| `put-finding` | Upsert a finding + append an occurrence. Prints `<STATUS> <finding_id>`, or `REGRESSED <finding_id>` on regression. A store holding a status audit-mem never sets for the finding is refused, and left as it was. |
+| `put-finding` | Upsert a finding + append an occurrence. Prints `<STATUS> <finding_id>`, or `REGRESSED <finding_id>` on regression. A severity or title it replaces is kept (below). A store holding a status audit-mem never sets for the finding is refused, and left as it was. |
 | `set-status` | Set a finding's status (`FIXED` \| `OPEN` \| `ACKNOWLEDGED` \| `DISPUTED`). |
 | `rule` | Record a `FALSE_POSITIVE` \| `ACCEPTED_RISK` ruling with a timestamp and its anchor: the commit it is made at and the guard it cites (below). A `FALSE_POSITIVE` ruling needs `--commit` and `--guard`. |
 | `check` | Print `{"suppressed":bool,"ruling":..}`; exit 0 when the newest `FALSE_POSITIVE` ruling for the signature still holds, else exit 1. A ruling that no longer holds is printed with `"stale":"<why>"` and suppresses nothing. |
-| `regressions` | JSON `{regressions[], truncated}`: of the findings with status `REGRESSED`, the 200 seen most recently (by their newest occurrence), the most severe first; `truncated` counts the rest. |
-| `warm` | JSON `{profile, invariants[], open_fp_rulings[], truncated}` — the warm-start context block for a re-audit: what `profile` and `invariant` recorded, each with the values they replaced (`changed`, below), and the rulings with their anchors. Each list holds at most 200 rows, the newest; `truncated` counts the rows left out of all of them. |
+| `regressions` | JSON `{regressions[], truncated}`: of the findings with status `REGRESSED`, the 200 seen most recently (by their newest occurrence), the most severe first, each with the severities and titles `put-finding` replaced in it (`changed`, below); `truncated` counts the rest. |
+| `warm` | JSON `{profile, invariants[], open_fp_rulings[], truncated}` — the warm-start context block for a re-audit: what `profile` and `invariant` recorded, each with the values they replaced (`changed`, below), and the rulings with their anchors. Each list holds at most 200 rows, the newest; `truncated` counts the rows left out of all of them, and the values left out of `changed` (below). |
 | `profile` | Record the program's protocol profile. Fields not given keep what the profile holds; a recorded value a field given replaces is kept (below). Prints `profile <program_id> recorded`, then `, replacing <fields> (…)` when it replaced any. |
 | `invariant` | Record an invariant of the program, one per statement: the same statement again updates the fields given, and keeps each value it replaces, a status included. Prints `invariant <id> recorded` or `invariant <id> updated`, then `, replacing <fields> (…)` when it replaced any. |
 
@@ -271,15 +283,17 @@ gives exact deduplication across audits.
 was `FIXED`, the status transitions to `REGRESSED` and the command prints
 `REGRESSED <finding_id>`. Brand-new findings start `OPEN`.
 
-**No value is erased silently.** When `profile` or `invariant` gives a field whose
-recorded value is not empty and not the one given, the value it held is kept in the
-`history` table, an erased one (`--notes ''`) too, and `warm` lists it under that
-profile's or invariant's `changed`, newest first, as
-`{"field", "previous", "recorded_at"}`: the field (`notes`, `status`, …), what it
-held, and when it was replaced, in unix seconds as `ruled_at`: the newest 200, as
-each of `warm`'s lists holds, with `truncated` counting the rest, which the store
-keeps. A field set for the first time replaces nothing. A later audit sees what a
-trust assumption or an invariant's status was before, and that it changed.
+**No value is erased silently.** When `profile` or `invariant` gives a field, or
+`put-finding` a severity or a title, whose recorded value is not empty and not the
+one given, the value it held is kept in the `history` table, an erased one
+(`--notes ''`) too. `warm` lists it under that profile's or invariant's `changed`,
+and `regressions` under that finding's, newest first, as
+`{"field", "previous", "recorded_at"}`: the field (`notes`, `status`, `severity`,
+…), what it held, and when it was replaced, in unix seconds as `ruled_at`. Each
+`changed` holds the newest 10, and one answer 200 in all, with `truncated` counting
+the rest, which the store keeps. A field set for the first time replaces nothing. A
+later audit sees what a trust assumption, an invariant's status or a finding's
+severity was before, and that it changed.
 
 ### Options
 
@@ -451,12 +465,13 @@ invariants(inv_id PK, program_id, protocol_class, statement, source_fn,
            cited_line, status)
 protocol_profile(program_id PK, protocol_class, trust_assumptions_json,
                  oracle_set, admin_set, notes)
-history(history_id PK, program_id, inv_id, field, previous, recorded_at)
+history(history_id PK, program_id, inv_id, finding_id, field, previous,
+        recorded_at)
 ```
 
-`history` holds each value `profile` (`inv_id` null) and `invariant` replaced; a
-store made before it gains it when it is next written, and reads as having replaced
-none.
+`history` holds each value `profile` (`inv_id` and `finding_id` null), `invariant`
+(`inv_id`) and `put-finding` (`finding_id`) replaced; a store made before it gains it
+when it is next written, and reads as having replaced none.
 
 ## `audit-logs`
 
