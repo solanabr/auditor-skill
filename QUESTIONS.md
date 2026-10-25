@@ -425,10 +425,10 @@ Building, testing or installing the project runs code the project controls — b
 
 ### Q47. May the auditor probe the project's own live hosts and buckets?
 DEP-072 (public cloud storage buckets) and DEP-073 (a `.git/` directory a web server exposes) can be checked against the deployed system. Asked once per audit. An unanswered Q47 counts as **no**, and so does every `/auditor:intake --auto` run.
-- [ ] **Yes** — read-only, unauthenticated probes of the project's own hosts and buckets: _______________
-- [ ] **No** — no live probes: the auditor gives the owner a command to run, and the item stays open until its output comes back, with the date
+- [ ] **Yes** — read-only, unauthenticated probes of the project's own hosts and buckets, each listed in `audit_<n>/intake.md` §8: _______________
+- [ ] **No** — no live probes: the auditor gives the owner a command to run, and the item is never `[PASS]` until its output comes back, with the date
 
-> **The project's own:** a host or bucket named here, or named by the repository's own deployment config and confirmed by the client. Never a third-party service: shared CDNs, SaaS, the cloud provider's own APIs beyond the named bucket, package registries. A probe never uses the auditor's credentials, cookies or tool config (`aws s3 ls s3://<bucket> --no-sign-request`, `curl -q …`), and the report lists each one as an outside contact (Rule 11b).
+> **The project's own:** a host or bucket named here, or named by the repository's own deployment config and confirmed by the client. At intake the auditor will show each host or bucket found in the repository's deployment config with its file and line, and list only those the client confirms; nothing found later is added. A project's own subdomain on a hosting platform (`<app>.vercel.app`) counts when the client names it; the platform's own hosts and APIs never do. Never a third-party service: shared CDNs, SaaS, the cloud provider's own APIs beyond the named bucket, package registries. `<host>` is a DNS name or IPv4 address exactly as `intake.md` §8 lists it: ASCII letters, digits, `-` and `.` only (an IDN in its `xn--` form), with no user, port or path. `<bucket>` is 3–63 lowercase letters, digits, `-` and `.`. Refuse anything else. A probe never uses the auditor's credentials, cookies or tool config (checklist 13, Live probes), and the report lists each one as an outside contact (Rule 11b).
 
 ---
 
@@ -452,5 +452,5 @@ DEP-072 (public cloud storage buckets) and DEP-073 (a `.git/` directory a web se
 | Q41 = Quick scan | Uses grep + known vectors only, skips semantic analysis |
 | Q46 = Isolated | Builds, tests, installs and every PoC build run in a container / VM / sandbox (`OUTPUT-RULES.md` Rule 11a); a step that cannot run there keeps its source-level verdict, and a PoC records `[PoC-ATTEMPTED]` |
 | Q46 = Native, or unanswered | Target-controlled code runs on the auditor's machine; the report's Coverage & Limitations states it |
-| Q47 = Yes | DEP-072 / DEP-073 may probe the hosts and buckets named or confirmed at intake, read-only and unauthenticated; the report lists each probe as an outside contact (`OUTPUT-RULES.md` Rule 11b) |
-| Q47 = No, unanswered, or `--auto` | No live probes: DEP-072 / DEP-073 give the owner a command to run and the evidence to send back (its output, with the date), and stay `[PARTIAL]` until it arrives, never `[PASS]` |
+| Q47 = Yes | DEP-072 / DEP-073 may probe the hosts and buckets `audit_<n>/intake.md` §8 lists under Live probes, read-only and unauthenticated; the report lists each probe as an outside contact (`OUTPUT-RULES.md` Rule 11b) |
+| Q47 = No, unanswered, or `--auto` | No live probes: DEP-072 / DEP-073 give the owner a command to run and the evidence to send back (its output, with the date), and are never `[PASS]` until it arrives: `[PARTIAL]`, or `[FAIL-N]` when the IaC or server config already shows the exposure |
