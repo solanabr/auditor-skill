@@ -32,6 +32,8 @@ fn tree() -> Wt {
         .status()
         .expect("run mkfifo");
     assert!(made.success(), "mkfifo");
+    wt.mkdir("src/locked");
+    wt.chmod("src/locked", 0o000);
     wt
 }
 
@@ -119,6 +121,12 @@ fn confine_rs_reads_every_path_case_as_confine_sh_does() {
         let fields: Vec<&str> = line.split('\t').collect();
         let [want, path, status, expect] = fields[..] else {
             panic!("a case line has four fields: {line:?}");
+        };
+        let want = match want.strip_prefix("noroot:") {
+            // SAFETY: geteuid only reads this process's effective user id.
+            Some(_) if unsafe { libc::geteuid() } == 0 => continue,
+            Some(want) => want,
+            None => want,
         };
         n += 1;
         let (path, expect) = (fill(path), fill(expect));

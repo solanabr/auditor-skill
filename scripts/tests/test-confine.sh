@@ -135,6 +135,7 @@ ln -s nowhere "$WT/dangling"
 ln -s "$T/outside" "$WT/out"
 ln -s ../a.rs "$WT/src/inner"
 if ! mkfifo "$WT/fifo" 2>/dev/null; then skp "mkfifo is not available: the FIFO case fails below"; fi
+mkdir "$WT/src/locked" && chmod 000 "$WT/src/locked"
 # fill <var> <field>: <var> set to a field of the case file with its placeholders filled in (its header
 # lists them), as tools/auditor-tools/tests/confine_agrees.rs fills them.
 fill() {
@@ -161,6 +162,11 @@ ncase=0
 while IFS= read -r line; do
   case "$line" in ''|'#'*) continue ;; esac
   IFS=$'\t' read -r want p status expect <<< "$line"
+  case "$want" in
+    noroot:*)
+      want=${want#noroot:}
+      if [ "$(id -u)" -eq 0 ]; then skp "confine_path $want $p: root may search any directory"; continue; fi ;;
+  esac
   fill p "$p"
   fill expect "$expect"
   ncase=$((ncase + 1))
@@ -169,6 +175,7 @@ while IFS= read -r line; do
   else check "confine_path $want $p refused" refused "${expect#test: refused: }"; fi
 done < "$CASES"
 check "the path case file has cases ($ncase)" test "$ncase" -gt 40
+chmod 700 "$WT/src/locked" && rmdir "$WT/src/locked"
 
 # =================================================================================================
 # Run directories: names, .gitignore, and the whole check.

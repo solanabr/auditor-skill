@@ -134,7 +134,8 @@ so it must be safe whatever arguments follow. Its rules are those of
 - `<dir>` is `.` or a relative path inside the working directory: at most 1024
   bytes, no control character, no leading `-` or `~`, no empty, `.` or `..`
   component once one leading `./` is dropped, no symbolic link on the way (each name
-  is checked with `lstat`), resolving inside the working directory.
+  is checked with `lstat`), resolving inside the working directory to a directory
+  it may search.
 - `--out` is `prescan.json`, or `prescan-<slug>.json` with a slug of 1 to 32 of
   `a-z`, `0-9` and `-`, directly in a run directory, `audit_<n>/` or `incident_<n>/`,
   that passes `scripts/rundir.sh check`: a real directory in the working directory,

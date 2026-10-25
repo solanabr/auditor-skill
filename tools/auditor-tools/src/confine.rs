@@ -151,6 +151,15 @@ pub fn self_check(wt: &Path) -> Result<(), Stop> {
     Ok(())
 }
 
+/// Whether this process may search the directory `dir`: `access(dir, X_OK)`.
+fn searchable(dir: &Path) -> bool {
+    let Ok(name) = CString::new(dir.as_os_str().as_bytes()) else {
+        return false;
+    };
+    // SAFETY: `name` is NUL-terminated; access only reads it.
+    unsafe { libc::access(name.as_ptr(), libc::X_OK) == 0 }
+}
+
 /// `realpath(WT/p)` must stay under WT.
 pub fn stays_inside(wt: &Path, path: &Path) -> bool {
     match path.canonicalize() {
@@ -348,9 +357,9 @@ pub enum Kind {
 /// every name on the way is checked with lstat and must not be a symbolic link,
 /// every name before the last must be a directory, an existing last name must be a
 /// regular file or a directory, and what it names (or, when absent, the directory
-/// it would be made in) must resolve inside WT. A name lstat cannot find or
-/// cannot name (one longer than a name may be, say) is absent, as `[ -e ]` reads
-/// it.
+/// it would be made in) must resolve inside WT to a directory this process may
+/// search, as `cd -P` needs. A name lstat cannot find or cannot name (one longer
+/// than a name may be, say) is absent, as `[ -e ]` reads it.
 pub fn check(wt: &Path, r: &Rel, what: &str) -> Result<Kind, Stop> {
     let s = r.shown();
     let mut kind = Kind::Dir;
@@ -391,7 +400,9 @@ pub fn check(wt: &Path, r: &Rel, what: &str) -> Result<Kind, Stop> {
     }
     let real = resolve
         .canonicalize()
-        .map_err(|_| refuse(format!("{what} cannot be resolved: {s}")))?;
+        .ok()
+        .filter(|real| searchable(real))
+        .ok_or_else(|| refuse(format!("{what} cannot be resolved: {s}")))?;
     if !real.starts_with(wt) {
         return Err(refuse(format!(
             "{what} resolves outside the working directory: {s}"
