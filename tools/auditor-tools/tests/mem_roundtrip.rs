@@ -565,3 +565,82 @@ fn each_answer_lists_ten_changes_an_item_and_two_hundred_in_all() {
         "the replaced values left out"
     );
 }
+
+#[test]
+fn warm_and_regressions_read_a_long_history_in_time() {
+    let conn = mem::open_in_memory().expect("open in-memory db");
+    let mut owners: Vec<(Option<i64>, Option<String>)> = Vec::new();
+    for i in 0..100 {
+        let (id, _, _) =
+            mem::put_invariant(&conn, PROG, &format!("invariant {i}"), &Default::default())
+                .unwrap();
+        owners.push((Some(id), None));
+        let sig = format!("sig {i}");
+        put_one(&conn, &sig, 3, "t");
+        mem::set_status(&conn, PROG, &sig, "rc", "FIXED").unwrap();
+        put_one(&conn, &sig, 3, "t");
+        owners.push((None, Some(mem::finding_id(PROG, &sig, "rc"))));
+    }
+    // Two thousand replaced values for each, as many writes would leave them.
+    let tx = conn.unchecked_transaction().unwrap();
+    {
+        let mut add = tx
+            .prepare(
+                "INSERT INTO history (program_id, inv_id, finding_id, field, previous, recorded_at) \
+                 VALUES (?1, ?2, ?3, 'status', ?4, '0')",
+            )
+            .unwrap();
+        for round in 0..2_000 {
+            for (inv_id, finding_id) in &owners {
+                add.execute(rusqlite::params![
+                    PROG,
+                    inv_id,
+                    finding_id,
+                    format!("value {round}")
+                ])
+                .unwrap();
+            }
+        }
+    }
+    tx.commit().unwrap();
+
+    // What one read of the whole history takes here: an answer may take a few,
+    // not one an item (200 items, 400,000 rows).
+    let one_read = (0..3)
+        .map(|_| {
+            let started = std::time::Instant::now();
+            let n: i64 = conn
+                .query_row(
+                    "SELECT count(*) FROM history WHERE program_id = ?1",
+                    [PROG],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(n, 400_000);
+            started.elapsed()
+        })
+        .min()
+        .unwrap();
+    let started = std::time::Instant::now();
+    let warm = mem::warm(&conn, PROG).unwrap();
+    let warm_took = started.elapsed();
+    let started = std::time::Instant::now();
+    let regs = mem::regressions(&conn, PROG).unwrap();
+    let regs_took = started.elapsed();
+    assert!(
+        warm_took < one_read * 25,
+        "warm took {warm_took:?}, one read of the history {one_read:?}"
+    );
+    assert!(
+        regs_took < one_read * 25,
+        "regressions took {regs_took:?}, one read of the history {one_read:?}"
+    );
+
+    let counts: Vec<usize> = warm.invariants.iter().map(|i| i.changed.len()).collect();
+    assert_eq!(counts, [[10; 20].as_slice(), &[0; 80]].concat());
+    assert_eq!(warm.invariants[0].changed[0].previous, "value 1999");
+    assert_eq!(warm.truncated, 100 * 2_000 - 200);
+    let counts: Vec<usize> = regs.regressions.iter().map(|r| r.changed.len()).collect();
+    assert_eq!(counts, [[10; 20].as_slice(), &[0; 80]].concat());
+    assert_eq!(regs.truncated, 100 * 2_000 - 200);
+}

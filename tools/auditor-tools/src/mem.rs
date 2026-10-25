@@ -12,6 +12,7 @@
 //! `trusted_schema` off, so a crafted store cannot run anything through its
 //! schema.
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -829,16 +830,13 @@ pub fn regressions(conn: &Connection, program_id: &str) -> Result<Regressions> {
     let mut rows = rows;
     let mut truncated = left(total, rows.len());
     if has_history(conn)? {
-        let mut budget = CHANGES;
-        for row in &mut rows {
-            let (changed, more) = changes(
-                conn,
-                program_id,
-                Owner::Finding(&row.finding_id),
-                &mut budget,
-            )?;
-            row.changed = changed;
-            truncated += more;
+        let (lists, more) = {
+            let owners: Vec<Owner> = rows.iter().map(|r| Owner::Finding(&r.finding_id)).collect();
+            changes_of(conn, program_id, &owners)?
+        };
+        truncated += more;
+        for (row, list) in rows.iter_mut().zip(lists) {
+            row.changed = list;
         }
     }
     Ok(Regressions {
@@ -894,41 +892,79 @@ impl Owner<'_> {
     }
 }
 
-/// The values replaced in one owner, newest first: at most `CHANGES_EACH`, and no
-/// more than `budget`, which they use up; and how many more there are.
-fn changes(
+/// The values replaced in each of `owners`, the items one answer shows, in its
+/// order: newest first, at most `CHANGES_EACH` an item and `CHANGES` in all,
+/// handed out in that order; and how many more of theirs there are. `history` is
+/// read twice whatever the number of items: a count by owner, then one pass
+/// newest first that ends once every item has its share.
+fn changes_of(
     conn: &Connection,
     program_id: &str,
-    owner: Owner,
-    budget: &mut usize,
-) -> Result<(Vec<Change>, u64)> {
-    let (inv_id, finding_id) = owner.ids();
-    let total: i64 = conn.query_row(
-        "SELECT count(*) FROM history WHERE program_id = ?1 AND inv_id IS ?2 AND finding_id IS ?3",
-        params![program_id, inv_id, finding_id],
-        |r| r.get(0),
-    )?;
+    owners: &[Owner],
+) -> Result<(Vec<Vec<Change>>, u64)> {
+    type Key = (Option<i64>, Option<String>);
+    let mut place: HashMap<Key, usize> = HashMap::new();
+    for (i, owner) in owners.iter().enumerate() {
+        place.entry(owner.ids()).or_insert(i);
+    }
+    let key = |r: &rusqlite::Row| -> rusqlite::Result<Key> { Ok((r.get(0)?, r.get(1)?)) };
+    let mut totals = vec![0u64; owners.len()];
     let mut stmt = conn.prepare(
-        "SELECT field, previous, recorded_at FROM history \
-         WHERE program_id = ?1 AND inv_id IS ?2 AND finding_id IS ?3 \
-         ORDER BY history_id DESC LIMIT ?4",
+        "SELECT inv_id, finding_id, count(*) FROM history WHERE program_id = ?1 \
+         GROUP BY inv_id, finding_id",
     )?;
-    let text = |r: &rusqlite::Row, i: usize| -> rusqlite::Result<String> {
-        Ok(r.get::<_, Option<String>>(i)?.unwrap_or_default())
-    };
-    let limit = i64::try_from(CHANGES_EACH.min(*budget)).unwrap_or(0);
-    let rows = stmt
-        .query_map(params![program_id, inv_id, finding_id, limit], |r| {
-            Ok(Change {
-                field: text(r, 0)?,
-                previous: text(r, 1)?,
-                recorded_at: text(r, 2)?,
-            })
-        })?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    *budget -= rows.len();
-    let more = left(total, rows.len());
-    Ok((rows, more))
+    let mut rows = stmt.query(params![program_id])?;
+    while let Some(r) = rows.next()? {
+        if let Some(&i) = place.get(&key(r)?) {
+            totals[i] = u64::try_from(r.get::<_, i64>(2)?).unwrap_or(0);
+        }
+    }
+    let mut budget = CHANGES;
+    let shares: Vec<usize> = totals
+        .iter()
+        .map(|&total| {
+            let share = usize::try_from(total)
+                .unwrap_or(usize::MAX)
+                .min(CHANGES_EACH)
+                .min(budget);
+            budget -= share;
+            share
+        })
+        .collect();
+    let mut lists: Vec<Vec<Change>> = shares.iter().map(|&n| Vec::with_capacity(n)).collect();
+    let mut wanted: usize = shares.iter().sum();
+    if wanted > 0 {
+        let text = |r: &rusqlite::Row, i: usize| -> rusqlite::Result<String> {
+            Ok(r.get::<_, Option<String>>(i)?.unwrap_or_default())
+        };
+        let mut stmt = conn.prepare(
+            "SELECT inv_id, finding_id, field, previous, recorded_at FROM history \
+             WHERE program_id = ?1 ORDER BY history_id DESC",
+        )?;
+        let mut rows = stmt.query(params![program_id])?;
+        while wanted > 0 {
+            let Some(r) = rows.next()? else {
+                break;
+            };
+            let Some(&i) = place.get(&key(r)?) else {
+                continue;
+            };
+            if lists[i].len() < shares[i] {
+                lists[i].push(Change {
+                    field: text(r, 2)?,
+                    previous: text(r, 3)?,
+                    recorded_at: text(r, 4)?,
+                });
+                wanted -= 1;
+            }
+        }
+    }
+    let truncated = totals
+        .iter()
+        .zip(&lists)
+        .map(|(&total, list)| total.saturating_sub(list.len() as u64))
+        .sum();
+    Ok((lists, truncated))
 }
 
 /// Keeps, in `history`, each value of `old` that `new` replaces in `owner`: a
@@ -1169,12 +1205,6 @@ pub fn warm(conn: &Connection, program_id: &str) -> Result<WarmContext> {
             },
         )
         .optional()?;
-    let mut budget = CHANGES;
-    if let (Some(p), true) = (profile.as_mut(), history) {
-        let (changed, more) = changes(conn, program_id, Owner::Profile, &mut budget)?;
-        p.changed = changed;
-        truncated += more;
-    }
 
     let total: i64 = conn.query_row(
         "SELECT count(*) FROM invariants WHERE program_id = ?1",
@@ -1202,15 +1232,19 @@ pub fn warm(conn: &Connection, program_id: &str) -> Result<WarmContext> {
     invariants.reverse();
     truncated += left(total, invariants.len());
     if history {
-        for invariant in &mut invariants {
-            let (changed, more) = changes(
-                conn,
-                program_id,
-                Owner::Invariant(invariant.inv_id),
-                &mut budget,
-            )?;
-            invariant.changed = changed;
-            truncated += more;
+        let mut owners: Vec<Owner> = Vec::new();
+        if profile.is_some() {
+            owners.push(Owner::Profile);
+        }
+        owners.extend(invariants.iter().map(|i| Owner::Invariant(i.inv_id)));
+        let (lists, more) = changes_of(conn, program_id, &owners)?;
+        truncated += more;
+        let mut lists = lists.into_iter();
+        if let Some(p) = profile.as_mut() {
+            p.changed = lists.next().unwrap_or_default();
+        }
+        for (invariant, list) in invariants.iter_mut().zip(lists) {
+            invariant.changed = list;
         }
     }
 
