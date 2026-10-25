@@ -432,9 +432,9 @@ grep -rnE --include='*.yml' --include='*.yaml' 'github\.event\.(issue|pull_reque
 
 ```bash
 # R3 — unsound gate comparisons: string contains(), deny-lists, untrusted association values, app/<slug> strings, actor gates
-grep -rnE --include='*.yml' --include='*.yaml' -e "contains\([[:space:]]*'[^']*(OWNER|MEMBER|COLLABORATOR)" -e 'author_association[[:space:]]*!=' -e '![[:space:]]*contains\([[:space:]]*from(JSON|Json)' -e 'github\.(actor|triggering_actor)[[:space:]]*[!=]=' -e 'contains\(.*github\.(actor|triggering_actor)' -e "[\"'](CONTRIBUTOR|FIRST_TIMER|FIRST_TIME_CONTRIBUTOR|MANNEQUIN)[\"']" -e "app/[A-Za-z0-9_-]+'" .github/
+grep -rnE --include='*.yml' --include='*.yaml' -e "contains\([[:space:]]*'[^']*(OWNER|MEMBER|COLLABORATOR)" -e 'author_association[[:space:]]*!=' -e '!=[[:space:]]*github\.event\.[a-z_]+\.author_association' -e '![[:space:]]*contains\([[:space:]]*from(JSON|Json)' -e 'github\.(actor|triggering_actor|event\.sender\.login)[[:space:]]*[!=]=' -e '[!=]=[[:space:]]*github\.(actor|triggering_actor|event\.sender\.login)' -e 'contains\(.*github\.(actor|triggering_actor|event\.sender\.login)' -e "[\"'](CONTRIBUTOR|FIRST_TIMER|FIRST_TIME_CONTRIBUTOR|MANNEQUIN)[\"']" -e "app/[A-Za-z0-9_-]+'" .github/
 ```
-> An actor comparison is a sound allowlist on `issue_comment` (the actor is the commenter) and unsound on PR-family and `workflow_run` events (DEP-091). `contains(github.actor, …)` is a substring test and unsound on every event. Function names are case-insensitive, so `fromJson` counts the same as `fromJSON`.
+> An actor comparison is a sound allowlist on `issue_comment` (the actor is the commenter) and unsound on PR-family and `workflow_run` events (DEP-091). `github.event.sender.login`, the account that triggered the event, is judged like `github.actor`, and a comparison counts with either operand first (`'x' == github.actor`, `'NONE' != …author_association`). `contains(github.actor, …)` is a substring test and unsound on every event. Function names are case-insensitive, so `fromJson` counts the same as `fromJSON`.
 
 ```bash
 # R4 — workflow_run consumers: head fields and artifact downloads

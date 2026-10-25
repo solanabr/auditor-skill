@@ -1,0 +1,13 @@
+# Fixture: pull_request_target gate with the login on the left of ==; the actor is whoever last acted on the PR.
+name: f47-reversed-actor-gate
+on:
+  pull_request_target:
+    types: [opened, synchronize]
+permissions:
+  contents: write
+jobs:
+  build:
+    if: ${{ 'renovate[bot]' == github.actor }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "privileged build"
