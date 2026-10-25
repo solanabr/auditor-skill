@@ -96,7 +96,10 @@ its length before it; the report of that one file comes back on the child's
 stdout the same way. A file the child does not finish, because it aborts, dies on
 a signal or takes more than 10 seconds, is listed as `the parser could not
 finish`; that child is killed, the next file goes to a new one, and the scan goes
-on. The child reads and writes nothing else.
+on. The child reads and writes nothing else. Before each file it sets its own CPU
+limit to the CPU it has used and 20 seconds more, twice the time it is given, and
+its core-file limit to none: a child whose parent is gone, with no one left to kill
+it, dies once a file has used that.
 
 A report has bounds. One file lists at most 20,000 items (sites, functions,
 instructions with their arguments, accounts structs with their fields, PDAs); a

@@ -884,6 +884,55 @@ pub const PARSE_TIME: Duration = Duration::from_secs(10);
 /// and the child killed.
 pub const MAX_ANSWER: usize = 32 << 20;
 
+/// Sets this process's CPU limit to the CPU it has used so far, rounded up to a
+/// second, and `more`: past it the kernel ends the process (SIGXCPU, its default
+/// action restored here, should the parent have left it ignored), whether or not a
+/// parent is left to kill it. Its core-file limit goes to none, so that end writes
+/// nothing.
+pub fn limit_cpu(more: Duration) -> io::Result<()> {
+    // SAFETY: SIG_DFL is a valid disposition; signal only sets it.
+    if unsafe { libc::signal(libc::SIGXCPU, libc::SIG_DFL) } == libc::SIG_ERR {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: an all-zero rusage is valid; getrusage only writes it.
+    let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+    // SAFETY: `usage` is a rusage this function owns.
+    if unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let time = |t: libc::timeval| {
+        let secs = u64::try_from(t.tv_sec).unwrap_or(0);
+        let micros = u32::try_from(t.tv_usec).unwrap_or(0);
+        Duration::from_secs(secs).saturating_add(Duration::from_micros(micros.into()))
+    };
+    let used = time(usage.ru_utime).saturating_add(time(usage.ru_stime));
+    let soft = used
+        .as_secs()
+        .saturating_add(u64::from(used.subsec_nanos() > 0))
+        .saturating_add(more.as_secs());
+    let set = |resource, soft: u64| {
+        let mut limit = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        // SAFETY: `limit` is an rlimit this closure owns; getrlimit only writes
+        // it, setrlimit only reads it.
+        let set = unsafe {
+            libc::getrlimit(resource, &mut limit) == 0 && {
+                limit.rlim_cur = soft.min(limit.rlim_max);
+                libc::setrlimit(resource, &limit) == 0
+            }
+        };
+        if set {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    };
+    set(libc::RLIMIT_CPU, soft)?;
+    set(libc::RLIMIT_CORE, 0)
+}
+
 /// The executable this process runs from, every link resolved: the binary a
 /// child of audit-scan is started from.
 pub fn own_exe() -> io::Result<PathBuf> {

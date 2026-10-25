@@ -19,6 +19,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use proc_macro2::{Delimiter, LineColumn, Spacing, Span, TokenStream, TokenTree};
 use quote::ToTokens;
@@ -459,11 +460,23 @@ fn read_bytes(dir: RawFd, name: &[u8]) -> Result<Vec<u8>, String> {
 /// to stdout the same way, as JSON with the file named `""` for the parent to name.
 /// It reads and writes nothing else, and ends at the end of its stdin. Each file is
 /// scanned on a thread of its own, on the first of `STACKS` the system grants: a
-/// tree deeper than that ends this process, and only that file is skipped.
+/// tree deeper than that ends this process, and only that file is skipped. Each
+/// file may use twice `confine::PARSE_TIME` of CPU (`parse_frames`).
 pub fn parse_stdin() -> io::Result<()> {
-    let mut input = io::stdin().lock();
-    let mut output = io::stdout().lock();
+    parse_frames(
+        &mut io::stdin().lock(),
+        &mut io::stdout().lock(),
+        confine::PARSE_TIME * 2,
+    )
+}
+
+/// `parse_stdin`, from `input` to `output`, each file given `cpu`: before each
+/// frame is read, this process's CPU limit is set to the CPU it has used so far and
+/// `cpu` more (`confine::limit_cpu`), so a child whose parent is gone, with no one
+/// left to kill it, dies once one file has used that.
+pub fn parse_frames(input: &mut dyn Read, output: &mut dyn Write, cpu: Duration) -> io::Result<()> {
     loop {
+        confine::limit_cpu(cpu)?;
         let mut head = [0u8; 8];
         if input.read(&mut head[..1])? == 0 {
             return Ok(());
