@@ -419,7 +419,7 @@ npx license-checker --summary
 
 ```bash
 # R1 — files with a comment / review / issue / discussion trigger that never mention author_association (the first list minus the second)
-grep -rlE --include='*.yml' --include='*.yaml' -e '^[[:space:]]*-?[[:space:]]*(issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues):?[[:space:]]*(#.*)?$|^[[:space:]]*(issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues):[[:space:]]*\{' -e "^[\"']?on[\"']?:.*(issue_comment|pull_request_review|discussion|issues)" .github/
+grep -rlE --include='*.yml' --include='*.yaml' -e '^[[:space:]]*-?[[:space:]]*(issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues):?[[:space:]]*(#.*)?$|^[[:space:]]*(issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues):[[:space:]]*\{' -e "^[\"']?on[\"']?:.*(issue_comment|pull_request_review|discussion|issues)" -e "^[[:space:]]*-?[[:space:]]*[\"'](issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues)[\"']" .github/
 echo 'second list (files that mention author_association):'
 grep -rl --include='*.yml' --include='*.yaml' 'author_association' .github/
 ```
