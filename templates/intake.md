@@ -63,9 +63,10 @@ every exclusion with its source. Each row's source is one of:
   discovered                                what /intake step 1 found in the tree
   default                                   discovery/file-map.md
 Every path is relative to the working directory, with no leading / or ~, no ..
-component, and nothing inside a run directory. The next interactive /intake in this
-checkout offers this table again and applies it only on the human's yes; --auto never
-applies it (/intake step 4).
+component, and nothing inside a run directory. A path is taken literally unless its
+Note says glob. Keep every cell to printable ASCII, with no |. The next interactive
+/intake in this checkout offers this table again and applies it only on the human's
+yes; --auto never applies it (/intake step 4).
 -->
 
 | Kind | Path or glob | Note | Source |
