@@ -132,7 +132,7 @@ Build them again after every update, with `cargo build --release --locked` in th
 
 ### Permissions and isolation
 
-The `/auditor:*` commands run their bundled steps without asking: the working-tree check, run directories, read-only git, the Rust tools, and the runners that build and test the project in the execution mode you chose at intake. Each of these checks its own arguments and stays inside the working tree and its run directories; everything else asks. Two settings make a run smooth and safe:
+The `/auditor:*` commands run their bundled steps without asking: the working-tree check, run directories, read-only git, the Rust tools, and the runners that build and test the project in the execution mode you chose at intake. Each of these checks its own arguments, takes paths inside the working tree, and writes only into run directories, the `audit-mem` store and scratch directories outside the tree; everything else asks. Two settings make a run smooth and safe:
 
 - Add the `Skill(auditor:… *)` rules from [docs/permissions-and-isolation.md](docs/permissions-and-isolation.md#turns-and-resuming) to your user settings, `~/.claude/settings.json`, so a flow resumes after your reply without a prompt. They name no path.
 - For code you don't trust, choose isolated mode at intake, set `AUDITOR_EXEC_MODE=isolated`, and run in a container, a VM or Claude Code's sandbox. In native mode the project's builds and tests run on your machine without a prompt for each run.
