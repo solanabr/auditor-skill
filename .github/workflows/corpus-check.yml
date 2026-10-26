@@ -74,8 +74,9 @@ jobs:
   corpus-macos:
     # Advisory: do not add this job to the required checks. It runs the same checks, except the pull-request
     # attribution check, under macOS /bin/bash 3.2 with BSD sed, grep and awk. Every step sets a stock macOS PATH
-    # plus ~/.cargo/bin, which the first step asserts, so no tool from the runner image's Homebrew stands in for
-    # the system one.
+    # plus ~/.cargo/bin, which the stock-toolchain step asserts, so no tool from the runner image's Homebrew
+    # stands in for the system one. The image ships without cargo and rustup at times; the two steps before that
+    # one then install them into ~/.cargo with rustup.
     name: macOS, bash 3.2 and BSD tools (advisory)
     runs-on: macos-26
     timeout-minutes: 30
@@ -93,6 +94,19 @@ jobs:
         with:
           submodules: false
           persist-credentials: false
+
+      - name: Look for cargo and rustup in ~/.cargo/bin
+        id: rust
+        run: |
+          export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin"
+          if command -v cargo >/dev/null && command -v rustup >/dev/null; then echo "missing=false" >> "$GITHUB_OUTPUT"
+          else echo "missing=true" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Install cargo and rustup (stable) when the image lacks them
+        if: ${{ !cancelled() && steps.rust.outputs.missing == 'true' }}
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
 
       - name: Stock toolchain (bash 3.2, BSD sed / grep / awk, Apple git, python3, jq, cargo, rustup)
         run: |
