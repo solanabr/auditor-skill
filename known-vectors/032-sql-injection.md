@@ -28,7 +28,8 @@ grep -rn --include="*.ts" -E "\.query\(|\.raw\(|execute\(" apps/backend/
 **Step 3: Verify parameterized queries**
 ```
 # Every query should use placeholders ($1, ?, :param) — never string concatenation
-grep -rn --include="*.ts" -E "query\(`|query\(\"" apps/backend/ | grep -v "\$"
+grep -rn --include="*.ts" -E 'query\(`|query\("' apps/backend/
+grep -rn --include="*.ts" -E 'query\(`[^`]*\$\{' apps/backend/
 ```
 - ✅ PASS: All queries use parameterized placeholders
 - ❌ FAIL: Any query uses string interpolation with user input (`\`SELECT * FROM x WHERE id = ${userId}\``)
