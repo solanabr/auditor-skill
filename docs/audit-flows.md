@@ -102,7 +102,7 @@ The same lifecycle, but it **stops at checkpoints** and lets you steer. At each 
 - **(b)** the next-focus plan (which surfaces/vectors are queued and why);
 - **(c)** targeted questions only a human can answer — business context, the intended trust model, whether a flagged behavior is intentional, severity calls that depend on off-chain assumptions.
 
-Checkpoints land after scope, after context, after each review phase, after triage, and after reconciliation. Your answers fold back in and each trust-model answer is logged as a stated assumption in the report. After each answer the flow resumes through the Skill tool (`auditor:audit-assist --resume <checkpoint>`), which gives the new turn its pre-approvals back; Manual mode asks about that call unless your user settings allow it ([Turns and resuming](permissions-and-isolation.md#turns-and-resuming)).
+Checkpoints land after scope, after context, after each review phase, after triage, and after reconciliation. Your answers fold back in and each trust-model answer is logged as a stated assumption in the report. After each answer the flow resumes through the Skill tool (`auditor:audit-assist --resume <checkpoint> audit_<n>`), which gives the new turn its pre-approvals back; Manual mode asks about that call unless your user settings allow it ([Turns and resuming](permissions-and-isolation.md#turns-and-resuming)).
 
 ```
 /auditor:audit-assist --scope full
