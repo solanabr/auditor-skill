@@ -108,7 +108,8 @@ Code asks about a shell read outside the working directory.
    0 says: show the line, and tell the user to make a clean copy — clone the
    repository to a new directory, delete every `.claude/` and `.mcp.json` in the
    copy, and start Claude Code there — or to start it in an incident workspace of
-   its own, outside the repository. When the line names a
+   its own, outside the repository. A call that is denied or cannot run stops the
+   run the same way: the working tree has not been checked. When the line names a
    `.claude/settings.local.json` in the user's own workspace, it may hold a rule
    saved with "don't ask again": have them move its `permissions.allow` entries to
    `~/.claude/settings.json` and delete the file. Project config in the working
