@@ -545,14 +545,16 @@ if [ "$(cat "$T/mf.out")" = '    "husky": "^9.0.0",' ]; then
   ok "KV-078 Step 10 finds husky among the declared dependencies, with no npm"
 else bad "KV-078 Step 10 on the manifests fixture"; sed 's/^/  | /' "$T/mf.out"; fi
 mf_step "$ROOT/known-vectors/049-http-response-splitting.md" 4
-printf '%s\n' '4:    "node": ">=18"' '20.11.1' './srv/Dockerfile:1:FROM node:18-alpine' > "$T/mf.want"
-if cmp -s "$T/mf.want" "$T/mf.out"; then
-  ok "KV-049 Step 4 reads the declared runtime (engines, .nvmrc, a Dockerfile's node image), not the auditor's node"
+printf '%s\n' '4:    "node": ">=18"' './.nvmrc:20.11.1' './apps/backend/.nvmrc:18' './srv/Dockerfile:1:FROM node:18-alpine' > "$T/mf.want"
+sort "$T/mf.want" > "$T/mf.wsort"; sort "$T/mf.out" > "$T/mf.osort"   # the recursive grep's order varies by platform
+if cmp -s "$T/mf.wsort" "$T/mf.osort"; then
+  ok "KV-049 Step 4 reads the declared runtime (engines, the .nvmrc of the root and apps, a Dockerfile's node image), not the auditor's node"
 else bad "KV-049 Step 4 on the manifests fixture"; sed 's/^/  | /' "$T/mf.out"; fi
 mf_step "$KV089" 3
-printf '%s\n' 'package.json:4:    "node": ">=18"' 'apps/backend/package.json:4:    "node": "20.x"' '20.11.1' '18' \
+printf '%s\n' 'package.json:4:    "node": ">=18"' 'apps/backend/package.json:4:    "node": "20.x"' './.nvmrc:20.11.1' './apps/backend/.nvmrc:18' \
   './srv/Dockerfile:1:FROM node:18-alpine' > "$T/mf.want"
-if cmp -s "$T/mf.want" "$T/mf.out"; then
+sort "$T/mf.want" > "$T/mf.wsort"; sort "$T/mf.out" > "$T/mf.osort"   # the recursive grep's order varies by platform
+if cmp -s "$T/mf.wsort" "$T/mf.osort"; then
   ok "KV-089 Step 3 reads the declared runtime of the root and both apps, not the auditor's node, without node_modules"
 else bad "KV-089 Step 3 on the manifests fixture"; sed 's/^/  | /' "$T/mf.out"; fi
 
