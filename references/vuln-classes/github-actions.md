@@ -317,8 +317,9 @@ producer; a crossing that has neither is the finding.
 - **OIDC subjects.** A job that names no environment and runs on a comment, issue, discussion or `workflow_run` event
   has the default branch as its ref, so it requests the same OIDC subject as a push to that branch
   (`repo:<org>/<repo>:ref:refs/heads/<default>`). A cloud trust policy (a KMS signer holding a deploy key, say) must
-  also bind `environment`, `event_name` or `job_workflow_ref`. The policy is hosted: grade it `[PARTIAL]` until it has
-  been seen.
+  also bind `environment`, `event_name` or `job_workflow_ref`. KV-140 Step 7 finds the policies in the infrastructure
+  code and grades them (§7.4); a policy kept outside the repository is hosted: grade it `[PARTIAL]` until it has been
+  seen.
 
 ---
 
@@ -388,22 +389,64 @@ deploy keypair, an upgrade authority, a Squads member key, or an SDK's npm or cr
 
 ---
 
-## 7. Pointers: pinning, supply chain, runners, permissions
+## 7. Pins, repointed tags, runners, OIDC trust and permissions (KV-080 · KV-140 · DEP-067 · DEP-070 · DEP-084)
 
-- **Pinning (DEP-067, DEP-070).** Every action is pinned to a full SHA with a `# vX.Y.Z` comment, and the SHA resolves to
-  a tag or branch of the named repository (`git ls-remote https://github.com/<owner>/<repo>` lists it; run it from a
-  scratch dir outside the checkout, so its repo config does not apply, and only for an `owner/repo` slug, the first two
-  segments of the `uses:` value, that matches `^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`): a commit that exists only in a fork
-  can still be referenced through the parent's `owner/repo` slug, an "impostor commit" (Chainguard, 2023). Pins are
-  kept current by a Dependabot or Renovate `github-actions` updater, because an old pin keeps fixed bugs (§1). Tag
-  repointing is not hypothetical: tj-actions/changed-files and reviewdog in 2025, trivy-action in 2026 (§8).
-- **Self-hosted runners.** Fork-PR jobs do not run on persistent self-hosted runners in public repositories. The PyTorch
-  research (Stawinski and Khan, 2024) turned a merged typo fix into contributor status, ran on a self-hosted runner and
-  reached release credentials.
-- **Permissions.** Declare `permissions:` explicitly per workflow or job (KV-080 step 5); repositories created before
-  2023-02-02 may still default to read-write (`[PARTIAL]` until the setting is seen).
-- **OIDC and cloud deploys.** DEP-084 and §5.6. **Secrets in logs.** DEP-071 and SEC-046; the tj-actions payload printed
-  secrets into public logs.
+**7.1 Pins and impostor commits (KV-080 Step 4, DEP-067, DEP-070).** Every action is pinned to a full SHA with a
+`# vX.Y.Z` comment, and pins are kept current by a Dependabot or Renovate `github-actions` updater, because an old pin
+keeps fixed bugs (§1). A pin is only as good as the commit behind it: GitHub serves a commit that exists only in a fork
+through the parent's `owner/repo` slug, an "impostor commit" (Chainguard, 2023), so a pin can carry a real version
+comment and still run code the maintainers never merged. Recipe R9 lists every pin. For each repository it names, run
+one `git ls-remote --tags` in the form KV-080 Step 4 gives:
+- only for an `owner/repo` slug, the first two segments of the `uses:` value, that matches
+  `^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`;
+- in a new empty directory, stopping when that cannot be made, and reading the config of no repository that holds it,
+  so no `url.<base>.insteadOf` can send the request elsewhere or answer it with refs of its own;
+- with no credential helper, askpass program, `~/.netrc` entry or terminal prompt left to answer GitHub's login request
+  with the auditor's credentials, since the target chose the repository.
+
+The call asks for approval, because its URL comes from the target, and github.com and the slugs sent go in the report's
+outside-service list ([`OUTPUT-RULES.md` Rule 11b](../../OUTPUT-RULES.md#rule-11-operating-safety)). A pin passes only
+when its SHA is on the line of the tag its comment names, or on that tag's `^{}` line. Anything else is `[PARTIAL]`:
+`ls-remote` lists ref tips only, so a commit deeper in a branch is legitimate and unlisted, and a fork-only commit looks
+the same; telling them apart needs a fetch.
+
+**7.2 A repointed tag (KV-080 Step 4).** Tag repointing is not hypothetical: tj-actions/changed-files and reviewdog in
+2025, trivy-action in 2026 (§8). A tag reference runs whatever the tag points to when the job starts, so every workflow
+that names the action by a tag or a branch FAILs. A SHA pin runs only its own commit, which is the malicious one if it
+was taken while the tag was repointed. Which runs took the repointed commit is in the run history, which the source does
+not show: name for the owner the runs in the advisory's window, the secrets and OIDC roles those jobs held (to rotate),
+their logs (public on a public repository; to delete), and the caches, artifacts and releases they wrote (to discard).
+The fix pins the SHA that `ls-remote` lists under a release the advisory names as clean. A comment whose tag
+`ls-remote` shows at another commit than the pin is the same signal without an advisory: the tag moved after the pin
+was taken, or the pin never was that release.
+
+**7.3 Self-hosted runners (KV-080 Step 8).** A persistent runner keeps files, processes and its own registration
+credentials from one job to the next, so any job that an outside account starts can leave code behind for a later
+release job. The PyTorch research (Stawinski and Khan, 2024) turned a merged typo fix into contributor status, ran on a
+self-hosted runner and reached release credentials.
+- Fork-PR, comment and issue jobs of a public repository never run on a persistent self-hosted runner.
+- An ephemeral runner takes one job and is discarded: `config.sh --ephemeral`, `run.sh --jitconfig`, or an Actions
+  Runner Controller scale set.
+- A runner group decides which repositories and workflows reach its runners. A group open to public repositories puts
+  its runners within the outside attacker's reach; one open to every workflow lets an unprivileged workflow share
+  runners with release jobs.
+- The infrastructure code (Terraform, Helm values, registration scripts) shows some of this. GitHub's settings hold the
+  rest: the group's repository and workflow access, how each runner was registered, and the fork pull request approval
+  policy. They stay `[PARTIAL]` until seen (§0).
+
+**7.4 OIDC trust policies (KV-140 Step 7, DEP-084, §5.6).** A cloud role that trusts GitHub's OIDC issuer is as narrow
+as the subject and claims it binds. Any job of any repository on GitHub can mint a token from that issuer, for any
+audience, so a policy that checks only the audience trusts all of them, and one that binds `repo:<org>/*` trusts every
+repository of the owner. A role that can deploy, sign or publish binds one repository plus an environment with required
+reviewers, the event (`event_name`), or one reviewed workflow at a protected ref (`job_workflow_ref`);
+`repo:<org>/<repo>:ref:refs/heads/<default>` alone also admits the comment-, issue-, discussion- and
+`workflow_run`-triggered jobs of §5.6. A repository or organization can customize the subject claim
+(`include_claim_keys`), which changes the string a policy must match. A policy kept outside the repository, and the
+subject template, are hosted settings: `[PARTIAL]` until seen.
+
+**7.5 Permissions and secrets in logs.** Declare `permissions:` explicitly per workflow or job (KV-080 step 5);
+repositories created before 2023-02-02 may still default to read-write (`[PARTIAL]` until the setting is seen). Secrets
+in logs: DEP-071 and SEC-046; the tj-actions payload printed secrets into public logs.
 
 ---
 
@@ -427,7 +470,7 @@ CodeQL's `actions` language (queries such as `actions/untrusted-checkout/*`, `ac
 `actions/code-injection/*`, `actions/envvar-injection/*`, `actions/envpath-injection/*`, `actions/artifact-poisoning/*`,
 `actions/cache-poisoning/*`, `actions/improper-access-control`) and zizmor (`template-injection`, `dangerous-triggers`,
 `github-env`, `bot-conditions`, `unsound-contains`, `artipacked`, `cache-poisoning`, `impostor-commit` in online mode)
-cover part of §3–§5. Neither replaces this file. Run with `--offline --persona=auditor` over
+cover part of §3–§5. Neither replaces this file. `audit-scan --workflows .github/workflows` is the offline fact pass these tools confirm: it lists each workflow's triggers, jobs and steps, and what it could not model under `skipped`/`unknown`. Run with `--offline --no-config --persona=auditor` (`--no-config` so the audited repo's own `zizmor.yml` cannot disable audits) over
 fixtures 01–17 in `scripts/tests/fixtures/gha/`, zizmor 1.30.1 did not flag:
 - a mention-only gate (fixtures 01, 10);
 - the cross-object OR (02);

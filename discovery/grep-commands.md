@@ -239,24 +239,20 @@ grep_search: "NEXT_PUBLIC_"   includePattern: "apps/web/**/*.tsx"
 
 ### Committed env/key files
 ```bash
-# Terminal (OUTPUT-RULES Rule 11c flags):
-GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-  ls-files | grep -iE "\.env|keypair|delegate\.json|\.pem|\.key"
+# Terminal (read-only git, OUTPUT-RULES Rule 11c):
+"<auditor-skill root>/scripts/git-ro.sh" ls-files | grep -iE "\.env|keypair|delegate\.json|\.pem|\.key"
 find . -name "*.env*" -not -path "./node_modules/*" -not -path "./.git/*"
 find . -name "*keypair*" -not -path "./node_modules/*" -not -path "./.git/*"
 ```
 
 ### Git history secrets
 ```bash
-# Terminal (OUTPUT-RULES Rule 11c flags; a pickaxe search runs the repo's textconv drivers unless
-# --no-textconv is given). -S also matches files a committed .gitattributes marks -diff or binary;
-# -G and patch output (-p) skip their content unless --text is given:
-GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-  log --all --no-textconv --no-ext-diff -S "private" --oneline | head -20
-GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-  log --all --no-textconv --no-ext-diff -S "secret" --oneline | head -20
-GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-  log --all --no-textconv --no-ext-diff -S "BEGIN RSA" --oneline | head -20
+# Terminal (read-only git, OUTPUT-RULES Rule 11c, which runs no textconv driver of the repository). -S also
+# matches files a committed .gitattributes marks -diff or binary; -G and patch output (-p) skip their content
+# unless --text is given:
+"<auditor-skill root>/scripts/git-ro.sh" log --all -S "private" --oneline | head -20
+"<auditor-skill root>/scripts/git-ro.sh" log --all -S "secret" --oneline | head -20
+"<auditor-skill root>/scripts/git-ro.sh" log --all -S "BEGIN RSA" --oneline | head -20
 ```
 
 ---
@@ -336,9 +332,8 @@ grep_search: "load_instruction_at|get_instruction_relative"   isRegexp: true   i
 
 ### Terraform / IaC hygiene (DEP-080..DEP-086)
 ```
-# Terminal (OUTPUT-RULES Rule 11c flags on git):
-GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-  ls-files | grep -E "\.tfstate|tfplan|\.terraform/"
+# Terminal (read-only git, OUTPUT-RULES Rule 11c):
+"<auditor-skill root>/scripts/git-ro.sh" ls-files | grep -E "\.tfstate|tfplan|\.terraform/"
 grep -rn -E "allUsers|allAuthenticatedUsers|0\.0\.0\.0/0|roles/(editor|owner)|ingress.*all" terraform/
 ```
 
@@ -371,43 +366,43 @@ grep_search: "target=\"_blank\""   includePattern: "apps/web/**/*.tsx"
 
 ## Supply Chain
 
-> Every package-manager or cargo command in this section reads the target's `.npmrc`, `.cargo/config*` and `rust-toolchain*` when started inside its tree. Run them from a scratch dir OUTSIDE the target tree, on copies of the manifest + lockfile with the toolchain pinned (OUTPUT-RULES Rule 11a; FULL-AUDIT Step 3.2).
+> Every package-manager or cargo command in this section reads the target's `.npmrc`, `.cargo/config*` and `rust-toolchain*` when started inside its tree. The bundled `deps.sh` runs the audits and registry queries on copies of the manifests and lockfiles in a scratch dir OUTSIDE the target tree, with the toolchain pinned (OUTPUT-RULES Rule 11a; FULL-AUDIT Step 3.2): run it from the working directory by its quoted path. `npm outdated` and `npx` have no bundled runner, so they ask for approval: run them from such a scratch dir, on copies of the manifest + lockfile.
 
 ### Check for compromised packages
 ```bash
 # Terminal: known-bad releases in manifests and lockfiles, as in KV-077 Step 2 (which also searches history)
-AX='(^|[^A-Za-z0-9_.-])axios[@/](npm:)?(1\.14\.1|0\.30\.4)([^0-9]|$)|/axios/-/axios-(1\.14\.1|0\.30\.4)\.tgz|"axios"[[:space:]]*:[[:space:]]*"=?(1\.14\.1|0\.30\.4)"'
-W3='web3\.js[@/](npm:)?1\.95\.(6|7)([^0-9]|$)|/web3\.js/-/web3\.js-1\.95\.(6|7)\.tgz|"@solana/web3\.js"[[:space:]]*:[[:space:]]*"=?1\.95\.(6|7)"'
-grep -rnE -e "$AX" -e "$W3" --exclude-dir=node_modules --include='package.json' --include='package-lock.json' \
-  --include='npm-shrinkwrap.json' --include='pnpm-lock.yaml' --include='yarn.lock' --include='bun.lock' .
+grep -rnE --exclude-dir=node_modules --include='package.json' --include='package-lock.json' --include='npm-shrinkwrap.json' --include='pnpm-lock.yaml' --include='yarn.lock' --include='bun.lock' -e '(^|[^A-Za-z0-9_.-])axios[@/](npm:)?(1\.14\.1|0\.30\.4)([^0-9]|$)|/axios/-/axios-(1\.14\.1|0\.30\.4)\.tgz|"axios"[[:space:]]*:[[:space:]]*"=?(1\.14\.1|0\.30\.4)"' -e 'web3\.js[@/](npm:)?1\.95\.(6|7)([^0-9]|$)|/web3\.js/-/web3\.js-1\.95\.(6|7)\.tgz|"@solana/web3\.js"[[:space:]]*:[[:space:]]*"=?1\.95\.(6|7)"' .
 # package-lock.json / npm-shrinkwrap.json without "resolved" fields: the name on the entry's key (or "name")
 # line, the version on a line below it
-grep -rnE -A2 --exclude-dir=node_modules --include='package-lock.json' --include='npm-shrinkwrap.json' \
-  '"(([^"]*/)?node_modules/)?axios": [{]|"name": "axios"' . | grep -E '"version": "(1\.14\.1|0\.30\.4)"'
-grep -rnE -A2 --exclude-dir=node_modules --include='package-lock.json' --include='npm-shrinkwrap.json' \
-  '"([^"]*/)?@solana/web3\.js": [{]|"name": "@solana/web3\.js"' . | grep -E '"version": "1\.95\.(6|7)"'
-# from a scratch dir OUTSIDE the target tree holding copies of package.json + the lockfile (OUTPUT-RULES Rule 11a)
-npm audit
+grep -rnE -A2 --exclude-dir=node_modules --include='package-lock.json' --include='npm-shrinkwrap.json' '"(([^"]*/)?node_modules/)?axios": [{]|"name": "axios"' . | grep -E '"version": "(1\.14\.1|0\.30\.4)"'
+grep -rnE -A2 --exclude-dir=node_modules --include='package-lock.json' --include='npm-shrinkwrap.json' '"([^"]*/)?@solana/web3\.js": [{]|"name": "@solana/web3\.js"' . | grep -E '"version": "1\.95\.(6|7)"'
+# npm audit on copies of package.json and its lockfile, outside the target tree (OUTPUT-RULES Rule 11a)
+"<auditor-skill root>/scripts/runner/deps.sh" npm-audit --run audit_<n> --manifest package.json --manifest package-lock.json
 ```
 
 ### Package publish dates (14-day quarantine)
 ```bash
-# Terminal: Check publish date for critical packages
-npm info @anchor-lang/core time --json | tail -5
-npm info express time --json | tail -5
-npm info next time --json | tail -5
+# Terminal: the publish time of each version of a critical package (the registry's answer is in the file the
+# last line names)
+"<auditor-skill root>/scripts/runner/deps.sh" npm-time --run audit_<n> @anchor-lang/core
+"<auditor-skill root>/scripts/runner/deps.sh" npm-time --run audit_<n> express
+"<auditor-skill root>/scripts/runner/deps.sh" npm-time --run audit_<n> next
 ```
 
 ### Outdated packages
 ```bash
-# Terminal:
+# Terminal: npm outdated has no bundled runner, so it asks for approval; run it from a scratch dir OUTSIDE the
+# target tree, on copies of package.json + the lockfile
 npm outdated
-cargo outdated  # if cargo-outdated installed
+# cargo outdated on copies of the manifests (exit 3 when cargo-outdated is not installed); add each workspace
+# member's Cargo.toml and the Cargo.lock as more --manifest files
+"<auditor-skill root>/scripts/runner/deps.sh" cargo-outdated --run audit_<n> --manifest Cargo.toml
 ```
 
 ### License check
 ```bash
-# Terminal:
+# Terminal: npx downloads and runs a package, so it asks for approval; run it from a scratch dir OUTSIDE the
+# target tree, on copies of package.json + the lockfile
 npx license-checker --summary
 ```
 
@@ -415,7 +410,7 @@ npx license-checker --summary
 
 ## GitHub Actions (CI trigger trust)
 
-> Locators for `references/vuln-classes/github-actions.md`, KV-080, KV-116, KV-139, KV-140, DEP-067..071 / DEP-090..096 and AI-021..035. A hit is a place to read, not a finding: open the whole workflow, then trace trigger → actor → payload → sink → privilege. Every recipe is recursive with `--include` and fully single-quoted where it contains `$` or `!`, so it runs unchanged in bash and zsh and never trips on an unmatched glob. Point the same commands at any `action.yml` / `action.yaml` outside `.github/` (composite actions at the repo root). `scripts/tests/test-gha-recipes.sh` runs R1–R8 exactly as written here, plus the KV-116 Step 1, KV-139 Step 1 and KV-140 Step 6 locators, against `scripts/tests/fixtures/gha/`, and fails if a known vector's copy of R1–R5 or R7 differs from this file by a byte.
+> Locators for `references/vuln-classes/github-actions.md`, KV-080, KV-116, KV-139, KV-140, DEP-067..071 / DEP-090..096 and AI-021..035. A hit is a place to read, not a finding: open the whole workflow, then trace trigger → actor → payload → sink → privilege. Every recipe is recursive with `--include` and fully single-quoted where it contains `$` or `!`, so it runs unchanged in bash and zsh and never trips on an unmatched glob. Point the same commands at any `action.yml` / `action.yaml` outside `.github/` (composite actions at the repo root). `scripts/tests/test-gha-recipes.sh` runs R1–R9 exactly as written here, plus the KV-116 Step 1, KV-139 Step 1, KV-140 Steps 6 and 7 and KV-080 Step 8 locators, against `scripts/tests/fixtures/gha/`, and fails if a known vector's copy of R1–R5, R7 or R9 differs from this file by a byte.
 
 ```bash
 # R1 — files with a comment / review / issue / discussion trigger and no author_association outside a comment (the first list minus the second)
@@ -467,7 +462,13 @@ grep -rnE --include='*.yml' --include='*.yaml' 'anthropics/claude-code-(base-)?a
 ```
 > AI-023..031, AI-034..035, KV-116. `claude --model x -p` and `gemini -m x -p` count: options may come before `-p`, claude's `--print` or gemini's `--prompt`, as long as no `|`, `;`, `&` or `#` comes between them, or the line ends in a `\` that continues the command. Pre-v1 names (`direct_prompt`, `override_prompt`, `custom_instructions`, `allowed_tools`, `disallowed_tools`) can remain after a workflow's `uses:` line moves to `@v1` or a SHA, so judge each step by the keys it sets.
 
-**Tool cross-check (optional, static).** `zizmor --offline --persona=auditor .github/workflows/` and CodeQL's `actions` language cover template injection, env-file writes, dangerous triggers and bot conditions. Neither replaces R1–R3, R7 or R8: on fixtures 01–17 in `scripts/tests/fixtures/gha/`, zizmor 1.30.1 did not flag a mention-only gate, the cross-object OR, a deny-list, event text in an agent prompt input, `allowed_non_write_users: "*"` or `allow-unsafe-pr-checkout: true` (details in `references/vuln-classes/github-actions.md` §9).
+```bash
+# R9 — actions and reusable workflows pinned to a full commit SHA, with their version comments
+grep -rnE --include='*.yml' --include='*.yaml' '^[^#]*uses:[[:space:]]*.?[A-Za-z0-9._-]+/[A-Za-z0-9._-]+(/[^@[:space:]]*)?@[0-9a-f]{40}([^0-9a-f]|$)' .github/
+```
+> DEP-067, KV-080 Step 4. GitHub serves a commit that exists only in a fork through the parent's `owner/repo`, so a pin is only as good as the commit behind it: check each repository R9 names once, with the `git ls-remote` command and the grading in KV-080 Step 4. R9 lists pins quoted or not, with or without a version comment, and the job-level `uses:` of reusable workflows. The first command of that step lists the references that are not a full SHA: tags, branches, short SHAs and `docker://` images.
+
+**Tool cross-check (optional, static).** `audit-scan --workflows .github/workflows` parses the workflows into trigger → job → step facts first, and lists what it could not model under `skipped`/`unknown`. `zizmor --offline --no-config --persona=auditor .github/workflows/` (`--no-config` so the audited repo's own `zizmor.yml` cannot turn audits off) and CodeQL's `actions` language cover template injection, env-file writes, dangerous triggers and bot conditions. Neither replaces R1–R3, R7 or R8: on fixtures 01–17 in `scripts/tests/fixtures/gha/`, zizmor 1.30.1 did not flag a mention-only gate, the cross-object OR, a deny-list, event text in an agent prompt input, `allowed_non_write_users: "*"` or `allow-unsafe-pr-checkout: true` (details in `references/vuln-classes/github-actions.md` §9).
 
 ---
 
@@ -475,25 +476,28 @@ grep -rnE --include='*.yml' --include='*.yaml' 'anthropics/claude-code-(base-)?a
 
 ### Program upgrade authority
 ```bash
-# Terminal:
-solana program show <PROGRAM_ID> --url mainnet-beta
+# Terminal: read-only, through the bundled RPC reader (--cluster devnet for a devnet program)
+"<auditor-skill root>/scripts/rpc-read.sh" program-show <PROGRAM_ID> --run audit_<n> --cluster mainnet-beta
 ```
 
 ### Anchor build verification
 ```bash
-# Terminal — builds the target (build.rs, proc-macros): only in the OUTPUT-RULES Rule 11a mode recorded at intake
-anchor build 2>&1 | tail -20
+# Terminal — builds the target (build.rs, proc-macros) through the bundled target.sh, in the OUTPUT-RULES
+# Rule 11a mode recorded at intake (exit 3 with none recorded); its last line names the log
+"<auditor-skill root>/scripts/runner/target.sh" anchor-build --run audit_<n> --src .
 ```
 
 ### Test suite
 ```bash
-# Terminal — runs the target's tests and Anchor.toml [scripts]: only in the OUTPUT-RULES Rule 11a mode recorded at intake
-anchor test --validator legacy 2>&1 | tail -30
+# Terminal — runs the target's tests and Anchor.toml [scripts] through the bundled target.sh, in the OUTPUT-RULES
+# Rule 11a mode recorded at intake, against no validator: tests that need one fail, and nothing is deployed
+"<auditor-skill root>/scripts/runner/target.sh" anchor-test --run audit_<n> --src .
 ```
 
 ### Binary hash verification
 ```bash
-# Terminal — rebuilds the target from source: only in the OUTPUT-RULES Rule 11a mode recorded at intake
+# Terminal — rebuilds the target from source: only in the OUTPUT-RULES Rule 11a mode recorded at intake. No
+# bundled runner wraps it (it builds in docker and reads the deployed program), so it asks for approval
 anchor verify <PROGRAM_ID> --provider-url mainnet-beta
 ```
 
@@ -627,8 +631,8 @@ grep_search: "openai|anthropic|llm|gpt|completion|embedding|prompt"   isRegexp: 
 
 ### Change management controls
 ```bash
-# Terminal: Check branch protection (OUTPUT-RULES Rule 11c flags)
-GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false remote -v
+# Terminal: Check branch protection (read-only git, OUTPUT-RULES Rule 11c)
+"<auditor-skill root>/scripts/git-ro.sh" remote -v
 # Terminal: Check for PR templates
 find .github -name "*pull_request*" -o -name "CODEOWNERS" 2>/dev/null
 ```

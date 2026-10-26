@@ -12,48 +12,48 @@
 #   @NL@ a newline   @ESC@ an escape character (0x1b)   @TAB@ a tab   @EMPTY@ (a whole field) an empty argument
 #   @SHOWN(x)@ x as the binary shows a value in a message: cut after 200 bytes, then ...
 # the contract marker: --contract=1 alone, in its place, and once, changes nothing; any other --contract word is refused
-2	audit-scan: refused: --contract=2 names a contract this build does not keep (it keeps --contract=1); rebuild it with cargo build --release --locked in tools/auditor-tools (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--contract=2	.
-2	audit-scan: refused: --contract=1 comes first, once (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	--contract=1
-2	audit-scan: refused: --contract=1 comes first, once (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--contract=1	--contract=1	.
-2	audit-scan: refused: --contract=1 comes first, once (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--contract=1	.	--out	audit_1/prescan.json	--contract=1
-2	audit-scan: refused: --contract names a contract this build does not keep (it keeps --contract=1); rebuild it with cargo build --release --locked in tools/auditor-tools (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--contract	.
-2	audit-scan: refused: --contract= names a contract this build does not keep (it keeps --contract=1); rebuild it with cargo build --release --locked in tools/auditor-tools (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--contract=	.
-2	audit-scan: refused: --contract=01 names a contract this build does not keep (it keeps --contract=1); rebuild it with cargo build --release --locked in tools/auditor-tools (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--contract=01	.
-2	audit-scan: refused: --contract=1x names a contract this build does not keep (it keeps --contract=1); rebuild it with cargo build --release --locked in tools/auditor-tools (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--contract=1x	.
-2	audit-scan: refused: --contracts names a contract this build does not keep (it keeps --contract=1); rebuild it with cargo build --release --locked in tools/auditor-tools (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--contracts	.
-2	audit-scan: refused: --contract=? names a contract this build does not keep (it keeps --contract=1); rebuild it with cargo build --release --locked in tools/auditor-tools (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--contract=@ESC@	.
-2	audit-scan: refused: no directory to scan (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--contract=1
+2	audit-scan: refused: --contract=2 names a contract this build does not keep (it keeps --contract=1); rebuild it with cargo build --release --locked in tools/auditor-tools (usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--contract=2	.
+2	audit-scan: refused: --contract=1 comes first, once (usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	--contract=1
+2	audit-scan: refused: --contract=1 comes first, once (usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--contract=1	--contract=1	.
+2	audit-scan: refused: --contract=1 comes first, once (usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--contract=1	.	--out	audit_1/prescan.json	--contract=1
+2	audit-scan: refused: --contract names a contract this build does not keep (it keeps --contract=1); rebuild it with cargo build --release --locked in tools/auditor-tools (usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--contract	.
+2	audit-scan: refused: --contract= names a contract this build does not keep (it keeps --contract=1); rebuild it with cargo build --release --locked in tools/auditor-tools (usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--contract=	.
+2	audit-scan: refused: --contract=01 names a contract this build does not keep (it keeps --contract=1); rebuild it with cargo build --release --locked in tools/auditor-tools (usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--contract=01	.
+2	audit-scan: refused: --contract=1x names a contract this build does not keep (it keeps --contract=1); rebuild it with cargo build --release --locked in tools/auditor-tools (usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--contract=1x	.
+2	audit-scan: refused: --contracts names a contract this build does not keep (it keeps --contract=1); rebuild it with cargo build --release --locked in tools/auditor-tools (usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--contracts	.
+2	audit-scan: refused: --contract=? names a contract this build does not keep (it keeps --contract=1); rebuild it with cargo build --release --locked in tools/auditor-tools (usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--contract=@ESC@	.
+2	audit-scan: refused: no directory to scan (usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--contract=1
 2	audit-scan: refused: --out may not start with - or ~: --contract=1	src	--out	--contract=1
 2	audit-scan: refused: the directory to scan must be relative to the working directory: @SHOWN(@WT@)@	--contract=1	@WT@
 2	audit-scan: refused: the directory to scan passes through a symbolic link: linkdir	--contract=1	linkdir
 2	audit-scan: refused: --out must be relative to the working directory: @SHOWN(@OUT@/sentinel.txt)@	--contract=1	.	--out	@OUT@/sentinel.txt
 2	audit-scan: refused: --out has more than one name (a hard link): audit_7/prescan.json	--contract=1	.	--out	audit_7/prescan.json
 # the word audit-scan starts itself with to parse, as its only argument; anywhere else an option it does not know
-2	audit-scan: refused: unknown option --internal-parse-stdin (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--internal-parse-stdin	.
-2	audit-scan: refused: unknown option --internal-parse-stdin (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	--internal-parse-stdin
-2	audit-scan: refused: unknown option --internal-parse-stdin (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--contract=1	--internal-parse-stdin
-2	audit-scan: refused: unknown option --internal-parse-stdin (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--internal-parse-stdin	--internal-parse-stdin
-2	audit-scan: refused: unknown option --internal-parse-stdin (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	src	--out	audit_1/prescan.json	--internal-parse-stdin
+2	audit-scan: refused: unknown option --internal-parse-stdin (usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--internal-parse-stdin	.
+2	audit-scan: refused: unknown option --internal-parse-stdin (usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	--internal-parse-stdin
+2	audit-scan: refused: unknown option --internal-parse-stdin (usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--contract=1	--internal-parse-stdin
+2	audit-scan: refused: unknown option --internal-parse-stdin (usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--internal-parse-stdin	--internal-parse-stdin
+2	audit-scan: refused: unknown option --internal-parse-stdin (usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	src	--out	audit_1/prescan.json	--internal-parse-stdin
 # grammar
-2	audit-scan: refused: no directory to scan (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])
-2	audit-scan: refused: it takes one directory (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	src
-2	audit-scan: refused: unknown option --help (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--help
-2	audit-scan: refused: unknown option -h (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	-h
-2	audit-scan: refused: unknown option --version (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--version
-2	audit-scan: refused: unknown option -- (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--	.
-2	audit-scan: refused: unknown option - (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	-
-2	audit-scan: refused: unknown option --pretty=yes (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	--pretty=yes
-2	audit-scan: refused: unknown option --outfile (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	--outfile	audit_1/prescan.json
-2	audit-scan: refused: unknown option --ou (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	--ou	audit_1/prescan.json
-2	audit-scan: refused: unknown option -o (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	-o	audit_1/prescan.json
-2	audit-scan: refused: --pretty is given more than once (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	--pretty	--pretty
-2	audit-scan: refused: --out is given more than once (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	--out	audit_1/prescan.json	--out=audit_1/prescan-2.json
-2	audit-scan: refused: --out needs a file (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	--out
+2	audit-scan: refused: no directory to scan (usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])
+2	audit-scan: refused: it takes one directory (usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	src
+2	audit-scan: refused: unknown option --help (usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--help
+2	audit-scan: refused: unknown option -h (usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	-h
+2	audit-scan: refused: unknown option --version (usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--version
+2	audit-scan: refused: unknown option -- (usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--	.
+2	audit-scan: refused: unknown option - (usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	-
+2	audit-scan: refused: unknown option --pretty=yes (usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	--pretty=yes
+2	audit-scan: refused: unknown option --outfile (usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	--outfile	audit_1/prescan.json
+2	audit-scan: refused: unknown option --ou (usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	--ou	audit_1/prescan.json
+2	audit-scan: refused: unknown option -o (usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	-o	audit_1/prescan.json
+2	audit-scan: refused: --pretty is given more than once (usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	--pretty	--pretty
+2	audit-scan: refused: --out is given more than once (usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	--out	audit_1/prescan.json	--out=audit_1/prescan-2.json
+2	audit-scan: refused: --out needs a file (usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	--out
 2	audit-scan: refused: --out is empty	.	--out=
 2	audit-scan: refused: --out may not start with - or ~: --pretty	.	--out	--pretty
 2	audit-scan: refused: --out may not start with - or ~: --out	.	--out	--out
-2	audit-scan: refused: it takes one directory (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	src	audit_1
-2	audit-scan: refused: --out is given more than once (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--out=audit_1/prescan.json	.	--out	audit_1/prescan.json
+2	audit-scan: refused: it takes one directory (usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	src	audit_1
+2	audit-scan: refused: --out is given more than once (usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--out=audit_1/prescan.json	.	--out	audit_1/prescan.json
 2	audit-scan: refused: --out may not start with - or ~: --pretty	--out=--pretty	.
 # the directory to scan
 2	audit-scan: refused: the directory to scan must be relative to the working directory: @SHOWN(@WT@)@	@WT@
@@ -88,6 +88,18 @@
 2	audit-scan: refused: the directory to scan is longer than 1024 bytes	@LONG:1025@
 2	audit-scan: refused: the directory to scan must be relative to the working directory: @SHOWN(@WT@/../outside)@	@WT@/../outside
 2	audit-scan: refused: the directory to scan passes through a symbolic link: src/linked.rs/x	src/linked.rs/x
+# --workflows: a confined directory like the one to scan, holding the workflow files; never . , given once
+2	audit-scan: refused: --workflows needs a directory (usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	--workflows
+2	audit-scan: refused: --workflows is given more than once (usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	--workflows	src	--workflows=src
+2	audit-scan: refused: --workflows is empty	.	--workflows=
+2	audit-scan: refused: --workflows may not start with - or ~: --pretty	.	--workflows=--pretty
+2	audit-scan: refused: --workflows must be relative to the working directory: @SHOWN(@WT@)@	.	--workflows	@WT@
+2	audit-scan: refused: --workflows has an empty, . or .. component: ../outside	.	--workflows	../outside
+2	audit-scan: refused: --workflows passes through a symbolic link: linkdir	.	--workflows	linkdir
+2	audit-scan: refused: --workflows is not a regular file or a directory: fifo	.	--workflows	fifo
+2	audit-scan: refused: --workflows is not an existing directory: a.rs	.	--workflows	a.rs
+2	audit-scan: refused: --workflows is not an existing directory: nope	.	--workflows	nope
+2	audit-scan: refused: --workflows passes through a symbolic link: linkdir	.	--workflows	linkdir	--out	audit_1/prescan.json
 # --out
 2	audit-scan: refused: --out must be relative to the working directory: @SHOWN(@WT@/audit_1/prescan.json)@	src	--out	@WT@/audit_1/prescan.json
 2	audit-scan: refused: --out must be relative to the working directory: @SHOWN(@OUT@/prescan.json)@	src	--out	@OUT@/prescan.json

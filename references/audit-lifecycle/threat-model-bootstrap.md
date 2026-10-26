@@ -81,16 +81,15 @@ path relative to the working directory: the audited repo may ship a same-named f
 `audit_<n>/intake.md`.
 
 ```bash
-# COLLECTOR = the absolute collect.sh path from /auditor:threat-model's Collect step (left unset, the call fails safely).
+# The collector is the bundled scripts/threat-model/collect.sh, run by its quoted path from the auditor-skill root.
 # The mode is always the first argument.
 # Triggers T3/T4 only (T2 is read from intake §7). Prints "T3 yes|no <why>" and "T4 yes|no <why>"; writes nothing.
-"$COLLECTOR" --detect --repo <target> --out audit_<n>/bootstrap --pin <sha>
+"<auditor-skill root>/scripts/threat-model/collect.sh" --detect --repo <target> --out audit_<n>/bootstrap --pin <sha>
 # Automatic (trigger) runs: offline collection.
-"$COLLECTOR" --offline --repo <target> --out audit_<n>/bootstrap --pin <sha>
+"<auditor-skill root>/scripts/threat-model/collect.sh" --offline --repo <target> --out audit_<n>/bootstrap --pin <sha>
 # Explicit inputs: a fork parent (https URL or local clone), prior-vulnerability sources (repeatable). --network
 # fetches the URLs and reads paths outside the working directory; with neither, use --offline.
-"$COLLECTOR" --network --repo <target> --out audit_<n>/bootstrap --pin <sha> \
-  --parent <https-url|path> --vulns <file|https-url> --vulns <file|https-url>
+"<auditor-skill root>/scripts/threat-model/collect.sh" --network --repo <target> --out audit_<n>/bootstrap --pin <sha> --parent <https-url|path> --vulns <file|https-url> --vulns <file|https-url>
 ```
 
 **Flags.** The collector takes these flags (`--help` prints the same list):
@@ -169,7 +168,7 @@ config.
 | `history.md` | the sections below; the header records target, pinned commit, paths, parent and network mode |
 | `inputs.tsv` | one row per input: source, format, sha256, stored file, status |
 | `inputs/` | converted or copied inputs and the allowlisted incident extracts |
-| `diffs/` | `target-<sha>.diff` behind REMOVED / ADDED-QUIET rows; `parent-<sha>.diff` behind absent parent guards (20 commits each). Each holds the commit's full id, date, subject and up to 20 body lines, then its diff limited to the files its rows name, up to 400 lines. Every cut ends in a `TRUNCATED (…)` line naming the command for the rest, to run in a scratch copy (`OUTPUT-RULES.md` Rule 11c): `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false show --no-textconv --no-ext-diff <full id> -- '<path>'`, each path escaped like other target text and single-quoted (`--no-patch` and no path for a cut message) |
+| `diffs/` | `target-<sha>.diff` behind REMOVED / ADDED-QUIET rows; `parent-<sha>.diff` behind absent parent guards (20 commits each). Each holds the commit's full id, date, subject and up to 20 body lines, then its diff limited to the files its rows name, up to 400 lines. Every cut ends in a `TRUNCATED (…)` line naming the command for the rest, the read-only git of `OUTPUT-RULES.md` Rule 11c: `"<auditor-skill root>/scripts/git-ro.sh" [--repo '<dir>'] show <full id> -- '<path>'`, each path escaped like other target text and single-quoted (`--no-patch` and no path for a cut message); for a repository outside the working directory it names a copy inside it, given with `--repo` |
 | `audit-mem-warm.json` | standing rulings for the program id, when available |
 
 | Section | What it lists | Read it as |

@@ -109,19 +109,19 @@
 | 06 | Economic & Logic | 92 | | | | | % |
 | 07 | OpSec & Governance | 87 | | | | | % |
 | 08 | TypeScript Safety | 64 | | | | | % |
-| 09 | Backend Security | 132 | | | | | % |
+| 09 | Backend Security | 133 | | | | | % |
 | 10 | Frontend Security | 84 | | | | | % |
-| 11 | Supply Chain | 62 | | | | | % |
+| 11 | Supply Chain | 65 | | | | | % |
 | 12 | Secrets & OpSec | 53 | | | | | % |
 | 13 | Deployment & Infra | 96 | | | | | % |
 | 14 | Python Safety | 82 | | | | | % |
 | 15 | General Language | 88 | | | | | % |
 | 16 | Formal Verification & Testing | 73 | | | | | % |
-| 17 | Logging, Monitoring & IR | 65 | | | | | % |
+| 17 | Logging, Monitoring & IR | 68 | | | | | % |
 | 18 | Privacy, Compliance & Change Mgmt | 60 | | | | | % |
-| 19 | AI Agent Security | 35 | | | | | % |
-| 20 | Rust Off-Chain Services | 21 | | | | | % |
-| | **Total** | **1446** | | | | | **%** |
+| 19 | AI Agent Security | 39 | | | | | % |
+| 20 | Rust Off-Chain Services | 23 | | | | | % |
+| | **Total** | **1459** | | | | | **%** |
 
 > Note: Only applicable checklists are counted in totals. Non-applicable checklists are excluded entirely.
 
@@ -260,7 +260,7 @@
 
 ```
 [PASS]      BE-001: {reason}
-...through BE-132
+...through BE-133
 ```
 
 ### Checklist 10 — Frontend Security
@@ -274,7 +274,7 @@
 
 ```
 [PASS]      SC-001: {reason}
-...through SC-062
+...through SC-065
 ```
 
 ### Checklist 12 — Secrets & OpSec
@@ -316,7 +316,7 @@
 
 ```
 [PASS]      LM-001: {reason}
-...through LM-065
+...through LM-068
 ```
 
 ### Checklist 18 — Privacy, Compliance & Change Management
@@ -324,6 +324,20 @@
 ```
 [PASS]      PC-001: {reason}
 ...through PC-060
+```
+
+### Checklist 19 — AI Agent Security
+
+```
+[PASS]      AI-001: {reason}
+...through AI-039
+```
+
+### Checklist 20 — Rust Off-Chain Services
+
+```
+[PASS]      RS-001: {reason}
+...through RS-023
 ```
 
 ### Known Vectors Results (KV-001..KV-140)
@@ -484,7 +498,7 @@ OS:
 Cluster tested: devnet / mainnet-beta
 RPC Provider: 
 Execution mode: isolated (<how>) / native   (OUTPUT-RULES Rule 11a)
-Outside services: <tool → service → data sent; each live probe (Q47) → host or bucket → request> / none   (Rule 11b)
+Outside services: <each disclosures.tsv row, then each contact no row holds: tool → service → data sent; each live probe (Q47) → host or bucket → request> / none   (Rule 11b)
 ```
 
 ### C. Disclaimer

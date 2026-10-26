@@ -615,7 +615,7 @@ fn refuses_paths_outside_the_working_tree() {
 fn refuses_a_grammar_it_does_not_have() {
     let wt = Wt::new();
     wt.run_dir("audit_1");
-    let usage = "usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty]";
+    let usage = "usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty]";
     for (args, why) in [
         (vec![], "no directory to scan"),
         (vec![".", "."], "it takes one directory"),
@@ -633,6 +633,11 @@ fn refuses_a_grammar_it_does_not_have() {
             "--out is given more than once",
         ),
         (vec![".", "--out"], "--out needs a file"),
+        (vec![".", "--workflows"], "--workflows needs a directory"),
+        (
+            vec![".", "--workflows", "src", "--workflows=src"],
+            "--workflows is given more than once",
+        ),
         (vec![".", "--help"], "unknown option --help"),
         (vec!["-h"], "unknown option -h"),
         (vec![".", "--"], "unknown option --"),
@@ -666,7 +671,7 @@ fn takes_the_contract_marker_first_and_refuses_any_other() {
     );
     assert_eq!(out.status.code(), Some(0), "{}", common::stderr(&out));
     assert_eq!(wt.read("audit_1/prescan.json"), plain.as_bytes());
-    let usage = "usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty]";
+    let usage = "usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty]";
     let other =
         "names a contract this build does not keep (it keeps --contract=1); rebuild it with \
                  cargo build --release --locked in tools/auditor-tools";

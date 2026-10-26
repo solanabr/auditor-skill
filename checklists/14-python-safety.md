@@ -74,12 +74,12 @@ Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{seve
 ## 14.6 — Dependency & Import Safety
 
 - [ ] **PY-049**: `requirements.txt` or `pyproject.toml` pins exact versions (not `>=` or `~=` for critical deps)
-- [ ] **PY-050**: No packages with known CVEs — run `pip audit` or `safety check`
+- [ ] **PY-050**: No packages with known CVEs — run `pip-audit` or `safety check` (both ask for approval; no bundled reader covers them)
 - [ ] **PY-051**: Virtual environment used — no system-wide `pip install`
 - [ ] **PY-052**: No `pip install` with `--trusted-host` or `--index-url` pointing to untrusted registries
 - [ ] **PY-053**: `__init__.py` files do not execute code with side effects on import
 - [ ] **PY-054**: No wildcard imports (`from module import *`) — pollutes namespace, hides dependencies
-- [ ] **PY-055**: Dependencies scanned with `pip audit` — no known vulnerabilities
+- [ ] **PY-055**: Dependencies scanned with `pip-audit` — no known vulnerabilities (asks for approval)
 - [ ] **PY-056**: 14-day quarantine rule applied to new package versions (same as npm)
 
 ## 14.7 — Error Handling & Type Safety

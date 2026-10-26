@@ -16,10 +16,11 @@ knows what to apply it to. Two accepted forms:
 mailbox-format patch with author/date/subject that `git am` applies and attributes:
 
 ```
-git format-patch -1 <fix-commit> --stdout > {FINDING_ID}.patch
+git format-patch -1 <fix-commit> --stdout > audit_<n>/patches/{FINDING_ID}.patch
 ```
 
-Its `From`/`Subject` lines carry the commit metadata. Keep the subject a single
+No bundled tool runs `git format-patch`, so it asks for approval. Its `From`/`Subject` lines carry the commit
+metadata. Keep the subject a single
 imperative line naming the guard, e.g. `Require is_signer on authority in update_config`.
 
 **B. Plain unified diff against a pinned commit (when there is no fix commit yet).**
@@ -77,7 +78,7 @@ The fix and the proof are the same change viewed twice:
   them is wrong — reconcile before claiming the fix.
 - The proof that the patch works is **executing the finding's PoC against the patched
   build**: with this diff transplanted onto `src/vulnerable.rs` as `src/fixed.rs`, or
-  with the patched target build as `FIXED_SO`, `run.sh` must exit 0 — the attack in
+  with the patched target build as `--fixed-so`, `run.sh` must exit 0 — the attack in
   `tests/fixed_blocked.rs` is now rejected. That is what promotes the patch to
   `[FIX-VERIFIED]`. Reading the diff is not verification. See `VERIFICATION.md`.
 - If no executable PoC exists, the ceiling is `[FIX-PROPOSED]` — verified by

@@ -17,7 +17,9 @@
 #     ':' or a space, and is not one YAML reads as a number, boolean or null. disable-model-invocation,
 #     background and user-invocable are true or false;
 #   - agents have name, description and tools; commands have description and allowed-tools; a SKILL.md has
-#     name and description, and no other key unless it is under skills/, where it may also have:
+#     name and description, and no other key but allowed-tools in the root SKILL.md (the one directly in the
+#     current directory; read as a command's, its bundled tools from ${CLAUDE_SKILL_DIR}), unless it is under
+#     skills/, where it may also have:
 #       - context, only fork, which then needs agent (without one the fork runs as general-purpose, with
 #         every tool);
 #       - agent, only with context: fork, and only auditor:<name>, where agents/<name>.md at the plugin
@@ -25,11 +27,13 @@
 #       - background, only with context: fork, and user-invocable, each true or false;
 #       - allowed-tools, read as a command's;
 #   - tools and allowed-tools list 'Name' or 'Name(pattern)' entries (agents: names only, no pattern),
-#     separated by ', ' or one per item, none empty; allowed-tools lists nothing in FORBIDDEN_ALLOWED_TOOLS;
+#     separated by ', ' or one per item, none empty; allowed-tools lists nothing in FORBIDDEN_ALLOWED_TOOLS
+#     (* and a bare Bash, or a pattern that is all *, : and spaces, such as Bash(*));
 #   - an allowed-tools entry that can run the bundled audit-scan or audit-mem (a Bash entry naming either as a
 #     word, in any letter case, or whose program word holds a *, a final :* aside) takes a form the confined
 #     builds pin, with the contract marker --contract=1 where they take it, which a build made before them refuses:
-#     Bash("${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release/audit-scan" --contract=1 ...),
+#     Bash("${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release/audit-scan" --contract=1 ...) (in the root
+#     SKILL.md, ${CLAUDE_SKILL_DIR} in place of ${CLAUDE_PLUGIN_ROOT}),
 #     Bash(".../audit-mem" <subcommand> --contract=1 ...) for init, put-finding, check, regressions, warm,
 #     profile or invariant (never rule or set-status), or Bash(test -x "<either path>");
 #   - the block is at most 65,536 bytes and holds at most 256 of '[', '{' and ' - ';
@@ -40,8 +44,10 @@
 set -uo pipefail
 
 # Entries the allowed-tools of a command or skill may never list, space-separated. A name also refuses its
-# catch-all patterns, such as Bash(*) for Bash. (An agent's tools list names only, so * fails there too.)
-FORBIDDEN_ALLOWED_TOOLS='*'
+# catch-all patterns, such as Bash(*) for Bash. (An agent's tools list names only, so * fails there too.) A
+# bare Bash would pre-approve every command line; each Bash rule names one entry point instead, which
+# check-entrypoints.sh checks against scripts/entrypoints.txt.
+FORBIDDEN_ALLOWED_TOOLS='* Bash'
 
 if [ $# -eq 0 ]; then
   cd "$(dirname "$0")/.." || exit 2
@@ -97,15 +103,16 @@ function runs_tools(e,   l) {
   sub(/:\*\)$/, ")", l)
   return substr(l, 1, 5) == "bash(" && (l ~ /audit-(scan|mem)([^a-z0-9_.-]|$)/ || l ~ /^bash\([^ ]*[*]/)
 }
-# Such an entry in a form a rule may take: the quoted path from ${CLAUDE_PLUGIN_ROOT}, then the contract marker
-# where the confined builds take it, or a test -x of the path.
-function tools_form(e,   root) {
-  root = "^Bash\\(\"[$][{]CLAUDE_PLUGIN_ROOT[}]/tools/auditor-tools/target/release/audit-"
+# Such an entry in a form a rule may take: the quoted path from ${CLAUDE_PLUGIN_ROOT} (in the root SKILL.md, from
+# ${CLAUDE_SKILL_DIR}), then the contract marker where the confined builds take it, or a test -x of the path.
+function tools_form(e,   var, root) {
+  var = (rootskill ? "CLAUDE_SKILL_DIR" : "CLAUDE_PLUGIN_ROOT")
+  root = "^Bash\\(\"[$][{]" var "[}]/tools/auditor-tools/target/release/audit-"
   return e ~ (root "scan\" --contract=1( |\\)$)") \
     || e ~ (root "mem\" (init|put-finding|check|regressions|warm|profile|invariant) --contract=1( |\\)$)") \
-    || e ~ ("^Bash\\(test -x \"[$][{]CLAUDE_PLUGIN_ROOT[}]/tools/auditor-tools/target/release/audit-(scan|mem)\"\\)$")
+    || e ~ ("^Bash\\(test -x \"[$][{]" var "[}]/tools/auditor-tools/target/release/audit-(scan|mem)\"\\)$")
 }
-function entry(e, key,   i, f, p, all) {
+function entry(e, key,   i, f, p, all, r) {
   if (e == "") { bad(key " has an empty entry"); return }
   # a forbidden entry, or its name with a pattern that is empty once spaces, * and : are removed: Bash(*)
   if (key == "allowed-tools") for (i in forbid) {
@@ -115,8 +122,9 @@ function entry(e, key,   i, f, p, all) {
     if (e == f || all) { bad(key " may not list " q e q); return }
   }
   if (key == "allowed-tools" && runs_tools(e) && !tools_form(e)) {
+    r = (rootskill ? "${CLAUDE_SKILL_DIR}" : "${CLAUDE_PLUGIN_ROOT}")
     bad(key " entry " q e q " can run audit-scan or audit-mem in a form the confined builds do not pin: write " \
-        "Bash(\"${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release/audit-scan\" --contract=1 *), or audit-mem\" " \
+        "Bash(\"" r "/tools/auditor-tools/target/release/audit-scan\" --contract=1 *), or audit-mem\" " \
         "<subcommand> --contract=1 * for init, put-finding, check, regressions, warm, profile or invariant"); return }
   if (kind == "agent" && e !~ /^[A-Z][A-Za-z]*$/) { bad(key " entry " q e q " is not a tool name"); return }
   if (e !~ /^[A-Z][A-Za-z]*(\([^()]+\))?$/)
@@ -183,6 +191,7 @@ BEGIN {
   } else if (plugin) {
     what = "a SKILL.md under skills/"; keys = "name description context agent background user-invocable allowed-tools"
     need = "name description"
+  } else if (rootskill) { what = "the root SKILL.md"; keys = "name description allowed-tools"; need = "name description"
   } else { what = "a SKILL.md"; keys = "name description"; need = "name description" }
   n = split(keys, a, " "); for (i = 1; i <= n; i++) known[a[i]] = 1
 }
@@ -222,14 +231,14 @@ trap 'rm -f "$names" "$refs"' EXIT
 fail=0; n=0
 for f in "$@"; do
   rel=$f; case "$f" in "$PWD"/*) rel=${f#"$PWD"/} ;; esac
-  low=$(printf '%s' "$rel" | LC_ALL=C tr 'A-Z' 'a-z'); rest=$low; kind=; plugin=; root=
+  low=$(printf '%s' "$rel" | LC_ALL=C tr 'A-Z' 'a-z'); rest=$low; kind=; plugin=; root=; rootskill=
   while :; do   # the first directory named agents, commands or skills gives the kind
     case "$rest" in
       agents/*) case "$low" in *.md) kind=agent ;; esac; break ;;
       commands/*) case "$low" in *.md) kind=command ;; esac; break ;;
       skills/*) case "$low" in */skill.md) kind=skill plugin=1 root=${rel:0:$((${#rel} - ${#rest}))} ;; esac; break ;;
       */*) rest=${rest#*/} ;;
-      *) case "$low" in skill.md | */skill.md) kind=skill ;; esac; break ;;
+      *) case "$low" in skill.md) kind=skill rootskill=1 ;; */skill.md) kind=skill ;; esac; break ;;
     esac
   done
   if [ -z "$kind" ]; then
@@ -242,7 +251,8 @@ for f in "$@"; do
     echo "::error::$f: a NUL byte" >&2; fail=1; continue
   fi
   : > "$refs"
-  LC_ALL=C awk -v file="$f" -v kind="$kind" -v plugin="$plugin" -v q="'" -v forbidden="$FORBIDDEN_ALLOWED_TOOLS" \
+  LC_ALL=C awk -v file="$f" -v kind="$kind" -v plugin="$plugin" -v rootskill="$rootskill" -v q="'" \
+    -v forbidden="$FORBIDDEN_ALLOWED_TOOLS" \
     -v names="$names" -v refs="$refs" "$PROG" "$f" >&2 || fail=1
   while IFS=$'\t' read -r line agent; do   # each agent a skill names: a file at the plugin root, named so
     a="${root}agents/$agent.md"

@@ -27,6 +27,7 @@ This checklist is NET-NEW: it covers the seam where an AI agent (autonomous trad
 - [ ] **AI-010**: Human-in-the-loop threshold — transactions above a configured value (or touching authority-changing instructions) require explicit human approval, not agent auto-approval
 - [ ] **AI-011**: Simulation result is actually inspected — writable-account deltas / balance changes from the simulation are compared against the agent's intent, not just checked for `err == null`
 - [ ] **AI-012**: The signer is the LAST stage and is isolated — the component that holds the key validates the fully-built tx itself and does not trust an upstream "already validated" flag from the LLM/orchestration layer
+- [ ] **AI-036**: Any human-in-the-loop or policy approval is bound to the exact serialized message bytes that will be signed — the bytes shown for approval are hashed and the signer refuses if the bytes presented at sign time differ, so no re-build, blockhash refresh that swaps instructions, or re-serialization happens between approval and signature; approving a human-readable summary or a transaction id alone is a FAIL (extends AI-010, AI-012; cross-ref BE-127, BE-131)
 
 ## 19.3 — MCP Tool Trust
 
@@ -35,12 +36,15 @@ This checklist is NET-NEW: it covers the seam where an AI agent (autonomous trad
 - [ ] **AI-015**: MCP tool *output* is validated/typed before it can influence a signing decision — a tool result is data, never a command; it does not flow unchecked into `eval`, a prompt that then signs, or transaction-construction
 - [ ] **AI-016**: MCP server set is allowlisted and least-privilege — the agent cannot silently gain new tools at runtime (no dynamic server discovery that adds signing-capable tools without review)
 - [ ] **AI-017**: Sensitive/signing-capable MCP tools require a distinct trust boundary (separate approval, separate credential) from read-only data tools — a poisoned read tool cannot reach the signer
+- [ ] **AI-037**: Tool-name collisions across connected MCP servers are resolved deterministically and safely — tool names are namespaced or qualified by server, and a later, lower-trust, or newly-discovered server cannot register a tool whose bare name shadows a trusted one and silently capture calls routed by name; a collision on a signing-capable tool is rejected, not overridden (extends AI-013, AI-016)
 
 ## 19.4 — Injection Surface (On-Chain Data → LLM)
 
 - [ ] **AI-018**: Attacker-controllable on-chain reads — transaction memos, SPL/Metaplex token & NFT metadata (name/symbol/uri and fetched JSON), account data, and program logs — are sanitized / delimited / treated as untrusted before entering the LLM context (grep for memo parsing, `metadata`, `logMessages`, `getParsedTransaction` feeding a prompt)
 - [ ] **AI-019**: Retrieved/on-chain data CANNOT alter a tool-call or signing decision without passing a deterministic guardrail (allowlist/cap check) that runs OUTSIDE the LLM — i.e., prompt-injected text can never be the sole authority that triggers a signature
 - [ ] **AI-020**: Off-chain content the agent fetches by following on-chain pointers (e.g., an NFT `uri`, a URL in a memo) is fetched in a sandbox and its body is likewise treated as untrusted LLM input, not as instructions
+- [ ] **AI-038**: The agent's persistent memory / vector store / conversation-history recall cannot be poisoned into a signing decision — content written to memory from attacker-controllable sources (on-chain reads, tool output, fetched pages — AI-018..AI-020) is labeled untrusted at write time, and a recalled memory is re-subjected to the deterministic allowlist/cap guardrail that runs outside the LLM (AI-019) rather than trusted because it was remembered
+- [ ] **AI-039**: The agent's own model output is treated as untrusted when it is rendered — any surface that displays agent output as Markdown or HTML (a dashboard, report, chat UI, notification) sanitizes it so an injected image or link cannot exfiltrate data via an auto-loaded URL and injected markup cannot execute or mislead; output is not passed to `dangerouslySetInnerHTML` or an unsanitized Markdown-to-HTML renderer (cross-ref FE-001, FE-002)
 
 ## 19.5 — AI-in-CI (Solana Deploy Pipeline)
 

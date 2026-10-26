@@ -17,7 +17,7 @@ Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{seve
 - [ ] **SEC-005**: No base58-encoded private keys in any file (44-character strings starting with specific patterns)
 - [ ] **SEC-006**: No JSON keypair files committed (`.json` files with 64-element integer arrays)
 - [ ] **SEC-007**: No Solana keypair files in repo (check for `id.json`, `*-keypair.json`, `*-delegate.json`)
-- [ ] **SEC-008**: No `.env` files committed to git — check `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false log --all --no-textconv --name-only | grep -i ".env"` (OUTPUT-RULES Rule 11c flags)
+- [ ] **SEC-008**: No `.env` files committed to git — check `"<auditor-skill root>/scripts/git-ro.sh" log --all --name-only | grep -i ".env"` (read-only git, OUTPUT-RULES Rule 11c)
 - [ ] **SEC-009**: No API keys hardcoded — check for patterns like `sk-`, `api_`, `key_`, long hex/base64 strings
 - [ ] **SEC-010**: No RPC URLs with API keys hardcoded (check for `rpc.helius.xyz`, `rpc.ankr.com` with keys in URL)
 
@@ -35,7 +35,7 @@ Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{seve
 
 - [ ] **SEC-018**: `.gitignore` includes: `.env`, `.env.*`, `*.pem`, `*-keypair.json`, `*-delegate.json`, `id.json`
 - [ ] **SEC-019**: `.gitignore` includes: `node_modules/`, `target/`, `.anchor/`, `test-ledger/`
-- [ ] **SEC-020**: Run `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false log --all --no-textconv --diff-filter=A --name-only` (OUTPUT-RULES Rule 11c flags) — check if secrets were EVER committed (even if now deleted)
+- [ ] **SEC-020**: Run `"<auditor-skill root>/scripts/git-ro.sh" log --all --diff-filter=A --name-only` (read-only git, OUTPUT-RULES Rule 11c) — check if secrets were EVER committed (even if now deleted)
 - [ ] **SEC-021**: If any secret was ever committed — it MUST be rotated (deleting from git history is not sufficient)
 - [ ] **SEC-022**: Pre-commit hooks: is there a secret detection hook? (gitleaks, detect-secrets, etc.)
 - [ ] **SEC-023**: No `.env` in any branch (check all branches, not just current)

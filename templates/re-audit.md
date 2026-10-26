@@ -14,12 +14,12 @@ auditor's machine).
 **The PoC re-run field.** Every finding with a PoC gets one, in this form:
 
 ```
-PoC re-run @ {HEAD_SHA} (Re-detonated against: {patched target build (`VULNERABLE_SO` / `FIXED_SO` overrides — `templates/poc/run.sh`) | minimized model}; AUDITOR_EXEC_MODE={isolated | native}): {reverts (<how the fixed arm held>) | still succeeds | inconclusive (<reason>) | not run (<reason>)}
+PoC re-run @ {HEAD_SHA} (Re-detonated against: {patched target build (`--vulnerable-so` / `--fixed-so` — `templates/poc/run.sh`) | minimized model}; AUDITOR_EXEC_MODE={isolated | native}): {reverts (<how the fixed arm held>) | still succeeds | inconclusive (<reason>) | not run (<reason>)}
 ```
 
 A re-run against the client's fix is a *patched target build*: `run.sh` in prebuilt mode with
-`VULNERABLE_SO` = the build of the audited commit and `FIXED_SO` = the build of the head commit, after the
-crate's `run.sh` and `shared-test-utils/src/` are refreshed from the installation. With no build of the head
+`--vulnerable-so` = the build of the audited commit and `--fixed-so` = the build of the head commit, after the
+crate's `shared-test-utils/src/` is refreshed from the installation. With no build of the head
 commit it is the *minimized model*: the crate's `src/fixed.rs` becomes its `src/vulnerable.rs` with the
 client's fix transplanted, and `run.sh` runs with no overrides. The value follows `run.sh`:
 

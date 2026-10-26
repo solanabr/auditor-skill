@@ -6,13 +6,13 @@ Every tool here is an **optional layer**. The corpus works fully without any of 
 
 | Tool | Buys you | Built/enabled by |
 |------|----------|------------------|
-| [`audit-scan`](#audit-scan) | ~30-40% fewer input tokens; a map of the risky surface | `cargo build --release` |
-| [`audit-mem`](#audit-mem) | exact de-dup, regression detection, FP suppression, warm re-audits | `cargo build --release` |
+| [`audit-scan`](#audit-scan) | ~30-40% fewer input tokens; a map of the risky surface | `cargo build --release --locked` |
+| [`audit-mem`](#audit-mem) | exact de-dup, regression detection, FP suppression, warm re-audits | `cargo build --release --locked` |
 | [`audit-logs`](#audit-logs) | the incident recipes `profile.sh`, `frames.py` and `deltas.py` as one offline binary, with the same output | `cargo build --release --locked` |
 | [Trail of Bits plugins](#trail-of-bits-plugins) | real SAST, fuzzing, coverage, mutation | plugin install or `install.sh`; else `git submodule update --init --depth 1 -- vendor/trailofbits` |
 | [Surfpool sim](#surfpool-economic-simulation) | a real $ P/L for economic findings | `surfpool` CLI + MCP |
 | [PoC/patch harness](#pocpatch-harness-stack) | executable exploits + verified fixes | platform-tools ≥ v1.54 |
-| [Bundled scripts](#bundled-scripts) | incident corpus collection and queries, the threat-model history collector, the Trail of Bits bump review | nothing to build: bash ≥ 3.2, plus `jq`, `python3`, `curl` or the `solana` CLI per script |
+| [Bundled scripts](#bundled-scripts) | the working-tree check, run directories, read-only git, the lockfile and known-bad release checks of the git history, the runners that build, test, audit dependencies and run SAST, incident corpus collection and queries, the threat-model history collector, the Trail of Bits bump review | nothing to build: bash ≥ 3.2, plus `git`, `jq`, `python3`, `curl` or the `solana` CLI per script, and the toolchains the runners drive |
 
 ---
 
@@ -25,7 +25,7 @@ A deterministic Rust AST pass (`syn` with `span-locations`, so every hit carries
 Build once, then run the binary by its absolute path from the repository under audit. `<auditor-skill root>` is the directory auditor-skill is installed in, never a path relative to your project ([`OUTPUT-RULES.md` Rule 11e](../OUTPUT-RULES.md#11e--bundled-paths)):
 
 ```bash
-cd "<auditor-skill root>/tools/auditor-tools" && cargo build --release        # once
+cd "<auditor-skill root>/tools/auditor-tools" && cargo build --release --locked        # once
 "<auditor-skill root>/tools/auditor-tools/target/release/audit-scan" --contract=1 ./programs/my-program/src --pretty --out audit_1/prescan.json
 ```
 
@@ -147,9 +147,40 @@ Build it in the installation, never inside the repository under audit, as for `a
 
 - **Paths:** as for the scripts: each corpus is a regular file with one name in an `incident_<n>/` run directory whose `.gitignore` holds `*`, named relative to the working directory, with no empty, `.` or `..` component and no symbolic link on the way; each option comes once, before the corpus paths; `--out` names a new `<name>.jsonl`, `.tsv` or `.txt` directly in the run directory. Anything else is refused with exit 2 before any input is read. With no corpus named, `frames` and `deltas` read stdin.
 - **Exit:** 0 done · 1 an input that cannot be read, an `--out` that cannot be written, or a failed write · 2 usage, or a refused path · 4 a stale build: it carries a copy of the files it was built from (the three recipes, `scripts/lib/confine.sh`, its `Cargo.toml` and `src/`), and when an installed one differs it writes nothing and prints one line, `audit-logs: stale build: …`; rebuild it, or run the scripts.
-- **Pre-approval:** inside the `auditor:dnr-analyze` fork, `audit-logs` runs without a prompt by this path, as do the three recipes and `jq-ro.sh`; no other bundled script is pre-approved, and neither is `jq`. Each refuses a named input outside a run directory before reading anything (exit 2). With no corpus named, `frames` and `deltas` read stdin, which a `<` redirect can fill from any file Claude Code lets the fork read; they print nothing from a line that is not a transaction. A line that holds a `$` or a backtick, inside quotes too, still prompts.
+- **Pre-approval:** inside the `auditor:dnr-analyze` fork, `audit-logs` runs without a prompt by this path, as do the three recipes and `jq-ro.sh`; the fork pre-approves no other bundled script, and nothing pre-approves `jq`. Each refuses a named input outside a run directory before reading anything (exit 2). With no corpus named, `frames` and `deltas` read stdin, which a `<` redirect can fill from any file Claude Code lets the fork read; they print nothing from a line that is not a transaction. A line that holds a `$` or a backtick, inside quotes too, still prompts.
 - **Network:** none. **Writes:** stdout, or the `--out` file, through a new temporary file beside it, made, linked and removed through the run directory, opened once.
 - **Where it differs from the scripts:** `profile` pads its counts as GNU `uniq -c` does (BSD `uniq -c` pads to 4); a closed stdout, a broken pipe or a stdin that is a directory ends it with another exit status; and it needs none of what `profile.sh` alone refuses to run without (a `TMPDIR` and a `PATH` entry outside the working directory, `jq`, `python3`); see [`tools/auditor-tools/README.md`](../tools/auditor-tools/README.md#where-it-differs-from-the-scripts).
+
+---
+
+## GitHub Actions workflow analysis
+
+Three layers, cheapest first. Each is optional; the corpus's GitHub Actions checks (`references/vuln-classes/github-actions.md`, `discovery/grep-commands.md` R1–R8) run without any of them.
+
+1. **`audit-scan --workflows .github/workflows`** — bundled, offline, no prompt. It reads each `*.yml`/`*.yaml` into trigger → job → step facts (`workflows[]`), and lists what it could not model under each workflow's `unknown[]` and whole files under `skipped[]` (see [`tools/auditor-tools/README.md`](../tools/auditor-tools/README.md#the-workflow-pass)). It is a **map, not a verdict**: it enumerates the surface the grep rules and the tools below then judge.
+2. **zizmor** — a workflow SAST. Third-party, so it is an install plus a run and **prompts by design** ([permissions-and-isolation.md](permissions-and-isolation.md#what-still-asks-and-why)); run it in the recorded execution mode.
+3. **CodeQL** — GitHub's `actions` queries. Also third-party, also prompts; mind its licence (below).
+
+### zizmor — run it pinned and without the target's config
+
+Pin the tool **by version and by hash**, and ignore any configuration the audited repository ships.
+
+```bash
+# the published container, by digest (optionally with a version tag before the @)
+docker run --rm -v "$PWD":/src:ro ghcr.io/zizmorcore/zizmor:v1.30.1@sha256:<digest> \
+  --offline --no-config --persona=auditor /src/.github/workflows
+```
+
+- **Why `--no-config`.** zizmor discovers a config file at `.github/zizmor.yml`, `.github/zizmor.yaml`, `zizmor.yml` or `zizmor.yaml` from the repository root, and a discovered config can turn audits off (`rules.<id>.disable`) or ignore findings in named files (`rules.<id>.ignore`). Since the repository under audit is untrusted, do not let its config steer the scan: `--no-config` loads no configuration at all (per the docs, "If `--no-config` is passed, no configuration is ever loaded"); `--config <your own file>` or `ZIZMOR_CONFIG` replaces discovery with a file you control. ([docs.zizmor.sh/configuration](https://docs.zizmor.sh/configuration/))
+- **`--offline`** blocks network and remote-repository fetches; **`--persona=auditor`** reports every finding, "even ones that it's not sure about". ([docs.zizmor.sh/usage](https://docs.zizmor.sh/usage/))
+- **Pinning.** The published image is `ghcr.io/zizmorcore/zizmor` ([docs.zizmor.sh/installation](https://docs.zizmor.sh/installation/)). *Unverified:* zizmor's install docs show only the unpinned `:latest` pull and an unversioned `pip install zizmor` / `uvx zizmor`; pinning a container by `@sha256:` digest and installing a pinned PyPI version under pip's hash-checking mode (`pip install zizmor==<v> --require-hashes -r <reqs>`) are standard Docker/pip mechanisms, not forms those pages document. Confirm the digest against the release you intend to run.
+- **What it misses.** `github-actions.md` §9 records, for **zizmor 1.30.1** over fixtures 01–17, the gates it did not flag (a mention-only gate, a cross-object OR, deny-lists, event text in an agent prompt input). A clean zizmor run does not close the class.
+
+### CodeQL — the `actions` queries, and the licence
+
+CodeQL analyzes **GitHub Actions** as a language; its query packs are `codeql/actions-queries` and `codeql/actions-all`, matching `.github/workflows/*.yml`, `.github/workflows/*.yaml`, `**/action.yml` and `**/action.yaml`. ([codeql.github.com, supported languages](https://codeql.github.com/docs/codeql-overview/supported-languages-and-frameworks/)) Building a CodeQL database for Actions needs no compiler.
+
+**Licence — read before running it on client code.** The CodeQL CLI licence permits analysis only of an "Open Source Codebase" — one "released under an OSI-approved License" (visibility is not the test). It **prohibits** using the tool "in any other context … with any codebase that is not an Open Source Codebase (e.g., code in a private repo in GitHub)"; a **paid GitHub Advanced Security** licence lifts that restriction. So CodeQL is fine for an open-source target, but for closed-source client code it needs that paid licence. ([github/codeql-cli-binaries `LICENSE.md`](https://github.com/github/codeql-cli-binaries/blob/main/LICENSE.md)) This is a plain-language reading of the terms, not legal advice; read the current terms before you rely on it.
 
 ---
 
@@ -165,7 +196,7 @@ git ls-tree HEAD vendor/trailofbits                   # the pinned commit, initi
 
 Agents delegate when present, fall back to native grep when absent (and note "deeper tooling available via `git submodule update --init --depth 1 -- vendor/trailofbits`, run in the auditor-skill directory (plugin and install.sh installs already include it)" in the report).
 
-Rows that build or run target code follow the execution mode recorded at intake ([`OUTPUT-RULES.md` Rule 11a](../OUTPUT-RULES.md#rule-11-operating-safety)); rows that send code or dependency data to an outside service are listed in the report (Rule 11b).
+Rows that build or run target code follow the execution mode recorded at intake ([`OUTPUT-RULES.md` Rule 11a](../OUTPUT-RULES.md#rule-11-operating-safety)); rows that send code or dependency data to an outside service are listed in the report (Rule 11b). The commands do not pre-approve these tools: each run asks, and a non-interactive run denies it ([permissions-and-isolation.md](permissions-and-isolation.md#what-still-asks-and-why)). SAST with semgrep runs through the bundled [`sast.sh`](#sastsh) instead, which needs no prompt.
 
 **Instruction files.** Trail of Bits ships a root `CLAUDE.md` that imports its contributor guide (`@AGENTS.md`, ~20 KB). When the submodule sits inside the project you run Claude Code in, that guide loads into the session the first time it reads a file under `vendor/trailofbits/`. To keep it out, add `"claudeMdExcludes": ["**/vendor/trailofbits/CLAUDE.md", "**/vendor/trailofbits/**/AGENTS.md"]` to your own `.claude/settings.local.json` — never to a client's committed `settings.json`.
 
@@ -214,6 +245,8 @@ Frameworks by finding type — **Mollusk** (single-instruction logic/access-cont
 
 Toolchain gate: **`cargo build-sbf` platform-tools ≥ v1.54** (the default v1.51/cargo 1.84 bundle cannot parse the `edition2024` manifests in modern `mollusk-svm`/`litesvm` — pass `--tools-version v1.54`). Never hard-fails: any absence → `[PoC-ATTEMPTED]` + the prose PoC is kept; downgrading the evidence tier never downgrades the finding's severity.
 
+The installation's `templates/poc/run.sh` builds every PoC: `--init <R>/poc/<ID>` makes the crate from the template, `--crate <R>/poc/<ID>` builds and runs it in the run's execution mode, and `--new-cache` makes a build cache for the engagement. `/auditor:patch` and `/auditor:re-audit` build the target itself, as it is and patched, with [`target.sh build-sbf`](#targetsh), and hand the `.so` files to `run.sh --vulnerable-so` and `--fixed-so`.
+
 Full walkthrough — layout, framework matrix, tiers, the "executable outranks prose but prose is never removed" rule, toolchain requirements: **[poc-and-patches.md](poc-and-patches.md)**. Reference: [`references/orchestration/poc-harness.md`](../references/orchestration/poc-harness.md).
 
 ---
@@ -221,6 +254,189 @@ Full walkthrough — layout, framework matrix, tiers, the "executable outranks p
 ## Bundled scripts
 
 Shell and Python scripts that ship with auditor-skill; there is nothing to build. The commands run them by absolute path from the installation, never by a `scripts/` path relative to the audited repository ([Rule 11e](../OUTPUT-RULES.md#11e--bundled-paths)); the Python ones run directly by that path, their first line running them as `python3 -I`. The shell scripts run under bash 3.2 or later. The blocks below give each script's arguments, exit codes, network use and outputs.
+
+The commands pre-approve the scripts their steps run, each in the plain form [Rule 11e](../OUTPUT-RULES.md#11e--bundled-paths) gives: the quoted path, from the working directory, with nothing in front. Each checks every argument before it acts and refuses anything outside its grammar with one line ([permissions-and-isolation.md](permissions-and-isolation.md) says which steps run without asking, and why that is safe). The examples below use `<auditor-skill root>` for the directory auditor-skill is installed in; put yours in its place.
+
+### Working-tree checks
+
+#### `preflight.sh`
+
+```bash
+# an example of what you type; <auditor-skill root> is where auditor-skill is installed
+"<auditor-skill root>/scripts/preflight.sh"
+```
+
+The first step of every command: it refuses a working tree that ships Claude Code project config, before anything reads the tree ([Rule 11e](../OUTPUT-RULES.md#11e--bundled-paths)). Claude Code loads that config beside the plugin's, so a repository's own skill or agent could take the place of one of ours, or its settings could add hooks, MCP servers and permissions. It reads names and small settings files only, matches them in any letter case, follows no symbolic link and skips every `.git` directory. It refuses, naming the first such path:
+
+- in the working directory, at any depth: a `.claude` that is a symbolic link; in a `.claude` directory, a `skills`, `commands`, `agents`, `hooks`, `output-styles` or `workflows` entry, or a `scheduled_tasks.json`; a `.claude/settings.json` or `settings.local.json` that is not a regular file of at most 64 KiB holding one JSON object whose top-level keys are all among `$schema`, `model`, `cleanupPeriodDays` and `includeCoAuthoredBy`; a `.mcp.json` of any type;
+- the same entries in each parent of the working directory up to the top level of its git repository (your own `~/.claude` excepted);
+- a working directory inside a `.claude` or git directory, or in a linked git worktree, where Claude Code also loads the main checkout's `.claude/settings.local.json`;
+- a tree of more than `AUDITOR_PREFLIGHT_MAX_ENTRIES` entries outside `.git` (default 200000), a tree `find` cannot read in full, and a repository git cannot place.
+
+A `CLAUDE.md`, `CLAUDE.local.md` or `.claude/rules` directory is not refused: Claude Code reads them as instructions, so each gets a `preflight: note:` line, and their text stays data. To audit a repository it refuses, make a clean copy: clone it to a new directory, delete every `.claude/` and `.mcp.json` in the copy, and start Claude Code there.
+
+- **Arguments:** none; any is refused. **Exit:** 0 clean, the last line `preflight: ok: …` · 64 refused, with one line, `preflight: refused: <reason>`, and nothing on stdout.
+- **Network:** none. **Writes:** nothing. **Needs:** git and find; jq when a `.claude/settings*.json` is present.
+
+#### `rundir.sh`
+
+```bash
+# examples of what you type; <auditor-skill root> is where auditor-skill is installed
+"<auditor-skill root>/scripts/rundir.sh" new audit
+"<auditor-skill root>/scripts/rundir.sh" check audit_1
+"<auditor-skill root>/scripts/rundir.sh" sub audit_1 poc/F-003
+"<auditor-skill root>/scripts/rundir.sh" store
+```
+
+Makes, checks and reuses run directories ([Rule 11d](../OUTPUT-RULES.md#11d--output-hygiene)). A run directory is `audit_<n>` or `incident_<n>` (`<n>` of 1 to 6 digits) directly in the working directory: a real directory, holding no symbolic link, tracked by no repository in any letter case, whose `.gitignore` holds exactly `*`.
+
+- **`new audit|incident`** takes the highest `<n>` over real directories of that kind, plus one, makes the directory with a plain `mkdir`, writes its `.gitignore` first under noclobber, then the standard subdirectories (audit: `worksheets/context`, `poc`, `patches`, `exec`, `deps`, `sast`; incident: `bin`, `poc`, `patches`, `exec`, `logs`), and prints the name. It refuses when the repository tracks a path under a top-level `audit_*` or `incident_*` directory, or a submodule of that name, in any letter case, and when the next name is taken.
+- **`check <R>`** prints `ok <R>` for a run directory that may be reused. Reuse one only once you have confirmed which one.
+- **`sub <R> <rel>`** makes `<R>/<rel>`, or accepts it when it exists, and prints the path: `poc/<ID>`, `patches`, `harnesses`, `bootstrap`, `corpus-<k>`, `logs` or `rpc`, where `<ID>` is `F-<1-4 digits>` or `INC-<1-6 digits>.<1-4 digits>` and `<k>` 1 to 4 digits.
+- **`store`** prints `.audit-memory/audit.db` for an in-tree store that passes the Rule 11d check, and `absent` when there is none; otherwise it refuses, and the flow uses `<R>/audit-mem.db`.
+- **Exit:** 0 done · 64 refused, with one line, `rundir: refused: <reason>`. **Network:** none. **Needs:** git and find.
+
+### Read-only git
+
+#### `git-ro.sh`
+
+```bash
+# examples of what you type; <auditor-skill root> is where auditor-skill is installed
+"<auditor-skill root>/scripts/git-ro.sh" log --oneline -20
+"<auditor-skill root>/scripts/git-ro.sh" diff --name-only main..HEAD
+"<auditor-skill root>/scripts/git-ro.sh" copy . audit_1
+"<auditor-skill root>/scripts/git-ro.sh" --git-dir audit_1/src.git show --stat HEAD
+"<auditor-skill root>/scripts/git-ro.sh" partial
+```
+
+Read-only git for checkouts the auditor did not create ([Rule 11c](../OUTPUT-RULES.md#11c--untrusted-git-checkouts)). Every git command runs through the hardened call of `scripts/lib/confine.sh`: `env -i` with only `HOME`, a cleaned `PATH`, `TMPDIR`, `LC_ALL=C` and `TZ`, system and global config dropped, lazy fetch off, `protocol.allow=never`, and `-c` pins that switch off the config keys known to run a program, read a file outside the tree, or hide what a read shows. Apart from `--repo` and `--git-dir`, which `git-ro.sh` reads itself, every word you give lands after the subcommand, so git reads it as that subcommand's option, never as a global one.
+
+- **Subcommands:** `log`, `shortlog`, `rev-list`, `show`, `ls-tree`, `cat-file`, `rev-parse`, `merge-base`, `name-rev`, `for-each-ref`, `show-ref`, `count-objects`, `cherry` and `reflog show`; `diff` between committed revisions only (`A..B`, `A...B`, `A^!`, `A B` or `--cached [A]`, paths after `--`); `diff-tree`; `blame <rev> -- <path>`; `grep` over committed content; and read-only forms of `ls-files`, `describe`, `config` and `remote`. Anything else is refused: `status`, `checkout`, `fetch`, `range-diff` and every alias among them. It adds `--no-textconv --no-ext-diff` where they apply.
+- **Refused options**, at any position before `--`: those that write a file, run a program or reach another repository or the work tree, such as `--output`, `--ext-diff`, `--textconv`, `--show-signature`, `--exec`, `--upload-pack`, `--git-dir`, `--work-tree`, `--recurse-submodules`, `--no-index` and `--contents`; the script's header lists them all. A `--format` or `--pretty` takes a built-in name, a `format:` or `tformat:` string, or a string with a `%`, never `%G` or `%(signature`.
+- **`copy <dir> <R>`** clones `<dir>` bare into `<R>/src.git` (`src-2.git` and on once that exists), with no hooks and no submodules, and prints its path; read the copy with `--git-dir <R>/src.git`. It refuses a partial clone (exit 3) and git without the May-2024 clone fixes (exit 69).
+- **`partial`** exits 3 in a partial clone and prints the keys that mark it, and 0 in a full one. In a partial clone every read prints a note first; nothing is fetched, and a missing object fails.
+- **`tracked <path>`** prints what git tracks at that path, in any letter case.
+- **`<dir>`, `--repo <dir>`:** `.` (the default) or a relative path inside the working directory, with no `..` and no symbolic link on the way, that is the top level of a repository whose git directory lies inside the working directory, holds no link, and borrows no objects (alternates) or parents (grafts).
+- **Output:** control characters other than tab and newline print as `?`; `-z` and the other NUL-separated forms are refused.
+- **Exit:** git's own status (0, 1, 128) · 3 a partial clone (`partial`, `copy`) · 64 refused, with one line, `git-ro: refused: <reason>` · 69 git too old to copy. **Network:** none. **Writes:** only `copy`'s `<R>/src.git`. **Needs:** git.
+
+### Supply-chain recipes (`scripts/recipes/`)
+
+Two history checks of the supply-chain walk: the lockfile hints of checklist 11 §11.11, and the history half of the known-bad release check (FULL-AUDIT Step 3.2, KV-077 Step 2). `/auditor:audit`, `/auditor:audit-cycle`, `/auditor:audit-assist`, `/auditor:diff-audit` and `/auditor:re-audit` pre-approve both, as does the skill asked in plain words; `/auditor:quick-scan` pre-approves `web3js-history.sh` only.
+
+Both read committed content only, never the work tree, through the hardened git call of `scripts/lib/confine.sh` that `git-ro.sh` uses. They take the repository as `git-ro.sh` does: `--repo <dir>` (`.` by default), or `--git-dir <R>/src.git` for a copy `git-ro.sh copy` made. In a partial clone each prints a note under its own name first and fetches nothing, so a missing object fails; in a shallow clone a note says the history before the boundary is missing. Each diff runs with `--text`, three lines of context and the `a/` and `b/` prefixes, whatever the checkout's config sets, so a committed `.gitattributes` that marks a lockfile binary hides nothing. Every control character but tab and newline prints as `?`, and standard input is never read.
+
+#### `lock-delta.sh`
+
+```bash
+# examples of what you type; <auditor-skill root> is where auditor-skill is installed
+"<auditor-skill root>/scripts/recipes/lock-delta.sh" cargo main..HEAD
+"<auditor-skill root>/scripts/recipes/lock-delta.sh" --git-dir audit_1/src.git npm v1.2.0..v1.3.0
+```
+
+Each version, source and checksum line that changed in the lockfiles of one kind between two commits, with the name of its package, below each file's `+++ b/<path>` line (`+++ /dev/null` for a file the range deletes).
+
+- **`npm`:** `package-lock.json`, `npm-shrinkwrap.json` and `yarn.lock` (v1 and berry): each changed `version`, `resolved`, `resolution`, `integrity` or `checksum` line after the key of its entry, `?` for a key outside the hunk. **`bun`:** the text `bun.lock`: each changed entry as `-` or `+` and `<name>@<version>`. **`cargo`:** `Cargo.lock`: each changed `version`, `source` or `checksum` line after its package name.
+- **Arguments:** `[--repo <dir> | --git-dir <R>/src.git] npm|bun|cargo <base>..<head>`, where `<base>` and `<head>` name commits: letters, digits and `._/~^+-`, starting with a letter or a digit, with no `..`, at most 255 bytes each.
+- **Exit:** 0 done, whether or not a line printed · 64 refused, with one line, `lock-delta: refused: <reason>` · git's own status when git fails (128: a revision it cannot find). **Network:** none. **Writes:** nothing. **Needs:** git.
+
+#### `web3js-history.sh`
+
+```bash
+# examples of what you type; <auditor-skill root> is where auditor-skill is installed
+"<auditor-skill root>/scripts/recipes/web3js-history.sh"
+"<auditor-skill root>/scripts/recipes/web3js-history.sh" --git-dir audit_1/src.git
+```
+
+The commits, on every branch, that add or remove the hijacked `@solana/web3.js` 1.95.6 or 1.95.7, or axios 1.14.1 or 0.30.4, in a manifest or a lockfile. Two searches run over every branch, merge commits (against their first parent) and the root commit, each under its own heading:
+
+- **`== single-line form`:** each commit that adds or removes a line naming one of those releases, as a resolved URL, a pnpm, yarn or bun key, or an exact pin, printed as `<commit> <subject>`.
+- **`== key-line form`:** a `package-lock.json` or `npm-shrinkwrap.json` written without `resolved` fields names a package only on its entry's key line, with the version on a line below it; each such version line added, removed, or kept under a key that changed, printed as `<commit> <a/ or b/ path> <line>`.
+
+Nothing under a heading means none was found. Another package at one of those versions is not reported.
+
+- **Arguments:** `[--repo <dir> | --git-dir <R>/src.git]`.
+- **Exit:** 0 both searches ran, whether or not a line printed · 64 refused, with one line, `web3js-history: refused: <reason>` · git's own status when git fails, once both searches have run. **Network:** none. **Writes:** nothing. **Needs:** git.
+
+### Runners
+
+The runners behind the audit's tool steps ([Rule 11a](../OUTPUT-RULES.md#11a--execution-mode)). Each refuses with one line, `<tool>: refused: <reason>` (exit 64), before it copies or sends anything, and works in a scratch directory outside the working directory, removed on exit, in the cleaned environment of `scripts/lib/isolation.sh`. `deps.sh`, `sast.sh` and `target.sh` also name a blocker with one line, `<tool>: blocker: <reason>` (exit 3), and `AUDITOR_RUN_TIMEOUT` (whole seconds, 1 to 86400, default 1800) bounds each of their runs; `probe.sh` has neither, and `PROBE_WAIT` bounds each of its queries.
+
+#### `probe.sh`
+
+```bash
+# examples of what you type; <auditor-skill root> is where auditor-skill is installed
+"<auditor-skill root>/scripts/runner/probe.sh"
+"<auditor-skill root>/scripts/runner/probe.sh" --only cargo-build-sbf,isolation
+```
+
+What this machine offers the runners. One line per tool, `<name>: <its version line>`, `<name>: absent` or `<name>: unusable (<why>)`, for `cargo`, `rustup`, `cargo-build-sbf`, `cargo-fuzz`, `trident`, `anchor`, `solana`, `surfpool`, `semgrep`, `pandoc` and `python3`; then `isolation:`, which says whether any credential the isolation self-check reads is readable here. Each query runs from the scratch directory, offline, with `RUSTUP_TOOLCHAIN` pinned and every proxy variable pointing at a closed port, so a target's `.cargo/config*` or `rust-toolchain*` never applies. The `isolation:` line names readable paths for you; a report records only whether there were any.
+
+- **Exit:** 0 · 64 refused. `PROBE_WAIT` (1 to 600 seconds, default 30) bounds each query. **Network:** none. **Writes:** its scratch directory only.
+
+#### `deps.sh`
+
+```bash
+# examples of what you type; <auditor-skill root> is where auditor-skill is installed
+"<auditor-skill root>/scripts/runner/deps.sh" cargo-audit --run audit_1 --manifest Cargo.lock
+"<auditor-skill root>/scripts/runner/deps.sh" npm-audit --run audit_1 --manifest web/package.json --manifest web/package-lock.json
+"<auditor-skill root>/scripts/runner/deps.sh" npm-time --run audit_1 @solana/web3.js
+"<auditor-skill root>/scripts/runner/deps.sh" fetch-artifact --run audit_1 crates anchor-lang 0.31.1
+```
+
+Dependency audits and registry queries (checklist 11), on copies of the manifests and lockfiles it is given. It runs no code from the working directory, so it needs no execution mode.
+
+| Action | What it runs |
+|--------|--------------|
+| `cargo-audit` | `cargo audit` on a copied `Cargo.lock`; with `--no-fetch`, against the advisory database already in `CARGO_HOME`, sending nothing |
+| `cargo-outdated`, `cargo-tree` | on a workspace rebuilt from the copied `Cargo.toml` files' names, versions, features and dependency entries, so no `[patch]` or `[replace]` table of the target reaches cargo |
+| `npm-audit` | `npm audit` on a copied `package.json` and lockfile, with its own `.npmrc` and empty user and global config |
+| `npm-view`, `npm-time`, `crate-info`, `pypi-info` | one registry record, fetched by curl from a host fixed in code |
+| `fetch-artifact` | a published `.crate`, npm tarball or PyPI sdist (else a pure-Python wheel), its digest checked against the registry's, unpacked without running anything into `<R>/deps/fetch-artifact-<n>/files/`; an entry that is not a regular file or a directory, or has an unsafe name, is left out and listed (each an SC-060 hit) |
+
+- **Manifests:** each `--manifest` is a regular file of at most 50 MB inside the working directory, named as its action takes it (`Cargo.lock`, `Cargo.toml`, `package.json`, `package-lock.json`, `npm-shrinkwrap.json`), never `.npmrc`, `.yarnrc*`, `rust-toolchain*` or a file under `.cargo/`. A dependency from git or from another registry stops `cargo-outdated` and `cargo-tree`.
+- **Exit:** 0 nothing found · 1 findings (vulnerabilities, outdated dependencies, or a package or version the registry does not have) · 3 blocker · 64 refused. **Output:** `<R>/deps/<action>-<n>.txt`, named on the last line.
+- **Network:** registry.npmjs.org, crates.io, index.crates.io, static.crates.io, pypi.org and files.pythonhosted.org, and github.com for the RustSec database, fixed in code; one row of `<R>/disclosures.tsv` before the first request to each service.
+- **Needs:** python3, and cargo, cargo-audit, cargo-outdated, npm or curl as the action needs.
+
+#### `sast.sh`
+
+```bash
+# an example of what you type; <auditor-skill root> is where auditor-skill is installed
+"<auditor-skill root>/scripts/runner/sast.sh" semgrep --run audit_1 --path programs --ruleset p/rust --ruleset p/trailofbits
+```
+
+semgrep over the code under audit. semgrep parses the code and never runs it, so `sast.sh` needs no execution mode. It runs `semgrep scan --config <id>… --metrics=off --disable-version-check --sarif` from the scratch directory, with semgrep's settings there too.
+
+- **`--path`:** `.` or a confined directory or regular file, holding no symbolic link that resolves outside it, since semgrep could quote what one points to. **`--ruleset`:** `p/rust`, `p/trailofbits`, `p/typescript`, `p/javascript`, `p/python`, `p/golang`, `p/secrets`, `p/github-actions` or `p/solidity`, each at most once.
+- **Exit:** 0 no results · 1 results · 3 blocker (semgrep missing or failing) · 64 refused. **Output:** `<R>/sast/semgrep-<n>.sarif` and its `.log`; the last line gives the number of results and names any `.semgrepignore` that narrowed the scan.
+- **Network:** semgrep.dev, for the rulesets; one row of `<R>/disclosures.tsv` first. **Needs:** semgrep, python3 and git.
+
+#### `target.sh`
+
+```bash
+# examples of what you type; <auditor-skill root> is where auditor-skill is installed
+"<auditor-skill root>/scripts/runner/target.sh" anchor-build --run audit_1 --src .
+"<auditor-skill root>/scripts/runner/target.sh" build-sbf --run audit_1 --src . --rev HEAD --patch audit_1/patches/F-003.patch
+```
+
+Builds and tests the code under audit in the execution mode recorded for the run, from a scratch copy outside the working directory.
+
+| Action | Its fixed command line, in the copy |
+|--------|-------------------------------------|
+| `anchor-build` | `anchor build --ignore-keys [-p <program>] -- --skip-tools-install --offline` |
+| `anchor-test` | `npm ci --ignore-scripts` when the directory holds `package-lock.json`, the build, then `anchor test --skip-build --skip-deploy --skip-local-validator` with a throwaway wallet: no validator starts and nothing is deployed |
+| `build-sbf` | `cargo build-sbf --skip-tools-install --offline`; the `.so` files land in `<R>/exec/build-sbf-<n>/`, for `run.sh --vulnerable-so` and `--fixed-so` |
+| `cargo-test` | `cargo test --offline`, for `--package` or the workspace |
+| `clippy` | `cargo clippy --offline --all-targets -- -W clippy::all -W clippy::pedantic` |
+| `npm-ci` | `npm ci --ignore-scripts --no-audit --no-fund` (checklist 11 SC-012) |
+
+- **Mode:** the stricter of `<R>/exec-mode` and `AUDITOR_EXEC_MODE`. With neither, with `none`, or with a `--mode` that names another, it stops (exit 3) before it copies anything. In isolated mode the credential self-check runs first; in native mode it prints, as a warning, what the build can read, by kind and count. An incident's code (`--run incident_<n>`) builds only once `incident_<n>/INCIDENTS.json` records its `root_cause_class`, and never natively for `supply_chain_or_ci`.
+- **The copy:** a `--src` that is a repository's top level, or a copy `git-ro.sh copy` made in `<R>`, is cloned with no hooks and checked out at `--rev` (`HEAD` by default); a revision that has submodules stops the run, since `target.sh` never fetches them. `--patch <R>/patches/<ID>.patch` is applied with `git apply --index`. Any other directory is copied file by file, without the run directories, `.audit-memory`, `target/` and `node_modules/`. `--package` (build-sbf, cargo-test, clippy) and `--program` (the anchor actions) pick one, `--dir` a workspace below the copy's top, and `--timeout` lowers `AUDITOR_RUN_TIMEOUT`.
+- **The environment:** a throwaway `HOME` with a fresh Solana keypair, and `RUSTUP_TOOLCHAIN` pinned, so the copy's `rust-toolchain` file is not read. The downloads come first, and only they get the proxy variables: `cargo fetch`, started outside the copy; `cargo build-sbf --install-only`; `npm ci --ignore-scripts`. Every build and test after them runs with cargo offline and without the proxy variables, so cargo fetches nothing more; on an open network a build script can still connect by itself, which only a sandbox's or a container's network rules stop.
+- **Exit:** 0 the action succeeded · 1 it ran and failed · 3 blocker · 64 refused. **Output:** the log in `<R>/exec/<action>-<n>.log` and the `.so` files the build made, named on the last line.
+- **Network:** only the downloads: the crates and packages, from the registries and git hosts the target's manifests, lockfile and `.npmrc` name, and the platform tools, from GitHub. The Q46 mode gates them, and they add no disclosure row.
+- **Needs:** git with the May-2024 clone fixes for a repository source, python3, and cargo, an Agave `cargo build-sbf` that has `--install-only`, `--skip-tools-install` and `--offline`, anchor or npm as the action needs.
 
 ### Detection & response recipes (`scripts/dnr/`)
 
@@ -234,7 +450,7 @@ The recipes behind `/auditor:hunt` and `/auditor:respond` ([detection-response.m
 
 Step 1 of every hunt and response: it keeps the deployed program bytes before a hotfix can replace them. It runs `solana program show` and `solana program dump`, or `solana program-v4 show` and `download` for a loader-v4 program. It reads the program again after the dump and dumps once more if the last-deployed slot moved. Every `show` must name the requested id as its Program Id. It checks the ELF header, hashes the dump the way `solana-verify` does (trailing zero padding trimmed, then sha256), and prints a ledger line: `program=… owner=… last_deployed_slot=… authority=… sha256_zero_trimmed=… elf_bytes=… padding_bytes=… file=bin/<id>[@<slot>].so`. A loader-v4 program's line also has `status=…` (`deployed`, `retracted` or `finalized`) after `authority=`. A program on an immutable loader shows `last_deployed_slot=n/a (immutable loader)` and `authority=none`.
 
-Run it directly by its path, from the working directory.
+Run it directly by its path, from the working directory; `/auditor:hunt` and `/auditor:respond` pre-approve it.
 
 - **Arguments:** exactly two: a base58 program id (32 bytes) and the run directory, `incident_<n>`, relative to the working directory (a leading `./` and a trailing `/` are dropped).
 - **Exit:**
@@ -278,7 +494,7 @@ Run it directly by its path, from the working directory.
   [--before <signature>] [--max-pages N] [--max-tx N] -- <address> [<address> ...]
 ```
 
-The one gated collector: it pages each address's signature history, failed transactions included (they are evidence of attempts), and fetches every transaction in the window into a local JSONL corpus, newest first. Run it directly by its path, from the working directory; each option is given at most once.
+The one gated collector: it pages each address's signature history, failed transactions included (they are evidence of attempts), and fetches every transaction in the window into a local JSONL corpus, newest first. Run it directly by its path, from the working directory; each option is given at most once. `/auditor:hunt` and `/auditor:respond` pre-approve it, and run it only with the addresses, window and caps you approved.
 
 | Flag | Meaning |
 |------|---------|
@@ -318,7 +534,7 @@ The one gated collector: it pages each address's signature history, failed trans
   - The three files are written only through the descriptors opened when they were created.
   - stdout ends with `transactions fetched: N of M calls -> …` and `collection gaps: N (see …)`, except after a failed write (exit 3), when a `[blocker]` line on stderr takes their place. Notices go to stderr and start with `  ! `.
   - A run stopped by INT, TERM or HUP adds gap rows for the address being paged (naming the `--before` signature to resume from, once one of its pages was read) and each one after it, and one for the signatures listed but not fetched, then prints the closing lines. A run killed outright prints nothing more; then each signature in `signatures.jsonl` with no transaction in `transactions.jsonl` is a gap, and so is every address whose history may not have been paged to its end: the last `queried_address` in `signatures.jsonl` and every address given after it, or every address given when none appears.
-- **Run time:** up to addresses × `--max-pages` + `--max-tx` calls, one at a time, each up to 60 seconds. Run a long collection in the background, or with a timeout sized from that count.
+- **Run time:** up to addresses × `--max-pages` + `--max-tx` calls, one at a time, each up to 60 seconds. The commands run it in the foreground with a timeout sized from that count: a Bash call that outlasts its timeout moves to the background, and the turn its completion starts has none of the command's pre-approvals ([Long steps](permissions-and-isolation.md#long-steps)). Run by hand, a long collection can go in the background.
 - **Needs:** curl and jq; `python3` too when jq rounds large integers (before jq 1.7).
 
 #### `profile.sh`
@@ -399,7 +615,7 @@ A filter from stdin to stdout that removes provider credentials. In a URL of any
 "<auditor-skill root>/scripts/threat-model/collect.sh" --network --repo <dir> --out audit_<n>/bootstrap [options]
 ```
 
-The read-only collector behind `/auditor:threat-model --bootstrap` ([method and output contract](../references/audit-lifecycle/threat-model-bootstrap.md)). It gathers commits whose message matches security keywords, reverts, account-guard lines that were removed or quietly added, churn, an optional fork-parent comparison, provenance signals, prior-vulnerability inputs and the `audit-mem` warm block. It never checks out, builds, runs or modifies the target, and it runs git with the Rule 11c hardening (the hardened call in `scripts/lib/confine.sh`: no environment of the caller's, system and global config dropped, no pager, fsmonitor, hooks, signature helpers, textconv, external diff or transport). Run it directly by its path, from the working directory.
+The read-only collector behind `/auditor:threat-model --bootstrap` ([method and output contract](../references/audit-lifecycle/threat-model-bootstrap.md)). It gathers commits whose message matches security keywords, reverts, account-guard lines that were removed or quietly added, churn, an optional fork-parent comparison, provenance signals, prior-vulnerability inputs and the `audit-mem` warm block. It never checks out, builds, runs or modifies the target, and it runs git with the Rule 11c hardening (the hardened call in `scripts/lib/confine.sh`: no environment of the caller's, system and global config dropped, no pager, fsmonitor, hooks, signature helpers, textconv, external diff or transport). Run it directly by its path, from the working directory. `/auditor:threat-model`, `/auditor:audit-cycle` and `/auditor:audit-assist` pre-approve its `--detect` and `--offline` forms; `--network` always asks.
 
 The mode is the first argument; a mode anywhere else, as in the older `--repo … --out … --offline`, is refused:
 
@@ -454,7 +670,7 @@ Each option is given at most once, except the repeatable `--paths`, `--parent-pa
 "<auditor-skill root>/scripts/rpc-read.sh" program-show <program_id> [--run <R>] [--cluster mainnet-beta|devnet|testnet]
 ```
 
-One read-only read from the chain through the `solana` CLI: an account's current value (`getAccountInfo`), one transaction, or a program's metadata such as its upgrade authority. The CLI runs on a throwaway config in a private temp directory, the endpoint in its `json_rpc_url` and a keypair path that names no file, and the read runs only when `solana config get keypair` reports that path back. Run it directly by its path, from the working directory.
+One read-only read from the chain through the `solana` CLI: an account's current value (`getAccountInfo`), one transaction, or a program's metadata such as its upgrade authority. The CLI runs on a throwaway config in a private temp directory, the endpoint in its `json_rpc_url` and a keypair path that names no file, and the read runs only when `solana config get keypair` reports that path back. Run it directly by its path, from the working directory; the commands that read from RPC pre-approve it.
 
 - **Endpoint:** `$RPC_URL` from the environment, never an argument; with `--cluster`, one of the public endpoints fixed in the script: `https://api.mainnet-beta.solana.com`, `https://api.devnet.solana.com` or `https://api.testnet.solana.com`.
 - **Reads:** `account` runs `solana account <address> --lamports --output-file <temp file>` and prints the address, balance in lamports, owner, executable flag and rent epoch, then the data's length and sha256; the data itself is never printed. `confirm` runs `solana confirm -v <signature>` and drops the CLI's first lines, which name the endpoint and the keypair path. `program-show` runs `solana program show <id>`, or `program-v4 show` for a loader-v4 program, each with a fixed authority so the CLI never looks for a signer, and the output must name the id as its Program Id. The CLI's output and errors pass through `redact.sh`, since its text can name the endpoint, key included. Every control character in what is printed shows as `?`, except TAB and LF.
@@ -472,7 +688,7 @@ One read-only read from the chain through the `solana` CLI: an account's current
 "<auditor-skill root>/scripts/report-to-pdf.sh" [audit_<n>/REPORT.md]
 ```
 
-A best-effort PDF of a report; the Markdown stays the deliverable. The input is `audit_<n>/REPORT.md`, `audit_<n>/RE-AUDIT.md`, `audit_<n>/PR-REPORT.md` or `incident_<n>/INCIDENT_REPORT.md`, relative to the working directory, in a run directory that passes `rundir.sh check`, and a regular file with one link; with no argument it takes the newest `audit_*/REPORT.md`. The PDF is written beside it, `.md` swapped for `.pdf`. Run it directly by its path, from the working directory.
+A best-effort PDF of a report; the Markdown stays the deliverable. The input is `audit_<n>/REPORT.md`, `audit_<n>/RE-AUDIT.md`, `audit_<n>/PR-REPORT.md` or `incident_<n>/INCIDENT_REPORT.md`, relative to the working directory, in a run directory that passes `rundir.sh check`, and a regular file with one link; with no argument it takes the newest `audit_*/REPORT.md`. The PDF is written beside it, `.md` swapped for `.pdf`. Run it directly by its path, from the working directory; `/auditor:audit-cycle` pre-approves it.
 
 - **Rendering:** the report is copied into a private temp directory outside the working directory and rendered there with `pandoc --sandbox -f markdown-raw_tex-raw_attribute --lua-filter "<auditor-skill root>/scripts/pdf/no-remote.lua" --pdf-engine=<xelatex, lualatex or pdflatex, the first found> --pdf-engine-opt=-no-shell-escape`. `--sandbox` keeps pandoc from reading any file but its input and from fetching anything. The filter turns every image into its alt text, drops every raw block and raw inline, shows math as code, in the metadata too, and leaves every element its identifier and classes but no key=value attribute (the LaTeX writer passes some, such as a figure's `latex-placement`, to the engine as written), so no remote image is fetched and no text of the report reaches the TeX engine as TeX. Raw HTML is still parsed, so the report templates' HTML comments drop out instead of printing. The engine runs with kpathsea's paranoid `openin_any=p` and `openout_any=p` and with `shell_escape=f`; the caller's `TEXMFOUTPUT` is dropped, and pandoc sets its own temp directory. The PDF goes into a new file beside the report and is renamed into place; a PDF already there is replaced only when it is a regular file with one link.
 - **Exit:** 0 rendered, or skipped with a message: no report, no pandoc, a pandoc older than 2.15 (no `--sandbox`), no engine, or a render that failed · 2 refused, with one line, `report-to-pdf: refused: <reason>`: another path, two arguments, a run directory that fails the checks, a report that is not a regular file with one link, a PDF in the way that is not one, or a `TMPDIR` inside the working directory.

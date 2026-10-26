@@ -19,7 +19,7 @@ Before starting any phase:
 5. Create a session checkpoint file to track progress across chunks (Rule 3 in OUTPUT-RULES.md)
 6. Remember: **walk the code file by file — never one-shot** (Rule 3)
 7. Apply **Operating Safety** ([OUTPUT-RULES.md Rule 11](OUTPUT-RULES.md#rule-11-operating-safety)) before anything runs: take the execution mode recorded at intake (11a — isolated recommended, native allowed with a report caveat), list every outside service a tool contacts (11b), treat a `.git/` you did not clone yourself as untrusted (11c), and make `.gitignore` containing `*` the first file in `audit_<n>/` (11d)
-8. Resolve every bundled path in this file (`tools/`, `templates/`, `scripts/`, `vendor/trailofbits/`, the corpus) from the auditor-skill root, never the working directory, which is the audited repo ([Rule 11e](OUTPUT-RULES.md#11e--bundled-paths)). The root is the absolute path the skill (`${CLAUDE_SKILL_DIR}`) or command (`${CLAUDE_PLUGIN_ROOT}`) gave you; nothing is filled in here, so it is written `<auditor-skill root>` below. The executables this plan runs: `"<auditor-skill root>/tools/auditor-tools/target/release/audit-scan"`, `"<auditor-skill root>/tools/auditor-tools/target/release/audit-mem"`, and the Trail of Bits plugins when `test -d "<auditor-skill root>/vendor/trailofbits/plugins"` succeeds
+8. Resolve every bundled path in this file (`tools/`, `templates/`, `scripts/`, `vendor/trailofbits/`, the corpus) from the auditor-skill root, never the working directory, which is the audited repo ([Rule 11e](OUTPUT-RULES.md#11e--bundled-paths)). The root is the absolute path the skill (`${CLAUDE_SKILL_DIR}`) or command (`${CLAUDE_PLUGIN_ROOT}`) gave you; nothing is filled in here, so it is written `<auditor-skill root>` below. The executables this plan runs: `"<auditor-skill root>/tools/auditor-tools/target/release/audit-scan"`, `"<auditor-skill root>/tools/auditor-tools/target/release/audit-mem"`, the runners `"<auditor-skill root>/scripts/runner/deps.sh"` (Step 3.2) and `"<auditor-skill root>/scripts/runner/target.sh"` (Step 3.4), the read-only git `"<auditor-skill root>/scripts/git-ro.sh"` and `"<auditor-skill root>/scripts/recipes/web3js-history.sh"` (Steps 3.2 and 3.3), the RPC reader `"<auditor-skill root>/scripts/rpc-read.sh"` (Step 3.1), and the Trail of Bits plugins when `test -d "<auditor-skill root>/vendor/trailofbits/plugins"` succeeds. A `refused:` line from one of them (exit 64) means that step did not run: record it in Coverage & Limitations, never as a PASS or an N/A. git-ro.sh, the two recipes and `target.sh --src .` refuse a checkout whose git directory holds a symbolic link (a hook installed with `ln -s`), borrows objects or has grafts, or that another user owns: ask the human to audit a fresh clone made outside the working directory, as preflight does for project config
 
 ---
 
@@ -63,7 +63,10 @@ RECORD:
 ### 0.2 — Map the Codebase
 
 ```
-ACTION: Use the in-scope paths recorded at intake (audit_<n>/intake.md §1, Q39/Q44), else the defaults in discovery/file-map.md, OR auto-discover:
+ACTION: Use this run's own Layout table (audit_<n>/intake.md §1, Q39/Q44: where the code, the tests and the build files live, and the exclusions), and nothing from an earlier run's directory: intake copies an earlier layout into this table only on the human's yes.
+A run directory reused without a new intake holds an earlier run's table: offer it to the human as /auditor:intake step 4 offers an earlier table. On a yes, set each row's source in that intake.md to "reused from audit_<n> on the human's yes"; on anything else, replace the table there with the defaults. Record which under Earlier layout.
+With a table, also note each directory outside run directories with code in it that no row lists or excludes: the highest such directory (node_modules/, target/), not each one under it.
+Without a table, use the defaults in discovery/file-map.md, OR auto-discover:
   1. List all .rs files under programs/
   2. List all .ts/.tsx files under apps/backend/src/
   3. List all .ts/.tsx files under apps/web/src/
@@ -76,11 +79,13 @@ RECORD:
   - Total TS/TSX files: ___
   - Total instruction handlers: ___
   - Total API endpoints (backend routes + frontend API routes): ___
+  - Exclusions applied, each with its source from the Layout table (report §2.4 Out of Scope): ___
+  - Directories outside run directories with code that no row of the Layout table lists or excludes, not reviewed (report §2.4): ___
 ```
 
 ### 0.3 — Build Instruction Matrix
 
-> **Optional deterministic pre-pass.** If the bundled tools are built (`test -x "<auditor-skill root>/tools/auditor-tools/target/release/audit-scan"`, PRE-FLIGHT 8), run `"<auditor-skill root>/tools/auditor-tools/target/release/audit-scan" --contract=1 <program-path> --out audit_<n>/prescan.json` first — it emits this instruction matrix (plus the account-constraint, PDA-seed, arithmetic, and CPI tables) deterministically at ~$0, so Phase 0.2–0.4 collapse to *reading the JSON* and files with zero scan hits get a spot-check instead of a full read. Also run `"<auditor-skill root>/tools/auditor-tools/target/release/audit-mem" warm --contract=1 --program-id <id>` to load the prior protocol profile, invariants + open false-positive rulings. Use `.audit-memory/` only if you created it (`audit-mem init --contract=1` does, `.gitignore` first); `audit-mem` refuses one the repository tracks (the Rule 11d check, `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false --icase-pathspecs ls-files -- .audit-memory`, run by the tool) or one holding a link. Otherwise pass `--db audit_<n>/audit-mem.db` for a store for this run. Each call carries `--contract=1` where shown; a build older than that contract refuses it (exit 2): proceed as without the tools, and note that they need building again. Treat all pre-scan output as a *map to verify*, never as verdicts. See [references/orchestration/pre-scan.md](references/orchestration/pre-scan.md). Absent the toolchain, build the matrix by hand below.
+> **Optional deterministic pre-pass.** If the bundled tools are built (`test -x "<auditor-skill root>/tools/auditor-tools/target/release/audit-scan"`, PRE-FLIGHT 8), run `"<auditor-skill root>/tools/auditor-tools/target/release/audit-scan" --contract=1 <program-path> --out audit_<n>/prescan.json` first (add `--workflows .github/workflows` when that directory exists, to parse the workflows into the report's `workflows` key; `skipped`/`unknown` name what it could not model) — it emits this instruction matrix (plus the account-constraint, PDA-seed, arithmetic, and CPI tables) deterministically at ~$0, so Phase 0.2–0.4 collapse to *reading the JSON* and files with zero scan hits get a spot-check instead of a full read. Also run `"<auditor-skill root>/tools/auditor-tools/target/release/audit-mem" warm --contract=1 --program-id <id>` to load the prior protocol profile, invariants + open false-positive rulings. Use `.audit-memory/` only if you created it (`audit-mem init --contract=1` does, `.gitignore` first); `audit-mem` refuses one the repository tracks (the Rule 11d check, `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false --icase-pathspecs ls-files -- .audit-memory`, run by the tool) or one holding a link. Otherwise pass `--db audit_<n>/audit-mem.db` for a store for this run. Each call carries `--contract=1` where shown; a build older than that contract refuses it (exit 2): proceed as without the tools, and note that they need building again. Treat all pre-scan output as a *map to verify*, never as verdicts. See [references/orchestration/pre-scan.md](references/orchestration/pre-scan.md). Absent the toolchain, build the matrix by hand below.
 
 ```
 ACTION: Read lib.rs → list every #[instruction] or pub fn handler.
@@ -323,8 +328,10 @@ RECORD: findings per file
 ```
 ACTIONS (some require terminal):
 
-  # Check upgrade authority
-  solana program show <PROGRAM_ID> --url $SOLANA_RPC_URL
+  # Check upgrade authority: a read-only read through the bundled rpc-read.sh, which keeps the endpoint out
+  # of argv, signs nothing and records the read in audit_<n>/disclosures.tsv (Rule 11b); --cluster devnet
+  # for a devnet program, and without --cluster the RPC_URL environment variable names the endpoint
+  "<auditor-skill root>/scripts/rpc-read.sh" program-show <PROGRAM_ID> --run audit_<n> --cluster mainnet-beta
 
   # Check for backdoors
   grep -rn "unsafe" --include="*.rs" programs/
@@ -343,101 +350,61 @@ RECORD: governance configuration + findings
 ```
 ACTIONS:
 
-  # Check for compromised packages: axios 1.14.1 / 0.30.4 (AX) and the hijacked
-  # @solana/web3.js 1.95.6 / 1.95.7 (W3), as exact pins and resolved versions in package.json,
-  # package-lock / npm-shrinkwrap, pnpm (lockfile v5 keys too), yarn v1 + berry and bun
-  AX='(^|[^A-Za-z0-9_.-])axios[@/](npm:)?(1\.14\.1|0\.30\.4)([^0-9]|$)|/axios/-/axios-(1\.14\.1|0\.30\.4)\.tgz|"axios"[[:space:]]*:[[:space:]]*"=?(1\.14\.1|0\.30\.4)"'
-  W3='web3\.js[@/](npm:)?1\.95\.(6|7)([^0-9]|$)|/web3\.js/-/web3\.js-1\.95\.(6|7)\.tgz|"@solana/web3\.js"[[:space:]]*:[[:space:]]*"=?1\.95\.(6|7)"'
-  grep -rnE -e "$AX" -e "$W3" --exclude-dir=node_modules --include='package.json' --include='package-lock.json' \
-    --include='npm-shrinkwrap.json' --include='pnpm-lock.yaml' --include='yarn.lock' --include='bun.lock' .
+  # Check for compromised packages: axios 1.14.1 / 0.30.4 and the hijacked @solana/web3.js
+  # 1.95.6 / 1.95.7, as exact pins and resolved versions in package.json, package-lock /
+  # npm-shrinkwrap, pnpm (lockfile v5 keys too), yarn v1 + berry and bun, each followed by a
+  # character that is not a digit, or at the end of a line
+  grep -rnE --exclude-dir=node_modules --include='package.json' --include='package-lock.json' --include='npm-shrinkwrap.json' --include='pnpm-lock.yaml' --include='yarn.lock' --include='bun.lock' -e '(^|[^A-Za-z0-9_.-])axios[@/](npm:)?(1\.14\.1|0\.30\.4)([^0-9]|$)|/axios/-/axios-(1\.14\.1|0\.30\.4)\.tgz|"axios"[[:space:]]*:[[:space:]]*"=?(1\.14\.1|0\.30\.4)"' -e 'web3\.js[@/](npm:)?1\.95\.(6|7)([^0-9]|$)|/web3\.js/-/web3\.js-1\.95\.(6|7)\.tgz|"@solana/web3\.js"[[:space:]]*:[[:space:]]*"=?1\.95\.(6|7)"' .
   # a package-lock.json or npm-shrinkwrap.json written without "resolved" fields names the
   # package only on the entry's key line (or its "name" line, for an alias), with the
   # version on a line below it
-  grep -rnE -A2 --exclude-dir=node_modules --include='package-lock.json' --include='npm-shrinkwrap.json' \
-    '"(([^"]*/)?node_modules/)?axios": [{]|"name": "axios"' . | grep -E '"version": "(1\.14\.1|0\.30\.4)"'
-  grep -rnE -A2 --exclude-dir=node_modules --include='package-lock.json' --include='npm-shrinkwrap.json' \
-    '"([^"]*/)?@solana/web3\.js": [{]|"name": "@solana/web3\.js"' . | grep -E '"version": "1\.95\.(6|7)"'
-  # history too: every branch, merge commits (against their first parent) and the root
-  # commit; --text because a committed .gitattributes can mark lockfiles binary, which
-  # hides them from -G
-  GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c core.bigFileThreshold=512m \
-    log --all --full-history --root --diff-merges=first-parent --no-patch --oneline --text --no-textconv --no-ext-diff \
-    -G"$AX|$W3" -- '*lock*' '*package.json' '*npm-shrinkwrap.json'
-  # ...and the key-line form in history: each commit that added or removed such an entry
-  KL='"(([^"]*/)?node_modules/)?axios": [{]|"name": "axios"|"version": "(1\.14\.1|0\.30\.4)"|"([^"]*/)?@solana/web3\.js": [{]|"name": "@solana/web3\.js"|"version": "1\.95\.(6|7)"'
-  GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c core.bigFileThreshold=512m \
-    log --all --full-history --root --diff-merges=first-parent -p -U3 --no-color --format='commit %h' --text --no-textconv --no-ext-diff \
-    -G"$KL" -- '*package-lock.json' '*npm-shrinkwrap.json' \
-    | awk 'function bad(k) {return (k ~ /"(([^"]*\/)?node_modules\/)?axios"/ && /"version": "(1\.14\.1|0\.30\.4)"/) ||
-                                   (k ~ /@solana\/web3\.js"/ && /"version": "1\.95\.(6|7)"/)}
-           {sub(/\r$/, "")} /^commit /{c=$2} /^--- /{f=substr($0, 5)} /^[+][+][+] [^\/]/{f=substr($0, 5)} /^@@/{o=n=""}
-           /^[-+ ][[:space:]]*"[^"]*": [{]$/ || /^[-+ ][[:space:]]+"name": /{if (/^-/) o=$0; else if (/^[+]/) n=$0; else o=n=$0}
-           /^[-+ ][[:space:]]+"version": "/{w=bad(o); v=bad(n); if ((/^-/ && w) || (/^[+]/ && v) || (/^ / && w != v)) print c, f, $0}'
+  grep -rnE -A2 --exclude-dir=node_modules --include='package-lock.json' --include='npm-shrinkwrap.json' '"(([^"]*/)?node_modules/)?axios": [{]|"name": "axios"' . | grep -E '"version": "(1\.14\.1|0\.30\.4)"'
+  grep -rnE -A2 --exclude-dir=node_modules --include='package-lock.json' --include='npm-shrinkwrap.json' '"([^"]*/)?@solana/web3\.js": [{]|"name": "@solana/web3\.js"' . | grep -E '"version": "1\.95\.(6|7)"'
+  # history too, both forms: every branch, merge commits (against their first parent) and
+  # the root commit, through the read-only git of Rule 11c, with --text, because a committed
+  # .gitattributes can mark lockfiles binary, which hides them from -G
+  "<auditor-skill root>/scripts/recipes/web3js-history.sh"
   # → known-bad releases (KV-077 Step 2; SC-001, SC-002, SC-005). A hit now is CRITICAL;
   #   a hit in history means rotate every key or credential a build from that window could
-  #   read; a `fatal:` / `lazy fetching disabled` line means a partial clone: the history
+  #   read; a `web3js-history: partial clone` or `shallow clone` line, a `refused:` line,
+  #   or a `fatal:` line, means the history is incomplete or the step did not run: that
   #   part is INCONCLUSIVE
 
   # Check version pinning
   cat apps/backend/package.json | grep -E '[\^~]' # should be minimal
   cat apps/web/package.json | grep -E '[\^~]'
 
-  # Audits, registry queries and any cargo / rustc command (even --version) run from
-  # a scratch dir OUTSIDE the target tree, on copies of the manifest + lockfile, with
-  # the toolchain pinned, so the target's .npmrc / .cargo/config* / rust-toolchain*
-  # cannot steer them — cargo and rustup read those from every parent directory, so
-  # audit_<n>/ inside the tree is not far enough (Rule 11a). Run the block below as
-  # one command: $SCRATCH lasts only as long as its shell, and with it empty
-  # `cd "$SCRATCH"` would stay in the target tree. So the block first checks that it
-  # is an absolute directory outside the working directory:
-  #   OUTCOME: no scratch copy → nothing below ran (npm audit, cargo audit, the
-  #                              quarantine check): never a PASS. Point TMPDIR at an
-  #                              absolute directory outside the target tree if mktemp
-  #                              failed or landed inside it, then run the whole block again
-  SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/auditor-scratch.XXXXXX")   # outside the target tree
-  case "$SCRATCH" in /*) ;; *) SCRATCH= ;; esac      # an absolute path only,
-  case "$SCRATCH/" in "$PWD"/*) SCRATCH= ;; esac     # never inside the working directory
-  if [ -z "$SCRATCH" ] || [ ! -d "$SCRATCH" ]; then
-    echo "OUTCOME: no scratch copy (check TMPDIR)"
-  else
-    TC=$(cd "$SCRATCH" && rustup default | cut -d' ' -f1)   # your own toolchain, never the target's
-    mkdir -p "$SCRATCH/backend" "$SCRATCH/web" "$SCRATCH/rust"
-    cp apps/backend/package.json apps/backend/package-lock.json "$SCRATCH/backend/"
-    cp apps/web/package.json apps/web/package-lock.json "$SCRATCH/web/"
-    cp Cargo.lock "$SCRATCH/rust/"
+  # Audits and registry queries run through the bundled deps.sh, from the working
+  # directory by its quoted path, with no cd first. It copies only the manifests and
+  # lockfiles it is given into a scratch directory outside the target tree and runs
+  # there with the toolchain pinned, so the target's .npmrc / .cargo/config* /
+  # rust-toolchain* never steer it (Rule 11a), and it records each outside service it
+  # contacts in audit_<n>/disclosures.tsv (Rule 11b). Its last line names the output,
+  # audit_<n>/deps/<action>-<k>.txt. Exit 0 = nothing found, 1 = findings,
+  # 3 = blocker (the line says why), 64 = refused.
+  #   OUTCOME: exit 3 or 64 → that check did not run: never a PASS; copy the line into
+  #                           Coverage & Limitations
 
-    # Run npm audit
-    (cd "$SCRATCH/backend" && npm audit)
-    (cd "$SCRATCH/web" && npm audit)
+  # npm audit, one package.json and its lockfile at a time
+  "<auditor-skill root>/scripts/runner/deps.sh" npm-audit --run audit_<n> --manifest apps/backend/package.json --manifest apps/backend/package-lock.json
+  "<auditor-skill root>/scripts/runner/deps.sh" npm-audit --run audit_<n> --manifest apps/web/package.json --manifest apps/web/package-lock.json
 
-    # Cargo audit (SC-004), stderr kept. It exits 1 both for advisories and for an advisory
-    # database it cannot fetch or load (offline, or github.com outside an isolated run's
-    # egress), so the output decides:
-    #   OUTCOME: vulnerabilities found   → findings, SC-004 FAIL
-    #   OUTCOME: advisory DB unavailable → say so in Coverage & Limitations ("advisory DB
-    #                                      unavailable"), or rerun with --no-fetch against
-    #                                      a local DB if one exists
-    #   OUTCOME: not installed           → SC-004 N/A, and Coverage & Limitations says so
-    #   no OUTCOME line and no "error:"  → SC-004 PASS
-    if (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit --version) >/dev/null 2>&1; then
-      (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit --color never) 2>&1 | tee "$SCRATCH/cargo-audit.txt"
-      grep -qE '^error: [0-9]+ vulnerabilit(y|ies) found' "$SCRATCH/cargo-audit.txt" && echo "OUTCOME: vulnerabilities found"
-      grep -qE '^error: .*advisory database' "$SCRATCH/cargo-audit.txt" && echo "OUTCOME: advisory DB unavailable"
-    else
-      echo "OUTCOME: not installed"
-    fi
+  # Cargo audit (SC-004). The advisory database comes from GitHub (RustSec):
+  #   exit 1                               → vulnerabilities found: findings, SC-004 FAIL
+  #   exit 3, "no advisory database"       → say so in Coverage & Limitations ("advisory DB
+  #                                          unavailable"), or run it again with --no-fetch,
+  #                                          which uses the database already in CARGO_HOME
+  #   exit 3, "cargo-audit is not on PATH" → SC-004 N/A, and Coverage & Limitations says so
+  #   exit 0                               → SC-004 PASS
+  "<auditor-skill root>/scripts/runner/deps.sh" cargo-audit --run audit_<n> --manifest Cargo.lock
 
-    # Check quarantine (14-day rule) for newest deps
-    (cd "$SCRATCH" && npm info @anchor-lang/core time | tail -5)
-  fi
+  # Check quarantine (14-day rule) for newest deps: the publish time of each version
+  "<auditor-skill root>/scripts/runner/deps.sh" npm-time --run audit_<n> @anchor-lang/core
 
   # Dependency changes since the baseline (last audited ref; first audit: last
   # release tag) → checklist 11 §11.11: review the published artifacts' code delta
-  # (Rule 11c flags; the same files as §11.11's first lockfile hint)
-  GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c core.bigFileThreshold=512m \
-    diff --text --no-textconv --no-ext-diff --no-color --stat <baseline>..HEAD -- '*.lock' '*-lock.json' \
-    '*npm-shrinkwrap.json' '*-lock.yaml' '*go.sum' '*go.mod' '*Cargo.toml' '*package.json' '*pyproject.toml' \
-    '*requirements*.txt'
+  # (read-only git, Rule 11c; the same files as §11.11's first lockfile hint)
+  "<auditor-skill root>/scripts/git-ro.sh" diff --text --no-color --stat <baseline>..HEAD -- '*.lock' '*-lock.json' '*npm-shrinkwrap.json' '*-lock.yaml' '*go.sum' '*go.mod' '*Cargo.toml' '*package.json' '*pyproject.toml' '*requirements*.txt'
 
 RECORD: dependency audit results
 ```
@@ -454,12 +421,11 @@ ACTIONS:
   # Keypair files in repo
   find . -name "*keypair*.json" -o -name "*delegate*.json" -o -name "id.json" | grep -v node_modules
 
-  # .env files committed (Rule 11c flags)
-  GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false ls-files | grep -i ".env"
+  # .env files committed (read-only git, Rule 11c)
+  "<auditor-skill root>/scripts/git-ro.sh" ls-files | grep -i ".env"
 
-  # Git history check (Rule 11c flags)
-  GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-    log --all --no-textconv --diff-filter=A --name-only -- "*.env" "*.pem" "*secret*"
+  # Git history check (read-only git, Rule 11c)
+  "<auditor-skill root>/scripts/git-ro.sh" log --all --diff-filter=A --name-only -- "*.env" "*.pem" "*secret*"
 
   # NEXT_PUBLIC_ audit
   grep -rn "NEXT_PUBLIC_" apps/web/.env* 2>/dev/null
@@ -473,18 +439,25 @@ RECORD: any secret exposure
 ```
 ACTIONS:
 
-  # Both commands below run target-controlled code (build.rs, proc-macros, and
-  # Anchor.toml [scripts], which `anchor test` executes). Run them in the execution
-  # mode recorded at intake — OUTPUT-RULES Rule 11a (isolated recommended; native
-  # allowed, with the report caveat). If they cannot run in that mode, keep the
-  # source-level verdicts and add a Rule 10 confidence note.
+  # Both runs below build and run target-controlled code (build.rs, proc-macros, and
+  # Anchor.toml [scripts], which `anchor test` executes). The bundled target.sh runs
+  # them in the execution mode recorded at intake — OUTPUT-RULES Rule 11a (isolated
+  # recommended; native allowed, with the report caveat): the stricter of
+  # audit_<n>/exec-mode and AUDITOR_EXEC_MODE, and with none recorded, or none, it
+  # stops (exit 3). It builds a scratch clone of the committed source outside the target
+  # tree, offline after its downloads, in a throwaway HOME and Solana keypair. Run it
+  # from the working directory by its quoted path, with no cd first. Its last line
+  # names the log, audit_<n>/exec/<action>-<k>.log, and the programs' .so files, in
+  # audit_<n>/exec/<action>-<k>/. Exit 0 = ok, 1 = the build or the tests failed,
+  # 3 = blocker (the line says why), 64 = refused. If they cannot run in that mode,
+  # keep the source-level verdicts and add a Rule 10 confidence note.
 
-  # Verify build
-  anchor build 2>&1 | tail -20
-  # Check for warnings, errors
+  # Verify build (--program <name> for one program)
+  "<auditor-skill root>/scripts/runner/target.sh" anchor-build --run audit_<n> --src .
+  # Check its log for warnings, errors
 
-  # Verify tests pass
-  anchor test --skip-local-validator 2>&1 | tail -30
+  # Verify tests pass: the test script runs against no validator, and nothing is deployed
+  "<auditor-skill root>/scripts/runner/target.sh" anchor-test --run audit_<n> --src .
 
   # Check deployment config (render.yaml, fly.toml, docker-compose.yml, etc.)
   # Adapt file names to your deployment platform

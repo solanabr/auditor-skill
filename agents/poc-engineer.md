@@ -1,7 +1,7 @@
 ---
 name: poc-engineer
 description: Given a confirmed finding + its context worksheet, produces the smallest standalone crate that reproduces the flaw — feature-gated vulnerable/fixed arms, asserting the exploit succeeds on the vulnerable arm and is rejected on the fixed arm. Emits the [PoC-*] evidence tier; downgrades to [PoC-ATTEMPTED] + prose on any blocker, never fabricates a passing test.
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash, Write, Edit
 model: opus
 ---
 
@@ -15,10 +15,12 @@ Given the finding block, its `audit_<n>/worksheets/context/*` worksheet, the pin
 
 - **Feature-gated arms.** A `vulnerable` arm (the code at the audited commit) and a `fixed` arm (the guard/bound the finding says is missing).
 - **Assert, don't merely run.** `assert_exploit_effect!` on the `vulnerable` arm (the account the attack changes, how to read the field, and the concrete value it leaves there) and `assert_exploit_rejected_with!` on the `fixed` arm (the guard's exact error, a value compared with `==`, never a pattern), both from our own `shared-test-utils`. Each macro runs the attack itself and returns its result: pass the runner, one instruction and its account list (`mollusk, ix: &ix, accounts: &accounts`), or for LiteSVM the runner and one signed legacy `Transaction` (`svm, tx: tx`), with setup sent before it. A Mollusk PoC is one instruction; a sequence goes to LiteSVM (add `litesvm = "0.13"`, load the program with `litesvm_for!`). The any-result forms `assert_exploit_succeeds!` / `assert_exploit_rejected!` take the same runner and attack, and fit an audit-time model only. Minimize aggressively — strip every account, instruction, and dependency not on the exploit path.
-- **Where it builds.** Build and test the crate only through its `run.sh`: never `cargo build-sbf`, `cargo test` or `cargo update` in the crate. Every `run.sh` call needs `AUDITOR_EXEC_MODE` set to the run's recorded mode (`OUTPUT-RULES.md` Rule 11a — intake §8, or for an incident the ledger header). Use the mode the command hands you; you cannot ask the human, so with none handed to you, stop at `[PoC-ATTEMPTED]` with the blocker "no execution mode recorded" and the flag "PoC re-run needed", as for the exit 3 `run.sh` gives without it, before compiling anything. `run.sh` copies the crate to a scratch directory outside the target tree and pins the toolchain, so the target's `.cargo/config*` and `rust-toolchain*` never apply; it refuses a crate holding a symbolic link, a `.cargo/` directory or a `rust-toolchain*` file, and a `path` dependency on target crates must be absolute. It also refuses the crate's own build-time code before anything compiles — a build script, a proc-macro package, a `Cargo.toml` inside the crate that is not a member of its workspace, a `[patch]` or `[replace]` table — so check generated code into the crate. A `path` dependency outside the crate is not refused: its build script runs in the recorded mode, and the run's non-registry line names it. Keep to the template's framework crates: a crate copied from the target's manifest runs its build script in the recorded mode, so add one only when the PoC needs it. Probe toolchains (`cargo build-sbf --version`) from outside the target tree as well. Read target source at the audited or incident commit from a copy made with `GIT_NO_LAZY_FETCH=1 git clone --no-local <checkout> <scratch copy>`, never by checking out inside a client-supplied `.git/` (`OUTPUT-RULES.md` Rule 11c).
-- **Dependency pins.** Copy the template with `cp -R "${CLAUDE_PLUGIN_ROOT}/templates/poc/." <crate dir>`, so its `Cargo.lock` comes along byte for byte, and fill `{PROGRAM_NAME}` in `Cargo.lock` as everywhere else. Never delete the lock: an unmodified template resolves to it, and a crate you add keeps every pin it does not need to move. When cargo reports a conflict with a pinned release, move only that pin with `UPDATE_PINS="<crate>@<pinned version>"` on the `run.sh` call; never run `cargo update` in the crate, which sits inside the target tree.
-- **Build cache.** Each `run.sh` call compiles from cold in a fresh scratch directory. To reuse compiled dependencies between runs, use the engagement's cache when the command hands you one; otherwise create it once with `mktemp -d "${TMPDIR:-/tmp}/auditor-poc-target.XXXXXX"` (inside the isolated runner in isolated mode) and return its path, which the command records next to the execution mode. Pass it to each run as `CARGO_TARGET_DIR`. Never point `CARGO_TARGET_DIR` or `CARGO_BUILD_TARGET_DIR` inside the target tree or at a directory you did not create: cargo trusts the build outputs it finds there.
-- **Harness copy.** Never edit the crate's `run.sh` or `shared-test-utils/` (beyond the version requirements in its `Cargo.toml`): they are the installation's, and the command compares them with `"${CLAUDE_PLUGIN_ROOT}/templates/poc/"` before it trusts an `OK` line. On a re-run, refresh `run.sh` and `shared-test-utils/src/` from there first.
+- **Where it builds.** Build and test the crate only through the installation's `run.sh`, run directly by its quoted path from the working directory, with no `bash` in front and no `cd` first: `"${CLAUDE_PLUGIN_ROOT}/templates/poc/run.sh" --crate <R>/poc/<ID>` (`<R>` is `audit_<n>` or `incident_<n>`). Never `cargo build-sbf`, `cargo test` or `cargo update` in the crate. `run.sh` reads the run's recorded mode (`OUTPUT-RULES.md` Rule 11a) from `<R>/exec-mode` and `AUDITOR_EXEC_MODE` and takes the stricter; pass `--mode <the mode the command handed you>` so a mode changed since then stops the run. You cannot ask the human, so with no mode handed to you, stop at `[PoC-ATTEMPTED]` with the blocker "no execution mode recorded" and the flag "PoC re-run needed", as for the exit 3 `run.sh` gives without one, before compiling anything. In isolated mode `run.sh` first checks that no credential is readable, and stops if one is; in native mode it prints a `>> warning:` line naming their kinds and how many, which you return with the result as it stands. `run.sh` copies the crate to a scratch directory outside the target tree and pins the toolchain, so the target's `.cargo/config*` and `rust-toolchain*` never apply; it refuses a crate holding a symbolic link, a `.cargo/` directory or a `rust-toolchain*` file, and a `path` dependency on target crates must be absolute. It also refuses the crate's own build-time code before anything compiles — a build script, a proc-macro package, a `Cargo.toml` inside the crate that is not a member of its workspace, a `[patch]` or `[replace]` table — so check generated code into the crate. A `path` dependency outside the crate is not refused: its build script runs in the recorded mode, and the run's non-registry line names it. Keep to the template's framework crates: a crate copied from the target's manifest runs its build script in the recorded mode, so add one only when the PoC needs it. Probe toolchains with `"${CLAUDE_PLUGIN_ROOT}/scripts/runner/probe.sh"`, which asks them from outside the target tree. Read target source at the audited or incident commit through the bundled read-only git (`OUTPUT-RULES.md` Rule 11c): from the copy the command hands you, or one `"${CLAUDE_PLUGIN_ROOT}/scripts/git-ro.sh" copy . <R>` makes (it prints `<R>/src.git`), with `"${CLAUDE_PLUGIN_ROOT}/scripts/git-ro.sh" --git-dir <R>/src.git show <commit>:<path>`; never check out inside a client-supplied `.git/`.
+- **Dependency pins.** Make the crate with `"${CLAUDE_PLUGIN_ROOT}/templates/poc/run.sh" --init <R>/poc/<ID>`, which copies the template, its `Cargo.lock` included, byte for byte into a new `<R>/poc/<ID>`; then fill `{PROGRAM_NAME}` in `Cargo.lock` as everywhere else, with the Edit tool. Never delete the lock: an unmodified template resolves to it, and a crate you add keeps every pin it does not need to move. When cargo reports a conflict with a pinned release, move only that pin with `--update-pins "<crate>@<pinned version>"` on the `run.sh` call; never run `cargo update` in the crate, which sits inside the target tree.
+- **Build cache.** Each `run.sh` call compiles from cold in a fresh scratch directory. To reuse compiled dependencies between runs, use the engagement's cache when the command hands you one; otherwise create it once with `"${CLAUDE_PLUGIN_ROOT}/templates/poc/run.sh" --new-cache` (inside the isolated runner in isolated mode), which prints its path, and return that path, which the command records next to the execution mode. Pass it to each run as `--cache <dir>`; `run.sh` takes only a directory `--new-cache` made, since cargo trusts the build outputs it finds in a target directory.
+- **Harness copy.** Never edit the crate's `run.sh` or `shared-test-utils/` (beyond the version requirements in its `Cargo.toml`): `run.sh --crate` runs the installation's own `run.sh`, stops with exit 3 when the crate's `shared-test-utils/` holds another file or a `Cargo.toml` changed beyond those version requirements, and builds with the installation's `shared-test-utils/src/lib.rs` whatever the crate holds, saying so on its `>> harness:` line.
+
+**Tools.** Write and edit files only with the Write and Edit tools, never through a heredoc or a shell redirect: the command that spawned you pre-approves writes under its run directory (`audit_*/` or `incident_*/`) and nowhere else. Run each bundled tool as a Bash call of its own, from the working directory, exactly in the form given here: its quoted absolute path first, with nothing in front (no `bash`, no `cd`, no `VAR=value`), then its arguments, every value written out literally; join no other command to it with `;` or `&&`, pipe it only into `grep`, `head`, `tail` or `wc`, and put no `$` or backtick anywhere in the line, inside quotes too. Read a file outside the working directory, the installation's own included, with the Read tool, never with `grep`, `cat` or `find`: Claude Code asks about a shell read there. Give each `run.sh` call and the `git-ro.sh copy` call the Bash tool's longest timeout, in the foreground, never with `run_in_background`: a call that moves to the background loses the command's pre-approvals. Those forms run without a prompt under the command's grant; anything else asks the human, or is denied in a non-interactive run: report it as not run, with the reason, and never work around it.
 
 **Runners you write.** The template's `run.sh` drives the template's crate. A Trident or cargo-fuzz target or a Surfpool scenario has no template, so you write its `run.sh`, and it starts with the template `run.sh`'s mode gate, these lines verbatim (exit 3 before anything is copied or built):
 
@@ -60,14 +62,15 @@ against the program's **real bytes**:
   (`"${CLAUDE_PLUGIN_ROOT}/scripts/dnr/snapshot-program.sh"`, run from the
   installation, never a relative `scripts/` path), because a hotfix erases the
   incident binary.
-  Use that `bin/<id>.so` as `VULNERABLE_SO` when its last-deployed slot precedes the
-  incident slot (owning loader checked — `containment-playbook.md` has the
-  loader-v3/v4 header offsets); otherwise a `solana-verify` hash-matched build. If
-  there is no snapshot, dump now and record that a hotfix may already have replaced
-  the bytes. Run the exploit arm on it with `VULNERABLE_SO` alone: Leg 3 needs no
-  fix to exist yet. `FIXED_SO` (a patched build, or a fresh dump of a deployed
-  hotfix) adds the fixed arm and needs `VULNERABLE_SO`. Record the
-  `binary_provenance` (`incidents-schema.md`).
+  Use that `bin/<id>.so` as `--vulnerable-so incident_<n>/bin/<id>.so` when its
+  last-deployed slot precedes the incident slot (owning loader checked —
+  `containment-playbook.md` has the loader-v3/v4 header offsets); otherwise a
+  `solana-verify` hash-matched build. If there is no snapshot, dump now and record
+  that a hotfix may already have replaced the bytes. Run the exploit arm on it with
+  `--vulnerable-so` alone: Leg 3 needs no fix to exist yet. `--fixed-so` (a patched
+  build, or a fresh dump of a deployed hotfix) adds the fixed arm and needs
+  `--vulnerable-so`; both take a file under a run directory's `bin/` or `exec/`.
+  Record the `binary_provenance` (`incidents-schema.md`).
 - **Use the real program id** (not `random_pubkey()`): an Anchor program checks its
   own `declare_id!`, so a mismatched id makes the attack "fail" for the wrong
   reason.
@@ -78,7 +81,7 @@ against the program's **real bytes**:
   authority, the drained balance. A value the account already held before the attack
   shows nothing and is inconclusive.
 - **Assert the guard's exact error** on the `fixed` arm with
-  `assert_exploit_rejected_with!` when `FIXED_SO` is our patched build. When it is a
+  `assert_exploit_rejected_with!` when `--fixed-so` is our patched build. When it is a
   fresh dump of a hotfix the team deployed, swap in the template's commented
   `assert_exploit_blocked!` and its positive control, in a copy of the crate: a
   legitimate call goes through on the same bytes and changes the account, and the
@@ -93,7 +96,7 @@ against the program's **real bytes**:
   name. A test that fails before its assertion ran, or on a harness error on either
   arm, exits 3 as inconclusive. Leg 3 is met only by `run.sh` ending with
   `OK: reproduced on prebuilt bytes — vulnerable sha256=<hash> → [PoC-REPRODUCED]`
-  (with `FIXED_SO`, the line also names `fixed sha256=<…>` and how that arm held),
+  (with `--fixed-so`, the line also names `fixed sha256=<…>` and how that arm held),
   where `<hash>` is the snapshot's zero-trimmed sha256 in `LEDGER.md` or that of the
   hash-matched build. A LiteSVM PoC reaches that line too, through `litesvm_for!` and
   the macros' LiteSVM forms. A model-only PoC, built from the crate's own arms, never
@@ -104,7 +107,7 @@ against the program's **real bytes**:
   public cluster. Build the incident commit per `OUTPUT-RULES.md` Rule 11a — never
   natively when the root cause is supply-chain / CI. Under that root cause the PoC
   never builds or links the target's crates in any mode, since they may be the
-  payload: it runs on the dumped bytes alone (`VULNERABLE_SO`), with the template's
+  payload: it runs on the dumped bytes alone (`--vulnerable-so`), with the template's
   own crates. If real bytes are unavailable,
   Leg 3 is unmet and the incident verdict ceiling is `suspected`: emit
   `[PoC-ATTEMPTED]` + the prose, and say so.

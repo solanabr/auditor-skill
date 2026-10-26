@@ -35,8 +35,8 @@ grep "resolved" package-lock.json | sort -u | head -20
 
 **Step 4: Check for install scripts in dependencies**
 ```
-# Malicious packages often use postinstall scripts
-npm ls --all 2>/dev/null | head -5
+# Malicious packages often use postinstall scripts: the count of locked packages that run one (npm 7+ lockfiles)
+grep -c '"hasInstallScript": true' package-lock.json 2>/dev/null
 grep -r "postinstall\|preinstall" node_modules/*/package.json 2>/dev/null | grep -v "node_modules/.*node_modules" | head -20
 ```
 - ✅ PASS: No suspicious install scripts, or `--ignore-scripts` used for untrusted packages
@@ -44,7 +44,7 @@ grep -r "postinstall\|preinstall" node_modules/*/package.json 2>/dev/null | grep
 
 **Step 5: Check for package-lock.json in repo**
 ```
-GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false ls-files package-lock.json   # Rule 11c flags
+"<auditor-skill root>/scripts/git-ro.sh" ls-files package-lock.json   # read-only git (Rule 11c)
 ```
 - ✅ PASS: Lockfile is committed (prevents resolution attacks)
 - ❌ FAIL: Lockfile not committed — every install resolves fresh

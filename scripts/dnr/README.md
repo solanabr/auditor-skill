@@ -48,9 +48,11 @@ A collection is the slow step: `collect.sh` makes up to addresses ×
 usually well under one second on a healthy endpoint. No argument raises the caps
 set in the environment: `AUDITOR_RPC_MAX_PAGES` (default 100),
 `AUDITOR_RPC_MAX_TX` (default 10000) and `AUDITOR_RPC_MAX_ADDRESSES` (default
-25); a default over a cap set lower drops to that cap. Run a long one in the
-background, or with a timeout sized from that call count; never let a short
-tool timeout cut it off unnoticed. A run stopped by INT, TERM or HUP records
+25); a default over a cap set lower drops to that cap. `/auditor:hunt` and
+`/auditor:respond` run it in the foreground with a timeout sized from that call
+count: a Bash call that outlasts its timeout moves to the background, and the
+turn its completion starts has none of the command's pre-approvals. Run by hand,
+a long one can go in the background. A run stopped by INT, TERM or HUP records
 what it had not finished as collection gaps and prints its closing lines. A run
 whose write to a corpus file fails (a full disk, say) stops there: it records
 what it had not finished as gaps while `collection-gaps.tsv` still takes them,
@@ -243,12 +245,16 @@ account's current value — at `finalized`, not in log text. See
 
 ## Not a sandbox
 
-These scripts run on the auditor's machine; `collect.sh` makes outbound RPC calls.
-The `auditor:dnr-analyze` skill pre-approves `profile.sh`, `frames.py`, `deltas.py`
-and `jq-ro.sh` inside its fork, and `audit-logs` from `tools/auditor-tools/`, each
-run directly by its path and reading only files inside a run directory;
-`collect.sh`, `snapshot-program.sh` and `redact.sh` still ask for approval. Those
-lists, and these recipes, shape intent and are not a security boundary (see
+These scripts run on the auditor's machine; `collect.sh` and `snapshot-program.sh`
+make outbound RPC calls. The `auditor:dnr-analyze` skill pre-approves `profile.sh`,
+`frames.py`, `deltas.py` and `jq-ro.sh` inside its fork, and `audit-logs` from
+`tools/auditor-tools/`, each run directly by its path and reading only files inside
+a run directory. `/auditor:hunt` and `/auditor:respond` pre-approve
+`snapshot-program.sh` and `collect.sh`, which take only `incident_<n>` paths and
+the endpoint and caps your environment sets, and run the collector only with the
+addresses, window and caps you approved (`--confirmed`); a line that pipes into
+`redact.sh` still asks. Each script's own checks bound what it can do; neither they
+nor those pre-approvals confine the agent or the machine (see
 `references/detection-response/README.md` § "allowed-tools is not a sandbox").
 Confinement, when you need it, is an isolated run mode
 (`OUTPUT-RULES.md` Rule 11a).

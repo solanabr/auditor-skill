@@ -421,6 +421,15 @@ eq "audit-scan: a link in the tree is listed, not followed" \
   "$(python3 -I -c 'import json,sys; print(" ".join(s["file"] for s in json.load(open(sys.argv[1]))["skipped"]))' "$W/audit_1/prescan.json")" \
   "./linkdir ./src/link.rs"
 
+# --workflows reads the *.yml files of a directory into the report.
+mkdir -p "$W/.github/workflows"
+printf 'name: ci\non:\n  pull_request_target:\n    types: [opened]\npermissions:\n  contents: write\njobs:\n  build:\n    steps:\n      - uses: actions/checkout@v5\n        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n      - run: echo hi\n' > "$W/.github/workflows/ci.yml"
+( cd "$W" && "$SCAN" --contract=1 ./src --workflows .github/workflows ) > "$T/wf.out" 2> "$T/wf.err"
+eq "audit-scan: --workflows parses a workflow, exit 0, nothing on stderr" "$?:$(cat "$T/wf.err")" "0:"
+eq "audit-scan: --workflows reads the trigger, job and step facts" \
+  "$(python3 -I -c 'import json,sys; w=json.load(open(sys.argv[1]))["workflows"]; print(len(w), w[0]["triggers"][0], w[0]["jobs"][0]["steps"][0]["uses"])' "$T/wf.out")" \
+  "1 pull_request_target actions/checkout@v5"
+
 P=VaultProg1111
 S=unchecked_sub@vault.balance
 printf 'fn withdraw() {\n    require!(vault.balance >= amount);\n    vault.balance -= amount;\n}\n' > "$W/src/withdraw.rs"

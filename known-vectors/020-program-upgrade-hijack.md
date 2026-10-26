@@ -14,8 +14,8 @@ Attacker compromises the upgrade authority wallet → deploys malicious program 
 
 **Step 1: Check current upgrade authority**
 ```
-# For mainnet-deployed program:
-solana program show <PROGRAM_ID> --url mainnet-beta
+# For a mainnet-deployed program (--cluster devnet for a devnet one), read-only through the bundled RPC reader:
+"<auditor-skill root>/scripts/rpc-read.sh" program-show <PROGRAM_ID> --run audit_<n> --cluster mainnet-beta
 # Look for "Authority" field
 ```
 - ✅ PASS: Authority is a multisig, governance program, or `none` (immutable)
@@ -30,8 +30,8 @@ grep -rn "upgrade_authority\|authority\|wallet\|program_id" Anchor.toml
 
 **Step 3: Verify upgrade process is documented**
 ```
-# Check for deploy/upgrade documentation
-find . -name "*.md" | xargs grep -li "upgrade\|deploy" 2>/dev/null
+# Check for deploy/upgrade documentation: every Markdown file that mentions either, whatever its name
+grep -rliE --include='*.md' 'upgrade|deploy' .
 ```
 - ✅ PASS: Documented upgrade process with multi-party approval
 - ❌ FAIL: No upgrade documentation, ad-hoc process

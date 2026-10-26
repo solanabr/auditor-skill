@@ -1,0 +1,39 @@
+name: vendor-delta
+
+# On every pull request that moves the vendor/trailofbits gitlink, scripts/tob-delta-pr.sh writes the upstream
+# delta to the job summary (CONTRIBUTING.md §5, "Bumping vendor/trailofbits"). Advisory: not a required check,
+# and it never approves or merges. It needs no secret, reads contents only and keeps no credential; its one
+# outside contact is a fetch of https://github.com/trailofbits/skills by the names of its default branch,
+# branches and tags.
+# A pull_request run takes this workflow and the scripts from the PR's merge commit, so the summary counts only
+# when the PR's file list shows nothing but the gitlink and the README pin line, as its first line says. The job
+# runs on every PR and the script finds the move itself, so no paths filter has to match a gitlink.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  delta:
+    name: vendor/trailofbits upstream delta (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout (the merge commit and its parents)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          submodules: false
+          persist-credentials: false
+
+      # HEAD is the PR's merge commit, whose first parent is the base; test-corpus-pins.sh runs this step's script
+      - name: Summarise the upstream delta of a vendor/trailofbits move
+        run: |
+          if ! git rev-parse --verify -q 'HEAD^2' > /dev/null; then
+            echo "::error::HEAD is not the PR's merge commit, so HEAD^1 is not its base"
+          elif bash scripts/tob-delta-pr.sh 'HEAD^1' HEAD >> "$GITHUB_STEP_SUMMARY"; then
+            exit 0
+          fi
+          echo "The upstream delta could not be summarised; this job's log says why. Run the delta review locally (CONTRIBUTING.md §5)." >> "$GITHUB_STEP_SUMMARY"
+          exit 1

@@ -6,7 +6,7 @@ This is the PROFESSIONAL, findings-focused deliverable handed to the client —
 structured the way public Solana security reports are (Trail of Bits, OtterSec,
 Neodyme, Zellic, Zenith, Halborn, Certora). It is DISTINCT from
 templates/report-template.md, which is the INTERNAL item-by-item verdict report
-(1446-item checklist grid + 1-10 risk score). Use THIS file when producing the
+(1459-item checklist grid + 1-10 risk score). Use THIS file when producing the
 report the client reads.
 
 HOW TO USE:
@@ -36,7 +36,7 @@ the proprietary knowledge base, and re-author all conventions in original wordin
 
 |                       |                                                        |
 | --------------------- | ------------------------------------------------------ |
-| **Auditor**           | auditor-skill v7.6                                     |
+| **Auditor**           | auditor-skill v7.7                                     |
 | **Client**            | {client / organization}                                |
 | **Protocol**          | {protocol / product name}                              |
 | **Report Title**      | {e.g. "Vault Program Security Assessment"}             |
@@ -254,6 +254,11 @@ front-end UI, deployment keys/opsec, economic/game-theoretic soundness of the
 tokenomics beyond code correctness, and any code outside the listed commits.
 Also list anything that was in the repo but deliberately NOT reviewed, and why
 (e.g. delivered closed-source / compiled-only, or explicitly de-scoped by client).
+List every exclusion in the Layout table of audit_<n>/intake.md §1, with its
+reason and its source as the table gives it. A reused exclusion narrows coverage
+on an earlier run's answer, so its source reads "reused from audit_<k> on the
+human's yes". Also list each directory outside run directories with code in it
+that no row of that table lists or excludes (FULL-AUDIT 0.2), as not reviewed.
 -->
 
 - {e.g. Third-party programs invoked via CPI (SPL Token, Jupiter) — assumed correct.}
@@ -262,6 +267,8 @@ Also list anything that was in the repo but deliberately NOT reviewed, and why
 - {e.g. Deployment process, key custody, and operational security (see Disclaimer).}
 - {e.g. Economic model / tokenomics design beyond on-chain code correctness.}
 - {e.g. Program X, delivered as a compiled artifact only — source not provided, could not be reviewed.}
+- {e.g. `vendor/` — vendored upstream code; reused from audit_<k> on the human's yes.}
+- {e.g. `scripts/migrations/` — code no row of the intake Layout table lists; not reviewed.}
 - {Any code outside the commits in §2.2.}
 
 ---
@@ -380,7 +387,7 @@ scopes the assurance the client should take away. Cover:
 - **Blockers** — {Anything that constrained coverage: code delivered late,
   portions unbuildable, closed-source components, or the engagement time box.}
 - **Execution mode** — {isolated: <container / VM / sandbox> | native: target-controlled code (builds, tests, PoCs) ran on the auditor's machine — steps: …} (OUTPUT-RULES Rule 11a).
-- **Outside services** — {one line per tool → service → what was sent, and per live probe of DEP-072 / DEP-073 (QUESTIONS.md Q47) → host or bucket → the request | none} (OUTPUT-RULES Rule 11b).
+- **Outside services** — {one line per row of the engagement's `disclosures.tsv` files (tool → service → what was sent), then one per contact no row holds: the builds' own downloads, an MCP server, WebFetch, a Trail of Bits tool or anything run by hand (tool → service → what was sent), and per live probe of DEP-072 / DEP-073 (QUESTIONS.md Q47) → host or bucket → the request | none} (OUTPUT-RULES Rule 11b).
 
 ---
 

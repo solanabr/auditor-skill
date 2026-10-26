@@ -307,57 +307,6 @@ if [ -n "$MODE_ARG" ] && [ "$MODE_ARG" != "$MODE" ]; then
 fi
 echo ">> execution mode: $MODE (the stricter of $SOURCES)"
 
-# What the incident check runs with python3 -I: "<INCIDENTS.json> [<INC-n.k>]" prints that incident's
-# root_cause_class, or with no id supply_chain_or_ci when any incident has it and "other" otherwise; exit 3
-# with the reason when the file, an incident or a class cannot be read.
-INCIDENT_PY='import json, os, stat, sys
-
-CLASSES = ("code_flaw", "key_compromise", "oracle_or_dependency", "economic_design", "off_chain",
-           "supply_chain_or_ci", "unknown")
-LIMIT = 4 * 1024 * 1024
-
-
-def say(text, status):
-    print(text)
-    sys.exit(status)
-
-
-path, wanted = sys.argv[1], sys.argv[2]
-try:
-    st = os.lstat(path)
-except FileNotFoundError:
-    say("is missing", 3)
-except OSError:
-    say("cannot be read", 3)
-if not stat.S_ISREG(st.st_mode):
-    say("is not a regular file", 3)
-if st.st_size > LIMIT:
-    say("is larger than 4 MiB", 3)
-try:
-    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NOCTTY", 0))
-    with os.fdopen(fd, "rb") as f:
-        data = json.loads(f.read(LIMIT + 1).decode("utf-8"))
-except (OSError, UnicodeDecodeError, ValueError, RecursionError):
-    say("cannot be read as JSON", 3)
-incidents = data.get("incidents") if isinstance(data, dict) else None
-if not isinstance(incidents, list):
-    say("holds no incidents list", 3)
-incidents = [i for i in incidents if isinstance(i, dict)]
-if wanted:
-    incidents = [i for i in incidents if i.get("id") == wanted]
-    if not incidents:
-        say("records no incident %s" % wanted, 3)
-    if len(incidents) > 1:
-        say("records %s more than once" % wanted, 3)
-if not incidents:
-    say("records no incident", 3)
-for i in incidents:
-    if i.get("root_cause_class") not in CLASSES:
-        say("gives %s no root_cause_class from incidents-schema.md" % (wanted or "an incident"), 3)
-if wanted:
-    say(incidents[0]["root_cause_class"], 0)
-say("supply_chain_or_ci" if any(i["root_cause_class"] == "supply_chain_or_ci" for i in incidents) else "other", 0)
-'
 case "$R" in
   incident_*)
     inc=""
@@ -366,7 +315,8 @@ case "$R" in
     command -v python3 >/dev/null 2>&1 ||
       blocker "python3 is not on PATH, so target.sh cannot read the root_cause_class in $json (OUTPUT-RULES.md Rule 11a) — nothing was copied or built."
     rc=0
-    cls=$( (cd / && exec python3 -I -c "$INCIDENT_PY" "$WT/$json" "$inc") ) || rc=$?
+    iso_incident_class "$WT/$json" "$inc" || rc=$?
+    cls=$ISO_CLASS
     if [ "$rc" != 0 ]; then
       [ "$rc" = 3 ] && [ -n "$cls" ] || cls="cannot be read"
       blocker "$json $cls: an incident's code is built only once $json records its root_cause_class (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built."
@@ -596,7 +546,7 @@ printf '>> target.sh %s, execution mode %s; HOME %s (throwaway, with a fresh Sol
 # ---- the copy ------------------------------------------------------------------------------------------
 if [ "$SRC_KIND" = repo ]; then
   printf '>> git clone --no-local --no-checkout --no-recurse-submodules --template= %s\n' "$SRC_SHOWN" >&9
-  CONFINE_CEILING=${S%/*} hgit "$S" -c protocol.file.allow=always \
+  CONFINE_ALLOW_PROTOCOL=file CONFINE_CEILING=${S%/*} hgit "$S" -c protocol.file.allow=always \
     clone --no-local --no-checkout --no-recurse-submodules --template= -- "$SRC_ABS" "$S/src" </dev/null >&9 2>&9 ||
     finish 3 "git could not clone $SRC_SHOWN"
   SHA=$(hgit "$S/src" rev-parse --verify --quiet --end-of-options "${REV:-HEAD}^{commit}" 2>&9) && [ -n "$SHA" ] ||

@@ -22,44 +22,30 @@ cat package.json apps/backend/package.json apps/web/package.json | grep -E "\"@|
 
 **Step 2: Check for known compromised packages**
 ```
-# Known-bad releases: axios 1.14.1 / 0.30.4 (AX) and the hijacked @solana/web3.js 1.95.6 / 1.95.7 (W3). Each
+# Known-bad releases: axios 1.14.1 / 0.30.4 and the hijacked @solana/web3.js 1.95.6 / 1.95.7. The first grep
 # finds exact pins and resolved versions in package.json, package-lock / npm-shrinkwrap, pnpm (lockfile v5 keys
-# too), yarn v1 + berry and bun; ranges such as "^1.95.7" do not match on their own:
-AX='(^|[^A-Za-z0-9_.-])axios[@/](npm:)?(1\.14\.1|0\.30\.4)([^0-9]|$)|/axios/-/axios-(1\.14\.1|0\.30\.4)\.tgz|"axios"[[:space:]]*:[[:space:]]*"=?(1\.14\.1|0\.30\.4)"'
-W3='web3\.js[@/](npm:)?1\.95\.(6|7)([^0-9]|$)|/web3\.js/-/web3\.js-1\.95\.(6|7)\.tgz|"@solana/web3\.js"[[:space:]]*:[[:space:]]*"=?1\.95\.(6|7)"'
-grep -rnE -e "$AX" -e "$W3" --exclude-dir=node_modules --include='package.json' --include='package-lock.json' \
-  --include='npm-shrinkwrap.json' --include='pnpm-lock.yaml' --include='yarn.lock' --include='bun.lock' .
+# too), yarn v1 + berry and bun, each followed by a character that is not a digit or at the end of a line; ranges such as "^1.95.7" do
+# not match on their own:
+grep -rnE --exclude-dir=node_modules --include='package.json' --include='package-lock.json' --include='npm-shrinkwrap.json' --include='pnpm-lock.yaml' --include='yarn.lock' --include='bun.lock' -e '(^|[^A-Za-z0-9_.-])axios[@/](npm:)?(1\.14\.1|0\.30\.4)([^0-9]|$)|/axios/-/axios-(1\.14\.1|0\.30\.4)\.tgz|"axios"[[:space:]]*:[[:space:]]*"=?(1\.14\.1|0\.30\.4)"' -e 'web3\.js[@/](npm:)?1\.95\.(6|7)([^0-9]|$)|/web3\.js/-/web3\.js-1\.95\.(6|7)\.tgz|"@solana/web3\.js"[[:space:]]*:[[:space:]]*"=?1\.95\.(6|7)"' .
 # A package-lock.json or npm-shrinkwrap.json written without "resolved" fields names the package only on the
 # entry's key line (or its "name" line, for an alias), with the version on a line below it:
-grep -rnE -A2 --exclude-dir=node_modules --include='package-lock.json' --include='npm-shrinkwrap.json' \
-  '"(([^"]*/)?node_modules/)?axios": [{]|"name": "axios"' . | grep -E '"version": "(1\.14\.1|0\.30\.4)"'
-grep -rnE -A2 --exclude-dir=node_modules --include='package-lock.json' --include='npm-shrinkwrap.json' \
-  '"([^"]*/)?@solana/web3\.js": [{]|"name": "@solana/web3\.js"' . | grep -E '"version": "1\.95\.(6|7)"'
-# ...and anywhere in history: every branch, merge commits (against their first parent) and the root commit
-# (OUTPUT-RULES Rule 11c flags; --text because a committed .gitattributes can mark lockfiles binary, which hides
-# them from -G):
-GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c core.bigFileThreshold=512m \
-  log --all --full-history --root --diff-merges=first-parent --no-patch --oneline --text --no-textconv --no-ext-diff \
-  -G"$AX|$W3" -- '*lock*' '*package.json' '*npm-shrinkwrap.json'
-# ...and the key-line form in history: each commit that added or removed such an entry
-KL='"(([^"]*/)?node_modules/)?axios": [{]|"name": "axios"|"version": "(1\.14\.1|0\.30\.4)"|"([^"]*/)?@solana/web3\.js": [{]|"name": "@solana/web3\.js"|"version": "1\.95\.(6|7)"'
-GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c core.bigFileThreshold=512m \
-  log --all --full-history --root --diff-merges=first-parent -p -U3 --no-color --format='commit %h' --text --no-textconv --no-ext-diff \
-  -G"$KL" -- '*package-lock.json' '*npm-shrinkwrap.json' \
-  | awk 'function bad(k) {return (k ~ /"(([^"]*\/)?node_modules\/)?axios"/ && /"version": "(1\.14\.1|0\.30\.4)"/) ||
-                                 (k ~ /@solana\/web3\.js"/ && /"version": "1\.95\.(6|7)"/)}
-         {sub(/\r$/, "")} /^commit /{c=$2} /^--- /{f=substr($0, 5)} /^[+][+][+] [^\/]/{f=substr($0, 5)} /^@@/{o=n=""}
-         /^[-+ ][[:space:]]*"[^"]*": [{]$/ || /^[-+ ][[:space:]]+"name": /{if (/^-/) o=$0; else if (/^[+]/) n=$0; else o=n=$0}
-         /^[-+ ][[:space:]]+"version": "/{w=bad(o); v=bad(n); if ((/^-/ && w) || (/^[+]/ && v) || (/^ / && w != v)) print c, f, $0}'
+grep -rnE -A2 --exclude-dir=node_modules --include='package-lock.json' --include='npm-shrinkwrap.json' '"(([^"]*/)?node_modules/)?axios": [{]|"name": "axios"' . | grep -E '"version": "(1\.14\.1|0\.30\.4)"'
+grep -rnE -A2 --exclude-dir=node_modules --include='package-lock.json' --include='npm-shrinkwrap.json' '"([^"]*/)?@solana/web3\.js": [{]|"name": "@solana/web3\.js"' . | grep -E '"version": "1\.95\.(6|7)"'
+# ...and anywhere in history, both forms: every branch, merge commits (against their first parent) and the root
+# commit, through the read-only git of OUTPUT-RULES Rule 11c, with --text, because a committed .gitattributes can
+# mark lockfiles binary, which hides them from -G. Each form prints under its own heading:
+"<auditor-skill root>/scripts/recipes/web3js-history.sh"
 ```
-- ✅ PASS: Zero matches in the tree, and either zero matches in history or evidence that every key or credential a build from that window could read was rotated
+- ✅ PASS: Zero matches in the tree, no `refused:` line, and either no line under either heading of `web3js-history.sh` or evidence that every key or credential a build from that window could read was rotated
 - ❌ FAIL: Compromised package version in the tree — CRITICAL; or a hit in history with no evidence of rotation — every key or credential a build containing it could read is exposed: rotate it
-- ⚠️ INCONCLUSIVE (history part): a `fatal:` or `lazy fetching disabled` line means the checkout is a partial clone with incomplete history (OUTPUT-RULES Rule 11c); the history search did not run, so it is never a PASS
+- ⚠️ INCONCLUSIVE (history part): a `web3js-history: partial clone` or `web3js-history: shallow clone` line, a `refused:` line, or a `fatal:` line, means the history is incomplete or the step did not run (OUTPUT-RULES Rule 11c), so that part is never a PASS
 
 **Step 3: Run npm audit**
 ```
-# from a scratch dir OUTSIDE the target tree holding copies of package.json + the lockfile (OUTPUT-RULES Rule 11a)
-npm audit --omit=dev 2>/dev/null | tail -20
+# on copies of package.json and its lockfile, outside the target tree (OUTPUT-RULES Rule 11a); dev dependencies
+# are audited too, since a malicious one runs its install scripts like any other. The report is in the file the
+# last line names
+"<auditor-skill root>/scripts/runner/deps.sh" npm-audit --run audit_<n> --manifest package.json --manifest package-lock.json
 ```
 - ✅ PASS: Zero vulnerabilities, or only low/informational
 - ⚠️ PARTIAL: Moderate vulnerabilities
@@ -67,8 +53,8 @@ npm audit --omit=dev 2>/dev/null | tail -20
 
 **Step 4: Check package publish dates (14-day quarantine)**
 ```
-# For recently added packages, verify they're not brand-new (run outside the target tree, Rule 11a):
-npm info @anchor-lang/core time --json 2>/dev/null | tail -5
+# For recently added packages, verify they're not brand-new: the publish time of each version
+"<auditor-skill root>/scripts/runner/deps.sh" npm-time --run audit_<n> @anchor-lang/core
 ```
 - ✅ PASS: All packages' installed versions are >14 days old
 - ❌ FAIL: Package version published <14 days ago

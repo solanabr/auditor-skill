@@ -1,0 +1,16 @@
+# Fixture (near misses for R9): references that are not a full-SHA pin of a GitHub repository; R9 lists none.
+name: f77-pin-near-misses
+on: push
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: example/short-sha-action@08c6903
+      - uses: example/long-hex-action@08c6903cd8c0fde910a37f88322edcfb5dd907a8f
+      - uses: docker://ghcr.io/example/image@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      - uses: ./.github/actions/local
+      # - uses: example/retired-action@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v1.0.0
+      - run: echo "built from 08c6903cd8c0fde910a37f88322edcfb5dd907a8"

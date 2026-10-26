@@ -108,26 +108,22 @@
 #   iso_copy_new <file> <path>   copies the regular file <file>, never a symbolic link, into <path>, which
 #                                must not exist (a link counts), through the descriptor opened at its
 #                                creation; status 1 when it cannot.
-#   iso_disclosures_ok <R>       status 0 when <R>/disclosures.tsv is absent, or a regular file with one link
-#                                whose first line is the header.
-#   iso_disclose <R> <tool> <service> <kind> <value>...
-#                                adds one row to <R>/disclosures.tsv (OUTPUT-RULES.md Rule 11b), creating it,
-#                                header first, with noclobber when it is absent; status 1 when it cannot.
-#                                The row is time (UTC, YYYY-MM-DDTHH:MM:SSZ), tool (the script, relative to
-#                                the installation root), service (the domain that received the requests),
-#                                sent ("<kind>: <value> <value> ...") and count (how many values), separated
-#                                by tabs, each control character in a cell printed as ?. This is the row
-#                                confine_disclose writes in the collectors' branch of scripts/lib/confine.sh;
-#                                once both are in one tree, the runners call that one and this goes.
-# Needs bash >= 3.2, python3 (the self-check, the keypair and the watchdog), env, mkdir, mktemp, find, cat and
-# date.
+#   iso_incident_class <INCIDENTS.json> [<INC-n.k>]
+#                                sets ISO_CLASS to the root_cause_class that file (an absolute path) records
+#                                for that incident, or, with no id, to supply_chain_or_ci when any incident has
+#                                it and to "other" otherwise; status 3 with ISO_CLASS the reason when the file,
+#                                an incident or a class cannot be read (references/detection-response/
+#                                incidents-schema.md). python3 starts from /, as for the self-check.
+# Needs bash >= 3.2, python3 (the self-check, the keypair and the watchdog), env, mkdir, mktemp and cat.
 
 # What iso_credentials, iso_cred_names, iso_homes and iso_env run, with python3 -I so that no module comes
-# from the working directory or PYTHONPATH. "creds given|default [<home>...]" prints what is readable by
-# kind and count on its first line and the readable paths after it (exit 1), nothing (exit 0), or why the
-# check could not finish (exit 2); "names" prints the variable names that look like credentials; "homes
-# <home>" prints the homes; "wallet <path>" writes a fresh keypair, RFC 8032 key generation from 32 random
-# bytes, as the 64-number array solana-keygen writes. Exit 2 on anything unexpected.
+# from the working directory or PYTHONPATH. python3 starts from /, so nothing in the working directory picks
+# the interpreter (a .python-version a pyenv shim reads), and a relative path in a variable the check reads
+# is taken from /, never from the tree under audit. "creds given|default [<home>...]" prints what is
+# readable by kind and count on its first line and the readable paths after it (exit 1), nothing (exit 0),
+# or why the check could not finish (exit 2); "names" prints the variable names that look like credentials;
+# "homes <home>" prints the homes; "wallet <path>" writes a fresh keypair, RFC 8032 key generation from 32
+# random bytes, as the 64-number array solana-keygen writes. Exit 2 on anything unexpected.
 ISO_PY='import glob, hashlib, json, os, pwd, re, socket, stat, sys
 
 KINDS = ("SSH keys", "agent sockets", "Solana keypairs or CLI config", "cloud credentials",
@@ -427,7 +423,7 @@ sys.exit(2)
 '
 
 iso_homes() {
-  python3 -I -c "$ISO_PY" homes "${HOME:-}"
+  (cd / && exec python3 -I -c "$ISO_PY" homes "${HOME:-}")
 }
 
 iso_credentials() { # iso_credentials [<home>...]
@@ -435,7 +431,7 @@ iso_credentials() { # iso_credentials [<home>...]
   ISO_KINDS="" ISO_READABLE="" ISO_WHY=""
   command -v python3 >/dev/null 2>&1 || { ISO_WHY="python3 is not on PATH"; return 2; }
   [ $# -gt 0 ] || which=default
-  out=$(python3 -I -c "$ISO_PY" creds "$which" "$@") || rc=$?
+  out=$(cd / && exec python3 -I -c "$ISO_PY" creds "$which" "$@") || rc=$?
   case "$rc" in
     0) return 0 ;;
     1) ISO_KINDS=${out%%$'\n'*}; ISO_READABLE=${out#*$'\n'}; return 1 ;;
@@ -448,7 +444,7 @@ iso_credentials() { # iso_credentials [<home>...]
 iso_cred_names() { # iso_cred_names
   ISO_NAMES=""
   command -v python3 >/dev/null 2>&1 || return 0
-  ISO_NAMES=$(python3 -I -c "$ISO_PY" names 2>/dev/null) || ISO_NAMES=""
+  ISO_NAMES=$(cd / && exec python3 -I -c "$ISO_PY" names 2>/dev/null) || ISO_NAMES=""
 }
 
 iso_inherited() { # iso_inherited <dir>
@@ -499,7 +495,7 @@ iso_env() { # iso_env <dir> [keep-home]
   else
     ISO_HOME=$1/home
     confine_mkdir "$ISO_HOME" && confine_mkdir "$ISO_HOME/.config" && confine_mkdir "$ISO_HOME/.config/solana" || return 1
-    python3 -I -c "$ISO_PY" wallet "$ISO_HOME/.config/solana/id.json" || return 1
+    (cd / && exec python3 -I -c "$ISO_PY" wallet "$ISO_HOME/.config/solana/id.json") || return 1
   fi
   ISO_ENV=("PATH=$PATH" "HOME=$ISO_HOME" "TMPDIR=$ISO_TMP" "LC_ALL=C"
     "CARGO_HOME=${CARGO_HOME:-${real:-/nonexistent}/.cargo}" "RUSTUP_HOME=${RUSTUP_HOME:-${real:-/nonexistent}/.rustup}")
@@ -632,32 +628,58 @@ iso_copy_new() { # iso_copy_new <file> <path>
   ( set -C; exec 9>"$2" && cat -- "$1" >&9 ) 2>/dev/null
 }
 
-ISO_DISCLOSURES_HEADER=$'time\ttool\tservice\tsent\tcount'
+# What iso_incident_class runs, with python3 -I: "<INCIDENTS.json> [<INC-n.k>]" prints that incident's
+# root_cause_class, or with no id supply_chain_or_ci when any incident has it and "other" otherwise; exit 3
+# with the reason when the file, an incident or a class cannot be read.
+ISO_INCIDENT_PY='import json, os, stat, sys
 
-iso_disclosures_ok() { # iso_disclosures_ok <R>
-  local f=$CONFINE_WT/$1/disclosures.tsv listed first
-  if [ ! -e "$f" ] && [ ! -L "$f" ]; then return 0; fi
-  [ -f "$f" ] && [ ! -L "$f" ] || return 1
-  listed=$(find "$f" -prune -type f -links 1 -print 2>/dev/null) && [ "$listed" = "$f" ] || return 1
-  IFS= read -r first < "$f" || return 1
-  [ "$first" = "$ISO_DISCLOSURES_HEADER" ]
-}
+CLASSES = ("code_flaw", "key_compromise", "oracle_or_dependency", "economic_design", "off_chain",
+           "supply_chain_or_ci", "unknown")
+LIMIT = 4 * 1024 * 1024
 
-iso_disclose() { # iso_disclose <R> <tool> <service> <kind> <value>...
-  local r=$1 tool=$2 service=$3 kind=$4 f now row v sent="" n=0
-  shift 4
-  for v in "$@"; do
-    sent=${sent:+$sent }$v
-    n=$((n + 1))
-  done
-  now=$(date -u +%Y-%m-%dT%H:%M:%SZ) || return 1
-  sent="$kind: $sent"
-  row=${now//[[:cntrl:]]/?}$'\t'${tool//[[:cntrl:]]/?}$'\t'${service//[[:cntrl:]]/?}$'\t'${sent//[[:cntrl:]]/?}$'\t'$n
-  f=$CONFINE_WT/$r/disclosures.tsv
-  iso_disclosures_ok "$r" || return 1
-  if [ ! -e "$f" ] && [ ! -L "$f" ]; then
-    confine_new_file "$f" "$ISO_DISCLOSURES_HEADER"$'\n'"$row"$'\n' && return 0
-    iso_disclosures_ok "$r" || return 1
-  fi
-  printf '%s\n' "$row" 2>/dev/null >> "$f"
+
+def say(text, status):
+    print(text)
+    sys.exit(status)
+
+
+path, wanted = sys.argv[1], sys.argv[2]
+try:
+    st = os.lstat(path)
+except FileNotFoundError:
+    say("is missing", 3)
+except OSError:
+    say("cannot be read", 3)
+if not stat.S_ISREG(st.st_mode):
+    say("is not a regular file", 3)
+if st.st_size > LIMIT:
+    say("is larger than 4 MiB", 3)
+try:
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NOCTTY", 0))
+    with os.fdopen(fd, "rb") as f:
+        data = json.loads(f.read(LIMIT + 1).decode("utf-8"))
+except (OSError, UnicodeDecodeError, ValueError, RecursionError):
+    say("cannot be read as JSON", 3)
+incidents = data.get("incidents") if isinstance(data, dict) else None
+if not isinstance(incidents, list):
+    say("holds no incidents list", 3)
+incidents = [i for i in incidents if isinstance(i, dict)]
+if wanted:
+    incidents = [i for i in incidents if i.get("id") == wanted]
+    if not incidents:
+        say("records no incident %s" % wanted, 3)
+    if len(incidents) > 1:
+        say("records %s more than once" % wanted, 3)
+if not incidents:
+    say("records no incident", 3)
+for i in incidents:
+    if i.get("root_cause_class") not in CLASSES:
+        say("gives %s no root_cause_class from incidents-schema.md" % (wanted or "an incident"), 3)
+if wanted:
+    say(incidents[0]["root_cause_class"], 0)
+say("supply_chain_or_ci" if any(i["root_cause_class"] == "supply_chain_or_ci" for i in incidents) else "other", 0)
+'
+
+iso_incident_class() { # iso_incident_class <INCIDENTS.json> [<INC-n.k>]
+  ISO_CLASS=$(cd / && exec python3 -I -c "$ISO_INCIDENT_PY" "$1" "${2:-}")
 }

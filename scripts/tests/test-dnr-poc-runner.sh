@@ -31,6 +31,10 @@
 #   * the harness binding: the crate depends on its own shared-test-utils/ under the
 #     import name shared_test_utils, no other dependency takes that name in either
 #     spelling, and each arm's build compiles that copy and no other;
+#   * the harness copy: --crate stops before anything is copied when shared-test-utils/
+#     holds a file other than Cargo.toml and src/lib.rs, or a Cargo.toml changed beyond
+#     its dependency version requirements; every build compiles the installation's
+#     src/lib.rs, a missing or changed one too, and the >> harness: line says which;
 #   * the non-registry line before the final line: the path and git dependencies in
 #     the resolved Cargo.lock;
 #   * the macros run the attack themselves; their old forms do not compile and say how
@@ -66,9 +70,11 @@
 #     installation's template never builds itself;
 #   * an incident's crate runs only once incident_<n>/INCIDENTS.json records its
 #     root_cause_class (a file, an incident or a class that cannot be read stops it,
-#     a nested or large file included); supply_chain_or_ci refuses native mode, a run
-#     without --vulnerable-so, path and git dependencies and sources outside the crate,
-#     and a build that compiled code from outside it;
+#     a nested or large file included), read by scripts/lib/isolation.sh's
+#     iso_incident_class, whose python3 starts from /, as each one run.sh starts before
+#     it leaves the working directory does; supply_chain_or_ci refuses native mode, a
+#     run without --vulnerable-so, path and git dependencies and sources outside the
+#     crate, and a build that compiled code from outside it;
 #   * the isolation self-check (scripts/lib/isolation.sh): in isolated mode, a fake HOME
 #     holding any credential it reads stops the run before anything is copied, and so
 #     does a check that cannot finish; in native mode it is a warning. Through a driver,
@@ -77,7 +83,9 @@
 #     like credentials, and agent sockets (serving one needs a machine that allows it:
 #     on CI a machine that does not fails the run, anywhere else one SKIP line says
 #     so). On CI the runner's own home must pass the check, so that the checks that
-#     isolated mode passes run there;
+#     isolated mode passes run there. Its python3 starts from /: a .python-version in
+#     the working directory picks no interpreter, and a relative path in a variable it
+#     reads is taken from /;
 #   * environment cleaning: canary variables in the caller's environment reach no cargo
 #     call, no build script and no test binary; HOME is a throwaway one with a fresh
 #     Solana keypair, but for cargo build-sbf --install-only; only cargo fetch, cargo
@@ -88,8 +96,8 @@
 #     cleaned environment, each killed when it gives no answer in PROBE_WAIT seconds,
 #     the isolation line (kinds, then at most 20 paths), --only and its case file
 #     fixtures/probe/cases.txt;
-#   * the patch verification recipe (templates/patch/VERIFICATION.md §1): its worktree
-#     is made in a Rule 11c copy, and no git runs in the client checkout.
+#   * the patch verification recipe (templates/patch/VERIFICATION.md §1): exactly the two
+#     target.sh build-sbf lines, the quoted installation path first, with no cd and no $.
 #
 # No Solana toolchain and no network needed. A temp copy of run.sh runs with a `cargo`
 # shim, whose `--no-run` build reports a stand-in test binary, or with a PATH that has
@@ -117,11 +125,12 @@ trap 'rm -rf "$T"' EXIT
 # run.sh reports physical paths (pwd -P); compare against the same.
 T="$(cd "$T" && pwd -P)" || exit 1
 
-mk_crate() {  # mk_crate <dir>: run.sh, a manifest, its own shared-test-utils/ and the template's tests (the shim never compiles them)
-  mkdir -p "$1/tests" "$1/shared-test-utils"
+mk_crate() {  # mk_crate <dir>: run.sh, a manifest, the installation's shared-test-utils/ and the template's tests (the shim never compiles them)
+  mkdir -p "$1/tests" "$1/shared-test-utils/src"
   cp "$TEMPLATE/run.sh" "$1/run.sh"
   printf '[package]\nname = "poc_shim"\nversion = "0.1.0"\nedition = "2021"\n' > "$1/Cargo.toml"
-  printf '[package]\nname = "shared-test-utils"\nversion = "0.1.0"\n' > "$1/shared-test-utils/Cargo.toml"
+  cp "$TEMPLATE/shared-test-utils/Cargo.toml" "$1/shared-test-utils/Cargo.toml"
+  cp "$TEMPLATE/shared-test-utils/src/lib.rs" "$1/shared-test-utils/src/lib.rs"
   cp "$TEMPLATE/tests/exploit.rs" "$TEMPLATE/tests/fixed_blocked.rs" "$1/tests/"
 }
 mk_crate "$T/inc"
@@ -1304,6 +1313,57 @@ code="$(ngate AUDITOR_EXEC_MODE=yes -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
 [ "$code" = 3 ] && grep -qF "run.sh refused: AUDITOR_EXEC_MODE is 'yes', not none, isolated or native" "$T/out" && new_nothing_ran \
   && ok "AUDITOR_EXEC_MODE=yes -> refused, even with a recorded mode" || { bad "AUDITOR_EXEC_MODE=yes: exit $code"; cat "$T/out" >&2; }
 
+# The harness copy: run.sh --crate checks the crate's shared-test-utils/ before anything is copied, and every
+# build compiles the installation's src/lib.rs whatever the crate holds; its >> harness: line says whether the
+# crate's copy matched. A copy that holds another file, or a Cargo.toml changed beyond the version
+# requirements of its dependencies, stops the run.
+STU="$WT/audit_1/poc/F-1/shared-test-utils"
+cp "$STU/Cargo.toml" "$T/stu-cargo.keep"
+code="$(ngate -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+[ "$code" = 0 ] && grep -qxF ">> harness: the crate's shared-test-utils/ is the installation's (its dependency version requirements aside)" "$T/out" \
+  && ok "--crate with the installation's harness copy -> the build runs, and the harness line says the copy matched" || { bad "harness copy, unchanged: exit $code"; cat "$T/out" >&2; }
+printf '// changed in the crate\n' >> "$STU/src/lib.rs"
+code="$(ngate -- --crate audit_1/poc/F-1 "${NVULN[@]}" --keep)"; bd="$(new_build_dir)"
+[ "$code" = 0 ] && grep -qxF ">> harness: the crate's shared-test-utils/src/lib.rs differs from the installation's; this build used the installation's, so record the difference" "$T/out" \
+  && [ -n "$bd" ] && cmp -s "$bd/shared-test-utils/src/lib.rs" "$TEMPLATE/shared-test-utils/src/lib.rs" \
+  && ok "--crate with a changed shared-test-utils/src/lib.rs -> the build compiles the installation's, and the harness line says the copy differed" \
+  || { bad "harness copy, src/lib.rs changed: exit $code, build dir '$bd'"; cat "$T/out" >&2; }
+[ -z "$bd" ] || rm -rf "$bd"
+rm "$STU/src/lib.rs"
+code="$(ngate -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+[ "$code" = 0 ] && grep -qxF ">> harness: the crate has no shared-test-utils/src/lib.rs; this build used the installation's" "$T/out" \
+  && ok "--crate with no shared-test-utils/src/lib.rs -> the build compiles the installation's, and says so" || { bad "harness copy, no src/lib.rs: exit $code"; cat "$T/out" >&2; }
+cp "$TEMPLATE/shared-test-utils/src/lib.rs" "$STU/src/lib.rs"
+sed 's/^mollusk-svm = "[^"]*"/mollusk-svm = "0.99"/' "$T/stu-cargo.keep" > "$STU/Cargo.toml"
+code="$(ngate -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+[ "$code" = 0 ] && ! cmp -s "$STU/Cargo.toml" "$T/stu-cargo.keep" \
+  && grep -qxF ">> harness: the crate's shared-test-utils/ is the installation's (its dependency version requirements aside)" "$T/out" \
+  && ok "--crate with a dependency version requirement changed in shared-test-utils/Cargo.toml -> the build runs" || { bad "harness copy, a version requirement: exit $code"; cat "$T/out" >&2; }
+while IFS='|' read -r how what text; do
+  [ -n "$how" ] || continue
+  cp "$T/stu-cargo.keep" "$STU/Cargo.toml"
+  case "$how" in
+    dependency) printf 'evil = { path = "/tmp/evil" }\n' >> "$STU/Cargo.toml" ;;
+    feature) sed 's/^sha2 = "0.10"/sha2 = { version = "0.10", features = ["asm"] }/' "$T/stu-cargo.keep" > "$STU/Cargo.toml" ;;
+    package) sed 's/^edition = "2021"/edition = "2024"/' "$T/stu-cargo.keep" > "$STU/Cargo.toml" ;;
+    build-script) printf 'fn main() {}\n' > "$STU/build.rs" ;;
+    module) printf 'pub fn x() {}\n' > "$STU/src/other.rs" ;;
+    no-manifest) rm "$STU/Cargo.toml" ;;
+  esac
+  code="$(ngate -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+  [ "$code" = 3 ] && grep -qF "[PoC-ATTEMPTED] blocker: the crate's $text" "$T/out" && new_nothing_ran && one_blocker \
+    && ok "--crate with a harness copy $what -> exit 3 before anything is copied: $text" || { bad "harness copy $what: exit $code"; cat "$T/out" >&2; }
+  rm -f "$STU/build.rs" "$STU/src/other.rs"
+done <<CASES
+dependency|that adds a dependency|shared-test-utils/Cargo.toml differs from the installation copy beyond the version requirements of its dependencies, from line
+feature|that turns on a feature|shared-test-utils/Cargo.toml differs from the installation copy beyond the version requirements of its dependencies, from line
+package|that changes the package's edition|shared-test-utils/Cargo.toml differs from the installation copy beyond the version requirements of its dependencies, from line
+build-script|that holds a build script|shared-test-utils/ holds build.rs, which the installation copy does not
+module|that holds another source file|shared-test-utils/ holds src/other.rs, which the installation copy does not
+no-manifest|without its Cargo.toml|shared-test-utils/ has no Cargo.toml
+CASES
+cp "$T/stu-cargo.keep" "$STU/Cargo.toml"
+
 # Every run directory an argument names counts: here --vulnerable-so and --fixed-so under audit_2/exec/.
 ( cd "$WT" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null || bad "rundir.sh could not make audit_2"
 mkdir -p "$WT/audit_2/exec/b"; cp "$T/vuln.so" "$T/fixed.so" "$WT/audit_2/exec/b/"
@@ -1819,6 +1879,35 @@ for sh in "${SHELLS[@]}"; do
   [ "$rc" = 64 ] && case "$out" in *"would inherit $T/cfgparent/.cargo/config.toml; point TMPDIR outside any repository") true ;; *) false ;; esac \
     && [ -z "$(ls -A "$T/cfgparent/tmp")" ] && ok "iso_scratch ($sh): a scratch directory under a .cargo/config.toml -> refused" || bad "iso_scratch ($sh) under a cargo config: $rc '$out'"
 done
+
+# isolation.sh starts each python3 from /: a .python-version in the working directory, which a pyenv shim
+# reads to pick the interpreter, picks none, and a relative path in a variable the check reads (KUBECONFIG
+# here) is taken from /, never from the tree under audit. A python3 stand-in first on PATH records the
+# directory of each run that finds a .python-version there.
+PV="$T/pv-wt"; PVBIN="$T/pv-bin"; mkdir -p "$PV" "$PVBIN" "$T/pv-home"
+printf 'from-the-tree\n' > "$PV/.python-version"; printf 'apiVersion: v1\n' > "$PV/kube.cfg"
+printf '#!/bin/sh\n[ -e .python-version ] && pwd >> "%s"\nexec "%s" "$@"\n' "$T/pv-picked" "$(command -v python3)" > "$PVBIN/python3"
+chmod +x "$PVBIN/python3"
+for sh in "${SHELLS[@]}"; do
+  rm -f "$T/pv-picked"; rm -rf "$T/pv-env"; mkdir -p "$T/pv-env"
+  for what in homes names creds "env $T/pv-env"; do
+    (cd "$PV" && env -i HOME="$CLEANHOME" PATH="$PVBIN:$PATH" "$sh" "$T/iso-driver.sh" "$ROOT" $what) >/dev/null 2>&1
+  done
+  [ ! -e "$T/pv-picked" ] && [ -f "$T/pv-env/home/.config/solana/id.json" ] \
+    && ok "isolation.sh ($sh): homes, names, creds and the keypair run python3 from /, so the working directory's .python-version picks no interpreter" \
+    || bad "isolation.sh ($sh): python3 ran where the working directory's .python-version picks it: $(cat "$T/pv-picked" 2>/dev/null)"
+  out="$(cd "$PV" && env -i HOME="$CLEANHOME" KUBECONFIG=kube.cfg PATH="$PATH" "$sh" "$T/iso-driver.sh" "$ROOT" creds "$T/pv-home")"; rc=$?
+  [ "$rc" = 0 ] && [ -z "$out" ] && ok "iso_credentials ($sh): a relative KUBECONFIG is taken from /, so the tree's kube.cfg does not count" \
+    || bad "iso_credentials ($sh), a relative KUBECONFIG: $rc '$out'"
+done
+# run.sh --crate for an incident reads INCIDENTS.json with the same python3 from / (iso_incident_class), and
+# every other python3 it starts before it leaves the working directory starts from / too.
+mk_crate "$WT/incident_1/poc/INC-1.1"; incidents code_flaw; printf 'from-the-tree\n' > "$WT/.python-version"; rm -f "$T/pv-picked"
+code="$(ngate AUDITOR_EXEC_MODE=native PATH="$PVBIN:$SP" -- --crate incident_1/poc/INC-1.1 "${IVULN[@]}")"
+[ "$code" = 0 ] && grep -qF '>> incident INC-1.1: root_cause_class code_flaw (incident_1/INCIDENTS.json)' "$T/out" && [ ! -e "$T/pv-picked" ] \
+  && ok "run.sh --crate for an incident: the incident check and the self-check run python3 from /, so the working directory's .python-version picks no interpreter" \
+  || { bad "run.sh --crate for an incident with a .python-version: exit $code, python3 ran in: $(cat "$T/pv-picked" 2>/dev/null)"; cat "$T/out" >&2; }
+rm -rf "$IJ" "$WT/incident_1/poc/INC-1.1" "$WT/.python-version"
 
 # scripts/runner/probe.sh: fixed version queries from a scratch directory, in the cleaned environment
 # with the real HOME, the proxy at a closed port, standard input closed; absent and unusable tools; the
@@ -2953,12 +3042,18 @@ path = \"$T/e-oot-outside/lib.rs\"
   printf 'fn main() {\n    let mut text = String::new();\n    for (k, v) in std::env::vars() {\n        text.push_str(&format!("{k}={v}\\n"));\n    }\n    std::fs::write("%s", text).expect("record the environment");\n}\n' "$T/envdep.env" > "$T/envdep/build.rs"
   printf 'envdep = { path = "%s" }\n' "$T/envdep" >> "$RW/audit_1/poc/F-1/Cargo.toml"
   REAL=(HOME="$CLEANHOME" "${TOOL_HOMES[@]}" PATH="$PATH" TMPDIR="$NT" CARGO_NET_OFFLINE=true)
-  rr() {  # rr [VAR=val ...] -- <argument>...: the installation's run.sh with real cargo, from $RW -> exit code
+  # --crate builds only a harness copy whose Cargo.toml is the installation's but for its dependency version
+  # requirements, and this crate's names the stand-in crates by path: these runs use a copy of the
+  # installation (its scripts/lib/ and templates/) whose harness Cargo.toml is the crate's.
+  IR="$T/inst-real"; mkdir -p "$IR/scripts" && cp -R "$ROOT/scripts/lib" "$IR/scripts/" && cp -R "$ROOT/templates" "$IR/" \
+    && cp "$RW/audit_1/poc/F-1/shared-test-utils/Cargo.toml" "$IR/templates/poc/shared-test-utils/Cargo.toml" \
+    || bad "cannot copy the installation for the real-cargo runs"
+  rr() {  # rr [VAR=val ...] -- <argument>...: that copy's run.sh with real cargo, from $RW -> exit code
     local -a vars=()
     while [ $# -gt 0 ] && [ "$1" != -- ]; do vars+=("$1"); shift; done
     [ $# -gt 0 ] && shift
     rm -rf "$NT"; mkdir -p "$NT"
-    ( cd "$RW" && env -i "${REAL[@]}" ${vars[@]+"${vars[@]}"} "$RUNSH" "$@" ) >"$T/out" 2>&1 </dev/null
+    ( cd "$RW" && env -i "${REAL[@]}" ${vars[@]+"${vars[@]}"} "$IR/templates/poc/run.sh" "$@" ) >"$T/out" 2>&1 </dev/null
     echo $?
   }
   RSO=(--vulnerable-so audit_1/exec/sb/sb-takeover.so --fixed-so audit_1/exec/sb/sb-reject-MissingRequiredSignature.so)
@@ -3030,49 +3125,27 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# The patch verification recipe (templates/patch/VERIFICATION.md §1), run from inside
-# a client checkout whose post-checkout hook leaves a marker: it makes its worktree in
-# a Rule 11c copy under its own scratch directory and runs no git in the checkout, so
-# the hook stays silent. The control shows the hook runs for a worktree made there.
+# The patch verification recipe (templates/patch/VERIFICATION.md §1) builds through
+# the bundled target.sh, which makes its own scratch clone outside the target tree:
+# the block is the unpatched build and the patched one, exactly two target.sh
+# build-sbf lines, each a plain call with the quoted installation path first and no
+# cd or $. test-runners.sh runs target.sh build-sbf (the scratch clone, --rev,
+# --patch, no hook of the source repository), and test-recipes.sh runs both lines as
+# written.
 # ---------------------------------------------------------------------------
-if command -v git >/dev/null 2>&1; then
-  # git with no global or system config, so no hooksPath or signing setting of this
-  # machine changes what runs.
-  C="$T/client"; HK="$T/hook.marker"; GE=( env -i HOME="$T/home" PATH="$PATH" GIT_CONFIG_NOSYSTEM=1 )
-  G=( "${GE[@]}" git -c user.email=t@example.invalid -c user.name=t )
-  mkdir -p "$C" "$T/tmp-recipe" "$T/home"
-  "${G[@]}" -C "$C" init -q && printf 'v1\n' > "$C/lib.rs" && "${G[@]}" -C "$C" add lib.rs && "${G[@]}" -C "$C" commit -qm v1
-  commit="$("${G[@]}" -C "$C" rev-parse HEAD)"
-  printf '#!/bin/sh\necho hook >> "%s"\n' "$HK" > "$C/.git/hooks/post-checkout"; chmod +x "$C/.git/hooks/post-checkout"
-  printf -- '--- a/lib.rs\n+++ b/lib.rs\n@@ -1 +1 @@\n-v1\n+v2\n' > "$T/F-1.patch"
-  # The §1 block with its placeholders filled and the SBF build replaced by a check of
-  # the patched file in the worktree.
-  python3 -I - "$TEMPLATE/../patch/VERIFICATION.md" "$T/recipe.sh" "$C" "$commit" "$T" <<'PY2'
-import sys
-doc, out, checkout, commit, t = sys.argv[1:]
-block = open(doc, encoding="utf-8").read().split("## 1. Apply", 1)[1].split("```bash\n", 1)[1].split("```", 1)[0]
-build = "cargo build-sbf --tools-version v1.54"
-assert block.count(build) == 1, "the recipe's build step moved"
-block = (block.replace("{FINDING_ID}", "F-1").replace("{CHECKOUT}", checkout).replace("{COMMIT}", commit)
-         .replace("{PATH_TO}", t).replace(build, f'grep -qx v2 lib.rs && pwd -P > "{t}/recipe.pwd"'))
-assert "{" not in block.replace("${", ""), "a placeholder is left"
-open(out, "w", encoding="utf-8").write(block)
+if python3 -I - "$TEMPLATE/../patch/VERIFICATION.md" >"$T/out" 2>&1 <<'PY2'
+import re, sys
+doc = open(sys.argv[1], encoding="utf-8").read()
+block = doc.split("## 1. Apply", 1)[1].split("```bash\n", 1)[1].split("```", 1)[0]
+calls = [l for l in block.splitlines() if l.strip() and not l.lstrip().startswith("#")]
+held = [l for l in calls if "$" in l or re.search(r"(^|[;&|(])\s*cd\s", l)]
+assert not held, "a line holds a $ or a cd: %r" % held
+ts = '"<auditor-skill root>/scripts/runner/target.sh" build-sbf --run {PATH_TO} --src . --rev {COMMIT}'
+want = [ts, ts + " --patch {PATH_TO}/patches/{FINDING_ID}.patch"]
+assert calls == want, "the block is not the two target.sh build-sbf lines: %r" % calls
 PY2
-  rm -f "$HK" "$T/recipe.pwd"
-  ( cd "$C" && "${GE[@]}" TMPDIR="$T/tmp-recipe" bash "$T/recipe.sh" ) >"$T/out" 2>&1; code=$?
-  wt="$(cat "$T/recipe.pwd" 2>/dev/null)"
-  case "$wt" in "$T/tmp-recipe"/fix-F-1.*/fix) where=scratch ;; *) where="'$wt'" ;; esac
-  if [ "$code" = 0 ] && [ "$where" = scratch ] && [ ! -e "$HK" ] && [ "$("${G[@]}" -C "$C" worktree list | wc -l | tr -d ' ')" = 1 ] \
-     && [ "$(cat "$C/lib.rs")" = v1 ]; then
-    ok "VERIFICATION.md §1, run from inside the client checkout: the patched worktree is in a scratch copy, and no git ran in the checkout (its hook stayed silent)"
-  else
-    bad "VERIFICATION.md §1 recipe: exit $code, worktree $where, hook marker $( [ -e "$HK" ] && echo present || echo absent )"; cat "$T/out" >&2
-  fi
-  ( cd "$C" && "${G[@]}" worktree add -q "$T/ctl-wt" "$commit" ) >/dev/null 2>&1
-  [ -s "$HK" ] && ok "control: a worktree made in the client checkout runs its post-checkout hook" || bad "control: the client checkout's hook did not run, so the recipe check proves nothing"
-else
-  echo "note: git not on PATH; the patch verification recipe check is skipped"
-fi
+then ok "VERIFICATION.md §1: exactly the two target.sh build-sbf lines, the quoted installation path first, no cd and no \$"
+else bad "VERIFICATION.md §1 is not the two target.sh build-sbf lines"; cat "$T/out" >&2; fi
 
 if [ "$fails" -ne 0 ]; then
   echo "test-dnr-poc-runner: $fails assertion(s) FAILED" >&2

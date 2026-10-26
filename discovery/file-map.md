@@ -1,7 +1,7 @@
 # File Discovery Patterns
 
 > Maps each audit checklist to the exact files/globs that must be scanned.  
-> These are defaults. A target with another layout records its in-scope paths at intake (`QUESTIONS.md` Q39, exclusions under Q44, written to `audit_<n>/intake.md` §1) instead of editing this file, which a shared or plugin install overwrites on update.
+> These are defaults. A target with another layout records its in-scope paths at intake (`QUESTIONS.md` Q39, exclusions under Q44, written to the Layout table of `audit_<n>/intake.md` §1) instead of editing this file, which a shared or plugin install overwrites on update. The next interactive intake in the same checkout offers that table again and applies it only on the human's yes; `--auto` never applies it.
 
 ---
 
@@ -160,8 +160,8 @@ PRIMARY:
   .gitignore                           # Secrets exclusion
 
 TERMINAL COMMANDS:
-  solana program show <PROGRAM_ID>     # Upgrade authority
-  anchor verify <PROGRAM_ID>           # Binary verification (rebuilds the target: Rule 11a mode only)
+  "<auditor-skill root>/scripts/rpc-read.sh" program-show <PROGRAM_ID> --run audit_<n> --cluster mainnet-beta   # Upgrade authority (read-only)
+  anchor verify <PROGRAM_ID>           # Binary verification (rebuilds the target: Rule 11a mode only; asks for approval)
 
 GREP PATTERNS:
   "declare_id!"          → Program ID
@@ -239,12 +239,13 @@ PRIMARY:
   Cargo.toml                           # Rust workspace
   Cargo.lock                           # Rust lock file
 
-TERMINAL COMMANDS (from a scratch dir OUTSIDE the target tree, on copies of the manifest +
-lockfile, toolchain pinned — OUTPUT-RULES Rule 11a, FULL-AUDIT Step 3.2):
-  npm audit                            # Known vulnerabilities
-  cargo audit                          # Rust vulnerabilities
-  npm info <pkg> time                  # Publish date check
-  npm outdated                         # Outdated packages
+TERMINAL COMMANDS (deps.sh: copies of the manifests + lockfiles outside the target tree, toolchain
+pinned — OUTPUT-RULES Rule 11a, FULL-AUDIT Step 3.2):
+  "<auditor-skill root>/scripts/runner/deps.sh" npm-audit --run audit_<n> --manifest package.json --manifest package-lock.json   # Known vulnerabilities
+  "<auditor-skill root>/scripts/runner/deps.sh" cargo-audit --run audit_<n> --manifest Cargo.lock   # Rust vulnerabilities
+  "<auditor-skill root>/scripts/runner/deps.sh" npm-time --run audit_<n> <pkg>   # Publish date check
+  npm outdated                         # Outdated packages: no bundled runner, so it asks for approval;
+                                       # run it from a scratch dir outside the tree, on copies
 ```
 
 ### 12 — Secrets & Key Management
@@ -265,11 +266,9 @@ SCAN TARGETS (entire repo):
   **/*keypair*
   **/*delegate*
 
-TERMINAL COMMANDS (git with the OUTPUT-RULES Rule 11c prefix):
-  GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-    ls-files | grep -i ".env"          # Committed env files
-  GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-    log --all --no-textconv --no-ext-diff -S "private" --oneline   # Secrets in git history
+TERMINAL COMMANDS (read-only git, OUTPUT-RULES Rule 11c):
+  "<auditor-skill root>/scripts/git-ro.sh" ls-files | grep -i ".env"                     # Committed env files
+  "<auditor-skill root>/scripts/git-ro.sh" log --all -S "private" --oneline              # Secrets in git history
   find . -name "*keypair*.json"        # Key files in repo
 ```
 
@@ -284,9 +283,9 @@ PRIMARY:
   scripts/                             # Build/deploy scripts
   .github/workflows/                   # CI/CD (if exists)
 
-TERMINAL COMMANDS (they run target code: only in the OUTPUT-RULES Rule 11a mode recorded at intake):
-  anchor build 2>&1 | tail -20        # Build verification
-  anchor test 2>&1 | tail -30         # Test run
+TERMINAL COMMANDS (they run target code: target.sh, in the OUTPUT-RULES Rule 11a mode recorded at intake):
+  "<auditor-skill root>/scripts/runner/target.sh" anchor-build --run audit_<n> --src .   # Build verification
+  "<auditor-skill root>/scripts/runner/target.sh" anchor-test --run audit_<n> --src .    # Test run, against no validator
 ```
 
 ### 14 — Python Safety
@@ -319,8 +318,9 @@ GREP PATTERNS:
   "password"             → Hardcoded credentials
   "__import__"           → Dynamic import risk
 
-TERMINAL COMMANDS:
-  pip audit                            # Known vulnerabilities
+TERMINAL COMMANDS (third-party tools no bundled runner wraps, so each asks for approval; run the
+dependency audits from a scratch dir outside the target tree, on copies of the requirements files):
+  pip-audit                            # Known vulnerabilities
   safety check                         # Dependency audit
   bandit -r .                          # Static security analysis
 ```
@@ -509,7 +509,7 @@ GREP PATTERNS:
 When auditing a different repository:
 
 1. **Install** auditor-skill outside the repository under audit (the plugin, or `~/.claude/skills/auditor-skill`; OUTPUT-RULES Rule 11e)
-2. **Record** the target's in-scope paths at intake where its layout or directories differ from the "Repository Layout Assumptions" and the globs above (`QUESTIONS.md` Q39, exclusions under Q44, written to `audit_<n>/intake.md` §1), instead of editing this file, which a shared or plugin install overwrites on update
+2. **Record** the target's in-scope paths at intake where its layout or directories differ from the "Repository Layout Assumptions" and the globs above (`QUESTIONS.md` Q39, exclusions under Q44, written to the Layout table of `audit_<n>/intake.md` §1), instead of editing this file, which a shared or plugin install overwrites on update. A later audit in the same checkout reuses that table only on the human's yes at its intake (`/auditor:intake` step 4)
 3. The checklists themselves are **generic** — they work for any Solana/Anchor program
 4. Checklists 08-13 work for any TypeScript/Express/Next.js project
 5. Checklist 14 works for any Python project

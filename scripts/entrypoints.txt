@@ -1,0 +1,32 @@
+# entrypoints.txt — every entry point a command, a skill under skills/ or the root SKILL.md pre-approves, and
+# the case file of hostile arguments it runs against. scripts/check-entrypoints.sh checks this list against the
+# allow rules and the files; scripts/tests/test-preapproved-entrypoints.sh runs each entry point with its case
+# file. One entry point per line, two or three fields separated by one tab:
+#   1. its path from the installation root;
+#   2. its case file, from the installation root;
+#   3. when present, the words every allow rule naming it starts with after the quoted path, separated by
+#      spaces, each word a list of choices separated by |. Without it a rule may start with any word.
+# An allow rule takes the form Bash("${CLAUDE_PLUGIN_ROOT}/<path>" <words> *), with ${CLAUDE_SKILL_DIR} in the
+# root SKILL.md. Add an entry point here only with its case file, and with the confinement contract met.
+scripts/preflight.sh	scripts/tests/fixtures/preflight/cases.txt
+scripts/rundir.sh	scripts/tests/fixtures/rundir/cases.txt
+scripts/git-ro.sh	scripts/tests/fixtures/git-ro/cases.txt
+scripts/rpc-read.sh	scripts/tests/fixtures/rpc-read/cases.txt
+scripts/report-to-pdf.sh	scripts/tests/fixtures/report-pdf/cases.txt
+scripts/recipes/lock-delta.sh	scripts/tests/fixtures/recipes/lock-delta/cases.txt
+scripts/recipes/web3js-history.sh	scripts/tests/fixtures/recipes/web3js-history/cases.txt
+scripts/threat-model/collect.sh	scripts/tests/fixtures/threat-model/cases.txt	--detect|--offline
+scripts/runner/probe.sh	scripts/tests/fixtures/probe/cases.txt
+scripts/runner/deps.sh	scripts/tests/fixtures/deps/cases.txt
+scripts/runner/sast.sh	scripts/tests/fixtures/sast/cases.txt
+scripts/runner/target.sh	scripts/tests/fixtures/target/cases.txt
+templates/poc/run.sh	scripts/tests/fixtures/poc-run/cases.txt
+scripts/dnr/snapshot-program.sh	scripts/tests/fixtures/snapshot-program/cases.txt
+scripts/dnr/collect.sh	scripts/tests/fixtures/dnr-collect/cases.txt
+scripts/dnr/profile.sh	scripts/tests/fixtures/audit-logs/hostile-args.txt
+scripts/dnr/frames.py	scripts/tests/fixtures/audit-logs/hostile-args.txt
+scripts/dnr/deltas.py	scripts/tests/fixtures/audit-logs/hostile-args.txt
+scripts/dnr/jq-ro.sh	scripts/tests/fixtures/jq-ro/cases.txt
+tools/auditor-tools/target/release/audit-scan	scripts/tests/fixtures/audit-scan/cases.txt	--contract=1
+tools/auditor-tools/target/release/audit-mem	scripts/tests/fixtures/audit-mem/cases.txt	init|put-finding|check|regressions|warm|profile|invariant --contract=1
+tools/auditor-tools/target/release/audit-logs	scripts/tests/fixtures/audit-logs/hostile-args.txt

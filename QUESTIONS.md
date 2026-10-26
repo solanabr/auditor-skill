@@ -347,6 +347,8 @@ Select all that apply, or choose "Full":
 - [ ] Supply chain / dependencies only
 - [ ] Specific files/modules: _______________
 
+> **Where your code lives.** If your code, tests or build files are not where `discovery/file-map.md` expects them (`programs/{name}/src/`, `apps/backend/src/`, `apps/web/src/`), name them here. Intake records them, with your exclusions (Q44), in the Layout table of `audit_<n>/intake.md` §1, each with its source. The next interactive intake in the same checkout shows you that table and reuses it only on your yes; `/auditor:intake --auto` never reuses it, and audits with the defaults.
+
 ### Q40. What are your top security concerns?
 Rank your top 3:
 - [1 ] Fund theft / drain
@@ -405,6 +407,8 @@ _______________
 _______________
 ```
 
+> Each exclusion narrows what the audit covers, so the report's Out of Scope lists it with its source. An earlier run's exclusions are reused only on your yes, after you have seen them, and never by `--auto`: a layout read from the audited tree (a committed file, or a planted run directory in a tree that is not a git repository) could exclude that tree's own code.
+
 ### Q45. Any additional context the auditor should know?
 ```
 Free text — known issues, recent changes, areas of concern, etc.:
@@ -416,12 +420,12 @@ _______________
 ## Section 11: Audit Execution
 
 ### Q46. Where may the auditor run the project's own code?
-Building, testing or installing the project runs code the project controls — build scripts, proc-macros, test suites, `Anchor.toml` scripts, package install hooks. Asked once per audit; see `OUTPUT-RULES.md` Rule 11a.
+Building, testing or installing the project runs code the project controls — build scripts, proc-macros, test suites, `Anchor.toml` scripts, package install hooks. Asked once per audit; see `OUTPUT-RULES.md` Rule 11a. Intake writes the answer, one word, to `audit_<n>/exec-mode`. The bundled runners take the stricter of the `exec-mode` of the run directory they work in and `AUDITOR_EXEC_MODE` in the environment Claude Code runs in (none, then isolated, then native), and in that mode they build and test without asking again for each run. The agent can write that file, so if you choose Isolated, also set `AUDITOR_EXEC_MODE=isolated` in that environment; `AUDITOR_EXEC_MODE=none` stops every build and run of the project's code through the bundled runners.
 - [ ] **Isolated** (recommended) — a container, VM, or Claude Code sandbox, with no keys or credentials mounted
 - [ ] **Native** — on the auditor's own machine (the report says so)
 - [ ] No preference — recorded as **native** (also the default when non-interactive runs leave Q46 unanswered), and the report carries that caveat
 
-> Tools that send code, dependency names or addresses to outside services (an RPC provider, a second-opinion LLM, package registries) are not gated by this answer; the report lists each one (Rule 11b).
+> Tools that send code, dependency names or addresses to outside services (an RPC provider, a second-opinion LLM, package registries) are not gated by this answer; the report lists each one (Rule 11b), and the bundled tools that query them record theirs in the run directory's `disclosures.tsv`.
 
 ### Q47. May the auditor probe the project's own live hosts and buckets?
 DEP-072 (public cloud storage buckets) and DEP-073 (a `.git/` directory a web server exposes) can be checked against the deployed system. Asked once per audit. An unanswered Q47 counts as **no**, and so does every `/auditor:intake --auto` run.

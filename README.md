@@ -5,7 +5,7 @@
 # auditor-skill — Open-Source AI Security Audit Skill
 
 > Production-grade security audit for any codebase, powered by AI agents.
-> 20 checklists · 1,446 verification items · 140 known attack vectors · executable PoCs + fix patches
+> 20 checklists · 1,459 verification items · 140 known attack vectors · executable PoCs + fix patches
 > A full audit-firm lifecycle (automated + interactive) · Benchmarked against CertiK, SOC 2, OWASP Top 10:2025
 > Verify COSTS.md as a referecence - Running this audit can burn a lot of credits.
 
@@ -13,15 +13,15 @@
 
 ## What Is This?
 
-auditor-skill is a **skill file** (a structured prompt + checklists) that turns any LLM agent (Copilot, Cursor, Windsurf, Claude Code, Codex, etc.) into a professional-grade security auditor. It reads your code file by file, checks 1,446 items across 20 security domains, tests against 140 real-world attack vectors, and produces a structured report with severity scores.
+auditor-skill is a **skill file** (a structured prompt + checklists) that turns any LLM agent (Copilot, Cursor, Windsurf, Claude Code, Codex, etc.) into a professional-grade security auditor. It reads your code file by file, checks 1,459 items across 20 security domains, tests against 140 real-world attack vectors, and produces a structured report with severity scores.
 
 **It is not a SaaS product.** It's a folder of markdown files you install for your AI agent — outside any repository you audit — or send to an LLM API.
 
-> **Adaptation required before use.** This skill was originally developed for a specific Solana/Anchor DeFi project and then generalized. `discovery/file-map.md` assumes that project's layout (`programs/{name}/src/`, `apps/backend/src/`, `apps/web/src/`). If yours differs, record where your code lives at intake instead: the in-scope paths under `QUESTIONS.md` Q39 ("Specific files/modules") and the exclusions under Q44, which `/auditor:intake` writes to `audit_<n>/intake.md` §1. An edited `discovery/file-map.md` in a shared or plugin install is lost on the next update. The questionnaire in `QUESTIONS.md` is a blank template — fill it out (or run `/auditor:intake`) for your project before invoking the auditor. Everything else (checklists, known vectors, output rules) is fully portable as-is.
+> **Adaptation required before use.** This skill was originally developed for a specific Solana/Anchor DeFi project and then generalized. `discovery/file-map.md` assumes that project's layout (`programs/{name}/src/`, `apps/backend/src/`, `apps/web/src/`). If yours differs, record where your code lives at intake instead: the in-scope paths under `QUESTIONS.md` Q39 ("Specific files/modules") and the exclusions under Q44, which `/auditor:intake` writes to the Layout table of `audit_<n>/intake.md` §1. The next interactive intake in the same checkout offers that table again and reuses it only on your yes. An edited `discovery/file-map.md` in a shared or plugin install is lost on the next update. The questionnaire in `QUESTIONS.md` is a blank template — fill it out (or run `/auditor:intake`) for your project before invoking the auditor. Everything else (checklists, known vectors, output rules) is fully portable as-is.
 
 ---
 
-## What It Does (v7.6)
+## What It Does (v7.7)
 
 - **Detection & response, post-incident (v7.6).** `/auditor:hunt` works through transaction history, program logs and Geyser/indexer exports with a written hypothesis ledger; `/auditor:respond` starts from a signature, address or alert and establishes whether the attack landed, how far it reached, and why. Verdicts follow a single [ladder](references/detection-response/README.md#the-verdict-ladder-the-one-normative-copy); the response plan is for humans to carry out — the track acts on nothing. Ported Solana-native from Anthropic's defending-code-reference-harness.
 - **History-seeded threat models (v7.6).** `/auditor:threat-model --bootstrap` starts the threat model from what already went wrong: removed or quietly added account guards, reverts and fix commits in the target's history, a fork's distance from its parent, prior audit reports, post-mortems and incident records. One read-only, hardened collector (`scripts/threat-model/collect.sh`) gathers it; non-interactive runs stay offline, and every goal cites its evidence.
@@ -52,6 +52,7 @@ auditor-skill is a **skill file** (a structured prompt + checklists) that turns 
 | [docs/poc-and-patches.md](docs/poc-and-patches.md) | Executable exploit + fix-patch delivery |
 | [docs/output-and-rigor.md](docs/output-and-rigor.md) | Severity, the Rule 5b gate, scope-gated loading, report format |
 | [docs/detection-response.md](docs/detection-response.md) | Post-incident hunting + incident workup (`/auditor:hunt`, `/auditor:respond`) |
+| [docs/permissions-and-isolation.md](docs/permissions-and-isolation.md) | What runs without asking and why that is safe, what still asks, isolated runs, `claude -p`, the risks that remain |
 
 ---
 
@@ -60,14 +61,14 @@ auditor-skill is a **skill file** (a structured prompt + checklists) that turns 
 | Language | Checklists | Items |
 |----------|-----------|-------|
 | Rust (Solana/Anchor) | 01-07 | 531 |
-| Rust (off-chain services) | 20 | 21 |
-| TypeScript / Node.js | 08-09 | 196 |
+| Rust (off-chain services) | 20 | 23 |
+| TypeScript / Node.js | 08-09 | 197 |
 | React / Next.js | 08, 10 | 148 |
 | Python | 14 | 82 |
 | Go / Java / Ruby / PHP | 15 | 88 |
-| AI / agent components | 19 | 35 |
-| **Always applied** (any repo) | 11-13, 16-18 | 409 |
-| **Total** | **20** | **1,446** |
+| AI / agent components | 19 | 39 |
+| **Always applied** (any repo) | 11-13, 16-18 | 415 |
+| **Total** | **20** | **1,459** |
 
 ---
 
@@ -105,7 +106,7 @@ curl -fsSL https://raw.githubusercontent.com/solanabr/auditor-skill/main/install
 git clone https://github.com/solanabr/auditor-skill.git ~/.claude/skills/auditor-skill
 ```
 
-Claude Code auto-discovers user-level skills under `~/.claude/skills/`; invoke by asking your agent to "audit this repo using the auditor-skill" (use **Option 1** for the `/auditor:*` slash commands). This is also Option 2's default path, so a later `install.sh` run without a path upgrades this clone: it installs a fresh clone and moves this one to Option 2's backup directory, without running git in it. For other agents (Cursor, Windsurf, Copilot, Codex), copy the folder anywhere the agent reads outside the repository you audit, and point it at its `SKILL.md`.
+Claude Code auto-discovers user-level skills under `~/.claude/skills/`; invoke by asking your agent to "audit this repo using the auditor-skill" (use **Option 1** for the `/auditor:*` slash commands; Claude Code 2.1.157 and later also loads this clone as the `auditor` plugin, commands included, unless managed settings block plugins saved there, with `strictPluginOnlyCustomization` or a `strictKnownMarketplaces` list without `skills-dir`, or an `auditor` plugin installed from a marketplace takes precedence). This is also Option 2's default path, so a later `install.sh` run without a path upgrades this clone: it installs a fresh clone and moves this one to Option 2's backup directory, without running git in it. For other agents (Cursor, Windsurf, Copilot, Codex), copy the folder anywhere the agent reads outside the repository you audit, and point it at its `SKILL.md`.
 
 ### Option 4: Feed files to the API directly
 
@@ -124,10 +125,17 @@ git submodule update --init --depth 1 -- vendor/trailofbits
 The native corpus works fully **without** it (it falls back to grep-based checks and notes where deeper tooling would run). With the submodule initialized, the auditor delegates to the vendored tools per [`references/orchestration/boundary-map.md`](references/orchestration/boundary-map.md). For the optional token-efficiency tools (`audit-scan` pre-scanner + `audit-mem` memory), build the Rust CLIs (`<auditor-skill root>` is where you installed auditor-skill):
 
 ```bash
-cd "<auditor-skill root>/tools/auditor-tools" && cargo build --release
+cd "<auditor-skill root>/tools/auditor-tools" && cargo build --release --locked
 ```
 
-The auditor runs them, the scripts and the Trail of Bits plugins by absolute path from the installation, never by a path relative to the project it audits ([OUTPUT-RULES.md Rule 11e](OUTPUT-RULES.md#11e--bundled-paths)). If the installation sits inside the repository under audit anyway (such as `.claude/skills/auditor-skill`, where `install.sh` without a path installed through 7.6.0), the build runs inside that tree, where cargo and rustup read its `.cargo/config*` and `rust-toolchain*` from every parent directory: build there only in [Rule 11a](OUTPUT-RULES.md#rule-11-operating-safety) isolated mode, or delete that copy and install a fresh one outside (the plugin, or Option 2 with the path `~/.claude/skills/auditor-skill`) and build that one. Never move or update a copy you find inside a repository ([Installation](#installation)).
+Build them again after every update, with `cargo build --release --locked` in the same directory: the flows call them with a contract marker (`--contract=1`) that an older build refuses, and until then they go on as if the tools were absent. The auditor runs them, the scripts and the Trail of Bits plugins by absolute path from the installation, never by a path relative to the project it audits ([OUTPUT-RULES.md Rule 11e](OUTPUT-RULES.md#11e--bundled-paths)). If the installation sits inside the repository under audit anyway (such as `.claude/skills/auditor-skill`, where `install.sh` without a path installed through 7.6.0), the build runs inside that tree, where cargo and rustup read its `.cargo/config*` and `rust-toolchain*` from every parent directory: build there only in [Rule 11a](OUTPUT-RULES.md#rule-11-operating-safety) isolated mode, or delete that copy and install a fresh one outside (the plugin, or Option 2 with the path `~/.claude/skills/auditor-skill`) and build that one. Never move or update a copy you find inside a repository ([Installation](#installation)).
+
+### Permissions and isolation
+
+The `/auditor:*` commands run their bundled steps without asking: the working-tree check, run directories, read-only git, the Rust tools, and the runners that build and test the project in the execution mode you chose at intake. Each of these checks its own arguments, takes paths inside the working tree (the PoC build cache aside), and writes only into run directories, the `audit-mem` store and scratch directories outside the tree, besides the toolchain caches its downloads fill. Other calls ask, apart from Claude Code's own read-only commands and the file reads the commands pre-approve (Read, Grep and Glob, for any path). Two settings make a run smooth and safe, but for [one risk the first adds](docs/permissions-and-isolation.md#what-remains-a-risk), since its rules also let Claude start a flow by itself:
+
+- Add the `Skill(auditor:… *)` rules from [docs/permissions-and-isolation.md](docs/permissions-and-isolation.md#turns-and-resuming) to your user settings, `~/.claude/settings.json`, so a flow resumes after your reply without a prompt. They name no path.
+- For code you don't trust, choose isolated mode at intake, set `AUDITOR_EXEC_MODE=isolated`, and run in a container, a VM or Claude Code's sandbox. In native mode the project's builds and tests run on your machine without a prompt for each run.
 
 ---
 
@@ -190,18 +198,18 @@ auditor-skill/
 │   ├── 06-program-economic-logic.md        (92 items)
 │   ├── 07-program-opsec-governance.md      (87 items)
 │   ├── 08-typescript-safety.md             (64 items)
-│   ├── 09-backend-security.md             (132 items)
+│   ├── 09-backend-security.md             (133 items)
 │   ├── 10-frontend-security.md             (84 items)
-│   ├── 11-supply-chain.md                  (62 items)
+│   ├── 11-supply-chain.md                  (65 items)
 │   ├── 12-secrets-opsec.md                 (53 items)
 │   ├── 13-deployment-infrastructure.md     (96 items)
 │   ├── 14-python-safety.md                 (82 items)
 │   ├── 15-general-language-safety.md       (88 items)
 │   ├── 16-formal-verification-testing.md   (73 items)
-│   ├── 17-logging-monitoring-incident-response.md (65 items)
+│   ├── 17-logging-monitoring-incident-response.md (68 items)
 │   ├── 18-privacy-compliance-change-management.md (60 items)
-│   ├── 19-ai-agent-security.md (35 items) — AI agents on Solana
-│   └── 20-rust-offchain-services.md (21 items) — Off-chain Rust (geyser/indexers/keepers)
+│   ├── 19-ai-agent-security.md (39 items) — AI agents on Solana
+│   └── 20-rust-offchain-services.md (23 items) — Off-chain Rust (geyser/indexers/keepers)
 │
 ├── discovery/               ← File patterns and search commands
 │   ├── file-map.md          ← Maps checklists → target file patterns
@@ -234,7 +242,7 @@ auditor-skill/
 ├── skills/
 │   └── dnr-analyze/         ← auditor:dnr-analyze: one D&R analysis phase, run as a fork of incident-responder
 │
-├── tools/auditor-tools/     ← Rust CLIs (cargo build --release)
+├── tools/auditor-tools/     ← Rust CLIs (cargo build --release --locked)
 │   ├── audit-scan           ← deterministic pre-scan → JSON risky-surface map (~$0)
 │   ├── audit-mem            ← SQLite cross-audit memory (dedup · regression · FP-suppression)
 │   └── audit-logs           ← the D&R analysis recipes as one offline binary (cargo build --release --locked)
@@ -249,10 +257,14 @@ auditor-skill/
 │   └── patch/               ← patch + VERIFICATION templates
 │
 ├── docs/                    ← Usage guides (start at docs/README.md)
-├── scripts/                 ← preflight.sh, rundir.sh, report-to-pdf.sh, the CI checks (check-*.sh), tob-delta-review.sh + the no-attribution commit hook
+├── scripts/                 ← preflight.sh, rundir.sh, git-ro.sh, rpc-read.sh, report-to-pdf.sh, the CI checks (check-*.sh), tob-delta-review.sh + the no-attribution commit hook
+│   ├── runner/              ← probe.sh, deps.sh, sast.sh, target.sh: toolchain probes, dependency audits, SAST, and builds and tests in the recorded execution mode
+│   ├── recipes/             ← lock-delta.sh, web3js-history.sh: the lockfile changes and known-bad releases in the git history, for the supply-chain checks
+│   ├── lib/                 ← confine.sh and isolation.sh, the checks and environment cleaning the entry points share
+│   ├── pdf/                 ← no-remote.lua, the pandoc filter report-to-pdf.sh renders with
 │   ├── dnr/                 ← detection & response recipes (gated RPC collector, program snapshot, corpus profile, log frames, balance deltas, jq-ro.sh)
 │   ├── threat-model/        ← collect.sh — the read-only threat-model bootstrap collector
-│   └── tests/               ← script self-tests (+ fixtures/gha/, workflows that are never executed)
+│   └── tests/               ← script self-tests (+ fixtures/gha/, workflows and a composite action that are never executed)
 ├── AGENTS.md                ← Agent-orchestration overview
 └── vendor/trailofbits/      ← Trail of Bits execution plugins (git submodule, pinned — see Installation)
 ```
@@ -284,7 +296,7 @@ The audit produces a structured markdown report with:
 1. **Executive Summary** — risk score (1-10), deploy/no-deploy verdict, severity distribution
 2. **Instruction Matrix** — every smart contract instruction mapped
 3. **State Model** — account structs, PDA seeds, relationships
-4. **Per-Item Verdicts** — every in-scope checklist item (up to 1,446) with `[PASS]`, `[FAIL-N]`, `[PARTIAL]`, or `[N/A]`
+4. **Per-Item Verdicts** — every in-scope checklist item (up to 1,459) with `[PASS]`, `[FAIL-N]`, `[PARTIAL]`, or `[N/A]`
 5. **Known Vectors Results** — each in-scope attack vector (up to 140) with explicit verdict and evidence
 6. **Findings** — deduplicated, severity-sorted
 7. **Attack Scenarios** — narrative exploitable paths
@@ -402,7 +414,7 @@ MIT — use it, fork it, improve it, sell services built on it. Attribution appr
 ## FAQ
 
 **Q: Does this replace a professional audit?**
-A: It covers more items than most paid audits (1,446 plus 140 known-vector checks vs typical 50-200), but an AI auditor cannot do everything a human can (social engineering assessment, business logic review requiring domain expertise, legal compliance opinions). Use this as a first pass, then hire humans for what it flags.
+A: It covers more items than most paid audits (1,459 plus 140 known-vector checks vs typical 50-200), but an AI auditor cannot do everything a human can (social engineering assessment, business logic review requiring domain expertise, legal compliance opinions). Use this as a first pass, then hire humans for what it flags.
 
 **Q: Which AI model should I use?**
 A: See [COSTS.md](COSTS.md). For maximum depth, use Opus 4 or o3. For best value, use Sonnet 4 or GPT-4.1. For CI/CD integration (fast, cheap), use Haiku or o4-mini.
@@ -411,7 +423,7 @@ A: See [COSTS.md](COSTS.md). For maximum depth, use Opus 4 or o3. For best value
 A: Depends on repo size and model. A 50K-line repo takes 60-90 minutes with Opus 4. See [COSTS.md](COSTS.md) for full estimates.
 
 **Q: Can I use this in CI/CD?**
-A: Yes — run the QUICK scope (known vectors grep scan) on every PR, and FULL scope on release branches. On a public repository the job posts pass/fail only — no finding counts: logs and uploaded artifacts are readable by any signed-in GitHub user, so finding details go to a private channel (OUTPUT-RULES Rule 11d).
+A: Yes — run the QUICK scope (known vectors grep scan) on every PR, and FULL scope on release branches. On a public repository the job posts pass/fail only — no finding counts: logs and uploaded artifacts are readable by any signed-in GitHub user, so finding details go to a private channel (OUTPUT-RULES Rule 11d). A CI job is a `claude -p` run: it denies every call that would ask. The QUICK scope builds nothing; a FULL run builds the project natively unless the job sets `AUDITOR_EXEC_MODE` (see [docs/permissions-and-isolation.md](docs/permissions-and-isolation.md#non-interactive-runs-claude--p)). Run it on a clean copy, with `--setting-sources user`: a pull request can carry `.claude/settings.json` hooks and a `.mcp.json` that `claude -p` runs when it starts.
 
 **Q: Can I use this for non-Solana projects?**
 A: Yes — checklists 08-18 are language-agnostic or cover Python/Go/Java/Ruby/PHP. Checklists 01-07 are Solana-specific.

@@ -86,11 +86,20 @@ not the thing standing between the treasury and the exit.
 9. **Read the incident-slot source without checking it out** (`OUTPUT-RULES.md`
    Rule 11c). `--repo` is usually the client's own checkout, and checking out runs
    its hooks and filters and changes its tree: never `checkout`, `switch` or
-   `worktree add` there. Copy it to a directory outside it with
-   `GIT_NO_LAZY_FETCH=1 git clone --no-local <checkout> <scratch copy>`, and read the revision deployed at the incident slot from that copy with
-   `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false show --no-textconv --no-ext-diff <rev>:<path>`
-   (`GIT_NO_LAZY_FETCH=1` keeps a partial clone from fetching missing objects
-   through the checkout's own remote configuration).
+   `worktree add` there. Copy it with
+   `"<auditor-skill root>/scripts/git-ro.sh" copy <repo> incident_<n>`, a bare copy
+   without its hooks, filters or config at `incident_<n>/src.git` (the path it
+   prints), and read the revision deployed at the incident slot from it with
+   `"<auditor-skill root>/scripts/git-ro.sh" --git-dir incident_<n>/src.git show <rev>:<path>`.
+   `<repo>` is a path inside the working directory (`.` in the checkout). git-ro.sh
+   fetches nothing: `copy` refuses a partial clone (exit 3), and
+   `"<auditor-skill root>/scripts/git-ro.sh" --repo <repo> show <rev>:<path>` then
+   reads the repository itself, where a missing object fails. A `--repo` outside the
+   working directory is copied with
+   `GIT_NO_LAZY_FETCH=1 git clone --no-local <checkout> <scratch copy>` and read with
+   `GIT_NO_LAZY_FETCH=1 git -C <scratch copy> --no-pager -c core.fsmonitor=false -c log.showSignature=false show --no-textconv --no-ext-diff <rev>:<path>`,
+   which ask (`GIT_NO_LAZY_FETCH=1` keeps a partial clone from fetching missing
+   objects through the checkout's own remote configuration).
 
 These rules, and the `allowed-tools` lists on the commands, are **not a sandbox**
 (see the end of this file). When confinement actually matters — above all when
@@ -138,11 +147,12 @@ other outcome is filed under `ruled_out[]`.
   hotfix can overwrite it; a later snapshot of a redeployed program is kept as
   `bin/<id>@<slot>.so`, and `bin/<id>.so` stays the first, incident-time snapshot)
   or a build whose hash matches the deployed program. For
-  `[PoC-REPRODUCED]` that is `templates/poc/run.sh` with `VULNERABLE_SO` set to those
-  bytes (no fixed build is needed) ending with
+  `[PoC-REPRODUCED]` that is
+  `"<auditor-skill root>/templates/poc/run.sh" --crate incident_<n>/poc/INC-<n>.<k> --vulnerable-so incident_<n>/bin/<id>.so`,
+  those bytes (no fixed build is needed), ending with
   `OK: reproduced on prebuilt bytes — vulnerable sha256=<hash> → [PoC-REPRODUCED]`,
   where `<hash>` is the zero-trimmed sha256 recorded in `LEDGER.md` for the snapshot,
-  or the hash-matched build's (with `FIXED_SO`, the line also names the fixed bytes).
+  or the hash-matched build's (with `--fixed-so`, the line also names the fixed bytes).
   `run.sh` prints it only after the exploit's `assert_exploit_effect!` ran and held on
   the bytes it placed (every program `mollusk_for` or `litesvm_for!` loaded is the
   snapshot): the **observed Leg-1 effect** (the account the attack changed and the
@@ -274,10 +284,14 @@ read past incidents as prior vulnerabilities from `INCIDENTS.json`
 
 A command's or a skill's `allowed-tools` list **pre-approves** calls for the turn
 that runs it; it does not restrict what is callable, and it is not a security
-boundary. `/auditor:hunt` and `/auditor:respond` pre-approve only reading (`Read`,
-`Grep`, `Glob`), `Task`, edits confined to `incident_*/`, `preflight.sh` and
-`rundir.sh` by their exact paths in the installation, and invoking the
-`auditor:dnr-analyze` skill. Inside its fork, that skill pre-approves the offline
+boundary. `/auditor:hunt` and `/auditor:respond` pre-approve reading (`Read`,
+`Grep`, `Glob`), `Task`, edits confined to `incident_*/`, invoking themselves again
+and the `auditor:dnr-analyze` skill, and, by their exact paths in the installation,
+`preflight.sh`, `rundir.sh`, the snapshot and the collector (which reach only the
+user's `$RPC_URL`, within the caps the user's environment sets, after the human's
+yes), `rpc-read.sh`, `git-ro.sh` and the runners `probe.sh`, `target.sh` and
+`run.sh`, which build and run code only in the recorded execution mode. Inside its
+fork, that skill pre-approves the offline
 analysis tools by their exact paths in the installation, run directly with nothing
 in front: `profile.sh`, `frames.py`, `deltas.py`, `jq-ro.sh` and `audit-logs`. The
 recipes and `audit-logs` read only files inside an `incident_<n>/` run directory,
@@ -285,7 +299,7 @@ and `jq-ro.sh` only files inside a run directory; it runs `jq` with an empty
 environment and refuses every option that reads a file or module. No
 pattern names a path relative to the working directory, which would pre-approve
 whatever same-named file the audited repo ships (rule 8). Everything else prompts:
-the networked `collect.sh` and `snapshot-program.sh`, `redact.sh`, `jq` itself
+a line through `redact.sh`, `jq` itself
 (`jq -n env` or `$ENV` prints every environment variable, `$RPC_URL` included), a
 line that holds a `$`, and everything that touches the chain or executes code:
 `solana`, `curl`, `cargo`, `surfpool`, a bare `python3`, `sqlite3`, `awk`. Claude

@@ -35,37 +35,32 @@ grep -rn --include="*.ts" --include="*.tsx" --include="*.env*" -E "[1-9A-HJ-NP-Z
 
 **Step 4: Full git history scan for ever-committed secrets**
 ```
-# Check if ANY secret-looking file was ever added to git (OUTPUT-RULES Rule 11c flags)
-GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-  log --all --no-textconv --diff-filter=A --name-only --pretty=format:"%H %s" \
-  -- "*.env" "*.env.*" "*.pem" "*-keypair.json" "*-delegate.json" "id.json" "*secret*" "*private*"
+# Check if ANY secret-looking file was ever added to git (read-only git, OUTPUT-RULES Rule 11c)
+"<auditor-skill root>/scripts/git-ro.sh" log --all --diff-filter=A --name-only --pretty=format:"%H %s" -- "*.env" "*.env.*" "*.pem" "*-keypair.json" "*-delegate.json" "id.json" "*secret*" "*private*"
 ```
-- ✅ PASS: Zero results
+- ✅ PASS: Zero results, and no `refused:` line
 - ❌ FAIL: Any file listed → secret was committed. Even if later deleted, **it's still in history**
 
 **Step 5: Deep git history search for key content**
 ```
-# Search git history for actual secret values, not just filenames (OUTPUT-RULES Rule 11c flags). -S also finds
-# files a committed .gitattributes marks -diff or binary, but the patch then shows only "Binary files differ":
+# Search git history for actual secret values, not just filenames (read-only git, OUTPUT-RULES Rule 11c). -S also
+# finds files a committed .gitattributes marks -diff or binary, but the patch then shows only "Binary files differ":
 # --text prints their content on the text-pathspec searches
-GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c core.bigFileThreshold=512m \
-  log --all -p --text --no-textconv --no-ext-diff -S "BEGIN RSA PRIVATE" --oneline -- "*.ts" "*.json" "*.pem" | head -40
+"<auditor-skill root>/scripts/git-ro.sh" log --all -p --text -S "BEGIN RSA PRIVATE" --oneline -- "*.ts" "*.json" "*.pem" | head -40
 # whole repository, so no --text: a file marked binary shows no content here; re-run with --text limited to text pathspecs
-GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-  log --all -p --no-textconv --no-ext-diff -S "BEGIN EC PRIVATE" --oneline | head -20
-GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c core.bigFileThreshold=512m \
-  log --all -p --text --no-textconv --no-ext-diff -S "mnemonic" --oneline -- "*.ts" "*.json" "*.env" | head -20
+"<auditor-skill root>/scripts/git-ro.sh" log --all -p -S "BEGIN EC PRIVATE" --oneline | head -20
+"<auditor-skill root>/scripts/git-ro.sh" log --all -p --text -S "mnemonic" --oneline -- "*.ts" "*.json" "*.env" | head -20
 ```
-- ✅ PASS: Zero matches across all three
+- ✅ PASS: Zero matches across all three, and no `refused:` line
 - ❌ FAIL: Any match → key was in history. MUST rotate immediately, even if commit was reverted
-- ⚠️ INCONCLUSIVE: any `fatal:` or `lazy fetching disabled` line in the output — the checkout is a partial clone with incomplete history (OUTPUT-RULES Rule 11c); record it as not checked, never as a PASS
+- ⚠️ INCONCLUSIVE: a `git-ro: partial clone` or `git-ro: shallow clone` line, a `refused:` line, or any `fatal:` line, in the output — the history is incomplete or the step did not run (OUTPUT-RULES Rule 11c); record it as not checked, never as a PASS
 
 **Step 6: Verify git-tracked files right now**
 ```
-GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-  ls-files | grep -iE "\.(env|pem)$|keypair|delegate|secret|private"   # Rule 11c flags
+# tracked .env and .pem files, and every path naming a keypair, delegate, secret or private key, in any letter case
+"<auditor-skill root>/scripts/git-ro.sh" ls-files -- ':(icase)*.env' ':(icase)*.pem' ':(icase)*keypair*' ':(icase)*delegate*' ':(icase)*secret*' ':(icase)*private*'
 ```
-- ✅ PASS: Zero results (no secret files are tracked by git)
+- ✅ PASS: Zero results (no secret files are tracked by git), and no `refused:` line
 - ❌ FAIL: Any file listed → currently tracked. Remove, add to .gitignore, rotate the secret
 
 **Step 7: Check .gitignore completeness**
