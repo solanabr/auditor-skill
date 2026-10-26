@@ -32,6 +32,7 @@ Commands are namespaced `auditor`, so you invoke them as `/auditor:audit`, `/aud
 | Work an alert or a drained protocol: outcome, damage, next steps | `/auditor:respond <signature / address / INC-n.k>` | [detection-response.md](detection-response.md) |
 | Cut audit token cost ~30-40% | build `audit-scan` | [power-tools.md](power-tools.md#audit-scan) |
 | Remember findings across audits | build `audit-mem` | [power-tools.md](power-tools.md#audit-mem) |
+| Run with fewer prompts, isolated, or in `claude -p` | the user-settings rules, `AUDITOR_EXEC_MODE` | [permissions-and-isolation.md](permissions-and-isolation.md) |
 
 As a CI gate, `/auditor:quick-scan` runs non-interactively, so the run must be able to run its analyzers: a gate whose analyzers did not run fails.
 
@@ -45,6 +46,7 @@ As a CI gate, `/auditor:quick-scan` runs non-interactively, so the run must be a
 - **[poc-and-patches.md](poc-and-patches.md)** — executable PoC + patch delivery, framework matrix, evidence and fix tiers.
 - **[output-and-rigor.md](output-and-rigor.md)** — severity model, the Rule 5b gate, report templates, the no-"safe to deploy" convention.
 - **[detection-response.md](detection-response.md)** — post-incident hunting and incident workup.
+- **[permissions-and-isolation.md](permissions-and-isolation.md)** — what runs without asking and why that is safe, what still asks, isolated runs (container, VM, Claude Code's sandbox), `claude -p`, and the risks that remain.
 
 ## Root references (outside `docs/`)
 
