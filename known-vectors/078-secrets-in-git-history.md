@@ -91,7 +91,7 @@ cat .gitignore | grep -E "\.env|keypair|\.pem|\.key|id_rsa|delegate\.json"
 **Step 10: Check for pre-commit hooks (prevention)**
 ```
 cat .husky/pre-commit 2>/dev/null; cat .git/hooks/pre-commit 2>/dev/null; cat .pre-commit-config.yaml 2>/dev/null
-npm ls --depth=0 2>/dev/null | grep -iE "husky|lint-staged|detect-secrets|gitleaks|trufflehog"
+grep -iE '"(husky|lint-staged|detect-secrets|gitleaks|trufflehog)"' package.json 2>/dev/null
 ```
 - ✅ PASS: Pre-commit hook runs secret scanner (gitleaks, detect-secrets, or trufflehog)
 - ⚠️ PARTIAL: Husky installed but no secret scanning hook

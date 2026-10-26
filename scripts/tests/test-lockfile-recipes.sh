@@ -24,7 +24,9 @@
 #     runs; a TMPDIR inside the working directory stops the copy. Step 2 takes an https:// URL only and fetches
 #     over https only: an option-shaped remote.upstream.url that Step 1 prints, a local path or a file:// URL
 #     fetches nothing and fires no canary, and an option-shaped deployed commit is refused, never read as an
-#     option; its log, above 64 KiB, is cut at 40 lines; SC-054 names the same fetch.
+#     option; its log, above 64 KiB, is cut at 40 lines; SC-054 names the same fetch;
+#   - the manifest reads of KV-076 Step 4, KV-078 Step 10, KV-049 Step 4 and KV-089 Step 3, on a PATH with no
+#     npm or node: the locked packages with an install script, a declared hook tool, the declared runtime.
 # Usage (from the repo root): bash scripts/tests/test-lockfile-recipes.sh
 # Needs bash >= 3.2, git, grep, sed, awk, find, mkfifo. No network: the test's git config rewrites the
 # upstream's https URL to a local path.
@@ -513,6 +515,45 @@ for w in '-c protocol.allow=never -c protocol.https.allow=always' 'fetch --no-ta
 done
 if [ -z "$miss" ]; then ok "SC-054 names the https-only fetch and the log form KV-137 Step 2 runs"
 else bad "SC-054 and KV-137 Step 2 differ, missing:$miss"; fi
+
+# ---- the manifest reads, as the corpus prints them, on a PATH with no npm or node: KV-076 Step 4 counts the locked
+# packages that run an install script, KV-078 Step 10 finds a secret-scanning hook tool among the declared
+# dependencies, and KV-049 Step 4 and KV-089 Step 3 read the Node.js runtime the target declares, never the
+# auditor's own, with node_modules left out
+MF="$T/manifests"
+mkdir -p "$MF/apps/backend" "$MF/apps/web" "$MF/node_modules/x" "$MF/srv" "$MF/mpath" || exit 1
+printf '{\n  "name": "m",\n  "lockfileVersion": 3,\n  "packages": {\n    "": {"name": "m"},\n    "node_modules/a": {\n      "version": "1.0.0",\n      "hasInstallScript": true\n    },\n    "node_modules/b": {\n      "version": "1.0.0"\n    },\n    "node_modules/c": {\n      "version": "2.0.0",\n      "hasInstallScript": true\n    }\n  }\n}\n' > "$MF/package-lock.json"
+printf '{\n  "name": "m",\n  "engines": {\n    "node": ">=18"\n  },\n  "devDependencies": {\n    "husky": "^9.0.0",\n    "@types/node": "^20.0.0"\n  }\n}\n' > "$MF/package.json"
+printf '{\n  "name": "backend",\n  "engines": {\n    "node": "20.x"\n  }\n}\n' > "$MF/apps/backend/package.json"
+printf '{\n  "name": "web"\n}\n' > "$MF/apps/web/package.json"
+printf '20.11.1\n' > "$MF/.nvmrc"; printf '18\n' > "$MF/apps/backend/.nvmrc"
+printf 'FROM node:18-alpine\n' > "$MF/srv/Dockerfile"; printf 'FROM node:8\n' > "$MF/node_modules/x/Dockerfile"
+printf '{\n  "name": "x",\n  "engines": {\n    "node": ">=4"\n  },\n  "scripts": {\n    "postinstall": "node x.js"\n  }\n}\n' > "$MF/node_modules/x/package.json"
+for t in bash sh grep cat head sed; do p=$(type -P "$t" 2>/dev/null) && ln -s "$p" "$MF/mpath/$t"; done
+mf_step() { # mf_step FILE N: the step's code block, run in the fixture on that PATH; its output in $T/mf.out
+  kv_step "$1" "$2" > "$T/mf-step.sh"
+  (cd "$MF" && env -i PATH="$MF/mpath" HOME="$T" LC_ALL=C bash "$T/mf-step.sh") > "$T/mf.out" 2>&1 </dev/null
+}
+mf_step "$ROOT/known-vectors/076-dependency-confusion-substitution-attack.md" 4
+if [ "$(sed -n 1p "$T/mf.out")" = 2 ] && grep -q '^node_modules/x/package.json: *"postinstall": "node x.js"$' "$T/mf.out" \
+   && [ "$(grep -c '' "$T/mf.out")" = 2 ]; then
+  ok "KV-076 Step 4 counts the 2 locked packages that run an install script, and lists the postinstall line, with no npm"
+else bad "KV-076 Step 4 on the manifests fixture"; sed 's/^/  | /' "$T/mf.out"; fi
+mf_step "$ROOT/known-vectors/078-secrets-in-git-history.md" 10
+if [ "$(cat "$T/mf.out")" = '    "husky": "^9.0.0",' ]; then
+  ok "KV-078 Step 10 finds husky among the declared dependencies, with no npm"
+else bad "KV-078 Step 10 on the manifests fixture"; sed 's/^/  | /' "$T/mf.out"; fi
+mf_step "$ROOT/known-vectors/049-http-response-splitting.md" 4
+printf '%s\n' '4:    "node": ">=18"' '20.11.1' './srv/Dockerfile:1:FROM node:18-alpine' > "$T/mf.want"
+if cmp -s "$T/mf.want" "$T/mf.out"; then
+  ok "KV-049 Step 4 reads the declared runtime (engines, .nvmrc, a Dockerfile's node image), not the auditor's node"
+else bad "KV-049 Step 4 on the manifests fixture"; sed 's/^/  | /' "$T/mf.out"; fi
+mf_step "$KV089" 3
+printf '%s\n' 'package.json:4:    "node": ">=18"' 'apps/backend/package.json:4:    "node": "20.x"' '20.11.1' '18' \
+  './srv/Dockerfile:1:FROM node:18-alpine' > "$T/mf.want"
+if cmp -s "$T/mf.want" "$T/mf.out"; then
+  ok "KV-089 Step 3 reads the declared runtime of the root and both apps, not the auditor's node, without node_modules"
+else bad "KV-089 Step 3 on the manifests fixture"; sed 's/^/  | /' "$T/mf.out"; fi
 
 echo "---- $pass passed, $failn failed"
 [ "$failn" -eq 0 ]

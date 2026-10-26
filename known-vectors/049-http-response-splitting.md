@@ -35,8 +35,11 @@ grep -rn --include="*.ts" -iE "\\\\r|\\\\n|replace.*newline" apps/backend/ | gre
 
 **Step 4: Node.js version check**
 ```
-node --version
-# Node.js 12+ rejects header values containing \r or \n
+# The runtime the target declares (package.json engines, .nvmrc, .node-version, a Dockerfile's node image),
+# not the auditor's own node. Node.js 12+ rejects header values containing \r or \n
+grep -n '"node"' package.json 2>/dev/null
+cat .nvmrc .node-version 2>/dev/null
+grep -rn --include='Dockerfile*' --exclude-dir=node_modules -E '^FROM[[:space:]]+node' . 2>/dev/null
 ```
 - ✅ PASS: Node.js 12+ (built-in protection)
 - ⚠️ PARTIAL: Older Node.js but no user input in headers
