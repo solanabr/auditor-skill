@@ -9,8 +9,16 @@ allowed-tools:
   - Task
   - Edit(incident_*/**)
   - Skill(auditor:dnr-analyze *)
+  - Skill(auditor:respond *)
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh" *)'
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" *)'
+  - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/dnr/snapshot-program.sh" *)'
+  - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/dnr/collect.sh" *)'
+  - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/rpc-read.sh" *)'
+  - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/git-ro.sh" *)'
+  - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/runner/probe.sh" *)'
+  - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/runner/target.sh" *)'
+  - 'Bash("${CLAUDE_PLUGIN_ROOT}/templates/poc/run.sh" *)'
 ---
 
 # auditor-skill — Incident Response (lead in hand)
@@ -45,26 +53,44 @@ export, or recipe output — only the agent's report and the paths it names.
 > Open every run with this line: **if funds are moving right now, run the
 > pause/freeze runbook and open a SEAL 911 ticket (`@seal_911_bot`) first — this
 > workup comes after, it is not the emergency response.** The `allowed-tools` above
-> are not a sandbox (README); beyond reading, `Task`, edits under `incident_*/` and
-> the skill, they pre-approve only `preflight.sh` and `rundir.sh` by their exact
-> paths. Inside the `auditor:dnr-analyze` fork, the offline analysis tools
+> are not a sandbox (README); beyond reading, `Task`, edits under `incident_*/`,
+> invoking this command again and the skill, they pre-approve these bundled tools
+> by their exact paths: `preflight.sh` and `rundir.sh`; the snapshot and the
+> collector (`snapshot-program.sh` and `collect.sh`, which reach only the user's
+> `$RPC_URL`, within the caps the user's environment sets; the human's yes in step
+> 3 gates a collection); `rpc-read.sh`; `git-ro.sh`; and the runners `probe.sh`,
+> `target.sh` and `run.sh`, which build and run code only in the recorded execution
+> mode. Inside the `auditor:dnr-analyze` fork, the offline analysis tools
 > (`profile.sh`, `frames.py`, `deltas.py`, `jq-ro.sh` and `audit-logs`) run
 > without a prompt, by their exact paths. They read only regular
 > files with one name in a run directory, by relative paths, and the recipes and
 > `audit-logs` write only a new `.jsonl`, `.tsv` or `.txt` file directly in one
-> (`--out`); anything else they refuse (exit 2) before reading any input. The
-> collector, the snapshot and `redact.sh` still prompt for approval, as do `jq`
-> itself (which can print the environment, `$RPC_URL` included) and anything that
-> executes code.
+> (`--out`); anything else they refuse (exit 2) before reading any input.
+> `redact.sh` still prompts for approval, as do `jq` itself (which can print the
+> environment, `$RPC_URL` included), the `--logs` copy from outside the working
+> directory, and anything else that executes code.
 
 Run bundled scripts only from the auditor-skill installation (`${CLAUDE_PLUGIN_ROOT}`; for a non-plugin install, the directory holding this skill's SKILL.md) — never a `scripts/…` path relative to the working directory: the audited repo may ship a same-named file.
 Run each bundled script, and the `--logs` check and copy, as a Bash call of its
-own, exactly in the form given here: the quoted absolute path first, with nothing
-in front (no `bash`, no `cd`, no variable assignment), then its arguments. Join no
-other command to it with `;`, `&&` or `|`, and add no `echo`: the tool reports the
-exit status. Put no `$` or backtick anywhere in the line, inside quotes too (so
-never `echo $?`): Claude Code asks about any command that holds one, whatever its
-allow rules say.
+own, from the working directory, exactly in the form given here: the quoted
+absolute path first, with nothing in front (no `bash`, no `cd`, no variable
+assignment), then its arguments, every value you fill in written out literally.
+Join no other command to it with `;`, `&&` or `|`, and add no `echo`: the tool
+reports the exit status. Put no `$` or backtick anywhere in the line, inside quotes
+too (so never `echo $?`): Claude Code asks about any command that holds one,
+whatever its allow rules say.
+This command's pre-approvals last for the turn that invoked it: Claude Code clears
+them at the user's next message, and a turn that a background agent's completion
+notice starts has none, so spawn every agent in the foreground. When the workup
+goes on after the human replies (a yes to a collection, the execution mode, the
+reuse of a run directory), first invoke this command again through the Skill tool
+as `auditor:respond --resume <step> incident_<n>` followed by the lead and the
+answers, `<step>` being the step you go on with (`1` once the human names the run
+directory to reuse, `3` after a yes to a collection, `5` after the mode), and do
+that step's work in the same turn. A resumed invocation adopts that run directory
+and never repeats a finished step. A `claude -p` run is one turn with no replies,
+and a call that would ask is denied there: pass each denied call, and the gap it
+leaves, to the agent for the ledger and the plan.
 Run any python you point at the corpus as `python3 -I`, so no module from the
 working directory or `PYTHONPATH` can stand in for the stdlib; the bundled recipes
 run directly by their path, in the fork, where their shebang does the same.
@@ -157,7 +183,11 @@ directory.
    Show the human the addresses, the window the agent proposed around the lead,
    the caps and the estimated call count, get a yes, and pass exactly those
    values: the window as `--since <fromUnix> --until <toUnix>`, the caps as
-   `--max-pages N --max-tx N`, never a `--window` argument. A collection into an
+   `--max-pages N --max-tx N`, never a `--window` argument. That yes is the only
+   gate, since the collector runs under this command's rules with no prompt; it
+   comes as the human's reply, so first invoke
+   `auditor:respond --resume 3 incident_<n>` with those values, then collect in
+   that turn. A collection into an
    incident that already has a corpus goes to a new `incident_<n>/corpus-<k>/`
    (`<k>` is the highest existing number + 1, `corpus/` counting as 1;
    `collect.sh` makes it), and every recipe then reads
@@ -186,18 +216,37 @@ directory.
 
 5. **Root cause & PoC (Phase 3)** (this command). Spawn `context-builder` on the
    implicated handler in the source deployed at the incident slot. Read that
-   revision without checking it out: make a copy outside the client's checkout with
-   `GIT_NO_LAZY_FETCH=1 git clone --no-local <checkout> <scratch copy>`, and read from the copy with
-   `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false show --no-textconv --no-ext-diff <rev>:<path>`
-   (Rule 11c). Never `checkout`, `switch` or `worktree add` in `--repo`. Then spawn
+   revision without checking it out (Rule 11c), as `/auditor:hunt` step 5 does:
+   `"${CLAUDE_PLUGIN_ROOT}/scripts/git-ro.sh" copy <repo> incident_<n>` makes a
+   bare copy and prints its path (`incident_<n>/src.git`, then `src-2.git`, …), and
+   `"${CLAUDE_PLUGIN_ROOT}/scripts/git-ro.sh" --git-dir incident_<n>/src.git show <rev>:<path>`
+   reads from it, with `<repo>` the `--repo` path inside the working directory (`.`
+   when you run in the checkout); a `--repo` outside it is copied and read with raw
+   git, which asks each time, in the form hunt step 5 gives. Never `checkout`,
+   `switch` or `worktree add` in `--repo`. Then spawn
    `poc-engineer` in incident mode to reproduce on the bytes from step 1 (Leg 3)
-   with `run.sh --vulnerable-so incident_<n>/bin/<program>.so` alone — in-process SVM or a local surfnet, harness
-   keys only, asserting the observed effect with `assert_exploit_effect!`. Leg 3 is
+   with `run.sh --vulnerable-so incident_<n>/bin/<program>.so` alone — in-process
+   SVM or a local surfnet, harness keys only, asserting the observed effect with
+   `assert_exploit_effect!`. Leg 3 is
    met only when `run.sh` ends with `OK: reproduced on prebuilt bytes — vulnerable
    sha256=<the step-1 hash> → [PoC-REPRODUCED]`; no usable bytes → the ceiling is
-   `suspected`. Every PoC run and any build of target code needs the Rule 11a
+   `suspected`. Every PoC run and any build of target code (through
+   `"${CLAUDE_PLUGIN_ROOT}/scripts/runner/target.sh"`) needs the Rule 11a
    mode: ask once (a non-interactive run is native, and the report says so),
-   pass it to the agent for the ledger header, pass it on as `AUDITOR_EXEC_MODE`.
+   pass it to the agent for the ledger header, and write it as one word to
+   `incident_<n>/exec-mode` with the Write tool, where
+   `"${CLAUDE_PLUGIN_ROOT}/templates/poc/run.sh" --crate` reads it; the answer is
+   the human's reply, so first invoke `auditor:respond --resume 5 incident_<n>`
+   with it. Before `poc-engineer` runs, `INCIDENTS.json` must record the incident
+   with its `id` and `root_cause_class` (`unknown` until it is known):
+   `run.sh --crate` reads it, stops when it cannot, and holds a
+   `supply_chain_or_ci` incident to isolated mode on its dumped bytes (Rule 11a).
+   An `INC-<n>.<k>` lead's entry is there already. Otherwise add the entry with the
+   Edit tool, or, with no `INCIDENTS.json` yet, write one with the Write tool in
+   this shape, `INC-<n>.<k>` being the next id of this run:
+   `{"schema": "auditor-incidents/1", "incidents": [{"id": "INC-<n>.<k>", "root_cause_class": "unknown"}]}`
+   (the class the root cause shows in place of `unknown`); step 6 completes the
+   entry, keeping that id.
    Hand `poc-engineer` the PoC build cache from the ledger header, if any, and pass
    one it creates to the agent for that header. Before the Leg 3 line counts, check the
    crate's harness copy and its `non-registry code:` line as `/auditor:poc` step 6

@@ -42,11 +42,16 @@ provider domain, the window and caps the human approved for each collection, the
 execution mode and the PoC build cache once they are recorded, and, later, the
 `context-builder` and `poc-engineer` results. Work from exactly those. Copy the
 mode and the cache into `LEDGER.md`'s **Execution mode** and **PoC build cache**
-lines. When a Leg-3 `run.sh` run exits 3, set the **PoC re-run flag** line to "PoC
-re-run needed" with `run.sh`'s blocker line verbatim, and clear it once a re-run
-decides. You never run `collect.sh`: when the corpus is not enough, return the
-exact addresses, window and caps you propose; the command asks the human and
-collects into the next `incident_<n>/corpus-<k>/`.
+lines; the command writes the mode to `incident_<n>/exec-mode` as well, where
+`run.sh --crate` reads it. Before an incident's first PoC run the command records
+it in `INCIDENTS.json` with its `id` and `root_cause_class`, since `run.sh --crate`
+reads that class and stops without it: keep those ids, and the class unless your
+evidence changes it, when you write the file in full. When a Leg-3 `run.sh` run
+exits 3, set the **PoC re-run flag** line to "PoC re-run needed" with `run.sh`'s
+blocker line verbatim, and clear it once a re-run decides. You never run
+`collect.sh`: when the corpus is not enough, return the exact addresses, window and
+caps you propose; the command asks the human and collects into the next
+`incident_<n>/corpus-<k>/`.
 
 ## Mandate
 
