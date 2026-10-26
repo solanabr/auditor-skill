@@ -153,6 +153,37 @@ Build it in the installation, never inside the repository under audit, as for `a
 
 ---
 
+## GitHub Actions workflow analysis
+
+Three layers, cheapest first. Each is optional; the corpus's GitHub Actions checks (`references/vuln-classes/github-actions.md`, `discovery/grep-commands.md` R1–R8) run without any of them.
+
+1. **`audit-scan --workflows .github/workflows`** — bundled, offline, no prompt. It reads each `*.yml`/`*.yaml` into trigger → job → step facts (`workflows[]`), and lists what it could not model under each workflow's `unknown[]` and whole files under `skipped[]` (see [`tools/auditor-tools/README.md`](../tools/auditor-tools/README.md#the-workflow-pass)). It is a **map, not a verdict**: it enumerates the surface the grep rules and the tools below then judge.
+2. **zizmor** — a workflow SAST. Third-party, so it is an install plus a run and **prompts by design** ([permissions-and-isolation.md](permissions-and-isolation.md#what-still-asks-and-why)); run it in the recorded execution mode.
+3. **CodeQL** — GitHub's `actions` queries. Also third-party, also prompts; mind its licence (below).
+
+### zizmor — run it pinned and without the target's config
+
+Pin the tool **by version and by hash**, and ignore any configuration the audited repository ships.
+
+```bash
+# the published container, by digest (optionally with a version tag before the @)
+docker run --rm -v "$PWD":/src:ro ghcr.io/zizmorcore/zizmor:v1.30.1@sha256:<digest> \
+  --offline --no-config --persona=auditor /src/.github/workflows
+```
+
+- **Why `--no-config`.** zizmor discovers a config file at `.github/zizmor.yml`, `.github/zizmor.yaml`, `zizmor.yml` or `zizmor.yaml` from the repository root, and a discovered config can turn audits off (`rules.<id>.disable`) or ignore findings in named files (`rules.<id>.ignore`). Since the repository under audit is untrusted, do not let its config steer the scan: `--no-config` loads no configuration at all (per the docs, "If `--no-config` is passed, no configuration is ever loaded"); `--config <your own file>` or `ZIZMOR_CONFIG` replaces discovery with a file you control. ([docs.zizmor.sh/configuration](https://docs.zizmor.sh/configuration/))
+- **`--offline`** blocks network and remote-repository fetches; **`--persona=auditor`** reports every finding, "even ones that it's not sure about". ([docs.zizmor.sh/usage](https://docs.zizmor.sh/usage/))
+- **Pinning.** The published image is `ghcr.io/zizmorcore/zizmor` ([docs.zizmor.sh/installation](https://docs.zizmor.sh/installation/)). *Unverified:* zizmor's install docs show only the unpinned `:latest` pull and an unversioned `pip install zizmor` / `uvx zizmor`; pinning a container by `@sha256:` digest and installing a pinned PyPI version under pip's hash-checking mode (`pip install zizmor==<v> --require-hashes -r <reqs>`) are standard Docker/pip mechanisms, not forms those pages document. Confirm the digest against the release you intend to run.
+- **What it misses.** `github-actions.md` §9 records, for **zizmor 1.30.1** over fixtures 01–17, the gates it did not flag (a mention-only gate, a cross-object OR, deny-lists, event text in an agent prompt input). A clean zizmor run does not close the class.
+
+### CodeQL — the `actions` queries, and the licence
+
+CodeQL analyzes **GitHub Actions** as a language; its query packs are `codeql/actions-queries` and `codeql/actions-all`, matching `.github/workflows/*.yml`, `.github/workflows/*.yaml`, `**/action.yml` and `**/action.yaml`. ([codeql.github.com, supported languages](https://codeql.github.com/docs/codeql-overview/supported-languages-and-frameworks/)) Building a CodeQL database for Actions needs no compiler.
+
+**Licence — read before running it on client code.** The CodeQL CLI licence permits analysis only of an "Open Source Codebase" — one "released under an OSI-approved License" (visibility is not the test). It **prohibits** using the tool "in any other context … with any codebase that is not an Open Source Codebase (e.g., code in a private repo in GitHub)"; a **paid GitHub Advanced Security** licence lifts that restriction. So CodeQL is fine for an open-source target, but for closed-source client code it needs that paid licence. ([github/codeql-cli-binaries `LICENSE.md`](https://github.com/github/codeql-cli-binaries/blob/main/LICENSE.md)) This is a plain-language reading of the terms, not legal advice; read the current terms before you rely on it.
+
+---
+
 ## Trail of Bits plugins
 
 auditor-skill's corpus is the **knowledge** layer; Trail of Bits (vendored at `vendor/trailofbits`, CC-BY-SA — a reference, not a copy) is the **execution** layer — tools prose + grep cannot run. The plugin install and `install.sh` fetch it at the pinned commit, which the [README](../README.md#tool-execution-trail-of-bits--optional-rust-tools) names and which moves only through the review in [CONTRIBUTING.md §5](../CONTRIBUTING.md#5-tooling-changes). For any other clone, initialize it from the auditor-skill directory:

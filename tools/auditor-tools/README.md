@@ -74,7 +74,7 @@ says to rebuild it.
 ## `audit-scan`
 
 ```
-audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty]
+audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty]
 ```
 
 Recursively walks the `*.rs` files under `<dir>`, parses each as `syn::parse_file`
@@ -126,6 +126,34 @@ longest chain is 1,434 tokens and the deepest nesting 44 groups. Parsed in the
 child, those files give the report a scan in one process gave, in 22 s against
 21.
 
+### The workflow pass
+
+With `--workflows <dir>` the scan also reads the `*.yml` and `*.yaml` files
+directly in `<dir>` — usually `.github/workflows` — into the report's `workflows`
+key, each as trigger → job → step facts. `<dir>` is a confined directory like the
+one to scan (relative, inside the working directory, reached through no symbolic
+link, an existing directory), given once; it is not `.`, since GitHub reads
+workflows only from a `.github/workflows` directory. The pass does not recurse,
+follows no symbolic link, and reads only regular files with one name of at most 4
+MiB, each opened from the directory's descriptor without following a link; a
+`*.y*ml` entry that is a link, a FIFO or another non-regular file, one that is
+not UTF-8, and every file past the 256 a directory's pass parses, is listed in
+`skipped` with the reason, as a `*.rs` file is.
+
+A hand-written parser reads the block and flow subset workflows are written in:
+block mappings and sequences, flow `[…]` and `{…}`, plain and quoted scalars, and
+`|`/`>` block scalars (a scalar's whitespace is collapsed and it is cut after 200
+characters, as a snippet is). It is not a general YAML library. Anything outside
+that subset — an anchor (`&`), an alias (`*`), a tag (`!…`), a merge key, an
+indentation tab, an unterminated flow — is listed in that workflow's `unknown`,
+with its line, rather than guessed; an alias is never expanded, so no input grows
+the output past the bytes it read. The parser is bounded by construction: a file
+nests at most 32 levels, holds at most 50,000 nodes, and is at most 4 MiB. A file
+it cannot parse whole (not a YAML mapping, a second YAML document, or more
+structure than the caps allow) is listed in `skipped`. Because it cannot recurse
+without bound or expand an alias, it runs in this process and needs no child,
+unlike the `syn` parse of a `*.rs` file.
+
 ### Where it reads and writes
 
 It is built to be pre-approved as one `Bash(…)` rule on its absolute path and the
@@ -149,8 +177,10 @@ so it must be safe whatever arguments follow. Its rules are those of
   already there is replaced only when it is a regular file with one name, as
   audit-scan's own earlier output is.
 - `--contract=1` comes first, or not at all. Each option is given once, `--out
-  <file>` or `--out=<file>`; the word after `--out` is its value whatever it looks
-  like. Any other word that starts with `-` is refused.
+  <file>` or `--out=<file>` and `--workflows <dir>` or `--workflows=<dir>`; the
+  word after `--out` or `--workflows` is its value whatever it looks like. Any
+  other word that starts with `-` is refused. `--workflows` takes a directory
+  that passes the same checks as the one to scan, but not `.`.
 - It asks git whether a run directory is tracked as confine.sh's `hgit` asks it: git
   from a `PATH` with every entry inside the working directory removed, with an
   environment of its own and the repository's config pinned off. When git cannot
@@ -243,8 +273,31 @@ Exit: 0 done · 1 the output cannot be written · 2 refused, with one stderr lin
     { "name": "string", "file": "string", "line": 0, "pub": false }
   ],
 
+  // workflows read by `--workflows` (empty without it): each
+  // `.github/workflows/*.yml` as trigger -> job -> step facts. Absent optional
+  // scalars (name/if/uses/run) are left out.
+  "workflows": [
+    { "file": "string", "name": "string",
+      "triggers": ["string"],        // event names under `on:`
+      "permissions": ["string"],     // each `scope: level`, or a token like `write-all`
+      "jobs": [
+        { "id": "string", "line": 0, "if": "string",
+          "permissions": ["string"],
+          "uses": "string",          // a reusable workflow called at the job level
+          "steps": [
+            { "line": 0, "if": "string", "uses": "string", "run": "string",
+              "with": [ { "key": "string", "value": "string" } ],
+              "env":  [ { "key": "string", "value": "string" } ] }
+          ] }
+      ],
+      // constructs outside the parser's subset (an anchor, alias, tag, merge
+      // key, indentation tab, unterminated flow), never expanded.
+      "unknown": [ { "line": 0, "what": "string" } ] }
+  ],
+
   // every symbolic link the walk did not follow, every directory it did not
-  // enter for its depth, and every `*.rs` file it did not parse, with why.
+  // enter for its depth, every `*.rs` file it did not parse, and every workflow
+  // file `--workflows` could not read or parse whole, with why.
   "skipped": [
     { "file": "string", "reason": "string" }
   ]
@@ -260,6 +313,8 @@ rendered, so a long chain costs no more than a short one.
 
 ```bash
 audit-scan --contract=1 ./programs/my-program/src --pretty --out audit_1/prescan.json
+# also read the repository's workflows into the report's `workflows` key
+audit-scan --contract=1 ./programs/my-program/src --workflows .github/workflows --out audit_1/prescan.json
 ```
 
 ## `audit-mem`
