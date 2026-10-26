@@ -692,6 +692,7 @@ commands/audit-assist.md	a turn that a background agent's or background command'
 commands/threat-model.md	a turn that a background agent's or background command's completion notice starts has none
 commands/poc.md	a turn that a background agent's or background command's completion notice starts has none
 commands/patch.md	a turn that a background agent's or background command's completion notice starts has none
+SKILL.md	a turn that a background agent's or background command's completion notice starts has none
 commands/audit.md	Give each runner call (`target.sh`, `deps.sh`, `sast.sh`) the Bash tool's longest timeout
 commands/audit-cycle.md	Give each runner call (`run.sh`, `target.sh`, `deps.sh`, `sast.sh`) the Bash tool's longest timeout
 commands/audit-assist.md	Give each runner call (`run.sh`, `target.sh`, `deps.sh`, `sast.sh`) the Bash tool's longest timeout
