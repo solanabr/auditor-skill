@@ -42,8 +42,10 @@ grep -rnE -A2 --exclude-dir=node_modules --include='package-lock.json' --include
 
 **Step 3: Run npm audit**
 ```
-# from a scratch dir OUTSIDE the target tree holding copies of package.json + the lockfile (OUTPUT-RULES Rule 11a)
-npm audit --omit=dev 2>/dev/null | tail -20
+# on copies of package.json and its lockfile, outside the target tree (OUTPUT-RULES Rule 11a); dev dependencies
+# are audited too, since a malicious one runs its install scripts like any other. The report is in the file the
+# last line names
+"<auditor-skill root>/scripts/runner/deps.sh" npm-audit --run audit_<n> --manifest package.json --manifest package-lock.json
 ```
 - ✅ PASS: Zero vulnerabilities, or only low/informational
 - ⚠️ PARTIAL: Moderate vulnerabilities
@@ -51,8 +53,8 @@ npm audit --omit=dev 2>/dev/null | tail -20
 
 **Step 4: Check package publish dates (14-day quarantine)**
 ```
-# For recently added packages, verify they're not brand-new (run outside the target tree, Rule 11a):
-npm info @anchor-lang/core time --json 2>/dev/null | tail -5
+# For recently added packages, verify they're not brand-new: the publish time of each version
+"<auditor-skill root>/scripts/runner/deps.sh" npm-time --run audit_<n> @anchor-lang/core
 ```
 - ✅ PASS: All packages' installed versions are >14 days old
 - ❌ FAIL: Package version published <14 days ago

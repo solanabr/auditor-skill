@@ -366,7 +366,7 @@ grep_search: "target=\"_blank\""   includePattern: "apps/web/**/*.tsx"
 
 ## Supply Chain
 
-> Every package-manager or cargo command in this section reads the target's `.npmrc`, `.cargo/config*` and `rust-toolchain*` when started inside its tree. Run them from a scratch dir OUTSIDE the target tree, on copies of the manifest + lockfile with the toolchain pinned (OUTPUT-RULES Rule 11a; FULL-AUDIT Step 3.2).
+> Every package-manager or cargo command in this section reads the target's `.npmrc`, `.cargo/config*` and `rust-toolchain*` when started inside its tree. The bundled `deps.sh` runs the audits and registry queries on copies of the manifests and lockfiles in a scratch dir OUTSIDE the target tree, with the toolchain pinned (OUTPUT-RULES Rule 11a; FULL-AUDIT Step 3.2): run it from the working directory by its quoted path. `npm outdated` and `npx` have no bundled runner, so they ask for approval: run them from such a scratch dir, on copies of the manifest + lockfile.
 
 ### Check for compromised packages
 ```bash
@@ -376,28 +376,33 @@ grep -rnE --exclude-dir=node_modules --include='package.json' --include='package
 # line, the version on a line below it
 grep -rnE -A2 --exclude-dir=node_modules --include='package-lock.json' --include='npm-shrinkwrap.json' '"(([^"]*/)?node_modules/)?axios": [{]|"name": "axios"' . | grep -E '"version": "(1\.14\.1|0\.30\.4)"'
 grep -rnE -A2 --exclude-dir=node_modules --include='package-lock.json' --include='npm-shrinkwrap.json' '"([^"]*/)?@solana/web3\.js": [{]|"name": "@solana/web3\.js"' . | grep -E '"version": "1\.95\.(6|7)"'
-# from a scratch dir OUTSIDE the target tree holding copies of package.json + the lockfile (OUTPUT-RULES Rule 11a)
-npm audit
+# npm audit on copies of package.json and its lockfile, outside the target tree (OUTPUT-RULES Rule 11a)
+"<auditor-skill root>/scripts/runner/deps.sh" npm-audit --run audit_<n> --manifest package.json --manifest package-lock.json
 ```
 
 ### Package publish dates (14-day quarantine)
 ```bash
-# Terminal: Check publish date for critical packages
-npm info @anchor-lang/core time --json | tail -5
-npm info express time --json | tail -5
-npm info next time --json | tail -5
+# Terminal: the publish time of each version of a critical package (the registry's answer is in the file the
+# last line names)
+"<auditor-skill root>/scripts/runner/deps.sh" npm-time --run audit_<n> @anchor-lang/core
+"<auditor-skill root>/scripts/runner/deps.sh" npm-time --run audit_<n> express
+"<auditor-skill root>/scripts/runner/deps.sh" npm-time --run audit_<n> next
 ```
 
 ### Outdated packages
 ```bash
-# Terminal:
+# Terminal: npm outdated has no bundled runner, so it asks for approval; run it from a scratch dir OUTSIDE the
+# target tree, on copies of package.json + the lockfile
 npm outdated
-cargo outdated  # if cargo-outdated installed
+# cargo outdated on copies of the manifests (exit 3 when cargo-outdated is not installed); add each workspace
+# member's Cargo.toml and the Cargo.lock as more --manifest files
+"<auditor-skill root>/scripts/runner/deps.sh" cargo-outdated --run audit_<n> --manifest Cargo.toml
 ```
 
 ### License check
 ```bash
-# Terminal:
+# Terminal: npx downloads and runs a package, so it asks for approval; run it from a scratch dir OUTSIDE the
+# target tree, on copies of package.json + the lockfile
 npx license-checker --summary
 ```
 
@@ -471,19 +476,22 @@ grep -rnE --include='*.yml' --include='*.yaml' 'anthropics/claude-code-(base-)?a
 
 ### Anchor build verification
 ```bash
-# Terminal — builds the target (build.rs, proc-macros): only in the OUTPUT-RULES Rule 11a mode recorded at intake
-anchor build 2>&1 | tail -20
+# Terminal — builds the target (build.rs, proc-macros) through the bundled target.sh, in the OUTPUT-RULES
+# Rule 11a mode recorded at intake (exit 3 with none recorded); its last line names the log
+"<auditor-skill root>/scripts/runner/target.sh" anchor-build --run audit_<n> --src .
 ```
 
 ### Test suite
 ```bash
-# Terminal — runs the target's tests and Anchor.toml [scripts]: only in the OUTPUT-RULES Rule 11a mode recorded at intake
-anchor test --validator legacy 2>&1 | tail -30
+# Terminal — runs the target's tests and Anchor.toml [scripts] through the bundled target.sh, in the OUTPUT-RULES
+# Rule 11a mode recorded at intake, against no validator: tests that need one fail, and nothing is deployed
+"<auditor-skill root>/scripts/runner/target.sh" anchor-test --run audit_<n> --src .
 ```
 
 ### Binary hash verification
 ```bash
-# Terminal — rebuilds the target from source: only in the OUTPUT-RULES Rule 11a mode recorded at intake
+# Terminal — rebuilds the target from source: only in the OUTPUT-RULES Rule 11a mode recorded at intake. No
+# bundled runner wraps it (it builds in docker and reads the deployed program), so it asks for approval
 anchor verify <PROGRAM_ID> --provider-url mainnet-beta
 ```
 

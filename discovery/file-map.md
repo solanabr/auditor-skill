@@ -161,7 +161,7 @@ PRIMARY:
 
 TERMINAL COMMANDS:
   "<auditor-skill root>/scripts/rpc-read.sh" program-show <PROGRAM_ID> --run audit_<n> --cluster mainnet-beta   # Upgrade authority (read-only)
-  anchor verify <PROGRAM_ID>           # Binary verification (rebuilds the target: Rule 11a mode only)
+  anchor verify <PROGRAM_ID>           # Binary verification (rebuilds the target: Rule 11a mode only; asks for approval)
 
 GREP PATTERNS:
   "declare_id!"          → Program ID
@@ -239,12 +239,13 @@ PRIMARY:
   Cargo.toml                           # Rust workspace
   Cargo.lock                           # Rust lock file
 
-TERMINAL COMMANDS (from a scratch dir OUTSIDE the target tree, on copies of the manifest +
-lockfile, toolchain pinned — OUTPUT-RULES Rule 11a, FULL-AUDIT Step 3.2):
-  npm audit                            # Known vulnerabilities
-  cargo audit                          # Rust vulnerabilities
-  npm info <pkg> time                  # Publish date check
-  npm outdated                         # Outdated packages
+TERMINAL COMMANDS (deps.sh: copies of the manifests + lockfiles outside the target tree, toolchain
+pinned — OUTPUT-RULES Rule 11a, FULL-AUDIT Step 3.2):
+  "<auditor-skill root>/scripts/runner/deps.sh" npm-audit --run audit_<n> --manifest package.json --manifest package-lock.json   # Known vulnerabilities
+  "<auditor-skill root>/scripts/runner/deps.sh" cargo-audit --run audit_<n> --manifest Cargo.lock   # Rust vulnerabilities
+  "<auditor-skill root>/scripts/runner/deps.sh" npm-time --run audit_<n> <pkg>   # Publish date check
+  npm outdated                         # Outdated packages: no bundled runner, so it asks for approval;
+                                       # run it from a scratch dir outside the tree, on copies
 ```
 
 ### 12 — Secrets & Key Management
@@ -282,9 +283,9 @@ PRIMARY:
   scripts/                             # Build/deploy scripts
   .github/workflows/                   # CI/CD (if exists)
 
-TERMINAL COMMANDS (they run target code: only in the OUTPUT-RULES Rule 11a mode recorded at intake):
-  anchor build 2>&1 | tail -20        # Build verification
-  anchor test 2>&1 | tail -30         # Test run
+TERMINAL COMMANDS (they run target code: target.sh, in the OUTPUT-RULES Rule 11a mode recorded at intake):
+  "<auditor-skill root>/scripts/runner/target.sh" anchor-build --run audit_<n> --src .   # Build verification
+  "<auditor-skill root>/scripts/runner/target.sh" anchor-test --run audit_<n> --src .    # Test run, against no validator
 ```
 
 ### 14 — Python Safety
