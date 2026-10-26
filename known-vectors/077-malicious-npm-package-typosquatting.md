@@ -36,9 +36,9 @@ grep -rnE -A2 --exclude-dir=node_modules --include='package-lock.json' --include
 # mark lockfiles binary, which hides them from -G. Each form prints under its own heading:
 "<auditor-skill root>/scripts/recipes/web3js-history.sh"
 ```
-- ✅ PASS: Zero matches in the tree, and either no line under either heading of `web3js-history.sh` or evidence that every key or credential a build from that window could read was rotated
+- ✅ PASS: Zero matches in the tree, no `refused:` line, and either no line under either heading of `web3js-history.sh` or evidence that every key or credential a build from that window could read was rotated
 - ❌ FAIL: Compromised package version in the tree — CRITICAL; or a hit in history with no evidence of rotation — every key or credential a build containing it could read is exposed: rotate it
-- ⚠️ INCONCLUSIVE (history part): a `web3js-history: partial clone` or `web3js-history: shallow clone` line, or a `fatal:` line, means the history is incomplete (OUTPUT-RULES Rule 11c), so that part is never a PASS
+- ⚠️ INCONCLUSIVE (history part): a `web3js-history: partial clone` or `web3js-history: shallow clone` line, a `refused:` line, or a `fatal:` line, means the history is incomplete or the step did not run (OUTPUT-RULES Rule 11c), so that part is never a PASS
 
 **Step 3: Run npm audit**
 ```

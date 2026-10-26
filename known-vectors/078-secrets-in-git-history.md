@@ -40,7 +40,7 @@ grep -rn --include="*.ts" --include="*.tsx" -E "[1-9A-HJ-NP-Za-km-z]{64,88}" . |
 # Every file ever added whose path names a secret, in any letter case (read-only git, OUTPUT-RULES Rule 11c)
 "<auditor-skill root>/scripts/git-ro.sh" log --all --diff-filter=A --name-only --pretty=format: -- ':(icase)*.env' ':(icase)*.pem' ':(icase)*id_rsa*' ':(icase)*keypair*' ':(icase)*wallet*.json*' ':(icase)*secret*' ':(icase)*credential*' ':(icase)*.key' ':(icase)*delegate.json*' | sort -u
 ```
-- ✅ PASS: Zero dangerous filenames ever committed
+- ✅ PASS: Zero dangerous filenames ever committed, and no `refused:` line
 - ❌ FAIL: Dangerous file was committed at some point (even if deleted later — IT IS STILL IN HISTORY)
 
 **Step 5: Search actual git history content for leaked secrets**
@@ -53,24 +53,24 @@ grep -rn --include="*.ts" --include="*.tsx" -E "[1-9A-HJ-NP-Za-km-z]{64,88}" . |
 "<auditor-skill root>/scripts/git-ro.sh" log --all -p -S "PRIVATE_KEY" --diff-filter=ACMR -- . | head -20
 "<auditor-skill root>/scripts/git-ro.sh" log --all -p -S "mnemonic" --diff-filter=ACMR -- . | head -20
 ```
-- ✅ PASS: Zero matches in entire git history, and no `git-ro: partial clone`, `git-ro: shallow clone` or `fatal:` line in the output
+- ✅ PASS: Zero matches in entire git history, and no `git-ro: partial clone`, `git-ro: shallow clone`, `refused:` or `fatal:` line in the output
 - ❌ FAIL: Any secret found in historical commits — MUST rotate the credential AND consider `git filter-repo` to rewrite history (force push required)
-- ⚠️ INCONCLUSIVE: a `git-ro: partial clone` or `git-ro: shallow clone` line, or any `fatal:` line, in the output — the history is incomplete (OUTPUT-RULES Rule 11c); record it as not checked, never as a PASS
+- ⚠️ INCONCLUSIVE: a `git-ro: partial clone` or `git-ro: shallow clone` line, a `refused:` line, or any `fatal:` line, in the output — the history is incomplete or the step did not run (OUTPUT-RULES Rule 11c); record it as not checked, never as a PASS
 
 **Step 6: Search git history for Solana keypair arrays**
 ```
 # --text: a committed .gitattributes can mark these files -diff or binary, which hides the arrays from the patch
 "<auditor-skill root>/scripts/git-ro.sh" log --all -p --text --diff-filter=ACMR -- '*.json' '*.ts' '*.js' | grep -E "\[([0-9]{1,3},){20,}" | head -10
 ```
-- ✅ PASS: No keypair-like arrays in history, and no `git-ro: partial clone`, `git-ro: shallow clone` or `fatal:` line in the output
+- ✅ PASS: No keypair-like arrays in history, and no `git-ro: partial clone`, `git-ro: shallow clone`, `refused:` or `fatal:` line in the output
 - ❌ FAIL: Possible keypair in git history — identify commit: `"<auditor-skill root>/scripts/git-ro.sh" log --all -p -S '[123,45,67' -- .`
-- ⚠️ INCONCLUSIVE: a `git-ro: partial clone` or `git-ro: shallow clone` line, or any `fatal:` line, in the output — the history is incomplete (OUTPUT-RULES Rule 11c); record it as not checked, never as a PASS
+- ⚠️ INCONCLUSIVE: a `git-ro: partial clone` or `git-ro: shallow clone` line, a `refused:` line, or any `fatal:` line, in the output — the history is incomplete or the step did not run (OUTPUT-RULES Rule 11c); record it as not checked, never as a PASS
 
 **Step 7: Check for .env files ever tracked**
 ```
 "<auditor-skill root>/scripts/git-ro.sh" log --all --diff-filter=A --name-only --pretty=format: | grep -E "^\.env|/\.env"
 ```
-- ✅ PASS: No .env file ever committed
+- ✅ PASS: No .env file ever committed, and no `refused:` line
 - ❌ FAIL: .env file was committed — secrets in history, rotate ALL env vars
 
 **Step 8: Verify .gitignore completeness**
@@ -85,7 +85,7 @@ cat .gitignore | grep -E "\.env|keypair|\.pem|\.key|id_rsa|delegate\.json"
 # every tracked path naming an env file, a key or a secret, in any letter case (read-only git, Rule 11c)
 "<auditor-skill root>/scripts/git-ro.sh" ls-files -- ':(icase)*.env*' ':(icase)*keypair*' ':(icase)*secret*' ':(icase)*credential*' ':(icase)*.pem*' ':(icase)*.key' ':(icase)*delegate.json*'
 ```
-- ✅ PASS: Zero results — no sensitive files currently tracked
+- ✅ PASS: Zero results and no `refused:` line — no sensitive files currently tracked
 - ❌ FAIL: Sensitive file tracked — remove with `git rm --cached <file>` immediately
 
 **Step 10: Check for pre-commit hooks (prevention)**

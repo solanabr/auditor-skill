@@ -38,7 +38,7 @@ grep -rn --include="*.ts" --include="*.tsx" --include="*.env*" -E "[1-9A-HJ-NP-Z
 # Check if ANY secret-looking file was ever added to git (read-only git, OUTPUT-RULES Rule 11c)
 "<auditor-skill root>/scripts/git-ro.sh" log --all --diff-filter=A --name-only --pretty=format:"%H %s" -- "*.env" "*.env.*" "*.pem" "*-keypair.json" "*-delegate.json" "id.json" "*secret*" "*private*"
 ```
-- ✅ PASS: Zero results
+- ✅ PASS: Zero results, and no `refused:` line
 - ❌ FAIL: Any file listed → secret was committed. Even if later deleted, **it's still in history**
 
 **Step 5: Deep git history search for key content**
@@ -51,16 +51,16 @@ grep -rn --include="*.ts" --include="*.tsx" --include="*.env*" -E "[1-9A-HJ-NP-Z
 "<auditor-skill root>/scripts/git-ro.sh" log --all -p -S "BEGIN EC PRIVATE" --oneline | head -20
 "<auditor-skill root>/scripts/git-ro.sh" log --all -p --text -S "mnemonic" --oneline -- "*.ts" "*.json" "*.env" | head -20
 ```
-- ✅ PASS: Zero matches across all three
+- ✅ PASS: Zero matches across all three, and no `refused:` line
 - ❌ FAIL: Any match → key was in history. MUST rotate immediately, even if commit was reverted
-- ⚠️ INCONCLUSIVE: a `git-ro: partial clone` or `git-ro: shallow clone` line, or any `fatal:` line, in the output — the history is incomplete (OUTPUT-RULES Rule 11c); record it as not checked, never as a PASS
+- ⚠️ INCONCLUSIVE: a `git-ro: partial clone` or `git-ro: shallow clone` line, a `refused:` line, or any `fatal:` line, in the output — the history is incomplete or the step did not run (OUTPUT-RULES Rule 11c); record it as not checked, never as a PASS
 
 **Step 6: Verify git-tracked files right now**
 ```
 # tracked .env and .pem files, and every path naming a keypair, delegate, secret or private key, in any letter case
 "<auditor-skill root>/scripts/git-ro.sh" ls-files -- ':(icase)*.env' ':(icase)*.pem' ':(icase)*keypair*' ':(icase)*delegate*' ':(icase)*secret*' ':(icase)*private*'
 ```
-- ✅ PASS: Zero results (no secret files are tracked by git)
+- ✅ PASS: Zero results (no secret files are tracked by git), and no `refused:` line
 - ❌ FAIL: Any file listed → currently tracked. Remove, add to .gitignore, rotate the secret
 
 **Step 7: Check .gitignore completeness**

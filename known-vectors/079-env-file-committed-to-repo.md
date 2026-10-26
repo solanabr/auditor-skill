@@ -16,7 +16,7 @@ category: devops
 ```
 "<auditor-skill root>/scripts/git-ro.sh" ls-files | grep -E "\.env"   # read-only git (Rule 11c)
 ```
-- ✅ PASS: No .env files tracked
+- ✅ PASS: No .env files tracked, and no `refused:` line
 - ❌ FAIL: .env file is tracked — IMMEDIATE action: `git rm --cached .env` + rotate all secrets
 
 **Step 2: Check .gitignore for .env patterns**
@@ -31,7 +31,7 @@ grep -E "\.env" .gitignore
 # read-only git (OUTPUT-RULES Rule 11c)
 "<auditor-skill root>/scripts/git-ro.sh" log --all --diff-filter=A --name-only --pretty=format: | grep -E "\.env"
 ```
-- ✅ PASS: .env was never committed
+- ✅ PASS: .env was never committed, and no `refused:` line
 - ❌ FAIL: .env was committed at some point — secrets are in history, rotate ALL variables in that file
 
 **Step 4: If .env exists, verify it's a template only**
