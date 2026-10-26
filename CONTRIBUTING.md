@@ -182,6 +182,36 @@ version in a trailing comment.
   meant to stop early carries the comment `# pipefail-ok: <reason>` on its line.
 - A change to a pipeline gets a test with an input larger than a pipe holds (over 64 KiB; 1 MiB is usual).
 
+### Pre-approved entry points
+
+A command's allow rule names a bundled entry point with any words after it, as in
+`Bash("${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" *)`, so such a tool must be safe whatever arguments follow
+([docs/permissions-and-isolation.md](docs/permissions-and-isolation.md#why-that-is-safe)). A new one, or a change to
+one:
+
+- runs directly by its quoted path: a `#!/bin/bash` or `#!/usr/bin/env -S python3 -I` first line and mode
+  `100755`. It refuses to run from an installation inside the working directory, or from a path that holds a
+  quote, `$`, a backtick, a backslash or a control character;
+- checks every argument against a closed grammar before any effect, and refuses anything else with one stderr
+  line, `<tool>: refused: <reason>`;
+- takes only relative paths inside the working directory, of the shapes it names, with no `..` and no symbolic
+  link on the way;
+- writes only into run directories that pass `rundir.sh check`, into the `audit-mem` store, or into its own
+  scratch directory outside the working directory, creating each file with no-follow, exclusive creation;
+- runs no program that its arguments or the repository name. It runs git only through `hgit` in
+  `scripts/lib/confine.sh`, and the project's code only in the recorded mode, in the cleaned environment of
+  `scripts/lib/isolation.sh`;
+- contacts only a destination fixed in its code or set in the user's environment, within caps set there, and
+  adds a row to `<R>/disclosures.tsv` before the first request;
+- reads stdin only where its grammar says so, and treats a check that cannot run as a refusal.
+
+A bash entry point sources `scripts/lib/confine.sh` rather than repeating its checks. Each ships a case file of
+hostile arguments, `scripts/tests/fixtures/<tool>/cases.txt` (one case per line: the exit status, the one stderr
+line, then the arguments, separated by tabs), with a suite that runs under macOS `/bin/bash` 3.2 and under bash 5
+with GNU tools. A command pre-approves only such an entry point, in the form its header documents;
+`scripts/check-frontmatter.sh` holds rules for `audit-scan` and `audit-mem` to the forms that carry
+`--contract=1`.
+
 ### Frontmatter of commands, agents and `SKILL.md`
 
 `scripts/check-frontmatter.sh` fails when Claude Code would read a field differently from what is written.
