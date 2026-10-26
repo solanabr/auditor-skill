@@ -106,7 +106,7 @@ A Bash call runs in the foreground until its timeout: two minutes unless Claude 
 }
 ```
 
-`BASH_DEFAULT_TIMEOUT_MS` is the timeout of a call that names none, and `BASH_MAX_TIMEOUT_MS` the most a call may ask for (Claude Code's tools reference). With these values a call may take 30 minutes by default and an hour at most, and a call that hangs holds the flow that long. In a `claude -p` run whose prompt is text, the first value also gives a command that still moves to the background 30 minutes there instead of 10.
+`BASH_DEFAULT_TIMEOUT_MS` is the timeout of a call that names none. `BASH_MAX_TIMEOUT_MS` caps what a call may ask for, and the cap is the larger of the two values (Claude Code's tools reference). With these values a call may take 30 minutes by default and an hour at most, and a call that hangs holds the flow that long. In a `claude -p` run whose prompt is text, a call that still moves to the background may run there for 10 minutes by default; the first value raises that to 30.
 
 ## Running isolated
 
