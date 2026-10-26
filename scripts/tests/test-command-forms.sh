@@ -6,8 +6,9 @@
 #       a bundled entry point from the root names it as "${CLAUDE_PLUGIN_ROOT}/<path>" (in the root SKILL.md,
 #       "${CLAUDE_SKILL_DIR}/<path>"), quoted, first in the command, or as the file a test -x, -f or -e reads (a
 #       cmp or diff of it asks, since it lies outside the working directory); with no bash, cd, env or VAR=value
-#       in front, no other $, no backtick, no ;, &&, ||, &, no
-#       pipe (a | with a space beside it; a|b in a usage line is a choice), and no line continuation.
+#       in front, no other $, no backtick, no ;, &&, ||, &, no process substitution, no pipe (a | with a space
+#       beside it, or one straight into a program such as sh or tee; a|b in a usage line is a choice), no line
+#       continuation, and no file redirect but into a run directory (audit_<n>/ or incident_<n>/) or /dev/null.
 #   C2  Every Bash allow rule that names a path from the root names it as its quoted first word (after an
 #       optional test -x), and that path is a tracked file of mode 100755 whose first line is a #! line, or a
 #       binary a crate under tools/auditor-tools declares, executable when it is built.
@@ -19,6 +20,12 @@
 #       is "<root>/scripts/preflight.sh", with no arguments, in a paragraph that starts "0. **Preflight" (in the
 #       root SKILL.md, "**Step 0 — Preflight") and says that a refusal, and a call that is denied, stop the run;
 #       and the allowed-tools of every command, and of the root SKILL.md, pre-approve that call.
+#   C5  Every rooted call in a command's body, and in the bodies of the agents it spawns (a code span naming the
+#       agent after spawn or delegate in the sentence, or right after run), is one of that command's Bash rules:
+#       the same path, then the rule's fixed words (all of them, for a rule with no *). A fork skill's calls,
+#       and its agent's, are its own rules', and so are the root SKILL.md's. A call is an entry point first in a
+#       code span with words after it, or first on a fenced code line; one the rest of its sentence says asks
+#       is a documented prompt.
 #   P   Wording the flows depend on stays in place (the PINS list): what keeps a long call, and the turn after
 #       it, inside a command's grant.
 # The entry points are the tracked files under scripts/ (but scripts/tests/) and templates/ of mode 100755 that
@@ -51,8 +58,16 @@ import os, re, sys
 tree, index_file, files = sys.argv[1], sys.argv[2], sys.argv[3:]
 DIRECT = ("#!/bin/bash", "#!/usr/bin/env -S python3 -I")
 ROOTED = re.compile(r'\$\{(CLAUDE_PLUGIN_ROOT|CLAUDE_SKILL_DIR)\}("?)/([A-Za-z0-9_./-]+)')
+CALL = re.compile(r'^\s*"\$\{(CLAUDE_PLUGIN_ROOT|CLAUDE_SKILL_DIR)\}/([A-Za-z0-9_./-]+)"(.*)$')
 READERS = ("test -x", "test -f", "test -e")
 RELEASE = "tools/auditor-tools/target/release/"
+# Programs a | with no space beside it still pipes into; any other a|b is a choice in a usage line.
+PIPE_INTO = set("sh bash zsh dash ksh fish python python3 perl ruby node tee xargs env eval exec source nc ncat "
+                "socat curl wget dd cat head tail grep egrep fgrep sed awk gawk mawk jq sort uniq cut tr wc base64 "
+                "openssl ssh scp".split())
+SPAWN = re.compile(r'(?i)\b(spawns?|delegates?)\b')
+RUN_AGENT = re.compile(r'(?i)\bruns?\s+(?:the\s+)?\**`([a-z][a-z0-9-]*)`')
+ASKS = re.compile(r'\b(asks|prompts)\b')
 
 modes = {}
 with open(index_file, encoding="utf-8", errors="replace") as f:
@@ -114,6 +129,51 @@ def split_commas(s):
         parts.append(cur.strip())
     return parts
 
+def read(path):
+    with open(os.path.join(tree, path), encoding="utf-8") as f:
+        return f.read()
+
+def split_doc(text):
+    """(frontmatter lines, body lines, the body's first line number)"""
+    lines = text.split("\n")
+    if lines and lines[0] == "---":
+        for i in range(1, len(lines)):
+            if lines[i] == "---":
+                return lines[1:i], lines[i + 1:], i + 2
+    return [], lines, 1
+
+def value(fm, key):
+    for l in fm:
+        if l.startswith(key + ":"):
+            return unquote(l[len(key) + 1:])
+    return ""
+
+def rules_of(fm):
+    rules, key = [], None
+    for n, l in enumerate(fm, start=2):
+        if l.startswith("  - "):
+            if key == "allowed-tools":
+                rules.append((n, unquote(l[4:])))
+            continue
+        m = re.match(r'^([A-Za-z0-9_-]+):(.*)$', l)
+        if m:
+            key = m.group(1)
+            if key == "allowed-tools" and m.group(2).strip():
+                rules.extend((n, e) for e in split_commas(unquote(m.group(2))))
+    return rules
+
+def parse_rule(e):
+    """None for a rule naming no path from the root; False for one not naming it as its quoted first word;
+    else (test -x?, root variable, path, the fixed words after it, whether a * ends it)."""
+    if not (e.startswith("Bash(") and e.endswith(")")) or "${CLAUDE_" not in e:
+        return None
+    m = re.match(r'^(test -x )?"\$\{(CLAUDE_PLUGIN_ROOT|CLAUDE_SKILL_DIR)\}/([^"]+)"(?: (.*))?$', e[5:-1])
+    if not m:
+        return False
+    words = (m.group(4) or "").split()
+    star = bool(words) and words[-1] == "*"
+    return (bool(m.group(1)), m.group(2), m.group(3), words[:-1] if star else words, star)
+
 def operators(s):
     found, q, i = [], None, 0
     while i < len(s):
@@ -134,19 +194,49 @@ def operators(s):
             found.append("a line continuation")
         elif c == ";":
             found.append(";")
+        elif s.startswith("<(", i) or s.startswith(">(", i):
+            found.append("a process substitution")
         elif s.startswith("&&", i) or s.startswith("||", i) or s.startswith("|&", i):
             found.append(s[i:i + 2]); i += 1
         elif c in "|&":
             before = s[i - 1] if i > 0 else " "
             after = s[i + 1] if i + 1 < len(s) else " "
-            if before.isspace() or after.isspace():
+            word = re.match(r'[A-Za-z0-9_.-]*', s[i + 1:]).group(0)
+            if before.isspace() or after.isspace() or (c == "|" and word in PIPE_INTO):
                 found.append("a pipe" if c == "|" else "&")
         i += 1
     return found
 
+def redirects(s):
+    """The target of each file redirect outside quotes that does not lead into a run directory (or /dev/null)."""
+    s = re.sub(r'<[^<>(\s][^<>]*>', 'P', s)       # placeholders such as <R>/poc/<ID>
+    bad, q, i = [], None, 0
+    while i < len(s):
+        c = s[i]
+        if q:
+            if c == q:
+                q = None
+            elif c == "\\" and q == '"':
+                i += 1
+        elif c in "'\"":
+            q = c
+        elif c in "<>" and not s.startswith("<(", i) and not s.startswith(">(", i):
+            j = i
+            while j < len(s) and s[j] in "<>|&":
+                j += 1
+            op = s[i:j]
+            if op.startswith("<<") or op.endswith("&") or op.startswith(">&") or op.startswith("<&"):
+                i = j; continue                    # here-documents and strings, and descriptor copies
+            target = re.match(r'\s*([^\s;&|<>]*)', s[j:]).group(1)
+            if target != "/dev/null" and not re.match(r'^(\./)?(audit|incident)_[^/\s]*/', target):
+                bad.append(target or "(no target)")
+            i = j; continue
+        i += 1
+    return bad
+
 def segments(body, first):
-    """(line number, text, first line of its paragraph, the paragraph) for every inline code span and fenced
-    code line."""
+    """(line number, text, first line of its paragraph, the paragraph, where the code ends in it, fenced?) for
+    every inline code span and fenced code line."""
     fence, para = None, []
     def spans(para):
         text = "\n".join(l for _, l in para)
@@ -179,7 +269,7 @@ def segments(body, first):
                     k += 1
             if close < 0:
                 i = j; continue
-            yield line_at(j), text[j:close].replace("\n", " "), para[0][1], text
+            yield line_at(j), text[j:close].replace("\n", " "), para[0][1], text, close + run, False
             i = close + run
     for idx, line in enumerate(body):
         n = first + idx
@@ -188,7 +278,7 @@ def segments(body, first):
             if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence) and not m.group(2).strip():
                 fence = None
             else:
-                yield n, line.strip(), line, line
+                yield n, line.strip(), line, line, len(line), True
             continue
         if m:
             for s in spans(para):
@@ -196,7 +286,7 @@ def segments(body, first):
             para = []
             fence = m.group(1)
             continue
-        if line.strip() == "" or re.match(r'^\s*(\d+[.)]|[-*+])\s', line):
+        if line.strip() == "" or re.match(r'^\s*(\d+[a-z]?[.)]|[-*+])\s', line):
             for s in spans(para):
                 yield s
             para = []
@@ -212,45 +302,91 @@ def marker(check_file, n, tool, rest, where):
     if tool == "audit-mem" and len(words) >= 1 and (len(words) < 2 or words[1] != "--contract=1"):
         finding("C3", check_file, n, "audit-mem %s without --contract=1 right after its subcommand: %s" % (where, rest[:120]))
 
+# The plugin's agents, by the name their frontmatter gives, and the fork skills, by the agent they run as.
+agents, forks = {}, {}
+for d, pattern in (("agents", None), ("skills", None)):
+    if not os.path.isdir(os.path.join(tree, d)):
+        continue
+    for name in sorted(os.listdir(os.path.join(tree, d))):
+        path = "%s/%s" % (d, name) if d == "agents" else "%s/%s/SKILL.md" % (d, name)
+        if d == "agents" and not name.endswith(".md"):
+            continue
+        if not os.path.isfile(os.path.join(tree, path)):
+            continue
+        try:
+            fm, body, first = split_doc(read(path))
+        except (OSError, UnicodeDecodeError):
+            continue
+        if d == "agents":
+            agents[value(fm, "name")] = (path, body, first)
+        elif value(fm, "agent").startswith("auditor:"):
+            forks[path] = value(fm, "agent")[len("auditor:"):]
+
+def spawned(body):
+    """The agents a body spawns: each code span naming an agent after spawn or delegate in its sentence, and
+    one right after run."""
+    names = set()
+    for para in re.split(r'\n\s*\n|\n(?=\s*(?:\d+[a-z]?[.)]|[-*+])\s)', "\n".join(body)):
+        for sentence in re.split(r'(?<=[.!?])\s+', para):
+            m = SPAWN.search(sentence)
+            if m:
+                names.update(a for a in re.findall(r'`([a-z][a-z0-9-]*)`', sentence[m.end():]) if a in agents)
+            names.update(a for a in RUN_AGENT.findall(sentence) if a in agents)
+    return names
+
+def calls(body, first):
+    """(line, path, words, text) for each rooted call: an entry point first in a code span with words after
+    it, or first on a fenced code line. A call the rest of its sentence says asks is a documented prompt."""
+    res = []
+    for n, seg, para, ptext, end, fenced in segments(body, first):
+        m = CALL.match(seg)
+        if not m or m.group(2) not in entry:
+            continue
+        words = m.group(3).split()
+        if not words and not fenced:
+            continue
+        if not fenced and ASKS.search(re.split(r'(?<=[.!?])\s', ptext[end:], 1)[0]):
+            continue
+        res.append((n, m.group(2), words, seg))
+    return res
+
+def covered(rules, path, words):
+    for r in rules:
+        if not r or r[0] or r[2] != path:
+            continue
+        if (r[4] and words[:len(r[3])] == r[3]) or (not r[4] and words == r[3]):
+            return True
+    return False
+
+def check_calls(owner, rules, sources):
+    parsed = [parse_rule(e) for _, e in rules]
+    for src, body, first in sources:
+        for n, path, words, seg in calls(body, first):
+            if not covered(parsed, path, words):
+                finding("C5", src, n, "%s does not pre-approve this call: %s" % (owner, seg[:160]))
+
 for f in files:
     try:
-        text = open(os.path.join(tree, f), encoding="utf-8").read()
+        text = read(f)
     except (OSError, UnicodeDecodeError) as e:
         print("cannot read %s: %s" % (f, e), file=sys.stderr); sys.exit(2)
-    lines = text.split("\n")
-    fm, body, first = [], lines, 1
-    if lines and lines[0] == "---":
-        for i in range(1, len(lines)):
-            if lines[i] == "---":
-                fm, body, first = lines[1:i], lines[i + 1:], i + 2
-                break
+    fm, body, first = split_doc(text)
     root_skill = f == "SKILL.md"
     command = f.startswith("commands/")
     var = "CLAUDE_SKILL_DIR" if root_skill else "CLAUDE_PLUGIN_ROOT"
 
     # allowed-tools rules
-    rules, key = [], None
-    for n, l in enumerate(fm, start=2):
-        if l.startswith("  - "):
-            if key == "allowed-tools":
-                rules.append((n, unquote(l[4:])))
-            continue
-        m = re.match(r'^([A-Za-z0-9_-]+):(.*)$', l)
-        if m:
-            key = m.group(1)
-            if key == "allowed-tools" and m.group(2).strip():
-                rules.extend((n, e) for e in split_commas(unquote(m.group(2))))
+    rules = rules_of(fm)
     for n, e in rules:
-        if not (e.startswith("Bash(") and e.endswith(")")) or "${CLAUDE_" not in e:
+        r = parse_rule(e)
+        if r is None:
             continue
-        pat = e[5:-1]
-        m = re.match(r'^(test -x )?"\$\{(CLAUDE_PLUGIN_ROOT|CLAUDE_SKILL_DIR)\}/([^"]+)"( |$)', pat)
-        if not m:
+        if r is False:
             finding("C2", f, n, "the rule names a path from the root, but not as its quoted first word: %s" % e)
             continue
-        if m.group(2) != var:
-            finding("C2", f, n, "the rule names the root as ${%s}, not ${%s}: %s" % (m.group(2), var, e))
-        path = m.group(3)
+        test_x, rvar, path, fixed, star = r
+        if rvar != var:
+            finding("C2", f, n, "the rule names the root as ${%s}, not ${%s}: %s" % (rvar, var, e))
         full = os.path.join(tree, path)
         if path.startswith(RELEASE):
             if path[len(RELEASE):] not in bins:
@@ -263,15 +399,15 @@ for f in files:
             finding("C2", f, n, "%s is mode %s, not 100755" % (path, modes[path]))
         elif not first_line(path).startswith("#!"):
             finding("C2", f, n, "%s has no #! line" % path)
-        if not m.group(1) and path.startswith(RELEASE):
-            marker(f, n, path[len(RELEASE):], pat[m.end():].strip() if m.group(4) else "", "rule")
+        if not test_x and path.startswith(RELEASE):
+            marker(f, n, path[len(RELEASE):], " ".join(fixed + (["*"] if star else [])), "rule")
     preflight_rule = 'Bash("${%s}/scripts/preflight.sh" *)' % var
     if (command or root_skill) and preflight_rule not in [e for _, e in rules]:
         finding("C4", f, 1, "allowed-tools does not pre-approve %s" % preflight_rule)
 
     # the body
     first_entry = None
-    for n, seg, para, ptext in segments(body, first):
+    for n, seg, para, ptext, end, fenced in segments(body, first):
         words = seg.split()
         if words and words[0] in ("audit-scan", "audit-mem") and "${" not in seg:
             if (words[0] == "audit-scan" and len(words) >= 2) or (words[0] == "audit-mem" and len(words) >= 3):
@@ -295,6 +431,7 @@ for f in files:
             if "$" in seg.replace("${CLAUDE_PLUGIN_ROOT}", "").replace("${CLAUDE_SKILL_DIR}", ""):
                 what.append("a $ beside the root")
             what.extend(sorted(set(operators(seg))))
+            what.extend("a redirect outside a run directory: %s" % t for t in redirects(seg))
             if what:
                 finding("C1", f, n, "%s: %s" % ("; ".join(what), seg[:160]))
             elif not lead and path.startswith(RELEASE):
@@ -313,6 +450,14 @@ for f in files:
                 finding("C4", f, n, "preflight.sh first appears outside a paragraph that starts %s" % want.replace("\\", ""))
             elif not re.search(r'(?i)refus', ptext) or not re.search(r'(?i)denied', ptext):
                 finding("C4", f, n, "step 0 does not say that a refusal and a denied call both stop the run")
+
+    # every call in the body, and in the bodies of the agents it spawns (or, for a fork skill, the agent it runs
+    # as), is one of its own rules: the path, then the rule's fixed words
+    if command or root_skill or f in forks:
+        sources = [(f, body, first)]
+        names = spawned(body) | ({forks[f]} if f in forks else set())
+        sources.extend(agents[a] for a in sorted(names) if a in agents)
+        check_calls(f, rules, sources)
 
 for line in out:
     print(line)
@@ -347,17 +492,17 @@ chmod 644 "$fx/scripts/plain.sh"
 R='${CLAUDE_PLUGIN_ROOT}'
 B="$R/tools/auditor-tools/target/release"
 STEP0="0. **Preflight.** Run \`\"$R/scripts/preflight.sh\"\`, with no arguments. On a refusal, stop; a call that is denied stops the run too."
-# cmd <name> <rule>... -- <body line>...: a command whose allowed-tools pre-approve preflight.sh and the rules
+# cmd <name> <rule>... -- <body line>...: a command whose allowed-tools pre-approve preflight.sh, ok.sh and the rules
 cmd() {
   local f="$fx/commands/$1.md"; shift
   { printf -- '---\ndescription: "A command."\nallowed-tools:\n  - Read\n'
-    printf "  - 'Bash(\"%s/scripts/preflight.sh\" *)'\n" "$R"
+    printf "  - 'Bash(\"%s/scripts/preflight.sh\" *)'\n  - 'Bash(\"%s/scripts/ok.sh\" *)'\n" "$R" "$R"
     while [ $# -gt 0 ] && [ "$1" != -- ]; do printf '  - %s\n' "$1"; shift; done
     printf -- '---\n\n'; [ $# -gt 0 ] && shift
     printf '%s\n' "$STEP0"
     while [ $# -gt 0 ]; do printf '%s\n' "$1"; shift; done; } > "$f"
 }
-cmd good "'Bash(\"$R/scripts/ok.sh\" *)'" "'Bash(\"$B/audit-scan\" --contract=1 *)'" \
+cmd good "'Bash(\"$R/scripts/rec.py\" *)'" "'Bash(\"$B/audit-scan\" --contract=1 *)'" \
   "'Bash(\"$B/audit-mem\" warm --contract=1 *)'" "'Bash(\"$R/templates/poc/run.sh\" *)'" \
   "'Bash(test -x \"$B/audit-mem\")'" "'Bash(git log:*)'" "Edit(audit_*/**)" -- \
   "1. Run \`\"$R/scripts/ok.sh\" new audit\` and \`\"$R/scripts/rec.py\" tokens|lamports [--by owner,mint|mint] incident_<n>/corpus*/x.jsonl > incident_<n>/out.txt\`." \
@@ -365,6 +510,8 @@ cmd good "'Bash(\"$R/scripts/ok.sh\" *)'" "'Bash(\"$B/audit-scan\" --contract=1 
   "   \`\"$B/audit-mem\" warm --contract=1 --program-id <id>\`; \`audit-mem warm --contract=1 --program-id <id>\`, \`audit-mem init\`." \
   "3. Check \`test -f \"$R/templates/poc/run.sh\"\`; mention \`\"$B/audit-mem\"\` alone; read \`$R/references/x.md\`." \
   "4. Prose names \`run.sh --crate\` and \`\"$R/scripts/filter.sh\"\` behind \`x 2>&1 | bash \"$R/scripts/filter.sh\"\`." \
+  "5. Keep \`\"$R/scripts/ok.sh\" check x > audit_<n>/out.txt 2>/dev/null\` and \`\"$R/scripts/ok.sh\" check x 2>&1\`." \
+  "6. Spawn \`fx-runner\` on it; \`\"$R/templates/poc/run.sh\" --crate <R>/poc/<ID>\` runs it, and \`\"$R/scripts/rec.py\" --crate x\`, which asks, does not." \
   "" '```bash' "\"$R/scripts/ok.sh\" check audit_<n> --cluster mainnet-beta" '```'
 cmd c1-bash -- "1. \`bash \"$R/scripts/ok.sh\" new audit\`"
 cmd c1-cd -- "1. \`cd sub && \"$R/scripts/ok.sh\"\`"
@@ -380,6 +527,10 @@ cmd c1-continued -- '```bash' "\"$R/scripts/ok.sh\" check audit_<n> \\" "  --mor
 cmd c1-wrapped-span -- "1. Run \`\"$R/scripts/ok.sh\" check" "   x | tail -1\` across a line break."
 cmd c1-cmp -- "1. Compare with \`cmp \"$R/templates/poc/run.sh\" <crate>/run.sh\`."
 cmd c1-diff -- "1. Compare with \`diff \"$R/templates/poc/run.sh\" <crate>/run.sh\`."
+cmd c1-procsub -- "1. \`\"$R/scripts/ok.sh\" diff <(cat x)\`"
+cmd c1-redirect -- "1. \`\"$R/scripts/ok.sh\" log > ../../.zshrc\`"
+cmd c1-redirect-in -- "1. \`\"$R/scripts/ok.sh\" check < /etc/hosts\`"
+cmd c1-pipe-tight -- "1. \`\"$R/scripts/ok.sh\" log|sh\`"
 cmd c2-missing "'Bash(\"$R/scripts/gone.sh\" *)'" --
 cmd c2-mode "'Bash(\"$R/scripts/plain.sh\" *)'" --
 cmd c2-shebang "'Bash(\"$R/scripts/noshebang.sh\" *)'" --
@@ -387,10 +538,20 @@ cmd c2-bin "'Bash(\"$B/audit-logs\" *)'" --
 cmd c2-bash-rule "'Bash(bash \"$R/scripts/ok.sh\" *)'" --
 cmd c3-scan-rule "'Bash(\"$B/audit-scan\" *)'" --
 cmd c3-mem-rule "'Bash(\"$B/audit-mem\" warm *)'" --
-cmd c3-scan-call -- "1. \`\"$B/audit-scan\" . --out audit_<n>/prescan.json\`"
-cmd c3-mem-call -- "1. \`\"$B/audit-mem\" check --program-id <id> --contract=1\`"
+cmd c3-scan-call "'Bash(\"$B/audit-scan\" --contract=1 *)'" -- "1. \`\"$B/audit-scan\" . --out audit_<n>/prescan.json\`"
+cmd c3-mem-call "'Bash(\"$B/audit-mem\" check --contract=1 *)'" -- "1. \`\"$B/audit-mem\" check --program-id <id> --contract=1\`"
 cmd c3-mem-bare -- "1. \`audit-mem warm --program-id <id>\`"
-cmd c3-scan-fenced -- '```bash' "\"$B/audit-scan\" --pretty ." '```'
+cmd c3-scan-fenced "'Bash(\"$B/audit-scan\" --contract=1 *)'" -- '```bash' "\"$B/audit-scan\" --pretty ." '```'
+# C5: each call is one of its command's rules, the agents it spawns too; a call its sentence says asks is not
+cmd c5-unlisted -- "1. Run \`\"$R/templates/poc/run.sh\" --crate audit_<n>/poc/F-1\`."
+cmd c5-agent -- "1. Spawn \`fx-runner\` on the crate."
+cmd c5-agent-covered "'Bash(\"$R/scripts/rec.py\" *)'" -- "1. Delegate the walk to \`fx-runner\`."
+cmd c5-agent-mention -- "1. Read what \`fx-runner\` wrote into the run directory."
+cmd c5-asks -- "1. Run \`\"$R/templates/poc/run.sh\" --crate x\`, which asks."
+printf -- '---\ndescription: "A command."\nallowed-tools:\n  - '"'"'Bash("%s/scripts/preflight.sh" *)'"'"'\n  - '"'"'Bash("%s/scripts/ok.sh" new *)'"'"'\n  - '"'"'Bash("%s/scripts/rec.py" x)'"'"'\n---\n\n%s\n1. `"%s/scripts/ok.sh" new audit`, `"%s/scripts/rec.py" x`, then `"%s/scripts/ok.sh" check audit_1`.\n' \
+  "$R" "$R" "$R" "$STEP0" "$R" "$R" "$R" > "$fx/commands/c5-fixed-word.md"
+sed -e 's#`"${CLAUDE_PLUGIN_ROOT}/scripts/ok.sh" check audit_1`#`"${CLAUDE_PLUGIN_ROOT}/scripts/rec.py" x y`#' \
+  "$fx/commands/c5-fixed-word.md" > "$fx/commands/c5-exact.md"
 printf -- '---\ndescription: "A command."\nallowed-tools: Read\n---\n\n%s\n' "$STEP0" > "$fx/commands/c4-no-rule.md"
 printf -- '---\ndescription: "A command."\nallowed-tools:\n  - '"'"'Bash("%s/scripts/preflight.sh" *)'"'"'\n---\n\n1. Read the tree.\n' "$R" \
   > "$fx/commands/c4-no-step.md"
@@ -400,6 +561,11 @@ sed -e 's#^0\. \*\*Preflight\.\*\*#Step zero:#' "$fx/commands/good.md" > "$fx/co
 sed -e 's#preflight\.sh"`, with#preflight.sh" --fast`, with#' "$fx/commands/good.md" > "$fx/commands/c4-args.md"
 sed -e 's#; a call that is denied stops the run too\.#.#' "$fx/commands/good.md" > "$fx/commands/c4-no-denial.md"
 # agents and skills have no step 0; the root SKILL.md has it, from ${CLAUDE_SKILL_DIR}
+printf -- '---\nname: fx-runner\ndescription: "An agent."\ntools: Read, Bash\n---\n\nRun `"%s/scripts/rec.py" x`.\n' "$R" \
+  > "$fx/agents/fx-runner.md"
+mkdir -p "$fx/skills/fork"
+printf -- '---\nname: f\ndescription: "A fork."\ncontext: fork\nagent: auditor:fx-runner\nallowed-tools: Read\n---\n\nRun as the agent.\n' \
+  > "$fx/skills/fork/SKILL.md"
 printf -- '---\nname: a\ndescription: "An agent."\ntools: Read, Bash\n---\n\nRun `"%s/scripts/ok.sh" check x`.\n' "$R" > "$fx/agents/good.md"
 printf -- '---\nname: a\ndescription: "An agent."\ntools: Read, Bash\n---\n\nRun `bash "%s/scripts/ok.sh"`.\n' "$R" > "$fx/agents/c1.md"
 printf -- '---\nname: s\ndescription: "A skill."\nallowed-tools:\n  - '"'"'Bash("%s/scripts/rec.py" *)'"'"'\n---\n\nRun `"%s/scripts/rec.py" x` or `"%s/scripts/rec.py" x | wc -l`.\n' "$R" "$R" "$R" \
@@ -424,13 +590,18 @@ expect() {
   else bad "fixture $f: findings [${got}], want [${want}]: $(check "$fx" "$f" | sed -n '1,3p')"; fi
 }
 expect commands/good.md ""
-for c in bash cd env unquoted half-quoted dollar pipe semicolon and skill-dir continued wrapped-span cmp diff large; do
+for c in bash cd env unquoted half-quoted dollar pipe semicolon and skill-dir continued wrapped-span cmp diff \
+    procsub redirect redirect-in pipe-tight large; do
   expect "commands/c1-$c.md" C1
 done
 expect commands/c2-missing.md C2; expect commands/c2-mode.md C2; expect commands/c2-shebang.md C2
 expect commands/c2-bin.md C2; expect commands/c2-bash-rule.md C2
-expect commands/c3-scan-rule.md C3; expect commands/c3-mem-rule.md C3; expect commands/c3-scan-call.md C3
-expect commands/c3-mem-call.md C3; expect commands/c3-mem-bare.md C3; expect commands/c3-scan-fenced.md C3
+# a rooted call without the marker is also no call its marked rule pre-approves
+expect commands/c3-scan-rule.md C3; expect commands/c3-mem-rule.md C3; expect commands/c3-scan-call.md "C3 C5"
+expect commands/c3-mem-call.md "C3 C5"; expect commands/c3-mem-bare.md C3; expect commands/c3-scan-fenced.md "C3 C5"
+expect commands/c5-unlisted.md C5; expect commands/c5-agent.md C5; expect commands/c5-agent-covered.md ""
+expect commands/c5-agent-mention.md ""; expect commands/c5-asks.md ""; expect commands/c5-fixed-word.md C5
+expect commands/c5-exact.md C5; expect skills/fork/SKILL.md C5
 expect commands/c4-no-rule.md C4; expect commands/c4-no-step.md C4; expect commands/c4-late.md C4
 expect commands/c4-paragraph.md C4; expect commands/c4-args.md C4; expect commands/c4-no-denial.md C4
 expect agents/good.md ""; expect agents/c1.md C1; expect skills/s/SKILL.md C1; expect SKILL.md ""
@@ -443,6 +614,10 @@ total=$(wc -l < "$fx/commands/c1-large.md"); total=${total//[!0-9]/}
 # its body (C1) and in its rules (C2)
 cp "$fx/skill-root.md" "$fx/SKILL.md"; git -C "$fx" add -- SKILL.md 2>/dev/null
 expect SKILL.md "C1 C2"
+# and its calls are its own rules': rec.py is not one of them
+{ sed -e 's#CLAUDE_PLUGIN_ROOT}/scripts/ok#CLAUDE_SKILL_DIR}/scripts/ok#' "$fx/skill-root.md"
+  printf 'Also `"${CLAUDE_SKILL_DIR}/scripts/rec.py" x`.\n'; } > "$fx/SKILL.md"
+expect SKILL.md C5
 
 # ---- 1-4. the tree ----------------------------------------------------------------------------------------------
 cd "$TREE" || exit 1
