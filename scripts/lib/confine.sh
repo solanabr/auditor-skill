@@ -108,13 +108,15 @@ confine_need() { # confine_need <program>...: refuse unless each is on the clean
 # and patterns (grep.patternType, log.showRoot, replace refs, the commit-graph cache).
 # GIT_CEILING_DIRECTORIES stops discovery at WT's parent unless the caller sets CONFINE_CEILING for one
 # call. GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS makes git refuse abbreviated long options where its option
-# parser checks it; git-ro.sh refuses them on its own as well.
+# parser checks it; git-ro.sh refuses them on its own as well. GIT_ALLOW_PROTOCOL carries the transport
+# allowlist in the environment, which the repository's config cannot widen; it is empty (no transport)
+# unless the caller sets CONFINE_ALLOW_PROTOCOL for one call.
 hgit() {
   local d=$1
   shift
   env -i ${HOME+"HOME=$HOME"} PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" LC_ALL=C TZ="${TZ:-UTC}" \
     GIT_NO_LAZY_FETCH=1 GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
-    GIT_OPTIONAL_LOCKS=0 GIT_CEILING_DIRECTORIES="$CONFINE_CEILING" GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS=true \
+    GIT_OPTIONAL_LOCKS=0 GIT_ALLOW_PROTOCOL="${CONFINE_ALLOW_PROTOCOL-}" GIT_CEILING_DIRECTORIES="$CONFINE_CEILING" GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS=true \
     git --no-pager -C "$d" \
     -c core.fsmonitor=false -c core.pager=cat -c core.hooksPath=/dev/null -c core.untrackedCache=false \
     -c log.showSignature=false -c gpg.program=false -c gpg.ssh.program=false -c gpg.x509.program=false \
