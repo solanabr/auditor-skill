@@ -562,6 +562,8 @@ check "... with --no-local --bare --no-recurse-submodules --template=" \
 awk '/^ENV / { sub(/^ENV /, ""); sub(/=.*/, ""); print }' "$T/rec.log" | sort -u > "$T/env.names"
 check "... and only the hardened environment" \
   test -z "$(grep -vxE 'HOME|PATH|TMPDIR|LC_ALL|TZ|GIT_NO_LAZY_FETCH|GIT_CONFIG_NOSYSTEM|GIT_CONFIG_GLOBAL|GIT_TERMINAL_PROMPT|GIT_OPTIONAL_LOCKS|GIT_ALLOW_PROTOCOL|GIT_CEILING_DIRECTORIES|GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS|PWD|OLDPWD|SHLVL|_' "$T/env.names")"
+check "... with GIT_ALLOW_PROTOCOL=file, so the copy's clone permits only the local-file transport" \
+  grep -qx "ENV GIT_ALLOW_PROTOCOL=file" "$T/rec.log"
 check "... and runs no hook" nomarks
 
 # PATH: entries inside the working directory, relative ones and "." are dropped before anything runs.
@@ -620,6 +622,38 @@ else
   check "copy of a partial clone: exit 3" test "$RC" = 3
   check "... with its one line" err_is "git-ro: . is a partial clone: a copy would lack the objects it never fetched, and nothing is fetched; make a full copy from a source you trust (Rule 11c)"
   check "... and nothing copied or fetched" sh -c "[ ! -e '$PC/audit_1/src.git' ] && [ -z \"\$(ls -A '$T/marks')\" ]"
+fi
+
+# =================================================================================================
+# The transport allowlist is carried in the environment, so a checkout whose own config permits a
+# non-local transport cannot widen it. On a git that ignores GIT_NO_LAZY_FETCH (git before 2.44.0, here
+# a shim) a read of a missing object fetches nothing and runs nothing outside the tree.
+# =================================================================================================
+mkdir -p "$T/oldgit-nlf"
+printf '#!/bin/sh\nunset GIT_NO_LAZY_FETCH\nexec "%s" "$@"\n' "$REAL_GIT" > "$T/oldgit-nlf/git"
+chmod +x "$T/oldgit-nlf/git"
+APC="$T/allow-partial"
+if ! git clone -q --filter=blob:none --no-local "file://$SRV" "$APC" >/dev/null 2>&1; then
+  skp "transport allowlist: this git could not make a blobless clone"
+else
+  git -C "$APC" config remote.origin.url "ext::sh -c touch% $T/marks/ext-reenabled"
+  git -C "$APC" config protocol.ext.allow always
+  clearmarks
+  # Control: on a git that ignores GIT_NO_LAZY_FETCH, plain git reaches the ext:: transport this
+  # checkout's config permits. Assert the allowlist stops it only when the control confirms the fixture
+  # reaches it, so the assertion is never vacuous.
+  ( cd "$APC" && PATH="$T/oldgit-nlf:$PATH" git -c protocol.allow=never show "HEAD~1:f.txt" ) >/dev/null 2>&1
+  if [ -e "$T/marks/ext-reenabled" ]; then
+    ok "control: this git reaches the ext:: transport once GIT_NO_LAZY_FETCH is ignored"
+    clearmarks
+    PATH="$T/oldgit-nlf:$PATH" run "$APC" show "HEAD~1:f.txt"
+    check "a missing object is not fetched through a config-permitted ext:: transport" test "$RC" != 0
+    check "... and nothing outside the tree runs" nomarks
+    clearmarks
+  else
+    clearmarks
+    skp "control: this git did not reach the ext:: transport; the transport-allowlist check is skipped"
+  fi
 fi
 
 # =================================================================================================
