@@ -254,6 +254,10 @@ front-end UI, deployment keys/opsec, economic/game-theoretic soundness of the
 tokenomics beyond code correctness, and any code outside the listed commits.
 Also list anything that was in the repo but deliberately NOT reviewed, and why
 (e.g. delivered closed-source / compiled-only, or explicitly de-scoped by client).
+List every exclusion in the Layout table of audit_<n>/intake.md §1, with its
+reason and its source as the table gives it. A reused exclusion narrows coverage
+on an earlier run's answer, so its source reads "reused from audit_<k> on the
+human's yes".
 -->
 
 - {e.g. Third-party programs invoked via CPI (SPL Token, Jupiter) — assumed correct.}
@@ -262,6 +266,7 @@ Also list anything that was in the repo but deliberately NOT reviewed, and why
 - {e.g. Deployment process, key custody, and operational security (see Disclaimer).}
 - {e.g. Economic model / tokenomics design beyond on-chain code correctness.}
 - {e.g. Program X, delivered as a compiled artifact only — source not provided, could not be reviewed.}
+- {e.g. `vendor/` — vendored upstream code (Q44); reused from audit_<k> on the human's yes.}
 - {Any code outside the commits in §2.2.}
 
 ---
