@@ -1,6 +1,6 @@
 ---
 name: auditor:patch
-description: Draft and verify a fix for a confirmed finding — a MINIMAL idiomatic unified diff against the pinned audited commit, applied to a scratch worktree and proven by re-running the finding's PoC (it must now revert). Proposal only; the auditor stays read-only on the client tree. Optional mutation + blast-radius evidence; opt-in post-patch validation, in isolated mode only, can only lower the tier. Emits [FIX-VERIFIED] / [FIX-INSUFFICIENT] / [FIX-PROPOSED].
+description: Draft and verify a fix for a confirmed finding — a MINIMAL idiomatic unified diff against the pinned audited commit, applied to a scratch clone and proven by re-running the finding's PoC (it must now revert). Proposal only; the auditor stays read-only on the client tree. Optional mutation + blast-radius evidence; opt-in post-patch validation, in isolated mode only, can only lower the tier. Emits [FIX-VERIFIED] / [FIX-INSUFFICIENT] / [FIX-PROPOSED].
 argument-hint: "<finding-id | INC-n.k> [--verify-with-mutation] [--post-patch-validation]"
 allowed-tools:
   - Read
@@ -53,7 +53,7 @@ This command's pre-approvals last for the turn that invoked it: Claude Code clea
 
 | Tier | Meaning |
 |------|---------|
-| `[FIX-VERIFIED]` | Diff applied to a scratch worktree, rebuilt, and the finding's PoC **re-ran and now reverts** — closure demonstrated by execution. Optional mutation/blast-radius clean. |
+| `[FIX-VERIFIED]` | Diff applied to a scratch clone, rebuilt, and the finding's PoC **re-ran and now reverts** — closure demonstrated by execution. Optional mutation/blast-radius clean. |
 | `[FIX-INSUFFICIENT]` | The diff does **not** fully close the bound — the PoC still exploits a residual path, an uncaught mutant survives on the patched line, or the change breaks an adjacent path (blast-radius regression). State exactly what remains open. |
 | `[FIX-PROPOSED]` | A minimal idiomatic diff re-derived from the code closes the cited bound, but **no executable PoC was available** to run the revert. Verified by reasoning, flagged as not-yet-executed — never silently promoted to `[FIX-VERIFIED]`. |
 
