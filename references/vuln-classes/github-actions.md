@@ -470,7 +470,7 @@ CodeQL's `actions` language (queries such as `actions/untrusted-checkout/*`, `ac
 `actions/code-injection/*`, `actions/envvar-injection/*`, `actions/envpath-injection/*`, `actions/artifact-poisoning/*`,
 `actions/cache-poisoning/*`, `actions/improper-access-control`) and zizmor (`template-injection`, `dangerous-triggers`,
 `github-env`, `bot-conditions`, `unsound-contains`, `artipacked`, `cache-poisoning`, `impostor-commit` in online mode)
-cover part of §3–§5. Neither replaces this file. Run with `--offline --persona=auditor` over
+cover part of §3–§5. Neither replaces this file. `audit-scan --workflows .github/workflows` is the offline fact pass these tools confirm: it lists each workflow's triggers, jobs and steps, and what it could not model under `skipped`/`unknown`. Run with `--offline --no-config --persona=auditor` (`--no-config` so the audited repo's own `zizmor.yml` cannot disable audits) over
 fixtures 01–17 in `scripts/tests/fixtures/gha/`, zizmor 1.30.1 did not flag:
 - a mention-only gate (fixtures 01, 10);
 - the cross-object OR (02);
