@@ -371,6 +371,15 @@ fm commands/bash-patterns.md pass "$C" "allowed-tools:" "  - Read" "  - 'Bash(jq
 expect "frontmatter, with Bash forbidden: Bash(pattern) entries pass" 0 bash "$T/fm-no-bash.sh" "$T/fm/commands/bash-patterns.md"
 expect "frontmatter, with Bash forbidden: an agent's Bash tool passes" 0 bash "$T/fm-no-bash.sh" "$T/fm/agents/a00-control.md" \
   "$ROOT/agents/context-builder.md"
+# FORBIDDEN_ALLOWED_TOOLS holds a bare Bash: a command's, a skill's and the root SKILL.md's fail, in either list
+# form, and so does a catch-all pattern; Bash(pattern) entries pass
+fm commands/bare-bash-real.md fail "$C" "allowed-tools: Read, Bash"
+fm commands/bare-bash-item.md fail "$C" "allowed-tools:" "  - Read" "  - Bash"
+fm commands/bare-bash-quoted.md fail "$C" "allowed-tools:" "  - 'Bash'"
+fm commands/catch-all-real.md fail "$C" "allowed-tools: Read, Bash(*)"
+fm skills/bare-bash/SKILL.md fail "name: bb" 'description: "A skill."' "allowed-tools: Read, Bash"
+fmroot bare-bash fail "name: r" 'description: "A skill."' "allowed-tools:" "  - Bash"
+fm commands/bash-pattern-real.md pass "$C" "allowed-tools: Read, Bash(jq *)"
 for all in 'Bash(*)' 'Bash( * )' 'Bash(:*)' 'Bash(**)'; do
   printf -- '---\n%s\n%s\n---\n' "$C" "allowed-tools: Read, $all" > "$T/fm/commands/catch-all.md"
   expect "frontmatter, with Bash forbidden: $all fails" 1 bash "$T/fm-no-bash.sh" "$T/fm/commands/catch-all.md"

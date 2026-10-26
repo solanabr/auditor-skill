@@ -27,7 +27,8 @@
 #       - background, only with context: fork, and user-invocable, each true or false;
 #       - allowed-tools, read as a command's;
 #   - tools and allowed-tools list 'Name' or 'Name(pattern)' entries (agents: names only, no pattern),
-#     separated by ', ' or one per item, none empty; allowed-tools lists nothing in FORBIDDEN_ALLOWED_TOOLS;
+#     separated by ', ' or one per item, none empty; allowed-tools lists nothing in FORBIDDEN_ALLOWED_TOOLS
+#     (* and a bare Bash, or a pattern that is all *, : and spaces, such as Bash(*));
 #   - an allowed-tools entry that can run the bundled audit-scan or audit-mem (a Bash entry naming either as a
 #     word, in any letter case, or whose program word holds a *, a final :* aside) takes a form the confined
 #     builds pin, with the contract marker --contract=1 where they take it, which a build made before them refuses:
@@ -43,8 +44,10 @@
 set -uo pipefail
 
 # Entries the allowed-tools of a command or skill may never list, space-separated. A name also refuses its
-# catch-all patterns, such as Bash(*) for Bash. (An agent's tools list names only, so * fails there too.)
-FORBIDDEN_ALLOWED_TOOLS='*'
+# catch-all patterns, such as Bash(*) for Bash. (An agent's tools list names only, so * fails there too.) A
+# bare Bash would pre-approve every command line; each Bash rule names one entry point instead, which
+# check-entrypoints.sh checks against scripts/entrypoints.txt.
+FORBIDDEN_ALLOWED_TOOLS='* Bash'
 
 if [ $# -eq 0 ]; then
   cd "$(dirname "$0")/.." || exit 2
