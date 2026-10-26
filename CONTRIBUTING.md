@@ -295,9 +295,10 @@ On the PR, the `vendor-delta` job writes the review of step 1 to the job summary
 the workflow and its scripts from the PR, so that summary counts only for a PR that changes nothing but the
 gitlink and the README pin line, as the PR's file list shows; the summary's first line says so, and its second
 says when the PR changes other files. The pin line may change only in its commit hashes and date, as step 3
-updates them, and stay where it is. Any other change in the PR, the workflow or the scripts included, means
-the reviewer runs the delta review locally instead. So does a summary that is missing or ends with a note
-that it is cut.
+updates them, and stay where it is: the summary checks that nothing else on it changed, and
+`scripts/check-corpus.sh` checks the hashes. Any other change in the PR, the workflow or the scripts included,
+means the reviewer runs the delta review locally instead. So does a summary that is missing or ends with a
+note that it is cut.
 
 1. Read the delta review: the job summary, when it counts, or the output of
    `bash scripts/tob-delta-review.sh <clone> <old-sha> <new-sha>` in a full clone of
