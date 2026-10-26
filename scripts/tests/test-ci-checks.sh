@@ -19,7 +19,11 @@
 #      is the last of 3,000 tracked paths; on each load surface at the plugin root, and on a SKILL.md other
 #      than SKILL.md and skills/<name>/SKILL.md in any letter case, unless the allow list names it; and on a
 #      manifest key beyond its list, also at the end of a 1 MiB manifest. It passes the repository itself,
-#      and fails outside a checkout and without jq.
+#      and fails outside a checkout and without jq;
+#   6. scripts/check-entrypoints.sh passes the repository, reading its whole list, and a checkout whose entry
+#      points, case files and allow rules all keep the contract; it fails each kind of bad list line (also the
+#      last line of a list over 64 KiB), entry point, case file and allow rule, an agent's Bash rule, and an
+#      entry point no rule pre-approves; it cannot run outside a checkout or without its list.
 # Usage (from the repo root): bash scripts/tests/test-ci-checks.sh   (VERBOSE=1 shows each check's output)
 # Builds throwaway files and git repos under ${TMPDIR:-/tmp}; no network; bash >= 3.2.
 set -uo pipefail
@@ -645,6 +649,142 @@ mkdir -p "$T/nojq"; for t in git tr dirname; do ln -s "$(command -v "$t")" "$T/n
 hyrepo no-jq; out=$(PATH="$T/nojq" "$BASH" "$T/hy/no-jq/scripts/check-hygiene.sh" 2>&1); got=$?
 case "$got:$out" in 1:*"jq is needed"*) pass=$((pass + 1)); echo "PASS hygiene: without jq the manifests fail";;
   *) failn=$((failn + 1)); echo "FAIL hygiene: without jq (rc=$got)"; echo "$out";; esac
+
+# ---- 6. check-entrypoints.sh -------------------------------------------------------------------------
+EPC="$ROOT/scripts/check-entrypoints.sh"
+expect "entry points: the repository passes" 0 bash "$EPC"
+nep=$(grep -c -v -e '^#' -e '^$' "$ROOT/scripts/entrypoints.txt")
+case "$out" in *"passed: $nep entry points"*) pass=$((pass + 1)); echo "PASS entry points: ... all $nep read";;
+  *) failn=$((failn + 1)); echo "FAIL entry points: the repository's list was not read whole"; echo "$out";; esac
+PR='${CLAUDE_PLUGIN_ROOT}'; SD='${CLAUDE_SKILL_DIR}'; RB='tools/auditor-tools/target/release'
+eprepo() { # eprepo NAME  — a checkout whose entry points, case files and rules all pass
+  local d="$T/ep/$1"
+  mkdir -p "$d/scripts/lib" "$d/scripts/tests/fixtures/ok" "$d/scripts/tests/fixtures/rec" "$d/tools/auditor-tools/logs" \
+    "$d/commands" "$d/agents" "$d/skills/s" && git -C "$d" init -q && cp "$EPC" "$d/scripts/check-entrypoints.sh" || return
+  printf '# shared checks\n' > "$d/scripts/lib/confine.sh"
+  printf '#!/bin/bash\nhere=${0%%/*}\n. "$here/lib/confine.sh" || exit 64\n' > "$d/scripts/ok.sh"
+  printf '#!/bin/bash\n  . "${here%%/*}/lib/confine.sh" || exit 2\n' > "$d/scripts/tm.sh"
+  printf '#!/usr/bin/env -S python3 -I\nimport sys\n' > "$d/scripts/rec.py"
+  chmod 755 "$d/scripts/ok.sh" "$d/scripts/tm.sh" "$d/scripts/rec.py"
+  printf '# cases\n64\tok: refused: x\t--x\n' > "$d/scripts/tests/fixtures/ok/cases.txt"
+  printf '# cases\nno arguments\nan option\t--x\n' > "$d/scripts/tests/fixtures/rec/hostile-args.txt"
+  printf '[package]\nname = "t"\n\n[[bin]]\nname = "audit-scan"\npath = "a.rs"\n\n[[bin]]\nname = "audit-mem"\npath = "b.rs"\n' \
+    > "$d/tools/auditor-tools/Cargo.toml"
+  printf '[package]\nname = "logs"\n\n[[bin]]\nname = "audit-logs"\npath = "main.rs"\n' > "$d/tools/auditor-tools/logs/Cargo.toml"
+  { printf '# the list\nscripts/ok.sh\tscripts/tests/fixtures/ok/cases.txt\n'
+    printf 'scripts/tm.sh\tscripts/tests/fixtures/ok/cases.txt\t--detect|--offline\n'
+    printf 'scripts/rec.py\tscripts/tests/fixtures/rec/hostile-args.txt\n'
+    printf '%s/audit-scan\tscripts/tests/fixtures/ok/cases.txt\t--contract=1\n' "$RB"
+    printf '%s/audit-mem\tscripts/tests/fixtures/ok/cases.txt\twarm|check --contract=1\n' "$RB"
+    printf '%s/audit-logs\tscripts/tests/fixtures/rec/hostile-args.txt\n' "$RB"; } > "$d/scripts/entrypoints.txt"
+  { printf -- "---\ndescription: A command.\nallowed-tools:\n  - Read\n  - Edit(audit_*/**)\n  - 'Bash(\"%s/scripts/ok.sh\" *)'\n" "$PR"
+    printf -- "  - 'Bash(\"%s/scripts/ok.sh\")'\n  - 'Bash(\"%s/scripts/tm.sh\" --offline *)'\n" "$PR" "$PR"
+    printf -- "  - 'Bash(\"%s/%s/audit-scan\" --contract=1 *)'\n  - 'Bash(\"%s/%s/audit-mem\" check --contract=1 --db x.db)'\n" \
+      "$PR" "$RB" "$PR" "$RB"
+    printf -- "---\n\nBody.\n"; } > "$d/commands/c.md"
+  printf -- "---\ndescription: A one-line command.\nallowed-tools: Read, Bash(\"%s/%s/audit-logs\" profile *), Grep\n---\n" "$PR" "$RB" \
+    > "$d/commands/one.md"
+  printf -- '---\nname: a\ndescription: An agent.\ntools: Read, Grep, Bash\n---\n' > "$d/agents/a.md"
+  printf -- "---\nname: s\ndescription: A skill.\nallowed-tools:\n  - 'Bash(\"%s/scripts/rec.py\" *)'\n---\n" "$PR" > "$d/skills/s/SKILL.md"
+  printf -- "---\nname: r\ndescription: The root skill.\nallowed-tools:\n  - 'Bash(\"%s/scripts/ok.sh\" new *)'\n---\n" "$SD" > "$d/SKILL.md"
+  git -C "$d" add -A
+}
+eprun() { # eprun NAME WANT-RC TEXT  — the check in checkout NAME exits WANT-RC and says TEXT
+  local got
+  out=$(bash "$T/ep/$1/scripts/check-entrypoints.sh" 2>&1); got=$?
+  case "$got:$out" in "$2:"*"$3"*) pass=$((pass + 1)); echo "PASS entry points: $1 (rc=$got)"; if [ -n "${VERBOSE:-}" ]; then echo "$out"; fi;;
+    *) failn=$((failn + 1)); echo "FAIL entry points: $1 (rc=$got, want $2 and '$3')"; echo "$out";; esac
+}
+ep() { # ep NAME TEXT SETUP  — a good checkout, changed by the shell code SETUP run in it, fails saying TEXT
+  if eprepo "$1" && (cd "$T/ep/$1" && eval "$3" && git add -A); then eprun "$1" 1 "$2"
+  else failn=$((failn + 1)); echo "FAIL entry points: cannot build the checkout $1"; fi
+}
+eprepo good && eprun good 0 "passed: 6 entry points, 8 Bash rules"
+# the list
+ep list-one-field "want <path><TAB><case file>[<TAB><words>], not 1 fields" 'printf "scripts/ok.sh\n" >> scripts/entrypoints.txt'
+ep list-four-fields "not 4 fields" 'printf "scripts/x.sh\ta\tb\tc\n" >> scripts/entrypoints.txt'
+ep list-absolute "/etc/x.sh is not a relative path" 'printf "/etc/x.sh\tscripts/tests/fixtures/ok/cases.txt\n" >> scripts/entrypoints.txt'
+ep list-dotdot "scripts/../x.sh has an empty, . or .. component" \
+  'printf "scripts/../x.sh\tscripts/tests/fixtures/ok/cases.txt\n" >> scripts/entrypoints.txt'
+ep list-twice "scripts/ok.sh is listed twice (first at line 2)" 'printf "scripts/ok.sh\tscripts/tests/fixtures/ok/cases.txt\n" >> scripts/entrypoints.txt'
+ep list-words-star "the words for scripts/ok.sh are not words" \
+  'awk -F"\t" -v OFS="\t" "\$1 == \"scripts/ok.sh\" { \$3 = \"new *\" } { print }" scripts/entrypoints.txt > l && mv l scripts/entrypoints.txt'
+ep list-trailing-tab "the words for scripts/ok.sh are not words" \
+  'awk "\$1 == \"scripts/ok.sh\" { \$0 = \$0 \"\t\" } { print }" scripts/entrypoints.txt > l && mv l scripts/entrypoints.txt'
+ep list-empty "lists no entry point" 'printf "# nothing\n" > scripts/entrypoints.txt'
+# each entry point
+ep script-untracked "scripts/ok.sh is not a tracked file" 'git rm -q --cached scripts/ok.sh && printf "scripts/ok.sh\n" > .git/info/exclude'
+ep script-mode "scripts/ok.sh is mode 100644 in the index, not 100755" 'chmod 644 scripts/ok.sh'
+ep script-link "scripts/ok.sh is mode 120000 in the index, not 100755" 'mv scripts/ok.sh scripts/real.sh && ln -s real.sh scripts/ok.sh'
+ep script-env-bash "scripts/ok.sh starts with '#!/usr/bin/env bash', not #!/bin/bash" \
+  'printf "#!/usr/bin/env bash\n. \"\$here/lib/confine.sh\"\n" > scripts/ok.sh'
+ep script-env-python "scripts/rec.py starts with '#!/usr/bin/env python3', not #!/bin/bash" 'printf "#!/usr/bin/env python3\n" > scripts/rec.py'
+ep script-crlf "scripts/ok.sh starts with" 'printf "#!/bin/bash\r\n. \"\$here/lib/confine.sh\"\n" > scripts/ok.sh'
+ep script-no-confine "scripts/ok.sh does not source scripts/lib/confine.sh" 'printf "#!/bin/bash\n# . \"\$here/lib/confine.sh\"\n" > scripts/ok.sh'
+ep script-elsewhere "bin/x.sh is not under scripts/, templates/ or tools/auditor-tools/target/release/" \
+  'printf "bin/x.sh\tscripts/tests/fixtures/ok/cases.txt\n" >> scripts/entrypoints.txt'
+ep bin-undeclared "audit-x is no binary a crate under tools/auditor-tools declares" \
+  "printf '%s/audit-x\tscripts/tests/fixtures/ok/cases.txt\n' '$RB' >> scripts/entrypoints.txt"
+ep bin-nested "$RB/sub/audit-scan is not tools/auditor-tools/target/release/<binary>" \
+  "printf '%s/sub/audit-scan\tscripts/tests/fixtures/ok/cases.txt\n' '$RB' >> scripts/entrypoints.txt"
+ep bin-crate-untracked "audit-logs is no binary a crate under tools/auditor-tools declares" \
+  'git rm -q --cached tools/auditor-tools/logs/Cargo.toml && printf "logs/\n" > .git/info/exclude'
+ep cases-untracked "the case file scripts/tests/fixtures/rec/hostile-args.txt is not a tracked file" \
+  'git rm -q --cached scripts/tests/fixtures/rec/hostile-args.txt && printf "*.txt\n" > .git/info/exclude'
+ep cases-empty "the case file scripts/tests/fixtures/rec/hostile-args.txt holds no case" \
+  'printf "# only comments\n\n" > scripts/tests/fixtures/rec/hostile-args.txt'
+ep cases-no-status "the case file scripts/tests/fixtures/ok/cases.txt: line 3 does not start with an exit status and a tab" \
+  'printf "an option\t--x\n" >> scripts/tests/fixtures/ok/cases.txt'
+# the allow rules
+epcmd() { # epcmd NAME TEXT ENTRY  — the good checkout with the item ENTRY added to commands/c.md's allowed-tools fails saying TEXT
+  printf '%s\n' "$3" > "$T/ep-entry"
+  ep "$1" "$2" 'awk -v f="$T/ep-entry" "NR == 4 { getline e < f; print \"  - \" e } { print }" commands/c.md > c && mv c commands/c.md'
+}
+epcmd rule-bare "allowed-tools entry 'Bash' is not Bash(\"\${CLAUDE_PLUGIN_ROOT}/<path>\" ...)" 'Bash'
+epcmd rule-catch-all "is not Bash(\"\${CLAUDE_PLUGIN_ROOT}/<path>\"" "'Bash(*)'"
+epcmd rule-bash-in-front "is not Bash(\"\${CLAUDE_PLUGIN_ROOT}/<path>\"" "'Bash(bash \"$PR/scripts/ok.sh\" *)'"
+epcmd rule-unquoted "is not Bash(\"\${CLAUDE_PLUGIN_ROOT}/<path>\"" "'Bash($PR/scripts/ok.sh *)'"
+epcmd rule-half-quoted "is not Bash(\"\${CLAUDE_PLUGIN_ROOT}/<path>\"" "'Bash(\"$PR\"/scripts/ok.sh *)'"
+epcmd rule-skill-dir "is not Bash(\"\${CLAUDE_PLUGIN_ROOT}/<path>\"" "'Bash(\"$SD/scripts/ok.sh\" *)'"
+epcmd rule-unlisted "names scripts/other.sh, which scripts/entrypoints.txt does not list" "'Bash(\"$PR/scripts/other.sh\" *)'"
+epcmd rule-glob "names scripts/*, which scripts/entrypoints.txt does not list" "'Bash(\"$PR/scripts/*\" *)'"
+epcmd rule-case "names scripts/OK.sh, which scripts/entrypoints.txt does not list" "'Bash(\"$PR/scripts/OK.sh\" *)'"
+epcmd rule-dot "names scripts/./ok.sh, which scripts/entrypoints.txt does not list" "'Bash(\"$PR/scripts/./ok.sh\" *)'"
+epcmd rule-no-space "has no space after the quoted path" "'Bash(\"$PR/scripts/ok.sh\"*)'"
+epcmd rule-prefix "has no space after the quoted path" "'Bash(\"$PR/scripts/ok.sh\":*)'"
+epcmd rule-unclosed "does not close the quoted path" "'Bash(\"$PR/scripts/ok.sh *)'"
+epcmd rule-star-inside "the word '*' holds a character other than" "'Bash(\"$PR/scripts/ok.sh\" * --x)'"
+epcmd rule-dollar "the word '\$HOME' holds a character other than" "'Bash(\"$PR/scripts/ok.sh\" \$HOME *)'"
+epcmd rule-quoted-word "holds a character other than" "'Bash(\"$PR/scripts/ok.sh\" \"\"x\"\" *)'"
+epcmd rule-two-spaces "has an empty word" "'Bash(\"$PR/scripts/ok.sh\"  *)'"
+epcmd rule-scan-no-marker "does not start with '--contract=1' after the path" "'Bash(\"$PR/$RB/audit-scan\" *)'"
+epcmd rule-scan-late-marker "does not start with '--contract=1' after the path" "'Bash(\"$PR/$RB/audit-scan\" . --contract=1 *)'"
+epcmd rule-mem-no-marker "does not start with 'warm|check --contract=1' after the path" "'Bash(\"$PR/$RB/audit-mem\" warm *)'"
+epcmd rule-mem-other "does not start with 'warm|check --contract=1' after the path" "'Bash(\"$PR/$RB/audit-mem\" rule --contract=1 *)'"
+epcmd rule-mem-any "does not start with 'warm|check --contract=1' after the path" "'Bash(\"$PR/$RB/audit-mem\" *)'"
+epcmd rule-collector-any "does not start with '--detect|--offline' after the path" "'Bash(\"$PR/scripts/tm.sh\" *)'"
+epcmd rule-collector-network "does not start with '--detect|--offline' after the path" "'Bash(\"$PR/scripts/tm.sh\" --network *)'"
+ep rule-control "holds a tab, a control character or a byte outside printable ASCII" \
+  "printf -- \"---\ndescription: A command.\nallowed-tools:\n  - 'Bash(\\\"%s/scripts/ok.sh\\\" \\033 *)'\n---\n\" '$PR' > commands/esc.md"
+ep rule-one-line "commands/one.md:3: allowed-tools entry 'Bash(bash" \
+  "sed 's#Bash(\"#Bash(bash \"#' commands/one.md > o && mv o commands/one.md"
+ep rule-skill "skills/s/SKILL.md:5: allowed-tools entry" "sed 's#/scripts/rec.py#/scripts/gone.py#' skills/s/SKILL.md > s && mv s skills/s/SKILL.md"
+ep rule-root-plugin-root "SKILL.md:5: allowed-tools entry 'Bash(\"\${CLAUDE_PLUGIN_ROOT}/scripts/ok.sh\" new *)' is not Bash(\"\${CLAUDE_SKILL_DIR}/<path>\"" \
+  "sed 's#CLAUDE_SKILL_DIR#CLAUDE_PLUGIN_ROOT#' SKILL.md > s && mv s SKILL.md"
+ep rule-agent "agents/a.md:4: the agent tools entry 'Bash(git log *)' is a Bash rule" \
+  "sed 's#^tools: .*#tools: Read, Bash(git log *)#' agents/a.md > a && mv a agents/a.md"
+ep rule-nested-command "commands/sub/n.md:4: allowed-tools entry 'Bash'" \
+  "mkdir commands/sub && printf -- '---\ndescription: N.\nallowed-tools:\n  - Bash\n---\n' > commands/sub/n.md"
+# every listed entry point is pre-approved somewhere
+ep unapproved "scripts/rec.py is listed, but no command, skill or root SKILL.md rule pre-approves it" 'rm skills/s/SKILL.md'
+# large input: a list of 3,000 comment lines, over 64 KiB, whose one bad line is last
+ep list-large "scripts/entrypoints.txt:3008: want <path><TAB><case file>[<TAB><words>], not 1 fields" \
+  'awk "BEGIN { for (i = 0; i < 3000; i++) printf \"# comment line %05d of a long list, padded out to fill it up\n\", i }" >> scripts/entrypoints.txt && printf "scripts/ok.sh\n" >> scripts/entrypoints.txt'
+# cannot run: outside a checkout, or with no list
+mkdir -p "$T/ep-nogit/scripts" && cp "$EPC" "$T/ep-nogit/scripts/" && printf 'scripts/ok.sh\tx\n' > "$T/ep-nogit/scripts/entrypoints.txt"
+expect "entry points: outside a checkout fails" 2 bash "$T/ep-nogit/scripts/check-entrypoints.sh"
+if eprepo no-list && rm "$T/ep/no-list/scripts/entrypoints.txt"; then eprun no-list 2 "scripts/entrypoints.txt is not a file"
+else failn=$((failn + 1)); echo "FAIL entry points: cannot build the checkout no-list"; fi
 
 echo "---- $pass passed, $failn failed"
 [ "$failn" -eq 0 ]
