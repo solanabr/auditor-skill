@@ -86,11 +86,15 @@ not the thing standing between the treasury and the exit.
 9. **Read the incident-slot source without checking it out** (`OUTPUT-RULES.md`
    Rule 11c). `--repo` is usually the client's own checkout, and checking out runs
    its hooks and filters and changes its tree: never `checkout`, `switch` or
-   `worktree add` there. Copy it to a directory outside it with
-   `GIT_NO_LAZY_FETCH=1 git clone --no-local <checkout> <scratch copy>`, and read the revision deployed at the incident slot from that copy with
-   `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false show --no-textconv --no-ext-diff <rev>:<path>`
-   (`GIT_NO_LAZY_FETCH=1` keeps a partial clone from fetching missing objects
-   through the checkout's own remote configuration).
+   `worktree add` there. Copy it into the run directory with
+   `"<auditor-skill root>/scripts/git-ro.sh" copy <checkout> incident_<n>`, where
+   `<checkout>` is `.` or the repository's path relative to the working directory: a
+   bare copy without its hooks, filters or config, whose path it prints. Read the
+   revision deployed at the incident slot from that copy with
+   `"<auditor-skill root>/scripts/git-ro.sh" --git-dir incident_<n>/src.git show <rev>:<path>`.
+   git-ro.sh fetches nothing: `copy` refuses a partial clone (exit 3), and
+   `"<auditor-skill root>/scripts/git-ro.sh" show <rev>:<path>` then reads the
+   checkout itself, where a missing object fails.
 
 These rules, and the `allowed-tools` lists on the commands, are **not a sandbox**
 (see the end of this file). When confinement actually matters — above all when

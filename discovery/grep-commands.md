@@ -239,24 +239,20 @@ grep_search: "NEXT_PUBLIC_"   includePattern: "apps/web/**/*.tsx"
 
 ### Committed env/key files
 ```bash
-# Terminal (OUTPUT-RULES Rule 11c flags):
-GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-  ls-files | grep -iE "\.env|keypair|delegate\.json|\.pem|\.key"
+# Terminal (read-only git, OUTPUT-RULES Rule 11c):
+"<auditor-skill root>/scripts/git-ro.sh" ls-files | grep -iE "\.env|keypair|delegate\.json|\.pem|\.key"
 find . -name "*.env*" -not -path "./node_modules/*" -not -path "./.git/*"
 find . -name "*keypair*" -not -path "./node_modules/*" -not -path "./.git/*"
 ```
 
 ### Git history secrets
 ```bash
-# Terminal (OUTPUT-RULES Rule 11c flags; a pickaxe search runs the repo's textconv drivers unless
-# --no-textconv is given). -S also matches files a committed .gitattributes marks -diff or binary;
-# -G and patch output (-p) skip their content unless --text is given:
-GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-  log --all --no-textconv --no-ext-diff -S "private" --oneline | head -20
-GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-  log --all --no-textconv --no-ext-diff -S "secret" --oneline | head -20
-GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-  log --all --no-textconv --no-ext-diff -S "BEGIN RSA" --oneline | head -20
+# Terminal (read-only git, OUTPUT-RULES Rule 11c, which runs no textconv driver of the repository). -S also
+# matches files a committed .gitattributes marks -diff or binary; -G and patch output (-p) skip their content
+# unless --text is given:
+"<auditor-skill root>/scripts/git-ro.sh" log --all -S "private" --oneline | head -20
+"<auditor-skill root>/scripts/git-ro.sh" log --all -S "secret" --oneline | head -20
+"<auditor-skill root>/scripts/git-ro.sh" log --all -S "BEGIN RSA" --oneline | head -20
 ```
 
 ---
@@ -336,9 +332,8 @@ grep_search: "load_instruction_at|get_instruction_relative"   isRegexp: true   i
 
 ### Terraform / IaC hygiene (DEP-080..DEP-086)
 ```
-# Terminal (OUTPUT-RULES Rule 11c flags on git):
-GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-  ls-files | grep -E "\.tfstate|tfplan|\.terraform/"
+# Terminal (read-only git, OUTPUT-RULES Rule 11c):
+"<auditor-skill root>/scripts/git-ro.sh" ls-files | grep -E "\.tfstate|tfplan|\.terraform/"
 grep -rn -E "allUsers|allAuthenticatedUsers|0\.0\.0\.0/0|roles/(editor|owner)|ingress.*all" terraform/
 ```
 
@@ -627,8 +622,8 @@ grep_search: "openai|anthropic|llm|gpt|completion|embedding|prompt"   isRegexp: 
 
 ### Change management controls
 ```bash
-# Terminal: Check branch protection (OUTPUT-RULES Rule 11c flags)
-GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false remote -v
+# Terminal: Check branch protection (read-only git, OUTPUT-RULES Rule 11c)
+"<auditor-skill root>/scripts/git-ro.sh" remote -v
 # Terminal: Check for PR templates
 find .github -name "*pull_request*" -o -name "CODEOWNERS" 2>/dev/null
 ```

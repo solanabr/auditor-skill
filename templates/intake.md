@@ -45,7 +45,7 @@ HOW TO USE:
 | ------------------- | ------------------------------------------------- |
 | **Repository**      | {path or URL}                                     |
 | **Branch**          | {branch reviewed}                                 |
-| **Audited commit**  | `{full 40-char SHA}` (`git rev-parse HEAD`)       |
+| **Audited commit**  | `{full 40-char SHA}` (`"<auditor-skill root>/scripts/git-ro.sh" rev-parse HEAD`) |
 | **Scope**           | {FULL / PROGRAM / BACKEND / FRONTEND / DEVOPS}    |
 | **In scope**        | {paths / programs / dirs reviewed}                |
 | **Out of scope**    | {excluded paths + reason — Q44} |

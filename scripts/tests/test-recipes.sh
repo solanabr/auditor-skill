@@ -328,6 +328,154 @@ tree "$CW" > "$T/ctree.after"
 check "no case changed anything in the working directory" cmp -s "$T/ctree.before" "$T/ctree.after"
 check "no case started a program the fixture's config names" test -z "$(fired)"
 
+# =================================================================================================
+# The corpus. Every code line and code span of FULL-AUDIT.md, checklists/, known-vectors/, discovery/,
+# references/ and templates/ that starts with "<auditor-skill root>/scripts/..." is one plain command, the form a
+# command's rule pre-approves: the quoted path first, no $ or backtick anywhere (a $ stops a rule from
+# matching, quoted or not), no &&, || or ;, and a pipe only into grep, head, tail, sort, uniq, cut or wc. No code
+# line runs a bundled script any other way (bash, cd or an assignment in front, or inside $( )). The calls of
+# git-ro.sh, the recipes, the runners, rpc-read.sh and rundir.sh then run as written, their placeholders
+# filled, in a fixture with no cargo, npm, curl or solana on PATH: git-ro.sh, the recipes and rundir.sh do
+# their work, and each runner reaches the blocker it gives when its tool or the recorded mode is missing, so
+# none is refused.
+# =================================================================================================
+FORMS="$T/forms.tsv"
+python3 -I - "$ROOT" "$FORMS" > "$T/forms.err" 2>&1 <<'PY'
+import os, re, shlex, sys
+
+root, out = sys.argv[1], sys.argv[2]
+os.chdir(root)
+files = ["FULL-AUDIT.md"]
+for d in ("checklists", "known-vectors", "discovery"):
+    files += sorted(os.path.join(d, f) for f in os.listdir(d) if f.endswith(".md"))
+for d in ("references", "templates"):
+    for dp, dn, fn in sorted(os.walk(d)):
+        files += sorted(os.path.join(dp, f) for f in fn if f.endswith(".md"))
+Q = '"<auditor-skill root>/scripts/'
+RUN = ("git-ro.sh", "recipes/", "runner/deps.sh", "runner/target.sh", "rpc-read.sh", "rundir.sh")
+READERS = {"grep", "head", "tail", "sort", "uniq", "cut", "wc"}
+FILL = [("<auditor-skill root>", root), ("audit_<n>", "audit_1"), ("incident_<n>", "incident_1"),
+        ("incident_<k>", "incident_1"), ("<base>..<head>", "t-base..t-head"), ("<baseline>..HEAD", "t-base..HEAD"),
+        ("<PROGRAM_ID>", "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),
+        ("<address>", "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),
+        ("<signature>", "5h6xBEauJ3PK6SWCZ1PGjBvj8vDdWG3KpwATGy1ARAXFSDwt8GFXM7W5Ncn16wmqokgpiKRLuS83KUxyZyv2sUYv"),
+        ("crates|npm|pypi", "npm"), ("<pkg>", "left-pad"), ("<ver>", "1.3.0"), ("<crate>", "anchor-lang"),
+        ("<package>", "left-pad"), ("<version>", "1.3.0"), ("<rev>:<path>", "t-head:package.json"),
+        ("<checkout>", "."), ("<copy>", "audit_1/src.git"), ("<deployed_commit>", "t-base"),
+        ("{PATH_TO}", "audit_1"), ("{COMMIT}", "t-head"), ("{FINDING_ID}", "F-1"), ("<R>", "audit_1"),
+        ("<ID>", "F-1"), ("<in-scope directory>", "."), ("<dir>", ".")]
+# Spans that show a call's shape with optional parts, not a call to run.
+SHAPES = {"\"<auditor-skill root>/scripts/git-ro.sh\" [--repo '<dir>'] show <full id> -- '<path>'"}
+bad = []
+rows = []
+def form(f, n, cmd):
+    if "$" in cmd or "`" in cmd:
+        bad.append(f"{f}:{n}: holds a $ or a backtick: {cmd}")
+        return
+    filled = cmd
+    for a, b in FILL:
+        filled = filled.replace(a, b)
+    # A placeholder left (a call's shape) is one word for the check of operators below.
+    shape = re.sub(r"<[A-Za-z][^<>]*>", "PLACEHOLDER", filled)
+    try:
+        lex = shlex.shlex(shape, posix=True, punctuation_chars=True)
+        lex.commenters = "#"
+        toks = list(lex)
+    except ValueError as e:
+        bad.append(f"{f}:{n}: cannot be read as shell words ({e}): {cmd}")
+        return
+    parts, cur = [], []
+    for t in toks:
+        if t in ("&&", "||", ";", "&", ";;", "|&", ">", ">>", "<", "2>", ">&"):
+            bad.append(f"{f}:{n}: {t} in a pre-approved call: {cmd}")
+            return
+        if t == "|":
+            parts.append(cur); cur = []
+        else:
+            cur.append(t)
+    parts.append(cur)
+    for p in parts[1:]:
+        if not p or p[0] not in READERS:
+            bad.append(f"{f}:{n}: a pipe into {p[0] if p else 'nothing'}, not a read-only reader: {cmd}")
+            return
+    tool = parts[0][0].split("/scripts/", 1)[1] if "/scripts/" in parts[0][0] else ""
+    run = len(parts[0]) > 1 and any(tool.startswith(r) for r in RUN) and cmd not in SHAPES
+    if run and (re.search(r"<[A-Za-z][^>]*>", filled) or re.search(r"\{[A-Z_]+\}", filled)):
+        bad.append(f"{f}:{n}: a placeholder this test cannot fill: {cmd}")
+        return
+    rows.append((f, str(n), tool, "run" if run else "form", filled))
+for f in files:
+    fence = False
+    for n, line in enumerate(open(f, encoding="utf-8"), 1):
+        body = re.sub(r"^(> ?)+", "", line.rstrip("\n"))
+        if body.lstrip().startswith("```"):
+            fence = not fence
+            continue
+        if fence:
+            s = body.lstrip()
+            if s.startswith(Q):
+                form(f, n, s)
+            elif "<auditor-skill root>/scripts/" in s and not s.startswith("#"):
+                bad.append(f"{f}:{n}: a bundled script run other than by its quoted path first: {s}")
+        else:
+            for m in re.finditer(r"`([^`]*)`", body):
+                if m.group(1).startswith(Q):
+                    form(f, n, m.group(1))
+with open(out, "w", encoding="utf-8") as o:
+    for r in rows:
+        o.write("\t".join(r) + "\n")
+for b in bad:
+    print(b)
+sys.exit(1 if bad else 0)
+PY
+prc=$?
+check "every rooted bundled call in the corpus is one plain command (no \$, no &&, ; or ||, pipes into readers only)" \
+  sh -c "[ '$prc' = 0 ] && [ -s '$FORMS' ]"
+[ "$prc" = 0 ] || sed 's/^/#   /' "$T/forms.err"
+nform=$(grep -c . "$FORMS" 2>/dev/null); nrun=$(grep -c "	run	" "$FORMS" 2>/dev/null)
+check "the corpus holds rooted calls to check ($nform, $nrun of them run below)" test "${nrun:-0}" -gt 40
+
+# The fixture they run in: a repository with the manifests and lockfiles the calls name, tags t-base and t-head,
+# a run directory of each kind with a patch, a git-ro.sh copy holding a FETCH_HEAD, and a PATH with git and the
+# basic tools but no cargo, npm, curl or solana.
+F="$T/forms-wt"
+git init -q "$F" && mkdir -p "$F/apps/backend" "$F/apps/web" "$F/programs/p/src" && cd "$F" \
+  && for d in . apps/backend apps/web; do printf '{"name": "x", "version": "1.0.0"}\n' > "$d/package.json"; \
+       npm_lock 1.3.0 AAAA > "$d/package-lock.json"; done \
+  && printf '[package]\nname = "p"\nversion = "0.1.0"\n' > Cargo.toml \
+  && printf '# lock\nversion = 3\n\n[[package]]\nname = "p"\nversion = "0.1.0"\n' > Cargo.lock \
+  && echo 'pub fn f() {}' > programs/p/src/lib.rs && c base >/dev/null && git tag t-base \
+  && npm_lock 1.3.1 BBBB > package-lock.json && c head >/dev/null && git tag t-head \
+  && git config remote.upstream.url https://upstream.example.invalid/vendor/program \
+  && "$RUNDIR" new audit >/dev/null && "$RUNDIR" new incident >/dev/null && mkdir -p audit_1/patches \
+  && printf 'diff --git a/x b/x\n' > audit_1/patches/F-1.patch && "$GITRO" copy . audit_1 >/dev/null 2>&1 \
+  && git rev-parse t-head > audit_1/src.git/FETCH_HEAD || { ko "could not build the corpus fixture"; }
+cd "$ROOT" || exit 1
+MP="$T/minpath"; mkdir -p "$MP"
+for t in bash sh env git find grep sed awk tr wc od cat sort uniq head tail cut mkdir mktemp rm rmdir chmod cp ln \
+         mv date python3 sleep ls dirname basename readlink stat touch id uname kill printf; do
+  p=$(type -P "$t" 2>/dev/null) && ln -s "$p" "$MP/$t"
+done
+nok=0
+while IFS=$'\t' read -r f n tool how cmd; do
+  [ "$how" = run ] || continue
+  (cd "$F" && env -i HOME="$T/home" PATH="$MP" TMPDIR="$T" RPC_URL=https://rpc.example.invalid/ LC_ALL=C \
+    "$MP/bash" -c "$cmd") >"$T/out" 2>"$T/err" </dev/null
+  RC=$?
+  case "$tool" in
+    git-ro.sh) good=$( { [ "$RC" = 0 ] || [ "$RC" = 1 ]; } && ! grep -q -e 'refused:' -e '^fatal:' "$T/err" && echo y) ;;
+    recipes/*|rundir.sh) good=$( [ "$RC" = 0 ] && ! grep -q 'refused:' "$T/err" && echo y) ;;
+    runner/deps.sh) good=$( [ "$RC" = 3 ] && grep -q '^deps: blocker: .* is not on PATH' "$T/err" && echo y) ;;
+    runner/target.sh) good=$( [ "$RC" = 3 ] && grep -q '^target: blocker: no recorded mode' "$T/err" && echo y) ;;
+    rpc-read.sh) good=$( [ "$RC" = 3 ] && grep -q '^\[blocker\] solana CLI not on PATH' "$T/err" && echo y) ;;
+    *) good="" ;;
+  esac
+  if [ -n "$good" ]; then nok=$((nok + 1)); else
+    ko "$f:$n: the call does not run as written (status $RC): $(printf '%s' "$cmd" | cut -c1-200) — $(head -c 300 "$T/err")"
+  fi
+done < "$FORMS"
+check "every rooted call of git-ro.sh, the recipes, the runners, rpc-read.sh and rundir.sh runs as written ($nok)" \
+  test "$nok" = "${nrun:-x}"
 echo
 echo "recipes tests: $pass passed, $fail failed, $skip skipped"
 [ "$fail" -eq 0 ]

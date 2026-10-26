@@ -265,11 +265,9 @@ SCAN TARGETS (entire repo):
   **/*keypair*
   **/*delegate*
 
-TERMINAL COMMANDS (git with the OUTPUT-RULES Rule 11c prefix):
-  GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-    ls-files | grep -i ".env"          # Committed env files
-  GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-    log --all --no-textconv --no-ext-diff -S "private" --oneline   # Secrets in git history
+TERMINAL COMMANDS (read-only git, OUTPUT-RULES Rule 11c):
+  "<auditor-skill root>/scripts/git-ro.sh" ls-files | grep -i ".env"                     # Committed env files
+  "<auditor-skill root>/scripts/git-ro.sh" log --all -S "private" --oneline              # Secrets in git history
   find . -name "*keypair*.json"        # Key files in repo
 ```
 

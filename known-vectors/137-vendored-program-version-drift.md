@@ -24,10 +24,9 @@ The class is invisible to dependency scanners: `cargo audit` / `npm audit` see l
 **Step 1: Establish program provenance — is any in-scope program vendored, white-label or forked?**
 ```
 grep -rn -iE "fork of|forked from|based on|powered by|white.?label|licensed from|upstream" README.md docs/ programs/ 2>/dev/null
-GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-  log --oneline --reverse --no-textconv -- programs/ | head -5   # imported wholesale in one commit? (Rule 11c flags)
-GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false remote -v
-GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false config --get-all remote.upstream.url
+"<auditor-skill root>/scripts/git-ro.sh" log --oneline --reverse -- programs/ | head -5   # imported wholesale in one commit? (read-only git, Rule 11c)
+"<auditor-skill root>/scripts/git-ro.sh" remote -v
+"<auditor-skill root>/scripts/git-ro.sh" config --get-all remote.upstream.url
 grep -rn -E "declare_id!" programs/ | sort   # compare against known vendor/upstream program IDs
 ```
 - Record for each program: upstream repo/vendor, the commit or release the deployment was built from, and who operates the upgrade authority (tenant or vendor). Also list vendor programs reached via CPI (cross-ref KV-009).

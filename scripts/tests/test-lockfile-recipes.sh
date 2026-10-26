@@ -458,7 +458,7 @@ else bad "KV-137 Step 2 with a relative TMPDIR"; sed 's/^/  | /' "$T/kv137.out";
 # an option-shaped remote.upstream.url in the checkout's config: Step 1 prints it, and Step 2 gets it as written
 opt="--upload-pack=touch $U/fired-upload-pack;:"
 git -C "$U/client" config remote.upstream.url "$opt"
-kv_step "$KV137" 1 > "$T/kv137-1.sh"; rm -f "$U"/fired-*
+kv_step "$KV137" 1 | sed "s#<auditor-skill root>#$ROOT#g" > "$T/kv137-1.sh"; rm -f "$U"/fired-*
 ( cd "$U/client" && bash "$T/kv137-1.sh" ) > "$T/kv137-1.out" 2>&1
 if has "$T/kv137-1.out" "$opt" && [ -z "$(fired)" ]; then ok "KV-137 Step 1 prints the checkout's remote.upstream.url as data"
 else bad "KV-137 Step 1 with an option-shaped remote.upstream.url"; sed 's/^/  | /' "$T/kv137-1.out"; fi

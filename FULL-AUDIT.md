@@ -432,12 +432,11 @@ ACTIONS:
   # Keypair files in repo
   find . -name "*keypair*.json" -o -name "*delegate*.json" -o -name "id.json" | grep -v node_modules
 
-  # .env files committed (Rule 11c flags)
-  GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false ls-files | grep -i ".env"
+  # .env files committed (read-only git, Rule 11c)
+  "<auditor-skill root>/scripts/git-ro.sh" ls-files | grep -i ".env"
 
-  # Git history check (Rule 11c flags)
-  GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-    log --all --no-textconv --diff-filter=A --name-only -- "*.env" "*.pem" "*secret*"
+  # Git history check (read-only git, Rule 11c)
+  "<auditor-skill root>/scripts/git-ro.sh" log --all --diff-filter=A --name-only -- "*.env" "*.pem" "*secret*"
 
   # NEXT_PUBLIC_ audit
   grep -rn "NEXT_PUBLIC_" apps/web/.env* 2>/dev/null

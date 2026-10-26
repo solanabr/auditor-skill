@@ -51,7 +51,7 @@ Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{seve
 - [ ] **OPS-033**: API keys — are they scoped to minimum required permissions?
 - [ ] **OPS-034**: RPC endpoint — is it a dedicated RPC (Helius/Triton) not the public endpoint?
 - [ ] **OPS-035**: RPC endpoint — is the API key exposed in frontend code?
-- [ ] **OPS-036**: Has any key ever been committed to git? Check `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false log --all --oneline --no-textconv --no-ext-diff -S "secret_string"` patterns (OUTPUT-RULES Rule 11c flags)
+- [ ] **OPS-036**: Has any key ever been committed to git? Check `"<auditor-skill root>/scripts/git-ro.sh" log --all --oneline -S "secret_string"` patterns (read-only git, OUTPUT-RULES Rule 11c)
 
 ## 7.4 — Multisig Configuration
 

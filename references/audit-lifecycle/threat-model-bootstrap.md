@@ -169,7 +169,7 @@ config.
 | `history.md` | the sections below; the header records target, pinned commit, paths, parent and network mode |
 | `inputs.tsv` | one row per input: source, format, sha256, stored file, status |
 | `inputs/` | converted or copied inputs and the allowlisted incident extracts |
-| `diffs/` | `target-<sha>.diff` behind REMOVED / ADDED-QUIET rows; `parent-<sha>.diff` behind absent parent guards (20 commits each). Each holds the commit's full id, date, subject and up to 20 body lines, then its diff limited to the files its rows name, up to 400 lines. Every cut ends in a `TRUNCATED (…)` line naming the command for the rest, to run in a scratch copy (`OUTPUT-RULES.md` Rule 11c): `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false show --no-textconv --no-ext-diff <full id> -- '<path>'`, each path escaped like other target text and single-quoted (`--no-patch` and no path for a cut message) |
+| `diffs/` | `target-<sha>.diff` behind REMOVED / ADDED-QUIET rows; `parent-<sha>.diff` behind absent parent guards (20 commits each). Each holds the commit's full id, date, subject and up to 20 body lines, then its diff limited to the files its rows name, up to 400 lines. Every cut ends in a `TRUNCATED (…)` line naming the command for the rest, the read-only git of `OUTPUT-RULES.md` Rule 11c: `"<auditor-skill root>/scripts/git-ro.sh" [--repo '<dir>'] show <full id> -- '<path>'`, each path escaped like other target text and single-quoted (`--no-patch` and no path for a cut message); for a repository outside the working directory it names a copy inside it, given with `--repo` |
 | `audit-mem-warm.json` | standing rulings for the program id, when available |
 
 | Section | What it lists | Read it as |
