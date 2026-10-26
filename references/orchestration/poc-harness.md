@@ -329,6 +329,11 @@ finding's own exploit — a diff that merely reads plausibly is `[FIX-PROPOSED]`
 The scratch-worktree rebuild runs target-controlled code (Rule 11a): it uses the
 execution mode recorded at intake, and when that mode cannot run it the patch stays
 `[FIX-PROPOSED]`.
+Opt-in Trail of Bits `post-patch-validation` (`/auditor:patch --post-patch-validation`,
+isolated mode only, on a disposable clone) is optional evidence that can only lower a
+tier: a finding in its result turns `[FIX-VERIFIED]` into `[FIX-INSUFFICIENT]`, with that
+check as the reason; a `[FIX-PROPOSED]` or `[FIX-INSUFFICIENT]` patch keeps its tier and
+records the finding under Residual, and nothing else in its result changes a tier.
 The patch is a **proposal**: the auditor stays read-only on the client tree and hands
 back the diff plus this verification record for the client to apply and re-test.
 
