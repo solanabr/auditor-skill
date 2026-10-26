@@ -3,7 +3,8 @@ name: vendor-delta
 # On every pull request that moves the vendor/trailofbits gitlink, scripts/tob-delta-pr.sh writes the upstream
 # delta to the job summary (CONTRIBUTING.md §5, "Bumping vendor/trailofbits"). Advisory: not a required check,
 # and it never approves or merges. It needs no secret, reads contents only and keeps no credential; its one
-# outside contact is a fetch of https://github.com/trailofbits/skills by branch and tag name.
+# outside contact is a fetch of https://github.com/trailofbits/skills by the names of its default branch,
+# branches and tags.
 # A pull_request run takes this workflow and the scripts from the PR's merge commit, so the summary counts only
 # when the PR's file list shows nothing but the gitlink and the README pin line, as its first line says. The job
 # runs on every PR and the script finds the move itself, so no paths filter has to match a gitlink.
