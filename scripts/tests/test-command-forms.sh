@@ -734,6 +734,9 @@ agents/vuln-hunter.md	only into `grep`, `head`, `tail` or `wc`
 agents/poc-engineer.md	only into `grep`, `head`, `tail` or `wc`
 agents/patch-engineer.md	only into `grep`, `head`, `tail` or `wc`
 SKILL.md	only into `grep`, `head`, `tail` or `wc`
+agents/context-builder.md	only into `grep`, `head`, `tail` or `wc`
+agents/economic-analyst.md	only into `grep`, `head`, `tail` or `wc`
+agents/peer-reviewer.md	only into `grep`, `head`, `tail` or `wc`
 PINS
 
 # Each command's resume text, and the root SKILL.md's, says how to answer the prompt its re-invocation brings.
