@@ -484,7 +484,8 @@ expect "pipefail: the CI check scripts and their suites are clean" 0 bash "$ROOT
   "$ROOT/scripts/check-attribution.sh" "$ROOT/scripts/check-corpus.sh" "$ROOT/scripts/check-frontmatter.sh" \
   "$ROOT/scripts/check-hygiene.sh" "$ROOT/scripts/check-pipefail.sh" "$ROOT/scripts/tob-delta-review.sh" \
   "$ROOT/scripts/tests/test-bundled-paths.sh" "$ROOT/scripts/tests/test-ci-checks.sh" \
-  "$ROOT/scripts/tests/test-corpus-pins.sh" "$ROOT/scripts/tests/test-gha-recipes.sh"
+  "$ROOT/scripts/tests/test-corpus-pins.sh" "$ROOT/scripts/tests/test-gha-recipes.sh" \
+  "$ROOT/scripts/check-entrypoints.sh" "$ROOT/scripts/tests/test-command-forms.sh" "$ROOT/scripts/tests/test-preapproved-entrypoints.sh"
 
 # ---- 4. workflows --------------------------------------------------------------------------------------
 wfcheck() { # wfcheck FILE -> one line per problem, read byte by byte
