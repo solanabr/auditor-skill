@@ -224,7 +224,7 @@ Code asks about a shell read outside the working directory.
      of this command's pre-approvals. When the estimate will not fit, propose
      smaller caps or fewer addresses, and collect the rest after another yes into
      the next `incident_<n>/corpus-<k>/`. If a run does move to the background,
-     invoke `auditor:hunt --resume 2 incident_<n>` through the Skill tool once it
+     invoke `auditor:hunt --resume 3 incident_<n>` through the Skill tool once it
      completes (it asks; `claude -p` allows it only when the user's settings allow
      `Skill(auditor:hunt *)`). Its `provider:` line names the provider
      **domain** (the service that received the queried addresses: the host's last

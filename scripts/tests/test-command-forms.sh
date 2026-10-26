@@ -682,10 +682,10 @@ while IFS='	' read -r f want; do
   if [ -f "$f" ] && grep -qF -- "$want" "$f"; then ok "pin $f: $want"; else bad "P $f lost: $want"; fi
 done <<'PINS'
 commands/hunt.md	Run it in the foreground, never with `run_in_background`, and give the Bash
-commands/hunt.md	invoke `auditor:hunt --resume 2 incident_<n>` through the Skill tool once it
+commands/hunt.md	invoke `auditor:hunt --resume 3 incident_<n>` through the Skill tool once it
 commands/hunt.md	background command's completion notice starts has none, so spawn every agent in
 commands/respond.md	foreground, never with `run_in_background`, and give the Bash call a timeout
-commands/respond.md	`auditor:respond --resume 3 incident_<n>` through the Skill tool once it
+commands/respond.md	`auditor:respond --resume 4 incident_<n>` through the Skill tool once it
 commands/respond.md	background command's completion notice starts has none, so spawn every agent in
 commands/audit-cycle.md	a turn that a background agent's or background command's completion notice starts has none
 commands/audit-assist.md	a turn that a background agent's or background command's completion notice starts has none

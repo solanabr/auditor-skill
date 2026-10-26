@@ -213,7 +213,7 @@ Code asks about a shell read outside the working directory.
    pre-approvals. When the estimate will not fit, propose smaller caps or fewer
    addresses, and collect the rest after another yes into the next
    `incident_<n>/corpus-<k>/`. If a run does move to the background, invoke
-   `auditor:respond --resume 3 incident_<n>` through the Skill tool once it
+   `auditor:respond --resume 4 incident_<n>` through the Skill tool once it
    completes (it asks; `claude -p` allows it only when the user's settings allow
    `Skill(auditor:respond *)`). A run stopped early still records what it had not
    fetched as gaps.
