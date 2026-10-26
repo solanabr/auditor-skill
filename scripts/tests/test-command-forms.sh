@@ -27,7 +27,8 @@
 #       code span with words after it, or first on a fenced code line; one the rest of its sentence says asks
 #       is a documented prompt.
 #   P   Wording the flows depend on stays in place (the PINS list): what keeps a long call, and the turn after
-#       it, inside a command's grant.
+#       it, inside a command's grant; and no body names the environment form of a PoC run (VULNERABLE_SO and the
+#       rest), which run.sh --crate does not read.
 # The entry points are the tracked files under scripts/ (but scripts/tests/) and templates/ of mode 100755 that
 # start with a direct-exec shebang (#!/bin/bash or #!/usr/bin/env -S python3 -I), and the binaries the crates
 # under tools/auditor-tools declare. Each check first runs on known-good and known-bad fixture files, one of
@@ -669,6 +670,14 @@ agents/vuln-hunter.md	Give each runner call (`run.sh`, `target.sh`, `deps.sh`, `
 commands/hunt.md	Give each runner call (`run.sh`, `target.sh`) the Bash tool's longest timeout, in the
 commands/respond.md	Give each runner call (`run.sh`, `target.sh`) the Bash tool's longest timeout, in the
 PINS
+
+# run.sh --crate reads its inputs from arguments only, so no body names the environment form of a PoC run.
+for f in commands/*.md agents/*.md skills/*/SKILL.md SKILL.md; do
+  [ -f "$f" ] || continue
+  for v in VULNERABLE_SO FIXED_SO UPDATE_PINS KEEP_POC_BUILD CARGO_TARGET_DIR; do
+    if grep -qF -- "$v" "$f"; then bad "P $f names $v, which run.sh --crate does not read"; else ok "no $v in $f"; fi
+  done
+done
 
 echo "---- command forms: $pass passed, $failn failed"
 [ "$failn" -eq 0 ]

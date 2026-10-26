@@ -62,14 +62,15 @@ against the program's **real bytes**:
   (`"${CLAUDE_PLUGIN_ROOT}/scripts/dnr/snapshot-program.sh"`, run from the
   installation, never a relative `scripts/` path), because a hotfix erases the
   incident binary.
-  Use that `bin/<id>.so` as `--vulnerable-so incident_<n>/bin/<id>.so` when its last-deployed slot precedes the
-  incident slot (owning loader checked — `containment-playbook.md` has the
-  loader-v3/v4 header offsets); otherwise a `solana-verify` hash-matched build. If
-  there is no snapshot, dump now and record that a hotfix may already have replaced
-  the bytes. Run the exploit arm on it with `VULNERABLE_SO` alone: Leg 3 needs no
-  fix to exist yet. `FIXED_SO` (a patched build, or a fresh dump of a deployed
-  hotfix) adds the fixed arm and needs `VULNERABLE_SO`. Record the
-  `binary_provenance` (`incidents-schema.md`).
+  Use that `bin/<id>.so` as `--vulnerable-so incident_<n>/bin/<id>.so` when its
+  last-deployed slot precedes the incident slot (owning loader checked —
+  `containment-playbook.md` has the loader-v3/v4 header offsets); otherwise a
+  `solana-verify` hash-matched build. If there is no snapshot, dump now and record
+  that a hotfix may already have replaced the bytes. Run the exploit arm on it with
+  `--vulnerable-so` alone: Leg 3 needs no fix to exist yet. `--fixed-so` (a patched
+  build, or a fresh dump of a deployed hotfix) adds the fixed arm and needs
+  `--vulnerable-so`; both take a file under a run directory's `bin/` or `exec/`.
+  Record the `binary_provenance` (`incidents-schema.md`).
 - **Use the real program id** (not `random_pubkey()`): an Anchor program checks its
   own `declare_id!`, so a mismatched id makes the attack "fail" for the wrong
   reason.
@@ -80,7 +81,7 @@ against the program's **real bytes**:
   authority, the drained balance. A value the account already held before the attack
   shows nothing and is inconclusive.
 - **Assert the guard's exact error** on the `fixed` arm with
-  `assert_exploit_rejected_with!` when `FIXED_SO` is our patched build. When it is a
+  `assert_exploit_rejected_with!` when `--fixed-so` is our patched build. When it is a
   fresh dump of a hotfix the team deployed, swap in the template's commented
   `assert_exploit_blocked!` and its positive control, in a copy of the crate: a
   legitimate call goes through on the same bytes and changes the account, and the
@@ -95,7 +96,7 @@ against the program's **real bytes**:
   name. A test that fails before its assertion ran, or on a harness error on either
   arm, exits 3 as inconclusive. Leg 3 is met only by `run.sh` ending with
   `OK: reproduced on prebuilt bytes — vulnerable sha256=<hash> → [PoC-REPRODUCED]`
-  (with `FIXED_SO`, the line also names `fixed sha256=<…>` and how that arm held),
+  (with `--fixed-so`, the line also names `fixed sha256=<…>` and how that arm held),
   where `<hash>` is the snapshot's zero-trimmed sha256 in `LEDGER.md` or that of the
   hash-matched build. A LiteSVM PoC reaches that line too, through `litesvm_for!` and
   the macros' LiteSVM forms. A model-only PoC, built from the crate's own arms, never
@@ -106,7 +107,7 @@ against the program's **real bytes**:
   public cluster. Build the incident commit per `OUTPUT-RULES.md` Rule 11a — never
   natively when the root cause is supply-chain / CI. Under that root cause the PoC
   never builds or links the target's crates in any mode, since they may be the
-  payload: it runs on the dumped bytes alone (`VULNERABLE_SO`), with the template's
+  payload: it runs on the dumped bytes alone (`--vulnerable-so`), with the template's
   own crates. If real bytes are unavailable,
   Leg 3 is unmet and the incident verdict ceiling is `suspected`: emit
   `[PoC-ATTEMPTED]` + the prose, and say so.
