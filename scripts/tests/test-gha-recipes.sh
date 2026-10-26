@@ -11,7 +11,8 @@
 # and that no recipe flags a fixture's comment lines. It runs R1 and K139-1 over trigger spellings built at run
 # time, R1 over file names that hold a space or a quote, and R1 over large inputs: 2,000 workflows, and two of
 # about 1 MiB. Every command of every recipe must end within 30 s on a workflow that holds one 1 MiB line of
-# near misses.
+# near misses. KV-020 Step 3 and KV-100 Step 4, which list documentation files with one recursive grep as R1 does,
+# run over file names that hold a space or a quote, and KV-100's over more than 64 KiB of names.
 #
 # Usage (from the repo root): bash scripts/tests/test-gha-recipes.sh
 # Needs bash >= 3.2, grep, awk. No network. The fixtures are copied into a temp dir as .github/workflows/, and
@@ -341,6 +342,38 @@ if [ -z "$slow$noisy" ] && [ "$size" -gt 1000000 ]; then
   echo "ok   every recipe on a line of $size bytes of near misses: each command done within 30 s, nothing flagged"
 else
   echo "FAIL a line of $size bytes of near misses: still running after 30 s [$slow], flagged [$noisy]"
+  fail=1
+fi
+
+# KV-020 Step 3 and KV-100 Step 4 list documentation files with one recursive grep, as R1 does: a file name with a
+# space or a quote is listed like any other, a file that is not Markdown is not, and KV-100's head ends the listing
+# after five names of more than 64 KiB of them.
+docs="$work/docs"; mkdir -p "$docs/docs/sub" || exit 1
+printf 'How to upgrade the program\n' > "$docs/docs/upgrade plan.md"
+printf 'We deploy with a multisig\n' > "$docs/docs/it's deploy.md"
+printf 'Disaster recovery: restore from backup\n' > "$docs/docs/sub/dr \"notes\".md"
+printf 'nothing to see\n' > "$docs/README.md"
+printf 'upgrade, deploy and recovery\n' > "$docs/notes.txt"
+kv020=$(kv_block 020-program-upgrade-hijack.md 3 | grep '^grep ')
+kv100=$(kv_block 100-insufficient-backup-disaster-recovery.md 4 | grep '^grep ')
+got020=$( (cd "$docs" && bash -c "$kv020" </dev/null 2>/dev/null) | sort | tr '\n' '|')
+got100=$( (cd "$docs" && bash -c "$kv100" </dev/null 2>/dev/null) | sort | tr '\n' '|')
+if [ "$got020" = "./docs/it's deploy.md|./docs/upgrade plan.md|" ] && [ "$got100" = './docs/sub/dr "notes".md|' ]; then
+  echo "ok   KV-020 Step 3 and KV-100 Step 4 list Markdown files whose names hold a space or a quote, and nothing else"
+else
+  echo "FAIL KV-020 Step 3 / KV-100 Step 4: got [$got020] and [$got100]"
+  fail=1
+fi
+many="$work/many-docs"; mkdir -p "$many" || exit 1
+awk -v d="$many" 'BEGIN { for (i = 0; i < 3000; i++) { f = sprintf("%s/disaster recovery notes, part %04d of many.md", d, i)
+  print "restore drill" > f; close(f) } }'
+(cd "$many" && bash -c "$kv100" </dev/null 2>/dev/null) > "$work/kv100.out"
+names=$( (cd "$many" && grep -rliE --include='*.md' 'restore' . </dev/null) | wc -c | tr -d ' ')
+if [ "$(grep -c '^\./disaster recovery notes, part [0-9]* of many\.md$' "$work/kv100.out")" = 5 ] \
+   && [ "$(grep -c . "$work/kv100.out")" = 5 ] && [ "$names" -gt 65536 ]; then
+  echo "ok   KV-100 Step 4 stops after five names of $names bytes of them"
+else
+  echo "FAIL KV-100 Step 4 over $names bytes of names: $(head -c 300 "$work/kv100.out")"
   fail=1
 fi
 

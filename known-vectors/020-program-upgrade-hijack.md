@@ -30,8 +30,8 @@ grep -rn "upgrade_authority\|authority\|wallet\|program_id" Anchor.toml
 
 **Step 3: Verify upgrade process is documented**
 ```
-# Check for deploy/upgrade documentation
-find . -name "*.md" | xargs grep -li "upgrade\|deploy" 2>/dev/null
+# Check for deploy/upgrade documentation: every Markdown file that mentions either, whatever its name
+grep -rliE --include='*.md' 'upgrade|deploy' .
 ```
 - ✅ PASS: Documented upgrade process with multi-party approval
 - ❌ FAIL: No upgrade documentation, ad-hoc process

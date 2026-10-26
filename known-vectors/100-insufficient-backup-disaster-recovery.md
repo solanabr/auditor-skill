@@ -40,7 +40,7 @@ grep -rn --include="*.yaml" --include="*.yml" --include="*.ts" -iE "backup|mongo
 
 **Step 4: Check for recovery procedure documentation**
 ```
-find . -name "*.md" | xargs grep -liE "disaster|recovery|restore|backup.*procedure" 2>/dev/null | head -5
+grep -rliE --include='*.md' 'disaster|recovery|restore|backup.*procedure' . | head -5
 ```
 - ✅ PASS: Documented disaster recovery procedure
 - ⚠️ PARTIAL: Backups exist but no documented recovery procedure
