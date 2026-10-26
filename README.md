@@ -252,7 +252,7 @@ auditor-skill/
 ├── scripts/                 ← preflight.sh, rundir.sh, report-to-pdf.sh, the CI checks (check-*.sh), tob-delta-review.sh + the no-attribution commit hook
 │   ├── dnr/                 ← detection & response recipes (gated RPC collector, program snapshot, corpus profile, log frames, balance deltas, jq-ro.sh)
 │   ├── threat-model/        ← collect.sh — the read-only threat-model bootstrap collector
-│   └── tests/               ← script self-tests (+ fixtures/gha/, workflows that are never executed)
+│   └── tests/               ← script self-tests (+ fixtures/gha/, workflows and a composite action that are never executed)
 ├── AGENTS.md                ← Agent-orchestration overview
 └── vendor/trailofbits/      ← Trail of Bits execution plugins (git submodule, pinned — see Installation)
 ```
