@@ -658,6 +658,34 @@ for c in "fork commit|$prbase|$(prhead "$uimp")|on no branch or tag of $URL" \
   else no_ "$name (rc=$rc, want 2 with nothing printed and '$msg')" "$out$err"; fi
 done
 
+# the workflow's step, its own script with the bundled scripts named from this checkout, on a pull_request
+# checkout: the merge commit fetched with depth 2, as actions/checkout fetches it. A change the base gained after
+# the PR branched is not the PR's; a checkout that is not a merge commit fails the step.
+awk '/^        run: \|$/ { on = 1; next } on && /^          / { print substr($0, 11); next } on { exit }' \
+  "$ROOT/.github/workflows/vendor-delta.yml" | sed "s|bash scripts/|bash \"$ROOT/scripts/\"|" > "$TP/step.sh"
+b2=$(prhead "$u0" docs/later.md "a change on the base"); p1=$(prhead "$u1" README.md "$(readme "$u1")")
+mt=$(prhead "$u1" README.md "$(readme "$u1")" docs/later.md "a change on the base")
+git -C "$pr" update-ref refs/pull/1/merge "$(git -C "$pr" commit-tree -p "$b2" -p "$p1" -m merge "$(git -C "$pr" rev-parse "$mt^{tree}")")"
+git -C "$pr" update-ref refs/pull/1/head "$p1"
+step() { # step REF -> $rc, $TP/summary.md and $TP/step.log: the workflow's step in a depth-2 checkout of REF
+  local ws="$TP/ws-${1##*/}"
+  git init -q "$ws" && git -C "$ws" fetch -q --depth=2 "file://$pr" "+$1:refs/remotes/pull/1/x" \
+    && git -C "$ws" checkout -q --detach refs/remotes/pull/1/x 2>/dev/null
+  : > "$TP/summary.md"
+  (cd "$ws" && GITHUB_STEP_SUMMARY="$TP/summary.md" GIT_CONFIG_GLOBAL="$TP/gh.gitconfig" bash -e "$TP/step.sh") > "$TP/step.log" 2>&1
+  rc=$?
+}
+step refs/pull/1/merge; sum=$(cat "$TP/summary.md")
+[ "$rc" -eq 0 ] && [ "$(git -C "$TP/ws-merge" rev-parse --is-shallow-repository)" = true ] \
+  && [ "$(nth "$sum" 3p)" = "This PR changes nothing else but the README pin line." ] && [ "$(fenced "$sum")" = ok ] \
+  && ok_ "the workflow's step on a depth-2 merge checkout summarises the PR's own changes" \
+  || no_ "the workflow's step on a depth-2 merge checkout (rc=$rc)" "$sum$(cat "$TP/step.log")"
+step refs/pull/1/head
+[ "$rc" -eq 1 ] && has "$(cat "$TP/step.log")" "::error::HEAD is not the PR's merge commit" \
+  && has "$(cat "$TP/summary.md")" "The upstream delta could not be summarised" \
+  && ok_ "the workflow's step fails on a checkout that is not a merge commit" \
+  || no_ "the workflow's step on a checkout that is not a merge commit (rc=$rc)" "$(cat "$TP/summary.md" "$TP/step.log")"
+
 # over the cap: a review of more than 1 MiB is cut at a line, the fence still closes, and the note says so
 full=$(bash "$ROOT/scripts/tob-delta-review.sh" "$up" "$u0" "$ubig" 2>/dev/null | wc -c | tr -d ' ')
 prrun "$prbase" "$(prhead "$ubig" README.md "$(readme "$ubig")")"
