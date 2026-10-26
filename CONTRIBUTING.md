@@ -202,7 +202,8 @@ one:
   `scripts/lib/confine.sh`, and the project's code only in the recorded mode, in the cleaned environment of
   `scripts/lib/isolation.sh`;
 - contacts only a destination fixed in its code or set in the user's environment, within caps set there, and
-  adds a row to `<R>/disclosures.tsv` before the first request;
+  adds a row to `<R>/disclosures.tsv` before the first request; a build in the recorded mode, whose downloads
+  go where the project's manifests point, is the one exception;
 - reads stdin only where its grammar says so, and treats a check that cannot run as a refusal.
 
 A bash entry point sources `scripts/lib/confine.sh` rather than repeating its checks. Each ships a case file of
