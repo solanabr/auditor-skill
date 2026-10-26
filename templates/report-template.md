@@ -111,7 +111,7 @@
 | 08 | TypeScript Safety | 64 | | | | | % |
 | 09 | Backend Security | 132 | | | | | % |
 | 10 | Frontend Security | 84 | | | | | % |
-| 11 | Supply Chain | 62 | | | | | % |
+| 11 | Supply Chain | 65 | | | | | % |
 | 12 | Secrets & OpSec | 53 | | | | | % |
 | 13 | Deployment & Infra | 96 | | | | | % |
 | 14 | Python Safety | 82 | | | | | % |
@@ -121,7 +121,7 @@
 | 18 | Privacy, Compliance & Change Mgmt | 60 | | | | | % |
 | 19 | AI Agent Security | 35 | | | | | % |
 | 20 | Rust Off-Chain Services | 21 | | | | | % |
-| | **Total** | **1446** | | | | | **%** |
+| | **Total** | **1449** | | | | | **%** |
 
 > Note: Only applicable checklists are counted in totals. Non-applicable checklists are excluded entirely.
 
@@ -274,7 +274,7 @@
 
 ```
 [PASS]      SC-001: {reason}
-...through SC-062
+...through SC-065
 ```
 
 ### Checklist 12 — Secrets & OpSec
