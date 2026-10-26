@@ -361,7 +361,7 @@ FILL = [("<auditor-skill root>", root), ("audit_<n>", "audit_1"), ("incident_<n>
         ("<signature>", "5h6xBEauJ3PK6SWCZ1PGjBvj8vDdWG3KpwATGy1ARAXFSDwt8GFXM7W5Ncn16wmqokgpiKRLuS83KUxyZyv2sUYv"),
         ("crates|npm|pypi", "npm"), ("<pkg>", "left-pad"), ("<ver>", "1.3.0"), ("<crate>", "anchor-lang"),
         ("<package>", "left-pad"), ("<version>", "1.3.0"), ("<rev>:<path>", "t-head:package.json"),
-        ("<checkout>", "."), ("<copy>", "audit_1/src.git"), ("<deployed_commit>", "t-base"), ("<deployed>", "t-base"),
+        ("<checkout>", "."), ("<repo>", "."), ("<copy>", "audit_1/src.git"), ("<deployed_commit>", "t-base"), ("<deployed>", "t-base"),
         ("{PATH_TO}", "audit_1"), ("{COMMIT}", "t-head"), ("{FINDING_ID}", "F-1"), ("<R>", "audit_1"),
         ("<ID>", "F-1"), ("<in-scope directory>", "."), ("<dir>", ".")]
 # Spans that show a call's shape with optional parts, not a call to run.
