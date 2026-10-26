@@ -422,7 +422,7 @@ A: See [COSTS.md](COSTS.md). For maximum depth, use Opus 4 or o3. For best value
 A: Depends on repo size and model. A 50K-line repo takes 60-90 minutes with Opus 4. See [COSTS.md](COSTS.md) for full estimates.
 
 **Q: Can I use this in CI/CD?**
-A: Yes — run the QUICK scope (known vectors grep scan) on every PR, and FULL scope on release branches. On a public repository the job posts pass/fail only — no finding counts: logs and uploaded artifacts are readable by any signed-in GitHub user, so finding details go to a private channel (OUTPUT-RULES Rule 11d).
+A: Yes — run the QUICK scope (known vectors grep scan) on every PR, and FULL scope on release branches. On a public repository the job posts pass/fail only — no finding counts: logs and uploaded artifacts are readable by any signed-in GitHub user, so finding details go to a private channel (OUTPUT-RULES Rule 11d). A CI job is a `claude -p` run: it denies every call that would ask, and builds the project natively unless the job sets `AUDITOR_EXEC_MODE` (see [docs/permissions-and-isolation.md](docs/permissions-and-isolation.md#non-interactive-runs-claude--p)).
 
 **Q: Can I use this for non-Solana projects?**
 A: Yes — checklists 08-18 are language-agnostic or cover Python/Go/Java/Ruby/PHP. Checklists 01-07 are Solana-specific.
