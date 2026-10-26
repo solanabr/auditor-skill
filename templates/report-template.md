@@ -120,8 +120,8 @@
 | 17 | Logging, Monitoring & IR | 65 | | | | | % |
 | 18 | Privacy, Compliance & Change Mgmt | 60 | | | | | % |
 | 19 | AI Agent Security | 35 | | | | | % |
-| 20 | Rust Off-Chain Services | 21 | | | | | % |
-| | **Total** | **1450** | | | | | **%** |
+| 20 | Rust Off-Chain Services | 23 | | | | | % |
+| | **Total** | **1452** | | | | | **%** |
 
 > Note: Only applicable checklists are counted in totals. Non-applicable checklists are excluded entirely.
 
@@ -324,6 +324,13 @@
 ```
 [PASS]      PC-001: {reason}
 ...through PC-060
+```
+
+### Checklist 20 — Rust Off-Chain Services
+
+```
+[PASS]      RS-001: {reason}
+...through RS-023
 ```
 
 ### Known Vectors Results (KV-001..KV-140)
