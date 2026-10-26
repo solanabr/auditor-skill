@@ -19,6 +19,8 @@ auditor-skill offers a spectrum from a 5-minute grep triage to a full automated 
 
 All three heavyweight flows run the **same lifecycle** over the same corpus. The difference is autonomy: `audit-cycle` runs it to completion, `audit-assist` pauses for you, `re-audit` runs the delta subset.
 
+Every flow first runs `preflight.sh` on the working tree, then runs its bundled steps without asking: run directories, read-only git, the Rust tools, and the runners that build and test in the execution mode recorded at intake. What still asks, and how to run isolated or in `claude -p`: [permissions-and-isolation.md](permissions-and-isolation.md).
+
 ## The lifecycle (shared spine)
 
 Both `/auditor:audit-cycle` and `/auditor:audit-assist` execute this pipeline. It mirrors a professional firm engagement, run by mechanisms the skill already has ([`references/audit-lifecycle/methodology.md`](../references/audit-lifecycle/methodology.md)).
@@ -30,7 +32,7 @@ context (Phase 0.5)→ context-builder reconstructs invariants/assumptions per f
    ↓
 threat model       → threat-modeler emits assets · actor×capability · trust boundaries · AG-n goals (no verdicts); history-seeded by the bundled collector when a trigger fires
    ↓
-tool-assisted pass → ToB static-analysis (SARIF) up-front to clear the mechanical surface; else grep
+tool-assisted pass → sast.sh semgrep (SARIF), clippy, cargo-audit, cargo-outdated through the runners, up-front to clear the mechanical surface; ToB static-analysis adds engines; else grep
    ↓
 domain-partitioned → vuln-hunter (checklists + vectors) ∥ economic-analyst (checklist 06 + value flow)
    review              over DISJOINT surfaces — not N identical clones; each self-triages at the leaf
@@ -100,7 +102,7 @@ The same lifecycle, but it **stops at checkpoints** and lets you steer. At each 
 - **(b)** the next-focus plan (which surfaces/vectors are queued and why);
 - **(c)** targeted questions only a human can answer — business context, the intended trust model, whether a flagged behavior is intentional, severity calls that depend on off-chain assumptions.
 
-Checkpoints land after scope, after context, after each review phase, after triage, and after reconciliation. Your answers fold back in and each trust-model answer is logged as a stated assumption in the report.
+Checkpoints land after scope, after context, after each review phase, after triage, and after reconciliation. Your answers fold back in and each trust-model answer is logged as a stated assumption in the report. After each answer the flow resumes through the Skill tool (`auditor:audit-assist --resume <checkpoint>`), which gives the new turn its pre-approvals back; Manual mode asks about that call unless your user settings allow it ([Turns and resuming](permissions-and-isolation.md#turns-and-resuming)).
 
 ```
 /auditor:audit-assist --scope full
@@ -126,11 +128,11 @@ These skip the full item-by-item walk.
 
 ### `/auditor:quick-scan`
 
-Discovery + static analysis (ToB `static-analysis` if present, else grep scanners) + only the CRITICAL/HIGH known-vectors for the detected domains. Reports findings with severity + `file:line`, and states plainly it is a triage pass. Good for a first look or a CI gate; points to `/auditor:audit` for full coverage. As a CI gate it runs non-interactively, so the run must be able to run its analyzers: an analyzer that did not run is reported as not run, and the gate fails. As a CI gate on a public repository it publishes pass/fail only — no finding counts — in comments, logs and artifacts, and sends details through a private channel, failing the job when none is available and never falling back to printing them (`OUTPUT-RULES.md` Rule 11d).
+Discovery + static analysis (`sast.sh` semgrep; ToB `static-analysis` when semgrep is missing and the plugins are present; else grep scanners) + only the CRITICAL/HIGH known-vectors for the detected domains. Reports findings with severity + `file:line`, and states plainly it is a triage pass. Good for a first look or a CI gate; points to `/auditor:audit` for full coverage. As a CI gate it runs non-interactively, so the run must be able to run its analyzers: an analyzer that did not run is reported as not run, and the gate fails. As a CI gate on a public repository it publishes pass/fail only — no finding counts — in comments, logs and artifacts, and sends details through a private channel, failing the job when none is available and never falling back to printing them (`OUTPUT-RULES.md` Rule 11d).
 
 ### `/auditor:diff-audit`
 
-PR / commit-scoped. Computes the changed set (`git diff --name-only base..head`, default `main..HEAD`), runs Phase 0.5 on changed functions + 1-hop callers/callees, risk-classifies changed files (auth / crypto / value-transfer / validation-removal = HIGH), git-blames removed security code (a deletion in a "fix"/"CVE" commit is a CRITICAL regression), runs only the matching checklist items + vectors through Rule 5b, and adds a dependency lane (checklist 11 §11.11 — the published code delta of each bumped package) when a manifest or lockfile changed. Emits `audit_<n>/PR-REPORT.md`.
+PR / commit-scoped. Computes the changed set with read-only git (`git-ro.sh diff --name-only base..head`, default `main..HEAD`), runs Phase 0.5 on changed functions + 1-hop callers/callees, risk-classifies changed files (auth / crypto / value-transfer / validation-removal = HIGH), git-blames removed security code (a deletion in a "fix"/"CVE" commit is a CRITICAL regression), runs only the matching checklist items + vectors through Rule 5b, and adds a dependency lane (checklist 11 §11.11 — the published code delta of each bumped package) when a manifest or lockfile changed. Emits `audit_<n>/PR-REPORT.md`.
 
 ```
 /auditor:diff-audit main..HEAD
