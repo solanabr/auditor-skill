@@ -1,6 +1,25 @@
 ---
 name: auditor-skill
 description: "**AUDIT SKILL** — Comprehensive on-chain Solana program auditor and full-stack security review for ANY programming language. USE FOR: auditing Solana/Anchor programs, reviewing smart contract security, checking for vulnerabilities (missing signers, unchecked accounts, arithmetic overflow, CPI attacks, PDA confusion, type cosplay, reinitialization, flash loan exploits, MEV, governance backdoors, timelock bypass), auditing TypeScript/Python/Go/Java/Ruby/PHP/any language, backend/frontend code review, supply chain safety, CI/CD and GitHub Actions workflow security (comment-triggered commands, pull_request_target / workflow_run pwn requests, AI agents in CI), operational security (multisig, upgrade authority, deploy process), formal verification and testing quality, logging/monitoring/incident response, post-incident threat hunting and incident workup from transaction history and program logs (/auditor:hunt, /auditor:respond), data privacy/GDPR/SOC2 compliance, change management, penetration testing methodology, AI/ML security, generating audit reports, running full repository audits. Severity 1-10 scale, 20 micro-checklist domains with 1446 individual verification items, plus 140 known attack vectors, chunked file-by-file execution, item-by-item verdicts. Benchmarked against CertiK (crypto) and EY/SOC2/COBIT (traditional) audit standards. DO NOT USE FOR: writing new features, general coding, non-security reviews."
+allowed-tools:
+  - Read
+  - Grep
+  - Glob
+  - Task
+  - Edit(audit_*/**)
+  - 'Bash("${CLAUDE_SKILL_DIR}/scripts/preflight.sh" *)'
+  - 'Bash("${CLAUDE_SKILL_DIR}/scripts/rundir.sh" *)'
+  - 'Bash("${CLAUDE_SKILL_DIR}/scripts/git-ro.sh" *)'
+  - 'Bash("${CLAUDE_SKILL_DIR}/tools/auditor-tools/target/release/audit-scan" --contract=1 *)'
+  - 'Bash("${CLAUDE_SKILL_DIR}/tools/auditor-tools/target/release/audit-mem" init --contract=1 *)'
+  - 'Bash("${CLAUDE_SKILL_DIR}/tools/auditor-tools/target/release/audit-mem" warm --contract=1 *)'
+  - 'Bash("${CLAUDE_SKILL_DIR}/tools/auditor-tools/target/release/audit-mem" check --contract=1 *)'
+  - 'Bash("${CLAUDE_SKILL_DIR}/tools/auditor-tools/target/release/audit-mem" regressions --contract=1 *)'
+  - 'Bash("${CLAUDE_SKILL_DIR}/scripts/runner/probe.sh" *)'
+  - 'Bash("${CLAUDE_SKILL_DIR}/scripts/runner/deps.sh" *)'
+  - 'Bash("${CLAUDE_SKILL_DIR}/scripts/runner/sast.sh" *)'
+  - 'Bash("${CLAUDE_SKILL_DIR}/scripts/runner/target.sh" *)'
+  - 'Bash("${CLAUDE_SKILL_DIR}/scripts/rpc-read.sh" *)'
 ---
 
 # auditor-skill — Multi-Language Security Audit Skill

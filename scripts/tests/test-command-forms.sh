@@ -17,7 +17,7 @@
 #   C4  Every command, and the root SKILL.md, runs preflight.sh as step 0: the first entry point its body names
 #       is "<root>/scripts/preflight.sh", with no arguments, in a paragraph that starts "0. **Preflight" (in the
 #       root SKILL.md, "**Step 0 — Preflight") and says that a refusal, and a call that is denied, stop the run;
-#       and every command's allowed-tools pre-approves that call.
+#       and the allowed-tools of every command, and of the root SKILL.md, pre-approve that call.
 #   P   Wording the flows depend on stays in place (the PINS list): what keeps a long call, and the turn after
 #       it, inside a command's grant.
 # The entry points are the tracked files under scripts/ (but scripts/tests/) and templates/ of mode 100755 that
@@ -51,7 +51,6 @@ tree, index_file, files = sys.argv[1], sys.argv[2], sys.argv[3:]
 DIRECT = ("#!/bin/bash", "#!/usr/bin/env -S python3 -I")
 ROOTED = re.compile(r'\$\{(CLAUDE_PLUGIN_ROOT|CLAUDE_SKILL_DIR)\}("?)/([A-Za-z0-9_./-]+)')
 READERS = ("test -x", "test -f", "test -e", "cmp", "diff", "diff -r")
-PREFLIGHT_RULE = 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh" *)'
 RELEASE = "tools/auditor-tools/target/release/"
 
 modes = {}
@@ -265,8 +264,9 @@ for f in files:
             finding("C2", f, n, "%s has no #! line" % path)
         if not m.group(1) and path.startswith(RELEASE):
             marker(f, n, path[len(RELEASE):], pat[m.end():].strip() if m.group(4) else "", "rule")
-    if command and PREFLIGHT_RULE not in [e for _, e in rules]:
-        finding("C4", f, 1, "allowed-tools does not pre-approve %s" % PREFLIGHT_RULE)
+    preflight_rule = 'Bash("${%s}/scripts/preflight.sh" *)' % var
+    if (command or root_skill) and preflight_rule not in [e for _, e in rules]:
+        finding("C4", f, 1, "allowed-tools does not pre-approve %s" % preflight_rule)
 
     # the body
     first_entry = None
@@ -401,7 +401,7 @@ printf -- '---\nname: a\ndescription: "An agent."\ntools: Read, Bash\n---\n\nRun
 printf -- '---\nname: a\ndescription: "An agent."\ntools: Read, Bash\n---\n\nRun `bash "%s/scripts/ok.sh"`.\n' "$R" > "$fx/agents/c1.md"
 printf -- '---\nname: s\ndescription: "A skill."\nallowed-tools:\n  - '"'"'Bash("%s/scripts/rec.py" *)'"'"'\n---\n\nRun `"%s/scripts/rec.py" x` or `"%s/scripts/rec.py" x | wc -l`.\n' "$R" "$R" "$R" \
   > "$fx/skills/s/SKILL.md"
-printf -- '---\nname: x\ndescription: "A skill."\n---\n\n**Step 0 — Preflight.** Run `"${CLAUDE_SKILL_DIR}/scripts/preflight.sh"`; a refusal, or a denied call, stops the run.\nThen `"${CLAUDE_SKILL_DIR}/scripts/ok.sh" check x`.\n' \
+printf -- '---\nname: x\ndescription: "A skill."\nallowed-tools:\n  - '"'"'Bash("${CLAUDE_SKILL_DIR}/scripts/preflight.sh" *)'"'"'\n  - '"'"'Bash("${CLAUDE_SKILL_DIR}/scripts/ok.sh" *)'"'"'\n---\n\n**Step 0 — Preflight.** Run `"${CLAUDE_SKILL_DIR}/scripts/preflight.sh"`; a refusal, or a denied call, stops the run.\nThen `"${CLAUDE_SKILL_DIR}/scripts/ok.sh" check x`.\n' \
   > "$fx/SKILL.md"
 sed -e 's#CLAUDE_SKILL_DIR}/scripts/ok#CLAUDE_PLUGIN_ROOT}/scripts/ok#' "$fx/SKILL.md" > "$fx/skill-root.md"
 # over 64 KiB, the one bad line last
@@ -436,9 +436,10 @@ line=$(check "$fx" commands/c1-large.md | cut -f2)
 total=$(wc -l < "$fx/commands/c1-large.md"); total=${total//[!0-9]/}
 [ "$line" = "commands/c1-large.md:$total" ] && ok "the large fixture is read to its last line ($total)" \
   || bad "the large fixture's finding is at [$line], want commands/c1-large.md:$total"
-# the root SKILL.md runs its entry points from ${CLAUDE_SKILL_DIR}: from ${CLAUDE_PLUGIN_ROOT} is a C1 finding there
+# the root SKILL.md runs its entry points from ${CLAUDE_SKILL_DIR}: from ${CLAUDE_PLUGIN_ROOT} is a finding there, in
+# its body (C1) and in its rules (C2)
 cp "$fx/skill-root.md" "$fx/SKILL.md"; git -C "$fx" add -- SKILL.md 2>/dev/null
-expect SKILL.md C1
+expect SKILL.md "C1 C2"
 
 # ---- 1-4. the tree ----------------------------------------------------------------------------------------------
 cd "$TREE" || exit 1

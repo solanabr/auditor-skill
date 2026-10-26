@@ -275,6 +275,26 @@ fm skills/tools-dashes/SKILL.md fail "name: t6" "$S" "allowed-tools:" "  - 'Bash
 fm skill-tools/SKILL.md fail "name: r1" 'description: "A skill."' "allowed-tools: Read"
 fm skill-fork/SKILL.md fail "name: r2" "$S" "$F" "$A"
 fm skill-invocable/SKILL.md fail "name: r3" 'description: "A skill."' "user-invocable: false"
+# the root SKILL.md, the one directly in the directory the check runs in, may also list allowed-tools under a
+# command's rules, its bundled audit-scan and audit-mem from ${CLAUDE_SKILL_DIR}; it takes no other key
+fmroot() { # fmroot NAME WANT LINE...  — a SKILL.md of those LINEs, checked as SKILL.md from its own directory
+  local d="$T/fmroot/$1" want=$2 got=pass; shift 2
+  mkdir -p "$d"; { echo ---; printf '%s\n' "$@"; echo ---; echo; echo Body.; } > "$d/SKILL.md"
+  out=$(cd "$d" && bash "$ROOT/scripts/check-frontmatter.sh" SKILL.md 2>&1) || got=fail
+  if [ "$got" = "$want" ]; then pass=$((pass + 1)); echo "PASS frontmatter $want: root SKILL.md, ${d##*/}"
+  else failn=$((failn + 1)); echo "FAIL frontmatter root SKILL.md, ${d##*/}: got $got, want $want"; echo "$out"; fi
+}
+TS='${CLAUDE_SKILL_DIR}/tools/auditor-tools/target/release'
+fmroot listed pass "name: r" 'description: "A skill."' "allowed-tools:" "  - Read" "  - Edit(audit_*/**)" \
+  "  - 'Bash(\"\${CLAUDE_SKILL_DIR}/scripts/preflight.sh\" *)'" "  - 'Bash(\"$TS/audit-scan\" --contract=1 *)'" \
+  "  - 'Bash(\"$TS/audit-mem\" warm --contract=1 *)'" "  - 'Bash(test -x \"$TS/audit-mem\")'"
+fmroot one-line pass "name: r" 'description: "A skill."' "allowed-tools: Read, Grep"
+fmroot plugin-root fail "name: r" 'description: "A skill."' "allowed-tools:" "  - 'Bash(\"$TB/audit-mem\" warm --contract=1 *)'"
+fmroot no-marker fail "name: r" 'description: "A skill."' "allowed-tools:" "  - 'Bash(\"$TS/audit-mem\" check *)'"
+fmroot rule fail "name: r" 'description: "A skill."' "allowed-tools:" "  - 'Bash(\"$TS/audit-mem\" rule --contract=1 *)'"
+fmroot star fail "name: r" 'description: "A skill."' "allowed-tools: Read, Bash(*)"
+fmroot fork fail "name: r" 'description: "A skill."' "context: fork" "allowed-tools: Read"
+fmroot invocable fail "name: r" 'description: "A skill."' "user-invocable: false"
 # the agent is looked up at the plugin root, the path before skills/, however the skill is named
 for at in "$T/fm|skills/forked/SKILL.md" "$T/fm/agents|../skills/forked/SKILL.md" "$ROOT|$T/fm/skills/forked/SKILL.md"; do
   expect "frontmatter: an agent found from ${at%%|*} for ${at#*|}" 0 sh -c 'cd "$1" && bash "$2" "$3"' sh \
