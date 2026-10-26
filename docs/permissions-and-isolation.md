@@ -241,6 +241,8 @@ An absolute Bash path in your own rules would approve a program whatever words f
 
 ## Optional hardening
 
+Put these keys in the file you pass with `--settings` when you audit, such as the sandbox file [above](#claude-codes-sandbox), not in your user settings: there the ask rule would make plain git ask in every session.
+
 ```json
 {
   "env": {
