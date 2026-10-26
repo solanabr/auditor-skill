@@ -21,11 +21,12 @@
 #       root SKILL.md, "**Step 0 — Preflight") and says that a refusal, and a call that is denied, stop the run;
 #       and the allowed-tools of every command, and of the root SKILL.md, pre-approve that call.
 #   C5  Every rooted call in a command's body, and in the bodies of the agents it spawns (a code span naming the
-#       agent after spawn or delegate in the sentence, or right after run), is one of that command's Bash rules:
+#       agent after spawn, delegate or run in the sentence, or starting a list item under such a paragraph, but
+#       not in a list item about another command), is one of that command's Bash rules:
 #       the same path, then the rule's fixed words (all of them, for a rule with no *). A fork skill's calls,
 #       and its agent's, are its own rules', and so are the root SKILL.md's. A call is an entry point first in a
-#       code span with words after it, or first on a fenced code line; one the rest of its sentence says asks
-#       is a documented prompt.
+#       code span with words after it, or first on a fenced code line; one whose own clause (up to the
+#       sentence's end, a ; or the next rooted call) says it asks is a documented prompt.
 #   P   Wording the flows depend on stays in place (the PINS list): what keeps a long call, and the turn after
 #       it, inside a command's grant; and no body names the environment form of a PoC run (VULNERABLE_SO and the
 #       rest), which run.sh --crate does not read.
@@ -66,8 +67,7 @@ RELEASE = "tools/auditor-tools/target/release/"
 PIPE_INTO = set("sh bash zsh dash ksh fish python python3 perl ruby node tee xargs env eval exec source nc ncat "
                 "socat curl wget dd cat head tail grep egrep fgrep sed awk gawk mawk jq sort uniq cut tr wc base64 "
                 "openssl ssh scp".split())
-SPAWN = re.compile(r'(?i)\b(spawns?|delegates?)\b')
-RUN_AGENT = re.compile(r'(?i)\bruns?\s+(?:the\s+)?\**`([a-z][a-z0-9-]*)`')
+SPAWN = re.compile(r'(?i)\b(spawns?|delegates?|runs?)\b')
 ASKS = re.compile(r'\b(asks|prompts)\b')
 
 modes = {}
@@ -324,20 +324,34 @@ for d, pattern in (("agents", None), ("skills", None)):
             forks[path] = value(fm, "agent")[len("auditor:"):]
 
 def spawned(body):
-    """The agents a body spawns: each code span naming an agent after spawn or delegate in its sentence, and
-    one right after run."""
-    names = set()
+    """The agents a command spawns: each code span naming an agent after spawn, delegate or run in its
+    sentence, and the agent each list item under such a paragraph starts with. A list item that starts with
+    another command's name describes that command."""
+    names, spawns = set(), False
     for para in re.split(r'\n\s*\n|\n(?=\s*(?:\d+[a-z]?[.)]|[-*+])\s)', "\n".join(body)):
+        item = re.match(r'^\s+[-*+]\s+`([a-z][a-z0-9-]*)`', para)
+        if spawns and item and item.group(1) in agents:
+            names.add(item.group(1))
+            continue
+        spawns = False
+        if re.match(r'^\s*[-*+]\s+\**`/', para):
+            continue
         for sentence in re.split(r'(?<=[.!?])\s+', para):
             m = SPAWN.search(sentence)
             if m:
+                spawns = True
                 names.update(a for a in re.findall(r'`([a-z][a-z0-9-]*)`', sentence[m.end():]) if a in agents)
-            names.update(a for a in RUN_AGENT.findall(sentence) if a in agents)
     return names
+
+def asks(rest):
+    """Whether the clause after a call says it asks: the rest of its sentence, up to a ; or the next rooted call."""
+    clause = re.split(r'(?<=[.!?])\s', rest, 1)[0]
+    clause = re.split(r';|`"\$\{CLAUDE_', clause, 1)[0]
+    return bool(ASKS.search(clause))
 
 def calls(body, first):
     """(line, path, words, text) for each rooted call: an entry point first in a code span with words after
-    it, or first on a fenced code line. A call the rest of its sentence says asks is a documented prompt."""
+    it, or first on a fenced code line. A call whose own clause says it asks is a documented prompt."""
     res = []
     for n, seg, para, ptext, end, fenced in segments(body, first):
         m = CALL.match(seg)
@@ -346,7 +360,7 @@ def calls(body, first):
         words = m.group(3).split()
         if not words and not fenced:
             continue
-        if not fenced and ASKS.search(re.split(r'(?<=[.!?])\s', ptext[end:], 1)[0]):
+        if not fenced and asks(ptext[end:]):
             continue
         res.append((n, m.group(2), words, seg))
     return res
@@ -456,7 +470,7 @@ for f in files:
     # as), is one of its own rules: the path, then the rule's fixed words
     if command or root_skill or f in forks:
         sources = [(f, body, first)]
-        names = spawned(body) | ({forks[f]} if f in forks else set())
+        names = {forks[f]} if f in forks else spawned(body)
         sources.extend(agents[a] for a in sorted(names) if a in agents)
         check_calls(f, rules, sources)
 
@@ -548,7 +562,12 @@ cmd c5-unlisted -- "1. Run \`\"$R/templates/poc/run.sh\" --crate audit_<n>/poc/F
 cmd c5-agent -- "1. Spawn \`fx-runner\` on the crate."
 cmd c5-agent-covered "'Bash(\"$R/scripts/rec.py\" *)'" -- "1. Delegate the walk to \`fx-runner\`."
 cmd c5-agent-mention -- "1. Read what \`fx-runner\` wrote into the run directory."
+cmd c5-agent-list -- "1. Run the reviewers in parallel:" "   - \`fx-other\` over the program." "   - \`fx-runner\` over the value flow."
+cmd c5-agent-and -- "1. Run \`fx-other\` (checklists) and \`fx-runner\` (vectors) over their surfaces."
+cmd c5-other-command -- "- **\`/auditor:other\`** runs \`fx-runner\` over the tree."
 cmd c5-asks -- "1. Run \`\"$R/templates/poc/run.sh\" --crate x\`, which asks."
+cmd c5-asks-later -- "1. Run \`\"$R/templates/poc/run.sh\" --crate x\`; a copy from outside it asks."
+cmd c5-asks-next -- "1. Run \`\"$R/templates/poc/run.sh\" --crate x\`, then \`\"$R/scripts/rec.py\" y\`, which asks."
 printf -- '---\ndescription: "A command."\nallowed-tools:\n  - '"'"'Bash("%s/scripts/preflight.sh" *)'"'"'\n  - '"'"'Bash("%s/scripts/ok.sh" new *)'"'"'\n  - '"'"'Bash("%s/scripts/rec.py" x)'"'"'\n---\n\n%s\n1. `"%s/scripts/ok.sh" new audit`, `"%s/scripts/rec.py" x`, then `"%s/scripts/ok.sh" check audit_1`.\n' \
   "$R" "$R" "$R" "$STEP0" "$R" "$R" "$R" > "$fx/commands/c5-fixed-word.md"
 sed -e 's#`"${CLAUDE_PLUGIN_ROOT}/scripts/ok.sh" check audit_1`#`"${CLAUDE_PLUGIN_ROOT}/scripts/rec.py" x y`#' \
@@ -564,6 +583,7 @@ sed -e 's#; a call that is denied stops the run too\.#.#' "$fx/commands/good.md"
 # agents and skills have no step 0; the root SKILL.md has it, from ${CLAUDE_SKILL_DIR}
 printf -- '---\nname: fx-runner\ndescription: "An agent."\ntools: Read, Bash\n---\n\nRun `"%s/scripts/rec.py" x`.\n' "$R" \
   > "$fx/agents/fx-runner.md"
+printf -- '---\nname: fx-other\ndescription: "An agent."\ntools: Read\n---\n\nRead the tree.\n' > "$fx/agents/fx-other.md"
 mkdir -p "$fx/skills/fork"
 printf -- '---\nname: f\ndescription: "A fork."\ncontext: fork\nagent: auditor:fx-runner\nallowed-tools: Read\n---\n\nRun as the agent.\n' \
   > "$fx/skills/fork/SKILL.md"
@@ -602,6 +622,8 @@ expect commands/c3-scan-rule.md C3; expect commands/c3-mem-rule.md C3; expect co
 expect commands/c3-mem-call.md "C3 C5"; expect commands/c3-mem-bare.md C3; expect commands/c3-scan-fenced.md "C3 C5"
 expect commands/c5-unlisted.md C5; expect commands/c5-agent.md C5; expect commands/c5-agent-covered.md ""
 expect commands/c5-agent-mention.md ""; expect commands/c5-asks.md ""; expect commands/c5-fixed-word.md C5
+expect commands/c5-asks-later.md C5; expect commands/c5-asks-next.md C5
+expect commands/c5-agent-list.md C5; expect commands/c5-agent-and.md C5; expect commands/c5-other-command.md ""
 expect commands/c5-exact.md C5; expect skills/fork/SKILL.md C5
 expect commands/c4-no-rule.md C4; expect commands/c4-no-step.md C4; expect commands/c4-late.md C4
 expect commands/c4-paragraph.md C4; expect commands/c4-args.md C4; expect commands/c4-no-denial.md C4
