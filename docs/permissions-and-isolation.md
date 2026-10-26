@@ -206,7 +206,7 @@ What each part does:
 
 A run's first turn has the command's pre-approvals, and the agents it starts keep them. When background work finishes after that turn, the run takes another turn, which has none, so a flow that goes on there resumes through the Skill tool, and `claude -p` denies that call unless a rule allows it. A Bash call that outlasts its timeout is background work too ([Long steps](#long-steps)). Keep the rules from [Turns and resuming](#turns-and-resuming) in your user settings, or pass them with `--allowedTools`. A run also needs a recorded mode: `/auditor:intake --auto` writes `native`, the documented default, unless `AUDITOR_EXEC_MODE` is stricter. An incident collection needs `--collect`, which stands for your yes to the addresses, window and caps.
 
-In a repository you didn't write, `claude -p` runs the hooks in the project's `.claude/settings.json` and connects the servers in its `.mcp.json` when it starts, before `preflight.sh` can refuse them. Run it in a clean copy, or pass `--setting-sources user`, which reads neither.
+In a repository you didn't write, `claude -p` runs the hooks in the project's `.claude/settings.json` and connects the servers in its `.mcp.json` when it starts, before `preflight.sh` can refuse them. Run it in a clean copy, and pass `--setting-sources user`, which reads neither. The project's skills, commands and agents still load with that flag; preflight refuses them at the first step, and a clean copy keeps them out from the start.
 
 ```bash
 # Examples of what you type. They need the claude CLI and the plugin installed.
@@ -217,7 +217,7 @@ claude -p "/auditor:audit-cycle ." --setting-sources user
 
 # Recommended for untrusted code: inside a container or VM with no credentials mounted,
 # whose environment sets AUDITOR_EXEC_MODE=isolated. The runners' self-check refuses if keys are readable.
-claude -p "/auditor:audit-cycle ." --permission-mode bypassPermissions
+claude -p "/auditor:audit-cycle ." --permission-mode bypassPermissions --setting-sources user
 
 # On a host, with the classifier for the steps that are not pre-approved
 claude -p "/auditor:audit-cycle ." --permission-mode auto --setting-sources user
