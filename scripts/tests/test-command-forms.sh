@@ -711,8 +711,8 @@ commands/respond.md	the Bash tool's longest timeout, in the foreground, never wi
 commands/threat-model.md	Give it the Bash tool's longest timeout, in the foreground, never with `run_in_background`: on a long history it can outlast the two-minute default
 PINS
 
-# Each command's resume text says how to answer the prompt its re-invocation brings.
-for f in commands/*.md; do
+# Each command's resume text, and the root SKILL.md's, says how to answer the prompt its re-invocation brings.
+for f in commands/*.md SKILL.md; do
   if grep -qF -- 'tell the human to answer "Yes", not "don'"'"'t ask again"' "$f"; then ok "$f: the resume text names the answer"
   else bad "P $f: the resume text does not tell the human to answer \"Yes\", not \"don't ask again\""; fi
 done
