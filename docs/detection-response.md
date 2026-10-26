@@ -156,7 +156,7 @@ already captured.
   `"Skill(auditor:dnr-analyze *)"` to `permissions.allow` in your user settings
   (`~/.claude/settings.json`), or the whole list in
   [Turns and resuming](permissions-and-isolation.md#turns-and-resuming).
-  Answering "don't ask again" at the prompt saves the rule in a
+  Answering "don't ask again" at the prompt can save the rule in a
   `.claude/settings.local.json` instead: at the root of the git repository that
   holds the working directory (the main checkout's root, for a worktree), or in the
   working directory itself outside a repository; and `preflight.sh` refuses that
