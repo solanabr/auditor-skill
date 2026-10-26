@@ -75,7 +75,8 @@ Run each bundled script, and the `--logs` check and copy, as a Bash call of its
 own, from the working directory, exactly in the form given here: the quoted
 absolute path first, with nothing in front (no `bash`, no `cd`, no variable
 assignment), then its arguments, every value you fill in written out literally.
-Join no other command to it with `;`, `&&` or `|`, and add no `echo`: the tool
+Join no other command to it with `;` or `&&`,
+pipe it only into `grep`, `head`, `tail` or `wc`, and add no `echo`: the tool
 reports the exit status. Put no `$` or backtick anywhere in the line, inside quotes
 too (so never `echo $?`): Claude Code asks about any command that holds one,
 whatever its allow rules say.

@@ -714,6 +714,26 @@ commands/audit.md	A reused directory's `exec-mode` and its `intake.md` §5, §6 
 commands/threat-model.md	A reused directory's `exec-mode` and its `intake.md` §5, §6 and §8 are an earlier run's answers: ask `QUESTIONS.md` Q46 and Q47 again, confirm §5 and §6 with the human, and write the answers in their place before a step uses them.
 commands/hunt.md	directory's `exec-mode` is an earlier run's answer: ask for the mode again,
 commands/respond.md	run's answer: ask for the mode again, as step 5 does, before a runner uses it.
+commands/audit-assist.md	only into `grep`, `head`, `tail` or `wc`
+commands/audit-cycle.md	only into `grep`, `head`, `tail` or `wc`
+commands/audit.md	only into `grep`, `head`, `tail` or `wc`
+commands/deep-review.md	only into `grep`, `head`, `tail` or `wc`
+commands/diff-audit.md	only into `grep`, `head`, `tail` or `wc`
+commands/economic-sim.md	only into `grep`, `head`, `tail` or `wc`
+commands/hunt.md	only into `grep`, `head`, `tail` or `wc`
+commands/intake.md	only into `grep`, `head`, `tail` or `wc`
+commands/patch.md	only into `grep`, `head`, `tail` or `wc`
+commands/poc.md	only into `grep`, `head`, `tail` or `wc`
+commands/quick-scan.md	only into `grep`, `head`, `tail` or `wc`
+commands/re-audit.md	only into `grep`, `head`, `tail` or `wc`
+commands/respond.md	only into `grep`, `head`, `tail` or `wc`
+commands/spec-audit.md	only into `grep`, `head`, `tail` or `wc`
+commands/threat-model.md	only into `grep`, `head`, `tail` or `wc`
+commands/triage.md	only into `grep`, `head`, `tail` or `wc`
+agents/vuln-hunter.md	only into `grep`, `head`, `tail` or `wc`
+agents/poc-engineer.md	only into `grep`, `head`, `tail` or `wc`
+agents/patch-engineer.md	only into `grep`, `head`, `tail` or `wc`
+SKILL.md	only into `grep`, `head`, `tail` or `wc`
 PINS
 
 # Each command's resume text, and the root SKILL.md's, says how to answer the prompt its re-invocation brings.
