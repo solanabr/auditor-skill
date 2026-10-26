@@ -122,6 +122,7 @@ without `target/`, refusing a symbolic link, a `.cargo/` directory or a
 `rust-toolchain*` file; `RUSTUP_TOOLCHAIN` pinned; every `cargo`, `trident` or
 `surfpool` command started from that copy; a `path` dependency on target crates
 absolute. A runner without both is not a PoC runner, and the tier is `[PoC-ATTEMPTED]`.
+Such a runner is code the agent wrote, so no command pre-approves it: each run asks for approval.
 
 **Run the probes below through `"<auditor-skill root>/scripts/runner/probe.sh"`,
 never from inside the target tree** (Rule 11a). It asks each tool for its version from a
