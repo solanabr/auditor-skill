@@ -61,7 +61,7 @@ You run git only through the collector. Run bundled scripts only from the audito
 "${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --offline --repo <target> --out audit_<n>/bootstrap --pin <sha from intake> [--paths <in-scope program dir>] [--vulns <file>] [--program-id <id> --audit-mem-db <store intake recorded>]
 ```
 
-Write it as one line, the options in brackets only where they apply.
+Write it as one line, the options in brackets only where they apply. Give it the Bash tool's longest timeout, in the foreground, never with `run_in_background`: on a long history it can outlast the two-minute default, and a call that moves to the background loses these pre-approvals, and so does the turn its completion starts.
 
 Put `--network` in place of `--offline` only when the user passed an `https://` `--parent` / `--vulns` value or confirmed the exact URL, or named a `--repo`, `--parent` or `--vulns` path outside the working directory; that call prompts, and each URL it fetches is recorded in `audit_<n>/disclosures.tsv`. If a section of `history.md` prints `TRUNCATED`, re-run with a higher `--cap` before using it. Then hand `audit_<n>/bootstrap/` to `threat-modeler` together with the other inputs.
 

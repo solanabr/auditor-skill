@@ -695,17 +695,20 @@ commands/patch.md	a turn that a background agent's or background command's compl
 commands/audit.md	Give each runner call (`target.sh`, `deps.sh`, `sast.sh`) the Bash tool's longest timeout
 commands/audit-cycle.md	Give each runner call (`run.sh`, `target.sh`, `deps.sh`, `sast.sh`) the Bash tool's longest timeout
 commands/audit-assist.md	Give each runner call (`run.sh`, `target.sh`, `deps.sh`, `sast.sh`) the Bash tool's longest timeout
-commands/diff-audit.md	Give each runner call (`target.sh`, `deps.sh`) the Bash tool's longest timeout
+commands/diff-audit.md	Give each runner call (`target.sh`, `deps.sh`) and the `git-ro.sh copy` call the Bash tool's longest timeout
 commands/quick-scan.md	Give each runner call (`deps.sh`, `sast.sh`) the Bash tool's longest timeout
 commands/re-audit.md	Give each runner call (`run.sh`, `target.sh`, `deps.sh`, `sast.sh`) the Bash tool's longest timeout
 commands/poc.md	Give each runner call (`run.sh`, `target.sh`) the Bash tool's longest timeout
 commands/patch.md	Give each runner call (`run.sh`, `target.sh`) the Bash tool's longest timeout
 SKILL.md	Give each runner call (`target.sh`, `deps.sh`, `sast.sh`) the Bash tool's longest timeout
-agents/poc-engineer.md	Give each `run.sh` call the Bash tool's longest timeout
+agents/poc-engineer.md	Give each `run.sh` call and the `git-ro.sh copy` call the Bash tool's longest timeout
 agents/patch-engineer.md	Give each runner call (`run.sh`, `target.sh`) the Bash tool's longest timeout
 agents/vuln-hunter.md	Give each `sast.sh` call the Bash tool's longest timeout
-commands/hunt.md	Give each runner call (`run.sh`, `target.sh`) the Bash tool's longest timeout, in the
-commands/respond.md	Give each runner call (`run.sh`, `target.sh`) the Bash tool's longest timeout, in the
+commands/hunt.md	Give each runner call (`run.sh`, `target.sh`) and the `git-ro.sh copy` call
+commands/hunt.md	the Bash tool's longest timeout, in the foreground, never with `run_in_background`:
+commands/respond.md	Give each runner call (`run.sh`, `target.sh`) and the `git-ro.sh copy` call
+commands/respond.md	the Bash tool's longest timeout, in the foreground, never with `run_in_background`:
+commands/threat-model.md	Give it the Bash tool's longest timeout, in the foreground, never with `run_in_background`: on a long history it can outlast the two-minute default
 PINS
 
 # Each command's resume text says how to answer the prompt its re-invocation brings.

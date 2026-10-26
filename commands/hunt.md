@@ -77,9 +77,10 @@ Join no other command to it with `;`, `&&` or `|`, and add no `echo`: the tool
 reports the exit status. Put no `$` or backtick anywhere in the line, inside quotes
 too (so never `echo $?`): Claude Code asks about any command that holds one,
 whatever its allow rules say.
-Give each runner call (`run.sh`, `target.sh`) the Bash tool's longest timeout, in the
-foreground, never with `run_in_background`: a call that moves to the background loses
-these pre-approvals, and so does the turn its completion starts.
+Give each runner call (`run.sh`, `target.sh`) and the `git-ro.sh copy` call
+the Bash tool's longest timeout, in the foreground, never with `run_in_background`:
+a call that moves to the background loses these pre-approvals, and so does the turn
+its completion starts.
 This command's pre-approvals last for the turn that invoked it: Claude Code clears
 them at the user's next message, and a turn that a background agent's or
 background command's completion notice starts has none, so spawn every agent in
