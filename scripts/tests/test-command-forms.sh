@@ -17,7 +17,9 @@
 #       without braces, which Claude Code does not fill in.
 #   C2  Every Bash allow rule that names a path from the root names it as its quoted first word (after an
 #       optional test -x), and that path is a tracked file of mode 100755 whose first line is a #! line, or a
-#       binary a crate under tools/auditor-tools declares, executable when it is built.
+#       binary a crate under tools/auditor-tools declares, executable when it is built. What an allow rule may
+#       pre-approve at all (an entry point scripts/entrypoints.txt lists, with the words it names, or a read
+#       tool, Task, a run-directory edit or an auditor skill) is scripts/check-entrypoints.sh's check.
 #   C3  Every call of audit-scan carries --contract=1 as its first argument, and every call of audit-mem
 #       --contract=1 right after its subcommand: in the rules, in rooted calls, and in code spans that start
 #       with the bare name and pass arguments (a span naming only the tool, or the tool and a subcommand, is a
@@ -639,7 +641,7 @@ cmd() {
 }
 cmd good "'Bash(\"$R/scripts/rec.py\" *)'" "'Bash(\"$B/audit-scan\" --contract=1 *)'" \
   "'Bash(\"$B/audit-mem\" warm --contract=1 *)'" "'Bash(\"$R/templates/poc/run.sh\" *)'" \
-  "'Bash(test -x \"$B/audit-mem\")'" "'Bash(git log:*)'" "Edit(audit_*/**)" -- \
+  "'Bash(test -x \"$B/audit-mem\")'" "Edit(audit_*/**)" -- \
   "1. Run \`\"$R/scripts/ok.sh\" new audit\` and \`\"$R/scripts/rec.py\" tokens|lamports [--by owner,mint|mint] incident_<n>/corpus*/x.jsonl > incident_<n>/out.txt\`." \
   "2. When built (\`test -x \"$B/audit-scan\"\`), \`\"$B/audit-scan\" --contract=1 . --out audit_<n>/prescan.json\` and" \
   "   \`\"$B/audit-mem\" warm --contract=1 --program-id <id>\`; \`audit-mem warm --contract=1 --program-id <id>\`, \`audit-mem init\`." \

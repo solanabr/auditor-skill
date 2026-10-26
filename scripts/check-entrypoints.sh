@@ -15,6 +15,8 @@
 #     names for that entry point first (the contract marker of audit-scan and audit-mem, the collector's
 #     mode); a bare Bash fails, and so does a tools entry naming Bash with a pattern in an agent (any .md under
 #     agents/), which gets its approval from the command that spawns it;
+#   - every other allowed-tools entry there is a read tool (Read, Grep, Glob), Task, a run-directory edit
+#     (Edit(audit_*/**), Edit(incident_*/**)) or one of the plugin's own skills (Skill(auditor:<name> *));
 #   - each listed entry point is named by at least one such rule.
 # Files are found in any letter case, as check-frontmatter.sh finds them. How the bodies and the corpus call
 # each entry point is test-command-forms.sh's check; what each does with hostile arguments is
@@ -131,7 +133,10 @@ while IFS= read -r f; do
       rule(cur, n)
     }
     function rule(e, n,   var, pre, rest, ep, k, nw, w, i, j, need, alts, na, hit) {
-      if (e !~ /^Bash([^A-Za-z0-9_]|$)/) return
+      if (e !~ /^Bash([^A-Za-z0-9_]|$)/) {
+        if (kind != "agent" && e !~ named_re)
+          bad(n, "allowed-tools entry " q e q " is no read tool (Read, Grep, Glob), Task, run-directory edit (Edit(audit_*/**), Edit(incident_*/**)), auditor skill (Skill(auditor:<name> *)) or Bash rule for a listed entry point")
+        return }
       if (kind == "agent") {   # the Bash tool itself; a pattern would be a rule, which an agent cannot carry
         if (e != "Bash") bad(n, "the agent tools entry " q e q " is a Bash rule; an agent gets its approval from the command that spawns it")
         return }
@@ -162,7 +167,10 @@ while IFS= read -r f; do
       }
       print ep >> named
     }
-    BEGIN { while ((getline l < listf) > 0) { split(l, a, "\t"); words[a[2]] = a[4] } }
+    BEGIN {
+      while ((getline l < listf) > 0) { split(l, a, "\t"); words[a[2]] = a[4] }
+      named_re = "^(Read|Grep|Glob|Task|Edit[(](audit|incident)_[*]/[*][*][)]|Skill[(]auditor:[a-z0-9]+(-[a-z0-9]+)* [*][)])$"
+    }
     NR == 1 { if ($0 != "---") exit; next }
     $0 == "---" { exit }
     substr($0, 1, 4) == "  - " { if (key == "allowed-tools" || key == "tools") rule(unq(substr($0, 5)), NR); next }

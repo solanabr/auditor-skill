@@ -809,7 +809,8 @@ eprepo() { # eprepo NAME  — a checkout whose entry points, case files and rule
   printf '#!/bin/bash\nhere=${0%%/*}\n. "$here/lib/confine.sh" || exit 64\n' > "$d/scripts/ok.sh"
   printf '#!/bin/bash\n  . "${here%%/*}/lib/confine.sh" || exit 2\n' > "$d/scripts/tm.sh"
   printf '#!/usr/bin/env -S python3 -I\nimport sys\n' > "$d/scripts/rec.py"
-  chmod 755 "$d/scripts/ok.sh" "$d/scripts/tm.sh" "$d/scripts/rec.py"
+  printf '#!/usr/bin/env bash\ncat\n' > "$d/scripts/filter.sh"   # executable, but no confined entry point
+  chmod 755 "$d/scripts/ok.sh" "$d/scripts/tm.sh" "$d/scripts/rec.py" "$d/scripts/filter.sh"
   printf '# cases\n64\tok: refused: x\t--x\n' > "$d/scripts/tests/fixtures/ok/cases.txt"
   printf '# cases\nno arguments\nan option\t--x\n' > "$d/scripts/tests/fixtures/rec/hostile-args.txt"
   printf '[package]\nname = "t"\n\n[[bin]]\nname = "audit-scan"\npath = "a.rs"\n\n[[bin]]\nname = "audit-mem"\npath = "b.rs"\n' \
@@ -825,10 +826,11 @@ eprepo() { # eprepo NAME  — a checkout whose entry points, case files and rule
     printf -- "  - 'Bash(\"%s/scripts/ok.sh\")'\n  - 'Bash(\"%s/scripts/tm.sh\" --offline *)'\n" "$PR" "$PR"
     printf -- "  - 'Bash(\"%s/%s/audit-scan\" --contract=1 *)'\n  - 'Bash(\"%s/%s/audit-mem\" check --contract=1 --db x.db)'\n" \
       "$PR" "$RB" "$PR" "$RB"
+    printf -- "  - Glob\n  - Task\n  - Edit(incident_*/**)\n  - Skill(auditor:poc *)\n  - Skill(auditor:audit-report *)\n"
     printf -- "---\n\nBody.\n"; } > "$d/commands/c.md"
   printf -- "---\ndescription: A one-line command.\nallowed-tools: Read, Bash(\"%s/%s/audit-logs\" profile *), Grep\n---\n" "$PR" "$RB" \
     > "$d/commands/one.md"
-  printf -- '---\nname: a\ndescription: An agent.\ntools: Read, Grep, Bash\n---\n' > "$d/agents/a.md"
+  printf -- '---\nname: a\ndescription: An agent.\ntools: Read, Grep, Write, Edit, Bash\n---\n' > "$d/agents/a.md"
   printf -- "---\nname: s\ndescription: A skill.\nallowed-tools:\n  - 'Bash(\"%s/scripts/rec.py\" *)'\n---\n" "$PR" > "$d/skills/s/SKILL.md"
   printf -- "---\nname: r\ndescription: The root skill.\nallowed-tools:\n  - 'Bash(\"%s/scripts/ok.sh\" new *)'\n---\n" "$SD" > "$d/SKILL.md"
   git -C "$d" add -A
@@ -908,6 +910,16 @@ epcmd rule-mem-other "does not start with 'warm|check --contract=1' after the pa
 epcmd rule-mem-any "does not start with 'warm|check --contract=1' after the path" "'Bash(\"$PR/$RB/audit-mem\" *)'"
 epcmd rule-collector-any "does not start with '--detect|--offline' after the path" "'Bash(\"$PR/scripts/tm.sh\" *)'"
 epcmd rule-collector-network "does not start with '--detect|--offline' after the path" "'Bash(\"$PR/scripts/tm.sh\" --network *)'"
+epcmd rule-plain "allowed-tools entry 'Bash(git log:*)' is not Bash(\"\${CLAUDE_PLUGIN_ROOT}/<path>\"" "'Bash(git log:*)'"
+epcmd rule-test-script "names scripts/tests/t.sh, which scripts/entrypoints.txt does not list" "'Bash(\"$PR/scripts/tests/t.sh\" *)'"
+epcmd rule-env-shebang "names scripts/filter.sh, which scripts/entrypoints.txt does not list" "'Bash(\"$PR/scripts/filter.sh\" *)'"
+# every other allowed-tools entry is a read tool, Task, a run-directory edit or an auditor skill
+for e in WebFetch Write 'Edit(**)' 'Edit(audit_1/x.md)' Skill 'Skill(other:x *)' 'Skill(auditor:poc)' mcp__srv__tool 'Task(x)'; do
+  epcmd "rule-named-$(printf '%s' "$e" | tr -c 'A-Za-z0-9_-' '_')" \
+    "allowed-tools entry '$e' is no read tool (Read, Grep, Glob), Task, run-directory edit" "$e"
+done
+ep rule-named-root "SKILL.md:5: allowed-tools entry 'WebFetch' is no read tool" \
+  'awk "{ print } /^allowed-tools:\$/ { print \"  - WebFetch\" }" SKILL.md > s && mv s SKILL.md'
 ep rule-control "holds a tab, a control character or a byte outside printable ASCII" \
   "printf -- \"---\ndescription: A command.\nallowed-tools:\n  - 'Bash(\\\"%s/scripts/ok.sh\\\" \\033 *)'\n---\n\" '$PR' > commands/esc.md"
 ep rule-one-line "commands/one.md:3: allowed-tools entry 'Bash(bash" \
