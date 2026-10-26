@@ -278,10 +278,11 @@ under the lowercase name.
 - **`vendor-delta`**: on every PR, advisory. When the PR moves the `vendor/trailofbits` gitlink,
   `scripts/tob-delta-pr.sh` writes the upstream delta to the job summary. It fetches
   `https://github.com/trailofbits/skills`, the entry of `SUBMODULE_URLS` in `scripts/check-corpus.sh` (never
-  the URL in `.gitmodules`), by branch and tag name only, so a commit that no branch or tag of it reaches fails
-  the job, and runs `scripts/tob-delta-review.sh` on that clone. The summary is one fenced code block of at most
-  1,000,000 bytes. The job needs no secret, keeps no credential, and never approves or merges. "Bumping
-  `vendor/trailofbits`" below says when the summary counts.
+  the URL in `.gitmodules`), by the names of its default branch, branches and tags only, so a commit that no
+  branch or tag of it reaches fails the job, and runs `scripts/tob-delta-review.sh` on that clone. The summary
+  is two lines of its own, then the PR's other files and the review in one fenced code block, then a note when
+  lines are left out or cut; 300,000 bytes at most. The job needs no secret, keeps no credential, and never
+  approves or merges. "Bumping `vendor/trailofbits`" below says when the summary counts.
 
 ### Bumping `vendor/trailofbits`
 
@@ -293,8 +294,10 @@ fails that PR until the README pin is updated on the same branch. Never auto-mer
 On the PR, the `vendor-delta` job writes the review of step 1 to the job summary. A `pull_request` run takes
 the workflow and its scripts from the PR, so that summary counts only for a PR that changes nothing but the
 gitlink and the README pin line, as the PR's file list shows; the summary's first line says so, and its second
-says when the PR changes other files. Any other change in the PR, the workflow or the scripts included, means
-the reviewer runs the delta review locally instead. So does a summary that is cut short or missing.
+says when the PR changes other files. The pin line may change only in its commit hashes and date, as step 3
+updates them, and stay where it is. Any other change in the PR, the workflow or the scripts included, means
+the reviewer runs the delta review locally instead. So does a summary that is missing or ends with a note
+that it is cut.
 
 1. Read the delta review: the job summary, when it counts, or the output of
    `bash scripts/tob-delta-review.sh <clone> <old-sha> <new-sha>` in a full clone of
