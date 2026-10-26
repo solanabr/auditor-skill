@@ -521,7 +521,7 @@ else bad "SC-054 and KV-137 Step 2 differ, missing:$miss"; fi
 # dependencies, and KV-049 Step 4 and KV-089 Step 3 read the Node.js runtime the target declares, never the
 # auditor's own, with node_modules left out
 MF="$T/manifests"
-mkdir -p "$MF/apps/backend" "$MF/apps/web" "$MF/node_modules/x" "$MF/srv" "$MF/mpath" || exit 1
+mkdir -p "$MF/apps/backend" "$MF/apps/web" "$MF/node_modules/x" "$MF/node_modules/y" "$MF/srv" "$MF/mpath" || exit 1
 printf '{\n  "name": "m",\n  "lockfileVersion": 3,\n  "packages": {\n    "": {"name": "m"},\n    "node_modules/a": {\n      "version": "1.0.0",\n      "hasInstallScript": true\n    },\n    "node_modules/b": {\n      "version": "1.0.0"\n    },\n    "node_modules/c": {\n      "version": "2.0.0",\n      "hasInstallScript": true\n    }\n  }\n}\n' > "$MF/package-lock.json"
 printf '{\n  "name": "m",\n  "engines": {\n    "node": ">=18"\n  },\n  "devDependencies": {\n    "husky": "^9.0.0",\n    "@types/node": "^20.0.0"\n  }\n}\n' > "$MF/package.json"
 printf '{\n  "name": "backend",\n  "engines": {\n    "node": "20.x"\n  }\n}\n' > "$MF/apps/backend/package.json"
@@ -529,6 +529,7 @@ printf '{\n  "name": "web"\n}\n' > "$MF/apps/web/package.json"
 printf '20.11.1\n' > "$MF/.nvmrc"; printf '18\n' > "$MF/apps/backend/.nvmrc"
 printf 'FROM node:18-alpine\n' > "$MF/srv/Dockerfile"; printf 'FROM node:8\n' > "$MF/node_modules/x/Dockerfile"
 printf '{\n  "name": "x",\n  "engines": {\n    "node": ">=4"\n  },\n  "scripts": {\n    "postinstall": "node x.js"\n  }\n}\n' > "$MF/node_modules/x/package.json"
+printf '{\n  "name": "y"\n}\n' > "$MF/node_modules/y/package.json"   # two packages, so grep names the file with GNU grep too
 for t in bash sh grep cat head sed; do p=$(type -P "$t" 2>/dev/null) && ln -s "$p" "$MF/mpath/$t"; done
 mf_step() { # mf_step FILE N: the step's code block, run in the fixture on that PATH; its output in $T/mf.out
   kv_step "$1" "$2" > "$T/mf-step.sh"
