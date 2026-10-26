@@ -671,6 +671,11 @@ commands/hunt.md	Give each runner call (`run.sh`, `target.sh`) the Bash tool's l
 commands/respond.md	Give each runner call (`run.sh`, `target.sh`) the Bash tool's longest timeout, in the
 PINS
 
+# Each command's resume text says how to answer the prompt its re-invocation brings.
+for f in commands/*.md; do
+  if grep -qF -- 'tell the human to answer "Yes", not "don'"'"'t ask again"' "$f"; then ok "$f: the resume text names the answer"
+  else bad "P $f: the resume text does not tell the human to answer \"Yes\", not \"don't ask again\""; fi
+done
 # run.sh --crate reads its inputs from arguments only, so no body names the environment form of a PoC run.
 for f in commands/*.md agents/*.md skills/*/SKILL.md SKILL.md; do
   [ -f "$f" ] || continue

@@ -92,9 +92,12 @@ as `auditor:respond --resume <step> incident_<n>` followed by the lead and the
 answers, `<step>` being the step you go on with (`1` once the human names the run
 directory to reuse, `3` after a yes to a collection, `5` after the mode), and do
 that step's work in the same turn. A resumed invocation adopts that run directory
-and never repeats a finished step. A `claude -p` run is one turn with no replies,
-and a call that would ask is denied there: pass each denied call, and the gap it
-leaves, to the agent for the ledger and the plan.
+and never repeats a finished step. That invocation asks:
+tell the human to answer "Yes", not "don't ask again", which saves a rule into the
+audited tree's `.claude/settings.local.json`, a file the next run's step 0 refuses.
+A `claude -p` run is one turn with no replies, and a call that would ask is denied
+there: pass each denied call, and the gap it leaves, to the agent for the ledger and
+the plan.
 Run any python you point at the corpus as `python3 -I`, so no module from the
 working directory or `PYTHONPATH` can stand in for the stdlib; the bundled recipes
 run directly by their path, in the fork, where their shebang does the same.

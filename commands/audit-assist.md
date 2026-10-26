@@ -53,7 +53,7 @@ At **every checkpoint**, surface a compact status and then **wait for the human*
 
 Fold the human's answers back in, re-synthesize, and continue.
 
-**Each checkpoint ends the turn.** This command's pre-approvals last for the turn that invoked it: Claude Code clears them at the user's next message, and a turn that a background agent's or background command's completion notice starts has none, so spawn every agent in the foreground. When the flow continues after the human answers a checkpoint, first invoke this command again through the Skill tool as `auditor:audit-assist --resume <checkpoint> audit_<n>`, with the answers (`<checkpoint>` is `1`, `2`, `3`, `3b` or `4`, the one just answered). Then do the next phase's work in that turn. A resumed invocation never repeats finished steps.
+**Each checkpoint ends the turn.** This command's pre-approvals last for the turn that invoked it: Claude Code clears them at the user's next message, and a turn that a background agent's or background command's completion notice starts has none, so spawn every agent in the foreground. When the flow continues after the human answers a checkpoint, first invoke this command again through the Skill tool as `auditor:audit-assist --resume <checkpoint> audit_<n>`, with the answers (`<checkpoint>` is `1`, `2`, `3`, `3b` or `4`, the one just answered). Then do the next phase's work in that turn. A resumed invocation never repeats finished steps. That invocation asks: tell the human to answer "Yes", not "don't ask again", which saves a rule into the audited tree's `.claude/settings.local.json`, a file the next run's step 0 refuses.
 
 ## Lifecycle with checkpoints
 
