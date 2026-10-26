@@ -416,12 +416,12 @@ _______________
 ## Section 11: Audit Execution
 
 ### Q46. Where may the auditor run the project's own code?
-Building, testing or installing the project runs code the project controls — build scripts, proc-macros, test suites, `Anchor.toml` scripts, package install hooks. Asked once per audit; see `OUTPUT-RULES.md` Rule 11a.
+Building, testing or installing the project runs code the project controls — build scripts, proc-macros, test suites, `Anchor.toml` scripts, package install hooks. Asked once per audit; see `OUTPUT-RULES.md` Rule 11a. Intake writes the answer, one word, to `audit_<n>/exec-mode`. The bundled runners take the stricter of that file and `AUDITOR_EXEC_MODE` in the environment Claude Code runs in (none, then isolated, then native), and in that mode they build and test without asking again for each run. The agent can write that file, so if you choose Isolated, also set `AUDITOR_EXEC_MODE=isolated` in that environment; `AUDITOR_EXEC_MODE=none` stops every build of the project's code.
 - [ ] **Isolated** (recommended) — a container, VM, or Claude Code sandbox, with no keys or credentials mounted
 - [ ] **Native** — on the auditor's own machine (the report says so)
 - [ ] No preference — recorded as **native** (also the default when non-interactive runs leave Q46 unanswered), and the report carries that caveat
 
-> Tools that send code, dependency names or addresses to outside services (an RPC provider, a second-opinion LLM, package registries) are not gated by this answer; the report lists each one (Rule 11b).
+> Tools that send code, dependency names or addresses to outside services (an RPC provider, a second-opinion LLM, package registries) are not gated by this answer; the report lists each one (Rule 11b), and the bundled tools record theirs in the run directory's `disclosures.tsv`.
 
 ### Q47. May the auditor probe the project's own live hosts and buckets?
 DEP-072 (public cloud storage buckets) and DEP-073 (a `.git/` directory a web server exposes) can be checked against the deployed system. Asked once per audit. An unanswered Q47 counts as **no**, and so does every `/auditor:intake --auto` run.
