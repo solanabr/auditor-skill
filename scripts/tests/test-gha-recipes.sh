@@ -6,15 +6,17 @@
 #   K116-1   KV-116 Step 1 (AI-agent steps);
 #   K139-1   KV-139 Step 1 (externally triggerable workflows);
 #   K140-6   KV-140 Step 6 (Actions cache writers and restorers);
+#   K140-7a  KV-140 Step 7, first command (places that trust GitHub's OIDC issuer);
+#   K140-7b  KV-140 Step 7, second command (the subjects and claims trust policies bind);
 #   K080-8a  KV-080 Step 8, first command (jobs on runners GitHub does not host);
 #   K080-8b  KV-080 Step 8, second command (runner registrations and runner-group settings).
 # A recipe of two commands (R1) flags what the first lists and the second does not; every other line of an R
 # recipe must be an echo of a quoted marker, which the suite does not run. The suite also checks that every
 # known-vector step that repeats an R recipe carries its lines byte for byte, as one block in the same order,
-# and that no recipe flags a fixture's comment lines. R9 and the KV-080 Step 8 commands are also checked line
-# by line on their own fixtures, and the one that searches outside .github/ skips node_modules/ and
-# .terraform/. It runs R1 and K139-1 over trigger spellings built at run time, R1 over file names that hold a
-# space or a quote, and R1 over large inputs: 2,000 workflows, and two of about 1 MiB. Every command of every
+# and that no recipe flags a fixture's comment lines. R9 and the KV-080 Step 8 and KV-140 Step 7 commands are
+# also checked line by line on their own fixtures, and those that search outside .github/ skip node_modules/
+# and .terraform/. It runs R1 and K139-1 over trigger spellings built at run time, R1 over file names that hold
+# a space or a quote, and R1 over large inputs: 2,000 workflows, and two of about 1 MiB. Every command of every
 # recipe must end within 30 s on a workflow that holds one 1 MiB line of near misses. KV-020 Step 3 and KV-100
 # Step 4, which list documentation files with one recursive grep as R1 does, run over file names that hold a
 # space or a quote, and KV-100's over more than 64 KiB of names.
@@ -98,6 +100,8 @@ KV140=140-workflow-run-pwn-request-artifact-cache-poisoning.md
 KV_RECIPES="K116-1 $KV116 1 1
 K139-1 $KV139 1 1
 K140-6 $KV140 6 1
+K140-7a $KV140 7 1
+K140-7b $KV140 7 2
 K080-8a $KV080 8 1
 K080-8b $KV080 8 2"
 
@@ -111,7 +115,7 @@ R7 $KV080 2
 R7 $KV140 2
 R9 $KV080 4"
 
-IDS="R1 R2 R3 R4 R5 R6 R7 R8 R9 K116-1 K139-1 K140-6 K080-8a K080-8b"
+IDS="R1 R2 R3 R4 R5 R6 R7 R8 R9 K116-1 K139-1 K140-6 K140-7a K140-7b K080-8a K080-8b"
 
 # Fixtures each recipe must flag (two-digit prefixes, ascending). Anything else is a mismatch.
 expected() {
@@ -128,6 +132,8 @@ expected() {
     K116-1) echo "01 08 11 14 33 34 54 57 67 68 72 73" ;;
     K139-1) echo "01 02 03 04 08 10 11 14 16 17 22 23 25 26 33 40 48 49 53 55 56 58 59 62 64 65 66 69 71 74" ;;
     K140-6) echo "35 36 37 38 39 42 43 44 45" ;;
+    K140-7a) echo "80 81 82 83 84 85 93 95 96 97" ;;
+    K140-7b) echo "80 82 83 84 85 93 95 96 97" ;;
     K080-8a) echo "78 98" ;;
     K080-8b) echo "86 87 88 89 90 94" ;;
   esac
@@ -144,7 +150,26 @@ K080-8b infra/87-arc-runner-deployment.yaml 11
 K080-8b infra/88-arc-scale-set-values.yml 4
 K080-8b infra/89-runner-module.hcl 7
 K080-8b infra/90-runner-register.sh 3 5
-K080-8b infra/94-runner-group.tf.json 3 7"
+K080-8b infra/94-runner-group.tf.json 3 7
+K140-7a infra/80-oidc-aws-repo-wildcard.tf 7 11 16
+K140-7a infra/81-oidc-aws-audience-only.json 7 10
+K140-7a infra/82-oidc-azure-environment.tf 7
+K140-7a infra/83-oidc-gcp-owner.tf 13
+K140-7a infra/84-oidc-vault-workflow.tf 4 5
+K140-7a infra/85-oidc-cloudformation-default-branch.yaml 11 14 15
+K140-7a infra/93-oidc-aws-any-repository.json 7 10 11
+K140-7a infra/95-oidc-terragrunt.hcl 7
+K140-7a infra/96-oidc-pulumi.yml 12 15
+K140-7a infra/97-oidc-provider.sh 4
+K140-7b infra/80-oidc-aws-repo-wildcard.tf 17
+K140-7b infra/82-oidc-azure-environment.tf 8 14
+K140-7b infra/83-oidc-gcp-owner.tf 11 20 26
+K140-7b infra/84-oidc-vault-workflow.tf 14 15
+K140-7b infra/85-oidc-cloudformation-default-branch.yaml 15
+K140-7b infra/93-oidc-aws-any-repository.json 11
+K140-7b infra/95-oidc-terragrunt.hcl 8
+K140-7b infra/96-oidc-pulumi.yml 15
+K140-7b infra/97-oidc-provider.sh 6"
 
 # The command lines of recipe <id>.
 recipe_lines() {
@@ -250,13 +275,14 @@ while read -r id fx want; do
   else echo "FAIL $id in $fx: got lines [$got] want [$want]"; fail=1; fi
 done <<< "$LINES"
 
-# The command that searches the whole tree skips node_modules/ and .terraform/, which hold dependencies and
+# The commands that search the whole tree skip node_modules/ and .terraform/, which hold dependencies and
 # downloaded modules rather than the repository's own settings.
 excl="$work/excluded"; mkdir -p "$excl/node_modules/runner" "$excl/.terraform/modules/oidc" "$excl/infra" || exit 1
 for d in node_modules/runner .terraform/modules/oidc infra; do
-  printf 'allows_public_repositories = true\n' > "$excl/$d/main.tf"
+  printf 'allows_public_repositories = true\nidentifiers = ["token.actions.githubusercontent.com"]\nvalues = ["repo:example/app:*"]\n' \
+    > "$excl/$d/main.tf"
 done
-for id in K080-8b; do
+for id in K080-8b K140-7a K140-7b; do
   got=$(run_recipe "$excl" "$(recipe_lines "$id")" | sed 's#^\./##; s#:.*##' | sort -u | tr '\n' ' ')
   if [ "$got" = "infra/main.tf " ]; then echo "ok   $id skips node_modules/ and .terraform/"
   else echo "FAIL $id outside node_modules/ and .terraform/: got [$got] want [infra/main.tf ]"; fail=1; fi

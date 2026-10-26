@@ -83,16 +83,25 @@ grep -rnE --include='*.yml' --include='*.yaml' 'actions/cache|Swatinem/rust-cach
 - ✅ PASS: release, publish and deploy jobs restore no Actions cache that a default-branch-context job running untrusted code can write. Those writers include `pull_request_target`, `issue_comment`, `issues`, `discussion*`, `workflow_run` and agent jobs.
 - ❌ FAIL: a release job restores a cache key that such a job also saves. The 10 GB eviction lets the writer replace existing entries (Ultralytics, Clinejection).
 
-**Step 7: What the privileged job can reach**
+**Step 7: What the privileged job can reach, and the cloud trust policies its OIDC token meets**
+```
+grep -rnE --exclude-dir=node_modules --exclude-dir=.terraform --include='*.tf' --include='*.hcl' --include='*.json' --include='*.yml' --include='*.yaml' --include='*.sh' '^[^#]*token\.actions\.githubusercontent\.com' .
+grep -rnE --exclude-dir=node_modules --exclude-dir=.terraform --include='*.tf' --include='*.hcl' --include='*.json' --include='*.yml' --include='*.yaml' --include='*.sh' '^[^#]*(repo:[A-Za-z0-9*?._-]*[/*?]|attribute\.repository(_owner)?/|attribute_condition|bound_claims|job_workflow_ref|include_claim_keys)' .
+```
 - A composite action cannot read `secrets.*`, so any secret it uses arrives as an input value: trace it from the calling step's `with:`. Under `secrets: inherit` the called reusable workflow receives every caller secret without listing any; a workflow it calls in turn gets them only if it passes them on.
+- The first command lists each place in the infrastructure code that trusts GitHub's OIDC issuer: an AWS OIDC provider and its role conditions, a GCP workload identity provider, an Azure federated credential, a Vault JWT backend. The second lists the subjects and claims those policies bind. Read each policy whole. Trust policies often live in an infrastructure repository: run both there too when the owner names one.
+- A job's token carries the subject `repo:<org>/<repo>:environment:<name>` when the job names an environment, `repo:<org>/<repo>:pull_request` on a pull request, and `repo:<org>/<repo>:ref:<ref>` otherwise. Comment-, issue-, discussion- and `workflow_run`-triggered jobs that name no environment run on the default branch, so they mint the same subject as a push to it (`references/vuln-classes/github-actions.md` §5.6).
 - ✅ PASS:
   - deploy, upgrade-authority and publish secrets sit in an `environment:` with required reviewers (since 2025-12-08 branch rules alone do not fence `pull_request_target`);
-  - any cloud OIDC trust policy for this repository binds `environment`, `event_name` or `job_workflow_ref`, not `repo:<org>/<repo>:ref:refs/heads/<default>` alone, which comment-, issue- and `workflow_run`-triggered jobs also mint.
-- ❌ FAIL: a job from Steps 2–6 holds the deploy keypair, the upgrade authority, a publish token or an OIDC role, with no reviewer gate between it and the fork-controlled input.
-- ⚠️ PARTIAL: reviewers or the trust policy are hosted settings the source does not show. Name them for the owner to confirm.
+  - each trust policy checks the audience and binds one repository plus an environment with required reviewers (`repo:<org>/<repo>:environment:<name>`), the event (`event_name`, such as a `push` to a protected branch), or one reviewed workflow at a protected ref (`job_workflow_ref`).
+- ❌ FAIL:
+  - a job from Steps 2–6 holds the deploy keypair, the upgrade authority, a publish token or an OIDC role, with no reviewer gate between it and the fork-controlled input;
+  - a trust policy binds no subject or claim, or the subject `repo:*`, so a token from any repository on GitHub passes (an AWS condition on `:aud` alone, say);
+  - a role that can deploy, sign or publish accepts every repository of an owner (`repo:<org>/*`, a GCP `attribute.repository_owner/<org>` member), `repo:<org>/<repo>:*` (any ref, event or environment), `repo:<org>/<repo>:pull_request`, or `repo:<org>/<repo>:ref:refs/heads/<default>` alone.
+- ⚠️ PARTIAL: reviewers, a trust policy kept outside this repository, and a customized subject claim (`include_claim_keys`, set for the repository or organization through GitHub's OIDC customization API) are hosted settings the source does not show. Name them for the owner to confirm.
 
 **Overall verdict:**
 - ✅: no privileged-trigger job checks out, builds, sources or trusts fork-controlled code, artifacts, env values or caches, and release secrets sit behind required reviewers
 - ⚠️: fork content is handled only as data, but a hardening gap remains: a pre-guard checkout pin, a cache shared with a non-release job, unconfirmed reviewers, or an OIDC trust policy that has not been seen
-- ❌: a privileged job executes or trusts fork-controlled bytes (checkout, build, artifact, env file or cache) with a write scope, secret, OIDC token or deploy path in reach
+- ❌: a privileged job executes or trusts fork-controlled bytes (checkout, build, artifact, env file or cache) with a write scope, secret, OIDC token or deploy path in reach; or a cloud trust policy accepts a token from any repository on GitHub, or, for a role that can deploy, sign or publish, from every repository of the owner or with the default-branch subject alone
 - N/A: no `pull_request_target` or `workflow_run` workflow, and no comment-triggered job that fetches PR code

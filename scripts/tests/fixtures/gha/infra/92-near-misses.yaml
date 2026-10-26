@@ -1,5 +1,11 @@
-# Fixture (near misses for KV-080 Step 8): Kubernetes settings that resemble a runner's; the step lists none of
-# them.
+# Fixture (near misses for KV-080 Step 8 and KV-140 Step 7): Kubernetes, application and GitLab settings that
+# resemble them; neither step lists any of them.
 resources:
   limits:
     ephemeral-storage: 1Gi
+repo: example/app
+repository: example/app
+oidc:
+  issuer: https://gitlab.example.invalid
+  subject: project_path:example/app:ref_type:branch:ref:main
+  # subject: repo:example/app:*

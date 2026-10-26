@@ -317,8 +317,9 @@ producer; a crossing that has neither is the finding.
 - **OIDC subjects.** A job that names no environment and runs on a comment, issue, discussion or `workflow_run` event
   has the default branch as its ref, so it requests the same OIDC subject as a push to that branch
   (`repo:<org>/<repo>:ref:refs/heads/<default>`). A cloud trust policy (a KMS signer holding a deploy key, say) must
-  also bind `environment`, `event_name` or `job_workflow_ref`. The policy is hosted: grade it `[PARTIAL]` until it has
-  been seen.
+  also bind `environment`, `event_name` or `job_workflow_ref`. KV-140 Step 7 finds the policies in the infrastructure
+  code and grades them (§7.4); a policy kept outside the repository is hosted: grade it `[PARTIAL]` until it has been
+  seen.
 
 ---
 
@@ -432,7 +433,15 @@ self-hosted runner and reached release credentials.
   rest: the group's repository and workflow access, how each runner was registered, and the fork pull request approval
   policy. They stay `[PARTIAL]` until seen (§0).
 
-**7.4 OIDC and cloud deploys.** DEP-084 and §5.6.
+**7.4 OIDC trust policies (KV-140 Step 7, DEP-084, §5.6).** A cloud role that trusts GitHub's OIDC issuer is as narrow
+as the subject and claims it binds. Any job of any repository on GitHub can mint a token from that issuer, for any
+audience, so a policy that checks only the audience trusts all of them, and one that binds `repo:<org>/*` trusts every
+repository of the owner. A role that can deploy, sign or publish binds one repository plus an environment with required
+reviewers, the event (`event_name`), or one reviewed workflow at a protected ref (`job_workflow_ref`);
+`repo:<org>/<repo>:ref:refs/heads/<default>` alone also admits the comment-, issue-, discussion- and
+`workflow_run`-triggered jobs of §5.6. A repository or organization can customize the subject claim
+(`include_claim_keys`), which changes the string a policy must match. A policy kept outside the repository, and the
+subject template, are hosted settings: `[PARTIAL]` until seen.
 
 **7.5 Permissions and secrets in logs.** Declare `permissions:` explicitly per workflow or job (KV-080 step 5);
 repositories created before 2023-02-02 may still default to read-write (`[PARTIAL]` until the setting is seen). Secrets
