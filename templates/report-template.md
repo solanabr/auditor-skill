@@ -119,9 +119,9 @@
 | 16 | Formal Verification & Testing | 73 | | | | | % |
 | 17 | Logging, Monitoring & IR | 65 | | | | | % |
 | 18 | Privacy, Compliance & Change Mgmt | 60 | | | | | % |
-| 19 | AI Agent Security | 35 | | | | | % |
+| 19 | AI Agent Security | 39 | | | | | % |
 | 20 | Rust Off-Chain Services | 23 | | | | | % |
-| | **Total** | **1452** | | | | | **%** |
+| | **Total** | **1456** | | | | | **%** |
 
 > Note: Only applicable checklists are counted in totals. Non-applicable checklists are excluded entirely.
 
@@ -324,6 +324,13 @@
 ```
 [PASS]      PC-001: {reason}
 ...through PC-060
+```
+
+### Checklist 19 — AI Agent Security
+
+```
+[PASS]      AI-001: {reason}
+...through AI-039
 ```
 
 ### Checklist 20 — Rust Off-Chain Services

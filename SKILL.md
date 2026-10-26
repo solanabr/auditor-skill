@@ -1,6 +1,6 @@
 ---
 name: auditor-skill
-description: "**AUDIT SKILL** — Comprehensive on-chain Solana program auditor and full-stack security review for ANY programming language. USE FOR: auditing Solana/Anchor programs, reviewing smart contract security, checking for vulnerabilities (missing signers, unchecked accounts, arithmetic overflow, CPI attacks, PDA confusion, type cosplay, reinitialization, flash loan exploits, MEV, governance backdoors, timelock bypass), auditing TypeScript/Python/Go/Java/Ruby/PHP/any language, backend/frontend code review, supply chain safety, CI/CD and GitHub Actions workflow security (comment-triggered commands, pull_request_target / workflow_run pwn requests, AI agents in CI), operational security (multisig, upgrade authority, deploy process), formal verification and testing quality, logging/monitoring/incident response, post-incident threat hunting and incident workup from transaction history and program logs (/auditor:hunt, /auditor:respond), data privacy/GDPR/SOC2 compliance, change management, penetration testing methodology, AI/ML security, generating audit reports, running full repository audits. Severity 1-10 scale, 20 micro-checklist domains with 1452 individual verification items, plus 140 known attack vectors, chunked file-by-file execution, item-by-item verdicts. Benchmarked against CertiK (crypto) and EY/SOC2/COBIT (traditional) audit standards. DO NOT USE FOR: writing new features, general coding, non-security reviews."
+description: "**AUDIT SKILL** — Comprehensive on-chain Solana program auditor and full-stack security review for ANY programming language. USE FOR: auditing Solana/Anchor programs, reviewing smart contract security, checking for vulnerabilities (missing signers, unchecked accounts, arithmetic overflow, CPI attacks, PDA confusion, type cosplay, reinitialization, flash loan exploits, MEV, governance backdoors, timelock bypass), auditing TypeScript/Python/Go/Java/Ruby/PHP/any language, backend/frontend code review, supply chain safety, CI/CD and GitHub Actions workflow security (comment-triggered commands, pull_request_target / workflow_run pwn requests, AI agents in CI), operational security (multisig, upgrade authority, deploy process), formal verification and testing quality, logging/monitoring/incident response, post-incident threat hunting and incident workup from transaction history and program logs (/auditor:hunt, /auditor:respond), data privacy/GDPR/SOC2 compliance, change management, penetration testing methodology, AI/ML security, generating audit reports, running full repository audits. Severity 1-10 scale, 20 micro-checklist domains with 1456 individual verification items, plus 140 known attack vectors, chunked file-by-file execution, item-by-item verdicts. Benchmarked against CertiK (crypto) and EY/SOC2/COBIT (traditional) audit standards. DO NOT USE FOR: writing new features, general coding, non-security reviews."
 allowed-tools:
   - Read
   - Grep
@@ -27,7 +27,7 @@ allowed-tools:
 # auditor-skill — Multi-Language Security Audit Skill
 
 > **Version:** 7.6\
-> **Items:** 1,452 across 20 checklists (+ 140 known vectors)\
+> **Items:** 1,456 across 20 checklists (+ 140 known vectors)\
 > **Languages:** Rust, TypeScript, Python, Go, Java, Ruby, PHP, + any via general checklist  
 > **Severity:** 1–10 numeric scale  
 > **Benchmarked against:** CertiK (crypto audit), EY/SOC 2/COBIT (traditional IT audit), OWASP Top 10:2025  
@@ -120,7 +120,7 @@ Incidents use their own urgency vocabulary (immediate / urgent / routine, [refer
 Repositories can be 10 files or 10,000 files. The auditor reads files **one at a time**, never guesses, and saves checkpoints between chunks. See [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 3.
 
 ### 2. Every Item Gets a Verdict
-All in-scope checklist items (up to 1,452) and all in-scope known vectors (up to 140) appear in the report with explicit verdicts. Nothing is silently skipped. See [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 4.
+All in-scope checklist items (up to 1,456) and all in-scope known vectors (up to 140) appear in the report with explicit verdicts. Nothing is silently skipped. See [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 4.
 
 ### 3. Executive Summary First
 Every report starts with a plain-language summary: what was audited, what was found, whether it's safe to deploy. See [OUTPUT-RULES.md](OUTPUT-RULES.md) Rule 2.
@@ -221,9 +221,9 @@ Authoritative mapping → **Scope-Gated Loading, Step 2** (scope table) above. D
 | 16 | Formal Verification & Testing | 73 | Universal | [16-formal-verification-testing.md](checklists/16-formal-verification-testing.md) |
 | 17 | Logging, Monitoring & IR | 65 | Universal | [17-logging-monitoring-incident-response.md](checklists/17-logging-monitoring-incident-response.md) |
 | 18 | Privacy, Compliance & Change Mgmt | 60 | Universal | [18-privacy-compliance-change-management.md](checklists/18-privacy-compliance-change-management.md) |
-| 19 | AI Agent Security (Solana × AI) | 35 | AI / Agent | [19-ai-agent-security.md](checklists/19-ai-agent-security.md) |
+| 19 | AI Agent Security (Solana × AI) | 39 | AI / Agent | [19-ai-agent-security.md](checklists/19-ai-agent-security.md) |
 | 20 | Rust Off-Chain Services | 23 | Off-chain | [20-rust-offchain-services.md](checklists/20-rust-offchain-services.md) |
-| | **Total** | **1,452** | | |
+| | **Total** | **1,456** | | |
 
 ---
 
