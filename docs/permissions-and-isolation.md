@@ -65,7 +65,7 @@ What happens to the calls in the table depends on the permission mode:
 
 - **Manual mode** asks you.
 - **Auto mode**, the default for terminal sessions in recent Claude Code, sends them to its classifier. The commands' own rules are decided first, so the bundled steps run without the classifier.
-- **`claude -p`** with no permission mode set starts in Manual mode, and denies every call that would ask. The flow records each denied step as not run, under Coverage & Limitations.
+- **`claude -p`** with no permission mode set starts in Manual mode (Claude Code 2.1.302 and later), and denies every call that would ask. The flow records each denied step as not run, under Coverage & Limitations.
 
 ## Turns and resuming
 
