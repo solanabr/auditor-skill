@@ -125,7 +125,7 @@ git submodule update --init --depth 1 -- vendor/trailofbits
 The native corpus works fully **without** it (it falls back to grep-based checks and notes where deeper tooling would run). With the submodule initialized, the auditor delegates to the vendored tools per [`references/orchestration/boundary-map.md`](references/orchestration/boundary-map.md). For the optional token-efficiency tools (`audit-scan` pre-scanner + `audit-mem` memory), build the Rust CLIs (`<auditor-skill root>` is where you installed auditor-skill):
 
 ```bash
-cd "<auditor-skill root>/tools/auditor-tools" && cargo build --release
+cd "<auditor-skill root>/tools/auditor-tools" && cargo build --release --locked
 ```
 
 Build them again after every update, with `cargo build --release --locked` in the same directory: the flows call them with a contract marker (`--contract=1`) that an older build refuses, and until then they go on as if the tools were absent. The auditor runs them, the scripts and the Trail of Bits plugins by absolute path from the installation, never by a path relative to the project it audits ([OUTPUT-RULES.md Rule 11e](OUTPUT-RULES.md#11e--bundled-paths)). If the installation sits inside the repository under audit anyway (such as `.claude/skills/auditor-skill`, where `install.sh` without a path installed through 7.6.0), the build runs inside that tree, where cargo and rustup read its `.cargo/config*` and `rust-toolchain*` from every parent directory: build there only in [Rule 11a](OUTPUT-RULES.md#rule-11-operating-safety) isolated mode, or delete that copy and install a fresh one outside (the plugin, or Option 2 with the path `~/.claude/skills/auditor-skill`) and build that one. Never move or update a copy you find inside a repository ([Installation](#installation)).
@@ -242,7 +242,7 @@ auditor-skill/
 ├── skills/
 │   └── dnr-analyze/         ← auditor:dnr-analyze: one D&R analysis phase, run as a fork of incident-responder
 │
-├── tools/auditor-tools/     ← Rust CLIs (cargo build --release)
+├── tools/auditor-tools/     ← Rust CLIs (cargo build --release --locked)
 │   ├── audit-scan           ← deterministic pre-scan → JSON risky-surface map (~$0)
 │   ├── audit-mem            ← SQLite cross-audit memory (dedup · regression · FP-suppression)
 │   └── audit-logs           ← the D&R analysis recipes as one offline binary (cargo build --release --locked)

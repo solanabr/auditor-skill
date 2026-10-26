@@ -34,7 +34,7 @@ The corpus works **fully without it**: agents fall back to `discovery/grep-comma
 Two binaries cut audit cost and add cross-audit memory. Build once (`<auditor-skill root>` is where you installed it, e.g. `~/.claude/skills/auditor-skill`):
 
 ```bash
-cd "<auditor-skill root>/tools/auditor-tools" && cargo build --release
+cd "<auditor-skill root>/tools/auditor-tools" && cargo build --release --locked
 # binaries: target/release/audit-scan  and  target/release/audit-mem
 cargo test   # optional: scan_fixture + mem_roundtrip
 ```
