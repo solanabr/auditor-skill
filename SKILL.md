@@ -10,6 +10,8 @@ allowed-tools:
   - 'Bash("${CLAUDE_SKILL_DIR}/scripts/preflight.sh" *)'
   - 'Bash("${CLAUDE_SKILL_DIR}/scripts/rundir.sh" *)'
   - 'Bash("${CLAUDE_SKILL_DIR}/scripts/git-ro.sh" *)'
+  - 'Bash("${CLAUDE_SKILL_DIR}/scripts/recipes/lock-delta.sh" *)'
+  - 'Bash("${CLAUDE_SKILL_DIR}/scripts/recipes/web3js-history.sh" *)'
   - 'Bash("${CLAUDE_SKILL_DIR}/tools/auditor-tools/target/release/audit-scan" --contract=1 *)'
   - 'Bash("${CLAUDE_SKILL_DIR}/tools/auditor-tools/target/release/audit-mem" init --contract=1 *)'
   - 'Bash("${CLAUDE_SKILL_DIR}/tools/auditor-tools/target/release/audit-mem" warm --contract=1 *)'

@@ -11,6 +11,8 @@ allowed-tools:
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh" *)'
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" *)'
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/git-ro.sh" *)'
+  - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/recipes/lock-delta.sh" *)'
+  - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/recipes/web3js-history.sh" *)'
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release/audit-scan" --contract=1 *)'
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release/audit-mem" warm --contract=1 *)'
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release/audit-mem" regressions --contract=1 *)'
