@@ -46,7 +46,7 @@ Each tool confines itself to the directory it starts in, so the flows run every 
 
 Each decision is asked once, in the flow, and not again as a permission prompt:
 
-- **Running the project's code** is your answer to `QUESTIONS.md` Q46 at intake. In the mode you chose, the runners build and test without asking again for each run. `/auditor:audit-cycle` asks no question: it records native mode and, unless `AUDITOR_EXEC_MODE` is stricter, builds and tests the project on your machine.
+- **Running the project's code** is your answer to `QUESTIONS.md` Q46 at intake. In the mode you chose, the runners build and test without asking again for each run. A run directory this session did not make holds an earlier run's answers, so a flow asks Q46 again before a step uses its `exec-mode`. `/auditor:audit-cycle` asks no question: it records native mode and, unless `AUDITOR_EXEC_MODE` is stricter, builds and tests the project on your machine.
 - **An RPC collection** is your yes to the addresses, time window, caps and call estimate that `/auditor:hunt` and `/auditor:respond` show you (`--collect` in a non-interactive run). The collector then runs with exactly those values.
 - **An outside service** is listed in the report, not gated (Rule 11b).
 
