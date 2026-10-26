@@ -710,6 +710,10 @@ commands/hunt.md	the Bash tool's longest timeout, in the foreground, never with 
 commands/respond.md	Give each runner call (`run.sh`, `target.sh`) and the `git-ro.sh copy` call
 commands/respond.md	the Bash tool's longest timeout, in the foreground, never with `run_in_background`:
 commands/threat-model.md	Give it the Bash tool's longest timeout, in the foreground, never with `run_in_background`: on a long history it can outlast the two-minute default
+commands/audit.md	A reused directory's `exec-mode` and its `intake.md` §5, §6 and §8 are an earlier run's answers: ask `QUESTIONS.md` Q46 and Q47 again, confirm §5 and §6 with the human, and write the answers in their place before a step uses them.
+commands/threat-model.md	A reused directory's `exec-mode` and its `intake.md` §5, §6 and §8 are an earlier run's answers: ask `QUESTIONS.md` Q46 and Q47 again, confirm §5 and §6 with the human, and write the answers in their place before a step uses them.
+commands/hunt.md	directory's `exec-mode` is an earlier run's answer: ask for the mode again,
+commands/respond.md	run's answer: ask for the mode again, as step 5 does, before a runner uses it.
 PINS
 
 # Each command's resume text, and the root SKILL.md's, says how to answer the prompt its re-invocation brings.

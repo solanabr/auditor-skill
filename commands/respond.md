@@ -137,7 +137,8 @@ Code asks about a shell read outside the working directory.
      64, one `rundir: refused: …` line), stop and show the line. Reuse an existing
      `incident_*` only after the human confirms which one, and only when
      `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" check incident_<n>` prints
-     `ok incident_<n>`.
+     `ok incident_<n>`. A reused incident directory's `exec-mode` is an earlier
+     run's answer: ask for the mode again, as step 5 does, before a runner uses it.
    - For an `INC-<n>.<k>` lead, the lead names the `incident_<n>/` to reuse (naming
      it is the confirmation): adopt it under that rule; the agent works into its
      `INCIDENTS.json`, since minting a fresh directory would orphan the incident.

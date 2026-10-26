@@ -79,7 +79,7 @@ Collector flags (`references/audit-lifecycle/threat-model-bootstrap.md` §2 has 
 - Modes: `--offline`, no network; `--detect`, T3/T4 only, writes nothing; `--network`, fetches the given https URLs and reads paths outside the working directory.
 - `--cap <n>` (default 60 rows), `--small <n>` (40 lines), `--fix-ceiling <n>` (300 lines): volume.
 
-`audit_<n>` is this audit's directory from intake, made by `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" new audit`. Reuse an existing `audit_*` only when `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" check audit_<n>` prints `ok audit_<n>`, after the human confirms which one. The collector exits 2 on any `--out` but `audit_<n>/bootstrap`, and on a run directory that is or holds a symbolic link, that git tracks in any letter case, that has no `.gitignore` holding `*`, or that git or find cannot check.
+`audit_<n>` is this audit's directory from intake, made by `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" new audit`. Reuse an existing `audit_*` only when `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" check audit_<n>` prints `ok audit_<n>`, after the human confirms which one. A reused directory's `exec-mode` and its `intake.md` §5, §6 and §8 are an earlier run's answers: ask `QUESTIONS.md` Q46 and Q47 again, confirm §5 and §6 with the human, and write the answers in their place before a step uses them. The collector exits 2 on any `--out` but `audit_<n>/bootstrap`, and on a run directory that is or holds a symbolic link, that git tracks in any letter case, that has no `.gitignore` holding `*`, or that git or find cannot check.
 
 Its `--detect` and `--offline` forms run without a prompt; `--network` always prompts.
 

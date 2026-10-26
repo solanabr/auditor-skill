@@ -141,7 +141,9 @@ Code asks about a shell read outside the working directory.
      run directory), stop and show the line. Reuse an existing `incident_*` only
      after the human confirms which one, and only when
      `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" check incident_<n>` prints
-     `ok incident_<n>` (`--fresh` always creates a new one).
+     `ok incident_<n>` (`--fresh` always creates a new one). A reused incident
+     directory's `exec-mode` is an earlier run's answer: ask for the mode again,
+     as step 6 does, before a runner uses it.
    - From here on, every path this command passes on and every phase brief names
      that one directory, spelled exactly as `rundir.sh` printed it. Never write into
      another `incident_*`, one in another letter case, or one git tracks. Every
