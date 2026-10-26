@@ -149,8 +149,9 @@ already captured.
 - **Approving the skill.** A command's pre-approvals last for the turn that
   started it. When the command goes on after one of your replies (a yes to a
   collection, say), it first invokes itself again through the Skill tool
-  (`auditor:hunt --resume <step>`, or `auditor:respond …`), and each analysis phase
-  runs `auditor:dnr-analyze`; Manual mode asks about each. To skip that, add
+  (`auditor:hunt --resume <step>`, or `auditor:respond …`), which gives the new
+  turn the command's pre-approvals again, `auditor:dnr-analyze` among them; Manual
+  mode asks about that resume call. To skip that, add
   `"Skill(auditor:hunt *)"`, `"Skill(auditor:respond *)"` and
   `"Skill(auditor:dnr-analyze *)"` to `permissions.allow` in your user settings
   (`~/.claude/settings.json`), or the whole list in
