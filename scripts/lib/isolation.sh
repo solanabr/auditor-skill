@@ -108,6 +108,12 @@
 #   iso_copy_new <file> <path>   copies the regular file <file>, never a symbolic link, into <path>, which
 #                                must not exist (a link counts), through the descriptor opened at its
 #                                creation; status 1 when it cannot.
+#   iso_incident_class <INCIDENTS.json> [<INC-n.k>]
+#                                sets ISO_CLASS to the root_cause_class that file (an absolute path) records
+#                                for that incident, or, with no id, to supply_chain_or_ci when any incident has
+#                                it and to "other" otherwise; status 3 with ISO_CLASS the reason when the file,
+#                                an incident or a class cannot be read (references/detection-response/
+#                                incidents-schema.md). python3 starts from /, as for the self-check.
 # Needs bash >= 3.2, python3 (the self-check, the keypair and the watchdog), env, mkdir, mktemp and cat.
 
 # What iso_credentials, iso_cred_names, iso_homes and iso_env run, with python3 -I so that no module comes
@@ -620,4 +626,60 @@ iso_copy_new() { # iso_copy_new <file> <path>
   [ -f "$1" ] && [ ! -L "$1" ] || return 1
   if [ -e "$2" ] || [ -L "$2" ]; then return 1; fi
   ( set -C; exec 9>"$2" && cat -- "$1" >&9 ) 2>/dev/null
+}
+
+# What iso_incident_class runs, with python3 -I: "<INCIDENTS.json> [<INC-n.k>]" prints that incident's
+# root_cause_class, or with no id supply_chain_or_ci when any incident has it and "other" otherwise; exit 3
+# with the reason when the file, an incident or a class cannot be read.
+ISO_INCIDENT_PY='import json, os, stat, sys
+
+CLASSES = ("code_flaw", "key_compromise", "oracle_or_dependency", "economic_design", "off_chain",
+           "supply_chain_or_ci", "unknown")
+LIMIT = 4 * 1024 * 1024
+
+
+def say(text, status):
+    print(text)
+    sys.exit(status)
+
+
+path, wanted = sys.argv[1], sys.argv[2]
+try:
+    st = os.lstat(path)
+except FileNotFoundError:
+    say("is missing", 3)
+except OSError:
+    say("cannot be read", 3)
+if not stat.S_ISREG(st.st_mode):
+    say("is not a regular file", 3)
+if st.st_size > LIMIT:
+    say("is larger than 4 MiB", 3)
+try:
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NOCTTY", 0))
+    with os.fdopen(fd, "rb") as f:
+        data = json.loads(f.read(LIMIT + 1).decode("utf-8"))
+except (OSError, UnicodeDecodeError, ValueError, RecursionError):
+    say("cannot be read as JSON", 3)
+incidents = data.get("incidents") if isinstance(data, dict) else None
+if not isinstance(incidents, list):
+    say("holds no incidents list", 3)
+incidents = [i for i in incidents if isinstance(i, dict)]
+if wanted:
+    incidents = [i for i in incidents if i.get("id") == wanted]
+    if not incidents:
+        say("records no incident %s" % wanted, 3)
+    if len(incidents) > 1:
+        say("records %s more than once" % wanted, 3)
+if not incidents:
+    say("records no incident", 3)
+for i in incidents:
+    if i.get("root_cause_class") not in CLASSES:
+        say("gives %s no root_cause_class from incidents-schema.md" % (wanted or "an incident"), 3)
+if wanted:
+    say(incidents[0]["root_cause_class"], 0)
+say("supply_chain_or_ci" if any(i["root_cause_class"] == "supply_chain_or_ci" for i in incidents) else "other", 0)
+'
+
+iso_incident_class() { # iso_incident_class <INCIDENTS.json> [<INC-n.k>]
+  ISO_CLASS=$(cd / && exec python3 -I -c "$ISO_INCIDENT_PY" "$1" "${2:-}")
 }

@@ -70,9 +70,11 @@
 #     installation's template never builds itself;
 #   * an incident's crate runs only once incident_<n>/INCIDENTS.json records its
 #     root_cause_class (a file, an incident or a class that cannot be read stops it,
-#     a nested or large file included); supply_chain_or_ci refuses native mode, a run
-#     without --vulnerable-so, path and git dependencies and sources outside the crate,
-#     and a build that compiled code from outside it;
+#     a nested or large file included), read by scripts/lib/isolation.sh's
+#     iso_incident_class, whose python3 starts from /, as each one run.sh starts before
+#     it leaves the working directory does; supply_chain_or_ci refuses native mode, a
+#     run without --vulnerable-so, path and git dependencies and sources outside the
+#     crate, and a build that compiled code from outside it;
 #   * the isolation self-check (scripts/lib/isolation.sh): in isolated mode, a fake HOME
 #     holding any credential it reads stops the run before anything is copied, and so
 #     does a check that cannot finish; in native mode it is a warning. Through a driver,
@@ -1898,6 +1900,14 @@ for sh in "${SHELLS[@]}"; do
   [ "$rc" = 0 ] && [ -z "$out" ] && ok "iso_credentials ($sh): a relative KUBECONFIG is taken from /, so the tree's kube.cfg does not count" \
     || bad "iso_credentials ($sh), a relative KUBECONFIG: $rc '$out'"
 done
+# run.sh --crate for an incident reads INCIDENTS.json with the same python3 from / (iso_incident_class), and
+# every other python3 it starts before it leaves the working directory starts from / too.
+mk_crate "$WT/incident_1/poc/INC-1.1"; incidents code_flaw; printf 'from-the-tree\n' > "$WT/.python-version"; rm -f "$T/pv-picked"
+code="$(ngate AUDITOR_EXEC_MODE=native PATH="$PVBIN:$SP" -- --crate incident_1/poc/INC-1.1 "${IVULN[@]}")"
+[ "$code" = 0 ] && grep -qF '>> incident INC-1.1: root_cause_class code_flaw (incident_1/INCIDENTS.json)' "$T/out" && [ ! -e "$T/pv-picked" ] \
+  && ok "run.sh --crate for an incident: the incident check and the self-check run python3 from /, so the working directory's .python-version picks no interpreter" \
+  || { bad "run.sh --crate for an incident with a .python-version: exit $code, python3 ran in: $(cat "$T/pv-picked" 2>/dev/null)"; cat "$T/out" >&2; }
+rm -rf "$IJ" "$WT/incident_1/poc/INC-1.1" "$WT/.python-version"
 
 # scripts/runner/probe.sh: fixed version queries from a scratch directory, in the cleaned environment
 # with the real HOME, the proxy at a closed port, standard input closed; absent and unusable tools; the

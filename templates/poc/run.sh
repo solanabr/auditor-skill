@@ -442,51 +442,6 @@ exec_mode() {
   fi
 }
 
-# What incident_rule runs, with python3 -I: the root_cause_class incident_<n>/INCIDENTS.json
-# records for one incident (references/detection-response/incidents-schema.md), or, with
-# exit 3, why it cannot say.
-INCIDENT_PY='import json, os, stat, sys
-
-CLASSES = ("code_flaw", "key_compromise", "oracle_or_dependency", "economic_design", "off_chain",
-           "supply_chain_or_ci", "unknown")
-LIMIT = 4 * 1024 * 1024
-
-
-def say(text, status):
-    print(text)
-    sys.exit(status)
-
-
-path, wanted = sys.argv[1], sys.argv[2]
-try:
-    st = os.lstat(path)
-except FileNotFoundError:
-    say("is missing", 3)
-except OSError:
-    say("cannot be read", 3)
-if not stat.S_ISREG(st.st_mode):
-    say("is not a regular file", 3)
-if st.st_size > LIMIT:
-    say("is larger than 4 MiB", 3)
-try:
-    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NOCTTY", 0))
-    with os.fdopen(fd, "rb") as f:
-        data = json.loads(f.read(LIMIT + 1).decode("utf-8"))
-except (OSError, UnicodeDecodeError, ValueError, RecursionError):
-    say("cannot be read as JSON", 3)
-incidents = data.get("incidents") if isinstance(data, dict) else None
-if not isinstance(incidents, list):
-    say("holds no incidents list", 3)
-found = [i for i in incidents if isinstance(i, dict) and i.get("id") == wanted]
-if not found:
-    say("records no incident %s" % wanted, 3)
-if len(found) > 1:
-    say("records %s more than once" % wanted, 3)
-if found[0].get("root_cause_class") not in CLASSES:
-    say("gives %s no root_cause_class from incidents-schema.md" % wanted, 3)
-say(found[0]["root_cause_class"], 0)
-'
-
 # incident_rule: a crate at incident_<n>/poc/INC-<n>.<k> runs only once incident_<n>/INCIDENTS.json
 # records that incident's root_cause_class (OUTPUT-RULES.md Rule 11a). supply_chain_or_ci refuses
 # native mode and a run without --vulnerable-so, and sets SUPPLY_CHAIN for the checks of the
@@ -496,7 +451,8 @@ incident_rule() {
   case "${CRATE_RUN}" in incident_*) ;; *) return 0 ;; esac
   command -v python3 >/dev/null 2>&1 ||
     blocker "python3 is not on PATH, so run.sh cannot read the root_cause_class of ${id} in ${json} (OUTPUT-RULES.md Rule 11a) — nothing was copied or built."
-  out="$(python3 -I -c "${INCIDENT_PY}" "${WT}/${json}" "${id}")" || rc=$?
+  iso_incident_class "${WT}/${json}" "${id}" || rc=$?
+  out="${ISO_CLASS}"
   if [[ "${rc}" -ne 0 ]]; then
     [[ "${rc}" -eq 3 && -n "${out}" ]] || out="cannot be read"
     blocker "${json} ${out}: an incident's PoC runs only once ${json} records its root_cause_class (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built."
