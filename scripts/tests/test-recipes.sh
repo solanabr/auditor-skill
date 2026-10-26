@@ -507,7 +507,7 @@ KEEP = [
     ("known-vectors/137-vendored-program-version-drift.md",
      'git --git-dir=<copy> -c protocol.allow=never -c protocol.https.allow=always fetch --no-tags --end-of-options "$UPSTREAM" HEAD'),
     # form A of a patch file, from a fix commit
-    ("templates/patch/patch.md", "git format-patch -1 <fix-commit> --stdout > {FINDING_ID}.patch"),
+    ("templates/patch/patch.md", "git format-patch -1 <fix-commit> --stdout > audit_<n>/patches/{FINDING_ID}.patch"),
     # §4: the clone the Trail of Bits runner works in
     ("templates/patch/VERIFICATION.md",
      'GIT_NO_LAZY_FETCH=1 git clone -q --no-local --no-checkout --template= "$PPV_SRC" "$PPV/repo" &&'),

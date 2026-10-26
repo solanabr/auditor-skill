@@ -16,7 +16,7 @@ knows what to apply it to. Two accepted forms:
 mailbox-format patch with author/date/subject that `git am` applies and attributes:
 
 ```
-git format-patch -1 <fix-commit> --stdout > {FINDING_ID}.patch
+git format-patch -1 <fix-commit> --stdout > audit_<n>/patches/{FINDING_ID}.patch
 ```
 
 No bundled tool runs `git format-patch`, so it asks for approval. Its `From`/`Subject` lines carry the commit
