@@ -6,10 +6,10 @@ patch) and its verdict updates the finding's **Auditor Verification** line in th
 report.
 
 Verification is by **execution**, on a throwaway copy. Never write to the client's
-real tree: apply the patch to a **scratch git worktree**, build there, run there,
+real tree: apply the patch in a **scratch clone** (the bundled `target.sh` makes it outside the tree), build there, run there,
 discard it.
 
-## 1. Apply (scratch worktree — never the client checkout)
+## 1. Apply (scratch clone — never the client checkout)
 
 The rebuild runs target-controlled code (build scripts, proc-macros, toolchain files), so it follows the
 execution mode recorded at intake — `OUTPUT-RULES.md` Rule 11a (isolated recommended; native allowed and
@@ -25,8 +25,10 @@ working directory, with no `cd` first.
 "<auditor-skill root>/scripts/runner/target.sh" build-sbf --run {PATH_TO} --src . --rev {COMMIT} --patch {PATH_TO}/patches/{FINDING_ID}.patch
 ```
 
-Exit 3 ending `does not apply to <commit>` means the patch does not apply; exit 1 means the patched program
-does not build. The last line names the log, `{PATH_TO}/exec/build-sbf-<k>.log`, and the `.so`.
+Exit 3 with a `target: blocker:` line saying `<patch> does not apply to <commit>` means the patch does not
+apply; exit 1 means the patched program does not build. The last line names the log,
+`{PATH_TO}/exec/build-sbf-<k>.log`, and the `.so`. If the unpatched build fails too, the platform tools may be
+too old: set `TOOLS_VERSION=v1.54` where Claude Code runs.
 
 - [ ] Patch applied cleanly against `{COMMIT}` (no fuzz, no reject `.rej` files).
 - [ ] Patched program builds.
@@ -45,6 +47,10 @@ cp "<auditor-skill root>/templates/poc/shared-test-utils/src/lib.rs" {PATH_TO}/p
 "<auditor-skill root>/templates/poc/run.sh" --crate {PATH_TO}/poc/{FINDING_ID}    # minimized model (src/fixed.rs: the patch on src/vulnerable.rs)
 "<auditor-skill root>/templates/poc/run.sh" --crate {PATH_TO}/poc/{FINDING_ID} --vulnerable-so {UNPATCHED_SO} --fixed-so {PATCHED_SO}   # patched target build: files under {PATH_TO}/exec/
 ```
+
+The `cp` asks for approval: it reads the installation, outside the working directory, and no bundled tool
+copies the harness. A non-interactive run denies it: then compare the copy with the installation's as
+`/auditor:poc` step 6 does, and record a mismatch as "PoC re-run needed".
 
 **Re-detonated against:** {patched target build (`--vulnerable-so` / `--fixed-so` — `templates/poc/run.sh`) | minimized model}
 — a *patched target build* runs `run.sh` with `--vulnerable-so` = the unpatched build and `--fixed-so` = the
@@ -93,6 +99,10 @@ exploit earns `[FIX-VERIFIED]`. If there is no executable PoC to run, stop at
   ```
   Interface as documented by the vendored `mutation-testing` skill (mewt 4.x); `mewt --help`
   is authoritative. A mutation run executes the target's tests, so it follows Rule 11a too.
+  No bundled runner wraps mewt (DESIGN §5.1: `target.sh mutate`, 7.9), so each call asks for approval. It needs
+  a tree with the patch applied, which §1 no longer leaves: make one by hand outside the working directory, in
+  the recorded mode, or record the mutation step as not run. Never run it in the client checkout: `mewt init`
+  writes `mewt.toml` and `mewt.sqlite` where it runs.
   - [ ] No surviving mutant on the patched line(s) — or the survivor is recorded and
         the verdict is not overstated.
 
@@ -201,7 +211,7 @@ Emit exactly one, and write it to the finding's **Auditor Verification** line:
 
 | Verdict | Condition |
 |---------|-----------|
-| `[FIX-VERIFIED]` | Patch applied to a scratch worktree, rebuilt, and the finding's PoC **re-ran and now reverts**. Optional mutation/blast-radius clean. |
+| `[FIX-VERIFIED]` | Patch applied to a scratch clone, rebuilt, and the finding's PoC **re-ran and now reverts**. Optional mutation/blast-radius clean. |
 | `[FIX-INSUFFICIENT]` | The PoC still exploits a residual path, a mutant survives on the patched line, or an adjacent path regressed (blast-radius). State exactly what remains open. |
 | `[FIX-PROPOSED]` | A minimal idiomatic diff re-derived from the code closes the cited bound, but **no executable PoC was available** to run the revert. Verified by reasoning, flagged not-yet-executed — never silently promoted. |
 

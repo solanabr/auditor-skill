@@ -311,7 +311,7 @@ re-running that PoC. The verdict maps to the report's **Auditor Verification** f
 (templates: `templates/patch/patch.md` + `VERIFICATION.md`).
 
 ```
-[FIX-VERIFIED]      Diff applied to a SCRATCH worktree, rebuilt, and the finding's PoC
+[FIX-VERIFIED]      Diff applied to a SCRATCH clone, rebuilt, and the finding's PoC
    (strongest)      re-ran and now REVERTS — closure shown by execution. Optional
         │           mewt-mutation / blast-radius clean.
         │
@@ -383,7 +383,7 @@ pinned one is `inconclusive`, and so is every exit 3. A FIXED status without a
    copy of `<auditor-skill root>/templates/poc/` (`run.sh --init`) → `run.sh --crate` →
    award the highest tier reached (§3).
 3. `/auditor:patch` → `patch-engineer` writes `templates/patch/` diff → apply to a
-   scratch worktree → re-run the PoC → award a fix tier (§4).
+   scratch clone → re-run the PoC → award a fix tier (§4).
 4. `audit-cycle` / `re-audit` fold both tiers back into the finding block; the report's
    **Auditor Verification** line carries the fix verdict, and `RE-AUDIT.md` the step-4b
    PoC re-run of each finding (§4).
