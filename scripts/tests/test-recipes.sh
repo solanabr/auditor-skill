@@ -344,7 +344,14 @@ for tool in lock-delta web3js-history; do
     rest=${line#*$'\t'}
     want_err=${rest%%$'\t'*}
     args=()
-    case "$rest" in *$'\t'*) rest=${rest#*$'\t'}; IFS=$'\t' read -r -a args <<< "$rest" ;; esac
+    case "$rest" in
+      *$'\t'*)
+        rest=${rest#*$'\t'}
+        while :; do          # split on TAB, keeping empty fields so a case can pass ''
+          args+=("${rest%%$'\t'*}")
+          case "$rest" in *$'\t'*) rest=${rest#*$'\t'} ;; *) break ;; esac
+        done ;;
+    esac
     ncase=$((ncase + 1))
     i=0
     for sh in "${SHELLS[@]}"; do

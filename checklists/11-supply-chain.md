@@ -51,7 +51,7 @@ Run the registry-facing commands these items call for through `"<auditor-skill r
 - [ ] **SC-021**: Any packages with recent ownership transfer? Check npm page for maintainer changes
 - [ ] **SC-022**: Package `@coral-xyz/anchor` is NOT installed (discontinued — use `@anchor-lang/core`)
 - [ ] **SC-023**: No duplicate packages (same functionality from different packages)
-- [ ] **SC-024**: Postinstall scripts — any package runs scripts on install? (`npm ls --json` then check scripts)
+- [ ] **SC-024**: Postinstall scripts — any package runs scripts on install? (`npm ls --json` then check scripts; `npm ls` asks for approval)
 
 ## 11.5 — Build Security
 
@@ -75,7 +75,7 @@ Run the registry-facing commands these items call for through `"<auditor-skill r
 
 ## 11.7 — Transitive Dependencies
 
-- [ ] **SC-039**: Run `npm ls --all` — review tree for unexpected packages
+- [ ] **SC-039**: Run `npm ls --all` (asks for approval) — review tree for unexpected packages
 - [ ] **SC-040**: Any transitive dependency that is in the compromised list?
 - [ ] **SC-041**: Any transitive dependency pulling in native binary modules? (Higher risk)
 - [ ] **SC-042**: Dependency resolution conflicts — any forced resolutions/overrides?

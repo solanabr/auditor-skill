@@ -88,8 +88,8 @@
 #     cleaned environment, each killed when it gives no answer in PROBE_WAIT seconds,
 #     the isolation line (kinds, then at most 20 paths), --only and its case file
 #     fixtures/probe/cases.txt;
-#   * the patch verification recipe (templates/patch/VERIFICATION.md §1): its worktree
-#     is made in a Rule 11c copy, and no git runs in the client checkout.
+#   * the patch verification recipe (templates/patch/VERIFICATION.md §1): exactly the two
+#     target.sh build-sbf lines, the quoted installation path first, with no cd and no $.
 #
 # No Solana toolchain and no network needed. A temp copy of run.sh runs with a `cargo`
 # shim, whose `--no-run` build reports a stand-in test binary, or with a PATH that has
