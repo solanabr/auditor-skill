@@ -161,7 +161,7 @@ show "$tmp/mdhosts"
 section "Remote-exec patterns in added lines, continuation lines joined, any letter case (a download piped to or evaluated by a shell, an interpreter or PowerShell; npx --yes, bunx and dlx; pip, pipx, uv, uvx, npm, cargo and deno installs from git or a URL; go install …@latest)"
 # "<path>: <added line>". An added line ending in a backslash, in a space and a backtick (PowerShell), or in a
 # pipe outside a Markdown table row, is joined with the next added line, so a multi-line installer is scanned as
-# one command; a CR at the end of a line (CR LF line ends) is dropped first. A "+++ " line names the file only
+# one command; the CRs at the end of a line (CR LF line ends) are dropped first. A "+++ " line names the file only
 # inside a file header, so an added line that starts with "++ " is scanned like any other.
 joined() { awk '
   function flush() { if (buf != "") print file ": " buf; buf = "" }
@@ -169,7 +169,7 @@ joined() { awk '
   hdr && /^\+\+\+ / { file = substr($0, 5); sub(/^b\//, "", file); next }
   /^@@/ { flush(); hdr = 0; next }
   hdr { next }
-  /^\+/ { s = substr($0, 2); sub(/\r$/, "", s); if (buf != "") sub(/^[ \t]+/, "", s); buf = (buf == "") ? s : buf " " s
+  /^\+/ { s = substr($0, 2); sub(/\r+$/, "", s); if (buf != "") sub(/^[ \t]+/, "", s); buf = (buf == "") ? s : buf " " s
           if (buf ~ /\\[ \t]*$/) { sub(/[ \t]*\\[ \t]*$/, "", buf); next }
           if (buf ~ /[ \t]`[ \t]*$/) { sub(/[ \t]*`[ \t]*$/, "", buf); next }
           if (buf ~ /[|][ \t]*$/ && s !~ /^[ \t]*[|]/) next
