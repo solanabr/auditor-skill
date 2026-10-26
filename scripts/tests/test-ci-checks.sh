@@ -516,7 +516,7 @@ wfcheck() { # wfcheck FILE -> one line per problem, read byte by byte
     }
     # keyat(s, i): the key that may start at s[i], after any tag and anchor: an explicit ? key, an alias, or a
     # key YAML reads as on (or On, ON) that is quoted, escaped, tagged or anchored, or in another letter case
-    function keyat(s, i,   props, v, j, w) {
+    function keyat(s, i,   props, v, j, w, c) {
       if (substr(s, i, 1) == "?" && (i == length(s) || substr(s, i + 1, 1) ~ /[ \t]/)) {
         print f ": an explicit ? key; write each key plainly: " s; return }
       props = 0
@@ -538,9 +538,11 @@ wfcheck() { # wfcheck FILE -> one line per problem, read byte by byte
         return
       }
       w = substr(s, i)
-      if (!match(w, /^[^] \t:,{}[]+[ \t]*:([] \t,}]|$)/)) return
-      w = substr(w, 1, RLENGTH); sub(/[ \t]*:.*$/, "", w)
-      if (tolower(w) != "on") return
+      if (!match(w, /^[^ \t:,{}]+[ \t]*:/)) return
+      c = substr(w, RLENGTH + 1, 1)
+      if (c != "" && c != " " && c != "\t" && c != "," && c != "}" && c != "]") return
+      w = substr(w, 1, RLENGTH); sub(/[ \t]*:$/, "", w)
+      if (index(w, "[") || index(w, "]") || tolower(w) != "on") return
       if (props) print f ": the on key has a tag or an anchor; write it as plain on: " s
       else if (w != "on") print f ": the on key is in another letter case; write it as plain on: " s
     }
