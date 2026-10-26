@@ -15,6 +15,8 @@ allowed-tools:
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release/audit-mem" warm --contract=1 *)'
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release/audit-mem" check --contract=1 *)'
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/runner/deps.sh" *)'
+  - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/runner/target.sh" *)'
+  - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/rpc-read.sh" *)'
 ---
 
 # auditor-skill — Differential Audit (Mode 4)

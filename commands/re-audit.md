@@ -15,9 +15,11 @@ allowed-tools:
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release/audit-mem" warm --contract=1 *)'
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release/audit-mem" regressions --contract=1 *)'
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/runner/deps.sh" *)'
+  - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/runner/sast.sh" *)'
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/runner/probe.sh" *)'
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/runner/target.sh" *)'
   - 'Bash("${CLAUDE_PLUGIN_ROOT}/templates/poc/run.sh" *)'
+  - 'Bash("${CLAUDE_PLUGIN_ROOT}/scripts/rpc-read.sh" *)'
   - Skill(auditor:audit-report *)
 ---
 
