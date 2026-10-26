@@ -791,10 +791,13 @@ for f in FULL-AUDIT.md checklists/*.md known-vectors/*.md discovery/*.md; do [ -
 find references templates docs -type f -name '*.md' 2>/dev/null | LC_ALL=C sort > "$T/corpus-files"
 while IFS= read -r f; do set -- "$@" "$f"; done < "$T/corpus-files"
 [ $# -gt $((nbodies + 100)) ] || bad "only $(($# - nbodies)) corpus files in $TREE"
-# Findings the tree has until the edits that fix them land, each <check> <file> <the text it shows>: the check
-# fails on any other finding, and on a listed one it no longer makes, which is then to be deleted here.
-KNOWN='C6	docs/output-and-rigor.md	not quoted as "<auditor-skill root>/scripts/rundir.sh": <auditor-skill root>/scripts/rundir.sh new
-C7	references/detection-response/incidents-schema.md	runs templates/poc/run.sh by a path relative to the working directory'
+# Findings the tree has until the edits that fix them land, one to a line, each <check> <file> <the text it
+# shows>: the check fails on any other finding, and on a listed one it no longer makes, whose line is then to
+# be deleted here.
+KNOWN='
+C6	docs/output-and-rigor.md	not quoted as "<auditor-skill root>/scripts/rundir.sh": <auditor-skill root>/scripts/rundir.sh new
+C7	references/detection-response/incidents-schema.md	runs templates/poc/run.sh by a path relative to the working directory
+'
 found=$(check "$TREE" "$@"); rc=$?
 if [ "$rc" -ne 0 ]; then bad "the checker failed on $TREE (status $rc)"
 else
