@@ -33,6 +33,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: bash scripts/check-pipefail.sh
 
+      - name: Every allow rule names a listed entry point, and each keeps the contract
+        if: ${{ !cancelled() }}
+        run: bash scripts/check-entrypoints.sh
+
       - name: Clear the agent sockets and container config the runner image ships
         if: ${{ !cancelled() }}
         run: |
@@ -123,6 +127,12 @@ jobs:
         run: |
           export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin"
           bash scripts/check-pipefail.sh
+
+      - name: Every allow rule names a listed entry point, and each keeps the contract
+        if: ${{ !cancelled() }}
+        run: |
+          export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin"
+          bash scripts/check-entrypoints.sh
 
       - name: Script self-tests (every suite runs; the step fails at the end if any failed)
         if: ${{ !cancelled() }}
