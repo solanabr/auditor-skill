@@ -368,7 +368,7 @@ FILL = [("<auditor-skill root>", root), ("audit_<n>", "audit_1"), ("incident_<n>
 SHAPES = {"\"<auditor-skill root>/scripts/git-ro.sh\" [--repo '<dir>'] show <full id> -- '<path>'"}
 bad = []
 rows = []
-def form(f, n, cmd):
+def form(f, n, cmd, code):
     if "$" in cmd or "`" in cmd:
         bad.append(f"{f}:{n}: holds a $ or a backtick: {cmd}")
         return
@@ -399,7 +399,8 @@ def form(f, n, cmd):
             bad.append(f"{f}:{n}: a pipe into {p[0] if p else 'nothing'}, not a read-only reader: {cmd}")
             return
     tool = parts[0][0].split("/scripts/", 1)[1] if "/scripts/" in parts[0][0] else ""
-    run = len(parts[0]) > 1 and any(tool.startswith(r) for r in RUN) and cmd not in SHAPES
+    # A code line is a call; a code span with no argument names the script in prose.
+    run = (code or len(parts[0]) > 1) and any(tool.startswith(r) for r in RUN) and cmd not in SHAPES
     if run and (re.search(r"<[A-Za-z][^>]*>", filled) or re.search(r"\{[A-Z_]+\}", filled)):
         bad.append(f"{f}:{n}: a placeholder this test cannot fill: {cmd}")
         return
@@ -414,13 +415,13 @@ for f in files:
         if fence:
             s = body.lstrip()
             if s.startswith(Q):
-                form(f, n, s)
+                form(f, n, s, True)
             elif "<auditor-skill root>/scripts/" in s and not s.startswith("#"):
                 bad.append(f"{f}:{n}: a bundled script run other than by its quoted path first: {s}")
         else:
             for m in re.finditer(r"`([^`]*)`", body):
                 if m.group(1).startswith(Q):
-                    form(f, n, m.group(1))
+                    form(f, n, m.group(1), False)
 with open(out, "w", encoding="utf-8") as o:
     for r in rows:
         o.write("\t".join(r) + "\n")

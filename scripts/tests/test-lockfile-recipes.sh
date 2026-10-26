@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # test-lockfile-recipes.sh — run the dependency recipes exactly as the corpus writes them, against throwaway
 # repositories, and check what they print:
-#   - checklist 11 §11.11: the npm / yarn lockfile hint prints each changed version, resolved, integrity or
-#     checksum line after the key of its entry (package-lock.json and npm-shrinkwrap.json with and without
-#     resolved fields, lockfile v1, an npm alias, yarn v1 and berry), and "?" when the key is outside the
-#     hunk, in tab-indented and CRLF lockfiles too; every hint prints the same under a checkout config that
-#     sets colour and zero context lines; the changed-files hint, which FULL-AUDIT Step 3.2 repeats, lists
-#     a go.mod change; step 4's sweep deletes every entry that is neither a regular file nor a directory, in
-#     0555 and 0000 directories too;
+#   - checklist 11 §11.11, through scripts/git-ro.sh and scripts/recipes/lock-delta.sh as the corpus calls them:
+#     the npm / yarn lockfile hint prints each changed version, resolved, integrity or checksum line after the
+#     key of its entry (package-lock.json and npm-shrinkwrap.json with and without resolved fields, lockfile
+#     v1, an npm alias, yarn v1 and berry), and "?" when the key is outside the hunk, in tab-indented and CRLF
+#     lockfiles too; every hint prints the same under a checkout config that sets colour and zero context
+#     lines; the changed-files hint, which FULL-AUDIT Step 3.2 repeats, lists a go.mod change; step 4's sweep
+#     deletes every entry that is neither a regular file nor a directory, in 0555 and 0000 directories too;
 #   - the known-bad release check for axios 1.14.1 / 0.30.4 and @solana/web3.js 1.95.6 / 1.95.7, the same
-#     commands in FULL-AUDIT Step 3.2, KV-077 Step 2 and (its tree part) discovery/grep-commands.md: the
-#     single-line shapes (resolved URLs, pnpm v5 and v9 keys, yarn berry, bun, exact pins), and the key-line
-#     form in the tree and in history (added, removed, a changed key, an alias, a deleted lockfile, a merged
-#     side branch, a merge commit, tab and CRLF lockfiles), but not another package at those versions; the
-#     --oneline history search; above 64 KiB;
+#     commands in FULL-AUDIT Step 3.2, KV-077 Step 2 and (its tree part) discovery/grep-commands.md, its history
+#     through scripts/recipes/web3js-history.sh: the single-line shapes (resolved URLs, pnpm v5 and v9 keys, yarn
+#     berry, bun, exact pins), and the key-line form in the tree and in history (added, removed, a changed key,
+#     an alias, a deleted lockfile, a merged side branch, a merge commit, tab and CRLF lockfiles), but not
+#     another package at those versions; the single-line history search; above 64 KiB;
 #   - the scratch-directory recipes, KV-089 Steps 1, 2 and 5: with $SCRATCH unset, empty, missing, relative or
 #     inside the working directory, or mktemp failing, they print OUTCOME: no scratch copy and run nothing;
 #     otherwise npm, cargo and rustup run only inside the scratch directory. FULL-AUDIT Step 3.2 runs its audits
@@ -58,10 +58,10 @@ cl_hint() {
     g { s = 1; sub(/^> /, ""); print }
   ' "$CL"
 }
-# The known-bad check: from the AX= line to the end of the history awk, comments dropped, indentation removed;
-# its tree part is the first 8 of those lines.
-kb_block() { awk '/^ *AX=/ {g = 1} g && !/^ *#/ {sub(/^ */, ""); print} g && /print c, f, \$0}'"'"'$/ {exit}' "$1"; }
-kb_tree() { awk '/^ *AX=/ {g = 1} g && !/^ *#/ {sub(/^ */, ""); print; if (++n == 8) exit}' "$1"; }
+# The known-bad check: from its first grep to the web3js-history.sh call, comments dropped, indentation removed;
+# its tree part is the first 3 of those lines.
+kb_block() { awk '/^ *grep -rnE --exclude-dir=node_modules --include=.package\.json./ {g = 1} g && !/^ *#/ {sub(/^ */, ""); print} g && /web3js-history\.sh"$/ {exit}' "$1"; }
+kb_tree() { awk '/^ *grep -rnE --exclude-dir=node_modules --include=.package\.json./ {g = 1} g && !/^ *#/ {sub(/^ */, ""); print; if (++n == 3) exit}' "$1"; }
 # A known vector's step: the lines of the first code block after "**Step <n>:".
 kv_step() { awk -v n="$2" 'index($0, "**Step " n ":") == 1 {s = 1; next} s && /^```$/ {if (c) exit; c = 1; next} s && c' "$1"; }
 # FULL-AUDIT Step 3.2, from its heading to the next step's, block indentation removed.
@@ -135,8 +135,8 @@ locks 1.95.5 AAAA BBBB CCCC && (cd "$H" && other_locks 1.95.5 AAAA 0.30.1 aaaa b
   && git -C "$H" commit -qam head && git -C "$H" tag rev-head || { echo "could not build the hints fixture" >&2; exit 1; }
 
 # ---- 1. §11.11 lockfile hints -----------------------------------------------------------------------------
-run_hint() { # run_hint MARKER OUT: the hint, <base>..<head> filled in, run in the fixture
-  cl_hint "$1" | sed 's/<base>\.\.<head>/rev-base..rev-head/' > "$T/hint.sh"
+run_hint() { # run_hint MARKER OUT: the hint, <base>..<head> and the installation filled in, run in the fixture
+  cl_hint "$1" | sed -e 's/<base>\.\.<head>/rev-base..rev-head/' -e "s#<auditor-skill root>#$ROOT#g" > "$T/hint.sh"
   if [ ! -s "$T/hint.sh" ]; then : > "$2"; return 1; fi
   ( cd "$H" && bash "$T/hint.sh" ) > "$2" 2> "$T/hint.err"
 }
@@ -178,7 +178,7 @@ has "$T/plain.out" '"borsh" +checksum = "eeee"' && ok "Cargo.lock hint names a c
 # FULL-AUDIT Step 3.2's list of changed dependency files: the same flags and files as the first hint
 stat_args() { tr -d '>\\' | tr -s ' \n' '\n\n' | grep -E -e "^--" -e "^'"; }
 cl_hint 'changed manifests and lockfiles' | stat_args > "$T/stat-cl"
-awk '/^  # Dependency changes since the baseline/ {g = 1} g && /^  *(GIT_NO_LAZY_FETCH|diff|.\*)/ {print} g && /requirements/ {exit}' "$FA" \
+awk '/^  # Dependency changes since the baseline/ {g = 1} g && /git-ro\.sh" diff / {print} g && /requirements/ {exit}' "$FA" \
   | stat_args > "$T/stat-fa"
 if [ -s "$T/stat-cl" ] && cmp -s "$T/stat-cl" "$T/stat-fa"; then ok "FULL-AUDIT Step 3.2 lists the same dependency files as §11.11"
 else bad "FULL-AUDIT Step 3.2's dependency-change list differs from §11.11's"; diff "$T/stat-cl" "$T/stat-fa" | sed 's/^/  | /'; fi
@@ -208,11 +208,12 @@ else bad "step 4 ('$sweep', then '$confirm') left: $left"; sed 's/^/  | /' "$T/s
 
 # ---- 2. the known-bad release check ---------------------------------------------------------------------
 kb_block "$FA" > "$T/kb-fa.sh"; kb_block "$KV077" > "$T/kb-kv.sh"; kb_tree "$KV077" > "$T/kbt-kv.sh"; kb_tree "$GC" > "$T/kbt-gc.sh"
-if [ -s "$T/kb-fa.sh" ] && cmp -s "$T/kb-fa.sh" "$T/kb-kv.sh" && [ "$(wc -l < "$T/kbt-kv.sh" | tr -d ' ')" = 8 ] \
+sed "s#<auditor-skill root>#$ROOT#g" "$T/kb-fa.sh" > "$T/kb-run.sh"
+if [ -s "$T/kb-fa.sh" ] && cmp -s "$T/kb-fa.sh" "$T/kb-kv.sh" && [ "$(wc -l < "$T/kbt-kv.sh" | tr -d ' ')" = 3 ] \
    && cmp -s "$T/kbt-kv.sh" "$T/kbt-gc.sh"; then
   ok "FULL-AUDIT Step 3.2, KV-077 Step 2 and discovery/grep-commands.md carry the same known-bad check"
 else bad "the known-bad check differs between FULL-AUDIT Step 3.2, KV-077 Step 2 and discovery/grep-commands.md"; fi
-run_kb() { ( cd "$1" && bash "$T/kb-fa.sh" ) > "$T/kb.out" 2>&1; }
+run_kb() { ( cd "$1" && bash "$T/kb-run.sh" ) > "$T/kb.out" 2>&1; }
 c() { git add -A && git commit -qm "$1" && git rev-parse --short HEAD; }
 
 # single-line shapes and the key-line form in the hints fixture, at rev-head

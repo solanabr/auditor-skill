@@ -343,40 +343,24 @@ RECORD: governance configuration + findings
 ```
 ACTIONS:
 
-  # Check for compromised packages: axios 1.14.1 / 0.30.4 (AX) and the hijacked
-  # @solana/web3.js 1.95.6 / 1.95.7 (W3), as exact pins and resolved versions in package.json,
-  # package-lock / npm-shrinkwrap, pnpm (lockfile v5 keys too), yarn v1 + berry and bun
-  AX='(^|[^A-Za-z0-9_.-])axios[@/](npm:)?(1\.14\.1|0\.30\.4)([^0-9]|$)|/axios/-/axios-(1\.14\.1|0\.30\.4)\.tgz|"axios"[[:space:]]*:[[:space:]]*"=?(1\.14\.1|0\.30\.4)"'
-  W3='web3\.js[@/](npm:)?1\.95\.(6|7)([^0-9]|$)|/web3\.js/-/web3\.js-1\.95\.(6|7)\.tgz|"@solana/web3\.js"[[:space:]]*:[[:space:]]*"=?1\.95\.(6|7)"'
-  grep -rnE -e "$AX" -e "$W3" --exclude-dir=node_modules --include='package.json' --include='package-lock.json' \
-    --include='npm-shrinkwrap.json' --include='pnpm-lock.yaml' --include='yarn.lock' --include='bun.lock' .
+  # Check for compromised packages: axios 1.14.1 / 0.30.4 and the hijacked @solana/web3.js
+  # 1.95.6 / 1.95.7, as exact pins and resolved versions in package.json, package-lock /
+  # npm-shrinkwrap, pnpm (lockfile v5 keys too), yarn v1 + berry and bun, each followed by a
+  # character that is not a digit
+  grep -rnE --exclude-dir=node_modules --include='package.json' --include='package-lock.json' --include='npm-shrinkwrap.json' --include='pnpm-lock.yaml' --include='yarn.lock' --include='bun.lock' -e '(^|[^A-Za-z0-9_.-])axios[@/](npm:)?(1\.14\.1|0\.30\.4)[^0-9]|/axios/-/axios-(1\.14\.1|0\.30\.4)\.tgz|"axios"[[:space:]]*:[[:space:]]*"=?(1\.14\.1|0\.30\.4)"' -e 'web3\.js[@/](npm:)?1\.95\.(6|7)[^0-9]|/web3\.js/-/web3\.js-1\.95\.(6|7)\.tgz|"@solana/web3\.js"[[:space:]]*:[[:space:]]*"=?1\.95\.(6|7)"' .
   # a package-lock.json or npm-shrinkwrap.json written without "resolved" fields names the
   # package only on the entry's key line (or its "name" line, for an alias), with the
   # version on a line below it
-  grep -rnE -A2 --exclude-dir=node_modules --include='package-lock.json' --include='npm-shrinkwrap.json' \
-    '"(([^"]*/)?node_modules/)?axios": [{]|"name": "axios"' . | grep -E '"version": "(1\.14\.1|0\.30\.4)"'
-  grep -rnE -A2 --exclude-dir=node_modules --include='package-lock.json' --include='npm-shrinkwrap.json' \
-    '"([^"]*/)?@solana/web3\.js": [{]|"name": "@solana/web3\.js"' . | grep -E '"version": "1\.95\.(6|7)"'
-  # history too: every branch, merge commits (against their first parent) and the root
-  # commit; --text because a committed .gitattributes can mark lockfiles binary, which
-  # hides them from -G
-  GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c core.bigFileThreshold=512m \
-    log --all --full-history --root --diff-merges=first-parent --no-patch --oneline --text --no-textconv --no-ext-diff \
-    -G"$AX|$W3" -- '*lock*' '*package.json' '*npm-shrinkwrap.json'
-  # ...and the key-line form in history: each commit that added or removed such an entry
-  KL='"(([^"]*/)?node_modules/)?axios": [{]|"name": "axios"|"version": "(1\.14\.1|0\.30\.4)"|"([^"]*/)?@solana/web3\.js": [{]|"name": "@solana/web3\.js"|"version": "1\.95\.(6|7)"'
-  GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c core.bigFileThreshold=512m \
-    log --all --full-history --root --diff-merges=first-parent -p -U3 --no-color --format='commit %h' --text --no-textconv --no-ext-diff \
-    -G"$KL" -- '*package-lock.json' '*npm-shrinkwrap.json' \
-    | awk 'function bad(k) {return (k ~ /"(([^"]*\/)?node_modules\/)?axios"/ && /"version": "(1\.14\.1|0\.30\.4)"/) ||
-                                   (k ~ /@solana\/web3\.js"/ && /"version": "1\.95\.(6|7)"/)}
-           {sub(/\r$/, "")} /^commit /{c=$2} /^--- /{f=substr($0, 5)} /^[+][+][+] [^\/]/{f=substr($0, 5)} /^@@/{o=n=""}
-           /^[-+ ][[:space:]]*"[^"]*": [{]$/ || /^[-+ ][[:space:]]+"name": /{if (/^-/) o=$0; else if (/^[+]/) n=$0; else o=n=$0}
-           /^[-+ ][[:space:]]+"version": "/{w=bad(o); v=bad(n); if ((/^-/ && w) || (/^[+]/ && v) || (/^ / && w != v)) print c, f, $0}'
+  grep -rnE -A2 --exclude-dir=node_modules --include='package-lock.json' --include='npm-shrinkwrap.json' '"(([^"]*/)?node_modules/)?axios": [{]|"name": "axios"' . | grep -E '"version": "(1\.14\.1|0\.30\.4)"'
+  grep -rnE -A2 --exclude-dir=node_modules --include='package-lock.json' --include='npm-shrinkwrap.json' '"([^"]*/)?@solana/web3\.js": [{]|"name": "@solana/web3\.js"' . | grep -E '"version": "1\.95\.(6|7)"'
+  # history too, both forms: every branch, merge commits (against their first parent) and
+  # the root commit, through the read-only git of Rule 11c, with --text, because a committed
+  # .gitattributes can mark lockfiles binary, which hides them from -G
+  "<auditor-skill root>/scripts/recipes/web3js-history.sh"
   # → known-bad releases (KV-077 Step 2; SC-001, SC-002, SC-005). A hit now is CRITICAL;
   #   a hit in history means rotate every key or credential a build from that window could
-  #   read; a `fatal:` / `lazy fetching disabled` line means a partial clone: the history
-  #   part is INCONCLUSIVE
+  #   read; a `web3js-history: partial clone` or `shallow clone` line, or a `fatal:` line,
+  #   means the history is incomplete: that part is INCONCLUSIVE
 
   # Check version pinning
   cat apps/backend/package.json | grep -E '[\^~]' # should be minimal
@@ -411,11 +395,8 @@ ACTIONS:
 
   # Dependency changes since the baseline (last audited ref; first audit: last
   # release tag) → checklist 11 §11.11: review the published artifacts' code delta
-  # (Rule 11c flags; the same files as §11.11's first lockfile hint)
-  GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c core.bigFileThreshold=512m \
-    diff --text --no-textconv --no-ext-diff --no-color --stat <baseline>..HEAD -- '*.lock' '*-lock.json' \
-    '*npm-shrinkwrap.json' '*-lock.yaml' '*go.sum' '*go.mod' '*Cargo.toml' '*package.json' '*pyproject.toml' \
-    '*requirements*.txt'
+  # (read-only git, Rule 11c; the same files as §11.11's first lockfile hint)
+  "<auditor-skill root>/scripts/git-ro.sh" diff --text --no-color --stat <baseline>..HEAD -- '*.lock' '*-lock.json' '*npm-shrinkwrap.json' '*-lock.yaml' '*go.sum' '*go.mod' '*Cargo.toml' '*package.json' '*pyproject.toml' '*requirements*.txt'
 
 RECORD: dependency audit results
 ```
