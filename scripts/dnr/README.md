@@ -243,12 +243,16 @@ account's current value — at `finalized`, not in log text. See
 
 ## Not a sandbox
 
-These scripts run on the auditor's machine; `collect.sh` makes outbound RPC calls.
-The `auditor:dnr-analyze` skill pre-approves `profile.sh`, `frames.py`, `deltas.py`
-and `jq-ro.sh` inside its fork, and `audit-logs` from `tools/auditor-tools/`, each
-run directly by its path and reading only files inside a run directory;
-`collect.sh`, `snapshot-program.sh` and `redact.sh` still ask for approval. Those
-lists, and these recipes, shape intent and are not a security boundary (see
+These scripts run on the auditor's machine; `collect.sh` and `snapshot-program.sh`
+make outbound RPC calls. The `auditor:dnr-analyze` skill pre-approves `profile.sh`,
+`frames.py`, `deltas.py` and `jq-ro.sh` inside its fork, and `audit-logs` from
+`tools/auditor-tools/`, each run directly by its path and reading only files inside
+a run directory. `/auditor:hunt` and `/auditor:respond` pre-approve
+`snapshot-program.sh` and `collect.sh`, which take only `incident_<n>` paths and
+the endpoint and caps your environment sets, and run the collector only with the
+addresses, window and caps you approved (`--confirmed`); a line that pipes into
+`redact.sh` still asks. Each script's own checks bound what it can do; neither they
+nor those pre-approvals confine the agent or the machine (see
 `references/detection-response/README.md` § "allowed-tools is not a sandbox").
 Confinement, when you need it, is an isolated run mode
 (`OUTPUT-RULES.md` Rule 11a).
