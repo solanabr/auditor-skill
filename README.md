@@ -52,6 +52,7 @@ auditor-skill is a **skill file** (a structured prompt + checklists) that turns 
 | [docs/poc-and-patches.md](docs/poc-and-patches.md) | Executable exploit + fix-patch delivery |
 | [docs/output-and-rigor.md](docs/output-and-rigor.md) | Severity, the Rule 5b gate, scope-gated loading, report format |
 | [docs/detection-response.md](docs/detection-response.md) | Post-incident hunting + incident workup (`/auditor:hunt`, `/auditor:respond`) |
+| [docs/permissions-and-isolation.md](docs/permissions-and-isolation.md) | What runs without asking and why that is safe, what still asks, isolated runs, `claude -p`, the risks that remain |
 
 ---
 
@@ -127,7 +128,14 @@ The native corpus works fully **without** it (it falls back to grep-based checks
 cd "<auditor-skill root>/tools/auditor-tools" && cargo build --release
 ```
 
-The auditor runs them, the scripts and the Trail of Bits plugins by absolute path from the installation, never by a path relative to the project it audits ([OUTPUT-RULES.md Rule 11e](OUTPUT-RULES.md#11e--bundled-paths)). If the installation sits inside the repository under audit anyway (such as `.claude/skills/auditor-skill`, where `install.sh` without a path installed through 7.6.0), the build runs inside that tree, where cargo and rustup read its `.cargo/config*` and `rust-toolchain*` from every parent directory: build there only in [Rule 11a](OUTPUT-RULES.md#rule-11-operating-safety) isolated mode, or delete that copy and install a fresh one outside (the plugin, or Option 2 with the path `~/.claude/skills/auditor-skill`) and build that one. Never move or update a copy you find inside a repository ([Installation](#installation)).
+Build them again after every update, with `cargo build --release --locked` in the same directory: the flows call them with a contract marker (`--contract=1`) that an older build refuses, and until then they go on as if the tools were absent. The auditor runs them, the scripts and the Trail of Bits plugins by absolute path from the installation, never by a path relative to the project it audits ([OUTPUT-RULES.md Rule 11e](OUTPUT-RULES.md#11e--bundled-paths)). If the installation sits inside the repository under audit anyway (such as `.claude/skills/auditor-skill`, where `install.sh` without a path installed through 7.6.0), the build runs inside that tree, where cargo and rustup read its `.cargo/config*` and `rust-toolchain*` from every parent directory: build there only in [Rule 11a](OUTPUT-RULES.md#rule-11-operating-safety) isolated mode, or delete that copy and install a fresh one outside (the plugin, or Option 2 with the path `~/.claude/skills/auditor-skill`) and build that one. Never move or update a copy you find inside a repository ([Installation](#installation)).
+
+### Permissions and isolation
+
+The `/auditor:*` commands run their bundled steps without asking: the working-tree check, run directories, read-only git, the Rust tools, and the runners that build and test the project in the execution mode you chose at intake. Each of these checks its own arguments and stays inside the working tree and its run directories; everything else asks. Two settings make a run smooth and safe:
+
+- Add the `Skill(auditor:… *)` rules from [docs/permissions-and-isolation.md](docs/permissions-and-isolation.md#turns-and-resuming) to your user settings, `~/.claude/settings.json`, so a flow resumes after your reply without a prompt. They name no path.
+- For code you don't trust, choose isolated mode at intake, set `AUDITOR_EXEC_MODE=isolated`, and run in a container, a VM or Claude Code's sandbox. In native mode the project's builds and tests run on your machine without a prompt for each run.
 
 ---
 
@@ -249,7 +257,10 @@ auditor-skill/
 │   └── patch/               ← patch + VERIFICATION templates
 │
 ├── docs/                    ← Usage guides (start at docs/README.md)
-├── scripts/                 ← preflight.sh, rundir.sh, report-to-pdf.sh, the CI checks (check-*.sh), tob-delta-review.sh + the no-attribution commit hook
+├── scripts/                 ← preflight.sh, rundir.sh, git-ro.sh, rpc-read.sh, report-to-pdf.sh, the CI checks (check-*.sh), tob-delta-review.sh + the no-attribution commit hook
+│   ├── runner/              ← probe.sh, deps.sh, sast.sh, target.sh: toolchain probes, dependency audits, SAST, and builds and tests in the recorded execution mode
+│   ├── lib/                 ← confine.sh and isolation.sh, the checks and environment cleaning the entry points share
+│   ├── pdf/                 ← no-remote.lua, the pandoc filter report-to-pdf.sh renders with
 │   ├── dnr/                 ← detection & response recipes (gated RPC collector, program snapshot, corpus profile, log frames, balance deltas, jq-ro.sh)
 │   ├── threat-model/        ← collect.sh — the read-only threat-model bootstrap collector
 │   └── tests/               ← script self-tests (+ fixtures/gha/, workflows and a composite action that are never executed)
