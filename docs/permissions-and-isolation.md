@@ -230,7 +230,7 @@ An absolute Bash path in your own rules would approve a program whatever words f
 
 ## Organizations with managed permission rules
 
-If your organization sets `allowManagedPermissionRulesOnly` in managed settings, Claude Code ignores the allow, ask and deny rules in your own settings (the rules above included) and `--allowedTools`, and hides "don't ask again". It also ignores the `allowed-tools` of skills and plugins from the sources that setting's reference lists, such as a skill installed under `~/.claude/skills/`; a plugin installed from its marketplace keeps them. So the resume prompt comes back each time, the steps of a skill install ask, and `claude -p` denies them. Ask your administrator to add the rules to managed settings, or run in a container or VM.
+If your organization sets `allowManagedPermissionRulesOnly` in managed settings, Claude Code ignores the allow, ask and deny rules in your own settings (the rules above included) and `--allowedTools`, and hides "don't ask again". It also ignores the commands' own pre-approvals: the `allowed-tools` of a skill installed under `~/.claude/skills/` and the other sources that setting's reference lists, and, since Claude Code 2.1.284, of a plugin from a marketplace, unless the plugin comes from an official Anthropic source or one that managed settings vouch for (the changelog). So every step asks, the resume prompt comes back each time, and `claude -p` denies the steps; a denied `preflight.sh` call ends the run at its first step. Ask your administrator, or run in a container or VM ([above](#a-container-or-a-vm)).
 
 ## What remains a risk
 
