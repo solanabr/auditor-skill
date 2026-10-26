@@ -421,7 +421,7 @@ Building, testing or installing the project runs code the project controls — b
 - [ ] **Native** — on the auditor's own machine (the report says so)
 - [ ] No preference — recorded as **native** (also the default when non-interactive runs leave Q46 unanswered), and the report carries that caveat
 
-> Tools that send code, dependency names or addresses to outside services (an RPC provider, a second-opinion LLM, package registries) are not gated by this answer; the report lists each one (Rule 11b), and the bundled tools record theirs in the run directory's `disclosures.tsv`.
+> Tools that send code, dependency names or addresses to outside services (an RPC provider, a second-opinion LLM, package registries) are not gated by this answer; the report lists each one (Rule 11b), and the bundled tools that query them record theirs in the run directory's `disclosures.tsv`.
 
 ### Q47. May the auditor probe the project's own live hosts and buckets?
 DEP-072 (public cloud storage buckets) and DEP-073 (a `.git/` directory a web server exposes) can be checked against the deployed system. Asked once per audit. An unanswered Q47 counts as **no**, and so does every `/auditor:intake --auto` run.
