@@ -12,8 +12,10 @@
 #      *.sh file;
 #   4. .github/workflows: the required job keeps its name; every workflow and job reads contents only; no
 #      workflow names pull_request_target or workflow_run outside a comment line, however its trigger is
-#      written, and no run: script holds a ${{ }} expression; every job has timeout-minutes, every action is
-#      pinned by full SHA with its version, and no checkout keeps credentials;
+#      written, and none spells a key YAML reads as on other than as plain on: (quoted in either style, with
+#      escapes, a tag, an anchor or another letter case, in block or flow style), or writes an explicit ? key
+#      or an alias as a key; no run: script holds a ${{ }} expression; every job has timeout-minutes, every
+#      action is pinned by full SHA with its version, and no checkout keeps credentials;
 #   5. scripts/check-hygiene.sh fails on each kind of file it names, and on a top-level directory named
 #      commands, agents, skills, hooks, bin, monitors or .claude-plugin in another letter case, also when it
 #      is the last of 3,000 tracked paths; on each load surface at the plugin root, and on a SKILL.md other
@@ -485,8 +487,88 @@ expect "pipefail: the CI check scripts and their suites are clean" 0 bash "$ROOT
   "$ROOT/scripts/tests/test-corpus-pins.sh" "$ROOT/scripts/tests/test-gha-recipes.sh"
 
 # ---- 4. workflows --------------------------------------------------------------------------------------
-wfcheck() { # wfcheck FILE -> one line per problem
-  awk -v f="$1" 'BEGIN { sha = "[0-9a-f]"; for (i = 1; i < 40; i++) sha = sha "[0-9a-f]" }
+wfcheck() { # wfcheck FILE -> one line per problem, read byte by byte
+  LC_ALL=C awk -v f="$1" -v q="'" '
+    # the letter a two-digit hex code names, or \001 for any other code
+    function hexchr(h) { h = tolower(h); return (h in letter) ? letter[h] : "\001" }
+    # quoted(s, i): the value of the quoted scalar that starts at s[i] (a quote mark), each \x, \u and \U escape
+    # of a letter decoded and any other escape read as \001. QEND is the index after its closing quote, or 0
+    # when it goes on past the line.
+    function quoted(s, i,   c, e, v, j, n, h) {
+      c = substr(s, i, 1); v = ""; j = i + 1; QEND = 0
+      while (j <= length(s)) {
+        e = substr(s, j, 1)
+        if (c == q) {
+          if (e != q) { v = v e; j++; continue }
+          if (substr(s, j + 1, 1) == q) { v = v q; j += 2; continue }
+          QEND = j + 1; return v
+        }
+        if (e == "\"") { QEND = j + 1; return v }
+        if (e != "\\") { v = v e; j++; continue }
+        e = substr(s, j + 1, 1); n = 0
+        if (e == "x") n = 2; else if (e == "u") n = 4; else if (e == "U") n = 8
+        h = substr(s, j + 2, n)
+        if (n && length(h) == n && h ~ /^[0-9A-Fa-f]+$/ && substr(h, 1, n - 2) ~ /^0*$/) v = v hexchr(substr(h, n - 1))
+        else v = v "\001"
+        j += 2 + n
+      }
+      return v
+    }
+    # keyat(s, i): the key that may start at s[i], after any tag and anchor: an explicit ? key, an alias, or a
+    # key YAML reads as on (or On, ON) that is quoted, escaped, tagged or anchored, or in another letter case
+    function keyat(s, i,   props, v, j, w) {
+      if (substr(s, i, 1) == "?" && (i == length(s) || substr(s, i + 1, 1) ~ /[ \t]/)) {
+        print f ": an explicit ? key; write each key plainly: " s; return }
+      props = 0
+      while (substr(s, i, 1) == "!" || substr(s, i, 1) == "&") {
+        props = 1
+        while (i <= length(s) && substr(s, i, 1) !~ /[ \t]/) i++
+        while (substr(s, i, 1) ~ /[ \t]/) i++
+      }
+      if (substr(s, i, 1) == "*") {
+        j = i; while (j <= length(s) && substr(s, j, 1) !~ /[ \t]/) j++
+        while (substr(s, j, 1) ~ /[ \t]/) j++
+        if (substr(s, j, 1) == ":") print f ": an alias as a key; write each key plainly: " s
+        return
+      }
+      if (substr(s, i, 1) == "\"" || substr(s, i, 1) == q) {
+        v = quoted(s, i); if (!QEND) return
+        j = QEND; while (substr(s, j, 1) ~ /[ \t]/) j++
+        if (substr(s, j, 1) == ":" && tolower(v) == "on") print f ": the on key is quoted; write it as plain on: " s
+        return
+      }
+      w = substr(s, i)
+      if (!match(w, /^[^] \t:,{}[]+[ \t]*:([] \t,}]|$)/)) return
+      w = substr(w, 1, RLENGTH); sub(/[ \t]*:.*$/, "", w)
+      if (tolower(w) != "on") return
+      if (props) print f ": the on key has a tag or an anchor; write it as plain on: " s
+      else if (w != "on") print f ": the on key is in another letter case; write it as plain on: " s
+    }
+    # keys(s): every key on the line s: the first, after any - of a sequence, and each after a { [ or , outside
+    # a quoted scalar and before a comment
+    function keys(s,   i, j, c) {
+      i = 1
+      while (substr(s, i, 1) ~ /[ \t]/) i++
+      while (substr(s, i, 1) == "-" && substr(s, i + 1, 1) ~ /[ \t]/) { i += 2; while (substr(s, i, 1) ~ /[ \t]/) i++ }
+      keyat(s, i)
+      for (; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (c == "\"" || c == q) { quoted(s, i); if (!QEND) return; i = QEND - 1; continue }
+        if (c == "#" && (i == 1 || substr(s, i - 1, 1) ~ /[ \t]/)) return
+        if (c == "{" || c == "[" || c == ",") { j = i + 1; while (substr(s, j, 1) ~ /[ \t]/) j++; keyat(s, j) }
+      }
+    }
+    BEGIN { sha = "[0-9a-f]"; for (i = 1; i < 40; i++) sha = sha "[0-9a-f]"
+      for (i = 65; i <= 122; i++) if (i <= 90 || i >= 97) letter[sprintf("%02x", i)] = sprintf("%c", i) }
+    # the keys of every line outside a block scalar (| or >) and a comment line; the first line without a BOM
+    { line = $0; if (NR == 1) sub(/^\357\273\277/, "", line); inside = 0 }
+    blk { match(line, /^[ \t]*/)
+      if (line ~ /^[ \t]*$/) inside = 1
+      else if (contind < 0 && RLENGTH > blkind) { contind = RLENGTH; inside = 1 }
+      else if (contind >= 0 && RLENGTH >= contind) inside = 1
+      else blk = 0 }
+    !inside && line !~ /^[ \t]*#/ { keys(line)
+      if (line ~ /(^|[ \t:])[|>][-+0-9]*[ \t]*(#.*)?$/) { match(line, /^[ \t]*(-[ \t]+)*/); blkind = RLENGTH; contind = -1; blk = 1 } }
     /^permissions:/ { if ($0 !~ /^permissions:[ \t]*$/) print f ": permissions is not a block"; perm = 1; next }
     perm == 1 && /^  [^ ]/ { if ($0 !~ /^  contents: read[ \t]*$/) print f ": permissions grants more than contents: read"; next }
     perm == 1 { perm = 2 }
@@ -564,6 +646,50 @@ trig flag explicit-key 'on:' '  ? pull_request_target' '  : {types: [opened]}'
 trig flag bom "$(printf '\357\273\277on: workflow_run')"
 trig pass comment-line '# no job here starts on pull_request_target or workflow_run' 'on: push'
 trig pass quoted-on-other-events '"on": [push, pull_request]'
+# The trigger key is plain on: only. A key YAML reads as on in any other spelling fails whatever its events,
+# and so does an explicit ? key or an alias as a key.
+onkey() { # onkey WANT NAME LINE...  — a workflow that starts with LINE...; the checker must WANT (flag|pass) its keys
+  local want=$1 name=$2 got=pass; shift 2
+  { printf '%s\n' "$@"; printf 'permissions:\n  contents: read\n'; } > "$T/onkey-$name.yml"
+  case "$(wfcheck "$T/onkey-$name.yml")" in *"the on key is "*|*"the on key has "*|*"an explicit ? key"*|*"an alias as a key"*) got=flag;; esac
+  if [ "$got" = "$want" ]; then pass=$((pass + 1)); echo "PASS workflows: the on-key check gives $want on $name"
+  else failn=$((failn + 1)); echo "FAIL workflows: the on-key check gives $got on $name, want $want"; wfcheck "$T/onkey-$name.yml"; fi
+}
+onkey flag double-quoted '"on": push'
+onkey flag single-quoted "'on': push"
+onkey flag space-before-colon '"on" : push'
+onkey flag tab-before-colon "$(printf '"on"\t: push')"
+onkey flag block-value "'on':" '  push:' '    branches: [main]'
+onkey flag hex-escape '"o\x6e": push'
+onkey flag hex-escapes-upper '"\x6F\x6E": push'
+onkey flag unicode-escape '"on": push'
+onkey flag long-unicode-escape '"o\U0000006E": push'
+onkey flag quoted-other-case '"On": push'
+onkey flag plain-other-case 'ON: push'
+onkey flag json-style '{"name": "x", "on": "push", "permissions": {"contents": "read"}}'
+onkey flag flow-lines '{' '  "name": "x",' "  'on': push" '}'
+onkey flag flow-plain-tagged '{name: x, !!str on: push}'
+onkey flag in-sequence '- "on": push'
+onkey flag explicit-quoted '? "on"' ': push'
+onkey flag explicit-plain '? on' ': push'
+onkey flag explicit-continued '? "o\' '  n"' ': push'
+onkey flag tag-quoted '!!str "on": push'
+onkey flag tag-plain '!!str on: push'
+onkey flag verbatim-tag "!<tag:yaml.org,2002:str> 'on': push"
+onkey flag anchor '&k "on": push'
+onkey flag anchor-plain '&k on: push'
+onkey flag alias 'events: &k on' '*k : push'
+onkey flag bom "$(printf '\357\273\277"on": push')"
+onkey flag trailing-comment "'on': push   # the trigger"
+onkey pass plain 'on: push'
+onkey pass plain-block 'on:' '  push:' '    branches: [main]'
+onkey pass quoted-value 'on: "push"'
+onkey pass quoted-other-key 'on: push' '"env": {"A": "on"}'
+onkey pass in-block-scalar 'on: push' 'jobs:' '  a:' '    steps:' '      - run: |' "          echo '\"on\": x'" "          echo 'on': x" \
+  '        shell: bash'
+onkey pass in-quoted-value 'on: push' "x: 'jq ''{\"on\": 1}'''"
+onkey pass in-comment '# "on": push' 'on: push   # "on": too'
+onkey pass value-on 'on: push' 'x: [a, on]'
 
 # ---- 5. check-hygiene.sh ------------------------------------------------------------------------------
 HYG="$ROOT/scripts/check-hygiene.sh"
