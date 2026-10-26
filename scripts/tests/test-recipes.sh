@@ -449,17 +449,27 @@ git init -q "$F" && mkdir -p "$F/apps/backend" "$F/apps/web" "$F/programs/p/src"
   && npm_lock 1.3.1 BBBB > package-lock.json && c head >/dev/null && git tag t-head \
   && git config remote.upstream.url https://upstream.example.invalid/vendor/program \
   && "$RUNDIR" new audit >/dev/null && "$RUNDIR" new incident >/dev/null && mkdir -p audit_1/patches \
-  && printf 'diff --git a/x b/x\n' > audit_1/patches/F-1.patch && "$GITRO" copy . audit_1 >/dev/null 2>&1 \
-  && git rev-parse t-head > audit_1/src.git/FETCH_HEAD || { ko "could not build the corpus fixture"; }
+  && printf 'diff --git a/x b/x\n' > audit_1/patches/F-1.patch || { ko "could not build the corpus fixture"; }
+# git-ro.sh copy needs git with the May-2024 clone fixes (exit 69 otherwise): without them the calls that make or
+# read a copy are skipped with a note, and fail on CI.
+"$GITRO" copy . audit_1 >/dev/null 2>&1; crc=$?
+if [ "$crc" = 0 ]; then git rev-parse t-head > audit_1/src.git/FETCH_HEAD || ko "could not give the corpus fixture's copy a FETCH_HEAD"
+elif [ "$crc" != 69 ]; then ko "git-ro.sh copy failed in the corpus fixture (status $crc)"; fi
 cd "$ROOT" || exit 1
 MP="$T/minpath"; mkdir -p "$MP"
 for t in bash sh env git find grep sed awk tr wc od cat sort uniq head tail cut mkdir mktemp rm rmdir chmod cp ln \
          mv date python3 sleep ls dirname basename readlink stat touch id uname kill printf; do
   p=$(type -P "$t" 2>/dev/null) && ln -s "$p" "$MP/$t"
 done
-nok=0
+nok=0 ncopy=0
 while IFS=$'\t' read -r f n tool how cmd; do
   [ "$how" = run ] || continue
+  case "$crc:$cmd" in
+    69:*" copy "*|69:*" --git-dir "*)
+      if [ "${CI:-}" = true ]; then ko "$f:$n: needs git-ro.sh copy, and this git lacks the May-2024 clone fixes"
+      else ncopy=$((ncopy + 1)); nok=$((nok + 1)); fi
+      continue ;;
+  esac
   (cd "$F" && env -i HOME="$T/home" PATH="$MP" TMPDIR="$T" RPC_URL=https://rpc.example.invalid/ LC_ALL=C \
     "$MP/bash" -c "$cmd"$'\n''exit "${PIPESTATUS[0]}"') >"$T/out" 2>"$T/err" </dev/null
   RC=$?   # the bundled tool's own status, not that of a reader it pipes into
@@ -475,6 +485,7 @@ while IFS=$'\t' read -r f n tool how cmd; do
     ko "$f:$n: the call does not run as written (status $RC): $(printf '%s' "$cmd" | cut -c1-200) — $(head -c 300 "$T/err")"
   fi
 done < "$FORMS"
+[ "$ncopy" = 0 ] || skp "$ncopy calls that make or read a git-ro.sh copy: this git lacks the May-2024 clone fixes"
 check "every rooted call of git-ro.sh, the recipes, the runners, rpc-read.sh and rundir.sh runs as written ($nok)" \
   test "$nok" = "${nrun:-x}"
 echo
