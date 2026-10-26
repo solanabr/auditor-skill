@@ -117,7 +117,8 @@ nothing, and prints the line to record, unless the stricter of the recorded mode
 `probe.sh --only isolation` finds none of the credentials it checks readable, the vendored skill and `uv` are
 there, and `git-ro.sh copy` takes the checkout. That copy refuses a partial clone, a git without the May-2024
 clone fixes, borrowed objects (alternates) and links. When a block stops on an error instead, record "not run:
-<its first error line>".
+<its first error line>". Each block asks for approval: it is shell code, and it runs the Trail of Bits
+runner, which no bundled tool wraps.
 
 The placeholders here are this section's own. `{R}` is the run directory, `audit_<n>` or `incident_<n>`,
 relative to the working directory; `{MODE}` is the word `{R}/exec-mode` holds or, when there is no such file,

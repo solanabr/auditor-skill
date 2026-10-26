@@ -19,7 +19,8 @@ mailbox-format patch with author/date/subject that `git am` applies and attribut
 git format-patch -1 <fix-commit> --stdout > {FINDING_ID}.patch
 ```
 
-Its `From`/`Subject` lines carry the commit metadata. Keep the subject a single
+No bundled tool runs `git format-patch`, so it asks for approval. Its `From`/`Subject` lines carry the commit
+metadata. Keep the subject a single
 imperative line naming the guard, e.g. `Require is_signer on authority in update_config`.
 
 **B. Plain unified diff against a pinned commit (when there is no fix commit yet).**
