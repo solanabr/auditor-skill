@@ -3030,49 +3030,27 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# The patch verification recipe (templates/patch/VERIFICATION.md §1), run from inside
-# a client checkout whose post-checkout hook leaves a marker: it makes its worktree in
-# a Rule 11c copy under its own scratch directory and runs no git in the checkout, so
-# the hook stays silent. The control shows the hook runs for a worktree made there.
+# The patch verification recipe (templates/patch/VERIFICATION.md §1) builds through
+# the bundled target.sh, which makes its own scratch clone outside the target tree:
+# the block is the unpatched build and the patched one, exactly two target.sh
+# build-sbf lines, each a plain call with the quoted installation path first and no
+# cd or $. test-runners.sh runs target.sh build-sbf (the scratch clone, --rev,
+# --patch, no hook of the source repository), and test-recipes.sh runs both lines as
+# written.
 # ---------------------------------------------------------------------------
-if command -v git >/dev/null 2>&1; then
-  # git with no global or system config, so no hooksPath or signing setting of this
-  # machine changes what runs.
-  C="$T/client"; HK="$T/hook.marker"; GE=( env -i HOME="$T/home" PATH="$PATH" GIT_CONFIG_NOSYSTEM=1 )
-  G=( "${GE[@]}" git -c user.email=t@example.invalid -c user.name=t )
-  mkdir -p "$C" "$T/tmp-recipe" "$T/home"
-  "${G[@]}" -C "$C" init -q && printf 'v1\n' > "$C/lib.rs" && "${G[@]}" -C "$C" add lib.rs && "${G[@]}" -C "$C" commit -qm v1
-  commit="$("${G[@]}" -C "$C" rev-parse HEAD)"
-  printf '#!/bin/sh\necho hook >> "%s"\n' "$HK" > "$C/.git/hooks/post-checkout"; chmod +x "$C/.git/hooks/post-checkout"
-  printf -- '--- a/lib.rs\n+++ b/lib.rs\n@@ -1 +1 @@\n-v1\n+v2\n' > "$T/F-1.patch"
-  # The §1 block with its placeholders filled and the SBF build replaced by a check of
-  # the patched file in the worktree.
-  python3 -I - "$TEMPLATE/../patch/VERIFICATION.md" "$T/recipe.sh" "$C" "$commit" "$T" <<'PY2'
-import sys
-doc, out, checkout, commit, t = sys.argv[1:]
-block = open(doc, encoding="utf-8").read().split("## 1. Apply", 1)[1].split("```bash\n", 1)[1].split("```", 1)[0]
-build = "cargo build-sbf --tools-version v1.54"
-assert block.count(build) == 1, "the recipe's build step moved"
-block = (block.replace("{FINDING_ID}", "F-1").replace("{CHECKOUT}", checkout).replace("{COMMIT}", commit)
-         .replace("{PATH_TO}", t).replace(build, f'grep -qx v2 lib.rs && pwd -P > "{t}/recipe.pwd"'))
-assert "{" not in block.replace("${", ""), "a placeholder is left"
-open(out, "w", encoding="utf-8").write(block)
+if python3 -I - "$TEMPLATE/../patch/VERIFICATION.md" >"$T/out" 2>&1 <<'PY2'
+import re, sys
+doc = open(sys.argv[1], encoding="utf-8").read()
+block = doc.split("## 1. Apply", 1)[1].split("```bash\n", 1)[1].split("```", 1)[0]
+calls = [l for l in block.splitlines() if l.strip() and not l.lstrip().startswith("#")]
+held = [l for l in calls if "$" in l or re.search(r"(^|[;&|(])\s*cd\s", l)]
+assert not held, "a line holds a $ or a cd: %r" % held
+ts = '"<auditor-skill root>/scripts/runner/target.sh" build-sbf --run {PATH_TO} --src . --rev {COMMIT}'
+want = [ts, ts + " --patch {PATH_TO}/patches/{FINDING_ID}.patch"]
+assert calls == want, "the block is not the two target.sh build-sbf lines: %r" % calls
 PY2
-  rm -f "$HK" "$T/recipe.pwd"
-  ( cd "$C" && "${GE[@]}" TMPDIR="$T/tmp-recipe" bash "$T/recipe.sh" ) >"$T/out" 2>&1; code=$?
-  wt="$(cat "$T/recipe.pwd" 2>/dev/null)"
-  case "$wt" in "$T/tmp-recipe"/fix-F-1.*/fix) where=scratch ;; *) where="'$wt'" ;; esac
-  if [ "$code" = 0 ] && [ "$where" = scratch ] && [ ! -e "$HK" ] && [ "$("${G[@]}" -C "$C" worktree list | wc -l | tr -d ' ')" = 1 ] \
-     && [ "$(cat "$C/lib.rs")" = v1 ]; then
-    ok "VERIFICATION.md §1, run from inside the client checkout: the patched worktree is in a scratch copy, and no git ran in the checkout (its hook stayed silent)"
-  else
-    bad "VERIFICATION.md §1 recipe: exit $code, worktree $where, hook marker $( [ -e "$HK" ] && echo present || echo absent )"; cat "$T/out" >&2
-  fi
-  ( cd "$C" && "${G[@]}" worktree add -q "$T/ctl-wt" "$commit" ) >/dev/null 2>&1
-  [ -s "$HK" ] && ok "control: a worktree made in the client checkout runs its post-checkout hook" || bad "control: the client checkout's hook did not run, so the recipe check proves nothing"
-else
-  echo "note: git not on PATH; the patch verification recipe check is skipped"
-fi
+then ok "VERIFICATION.md §1: exactly the two target.sh build-sbf lines, the quoted installation path first, no cd and no \$"
+else bad "VERIFICATION.md §1 is not the two target.sh build-sbf lines"; cat "$T/out" >&2; fi
 
 if [ "$fails" -ne 0 ]; then
   echo "test-dnr-poc-runner: $fails assertion(s) FAILED" >&2
