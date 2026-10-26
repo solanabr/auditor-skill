@@ -1,0 +1,5 @@
+# Fixture (near misses for KV-080 Step 8): Kubernetes settings that resemble a runner's; the step lists none of
+# them.
+resources:
+  limits:
+    ephemeral-storage: 1Gi

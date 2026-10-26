@@ -1,0 +1,6 @@
+# Fixture: Helm values for an Actions Runner Controller scale set placed in a runner group.
+githubConfigUrl: https://github.com/example
+githubConfigSecret: arc-github-app
+runnerGroup: build-runners
+minRunners: 0
+maxRunners: 5

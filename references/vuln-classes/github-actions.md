@@ -418,9 +418,19 @@ The fix pins the SHA that `ls-remote` lists under a release the advisory names a
 `ls-remote` shows at another commit than the pin is the same signal without an advisory: the tag moved after the pin
 was taken, or the pin never was that release.
 
-**7.3 Self-hosted runners.** Fork-PR jobs do not run on persistent self-hosted runners in public repositories. The
-PyTorch research (Stawinski and Khan, 2024) turned a merged typo fix into contributor status, ran on a self-hosted
-runner and reached release credentials.
+**7.3 Self-hosted runners (KV-080 Step 8).** A persistent runner keeps files, processes and its own registration
+credentials from one job to the next, so any job that an outside account starts can leave code behind for a later
+release job. The PyTorch research (Stawinski and Khan, 2024) turned a merged typo fix into contributor status, ran on a
+self-hosted runner and reached release credentials.
+- Fork-PR, comment and issue jobs of a public repository never run on a persistent self-hosted runner.
+- An ephemeral runner takes one job and is discarded: `config.sh --ephemeral`, `run.sh --jitconfig`, or an Actions
+  Runner Controller scale set.
+- A runner group decides which repositories and workflows reach its runners. A group open to public repositories puts
+  its runners within the outside attacker's reach; one open to every workflow lets an unprivileged workflow share
+  runners with release jobs.
+- The infrastructure code (Terraform, Helm values, registration scripts) shows some of this. GitHub's settings hold the
+  rest: the group's repository and workflow access, how each runner was registered, and the fork pull request approval
+  policy. They stay `[PARTIAL]` until seen (§0).
 
 **7.4 OIDC and cloud deploys.** DEP-084 and §5.6.
 

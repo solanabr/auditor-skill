@@ -88,7 +88,18 @@ grep -rl --include='*.yml' --include='*.yaml' '^[^#]*author_association' .github
 - ✅ PASS: Every privileged job on these triggers gates on the triggering object's own `author_association`, paired per event
 - ❌ FAIL: A privileged job starts on a mention or command alone, or reads the opener's association on a comment event. Full procedure: KV-139
 
+**Step 8: Check self-hosted runners: who can start a job on them, and what one job leaves for the next**
+```
+grep -rnE --include='*.yml' --include='*.yaml' '^[^#]*runs-on:' .github/ | grep -vE 'runs-on:[[:space:]]*.?(ubuntu|windows|macos)-[0-9a-z.-]+.?[[:space:]]*(#.*)?$'
+grep -rnE --exclude-dir=node_modules --exclude-dir=.terraform --include='*.tf' --include='*.hcl' --include='*.json' --include='*.yml' --include='*.yaml' --include='*.sh' '^[^#]*(config\.sh[^#]*--(url|token)|--jitconfig|ephemeral(_runners)?"?[[:space:]]*[:=]|allows_public_repositories|runner_?[Gg]roup)' .
+```
+- The first command lists each `runs-on:` that names no GitHub-hosted image: `self-hosted`, a `group:`, a custom label (an Actions Runner Controller scale set is addressed by its name), an expression, or a value on the lines below. The second lists runner registrations and runner-group settings in the repository's infrastructure code; runner infrastructure often lives in another repository, so run it there too when the owner names one.
+- Record per listed job: its trigger (Step 1), whether the repository is public, and who can start it (fork pull requests, comments, issues: `references/vuln-classes/github-actions.md` §2.4).
+- ✅ PASS: no job runs on a self-hosted runner; or every self-hosted runner a job reaches is ephemeral (registered with `config.sh --ephemeral`, started with `run.sh --jitconfig`, or an Actions Runner Controller scale set), and its runner group admits no public repository and only the workflows that need it.
+- ❌ FAIL: on a public repository, a job that a fork pull request, a comment or an issue can start runs on a persistent self-hosted runner; or the infrastructure code registers persistent runners (no `--ephemeral`, `ephemeral: false`, `enable_ephemeral_runners = false`) into a runner group with `allows_public_repositories = true`. A persistent runner keeps files, processes and its own registration credentials from one job to the next, so one job can leave code that a later release job runs (the PyTorch research, Stawinski and Khan, 2024).
+- ⚠️ PARTIAL: a persistent runner that only collaborators' jobs reach, which is a hardening gap (release and deploy jobs get runners of their own); and what GitHub's settings hold when the source does not show it: whether a runner is ephemeral, which repositories and workflows its group admits, and the fork pull request approval policy. Name each for the owner to confirm.
+
 **Overall verdict:**
-- ✅: Actions SHA-pinned to the releases their comments name, minimal permissions, no fork-controlled code in privileged triggers, comment triggers author-gated, secrets protected
-- ⚠️: Version-tag pinned, reasonable permissions, known action vendors; pins not yet verified
-- ❌: Unpinned actions, privileged trigger with PR checkout, ungated comment-triggered privileged job, secrets in logs, a tag reference to an action whose tags were repointed
+- ✅: Actions SHA-pinned to the releases their comments name, minimal permissions, no fork-controlled code in privileged triggers, comment triggers author-gated, secrets protected, self-hosted runners ephemeral and closed to public repositories
+- ⚠️: Version-tag pinned, reasonable permissions, known action vendors; pins or runner settings not yet verified
+- ❌: Unpinned actions, privileged trigger with PR checkout, ungated comment-triggered privileged job, secrets in logs, a tag reference to an action whose tags were repointed, a persistent self-hosted runner that outside accounts can reach

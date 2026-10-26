@@ -1,24 +1,28 @@
 #!/usr/bin/env bash
 # test-gha-recipes.sh — run the GitHub Actions recipes exactly as written against the fixture workflows in
-# scripts/tests/fixtures/gha/, and check that each recipe flags exactly the expected fixtures:
+# scripts/tests/fixtures/gha/ and the infrastructure files in its infra/, and check that each recipe flags exactly
+# the expected fixtures:
 #   R1–R9    discovery/grep-commands.md, section "GitHub Actions (CI trigger trust)";
 #   K116-1   KV-116 Step 1 (AI-agent steps);
 #   K139-1   KV-139 Step 1 (externally triggerable workflows);
-#   K140-6   KV-140 Step 6 (Actions cache writers and restorers).
+#   K140-6   KV-140 Step 6 (Actions cache writers and restorers);
+#   K080-8a  KV-080 Step 8, first command (jobs on runners GitHub does not host);
+#   K080-8b  KV-080 Step 8, second command (runner registrations and runner-group settings).
 # A recipe of two commands (R1) flags what the first lists and the second does not; every other line of an R
 # recipe must be an echo of a quoted marker, which the suite does not run. The suite also checks that every
 # known-vector step that repeats an R recipe carries its lines byte for byte, as one block in the same order,
-# and that no recipe flags a fixture's comment lines. R9 is also checked line by line on its own fixtures. It
-# runs R1 and K139-1 over trigger spellings built at run time, R1 over file names that hold a space or a quote,
-# and R1 over large inputs: 2,000 workflows, and two of about 1 MiB. Every command of every recipe must end
-# within 30 s on a workflow that holds one 1 MiB line of near misses. KV-020 Step 3 and KV-100 Step 4, which
-# list documentation files with one recursive grep as R1 does, run over file names that hold a space or a
-# quote, and KV-100's over more than 64 KiB of names.
+# and that no recipe flags a fixture's comment lines. R9 and the KV-080 Step 8 commands are also checked line
+# by line on their own fixtures, and the one that searches outside .github/ skips node_modules/ and
+# .terraform/. It runs R1 and K139-1 over trigger spellings built at run time, R1 over file names that hold a
+# space or a quote, and R1 over large inputs: 2,000 workflows, and two of about 1 MiB. Every command of every
+# recipe must end within 30 s on a workflow that holds one 1 MiB line of near misses. KV-020 Step 3 and KV-100
+# Step 4, which list documentation files with one recursive grep as R1 does, run over file names that hold a
+# space or a quote, and KV-100's over more than 64 KiB of names.
 #
 # Usage (from the repo root): bash scripts/tests/test-gha-recipes.sh
-# Needs bash >= 3.2, grep, awk. No network. The fixtures are copied into a temp dir as .github/workflows/, and
-# those under actions/ as .github/actions/<name>/action.yml, for the run; nothing is written under the
-# repository's own .github/.
+# Needs bash >= 3.2, grep, awk. No network. The fixtures are copied into a temp dir as .github/workflows/, those
+# under actions/ as .github/actions/<name>/action.yml, and those under infra/ as infra/, for the run; nothing is
+# written under the repository's own .github/.
 set -uo pipefail
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -29,8 +33,9 @@ fixtures="$root/scripts/tests/fixtures/gha"
 work=$(mktemp -d "${TMPDIR:-/tmp}/gha-recipes.XXXXXX") || exit 1
 trap 'rm -rf "$work"' EXIT
 
-# install_fixtures <fixture dir> <tree>: the workflows (.yml and .yaml) into <tree>/.github/workflows/, and each
-# composite action in <fixture dir>/actions/ as <tree>/.github/actions/<name>/action.yml.
+# install_fixtures <fixture dir> <tree>: the workflows (.yml and .yaml) into <tree>/.github/workflows/, each
+# composite action in <fixture dir>/actions/ as <tree>/.github/actions/<name>/action.yml, and the
+# infrastructure files in <fixture dir>/infra/ into <tree>/infra/.
 install_fixtures() {
   local a n
   mkdir -p "$2/.github/workflows" && cp "$1"/*.yml "$1"/*.yaml "$2/.github/workflows/" || return 1
@@ -38,6 +43,7 @@ install_fixtures() {
     n=${a##*/}; n=${n%.yml}
     mkdir -p "$2/.github/actions/$n" && cp "$a" "$2/.github/actions/$n/action.yml" || return 1
   done
+  mkdir -p "$2/infra" && cp "$1"/infra/* "$2/infra/" || return 1
 }
 install_fixtures "$fixtures" "$work" || exit 1
 
@@ -88,10 +94,12 @@ KV116=116-ai-coding-agent-ci-deploy-key.md
 KV139=139-comment-triggered-workflow-author-gating.md
 KV140=140-workflow-run-pwn-request-artifact-cache-poisoning.md
 
-# Recipes that live only in a known vector (<id> <vector file> <step>): the step's first grep line.
-KV_RECIPES="K116-1 $KV116 1
-K139-1 $KV139 1
-K140-6 $KV140 6"
+# Recipes that live only in a known vector (<id> <vector file> <step> <n>): the step's <n>-th grep line.
+KV_RECIPES="K116-1 $KV116 1 1
+K139-1 $KV139 1 1
+K140-6 $KV140 6 1
+K080-8a $KV080 8 1
+K080-8b $KV080 8 2"
 
 # Known-vector steps that repeat an R recipe (<id> <vector file> <step>).
 COPIES="R1 $KV080 7
@@ -103,7 +111,7 @@ R7 $KV080 2
 R7 $KV140 2
 R9 $KV080 4"
 
-IDS="R1 R2 R3 R4 R5 R6 R7 R8 R9 K116-1 K139-1 K140-6"
+IDS="R1 R2 R3 R4 R5 R6 R7 R8 R9 K116-1 K139-1 K140-6 K080-8a K080-8b"
 
 # Fixtures each recipe must flag (two-digit prefixes, ascending). Anything else is a mismatch.
 expected() {
@@ -120,21 +128,31 @@ expected() {
     K116-1) echo "01 08 11 14 33 34 54 57 67 68 72 73" ;;
     K139-1) echo "01 02 03 04 08 10 11 14 16 17 22 23 25 26 33 40 48 49 53 55 56 58 59 62 64 65 66 69 71 74" ;;
     K140-6) echo "35 36 37 38 39 42 43 44 45" ;;
+    K080-8a) echo "78 98" ;;
+    K080-8b) echo "86 87 88 89 90 94" ;;
   esac
 }
 
 # The lines each recipe must flag in its own fixtures (<id> <fixture> <line>...); its other fixtures are listed
 # whole in expected(), and its near misses are in neither.
 LINES="R9 76-pin-forms.yml 11 12 13 14 16 17 19
-R9 98-pin-and-runner-yaml-extension.yaml 11"
+R9 98-pin-and-runner-yaml-extension.yaml 11
+K080-8a 78-self-hosted-runners.yml 9 13 17 23 27 34
+K080-8a 98-pin-and-runner-yaml-extension.yaml 9
+K080-8b infra/86-runner-group-public.tf 2 5
+K080-8b infra/87-arc-runner-deployment.yaml 11
+K080-8b infra/88-arc-scale-set-values.yml 4
+K080-8b infra/89-runner-module.hcl 7
+K080-8b infra/90-runner-register.sh 3 5
+K080-8b infra/94-runner-group.tf.json 3 7"
 
 # The command lines of recipe <id>.
 recipe_lines() {
-  local i file step
+  local i file step n
   case "$1" in
     R*) recipe "$1" ;;
-    *) while read -r i file step; do
-         if [ "$i" = "$1" ]; then kv_step "$file" "$step" | sed -n 1p; fi
+    *) while read -r i file step n; do
+         if [ "$i" = "$1" ]; then kv_step "$file" "$step" | sed -n "${n}p"; fi
        done <<< "$KV_RECIPES" ;;
   esac
 }
@@ -176,9 +194,10 @@ same_files() {
     "$(printf '%s\n' "$second" | grep -oE -- "--include='[^']*'")" ]
 }
 
-# The two-digit fixture prefixes in a recipe's output, ascending, on one line.
+# The two-digit fixture prefixes in a recipe's output, ascending, on one line. A recipe rooted at . prints its
+# paths after ./.
 prefixes() {
-  sed -E 's#^\.github/(workflows|actions)/##; s#^([0-9][0-9])-.*#\1#' | sort -u | tr '\n' ' ' | sed 's/ $//'
+  sed -E 's#^\./##; s#^(\.github/(workflows|actions)|infra)/##; s#^([0-9][0-9])-.*#\1#' | sort -u | tr '\n' ' ' | sed 's/ $//'
 }
 
 fail=0; nrec=0
@@ -224,12 +243,24 @@ done
 nlines=0
 while read -r id fx want; do
   nlines=$((nlines + 1))
-  path=.github/workflows/$fx
-  got=$(run_recipe "$work" "$(recipe_lines "$id")" | awk -F: -v p="$path" '$1 == p { print $2 }' | sort -n | tr '\n' ' ' \
-    | sed 's/ $//')
+  case "$fx" in infra/*) path=$fx ;; *) path=.github/workflows/$fx ;; esac
+  got=$(run_recipe "$work" "$(recipe_lines "$id")" | sed 's#^\./##' | awk -F: -v p="$path" '$1 == p { print $2 }' \
+    | sort -n | tr '\n' ' ' | sed 's/ $//')
   if [ "$got" = "$want" ]; then echo "ok   $id in $fx: lines $got"
   else echo "FAIL $id in $fx: got lines [$got] want [$want]"; fail=1; fi
 done <<< "$LINES"
+
+# The command that searches the whole tree skips node_modules/ and .terraform/, which hold dependencies and
+# downloaded modules rather than the repository's own settings.
+excl="$work/excluded"; mkdir -p "$excl/node_modules/runner" "$excl/.terraform/modules/oidc" "$excl/infra" || exit 1
+for d in node_modules/runner .terraform/modules/oidc infra; do
+  printf 'allows_public_repositories = true\n' > "$excl/$d/main.tf"
+done
+for id in K080-8b; do
+  got=$(run_recipe "$excl" "$(recipe_lines "$id")" | sed 's#^\./##; s#:.*##' | sort -u | tr '\n' ' ')
+  if [ "$got" = "infra/main.tf " ]; then echo "ok   $id skips node_modules/ and .terraform/"
+  else echo "FAIL $id outside node_modules/ and .terraform/: got [$got] want [infra/main.tf ]"; fail=1; fi
+done
 
 # A copy is the recipe's code lines as one run of whole lines, in order. The step may hold other commands
 # around a recipe of one command; a recipe of two is the whole code of its step, so "the first" and "the second"
@@ -262,9 +293,10 @@ for id in $IDS; do
   done
 done
 
-# Every expected hit comes from a workflow line: no recipe flags the fixtures' comment lines on their own.
-mkdir -p "$work/comment-lines/actions"
-for f in "$fixtures"/*.yml "$fixtures"/*.yaml "$fixtures"/actions/*.yml; do
+# Every expected hit comes from a workflow or infrastructure line: no recipe flags the fixtures' comment lines
+# on their own.
+mkdir -p "$work/comment-lines/actions" "$work/comment-lines/infra"
+for f in "$fixtures"/*.yml "$fixtures"/*.yaml "$fixtures"/actions/*.yml "$fixtures"/infra/*; do
   sed -n '/^[[:space:]]*#/p' "$f" > "$work/comment-lines/${f#"$fixtures"/}"
 done
 install_fixtures "$work/comment-lines" "$work/comments" || exit 1
@@ -400,5 +432,5 @@ else
 fi
 
 if [ "$fail" -ne 0 ]; then echo "gha recipe test FAILED" >&2; exit 1; fi
-nfix=$(ls "$fixtures"/*.yml "$fixtures"/*.yaml "$fixtures"/actions/*.yml | wc -l | tr -d ' ')
+nfix=$(ls "$fixtures"/*.yml "$fixtures"/*.yaml "$fixtures"/actions/*.yml "$fixtures"/infra/* | wc -l | tr -d ' ')
 echo "gha recipe test passed: $nrec recipes, $nfix fixtures, $nlines line checks, $ncopy copies, comment lines, trigger spellings, file names, large inputs"
