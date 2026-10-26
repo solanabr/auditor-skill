@@ -511,10 +511,6 @@ KEEP = [
     # §4: the clone the Trail of Bits runner works in
     ("templates/patch/VERIFICATION.md",
      'GIT_NO_LAZY_FETCH=1 git clone -q --no-local --no-checkout --template= "$PPV_SRC" "$PPV/repo" &&'),
-    # §1: the scratch worktree rebuild
-    ("templates/patch/VERIFICATION.md", 'GIT_NO_LAZY_FETCH=1 git clone --no-local {CHECKOUT} "$SCRATCH/copy" &&'),
-    ("templates/patch/VERIFICATION.md", 'git -C "$SCRATCH/copy" worktree add "$SCRATCH/fix" {COMMIT} &&'),
-    ("templates/patch/VERIFICATION.md", "git apply {PATH_TO}/{FINDING_ID}.patch &&"),
 ]
 # (file, text): prose that names the prefix as part of what a tool runs, or a call that asks
 PROSE = [
@@ -522,7 +518,6 @@ PROSE = [
     ("references/orchestration/pre-scan.md", "as `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false --icase-pathspecs ls-files -- .audit-memory` would show"),
     ("references/detection-response/README.md", "`GIT_NO_LAZY_FETCH=1 git clone --no-local <checkout> <scratch copy>` and read with"),
     ("references/detection-response/README.md", "`GIT_NO_LAZY_FETCH=1 git -C <scratch copy> --no-pager -c core.fsmonitor=false -c log.showSignature=false show --no-textconv --no-ext-diff <rev>:<path>`,"),
-    ("templates/patch/VERIFICATION.md", "copy you made yourself, `GIT_NO_LAZY_FETCH=1 git clone --no-local <checkout> <scratch copy>` (Rule 11c),"),
 ]
 def bare(line):  # the line without its comment, and with each quoted string emptied
     out, q, esc = [], None, False
@@ -583,14 +578,9 @@ for d in ("references", "templates"):
     for dp, dn, fn in sorted(os.walk(d)):
         files += sorted(os.path.join(dp, f) for f in fn if f.endswith(".md"))
 files.remove("references/framework-idioms/build-and-tooling.md")
-# (file, text): code lines that run nothing, or that a change elsewhere replaces
+# (file, text): code lines that run nothing
 NOT_STEPS = [
     ("templates/audit-report.md", "node / npm:     {version}"),
-    # VERIFICATION.md §1's scratch worktree rebuild
-    ("templates/patch/VERIFICATION.md", 'GIT_NO_LAZY_FETCH=1 git clone --no-local {CHECKOUT} "$SCRATCH/copy" &&  # the Rule 11c copy'),
-    ("templates/patch/VERIFICATION.md", 'git -C "$SCRATCH/copy" worktree add "$SCRATCH/fix" {COMMIT} &&  # the audited commit the patch targets'),
-    ("templates/patch/VERIFICATION.md", "git apply {PATH_TO}/{FINDING_ID}.patch &&                       # or: git am < ... for format-patch"),
-    ("templates/patch/VERIFICATION.md", "cargo build-sbf --tools-version v1.54                           # rebuild the patched program"),
 ]
 TOOLS = ("npm|npx|yarn|pnpm|bun|node|cargo|anchor|solana|solana-verify|solana-keygen|rustup|avm|pip|pip-audit|safety|"
          "bandit|uv|curl|wget|dig|nslookup|whois|openssl|gh|aws|gsutil|gcloud|az|docker|git")

@@ -13,20 +13,20 @@ discard it.
 
 The rebuild runs target-controlled code (build scripts, proc-macros, toolchain files), so it follows the
 execution mode recorded at intake — `OUTPUT-RULES.md` Rule 11a (isolated recommended; native allowed and
-stated in the report). If it cannot run in that mode, stop at `[FIX-PROPOSED]`. Create the worktree in a
-copy you made yourself, `GIT_NO_LAZY_FETCH=1 git clone --no-local <checkout> <scratch copy>` (Rule 11c),
-never in a checkout the client supplied: every git command below runs from the scratch directory and on the
-copy (`git -C`), none in the client checkout. `{CHECKOUT}` and `{PATH_TO}` are absolute paths.
+stated in the report). If it cannot run in that mode, stop at `[FIX-PROPOSED]`. The bundled runner builds in
+a scratch clone it makes outside the target tree (Rule 11c): no git command runs in the client checkout, and
+nothing is written in it but the run directory. `{PATH_TO}` is the run directory, `audit_<n>` or
+`incident_<n>`, relative to the working directory; `{COMMIT}` is the audited commit. Run each line from the
+working directory, with no `cd` first.
 
 ```bash
-SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/fix-{FINDING_ID}.XXXXXX")" &&  # a fresh directory at an unpredictable path
-  cd "$SCRATCH" &&                                                # out of the client checkout before any git
-  GIT_NO_LAZY_FETCH=1 git clone --no-local {CHECKOUT} "$SCRATCH/copy" &&  # the Rule 11c copy
-  git -C "$SCRATCH/copy" worktree add "$SCRATCH/fix" {COMMIT} &&  # the audited commit the patch targets
-  cd "$SCRATCH/fix" &&
-  git apply {PATH_TO}/{FINDING_ID}.patch &&                       # or: git am < ... for format-patch
-  cargo build-sbf --tools-version v1.54                           # rebuild the patched program
+# the unpatched build, then the patched one; each keeps its .so in {PATH_TO}/exec/build-sbf-<k>/
+"<auditor-skill root>/scripts/runner/target.sh" build-sbf --run {PATH_TO} --src . --rev {COMMIT}
+"<auditor-skill root>/scripts/runner/target.sh" build-sbf --run {PATH_TO} --src . --rev {COMMIT} --patch {PATH_TO}/patches/{FINDING_ID}.patch
 ```
+
+Exit 3 ending `does not apply to <commit>` means the patch does not apply; exit 1 means the patched program
+does not build. The last line names the log, `{PATH_TO}/exec/build-sbf-<k>.log`, and the `.so`.
 
 - [ ] Patch applied cleanly against `{COMMIT}` (no fuzz, no reject `.rej` files).
 - [ ] Patched program builds.
