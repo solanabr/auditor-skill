@@ -118,7 +118,7 @@ CAP=${AUDITOR_RUN_TIMEOUT:-1800}
   refuse "AUDITOR_RUN_TIMEOUT is '$(confine_text "$CAP")', not a whole number of seconds from 1 to 86400"
 LIMIT=$((10#$CAP))
 iso_tmp_outside
-iso_disclosures_ok "$R" || refuse "$R/disclosures.tsv is not a regular file with one link whose first line is the header, so no row can be added to it"
+confine_disclosures_ok "$R" || refuse "$R/disclosures.tsv is not a regular file with one link whose first line is the header, so no row can be added to it"
 
 # ---- the tools, scratch and the watchdog -------------------------------------------------------------
 command -v semgrep >/dev/null 2>&1 || blocker "semgrep is not on PATH, so the scan cannot run here — nothing was sent."
@@ -157,7 +157,7 @@ fi
 
 CONFIGS=()
 for s in "${SETS[@]}"; do CONFIGS+=(--config "$s"); done
-iso_disclose "$R" "$TOOL" semgrep.dev "ruleset ids (the semgrep registry, for the rules)" "${SETS[@]}" ||
+confine_disclose "$R" "$TOOL" semgrep.dev "ruleset ids (the semgrep registry, for the rules)" "${SETS[@]}" ||
   blocker "cannot add a row to $R/disclosures.tsv, so nothing was sent"
 : > "$S/out.log" || blocker "cannot write in $S"
 printf '>> semgrep scan %s --metrics=off --disable-version-check --sarif --output <scratch> --error -- %s\n' \

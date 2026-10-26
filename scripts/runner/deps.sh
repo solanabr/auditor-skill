@@ -253,7 +253,7 @@ CAP=${AUDITOR_RUN_TIMEOUT:-1800}
   refuse "AUDITOR_RUN_TIMEOUT is '$(confine_text "$CAP")', not a whole number of seconds from 1 to 86400"
 LIMIT=$((10#$CAP))
 iso_tmp_outside
-iso_disclosures_ok "$R" || refuse "$R/disclosures.tsv is not a regular file with one link whose first line is the header, so no row can be added to it"
+confine_disclosures_ok "$R" || refuse "$R/disclosures.tsv is not a regular file with one link whose first line is the header, so no row can be added to it"
 
 # ---- the tools -----------------------------------------------------------------------------------------
 need() { command -v "$1" >/dev/null 2>&1 || blocker "$1 is not on PATH, so $ACTION cannot run here — nothing was copied or sent."; }
@@ -357,7 +357,7 @@ stopped() { # stopped: a reason when the last step did not just exit with a stat
   esac
 }
 disclose() { # disclose <service> <kind> <value>...: the row before the first request to <service>
-  iso_disclose "$R" "$TOOL" "$@" || blocker "cannot add a row to $R/disclosures.tsv, so nothing was sent"
+  confine_disclose "$R" "$TOOL" "$@" || blocker "cannot add a row to $R/disclosures.tsv, so nothing was sent"
 }
 # get <url> <file> [json]: one https GET into <file> (no redirects, at most 100 MiB); sets HTTP, the status
 # code. A transfer that does not finish is a blocker.
