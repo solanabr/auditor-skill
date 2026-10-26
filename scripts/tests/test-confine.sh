@@ -283,7 +283,7 @@ check "hgit reads the repository it is given, whatever GIT_* the caller set" out
 check "... and git writes no trace" test ! -e "$T/trace"
 awk '/^ENV / { sub(/^ENV /, ""); sub(/=.*/, ""); print }' "$T/rec.log" | sort -u > "$T/env.names"
 check "hgit passes only the hardened environment" \
-  test -z "$(grep -vxE 'HOME|PATH|TMPDIR|LC_ALL|TZ|GIT_NO_LAZY_FETCH|GIT_CONFIG_NOSYSTEM|GIT_CONFIG_GLOBAL|GIT_TERMINAL_PROMPT|GIT_OPTIONAL_LOCKS|GIT_CEILING_DIRECTORIES|GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS|PWD|OLDPWD|SHLVL|_' "$T/env.names")"
+  test -z "$(grep -vxE 'HOME|PATH|TMPDIR|LC_ALL|TZ|GIT_NO_LAZY_FETCH|GIT_CONFIG_NOSYSTEM|GIT_CONFIG_GLOBAL|GIT_TERMINAL_PROMPT|GIT_OPTIONAL_LOCKS|GIT_ALLOW_PROTOCOL|GIT_CEILING_DIRECTORIES|GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS|PWD|OLDPWD|SHLVL|_' "$T/env.names")"
 awk -F '\037' '$1 == "ARGV" { print $2, ($3 == "-C"), $5, $6; exit }' "$T/rec.log" > "$T/argv"
 check "hgit runs git --no-pager -C <dir> -c core.fsmonitor=false first" test "$(cat "$T/argv")" = '--no-pager 1 -c core.fsmonitor=false'
 for pin in core.pager=cat core.hooksPath=/dev/null protocol.allow=never core.attributesFile=/dev/null \

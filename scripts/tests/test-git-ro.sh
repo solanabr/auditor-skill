@@ -542,7 +542,7 @@ check "... and runs no program they name" nomarks
 check "... and git writes no trace" test ! -e "$T/trace.log" -a ! -e "$T/trace2.log"
 awk '/^ENV / { sub(/^ENV /, ""); sub(/=.*/, ""); print }' "$T/rec.log" | sort -u > "$T/env.names"
 check "git receives only the hardened environment" \
-  test -z "$(grep -vxE 'HOME|PATH|TMPDIR|LC_ALL|TZ|GIT_NO_LAZY_FETCH|GIT_CONFIG_NOSYSTEM|GIT_CONFIG_GLOBAL|GIT_TERMINAL_PROMPT|GIT_OPTIONAL_LOCKS|GIT_CEILING_DIRECTORIES|GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS|PWD|OLDPWD|SHLVL|_' "$T/env.names")"
+  test -z "$(grep -vxE 'HOME|PATH|TMPDIR|LC_ALL|TZ|GIT_NO_LAZY_FETCH|GIT_CONFIG_NOSYSTEM|GIT_CONFIG_GLOBAL|GIT_TERMINAL_PROMPT|GIT_OPTIONAL_LOCKS|GIT_ALLOW_PROTOCOL|GIT_CEILING_DIRECTORIES|GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS|PWD|OLDPWD|SHLVL|_' "$T/env.names")"
 check "... with GIT_CONFIG_GLOBAL=/dev/null and GIT_CONFIG_NOSYSTEM=1" \
   sh -c "grep -qx 'ENV GIT_CONFIG_GLOBAL=/dev/null' '$T/rec.log' && grep -qx 'ENV GIT_CONFIG_NOSYSTEM=1' '$T/rec.log'"
 check "... and GIT_CEILING_DIRECTORIES at the working directory's parent" grep -qx "ENV GIT_CEILING_DIRECTORIES=$T" "$T/rec.log"
@@ -561,7 +561,7 @@ check "... with --no-local --bare --no-recurse-submodules --template=" \
   awk -F '\037' '$1 == "ARGV" { for (i = 2; i <= NF; i++) if ($i == "clone") { ok = ($(i + 1) == "--no-local" && $(i + 2) == "--bare" && $(i + 3) == "--no-recurse-submodules" && $(i + 4) == "--template=") } } END { exit !ok }' "$T/rec.log"
 awk '/^ENV / { sub(/^ENV /, ""); sub(/=.*/, ""); print }' "$T/rec.log" | sort -u > "$T/env.names"
 check "... and only the hardened environment" \
-  test -z "$(grep -vxE 'HOME|PATH|TMPDIR|LC_ALL|TZ|GIT_NO_LAZY_FETCH|GIT_CONFIG_NOSYSTEM|GIT_CONFIG_GLOBAL|GIT_TERMINAL_PROMPT|GIT_OPTIONAL_LOCKS|GIT_CEILING_DIRECTORIES|GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS|PWD|OLDPWD|SHLVL|_' "$T/env.names")"
+  test -z "$(grep -vxE 'HOME|PATH|TMPDIR|LC_ALL|TZ|GIT_NO_LAZY_FETCH|GIT_CONFIG_NOSYSTEM|GIT_CONFIG_GLOBAL|GIT_TERMINAL_PROMPT|GIT_OPTIONAL_LOCKS|GIT_ALLOW_PROTOCOL|GIT_CEILING_DIRECTORIES|GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS|PWD|OLDPWD|SHLVL|_' "$T/env.names")"
 check "... and runs no hook" nomarks
 
 # PATH: entries inside the working directory, relative ones and "." are dropped before anything runs.
