@@ -55,10 +55,13 @@ Telegram bot (`@seal_911_bot`). These commands are the after-the-fact workup.
   collect only with `--collect`, which stands in for your yes to the addresses,
   window and caps. The commands pre-approve the snapshot and the collector, so in
   `claude -p` they run too, within the caps your environment sets; the `--logs`
-  copy is refused there (above). A long collection runs in the
-  background; one stopped by INT, TERM or HUP, or by a failed write, records what
-  it had not fetched as collection gaps; for one killed outright, the agent
-  records them from its files.
+  copy is refused there (above). The collection runs in the foreground, with a
+  timeout sized from its call count; one that outlasts it moves to the background,
+  and the turn its completion starts has none of the command's pre-approvals, so
+  the command first invokes itself again, which asks unless your settings allow it
+  ([Long steps](permissions-and-isolation.md#long-steps)). One stopped by INT,
+  TERM or HUP, or by a failed write, records what it had not fetched as collection
+  gaps; for one killed outright, the agent records them from its files.
 - **Source** (`--repo`): needed to confirm a flaw and to reach
   `confirmed_exploited`; without it, findings cap at `suspected`.
 

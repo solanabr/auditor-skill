@@ -465,7 +465,7 @@ The one gated collector: it pages each address's signature history, failed trans
   - The three files are written only through the descriptors opened when they were created.
   - stdout ends with `transactions fetched: N of M calls -> …` and `collection gaps: N (see …)`, except after a failed write (exit 3), when a `[blocker]` line on stderr takes their place. Notices go to stderr and start with `  ! `.
   - A run stopped by INT, TERM or HUP adds gap rows for the address being paged (naming the `--before` signature to resume from, once one of its pages was read) and each one after it, and one for the signatures listed but not fetched, then prints the closing lines. A run killed outright prints nothing more; then each signature in `signatures.jsonl` with no transaction in `transactions.jsonl` is a gap, and so is every address whose history may not have been paged to its end: the last `queried_address` in `signatures.jsonl` and every address given after it, or every address given when none appears.
-- **Run time:** up to addresses × `--max-pages` + `--max-tx` calls, one at a time, each up to 60 seconds. Run a long collection in the background, or with a timeout sized from that count.
+- **Run time:** up to addresses × `--max-pages` + `--max-tx` calls, one at a time, each up to 60 seconds. The commands run it in the foreground with a timeout sized from that count: a Bash call that outlasts its timeout moves to the background, and the turn its completion starts has none of the command's pre-approvals ([Long steps](permissions-and-isolation.md#long-steps)). Run by hand, a long collection can go in the background.
 - **Needs:** curl and jq; `python3` too when jq rounds large integers (before jq 1.7).
 
 #### `profile.sh`
