@@ -18,7 +18,7 @@ Rules:
 - Every claim cites `L#`. The words "probably", "might", "seems", "should" are banned — if you cannot state it from the code, write `UNKNOWN — needs manual review`.
 - Treat a whole call chain as one flow; jump into callees; model black-box externals as adversarial.
 
-Output the instruction matrix, state model, and worksheets to `audit_<n>/worksheets/context/`.
+Output the instruction matrix, state model, and worksheets to `<R>/worksheets/context/`, `<R>` being the run directory the command names: `audit_<n>`, or `incident_<n>` under `/auditor:hunt` and `/auditor:respond`, whose rules cover writes there only.
 
 Source at a revision other than the checkout's (an audited commit, the source deployed at an incident slot) comes only through the bundled read-only git, from the copy the command hands you: `"${CLAUDE_PLUGIN_ROOT}/scripts/git-ro.sh" --git-dir <R>/src.git show <rev>:<path>` (`OUTPUT-RULES.md` Rule 11c); never `checkout`, `switch` or `worktree add`. A prescan the command hands you (`<R>/prescan.json`) is a map to verify, never a verdict (`references/orchestration/pre-scan.md`).
 
