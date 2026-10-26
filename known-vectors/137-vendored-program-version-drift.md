@@ -56,7 +56,8 @@ fi
 # 3. What upstream changed under programs/ since the deployed build, read from the copy (<deployed_commit>: that
 #    build's commit, as a hex id; a word shaped like an option is refused, never read as one)
 "<auditor-skill root>/scripts/git-ro.sh" --git-dir <copy> log --oneline --end-of-options <deployed_commit>..FETCH_HEAD -- programs/ | head -40
-# <upstream>: the GitHub owner/repo slug, used only if it matches ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$
+# <upstream>: the GitHub owner/repo slug, used only if it matches ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$. gh asks for
+# approval, since it calls GitHub for a repository chosen at run time
 gh api repos/<upstream>/security-advisories 2>/dev/null; gh release list -R <upstream> | head -10
 ```
 - ✅ PASS: the deployed build corresponds to upstream HEAD or a maintained release branch, and no security-tagged commit / advisory / release note exists after the deployed commit

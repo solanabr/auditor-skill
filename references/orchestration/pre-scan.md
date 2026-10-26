@@ -5,6 +5,7 @@
 The tools live in `<auditor-skill root>/tools/auditor-tools/` (one Rust crate, two binaries). `<auditor-skill root>` is the absolute installation path the invoking command or skill gave you, never the working directory, which is usually the audited repo (`OUTPUT-RULES.md` Rule 11e). Build once:
 
 ```bash
+# built once, by whoever installs the skill; run by an agent, the build asks for approval, like any install
 cd "<auditor-skill root>/tools/auditor-tools" && cargo build --release
 # binaries: <auditor-skill root>/tools/auditor-tools/target/release/audit-scan  and  …/audit-mem
 ```

@@ -318,8 +318,9 @@ GREP PATTERNS:
   "password"             → Hardcoded credentials
   "__import__"           → Dynamic import risk
 
-TERMINAL COMMANDS:
-  pip audit                            # Known vulnerabilities
+TERMINAL COMMANDS (third-party tools no bundled runner wraps, so each asks for approval; run the
+dependency audits from a scratch dir outside the target tree, on copies of the requirements files):
+  pip-audit                            # Known vulnerabilities
   safety check                         # Dependency audit
   bandit -r .                          # Static security analysis
 ```

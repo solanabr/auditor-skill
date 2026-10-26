@@ -568,6 +568,83 @@ PY
 if [ "$?" = 0 ]; then ok "no corpus recipe runs plain git, and the Rule 11c prefix is left only in the listed text"
 else ko "a corpus recipe runs plain git, or the Rule 11c prefix is left outside the listed text"; sed 's/^/#   /' "$T/plain-git.txt" | cut -c1-220; fi
 
+# Calls that ask: a code line that runs a tool no command pre-approves (npm, cargo, curl, dig, gh, uv, plain git
+# and the like) sits in a step whose text says it asks for approval: the step's own lines, from its heading or
+# its bold **Step** line through the paragraph after the block. The fixes a developer runs on their own machine
+# (build-and-tooling.md) are no audit step.
+python3 -I - "$ROOT" > "$T/asks.txt" 2>&1 <<'PY'
+import os, re, sys
+
+os.chdir(sys.argv[1])
+files = ["FULL-AUDIT.md"]
+for d in ("checklists", "known-vectors", "discovery"):
+    files += sorted(os.path.join(d, f) for f in os.listdir(d) if f.endswith(".md"))
+for d in ("references", "templates"):
+    for dp, dn, fn in sorted(os.walk(d)):
+        files += sorted(os.path.join(dp, f) for f in fn if f.endswith(".md"))
+files.remove("references/framework-idioms/build-and-tooling.md")
+# (file, text): code lines that run nothing, or that a change elsewhere replaces
+NOT_STEPS = [
+    ("templates/audit-report.md", "node / npm:     {version}"),
+    # VERIFICATION.md §1's scratch worktree rebuild
+    ("templates/patch/VERIFICATION.md", 'GIT_NO_LAZY_FETCH=1 git clone --no-local {CHECKOUT} "$SCRATCH/copy" &&  # the Rule 11c copy'),
+    ("templates/patch/VERIFICATION.md", 'git -C "$SCRATCH/copy" worktree add "$SCRATCH/fix" {COMMIT} &&  # the audited commit the patch targets'),
+    ("templates/patch/VERIFICATION.md", "git apply {PATH_TO}/{FINDING_ID}.patch &&                       # or: git am < ... for format-patch"),
+    ("templates/patch/VERIFICATION.md", "cargo build-sbf --tools-version v1.54                           # rebuild the patched program"),
+]
+TOOLS = ("npm|npx|yarn|pnpm|bun|node|cargo|anchor|solana|solana-verify|solana-keygen|rustup|avm|pip|pip-audit|safety|"
+         "bandit|uv|curl|wget|dig|nslookup|whois|openssl|gh|aws|gsutil|gcloud|az|docker|git")
+ENV = r"(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:env(?:\s+-u\s+\S+)*\s+(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*)?"
+CALL = re.compile(r"(?:^|[|;&(]|\b(?:then|do|else|if)\s)\s*" + ENV + r"(" + TOOLS + r")(?=\s|$)")
+ASKS = re.compile(r"asks? for approval", re.I)
+SHELL = {"", "bash", "sh", "shell", "console", "zsh"}
+def bare(line):  # the line without its comment, and with each quoted string emptied
+    out, q, esc = [], None, False
+    for i, ch in enumerate(line):
+        if q == '"' and esc: esc = False
+        elif q == '"' and ch == "\\": esc = True
+        elif q:
+            if ch == q: q = None; out.append(ch)
+        elif ch in "'\"": q = ch; out.append(ch)
+        elif ch == "#" and (i == 0 or line[i - 1] in " \t"): break
+        else: out.append(ch)
+    return "".join(out)
+def text(line):
+    return line[2:] if line.startswith("> ") else ("" if line == ">" else line)
+bad, seen = [], set()
+for f in files:
+    lines = [text(l.rstrip("\n")) for l in open(f, encoding="utf-8")]
+    fence, start = [], 0
+    for i, l in enumerate(lines):
+        if l.lstrip().startswith("```"):
+            fence.append(i)
+    heads = [i for i, l in enumerate(lines) if (l.startswith("#") or l.lstrip().startswith("**Step")) and
+             sum(1 for x in fence if x < i) % 2 == 0]
+    for a, b in zip(fence[0::2], fence[1::2]):
+        if lines[a].lstrip()[3:].strip().lower() not in SHELL:
+            continue
+        top = max([h for h in heads if h < a], default=-1) + 1
+        end = b + 1
+        while end < len(lines) and not lines[end].strip(): end += 1
+        while end < len(lines) and lines[end].strip() and not lines[end].lstrip().startswith("```"): end += 1
+        context = "\n".join(lines[top:end])
+        for n in range(a + 1, b):
+            m = CALL.search(bare(lines[n]))
+            if not m:
+                continue
+            k = (f, lines[n].strip())
+            if k in NOT_STEPS:
+                seen.add(k)
+            elif not ASKS.search(context):
+                bad.append(f"{f}:{n + 1}: runs {m.group(1)}, and its step does not say it asks for approval: {lines[n].strip()[:120]}")
+for k in NOT_STEPS:
+    if k not in seen: bad.append(f"{k[0]}: the listed line is gone, so the list needs updating: {k[1][:100]}")
+print("\n".join(bad))
+sys.exit(1 if bad else 0)
+PY
+if [ "$?" = 0 ]; then ok "every corpus call of a tool no command pre-approves sits in a step that says it asks for approval"
+else ko "a corpus call of a tool no command pre-approves sits in a step that does not say it asks for approval"; sed 's/^/#   /' "$T/asks.txt" | cut -c1-220; fi
+
 # Above 64 KiB: each corpus call of git-ro.sh that pipes into head, run as written over a history of 400 commits
 # whose matching output passes 64 KiB, prints its head's lines and ends.
 B="$T/big-history"
