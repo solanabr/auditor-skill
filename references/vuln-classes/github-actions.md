@@ -399,7 +399,8 @@ comment and still run code the maintainers never merged. Recipe R9 lists every p
 one `git ls-remote --tags` in the form KV-080 Step 4 gives:
 - only for an `owner/repo` slug, the first two segments of the `uses:` value, that matches
   `^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`;
-- from a new empty directory outside the checkout, so no repository config applies;
+- in a new empty directory, stopping when that cannot be made, and reading the config of no repository that holds it,
+  so no `url.<base>.insteadOf` can send the request elsewhere or answer it with refs of its own;
 - with no credential helper, askpass program, `~/.netrc` entry or terminal prompt left to answer GitHub's login request
   with the auditor's credentials, since the target chose the repository.
 
