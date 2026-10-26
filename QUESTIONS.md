@@ -407,7 +407,7 @@ _______________
 _______________
 ```
 
-> Each exclusion narrows what the audit covers, so the report's Out of Scope lists it with its source. An earlier run's exclusions are reused only on your yes at intake, after you have seen them, and never by `--auto`: a layout read from the audited tree (a committed file, or a planted run directory in a tree that is not a git repository) could exclude that tree's own code.
+> Each exclusion narrows what the audit covers, so the report's Out of Scope lists it with its source. An earlier run's exclusions are reused only on your yes, after you have seen them, and never by `--auto`: a layout read from the audited tree (a committed file, or a planted run directory in a tree that is not a git repository) could exclude that tree's own code.
 
 ### Q45. Any additional context the auditor should know?
 ```
