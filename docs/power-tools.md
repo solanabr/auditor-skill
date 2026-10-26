@@ -12,7 +12,7 @@ Every tool here is an **optional layer**. The corpus works fully without any of 
 | [Trail of Bits plugins](#trail-of-bits-plugins) | real SAST, fuzzing, coverage, mutation | plugin install or `install.sh`; else `git submodule update --init --depth 1 -- vendor/trailofbits` |
 | [Surfpool sim](#surfpool-economic-simulation) | a real $ P/L for economic findings | `surfpool` CLI + MCP |
 | [PoC/patch harness](#pocpatch-harness-stack) | executable exploits + verified fixes | platform-tools ≥ v1.54 |
-| [Bundled scripts](#bundled-scripts) | the working-tree check, run directories, read-only git, the runners that build, test, audit dependencies and run SAST, incident corpus collection and queries, the threat-model history collector, the Trail of Bits bump review | nothing to build: bash ≥ 3.2, plus `git`, `jq`, `python3`, `curl` or the `solana` CLI per script, and the toolchains the runners drive |
+| [Bundled scripts](#bundled-scripts) | the working-tree check, run directories, read-only git, the lockfile and known-bad release checks of the git history, the runners that build, test, audit dependencies and run SAST, incident corpus collection and queries, the threat-model history collector, the Trail of Bits bump review | nothing to build: bash ≥ 3.2, plus `git`, `jq`, `python3`, `curl` or the `solana` CLI per script, and the toolchains the runners drive |
 
 ---
 
@@ -288,6 +288,44 @@ Read-only git for checkouts the auditor did not create ([Rule 11c](../OUTPUT-RUL
 - **`<dir>`, `--repo <dir>`:** `.` (the default) or a relative path inside the working directory, with no `..` and no symbolic link on the way, that is the top level of a repository whose git directory lies inside the working directory, holds no link, and borrows no objects (alternates) or parents (grafts).
 - **Output:** control characters other than tab and newline print as `?`; `-z` and the other NUL-separated forms are refused.
 - **Exit:** git's own status (0, 1, 128) · 3 a partial clone (`partial`, `copy`) · 64 refused, with one line, `git-ro: refused: <reason>` · 69 git too old to copy. **Network:** none. **Writes:** only `copy`'s `<R>/src.git`. **Needs:** git.
+
+### Supply-chain recipes (`scripts/recipes/`)
+
+Two history checks of the supply-chain walk: the lockfile hints of checklist 11 §11.11, and the history half of the known-bad release check (FULL-AUDIT Step 3.2, KV-077 Step 2). `/auditor:audit`, `/auditor:audit-cycle`, `/auditor:audit-assist`, `/auditor:diff-audit` and `/auditor:re-audit` pre-approve both, as does the skill asked in plain words; `/auditor:quick-scan` pre-approves `web3js-history.sh` only.
+
+Both read committed content only, never the work tree, through the hardened git call of `scripts/lib/confine.sh` that `git-ro.sh` uses. They take the repository as `git-ro.sh` does: `--repo <dir>` (`.` by default), or `--git-dir <R>/src.git` for a copy `git-ro.sh copy` made. In a partial clone each prints a note under its own name first and fetches nothing, so a missing object fails; in a shallow clone a note says the history before the boundary is missing. Each diff runs with `--text`, three lines of context and the `a/` and `b/` prefixes, whatever the checkout's config sets, so a committed `.gitattributes` that marks a lockfile binary hides nothing. Every control character but tab and newline prints as `?`, and standard input is never read.
+
+#### `lock-delta.sh`
+
+```bash
+# examples of what you type; <auditor-skill root> is where auditor-skill is installed
+"<auditor-skill root>/scripts/recipes/lock-delta.sh" cargo main..HEAD
+"<auditor-skill root>/scripts/recipes/lock-delta.sh" --git-dir audit_1/src.git npm v1.2.0..v1.3.0
+```
+
+Each version, source and checksum line that changed in the lockfiles of one kind between two commits, with the name of its package, below each file's `+++ b/<path>` line (`+++ /dev/null` for a file the range deletes).
+
+- **`npm`:** `package-lock.json`, `npm-shrinkwrap.json` and `yarn.lock` (v1 and berry): each changed `version`, `resolved`, `resolution`, `integrity` or `checksum` line after the key of its entry, `?` for a key outside the hunk. **`bun`:** the text `bun.lock`: each changed entry as `-` or `+` and `<name>@<version>`. **`cargo`:** `Cargo.lock`: each changed `version`, `source` or `checksum` line after its package name.
+- **Arguments:** `[--repo <dir> | --git-dir <R>/src.git] npm|bun|cargo <base>..<head>`, where `<base>` and `<head>` name commits: letters, digits and `._/~^+-`, starting with a letter or a digit, with no `..`, at most 255 bytes each.
+- **Exit:** 0 done, whether or not a line printed · 64 refused, with one line, `lock-delta: refused: <reason>` · git's own status when git fails (128: a revision it cannot find). **Network:** none. **Writes:** nothing. **Needs:** git.
+
+#### `web3js-history.sh`
+
+```bash
+# examples of what you type; <auditor-skill root> is where auditor-skill is installed
+"<auditor-skill root>/scripts/recipes/web3js-history.sh"
+"<auditor-skill root>/scripts/recipes/web3js-history.sh" --git-dir audit_1/src.git
+```
+
+The commits, on every branch, that add or remove the hijacked `@solana/web3.js` 1.95.6 or 1.95.7, or axios 1.14.1 or 0.30.4, in a manifest or a lockfile. Two searches run over every branch, merge commits (against their first parent) and the root commit, each under its own heading:
+
+- **`== single-line form`:** each commit that adds or removes a line naming one of those releases, as a resolved URL, a pnpm, yarn or bun key, or an exact pin, printed as `<commit> <subject>`.
+- **`== key-line form`:** a `package-lock.json` or `npm-shrinkwrap.json` written without `resolved` fields names a package only on its entry's key line, with the version on a line below it; each such version line added, removed, or kept under a key that changed, printed as `<commit> <a/ or b/ path> <line>`.
+
+Nothing under a heading means none was found. Another package at one of those versions is not reported.
+
+- **Arguments:** `[--repo <dir> | --git-dir <R>/src.git]`.
+- **Exit:** 0 both searches ran, whether or not a line printed · 64 refused, with one line, `web3js-history: refused: <reason>` · git's own status when git fails, once both searches have run. **Network:** none. **Writes:** nothing. **Needs:** git.
 
 ### Runners
 

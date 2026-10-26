@@ -259,6 +259,7 @@ auditor-skill/
 ├── docs/                    ← Usage guides (start at docs/README.md)
 ├── scripts/                 ← preflight.sh, rundir.sh, git-ro.sh, rpc-read.sh, report-to-pdf.sh, the CI checks (check-*.sh), tob-delta-review.sh + the no-attribution commit hook
 │   ├── runner/              ← probe.sh, deps.sh, sast.sh, target.sh: toolchain probes, dependency audits, SAST, and builds and tests in the recorded execution mode
+│   ├── recipes/             ← lock-delta.sh, web3js-history.sh: the lockfile changes and known-bad releases in the git history, for the supply-chain checks
 │   ├── lib/                 ← confine.sh and isolation.sh, the checks and environment cleaning the entry points share
 │   ├── pdf/                 ← no-remote.lua, the pandoc filter report-to-pdf.sh renders with
 │   ├── dnr/                 ← detection & response recipes (gated RPC collector, program snapshot, corpus profile, log frames, balance deltas, jq-ro.sh)
