@@ -23,7 +23,8 @@
 # --repo <dir> is "." (the default) or a path relative to the working directory, with no "..", and no symbolic
 # link on the way, that is the top level of a repository whose git directory lies inside the working directory
 # (scripts/lib/confine.sh, as scripts/git-ro.sh takes it). --git-dir names a copy that scripts/git-ro.sh copy
-# made in a run directory <R>, audit_<n> or incident_<n>.
+# made in a run directory <R>, audit_<n> or incident_<n>. A --git-dir copy holds the checkout's own branches and
+# tags but no refs/remotes, so "every branch" then covers those only.
 #
 # git runs through the hardened call of scripts/lib/confine.sh (OUTPUT-RULES.md Rule 11c; scripts/git-ro.sh's
 # header lists what it switches off), as
@@ -117,6 +118,7 @@ main() {
       --repo|--git-dir)
         [ "$given" -eq 0 ] || refuse "give --repo or --git-dir once"
         [ $# -ge 2 ] || refuse "$1 needs a value"
+        [ -n "$2" ] || refuse "$1 is empty"
         if [ "$1" = --repo ]; then repo=$2 what=--repo; else gitdir=$2; fi
         given=1
         shift 2 ;;

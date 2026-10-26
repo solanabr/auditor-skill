@@ -63,7 +63,7 @@ NPM_AWK='{sub(/\r$/, "")} /^[+][+][+] /{print} /^@@/{o=n="?"}
 # The text bun.lock: the first array element of an entry is name@version.
 BUN_SED='/^\+\+\+ /p; s/^([-+])[[:space:]]+"[^"]+": \["([^"]+)".*/\1 \2/p'
 # Cargo.lock: the name line of each [[package]] comes before its version, source and checksum lines.
-CARGO_AWK='/^[+][+][+] /{print} /^ name = /{o=n=$3} /^-name = /{o=$3} /^[+]name = /{n=$3}
+CARGO_AWK='{sub(/\r$/, "")} /^[+][+][+] /{print} /^@@/{o=n="?"} /^ name = /{o=n=$3} /^-name = /{o=$3} /^[+]name = /{n=$3}
   /^-(version|source|checksum) = /{print o, $0} /^[+](version|source|checksum) = /{print n, $0}'
 
 refuse() { confine_refuse "$1"; }
@@ -127,6 +127,7 @@ main() {
       --repo|--git-dir)
         [ "$given" -eq 0 ] || refuse "give --repo or --git-dir once"
         [ $# -ge 2 ] || refuse "$1 needs a value"
+        [ -n "$2" ] || refuse "$1 is empty"
         if [ "$1" = --repo ]; then repo=$2 what=--repo; else gitdir=$2; fi
         given=1
         shift 2 ;;
