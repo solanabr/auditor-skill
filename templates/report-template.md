@@ -117,11 +117,11 @@
 | 14 | Python Safety | 82 | | | | | % |
 | 15 | General Language | 88 | | | | | % |
 | 16 | Formal Verification & Testing | 73 | | | | | % |
-| 17 | Logging, Monitoring & IR | 65 | | | | | % |
+| 17 | Logging, Monitoring & IR | 68 | | | | | % |
 | 18 | Privacy, Compliance & Change Mgmt | 60 | | | | | % |
 | 19 | AI Agent Security | 39 | | | | | % |
 | 20 | Rust Off-Chain Services | 23 | | | | | % |
-| | **Total** | **1456** | | | | | **%** |
+| | **Total** | **1459** | | | | | **%** |
 
 > Note: Only applicable checklists are counted in totals. Non-applicable checklists are excluded entirely.
 
@@ -316,7 +316,7 @@
 
 ```
 [PASS]      LM-001: {reason}
-...through LM-065
+...through LM-068
 ```
 
 ### Checklist 18 — Privacy, Compliance & Change Management
