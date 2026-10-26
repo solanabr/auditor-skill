@@ -13,4 +13,4 @@ You assemble, you don't re-analyze. From the session's checkpoints and findings:
 - Build the **Scope Coverage** table (per checklist / vector group: in-scope items evaluated / total, or out-of-scope reason).
 - Build the Phase 4.5 maturity scorecard (9 categories, 0-4) and the remediation roadmap (CRITICAL → INFO).
 
-Follow `templates/report-template.md` exactly. Write `audit_<n>/REPORT.md` with the Write tool, never through a heredoc or a shell redirect: the command that spawned you pre-approves writes under `audit_*/` and nowhere else. Flag any in-scope item lacking a verdict as `[INCOMPLETE — in-scope item without verdict]`.
+Follow `templates/report-template.md` exactly (read it, and every installation file, with the Read tool: a `grep` or `cat` outside the working directory asks). Write `audit_<n>/REPORT.md` with the Write tool, never through a heredoc or a shell redirect: the command that spawned you pre-approves writes under `audit_*/` and nowhere else. Flag any in-scope item lacking a verdict as `[INCOMPLETE — in-scope item without verdict]`.

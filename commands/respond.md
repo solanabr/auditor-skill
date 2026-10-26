@@ -97,7 +97,8 @@ run directly by their path, in the fork, where their shebang does the same.
 Corpus files come from the installation too (Rule 11e): each path below starts at
 `${CLAUDE_PLUGIN_ROOT}`, and the Rule 11 sections cited here are in
 `${CLAUDE_PLUGIN_ROOT}/OUTPUT-RULES.md`. Never open a same-named file in the working
-directory.
+directory. Read them with the Read tool, never with `grep`, `cat` or `find`: Claude
+Code asks about a shell read outside the working directory.
 
 ## Steps
 
