@@ -13,9 +13,10 @@
 #   4. .github/workflows: the required job keeps its name; every workflow and job reads contents only; no
 #      workflow names pull_request_target or workflow_run outside a comment line, however its trigger is
 #      written, and none spells a key YAML reads as on other than as plain on: (quoted in either style, with
-#      escapes, a tag, an anchor or another letter case, in block or flow style), or writes an explicit ? key
-#      or an alias as a key; no run: script holds a ${{ }} expression; every job has timeout-minutes, every
-#      action is pinned by full SHA with its version, and no checkout keeps credentials;
+#      escapes, a tag, an anchor or another letter case, in block or flow style), or writes an explicit ? key,
+#      an alias as a key or a merge key (<<); no run: script holds a ${{ }} expression; every job has
+#      timeout-minutes, every action is pinned by full SHA with its version, and no checkout keeps
+#      credentials;
 #   5. scripts/check-hygiene.sh fails on each kind of file it names, and on a top-level directory named
 #      commands, agents, skills, hooks, bin, monitors or .claude-plugin in another letter case, also when it
 #      is the last of 3,000 tracked paths; on each load surface at the plugin root, and on a SKILL.md other
@@ -515,8 +516,9 @@ wfcheck() { # wfcheck FILE -> one line per problem, read byte by byte
       }
       return v
     }
-    # keyat(s, i): the key that may start at s[i], after any tag and anchor: an explicit ? key, an alias, or a
-    # key YAML reads as on (or On, ON) that is quoted, escaped, tagged or anchored, or in another letter case
+    # keyat(s, i): the key that may start at s[i], after any tag and anchor: an explicit ? key, an alias, a
+    # merge key (<<, which can bring in a mapping that holds on), or a key YAML reads as on (or On, ON) that is
+    # quoted, escaped, tagged or anchored, or in another letter case
     function keyat(s, i,   props, v, j, w, c) {
       if (substr(s, i, 1) == "?" && (i == length(s) || substr(s, i + 1, 1) ~ /[ \t]/)) {
         print f ": an explicit ? key; write each key plainly: " s; return }
@@ -539,6 +541,7 @@ wfcheck() { # wfcheck FILE -> one line per problem, read byte by byte
         return
       }
       w = substr(s, i)
+      if (substr(w, 1, 2) == "<<" && w ~ /^<<[ \t]*:([ \t,}]|$)/) { print f ": a merge key; write each key plainly: " s; return }
       if (!match(w, /^[^ \t:,{}]+[ \t]*:/)) return
       c = substr(w, RLENGTH + 1, 1)
       if (c != "" && c != " " && c != "\t" && c != "," && c != "}" && c != "]") return
@@ -654,7 +657,7 @@ trig pass quoted-on-other-events '"on": [push, pull_request]'
 onkey() { # onkey WANT NAME LINE...  — a workflow that starts with LINE...; the checker must WANT (flag|pass) its keys
   local want=$1 name=$2 got=pass; shift 2
   { printf '%s\n' "$@"; printf 'permissions:\n  contents: read\n'; } > "$T/onkey-$name.yml"
-  case "$(wfcheck "$T/onkey-$name.yml")" in *"the on key is "*|*"the on key has "*|*"an explicit ? key"*|*"an alias as a key"*) got=flag;; esac
+  case "$(wfcheck "$T/onkey-$name.yml")" in *"the on key is "*|*"the on key has "*|*"an explicit ? key"*|*"an alias as a key"*|*"a merge key"*) got=flag;; esac
   if [ "$got" = "$want" ]; then pass=$((pass + 1)); echo "PASS workflows: the on-key check gives $want on $name"
   else failn=$((failn + 1)); echo "FAIL workflows: the on-key check gives $got on $name, want $want"; wfcheck "$T/onkey-$name.yml"; fi
 }
@@ -682,6 +685,8 @@ onkey flag verbatim-tag "!<tag:yaml.org,2002:str> 'on': push"
 onkey flag anchor '&k "on": push'
 onkey flag anchor-plain '&k on: push'
 onkey flag alias 'events: &k on' '*k : push'
+onkey flag merge-key 'defaults: &d {on: push}' '<<: *d'
+onkey flag merge-key-flow '{name: x, <<: {on: push}}'
 onkey flag bom "$(printf '\357\273\277"on": push')"
 onkey flag trailing-comment "'on': push   # the trigger"
 onkey pass plain 'on: push'
@@ -693,6 +698,7 @@ onkey pass in-block-scalar 'on: push' 'jobs:' '  a:' '    steps:' '      - run: 
 onkey pass in-quoted-value 'on: push' "x: 'jq ''{\"on\": 1}'''"
 onkey pass in-comment '# "on": push' 'on: push   # "on": too'
 onkey pass value-on 'on: push' 'x: [a, on]'
+onkey pass merge-text-in-values 'on: push' 'x: "<<: y"' 'y: [<<, z]'
 
 # ---- 5. check-hygiene.sh ------------------------------------------------------------------------------
 HYG="$ROOT/scripts/check-hygiene.sh"
