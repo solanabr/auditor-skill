@@ -347,7 +347,7 @@ Select all that apply, or choose "Full":
 - [ ] Supply chain / dependencies only
 - [ ] Specific files/modules: _______________
 
-> **Where your code lives.** If your source, tests or build files are not where `discovery/file-map.md` expects them (`programs/{name}/src/`, `apps/backend/src/`, `apps/web/src/`), name them here. Intake records them, with your exclusions (Q44), in the Layout table of `audit_<n>/intake.md` §1, each with its source. The next interactive intake in the same repository shows you that table and reuses it only on your yes; `/auditor:intake --auto` never reuses it, and audits with the defaults.
+> **Where your code lives.** If your code, tests or build files are not where `discovery/file-map.md` expects them (`programs/{name}/src/`, `apps/backend/src/`, `apps/web/src/`), name them here. Intake records them, with your exclusions (Q44), in the Layout table of `audit_<n>/intake.md` §1, each with its source. The next interactive intake in the same checkout shows you that table and reuses it only on your yes; `/auditor:intake --auto` never reuses it, and audits with the defaults.
 
 ### Q40. What are your top security concerns?
 Rank your top 3:

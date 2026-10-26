@@ -1,7 +1,7 @@
 # File Discovery Patterns
 
 > Maps each audit checklist to the exact files/globs that must be scanned.  
-> These are defaults. A target with another layout records its in-scope paths at intake (`QUESTIONS.md` Q39, exclusions under Q44, written to the Layout table of `audit_<n>/intake.md` §1) instead of editing this file, which a shared or plugin install overwrites on update. The next interactive intake of the same repository offers that table again and applies it only on the human's yes; `--auto` never applies it.
+> These are defaults. A target with another layout records its in-scope paths at intake (`QUESTIONS.md` Q39, exclusions under Q44, written to the Layout table of `audit_<n>/intake.md` §1) instead of editing this file, which a shared or plugin install overwrites on update. The next interactive intake in the same checkout offers that table again and applies it only on the human's yes; `--auto` never applies it.
 
 ---
 
@@ -509,7 +509,7 @@ GREP PATTERNS:
 When auditing a different repository:
 
 1. **Install** auditor-skill outside the repository under audit (the plugin, or `~/.claude/skills/auditor-skill`; OUTPUT-RULES Rule 11e)
-2. **Record** the target's in-scope paths at intake where its layout or directories differ from the "Repository Layout Assumptions" and the globs above (`QUESTIONS.md` Q39, exclusions under Q44, written to the Layout table of `audit_<n>/intake.md` §1), instead of editing this file, which a shared or plugin install overwrites on update. A later audit of the same repository reuses that table only on the human's yes at its intake (`/auditor:intake` step 4)
+2. **Record** the target's in-scope paths at intake where its layout or directories differ from the "Repository Layout Assumptions" and the globs above (`QUESTIONS.md` Q39, exclusions under Q44, written to the Layout table of `audit_<n>/intake.md` §1), instead of editing this file, which a shared or plugin install overwrites on update. A later audit in the same checkout reuses that table only on the human's yes at its intake (`/auditor:intake` step 4)
 3. The checklists themselves are **generic** — they work for any Solana/Anchor program
 4. Checklists 08-13 work for any TypeScript/Express/Next.js project
 5. Checklist 14 works for any Python project
