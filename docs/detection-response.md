@@ -53,9 +53,9 @@ Telegram bot (`@seal_911_bot`). These commands are the after-the-fact workup.
   the collector finalizes and passes `maxSupportedTransactionVersion: 1`, which is
   mandatory now that v1 transactions are live on mainnet. Non-interactive runs
   collect only with `--collect`, which stands in for your yes to the addresses,
-  window and caps, not for permission prompts: in `claude -p` the snapshot and the
-  collector are denied unless the permission mode or the run's rules allow them,
-  and the `--logs` copy is refused (above). A long collection runs in the
+  window and caps. The commands pre-approve the snapshot and the collector, so in
+  `claude -p` they run too, within the caps your environment sets; the `--logs`
+  copy is refused there (above). A long collection runs in the
   background; one stopped by INT, TERM or HUP, or by a failed write, records what
   it had not fetched as collection gaps; for one killed outright, the agent
   records them from its files.
@@ -129,29 +129,39 @@ already captured.
   `.claude/` and `.mcp.json` in the copy, and start Claude Code there. `CLAUDE.md`
   files are listed, not refused; their text is the repository's, never
   instructions.
-- **What runs without asking.** The commands pre-approve only reading, `Task`,
-  edits under `incident_*/`, the checks `preflight.sh` and `rundir.sh`, and the
+- **What runs without asking.** The commands pre-approve reading, `Task`, edits
+  under `incident_*/`, the checks `preflight.sh` and `rundir.sh`, the program
+  snapshot, the collector (run only with the values you approved), `rpc-read.sh`,
+  read-only git through `git-ro.sh`, the toolchain probe, the PoC runner and the
+  build runner (both in the execution mode you chose), and the
   `auditor:dnr-analyze` skill. Inside the skill's fork, the offline analysis tools
   run without a prompt: `profile.sh`, `frames.py`, `deltas.py`, `jq-ro.sh` (jq over
   run-directory files, with an empty environment) and `audit-logs`, each run
   directly by its path in the installation and reading only files inside a run
-  directory. The collector, the program snapshot, `jq` itself and anything that
-  executes code still ask. Pre-approval is not a sandbox: real confinement is an
-  isolated run mode
+  directory. `jq` itself, a line through `redact.sh`, the `solana` CLI and anything
+  else that executes code still ask. Pre-approval is not a sandbox: real
+  confinement is an isolated run mode
   ([`OUTPUT-RULES.md` Rule 11](../OUTPUT-RULES.md#rule-11-operating-safety)); the
-  RPC provider that received your addresses is disclosed under Rule 11b.
+  RPC provider that received your addresses is disclosed under Rule 11b, from the
+  rows the snapshot and the collector add to `incident_<n>/disclosures.tsv`.
+  [permissions-and-isolation.md](permissions-and-isolation.md) has the whole
+  picture.
 - **Approving the skill.** A command's pre-approvals last for the turn that
-  started it. For each analysis phase that starts after one of your replies (a
-  yes to a collection, say), Manual mode asks to run `auditor:dnr-analyze`. To
-  skip that, add `"Skill(auditor:dnr-analyze *)"` to `permissions.allow` in your
-  user settings (`~/.claude/settings.json`). Answering "don't ask again" at the
-  prompt saves the rule in a `.claude/settings.local.json` instead: at the root of
-  the git repository that holds the working directory (the main checkout's root,
-  for a worktree), or in the working directory itself outside a repository; and
-  `preflight.sh` refuses that file on the next run, since a `permissions` key is
-  not on its list. Move its `permissions.allow` entries to `~/.claude/settings.json`
-  and delete the file. The fork keeps its own pre-approvals while it runs, after
-  your messages too.
+  started it. When the command goes on after one of your replies (a yes to a
+  collection, say), it first invokes itself again through the Skill tool
+  (`auditor:hunt --resume <step>`, or `auditor:respond …`), and each analysis phase
+  runs `auditor:dnr-analyze`; Manual mode asks about each. To skip that, add
+  `"Skill(auditor:hunt *)"`, `"Skill(auditor:respond *)"` and
+  `"Skill(auditor:dnr-analyze *)"` to `permissions.allow` in your user settings
+  (`~/.claude/settings.json`), or the whole list in
+  [Turns and resuming](permissions-and-isolation.md#turns-and-resuming).
+  Answering "don't ask again" at the prompt saves the rule in a
+  `.claude/settings.local.json` instead: at the root of the git repository that
+  holds the working directory (the main checkout's root, for a worktree), or in the
+  working directory itself outside a repository; and `preflight.sh` refuses that
+  file on the next run, since a `permissions` key is not on its list. Move its
+  `permissions.allow` entries to `~/.claude/settings.json` and delete the file. The
+  fork keeps its own pre-approvals while it runs, after your messages too.
 - **Recipes:** [`scripts/dnr/`](../scripts/dnr/) — profiling, log-frame attribution,
   and exact balance deltas, each checked against adversarial fixtures by
   `scripts/tests/test-dnr.sh`. They share one input contract: a line they cannot
