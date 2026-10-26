@@ -347,6 +347,8 @@ Select all that apply, or choose "Full":
 - [ ] Supply chain / dependencies only
 - [ ] Specific files/modules: _______________
 
+> **Where your code lives.** If your source, tests or build files are not where `discovery/file-map.md` expects them (`programs/{name}/src/`, `apps/backend/src/`, `apps/web/src/`), name them here. Intake records them, with your exclusions (Q44), in the Layout table of `audit_<n>/intake.md` §1, each with its source. The next interactive intake in the same repository shows you that table and reuses it only on your yes; `/auditor:intake --auto` never reuses it, and audits with the defaults.
+
 ### Q40. What are your top security concerns?
 Rank your top 3:
 - [1 ] Fund theft / drain
@@ -404,6 +406,8 @@ _______________
 _______________
 _______________
 ```
+
+> Each exclusion narrows what the audit covers, so the report's Out of Scope lists it with its source. An earlier run's exclusions are reused only on your yes at intake, after you have seen them, and never by `--auto`: a layout read from the audited tree (a committed file, or a planted run directory in a tree that is not a git repository) could exclude that tree's own code.
 
 ### Q45. Any additional context the auditor should know?
 ```
