@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# test-command-forms.sh — the commands, agents and skills run each bundled entry point in the one form their
-# allow rules pre-approve: Claude Code approves a call without asking only when its text starts with the quoted
-# path the rule names and holds no $ other than the root it substitutes (OUTPUT-RULES.md Rule 11e).
+# test-command-forms.sh — the commands, agents and skills, and the corpus they send the agent to, run each
+# bundled entry point in the one form its allow rules pre-approve: Claude Code approves a call without asking
+# only when its text starts with the quoted path the rule names and holds no $ other than the root it
+# substitutes (OUTPUT-RULES.md Rule 11e).
 #   C1  In commands/*.md, agents/*.md, skills/*/SKILL.md and SKILL.md, every code span and code line that names
 #       a bundled entry point from the root names it as "${CLAUDE_PLUGIN_ROOT}/<path>" (in the root SKILL.md,
 #       "${CLAUDE_SKILL_DIR}/<path>"), quoted, first in the command, or as the file a test -x, -f or -e reads (a
@@ -28,13 +29,24 @@
 #       and its agent's, are its own rules', and so are the root SKILL.md's. A call is an entry point first in a
 #       code span with words after it, or first on a fenced code line; one whose own clause (up to the
 #       sentence's end, a ; or the next rooted call) says it asks is a documented prompt.
+#   C6  In the corpus (FULL-AUDIT.md, checklists/, known-vectors/, discovery/, and every .md under references/,
+#       templates/ and docs/), every call of an entry point names it as "<auditor-skill root>/<path>", quoted,
+#       first in the command or as the file a test -x, -f or -e reads, with no other $ or backtick in it: no
+#       bash, sh, env, cd or VAR=value in front, and not ${CLAUDE_PLUGIN_ROOT}, which only a command body
+#       substitutes. A call is a code span with words after the path, or a line of a shell code block (bash,
+#       sh, shell, zsh, console or none named) that is not a comment; a quoted block counts too, and a span
+#       that starts Bash( names a rule.
+#   C7  No file of the corpus, command, agent or skill runs an entry point by a path relative to the working
+#       directory (scripts/rundir.sh new, ./scripts/..., bash scripts/...), where the tree under audit can put a
+#       file of its own; a span holding the path alone names the file.
 #   P   Wording the flows depend on stays in place (the PINS list): what keeps a long call, and the turn after
 #       it, inside a command's grant; and no body names the environment form of a PoC run (VULNERABLE_SO and the
 #       rest), which run.sh --crate does not read.
 # The entry points are the tracked files under scripts/ (but scripts/tests/) and templates/ of mode 100755 that
-# start with a direct-exec shebang (#!/bin/bash or #!/usr/bin/env -S python3 -I), and the binaries the crates
-# under tools/auditor-tools declare. Each check first runs on known-good and known-bad fixture files, one of
-# them over 64 KiB with its one bad line last, so a broken check fails the test.
+# start with a direct-exec shebang (#!/bin/bash or #!/usr/bin/env -S python3 -I), the binaries the crates
+# under tools/auditor-tools declare, and every path scripts/entrypoints.txt lists. Each check first runs on
+# known-good and known-bad fixture files, one of them over 64 KiB with its one bad line last, so a broken check
+# fails the test. KNOWN lists the findings the tree has until the edits that fix them land.
 # Usage (from the repo root): bash scripts/tests/test-command-forms.sh [<tree>]   (VERBOSE=1 lists every check)
 #   <tree>: a git checkout to check instead of this one, such as an older commit's.
 # Needs bash >= 3.2, git and python3. No network.
@@ -69,6 +81,14 @@ PIPE_INTO = set("sh bash zsh dash ksh fish python python3 perl ruby node tee xar
                 "socat curl wget dd cat head tail grep egrep fgrep sed awk gawk mawk jq sort uniq cut tr wc base64 "
                 "openssl ssh scp".split())
 SPAWN = re.compile(r'(?i)\b(spawns?|delegates?|runs?)\b')
+# The corpus names the installation root as <auditor-skill root>; a call there, from any root, is read in code
+# spans and in shell code blocks.
+CORPUS_ROOT = "<auditor-skill root>"
+ANY_ROOT = re.compile(r'("?)(<auditor-skill root>|\$\{CLAUDE_PLUGIN_ROOT\}|\$CLAUDE_PLUGIN_ROOT|\$\{CLAUDE_SKILL_DIR\}|'
+                      r'\$CLAUDE_SKILL_DIR)("?)/([A-Za-z0-9_./-]+)("?)')
+SHELL_FENCES = ("", "bash", "sh", "shell", "zsh", "console")
+LEAD = re.compile(r'^(?:(?:bash|sh|zsh|dash|ksh|env|exec|command|sudo|nice|nohup|time|python3?|timeout\s+\S+|'
+                  r'[A-Za-z_][A-Za-z0-9_]*=\S*)\s+|cd\s+\S+\s*(?:&&|;|\|\|)\s*)*')
 ASKS = re.compile(r'\b(asks|prompts)\b')
 
 modes = {}
@@ -103,6 +123,14 @@ for path, mode in modes.items():
     if mode == "100755" and path.startswith(("scripts/", "templates/")) and not path.startswith("scripts/tests/"):
         if first_line(path) in DIRECT:
             entry.add(path)
+try:
+    with open(os.path.join(tree, "scripts/entrypoints.txt"), encoding="utf-8", errors="replace") as fh:
+        entry.update(l.split("\t", 1)[0].strip() for l in fh if l.strip() and not l.startswith("#"))
+except OSError:
+    pass
+# A call by a path relative to the working directory, after any interpreter, cd, env or assignment in front.
+REL = re.compile(r'^"?(?:\./)?(' + "|".join(re.escape(p) for p in sorted(entry, key=len, reverse=True)) +
+                 r')(?![A-Za-z0-9_.-])"?')
 
 out = []
 def finding(check, f, n, what):
@@ -243,10 +271,10 @@ def redirects(s):
         i += 1
     return bad
 
-def segments(body, first):
+def segments(body, first, infos=None):
     """(line number, text, first line of its paragraph, the paragraph, where the code ends in it, fenced?) for
-    every inline code span and fenced code line."""
-    fence, para = None, []
+    every inline code span and fenced code line. infos, when given, gets each fenced line's info string."""
+    fence, para, info = None, [], ""
     def spans(para):
         text = "\n".join(l for _, l in para)
         starts, pos = [], 0
@@ -287,6 +315,8 @@ def segments(body, first):
             if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence) and not m.group(2).strip():
                 fence = None
             else:
+                if infos is not None:
+                    infos[n] = info
                 yield n, line.strip(), line, line, len(line), True
             continue
         if m:
@@ -294,6 +324,7 @@ def segments(body, first):
                 yield s
             para = []
             fence = m.group(1)
+            info = (m.group(2).split() or [""])[0].lower()
             continue
         if line.strip() == "" or re.match(r'^\s*(\d+[a-z]?[.)]|[-*+])\s', line):
             for s in spans(para):
@@ -388,6 +419,45 @@ def check_calls(owner, rules, sources):
             if not covered(parsed, path, words):
                 finding("C5", src, n, "%s does not pre-approve this call: %s" % (owner, seg[:160]))
 
+def relative(f, n, seg, fenced, root):
+    """C7: a call of an entry point by a path relative to the working directory."""
+    rest = seg[len(LEAD.match(seg).group(0)):]
+    m = REL.match(rest)
+    if m and (fenced or rest[m.end():].strip(' "')):
+        finding("C7", f, n, 'runs %s by a path relative to the working directory, where the tree under audit can put '
+                'a file of its own; name it as "%s/%s": %s' % (m.group(1), root, m.group(1), seg[:160]))
+
+def corpus(f, body, first):
+    """C6 and C7 for a corpus file: every call, in a code span with words after the path or on a line of a shell
+    code block (not a comment line), names the entry point as "<auditor-skill root>/<path>", quoted, first, with
+    no $ or backtick in the call."""
+    infos = {}
+    body = [re.sub(r'^(> ?)+', '', l) for l in body]
+    for n, seg, para, ptext, end, fenced in segments(body, first, infos):
+        if fenced and (infos.get(n, "") not in SHELL_FENCES or seg.startswith("#")):
+            continue
+        if seg.startswith("Bash("):
+            continue   # a rule, as a command lists it
+        for m in ANY_ROOT.finditer(seg):
+            path = m.group(4)
+            if path not in entry or (not fenced and not seg[m.end():].strip()):
+                continue   # not an entry point, or the path alone names it
+            what = []
+            if m.group(2) != CORPUS_ROOT:
+                what.append("the root is %s, which only a command body substitutes; the corpus writes %s" % (m.group(2), CORPUS_ROOT))
+            if not (m.group(1) == '"' and m.group(5) == '"' and not m.group(3)):
+                what.append('not quoted as "%s/%s"' % (CORPUS_ROOT, path))
+            lead = seg[:m.start()].strip()
+            if lead and lead not in READERS:
+                what.append("%r in front of it" % lead)
+            if "$" in seg:
+                what.append("a $ in the call")
+            if "`" in seg:
+                what.append("a backtick in the call")
+            if what:
+                finding("C6", f, n, "%s: %s" % ("; ".join(what), seg[:160]))
+        relative(f, n, seg, fenced, CORPUS_ROOT)
+
 for f in files:
     try:
         text = read(f)
@@ -397,6 +467,9 @@ for f in files:
     root_skill = f == "SKILL.md"
     command = f.startswith("commands/")
     var = "CLAUDE_SKILL_DIR" if root_skill else "CLAUDE_PLUGIN_ROOT"
+    if not (command or root_skill or f.startswith(("agents/", "skills/"))):
+        corpus(f, body, first)
+        continue
 
     # allowed-tools rules
     rules = rules_of(fm)
@@ -431,6 +504,8 @@ for f in files:
     # the body
     first_entry = None
     for n, seg, para, ptext, end, fenced in segments(body, first):
+        if not (fenced and seg.startswith("#")):
+            relative(f, n, seg, fenced, "${%s}" % var)
         words = seg.split()
         if words and words[0] in ("audit-scan", "audit-mem") and "${" not in seg:
             if (words[0] == "audit-scan" and len(words) >= 2) or (words[0] == "audit-mem" and len(words) >= 3):
@@ -612,6 +687,44 @@ sed -e 's#CLAUDE_SKILL_DIR}/scripts/ok#CLAUDE_PLUGIN_ROOT}/scripts/ok#' "$fx/SKI
 { sed -n '1,/^0\. \*\*Preflight/p' "$fx/commands/good.md"
   awk 'BEGIN { for (i = 0; i < 1400; i++) printf "Prose line %05d of a long command body, padded out with words to fill it up.\n", i }'
   printf '1. `bash "%s/scripts/ok.sh"`\n' "$R"; } > "$fx/commands/c1-large.md"
+# C6 and C7: the corpus calls each entry point as "<auditor-skill root>/<path>", in a code span with words after
+# it or on a line of a shell code block, and no file calls one by a path relative to the working directory
+Q='<auditor-skill root>'
+corp() { local f="$fx/$1"; shift; mkdir -p "$(dirname "$f")" && printf '%s\n' "$@" > "$f"; }
+corp references/r/good.md "# Good" \
+  "Run \`\"$Q/scripts/ok.sh\" new audit\`, then \`\"$Q/scripts/ok.sh\" check audit_1 | head -5\`." \
+  "When built (\`test -x \"$Q/tools/auditor-tools/target/release/audit-scan\"\`), name \`$Q/scripts/ok.sh\` or \`scripts/ok.sh\` alone." \
+  "A rule reads \`Bash(\"\${CLAUDE_PLUGIN_ROOT}/scripts/ok.sh\" *)\`; \`scripts/ok.sh\` and \`templates/poc/run.sh\` are files." \
+  '```bash' "\"$Q/scripts/ok.sh\" check audit_1 2>/dev/null | wc -l" '# scripts/ok.sh check x, in a comment' '```' \
+  '```json' "{\"command\": \"$Q/scripts/ok.sh check x\"}" '```' \
+  '```bash' 'ROOT="<auditor-skill root>"' 'x=$("$ROOT/scripts/ok.sh" check audit_1)' '```' \
+  "> \`\"$Q/scripts/ok.sh\" check x\` in a quote, and \`\"$Q/templates/poc/run.sh\" --crate audit_1/poc/F-1\`."
+corp references/r/c6-bash.md "Run \`bash \"$Q/scripts/ok.sh\" new audit\`."
+corp references/r/c6-cd.md '```bash' "cd sub && \"$Q/scripts/ok.sh\" check x" '```'
+corp references/r/c6-env.md "Run \`FOO=1 \"$Q/scripts/ok.sh\" new\`."
+corp references/r/c6-env-word.md "Run \`env \"$Q/scripts/ok.sh\" new\`."
+corp references/r/c6-dollar.md "Run \`\"$Q/scripts/ok.sh\" --run \"\$RUN\"\`."
+corp references/r/c6-unquoted.md "Run \`$Q/scripts/ok.sh new\`."
+corp references/r/c6-half-quoted.md "Run \`\"$Q\"/scripts/ok.sh new\`."
+corp references/r/c6-plugin-root.md "Run \`\"\${CLAUDE_PLUGIN_ROOT}/scripts/ok.sh\" new\`."
+corp references/r/c6-backtick.md '```' "\"$Q/scripts/ok.sh\" check \`cat x\`" '```'
+corp references/r/c6-quoted-fence.md '> ```sh' "> bash \"$Q/scripts/ok.sh\" check x" '> ```'
+corp references/r/c6-wrapped.md "Run \`bash" "\"$Q/scripts/ok.sh\" new\` across a line break."
+corp references/r/c6-tool.md "Run \`\"$Q/tools/auditor-tools/target/release/audit-mem\" warm --contract=1 --db \$DB\`."
+corp docs/c6.md "Run \`sh \"$Q/scripts/ok.sh\" new\`."
+corp FULL-AUDIT.md '```bash' "X=1 \"$Q/scripts/ok.sh\" check x" '```'
+corp references/r/c7-span.md "Run \`scripts/ok.sh new audit\`."
+corp references/r/c7-dot.md "Run \`./scripts/ok.sh new\`."
+corp references/r/c7-bash.md "Run \`bash scripts/ok.sh new\`."
+corp references/r/c7-quoted.md "Run \`\"scripts/ok.sh\" new\`."
+corp references/r/c7-fenced.md '```bash' 'scripts/ok.sh check x' '```'
+corp references/r/c7-template.md "Run \`templates/poc/run.sh --crate x\`."
+corp templates/t/c7-cd.md '```' 'cd sub; scripts/ok.sh check x' '```'
+cmd c7-relative -- "1. Run \`scripts/ok.sh new audit\`."
+printf -- '---\nname: a\ndescription: "An agent."\ntools: Read, Bash\n---\n\nRun `bash ./scripts/ok.sh check x`.\n' > "$fx/agents/c7.md"
+# over 64 KiB, the one bad line last
+{ awk 'BEGIN { for (i = 0; i < 1400; i++) printf "Prose line %05d of a long reference, padded out with words to fill it up.\n", i }'
+  printf 'Run `bash "%s/scripts/ok.sh" new`.\n' "$Q"; } > "$fx/references/r/c6-large.md"
 git -C "$fx" init -q 2>/dev/null && git -C "$fx" add -- . 2>/dev/null || { bad "cannot make the fixture repository"; }
 size=$(wc -c < "$fx/commands/c1-large.md"); size=${size//[!0-9]/}
 [ "${size:-0}" -gt 65536 ] && ok "the large fixture is ${size} bytes" || bad "the large fixture is only ${size:-0} bytes"
@@ -643,6 +756,17 @@ expect commands/c5-exact.md C5; expect skills/fork/SKILL.md C5
 expect commands/c4-no-rule.md C4; expect commands/c4-no-step.md C4; expect commands/c4-late.md C4
 expect commands/c4-paragraph.md C4; expect commands/c4-args.md C4; expect commands/c4-no-denial.md C4
 expect agents/good.md ""; expect agents/c1.md C1; expect skills/s/SKILL.md C1; expect SKILL.md ""
+expect references/r/good.md ""
+for c in bash cd env env-word dollar unquoted half-quoted plugin-root backtick quoted-fence wrapped tool large; do
+  expect "references/r/c6-$c.md" C6
+done
+expect docs/c6.md C6; expect FULL-AUDIT.md C6
+for c in span dot bash quoted fenced template; do expect "references/r/c7-$c.md" C7; done
+expect templates/t/c7-cd.md C7; expect commands/c7-relative.md C7; expect agents/c7.md C7
+line=$(check "$fx" references/r/c6-large.md | cut -f2)
+total=$(wc -l < "$fx/references/r/c6-large.md"); total=${total//[!0-9]/}
+[ "$line" = "references/r/c6-large.md:$total" ] && ok "the large corpus fixture is read to its last line ($total)" \
+  || bad "the large corpus fixture's finding is at [$line], want references/r/c6-large.md:$total"
 # the large fixture's finding is its last line
 line=$(check "$fx" commands/c1-large.md | cut -f2)
 total=$(wc -l < "$fx/commands/c1-large.md"); total=${total//[!0-9]/}
@@ -662,17 +786,39 @@ cd "$TREE" || exit 1
 set --
 for f in commands/*.md agents/*.md skills/*/SKILL.md SKILL.md; do [ -f "$f" ] && set -- "$@" "$f"; done
 [ $# -gt 0 ] || { bad "no command, agent or skill files in $TREE"; }
+nbodies=$#
+for f in FULL-AUDIT.md checklists/*.md known-vectors/*.md discovery/*.md; do [ -f "$f" ] && set -- "$@" "$f"; done
+find references templates docs -type f -name '*.md' 2>/dev/null | LC_ALL=C sort > "$T/corpus-files"
+while IFS= read -r f; do set -- "$@" "$f"; done < "$T/corpus-files"
+[ $# -gt $((nbodies + 100)) ] || bad "only $(($# - nbodies)) corpus files in $TREE"
+# Findings the tree has until the edits that fix them land, each <check> <file> <the text it shows>: the check
+# fails on any other finding, and on a listed one it no longer makes, which is then to be deleted here.
+KNOWN='C6	docs/output-and-rigor.md	not quoted as "<auditor-skill root>/scripts/rundir.sh": <auditor-skill root>/scripts/rundir.sh new
+C7	references/detection-response/incidents-schema.md	runs templates/poc/run.sh by a path relative to the working directory'
 found=$(check "$TREE" "$@"); rc=$?
 if [ "$rc" -ne 0 ]; then bad "the checker failed on $TREE (status $rc)"
 else
-  n=0
+  n=0; seen=""
   while IFS='	' read -r id at what; do
     [ -n "$id" ] || continue
+    k=""
+    while IFS='	' read -r kid kfile ktext; do
+      [ -n "$kid" ] && [ "$id" = "$kid" ] && [ "${at%:*}" = "$kfile" ] && case "$what" in *"$ktext"*) k=y ;; esac
+    done <<EOF2
+$KNOWN
+EOF2
+    if [ -n "$k" ]; then seen="$seen$id ${at%:*};"; ok "known until its edit lands: $id $at"; continue; fi
     n=$((n + 1)); bad "$id $at: $what"
   done <<EOF
 $found
 EOF
-  [ "$n" -eq 0 ] && ok "$# files: every entry point in the one form its rule pre-approves, and preflight.sh as step 0"
+  while IFS='	' read -r kid kfile ktext; do
+    [ -n "$kid" ] || continue
+    case "$seen" in *"$kid $kfile;"*) ;; *) bad "$kid $kfile is fixed: delete it from KNOWN in scripts/tests/test-command-forms.sh" ;; esac
+  done <<EOF
+$KNOWN
+EOF
+  [ "$n" -eq 0 ] && ok "$nbodies bodies and $(($# - nbodies)) corpus files: every entry point in the one form its rule pre-approves, none by a relative path, and preflight.sh as step 0"
 fi
 
 # ---- 5. wording the flows depend on ------------------------------------------------------------------------
