@@ -488,6 +488,45 @@ done < "$FORMS"
 [ "$ncopy" = 0 ] || skp "$ncopy calls that make or read a git-ro.sh copy: this git lacks the May-2024 clone fixes"
 check "every rooted call of git-ro.sh, the recipes, the runners, rpc-read.sh and rundir.sh runs as written ($nok)" \
   test "$nok" = "${nrun:-x}"
+
+# Above 64 KiB: each corpus call of git-ro.sh that pipes into head, run as written over a history of 400 commits
+# whose matching output passes 64 KiB, prints its head's lines and ends.
+B="$T/big-history"
+git init -q "$B" && git -C "$B" symbolic-ref HEAD refs/heads/big || exit 1
+pad=$(printf '%0180d' 0)
+arr=$(i=0; while [ "$i" -lt 64 ]; do printf '%s,' "$((i * 3))"; i=$((i + 1)); done)
+i=1
+while [ "$i" -le 400 ]; do
+  printf 'commit refs/heads/big\ncommitter t <t@example.invalid> %s +0000\ndata <<EOT\nsecret private fixture %s %s\nEOT\n' \
+    "$((1700000000 + i))" "$i" "$pad"
+  printf 'M 100644 inline programs/p/k%s.rs\ndata <<EOT\n// %s BEGIN RSA PRIVATE BEGIN EC PRIVATE mnemonic sk_live PRIVATE_KEY private secret %s\nEOT\n' "$i" "$i" "$pad"
+  printf 'M 100644 inline keys/k%s.json\ndata <<EOT\n{"k": [%s1], "note": "BEGIN RSA PRIVATE mnemonic %s"}\nEOT\n' "$i" "$arr" "$i"
+  printf 'M 100644 inline src/k%s.ts\ndata <<EOT\nconst mnemonic = "%s %s";\nEOT\n\n' "$i" "$i" "$pad"
+  i=$((i + 1))
+done | git -C "$B" fast-import --quiet || exit 1
+git -C "$B" tag t-base big~399 && git -C "$B" tag t-head big && (cd "$B" && "$RUNDIR" new audit >/dev/null) || exit 1
+(cd "$B" && "$GITRO" copy . audit_1 >/dev/null 2>&1); bcrc=$?
+if [ "$bcrc" = 0 ]; then git -C "$B" rev-parse t-head > "$B/audit_1/src.git/FETCH_HEAD" || exit 1
+elif [ "$bcrc" != 69 ]; then ko "git-ro.sh copy failed in the large history (status $bcrc)"; fi
+nbig=0 nbigcopy=0
+while IFS=$'\t' read -r f n tool how cmd; do
+  [ "$tool:$how" = git-ro.sh:run ] || continue
+  case "$cmd" in *' | head -'[0-9]*) ;; *) continue ;; esac
+  case "$bcrc:$cmd" in
+    69:*" copy "*|69:*" --git-dir "*)
+      if [ "${CI:-}" = true ]; then ko "$f:$n: needs git-ro.sh copy, and this git lacks the May-2024 clone fixes"
+      else nbigcopy=$((nbigcopy + 1)); nbig=$((nbig + 1)); fi
+      continue ;;
+  esac
+  want=$(printf '%s\n' "$cmd" | sed -n 's/.* | head -\([0-9][0-9]*\).*/\1/p')
+  producer=${cmd%%' | head -'*}
+  size=$( (cd "$B" && bash -c "$producer" </dev/null 2>/dev/null) | wc -c | tr -d ' ')
+  got=$( (cd "$B" && bash -c "$cmd" </dev/null 2>/dev/null) | wc -l | tr -d ' ')
+  nbig=$((nbig + 1))
+  check "$f:$n: over $size bytes, the call ends with its head's $want lines" sh -c "[ '$size' -gt 65536 ] && [ '$got' = '$want' ]"
+done < "$FORMS"
+[ "$nbigcopy" = 0 ] || skp "$nbigcopy large-history calls that read a git-ro.sh copy: this git lacks the May-2024 clone fixes"
+check "the corpus has git-ro.sh calls that pipe into head ($nbig)" test "$nbig" -gt 8
 echo
 echo "recipes tests: $pass passed, $fail failed, $skip skipped"
 [ "$fail" -eq 0 ]
