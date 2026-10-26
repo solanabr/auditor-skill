@@ -314,11 +314,13 @@ Code asks about a shell read outside the working directory.
    incident with its `id` and `root_cause_class` (`unknown` until it is known):
    `run.sh --crate` reads that class, stops when it cannot, and holds a
    `supply_chain_or_ci` incident to isolated mode on its dumped bytes (Rule 11a).
-   The agent writes that file only at step 7, so write it now with the Write tool,
-   one entry for each incident you run a PoC for, in this shape:
+   The agent writes that file only at step 7, so record each incident you run a PoC
+   for now: in a reused `incident_<n>` whose `INCIDENTS.json` exists, add its entry
+   with the Edit tool; with no `INCIDENTS.json` yet, write one with the Write tool in
+   this shape:
    `{"schema": "auditor-incidents/1", "incidents": [{"id": "INC-<n>.<k>", "root_cause_class": "unknown"}]}`
-   (the class step 5 found in place of `unknown`); step 7 writes the file in full
-   over it, keeping those ids. Hand `poc-engineer` the PoC build cache from the
+   (the class step 5 found in place of `unknown`); step 7 writes the file in full,
+   keeping those ids. Hand `poc-engineer` the PoC build cache from the
    ledger header, if any, and pass one it creates to the agent for that header.
    Before the Leg 3 line counts, check the crate's harness copy and its
    `non-registry code:` line as `/auditor:poc` step 6 does.
