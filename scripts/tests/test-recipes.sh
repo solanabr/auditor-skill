@@ -461,10 +461,10 @@ nok=0
 while IFS=$'\t' read -r f n tool how cmd; do
   [ "$how" = run ] || continue
   (cd "$F" && env -i HOME="$T/home" PATH="$MP" TMPDIR="$T" RPC_URL=https://rpc.example.invalid/ LC_ALL=C \
-    "$MP/bash" -c "$cmd") >"$T/out" 2>"$T/err" </dev/null
-  RC=$?
+    "$MP/bash" -c "$cmd"$'\n''exit "${PIPESTATUS[0]}"') >"$T/out" 2>"$T/err" </dev/null
+  RC=$?   # the bundled tool's own status, not that of a reader it pipes into
   case "$tool" in
-    git-ro.sh) good=$( { [ "$RC" = 0 ] || [ "$RC" = 1 ]; } && ! grep -q -e 'refused:' -e '^fatal:' "$T/err" && echo y) ;;
+    git-ro.sh) good=""; case "$RC" in 0|1|141) grep -q -e 'refused:' -e '^fatal:' "$T/err" || good=y ;; esac ;;
     recipes/*|rundir.sh) good=$( [ "$RC" = 0 ] && ! grep -q 'refused:' "$T/err" && echo y) ;;
     runner/deps.sh) good=$( [ "$RC" = 3 ] && grep -q '^deps: blocker: .* is not on PATH' "$T/err" && echo y) ;;
     runner/target.sh) good=$( [ "$RC" = 3 ] && grep -q '^target: blocker: no recorded mode' "$T/err" && echo y) ;;

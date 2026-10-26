@@ -10,7 +10,7 @@ Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{seve
 
 ## 7.1 — Program Upgrade Authority
 
-- [ ] **OPS-001**: What is the current upgrade authority of the deployed program? (run `solana program show <PROGRAM_ID>`)
+- [ ] **OPS-001**: What is the current upgrade authority of the deployed program? (run `"<auditor-skill root>/scripts/rpc-read.sh" program-show <PROGRAM_ID> --run audit_<n> --cluster mainnet-beta`, read-only, through the bundled RPC reader)
 - [ ] **OPS-002**: Is the upgrade authority a multisig (e.g., Squads v3/v4)? If it's a single wallet — flag as HIGH
 - [ ] **OPS-003**: How many signers are required on the multisig? Verify threshold (e.g., 2/3, 3/5)
 - [ ] **OPS-004**: Who are the individual signers on the multisig? Are they different entities?

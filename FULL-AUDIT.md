@@ -323,8 +323,10 @@ RECORD: findings per file
 ```
 ACTIONS (some require terminal):
 
-  # Check upgrade authority
-  solana program show <PROGRAM_ID> --url $SOLANA_RPC_URL
+  # Check upgrade authority: a read-only read through the bundled rpc-read.sh, which keeps the endpoint out
+  # of argv, signs nothing and records the read in audit_<n>/disclosures.tsv (Rule 11b); --cluster devnet
+  # for a devnet program, and without --cluster the RPC_URL environment variable names the endpoint
+  "<auditor-skill root>/scripts/rpc-read.sh" program-show <PROGRAM_ID> --run audit_<n> --cluster mainnet-beta
 
   # Check for backdoors
   grep -rn "unsafe" --include="*.rs" programs/

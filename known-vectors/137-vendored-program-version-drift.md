@@ -85,7 +85,7 @@ grep -rn -B3 -A15 -iE "add.*admin|grant.*role|signature.?bundle|ed25519|secp256k
 ```
 # from the vendor SDK / docs / explorer: list other deployments of the same codebase
 grep -rn -iE "program.?ids?|deployments|tenants|partners" <vendor-sdk>/ docs/ 2>/dev/null
-solana program show <PROGRAM_ID>   # upgrade authority: tenant multisig, vendor hot key, or none?
+"<auditor-skill root>/scripts/rpc-read.sh" program-show <PROGRAM_ID> --run audit_<n> --cluster mainnet-beta   # upgrade authority: tenant multisig, vendor hot key, or none?
 ```
 - ✅ PASS: the team knows which sibling deployments share the codebase, monitors security incidents against them (an incident anywhere in the fleet triggers the tenant's own incident response), and the upgrade authority for *their* instance is a governed multisig/timelock (cross-ref KV-020/KV-091) — whether held by tenant or vendor is documented and contracted
 - ❌ FAIL: no fleet awareness (the Avici position: the sibling exploit and the upstream patch both predate the drain), or the vendor holds a single hot upgrade key over every tenant deployment (one vendor key compromise = whole-fleet rug, cross-ref KV-008)

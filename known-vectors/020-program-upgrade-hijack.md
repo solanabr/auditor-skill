@@ -14,8 +14,8 @@ Attacker compromises the upgrade authority wallet → deploys malicious program 
 
 **Step 1: Check current upgrade authority**
 ```
-# For mainnet-deployed program:
-solana program show <PROGRAM_ID> --url mainnet-beta
+# For a mainnet-deployed program (--cluster devnet for a devnet one), read-only through the bundled RPC reader:
+"<auditor-skill root>/scripts/rpc-read.sh" program-show <PROGRAM_ID> --run audit_<n> --cluster mainnet-beta
 # Look for "Authority" field
 ```
 - ✅ PASS: Authority is a multisig, governance program, or `none` (immutable)

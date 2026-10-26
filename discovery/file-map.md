@@ -160,7 +160,7 @@ PRIMARY:
   .gitignore                           # Secrets exclusion
 
 TERMINAL COMMANDS:
-  solana program show <PROGRAM_ID>     # Upgrade authority
+  "<auditor-skill root>/scripts/rpc-read.sh" program-show <PROGRAM_ID> --run audit_<n> --cluster mainnet-beta   # Upgrade authority (read-only)
   anchor verify <PROGRAM_ID>           # Binary verification (rebuilds the target: Rule 11a mode only)
 
 GREP PATTERNS:

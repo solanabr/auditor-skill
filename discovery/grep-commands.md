@@ -465,8 +465,8 @@ grep -rnE --include='*.yml' --include='*.yaml' 'anthropics/claude-code-(base-)?a
 
 ### Program upgrade authority
 ```bash
-# Terminal:
-solana program show <PROGRAM_ID> --url mainnet-beta
+# Terminal: read-only, through the bundled RPC reader (--cluster devnet for a devnet program)
+"<auditor-skill root>/scripts/rpc-read.sh" program-show <PROGRAM_ID> --run audit_<n> --cluster mainnet-beta
 ```
 
 ### Anchor build verification
