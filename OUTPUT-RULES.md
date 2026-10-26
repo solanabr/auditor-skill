@@ -381,7 +381,7 @@ The bundled tools these rules name are the steps the commands run without a prom
 |---|---|---|
 | **isolated** (recommended) | Target-controlled code runs in a container or VM with no keys or credentials mounted (`~/.config/solana`, cloud credentials, `~/.ssh`), or under Claude Code's sandbox with read-deny rules on key and credential paths plus an egress allowlist. A read-only source mount and CPU / memory / time limits are recommended. | Which isolation was used. |
 | **native** | Target-controlled code runs on the auditor's own machine. Allowed. | In Coverage & Limitations: target code ran on the auditor's host, and which steps ran it. |
-| **none** | No target-controlled code runs: every runner stops before it copies anything. Q46 offers isolated and native; `none` comes from `AUDITOR_EXEC_MODE=none` or a run's `exec-mode` file. | In Coverage & Limitations: which steps did not run. |
+| **none** | No target-controlled code runs: `target.sh` and `run.sh --crate` stop before they copy anything; `probe.sh`, `deps.sh` and `sast.sh` run no target code and still run. Q46 offers isolated and native; `none` comes from `AUDITOR_EXEC_MODE=none` or a run's `exec-mode` file. | In Coverage & Limitations: which steps did not run. |
 
 Interactive runs ask once per audit — at intake, or at the first step that builds target code or a PoC if intake was skipped. Non-interactive runs (`/auditor:intake --auto`, the autonomous `/auditor:audit-cycle` flow) use the recorded mode; when none was recorded, the run is native and the report carries that caveat.
 
