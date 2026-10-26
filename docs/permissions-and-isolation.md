@@ -135,7 +135,7 @@ The container or VM is the boundary, so it suits builds of untrusted code best.
 - Give it a clean copy of the repository, not your own checkout ([Rule 11e](../OUTPUT-RULES.md#11e--bundled-paths)).
 - Set `AUDITOR_EXEC_MODE=isolated` in the image, and run Claude Code as a user other than root: it refuses `bypassPermissions` as root.
 
-Inside the container, `--permission-mode bypassPermissions` lets every call run but a few (ask rules, deletes of critical paths), which `claude -p` then denies. Limit the container's network to the registries and your RPC provider if you can: on an open network a build script can still connect by itself.
+Inside the container, `--permission-mode bypassPermissions` lets every call run but a few, such as those an ask rule matches and deletes of critical paths, which `claude -p` then denies. Limit the container's network to the registries and your RPC provider if you can: on an open network a build script can still connect by itself.
 
 ### Claude Code's sandbox
 
