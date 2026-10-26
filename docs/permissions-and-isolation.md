@@ -22,7 +22,7 @@ Each `/auditor:*` command pre-approves, in its `allowed-tools`, the bundled step
 | Snapshot an incident's programs, and collect its transactions | `scripts/dnr/snapshot-program.sh`, `scripts/dnr/collect.sh` |
 | Analyze an incident corpus, inside the `auditor:dnr-analyze` fork | `profile.sh`, `frames.py`, `deltas.py`, `jq-ro.sh`, `audit-logs` |
 
-The commands also pre-approve reading (`Read`, `Grep`, `Glob`), starting their agents (`Task`), and writing files under `audit_*/` and `incident_*/` with the Write and Edit tools. Each command pre-approves only the rows its own steps use. Details of each tool: [power-tools.md](power-tools.md).
+The commands also pre-approve reading (`Read`, `Grep`, `Glob`), starting their agents (`Task`), and writing files under `audit_*/` and `incident_*/` with the Write and Edit tools. Each command pre-approves only the rows its own steps use. When you ask in plain words ("audit this repo"), the skill itself pre-approves the steps `/auditor:audit` runs; an install as a user-level skill, rather than the plugin, has only that list, since it brings no `/auditor:*` commands. Details of each tool: [power-tools.md](power-tools.md).
 
 ### Why that is safe
 
