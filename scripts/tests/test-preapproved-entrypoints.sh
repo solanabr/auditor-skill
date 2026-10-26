@@ -384,9 +384,10 @@ fx_poc() { # fixtures/{poc-run,probe}/cases.txt, as test-dnr-poc-runner.sh build
   local c
   W=$S/wt; mkdir -p "$W/src" && newrun "$W" audit incident || return 1
   c="$W/audit_1/poc/F-1"
-  mkdir -p "$c/tests" "$c/shared-test-utils" && cp "$ROOT/templates/poc/run.sh" "$c/run.sh" \
+  mkdir -p "$c/tests" "$c/shared-test-utils/src" && cp "$ROOT/templates/poc/run.sh" "$c/run.sh" \
     && printf '[package]\nname = "poc_shim"\nversion = "0.1.0"\nedition = "2021"\n' > "$c/Cargo.toml" \
-    && printf '[package]\nname = "shared-test-utils"\nversion = "0.1.0"\n' > "$c/shared-test-utils/Cargo.toml" \
+    && cp "$ROOT/templates/poc/shared-test-utils/Cargo.toml" "$c/shared-test-utils/" \
+    && cp "$ROOT/templates/poc/shared-test-utils/src/lib.rs" "$c/shared-test-utils/src/" \
     && cp "$ROOT/templates/poc/tests/exploit.rs" "$ROOT/templates/poc/tests/fixed_blocked.rs" "$c/tests/" || return 1
   mkdir -p "$W/audit_1/exec/build-sbf-1" && python3 -I - "$W" <<'PY' || return 1
 import sys

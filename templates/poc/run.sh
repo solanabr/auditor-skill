@@ -142,6 +142,13 @@
 #     that dependency, one that imports it under another name, another dependency
 #     imported as shared_test_utils (with - or _), and a build that compiles a
 #     shared_test_utils from anywhere else, or none, stop it too.
+#   * the harness copy: the installation's copy checks the crate's shared-test-utils/
+#     before anything is copied. It must hold only Cargo.toml and src/lib.rs (target/
+#     and .git/ aside), and its Cargo.toml may differ from the installation's only in
+#     the version requirements of its dependencies; otherwise the run stops (exit 3).
+#     The build then compiles the installation's src/lib.rs whatever the crate holds,
+#     and a `>> harness:` line says whether the crate's copy matched. ./run.sh checks
+#     none of this.
 #   * the build cache: to reuse compiled dependencies between runs of one
 #     engagement, create a directory once per engagement with run.sh --new-cache, or
 #     for ./run.sh with `mktemp -d "${TMPDIR:-/tmp}/auditor-poc-target.XXXXXX"` (inside
@@ -792,7 +799,9 @@ fi
 # checks (exit 3 and the reason otherwise). `harness targetdir`: the directory cargo
 # builds into, from cargo metadata. `harness checkbuild`: the test binary in cargo's
 # JSON output. `harness settle`: an arm's verdict from its markers.
-# `harness nonregistry`: the path and git dependencies in Cargo.lock. python3 runs
+# `harness nonregistry`: the path and git dependencies in Cargo.lock. `harness stucopy`:
+# whether the crate's shared-test-utils/src/lib.rs is the installation's (same, differs or
+# missing), after the checks of the harness copy (exit 3 and the reason). python3 runs
 # isolated (-I): `python3 -c` would otherwise import modules such as hashlib.py from
 # the working directory, or from PYTHONPATH, in place of the stdlib.
 HARNESS_PY='import hashlib, json, os, re, sys
@@ -1155,6 +1164,56 @@ def nonregistry(root, lock, meta_path, builds):
     print(flat(", ".join(out)) if out else "none: every dependency comes from a registry")
 
 
+# A dependency table of a manifest, and a TOML string, basic or literal (chr 39 quotes).
+DEP_TABLE = re.compile(r"^\s*\[\s*(?:target\..+\.)?(?:dependencies|dev-dependencies|build-dependencies)\s*\]\s*(?:#.*)?$")
+STR = "(?:\"(?:[^\"\\\\]|\\\\.)*\"|\x27[^\x27]*\x27)"
+
+
+def requirements_blank(path):
+    """The manifest, line by line, with each version requirement in a dependency table blanked: the string
+    of a <name> = <string> line, and of a version key in an inline table."""
+    out, deps = [], False
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f.read().split("\n"):
+            if re.match(r"^\s*\[", line):
+                deps = bool(DEP_TABLE.match(line))
+            elif deps:
+                line = re.sub(r"^(\s*" + KEY + r"\s*=\s*)" + STR, lambda m: m.group(1) + chr(34) * 2, line)
+                line = re.sub(r"(\bversion\s*=\s*)" + STR, lambda m: m.group(1) + chr(34) * 2, line)
+            out.append(line)
+    return out
+
+
+def stucopy(crate, inst):
+    """The crate shared-test-utils/ against the installation copy: exit 3 with the reason when it is no
+    directory, holds a file the installation copy does not (target/ and .git/ aside, as the build copy leaves
+    them out), has no Cargo.toml, or has a Cargo.toml that differs beyond the version requirements of its
+    dependencies; else print whether its src/lib.rs is the installation copy: same, differs or missing."""
+    if os.path.islink(crate) or not os.path.isdir(crate):
+        refuse("shared-test-utils/ is not a directory")
+    files = []
+    for top, dirs, names in os.walk(crate):
+        dirs[:] = sorted(d for d in dirs if d.lower() not in ("target", ".git"))
+        files.extend(os.path.relpath(os.path.join(top, n), crate) for n in sorted(names))
+    extra = [f for f in files if f not in ("Cargo.toml", os.path.join("src", "lib.rs"))]
+    if extra:
+        refuse("shared-test-utils/ holds %s, which the installation copy does not" % extra[0])
+    if "Cargo.toml" not in files:
+        refuse("shared-test-utils/ has no Cargo.toml")
+    mine = requirements_blank(os.path.join(crate, "Cargo.toml"))
+    theirs = requirements_blank(os.path.join(inst, "Cargo.toml"))
+    if mine != theirs:
+        n = next(i for i in range(max(len(mine), len(theirs)) + 1)
+                 if i >= len(mine) or i >= len(theirs) or mine[i] != theirs[i])
+        refuse("shared-test-utils/Cargo.toml differs from the installation copy beyond the version requirements of its dependencies, from line %d" % (n + 1))
+    lib = os.path.join(crate, "src", "lib.rs")
+    if not os.path.isfile(lib):
+        print("missing")
+        return
+    with open(lib, "rb") as a, open(os.path.join(inst, "src", "lib.rs"), "rb") as b:
+        print("same" if a.read() == b.read() else "differs")
+
+
 command, args = sys.argv[1], sys.argv[2:]
 if command == "hash":
     print(zhash(args[0]))
@@ -1169,6 +1228,8 @@ elif command == "settle":
     settle(*args)
 elif command == "nonregistry":
     nonregistry(args[0], args[1], args[2], args[3:])
+elif command == "stucopy":
+    stucopy(*args)
 else:
     sys.exit(2)
 '
@@ -1280,6 +1341,19 @@ if [[ -n "${extra}" ]]; then
   echo "[PoC-ATTEMPTED] blocker: ${extra#./} inside the crate is a symbolic link, a .cargo/ directory or a rust-toolchain* file. run.sh builds a copy of the crate outside the target tree and never copies these; remove it (for a link, copy in the file itself)." >&2
   exit 3
 fi
+# The harness copy: the installation's run.sh checks the crate's shared-test-utils/ against its own
+# before anything is copied, and builds with its own src/lib.rs whatever the crate holds (WHERE IT BUILDS
+# above). python3 starts from /, so nothing in the working directory picks the interpreter.
+STU=""
+if [[ "${HERE}" != "${SELF}" ]]; then
+  rc=0
+  STU="$(cd / && harness stucopy "${HERE}/shared-test-utils" "${SELF}/shared-test-utils")" || rc=$?
+  if [[ "${rc}" -ne 0 ]]; then
+    [[ "${rc}" -eq 3 && -n "${STU}" ]] || STU="shared-test-utils/ cannot be read"
+    echo "[PoC-ATTEMPTED] blocker: the crate's ${STU}; put back the installation's templates/poc/shared-test-utils/ (or --init a new crate) — nothing was copied or built." >&2
+    exit 3
+  fi
+fi
 if ! BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/auditor-poc.XXXXXX")"; then
   echo "[PoC-ATTEMPTED] blocker: cannot create a scratch build directory under ${TMPDIR:-/tmp}." >&2
   exit 3
@@ -1299,6 +1373,17 @@ fi
 if ! copy_crate "${BUILD_DIR}"; then
   echo "[PoC-ATTEMPTED] blocker: could not copy the crate into ${BUILD_DIR}." >&2
   exit 3
+fi
+if [[ -n "${STU}" ]]; then
+  if ! { mkdir -p "${BUILD_DIR}/shared-test-utils/src" && cp "${SELF}/shared-test-utils/src/lib.rs" "${BUILD_DIR}/shared-test-utils/src/lib.rs"; }; then
+    echo "[PoC-ATTEMPTED] blocker: could not put the installation's shared-test-utils/src/lib.rs into ${BUILD_DIR}." >&2
+    exit 3
+  fi
+  case "${STU}" in
+    same) echo ">> harness: the crate's shared-test-utils/ is the installation's (its dependency version requirements aside)" ;;
+    differs) echo ">> harness: the crate's shared-test-utils/src/lib.rs differs from the installation's; this build used the installation's, so record the difference" ;;
+    *) echo ">> harness: the crate has no shared-test-utils/src/lib.rs; this build used the installation's" ;;
+  esac
 fi
 # run.sh's own files: cargo's metadata and JSON output, and one marker directory per arm.
 RUN_DIR="${BUILD_DIR}/markers"

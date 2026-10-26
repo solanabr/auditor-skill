@@ -31,6 +31,10 @@
 #   * the harness binding: the crate depends on its own shared-test-utils/ under the
 #     import name shared_test_utils, no other dependency takes that name in either
 #     spelling, and each arm's build compiles that copy and no other;
+#   * the harness copy: --crate stops before anything is copied when shared-test-utils/
+#     holds a file other than Cargo.toml and src/lib.rs, or a Cargo.toml changed beyond
+#     its dependency version requirements; every build compiles the installation's
+#     src/lib.rs, a missing or changed one too, and the >> harness: line says which;
 #   * the non-registry line before the final line: the path and git dependencies in
 #     the resolved Cargo.lock;
 #   * the macros run the attack themselves; their old forms do not compile and say how
@@ -119,11 +123,12 @@ trap 'rm -rf "$T"' EXIT
 # run.sh reports physical paths (pwd -P); compare against the same.
 T="$(cd "$T" && pwd -P)" || exit 1
 
-mk_crate() {  # mk_crate <dir>: run.sh, a manifest, its own shared-test-utils/ and the template's tests (the shim never compiles them)
-  mkdir -p "$1/tests" "$1/shared-test-utils"
+mk_crate() {  # mk_crate <dir>: run.sh, a manifest, the installation's shared-test-utils/ and the template's tests (the shim never compiles them)
+  mkdir -p "$1/tests" "$1/shared-test-utils/src"
   cp "$TEMPLATE/run.sh" "$1/run.sh"
   printf '[package]\nname = "poc_shim"\nversion = "0.1.0"\nedition = "2021"\n' > "$1/Cargo.toml"
-  printf '[package]\nname = "shared-test-utils"\nversion = "0.1.0"\n' > "$1/shared-test-utils/Cargo.toml"
+  cp "$TEMPLATE/shared-test-utils/Cargo.toml" "$1/shared-test-utils/Cargo.toml"
+  cp "$TEMPLATE/shared-test-utils/src/lib.rs" "$1/shared-test-utils/src/lib.rs"
   cp "$TEMPLATE/tests/exploit.rs" "$TEMPLATE/tests/fixed_blocked.rs" "$1/tests/"
 }
 mk_crate "$T/inc"
@@ -1305,6 +1310,57 @@ rmdir "$WT/audit_1/exec-mode"; printf 'native\n' > "$WT/audit_1/exec-mode"
 code="$(ngate AUDITOR_EXEC_MODE=yes -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
 [ "$code" = 3 ] && grep -qF "run.sh refused: AUDITOR_EXEC_MODE is 'yes', not none, isolated or native" "$T/out" && new_nothing_ran \
   && ok "AUDITOR_EXEC_MODE=yes -> refused, even with a recorded mode" || { bad "AUDITOR_EXEC_MODE=yes: exit $code"; cat "$T/out" >&2; }
+
+# The harness copy: run.sh --crate checks the crate's shared-test-utils/ before anything is copied, and every
+# build compiles the installation's src/lib.rs whatever the crate holds; its >> harness: line says whether the
+# crate's copy matched. A copy that holds another file, or a Cargo.toml changed beyond the version
+# requirements of its dependencies, stops the run.
+STU="$WT/audit_1/poc/F-1/shared-test-utils"
+cp "$STU/Cargo.toml" "$T/stu-cargo.keep"
+code="$(ngate -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+[ "$code" = 0 ] && grep -qxF ">> harness: the crate's shared-test-utils/ is the installation's (its dependency version requirements aside)" "$T/out" \
+  && ok "--crate with the installation's harness copy -> the build runs, and the harness line says the copy matched" || { bad "harness copy, unchanged: exit $code"; cat "$T/out" >&2; }
+printf '// changed in the crate\n' >> "$STU/src/lib.rs"
+code="$(ngate -- --crate audit_1/poc/F-1 "${NVULN[@]}" --keep)"; bd="$(new_build_dir)"
+[ "$code" = 0 ] && grep -qxF ">> harness: the crate's shared-test-utils/src/lib.rs differs from the installation's; this build used the installation's, so record the difference" "$T/out" \
+  && [ -n "$bd" ] && cmp -s "$bd/shared-test-utils/src/lib.rs" "$TEMPLATE/shared-test-utils/src/lib.rs" \
+  && ok "--crate with a changed shared-test-utils/src/lib.rs -> the build compiles the installation's, and the harness line says the copy differed" \
+  || { bad "harness copy, src/lib.rs changed: exit $code, build dir '$bd'"; cat "$T/out" >&2; }
+[ -z "$bd" ] || rm -rf "$bd"
+rm "$STU/src/lib.rs"
+code="$(ngate -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+[ "$code" = 0 ] && grep -qxF ">> harness: the crate has no shared-test-utils/src/lib.rs; this build used the installation's" "$T/out" \
+  && ok "--crate with no shared-test-utils/src/lib.rs -> the build compiles the installation's, and says so" || { bad "harness copy, no src/lib.rs: exit $code"; cat "$T/out" >&2; }
+cp "$TEMPLATE/shared-test-utils/src/lib.rs" "$STU/src/lib.rs"
+sed 's/^mollusk-svm = "[^"]*"/mollusk-svm = "0.99"/' "$T/stu-cargo.keep" > "$STU/Cargo.toml"
+code="$(ngate -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+[ "$code" = 0 ] && ! cmp -s "$STU/Cargo.toml" "$T/stu-cargo.keep" \
+  && grep -qxF ">> harness: the crate's shared-test-utils/ is the installation's (its dependency version requirements aside)" "$T/out" \
+  && ok "--crate with a dependency version requirement changed in shared-test-utils/Cargo.toml -> the build runs" || { bad "harness copy, a version requirement: exit $code"; cat "$T/out" >&2; }
+while IFS='|' read -r how what text; do
+  [ -n "$how" ] || continue
+  cp "$T/stu-cargo.keep" "$STU/Cargo.toml"
+  case "$how" in
+    dependency) printf 'evil = { path = "/tmp/evil" }\n' >> "$STU/Cargo.toml" ;;
+    feature) sed 's/^sha2 = "0.10"/sha2 = { version = "0.10", features = ["asm"] }/' "$T/stu-cargo.keep" > "$STU/Cargo.toml" ;;
+    package) sed 's/^edition = "2021"/edition = "2024"/' "$T/stu-cargo.keep" > "$STU/Cargo.toml" ;;
+    build-script) printf 'fn main() {}\n' > "$STU/build.rs" ;;
+    module) printf 'pub fn x() {}\n' > "$STU/src/other.rs" ;;
+    no-manifest) rm "$STU/Cargo.toml" ;;
+  esac
+  code="$(ngate -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+  [ "$code" = 3 ] && grep -qF "[PoC-ATTEMPTED] blocker: the crate's $text" "$T/out" && new_nothing_ran && one_blocker \
+    && ok "--crate with a harness copy $what -> exit 3 before anything is copied: $text" || { bad "harness copy $what: exit $code"; cat "$T/out" >&2; }
+  rm -f "$STU/build.rs" "$STU/src/other.rs"
+done <<CASES
+dependency|that adds a dependency|shared-test-utils/Cargo.toml differs from the installation copy beyond the version requirements of its dependencies, from line
+feature|that turns on a feature|shared-test-utils/Cargo.toml differs from the installation copy beyond the version requirements of its dependencies, from line
+package|that changes the package's edition|shared-test-utils/Cargo.toml differs from the installation copy beyond the version requirements of its dependencies, from line
+build-script|that holds a build script|shared-test-utils/ holds build.rs, which the installation copy does not
+module|that holds another source file|shared-test-utils/ holds src/other.rs, which the installation copy does not
+no-manifest|without its Cargo.toml|shared-test-utils/ has no Cargo.toml
+CASES
+cp "$T/stu-cargo.keep" "$STU/Cargo.toml"
 
 # Every run directory an argument names counts: here --vulnerable-so and --fixed-so under audit_2/exec/.
 ( cd "$WT" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null || bad "rundir.sh could not make audit_2"
@@ -2976,12 +3032,18 @@ path = \"$T/e-oot-outside/lib.rs\"
   printf 'fn main() {\n    let mut text = String::new();\n    for (k, v) in std::env::vars() {\n        text.push_str(&format!("{k}={v}\\n"));\n    }\n    std::fs::write("%s", text).expect("record the environment");\n}\n' "$T/envdep.env" > "$T/envdep/build.rs"
   printf 'envdep = { path = "%s" }\n' "$T/envdep" >> "$RW/audit_1/poc/F-1/Cargo.toml"
   REAL=(HOME="$CLEANHOME" "${TOOL_HOMES[@]}" PATH="$PATH" TMPDIR="$NT" CARGO_NET_OFFLINE=true)
-  rr() {  # rr [VAR=val ...] -- <argument>...: the installation's run.sh with real cargo, from $RW -> exit code
+  # --crate builds only a harness copy whose Cargo.toml is the installation's but for its dependency version
+  # requirements, and this crate's names the stand-in crates by path: these runs use a copy of the
+  # installation (its scripts/lib/ and templates/) whose harness Cargo.toml is the crate's.
+  IR="$T/inst-real"; mkdir -p "$IR/scripts" && cp -R "$ROOT/scripts/lib" "$IR/scripts/" && cp -R "$ROOT/templates" "$IR/" \
+    && cp "$RW/audit_1/poc/F-1/shared-test-utils/Cargo.toml" "$IR/templates/poc/shared-test-utils/Cargo.toml" \
+    || bad "cannot copy the installation for the real-cargo runs"
+  rr() {  # rr [VAR=val ...] -- <argument>...: that copy's run.sh with real cargo, from $RW -> exit code
     local -a vars=()
     while [ $# -gt 0 ] && [ "$1" != -- ]; do vars+=("$1"); shift; done
     [ $# -gt 0 ] && shift
     rm -rf "$NT"; mkdir -p "$NT"
-    ( cd "$RW" && env -i "${REAL[@]}" ${vars[@]+"${vars[@]}"} "$RUNSH" "$@" ) >"$T/out" 2>&1 </dev/null
+    ( cd "$RW" && env -i "${REAL[@]}" ${vars[@]+"${vars[@]}"} "$IR/templates/poc/run.sh" "$@" ) >"$T/out" 2>&1 </dev/null
     echo $?
   }
   RSO=(--vulnerable-so audit_1/exec/sb/sb-takeover.so --fixed-so audit_1/exec/sb/sb-reject-MissingRequiredSignature.so)
