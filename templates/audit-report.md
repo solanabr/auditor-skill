@@ -257,7 +257,8 @@ Also list anything that was in the repo but deliberately NOT reviewed, and why
 List every exclusion in the Layout table of audit_<n>/intake.md §1, with its
 reason and its source as the table gives it. A reused exclusion narrows coverage
 on an earlier run's answer, so its source reads "reused from audit_<k> on the
-human's yes".
+human's yes". Also list each directory with code in it that no row of that
+table lists or excludes (FULL-AUDIT 0.2), as not reviewed.
 -->
 
 - {e.g. Third-party programs invoked via CPI (SPL Token, Jupiter) — assumed correct.}
@@ -267,6 +268,7 @@ human's yes".
 - {e.g. Economic model / tokenomics design beyond on-chain code correctness.}
 - {e.g. Program X, delivered as a compiled artifact only — source not provided, could not be reviewed.}
 - {e.g. `vendor/` — vendored upstream code; reused from audit_<k> on the human's yes.}
+- {e.g. `scripts/migrations/` — code no row of the intake Layout table lists; not reviewed.}
 - {Any code outside the commits in §2.2.}
 
 ---

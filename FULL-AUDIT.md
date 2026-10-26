@@ -63,7 +63,7 @@ RECORD:
 ### 0.2 — Map the Codebase
 
 ```
-ACTION: Use this run's own Layout table (audit_<n>/intake.md §1, Q39/Q44: where the code, the tests and the build files live, and the exclusions), and nothing from an earlier run's directory: intake copies an earlier layout into this table only on the human's yes. A run directory reused without a new intake holds an earlier run's table: use it only after the human has seen every row of it and said yes. Without a table, use the defaults in discovery/file-map.md, OR auto-discover:
+ACTION: Use this run's own Layout table (audit_<n>/intake.md §1, Q39/Q44: where the code, the tests and the build files live, and the exclusions), and nothing from an earlier run's directory: intake copies an earlier layout into this table only on the human's yes. A run directory reused without a new intake holds an earlier run's table: use it only after the human has seen every row of it and said yes. Without a table, use the defaults in discovery/file-map.md, OR auto-discover. With one, also note each directory with code in it that no row lists or excludes:
   1. List all .rs files under programs/
   2. List all .ts/.tsx files under apps/backend/src/
   3. List all .ts/.tsx files under apps/web/src/
@@ -77,6 +77,7 @@ RECORD:
   - Total instruction handlers: ___
   - Total API endpoints (backend routes + frontend API routes): ___
   - Exclusions applied, each with its source from the Layout table (report §2.4 Out of Scope): ___
+  - Directories with code that no row of the Layout table lists or excludes, not reviewed (report §2.4): ___
 ```
 
 ### 0.3 — Build Instruction Matrix
