@@ -489,6 +489,85 @@ done < "$FORMS"
 check "every rooted call of git-ro.sh, the recipes, the runners, rpc-read.sh and rundir.sh runs as written ($nok)" \
   test "$nok" = "${nrun:-x}"
 
+# Plain git: no code line of these files runs git itself, and the Rule 11c prefix is left only where the text
+# says what a tool runs, except the calls listed here, each of which says why it asks for approval.
+python3 -I - "$ROOT" > "$T/plain-git.txt" 2>&1 <<'PY'
+import os, re, sys
+
+os.chdir(sys.argv[1])
+files = ["FULL-AUDIT.md"]
+for d in ("checklists", "known-vectors", "discovery"):
+    files += sorted(os.path.join(d, f) for f in os.listdir(d) if f.endswith(".md"))
+for d in ("references", "templates"):
+    for dp, dn, fn in sorted(os.walk(d)):
+        files += sorted(os.path.join(dp, f) for f in fn if f.endswith(".md"))
+# (file, text): a call that asks, and why
+KEEP = [
+    # KV-137 Step 2: the upstream fetch, whose URL is chosen at run time
+    ("known-vectors/137-vendored-program-version-drift.md",
+     'git --git-dir=<copy> -c protocol.allow=never -c protocol.https.allow=always fetch --no-tags --end-of-options "$UPSTREAM" HEAD'),
+    # form A of a patch file, from a fix commit
+    ("templates/patch/patch.md", "git format-patch -1 <fix-commit> --stdout > {FINDING_ID}.patch"),
+    # §4: the clone the Trail of Bits runner works in
+    ("templates/patch/VERIFICATION.md",
+     'GIT_NO_LAZY_FETCH=1 git clone -q --no-local --no-checkout --template= "$PPV_SRC" "$PPV/repo" &&'),
+    # §1: the scratch worktree rebuild
+    ("templates/patch/VERIFICATION.md", 'GIT_NO_LAZY_FETCH=1 git clone --no-local {CHECKOUT} "$SCRATCH/copy" &&'),
+    ("templates/patch/VERIFICATION.md", 'git -C "$SCRATCH/copy" worktree add "$SCRATCH/fix" {COMMIT} &&'),
+    ("templates/patch/VERIFICATION.md", "git apply {PATH_TO}/{FINDING_ID}.patch &&"),
+]
+# (file, text): prose that names the prefix as part of what a tool runs, or a call that asks
+PROSE = [
+    ("FULL-AUDIT.md", "(the Rule 11d check, `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false --icase-pathspecs ls-files -- .audit-memory`, run by the tool)"),
+    ("references/orchestration/pre-scan.md", "as `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false --icase-pathspecs ls-files -- .audit-memory` would show"),
+    ("references/detection-response/README.md", "`GIT_NO_LAZY_FETCH=1 git clone --no-local <checkout> <scratch copy>` and read with"),
+    ("references/detection-response/README.md", "`GIT_NO_LAZY_FETCH=1 git -C <scratch copy> --no-pager -c core.fsmonitor=false -c log.showSignature=false show --no-textconv --no-ext-diff <rev>:<path>`,"),
+    ("templates/patch/VERIFICATION.md", "copy you made yourself, `GIT_NO_LAZY_FETCH=1 git clone --no-local <checkout> <scratch copy>` (Rule 11c),"),
+]
+def bare(line):  # the line without its comment, and with each quoted string emptied
+    out, q, esc = [], None, False
+    for i, ch in enumerate(line):
+        if q == '"' and esc: esc = False
+        elif q == '"' and ch == "\\": esc = True
+        elif q:
+            if ch == q: q = None; out.append(ch)
+        elif ch in "'\"": q = ch; out.append(ch)
+        elif ch == "#" and (i == 0 or line[i - 1] in " \t"): break
+        else: out.append(ch)
+    return "".join(out)
+def uncomment(line):
+    q = None
+    for i, ch in enumerate(line):
+        if q:
+            if ch == q: q = None
+        elif ch in "'\"": q = ch
+        elif ch == "#" and (i == 0 or line[i - 1] in " \t"): return line[:i]
+    return line
+GIT = re.compile(r"(?:^|[|;&(]|\b(?:then|do|else|if)\s)\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*git\s")
+seen, bad = set(), []
+for f in files:
+    code = False
+    for n, line in enumerate(open(f, encoding="utf-8"), 1):
+        if line.lstrip().startswith("```"):
+            code = not code
+            continue
+        text = line.strip()
+        if code and GIT.search(bare(line)):
+            k = (f, uncomment(line).strip())
+            if k in KEEP: seen.add(k)
+            else: bad.append(f"{f}:{n}: runs git itself: {text[:160]}")
+        elif "GIT_NO_LAZY_FETCH=1 git" in line:
+            hit = [p for p in PROSE if p[0] == f and p[1] in line]
+            if hit: seen.update(hit)
+            else: bad.append(f"{f}:{n}: names the Rule 11c prefix as a recipe: {text[:160]}")
+for k in KEEP + PROSE:
+    if k not in seen: bad.append(f"{k[0]}: the listed text is gone, so the list needs updating: {k[1][:120]}")
+print("\n".join(bad))
+sys.exit(1 if bad else 0)
+PY
+if [ "$?" = 0 ]; then ok "no corpus recipe runs plain git, and the Rule 11c prefix is left only in the listed text"
+else ko "a corpus recipe runs plain git, or the Rule 11c prefix is left outside the listed text"; sed 's/^/#   /' "$T/plain-git.txt" | cut -c1-220; fi
+
 # Above 64 KiB: each corpus call of git-ro.sh that pipes into head, run as written over a history of 400 commits
 # whose matching output passes 64 KiB, prints its head's lines and ends.
 B="$T/big-history"
