@@ -28,7 +28,7 @@ The commands also pre-approve reading (`Read`, `Grep`, `Glob`), starting their a
 
 ### Why that is safe
 
-A rule such as `Bash("${CLAUDE_PLUGIN_ROOT}/scripts/git-ro.sh" *)` approves that one program, with any words after it. Claude Code matches the text before the `*` as written, after stripping a few wrappers such as `timeout` and `nice` and an assignment of a few known-safe variables: another path, `bash` in front, an assignment of any other variable, or a `$` anywhere stops the match. It splits a line at `&&`, `||`, `;`, `|`, `&` and newlines, and every part needs a rule or must be one of its read-only commands. A call that matches nothing asks. So each entry point is built to be safe whatever words follow:
+A rule such as `Bash("${CLAUDE_PLUGIN_ROOT}/scripts/git-ro.sh" *)` approves that one program, with any words after it. Claude Code matches the text before the `*` as written, after stripping a few wrappers such as `timeout` and `nice` and an assignment of a few known-safe variables: another path, `bash` in front, an assignment of any other variable, or a `$` anywhere stops the match. It splits a line at `&&`, `||`, `;`, `|`, `|&`, `&` and newlines, and every part needs a rule or must be one of its read-only commands. A call that matches nothing asks. So each entry point is built to be safe whatever words follow:
 
 - It runs from the installation, outside the tree under audit, by its absolute path.
 - It checks every argument against a closed grammar before it does anything, and refuses anything else with one stderr line that names the tool and the reason.
