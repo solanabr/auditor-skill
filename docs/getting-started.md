@@ -41,6 +41,8 @@ cargo test   # optional: scan_fixture + mem_roundtrip
 
 The agents run them by absolute path from the installation, never from your project ([`OUTPUT-RULES.md` Rule 11e](../OUTPUT-RULES.md#11e--bundled-paths)). If auditor-skill sits inside the repository you will audit anyway (such as `.claude/skills/auditor-skill`, where `install.sh` without a path installed through 7.6.0), this build runs inside that tree, where cargo and rustup read its `.cargo/config*` and `rust-toolchain*` from every parent directory: build there only in [Rule 11a](../OUTPUT-RULES.md#rule-11-operating-safety) isolated mode, or delete that copy and install a fresh one outside the repository (the plugin, or `install.sh ~/.claude/skills/auditor-skill`) and build that one. Never move or update a copy you find inside a repository ([README](../README.md#installation)).
 
+Build them again after every update of auditor-skill, with `cargo build --release --locked` in the same directory. The flows call them with a contract marker (`--contract=1`) that an older build refuses, and until you rebuild they go on as if the tools were absent.
+
 - **`audit-scan`** — deterministic AST pass that emits the risky surface (instructions, account constraints, PDAs, arithmetic, panics, CPIs) as one JSON, at ~$0 LLM cost. On a 50K-line program this removes roughly 200-300K input tokens (~30-40% of the variable cost). It is a *map to verify*, not a set of verdicts.
 - **`audit-mem`** — SQLite store for exact de-dup, FIXED→REGRESSED detection, false-positive suppression, and warm re-audits.
 
@@ -65,7 +67,7 @@ Everything else — checklists, known vectors, output rules — is portable as-i
 /auditor:quick-scan
 ```
 
-As a CI gate it runs non-interactively, so the run must be able to run its analyzers: a gate whose analyzers did not run fails.
+As a CI gate it runs non-interactively, so the run must be able to run its analyzers: a gate whose analyzers did not run fails. A non-interactive run denies every call that would ask ([section 6](#6-prompts-and-isolation)).
 
 **Full one-shot audit** of a program:
 
@@ -85,7 +87,15 @@ Audit the Solana program in programs/my-program/ using the auditor-skill with PR
 /auditor:audit-cycle --scope full
 ```
 
-The report lands at `audit_<n>/REPORT.md`. `<n>` is the highest existing `audit_*` number + 1, and the directory is created with `mkdir` (not `-p`), stopping if it already exists. An existing `audit_<n>/` is reused only when git does not track it and it holds no symbolic links, after you confirm which one; nothing is written into a tracked run directory ([Rule 11d](../OUTPUT-RULES.md#11d--output-hygiene)). Review [COSTS.md](../COSTS.md) first — a full Opus run on a large repo can burn real credits.
+The report lands at `audit_<n>/REPORT.md`, in a run directory that `rundir.sh new audit` makes: `<n>` is the highest existing `audit_*` number + 1, and the directory is created with `mkdir` (not `-p`), stopping if it already exists. An existing `audit_<n>/` is reused only when git does not track it and it holds no symbolic links, after you confirm which one; nothing is written into a tracked run directory ([Rule 11d](../OUTPUT-RULES.md#11d--output-hygiene)). Review [COSTS.md](../COSTS.md) first — a full Opus run on a large repo can burn real credits.
+
+## 6. Prompts and isolation
+
+The commands run their bundled steps without asking: the working-tree check, run directories, read-only git, the Rust tools, the runners that build and test in the mode you chose, and the collectors. Each of these checks its own arguments and stays inside the working tree and its run directories. Other calls ask. [permissions-and-isolation.md](permissions-and-isolation.md) has the full list, and why that is safe.
+
+- **Let flows resume without a prompt.** In Manual mode, a flow that goes on after your reply asks to run its own skill again. Add the `Skill(auditor:… *)` rules from [Turns and resuming](permissions-and-isolation.md#turns-and-resuming) to your user settings once. Don't answer "Yes, and don't ask again" at that prompt: it saves the rule into the audited repository, and the next run refuses that file.
+- **For code you don't trust, run isolated.** Answer Isolated at intake, set `AUDITOR_EXEC_MODE=isolated` where Claude Code runs, and run in a container or VM with no credentials, or under Claude Code's sandbox ([Running isolated](permissions-and-isolation.md#running-isolated)). In native mode the project's builds and tests run on your machine without a prompt for each run.
+- **Non-interactive runs** (`claude -p`, a CI gate) deny every call that would ask, and record it as a step not run: [Non-interactive runs](permissions-and-isolation.md#non-interactive-runs-claude--p).
 
 ## Scopes at a glance
 
@@ -104,3 +114,4 @@ Scope is enforced by *scope-gated loading*: out-of-scope checklists are never re
 - Understand the flows: [audit-flows.md](audit-flows.md)
 - Command reference: [commands.md](commands.md)
 - What the report guarantees: [output-and-rigor.md](output-and-rigor.md)
+- Prompts, isolation and `claude -p`: [permissions-and-isolation.md](permissions-and-isolation.md)
