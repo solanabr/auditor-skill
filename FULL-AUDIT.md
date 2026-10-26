@@ -348,8 +348,8 @@ ACTIONS:
   # Check for compromised packages: axios 1.14.1 / 0.30.4 and the hijacked @solana/web3.js
   # 1.95.6 / 1.95.7, as exact pins and resolved versions in package.json, package-lock /
   # npm-shrinkwrap, pnpm (lockfile v5 keys too), yarn v1 + berry and bun, each followed by a
-  # character that is not a digit
-  grep -rnE --exclude-dir=node_modules --include='package.json' --include='package-lock.json' --include='npm-shrinkwrap.json' --include='pnpm-lock.yaml' --include='yarn.lock' --include='bun.lock' -e '(^|[^A-Za-z0-9_.-])axios[@/](npm:)?(1\.14\.1|0\.30\.4)[^0-9]|/axios/-/axios-(1\.14\.1|0\.30\.4)\.tgz|"axios"[[:space:]]*:[[:space:]]*"=?(1\.14\.1|0\.30\.4)"' -e 'web3\.js[@/](npm:)?1\.95\.(6|7)[^0-9]|/web3\.js/-/web3\.js-1\.95\.(6|7)\.tgz|"@solana/web3\.js"[[:space:]]*:[[:space:]]*"=?1\.95\.(6|7)"' .
+  # character that is not a digit, or at the end of a line
+  grep -rnE --exclude-dir=node_modules --include='package.json' --include='package-lock.json' --include='npm-shrinkwrap.json' --include='pnpm-lock.yaml' --include='yarn.lock' --include='bun.lock' -e '(^|[^A-Za-z0-9_.-])axios[@/](npm:)?(1\.14\.1|0\.30\.4)([^0-9]|$)|/axios/-/axios-(1\.14\.1|0\.30\.4)\.tgz|"axios"[[:space:]]*:[[:space:]]*"=?(1\.14\.1|0\.30\.4)"' -e 'web3\.js[@/](npm:)?1\.95\.(6|7)([^0-9]|$)|/web3\.js/-/web3\.js-1\.95\.(6|7)\.tgz|"@solana/web3\.js"[[:space:]]*:[[:space:]]*"=?1\.95\.(6|7)"' .
   # a package-lock.json or npm-shrinkwrap.json written without "resolved" fields names the
   # package only on the entry's key line (or its "name" line, for an alias), with the
   # version on a line below it

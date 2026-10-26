@@ -24,9 +24,9 @@ cat package.json apps/backend/package.json apps/web/package.json | grep -E "\"@|
 ```
 # Known-bad releases: axios 1.14.1 / 0.30.4 and the hijacked @solana/web3.js 1.95.6 / 1.95.7. The first grep
 # finds exact pins and resolved versions in package.json, package-lock / npm-shrinkwrap, pnpm (lockfile v5 keys
-# too), yarn v1 + berry and bun, each followed by a character that is not a digit; ranges such as "^1.95.7" do
+# too), yarn v1 + berry and bun, each followed by a character that is not a digit or at the end of a line; ranges such as "^1.95.7" do
 # not match on their own:
-grep -rnE --exclude-dir=node_modules --include='package.json' --include='package-lock.json' --include='npm-shrinkwrap.json' --include='pnpm-lock.yaml' --include='yarn.lock' --include='bun.lock' -e '(^|[^A-Za-z0-9_.-])axios[@/](npm:)?(1\.14\.1|0\.30\.4)[^0-9]|/axios/-/axios-(1\.14\.1|0\.30\.4)\.tgz|"axios"[[:space:]]*:[[:space:]]*"=?(1\.14\.1|0\.30\.4)"' -e 'web3\.js[@/](npm:)?1\.95\.(6|7)[^0-9]|/web3\.js/-/web3\.js-1\.95\.(6|7)\.tgz|"@solana/web3\.js"[[:space:]]*:[[:space:]]*"=?1\.95\.(6|7)"' .
+grep -rnE --exclude-dir=node_modules --include='package.json' --include='package-lock.json' --include='npm-shrinkwrap.json' --include='pnpm-lock.yaml' --include='yarn.lock' --include='bun.lock' -e '(^|[^A-Za-z0-9_.-])axios[@/](npm:)?(1\.14\.1|0\.30\.4)([^0-9]|$)|/axios/-/axios-(1\.14\.1|0\.30\.4)\.tgz|"axios"[[:space:]]*:[[:space:]]*"=?(1\.14\.1|0\.30\.4)"' -e 'web3\.js[@/](npm:)?1\.95\.(6|7)([^0-9]|$)|/web3\.js/-/web3\.js-1\.95\.(6|7)\.tgz|"@solana/web3\.js"[[:space:]]*:[[:space:]]*"=?1\.95\.(6|7)"' .
 # A package-lock.json or npm-shrinkwrap.json written without "resolved" fields names the package only on the
 # entry's key line (or its "name" line, for an alias), with the version on a line below it:
 grep -rnE -A2 --exclude-dir=node_modules --include='package-lock.json' --include='npm-shrinkwrap.json' '"(([^"]*/)?node_modules/)?axios": [{]|"name": "axios"' . | grep -E '"version": "(1\.14\.1|0\.30\.4)"'
