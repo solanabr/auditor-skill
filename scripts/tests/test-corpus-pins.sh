@@ -583,7 +583,8 @@ printf "SUBMODULE_URLS='%s'\n" "$URL" > "$pr/scripts/check-corpus.sh"
 gmod() { # gmod URL [LINE] -> a .gitmodules for vendor/trailofbits at URL, with LINE added to its section
   printf '[submodule "vendor/trailofbits"]\n\tpath = vendor/trailofbits\n\turl = %s.git\n' "$1"; [ -z "${2:-}" ] || printf '\t%s\n' "$2"; }
 gmod "$URL" > "$pr/.gitmodules"
-readme() { printf '# Fixture\n\n**Pinned at** [`%s`](%s/tree/%s).\n\nLast line.\n' "${1:0:7}" "$URL" "$1"; }
+readme() { # readme SHA [DATE] -> a README.md whose pin line names SHA and DATE
+  printf '# Fixture\n\n**Pinned at** [`%s`](%s/tree/%s) of %s.\n\nLast line.\n' "${1:0:7}" "$URL" "$1" "${2:-2026-09-28}"; }
 readme "$u0" > "$pr/README.md"
 git -C "$pr" add scripts .gitmodules README.md && git -C "$pr" update-index --add --cacheinfo "160000,$u0,vendor/trailofbits"
 git -C "$pr" commit -q -m base; prbase=$(git -C "$pr" rev-parse HEAD)
@@ -620,7 +621,7 @@ git -C "$pr" checkout -q --detach "$(prhead "$u0" .gitmodules "$(gmod "$URL" 'ig
 case "$(git -C "$pr" config -f .gitmodules submodule.vendor/trailofbits.ignore)" in all) ok_ "the checked-out .gitmodules says ignore = all";;
   *) no_ "the checked-out .gitmodules does not say ignore = all";; esac
 
-prrun "$prbase" "$(prhead "$u1" README.md "$(readme "$u1")")"
+prrun "$prbase" "$(prhead "$u1" README.md "$(readme "$u1" 2026-10-01)")"
 line3=$(nth "$out" 3p)
 [ "$rc" -eq 0 ] && [ "$line3" = "This PR changes nothing else but the README pin line." ] \
   && ok_ "a move with the README pin line counts (rc=$rc)" || no_ "a move with the README pin line (rc=$rc): '$line3'" "$err"
@@ -645,9 +646,22 @@ case "$(nth "$out" 3p)" in "**This PR changes other files too, so this summary d
     [ "$rc" -eq 0 ] && [ "$v" = ok ] && ok_ "a PR that changes other files says the summary does not count" || no_ "other files (rc=$rc, fence:$v)" "$out";;
   *) no_ "a PR that changes other files does not say so (rc=$rc)" "$out$err";; esac
 for want in "Other files this PR changes:" "  M scripts/check-corpus.sh" "  A docs/[x](#y).md" \
-            "  M README.md (lines other than the pin line)"; do
+            "  M README.md (more than the commit hashes and dates on its pin line)"; do
   has "$(nth "$out" '6,10p')" "$want" && ok_ "the block starts with: $want" || no_ "the block does not start with: $want" "$out"
 done
+# README.md beyond the commit hashes and dates on its pin line is another change: a CR on the pin line (CommonMark
+# reads a lone CR as a line end), text added to the pin line, and the pin line moved
+readme_other() { # readme_other NAME TEXT -> a move whose README.md holds TEXT lists README.md as another change
+  prrun "$prbase" "$(prhead "$u1" README.md "$2")"
+  case "$rc|$(nth "$out" 3p)" in "0|**This PR changes other files too, so this summary does not count.**"*)
+      has "$out" "  M README.md (more than the commit hashes and dates on its pin line)" \
+        && ok_ "a README.md with $1 is another change" || no_ "a README.md with $1 is not listed" "$out";;
+    *) no_ "a README.md with $1 (rc=$rc)" "$out$err";; esac
+}
+readme_other "a CR on the pin line" "$(readme "$u1" | awk '/^\*\*Pinned at\*\*/ { printf "%s\r\r<!--\n", $0; next } { print }')"
+readme_other "text added to the pin line" \
+  "$(readme "$u1" | awk '/^\*\*Pinned at\*\*/ { print $0 " [Install](https://install.example/)"; next } { print }')"
+readme_other "the pin line moved" "$(readme "$u1" | awk '/^\*\*Pinned at\*\*/ { pin = $0; next } { print } END { print pin }')"
 
 prrun "$prbase" "$(prhead "$u0" README.md "$(readme "$u0")
 Another line.")"

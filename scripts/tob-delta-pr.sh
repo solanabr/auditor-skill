@@ -59,14 +59,28 @@ read -r omode nmode old new < "$tmp/pin"
 [ "$omode" = 160000 ] && [ "$nmode" = 160000 ] \
   || die "$PIN is not a gitlink at both commits (mode $omode -> $nmode), so there is no delta to summarise"
 
-# README.md counts as the pin line alone when it is the same at both commits once its first line that starts
-# with **Pinned at** is left out
-pinless() { rgit cat-file blob "$1:README.md" | awk '!cut && /^\*\*Pinned at\*\*/ { cut = 1; next } { print }'; }
+# README.md counts as the pin line alone when its pin line, the first that starts with **Pinned at**, has the
+# same number at both commits, holds no control character, and is the same once its commit hashes and dates are
+# left out, and every other line is the same byte for byte. pinnorm FILE prints that number, then FILE with the
+# hashes and dates on its pin line replaced; status 1 when FILE has no such pin line.
+pinnorm() {
+  local f=$1 k
+  k=$(awk '/^\*\*Pinned at\*\*/ { print NR; exit }' "$f") && [ -n "$k" ] || return 1
+  head -n "$k" "$f" | tail -n 1 > "$f.pin" || return 1
+  [ "$(tr -d '\012\040-\176\200-\377' < "$f.pin" | wc -c | tr -d ' ')" = 0 ] || return 1
+  echo "$k"
+  if [ "$k" -gt 1 ]; then head -n "$((k - 1))" "$f"; fi
+  awk '{ gsub(/[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]+/, "<sha>")
+    gsub(/20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]/, "<date>"); print }' "$f.pin"
+  tail -n "+$((k + 1))" "$f"
+}
 readme=unchanged
 if [ -s "$tmp/readme" ]; then
-  { pinless "$base" > "$tmp/readme.base" && pinless "$head" > "$tmp/readme.head"; } || die "cannot read README.md"
-  if cmp -s "$tmp/readme.base" "$tmp/readme.head"; then readme=pin
-  else echo "M README.md (lines other than the pin line)" >> "$tmp/other"; fi
+  { rgit cat-file blob "$base:README.md" > "$tmp/readme.base" && rgit cat-file blob "$head:README.md" > "$tmp/readme.head"; } \
+    || die "cannot read README.md"
+  if pinnorm "$tmp/readme.base" > "$tmp/readme.base.n" && pinnorm "$tmp/readme.head" > "$tmp/readme.head.n" \
+    && cmp -s "$tmp/readme.base.n" "$tmp/readme.head.n"; then readme=pin
+  else echo "M README.md (more than the commit hashes and dates on its pin line)" >> "$tmp/other"; fi
 fi
 
 urls=$(rgit cat-file blob "$base:scripts/check-corpus.sh" | sed -n "s/^SUBMODULE_URLS='\([^']*\)'\$/\1/p") \
