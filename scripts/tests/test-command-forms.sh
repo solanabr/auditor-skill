@@ -12,7 +12,9 @@
 #       or tee; a|b in a usage line is a choice), no line continuation, and no file redirect but into a run
 #       directory (audit_<n>/ or incident_<n>/, with no .. in the path) or /dev/null. A placeholder the bodies
 #       use (<n>, <R>/poc/<ID> and the rest of PLACEHOLDERS) is a word there; any other <...> is read as
-#       written, so <x>/tmp/evil redirects.
+#       written, so <x>/tmp/evil redirects. No bundled entry point is named outside a code span or fenced block,
+#       and no span names the root as <auditor-skill root>/ or as $CLAUDE_PLUGIN_ROOT or $CLAUDE_SKILL_DIR
+#       without braces, which Claude Code does not fill in.
 #   C2  Every Bash allow rule that names a path from the root names it as its quoted first word (after an
 #       optional test -x), and that path is a tracked file of mode 100755 whose first line is a #! line, or a
 #       binary a crate under tools/auditor-tools declares, executable when it is built.
@@ -24,13 +26,14 @@
 #       is "<root>/scripts/preflight.sh", with no arguments, in a paragraph that starts "0. **Preflight" (in the
 #       root SKILL.md, "**Step 0 — Preflight") and says that a refusal, and a call that is denied, stop the run;
 #       and the allowed-tools of every command, and of the root SKILL.md, pre-approve that call.
-#   C5  Every rooted call in a command's body, and in the bodies of the agents it spawns (a code span naming the
-#       agent after spawn, delegate or run in the sentence, or starting a list item under such a paragraph, but
-#       not in a list item about another command), is one of that command's Bash rules:
-#       the same path, then the rule's fixed words (all of them, for a rule with no *). A fork skill's calls,
-#       and its agent's, are its own rules', and so are the root SKILL.md's. A call is an entry point first in a
-#       code span with words after it, or first on a fenced code line; one whose own clause (up to the
-#       sentence's end, a ; or the next rooted call) says it asks is a documented prompt.
+#   C5  Every rooted call in a command's body, and in the bodies of the agents it spawns, is one of that
+#       command's Bash rules: the same path, then the rule's fixed words (all of them, for a rule with no *). The
+#       command spawns an agent that a code span names after spawn, delegate or run in the sentence, or after
+#       hand, start, launch, use, invoke or "the Task tool" in a sentence that names no auditor: skill (work
+#       handed on through a skill is the skill's), or that starts a list item under such a paragraph, but not
+#       in a list item about another command. A fork skill's calls, and its agent's, are its own rules', and so
+#       are the root SKILL.md's. A call is an entry point first in a code span with words after it, or first on
+#       a fenced code line; one whose span ", which asks" follows straight away is a documented prompt.
 #   C6  In the corpus (FULL-AUDIT.md, checklists/, known-vectors/, discovery/, and every .md under references/,
 #       templates/ and docs/), every call of an entry point names it as "<auditor-skill root>/<path>", quoted,
 #       first in the command or as the file a test -x, -f or -e reads, with no other $ or backtick in it: no
@@ -83,6 +86,8 @@ PIPE_INTO = set("sh bash zsh dash ksh fish python python3 perl ruby node tee xar
                 "socat curl wget dd cat head tail grep egrep fgrep sed awk gawk mawk jq sort uniq cut tr wc base64 "
                 "openssl ssh scp".split())
 SPAWN = re.compile(r'(?i)\b(spawns?|delegates?|runs?)\b')
+# Other words that hand an agent work; a sentence that names a skill (auditor:<name>) hands it to that skill.
+SPAWN_OTHER = re.compile(r'(?i)\b(hands?|starts?|launch(es)?|uses?|invokes?)\b|\bthe Task tool\b')
 # The corpus names the installation root as <auditor-skill root>; a call there, from any root, is read in code
 # spans and in shell code blocks.
 CORPUS_ROOT = "<auditor-skill root>"
@@ -91,7 +96,7 @@ ANY_ROOT = re.compile(r'("?)(<auditor-skill root>|\$\{CLAUDE_PLUGIN_ROOT\}|\$CLA
 SHELL_FENCES = ("", "bash", "sh", "shell", "zsh", "console")
 LEAD = re.compile(r'^(?:(?:bash|sh|zsh|dash|ksh|env|exec|command|sudo|nice|nohup|time|python3?|timeout\s+\S+|'
                   r'[A-Za-z_][A-Za-z0-9_]*=\S*)\s+|cd\s+\S+\s*(?:&&|;|\|\|)\s*)*')
-ASKS = re.compile(r'\b(asks|prompts)\b')
+ASKS = re.compile(r'^\s*,?\s*which asks\b')
 # The placeholders the bodies write in their calls, each a word to the redirect scan (<R>/poc/<ID> is a path);
 # any other <...> is read as written, so `<x>/tmp/evil` is a redirect. A body that writes a new one adds it here.
 PLACEHOLDERS = ("ID", "R", "address", "audited commit", "base", "changed program directory", "commit", "file",
@@ -376,7 +381,8 @@ for d, pattern in (("agents", None), ("skills", None)):
 
 def spawned(body):
     """The agents a command spawns: each code span naming an agent after spawn, delegate or run in its
-    sentence, and the agent each list item under such a paragraph starts with. A list item that starts with
+    sentence, or after another word that hands it work (SPAWN_OTHER) in a sentence that names no auditor:
+    skill, and the agent each list item under such a paragraph starts with. A list item that starts with
     another command's name describes that command."""
     names, spawns = set(), False
     for para in re.split(r'\n\s*\n|\n(?=\s*(?:\d+[a-z]?[.)]|[-*+])\s)', "\n".join(body)):
@@ -389,16 +395,16 @@ def spawned(body):
             continue
         for sentence in re.split(r'(?<=[.!?])\s+', para):
             m = SPAWN.search(sentence)
+            if not m and "`auditor:" not in sentence:
+                m = SPAWN_OTHER.search(sentence)
             if m:
                 spawns = True
                 names.update(a for a in re.findall(r'`([a-z][a-z0-9-]*)`', sentence[m.end():]) if a in agents)
     return names
 
 def asks(rest):
-    """Whether the clause after a call says it asks: the rest of its sentence, up to a ; or the next rooted call."""
-    clause = re.split(r'(?<=[.!?])\s', rest, 1)[0]
-    clause = re.split(r';|`"\$\{CLAUDE_', clause, 1)[0]
-    return bool(ASKS.search(clause))
+    """Whether the text right after a call's span says it asks: ", which asks", with nothing before it."""
+    return bool(ASKS.match(rest))
 
 def calls(body, first):
     """(line, path, words, text) for each rooted call: an entry point first in a code span with words after
@@ -522,6 +528,8 @@ for f in files:
         if words and words[0] in ("audit-scan", "audit-mem") and "${" not in seg:
             if (words[0] == "audit-scan" and len(words) >= 2) or (words[0] == "audit-mem" and len(words) >= 3):
                 marker(f, n, words[0], " ".join(words[1:]), "call")
+        if re.search(r'<auditor-skill root>/|\$CLAUDE_(PLUGIN_ROOT|SKILL_DIR)\b', seg):
+            finding("C1", f, n, "the root is written so that Claude Code does not fill it in: %s" % seg[:120])
         for m in ROOTED.finditer(seg):
             path = m.group(3)
             if path not in entry:
@@ -546,6 +554,23 @@ for f in files:
                 finding("C1", f, n, "%s: %s" % ("; ".join(what), seg[:160]))
             elif not lead and path.startswith(RELEASE):
                 marker(f, n, path[len(RELEASE):], seg[e + 1:], "call")
+    # an entry point named outside a code span or fenced block
+    flat, fence = [], None
+    for line in body:
+        fm_ = re.match(r'^\s*(`{3,}|~{3,})', line)
+        if fence:
+            if fm_ and fm_.group(1)[0] == fence[0]:
+                fence = None
+            flat.append("")
+            continue
+        if fm_:
+            fence = fm_.group(1); flat.append(""); continue
+        flat.append(line)
+    flat = re.sub(r'(`+)(.+?)\1', lambda mm: re.sub(r'[^\n]', ' ', mm.group(0)), "\n".join(flat), flags=re.S)
+    for i, line in enumerate(flat.split("\n")):
+        for mm in ROOTED.finditer(line):
+            if mm.group(3) in entry:
+                finding("C1", f, first + i, "a bundled entry point outside a code span or fenced block: %s" % line.strip()[:120])
     if command or root_skill:
         want = (r'^\*\*Step 0 — Preflight' if root_skill else r'^\s*0\. \*\*Preflight')
         if first_entry is None:
@@ -650,6 +675,10 @@ cmd c1-redirect-tight -- "1. \`\"$R/scripts/ok.sh\" log <x>../../.zshrc\`"
 cmd c1-placeholder-slash -- "1. \`\"$R/scripts/ok.sh\" log <x>/tmp/evil\`"
 cmd c1-placeholder-space -- "1. \`\"$R/scripts/ok.sh\" log <x> ../../.zshrc\`"
 cmd c1-placeholder-tilde -- "1. \`\"$R/scripts/ok.sh\" log <x>~/.zshrc\`"
+cmd c1-prose -- "1. Run $R/scripts/ok.sh new audit before anything else."
+cmd c1-indented -- "1. Run this:" "" "    \"$R/scripts/ok.sh\" new audit"
+cmd c1-corpus-root -- "1. \`\"<auditor-skill root>/scripts/ok.sh\" new audit\`"
+cmd c1-unbraced-root -- "1. \`\"\$CLAUDE_PLUGIN_ROOT/scripts/ok.sh\" new audit\`"
 cmd c2-missing "'Bash(\"$R/scripts/gone.sh\" *)'" --
 cmd c2-mode "'Bash(\"$R/scripts/plain.sh\" *)'" --
 cmd c2-shebang "'Bash(\"$R/scripts/noshebang.sh\" *)'" --
@@ -672,6 +701,13 @@ cmd c5-other-command -- "- **\`/auditor:other\`** runs \`fx-runner\` over the tr
 cmd c5-asks -- "1. Run \`\"$R/templates/poc/run.sh\" --crate x\`, which asks."
 cmd c5-asks-later -- "1. Run \`\"$R/templates/poc/run.sh\" --crate x\`; a copy from outside it asks."
 cmd c5-asks-next -- "1. Run \`\"$R/templates/poc/run.sh\" --crate x\`, then \`\"$R/scripts/rec.py\" y\`, which asks."
+cmd c5-asks-never -- "1. Run \`\"$R/templates/poc/run.sh\" --crate audit_<n>/poc/F-1\`, which never asks."
+cmd c5-asks-else -- "1. Run \`\"$R/templates/poc/run.sh\" --crate audit_<n>/poc/F-1\` as given, and anything else asks."
+cmd c5-prompts -- "1. Run \`\"$R/templates/poc/run.sh\" --crate audit_<n>/poc/F-1\`: it prompts for nothing."
+cmd c5-hand -- "1. Hand each finding to \`fx-runner\`."
+cmd c5-use -- "1. Use the \`fx-runner\` agent on the crate."
+cmd c5-task-tool -- "1. Start \`fx-runner\` with the Task tool."
+cmd c5-skill-hand -- "1. Hand the crate to \`fx-runner\` through \`auditor:poc\`."
 printf -- '---\ndescription: "A command."\nallowed-tools:\n  - '"'"'Bash("%s/scripts/preflight.sh" *)'"'"'\n  - '"'"'Bash("%s/scripts/ok.sh" new *)'"'"'\n  - '"'"'Bash("%s/scripts/rec.py" x)'"'"'\n---\n\n%s\n1. `"%s/scripts/ok.sh" new audit`, `"%s/scripts/rec.py" x`, then `"%s/scripts/ok.sh" check audit_1`.\n' \
   "$R" "$R" "$R" "$STEP0" "$R" "$R" "$R" > "$fx/commands/c5-fixed-word.md"
 sed -e 's#`"${CLAUDE_PLUGIN_ROOT}/scripts/ok.sh" check audit_1`#`"${CLAUDE_PLUGIN_ROOT}/scripts/rec.py" x y`#' \
@@ -755,7 +791,8 @@ expect() {
 expect commands/good.md ""
 for c in bash cd env unquoted half-quoted dollar pipe semicolon and skill-dir continued wrapped-span cmp diff \
     procsub redirect redirect-in pipe-tight pipe-path amp-tight redirect-dotdot redirect-dup redirect-masked \
-    redirect-tight placeholder-slash placeholder-space placeholder-tilde large; do
+    redirect-tight placeholder-slash placeholder-space placeholder-tilde prose indented corpus-root \
+    unbraced-root large; do
   expect "commands/c1-$c.md" C1
 done
 expect commands/c2-missing.md C2; expect commands/c2-mode.md C2; expect commands/c2-shebang.md C2
@@ -768,6 +805,8 @@ expect commands/c5-agent-mention.md ""; expect commands/c5-asks.md ""; expect co
 expect commands/c5-asks-later.md C5; expect commands/c5-asks-next.md C5
 expect commands/c5-agent-list.md C5; expect commands/c5-agent-and.md C5; expect commands/c5-other-command.md ""
 expect commands/c5-exact.md C5; expect skills/fork/SKILL.md C5
+for c in asks-never asks-else prompts hand use task-tool; do expect "commands/c5-$c.md" C5; done
+expect commands/c5-skill-hand.md ""
 expect commands/c4-no-rule.md C4; expect commands/c4-no-step.md C4; expect commands/c4-late.md C4
 expect commands/c4-paragraph.md C4; expect commands/c4-args.md C4; expect commands/c4-no-denial.md C4
 expect agents/good.md ""; expect agents/c1.md C1; expect skills/s/SKILL.md C1; expect SKILL.md ""
