@@ -243,7 +243,7 @@ another program is inconclusive too. On prebuilt bytes the vulnerable
 arm counts only on `assert_exploit_effect!` and the fixed arm only on
 `assert_exploit_rejected_with!` or `assert_exploit_blocked!`. When the pinned error is
 itself harness-class (a fix that now needs an extra account), it holds, and the run's
-`fixed arm:` line (on prebuilt bytes with `FIXED_SO`) says so: the positive control is
+`fixed arm:` line (on prebuilt bytes with `--fixed-so`) says so: the positive control is
 then the vulnerable arm, which runs the byte-identical attack and shows it fits the
 program. The markers are a floor, not proof: whoever reads the PoC still checks that
 the assertion states the finding's effect and the guard's error.

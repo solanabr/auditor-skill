@@ -189,7 +189,7 @@ later is added.
 | ------------------------- | ------------------------------------------- |
 | **Execution mode**        | {isolated (recommended) / native} (Q46)     |
 | **Isolation used**        | {container / VM / Claude Code sandbox — no keys or credentials mounted / N/A (native)} |
-| **PoC build cache**       | {the directory made once with `mktemp -d` for this engagement's `run.sh` calls, passed as `CARGO_TARGET_DIR` — inside the isolated runner in isolated mode / none} |
+| **PoC build cache**       | {the directory `run.sh --new-cache` made once for this engagement's `run.sh` calls, passed as `--cache` — inside the isolated runner in isolated mode / none} |
 | **Outside services**      | {disclosed in the report per Rule 11b — e.g. RPC provider, second-opinion LLM, registry queries / none planned} |
 | **Live probes**           | {yes — read-only, unauthenticated probes of: <each host or bucket the client named, or confirmed from the deployment config at <file>:<line>> / no} (Q47). `<host>` is a DNS name or IPv4 address exactly as `intake.md` §8 lists it: ASCII letters, digits, `-` and `.` only (an IDN in its `xn--` form), with no user, port or path. `<bucket>` is 3–63 lowercase letters, digits, `-` and `.`, beginning and ending with a letter or digit, with no `..`. Refuse anything else. |
 

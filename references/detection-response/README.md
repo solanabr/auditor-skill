@@ -142,11 +142,12 @@ other outcome is filed under `ruled_out[]`.
   hotfix can overwrite it; a later snapshot of a redeployed program is kept as
   `bin/<id>@<slot>.so`, and `bin/<id>.so` stays the first, incident-time snapshot)
   or a build whose hash matches the deployed program. For
-  `[PoC-REPRODUCED]` that is `templates/poc/run.sh` with `VULNERABLE_SO` set to those
-  bytes (no fixed build is needed) ending with
+  `[PoC-REPRODUCED]` that is
+  `"<auditor-skill root>/templates/poc/run.sh" --crate incident_<n>/poc/INC-<n>.<k> --vulnerable-so incident_<n>/bin/<id>.so`,
+  those bytes (no fixed build is needed), ending with
   `OK: reproduced on prebuilt bytes — vulnerable sha256=<hash> → [PoC-REPRODUCED]`,
   where `<hash>` is the zero-trimmed sha256 recorded in `LEDGER.md` for the snapshot,
-  or the hash-matched build's (with `FIXED_SO`, the line also names the fixed bytes).
+  or the hash-matched build's (with `--fixed-so`, the line also names the fixed bytes).
   `run.sh` prints it only after the exploit's `assert_exploit_effect!` ran and held on
   the bytes it placed (every program `mollusk_for` or `litesvm_for!` loaded is the
   snapshot): the **observed Leg-1 effect** (the account the attack changed and the

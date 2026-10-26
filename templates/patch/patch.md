@@ -77,7 +77,7 @@ The fix and the proof are the same change viewed twice:
   them is wrong — reconcile before claiming the fix.
 - The proof that the patch works is **executing the finding's PoC against the patched
   build**: with this diff transplanted onto `src/vulnerable.rs` as `src/fixed.rs`, or
-  with the patched target build as `FIXED_SO`, `run.sh` must exit 0 — the attack in
+  with the patched target build as `--fixed-so`, `run.sh` must exit 0 — the attack in
   `tests/fixed_blocked.rs` is now rejected. That is what promotes the patch to
   `[FIX-VERIFIED]`. Reading the diff is not verification. See `VERIFICATION.md`.
 - If no executable PoC exists, the ceiling is `[FIX-PROPOSED]` — verified by
