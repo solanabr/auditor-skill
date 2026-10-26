@@ -4,8 +4,9 @@
 # path the rule names and holds no $ other than the root it substitutes (OUTPUT-RULES.md Rule 11e).
 #   C1  In commands/*.md, agents/*.md, skills/*/SKILL.md and SKILL.md, every code span and code line that names
 #       a bundled entry point from the root names it as "${CLAUDE_PLUGIN_ROOT}/<path>" (in the root SKILL.md,
-#       "${CLAUDE_SKILL_DIR}/<path>"), quoted, first in the command, or as the file a test -x, -f or -e, cmp or
-#       diff reads; with no bash, cd, env or VAR=value in front, no other $, no backtick, no ;, &&, ||, &, no
+#       "${CLAUDE_SKILL_DIR}/<path>"), quoted, first in the command, or as the file a test -x, -f or -e reads (a
+#       cmp or diff of it asks, since it lies outside the working directory); with no bash, cd, env or VAR=value
+#       in front, no other $, no backtick, no ;, &&, ||, &, no
 #       pipe (a | with a space beside it; a|b in a usage line is a choice), and no line continuation.
 #   C2  Every Bash allow rule that names a path from the root names it as its quoted first word (after an
 #       optional test -x), and that path is a tracked file of mode 100755 whose first line is a #! line, or a
@@ -50,7 +51,7 @@ import os, re, sys
 tree, index_file, files = sys.argv[1], sys.argv[2], sys.argv[3:]
 DIRECT = ("#!/bin/bash", "#!/usr/bin/env -S python3 -I")
 ROOTED = re.compile(r'\$\{(CLAUDE_PLUGIN_ROOT|CLAUDE_SKILL_DIR)\}("?)/([A-Za-z0-9_./-]+)')
-READERS = ("test -x", "test -f", "test -e", "cmp", "diff", "diff -r")
+READERS = ("test -x", "test -f", "test -e")
 RELEASE = "tools/auditor-tools/target/release/"
 
 modes = {}
@@ -362,7 +363,7 @@ cmd good "'Bash(\"$R/scripts/ok.sh\" *)'" "'Bash(\"$B/audit-scan\" --contract=1 
   "1. Run \`\"$R/scripts/ok.sh\" new audit\` and \`\"$R/scripts/rec.py\" tokens|lamports [--by owner,mint|mint] incident_<n>/corpus*/x.jsonl > incident_<n>/out.txt\`." \
   "2. When built (\`test -x \"$B/audit-scan\"\`), \`\"$B/audit-scan\" --contract=1 . --out audit_<n>/prescan.json\` and" \
   "   \`\"$B/audit-mem\" warm --contract=1 --program-id <id>\`; \`audit-mem warm --contract=1 --program-id <id>\`, \`audit-mem init\`." \
-  "3. Compare with \`cmp \"$R/templates/poc/run.sh\" <crate>/run.sh\`; mention \`\"$B/audit-mem\"\` alone; read \`$R/references/x.md\`." \
+  "3. Check \`test -f \"$R/templates/poc/run.sh\"\`; mention \`\"$B/audit-mem\"\` alone; read \`$R/references/x.md\`." \
   "4. Prose names \`run.sh --crate\` and \`\"$R/scripts/filter.sh\"\` behind \`x 2>&1 | bash \"$R/scripts/filter.sh\"\`." \
   "" '```bash' "\"$R/scripts/ok.sh\" check audit_<n> --cluster mainnet-beta" '```'
 cmd c1-bash -- "1. \`bash \"$R/scripts/ok.sh\" new audit\`"
@@ -377,6 +378,8 @@ cmd c1-and -- "1. \`\"$R/scripts/ok.sh\" check x && true\`"
 cmd c1-skill-dir -- "1. \`\"\${CLAUDE_SKILL_DIR}/scripts/ok.sh\" check x\`"
 cmd c1-continued -- '```bash' "\"$R/scripts/ok.sh\" check audit_<n> \\" "  --more" '```'
 cmd c1-wrapped-span -- "1. Run \`\"$R/scripts/ok.sh\" check" "   x | tail -1\` across a line break."
+cmd c1-cmp -- "1. Compare with \`cmp \"$R/templates/poc/run.sh\" <crate>/run.sh\`."
+cmd c1-diff -- "1. Compare with \`diff \"$R/templates/poc/run.sh\" <crate>/run.sh\`."
 cmd c2-missing "'Bash(\"$R/scripts/gone.sh\" *)'" --
 cmd c2-mode "'Bash(\"$R/scripts/plain.sh\" *)'" --
 cmd c2-shebang "'Bash(\"$R/scripts/noshebang.sh\" *)'" --
@@ -421,7 +424,7 @@ expect() {
   else bad "fixture $f: findings [${got}], want [${want}]: $(check "$fx" "$f" | sed -n '1,3p')"; fi
 }
 expect commands/good.md ""
-for c in bash cd env unquoted half-quoted dollar pipe semicolon and skill-dir continued wrapped-span large; do
+for c in bash cd env unquoted half-quoted dollar pipe semicolon and skill-dir continued wrapped-span cmp diff large; do
   expect "commands/c1-$c.md" C1
 done
 expect commands/c2-missing.md C2; expect commands/c2-mode.md C2; expect commands/c2-shebang.md C2
