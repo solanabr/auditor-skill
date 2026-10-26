@@ -12,17 +12,18 @@
 # The move and the other paths come from git diff-tree --raw between the two commits with
 # --ignore-submodules=none, so neither the config nor the checked-out .gitmodules hides a gitlink. The upstream
 # is the https://github.com/trailofbits/skills entry of SUBMODULE_URLS in <base>'s scripts/check-corpus.sh,
-# never a URL from .gitmodules. Its branches and tags are fetched by name into a temp dir, never a commit by its
-# SHA, so a commit that none of them reaches, such as one that exists only in a fork, is not found. The fetch
-# runs with no credential helper, askpass program or terminal prompt. scripts/tob-delta-review.sh reads that
-# clone. Its report, and the paths the PR changes besides the gitlink and the README pin line, go inside one
-# fenced code block: the fence is longer than the number of backticks on any line inside it, ASCII control
-# characters other than tab show as ?, a line longer than WIDTH bytes is cut there and marked, and the whole
-# output stays within CAP bytes (GitHub refuses a step summary over 1 MiB). A note after the block says when
-# lines are left out or cut.
+# never a URL from .gitmodules. Its default branch (HEAD), branches and tags are fetched by name into a temp dir,
+# never a commit by its SHA, so a commit that none of them reaches, such as one that exists only in a fork, is not
+# found; the summary says whether NEW is on the default branch. The fetch runs with no credential helper,
+# askpass program or terminal prompt. scripts/tob-delta-review.sh reads that clone. Its report, and the paths
+# the PR changes besides the gitlink and the README pin line, go inside one fenced code block: the fence is
+# longer than the number of backticks on any line inside it, ASCII control characters other than tab show as
+# ?, a line longer than WIDTH bytes is cut there and marked, and the whole output stays within CAP bytes
+# (GitHub refuses a step summary over 1 MiB). A note after the block says when lines are left out or cut.
 # Exit: 0 printed, also when the PR does not move the gitlink · 2 nothing printed: a usage error, a commit this
 # repository lacks, a gitlink added, removed or replaced, a failed fetch, a commit that no branch or tag of the
-# upstream reaches, or a failed review. Writes nothing but a temp dir it removes on exit. Works with bash 3.2.
+# upstream reaches, a failed review, or any other step that fails. Writes nothing but a temp dir it removes on
+# exit. Works with bash 3.2.
 set -uo pipefail
 export LC_ALL=C
 
@@ -51,7 +52,7 @@ awk -F'\t' -v pin="$PIN" -v d="$tmp" '
   { split($1, m, " "); om = substr(m[1], 2); nm = m[2]; st = substr(m[5], 1, 1) }
   $2 == pin { print om, nm, m[3], m[4] > (d "/pin"); next }
   $2 == "README.md" && st == "M" && om == nm { print st > (d "/readme"); next }
-  { print st " " $2 > (d "/other") }' "$tmp/raw"
+  { print st " " $2 > (d "/other") }' "$tmp/raw" || die "reading the git diff-tree output failed"
 if [ ! -s "$tmp/pin" ]; then
   printf 'This PR does not move the `%s` gitlink, so there is no upstream delta to summarise.\n' "$PIN"
   exit 0
@@ -92,14 +93,17 @@ case " $(printf '%s' "$urls" | tr '\n' ' ') " in
 esac
 clone=$tmp/upstream
 git init -q "$clone" || die "git init failed"
-GIT_TERMINAL_PROMPT=0 GIT_ASKPASS='' git --no-pager -C "$clone" -c credential.helper= fetch --quiet --no-tags \
-  "$url" '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' || die "fetching the branches and tags of $url failed"
+# HEAD, the default branch, goes to refs/default, outside the namespaces the branch and tag refspecs write
+GIT_TERMINAL_PROMPT=0 GIT_ASKPASS='' git --no-pager -C "$clone" -c credential.helper= fetch --quiet --no-tags "$url" \
+  '+HEAD:refs/default' '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' \
+  || die "fetching the branches and tags of $url failed"
 for c in "$old" "$new"; do
   git -C "$clone" cat-file -e "$c^{commit}" 2>/dev/null || die "commit $c is on no branch or tag of $url"
 done
 git -C "$clone" for-each-ref --contains "$new" --format='%(refname)' refs/remotes/origin refs/tags > "$tmp/refs" \
   || die "git for-each-ref failed"
 [ -s "$tmp/refs" ] || die "commit $new is on no branch or tag of $url"
+if git -C "$clone" merge-base --is-ancestor "$new" refs/default 2>/dev/null; then dflt="is on"; else dflt="is not on"; fi
 bash "$here/tob-delta-review.sh" "$clone" "$old" "$new" > "$tmp/review" || die "scripts/tob-delta-review.sh failed"
 
 {
@@ -108,10 +112,11 @@ bash "$here/tob-delta-review.sh" "$clone" "$old" "$new" > "$tmp/review" || die "
     awk 'NR <= 100 { print "  " $0 } END { if (NR > 100) printf "  ... and %d more\n", NR - 100 }' "$tmp/other"
     echo
   fi
-  awk -v url="$url" '{ sub(/^refs\/remotes\/origin\//, "branch "); sub(/^refs\/tags\//, "tag ") }
+  awk -v url="$url" -v dflt="$dflt" '{ sub(/^refs\/remotes\/origin\//, "branch "); sub(/^refs\/tags\//, "tag ") }
     NR <= 10 { s = s (NR > 1 ? ", " : "") $0 }
     END { if (NR > 10) s = s sprintf(" and %d more", NR - 10)
-      print "Fetched by branch and tag name from " url ". NEW is on " s "." }' "$tmp/refs"
+      print "Fetched by branch and tag name from " url ". NEW " dflt " its default branch (HEAD)."
+      print "Branches and tags that hold NEW: " s "." }' "$tmp/refs"
   echo
   cat "$tmp/review"
 } > "$tmp/body"

