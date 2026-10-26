@@ -26,7 +26,7 @@ allowed-tools:
 
 # auditor-skill — Multi-Language Security Audit Skill
 
-> **Version:** 7.6\
+> **Version:** 7.7\
 > **Items:** 1,459 across 20 checklists (+ 140 known vectors)\
 > **Languages:** Rust, TypeScript, Python, Go, Java, Ruby, PHP, + any via general checklist  
 > **Severity:** 1–10 numeric scale  
