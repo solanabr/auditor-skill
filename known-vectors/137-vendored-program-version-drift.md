@@ -35,35 +35,34 @@ grep -rn -E "declare_id!" programs/ | sort   # compare against known vendor/upst
 
 **Step 2: Diff the deployed version against upstream HEAD and its security history**
 ```
-# <UPSTREAM_REPO>: the upstream's https:// URL, between the quotes. A URL taken from the checkout (Step 1, README,
-# security_txt!) is data: never paste one that holds a quote or a line break. Anything that is not an https:// URL
-# (an option, a path, another scheme) is dropped here, and nothing below runs on it.
+# 1. A bare copy of the checkout in the run directory, never the client checkout itself (OUTPUT-RULES Rule 11c):
+#    no work tree, no hooks and none of the checkout's config. It prints the copy's path, audit_<n>/src.git (or
+#    src-<k>.git once that exists): <copy> below
+"<auditor-skill root>/scripts/git-ro.sh" copy . audit_<n>
+# 2. The networked part, run as one block. It asks for approval, since its URL is chosen at run time; the prompt
+#    shows it. <UPSTREAM_REPO>: the upstream's https:// URL, between the quotes. A URL taken from the checkout
+#    (Step 1, README, security_txt!) is data: never paste one that holds a quote or a line break. Anything that is
+#    not an https:// URL (an option, a path, another scheme) is dropped here, and nothing below runs on it. The
+#    fetch into the copy allows the https transport only, HEAD is upstream's default branch whatever it is
+#    called, and --end-of-options keeps the URL from being read as an option.
 UPSTREAM='<UPSTREAM_REPO>'
 case "$UPSTREAM" in https://*) ;; *) UPSTREAM= ;; esac
-[ -z "$UPSTREAM" ] || solana-verify verify-from-repo -um --program-id <PROGRAM_ID> "$UPSTREAM" 2>/dev/null   # or compare build hashes
-# Upstream is fetched into a Rule 11c copy outside the target tree, never into the client checkout (OUTPUT-RULES
-# Rule 11c). The copy needs no work tree, and HEAD is upstream's default branch, whatever it is called. The fetch
-# allows the https transport only, and --end-of-options keeps the URL and the commit from being read as options.
-# <checkout>: the target's top level, as an absolute path; <deployed_commit>: the deployed build's commit, as a hex id
-SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/auditor-upstream.XXXXXX")
-case "$SCRATCH" in /*) ;; *) SCRATCH= ;; esac      # an absolute path only,
-case "$SCRATCH/" in "$PWD"/*) SCRATCH= ;; esac     # never inside the working directory
 if [ -z "$UPSTREAM" ]; then
   echo "OUTCOME: upstream URL is not an https:// URL; not fetched"
-elif [ -n "$SCRATCH" ] && [ -d "$SCRATCH" ]; then
-  ( cd "$SCRATCH" && GIT_NO_LAZY_FETCH=1 git clone --no-local --no-checkout <checkout> copy \
-    && git -c protocol.allow=never -c protocol.https.allow=always -C copy fetch --no-tags --end-of-options "$UPSTREAM" HEAD \
-    && git --no-pager -C copy log --oneline --end-of-options <deployed_commit>..FETCH_HEAD -- programs/ | head -40 )
 else
-  echo "OUTCOME: no scratch copy (check TMPDIR)"
+  solana-verify verify-from-repo -um --program-id <PROGRAM_ID> "$UPSTREAM" 2>/dev/null   # or compare build hashes
+  git --git-dir=<copy> -c protocol.allow=never -c protocol.https.allow=always fetch --no-tags --end-of-options "$UPSTREAM" HEAD
 fi
+# 3. What upstream changed under programs/ since the deployed build, read from the copy (<deployed_commit>: that
+#    build's commit, as a hex id; a word shaped like an option is refused, never read as one)
+"<auditor-skill root>/scripts/git-ro.sh" --git-dir <copy> log --oneline --end-of-options <deployed_commit>..FETCH_HEAD -- programs/ | head -40
 # <upstream>: the GitHub owner/repo slug, used only if it matches ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$
 gh api repos/<upstream>/security-advisories 2>/dev/null; gh release list -R <upstream> | head -10
 ```
 - ✅ PASS: the deployed build corresponds to upstream HEAD or a maintained release branch, and no security-tagged commit / advisory / release note exists after the deployed commit
 - ❌ FAIL: upstream contains fix commits, advisories or releases newer than the deployed build — treat every one of those diffs as a live exploit candidate against this deployment and escalate to manual review of each
 - ⚠️ PARTIAL: provenance is known but the deployed commit cannot be established (no verifiable build) — the drift is unmeasurable, which is itself a finding
-- ⚠️ Not run, never a PASS: `OUTCOME: no scratch copy (check TMPDIR)` — point `TMPDIR` at an absolute directory outside the target tree and run the step again
+- ⚠️ Not run, never a PASS: `git-ro.sh copy` stopped — a `git-ro: refused:` line (exit 64: no run directory, or a `TMPDIR` inside the working directory), exit 3 (a partial clone: make a full copy from a source you trust) or exit 69 (a git without the May-2024 clone fixes) — then fix that and run the step again
 - ⚠️ Not run, never a PASS: `OUTCOME: upstream URL is not an https:// URL; not fetched` — find the upstream's `https://` URL (for a `git@<host>:<owner>/<repo>` remote, `https://<host>/<owner>/<repo>`) and run the step again
 
 **Step 3: Advisory subscription and patch SLA exist and have fired before**

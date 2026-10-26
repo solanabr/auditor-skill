@@ -18,12 +18,12 @@
 #     inside the working directory, or mktemp failing, they print OUTCOME: no scratch copy and run nothing;
 #     otherwise npm, cargo and rustup run only inside the scratch directory. FULL-AUDIT Step 3.2 runs its audits
 #     and registry queries through scripts/runner/deps.sh, with no scratch block of its own;
-#   - KV-137 Steps 1 and 2: the upstream comparison runs in a scratch copy with no work tree, against
-#     upstream's default branch whatever its name, and nothing from the checkout's config runs; a relative
-#     TMPDIR stops it. Step 2 takes an https:// URL only and fetches over https only: an option-shaped
-#     remote.upstream.url that Step 1 prints, a local path or a file:// URL fetches nothing and fires no
-#     canary, and an option-shaped deployed commit is read as a revision; its log, above 64 KiB, is cut at
-#     40 lines; SC-054 names the same fetch.
+#   - KV-137 Steps 1 and 2: the upstream comparison runs in the bare copy scripts/git-ro.sh copy makes in a run
+#     directory, against upstream's default branch whatever its name, and nothing from the checkout's config
+#     runs; a TMPDIR inside the working directory stops the copy. Step 2 takes an https:// URL only and fetches
+#     over https only: an option-shaped remote.upstream.url that Step 1 prints, a local path or a file:// URL
+#     fetches nothing and fires no canary, and an option-shaped deployed commit is refused, never read as an
+#     option; its log, above 64 KiB, is cut at 40 lines; SC-054 names the same fetch.
 # Usage (from the repo root): bash scripts/tests/test-lockfile-recipes.sh
 # Needs bash >= 3.2, git, grep, sed, awk, find, mkfifo. No network: the test's git config rewrites the
 # upstream's https URL to a local path.
@@ -393,7 +393,7 @@ if [ "$deps" = 4 ] && ! grep -qE 'SCRATCH|mktemp|(^|[ ;&|(])cd |^ *[(]?(npm|carg
   ok "FULL-AUDIT Step 3.2 runs npm audit, cargo audit and the quarantine query through deps.sh, with no scratch block"
 else bad "FULL-AUDIT Step 3.2: $deps deps.sh lines, or a scratch block or a plain npm, cargo or rustup call is left"; fi
 
-# ---- 4. KV-137 Steps 1 and 2: upstream fetched into a scratch copy -----------------------------------------
+# ---- 4. KV-137 Steps 1 and 2: upstream fetched into a git-ro.sh copy --------------------------------------
 U="$T/kv137"
 filler137() { # 400 upstream commits under programs/ with long subjects, so the log Step 2 cuts at 40 lines passes 64 KiB
   local i=1 pad
@@ -424,11 +424,13 @@ mkdir -p "$U/bin" && printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "%s/verify-args"\
 refs_before=$(git -C "$U/client" for-each-ref | wc -l | tr -d ' ')
 deployed=$(git -C "$U/up" rev-list --max-parents=0 HEAD)
 logsize=$(git -C "$U/up" log --oneline "$deployed..HEAD" -- programs/ | wc -c | tr -d ' ')
-step137() { # step137 UPSTREAM_REPO DEPLOYED: Step 2 from the top of its block to its closing fi, placeholders filled
-  awk '/^\*\*Step 2:/ {s = 1} s && !g && /^```$/ {g = 1; next} g {print} g && /^fi$/ {exit}' "$KV137" \
-    | sed -e "s#<checkout>#$U/client#; s#<UPSTREAM_REPO>#$1#; s#<deployed_commit>#$2#; s#<PROGRAM_ID>#Prog1111#" \
-    > "$T/kv137.sh"
+step137() { # step137 UPSTREAM_REPO DEPLOYED: Step 2 up to its log line, placeholders filled, for a new run directory
+  R137=$(cd "$U/client" && "$ROOT/scripts/rundir.sh" new audit) || { bad "rundir.sh new audit failed in the KV-137 fixture"; return 1; }
+  awk '/^\*\*Step 2:/ {s = 1} s && !g && /^```$/ {g = 1; next} g {print} g && /FETCH_HEAD -- programs\/ \| head -40$/ {exit}' "$KV137" \
+    | sed -e "s#<auditor-skill root>#$ROOT#g; s#<copy>#$R137/src.git#g; s#audit_<n>#$R137#g; s#<UPSTREAM_REPO>#$1#" \
+          -e "s#<deployed_commit>#$2#; s#<PROGRAM_ID>#Prog1111#" > "$T/kv137.sh"
 }
+copy137() { [ -f "$U/client/$R137/src.git/auditor-copy" ]; }   # the run directory holds the copy git-ro.sh made
 run137() { # run137 [env argument...]: run it in the checkout, the stub first on PATH, with no canary or record left
   rm -f "$U"/fired-* "$U/verify-args"
   ( cd "$U/client" && env "$@" GIT_CONFIG_GLOBAL="$U/gitconfig" PATH="$U/bin:$PATH" bash "$T/kv137.sh" ) \
@@ -436,25 +438,27 @@ run137() { # run137 [env argument...]: run it in the checkout, the stub first on
 }
 fired() { ls "$U" | grep '^fired-'; }
 NOFETCH='OUTCOME: upstream URL is not an https:// URL; not fetched'
-mkdir -p "$T/tmp137" "$T/tmp137b" "$T/tmp137c" "$T/tmp137d" "$T/tmp137e"
+mkdir -p "$T/tmp137" "$U/client/rel"
 
 step137 "$URL" "$deployed"; run137 TMPDIR="$T/tmp137"
 if grep -q ' upstream security fix$' "$T/kv137.out" && [ -z "$(fired)" ] && [ "$logsize" -gt 65536 ] \
    && [ "$(grep -cE '^[0-9a-f]{7,} (filler [0-9]+ 0+|upstream security fix)$' "$T/kv137.out")" = 40 ] \
    && [ "$(git -C "$U/client" for-each-ref | wc -l | tr -d ' ')" = "$refs_before" ] \
-   && [ "$(ls -A "$T/tmp137"/auditor-upstream.*/copy)" = .git ] \
+   && copy137 && [ -f "$U/client/$R137/src.git/FETCH_HEAD" ] \
+   && [ "$(git --git-dir="$U/client/$R137/src.git" rev-parse --is-bare-repository)" = true ] \
    && [ "$(cat "$U/verify-args" 2>/dev/null)" = "$(printf 'verify-from-repo\n-um\n--program-id\nProg1111\n%s' "$URL")" ]; then
-  ok "KV-137 Step 2 lists the fix on upstream's default branch, cut at 40 lines from a $logsize-byte log, from a copy with no work tree, gives solana-verify the URL as one argument, and leaves the checkout alone"
+  ok "KV-137 Step 2 lists the fix on upstream's default branch, cut at 40 lines from a $logsize-byte log, from a bare copy in the run directory, gives solana-verify the URL as one argument, and leaves the checkout alone"
 else bad "KV-137 Step 2 (log of $logsize bytes)"; sed 's/^/  | /' "$T/kv137.out"; fi
-run137 -u GIT_ALLOW_PROTOCOL TMPDIR="$T/tmp137b"
+step137 "$URL" "$deployed"; run137 -u GIT_ALLOW_PROTOCOL TMPDIR="$T/tmp137"
 if grep -q "transport 'file' not allowed" "$T/kv137.out" && ! grep -q ' upstream security fix$' "$T/kv137.out" \
-   && ls -d "$T/tmp137b"/auditor-upstream.*/copy > /dev/null 2>&1 && [ -z "$(fired)" ]; then
+   && copy137 && [ -z "$(fired)" ]; then
   ok "KV-137 Step 2 fetches over https only: git config that rewrites the URL to a local repository does not get it fetched"
 else bad "KV-137 Step 2 fetched over a transport other than https"; sed 's/^/  | /' "$T/kv137.out"; fi
-run137 TMPDIR=rel
-if has "$T/kv137.out" "OUTCOME: no scratch copy (check TMPDIR)" && [ ! -e "$U/client/copy" ]; then
-  ok "KV-137 Step 2 with a relative TMPDIR prints OUTCOME: no scratch copy and clones nothing"
-else bad "KV-137 Step 2 with a relative TMPDIR"; sed 's/^/  | /' "$T/kv137.out"; fi
+step137 "$URL" "$deployed"; run137 TMPDIR=rel
+if has "$T/kv137.out" "git-ro: refused: the scratch directory (TMPDIR) lies inside the working directory" \
+   && [ ! -e "$U/client/$R137/src.git" ] && ! grep -q ' upstream security fix$' "$T/kv137.out"; then
+  ok "KV-137 Step 2 with a TMPDIR inside the working directory: git-ro.sh copy refuses, and nothing is fetched or read"
+else bad "KV-137 Step 2 with a TMPDIR inside the working directory"; sed 's/^/  | /' "$T/kv137.out"; fi
 
 # an option-shaped remote.upstream.url in the checkout's config: Step 1 prints it, and Step 2 gets it as written
 opt="--upload-pack=touch $U/fired-upload-pack;:"
@@ -463,23 +467,23 @@ kv_step "$KV137" 1 | sed "s#<auditor-skill root>#$ROOT#g" > "$T/kv137-1.sh"; rm 
 ( cd "$U/client" && bash "$T/kv137-1.sh" ) > "$T/kv137-1.out" 2>&1
 if has "$T/kv137-1.out" "$opt" && [ -z "$(fired)" ]; then ok "KV-137 Step 1 prints the checkout's remote.upstream.url as data"
 else bad "KV-137 Step 1 with an option-shaped remote.upstream.url"; sed 's/^/  | /' "$T/kv137-1.out"; fi
-step137 "$opt" "$deployed"; run137 TMPDIR="$T/tmp137c"
+step137 "$opt" "$deployed"; run137 TMPDIR="$T/tmp137"
 if has "$T/kv137.out" "$NOFETCH" && [ -z "$(fired)" ] && [ ! -e "$U/verify-args" ] \
-   && [ -z "$(find "$T/tmp137c" -name copy)" ]; then
+   && copy137 && [ ! -e "$U/client/$R137/src.git/FETCH_HEAD" ]; then
   ok "KV-137 Step 2 drops an option-shaped upstream URL: no canary fires, and neither solana-verify nor git runs on it"
 else bad "KV-137 Step 2 with an option-shaped upstream URL"; fired | sed 's/^/  | fired: /'; sed 's/^/  | /' "$T/kv137.out"; fi
 for v in "$U/up" "file://$U/up"; do
   case "$v" in file:*) what="a file:// URL" ;; *) what="a local path" ;; esac
-  step137 "$v" "$deployed"; run137 TMPDIR="$T/tmp137d"
+  step137 "$v" "$deployed"; run137 TMPDIR="$T/tmp137"
   if has "$T/kv137.out" "$NOFETCH" && ! grep -q ' upstream security fix$' "$T/kv137.out" && [ ! -e "$U/verify-args" ]; then
     ok "KV-137 Step 2 fetches nothing from $what"
   else bad "KV-137 Step 2 used $what as the upstream"; sed 's/^/  | /' "$T/kv137.out"; fi
 done
-# an option-shaped deployed commit is read as a revision, never as a git log option
-step137 "$URL" "--output=$U/fired-output"; run137 TMPDIR="$T/tmp137e"
+# an option-shaped deployed commit is refused before git reads it, never taken as a git log option
+step137 "$URL" "--output=$U/fired-output"; run137 TMPDIR="$T/tmp137"
 if [ -z "$(fired)" ] && ! grep -q ' upstream security fix$' "$T/kv137.out" \
-   && ls "$T/tmp137e"/auditor-upstream.*/copy/.git/FETCH_HEAD > /dev/null 2>&1; then
-  ok "KV-137 Step 2 reads an option-shaped deployed commit as a revision"
+   && grep -q '^git-ro: refused: log does not allow --output=' "$T/kv137.out" && [ -f "$U/client/$R137/src.git/FETCH_HEAD" ]; then
+  ok "KV-137 Step 2 refuses an option-shaped deployed commit, and git never takes it as an option"
 else bad "KV-137 Step 2 with an option-shaped deployed commit"; fired | sed 's/^/  | fired: /'; sed 's/^/  | /' "$T/kv137.out"; fi
 # SC-054 names the fetch and log forms Step 2 runs
 sc054=$(grep -F '**SC-054**' "$CL"); st137=$(kv_step "$KV137" 2); miss=
