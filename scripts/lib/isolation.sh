@@ -111,11 +111,13 @@
 # Needs bash >= 3.2, python3 (the self-check, the keypair and the watchdog), env, mkdir, mktemp and cat.
 
 # What iso_credentials, iso_cred_names, iso_homes and iso_env run, with python3 -I so that no module comes
-# from the working directory or PYTHONPATH. "creds given|default [<home>...]" prints what is readable by
-# kind and count on its first line and the readable paths after it (exit 1), nothing (exit 0), or why the
-# check could not finish (exit 2); "names" prints the variable names that look like credentials; "homes
-# <home>" prints the homes; "wallet <path>" writes a fresh keypair, RFC 8032 key generation from 32 random
-# bytes, as the 64-number array solana-keygen writes. Exit 2 on anything unexpected.
+# from the working directory or PYTHONPATH. python3 starts from /, so nothing in the working directory picks
+# the interpreter (a .python-version a pyenv shim reads), and a relative path in a variable the check reads
+# is taken from /, never from the tree under audit. "creds given|default [<home>...]" prints what is
+# readable by kind and count on its first line and the readable paths after it (exit 1), nothing (exit 0),
+# or why the check could not finish (exit 2); "names" prints the variable names that look like credentials;
+# "homes <home>" prints the homes; "wallet <path>" writes a fresh keypair, RFC 8032 key generation from 32
+# random bytes, as the 64-number array solana-keygen writes. Exit 2 on anything unexpected.
 ISO_PY='import glob, hashlib, json, os, pwd, re, socket, stat, sys
 
 KINDS = ("SSH keys", "agent sockets", "Solana keypairs or CLI config", "cloud credentials",
@@ -415,7 +417,7 @@ sys.exit(2)
 '
 
 iso_homes() {
-  python3 -I -c "$ISO_PY" homes "${HOME:-}"
+  (cd / && exec python3 -I -c "$ISO_PY" homes "${HOME:-}")
 }
 
 iso_credentials() { # iso_credentials [<home>...]
@@ -423,7 +425,7 @@ iso_credentials() { # iso_credentials [<home>...]
   ISO_KINDS="" ISO_READABLE="" ISO_WHY=""
   command -v python3 >/dev/null 2>&1 || { ISO_WHY="python3 is not on PATH"; return 2; }
   [ $# -gt 0 ] || which=default
-  out=$(python3 -I -c "$ISO_PY" creds "$which" "$@") || rc=$?
+  out=$(cd / && exec python3 -I -c "$ISO_PY" creds "$which" "$@") || rc=$?
   case "$rc" in
     0) return 0 ;;
     1) ISO_KINDS=${out%%$'\n'*}; ISO_READABLE=${out#*$'\n'}; return 1 ;;
@@ -436,7 +438,7 @@ iso_credentials() { # iso_credentials [<home>...]
 iso_cred_names() { # iso_cred_names
   ISO_NAMES=""
   command -v python3 >/dev/null 2>&1 || return 0
-  ISO_NAMES=$(python3 -I -c "$ISO_PY" names 2>/dev/null) || ISO_NAMES=""
+  ISO_NAMES=$(cd / && exec python3 -I -c "$ISO_PY" names 2>/dev/null) || ISO_NAMES=""
 }
 
 iso_inherited() { # iso_inherited <dir>
@@ -487,7 +489,7 @@ iso_env() { # iso_env <dir> [keep-home]
   else
     ISO_HOME=$1/home
     confine_mkdir "$ISO_HOME" && confine_mkdir "$ISO_HOME/.config" && confine_mkdir "$ISO_HOME/.config/solana" || return 1
-    python3 -I -c "$ISO_PY" wallet "$ISO_HOME/.config/solana/id.json" || return 1
+    (cd / && exec python3 -I -c "$ISO_PY" wallet "$ISO_HOME/.config/solana/id.json") || return 1
   fi
   ISO_ENV=("PATH=$PATH" "HOME=$ISO_HOME" "TMPDIR=$ISO_TMP" "LC_ALL=C"
     "CARGO_HOME=${CARGO_HOME:-${real:-/nonexistent}/.cargo}" "RUSTUP_HOME=${RUSTUP_HOME:-${real:-/nonexistent}/.rustup}")

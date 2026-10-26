@@ -77,7 +77,9 @@
 #     like credentials, and agent sockets (serving one needs a machine that allows it:
 #     on CI a machine that does not fails the run, anywhere else one SKIP line says
 #     so). On CI the runner's own home must pass the check, so that the checks that
-#     isolated mode passes run there;
+#     isolated mode passes run there. Its python3 starts from /: a .python-version in
+#     the working directory picks no interpreter, and a relative path in a variable it
+#     reads is taken from /;
 #   * environment cleaning: canary variables in the caller's environment reach no cargo
 #     call, no build script and no test binary; HOME is a throwaway one with a fresh
 #     Solana keypair, but for cargo build-sbf --install-only; only cargo fetch, cargo
@@ -1818,6 +1820,27 @@ for sh in "${SHELLS[@]}"; do
   out="$(cd "$WT" && env -i HOME="$CLEANHOME" PATH="$PATH" TMPDIR="$T/cfgparent/tmp" "$sh" "$T/iso-driver.sh" "$ROOT" scratch 2>&1)"; rc=$?
   [ "$rc" = 64 ] && case "$out" in *"would inherit $T/cfgparent/.cargo/config.toml; point TMPDIR outside any repository") true ;; *) false ;; esac \
     && [ -z "$(ls -A "$T/cfgparent/tmp")" ] && ok "iso_scratch ($sh): a scratch directory under a .cargo/config.toml -> refused" || bad "iso_scratch ($sh) under a cargo config: $rc '$out'"
+done
+
+# isolation.sh starts each python3 from /: a .python-version in the working directory, which a pyenv shim
+# reads to pick the interpreter, picks none, and a relative path in a variable the check reads (KUBECONFIG
+# here) is taken from /, never from the tree under audit. A python3 stand-in first on PATH records the
+# directory of each run that finds a .python-version there.
+PV="$T/pv-wt"; PVBIN="$T/pv-bin"; mkdir -p "$PV" "$PVBIN" "$T/pv-home"
+printf 'from-the-tree\n' > "$PV/.python-version"; printf 'apiVersion: v1\n' > "$PV/kube.cfg"
+printf '#!/bin/sh\n[ -e .python-version ] && pwd >> "%s"\nexec "%s" "$@"\n' "$T/pv-picked" "$(command -v python3)" > "$PVBIN/python3"
+chmod +x "$PVBIN/python3"
+for sh in "${SHELLS[@]}"; do
+  rm -f "$T/pv-picked"; rm -rf "$T/pv-env"; mkdir -p "$T/pv-env"
+  for what in homes names creds "env $T/pv-env"; do
+    (cd "$PV" && env -i HOME="$CLEANHOME" PATH="$PVBIN:$PATH" "$sh" "$T/iso-driver.sh" "$ROOT" $what) >/dev/null 2>&1
+  done
+  [ ! -e "$T/pv-picked" ] && [ -f "$T/pv-env/home/.config/solana/id.json" ] \
+    && ok "isolation.sh ($sh): homes, names, creds and the keypair run python3 from /, so the working directory's .python-version picks no interpreter" \
+    || bad "isolation.sh ($sh): python3 ran where the working directory's .python-version picks it: $(cat "$T/pv-picked" 2>/dev/null)"
+  out="$(cd "$PV" && env -i HOME="$CLEANHOME" KUBECONFIG=kube.cfg PATH="$PATH" "$sh" "$T/iso-driver.sh" "$ROOT" creds "$T/pv-home")"; rc=$?
+  [ "$rc" = 0 ] && [ -z "$out" ] && ok "iso_credentials ($sh): a relative KUBECONFIG is taken from /, so the tree's kube.cfg does not count" \
+    || bad "iso_credentials ($sh), a relative KUBECONFIG: $rc '$out'"
 done
 
 # scripts/runner/probe.sh: fixed version queries from a scratch directory, in the cleaned environment
