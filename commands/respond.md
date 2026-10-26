@@ -191,7 +191,7 @@ directory.
    `GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false show --no-textconv --no-ext-diff <rev>:<path>`
    (Rule 11c). Never `checkout`, `switch` or `worktree add` in `--repo`. Then spawn
    `poc-engineer` in incident mode to reproduce on the bytes from step 1 (Leg 3)
-   with `run.sh` `VULNERABLE_SO` alone — in-process SVM or a local surfnet, harness
+   with `run.sh --vulnerable-so incident_<n>/bin/<program>.so` alone — in-process SVM or a local surfnet, harness
    keys only, asserting the observed effect with `assert_exploit_effect!`. Leg 3 is
    met only when `run.sh` ends with `OK: reproduced on prebuilt bytes — vulnerable
    sha256=<the step-1 hash> → [PoC-REPRODUCED]`; no usable bytes → the ceiling is
@@ -212,7 +212,7 @@ directory.
    `${CLAUDE_PLUGIN_ROOT}/templates/response-plan.md`; a plan written for another
    lead is never overwritten. It covers the verdict, the timeline, containment, the
    code fix (handed off as `/auditor:patch INC-<n>.<k>`), the check of a hotfix the
-   team already deployed (the PoC re-run with `FIXED_SO` = a fresh dump of the
+   team already deployed (the PoC re-run with `--fixed-so` = a fresh dump of the
    current bytes and `assert_exploit_blocked!` with its positive control on the
    fixed arm, reported apart from our fix), recovery, coordination drafts, alerting proposals and the unanswered
    questions. Each action states what it is, the query result behind it, who has

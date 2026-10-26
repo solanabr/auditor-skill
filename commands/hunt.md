@@ -240,7 +240,7 @@ directory.
 
 6. **Reproduce (Phase 4).** For a source-confirmed flaw, spawn `poc-engineer` in
    **incident mode**: reproduce on the program's **real bytes** (the step-1 dump, or
-   a hash-matched build) with `run.sh` `VULNERABLE_SO` alone — no fix needs to
+   a hash-matched build) with `run.sh --vulnerable-so incident_<n>/bin/<program>.so` alone — no fix needs to
    exist yet — in an in-process SVM or a local surfnet, signing only with harness
    keys, and assert the effect seen on-chain with `assert_exploit_effect!`, not
    just that the call was accepted. This is Leg 3, met only when `run.sh` ends with
