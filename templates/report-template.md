@@ -109,7 +109,7 @@
 | 06 | Economic & Logic | 92 | | | | | % |
 | 07 | OpSec & Governance | 87 | | | | | % |
 | 08 | TypeScript Safety | 64 | | | | | % |
-| 09 | Backend Security | 132 | | | | | % |
+| 09 | Backend Security | 133 | | | | | % |
 | 10 | Frontend Security | 84 | | | | | % |
 | 11 | Supply Chain | 65 | | | | | % |
 | 12 | Secrets & OpSec | 53 | | | | | % |
@@ -121,7 +121,7 @@
 | 18 | Privacy, Compliance & Change Mgmt | 60 | | | | | % |
 | 19 | AI Agent Security | 35 | | | | | % |
 | 20 | Rust Off-Chain Services | 21 | | | | | % |
-| | **Total** | **1449** | | | | | **%** |
+| | **Total** | **1450** | | | | | **%** |
 
 > Note: Only applicable checklists are counted in totals. Non-applicable checklists are excluded entirely.
 
@@ -260,7 +260,7 @@
 
 ```
 [PASS]      BE-001: {reason}
-...through BE-132
+...through BE-133
 ```
 
 ### Checklist 10 — Frontend Security

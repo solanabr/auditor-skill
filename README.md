@@ -5,7 +5,7 @@
 # auditor-skill — Open-Source AI Security Audit Skill
 
 > Production-grade security audit for any codebase, powered by AI agents.
-> 20 checklists · 1,449 verification items · 140 known attack vectors · executable PoCs + fix patches
+> 20 checklists · 1,450 verification items · 140 known attack vectors · executable PoCs + fix patches
 > A full audit-firm lifecycle (automated + interactive) · Benchmarked against CertiK, SOC 2, OWASP Top 10:2025
 > Verify COSTS.md as a referecence - Running this audit can burn a lot of credits.
 
@@ -13,7 +13,7 @@
 
 ## What Is This?
 
-auditor-skill is a **skill file** (a structured prompt + checklists) that turns any LLM agent (Copilot, Cursor, Windsurf, Claude Code, Codex, etc.) into a professional-grade security auditor. It reads your code file by file, checks 1,449 items across 20 security domains, tests against 140 real-world attack vectors, and produces a structured report with severity scores.
+auditor-skill is a **skill file** (a structured prompt + checklists) that turns any LLM agent (Copilot, Cursor, Windsurf, Claude Code, Codex, etc.) into a professional-grade security auditor. It reads your code file by file, checks 1,450 items across 20 security domains, tests against 140 real-world attack vectors, and produces a structured report with severity scores.
 
 **It is not a SaaS product.** It's a folder of markdown files you install for your AI agent — outside any repository you audit — or send to an LLM API.
 
@@ -62,13 +62,13 @@ auditor-skill is a **skill file** (a structured prompt + checklists) that turns 
 |----------|-----------|-------|
 | Rust (Solana/Anchor) | 01-07 | 531 |
 | Rust (off-chain services) | 20 | 21 |
-| TypeScript / Node.js | 08-09 | 196 |
+| TypeScript / Node.js | 08-09 | 197 |
 | React / Next.js | 08, 10 | 148 |
 | Python | 14 | 82 |
 | Go / Java / Ruby / PHP | 15 | 88 |
 | AI / agent components | 19 | 35 |
 | **Always applied** (any repo) | 11-13, 16-18 | 412 |
-| **Total** | **20** | **1,449** |
+| **Total** | **20** | **1,450** |
 
 ---
 
@@ -198,7 +198,7 @@ auditor-skill/
 │   ├── 06-program-economic-logic.md        (92 items)
 │   ├── 07-program-opsec-governance.md      (87 items)
 │   ├── 08-typescript-safety.md             (64 items)
-│   ├── 09-backend-security.md             (132 items)
+│   ├── 09-backend-security.md             (133 items)
 │   ├── 10-frontend-security.md             (84 items)
 │   ├── 11-supply-chain.md                  (65 items)
 │   ├── 12-secrets-opsec.md                 (53 items)
@@ -296,7 +296,7 @@ The audit produces a structured markdown report with:
 1. **Executive Summary** — risk score (1-10), deploy/no-deploy verdict, severity distribution
 2. **Instruction Matrix** — every smart contract instruction mapped
 3. **State Model** — account structs, PDA seeds, relationships
-4. **Per-Item Verdicts** — every in-scope checklist item (up to 1,449) with `[PASS]`, `[FAIL-N]`, `[PARTIAL]`, or `[N/A]`
+4. **Per-Item Verdicts** — every in-scope checklist item (up to 1,450) with `[PASS]`, `[FAIL-N]`, `[PARTIAL]`, or `[N/A]`
 5. **Known Vectors Results** — each in-scope attack vector (up to 140) with explicit verdict and evidence
 6. **Findings** — deduplicated, severity-sorted
 7. **Attack Scenarios** — narrative exploitable paths
@@ -414,7 +414,7 @@ MIT — use it, fork it, improve it, sell services built on it. Attribution appr
 ## FAQ
 
 **Q: Does this replace a professional audit?**
-A: It covers more items than most paid audits (1,449 plus 140 known-vector checks vs typical 50-200), but an AI auditor cannot do everything a human can (social engineering assessment, business logic review requiring domain expertise, legal compliance opinions). Use this as a first pass, then hire humans for what it flags.
+A: It covers more items than most paid audits (1,450 plus 140 known-vector checks vs typical 50-200), but an AI auditor cannot do everything a human can (social engineering assessment, business logic review requiring domain expertise, legal compliance opinions). Use this as a first pass, then hire humans for what it flags.
 
 **Q: Which AI model should I use?**
 A: See [COSTS.md](COSTS.md). For maximum depth, use Opus 4 or o3. For best value, use Sonnet 4 or GPT-4.1. For CI/CD integration (fast, cheap), use Haiku or o4-mini.
