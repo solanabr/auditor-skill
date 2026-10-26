@@ -33,7 +33,7 @@ ok()  { pass=$((pass + 1)); if [ -n "${VERBOSE:-}" ]; then echo "ok   $*"; fi; }
 bad() { failn=$((failn + 1)); echo "FAIL $*"; }
 
 STRICT_FILES=$(ls commands/*.md agents/*.md skills/*/SKILL.md 2>/dev/null)
-RUN_FILES=$(ls SKILL.md FULL-AUDIT.md AGENTS.md OUTPUT-RULES.md README.md; find references discovery docs templates -name '*.md' | sort)
+RUN_FILES=$(ls SKILL.md FULL-AUDIT.md AGENTS.md OUTPUT-RULES.md README.md; find references discovery docs templates checklists known-vectors -name '*.md' | sort)
 
 # A bundled path preceded by start of line or a non-path character, after any ./ or ../ prefix.
 PRE='(^|[^A-Za-z0-9_./}>-])(\.\.?/)*'
