@@ -596,7 +596,7 @@ printf '>> target.sh %s, execution mode %s; HOME %s (throwaway, with a fresh Sol
 # ---- the copy ------------------------------------------------------------------------------------------
 if [ "$SRC_KIND" = repo ]; then
   printf '>> git clone --no-local --no-checkout --no-recurse-submodules --template= %s\n' "$SRC_SHOWN" >&9
-  CONFINE_CEILING=${S%/*} hgit "$S" -c protocol.file.allow=always \
+  CONFINE_ALLOW_PROTOCOL=file CONFINE_CEILING=${S%/*} hgit "$S" -c protocol.file.allow=always \
     clone --no-local --no-checkout --no-recurse-submodules --template= -- "$SRC_ABS" "$S/src" </dev/null >&9 2>&9 ||
     finish 3 "git could not clone $SRC_SHOWN"
   SHA=$(hgit "$S/src" rev-parse --verify --quiet --end-of-options "${REV:-HEAD}^{commit}" 2>&9) && [ -n "$SHA" ] ||

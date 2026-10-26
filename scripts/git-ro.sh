@@ -299,7 +299,7 @@ run_copy() { # run_copy <dir> <R>
   case "$scratch/" in
     "${WT%/}/"*) rmdir "$scratch" "$WT/$r/$dest"; refuse "the scratch directory (TMPDIR) lies inside the working directory" ;;
   esac
-  CONFINE_CEILING=${scratch%/*} hgit "$scratch" -c protocol.file.allow=always \
+  CONFINE_ALLOW_PROTOCOL=file CONFINE_CEILING=${scratch%/*} hgit "$scratch" -c protocol.file.allow=always \
     clone --no-local --bare --no-recurse-submodules --template= -- "$src" "$WT/$r/$dest" </dev/null
   rc=$?
   rmdir "$scratch"
