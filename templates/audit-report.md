@@ -266,7 +266,7 @@ human's yes".
 - {e.g. Deployment process, key custody, and operational security (see Disclaimer).}
 - {e.g. Economic model / tokenomics design beyond on-chain code correctness.}
 - {e.g. Program X, delivered as a compiled artifact only — source not provided, could not be reviewed.}
-- {e.g. `vendor/` — vendored upstream code (Q44); reused from audit_<k> on the human's yes.}
+- {e.g. `vendor/` — vendored upstream code; reused from audit_<k> on the human's yes.}
 - {Any code outside the commits in §2.2.}
 
 ---
