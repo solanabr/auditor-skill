@@ -275,6 +275,13 @@ under the lowercase name.
   only copies it over a placeholder. To move to a new version, after reading its release notes, set it in
   `package.json` and, in that directory, run
   `NPM_CONFIG_USERCONFIG=<empty file> npm install --package-lock-only --ignore-scripts`.
+- **`vendor-delta`**: on every PR, advisory. When the PR moves the `vendor/trailofbits` gitlink,
+  `scripts/tob-delta-pr.sh` writes the upstream delta to the job summary. It fetches
+  `https://github.com/trailofbits/skills`, the entry of `SUBMODULE_URLS` in `scripts/check-corpus.sh` (never
+  the URL in `.gitmodules`), by branch and tag name only, so a commit that no branch or tag of it reaches fails
+  the job, and runs `scripts/tob-delta-review.sh` on that clone. The summary is one fenced code block of at most
+  1,000,000 bytes. The job needs no secret, keeps no credential, and never approves or merges. "Bumping
+  `vendor/trailofbits`" below says when the summary counts.
 
 ### Bumping `vendor/trailofbits`
 
@@ -283,9 +290,16 @@ The Trail of Bits pin ships to every user: Claude Code clones the plugin with it
 one `gitsubmodule` PR a month (`.github/dependabot.yml`, 7-day cooldown) and `scripts/check-corpus.sh`
 fails that PR until the README pin is updated on the same branch. Never auto-merge it.
 
-1. In a full clone of `https://github.com/trailofbits/skills`, run
-   `bash scripts/tob-delta-review.sh <clone> <old-sha> <new-sha>` (read-only; `--fetch` updates the clone
-   first). Read every section: plugins added or removed; load surfaces (nested `.claude/`, `.claude-plugin/`
+On the PR, the `vendor-delta` job writes the review of step 1 to the job summary. A `pull_request` run takes
+the workflow and its scripts from the PR, so that summary counts only for a PR that changes nothing but the
+gitlink and the README pin line, as the PR's file list shows; the summary's first line says so, and its second
+says when the PR changes other files. Any other change in the PR, the workflow or the scripts included, means
+the reviewer runs the delta review locally instead. So does a summary that is cut short or missing.
+
+1. Read the delta review: the job summary, when it counts, or the output of
+   `bash scripts/tob-delta-review.sh <clone> <old-sha> <new-sha>` in a full clone of
+   `https://github.com/trailofbits/skills` (read-only; `--fetch` updates the clone first). Read every
+   section: plugins added or removed; load surfaces (nested `.claude/`, `.claude-plugin/`
    manifests and any hooks / monitors / MCP / LSP servers they declare, `hooks/`, `monitors/`, `bin/`,
    `.mcp.json` / `.lsp.json`, settings, `CLAUDE.md` / `AGENTS.md`, `workflows/*.js`); new executables;
    symlinks (`120000`) and gitlinks (`160000`); paths git still quotes, to read by hand; renamed files,
