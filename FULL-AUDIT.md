@@ -19,7 +19,7 @@ Before starting any phase:
 5. Create a session checkpoint file to track progress across chunks (Rule 3 in OUTPUT-RULES.md)
 6. Remember: **walk the code file by file — never one-shot** (Rule 3)
 7. Apply **Operating Safety** ([OUTPUT-RULES.md Rule 11](OUTPUT-RULES.md#rule-11-operating-safety)) before anything runs: take the execution mode recorded at intake (11a — isolated recommended, native allowed with a report caveat), list every outside service a tool contacts (11b), treat a `.git/` you did not clone yourself as untrusted (11c), and make `.gitignore` containing `*` the first file in `audit_<n>/` (11d)
-8. Resolve every bundled path in this file (`tools/`, `templates/`, `scripts/`, `vendor/trailofbits/`, the corpus) from the auditor-skill root, never the working directory, which is the audited repo ([Rule 11e](OUTPUT-RULES.md#11e--bundled-paths)). The root is the absolute path the skill (`${CLAUDE_SKILL_DIR}`) or command (`${CLAUDE_PLUGIN_ROOT}`) gave you; nothing is filled in here, so it is written `<auditor-skill root>` below. The executables this plan runs: `"<auditor-skill root>/tools/auditor-tools/target/release/audit-scan"`, `"<auditor-skill root>/tools/auditor-tools/target/release/audit-mem"`, and the Trail of Bits plugins when `test -d "<auditor-skill root>/vendor/trailofbits/plugins"` succeeds
+8. Resolve every bundled path in this file (`tools/`, `templates/`, `scripts/`, `vendor/trailofbits/`, the corpus) from the auditor-skill root, never the working directory, which is the audited repo ([Rule 11e](OUTPUT-RULES.md#11e--bundled-paths)). The root is the absolute path the skill (`${CLAUDE_SKILL_DIR}`) or command (`${CLAUDE_PLUGIN_ROOT}`) gave you; nothing is filled in here, so it is written `<auditor-skill root>` below. The executables this plan runs: `"<auditor-skill root>/tools/auditor-tools/target/release/audit-scan"`, `"<auditor-skill root>/tools/auditor-tools/target/release/audit-mem"`, the runners `"<auditor-skill root>/scripts/runner/deps.sh"` (Step 3.2) and `"<auditor-skill root>/scripts/runner/target.sh"` (Step 3.4), and the Trail of Bits plugins when `test -d "<auditor-skill root>/vendor/trailofbits/plugins"` succeeds
 
 ---
 
@@ -382,54 +382,32 @@ ACTIONS:
   cat apps/backend/package.json | grep -E '[\^~]' # should be minimal
   cat apps/web/package.json | grep -E '[\^~]'
 
-  # Audits, registry queries and any cargo / rustc command (even --version) run from
-  # a scratch dir OUTSIDE the target tree, on copies of the manifest + lockfile, with
-  # the toolchain pinned, so the target's .npmrc / .cargo/config* / rust-toolchain*
-  # cannot steer them — cargo and rustup read those from every parent directory, so
-  # audit_<n>/ inside the tree is not far enough (Rule 11a). Run the block below as
-  # one command: $SCRATCH lasts only as long as its shell, and with it empty
-  # `cd "$SCRATCH"` would stay in the target tree. So the block first checks that it
-  # is an absolute directory outside the working directory:
-  #   OUTCOME: no scratch copy → nothing below ran (npm audit, cargo audit, the
-  #                              quarantine check): never a PASS. Point TMPDIR at an
-  #                              absolute directory outside the target tree if mktemp
-  #                              failed or landed inside it, then run the whole block again
-  SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/auditor-scratch.XXXXXX")   # outside the target tree
-  case "$SCRATCH" in /*) ;; *) SCRATCH= ;; esac      # an absolute path only,
-  case "$SCRATCH/" in "$PWD"/*) SCRATCH= ;; esac     # never inside the working directory
-  if [ -z "$SCRATCH" ] || [ ! -d "$SCRATCH" ]; then
-    echo "OUTCOME: no scratch copy (check TMPDIR)"
-  else
-    TC=$(cd "$SCRATCH" && rustup default | cut -d' ' -f1)   # your own toolchain, never the target's
-    mkdir -p "$SCRATCH/backend" "$SCRATCH/web" "$SCRATCH/rust"
-    cp apps/backend/package.json apps/backend/package-lock.json "$SCRATCH/backend/"
-    cp apps/web/package.json apps/web/package-lock.json "$SCRATCH/web/"
-    cp Cargo.lock "$SCRATCH/rust/"
+  # Audits and registry queries run through the bundled deps.sh, from the working
+  # directory by its quoted path, with no cd first. It copies only the manifests and
+  # lockfiles it is given into a scratch directory outside the target tree and runs
+  # there with the toolchain pinned, so the target's .npmrc / .cargo/config* /
+  # rust-toolchain* never steer it (Rule 11a), and it records each outside service it
+  # contacts in audit_<n>/disclosures.tsv (Rule 11b). Its last line names the output,
+  # audit_<n>/deps/<action>-<k>.txt. Exit 0 = nothing found, 1 = findings,
+  # 3 = blocker (the line says why), 64 = refused.
+  #   OUTCOME: exit 3 or 64 → that check did not run: never a PASS; copy the line into
+  #                           Coverage & Limitations
 
-    # Run npm audit
-    (cd "$SCRATCH/backend" && npm audit)
-    (cd "$SCRATCH/web" && npm audit)
+  # npm audit, one package.json and its lockfile at a time
+  "<auditor-skill root>/scripts/runner/deps.sh" npm-audit --run audit_<n> --manifest apps/backend/package.json --manifest apps/backend/package-lock.json
+  "<auditor-skill root>/scripts/runner/deps.sh" npm-audit --run audit_<n> --manifest apps/web/package.json --manifest apps/web/package-lock.json
 
-    # Cargo audit (SC-004), stderr kept. It exits 1 both for advisories and for an advisory
-    # database it cannot fetch or load (offline, or github.com outside an isolated run's
-    # egress), so the output decides:
-    #   OUTCOME: vulnerabilities found   → findings, SC-004 FAIL
-    #   OUTCOME: advisory DB unavailable → say so in Coverage & Limitations ("advisory DB
-    #                                      unavailable"), or rerun with --no-fetch against
-    #                                      a local DB if one exists
-    #   OUTCOME: not installed           → SC-004 N/A, and Coverage & Limitations says so
-    #   no OUTCOME line and no "error:"  → SC-004 PASS
-    if (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit --version) >/dev/null 2>&1; then
-      (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit --color never) 2>&1 | tee "$SCRATCH/cargo-audit.txt"
-      grep -qE '^error: [0-9]+ vulnerabilit(y|ies) found' "$SCRATCH/cargo-audit.txt" && echo "OUTCOME: vulnerabilities found"
-      grep -qE '^error: .*advisory database' "$SCRATCH/cargo-audit.txt" && echo "OUTCOME: advisory DB unavailable"
-    else
-      echo "OUTCOME: not installed"
-    fi
+  # Cargo audit (SC-004). The advisory database comes from GitHub (RustSec):
+  #   exit 1                               → vulnerabilities found: findings, SC-004 FAIL
+  #   exit 3, "no advisory database"       → say so in Coverage & Limitations ("advisory DB
+  #                                          unavailable"), or run it again with --no-fetch,
+  #                                          which uses the database already in CARGO_HOME
+  #   exit 3, "cargo-audit is not on PATH" → SC-004 N/A, and Coverage & Limitations says so
+  #   exit 0                               → SC-004 PASS
+  "<auditor-skill root>/scripts/runner/deps.sh" cargo-audit --run audit_<n> --manifest Cargo.lock
 
-    # Check quarantine (14-day rule) for newest deps
-    (cd "$SCRATCH" && npm info @anchor-lang/core time | tail -5)
-  fi
+  # Check quarantine (14-day rule) for newest deps: the publish time of each version
+  "<auditor-skill root>/scripts/runner/deps.sh" npm-time --run audit_<n> @anchor-lang/core
 
   # Dependency changes since the baseline (last audited ref; first audit: last
   # release tag) → checklist 11 §11.11: review the published artifacts' code delta
@@ -473,18 +451,25 @@ RECORD: any secret exposure
 ```
 ACTIONS:
 
-  # Both commands below run target-controlled code (build.rs, proc-macros, and
-  # Anchor.toml [scripts], which `anchor test` executes). Run them in the execution
-  # mode recorded at intake — OUTPUT-RULES Rule 11a (isolated recommended; native
-  # allowed, with the report caveat). If they cannot run in that mode, keep the
-  # source-level verdicts and add a Rule 10 confidence note.
+  # Both runs below build and run target-controlled code (build.rs, proc-macros, and
+  # Anchor.toml [scripts], which `anchor test` executes). The bundled target.sh runs
+  # them in the execution mode recorded at intake — OUTPUT-RULES Rule 11a (isolated
+  # recommended; native allowed, with the report caveat): the stricter of
+  # audit_<n>/exec-mode and AUDITOR_EXEC_MODE, and with none recorded, or none, it
+  # stops (exit 3). It builds a scratch clone of the committed source outside the target
+  # tree, offline after its downloads, in a throwaway HOME and Solana keypair. Run it
+  # from the working directory by its quoted path, with no cd first. Its last line
+  # names the log, audit_<n>/exec/<action>-<k>.log, and the programs' .so files, in
+  # audit_<n>/exec/<action>-<k>/. Exit 0 = ok, 1 = the build or the tests failed,
+  # 3 = blocker (the line says why), 64 = refused. If they cannot run in that mode,
+  # keep the source-level verdicts and add a Rule 10 confidence note.
 
-  # Verify build
-  anchor build 2>&1 | tail -20
-  # Check for warnings, errors
+  # Verify build (--program <name> for one program)
+  "<auditor-skill root>/scripts/runner/target.sh" anchor-build --run audit_<n> --src .
+  # Check its log for warnings, errors
 
-  # Verify tests pass
-  anchor test --skip-local-validator 2>&1 | tail -30
+  # Verify tests pass: the test script runs against no validator, and nothing is deployed
+  "<auditor-skill root>/scripts/runner/target.sh" anchor-test --run audit_<n> --src .
 
   # Check deployment config (render.yaml, fly.toml, docker-compose.yml, etc.)
   # Adapt file names to your deployment platform

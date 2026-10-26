@@ -14,9 +14,10 @@
 #     form in the tree and in history (added, removed, a changed key, an alias, a deleted lockfile, a merged
 #     side branch, a merge commit, tab and CRLF lockfiles), but not another package at those versions; the
 #     --oneline history search; above 64 KiB;
-#   - the scratch-directory recipes, FULL-AUDIT Step 3.2 and KV-089 Steps 1, 2 and 5: with $SCRATCH unset,
-#     empty, missing, relative or inside the working directory, or mktemp failing, they print OUTCOME: no
-#     scratch copy and run nothing; otherwise npm, cargo and rustup run only inside the scratch directory;
+#   - the scratch-directory recipes, KV-089 Steps 1, 2 and 5: with $SCRATCH unset, empty, missing, relative or
+#     inside the working directory, or mktemp failing, they print OUTCOME: no scratch copy and run nothing;
+#     otherwise npm, cargo and rustup run only inside the scratch directory. FULL-AUDIT Step 3.2 runs its audits
+#     and registry queries through scripts/runner/deps.sh, with no scratch block of its own;
 #   - KV-137 Steps 1 and 2: the upstream comparison runs in a scratch copy with no work tree, against
 #     upstream's default branch whatever its name, and nothing from the checkout's config runs; a relative
 #     TMPDIR stops it. Step 2 takes an https:// URL only and fetches over https only: an option-shaped
@@ -63,8 +64,8 @@ kb_block() { awk '/^ *AX=/ {g = 1} g && !/^ *#/ {sub(/^ */, ""); print} g && /pr
 kb_tree() { awk '/^ *AX=/ {g = 1} g && !/^ *#/ {sub(/^ */, ""); print; if (++n == 8) exit}' "$1"; }
 # A known vector's step: the lines of the first code block after "**Step <n>:".
 kv_step() { awk -v n="$2" 'index($0, "**Step " n ":") == 1 {s = 1; next} s && /^```$/ {if (c) exit; c = 1; next} s && c' "$1"; }
-# FULL-AUDIT Step 3.2's scratch block, from SCRATCH= to its closing fi, block indentation removed.
-fa_scratch() { awk '/^  SCRATCH=\$\(mktemp -d/ {g = 1} g {sub(/^  /, ""); print} g && /^fi$/ {exit}' "$FA"; }
+# FULL-AUDIT Step 3.2, from its heading to the next step's, block indentation removed.
+fa_step32() { awk '/^### Step 3\.2 /{g = 1; next} g && /^### /{exit} g {sub(/^  /, ""); print}' "$FA"; }
 
 # ---- fixtures: npm / yarn lockfiles ---------------------------------------------------------------------
 npm_lock() { # npm_lock WEB3VER WEB3INT BABELINT SWINT RESOLVED(0|1) — lockfileVersion 3, with an alias entry
@@ -348,7 +349,7 @@ if ! grep -q -e '/d1/' -e '/d3/' -e ' b/d1/' -e ' b/d3/' "$T/kb.out" && [ "$(gre
 else bad "known-bad check reports a package it should skip"; sed 's/^/  | /' "$T/kb.out"; fi
 
 # ---- 3. scratch-directory recipes -----------------------------------------------------------------------
-kv_step "$KV089" 1 > "$T/kv1.sh"; kv_step "$KV089" 2 > "$T/kv2.sh"; kv_step "$KV089" 5 > "$T/kv5.sh"; fa_scratch > "$T/fa.sh"
+kv_step "$KV089" 1 > "$T/kv1.sh"; kv_step "$KV089" 2 > "$T/kv2.sh"; kv_step "$KV089" 5 > "$T/kv5.sh"
 cat "$T/kv1.sh" "$T/kv2.sh" "$T/kv5.sh" > "$T/kv125.sh"
 mkdir -p "$T/stub" "$T/tgt/apps/backend" "$T/tgt/apps/web" "$T/tmp"
 for p in apps/backend apps/web; do echo '{}' > "$T/tgt/$p/package.json"; echo '{}' > "$T/tgt/$p/package-lock.json"; done
@@ -376,17 +377,20 @@ scratch_case "KV-089 Step 5, SCRATCH unset" "$T/kv5.sh" "OUTCOME: no scratch cop
 scratch_case "KV-089 Step 5, SCRATCH a missing directory" "$T/kv5.sh" "OUTCOME: no scratch copy (run Step 1 first)" \
   SCRATCH="$T/missing" TMPDIR="$T/tmp"
 scratch_case "KV-089 Step 1, mktemp fails" "$T/kv1.sh" "OUTCOME: no scratch copy (check TMPDIR)" TMPDIR="$T/missing"
-scratch_case "FULL-AUDIT Step 3.2, mktemp fails" "$T/fa.sh" "OUTCOME: no scratch copy (check TMPDIR)" TMPDIR="$T/missing"
 mkdir -p "$T/tgt/rel" "$T/tgt/inside" "$T/tgt/tmpin" "$T/tgt/reltmp"
 scratch_case "KV-089 Step 2, SCRATCH a relative path" "$T/kv2.sh" "OUTCOME: no scratch copy (run Step 1 first)" SCRATCH=rel \
   TMPDIR="$T/tmp"
 scratch_case "KV-089 Step 5, SCRATCH inside the working directory" "$T/kv5.sh" "OUTCOME: no scratch copy (run Step 1 first)" \
   SCRATCH="$T/tgt/inside" TMPDIR="$T/tmp"
 scratch_case "KV-089 Step 1, TMPDIR a relative path" "$T/kv1.sh" "OUTCOME: no scratch copy (check TMPDIR)" TMPDIR=reltmp
-scratch_case "FULL-AUDIT Step 3.2, TMPDIR inside the working directory" "$T/fa.sh" "OUTCOME: no scratch copy (check TMPDIR)" \
-  TMPDIR="$T/tgt/tmpin"
 scratch_case "KV-089 Steps 1, 2 and 5 in one shell" "$T/kv125.sh" "" TMPDIR="$T/tmp"
-scratch_case "FULL-AUDIT Step 3.2" "$T/fa.sh" "" TMPDIR="$T/tmp"
+# FULL-AUDIT Step 3.2: npm audit, cargo audit and the quarantine query run through deps.sh, and nothing in the
+# step makes a scratch directory, changes directory or runs npm, cargo or rustup itself.
+fa_step32 > "$T/fa32.txt"; grep -v '^ *#' "$T/fa32.txt" > "$T/fa32-code.txt"
+deps=$(grep -cE '^"<auditor-skill root>/scripts/runner/deps\.sh" (npm-audit|cargo-audit|npm-time) --run audit_<n> ' "$T/fa32.txt")
+if [ "$deps" = 4 ] && ! grep -qE 'SCRATCH|mktemp|(^|[ ;&|(])cd |^ *[(]?(npm|cargo|rustup) ' "$T/fa32-code.txt"; then
+  ok "FULL-AUDIT Step 3.2 runs npm audit, cargo audit and the quarantine query through deps.sh, with no scratch block"
+else bad "FULL-AUDIT Step 3.2: $deps deps.sh lines, or a scratch block or a plain npm, cargo or rustup call is left"; fi
 
 # ---- 4. KV-137 Steps 1 and 2: upstream fetched into a scratch copy -----------------------------------------
 U="$T/kv137"
