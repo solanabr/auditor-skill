@@ -413,6 +413,7 @@ Some tools send audit material to services outside the auditor's machine. There 
 - RPC providers used by hand or by a Surfpool fork → program IDs and account addresses.
 - Trail of Bits `second-opinion` → OpenAI (Codex CLI) or Google (Antigravity / Gemini CLI): code and diffs under review.
 - Trail of Bits `supply-chain-risk-auditor` → package registries and repository-host APIs: dependency names.
+- Trail of Bits `post-patch-validation` (`/auditor:patch --post-patch-validation`) → whatever its checks contact while they build and test the target: package registries, toolchain downloads, hosts the target's code or tests reach.
 - Any MCP server or API that receives client code, dependency names, or addresses.
 
 ### 11c — Untrusted git checkouts
