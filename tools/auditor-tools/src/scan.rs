@@ -89,6 +89,9 @@ pub struct ScanReport {
     pub cpi_sites: Vec<CpiSite>,
     pub remaining_accounts_sites: Vec<RemainingAccountsSite>,
     pub functions: Vec<FunctionDef>,
+    /// Workflows read by the `--workflows` pass (empty without it): each
+    /// `.github/workflows/*.yml` as trigger → job → step facts.
+    pub workflows: Vec<crate::workflow::Workflow>,
     /// Every symbolic link the walk did not follow, every directory it did not
     /// enter, and every `*.rs` file it did not parse, with the reason.
     pub skipped: Vec<Skipped>,
@@ -269,6 +272,7 @@ impl ScanReport {
             cpi_sites: Vec::new(),
             remaining_accounts_sites: Vec::new(),
             functions: Vec::new(),
+            workflows: Vec::new(),
             skipped: Vec::new(),
         }
     }
@@ -331,7 +335,7 @@ pub fn scan_path_with(
 
 /// The directory to scan, each name on its way opened from the one before
 /// without following a link.
-fn open_root(root: &Path) -> io::Result<OwnedFd> {
+pub(crate) fn open_root(root: &Path) -> io::Result<OwnedFd> {
     let mut dir = confine::open_dir(libc::AT_FDCWD, b".")?;
     if root != Path::new(".") {
         for part in root.as_os_str().as_bytes().split(|&c| c == b'/') {
@@ -438,10 +442,10 @@ impl Scan<'_> {
     }
 }
 
-/// A `*.rs` file's bytes: a regular file with one name (a second name could be a
+/// A file's bytes: a regular file with one name (a second name could be a
 /// file outside the tree) of at most 4 MiB, opened from its directory without
 /// following a link or blocking on a FIFO.
-fn read_bytes(dir: RawFd, name: &[u8]) -> Result<Vec<u8>, String> {
+pub(crate) fn read_bytes(dir: RawFd, name: &[u8]) -> Result<Vec<u8>, String> {
     let unreadable = |e: io::Error| format!("cannot be read: {}", os_message(&e));
     let file = confine::open_file(dir, name).map_err(unreadable)?;
     let md = file.metadata().map_err(unreadable)?;
