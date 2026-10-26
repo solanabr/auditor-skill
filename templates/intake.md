@@ -49,28 +49,28 @@ HOW TO USE:
 | **Scope**           | {FULL / PROGRAM / BACKEND / FRONTEND / DEVOPS}    |
 | **In scope**        | {programs / components reviewed; their paths are in the Layout table} |
 | **Out of scope**    | {what is not reviewed, and why; excluded paths are in the Layout table (Q44)} |
-| **Earlier layout**  | {audit_<k>: reused on the human's yes / audit_<k>: offered, the human's new answers recorded / audit_<k>: not applied (--auto) / audit_<k>: not offered, and why / none} |
+| **Earlier layout**  | {audit_<k>: reused on the human's yes / audit_<k>: not reused, and why / none} |
 | **audit-mem store** | {path of the store that passed the Rule 11d check / none} |
 
 **Layout**
 
 <!--
-Q39 (where the source, the tests and the build files live) and Q44 (what is excluded).
+Q39 (where the code, the tests and the build files live) and Q44 (what is excluded).
 FULL-AUDIT 0.2 maps the codebase from this table, this run's only; report §2.4 lists
 every exclusion with its source. Each row's source is one of:
   Q39 / Q44                                 the human's answer at this intake
   reused from audit_<k> on the human's yes  an earlier run's row, applied unchanged
   discovered                                what /intake step 1 found in the tree
   default                                   discovery/file-map.md
-The next interactive /intake in this repository offers this table again and applies it
-only on the human's yes; --auto never applies it (/intake step 4), since a layout found
-in the audited tree could exclude that tree's own code. Every path is relative to the
-working directory, with no leading / or ~ and no .. component.
+Every path is relative to the working directory, with no leading / or ~, no ..
+component, and nothing inside a run directory. The next interactive /intake in this
+checkout offers this table again and applies it only on the human's yes; --auto never
+applies it (/intake step 4).
 -->
 
 | Kind | Path or glob | Note | Source |
 | ---- | ------------ | ---- | ------ |
-| Source   | {`programs/vault/src/`} | {on-chain program} | {Q39 / reused from audit_<k> on the human's yes / discovered / default} |
+| Code     | {`programs/vault/src/`} | {on-chain program} | {Q39 / reused from audit_<k> on the human's yes / discovered / default} |
 | Tests    | {`tests/`} | {…} | {…} |
 | Build    | {`Anchor.toml`, `Cargo.toml`, `package.json`} | {…} | {…} |
 | Excluded | {`vendor/`} | {why: vendored upstream code} | {Q44 / reused from audit_<k> on the human's yes} |
