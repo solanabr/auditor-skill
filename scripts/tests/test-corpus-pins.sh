@@ -670,6 +670,18 @@ readme_other "a CR on the pin line" "$(readme "$u1" | awk '/^\*\*Pinned at\*\*/ 
 readme_other "text added to the pin line" \
   "$(readme "$u1" | awk '/^\*\*Pinned at\*\*/ { print $0 " [Install](https://install.example/)"; next } { print }')"
 readme_other "the pin line moved" "$(readme "$u1" | awk '/^\*\*Pinned at\*\*/ { pin = $0; next } { print } END { print pin }')"
+readme_other "the hash and the date written as <sha> and <date>" \
+  "$(readme "$u1" | awk '/^\*\*Pinned at\*\*/ { sub(/`[0-9a-f]+`/, "`<sha>`"); sub(/ of [0-9-]+\./, " of <date>."); print; next } { print }')"
+# a step that fails while the pin line is read, here the awk that replaces its hashes and dates, exits 2
+realawk=$(command -v awk); mkdir -p "$TP/normawk"
+printf '#!/bin/sh\ncase "$1" in *"gsub(/[0-9a-f][0-9a-f]"*) exit 1;; esac\nexec "%s" "$@"\n' "$realawk" > "$TP/normawk/awk"
+chmod +x "$TP/normawk/awk"
+h=$(prhead "$u1" README.md "$(readme "$u1" | awk '/^\*\*Pinned at\*\*/ { print $0 " [Install](https://install.example/)"; next } { print }')")
+(cd "$pr" && PATH="$TP/normawk:$PATH" GIT_CONFIG_GLOBAL="$TP/gh.gitconfig" bash "$ROOT/scripts/tob-delta-pr.sh" "$prbase" "$h") \
+  > "$TP/pr.out" 2> "$TP/pr.err"; rc=$?
+[ "$rc" -eq 2 ] && [ ! -s "$TP/pr.out" ] && has "$(cat "$TP/pr.err")" "reading the README.md pin line failed" \
+  && ok_ "exit 2 and nothing printed: a step that fails while the pin line is read" \
+  || no_ "a step that fails while the pin line is read (rc=$rc)" "$(cat "$TP/pr.out" "$TP/pr.err")"
 
 prrun "$prbase" "$(prhead "$u0" README.md "$(readme "$u0")
 Another line.")"
