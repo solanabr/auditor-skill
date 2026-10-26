@@ -62,7 +62,7 @@ fi
 # The runtime the target declares (package.json engines, .nvmrc, .node-version, a Dockerfile's node image),
 # not the auditor's own node
 grep -n '"node"' package.json apps/backend/package.json apps/web/package.json 2>/dev/null
-cat .nvmrc .node-version apps/backend/.nvmrc apps/web/.nvmrc 2>/dev/null
+grep -rH --exclude-dir=node_modules --include=.nvmrc --include=.node-version '' .
 grep -rn --include='Dockerfile*' --exclude-dir=node_modules -E '^FROM[[:space:]]+node' . 2>/dev/null
 ```
 - ✅ PASS: Active LTS or Current release (18.x, 20.x, 22.x as of 2025)
