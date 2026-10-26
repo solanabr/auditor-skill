@@ -31,14 +31,26 @@ Probe what is actually installed before choosing a framework. A missing tool is 
 Building a PoC runs code — the build scripts and proc-macros of its dependencies, then
 its tests — and the crate can carry target code or crates taken from the target's
 manifest. So every PoC runs in the execution mode recorded at intake (for an incident,
-the mode the command recorded in the ledger header): `templates/poc/run.sh` needs
-`AUDITOR_EXEC_MODE` set to it — `isolated` inside the isolated runner, or `native` —
-and otherwise exits 3 before it compiles anything, which makes the PoC
-`[PoC-ATTEMPTED]`. With no recorded mode, the command asks once (a non-interactive
-run is native, and the report says so) and hands the mode on; `poc-engineer` and
-`patch-engineer` use the mode the command hands them and never ask. Build and test the
-crate only through `run.sh`. As a second layer, `run.sh` never builds inside the target
-tree: cargo reads `.cargo/config*` and rustup reads `rust-toolchain*` from every
+the mode the command recorded in the ledger header). The command writes it as one
+word (`isolated` inside the isolated runner, `native`, or `none`) to `<R>/exec-mode`,
+and `"<auditor-skill root>/templates/poc/run.sh" --crate <R>/poc/<ID>` takes the
+stricter of `AUDITOR_EXEC_MODE` and the `exec-mode` of every run directory its
+arguments name, `none` being the strictest; a copy inside the crate, run as
+`./run.sh`, reads `AUDITOR_EXEC_MODE` and its own `<R>/exec-mode`. With no mode, with
+`none`, or with a `--mode` that names another mode, it exits 3 before it compiles
+anything, which makes the PoC `[PoC-ATTEMPTED]`. The agent writes `<R>/exec-mode`, so
+a human who chose isolated also sets `AUDITOR_EXEC_MODE=isolated` where Claude Code
+runs: the stricter mode then holds whatever the file says. In isolated mode `run.sh`
+first checks that no key, cloud or registry credential is readable and no agent
+socket reachable (`scripts/lib/isolation.sh`), and stops if one is or if the check
+cannot finish; in native mode it prints their kinds and counts as a `>> warning:`
+line, which the report records as it stands. Every cargo call and test binary then
+runs in a cleaned environment with a throwaway `HOME` and Solana keypair, and every
+build and test runs offline, after the downloads. With no recorded mode, the command
+asks once (a non-interactive run is native, and the report says so) and hands the
+mode on; `poc-engineer` and `patch-engineer` use the mode the command hands them and
+never ask. Build and test the crate only through `run.sh`. As a second layer, `run.sh`
+never builds inside the target tree: cargo reads `.cargo/config*` and rustup reads `rust-toolchain*` from every
 parent directory, so a crate built under `audit_<n>/poc/` or `incident_<n>/poc/`
 would pick up the target's rustc wrapper, runner, linker, `[env]` and toolchain.
 `run.sh` copies the crate to a scratch directory outside the tree and builds it there
@@ -63,10 +75,11 @@ template's own crates. If the recorded mode cannot run the PoC, record
 **Build cache.** `run.sh` builds every run in a fresh scratch directory, so each run
 compiles the whole dependency graph from cold. To reuse compiled dependencies between
 runs of one engagement, create the cache once per engagement with
-`mktemp -d "${TMPDIR:-/tmp}/auditor-poc-target.XXXXXX"` — inside the isolated runner in
-isolated mode — and record its path next to the execution mode (`intake.md` §8, or for
-an incident the ledger header). Pass it to every `run.sh` call as `CARGO_TARGET_DIR`,
-and delete it when the engagement ends. Never point `CARGO_TARGET_DIR` or
+`"<auditor-skill root>/templates/poc/run.sh" --new-cache` — inside the isolated runner in
+isolated mode — and record the path it prints next to the execution mode (`intake.md`
+§8, or for an incident the ledger header). Pass it to every `run.sh` call as `--cache
+<dir>` (`CARGO_TARGET_DIR` for `./run.sh`), and delete it when the engagement ends;
+`--cache` takes only a directory `--new-cache` made. Never point `CARGO_TARGET_DIR` or
 `CARGO_BUILD_TARGET_DIR` inside the target tree or at a directory you did not create:
 cargo trusts the build outputs it finds there. The `.so` files stay in the scratch copy
 (`SBF_OUT_DIR`). PoC crates of one engagement often share a package name, so their
@@ -83,7 +96,7 @@ graph at releases published at least 14 days before the template shipped, and se
 the platform-tools rustc builds. An unmodified template resolves to that lock, and a
 PoC that adds crates keeps every pin it does not need to move. Copy the template with
 its lock, never delete the lock, and when cargo reports a conflict with a pinned
-release, move only that pin through `run.sh`: `UPDATE_PINS="<crate>@<pinned version>"`
+release, move only that pin through `run.sh`: `--update-pins "<crate>@<pinned version>"`
 runs `cargo update -p` in the scratch copy before the build, and the moved lock comes
 back with the crate. `run.sh` prints a line when a crate has no `Cargo.lock`.
 
@@ -110,18 +123,20 @@ without `target/`, refusing a symbolic link, a `.cargo/` directory or a
 `surfpool` command started from that copy; a `path` dependency on target crates
 absolute. A runner without both is not a PoC runner, and the tier is `[PoC-ATTEMPTED]`.
 
-**Run the probes below from `${TMPDIR:-/tmp}`, never from inside the target tree**
-(`cd "${TMPDIR:-/tmp}"` first, with `RUSTUP_TOOLCHAIN` pinned — Rule 11a). Inside it,
+**Run the probes below through `"<auditor-skill root>/scripts/runner/probe.sh"`,
+never from inside the target tree** (Rule 11a). It asks each tool for its version from a
+scratch directory outside it, with `RUSTUP_TOOLCHAIN` pinned. Inside the target tree,
 the target's `.cargo/config*` can define an `[alias]` named `build-sbf` or `fuzz` that
 shadows the real subcommand (cargo only warns), and a parent `rust-toolchain*` that
-names a `path` toolchain runs even on a bare `cargo --version`.
+names a `path` toolchain runs even on a bare `cargo --version`. Its `isolation:` line
+says whether this machine passes the isolated runner's credential check.
 
 | Gate | Detect | Enables | If absent |
 |------|--------|---------|-----------|
-| **`cargo build-sbf`** (platform-tools ≥ **v1.54** / cargo ≥ **1.85**) | `cargo build-sbf --version`, run from `${TMPDIR:-/tmp}`; check the bundled cargo ≥ 1.85 (default bundle is v1.51/cargo 1.84 and **cannot** parse the edition2024 manifests in the modern `mollusk-svm`/`litesvm` dep tree — pass `--tools-version v1.54`) | Mollusk **and** LiteSVM PoCs (both load a compiled `.so`) | No on-chain executable PoC → `[PoC-ATTEMPTED]`, keep prose. Name it: "install Agave platform-tools ≥ v1.54". |
+| **`cargo build-sbf`** (platform-tools ≥ **v1.54** / cargo ≥ **1.85**) | `cargo build-sbf --version`, probe.sh's `cargo-build-sbf` line; check the bundled cargo ≥ 1.85 (default bundle is v1.51/cargo 1.84 and **cannot** parse the edition2024 manifests in the modern `mollusk-svm`/`litesvm` dep tree — pass `--tools-version v1.54`) | Mollusk **and** LiteSVM PoCs (both load a compiled `.so`) | No on-chain executable PoC → `[PoC-ATTEMPTED]`, keep prose. Name it: "install Agave platform-tools ≥ v1.54". |
 | **Surfpool** (CLI + MCP) | `surfpool --version` on PATH; the surfpool MCP reachable | mainnet-fork economic/oracle/MEV reproduction with a real P/L. The fork loads state from the RPC datasource it is started with (`--rpc-url` / `--network`), which receives the program ids and account addresses it fetches: the report lists that provider and what it was sent (`OUTPUT-RULES.md` Rule 11b) | No fork simulation → fall back to Mollusk/LiteSVM if the logic is modelable, else `[PoC-ATTEMPTED]`. Name it: "surfpool CLI + MCP unreachable / fork state unavailable". |
 | **Trident** (stateful SVM fuzzer) | `trident --version` on PATH | coverage-guided multi-instruction fuzzing → crash/invariant artifact | Try `cargo fuzz` (below); if neither, keep the prose invariant argument → `[PoC-ATTEMPTED]`. |
-| **cargo-fuzz** (libFuzzer unit fuzz) | `cargo fuzz --version` on PATH, run from `${TMPDIR:-/tmp}` | fuzzing a single pure function (parse/deser/math) → crashing input | If absent, a hand-written failing unit test on the boundary value is the fallback; else `[PoC-ATTEMPTED]`. |
+| **cargo-fuzz** (libFuzzer unit fuzz) | `cargo fuzz --version` on PATH, probe.sh's `cargo-fuzz` line | fuzzing a single pure function (parse/deser/math) → crashing input | If absent, a hand-written failing unit test on the boundary value is the fallback; else `[PoC-ATTEMPTED]`. |
 
 Record which gates passed in the finding's PoC block. `run.sh` in `templates/poc/`
 self-detects `cargo-build-sbf` and exits `3` with a named blocker when it is missing —
@@ -250,11 +265,12 @@ line names is fixed. If the repaired re-run is still inconclusive, the finding s
 `[PoC-ATTEMPTED]` with the error and the flag.
 
 **Checking the harness copy.** Every marker comes from code inside the PoC crate, so
-before a command trusts an `OK` line it compares the crate's `run.sh` with the
-installation's `templates/poc/run.sh` byte for byte, and its `shared-test-utils/` with
+before a command trusts an `OK` line it compares the crate's `shared-test-utils/` with
 the installation's (only the version requirements in `shared-test-utils/Cargo.toml` may
-differ). A re-run — `/auditor:patch`, re-audit step 4b, an incident's `FIXED_SO` run —
-first refreshes `run.sh` and `shared-test-utils/src/` from the installation. A copy
+differ), and, for a `./run.sh` run, the crate's `run.sh` with the installation's
+`templates/poc/run.sh` byte for byte (`run.sh --crate` runs the installation's own). A
+re-run — `/auditor:patch`, re-audit step 4b, an incident's `--fixed-so` run — first
+refreshes `shared-test-utils/src/` from the installation. A copy
 that differs is not evidence: refresh it, re-run, and record the difference. `run.sh`
 itself binds the build to that copy: it exits 3 when the crate does not depend on
 `<crate>/shared-test-utils` under the import name `shared_test_utils`, when another
@@ -270,11 +286,11 @@ from outside the crate.
 OK: reproduced on prebuilt bytes — vulnerable sha256=<64 hex> → [PoC-REPRODUCED]
 ```
 
-(with `FIXED_SO`, the same line also names `fixed sha256=<…>` and how the fixed arm
+(with `--fixed-so`, the same line also names `fixed sha256=<…>` and how the fixed arm
 held), where `<64 hex>` is the zero-trimmed sha256 recorded for the incident snapshot
-or the hash-matched build. `VULNERABLE_SO` alone is enough for Leg 3: no fix needs to
-exist yet. A LiteSVM PoC reaches the same line when it loads the program through
-`litesvm_for!` and asserts with the macros' LiteSVM forms. A run of the crate's own
+or the hash-matched build. `--vulnerable-so incident_<n>/bin/<program>.so` alone is
+enough for Leg 3: no fix needs to exist yet. A LiteSVM PoC reaches the same line when
+it loads the program through `litesvm_for!` and asserts with the macros' LiteSVM forms. A run of the crate's own
 arms, a model, prints another line and never satisfies Leg 3, whatever its tier.
 
 **Migrating a 7.6.0 or earlier PoC.** A PoC written against those macros fails to build
@@ -320,8 +336,9 @@ back the diff plus this verification record for the client to apply and re-test.
 the minimized model or on the target itself. On the minimized model the crate's
 `fixed.rs` is its `vulnerable.rs` with the patch transplanted, and `run.sh` with no
 overrides must exit 0 (`VERIFICATION.md` §2; re-audit step 4b checks a client's fix the
-same way). On the target itself, `run.sh` runs with `VULNERABLE_SO` set to the unpatched
-build and `FIXED_SO` to the patched one. That is prebuilt mode: `run.sh`
+same way). On the target itself, `run.sh` runs with `--vulnerable-so` set to the
+unpatched build and `--fixed-so` to the patched one, each a file under a run
+directory's `exec/` or `bin/`. That is prebuilt mode: `run.sh`
 exits 3 unless both files are ELF programs and each arm's contract assertion ran and
 held on the bytes `run.sh` placed, `assert_exploit_effect!` on the unpatched bytes and
 `assert_exploit_rejected_with!` on the patched ones. Our patch is shown only by a line ending in `(rejected with the
@@ -330,15 +347,15 @@ the team deployed and is reported apart, never as evidence for our patch. An exi
 in its final line whether the patched arm accepted the attack or rejected it with
 another error than the pinned one; neither is a revert. The PoC must also use the
 program's real id (an Anchor program checks its own `declare_id!`), which
-`run.sh` does not check. The run needs `AUDITOR_EXEC_MODE` like any other, and the
-crate's `run.sh` and `shared-test-utils/src/` are refreshed from the installation
-before it (§3, "Checking the harness copy"). Exit 3 decides nothing: record its blocker
+`run.sh` does not check. The run needs the recorded mode like any other, and the
+crate's `shared-test-utils/src/` is refreshed from the installation before it (§3,
+"Checking the harness copy"). Exit 3 decides nothing: record its blocker
 line with "PoC re-run needed" (a harness error also gets the repair pass), never a
 broken fix. `VERIFICATION.md` records which target the PoC re-ran against in its
 *Re-detonated against* field.
 
 **Re-running against the client's fix (`/auditor:re-audit` step 4b).** The same prebuilt
-run, with `VULNERABLE_SO` set to the build of the audited commit and `FIXED_SO` to the
+run, with `--vulnerable-so` set to the build of the audited commit and `--fixed-so` to the
 build of the head commit, records one field per finding, in the words of *Re-detonated
 against*: `PoC re-run @ <head sha> (Re-detonated against: patched target build |
 minimized model; AUDITOR_EXEC_MODE=<mode>): reverts | still succeeds | inconclusive
@@ -357,7 +374,8 @@ pinned one is `inconclusive`, and so is every exit 3. A FIXED status without a
 
 1. Rule 5b confirms the finding (`OUTPUT-RULES.md`).
 2. `/auditor:poc` → detect gates (§1) → pick framework (§2) → `poc-engineer` fills a
-   copy of `<auditor-skill root>/templates/poc/` → `run.sh` → award the highest tier reached (§3).
+   copy of `<auditor-skill root>/templates/poc/` (`run.sh --init`) → `run.sh --crate` →
+   award the highest tier reached (§3).
 3. `/auditor:patch` → `patch-engineer` writes `templates/patch/` diff → apply to a
    scratch worktree → re-run the PoC → award a fix tier (§4).
 4. `audit-cycle` / `re-audit` fold both tiers back into the finding block; the report's
