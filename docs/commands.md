@@ -4,6 +4,8 @@ All 17 commands, grouped by phase. Namespace is `auditor` → invoke as `/audito
 
 Each entry lists the argument hint from the command's own frontmatter, when to reach for it, and what it emits. For how they compose into a full engagement, see [audit-flows.md](audit-flows.md).
 
+Each command starts with `preflight.sh` and pre-approves, in its `allowed-tools`, the bundled steps it runs: run directories, read-only git, the Rust tools, the runners and the collectors, each checking its own arguments. Everything else asks, and a non-interactive run denies it and records the step as not run. A command that goes on after your reply invokes itself again through the Skill tool (`--resume`), which Manual mode asks about unless your user settings allow it. What runs without asking, and why that is safe: [permissions-and-isolation.md](permissions-and-isolation.md).
+
 | Phase | Commands |
 |-------|----------|
 | Scoping | [`intake`](#auditorintake) · [`threat-model`](#auditorthreat-model) |
@@ -19,9 +21,9 @@ Each entry lists the argument hint from the command's own frontmatter, when to r
 
 ### `/auditor:intake`
 Alias `/scope`. **Arg:** `[path] [--auto]`
-Turns the passive `QUESTIONS.md` questionnaire into a persisted `audit_<n>/intake.md` — the durable intake artifact both `/auditor:audit-cycle` and `/auditor:audit-assist` read (fixes intake living only in conversation state). Pins the commit (`git rev-parse HEAD`), pre-fills languages/framework/monorepo shape from what the code shows, warms from prior audits via `audit-mem warm` if the tools are built, and captures scope, protocol class, compliance, severity calibration, and the trust-model inputs (who holds admin / upgrade authority / oracle / keeper / LP, and what the review trusts them NOT to do).
+Turns the passive `QUESTIONS.md` questionnaire into a persisted `audit_<n>/intake.md` — the durable intake artifact both `/auditor:audit-cycle` and `/auditor:audit-assist` read (fixes intake living only in conversation state). Pins the commit (`git-ro.sh rev-parse HEAD`), pre-fills languages/framework/monorepo shape from what the code shows, warms from prior audits via `audit-mem warm` if the tools are built, and captures scope, protocol class, compliance, severity calibration, and the trust-model inputs (who holds admin / upgrade authority / oracle / keeper / LP, and what the review trusts them NOT to do).
 **When:** before any serious audit. **Emits:** `audit_<n>/intake.md`.
-`--auto` records the applied default for every unanswered question (no-human pipelines); interactive mode asks sharp, answerable questions and skips what the repo already answers. It also asks once for the **execution mode** (`Q46`: isolated recommended / native — `OUTPUT-RULES.md` Rule 11a); `--auto` records native as an assumed default, and the report states it. Then it asks whether DEP-072 / DEP-073 may **probe the project's own live hosts and buckets** (`Q47`: read-only and unauthenticated, never a third-party service); `--auto`, like an unanswered Q47, records no, and those items give the owner a command to run instead.
+`--auto` records the applied default for every unanswered question (no-human pipelines); interactive mode asks sharp, answerable questions and skips what the repo already answers. It also asks once for the **execution mode** (`Q46`: isolated recommended / native — `OUTPUT-RULES.md` Rule 11a) and writes it to `audit_<n>/exec-mode`, where the runners read it (the stricter of it and `AUDITOR_EXEC_MODE`); `--auto` records native as an assumed default, and the report states it. Then it asks whether DEP-072 / DEP-073 may **probe the project's own live hosts and buckets** (`Q47`: read-only and unauthenticated, never a third-party service); `--auto`, like an unanswered Q47, records no, and those items give the owner a command to run instead.
 
 ### `/auditor:threat-model`
 **Arg:** `[path] [--auto] [--bootstrap] [--vulns <file|https-url>] [--seed <threat-model.md>] [--design-doc <file>] [--parent <https-url|path>]`
@@ -37,11 +39,11 @@ No verdicts, no severities — target enumeration only. `--auto` drives the `thr
 **Arg:** `[path] [--scope full|program|backend|frontend]`
 Full scope-gated audit end-to-end in one session: reads `OUTPUT-RULES.md`, follows `FULL-AUDIT.md` with scope-gated loading, spawns `context-builder` → `vuln-hunter` → `economic-analyst` → `audit-reporter`. Every in-scope item + phase-triggered vector gets `[PASS]`/`[FAIL-N]`/`[PARTIAL]`/`[N/A]`; N≥6 findings pass Rule 5b or downgrade.
 **When:** whole-repo audit where you handle triage yourself. **Emits:** `audit_<n>/REPORT.md` (internal template, numeric risk score) with executive summary, Scope Coverage table, findings, Phase 4.5 maturity scorecard, remediation roadmap.
-Uses ToB tooling if present, else the grep scanners (noting the gap).
+Runs SAST with `sast.sh` (semgrep) and the ToB tooling if present, else the grep scanners (noting the gap).
 
 ### `/auditor:quick-scan`
 **Arg:** (none)
-Fast triage: discovery + scope + static analysis (ToB `static-analysis` if present, else `discovery/grep-commands.md`) + only CRITICAL/HIGH known-vectors for the detected domains — not the full set.
+Fast triage: discovery + scope + static analysis (`sast.sh` semgrep with the rulesets in scope; ToB `static-analysis` when semgrep is missing and the plugins are present; else `discovery/grep-commands.md`) + only CRITICAL/HIGH known-vectors for the detected domains — not the full set.
 **When:** first look, CI gate (on a public repo: pass/fail only, no counts — Rule 11d). As a CI gate it runs non-interactively, so the run must be able to run its analyzers: an analyzer that did not run is reported as not run, and the gate fails. **Emits:** findings with severity + `file:line`; explicitly states it is a triage pass and points to `/auditor:audit`.
 
 ### `/auditor:deep-review`
@@ -51,7 +53,7 @@ Deep single-unit review: read the file, run Phase 0.5 context reconstruction on 
 
 ### `/auditor:diff-audit`
 **Arg:** `[base..head | PR number]`
-Differential audit (Mode 4). Changed set via `git diff --name-only base..head` (default `main..HEAD`); Phase 0.5 on changed functions + 1-hop callers/callees; risk-classify (auth/crypto/value-transfer/validation-removal = HIGH); git-blame removed security code (deletion in a "fix"/"CVE" commit = CRITICAL regression); run only the matching checklist items + vectors through Rule 5b. When a manifest or lockfile changed, a **dependency lane** runs checklist 11 §11.11 (the published artifact's code delta, SC-059..062) and adds a Dependency delta section.
+Differential audit (Mode 4). Changed set via read-only git, `git-ro.sh diff --name-only base..head` (default `main..HEAD`); Phase 0.5 on changed functions + 1-hop callers/callees; risk-classify (auth/crypto/value-transfer/validation-removal = HIGH); git-blame removed security code (deletion in a "fix"/"CVE" commit = CRITICAL regression); run only the matching checklist items + vectors through Rule 5b. When a manifest or lockfile changed, a **dependency lane** runs checklist 11 §11.11 (the published artifact's code delta, SC-059..062) and adds a Dependency delta section.
 **When:** a PR / commit range, not the whole tree. **Emits:** `audit_<n>/PR-REPORT.md` — changed-surface verdicts only; skips whole-repo discovery.
 
 ### `/auditor:spec-audit`
@@ -66,7 +68,7 @@ Spec-compliance (Mode 5). Extract a requirement list (Spec-IR) from the spec; Ph
 
 ### `/auditor:audit-assist`
 **Arg:** `[path] [--scope full|program|backend|frontend]`
-**Flow B — human-in-the-loop.** Same lifecycle as `audit-cycle`, but pauses at checkpoints (after scope, context, each review phase, triage, reconciliation) to surface (a) confirmed findings, (b) next-focus plan, (c) the targeted questions only a human can answer, then folds answers back in.
+**Flow B — human-in-the-loop.** Same lifecycle as `audit-cycle`, but pauses at checkpoints (after scope, context, each review phase, triage, reconciliation) to surface (a) confirmed findings, (b) next-focus plan, (c) the targeted questions only a human can answer, then folds answers back in. After each answer it resumes through the Skill tool (`--resume <checkpoint>`), which Manual mode asks about unless your user settings allow it.
 **When:** business-logic / trust-model judgment matters. **Emits:** the same client-facing report, converged iteratively. Detail: [audit-flows.md](audit-flows.md#flow-b--auditoraudit-assist-interactive).
 
 ---
@@ -85,12 +87,12 @@ Quantifies a candidate economic finding: model capital/setup cost, extractable v
 
 ### `/auditor:poc`
 **Arg:** `<finding-id | INC-n.k | file:line> [--fork] [--fuzz] [--force]`
-Turns a *confirmed* finding into a runnable exploit: resolve the finding + its context worksheet, gate on severity (N≥7 by default; `--force` overrides), detect the toolchain (never assume), pick the harness by finding type (Mollusk / LiteSVM / Surfpool `--fork` / Trident-cargo-fuzz `--fuzz`), spawn `poc-engineer` to fill a feature-gated `vulnerable`/`fixed` crate that **asserts** the flaw.
-**When:** demonstrate a High/Critical finding executably. **Emits:** `audit_<n>/poc/F-xxx/` (crate + one-command `run.sh`) + the earned `[PoC-*]` tier. Never hard-fails — toolchain absence → `[PoC-ATTEMPTED]` + the prose PoC is kept. Full detail: [poc-and-patches.md](poc-and-patches.md).
+Turns a *confirmed* finding into a runnable exploit: resolve the finding + its context worksheet, gate on severity (N≥7 by default; `--force` overrides), detect the toolchain with `probe.sh` (never assume), pick the harness by finding type (Mollusk / LiteSVM / Surfpool `--fork` / Trident-cargo-fuzz `--fuzz`), spawn `poc-engineer` to fill a feature-gated `vulnerable`/`fixed` crate that **asserts** the flaw.
+**When:** demonstrate a High/Critical finding executably. **Emits:** `audit_<n>/poc/F-xxx/` (the crate `run.sh --init` made, and the one command that reproduces it, the installation's `run.sh --crate audit_<n>/poc/F-xxx`) + the earned `[PoC-*]` tier. Never hard-fails — toolchain absence → `[PoC-ATTEMPTED]` + the prose PoC is kept. Full detail: [poc-and-patches.md](poc-and-patches.md).
 
 ### `/auditor:patch`
 **Arg:** `<finding-id | INC-n.k> [--verify-with-mutation] [--post-patch-validation]`
-Drafts and verifies a fix: `patch-engineer` writes a **minimal idiomatic** unified diff against the pinned commit that closes *exactly* the cited bound (obeys the Rust/Anchor/Pinocchio rules), applies it to a **scratch worktree** (never the client tree), rebuilds, and **re-runs the finding's PoC** — which must now revert. `--verify-with-mutation` adds `mewt` mutation + a blast-radius check. `--post-patch-validation` (opt-in) also runs Trail of Bits `post-patch-validation`, only in isolated mode and on a disposable clone; a finding in its result turns `[FIX-VERIFIED]` into `[FIX-INSUFFICIENT]`, or is recorded under Residual on any other tier, and nothing else in it changes a tier.
+Drafts and verifies a fix: `patch-engineer` writes a **minimal idiomatic** unified diff against the pinned commit that closes *exactly* the cited bound (obeys the Rust/Anchor/Pinocchio rules), builds the program as it is and patched with `target.sh build-sbf`, in a scratch clone (never the client tree), and **re-runs the finding's PoC** against those builds — which must now revert. `--verify-with-mutation` adds `mewt` mutation + a blast-radius check. `--post-patch-validation` (opt-in) also runs Trail of Bits `post-patch-validation`, only in isolated mode and on a disposable clone; a finding in its result turns `[FIX-VERIFIED]` into `[FIX-INSUFFICIENT]`, or is recorded under Residual on any other tier, and nothing else in it changes a tier.
 **When:** hand the client a proven fix. **Emits:** `audit_<n>/patches/F-xxx.patch` + `VERIFICATION.md` + the `[FIX-*]` tier. Proposal only — `[FIX-VERIFIED]` requires an *executed* revert; no PoC → `[FIX-PROPOSED]` ceiling. Detail: [poc-and-patches.md](poc-and-patches.md).
 
 ---
@@ -108,7 +110,7 @@ Aggregates the session's checkpoints and findings into the final report: de-dup 
 
 ### `/auditor:re-audit`
 **Arg:** `[prior-report] [base..head]`
-Fix-review / re-audit against a prior `audit_<n>/REPORT.md` (arg 1) and the current tree (delta `base..head`, default `main..HEAD`). Classifies every prior finding **FIXED / PARTIALLY-FIXED / STILL-OPEN / REGRESSED / ACKNOWLEDGED / DISPUTED** — each non-open status citing the **remediation commit/PR hash**, and re-running Rule 5b on the fix (a cosmetic/incomplete patch is not FIXED). Then audits the changed surface for NEW findings (diff-audit path) and runs a **sibling-patch-propagation sweep** for un-patched twins of every fixed anti-pattern (the sweep always emits a result — "no siblings found" is a first-class output). Its diff-audit pass includes the dependency lane, and differential execution (step 4b) runs in the intake execution mode (Rule 11a).
+Fix-review / re-audit against a prior `audit_<n>/REPORT.md` (arg 1) and the current tree (delta `base..head`, default `main..HEAD`). Classifies every prior finding **FIXED / PARTIALLY-FIXED / STILL-OPEN / REGRESSED / ACKNOWLEDGED / DISPUTED** — each non-open status citing the **remediation commit/PR hash**, and re-running Rule 5b on the fix (a cosmetic/incomplete patch is not FIXED). Then audits the changed surface for NEW findings (diff-audit path) and runs a **sibling-patch-propagation sweep** for un-patched twins of every fixed anti-pattern (the sweep always emits a result — "no siblings found" is a first-class output). Its diff-audit pass includes the dependency lane, and differential execution (step 4b) builds each commit and runs the target's own tests through `target.sh`, in the intake execution mode (Rule 11a).
 **When:** the team responded to findings and you verify. **Emits:** `audit_<n+1>/RE-AUDIT.md` (from `<auditor-skill root>/templates/re-audit.md`) — finding-diff table with each finding's step-4b PoC re-run (`reverts | still succeeds | inconclusive | not run`, a FIXED without an executed revert flagged) + new findings + sibling sweep + updated deploy verdict.
 Verification-verb discipline: use "we re-tested and confirmed" only when *you* verified against the current tree; a client's "we fixed it" stays "client states fixed (unverified)" and is not FIXED until independently confirmed.
 
@@ -120,7 +122,7 @@ Post-incident only — never part of an audit. Both commands are propose-only: t
 
 ### `/auditor:hunt`
 **Arg:** `[<address> ...] [--logs <dir>] [--repo <path>] [--window <fromUnix>..<toUnix>] [--collect] [--fresh]`
-Threat hunt with **no alert to start from**: checks the working tree with `preflight.sh`, snapshots the deployed programs, then baselines a Solana transaction corpus (your own `--logs` export first; otherwise a gated, capped RPC collection that runs only after you confirm the addresses, window and call budget — `--collect` stands in for that yes in non-interactive runs, though there the snapshot and the collector still need the permission mode or the run's rules to allow them, and the `--logs` copy is refused), records each hypothesis and its query in a ledger, checks each suspect against the source deployed at the incident slot via `context-builder`, and reproduces it on the program's real bytes via `poc-engineer`. Driven by the `incident-responder` agent, through the `auditor:dnr-analyze` skill.
+Threat hunt with **no alert to start from**: checks the working tree with `preflight.sh`, snapshots the deployed programs, then baselines a Solana transaction corpus (your own `--logs` export first; otherwise a gated, capped RPC collection that runs only after you confirm the addresses, window and call budget — `--collect` stands in for that yes in non-interactive runs, where the snapshot and the collector are pre-approved and the `--logs` copy is refused), records each hypothesis and its query in a ledger, checks each suspect against the source deployed at the incident slot via `context-builder`, and reproduces it on the program's real bytes via `poc-engineer`. Driven by the `incident-responder` agent, through the `auditor:dnr-analyze` skill.
 **When:** you suspect an attack but have no specific lead. **Emits:** `incident_<n>/LEDGER.md`, `INCIDENTS.json`, `INCIDENT_REPORT.md` and the program snapshot under `bin/` (the run directory's first file is a `.gitignore` of `*`). Verdicts follow the [one normative ladder](../references/detection-response/README.md#the-verdict-ladder-the-one-normative-copy).
 
 ### `/auditor:respond`
