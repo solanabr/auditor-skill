@@ -96,10 +96,13 @@
 # transaction in transactions.jsonl is a gap, and so is every address whose history
 # may not have been paged to its end: the last queried_address in signatures.jsonl
 # and every address given after it, or every address given when none appears. A run
-# makes up to addresses × --max-pages + --max-tx calls, each up to 60 s, so run a
-# long one in the background, or with a timeout sized from that count. A stdout or
-# stderr that stops taking output (a reader that exited, a closed terminal) loses the
-# messages, never the run: the collection goes on, and its corpus files are whole.
+# makes up to addresses × --max-pages + --max-tx calls, each up to 60 s.
+# `/auditor:hunt` and `/auditor:respond` run it in the foreground with a timeout sized
+# from that count: a Bash call that outlasts its timeout moves to the background, and
+# the turn its completion starts has none of the command's pre-approvals. Run by hand,
+# a long one can go in the background. A stdout or stderr that stops taking output (a
+# reader that exited, a closed terminal) loses the messages, never the run: the
+# collection goes on, and its corpus files are whole.
 #
 # A WRITE THAT FAILS: every write to the three corpus files, and to the private copies
 # of the signature and fetch lists, is checked (a full disk, a file-size limit). One
