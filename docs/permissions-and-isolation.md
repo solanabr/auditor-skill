@@ -22,7 +22,7 @@ Each `/auditor:*` command pre-approves, in its `allowed-tools`, the bundled step
 | Snapshot an incident's programs, and collect its transactions | `scripts/dnr/snapshot-program.sh`, `scripts/dnr/collect.sh` |
 | Analyze an incident corpus, inside the `auditor:dnr-analyze` fork | `profile.sh`, `frames.py`, `deltas.py`, `jq-ro.sh`, `audit-logs` |
 
-The commands also pre-approve reading (`Read`, `Grep`, `Glob`), starting their agents (`Task`), and writing files under `audit_*/` and `incident_*/` with the Write and Edit tools. Each command pre-approves only the rows its own steps use. When you ask in plain words ("audit this repo"), the skill runs the same first step, `preflight.sh`, but pre-approves nothing yet: its steps ask in Manual mode, go to the classifier in auto mode, and are denied in `claude -p`, where a denied preflight call stops the run. An install as a user-level skill, rather than the plugin, brings no `/auditor:*` commands, so it has no pre-approvals at all. Details of each tool: [power-tools.md](power-tools.md).
+The commands also pre-approve reading (`Read`, `Grep`, `Glob`), starting their agents (`Task`), and writing files under `audit_*/` and `incident_*/` with the Write and Edit tools. Each command pre-approves only the rows its own steps use. When you ask in plain words ("audit this repo"), the skill runs the same first step, `preflight.sh`, but pre-approves nothing: its steps ask in Manual mode, go to the classifier in auto mode, and are denied in `claude -p`, where a denied preflight call stops the run. An install as a user-level skill, rather than the plugin, brings no `/auditor:*` commands, so it has no pre-approvals at all. Details of each tool: [power-tools.md](power-tools.md).
 
 ### Why that is safe
 
