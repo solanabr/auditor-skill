@@ -11,9 +11,11 @@
 # log and show without colour, external diff or textconv and with rename detection set on the command
 # line, so those settings in the maintainer's ~/.gitconfig or the clone's config never reach the parsers
 # below. Upstream's own .gitattributes cannot hide a changed file from the scans either: they diff with
-# --text, and read attributes from the empty tree where git supports it (2.40+). The report informs a
-# human reviewer; it is not a verdict. Works with bash 3.2.
+# --text, and read attributes from the empty tree where git supports it (2.40+). Every tool reads bytes in
+# the C locale, and the added-line scans drop NUL bytes first, so neither a byte that is not UTF-8 nor a NUL
+# hides a line from them. The report informs a human reviewer; it is not a verdict. Works with bash 3.2.
 set -uo pipefail
+export LC_ALL=C
 
 fetch=0
 if [ "${1:-}" = "--fetch" ]; then fetch=1; shift; fi
@@ -139,11 +141,11 @@ MOVESURF="$LOADSURF|(^|/)skill\\.md\$|(^|/)(commands|agents|bin|scripts)/"
 moved() { renames "$@" | rx="$MOVESURF" awk -F'\t' '$1 == "R100" && tolower($3) !~ ENVIRON["rx"] \
   && $2 !~ /\/(tests|evals|evals-extra|fixtures)\/|[.]lock$|package-lock[.]json$/ { print $2 "\t" $3 }'; }
 moved "${CODE[@]}" > "$tmp/mv_code"; moved "${MD[@]}" > "$tmp/mv_md"; moved "${ALL[@]}" > "$tmp/mv_all"
-# added() MODE LIST PATHSPEC...: the -U0 diff a scan reads, every file as added or changed. MODE skip leaves out
-# the files at the NEW paths of LIST ("OLD<tab>NEW" lines), MODE only keeps just those. Without rename detection
-# a/ and b/ name the same path, so the path is the header's second half.
+# added() MODE LIST PATHSPEC...: the -U0 diff a scan reads, every file as added or changed, NUL bytes dropped.
+# MODE skip leaves out the files at the NEW paths of LIST ("OLD<tab>NEW" lines), MODE only keeps just those.
+# Without rename detection a/ and b/ name the same path, so the path is the header's second half.
 added() { local mode=$1 list=$2; shift 2
-  g diff "${SCAN[@]}" -U0 "$old" "$new" -- "$@" | awk -v mode="$mode" -v list="$list" '
+  g diff "${SCAN[@]}" -U0 "$old" "$new" -- "$@" | tr -d '\000' | awk -v mode="$mode" -v list="$list" '
     BEGIN { while ((getline l < list) > 0) { split(l, a, "\t"); s[a[2]] = 1 } }
     /^diff --git / { n = (length($0) - 16) / 2; keep = (substr($0, 14, n) in s) == (mode == "only") }
     keep'; }
