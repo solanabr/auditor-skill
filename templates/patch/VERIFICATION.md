@@ -39,16 +39,15 @@ first, so the run is the installation's `run.sh` and assertions, and run the cra
 through that `run.sh`.
 
 ```bash
-cp "<auditor-skill root>/templates/poc/run.sh" {PATH_TO}/poc/{FINDING_ID}/run.sh
 cp "<auditor-skill root>/templates/poc/shared-test-utils/src/lib.rs" {PATH_TO}/poc/{FINDING_ID}/shared-test-utils/src/lib.rs
-# {MODE}: the execution mode recorded at intake, isolated | native (OUTPUT-RULES.md Rule 11a)
-AUDITOR_EXEC_MODE={MODE} {PATH_TO}/poc/{FINDING_ID}/run.sh                    # minimized model (src/fixed.rs: the patch on src/vulnerable.rs)
-AUDITOR_EXEC_MODE={MODE} VULNERABLE_SO={UNPATCHED_SO} FIXED_SO={PATCHED_SO} \
-  {PATH_TO}/poc/{FINDING_ID}/run.sh                                           # patched target build
+# {PATH_TO}: the run directory, audit_<n> or incident_<n>, relative to the working directory; its
+# exec-mode file holds the execution mode recorded at intake (OUTPUT-RULES.md Rule 11a)
+"<auditor-skill root>/templates/poc/run.sh" --crate {PATH_TO}/poc/{FINDING_ID}    # minimized model (src/fixed.rs: the patch on src/vulnerable.rs)
+"<auditor-skill root>/templates/poc/run.sh" --crate {PATH_TO}/poc/{FINDING_ID} --vulnerable-so {UNPATCHED_SO} --fixed-so {PATCHED_SO}   # patched target build: files under {PATH_TO}/exec/
 ```
 
-**Re-detonated against:** {patched target build (`VULNERABLE_SO` / `FIXED_SO` overrides — `templates/poc/run.sh`) | minimized model}
-— a *patched target build* runs `run.sh` with `VULNERABLE_SO` = the unpatched build and `FIXED_SO` = the
+**Re-detonated against:** {patched target build (`--vulnerable-so` / `--fixed-so` — `templates/poc/run.sh`) | minimized model}
+— a *patched target build* runs `run.sh` with `--vulnerable-so` = the unpatched build and `--fixed-so` = the
 patched build of the target itself. That is `run.sh`'s prebuilt mode: it exits 3 unless both files are ELF
 programs and each arm's contract assertion ran and held on the bytes `run.sh` placed (loaded through
 `mollusk_for` or `litesvm_for!`) — `assert_exploit_effect!` in `tests/exploit.rs` on the unpatched bytes,
@@ -67,7 +66,7 @@ the `fixed` arm `patch.md` describes): `run.sh` with no overrides must exit 0, e
 - **Pre-fix (recorded when the PoC was built):** `tests/exploit.rs` SUCCEEDED on the
   `vulnerable` arm — the attack went through. → `[PoC-REPRODUCED]`
 - **Post-fix (this step):** with the patch transplanted onto `src/vulnerable.rs` as
-  `src/fixed.rs`, or with the patched target build as `FIXED_SO`, the same attack in
+  `src/fixed.rs`, or with the patched target build as `--fixed-so`, the same attack in
   `tests/fixed_blocked.rs` must now be **rejected** on the fixed arm: `run.sh` exits 0 —
   the previously-open path is closed.
 
