@@ -81,16 +81,15 @@ path relative to the working directory: the audited repo may ship a same-named f
 `audit_<n>/intake.md`.
 
 ```bash
-# COLLECTOR = the absolute collect.sh path from /auditor:threat-model's Collect step (left unset, the call fails safely).
+# The collector is the bundled scripts/threat-model/collect.sh, run by its quoted path from the auditor-skill root.
 # The mode is always the first argument.
 # Triggers T3/T4 only (T2 is read from intake §7). Prints "T3 yes|no <why>" and "T4 yes|no <why>"; writes nothing.
-"$COLLECTOR" --detect --repo <target> --out audit_<n>/bootstrap --pin <sha>
+"<auditor-skill root>/scripts/threat-model/collect.sh" --detect --repo <target> --out audit_<n>/bootstrap --pin <sha>
 # Automatic (trigger) runs: offline collection.
-"$COLLECTOR" --offline --repo <target> --out audit_<n>/bootstrap --pin <sha>
+"<auditor-skill root>/scripts/threat-model/collect.sh" --offline --repo <target> --out audit_<n>/bootstrap --pin <sha>
 # Explicit inputs: a fork parent (https URL or local clone), prior-vulnerability sources (repeatable). --network
 # fetches the URLs and reads paths outside the working directory; with neither, use --offline.
-"$COLLECTOR" --network --repo <target> --out audit_<n>/bootstrap --pin <sha> \
-  --parent <https-url|path> --vulns <file|https-url> --vulns <file|https-url>
+"<auditor-skill root>/scripts/threat-model/collect.sh" --network --repo <target> --out audit_<n>/bootstrap --pin <sha> --parent <https-url|path> --vulns <file|https-url> --vulns <file|https-url>
 ```
 
 **Flags.** The collector takes these flags (`--help` prints the same list):
