@@ -388,22 +388,45 @@ deploy keypair, an upgrade authority, a Squads member key, or an SDK's npm or cr
 
 ---
 
-## 7. Pointers: pinning, supply chain, runners, permissions
+## 7. Pins, repointed tags, runners, OIDC trust and permissions (KV-080 · KV-140 · DEP-067 · DEP-070 · DEP-084)
 
-- **Pinning (DEP-067, DEP-070).** Every action is pinned to a full SHA with a `# vX.Y.Z` comment, and the SHA resolves to
-  a tag or branch of the named repository (`git ls-remote https://github.com/<owner>/<repo>` lists it; run it from a
-  scratch dir outside the checkout, so its repo config does not apply, and only for an `owner/repo` slug, the first two
-  segments of the `uses:` value, that matches `^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`): a commit that exists only in a fork
-  can still be referenced through the parent's `owner/repo` slug, an "impostor commit" (Chainguard, 2023). Pins are
-  kept current by a Dependabot or Renovate `github-actions` updater, because an old pin keeps fixed bugs (§1). Tag
-  repointing is not hypothetical: tj-actions/changed-files and reviewdog in 2025, trivy-action in 2026 (§8).
-- **Self-hosted runners.** Fork-PR jobs do not run on persistent self-hosted runners in public repositories. The PyTorch
-  research (Stawinski and Khan, 2024) turned a merged typo fix into contributor status, ran on a self-hosted runner and
-  reached release credentials.
-- **Permissions.** Declare `permissions:` explicitly per workflow or job (KV-080 step 5); repositories created before
-  2023-02-02 may still default to read-write (`[PARTIAL]` until the setting is seen).
-- **OIDC and cloud deploys.** DEP-084 and §5.6. **Secrets in logs.** DEP-071 and SEC-046; the tj-actions payload printed
-  secrets into public logs.
+**7.1 Pins and impostor commits (KV-080 Step 4, DEP-067, DEP-070).** Every action is pinned to a full SHA with a
+`# vX.Y.Z` comment, and pins are kept current by a Dependabot or Renovate `github-actions` updater, because an old pin
+keeps fixed bugs (§1). A pin is only as good as the commit behind it: GitHub serves a commit that exists only in a fork
+through the parent's `owner/repo` slug, an "impostor commit" (Chainguard, 2023), so a pin can carry a real version
+comment and still run code the maintainers never merged. Recipe R9 lists every pin. For each repository it names, run
+one `git ls-remote --tags` in the form KV-080 Step 4 gives:
+- only for an `owner/repo` slug, the first two segments of the `uses:` value, that matches
+  `^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`;
+- from a new empty directory outside the checkout, so no repository config applies;
+- with no credential helper, askpass program, `~/.netrc` entry or terminal prompt left to answer GitHub's login request
+  with the auditor's credentials, since the target chose the repository.
+
+The call asks for approval, because its URL comes from the target, and github.com and the slugs sent go in the report's
+outside-service list ([`OUTPUT-RULES.md` Rule 11b](../../OUTPUT-RULES.md#rule-11-operating-safety)). A pin passes only
+when its SHA is on the line of the tag its comment names, or on that tag's `^{}` line. Anything else is `[PARTIAL]`:
+`ls-remote` lists ref tips only, so a commit deeper in a branch is legitimate and unlisted, and a fork-only commit looks
+the same; telling them apart needs a fetch.
+
+**7.2 A repointed tag (KV-080 Step 4).** Tag repointing is not hypothetical: tj-actions/changed-files and reviewdog in
+2025, trivy-action in 2026 (§8). A tag reference runs whatever the tag points to when the job starts, so every workflow
+that names the action by a tag or a branch FAILs. A SHA pin runs only its own commit, which is the malicious one if it
+was taken while the tag was repointed. Which runs took the repointed commit is in the run history, which the source does
+not show: name for the owner the runs in the advisory's window, the secrets and OIDC roles those jobs held (to rotate),
+their logs (public on a public repository; to delete), and the caches, artifacts and releases they wrote (to discard).
+The fix pins the SHA that `ls-remote` lists under a release the advisory names as clean. A comment whose tag
+`ls-remote` shows at another commit than the pin is the same signal without an advisory: the tag moved after the pin
+was taken, or the pin never was that release.
+
+**7.3 Self-hosted runners.** Fork-PR jobs do not run on persistent self-hosted runners in public repositories. The
+PyTorch research (Stawinski and Khan, 2024) turned a merged typo fix into contributor status, ran on a self-hosted
+runner and reached release credentials.
+
+**7.4 OIDC and cloud deploys.** DEP-084 and §5.6.
+
+**7.5 Permissions and secrets in logs.** Declare `permissions:` explicitly per workflow or job (KV-080 step 5);
+repositories created before 2023-02-02 may still default to read-write (`[PARTIAL]` until the setting is seen). Secrets
+in logs: DEP-071 and SEC-046; the tj-actions payload printed secrets into public logs.
 
 ---
 

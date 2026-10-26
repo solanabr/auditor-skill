@@ -410,7 +410,7 @@ npx license-checker --summary
 
 ## GitHub Actions (CI trigger trust)
 
-> Locators for `references/vuln-classes/github-actions.md`, KV-080, KV-116, KV-139, KV-140, DEP-067..071 / DEP-090..096 and AI-021..035. A hit is a place to read, not a finding: open the whole workflow, then trace trigger → actor → payload → sink → privilege. Every recipe is recursive with `--include` and fully single-quoted where it contains `$` or `!`, so it runs unchanged in bash and zsh and never trips on an unmatched glob. Point the same commands at any `action.yml` / `action.yaml` outside `.github/` (composite actions at the repo root). `scripts/tests/test-gha-recipes.sh` runs R1–R8 exactly as written here, plus the KV-116 Step 1, KV-139 Step 1 and KV-140 Step 6 locators, against `scripts/tests/fixtures/gha/`, and fails if a known vector's copy of R1–R5 or R7 differs from this file by a byte.
+> Locators for `references/vuln-classes/github-actions.md`, KV-080, KV-116, KV-139, KV-140, DEP-067..071 / DEP-090..096 and AI-021..035. A hit is a place to read, not a finding: open the whole workflow, then trace trigger → actor → payload → sink → privilege. Every recipe is recursive with `--include` and fully single-quoted where it contains `$` or `!`, so it runs unchanged in bash and zsh and never trips on an unmatched glob. Point the same commands at any `action.yml` / `action.yaml` outside `.github/` (composite actions at the repo root). `scripts/tests/test-gha-recipes.sh` runs R1–R9 exactly as written here, plus the KV-116 Step 1, KV-139 Step 1 and KV-140 Step 6 locators, against `scripts/tests/fixtures/gha/`, and fails if a known vector's copy of R1–R5, R7 or R9 differs from this file by a byte.
 
 ```bash
 # R1 — files with a comment / review / issue / discussion trigger and no author_association outside a comment (the first list minus the second)
@@ -461,6 +461,12 @@ grep -rnE --include='*.yml' --include='*.yaml' 'ref:[[:space:]]*.?\$\{\{.*(githu
 grep -rnE --include='*.yml' --include='*.yaml' 'anthropics/claude-code-(base-)?action|run-gemini-cli|gemini-cli-action|openai/codex-action|actions/ai-inference|claude ([^|;&#]* )?(-p|--print|\\[[:space:]]*$)|@anthropic-ai/claude-code|codex exec|gemini ([^|;&#]* )?(-p|--prompt|\\[[:space:]]*$)|allowed_non_write_users|allowed_bots|allow-users|allow-bots|include_comments_by_actor|direct_prompt|override_prompt|custom_instructions|allowed_tools|disallowed_tools|allowedTools|show_full_output|additional_permissions' .github/
 ```
 > AI-023..031, AI-034..035, KV-116. `claude --model x -p` and `gemini -m x -p` count: options may come before `-p`, claude's `--print` or gemini's `--prompt`, as long as no `|`, `;`, `&` or `#` comes between them, or the line ends in a `\` that continues the command. Pre-v1 names (`direct_prompt`, `override_prompt`, `custom_instructions`, `allowed_tools`, `disallowed_tools`) can remain after a workflow's `uses:` line moves to `@v1` or a SHA, so judge each step by the keys it sets.
+
+```bash
+# R9 — actions and reusable workflows pinned to a full commit SHA, with their version comments
+grep -rnE --include='*.yml' --include='*.yaml' '^[^#]*uses:[[:space:]]*.?[A-Za-z0-9._-]+/[A-Za-z0-9._-]+(/[^@[:space:]]*)?@[0-9a-f]{40}([^0-9a-f]|$)' .github/
+```
+> DEP-067, KV-080 Step 4. GitHub serves a commit that exists only in a fork through the parent's `owner/repo`, so a pin is only as good as the commit behind it: check each repository R9 names once, with the `git ls-remote` command and the grading in KV-080 Step 4. R9 lists pins quoted or not, with or without a version comment, and the job-level `uses:` of reusable workflows. The first command of that step lists the references that are not a full SHA: tags, branches, short SHAs and `docker://` images.
 
 **Tool cross-check (optional, static).** `zizmor --offline --persona=auditor .github/workflows/` and CodeQL's `actions` language cover template injection, env-file writes, dangerous triggers and bot conditions. Neither replaces R1–R3, R7 or R8: on fixtures 01–17 in `scripts/tests/fixtures/gha/`, zizmor 1.30.1 did not flag a mention-only gate, the cross-object OR, a deny-list, event text in an agent prompt input, `allowed_non_write_users: "*"` or `allow-unsafe-pr-checkout: true` (details in `references/vuln-classes/github-actions.md` §9).
 

@@ -10,7 +10,7 @@ category: devops
 
 Attacker modifies CI workflow or compromises CI tool — injects malicious code into build artifacts deployed to production.
 
-> Cross-ref: checklist 13 §13.9 (DEP-067..071) and §13.13 (DEP-090..096); KV-139 (comment-triggered workflow without per-event author gating); KV-140 (`workflow_run` / `pull_request_target` pwn request incl. artifact and cache poisoning); KV-116 (AI agent in CI holding deploy keys); `references/vuln-classes/github-actions.md`; recipes R1–R8 in `discovery/grep-commands.md` ("GitHub Actions (CI trigger trust)").
+> Cross-ref: checklist 13 §13.9 (DEP-067..071) and §13.13 (DEP-090..096); KV-139 (comment-triggered workflow without per-event author gating); KV-140 (`workflow_run` / `pull_request_target` pwn request incl. artifact and cache poisoning); KV-116 (AI agent in CI holding deploy keys); `references/vuln-classes/github-actions.md`; recipes R1–R9 in `discovery/grep-commands.md` ("GitHub Actions (CI trigger trust)").
 
 #### Verification Procedure
 
@@ -36,13 +36,30 @@ grep -rnE --include='*.yml' --include='*.yaml' 'echo.*(\$\{\{[^}]*secrets\.|\$[A
 - ✅ PASS: Secrets never echoed in CI logs
 - ❌ FAIL: Secrets printed to CI output (visible in logs)
 
-**Step 4: Check action versions (pinned to SHA?)**
+**Step 4: Check action versions (pinned to SHA?), the release behind each SHA, and repointed tags**
 ```
 grep -rnE --include='*.yml' --include='*.yaml' 'uses:' .github/ | grep -vE '@[a-f0-9]{40}' | grep -v 'uses: \./'
+grep -rnE --include='*.yml' --include='*.yaml' '^[^#]*uses:[[:space:]]*.?[A-Za-z0-9._-]+/[A-Za-z0-9._-]+(/[^@[:space:]]*)?@[0-9a-f]{40}([^0-9a-f]|$)' .github/
 ```
-- ✅ PASS: All actions pinned to full SHA (`@abc123...`) — immune to tag tampering; DEP-067 adds that each SHA must resolve to a tag or branch of the named repository and that pins are kept current
+- The first command lists every reference that is not a full SHA; the second (recipe R9) lists every action and reusable workflow pinned to one, with its version comment.
+- ✅ PASS: All actions pinned to full SHA (`@abc123...`), each the release its comment names (below), and kept current by a Dependabot or Renovate `github-actions` updater (DEP-067)
 - ⚠️ PARTIAL: Actions pinned to version tag (`@v4`) — better than no pin, but tag can be moved
 - ❌ FAIL: Actions referencing `@main` or `@latest`
+
+**The release behind each SHA.** GitHub serves a commit that exists only in a fork through the parent's `owner/repo` slug, so a pin can carry a real version comment and still run code the action's maintainers never merged: an impostor commit (Chainguard, 2023). Check each repository the second command lists once, for all its pins:
+- Run `cd "$(mktemp -d)" && HOME="$PWD" GIT_TERMINAL_PROMPT=0 GIT_ASKPASS= GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -c credential.helper= ls-remote --tags https://github.com/<owner>/<repo>`, with `<owner>/<repo>` the first two segments of the `uses:` value, and only when they match `^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`.
+- It runs in a new empty directory outside the checkout, so no repository config applies. The settings keep the auditor's credentials out of a request for a repository the target chose: when GitHub asks for a login, no credential helper, askpass program, `~/.netrc` entry or terminal prompt answers.
+- It asks for approval, because the URL comes from the target's workflows. A non-interactive run denies it: grade those pins `[PARTIAL]` (not verified).
+- List github.com and the slugs sent in the report's outside-service list (OUTPUT-RULES Rule 11b).
+
+In its output each line is `<sha>`, a tab and `refs/tags/<tag>`, and an annotated tag adds a `refs/tags/<tag>^{}` line that holds its commit. Grade each pin:
+- ✅ PASS: the pinned SHA is on the line of the tag its comment names (`# v4.2.2`, `# tag=v4.2.2` or `# pin@v4.2.2`), or on that tag's `^{}` line.
+- ⚠️ PARTIAL: it is not. `ls-remote` lists ref tips only, so a commit inside a branch's history is legitimate and unlisted, and a commit that exists only in a fork looks the same; telling them apart needs a fetch. Record which case it is: no version comment; a comment that names a moving tag (`v4`) or a branch; the SHA under another tag than the comment names (correct the comment); or the named tag at another commit (next paragraph).
+
+**A repointed tag.** When an advisory reports that an action's tags were repointed (tj-actions/changed-files and reviewdog in 2025, trivy-action in 2026), or the tag a comment names lists another commit than the pin:
+- ❌ FAIL: a workflow references that action by a tag or branch, so each run takes whatever the tag points to when the job starts; or a SHA pin is a commit the advisory names as malicious.
+- ⚠️ PARTIAL: what the source cannot show. Without an advisory, the pin and the tag disagree because the tag moved after the pin was taken, or because the pin never was that release: name both commits for the owner to check against the action's releases. With one, which runs took the repointed commit, and what they could reach, is in the run history: name the runs in the advisory's window; the secrets and OIDC roles those jobs held (to rotate); their logs, public on a public repository (to delete); and the caches, artifacts and releases they wrote (to discard).
+- The fix pins the SHA that `ls-remote` lists under a release the advisory names as clean.
 
 **Step 5: Check for write permissions**
 ```
@@ -72,6 +89,6 @@ grep -rl --include='*.yml' --include='*.yaml' '^[^#]*author_association' .github
 - ❌ FAIL: A privileged job starts on a mention or command alone, or reads the opener's association on a comment event. Full procedure: KV-139
 
 **Overall verdict:**
-- ✅: Actions SHA-pinned, minimal permissions, no fork-controlled code in privileged triggers, comment triggers author-gated, secrets protected
-- ⚠️: Version-tag pinned, reasonable permissions, known action vendors
-- ❌: Unpinned actions, privileged trigger with PR checkout, ungated comment-triggered privileged job, secrets in logs
+- ✅: Actions SHA-pinned to the releases their comments name, minimal permissions, no fork-controlled code in privileged triggers, comment triggers author-gated, secrets protected
+- ⚠️: Version-tag pinned, reasonable permissions, known action vendors; pins not yet verified
+- ❌: Unpinned actions, privileged trigger with PR checkout, ungated comment-triggered privileged job, secrets in logs, a tag reference to an action whose tags were repointed

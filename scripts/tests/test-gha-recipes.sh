@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
 # test-gha-recipes.sh — run the GitHub Actions recipes exactly as written against the fixture workflows in
 # scripts/tests/fixtures/gha/, and check that each recipe flags exactly the expected fixtures:
-#   R1–R8    discovery/grep-commands.md, section "GitHub Actions (CI trigger trust)";
+#   R1–R9    discovery/grep-commands.md, section "GitHub Actions (CI trigger trust)";
 #   K116-1   KV-116 Step 1 (AI-agent steps);
 #   K139-1   KV-139 Step 1 (externally triggerable workflows);
 #   K140-6   KV-140 Step 6 (Actions cache writers and restorers).
 # A recipe of two commands (R1) flags what the first lists and the second does not; every other line of an R
 # recipe must be an echo of a quoted marker, which the suite does not run. The suite also checks that every
 # known-vector step that repeats an R recipe carries its lines byte for byte, as one block in the same order,
-# and that no recipe flags a fixture's comment lines. It runs R1 and K139-1 over trigger spellings built at run
-# time, R1 over file names that hold a space or a quote, and R1 over large inputs: 2,000 workflows, and two of
-# about 1 MiB. Every command of every recipe must end within 30 s on a workflow that holds one 1 MiB line of
-# near misses. KV-020 Step 3 and KV-100 Step 4, which list documentation files with one recursive grep as R1 does,
-# run over file names that hold a space or a quote, and KV-100's over more than 64 KiB of names.
+# and that no recipe flags a fixture's comment lines. R9 is also checked line by line on its own fixtures. It
+# runs R1 and K139-1 over trigger spellings built at run time, R1 over file names that hold a space or a quote,
+# and R1 over large inputs: 2,000 workflows, and two of about 1 MiB. Every command of every recipe must end
+# within 30 s on a workflow that holds one 1 MiB line of near misses. KV-020 Step 3 and KV-100 Step 4, which
+# list documentation files with one recursive grep as R1 does, run over file names that hold a space or a
+# quote, and KV-100's over more than 64 KiB of names.
 #
 # Usage (from the repo root): bash scripts/tests/test-gha-recipes.sh
 # Needs bash >= 3.2, grep, awk. No network. The fixtures are copied into a temp dir as .github/workflows/, and
@@ -99,9 +100,10 @@ R3 $KV139 4
 R4 $KV140 4
 R5 $KV140 5
 R7 $KV080 2
-R7 $KV140 2"
+R7 $KV140 2
+R9 $KV080 4"
 
-IDS="R1 R2 R3 R4 R5 R6 R7 R8 K116-1 K139-1 K140-6"
+IDS="R1 R2 R3 R4 R5 R6 R7 R8 R9 K116-1 K139-1 K140-6"
 
 # Fixtures each recipe must flag (two-digit prefixes, ascending). Anything else is a mismatch.
 expected() {
@@ -114,11 +116,17 @@ expected() {
     R6) echo "05 07 08 14 15 16 20 31 32 50 75" ;;
     R7) echo "05 07 11 12 15 18 19 20 21 22 23 24 51 52 53 61 62 63 70 71" ;;
     R8) echo "01 08 11 14 33 34 54 57 67 68 72 73" ;;
+    R9) echo "01 05 07 08 11 12 15 18 19 20 21 22 23 24 35 36 38 39 42 43 44 45 51 52 53 60 61 62 63 70 71 76 98" ;;
     K116-1) echo "01 08 11 14 33 34 54 57 67 68 72 73" ;;
     K139-1) echo "01 02 03 04 08 10 11 14 16 17 22 23 25 26 33 40 48 49 53 55 56 58 59 62 64 65 66 69 71 74" ;;
     K140-6) echo "35 36 37 38 39 42 43 44 45" ;;
   esac
 }
+
+# The lines each recipe must flag in its own fixtures (<id> <fixture> <line>...); its other fixtures are listed
+# whole in expected(), and its near misses are in neither.
+LINES="R9 76-pin-forms.yml 11 12 13 14 16 17 19
+R9 98-pin-and-runner-yaml-extension.yaml 11"
 
 # The command lines of recipe <id>.
 recipe_lines() {
@@ -211,6 +219,18 @@ for id in $IDS; do
   check "$id" "$(recipe_lines "$id")"
 done
 
+# Line by line: in each fixture LINES names, the recipe flags exactly the lines listed, so every spelling and
+# every alternative of its pattern has a line of its own that it must reach.
+nlines=0
+while read -r id fx want; do
+  nlines=$((nlines + 1))
+  path=.github/workflows/$fx
+  got=$(run_recipe "$work" "$(recipe_lines "$id")" | awk -F: -v p="$path" '$1 == p { print $2 }' | sort -n | tr '\n' ' ' \
+    | sed 's/ $//')
+  if [ "$got" = "$want" ]; then echo "ok   $id in $fx: lines $got"
+  else echo "FAIL $id in $fx: got lines [$got] want [$want]"; fail=1; fi
+done <<< "$LINES"
+
 # A copy is the recipe's code lines as one run of whole lines, in order. The step may hold other commands
 # around a recipe of one command; a recipe of two is the whole code of its step, so "the first" and "the second"
 # name the same lines in both files.
@@ -233,9 +253,11 @@ while read -r id file step; do
   fi
 done <<< "$COPIES"
 
-# The negative controls must stay silent for every recipe.
+# The negative controls must stay silent for every recipe, except that R9 lists every full-SHA pin, and fixture
+# 60 pins its checkout the way DEP-067 asks.
 for id in $IDS; do
   for neg in 09 60; do
+    case "$id:$neg" in R9:60) continue ;; esac
     case " $(expected "$id") " in *" $neg "*) echo "FAIL $id: negative control $neg is expected"; fail=1 ;; esac
   done
 done
@@ -379,4 +401,4 @@ fi
 
 if [ "$fail" -ne 0 ]; then echo "gha recipe test FAILED" >&2; exit 1; fi
 nfix=$(ls "$fixtures"/*.yml "$fixtures"/*.yaml "$fixtures"/actions/*.yml | wc -l | tr -d ' ')
-echo "gha recipe test passed: $nrec recipes, $nfix fixtures, $ncopy copies, comment lines, trigger spellings, file names, large inputs"
+echo "gha recipe test passed: $nrec recipes, $nfix fixtures, $nlines line checks, $ncopy copies, comment lines, trigger spellings, file names, large inputs"
