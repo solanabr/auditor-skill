@@ -88,6 +88,11 @@ jobs:
         shell: /bin/bash --noprofile --norc -e {0}
     env:
       REQUIRE_TOOLCHAIN: "1"
+      # The install step's action writes CARGO_TERM_COLOR=always and CARGO_INCREMENTAL=0 to GITHUB_ENV when they
+      # are unset. Set here, both hold for every step whether or not it ran, and cargo's build log stays plain
+      # for the suites that check it for a ^warning line.
+      CARGO_TERM_COLOR: never
+      CARGO_INCREMENTAL: "0"
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
