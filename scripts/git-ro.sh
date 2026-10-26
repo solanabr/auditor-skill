@@ -57,13 +57,15 @@
 #
 # The hardened call (hgit in scripts/lib/confine.sh) runs every git command with env -i and only HOME,
 # PATH (absolute entries outside the working directory), TMPDIR, LC_ALL=C and TZ, plus GIT_NO_LAZY_FETCH,
-# GIT_TERMINAL_PROMPT=0, GIT_OPTIONAL_LOCKS=0, GIT_CEILING_DIRECTORIES at the working directory's parent,
+# GIT_TERMINAL_PROMPT=0, GIT_OPTIONAL_LOCKS=0, GIT_ALLOW_PROTOCOL (the transport allowlist, empty here),
+# GIT_CEILING_DIRECTORIES at the working directory's parent,
 # and system and global config dropped. git runs with --no-pager, and -c pins override the repository's
 # config. They switch off:
 #   - programs config can name: core.fsmonitor, core.pager, core.hooksPath (hooks), diff.external,
 #     gpg.program, gpg.ssh.program and gpg.x509.program, log.showSignature and format.pretty, and
 #     log.diffMerges (a remerge diff runs merge.<driver>.driver);
-#   - fetching: protocol.allow=never stops lazy fetch and every remote helper on every git version;
+#   - fetching: the empty transport allowlist above stops lazy fetch and every remote helper on every
+#     git version, and the repository's config cannot widen it (protocol.allow=never pins the same in config);
 #   - files outside the tree that config can name and git prints from or parses: core.attributesFile,
 #     core.excludesFile, diff.orderFile, mailmap.file;
 #   - other repositories: submodule.recurse, diff.submodule;
