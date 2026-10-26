@@ -63,7 +63,10 @@ RECORD:
 ### 0.2 — Map the Codebase
 
 ```
-ACTION: Use this run's own Layout table (audit_<n>/intake.md §1, Q39/Q44: where the code, the tests and the build files live, and the exclusions), and nothing from an earlier run's directory: intake copies an earlier layout into this table only on the human's yes. A run directory reused without a new intake holds an earlier run's table: use it only after the human has seen every row of it and said yes. Without a table, use the defaults in discovery/file-map.md, OR auto-discover. With one, also note each directory with code in it that no row lists or excludes:
+ACTION: Use this run's own Layout table (audit_<n>/intake.md §1, Q39/Q44: where the code, the tests and the build files live, and the exclusions), and nothing from an earlier run's directory: intake copies an earlier layout into this table only on the human's yes.
+A run directory reused without a new intake holds an earlier run's table: offer it to the human as /auditor:intake step 4 offers an earlier table. On a yes, set each row's source in that intake.md to "reused from audit_<n> on the human's yes"; on anything else, replace the table there with the defaults. Record which under Earlier layout.
+With a table, also note each directory outside run directories with code in it that no row lists or excludes: the highest such directory (node_modules/, target/), not each one under it.
+Without a table, use the defaults in discovery/file-map.md, OR auto-discover:
   1. List all .rs files under programs/
   2. List all .ts/.tsx files under apps/backend/src/
   3. List all .ts/.tsx files under apps/web/src/
@@ -77,7 +80,7 @@ RECORD:
   - Total instruction handlers: ___
   - Total API endpoints (backend routes + frontend API routes): ___
   - Exclusions applied, each with its source from the Layout table (report §2.4 Out of Scope): ___
-  - Directories with code that no row of the Layout table lists or excludes, not reviewed (report §2.4): ___
+  - Directories outside run directories with code that no row of the Layout table lists or excludes, not reviewed (report §2.4): ___
 ```
 
 ### 0.3 — Build Instruction Matrix
