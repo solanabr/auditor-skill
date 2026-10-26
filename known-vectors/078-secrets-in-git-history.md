@@ -38,7 +38,7 @@ grep -rn --include="*.ts" --include="*.tsx" -E "[1-9A-HJ-NP-Za-km-z]{64,88}" . |
 **Step 4: Scan ALL committed files in git history for dangerous filenames**
 ```
 # Every file ever added whose path names a secret, in any letter case (read-only git, OUTPUT-RULES Rule 11c)
-"<auditor-skill root>/scripts/git-ro.sh" log --all --diff-filter=A --name-only --pretty=format: -- ':(icase)*.env' ':(icase)*.pem' ':(icase)*id_rsa*' ':(icase)*keypair*' ':(icase)*wallet*.json*' ':(icase)*secret*' ':(icase)*credential*' ':(icase)*.key' ':(icase)*delegate.json*' | sort -u
+"<auditor-skill root>/scripts/git-ro.sh" log --all --diff-filter=A --name-only --pretty=format: -- ':(icase)*.env' ':(icase)*.pem' ':(icase)*id_rsa*' ':(icase)*keypair*' ':(icase)*wallet*.json*' ':(icase)*secret*' ':(icase)*credential*' ':(icase)*.key' ':(icase)*delegate.json*'
 ```
 - ✅ PASS: Zero dangerous filenames ever committed, and no `refused:` line
 - ❌ FAIL: Dangerous file was committed at some point (even if deleted later — IT IS STILL IN HISTORY)

@@ -332,7 +332,7 @@ check "no case started a program the fixture's config names" test -z "$(fired)"
 # The corpus. Every code line and code span of FULL-AUDIT.md, checklists/, known-vectors/, discovery/,
 # references/ and templates/ that starts with "<auditor-skill root>/scripts/..." is one plain command, the form a
 # command's rule pre-approves: the quoted path first, no $ or backtick anywhere (a $ stops a rule from
-# matching, quoted or not), no &&, || or ;, and a pipe only into grep, head, tail, sort, uniq, cut or wc. No code
+# matching, quoted or not), no &&, || or ;, and a pipe only into grep, head, tail or wc. No code
 # line runs a bundled script any other way (bash, cd or an assignment in front, or inside $( )). The calls of
 # git-ro.sh, the recipes, the runners, rpc-read.sh and rundir.sh then run as written, their placeholders
 # filled, in a fixture with no cargo, npm, curl or solana on PATH: git-ro.sh, the recipes and rundir.sh do
@@ -353,7 +353,7 @@ for d in ("references", "templates"):
         files += sorted(os.path.join(dp, f) for f in fn if f.endswith(".md"))
 Q = '"<auditor-skill root>/scripts/'
 RUN = ("git-ro.sh", "recipes/", "runner/deps.sh", "runner/target.sh", "rpc-read.sh", "rundir.sh")
-READERS = {"grep", "head", "tail", "sort", "uniq", "cut", "wc"}
+READERS = {"grep", "head", "tail", "wc"}
 FILL = [("<auditor-skill root>", root), ("audit_<n>", "audit_1"), ("incident_<n>", "incident_1"),
         ("incident_<k>", "incident_1"), ("<base>..<head>", "t-base..t-head"), ("<baseline>..HEAD", "t-base..HEAD"),
         ("<PROGRAM_ID>", "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),
