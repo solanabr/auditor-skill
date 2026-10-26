@@ -6,9 +6,10 @@
 #       a bundled entry point from the root names it as "${CLAUDE_PLUGIN_ROOT}/<path>" (in the root SKILL.md,
 #       "${CLAUDE_SKILL_DIR}/<path>"), quoted, first in the command, or as the file a test -x, -f or -e reads (a
 #       cmp or diff of it asks, since it lies outside the working directory); with no bash, cd, env or VAR=value
-#       in front, no other $, no backtick, no ;, &&, ||, &, no process substitution, no pipe (a | with a space
-#       beside it, or one straight into a program such as sh or tee; a|b in a usage line is a choice), no line
-#       continuation, and no file redirect but into a run directory (audit_<n>/ or incident_<n>/) or /dev/null.
+#       in front, no other $, no backtick, no ;, &&, ||, no & but in a redirect (2>&1, &>), no process
+#       substitution, no pipe (a | with a space beside it, or one straight into a path or a program such as sh
+#       or tee; a|b in a usage line is a choice), no line continuation, and no file redirect but into a run
+#       directory (audit_<n>/ or incident_<n>/, with no .. in the path) or /dev/null.
 #   C2  Every Bash allow rule that names a path from the root names it as its quoted first word (after an
 #       optional test -x), and that path is a tracked file of mode 100755 whose first line is a #! line, or a
 #       binary a crate under tools/auditor-tools declares, executable when it is built.
@@ -199,18 +200,22 @@ def operators(s):
             found.append("a process substitution")
         elif s.startswith("&&", i) or s.startswith("||", i) or s.startswith("|&", i):
             found.append(s[i:i + 2]); i += 1
-        elif c in "|&":
-            before = s[i - 1] if i > 0 else " "
+        elif c == "&":
+            # a & that is no part of a redirect (2>&1, &>) runs what comes before it in the background
+            if (s[i - 1] if i > 0 else " ") not in "<>" and s[i + 1:i + 2] != ">":
+                found.append("&")
+        elif c == "|" and (s[i - 1] if i > 0 else " ") != ">":
             after = s[i + 1] if i + 1 < len(s) else " "
             word = re.match(r'[A-Za-z0-9_.-]*', s[i + 1:]).group(0)
-            if before.isspace() or after.isspace() or (c == "|" and word in PIPE_INTO):
-                found.append("a pipe" if c == "|" else "&")
+            if (s[i - 1] if i > 0 else " ").isspace() or after.isspace() or after in "/.~'\"$({\\" \
+                    or word in PIPE_INTO:
+                found.append("a pipe")
         i += 1
     return found
 
 def redirects(s):
     """The target of each file redirect outside quotes that does not lead into a run directory (or /dev/null)."""
-    s = re.sub(r'<[^<>(\s][^<>]*>', 'P', s)       # placeholders such as <R>/poc/<ID>
+    s = re.sub(r'<[^<>(\s](?:[^<>]*[^<>\s])?>(?!\.\./)', 'P', s)   # placeholders such as <R>/poc/<ID>
     bad, q, i = [], None, 0
     while i < len(s):
         c = s[i]
@@ -226,10 +231,13 @@ def redirects(s):
             while j < len(s) and s[j] in "<>|&":
                 j += 1
             op = s[i:j]
-            if op.startswith("<<") or op.endswith("&") or op.startswith(">&") or op.startswith("<&"):
-                i = j; continue                    # here-documents and strings, and descriptor copies
+            if op.startswith("<<"):
+                i = j; continue                    # here-documents and here-strings
             target = re.match(r'\s*([^\s;&|<>]*)', s[j:]).group(1)
-            if target != "/dev/null" and not re.match(r'^(\./)?(audit|incident)_[^/\s]*/', target):
+            if op.endswith("&") and re.match(r'^(\d+|-)$', target):
+                i = j; continue                    # a descriptor copy, such as 2>&1
+            if target != "/dev/null" and (not re.match(r'^(\./)?(audit|incident)_[^/\s]*/', target)
+                                          or ".." in target.split("/")):
                 bad.append(target or "(no target)")
             i = j; continue
         i += 1
@@ -525,7 +533,7 @@ cmd good "'Bash(\"$R/scripts/rec.py\" *)'" "'Bash(\"$B/audit-scan\" --contract=1
   "   \`\"$B/audit-mem\" warm --contract=1 --program-id <id>\`; \`audit-mem warm --contract=1 --program-id <id>\`, \`audit-mem init\`." \
   "3. Check \`test -f \"$R/templates/poc/run.sh\"\`; mention \`\"$B/audit-mem\"\` alone; read \`$R/references/x.md\`." \
   "4. Prose names \`run.sh --crate\` and \`\"$R/scripts/filter.sh\"\` behind \`x 2>&1 | bash \"$R/scripts/filter.sh\"\`." \
-  "5. Keep \`\"$R/scripts/ok.sh\" check x > audit_<n>/out.txt 2>/dev/null\` and \`\"$R/scripts/ok.sh\" check x 2>&1\`." \
+  "5. Keep \`\"$R/scripts/ok.sh\" check x > audit_<n>/out.txt 2>/dev/null\` and \`\"$R/scripts/ok.sh\" check x 2>&1\`, \`\"$R/scripts/ok.sh\" check <in-scope directory> &> incident_<n>/log.txt\`." \
   "6. Spawn \`fx-runner\` on it; \`\"$R/templates/poc/run.sh\" --crate <R>/poc/<ID>\` runs it, and \`\"$R/scripts/rec.py\" --crate x\`, which asks, does not." \
   "" '```bash' "\"$R/scripts/ok.sh\" check audit_<n> --cluster mainnet-beta" '```'
 cmd c1-bash -- "1. \`bash \"$R/scripts/ok.sh\" new audit\`"
@@ -546,6 +554,12 @@ cmd c1-procsub -- "1. \`\"$R/scripts/ok.sh\" diff <(cat x)\`"
 cmd c1-redirect -- "1. \`\"$R/scripts/ok.sh\" log > ../../.zshrc\`"
 cmd c1-redirect-in -- "1. \`\"$R/scripts/ok.sh\" check < /etc/hosts\`"
 cmd c1-pipe-tight -- "1. \`\"$R/scripts/ok.sh\" log|sh\`"
+cmd c1-pipe-path -- "1. \`\"$R/scripts/ok.sh\" log|/bin/sh\`"
+cmd c1-amp-tight -- "1. \`\"$R/scripts/ok.sh\" log&curl x\`"
+cmd c1-redirect-dotdot -- "1. \`\"$R/scripts/ok.sh\" log > audit_1/../../.zshrc\`"
+cmd c1-redirect-dup -- "1. \`\"$R/scripts/ok.sh\" log >& ../x\`"
+cmd c1-redirect-masked -- "1. \`\"$R/scripts/ok.sh\" log <x >../../.zshrc\`"
+cmd c1-redirect-tight -- "1. \`\"$R/scripts/ok.sh\" log <x>../../.zshrc\`"
 cmd c2-missing "'Bash(\"$R/scripts/gone.sh\" *)'" --
 cmd c2-mode "'Bash(\"$R/scripts/plain.sh\" *)'" --
 cmd c2-shebang "'Bash(\"$R/scripts/noshebang.sh\" *)'" --
@@ -612,7 +626,8 @@ expect() {
 }
 expect commands/good.md ""
 for c in bash cd env unquoted half-quoted dollar pipe semicolon and skill-dir continued wrapped-span cmp diff \
-    procsub redirect redirect-in pipe-tight large; do
+    procsub redirect redirect-in pipe-tight pipe-path amp-tight redirect-dotdot redirect-dup redirect-masked \
+    redirect-tight large; do
   expect "commands/c1-$c.md" C1
 done
 expect commands/c2-missing.md C2; expect commands/c2-mode.md C2; expect commands/c2-shebang.md C2
