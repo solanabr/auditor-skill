@@ -257,8 +257,8 @@ Also list anything that was in the repo but deliberately NOT reviewed, and why
 List every exclusion in the Layout table of audit_<n>/intake.md §1, with its
 reason and its source as the table gives it. A reused exclusion narrows coverage
 on an earlier run's answer, so its source reads "reused from audit_<k> on the
-human's yes". Also list each directory with code in it that no row of that
-table lists or excludes (FULL-AUDIT 0.2), as not reviewed.
+human's yes". Also list each directory outside run directories with code in it
+that no row of that table lists or excludes (FULL-AUDIT 0.2), as not reviewed.
 -->
 
 - {e.g. Third-party programs invoked via CPI (SPL Token, Jupiter) — assumed correct.}
