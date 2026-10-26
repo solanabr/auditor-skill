@@ -321,6 +321,39 @@ check "web3js-history reads the real history, not a replace-ref substitution (it
   sh -c "[ '$RC' = 0 ] && grep -q '1\.95\.6' '$T/out'"
 
 # =================================================================================================
+# The recipes read through the hardened call, which carries the transport allowlist in the environment.
+# A checkout whose own config permits a non-local transport cannot widen it: on a git that ignores
+# GIT_NO_LAZY_FETCH (git before 2.44.0, here a shim) a read of a missing object fetches nothing and runs
+# nothing outside the tree.
+# =================================================================================================
+NLF="$T/oldgit-nlf"; mkdir -p "$NLF"
+printf '#!/bin/sh\nunset GIT_NO_LAZY_FETCH\nexec "%s" "$@"\n' "$(command -v git)" > "$NLF/git" && chmod +x "$NLF/git" || exit 1
+xtransport() { # xtransport <name> <source repo> <script> [<recipe arg>...]
+  local name=$1 src=$2 script=$3; shift 3
+  local pc="$T/xclone-$name" mark="$T/ext-ran-$name"
+  git -C "$src" config uploadpack.allowFilter true || return 0
+  if ! git clone -q --filter=blob:none --no-checkout "file://$src" "$pc" >/dev/null 2>&1; then
+    skp "$name transport allowlist: this git could not make a blobless clone"; return 0
+  fi
+  git -C "$pc" config remote.origin.url "ext::sh -c touch% $mark"
+  git -C "$pc" config protocol.ext.allow always
+  rm -f "$mark"
+  # Control: on a git that ignores GIT_NO_LAZY_FETCH, plain git reaches the ext:: transport the config permits.
+  ( cd "$pc" && PATH="$NLF:$PATH" git -c protocol.allow=never log -p -1 >/dev/null 2>&1 )
+  if [ ! -e "$mark" ]; then
+    skp "control: $name clone did not reach the ext:: transport; the transport-allowlist check is skipped"; return 0
+  fi
+  ok "control: $name clone reaches the ext:: transport once GIT_NO_LAZY_FETCH is ignored"
+  rm -f "$mark"
+  PATH="$NLF:$PATH" run "$pc" "$script" "$@"
+  check "$name: a missing object is not fetched through a config-permitted ext:: transport" test "$RC" != 0
+  check "$name: ... and nothing outside the tree runs" test ! -e "$mark"
+  rm -f "$mark"
+}
+xtransport lock-delta "$H" "$LD" npm t-base..t-head
+xtransport web3js-history "$X" "$WH"
+
+# =================================================================================================
 # The case files, under each bash on the machine.
 # =================================================================================================
 SHELLS=("$BASH")
