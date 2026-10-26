@@ -78,8 +78,9 @@ reports the exit status. Put no `$` or backtick anywhere in the line, inside quo
 too (so never `echo $?`): Claude Code asks about any command that holds one,
 whatever its allow rules say.
 This command's pre-approvals last for the turn that invoked it: Claude Code clears
-them at the user's next message, and a turn that a background agent's completion
-notice starts has none, so spawn every agent in the foreground. When the hunt goes
+them at the user's next message, and a turn that a background agent's or
+background command's completion notice starts has none, so spawn every agent in
+the foreground. When the hunt goes
 on after the human replies (the run directory to reuse, a yes to a collection, the
 execution mode), first invoke this command again through the Skill tool as
 `auditor:hunt --resume <step> incident_<n>` followed by the arguments and the
@@ -208,9 +209,17 @@ Code asks about a shell read outside the working directory.
      (`$RPC_URL` from the environment, never on the command line; it finalizes and
      passes `maxSupportedTransactionVersion: 1`). This step touches the network,
      within the caps the user's environment sets, and nothing else gates it but the
-     human's yes. A run makes up to the estimated call count, one call at a time, so
-     run a long one in the background, or with a timeout sized from that count,
-     never under a short tool timeout. Its `provider:` line names the provider
+     human's yes. A run makes up to the estimated call count, one call at a time.
+     Run it in the foreground, never with `run_in_background`, and give the Bash
+     call a timeout sized from that count, up to the tool's ceiling (ten minutes
+     unless the user's `BASH_MAX_TIMEOUT_MS` raises it): a call that outlasts its
+     timeout moves to the background, and the turn its completion starts has none
+     of this command's pre-approvals. When the estimate will not fit, propose
+     smaller caps or fewer addresses, and collect the rest after another yes into
+     the next `incident_<n>/corpus-<k>/`. If a run does move to the background,
+     invoke `auditor:hunt --resume 2 incident_<n>` through the Skill tool once it
+     completes (it asks; `claude -p` allows it only when the user's settings allow
+     `Skill(auditor:hunt *)`). Its `provider:` line names the provider
      **domain** (the service that received the queried addresses: the host's last
      two DNS labels, since a subdomain can carry an endpoint token); pass it to the
      agent, which discloses it and the literal `$RPC_URL` in the ledger and report

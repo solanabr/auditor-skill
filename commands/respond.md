@@ -80,8 +80,9 @@ reports the exit status. Put no `$` or backtick anywhere in the line, inside quo
 too (so never `echo $?`): Claude Code asks about any command that holds one,
 whatever its allow rules say.
 This command's pre-approvals last for the turn that invoked it: Claude Code clears
-them at the user's next message, and a turn that a background agent's completion
-notice starts has none, so spawn every agent in the foreground. When the workup
+them at the user's next message, and a turn that a background agent's or
+background command's completion notice starts has none, so spawn every agent in
+the foreground. When the workup
 goes on after the human replies (a yes to a collection, the execution mode, the
 reuse of a run directory), first invoke this command again through the Skill tool
 as `auditor:respond --resume <step> incident_<n>` followed by the lead and the
@@ -193,9 +194,19 @@ Code asks about a shell read outside the working directory.
    incident that already has a corpus goes to a new `incident_<n>/corpus-<k>/`
    (`<k>` is the highest existing number + 1, `corpus/` counting as 1;
    `collect.sh` makes it), and every recipe then reads
-   `incident_<n>/corpus*/transactions.jsonl`, counting each transaction once. Run a
-   long collection in the background, or with a timeout sized from the estimated
-   call count; a run stopped early still records what it had not fetched as gaps.
+   `incident_<n>/corpus*/transactions.jsonl`, counting each transaction once. A
+   run makes up to the estimated call count, one call at a time. Run it in the
+   foreground, never with `run_in_background`, and give the Bash call a timeout
+   sized from that count, up to the tool's ceiling (ten minutes unless the user's
+   `BASH_MAX_TIMEOUT_MS` raises it): a call that outlasts its timeout moves to the
+   background, and the turn its completion starts has none of this command's
+   pre-approvals. When the estimate will not fit, propose smaller caps or fewer
+   addresses, and collect the rest after another yes into the next
+   `incident_<n>/corpus-<k>/`. If a run does move to the background, invoke
+   `auditor:respond --resume 3 incident_<n>` through the Skill tool once it
+   completes (it asks; `claude -p` allows it only when the user's settings allow
+   `Skill(auditor:respond *)`). A run stopped early still records what it had not
+   fetched as gaps.
    The next phase gets the corpus paths (each `corpus*/transactions.jsonl` and the
    `--logs` copies in `incident_<n>/logs/`), the collector's `provider:` domain (the
    host's last two DNS labels, disclosed under Rule 11b; a keyed URL is never

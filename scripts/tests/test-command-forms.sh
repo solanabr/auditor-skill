@@ -18,6 +18,8 @@
 #       is "<root>/scripts/preflight.sh", with no arguments, in a paragraph that starts "0. **Preflight" (in the
 #       root SKILL.md, "**Step 0 — Preflight") and says that a refusal, and a call that is denied, stop the run;
 #       and every command's allowed-tools pre-approves that call.
+#   P   Wording the flows depend on stays in place (the PINS list): what keeps a long call, and the turn after
+#       it, inside a command's grant.
 # The entry points are the tracked files under scripts/ (but scripts/tests/) and templates/ of mode 100755 that
 # start with a direct-exec shebang (#!/bin/bash or #!/usr/bin/env -S python3 -I), and the binaries the crates
 # under tools/auditor-tools declare. Each check first runs on known-good and known-bad fixture files, one of
@@ -455,6 +457,25 @@ $found
 EOF
   [ "$n" -eq 0 ] && ok "$# files: every entry point in the one form its rule pre-approves, and preflight.sh as step 0"
 fi
+
+# ---- 5. wording the flows depend on ------------------------------------------------------------------------
+# file <TAB> text that must stay in it, on one line of the file.
+while IFS='	' read -r f want; do
+  [ -n "$f" ] || continue
+  if [ -f "$f" ] && grep -qF -- "$want" "$f"; then ok "pin $f: $want"; else bad "P $f lost: $want"; fi
+done <<'PINS'
+commands/hunt.md	Run it in the foreground, never with `run_in_background`, and give the Bash
+commands/hunt.md	invoke `auditor:hunt --resume 2 incident_<n>` through the Skill tool once it
+commands/hunt.md	background command's completion notice starts has none, so spawn every agent in
+commands/respond.md	foreground, never with `run_in_background`, and give the Bash call a timeout
+commands/respond.md	`auditor:respond --resume 3 incident_<n>` through the Skill tool once it
+commands/respond.md	background command's completion notice starts has none, so spawn every agent in
+commands/audit-cycle.md	a turn that a background agent's or background command's completion notice starts has none
+commands/audit-assist.md	a turn that a background agent's or background command's completion notice starts has none
+commands/threat-model.md	a turn that a background agent's or background command's completion notice starts has none
+commands/poc.md	a turn that a background agent's or background command's completion notice starts has none
+commands/patch.md	a turn that a background agent's or background command's completion notice starts has none
+PINS
 
 echo "---- command forms: $pass passed, $failn failed"
 [ "$failn" -eq 0 ]
