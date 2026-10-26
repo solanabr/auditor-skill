@@ -16,10 +16,11 @@
 # and that no recipe flags a fixture's comment lines. R9 and the KV-080 Step 8 and KV-140 Step 7 commands are
 # also checked line by line on their own fixtures, and those that search outside .github/ skip node_modules/
 # and .terraform/. It runs R1 and K139-1 over trigger spellings built at run time, R1 over file names that hold
-# a space or a quote, and R1 over large inputs: 2,000 workflows, and two of about 1 MiB. Every command of every
-# recipe must end within 30 s on a workflow that holds one 1 MiB line of near misses. KV-020 Step 3 and KV-100
-# Step 4, which list documentation files with one recursive grep as R1 does, run over file names that hold a
-# space or a quote, and KV-100's over more than 64 KiB of names.
+# a space or a quote, and R1 over large inputs: 2,000 workflows, and two of about 1 MiB. R9 and KV-080 Step 8's
+# first command run over 2,000 workflows, and each KV-080 and KV-140 command that pipes into head over more than
+# 64 KiB of its own output. Every command of every recipe must end within 30 s on files that hold one 1 MiB
+# line of near misses. KV-020 Step 3 and KV-100 Step 4, which list documentation files with one recursive grep
+# as R1 does, run over file names that hold a space or a quote, and KV-100's over more than 64 KiB of names.
 #
 # Usage (from the repo root): bash scripts/tests/test-gha-recipes.sh
 # Needs bash >= 3.2, grep, awk. No network. The fixtures are copied into a temp dir as .github/workflows/, those
@@ -404,24 +405,83 @@ else
   fail=1
 fi
 
-# One workflow holding a 1 MiB line that nearly matches R6 again and again. Each command of every recipe must end
-# within 30 s and flag nothing. GNU grep in a UTF-8 locale backtracks for minutes on such a line when a range such
-# as a-z follows .*, which is why R6 spells its letters out.
-long="$work/long"; mkdir -p "$long/.github/workflows"
+# Large inputs for R9 and KV-080 Step 8: 2,000 workflows, each with a full-SHA pin and a job on a GitHub-hosted
+# image, and one with a job on a self-hosted runner. R9 lists all 2,000 pins in more than 64 KiB of output, and
+# the runner command lists only that job after more than 64 KiB of runs-on lines have gone through its pipe.
+scale="$work/scale"; mkdir -p "$scale/.github/workflows"
+awk -v d="$scale/.github/workflows" 'BEGIN { for (i = 0; i < 2000; i++) { f = sprintf("%s/pinned-workflow-%04d.yml", d, i)
+  printf "on: push\npermissions:\n  contents: read\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n" > f
+  printf "      - uses: example/action-%04d@0123456789abcdef0123456789abcdef01234567 # v1.0.0\n", i > f; close(f) } }'
+printf 'on: push\njobs:\n  a:\n    runs-on: [self-hosted, linux]\n    steps:\n      - run: make\n' \
+  > "$scale/.github/workflows/self-hosted.yml"
+(cd "$scale" && eval "$(recipe R9)" </dev/null 2>/dev/null) > "$work/r9.out"
+size=$(wc -c < "$work/r9.out" | tr -d ' ')
+n=$(grep -c '^\.github/workflows/pinned-workflow-[0-9]*\.yml:8:      - uses: example/action-[0-9]*@0123456789abcdef0123456789abcdef01234567 # v1\.0\.0$' "$work/r9.out")
+if [ "$n" = 2000 ] && [ "$(grep -c . "$work/r9.out")" = 2000 ] && [ "$size" -gt 65536 ]; then
+  echo "ok   R9 on large inputs: all 2,000 pins listed, $size bytes"
+else
+  echo "FAIL R9 on large inputs: $n of 2,000 pins in $size bytes"
+  fail=1
+fi
+runners=$(recipe_lines K080-8a)
+size=$( (cd "$scale" && eval "${runners%% | *}" </dev/null 2>/dev/null) | wc -c | tr -d ' ')
+got=$(run_recipe "$scale" "$runners")
+if [ "$got" = '.github/workflows/self-hosted.yml:4:    runs-on: [self-hosted, linux]' ] && [ "$size" -gt 65536 ]; then
+  echo "ok   KV-080 Step 8 on large inputs: $size bytes of runs-on lines through its pipe, only the self-hosted job listed"
+else
+  echo "FAIL KV-080 Step 8 on large inputs ($size bytes through its pipe): got [${got:0:300}]"
+  fail=1
+fi
+
+# Each command of KV-080 and KV-140 that pipes into head, run as written over the same workflows, where what it
+# pipes runs over 64 KiB: it prints its head's lines and ends.
+nhead=0
+for v in "$KV080" "$KV140"; do
+  while IFS= read -r c; do
+    [ -n "$c" ] || continue
+    nhead=$((nhead + 1)); n=${c##*head -}
+    size=$( (cd "$scale" && bash -c "${c%' | head -'*}" </dev/null 2>/dev/null) | wc -c | tr -d ' ')
+    got=$( (cd "$scale" && bash -c "$c" </dev/null 2>/dev/null) | wc -l | tr -d ' ')
+    if [ "$size" -gt 65536 ] && [ "$got" = "$n" ]; then
+      echo "ok   $v: a command piping into head -$n prints its $n lines of $size bytes and ends"
+    else
+      echo "FAIL $v: [$c] over $size bytes printed $got lines, want $n"
+      fail=1
+    fi
+  done <<< "$(awk '/^```/ { code = !code; next } code && / \| head -[0-9]+$/' "$kv/$v")"
+done
+if [ "$nhead" -eq 0 ]; then echo "FAIL no command of KV-080 or KV-140 pipes into head"; fail=1; fi
+
+# Files holding a 1 MiB line of near misses: one that nearly matches R6 again and again, one that repeats a pin
+# with a SHA one digit short, and an infrastructure file that repeats lookalikes of the runner and OIDC settings.
+# Each command of every recipe must end within 30 s and flag nothing. GNU grep in a UTF-8 locale backtracks for
+# minutes on such a line when a range such as a-z follows .*, which is why R6 spells its letters out.
+long="$work/long"; mkdir -p "$long/.github/workflows" "$long/infra"
 { printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo "'
   awk 'BEGIN { for (i = 0; i < 26000; i++) printf "${{ github.event.issue.x contains( ref: " }'
   printf '"\n'; } > "$long/.github/workflows/long.yml"
-size=$(wc -c < "$long/.github/workflows/long.yml" | tr -d ' ')
+{ printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo "'
+  awk 'BEGIN { for (i = 0; i < 19000; i++) printf "uses: example/x@0123456789abcdef0123456789abcdef0123456 " }'
+  printf '"\n'; } > "$long/.github/workflows/long-pins.yml"
+{ printf 'note = "'
+  awk 'BEGIN { for (i = 0; i < 10000; i++)
+    printf "config.sh --prefix=x repo:x.y repo: x/y token.actions.githubusercontent.co ephemeral-storage runner group " }'
+  printf '"\n'; } > "$long/infra/long.tf"
+sizes=""; small=0
+for f in .github/workflows/long.yml .github/workflows/long-pins.yml infra/long.tf; do
+  s=$(wc -c < "$long/$f" | tr -d ' '); sizes="$sizes $s"
+  if [ "$s" -le 1000000 ]; then small=1; fi
+done
 slow=""; noisy=""
 for id in $IDS; do
   while IFS= read -r c; do
     if ! within 30 "$long" "$c"; then slow="$slow $id"; elif [ -s "$work/within.out" ]; then noisy="$noisy $id"; fi
   done <<< "$(recipe_lines "$id")"
 done
-if [ -z "$slow$noisy" ] && [ "$size" -gt 1000000 ]; then
-  echo "ok   every recipe on a line of $size bytes of near misses: each command done within 30 s, nothing flagged"
+if [ -z "$slow$noisy" ] && [ "$small" -eq 0 ]; then
+  echo "ok   every recipe on lines of$sizes bytes of near misses: each command done within 30 s, nothing flagged"
 else
-  echo "FAIL a line of $size bytes of near misses: still running after 30 s [$slow], flagged [$noisy]"
+  echo "FAIL lines of$sizes bytes of near misses: still running after 30 s [$slow], flagged [$noisy]"
   fail=1
 fi
 
