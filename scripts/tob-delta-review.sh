@@ -177,7 +177,7 @@ joined() { awk '
   { flush() }
   END { flush() }'; }
 # Matched in any letter case: PowerShell ignores case, and so does macOS's default file system.
-SHELLS="((ba|z|da|k)?sh|python[0-9.]*|node|perl|ruby|pwsh|powershell|iex|invoke-expression)([[:space:];&|)\"']|\$)"
+SHELLS="((ba|z|da|k)?sh|python[0-9.]*|node|perl|ruby|pwsh|powershell|iex|invoke-expression)([[:space:];&|)\"'\`]|\$)"
 GET='(curl|wget)([.]exe)?|(^|[^[:alnum:]_-])(irm|iwr|invoke-restmethod|invoke-webrequest)'   # a download command
 RX_PIPE="($GET)[\"']?[[:space:]].*[|][[:space:]]*(sudo([[:space:]]+-[-A-Za-z0-9=,_]+([[:space:]]+[A-Za-z0-9_]+)?)*[[:space:]]+)?((/[^[:space:]|]*/)?env([[:space:]]+[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*)*[[:space:]]+)?(/[^[:space:]|]*/)?$SHELLS"
 # a shell, eval, an interpreter's -c / -e, or a here-string handed "$(curl …)" or `curl …`
