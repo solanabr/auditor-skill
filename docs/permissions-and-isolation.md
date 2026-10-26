@@ -83,13 +83,13 @@ The Skill tool needs permission, and a plugin cannot ship permission rules, so M
       "Skill(auditor:respond *)", "Skill(auditor:dnr-analyze *)", "Skill(auditor:audit *)",
       "Skill(auditor:quick-scan *)", "Skill(auditor:deep-review *)", "Skill(auditor:diff-audit *)",
       "Skill(auditor:spec-audit *)", "Skill(auditor:economic-sim *)", "Skill(auditor:re-audit *)",
-      "Skill(auditor:auditor-skill *)"
+      "Skill(auditor:auditor-skill)", "Skill(auditor:auditor-skill *)"
     ]
   }
 }
 ```
 
-These rules name the plugin's skills and no path or version. What each skill then pre-approves stays inside the plugin, and changes with it. They cover every command, the analysis skill and the root skill, `auditor:auditor-skill`, which a request in plain words runs, so neither a resume nor the first call to the root skill asks. They also let Claude start any of these flows by itself, in any repository you open, with no prompt in Manual mode and no classifier check in auto mode, for example when a file it reads tells it to; `/auditor:audit-cycle` started that way records native mode and builds the project on your machine. To rule that out, set `AUDITOR_EXEC_MODE=isolated` (or `none`) in the same file's `env`, or keep these rules in a file you pass with `claude --settings` when you audit. In the `install.sh` layout the root skill is your personal skill `auditor-skill`: add `"Skill(auditor-skill *)"` there too. Leave that one out with the plugin install, where a repository's own `.claude/skills/auditor-skill/` could take the name. `Skill(name *)` matches the skill by name with any arguments (Claude Code's skills reference).
+These rules name the plugin's skills and no path or version. What each skill then pre-approves stays inside the plugin, and changes with it. They cover every command, the analysis skill and the root skill, `auditor:auditor-skill`, which a request in plain words runs, so neither a resume nor the first call to the root skill asks. They also let Claude start any of these flows by itself, in any repository you open, with no prompt in Manual mode and no classifier check in auto mode, for example when a file it reads tells it to; `/auditor:audit-cycle` started that way records native mode and builds the project on your machine. To rule that out, set `AUDITOR_EXEC_MODE=isolated` (or `none`) in the same file's `env`, or keep these rules in a file you pass with `claude --settings` when you audit. In the `install.sh` layout the root skill is your personal skill `auditor-skill`: add `"Skill(auditor-skill)"` and `"Skill(auditor-skill *)"` there too. Leave those out with the plugin install, where a repository's own `.claude/skills/auditor-skill/` could take the name. `Skill(name *)` matches the skill by name with any arguments, and `Skill(name)` matches it exactly (Claude Code's skills reference). Whether the first also matches a call with no arguments is documented for Bash rules only, so the root skill, which a request in plain words may invoke with none, gets both forms.
 
 Don't answer "Yes, and don't ask again" at that prompt instead. It can save the rule into the audited repository's `.claude/settings.local.json`, a file in the client's tree: for a Bash rule Claude Code uses the one at the root of the git repository that holds the working directory, and the working directory's own outside a repository. `preflight.sh` refuses that file on the next run, since a `permissions` key is not one a clean tree may carry. Choosing a mode in `/sandbox`, or "don't ask again" at a sandbox network prompt, writes the same file. So keep the sandbox in the file you pass with `--settings`, and add hosts to its `allowedDomains`: under the block below, with `strictAllowlist`, no network prompt appears. If such a file appeared, move its entries to `~/.claude/settings.json` and delete it.
 
@@ -229,10 +229,10 @@ claude -p "/auditor:audit-cycle ." --permission-mode auto --setting-sources user
 # where it invokes itself and its analysis skill again:
 claude -p "/auditor:hunt <program> --collect" --setting-sources user --allowedTools "Skill(auditor:hunt *)" "Skill(auditor:dnr-analyze *)"
 
-# A request in plain words runs the root skill, which needs its own rule (Skill(auditor-skill *)
-# in the install.sh layout), and runs its steps only as far as that skill pre-approves them
-# (see "What runs without asking" above):
-claude -p "Audit this repository with the auditor-skill" --setting-sources user --allowedTools "Skill(auditor:auditor-skill *)"
+# A request in plain words runs the root skill, which needs its own rules (Skill(auditor-skill)
+# and Skill(auditor-skill *) in the install.sh layout), and runs its steps only as far as that
+# skill pre-approves them (see "What runs without asking" above):
+claude -p "Audit this repository with the auditor-skill" --setting-sources user --allowedTools "Skill(auditor:auditor-skill)" "Skill(auditor:auditor-skill *)"
 ```
 
 **The default builds on your host.** `claude -p "/auditor:audit-cycle ."` on your own machine records native mode and builds and tests the project there without asking. For code you don't trust, set `AUDITOR_EXEC_MODE=isolated`, so that a host with readable keys refuses the builds, or `AUDITOR_EXEC_MODE=none`, so that the runners build none of it.
