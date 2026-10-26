@@ -192,7 +192,10 @@ Code asks about a shell read outside the working directory.
    Show the human the addresses, the window the agent proposed around the lead,
    the caps and the estimated call count, get a yes, and pass exactly those
    values: the window as `--since <fromUnix> --until <toUnix>`, the caps as
-   `--max-pages N --max-tx N`, never a `--window` argument. That yes is the only
+   `--max-pages N --max-tx N`, never a `--window` argument, in the call
+   `"${CLAUDE_PLUGIN_ROOT}/scripts/dnr/collect.sh" --out incident_<n>/corpus --confirmed --since <fromUnix> --until <toUnix> --max-pages N --max-tx N -- <address> …`
+   (`--out incident_<n>/corpus-<k>` for a later corpus; `$RPC_URL` comes from the
+   environment, never the command line). That yes is the only
    gate, since the collector runs under this command's rules with no prompt; it
    comes as the human's reply, so first invoke
    `auditor:respond --resume 3 incident_<n>` with those values, then collect in
