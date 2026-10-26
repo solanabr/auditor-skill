@@ -14,10 +14,11 @@
 #     berry, bun, exact pins), and the key-line form in the tree and in history (added, removed, a changed key,
 #     an alias, a deleted lockfile, a merged side branch, a merge commit, tab and CRLF lockfiles), but not
 #     another package at those versions; the single-line history search; above 64 KiB;
-#   - the scratch-directory recipes, KV-089 Steps 1, 2 and 5: with $SCRATCH unset, empty, missing, relative or
-#     inside the working directory, or mktemp failing, they print OUTCOME: no scratch copy and run nothing;
-#     otherwise npm, cargo and rustup run only inside the scratch directory. FULL-AUDIT Step 3.2 runs its audits
-#     and registry queries through scripts/runner/deps.sh, with no scratch block of its own;
+#   - the scratch-directory recipes, KV-089 Steps 1 and 2: with $SCRATCH unset, empty, missing, relative or
+#     inside the working directory, also when TMPDIR or $SCRATCH is a link into it or the working directory was
+#     entered through a link, or with mktemp failing, they print OUTCOME: no scratch copy and run nothing;
+#     otherwise npm runs only inside the scratch directory. FULL-AUDIT Step 3.2 and KV-089 Step 5 run their
+#     audits and registry queries through scripts/runner/deps.sh, with no scratch block of their own;
 #   - KV-137 Steps 1 and 2: the upstream comparison runs in the bare copy scripts/git-ro.sh copy makes in a run
 #     directory, against upstream's default branch whatever its name, and nothing from the checkout's config
 #     runs; a TMPDIR inside the working directory stops the copy. Step 2 takes an https:// URL only and fetches
@@ -351,7 +352,7 @@ else bad "known-bad check reports a package it should skip"; sed 's/^/  | /' "$T
 
 # ---- 3. scratch-directory recipes -----------------------------------------------------------------------
 kv_step "$KV089" 1 > "$T/kv1.sh"; kv_step "$KV089" 2 > "$T/kv2.sh"; kv_step "$KV089" 5 > "$T/kv5.sh"
-cat "$T/kv1.sh" "$T/kv2.sh" "$T/kv5.sh" > "$T/kv125.sh"
+cat "$T/kv1.sh" "$T/kv2.sh" > "$T/kv12.sh"
 mkdir -p "$T/stub" "$T/tgt/apps/backend" "$T/tgt/apps/web" "$T/tmp"
 for p in apps/backend apps/web; do echo '{}' > "$T/tgt/$p/package.json"; echo '{}' > "$T/tgt/$p/package-lock.json"; done
 echo '# lock' > "$T/tgt/Cargo.lock"
@@ -359,32 +360,50 @@ for s in npm cargo rustup; do
   printf '#!/bin/sh\necho "%s $PWD" >> "%s/ran"\n[ "$1" = default ] && echo "stable-x (default)"\nexit 0\n' "$s" "$T" > "$T/stub/$s"
 done
 chmod +x "$T/stub/npm" "$T/stub/cargo" "$T/stub/rustup"
+scratch_dir=$T/tgt   # the working directory the recipes start in
 scratch_case() { # scratch_case NAME SCRIPT WANT [env assignment...]: WANT is the expected OUTCOME line, or "" for a run
   local name=$1 script=$2 want=$3; shift 3
   : > "$T/ran"
-  ( cd "$T/tgt" && env "$@" PATH="$T/stub:$PATH" bash "$script" ) > "$T/sc.out" 2>&1
+  ( cd "$scratch_dir" && env "$@" PATH="$T/stub:$PATH" bash "$script" ) > "$T/sc.out" 2>&1
   if [ -n "$want" ]; then
     if grep -qxF "$want" "$T/sc.out" && [ ! -s "$T/ran" ] && [ -z "$(ls -A "$T/tmp")" ]; then ok "$name: prints '$want' and runs nothing"
     else bad "$name"; sed 's/^/  | /' "$T/sc.out" "$T/ran"; fi
   else
     if [ -s "$T/ran" ] && ! grep -q 'OUTCOME: no scratch copy' "$T/sc.out" && ! grep -qvF " $T/tmp/auditor-scratch." "$T/ran"; then
-      ok "$name: npm, cargo and rustup run only in the scratch directory"
+      ok "$name: npm runs only in the scratch directory"
     else bad "$name"; sed 's/^/  | /' "$T/sc.out" "$T/ran"; fi
   fi
 }
 scratch_case "KV-089 Step 2, SCRATCH unset" "$T/kv2.sh" "OUTCOME: no scratch copy (run Step 1 first)" -u SCRATCH TMPDIR="$T/tmp"
 scratch_case "KV-089 Step 2, SCRATCH empty" "$T/kv2.sh" "OUTCOME: no scratch copy (run Step 1 first)" SCRATCH= TMPDIR="$T/tmp"
-scratch_case "KV-089 Step 5, SCRATCH unset" "$T/kv5.sh" "OUTCOME: no scratch copy (run Step 1 first)" -u SCRATCH TMPDIR="$T/tmp"
-scratch_case "KV-089 Step 5, SCRATCH a missing directory" "$T/kv5.sh" "OUTCOME: no scratch copy (run Step 1 first)" \
+scratch_case "KV-089 Step 2, SCRATCH a missing directory" "$T/kv2.sh" "OUTCOME: no scratch copy (run Step 1 first)" \
   SCRATCH="$T/missing" TMPDIR="$T/tmp"
 scratch_case "KV-089 Step 1, mktemp fails" "$T/kv1.sh" "OUTCOME: no scratch copy (check TMPDIR)" TMPDIR="$T/missing"
 mkdir -p "$T/tgt/rel" "$T/tgt/inside" "$T/tgt/tmpin" "$T/tgt/reltmp"
 scratch_case "KV-089 Step 2, SCRATCH a relative path" "$T/kv2.sh" "OUTCOME: no scratch copy (run Step 1 first)" SCRATCH=rel \
   TMPDIR="$T/tmp"
-scratch_case "KV-089 Step 5, SCRATCH inside the working directory" "$T/kv5.sh" "OUTCOME: no scratch copy (run Step 1 first)" \
+scratch_case "KV-089 Step 2, SCRATCH inside the working directory" "$T/kv2.sh" "OUTCOME: no scratch copy (run Step 1 first)" \
   SCRATCH="$T/tgt/inside" TMPDIR="$T/tmp"
 scratch_case "KV-089 Step 1, TMPDIR a relative path" "$T/kv1.sh" "OUTCOME: no scratch copy (check TMPDIR)" TMPDIR=reltmp
-scratch_case "KV-089 Steps 1, 2 and 5 in one shell" "$T/kv125.sh" "" TMPDIR="$T/tmp"
+# Paths compared with their links resolved: a TMPDIR or a $SCRATCH that names a link into the working directory,
+# and a working directory entered through a link, whose $PWD is not the path mktemp's directory resolves under
+ln -s "$T/tgt/tmpin" "$T/tmplink" && ln -s "$T/tgt/inside" "$T/sclink" && ln -s "$T/tgt" "$T/tgtlink" || exit 1
+scratch_case "KV-089 Step 1, TMPDIR a link from outside the working directory into it" "$T/kv1.sh" \
+  "OUTCOME: no scratch copy (check TMPDIR)" TMPDIR="$T/tmplink"
+scratch_case "KV-089 Step 2, SCRATCH a link to a directory inside the working directory" "$T/kv2.sh" \
+  "OUTCOME: no scratch copy (run Step 1 first)" SCRATCH="$T/sclink" TMPDIR="$T/tmp"
+scratch_dir=$T/tgtlink
+scratch_case "KV-089 Step 1, the working directory entered through a link, TMPDIR inside it" "$T/kv1.sh" \
+  "OUTCOME: no scratch copy (check TMPDIR)" TMPDIR="$T/tgt/tmpin"
+scratch_case "KV-089 Steps 1 and 2 in one shell, from the working directory entered through a link" "$T/kv12.sh" "" TMPDIR="$T/tmp"
+scratch_dir=$T/tgt
+scratch_case "KV-089 Steps 1 and 2 in one shell" "$T/kv12.sh" "" TMPDIR="$T/tmp"
+# KV-089 Step 5 is FULL-AUDIT Step 3.2's cargo audit, through deps.sh
+grep -E '^"<auditor-skill root>/scripts/runner/deps\.sh" cargo-audit ' "$T/kv5.sh" > "$T/kv5-deps.txt"
+if [ "$(grep -cv '^#' "$T/kv5.sh")" = 1 ] && [ "$(grep -c . "$T/kv5-deps.txt")" = 1 ] \
+   && grep -qxF "  $(cat "$T/kv5-deps.txt")" "$FA"; then
+  ok "KV-089 Step 5 runs cargo audit through deps.sh, as FULL-AUDIT Step 3.2 does"
+else bad "KV-089 Step 5 is not FULL-AUDIT Step 3.2's deps.sh cargo-audit call"; sed 's/^/  | /' "$T/kv5.sh"; fi
 # FULL-AUDIT Step 3.2: npm audit, cargo audit and the quarantine query run through deps.sh, and nothing in the
 # step makes a scratch directory, changes directory or runs npm, cargo or rustup itself.
 fa_step32 > "$T/fa32.txt"; grep -v '^ *#' "$T/fa32.txt" > "$T/fa32-code.txt"

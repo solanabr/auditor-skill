@@ -14,14 +14,15 @@ Known vulnerability in production dependency → attacker uses public exploit to
 
 **Step 1: Run npm audit**
 ```
-# Audits and registry queries run from a scratch dir OUTSIDE the target tree, on copies of
-# the manifest + lockfile, so the target's .npmrc cannot steer them (OUTPUT-RULES Rule 11a).
-# $SCRATCH lasts only as long as its shell: run Steps 1, 2 and 5 in one shell. Each step
-# runs nothing unless $SCRATCH is an absolute directory outside the working directory, since
-# `cd "$SCRATCH"` with it empty would stay in the target tree
+# npm audit --omit=dev and npm outdated have no bundled runner (deps.sh npm-audit also audits dev
+# dependencies), so Steps 1 and 2 ask for approval. They run from a scratch dir OUTSIDE the target
+# tree, on copies of the manifest + lockfile, so the target's .npmrc cannot steer them (OUTPUT-RULES
+# Rule 11a). $SCRATCH lasts only as long as its shell: run Steps 1 and 2 in one shell. Each step runs
+# nothing unless $SCRATCH is an absolute directory outside the working directory, both compared with
+# every symbolic link resolved, since `cd "$SCRATCH"` with it empty would stay in the target tree
 SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/auditor-scratch.XXXXXX")   # outside the target tree
-case "$SCRATCH" in /*) ;; *) SCRATCH= ;; esac      # an absolute path only,
-case "$SCRATCH/" in "$PWD"/*) SCRATCH= ;; esac     # never inside the working directory
+case "$SCRATCH" in /*) SCRATCH=$(cd "$SCRATCH" && pwd -P) ;; *) SCRATCH= ;; esac   # an absolute path only, links resolved,
+case "$SCRATCH/" in "$(pwd -P)"/*) SCRATCH= ;; esac     # never inside the working directory
 if [ -z "$SCRATCH" ] || [ ! -d "$SCRATCH" ]; then
   echo "OUTCOME: no scratch copy (check TMPDIR)"
 else
@@ -41,8 +42,8 @@ fi
 ```
 # On the Step 1 copies. They have no node_modules, so Current reads MISSING:
 # compare Wanted / Latest with the version the lockfile pins
-case "${SCRATCH:-}" in /*) ;; *) SCRATCH= ;; esac   # an absolute path only,
-case "$SCRATCH/" in "$PWD"/*) SCRATCH= ;; esac     # never inside the working directory
+case "${SCRATCH:-}" in /*) SCRATCH=$(cd "$SCRATCH" && pwd -P) ;; *) SCRATCH= ;; esac   # an absolute path only, links resolved,
+case "$SCRATCH/" in "$(pwd -P)"/*) SCRATCH= ;; esac     # never inside the working directory
 if [ -z "$SCRATCH" ] || [ ! -d "$SCRATCH" ]; then
   echo "OUTCOME: no scratch copy (run Step 1 first)"
 else
@@ -71,28 +72,13 @@ grep -E "\"[~^]" apps/backend/package.json apps/web/package.json | head -20
 
 **Step 5: Check Cargo audit (Solana program)**
 ```
-# A copy of Cargo.lock in the Step 1 scratch dir, toolchain pinned (OUTPUT-RULES Rule 11a), stderr
-# kept. cargo-audit exits 1 both for advisories and for an advisory database it cannot fetch or
-# load, so the OUTCOME line decides (the FULL-AUDIT Step 3.2 recipe)
-case "${SCRATCH:-}" in /*) ;; *) SCRATCH= ;; esac   # an absolute path only,
-case "$SCRATCH/" in "$PWD"/*) SCRATCH= ;; esac     # never inside the working directory
-if [ -z "$SCRATCH" ] || [ ! -d "$SCRATCH" ]; then
-  echo "OUTCOME: no scratch copy (run Step 1 first)"
-else
-  mkdir -p "$SCRATCH/rust" && cp Cargo.lock "$SCRATCH/rust/"
-  TC=$(cd "$SCRATCH" && rustup default | cut -d' ' -f1)   # your own toolchain, never the target's
-  if (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit --version) >/dev/null 2>&1; then
-    (cd "$SCRATCH/rust" && RUSTUP_TOOLCHAIN="$TC" cargo audit --color never) 2>&1 | tee "$SCRATCH/cargo-audit.txt"
-    grep -qE '^error: [0-9]+ vulnerabilit(y|ies) found' "$SCRATCH/cargo-audit.txt" && echo "OUTCOME: vulnerabilities found"
-    grep -qE '^error: .*advisory database' "$SCRATCH/cargo-audit.txt" && echo "OUTCOME: advisory DB unavailable"
-  else
-    echo "OUTCOME: not installed"
-  fi
-fi
+# The bundled deps.sh, as FULL-AUDIT Step 3.2 runs it: a copy of Cargo.lock in a scratch directory
+# outside the target tree, the toolchain pinned (OUTPUT-RULES Rule 11a)
+"<auditor-skill root>/scripts/runner/deps.sh" cargo-audit --run audit_<n> --manifest Cargo.lock
 ```
-- ✅ PASS: no OUTCOME line and no `error:` line — zero vulnerabilities in Rust dependencies
-- ❌ FAIL: `OUTCOME: vulnerabilities found` — known CVEs in Rust dependencies
-- ⚠️ Not run, never a PASS: `OUTCOME: advisory DB unavailable` (Coverage & Limitations records "advisory DB unavailable", or rerun with `--no-fetch` against a local DB if one exists), `OUTCOME: not installed` (N/A, and Coverage & Limitations says so) or `OUTCOME: no scratch copy (run Step 1 first)` (run Step 1 and this step in one shell)
+- ✅ PASS: exit 0 — zero vulnerabilities in Rust dependencies
+- ❌ FAIL: exit 1 — known CVEs in Rust dependencies
+- ⚠️ Not run, never a PASS: exit 3 with "no advisory database" (Coverage & Limitations records "advisory DB unavailable", or run it again with `--no-fetch`, which uses the database already in `CARGO_HOME`), exit 3 because cargo-audit is not on PATH (N/A, and Coverage & Limitations says so), or exit 64 (copy its `refused:` line into Coverage & Limitations)
 
 **Overall verdict:**
 - ✅: No audit vulnerabilities, packages up to date, LTS Node, pinned versions
