@@ -130,16 +130,17 @@ already captured.
   files are listed, not refused; their text is the repository's, never
   instructions.
 - **What runs without asking.** The commands pre-approve reading, `Task`, edits
-  under `incident_*/`, the checks `preflight.sh` and `rundir.sh`, the program
-  snapshot, the collector (run only with the values you approved), `rpc-read.sh`,
-  read-only git through `git-ro.sh`, the toolchain probe, the PoC runner and the
-  build runner (both in the execution mode you chose), and the
-  `auditor:dnr-analyze` skill. Inside the skill's fork, the offline analysis tools
+  under `incident_*/`, invoking themselves again and the `auditor:dnr-analyze`
+  skill, and these bundled tools by their paths: the checks `preflight.sh` and
+  `rundir.sh`, the program snapshot and the collector (your `RPC_URL` only, within
+  the caps your environment sets, after your yes), `rpc-read.sh`, `git-ro.sh`, and
+  the runners `probe.sh`, `target.sh` and `run.sh` (in the recorded execution
+  mode). Inside the skill's fork, the offline analysis tools
   run without a prompt: `profile.sh`, `frames.py`, `deltas.py`, `jq-ro.sh` (jq over
   run-directory files, with an empty environment) and `audit-logs`, each run
   directly by its path in the installation and reading only files inside a run
-  directory. `jq` itself, a line through `redact.sh`, the `solana` CLI and anything
-  else that executes code still ask. Pre-approval is not a sandbox: real
+  directory. `jq` itself, a line through `redact.sh`, the `--logs` copy, the
+  `solana` CLI and anything else that executes code still ask. Pre-approval is not a sandbox: real
   confinement is an isolated run mode
   ([`OUTPUT-RULES.md` Rule 11](../OUTPUT-RULES.md#rule-11-operating-safety)); the
   RPC provider that received your addresses is disclosed under Rule 11b, from the
