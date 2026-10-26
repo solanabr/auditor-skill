@@ -401,12 +401,18 @@ Interactive runs ask once per audit — at intake, or at the first step that bui
 
 ### 11b — Outside-service disclosure
 
-Some tools send audit material to services outside the auditor's machine. There is no consent gate, but nothing goes out silently: the report lists each tool, the service it contacted, and what it sent. Typical entries:
+Some tools send audit material to services outside the auditor's machine. There is no consent gate, but nothing goes out silently: the report lists each tool, the service it contacted, and what it sent.
 
+**Where the list comes from.** Each bundled tool that contacts an outside service first adds one row to its run directory's `disclosures.tsv` (`audit_<n>/disclosures.tsv` or `incident_<n>/disclosures.tsv`): the time (UTC), the tool, the service (the host's last two DNS labels, as the collectors print the provider), what was sent, and how many values. Rows are only ever added, and a `disclosures.tsv` that is not a regular file with one link and the header is refused before anything is sent. The report's list is every row of the engagement's run directories, then each contact no row holds: MCP servers, WebFetch, the Trail of Bits tools, and anything else run by hand. `rpc-read.sh` without `--run` writes no row, and prints the service and what it received on stderr instead: copy that into the list. Typical entries:
+
+- `deps.sh` → crates.io and github.com (the RustSec database), npmjs.org, pypi.org and pythonhosted.org: package names and versions, or the manifests and lockfiles it was given (rows).
+- `sast.sh` → semgrep.dev: the ruleset ids (a row).
+- `collect.sh`, `snapshot-program.sh` and `rpc-read.sh` → the RPC provider in `RPC_URL`, or a public Solana endpoint for `rpc-read.sh --cluster`: account addresses, signatures and program IDs (rows).
+- The threat-model collector in `--network` → the host of each URL it fetched (rows).
+- Builds through `target.sh` and `run.sh` → the registries and git hosts the target's manifests and lockfile name: dependency names and versions. The Q46 mode gates these downloads, and they write no row.
+- RPC providers used by hand or by a Surfpool fork → program IDs and account addresses.
 - Trail of Bits `second-opinion` → OpenAI (Codex CLI) or Google (Antigravity / Gemini CLI): code and diffs under review.
 - Trail of Bits `supply-chain-risk-auditor` → package registries and repository-host APIs: dependency names.
-- RPC providers → program IDs and account addresses.
-- Registry queries (`npm view`, the crates.io / PyPI APIs) → package names and versions.
 - Any MCP server or API that receives client code, dependency names, or addresses.
 
 ### 11c — Untrusted git checkouts
