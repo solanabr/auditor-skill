@@ -403,7 +403,7 @@ Interactive runs ask once per audit — at intake, or at the first step that bui
 
 Some tools send audit material to services outside the auditor's machine. There is no consent gate, but nothing goes out silently: the report lists each tool, the service it contacted, and what it sent.
 
-**Where the list comes from.** Each bundled tool that contacts an outside service first adds one row to its run directory's `disclosures.tsv` (`audit_<n>/disclosures.tsv` or `incident_<n>/disclosures.tsv`): the time (UTC), the tool, the service (the host's last two DNS labels, as the collectors print the provider), what was sent, and how many values. Rows are only ever added, and a `disclosures.tsv` that is not a regular file with one link and the header is refused before anything is sent. The report's list is every row of the engagement's run directories, then each contact no row holds: MCP servers, WebFetch, the Trail of Bits tools, and anything else run by hand. `rpc-read.sh` without `--run` writes no row, and prints the service and what it received on stderr instead: copy that into the list. Typical entries:
+**Where the list comes from.** Each bundled tool that contacts an outside service first adds one row to its run directory's `disclosures.tsv` (`audit_<n>/disclosures.tsv` or `incident_<n>/disclosures.tsv`): the time (UTC), the tool, the service (the host's last two DNS labels, as the collectors print the provider), what was sent, and how many values. Rows are only ever added, and a `disclosures.tsv` that is not a regular file with one link and the header is refused before anything is sent. The report's list is every row of the engagement's run directories, then each contact no row holds: MCP servers, WebFetch, the Trail of Bits tools, the live probes of Q47, and anything else run by hand. `rpc-read.sh` without `--run` writes no row, and prints the service and what it received on stderr instead: copy that into the list. Typical entries:
 
 - `deps.sh` → crates.io and github.com (the RustSec database), npmjs.org, pypi.org and pythonhosted.org: package names and versions, or the manifests and lockfiles it was given (rows).
 - `sast.sh` → semgrep.dev: the ruleset ids (a row).
@@ -414,6 +414,7 @@ Some tools send audit material to services outside the auditor's machine. There 
 - Trail of Bits `second-opinion` → OpenAI (Codex CLI) or Google (Antigravity / Gemini CLI): code and diffs under review.
 - Trail of Bits `supply-chain-risk-auditor` → package registries and repository-host APIs: dependency names.
 - Trail of Bits `post-patch-validation` (`/auditor:patch --post-patch-validation`) → whatever its checks contact while they build and test the target: package registries, toolchain downloads, hosts the target's code or tests reach.
+- Live probes of the project's own hosts and buckets (DEP-072, DEP-073; only under `QUESTIONS.md` Q47, and only for what `audit_<n>/intake.md` §8 lists) → that host or bucket: an unauthenticated, read-only request.
 - Any MCP server or API that receives client code, dependency names, or addresses.
 
 ### 11c — Untrusted git checkouts
