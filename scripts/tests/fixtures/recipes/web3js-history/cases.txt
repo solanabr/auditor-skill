@@ -14,8 +14,9 @@
 64	web3js-history: refused: usage: web3js-history.sh [--repo <dir> | --git-dir <R>/src.git]	--repo=.
 64	web3js-history: refused: --repo needs a value	--repo
 64	web3js-history: refused: --git-dir needs a value	--git-dir
-64	web3js-history: refused: --repo is empty	--repo	
-64	web3js-history: refused: --git-dir is empty	--git-dir	
+# an empty --repo / --git-dir value is refused; a trailing token keeps the line clear of trailing whitespace
+64	web3js-history: refused: --repo is empty	--repo		x
+64	web3js-history: refused: --git-dir is empty	--git-dir		x
 64	web3js-history: refused: give --repo or --git-dir once	--repo	.	--repo	.
 64	web3js-history: refused: give --repo or --git-dir once	--repo	.	--git-dir	audit_1/src.git
 64	web3js-history: refused: --repo has an empty, . or .. component: ../x	--repo	../x

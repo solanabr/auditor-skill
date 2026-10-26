@@ -29,8 +29,9 @@
 64	lock-delta: refused: usage: lock-delta.sh [--repo <dir> | --git-dir <R>/src.git] npm|bun|cargo <base>..<head>	--repo=.	npm	A..B
 64	lock-delta: refused: --repo needs a value	--repo
 64	lock-delta: refused: --git-dir needs a value	--git-dir
-64	lock-delta: refused: --repo is empty	--repo	
-64	lock-delta: refused: --git-dir is empty	--git-dir	
+# an empty --repo / --git-dir value is refused; a trailing npm A..B keeps the line clear of trailing whitespace
+64	lock-delta: refused: --repo is empty	--repo		npm	A..B
+64	lock-delta: refused: --git-dir is empty	--git-dir		npm	A..B
 64	lock-delta: refused: give --repo or --git-dir once	--repo	.	--repo	.	npm	A..B
 64	lock-delta: refused: give --repo or --git-dir once	--repo	.	--git-dir	audit_1/src.git	npm	A..B
 64	lock-delta: refused: --repo has an empty, . or .. component: ../x	--repo	../x	npm	A..B
