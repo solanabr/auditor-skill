@@ -108,7 +108,15 @@ done
 git -C "$clone" for-each-ref --contains "$new" --format='%(refname)' refs/remotes/origin refs/tags > "$tmp/refs" \
   || die "git for-each-ref failed"
 [ -s "$tmp/refs" ] || die "commit $new is on no branch or tag of $url"
-if git -C "$clone" merge-base --is-ancestor "$new" refs/default 2>/dev/null; then dflt="is on"; else dflt="is not on"; fi
+# a branch or tag named HEAD can stand in for HEAD when the upstream advertises none
+if git -C "$clone" rev-parse -q --verify refs/remotes/origin/HEAD > /dev/null \
+  || git -C "$clone" rev-parse -q --verify refs/tags/HEAD > /dev/null; then
+  dflt="The upstream has a branch or tag named HEAD, so whether NEW is on its default branch is not known."
+elif git -C "$clone" merge-base --is-ancestor "$new" refs/default 2>/dev/null; then
+  dflt="NEW is on its default branch (HEAD)."
+else
+  dflt="NEW is not on its default branch (HEAD)."
+fi
 bash "$here/tob-delta-review.sh" "$clone" "$old" "$new" > "$tmp/review" || die "scripts/tob-delta-review.sh failed"
 
 {
@@ -120,7 +128,7 @@ bash "$here/tob-delta-review.sh" "$clone" "$old" "$new" > "$tmp/review" || die "
   awk -v url="$url" -v dflt="$dflt" '{ sub(/^refs\/remotes\/origin\//, "branch "); sub(/^refs\/tags\//, "tag ") }
     NR <= 10 { s = s (NR > 1 ? ", " : "") $0 }
     END { if (NR > 10) s = s sprintf(" and %d more", NR - 10)
-      print "Fetched by branch and tag name from " url ". NEW " dflt " its default branch (HEAD)."
+      print "Fetched from " url " by the names of its default branch (HEAD), branches and tags. " dflt
       print "Branches and tags that hold NEW: " s "." }' "$tmp/refs"
   echo
   cat "$tmp/review"

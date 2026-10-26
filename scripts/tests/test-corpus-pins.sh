@@ -646,6 +646,12 @@ case "$out" in *"$(printf '\033')"*|*"$(printf '\r')"*) no_ "ESC or CR reaches t
 prrun "$prbase" "$(prhead "$u1")"
 [ "$rc" -eq 0 ] && [ "$(nth "$out" 3p)" = "This PR changes nothing else." ] \
   && ok_ "a move of the gitlink alone counts" || no_ "a move of the gitlink alone (rc=$rc)" "$out$err"
+# a tag named HEAD: the summary does not say whether NEW is on the default branch
+git -C "$up" update-ref refs/tags/HEAD "$u1"
+prrun "$prbase" "$(prhead "$u1")"
+has "$out" "The upstream has a branch or tag named HEAD, so whether NEW is on its default branch is not known." \
+  && ok_ "a tag named HEAD leaves the default branch unknown" || no_ "a tag named HEAD (rc=$rc)" "$out$err"
+git -C "$up" update-ref -d refs/tags/HEAD
 
 prrun "$prbase" "$(prhead "$u1" README.md "$(readme "$u1")
 Another line." scripts/check-corpus.sh "SUBMODULE_URLS='$URL https://github.com/someone/skills'" "docs/[x](#y).md" z)"
