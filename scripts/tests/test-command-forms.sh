@@ -10,7 +10,9 @@
 #       in front, no other $, no backtick, no ;, &&, ||, no & but in a redirect (2>&1, &>), no process
 #       substitution, no pipe (a | with a space beside it, or one straight into a path or a program such as sh
 #       or tee; a|b in a usage line is a choice), no line continuation, and no file redirect but into a run
-#       directory (audit_<n>/ or incident_<n>/, with no .. in the path) or /dev/null.
+#       directory (audit_<n>/ or incident_<n>/, with no .. in the path) or /dev/null. A placeholder the bodies
+#       use (<n>, <R>/poc/<ID> and the rest of PLACEHOLDERS) is a word there; any other <...> is read as
+#       written, so <x>/tmp/evil redirects.
 #   C2  Every Bash allow rule that names a path from the root names it as its quoted first word (after an
 #       optional test -x), and that path is a tracked file of mode 100755 whose first line is a #! line, or a
 #       binary a crate under tools/auditor-tools declares, executable when it is built.
@@ -90,6 +92,16 @@ SHELL_FENCES = ("", "bash", "sh", "shell", "zsh", "console")
 LEAD = re.compile(r'^(?:(?:bash|sh|zsh|dash|ksh|env|exec|command|sudo|nice|nohup|time|python3?|timeout\s+\S+|'
                   r'[A-Za-z_][A-Za-z0-9_]*=\S*)\s+|cd\s+\S+\s*(?:&&|;|\|\|)\s*)*')
 ASKS = re.compile(r'\b(asks|prompts)\b')
+# The placeholders the bodies write in their calls, each a word to the redirect scan (<R>/poc/<ID> is a path);
+# any other <...> is read as written, so `<x>/tmp/evil` is a redirect. A body that writes a new one adds it here.
+PLACEHOLDERS = ("ID", "R", "address", "audited commit", "base", "changed program directory", "commit", "file",
+                "filter", "fromUnix", "head", "id", "in-scope directory", "in-scope program dir", "json", "k",
+                "n+1", "n", "name", "package", "path", "program directory", "program-path", "program_id", "repo",
+                "rev", "sha from intake", "sha", "sig", "signature", "store intake recorded", "target",
+                "the file's directory", "the full commit id intake pinned", "the full id of head",
+                "the mode the command hands you", "toUnix", "value", "version")
+PLACEHOLDER = re.compile(r'<(?:' + "|".join(re.escape(p) for p in sorted(PLACEHOLDERS, key=len, reverse=True)) +
+                         r')>(?!\.\./)')
 
 modes = {}
 with open(index_file, encoding="utf-8", errors="replace") as f:
@@ -243,7 +255,7 @@ def operators(s):
 
 def redirects(s):
     """The target of each file redirect outside quotes that does not lead into a run directory (or /dev/null)."""
-    s = re.sub(r'<[^<>(\s](?:[^<>]*[^<>\s])?>(?!\.\./)', 'P', s)   # placeholders such as <R>/poc/<ID>
+    s = PLACEHOLDER.sub('P', s)
     bad, q, i = [], None, 0
     while i < len(s):
         c = s[i]
@@ -635,6 +647,9 @@ cmd c1-redirect-dotdot -- "1. \`\"$R/scripts/ok.sh\" log > audit_1/../../.zshrc\
 cmd c1-redirect-dup -- "1. \`\"$R/scripts/ok.sh\" log >& ../x\`"
 cmd c1-redirect-masked -- "1. \`\"$R/scripts/ok.sh\" log <x >../../.zshrc\`"
 cmd c1-redirect-tight -- "1. \`\"$R/scripts/ok.sh\" log <x>../../.zshrc\`"
+cmd c1-placeholder-slash -- "1. \`\"$R/scripts/ok.sh\" log <x>/tmp/evil\`"
+cmd c1-placeholder-space -- "1. \`\"$R/scripts/ok.sh\" log <x> ../../.zshrc\`"
+cmd c1-placeholder-tilde -- "1. \`\"$R/scripts/ok.sh\" log <x>~/.zshrc\`"
 cmd c2-missing "'Bash(\"$R/scripts/gone.sh\" *)'" --
 cmd c2-mode "'Bash(\"$R/scripts/plain.sh\" *)'" --
 cmd c2-shebang "'Bash(\"$R/scripts/noshebang.sh\" *)'" --
@@ -740,7 +755,7 @@ expect() {
 expect commands/good.md ""
 for c in bash cd env unquoted half-quoted dollar pipe semicolon and skill-dir continued wrapped-span cmp diff \
     procsub redirect redirect-in pipe-tight pipe-path amp-tight redirect-dotdot redirect-dup redirect-masked \
-    redirect-tight large; do
+    redirect-tight placeholder-slash placeholder-space placeholder-tilde large; do
   expect "commands/c1-$c.md" C1
 done
 expect commands/c2-missing.md C2; expect commands/c2-mode.md C2; expect commands/c2-shebang.md C2
