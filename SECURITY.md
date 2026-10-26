@@ -8,6 +8,13 @@ it, and once to the machines that run it.
 - **Tooling that runs on a contributor's or user's machine**: `install.sh`, `scripts/*`, the Rust CLIs
   under `tools/auditor-tools`, the vendored submodule wiring, and the GitHub workflows. Anything that
   could execute unintended code, read or exfiltrate secrets, or write outside the expected paths.
+- **The steps the commands run without asking**: the bundled entry points their `allowed-tools` pre-approve
+  (`scripts/preflight.sh`, `rundir.sh`, `git-ro.sh`, the runners in `scripts/runner/`, the collectors,
+  `audit-scan`, `audit-mem` and the rest [docs/permissions-and-isolation.md](docs/permissions-and-isolation.md)
+  lists). Each is meant to be safe whatever arguments it gets. A way to make one write outside a run directory
+  or the `audit-mem` store, run a program its arguments or the audited repository name, take a path outside
+  the working directory, reach a host its documentation does not name, or run the project's code outside the
+  recorded execution mode is a security issue. So is an allow rule that reaches a program outside that set.
 - **Corpus content that could steer an auditor or an AI agent into a dangerous action** — for example a
   "verification step" that instructs running a destructive command, sending data to an external
   endpoint, or that materially misdescribes a vulnerability so that a real finding is dismissed.
