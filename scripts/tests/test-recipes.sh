@@ -285,6 +285,42 @@ check "web3js-history: a shallow clone prints its note" \
   has "$T/err" 'web3js-history: shallow clone: history before the shallow boundary is missing (Rule 11c)'
 
 # =================================================================================================
+# Replace refs: a recipe reads the real history, not a substituted commit, so it is not plain git.
+# hgit pins core.useReplaceRefs=false; plain git honours a replace ref and would read the replacement.
+# =================================================================================================
+LRP="$T/replace-ld"
+git init -q "$LRP" && (
+  cd "$LRP" || exit 1
+  npm_lock 1.3.0 AAAA > package-lock.json && git add package-lock.json && git commit -qm base
+  b=$(git rev-parse HEAD)
+  npm_lock 1.3.1 BBBB > package-lock.json && git add package-lock.json && git commit -qm head
+  h=$(git rev-parse HEAD)
+  # a decoy head with a different version, child of base, built without touching the work tree
+  blob=$(npm_lock 9.9.9 CCCC | git hash-object -w --stdin)
+  tree=$(printf '100644 blob %s\tpackage-lock.json\n' "$blob" | git mktree)
+  decoy=$(echo decoy | git commit-tree "$tree" -p "$b")
+  git replace "$h" "$decoy" && git tag t-base "$b" && git tag t-head "$h"
+) >/dev/null 2>&1 || ko "could not build the lock-delta replace-ref fixture"
+run "$LRP" "$LD" npm t-base..t-head
+check "lock-delta reads the real head, not a replace-ref substitution (it is not plain git)" \
+  sh -c "[ '$RC' = 0 ] && grep -qF '\"node_modules/left-pad\" +      \"version\": \"1.3.1\",' '$T/out' && ! grep -q '9.9.9' '$T/out'"
+
+WRP="$T/replace-w3"
+git init -q "$WRP" && mkdir -p "$WRP/app" && (
+  cd "$WRP" || exit 1
+  w3_files 1.95.5 && git add -A && git commit -qm base
+  b=$(git rev-parse HEAD)
+  w3_files 1.95.6 && git add -A && git commit -qm bump
+  h=$(git rev-parse HEAD)
+  # a decoy head at the safe release (base's tree), child of base, installed as a replacement for the real head
+  decoy=$(git commit-tree "$(git rev-parse "$b^{tree}")" -p "$b" -m decoy)
+  git replace "$h" "$decoy"
+) >/dev/null 2>&1 || ko "could not build the web3js-history replace-ref fixture"
+run "$WRP" "$WH"
+check "web3js-history reads the real history, not a replace-ref substitution (it is not plain git)" \
+  sh -c "[ '$RC' = 0 ] && grep -q '1\.95\.6' '$T/out'"
+
+# =================================================================================================
 # The case files, under each bash on the machine.
 # =================================================================================================
 SHELLS=("$BASH")
@@ -330,14 +366,16 @@ check "no case started a program the fixture's config names" test -z "$(fired)"
 
 # =================================================================================================
 # The corpus. Every code line and code span of FULL-AUDIT.md, checklists/, known-vectors/, discovery/,
-# references/ and templates/ that starts with "<auditor-skill root>/scripts/..." is one plain command, the form a
+# references/ and templates/ that starts with a quoted bundled root (scripts/, templates/ or tools/) is one plain command, the form a
 # command's rule pre-approves: the quoted path first, no $ or backtick anywhere (a $ stops a rule from
 # matching, quoted or not), no &&, || or ;, and a pipe only into grep, head, tail or wc. No code
 # line runs a bundled script any other way (bash, cd or an assignment in front, or inside $( )). The calls of
 # git-ro.sh, the recipes, the runners, rpc-read.sh and rundir.sh then run as written, their placeholders
 # filled, in a fixture with no cargo, npm, curl or solana on PATH: git-ro.sh, the recipes and rundir.sh do
 # their work, and each runner reaches the blocker it gives when its tool or the recorded mode is missing, so
-# none is refused.
+# none is refused. A code line that starts with a relative bundled path, a span that names a quoted root without
+# starting with it, and an audit-scan or audit-mem call missing --contract=1 right after it (or its subcommand)
+# are each refused.
 # =================================================================================================
 FORMS="$T/forms.tsv"
 python3 -I - "$ROOT" "$FORMS" > "$T/forms.err" 2>&1 <<'PY'
@@ -351,9 +389,15 @@ for d in ("checklists", "known-vectors", "discovery"):
 for d in ("references", "templates"):
     for dp, dn, fn in sorted(os.walk(d)):
         files += sorted(os.path.join(dp, f) for f in fn if f.endswith(".md"))
-Q = '"<auditor-skill root>/scripts/'
+Q = ('"<auditor-skill root>/scripts/', '"<auditor-skill root>/templates/', '"<auditor-skill root>/tools/')
 RUN = ("git-ro.sh", "recipes/", "runner/deps.sh", "runner/target.sh", "rpc-read.sh", "rundir.sh")
 READERS = {"grep", "head", "tail", "wc"}
+# A code line that starts with a relative path to a bundled entry point runs the audited repo's own file (Rule 11e).
+REL = re.compile(r"^(scripts/\S+\.sh|templates/poc/run\.sh|tools/auditor-tools/\S*audit-(scan|mem|logs))(\s|$)")
+# Spans that name a quoted root inside a longer command, read-only and not a call a rule pre-approves.
+SPAN_OK = ('test -x "<auditor-skill root>/tools/auditor-tools/target/release/audit-scan"',
+           'set -o pipefail; <cmd> 2>&1 | bash "<auditor-skill root>/scripts/dnr/redact.sh"')
+span_seen = set()
 FILL = [("<auditor-skill root>", root), ("audit_<n>", "audit_1"), ("incident_<n>", "incident_1"),
         ("incident_<k>", "incident_1"), ("<base>..<head>", "t-base..t-head"), ("<baseline>..HEAD", "t-base..HEAD"),
         ("<PROGRAM_ID>", "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),
@@ -398,6 +442,13 @@ def form(f, n, cmd, code):
         if not p or p[0] not in READERS:
             bad.append(f"{f}:{n}: a pipe into {p[0] if p else 'nothing'}, not a read-only reader: {cmd}")
             return
+    base = os.path.basename(parts[0][0]) if parts[0] else ""
+    if len(parts[0]) > 1 and base in ("audit-scan", "audit-mem"):
+        at = 1 if base == "audit-scan" else 2   # right after the binary, or after its subcommand
+        if len(parts[0]) <= at or parts[0][at] != "--contract=1":
+            where = "it" if base == "audit-scan" else "its subcommand"
+            bad.append(f"{f}:{n}: {base} without --contract=1 right after {where}: {cmd}")
+            return
     tool = parts[0][0].split("/scripts/", 1)[1] if "/scripts/" in parts[0][0] else ""
     # A code line is a call; a code span with no argument names the script in prose.
     run = (code or len(parts[0]) > 1) and any(tool.startswith(r) for r in RUN) and cmd not in SHAPES
@@ -416,12 +467,24 @@ for f in files:
             s = body.lstrip()
             if s.startswith(Q):
                 form(f, n, s, True)
-            elif "<auditor-skill root>/scripts/" in s and not s.startswith("#"):
+            elif s.startswith("#"):
+                pass
+            elif "<auditor-skill root>/scripts/" in s:
                 bad.append(f"{f}:{n}: a bundled script run other than by its quoted path first: {s}")
+            elif REL.match(s):
+                bad.append(f"{f}:{n}: a relative path to a bundled entry point, not its quoted root: {s}")
         else:
             for m in re.finditer(r"`([^`]*)`", body):
-                if m.group(1).startswith(Q):
-                    form(f, n, m.group(1), False)
+                g = m.group(1)
+                if g.startswith(Q):
+                    form(f, n, g, False)
+                elif g in SPAN_OK:
+                    span_seen.add(g)
+                elif any(r in g for r in Q):
+                    bad.append(f"{f}:{n}: a span names a quoted root without starting with it: {g}")
+for k in SPAN_OK:
+    if k not in span_seen:
+        bad.append(f"the listed span exception is gone, so SPAN_OK needs updating: {k}")
 with open(out, "w", encoding="utf-8") as o:
     for r in rows:
         o.write("\t".join(r) + "\n")
@@ -565,7 +628,8 @@ else ko "a corpus recipe runs plain git, or the Rule 11c prefix is left outside 
 
 # Calls that ask: a code line that runs a tool no command pre-approves (npm, cargo, curl, dig, gh, uv, plain git
 # and the like) sits in a step whose text says it asks for approval: the step's own lines, from its heading or
-# its bold **Step** line through the paragraph after the block. The fixes a developer runs on their own machine
+# its bold **Step** line through the paragraph after the block. A shell loop head, an in-place sed and a find
+# that runs or deletes are flagged the same way. The fixes a developer runs on their own machine
 # (build-and-tooling.md) are no audit step.
 python3 -I - "$ROOT" > "$T/asks.txt" 2>&1 <<'PY'
 import os, re, sys
@@ -583,9 +647,14 @@ NOT_STEPS = [
     ("templates/audit-report.md", "node / npm:     {version}"),
 ]
 TOOLS = ("npm|npx|yarn|pnpm|bun|node|cargo|anchor|solana|solana-verify|solana-keygen|rustup|avm|pip|pip-audit|safety|"
-         "bandit|uv|curl|wget|dig|nslookup|whois|openssl|gh|aws|gsutil|gcloud|az|docker|git")
+         "bandit|uv|curl|wget|dig|nslookup|whois|openssl|gh|aws|gsutil|gcloud|az|docker|git|"
+         "awk|sed|python3|jq|xargs|cp|mv|mkdir|tee|mewt|trident|surfpool|semgrep")
 ENV = r"(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:env(?:\s+-u\s+\S+)*\s+(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*)?"
 CALL = re.compile(r"(?:^|[|;&(]|\b(?:then|do|else|if)\s)\s*" + ENV + r"(" + TOOLS + r")(?=\s|$)")
+# a shell loop head, an in-place sed, and a find that runs or deletes — none read-only, none pre-approved
+LOOP = re.compile(r"(?:^|[|;&(]|\b(?:then|do|else)\s)\s*(for|while)(?=\s|$)")
+SEDI = re.compile(r"\bsed\s+(?:-\S+\s+)*-\S*i")
+FINDX = re.compile(r"\bfind\s.*-(?:exec|delete|ok)\b")
 ASKS = re.compile(r"asks? for approval", re.I)
 SHELL = {"", "bash", "sh", "shell", "console", "zsh"}
 def bare(line):  # the line without its comment, and with each quoted string emptied
@@ -619,14 +688,17 @@ for f in files:
         while end < len(lines) and lines[end].strip() and not lines[end].lstrip().startswith("```"): end += 1
         context = "\n".join(lines[top:end])
         for n in range(a + 1, b):
-            m = CALL.search(bare(lines[n]))
-            if not m:
+            bl = bare(lines[n])
+            m = CALL.search(bl)
+            what = (m.group(1) if m else "a shell loop" if LOOP.search(bl) else
+                    "sed -i" if SEDI.search(bl) else "find -exec" if FINDX.search(bl) else None)
+            if what is None:
                 continue
             k = (f, lines[n].strip())
             if k in NOT_STEPS:
                 seen.add(k)
             elif not ASKS.search(context):
-                bad.append(f"{f}:{n + 1}: runs {m.group(1)}, and its step does not say it asks for approval: {lines[n].strip()[:120]}")
+                bad.append(f"{f}:{n + 1}: runs {what}, and its step does not say it asks for approval: {lines[n].strip()[:120]}")
 for k in NOT_STEPS:
     if k not in seen: bad.append(f"{k[0]}: the listed line is gone, so the list needs updating: {k[1][:100]}")
 print("\n".join(bad))
