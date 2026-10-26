@@ -16,7 +16,8 @@
 #       mention).
 #   C4  Every command, and the root SKILL.md, runs preflight.sh as step 0: the first entry point its body names
 #       is "<root>/scripts/preflight.sh", with no arguments, in a paragraph that starts "0. **Preflight" (in the
-#       root SKILL.md, "**Step 0 — Preflight"); and every command's allowed-tools pre-approves that call.
+#       root SKILL.md, "**Step 0 — Preflight") and says that a refusal, and a call that is denied, stop the run;
+#       and every command's allowed-tools pre-approves that call.
 # The entry points are the tracked files under scripts/ (but scripts/tests/) and templates/ of mode 100755 that
 # start with a direct-exec shebang (#!/bin/bash or #!/usr/bin/env -S python3 -I), and the binaries the crates
 # under tools/auditor-tools declare. Each check first runs on known-good and known-bad fixture files, one of
@@ -142,7 +143,8 @@ def operators(s):
     return found
 
 def segments(body, first):
-    """(line number, text, first line of its paragraph) for every inline code span and fenced code line."""
+    """(line number, text, first line of its paragraph, the paragraph) for every inline code span and fenced
+    code line."""
     fence, para = None, []
     def spans(para):
         text = "\n".join(l for _, l in para)
@@ -175,7 +177,7 @@ def segments(body, first):
                     k += 1
             if close < 0:
                 i = j; continue
-            yield line_at(j), text[j:close].replace("\n", " "), para[0][1]
+            yield line_at(j), text[j:close].replace("\n", " "), para[0][1], text
             i = close + run
     for idx, line in enumerate(body):
         n = first + idx
@@ -184,7 +186,7 @@ def segments(body, first):
             if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence) and not m.group(2).strip():
                 fence = None
             else:
-                yield n, line.strip(), line
+                yield n, line.strip(), line, line
             continue
         if m:
             for s in spans(para):
@@ -266,7 +268,7 @@ for f in files:
 
     # the body
     first_entry = None
-    for n, seg, para in segments(body, first):
+    for n, seg, para, ptext in segments(body, first):
         words = seg.split()
         if words and words[0] in ("audit-scan", "audit-mem") and "${" not in seg:
             if (words[0] == "audit-scan" and len(words) >= 2) or (words[0] == "audit-mem" and len(words) >= 3):
@@ -276,7 +278,7 @@ for f in files:
             if path not in entry:
                 continue
             if first_entry is None:
-                first_entry = (n, seg, para, path)
+                first_entry = (n, seg, para, ptext, path)
             what = []
             s, e = m.start(), m.end()
             quoted = s > 0 and seg[s - 1] == '"' and seg[e:e + 1] == '"' and not m.group(2)
@@ -299,13 +301,15 @@ for f in files:
         if first_entry is None:
             finding("C4", f, 1, "the body runs no preflight.sh as step 0")
         else:
-            n, seg, para, path = first_entry
+            n, seg, para, ptext, path = first_entry
             if path != "scripts/preflight.sh":
                 finding("C4", f, n, "the first entry point the body names is %s, not scripts/preflight.sh in step 0" % path)
             elif seg.strip() != '"${%s}/scripts/preflight.sh"' % var:
                 finding("C4", f, n, "step 0 runs preflight.sh with something beside it: %s" % seg)
             elif not re.match(want, para):
                 finding("C4", f, n, "preflight.sh first appears outside a paragraph that starts %s" % want.replace("\\", ""))
+            elif not re.search(r'(?i)refus', ptext) or not re.search(r'(?i)denied', ptext):
+                finding("C4", f, n, "step 0 does not say that a refusal and a denied call both stop the run")
 
 for line in out:
     print(line)
@@ -339,7 +343,7 @@ chmod 644 "$fx/scripts/plain.sh"
 
 R='${CLAUDE_PLUGIN_ROOT}'
 B="$R/tools/auditor-tools/target/release"
-STEP0="0. **Preflight.** Run \`\"$R/scripts/preflight.sh\"\`, with no arguments."
+STEP0="0. **Preflight.** Run \`\"$R/scripts/preflight.sh\"\`, with no arguments. On a refusal, stop; a call that is denied stops the run too."
 # cmd <name> <rule>... -- <body line>...: a command whose allowed-tools pre-approve preflight.sh and the rules
 cmd() {
   local f="$fx/commands/$1.md"; shift
@@ -389,12 +393,13 @@ cmd c4-late -- "1. \`\"$R/scripts/ok.sh\" new audit\`" "2. Then \`\"$R/scripts/p
 sed -e '/^0\. \*\*Preflight/d' "$fx/commands/c4-late.md" > "$fx/commands/c4-late.md.new" && mv "$fx/commands/c4-late.md.new" "$fx/commands/c4-late.md"
 sed -e 's#^0\. \*\*Preflight\.\*\*#Step zero:#' "$fx/commands/good.md" > "$fx/commands/c4-paragraph.md"
 sed -e 's#preflight\.sh"`, with#preflight.sh" --fast`, with#' "$fx/commands/good.md" > "$fx/commands/c4-args.md"
+sed -e 's#; a call that is denied stops the run too\.#.#' "$fx/commands/good.md" > "$fx/commands/c4-no-denial.md"
 # agents and skills have no step 0; the root SKILL.md has it, from ${CLAUDE_SKILL_DIR}
 printf -- '---\nname: a\ndescription: "An agent."\ntools: Read, Bash\n---\n\nRun `"%s/scripts/ok.sh" check x`.\n' "$R" > "$fx/agents/good.md"
 printf -- '---\nname: a\ndescription: "An agent."\ntools: Read, Bash\n---\n\nRun `bash "%s/scripts/ok.sh"`.\n' "$R" > "$fx/agents/c1.md"
 printf -- '---\nname: s\ndescription: "A skill."\nallowed-tools:\n  - '"'"'Bash("%s/scripts/rec.py" *)'"'"'\n---\n\nRun `"%s/scripts/rec.py" x` or `"%s/scripts/rec.py" x | wc -l`.\n' "$R" "$R" "$R" \
   > "$fx/skills/s/SKILL.md"
-printf -- '---\nname: x\ndescription: "A skill."\n---\n\n**Step 0 — Preflight.** Run `"${CLAUDE_SKILL_DIR}/scripts/preflight.sh"`.\nThen `"${CLAUDE_SKILL_DIR}/scripts/ok.sh" check x`.\n' \
+printf -- '---\nname: x\ndescription: "A skill."\n---\n\n**Step 0 — Preflight.** Run `"${CLAUDE_SKILL_DIR}/scripts/preflight.sh"`; a refusal, or a denied call, stops the run.\nThen `"${CLAUDE_SKILL_DIR}/scripts/ok.sh" check x`.\n' \
   > "$fx/SKILL.md"
 sed -e 's#CLAUDE_SKILL_DIR}/scripts/ok#CLAUDE_PLUGIN_ROOT}/scripts/ok#' "$fx/SKILL.md" > "$fx/skill-root.md"
 # over 64 KiB, the one bad line last
@@ -422,7 +427,7 @@ expect commands/c2-bin.md C2; expect commands/c2-bash-rule.md C2
 expect commands/c3-scan-rule.md C3; expect commands/c3-mem-rule.md C3; expect commands/c3-scan-call.md C3
 expect commands/c3-mem-call.md C3; expect commands/c3-mem-bare.md C3; expect commands/c3-scan-fenced.md C3
 expect commands/c4-no-rule.md C4; expect commands/c4-no-step.md C4; expect commands/c4-late.md C4
-expect commands/c4-paragraph.md C4; expect commands/c4-args.md C4
+expect commands/c4-paragraph.md C4; expect commands/c4-args.md C4; expect commands/c4-no-denial.md C4
 expect agents/good.md ""; expect agents/c1.md C1; expect skills/s/SKILL.md C1; expect SKILL.md ""
 # the large fixture's finding is its last line
 line=$(check "$fx" commands/c1-large.md | cut -f2)
