@@ -22,7 +22,7 @@ Each `/auditor:*` command pre-approves, in its `allowed-tools`, the bundled step
 | Snapshot an incident's programs, and collect its transactions | `scripts/dnr/snapshot-program.sh`, `scripts/dnr/collect.sh` |
 | Analyze an incident corpus, inside the `auditor:dnr-analyze` fork | `profile.sh`, `frames.py`, `deltas.py`, `jq-ro.sh`, `audit-logs` |
 
-The commands also pre-approve reading (`Read`, `Grep`, `Glob`), starting their agents (`Task`), and writing files under `audit_*/` and `incident_*/` with the Write and Edit tools. They pre-approve invoking the skills they run, too: `/auditor:audit-cycle` and `/auditor:audit-assist` their phase commands, `/auditor:re-audit` the report, and `/auditor:hunt` and `/auditor:respond` the `auditor:dnr-analyze` skill; a command that stops for your answers pre-approves invoking itself again. Each command pre-approves only the rows its own steps use. When you ask in plain words ("audit this repo"), the skill runs the same first step, `preflight.sh`, but pre-approves nothing: its steps ask in Manual mode, go to the classifier in auto mode, and are denied in `claude -p`, where a denied preflight call stops the run. An install as a user-level skill, rather than the plugin, brings no `/auditor:*` commands, so it has no pre-approvals at all. Details of each tool: [power-tools.md](power-tools.md).
+The commands also pre-approve reading (`Read`, `Grep`, `Glob`), starting their agents (`Task`), and writing files under `audit_*/` and `incident_*/` with the Write and Edit tools. They pre-approve invoking the skills they run, too: `/auditor:audit-cycle` and `/auditor:audit-assist` their phase commands, `/auditor:re-audit` the report, and `/auditor:hunt` and `/auditor:respond` the `auditor:dnr-analyze` skill; a command that stops for your answers pre-approves invoking itself again. Each command pre-approves only the rows its own steps use. When you ask in plain words ("audit this repo"), the skill runs the same first step, `preflight.sh`, but pre-approves nothing: its steps ask in Manual mode, go to the classifier in auto mode, and are denied in `claude -p`, where a denied preflight call stops the run. Claude Code 2.1.157 and later also loads a plugin saved under `~/.claude/skills/`, so an `install.sh` install, a clone there, brings the same `/auditor:*` commands and pre-approvals as the plugin install; its root skill is then your personal skill `auditor-skill`. Details of each tool: [power-tools.md](power-tools.md).
 
 ### Why that is safe
 
@@ -67,7 +67,7 @@ What happens to the calls in the table depends on the permission mode:
 
 ## Turns and resuming
 
-A command's pre-approvals last for the turn that invoked it, and cover the agents it starts in that turn. Claude Code clears them at your next message, even for an agent that is still running, and neither a resume nor anything else gives them back to that agent; a turn that starts when a background agent finishes gets none either (all measured with Claude Code 2.1.304). So the flows run their agents in the foreground, which holds the turn until they finish, and when a flow goes on after you reply (a checkpoint answer, a yes to a collection, a mode choice), it first invokes its own command again through the Skill tool, as `auditor:<name> --resume <step>` followed by its run directory (or the finding) and your answers, which gives the new turn the same pre-approvals. A resumed flow never repeats a step it finished. Every other command resumes the same way when you write to it before it ends.
+A command's pre-approvals last for the turn that invoked it, and cover the agents it starts in that turn. Claude Code clears them at your next message, even for an agent that is still running, and neither a resume nor anything else gives them back to that agent; a turn that starts when a background agent or command finishes gets none either (measured with Claude Code 2.1.304, for agents). So the flows run their agents in the foreground, which holds the turn until they finish, and when a flow goes on after you reply (a checkpoint answer, a yes to a collection, a mode choice), it first invokes its own command again through the Skill tool, as `auditor:<name> --resume <step>` followed by its run directory (or the finding) and your answers, which gives the new turn the same pre-approvals. A resumed flow never repeats a step it finished. Every other command resumes the same way when you write to it before it ends.
 
 The Skill tool needs permission, and a plugin cannot ship permission rules, so Manual mode asks each time a flow resumes. To stop that, add these rules to `permissions.allow` in your user settings, `~/.claude/settings.json`, beside any rules you already have there:
 
@@ -78,15 +78,33 @@ The Skill tool needs permission, and a plugin cannot ship permission rules, so M
       "Skill(auditor:audit-cycle *)", "Skill(auditor:audit-assist *)", "Skill(auditor:intake *)",
       "Skill(auditor:threat-model *)", "Skill(auditor:triage *)", "Skill(auditor:poc *)",
       "Skill(auditor:patch *)", "Skill(auditor:audit-report *)", "Skill(auditor:hunt *)",
-      "Skill(auditor:respond *)", "Skill(auditor:dnr-analyze *)"
+      "Skill(auditor:respond *)", "Skill(auditor:dnr-analyze *)", "Skill(auditor:audit *)",
+      "Skill(auditor:quick-scan *)", "Skill(auditor:deep-review *)", "Skill(auditor:diff-audit *)",
+      "Skill(auditor:spec-audit *)", "Skill(auditor:economic-sim *)", "Skill(auditor:re-audit *)",
+      "Skill(auditor:auditor-skill *)"
     ]
   }
 }
 ```
 
-These rules name the plugin's skills and no path or version. What each skill then pre-approves stays inside the plugin, and changes with it. They cover the flows that stop for your answers; if you also write to another command while it runs, add its `Skill(auditor:<name> *)` rule the same way.
+These rules name the plugin's skills and no path or version. What each skill then pre-approves stays inside the plugin, and changes with it. They cover every command, the analysis skill and the root skill, `auditor:auditor-skill`, which a request in plain words runs, so neither a resume nor the first call to the root skill asks. In the `install.sh` layout the root skill is your personal skill `auditor-skill`: add `"Skill(auditor-skill *)"` there too. Leave that one out with the plugin install, where a repository's own `.claude/skills/auditor-skill/` could take the name. `Skill(name *)` matches the skill by name with any arguments (Claude Code's skills reference).
 
 Don't answer "Yes, and don't ask again" at that prompt instead. It can save the rule into the audited repository's `.claude/settings.local.json`, a file in the client's tree: for a Bash rule Claude Code uses the one at the root of the git repository that holds the working directory, and the working directory's own outside a repository. `preflight.sh` refuses that file on the next run, since a `permissions` key is not one a clean tree may carry. Choosing a mode in `/sandbox`, or "don't ask again" at a sandbox network prompt, writes the same file. So set the sandbox in your user settings, and add hosts to `allowedDomains` there: under the block below, with `strictAllowlist`, no network prompt appears. If such a file appeared, move its entries to `~/.claude/settings.json` and delete it.
+
+### Long steps
+
+A Bash call runs in the foreground until its timeout: two minutes unless Claude asks for more, and ten minutes at most. A call that outlasts it moves to the background instead of stopping, and the turn its completion starts has none of the command's pre-approvals, so the flow has to resume first: Manual mode asks, and `claude -p` denies that call unless a rule allows it. Cold builds, PoC runs, semgrep on a large tree and long RPC collections can take longer, so raise both limits in your user settings:
+
+```json
+{
+  "env": {
+    "BASH_DEFAULT_TIMEOUT_MS": "1800000",
+    "BASH_MAX_TIMEOUT_MS": "3600000"
+  }
+}
+```
+
+`BASH_DEFAULT_TIMEOUT_MS` is the timeout of a call that names none, and `BASH_MAX_TIMEOUT_MS` the most a call may ask for (Claude Code's tools reference). With these values a call may take 30 minutes by default and an hour at most, and a call that hangs holds the flow that long. In a `claude -p` run whose prompt is text, the first value also gives a command that still moves to the background 30 minutes there instead of 10.
 
 ## Running isolated
 
@@ -186,7 +204,7 @@ What each part does:
 
 ## Non-interactive runs (`claude -p`)
 
-A run's first turn has the command's pre-approvals, and the agents it starts keep them. When background work finishes after that turn, the run takes another turn, which has none, so a flow that goes on there resumes through the Skill tool, and `claude -p` denies that call unless a rule allows it. Keep the rules from [Turns and resuming](#turns-and-resuming) in your user settings, or pass them with `--allowedTools`. A run also needs a recorded mode: `/auditor:intake --auto` writes `native`, the documented default, unless `AUDITOR_EXEC_MODE` is stricter. An incident collection needs `--collect`, which stands for your yes to the addresses, window and caps.
+A run's first turn has the command's pre-approvals, and the agents it starts keep them. When background work finishes after that turn, the run takes another turn, which has none, so a flow that goes on there resumes through the Skill tool, and `claude -p` denies that call unless a rule allows it. A Bash call that outlasts its timeout is background work too ([Long steps](#long-steps)). Keep the rules from [Turns and resuming](#turns-and-resuming) in your user settings, or pass them with `--allowedTools`. A run also needs a recorded mode: `/auditor:intake --auto` writes `native`, the documented default, unless `AUDITOR_EXEC_MODE` is stricter. An incident collection needs `--collect`, which stands for your yes to the addresses, window and caps.
 
 In a repository you didn't write, `claude -p` runs the hooks in the project's `.claude/settings.json` and connects the servers in its `.mcp.json` when it starts, before `preflight.sh` can refuse them. Run it in a clean copy, or pass `--setting-sources user`, which reads neither.
 
@@ -204,8 +222,15 @@ claude -p "/auditor:audit-cycle ." --permission-mode bypassPermissions
 # On a host, with the classifier for the steps that are not pre-approved
 claude -p "/auditor:audit-cycle ." --permission-mode auto --setting-sources user
 
-# Extra rules: only rules with no path (skill names, MCP tool names), never an absolute Bash path
-claude -p "/auditor:audit-cycle ." --allowedTools "Skill(auditor:audit-cycle *)"
+# Extra rules: only rules with no path (skill names, MCP tool names), never an absolute Bash path.
+# A hunt whose collection outlasts its timeout goes on in a turn with no pre-approvals,
+# where it invokes itself and its analysis skill again:
+claude -p "/auditor:hunt <program> --collect" --setting-sources user --allowedTools "Skill(auditor:hunt *)" "Skill(auditor:dnr-analyze *)"
+
+# A request in plain words runs the root skill, which needs its own rule (Skill(auditor-skill *)
+# in the install.sh layout), and runs its steps only as far as that skill pre-approves them
+# (see "What runs without asking" above):
+claude -p "Audit this repository with the auditor-skill" --setting-sources user --allowedTools "Skill(auditor:auditor-skill *)"
 ```
 
 **The default builds on your host.** `claude -p "/auditor:audit-cycle ."` on your own machine records native mode and builds and tests the project there without asking. For code you don't trust, set `AUDITOR_EXEC_MODE=isolated`, so that a host with readable keys refuses the builds, or `AUDITOR_EXEC_MODE=none`, so that the runners build none of it.
