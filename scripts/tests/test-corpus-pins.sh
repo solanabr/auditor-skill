@@ -4,14 +4,15 @@
 # under a maintainer git config that colours and converts diffs too, and over a table of remote-exec lines
 # (multi-line installers included), a host in added Markdown, a 1 MiB manifest that declares hooks, renamed
 # files (one moved unchanged that holds 1 MiB), monitors and bin/ as load surfaces, test and lockfile
-# exclusions that hold only as written, added lines that hold a byte that is not UTF-8 or a NUL, and
-# continuation lines that end in CR LF; and scripts/tob-delta-pr.sh, the PR summary, against fixture upstreams
-# served under their GitHub URLs: a move with and without the README pin line, other files, README.md changed
-# beyond the pin line's hashes and dates, a gitlink that the config and the checked-out .gitmodules ignore,
-# backticks, control characters and Markdown in the review, a line over 2,000 bytes, a review over 1 MiB, a
-# NEW off the default branch, the workflow's own step, and exit 2 with nothing printed for a commit that only
-# a fork or a pull ref reaches (also when .gitmodules names the fork), a removed gitlink, a SUBMODULE_URLS
-# without the upstream, a failing step, and usage errors.
+# exclusions that hold only as written, added lines that hold a byte that is not UTF-8 or a NUL, continuation
+# lines that end in CR LF or more CRs, and remote-exec commands in Markdown code spans; and
+# scripts/tob-delta-pr.sh, the PR summary, against fixture upstreams served under their GitHub URLs: a move with
+# and without the README pin line, other files, README.md changed beyond the pin line's hashes and dates (its
+# placeholders written out included), a gitlink that the config and the checked-out .gitmodules ignore,
+# backticks, control characters and Markdown in the review, a line over 2,000 bytes, a review over 1 MiB, a NEW
+# off the default branch, an upstream tag named HEAD, the workflow's own step, and exit 2 with nothing printed
+# for a commit that only a fork or a pull ref reaches (also when .gitmodules names the fork), a removed gitlink,
+# a SUBMODULE_URLS without the upstream, a step that fails, and usage errors.
 # Run from the repo root: `bash scripts/tests/test-corpus-pins.sh`.
 # Builds throwaway git repos under ${TMPDIR:-/tmp}; no network; bash >= 3.2.
 set -uo pipefail
