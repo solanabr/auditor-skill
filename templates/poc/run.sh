@@ -146,6 +146,13 @@
 #     cdylib of another member stop the run, in either mode, since cargo builds a bin
 #     with every integration test, and places a bin, a dylib or a staticlib outside the
 #     deps directory whose dep-info run.sh reads (below).
+#     The crate's own Rust code is read as well, every .rs file in it and each
+#     target's source, comments and literals aside: a crate-level #![feature(...)],
+#     with which a nightly or platform-tools rustc lets the source pick linker
+#     arguments, inline assembly (the asm macros), whose .incbin and .include
+#     directives read files that rustc's dep-info never lists, and the link
+#     attribute, which links a native library that it does not list either, each stop
+#     the run in either mode, a macro argument that names one included.
 #     The crate must be its own workspace root, as the template's [workspace] makes
 #     it: a `workspace` key under [package] that joins an outside workspace stops the
 #     run too, since these checks never read that workspace's manifest (its [patch]
@@ -219,9 +226,11 @@
 #     outside the crate (a `[lib] path`), and each file from outside the crate that
 #     rustc's dep-info (.d) lists for a unit of that workspace, in the test build and
 #     in each arm's SBF build: a `#[path]` module, a file an include!, include_str!
-#     or include_bytes! read, by an absolute or a relative path. Not listed: what a
-#     dependency's proc macro reads on its own, and what a file the line names reads
-#     in turn.
+#     or include_bytes! read, by an absolute or a relative path. A file inside the
+#     crate that the build read under a name not ending in .rs (an include! or
+#     #[path] of it) is read after the build for inline assembly and the link
+#     attribute, refused as above. Not listed: what a dependency's proc macro reads
+#     on its own, and what a file the line names reads in turn.
 #
 # PREBUILT BYTES (incidents under references/detection-response/, or a re-run
 # against the target's own builds). Leg 3 of `confirmed_exploited` needs the exploit
@@ -798,15 +807,16 @@ fi
 # builds into, from cargo metadata. `harness checkbuild`: the test binary in cargo's
 # JSON output. `harness settle`: an arm's verdict from its markers.
 # `harness nonregistry`: the code from outside the crate and crates.io, from Cargo.lock
-# and from the dep-info of the crate's own units. `harness sbfdeps`: copies the
-# dep-info an arm's SBF build wrote for those units. `harness stucopy`:
+# and from the dep-info of the crate's own units, after the check of the files of the
+# crate they list (exit 3 and the reason). `harness sbfdeps`: copies the dep-info an
+# arm's SBF build wrote for those units. `harness stucopy`:
 # whether the crate's shared-test-utils/src/lib.rs is the installation's (same, differs or
 # missing), after the checks of the harness copy (exit 3 and the reason). python3 runs
 # isolated (-I): `python3 -c` would otherwise import modules such as hashlib.py from
 # the working directory, or from PYTHONPATH, in place of the stdlib. It starts from /,
 # with every path it is given absolute: a version manager's shim picks the interpreter
 # from the directory it starts in, and the scratch copy holds the crate's files.
-HARNESS_PY='import hashlib, json, os, re, shutil, sys
+HARNESS_PY='import hashlib, json, os, re, shutil, sys, unicodedata
 
 
 def zhash(path):
@@ -875,6 +885,76 @@ CRATES_IO_SRC = re.compile(r"^(?:index\.crates\.io-[0-9a-f]{16}|github\.com-1ecc
 # crate itself a cdylib too (its .so). cargo builds a bin with every integration test of its package, and
 # places a bin, a dylib or a staticlib outside the deps directory whose dep-info nonregistry reads.
 TARGET_KINDS = ("lib", "rlib", "test")
+
+# Rust source as tokens, for the check of the crate own code: comments, strings (byte, C and raw ones
+# too) and character literals left out, an identifier without its r# prefix and in NFC, as rustc reads
+# it, and anything else as one character, each with its line.
+LEX = re.compile(
+    r"(?P<nl>\n)|(?P<ws>[^\S\n]+)|(?P<lc>//[^\n]*)|(?P<bc>/\*)"
+    r"|(?P<raw>[bc]?r(?P<hashes>#*)\x22)"
+    r"|(?P<str>[bc]?\x22(?:[^\x22\\]|\\.)*\x22)"
+    r"|(?P<chr>b?\x27(?:\\(?:u\{[0-9A-Fa-f_]*\}|x[0-9A-Fa-f]{2}|.)|[^\\\n\r\t\x27])\x27)"
+    r"|(?P<id>(?:r#)?[^\W\d]\w*)|(?P<other>.)", re.S)
+
+
+def rust_tokens(text):
+    out, i, line, end = [], 0, 1, len(text)
+    while i < end:
+        m = LEX.match(text, i)
+        j = m.end()
+        if m.group("bc") is not None:
+            depth = 1
+            while j < end and depth:
+                if text.startswith("/*", j):
+                    depth, j = depth + 1, j + 2
+                elif text.startswith("*/", j):
+                    depth, j = depth - 1, j + 2
+                else:
+                    j += 1
+        elif m.group("raw") is not None:
+            close = "\x22" + m.group("hashes")
+            j = text.find(close, j)
+            j = end if j < 0 else j + len(close)
+        elif m.group("id") is not None:
+            name = m.group("id")
+            out.append((unicodedata.normalize("NFC", name[2:] if name.startswith("r#") else name), line))
+        elif m.group("other") is not None:
+            out.append((m.group("other"), line))
+        line += text.count("\n", i, j)
+        i = j
+    return out
+
+
+# What the crate own Rust code may not hold, as an identifier anywhere (a macro argument can name it):
+# inline assembly, whose .incbin and .include directives read files that the rustc dep-info never lists,
+# and the link attribute, which links a native library that it does not list either. And, read before the
+# build, a crate-level feature: a nightly or platform-tools rustc then lets the source turn on a link kind
+# that hands the linker its arguments.
+OWN_CODE = ("asm", "global_asm", "naked_asm", "link")
+OWN_WHY = {
+    "feature": "turns on unstable rustc features (#![feature]), with which a nightly or platform-tools rustc lets the source choose linker arguments, code that runs at build time",
+    "link": "names link, the attribute that links a native library, which the rustc dep-info never lists",
+}
+
+
+def own_code(path, feature=True):
+    # The first thing in the Rust file <path> that the crate own code may not hold: (its name, its line),
+    # or None, also for a file that is not UTF-8 text, which rustc compiles as no source.
+    try:
+        with open(path, encoding="utf-8") as f:
+            tokens = rust_tokens(f.read())
+    except (OSError, UnicodeDecodeError):
+        return None
+    for k, (token, line) in enumerate(tokens):
+        if feature and token == "feature" and k + 1 < len(tokens) and tokens[k + 1][0] == "(":
+            return ("feature", line)
+        if token in OWN_CODE:
+            return (token, line)
+    return None
+
+
+def own_why(found):
+    return OWN_WHY.get(found[0], "names %s, inline assembly, whose .incbin and .include directives read files that the rustc dep-info never lists" % found[0])
 
 
 def crate(meta_path, root, rule=""):
@@ -960,6 +1040,16 @@ def crate(meta_path, root, rule=""):
                 refuse("%s:%d holds a [patch] or [replace] table, which builds other code in place of a dependency: run.sh refuses it in either mode. Depend on the crate itself, at the version you need." % (os.path.relpath(manifest, root), number))
             if key == "cargo-features":
                 refuse("%s:%d holds a cargo-features key, with which a nightly cargo lets the manifest choose code that runs at build time (a linker, rustflags, a codegen backend): run.sh refuses it in either mode." % (os.path.relpath(manifest, root), number))
+    # The crate own Rust code: every .rs file in the crate, and the source of each target wherever it lies
+    # (a crate-level attribute sits there).
+    sources = set(os.path.realpath(t["src_path"]) for p in meta.get("packages", []) for t in p.get("targets", []) if t.get("src_path"))
+    for top, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if not (top == root and d in ("target", "markers"))]
+        sources.update(os.path.join(top, name) for name in files if name.lower().endswith(".rs"))
+    for path in sorted(sources):
+        found = own_code(path)
+        if found:
+            refuse("%s:%d %s: run.sh refuses it in the crate\x27s own code, in either mode." % (os.path.relpath(path, root) if under(path, root) else path, found[1], own_why(found)))
     if not lib or not re.match(r"^[A-Za-z0-9_]+$", lib):
         refuse("Cargo.toml has no [lib] target with a plain name, so run.sh cannot name the program it places.")
     print(lib)
@@ -1231,11 +1321,20 @@ def nonregistry(root, lock, meta_path, inputs):
             note("%s %s (%s)" % (key[0], key[1], source))
         elif source is not None and source not in CRATES_IO:
             note("%s %s (%s, not crates.io)" % (key[0], key[1], source))
+    # A file of the crate whose name does not end in .rs, which the crate check did not read, is read
+    # here: the build took it in as Rust code (an include! or a #[path] of it) or as data.
+    unread = set()
     for depfile in sorted(set(depfiles)):
         for entry in depinfo(depfile):
             path = outside(entry)
             if path:
                 note("%s (compiled in)" % path)
+            elif under(os.path.join(root, entry), root) and not entry.lower().endswith(".rs"):
+                unread.add(os.path.realpath(os.path.join(root, entry)))
+    for path in sorted(unread):
+        found = own_code(path, feature=False)
+        if found:
+            refuse("%s:%d %s; the build read that file of the crate, and run.sh refuses it in the crate\x27s own code, in either mode (read a data file that names it at run time instead)." % (os.path.relpath(path, root), found[1], own_why(found)))
     print(flat(", ".join(out)) if out else "none: every dependency comes from a registry")
 
 
@@ -1744,13 +1843,18 @@ settle() {
 
 NONREG=""
 capture_nonreg() {  # the non-registry code, read right after a build (before a test can rewrite the lock)
-  local d
+  local d rc=0
   local -a inputs=("${RUN_DIR}"/build-*.json)
   for d in "${RUN_DIR}"/sbf-*.d; do
     if [[ -f "${d}" ]]; then inputs+=("${d}"); fi
   done
-  NONREG="$(harness nonregistry "${BUILD_DIR}" "${BUILD_DIR}/Cargo.lock" "${RUN_DIR}/metadata.json" "${inputs[@]}" 2>/dev/null)" \
-    || NONREG="unknown — ${BUILD_DIR}/Cargo.lock could not be read"
+  NONREG="$(harness nonregistry "${BUILD_DIR}" "${BUILD_DIR}/Cargo.lock" "${RUN_DIR}/metadata.json" "${inputs[@]}" 2>/dev/null)" || rc=$?
+  # A file of the crate the build read that holds what the crate check refuses: a blocker in either mode.
+  if [[ "${rc}" -eq 3 && -n "${NONREG}" ]]; then
+    echo "[PoC-ATTEMPTED] blocker: ${NONREG}" >&2
+    exit 3
+  fi
+  if [[ "${rc}" -ne 0 ]]; then NONREG="unknown — ${BUILD_DIR}/Cargo.lock could not be read"; fi
   if [[ "${SUPPLY_CHAIN}" == 1 && "${NONREG}" != "none: every dependency comes from a registry" ]]; then
     echo "[PoC-ATTEMPTED] blocker: the build compiled code from outside the crate (${NONREG}), and the PoC of an incident whose root_cause_class is supply_chain_or_ci builds none of the target crates (OUTPUT-RULES.md Rule 11a); its test does not run." >&2
     exit 3

@@ -104,7 +104,14 @@ proc-macro package, a `Cargo.toml` inside the crate that is not a member of its
 workspace, a `[patch]` or `[replace]` table,
 a `cargo-features` key (with which a nightly cargo lets the manifest pick a linker or
 rustflags) — so check generated code into the crate
-instead; and a `tests/fixtures/{PROGRAM_NAME}.so`, which mollusk would load in place of
+instead;
+in the crate's own Rust code (every `.rs` file and each target's source; comments
+and strings aside), a crate-level `#![feature(...)]`, with which a nightly or
+platform-tools rustc lets the source pick linker arguments, inline assembly, whose
+`.incbin` and `.include` directives read files rustc's dep-info never lists, and the
+`link` attribute, which links a native library that the dep-info does not list
+either, named directly or through a macro;
+and a `tests/fixtures/{PROGRAM_NAME}.so`, which mollusk would load in place of
 the arm.
 
 Exit `0` means the exploit reproduced on `vulnerable` **and**, when the fixed arm
@@ -126,8 +133,10 @@ git dependencies in the resolved `Cargo.lock` and those from a registry other th
 crates.io, a target whose source lies outside the crate (a `[lib] path`), and each file
 from outside the crate that rustc's dep-info lists for the crate's own units, in the
 test build and in each arm's SBF build: a `#[path]` module, a file an `include!`,
-`include_str!` or `include_bytes!` read. What a dependency's proc macro reads on its
-own is not listed, nor what a file the line names reads in turn.
+`include_str!` or `include_bytes!` read. A file of the crate that the build read under
+a name not ending in `.rs` is checked after the build as the crate's `.rs` files are
+before it. What a dependency's proc macro reads on its own is not listed, nor what a
+file the line names reads in turn.
 
 `run.sh` and `shared-test-utils/` are the installation's copies; leave them as they
 are. Before a command trusts an `OK` line it compares them with the installation's

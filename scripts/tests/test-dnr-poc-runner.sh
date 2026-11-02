@@ -30,8 +30,10 @@
 #     anything compiles; `build = false` is honoured;
 #     so is a crate that is not its own workspace root;
 #     so is a cargo-features key;
-#     so is a target other than the library and the tests (a bin, an example, a bench,
-#     a dylib, a staticlib, another member's cdylib);
+#     so are a target other than the library and the tests (a bin, an example, a bench,
+#     a dylib, a staticlib, another member's cdylib), and in the crate's own Rust code a
+#     crate-level #![feature], inline assembly and the link attribute, a macro argument
+#     that names one included, while a comment or a string that mentions them passes;
 #   * the harness binding: the crate depends on its own shared-test-utils/ under the
 #     import name shared_test_utils, no other dependency takes that name in either
 #     spelling, and each arm's build compiles that copy and no other;
@@ -43,7 +45,9 @@
 #     the resolved Cargo.lock and those from a registry other than crates.io, and each
 #     file from outside the crate that the dep-info of the crate's own units lists, of
 #     any kind, an arm's SBF build's included (a member that build alone compiles too,
-#     never an older dep-info of a crate of the same name in a build cache);
+#     never an older dep-info of a crate of the same name in a build cache); a file of
+#     the crate the build read under a name not ending in .rs that holds inline
+#     assembly stops the run before its test;
 #   * the macros run the attack themselves; their old forms do not compile and say how
 #     to migrate; an effect present before the attack, a read that panics, and a
 #     positive control for another program or from another state are inconclusive;
@@ -804,6 +808,22 @@ printf '/target/sbpf-solana-solana/release/deps/shared_test_utils-0a1b2c3d4e5f60
 code="$(gate "$T/di" "$NATIVE" CARGO_TARGET_DIR="$DC" SHIM_SBF_DEPINFO="$T/di-sbf-member.d" SHIM_SBF_DEPINFO_AS=shared_test_utils-0a1b2c3d4e5f6071.d)"
 [ "$code" = 0 ] && grep -qxF "   non-registry code: $DI/sbf-member.rs (compiled in)" "$T/out" && grep -q '^OK: exploit reproduces' "$T/out" \
   && ok "a member only the SBF build compiles is named; an older dep-info of that name in the build cache is not" || { bad "an SBF-only member's dep-info: exit $code"; cat "$T/out" >&2; }
+# A file of the crate that the build read under a name not ending in .rs is read as the crate's .rs files
+# are: inline assembly in it (an include! takes it in as Rust code) stops the run after the build, before
+# the test runs; data whose strings only mention such words passes.
+mk_crate "$T/di-inc"; mkdir -p "$T/di-inc/src"
+printf 'core::arch::global_asm!(".incbin \\"%s/blob.bin\\"");\n' "$DI" > "$T/di-inc/src/payload.txt"
+printf '{"note": "a link to the asm notes", "keys": [1, 2]}\n' > "$T/di-inc/src/data.json"
+printf '@ROOT@/target/debug/deps/poc_shim.d: src/lib.rs src/data.json src/payload.txt\n\nsrc/lib.rs:\nsrc/data.json:\nsrc/payload.txt:\n' > "$T/di-inc.d"
+printf '@ROOT@/target/debug/deps/poc_shim.d: src/lib.rs src/data.json\n\nsrc/lib.rs:\nsrc/data.json:\n' > "$T/di-data.d"
+code="$(gate "$T/di-inc" "$NATIVE" "$VULN" SHIM_DEPINFO="$T/di-inc.d")"
+[ "$code" = 3 ] && grep -qF '[PoC-ATTEMPTED] blocker: src/payload.txt:1 names global_asm, inline assembly' "$T/out" && one_blocker \
+  && ! awk -F'\t' '$6 ~ /^testbin / { f = 1 } END { exit !f }' "$T/calls" \
+  && ok "inline assembly in a file of the crate the build read as src/payload.txt -> exit 3 after the build, the test never runs" \
+  || { bad "a file of the crate with inline assembly, read under another name than .rs: exit $code"; cat "$T/out" >&2; }
+code="$(gate "$T/di-inc" "$NATIVE" "$VULN" SHIM_DEPINFO="$T/di-data.d")"
+[ "$code" = 0 ] && grep -qxF '   non-registry code: none: every dependency comes from a registry' "$T/out" \
+  && ok "data of the crate the build read (src/data.json), whose strings mention link and asm -> not refused" || { bad "a data file of the crate: exit $code"; cat "$T/out" >&2; }
 
 # A hashlib.py planted in the crate, which the scratch copy holds too, and on PYTHONPATH
 # must not load when run.sh hashes the bytes; the control shows it would without -I.
@@ -968,6 +988,50 @@ SHIM_TARGET=staticlib|staticlib target poc_shim_extra (src/extra.rs) of poc_shim
 SHIM_MEMBER_KIND=dylib|dylib target shared_test_utils (shared-test-utils/src/lib.rs) of shared-test-utils
 SHIM_MEMBER_KIND=cdylib|cdylib target shared_test_utils (shared-test-utils/src/lib.rs) of shared-test-utils
 CASES
+# The crate's own Rust code, read before anything compiles, in either mode: a crate-level feature (with it a
+# nightly or platform-tools rustc lets the source pick linker arguments), inline assembly (its .incbin and
+# .include read files that rustc's dep-info never lists) and the link attribute (a native library that the
+# dep-info does not list either), in any .rs file of the crate, named directly or through a macro argument,
+# are refused; so is a feature in a target's source outside the crate. A comment, a string, a character and
+# a name that only mention them pass.
+n=0
+while IFS='|' read -r where text named; do
+  [ -n "$where" ] || continue
+  n=$((n + 1)); mk_crate "$T/oc-$n"; mkdir -p "$(dirname "$T/oc-$n/$where")"
+  printf '%b\n' "$text" > "$T/oc-$n/$where"
+  code="$(gate "$T/oc-$n" "$NATIVE" "$VULN")"
+  [ "$code" = 3 ] && grep -qF "blocker: $named" "$T/out" && grep -qF "run.sh refuses it in the crate's own code, in either mode." "$T/out" \
+    && nothing_built && one_blocker && ok "refused before anything compiles: $named" || { bad "$where holding $text: exit $code"; cat "$T/out" >&2; }
+done <<'CASES'
+src/lib.rs|#![feature(link_arg_attribute)]\npub fn f() {}|src/lib.rs:1 turns on unstable rustc features
+src/lib.rs|#![cfg_attr(all(), feature (link_arg_attribute))]|src/lib.rs:1 turns on unstable rustc features
+src/lib.rs|// the library\ncore::arch::global_asm!(".globl x");|src/lib.rs:2 names global_asm, inline assembly
+tests/helper.rs|use std::arch::asm;|tests/helper.rs:1 names asm, inline assembly
+src/deep/mod.rs|pub use core::arch::naked_asm as n;|src/deep/mod.rs:1 names naked_asm, inline assembly
+src/lib.rs|macro_rules! g { ($a:ident) => { core::arch::$a!(".globl x"); } }\ng!(global_asm);|src/lib.rs:2 names global_asm, inline assembly
+src/lib.rs|#[link(name = "c")]\nextern "C" {}|src/lib.rs:1 names link, the attribute that links a native library
+src/lib.rs|macro_rules! m { ($a:ident) => { #[$a(name = "c")] extern "C" {} } }\nm!(r#link);|src/lib.rs:2 names link, the attribute that links a native library
+CASES
+mk_crate "$T/oc-out"; printf '#![feature(link_arg_attribute)]\n' > "$T/oc-outside-lib.rs"
+code="$(gate "$T/oc-out" "$NATIVE" "$VULN" SHIM_LIB_SRC="$T/oc-outside-lib.rs")"
+[ "$code" = 3 ] && grep -qF "blocker: $T/oc-outside-lib.rs:1 turns on unstable rustc features" "$T/out" && nothing_built && one_blocker \
+  && ok "refused before anything compiles: a feature in the library's source outside the crate" || { bad "a feature in an outside target source: exit $code"; cat "$T/out" >&2; }
+mk_crate "$T/oc-mention"; mkdir -p "$T/oc-mention/src"
+cat > "$T/oc-mention/src/lib.rs" <<'RS'
+//! Mentions only: global_asm!, asm!, naked_asm!, #[link(name = "c")] and #![feature(x)].
+/* core::arch::global_asm!(".incbin"); /* nested */ #[link(name = "c")] feature(x) */
+#![cfg_attr(feature = "fixed", allow(dead_code))]
+pub const NOTE: &str = "global_asm! link #![feature(x)] \" asm";
+pub const RAW: &str = r##"asm "# link"##;
+pub const QUOTE: char = '"';
+pub const BYTES: &[u8] = b"naked_asm";
+#[link_section = ".data"]
+pub static LINKED: u8 = 0;
+pub fn wasm<'a>(feature_set: &'a str) -> &'a str { let symlink = feature_set; symlink }
+RS
+code="$(gate "$T/oc-mention" "$NATIVE" "$VULN")"
+[ "$code" = 0 ] && grep -q "^$LEG3" "$T/out" && ok "comments, strings, a character and names that only mention a feature, inline assembly or link -> not refused" \
+  || { bad "mentions in the crate's own code: exit $code"; cat "$T/out" >&2; }
 
 # ---------------------------------------------------------------------------
 # Where the crate builds. A hostile target tree: its .cargo/config.toml names a
@@ -3527,9 +3591,10 @@ workspace = \"$WSR\"
   else
     echo "note: no nightly toolchain; the real-cargo cargo-features check is skipped (the shim checks above still ran)"
   fi
-  # A bin target with an outside #[path] module, and a dylib member whose module is outside: built, each
-  # compiles the outside file in while the dep-info run.sh reads names neither. cargo metadata names both,
-  # and each run stops before anything compiles.
+  # A bin target with an outside #[path] module, a dylib member whose module is outside, and inline assembly
+  # whose .incbin reads an outside file: built, each compiles the outside file in while the dep-info run.sh
+  # reads names none of them. cargo metadata names the first two, the crate's own source the third, and
+  # each run stops before anything compiles.
   O3="$T/e-own-outside"; mkdir -p "$O3"; printf 'pub fn run() -> u8 { 9 }\n' > "$O3/evil.rs"; printf 'outside bytes\n' > "$O3/blob.bin"
   mk_e2e "$T/e-bin"; printf '#[path = "%s/evil.rs"]\nmod evil;\nfn main() { std::process::exit(evil::run() as i32); }\n' "$O3" > "$T/e-bin/src/main.rs"
   mk_e2e "$T/e-dylib"; mkdir -p "$T/e-dylib/helper/src"
@@ -3537,11 +3602,24 @@ workspace = \"$WSR\"
   printf '#[path = "%s/evil.rs"]\npub mod evil;\n' "$O3" > "$T/e-dylib/helper/src/lib.rs"
   subst "$T/e-dylib/Cargo.toml" 'shared-test-utils = { path = "shared-test-utils" }' 'shared-test-utils = { path = "shared-test-utils" }
 helper = { path = "helper" }'
-  for c in 'e-bin|the bin target poc_e2e (src/main.rs) of poc_e2e' 'e-dylib|the dylib target helper (helper/src/lib.rs) of helper'; do
+  mk_e2e "$T/e-asm"; printf 'core::arch::global_asm!(".globl poc_blob\\npoc_blob:\\n.incbin \\"%s/blob.bin\\"");\n' "$O3" >> "$T/e-asm/src/lib.rs"
+  for c in 'e-bin|the bin target poc_e2e (src/main.rs) of poc_e2e' 'e-dylib|the dylib target helper (helper/src/lib.rs) of helper' \
+           'e-asm|names global_asm, inline assembly'; do
     code="$(e2e "$T/${c%%|*}" VULNERABLE_SO="$SB-takeover.so")"
     [ "$code" = 3 ] && grep -qF "${c#*|}" "$T/out" && one_blocker && ! grep -q 'Compiling' "$T/out" \
       && ok "real cargo: ${c#*|} -> exit 3 before anything compiles" || { bad "real cargo, ${c%%|*}: exit $code"; cat "$T/out" >&2; }
   done
+  # The same inline assembly in a file of the crate named other than .rs, which the library include!s: it
+  # compiles, and rustc's dep-info lists the file but not what its .incbin reads. run.sh reads the file after
+  # the build and stops before the test runs.
+  mk_e2e "$T/e-inctxt"
+  printf 'core::arch::global_asm!(".globl poc_blob\\npoc_blob:\\n.incbin \\"%s/blob.bin\\"");\n' "$O3" > "$T/e-inctxt/src/payload.txt"
+  printf 'include!("payload.txt");\n' >> "$T/e-inctxt/src/lib.rs"
+  code="$(e2e "$T/e-inctxt" VULNERABLE_SO="$SB-takeover.so")"
+  [ "$code" = 3 ] && grep -qF 'blocker: src/payload.txt:1 names global_asm, inline assembly' "$T/out" && one_blocker && grep -q 'Compiling poc_e2e' "$T/out" \
+    && ! grep -q "^$LEG3" "$T/out" && ! grep -q '^>> running exploit' "$T/out" \
+    && ok "real cargo: inline assembly in an include!d src/payload.txt -> exit 3 after the build, before the test" \
+    || { bad "real cargo, inline assembly in an include!d .txt: exit $code"; cat "$T/out" >&2; }
 
   # The installation's copy with real cargo. The crate sits in a run directory, its prebuilt bytes under
   # exec/, and it depends on a path crate outside it whose build script records the environment it is
