@@ -24,7 +24,7 @@ grep -rn -A 12 --include='*.yml' --include='*.yaml' '^on:' .github/workflows/ 2>
 **Step 2: Check privileged triggers (`pull_request_target`, `workflow_run`) for fork-controlled checkouts**
 ```
 grep -rnE --include='*.yml' --include='*.yaml' 'pull_request_target|workflow_run' .github/
-grep -rnE --include='*.yml' --include='*.yaml' 'ref:[[:space:]]*.?\$\{\{.*(github\.event\.(pull_request\.(head\.(sha|ref)|merge_commit_sha)|workflow_run\.head_(sha|branch))|github\.head_ref|steps\.[A-Za-z0-9_-]+\.outputs\.head_(sha|ref)|from(JSON|Json|json)\(steps\.[A-Za-z0-9_-]+\.outputs\.[A-Za-z0-9_]+\)\.head\.(sha|ref))|(^|[[:space:]{,])ref:[[:space:]]*(.?\$\{\{.*(env|needs|steps)\.|[|>])|repository:[[:space:]]*.?\$\{\{[[:space:]]*github\.event\.pull_request\.head\.repo\.full_name|refs/pull/|gh pr checkout|git (fetch|pull|checkout)[^#]*(pull/|[Hh][Ee][Aa][Dd][._]([Ss][Hh][Aa]|[Rr][Ee][Ff]))|allow-unsafe-pr-checkout' .github/
+grep -rnE --include='*.yml' --include='*.yaml' '^(ref:[ 	]*(.?\$\{\{.*(env|needs|steps)\.|[|>])|.*([ 	{,]ref:[ 	]*(.?\$\{\{.*(env|needs|steps)\.|[|>])|ref:[ 	]*.?\$\{\{.*(github\.event\.(pull_request\.(head\.(sha|ref)|merge_commit_sha)|workflow_run\.head_(sha|branch))|github\.head_ref|steps\.[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-]+\.outputs\.head_(sha|ref)|from(JSON|Json|json)\(steps\.[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-]+\.outputs\.[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_]+\)\.head\.(sha|ref))|repository:[ 	]*.?\$\{\{[ 	]*github\.event\.pull_request\.head\.repo\.full_name|refs/pull/|gh pr checkout|git (fetch|pull|checkout).*(pull/|[Hh][Ee][Aa][Dd][._]([Ss][Hh][Aa]|[Rr][Ee][Ff]))|allow-unsafe-pr-checkout))' .github/
 ```
 - ✅ PASS: No privileged trigger, or the privileged job checks out only the base ref with an `actions/checkout` that carries the fork-PR guard (v2.8.0 / v3.7.0 / v4.4.0 / v5.1.0 / v6.1.0 / v7.0.0 or later)
 - ❌ FAIL: `pull_request_target` or `workflow_run` with a checkout or fetch of the PR / run head, or `allow-unsafe-pr-checkout: true` — forked PRs run arbitrary code with the base repository's secrets and write token. Full procedure: KV-140
@@ -38,10 +38,10 @@ grep -rnE --include='*.yml' --include='*.yaml' 'echo.*(\$\{\{[^}]*secrets\.|\$[A
 
 **Step 4: Check action versions (pinned to SHA?), the release behind each SHA, and repointed tags**
 ```
-grep -rnE --include='*.yml' --include='*.yaml' 'uses:' .github/ | grep -vE '@[a-f0-9]{40}' | grep -v 'uses: \./'
-grep -rnE --include='*.yml' --include='*.yaml' '^[^#]*uses:[[:space:]]*.?[A-Za-z0-9._-]+/[A-Za-z0-9._-]+(/[^@[:space:]]*)?@[0-9a-f]{40}([^0-9a-f]|$)' .github/
+grep -rnE --include='*.yml' --include='*.yaml' 'uses:' .github/ | grep -avE '^.*uses:[ 	]*.?[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-]+/[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-]+(/[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._/-]*)?@[0123456789abcdef]{40}([] 	"'\'',}]|$)' | grep -av 'uses: \./'
+grep -rnv --include='*.yml' --include='*.yaml' '^[ 	]*#' .github/ | grep -aE '^.*uses:[ 	]*.?[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-]+/[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-]+(/[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._/-]*)?@[0123456789abcdef]{40}([] 	"'\'',}]|$)'
 ```
-- The first command lists every reference that is not a full SHA; the second (recipe R9) lists every action and reusable workflow pinned to one, with its version comment.
+- The second command (recipe R9) lists every action and reusable workflow pinned to a full SHA, with its version comment. The first lists every other `uses:` line: tags, branches, short SHAs, `docker://` images, and a pin R9 cannot read (a path holding a character other than a letter, a digit, `.`, `_`, `-` or `/`, or, under GNU or BSD grep, a bare SHA that ends a line of a file saved with CRLF line ends), which you grade by hand. A `uses:` line is in one of the two unless it names a local action (`./`) or is a commented-out pin.
 - ✅ PASS: All actions pinned to full SHA (`@abc123...`), each the release its comment names (below), and kept current by a Dependabot or Renovate `github-actions` updater (DEP-067)
 - ⚠️ PARTIAL: Actions pinned to version tag (`@v4`) — better than no pin, but tag can be moved
 - ❌ FAIL: Actions referencing `@main` or `@latest`
@@ -80,18 +80,18 @@ grep -rn --include="*.yml" --include="*.yaml" "uses.*/" .github/workflows/ | gre
 
 **Step 7: Check comment- and issue-triggered jobs for an author gate**
 ```
-grep -rlE --include='*.yml' --include='*.yaml' -e '^[[:space:]]*-?[[:space:]]*(issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues)[[:space:]]*(:[[:space:]]*([{[&*~]|null|(#.*)?$)|[],]|(#.*)?$)' -e "^[^[:alnum:]_#-]{0,3}[\"']?on[\"']?[[:space:]]*:.*(issue_comment|pull_request_review|discussion|issues)" -e "^[[:space:]]*-?[[:space:]]*[\"'](issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues)[\"']" .github/
+grep -rlE --include='*.yml' --include='*.yaml' -e '^[ 	]*-?[ 	]*(issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues)[ 	]*(:[ 	]*([{[&*~]|null|(#.*)?.?$)|[],]|(#.*)?.?$)' -e "^.{0,3}[\"']?on[\"']?[ 	]*:.*(issue_comment|pull_request_review|discussion|issues)" -e "^[ 	]*-?[ 	]*[\"'](issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues)[\"']" .github/
 echo 'second list: files under .github/ that mention author_association'
-grep -rl --include='*.yml' --include='*.yaml' '^[^#]*author_association' .github/
+grep -rl --include='*.yml' --include='*.yaml' '^[][	 !"$%&'\''()*+,./0123456789:;<=>?@^_`abcdefghijklmnopqrstuvwxyz{|}~ABCDEFGHIJKLMNOPQRSTUVWXYZ-]*author_association' .github/
 ```
-- Read each file in the first list and not in the second: it has one of these triggers and never mentions `author_association` outside a comment
+- Read each file in the first list and not in the second: it has one of these triggers and no line that mentions `author_association` after nothing but printable ASCII other than `#` (so not inside a comment)
 - ✅ PASS: Every privileged job on these triggers gates on the triggering object's own `author_association`, paired per event
 - ❌ FAIL: A privileged job starts on a mention or command alone, or reads the opener's association on a comment event. Full procedure: KV-139
 
 **Step 8: Check self-hosted runners: who can start a job on them, and what one job leaves for the next**
 ```
-grep -rnE --include='*.yml' --include='*.yaml' '^[^#]*runs-on:' .github/ | grep -vE 'runs-on:[[:space:]]*.?(ubuntu|windows|macos)-[0-9a-z.-]+.?[[:space:]]*(#.*)?$'
-grep -rnE --exclude-dir=node_modules --exclude-dir=.terraform --include='*.tf' --include='*.hcl' --include='*.json' --include='*.yml' --include='*.yaml' --include='*.sh' '^[^#]*(config\.sh[^#]*--(url|token)|--jitconfig|ephemeral(_runners)?"?[[:space:]]*[:=]|allows_public_repositories|runner_?[Gg]roup)' .
+grep -rnv --include='*.yml' --include='*.yaml' '^[ 	]*#' .github/ | grep -a 'runs-on:' | grep -avE '^.*runs-on:[ 	]*.?(ubuntu|windows|macos)-[0123456789abcdefghijklmnopqrstuvwxyz.-]+.?[ 	]*(#.*)?$'
+grep -rnv --exclude-dir=node_modules --exclude-dir=.terraform --include='*.tf' --include='*.hcl' --include='*.json' --include='*.yml' --include='*.yaml' --include='*.sh' '^[ 	]*#' . | grep -aE '^.*(config\.sh.*--(url|token)|--jitconfig|ephemeral(_runners)?"?[ 	]*[:=]|allows_public_repositories|runner_?[Gg]roup)'
 ```
 - The first command lists each `runs-on:` that names no GitHub-hosted image: `self-hosted`, a `group:`, a custom label (an Actions Runner Controller scale set is addressed by its name), an expression, or a value on the lines below. The second lists runner registrations and runner-group settings in the repository's infrastructure code; runner infrastructure often lives in another repository, so run it there too when the owner names one.
 - Record per listed job: its trigger (Step 1), whether the repository is public, and who can start it (fork pull requests, comments, issues: `references/vuln-classes/github-actions.md` §2.4).

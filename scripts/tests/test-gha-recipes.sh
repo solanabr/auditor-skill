@@ -13,14 +13,18 @@
 # A recipe of two commands (R1) flags what the first lists and the second does not; every other line of an R
 # recipe must be an echo of a quoted marker, which the suite does not run. The suite also checks that every
 # known-vector step that repeats an R recipe carries its lines byte for byte, as one block in the same order,
-# and that no recipe flags a fixture's comment lines. R9 and the KV-080 Step 8 and KV-140 Step 7 commands are
-# also checked line by line on their own fixtures, and those that search outside .github/ skip node_modules/
-# and .terraform/. It runs R1 and K139-1 over trigger spellings built at run time, R1 over file names that hold
-# a space or a quote, and R1 over large inputs: 2,000 workflows, and two of about 1 MiB. R9 and KV-080 Step 8's
-# first command run over 2,000 workflows, and each KV-080 and KV-140 command that pipes into head over more than
-# 64 KiB of its own output. Every command of every recipe must end within 30 s on files that hold one 1 MiB
-# line of near misses. KV-020 Step 3 and KV-100 Step 4, which list documentation files with one recursive grep
-# as R1 does, run over file names that hold a space or a quote, and KV-100's over more than 64 KiB of names.
+# and that no recipe flags a fixture's comment lines. R9 and the KV-080 Step 8 and KV-140 Step 7 commands
+# are also checked line by line on their own fixtures, and those that search outside .github/ skip node_modules/
+# and .terraform/. Every pattern a recipe gives grep must stay inside what GNU grep's DFA runs in a UTF-8
+# locale, and hold no backslash inside a bracket. It runs R1 and K139-1 over trigger spellings built at run time
+# (CRLF line ends among them), R1 over file names that hold a space or a quote, and R1 over
+# large inputs: 2,000 workflows, and two of about 1 MiB. R9 and KV-080 Step 8's first
+# command run over 2,000 workflows, and each KV-080 and KV-140 command that pipes into head over more than 64 KiB
+# of its own output. KV-080 Step 4's two commands run over pins saved with CRLF line ends and over references R9
+# does not read as pins: each uses: line lands in exactly one of them. Every command of every recipe must end
+# within 30 s, in a UTF-8 locale where one is installed, on files that hold one 1 MiB line of near misses. KV-020
+# Step 3 and KV-100 Step 4, which list documentation files with one recursive grep as R1 does, run over file names
+# that hold a space or a quote, and KV-100's over more than 64 KiB of names.
 #
 # Usage (from the repo root): bash scripts/tests/test-gha-recipes.sh
 # Needs bash >= 3.2, grep, awk. No network. The fixtures are copied into a temp dir as .github/workflows/, those
@@ -197,11 +201,12 @@ run_recipe() {
     | awk -v f="$work/second.out" 'BEGIN { while ((getline l < f) > 0) seen[l] = 1 } !($0 in seen)'
 }
 
-# within <seconds> <tree> <command>: run the command in <tree>, its output in $work/within.out. Fails, and stops
-# the command, when it is still running after <seconds>.
+# within <seconds> <tree> <command> [<locale>]: run the command in <tree>, under LC_ALL=<locale> when one is given,
+# its output in $work/within.out. Fails, and stops the command, when it is still running after <seconds>.
 within() {
   local pid i=0
-  (cd "$2" && eval "exec $3" </dev/null > "$work/within.out" 2>/dev/null) &
+  (cd "$2" && if [ -n "${4-}" ]; then export LC_ALL="$4"; fi &&
+    eval "exec $3" </dev/null > "$work/within.out" 2>/dev/null) &
   pid=$!
   while kill -0 "$pid" 2>/dev/null; do
     if [ "$i" -ge "$(($1 * 10))" ]; then kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; return 1; fi
@@ -275,6 +280,84 @@ while read -r id fx want; do
   if [ "$got" = "$want" ]; then echo "ok   $id in $fx: lines $got"
   else echo "FAIL $id in $fx: got lines [$got] want [$want]"; fail=1; fi
 done <<< "$LINES"
+
+# Linear by construction. In a UTF-8 locale GNU grep decides a line in one pass of its DFA only when the pattern
+# holds nothing the DFA leaves undecided: a negated bracket such as [^#], a class such as [[:space:]], a range
+# other than digits (A-Z), an equivalence class, a back-reference, a word anchor, or a letter in a bracket under -i.
+# With one of them, every line that may match goes to its regex matcher, which starts again at each position of the
+# line, and one long line takes minutes. So every pattern a recipe gives grep stays out of that list, and holds no
+# backslash inside a bracket, which Claude Code's grep (ugrep) reads as an escape. R3, whose copy is KV-139 Step 4,
+# and the KV-116 and KV-139 locators are not converted yet.
+LINEAR_PENDING="R3 K116-1 K139-1"
+patterns_of() { # patterns_of <command line>: "<1 under -i, else 0> <pattern>" for each pattern of each grep it runs
+  : > "$work/patterns"
+  (
+    grep() {
+      local a ic=0 next=0 found=0
+      for a in "$@"; do case "$a" in --*) ;; -*i*) ic=1 ;; esac; done
+      for a in "$@"; do
+        if [ "$next" -eq 1 ]; then printf '%s %s\n' "$ic" "$a" >> "$work/patterns"; next=0; found=1; continue; fi
+        case "$a" in
+          -e) next=1 ;;
+          -*) ;;
+          *) if [ "$found" -eq 0 ]; then printf '%s %s\n' "$ic" "$a" >> "$work/patterns"; found=1; fi ;;
+        esac
+      done
+    }
+    eval "$1" </dev/null >/dev/null 2>&1
+  )
+  cat "$work/patterns"
+}
+outside_dfa() { # each "<ic> <pattern>" line on stdin that holds a construct outside the subset, with the reason
+  LC_ALL=C awk -v esc="wWsSbB<>\`'" '
+    { ic = substr($0, 1, 1); p = substr($0, 3); n = length(p); i = 1; why = ""
+      while (i <= n && why == "") {
+        c = substr(p, i, 1)
+        if (c == "\\") {
+          d = substr(p, i + 1, 1)
+          if (d ~ /[123456789]/) why = "a back-reference"
+          else if (d != "" && index(esc, d)) why = "the escape \\" d
+          i += 2; continue
+        }
+        if (c != "[") { i++; continue }
+        j = i + 1
+        if (substr(p, j, 1) == "^") { why = "a negated bracket"; break }
+        first = j
+        while (j <= n) {
+          d = substr(p, j, 1)
+          if (d == "]" && j > first) break
+          if (d == "[" && index(":.=", substr(p, j + 1, 1))) { why = "a class in a bracket"; break }
+          if (d == "\\") { why = "a backslash in a bracket"; break }
+          if (d == "-" && j > first && substr(p, j + 1, 1) != "]") { why = "a range in a bracket"; break }
+          if (d > "~") { why = "a byte outside ASCII in a bracket"; break }
+          if (ic == "1" && index("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", d)) {
+            why = "a letter in a bracket under -i"; break
+          }
+          j++
+        }
+        if (why == "" && j > n) why = "an unclosed bracket"
+        i = j + 1
+      }
+      if (why != "") print why ": " substr(p, 1, 100)
+    }'
+}
+nlinear=0; nonlinear=""
+for id in $IDS K080-4a; do
+  case " $LINEAR_PENDING " in *" $id "*) continue ;; esac
+  if [ "$id" = K080-4a ]; then cmds=$(kv_step "$KV080" 4 | sed -n 1p); else cmds=$(recipe_lines "$id"); fi
+  while IFS= read -r c; do
+    [ -n "$c" ] || continue
+    bad=$(patterns_of "$c" | outside_dfa)
+    if [ -z "$(patterns_of "$c")" ]; then bad="no pattern found"; fi
+    if [ -n "$bad" ]; then nonlinear="$nonlinear $id"; echo "FAIL $id: $(printf '%s\n' "$bad" | sed -n 1p)"; fail=1; fi
+  done <<< "$cmds"
+  nlinear=$((nlinear + 1))
+done
+if [ -z "$nonlinear" ]; then
+  echo "ok   $nlinear recipes, KV-080 Step 4's first command among them, use only patterns GNU grep's DFA runs" \
+    "in a UTF-8 locale"
+fi
+echo "SKIP linear-pattern check for $LINEAR_PENDING: not converted yet"
 
 # The commands that search the whole tree skip node_modules/ and .terraform/, which hold dependencies and
 # downloaded modules rather than the repository's own settings.
@@ -353,9 +436,10 @@ else
   fail=1
 fi
 
+
 # Trigger spellings, one workflow each: a space before a colon, an event key holding null, ~, [], an anchor or an
-# alias, a flow list wrapped over lines, a byte-order mark before on:, a JSON document and an indented document.
-# None has an author gate, so R1 and K139-1 must list every one.
+# alias, a flow list wrapped over lines, a byte-order mark before on:, a JSON document, an indented document, and
+# lines that end in CRLF. None has an author gate, so R1 and K139-1 must list every one.
 spell="$work/spellings"; mkdir -p "$spell/.github/workflows"
 ns=0
 while IFS= read -r t; do
@@ -374,6 +458,9 @@ on: [push,\n  issues]
 \0357\0273\0277on: issue_comment
 {"on": {"issue_comment": {"types": ["created"]}}, "jobs": {"a": {"runs-on": "ubuntu-latest"}}}
   on: issue_comment\n  jobs:\n    a:\n      runs-on: ubuntu-latest
+on:\r\n  issue_comment:\r\n    types: [created]\r
+on:\r\n  - push\r\n  - issues\r
+on: [push, discussion]\r\njobs:\r\n  a:\r\n    runs-on: ubuntu-latest\r
 SPELLINGS
 want=""; i=0
 while [ "$i" -lt "$ns" ]; do i=$((i + 1)); want="$want $i"; done; want=${want# }
@@ -407,7 +494,7 @@ fi
 
 # Large inputs for R9 and KV-080 Step 8: 2,000 workflows, each with a full-SHA pin and a job on a GitHub-hosted
 # image, and one with a job on a self-hosted runner. R9 lists all 2,000 pins in more than 64 KiB of output, and
-# the runner command lists only that job after more than 64 KiB of runs-on lines have gone through its pipe.
+# the runner command lists only that job after more than 64 KiB of workflow lines have gone through its pipe.
 scale="$work/scale"; mkdir -p "$scale/.github/workflows"
 awk -v d="$scale/.github/workflows" 'BEGIN { for (i = 0; i < 2000; i++) { f = sprintf("%s/pinned-workflow-%04d.yml", d, i)
   printf "on: push\npermissions:\n  contents: read\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n" > f
@@ -427,11 +514,40 @@ runners=$(recipe_lines K080-8a)
 size=$( (cd "$scale" && eval "${runners%% | *}" </dev/null 2>/dev/null) | wc -c | tr -d ' ')
 got=$(run_recipe "$scale" "$runners")
 if [ "$got" = '.github/workflows/self-hosted.yml:4:    runs-on: [self-hosted, linux]' ] && [ "$size" -gt 65536 ]; then
-  echo "ok   KV-080 Step 8 on large inputs: $size bytes of runs-on lines through its pipe, only the self-hosted job listed"
+  echo "ok   KV-080 Step 8 on large inputs: $size bytes through its pipe, only the self-hosted job listed"
 else
   echo "FAIL KV-080 Step 8 on large inputs ($size bytes through its pipe): got [${got:0:300}]"
   fail=1
 fi
+
+# KV-080 Step 4: the second command (R9) lists the full-SHA pins it can read, and the first lists every other uses:
+# line, so each uses: line that is not a comment and names no local action is in exactly one of them. In a file
+# saved with CRLF line ends a bare pin ends in a CR, which GNU and BSD grep do not take for the end of the line
+# (Claude Code's grep does, and R9 lists it there); a reference of 41 hex digits and a path holding a + are not pins
+# to R9 on any grep. The first command lists all three.
+step4="$work/step4"; mkdir -p "$step4/.github/workflows"
+sha=0123456789abcdef0123456789abcdef01234567
+printf 'on: push\r\njobs:\r\n  a:\r\n    runs-on: ubuntu-latest\r\n    steps:\r\n      - uses: example/bare@%s\r\n' "$sha" \
+  > "$step4/.github/workflows/crlf.yml"
+printf '      - uses: example/versioned@%s # v1.0.0\r\n      - uses: "example/quoted@%s"\r\n      - uses: example/tag@v1\r\n' \
+  "$sha" "$sha" >> "$step4/.github/workflows/crlf.yml"
+printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: example/long@%sf\n' "$sha" \
+  > "$step4/.github/workflows/lf.yml"
+printf '      - uses: example/odd/pa+th@%s\n      - uses: ./.github/actions/local\n      # - uses: example/retired@%s\n' \
+  "$sha" "$sha" >> "$step4/.github/workflows/lf.yml"
+first4=$(kv_step "$KV080" 4 | sed -n 1p); second4=$(kv_step "$KV080" 4 | sed -n 2p)
+got1=$( (cd "$step4" && eval "$first4" </dev/null 2>/dev/null) | tr -d '\r' | sed 's#^\.github/workflows/##' \
+  | awk -F: '{ print $1 ":" $2 }' | sort | tr '\n' ' ')
+got2=$( (cd "$step4" && eval "$second4" </dev/null 2>/dev/null) | tr -d '\r' | sed 's#^\.github/workflows/##' \
+  | awk -F: '{ print $1 ":" $2 }' | sort | tr '\n' ' ')
+case "$got1|$got2" in
+  "crlf.yml:6 crlf.yml:9 lf.yml:6 lf.yml:7 |crlf.yml:7 crlf.yml:8 " | \
+  "crlf.yml:9 lf.yml:6 lf.yml:7 |crlf.yml:6 crlf.yml:7 crlf.yml:8 ")
+    echo "ok   KV-080 Step 4: R9 lists the pins it reads, the first command every other uses: line, CRLF ends included" ;;
+  *) echo "FAIL KV-080 Step 4: first command listed [$got1], want [crlf.yml:6 crlf.yml:9 lf.yml:6 lf.yml:7 ];" \
+       "R9 listed [$got2], want [crlf.yml:7 crlf.yml:8 ]"
+     fail=1 ;;
+esac
 
 # Each command of KV-080 and KV-140 that pipes into head, run as written over the same workflows, where what it
 # pipes runs over 64 KiB: it prints its head's lines and ends.
@@ -453,9 +569,13 @@ done
 if [ "$nhead" -eq 0 ]; then echo "FAIL no command of KV-080 or KV-140 pipes into head"; fail=1; fi
 
 # Files holding a 1 MiB line of near misses: one that nearly matches R6 again and again, one that repeats a pin
-# with a SHA one digit short, and an infrastructure file that repeats lookalikes of the runner and OIDC settings.
-# Each command of every recipe must end within 30 s and flag nothing. GNU grep in a UTF-8 locale backtracks for
-# minutes on such a line when a range such as a-z follows .*, which is why R6 spells its letters out.
+# with a SHA one digit short, one that repeats a ref: expression whose step output R7 cannot read, one whose only
+# author_association follows a #, and an infrastructure file that repeats lookalikes of the runner and OIDC
+# settings. Each command of every recipe must end within 30 s and flag nothing, in a UTF-8 locale where one is
+# installed (C.UTF-8 on GitHub's ubuntu runners): there GNU grep needs minutes for such a line when a pattern holds
+# a construct its DFA leaves undecided (see "Linear by construction" above), and each line here passes the filter
+# GNU grep runs before that.
+utf8=$(locale -a 2>/dev/null | grep -iE '^(C|en_US)[.]utf-?8$' | sed -n 1p)
 long="$work/long"; mkdir -p "$long/.github/workflows" "$long/infra"
 { printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo "'
   awk 'BEGIN { for (i = 0; i < 26000; i++) printf "${{ github.event.issue.x contains( ref: " }'
@@ -467,21 +587,30 @@ long="$work/long"; mkdir -p "$long/.github/workflows" "$long/infra"
   awk 'BEGIN { for (i = 0; i < 10000; i++)
     printf "config.sh --prefix=x repo:x.y repo: x/y token.actions.githubusercontent.co ephemeral-storage runner group " }'
   printf '"\n'; } > "$long/infra/long.tf"
+{ printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo "'
+  awk 'BEGIN { for (i = 0; i < 28000; i++) printf "xref: ${{ steps.a b.outputs.head_sha " }'
+  printf '"\n'; } > "$long/.github/workflows/long-refs.yml"
+{ printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo "'
+  awk 'BEGIN { for (i = 0; i < 33000; i++) printf "the comment author association x " }'
+  printf '" # github.event.comment.author_association\n'; } > "$long/.github/workflows/long-gate.yml"
 sizes=""; small=0
-for f in .github/workflows/long.yml .github/workflows/long-pins.yml infra/long.tf; do
+for f in .github/workflows/long.yml .github/workflows/long-pins.yml .github/workflows/long-refs.yml \
+  .github/workflows/long-gate.yml infra/long.tf; do
   s=$(wc -c < "$long/$f" | tr -d ' '); sizes="$sizes $s"
   if [ "$s" -le 1000000 ]; then small=1; fi
 done
 slow=""; noisy=""
 for id in $IDS; do
   while IFS= read -r c; do
-    if ! within 30 "$long" "$c"; then slow="$slow $id"; elif [ -s "$work/within.out" ]; then noisy="$noisy $id"; fi
+    if ! within 30 "$long" "$c" "$utf8"; then slow="$slow $id"; elif [ -s "$work/within.out" ]; then noisy="$noisy $id"; fi
   done <<< "$(recipe_lines "$id")"
 done
 if [ -z "$slow$noisy" ] && [ "$small" -eq 0 ]; then
-  echo "ok   every recipe on lines of$sizes bytes of near misses: each command done within 30 s, nothing flagged"
+  echo "ok   every recipe on lines of$sizes bytes of near misses (LC_ALL=${utf8:-unset}): each command done within" \
+    "30 s, nothing flagged"
 else
-  echo "FAIL lines of$sizes bytes of near misses: still running after 30 s [$slow], flagged [$noisy]"
+  echo "FAIL lines of$sizes bytes of near misses (LC_ALL=${utf8:-unset}): still running after 30 s [$slow]," \
+    "flagged [$noisy]"
   fail=1
 fi
 
