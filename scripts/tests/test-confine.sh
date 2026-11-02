@@ -505,6 +505,22 @@ if mkfifo "$T/fifo-probe" 2>/dev/null; then
   lib_bounded "$RW/fifoinc2/cfg/pipe" "$RW" 'confine_repo fifoinc2 R'
   check "... and one a file the config includes includes in turn, named relative to that file" \
     refused "a named pipe or device is included by the repository's config, and git would wait on it for good: pipe"
+  # Includes that fan out over the same files: each file is read once, nearest first, and a named pipe
+  # at the far end is still found. Here every file of a level includes all four of the next one.
+  mkrepo "$RW/incfan"; put "$RW/incfan" f x; commit "$RW/incfan" -m x
+  mkdir -p "$RW/incfan/i"
+  mkfifo "$RW/incfan/i/pipe"
+  for l in 1 2 3 4; do
+    for i in 1 2 3 4; do
+      { printf '[include]\n'
+        if [ "$l" -lt 4 ]; then for j in 1 2 3 4; do printf '\tpath = %s.%s\n' "$((l + 1))" "$j"; done
+        elif [ "$i" = 4 ]; then printf '\tpath = pipe\n'; fi; } > "$RW/incfan/i/$l.$i"
+    done
+  done
+  { printf '[include]\n'; for j in 1 2 3 4; do printf '\tpath = ../i/1.%s\n' "$j"; done; } >> "$RW/incfan/.git/config"
+  lib_bounded "$RW/incfan/i/pipe" "$RW" 'confine_repo incfan R'
+  check "... and one at the far end of includes that fan out over the same files" \
+    refused "a named pipe or device is included by the repository's config, and git would wait on it for good: pipe"
   mkrepo "$T/above"; put "$T/above" f x; commit "$T/above" -m x
   mkdir -p "$T/above/sub"
   rm "$T/above/.git/HEAD"; mkfifo "$T/above/.git/HEAD"
@@ -545,6 +561,36 @@ if mkfifo "$T/fifo-probe" 2>/dev/null; then
 else
   skp "mkfifo is not available: the named pipe cases"
 fi
+# A config that includes itself six times: each file is read once, so the check ends at once, and git's
+# own refusal (it stops at a depth of 10) follows. More than 64 included files, a file git cannot read as
+# config, and a file name holding a line end are refused before git starts.
+mkrepo "$RW/incself"; put "$RW/incself" f x; commit "$RW/incself" -m x
+{ printf '[include]\n'; for i in 1 2 3 4 5 6; do printf '\tpath = config\n'; done; } >> "$RW/incself/.git/config"
+bounded /dev/null lib "$RW" 'confine_repo incself R'
+check "a config that includes itself six times is read once, then git refuses it at once" \
+  refused 'R is not a git repository that git can read (none there, or another user owns it: audit a copy): incself'
+mkrepo "$RW/incmany"; put "$RW/incmany" f x; commit "$RW/incmany" -m x
+i=0
+printf '[include]\n' >> "$RW/incmany/.git/config"
+while [ "$i" -lt 70 ]; do
+  printf '[core]\n' > "$RW/incmany/.git/inc$i"
+  printf '\tpath = inc%s\n' "$i" >> "$RW/incmany/.git/config"
+  i=$((i + 1))
+done
+lib "$RW" 'confine_repo incmany R'
+check "a config that includes more than 64 files is refused" \
+  refused "the repository's config includes more than 64 files, more than these checks follow"
+mkrepo "$RW/incbad"; put "$RW/incbad" f x; commit "$RW/incbad" -m x
+printf '[include\n' > "$RW/incbad/.git/junk"
+printf '[include]\n\tpath = junk\n' >> "$RW/incbad/.git/config"
+lib "$RW" 'confine_repo incbad R'
+check "... and one that includes a file git cannot read as config" \
+  refused "git cannot list what this config file includes: $(shown "$RW/incbad/.git/junk")"
+mkrepo "$RW/incnl"; put "$RW/incnl" f x; commit "$RW/incnl" -m x
+printf '[include]\n\tpath = "a\\nb"\n' >> "$RW/incnl/.git/config"
+lib "$RW" 'confine_repo incnl R'
+check "... and one that includes a file whose name holds a line end" \
+  refused "the repository's config includes a file whose name holds a line end"
 # A socket in the git directory (git's own fsmonitor daemon keeps one there) does not block an open, and
 # passes. Making one needs a machine that allows it: on CI one that does not fails, elsewhere a skip.
 mkrepo "$RW/sock"; put "$RW/sock" f x; commit "$RW/sock" -m x

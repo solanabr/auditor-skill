@@ -195,37 +195,73 @@ confine_git_head() {
   case "${h:0:40}" in *[!0-9a-fA-F]*) return 1 ;; esac
 }
 
-# confine_git_includes <config file> <depth>: print the first include.path or includeIf.<condition>.path
-# value, in the file or in one it includes (to git's 10 levels), that names a named pipe or device; print
-# nothing when there is none. git lists the values, with no repository (--git-dir=/dev/null), following
-# none.
+# confine_git_includes <config file>...: status 1 (CONFINE_GIT_WHY says why) when an include.path or
+# includeIf.<condition>.path value in the files, or in a file they include in turn, names a named pipe or
+# device or a file whose name holds a line end, when git cannot list one file's values, or when they
+# include more than 64 files. Each file is read once, nearest first, to git's 10 levels: git lists its
+# values with no repository (--git-dir=/dev/null), following none. A value written ~user/ or %(prefix)/
+# names a place outside the tree and is not followed.
 confine_git_includes() {
-  local f=$1 v t
-  [ "$2" -le 10 ] && [ -f "$f" ] || return 0
-  v=$(cat -- "$f" 2>/dev/null) || return 0
-  case "$v" in *[iI][nN][cC][lL][uU][dD][eE]*) ;; *) return 0 ;; esac
-  hgit / --git-dir=/dev/null config --file "$f" --no-includes -z --get-regexp '^include(if\..+)?\.path$' 2>/dev/null </dev/null |
-    while IFS= read -r -d '' v; do
-      case "$v" in *$'\n'*) v=${v#*$'\n'} ;; *) continue ;; esac
-      case "$v" in
-        '~/'*) t=${HOME-}/${v#'~/'} ;;
-        '~'*|'%(prefix)/'*) continue ;;
-        /*) t=$v ;;
-        *) t=${f%/*}/$v ;;
-      esac
-      if confine_special "$t"; then printf '%s' "$v"; break; fi
-      if [ -f "$t" ]; then
-        t=$(confine_git_includes "$t" $(($2 + 1)))
-        if [ -n "$t" ]; then printf '%s' "$t"; break; fi
-      fi
+  local f t line out level=0 n=0 dup s
+  local -a cur=("$@") next=() seen=("$@")
+  while [ "${#cur[@]}" -gt 0 ] && [ "$level" -le 10 ]; do
+    next=()
+    for f in "${cur[@]}"; do
+      [ -f "$f" ] || continue
+      grep -i -q -e include -- "$f" 2>/dev/null
+      [ "$?" -ne 1 ] || continue
+      out=$(hgit / --git-dir=/dev/null config --file "$f" --no-includes -z --get-regexp '^include(if\..+)?\.path$' 2>/dev/null </dev/null |
+        while IFS= read -r -d '' t; do
+          case "$t" in (*$'\n'*) t=${t#*$'\n'} ;; (*) continue ;; esac
+          line=$t
+          case "$t" in
+            ('~/'*) t=${HOME-}/${t#'~/'} ;;
+            ('~'*|'%(prefix)/'*) continue ;;
+            (/*) ;;
+            (*) t=${f%/*}/$t ;;
+          esac
+          case "$t" in (*$'\n'*) printf 'N\n'; break ;; esac
+          if confine_special "$t"; then printf 'S%s\n' "$line"; break; fi
+          [ ! -f "$t" ] || printf 'F%s\n' "$t"
+        done
+        printf 'R%s\n' "${PIPESTATUS[0]}")
+      while [ -n "$out" ]; do
+        case "$out" in
+          *$'\n'*) line=${out%%$'\n'*}; out=${out#*$'\n'} ;;
+          *) line=$out; out="" ;;
+        esac
+        case "$line" in
+          N) CONFINE_GIT_WHY="the repository's config includes a file whose name holds a line end"; return 1 ;;
+          S*) confine_git_wait "is included by the repository's config" "${line#S}"; return 1 ;;
+          R0|R1) ;;
+          R*) CONFINE_GIT_WHY="git cannot list what this config file includes: $(confine_text "$f")"; return 1 ;;
+          F*)
+            t=${line#F}
+            dup=0
+            for s in "${seen[@]}"; do
+              if [ "$t" -ef "$s" ]; then dup=1; break; fi
+            done
+            [ "$dup" -eq 0 ] || continue
+            n=$((n + 1))
+            if [ "$n" -gt 64 ]; then
+              CONFINE_GIT_WHY="the repository's config includes more than 64 files, more than these checks follow"
+              return 1
+            fi
+            seen+=("$t")
+            next+=("$t") ;;
+        esac
+      done
     done
+    cur=(${next[@]+"${next[@]}"})
+    level=$((level + 1))
+  done
 }
 
 # confine_git_dir_files <git directory> <common directory>: status 1 (CONFINE_GIT_WHY says why) when
 # something in either, or a file their config includes, could stop git: a named pipe or device, a
 # symbolic link to one, or one an include names (confine_git_includes).
 confine_git_dir_files() {
-  local g=$1 c=$2 d f v odd
+  local g=$1 c=$2 d odd
   for d in "$g" "$c"; do
     [ -d "$d" ] || continue
     odd=$(find "$d" \( -type p -o -type b -o -type c \) -print 2>/dev/null)
@@ -234,10 +270,7 @@ confine_git_dir_files() {
     [ -z "$odd" ] || confine_git_wait "is named by a link in the git directory" "$d" || return 1
     [ ! "$c" -ef "$g" ] || break
   done
-  for f in "$c/config" "$g/config.worktree"; do
-    v=$(confine_git_includes "$f" 0)
-    [ -z "$v" ] || confine_git_wait "is included by the repository's config" "$v" || return 1
-  done
+  confine_git_includes "$c/config" "$g/config.worktree"
 }
 
 # confine_git_candidate <dir>: what git's discovery makes of <dir> as a git directory (is_git_directory):
