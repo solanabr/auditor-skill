@@ -13,8 +13,9 @@
 //! 6 digits) directly in WT: a real directory, holding no symbolic link, tracked by
 //! no repository in any letter case, whose `.gitignore` holds exactly `*`, as
 //! `scripts/rundir.sh check` checks it. git runs only as `hgit` runs it: found on
-//! a PATH with every entry inside WT removed, with an environment of its own, and
-//! with the repository's config pinned off. The only other program started is
+//! a PATH with every entry inside WT removed, with an environment of its own that
+//! allows no transport, and with the repository's config pinned off.
+//! The only other program started is
 //! audit-scan itself, by the path it runs from, to parse one file in a child: the
 //! file's bytes on its stdin, no environment, killed past a time limit. A file is
 //! made through its directory's descriptor, never through a link and never over a
@@ -594,7 +595,8 @@ impl Git {
     }
 
     /// `hgit <WT> <args>` with GIT_CEILING_DIRECTORIES set to `ceiling`: no
-    /// environment but its own, the repository's config pinned off.
+    /// environment but its own, GIT_ALLOW_PROTOCOL empty (no transport, which no
+    /// config of the repository's can widen), the repository's config pinned off.
     fn run(&self, ceiling: &OsStr, args: &[&OsStr]) -> io::Result<std::process::Output> {
         let (exe, path) = self
             .found
@@ -624,6 +626,7 @@ impl Git {
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("GIT_OPTIONAL_LOCKS", "0")
+            .env("GIT_ALLOW_PROTOCOL", "")
             .env("GIT_CEILING_DIRECTORIES", ceiling)
             .env("GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS", "true")
             .arg("--no-pager")

@@ -1,11 +1,17 @@
 //! confine.rs against scripts/lib/confine.sh: every case of the case file
 //! test-confine.sh runs `confine_path` over, run through `confine::rel` and
-//! `confine::check` in the same tree, must come out as the shell's does.
+//! `confine::check` in the same tree, must come out as the shell's does; and
+//! git, asked whether a path is tracked, runs with the same arguments and the
+//! same environment from both.
 
 mod common;
 
+use std::collections::BTreeMap;
 use std::ffi::OsStr;
-use std::process::Command;
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
+use std::process::{Command, Stdio};
 
 use auditor_tools::confine::{self, Kind, Stop};
 use common::Wt;
@@ -139,4 +145,98 @@ fn confine_rs_reads_every_path_case_as_confine_sh_does() {
     }
     assert!(n > 40, "only {n} cases read");
     assert!(differ.is_empty(), "{}", differ.join("\n"));
+}
+
+/// A `git` in `dir` that runs nothing: each call keeps its environment and its
+/// arguments, one per line, in `dir/log/<pid>.env` and `.args`, and answers as
+/// git does when nothing asked about is tracked: nothing, exit 0.
+fn recording_git(dir: &Path) {
+    fs::create_dir_all(dir.join("log")).expect("make the log directory");
+    let git = dir.join("git");
+    fs::write(
+        &git,
+        "#!/bin/sh\nlog=${0%/*}/log/$$\n/usr/bin/env > \"$log.env\"\n\
+         for a in \"$@\"; do printf '%s\\n' \"$a\"; done > \"$log.args\"\nexit 0\n",
+    )
+    .expect("write the recording git");
+    fs::set_permissions(&git, fs::Permissions::from_mode(0o755)).expect("chmod it");
+}
+
+/// Each call `recording_git` kept, by its arguments: its environment, sorted,
+/// less what the shell running it adds (PWD, OLDPWD, SHLVL and _).
+fn git_calls(dir: &Path) -> BTreeMap<String, Vec<String>> {
+    let mut calls = BTreeMap::new();
+    for entry in fs::read_dir(dir.join("log")).expect("read the log") {
+        let args = entry.expect("a log entry").path();
+        if args.extension() != Some(OsStr::new("args")) {
+            continue;
+        }
+        let env = fs::read_to_string(args.with_extension("env")).expect("read an environment");
+        let mut env: Vec<String> = env
+            .lines()
+            .filter(|v| !matches!(v.split('=').next(), Some("PWD" | "OLDPWD" | "SHLVL" | "_")))
+            .map(str::to_string)
+            .collect();
+        env.sort();
+        calls.insert(fs::read_to_string(&args).expect("read the arguments"), env);
+    }
+    calls
+}
+
+#[test]
+fn confine_rs_runs_git_as_hgit_does() {
+    let wt = Wt::repo();
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .expect("the repository root resolves");
+    let (sh, rs) = (wt.outside().join("sh"), wt.outside().join("rs"));
+    recording_git(&sh);
+    recording_git(&rs);
+    let path = |git: &Path| format!("{}:/usr/bin:/bin", git.display());
+    // confine.sh asks it with confine_tracked, as rundir.sh store does.
+    let shell = Command::new("bash")
+        .args([
+            "-c",
+            ". \"$1/scripts/lib/confine.sh\" && confine_init agree \"$1\" && \
+             confine_tracked .audit-memory",
+            "agree",
+        ])
+        .arg(&root)
+        .current_dir(&wt.dir)
+        .env("PATH", path(&sh))
+        .env_remove("CONFINE_ALLOW_PROTOCOL")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run bash");
+    assert!(
+        shell.status.success(),
+        "confine_tracked: {}",
+        String::from_utf8_lossy(&shell.stderr)
+    );
+    // confine.rs asks it with Git::tracked, as audit-mem does of its in-tree store.
+    let rust = Command::new(env!("CARGO_BIN_EXE_audit-mem"))
+        .args(["warm", "--program-id", "VaultProg1111"])
+        .current_dir(&wt.dir)
+        .env("PATH", path(&rs))
+        .stdin(Stdio::null())
+        .output()
+        .expect("run audit-mem");
+    assert!(
+        rust.status.success(),
+        "audit-mem: {}",
+        String::from_utf8_lossy(&rust.stderr)
+    );
+    let (sh, rs) = (git_calls(&sh), git_calls(&rs));
+    assert_eq!(sh.len(), 2, "hgit runs git twice: {sh:#?}");
+    assert_eq!(
+        rs, sh,
+        "confine.rs gives git the arguments and the environment hgit gives it"
+    );
+    for env in rs.values() {
+        assert!(
+            env.iter().any(|v| v == "GIT_ALLOW_PROTOCOL="),
+            "no transport is allowed: {env:#?}"
+        );
+    }
 }
