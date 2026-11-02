@@ -22,9 +22,16 @@ Given the finding block, its `audit_<n>/worksheets/context/*` worksheet, the pin
 
 **Tools.** Write and edit files only with the Write and Edit tools, never through a heredoc or a shell redirect: the command that spawned you pre-approves writes under its run directory (`audit_*/` or `incident_*/`) and nowhere else. Run each bundled tool as a Bash call of its own, from the working directory, exactly in the form given here: its quoted absolute path first, with nothing in front (no `bash`, no `cd`, no `VAR=value`), then its arguments, every value written out literally; join no other command to it with `;` or `&&`, pipe it only into `grep`, `head`, `tail` or `wc`, and put no `$` or backtick anywhere in the line, inside quotes too. Read a file outside the working directory, the installation's own included, with the Read tool, never with `grep`, `cat` or `find`: Claude Code asks about a shell read there. Give each `run.sh` call and the `git-ro.sh copy` call the Bash tool's longest timeout, in the foreground, never with `run_in_background`: a call that moves to the background loses the command's pre-approvals. Those forms run without a prompt under the command's grant; anything else asks the human, or is denied in a non-interactive run: report it as not run, with the reason, and never work around it.
 
-**Runners you write.** The template's `run.sh` drives the template's crate. A Trident or cargo-fuzz target or a Surfpool scenario has no template, so you write its `run.sh`, and it starts with the template `run.sh`'s mode gate, these lines verbatim (exit 3 before anything is copied or built):
+**Runners you write.** The template's `run.sh` drives the template's crate. A Trident or cargo-fuzz target or a Surfpool scenario has no template, so you write its `run.sh`, and it starts with these lines verbatim, `<R>` written out as the run directory the crate lies in: like `run.sh --crate`, they take the stricter of `<R>/exec-mode` and `AUDITOR_EXEC_MODE`, then the template `run.sh`'s mode gate, and in isolated mode the installation's credential self-check through `probe.sh`, and exit 3 before anything is copied or built:
 
 ```bash
+RUN_DIR='<R>'
+AUDITOR_ROOT='${CLAUDE_PLUGIN_ROOT}'
+case " $(head -c 16 "$RUN_DIR/exec-mode" 2>/dev/null || true) ${AUDITOR_EXEC_MODE:-} " in
+  *" none "*) AUDITOR_EXEC_MODE=none ;;
+  *" isolated "*) AUDITOR_EXEC_MODE=isolated ;;
+  *" native "*) AUDITOR_EXEC_MODE=native ;;
+esac
 case "${AUDITOR_EXEC_MODE:-}" in
   isolated|native) ;;
   *)
@@ -33,9 +40,13 @@ case "${AUDITOR_EXEC_MODE:-}" in
     exit 3
     ;;
 esac
+if [ "$AUDITOR_EXEC_MODE" = isolated ] && [ "$("$AUDITOR_ROOT/scripts/runner/probe.sh" --only isolation 2>/dev/null)" != 'isolation: none of the credentials the self-check reads is readable' ]; then
+  echo "[PoC-ATTEMPTED] blocker: isolated mode, but this is not the isolated runner (scripts/runner/probe.sh --only isolation lists what is readable) — nothing was copied or built." >&2
+  exit 3
+fi
 ```
 
-After the gate, it builds and runs from a scratch copy outside the target tree, as the template's `run.sh` does: a directory from `mktemp -d "${TMPDIR:-/tmp}/auditor-poc.XXXXXX"`, the crate copied in without `target/` (refusing a symbolic link, a `.cargo/` directory or a `rust-toolchain*` file), `RUSTUP_TOOLCHAIN` pinned, every `cargo`, `trident` or `surfpool` command started from that copy, and a `path` dependency on target crates absolute. A runner without both is not a PoC runner, and the tier is `[PoC-ATTEMPTED]`.
+A missing `<R>/exec-mode` leaves the mode to `AUDITOR_EXEC_MODE`, as for a crate's own `./run.sh`. After the gate, it builds and runs from a scratch copy outside the target tree, as the template's `run.sh` does: a directory from `mktemp -d "${TMPDIR:-/tmp}/auditor-poc.XXXXXX"`, the crate copied in without `target/` (refusing a symbolic link, a `.cargo/` directory or a `rust-toolchain*` file), `RUSTUP_TOOLCHAIN` pinned, every `cargo`, `trident` or `surfpool` command started from that copy, and a `path` dependency on target crates absolute. A runner without both is not a PoC runner, and the tier is `[PoC-ATTEMPTED]`.
 
 **Hard rule:** the exploit test must **ASSERT the vulnerability** — it succeeds against `vulnerable` and is rejected against `fixed`. A test that compiles and runs but does not assert the flaw is not a PoC.
 

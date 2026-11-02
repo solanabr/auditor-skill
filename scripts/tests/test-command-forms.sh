@@ -53,6 +53,9 @@
 #       arrives in; wording that copied an earlier run's mode forward, or passed the file's mode as run.sh
 #       --mode, stays gone (the GONE list); and no body names the environment form of a PoC run (VULNERABLE_SO
 #       and the rest), which run.sh --crate does not read.
+#   G   The lines agents/poc-engineer.md gives a runner it writes, run as such a runner's first lines, take the
+#       stricter of <R>/exec-mode and AUDITOR_EXEC_MODE as run.sh --crate does, stop on none or no mode, and in
+#       isolated mode stop unless probe.sh --only isolation finds nothing readable.
 # The entry points are the tracked files under scripts/ (but scripts/tests/) and templates/ of mode 100755 that
 # start with a direct-exec shebang (#!/bin/bash or #!/usr/bin/env -S python3 -I), the binaries the crates
 # under tools/auditor-tools declare, and every path scripts/entrypoints.txt lists. Each check first runs on
@@ -965,6 +968,8 @@ QUESTIONS.md	and again before a later session uses a run directory an earlier on
 agents/poc-engineer.md	When the command handed you `isolated`, pass `--mode isolated`, so a run whose recorded mode has since become less strict stops; with `native`, pass no `--mode`
 agents/patch-engineer.md	adding `--mode isolated` when the command handed you `isolated`, as `poc-engineer` does
 commands/intake.md	so the report states the mode their `>> execution mode:` line shows
+scripts/runner/probe.sh	0) printf 'isolation: none of the credentials the self-check reads is readable\n' ;;
+agents/poc-engineer.md	!= 'isolation: none of the credentials the self-check reads is readable' ]; then
 commands/audit-assist.md	only into `grep`, `head`, `tail` or `wc`
 commands/audit-cycle.md	only into `grep`, `head`, `tail` or `wc`
 commands/audit.md	only into `grep`, `head`, `tail` or `wc`
@@ -1023,6 +1028,54 @@ for f in commands/*.md agents/*.md skills/*/SKILL.md SKILL.md; do
     if grep -qF -- "$v" "$f"; then bad "P $f names $v, which run.sh --crate does not read"; else ok "no $v in $f"; fi
   done
 done
+
+# ---- 6. the mode lines a runner poc-engineer writes starts with -------------------------------------------
+# Run as a runner's first lines, from a working tree whose run directory holds an exec-mode, with a stand-in
+# installation whose probe.sh prints the isolation line FAKE_ISOLATION holds: like run.sh --crate, they take the
+# stricter of <R>/exec-mode and AUDITOR_EXEC_MODE, stop on none or no mode, and in isolated mode stop unless the
+# self-check finds nothing readable.
+G="$T/gate"
+mkdir -p "$G/inst/scripts/runner" "$G/ws/audit_1" "$G/home"
+printf '#!/bin/bash\nprintf "%%s\\n" "${FAKE_ISOLATION:-isolation: readable: SSH keys (1); ~/.ssh/id_ed25519}"\n' \
+  > "$G/inst/scripts/runner/probe.sh"
+chmod 755 "$G/inst/scripts/runner/probe.sh"
+awk -v root="$G/inst" '
+  /^\*\*Runners you write\.\*\*/ { on = 1; next }
+  on && !inb && /^```bash$/ { inb = 1; next }
+  inb && /^```$/ { exit }
+  inb && $0 == "RUN_DIR=\047<R>\047" { print "RUN_DIR=\047audit_1\047"; next }
+  inb && $0 == "AUDITOR_ROOT=\047${CLAUDE_PLUGIN_ROOT}\047" { print "AUDITOR_ROOT=\047" root "\047"; next }
+  inb { print }' "$TREE/agents/poc-engineer.md" > "$G/lines"
+{ printf '#!/usr/bin/env bash\nset -euo pipefail\n'; cat "$G/lines"
+  printf 'echo "past the gate: $AUDITOR_EXEC_MODE"\n'; } > "$G/runner.sh"
+CLEAN='isolation: none of the credentials the self-check reads is readable'
+while IFS='|' read -r file env iso want; do
+  [ -n "$want" ] || continue
+  if [ -n "$file" ]; then printf '%s\n' "$file" > "$G/ws/audit_1/exec-mode"; else rm -f "$G/ws/audit_1/exec-mode"; fi
+  set -- FAKE_ISOLATION="$CLEAN"
+  [ "$iso" = readable ] && set -- FAKE_ISOLATION="isolation: readable: SSH keys (1); ~/.ssh/id_ed25519"
+  [ -n "$env" ] && set -- "$@" AUDITOR_EXEC_MODE="$env"
+  out=$(cd "$G/ws" && env -i PATH="$PATH" HOME="$G/home" "$@" bash "$G/runner.sh" 2>&1); rc=$?
+  label="runner gate: exec-mode '${file:-absent}', AUDITOR_EXEC_MODE '${env:-unset}', self-check $iso"
+  case "$want" in
+    stop) if [ "$rc" = 3 ] && [ "${out#*past the gate}" = "$out" ] && [ "${out#*'[PoC-ATTEMPTED] blocker:'}" != "$out" ]; then
+            ok "$label -> exit 3, nothing past the gate"
+          else bad "$label: exit $rc, want 3 before anything else: ${out:0:300}"; fi ;;
+    *)    if [ "$rc" = 0 ] && [ "$out" = "past the gate: $want" ]; then ok "$label -> runs in $want mode"
+          else bad "$label: exit $rc, want a run in $want mode: ${out:0:300}"; fi ;;
+  esac
+done <<'CASES'
+native||clean|native
+|native|clean|native
+||clean|stop
+none|native|clean|stop
+native|none|clean|stop
+isolated|native|clean|isolated
+isolated|native|readable|stop
+native|isolated|readable|stop
+native|isolated|clean|isolated
+|isolated|readable|stop
+CASES
 
 echo "---- command forms: $pass passed, $failn failed"
 [ "$failn" -eq 0 ]
