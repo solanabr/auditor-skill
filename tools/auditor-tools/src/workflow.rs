@@ -1,16 +1,19 @@
 //! A workflow-aware pass over `.github/workflows/*.yml`, with a hand-written
 //! strict-subset YAML parser.
 //!
-//! The parser is not a general YAML library: it reads the block and flow subset
-//! GitHub Actions workflows are written in (block mappings and sequences, flow
-//! `[…]` and `{…}`, plain and quoted scalars, and `|`/`>` block scalars), and
-//! marks anything outside that subset — an anchor (`&`), an alias (`*`), a tag
-//! (`!…`), a merge key, an indentation tab, an unterminated flow — as `unknown`
-//! rather than guessing it. It never expands an alias, so no input can grow its
-//! output beyond the bytes it read. A whole file with a second YAML document, or
-//! more structure than the caps allow, is listed in `skipped`; a construct inside
-//! a file the parser did model is listed in that workflow's `unknown`, and the
-//! auditor reads those by hand.
+//! The parser is not a general YAML library. It reads the block and flow subset
+//! GitHub Actions workflows are written in: block mappings and sequences, flow
+//! `[…]` and `{…}` on one line or several, plain and quoted scalars, wrapped over
+//! lines or not, with every escape YAML 1.2 defines, and `|`/`>` block scalars
+//! with their indicators. It fails closed on the rest. A construct outside that
+//! subset (an alias, a tag, a merge key, an explicit `?` key) is listed in that
+//! workflow's `unknown` with the lines it covers, which are not read; an anchor is
+//! listed too, though its node is read. A line it cannot place (YAML that does not
+//! parse, a tab in indentation, a character YAML parsers read differently) ends
+//! the read, and `unknown` says the file is not read from that line to the end. A
+//! workflow is read whole only when its `unknown` is empty. The parser never
+//! expands an alias. A file with a second YAML document, or more structure than
+//! the caps allow, is listed in `skipped`.
 //!
 //! It is bounded by construction — [`MAX_WF_DEPTH`] on nesting, [`MAX_WF_NODES`]
 //! on nodes a file, `confine::MAX_FILE` on bytes a file (the walk enforces it),
@@ -25,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use crate::confine::{self, os_message};
 use crate::scan::Skipped;
 
-/// Block and flow nesting past which the parser stops and marks the node
+/// Block and flow nesting past which the parser stops and lists the node in
 /// `unknown`: deeper than any real workflow, so a file that reaches it is hostile
 /// or generated.
 pub const MAX_WF_DEPTH: usize = 32;
@@ -39,12 +42,12 @@ pub const MAX_WF_NODES: usize = 50_000;
 /// further file is in `skipped` as not parsed.
 pub const MAX_WF_FILES: usize = 256;
 
-/// The longest a scalar is kept: its whitespace collapsed to single spaces and
-/// cut after this many characters with `...`, as a report snippet is.
+/// The longest a scalar or a key is kept: its whitespace collapsed to single
+/// spaces and cut after this many characters with `...`, as a report snippet is.
 const MAX_WF_SCALAR: usize = 200;
 
-/// One parsed workflow file: the facts the pass reads, and the constructs in it
-/// the parser left unresolved.
+/// One parsed workflow file: the facts the pass reads, and what in it the parser
+/// did not read.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Workflow {
     pub file: String,
@@ -56,7 +59,8 @@ pub struct Workflow {
     /// when the key is absent.
     pub permissions: Vec<String>,
     pub jobs: Vec<Job>,
-    /// Every construct in this file outside the parser's subset, with its line.
+    /// Every construct in this file outside the parser's subset, and every line
+    /// it did not read, with its line: empty only when the whole file was read.
     pub unknown: Vec<Unknown>,
 }
 
@@ -201,101 +205,378 @@ use std::os::unix::ffi::OsStrExt;
 /// means the file is skipped whole: it is not a single YAML mapping, it holds a
 /// second document, or it holds more structure than the caps allow.
 pub fn parse_workflow(label: &str, source: &str) -> Result<Workflow, String> {
-    let lines = split_lines(source);
-    only_one_document(&lines)?;
+    let normal = normalize(source);
+    let (text, cut) = cut_at_odd_char(&normal);
+    let src = Src::new(text);
     let mut p = P {
-        lines,
+        src: &src,
+        end: src.count(),
         pos: 0,
         nodes: 0,
         truncated: false,
+        stopped: false,
         unknown: Vec::new(),
     };
-    // A single leading `---` opens the one document.
-    p.skip_blanks();
-    if p.peek().is_some_and(|l| l.content.trim_end() == "---") {
-        p.pos += 1;
+    if let Some((no, what)) = cut {
+        p.mark(no, &format!("{what}: not read from line {no} to the end"));
     }
-    let root = p.parse_block(0, 0);
+    let inline = p.document()?;
+    let root = match inline {
+        Some(li) => p.inline_root(li),
+        None => p.block(0, 0),
+    };
+    p.finish();
     if p.truncated {
         return Err(format!(
             "holds more structure than the parser lists (over {MAX_WF_NODES} nodes)"
         ));
     }
-    let NodeKind::Map(entries) = root.kind else {
-        return Err("not a YAML mapping".to_string());
-    };
-    Ok(build(label, entries, p.unknown))
-}
-
-// ---------------------------------------------------------------------------
-// Lines
-// ---------------------------------------------------------------------------
-
-/// One source line: its number, its indentation (leading spaces), the text past
-/// the indentation, the whole line (for a block scalar's body), whether it is
-/// blank or a comment, and whether a tab sits in its indentation.
-struct Raw<'a> {
-    number: usize,
-    indent: usize,
-    content: &'a str,
-    raw: &'a str,
-    blank_or_comment: bool,
-    tab_indent: bool,
-}
-
-/// Split the source into lines (`\n`, a trailing `\r` dropped), each measured.
-fn split_lines(source: &str) -> Vec<Raw<'_>> {
-    source
-        .split('\n')
-        .enumerate()
-        .map(|(i, line)| {
-            let raw = line.strip_suffix('\r').unwrap_or(line);
-            let mut indent = 0;
-            let mut tab_indent = false;
-            for b in raw.bytes() {
-                match b {
-                    b' ' => indent += 1,
-                    b'\t' => {
-                        tab_indent = true;
-                        break;
-                    }
-                    _ => break,
-                }
-            }
-            let content = &raw[indent..];
-            let blank_or_comment = content.is_empty() || content.starts_with('#');
-            Raw {
-                number: i + 1,
-                indent,
-                content,
-                raw,
-                blank_or_comment,
-                tab_indent,
-            }
-        })
-        .collect()
-}
-
-/// A second YAML document (a `---` or `...` marker at the left margin after the
-/// first content line) is refused: the parser reads one document.
-fn only_one_document(lines: &[Raw]) -> Result<(), String> {
-    let mut seen_content = false;
-    for l in lines {
-        if l.blank_or_comment {
-            continue;
-        }
-        let t = l.content.trim_end();
-        if l.indent == 0 && (t == "---" || t == "...") {
-            if t == "..." || seen_content {
-                return Err("holds more than one YAML document".to_string());
-            }
-            // A single leading `---` opens the first document.
-            seen_content = true;
-            continue;
-        }
-        seen_content = true;
+    match root.kind {
+        NodeKind::Map(entries) => Ok(build(label, entries, p.unknown)),
+        NodeKind::Unknown => Ok(build(label, Vec::new(), p.unknown)),
+        NodeKind::Null if !p.unknown.is_empty() => Ok(build(label, Vec::new(), p.unknown)),
+        _ => Err("not a YAML mapping".to_string()),
     }
-    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Characters and lines
+// ---------------------------------------------------------------------------
+
+/// The source with one leading byte order mark dropped and every line break
+/// (`\r\n`, `\r`, `\n`, as YAML reads them) written as `\n`.
+fn normalize(source: &str) -> String {
+    let s = source.strip_prefix('\u{feff}').unwrap_or(source);
+    if s.contains('\r') {
+        s.replace("\r\n", "\n").replace('\r', "\n")
+    } else {
+        s.to_string()
+    }
+}
+
+/// The text up to the line holding the first character YAML parsers refuse or
+/// read differently (a control character, a NEL, LS or PS, which YAML 1.1 parsers
+/// read as a line break, a byte order mark past the start), and that line's number
+/// and what it holds; the whole text when there is none.
+fn cut_at_odd_char(text: &str) -> (&str, Option<(usize, &'static str)>) {
+    for (at, c) in text.char_indices() {
+        let what = match c {
+            '\t' | '\n' | ' '..='~' => continue,
+            '\u{85}' | '\u{2028}' | '\u{2029}' => {
+                "a NEL, LS or PS character, which YAML 1.1 parsers read as a line break"
+            }
+            '\u{feff}' => "a byte order mark past the start of the file",
+            '\0'..='\u{1f}' | '\u{7f}'..='\u{9f}' | '\u{fffe}' | '\u{ffff}' => {
+                "a control character YAML does not allow"
+            }
+            _ => continue,
+        };
+        let start = text[..at].rfind('\n').map_or(0, |i| i + 1);
+        let no = text[..start].matches('\n').count() + 1;
+        return (&text[..start], Some((no, what)));
+    }
+    (text, None)
+}
+
+/// The source's lines: where each starts, and one past the end of the last.
+struct Src<'s> {
+    text: &'s str,
+    starts: Vec<usize>,
+}
+
+/// One line: its index, its indentation (leading spaces) and the text past it.
+#[derive(Clone, Copy)]
+struct Line<'s> {
+    index: usize,
+    indent: usize,
+    rest: &'s str,
+}
+
+impl<'s> Src<'s> {
+    fn new(text: &'s str) -> Self {
+        let mut starts = vec![0];
+        starts.extend(
+            text.bytes()
+                .enumerate()
+                .filter(|&(_, b)| b == b'\n')
+                .map(|(i, _)| i + 1),
+        );
+        starts.push(text.len() + 1);
+        Src { text, starts }
+    }
+
+    fn count(&self) -> usize {
+        self.starts.len() - 1
+    }
+
+    fn end_of(&self, index: usize) -> usize {
+        self.starts[index + 1] - 1
+    }
+
+    fn line(&self, index: usize) -> Line<'s> {
+        let raw = &self.text[self.starts[index]..self.end_of(index)];
+        let rest = raw.trim_start_matches(' ');
+        Line {
+            index,
+            indent: raw.len() - rest.len(),
+            rest,
+        }
+    }
+
+    /// The index of the line holding byte `at`.
+    fn line_of(&self, at: usize) -> usize {
+        match self.starts.binary_search(&at) {
+            Ok(i) => i,
+            Err(i) => i - 1,
+        }
+    }
+
+    /// Where `s`, a slice of the text, starts in it.
+    fn offset(&self, s: &str) -> usize {
+        s.as_ptr() as usize - self.text.as_ptr() as usize
+    }
+
+    /// The column `s`, a slice of the text, starts at in its line.
+    fn column(&self, s: &str) -> usize {
+        let at = self.offset(s);
+        at - self.starts[self.line_of(at)]
+    }
+}
+
+impl Line<'_> {
+    fn no(&self) -> usize {
+        self.index + 1
+    }
+
+    fn blank(&self) -> bool {
+        self.rest.bytes().all(|b| b == b' ' || b == b'\t')
+    }
+
+    fn comment(&self) -> bool {
+        self.rest.trim_start_matches([' ', '\t']).starts_with('#')
+    }
+
+    fn skippable(&self) -> bool {
+        self.blank() || self.comment()
+    }
+
+    /// A tab right after the leading spaces of a line with content.
+    fn tabbed(&self) -> bool {
+        self.rest.starts_with('\t')
+    }
+}
+
+/// A line that opens a block sequence entry: `-` alone, or `-` then a space or a
+/// tab.
+fn is_seq_line(t: &str) -> bool {
+    let b = t.as_bytes();
+    b.first() == Some(&b'-') && (b.len() == 1 || matches!(b[1], b' ' | b'\t'))
+}
+
+/// A scalar as the report keeps it, built a piece at a time: its whitespace
+/// collapsed to single spaces, cut after `MAX_WF_SCALAR` characters with `...`.
+/// Only what is kept is stored.
+struct Clip {
+    out: String,
+    chars: usize,
+    space: bool,
+    cut: bool,
+}
+
+impl Clip {
+    fn new() -> Self {
+        Clip {
+            out: String::new(),
+            chars: 0,
+            space: false,
+            cut: false,
+        }
+    }
+
+    fn push(&mut self, c: char) {
+        if self.cut {
+            return;
+        }
+        if c.is_whitespace() {
+            self.space = self.chars > 0;
+            return;
+        }
+        if self.space && self.chars < MAX_WF_SCALAR {
+            self.out.push(' ');
+            self.chars += 1;
+        }
+        self.space = false;
+        if self.chars == MAX_WF_SCALAR {
+            self.cut = true;
+            return;
+        }
+        self.out.push(c);
+        self.chars += 1;
+    }
+
+    fn push_str(&mut self, s: &str) {
+        for c in s.chars() {
+            if self.cut {
+                return;
+            }
+            self.push(c);
+        }
+    }
+
+    fn done(mut self) -> String {
+        if self.cut {
+            self.out.push_str("...");
+        }
+        self.out
+    }
+}
+
+fn clipped(s: &str) -> String {
+    let mut c = Clip::new();
+    c.push_str(s);
+    c.done()
+}
+
+// ---------------------------------------------------------------------------
+// Scalars on their own
+// ---------------------------------------------------------------------------
+
+const BAD_ESCAPE: &str = "an escape YAML does not define";
+
+/// Why a quoted scalar is not read: it does not close, or an escape at this byte
+/// is not one YAML defines.
+enum QuotedError {
+    Unclosed,
+    Escape(usize),
+}
+
+/// The quoted scalar `s` opens with (its first byte is `"` or `'`), read up to its
+/// closing quote, on its line or later ones: its value, with every escape YAML 1.2
+/// defines decoded and its line breaks folded, and how many bytes of `s` it spans.
+fn quoted(s: &str) -> Result<(String, usize), QuotedError> {
+    let b = s.as_bytes();
+    let double = b[0] == b'"';
+    let mut clip = Clip::new();
+    let mut i = 1;
+    loop {
+        let Some(c) = s[i..].chars().next() else {
+            return Err(QuotedError::Unclosed);
+        };
+        match c {
+            '\'' if !double => {
+                if b.get(i + 1) == Some(&b'\'') {
+                    clip.push('\'');
+                    i += 2;
+                    continue;
+                }
+                return Ok((clip.done(), i + 1));
+            }
+            '"' if double => return Ok((clip.done(), i + 1)),
+            '\\' if double => {
+                let at = i;
+                let Some(e) = s[i + 1..].chars().next() else {
+                    return Err(QuotedError::Unclosed);
+                };
+                i += 1 + e.len_utf8();
+                let decoded = match e {
+                    '0' => '\0',
+                    'a' => '\u{7}',
+                    'b' => '\u{8}',
+                    't' | '\t' => '\t',
+                    'n' => '\n',
+                    'v' => '\u{b}',
+                    'f' => '\u{c}',
+                    'r' => '\r',
+                    'e' => '\u{1b}',
+                    ' ' => ' ',
+                    '"' => '"',
+                    '/' => '/',
+                    '\\' => '\\',
+                    'N' => '\u{85}',
+                    '_' => '\u{a0}',
+                    'L' => '\u{2028}',
+                    'P' => '\u{2029}',
+                    'x' | 'u' | 'U' => {
+                        let n = match e {
+                            'x' => 2,
+                            'u' => 4,
+                            _ => 8,
+                        };
+                        let code = s
+                            .get(i..i + n)
+                            .filter(|h| h.bytes().all(|d| d.is_ascii_hexdigit()))
+                            .and_then(|h| u32::from_str_radix(h, 16).ok())
+                            .and_then(char::from_u32)
+                            .ok_or(QuotedError::Escape(at))?;
+                        i += n;
+                        code
+                    }
+                    '\n' => {
+                        // An escaped line break: the break, and the next line's
+                        // leading whitespace, are dropped.
+                        while matches!(b.get(i), Some(b' ' | b'\t')) {
+                            i += 1;
+                        }
+                        continue;
+                    }
+                    _ => return Err(QuotedError::Escape(at)),
+                };
+                clip.push(decoded);
+            }
+            _ => {
+                clip.push(c);
+                i += c.len_utf8();
+            }
+        }
+    }
+}
+
+/// A plain scalar's text on one line, up to a comment (a `#` after a space or a
+/// tab) with its trailing whitespace dropped, and whether a comment ended it.
+fn plain_line(t: &str) -> (&str, bool) {
+    let b = t.as_bytes();
+    for i in 1..b.len() {
+        if b[i] == b'#' && matches!(b[i - 1], b' ' | b'\t') {
+            return (t[..i].trim_end_matches([' ', '\t']), true);
+        }
+    }
+    (t.trim_end_matches([' ', '\t']), false)
+}
+
+/// Whether a plain scalar's text holds `: ` (or a `:` that ends it), which YAML
+/// reads as a mapping's value indicator, not as text.
+fn holds_indicator(t: &str) -> bool {
+    let b = t.as_bytes();
+    (0..b.len()).any(|i| b[i] == b':' && (i + 1 == b.len() || matches!(b[i + 1], b' ' | b'\t')))
+}
+
+/// A plain key on a line: the text up to the first `:` that ends the line or is
+/// followed by a space or a tab, before any comment, and the text after that `:`.
+fn plain_key(t: &str) -> Option<(&str, &str)> {
+    let b = t.as_bytes();
+    for i in 0..b.len() {
+        match b[i] {
+            b':' if i + 1 == b.len() || matches!(b[i + 1], b' ' | b'\t') => {
+                let key = t[..i].trim_end_matches([' ', '\t']);
+                return (!key.is_empty()).then(|| (key, &t[i + 1..]));
+            }
+            b'#' if i > 0 && matches!(b[i - 1], b' ' | b'\t') => return None,
+            _ => {}
+        }
+    }
+    None
+}
+
+/// An anchor's, an alias's or a tag's text: up to whitespace or a flow indicator.
+fn prop_word(s: &str) -> &str {
+    let end = s
+        .find([' ', '\t', '\n', ',', '[', ']', '{', '}'])
+        .unwrap_or(s.len());
+    &s[..end]
+}
+
+fn flow_indicator(b: u8) -> bool {
+    matches!(b, b',' | b'[' | b']' | b'{' | b'}')
 }
 
 // ---------------------------------------------------------------------------
@@ -312,7 +593,31 @@ enum NodeKind {
     Map(Vec<Entry>),
     Seq(Vec<Node>),
     Null,
+    /// A node the parser did not read; `unknown` says why.
     Unknown,
+}
+
+impl Node {
+    fn null(line: usize) -> Node {
+        Node {
+            line,
+            kind: NodeKind::Null,
+        }
+    }
+
+    fn unknown(line: usize) -> Node {
+        Node {
+            line,
+            kind: NodeKind::Unknown,
+        }
+    }
+
+    fn scalar(line: usize, s: String) -> Node {
+        Node {
+            line,
+            kind: NodeKind::Scalar(s),
+        }
+    }
 }
 
 struct Entry {
@@ -321,30 +626,65 @@ struct Entry {
     value: Node,
 }
 
-struct P<'a> {
-    lines: Vec<Raw<'a>>,
+/// What a line opens with, where a mapping's key belongs.
+enum Key<'s> {
+    /// A key, the text after its `:`, and the anchors written before it.
+    Pair(String, &'s str, Vec<&'s str>),
+    /// A key the parser does not read (a merge key, an alias, a tagged key).
+    Unread(String),
+    /// An explicit key, `?`.
+    Explicit,
+    /// A key YAML refuses.
+    Bad(&'static str),
+    /// No key: the line is not a mapping entry.
+    None,
+}
+
+/// What a node's text starts with, past its properties.
+enum Props<'s> {
+    /// The node's text past any anchors (listed) and the whitespace after them.
+    Node(&'s str),
+    /// A tag: the node is not read.
+    Tag(String),
+    /// An alias, and the text after it.
+    Alias(String, &'s str),
+}
+
+type FlowError = (usize, &'static str);
+
+const UNCLOSED_FLOW: &str = "a flow collection that does not close";
+
+/// A parse under way: the lines, the first line not to read, the next line to
+/// read, the nodes counted, and what was not read. Once `stopped`, nothing more is
+/// read.
+struct P<'s> {
+    src: &'s Src<'s>,
+    end: usize,
     pos: usize,
     nodes: usize,
     truncated: bool,
+    stopped: bool,
     unknown: Vec<Unknown>,
 }
 
-impl<'a> P<'a> {
-    fn skip_blanks(&mut self) {
-        while self.lines.get(self.pos).is_some_and(|l| l.blank_or_comment) {
+impl<'s> P<'s> {
+    fn peek(&self) -> Option<Line<'s>> {
+        (self.pos < self.end).then(|| self.src.line(self.pos))
+    }
+
+    fn skip_blank(&mut self) {
+        while self.pos < self.end && self.src.line(self.pos).skippable() {
             self.pos += 1;
         }
     }
 
-    fn peek(&self) -> Option<&Raw<'a>> {
-        self.lines.get(self.pos)
-    }
-
-    /// Count a node; once past the cap the parse is truncated and stops building.
-    fn node(&mut self) -> bool {
+    /// Count a node; past the cap the parse is truncated and stops.
+    fn count(&mut self) -> bool {
         self.nodes += 1;
         if self.nodes > MAX_WF_NODES {
             self.truncated = true;
+            self.stopped = true;
+            self.pos = self.end;
             return false;
         }
         true
@@ -359,342 +699,841 @@ impl<'a> P<'a> {
         }
     }
 
-    fn unknown_at(&mut self, line: usize, what: &str) -> Node {
-        self.mark(line, what);
-        Node {
-            line,
-            kind: NodeKind::Unknown,
+    /// The read ends at line `no`: nothing from it to the end of the file is read.
+    fn fail(&mut self, no: usize, what: &str) -> Node {
+        if !self.stopped {
+            self.mark(no, &format!("{what}: not read from line {no} to the end"));
+            self.stopped = true;
+        }
+        self.pos = self.end;
+        Node::unknown(no)
+    }
+
+    /// `fail` for a node that starts at line `no` and goes wrong at byte `at`.
+    fn fail_at(&mut self, no: usize, at: usize, what: &str) -> Node {
+        let line = self.src.line_of(at) + 1;
+        if line == no {
+            self.fail(no, what)
+        } else {
+            self.fail(no, &format!("{what} (line {line})"))
         }
     }
 
-    /// The block at `min_indent` or deeper: a sequence, a mapping, or a bare
-    /// scalar, whichever its first non-blank line begins.
-    fn parse_block(&mut self, min_indent: usize, depth: usize) -> Node {
-        self.skip_blanks();
-        if self.truncated || depth > MAX_WF_DEPTH {
-            if depth > MAX_WF_DEPTH {
-                let line = self.peek().map_or(0, |l| l.number);
-                return self.unknown_at(line, "nested too deeply");
+    /// The lines from the next one that belong to a node at line `no` the parser
+    /// does not read — blank and comment lines, lines indented `min` or more, and,
+    /// with `seq`, sequence entries at that indentation — passed over, and listed
+    /// with `what`.
+    fn unread(&mut self, no: usize, min: usize, seq: Option<usize>, what: &str) -> Node {
+        let mut last = no;
+        while let Some(l) = self.peek() {
+            if !l.skippable() {
+                if !(l.indent >= min || (seq == Some(l.indent) && is_seq_line(l.rest))) {
+                    break;
+                }
+                last = l.no();
             }
-            return Node {
-                line: 0,
-                kind: NodeKind::Null,
-            };
-        }
-        let Some(l) = self.peek() else {
-            return Node {
-                line: 0,
-                kind: NodeKind::Null,
-            };
-        };
-        if l.indent < min_indent {
-            return Node {
-                line: l.number,
-                kind: NodeKind::Null,
-            };
-        }
-        let indent = l.indent;
-        let (number, tab) = (l.number, l.tab_indent);
-        if tab {
             self.pos += 1;
-            return self.unknown_at(number, "a tab in indentation");
         }
-        if is_seq_line(l) {
-            return self.parse_seq(indent, depth);
-        }
-        if split_key(l.content).is_some() {
-            return self.parse_map(indent, depth);
-        }
-        // A bare scalar as the whole block value.
-        let value = scalar_value(l.content);
-        self.pos += 1;
-        self.node();
-        Node {
-            line: number,
-            kind: NodeKind::Scalar(value),
-        }
+        let lines = if last == no {
+            format!("line {no}")
+        } else {
+            format!("lines {no}-{last}")
+        };
+        self.mark(no, &format!("{what}: {lines} not read"));
+        Node::unknown(no)
     }
 
-    fn parse_map(&mut self, indent: usize, depth: usize) -> Node {
-        let start = self.peek().map_or(0, |l| l.number);
-        let mut entries = Vec::new();
-        loop {
-            self.skip_blanks();
-            if self.truncated {
-                break;
-            }
-            let Some(l) = self.peek() else { break };
-            if l.indent != indent {
-                break;
-            }
-            if l.tab_indent {
-                let n = l.number;
-                self.pos += 1;
-                self.mark(n, "a tab in indentation");
+    /// Directives and document markers: a `%` directive before the document is
+    /// listed; one leading `---` opens it, and the root may start on that line
+    /// (its index is returned); a `...` ends it. A second document is refused.
+    fn document(&mut self) -> Result<Option<usize>, String> {
+        let marker = |l: &Line, m: &str| {
+            l.indent == 0
+                && l.rest.starts_with(m)
+                && matches!(l.rest.as_bytes().get(3), None | Some(b' ' | b'\t'))
+        };
+        let mut started = false;
+        let mut content = false;
+        let mut inline = None;
+        let mut i = 0;
+        while i < self.end {
+            let l = self.src.line(i);
+            i += 1;
+            if l.skippable() {
                 continue;
             }
-            let Some((key, rest)) = split_key(l.content) else {
-                break;
-            };
-            let (number, rest) = (l.number, rest.to_string());
-            self.pos += 1;
-            if !self.node() {
+            if marker(&l, "...") {
+                let after = l.rest[3..].trim_start_matches([' ', '\t']);
+                if !(after.is_empty() || after.starts_with('#'))
+                    || (i..self.end).any(|j| !self.src.line(j).skippable())
+                {
+                    return Err("holds more than one YAML document".to_string());
+                }
+                self.end = l.index;
                 break;
             }
-            let value = self.parse_entry_value(&rest, number, indent, depth);
-            entries.push(Entry {
-                key,
-                line: number,
-                value,
-            });
+            if marker(&l, "---") {
+                if started || content {
+                    return Err("holds more than one YAML document".to_string());
+                }
+                started = true;
+                self.pos = i;
+                let after = l.rest[3..].trim_start_matches([' ', '\t']);
+                if !after.is_empty() && !after.starts_with('#') {
+                    inline = Some(l.index);
+                    content = true;
+                }
+                continue;
+            }
+            if !started && !content && l.indent == 0 && l.rest.starts_with('%') {
+                self.mark(l.no(), "a YAML directive");
+                self.pos = i;
+                continue;
+            }
+            content = true;
+        }
+        Ok(inline)
+    }
+
+    /// Nothing may be left once the root is read.
+    fn finish(&mut self) {
+        if self.stopped {
+            return;
+        }
+        self.skip_blank();
+        if let Some(l) = self.peek() {
+            self.fail(l.no(), "a line the parser could not place");
+        }
+    }
+
+    /// A node's anchors (each listed), and a tag or an alias, at the start of `t`.
+    fn props(&mut self, mut t: &'s str, no: usize) -> Props<'s> {
+        loop {
+            match t.as_bytes().first() {
+                Some(b'&') => {
+                    let name = prop_word(&t[1..]);
+                    self.anchor(no, name);
+                    t = t[1 + name.len()..].trim_start_matches([' ', '\t']);
+                }
+                Some(b'!') => return Props::Tag(clipped(prop_word(t))),
+                Some(b'*') => {
+                    let name = prop_word(&t[1..]);
+                    return Props::Alias(clipped(name), &t[1 + name.len()..]);
+                }
+                _ => return Props::Node(t),
+            }
+        }
+    }
+
+    fn anchor(&mut self, no: usize, name: &str) {
+        self.mark(
+            no,
+            &format!(
+                "an anchor (&{}): its node is read; an alias to it is not expanded",
+                clipped(name)
+            ),
+        );
+    }
+
+    /// An alias node, `*name`, at line `no`, followed by `after` on its line.
+    fn alias(&mut self, no: usize, name: &str, after: &str) -> Node {
+        let rest = after.trim_start_matches([' ', '\t']);
+        if !(rest.is_empty() || rest.starts_with('#')) {
+            return self.fail(no, "content after an alias");
+        }
+        self.mark(no, &format!("an alias (*{name}), not expanded"));
+        Node::unknown(no)
+    }
+
+    /// What `t`, at a mapping key's place, opens with.
+    fn key_of(&self, t: &'s str) -> Key<'s> {
+        let mut t = t;
+        let mut anchors = Vec::new();
+        let mut tag = None;
+        loop {
+            match t.as_bytes().first() {
+                Some(b'&') => {
+                    let name = prop_word(&t[1..]);
+                    anchors.push(name);
+                    t = t[1 + name.len()..].trim_start_matches([' ', '\t']);
+                }
+                Some(b'!') if tag.is_none() => {
+                    let word = prop_word(t);
+                    tag = Some(clipped(word));
+                    t = t[word.len()..].trim_start_matches([' ', '\t']);
+                }
+                _ => break,
+            }
+        }
+        let b = t.as_bytes();
+        let key = match b.first() {
+            None => return Key::None,
+            Some(b'?') if b.len() == 1 || matches!(b[1], b' ' | b'\t') => return Key::Explicit,
+            Some(b'"' | b'\'') => match quoted(t) {
+                Err(QuotedError::Unclosed) => return Key::None,
+                Err(QuotedError::Escape(_)) => return Key::Bad(BAD_ESCAPE),
+                Ok((key, len)) => {
+                    let after = t[len..].trim_start_matches([' ', '\t']);
+                    match after.strip_prefix(':') {
+                        Some(rest) if rest.is_empty() || rest.starts_with([' ', '\t']) => {
+                            (key, rest)
+                        }
+                        _ => return Key::None,
+                    }
+                }
+            },
+            Some(b'*') => {
+                let name = prop_word(&t[1..]);
+                let after = t[1 + name.len()..].trim_start_matches([' ', '\t']);
+                return match after.strip_prefix(':') {
+                    Some(rest) if rest.is_empty() || rest.starts_with([' ', '\t']) => {
+                        Key::Unread(format!("an alias (*{}) as a key", clipped(name)))
+                    }
+                    _ => Key::None,
+                };
+            }
+            Some(b'[' | b'{' | b'|' | b'>' | b'%' | b'@' | b'`' | b',' | b']' | b'}' | b'#') => {
+                return Key::None
+            }
+            Some(b'-') if is_seq_line(t) => return Key::None,
+            _ => match plain_key(t) {
+                Some(("<<", _)) if tag.is_none() => {
+                    return Key::Unread("a merge key (<<)".to_string())
+                }
+                Some((key, rest)) => (clipped(key), rest),
+                None => return Key::None,
+            },
+        };
+        match tag {
+            Some(tag) => Key::Unread(format!("a tag ({tag}) on a key")),
+            None => Key::Pair(key.0, key.1, anchors),
+        }
+    }
+
+    /// The root on the `---` line at index `li`.
+    fn inline_root(&mut self, li: usize) -> Node {
+        let no = li + 1;
+        let t = self.src.line(li).rest[3..].trim_start_matches([' ', '\t']);
+        self.pos = no;
+        let t = match self.props(t, no) {
+            Props::Node(t) => t,
+            Props::Tag(tag) => return self.unread(no, 0, None, &format!("a tag ({tag})")),
+            Props::Alias(name, after) => return self.alias(no, &name, after),
+        };
+        if t.is_empty() || t.starts_with('#') {
+            return self.block(0, 1);
+        }
+        if is_seq_line(t) || !matches!(self.key_of(t), Key::None) {
+            return self.fail(no, "a block collection on the `---` line");
+        }
+        self.inline_value(t, no, 0, 0)
+    }
+
+    /// A node on its own lines, indented `min` or more: a block sequence, a block
+    /// mapping, or a scalar or flow collection, whichever its first line opens.
+    fn block(&mut self, min: usize, depth: usize) -> Node {
+        self.skip_blank();
+        let Some(l) = self.peek() else {
+            return Node::null(0);
+        };
+        let no = l.no();
+        if l.indent < min {
+            return Node::null(no);
+        }
+        if depth > MAX_WF_DEPTH {
+            return self.unread(no, min, None, "nested too deeply");
+        }
+        if l.tabbed() {
+            return self.fail(no, "a tab in indentation");
+        }
+        let t = match self.props(l.rest, no) {
+            Props::Node(t) => t,
+            Props::Tag(tag) => return self.unread(no, min, None, &format!("a tag ({tag})")),
+            Props::Alias(name, after) => {
+                self.pos = l.index + 1;
+                return self.alias(no, &name, after);
+            }
+        };
+        if t.is_empty() || t.starts_with('#') {
+            // Properties alone on their line: the node is on the lines below.
+            self.pos = l.index + 1;
+            return self.block(min, depth + 1);
+        }
+        if is_seq_line(t) {
+            if t.len() != l.rest.len() {
+                return self.fail(no, "properties before a sequence entry");
+            }
+            return self.seq(l.indent, depth, None);
+        }
+        if !matches!(self.key_of(t), Key::None) {
+            return self.map(l.indent, depth, Some((l.index, t)));
+        }
+        self.pos = l.index + 1;
+        self.inline_value(t, no, min, depth)
+    }
+
+    /// A block mapping whose keys sit at column `indent`, its first entry `first`
+    /// when that opens on a line read already (a sequence entry's `- key: value`).
+    fn map(&mut self, indent: usize, depth: usize, first: Option<(usize, &'s str)>) -> Node {
+        let line = first.map_or_else(|| self.peek().map_or(0, |l| l.no()), |(li, _)| li + 1);
+        let mut entries = Vec::new();
+        if let Some((li, t)) = first {
+            self.entry(li, indent, t, depth, &mut entries);
+        }
+        loop {
+            self.skip_blank();
+            let Some(l) = self.peek() else { break };
+            if l.indent < indent {
+                break;
+            }
+            if l.indent > indent {
+                self.fail(l.no(), "a line indented deeper than the entries before it");
+                break;
+            }
+            if l.tabbed() {
+                self.fail(l.no(), "a tab in indentation");
+                break;
+            }
+            if is_seq_line(l.rest) {
+                self.fail(l.no(), "a sequence entry inside a mapping");
+                break;
+            }
+            self.entry(l.index, indent, l.rest, depth, &mut entries);
         }
         Node {
-            line: start,
+            line,
             kind: NodeKind::Map(entries),
         }
     }
 
-    fn parse_seq(&mut self, indent: usize, depth: usize) -> Node {
-        let start = self.peek().map_or(0, |l| l.number);
-        let mut items = Vec::new();
-        loop {
-            self.skip_blanks();
-            if self.truncated {
-                break;
+    /// One mapping entry, `t` on the line at index `li`, its key at column
+    /// `indent`.
+    fn entry(
+        &mut self,
+        li: usize,
+        indent: usize,
+        t: &'s str,
+        depth: usize,
+        entries: &mut Vec<Entry>,
+    ) {
+        let no = li + 1;
+        self.pos = no;
+        if !self.count() {
+            return;
+        }
+        match self.key_of(t) {
+            Key::Pair(key, rest, anchors) => {
+                for name in anchors {
+                    self.anchor(no, name);
+                }
+                let value = self.entry_value(rest, no, indent, depth + 1);
+                entries.push(Entry {
+                    key,
+                    line: no,
+                    value,
+                });
             }
-            let Some(l) = self.peek() else { break };
-            if l.indent != indent || !is_seq_line(l) {
-                break;
+            Key::Unread(what) => {
+                self.unread(no, indent + 1, Some(indent), &what);
             }
-            let number = l.number;
-            // The text after the `-` and the spaces following it.
-            let after = &l.content[1..];
-            let trimmed = after.trim_start();
-            let dash_prefix = l.content.len() - trimmed.len();
-            let item_indent = indent + dash_prefix;
-            let rest = trimmed.to_string();
+            Key::Explicit => self.explicit(no, indent),
+            Key::Bad(what) => {
+                self.fail(no, what);
+            }
+            Key::None => {
+                self.fail(no, "a line that is not a `key: value` entry");
+            }
+        }
+    }
+
+    /// An explicit `?` entry at line `no`, its `?` at column `indent`: its key's
+    /// lines, then a `:` line at that column and its value's lines, are listed and
+    /// not read.
+    fn explicit(&mut self, no: usize, indent: usize) {
+        let mut last = no;
+        let mut value = false;
+        while let Some(l) = self.peek() {
+            if !l.skippable() {
+                let colon = l.rest == ":" || l.rest.starts_with(": ") || l.rest.starts_with(":\t");
+                let deeper =
+                    l.indent > indent || (l.indent == indent && value && is_seq_line(l.rest));
+                if !deeper && !(l.indent == indent && !value && colon) {
+                    break;
+                }
+                value |= !deeper;
+                last = l.no();
+            }
             self.pos += 1;
-            if !self.node() {
+        }
+        let lines = if last == no {
+            format!("line {no}")
+        } else {
+            format!("lines {no}-{last}")
+        };
+        self.mark(no, &format!("an explicit key (?): {lines} not read"));
+    }
+
+    /// A mapping entry's value: the text `rest` after its key's `:` on line `no`,
+    /// or, when that is empty, the node on the lines below (a sequence at the key's
+    /// column `key_indent` or deeper, anything else deeper).
+    fn entry_value(&mut self, rest: &'s str, no: usize, key_indent: usize, depth: usize) -> Node {
+        let min = key_indent + 1;
+        if depth > MAX_WF_DEPTH {
+            return self.unread(no, min, Some(key_indent), "nested too deeply");
+        }
+        let t = match self.props(rest.trim_start_matches([' ', '\t']), no) {
+            Props::Node(t) => t,
+            Props::Tag(tag) => {
+                return self.unread(no, min, Some(key_indent), &format!("a tag ({tag})"))
+            }
+            Props::Alias(name, after) => return self.alias(no, &name, after),
+        };
+        if !(t.is_empty() || t.starts_with('#')) {
+            return self.inline_value(t, no, min, depth);
+        }
+        self.skip_blank();
+        match self.peek() {
+            Some(l) if l.indent == key_indent && is_seq_line(l.rest) => {
+                self.seq(key_indent, depth, None)
+            }
+            Some(l) if l.indent > key_indent => self.block(min, depth),
+            _ => Node::null(no),
+        }
+    }
+
+    /// A block sequence whose dashes sit at column `indent`, its first entry
+    /// `first` when that opens on a line read already (`- - item`).
+    fn seq(&mut self, indent: usize, depth: usize, first: Option<(usize, &'s str)>) -> Node {
+        let line = first.map_or_else(|| self.peek().map_or(0, |l| l.no()), |(li, _)| li + 1);
+        let mut items = Vec::new();
+        let mut next = first;
+        loop {
+            let (li, t) = match next.take() {
+                Some(item) => item,
+                None => {
+                    self.skip_blank();
+                    let Some(l) = self.peek() else { break };
+                    if l.indent < indent {
+                        break;
+                    }
+                    if l.indent > indent {
+                        self.fail(l.no(), "a line indented deeper than the entries before it");
+                        break;
+                    }
+                    if l.tabbed() {
+                        self.fail(l.no(), "a tab in indentation");
+                        break;
+                    }
+                    if !is_seq_line(l.rest) {
+                        break;
+                    }
+                    (l.index, l.rest)
+                }
+            };
+            self.pos = li + 1;
+            if !self.count() {
                 break;
             }
-            let item = if rest.is_empty() || rest.starts_with('#') {
-                // The value sits on the lines below, deeper than the dash.
-                self.parse_block(indent + 1, depth + 1)
-            } else if let Some((key, krest)) = split_key(&rest) {
-                self.parse_map_from(key, krest, number, item_indent, depth + 1)
-            } else {
-                self.parse_inline(&rest, number, item_indent, depth + 1)
-            };
+            let item = self.item(li, indent, &t[1..], depth + 1);
             items.push(item);
         }
         Node {
-            line: start,
+            line,
             kind: NodeKind::Seq(items),
         }
     }
 
-    /// A mapping whose first entry opens on a sequence item's `-` line
-    /// (`- key: value`), its remaining entries at column `indent`.
-    fn parse_map_from(
-        &mut self,
-        first_key: String,
-        first_rest: &str,
-        line: usize,
-        indent: usize,
-        depth: usize,
-    ) -> Node {
+    /// A sequence entry: `after`, the text after its dash at column `dash` on the
+    /// line at index `li`, or the node on the lines below.
+    fn item(&mut self, li: usize, dash: usize, after: &'s str, depth: usize) -> Node {
+        let no = li + 1;
+        let min = dash + 1;
         if depth > MAX_WF_DEPTH {
-            return self.unknown_at(line, "nested too deeply");
+            return self.unread(no, min, None, "nested too deeply");
         }
-        let mut entries = Vec::new();
-        let first_rest = first_rest.to_string();
-        if self.node() {
-            let value = self.parse_entry_value(&first_rest, line, indent, depth);
-            entries.push(Entry {
-                key: first_key,
-                line,
-                value,
-            });
+        let t = after.trim_start_matches(' ');
+        let rest = t.trim_start_matches([' ', '\t']);
+        if t.starts_with('\t') && !(rest.is_empty() || rest.starts_with('#')) {
+            return self.fail(no, "a tab after a sequence entry's dash");
         }
-        loop {
-            self.skip_blanks();
-            if self.truncated {
-                break;
+        let column = if rest.is_empty() {
+            0
+        } else {
+            self.src.column(rest)
+        };
+        let t = match self.props(rest, no) {
+            Props::Node(t) => t,
+            Props::Tag(tag) => return self.unread(no, min, None, &format!("a tag ({tag})")),
+            Props::Alias(name, after) => return self.alias(no, &name, after),
+        };
+        if t.is_empty() || t.starts_with('#') {
+            let node = self.block(min, depth);
+            return match node.kind {
+                NodeKind::Null => Node::null(no),
+                _ => node,
+            };
+        }
+        if is_seq_line(t) {
+            if t.len() != rest.len() {
+                return self.fail(no, "properties before a sequence entry");
             }
+            return self.seq(column, depth, Some((li, t)));
+        }
+        if !matches!(self.key_of(t), Key::None) {
+            return self.map(column, depth, Some((li, t)));
+        }
+        self.inline_value(t, no, min, depth)
+    }
+
+    /// A value that starts on line `no` with `t` (not empty, no comment, no
+    /// properties): a block scalar, a flow collection, a quoted or a plain scalar.
+    /// Lines that go on with it are indented `min` or more.
+    fn inline_value(&mut self, t: &'s str, no: usize, min: usize, depth: usize) -> Node {
+        let b = t.as_bytes();
+        match b[0] {
+            b'|' | b'>' => self.block_scalar(t, no, min),
+            b'[' | b'{' => {
+                let mut at = self.src.offset(t);
+                match self.flow_node(&mut at, depth) {
+                    Ok(node) if self.after_inline(at) => node,
+                    Ok(_) => Node::unknown(no),
+                    Err((at, what)) => self.fail_at(no, at, what),
+                }
+            }
+            b'"' | b'\'' => {
+                let at = self.src.offset(t);
+                match quoted(&self.src.text[at..]) {
+                    Ok((value, len)) if self.after_inline(at + len) => {
+                        self.count();
+                        Node::scalar(no, value)
+                    }
+                    Ok(_) => Node::unknown(no),
+                    Err(QuotedError::Unclosed) => {
+                        self.fail(no, "a quoted scalar that does not close")
+                    }
+                    Err(QuotedError::Escape(off)) => self.fail_at(no, at + off, BAD_ESCAPE),
+                }
+            }
+            b'%' | b'@' | b'`' | b',' | b']' | b'}' => {
+                self.fail(no, "a value that starts with a character YAML reserves")
+            }
+            b'-' | b'?' | b':' if b.len() == 1 || matches!(b[1], b' ' | b'\t') => {
+                self.fail(no, "a `-`, `?` or `:` indicator where a value belongs")
+            }
+            _ => self.plain(t, no, min),
+        }
+    }
+
+    /// The rest of the line holding byte `at`, where a flow collection or a quoted
+    /// scalar ended, holds nothing but a comment; the read goes on with the next
+    /// line. Otherwise the read ends there.
+    fn after_inline(&mut self, at: usize) -> bool {
+        let li = self.src.line_of(at);
+        let rest = self.src.text[at..self.src.end_of(li)].trim_start_matches([' ', '\t']);
+        if rest.is_empty() || rest.starts_with('#') {
+            self.pos = li + 1;
+            true
+        } else {
+            self.fail(li + 1, "content after a flow collection or a quoted scalar");
+            false
+        }
+    }
+
+    /// A plain scalar that starts on line `no` with `t`, and goes on over the
+    /// lines below indented `min` or more, up to a comment.
+    fn plain(&mut self, t: &'s str, no: usize, min: usize) -> Node {
+        const COLON: &str = "a plain scalar holding `: `, which YAML reads as a key";
+        let (first, mut ended) = plain_line(t);
+        if holds_indicator(first) {
+            return self.fail(no, COLON);
+        }
+        let mut clip = Clip::new();
+        clip.push_str(first);
+        self.pos = no;
+        while !ended {
             let Some(l) = self.peek() else { break };
-            if l.indent != indent {
-                break;
-            }
-            if l.tab_indent {
-                let n = l.number;
+            if l.blank() {
                 self.pos += 1;
-                self.mark(n, "a tab in indentation");
                 continue;
             }
-            let Some((key, rest)) = split_key(l.content) else {
+            if l.indent < min || l.comment() {
                 break;
-            };
-            let (number, rest) = (l.number, rest.to_string());
+            }
+            let (piece, comment) = plain_line(l.rest.trim_start_matches([' ', '\t']));
+            if holds_indicator(piece) {
+                return self.fail(l.no(), COLON);
+            }
+            clip.push(' ');
+            clip.push_str(piece);
             self.pos += 1;
-            if !self.node() {
-                break;
-            }
-            let value = self.parse_entry_value(&rest, number, indent, depth);
-            entries.push(Entry {
-                key,
-                line: number,
-                value,
-            });
+            ended = comment;
         }
-        Node {
-            line,
-            kind: NodeKind::Map(entries),
-        }
+        self.count();
+        Node::scalar(no, clip.done())
     }
 
-    /// A mapping entry's value: the inline text after `key:`, or, when that is
-    /// empty, the block on the lines below (a sequence at `key_indent` or deeper,
-    /// a mapping or scalar deeper).
-    fn parse_entry_value(
-        &mut self,
-        rest: &str,
-        line: usize,
-        key_indent: usize,
-        depth: usize,
-    ) -> Node {
-        let trimmed = rest.trim_start();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            self.skip_blanks();
-            return match self.peek() {
-                Some(l) if is_seq_line(l) && l.indent >= key_indent && !l.tab_indent => {
-                    self.parse_seq(l.indent, depth + 1)
-                }
-                Some(l) if l.indent > key_indent => self.parse_block(key_indent + 1, depth + 1),
-                _ => Node {
-                    line,
-                    kind: NodeKind::Null,
-                },
-            };
-        }
-        self.parse_inline(trimmed, line, key_indent, depth + 1)
-    }
-
-    /// An inline value: a block scalar (`|`/`>`), a flow `[…]` or `{…}`, a plain
-    /// or quoted scalar, or a construct outside the subset.
-    fn parse_inline(&mut self, text: &str, line: usize, owner_indent: usize, depth: usize) -> Node {
-        if depth > MAX_WF_DEPTH {
-            return self.unknown_at(line, "nested too deeply");
-        }
-        let first = text.as_bytes()[0];
-        match first {
-            b'|' | b'>' => self.parse_block_scalar(text, line, owner_indent),
-            b'[' | b'{' => {
-                let (node, used) = self.parse_flow(text, line, depth);
-                let tail = text[used..].trim_start();
-                if !tail.is_empty() && !tail.starts_with('#') {
-                    self.mark(line, "content after a flow collection");
-                }
-                node
-            }
-            b'&' => self.unknown_at(line, "an anchor (&)"),
-            b'*' => self.unknown_at(line, "an alias (*)"),
-            b'!' => self.unknown_at(line, "a tag (!)"),
-            _ => {
-                self.node();
-                Node {
-                    line,
-                    kind: NodeKind::Scalar(scalar_value(text)),
-                }
-            }
-        }
-    }
-
-    /// A `|` or `>` block scalar: the body is the lines below, more indented than
-    /// the owning key or dash; literal (`|`) keeps their line breaks, folded
-    /// (`>`) joins them with spaces. The value is collapsed and cut like any
-    /// scalar, so only what is kept is built.
-    fn parse_block_scalar(&mut self, header: &str, line: usize, owner_indent: usize) -> Node {
-        let folded = header.starts_with('>');
-        let mut body: Vec<&str> = Vec::new();
-        let mut body_indent: Option<usize> = None;
-        while let Some(l) = self.lines.get(self.pos) {
-            if !l.raw.trim().is_empty() && l.indent <= owner_indent {
-                break;
-            }
-            let strip = *body_indent.get_or_insert(l.indent);
-            let line_text = if l.raw.len() >= strip {
-                &l.raw[strip.min(l.raw.len())..]
-            } else {
-                ""
-            };
-            body.push(line_text);
-            self.pos += 1;
-        }
-        self.node();
-        let joined = body.join(if folded { " " } else { "\n" });
-        Node {
-            line,
-            kind: NodeKind::Scalar(clip(&joined)),
-        }
-    }
-
-    /// A single-line flow collection. Returns the node and how many bytes of
-    /// `text` it spanned (through the closing `]`/`}`). An unterminated or
-    /// over-deep flow is `unknown`.
-    fn parse_flow(&mut self, text: &str, line: usize, depth: usize) -> (Node, usize) {
-        if depth > MAX_WF_DEPTH {
-            return (self.unknown_at(line, "nested too deeply"), text.len());
-        }
-        let bytes = text.as_bytes();
-        let open = bytes[0];
-        let (close, seq) = if open == b'[' {
-            (b']', true)
-        } else {
-            (b'}', false)
-        };
-        self.node();
-        let mut items: Vec<Node> = Vec::new();
-        let mut entries: Vec<Entry> = Vec::new();
-        let mut i = 1;
+    /// A `|` or `>` block scalar whose header `t` is on line `no`; its body is the
+    /// lines below indented `min` or more, at the indentation its header gives or
+    /// its first line has. Literal (`|`) and folded (`>`) are kept alike, since the
+    /// value's whitespace is collapsed.
+    fn block_scalar(&mut self, t: &'s str, no: usize, min: usize) -> Node {
+        let mut rest = &t[1..];
+        let mut given = None;
+        let mut chomp = false;
         loop {
-            // Skip spaces between items.
-            while i < bytes.len() && bytes[i] == b' ' {
-                i += 1;
+            match rest.as_bytes().first() {
+                Some(&d @ b'1'..=b'9') if given.is_none() => given = Some(usize::from(d - b'0')),
+                Some(b'+' | b'-') if !chomp => chomp = true,
+                _ => break,
             }
-            if i >= bytes.len() {
-                return (self.unknown_at(line, "an unterminated flow collection"), i);
+            rest = &rest[1..];
+        }
+        let rest = rest.trim_start_matches([' ', '\t']);
+        if !(rest.is_empty() || rest.starts_with('#')) {
+            return self.fail(no, "a block scalar header YAML does not define");
+        }
+        self.pos = no;
+        let body = match given {
+            Some(n) => Some(min + n - 1),
+            None => (self.pos..self.end)
+                .map(|i| self.src.line(i))
+                .find(|l| !l.blank())
+                .map(|l| l.indent)
+                .filter(|&indent| indent >= min),
+        };
+        let mut clip = Clip::new();
+        while let Some(l) = self.peek() {
+            if l.blank() {
+                self.pos += 1;
+                continue;
             }
-            if bytes[i] == close {
-                i += 1;
-                break;
+            match body {
+                Some(body) if l.indent >= body => {
+                    clip.push('\n');
+                    let raw = &self.src.text[self.src.starts[l.index]..self.src.end_of(l.index)];
+                    clip.push_str(raw.get(body..).unwrap_or(""));
+                    self.pos += 1;
+                }
+                _ if l.indent < min || l.comment() => break,
+                _ => return self.fail(l.no(), "a block scalar line indented less than its first"),
             }
-            // An empty collection `[]` / `{}` closes at once (handled above); a
-            // trailing comma before the close is tolerated.
-            let (raw_item, next) = scan_flow_item(text, i, close);
-            i = next;
-            let item = raw_item.trim();
-            if !item.is_empty() {
-                if seq {
-                    let node = self.flow_value(item, line, depth);
-                    items.push(node);
-                } else if let Some((key, val)) = split_flow_entry(item) {
-                    let value = self.flow_value(val.trim(), line, depth);
-                    entries.push(Entry { key, line, value });
+        }
+        self.count();
+        Node::scalar(no, clip.done())
+    }
+
+    // -----------------------------------------------------------------------
+    // Flow collections, on one line or several
+    // -----------------------------------------------------------------------
+
+    /// Whitespace, line breaks and comments from byte `at`.
+    fn ws(&self, at: &mut usize) {
+        let b = self.src.text.as_bytes();
+        while let Some(&c) = b.get(*at) {
+            match c {
+                b' ' | b'\t' | b'\n' => *at += 1,
+                b'#' => {
+                    while b.get(*at).is_some_and(|&c| c != b'\n') {
+                        *at += 1;
+                    }
+                }
+                _ => break,
+            }
+        }
+    }
+
+    /// Whether byte `at` is a `:` that indicates a value: followed by whitespace,
+    /// a flow indicator or the end, or right after a quoted scalar or a flow
+    /// collection (`json`).
+    fn indicates_value(&self, at: usize, json: bool) -> bool {
+        let b = self.src.text.as_bytes();
+        b.get(at) == Some(&b':')
+            && (json
+                || b.get(at + 1)
+                    .is_none_or(|&c| matches!(c, b' ' | b'\t' | b'\n') || flow_indicator(c)))
+    }
+
+    /// An explicit `?` at byte `at`, passed over with the whitespace after it.
+    fn explicit_flow(&self, at: &mut usize) -> bool {
+        let b = self.src.text.as_bytes();
+        let alone = b
+            .get(*at + 1)
+            .is_none_or(|&c| matches!(c, b' ' | b'\t' | b'\n') || flow_indicator(c));
+        if b.get(*at) != Some(&b'?') || !alone {
+            return false;
+        }
+        *at += 1;
+        self.ws(at);
+        true
+    }
+
+    /// Whether byte `at` ends a flow entry: `,`, a closing bracket, or the end.
+    fn entry_ends(&self, at: usize, close: u8) -> bool {
+        self.src
+            .text
+            .as_bytes()
+            .get(at)
+            .is_none_or(|&c| c == b',' || c == close)
+    }
+
+    /// The flow node at byte `at`, which is passed over it.
+    fn flow_node(&mut self, at: &mut usize, depth: usize) -> Result<Node, FlowError> {
+        let t = self.src.text;
+        let no = self.src.line_of(*at) + 1;
+        if self.stopped {
+            return Ok(Node::unknown(no));
+        }
+        let Some(c) = t[*at..].chars().next() else {
+            return Err((*at, UNCLOSED_FLOW));
+        };
+        match c {
+            '[' | '{' => {
+                if depth > MAX_WF_DEPTH {
+                    return Err((*at, "a flow collection nested too deeply"));
+                }
+                self.flow_collection(at, depth, c == '[')
+            }
+            '"' | '\'' => match quoted(&t[*at..]) {
+                Ok((value, len)) => {
+                    *at += len;
+                    self.count();
+                    Ok(Node::scalar(no, value))
+                }
+                Err(QuotedError::Unclosed) => Err((*at, "a quoted scalar that does not close")),
+                Err(QuotedError::Escape(off)) => Err((*at + off, BAD_ESCAPE)),
+            },
+            '*' => {
+                let name = prop_word(&t[*at + 1..]);
+                *at += 1 + name.len();
+                self.mark(no, &format!("an alias (*{}), not expanded", clipped(name)));
+                Ok(Node::unknown(no))
+            }
+            '&' | '!' => {
+                let mut tagged = false;
+                while let Some(&p @ (b'&' | b'!')) = t.as_bytes().get(*at) {
+                    let word = prop_word(&t[*at..]);
+                    *at += word.len();
+                    if p == b'&' {
+                        self.anchor(no, &word[1..]);
+                    } else {
+                        tagged = true;
+                        self.mark(
+                            no,
+                            &format!("a tag ({}): its node is not read", clipped(word)),
+                        );
+                    }
+                    self.ws(at);
+                }
+                let node = if self.entry_ends(*at, b']') || self.entry_ends(*at, b'}') {
+                    Node::null(no)
                 } else {
-                    self.mark(line, "a flow mapping entry without a key");
+                    self.flow_node(at, depth)?
+                };
+                Ok(if tagged { Node::unknown(no) } else { node })
+            }
+            '|' | '>' => Err((*at, "a block scalar inside a flow collection")),
+            ',' | ']' | '}' => Err((*at, "an empty entry in a flow collection")),
+            '%' | '@' | '`' => Err((*at, "a value that starts with a character YAML reserves")),
+            '-' | '?' | ':'
+                if t.as_bytes()
+                    .get(*at + 1)
+                    .is_none_or(|&c| matches!(c, b' ' | b'\t' | b'\n') || flow_indicator(c)) =>
+            {
+                Err((*at, "a `-`, `?` or `:` indicator where a value belongs"))
+            }
+            _ => Ok(self.flow_plain(at, no)),
+        }
+    }
+
+    /// A flow sequence (`seq`) or mapping opening at byte `at`.
+    fn flow_collection(
+        &mut self,
+        at: &mut usize,
+        depth: usize,
+        seq: bool,
+    ) -> Result<Node, FlowError> {
+        let start = *at;
+        let no = self.src.line_of(start) + 1;
+        let close = if seq { b']' } else { b'}' };
+        *at += 1;
+        self.count();
+        let mut items = Vec::new();
+        let mut entries = Vec::new();
+        loop {
+            self.ws(at);
+            if self.stopped {
+                return Ok(Node::unknown(no));
+            }
+            match self.src.text.as_bytes().get(*at) {
+                None => return Err((start, UNCLOSED_FLOW)),
+                Some(&c) if c == close => {
+                    *at += 1;
+                    break;
+                }
+                _ => {}
+            }
+            let line = self.src.line_of(*at) + 1;
+            let explicit = self.explicit_flow(at);
+            let first = self.src.text.as_bytes().get(*at).copied();
+            let json = matches!(first, Some(b'"' | b'\'' | b'[' | b'{'));
+            let key =
+                if self.indicates_value(*at, false) || (explicit && self.entry_ends(*at, close)) {
+                    Node::null(line)
+                } else {
+                    self.flow_node(at, depth + 1)?
+                };
+            self.ws(at);
+            let value = if self.indicates_value(*at, json) {
+                // An implicit key sits on one line, with its `:`.
+                if !explicit && self.src.line_of(*at) + 1 != line {
+                    return Err((*at, "a flow mapping key that spans lines"));
+                }
+                *at += 1;
+                self.ws(at);
+                Some(if self.entry_ends(*at, close) {
+                    Node::null(line)
+                } else {
+                    self.flow_node(at, depth + 1)?
+                })
+            } else {
+                None
+            };
+            self.count();
+            if seq {
+                if explicit || value.is_some() {
+                    self.mark(
+                        line,
+                        "a mapping inside a flow sequence: its entry is not read",
+                    );
+                    items.push(Node::unknown(line));
+                } else {
+                    items.push(key);
+                }
+            } else {
+                match key.kind {
+                    NodeKind::Scalar(k) if !explicit => entries.push(Entry {
+                        key: k,
+                        line,
+                        value: value.unwrap_or(Node::null(line)),
+                    }),
+                    _ => self.mark(
+                        line,
+                        "a flow mapping key that is not a scalar: its entry is not read",
+                    ),
                 }
             }
-            // Step past a separating comma.
-            while i < bytes.len() && bytes[i] == b' ' {
-                i += 1;
-            }
-            if i < bytes.len() && bytes[i] == b',' {
-                i += 1;
-            } else if i < bytes.len() && bytes[i] == close {
-                i += 1;
-                break;
-            } else if i >= bytes.len() {
-                return (self.unknown_at(line, "an unterminated flow collection"), i);
+            self.ws(at);
+            match self.src.text.as_bytes().get(*at) {
+                Some(b',') => *at += 1,
+                Some(&c) if c == close => {
+                    *at += 1;
+                    break;
+                }
+                None => return Err((start, UNCLOSED_FLOW)),
+                Some(_) if seq => {
+                    return Err((*at, "a flow sequence entry not followed by , or ]"))
+                }
+                Some(_) => return Err((*at, "a flow mapping entry not followed by , or }")),
             }
         }
         let kind = if seq {
@@ -702,314 +1541,50 @@ impl<'a> P<'a> {
         } else {
             NodeKind::Map(entries)
         };
-        (Node { line, kind }, i)
+        Ok(Node { line: no, kind })
     }
 
-    /// A value inside a flow collection: a nested flow, or a scalar.
-    fn flow_value(&mut self, item: &str, line: usize, depth: usize) -> Node {
-        if item.starts_with('[') || item.starts_with('{') {
-            let (node, used) = self.parse_flow(item, line, depth + 1);
-            let tail = item[used.min(item.len())..].trim();
-            if !tail.is_empty() {
-                self.mark(line, "content after a flow collection");
-            }
-            node
-        } else if item.starts_with('&') || item.starts_with('*') || item.starts_with('!') {
-            self.unknown_at(line, "an anchor, alias or tag")
-        } else {
-            self.node();
-            Node {
-                line,
-                kind: NodeKind::Scalar(scalar_value(item)),
-            }
-        }
-    }
-}
-
-/// A line that opens a sequence item: `-` alone, or `-` then a space.
-fn is_seq_line(l: &Raw) -> bool {
-    l.content == "-" || l.content.starts_with("- ")
-}
-
-/// The bytes of one flow item, from `start` up to the next top-level `,` or the
-/// closing `close`, quotes and nested `[]`/`{}` passed over. Returns the item's
-/// text and the index of the delimiter.
-fn scan_flow_item(text: &str, start: usize, close: u8) -> (&str, usize) {
-    let bytes = text.as_bytes();
-    let mut i = start;
-    let mut depth = 0usize;
-    let mut in_s = false;
-    let mut in_d = false;
-    while i < bytes.len() {
-        let c = bytes[i];
-        if in_s {
-            if c == b'\'' {
-                in_s = false;
-            }
-        } else if in_d {
-            if c == b'\\' {
-                i += 2;
-                continue;
-            }
-            if c == b'"' {
-                in_d = false;
-            }
-        } else {
+    /// A plain scalar inside a flow collection, from byte `at`: up to a flow
+    /// indicator, a `:` that indicates a value, or a comment, over line breaks.
+    fn flow_plain(&mut self, at: &mut usize, no: usize) -> Node {
+        let t = self.src.text;
+        let b = t.as_bytes();
+        let ends = |i: usize| match b.get(i) {
+            None => true,
+            Some(&c) if flow_indicator(c) || c == b'#' => true,
+            Some(b':') => b
+                .get(i + 1)
+                .is_none_or(|&c| matches!(c, b' ' | b'\t' | b'\n') || flow_indicator(c)),
+            _ => false,
+        };
+        let mut clip = Clip::new();
+        let mut i = *at;
+        let mut end = i;
+        while let Some(c) = t[i..].chars().next() {
             match c {
-                b'\'' => in_s = true,
-                b'"' => in_d = true,
-                b'[' | b'{' => depth += 1,
-                b']' | b'}' => {
-                    if depth == 0 {
+                ' ' | '\t' | '\n' => {
+                    let mut j = i;
+                    while matches!(b.get(j), Some(b' ' | b'\t' | b'\n')) {
+                        j += 1;
+                    }
+                    if ends(j) {
                         break;
                     }
-                    depth -= 1;
+                    clip.push(' ');
+                    i = j;
                 }
-                b',' if depth == 0 => break,
-                c if c == close && depth == 0 => break,
-                _ => {}
-            }
-        }
-        i += 1;
-    }
-    (&text[start..i], i)
-}
-
-/// A flow mapping entry split at its `key:`.
-fn split_flow_entry(item: &str) -> Option<(String, &str)> {
-    let bytes = item.as_bytes();
-    let mut in_s = false;
-    let mut in_d = false;
-    let mut i = 0;
-    while i < bytes.len() {
-        let c = bytes[i];
-        if in_s {
-            if c == b'\'' {
-                in_s = false;
-            }
-        } else if in_d {
-            if c == b'\\' {
-                i += 2;
-                continue;
-            }
-            if c == b'"' {
-                in_d = false;
-            }
-        } else {
-            match c {
-                b'\'' => in_s = true,
-                b'"' => in_d = true,
-                b':' if i + 1 == bytes.len() || bytes[i + 1] == b' ' => {
-                    let key = scalar_value(item[..i].trim());
-                    if key.is_empty() {
-                        return None;
-                    }
-                    return Some((key, &item[i + 1..]));
+                ',' | '[' | ']' | '{' | '}' => break,
+                ':' if ends(i) => break,
+                _ => {
+                    clip.push(c);
+                    i += c.len_utf8();
+                    end = i;
                 }
-                _ => {}
             }
         }
-        i += 1;
-    }
-    None
-}
-
-/// A line's `key:` split into the key (unquoted) and the text after the colon,
-/// or `None` when the line is not a mapping entry. The key is a leading quoted
-/// string, or the text up to the first `:` that ends the line or is followed by a
-/// space, outside quotes.
-fn split_key(content: &str) -> Option<(String, &str)> {
-    let bytes = content.as_bytes();
-    if bytes.is_empty() {
-        return None;
-    }
-    if bytes[0] == b'"' || bytes[0] == b'\'' {
-        let q = bytes[0];
-        let mut i = 1;
-        while i < bytes.len() {
-            if q == b'"' && bytes[i] == b'\\' {
-                i += 2;
-                continue;
-            }
-            if bytes[i] == q {
-                if q == b'\'' && i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
-                    i += 2;
-                    continue;
-                }
-                break;
-            }
-            i += 1;
-        }
-        if i >= bytes.len() {
-            return None;
-        }
-        let key_raw = &content[..=i];
-        let mut j = i + 1;
-        while j < bytes.len() && bytes[j] == b' ' {
-            j += 1;
-        }
-        if j >= bytes.len() || bytes[j] != b':' {
-            return None;
-        }
-        if j + 1 < bytes.len() && bytes[j + 1] != b' ' {
-            return None;
-        }
-        let key = scalar_value(key_raw);
-        let rest = content.get(j + 1..).unwrap_or("");
-        return Some((key, rest));
-    }
-    let mut in_s = false;
-    let mut in_d = false;
-    let mut i = 0;
-    while i < bytes.len() {
-        let c = bytes[i];
-        if in_s {
-            if c == b'\'' {
-                in_s = false;
-            }
-        } else if in_d {
-            if c == b'\\' {
-                i += 2;
-                continue;
-            }
-            if c == b'"' {
-                in_d = false;
-            }
-        } else {
-            match c {
-                b'\'' => in_s = true,
-                b'"' => in_d = true,
-                b':' if i + 1 == bytes.len() || bytes[i + 1] == b' ' => {
-                    let key = content[..i].trim_end();
-                    if key.is_empty() {
-                        return None;
-                    }
-                    return Some((key.to_string(), content.get(i + 1..).unwrap_or("")));
-                }
-                _ => {}
-            }
-        }
-        i += 1;
-    }
-    None
-}
-
-/// A scalar's value: a fully single- or double-quoted string unquoted, else the
-/// plain text with a trailing ` #` comment removed; then collapsed and cut.
-fn scalar_value(r: &str) -> String {
-    let t = r.trim();
-    if let Some(inner) = fully_quoted(t) {
-        return clip(&inner);
-    }
-    clip(strip_comment(t))
-}
-
-/// The content of `t` when it is one fully quoted scalar (the opening quote's
-/// match is its last character), unescaped; `None` otherwise.
-fn fully_quoted(t: &str) -> Option<String> {
-    let bytes = t.as_bytes();
-    if bytes.len() < 2 {
-        return None;
-    }
-    let q = bytes[0];
-    if q != b'"' && q != b'\'' {
-        return None;
-    }
-    let mut i = 1;
-    while i < bytes.len() {
-        if q == b'"' && bytes[i] == b'\\' {
-            i += 2;
-            continue;
-        }
-        if bytes[i] == q {
-            if q == b'\'' && i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
-                i += 2;
-                continue;
-            }
-            break;
-        }
-        i += 1;
-    }
-    if i != bytes.len() - 1 {
-        return None; // the close is not the last character
-    }
-    let inner = &t[1..i];
-    Some(if q == b'"' {
-        unescape_double(inner)
-    } else {
-        inner.replace("''", "'")
-    })
-}
-
-/// A double-quoted scalar's common escapes; an unknown escape is kept as written.
-fn unescape_double(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars();
-    while let Some(c) = chars.next() {
-        if c == '\\' {
-            match chars.next() {
-                Some('n') => out.push('\n'),
-                Some('t') => out.push('\t'),
-                Some('r') => out.push('\r'),
-                Some('"') => out.push('"'),
-                Some('\\') => out.push('\\'),
-                Some('0') => out.push('\0'),
-                Some(other) => {
-                    out.push('\\');
-                    out.push(other);
-                }
-                None => out.push('\\'),
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    out
-}
-
-/// The text before a ` #` comment, the comment outside quotes; `t` is trimmed.
-fn strip_comment(t: &str) -> &str {
-    let bytes = t.as_bytes();
-    let mut in_s = false;
-    let mut in_d = false;
-    let mut i = 0;
-    while i < bytes.len() {
-        let c = bytes[i];
-        if in_s {
-            if c == b'\'' {
-                in_s = false;
-            }
-        } else if in_d {
-            if c == b'\\' {
-                i += 2;
-                continue;
-            }
-            if c == b'"' {
-                in_d = false;
-            }
-        } else {
-            match c {
-                b'\'' => in_s = true,
-                b'"' => in_d = true,
-                b'#' if i > 0 && bytes[i - 1] == b' ' => return t[..i].trim_end(),
-                _ => {}
-            }
-        }
-        i += 1;
-    }
-    t
-}
-
-/// A scalar for a report: its whitespace collapsed to single spaces, cut after
-/// `MAX_WF_SCALAR` characters with `...`.
-fn clip(s: &str) -> String {
-    let collapsed = s.split_whitespace().collect::<Vec<_>>().join(" ");
-    if collapsed.chars().count() > MAX_WF_SCALAR {
-        let mut out: String = collapsed.chars().take(MAX_WF_SCALAR).collect();
-        out.push_str("...");
-        out
-    } else {
-        collapsed
+        *at = end;
+        self.count();
+        Node::scalar(no, clip.done())
     }
 }
 
@@ -1017,57 +1592,120 @@ fn clip(s: &str) -> String {
 // The node tree mapped to workflow facts
 // ---------------------------------------------------------------------------
 
-fn build(label: &str, entries: Vec<Entry>, unknown: Vec<Unknown>) -> Workflow {
+/// The facts of the modeled keys an entry list holds. A modeled key written twice
+/// is listed in `unknown`, since YAML parsers read a repeated key differently,
+/// and the facts of both are kept.
+fn repeated(
+    key: &str,
+    line: usize,
+    names: &[&str],
+    seen: &mut Vec<String>,
+    unknown: &mut Vec<Unknown>,
+) {
+    if !names.contains(&key) {
+        return;
+    }
+    if seen.iter().any(|s| s == key) {
+        unknown.push(Unknown {
+            line,
+            what: format!("a second `{key}` key, which YAML parsers read differently"),
+        });
+    } else {
+        seen.push(key.to_string());
+    }
+}
+
+/// A modeled key's value that is not the kind GitHub reads there is listed.
+fn not_a(key: &str, line: usize, what: &str, unknown: &mut Vec<Unknown>) {
+    unknown.push(Unknown {
+        line,
+        what: format!("a `{key}` value that is not {what}"),
+    });
+}
+
+fn build(label: &str, entries: Vec<Entry>, mut unknown: Vec<Unknown>) -> Workflow {
     let mut wf = Workflow {
         file: label.to_string(),
         name: None,
         triggers: Vec::new(),
         permissions: Vec::new(),
         jobs: Vec::new(),
-        unknown,
+        unknown: Vec::new(),
     };
-    for e in entries {
-        match e.key.as_str() {
-            "name" => wf.name = scalar_of(&e.value),
-            "on" => wf.triggers = events(&e.value),
-            "permissions" => wf.permissions = perms(&e.value),
-            "jobs" => {
-                if let NodeKind::Map(jobs) = e.value.kind {
-                    for j in jobs {
-                        wf.jobs.push(job(j));
-                    }
+    let mut seen = Vec::new();
+    for Entry { key, line, value } in entries {
+        repeated(
+            &key,
+            line,
+            &["name", "on", "permissions", "jobs"],
+            &mut seen,
+            &mut unknown,
+        );
+        match key.as_str() {
+            "name" => {
+                if let Some(s) = text(&key, &value, &mut unknown) {
+                    wf.name.get_or_insert(s);
                 }
             }
+            "on" => events(&value, &mut wf.triggers, &mut unknown),
+            "permissions" => perms(&value, &mut wf.permissions, &mut unknown),
+            "jobs" => match value.kind {
+                NodeKind::Map(jobs) => wf
+                    .jobs
+                    .extend(jobs.into_iter().map(|j| job(j, &mut unknown))),
+                NodeKind::Null | NodeKind::Unknown => {}
+                _ => not_a("jobs", value.line, "a mapping", &mut unknown),
+            },
             _ => {}
         }
     }
+    unknown.sort_by_key(|u| u.line);
+    wf.unknown = unknown;
     wf
 }
 
-fn events(node: &Node) -> Vec<String> {
+/// A scalar's text; `None` for no value, and for a collection, which is listed.
+fn text(key: &str, node: &Node, unknown: &mut Vec<Unknown>) -> Option<String> {
     match &node.kind {
-        NodeKind::Scalar(s) => vec![s.clone()],
-        NodeKind::Seq(items) => items.iter().filter_map(scalar_of).collect(),
-        NodeKind::Map(entries) => entries.iter().map(|e| e.key.clone()).collect(),
-        _ => Vec::new(),
+        NodeKind::Scalar(s) => Some(s.clone()),
+        NodeKind::Null | NodeKind::Unknown => None,
+        NodeKind::Map(_) | NodeKind::Seq(_) => {
+            not_a(key, node.line, "a scalar", unknown);
+            None
+        }
     }
 }
 
-fn perms(node: &Node) -> Vec<String> {
+fn events(node: &Node, out: &mut Vec<String>, unknown: &mut Vec<Unknown>) {
     match &node.kind {
-        NodeKind::Scalar(s) => vec![s.clone()],
-        NodeKind::Map(entries) => entries
-            .iter()
-            .map(|e| match scalar_of(&e.value) {
-                Some(v) => format!("{}: {}", e.key, v),
-                None => e.key.clone(),
-            })
-            .collect(),
-        _ => Vec::new(),
+        NodeKind::Scalar(s) => out.push(s.clone()),
+        NodeKind::Seq(items) => {
+            for item in items {
+                out.extend(text("on", item, unknown));
+            }
+        }
+        NodeKind::Map(entries) => out.extend(entries.iter().map(|e| e.key.clone())),
+        NodeKind::Null | NodeKind::Unknown => {}
     }
 }
 
-fn job(entry: Entry) -> Job {
+fn perms(node: &Node, out: &mut Vec<String>, unknown: &mut Vec<Unknown>) {
+    match &node.kind {
+        NodeKind::Scalar(s) => out.push(s.clone()),
+        NodeKind::Map(entries) => {
+            for e in entries {
+                out.push(match text("permissions", &e.value, unknown) {
+                    Some(v) => format!("{}: {}", e.key, v),
+                    None => e.key.clone(),
+                });
+            }
+        }
+        NodeKind::Seq(_) => not_a("permissions", node.line, "a mapping or a scalar", unknown),
+        NodeKind::Null | NodeKind::Unknown => {}
+    }
+}
+
+fn job(entry: Entry, unknown: &mut Vec<Unknown>) -> Job {
     let mut j = Job {
         id: entry.key,
         line: entry.line,
@@ -1076,27 +1714,39 @@ fn job(entry: Entry) -> Job {
         uses: None,
         steps: Vec::new(),
     };
-    if let NodeKind::Map(entries) = entry.value.kind {
-        for e in entries {
-            match e.key.as_str() {
-                "if" => j.cond = scalar_of(&e.value),
-                "permissions" => j.permissions = perms(&e.value),
-                "uses" => j.uses = scalar_of(&e.value),
-                "steps" => {
-                    if let NodeKind::Seq(items) = e.value.kind {
-                        for item in items {
-                            j.steps.push(step(item));
-                        }
-                    }
+    match entry.value.kind {
+        NodeKind::Map(entries) => {
+            let mut seen = Vec::new();
+            for Entry { key, line, value } in entries {
+                repeated(
+                    &key,
+                    line,
+                    &["if", "permissions", "uses", "steps"],
+                    &mut seen,
+                    unknown,
+                );
+                match key.as_str() {
+                    "if" => j.cond = j.cond.take().or(text(&key, &value, unknown)),
+                    "permissions" => perms(&value, &mut j.permissions, unknown),
+                    "uses" => j.uses = j.uses.take().or(text(&key, &value, unknown)),
+                    "steps" => match value.kind {
+                        NodeKind::Seq(items) => j
+                            .steps
+                            .extend(items.into_iter().map(|item| step(item, unknown))),
+                        NodeKind::Null | NodeKind::Unknown => {}
+                        _ => not_a("steps", value.line, "a sequence", unknown),
+                    },
+                    _ => {}
                 }
-                _ => {}
             }
         }
+        NodeKind::Null | NodeKind::Unknown => {}
+        _ => not_a(&j.id, entry.value.line, "a mapping", unknown),
     }
     j
 }
 
-fn step(node: Node) -> Step {
+fn step(node: Node, unknown: &mut Vec<Unknown>) -> Step {
     let mut s = Step {
         line: node.line,
         cond: None,
@@ -1105,38 +1755,45 @@ fn step(node: Node) -> Step {
         with: Vec::new(),
         env: Vec::new(),
     };
-    if let NodeKind::Map(entries) = node.kind {
-        for e in entries {
-            match e.key.as_str() {
-                "if" => s.cond = scalar_of(&e.value),
-                "uses" => s.uses = scalar_of(&e.value),
-                "run" => s.run = scalar_of(&e.value),
-                "with" => s.with = pairs(&e.value),
-                "env" => s.env = pairs(&e.value),
-                _ => {}
+    match node.kind {
+        NodeKind::Map(entries) => {
+            let mut seen = Vec::new();
+            for Entry { key, line, value } in entries {
+                repeated(
+                    &key,
+                    line,
+                    &["if", "uses", "run", "with", "env"],
+                    &mut seen,
+                    unknown,
+                );
+                match key.as_str() {
+                    "if" => s.cond = s.cond.take().or(text(&key, &value, unknown)),
+                    "uses" => s.uses = s.uses.take().or(text(&key, &value, unknown)),
+                    "run" => s.run = s.run.take().or(text(&key, &value, unknown)),
+                    "with" => pairs(&key, &value, &mut s.with, unknown),
+                    "env" => pairs(&key, &value, &mut s.env, unknown),
+                    _ => {}
+                }
             }
         }
+        NodeKind::Null | NodeKind::Unknown => {}
+        _ => not_a("steps", node.line, "a mapping", unknown),
     }
     s
 }
 
-fn pairs(node: &Node) -> Vec<Pair> {
+fn pairs(key: &str, node: &Node, out: &mut Vec<Pair>, unknown: &mut Vec<Unknown>) {
     match &node.kind {
-        NodeKind::Map(entries) => entries
-            .iter()
-            .map(|e| Pair {
-                key: e.key.clone(),
-                value: scalar_of(&e.value).unwrap_or_default(),
-            })
-            .collect(),
-        _ => Vec::new(),
-    }
-}
-
-fn scalar_of(node: &Node) -> Option<String> {
-    match &node.kind {
-        NodeKind::Scalar(s) => Some(s.clone()),
-        _ => None,
+        NodeKind::Map(entries) => {
+            for e in entries {
+                out.push(Pair {
+                    key: e.key.clone(),
+                    value: text(key, &e.value, unknown).unwrap_or_default(),
+                });
+            }
+        }
+        NodeKind::Null | NodeKind::Unknown => {}
+        _ => not_a(key, node.line, "a mapping", unknown),
     }
 }
 
@@ -1146,6 +1803,17 @@ mod tests {
 
     fn wf(src: &str) -> Workflow {
         parse_workflow("w.yml", src).expect("parses")
+    }
+
+    fn unknown(w: &Workflow) -> Vec<(usize, &str)> {
+        w.unknown
+            .iter()
+            .map(|u| (u.line, u.what.as_str()))
+            .collect()
+    }
+
+    fn job_ids(w: &Workflow) -> Vec<&str> {
+        w.jobs.iter().map(|j| j.id.as_str()).collect()
     }
 
     #[test]
@@ -1219,22 +1887,39 @@ mod tests {
     fn anchors_aliases_tags_are_unknown_not_expanded() {
         let w = wf("on: push\nx: &a value\ny: *a\nz: !!str 1\n");
         assert_eq!(w.triggers, ["push"]);
-        let kinds: Vec<&str> = w.unknown.iter().map(|u| u.what.as_str()).collect();
-        assert!(kinds.contains(&"an anchor (&)"), "{kinds:?}");
-        assert!(kinds.contains(&"an alias (*)"), "{kinds:?}");
-        assert!(kinds.contains(&"a tag (!)"), "{kinds:?}");
+        assert_eq!(
+            unknown(&w),
+            [
+                (
+                    2,
+                    "an anchor (&a): its node is read; an alias to it is not expanded"
+                ),
+                (3, "an alias (*a), not expanded"),
+                (4, "a tag (!!str): line 4 not read"),
+            ]
+        );
     }
 
     #[test]
-    fn a_tab_in_indentation_is_unknown() {
+    fn a_tab_in_indentation_ends_the_read() {
         let w = wf("on: push\njobs:\n\tbuild:\n    steps: []\n");
-        assert!(w.unknown.iter().any(|u| u.what == "a tab in indentation"));
+        assert_eq!(w.triggers, ["push"]);
+        assert_eq!(
+            unknown(&w),
+            [(3, "a tab in indentation: not read from line 3 to the end")]
+        );
     }
 
     #[test]
     fn a_second_document_is_refused() {
         let e = parse_workflow("w.yml", "on: push\n---\non: pull_request\n").unwrap_err();
         assert_eq!(e, "holds more than one YAML document");
+        let e = parse_workflow("w.yml", "on: push\n...\non: pull_request\n").unwrap_err();
+        assert_eq!(e, "holds more than one YAML document");
+        let e = parse_workflow("w.yml", "on: push\n... on: pull_request\n").unwrap_err();
+        assert_eq!(e, "holds more than one YAML document");
+        // A document end marker with nothing after it closes the one document.
+        assert_eq!(wf("on: push\n...\n# end\n").triggers, ["push"]);
     }
 
     #[test]
@@ -1247,20 +1932,45 @@ mod tests {
 
     #[test]
     fn a_leading_document_marker_is_allowed() {
-        let w = wf("---\non: push\n");
+        assert_eq!(wf("---\non: push\n").triggers, ["push"]);
+        assert_eq!(wf("--- {on: push}\n").triggers, ["push"]);
+        let w = wf("%YAML 1.2\n---\non: push\n");
         assert_eq!(w.triggers, ["push"]);
+        assert_eq!(unknown(&w), [(1, "a YAML directive")]);
     }
 
     #[test]
-    fn over_deep_nesting_is_marked_unknown() {
+    fn over_deep_nesting_is_marked_unknown_and_the_rest_is_read() {
         let mut src = String::from("a:\n");
         for i in 0..(MAX_WF_DEPTH + 5) {
             src.push_str(&"  ".repeat(i + 1));
             src.push_str("b:\n");
         }
-        // Parses without panic; the deepest levels are marked unknown.
+        src.push_str("on: push\n");
         let w = parse_workflow("w.yml", &src).expect("parses");
-        assert!(w.unknown.iter().any(|u| u.what == "nested too deeply"));
+        assert_eq!(w.triggers, ["push"]);
+        assert_eq!(w.unknown.len(), 1);
+        assert!(
+            w.unknown[0].what.starts_with("nested too deeply: lines "),
+            "{:?}",
+            w.unknown
+        );
+        assert!(
+            w.unknown[0].what.ends_with("-38 not read"),
+            "{:?}",
+            w.unknown
+        );
+        // A flow collection nested past the cap ends the read.
+        let deep = format!("on: push\nx: {}{}\n", "[".repeat(40), "]".repeat(40));
+        let w = wf(&deep);
+        assert_eq!(w.triggers, ["push"]);
+        assert_eq!(
+            unknown(&w),
+            [(
+                2,
+                "a flow collection nested too deeply: not read from line 2 to the end"
+            )]
+        );
     }
 
     #[test]
@@ -1274,12 +1984,15 @@ mod tests {
     }
 
     #[test]
-    fn comment_inside_quotes_is_not_a_comment() {
-        let w = wf("jobs:\n  b:\n    steps:\n      - run: echo '# not a comment'\n");
+    fn a_hash_after_a_space_starts_a_comment_even_between_quotes_of_a_plain_scalar() {
+        // `'#` is no comment; ` #` is one, whatever quotes a plain scalar holds.
+        let w = wf("jobs:\n  b:\n    steps:\n      - run: echo '# not a comment'\n      - run: echo \"x # y\"\n");
         assert_eq!(
             w.jobs[0].steps[0].run.as_deref(),
             Some("echo '# not a comment'")
         );
+        assert_eq!(w.jobs[0].steps[1].run.as_deref(), Some("echo \"x"));
+        assert!(w.unknown.is_empty());
     }
 
     #[test]
@@ -1290,5 +2003,379 @@ mod tests {
             Some("contains(github.event.comment.body, '/deploy')")
         );
         assert_eq!(w.jobs[0].permissions, ["contents: write"]);
+    }
+
+    /// The pull_request_target job the tests below expect to survive.
+    const PRT_JOB: &str = "jobs:\n  b:\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n      - run: ./build.sh\n";
+
+    fn assert_prt(w: &Workflow) {
+        assert_eq!(w.triggers, ["pull_request_target"], "{w:?}");
+        assert_eq!(job_ids(w), ["b"], "{w:?}");
+        let steps = &w.jobs[0].steps;
+        assert_eq!(steps.len(), 2, "{w:?}");
+        assert_eq!(steps[0].uses.as_deref(), Some("actions/checkout@v4"));
+        assert_eq!(
+            steps[0].with[0].value,
+            "${{ github.event.pull_request.head.sha }}"
+        );
+        assert_eq!(steps[1].run.as_deref(), Some("./build.sh"));
+    }
+
+    #[test]
+    fn wrapped_plain_and_quoted_scalars_are_read_whole() {
+        let w = wf(&format!(
+            "name: Build and\n  test\non: pull_request_target\n{PRT_JOB}"
+        ));
+        assert_prt(&w);
+        assert_eq!(w.name.as_deref(), Some("Build and test"));
+        assert!(w.unknown.is_empty(), "{:?}", w.unknown);
+
+        let w = wf(&format!(
+            "name: \"Build\n  and test\"\non: pull_request_target\n{PRT_JOB}"
+        ));
+        assert_prt(&w);
+        assert_eq!(w.name.as_deref(), Some("Build and test"));
+        assert!(w.unknown.is_empty(), "{:?}", w.unknown);
+
+        let w = wf("on: pull_request_target\njobs:\n  deploy:\n    if: github.event.issue.pull_request &&\n      contains(github.event.comment.body, '/deploy')\n    steps:\n      - run: npm ci &&\n          npm test\n      - run: ./build.sh\n  later:\n    if:\n      github.event_name == 'x' &&\n      github.actor == 'y'\n    steps:\n      - run: echo later\n");
+        assert!(w.unknown.is_empty(), "{:?}", w.unknown);
+        assert_eq!(job_ids(&w), ["deploy", "later"]);
+        assert_eq!(
+            w.jobs[0].cond.as_deref(),
+            Some(
+                "github.event.issue.pull_request && contains(github.event.comment.body, '/deploy')"
+            )
+        );
+        assert_eq!(
+            w.jobs[0].steps[0].run.as_deref(),
+            Some("npm ci && npm test")
+        );
+        assert_eq!(w.jobs[0].steps[1].run.as_deref(), Some("./build.sh"));
+        assert_eq!(
+            w.jobs[1].cond.as_deref(),
+            Some("github.event_name == 'x' && github.actor == 'y'")
+        );
+    }
+
+    #[test]
+    fn what_cannot_be_placed_ends_the_read_and_says_so() {
+        // `? on` is an explicit key: listed with its lines, and the rest is read.
+        let w = wf(&format!("name: x\n? on\n: pull_request_target\n{PRT_JOB}"));
+        assert_eq!(
+            unknown(&w),
+            [(2, "an explicit key (?): lines 2-3 not read")]
+        );
+        assert_eq!(job_ids(&w), ["b"]);
+        // A wrapped value holding `: ` does not parse: nothing after it is read.
+        let w = wf(&format!(
+            "on: pull_request_target\nname: a\n  b: c\n{PRT_JOB}"
+        ));
+        assert_eq!(w.triggers, ["pull_request_target"]);
+        assert!(w.jobs.is_empty());
+        assert_eq!(
+            unknown(&w),
+            [(
+                3,
+                "a plain scalar holding `: `, which YAML reads as a key: not read from line 3 to the end"
+            )]
+        );
+        // A line indented to no open block.
+        let w = wf("jobs:\n    build:\n      steps: []\n  test:\n    steps: []\non: push\n");
+        assert_eq!(job_ids(&w), ["build"]);
+        assert_eq!(
+            unknown(&w),
+            [(
+                4,
+                "a line indented deeper than the entries before it: not read from line 4 to the end"
+            )]
+        );
+        // A root indented past the lines after it.
+        let w = wf("  on: push\njobs: {}\n");
+        assert_eq!(w.triggers, ["push"]);
+        assert_eq!(
+            unknown(&w),
+            [(
+                2,
+                "a line the parser could not place: not read from line 2 to the end"
+            )]
+        );
+    }
+
+    #[test]
+    fn a_tab_after_a_colon_separates_and_tabbed_blank_or_comment_lines_are_skipped() {
+        let w = wf(&format!(
+            "name: x\non:\tpull_request_target\n{}",
+            PRT_JOB.replacen(
+                "    steps:\n",
+                "\t\n    \t# checkout the PR\n    steps:\n",
+                1
+            )
+        ));
+        assert_prt(&w);
+        assert!(w.unknown.is_empty(), "{:?}", w.unknown);
+    }
+
+    #[test]
+    fn escapes_are_decoded() {
+        for key in ["\"o\\u006e\"", "\"\\x6fn\"", "\"o\\U0000006e\"", "'on'"] {
+            let w = wf(&format!("{key}: pull_request_target\n{PRT_JOB}"));
+            assert_prt(&w);
+            assert!(w.unknown.is_empty(), "{key}: {:?}", w.unknown);
+        }
+        let w = wf(&format!("on: \"pull_request_t\\x61rget\"\n{PRT_JOB}"));
+        assert_prt(&w);
+        let w = wf("on: push\nname: \"\\0\\a\\b\\t\\\t\\n\\v\\f\\r\\e\\ \\\"\\/\\\\\\N\\_\\L\\P|\\x41\\u00e9\\U0001F600\"\n");
+        assert_eq!(
+            w.name.as_deref(),
+            Some("\0\u{7}\u{8} \u{1b} \"/\\ |A\u{e9}\u{1f600}")
+        );
+        // An escaped line break joins the lines with nothing between them.
+        let w = wf("on: push\nname: \"one \\\n   two\\\n   three\"\n");
+        assert_eq!(w.name.as_deref(), Some("one twothree"));
+        for bad in ["\"\\q\"", "\"\\ud800\"", "\"\\U00110000\"", "\"\\x4\""] {
+            let w = wf(&format!("on: push\nname: {bad}\n{PRT_JOB}"));
+            assert_eq!(w.triggers, ["push"]);
+            assert!(w.jobs.is_empty(), "{bad}");
+            assert_eq!(
+                unknown(&w),
+                [(
+                    2,
+                    "an escape YAML does not define: not read from line 2 to the end"
+                )],
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_byte_order_mark_and_every_line_break_are_read_as_yaml_reads_them() {
+        assert_prt(&wf(&format!("\u{feff}on: pull_request_target\n{PRT_JOB}")));
+        assert_prt(&wf(
+            &format!("on: pull_request_target\n{PRT_JOB}").replace('\n', "\r")
+        ));
+        assert_prt(&wf(
+            &format!("on: pull_request_target\n{PRT_JOB}").replace('\n', "\r\n")
+        ));
+        // A mark, or a character YAML parsers read differently, past the start.
+        for (odd, what) in [
+            ("\u{feff}", "a byte order mark past the start of the file"),
+            (
+                "\u{2028}",
+                "a NEL, LS or PS character, which YAML 1.1 parsers read as a line break",
+            ),
+            (
+                "\u{85}",
+                "a NEL, LS or PS character, which YAML 1.1 parsers read as a line break",
+            ),
+            ("\u{7}", "a control character YAML does not allow"),
+            ("\u{7f}", "a control character YAML does not allow"),
+        ] {
+            let w = wf(&format!(
+                "on: push\nname: a{odd}on: pull_request_target\n{PRT_JOB}"
+            ));
+            assert_eq!(w.triggers, ["push"]);
+            assert!(w.jobs.is_empty());
+            assert_eq!(
+                unknown(&w),
+                [(
+                    2,
+                    format!("{what}: not read from line 2 to the end").as_str()
+                )]
+            );
+        }
+    }
+
+    #[test]
+    fn a_flow_root_and_flow_collections_over_lines_are_read() {
+        let w = wf("{\"on\": \"pull_request_target\", \"jobs\": {\"b\": {\"runs-on\": \"ubuntu-latest\", \"steps\": [{\"run\": \"echo ${{ github.event.pull_request.title }}\"}]}}}\n");
+        assert_eq!(w.triggers, ["pull_request_target"]);
+        assert_eq!(
+            w.jobs[0].steps[0].run.as_deref(),
+            Some("echo ${{ github.event.pull_request.title }}")
+        );
+        assert!(w.unknown.is_empty(), "{:?}", w.unknown);
+        let w = wf("{\"on\":\"push\",\"jobs\":{}}\n");
+        assert_eq!(w.triggers, ["push"]);
+        let w = wf(&format!(
+            "on: [push,\n  pull_request_target] # both\n{}",
+            PRT_JOB.replacen("    steps:\n", "    strategy:\n      matrix:\n        os: [ubuntu-latest,\n             macos-latest]\n    steps:\n", 1)
+        ));
+        assert_eq!(w.triggers, ["push", "pull_request_target"]);
+        assert_eq!(w.jobs[0].steps.len(), 2);
+        assert!(w.unknown.is_empty(), "{:?}", w.unknown);
+    }
+
+    #[test]
+    fn a_mismatched_or_open_flow_collection_ends_the_read() {
+        for (src, what) in [
+            ("x: {a]\non: push\n", "a flow mapping entry not followed by , or }: not read from line 1 to the end"),
+            ("on: push\nbranches: [main}\n", "a flow sequence entry not followed by , or ]: not read from line 2 to the end"),
+            ("on: push\nx: [a, b\n", "a flow collection that does not close: not read from line 2 to the end"),
+            ("on: push\nx: [a, , b]\n", "an empty entry in a flow collection: not read from line 2 to the end"),
+            ("on: push\nx: [a] b\n", "content after a flow collection or a quoted scalar: not read from line 2 to the end"),
+            ("on: push\nx: {a\n: b}\n", "a flow mapping key that spans lines (line 3): not read from line 2 to the end"),
+            ("on: push\nx: {\"a\n b\": c}\n", "a flow mapping key that spans lines (line 3): not read from line 2 to the end"),
+        ] {
+            let w = wf(src);
+            assert_eq!(unknown(&w), [(if src.starts_with("x") { 1 } else { 2 }, what)], "{src:?}");
+        }
+        // Valid YAML with quotes that open no scalar, and brackets inside quotes.
+        let w = wf("on: push\nx: {a: don't, b: ']'}\njobs:\n  b:\n    steps:\n      - uses: some/action@v1\n        with: {title: don't merge, pattern: ']'}\n");
+        assert!(w.unknown.is_empty(), "{:?}", w.unknown);
+        assert_eq!(w.jobs[0].steps[0].with[0].value, "don't merge");
+        assert_eq!(w.jobs[0].steps[0].with[1].value, "]");
+    }
+
+    #[test]
+    fn an_escaped_line_break_in_a_flow_item_and_a_short_block_scalar_line_do_not_panic() {
+        let w = wf("on: pull_request_target\njobs:\n  b:\n    steps:\n      - uses: x\n        with:\n          a: [\"\\\n");
+        assert_eq!(w.triggers, ["pull_request_target"]);
+        assert_eq!(
+            unknown(&w),
+            [(
+                7,
+                "a quoted scalar that does not close: not read from line 7 to the end"
+            )]
+        );
+        // An escaped line break inside a flow item is read; an input GitHub reads
+        // as a string given a sequence is listed.
+        let w = wf("on: push\njobs:\n  b:\n    steps:\n      - uses: some/action@v1\n        with:\n          args: [\"first \\\n            second\"]\n");
+        assert_eq!(w.jobs[0].steps[0].with[0].value, "");
+        assert_eq!(unknown(&w), [(7, "a `with` value that is not a scalar")]);
+        let w = wf("on: pull_request_target\nx: |\n      a\n   \u{e9}\u{e9}\u{e9}\njobs:\n  b:\n    steps:\n      - run: echo hi\n");
+        assert_eq!(
+            unknown(&w),
+            [(
+                4,
+                "a block scalar line indented less than its first: not read from line 4 to the end"
+            )]
+        );
+    }
+
+    #[test]
+    fn block_scalar_indicators_set_the_indentation() {
+        let w = wf("on: push\njobs:\n  b:\n    steps:\n      - run: |2\n              echo a\n            curl https://example.invalid/x | sh\n      - run: |2-\n              echo b\n             \u{e9}\u{e9}\u{e9}\n");
+        assert!(w.unknown.is_empty(), "{:?}", w.unknown);
+        assert_eq!(
+            w.jobs[0].steps[0].run.as_deref(),
+            Some("echo a curl https://example.invalid/x | sh")
+        );
+        assert_eq!(
+            w.jobs[0].steps[1].run.as_deref(),
+            Some("echo b \u{e9}\u{e9}\u{e9}")
+        );
+        // A line less indented than the header's indentation does not parse.
+        let w = wf("on: push\na: |2\n x\nb: 1\n");
+        assert_eq!(
+            unknown(&w),
+            [(
+                3,
+                "a block scalar line indented less than its first: not read from line 3 to the end"
+            )]
+        );
+        // A trailing comment less indented than the body ends it.
+        let w = wf("run: |\n    echo\n  # c\non: push\n");
+        assert_eq!(w.triggers, ["push"]);
+        assert!(w.unknown.is_empty());
+        assert_eq!(
+            unknown(&wf("on: push\nx: |x\n  y\n")),
+            [(
+                2,
+                "a block scalar header YAML does not define: not read from line 2 to the end"
+            )]
+        );
+    }
+
+    #[test]
+    fn a_quoted_scalar_followed_by_a_comment_is_unquoted() {
+        let w = wf("\"on\": pull_request_target # trigger\njobs:\n  b:\n    steps:\n      - uses: \"actions/checkout@v4\" # v4\n        with:\n          ref: \"${{ github.event.pull_request.head.sha }}\" # PR head\n      - uses: 'example/single@v1'#c\n");
+        assert_eq!(w.triggers, ["pull_request_target"]);
+        assert_eq!(
+            w.jobs[0].steps[0].uses.as_deref(),
+            Some("actions/checkout@v4")
+        );
+        assert_eq!(
+            w.jobs[0].steps[0].with[0].value,
+            "${{ github.event.pull_request.head.sha }}"
+        );
+        assert_eq!(
+            w.jobs[0].steps[1].uses.as_deref(),
+            Some("example/single@v1")
+        );
+        assert!(w.unknown.is_empty());
+    }
+
+    #[test]
+    fn an_anchored_block_is_read_and_its_alias_listed() {
+        // GitHub's documented anchor shape: both jobs are read.
+        let w = wf("on: pull_request_target\njobs:\n  job1:\n    env: &env_vars\n      NODE_ENV: production\n    steps:\n      - run: echo one\n  job2:\n    env: *env_vars\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n      - run: npm install && npm test\n");
+        assert_eq!(job_ids(&w), ["job1", "job2"]);
+        assert_eq!(w.jobs[1].steps.len(), 2);
+        assert_eq!(
+            unknown(&w),
+            [
+                (
+                    4,
+                    "an anchor (&env_vars): its node is read; an alias to it is not expanded"
+                ),
+                (9, "an alias (*env_vars), not expanded"),
+            ]
+        );
+        let w = wf("on: pull_request_target\ndefaults_anchor: &defaults\n  runs-on: ubuntu-latest\njobs:\n  b:\n    <<: *defaults\n    steps:\n      - run: x\n");
+        assert_eq!(job_ids(&w), ["b"]);
+        assert_eq!(w.jobs[0].steps[0].run.as_deref(), Some("x"));
+        assert_eq!(
+            unknown(&w),
+            [
+                (
+                    2,
+                    "an anchor (&defaults): its node is read; an alias to it is not expanded"
+                ),
+                (6, "a merge key (<<): line 6 not read"),
+            ]
+        );
+        // A tagged block is not read, and what follows it is.
+        let w = wf("x: !custom\n  a: 1\n  b: [2,\n    3]\non: push\n");
+        assert_eq!(w.triggers, ["push"]);
+        assert_eq!(unknown(&w), [(1, "a tag (!custom): lines 1-4 not read")]);
+        // A merge key's flow value.
+        let w = wf("on: push\njobs:\n  b:\n    <<: {runs-on: ubuntu-latest}\n    steps:\n      - run: echo hi\n");
+        assert_eq!(unknown(&w), [(4, "a merge key (<<): line 4 not read")]);
+        assert_eq!(w.jobs[0].steps.len(), 1);
+    }
+
+    #[test]
+    fn a_repeated_key_keeps_both_and_is_listed() {
+        let w = wf("on: pull_request_target\non: push\n");
+        assert_eq!(w.triggers, ["pull_request_target", "push"]);
+        assert_eq!(
+            unknown(&w),
+            [(2, "a second `on` key, which YAML parsers read differently")]
+        );
+    }
+
+    #[test]
+    fn a_compact_and_nested_sequence_and_mapping() {
+        let w = wf("on: push\nx:\n- - a\n  - b\n- c\njobs:\n  b:\n    steps:\n    - name: x\n      uses: y\n    -   run: z\n        if: always()\n");
+        assert!(w.unknown.is_empty(), "{:?}", w.unknown);
+        assert_eq!(w.jobs[0].steps[0].uses.as_deref(), Some("y"));
+        assert_eq!(w.jobs[0].steps[1].run.as_deref(), Some("z"));
+        assert_eq!(w.jobs[0].steps[1].cond.as_deref(), Some("always()"));
+    }
+
+    #[test]
+    fn keys_and_values_are_cut() {
+        let long = "k".repeat(5000);
+        let w = wf(&format!("on:\n  {long}:\n"));
+        assert_eq!(w.triggers[0].chars().count(), MAX_WF_SCALAR + 3);
+        assert!(w.triggers[0].ends_with("..."));
+    }
+
+    #[test]
+    fn no_prefix_of_a_workflow_panics_or_loops() {
+        let src = format!("%YAML 1.2\n--- &root\nname: \"Build\\x20and\n  test\" # c\non: [push,\n  'pull_request_target']\nx: {{a: don't, b: ']', c: [\"\\u00e9\\\n d\"]}}\ny: !t\n  z: 1\njobs:\n  b:\n    if: a &&\n      b\n    steps:\n      - run: |2-\n            echo \u{e9}\n          echo\n      - ? k\n        : v\n      - *a\n      - - x\n        - y\n{PRT_JOB}");
+        for (i, _) in src.char_indices() {
+            let _ = parse_workflow("w.yml", &src[..i]);
+        }
     }
 }
