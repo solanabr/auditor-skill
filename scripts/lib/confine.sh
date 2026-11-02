@@ -259,15 +259,19 @@ confine_git_includes() {
 
 # confine_git_dir_files <git directory> <common directory>: status 1 (CONFINE_GIT_WHY says why) when
 # something in either, or a file their config includes, could stop git: a named pipe or device, a
-# symbolic link to one, or one an include names (confine_git_includes).
+# symbolic link to one, or one an include names (confine_git_includes). One find lists the pipes,
+# devices and links of each; the shell tests where each link leads.
 confine_git_dir_files() {
   local g=$1 c=$2 d odd
   for d in "$g" "$c"; do
     [ -d "$d" ] || continue
-    odd=$(find "$d" \( -type p -o -type b -o -type c \) -print 2>/dev/null)
-    [ -z "$odd" ] || confine_git_wait "is in the git directory" "$d" || return 1
-    odd=$(find "$d" -type l \( -exec test -p {} \; -o -exec test -b {} \; -o -exec test -c {} \; \) -print 2>/dev/null)
-    [ -z "$odd" ] || confine_git_wait "is named by a link in the git directory" "$d" || return 1
+    odd=$(find "$d" \( -type p -o -type b -o -type c -o -type l \) -print0 2>/dev/null |
+      while IFS= read -r -d '' f; do
+        if [ ! -L "$f" ]; then printf p; break; fi
+        if confine_special "$f"; then printf l; break; fi
+      done)
+    [ "$odd" != p ] || { confine_git_wait "is in the git directory" "$d"; return 1; }
+    [ "$odd" != l ] || { confine_git_wait "is named by a link in the git directory" "$d"; return 1; }
     [ ! "$c" -ef "$g" ] || break
   done
   confine_git_includes "$c/config" "$g/config.worktree"
@@ -501,6 +505,8 @@ confine_repo() {
 # are printed.
 confine_tracked() {
   local err
+  # Checked here first, so the two calls below find it done.
+  CONFINE_CEILING='' confine_git_check "$CONFINE_WT" || return 2
   if ! err=$(CONFINE_CEILING='' hgit "$CONFINE_WT" rev-parse --is-inside-work-tree 2>&1 >/dev/null); then
     case "$err" in *'not a git repository'*) return 0 ;; esac
     return 2
@@ -594,6 +600,8 @@ confine_rundir() {
   [ -d "$CONFINE_WT/$r" ] || confine_refuse "$what is not an existing directory: $shown"
   links=$(find "$CONFINE_WT/$r" -type l -print 2>/dev/null) || confine_refuse "$what cannot be fully read: $shown"
   [ -z "$links" ] || confine_refuse "$what holds a symbolic link: $shown"
+  # In this shell, so a file git would wait on is refused for what it is, and confine_tracked finds it checked.
+  CONFINE_CEILING='' confine_git_files "$CONFINE_WT"
   listed=$(confine_tracked "$r") || confine_refuse "git cannot tell whether $what is tracked: $shown"
   [ -z "$listed" ] || confine_refuse "$what is tracked by git: $shown"
   confine_ignore_all "$CONFINE_WT/$r/.gitignore" || confine_refuse "$what has no .gitignore holding exactly *: $shown"

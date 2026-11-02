@@ -463,13 +463,13 @@ script() { # script <dir> <script> <arg>...: scripts/<script>, with its output i
 }
 refused_by() { [ "$RC" = 64 ] && [ "$(sed -n '$=' "$T/err")" = 1 ] && grep -q "^$1: refused: " "$T/err"; }
 lib_bounded() { local f=$1; shift; bounded "$f" lib "$@"; } # lib_bounded <pipe> <lib arguments>...
-bounded() { # bounded <pipe> <command>...: the command (lib or script), given 10 s
-  local f=$1 pid n=0
+bounded() { # bounded <pipe> <command>...: the command (lib or script), given 10 s, or BOUND tenths of a second
+  local f=$1 pid n=0 limit=${BOUND:-100}
   shift
   rm -f "$T/rc"
   ( "$@"; printf '%s' "$RC" > "$T/rc" ) &
   pid=$!
-  while kill -0 "$pid" 2>/dev/null && [ "$n" -lt 100 ]; do sleep 0.1; n=$((n + 1)); done
+  while kill -0 "$pid" 2>/dev/null && [ "$n" -lt "$limit" ]; do sleep 0.1; n=$((n + 1)); done
   if kill -0 "$pid" 2>/dev/null; then
     kill -KILL "$pid" 2>/dev/null
     wait "$pid" 2>/dev/null
@@ -561,6 +561,19 @@ if mkfifo "$T/fifo-probe" 2>/dev/null; then
 else
   skp "mkfifo is not available: the named pipe cases"
 fi
+# A git directory holding 2000 symbolic links: one find lists them and the shell tests each, so rundir.sh
+# and confine_repo end within 5 s (a find -exec per link took minutes).
+mkrepo "$RW/links"; put "$RW/links" f x; commit "$RW/links" -m x
+mkdir "$RW/links/.git/many"
+set --
+i=0
+while [ "$i" -lt 2000 ]; do set -- "$@" "../h$i"; i=$((i + 1)); done
+(cd "$RW/links/.git/many" && ln -s "$@" .)
+set --
+BOUND=50 bounded /dev/null script "$RW/links" rundir.sh new audit
+check "rundir.sh new audit in a repository whose git directory holds 2000 links ends within 5 s" sh -c "[ '$RC' = 0 ] && [ \"\$(cat '$T/out')\" = audit_1 ]"
+BOUND=50 bounded /dev/null lib "$RW" 'confine_repo links R'
+check "... and confine_repo refuses that git directory for its links within 5 s" refused 'R has a symbolic link in its git directory: links'
 # A config that includes itself six times: each file is read once, so the check ends at once, and git's
 # own refusal (it stops at a depth of 10) follows. More than 64 included files, a file git cannot read as
 # config, and a file name holding a line end are refused before git starts.
