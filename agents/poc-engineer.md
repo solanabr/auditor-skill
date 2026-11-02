@@ -22,15 +22,31 @@ Given the finding block, its `audit_<n>/worksheets/context/*` worksheet, the pin
 
 **Tools.** Write and edit files only with the Write and Edit tools, never through a heredoc or a shell redirect: the command that spawned you pre-approves writes under its run directory (`audit_*/` or `incident_*/`) and nowhere else. Run each bundled tool as a Bash call of its own, from the working directory, exactly in the form given here: its quoted absolute path first, with nothing in front (no `bash`, no `cd`, no `VAR=value`), then its arguments, every value written out literally; join no other command to it with `;` or `&&`, pipe it only into `grep`, `head`, `tail` or `wc`, and put no `$` or backtick anywhere in the line, inside quotes too. Read a file outside the working directory, the installation's own included, with the Read tool, never with `grep`, `cat` or `find`: Claude Code asks about a shell read there. Give each `run.sh` call and the `git-ro.sh copy` call the Bash tool's longest timeout, in the foreground, never with `run_in_background`: a call that moves to the background loses the command's pre-approvals. Those forms run without a prompt under the command's grant; anything else asks the human, or is denied in a non-interactive run: report it as not run, with the reason, and never work around it.
 
-**Runners you write.** The template's `run.sh` drives the template's crate. A Trident or cargo-fuzz target or a Surfpool scenario has no template, so you write its `run.sh`, and it starts with these lines verbatim, `<R>` written out as the run directory the crate lies in: like `run.sh --crate`, they take the stricter of `<R>/exec-mode` and `AUDITOR_EXEC_MODE`, then the template `run.sh`'s mode gate, and in isolated mode the installation's credential self-check through `probe.sh`, and exit 3 before anything is copied or built:
+**Runners you write.** The template's `run.sh` drives the template's crate. A Trident or cargo-fuzz target or a Surfpool scenario has no template, so you write its `run.sh` in its crate, `<R>/poc/<ID>/run.sh`, and it starts with these lines verbatim. Like `run.sh --crate`, they find `<R>` from the runner's own path, wherever the runner is started from, and take the stricter of `<R>/exec-mode` and `AUDITOR_EXEC_MODE`. They stop the run when `exec-mode` is not a regular file holding one word, none, isolated or native; an `AUDITOR_EXEC_MODE` other than none, isolated or native is left as it is, and the template `run.sh`'s mode gate, which they apply next, stops on it. In isolated mode they then run the installation's credential self-check through `probe.sh`. Each stop is an exit 3 before anything is copied or built:
 
 ```bash
-RUN_DIR='<R>'
+RUN_DIR=$(CDPATH= cd -P -- "$(dirname -- "$0")" && pwd -P) || exit 3
+RUN_DIR=${RUN_DIR%/poc/*}
 AUDITOR_ROOT='${CLAUDE_PLUGIN_ROOT}'
-case " $(head -c 16 "$RUN_DIR/exec-mode" 2>/dev/null || true) ${AUDITOR_EXEC_MODE:-} " in
-  *" none "*) AUDITOR_EXEC_MODE=none ;;
-  *" isolated "*) AUDITOR_EXEC_MODE=isolated ;;
-  *" native "*) AUDITOR_EXEC_MODE=native ;;
+RECORDED=
+if [ -e "$RUN_DIR/exec-mode" ] || [ -L "$RUN_DIR/exec-mode" ]; then
+  if [ -f "$RUN_DIR/exec-mode" ] && [ ! -L "$RUN_DIR/exec-mode" ]; then RECORDED=$(head -c 10 "$RUN_DIR/exec-mode" 2>/dev/null || true); fi
+  case "$RECORDED" in
+    none|isolated|native) ;;
+    *)
+      echo "[PoC-ATTEMPTED] blocker: ${RUN_DIR##*/}/exec-mode is not a regular file holding one word, none, isolated or native — nothing was copied or built." >&2
+      exit 3
+      ;;
+  esac
+fi
+case "${AUDITOR_EXEC_MODE:-none}" in
+  none|isolated|native)
+    case " $RECORDED ${AUDITOR_EXEC_MODE:-} " in
+      *" none "*) AUDITOR_EXEC_MODE=none ;;
+      *" isolated "*) AUDITOR_EXEC_MODE=isolated ;;
+      *" native "*) AUDITOR_EXEC_MODE=native ;;
+    esac
+    ;;
 esac
 case "${AUDITOR_EXEC_MODE:-}" in
   isolated|native) ;;

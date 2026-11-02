@@ -53,9 +53,12 @@
 #       arrives in; wording that copied an earlier run's mode forward, or passed the file's mode as run.sh
 #       --mode, stays gone (the GONE list); and no body names the environment form of a PoC run (VULNERABLE_SO
 #       and the rest), which run.sh --crate does not read.
-#   G   The lines agents/poc-engineer.md gives a runner it writes, run as such a runner's first lines, take the
-#       stricter of <R>/exec-mode and AUDITOR_EXEC_MODE as run.sh --crate does, stop on none or no mode, and in
-#       isolated mode stop unless probe.sh --only isolation finds nothing readable.
+#   G   The lines agents/poc-engineer.md gives a runner it writes, run as the first lines of such a runner in a
+#       crate, from the working directory and from the crate, find <R> from the runner's path and take the
+#       stricter of <R>/exec-mode and AUDITOR_EXEC_MODE as run.sh --crate does; they stop on none, on no mode, on
+#       an exec-mode that is not a regular file holding one word and on an AUDITOR_EXEC_MODE that names no mode,
+#       and in isolated mode unless probe.sh --only isolation finds nothing readable. poc-harness.md §1 shows the
+#       same lines.
 # The entry points are the tracked files under scripts/ (but scripts/tests/) and templates/ of mode 100755 that
 # start with a direct-exec shebang (#!/bin/bash or #!/usr/bin/env -S python3 -I), the binaries the crates
 # under tools/auditor-tools declare, and every path scripts/entrypoints.txt lists. Each check first runs on
@@ -1030,40 +1033,65 @@ for f in commands/*.md agents/*.md skills/*/SKILL.md SKILL.md; do
 done
 
 # ---- 6. the mode lines a runner poc-engineer writes starts with -------------------------------------------
-# Run as a runner's first lines, from a working tree whose run directory holds an exec-mode, with a stand-in
-# installation whose probe.sh prints the isolation line FAKE_ISOLATION holds: like run.sh --crate, they take the
-# stricter of <R>/exec-mode and AUDITOR_EXEC_MODE, stop on none or no mode, and in isolated mode stop unless the
-# self-check finds nothing readable.
+# Run as the first lines of a runner in a crate at audit_1/poc/F-1, started from the working directory and from
+# the crate itself, with a stand-in installation whose probe.sh prints the isolation line FAKE_ISOLATION holds:
+# like run.sh --crate, they take the stricter of <R>/exec-mode and AUDITOR_EXEC_MODE; they stop on none, on no
+# mode, on an exec-mode that is not a regular file holding one word and on an AUDITOR_EXEC_MODE that names no
+# mode, and in isolated mode unless the self-check finds nothing readable. poc-harness.md §1 shows the same lines,
+# with the corpus's name for the root.
 G="$T/gate"
-mkdir -p "$G/inst/scripts/runner" "$G/ws/audit_1" "$G/home"
+mkdir -p "$G/inst/scripts/runner" "$G/ws/audit_1/poc/F-1" "$G/home"
 printf '#!/bin/bash\nprintf "%%s\\n" "${FAKE_ISOLATION:-isolation: readable: SSH keys (1); ~/.ssh/id_ed25519}"\n' \
   > "$G/inst/scripts/runner/probe.sh"
 chmod 755 "$G/inst/scripts/runner/probe.sh"
-awk -v root="$G/inst" '
-  /^\*\*Runners you write\.\*\*/ { on = 1; next }
-  on && !inb && /^```bash$/ { inb = 1; next }
-  inb && /^```$/ { exit }
-  inb && $0 == "RUN_DIR=\047<R>\047" { print "RUN_DIR=\047audit_1\047"; next }
-  inb && $0 == "AUDITOR_ROOT=\047${CLAUDE_PLUGIN_ROOT}\047" { print "AUDITOR_ROOT=\047" root "\047"; next }
-  inb { print }' "$TREE/agents/poc-engineer.md" > "$G/lines"
-{ printf '#!/usr/bin/env bash\nset -euo pipefail\n'; cat "$G/lines"
-  printf 'echo "past the gate: $AUDITOR_EXEC_MODE"\n'; } > "$G/runner.sh"
+runner_lines() {  # runner_lines <file>: the lines of the code block under its "Runners you write." paragraph
+  awk '/^\*\*Runners you write\.\*\*/ { on = 1; next }
+    on && !inb && /^```bash$/ { inb = 1; next }
+    inb && /^```$/ { exit }
+    inb { print }' "$1"
+}
+runner_lines "$TREE/agents/poc-engineer.md" > "$G/lines"
+runner_lines "$TREE/references/orchestration/poc-harness.md" > "$G/harness-lines"
+root_line="AUDITOR_ROOT='\${CLAUDE_PLUGIN_ROOT}'"
+if [ -s "$G/lines" ] && grep -qxF -- "$root_line" "$G/lines" &&
+   [ "$(sed "s#^AUDITOR_ROOT='<auditor-skill root>'\$#$root_line#" "$G/harness-lines")" = "$(cat "$G/lines")" ]; then
+  ok "references/orchestration/poc-harness.md shows the runner lines agents/poc-engineer.md gives, with the corpus's root"
+else
+  bad "references/orchestration/poc-harness.md: the runner lines differ from agents/poc-engineer.md's beyond the AUDITOR_ROOT line"
+fi
+{ printf '#!/usr/bin/env bash\nset -euo pipefail\n'
+  awk -v root="$G/inst" '$0 == "AUDITOR_ROOT=\047${CLAUDE_PLUGIN_ROOT}\047" { print "AUDITOR_ROOT=\047" root "\047"; next } { print }' "$G/lines"
+  printf 'echo "past the gate: $AUDITOR_EXEC_MODE"\n'; } > "$G/ws/audit_1/poc/F-1/run.sh"
 CLEAN='isolation: none of the credentials the self-check reads is readable'
+# <exec-mode>|<AUDITOR_EXEC_MODE>|<self-check>|<want>: an empty exec-mode is none at all, @dir a directory, and
+# @link:<word> a symbolic link to a file that holds <word>.
 while IFS='|' read -r file env iso want; do
   [ -n "$want" ] || continue
-  if [ -n "$file" ]; then printf '%s\n' "$file" > "$G/ws/audit_1/exec-mode"; else rm -f "$G/ws/audit_1/exec-mode"; fi
+  rm -rf "$G/ws/audit_1/exec-mode" "$G/ws/audit_1/linked"
+  case "$file" in
+    '') ;;
+    @dir) mkdir "$G/ws/audit_1/exec-mode" ;;
+    @link:*) printf '%s\n' "${file#@link:}" > "$G/ws/audit_1/linked"; ln -s linked "$G/ws/audit_1/exec-mode" ;;
+    *) printf '%s\n' "$file" > "$G/ws/audit_1/exec-mode" ;;
+  esac
   set -- FAKE_ISOLATION="$CLEAN"
   [ "$iso" = readable ] && set -- FAKE_ISOLATION="isolation: readable: SSH keys (1); ~/.ssh/id_ed25519"
   [ -n "$env" ] && set -- "$@" AUDITOR_EXEC_MODE="$env"
-  out=$(cd "$G/ws" && env -i PATH="$PATH" HOME="$G/home" "$@" bash "$G/runner.sh" 2>&1); rc=$?
-  label="runner gate: exec-mode '${file:-absent}', AUDITOR_EXEC_MODE '${env:-unset}', self-check $iso"
-  case "$want" in
-    stop) if [ "$rc" = 3 ] && [ "${out#*past the gate}" = "$out" ] && [ "${out#*'[PoC-ATTEMPTED] blocker:'}" != "$out" ]; then
-            ok "$label -> exit 3, nothing past the gate"
-          else bad "$label: exit $rc, want 3 before anything else: ${out:0:300}"; fi ;;
-    *)    if [ "$rc" = 0 ] && [ "$out" = "past the gate: $want" ]; then ok "$label -> runs in $want mode"
-          else bad "$label: exit $rc, want a run in $want mode: ${out:0:300}"; fi ;;
-  esac
+  for from in 'working directory' crate; do
+    if [ "$from" = crate ]; then
+      out=$(cd "$G/ws/audit_1/poc/F-1" && env -i PATH="$PATH" HOME="$G/home" "$@" bash ./run.sh 2>&1); rc=$?
+    else
+      out=$(cd "$G/ws" && env -i PATH="$PATH" HOME="$G/home" "$@" bash audit_1/poc/F-1/run.sh 2>&1); rc=$?
+    fi
+    label="runner gate, started from the $from: exec-mode '${file:-absent}', AUDITOR_EXEC_MODE '${env:-unset}', self-check $iso"
+    case "$want" in
+      stop) if [ "$rc" = 3 ] && [ "${out#*past the gate}" = "$out" ] && [ "${out#*'[PoC-ATTEMPTED] blocker:'}" != "$out" ]; then
+              ok "$label -> exit 3, nothing past the gate"
+            else bad "$label: exit $rc, want 3 before anything else: ${out:0:300}"; fi ;;
+      *)    if [ "$rc" = 0 ] && [ "$out" = "past the gate: $want" ]; then ok "$label -> runs in $want mode"
+            else bad "$label: exit $rc, want a run in $want mode: ${out:0:300}"; fi ;;
+    esac
+  done
 done <<'CASES'
 native||clean|native
 |native|clean|native
@@ -1075,6 +1103,15 @@ isolated|native|readable|stop
 native|isolated|readable|stop
 native|isolated|clean|isolated
 |isolated|readable|stop
+native|Isolated|clean|stop
+native|NONE|clean|stop
+isolated|isolate|clean|stop
+|Isolated|clean|stop
+Isolated|native|clean|stop
+isolated native|native|clean|stop
+@dir|native|clean|stop
+@link:native|native|clean|stop
+@link:isolated||clean|stop
 CASES
 
 echo "---- command forms: $pass passed, $failn failed"
