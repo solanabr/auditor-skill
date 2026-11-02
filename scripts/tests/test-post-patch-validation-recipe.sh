@@ -16,6 +16,9 @@
 #     config runs there; the client checkout gets no worktree, lock or owner file, runs no hook and stays clean;
 #   - the plan guard: a plan.json that names another repository, or no plan, stops the second block before the
 #     runner;
+#   - the second block's own gate: it runs the plan in a shell call of its own, so it makes the first block's
+#     mode and isolation checks again, word for word, before anything else, and each refusal prints the first
+#     block's not-run line with no runner call, on a scratch directory whose plan names ../repo;
 #   - the controls: the stand-in runner handed a client checkout leaves its lock there and runs its hook, and a
 #     worktree of a clone without the attributes line runs the caller's git-lfs filter;
 #   - the rule text: one sentence on the tier effect, word for word in the five files that describe the fix
@@ -299,6 +302,41 @@ if [ "$copy_ok" = 1 ]; then
   runs=$((runs + 1)); guard "no plan.json" none
 fi
 
+# ---- the second block's own gate ------------------------------------------------------------------------------
+# The second block runs the plan, the target's code, in a shell call of its own, where the first block's verdict
+# does not reach: a retry outside the sandbox, or another session. $G is a scratch directory as the first block
+# leaves it, its plan naming ../repo. Under each refusal of the first block, the second must print the same line
+# and call the runner not at all; the control shows the same directory reaches the runner when the gate passes.
+G="$T/ppv-gate"
+mkdir -p "$G/plan" && git -c init.defaultBranch=main init -q "$G/repo" && printf 'v1\n' > "$G/repo/lib.rs" \
+  && printf 'v1\n' > "$G/repo/blob.bin" && git -C "$G/repo" add lib.rs blob.bin && git -C "$G/repo" commit -qm v1 \
+  && printf '{"repository": "../repo"}\n' > "$G/plan/plan.json" \
+  || { echo "cannot make the scratch directory for the second block's gate" >&2; exit 1; }
+notrun2() { # notrun2 LABEL MODE ENVMODE PROBE WANT
+  rm -f "$T/uv.log"
+  if ! block 2 "$2" "$T/root" "$G" "$T/b.sh"; then bad "second block, $1: VERIFICATION.md §4's second block cannot be read"; return; fi
+  run_block "$T/b.sh" "$T/tmp" "$3" "$4"
+  if [ "$code" = 0 ] && [ "$(cat "$T/out")" = "post-patch validation: not run: $5" ] && [ ! -e "$T/uv.log" ] && [ ! -e "$G/results" ]; then
+    ok "second block, $1: \"not run: $5\", and the runner never ran"
+  else bad "second block, $1: exit $code, runner called: $([ -e "$T/uv.log" ] && echo yes || echo no); output: $(cat "$T/out")"; fi
+}
+notrun2 "exec-mode native, AUDITOR_EXEC_MODE unset" native "" "$OKLINE" "needs isolated mode"
+notrun2 "exec-mode empty, AUDITOR_EXEC_MODE unset" "" "" "$OKLINE" "needs isolated mode"
+notrun2 "exec-mode isolated, AUDITOR_EXEC_MODE none" isolated none "$OKLINE" "needs isolated mode"
+notrun2 "exec-mode none, AUDITOR_EXEC_MODE isolated" none isolated "$OKLINE" "needs isolated mode"
+notrun2 "isolated, but probe.sh finds a credential (a retry outside the sandbox)" isolated "" \
+  "isolation: readable: SSH keys (1); ~/.ssh/id_ed25519" "this is not the isolated runner (scripts/runner/probe.sh --only isolation)"
+notrun2 "isolated, but probe.sh could not check" isolated "" "isolation: not checked (python3 is not on PATH)" \
+  "this is not the isolated runner (scripts/runner/probe.sh --only isolation)"
+rm -f "$T/uv.log"
+if block 2 isolated "$T/root" "$G" "$T/b.sh"; then
+  run_block "$T/b.sh" "$T/tmp" "" "$OKLINE"
+  if [ "$code" = 0 ] && grep -qx 'arg=validate-plan' "$T/uv.log" 2>/dev/null && grep -qx 'arg=run' "$T/uv.log" \
+     && [ -f "$G/results/result.json" ]; then
+    ok "control: with the gate passed, the second block runs the plan of that scratch directory"
+  else bad "control: the second block did not run the plan with the gate passed, so the checks above prove nothing: exit $code; $(cat "$T/out")"; fi
+else bad "control: VERIFICATION.md §4's second block cannot be read"; fi
+
 # ---- controls -------------------------------------------------------------------------------------------------
 C2="$T/client2"
 if client "$C2"; then
@@ -343,6 +381,26 @@ if has "$sec4" 'lowered from `[FIX-VERIFIED]` to `[FIX-INSUFFICIENT]` by `check_
    && grep -qF '**Residual (if any):** {what is still open, for INSUFFICIENT or a post-patch-validation finding — else "none".}' "$VER"
 then ok "VERIFICATION.md §4: the gate with its intake.md fallback, its own placeholders, the effect record, the plan rule, the submodule and error lines; §5's Residual"
 else bad "VERIFICATION.md §4 or §5 lacks part of its wording"; fi
+# The second block opens with the first block's setup and gate, word for word, before any cd or runner call.
+if python3 -I - "$VER" <<'PY'
+import re, sys
+sec = open(sys.argv[1], encoding="utf-8").read().split("\n## 4. Post-patch validation", 1)[1].split("\n## 5. ", 1)[0]
+b1, b2 = re.findall(r"```bash\n(.*?)```", sec, re.S)
+end = 'echo "post-patch validation: not run: this is not the isolated runner (scripts/runner/probe.sh --only isolation)"\n'
+if not b1.startswith('ROOT="<auditor-skill root>"\n') or end not in b1:
+    sys.exit("the first block does not open with ROOT= and end its isolation check as expected")
+gate = b1[:b1.index(end) + len(end)]
+if not b2.startswith(gate):
+    sys.exit("the second block does not open with the first block's gate")
+rest = b2[len(gate):]
+if not rest.startswith("elif ") or "uv run" in gate or 'cd "' in gate:
+    sys.exit("the second block's gate is not followed by its own branch")
+PY
+then
+  if has "$sec4" 'so the second block makes the same mode and isolation checks, word for word, before it runs anything'
+  then ok "VERIFICATION.md §4: the second block opens with the first block's mode and isolation checks, word for word, and says why"
+  else bad "VERIFICATION.md §4 does not say that the second block makes the same mode and isolation checks"; fi
+else bad "VERIFICATION.md §4's second block does not open with the first block's mode and isolation checks"; fi
 if grep -qxF 'argument-hint: "<finding-id | INC-n.k> [--verify-with-mutation] [--post-patch-validation]"' "$ROOT/commands/patch.md"
 then ok "/auditor:patch offers --post-patch-validation"; else bad "/auditor:patch's argument-hint lacks --post-patch-validation"; fi
 for f in references/orchestration/boundary-map.md docs/power-tools.md; do

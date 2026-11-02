@@ -174,12 +174,24 @@ reads no `uv.toml` or `pyproject.toml` above the scratch directory.
 Fill in the plan's checks as the skill's `SKILL.md` describes, at least one of every kind, with any helper
 files under `{PPV}/plan/checks/`, and change nothing else in `plan.json`; `{PPV}` is the directory the first
 block printed. Run the runner only through these two blocks: the skill's own examples pass `--repo .`, which
-during an audit is the client checkout. Then run the plan; nothing runs unless `plan.json` still names the
-clone:
+during an audit is the client checkout. Then run the plan. The plan runs the target's code, and each block is a
+shell call of its own, which the first block's checks do not reach (a retry outside the sandbox, a run in
+another session), so the second block makes the same mode and isolation checks, word for word, before it runs
+anything; nothing runs unless they pass and `plan.json` still names the clone:
 
 ```bash
-PPV_RUNNER="<auditor-skill root>/vendor/trailofbits/plugins/post-patch-validation/skills/post-patch-validation/scripts/post_patch_validation.py"
-cd "{PPV}" && if [ -d repo/.git ] &&                                   # outside the target tree, as above
+ROOT="<auditor-skill root>"
+PPV_RUNNER="$ROOT/vendor/trailofbits/plugins/post-patch-validation/skills/post-patch-validation/scripts/post_patch_validation.py"
+case " {MODE} ${AUDITOR_EXEC_MODE:-} " in       # the stricter of the recorded mode and AUDITOR_EXEC_MODE, as run.sh takes it
+  *" none "*) PPV_MODE=none ;;
+  *" isolated "*) PPV_MODE=isolated ;;
+  *) PPV_MODE=native ;;
+esac
+if [ "$PPV_MODE" != isolated ]; then
+  echo "post-patch validation: not run: needs isolated mode"
+elif [ "$("$ROOT/scripts/runner/probe.sh" --only isolation 2>/dev/null)" != "isolation: none of the credentials the self-check reads is readable" ]; then
+  echo "post-patch validation: not run: this is not the isolated runner (scripts/runner/probe.sh --only isolation)"
+elif cd "{PPV}" && [ -d repo/.git ] &&                                 # outside the target tree, as above
     [ "$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["repository"])' plan/plan.json 2>/dev/null)" = ../repo ]; then
   uv run --no-config "$PPV_RUNNER" validate-plan --plan "{PPV}/plan/plan.json" &&
     uv run --no-config "$PPV_RUNNER" run --plan "{PPV}/plan/plan.json" --output "{PPV}/results"   # exit 0, 1 or 10 leaves results/result.json
