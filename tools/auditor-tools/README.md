@@ -193,9 +193,11 @@ so it must be safe whatever arguments follow. Its rules are those of
 - It asks git whether a run directory is tracked as confine.sh's `hgit` asks it: git
   from a `PATH` with every entry inside the working directory removed, with an
   environment of its own and the repository's config pinned off. It asks for
-  `--out`, and, in a scan of `.`, for a run directory or `.audit-memory/` that holds
-  a `.gitignore` of exactly `*`. When git cannot answer, `--out` is refused, and
-  such a directory is scanned; with neither, git is not run.
+  `--out`, and, in a scan of `.` that has time left, for a run directory or
+  `.audit-memory/` that holds a `.gitignore` of exactly `*`. When git cannot
+  answer, `--out` is refused, and such a directory is scanned, as is each one
+  after it in that scan, for which git is not asked again; once the scan's time is
+  spent, such a directory is scanned without asking. With neither, git is not run.
 - It refuses to run from an installation inside the working directory, or from a
   path, as it was invoked or with its links resolved, holding a quote, `$`, a
   backtick, a backslash or a control character, and in a working directory whose

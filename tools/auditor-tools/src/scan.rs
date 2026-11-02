@@ -408,7 +408,8 @@ pub(crate) fn open_root(root: &Path) -> io::Result<OwnedFd> {
 /// directory, what parses a file, the report's size, about as it prints, against
 /// its cap, when it parses no more (never, when that is past what an `Instant`
 /// holds), and git in the working directory, found on first use (`own_output`;
-/// `Some(None)` when the working directory cannot be resolved).
+/// `Some(None)` when the working directory cannot be resolved, and once git has
+/// not answered).
 struct Scan<'p> {
     report: ScanReport,
     top: bool,
@@ -426,10 +427,13 @@ impl Scan<'_> {
     /// the mark `rundir.sh new` and `audit-mem init` write first, a `.gitignore` of
     /// exactly `*`, and no repository tracks it in any letter case, as
     /// confine.sh's `confine_tracked` asks. git is asked only about a directory
-    /// with the mark, and one git cannot answer for is not taken for an audit's
-    /// output.
+    /// with the mark, and only while the scan has time; one git does not answer
+    /// for is not taken for an audit's output, and once git has not answered, it
+    /// is asked no more, so each such directory after it is scanned too.
     fn own_output(&mut self, name: &[u8]) -> bool {
-        if !confine::ignores_all(&Path::new(OsStr::from_bytes(name)).join(".gitignore")) {
+        if !confine::ignores_all(&Path::new(OsStr::from_bytes(name)).join(".gitignore"))
+            || self.spent()
+        {
             return false;
         }
         let found = self
@@ -438,7 +442,19 @@ impl Scan<'_> {
         let Some(git) = found.as_mut() else {
             return false;
         };
-        git.need().is_ok() && git.tracked(name).is_some_and(|listed| listed.is_empty())
+        let listed = match git.need() {
+            Ok(()) => git.tracked(name),
+            Err(_) => None,
+        };
+        if listed.is_none() {
+            self.git = Some(None);
+        }
+        listed.is_some_and(|listed| listed.is_empty())
+    }
+
+    /// Whether the scan has run for its time.
+    fn spent(&self) -> bool {
+        self.until.is_some_and(|until| Instant::now() >= until)
     }
 
     fn skip(&mut self, path: &Path, reason: impl Into<String>) {
@@ -514,7 +530,7 @@ impl Scan<'_> {
         if self.full {
             return self.skip(path, FULL);
         }
-        if self.until.is_some_and(|until| Instant::now() >= until) {
+        if self.spent() {
             return self.skip(path, SPENT);
         }
         let one = read_bytes(dir.as_raw_fd(), name).and_then(|bytes| {

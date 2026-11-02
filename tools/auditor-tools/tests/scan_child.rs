@@ -1,7 +1,7 @@
 //! audit-scan's walk with parsers that die and hang: the file a parser does not
 //! finish is skipped, the next file goes to a new child, and the scan goes on;
-//! with a report that fills up; and with a scan whose time is spent. One test,
-//! since it enters the tree it scans.
+//! with a report that fills up; and with a scan whose time is spent, which asks
+//! git nothing more. One test, since it enters the tree it scans.
 
 mod common;
 
@@ -10,7 +10,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use auditor_tools::confine::{Parser, PARSE_TIME};
-use auditor_tools::scan::{scan_path_with, MAX_REPORT, SCAN_TIME};
+use auditor_tools::scan::{scan_path_with, ScanReport, MAX_REPORT, SCAN_TIME};
 use common::Wt;
 
 const BIN: &str = env!("CARGO_BIN_EXE_audit-scan");
@@ -132,4 +132,34 @@ fn a_file_whose_parser_dies_or_hangs_is_skipped_and_the_scan_goes_on() {
             ("slow/c.rs", spent)
         ]
     );
+
+    // A run directory is the audit's own only when git says nothing in it is
+    // tracked; once the scan's time is spent git is not asked, and the directory
+    // is walked like any other, each `*.rs` in it not parsed.
+    wt.run_dir("audit_1");
+    wt.write("audit_1/poc/lib.rs", b"fn poc() {}\n");
+    let run_dir = "a run directory (a .gitignore of * and nothing tracked), not scanned";
+    let in_time = scan_path_with(Path::new("."), MAX_REPORT, SCAN_TIME, &mut |bytes| {
+        real.parse(bytes, PARSE_TIME)
+    });
+    let late = scan_path_with(Path::new("."), MAX_REPORT, Duration::ZERO, &mut |bytes| {
+        real.parse(bytes, PARSE_TIME)
+    });
+    let about = |report: &ScanReport| -> Vec<(String, String)> {
+        report
+            .skipped
+            .iter()
+            .filter(|s| s.file.starts_with("./audit_1"))
+            .map(|s| (s.file.clone(), s.reason.clone()))
+            .collect()
+    };
+    assert_eq!(
+        about(&in_time),
+        [("./audit_1".to_string(), run_dir.to_string())]
+    );
+    assert_eq!(
+        about(&late),
+        [("./audit_1/poc/lib.rs".to_string(), spent.to_string())]
+    );
+    assert_eq!(late.files_scanned, 0);
 }

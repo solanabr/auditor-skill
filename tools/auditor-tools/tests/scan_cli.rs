@@ -941,6 +941,54 @@ fn refuses_an_out_when_git_cannot_answer() {
     );
 }
 
+#[test]
+fn asks_git_no_more_once_it_has_not_answered() {
+    let wt = Wt::new();
+    for name in ["audit_1", "audit_2", "audit_3"] {
+        wt.run_dir(name);
+        wt.write(&format!("{name}/poc/lib.rs"), b"fn poc() {}\n");
+    }
+    // A git first on PATH, outside the working tree, that notes each call and
+    // answers none.
+    let bin = wt.outside().join("bin");
+    fs::create_dir(&bin).expect("mkdir");
+    let calls = wt.outside().join("calls");
+    write_script(
+        &bin.join("git"),
+        &format!("#!/bin/sh\necho \"$1\" >> '{}'\nexit 1\n", calls.display()),
+    );
+    let path = format!("{}:/usr/bin:/bin", bin.display());
+    let report = json(&common::run_env(BIN, &wt.dir, &["."], &[("PATH", &path)]));
+    assert_eq!(
+        files(&report, "functions"),
+        vec![
+            "./audit_1/poc/lib.rs",
+            "./audit_2/poc/lib.rs",
+            "./audit_3/poc/lib.rs",
+        ]
+    );
+    assert_eq!(skipped(&report), []);
+    let asked = fs::read_to_string(&calls).expect("git was asked");
+    assert_eq!(asked.lines().count(), 1, "{asked}");
+}
+
+/// An executable script at `to`, written by `/bin/sh`, not by this process, for
+/// the reason `copy_binary` gives.
+fn write_script(to: &Path, text: &str) {
+    let status = Command::new("/bin/sh")
+        .args([
+            "-c",
+            "printf '%s' \"$1\" > \"$2\" && chmod 755 \"$2\"",
+            "sh",
+        ])
+        .arg(text)
+        .arg(to)
+        .stdin(Stdio::null())
+        .status()
+        .expect("run sh");
+    assert!(status.success(), "write {}", to.display());
+}
+
 /// A copy of the binary at `to`, written by `cp`. This process never holds the
 /// copy open for writing, so no child another test starts meanwhile inherits such a
 /// descriptor, which on Linux makes running the copy fail with ETXTBSY (`Text file
