@@ -333,27 +333,71 @@ done <<< "$LINES"
 # other than digits (A-Z), an equivalence class, a back-reference, a word anchor, or a letter in a bracket under -i.
 # With one of them, every line that may match goes to its regex matcher, which starts again at each position of the
 # line, and one long line takes minutes. So every pattern a recipe gives grep stays out of that list, and holds no
-# backslash inside a bracket, which Claude Code's grep (ugrep) reads as an escape. The KV-116 and KV-139 locators
+# backslash inside a bracket, which Claude Code's grep (ugrep) reads as an escape. Claude Code's grep has a slow path
+# of its own: it tries a pattern that holds * or + and does not start at ^ again from every position of a line, and
+# so every pattern of a grep call in which one pattern does not start at ^ (R3 took 60 s on the 1 MiB line below
+# with one such pattern beside ten that start at ^, 0.2 s without it). So in a grep call where a pattern holds * or
+# +, every pattern starts at ^ and keeps each | inside a group (^.*(a|b), not ^a|b). The KV-116 and KV-139 locators
 # are not converted yet.
 LINEAR_PENDING="K116-1 K139-1"
-patterns_of() { # patterns_of <command line>: "<1 under -i, else 0> <pattern>" for each pattern of each grep it runs
-  : > "$work/patterns"
+patterns_of() { # patterns_of <command line>: "<1 under -i, else 0> <pattern>" for each pattern of each grep it runs,
+  # on standard output and, one file per grep call, in $work/inv/
+  : > "$work/patterns"; rm -rf "$work/inv"; mkdir -p "$work/inv"
   (
     grep() {
-      local a ic=0 next=0 found=0
+      local a ic=0 next=0 found=0 f
+      f=$(mktemp "$work/inv/g.XXXXXX") || return 1
       for a in "$@"; do case "$a" in --*) ;; -*i*) ic=1 ;; esac; done
       for a in "$@"; do
-        if [ "$next" -eq 1 ]; then printf '%s %s\n' "$ic" "$a" >> "$work/patterns"; next=0; found=1; continue; fi
+        if [ "$next" -eq 1 ]; then printf '%s %s\n' "$ic" "$a" | tee -a "$f" >> "$work/patterns"; next=0; found=1; continue; fi
         case "$a" in
           -e) next=1 ;;
           -*) ;;
-          *) if [ "$found" -eq 0 ]; then printf '%s %s\n' "$ic" "$a" >> "$work/patterns"; found=1; fi ;;
+          *) if [ "$found" -eq 0 ]; then printf '%s %s\n' "$ic" "$a" | tee -a "$f" >> "$work/patterns"; found=1; fi ;;
         esac
       done
     }
     eval "$1" </dev/null >/dev/null 2>&1
   )
   cat "$work/patterns"
+}
+one_pass() { # one_pass <file of one grep call's "<ic> <pattern>" lines>: why Claude Code's grep would retry it, if it would
+  LC_ALL=C awk '
+    function scan(s,   n, i, c, j, e, depth) {
+      star = 0; bar = 0; depth = 0; n = length(s); i = 1
+      while (i <= n) {
+        c = substr(s, i, 1)
+        if (c == "\\") { i += 2; continue }
+        if (c == "[") {
+          j = i + 1
+          if (substr(s, j, 1) == "^") j++
+          if (substr(s, j, 1) == "]") j++
+          while (j <= n && substr(s, j, 1) != "]") {
+            if (substr(s, j, 1) == "[" && index(":.=", substr(s, j + 1, 1)) > 0) {
+              e = index(substr(s, j + 2), substr(s, j + 1, 1) "]")
+              if (e == 0) { j = n; break }
+              j += e + 3; continue
+            }
+            j++
+          }
+          i = j + 1; continue
+        }
+        if (c == "(") depth++
+        else if (c == ")") depth--
+        else if (c == "|" && depth == 0) bar = 1
+        else if (c == "*" || c == "+") star = 1
+        else if (c == "{") { e = index(substr(s, i), "}"); if (e > 2 && substr(s, i + e - 2, 1) == ",") star = 1 }
+        i++
+      }
+    }
+    { p[NR] = substr($0, 3); scan(p[NR]); bars[NR] = bar; if (star) any = 1 }
+    END {
+      if (!any) exit
+      for (k = 1; k <= NR; k++) {
+        if (substr(p[k], 1, 1) != "^") { print "a pattern that does not start at ^, in a grep that holds * or +: " substr(p[k], 1, 100); exit }
+        if (bars[k]) { print "a | outside every group, in a grep that holds * or +: " substr(p[k], 1, 100); exit }
+      }
+    }' "$1"
 }
 outside_dfa() { # each "<ic> <pattern>" line on stdin that holds a construct outside the subset, with the reason
   LC_ALL=C awk -v esc="wWsSbB<>\`'" '
@@ -394,15 +438,22 @@ for id in $IDS K080-4a; do
   if [ "$id" = K080-4a ]; then cmds=$(kv_step "$KV080" 4 | sed -n 1p); else cmds=$(recipe_lines "$id"); fi
   while IFS= read -r c; do
     [ -n "$c" ] || continue
-    bad=$(patterns_of "$c" | outside_dfa)
-    if [ -z "$(patterns_of "$c")" ]; then bad="no pattern found"; fi
+    pats=$(patterns_of "$c")
+    bad=$(printf '%s\n' "$pats" | outside_dfa)
+    if [ -z "$pats" ]; then bad="no pattern found"; fi
+    if [ -z "$bad" ]; then
+      for g in "$work/inv"/g.*; do
+        if [ -f "$g" ]; then bad=$(one_pass "$g"); fi
+        if [ -n "$bad" ]; then break; fi
+      done
+    fi
     if [ -n "$bad" ]; then nonlinear="$nonlinear $id"; echo "FAIL $id: $(printf '%s\n' "$bad" | sed -n 1p)"; fail=1; fi
   done <<< "$cmds"
   nlinear=$((nlinear + 1))
 done
 if [ -z "$nonlinear" ]; then
   echo "ok   $nlinear recipes, KV-080 Step 4's first command among them, use only patterns GNU grep's DFA runs" \
-    "in a UTF-8 locale"
+    "in a UTF-8 locale, and each grep call that holds * or + starts every pattern at ^"
 fi
 echo "SKIP linear-pattern check for $LINEAR_PENDING: not converted yet"
 
