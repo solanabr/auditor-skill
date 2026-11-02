@@ -112,7 +112,8 @@ and strings aside), a crate-level `#![feature(...)]`, with which a nightly or
 platform-tools rustc lets the source pick linker arguments, inline assembly, whose
 `.incbin` and `.include` directives read files rustc's dep-info never lists, and the
 `link` attribute, which links a native library that the dep-info does not list
-either, named directly or through a macro;
+either, named directly or as a macro's argument (what a macro that a dependency
+exports writes is not read);
 and a `tests/fixtures/{PROGRAM_NAME}.so`, which mollusk would load in place of
 the arm.
 
@@ -136,9 +137,9 @@ crates.io, a target whose source lies outside the crate (a `[lib] path`), and ea
 from outside the crate that rustc's dep-info lists for the crate's own units, in the
 test build and in each arm's SBF build: a `#[path]` module, a file an `include!`,
 `include_str!` or `include_bytes!` read. A file of the crate that the build read under
-a name not ending in `.rs` is checked after the build as the crate's `.rs` files are
-before it. What a dependency's proc macro reads on its own is not listed, nor what a
-file the line names reads in turn.
+a name not ending in `.rs` is read after the build for inline assembly and the `link`
+attribute, refused as above. What a dependency's proc macro reads on its own is not
+listed, nor what a file the line names reads in turn.
 
 `run.sh` and `shared-test-utils/` are the installation's copies; leave them as they
 are. Before a command trusts an `OK` line it compares them with the installation's

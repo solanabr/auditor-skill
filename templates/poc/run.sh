@@ -155,7 +155,8 @@
 #     arguments, inline assembly (the asm macros), whose .incbin and .include
 #     directives read files that rustc's dep-info never lists, and the link
 #     attribute, which links a native library that it does not list either, each stop
-#     the run in either mode, a macro argument that names one included.
+#     the run in either mode, a macro argument that names one included. What a macro
+#     that a dependency exports writes is not read.
 #     The crate must be its own workspace root, as the template's [workspace] makes
 #     it: a `workspace` key under [package] that joins an outside workspace stops the
 #     run too, since these checks never read that workspace's manifest (its [patch]
@@ -891,19 +892,21 @@ TARGET_KINDS = ("lib", "rlib", "test")
 
 # Rust source as tokens, for the check of the crate own code: comments, strings (byte, C and raw ones
 # too) and character literals left out, an identifier without its r# prefix and in NFC, as rustc reads
-# it, and anything else as one character, each with its line.
-LEX = re.compile(
-    r"(?P<nl>\n)|(?P<ws>[^\S\n]+)|(?P<lc>//[^\n]*)|(?P<bc>/\*)"
-    r"|(?P<raw>[bc]?r(?P<hashes>#*)\x22)"
-    r"|(?P<str>[bc]?\x22(?:[^\x22\\]|\\.)*\x22)"
-    r"|(?P<chr>b?\x27(?:\\(?:u\{[0-9A-Fa-f_]*\}|x[0-9A-Fa-f]{2}|.)|[^\\\n\r\t\x27])\x27)"
-    r"|(?P<id>(?:r#)?[^\W\d]\w*)|(?P<other>.)", re.S)
+# it, and anything else as one character, each with its line. Before the 2021 edition c and cr are no
+# string prefixes (cr"\"" is the identifier cr and an ordinary string there), so a file is read both
+# ways, and what either way finds counts.
+LEX = (r"(?P<nl>\n)|(?P<ws>[^\S\n]+)|(?P<lc>//[^\n]*)|(?P<bc>/\*)"
+       r"|(?P<raw>%sr(?P<hashes>#*)\x22)"
+       r"|(?P<str>%s\x22(?:[^\x22\\]|\\.)*\x22)"
+       r"|(?P<chr>b?\x27(?:\\(?:u\{[0-9A-Fa-f_]*\}|x[0-9A-Fa-f]{2}|.)|[^\\\n\r\t\x27])\x27)"
+       r"|(?P<id>(?:r#)?[^\W\d]\w*)|(?P<other>.)")
+LEXERS = (re.compile(LEX % ("[bc]?", "[bc]?"), re.S), re.compile(LEX % ("b?", "b?"), re.S))
 
 
-def rust_tokens(text):
+def rust_tokens(text, lexer):
     out, i, line, end = [], 0, 1, len(text)
     while i < end:
-        m = LEX.match(text, i)
+        m = lexer.match(text, i)
         j = m.end()
         if m.group("bc") is not None:
             depth = 1
@@ -945,14 +948,16 @@ def own_code(path, feature=True):
     # or None, also for a file that is not UTF-8 text, which rustc compiles as no source.
     try:
         with open(path, encoding="utf-8") as f:
-            tokens = rust_tokens(f.read())
+            text = f.read()
     except (OSError, UnicodeDecodeError):
         return None
-    for k, (token, line) in enumerate(tokens):
-        if feature and token == "feature" and k + 1 < len(tokens) and tokens[k + 1][0] == "(":
-            return ("feature", line)
-        if token in OWN_CODE:
-            return (token, line)
+    for lexer in LEXERS:
+        tokens = rust_tokens(text, lexer)
+        for k, (token, line) in enumerate(tokens):
+            if feature and token == "feature" and k + 1 < len(tokens) and tokens[k + 1][0] == "(":
+                return ("feature", line)
+            if token in OWN_CODE:
+                return (token, line)
     return None
 
 

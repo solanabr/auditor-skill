@@ -993,8 +993,9 @@ CASES
 # nightly or platform-tools rustc lets the source pick linker arguments), inline assembly (its .incbin and
 # .include read files that rustc's dep-info never lists) and the link attribute (a native library that the
 # dep-info does not list either), in any .rs file of the crate, named directly or through a macro argument,
-# are refused; so is a feature in a target's source outside the crate. A comment, a string, a character and
-# a name that only mention them pass.
+# are refused, also where an edition before 2021 reads cr"..." as the identifier cr and an ordinary string;
+# so is a feature in a target's source outside the crate. A comment, a string, a character and a name that
+# only mention them pass.
 n=0
 while IFS='|' read -r where text named; do
   [ -n "$where" ] || continue
@@ -1012,6 +1013,7 @@ src/deep/mod.rs|pub use core::arch::naked_asm as n;|src/deep/mod.rs:1 names nake
 src/lib.rs|macro_rules! g { ($a:ident) => { core::arch::$a!(".globl x"); } }\ng!(global_asm);|src/lib.rs:2 names global_asm, inline assembly
 src/lib.rs|#[link(name = "c")]\nextern "C" {}|src/lib.rs:1 names link, the attribute that links a native library
 src/lib.rs|macro_rules! m { ($a:ident) => { #[$a(name = "c")] extern "C" {} } }\nm!(r#link);|src/lib.rs:2 names link, the attribute that links a native library
+src/lib.rs|macro_rules! m { ($a:ident $b:literal) => {}; }\nm!(cr"\\""); core::arch::global_asm!(".globl x");|src/lib.rs:2 names global_asm, inline assembly
 CASES
 mk_crate "$T/oc-out"; printf '#![feature(link_arg_attribute)]\n' > "$T/oc-outside-lib.rs"
 code="$(gate "$T/oc-out" "$NATIVE" "$VULN" SHIM_LIB_SRC="$T/oc-outside-lib.rs")"
