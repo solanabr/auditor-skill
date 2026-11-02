@@ -74,6 +74,11 @@
 64	preflight: refused: the working tree ships Claude Code project config (.claude/agents), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	j:.claude/settings.json={"model":"x"}	d:.claude/agents
 64	preflight: refused: the working tree ships Claude Code project config (.claude/skills), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	f:CLAUDE.md	d:.claude/skills
 64	preflight: refused: the working tree ships Claude Code project config (.claude/skills), which Claude Code may load alongside this plugin; audit a copy without it (Rule 11e)	d:.claude/rules	d:.claude/skills
+64	preflight: refused: the working tree has a symbolic link (programs) to a directory outside it or inside a .git directory, where Claude Code may find project config this check does not read; audit a copy without it (Rule 11e)	d:.git/p/.claude/skills	l:programs=.git/p
+64	preflight: refused: the working tree has a symbolic link (x/objects) to a directory outside it or inside a .git directory, where Claude Code may find project config this check does not read; audit a copy without it (Rule 11e)	d:sub/.git/objects/pack	l:x/objects=../sub/.git/objects
+64	preflight: refused: the working tree has a symbolic link (up) to a directory outside it or inside a .git directory, where Claude Code may find project config this check does not read; audit a copy without it (Rule 11e)	l:up=..
+64	preflight: refused: the working tree has a symbolic link (a) to a directory outside it or inside a .git directory, where Claude Code may find project config this check does not read; audit a copy without it (Rule 11e)	l:b=/	l:a=..	d:c
+64	preflight: refused: the working tree has a symbolic link (a-via) to a directory outside it or inside a .git directory, where Claude Code may find project config this check does not read; audit a copy without it (Rule 11e)	l:a-via=z/hop	l:z/hop=../..
 0		d:src
 0		d:.claude
 0		f:.claude
@@ -101,3 +106,5 @@
 0		f:AGENTS.md	f:.claude/AGENTS.md	f:sub/agents.md	d:x/AGENTS.md
 0		d:CLAUDE.md
 0		l:loop=.	l:a/up=..
+0		d:src/lib	l:docs/src=../src	l:here=.	l:dev=/dev/null	l:gone=/nonexistent/preflight	l:ring=ring2	l:ring2=ring
+0		l:.git=..	d:sub	l:sub/.git=../..

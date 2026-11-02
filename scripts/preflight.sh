@@ -28,6 +28,10 @@
 # The refusal names the first such path in byte order, parents first.
 #
 # It also refuses:
+#   - a symbolic link in the working directory, outside .git, to a directory outside it or inside a .git
+#     directory: the scan reads neither, and Claude Code may load project config there once it reads a
+#     file through the link. A .git that is a link is skipped. The refusal names the first such link in
+#     byte order;
 #   - a working directory inside a .claude directory or a git directory;
 #   - a working directory in a linked git worktree: Claude Code also loads its main checkout's
 #     .claude/settings.local.json, and that checkout's project skills when the worktree has none;
@@ -230,6 +234,27 @@ done < <(matches .)
   refuse "the working tree ships Claude Code project config ($(confine_text "$HIT")), which Claude Code may load" \
     "alongside this plugin; audit a copy without it (Rule 11e)"
 [ "$st" = 0 ] || refuse "find cannot read the whole working tree, so it cannot be checked for Claude Code project config"
+
+# A link to a directory the scan above does not read, outside the working directory or in a .git
+# directory: Claude Code may find project config there once it reads a file through the link. A .git
+# that is itself a link (to a git directory kept elsewhere) is skipped, as a .git directory is.
+LINK='' st=''
+while IFS= read -r -d '' p; do
+  case "$p" in status=*) st=${p#status=}; continue ;; esac
+  [ -d "$p" ] || continue
+  if confine_phys "$p"; then
+    case "$CONFINE_PHYS/" in
+      "${WT%/}/"*) case "/${CONFINE_PHYS#"$WT"}/" in */.git/*) ;; *) continue ;; esac ;;
+    esac
+  fi
+  p=${p#./}
+  if [ -z "$LINK" ] || [[ "$p" < "$LINK" ]]; then LINK=$p; fi
+done < <(find . \( -name .git -prune \) -o -type l -print0 2>/dev/null
+         printf 'status=%s\0' "$?")
+[ "$st" = 0 ] || refuse "find cannot read the whole working tree, so it cannot be checked for Claude Code project config"
+[ -z "$LINK" ] ||
+  refuse "the working tree has a symbolic link ($(confine_text "$LINK")) to a directory outside it or inside a .git" \
+    "directory, where Claude Code may find project config this check does not read; audit a copy without it (Rule 11e)"
 
 if [ "$NNOTES" -gt 0 ]; then
   printf '%s' "$NOTES" | LC_ALL=C sort | sed -n "1,${NOTES_MAX}p" |
