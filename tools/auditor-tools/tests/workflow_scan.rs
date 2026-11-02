@@ -850,9 +850,10 @@ fn a_workflow_whose_parser_dies_or_hangs_is_skipped_and_the_caps_and_the_scans_t
 
 /// #31's acceptance: every workflow fixture in `scripts/tests/fixtures/gha/` (the
 /// `*.yml` and `*.yaml` files the pass reads there; it does not recurse into
-/// `actions/` or `infra/`) gives the facts checked in for it, read whole, under
-/// `scripts/tests/fixtures/audit-scan/gha-facts/<fixture>.json`. A fixture with
-/// no expected facts fails, naming it; so does an expectation with no fixture.
+/// `actions/` or `infra/`) gives the facts checked in for it, under
+/// `scripts/tests/fixtures/audit-scan/gha-facts/<fixture>.json`, and is read
+/// whole, with an empty `unknown`. A fixture with no expected facts fails, naming
+/// it; so does an expectation with no fixture, and a fixture not read whole.
 #[test]
 fn every_gha_fixture_gives_the_facts_checked_in_for_it() {
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/tests/fixtures");
@@ -886,6 +887,12 @@ fn every_gha_fixture_gives_the_facts_checked_in_for_it() {
         let mut facts_of = got.remove(n).unwrap_or(Value::Null);
         if let Some(w) = facts_of.as_object_mut() {
             w.remove("file");
+        }
+        if facts_of.is_object() && facts_of["unknown"] != Value::Array(Vec::new()) {
+            problems.push(format!(
+                "{n}: not read whole; unknown is {}",
+                facts_of["unknown"]
+            ));
         }
         let shown = serde_json::to_string_pretty(&facts_of).expect("JSON");
         let path = facts.join(format!("{n}.json"));
