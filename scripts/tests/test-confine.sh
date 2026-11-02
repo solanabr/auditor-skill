@@ -117,15 +117,29 @@ check "PATH keeps absolute entries outside the working directory, resolved" out_
 RC=$?
 check "a PATH with nothing outside the working directory is refused" refused 'no PATH entry is left outside the working directory'
 # A working directory inside a repository (a program of a monorepo): that repository's tree is under
-# audit too, so its node_modules/.bin is dropped; a repository at HOME (the auditor's own) is not.
+# audit too, so its node_modules/.bin is dropped. A .git the tree puts nearer does not shrink that tree:
+# an empty one, or a HEAD alone (git walks past both), or a repository of its own. A repository at HOME
+# (the auditor's own) is not taken.
 mkrepo "$T/mono"
 mkdir -p "$T/mono/node_modules/.bin" "$T/mono/programs/v"
 LIB_PATH="$T/mono/node_modules/.bin:$T/ok:$T/link-out" lib "$T/mono/programs/v" 'printf "%s" "$PATH"'
 check "PATH drops an entry inside the repository the working directory lies in" out_is "$T/ok:$T/ok2"
+mkdir "$T/mono/programs/v/.git"
+LIB_PATH="$T/mono/node_modules/.bin:$T/ok" lib "$T/mono/programs/v" 'printf "%s" "$PATH"'
+check "... also when the working directory holds an empty .git directory" out_is "$T/ok"
+rmdir "$T/mono/programs/v/.git"
+: > "$T/mono/programs/.git"
+LIB_PATH="$T/mono/node_modules/.bin:$T/ok" lib "$T/mono/programs/v" 'printf "%s" "$PATH"'
+check "... or an empty .git file lies between it and the repository's top level" out_is "$T/ok"
+rm "$T/mono/programs/.git"
+mkdir "$T/mono/programs/.git"
+printf 'ref: refs/heads/main\n' > "$T/mono/programs/.git/HEAD"
+LIB_PATH="$T/mono/node_modules/.bin:$T/ok" lib "$T/mono/programs/v" 'printf "%s" "$PATH"'
+check "... or a .git holding a HEAD alone lies there" out_is "$T/ok"
+rm -r "$T/mono/programs/.git"
 mkrepo "$T/mono/programs/own"
 LIB_PATH="$T/mono/node_modules/.bin:$T/ok" lib "$T/mono/programs/own" 'printf "%s" "$PATH"'
-check "... and a working directory with a repository of its own lies in that one, as git finds it" \
-  out_is "$T/mono/node_modules/.bin:$T/ok"
+check "... or the working directory is a repository of its own inside the outer one" out_is "$T/ok"
 mkdir -p "$HOME/bin" "$HOME/work/w"
 git init -q "$HOME"
 LIB_PATH="$HOME/bin:$T/ok" lib "$HOME/work/w" 'printf "%s" "$PATH"'

@@ -18,9 +18,10 @@
 # confine_init also sets LC_ALL=C and umask 077 and unsets CDPATH, BASH_ENV and ENV. It refuses an
 # installation root that holds a quote, "$", a backtick, a backslash or a control character, since the
 # quoted call could not match as written, or that lies inside WT (Rule 11e). PATH keeps only absolute
-# entries that resolve outside WT and outside the repository WT lies in (the nearest of WT and the
-# directories above it, below HOME, that holds a .git). Whether a path lies inside a directory is decided
-# by identity (device and inode) along its ancestors, never by comparing spellings.
+# entries that resolve outside WT and outside the tree WT lies in: the outermost of WT and the directories
+# above it, below HOME (to / when WT is not under HOME), that holds a .git of any kind, since the tree can
+# put a .git of its own anywhere below its top. Whether a path lies inside a directory is decided by
+# identity (device and inode) along its ancestors, never by comparing spellings.
 # hgit is the hardened git call of OUTPUT-RULES.md Rule 11c. scripts/git-ro.sh's header lists what its
 # -c pins switch off and when to re-check them; keep the two in step.
 # A tool that contacts an outside service records it in <R>/disclosures.tsv (OUTPUT-RULES.md Rule 11b;
@@ -94,11 +95,12 @@ confine_init() { # confine_init <tool> <installation root, physical> [<refusal s
   if confine_inside "$root" "$CONFINE_WT"; then
     confine_refuse "the installation lies inside the working directory; install it outside the tree under audit, or run from a directory that does not contain it (Rule 11e)"
   fi
-  # The repository WT lies in, as git finds it from WT: the nearest of WT and the directories above it,
-  # below HOME, that holds a .git. Its tree is under audit as well, so PATH entries inside it are dropped too.
+  # The tree WT lies in: the outermost of WT and the directories above it, below HOME, that holds a .git
+  # of any kind. Its tree is under audit as well, so PATH entries inside it are dropped too; a .git the
+  # tree puts nearer (an empty one, which git walks past) does not shrink it.
   p=$CONFINE_WT
   while :; do
-    if [ -e "$p/.git" ] || [ -L "$p/.git" ]; then top=$p; break; fi
+    if [ -e "$p/.git" ] || [ -L "$p/.git" ]; then top=$p; fi
     [ "$p" != / ] || break
     p=${p%/*}
     [ -n "$p" ] || p=/
