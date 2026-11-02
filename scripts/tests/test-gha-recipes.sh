@@ -137,8 +137,8 @@ expected() {
     K116-1) echo "01 08 11 14 33 34 54 57 67 68 72 73" ;;
     K139-1) echo "01 02 03 04 08 10 11 14 16 17 22 23 25 26 33 40 48 49 53 55 56 58 59 62 64 65 66 69 71 74" ;;
     K140-6) echo "35 36 37 38 39 42 43 44 45" ;;
-    K140-7a) echo "80 81 82 83 84 85 93 95 96 97" ;;
-    K140-7b) echo "80 82 83 84 85 93 95 96 97" ;;
+    K140-7a) echo "80 81 82 83 84 85 93 95 96 97 101" ;;
+    K140-7b) echo "80 82 83 84 85 93 95 96 97 101" ;;
     K080-8a) echo "78 98 100" ;;
     K080-8b) echo "86 87 88 89 90 94" ;;
   esac
@@ -167,6 +167,7 @@ K140-7a infra/93-oidc-aws-any-repository.json 7 10 11
 K140-7a infra/95-oidc-terragrunt.hcl 7
 K140-7a infra/96-oidc-pulumi.yml 12 15
 K140-7a infra/97-oidc-provider.sh 4
+K140-7a infra/101-oidc-immutable-subject.tf 9 13
 K140-7b infra/80-oidc-aws-repo-wildcard.tf 17
 K140-7b infra/82-oidc-azure-environment.tf 8 14
 K140-7b infra/83-oidc-gcp-owner.tf 11 20 26
@@ -175,7 +176,8 @@ K140-7b infra/85-oidc-cloudformation-default-branch.yaml 15
 K140-7b infra/93-oidc-aws-any-repository.json 11
 K140-7b infra/95-oidc-terragrunt.hcl 8
 K140-7b infra/96-oidc-pulumi.yml 15
-K140-7b infra/97-oidc-provider.sh 6"
+K140-7b infra/97-oidc-provider.sh 6
+K140-7b infra/101-oidc-immutable-subject.tf 14 25"
 
 # The command lines of recipe <id>.
 recipe_lines() {
