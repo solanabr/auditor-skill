@@ -1,5 +1,7 @@
 //! Round-trip test for the findings memory: dedup, regression, suppression.
 
+mod common;
+
 use auditor_tools::mem;
 
 const PROG: &str = "Prog1111111111111111111111111111111111111111";
@@ -643,4 +645,103 @@ fn warm_and_regressions_read_a_long_history_in_time() {
     let counts: Vec<usize> = regs.regressions.iter().map(|r| r.changed.len()).collect();
     assert_eq!(counts, [[10; 20].as_slice(), &[0; 80]].concat());
     assert_eq!(regs.truncated, 100 * 2_000 - 200);
+}
+
+/// A store on disk, made as `audit-mem init` makes it, in a new directory.
+fn store_on_disk() -> (common::Wt, std::path::PathBuf) {
+    let wt = common::Wt::new();
+    let db = wt.path("audit.db");
+    std::fs::File::create(&db).expect("make the store's file");
+    let conn = mem::open_read_write(&db).expect("open the store");
+    mem::ensure_schema(&conn).expect("make the tables");
+    (wt, db)
+}
+
+#[test]
+fn a_writer_that_meets_another_waits_for_it() {
+    type Write = fn(&rusqlite::Connection) -> anyhow::Result<()>;
+    let (_wt, db) = store_on_disk();
+    let writes: [(&str, Write); 6] = [
+        ("ensure_schema", mem::ensure_schema),
+        ("put_finding", |c| put_finding_once(c).map(drop)),
+        ("set_status", |c| {
+            mem::set_status(c, PROG, SIG, "rc", "FIXED").map(drop)
+        }),
+        ("add_ruling", |c| {
+            mem::add_ruling(
+                c,
+                &mem::NewRuling {
+                    program_id: PROG,
+                    signature: SIG,
+                    ruling: "FALSE_POSITIVE",
+                    rationale: "guarded",
+                    by: "auditor",
+                    scope: None,
+                    commit: Some(C1),
+                    guard: None,
+                },
+            )
+            .map(drop)
+        }),
+        ("put_profile", |c| {
+            mem::put_profile(
+                c,
+                PROG,
+                &mem::ProfileFields {
+                    protocol_class: Some("vault"),
+                    ..Default::default()
+                },
+            )
+            .map(drop)
+        }),
+        ("put_invariant", |c| {
+            mem::put_invariant(c, PROG, "shares == supply", &Default::default()).map(drop)
+        }),
+    ];
+    // Another writer holds the store's write lock while they start.
+    let holder = rusqlite::Connection::open(&db).expect("open the store");
+    holder
+        .execute_batch("BEGIN IMMEDIATE")
+        .expect("take the write lock");
+    let writers: Vec<_> = writes
+        .into_iter()
+        .map(|(name, write)| {
+            let db = db.clone();
+            let writer =
+                std::thread::spawn(move || mem::open_read_write(&db).and_then(|c| write(&c)));
+            (name, writer)
+        })
+        .collect();
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    holder.execute_batch("COMMIT").expect("let the lock go");
+    for (name, writer) in writers {
+        let done = writer.join().expect("the writer's thread");
+        assert!(done.is_ok(), "{name}: {:?}", done.err());
+    }
+    let count = |table: &str| -> i64 {
+        holder
+            .query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))
+            .expect("count")
+    };
+    for table in ["findings", "fp_rulings", "protocol_profile", "invariants"] {
+        assert_eq!(count(table), 1, "{table}");
+    }
+}
+
+fn put_finding_once(conn: &rusqlite::Connection) -> anyhow::Result<mem::PutOutcome> {
+    mem::put_finding(
+        conn,
+        &mem::PutFinding {
+            program_id: PROG,
+            signature: SIG,
+            root_cause: "rc",
+            title: "t",
+            severity: 3,
+            commit: None,
+            audit_n: None,
+            file: None,
+            line: None,
+            verdict: None,
+        },
+    )
 }

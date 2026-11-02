@@ -10,15 +10,18 @@
 //! ([`open_read_write`]). Either way it must hold only the tables audit-mem makes,
 //! and SQLite runs in its defensive mode, with triggers and views off and
 //! `trusted_schema` off, so a crafted store cannot run anything through its
-//! schema.
+//! schema. Each writer writes in one transaction that takes the write lock before
+//! it reads, so writers that meet wait for each other.
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use rusqlite::config::DbConfig;
-use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
+use rusqlite::{
+    params, Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior,
+};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
@@ -318,11 +321,15 @@ pub fn open_read_only(path: &Path) -> Result<Connection> {
     Ok(conn)
 }
 
+/// How long a writer waits for the store while another writer holds it.
+const BUSY: Duration = Duration::from_secs(5);
+
 /// Opens a store that exists for reading and writing, through no symbolic link
 /// and never making the file, hardened as `harden` does; it must hold nothing but
 /// audit-mem's tables. Each writer adds the tables and columns it lacks
-/// (`migrate`) in the transaction it writes in, so a writer that fails or refuses
-/// leaves the store as it was.
+/// (`migrate`) in the transaction it writes in (`write_transaction`), so a writer
+/// that fails or refuses leaves the store as it was, and one that meets another
+/// waits for it, up to `BUSY`.
 pub fn open_read_write(path: &Path) -> Result<Connection> {
     let conn = Connection::open_with_flags(
         path,
@@ -330,9 +337,22 @@ pub fn open_read_write(path: &Path) -> Result<Connection> {
             | OpenFlags::SQLITE_OPEN_NOFOLLOW
             | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
+    conn.busy_timeout(BUSY)?;
     harden(&conn)?;
     verify_schema(&conn)?;
     Ok(conn)
+}
+
+/// The transaction a writer writes in, begun with the write lock taken (BEGIN
+/// IMMEDIATE): a writer that meets another waits for it, up to the busy timeout.
+/// One begun deferred reads first and then asks for the write lock, which SQLite
+/// refuses at once ("database is locked") while another writer holds it, since it
+/// waits only for a connection that holds no lock yet.
+fn write_transaction(conn: &Connection) -> Result<Transaction<'_>> {
+    Ok(Transaction::new_unchecked(
+        conn,
+        TransactionBehavior::Immediate,
+    )?)
 }
 
 /// Open an in-memory database with the schema applied (used by tests).
@@ -357,7 +377,7 @@ fn ruling_columns(conn: &Connection) -> Result<Vec<String>> {
 /// anchor, and a new one is made the same way, so both read alike. Safe to call
 /// repeatedly; one transaction.
 pub fn ensure_schema(conn: &Connection) -> Result<()> {
-    let tx = conn.unchecked_transaction()?;
+    let tx = write_transaction(conn)?;
     migrate(&tx)?;
     tx.commit()?;
     Ok(())
@@ -416,7 +436,7 @@ pub fn put_finding(conn: &Connection, f: &PutFinding) -> Result<PutOutcome> {
     let commit = f.commit.unwrap_or("");
     let audit_n = f.audit_n.unwrap_or("");
 
-    let tx = conn.unchecked_transaction()?;
+    let tx = write_transaction(conn)?;
     migrate(&tx)?;
     let existing: Option<(String, Option<i64>, Option<String>)> = tx
         .query_row(
@@ -511,7 +531,7 @@ pub fn set_status(
     status: &str,
 ) -> Result<usize> {
     let id = finding_id(program_id, signature, root_cause);
-    let tx = conn.unchecked_transaction()?;
+    let tx = write_transaction(conn)?;
     migrate(&tx)?;
     let changed = tx.execute(
         "UPDATE findings SET status = ?2 WHERE finding_id = ?1",
@@ -583,7 +603,7 @@ pub struct NewRuling<'a> {
 /// Insert a false-positive / accepted-risk ruling with a timestamp and its
 /// anchor: the commit, and the guard's file, lines and hash. One transaction.
 pub fn add_ruling(conn: &Connection, r: &NewRuling) -> Result<i64> {
-    let tx = conn.unchecked_transaction()?;
+    let tx = write_transaction(conn)?;
     migrate(&tx)?;
     tx.execute(
         "INSERT INTO fp_rulings (program_id, code_signature, ruling, rationale, ruled_by, ruled_at, scope, \
@@ -1025,7 +1045,7 @@ pub fn put_profile(
     program_id: &str,
     f: &ProfileFields,
 ) -> Result<Vec<&'static str>> {
-    let tx = conn.unchecked_transaction()?;
+    let tx = write_transaction(conn)?;
     migrate(&tx)?;
     let old: Option<[String; 5]> = tx
         .query_row(
@@ -1113,7 +1133,7 @@ pub fn put_invariant(
     statement: &str,
     f: &InvariantFields,
 ) -> Result<(i64, bool, Vec<&'static str>)> {
-    let tx = conn.unchecked_transaction()?;
+    let tx = write_transaction(conn)?;
     migrate(&tx)?;
     let existing: Option<(i64, [String; 4])> = tx
         .query_row(

@@ -475,7 +475,8 @@ const JOURNAL_MAGIC: [u8; 8] = [0xd9, 0xd5, 0x05, 0xf9, 0x20, 0xa1, 0x63, 0xd7];
 /// are checked first: a `-wal` or `-shm` file, which audit-mem never makes and
 /// which SQLite would open (and a `-shm` write) even for a read, is refused, and
 /// a `-journal`, left by a write that stopped, must be a regular file with one
-/// name that names no super-journal (`names_super_journal`).
+/// name that names no super-journal (`names_super_journal`). A journal another
+/// writer is deleting, with no name left, is not checked.
 fn database(wt: &Path, store: &Store, dir_md: &fs::Metadata) -> Result<Db, Stop> {
     let s = store.shown();
     let tail = if store.in_tree {
@@ -500,6 +501,7 @@ fn database(wt: &Path, store: &Store, dir_md: &fs::Metadata) -> Result<Db, Stop>
                     "{s} has a {suffix} file beside it, which audit-mem never makes{tail}"
                 )))
             }
+            Ok(md) if md.file_type().is_file() && md.nlink() == 0 => {}
             Ok(md) if !md.file_type().is_file() || md.nlink() != 1 => {
                 return Err(refuse(format!(
                     "{s}{suffix} is not a regular file with one name{tail}"

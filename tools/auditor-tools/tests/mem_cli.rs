@@ -2036,6 +2036,54 @@ fn put_finding_keeps_the_severity_and_title_it_replaces_and_regressions_lists_th
     assert_eq!(regs["truncated"], 0);
 }
 
+#[test]
+fn writers_that_meet_wait_for_each_other() {
+    let wt = store();
+    // Another writer holds the store's write lock while the calls start.
+    let holder =
+        rusqlite::Connection::open(wt.path(".audit-memory/audit.db")).expect("open the store");
+    holder
+        .execute_batch("BEGIN IMMEDIATE")
+        .expect("take the write lock");
+    let calls: Vec<_> = (0..6)
+        .map(|i| {
+            let sig = format!("sig{i}");
+            let args = [
+                "put-finding",
+                "--contract=1",
+                "--program-id",
+                P,
+                "--signature",
+                sig.as_str(),
+                "--root-cause",
+                "r",
+                "--title",
+                "t",
+                "--severity",
+                "3",
+            ];
+            Command::new(BIN)
+                .args(args)
+                .current_dir(&wt.dir)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("start audit-mem")
+        })
+        .collect();
+    std::thread::sleep(std::time::Duration::from_millis(2000));
+    holder.execute_batch("COMMIT").expect("let the lock go");
+    for call in calls {
+        let o = call.wait_with_output().expect("wait for audit-mem");
+        assert!(ok(&o).starts_with("OPEN "), "{}", stdout(&o));
+    }
+    let rows: i64 = holder
+        .query_row("SELECT count(*) FROM findings", [], |r| r.get(0))
+        .expect("count the findings");
+    assert_eq!(rows, 6);
+}
+
 /// audit-mem run from `wt` with `args`, waited for at most `limit`. Past it the
 /// test fails: first `pipe` is opened for writing, so that a git blocked opening
 /// it goes on, and the call is killed.
