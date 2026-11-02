@@ -74,6 +74,7 @@ confine_init() { # confine_init <tool> <installation root, physical> [<refusal s
   CONFINE_STATUS=${3:-64}
   CONFINE_HINT=""
   CONFINE_GIT_CHECKED=$'\n'
+  CONFINE_GIT_CHECKING=$'\n'
   IFS=$' \t\n'
   unset CDPATH BASH_ENV ENV
   LC_ALL=C
@@ -148,34 +149,62 @@ confine_git_wait() { # confine_git_wait <where> <value>: CONFINE_GIT_WHY for a f
   return 1
 }
 
+confine_git_unread() { # confine_git_unread <file>: CONFINE_GIT_WHY for a gitfile or commondir file these checks cannot read as git does
+  CONFINE_GIT_WHY="a .git file or commondir file holds a NUL byte or more than 16 KiB, so where git would look cannot be told: $(confine_text "$1")"
+}
+
 # confine_named_dir <file> <prefix>: sets CONFINE_NAMED to the directory a gitfile ("gitdir: <dir>") or a
 # commondir file names, as git reads it: the text after <prefix>, without its trailing line ends, relative
-# to the file's directory; status 1 when the file is not a regular file under 16 KiB with that prefix.
+# to the file's directory (a commondir of line ends alone names that directory). Status 1 when git takes
+# no directory from it (not a regular file it can read, no <prefix>, nothing after a gitfile's); 2 when it
+# holds a NUL byte or more than 16 KiB, which these checks do not read as git does.
 confine_named_dir() {
   local s
-  [ -f "$1" ] || return 1
+  [ -f "$1" ] && [ -r "$1" ] || return 1
   s=$(wc -c < "$1" 2>/dev/null) || return 1
   s=${s//[!0-9]/}
-  [ -n "$s" ] && [ "$s" -le 16384 ] || return 1
-  s=$(cat -- "$1" 2>/dev/null && printf x) || return 1
-  s=${s%x}
+  [ -n "$s" ] && [ "$s" -le 16384 ] || return 2
+  s=""
+  if IFS= read -r -d '' s 2>/dev/null < "$1"; then return 2; fi
   while :; do
     case "$s" in *$'\n'|*$'\r') s=${s%?} ;; *) break ;; esac
   done
   case "$s" in "$2"*) s=${s#"$2"} ;; *) return 1 ;; esac
+  [ -n "$s" ] || [ -z "$2" ] || return 1
   case "$s" in /*) ;; *) s=${1%/*}/$s ;; esac
   CONFINE_NAMED=$s
 }
 
+# confine_git_head <dir>: how git's discovery takes <dir>/HEAD (validate_headref in git's setup.c):
+# status 0 for a regular file whose text, to its first NUL within its first 255 bytes, is "ref:", blanks,
+# then refs/..., or starts with 40 hex digits; 2 for a symbolic link, which git takes when it points into
+# refs/ (where it points is not read here); 1 for anything else, which git does not take for a HEAD.
+confine_git_head() {
+  local h=""
+  [ ! -L "$1/HEAD" ] || return 2
+  [ -f "$1/HEAD" ] && [ -r "$1/HEAD" ] || return 1
+  IFS= read -r -d '' -n 255 h 2>/dev/null < "$1/HEAD"
+  case "$h" in
+    ref:*)
+      h=${h#ref:}
+      h=${h#"${h%%[![:space:]]*}"}
+      case "$h" in refs/*) return 0 ;; esac
+      return 1 ;;
+  esac
+  [ "${#h}" -ge 40 ] || return 1
+  case "${h:0:40}" in *[!0-9a-fA-F]*) return 1 ;; esac
+}
+
 # confine_git_includes <config file> <depth>: print the first include.path or includeIf.<condition>.path
 # value, in the file or in one it includes (to git's 10 levels), that names a named pipe or device; print
-# nothing when there is none. git lists the values, from / where it finds no repository, following none.
+# nothing when there is none. git lists the values, with no repository (--git-dir=/dev/null), following
+# none.
 confine_git_includes() {
   local f=$1 v t
   [ "$2" -le 10 ] && [ -f "$f" ] || return 0
   v=$(cat -- "$f" 2>/dev/null) || return 0
   case "$v" in *[iI][nN][cC][lL][uU][dD][eE]*) ;; *) return 0 ;; esac
-  hgit / config --file "$f" --no-includes -z --get-regexp '^include(if\..+)?\.path$' 2>/dev/null </dev/null |
+  hgit / --git-dir=/dev/null config --file "$f" --no-includes -z --get-regexp '^include(if\..+)?\.path$' 2>/dev/null </dev/null |
     while IFS= read -r -d '' v; do
       case "$v" in *$'\n'*) v=${v#*$'\n'} ;; *) continue ;; esac
       case "$v" in
@@ -192,23 +221,18 @@ confine_git_includes() {
     done
 }
 
-# confine_git_dir_files <git directory>: status 1 (CONFINE_GIT_WHY says why) when something in it, in its
-# common directory, or a file their config includes could stop git: a named pipe or device, a symbolic
-# link to one, or one an include names (confine_git_includes). A common directory without objects and
-# refs is no repository's, and git reads nothing there.
+# confine_git_dir_files <git directory> <common directory>: status 1 (CONFINE_GIT_WHY says why) when
+# something in either, or a file their config includes, could stop git: a named pipe or device, a
+# symbolic link to one, or one an include names (confine_git_includes).
 confine_git_dir_files() {
-  local g=$1 c d f v odd
-  c=$g
-  if confine_named_dir "$g/commondir" '' && [ -d "$CONFINE_NAMED/objects" ] && [ -d "$CONFINE_NAMED/refs" ]; then
-    c=$CONFINE_NAMED
-  fi
+  local g=$1 c=$2 d f v odd
   for d in "$g" "$c"; do
     [ -d "$d" ] || continue
     odd=$(find "$d" \( -type p -o -type b -o -type c \) -print 2>/dev/null)
     [ -z "$odd" ] || confine_git_wait "is in the git directory" "$d" || return 1
     odd=$(find "$d" -type l \( -exec test -p {} \; -o -exec test -b {} \; -o -exec test -c {} \; \) -print 2>/dev/null)
     [ -z "$odd" ] || confine_git_wait "is named by a link in the git directory" "$d" || return 1
-    [ "$c" != "$g" ] || break
+    [ ! "$c" -ef "$g" ] || break
   done
   for f in "$c/config" "$g/config.worktree"; do
     v=$(confine_git_includes "$f" 0)
@@ -216,35 +240,81 @@ confine_git_dir_files() {
   done
 }
 
-# confine_git_check <dir>: status 1 (CONFINE_GIT_WHY says why) when git, run in <dir>, would wait on a
-# file for good. It looks as git's discovery does, from <dir> up to CONFINE_CEILING: at the HEAD and
-# commondir git opens in each .git (or the directory a .git file names) and in each directory it tries as
-# a bare repository, then at everything confine_git_dir_files checks in the first one that is a
-# repository. A directory that passed is not checked again for the same ceiling in the same shell.
-confine_git_check() {
-  local p=$1 key d
-  case "$p" in /*) ;; *) p=$CONFINE_WT/$p ;; esac
-  key=$p$'\t'${CONFINE_CEILING-}$'\n'
-  case "${CONFINE_GIT_CHECKED-}" in *$'\n'"$key"*) return 0 ;; esac
+# confine_git_candidate <dir>: what git's discovery makes of <dir> as a git directory (is_git_directory):
+# status 1 (CONFINE_GIT_WHY says why) for a named pipe or device as its HEAD or commondir, or for what
+# confine_git_dir_files finds; 0 when git takes it for a repository, once checked; 3 when git passes it
+# over, or may (a HEAD that is a link: checked as well, and the walk goes on); 4 when git stops there,
+# unable to read its commondir. git opens HEAD first, and commondir only past a HEAD it takes; a
+# repository has objects and refs in its common directory.
+confine_git_candidate() {
+  local g=$1 c head
+  if confine_special "$g/HEAD"; then confine_git_wait "is in the git directory" "$g"; return 1; fi
+  confine_git_head "$g"
+  head=$?
+  [ "$head" -ne 1 ] || return 3
+  if confine_special "$g/commondir"; then confine_git_wait "is in the git directory" "$g"; return 1; fi
+  c=$g
+  if [ -e "$g/commondir" ]; then
+    confine_named_dir "$g/commondir" ''
+    case $? in
+      0) c=$CONFINE_NAMED ;;
+      1) return 4 ;;
+      *) confine_git_unread "$g/commondir"; return 1 ;;
+    esac
+  fi
+  [ -x "$c/objects" ] && [ -x "$c/refs" ] || return 3
+  confine_git_dir_files "$g" "$c" || return 1
+  [ "$head" -eq 0 ] || return 3
+}
+
+# confine_git_walk <absolute dir>: confine_git_check's walk, the way git's discovery goes (setup.c): in
+# each directory from <dir> up to CONFINE_CEILING (which, as for git, is not looked at), first .git, then
+# the directory itself as a bare repository, up to the first git takes. A .git file names the directory
+# to look at instead, and git goes no further whatever it finds there; a .git that is neither a file
+# nor a directory is passed over.
+confine_git_walk() {
+  local p=$1 g
   while :; do
-    for d in "$p/.git" "$p"; do
-      if [ "$d" = "$p/.git" ] && [ -f "$d" ]; then confine_named_dir "$d" 'gitdir: ' && d=$CONFINE_NAMED || continue; fi
-      [ -d "$d" ] || continue
-      if confine_special "$d/HEAD" || confine_special "$d/commondir"; then
-        confine_git_wait "is in the git directory" "$d" || return 1
-      fi
-      if [ -e "$d/HEAD" ] && { [ "$d" != "$p" ] || { [ -d "$d/objects" ] && [ -d "$d/refs" ]; }; }; then
-        confine_git_dir_files "$d" || return 1
-        CONFINE_GIT_CHECKED=${CONFINE_GIT_CHECKED-}$key
-        return 0
-      fi
+    if [ -f "$p/.git" ]; then
+      confine_named_dir "$p/.git" 'gitdir: '
+      case $? in
+        0) confine_git_candidate "$CONFINE_NAMED"; [ "$?" -ne 1 ] || return 1 ;;
+        2) confine_git_unread "$p/.git"; return 1 ;;
+      esac
+      return 0
+    fi
+    for g in "$p/.git" "$p"; do
+      [ -d "$g" ] || continue
+      confine_git_candidate "$g"
+      case $? in
+        0|4) return 0 ;;
+        1) return 1 ;;
+      esac
     done
-    case "$p" in /|'') break ;; esac
+    [ "$p" != / ] || return 0
     p=${p%/*}
     [ -n "$p" ] || p=/
-    [ -z "${CONFINE_CEILING-}" ] || [ "$p" != "$CONFINE_CEILING" ] || break
+    [ -z "${CONFINE_CEILING-}" ] || [ "$p" != "$CONFINE_CEILING" ] || return 0
   done
-  CONFINE_GIT_CHECKED=${CONFINE_GIT_CHECKED-}$key
+}
+
+# confine_git_check <dir>: status 1 (CONFINE_GIT_WHY says why) when git, run in <dir>, would wait on a
+# file for good: what it opens on its way (confine_git_walk), in each candidate the HEAD, the commondir
+# and, in each that may be a repository, everything confine_git_dir_files checks. A directory that passed
+# is not checked again for the same ceiling in the same shell, nor while its own check is under way (the
+# git call that check makes reads no repository).
+confine_git_check() {
+  local p=$1 key busy rc
+  case "$p" in /*) ;; *) p=$CONFINE_WT/$p ;; esac
+  key=$p$'\t'${CONFINE_CEILING-}$'\n'
+  busy=${CONFINE_GIT_CHECKING:-$'\n'}
+  case "${CONFINE_GIT_CHECKED-}$busy" in *$'\n'"$key"*) return 0 ;; esac
+  CONFINE_GIT_CHECKING=$busy$key
+  confine_git_walk "$p"
+  rc=$?
+  CONFINE_GIT_CHECKING=$busy
+  [ "$rc" -ne 0 ] || CONFINE_GIT_CHECKED=${CONFINE_GIT_CHECKED-}$key
+  return "$rc"
 }
 
 confine_git_files() { # confine_git_files <dir>: refuse where confine_git_check finds a file git would wait on

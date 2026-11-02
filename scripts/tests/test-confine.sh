@@ -452,13 +452,22 @@ lib "$RW" 'confine_repo linkedwt R'
 check "... and refused once that common directory holds a symbolic link" refused 'R has a symbolic link in its git directory: linkedwt'
 rm "$RW/main/.git/refs/heads/elsewhere"
 # Named pipes: git opens them with a blocking open and waits for good, so each is refused before git
-# starts. lib_bounded gives a run 10 s, then reads 142 and opens the pipe for writing, so a git still
-# waiting there (as before this check existed) goes on and ends.
-lib_bounded() { # lib_bounded <pipe> <lib arguments>...
+# starts. bounded gives a run 10 s, then reads 142 and opens the pipe for writing, so a git still
+# waiting there (as before this check existed) goes on and ends. script runs one of the entry points
+# that start git, from a directory, under the first shell.
+script() { # script <dir> <script> <arg>...: scripts/<script>, with its output in $T/out and $T/err and its status in RC
+  local dir=$1 s=$2
+  shift 2
+  (cd "$dir" && "${SHELLS[0]}" "$ROOT/scripts/$s" "$@") >"$T/out" 2>"$T/err" </dev/null
+  RC=$?
+}
+refused_by() { [ "$RC" = 64 ] && [ "$(sed -n '$=' "$T/err")" = 1 ] && grep -q "^$1: refused: " "$T/err"; }
+lib_bounded() { local f=$1; shift; bounded "$f" lib "$@"; } # lib_bounded <pipe> <lib arguments>...
+bounded() { # bounded <pipe> <command>...: the command (lib or script), given 10 s
   local f=$1 pid n=0
   shift
   rm -f "$T/rc"
-  ( lib "$@"; printf '%s' "$RC" > "$T/rc" ) &
+  ( "$@"; printf '%s' "$RC" > "$T/rc" ) &
   pid=$!
   while kill -0 "$pid" 2>/dev/null && [ "$n" -lt 100 ]; do sleep 0.1; n=$((n + 1)); done
   if kill -0 "$pid" 2>/dev/null; then
@@ -504,6 +513,35 @@ if mkfifo "$T/fifo-probe" 2>/dev/null; then
     refused "a named pipe or device is in the git directory, and git would wait on it for good: $(shown "$T/above/.git")"
   lib_bounded "$T/above/.git/HEAD" "$T/above/sub" 'confine_tracked x; printf "[%s]" "$?"'
   check "... and confine_tracked fails closed (2) there" out_is '[2]'
+  # A .git that git walks past on its way up (a HEAD alone; a HEAD it does not take, beside objects and
+  # refs) does not end the check either: it goes on, as git does, to the repository above.
+  mkdir -p "$T/above/sub/dec/.git" "$T/above/sub/bad/.git/objects" "$T/above/sub/bad/.git/refs" "$T/above/sub/gf/gd"
+  printf 'ref: refs/heads/main\n' > "$T/above/sub/dec/.git/HEAD"
+  : > "$T/above/sub/bad/.git/HEAD"
+  for d in dec bad; do
+    lib_bounded "$T/above/.git/HEAD" "$T/above/sub/$d" 'CONFINE_CEILING="" hgit "$CONFINE_WT" rev-parse --is-inside-work-tree'
+    check "... and from below a .git that git walks past ($d)" \
+      refused "a named pipe or device is in the git directory, and git would wait on it for good: $(shown "$T/above/.git")"
+  done
+  lib_bounded "$T/above/.git/HEAD" "$T/above/sub/dec" 'confine_tracked x; printf "[%s]" "$?"'
+  check "... where confine_tracked fails closed (2) too" out_is '[2]'
+  bounded "$T/above/.git/HEAD" script "$T/above/sub/dec" rundir.sh new audit
+  check "rundir.sh new audit refuses there at once" refused_by rundir
+  bounded "$T/above/.git/HEAD" script "$T/above/sub/dec" preflight.sh
+  check "... and so does preflight.sh" refused_by preflight
+  # A .git file is where git stops, whatever the directory it names holds: git runs, and fails on its own.
+  printf 'ref: refs/heads/main\n' > "$T/above/sub/gf/gd/HEAD"
+  printf 'gitdir: gd\n' > "$T/above/sub/gf/.git"
+  lib_bounded "$T/above/.git/HEAD" "$T/above/sub/gf" 'CONFINE_CEILING="" hgit "$CONFINE_WT" rev-parse --is-inside-work-tree'
+  check "... while below a .git file, where git stops, git runs and fails on its own" test "$RC" = 128
+  # The same for a repository inside the working directory, through git-ro.sh --repo.
+  mkrepo "$RW/up"; put "$RW/up" sub/f x; commit "$RW/up" -m x
+  rm "$RW/up/.git/HEAD"; mkfifo "$RW/up/.git/HEAD"
+  mkdir "$RW/up/sub/.git"
+  printf 'ref: refs/heads/main\n' > "$RW/up/sub/.git/HEAD"
+  bounded "$RW/up/.git/HEAD" script "$RW" git-ro.sh --repo up/sub log --oneline
+  check "git-ro.sh --repo refuses a repository below one whose HEAD is a named pipe, past a .git git walks past" \
+    sh -c "[ '$RC' = 64 ] && [ \"\$(cat '$T/err')\" = 'git-ro: refused: a named pipe or device is in the git directory, and git would wait on it for good: $(shown "$RW/up/.git")' ]"
 else
   skp "mkfifo is not available: the named pipe cases"
 fi
