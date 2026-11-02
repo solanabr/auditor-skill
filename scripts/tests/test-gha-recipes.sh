@@ -130,8 +130,8 @@ expected() {
     R3) echo "03 12 13 17 25 26 27 28 46 47 48 49 74" ;;
     R4) echo "05 06 21 29 30 41" ;;
     R5) echo "06 07 15" ;;
-    R6) echo "05 07 08 14 15 16 20 31 32 50 75" ;;
-    R7) echo "05 07 11 12 15 18 19 20 21 22 23 24 51 52 53 61 62 63 70 71 102 103" ;;
+    R6) echo "05 07 08 14 15 16 20 31 32 50 75 105" ;;
+    R7) echo "05 07 11 12 15 18 19 20 21 22 23 24 51 52 53 61 62 63 70 71 102 103 105" ;;
     R8) echo "01 08 11 14 33 34 54 57 67 68 72 73" ;;
     R9) echo "01 05 07 08 11 12 15 18 19 20 21 22 23 24 35 36 38 39 42 43 44 45 51 52 53 60 61 62 63 70 71 76 98 107" ;;
     K116-1) echo "01 08 11 14 33 34 54 57 67 68 72 73" ;;
@@ -148,6 +148,7 @@ expected() {
 # whole in expected(), and its near misses are in neither.
 LINES="R7 102-input-and-matrix-ref.yml 19 29
 R7 actions/103-input-ref-composite-action.yml 13
+R7 105-index-syntax-refs.yml 20 30 37 38
 R9 76-pin-forms.yml 11 12 13 14 16 17 19
 R9 98-pin-and-runner-yaml-extension.yaml 11
 R9 107-pin-key-spellings.yml 14 15
