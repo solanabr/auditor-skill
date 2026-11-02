@@ -21,9 +21,9 @@
 #       pre-approve at all (an entry point scripts/entrypoints.txt lists, with the words it names, or a read
 #       tool, Task, a run-directory edit or an auditor skill) is scripts/check-entrypoints.sh's check.
 #   C3  Every call of audit-scan carries --contract=1 as its first argument, and every call of audit-mem
-#       --contract=1 right after its subcommand: in the rules, in rooted calls, and in code spans that start
-#       with the bare name and pass arguments (a span naming only the tool, or the tool and a subcommand, is a
-#       mention).
+#       --contract=1 right after its subcommand: in the rules, in rooted calls, and in code spans and code
+#       lines that start with the bare name and pass arguments (a span naming only the tool, or the tool and a
+#       subcommand, is a mention), in the bodies and in the corpus C6 reads alike.
 #   C4  Every command, and the root SKILL.md, runs preflight.sh as step 0: the first entry point its body names
 #       is "<root>/scripts/preflight.sh", with no arguments, in a paragraph that starts "0. **Preflight" (in the
 #       root SKILL.md, "**Step 0 — Preflight") and says that a refusal, and a call that is denied, stop the run;
@@ -361,6 +361,13 @@ def marker(check_file, n, tool, rest, where):
     if tool == "audit-mem" and len(words) >= 1 and (len(words) < 2 or words[1] != "--contract=1"):
         finding("C3", check_file, n, "audit-mem %s without --contract=1 right after its subcommand: %s" % (where, rest[:120]))
 
+def bare(check_file, n, seg):
+    """C3 for a span or code line that starts with the tool's bare name and passes arguments."""
+    words = seg.split()
+    if words and words[0] in ("audit-scan", "audit-mem") and "${" not in seg:
+        if (words[0] == "audit-scan" and len(words) >= 2) or (words[0] == "audit-mem" and len(words) >= 3):
+            marker(check_file, n, words[0], " ".join(words[1:]), "call")
+
 # The plugin's agents, by the name their frontmatter gives, and the fork skills, by the agent they run as.
 agents, forks = {}, {}
 for d, pattern in (("agents", None), ("skills", None)):
@@ -476,6 +483,9 @@ def corpus(f, body, first):
                 what.append("a backtick in the call")
             if what:
                 finding("C6", f, n, "%s: %s" % ("; ".join(what), seg[:160]))
+            elif not lead and path.startswith(RELEASE):
+                marker(f, n, path[len(RELEASE):], seg[m.end():], "call")
+        bare(f, n, seg)
         relative(f, n, seg, fenced, CORPUS_ROOT)
 
 for f in files:
@@ -526,10 +536,7 @@ for f in files:
     for n, seg, para, ptext, end, fenced in segments(body, first):
         if not (fenced and seg.startswith("#")):
             relative(f, n, seg, fenced, "${%s}" % var)
-        words = seg.split()
-        if words and words[0] in ("audit-scan", "audit-mem") and "${" not in seg:
-            if (words[0] == "audit-scan" and len(words) >= 2) or (words[0] == "audit-mem" and len(words) >= 3):
-                marker(f, n, words[0], " ".join(words[1:]), "call")
+        bare(f, n, seg)
         if re.search(r'<auditor-skill root>/|\$CLAUDE_(PLUGIN_ROOT|SKILL_DIR)\b', seg):
             finding("C1", f, n, "the root is written so that Claude Code does not fill it in: %s" % seg[:120])
         for m in ROOTED.finditer(seg):
@@ -751,7 +758,11 @@ corp references/r/good.md "# Good" \
   '```bash' "\"$Q/scripts/ok.sh\" check audit_1 2>/dev/null | wc -l" '# scripts/ok.sh check x, in a comment' '```' \
   '```json' "{\"command\": \"$Q/scripts/ok.sh check x\"}" '```' \
   '```bash' 'ROOT="<auditor-skill root>"' 'x=$("$ROOT/scripts/ok.sh" check audit_1)' '```' \
-  "> \`\"$Q/scripts/ok.sh\" check x\` in a quote, and \`\"$Q/templates/poc/run.sh\" --crate audit_1/poc/F-1\`."
+  "> \`\"$Q/scripts/ok.sh\" check x\` in a quote, and \`\"$Q/templates/poc/run.sh\" --crate audit_1/poc/F-1\`." \
+  "Scan with \`\"$Q/tools/auditor-tools/target/release/audit-scan\" --contract=1 . --workflows .github/workflows --out audit_<n>/prescan.json\`," \
+  "or \`audit-scan --contract=1 . --out audit_<n>/prescan.json\`; \`audit-mem warm --contract=1 --program-id <id>\`; \`audit-scan\` and \`audit-mem warm\` alone are names." \
+  '```bash' "\"$Q/tools/auditor-tools/target/release/audit-mem\" regressions --contract=1 --program-id <id>" '# audit-scan --workflows .github/workflows, in a comment' '```' \
+  '```json' '{"command": "audit-scan --workflows .github/workflows"}' '```'
 corp references/r/c6-bash.md "Run \`bash \"$Q/scripts/ok.sh\" new audit\`."
 corp references/r/c6-cd.md '```bash' "cd sub && \"$Q/scripts/ok.sh\" check x" '```'
 corp references/r/c6-env.md "Run \`FOO=1 \"$Q/scripts/ok.sh\" new\`."
@@ -764,6 +775,13 @@ corp references/r/c6-backtick.md '```' "\"$Q/scripts/ok.sh\" check \`cat x\`" '`
 corp references/r/c6-quoted-fence.md '> ```sh' "> bash \"$Q/scripts/ok.sh\" check x" '> ```'
 corp references/r/c6-wrapped.md "Run \`bash" "\"$Q/scripts/ok.sh\" new\` across a line break."
 corp references/r/c6-tool.md "Run \`\"$Q/tools/auditor-tools/target/release/audit-mem\" warm --contract=1 --db \$DB\`."
+# C3 in the corpus: a call of audit-scan or audit-mem without its marker, rooted or by its bare name
+corp references/r/c3-span.md "Cross-check with \`audit-scan --workflows .github/workflows\` first."
+corp references/r/c3-late.md "Run \`audit-scan . --contract=1 --out audit_<n>/prescan.json\`."
+corp references/r/c3-rooted.md "Run \`\"$Q/tools/auditor-tools/target/release/audit-scan\" . --out audit_<n>/prescan.json\`."
+corp references/r/c3-mem-fenced.md '```bash' "\"$Q/tools/auditor-tools/target/release/audit-mem\" warm --program-id <id>" '```'
+corp docs/c3-bare-fenced.md '```sh' 'audit-mem init --db audit_1/audit-mem.db' '```'
+corp templates/t/c3-mem-order.md "Run \`audit-mem --contract=1 regressions --program-id <id>\`."
 corp docs/c6.md "Run \`sh \"$Q/scripts/ok.sh\" new\`."
 corp FULL-AUDIT.md '```bash' "X=1 \"$Q/scripts/ok.sh\" check x" '```'
 corp references/r/c7-span.md "Run \`scripts/ok.sh new audit\`."
@@ -817,6 +835,8 @@ for c in bash cd env env-word dollar unquoted half-quoted plugin-root backtick q
   expect "references/r/c6-$c.md" C6
 done
 expect docs/c6.md C6; expect FULL-AUDIT.md C6
+for c in span late rooted mem-fenced; do expect "references/r/c3-$c.md" C3; done
+expect docs/c3-bare-fenced.md C3; expect templates/t/c3-mem-order.md C3
 for c in span dot bash quoted fenced template; do expect "references/r/c7-$c.md" C7; done
 expect templates/t/c7-cd.md C7; expect commands/c7-relative.md C7; expect agents/c7.md C7
 line=$(check "$fx" references/r/c6-large.md | cut -f2)
