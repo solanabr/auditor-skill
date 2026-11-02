@@ -25,7 +25,10 @@
 #     repository's own config can set a lower top level), the same entries in that parent's own .claude
 #     and .mcp.json. Outside a repository no parent is read.
 #     The user's own ~/.claude (or $CLAUDE_CONFIG_DIR) is user configuration and is skipped there.
-# The refusal names the first such path in byte order, parents first.
+# The refusal names the first such path in byte order, parents first. A name counts as the filesystem
+# opens it: where names are folded (APFS and HFS+ fold case and normalize Unicode), a name holding a byte
+# outside printable ASCII can open as one of the names above, .claude/ſkills (U+017F) as .claude/skills
+# or a Kelvin sign as k, and then counts as that name, shown as the tree spells it.
 #
 # It also refuses:
 #   - a symbolic link in the working directory, outside .git, to a directory outside it or inside a .git
@@ -71,6 +74,9 @@ TESTS=(-iname .claude -type l
   -o -ipath '*/.claude/scheduled_tasks.json'
   -o -ipath '*/.claude/settings.json' -o -ipath '*/.claude/settings.local.json'
   -o \( -iname claude.md -o -iname claude.local.md -o -iname agents.md \) ! -type d)
+# A name holding a byte outside printable ASCII, which a filesystem that folds names can open under one of
+# the names above; folded() finds out which.
+ODD=(-name '*[![:print:]]*')
 
 refuse() { confine_refuse "$*"; }   # refuse <words>...: one line, the words joined by spaces
 
@@ -110,12 +116,43 @@ settle() {
   if [ -z "$HIT" ] || [[ "$1" < "$HIT" ]]; then HIT=$1; fi
 }
 
-# matches <start> <find option>...: the matches under <start>, NUL-separated, then a status=<find's
-# status> record (a found path always starts with <start>, so it cannot pose as one).
+# folded <shown path> <absolute path>: an entry whose name holds a byte outside printable ASCII. Where
+# the filesystem folds names (APFS and HFS+ fold case and normalize Unicode), it opens such an entry
+# under an ASCII name: .claude/ſkills (U+017F) as .claude/skills, a Kelvin sign as k. Each name the
+# scans look for in the entry's directory is looked up there; when the lookup lands on this entry, the
+# entry is settled as that name would be, by the same tests, and shown as the tree spells it. A .claude
+# found that way is a hit unless it is a file: no scan reads a directory under that name.
+folded() {
+  local shown=$1 p=$2 d=${2%/*} n names fits
+  names='.claude .mcp.json CLAUDE.md CLAUDE.local.md AGENTS.md'
+  case "${d##*/}" in
+    .[cC][lL][aA][uU][dD][eE])
+      names="$names skills commands agents hooks output-styles workflows rules scheduled_tasks.json"
+      names="$names settings.json settings.local.json" ;;
+  esac
+  for n in $names; do
+    # the same file, or, for a link that leads nowhere, a lookup that lands on such a link
+    if [ "$d/$n" -ef "$p" ] || { [ -L "$p" ] && [ ! -e "$p" ] && [ -L "$d/$n" ] && [ ! -e "$d/$n" ]; }; then
+      if [ "$n" = .claude ]; then
+        fits=''
+        if [ -L "$p" ] || [ -d "$p" ]; then fits=y; fi
+      else
+        fits=$(find "$d/$n" -prune \( "${TESTS[@]}" \) -print 2>/dev/null) ||
+          refuse "find cannot read $(confine_text "$shown"), so it cannot be checked for Claude Code project config"
+      fi
+      [ -z "$fits" ] || settle "$shown" "$d/$n"
+      return 0
+    fi
+  done
+}
+
+# matches <start> <find option>...: the matches under <start>, and the names with a byte outside
+# printable ASCII (for folded()), NUL-separated, then a status=<find's status> record (a found path
+# always starts with <start>, so it cannot pose as one).
 matches() {
   local start=$1
   shift
-  find "$start" "$@" \( -name .git -type d -prune \) -o \( "${TESTS[@]}" \) -print0 2>/dev/null
+  find "$start" "$@" \( -name .git -type d -prune \) -o \( "${TESTS[@]}" -o "${ODD[@]}" \) -print0 2>/dev/null
   printf 'status=%s\0' "$?"
 }
 
@@ -192,6 +229,7 @@ parent() {
   while IFS= read -r -d '' p; do
     case "$p" in status=*) st=${p#status=}; continue ;; esac
     name=${p##*/}
+    case "$name" in *[![:print:]]*) folded "$up$name" "$p"; continue ;; esac
     if case "$name" in .[cC][lL][aA][uU][dD][eE]) true ;; *) false ;; esac; then
       if confine_phys "$p"; then
         case "$own" in *" $CONFINE_PHYS "*) continue ;; esac
@@ -200,7 +238,10 @@ parent() {
         st2=''
         while IFS= read -r -d '' q; do
           case "$q" in status=*) st2=${q#status=}; continue ;; esac
-          settle "$up$name/${q##*/}" "$q"
+          case "${q##*/}" in
+            *[![:print:]]*) folded "$up$name/${q##*/}" "$q" ;;
+            *) settle "$up$name/${q##*/}" "$q" ;;
+          esac
         done < <(matches "$p" -mindepth 1 -maxdepth 1)
         [ "$st2" = 0 ] ||
           refuse "find cannot read $(confine_text "$up$name"), so it cannot be checked for Claude Code project config"
@@ -208,7 +249,8 @@ parent() {
       fi
     fi
     settle "$up$name" "$p"
-  done < <(find "$a" -mindepth 1 -maxdepth 1 \( \( "${TESTS[@]}" \) -o \( -iname .claude -type d \) \) -print0 2>/dev/null
+  done < <(find "$a" -mindepth 1 -maxdepth 1 \( \( "${TESTS[@]}" \) -o "${ODD[@]}" -o \( -iname .claude -type d \) \) \
+             -print0 2>/dev/null
            printf 'status=%s\0' "$?")
   [ "$st" = 0 ] ||
     refuse "find cannot read $up, a parent of the working directory, so it cannot be checked for Claude Code project config"
@@ -228,7 +270,10 @@ done
 st=''
 while IFS= read -r -d '' p; do
   case "$p" in status=*) st=${p#status=}; continue ;; esac
-  settle "${p#./}" "$WT/${p#./}"
+  case "${p##*/}" in
+    *[![:print:]]*) folded "${p#./}" "$WT/${p#./}" ;;
+    *) settle "${p#./}" "$WT/${p#./}" ;;
+  esac
 done < <(matches .)
 [ -z "$HIT" ] ||
   refuse "the working tree ships Claude Code project config ($(confine_text "$HIT")), which Claude Code may load" \

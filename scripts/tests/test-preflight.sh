@@ -3,7 +3,7 @@
 # refused shape, links, letter cases, depths, the settings allowlist, the .git directories it skips), its
 # arguments and the entry limit, the notes, the parents up to the repository root (a core.worktree in the
 # repository's own config included) and the user's own configuration directory, linked worktrees and
-# submodule checkouts, a large tree, trees find cannot read,
+# submodule checkouts, names the filesystem folds, a large tree, trees find cannot read,
 # a missing jq, control characters in a path, and the installation or PATH entries inside the working
 # directory. Every run goes under each bash on the machine (/bin/bash and the bash running this suite,
 # when they differ) and must print the same under each. Needs git and jq; no network. Usage (from the
@@ -355,6 +355,66 @@ if git init -q "$M/child" && git -C "$M/child" add c.txt && gitc -C "$M/child" c
   check "... and a directory in it" just_ok
 else
   skp "git submodule add is not available"
+fi
+
+# =================================================================================================
+# Names the filesystem folds. APFS and HFS+ fold case and normalize Unicode: .claude/ſkills (U+017F, long
+# s) opens as .claude/skills, a Kelvin sign (U+212A) as k, the ligatures U+FB06 and U+FB02 as st and fl.
+# Where the filesystem holding the test directory folds them, each counts as the name it opens as; where
+# it does not (most Linux filesystems), it is another name, which Claude Code never opens, and passes.
+# =================================================================================================
+LS=$(printf '\305\277') KS=$(printf '\342\204\252') ST=$(printf '\357\254\206') FL=$(printf '\357\254\202')
+U=$(newdir)
+mkdir "$U/a$LS"
+FOLDS=no
+[ -d "$U/as" ] && FOLDS=yes
+echo "# the filesystem under $T opens a${LS} as as: $FOLDS"
+# folds <name> <where names fold: ships:<path>, note:<path> or ok> <entry>...: a case in a new directory
+folds() {
+  local name=$1 want=$2 C
+  shift 2
+  C=$(newdir) && build "$C" "$@" || { ko "$name: the fixture cannot be built"; return; }
+  run "$C"
+  if [ "$FOLDS" = no ]; then check "$name (not folded here, so another name)" just_ok; return; fi
+  case "$want" in
+    ships:*) check "$name" ships "${want#ships:}" ;;
+    note:*) check "$name" test "$RC:$(cat "$T/out")" = "0:$(note "${want#note:}")
+$OK_LINE" ;;
+    *) check "$name" just_ok ;;
+  esac
+}
+folds "a long s for the s of .claude/skills" "ships:.claude/${LS}kills" "d:.claude/${LS}kills/x"
+folds "a Kelvin sign for the k of .claude/skills" "ships:.claude/s${KS}ills" "d:.claude/s${KS}ills/x"
+folds "... of .claude/hooks" "ships:.claude/hoo${KS}s" "d:.claude/hoo${KS}s"
+folds "a long s in .claude/agents, as a link that leads nowhere" "ships:.claude/agent${LS}" "l:.claude/agent${LS}=missing"
+folds "the st ligature in .claude/output-styles" "ships:.claude/output-${ST}yles" "d:.claude/output-${ST}yles/x"
+folds "the fl ligature in .claude/workflows" "ships:.claude/work${FL}ows" "d:.claude/work${FL}ows/x"
+folds "a long s in .claude/scheduled_tasks.json" "ships:.claude/${LS}cheduled_tasks.json" "f:.claude/${LS}cheduled_tasks.json"
+folds "a long s in .mcp.json" "ships:.mcp.j${LS}on" "j:.mcp.j${LS}on={}"
+folds "... at depth" "ships:a/b/.mcp.j${LS}on" "f:a/b/.mcp.j${LS}on"
+folds "a long s in .claude/settings.json with hooks" "ships:.claude/${LS}ettings.json" \
+  "j:.claude/${LS}ettings.json={\"hooks\":{}}"
+folds "... and in settings.local.json with permissions" "ships:.claude/setting${LS}.local.json" \
+  "j:.claude/setting${LS}.local.json={\"permissions\":{\"allow\":[\"Bash\"]}}"
+folds "... while one with allowed keys passes, as settings.json does" ok "j:.claude/${LS}ettings.json={\"model\":\"x\"}"
+folds "a nested .claude/skills" "ships:sub/deeper/.claude/${LS}kills" "d:sub/deeper/.claude/${LS}kills/x"
+folds "a file named as skills passes, as a file named skills does" ok "f:.claude/${LS}kills"
+folds "an AGENTS.md so spelled gets a note" "note:AGENT${LS}.md" "f:AGENT${LS}.md"
+folds "... and so does .claude/rules" "note:.claude/rule${LS}" "d:.claude/rule${LS}"
+folds "names that open as no name preflight looks for pass" ok "f:caf$(printf '\303\251').txt" "d:.claude/note${LS}" \
+  "f:.claude/${LS}kill" "d:docs/${LS}kills"
+Q2=$(newdir)
+build "$Q2" d:pkg/sub "d:.claude/${LS}kills/x" "f:AGENT${LS}.md"
+git init -q "$Q2"
+run "$Q2/pkg/sub"
+if [ "$FOLDS" = yes ]; then
+  check "a parent's .claude/skills so spelled is refused" above "../../.claude/${LS}kills"
+  rm -rf "$Q2/.claude"
+  run "$Q2/pkg/sub"
+  check "... and a parent's AGENTS.md so spelled gets a note" test "$RC:$(cat "$T/out")" = "0:$(note "../../AGENT${LS}.md")
+$OK_LINE"
+else
+  check "a parent's names so spelled are other names here, and pass" just_ok
 fi
 
 # =================================================================================================
