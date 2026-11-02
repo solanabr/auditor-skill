@@ -84,7 +84,7 @@ grep -rlE --include='*.yml' --include='*.yaml' -e '^[ 	]*-?[ 	]*(issue_comment|p
 echo 'second list: files under .github/ that mention author_association'
 grep -rl --include='*.yml' --include='*.yaml' '^[][	 !"$%&'\''()*+,./0123456789:;<=>?@^_`abcdefghijklmnopqrstuvwxyz{|}~ABCDEFGHIJKLMNOPQRSTUVWXYZ-]*author_association' .github/
 ```
-- Read each file in the first list and not in the second: it has one of these triggers and no line that mentions `author_association` after nothing but printable ASCII other than `#` (so not inside a comment)
+- Read each file in the first list and not in the second: it has one of these triggers and no line that mentions `author_association` after nothing but printable ASCII other than `#` and `\` (so not inside a comment)
 - Run `find .github -name '*[[:cntrl:]]*'` too: a file or directory name holding a newline can forge lines in both lists, so any output means reading every workflow
 - ✅ PASS: Every privileged job on these triggers gates on the triggering object's own `author_association`, paired per event
 - ❌ FAIL: A privileged job starts on a mention or command alone, or reads the opener's association on a comment event. Full procedure: KV-139
