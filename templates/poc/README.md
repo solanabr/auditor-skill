@@ -86,6 +86,10 @@ directory under `$TMPDIR` (printed; `--keep`, or `KEEP_POC_BUILD=1` for `./run.s
 keeps it) and built there with the toolchain pinned, so the target's `.cargo/config*`
 and `rust-toolchain*` never apply. Refused before anything compiles, in either mode:
 a symbolic link, a `.cargo/` directory or a `rust-toolchain*` file in the crate;
+a version manager's file in the crate (`.tool-versions`, `.python-version`,
+`.prototools`, and `mise.toml` with mise's other config files and directories, from
+which an asdf, mise, pyenv or proto shim picks the `cargo`, `rustc` or `python3` it
+runs);
 build-time code of the crate's own — a build script (`build = false` turns one off), a
 proc-macro package, a `Cargo.toml` inside the crate that is not a member of its
 workspace, a `[patch]` or `[replace]` table — so check generated code into the crate

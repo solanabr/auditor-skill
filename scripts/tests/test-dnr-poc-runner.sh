@@ -46,8 +46,9 @@
 #   * the deployed-hotfix check holds only with its positive control: a legitimate
 #     call that goes through on the same bytes and changes the account;
 #   * where the crate builds (always a scratch copy outside the target tree with a
-#     pinned toolchain; a crate holding a symbolic link, .cargo/, rust-toolchain* or
-#     tests/fixtures/<crate>.so is refused; BPF_OUT_DIR is cleared; an inherited
+#     pinned toolchain; a crate holding a symbolic link, .cargo/, rust-toolchain*, a
+#     version manager's file or tests/fixtures/<crate>.so is refused; run.sh starts
+#     every python3 of its own from /; BPF_OUT_DIR is cleared; an inherited
 #     CARGO_TARGET_DIR is honoured), and the exit codes (a failed build is 3, a failed
 #     verdict 1/2; a refusal prints one blocker line; a run that stops anywhere else,
 #     an unset variable included, exits 3);
@@ -681,8 +682,8 @@ line="$(grep -n -m 1 '^   non-registry code: ' "$T/out")"; okline="$(grep -n -m 
 code="$(gate "$T/inc" "$NATIVE" "$VULN" SHIM_FAIL=exploit SHIM_MARKERS="exploit:attempted exploit:failed exploit:loaded")"
 [ "$code" = 1 ] && grep -q '^   non-registry code: none' "$T/out" && ok "a verdict line also comes after the non-registry line" || bad "non-registry line on a verdict: exit $code"
 
-# The hash runs with the crate dir as its working directory. A hashlib.py planted
-# there (and on PYTHONPATH) must not load; the control shows it would without -I.
+# A hashlib.py planted in the crate, which the scratch copy holds too, and on PYTHONPATH
+# must not load when run.sh hashes the bytes; the control shows it would without -I.
 mk_crate "$T/hostile"
 MARK="$T/shadow.marker"
 printf 'open(%s, "a").write("hashlib\\n")\n' "'$MARK'" > "$T/hostile/hashlib.py"
@@ -695,6 +696,22 @@ if [ "$code" = 0 ] && grep -q "vulnerable sha256 (zero-trimmed): $want" "$T/out"
 else
   bad "planted hashlib.py: exit $code, marker $( [ -e "$MARK" ] && echo present || echo absent )"; cat "$T/out" >&2
 fi
+# Every python3 run.sh starts to read cargo's output, the manifests, the markers and the bytes starts from
+# /, with absolute paths: a version manager's shim picks the interpreter from the directory it starts in,
+# and the scratch copy holds the crate's files. A python3 stand-in first on PATH records where each of
+# those calls started.
+PYH="$T/pyh-bin"; mkdir -p "$PYH"
+printf '#!/bin/sh\ncase "$4" in hash|crate|targetdir|checkbuild|settle|nonregistry|stucopy) printf "%%s %%s\\n" "$(pwd -P)" "$4" >> "%s" ;; esac\nexec "%s" "$@"\n' \
+  "$T/pyh.log" "$(command -v python3)" > "$PYH/python3"
+chmod +x "$PYH/python3"
+for how in "prebuilt bytes" "a model run"; do
+  rm -f "$T/pyh.log"
+  if [ "$how" = "a model run" ]; then code="$(gate "$T/inc" "$NATIVE" PATH="$PYH:$SP")"; else code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" PATH="$PYH:$SP")"; fi
+  calls="$(awk '{ print $NF }' "$T/pyh.log" 2>/dev/null | LC_ALL=C sort -u | tr '\n' ' ')"
+  [ "$code" = 0 ] && [ "$calls" = "checkbuild crate hash nonregistry settle targetdir " ] && ! grep -qvE '^/ [a-z]+$' "$T/pyh.log" \
+    && ok "run.sh's own python3 calls ($calls) all start from /, $how" \
+    || { bad "run.sh's python3 calls, $how: exit $code, started in: $(sed 's/ [a-z]*$//' "$T/pyh.log" 2>/dev/null | LC_ALL=C sort -u | tr '\n' ' ')"; cat "$T/out" >&2; }
+done
 
 # ---------------------------------------------------------------------------
 # The crate's own build-time code, refused in either mode from the manifests alone:
@@ -874,6 +891,30 @@ refused "$T/d-cargo-uc" .CARGO "a .CARGO/ directory inside the crate"
 mk_crate "$T/d-tc-uc"
 printf '[toolchain]\npath = "%s"\n' "$T/faketc" > "$T/d-tc-uc/Rust-Toolchain.toml"
 refused "$T/d-tc-uc" Rust-Toolchain.toml "a Rust-Toolchain.toml inside the crate"
+# A version manager's file is refused the same way, at any depth and in any letter case: a shim of asdf,
+# mise, pyenv or proto picks the cargo, rustc or python3 it runs from the directory it starts in, and
+# asdf's `path:` version names any program. The message names the first entry found, a directory before
+# its files.
+while IFS='|' read -r entry named; do
+  [ -n "$entry" ] || continue
+  mk_crate "$T/d-vm"; mkdir -p "$T/d-vm/$(dirname "$entry")"
+  printf 'rust path:%s\npython path:%s\n' "$T/vm-tool" "$T/vm-tool" > "$T/d-vm/$entry"
+  refused "$T/d-vm" "$named" "a version manager's $entry inside the crate"
+  rm -rf "$T/d-vm"
+done <<'CASES'
+.tool-versions|.tool-versions
+.python-version|.python-version
+mise.toml|mise.toml
+.mise.toml|.mise.toml
+mise.local.toml|mise.local.toml
+.mise.ci.toml|.mise.ci.toml
+.miserc.toml|.miserc.toml
+.config/mise.toml|.config
+mise/config.toml|mise
+.mise/conf.d/a.toml|.mise
+.prototools|.prototools
+tests/.Tool-Versions|tests/.Tool-Versions
+CASES
 # A target directory, in any letter case, is never copied: cargo would take the build
 # outputs in it for its own.
 mk_crate "$T/d-target"; mkdir -p "$T/d-target/TARGET/debug"; printf 'shipped\n' > "$T/d-target/TARGET/debug/shipped.txt"
@@ -2086,6 +2127,14 @@ code="$(ngate AUDITOR_EXEC_MODE=native PATH="$PVBIN:$SP" -- --crate incident_1/p
   && ok "run.sh --crate for an incident: the incident check and the self-check run python3 from /, so the working directory's .python-version picks no interpreter" \
   || { bad "run.sh --crate for an incident with a .python-version: exit $code, python3 ran in: $(cat "$T/pv-picked" 2>/dev/null)"; cat "$T/out" >&2; }
 rm -rf "$IJ" "$WT/incident_1/poc/INC-1.1" "$WT/.python-version"
+# And every python3 run.sh --crate starts for its own reading, the check of the harness copy included,
+# starts from / (the python3 stand-in from the shim runs above records where).
+rm -f "$T/pyh.log"
+code="$(ngate PATH="$PYH:$SP" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+calls="$(awk '{ print $NF }' "$T/pyh.log" 2>/dev/null | LC_ALL=C sort -u | tr '\n' ' ')"
+[ "$code" = 0 ] && [ "$calls" = "checkbuild crate hash nonregistry settle stucopy targetdir " ] && ! grep -qvE '^/ [a-z]+$' "$T/pyh.log" \
+  && ok "run.sh --crate: its own python3 calls ($calls) all start from /" \
+  || { bad "run.sh --crate, its python3 calls: exit $code, started in: $(sed 's/ [a-z]*$//' "$T/pyh.log" 2>/dev/null | LC_ALL=C sort -u | tr '\n' ' ')"; cat "$T/out" >&2; }
 
 # scripts/runner/probe.sh: fixed version queries from a scratch directory, in the cleaned environment
 # with the real HOME, the proxy at a closed port, standard input closed; absent and unusable tools; the

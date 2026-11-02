@@ -117,10 +117,15 @@
 # .cargo/config* from every parent directory (rustc-wrapper, runner, linker,
 # rustflags, an alias that shadows `build-sbf`), and rustup its rust-toolchain*
 # (which can name a `path` toolchain, i.e. any binaries). So, in either mode:
-#   * a crate that holds a symbolic link, a .cargo/ directory or a rust-toolchain*
-#     file, in any letter case (a filesystem that ignores case lets cargo and
-#     rustup read .CARGO/ as .cargo/), is refused (exit 3): the copy below never
-#     takes them.
+#   * a crate that holds a symbolic link, a .cargo/ directory, a rust-toolchain*
+#     file or a version manager's file, in any letter case (a filesystem that
+#     ignores case lets cargo and rustup read .CARGO/ as .cargo/), is refused (exit
+#     3): the copy below never takes them. The version managers' files are those a
+#     shim of asdf, mise, pyenv or proto reads in the directory it starts in, to pick
+#     the cargo, rustc or python3 it runs (asdf's `path:` version names any program):
+#     .tool-versions, .python-version, mise.toml, .mise.toml and their .local and
+#     environment forms (mise.<name>.toml), .miserc*, a mise/, .mise/ or .config/
+#     directory, and .prototools*.
 #   * the crate is copied, without a target/ directory in any letter case, into a
 #     fresh scratch directory,
 #     `mktemp -d "${TMPDIR:-/tmp}/auditor-poc.XXXXXX"`, and built and tested there
@@ -759,7 +764,9 @@ fi
 # whether the crate's shared-test-utils/src/lib.rs is the installation's (same, differs or
 # missing), after the checks of the harness copy (exit 3 and the reason). python3 runs
 # isolated (-I): `python3 -c` would otherwise import modules such as hashlib.py from
-# the working directory, or from PYTHONPATH, in place of the stdlib.
+# the working directory, or from PYTHONPATH, in place of the stdlib. It starts from /,
+# with every path it is given absolute: a version manager's shim picks the interpreter
+# from the directory it starts in, and the scratch copy holds the crate's files.
 HARNESS_PY='import hashlib, json, os, re, sys
 
 
@@ -1189,19 +1196,26 @@ elif command == "stucopy":
 else:
     sys.exit(2)
 '
-harness() { python3 -I -c "${HARNESS_PY}" "$@"; }
+harness() { (cd / && exec python3 -I -c "${HARNESS_PY}" "$@"); }
 
 # ── Where to build (see WHERE IT BUILDS above) ──────────────────────────────────
 # No here-documents or here-strings below: bash 3.2 may put their temp files in the
 # working directory (it does under a sandbox that denies /tmp), where a listing of
 # the crate would pick them up.
 
-# The first symbolic link, .cargo/ or rust-toolchain* inside the crate, in any letter
-# case; prints nothing when there is none. copy_crate takes none of them, so a crate
-# holding one is refused rather than built in a shape it was not written in.
+# A version manager's files and directories (see WHERE IT BUILDS above), as find tests
+# them: a shim of asdf, mise, pyenv or proto picks the program it runs from them.
+VERSION_FILES=(-iname .tool-versions -o -iname .python-version -o -iname mise.toml -o -iname .mise.toml
+  -o -iname 'mise.*.toml' -o -iname '.mise.*.toml' -o -iname '.miserc*' -o -iname mise -o -iname .mise
+  -o -iname .config -o -iname '.prototools*')
+
+# The first symbolic link, .cargo/, rust-toolchain* or version manager's file inside
+# the crate, in any letter case; prints nothing when there is none. copy_crate takes
+# none of them, so a crate holding one is refused rather than built in a shape it was
+# not written in.
 crate_extra() {
   local found
-  found="$(cd "${HERE}" && find . \( -iname target -type d \) -prune -o \( -type l -o -iname .cargo -o -iname 'rust-toolchain*' \) -print)"
+  found="$(cd "${HERE}" && find . \( -iname target -type d \) -prune -o \( -type l -o -iname .cargo -o -iname 'rust-toolchain*' -o "${VERSION_FILES[@]}" \) -print)"
   if [[ -n "${found}" ]]; then echo "${found%%$'\n'*}"; fi
   return 0
 }
@@ -1221,14 +1235,15 @@ inherited_config() {
   done
 }
 
-# copy_crate <dest> : the crate's files, never target/, .cargo/ or rust-toolchain* in any
-# letter case (cargo would take build outputs in a TARGET/ copy for its own). The
-# copies are stamped with the time of the copy, never the originals': with a shared
-# CARGO_TARGET_DIR, cargo would otherwise count a build of another crate of the same
-# name, made after these files were last changed, as this crate's own.
+# copy_crate <dest> : the crate's files, never target/, .cargo/, rust-toolchain* or a
+# version manager's file, in any letter case (cargo would take build outputs in a TARGET/
+# copy for its own). The copies are stamped with the time of the copy, never the
+# originals': with a shared CARGO_TARGET_DIR, cargo would otherwise count a build of
+# another crate of the same name, made after these files were last changed, as this
+# crate's own.
 copy_crate() {
   local list rel IFS=$'\n'
-  list="$(cd "${HERE}" && find . \( \( -iname target -type d \) -o -iname .cargo -o -iname 'rust-toolchain*' -o -iname .git \) -prune -o -type f -print)" || return 1
+  list="$(cd "${HERE}" && find . \( \( -iname target -type d \) -o -iname .cargo -o -iname 'rust-toolchain*' -o -iname .git -o "${VERSION_FILES[@]}" \) -prune -o -type f -print)" || return 1
   set -f
   for rel in ${list}; do
     if ! { mkdir -p "$1/$(dirname "${rel}")" && cp "${HERE}/${rel}" "$1/${rel}"; }; then
@@ -1294,16 +1309,16 @@ release_lock() {
 
 extra="$(crate_extra)"
 if [[ -n "${extra}" ]]; then
-  echo "[PoC-ATTEMPTED] blocker: ${extra#./} inside the crate is a symbolic link, a .cargo/ directory or a rust-toolchain* file. run.sh builds a copy of the crate outside the target tree and never copies these; remove it (for a link, copy in the file itself)." >&2
+  echo "[PoC-ATTEMPTED] blocker: ${extra#./} inside the crate is a symbolic link, a .cargo/ directory, a rust-toolchain* file or a version manager's file (.tool-versions, .python-version, mise's config). run.sh builds a copy of the crate outside the target tree and never copies these; remove it (for a link, copy in the file itself)." >&2
   exit 3
 fi
 # The harness copy: the installation's run.sh checks the crate's shared-test-utils/ against its own
 # before anything is copied, and builds with its own src/lib.rs whatever the crate holds (WHERE IT BUILDS
-# above). python3 starts from /, so nothing in the working directory picks the interpreter.
+# above). Like every harness call, it runs python3 from /.
 STU=""
 if [[ "${HERE}" != "${SELF}" ]]; then
   rc=0
-  STU="$(cd / && harness stucopy "${HERE}/shared-test-utils" "${SELF}/shared-test-utils")" || rc=$?
+  STU="$(harness stucopy "${HERE}/shared-test-utils" "${SELF}/shared-test-utils")" || rc=$?
   if [[ "${rc}" -ne 0 ]]; then
     [[ "${rc}" -eq 3 && -n "${STU}" ]] || STU="shared-test-utils/ cannot be read"
     echo "[PoC-ATTEMPTED] blocker: the crate's ${STU}; put back the installation's templates/poc/shared-test-utils/ (or --init a new crate) — nothing was copied or built." >&2
