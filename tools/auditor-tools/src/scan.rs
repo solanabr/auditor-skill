@@ -34,6 +34,48 @@ use crate::confine::{self, is_run_dir_name, os_message, MAX_FILE};
 
 const SNIPPET_MAX: usize = 80;
 
+/// The functions that make a cross-program call, by the last name of the path
+/// they are called by: solana-program's and solana-cpi's `invoke`,
+/// `invoke_signed`, `invoke_unchecked` and `invoke_signed_unchecked`; pinocchio's
+/// `cpi` module's, which adds `invoke_with_bounds` and `invoke_signed_with_bounds`,
+/// 0.9's `slice_invoke` and `slice_invoke_signed`, and later versions'
+/// `invoke_with_slice` and `invoke_signed_with_slice`; and the syscalls those end
+/// in, `sol_invoke_signed_c` and `sol_invoke_signed_rust`. Called as a method, as
+/// pinocchio-system's and pinocchio-token's instructions are
+/// (`Transfer { … }.invoke_signed(&signers)`), a site's kind is `method:<name>`.
+const CPI_CALLS: [&str; 12] = [
+    "invoke",
+    "invoke_signed",
+    "invoke_unchecked",
+    "invoke_signed_unchecked",
+    "invoke_with_bounds",
+    "invoke_signed_with_bounds",
+    "slice_invoke",
+    "slice_invoke_signed",
+    "invoke_with_slice",
+    "invoke_signed_with_slice",
+    "sol_invoke_signed_c",
+    "sol_invoke_signed_rust",
+];
+
+/// The functions that derive a program address from seeds, by the last name of
+/// the path they are called by: `find_program_address`, `try_find_program_address`
+/// and `create_program_address` (solana-program's and solana-pubkey's `Pubkey`,
+/// solana-address's `Address`, pinocchio's `pubkey` module), pinocchio's
+/// `checked_create_program_address`, and solana-address's `derive_address`,
+/// `derive_address_const`, `try_derive_address` and `derive_program_address` (the
+/// first two in pinocchio-pubkey too). Each takes the seeds first.
+const PDA_CALLS: [&str; 8] = [
+    "find_program_address",
+    "try_find_program_address",
+    "create_program_address",
+    "checked_create_program_address",
+    "derive_address",
+    "derive_address_const",
+    "try_derive_address",
+    "derive_program_address",
+];
+
 /// The most items one file may list (sites, functions, instructions with their
 /// arguments, accounts structs with their fields, PDAs); past them the file is in
 /// `skipped` as listing only the first ones. Nor does it list more than its answer
@@ -159,11 +201,15 @@ pub struct AccountConstraints {
     pub raw: String,
 }
 
+/// A program address derived from seeds: an Accounts field's `seeds = [...]`
+/// constraint (kind `seeds`), or a call to one of `PDA_CALLS` (kind: the function's
+/// name; `struct` and `field` are then empty).
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Pda {
     #[serde(rename = "struct")]
     pub struct_name: String,
     pub field: String,
+    pub kind: String,
     pub seeds: Vec<String>,
     pub file: String,
     pub line: usize,
@@ -1609,6 +1655,7 @@ impl<'t> FileVisitor<'t> {
                     pdas.push(Pda {
                         struct_name: String::new(),
                         field: field_name.clone(),
+                        kind: "seeds".to_string(),
                         seeds: seeds.clone(),
                         file: self.file.clone(),
                         line: field.ident.span().start().line,
@@ -1644,6 +1691,38 @@ impl<'t> FileVisitor<'t> {
             self.pdas.push(pda);
         }
         self.accounts_structs.push(accounts);
+    }
+
+    /// A call that derives a program address (`PDA_CALLS`, called by `name`), with
+    /// the seeds its first argument gives: each element of an array, `[a, b]` or
+    /// `&[a, b]`, or else the argument itself, each as its snippet. The seeds are
+    /// rendered only while the file's answer has room for them.
+    fn record_derivation(&mut self, node: &syn::ExprCall, name: &syn::Ident, kind: String) {
+        if self.full.is_some() {
+            return;
+        }
+        let seeds = node.args.first().map_or_else(Vec::new, elements);
+        let mut pda = Pda {
+            struct_name: String::new(),
+            field: String::new(),
+            kind,
+            seeds: Vec::new(),
+            file: self.file.clone(),
+            line: name.span().start().line,
+        };
+        let mut bytes = json_size(&pda);
+        for seed in seeds {
+            let (first, last) = (self.first(seed), self.last(seed));
+            let text = self.snippet(seed, first, last);
+            // The seed and the comma before the next.
+            bytes = bytes.saturating_add(json_size(&text)).saturating_add(1);
+            if self.size.saturating_add(bytes) > confine::MAX_ANSWER {
+                self.full = Some(LISTS_WHAT_FITS);
+                return;
+            }
+            pda.seeds.push(text);
+        }
+        self.list(1, pda, |v| &mut v.pdas);
     }
 }
 
@@ -1739,15 +1818,29 @@ impl<'ast> Visit<'ast> for FileVisitor<'_> {
 
     fn visit_expr_method_call(&mut self, node: &'ast syn::ExprMethodCall) {
         let method = node.method.to_string();
-        if method == "unwrap" || method == "expect" {
+        let cpi = CPI_CALLS.contains(&method.as_str());
+        if method == "unwrap" || method == "expect" || cpi {
             let first = attrs_first(&node.attrs).unwrap_or_else(|| self.first(&node.receiver));
-            let site = PanicSite {
-                file: self.file.clone(),
-                line: node.method.span().start().line,
-                kind: method,
-                snippet: self.snippet(node, first, node.paren_token.span.close()),
-            };
-            self.list(1, site, |v| &mut v.panic_sites);
+            let (file, line) = (self.file.clone(), node.method.span().start().line);
+            let snippet = self.snippet(node, first, node.paren_token.span.close());
+            if cpi {
+                let kind = format!("method:{method}");
+                let site = CpiSite {
+                    file,
+                    line,
+                    kind,
+                    snippet,
+                };
+                self.list(1, site, |v| &mut v.cpi_sites);
+            } else {
+                let site = PanicSite {
+                    file,
+                    line,
+                    kind: method,
+                    snippet,
+                };
+                self.list(1, site, |v| &mut v.panic_sites);
+            }
         }
         syn::visit::visit_expr_method_call(self, node);
     }
@@ -1809,20 +1902,17 @@ impl<'ast> Visit<'ast> for FileVisitor<'_> {
         if let syn::Expr::Path(path_expr) = node.func.as_ref() {
             if let Some(seg) = path_expr.path.segments.last() {
                 let name = seg.ident.to_string();
-                let kind = match name.as_str() {
-                    "invoke" => Some("invoke"),
-                    "invoke_signed" => Some("invoke_signed"),
-                    _ => None,
-                };
-                if let Some(kind) = kind {
+                if CPI_CALLS.contains(&name.as_str()) {
                     let first = attrs_first(&node.attrs).unwrap_or_else(|| self.first(&node.func));
                     let site = CpiSite {
                         file: self.file.clone(),
                         line: seg.ident.span().start().line,
-                        kind: kind.to_string(),
+                        kind: name,
                         snippet: self.snippet(node, first, node.paren_token.span.close()),
                     };
                     self.list(1, site, |v| &mut v.cpi_sites);
+                } else if PDA_CALLS.contains(&name.as_str()) {
+                    self.record_derivation(node, &seg.ident, name);
                 }
             }
         }
@@ -1830,8 +1920,10 @@ impl<'ast> Visit<'ast> for FileVisitor<'_> {
     }
 
     fn visit_path(&mut self, node: &'ast syn::Path) {
-        // Detect `.invoke()` / `.invoke_signed()` method-style CPIs and any
-        // reference to `CpiContext`.
+        // Any reference to `CpiContext`, Anchor's context for a cross-program
+        // call, in a type or an expression. A call by name (`invoke_signed(…)`,
+        // `Transfer { … }.invoke()`) is listed by `visit_expr_call` and
+        // `visit_expr_method_call`.
         if let Some(seg) = node.segments.last() {
             let name = seg.ident.to_string();
             if name == "CpiContext" {
@@ -1845,6 +1937,18 @@ impl<'ast> Visit<'ast> for FileVisitor<'_> {
             }
         }
         syn::visit::visit_path(self, node);
+    }
+}
+
+/// The elements of an array, `[a, b]` or `&[a, b]`; any other expression alone.
+fn elements(e: &Expr) -> Vec<&Expr> {
+    match e {
+        Expr::Array(array) => array.elems.iter().collect(),
+        Expr::Reference(r) => match r.expr.as_ref() {
+            Expr::Array(array) => array.elems.iter().collect(),
+            _ => vec![e],
+        },
+        _ => vec![e],
     }
 }
 
@@ -2170,6 +2274,8 @@ fn f(v: &[u8], ctx: Ctx) -> u8 {
     let r = ctx.remaining_accounts;
     invoke(&ix, &accounts)?;
     let c: CpiContext<T> = todo();
+    Transfer { from: a, to: b, lamports: 1 }.invoke_signed(&["CTRL"])?;
+    let (k, bump) = Pubkey::find_program_address(&[b"v", "CTRL".as_ref()], &ID);
     x
 }
 impl S { fn m(&self) {} }
@@ -2184,7 +2290,7 @@ impl S { fn m(&self) {} }
         let mut report = ScanReport::new(label.to_string(), 1);
         visitor.drain_into(&mut report);
         assert!(
-            report.cpi_sites.len() >= 2 && report.pdas.len() == 1,
+            report.cpi_sites.len() >= 3 && report.pdas.len() == 2,
             "{report:?}"
         );
         let took = serde_json::to_vec(&report).expect("JSON").len();

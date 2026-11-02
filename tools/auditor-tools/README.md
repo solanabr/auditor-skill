@@ -240,10 +240,16 @@ Exit: 0 done · 1 the output cannot be written · 2 refused, with one stderr lin
       ] }
   ],
 
-  // one entry per field carrying `seeds = [ ... ]`
+  // one entry per field carrying `seeds = [ ... ]` (kind `seeds`), and one per
+  // call that derives a program address from seeds (kind: the function, one of
+  // find_program_address, try_find_program_address, create_program_address,
+  // checked_create_program_address, derive_address, derive_address_const,
+  // try_derive_address, derive_program_address; `struct` and `field` empty),
+  // whose seeds are the elements of the array it is given first, or else that
+  // argument, each as a snippet.
   "pdas": [
-    { "struct": "string", "field": "string", "seeds": ["string"],
-      "file": "string", "line": 0 }
+    { "struct": "string", "field": "string", "kind": "string",
+      "seeds": ["string"], "file": "string", "line": 0 }
   ],
 
   // RAW binary/compound-assign arithmetic (NOT `.checked_*`). Every site is
@@ -262,9 +268,18 @@ Exit: 0 done · 1 the output cannot be written · 2 refused, with one stderr lin
 
   "unsafe_blocks": [ { "file": "string", "line": 0 } ],
 
-  // calls to `invoke` / `invoke_signed`, and any use of `CpiContext`.
+  // calls, by the last name of their path, to the cross-program call functions
+  // of solana-program, solana-cpi and pinocchio (invoke, invoke_signed,
+  // invoke_unchecked, invoke_signed_unchecked, invoke_with_bounds,
+  // invoke_signed_with_bounds, slice_invoke, slice_invoke_signed,
+  // invoke_with_slice, invoke_signed_with_slice) and to the syscalls they end in
+  // (sol_invoke_signed_c, sol_invoke_signed_rust), kind the name; the same names
+  // called as methods, as pinocchio-system's and pinocchio-token's instructions
+  // are, kind `method:<name>`; and any use of `CpiContext`. A call through an
+  // import under another name, a trait or a macro is not seen.
   "cpi_sites": [
-    { "file": "string", "line": 0, "kind": "invoke|invoke_signed|CpiContext",
+    { "file": "string", "line": 0,
+      "kind": "invoke|invoke_signed|…|method:invoke_signed|…|CpiContext",
       "snippet": "string" }
   ],
 
