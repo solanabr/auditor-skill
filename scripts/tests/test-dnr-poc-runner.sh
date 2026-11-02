@@ -28,6 +28,7 @@
 #   * the crate's own build-time code (a build script, a proc-macro package, a
 #     Cargo.toml that is not a member, a [patch] or [replace] table) is refused before
 #     anything compiles; `build = false` is honoured;
+#     so is a crate that is not its own workspace root;
 #   * the harness binding: the crate depends on its own shared-test-utils/ under the
 #     import name shared_test_utils, no other dependency takes that name in either
 #     spelling, and each arm's build compiles that copy and no other;
@@ -183,6 +184,7 @@ PY
 # such lib), then the stand-in test binary $T/shim/bin/<test> (none for
 # SHIM_FAIL=no-exe:<test>). SHIM_FAIL makes one step fail (build-sbf, update, metadata,
 # fetch, install-only) with cargo's own exit code, 101.
+# SHIM_WS_ROOT sets the workspace root `metadata` reports.
 #
 # The stand-in test binary logs its run to SHIM_CALLS as well (arguments "testbin
 # <test> ..."; SHIM_CALLS.env gets CARGO_MANIFEST_DIR and the dynamic library path) and
@@ -280,7 +282,8 @@ for top, dirs, files in os.walk(root):
 # The directory cargo builds into: CARGO_TARGET_DIR, CARGO_BUILD_TARGET_DIR, then
 # SHIM_TARGET_DIR, which stands for a target-dir set in cargo's own config.
 target = os.environ.get("CARGO_TARGET_DIR") or os.environ.get("CARGO_BUILD_TARGET_DIR") or os.environ.get("SHIM_TARGET_DIR") or os.path.join(root, "target")
-print(json.dumps({"packages": packages, "workspace_members": [p["id"] for p in packages], "workspace_root": root, "target_directory": target, "version": 1}))
+print(json.dumps({"packages": packages, "workspace_members": [p["id"] for p in packages], "workspace_root": os.environ.get("SHIM_WS_ROOT") or root,
+                  "target_directory": target, "version": 1}))
 PY
 cat > "$T/shim/build.py" <<'PY'
 import json, os, sys
@@ -795,6 +798,13 @@ done
 mk_patched "$T/patch-mention" Cargo.toml "$(printf '# [patch.crates-io]\n[package.metadata.notes]\ntext = "see [patch.crates-io]"\npatch-level = 1')"
 code="$(gate "$T/patch-mention" "$NATIVE" "$VULN")"
 [ "$code" = 0 ] && ok "a comment, a string and a patch-level key that only mention [patch] -> not refused" || { bad "mentions of [patch]: exit $code"; cat "$T/out" >&2; }
+# The crate is its own workspace root: one that belongs to an outside workspace (a workspace key under
+# [package]) would build into that workspace's target directory under its [patch], which these checks
+# never read. cargo metadata names the root; any other than the scratch copy is refused before anything
+# compiles.
+code="$(gate "$T/inc" "$NATIVE" "$VULN" SHIM_WS_ROOT=/elsewhere/ws)"
+[ "$code" = 3 ] && grep -qF 'the crate belongs to the workspace at /elsewhere/ws, not to its own' "$T/out" && nothing_built && one_blocker \
+  && ok "a crate whose workspace root is outside it -> refused before anything compiles" || { bad "outside workspace root: exit $code"; cat "$T/out" >&2; }
 
 # ---------------------------------------------------------------------------
 # Where the crate builds. A hostile target tree: its .cargo/config.toml names a
@@ -3253,6 +3263,24 @@ path = \"$T/e-oot-outside/lib.rs\"
   else
     bad "real cargo, out-of-tree sources: exit $code"; grep 'non-registry' "$T/out" >&2
   fi
+  # A crate that joins an outside workspace (a workspace key under [package]) whose root lists the scratch
+  # copies by a glob, and patches a dependency there: cargo metadata names that root, and the run stops
+  # before anything compiles, with nothing built into that workspace or locked there.
+  WSR="$T/e-ws-root"; WST="$T/e-ws-tmp"; mkdir -p "$WSR/vendor/xdep/src" "$WST"
+  printf '[workspace]\nresolver = "2"\nmembers = ["%s/auditor-poc.*"]\n\n[patch.crates-io]\nxdep = { path = "vendor/xdep" }\n' "$WST" > "$WSR/Cargo.toml"
+  printf '[package]\nname = "xdep"\nversion = "0.1.5"\nedition = "2021"\n' > "$WSR/vendor/xdep/Cargo.toml"; printf 'pub fn x() {}\n' > "$WSR/vendor/xdep/src/lib.rs"
+  mk_e2e "$T/e-ws"
+  subst "$T/e-ws/Cargo.toml" '[workspace]
+' ''
+  subst "$T/e-ws/Cargo.toml" 'publish = false
+' "publish = false
+workspace = \"$WSR\"
+"
+  code="$(run "$T/e-ws" "$PATH" "$NATIVE" CARGO_NET_OFFLINE=true TMPDIR="$WST" VULNERABLE_SO="$SB-takeover.so")"
+  [ "$code" = 3 ] && grep -qF "the crate belongs to the workspace at $WSR, not to its own" "$T/out" && one_blocker \
+    && [ ! -e "$WSR/target" ] && [ ! -e "$WSR/Cargo.lock" ] && ! grep -q 'Compiling' "$T/out" \
+    && ok "real cargo: a crate that joins an outside workspace -> exit 3 before anything compiles, nothing built or locked there" \
+    || { bad "real cargo, an outside workspace: exit $code"; cat "$T/out" >&2; }
 
   # The installation's copy with real cargo. The crate sits in a run directory, its prebuilt bytes under
   # exec/, and it depends on a path crate outside it whose build script records the environment it is

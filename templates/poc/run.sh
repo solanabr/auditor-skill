@@ -138,8 +138,12 @@
 #     `cargo metadata --no-deps`, run in the scratch copy, lists the crate's packages
 #     (the crate, shared-test-utils, any other member), and a build script (`build =
 #     false` turns one off), a proc-macro package, a Cargo.toml inside the crate that
-#     is not a member, or a [patch] or [replace] table in a manifest stops the run. A
-#     path dependency outside the crate is not refused: its build script runs in the
+#     is not a member, or a [patch] or [replace] table in a manifest stops the run.
+#     The crate must be its own workspace root, as the template's [workspace] makes
+#     it: a `workspace` key under [package] that joins an outside workspace stops the
+#     run too, since these checks never read that workspace's manifest (its [patch]
+#     included) and cargo would build into its target directory.
+#     A path dependency outside the crate is not refused: its build script runs in the
 #     recorded mode, and the non-registry line names it. Check code that is
 #     generated at build time into the crate instead. The contract macros must come
 #     from the harness copy that was checked, so the crate depends on its own
@@ -831,6 +835,12 @@ def crate(meta_path, root, rule=""):
     root = os.path.realpath(root)
     with open(meta_path, encoding="utf-8") as f:
         meta = json.load(f)
+    # The crate is its own workspace root, as the template [workspace] makes it. A workspace
+    # key under [package] joins an outside workspace instead: the checks below would not read
+    # its root manifest ([patch] included), and cargo would build into its target directory.
+    workspace = meta.get("workspace_root") or ""
+    if not workspace or os.path.realpath(workspace) != root:
+        refuse("the crate belongs to the workspace at %s, not to its own: run.sh builds a crate that is its own workspace root ([workspace] in its Cargo.toml, as in the template), so that no manifest outside it adds members, a [patch] table or the directory cargo builds into." % (workspace or "an unnamed place"))
     if rule == "supply-chain":
         # The target crates may be the payload: no dependency on a path outside the crate or
         # on git, and no target built from a source outside it.
