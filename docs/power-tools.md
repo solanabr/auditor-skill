@@ -172,7 +172,7 @@ docker run --rm --network none -v "$PWD":/src:ro \
   --offline --no-config --no-ignores --persona=auditor /src/.github/workflows
 ```
 
-Without Docker, install the same version from PyPI in pip's hash-checking mode, into a virtual environment outside the checkout. Save the requirement, with the sha256 of every 1.30.1 wheel, as `~/.venvs/zizmor-1.30.1.txt`, outside the repository under audit too:
+Without Docker, install the same version from PyPI in pip's hash-checking mode, into a virtual environment outside the checkout; zizmor 1.30.1 needs Python 3.10 or later. Save the requirement, with the sha256 of every 1.30.1 wheel, as `~/.venvs/zizmor-1.30.1.txt`, outside the repository under audit too:
 
 ```text
 zizmor==1.30.1 \
@@ -188,8 +188,10 @@ zizmor==1.30.1 \
     --hash=sha256:06e039fae8e185e2a1a8b002f2d95a6f5c3b548048bdd79e004dcb501fcd0868
 ```
 
+Then run these lines from the checkout. `python3 -I` runs Python in isolated mode: `python3 -m` alone puts the working directory first on `sys.path`, so a `venv.py` the repository ships would run in place of Python's own `venv`.
+
 ```bash
-python3 -m venv ~/.venvs/zizmor-1.30.1
+python3 -I -m venv ~/.venvs/zizmor-1.30.1
 ~/.venvs/zizmor-1.30.1/bin/pip install --require-hashes --only-binary :all: --no-deps -r ~/.venvs/zizmor-1.30.1.txt
 ~/.venvs/zizmor-1.30.1/bin/zizmor --offline --no-config --no-ignores --persona=auditor .github/workflows
 ```
@@ -197,7 +199,7 @@ python3 -m venv ~/.venvs/zizmor-1.30.1
 - **Why `--no-config`.** zizmor discovers a config file at `.github/zizmor.yml`, `.github/zizmor.yaml`, `zizmor.yml` or `zizmor.yaml` from the repository root, and a discovered config can turn audits off (`rules.<id>.disable`) or ignore findings in named files (`rules.<id>.ignore`). Since the repository under audit is untrusted, do not let its config steer the scan: `--no-config` loads no configuration at all (per the docs, "If `--no-config` is passed, no configuration is ever loaded"); `--config <your own file>` or `ZIZMOR_CONFIG` replaces discovery with a file you control. ([docs.zizmor.sh/configuration](https://docs.zizmor.sh/configuration/))
 - **Why `--no-ignores`.** A workflow file can also silence a finding itself, with a `# zizmor: ignore[<rule>]` comment on the lines the finding covers, and `--no-config` leaves those comments in force. `--no-ignores`, in zizmor 1.25.0 and later, turns off every ignore, comment and configuration alike, so nothing in the audited repository hides a finding. ([docs.zizmor.sh/usage](https://docs.zizmor.sh/usage/), "Disabling ignores")
 - **`--offline`** blocks network and remote-repository fetches, and `--network none` gives the container no network at all; **`--persona=auditor`** reports every finding, "even ones that it's not sure about". ([docs.zizmor.sh/usage](https://docs.zizmor.sh/usage/))
-- **Pinning.** The published image is `ghcr.io/zizmorcore/zizmor` ([docs.zizmor.sh/installation](https://docs.zizmor.sh/installation/)); its version tags have no `v` (`1.30.1`), and zizmor's install docs show only the unpinned `:latest` pull and unversioned `pip install zizmor` / `uvx zizmor`. The values above were checked on 2026-11-02: the registry gives `sha256:a2eb396d…8101` as the digest of tag `1.30.1`, an image index for linux/amd64 and linux/arm64 whose revision label is `99a054e`, the commit of zizmor's `v1.30.1` release; GitHub's package page lists the same digest for that tag; and PyPI's JSON API lists the ten wheel hashes for 1.30.1. A digest always names the same image, so the command cannot change under you. To move to another release, take its digest and hashes from the same places. *Unverified:* neither command has been run with these pins, and the Docker form relies on the image's entrypoint being `zizmor`.
+- **Pinning.** The published image is `ghcr.io/zizmorcore/zizmor` ([docs.zizmor.sh/installation](https://docs.zizmor.sh/installation/)); its version tags have no `v` (`1.30.1`), and zizmor's install docs show only the unpinned `:latest` pull and unversioned `pip install zizmor` / `uvx zizmor`. The values above were checked on 2026-11-02: the registry gives `sha256:a2eb396d…8101` as the digest of tag `1.30.1`, an image index for linux/amd64 and linux/arm64 whose revision label is `99a054e`, the commit of zizmor's `v1.30.1` release; GitHub's package page lists the same digest for that tag; and PyPI's JSON API lists the ten wheel hashes for 1.30.1 and its `requires_python` of `>=3.10`. A digest always names the same image, so the command cannot change under you. To move to another release, take its digest and hashes from the same places. *Unverified:* neither command has been run with these pins, and the Docker form relies on the image's entrypoint being `zizmor`.
 - **What it misses.** `github-actions.md` §9 records, for **zizmor 1.30.1** over fixtures 01–17, the gates it did not flag (a mention-only gate, a cross-object OR, deny-lists, event text in an agent prompt input). A clean zizmor run does not close the class.
 
 ### CodeQL — the `actions` queries, and the licence
