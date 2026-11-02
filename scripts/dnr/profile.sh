@@ -45,7 +45,9 @@
 # array (see frames.py). The one-per-signature pass runs as `python3 -I` and keeps
 # each well-formed line byte for byte, less surrounding whitespace. scripts/lib/
 # confine.sh sets LC_ALL=C and umask 077 and keeps only PATH entries outside the
-# working directory; the private temp directory must lie outside it too.
+# working directory; the private temp directory must lie outside it too. python3 is
+# found from / and runs by its absolute path, so no version file in the working
+# directory picks the interpreter a shim would run.
 #
 # Exit: 0 done · 1 a corpus file that cannot be read, or an --out that cannot be
 # written · 2 usage, or a refused path: a missing or non-regular file, one with a
@@ -62,12 +64,34 @@ here=$(cd -P -- "$here" 2>/dev/null && pwd -P) || { echo "profile.sh: refused: t
 # Every recipe refuses with exit 2 (README.md, Input contract), confine.sh with 64.
 confine_refuse() { printf '%s: refused: %s\n' "$CONFINE_TOOL" "$1" >&2; exit 2; }
 confine_init profile.sh "${here%/*/*}"
-# jq reads ~/.jq at start; nothing here needs HOME.
-HOME=/nonexistent
-export HOME
 for tool in jq python3; do
   command -v "$tool" >/dev/null 2>&1 || { echo "[blocker] $tool is not on PATH; profile.sh needs jq and python3." >&2; exit 3; }
 done
+# ---- interpreter (the same block is in profile.sh, frames.py and deltas.py)
+# python3 is looked up from / on the PATH confine_init cleaned of empty, relative and working-directory
+# entries, so no version file in the working directory (a .python-version or .tool-versions that a
+# pyenv, asdf or mise shim reads) picks it. The recipe then runs by the absolute path that interpreter
+# reports, which must lie outside the working directory, its links resolved too.
+py=$(cd / && exec python3 -I -c 'import os, sys
+print(sys.executable)
+print(os.path.realpath(sys.executable))' 2>/dev/null) || py=''
+pyreal=${py#*$'\n'}
+py=${py%%$'\n'*}
+case "$py$pyreal" in *[[:cntrl:]]*) py='' ;; esac
+case "$py" in
+  /*) ;;
+  *) echo "[blocker] python3 is not on PATH, or does not run; $CONFINE_TOOL needs python3." >&2; exit 3 ;;
+esac
+for d in "${py%/*}" "${pyreal%/*}"; do
+  confine_phys "${d:-/}" || confine_refuse "python3 cannot be resolved: $(confine_text "$py")"
+  case "$CONFINE_PHYS/" in
+    "${CONFINE_WT%/}/"*) confine_refuse "python3 lies inside the working directory: $(confine_text "$py")" ;;
+  esac
+done
+# ---- end of interpreter
+# jq reads ~/.jq at start; nothing here needs HOME.
+HOME=/nonexistent
+export HOME
 
 # One pass keeps the first line of each signature, across every file given, in a
 # private temp file that the queries below read, leaving out malformed lines under
@@ -696,7 +720,7 @@ with open(os.path.join(tmpd, "notes"), "w") as out:
     for note in skipped(stats):
         out.write("-- skipped: " + note + "\n")
         print("profile.sh: skipped " + note, file=sys.stderr)'
-python3 -I -c "$recipe" check "$tmpd" "$0" "$@"
+"$py" -I -c "$recipe" check "$tmpd" "$0" "$@"
 
 # report: the profile, from the deduplicated corpus. Every sort and uniq runs under
 # LC_ALL=C and compares bytes: under a UTF-8 locale, sort and uniq can count two keys
@@ -772,5 +796,5 @@ if [ "${1-}" != --out ]; then
   report
 else
   report > "$tmpd/report"
-  python3 -I -c "$recipe" publish "$tmpd" "$0" "$@"
+  "$py" -I -c "$recipe" publish "$tmpd" "$0" "$@"
 fi
