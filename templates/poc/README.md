@@ -113,8 +113,11 @@ Only a harness error (an inconclusive arm, or a test that no longer builds again
 refreshed harness copy) gets a repair pass: repair the harness setup once, never the
 assertions or the target, and re-run (`references/orchestration/poc-harness.md` §3).
 Before its final line, `run.sh` names the non-registry code in the build: the path and
-git dependencies in the resolved `Cargo.lock`, and any source compiled from outside the
-crate.
+git dependencies in the resolved `Cargo.lock` and those from a registry other than
+crates.io, and every file from outside the crate that the crate's own code compiled or
+read, of any kind (a `[lib] path`, a `#[path]` module, an `include!`, `include_str!` or
+`include_bytes!`), as rustc's dep-info for the test build and each arm's SBF build lists
+them.
 
 `run.sh` and `shared-test-utils/` are the installation's copies; leave them as they
 are. Before a command trusts an `OK` line it compares them with the installation's
@@ -241,8 +244,10 @@ reads the incident's `root_cause_class` from `incident_<n>/INCIDENTS.json`, and 
 (exit `3`) when the file, the incident or its class cannot be read. When the class is
 `supply_chain_or_ci` the target's crates may be the payload (`OUTPUT-RULES.md` Rule
 11a): the run must be isolated and on prebuilt bytes (`--vulnerable-so`), and a
-dependency on a path outside the crate or on git, a target built from outside it, or a
-build that compiled code from outside it stops the run before its test runs.
+dependency on a path outside the crate, on git or from a registry other than crates.io,
+a target built from outside it, or a build that compiled code from outside it stops the
+run, the dependencies before anything compiles (the resolved `Cargo.lock` is read again
+after the downloads) and the build before its test runs.
 `./run.sh` does not read `INCIDENTS.json`.
 
 ## Evidence tier

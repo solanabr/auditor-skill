@@ -37,7 +37,9 @@
 #     its dependency version requirements; every build compiles the installation's
 #     src/lib.rs, a missing or changed one too, and the >> harness: line says which;
 #   * the non-registry line before the final line: the path and git dependencies in
-#     the resolved Cargo.lock;
+#     the resolved Cargo.lock and those from a registry other than crates.io, and every
+#     file from outside the crate that the crate's own units compiled or read, of any
+#     kind, as their dep-info (and an arm's SBF build's) lists it;
 #   * the macros run the attack themselves; their old forms do not compile and say how
 #     to migrate; an effect present before the attack, a read that panics, and a
 #     positive control for another program or from another state are inconclusive;
@@ -75,8 +77,9 @@
 #     a nested or large file included), read by scripts/lib/isolation.sh's
 #     iso_incident_class, whose python3 starts from /, as each one run.sh starts before
 #     it leaves the working directory does; supply_chain_or_ci refuses native mode, a
-#     run without --vulnerable-so, path and git dependencies and sources outside the
-#     crate, and a build that compiled code from outside it;
+#     run without --vulnerable-so, path, git and other-registry dependencies (from the
+#     manifests, and from the resolved Cargo.lock before anything compiles) and sources
+#     outside the crate, and a build that compiled code from outside it;
 #   * the isolation self-check (scripts/lib/isolation.sh): in isolated mode, a fake HOME
 #     holding any credential it reads stops the run before anything is copied, and so
 #     does a check that cannot finish; in native mode it is a warning. Through a driver,
@@ -185,6 +188,12 @@ PY
 # SHIM_FAIL=no-exe:<test>). SHIM_FAIL makes one step fail (build-sbf, update, metadata,
 # fetch, install-only) with cargo's own exit code, 101.
 # SHIM_WS_ROOT sets the workspace root `metadata` reports.
+# `fetch` writes that Cargo.lock too, as cargo resolves one before anything builds; a
+# SHIM_DEP or SHIM_LOCK source may also be registry+ or sparse+. With SHIM_DEPINFO=<file>,
+# `test --no-run` also reports the root's own lib, whose dep-info in <target
+# dir>/debug/deps/ is that file with @ROOT@ standing for the crate; with
+# SHIM_SBF_DEPINFO=<file>, `build-sbf` puts that file in <target
+# dir>/sbpf-solana-solana/release/deps/ as the arm's dep-info.
 #
 # The stand-in test binary logs its run to SHIM_CALLS as well (arguments "testbin
 # <test> ..."; SHIM_CALLS.env gets CARGO_MANIFEST_DIR and the dynamic library path) and
@@ -247,7 +256,14 @@ case "${1:-} $*" in
 esac
 case "${1:-}" in
   metadata) exec python3 -I "$here/meta.py" "$(dirname "$manifest")" ;;
-  build-sbf) printf '\177ELFmodel-%s' "$features" > "$out/${SHIM_CRATE:-poc_shim}.so"; echo "[shim cargo build-sbf $features]"; exit 0 ;;
+  fetch) python3 -I "$here/build.py" "$(dirname "$manifest")" --lock-only || exit 101; echo "[shim cargo $*]"; exit 0 ;;
+  build-sbf)
+    printf '\177ELFmodel-%s' "$features" > "$out/${SHIM_CRATE:-poc_shim}.so"
+    if [ -n "${SHIM_SBF_DEPINFO:-}" ]; then
+      d="${CARGO_TARGET_DIR:-${CARGO_BUILD_TARGET_DIR:-${SHIM_TARGET_DIR:-$(dirname "$manifest")/target}}}/sbpf-solana-solana/release/deps"
+      mkdir -p "$d" && cp "$SHIM_SBF_DEPINFO" "$d/${SHIM_CRATE:-poc_shim}.d"
+    fi
+    echo "[shim cargo build-sbf $features]"; exit 0 ;;
   test) case " $* " in *" --no-run "*) exec python3 -I "$here/build.py" "$(dirname "$manifest")" "$@" ;; esac ;;
 esac
 echo "[shim cargo $*]"; exit 0
@@ -264,8 +280,9 @@ if stu != "none":
                  "source": None if path else "registry+https://github.com/rust-lang/crates.io-index"})
 if os.environ.get("SHIM_DEP"):
     name, spec = os.environ["SHIM_DEP"].split(",", 1)
-    git = spec.startswith("git+")
-    deps.append({"name": name, "rename": None, "path": None if git else spec, "kind": None, "source": spec if git else None})
+    source = spec if spec.startswith(("git+", "registry+", "sparse+")) else None
+    index = spec.split("+", 1)[1] if spec.startswith(("registry+", "sparse+")) and "crates.io" not in spec else None
+    deps.append({"name": name, "rename": None, "path": None if source else spec, "kind": None, "source": source, "registry": index})
 packages = []
 for top, dirs, files in os.walk(root):
     dirs[:] = sorted(d for d in dirs if not (top == root and d in ("target", "markers")))
@@ -288,10 +305,6 @@ PY
 cat > "$T/shim/build.py" <<'PY'
 import json, os, sys
 root, args = sys.argv[1], sys.argv[2:]
-test, fail = args[args.index("--test") + 1], os.environ.get("SHIM_FAIL", "")
-if fail == "no-run:" + test:
-    print("[shim cargo: test build fails]", file=sys.stderr)
-    sys.exit(101)
 lock = os.path.join(root, "Cargo.lock")
 if not os.path.exists(lock):
     entries = ['[[package]]\nname = "%s"\nversion = "0.1.0"\n' % os.environ.get("SHIM_CRATE", "poc_shim")]
@@ -299,6 +312,12 @@ if not os.path.exists(lock):
         name, version, source = spec.split("@", 2)
         entries.append('[[package]]\nname = "%s"\nversion = "%s"\n%s' % (name, version, "" if source == "path" else 'source = "%s"\n' % source))
     open(lock, "w").write("# shim lock\nversion = 4\n\n" + "\n".join(entries))
+if args == ["--lock-only"]:
+    sys.exit(0)
+test, fail = args[args.index("--test") + 1], os.environ.get("SHIM_FAIL", "")
+if fail == "no-run:" + test:
+    print("[shim cargo: test build fails]", file=sys.stderr)
+    sys.exit(101)
 for n in range(int(os.environ.get("SHIM_JSON_PAD", "0"))):
     print(json.dumps({"reason": "compiler-artifact", "package_id": "registry+https://github.com/rust-lang/crates.io-index#pad%d@1.0.0" % n,
                       "manifest_path": "/registry/pad%d/Cargo.toml" % n, "target": {"kind": ["lib"], "crate_types": ["lib"], "name": "pad%d" % n,
@@ -312,6 +331,16 @@ if fresh:
     print(json.dumps({"reason": "compiler-artifact", "package_id": "path+file://%s#poc_shim@0.1.0" % root, "manifest_path": os.path.join(root, "Cargo.toml"),
                       "target": {"kind": ["lib"], "crate_types": ["lib"], "name": "poc_shim", "src_path": os.path.join(root, "src", "lib.rs")},
                       "profile": {"test": False}, "features": [], "filenames": ["/cache/debug/deps/libpoc_shim-shared.rlib"], "executable": None, "fresh": True}))
+if os.environ.get("SHIM_DEPINFO"):
+    deps = os.path.join(os.environ.get("CARGO_TARGET_DIR") or os.environ.get("CARGO_BUILD_TARGET_DIR") or os.environ.get("SHIM_TARGET_DIR")
+                        or os.path.join(root, "target"), "debug", "deps")
+    os.makedirs(deps, exist_ok=True)
+    name = os.environ.get("SHIM_CRATE", "poc_shim")
+    with open(os.environ["SHIM_DEPINFO"]) as f:
+        open(os.path.join(deps, name + ".d"), "w").write(f.read().replace("@ROOT@", root))
+    print(json.dumps({"reason": "compiler-artifact", "package_id": "path+file://%s#%s@0.1.0" % (root, name), "manifest_path": os.path.join(root, "Cargo.toml"),
+                      "target": {"kind": ["cdylib", "lib"], "crate_types": ["cdylib", "lib"], "name": name, "src_path": os.path.join(root, "src", "lib.rs")},
+                      "profile": {"test": False}, "features": [], "filenames": [os.path.join(deps, "lib%s.rlib" % name)], "executable": None, "fresh": False}))
 stu_build = os.environ.get("SHIM_STU_BUILD", "copy")
 if stu_build != "none":
     stu_root = os.path.join(root, "shared-test-utils") if stu_build == "copy" else "/elsewhere/shared-test-utils"
@@ -684,6 +713,75 @@ line="$(grep -n -m 1 '^   non-registry code: ' "$T/out")"; okline="$(grep -n -m 
   && ok "the path and git dependencies in Cargo.lock are named before the OK line" || { bad "non-registry line: exit $code, '$line'"; cat "$T/out" >&2; }
 code="$(gate "$T/inc" "$NATIVE" "$VULN" SHIM_FAIL=exploit SHIM_MARKERS="exploit:attempted exploit:failed exploit:loaded")"
 [ "$code" = 1 ] && grep -q '^   non-registry code: none' "$T/out" && ok "a verdict line also comes after the non-registry line" || bad "non-registry line on a verdict: exit $code"
+# The non-registry line from the dep-info (.d) files of the crate's own units, read by run.sh's harness
+# code on its own: every file from outside the crate that the library, a test or the harness copy compiled
+# or read, of any kind, by an absolute path or a relative one (taken from the workspace root, where cargo
+# runs rustc for them), and an SBF build's dep-info; a dependency from a registry other than crates.io;
+# but no build output named as a rule's target (in a build cache outside the crate here), no file of
+# crates.io's sources, and no dependency's own dep-info.
+python3 -I -c 'import sys; src = open(sys.argv[1], encoding="utf-8").read(); sys.stdout.write(src.split("\nHARNESS_PY=\x27", 1)[1].split("\n\x27\n", 1)[0])' "$TEMPLATE/run.sh" > "$T/harness-nr.py"
+NR="$T/nr"; NO="$T/nr-outside"; NCH="$T/nr-cargo-home"; ND="$T/nr-cache/debug/deps"
+mkdir -p "$NR/src" "$NR/tests" "$NR/shared-test-utils/src" "$NO" "$ND" "$NCH/registry/src"
+python3 -I - "$NR" "$NO" "$NCH" "$ND" "$T/nr-sbf.d" <<'PY'
+import json, os, sys
+nr, no, ch, nd, sbf = sys.argv[1:]
+crates_io = ch + "/registry/src/index.crates.io-0123456789abcdef"
+def depinfo(path, outputs, files):
+    files = [f.replace(" ", "\\ ") for f in files]
+    with open(path, "w") as f:
+        for out in outputs:
+            f.write("%s: %s\n\n" % (out, " ".join(files)))
+        for name in files:
+            f.write("%s:\n" % name)
+        f.write("\n# env-dep:CARGO_PKG_NAME=x\n")
+def artifact(manifest, name, kind, filenames, exe=None):
+    return json.dumps({"reason": "compiler-artifact", "package_id": "path+file://%s#%s@0.1.0" % (os.path.dirname(manifest), name),
+                       "manifest_path": manifest, "target": {"kind": kind, "crate_types": kind, "name": name,
+                       "src_path": os.path.join(os.path.dirname(manifest), "src", "lib.rs")}, "profile": {"test": False},
+                       "features": [], "filenames": filenames, "executable": exe, "fresh": False})
+for m in (nr, nr + "/shared-test-utils"):
+    open(m + "/Cargo.toml", "w").write("[package]\n")
+json.dump({"packages": [{"name": "poc_nr", "version": "0.1.0", "manifest_path": nr + "/Cargo.toml", "targets": [], "dependencies": []},
+                        {"name": "shared-test-utils", "version": "0.1.0", "manifest_path": nr + "/shared-test-utils/Cargo.toml",
+                         "targets": [], "dependencies": []}], "workspace_root": nr}, open(nr + "-meta.json", "w"))
+lock = [("poc_nr", "0.1.0", None), ("shared-test-utils", "0.1.0", None), ("vault", "0.2.0", None),
+        ("helper", "1.0.0", "git+https://example.invalid/helper.git#abc"), ("borsh", "1.8.1", "registry+https://github.com/rust-lang/crates.io-index"),
+        ("sbor", "1.0.0", "sparse+https://index.crates.io/"), ("evil", "0.1.0", "registry+file:///nr/index")]
+with open(nr + "/Cargo.lock", "w") as f:
+    f.write("version = 4\n")
+    for name, version, source in lock:
+        f.write('\n[[package]]\nname = "%s"\nversion = "%s"\n%s' % (name, version, 'source = "%s"\n' % source if source else ""))
+with open(nr + "-build.json", "w") as f:
+    f.write(artifact(nr + "/Cargo.toml", "poc_nr", ["cdylib", "lib"], [nd + "/libpoc_nr.dylib", nd + "/libpoc_nr.rlib"]) + "\n")
+    f.write(artifact(nr + "/Cargo.toml", "exploit", ["test"], [nd + "/exploit-0a1b"], nd + "/exploit-0a1b") + "\n")
+    f.write(artifact(nr + "/shared-test-utils/Cargo.toml", "shared_test_utils", ["lib"], [nd + "/libshared_test_utils-5e6f.rlib"]) + "\n")
+    f.write(artifact(crates_io + "/borsh-1.8.1/Cargo.toml", "borsh", ["lib"], [nd + "/libborsh-7a8b.rlib"]) + "\n")
+depinfo(nd + "/poc_nr.d", [nd + "/poc_nr.d", nd + "/libpoc_nr.dylib", nd + "/libpoc_nr.rlib"],
+        ["src/lib.rs", no + "/state.rs", no + "/payload.inc", no + "/with space.txt", crates_io + "/serde-1.0.0/src/data.json",
+         ch + "/registry/src/evil.example-0123456789abcdef/x-1.0.0/src/lib.rs", ch + "/git/checkouts/x-0123/abc/src/lib.rs"])
+depinfo(nd + "/exploit-0a1b.d", [nd + "/exploit-0a1b.d", nd + "/exploit-0a1b"], ["tests/exploit.rs", "tests/../../nr-outside/helper.rs", no + "/key.json"])
+depinfo(nd + "/shared_test_utils-5e6f.d", [nd + "/shared_test_utils-5e6f.d"], ["shared-test-utils/src/lib.rs"])
+depinfo(nd + "/borsh-7a8b.d", [nd + "/borsh-7a8b.d"], [no + "/not-ours.rs"])
+depinfo(sbf, ["/target/sbpf-solana-solana/release/deps/poc_nr.d"], ["src/lib.rs", no + "/sbf-only.rs"])
+PY
+out="$(env -i PATH="$PATH" CARGO_HOME="$NCH" python3 -I "$T/harness-nr.py" nonregistry "$NR" "$NR/Cargo.lock" "$NR-meta.json" "$NR-build.json" "$T/nr-sbf.d")"; rc=$?
+want_nr="vault 0.2.0 (path), helper 1.0.0 (git+https://example.invalid/helper.git#abc), evil 0.1.0 (registry+file:///nr/index, not crates.io), $NO/helper.rs (compiled in), $NO/key.json (compiled in), $NO/state.rs (compiled in), $NO/payload.inc (compiled in), $NO/with space.txt (compiled in), $NCH/registry/src/evil.example-0123456789abcdef/x-1.0.0/src/lib.rs (compiled in), $NCH/git/checkouts/x-0123/abc/src/lib.rs (compiled in), $NO/sbf-only.rs (compiled in)"
+[ "$rc" = 0 ] && [ "$out" = "$want_nr" ] \
+  && ok "the non-registry line names every outside file the crate's own units read (any kind, absolute or relative, the SBF build's too) and another registry's crates" \
+  || { bad "harness nonregistry on the crate's own dep-info: $rc"; printf 'got:  %s\nwant: %s\n' "$out" "$want_nr" >&2; }
+# The same through run.sh, before the final line: the library's dep-info in a build (prebuilt bytes), and an
+# arm's SBF build in a model run.
+DI="$T/di-outside"; mkdir -p "$DI"
+printf '@ROOT@/target/debug/deps/poc_shim.d: src/lib.rs %s/state.rs %s/payload.inc\n\nsrc/lib.rs:\n%s/state.rs:\n%s/payload.inc:\n' "$DI" "$DI" "$DI" "$DI" > "$T/di-lib.d"
+printf '/target/sbpf-solana-solana/release/deps/poc_shim.d: src/lib.rs %s/sbf-only.rs\n\nsrc/lib.rs:\n%s/sbf-only.rs:\n' "$DI" "$DI" > "$T/di-sbf.d"
+mk_crate "$T/di"
+code="$(gate "$T/di" "$NATIVE" "$VULN" SHIM_DEPINFO="$T/di-lib.d")"
+line="$(grep -n -m 1 '^   non-registry code: ' "$T/out")"; okline="$(grep -n -m 1 "^$LEG3" "$T/out")"
+[ "$code" = 0 ] && [ "${line#*:}" = "   non-registry code: $DI/state.rs (compiled in), $DI/payload.inc (compiled in)" ] && [ "${line%%:*}" -lt "${okline%%:*}" ] \
+  && ok "a #[path] module and an include! of a non-.rs file in the library are named before the OK line" || { bad "the library's dep-info: exit $code, '$line'"; cat "$T/out" >&2; }
+code="$(gate "$T/di" "$NATIVE" SHIM_SBF_DEPINFO="$T/di-sbf.d")"
+[ "$code" = 0 ] && grep -qxF "   non-registry code: $DI/sbf-only.rs (compiled in)" "$T/out" && grep -q '^OK: exploit reproduces' "$T/out" \
+  && ok "a module only the SBF build compiles is named on the non-registry line of a model run" || { bad "the SBF build's dep-info: exit $code"; cat "$T/out" >&2; }
 
 # A hashlib.py planted in the crate, which the scratch copy holds too, and on PYTHONPATH
 # must not load when run.sh hashes the bytes; the control shows it would without -I.
@@ -2010,7 +2108,14 @@ done <<CASES
 SHIM_DEP=vault,$T/target-crates/vault|poc_shim depends on vault at $T/target-crates/vault, outside the crate
 SHIM_DEP=vault,git+https://example.invalid/vault|poc_shim depends on vault from git+https://example.invalid/vault
 SHIM_LIB_SRC=$T/target-crates/lib.rs|poc_shim builds poc_shim from $T/target-crates/lib.rs, outside the crate
+SHIM_DEP=evil,registry+file:///target/index|poc_shim depends on evil from file:///target/index, a registry other than crates.io
+SHIM_DEP=evil,sparse+https://registry.example.invalid/index/|poc_shim depends on evil from https://registry.example.invalid/index/, a registry other than crates.io
 CASES
+for spec in registry+https://github.com/rust-lang/crates.io-index sparse+https://index.crates.io/; do
+  ( cd "$SC" && env -i PATH="$PATH" "SHIM_DEP=borsh,$spec" python3 -I "$T/shim/meta.py" "$SC" ) > "$T/sc-meta.json"
+  out="$(python3 -I "$T/harness.py" crate "$T/sc-meta.json" "$SC" supply-chain)"; rc=$?
+  [ "$rc" = 0 ] && [ "$out" = poc_shim ] && ok "under supply_chain_or_ci the crate check accepts a dependency from crates.io ($spec)" || bad "the crate check, crates.io as $spec: $rc '$out'"
+done
 if [ "$ISOLATED_OK" = 1 ]; then
   code="$(ngate AUDITOR_EXEC_MODE=isolated -- --crate incident_1/poc/INC-1.1 "${IVULN[@]}")"
   [ "$code" = 0 ] && grep -q "^$LEG3" "$T/out" && ok "supply_chain_or_ci in isolated mode on the dumped bytes runs" || { bad "supply_chain_or_ci, isolated: exit $code"; cat "$T/out" >&2; }
@@ -2020,13 +2125,26 @@ if [ "$ISOLATED_OK" = 1 ]; then
   [ "$code" = 3 ] && grep -qF "poc_shim depends on vault at $T/target-crates/vault, outside the crate" "$T/out" && [ -z "$(ls -A "$NT")" ] \
     && awk -F'\t' '$6 !~ /^metadata / { b = 1 } END { exit b }' "$T/calls" \
     && ok "supply_chain_or_ci with a path dependency outside the crate -> exit 3 before anything compiles" || { bad "supply_chain_or_ci, a path dependency: exit $code"; cat "$T/out" >&2; }
+  # The resolved Cargo.lock is read again after the downloads: a path dependency, or one from another
+  # registry than crates.io, that cargo resolved stops the run before anything compiles.
+  for spec in 'vault@0.1.0@path|vault 0.1.0 (path)' 'evil@0.1.0@registry+file:///target/index|evil 0.1.0 (registry+file:///target/index, not crates.io)'; do
+    rm -f "$WT/incident_1/poc/INC-1.1/Cargo.lock"
+    SHIM_EXTRA=("SHIM_LOCK=${spec%%|*}")
+    code="$(ngate AUDITOR_EXEC_MODE=isolated -- --crate incident_1/poc/INC-1.1 "${IVULN[@]}")"
+    SHIM_EXTRA=()
+    [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: the resolved Cargo.lock names code from outside the crate (${spec#*|}), and the PoC of an incident whose root_cause_class is supply_chain_or_ci builds none of the target crates (OUTPUT-RULES.md Rule 11a); nothing was built." "$T/out" \
+      && ! awk -F'\t' '$6 ~ /^(test |testbin )/ { f = 1 } END { exit !f }' "$T/calls" \
+      && ok "supply_chain_or_ci with ${spec#*|} in the resolved Cargo.lock -> exit 3 before anything compiles" || { bad "supply_chain_or_ci, ${spec#*|} in the lock: exit $code"; cat "$T/out" >&2; }
+  done
+  # And a build that compiled a file from outside the crate, which only its dep-info names, stops before
+  # its test runs.
   rm -f "$WT/incident_1/poc/INC-1.1/Cargo.lock"
-  SHIM_EXTRA=("SHIM_LOCK=vault@0.1.0@path")
+  SHIM_EXTRA=(SHIM_DEPINFO="$T/di-lib.d")
   code="$(ngate AUDITOR_EXEC_MODE=isolated -- --crate incident_1/poc/INC-1.1 "${IVULN[@]}")"
   SHIM_EXTRA=()
-  [ "$code" = 3 ] && grep -q '^\[PoC-ATTEMPTED\] blocker: the build compiled code from outside the crate (vault 0.1.0 (path))' "$T/out" \
+  [ "$code" = 3 ] && grep -qF "[PoC-ATTEMPTED] blocker: the build compiled code from outside the crate ($DI/state.rs (compiled in), $DI/payload.inc (compiled in))" "$T/out" \
     && ! awk -F'\t' '$6 ~ /^testbin / { f = 1 } END { exit !f }' "$T/calls" \
-    && ok "supply_chain_or_ci with code from outside the crate in the build -> exit 3, the test never runs" || { bad "supply_chain_or_ci, a build with outside code: exit $code"; cat "$T/out" >&2; }
+    && ok "supply_chain_or_ci with a #[path] module and an include! from outside the crate in the build -> exit 3, the test never runs" || { bad "supply_chain_or_ci, a build with outside code: exit $code"; cat "$T/out" >&2; }
 fi
 rm -rf "$IJ" "$WT/incident_1/poc/INC-1.1"
 
@@ -3263,6 +3381,32 @@ path = \"$T/e-oot-outside/lib.rs\"
   else
     bad "real cargo, out-of-tree sources: exit $code"; grep 'non-registry' "$T/out" >&2
   fi
+  # The template's shape, a cdylib and lib, pulling in outside files of every kind: an absolute #[path]
+  # module and an include! of a non-.rs file in the library, and in the test an include_str! of a non-.rs
+  # file and a relative #[path] that climbs out of the scratch copy. rustc's dep-info for the library and
+  # the test lists each one, and the non-registry line names it.
+  mk_e2e "$T/e-inc"; O2="$T/e-inc-outside"; ET="$T/e-inc-tmp"; mkdir -p "$O2" "$ET/rel-outside"
+  printf 'pub fn state() -> u8 { 7 }\n' > "$O2/state.rs"; printf 'pub fn from_payload() -> u8 { 41 }\n' > "$O2/payload.inc"
+  printf 'outside bytes\n' > "$O2/key.txt"; printf 'pub fn helper() -> u8 { 5 }\n' > "$ET/rel-outside/helper.rs"
+  subst "$T/e-inc/Cargo.toml" '[workspace]' '[lib]
+crate-type = ["cdylib", "lib"]
+
+[workspace]'
+  printf '#[path = "%s/state.rs"]\npub mod outside_state;\ninclude!("%s/payload.inc");\n' "$O2" "$O2" >> "$T/e-inc/src/lib.rs"
+  subst "$T/e-inc/tests/exploit.rs" '#![cfg(feature = "vulnerable")]' "#![cfg(feature = \"vulnerable\")]
+#[path = \"../../rel-outside/helper.rs\"]
+mod rel_helper;
+const OUTSIDE_BYTES: &str = include_str!(\"$O2/key.txt\");"
+  subst "$T/e-inc/tests/exploit.rs" '    assert_exploit_effect!(' '    let _ = (rel_helper::helper(), OUTSIDE_BYTES.len(), poc_e2e::outside_state::state(), poc_e2e::from_payload());
+    assert_exploit_effect!('
+  code="$(e2e "$T/e-inc" VULNERABLE_SO="$SB-takeover.so" TMPDIR="$ET")"
+  line="$(grep -m 1 '^   non-registry code: ' "$T/out")"; named=1
+  for f in "$O2/state.rs" "$O2/payload.inc" "$O2/key.txt" "$ET/rel-outside/helper.rs"; do
+    case "$line" in *"$f (compiled in)"*) ;; *) named=0 ;; esac
+  done
+  [ "$code" = 0 ] && [ "$named" = 1 ] && grep -q "^$LEG3" "$T/out" \
+    && ok "real cargo: an outside #[path] module, include! and include_str! of any file, and a relative path out of the scratch copy are named on the non-registry line" \
+    || { bad "real cargo, outside includes: exit $code, '$line'"; cat "$T/out" >&2; }
   # A crate that joins an outside workspace (a workspace key under [package]) whose root lists the scratch
   # copies by a glob, and patches a dependency there: cargo metadata names that root, and the run stops
   # before anything compiles, with nothing built into that workspace or locked there.

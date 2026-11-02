@@ -207,8 +207,11 @@
 #     (a harness error, on either arm), exit 3. The markers are a floor, not proof:
 #     read the assertion all the same.
 #   * before the final line, run.sh prints the non-registry code in the build: the
-#     path and git dependencies in the resolved Cargo.lock, a `[lib] path` or
-#     `#[path]` source compiled from outside the crate, and the like.
+#     path and git dependencies in the resolved Cargo.lock and those from a registry
+#     other than crates.io, and every file from outside the crate that a package of
+#     the crate's own workspace compiled or read, of any kind: a `[lib] path`, a
+#     `#[path]` module, an include!, include_str! or include_bytes!, as rustc's
+#     dep-info (.d) files of the test build, and of each arm's SBF build, list them.
 #
 # PREBUILT BYTES (incidents under references/detection-response/, or a re-run
 # against the target's own builds). Leg 3 of `confirmed_exploited` needs the exploit
@@ -239,9 +242,11 @@
 #     from incident_<n>/INCIDENTS.json (a regular file of at most 4 MiB) and stops
 #     (exit 3) when the file, the incident or its class cannot be read. For
 #     supply_chain_or_ci it refuses native mode, a run without --vulnerable-so, a
-#     dependency on a path outside the crate or on git, and a target whose source lies
-#     outside the crate, and it stops before a test runs when the build compiled code
-#     from outside the crate. ./run.sh does not read INCIDENTS.json.
+#     dependency on a path outside the crate, on git or from a registry other than
+#     crates.io, and a target whose source lies outside the crate; it reads the
+#     resolved Cargo.lock again after the downloads, before anything compiles; and it
+#     stops before a test runs when the build compiled code from outside the crate.
+#     ./run.sh does not read INCIDENTS.json.
 
 set -Eeuo pipefail
 # Only an assertion that ran and did not hold gives a verdict (exit 1 or 2). Any
@@ -764,7 +769,8 @@ fi
 # checks (exit 3 and the reason otherwise). `harness targetdir`: the directory cargo
 # builds into, from cargo metadata. `harness checkbuild`: the test binary in cargo's
 # JSON output. `harness settle`: an arm's verdict from its markers.
-# `harness nonregistry`: the path and git dependencies in Cargo.lock. `harness stucopy`:
+# `harness nonregistry`: the code from outside the crate and crates.io, from Cargo.lock
+# and from the dep-info of the crate's own units. `harness stucopy`:
 # whether the crate's shared-test-utils/src/lib.rs is the installation's (same, differs or
 # missing), after the checks of the harness copy (exit 3 and the reason). python3 runs
 # isolated (-I): `python3 -c` would otherwise import modules such as hashlib.py from
@@ -831,6 +837,12 @@ def under(path, root):
     return path == root or path.startswith(root + os.sep)
 
 
+# crates.io as Cargo.lock and cargo metadata name it, and the directories cargo unpacks its
+# crates into, under CARGO_HOME/registry/src/ (any other name there is another registry).
+CRATES_IO = ("registry+https://github.com/rust-lang/crates.io-index", "sparse+https://index.crates.io/")
+CRATES_IO_SRC = re.compile(r"^(?:index\.crates\.io-[0-9a-f]{16}|github\.com-1ecc6299db9ec823)$")
+
+
 def crate(meta_path, root, rule=""):
     root = os.path.realpath(root)
     with open(meta_path, encoding="utf-8") as f:
@@ -842,8 +854,8 @@ def crate(meta_path, root, rule=""):
     if not workspace or os.path.realpath(workspace) != root:
         refuse("the crate belongs to the workspace at %s, not to its own: run.sh builds a crate that is its own workspace root ([workspace] in its Cargo.toml, as in the template), so that no manifest outside it adds members, a [patch] table or the directory cargo builds into." % (workspace or "an unnamed place"))
     if rule == "supply-chain":
-        # The target crates may be the payload: no dependency on a path outside the crate or
-        # on git, and no target built from a source outside it.
+        # The target crates may be the payload: no dependency on a path outside the crate, on
+        # git or from a registry other than crates.io, and no target built from a source outside it.
         for pkg in meta.get("packages", []):
             for dep in pkg.get("dependencies", []):
                 path, source = dep.get("path"), dep.get("source") or ""
@@ -851,6 +863,8 @@ def crate(meta_path, root, rule=""):
                     refuse("%s depends on %s at %s, outside the crate: the PoC of an incident whose root_cause_class is supply_chain_or_ci builds none of the target crates (OUTPUT-RULES.md Rule 11a)." % (pkg["name"], dep.get("name"), path))
                 if source.startswith("git+"):
                     refuse("%s depends on %s from %s: the PoC of an incident whose root_cause_class is supply_chain_or_ci builds no git dependency (OUTPUT-RULES.md Rule 11a)." % (pkg["name"], dep.get("name"), source))
+                if (source and source not in CRATES_IO) or dep.get("registry"):
+                    refuse("%s depends on %s from %s, a registry other than crates.io: the PoC of an incident whose root_cause_class is supply_chain_or_ci builds none of the target crates, and a registry the target names can serve them (OUTPUT-RULES.md Rule 11a)." % (pkg["name"], dep.get("name"), dep.get("registry") or source))
             for target in pkg.get("targets", []):
                 if not under(target.get("src_path", root), root):
                     refuse("%s builds %s from %s, outside the crate: the PoC of an incident whose root_cause_class is supply_chain_or_ci builds none of the target crates (OUTPUT-RULES.md Rule 11a)." % (pkg["name"], target.get("name", "?"), target.get("src_path")))
@@ -1065,13 +1079,50 @@ def settle(directory, arm, status, prebuilt, placed_so, placed):
     say("pass", *shown[0])
 
 
-def nonregistry(root, lock, meta_path, builds):
-    # The code the run compiled or linked that did not come from a registry: path and
-    # git dependencies from Cargo.lock, a target whose source sits outside the crate
-    # (a `[lib] path` or a `#[path]` module that a lockfile entry never names), and
-    # any such source listed in a compiled binary dep-info (.d) file.
+# An output in a deps directory and the dep-info (.d) file rustc writes beside it: deps/lib<crate><extra>
+# with .rlib, .rmeta, .so, .dylib or .a, and the executable deps/<crate><extra>, have deps/<crate><extra>.d.
+LIB_OUTPUT = re.compile(r"^lib(.+)\.(?:rlib|rmeta|so|dylib|a)$")
+
+
+def depfile_of(name):
+    folder, base = os.path.split(name)
+    if os.path.basename(folder) != "deps":
+        return ""
+    m = LIB_OUTPUT.match(base)
+    if m:
+        return os.path.join(folder, m.group(1) + ".d")
+    return os.path.join(folder, base + ".d") if base and "." not in base else ""
+
+
+def depinfo(path):
+    # Every file a dep-info file lists: the prerequisites of each rule (whose target is an output of the
+    # build) and the empty rule rustc writes for each of them. rustc escapes only a space.
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return []
+    files = []
+    for line in text.split("\n"):
+        if not line or line.startswith("#"):
+            continue
+        if ": " in line:
+            line = line.split(": ", 1)[1]
+        elif line.endswith(":"):
+            line = line[:-1]
+        files.extend(token.replace("\\ ", " ") for token in re.split(r"(?<!\\) +", line) if token)
+    return files
+
+
+def nonregistry(root, lock, meta_path, inputs):
+    # The code the run compiled or linked that comes neither from the crate nor from crates.io: path and
+    # git dependencies and those from another registry, from Cargo.lock; a target of the crate own
+    # workspace whose source sits outside the crate (a `[lib] path`); and every file from outside the
+    # crate that a unit of that workspace compiled or read, of any kind (a #[path] module, an include!,
+    # include_str! or include_bytes!), from the dep-info files of those units. <inputs> are the JSON
+    # outputs of the test builds and the dep-info files of the SBF builds.
     root = os.path.realpath(root)
-    members, paths, found, package = set(), {}, [], None
+    members, manifests, paths, found, package = set(), set(), {}, [], None
     out, seen = [], set()
 
     def note(text):
@@ -1079,17 +1130,28 @@ def nonregistry(root, lock, meta_path, builds):
             seen.add(text)
             out.append(text)
 
-    registry = os.path.realpath(os.environ.get("CARGO_HOME", os.path.expanduser("~/.cargo")))
+    sources = os.path.realpath(os.path.join(os.environ.get("CARGO_HOME", os.path.expanduser("~/.cargo")), "registry", "src"))
     sysroot = os.path.realpath(os.environ.get("AUDITOR_SYSROOT", "/nonexistent"))
 
     def outside(path):
-        return path and not under(path, root) and not under(path, registry) and not under(path, sysroot)
+        # The path a file resolves to when it lies outside the crate, the toolchain and the sources of
+        # crates.io, else "". cargo runs rustc in the workspace root for its members, so a relative
+        # entry is taken from there.
+        path = os.path.realpath(os.path.join(root, path))
+        if under(path, root) or under(path, sysroot):
+            return ""
+        if under(path, sources) and CRATES_IO_SRC.match(os.path.relpath(path, sources).split(os.sep, 1)[0]):
+            return ""
+        return path
 
     with open(meta_path, encoding="utf-8") as f:
         for pkg in json.load(f).get("packages", []):
             members.add((pkg["name"], pkg["version"]))
-    depfiles = []
-    for build in builds:
+            manifests.add(os.path.realpath(pkg["manifest_path"]))
+    depfiles = [item for item in inputs if item.endswith(".d")]
+    for build in inputs:
+        if build.endswith(".d"):
+            continue
         for msg in json_lines(build):
             if msg.get("reason") != "compiler-artifact":
                 continue
@@ -1098,15 +1160,15 @@ def nonregistry(root, lock, meta_path, builds):
                 fragment = pid.rsplit("#", 1)[-1]
                 name, at, version = fragment.rpartition("@")
                 paths[(name if at else os.path.basename(os.path.dirname(manifest)), version)] = os.path.dirname(manifest)
+            if not manifest or os.path.realpath(manifest) not in manifests:
+                continue
             target = msg.get("target") or {}
             src = target.get("src_path")
-            if manifest == os.path.join(root, "Cargo.toml") and src and outside(src):
+            if src and outside(src):
                 note("%s (path %s)" % (target.get("name", "?"), src))
-            for name in msg.get("filenames") or []:
-                if name and not name.endswith((".rlib", ".rmeta", ".so", ".dylib", ".dll")):
-                    depfiles.append(name + ".d")
-            if msg.get("executable"):
-                depfiles.append(msg["executable"] + ".d")
+            for name in (msg.get("filenames") or []) + [msg.get("executable") or ""]:
+                if depfile_of(name):
+                    depfiles.append(depfile_of(name))
     with open(lock, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -1124,16 +1186,13 @@ def nonregistry(root, lock, meta_path, builds):
             note("%s %s (path%s)" % (key[0], key[1], " " + paths[key] if key in paths else ""))
         elif source is not None and source.startswith("git+"):
             note("%s %s (%s)" % (key[0], key[1], source))
-    for depfile in set(depfiles):
-        try:
-            with open(depfile, encoding="utf-8", errors="replace") as f:
-                text = f.read()
-        except OSError:
-            continue
-        for token in re.split(r"(?<!\\)[ \n]+", text.split(":", 1)[-1]):
-            token = token.replace("\\ ", " ").strip()
-            if token.startswith("/") and os.path.splitext(token)[1] == ".rs" and outside(token):
-                note("%s (compiled in)" % token)
+        elif source is not None and source not in CRATES_IO:
+            note("%s %s (%s, not crates.io)" % (key[0], key[1], source))
+    for depfile in sorted(set(depfiles)):
+        for entry in depinfo(depfile):
+            path = outside(entry)
+            if path:
+                note("%s (compiled in)" % path)
     print(flat(", ".join(out)) if out else "none: every dependency comes from a registry")
 
 
@@ -1456,6 +1515,17 @@ if [[ "${CLEAN}" == 1 ]] && ! child_net cargo fetch --manifest-path "${BUILD_DIR
   echo "[PoC-ATTEMPTED] blocker: cargo fetch could not download the crate's dependencies — see the cargo output above." >&2
   exit 3
 fi
+# For supply_chain_or_ci the resolved Cargo.lock is read again before anything compiles:
+# a dependency on a path outside the crate, on git or from another registry than
+# crates.io, wherever cargo resolved it from, stops the run here (PREBUILT BYTES above).
+if [[ "${SUPPLY_CHAIN}" == 1 ]]; then
+  NONREG="$(harness nonregistry "${BUILD_DIR}" "${BUILD_DIR}/Cargo.lock" "${RUN_DIR}/metadata.json" 2>/dev/null)" ||
+    NONREG="unknown — ${BUILD_DIR}/Cargo.lock could not be read"
+  if [[ "${NONREG}" != "none: every dependency comes from a registry" ]]; then
+    echo "[PoC-ATTEMPTED] blocker: the resolved Cargo.lock names code from outside the crate (${NONREG}), and the PoC of an incident whose root_cause_class is supply_chain_or_ci builds none of the target crates (OUTPUT-RULES.md Rule 11a); nothing was built." >&2
+    exit 3
+  fi
+fi
 # cargo build-sbf in the installation's copy: its platform tools are installed once, with
 # the real HOME (where they live) and the proxy variables, building nothing; each arm then
 # builds offline in the throwaway HOME, whose .cache/solana links to the real one, where
@@ -1516,6 +1586,12 @@ place_arm() {  # place_arm <arm> : put <crate>.so in SBF_OUT_DIR for this arm; P
       echo "[PoC-ATTEMPTED] blocker: SBF build failed for the ${arm} arm — see the cargo output above." >&2
       exit 3
     fi
+    # The SBF build's dep-info, for harness nonregistry: a module the test build leaves
+    # out (#[cfg(target_os = "solana")]) is compiled here alone.
+    local d n=0
+    for d in "${EFFECTIVE_TARGET}"/*/release/deps/"${CRATE}".d; do
+      if [[ -f "${d}" ]]; then n=$((n + 1)); cp "${d}" "${RUN_DIR}/sbf-${arm}-${n}.d" 2>/dev/null || true; fi
+    done
   fi
   PLACED_HASH="$(harness hash "${so}")" || PLACED_HASH=""
   if [[ ! "${PLACED_HASH}" =~ ^[0-9a-f]{64}$ ]]; then
@@ -1594,14 +1670,19 @@ settle() {
 
 NONREG=""
 capture_nonreg() {  # the non-registry code, read right after a build (before a test can rewrite the lock)
-  NONREG="$(harness nonregistry "${BUILD_DIR}" "${BUILD_DIR}/Cargo.lock" "${RUN_DIR}/metadata.json" "${RUN_DIR}"/build-*.json 2>/dev/null)" \
+  local d
+  local -a inputs=("${RUN_DIR}"/build-*.json)
+  for d in "${RUN_DIR}"/sbf-*.d; do
+    if [[ -f "${d}" ]]; then inputs+=("${d}"); fi
+  done
+  NONREG="$(harness nonregistry "${BUILD_DIR}" "${BUILD_DIR}/Cargo.lock" "${RUN_DIR}/metadata.json" "${inputs[@]}" 2>/dev/null)" \
     || NONREG="unknown — ${BUILD_DIR}/Cargo.lock could not be read"
   if [[ "${SUPPLY_CHAIN}" == 1 && "${NONREG}" != "none: every dependency comes from a registry" ]]; then
     echo "[PoC-ATTEMPTED] blocker: the build compiled code from outside the crate (${NONREG}), and the PoC of an incident whose root_cause_class is supply_chain_or_ci builds none of the target crates (OUTPUT-RULES.md Rule 11a); its test does not run." >&2
     exit 3
   fi
 }
-nonregistry() {  # the path and git dependencies and out-of-tree sources the build pulled in
+nonregistry() {  # the dependencies from outside the crate and crates.io, and the out-of-tree files the build pulled in
   echo "   non-registry code: ${NONREG:-unknown — no build was read}"
 }
 
