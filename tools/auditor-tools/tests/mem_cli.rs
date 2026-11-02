@@ -548,6 +548,76 @@ fn checks_the_in_tree_store_with_git() {
 }
 
 #[test]
+fn a_git_in_the_repository_the_working_directory_lies_in_is_never_run() {
+    // The working directory is one program of a repository, and a PATH entry inside
+    // the repository, above it, holds a git that marks that it ran and lists a file.
+    let repo = Wt::repo();
+    repo.mkdir("programs/v");
+    let marker = repo.outside().join("ran");
+    repo.write(
+        "node_modules/.bin/git",
+        format!("#!/bin/sh\ntouch '{}'\necho x\n", marker.display()).as_bytes(),
+    );
+    repo.chmod("node_modules/.bin/git", 0o755);
+    let entry = repo.path("node_modules/.bin");
+    let path = format!(
+        "{}:{}",
+        entry.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let v = repo.path("programs/v");
+    let warm = ["warm", "--program-id", P];
+    ok(&run_env(BIN, &v, &warm, &[("PATH", &path)]));
+    assert!(
+        !marker.exists(),
+        "the git above the working directory did not run"
+    );
+    // A repository at HOME is not one the working directory lies in, so the entry
+    // stays, as confine_init keeps it; nor is one above a working directory that
+    // has a repository of its own.
+    let home = repo.dir.to_str().expect("a UTF-8 path");
+    let listed = format!("the repository tracks .audit-memory (in some letter case){USE_R}");
+    refused(
+        &run_env(BIN, &v, &warm, &[("PATH", &path), ("HOME", home)]),
+        "audit-mem",
+        &listed,
+    );
+    assert!(marker.exists(), "HOME: the entry stays");
+    fs::remove_file(&marker).expect("rm");
+    repo.git(&["init", "-q", "programs/v"]);
+    refused(
+        &run_env(BIN, &v, &warm, &[("PATH", &path)]),
+        "audit-mem",
+        &listed,
+    );
+    assert!(marker.exists(), "its own repository: the entry stays");
+    fs::remove_file(&marker).expect("rm");
+    // An entry inside the working directory reached by another spelling, through
+    // macOS's /System/Volumes/Data firmlink, is inside it all the same.
+    let data = Path::new("/System/Volumes/Data").join(
+        repo.dir
+            .strip_prefix("/")
+            .expect("the working tree is absolute"),
+    );
+    let same = |a: &Path, b: &Path| match (fs::metadata(a), fs::metadata(b)) {
+        (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+        _ => false,
+    };
+    if same(&data, &repo.dir) {
+        let path = format!(
+            "{}:{}",
+            data.join("node_modules/.bin").display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        ok(&run_env(BIN, &repo.dir, &warm, &[("PATH", &path)]));
+        assert!(
+            !marker.exists(),
+            "the git inside, spelled another way, did not run"
+        );
+    }
+}
+
+#[test]
 fn refuses_a_working_directory_whose_path_holds_a_control_character() {
     let wt = Wt::new();
     for name in ["a\nb", "a\u{7f}b"] {

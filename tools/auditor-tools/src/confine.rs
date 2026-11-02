@@ -13,9 +13,10 @@
 //! 6 digits) directly in WT: a real directory, holding no symbolic link, tracked by
 //! no repository in any letter case, whose `.gitignore` holds exactly `*`, as
 //! `scripts/rundir.sh check` checks it. git runs only as `hgit` runs it: found on
-//! a PATH with every entry inside WT removed, with an environment of its own that
-//! allows no transport, and with the repository's config pinned off; it is killed
-//! when it has not answered in time. The only other program started is
+//! a PATH with every entry inside WT, or inside the repository WT lies in, removed
+//! (by identity, not spelling), with an environment of its own that allows no
+//! transport, and with the repository's config pinned off; it is killed when it
+//! has not answered in time. The only other program started is
 //! audit-scan itself, by the path it runs from, to parse one file in a child: the
 //! file's bytes on its stdin, no environment, killed past a time limit. A file is
 //! made through its directory's descriptor, never through a link and never over a
@@ -531,8 +532,49 @@ pub const HGIT_PINS: &[&str] = &[
 /// cannot tell.
 pub const GIT_TIME: Duration = Duration::from_secs(10);
 
+/// Whether two stats name the same file: its device and inode.
+fn same(a: &Metadata, b: &Metadata) -> bool {
+    a.dev() == b.dev() && a.ino() == b.ino()
+}
+
+/// Whether `path` (absolute) is `dir` or lies below it, as `confine_inside`
+/// decides it: by identity along `path`'s ancestors, never by spelling, since one
+/// directory has several spellings (through `/System/Volumes/Data` on macOS, or in
+/// other letters on a volume that ignores letter case).
+fn inside(path: &Path, dir: &Path) -> bool {
+    let Ok(want) = fs::metadata(dir) else {
+        return false;
+    };
+    path.ancestors()
+        .any(|a| fs::metadata(a).is_ok_and(|md| same(&md, &want)))
+}
+
+/// The top level of the repository WT lies in, as `confine_init` finds it and git
+/// does from WT: the nearest of WT and the directories above it, below HOME, that
+/// holds a `.git` of any kind. Its tree is under audit too.
+fn repository_top(wt: &Path) -> Option<&Path> {
+    let home = std::env::var_os("HOME")
+        .filter(|h| !h.is_empty())
+        .and_then(|h| fs::metadata(h).ok());
+    let mut dir = wt;
+    loop {
+        if fs::symlink_metadata(dir.join(".git")).is_ok() {
+            return Some(dir);
+        }
+        dir = dir.parent()?;
+        if home
+            .as_ref()
+            .is_some_and(|h| fs::metadata(dir).is_ok_and(|md| same(&md, h)))
+        {
+            return None;
+        }
+    }
+}
+
 /// git, run as confine.sh's `hgit` runs it. Found on first use: on a PATH that
-/// keeps only absolute entries resolving outside WT, as `confine_init` cleans it.
+/// keeps only absolute entries resolving outside WT and outside the repository WT
+/// lies in (`repository_top`), each compared by identity (`inside`), as
+/// `confine_init` cleans it.
 pub struct Git {
     wt: PathBuf,
     found: Option<(PathBuf, OsString)>,
@@ -557,6 +599,7 @@ impl Git {
 
     fn find(&self) -> Result<(PathBuf, OsString), Stop> {
         let path = std::env::var_os("PATH").unwrap_or_default();
+        let top = repository_top(&self.wt);
         let mut clean: Vec<PathBuf> = Vec::new();
         for entry in path.as_bytes().split(|&c| c == b':') {
             if entry.first() != Some(&b'/') {
@@ -572,6 +615,8 @@ impl Git {
                     .iter()
                     .any(|&c| c < 0x20 || c == 0x7F)
                 || real.starts_with(&self.wt)
+                || inside(&real, &self.wt)
+                || top.is_some_and(|t| inside(&real, t))
             {
                 continue;
             }
@@ -1390,6 +1435,37 @@ mod tests {
                 "{script}: {took:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_path_lies_inside_a_directory_by_identity_and_the_repository_is_the_nearest() {
+        let dir = std::env::temp_dir()
+            .canonicalize()
+            .expect("the temporary directory resolves")
+            .join(format!("confine-inside-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("repo/.git")).expect("a scratch repository");
+        fs::create_dir_all(dir.join("repo/programs/v/src")).expect("a program in it");
+        std::os::unix::fs::symlink(dir.join("repo/programs"), dir.join("other"))
+            .expect("another spelling");
+        let v = dir.join("repo/programs/v");
+        assert!(inside(&v, &v));
+        assert!(inside(&v.join("src"), &v));
+        assert!(inside(&dir.join("other/v/src"), &v));
+        assert!(!inside(&dir.join("repo"), &v));
+        assert!(!inside(&dir.join("missing"), &v));
+        assert!(!inside(&v, &dir.join("missing")));
+        assert_eq!(repository_top(&v), Some(dir.join("repo").as_path()));
+        // A .git of any kind: a file, as a linked worktree has, or a dangling link.
+        fs::write(v.join(".git"), b"gitdir: /nowhere\n").expect("a .git file");
+        assert_eq!(repository_top(&v.join("src")), Some(v.as_path()));
+        fs::remove_file(v.join(".git")).expect("rm");
+        std::os::unix::fs::symlink("/nowhere", v.join("src/.git")).expect("a dangling link");
+        assert_eq!(
+            repository_top(&v.join("src")),
+            Some(v.join("src").as_path())
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 
     fn ok(s: &str) -> bool {
