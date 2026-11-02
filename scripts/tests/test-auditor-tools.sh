@@ -425,6 +425,8 @@ xtree() {
   for p in "$X"/packs/*.pack; do fgit -C "$X/wt" unpack-objects -q < "$p" || return 1; done
   far=$(fgit -C "$X/up" rev-parse HEAD:far) || return 1
   rm -f "$X/wt/.git/objects/${far:0:2}/${far:2}"
+  # The remote names nothing while the tree is checked missing: a git that ignores GIT_NO_LAZY_FETCH would fetch it back.
+  fgit -C "$X/wt" config remote.origin.url "file://$X/gone" || return 1
   ! GIT_NO_LAZY_FETCH=1 fgit -C "$X/wt" cat-file -e "$far" || return 1
   fgit -C "$X/wt" config remote.origin.url "ext::sh -c touch% $X/ext-ran" || return 1
   fgit -C "$X/wt" config protocol.ext.allow always || return 1
