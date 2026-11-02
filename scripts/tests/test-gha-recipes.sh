@@ -96,6 +96,38 @@ kv_block() { # kv_block <vector file> <step>
   ' "$kv/$1"
 }
 
+# Every line of that step outside its code blocks: its bullets.
+kv_text() { # kv_text <vector file> <step>
+  awk -v n="$2" '
+    index($0, "**Step " n ":") == 1 { s = 1; next }
+    s && /^\*\*Step / { exit }
+    s && /^```/ { code = !code; next }
+    s && !code { print }
+  ' "$kv/$1"
+}
+
+# The note under recipe <id>: the first line that starts with "> " after its code block.
+recipe_note() {
+  awk -v id="$1" '
+    /^## GitHub Actions \(CI trigger trust\)/ { sec = 1; next }
+    sec && /^## / { exit }
+    sec && index($0, "# " id " ") == 1 { grab = 1; next }
+    sec && grab == 1 && /^```/ { grab = 2; next }
+    sec && grab == 2 && /^> / { print; exit }
+  ' "$doc"
+}
+
+# spans <prefix>: each code span (`…`) on standard input that starts with <prefix>, without its backticks.
+spans() {
+  awk -v p="$1" '{
+    s = $0
+    while ((i = index(s, "`")) > 0) {
+      s = substr(s, i + 1); j = index(s, "`"); if (j == 0) break
+      t = substr(s, 1, j - 1); s = substr(s, j + 1)
+      if (index(t, p) == 1) print t
+    } }'
+}
+
 KV080=080-ci-cd-pipeline-injection.md
 KV116=116-ai-coding-agent-ci-deploy-key.md
 KV139=139-comment-triggered-workflow-author-gating.md
@@ -125,17 +157,17 @@ IDS="R1 R2 R3 R4 R5 R6 R7 R8 R9 K116-1 K139-1 K140-6 K140-7a K140-7b K080-8a K08
 # Fixtures each recipe must flag (two-digit prefixes, ascending). Anything else is a mismatch.
 expected() {
   case "$1" in
-    R1) echo "01 08 10 16 40 55 56 58 64 65 66 69" ;;
+    R1) echo "01 08 10 16 40 55 56 58 64 65 66 69 108" ;;
     R2) echo "02 04" ;;
     R3) echo "03 12 13 17 25 26 27 28 46 47 48 49 74" ;;
     R4) echo "05 06 21 29 30 41" ;;
     R5) echo "06 07 15" ;;
     R6) echo "05 07 08 14 15 16 20 31 32 50 75 105" ;;
     R7) echo "05 07 11 12 15 18 19 20 21 22 23 24 51 52 53 61 62 63 70 71 102 103 105" ;;
-    R8) echo "01 08 11 14 33 34 54 57 67 68 72 73" ;;
+    R8) echo "01 08 11 14 33 34 54 57 67 68 72 73 108" ;;
     R9) echo "01 05 07 08 11 12 15 18 19 20 21 22 23 24 35 36 38 39 42 43 44 45 51 52 53 60 61 62 63 70 71 76 98 107" ;;
-    K116-1) echo "01 08 11 14 33 34 54 57 67 68 72 73" ;;
-    K139-1) echo "01 02 03 04 08 10 11 14 16 17 22 23 25 26 33 40 48 49 53 55 56 58 59 62 64 65 66 69 71 74" ;;
+    K116-1) echo "01 08 11 14 33 34 54 57 67 68 72 73 108" ;;
+    K139-1) echo "01 02 03 04 08 10 11 14 16 17 22 23 25 26 33 40 48 49 53 55 56 58 59 62 64 65 66 69 71 74 108" ;;
     K140-6) echo "35 36 37 38 39 42 43 44 45" ;;
     K140-7a) echo "80 81 82 83 84 85 93 95 96 97 101" ;;
     K140-7b) echo "80 82 83 84 85 93 95 96 97 101" ;;
@@ -149,6 +181,7 @@ expected() {
 LINES="R7 102-input-and-matrix-ref.yml 19 29
 R7 actions/103-input-ref-composite-action.yml 13
 R7 105-index-syntax-refs.yml 20 30 37 38
+R8 108-agent-option-backslash.yml 14
 R9 76-pin-forms.yml 11 12 13 14 16 17 19
 R9 98-pin-and-runner-yaml-extension.yaml 11
 R9 107-pin-key-spellings.yml 14 15
@@ -470,6 +503,28 @@ if mkdir -p "$decoy" 2>/dev/null; then
 else
   echo "SKIP R1 newline-name decoy: this file system refuses a newline in a name"
 fi
+
+# An option value that holds a character outside ASCII before -p hides an agent call from R8 (a bracket that held one
+# would leave GNU grep's DFA), so its note gives a plain listing of every claude and gemini call. That listing, read
+# from the note, must list such a call.
+LISTINGS="R8"
+agent="$work/agent"; mkdir -p "$agent/.github/workflows"
+printf 'on: issue_comment\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n' > "$agent/.github/workflows/agent.yml"
+printf '      - run: claude --append-system-prompt "r\303\251ponds en fran\303\247ais" -p "fix it"\n' \
+  >> "$agent/.github/workflows/agent.yml"
+for src in $LISTINGS; do
+  case "$src" in
+    K116-1) c=$(kv_text "$KV116" 1 | spans 'grep ') ;;
+    *) c=$(recipe_note "$src" | spans 'grep ') ;;
+  esac
+  got=$( (cd "$agent" && eval "$c" </dev/null 2>/dev/null) | cut -d: -f1,2)
+  if [ -n "$c" ] && [ "$(printf '%s\n' "$c" | wc -l | tr -d ' ')" = 1 ] && [ "$got" = .github/workflows/agent.yml:6 ]; then
+    echo "ok   the listing $src's note gives lists an agent call whose option value holds a character outside ASCII"
+  else
+    echo "FAIL $src: the listing its note gives [${c:-none}] listed [$got], want [.github/workflows/agent.yml:6]"
+    fail=1
+  fi
+done
 
 # Trigger spellings, one workflow each: a space before a colon, an event key holding null, ~, [], an anchor or an
 # alias, a flow list wrapped over lines, a byte-order mark before on:, a JSON document, an indented document, and
