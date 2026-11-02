@@ -539,24 +539,47 @@ fi
 
 # A name that holds a newline prints as two lines. A decoy directory named zz.yml, a newline and .github, holding
 # workflows/evil.yml that mentions author_association, puts .github/workflows/evil.yml into R1's second list, and the
-# real, ungated workflow of that path drops out of R1 with no other sign. That is why the R1 note runs
-# find .github -name '*[[:cntrl:]]*' every time: it names the decoy.
+# real, ungated workflow of that path drops out of R1 with no other sign. A directory and a workflow named around the
+# marker line print a copy of the marker inside the first list. So the R1 note and KV-080 Step 7 run a find for names
+# that hold a control character every time: that find, read from each of them, must name both decoys.
 forge="$work/forge"; mkdir -p "$forge/.github/workflows"
 printf 'on: issue_comment\njobs:\n  a:\n    runs-on: ubuntu-latest\n' > "$forge/.github/workflows/evil.yml"
 decoy="$forge/.github/zz.yml
 .github/workflows"
-if mkdir -p "$decoy" 2>/dev/null; then
+forged="$work/forged"; mkdir -p "$forged/.github/workflows"
+printf 'on: issue_comment\njobs:\n  a:\n    runs-on: ubuntu-latest\n' > "$forged/.github/workflows/open.yml"
+mdir="$forged/.github/a
+second list: files under .github"
+marker='second list: files under .github/ that mention author_association'
+if mkdir -p "$decoy" "$mdir" 2>/dev/null; then
   printf 'x: github.event.comment.author_association\n' > "$decoy/evil.yml"
+  printf 'on: issue_comment\n' > "$mdir/ that mention author_association
+zz.yml"
   got=$(run_recipe "$forge" "$(recipe R1)" | tr '\n' '|')
-  found=$( (cd "$forge" && find .github -name '*[[:cntrl:]]*') | grep -c '^\.github/zz\.yml$')
-  if [ -z "$got" ] && [ "$found" = 1 ]; then
-    echo "ok   R1 loses an ungated workflow to a decoy name holding a newline, and the find the R1 note runs names the decoy"
+  nmark=$( (cd "$forged" && eval "$(recipe_block R1)" </dev/null 2>/dev/null) | grep -c -x -F "$marker")
+  if [ -z "$got" ] && [ "$nmark" = 2 ]; then
+    echo "ok   R1 loses an ungated workflow to a decoy name holding a newline, and another decoy prints the marker twice"
   else
-    echo "FAIL R1 newline-name decoy: R1 listed [$got] (want none: the decoy forges it), find named the decoy $found time(s)"
+    echo "FAIL R1 newline-name decoys: R1 listed [$got] (want none: the decoy forges it), the block printed the marker" \
+      "$nmark time(s) (want 2)"
     fail=1
   fi
+  for src in R1 KV-080-7; do
+    case "$src" in
+      R1) f=$(recipe_note R1 | spans 'find ') ;;
+      *) f=$(kv_text "$KV080" 7 | spans 'find ') ;;
+    esac
+    n1=$( (cd "$forge" && eval "$f" </dev/null 2>/dev/null) | grep -c '^\.github/zz\.yml$')
+    n2=$( (cd "$forged" && eval "$f" </dev/null 2>/dev/null) | grep -c '^\.github/a$')
+    if [ -n "$f" ] && [ "$(printf '%s\n' "$f" | wc -l | tr -d ' ')" = 1 ] && [ "$n1" = 1 ] && [ "$n2" -ge 1 ]; then
+      echo "ok   the find $src gives names both decoys"
+    else
+      echo "FAIL $src: its find [${f:-none}] named the decoys $n1 and $n2 time(s) (want 1 and at least 1)"
+      fail=1
+    fi
+  done
 else
-  echo "SKIP R1 newline-name decoy: this file system refuses a newline in a name"
+  echo "SKIP R1 newline-name decoys: this file system refuses a newline in a name"
 fi
 
 # An option value that holds a character outside ASCII before -p hides an agent call from R8 (a bracket that held one
