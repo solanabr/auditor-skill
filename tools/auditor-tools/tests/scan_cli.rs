@@ -542,7 +542,12 @@ fn skips_large_irregular_and_unparsable_files() {
 
 const RUN_DIR: &str = "a run directory (a .gitignore of * and nothing tracked), not scanned";
 const STORE: &str = "the audit-mem store (a .gitignore of * and nothing tracked), not scanned";
-const BUILD: &str = "a target/ directory (build output), not scanned";
+const BUILD: &str = "a target/ directory cargo made (it holds CACHEDIR.TAG), not scanned";
+
+/// The `CACHEDIR.TAG` cargo writes in a target directory.
+const CARGO_TAG: &[u8] = b"Signature: 8a477f597d28d172789f06886806bc55\n\
+# This file is a cache directory tag created by cargo.\n\
+# For information about cache directory tags see https://bford.info/cachedir/\n";
 
 #[test]
 fn prunes_the_run_directories_and_store_an_audit_made_at_the_top_only() {
@@ -552,8 +557,16 @@ fn prunes_the_run_directories_and_store_an_audit_made_at_the_top_only() {
     wt.write("audit_1/poc/F-1/src/lib.rs", b"fn poc() {}\n");
     wt.run_dir(".audit-memory");
     wt.write(".audit-memory/x.rs", b"fn mem() {}\n");
+    wt.write("target/CACHEDIR.TAG", CARGO_TAG);
     wt.write("target/debug/build.rs", b"fn built() {}\n");
+    // A directory named target without cargo's tag, such as a source module, and
+    // one whose tag is not cargo's, are scanned.
     wt.write("src/target/mod.rs", b"fn module() {}\n");
+    wt.write(
+        "programs/p/target/CACHEDIR.TAG",
+        b"Signature: 8a477f597d28d172789f06886806bc5\n",
+    );
+    wt.write("programs/p/target/lib.rs", b"fn near_miss() {}\n");
     wt.write("app/node_modules/m/lib.rs", b"fn installed() {}\n");
     wt.write("programs/p/audit_2/lib.rs", b"fn kept() {}\n");
     // Target code under a run directory's name, tracked or without the
@@ -572,7 +585,9 @@ fn prunes_the_run_directories_and_store_an_audit_made_at_the_top_only() {
             "./audit_8/src/lib.rs",
             "./incident_42/src/lib.rs",
             "./programs/p/audit_2/lib.rs",
+            "./programs/p/target/lib.rs",
             "./src/lib.rs",
+            "./src/target/mod.rs",
         ]
     );
     assert_eq!(
@@ -588,7 +603,6 @@ fn prunes_the_run_directories_and_store_an_audit_made_at_the_top_only() {
                 "a node_modules/ directory (installed packages), not scanned".into()
             ),
             ("./audit_1".into(), RUN_DIR.into()),
-            ("./src/target".into(), BUILD.into()),
             ("./target".into(), BUILD.into()),
         ]
     );

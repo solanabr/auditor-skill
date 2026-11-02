@@ -116,6 +116,10 @@ pub const MAX_CHAIN: usize = 20_000;
 /// it holds a descriptor open for each level.
 pub const MAX_WALK: usize = 128;
 
+/// How the `CACHEDIR.TAG` file cargo writes in each target directory starts: the
+/// signature that the Cache Directory Tagging Specification gives every such tag.
+const CACHEDIR_TAG: &[u8] = b"Signature: 8a477f597d28d172789f06886806bc55";
+
 /// The stacks the child that parses a file runs on, the first the system grants:
 /// syn's parser, the visit and the drop of a tree recurse on it, one level for
 /// each level the tree nests. The first holds the deepest tree measured that
@@ -365,10 +369,11 @@ pub fn scan_path(root: &Path) -> io::Result<ScanReport> {
 /// every `*.rs` file it does not parse (not regular, too large, unreadable, not
 /// UTF-8, nested or chained too deeply, not Rust that `syn` parses, one the parser
 /// could not finish, or one past the report's cap or the scan's time) is listed in
-/// `skipped`. Directories named `target`, `.git` and `node_modules` below `root`
-/// are pruned, and so are, when `root` is the working directory, the run
-/// directories and the store an audit made in it (`Scan::own_output`), each
-/// listed in `skipped` too. Entries are visited in byte order of their names.
+/// `skipped`. Directories named `.git` and `node_modules` below `root` are pruned,
+/// and so is one named `target` that holds the `CACHEDIR.TAG` cargo writes, and,
+/// when `root` is the working directory, the run directories and the store an
+/// audit made in it (`Scan::own_output`), each listed in `skipped` too. Entries
+/// are visited in byte order of their names.
 pub fn scan_path_with(
     root: &Path,
     cap: usize,
@@ -490,13 +495,13 @@ impl Scan<'_> {
         }
     }
 
-    /// A directory in `dir`. Build output, git's own directory and installed
-    /// packages, by their names, are not entered; nor, when the root is the
-    /// working directory, are the run directories and the store an audit made in
-    /// it (`own_output`). Each is in `skipped`, with why.
+    /// A directory in `dir`. git's own directory and installed packages, by their
+    /// names, are not entered, nor is cargo's build output, a `target` directory
+    /// that holds the `CACHEDIR.TAG` cargo writes (`cargo_made`); nor, when the
+    /// root is the working directory, are the run directories and the store an
+    /// audit made in it (`own_output`). Each is in `skipped`, with why.
     fn subdir(&mut self, dir: &OwnedFd, name: &[u8], path: &Path, depth: usize) {
         let pruned = match name {
-            b"target" => Some("a target/ directory (build output), not scanned"),
             b".git" => Some("a .git/ directory (git's own), not scanned"),
             b"node_modules" => Some("a node_modules/ directory (installed packages), not scanned"),
             b".audit-memory" if self.top && depth == 1 && self.own_output(name) => {
@@ -514,6 +519,10 @@ impl Scan<'_> {
             return self.skip(path, "nested too deeply to walk");
         }
         match confine::open_dir(dir.as_raw_fd(), name) {
+            Ok(sub) if name == b"target" && cargo_made(&sub) => self.skip(
+                path,
+                "a target/ directory cargo made (it holds CACHEDIR.TAG), not scanned",
+            ),
             Ok(sub) => self.dir(&sub, path, depth),
             Err(e) => match confine::kind_at(dir.as_raw_fd(), name) {
                 Ok(libc::S_IFLNK) => self.skip(path, "a symbolic link, not followed"),
@@ -554,6 +563,22 @@ impl Scan<'_> {
             Err(reason) => self.skip(path, reason),
         }
     }
+}
+
+/// Whether the directory `dir` holds the `CACHEDIR.TAG` cargo writes in a target
+/// directory it makes: a regular file, opened without following a link or
+/// blocking on a FIFO, that starts with the tag's signature.
+fn cargo_made(dir: &OwnedFd) -> bool {
+    let Ok(file) = confine::open_file(dir.as_raw_fd(), b"CACHEDIR.TAG") else {
+        return false;
+    };
+    let mut start = Vec::new();
+    file.metadata().is_ok_and(|md| md.file_type().is_file())
+        && file
+            .take(CACHEDIR_TAG.len() as u64)
+            .read_to_end(&mut start)
+            .is_ok()
+        && start == CACHEDIR_TAG
 }
 
 /// A file's bytes: a regular file with one name (a second name could be a
