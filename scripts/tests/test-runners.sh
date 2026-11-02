@@ -948,7 +948,7 @@ settings
 # deps.sh: registry queries and artifact fetches, through a curl stand-in that answers from $T/fix.
 # =================================================================================================
 python3 -I - "$T/fix" <<'PY'
-import base64, hashlib, io, json, os, sys, tarfile, zipfile
+import base64, hashlib, io, json, os, sys, tarfile, zipfile, zlib
 fix = sys.argv[1]
 def put(url, data, status=None):
     key = url.replace("/", "_").replace(":", "_").replace("%", "_").replace("@", "_")
@@ -1023,6 +1023,21 @@ many_url = "https://files.pythonhosted.org/packages/cc/dd/many-1.0-py3-none-any.
 put(many_url, many)
 put("https://pypi.org/pypi/many/1.0/json", json.dumps({"urls": [{"packagetype": "bdist_wheel", "filename": "many-1.0-py3-none-any.whl",
     "url": many_url, "digests": {"sha256": hashlib.sha256(many).hexdigest()}}]}))
+# Two .crate files whose caps must hold while they are read: 52001 headers of empty files and then bytes that are
+# no deflate stream (reading on from entry 50001 fails), and one entry that declares 600 MiB with no data after it.
+buf = io.BytesIO()
+with tarfile.open(fileobj=buf, mode="w", format=tarfile.USTAR_FORMAT) as t:
+    for i in range(52001):
+        t.addfile(tarfile.TarInfo("bomb-1.0.0/f%d" % i))
+c = zlib.compressobj(9, zlib.DEFLATED, 31)
+bomb = c.compress(buf.getvalue()[:512 * 52001]) + c.flush(zlib.Z_SYNC_FLUSH) + b"\xff" * 64
+info = tarfile.TarInfo("bigdecl-1.0.0/x")
+info.size = 600 * 1024 * 1024
+c = zlib.compressobj(9, zlib.DEFLATED, 31)
+bigdecl = c.compress(info.tobuf(tarfile.USTAR_FORMAT) + b"\0" * 1024) + c.flush()
+for name, data in (("bomb", bomb), ("bigdecl", bigdecl)):
+    put("https://static.crates.io/crates/%s/%s-1.0.0.crate" % (name, name), data)
+    put("https://crates.io/api/v1/crates/%s/1.0.0" % name, json.dumps({"version": {"num": "1.0.0", "crate": name, "checksum": hashlib.sha256(data).hexdigest()}}))
 PY
 UA='auditor-skill deps.sh (https://github.com/solanabr/auditor-skill)'
 r0=$(rows)
@@ -1094,7 +1109,16 @@ check "a PyPI file outside files.pythonhosted.org: exit 3, nothing downloaded" \
   sh -c "[ '$RC' = 3 ] && grep -q 'not under https://files.pythonhosted.org/packages/' '$T/err' && ! grep -q 'url: https://evil' '$T/calls'"
 run "$DEPS" "$WT" -- fetch-artifact --run audit_1 pypi many 1.0
 check "an artifact of more than 50000 entries: exit 3, nothing unpacked" \
-  sh -c "[ '$RC' = 3 ] && grep -q 'holds 50001 entries, more than 50000' '$T/err' && [ -z \"\$(find '$WT/audit_1/deps' -path '*/files/many' -print)\" ]"
+  sh -c "[ '$RC' = 3 ] && grep -q 'the artifact holds more than 50000 entries' '$T/err' && [ -z \"\$(find '$WT/audit_1/deps' -path '*/files/many' -print)\" ]"
+# The caps hold while a tar is read, one header at a time: the read stops at entry 50001, so the bytes after it,
+# which no deflate stream holds, are never read; and at an entry that declares more than 512 MiB, before the
+# read looks for the next one.
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates bomb 1.0.0
+check "a .crate of more than 50000 entries is refused at entry 50001, before the rest is read: exit 3, nothing unpacked" \
+  sh -c "[ '$RC' = 3 ] && grep -q '^deps: blocker: the artifact holds more than 50000 entries; output ' '$T/err' && [ -z \"\$(find '$WT/audit_1/deps' -path '*/files/bomb-1.0.0' -print)\" ]"
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates bigdecl 1.0.0
+check "a .crate entry that declares more than 512 MiB is refused when it is read: exit 3, nothing unpacked" \
+  sh -c "[ '$RC' = 3 ] && grep -q '^deps: blocker: the artifact unpacks to more than 512 MiB; output ' '$T/err' && [ -z \"\$(find '$WT/audit_1/deps' -path '*/files/bigdecl-1.0.0' -print)\" ]"
 run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates nope 1.0.0
 check "fetch-artifact of a version the registry does not have: exit 1" sh -c "[ '$RC' = 1 ] && grep -q '^>> fetch-artifact: crates.io has no nope 1.0.0 (HTTP 404)' '$T/out'"
 cp "$DT" "$T/dt.saved"

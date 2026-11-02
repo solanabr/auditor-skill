@@ -828,34 +828,63 @@ def verify(archive, algo, expected):
     return got
 
 
+def zip_kind(info):
+    mode = (info.external_attr >> 16) & 0o170000
+    if info.filename.endswith("/"):
+        return "dir"
+    if mode in (0, stat.S_IFREG):
+        return "file"
+    return "symbolic link" if mode == stat.S_IFLNK else "special file"
+
+
+def tar_kind(m):
+    return "file" if m.isfile() else "dir" if m.isdir() else "symbolic link" if m.issym() else \
+        "hard link" if m.islnk() else "special file"
+
+
+def bound_memory():
+    # A backstop for what a parser holds before the caps can count it (one long pax or GNU name header, the
+    # central directory of a zip, the window of a decompressor): at most 2 GiB of address space, where the
+    # system enforces the limit (Linux; macOS refuses to set it).
+    try:
+        import resource
+        soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+        want = 2 << 30
+        if hard != resource.RLIM_INFINITY and hard < want:
+            want = hard
+        if soft == resource.RLIM_INFINITY or soft > want:
+            resource.setrlimit(resource.RLIMIT_AS, (want, hard))
+    except (ImportError, AttributeError, ValueError, OSError):
+        pass
+
+
 def unpack(archive, filename, algo, expected, dest):
     got = verify(archive, algo, expected)
     weak = "" if algo != "sha1" else " (weak: the npm registry offered no sha512 integrity for this version, only a sha1 shasum; sha1 is collision-weak, so this is not a strong content check)"
     print("digest: %s %s, as the registry gives it%s" % (algo, got, weak))
-    entries, skipped = [], []
+    bound_memory()
+    entries, skipped, declared = [], [], 0
+    # The caps hold while the archive is read: the headers of a tar are read one at a time, and the read stops
+    # at the first entry past FILES, or the first file past BYTES of declared sizes, so the list never grows
+    # past the cap; nothing is unpacked until the whole list is within both.
     if filename.endswith((".whl", ".zip")):
         z = zipfile.ZipFile(archive)
-        for info in z.infolist():
-            mode = (info.external_attr >> 16) & 0o170000
-            if info.filename.endswith("/"):
-                kind = "dir"
-            elif mode in (0, stat.S_IFREG):
-                kind = "file"
-            else:
-                kind = "symbolic link" if mode == stat.S_IFLNK else "special file"
-            entries.append((info.filename, kind, info.file_size, info))
+        if len(z.filelist) > FILES:
+            fail("the artifact holds more than %d entries" % FILES)
+        listing = ((i.filename, zip_kind(i), i.file_size, i) for i in z.infolist())
         opener = lambda e: z.open(e[3])
     else:
         t = tarfile.open(archive, "r:*")
-        for m in t.getmembers():
-            kind = "file" if m.isfile() else "dir" if m.isdir() else "symbolic link" if m.issym() else \
-                "hard link" if m.islnk() else "special file"
-            entries.append((m.name, kind, m.size if m.isfile() else 0, m))
+        listing = ((m.name, tar_kind(m), m.size, m) for m in t)
         opener = lambda e: t.extractfile(e[3])
-    if len(entries) > FILES:
-        fail("the artifact holds %d entries, more than %d" % (len(entries), FILES))
-    if sum(e[2] for e in entries if e[1] == "file") > BYTES:
-        fail("the artifact unpacks to more than 512 MiB")
+    for name, kind, declared_size, ref in listing:
+        if len(entries) == FILES:
+            fail("the artifact holds more than %d entries" % FILES)
+        if kind == "file":
+            declared += declared_size
+            if declared > BYTES:
+                fail("the artifact unpacks to more than 512 MiB")
+        entries.append((name, kind, declared_size if kind == "file" else 0, ref))
     files = dirs = size = 0
     for e in entries:
         name, kind = e[0], e[1]
@@ -919,7 +948,7 @@ try:
 except SystemExit:
     raise
 except BaseException as why:
-    fail("cannot read the answer or the artifact: %s" % why)
+    fail("cannot read the answer or the artifact: %s" % (str(why) or type(why).__name__))
 '
 registry_py() { (cd / && exec python3 -I -c "$REGISTRY_PY" "$@"); }
 # registry_watched <out> <argument>...: registry_py under the watchdog, for the steps that read an artifact
