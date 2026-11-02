@@ -248,6 +248,9 @@
 #     crates.io, and a target whose source lies outside the crate; it reads the
 #     resolved Cargo.lock again after the downloads, before anything compiles; and it
 #     stops before a test runs when the build compiled code from outside the crate.
+#     While INCIDENTS.json records any supply_chain_or_ci incident, it refuses native
+#     mode for the crate of every other incident of that run directory too: they
+#     build from the same target tree.
 #     ./run.sh does not read INCIDENTS.json.
 
 set -Eeuo pipefail
@@ -461,7 +464,9 @@ exec_mode() {
 # incident_rule: a crate at incident_<n>/poc/INC-<n>.<k> runs only once incident_<n>/INCIDENTS.json
 # records that incident's root_cause_class (OUTPUT-RULES.md Rule 11a). supply_chain_or_ci refuses
 # native mode and a run without --vulnerable-so, and sets SUPPLY_CHAIN for the checks of the
-# crate and of each build (see PREBUILT BYTES above).
+# crate and of each build (see PREBUILT BYTES above). Native mode is refused for the crate of
+# another incident too while the file records any supply_chain_or_ci one: both build from the
+# same target tree.
 incident_rule() {
   local id="${CRATE_REL##*/}" json="${CRATE_RUN}/INCIDENTS.json" out rc=0
   case "${CRATE_RUN}" in incident_*) ;; *) return 0 ;; esac
@@ -474,7 +479,20 @@ incident_rule() {
     blocker "${json} ${out}: an incident's PoC runs only once ${json} records its root_cause_class (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built."
   fi
   echo ">> incident ${id}: root_cause_class ${out} (${json})"
-  [[ "${out}" == supply_chain_or_ci ]] || return 0
+  if [[ "${out}" != supply_chain_or_ci ]]; then
+    [[ "${MODE}" == native ]] || return 0
+    rc=0
+    iso_incident_class "${WT}/${json}" || rc=$?
+    out="${ISO_CLASS}"
+    if [[ "${rc}" -ne 0 ]]; then
+      [[ "${rc}" -eq 3 && -n "${out}" ]] || out="cannot be read"
+      blocker "${json} ${out}: a PoC there runs natively only once ${json} records the root_cause_class of every incident (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built."
+    fi
+    if [[ "${out}" != other ]]; then
+      blocker "${json} records an incident whose root_cause_class is supply_chain_or_ci, so no PoC of ${CRATE_RUN} is built natively: each builds from the same target tree, whose crates may be the payload (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built."
+    fi
+    return 0
+  fi
   if [[ "${MODE}" == native ]]; then
     blocker "the root_cause_class of ${id} is supply_chain_or_ci, and such an incident is never built natively (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built."
   fi
