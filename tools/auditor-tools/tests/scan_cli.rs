@@ -403,6 +403,29 @@ fn renders_the_snippets_of_a_long_chain_in_time() {
 }
 
 #[test]
+fn renders_the_snippets_that_start_at_a_long_literal_in_time() {
+    let wt = Wt::repo();
+    // A literal of a million spaces that each of 9,990 sites' snippets starts at.
+    let sum = format!(
+        "fn f() {{ let x = \"{}\"{}; }}\n",
+        " ".repeat(1_000_000),
+        " + a".repeat(9_990)
+    );
+    wt.write("src/sum.rs", sum.as_bytes());
+    let started = std::time::Instant::now();
+    let report = json(&run(BIN, &wt.dir, &["src"]));
+    let took = started.elapsed();
+    assert_eq!(skipped(&report), []);
+    let sites = report["arithmetic_sites"].as_array().expect("sites");
+    assert_eq!(sites.len(), 9_990);
+    // 80 characters, then the cut.
+    let first = format!("\" \"{} ...", " + a".repeat(19));
+    assert_eq!(sites[0]["snippet"], first);
+    assert_eq!(sites[9_989]["snippet"], "\" \" + a");
+    assert!(took.as_secs_f64() < 5.0, "took {took:?}");
+}
+
+#[test]
 fn does_not_walk_below_its_depth_limit() {
     let wt = Wt::repo();
     let mut deep = String::from("src");

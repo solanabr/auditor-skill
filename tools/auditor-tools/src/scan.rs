@@ -9,7 +9,8 @@
 //! would otherwise have to find by hand. The limits are the fast path; a file the
 //! parser still cannot finish ends only its child, and the scan goes on. A snippet
 //! is rendered from the file's tokens, a token at a time, up to `SNIPPET_MAX`
-//! characters.
+//! characters, each token's text kept only as far as a snippet can show it, so a
+//! snippet costs no more for a long literal or a long chain than for a short one.
 
 use std::collections::HashMap;
 use std::ffi::OsStr;
@@ -19,7 +20,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use proc_macro2::{Delimiter, LineColumn, Spacing, Span, TokenStream, TokenTree};
 use quote::ToTokens;
@@ -50,6 +51,12 @@ const _: () = assert!(
 /// The most a scan's report may hold, about as it prints; past it each further
 /// file is in `skipped` as not parsed.
 pub const MAX_REPORT: usize = 256 << 20;
+
+/// How long a scan may run before it parses no more: past it each further file is
+/// in `skipped` as not parsed. A file started before then still has its
+/// `confine::PARSE_TIME`, so a scan ends within about 100 seconds, inside the two
+/// minutes Claude Code gives a foreground command by default.
+pub const SCAN_TIME: Duration = Duration::from_secs(90);
 
 /// Group nesting (`(`, `[` and `{`) past which a file is not parsed.
 pub const MAX_DEPTH: usize = 256;
@@ -289,10 +296,10 @@ fn relabel<T>(into: &mut Vec<T>, from: Vec<T>, label: &str, file: fn(&mut T) -> 
 /// Scan every `*.rs` file under the directory `root`, a path relative to the
 /// working directory, returning one merged report, the files parsed in a child of
 /// this binary started by the path it runs from (`confine::Parser`), each given
-/// `confine::PARSE_TIME`.
+/// `confine::PARSE_TIME`, for `SCAN_TIME` in all.
 pub fn scan_path(root: &Path) -> io::Result<ScanReport> {
     let mut parser = confine::Parser::new(&confine::own_exe()?);
-    Ok(scan_path_with(root, MAX_REPORT, &mut |bytes| {
+    Ok(scan_path_with(root, MAX_REPORT, SCAN_TIME, &mut |bytes| {
         parser.parse(bytes, confine::PARSE_TIME)
     }))
 }
@@ -301,7 +308,8 @@ pub fn scan_path(root: &Path) -> io::Result<ScanReport> {
 /// `parse`, which gives the report of that one file as `parse_stdin` answers it,
 /// or `None` when the parser could not finish. The report holds about `cap` bytes
 /// at most: the file that would take it past them, and each file after it, is in
-/// `skipped` as not parsed.
+/// `skipped` as not parsed. No file is handed to `parse` once the scan has run for
+/// `time`: each is in `skipped` as not parsed.
 ///
 /// The walk opens each directory from its parent's descriptor without following a
 /// link, so a name swapped for a link while it runs is not entered, and reads only
@@ -309,13 +317,14 @@ pub fn scan_path(root: &Path) -> io::Result<ScanReport> {
 /// link it meets, every directory nested more than `MAX_WALK` levels down, and
 /// every `*.rs` file it does not parse (not regular, too large, unreadable, not
 /// UTF-8, nested or chained too deeply, not Rust that `syn` parses, one the parser
-/// could not finish, or one past the report's cap) is listed in `skipped`.
-/// Directories named `target`, `.git` and `node_modules` below `root` are pruned,
-/// and so are the run directories and `.audit-memory/` when `root` is the working
-/// directory. Entries are visited in byte order of their names.
+/// could not finish, or one past the report's cap or the scan's time) is listed in
+/// `skipped`. Directories named `target`, `.git` and `node_modules` below `root`
+/// are pruned, and so are the run directories and `.audit-memory/` when `root` is
+/// the working directory. Entries are visited in byte order of their names.
 pub fn scan_path_with(
     root: &Path,
     cap: usize,
+    time: Duration,
     parse: &mut dyn FnMut(&[u8]) -> Option<Vec<u8>>,
 ) -> ScanReport {
     let mut scan = Scan {
@@ -325,6 +334,7 @@ pub fn scan_path_with(
         size: 0,
         cap,
         full: false,
+        until: Instant::now().checked_add(time),
     };
     match open_root(root) {
         Ok(dir) => scan.dir(&dir, root, 0),
@@ -346,8 +356,9 @@ pub(crate) fn open_root(root: &Path) -> io::Result<OwnedFd> {
 }
 
 /// A scan under way: the report so far, whether the root is the working
-/// directory, what parses a file, and the report's size, about as it prints,
-/// against its cap.
+/// directory, what parses a file, the report's size, about as it prints, against
+/// its cap, and when it parses no more (never, when that is past what an
+/// `Instant` holds).
 struct Scan<'p> {
     report: ScanReport,
     top: bool,
@@ -355,6 +366,7 @@ struct Scan<'p> {
     size: usize,
     cap: usize,
     full: bool,
+    until: Option<Instant>,
 }
 
 impl Scan<'_> {
@@ -413,11 +425,15 @@ impl Scan<'_> {
     }
 
     /// A `*.rs` file, its bytes parsed by `parse`, its report added under its path
-    /// while the report has room for it.
+    /// while the report has room for it and the scan has time.
     fn file(&mut self, dir: &OwnedFd, name: &[u8], path: &Path) {
         const FULL: &str = "not parsed: the report is full";
+        const SPENT: &str = "not parsed: the scan's time is spent";
         if self.full {
             return self.skip(path, FULL);
+        }
+        if self.until.is_some_and(|until| Instant::now() >= until) {
+            return self.skip(path, SPENT);
         }
         let one = read_bytes(dir.as_raw_fd(), name).and_then(|bytes| {
             (self.parse)(&bytes)
@@ -684,8 +700,11 @@ fn tokens_string<T: ToTokens>(node: &T) -> String {
 /// tokens and its closing, each where it starts: what snippets are rendered from.
 struct Tokens {
     atoms: Vec<Atom>,
-    /// The text of every token, one after another.
+    /// The text of every token, one after another, each as far as a snippet can
+    /// show it (`Tokens::push_token`).
     text: String,
+    /// The token being added, as proc-macro2 prints it.
+    printed: String,
 }
 
 #[derive(Clone, Copy)]
@@ -803,6 +822,7 @@ impl Tokens {
         let mut tokens = Tokens {
             atoms: Vec::new(),
             text: String::new(),
+            printed: String::new(),
         };
         let mut around: Vec<Level> = Vec::new();
         let mut level = Level::new(stream.into_iter(), None, 0);
@@ -903,10 +923,31 @@ impl Tokens {
         });
     }
 
+    /// A token, its text kept as a snippet holds it (`Snippet`): each run of
+    /// whitespace one space, cut once more than `SNIPPET_MAX` characters are in,
+    /// after a character that is not whitespace. A render then reads at most that
+    /// much of any token, however long a literal or its whitespace runs.
     fn push_token(&mut self, tt: &TokenTree) {
         use std::fmt::Write;
+        self.printed.clear();
+        let _ = write!(self.printed, "{tt}");
         let start = self.text.len();
-        let _ = write!(self.text, "{tt}");
+        let (mut chars, mut space) = (0usize, false);
+        for c in self.printed.chars() {
+            if chars > SNIPPET_MAX {
+                break;
+            }
+            if c.is_whitespace() {
+                space = chars > 0;
+                continue;
+            }
+            if std::mem::take(&mut space) {
+                self.text.push(' ');
+                chars += 1;
+            }
+            self.text.push(c);
+            chars += 1;
+        }
         let joint = matches!(tt, TokenTree::Punct(p) if p.spacing() == Spacing::Joint);
         let at = u32::try_from(start).unwrap_or(u32::MAX);
         let len = u32::try_from(self.text.len() - start).unwrap_or(0);
@@ -2388,5 +2429,58 @@ impl S { fn m(&self) {} }
         );
         assert_eq!(report.panic_sites[0].line, 3);
         assert_eq!(report.arithmetic_sites[0].line, 4);
+    }
+
+    /// The snippet of each `a + b` in the file, as `truncate_snippet` makes it from
+    /// the whole expression: what a render from the file's tokens must give.
+    struct Sums(Vec<String>);
+
+    impl<'ast> Visit<'ast> for Sums {
+        fn visit_expr_binary(&mut self, node: &'ast syn::ExprBinary) {
+            self.0.push(truncate_snippet(&tokens_string(node)));
+            syn::visit::visit_expr_binary(self, node);
+        }
+    }
+
+    #[test]
+    fn a_token_is_kept_only_as_far_as_a_snippet_shows_it() {
+        // A literal of a million spaces that both sites' snippets start at.
+        let spaces = " ".repeat(1_000_000);
+        let source = format!("fn f() {{ let x = \"a{spaces}b\" + c + d; }}\n");
+        let (_, tokens) = parse(&source).expect("parses");
+        assert!(tokens.text.len() < 200, "{} bytes kept", tokens.text.len());
+        let report = scan_source("f.rs", &source).expect("parses");
+        let sums: Vec<&str> = report
+            .arithmetic_sites
+            .iter()
+            .map(|a| a.snippet.as_str())
+            .collect();
+        assert_eq!(sums, ["\"a b\" + c + d", "\"a b\" + c"]);
+        // A token cut near 80 characters, with and without whitespace at the cut,
+        // where the snippet starts and further in, renders as the whole one does.
+        let x = |n: usize| "x".repeat(n);
+        let literals = [
+            format!("\"{}\"", x(79)),
+            format!("\"{}y\"", x(79)),
+            format!("\"{}\t\n  yy\"", x(79)),
+            format!("\"{}\u{3000}\"", x(79)),
+            format!("\"{}{spaces}\"", x(79)),
+            format!("\"{}  z  \"", x(78)),
+            format!("r#\"  {}  \"#", x(90)),
+        ];
+        for prefix in [String::new(), "c + ".to_string(), format!("{} + ", x(70))] {
+            for literal in &literals {
+                let source = format!("fn f() {{ let v = {prefix}{literal} + d; }}\n");
+                let mut whole = Sums(Vec::new());
+                whole.visit_file(&syn::parse_file(&source).expect("parses"));
+                let report = scan_source("f.rs", &source).expect("parses");
+                let rendered: Vec<&str> = report
+                    .arithmetic_sites
+                    .iter()
+                    .map(|a| a.snippet.as_str())
+                    .collect();
+                assert_eq!(rendered, whole.0, "{prefix:.20} {literal:.90}");
+            }
+        }
     }
 }

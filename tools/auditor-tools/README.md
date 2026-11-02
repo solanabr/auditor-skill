@@ -86,8 +86,9 @@ symbolic link, goes no deeper than 128 directories below `<dir>`, and parses onl
 regular files with one name, of at most 4 MiB, in byte order of their names; every
 link it meets, every directory it does not enter for its depth, and every `*.rs`
 file it does not parse (not a regular file, a second name, larger than 4 MiB,
-unreadable, not UTF-8, nested or chained too deeply, not Rust that `syn` parses, or
-one the parser could not finish), is listed in `skipped` with the reason.
+unreadable, not UTF-8, nested or chained too deeply, not Rust that `syn` parses,
+one the parser could not finish, or one past the report's size or the scan's
+time), is listed in `skipped` with the reason.
 
 The files are parsed in a child: audit-scan starts itself, by the path it runs
 from, with `--internal-parse-stdin` as its only argument, no environment and `/`
@@ -99,7 +100,11 @@ finish`; that child is killed, the next file goes to a new one, and the scan goe
 on. The child reads and writes nothing else. Before each file it sets its own CPU
 limit to the CPU it has used and 20 seconds more, twice the time it is given, and
 its core-file limit to none: a child whose parent is gone, with no one left to kill
-it, dies once a file has used that.
+it, dies once a file has used that. A scan parses for 90 seconds at most: once it
+has run that long, each further `*.rs` file is in `skipped` as `not parsed: the
+scan's time is spent`, so a scan ends within about 100 seconds, inside the two
+minutes Claude Code gives a foreground command by default. Scan a smaller
+directory for the rest.
 
 A report has bounds. One file lists at most 20,000 items (sites, functions,
 instructions with their arguments, accounts structs with their fields, PDAs), and
@@ -306,8 +311,10 @@ Exit: 0 done · 1 the output cannot be written · 2 refused, with one stderr lin
 
 A snippet is the node's tokens as `proc-macro2` prints the file's own (a space
 between two tokens unless the source joins punctuation, as in `::<` or `?;`),
-whitespace collapsed and cut after 80 characters with `...`; only what is kept is
-rendered, so a long chain costs no more than a short one.
+whitespace collapsed and cut after 80 characters with `...`. Each token's text is
+kept, as the file is laid out, only as far as a snippet can show it, and only what
+a snippet keeps is rendered, so a snippet costs no more for a long chain or a long
+literal than for a short one.
 
 ### Example
 

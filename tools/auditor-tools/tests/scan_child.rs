@@ -1,6 +1,7 @@
 //! audit-scan's walk with parsers that die and hang: the file a parser does not
 //! finish is skipped, the next file goes to a new child, and the scan goes on;
-//! and with a report that fills up. One test, since it enters the tree it scans.
+//! with a report that fills up; and with a scan whose time is spent. One test,
+//! since it enters the tree it scans.
 
 mod common;
 
@@ -9,7 +10,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use auditor_tools::confine::{Parser, PARSE_TIME};
-use auditor_tools::scan::scan_path_with;
+use auditor_tools::scan::{scan_path_with, MAX_REPORT, SCAN_TIME};
 use common::Wt;
 
 const BIN: &str = env!("CARGO_BIN_EXE_audit-scan");
@@ -31,19 +32,15 @@ fn a_file_whose_parser_dies_or_hangs_is_skipped_and_the_scan_goes_on() {
     );
     let mut hangs = Parser::with(Path::new("/bin/sleep"), &[OsStr::new("30")]);
     let started = Instant::now();
-    let report = scan_path_with(
-        Path::new("src"),
-        auditor_tools::scan::MAX_REPORT,
-        &mut |bytes| {
-            if bytes.starts_with(b"// dies") {
-                dies.parse(bytes, PARSE_TIME)
-            } else if bytes.starts_with(b"// hangs") {
-                hangs.parse(bytes, Duration::from_secs(1))
-            } else {
-                real.parse(bytes, PARSE_TIME)
-            }
-        },
-    );
+    let report = scan_path_with(Path::new("src"), MAX_REPORT, SCAN_TIME, &mut |bytes| {
+        if bytes.starts_with(b"// dies") {
+            dies.parse(bytes, PARSE_TIME)
+        } else if bytes.starts_with(b"// hangs") {
+            hangs.parse(bytes, Duration::from_secs(1))
+        } else {
+            real.parse(bytes, PARSE_TIME)
+        }
+    });
     let took = started.elapsed();
     assert!(
         took >= Duration::from_secs(1) && took < Duration::from_secs(8),
@@ -83,7 +80,7 @@ fn a_file_whose_parser_dies_or_hangs_is_skipped_and_the_scan_goes_on() {
     let sums = format!("fn b() {{ {} }}\n", "let x = 1 + 2; ".repeat(1_000));
     wt.write("cap/b.rs", sums.as_bytes());
     wt.write("cap/c.rs", b"fn c() {}\n");
-    let report = scan_path_with(Path::new("cap"), 10_000, &mut |bytes| {
+    let report = scan_path_with(Path::new("cap"), 10_000, SCAN_TIME, &mut |bytes| {
         real.parse(bytes, PARSE_TIME)
     });
     assert_eq!(report.files_scanned, 1);
@@ -96,4 +93,43 @@ fn a_file_whose_parser_dies_or_hangs_is_skipped_and_the_scan_goes_on() {
         .collect();
     let full = "not parsed: the report is full";
     assert_eq!(skipped, [("cap/b.rs", full), ("cap/c.rs", full)]);
+
+    // A scan has a time: once it has run that long, no further file is parsed. The
+    // file it started before then still has the time a file is given.
+    wt.write("slow/a.rs", b"// hangs\nfn a() {}\n");
+    wt.write("slow/b.rs", b"fn b() {}\n");
+    wt.write("slow/c.rs", b"fn c() {}\n");
+    let started = Instant::now();
+    let report = scan_path_with(
+        Path::new("slow"),
+        MAX_REPORT,
+        Duration::from_millis(500),
+        &mut |bytes| {
+            if bytes.starts_with(b"// hangs") {
+                hangs.parse(bytes, Duration::from_secs(1))
+            } else {
+                real.parse(bytes, PARSE_TIME)
+            }
+        },
+    );
+    let took = started.elapsed();
+    assert!(
+        took >= Duration::from_secs(1) && took < Duration::from_secs(8),
+        "took {took:?}"
+    );
+    assert_eq!(report.files_scanned, 0);
+    let skipped: Vec<(&str, &str)> = report
+        .skipped
+        .iter()
+        .map(|s| (s.file.as_str(), s.reason.as_str()))
+        .collect();
+    let spent = "not parsed: the scan's time is spent";
+    assert_eq!(
+        skipped,
+        [
+            ("slow/a.rs", why),
+            ("slow/b.rs", spent),
+            ("slow/c.rs", spent)
+        ]
+    );
 }
