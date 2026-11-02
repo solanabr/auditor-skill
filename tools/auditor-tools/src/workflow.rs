@@ -16,19 +16,19 @@
 //! the caps allow, is listed in `skipped`.
 //!
 //! Each file is parsed in a child of audit-scan (`parse_stdin`), as a `*.rs` file
-//! is, so a parse that does not finish costs only that file. The caps bound what
-//! is built: [`MAX_WF_DEPTH`] on nesting, [`MAX_WF_NODES`] on nodes a file,
-//! `confine::MAX_FILE` on bytes a file, `confine::MAX_ANSWER` on the facts of a
-//! file, [`MAX_WF_FILES`] on files a directory, and what the `*.rs` walk left of
-//! `scan::MAX_REPORT` on the facts of them all, each counted as audit-scan prints
-//! it ([`printed_size`]).
+//! is, so a parse that does not finish costs only that file, and no file is parsed
+//! once the scan's time is spent. The caps bound what is built: [`MAX_WF_DEPTH`]
+//! on nesting, [`MAX_WF_NODES`] on nodes a file, `confine::MAX_FILE` on bytes a
+//! file, `confine::MAX_ANSWER` on the facts of a file, [`MAX_WF_FILES`] on files a
+//! directory, and what the `*.rs` walk left of `scan::MAX_REPORT` on the facts of
+//! them all, each counted as audit-scan prints it ([`printed_size`]).
 
 use std::ffi::OsStr;
 use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
@@ -59,6 +59,7 @@ const MAX_WF_SCALAR: usize = 200;
 pub const PARSE_WORKFLOWS: &str = "--internal-parse-workflows";
 
 const FULL: &str = "not parsed: the report is full";
+const SPENT: &str = "not parsed: the scan's time is spent";
 const UNFINISHED: &str = "the parser could not finish";
 const TOO_MANY_FACTS: &str = "not listed: its facts take more than 32 MiB";
 const _: () = assert!(
@@ -134,14 +135,15 @@ enum Answer {
 /// relative to the working directory), each in a child of this binary started by
 /// the path it runs from (`confine::Parser`) and given `confine::PARSE_TIME`, as
 /// `scan_workflows_with` does with `cap` bytes left of a report printed `pretty` or
-/// compact.
+/// compact, until `until`.
 pub fn scan_workflows(
     dir: &Path,
     cap: usize,
     pretty: bool,
+    until: Option<Instant>,
 ) -> io::Result<(Vec<Workflow>, Vec<Skipped>)> {
     let mut parser = confine::Parser::with(&confine::own_exe()?, &[OsStr::new(PARSE_WORKFLOWS)]);
-    Ok(scan_workflows_with(dir, cap, pretty, &mut |bytes| {
+    Ok(scan_workflows_with(dir, cap, pretty, until, &mut |bytes| {
         parser.parse(bytes, confine::PARSE_TIME)
     }))
 }
@@ -158,11 +160,15 @@ pub fn scan_workflows(
 /// one the parser could not finish, and every file past `MAX_WF_FILES`, is listed
 /// in `skipped` with the reason. The workflows take about `cap` bytes at most of a
 /// report printed `pretty` or compact (`printed_size`): the file whose facts would
-/// take them past it, and each file after it, is in `skipped` as not parsed.
+/// take them past it, and each file after it, is in `skipped` as not parsed. No
+/// file is handed to `parse` at or past `until` (never, with `None`): each is in
+/// `skipped` as not parsed, while a file handed to it before then keeps the time
+/// `parse` gives it.
 pub fn scan_workflows_with(
     dir: &Path,
     cap: usize,
     pretty: bool,
+    until: Option<Instant>,
     parse: &mut dyn FnMut(&[u8]) -> Option<Vec<u8>>,
 ) -> (Vec<Workflow>, Vec<Skipped>) {
     let mut workflows = Vec::new();
@@ -221,6 +227,10 @@ pub fn scan_workflows_with(
         parsed += 1;
         if full {
             skip(FULL.to_string());
+            continue;
+        }
+        if until.is_some_and(|until| Instant::now() >= until) {
+            skip(SPENT.to_string());
             continue;
         }
         let answer = crate::scan::read_bytes(fd.as_raw_fd(), &name).and_then(|bytes| {

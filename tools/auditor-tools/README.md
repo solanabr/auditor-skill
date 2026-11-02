@@ -191,14 +191,18 @@ the path it runs from, with `--internal-parse-workflows` as its only argument, n
 environment and `/` as its directory, and hands it one file's bytes at a time on
 its stdin. A file the child does not finish (it aborts, dies on a signal or takes
 more than 10 seconds) is listed as `the parser could not finish`, and the next
-file goes to a new child. One file's facts take at most 32 MiB; a file with more
-is in `skipped` as `not listed: its facts take more than 32 MiB`. The workflows
-together take what the `*.rs` walk left of the report's 256 MiB: the file whose
-facts would take them past it, and each file after it, is in `skipped` as `not
-parsed: the report is full`. Both are counted as audit-scan prints them: a
-character it writes as a `\u` escape (DEL, a C1 control, a bidirectional or an
-invisible one, which a YAML escape can name) counts as its escape, and in the
-workflows' total the layout `--pretty` gives counts too.
+file goes to a new child. Once the scan has run for 90 seconds no further
+workflow file is parsed: each is in `skipped` as `not parsed: the scan's time is
+spent`, while one handed to the child before then still has its 10 seconds.
+
+One file's facts take at most 32 MiB; a file with more is in `skipped` as `not
+listed: its facts take more than 32 MiB`. The workflows together take what the
+`*.rs` walk left of the report's 256 MiB: the file whose facts would take them
+past it, and each file after it, is in `skipped` as `not parsed: the report is
+full`. Both are counted as audit-scan prints them: a character it writes as a
+`\u` escape (DEL, a C1 control, a bidirectional or an invisible one, which a YAML
+escape can name) counts as its escape, and in the workflows' total the layout
+`--pretty` gives counts too.
 
 ### Where it reads and writes
 

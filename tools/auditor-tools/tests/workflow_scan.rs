@@ -679,11 +679,12 @@ fn the_workflow_child_word_is_refused_anywhere_but_alone() {
     }
 }
 
-/// The pass with parsers that die and hang, and with a report that fills up: the
-/// file a parser does not finish is skipped, the next file goes to a new child,
-/// and the pass goes on. One test, since it enters the tree it reads.
+/// The pass with parsers that die and hang, with a report that fills up, and with
+/// the scan's time spent: the file a parser does not finish is skipped, the next
+/// file goes to a new child, and the pass goes on. One test, since it enters the
+/// tree it reads.
 #[test]
-fn a_workflow_whose_parser_dies_or_hangs_is_skipped_and_the_report_cap_holds() {
+fn a_workflow_whose_parser_dies_or_hangs_is_skipped_and_the_caps_and_the_scans_time_hold() {
     let wt = Wt::repo();
     wt.write(".github/workflows/a.yml", b"on: push\n");
     wt.write(".github/workflows/b.yml", b"# dies\non: push\n");
@@ -702,6 +703,7 @@ fn a_workflow_whose_parser_dies_or_hangs_is_skipped_and_the_report_cap_holds() {
         Path::new(".github/workflows"),
         usize::MAX,
         false,
+        None,
         &mut |bytes| {
             if bytes.starts_with(b"# dies") {
                 dies.parse(bytes, PARSE_TIME)
@@ -753,9 +755,10 @@ fn a_workflow_whose_parser_dies_or_hangs_is_skipped_and_the_report_cap_holds() {
         format!("on: push\njobs:\n  b:\n    steps:\n{steps}").as_bytes(),
     );
     wt.write("cap/c.yml", b"on: push\n");
-    let (workflows, skipped) = scan_workflows_with(Path::new("cap"), 1_000, false, &mut |bytes| {
-        real.parse(bytes, PARSE_TIME)
-    });
+    let (workflows, skipped) =
+        scan_workflows_with(Path::new("cap"), 1_000, false, None, &mut |bytes| {
+            real.parse(bytes, PARSE_TIME)
+        });
     assert_eq!(workflows.len(), 1);
     assert_eq!(workflows[0].file, "cap/a.yml");
     let skipped: Vec<(&str, &str)> = skipped
@@ -780,9 +783,10 @@ fn a_workflow_whose_parser_dies_or_hangs_is_skipped_and_the_report_cap_holds() {
     assert_eq!(printed, compact.len() + 1000);
     // Each workflow takes what it prints and the comma after it.
     let mut files = |cap: usize, pretty: bool| {
-        let (workflows, skipped) = scan_workflows_with(Path::new("del"), cap, pretty, &mut |b| {
-            real.parse(b, PARSE_TIME)
-        });
+        let (workflows, skipped) =
+            scan_workflows_with(Path::new("del"), cap, pretty, None, &mut |b| {
+                real.parse(b, PARSE_TIME)
+            });
         let mut out: Vec<String> = workflows
             .iter()
             .map(|w| format!("{} read", w.file))
@@ -804,6 +808,42 @@ fn a_workflow_whose_parser_dies_or_hangs_is_skipped_and_the_report_cap_holds() {
         [
             "del/a.yml: not parsed: the report is full",
             "del/b.yml: not parsed: the report is full"
+        ]
+    );
+
+    // No file is handed to its parser once the scan's time is spent; one handed to
+    // it before then is still read.
+    let spent = "not parsed: the scan's time is spent";
+    let mut files = |until: Instant| {
+        let (workflows, skipped) =
+            scan_workflows_with(Path::new("cap"), usize::MAX, false, Some(until), &mut |b| {
+                // The first file takes the scan past its time.
+                while Instant::now() < until {
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                real.parse(b, PARSE_TIME)
+            });
+        let mut out: Vec<String> = workflows
+            .iter()
+            .map(|w| format!("{} read", w.file))
+            .collect();
+        out.extend(skipped.iter().map(|s| format!("{}: {}", s.file, s.reason)));
+        out
+    };
+    assert_eq!(
+        files(Instant::now()),
+        [
+            format!("cap/a.yml: {spent}"),
+            format!("cap/b.yml: {spent}"),
+            format!("cap/c.yml: {spent}")
+        ]
+    );
+    assert_eq!(
+        files(Instant::now() + Duration::from_secs(1)),
+        [
+            "cap/a.yml read".to_string(),
+            format!("cap/b.yml: {spent}"),
+            format!("cap/c.yml: {spent}")
         ]
     );
 }
