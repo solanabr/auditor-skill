@@ -426,7 +426,10 @@ check "anchor-test: npm ci --ignore-scripts first, then the build, then anchor t
   calls_are "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|cargo build-sbf --help|cargo build-sbf --install-only|npm ci --ignore-scripts --no-audit --no-fund|anchor build --ignore-keys -- --skip-tools-install --offline|anchor test --skip-build --skip-deploy --skip-local-validator --provider.cluster localnet --provider.wallet $S/home/.config/solana/id.json|"
 check "... npm ci gets the proxy, its own empty config files and the git on PATH" \
   sh -c "awk '/^== npm ci/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'env: HTTPS_PROXY=$PROXY' '$T/blk' && grep -qxF 'env: npm_config_userconfig=$S/npm/userconfig' '$T/blk' && grep -qxF 'env: npm_config_globalconfig=$S/npm/globalconfig' '$T/blk' && grep -qxF 'env: npm_config_git=$T/sys/git' '$T/blk' && grep -qxF 'env: npm_config_ignore_scripts=true' '$T/blk' && grep -qxF 'userconfig-bytes: 0' '$T/blk'"
+check "... and NODE_OPTIONS and npm's node-options preload the module that ends the npm install npm runs in a git dependency's checkout" \
+  sh -c "awk '/^== npm ci/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'env: NODE_OPTIONS=--require=\"$S/npm/nested.js\"' '$T/blk' && grep -qxF 'env: npm_config_node_options=--require=\"$S/npm/nested.js\"' '$T/blk'"
 check "... anchor test runs without the proxy" none_in_blocks '^== anchor test' '^env: [A-Za-z_]*[Pp][Rr][Oo][Xx][Yy]='
+check "... and without that preload" none_in_blocks '^== anchor (build|test)' '^env: (NODE_OPTIONS|npm_config_[a-z_]*)='
 run "$TARGET" "$WT" -- anchor-test --run audit_1 --src . --dir app
 check "anchor-test where the lockfile is yarn's: no install, and a note says so" \
   sh -c "[ '$RC' = 0 ] && grep -q '^>> note: app holds a yarn, pnpm or bun lockfile' '$T/out' && ! grep -q '^== npm' '$T/calls'"
@@ -494,6 +497,45 @@ if PATH=$REAL_PATH command -v npm >/dev/null 2>&1 && PATH=$REAL_PATH command -v 
     sh -c "[ '$RC' = 0 ] && [ -n '$log' ] && [ -f '$NR/$log' ] && ! grep -q ' info using ' '$NR/$log' && ! grep -q 'CANARY-proxy' '$NR/$log' '$T/out' '$T/err'"
 else
   skp "npm or node is not on PATH: target.sh's real npm ci case is skipped"
+fi
+# npm prepares a git dependency that has workspaces or an install, build or prepare script with an npm install in
+# that dependency's checkout, and that npm takes the checkout's .npmrc. $T/npmgit-<shape>'s lockfile names such a
+# dependency by git+file:// (a git host in practice): a repository whose .npmrc names a registry made of
+# ${https_proxy}, whose package.json depends on left-pad and has an install script that would leave a mark, or,
+# for the shape workspaces, workspaces and no script. npm ci of that tree on its own sends the proxy URL to that
+# registry; target.sh's npm ci installs the dependency and takes nothing from it.
+if PATH=$REAL_PATH command -v npm >/dev/null 2>&1 && PATH=$REAL_PATH command -v node >/dev/null 2>&1; then
+  for shape in install workspaces; do
+    GD=$T/gitdep-$shape NG=$T/npmgit-$shape
+    rm -rf "$T/npm-own" "$T/install-mark"
+    mkdir -p "$GD" "$NG" "$T/npm-own/home"
+    : > "$T/npm-own/userconfig"
+    : > "$T/npm-own/globalconfig"
+    tgit init -q "$GD"
+    case "$shape" in
+      install) printf '{\n  "name": "dep",\n  "version": "1.0.0",\n  "scripts": {"install": "touch %s/install-mark"},\n  "dependencies": {"left-pad": "1.3.0"}\n}\n' "$T" > "$GD/package.json" ;;
+      *) printf '{\n  "name": "dep",\n  "version": "1.0.0",\n  "workspaces": [],\n  "dependencies": {"left-pad": "1.3.0"}\n}\n' > "$GD/package.json" ;;
+    esac
+    printf 'registry=https://npm.invalid/${https_proxy}/\nfetch-retries=0\n' > "$GD/.npmrc"
+    tgit -C "$GD" add -A && tgit -C "$GD" commit -qm dep
+    spec=git+file://$GD#$(tgit -C "$GD" rev-parse HEAD)
+    printf '{\n  "name": "npmgit",\n  "version": "1.0.0",\n  "dependencies": {"dep": "%s"}\n}\n' "$spec" > "$NG/package.json"
+    printf '{\n  "name": "npmgit",\n  "version": "1.0.0",\n  "lockfileVersion": 3,\n  "requires": true,\n  "packages": {\n    "": {"name": "npmgit", "version": "1.0.0", "dependencies": {"dep": "%s"}},\n    "node_modules/dep": {"version": "1.0.0", "resolved": "%s"}\n  }\n}\n' "$spec" "$spec" > "$NG/package-lock.json"
+    cp -R "$NG" "$T/npm-own/tree"
+    ( cd "$NG" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null && printf 'native\n' > "$NG/audit_1/exec-mode"
+    own=$(cd "$T/npm-own/tree" && env -i HOME="$T/npm-own/home" PATH="$REAL_PATH" https_proxy="$PROXY" \
+      npm_config_userconfig="$T/npm-own/userconfig" npm_config_globalconfig="$T/npm-own/globalconfig" \
+      npm_config_cache="$T/npm-own/cache" npm_config_logs_dir="$T/npm-own/logs" npm_config_update_notifier=false \
+      npm_config_ignore_scripts=true npm ci --ignore-scripts --no-audit --no-fund 2>&1 </dev/null)
+    case "$own" in *CANARY-proxy*) took=yes ;; *) took=no ;; esac
+    check "real npm ci of a tree whose git dependency ($shape) holds a .npmrc naming \${https_proxy}: the npm install in the dependency's checkout sends the proxy URL" test "$took" = yes
+    run "$TARGET" "$NG" PATH="$REAL_PATH" https_proxy="$PROXY" -- npm-ci --run audit_1 --src .
+    log=$(sed -n 's/.*; log \(audit_1\/exec\/npm-ci-[0-9]*[.]log\).*/\1/p' "$T/out")
+    check "... while target.sh's npm ci installs it and takes nothing from it: exit 0, no proxy URL in its log, no script run" \
+      sh -c "[ '$RC' = 0 ] && [ -n '$log' ] && [ -f '$NG/$log' ] && grep -q '^added 1 package' '$NG/$log' && ! grep -q 'CANARY-proxy' '$NG/$log' '$T/out' '$T/err' && [ ! -e '$T/install-mark' ]"
+  done
+else
+  skp "npm or node is not on PATH: target.sh's real npm ci cases with a git dependency are skipped"
 fi
 
 # =================================================================================================
