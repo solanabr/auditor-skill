@@ -1,0 +1,42 @@
+{
+  "name": "f45-local-setup-wrapper",
+  "triggers": [
+    "push"
+  ],
+  "permissions": [
+    "contents: write"
+  ],
+  "jobs": [
+    {
+      "id": "release",
+      "line": 9,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 12,
+          "uses": "actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8",
+          "with": [],
+          "env": []
+        },
+        {
+          "line": 13,
+          "uses": "./.github/actions/setup-python-env",
+          "with": [
+            {
+              "key": "enable-cache",
+              "value": "true"
+            }
+          ],
+          "env": []
+        },
+        {
+          "line": 16,
+          "run": "make release",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

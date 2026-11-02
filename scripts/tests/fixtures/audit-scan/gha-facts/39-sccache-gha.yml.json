@@ -1,0 +1,37 @@
+{
+  "name": "f39-sccache-gha",
+  "triggers": [
+    "push"
+  ],
+  "permissions": [
+    "contents: write"
+  ],
+  "jobs": [
+    {
+      "id": "release",
+      "line": 12,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 15,
+          "uses": "actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8",
+          "with": [],
+          "env": []
+        },
+        {
+          "line": 16,
+          "uses": "mozilla-actions/sccache-action@v0.0.9",
+          "with": [],
+          "env": []
+        },
+        {
+          "line": 17,
+          "run": "cargo build-sbf && ./scripts/publish.sh",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

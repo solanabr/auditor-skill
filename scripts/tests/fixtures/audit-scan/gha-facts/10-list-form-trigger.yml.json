@@ -1,0 +1,27 @@
+{
+  "name": "f10-list-form-trigger",
+  "triggers": [
+    "issue_comment",
+    "issues"
+  ],
+  "permissions": [
+    "contents: read"
+  ],
+  "jobs": [
+    {
+      "id": "deploy",
+      "line": 7,
+      "if": "contains(github.event.comment.body, '/deploy')",
+      "permissions": [],
+      "steps": [
+        {
+          "line": 11,
+          "run": "echo deploy",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

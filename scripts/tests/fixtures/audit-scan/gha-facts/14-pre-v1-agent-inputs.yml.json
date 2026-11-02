@@ -1,0 +1,48 @@
+{
+  "name": "f14-pre-v1-agent-inputs",
+  "triggers": [
+    "issue_comment"
+  ],
+  "permissions": [
+    "contents: read",
+    "pull-requests: write"
+  ],
+  "jobs": [
+    {
+      "id": "review",
+      "line": 10,
+      "if": "contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.comment.author_association)",
+      "permissions": [],
+      "steps": [
+        {
+          "line": 14,
+          "uses": "anthropics/claude-code-action@v1",
+          "with": [
+            {
+              "key": "anthropic_api_key",
+              "value": "${{ secrets.ANTHROPIC_API_KEY }}"
+            },
+            {
+              "key": "direct_prompt",
+              "value": "Review this request. ${{ github.event.comment.body }}"
+            },
+            {
+              "key": "custom_instructions",
+              "value": "Be brief."
+            },
+            {
+              "key": "allowed_tools",
+              "value": "Bash(*)"
+            },
+            {
+              "key": "disallowed_tools",
+              "value": "WebFetch"
+            }
+          ],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

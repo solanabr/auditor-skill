@@ -1,0 +1,26 @@
+{
+  "name": "f66-quoted-event-list-item",
+  "triggers": [
+    "discussion_comment"
+  ],
+  "permissions": [
+    "contents: write"
+  ],
+  "jobs": [
+    {
+      "id": "deploy",
+      "line": 8,
+      "if": "startsWith(github.event.comment.body, '/deploy')",
+      "permissions": [],
+      "steps": [
+        {
+          "line": 12,
+          "run": "echo deploy",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

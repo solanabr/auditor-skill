@@ -1,0 +1,36 @@
+{
+  "name": "f33-agent-base-action",
+  "triggers": [
+    "issue_comment"
+  ],
+  "permissions": [
+    "contents: write",
+    "pull-requests: write"
+  ],
+  "jobs": [
+    {
+      "id": "review",
+      "line": 10,
+      "if": "contains(github.event.comment.body, '@claude') && contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.comment.author_association)",
+      "permissions": [],
+      "steps": [
+        {
+          "line": 14,
+          "uses": "anthropics/claude-code-base-action@beta",
+          "with": [
+            {
+              "key": "prompt",
+              "value": "Review the pull request this comment was posted on."
+            },
+            {
+              "key": "anthropic_api_key",
+              "value": "${{ secrets.ANTHROPIC_API_KEY }}"
+            }
+          ],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

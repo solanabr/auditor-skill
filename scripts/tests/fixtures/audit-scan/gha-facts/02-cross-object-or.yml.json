@@ -1,0 +1,28 @@
+{
+  "name": "f02-cross-object-or",
+  "triggers": [
+    "issue_comment",
+    "issues"
+  ],
+  "permissions": [
+    "contents: read",
+    "issues: write"
+  ],
+  "jobs": [
+    {
+      "id": "agent",
+      "line": 12,
+      "if": "contains(github.event.comment.body, '@claude') && (github.event.comment.author_association == 'MEMBER' || github.event.issue.author_association == 'MEMBER' || github.event.issue.author_association == ...",
+      "permissions": [],
+      "steps": [
+        {
+          "line": 16,
+          "run": "echo \"agent would run\"",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

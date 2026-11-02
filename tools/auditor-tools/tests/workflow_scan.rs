@@ -1,5 +1,6 @@
 //! The `--workflows` pass as a command: the facts it reads, the files it skips,
-//! the workflows directory it refuses, and the child each file is parsed in.
+//! the workflows directory it refuses, the child each file is parsed in, and the
+//! facts of every workflow fixture in `scripts/tests/fixtures/gha/`.
 
 mod common;
 
@@ -746,4 +747,79 @@ fn a_workflow_whose_parser_dies_or_hangs_is_skipped_and_the_report_cap_holds() {
         .collect();
     let full = "not parsed: the report is full";
     assert_eq!(skipped, [("cap/b.yml", full), ("cap/c.yml", full)]);
+}
+
+/// #31's acceptance: every workflow fixture in `scripts/tests/fixtures/gha/` (the
+/// `*.yml` and `*.yaml` files the pass reads there; it does not recurse into
+/// `actions/` or `infra/`) gives the facts checked in for it, read whole, under
+/// `scripts/tests/fixtures/audit-scan/gha-facts/<fixture>.json`. A fixture with
+/// no expected facts fails, naming it; so does an expectation with no fixture.
+#[test]
+fn every_gha_fixture_gives_the_facts_checked_in_for_it() {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/tests/fixtures");
+    let gha = fixtures.join("gha");
+    let facts = fixtures.join("audit-scan/gha-facts");
+    let mut names: Vec<String> = fs::read_dir(&gha)
+        .expect("read the gha fixtures")
+        .map(|e| e.expect("a fixture entry"))
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".yml") || n.ends_with(".yaml"))
+        .collect();
+    names.sort();
+    assert!(names.len() >= 79, "only {} gha fixtures", names.len());
+    let wt = Wt::repo();
+    wt.write("src/lib.rs", b"fn a() {}\n");
+    for n in &names {
+        wt.write(
+            &format!(".github/workflows/{n}"),
+            &fs::read(gha.join(n)).expect("read a fixture"),
+        );
+    }
+    let r = report(
+        &wt,
+        &["--contract=1", "./src", "--workflows", ".github/workflows"],
+    );
+    assert_eq!(r["skipped"], Value::Array(Vec::new()), "{}", r["skipped"]);
+    let mut got = by_name(&r);
+    let mut problems = Vec::new();
+    for n in &names {
+        let mut facts_of = got.remove(n).unwrap_or(Value::Null);
+        if let Some(w) = facts_of.as_object_mut() {
+            w.remove("file");
+        }
+        let shown = serde_json::to_string_pretty(&facts_of).expect("JSON");
+        let path = facts.join(format!("{n}.json"));
+        match fs::read(&path) {
+            Err(_) => problems.push(format!(
+                "{n}: no expected facts. Check each fact below against the fixture; if all hold, save them as {}:\n{shown}",
+                path.display()
+            )),
+            Ok(bytes) => {
+                let want: Value = serde_json::from_slice(&bytes)
+                    .unwrap_or_else(|e| panic!("{}: not JSON: {e}", path.display()));
+                if want != facts_of {
+                    problems.push(format!(
+                        "{n}: the facts differ from {}. Read now:\n{shown}",
+                        path.display()
+                    ));
+                }
+            }
+        }
+    }
+    for e in fs::read_dir(&facts).expect("read the expected facts") {
+        let file = e
+            .expect("an entry")
+            .file_name()
+            .to_string_lossy()
+            .into_owned();
+        let fixture = file.strip_suffix(".json").unwrap_or(&file);
+        if !names.iter().any(|n| n == fixture) {
+            problems.push(format!(
+                "{file}: expected facts for no fixture in {}",
+                gha.display()
+            ));
+        }
+    }
+    assert!(problems.is_empty(), "\n{}", problems.join("\n\n"));
 }

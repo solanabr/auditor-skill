@@ -1,0 +1,32 @@
+{
+  "name": "f16-event-dumps",
+  "triggers": [
+    "issues",
+    "push"
+  ],
+  "permissions": [
+    "contents: read"
+  ],
+  "jobs": [
+    {
+      "id": "log",
+      "line": 7,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 10,
+          "run": "echo '${{ toJSON(github.event.issue) }}'",
+          "with": [],
+          "env": []
+        },
+        {
+          "line": 11,
+          "run": "echo \"${{ github.event.commits[0].message }}\"",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

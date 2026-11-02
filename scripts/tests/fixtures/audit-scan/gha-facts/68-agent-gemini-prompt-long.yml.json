@@ -1,0 +1,30 @@
+{
+  "name": "f68-agent-gemini-prompt-long",
+  "triggers": [
+    "pull_request_target"
+  ],
+  "permissions": [
+    "contents: read"
+  ],
+  "jobs": [
+    {
+      "id": "review",
+      "line": 9,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 12,
+          "run": "gemini --model gemini-2.5-flash --prompt \"Review the change in this pull request\"",
+          "with": [],
+          "env": [
+            {
+              "key": "GEMINI_API_KEY",
+              "value": "${{ secrets.GEMINI_API_KEY }}"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

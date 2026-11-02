@@ -1,0 +1,26 @@
+{
+  "name": "f25-fromjson-allowlist-contributor",
+  "triggers": [
+    "issue_comment"
+  ],
+  "permissions": [
+    "contents: write"
+  ],
+  "jobs": [
+    {
+      "id": "release",
+      "line": 9,
+      "if": "startsWith(github.event.comment.body, '/release') && contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\",\"CONTRIBUTOR\"]'), github.event.comment.author_association)",
+      "permissions": [],
+      "steps": [
+        {
+          "line": 13,
+          "run": "echo \"privileged command\"",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

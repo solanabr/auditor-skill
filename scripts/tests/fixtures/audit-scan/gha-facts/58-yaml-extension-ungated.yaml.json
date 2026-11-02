@@ -1,0 +1,26 @@
+{
+  "name": "f58-yaml-extension-ungated",
+  "triggers": [
+    "issue_comment"
+  ],
+  "permissions": [
+    "contents: write"
+  ],
+  "jobs": [
+    {
+      "id": "deploy",
+      "line": 9,
+      "if": "startsWith(github.event.comment.body, '/deploy')",
+      "permissions": [],
+      "steps": [
+        {
+          "line": 13,
+          "run": "echo deploy",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

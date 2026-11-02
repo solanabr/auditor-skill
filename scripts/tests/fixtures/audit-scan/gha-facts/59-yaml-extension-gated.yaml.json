@@ -1,0 +1,26 @@
+{
+  "name": "f59-yaml-extension-gated",
+  "triggers": [
+    "issue_comment"
+  ],
+  "permissions": [
+    "contents: write"
+  ],
+  "jobs": [
+    {
+      "id": "deploy",
+      "line": 9,
+      "if": "startsWith(github.event.comment.body, '/deploy') && contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.comment.author_association)",
+      "permissions": [],
+      "steps": [
+        {
+          "line": 13,
+          "run": "echo deploy",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

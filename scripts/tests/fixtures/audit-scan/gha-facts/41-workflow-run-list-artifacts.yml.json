@@ -1,0 +1,37 @@
+{
+  "name": "f41-workflow-run-list-artifacts",
+  "triggers": [
+    "workflow_run"
+  ],
+  "permissions": [
+    "contents: read",
+    "actions: read"
+  ],
+  "jobs": [
+    {
+      "id": "fetch",
+      "line": 11,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 14,
+          "uses": "actions/github-script@v7",
+          "with": [
+            {
+              "key": "script",
+              "value": "const { data } = await github.rest.actions.listWorkflowRunArtifacts({ ...context.repo, run_id: context.payload.workflow_run.id }) const res = await github.request(data.artifacts[0].archive_download_ur..."
+            }
+          ],
+          "env": []
+        },
+        {
+          "line": 20,
+          "run": "unzip artifact.zip && ./apply.sh",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

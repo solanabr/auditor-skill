@@ -1,0 +1,25 @@
+{
+  "name": "f98-pin-and-runner-yaml-extension",
+  "triggers": [
+    "push"
+  ],
+  "permissions": [
+    "contents: read"
+  ],
+  "jobs": [
+    {
+      "id": "release",
+      "line": 8,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 11,
+          "uses": "example/release-action@4444444444444444444444444444444444444444",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}
