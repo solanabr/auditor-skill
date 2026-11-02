@@ -50,8 +50,9 @@
 #   P   Wording the flows depend on stays in place (the PINS list): what keeps a long call, and the turn after
 #       it, inside a command's grant, and what asks Q46 again for a run directory an earlier session made; every
 #       command that starts agents keeps them in the foreground and resumes in the turn an agent's result
-#       arrives in; wording that copied an earlier run's mode forward stays gone (the GONE list); and no body
-#       names the environment form of a PoC run (VULNERABLE_SO and the rest), which run.sh --crate does not read.
+#       arrives in; wording that copied an earlier run's mode forward, or passed the file's mode as run.sh
+#       --mode, stays gone (the GONE list); and no body names the environment form of a PoC run (VULNERABLE_SO
+#       and the rest), which run.sh --crate does not read.
 # The entry points are the tracked files under scripts/ (but scripts/tests/) and templates/ of mode 100755 that
 # start with a direct-exec shebang (#!/bin/bash or #!/usr/bin/env -S python3 -I), the binaries the crates
 # under tools/auditor-tools declare, and every path scripts/entrypoints.txt lists. Each check first runs on
@@ -108,8 +109,8 @@ PLACEHOLDERS = ("ID", "R", "address", "audited commit", "base", "changed program
                 "filter", "fromUnix", "head", "id", "in-scope directory", "in-scope program dir", "json", "k",
                 "n+1", "n", "name", "package", "path", "program directory", "program-path", "program_id", "repo",
                 "rev", "sha from intake", "sha", "sig", "signature", "store intake recorded", "target",
-                "the file's directory", "the full commit id intake pinned", "the full id of head",
-                "the mode the command hands you", "toUnix", "value", "version")
+                "the file's directory", "the full commit id intake pinned", "the full id of head", "toUnix",
+                "value", "version")
 PLACEHOLDER = re.compile(r'<(?:' + "|".join(re.escape(p) for p in sorted(PLACEHOLDERS, key=len, reverse=True)) +
                          r')>(?!\.\./)')
 
@@ -961,6 +962,9 @@ commands/re-audit.md	`audit_<n>/exec-mode` and its `intake.md` §8 are an earlie
 commands/re-audit.md	have the human confirm that `audit_<n>` is a run directory they made, not one that came with the tree
 commands/re-audit.md	no crate of `audit_<n>` runs and nothing is written in it
 QUESTIONS.md	and again before a later session uses a run directory an earlier one made
+agents/poc-engineer.md	When the command handed you `isolated`, pass `--mode isolated`, so a run whose recorded mode has since become less strict stops; with `native`, pass no `--mode`
+agents/patch-engineer.md	adding `--mode isolated` when the command handed you `isolated`, as `poc-engineer` does
+commands/intake.md	so the report states the mode their `>> execution mode:` line shows
 commands/audit-assist.md	only into `grep`, `head`, `tail` or `wc`
 commands/audit-cycle.md	only into `grep`, `head`, `tail` or `wc`
 commands/audit.md	only into `grep`, `head`, `tail` or `wc`
@@ -986,12 +990,16 @@ agents/economic-analyst.md	only into `grep`, `head`, `tail` or `wc`
 agents/peer-reviewer.md	only into `grep`, `head`, `tail` or `wc`
 PINS
 
-# Wording that must not come back, file <TAB> text: a flow never copies an earlier run's recorded mode forward.
+# Wording that must not come back, file <TAB> text: a flow never copies an earlier run's recorded mode forward,
+# and an agent never hands run.sh the file's mode as --mode, which stops every run a stricter AUDITOR_EXEC_MODE
+# holds to isolated mode.
 while IFS='	' read -r f gone; do
   [ -n "$f" ] || continue
   if [ -f "$f" ] && ! grep -qF -- "$gone" "$f"; then ok "gone from $f: $gone"; else bad "P $f says: $gone"; fi
 done <<'GONE'
 commands/re-audit.md	write the mode recorded at intake into
+agents/poc-engineer.md	--mode <the mode the command handed you>
+agents/patch-engineer.md	--mode <the mode the command hands you>
 GONE
 
 # Each command's resume text, and the root SKILL.md's, says how to answer the prompt its re-invocation brings.
