@@ -258,6 +258,15 @@ mkdir -p "$T/pycwd"; printf '#!/bin/sh\npwd -P >> "%s"\nexec "%s" "$@"\n' "$T/py
 (cd "$W" && PATH="$T/pycwd:$T/sol:$PATH" "$READ" account "$ADDR") >"$T/out" 2>"$T/err"; RC=$?
 check "account: both python3 calls (the id check and the hash) run from /" \
   sh -c "[ $RC = 0 ] && [ \"\$(grep -c . '$T/pycwd.log')\" = 2 ] && [ \"\$(sort -u '$T/pycwd.log')\" = / ]"
+# A solana that logs where it runs: every call runs from / too, so nothing in the working directory (a
+# .tool-versions an asdf or mise shim reads) picks the binary.
+mkdir -p "$T/solcwd"; printf '#!/bin/sh\npwd -P >> "%s"\nexec "%s" "$@"\n' "$T/solcwd.log" "$T/sol/solana" > "$T/solcwd/solana"; chmod +x "$T/solcwd/solana"
+: > "$T/solcwd.log"; rcs=""
+for read_id in "account $ADDR" "confirm $SIG" "program-show $PID"; do
+  (cd "$W" && PATH="$T/solcwd:$T/sol:$PATH" "$READ" "${read_id% *}" "${read_id#* }") >"$T/out" 2>"$T/err"; rcs="$rcs$?"
+done
+check "every solana call (the config check, then account, confirm and program-show) runs from /" \
+  sh -c "[ $rcs = 000 ] && [ \"\$(grep -c . '$T/solcwd.log')\" = 6 ] && [ \"\$(sort -u '$T/solcwd.log')\" = / ]"
 run account "$ADDR" --run "$R"
 check "account --run: exit 0" test "$RC" = 0
 check "account --run: the data is kept in R/rpc/, byte for byte" cmp -s "$T/want.data" "$W/$R/rpc/account-$ADDR.data"

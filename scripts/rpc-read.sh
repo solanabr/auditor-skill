@@ -18,7 +18,9 @@
 # not exist. `solana config get keypair` must report that path back, or the CLI fell back to its defaults
 # (public mainnet-beta and the default keypair) and the read stops with a blocker. An $RPC_URL holding a
 # quote, a backslash, whitespace or a control character is refused. The CLI's output and errors pass
-# through scripts/dnr/redact.sh, since its text can name the endpoint, key included.
+# through scripts/dnr/redact.sh, since its text can name the endpoint, key included. The CLI and python3
+# run from /, so no version file in the working directory (a .tool-versions or .python-version that an
+# asdf, mise or pyenv shim reads) picks the binary.
 #
 # Reads, with read-only RPC methods only (nothing is signed or sent):
 #   account <address>      `solana account <address> --lamports --output-file <temp file>`: prints the
@@ -141,7 +143,9 @@ trap 'rm -rf "$tmp"' EXIT
 err="$tmp/stderr" cfg="$tmp/cli.yml" nokey="$tmp/no-keypair.json" cli="$tmp/cli.txt" out="$tmp/out.txt" data="$tmp/account.data"
 printf 'json_rpc_url: "%s"\nwebsocket_url: ""\nkeypair_path: "%s"\n' "$url" "$nokey" > "$cfg" ||
   { echo "[blocker] cannot write the CLI config." >&2; exit 3; }
-case "$(solana -C "$cfg" config get keypair 2>/dev/null)" in
+# sol <arguments>: the solana CLI on that config, from / (see above); every path it is given is absolute.
+sol() { (cd / && exec solana -C "$cfg" "$@"); }
+case "$(sol config get keypair 2>/dev/null)" in
   *"$nokey"*) ;;
   *) echo "[blocker] the solana CLI did not load the keyless config; read $id another way." >&2
      exit 3 ;;
@@ -174,7 +178,7 @@ failed() { # failed <what>: the CLI's error, redacted, and exit 1
 case "$what" in
   account)
     # --output-file sends the data to a file, so the CLI prints no hex dump of it.
-    solana -C "$cfg" account "$id" --lamports --output-file "$data" > "$tmp/account.txt" 2> "$err" ||
+    sol account "$id" --lamports --output-file "$data" > "$tmp/account.txt" 2> "$err" ||
       failed "the solana CLI could not read the account $id"
     [ -f "$data" ] || : > "$data"
     # From /, as every python3 call here: nothing in the working directory picks the interpreter.
@@ -185,7 +189,7 @@ print(len(d), hashlib.sha256(d).hexdigest())' "$data" 2>/dev/null)
     { awk '/^(Public Key|Balance|Owner|Executable|Rent Epoch): / { print }' "$tmp/account.txt"
       printf 'Data Length: %s bytes\nData SHA-256: %s\n' "${sum%% *}" "${sum#* }"; } > "$cli" ;;
   confirm)
-    solana -C "$cfg" confirm -v --output json "$id" > "$cli" 2> "$err" ||
+    sol confirm -v --output json "$id" > "$cli" 2> "$err" ||
       failed "the solana CLI could not read the transaction $id"
     # A finalized transaction with no details in the answer: the CLI's getTransaction failed, and its JSON
     # leaves the reason out. From /, as every python3 call here.
@@ -199,9 +203,9 @@ print("partial" if c.get("confirmationStatus") == "finalized" and "transaction" 
       *) echo "[blocker] the solana CLI's answer for $id is not a JSON object." >&2; exit 3 ;;
     esac ;;
   program-show)
-    if ! solana -C "$cfg" program show "$id" --buffer-authority "$SYSTEM_ID" > "$cli" 2> "$err"; then
+    if ! sol program show "$id" --buffer-authority "$SYSTEM_ID" > "$cli" 2> "$err"; then
       mv "$err" "$tmp/stderr.show"
-      if ! solana -C "$cfg" program-v4 show --program-id "$id" --authority "$SYSTEM_ID" > "$cli" 2> "$err"; then
+      if ! sol program-v4 show --program-id "$id" --authority "$SYSTEM_ID" > "$cli" 2> "$err"; then
         echo "rpc-read: neither solana program show nor program-v4 show reads $id as a program:" >&2
         "$REDACT" < "$tmp/stderr.show" >&2
         "$REDACT" < "$err" >&2
