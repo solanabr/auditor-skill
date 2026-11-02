@@ -4,14 +4,18 @@
 #   - every command an item quotes is one plain command (quoted &, $ and the like allowed), starts with its
 #     tool's bare name, and appears word for word in the block;
 #   - the block, run with PATH holding only the stand-ins and env, mkdir and grep, calls the stand-in aws with
-#     exactly `s3api list-objects-v2 --bucket <bucket> --page-size 1 --max-items 1 --query KeyCount --output
-#     text --no-sign-request --region us-east-1`, the AWS profile, endpoint and CA variables cleared and the config
-#     and credentials files /dev/null (canary values are set beforehand), and
-#     the stand-in curl with exactly the GCS, Azure, .git/HEAD and made-up-path requests the block writes, each
-#     with -q first and --max-time 30;
-#   - a host, bucket, Azure account or container outside the grammar (a user, a port, a path, IPv6, a non-ASCII
-#     or uppercase name, an underscore, a space, a semicolon, $( ), a leading or trailing . or -, .., a - in an
-#     account, a . in a container, a name too short or too long) is refused, and its probe never runs;
+#     exactly `s3api list-objects-v2 --bucket <bucket> --no-paginate --query KeyCount --output text
+#     --no-sign-request --region us-east-1` and `s3api head-object --bucket <bucket> --key <key> --query
+#     ContentLength --output text --no-sign-request --region us-east-1`, the AWS profile, endpoint and CA
+#     variables cleared and the config and credentials files /dev/null (canary values are set beforehand), and
+#     the stand-in curl with exactly the GCS and Azure listings, the GCS and Azure object reads (headers only),
+#     and the .git/HEAD and made-up-path requests the block writes, each with -q first and --max-time 30;
+#   - the S3 probes print a key count and an object size: the stand-in aws prints what the AWS CLI v2 prints with
+#     --output text, None for a --query outside Contents and CommonPrefixes on a paginated call;
+#   - a host, bucket, Azure account or container, or object key, outside the grammar (a user, a port, a path,
+#     IPv6, a non-ASCII or uppercase name, an underscore, a space, a semicolon, $( ), a leading or trailing . or -,
+#     .., a - in an account, a . in a container, a name too short or too long; a key with a leading /, //, .., a
+#     . part, ? # or %) is refused, and its probe never runs;
 #   - the verdict line prints 1 only for a git HEAD body (ref: refs/…, a 40 or 64 hex id), its anchors pinned;
 #   - a real curl given DEP-073's command, with a host its URL parser rejects before any lookup, reads no planted
 #     ~/.curlrc, while the same command without -q does (the control);
@@ -99,8 +103,8 @@ $(spans "$id" "$prefix")
 EOF
   [ "$all" = 1 ] && ok "$id: its $n '$prefix' command(s) are plain, start with the bare tool name and match the block"
 }
-want_spans DEP-072 'env -u ' 1
-want_spans DEP-072 'curl ' 2
+want_spans DEP-072 'env -u ' 2
+want_spans DEP-072 'curl ' 4
 want_spans DEP-073 'curl ' 1
 want_spans DEP-073 'LC_ALL=C grep ' 1
 if [ -n "$B" ] && [ -z "$(printf '%s\n' "$B" | grep -E '(^|[^A-Za-z0-9_-])/[^ ]*/(curl|aws|grep|env)( |$)')" ]; then
@@ -110,6 +114,9 @@ else bad "the block calls a tool by an absolute path"; fi
 # ---- the block, against stand-ins -----------------------------------------------------------------------------
 # PATH holds only these: stand-in aws and curl, which log their arguments and the environment names that matter,
 # and the real env, mkdir and grep. Any other program the block named would not be found.
+# The stand-in aws prints what the AWS CLI v2 prints with --output text: list-objects-v2 is paginated unless
+# --no-paginate is given, and on a paginated call --query reads each page after the CLI kept only Contents and
+# CommonPrefixes, so a query for any other key, KeyCount among them, prints None; head-object is one call.
 mkdir -p "$T/bin" "$T/home" "$T/r" || exit 1
 for tool in env mkdir grep; do
   p=$(command -v "$tool") && ln -s "$p" "$T/bin/$tool" || { echo "no $tool on PATH" >&2; exit 1; }
@@ -120,7 +127,18 @@ cat > "$T/bin/aws" <<EOF
   for v in AWS_PROFILE AWS_DEFAULT_PROFILE AWS_ENDPOINT_URL AWS_ENDPOINT_URL_S3 AWS_CA_BUNDLE AWS_CONFIG_FILE AWS_SHARED_CREDENTIALS_FILE; do
     eval "printf 'env %s=%s\n' \$v \"\\\${\$v-unset}\""
   done; } >> "$T/calls.log"
-printf '0\n'
+op=""; query=""; paged=1; prev=""
+for a in "\$@"; do
+  case "\$a" in list-objects-v2|head-object) [ -n "\$op" ] || op=\$a ;; --no-paginate) paged=0 ;; esac
+  [ "\$prev" = --query ] && query=\$a
+  prev=\$a
+done
+case "\$op:\$paged:\$query" in
+  list-objects-v2:1:Contents*|list-objects-v2:1:CommonPrefixes*) ;;
+  list-objects-v2:0:KeyCount) printf '%s\n' "\${STANDIN_KEYCOUNT-0}" ;;
+  head-object:*:ContentLength) printf '%s\n' "\${STANDIN_SIZE-0}" ;;
+  *) printf 'None\n' ;;
+esac
 EOF
 cat > "$T/bin/curl" <<EOF
 #!/bin/sh
@@ -132,32 +150,45 @@ for a in "\$@"; do [ "\$prev" = -o ] && out=\$a; prev=\$a; done
 printf '200 \n'
 EOF
 chmod +x "$T/bin/aws" "$T/bin/curl" || exit 1
-fill() { # fill BUCKET HOST ACCOUNT CONTAINER > the block with its placeholders filled
-  printf '%s\n' "$B" | awk -v b="$1" -v h="$2" -v a="$3" -v c="$4" -v r="$T/r" '
+fill() { # fill BUCKET HOST ACCOUNT CONTAINER KEY > the block with its placeholders filled
+  printf '%s\n' "$B" | awk -v b="$1" -v h="$2" -v a="$3" -v c="$4" -v k="$5" -v r="$T/r" '
     function rep(s, k, v,   o, i) { o = ""; while ((i = index(s, k)) > 0) { o = o substr(s, 1, i - 1) v; s = substr(s, i + length(k)) } return o s }
     { s = rep($0, "<bucket>", b); s = rep(s, "<host>", h); s = rep(s, "<account>", a); s = rep(s, "<container>", c)
-      print rep(s, "<R>", r) }'
+      s = rep(s, "<key>", k); print rep(s, "<R>", r) }'
 }
-canary() { # canary FILE: run FILE with PATH limited to $T/bin and canary values in every variable the S3 probe clears
+canary() { # canary FILE: run FILE with PATH limited to $T/bin and canary values in every variable the S3 probes clear
   ( cd "$T" && env HOME="$T/home" CURL_HOME="$T/home" AWS_PROFILE=canary AWS_DEFAULT_PROFILE=canary \
       AWS_ENDPOINT_URL=http://canary.invalid AWS_ENDPOINT_URL_S3=http://canary.invalid AWS_CA_BUNDLE="$T/canary.pem" \
       AWS_CONFIG_FILE="$T/canary-config" AWS_SHARED_CREDENTIALS_FILE="$T/canary-credentials" \
-      STANDIN_BODY="ref: refs/heads/main" PATH="$T/bin" "$BASH" "$1" ) > "$T/out" 2>&1
+      STANDIN_BODY="ref: refs/heads/main" STANDIN_KEYCOUNT=3 STANDIN_SIZE=17 PATH="$T/bin" "$BASH" "$1" ) > "$T/out" 2>&1
+}
+aws_env() { # the environment the stand-in aws logs when the probe's env prefix ran
+  printf 'env %s\n' AWS_PROFILE=unset AWS_DEFAULT_PROFILE=unset AWS_ENDPOINT_URL=unset AWS_ENDPOINT_URL_S3=unset \
+    AWS_CA_BUNDLE=unset AWS_CONFIG_FILE=/dev/null AWS_SHARED_CREDENTIALS_FILE=/dev/null
 }
 rm -f "$T/calls.log"
-fill example-bucket app.example.invalid examplestore assets > "$T/good.sh"
+fill example-bucket app.example.invalid examplestore assets static/logo-v2.png > "$T/good.sh"
 canary "$T/good.sh"
 {
   printf 'call aws\n'
-  printf 'arg=%s\n' s3api list-objects-v2 --bucket example-bucket --page-size 1 --max-items 1 --query KeyCount \
+  printf 'arg=%s\n' s3api list-objects-v2 --bucket example-bucket --no-paginate --query KeyCount \
     --output text --no-sign-request --region us-east-1
-  printf 'env %s\n' AWS_PROFILE=unset AWS_DEFAULT_PROFILE=unset AWS_ENDPOINT_URL=unset AWS_ENDPOINT_URL_S3=unset \
-    AWS_CA_BUNDLE=unset AWS_CONFIG_FILE=/dev/null AWS_SHARED_CREDENTIALS_FILE=/dev/null
+  aws_env
   printf 'call curl\n'
   printf 'arg=%s\n' -q -sS --max-time 30 -o /dev/null -w '%{http_code}' 'https://storage.googleapis.com/storage/v1/b/example-bucket/o?maxResults=1'
   printf 'env CURL_HOME=%s\n' "$T/home"
   printf 'call curl\n'
   printf 'arg=%s\n' -q -sS --max-time 30 -o /dev/null -w '%{http_code}' 'https://examplestore.blob.core.windows.net/assets?restype=container&comp=list&maxresults=1'
+  printf 'env CURL_HOME=%s\n' "$T/home"
+  printf 'call aws\n'
+  printf 'arg=%s\n' s3api head-object --bucket example-bucket --key static/logo-v2.png --query ContentLength \
+    --output text --no-sign-request --region us-east-1
+  aws_env
+  printf 'call curl\n'
+  printf 'arg=%s\n' -q -sS --max-time 30 -I -o /dev/null -w '%{http_code}' 'https://storage.googleapis.com/example-bucket/static/logo-v2.png'
+  printf 'env CURL_HOME=%s\n' "$T/home"
+  printf 'call curl\n'
+  printf 'arg=%s\n' -q -sS --max-time 30 -I -o /dev/null -w '%{http_code}' 'https://examplestore.blob.core.windows.net/assets/static/logo-v2.png'
   printf 'env CURL_HOME=%s\n' "$T/home"
   printf 'call curl\n'
   printf 'arg=%s\n' -q -sS --max-time 30 --max-filesize 65536 -o "$T/r/probes/dep-073-app.example.invalid.txt" \
@@ -169,20 +200,23 @@ canary "$T/good.sh"
   printf 'env CURL_HOME=%s\n' "$T/home"
 } > "$T/want"
 if [ -f "$T/calls.log" ] && cmp -s "$T/want" "$T/calls.log"; then
-  ok "the block calls aws once (profile, endpoint and CA cleared, config and credentials /dev/null) and curl four times, each exactly as written"
+  ok "the block calls aws twice (profile, endpoint and CA cleared, config and credentials /dev/null) and curl six times, each exactly as written"
 else
   bad "the block's calls differ from what it writes:"; diff "$T/want" "$T/calls.log" 2>&1 | sed 's/^/    /'
 fi
 if [ "$(sed -n 's/^1$/one/p' "$T/out")" = one ] && ! grep -q refused "$T/out"; then
   ok "with a git HEAD saved, the verdict line prints 1, and no value was refused"
 else bad "good values: the verdict line did not print 1, or a value was refused: $(cat "$T/out")"; fi
+if grep -qx 3 "$T/out" && grep -qx 17 "$T/out" && ! grep -qx None "$T/out"; then
+  ok "the S3 probes print the key count and the object size, as the CLI prints them with these flags, and no None"
+else bad "the S3 probes do not print a key count and an object size: $(cat "$T/out")"; fi
 
 # ---- values outside the grammar are refused, and their probe never runs ------------------------------------------
 # Each value goes in single quotes, so a semicolon or $( ) in it starts nothing. A single quote would end those
 # quotes, which no check inside the block can see; the items say to check a value against the rule before filling.
-refused() { # refused LABEL BUCKET HOST ACCOUNT CONTAINER MUST-NOT-CALL...
+refused() { # refused LABEL BUCKET HOST ACCOUNT CONTAINER KEY MUST-NOT-CALL...
   local label=$1 f; shift
-  fill "$1" "$2" "$3" "$4" > "$T/bad.sh"; shift 4
+  fill "$1" "$2" "$3" "$4" "$5" > "$T/bad.sh"; shift 5
   rm -f "$T/calls.log"
   canary "$T/bad.sh"
   for f in "$@"; do
@@ -192,21 +226,32 @@ refused() { # refused LABEL BUCKET HOST ACCOUNT CONTAINER MUST-NOT-CALL...
   if grep -q '^refused: ' "$T/out"; then ok "$label: refused, and its probe never ran"
   else bad "$label: no refusal printed: $(cat "$T/out")"; fi
 }
-G=example-bucket; H=app.example.invalid; A=examplestore; K=assets
+G=example-bucket; H=app.example.invalid; A=examplestore; K=assets; O=static/logo-v2.png
 for b in Example_Bucket 'bucket/prefix' ab "$(printf '%064d' 0 | tr 0 b)" 'my bucket' 'x;y' 'x$(id)' '' \
          .lead trail. -lead trail- 'a..b'; do
-  refused "bucket '$b'" "$b" "$H" "$A" "$K" "call aws" "storage/v1/b/$b/o"
+  refused "bucket '$b'" "$b" "$H" "$A" "$K" "$O" "call aws" "storage/v1/b/$b/o" "arg=https://storage.googleapis.com/$b/"
 done
 for h in 'user@app.example.invalid' 'app.example.invalid:8443' '[2001:db8::1]' 'bücher.example' 'app.example.invalid/x' \
          'a b' 'x;y' 'x$(id)' ''; do
-  refused "host '$h'" "$G" "$h" "$A" "$K" "arg=https://$h/.git/HEAD" "arg=https://$h/.git/no-such-file-a7f3"
+  refused "host '$h'" "$G" "$h" "$A" "$K" "$O" "arg=https://$h/.git/HEAD" "arg=https://$h/.git/no-such-file-a7f3"
 done
 for a in Bad_Account ExampleStore ab "$(printf '%025d' 0 | tr 0 a)" ex-store ex.store; do
-  refused "Azure account '$a'" "$G" "$H" "$a" "$K" "$a.blob.core.windows.net"
+  refused "Azure account '$a'" "$G" "$H" "$a" "$K" "$O" "$a.blob.core.windows.net"
 done
 for k in Up a.b 'a b' 'a_b'; do
-  refused "Azure container '$k'" "$G" "$H" "$A" "$k" "/$k?restype"
+  refused "Azure container '$k'" "$G" "$H" "$A" "$k" "$O" "/$k?restype" "windows.net/$k/"
 done
+for o in '' /lead 'a//b' 'a/../b' .. 'a..b' . ./a 'a/.' 'a/./b' 'a b' 'x;y' 'x$(id)' 'bücher.png' 'a?b' 'a#b' \
+         'a%2e%2e' "$(printf '%01025d' 0 | tr 0 k)"; do
+  refused "object key '$(printf '%.40s' "$o")'" "$G" "$H" "$A" "$K" "$o" "arg=head-object" \
+    "arg=https://storage.googleapis.com/$G/" "windows.net/$K/"
+done
+rm -f "$T/calls.log"
+fill "$G" "$H" "$A" "$K" "$(printf '%01024d' 0 | tr 0 k)" > "$T/long.sh"
+canary "$T/long.sh"
+if ! grep -q '^refused: ' "$T/out" && grep -qx 'arg=head-object' "$T/calls.log"; then
+  ok "an object key of 1024 characters is taken"
+else bad "an object key of 1024 characters is refused: $(head -c 300 "$T/out")"; fi
 
 # ---- the verdict line ------------------------------------------------------------------------------------------
 verdict=$(printf '%s\n' "$B" | grep -F 'LC_ALL=C grep -cE ' | sed 's/^host_ok .* && //')
@@ -289,16 +334,21 @@ for id in DEP-072 DEP-073; do
     ok "$id: probes only under Q47 for what §8 lists, as an outside contact, within the grammar; owner-run otherwise; never [PASS]"
   else bad "$id lacks part of the rule of engagement: $line"; fi
 done
+KEY='An object `<key>` is 1–1024 ASCII letters, digits, `.`, `_`, `-` and `/`, with no leading `/`, no `//`, no `..` and no part that is `.`'
 if has "$(item DEP-072)" 'how the CLI follows a bucket in another region was not verified offline' \
-   && has "$(item DEP-072)" 'prints only a count of keys: `0` or `1`, not `AccessDenied`, means anyone can list it' \
-   && has "$(item DEP-072)" "$AZURE"; then
-  ok "DEP-072: only a key count, 0 or 1 meaning anyone can list it; the Azure names rule; the region redirect unverified offline"
-else bad "DEP-072 lacks the count, the Azure names rule or the unverified-offline note"; fi
+   && has "$(item DEP-072)" 'makes one request and prints only the number of keys it returned, `0` to `1000`, and no key name: a number, not `AccessDenied`, means anyone can list it' \
+   && has "$(item DEP-072)" 'listing a bucket and reading its objects are separate permissions on every provider, so check both' \
+   && has "$(item DEP-072)" 'which prints the object'"'"'s size and none of its content: a number, not a `403` or `404` error, means anyone can read it' \
+   && has "$(item DEP-072)" 'which fetch its headers only: `200` means anyone can read it' \
+   && has "$(item DEP-072)" 'A listing or a read that is refused shows only that this one request was refused, never that the bucket is private: judge public reads from the bucket policy, ACLs or IAM bindings, or the Azure container'"'"'s access level, in the IaC or from the owner' \
+   && has "$(item DEP-072)" "$AZURE" && has "$(item DEP-072)" "$KEY"; then
+  ok "DEP-072: a key count from one request; one object read, by size or headers; a refusal proves nothing; the Azure and key rules; the region redirect unverified offline"
+else bad "DEP-072 lacks the count, the object read, the refusal rule, the Azure or key rule or the unverified-offline note"; fi
 pre=$(awk 'index($0, "> **Live probes (DEP-072, DEP-073).**") == 1 { print; exit }' "$CL")
-if has "$pre" "$GRAMMAR" && has "$pre" "$AZURE" \
+if has "$pre" "$GRAMMAR" && has "$pre" "$AZURE" && has "$pre" "$KEY" \
    && has "$pre" 'only this first check catches a single quote; each probe below checks every other value again'; then
-  ok "the Live probes block states the grammar, the Azure rule and what only the check before filling catches"
-else bad "the Live probes block lacks the grammar, the Azure rule or the single-quote sentence"; fi
+  ok "the Live probes block states the grammar, the Azure and key rules and what only the check before filling catches"
+else bad "the Live probes block lacks the grammar, the Azure or key rule or the single-quote sentence"; fi
 line=$(item DEP-073)
 if has "$line" 'It is exposed only when the status is `200`' && has "$line" 'confirm it with a made-up path' \
    && has "$line" 'A `3xx` is recorded, and its target is probed only when §8 lists that host too' \
