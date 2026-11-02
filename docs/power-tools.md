@@ -172,7 +172,7 @@ docker run --rm --network none -v "$PWD":/src:ro \
   --offline --no-config --no-ignores --persona=auditor /src/.github/workflows
 ```
 
-Without Docker, install the same version from PyPI in pip's hash-checking mode, into a virtual environment outside the checkout. Save the requirement, with the sha256 of every 1.30.1 wheel, as `zizmor-1.30.1.txt`:
+Without Docker, install the same version from PyPI in pip's hash-checking mode, into a virtual environment outside the checkout. Save the requirement, with the sha256 of every 1.30.1 wheel, as `~/.venvs/zizmor-1.30.1.txt`, outside the repository under audit too:
 
 ```text
 zizmor==1.30.1 \
@@ -190,7 +190,7 @@ zizmor==1.30.1 \
 
 ```bash
 python3 -m venv ~/.venvs/zizmor-1.30.1
-~/.venvs/zizmor-1.30.1/bin/pip install --require-hashes --only-binary :all: --no-deps -r zizmor-1.30.1.txt
+~/.venvs/zizmor-1.30.1/bin/pip install --require-hashes --only-binary :all: --no-deps -r ~/.venvs/zizmor-1.30.1.txt
 ~/.venvs/zizmor-1.30.1/bin/zizmor --offline --no-config --no-ignores --persona=auditor .github/workflows
 ```
 
