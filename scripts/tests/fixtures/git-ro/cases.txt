@@ -267,6 +267,7 @@
 64	git-ro: refused: blame does not allow --branches	blame	--branches	HEAD	--	a.rs
 64	git-ro: refused: blame does not allow -x	blame	-x	HEAD	--	a.rs
 64	git-ro: refused: blame needs <rev> -- <path>: a revision, then --, then one path; only options may come before the revision, not ^HEAD	blame	^HEAD	HEAD	--	a.rs
+64	git-ro: refused: grep searches these revisions, so give paths after --: a.rs	grep	-n	require	HEAD	a.rs
 64	git-ro: refused: reflog only reads: reflog show [<options>] [<ref>]	reflog
 64	git-ro: refused: reflog only reads: reflog show [<options>] [<ref>]	reflog	expire	--all
 64	git-ro: refused: reflog only reads: reflog show [<options>] [<ref>]	reflog	delete	HEAD@{0}

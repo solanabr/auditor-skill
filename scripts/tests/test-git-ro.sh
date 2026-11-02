@@ -815,6 +815,38 @@ check "blame --reverse A..B still runs" test "$RC" = 0
 run "$G" blame '^HEAD' -- keys/id.txt
 check "blame ^HEAD never reads a file through a linked directory" sh -c "[ '$RC' = 64 ] && ! grep -q OUTSIDE-KEY-MATERIAL '$T/out'"
 check "no case of this section ran a configured program" nomarks
+# grep decides from its words. A git directory named after git's own message and a corrupt blob made git
+# grep --cached fail with that text, which the old fallback took for "trees are given".
+GM="$T/grep-message"; MSG='gd both --cached and trees are given'
+mkdir -p "$GM"
+git init -q --separate-git-dir="$GM/$MSG" "$GM"
+git -C "$GM" symbolic-ref HEAD refs/heads/main
+put "$GM" a.txt 'hello'
+put "$GM" keys/id.txt 'committed text'
+commit "$GM" -m keys
+oid=$(git -C "$GM" rev-parse HEAD:a.txt)
+chmod u+w "$GM/$MSG/objects/${oid:0:2}/${oid:2}"
+printf 'garbage' > "$GM/$MSG/objects/${oid:0:2}/${oid:2}"
+rm -r "$GM/keys"
+ln -s "$T/outside-keys" "$GM/keys"
+git -C "$GM" grep --cached -e OUTSIDE-KEY-MATERIAL > "$T/plain.out" 2>&1
+if grep -qF 'both --cached and trees are given' "$T/plain.out"; then ok "sanity: git's error on the corrupt blob holds the text, in the git directory's name"
+else skp "sanity: this git's error does not name the git directory"; fi
+run "$GM" grep -n -e OUTSIDE-KEY-MATERIAL
+check "grep of an index with a corrupt blob fails, and never falls back to the work tree" \
+  sh -c "[ '$RC' != 0 ] && [ '$RC' != 64 ] && ! grep -q OUTSIDE-KEY-MATERIAL '$T/out'"
+# A revision named like an option (refs/heads/-n) stays a revision: git gets it behind --end-of-options.
+git -C "$G" update-ref refs/heads/-n HEAD
+run "$G" grep committed -n
+check "grep searches a revision named -n as a revision" test "$(cat "$T/out")" = '-n:keys/id.txt:committed text'
+run "$G" grep OUTSIDE-KEY-MATERIAL -n
+check "... and finds nothing of the linked directory there" test "$RC:$(cat "$T/out")" = 1:
+git -C "$G" update-ref -d refs/heads/-n
+run "$G" grep -n -e committed HEAD keys
+check "grep with revisions and then a path without -- is refused" \
+  err_is 'git-ro: refused: grep searches these revisions, so give paths after --: keys'
+run "$G" grep -n -e committed HEAD -- keys
+check "... and with -- searches that path of the revision" test "$(cat "$T/out")" = 'HEAD:keys/id.txt:1:committed text'
 
 # =================================================================================================
 # What the repository could set to change what a read shows: how grep and log --grep read a pattern,

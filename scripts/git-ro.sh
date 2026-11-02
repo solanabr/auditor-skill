@@ -36,7 +36,11 @@
 #     the ids, so blame starts from a commit and never annotates the work tree. It refuses a repository
 #     whose config sets blame.ignoreRevsFile: git reads that file, prints a line it cannot parse, and no
 #     command-line value resets the setting. Blame a copy instead.
-#   grep: committed content only. With no revision it searches the index, as with --cached.
+#   grep: committed content only. git-ro reads the words as git grep does (options, then a pattern
+#     unless -e, --and, --not, ( or ) came first, then revisions, -- and paths) and resolves each
+#     revision. With none it searches the index, as with --cached; with some it gives git exactly those
+#     revisions, behind --end-of-options and ended with --. Without --, every word after the pattern must
+#     be a revision once one is: give paths after --.
 #   ls-files: no -m/--modified (it runs clean filters), --eol, or --format reading the work tree.
 #   cat-file: no --filters or --batch-command; standard input reaches --batch and --batch-check only.
 #   describe: no --dirty or --broken.
@@ -667,19 +671,86 @@ run_blame() {
   exit $?
 }
 
-run_grep() { # run_grep <arg>...: the index first; the same words again only when git says they name trees
-  local err rc
+# run_grep <arg>...: the words read the way git grep reads them. Options come first, up to the first word
+# that is not one, or --, or --end-of-options; -e, -f, -A, -B, -C and -m (and --max-depth, --threads,
+# --context, --after-context, --before-context and --max-count) take the rest of the word or the next
+# one. When no -e, --and, --not, ( or ) came, the next word (after one --) is the pattern. What follows
+# are revisions up to --, then paths; without --, revisions until the first word that is not one.
+# git-ro resolves the revisions itself. With none, git searches the index (--cached) and the remaining
+# words go to it as given. With some, git gets the options, the pattern as -e, and exactly those
+# revisions behind --end-of-options and ended with --, so it searches them and nothing else; a path
+# without -- after them is refused, since only a -- keeps git from reading a revision as a path. Neither
+# form reads the work tree, and nothing depends on what git prints.
+run_grep() {
+  local a c rest n i=0 j dd=-1 havepat=0 pat=""
+  local -a args=("$@") optw=() trees=() paths=() tail=()
   check_options grep "$@"
-  { err=$(hgit "$REPO" grep --no-textconv --cached "$@" 2>&1 1>&3 3>&- </dev/null); rc=$?; } 3>&1
-  if [ "$rc" -eq 128 ]; then
-    case "$err" in
-      *'both --cached and trees are given'*)
-        hgit "$REPO" grep --no-textconv "$@" </dev/null
-        exit $? ;;
+  n=$#
+  while [ "$i" -lt "$n" ]; do
+    a=${args[$i]}
+    case "$a" in
+      --) break ;;
+      --end-of-options) i=$((i + 1)); break ;;
+      '('|')'|--and|--not) havepat=1; optw+=("$a") ;;
+      --max-depth|--threads|--context|--after-context|--before-context|--max-count)
+        optw+=("$a")
+        i=$((i + 1))
+        [ "$i" -ge "$n" ] || optw+=("${args[$i]}") ;;
+      --?*) optw+=("$a") ;;
+      -?*)
+        optw+=("$a")
+        rest=${a#-}
+        while [ -n "$rest" ]; do
+          c=${rest%"${rest#?}"}
+          rest=${rest#?}
+          case "$c" in
+            e|f|A|B|C|m)
+              case "$c" in e|f) havepat=1 ;; esac
+              if [ -z "$rest" ]; then
+                i=$((i + 1))
+                [ "$i" -ge "$n" ] || optw+=("${args[$i]}")
+              fi
+              break ;;
+            O) break ;;
+          esac
+        done ;;
+      *) break ;;
     esac
+    i=$((i + 1))
+  done
+  if [ "$havepat" -eq 0 ]; then
+    if [ "$i" -lt "$n" ] && [ "${args[$i]}" = -- ]; then i=$((i + 1)); fi
+    if [ "$i" -lt "$n" ]; then pat=${args[$i]}; havepat=2; i=$((i + 1)); fi
   fi
-  [ -z "$err" ] || printf '%s\n' "$err" >&2
-  exit "$rc"
+  j=$i
+  while [ "$j" -lt "$n" ]; do
+    [ "${args[$j]}" != -- ] || { dd=$j; break; }
+    j=$((j + 1))
+  done
+  j=$i
+  while [ "$j" -lt "$n" ]; do
+    a=${args[$j]}
+    [ "$a" != -- ] || break
+    if one_object "$a" object; then
+      trees+=("$a")
+    elif [ "$dd" -ge 0 ] || [ "${#trees[@]}" -gt 0 ]; then
+      if [ "$dd" -lt 0 ]; then refuse "grep searches these revisions, so give paths after --: $(confine_text "$a")"; fi
+      trees=()
+      break
+    else
+      break
+    fi
+    j=$((j + 1))
+  done
+  [ "$havepat" -ne 2 ] || optw+=(-e "$pat")
+  if [ "${#trees[@]}" -eq 0 ]; then
+    [ "$i" -ge "$n" ] || tail=("${args[@]:$i}")
+    hgit "$REPO" grep --no-textconv --cached ${optw[@]+"${optw[@]}"} --end-of-options ${tail[@]+"${tail[@]}"} </dev/null
+    exit $?
+  fi
+  [ "$dd" -lt 0 ] || [ $((dd + 1)) -ge "$n" ] || paths=("${args[@]:$((dd + 1))}")
+  hgit "$REPO" grep --no-textconv ${optw[@]+"${optw[@]}"} --end-of-options "${trees[@]}" -- ${paths[@]+"${paths[@]}"} </dev/null
+  exit $?
 }
 
 main() {
