@@ -371,3 +371,100 @@ fn scan_fixture_lists_the_cross_program_calls_and_derivations_of_a_program_witho
         ]
     );
 }
+
+/// The line of `source` that holds `text`.
+fn line_in(source: &str, text: &str) -> usize {
+    source
+        .lines()
+        .position(|l| l.contains(text))
+        .expect("the line is in the source")
+        + 1
+}
+
+/// An Anchor program's cross-program calls, each made through a `CpiContext`: one
+/// from `CpiContext::new` handed to the callee's `cpi` module, one from
+/// `CpiContext::new_with_signer` with no type written, one made inside an SPL
+/// call, one by its full path, and one taken as a parameter.
+const ANCHOR_CPI: &str = r#"
+use anchor_lang::prelude::*;
+use anchor_spl::token_interface::{transfer_checked, TransferChecked};
+
+#[program]
+pub mod caller {
+    use super::*;
+
+    pub fn set(ctx: Context<Set>, value: u64) -> Result<()> {
+        let accounts = callee::cpi::accounts::SetValue {
+            store: ctx.accounts.store.to_account_info(),
+        };
+        let cpi_ctx = CpiContext::new(ctx.accounts.callee.key(), accounts);
+        callee::cpi::set_value(cpi_ctx, value)
+    }
+
+    pub fn set_signed(ctx: Context<Set>, value: u64) -> Result<()> {
+        let seeds: &[&[&[u8]]] = &[&[b"authority", &[ctx.bumps.authority]]];
+        let accounts = callee::cpi::accounts::SetValue {
+            store: ctx.accounts.store.to_account_info(),
+        };
+        let signed = CpiContext::new_with_signer(ctx.accounts.callee.key(), accounts, seeds);
+        callee::cpi::set_value(signed, value)
+    }
+
+    pub fn pay(ctx: Context<Pay>, amount: u64) -> Result<()> {
+        let decimals = ctx.accounts.mint.decimals;
+        transfer_checked(CpiContext::new_with_signer(ctx.accounts.token_program.key(), checked(&ctx), &[]), amount, decimals)?;
+        anchor_spl::token::transfer(anchor_lang::context::CpiContext::new(ctx.accounts.token_program.key(), plain(&ctx)), amount)
+    }
+}
+
+fn forward<'info>(ctx: CpiContext<'_, '_, '_, 'info, SetValue<'info>>) -> Result<()> {
+    callee::cpi::set_value(ctx, 1)
+}
+"#;
+
+#[test]
+fn scan_fixture_lists_each_cpi_context_of_an_anchor_program() {
+    let report = scan::scan_source("caller.rs", ANCHOR_CPI).expect("the fixture parses");
+    let sites: Vec<(&str, usize, &str)> = report
+        .cpi_sites
+        .iter()
+        .map(|c| (c.kind.as_str(), c.line, c.snippet.as_str()))
+        .collect();
+    let at = |text: &str| line_in(ANCHOR_CPI, text);
+    assert_eq!(
+        sites,
+        [
+            (
+                "CpiContext",
+                at("let cpi_ctx = CpiContext::new("),
+                "CpiContext :: new"
+            ),
+            (
+                "CpiContext",
+                at("let signed = CpiContext::new_with_signer("),
+                "CpiContext :: new_with_signer"
+            ),
+            (
+                "CpiContext",
+                at("transfer_checked(CpiContext::new_with_signer("),
+                "CpiContext :: new_with_signer"
+            ),
+            (
+                "CpiContext",
+                at("anchor_lang::context::CpiContext::new("),
+                "anchor_lang :: context :: CpiContext :: new"
+            ),
+            (
+                "CpiContext",
+                at("fn forward"),
+                "CpiContext <'_ , '_ , '_ , 'info , SetValue <'info >>"
+            ),
+        ]
+    );
+    let instructions: Vec<&str> = report
+        .instructions
+        .iter()
+        .map(|i| i.name.as_str())
+        .collect();
+    assert_eq!(instructions, ["set", "set_signed", "pay"]);
+}

@@ -281,8 +281,11 @@ Exit: 0 done · 1 the output cannot be written · 2 refused, with one stderr lin
   // invoke_with_slice, invoke_signed_with_slice) and to the syscalls they end in
   // (sol_invoke_signed_c, sol_invoke_signed_rust), kind the name; the same names
   // called as methods, as pinocchio-system's and pinocchio-token's instructions
-  // are, kind `method:<name>`; and any use of `CpiContext`. A call through an
-  // import under another name, a trait or a macro is not seen.
+  // are, kind `method:<name>`; and every path that names `CpiContext`, as a type
+  // or in the calls that make one (`CpiContext::new(..)`,
+  // `CpiContext::new_with_signer(..)`), kind `CpiContext`, the path as its
+  // snippet. A call through an import under another name, a trait or a macro is
+  // not seen.
   "cpi_sites": [
     { "file": "string", "line": 0,
       "kind": "invoke|invoke_signed|…|method:invoke_signed|…|CpiContext",

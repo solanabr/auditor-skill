@@ -1955,21 +1955,24 @@ impl<'ast> Visit<'ast> for FileVisitor<'_> {
     }
 
     fn visit_path(&mut self, node: &'ast syn::Path) {
-        // Any reference to `CpiContext`, Anchor's context for a cross-program
-        // call, in a type or an expression. A call by name (`invoke_signed(…)`,
-        // `Transfer { … }.invoke()`) is listed by `visit_expr_call` and
-        // `visit_expr_method_call`.
-        if let Some(seg) = node.segments.last() {
-            let name = seg.ident.to_string();
-            if name == "CpiContext" {
-                let site = CpiSite {
-                    file: self.file.clone(),
-                    line: seg.ident.span().start().line,
-                    kind: "CpiContext".to_string(),
-                    snippet: "CpiContext".to_string(),
-                };
-                self.list(1, site, |v| &mut v.cpi_sites);
-            }
+        // Any path with `CpiContext`, Anchor's context for a cross-program call, in
+        // it: the type, and the calls that make one, `CpiContext::new(…)` and
+        // `CpiContext::new_with_signer(…)`, the path as its snippet. A call by name
+        // (`invoke_signed(…)`, `Transfer { … }.invoke()`) is listed by
+        // `visit_expr_call` and `visit_expr_method_call`.
+        let named = node.segments.iter().find(|seg| seg.ident == "CpiContext");
+        if let Some(seg) = named {
+            let last = match path_tail(node) {
+                Tail::At(at) => at,
+                Tail::Ty(ty) => type_last(ty),
+            };
+            let site = CpiSite {
+                file: self.file.clone(),
+                line: seg.ident.span().start().line,
+                kind: "CpiContext".to_string(),
+                snippet: self.snippet(node, path_first(node), last),
+            };
+            self.list(1, site, |v| &mut v.cpi_sites);
         }
         syn::visit::visit_path(self, node);
     }
