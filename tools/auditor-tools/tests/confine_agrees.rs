@@ -190,10 +190,11 @@ fn confine_rs_runs_git_as_hgit_does() {
         .join("../..")
         .canonicalize()
         .expect("the repository root resolves");
-    let (sh, rs) = (wt.outside().join("sh"), wt.outside().join("rs"));
-    recording_git(&sh);
-    recording_git(&rs);
-    let path = |git: &Path| format!("{}:/usr/bin:/bin", git.display());
+    // One recording git for both, on one PATH, so that both clean the same PATH;
+    // the shell's calls are read before audit-mem runs, and moved aside.
+    let rec = wt.outside().join("rec");
+    recording_git(&rec);
+    let path = format!("{}:/usr/bin:/bin", rec.display());
     // confine.sh asks it with confine_tracked, as rundir.sh store does.
     let shell = Command::new("bash")
         .args([
@@ -204,7 +205,7 @@ fn confine_rs_runs_git_as_hgit_does() {
         ])
         .arg(&root)
         .current_dir(&wt.dir)
-        .env("PATH", path(&sh))
+        .env("PATH", &path)
         .env_remove("CONFINE_ALLOW_PROTOCOL")
         .stdin(Stdio::null())
         .output()
@@ -214,11 +215,14 @@ fn confine_rs_runs_git_as_hgit_does() {
         "confine_tracked: {}",
         String::from_utf8_lossy(&shell.stderr)
     );
+    let sh = git_calls(&rec);
+    fs::rename(rec.join("log"), wt.outside().join("log-sh")).expect("move the shell's calls");
+    fs::create_dir(rec.join("log")).expect("make the log directory again");
     // confine.rs asks it with Git::tracked, as audit-mem does of its in-tree store.
     let rust = Command::new(env!("CARGO_BIN_EXE_audit-mem"))
         .args(["warm", "--program-id", "VaultProg1111"])
         .current_dir(&wt.dir)
-        .env("PATH", path(&rs))
+        .env("PATH", &path)
         .stdin(Stdio::null())
         .output()
         .expect("run audit-mem");
@@ -227,7 +231,7 @@ fn confine_rs_runs_git_as_hgit_does() {
         "audit-mem: {}",
         String::from_utf8_lossy(&rust.stderr)
     );
-    let (sh, rs) = (git_calls(&sh), git_calls(&rs));
+    let rs = git_calls(&rec);
     assert_eq!(sh.len(), 2, "hgit runs git twice: {sh:#?}");
     assert_eq!(
         rs, sh,
