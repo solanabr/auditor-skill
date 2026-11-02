@@ -788,6 +788,12 @@ check "diff A^@ (a root commit has no parent) is refused" \
 run "$RT" diff 'HEAD^@' HEAD:a.rs -- a.rs
 check "... and so is a blob against nothing, which git compares with the file in the work tree" \
   err_is 'git-ro: refused: diff compares committed revisions (A..B, A...B, A^!, A B or --cached [A]), and this names no single tree: HEAD^@'
+# --merge-base takes commits, and git-ro hands git trees (git 2.50 crashes on them): A...B says the same.
+run "$RT" diff --merge-base HEAD HEAD
+check "diff --merge-base A B is refused, pointing to A...B" \
+  sh -c "[ '$RC' = 64 ] && [ ! -s '$T/out' ] && [ \"\$(cat '$T/err')\" = 'git-ro: refused: diff --merge-base A B is written A...B here: git-ro gives git trees, which have no merge base' ]"
+run "$RT" diff --cached --merge-base HEAD
+check "... while diff --cached --merge-base A runs" test "$RC" = 0
 for b in "^HEAD -- a.rs" "HEAD..HEAD -- a.rs" "--not --all HEAD -- a.rs" "^HEAD HEAD -- a.rs" "HEAD^@ -- a.rs"; do
   # shellcheck disable=SC2086
   run "$RT" blame $b

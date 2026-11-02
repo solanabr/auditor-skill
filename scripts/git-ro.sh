@@ -28,7 +28,8 @@
 #     to one tree itself (A...B through the merge base, A^! through A's first parent, the empty tree for
 #     a commit without one) and gives git just the two tree ids, behind --end-of-options and ended with
 #     --: git then compares two trees and reads neither the index nor the work tree. A word that names
-#     no single commit or tree (^A, A^@, A^-, two revisions in one) is refused.
+#     no single commit or tree (^A, A^@, A^-, two revisions in one) is refused, and so is --merge-base
+#     beside two revisions (write A...B; --cached --merge-base [A] runs).
 #   diff-tree: as git always runs it, on trees.
 #   blame: needs <rev> -- <path>, with only blame's own options before <rev>, written out in full (-L,
 #     --date, --ignore-rev, --since, --after, --until and --before may take the next word as their
@@ -530,6 +531,9 @@ run_diff() {
     hgit "$REPO" diff --no-textconv --no-ext-diff --ignore-submodules=none --cached ${opts[@]+"${opts[@]}"} -- ${post[@]+"${post[@]}"} </dev/null
     exit $?
   fi
+  for a in ${opts[@]+"${opts[@]}"}; do
+    [ "$a" != --merge-base ] || refuse "diff --merge-base A B is written A...B here: git-ro gives git trees, which have no merge base"
+  done
   i=0
   while [ "$i" -lt "${#opts[@]}" ]; do
     case "${opts[$i]}" in -*) ;; *) prev=$last; last=$i ;; esac
