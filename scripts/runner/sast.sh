@@ -22,9 +22,11 @@
 # a program for git to run; so every git semgrep starts gets GIT_DIR, never the repository's own: a copy of
 # its index and info/exclude under a config of sast.sh's own, or, where sast.sh makes no copy, a path that
 # does not exist (git fails, and semgrep lists the files itself, ignored ones included). git's ignore rules
-# leave out untracked files only. A .semgrepignore under <path> narrows what semgrep reads; the last line
-# names the .semgrepignore files it found. AUDITOR_RUN_TIMEOUT (whole seconds, 1 to 86400, default 1800)
-# bounds the scan, under the watchdog of isolation.sh's iso_watch.
+# leave out untracked files only. semgrep (1.117.0 and later) also reads every .semgrepignore of its
+# project, the nearest folder at or above <path> holding a .git (or a .hg, _darcs or .svn folder), else
+# <path>: for a folder, the last line names each one from the project down to <path> and under it; a file
+# given as <path> is scanned whatever they say. AUDITOR_RUN_TIMEOUT (whole seconds, 1 to 86400, default
+# 1800) bounds the scan, under the watchdog of isolation.sh's iso_watch.
 #
 # Output: the SARIF in <R>/sast/semgrep-<n>.sarif and semgrep's own messages in <R>/sast/semgrep-<n>.log.
 # The last stdout line gives the number of results and where they are. The scratch directory is removed on
@@ -200,10 +202,19 @@ case "$PROJ/" in
 esac
 ISO_ENV+=("${GITENV[@]}" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null)
 
-# The .semgrepignore files under the path, which narrow the scan; find's own failure only hides the note.
+# The .semgrepignore files that narrow the scan of a folder: semgrep reads every one in its project, so each one
+# from the project down to the scan root, then each one under it; find's own failure only hides the note.
 ignores=""
 if [ -d "$TARGET" ]; then
-  find "$TARGET" \( -name .git -o -name node_modules \) -prune -o -name .semgrepignore -type f -print > "$S/ignores" 2>/dev/null || : > "$S/ignores"
+  : > "$S/ignores"
+  rest=${TARGET#"${PROJ%/}"} cur=${PROJ%/}
+  while [ -n "$rest" ]; do
+    [ ! -f "$cur/.semgrepignore" ] || printf '%s\n' "$cur/.semgrepignore" >> "$S/ignores"
+    rest=${rest#/}
+    cur=$cur/${rest%%/*}
+    case "$rest" in */*) rest=/${rest#*/} ;; *) rest="" ;; esac
+  done
+  find "$TARGET" \( -name .git -o -name node_modules \) -prune -o -name .semgrepignore \( -type f -o -type l \) -print >> "$S/ignores" 2>/dev/null || : > "$S/ignores"
   while IFS= read -r f; do
     f=${f#"$WT"/}
     ignores=${ignores:+$ignores, }$(confine_text "$f")

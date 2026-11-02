@@ -1172,6 +1172,16 @@ printf 'programs/\n' > "$WT/src/.semgrepignore"
 run "$SAST" "$WT" -- semgrep --run audit_1 --path . --ruleset p/rust
 check "a .semgrepignore under the path is named in the last line" sh -c "[ '$RC' = 0 ] && grep -q '; note: .semgrepignore files narrow the scan: src/.semgrepignore\$' '$T/out'"
 rm -f "$WT/src/.semgrepignore"
+# semgrep reads every .semgrepignore of its project, so one at the repository's top, or in a folder between it
+# and the scan root, narrows the scan of a folder below them: the note names each, from the top down. A file
+# given as --path is scanned whatever they say.
+printf 'programs/\n' > "$WT/.semgrepignore"
+printf 'demo/\n' > "$WT/programs/.semgrepignore"
+run "$SAST" "$WT" -- semgrep --run audit_1 --path programs/demo --ruleset p/rust
+check "a .semgrepignore at the repository's top and one between it and --path are named, from the top down" \
+  sh -c "[ '$RC' = 0 ] && grep -q '; note: .semgrepignore files narrow the scan: .semgrepignore, programs/.semgrepignore\$' '$T/out'"
+run "$SAST" "$WT" -- semgrep --run audit_1 --path programs/demo/src/lib.rs --ruleset p/rust
+check "... and a file given as --path gets no note" sh -c "[ '$RC' = 0 ] && grep -q '^>> semgrep: ' '$T/out' && ! grep -q 'note:' '$T/out'"
 # The scan root's own project can be another repository. One with a .git directory gets its own copy of its
 # index; one with a .git file (a submodule's, or a separate git directory) gets none, so git finds no
 # repository; a folder shaped as a bare repository, which git takes for one from inside it, is never looked at,
@@ -1208,7 +1218,11 @@ gf|^git-cached: 128 fatal: not a git repository
 bare|^env: GIT_WORK_TREE=$WT\$
 idx|^git-cached: 128 fatal: not a git repository
 CASES
-rm -rf "$WT/nested" "$WT/gf" "$WT/bare" "$WT/idx" "$T/gf.git"
+printf 'y/\n' > "$WT/nested/.semgrepignore"
+run "$SAST" "$WT" -- semgrep --run audit_1 --path nested --ruleset p/rust
+check "a scan root in a project of its own: the note names its .semgrepignore, not the working directory's" \
+  sh -c "[ '$RC' = 0 ] && grep -q '; note: .semgrepignore files narrow the scan: nested/.semgrepignore\$' '$T/out'"
+rm -rf "$WT/nested" "$WT/gf" "$WT/bare" "$WT/idx" "$T/gf.git" "$WT/.semgrepignore" "$WT/programs/.semgrepignore"
 mkdir -p "$WT/src/inner"
 ln -s ../lib.rs "$WT/src/inner/near.rs"
 run "$SAST" "$WT" -- semgrep --run audit_1 --path src --ruleset p/rust
