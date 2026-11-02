@@ -26,8 +26,9 @@
 # -c pins switch off and when to re-check them; keep the two in step.
 # A tool that contacts an outside service records it in <R>/disclosures.tsv (OUTPUT-RULES.md Rule 11b;
 # the format is at confine_disclose).
-# Needs bash >= 3.2 and, on the cleaned PATH, env, git, find, wc and cat; confine_scratch needs mktemp,
-# confine_service sed, confine_disclose date, and confine_b58_bytes python3.
+# Needs bash >= 3.2 and, on the cleaned PATH, env, git, find, wc, cat and sleep (grep, when there, saves a
+# git call); confine_scratch needs mktemp, confine_service sed, confine_disclose date, and
+# confine_b58_bytes python3.
 
 # confine_refuse <reason>: the refusal line, then exit 64 (or the status confine_init was given). A tool
 # may set CONFINE_HINT around a check; the line then ends with "; <hint>". confine_init clears one the
@@ -76,7 +77,7 @@ confine_init() { # confine_init <tool> <installation root, physical> [<refusal s
   CONFINE_GIT_CHECKED=$'\n'
   CONFINE_GIT_CHECKING=$'\n'
   IFS=$' \t\n'
-  unset CDPATH BASH_ENV ENV
+  unset CDPATH BASH_ENV ENV CONFINE_GIT_TIME
   LC_ALL=C
   export LC_ALL
   umask 077
@@ -138,7 +139,8 @@ confine_need() { # confine_need <program>...: refuse unless each is on the clean
 # git opens the files of a repository with a blocking open, so a named pipe where it expects a file (a
 # FIFO as HEAD, or one its config includes) stops it for good; tar carries such files, and a config can
 # include a terminal device. These checks run without git, before git starts. A socket is let through:
-# opening one fails at once, and git's own fsmonitor daemon keeps one in .git.
+# opening one fails at once, and git's own fsmonitor daemon keeps one in .git. hgit's time limit
+# (confine_git_limit) is the backstop for a pipe they do not see, such as one behind a directory link.
 
 confine_special() { # confine_special <path>: status 0 for a named pipe or a device, a link followed
   [ -p "$1" ] || [ -b "$1" ] || [ -c "$1" ]
@@ -358,6 +360,57 @@ confine_git_files() { # confine_git_files <dir>: refuse where confine_git_check 
   confine_git_check "$1" || confine_refuse "$CONFINE_GIT_WHY"
 }
 
+# confine_git_limit <git arguments>: sets CONFINE_LIMIT, the seconds hgit gives git (0 for no limit):
+# CONFINE_GIT_TIME when the caller set it for the call, else 10 for rev-parse, config and ls-files, the
+# questions callers ask before they read, and no limit for the rest, which read a history or make a copy
+# and take as long as that takes. A value that is not a whole number counts as 10.
+confine_git_limit() {
+  local a skip=0
+  CONFINE_LIMIT=${CONFINE_GIT_TIME-}
+  if [ -z "$CONFINE_LIMIT" ]; then
+    CONFINE_LIMIT=0
+    for a in "$@"; do
+      if [ "$skip" -eq 1 ]; then skip=0; continue; fi
+      case "$a" in
+        -c|-C) skip=1 ;;
+        -*) ;;
+        rev-parse|config|ls-files) CONFINE_LIMIT=10; break ;;
+        *) break ;;
+      esac
+    done
+  fi
+  case "$CONFINE_LIMIT" in *[!0-9]*) CONFINE_LIMIT=10 ;; esac
+}
+
+# confine_timed <seconds> <dir> <command>...: the command (hgit's git), with this shell's standard input;
+# when it has not ended after <seconds> (0: no limit) it is killed and the call refused, so a named pipe
+# or device the checks above do not see ends in a refusal, not a wait. A watcher sleeps out the limit in
+# the background, holding none of the caller's descriptors; it ends, with its sleep, once git does.
+confine_timed() {
+  local t=$1 d=$2 pid w rc=0 late=0
+  shift 2
+  if [ "$t" -eq 0 ]; then "$@"; return; fi
+  "$@" 0<&0 &
+  pid=$!
+  (
+    s=""
+    trap '[ -z "$s" ] || kill "$s" 2>/dev/null; exit 0' TERM
+    sleep "$t" &
+    s=$!
+    wait "$s"
+    kill -KILL "$pid" 2>/dev/null || exit 0
+    exit 3
+  ) </dev/null >/dev/null 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
+  w=$!
+  # bash would note a job ended by a signal on stderr; the status says it.
+  wait "$pid" 2>/dev/null || rc=$?
+  kill "$w" 2>/dev/null
+  wait "$w" 2>/dev/null || late=$?
+  [ "$late" -ne 3 ] ||
+    confine_refuse "git has not answered within $t s in $(confine_text "$d"), so a file it opens there may be a named pipe or device that it would wait on for good"
+  return "$rc"
+}
+
 # hgit <dir> <git arguments>: git in <dir> with only the environment below, and the -c pins over the
 # repository's own config: what it runs, what it fetches, the files it reads, and how it reads history
 # and patterns (grep.patternType, log.showRoot, replace refs, the commit-graph cache).
@@ -366,12 +419,14 @@ confine_git_files() { # confine_git_files <dir>: refuse where confine_git_check 
 # parser checks it; git-ro.sh refuses them on its own as well. GIT_ALLOW_PROTOCOL carries the transport
 # allowlist in the environment, which the repository's config cannot widen; it is empty (no transport)
 # unless the caller sets CONFINE_ALLOW_PROTOCOL for one call. confine_git_files runs first, so git never
-# starts on a repository that holds a file it would wait on.
+# starts on a repository that holds a file it would wait on, and git gets the time confine_git_limit
+# gives it (CONFINE_GIT_TIME sets it for one call).
 hgit() {
   local d=$1
   shift
   confine_git_files "$d"
-  env -i ${HOME+"HOME=$HOME"} PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" LC_ALL=C TZ="${TZ:-UTC}" \
+  confine_git_limit "$@"
+  confine_timed "$CONFINE_LIMIT" "$d" env -i ${HOME+"HOME=$HOME"} PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" LC_ALL=C TZ="${TZ:-UTC}" \
     GIT_NO_LAZY_FETCH=1 GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
     GIT_OPTIONAL_LOCKS=0 GIT_ALLOW_PROTOCOL="${CONFINE_ALLOW_PROTOCOL-}" GIT_CEILING_DIRECTORIES="$CONFINE_CEILING" GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS=true \
     git --no-pager -C "$d" \

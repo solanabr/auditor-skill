@@ -63,6 +63,40 @@ mkrepo() { git init -q "$1" && git -C "$1" symbolic-ref HEAD refs/heads/main; }
 put()    { mkdir -p "$(dirname "$1/$2")" && printf '%s\n' "$3" > "$1/$2" && git -C "$1" add -- "$2"; }
 commit() { git -C "$1" commit -q "${@:2}"; }
 
+# bounded gives a run 10 s (or BOUND tenths of a second), then reads 142 and opens the named pipe it was
+# given for writing, so a git still waiting there (as before the checks below existed) goes on and ends.
+# script runs one of the entry points that start git, from a directory, under the first shell.
+script() { # script <dir> <script> <arg>...: scripts/<script>, with its output in $T/out and $T/err and its status in RC
+  local dir=$1 s=$2
+  shift 2
+  (cd "$dir" && "${SHELLS[0]}" "$ROOT/scripts/$s" "$@") >"$T/out" 2>"$T/err" </dev/null
+  RC=$?
+}
+refused_by() { [ "$RC" = 64 ] && [ "$(sed -n '$=' "$T/err")" = 1 ] && grep -q "^$1: refused: " "$T/err"; }
+lib_bounded() { local f=$1; shift; bounded "$f" lib "$@"; } # lib_bounded <pipe> <lib arguments>...
+bounded() { # bounded <pipe> <command>...: the command (lib or script), bounded as above
+  local f=$1 pid n=0 limit=${BOUND:-100}
+  shift
+  rm -f "$T/rc"
+  ( "$@"; printf '%s' "$RC" > "$T/rc" ) &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null && [ "$n" -lt "$limit" ]; do sleep 0.1; n=$((n + 1)); done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -KILL "$pid" 2>/dev/null
+    wait "$pid" 2>/dev/null
+    ( : > "$f" ) &
+    pid=$!
+    n=0
+    while kill -0 "$pid" 2>/dev/null && [ "$n" -lt 20 ]; do sleep 0.1; n=$((n + 1)); done
+    kill -KILL "$pid" 2>/dev/null
+    wait "$pid" 2>/dev/null
+    RC=142
+  else
+    wait "$pid"
+    RC=$(cat "$T/rc" 2>/dev/null)
+  fi
+}
+
 # =================================================================================================
 # confine_init: the working directory, the installation and the environment.
 # =================================================================================================
@@ -336,6 +370,21 @@ for pin in core.pager=cat core.hooksPath=/dev/null protocol.allow=never core.att
   check "hgit pins $pin before the subcommand" \
     awk -F '\037' -v pin="$pin" '$1 == "ARGV" { for (i = 2; i <= NF && $i != "rev-parse"; i++) if ($i == pin && $(i - 1) == "-c") found = 1; exit } END { exit !found }' "$T/rec.log"
 done
+# The time git gets: 10 s for the questions rev-parse, config and ls-files answer, no limit for a read or a
+# copy, CONFINE_GIT_TIME for one call (a value that is no whole number counting as 10), never the
+# environment's.
+lib "$R" 'for w in rev-parse "-c a=b config" "--icase-pathspecs ls-files" log "-c x=y clone" "-C d rev-parse" ""; do confine_git_limit $w; printf "%s " "$CONFINE_LIMIT"; done
+  CONFINE_GIT_TIME=3 confine_git_limit log; printf "%s " "$CONFINE_LIMIT"; CONFINE_GIT_TIME=x confine_git_limit log; printf "%s" "$CONFINE_LIMIT"'
+check "confine_git_limit: 10 s for rev-parse, config and ls-files, none for the rest, CONFINE_GIT_TIME for one call" \
+  out_is '10 10 10 0 0 10 0 3 10'
+CONFINE_GIT_TIME=0 lib "$R" 'confine_git_limit rev-parse; printf "%s" "$CONFINE_LIMIT"'
+check "... and confine_init drops one the environment passes in" out_is 10
+# With a limit, git keeps the caller's standard input and its own status, and a call that ends at once
+# returns at once: the watcher holds none of its output.
+lib "$R" 'printf "HEAD\n" | CONFINE_GIT_TIME=5 hgit "$CONFINE_WT" cat-file --batch-check="%(objecttype)"; CONFINE_GIT_TIME=5 hgit "$CONFINE_WT" rev-parse --verify --quiet nosuch; printf "%s" "$?"'
+check "under a limit git reads the caller's standard input and keeps its status" out_is "$(printf 'commit\n1')"
+BOUND=50 bounded /dev/null lib "$R" 'b=$(CONFINE_GIT_TIME=30 hgit "$CONFINE_WT" rev-parse --abbrev-ref HEAD); printf "%s" "$b"'
+check "... and a call that ends at once returns at once" out_is main
 
 # =================================================================================================
 # Repositories: the top level, git directories inside WT, partial clones, and what is tracked.
@@ -452,39 +501,7 @@ lib "$RW" 'confine_repo linkedwt R'
 check "... and refused once that common directory holds a symbolic link" refused 'R has a symbolic link in its git directory: linkedwt'
 rm "$RW/main/.git/refs/heads/elsewhere"
 # Named pipes: git opens them with a blocking open and waits for good, so each is refused before git
-# starts. bounded gives a run 10 s, then reads 142 and opens the pipe for writing, so a git still
-# waiting there (as before this check existed) goes on and ends. script runs one of the entry points
-# that start git, from a directory, under the first shell.
-script() { # script <dir> <script> <arg>...: scripts/<script>, with its output in $T/out and $T/err and its status in RC
-  local dir=$1 s=$2
-  shift 2
-  (cd "$dir" && "${SHELLS[0]}" "$ROOT/scripts/$s" "$@") >"$T/out" 2>"$T/err" </dev/null
-  RC=$?
-}
-refused_by() { [ "$RC" = 64 ] && [ "$(sed -n '$=' "$T/err")" = 1 ] && grep -q "^$1: refused: " "$T/err"; }
-lib_bounded() { local f=$1; shift; bounded "$f" lib "$@"; } # lib_bounded <pipe> <lib arguments>...
-bounded() { # bounded <pipe> <command>...: the command (lib or script), given 10 s, or BOUND tenths of a second
-  local f=$1 pid n=0 limit=${BOUND:-100}
-  shift
-  rm -f "$T/rc"
-  ( "$@"; printf '%s' "$RC" > "$T/rc" ) &
-  pid=$!
-  while kill -0 "$pid" 2>/dev/null && [ "$n" -lt "$limit" ]; do sleep 0.1; n=$((n + 1)); done
-  if kill -0 "$pid" 2>/dev/null; then
-    kill -KILL "$pid" 2>/dev/null
-    wait "$pid" 2>/dev/null
-    ( : > "$f" ) &
-    pid=$!
-    n=0
-    while kill -0 "$pid" 2>/dev/null && [ "$n" -lt 20 ]; do sleep 0.1; n=$((n + 1)); done
-    kill -KILL "$pid" 2>/dev/null
-    wait "$pid" 2>/dev/null
-    RC=142
-  else
-    wait "$pid"
-    RC=$(cat "$T/rc" 2>/dev/null)
-  fi
-}
+# starts (each run bounded, as at the top).
 if mkfifo "$T/fifo-probe" 2>/dev/null; then
   mkrepo "$RW/fifohead"; put "$RW/fifohead" f x; commit "$RW/fifohead" -m x
   rm "$RW/fifohead/.git/HEAD"; mkfifo "$RW/fifohead/.git/HEAD"
@@ -558,6 +575,19 @@ if mkfifo "$T/fifo-probe" 2>/dev/null; then
   bounded "$RW/up/.git/HEAD" script "$RW" git-ro.sh --repo up/sub log --oneline
   check "git-ro.sh --repo refuses a repository below one whose HEAD is a named pipe, past a .git git walks past" \
     sh -c "[ '$RC' = 64 ] && [ \"\$(cat '$T/err')\" = 'git-ro: refused: a named pipe or device is in the git directory, and git would wait on it for good: $(shown "$RW/up/.git")' ]"
+  # A named pipe these checks do not see, behind a link to a directory outside the git directory: git
+  # waits on it, and the time limit ends that. 2 s set for one call; 10 s by default for rev-parse.
+  mkrepo "$T/lr"; put "$T/lr" f x; commit "$T/lr" -m x
+  mkdir -p "$T/lr-out"
+  mv "$T/lr/.git/refs/heads" "$T/lr-out/heads"
+  ln -s "$T/lr-out/heads" "$T/lr/.git/refs/heads"
+  rm "$T/lr-out/heads/main"; mkfifo "$T/lr-out/heads/main"
+  lib_bounded "$T/lr-out/heads/main" "$T/lr" 'CONFINE_GIT_TIME=2 hgit "$CONFINE_WT" rev-parse --verify HEAD'
+  check "git that has not answered within the time it was given is killed, and the call refused" \
+    refused "git has not answered within 2 s in $(shown "$T/lr"), so a file it opens there may be a named pipe or device that it would wait on for good"
+  BOUND=350 lib_bounded "$T/lr-out/heads/main" "$T/lr" 'hgit "$CONFINE_WT" rev-parse --verify HEAD'
+  check "... after 10 s by default for a question such as rev-parse" \
+    refused "git has not answered within 10 s in $(shown "$T/lr"), so a file it opens there may be a named pipe or device that it would wait on for good"
 else
   skp "mkfifo is not available: the named pipe cases"
 fi
