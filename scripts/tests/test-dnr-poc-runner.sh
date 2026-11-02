@@ -30,6 +30,8 @@
 #     anything compiles; `build = false` is honoured;
 #     so is a crate that is not its own workspace root;
 #     so is a cargo-features key;
+#     so is a target other than the library and the tests (a bin, an example, a bench,
+#     a dylib, a staticlib, another member's cdylib);
 #   * the harness binding: the crate depends on its own shared-test-utils/ under the
 #     import name shared_test_utils, no other dependency takes that name in either
 #     spelling, and each arm's build compiles that copy and no other;
@@ -38,9 +40,10 @@
 #     its dependency version requirements; every build compiles the installation's
 #     src/lib.rs, a missing or changed one too, and the >> harness: line says which;
 #   * the non-registry line before the final line: the path and git dependencies in
-#     the resolved Cargo.lock and those from a registry other than crates.io, and every
-#     file from outside the crate that the crate's own units compiled or read, of any
-#     kind, as their dep-info (and an arm's SBF build's) lists it;
+#     the resolved Cargo.lock and those from a registry other than crates.io, and each
+#     file from outside the crate that the dep-info of the crate's own units lists, of
+#     any kind, an arm's SBF build's included (a member that build alone compiles too,
+#     never an older dep-info of a crate of the same name in a build cache);
 #   * the macros run the attack themselves; their old forms do not compile and say how
 #     to migrate; an effect present before the attack, a read that panics, and a
 #     positive control for another program or from another state are inconclusive;
@@ -196,7 +199,10 @@ PY
 # `test --no-run` also reports the root's own lib, whose dep-info in <target
 # dir>/debug/deps/ is that file with @ROOT@ standing for the crate; with
 # SHIM_SBF_DEPINFO=<file>, `build-sbf` puts that file in <target
-# dir>/sbpf-solana-solana/release/deps/ as the arm's dep-info.
+# dir>/sbpf-solana-solana/release/deps/ as the arm's dep-info (named SHIM_SBF_DEPINFO_AS,
+# <crate>.d by default). SHIM_TARGET=<kind> gives the root package another target, of
+# that kind, named poc_shim_extra (src/extra.rs); SHIM_MEMBER_KIND=<kind> makes
+# shared-test-utils' library that kind.
 #
 # The stand-in test binary logs its run to SHIM_CALLS as well (arguments "testbin
 # <test> ..."; SHIM_CALLS.env gets CARGO_MANIFEST_DIR and the dynamic library path) and
@@ -264,7 +270,7 @@ case "${1:-}" in
     printf '\177ELFmodel-%s' "$features" > "$out/${SHIM_CRATE:-poc_shim}.so"
     if [ -n "${SHIM_SBF_DEPINFO:-}" ]; then
       d="${CARGO_TARGET_DIR:-${CARGO_BUILD_TARGET_DIR:-${SHIM_TARGET_DIR:-$(dirname "$manifest")/target}}}/sbpf-solana-solana/release/deps"
-      mkdir -p "$d" && cp "$SHIM_SBF_DEPINFO" "$d/${SHIM_CRATE:-poc_shim}.d"
+      mkdir -p "$d" && cp "$SHIM_SBF_DEPINFO" "$d/${SHIM_SBF_DEPINFO_AS:-${SHIM_CRATE:-poc_shim}.d}"
     fi
     echo "[shim cargo build-sbf $features]"; exit 0 ;;
   test) case " $* " in *" --no-run "*) exec python3 -I "$here/build.py" "$(dirname "$manifest")" "$@" ;; esac ;;
@@ -292,9 +298,12 @@ for top, dirs, files in os.walk(root):
     if "Cargo.toml" not in files:
         continue
     name = crate if top == root else os.path.basename(top)
-    kind = ["lib"] if top != root else ["proc-macro"] if meta == "proc-macro" else ["cdylib", "lib"]
+    kind = [os.environ.get("SHIM_MEMBER_KIND") or "lib"] if top != root else ["proc-macro"] if meta == "proc-macro" else ["cdylib", "lib"]
     src = os.environ.get("SHIM_LIB_SRC") if top == root and os.environ.get("SHIM_LIB_SRC") else os.path.join(top, "src", "lib.rs")
     targets = [{"name": name.replace("-", "_"), "kind": kind, "crate_types": kind, "src_path": src}]
+    if top == root and os.environ.get("SHIM_TARGET"):
+        extra = [os.environ["SHIM_TARGET"]]
+        targets.append({"name": "poc_shim_extra", "kind": extra, "crate_types": extra, "src_path": os.path.join(top, "src", "extra.rs")})
     if top == root and meta == "build-script":
         targets.append({"name": "build-script-build", "kind": ["custom-build"], "crate_types": ["bin"], "src_path": os.path.join(top, "build.rs")})
     packages.append({"name": name, "version": "0.1.0", "id": "path+file://%s#%s@0.1.0" % (top, name), "manifest_path": os.path.join(top, "Cargo.toml"),
@@ -785,6 +794,16 @@ line="$(grep -n -m 1 '^   non-registry code: ' "$T/out")"; okline="$(grep -n -m 
 code="$(gate "$T/di" "$NATIVE" SHIM_SBF_DEPINFO="$T/di-sbf.d")"
 [ "$code" = 0 ] && grep -qxF "   non-registry code: $DI/sbf-only.rs (compiled in)" "$T/out" && grep -q '^OK: exploit reproduces' "$T/out" \
   && ok "a module only the SBF build compiles is named on the non-registry line of a model run" || { bad "the SBF build's dep-info: exit $code"; cat "$T/out" >&2; }
+# A member the crate's library depends on for the SBF target alone is compiled by that build only: the
+# dep-info this run's build wrote for it there is read, and an older one of a crate of the same name, left in
+# a shared build cache, is not.
+DC="$T/di-cache"; DCD="$DC/sbpf-solana-solana/release/deps"; mkdir -p "$DCD"
+printf '%s/libshared_test_utils-0123456789abcdef.rlib: shared-test-utils/src/lib.rs %s/stale.rs\n\nshared-test-utils/src/lib.rs:\n%s/stale.rs:\n' "$DCD" "$DI" "$DI" > "$DCD/shared_test_utils-0123456789abcdef.d"
+touch -t 202001010000 "$DCD/shared_test_utils-0123456789abcdef.d"
+printf '/target/sbpf-solana-solana/release/deps/shared_test_utils-0a1b2c3d4e5f6071.d: shared-test-utils/src/lib.rs %s/sbf-member.rs\n\nshared-test-utils/src/lib.rs:\n%s/sbf-member.rs:\n' "$DI" "$DI" > "$T/di-sbf-member.d"
+code="$(gate "$T/di" "$NATIVE" CARGO_TARGET_DIR="$DC" SHIM_SBF_DEPINFO="$T/di-sbf-member.d" SHIM_SBF_DEPINFO_AS=shared_test_utils-0a1b2c3d4e5f6071.d)"
+[ "$code" = 0 ] && grep -qxF "   non-registry code: $DI/sbf-member.rs (compiled in)" "$T/out" && grep -q '^OK: exploit reproduces' "$T/out" \
+  && ok "a member only the SBF build compiles is named; an older dep-info of that name in the build cache is not" || { bad "an SBF-only member's dep-info: exit $code"; cat "$T/out" >&2; }
 
 # A hashlib.py planted in the crate, which the scratch copy holds too, and on PYTHONPATH
 # must not load when run.sh hashes the bytes; the control shows it would without -I.
@@ -805,14 +824,17 @@ fi
 # and the scratch copy holds the crate's files. A python3 stand-in first on PATH records where each of
 # those calls started.
 PYH="$T/pyh-bin"; mkdir -p "$PYH"
-printf '#!/bin/sh\ncase "$4" in hash|crate|targetdir|checkbuild|settle|nonregistry|stucopy) printf "%%s %%s\\n" "$(pwd -P)" "$4" >> "%s" ;; esac\nexec "%s" "$@"\n' \
+printf '#!/bin/sh\ncase "$4" in hash|crate|targetdir|checkbuild|settle|nonregistry|sbfdeps|stucopy) printf "%%s %%s\\n" "$(pwd -P)" "$4" >> "%s" ;; esac\nexec "%s" "$@"\n' \
   "$T/pyh.log" "$(command -v python3)" > "$PYH/python3"
 chmod +x "$PYH/python3"
 for how in "prebuilt bytes" "a model run"; do
   rm -f "$T/pyh.log"
-  if [ "$how" = "a model run" ]; then code="$(gate "$T/inc" "$NATIVE" PATH="$PYH:$SP")"; else code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" PATH="$PYH:$SP")"; fi
+  want_calls="checkbuild crate hash nonregistry settle targetdir "
+  if [ "$how" = "a model run" ]; then
+    want_calls="checkbuild crate hash nonregistry sbfdeps settle targetdir "; code="$(gate "$T/inc" "$NATIVE" PATH="$PYH:$SP")"
+  else code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" PATH="$PYH:$SP")"; fi
   calls="$(awk '{ print $NF }' "$T/pyh.log" 2>/dev/null | LC_ALL=C sort -u | tr '\n' ' ')"
-  [ "$code" = 0 ] && [ "$calls" = "checkbuild crate hash nonregistry settle targetdir " ] && ! grep -qvE '^/ [a-z]+$' "$T/pyh.log" \
+  [ "$code" = 0 ] && [ "$calls" = "$want_calls" ] && ! grep -qvE '^/ [a-z]+$' "$T/pyh.log" \
     && ok "run.sh's own python3 calls ($calls) all start from /, $how" \
     || { bad "run.sh's python3 calls, $how: exit $code, started in: $(sed 's/ [a-z]*$//' "$T/pyh.log" 2>/dev/null | LC_ALL=C sort -u | tr '\n' ' ')"; cat "$T/out" >&2; }
 done
@@ -928,6 +950,24 @@ code="$(gate "$T/cf-mention" "$NATIVE" "$VULN")"
 code="$(gate "$T/inc" "$NATIVE" "$VULN" SHIM_WS_ROOT=/elsewhere/ws)"
 [ "$code" = 3 ] && grep -qF 'the crate belongs to the workspace at /elsewhere/ws, not to its own' "$T/out" && nothing_built && one_blocker \
   && ok "a crate whose workspace root is outside it -> refused before anything compiles" || { bad "outside workspace root: exit $code"; cat "$T/out" >&2; }
+# A PoC crate builds its library and its tests. Any other target of a member is refused before anything
+# compiles: a bin, which cargo builds with every integration test; an example or a bench; a dylib or a
+# staticlib, which cargo places outside the deps directory whose dep-info run.sh reads; and a cdylib of a
+# member other than the crate.
+while IFS='|' read -r var named; do
+  [ -n "$var" ] || continue
+  code="$(gate "$T/inc" "$NATIVE" "$VULN" "$var")"
+  [ "$code" = 3 ] && grep -qF "blocker: the $named: a PoC crate builds its library" "$T/out" && nothing_built && one_blocker \
+    && ok "refused before anything compiles: the $named" || { bad "$var: exit $code"; cat "$T/out" >&2; }
+done <<'CASES'
+SHIM_TARGET=bin|bin target poc_shim_extra (src/extra.rs) of poc_shim
+SHIM_TARGET=example|example target poc_shim_extra (src/extra.rs) of poc_shim
+SHIM_TARGET=bench|bench target poc_shim_extra (src/extra.rs) of poc_shim
+SHIM_TARGET=dylib|dylib target poc_shim_extra (src/extra.rs) of poc_shim
+SHIM_TARGET=staticlib|staticlib target poc_shim_extra (src/extra.rs) of poc_shim
+SHIM_MEMBER_KIND=dylib|dylib target shared_test_utils (shared-test-utils/src/lib.rs) of shared-test-utils
+SHIM_MEMBER_KIND=cdylib|cdylib target shared_test_utils (shared-test-utils/src/lib.rs) of shared-test-utils
+CASES
 
 # ---------------------------------------------------------------------------
 # Where the crate builds. A hostile target tree: its .cargo/config.toml names a
@@ -3487,6 +3527,21 @@ workspace = \"$WSR\"
   else
     echo "note: no nightly toolchain; the real-cargo cargo-features check is skipped (the shim checks above still ran)"
   fi
+  # A bin target with an outside #[path] module, and a dylib member whose module is outside: built, each
+  # compiles the outside file in while the dep-info run.sh reads names neither. cargo metadata names both,
+  # and each run stops before anything compiles.
+  O3="$T/e-own-outside"; mkdir -p "$O3"; printf 'pub fn run() -> u8 { 9 }\n' > "$O3/evil.rs"; printf 'outside bytes\n' > "$O3/blob.bin"
+  mk_e2e "$T/e-bin"; printf '#[path = "%s/evil.rs"]\nmod evil;\nfn main() { std::process::exit(evil::run() as i32); }\n' "$O3" > "$T/e-bin/src/main.rs"
+  mk_e2e "$T/e-dylib"; mkdir -p "$T/e-dylib/helper/src"
+  printf '[package]\nname = "helper"\nversion = "0.1.0"\nedition = "2021"\npublish = false\n\n[lib]\ncrate-type = ["dylib"]\n' > "$T/e-dylib/helper/Cargo.toml"
+  printf '#[path = "%s/evil.rs"]\npub mod evil;\n' "$O3" > "$T/e-dylib/helper/src/lib.rs"
+  subst "$T/e-dylib/Cargo.toml" 'shared-test-utils = { path = "shared-test-utils" }' 'shared-test-utils = { path = "shared-test-utils" }
+helper = { path = "helper" }'
+  for c in 'e-bin|the bin target poc_e2e (src/main.rs) of poc_e2e' 'e-dylib|the dylib target helper (helper/src/lib.rs) of helper'; do
+    code="$(e2e "$T/${c%%|*}" VULNERABLE_SO="$SB-takeover.so")"
+    [ "$code" = 3 ] && grep -qF "${c#*|}" "$T/out" && one_blocker && ! grep -q 'Compiling' "$T/out" \
+      && ok "real cargo: ${c#*|} -> exit 3 before anything compiles" || { bad "real cargo, ${c%%|*}: exit $code"; cat "$T/out" >&2; }
+  done
 
   # The installation's copy with real cargo. The crate sits in a run directory, its prebuilt bytes under
   # exec/, and it depends on a path crate outside it whose build script records the environment it is

@@ -96,6 +96,9 @@ which an asdf, mise, pyenv or proto shim picks the `cargo`, `rustc` or `python3`
 runs);
 a crate that is not its own workspace root (a `workspace` key under `[package]` that
 joins an outside workspace, whose manifest these checks do not read);
+a target other than the library (also a `cdylib`, for the crate itself) and the tests:
+a bin, an example or a bench, or a `dylib` or `staticlib`, which cargo builds outside
+the directory whose dep-info `run.sh` reads (a bin, with every integration test);
 build-time code of the crate's own — a build script (`build = false` turns one off), a
 proc-macro package, a `Cargo.toml` inside the crate that is not a member of its
 workspace, a `[patch]` or `[replace]` table,
@@ -120,10 +123,11 @@ refreshed harness copy) gets a repair pass: repair the harness setup once, never
 assertions or the target, and re-run (`references/orchestration/poc-harness.md` §3).
 Before its final line, `run.sh` names the non-registry code in the build: the path and
 git dependencies in the resolved `Cargo.lock` and those from a registry other than
-crates.io, and every file from outside the crate that the crate's own code compiled or
-read, of any kind (a `[lib] path`, a `#[path]` module, an `include!`, `include_str!` or
-`include_bytes!`), as rustc's dep-info for the test build and each arm's SBF build lists
-them.
+crates.io, a target whose source lies outside the crate (a `[lib] path`), and each file
+from outside the crate that rustc's dep-info lists for the crate's own units, in the
+test build and in each arm's SBF build: a `#[path]` module, a file an `include!`,
+`include_str!` or `include_bytes!` read. What a dependency's proc macro reads on its
+own is not listed, nor what a file the line names reads in turn.
 
 `run.sh` and `shared-test-utils/` are the installation's copies; leave them as they
 are. Before a command trusts an `OK` line it compares them with the installation's

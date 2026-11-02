@@ -141,6 +141,11 @@
 #     is not a member, or a [patch] or [replace] table in a manifest stops the run.
 #     So does a cargo-features key: on a nightly cargo it lets the manifest choose a
 #     linker, rustflags or a codegen backend.
+#     The crate's packages build a library and tests only (the crate's own library
+#     also as a cdylib): a bin, example or bench target, a dylib or a staticlib, and a
+#     cdylib of another member stop the run, in either mode, since cargo builds a bin
+#     with every integration test, and places a bin, a dylib or a staticlib outside the
+#     deps directory whose dep-info run.sh reads (below).
 #     The crate must be its own workspace root, as the template's [workspace] makes
 #     it: a `workspace` key under [package] that joins an outside workspace stops the
 #     run too, since these checks never read that workspace's manifest (its [patch]
@@ -210,10 +215,13 @@
 #     read the assertion all the same.
 #   * before the final line, run.sh prints the non-registry code in the build: the
 #     path and git dependencies in the resolved Cargo.lock and those from a registry
-#     other than crates.io, and every file from outside the crate that a package of
-#     the crate's own workspace compiled or read, of any kind: a `[lib] path`, a
-#     `#[path]` module, an include!, include_str! or include_bytes!, as rustc's
-#     dep-info (.d) files of the test build, and of each arm's SBF build, list them.
+#     other than crates.io, a target of the crate's own workspace whose source lies
+#     outside the crate (a `[lib] path`), and each file from outside the crate that
+#     rustc's dep-info (.d) lists for a unit of that workspace, in the test build and
+#     in each arm's SBF build: a `#[path]` module, a file an include!, include_str!
+#     or include_bytes! read, by an absolute or a relative path. Not listed: what a
+#     dependency's proc macro reads on its own, and what a file the line names reads
+#     in turn.
 #
 # PREBUILT BYTES (incidents under references/detection-response/, or a re-run
 # against the target's own builds). Leg 3 of `confirmed_exploited` needs the exploit
@@ -790,14 +798,15 @@ fi
 # builds into, from cargo metadata. `harness checkbuild`: the test binary in cargo's
 # JSON output. `harness settle`: an arm's verdict from its markers.
 # `harness nonregistry`: the code from outside the crate and crates.io, from Cargo.lock
-# and from the dep-info of the crate's own units. `harness stucopy`:
+# and from the dep-info of the crate's own units. `harness sbfdeps`: copies the
+# dep-info an arm's SBF build wrote for those units. `harness stucopy`:
 # whether the crate's shared-test-utils/src/lib.rs is the installation's (same, differs or
 # missing), after the checks of the harness copy (exit 3 and the reason). python3 runs
 # isolated (-I): `python3 -c` would otherwise import modules such as hashlib.py from
 # the working directory, or from PYTHONPATH, in place of the stdlib. It starts from /,
 # with every path it is given absolute: a version manager's shim picks the interpreter
 # from the directory it starts in, and the scratch copy holds the crate's files.
-HARNESS_PY='import hashlib, json, os, re, sys
+HARNESS_PY='import hashlib, json, os, re, shutil, sys
 
 
 def zhash(path):
@@ -862,6 +871,11 @@ def under(path, root):
 CRATES_IO = ("registry+https://github.com/rust-lang/crates.io-index", "sparse+https://index.crates.io/")
 CRATES_IO_SRC = re.compile(r"^(?:index\.crates\.io-[0-9a-f]{16}|github\.com-1ecc6299db9ec823)$")
 
+# The kinds of target a package of the crate own workspace may have: a library and tests, and for the
+# crate itself a cdylib too (its .so). cargo builds a bin with every integration test of its package, and
+# places a bin, a dylib or a staticlib outside the deps directory whose dep-info nonregistry reads.
+TARGET_KINDS = ("lib", "rlib", "test")
+
 
 def crate(meta_path, root, rule=""):
     root = os.path.realpath(root)
@@ -898,6 +912,9 @@ def crate(meta_path, root, rule=""):
                 refuse("%s is a build script of %s: run.sh refuses build-time code in the crate, in either mode. Check what it generates into the crate instead." % (src, pkg["name"]))
             if "proc-macro" in kinds:
                 refuse("%s (%s) is a proc-macro package: run.sh refuses build-time code in the crate, in either mode." % (pkg["name"], src))
+            other = [k for k in kinds if k not in TARGET_KINDS and not (k == "cdylib" and manifest == os.path.join(root, "Cargo.toml"))]
+            if other:
+                refuse("the %s target %s (%s) of %s: a PoC crate builds its library (the crate itself also as a cdylib) and its tests, and run.sh refuses any other target in either mode, as cargo builds a bin with every integration test and places a bin, a dylib or a staticlib outside the deps directory whose dep-info it reads." % ("/".join(other), target.get("name", "?"), src, pkg["name"]))
             if manifest == os.path.join(root, "Cargo.toml") and ("lib" in kinds or "cdylib" in kinds):
                 lib = target.get("name", "")
         if manifest == os.path.join(root, "Cargo.toml"):
@@ -1171,6 +1188,9 @@ def nonregistry(root, lock, meta_path, inputs):
         for pkg in json.load(f).get("packages", []):
             members.add((pkg["name"], pkg["version"]))
             manifests.add(os.path.realpath(pkg["manifest_path"]))
+            for target in pkg.get("targets", []):
+                if target.get("src_path") and outside(target["src_path"]):
+                    note("%s (path %s)" % (target.get("name", "?"), target["src_path"]))
     depfiles = [item for item in inputs if item.endswith(".d")]
     for build in inputs:
         if build.endswith(".d"):
@@ -1217,6 +1237,29 @@ def nonregistry(root, lock, meta_path, inputs):
             if path:
                 note("%s (compiled in)" % path)
     print(flat(", ".join(out)) if out else "none: every dependency comes from a registry")
+
+
+def sbfdeps(meta_path, stamp, dest, prefix, target):
+    # The dep-info (.d) files an arm SBF build wrote for the units of the crate own workspace, copied to
+    # <dest>/<prefix>-<n>.d for nonregistry: those in <target>/<triple>/release/deps/ named after a target
+    # of a member (its crate name, alone or with - and a hash) and written since <stamp> was, in whole
+    # seconds. A build cache can hold older ones of another crate of the same name.
+    with open(meta_path, encoding="utf-8") as f:
+        names = set(t.get("name", "").replace("-", "_") for p in json.load(f).get("packages", []) for t in p.get("targets", []))
+    since, n = int(os.stat(stamp).st_mtime), 0
+    for triple in sorted(os.listdir(target)):
+        deps = os.path.join(target, triple, "release", "deps")
+        if not os.path.isdir(deps):
+            continue
+        for name in sorted(os.listdir(deps)):
+            stem, dash, tail = name[:-2].rpartition("-")
+            if not name.endswith(".d") or not (name[:-2] in names or (stem in names and re.match(r"^[0-9a-f]+$", tail))):
+                continue
+            path = os.path.join(deps, name)
+            if int(os.stat(path).st_mtime) >= since:
+                n += 1
+                shutil.copyfile(path, os.path.join(dest, "%s-%d.d" % (prefix, n)))
+    print(n)
 
 
 # A dependency table of a manifest, and a TOML string, basic or literal (chr 39 quotes).
@@ -1283,6 +1326,8 @@ elif command == "settle":
     settle(*args)
 elif command == "nonregistry":
     nonregistry(args[0], args[1], args[2], args[3:])
+elif command == "sbfdeps":
+    sbfdeps(*args)
 elif command == "stucopy":
     stucopy(*args)
 else:
@@ -1599,6 +1644,10 @@ place_arm() {  # place_arm <arm> : put <crate>.so in SBF_OUT_DIR for this arm; P
     echo ">> ${arm} arm: prebuilt ${src}"
   else
     echo ">> building '${arm}' arm to SBF (${CRATE}.so)"
+    if ! : > "${RUN_DIR}/sbf-${arm}.stamp"; then
+      echo "[PoC-ATTEMPTED] blocker: cannot prepare ${RUN_DIR}/sbf-${arm}.stamp." >&2
+      exit 3
+    fi
     local -a build=(child_sbf cargo build-sbf)
     if [[ "${SBF_SPLIT}" == 1 ]]; then build=(child CARGO_NET_OFFLINE=true cargo build-sbf --skip-tools-install --offline); fi
     if ! "${build[@]}" \
@@ -1610,11 +1659,13 @@ place_arm() {  # place_arm <arm> : put <crate>.so in SBF_OUT_DIR for this arm; P
       exit 3
     fi
     # The SBF build's dep-info, for harness nonregistry: a module the test build leaves
-    # out (#[cfg(target_os = "solana")]) is compiled here alone.
-    local d n=0
-    for d in "${EFFECTIVE_TARGET}"/*/release/deps/"${CRATE}".d; do
-      if [[ -f "${d}" ]]; then n=$((n + 1)); cp "${d}" "${RUN_DIR}/sbf-${arm}-${n}.d" 2>/dev/null || true; fi
-    done
+    # out (#[cfg(target_os = "solana")]), or a member the crate's library depends on for
+    # that target alone, is compiled here only. harness sbfdeps copies what this build
+    # wrote for the crate's own units, while the lock still keeps other runs out.
+    if ! harness sbfdeps "${RUN_DIR}/metadata.json" "${RUN_DIR}/sbf-${arm}.stamp" "${RUN_DIR}" "sbf-${arm}" "${EFFECTIVE_TARGET}" >/dev/null 2>&1; then
+      echo "[PoC-ATTEMPTED] blocker: could not read the dep-info the ${arm} arm's SBF build wrote under ${EFFECTIVE_TARGET}." >&2
+      exit 3
+    fi
   fi
   PLACED_HASH="$(harness hash "${so}")" || PLACED_HASH=""
   if [[ ! "${PLACED_HASH}" =~ ^[0-9a-f]{64}$ ]]; then
