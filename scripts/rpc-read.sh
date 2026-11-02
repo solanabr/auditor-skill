@@ -25,8 +25,12 @@
 #                          address, balance in lamports, owner, executable flag and rent epoch, then the
 #                          data's length and sha256. The data itself is never printed; with --run it is
 #                          kept as R/rpc/account-<address>.data.
-#   confirm <signature>    `solana confirm -v <signature>`: the transaction's status and details, without
-#                          the CLI's first lines, which name the endpoint and the keypair path.
+#   confirm <signature>    `solana confirm -v --output json <signature>`: the transaction's status and
+#                          details as JSON. JSON never holds the CLI's error text (the text form prints a
+#                          failed details read's error, which solana CLI 2.2.x and older spell with the
+#                          endpoint's parts, key included, as fields no URL rule matches), nor the text
+#                          form's first lines, which name the endpoint and the keypair path. A finalized
+#                          transaction whose details the CLI could not read is a failed read.
 #   program-show <id>      `solana program show <id>`, or `program-v4 show` for a loader-v4 program (both
 #                          with a fixed authority, so the CLI never looks for a signer); the output must
 #                          name <id> as its Program Id.
@@ -41,10 +45,12 @@
 # noclobber. Without --run nothing is written, and stderr names the service and what it received, for the
 # report's Rule 11b list.
 #
-# Exit: 0 done · 1 the CLI ran and the read failed (its error, redacted, on stderr) · 3 blocker (no solana
-# CLI or python3, no private temp directory, the CLI did not take the config, a disclosure row or a kept
-# file that could not be written, show output naming another program id) · 64 refused.
-# Needs bash >= 3.2, the solana CLI, and python3 (the id check and the hash, as python3 -I).
+# Exit: 0 done · 1 the CLI ran and the read failed (its error, redacted, on stderr; for confirm, also a
+# finalized transaction without its details) · 3 blocker (no solana CLI or python3, no private temp
+# directory, the CLI did not take the config, a disclosure row or a kept file that could not be written,
+# show output naming another program id, a confirm answer that is not a JSON object) · 64 refused.
+# Needs bash >= 3.2, the solana CLI, and python3 (the id check, the hash and the confirm answer's check,
+# as python3 -I).
 
 set -uo pipefail
 unset CDPATH
@@ -179,11 +185,19 @@ print(len(d), hashlib.sha256(d).hexdigest())' "$data" 2>/dev/null)
     { awk '/^(Public Key|Balance|Owner|Executable|Rent Epoch): / { print }' "$tmp/account.txt"
       printf 'Data Length: %s bytes\nData SHA-256: %s\n' "${sum%% *}" "${sum#* }"; } > "$cli" ;;
   confirm)
-    # In verbose mode the CLI's text starts with the endpoint, URL and key included, and the keypair path.
-    solana -C "$cfg" confirm -v "$id" > "$tmp/confirm.txt" 2> "$err" ||
+    solana -C "$cfg" confirm -v --output json "$id" > "$cli" 2> "$err" ||
       failed "the solana CLI could not read the transaction $id"
-    sed -e '/^RPC URL: /d' -e '/^Default Signer Path: /d' "$tmp/confirm.txt" > "$cli" ||
-      { echo "[blocker] the CLI's output could not be read back." >&2; exit 3; } ;;
+    # A finalized transaction with no details in the answer: the CLI's getTransaction failed, and its JSON
+    # leaves the reason out. From /, as every python3 call here.
+    case "$(cd / && python3 -I -c 'import json, sys
+c = json.loads(open(sys.argv[1], "rb").read().decode("utf-8", "replace"), strict=False)
+print("partial" if c.get("confirmationStatus") == "finalized" and "transaction" not in c else "whole")' "$cli" 2>/dev/null)" in
+      whole) ;;
+      partial)
+        echo "rpc-read: the solana CLI read the transaction $id as finalized but not its details (its getTransaction call failed); read it again later." >&2
+        exit 1 ;;
+      *) echo "[blocker] the solana CLI's answer for $id is not a JSON object." >&2; exit 3 ;;
+    esac ;;
   program-show)
     if ! solana -C "$cfg" program show "$id" --buffer-authority "$SYSTEM_ID" > "$cli" 2> "$err"; then
       mv "$err" "$tmp/stderr.show"

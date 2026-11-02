@@ -37,6 +37,13 @@
 # request line (`> POST /v2/<key> HTTP/2`) or an HTTP/2 `[:path: …]` header loses
 # its path.
 #
+# Rust's Debug form of a URL (url::Url, which solana CLI 2.2.x and older print in some
+# errors: `Url { scheme: "https", …, username: "", password: None, host:
+# Some(Domain("<token>.provider.example")), port: None, path: "/v2/<key>", query:
+# Some("api-key=<key>"), fragment: None }`) has no scheme://, so its fields are
+# redacted one by one: a username, password, query or fragment becomes "REDACTED",
+# the path "/REDACTED", and a Domain host keeps its last two labels, as above.
+#
 # It is a convenience, not a guarantee (a novel key format can slip through), so the
 # rule still holds: never put an RPC URL in INCIDENTS.json, LEDGER.md, or any
 # output. Record the provider domain (the host's last two labels) and the literal
@@ -65,7 +72,16 @@ key='[Aa][Pp][Ii][-_]?[Kk][Ee][Yy]|[Aa][Cc][Cc][Ee][Ss][Ss][-_]?[Tt][Oo][Kk][Ee]
 # IPv4 address never matches): \1 is what precedes it, \3 its last two labels.
 host='(^|[^A-Za-z0-9_.-])([A-Za-z0-9_-]+\.)+([A-Za-z0-9_-]+\.[A-Za-z][A-Za-z0-9_-]*)'
 
+# A string in Rust's Debug form: quoted, a backslash escaping the character after it;
+# dstr may be empty, dword may not.
+dstr='"([^"\\]|\\.)*"'
+dword='"([^"\\]|\\.)+"'
+
 sed -E \
+  -e "s#(username: )${dword}#\\1\"REDACTED\"#g" \
+  -e "s#((password|query|fragment): Some[(])${dstr}#\\1\"REDACTED\"#g" \
+  -e "s#(path: )${dstr}#\\1\"/REDACTED\"#g" \
+  -e "s#(host: Some[(]Domain[(]\")[^\"]*\\.([^\".]+\\.[A-Za-z][^\".]*\")#\\1REDACTED.\\2#g" \
   -e "s#(${scheme})[^@/?${end}]*@#\\1REDACTED@#g" \
   -e "s#(${scheme}[^/?${end}]+)[/?][^${end}]*#\\1/REDACTED#g" \
   -e "s#(${scheme}(REDACTED@)?)[^/?@${end}]*\.([^./?@${end}]+\.[A-Za-z][^./?@${end}]*)#\\1REDACTED.\\3#g" \
