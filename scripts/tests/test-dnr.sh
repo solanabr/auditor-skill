@@ -1961,8 +1961,8 @@ eq "sums: a grouping the mode does not take, none, or two are refused (exit 2, o
 #     working-directory entry (scripts/lib/confine.sh), look it up from /, and run
 #     the recipe by the absolute path it reports, outside the working directory. So a
 #     python3 the audited tree ships never runs, and no version file there (a
-#     .python-version a pyenv shim reads) picks the interpreter. The three copies
-#     of the interpreter block are the same.
+#     .python-version a pyenv shim reads) picks the interpreter; profile.sh's queries
+#     run from / as well. The three copies of the interpreter block are the same.
 # ---------------------------------------------------------------------------
 iblock() { sed -n '/^# ---- interpreter/,/^# ---- end of interpreter/p' "$1"; }
 if [[ -n "$(iblock "$DNR/profile.sh")" && "$(iblock "$DNR/profile.sh")" == "$(iblock "$DNR/frames.py")" \
@@ -1987,19 +1987,20 @@ for p in ":$PATH" "$TT/no-such-dir26::$PATH" "./node_modules/.bin:$PATH" "bin:$P
 done
 eq "interpreter: frames.py and deltas.py never run a python3 the tree ships, wherever PATH names it (empty, relative, in the tree)" \
   "${res# }" "ok ok ok ok ok"
-# A python3 that logs where it runs, as a version manager's shim would read its version file there.
-PY26="$(command -v python3)"
+# A python3 and a jq that log where they run, as a version manager's shim would read its version file there.
+PY26="$(command -v python3)" JQ26="$(command -v jq)"
 mkdir -p "$TT/shim26"
 printf '#!/bin/sh\npwd -P >> "%s"\nexec "%s" "$@"\n' "$TT/python26.log" "$PY26" > "$TT/shim26/python3"
-chmod +x "$TT/shim26/python3"
-: > "$TT/python26.log"
+printf '#!/bin/sh\npwd -P >> "%s"\nexec "%s" "$@"\n' "$TT/jq26.log" "$JQ26" > "$TT/shim26/jq"
+chmod +x "$TT/shim26/python3" "$TT/shim26/jq"
+: > "$TT/python26.log"; : > "$TT/jq26.log"
 want26p="$(profile "$F/clean-mixed.jsonl" 2>&1)"
 got="$(cd "$EV26" && PATH="$TT/shim26:$PATH" "$DNR/frames.py" incident_1/log-newline-injection.jsonl 2>&1)|$(cd "$EV26" &&
   PATH="$TT/shim26:$PATH" "$DNR/deltas.py" tokens incident_1/same-owner-drain.jsonl 2>&1)"
 gotp="$(cd "$RW" && PATH="$TT/shim26:$PATH" "$DNR/profile.sh" "$F/clean-mixed.jsonl" 2>&1)"
-eq "interpreter: the three recipes start python3 through PATH only from /, once each" \
-  "$([[ "$got" == "$want26" && "$gotp" == "$want26p" ]] && echo same)|$(sort -u "$TT/python26.log" | tr '\n' ' ')$(grep -c . "$TT/python26.log")" \
-  "same|/ 3"
+eq "interpreter: the three recipes start python3 through PATH only from /, once each, and profile.sh's jq only from /" \
+  "$([[ "$got" == "$want26" && "$gotp" == "$want26p" ]] && echo same)|$(sort -u "$TT/python26.log" | tr '\n' ' ')$(grep -c . "$TT/python26.log")|$(sort -u "$TT/jq26.log" | tr '\n' ' ')" \
+  "same|/ 3|/ "
 # A python3 that reports an interpreter inside the working directory is refused before anything runs.
 mkdir -p "$TT/liar26"
 printf '#!/bin/sh\nprintf "%%s\\n%%s\\n" "%s/bin/python3" "%s/bin/python3"\n' "$EV26" "$EV26" > "$TT/liar26/python3"

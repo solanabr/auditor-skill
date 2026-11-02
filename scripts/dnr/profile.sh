@@ -46,8 +46,8 @@
 # each well-formed line byte for byte, less surrounding whitespace. scripts/lib/
 # confine.sh sets LC_ALL=C and umask 077 and keeps only PATH entries outside the
 # working directory; the private temp directory must lie outside it too. python3 is
-# found from / and runs by its absolute path, so no version file in the working
-# directory picks the interpreter a shim would run.
+# found from / and runs by its absolute path, and the queries run from /, so no
+# version file in the working directory picks the interpreter or jq a shim would run.
 #
 # Exit: 0 done · 1 a corpus file that cannot be read, or an --out that cannot be
 # written · 2 usage, or a refused path: a missing or non-regular file, one with a
@@ -726,7 +726,9 @@ with open(os.path.join(tmpd, "notes"), "w") as out:
 # LC_ALL=C and compares bytes: under a UTF-8 locale, sort and uniq can count two keys
 # that differ only in a character the collation ignores (U+00A0, say) as one line,
 # and order ties by that locale. Under C, each key is its own line and every tie
-# falls in the same order wherever the profile runs.
+# falls in the same order wherever the profile runs. It reads only files in the private
+# temp directory, by absolute paths, and runs from /, so no version file in the working
+# directory picks the jq (or any other tool) that a shim runs.
 report() {
 cat "$tmpd/header"
 echo "-- transactions / outcome"
@@ -793,8 +795,8 @@ cat "$tmpd/notes"
 # <file>, which is linked to <file>; a link never replaces a file that appeared in the
 # meantime.
 if [ "${1-}" != --out ]; then
-  report
+  (cd / && report)
 else
-  report > "$tmpd/report"
+  (cd / && report) > "$tmpd/report"
   "$py" -I -c "$recipe" publish "$tmpd" "$0" "$@"
 fi
