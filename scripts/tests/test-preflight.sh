@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # test-preflight.sh — self-test for scripts/preflight.sh: the case file fixtures/preflight/cases.txt (every
 # refused shape, links, letter cases, depths, the settings allowlist, the .git directories it skips), its
-# arguments and the entry limit, the notes, the parents up to the repository root and the user's own
-# configuration directory, linked worktrees and submodule checkouts, a large tree, trees find cannot read,
+# arguments and the entry limit, the notes, the parents up to the repository root (a core.worktree in the
+# repository's own config included) and the user's own configuration directory, linked worktrees and
+# submodule checkouts, a large tree, trees find cannot read,
 # a missing jq, control characters in a path, and the installation or PATH entries inside the working
 # directory. Every run goes under each bash on the machine (/bin/bash and the bash running this suite,
 # when they differ) and must print the same under each. Needs git and jq; no network. Usage (from the
@@ -258,6 +259,30 @@ check "a parent's AGENTS.md and .claude/AGENTS.md get notes, a sibling's does no
   test "$RC:$(cat "$T/out")" = "0:$(note ../.claude/AGENTS.md)
 $(note ../AGENTS.md)
 $OK_LINE"
+# A core.worktree in the repository's own config sets a top level below the directory that holds the
+# repository; the parents are still read up to that directory.
+build "$P" d:r8/sub/deeper d:r8/.claude/skills
+git init -q "$P/r8" && git -C "$P/r8" config core.worktree ../sub
+run "$P/r8/sub"
+check "a core.worktree in the repository's own config does not stop the parents below the directory holding .git" \
+  above ../.claude/skills
+run "$P/r8/sub/deeper"
+check "... from deeper in that top level either" above ../../.claude/skills
+build "$P" d:r10/sub d:r10/.claude/agents
+git init -q --separate-git-dir="$P/r10.git" "$P/r10" && git -C "$P/r10" config core.worktree "$P/r10/sub"
+run "$P/r10/sub"
+check "... nor one in a repository whose .git is a file naming its git directory" above ../.claude/agents
+# No program the repository's own config names runs: hooks, fsmonitor, a pager.
+build "$P" d:r13/sub d:r13/.claude/commands
+git init -q "$P/r13"
+printf '#!/bin/sh\ntouch "%s/marks/git-config-program"\n' "$T" > "$P/r13/.git/mark"
+chmod +x "$P/r13/.git/mark"
+mkdir -p "$P/r13/.git/hooks-x" && cp "$P/r13/.git/mark" "$P/r13/.git/hooks-x/post-checkout"
+git -C "$P/r13" config core.fsmonitor "$P/r13/.git/mark" && git -C "$P/r13" config core.pager "$P/r13/.git/mark" &&
+  git -C "$P/r13" config core.hooksPath "$P/r13/.git/hooks-x" && git -C "$P/r13" config core.worktree ../sub
+run "$P/r13/sub"
+check "with a hostile git config, the parents are still read" above ../.claude/commands
+check "... and no program the repository's config names ran" nomarks
 build "$P" d:r6/x d:r6/.claude/notes d:r6/docs/.claude/agents
 git init -q "$P/r6"
 run "$P/r6/x"
