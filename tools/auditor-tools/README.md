@@ -195,7 +195,10 @@ file goes to a new child. One file's facts take at most 32 MiB; a file with more
 is in `skipped` as `not listed: its facts take more than 32 MiB`. The workflows
 together take what the `*.rs` walk left of the report's 256 MiB: the file whose
 facts would take them past it, and each file after it, is in `skipped` as `not
-parsed: the report is full`.
+parsed: the report is full`. Both are counted as audit-scan prints them: a
+character it writes as a `\u` escape (DEL, a C1 control, a bidirectional or an
+invisible one, which a YAML escape can name) counts as its escape, and in the
+workflows' total the layout `--pretty` gives counts too.
 
 ### Where it reads and writes
 

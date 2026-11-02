@@ -13,8 +13,8 @@ use std::path::Path;
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
-use auditor_tools::confine::{Parser, PARSE_TIME};
-use auditor_tools::workflow::{scan_workflows_with, PARSE_WORKFLOWS};
+use auditor_tools::confine::{json_text, Parser, PARSE_TIME};
+use auditor_tools::workflow::{parse_workflow, scan_workflows_with, PARSE_WORKFLOWS};
 use common::{refused, refused_with, run, shown, stdout, Wt};
 use serde_json::Value;
 
@@ -131,6 +131,19 @@ fn reads_both_yml_and_yaml_in_byte_order() {
         names,
         [".github/workflows/a.yml", ".github/workflows/b.yaml"]
     );
+    // The report --pretty lays out holds them too.
+    let r = report(
+        &wt,
+        &[
+            "--contract=1",
+            "./src",
+            "--workflows",
+            ".github/workflows",
+            "--pretty",
+        ],
+    );
+    assert_eq!(r["workflows"].as_array().unwrap().len(), 2);
+    assert_eq!(r["skipped"].as_array().unwrap().len(), 0);
 }
 
 #[test]
@@ -685,8 +698,11 @@ fn a_workflow_whose_parser_dies_or_hangs_is_skipped_and_the_report_cap_holds() {
     );
     let mut hangs = Parser::with(Path::new("/bin/sleep"), &[OsStr::new("30")]);
     let started = Instant::now();
-    let (workflows, skipped) =
-        scan_workflows_with(Path::new(".github/workflows"), usize::MAX, &mut |bytes| {
+    let (workflows, skipped) = scan_workflows_with(
+        Path::new(".github/workflows"),
+        usize::MAX,
+        false,
+        &mut |bytes| {
             if bytes.starts_with(b"# dies") {
                 dies.parse(bytes, PARSE_TIME)
             } else if bytes.starts_with(b"# hangs") {
@@ -694,7 +710,8 @@ fn a_workflow_whose_parser_dies_or_hangs_is_skipped_and_the_report_cap_holds() {
             } else {
                 real.parse(bytes, PARSE_TIME)
             }
-        });
+        },
+    );
     let took = started.elapsed();
     assert!(
         took >= Duration::from_secs(1) && took < Duration::from_secs(8),
@@ -736,7 +753,7 @@ fn a_workflow_whose_parser_dies_or_hangs_is_skipped_and_the_report_cap_holds() {
         format!("on: push\njobs:\n  b:\n    steps:\n{steps}").as_bytes(),
     );
     wt.write("cap/c.yml", b"on: push\n");
-    let (workflows, skipped) = scan_workflows_with(Path::new("cap"), 1_000, &mut |bytes| {
+    let (workflows, skipped) = scan_workflows_with(Path::new("cap"), 1_000, false, &mut |bytes| {
         real.parse(bytes, PARSE_TIME)
     });
     assert_eq!(workflows.len(), 1);
@@ -747,6 +764,48 @@ fn a_workflow_whose_parser_dies_or_hangs_is_skipped_and_the_report_cap_holds() {
         .collect();
     let full = "not parsed: the report is full";
     assert_eq!(skipped, [("cap/b.yml", full), ("cap/c.yml", full)]);
+
+    // The cap counts the facts as audit-scan prints them: a DEL, written \x7f in
+    // YAML, takes one byte as serde_json writes it and six printed, and --pretty
+    // lays out each line.
+    let src = format!(
+        "on: push\njobs:\n  b:\n    steps:\n      - run: x\n        env:\n          K: \"{}\"\n",
+        "\\x7f".repeat(200)
+    );
+    wt.write("del/a.yml", src.as_bytes());
+    wt.write("del/b.yml", src.as_bytes());
+    let compact =
+        serde_json::to_string(&parse_workflow("del/a.yml", &src).expect("parses")).expect("JSON");
+    let printed = json_text(compact.clone()).len();
+    assert_eq!(printed, compact.len() + 1000);
+    // Each workflow takes what it prints and the comma after it.
+    let mut files = |cap: usize, pretty: bool| {
+        let (workflows, skipped) = scan_workflows_with(Path::new("del"), cap, pretty, &mut |b| {
+            real.parse(b, PARSE_TIME)
+        });
+        let mut out: Vec<String> = workflows
+            .iter()
+            .map(|w| format!("{} read", w.file))
+            .collect();
+        out.extend(skipped.iter().map(|s| format!("{}: {}", s.file, s.reason)));
+        out
+    };
+    let both = 2 * (printed + 1);
+    assert_eq!(files(both, false), ["del/a.yml read", "del/b.yml read"]);
+    assert_eq!(
+        files(both - 1, false),
+        [
+            "del/a.yml read",
+            "del/b.yml: not parsed: the report is full"
+        ]
+    );
+    assert_eq!(
+        files(printed + 1, true),
+        [
+            "del/a.yml: not parsed: the report is full",
+            "del/b.yml: not parsed: the report is full"
+        ]
+    );
 }
 
 /// #31's acceptance: every workflow fixture in `scripts/tests/fixtures/gha/` (the

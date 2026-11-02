@@ -20,7 +20,8 @@
 //! is built: [`MAX_WF_DEPTH`] on nesting, [`MAX_WF_NODES`] on nodes a file,
 //! `confine::MAX_FILE` on bytes a file, `confine::MAX_ANSWER` on the facts of a
 //! file, [`MAX_WF_FILES`] on files a directory, and what the `*.rs` walk left of
-//! `scan::MAX_REPORT` on the facts of them all.
+//! `scan::MAX_REPORT` on the facts of them all, each counted as audit-scan prints
+//! it ([`printed_size`]).
 
 use std::ffi::OsStr;
 use std::io::{self, Read, Write};
@@ -132,10 +133,15 @@ enum Answer {
 /// Parse every `*.yml` and `*.yaml` file directly in the directory `dir` (a path
 /// relative to the working directory), each in a child of this binary started by
 /// the path it runs from (`confine::Parser`) and given `confine::PARSE_TIME`, as
-/// `scan_workflows_with` does with `cap` bytes of report left.
-pub fn scan_workflows(dir: &Path, cap: usize) -> io::Result<(Vec<Workflow>, Vec<Skipped>)> {
+/// `scan_workflows_with` does with `cap` bytes left of a report printed `pretty` or
+/// compact.
+pub fn scan_workflows(
+    dir: &Path,
+    cap: usize,
+    pretty: bool,
+) -> io::Result<(Vec<Workflow>, Vec<Skipped>)> {
     let mut parser = confine::Parser::with(&confine::own_exe()?, &[OsStr::new(PARSE_WORKFLOWS)]);
-    Ok(scan_workflows_with(dir, cap, &mut |bytes| {
+    Ok(scan_workflows_with(dir, cap, pretty, &mut |bytes| {
         parser.parse(bytes, confine::PARSE_TIME)
     }))
 }
@@ -150,12 +156,13 @@ pub fn scan_workflows(dir: &Path, cap: usize) -> io::Result<(Vec<Workflow>, Vec<
 /// link. A `*.y*ml` entry that is a link or not a regular file, one that is not
 /// UTF-8, one with a second YAML document or more structure than the caps allow,
 /// one the parser could not finish, and every file past `MAX_WF_FILES`, is listed
-/// in `skipped` with the reason. The workflows hold about `cap` bytes at most:
-/// the file whose facts would take them past it, and each file after it, is in
-/// `skipped` as not parsed.
+/// in `skipped` with the reason. The workflows take about `cap` bytes at most of a
+/// report printed `pretty` or compact (`printed_size`): the file whose facts would
+/// take them past it, and each file after it, is in `skipped` as not parsed.
 pub fn scan_workflows_with(
     dir: &Path,
     cap: usize,
+    pretty: bool,
     parse: &mut dyn FnMut(&[u8]) -> Option<Vec<u8>>,
 ) -> (Vec<Workflow>, Vec<Skipped>) {
     let mut workflows = Vec::new();
@@ -218,44 +225,76 @@ pub fn scan_workflows_with(
         }
         let answer = crate::scan::read_bytes(fd.as_raw_fd(), &name).and_then(|bytes| {
             parse(&bytes)
-                .and_then(|out| Some((out.len(), serde_json::from_slice::<Answer>(&out).ok()?)))
+                .and_then(|out| serde_json::from_slice::<Answer>(&out).ok())
                 .ok_or_else(|| UNFINISHED.to_string())
         });
         match answer {
-            Ok((len, Answer::Workflow(mut wf))) => {
-                let cost = len.saturating_add(json_size(&label));
+            Ok(Answer::Workflow(mut wf)) => {
+                wf.file = label.clone();
+                // A workflow sits two levels into the report, a comma after it.
+                let cost = printed_size(&wf, pretty, 2).saturating_add(1);
                 if size.saturating_add(cost) > cap {
                     full = true;
                     skip(FULL.to_string());
                     continue;
                 }
                 size += cost;
-                wf.file = label;
                 workflows.push(wf);
             }
-            Ok((_, Answer::Skipped(reason))) | Err(reason) => skip(reason),
+            Ok(Answer::Skipped(reason)) | Err(reason) => skip(reason),
         }
     }
     (workflows, skipped)
 }
 
-/// The bytes `value` takes as JSON, as `serde_json` writes it: counted, not kept.
-pub fn json_size<T: Serialize + ?Sized>(value: &T) -> usize {
-    struct Count(usize);
+/// The bytes `value` takes as audit-scan prints it, `depth` levels into its
+/// report: its JSON as `serde_json` writes it, compact or `pretty` (where each
+/// line takes two spaces more for each level), with each character
+/// `confine::json_text` escapes counted as its escape. Counted, not kept.
+pub fn printed_size<T: Serialize + ?Sized>(value: &T, pretty: bool, depth: usize) -> usize {
+    struct Count {
+        bytes: usize,
+        indent: usize,
+    }
     impl Write for Count {
         fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            self.0 = self.0.saturating_add(buf.len());
+            // serde_json writes a whole number of characters at a time; should a
+            // write not hold one, the count fails, past any cap.
+            let text = std::str::from_utf8(buf).map_err(io::Error::other)?;
+            let lines = text.bytes().filter(|&b| b == b'\n').count();
+            self.bytes = self
+                .bytes
+                .saturating_add(printed_len(text))
+                .saturating_add(lines.saturating_mul(self.indent));
             Ok(buf.len())
         }
         fn flush(&mut self) -> io::Result<()> {
             Ok(())
         }
     }
-    let mut count = Count(0);
-    match serde_json::to_writer(&mut count, value) {
-        Ok(()) => count.0,
+    let mut count = Count {
+        bytes: 0,
+        indent: if pretty { depth.saturating_mul(2) } else { 0 },
+    };
+    let written = if pretty {
+        serde_json::to_writer_pretty(&mut count, value)
+    } else {
+        serde_json::to_writer(&mut count, value)
+    };
+    match written {
+        Ok(()) => count.bytes,
         Err(_) => usize::MAX,
     }
+}
+
+/// The bytes the JSON text `json` takes once `confine::json_text` has escaped it:
+/// six for each UTF-16 unit of a character it writes as a `\u` escape.
+fn printed_len(json: &str) -> usize {
+    json.chars()
+        .filter(|&c| c >= '\u{7f}' && confine::unsafe_char(c))
+        .fold(json.len(), |len, c| {
+            len.saturating_add(6 * c.len_utf16() - c.len_utf8())
+        })
 }
 
 /// audit-scan started as its own child to parse workflow files
@@ -298,8 +337,9 @@ pub fn parse_frames(input: &mut dyn Read, output: &mut dyn Write, cpu: Duration)
     }
 }
 
-/// The answer for one file's bytes, as JSON of at most `cap` bytes: a workflow
-/// whose facts take more is skipped instead.
+/// The answer for one file's bytes, as JSON that takes at most `cap` bytes once
+/// audit-scan prints it (`printed_len`): a workflow whose facts take more is
+/// skipped instead.
 fn answer(bytes: &[u8], cap: usize) -> io::Result<Vec<u8>> {
     let answer = match std::str::from_utf8(bytes) {
         Err(_) => Answer::Skipped("not UTF-8".to_string()),
@@ -308,9 +348,9 @@ fn answer(bytes: &[u8], cap: usize) -> io::Result<Vec<u8>> {
             Err(reason) => Answer::Skipped(reason),
         },
     };
-    let json = serde_json::to_vec(&answer).map_err(io::Error::other)?;
-    if json.len() <= cap {
-        return Ok(json);
+    let json = serde_json::to_string(&answer).map_err(io::Error::other)?;
+    if printed_len(&json) <= cap {
+        return Ok(json.into_bytes());
     }
     serde_json::to_vec(&Answer::Skipped(TOO_MANY_FACTS.to_string())).map_err(io::Error::other)
 }
@@ -2596,5 +2636,56 @@ mod tests {
         }
         let bad: Answer = serde_json::from_slice(&answer(&[0xff], 1 << 20).unwrap()).unwrap();
         assert!(matches!(bad, Answer::Skipped(why) if why == "not UTF-8"));
+    }
+
+    #[test]
+    fn an_answer_is_capped_as_audit_scan_prints_it() {
+        // 200 DELs in a value: 200 bytes as serde_json writes them, 1,200 printed.
+        let src = format!(
+            "on: push\njobs:\n  b:\n    steps:\n      - run: x\n        env:\n          K: \"{}\"\n",
+            "\\x7f".repeat(200)
+        );
+        let json = answer(src.as_bytes(), usize::MAX).unwrap();
+        let printed = confine::json_text(String::from_utf8(json.clone()).unwrap()).len();
+        assert_eq!(printed, json.len() + 1000);
+        let fits: Answer =
+            serde_json::from_slice(&answer(src.as_bytes(), printed).unwrap()).unwrap();
+        assert!(matches!(fits, Answer::Workflow(_)));
+        let over: Answer =
+            serde_json::from_slice(&answer(src.as_bytes(), printed - 1).unwrap()).unwrap();
+        assert!(matches!(over, Answer::Skipped(why) if why == TOO_MANY_FACTS));
+    }
+
+    #[test]
+    fn printed_size_counts_what_audit_scan_prints() {
+        let odd =
+            "\u{7f}\u{7f} \u{85}\u{200b}\u{202e}\u{e0001} \"q\" \\ \n \u{e9} \u{2713} \u{1f980}";
+        for v in ["plain", odd, ""] {
+            let one = serde_json::json!({"key": v, "list": [v, 1, null, []], "map": {"a": [v]}});
+            for pretty in [false, true] {
+                let printed = |value: &serde_json::Value| {
+                    let json = if pretty {
+                        serde_json::to_string_pretty(value)
+                    } else {
+                        serde_json::to_string(value)
+                    };
+                    confine::json_text(json.unwrap()).len()
+                };
+                assert_eq!(printed_size(&one, pretty, 0), printed(&one), "{v:?}");
+                // Two levels into a report, as a workflow sits in it.
+                let around = printed(&serde_json::json!({"workflows": [0]})) - 1;
+                assert_eq!(
+                    printed_size(&one, pretty, 2) + around,
+                    printed(&serde_json::json!({"workflows": [one]})),
+                    "{v:?}"
+                );
+            }
+        }
+        // A DEL a workflow's value holds takes six bytes printed, one in serde_json.
+        let w = wf("on: push\njobs:\n  b:\n    steps:\n      - run: \"\\x7f\\x7f\"\n");
+        assert_eq!(
+            printed_size(&w, false, 0),
+            serde_json::to_string(&w).unwrap().len() + 10
+        );
     }
 }

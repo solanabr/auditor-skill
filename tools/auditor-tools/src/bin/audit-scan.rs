@@ -22,7 +22,7 @@
 //! for a workflow file): the file's bytes on its stdin, no environment, killed
 //! past `confine::PARSE_TIME`. A file whose child does not finish is skipped, and
 //! the scan goes on. The workflows' facts take what the `*.rs` walk left of the
-//! report's cap, `scan::MAX_REPORT`.
+//! report's cap, `scan::MAX_REPORT`, both counted as the report prints.
 //! Exit: 0 done · 1 the output cannot be written · 2 refused.
 
 use std::ffi::{OsStr, OsString};
@@ -245,8 +245,8 @@ fn run(args: &[OsString]) -> Result<(), Stop> {
     let mut report = scan::scan_path(dir.path())
         .map_err(|e| Stop(1, format!("cannot start the scan: {}", os_message(&e))))?;
     if let Some(wdir) = &workflows {
-        let left = scan::MAX_REPORT.saturating_sub(workflow::json_size(&report));
-        let (parsed, skipped) = workflow::scan_workflows(wdir.path(), left)
+        let left = scan::MAX_REPORT.saturating_sub(workflow::printed_size(&report, call.pretty, 0));
+        let (parsed, skipped) = workflow::scan_workflows(wdir.path(), left, call.pretty)
             .map_err(|e| Stop(1, format!("cannot start the scan: {}", os_message(&e))))?;
         report.workflows = parsed;
         report.skipped.extend(skipped);
