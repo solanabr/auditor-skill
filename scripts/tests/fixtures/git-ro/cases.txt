@@ -259,6 +259,14 @@
 64	git-ro: refused: diff compares committed revisions (A..B, A...B, A^!, A B or --cached [A]), and this names no single tree: HEAD~1:a.rs	diff	HEAD~1:a.rs	HEAD:a.rs
 64	git-ro: refused: diff compares committed revisions (A..B, A...B, A^!, A B or --cached [A]), and this names no single commit: HEAD:a.rs	diff	HEAD:a.rs^!
 64	git-ro: refused: diff compares committed revisions (A..B, A...B, A^!, A B or --cached [A]), and this names no single tree: nosuch	diff	nosuch..HEAD
+64	git-ro: refused: blame needs a commit, and this names no single commit: ^HEAD	blame	^HEAD	--	a.rs
+64	git-ro: refused: blame needs a commit, and this names no single commit: HEAD^@	blame	HEAD^@	--	a.rs
+64	git-ro: refused: blame's A..B needs two different commits: HEAD..HEAD	blame	HEAD..HEAD	--	a.rs
+64	git-ro: refused: blame takes one revision, or A..B with --reverse, not HEAD...side	blame	HEAD...side	--	a.rs
+64	git-ro: refused: blame does not allow --not	blame	--not	--all	HEAD	--	a.rs
+64	git-ro: refused: blame does not allow --branches	blame	--branches	HEAD	--	a.rs
+64	git-ro: refused: blame does not allow -x	blame	-x	HEAD	--	a.rs
+64	git-ro: refused: blame needs <rev> -- <path>: a revision, then --, then one path; only options may come before the revision, not ^HEAD	blame	^HEAD	HEAD	--	a.rs
 64	git-ro: refused: reflog only reads: reflog show [<options>] [<ref>]	reflog
 64	git-ro: refused: reflog only reads: reflog show [<options>] [<ref>]	reflog	expire	--all
 64	git-ro: refused: reflog only reads: reflog show [<options>] [<ref>]	reflog	delete	HEAD@{0}

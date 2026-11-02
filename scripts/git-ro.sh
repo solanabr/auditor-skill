@@ -30,9 +30,12 @@
 #     --: git then compares two trees and reads neither the index nor the work tree. A word that names
 #     no single commit or tree (^A, A^@, A^-, two revisions in one) is refused.
 #   diff-tree: as git always runs it, on trees.
-#   blame: needs <rev> -- <path>; git-ro puts the revision right after the subcommand. It refuses a
-#     repository whose config sets blame.ignoreRevsFile: git reads that file, prints a line it cannot
-#     parse, and no command-line value resets the setting. Blame a copy instead.
+#   blame: needs <rev> -- <path>, with only blame's own options before <rev>, written out in full (-L,
+#     --date, --ignore-rev, --since, --after, --until and --before may take the next word as their
+#     value). git-ro resolves <rev> to a commit (A..B, for --reverse, to two different commits) and passes
+#     the ids, so blame starts from a commit and never annotates the work tree. It refuses a repository
+#     whose config sets blame.ignoreRevsFile: git reads that file, prints a line it cannot parse, and no
+#     command-line value resets the setting. Blame a copy instead.
 #   grep: committed content only. With no revision it searches the index, as with --cached.
 #   ls-files: no -m/--modified (it runs clean filters), --eol, or --format reading the work tree.
 #   cat-file: no --filters or --batch-command; standard input reaches --batch and --batch-check only.
@@ -585,8 +588,47 @@ run_diff() {
   exit $?
 }
 
-run_blame() { # run_blame [<options>] <rev> -- <path>
-  local a i=0 dd=-1 rev path
+blame_short() { # blame_short <word>: status 0 for a cluster of blame's short flags (b c e f l n p s t w, M and C with an optional number)
+  local r=${1#-} c
+  [ -n "$r" ] || return 1
+  while [ -n "$r" ]; do
+    c=${r%"${r#?}"}
+    r=${r#?}
+    case "$c" in
+      [bceflnpstw]) ;;
+      M|C) while :; do case "$r" in [0-9]*) r=${r#?} ;; *) break ;; esac; done ;;
+      *) return 1 ;;
+    esac
+  done
+}
+
+# blame_options <word>...: refuse any word but blame's own options and the value that follows -L, --date,
+# --ignore-rev, --since, --after, --until or --before. None of them names or negates a revision, so the
+# one commit git-ro resolved stays the commit blame starts from. A revision word (^A, A..B) or a ref
+# option (--not --all) could mark that commit uninteresting, and blame with no commit left to start
+# from annotates the work tree.
+blame_options() {
+  local a
+  while [ $# -gt 0 ]; do
+    a=$1
+    case "$a" in
+      -L|--date|--ignore-rev|--since|--after|--until|--before)
+        [ $# -ge 2 ] || refuse "blame's $a needs a value"
+        shift ;;
+      -L?*|--date=*|--ignore-rev=*|--since=*|--after=*|--until=*|--before=*|--encoding=*|--abbrev=*) ;;
+      --root|--show-stats|--reverse|--first-parent|--porcelain|--line-porcelain|--incremental|--progress|--no-progress|\
+      --score-debug|--show-name|--show-number|--show-email|--minimal|--color-lines|--color-by-age|--abbrev) ;;
+      -?*) blame_short "$a" || refuse_option "$a" ;;
+      *) refuse "$BLAME_USAGE; only options may come before the revision, not $(confine_text "$a")" ;;
+    esac
+    shift
+  done
+}
+
+# run_blame [<options>] <rev> -- <path>: <rev>, or A..B, resolved to commits first. With A..B the two
+# must differ: one commit as both ends is uninteresting, and blame would fall back to the work tree.
+run_blame() {
+  local a i=0 dd=-1 rev path l r spec
   local -a args=("$@") opts=()
   for a in "$@"; do
     if [ "$a" = -- ]; then dd=$i; break; fi
@@ -598,13 +640,30 @@ run_blame() { # run_blame [<options>] <rev> -- <path>
   case "$rev" in -*) refuse "$BLAME_USAGE" ;; esac
   [ "$dd" -lt 2 ] || opts=("${args[@]:0:$((dd - 1))}")
   check_options blame ${opts[@]+"${opts[@]}"}
+  blame_options ${opts[@]+"${opts[@]}"}
+  case "$rev" in
+    *...*) refuse "blame takes one revision, or A..B with --reverse, not $(confine_text "$rev")" ;;
+    *..*)
+      l=${rev%%..*}
+      r=${rev#*..}
+      [ -n "$l" ] || l=HEAD
+      [ -n "$r" ] || r=HEAD
+      one_object "$l" commit || refuse "blame needs commits, and this names no single commit: $(confine_text "$l")"
+      spec=$OID
+      one_object "$r" commit || refuse "blame needs commits, and this names no single commit: $(confine_text "$r")"
+      [ "$OID" != "$spec" ] || refuse "blame's A..B needs two different commits: $(confine_text "$rev")"
+      spec=$spec..$OID ;;
+    *)
+      one_object "$rev" commit || refuse "blame needs a commit, and this names no single commit: $(confine_text "$rev")"
+      spec=$OID ;;
+  esac
   hgit "$REPO" config --get-all blame.ignorerevsfile >/dev/null 2>&1
   case $? in
     1) ;;
     0) refuse "blame does not run where the repository's config sets blame.ignoreRevsFile; blame a copy (git-ro.sh copy, then --git-dir)" ;;
     *) refuse "git cannot read the repository's config" ;;
   esac
-  hgit "$REPO" blame --no-textconv --no-ext-diff "$rev" ${opts[@]+"${opts[@]}"} -- "$path" </dev/null
+  hgit "$REPO" blame --no-textconv --no-ext-diff "$spec" ${opts[@]+"${opts[@]}"} -- "$path" </dev/null
   exit $?
 }
 

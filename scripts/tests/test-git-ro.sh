@@ -769,6 +769,10 @@ git -C "$RT" diff 'HEAD^!' >/dev/null 2>&1
 if nomarks; then skp "sanity: this git does not run the clean filter for diff A^! of a root commit"
 else ok "sanity: plain git diff A^! of a root commit runs the clean filter on the work tree"; fi
 clearmarks
+git -C "$RT" blame '^HEAD' -- a.rs >/dev/null 2>&1
+if nomarks; then skp "sanity: this git does not run the clean filter for blame ^HEAD"
+else ok "sanity: plain git blame ^HEAD annotates the work tree, running the clean filter"; fi
+clearmarks
 touch -t 202101010000 "$RT/a.rs"
 snapshot "$RT" "$T/snap.base"
 run "$RT" diff 'HEAD^!'
@@ -783,6 +787,14 @@ check "diff A^@ (a root commit has no parent) is refused" \
 run "$RT" diff 'HEAD^@' HEAD:a.rs -- a.rs
 check "... and so is a blob against nothing, which git compares with the file in the work tree" \
   err_is 'git-ro: refused: diff compares committed revisions (A..B, A...B, A^!, A B or --cached [A]), and this names no single tree: HEAD^@'
+for b in "^HEAD -- a.rs" "HEAD..HEAD -- a.rs" "--not --all HEAD -- a.rs" "^HEAD HEAD -- a.rs" "HEAD^@ -- a.rs"; do
+  # shellcheck disable=SC2086
+  run "$RT" blame $b
+  check "blame $b is refused before git runs" sh -c "[ '$RC' = 64 ] && [ ! -s '$T/out' ]"
+done
+check "... none ran the clean filter" nomarks
+run "$RT" blame HEAD -- a.rs
+check "blame of a commit still runs" sh -c "[ '$RC' = 0 ] && grep -q 'fn a() {}' '$T/out'"
 git -C "$RT" config --unset filter.evil.clean
 put "$RT" a.rs 'fn a() { second(); }'
 commit "$RT" -m second
@@ -798,6 +810,10 @@ rm "$RT/.git/shallow"
 run "$RT" diff 'HEAD^!'
 check "diff A^! of a commit with a parent compares it with that parent" \
   sh -c "grep -qx -- '-fn a() {}' '$T/out' && grep -qx '+fn a() { second(); }' '$T/out'"
+run "$RT" blame --reverse HEAD~1..HEAD -- a.rs
+check "blame --reverse A..B still runs" test "$RC" = 0
+run "$G" blame '^HEAD' -- keys/id.txt
+check "blame ^HEAD never reads a file through a linked directory" sh -c "[ '$RC' = 64 ] && ! grep -q OUTSIDE-KEY-MATERIAL '$T/out'"
 check "no case of this section ran a configured program" nomarks
 
 # =================================================================================================
