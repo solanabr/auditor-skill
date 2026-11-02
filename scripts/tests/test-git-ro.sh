@@ -752,6 +752,55 @@ run "$G" grep -n -e committed
 check "... and finds the committed text" test "$(cat "$T/out")" = 'keys/id.txt:1:committed text'
 
 # =================================================================================================
+# Revisions git-ro resolves itself. diff, blame and grep start from commits and trees whatever revision
+# syntax they get: a root or shallow commit's A^!, A^@ (no parent at all), a negation, a range of one
+# commit, ref options that mark the commit uninteresting. git would otherwise compare with or annotate
+# the work tree, running its clean filter and reading files through linked directories.
+# =================================================================================================
+RT="$T/root-filter"; mkrepo "$RT"
+printf '* filter=evil\n' > "$RT/.gitattributes"
+git -C "$RT" add .gitattributes
+put "$RT" a.rs 'fn a() {}'
+commit "$RT" -m 'root import'
+git -C "$RT" config filter.evil.clean "$T/bin/mark-clean"
+touch -t 202001010000 "$RT/a.rs"
+clearmarks
+git -C "$RT" diff 'HEAD^!' >/dev/null 2>&1
+if nomarks; then skp "sanity: this git does not run the clean filter for diff A^! of a root commit"
+else ok "sanity: plain git diff A^! of a root commit runs the clean filter on the work tree"; fi
+clearmarks
+touch -t 202101010000 "$RT/a.rs"
+snapshot "$RT" "$T/snap.base"
+run "$RT" diff 'HEAD^!'
+check "diff A^! of a root commit compares it with the empty tree" \
+  sh -c "[ '$RC' = 0 ] && grep -q '^new file mode' '$T/out' && grep -qx '+fn a() {}' '$T/out'"
+check "... runs no clean filter" nomarks
+snapshot "$RT" "$T/snap.now"
+check "... and leaves the index and the work tree as they were" cmp -s "$T/snap.base" "$T/snap.now"
+run "$RT" diff 'HEAD^@' 'HEAD^@'
+check "diff A^@ (a root commit has no parent) is refused" \
+  err_is 'git-ro: refused: diff compares committed revisions (A..B, A...B, A^!, A B or --cached [A]), and this names no single tree: HEAD^@'
+run "$RT" diff 'HEAD^@' HEAD:a.rs -- a.rs
+check "... and so is a blob against nothing, which git compares with the file in the work tree" \
+  err_is 'git-ro: refused: diff compares committed revisions (A..B, A...B, A^!, A B or --cached [A]), and this names no single tree: HEAD^@'
+git -C "$RT" config --unset filter.evil.clean
+put "$RT" a.rs 'fn a() { second(); }'
+commit "$RT" -m second
+git -C "$RT" config filter.evil.clean "$T/bin/mark-clean"
+git -C "$RT" rev-parse HEAD > "$RT/.git/shallow"
+touch -t 202001010000 "$RT/a.rs"
+clearmarks
+run "$RT" diff 'HEAD^!'
+check "diff A^! of a commit the shallow file cuts off compares it with the empty tree" \
+  sh -c "[ '$RC' = 0 ] && grep -qx '+fn a() { second(); }' '$T/out' && ! grep -qx -- '-fn a() {}' '$T/out'"
+check "... runs no clean filter" nomarks
+rm "$RT/.git/shallow"
+run "$RT" diff 'HEAD^!'
+check "diff A^! of a commit with a parent compares it with that parent" \
+  sh -c "grep -qx -- '-fn a() {}' '$T/out' && grep -qx '+fn a() { second(); }' '$T/out'"
+check "no case of this section ran a configured program" nomarks
+
+# =================================================================================================
 # What the repository could set to change what a read shows: how grep and log --grep read a pattern,
 # the root commit's patch, replace refs, submodule ignore rules, grafts and a shallow file.
 # =================================================================================================

@@ -24,8 +24,11 @@
 #   log, shortlog, rev-list, show, ls-tree, cat-file, rev-parse, merge-base, name-rev, for-each-ref,
 #   show-ref, count-objects, cherry, reflog show: allowed, subject to the denylist below.
 #   diff: committed revisions only, A..B, A...B, A^!, A B or --cached [A]; paths go after --. The
-#     revisions are the last one or two words before -- that are not options. git-ro puts them behind
-#     --end-of-options and ends them with --, so no option can take one as its value.
+#     revisions are the last one or two words before -- that are not options. git-ro resolves each side
+#     to one tree itself (A...B through the merge base, A^! through A's first parent, the empty tree for
+#     a commit without one) and gives git just the two tree ids, behind --end-of-options and ended with
+#     --: git then compares two trees and reads neither the index nor the work tree. A word that names
+#     no single commit or tree (^A, A^@, A^-, two revisions in one) is refused.
 #   diff-tree: as git always runs it, on trees.
 #   blame: needs <rev> -- <path>; git-ro puts the revision right after the subcommand. It refuses a
 #     repository whose config sets blame.ignoreRevsFile: git reads that file, prints a line it cannot
@@ -478,12 +481,35 @@ run_remote() { # run_remote <arg>...: remote, remote -v, remote get-url [--all] 
   exit "${st[1]}"
 }
 
+# one_object <word> <type>: sets OID to the full id of the one object <word> names, peeled to <type>
+# (commit, tree, or object for any); status 1 when it names none, more than one (A..B, A^@, A^-) or a
+# negation (^A, which rev-parse prints as ^<id>). git resolves the word; only its plain answer counts.
+one_object() {
+  local o
+  o=$(hgit "$REPO" rev-parse --verify --quiet --end-of-options "$1" 2>/dev/null </dev/null) && is_oid "$o" &&
+    o=$(hgit "$REPO" rev-parse --verify --quiet "$o^{$2}" 2>/dev/null </dev/null) && is_oid "$o" || return 1
+  OID=$o
+}
+
+is_oid() { # is_oid <s>: status 0 for a full object id, 40 or 64 lowercase hex digits
+  case "$1" in ''|*[!0-9a-f]*) return 1 ;; esac
+  [ "${#1}" -eq 40 ] || [ "${#1}" -eq 64 ]
+}
+
+diff_side() { # diff_side <word> <commit|tree>: one_object, or refuse
+  one_object "$1" "$2" ||
+    refuse "diff compares committed revisions (A..B, A...B, A^!, A B or --cached [A]), and this names no single $2: $(confine_text "$1")"
+}
+
 # run_diff <arg>...: the revisions are the last one or two words before -- that are not options (one
-# when it is a range, A..B, A...B or A^!). They move behind --end-of-options and end with --, so git
-# reads them as revisions whatever option precedes them, and two revisions never reach the work tree.
+# when it is A..B, A...B or A^!). git-ro resolves the two sides to trees and hands git only their ids,
+# behind --end-of-options and ended with --. Given two trees, git diff compares them, whatever else the
+# words say: other words can add trees or blobs (git then refuses or shows a combined diff), never take
+# one away, so the index and the work tree stay unread. --cached [A] compares the index with A (HEAD by
+# default); with --cached git reads no file of the work tree either.
 run_diff() {
-  local a seen=0 cached=0 i last=-1 prev=-1
-  local -a pre=() post=() opts=() revs=() rest=()
+  local a seen=0 cached=0 i last=-1 prev=-1 w l r ca cb tl tr bases parents
+  local -a pre=() post=() opts=() rest=()
   for a in "$@"; do
     if [ "$seen" -eq 0 ] && [ "$a" = -- ]; then seen=1; continue; fi
     if [ "$seen" -eq 0 ]; then pre+=("$a"); else post+=("$a"); fi
@@ -502,17 +528,59 @@ run_diff() {
     i=$((i + 1))
   done
   [ "$last" -ge 0 ] || refuse "$DIFF_USAGE"
-  case "${opts[$last]}" in
-    *..*|*'^!') revs=("${opts[$last]}"); prev=-1 ;;
-    *) [ "$prev" -ge 0 ] || refuse "$DIFF_USAGE"
-       revs=("${opts[$prev]}" "${opts[$last]}") ;;
+  w=${opts[$last]}
+  case "$w" in
+    *..*)
+      prev=-1
+      l=${w%%..*}
+      r=${w#*..}
+      [ -n "$l" ] || l=HEAD
+      case "$r" in
+        .*) # A...B: from the merge base of A and B (the first, as git diff takes it) to B
+          r=${r#.}
+          [ -n "$r" ] || r=HEAD
+          diff_side "$l" commit; ca=$OID
+          diff_side "$r" commit; cb=$OID
+          bases=$(hgit "$REPO" merge-base --all "$ca" "$cb" </dev/null)
+          case $? in
+            0) ;;
+            1) printf 'fatal: %s...%s: no merge base\n' "$l" "$r" >&2; exit 128 ;;
+            *) exit 128 ;;
+          esac
+          case "$bases" in
+            *$'\n'*) printf 'warning: %s...%s: multiple merge bases, using %s\n' "$l" "$r" "${bases%%$'\n'*}" >&2 ;;
+          esac
+          diff_side "${bases%%$'\n'*}" tree; tl=$OID
+          diff_side "$cb" tree; tr=$OID ;;
+        *) # A..B
+          [ -n "$r" ] || r=HEAD
+          diff_side "$l" tree; tl=$OID
+          diff_side "$r" tree; tr=$OID ;;
+      esac ;;
+    *'^!') # A^!: from A's first parent to A; a commit without one (a root, or cut off by .git/shallow)
+      # starts from the empty tree
+      prev=-1
+      diff_side "${w%'^!'}" commit; ca=$OID
+      parents=$(hgit "$REPO" rev-parse "$ca^@" </dev/null) || exit 128
+      if [ -n "$parents" ]; then
+        diff_side "${parents%%$'\n'*}" tree
+      else
+        a=$(hgit "$REPO" hash-object -t tree /dev/null </dev/null) && is_oid "$a" || exit 128
+        OID=$a
+      fi
+      tl=$OID
+      diff_side "$ca" tree; tr=$OID ;;
+    *)
+      [ "$prev" -ge 0 ] || refuse "$DIFF_USAGE"
+      diff_side "${opts[$prev]}" tree; tl=$OID
+      diff_side "$w" tree; tr=$OID ;;
   esac
   i=0
   while [ "$i" -lt "${#opts[@]}" ]; do
     [ "$i" -eq "$last" ] || [ "$i" -eq "$prev" ] || rest+=("${opts[$i]}")
     i=$((i + 1))
   done
-  hgit "$REPO" diff --no-textconv --no-ext-diff --ignore-submodules=none ${rest[@]+"${rest[@]}"} --end-of-options "${revs[@]}" \
+  hgit "$REPO" diff --no-textconv --no-ext-diff --ignore-submodules=none ${rest[@]+"${rest[@]}"} --end-of-options "$tl" "$tr" \
     -- ${post[@]+"${post[@]}"} </dev/null
   exit $?
 }
