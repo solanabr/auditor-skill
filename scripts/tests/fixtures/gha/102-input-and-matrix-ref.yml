@@ -1,0 +1,30 @@
+# Fixture: a reusable workflow that checks out the ref its caller passes as an input, and a pull_request_target job
+# that checks out a matrix value built from the PR head; R7 lists both ref lines.
+name: f102-input-and-matrix-ref
+on:
+  workflow_call:
+    inputs:
+      sha:
+        type: string
+        required: true
+  pull_request_target:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha }}
+      - run: make
+  matrix:
+    strategy:
+      matrix:
+        head: ['${{ github.event.pull_request.head.sha }}']
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.head }}
+      - run: make

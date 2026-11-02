@@ -13,7 +13,7 @@
 # A recipe of two commands (R1) flags what the first lists and the second does not; every other line of an R
 # recipe must be an echo of a quoted marker, which the suite does not run. The suite also checks that every
 # known-vector step that repeats an R recipe carries its lines byte for byte, as one block in the same order,
-# and that no recipe flags a fixture's comment lines. R9 and the KV-080 Step 8 and KV-140 Step 7 commands
+# and that no recipe flags a fixture's comment lines. R7, R9 and the KV-080 Step 8 and KV-140 Step 7 commands
 # are also checked line by line on their own fixtures, and those that search outside .github/ skip node_modules/
 # and .terraform/. Every pattern a recipe gives grep must stay inside what GNU grep's DFA runs in a UTF-8
 # locale, and hold no backslash inside a bracket. It runs R1 and K139-1 over trigger spellings built at run time
@@ -131,7 +131,7 @@ expected() {
     R4) echo "05 06 21 29 30 41" ;;
     R5) echo "06 07 15" ;;
     R6) echo "05 07 08 14 15 16 20 31 32 50 75" ;;
-    R7) echo "05 07 11 12 15 18 19 20 21 22 23 24 51 52 53 61 62 63 70 71" ;;
+    R7) echo "05 07 11 12 15 18 19 20 21 22 23 24 51 52 53 61 62 63 70 71 102 103" ;;
     R8) echo "01 08 11 14 33 34 54 57 67 68 72 73" ;;
     R9) echo "01 05 07 08 11 12 15 18 19 20 21 22 23 24 35 36 38 39 42 43 44 45 51 52 53 60 61 62 63 70 71 76 98" ;;
     K116-1) echo "01 08 11 14 33 34 54 57 67 68 72 73" ;;
@@ -146,7 +146,9 @@ expected() {
 
 # The lines each recipe must flag in its own fixtures (<id> <fixture> <line>...); its other fixtures are listed
 # whole in expected(), and its near misses are in neither.
-LINES="R9 76-pin-forms.yml 11 12 13 14 16 17 19
+LINES="R7 102-input-and-matrix-ref.yml 19 29
+R7 actions/103-input-ref-composite-action.yml 13
+R9 76-pin-forms.yml 11 12 13 14 16 17 19
 R9 98-pin-and-runner-yaml-extension.yaml 11
 K080-8a 78-self-hosted-runners.yml 9 13 17 23 27 34
 K080-8a 98-pin-and-runner-yaml-extension.yaml 9
@@ -278,7 +280,11 @@ done
 nlines=0
 while read -r id fx want; do
   nlines=$((nlines + 1))
-  case "$fx" in infra/*) path=$fx ;; *) path=.github/workflows/$fx ;; esac
+  case "$fx" in
+    infra/*) path=$fx ;;
+    actions/*) path=${fx#actions/}; path=.github/actions/${path%.yml}/action.yml ;;
+    *) path=.github/workflows/$fx ;;
+  esac
   got=$(run_recipe "$work" "$(recipe_lines "$id")" | sed 's#^\./##' | awk -F: -v p="$path" '$1 == p { print $2 }' \
     | sort -n | tr '\n' ' ' | sed 's/ $//')
   if [ "$got" = "$want" ]; then echo "ok   $id in $fx: lines $got"
