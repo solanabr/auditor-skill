@@ -13,18 +13,20 @@
 # A recipe of two commands (R1) flags what the first lists and the second does not; every other line of an R
 # recipe must be an echo of a quoted marker, which the suite does not run. The suite also checks that every
 # known-vector step that repeats an R recipe carries its lines byte for byte, as one block in the same order,
-# and that no recipe flags a fixture's comment lines. R7, R9 and the KV-080 Step 8 and KV-140 Step 7 commands
-# are also checked line by line on their own fixtures, and those that search outside .github/ skip node_modules/
-# and .terraform/. Every pattern a recipe gives grep must stay inside what GNU grep's DFA runs in a UTF-8
-# locale, and hold no backslash inside a bracket. It runs R1 and K139-1 over trigger spellings built at run time
-# (CRLF line ends among them), R1 over file names that hold a space or a quote and over a decoy name that holds
-# a newline, and R1 over large inputs: 2,000 workflows, and two of about 1 MiB. R9 and KV-080 Step 8's first
-# command run over 2,000 workflows, and each KV-080 and KV-140 command that pipes into head over more than 64 KiB
-# of its own output. KV-080 Step 4's two commands run over pins saved with CRLF line ends and over references R9
-# does not read as pins: each uses: line lands in exactly one of them. Every command of every recipe must end
-# within 30 s, in a UTF-8 locale where one is installed, on files that hold one 1 MiB line of near misses. KV-020
-# Step 3 and KV-100 Step 4, which list documentation files with one recursive grep as R1 does, run over file names
-# that hold a space or a quote, and KV-100's over more than 64 KiB of names.
+# and that no recipe flags a fixture's comment lines. R3, R7, R8, R9 and the KV-080 Step 8 and KV-140 Step 7
+# commands are also checked line by line on their own fixtures, and those that search outside .github/ skip
+# node_modules/ and .terraform/. Every pattern a recipe gives grep must stay inside what GNU grep's DFA runs in a
+# UTF-8 locale and hold no backslash inside a bracket, and in a grep call that holds * or + every pattern must
+# start at ^. It runs R1 and K139-1 over trigger spellings built at run time (CRLF line ends among them), R1 over
+# file names that hold a space or a quote and over decoy names that hold a newline, with the find that the R1 note
+# and KV-080 Step 7 give, the listing that the R8 note gives over an agent call R8 cannot read, and R1 over large
+# inputs: 2,000 workflows, and two of about 1 MiB. R9 and KV-080 Step 8's first command run over 2,000 workflows,
+# and each KV-080 and KV-140 command that pipes into head over more than 64 KiB of its own output. KV-080 Step 4's
+# two commands run over pins saved with CRLF line ends, over references R9 does not read as pins and over uses:
+# lines whose trailing comment names a pin or a local action: each uses: line lands in exactly one of them. Every
+# command of every recipe must end within 30 s, in a UTF-8 locale where one is installed, on files that hold one
+# 1 MiB line of near misses. KV-020 Step 3 and KV-100 Step 4, which list documentation files with one recursive
+# grep as R1 does, run over file names that hold a space or a quote, and KV-100's over more than 64 KiB of names.
 #
 # Usage (from the repo root): bash scripts/tests/test-gha-recipes.sh
 # Needs bash >= 3.2, grep, awk. No network. The fixtures are copied into a temp dir as .github/workflows/, those
@@ -154,7 +156,7 @@ R9 $KV080 4"
 
 IDS="R1 R2 R3 R4 R5 R6 R7 R8 R9 K116-1 K139-1 K140-6 K140-7a K140-7b K080-8a K080-8b"
 
-# Fixtures each recipe must flag (two-digit prefixes, ascending). Anything else is a mismatch.
+# Fixtures each recipe must flag (their two- or three-digit prefixes, ascending). Anything else is a mismatch.
 expected() {
   case "$1" in
     R1) echo "01 08 10 16 40 55 56 58 64 65 66 69 108" ;;
