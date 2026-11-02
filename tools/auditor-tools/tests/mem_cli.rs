@@ -1374,7 +1374,7 @@ fn refuses_a_journal_that_names_a_super_journal_and_deletes_nothing() {
                 "--signature",
                 SIG,
                 "--ruling",
-                "FALSE_POSITIVE",
+                "ACCEPTED_RISK",
                 "--rationale",
                 "r",
                 "--by",
