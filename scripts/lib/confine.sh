@@ -199,12 +199,12 @@ confine_git_head() {
 
 # confine_git_includes <config file>...: status 1 (CONFINE_GIT_WHY says why) when an include.path or
 # includeIf.<condition>.path value in the files, or in a file they include in turn, names a named pipe or
-# device or a file whose name holds a line end, when git cannot list one file's values, or when they
-# include more than 64 files. Each file is read once, nearest first, to git's 10 levels: git lists its
-# values with no repository (--git-dir=/dev/null), following none. A value written ~user/ or %(prefix)/
-# names a place outside the tree and is not followed.
+# device or a file whose name holds a line end, when git cannot list one file's values, when one file
+# lists more than 64 includes, or when they include more than 64 files. Each file is read once, nearest
+# first, to git's 10 levels: git lists its values with no repository (--git-dir=/dev/null), following
+# none. A value written ~user/ or %(prefix)/ names a place outside the tree and is not followed.
 confine_git_includes() {
-  local f t line out level=0 n=0 dup s
+  local f t line out level=0 n=0 dup s values=0
   local -a cur=("$@") next=() seen=("$@")
   while [ "${#cur[@]}" -gt 0 ] && [ "$level" -le 10 ]; do
     next=()
@@ -216,6 +216,8 @@ confine_git_includes() {
         while IFS= read -r -d '' t; do
           case "$t" in (*$'\n'*) t=${t#*$'\n'} ;; (*) continue ;; esac
           line=$t
+          values=$((values + 1))
+          if [ "$values" -gt 64 ]; then printf 'M\n'; break; fi
           case "$t" in
             ('~/'*) t=${HOME-}/${t#'~/'} ;;
             ('~'*|'%(prefix)/'*) continue ;;
@@ -234,6 +236,7 @@ confine_git_includes() {
         esac
         case "$line" in
           N) CONFINE_GIT_WHY="the repository's config includes a file whose name holds a line end"; return 1 ;;
+          M) CONFINE_GIT_WHY="a config file of the repository lists more than 64 includes, more than these checks follow: $(confine_text "$f")"; return 1 ;;
           S*) confine_git_wait "is included by the repository's config" "${line#S}"; return 1 ;;
           R0|R1) ;;
           R*) CONFINE_GIT_WHY="git cannot list what this config file includes: $(confine_text "$f")"; return 1 ;;

@@ -612,17 +612,26 @@ mkrepo "$RW/incself"; put "$RW/incself" f x; commit "$RW/incself" -m x
 bounded /dev/null lib "$RW" 'confine_repo incself R'
 check "a config that includes itself six times is read once, then git refuses it at once" \
   refused 'R is not a git repository that git can read (none there, or another user owns it: audit a copy): incself'
+# 8 files, each including 9 more: 80 files in all, no file listing more than 9.
 mkrepo "$RW/incmany"; put "$RW/incmany" f x; commit "$RW/incmany" -m x
-i=0
 printf '[include]\n' >> "$RW/incmany/.git/config"
-while [ "$i" -lt 70 ]; do
-  printf '[core]\n' > "$RW/incmany/.git/inc$i"
-  printf '\tpath = inc%s\n' "$i" >> "$RW/incmany/.git/config"
-  i=$((i + 1))
+for i in 0 1 2 3 4 5 6 7; do
+  printf '\tpath = a%s\n' "$i" >> "$RW/incmany/.git/config"
+  printf '[include]\n' > "$RW/incmany/.git/a$i"
+  for j in 0 1 2 3 4 5 6 7 8; do
+    printf '\tpath = b%s%s\n' "$i" "$j" >> "$RW/incmany/.git/a$i"
+    printf '[core]\n' > "$RW/incmany/.git/b$i$j"
+  done
 done
 lib "$RW" 'confine_repo incmany R'
-check "a config that includes more than 64 files is refused" \
+check "a config that includes more than 64 files in all is refused" \
   refused "the repository's config includes more than 64 files, more than these checks follow"
+mkrepo "$RW/incvals"; put "$RW/incvals" f x; commit "$RW/incvals" -m x
+{ printf '[include]\n'; i=0; while [ "$i" -lt 65 ]; do printf '\tpath = one\n'; i=$((i + 1)); done; } >> "$RW/incvals/.git/config"
+printf '[core]\n' > "$RW/incvals/.git/one"
+lib "$RW" 'confine_repo incvals R'
+check "... and one whose config lists more than 64 includes, even of one file" \
+  refused "a config file of the repository lists more than 64 includes, more than these checks follow: $(shown "$RW/incvals/.git/config")"
 mkrepo "$RW/incbad"; put "$RW/incbad" f x; commit "$RW/incbad" -m x
 printf '[include\n' > "$RW/incbad/.git/junk"
 printf '[include]\n\tpath = junk\n' >> "$RW/incbad/.git/config"
