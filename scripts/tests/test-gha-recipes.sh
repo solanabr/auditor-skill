@@ -133,7 +133,7 @@ expected() {
     R6) echo "05 07 08 14 15 16 20 31 32 50 75" ;;
     R7) echo "05 07 11 12 15 18 19 20 21 22 23 24 51 52 53 61 62 63 70 71 102 103" ;;
     R8) echo "01 08 11 14 33 34 54 57 67 68 72 73" ;;
-    R9) echo "01 05 07 08 11 12 15 18 19 20 21 22 23 24 35 36 38 39 42 43 44 45 51 52 53 60 61 62 63 70 71 76 98" ;;
+    R9) echo "01 05 07 08 11 12 15 18 19 20 21 22 23 24 35 36 38 39 42 43 44 45 51 52 53 60 61 62 63 70 71 76 98 107" ;;
     K116-1) echo "01 08 11 14 33 34 54 57 67 68 72 73" ;;
     K139-1) echo "01 02 03 04 08 10 11 14 16 17 22 23 25 26 33 40 48 49 53 55 56 58 59 62 64 65 66 69 71 74" ;;
     K140-6) echo "35 36 37 38 39 42 43 44 45" ;;
@@ -150,6 +150,7 @@ LINES="R7 102-input-and-matrix-ref.yml 19 29
 R7 actions/103-input-ref-composite-action.yml 13
 R9 76-pin-forms.yml 11 12 13 14 16 17 19
 R9 98-pin-and-runner-yaml-extension.yaml 11
+R9 107-pin-key-spellings.yml 14 15
 K080-8a 78-self-hosted-runners.yml 9 13 17 23 27 34
 K080-8a 98-pin-and-runner-yaml-extension.yaml 9
 K080-8a 100-arc-runner-labels.yml 9 13 17 21 25 29 33
@@ -556,7 +557,10 @@ fi
 # line, so each uses: line that is not a comment and names no local action is in exactly one of them. In a file
 # saved with CRLF line ends a bare pin ends in a CR, which GNU and BSD grep do not take for the end of the line
 # (Claude Code's grep does, and R9 lists it there); a reference of 41 hex digits and a path holding a + are not pins
-# to R9 on any grep. The first command lists all three.
+# to R9 on any grep. The first command lists all three. Both read the uses key that starts the line: a branch
+# reference whose trailing comment names a pin or a local action goes to the first list, and so do a branch reference
+# with a blank before the colon and a pin that follows another key of a { } mapping; a pin under a quoted key goes to
+# R9's.
 step4="$work/step4"; mkdir -p "$step4/.github/workflows"
 sha=0123456789abcdef0123456789abcdef01234567
 printf 'on: push\r\njobs:\r\n  a:\r\n    runs-on: ubuntu-latest\r\n    steps:\r\n      - uses: example/bare@%s\r\n' "$sha" \
@@ -567,17 +571,22 @@ printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - u
   > "$step4/.github/workflows/lf.yml"
 printf '      - uses: example/odd/pa+th@%s\n      - uses: ./.github/actions/local\n      # - uses: example/retired@%s\n' \
   "$sha" "$sha" >> "$step4/.github/workflows/lf.yml"
+printf '      - uses: example/moving@main # uses: example/pinned@%s\n      - uses: example/moving@main # uses: ./x\n' \
+  "$sha" >> "$step4/.github/workflows/lf.yml"
+printf '      - "uses": example/quoted-key@%s\n      - uses : example/spaced-key@main\n' "$sha" \
+  >> "$step4/.github/workflows/lf.yml"
+printf '      - { with: { a: 1 }, uses: example/flow-second@%s }\n' "$sha" >> "$step4/.github/workflows/lf.yml"
 first4=$(kv_step "$KV080" 4 | sed -n 1p); second4=$(kv_step "$KV080" 4 | sed -n 2p)
 got1=$( (cd "$step4" && eval "$first4" </dev/null 2>/dev/null) | tr -d '\r' | sed 's#^\.github/workflows/##' \
-  | awk -F: '{ print $1 ":" $2 }' | sort | tr '\n' ' ')
+  | awk -F: '{ print $1 ":" $2 }' | sort -t: -k1,1 -k2,2n | tr '\n' ' ')
 got2=$( (cd "$step4" && eval "$second4" </dev/null 2>/dev/null) | tr -d '\r' | sed 's#^\.github/workflows/##' \
-  | awk -F: '{ print $1 ":" $2 }' | sort | tr '\n' ' ')
+  | awk -F: '{ print $1 ":" $2 }' | sort -t: -k1,1 -k2,2n | tr '\n' ' ')
 case "$got1|$got2" in
-  "crlf.yml:6 crlf.yml:9 lf.yml:6 lf.yml:7 |crlf.yml:7 crlf.yml:8 " | \
-  "crlf.yml:9 lf.yml:6 lf.yml:7 |crlf.yml:6 crlf.yml:7 crlf.yml:8 ")
+  "crlf.yml:6 crlf.yml:9 lf.yml:6 lf.yml:7 lf.yml:10 lf.yml:11 lf.yml:13 lf.yml:14 |crlf.yml:7 crlf.yml:8 lf.yml:12 " | \
+  "crlf.yml:9 lf.yml:6 lf.yml:7 lf.yml:10 lf.yml:11 lf.yml:13 lf.yml:14 |crlf.yml:6 crlf.yml:7 crlf.yml:8 lf.yml:12 ")
     echo "ok   KV-080 Step 4: R9 lists the pins it reads, the first command every other uses: line, CRLF ends included" ;;
-  *) echo "FAIL KV-080 Step 4: first command listed [$got1], want [crlf.yml:6 crlf.yml:9 lf.yml:6 lf.yml:7 ];" \
-       "R9 listed [$got2], want [crlf.yml:7 crlf.yml:8 ]"
+  *) echo "FAIL KV-080 Step 4: first command listed [$got1], want [crlf.yml:6 crlf.yml:9 lf.yml:6 lf.yml:7 lf.yml:10" \
+       "lf.yml:11 lf.yml:13 lf.yml:14 ]; R9 listed [$got2], want [crlf.yml:7 crlf.yml:8 lf.yml:12 ]"
      fail=1 ;;
 esac
 

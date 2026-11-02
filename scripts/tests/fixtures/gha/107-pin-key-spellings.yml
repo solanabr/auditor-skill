@@ -1,0 +1,15 @@
+# Fixture: uses: lines that a filter reading a later uses: would misfile: branch references whose trailing comment
+# names a full-SHA pin or a local action, and full-SHA pins under a quoted key or with a space before the colon.
+# R9 lists the two pins; KV-080 Step 4's first command lists the two branch references.
+name: f107-pin-key-spellings
+on: push
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: example/moving-action@main # uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+      - uses: example/moving-local@main # uses: ./.github/actions/local
+      - "uses": "example/quoted-key-action@5555555555555555555555555555555555555555" # v1.0.0
+      - uses : example/spaced-key-action@6666666666666666666666666666666666666666 # v1.0.0
