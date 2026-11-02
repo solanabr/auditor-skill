@@ -44,6 +44,8 @@ A rule such as `Bash("${CLAUDE_PLUGIN_ROOT}/scripts/git-ro.sh" *)` approves that
 
 Each tool confines itself to the directory it starts in, so the flows run every one of them from the working directory, never after a `cd`. Their suites run them on hostile arguments under macOS `/bin/bash` 3.2 and under bash 5 with GNU tools.
 
+**No `bin/` wrappers.** A plugin's `bin/` directory is on the Bash tool's `PATH` while the plugin is enabled, so the commands could call these tools by bare name. By the maintainer's decision of 2026-11-02, auditor-skill ships no `bin/`: the commands and their allow rules keep each tool's absolute `${CLAUDE_PLUGIN_ROOT}` path. claude.ai and Cowork do not install a plugin that has a top-level `bin/` (Claude Code's plugins reference), the `install.sh` and `solanabr/ai-kit` layouts need the absolute paths anyway, and `scripts/check-hygiene.sh` refuses a `bin/` at the plugin root ([CONTRIBUTING.md](../CONTRIBUTING.md#load-surfaces-at-the-plugin-root)).
+
 Each decision is asked once, in the flow, and not again as a permission prompt:
 
 - **Running the project's code** is your answer to `QUESTIONS.md` Q46 at intake. In the mode you chose, the runners build and test without asking again for each run. A run directory this session did not make holds an earlier run's answers, so a flow asks Q46 again before a step uses its `exec-mode`. `/auditor:audit-cycle` asks no question: it records native mode and, unless `AUDITOR_EXEC_MODE` is stricter, builds and tests the project on your machine.
