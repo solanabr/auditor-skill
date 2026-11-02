@@ -125,7 +125,10 @@
 #     the cargo, rustc or python3 it runs (asdf's `path:` version names any program):
 #     .tool-versions, .python-version, mise.toml, .mise.toml and their .local and
 #     environment forms (mise.<name>.toml), .miserc*, a mise/, .mise/ or .config/
-#     directory, and .prototools*.
+#     directory, and .prototools*. So is any file or directory whose name is not
+#     printable ASCII: a filesystem that folds case reads such a name as another, as
+#     macOS reads .tool-versions with a long s (U+017F) in place of an s as
+#     .tool-versions.
 #   * the crate is copied, without a target/ directory in any letter case, into a
 #     fresh scratch directory,
 #     `mktemp -d "${TMPDIR:-/tmp}/auditor-poc.XXXXXX"`, and built and tested there
@@ -1446,12 +1449,15 @@ VERSION_FILES=(-iname .tool-versions -o -iname .python-version -o -iname mise.to
   -o -iname .config -o -iname '.prototools*')
 
 # The first symbolic link, .cargo/, rust-toolchain* or version manager's file inside
-# the crate, in any letter case; prints nothing when there is none. copy_crate takes
-# none of them, so a crate holding one is refused rather than built in a shape it was
-# not written in.
+# the crate, in any letter case, or name that is not printable ASCII (a filesystem that
+# folds case reads such a name as another); prints nothing when there is none, and each
+# byte outside printable ASCII as ?, a newline in a name too. copy_crate takes none of
+# them, so a crate holding one is refused rather than built in a shape it was not
+# written in.
 crate_extra() {
   local found
-  found="$(cd "${HERE}" && find . \( -iname target -type d \) -prune -o \( -type l -o -iname .cargo -o -iname 'rust-toolchain*' -o "${VERSION_FILES[@]}" \) -print)"
+  found="$(cd "${HERE}" && LC_ALL=C find . \( -iname target -type d \) -prune -o \( -type l -o -iname .cargo -o -iname 'rust-toolchain*' -o "${VERSION_FILES[@]}" -o -name '*[! -~]*' \) -print0 \
+    | LC_ALL=C tr -c '\000 -~' '?' | LC_ALL=C tr '\000' '\n')"
   if [[ -n "${found}" ]]; then echo "${found%%$'\n'*}"; fi
   return 0
 }
@@ -1545,7 +1551,7 @@ release_lock() {
 
 extra="$(crate_extra)"
 if [[ -n "${extra}" ]]; then
-  echo "[PoC-ATTEMPTED] blocker: ${extra#./} inside the crate is a symbolic link, a .cargo/ directory, a rust-toolchain* file or a version manager's file (.tool-versions, .python-version, mise's config). run.sh builds a copy of the crate outside the target tree and never copies these; remove it (for a link, copy in the file itself)." >&2
+  echo "[PoC-ATTEMPTED] blocker: ${extra#./} inside the crate is a symbolic link, a .cargo/ directory, a rust-toolchain* file or a version manager's file (.tool-versions, .python-version, mise's config), or has a name that is not printable ASCII (shown with ? for each other byte), which a filesystem that folds case can read as one of those. run.sh builds a copy of the crate outside the target tree and never copies these; remove it or rename it (for a link, copy in the file itself)." >&2
   exit 3
 fi
 # The harness copy: the installation's run.sh checks the crate's shared-test-utils/ against its own

@@ -58,7 +58,8 @@
 #     call that goes through on the same bytes and changes the account;
 #   * where the crate builds (always a scratch copy outside the target tree with a
 #     pinned toolchain; a crate holding a symbolic link, .cargo/, rust-toolchain*, a
-#     version manager's file or tests/fixtures/<crate>.so is refused; run.sh starts
+#     version manager's file, a name that is not printable ASCII or
+#     tests/fixtures/<crate>.so is refused; run.sh starts
 #     every python3 of its own from /; BPF_OUT_DIR is cleared; an inherited
 #     CARGO_TARGET_DIR is honoured), and the exit codes (a failed build is 3, a failed
 #     verdict 1/2; a refusal prints one blocker line; a run that stops anywhere else,
@@ -1151,6 +1152,22 @@ mise/config.toml|mise
 .mise/conf.d/a.toml|.mise
 .prototools|.prototools
 tests/.Tool-Versions|tests/.Tool-Versions
+CASES
+# A name that is not printable ASCII is refused the same way, at any depth and on any filesystem: macOS,
+# which folds case, reads .tool-versions with a long s (U+017F) in place of an s as .tool-versions, which
+# the copy would take. The message shows each byte outside printable ASCII, a newline in a name too, as ?.
+while IFS='|' read -r entry named; do
+  [ -n "$entry" ] || continue
+  e="$(printf "$entry")"; mk_crate "$T/d-na"; mkdir -p "$T/d-na/$(dirname "$e")"
+  printf 'rust path:%s\npython path:%s\n' "$T/vm-tool" "$T/vm-tool" > "$T/d-na/$e"
+  refused "$T/d-na" "$named" "an entry named $named (not printable ASCII) inside the crate"
+  rm -rf "$T/d-na"
+done <<'CASES'
+.tool-ver\305\277ions|.tool-ver??ions
+mi\305\277e.toml|mi??e.toml
+.python-ver\305\277ion|.python-ver??ion
+tests/donn\303\251es/a.txt|tests/donn??es
+a\nb.txt|a?b.txt
 CASES
 # A target directory, in any letter case, is never copied: cargo would take the build
 # outputs in it for its own.

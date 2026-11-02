@@ -94,6 +94,8 @@ a version manager's file in the crate (`.tool-versions`, `.python-version`,
 `.prototools`, and `mise.toml` with mise's other config files and directories, from
 which an asdf, mise, pyenv or proto shim picks the `cargo`, `rustc` or `python3` it
 runs);
+a file or directory whose name is not printable ASCII (a filesystem that folds case,
+as macOS does, can read such a name as one of the above);
 a crate that is not its own workspace root (a `workspace` key under `[package]` that
 joins an outside workspace, whose manifest these checks do not read);
 a target other than the library (also a `cdylib`, for the crate itself) and the tests:
