@@ -48,9 +48,10 @@
 #       directory (scripts/rundir.sh new, ./scripts/..., bash scripts/...), where the tree under audit can put a
 #       file of its own; a span holding the path alone names the file.
 #   P   Wording the flows depend on stays in place (the PINS list): what keeps a long call, and the turn after
-#       it, inside a command's grant; every command that starts agents keeps them in the foreground and resumes
-#       in the turn an agent's result arrives in; and no body names the environment form of a PoC run
-#       (VULNERABLE_SO and the rest), which run.sh --crate does not read.
+#       it, inside a command's grant, and what asks Q46 again for a run directory an earlier session made; every
+#       command that starts agents keeps them in the foreground and resumes in the turn an agent's result
+#       arrives in; wording that copied an earlier run's mode forward stays gone (the GONE list); and no body
+#       names the environment form of a PoC run (VULNERABLE_SO and the rest), which run.sh --crate does not read.
 # The entry points are the tracked files under scripts/ (but scripts/tests/) and templates/ of mode 100755 that
 # start with a direct-exec shebang (#!/bin/bash or #!/usr/bin/env -S python3 -I), the binaries the crates
 # under tools/auditor-tools declare, and every path scripts/entrypoints.txt lists. Each check first runs on
@@ -949,6 +950,17 @@ commands/audit.md	A reused directory's `exec-mode` and its `intake.md` §5, §6 
 commands/threat-model.md	A reused directory's `exec-mode` and its `intake.md` §5, §6 and §8 are an earlier run's answers: ask `QUESTIONS.md` Q46 and Q47 again, confirm §5 and §6 with the human, and write the answers in their place before a step uses them.
 commands/hunt.md	directory's `exec-mode` is an earlier run's answer: ask for the mode again,
 commands/respond.md	run's answer: ask for the mode again, as step 5 does, before a runner uses it.
+commands/poc.md	A run directory this session did not make, an earlier session's or one that came with the tree, holds an earlier run's answers
+commands/poc.md	or `<R>` is a run directory this session did not make, ask `QUESTIONS.md` Q46 once, naming `<R>`
+commands/poc.md	a mode an earlier session recorded was that run's answer, so never hand it on unasked.
+commands/patch.md	A run directory this session did not make, an earlier session's or one that came with the tree, holds an earlier run's answers
+commands/patch.md	or `<R>` is a run directory this session did not make, ask `QUESTIONS.md` Q46 once, naming `<R>`
+commands/patch.md	a mode an earlier session recorded was that run's answer, so never hand it on unasked.
+commands/re-audit.md	check it with `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" check audit_<n>`: unless it prints `ok audit_<n>`, nothing is written in it
+commands/re-audit.md	`audit_<n>/exec-mode` and its `intake.md` §8 are an earlier run's answers, never copied
+commands/re-audit.md	have the human confirm that `audit_<n>` is a run directory they made, not one that came with the tree
+commands/re-audit.md	no crate of `audit_<n>` runs and nothing is written in it
+QUESTIONS.md	and again before a later session uses a run directory an earlier one made
 commands/audit-assist.md	only into `grep`, `head`, `tail` or `wc`
 commands/audit-cycle.md	only into `grep`, `head`, `tail` or `wc`
 commands/audit.md	only into `grep`, `head`, `tail` or `wc`
@@ -973,6 +985,14 @@ agents/context-builder.md	only into `grep`, `head`, `tail` or `wc`
 agents/economic-analyst.md	only into `grep`, `head`, `tail` or `wc`
 agents/peer-reviewer.md	only into `grep`, `head`, `tail` or `wc`
 PINS
+
+# Wording that must not come back, file <TAB> text: a flow never copies an earlier run's recorded mode forward.
+while IFS='	' read -r f gone; do
+  [ -n "$f" ] || continue
+  if [ -f "$f" ] && ! grep -qF -- "$gone" "$f"; then ok "gone from $f: $gone"; else bad "P $f says: $gone"; fi
+done <<'GONE'
+commands/re-audit.md	write the mode recorded at intake into
+GONE
 
 # Each command's resume text, and the root SKILL.md's, says how to answer the prompt its re-invocation brings.
 for f in commands/*.md SKILL.md; do
