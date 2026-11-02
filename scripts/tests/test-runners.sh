@@ -442,6 +442,59 @@ settings FAKE_NPM_CI_RC=1
 run "$TARGET" "$WT" -- npm-ci --run audit_1 --src .
 check "npm ci that fails (a lockfile out of step with package.json): exit 1" sh -c "[ '$RC' = 1 ] && grep -q '^>> npm-ci: npm ci --ignore-scripts failed (exit 1)' '$T/out'"
 settings
+# npm takes a project's settings from the .npmrc of the package root it finds from its working directory up,
+# a workspace's root among them, and expands ${VAR} in them from its environment, the proxy variables
+# included. fixtures/target/fake-npm.sh, first on PATH, reports each .npmrc from where it runs up to the top
+# of the copy. $T/npmwt is not a repository: a workspace whose top and app/ each hold a package.json, a lock
+# and a .npmrc naming ${HTTPS_PROXY}, with app/deep/.npmrc below them, and Cargo.toml and Anchor.toml.
+NW=$T/npmwt
+mkdir -p "$T/npmfake" "$NW/app/deep"
+sed "s#@T@#$T#g" "$FIXT/target/fake-npm.sh" > "$T/npmfake/npm" && chmod 700 "$T/npmfake/npm"
+printf '[package]\nname = "npmwt"\nversion = "0.1.0"\n' > "$NW/Cargo.toml"
+printf '[provider]\ncluster = "localnet"\n' > "$NW/Anchor.toml"
+printf '{\n  "name": "npmwt",\n  "version": "1.0.0",\n  "workspaces": ["app"]\n}\n' > "$NW/package.json"
+printf '{\n  "name": "app",\n  "version": "1.0.0"\n}\n' > "$NW/app/package.json"
+cp "$WT/package-lock.json" "$NW/package-lock.json"
+cp "$WT/package-lock.json" "$NW/app/package-lock.json"
+printf 'registry=https://npm.invalid/${HTTPS_PROXY}/\n' > "$NW/.npmrc"
+printf '//npm.invalid/:_authToken=${HTTPS_PROXY}\n' > "$NW/app/.npmrc"
+printf 'fund=false\n' > "$NW/app/deep/.npmrc"
+( cd "$NW" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null && printf 'native\n' > "$NW/audit_1/exec-mode"
+NOTE='>> note: npm ci takes no settings from the code under audit: target.sh removed these from the copy, and the registry and other settings they name do not apply:'
+run "$TARGET" "$NW" PATH="$T/npmfake:$FPATH" HTTPS_PROXY="$PROXY" -- npm-ci --run audit_1 --src .
+check "npm-ci where the copy's top holds a .npmrc naming \${HTTPS_PROXY}: npm ci finds no .npmrc" in_blocks '^== npm ci' '^npmrc: none$'
+check "... the run goes on, and a note names the .npmrc removed" sh -c "[ '$RC' = 0 ] && grep -qxF '$NOTE .npmrc' '$T/out'"
+run "$TARGET" "$NW" PATH="$T/npmfake:$FPATH" HTTPS_PROXY="$PROXY" -- npm-ci --run audit_1 --src . --dir app
+check "npm-ci --dir app, a workspace of the top: npm ci runs in app and finds no .npmrc up to the top" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF 'cwd: $S/src/app' '$T/calls' && grep -qxF 'npmrc: none' '$T/calls' && ! grep -q '^npmrc: [^n]' '$T/calls' && grep -qxF '$NOTE .npmrc, app/.npmrc' '$T/out'"
+run "$TARGET" "$NW" PATH="$T/npmfake:$FPATH" HTTPS_PROXY="$PROXY" -- anchor-test --run audit_1 --src .
+check "anchor-test's npm ci finds no .npmrc of the copy either" \
+  sh -c "[ '$RC' = 0 ] && grep -q '^== npm ci ' '$T/calls' && ! grep -q '^npmrc: [^n]' '$T/calls' && grep -qxF '$NOTE .npmrc' '$T/out'"
+# The real npm, where it is installed. The copy's .npmrc sets loglevel=info and a log heading made of
+# ${https_proxy}: npm run in that tree takes both, so its log lines start with the proxy URL; the npm ci of
+# target.sh takes neither, so no info line and no part of the proxy URL reaches its log.
+if PATH=$REAL_PATH command -v npm >/dev/null 2>&1 && PATH=$REAL_PATH command -v node >/dev/null 2>&1; then
+  NR=$T/npmreal
+  mkdir -p "$NR" "$T/npm-own/home"
+  : > "$T/npm-own/userconfig"
+  : > "$T/npm-own/globalconfig"
+  printf '{\n  "name": "npmreal",\n  "version": "1.0.0"\n}\n' > "$NR/package.json"
+  printf '{\n  "name": "npmreal",\n  "version": "1.0.0",\n  "lockfileVersion": 3,\n  "requires": true,\n  "packages": {\n    "": {\n      "name": "npmreal",\n      "version": "1.0.0"\n    }\n  }\n}\n' > "$NR/package-lock.json"
+  printf 'loglevel=info\nheading=npm-${https_proxy}\n' > "$NR/.npmrc"
+  ( cd "$NR" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null && printf 'native\n' > "$NR/audit_1/exec-mode"
+  own=$(cd "$NR" && env -i HOME="$T/npm-own/home" PATH="$REAL_PATH" https_proxy="$PROXY" \
+    npm_config_userconfig="$T/npm-own/userconfig" npm_config_globalconfig="$T/npm-own/globalconfig" \
+    npm_config_cache="$T/npm-own/cache" npm_config_logs_dir="$T/npm-own/logs" npm_config_update_notifier=false \
+    npm config get loglevel 2>&1 </dev/null)
+  case "$own" in *"npm-$PROXY info "*) took=yes ;; *) took=no ;; esac
+  check "real npm, run in a tree whose .npmrc sets loglevel=info and heading=npm-\${https_proxy}, prints the proxy URL" test "$took" = yes
+  run "$TARGET" "$NR" PATH="$REAL_PATH" https_proxy="$PROXY" -- npm-ci --run audit_1 --src .
+  log=$(sed -n 's/.*; log \(audit_1\/exec\/npm-ci-[0-9]*[.]log\).*/\1/p' "$T/out")
+  check "... while target.sh's real npm ci of that tree takes nothing from it: exit 0, no info line, no proxy URL in its log" \
+    sh -c "[ '$RC' = 0 ] && [ -n '$log' ] && [ -f '$NR/$log' ] && ! grep -q ' info using ' '$NR/$log' && ! grep -q 'CANARY-proxy' '$NR/$log' '$T/out' '$T/err'"
+else
+  skp "npm or node is not on PATH: target.sh's real npm ci case is skipped"
+fi
 
 # =================================================================================================
 # target.sh: the watchdog, signals and large output.

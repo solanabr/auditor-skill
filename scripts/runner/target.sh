@@ -54,10 +54,13 @@
 # them runs code from the copy: cargo fetch, started outside the copy so that the copy's .cargo/config is
 # not read either; cargo build-sbf --install-only, with the real HOME, where the platform tools live; and
 # npm ci --ignore-scripts, with npm's user and global config files empty, its cache and logs in the scratch
-# directory and its git the one on PATH. Only these get the proxy variables. Every build and test after them
-# runs offline (CARGO_NET_OFFLINE=true), without the proxy variables, in the throwaway HOME, whose
-# .cache/solana links to the real one. Anchor.toml's [toolchain] can still make anchor fetch another Solana
-# or Anchor release; that would land in the throwaway HOME, and offline it fails.
+# directory and its git the one on PATH, and no .npmrc of the copy: npm takes a project's settings from the
+# package root it finds from --dir up and expands ${VAR} in them from its environment, so target.sh removes
+# each .npmrc from the top of the copy down to --dir first, and says which. Only these get the proxy
+# variables. Every build and test after them runs offline (CARGO_NET_OFFLINE=true), without the proxy
+# variables, in the throwaway HOME, whose .cache/solana links to the real one. Anchor.toml's [toolchain] can
+# still make anchor fetch another Solana or Anchor release; that would land in the throwaway HOME, and
+# offline it fails.
 #
 # The watchdog. AUDITOR_RUN_TIMEOUT (whole seconds, 1 to 86400, default 1800) bounds the whole run, and a
 # --timeout no higher than it lowers the bound. Each step runs in a session of its own, under ulimit -t of
@@ -611,6 +614,26 @@ if [ -n "$DIR_ARG" ]; then
 fi
 at=${DIR_ARG:-the top of the copy}
 real_file() { [ -f "$1" ] && [ ! -L "$1" ]; }
+# no_npmrc: npm takes a project's settings from the .npmrc of the package root it finds from its working
+# directory up (a workspace's root above it among them), and expands ${VAR} in them from its environment, the
+# proxy variables included. Before npm ci, every .npmrc from the top of the copy down to AD goes, of any kind.
+no_npmrc() {
+  local d=$S/src rel="" rest=$DIR_ARG gone=""
+  while :; do
+    if [ -e "$d/.npmrc" ] || [ -L "$d/.npmrc" ]; then
+      rm -rf -- "$d/.npmrc" 2>&9
+      { [ ! -e "$d/.npmrc" ] && [ ! -L "$d/.npmrc" ]; } || finish 3 "cannot remove ${rel}.npmrc from the copy before npm ci"
+      gone=${gone:+$gone, }${rel}.npmrc
+    fi
+    [ -n "$rest" ] || break
+    d=$d/${rest%%/*}
+    rel=$rel${rest%%/*}/
+    case "$rest" in */*) rest=${rest#*/} ;; *) rest="" ;; esac
+  done
+  [ -n "$gone" ] || return 0
+  echo ">> note: npm ci takes no settings from the code under audit: target.sh removed these from the copy, and the registry and other settings they name do not apply: $gone"
+  printf '>> removed from the copy before npm ci: %s\n' "$gone" >&9
+}
 
 # ---- the downloads -------------------------------------------------------------------------------------
 case "$ACTION" in
@@ -639,6 +662,7 @@ esac
 if [ "$ACTION" = anchor-test ]; then
   if real_file "$AD/package-lock.json" || real_file "$AD/npm-shrinkwrap.json"; then
     command -v npm >/dev/null 2>&1 && command -v node >/dev/null 2>&1 || finish 3 "$at holds a package lock, and npm or node is not on PATH"
+    no_npmrc
     step "$AD" ${NET[@]+"${NET[@]}"} ${NPM[@]+"${NPM[@]}"} npm ci --ignore-scripts --no-audit --no-fund
     fetched "npm ci --ignore-scripts, the install of the JavaScript dependencies,"
   elif real_file "$AD/yarn.lock" || real_file "$AD/pnpm-lock.yaml" || real_file "$AD/bun.lock"; then
@@ -701,6 +725,7 @@ print(path)' "$S/metadata.json" "$PACKAGE" "$S/src") 2>/dev/null) && [ -n "$mp" 
     outcome "anchor test"
     finish 0 "ok (exit 0)" ;;
   npm-ci)
+    no_npmrc
     step "$AD" ${NET[@]+"${NET[@]}"} ${NPM[@]+"${NPM[@]}"} npm ci --ignore-scripts --no-audit --no-fund
     outcome "npm ci --ignore-scripts"
     finish 0 "ok (exit 0)" ;;
