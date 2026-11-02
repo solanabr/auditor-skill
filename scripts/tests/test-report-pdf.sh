@@ -5,8 +5,9 @@
 # file fixtures/report-pdf/cases.txt, run under each bash on the machine (/bin/bash and the bash running
 # this suite, when they differ), which must print the same. Stand-ins take the place of pandoc and of the
 # TeX engines; where pandoc 2.15 or later is installed, the filter also runs in the real pandoc against
-# remote-image, raw-TeX, YAML and unclosed-comment fixtures (skipped, never failed, without it). Needs git;
-# no network.
+# remote-image, raw-TeX, YAML and unclosed-comment fixtures, and where a TeX engine is installed, a probe
+# shows that the engine, given the flag and settings report-to-pdf.sh gives it, runs no shell command and
+# writes no file at an absolute path (each skipped, never failed, without the tool). Needs git; no network.
 # Usage (from the repo root): bash scripts/tests/test-report-pdf.sh
 set -uo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd -P)
@@ -58,11 +59,13 @@ for a in "$@"; do [ "$prev" = -o ] && out=$a; prev=$a; done
 printf '%%PDF-1.4 stand-in for %s\n' "$out" > "$out"
 EOF
 # The engine stand-in, as xelatex, lualatex or pdflatex: it records its arguments and the TeX settings
-# of its environment, keeps the .tex it was given in $FAKE_TEX, and writes <outdir>/<name>.pdf.
+# of its environment, keeps the .tex it was given in $FAKE_TEX, and writes <outdir>/<name>.pdf. Given
+# FAKE_ENGINE_TOUCH, it also creates that file, as an engine that wrote outside its directory would.
 cat > "$T/engine" <<'EOF'
 #!/bin/sh
 { printf '%s' "${0##*/}"; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\n'
   printf 'env openin_any=%s openout_any=%s shell_escape=%s\n' "${openin_any-unset}" "${openout_any-unset}" "${shell_escape-unset}"; } >> "$FAKE_LOG"
+[ -z "${FAKE_ENGINE_TOUCH:-}" ] || : > "$FAKE_ENGINE_TOUCH"
 outdir=.; last=""
 while [ $# -gt 0 ]; do
   case "$1" in -output-directory) outdir=$2; shift 2 ;; *) last=$1; shift ;; esac
@@ -348,13 +351,27 @@ EOF
   # The whole run, with the real pandoc and the engine stand-in.
   mkdir -p "$T/realbin"; ln -s "$REALPANDOC" "$T/realbin/pandoc"
   cp "$F" "$W/$R/REPORT.md"; : > "$FAKE_LOG"; rm -f "$FAKE_TEX" "$W/$R/REPORT.pdf"
+  tree "$W" > "$T/w.before"; tree "$HOME" > "$T/home.before"
   run "$T/realbin:$T/xe:$T/tools" "$R/REPORT.md"
   check "real pandoc: the report renders (exit 0) with the engine stand-in" sh -c "[ $RC = 0 ] && grep -q '^%PDF-1.4 engine stand-in' '$W/$R/REPORT.pdf'"
   check "real pandoc: the engine got -no-shell-escape" sh -c "grep '^xelatex ' '$FAKE_LOG' | grep -qF '[-no-shell-escape]'"
   check "real pandoc: ... and the paranoid settings" has "$FAKE_LOG" "env openin_any=p openout_any=p shell_escape=f"
   check "real pandoc: the .tex the engine got has no image, raw TeX or math from the report" \
     sh -c "[ -s '$FAKE_TEX' ] && ! grep -qF -e '\\includegraphics' -e '\\write18' -e '\\special{' -e '\\input{/etc' '$FAKE_TEX'"
-  check "real pandoc: nothing was written outside the run directory" sh -c "[ ! -e '$W/pwned' ] && [ ! -e '$W/pwned-block' ] && [ ! -e '$T/pwned' ]"
+  # What the run left outside its scratch directory, which it removes: the PDF beside the report, and
+  # nothing else. The comparison must see a file the engine writes in the working directory, as the
+  # stand-in does given FAKE_ENGINE_TOUCH.
+  changed() { diff "$1" "$2" | sed -n 's/^[<>] //p' | LC_ALL=C sort | tr '\n' ' '; }
+  tree "$W" > "$T/w.after"; tree "$HOME" > "$T/home.after"
+  check "real pandoc: the run adds REPORT.pdf and nothing else to the working directory" \
+    test "$(changed "$T/w.before" "$T/w.after")" = "./$R/REPORT.pdf "
+  check "real pandoc: ... and nothing to HOME" cmp -s "$T/home.before" "$T/home.after"
+  rm -f "$W/$R/REPORT.pdf"; tree "$W" > "$T/w.before"
+  FAKE_ENGINE_TOUCH="$W/planted" run "$T/realbin:$T/xe:$T/tools" "$R/REPORT.md"
+  tree "$W" > "$T/w.after"
+  check "real pandoc: ... a comparison that sees a file the engine writes there" \
+    test "$(changed "$T/w.before" "$T/w.after")" = "./$R/REPORT.pdf ./planted "
+  rm -f "$W/planted"
   # YAML blocks quoted from the audited repo, in a blockquote and at the top level: as metadata they would
   # replace the body, put Lua into \directlua through a font fallback, and set the document class and
   # the PDF trailer.
@@ -392,6 +409,53 @@ EOF
   check "real pandoc, YAML in the report: the document class and the PDF trailer stay the template's" \
     sh -c "[ -s '$T/preamble.tex' ] && ! grep -q -e '{standalone}' -e 'trailer' '$T/preamble.tex'"
   check "real pandoc, YAML in the report: it prints as text" sh -c "grep -q 'body:' '$FAKE_TEX' && grep -q 'documentclass:' '$FAKE_TEX'"
+fi
+
+# =================================================================================================
+# The engine's own guard, where a TeX engine is installed: a .tex that runs a shell command and opens a
+# file at an absolute path for writing, compiled with the flag and settings report-to-pdf.sh gives the
+# engine (checked above), writes neither file. Each check counts only when the same .tex, compiled with
+# shell escape on and openout_any=a, does write its file; otherwise it is skipped.
+# =================================================================================================
+ENG=""
+for e in xelatex lualatex pdflatex; do
+  p=$(command -v "$e" 2>/dev/null) && case "$p" in /*) ENG=$p; break ;; esac
+done
+if [ -z "$ENG" ]; then
+  skp "the engine's own guard: no xelatex, lualatex or pdflatex on PATH"
+elif case "$T" in *[!A-Za-z0-9_./-]*) true ;; *) false ;; esac; then
+  skp "the engine's own guard: the temp path holds a character TeX would read as markup: $T"
+else
+  # probe <dir> <shell_escape> <openout_any> <shell-escape flag>: compile probe.tex in <dir>.
+  probe() {
+    rm -rf "$T/outside" && mkdir -p "$1" "$T/outside" || return 1
+    cat > "$1/probe.tex" <<EOF
+\documentclass{article}
+\begin{document}
+\immediate\write18{touch $T/outside/shell}
+\newwrite\probeout
+\immediate\openout\probeout=$T/outside/openout.tex
+\immediate\write\probeout{x}
+\immediate\closeout\probeout
+probe
+\end{document}
+EOF
+    (cd "$1" && unset TEXMFOUTPUT && export openin_any=p openout_any="$3" shell_escape="$2" TMPDIR="$1" &&
+      exec "$ENG" "$4" -interaction=nonstopmode -halt-on-error probe.tex) >/dev/null 2>&1 </dev/null
+  }
+  probe "$T/probe-open" t a -shell-escape
+  opened=""
+  [ -e "$T/outside/shell" ] && opened="shell"
+  [ -e "$T/outside/openout.tex" ] && opened="$opened openout"
+  probe "$T/probe-shut" f p -no-shell-escape
+  case "$opened" in
+    *shell*) check "the engine's own guard (${ENG##*/}): no shell command runs" test ! -e "$T/outside/shell" ;;
+    *) skp "the engine's own guard: ${ENG##*/} ran no shell command even with shell escape on" ;;
+  esac
+  case "$opened" in
+    *openout*) check "the engine's own guard (${ENG##*/}): no file is written at an absolute path" test ! -e "$T/outside/openout.tex" ;;
+    *) skp "the engine's own guard: ${ENG##*/} wrote no file at an absolute path even with openout_any=a" ;;
+  esac
 fi
 
 # =================================================================================================
