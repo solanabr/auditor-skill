@@ -139,6 +139,8 @@
 #     (the crate, shared-test-utils, any other member), and a build script (`build =
 #     false` turns one off), a proc-macro package, a Cargo.toml inside the crate that
 #     is not a member, or a [patch] or [replace] table in a manifest stops the run.
+#     So does a cargo-features key: on a nightly cargo it lets the manifest choose a
+#     linker, rustflags or a codegen backend.
 #     The crate must be its own workspace root, as the template's [workspace] makes
 #     it: a `workspace` key under [package] that joins an outside workspace stops the
 #     run too, since these checks never read that workspace's manifest (its [patch]
@@ -918,8 +920,11 @@ def crate(meta_path, root, rule=""):
             refuse("cannot read %s." % os.path.relpath(manifest, root))
         for number, line in enumerate(text.lstrip("﻿").splitlines(), 1):
             m = HEAD.match(line) or PAIR.match(line)
-            if m and unquote(m.group(1)) in ("patch", "replace"):
+            key = unquote(m.group(1)) if m else ""
+            if key in ("patch", "replace"):
                 refuse("%s:%d holds a [patch] or [replace] table, which builds other code in place of a dependency: run.sh refuses it in either mode. Depend on the crate itself, at the version you need." % (os.path.relpath(manifest, root), number))
+            if key == "cargo-features":
+                refuse("%s:%d holds a cargo-features key, with which a nightly cargo lets the manifest choose code that runs at build time (a linker, rustflags, a codegen backend): run.sh refuses it in either mode." % (os.path.relpath(manifest, root), number))
     if not lib or not re.match(r"^[A-Za-z0-9_]+$", lib):
         refuse("Cargo.toml has no [lib] target with a plain name, so run.sh cannot name the program it places.")
     print(lib)

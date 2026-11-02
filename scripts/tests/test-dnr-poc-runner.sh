@@ -29,6 +29,7 @@
 #     Cargo.toml that is not a member, a [patch] or [replace] table) is refused before
 #     anything compiles; `build = false` is honoured;
 #     so is a crate that is not its own workspace root;
+#     so is a cargo-features key;
 #   * the harness binding: the crate depends on its own shared-test-utils/ under the
 #     import name shared_test_utils, no other dependency takes that name in either
 #     spelling, and each arm's build compiles that copy and no other;
@@ -896,6 +897,28 @@ done
 mk_patched "$T/patch-mention" Cargo.toml "$(printf '# [patch.crates-io]\n[package.metadata.notes]\ntext = "see [patch.crates-io]"\npatch-level = 1')"
 code="$(gate "$T/patch-mention" "$NATIVE" "$VULN")"
 [ "$code" = 0 ] && ok "a comment, a string and a patch-level key that only mention [patch] -> not refused" || { bad "mentions of [patch]: exit $code"; cat "$T/out" >&2; }
+# A cargo-features key, with which a nightly cargo lets the manifest choose code that runs at build time (a
+# linker in [profile] rustflags, a codegen backend), in any TOML spelling, in the root manifest or a
+# member's, is refused before anything compiles; a comment, a string or another key that only mentions it
+# passes.
+n=0
+while IFS='|' read -r where text; do
+  [ -n "$where" ] || continue
+  n=$((n + 1)); mk_patched "$T/cf-$n" Cargo.toml ""
+  printf '%s\n%s\n' "$text" "$(cat "$T/cf-$n/$where")" > "$T/cf-$n/$where.new" && mv "$T/cf-$n/$where.new" "$T/cf-$n/$where"
+  code="$(gate "$T/cf-$n" "$NATIVE" "$VULN")"
+  [ "$code" = 3 ] && grep -qF "$where:1 holds a cargo-features key" "$T/out" && nothing_built && one_blocker \
+    && ok "refused before anything compiles: $where starts with $text" || { bad "$where with $text: exit $code"; cat "$T/out" >&2; }
+done <<'CASES'
+Cargo.toml|cargo-features = ["profile-rustflags"]
+Cargo.toml|"cargo-features" = ["codegen-backend"]
+Cargo.toml|'cargo-features' = ["profile-rustflags"]
+Cargo.toml|"cargo-features" = ["profile-rustflags"]
+shared-test-utils/Cargo.toml|cargo-features = ["profile-rustflags"]
+CASES
+mk_patched "$T/cf-mention" Cargo.toml "$(printf '# cargo-features = ["profile-rustflags"]\n[package.metadata.notes]\ntext = "cargo-features"\ncargo-features-note = 1')"
+code="$(gate "$T/cf-mention" "$NATIVE" "$VULN")"
+[ "$code" = 0 ] && ok "a comment, a string and a key that only mention cargo-features -> not refused" || { bad "mentions of cargo-features: exit $code"; cat "$T/out" >&2; }
 # The crate is its own workspace root: one that belongs to an outside workspace (a workspace key under
 # [package]) would build into that workspace's target directory under its [patch], which these checks
 # never read. cargo metadata names the root; any other than the scratch copy is refused before anything
@@ -3425,6 +3448,18 @@ workspace = \"$WSR\"
     && [ ! -e "$WSR/target" ] && [ ! -e "$WSR/Cargo.lock" ] && ! grep -q 'Compiling' "$T/out" \
     && ok "real cargo: a crate that joins an outside workspace -> exit 3 before anything compiles, nothing built or locked there" \
     || { bad "real cargo, an outside workspace: exit $code"; cat "$T/out" >&2; }
+  # On a nightly cargo a manifest's cargo-features can choose a linker or rustflags: the crate check refuses
+  # the key before anything compiles. (A stable cargo refuses the manifest itself.)
+  if [ "$(rustup toolchain list 2>/dev/null | grep -c '^nightly')" -gt 0 ]; then
+    mk_e2e "$T/e-cf"
+    printf 'cargo-features = ["profile-rustflags"]\n\n%s\n\n[profile.dev]\nrustflags = ["--cfg", "poc_canary"]\n' "$(cat "$T/e-cf/Cargo.toml")" > "$T/e-cf/Cargo.toml.new" \
+      && mv "$T/e-cf/Cargo.toml.new" "$T/e-cf/Cargo.toml"
+    code="$(e2e "$T/e-cf" VULNERABLE_SO="$SB-takeover.so" RUSTUP_TOOLCHAIN=nightly)"
+    [ "$code" = 3 ] && grep -qF 'Cargo.toml:1 holds a cargo-features key' "$T/out" && one_blocker && ! grep -q 'Compiling' "$T/out" \
+      && ok "real cargo, nightly: a manifest with cargo-features -> exit 3 before anything compiles" || { bad "real cargo, nightly cargo-features: exit $code"; cat "$T/out" >&2; }
+  else
+    echo "note: no nightly toolchain; the real-cargo cargo-features check is skipped (the shim checks above still ran)"
+  fi
 
   # The installation's copy with real cargo. The crate sits in a run directory, its prebuilt bytes under
   # exec/, and it depends on a path crate outside it whose build script records the environment it is
