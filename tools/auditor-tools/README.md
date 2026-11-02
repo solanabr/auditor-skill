@@ -169,9 +169,10 @@ line, and never guessed.
 - A line it cannot place ends the read, and `unknown` says the file is not read
   from that line to the end: YAML that does not parse (a mismatched or unclosed
   bracket, an escape YAML does not define, a plain scalar holding `: `, a block
-  scalar line indented less than its first, a tab in indentation), or a character
-  YAML parsers refuse or read differently (a control character; a NEL, LS or PS,
-  which YAML 1.1 parsers read as a line break; a byte order mark past the start).
+  scalar line indented less than its first, or a blank line before its first
+  indented more, a tab in indentation), or a character YAML parsers refuse or
+  read differently (a control character; a NEL, LS or PS, which YAML 1.1 parsers
+  read as a line break; a byte order mark past the start).
 - A modeled key (`on`, `jobs`, `name`, `permissions`; a job's `if`, `uses`,
   `permissions`, `steps`; a step's `if`, `uses`, `run`, `with`, `env`) written
   twice is listed: a list (triggers, jobs, steps, …) keeps the entries of both,

