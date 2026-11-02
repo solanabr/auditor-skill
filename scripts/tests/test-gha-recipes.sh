@@ -159,7 +159,7 @@ expected() {
   case "$1" in
     R1) echo "01 08 10 16 40 55 56 58 64 65 66 69 108" ;;
     R2) echo "02 04" ;;
-    R3) echo "03 12 13 17 25 26 27 28 46 47 48 49 74" ;;
+    R3) echo "03 12 13 17 25 26 27 28 46 47 48 49 74 104" ;;
     R4) echo "05 06 21 29 30 41" ;;
     R5) echo "06 07 15" ;;
     R6) echo "05 07 08 14 15 16 20 31 32 50 75 105" ;;
@@ -167,7 +167,7 @@ expected() {
     R8) echo "01 08 11 14 33 34 54 57 67 68 72 73 108" ;;
     R9) echo "01 05 07 08 11 12 15 18 19 20 21 22 23 24 35 36 38 39 42 43 44 45 51 52 53 60 61 62 63 70 71 76 98 107" ;;
     K116-1) echo "01 08 11 14 33 34 54 57 67 68 72 73 108" ;;
-    K139-1) echo "01 02 03 04 08 10 11 14 16 17 22 23 25 26 33 40 48 49 53 55 56 58 59 62 64 65 66 69 71 74 108" ;;
+    K139-1) echo "01 02 03 04 08 10 11 14 16 17 22 23 25 26 33 40 48 49 53 55 56 58 59 62 64 65 66 69 71 74 104 108" ;;
     K140-6) echo "35 36 37 38 39 42 43 44 45" ;;
     K140-7a) echo "80 81 82 83 84 85 93 95 96 97 101" ;;
     K140-7b) echo "80 82 83 84 85 93 95 96 97 101" ;;
@@ -178,7 +178,8 @@ expected() {
 
 # The lines each recipe must flag in its own fixtures (<id> <fixture> <line>...); its other fixtures are listed
 # whole in expected(), and its near misses are in neither.
-LINES="R7 102-input-and-matrix-ref.yml 19 29
+LINES="R3 104-denylist-spellings.yml 11 16 21 26 31 36 41
+R7 102-input-and-matrix-ref.yml 19 29
 R7 actions/103-input-ref-composite-action.yml 13
 R7 105-index-syntax-refs.yml 20 30 37 38
 R8 108-agent-option-backslash.yml 14
@@ -332,9 +333,9 @@ done <<< "$LINES"
 # other than digits (A-Z), an equivalence class, a back-reference, a word anchor, or a letter in a bracket under -i.
 # With one of them, every line that may match goes to its regex matcher, which starts again at each position of the
 # line, and one long line takes minutes. So every pattern a recipe gives grep stays out of that list, and holds no
-# backslash inside a bracket, which Claude Code's grep (ugrep) reads as an escape. R3, whose copy is KV-139 Step 4,
-# and the KV-116 and KV-139 locators are not converted yet.
-LINEAR_PENDING="R3 K116-1 K139-1"
+# backslash inside a bracket, which Claude Code's grep (ugrep) reads as an escape. The KV-116 and KV-139 locators
+# are not converted yet.
+LINEAR_PENDING="K116-1 K139-1"
 patterns_of() { # patterns_of <command line>: "<1 under -i, else 0> <pattern>" for each pattern of each grep it runs
   : > "$work/patterns"
   (
@@ -421,10 +422,13 @@ done
 # A copy is the recipe's code lines as one run of whole lines, in order. The step may hold other commands
 # around a recipe of one command; a recipe of two is the whole code of its step, so "the first" and "the second"
 # name the same lines in both files.
+# KV-139 Step 4 still holds R3 as it was before R3 read a line in one pass; that copy moves with the KV-139 locator.
+COPY_PENDING="R3"
 nl='
 '
 ncopy=0
 while read -r id file step; do
+  case " $COPY_PENDING " in *" $id "*) echo "SKIP copy of $id in $file step $step: not converted yet"; continue ;; esac
   ncopy=$((ncopy + 1))
   want=$(recipe_block "$id")
   have=$(kv_block "$file" "$step")
