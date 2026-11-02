@@ -33,9 +33,10 @@
 #   - a tree find cannot read in full;
 #   - a repository git cannot place.
 #
-# A CLAUDE.md, a CLAUDE.local.md or a .claude/rules directory is not refused. Claude Code reads them as
-# project instructions, so each gets a "preflight: note:" line on stdout (at most 20, then a count), and
-# the run ends with "preflight: ok: ...".
+# A CLAUDE.md, a CLAUDE.local.md, an AGENTS.md or a .claude/rules directory is not refused. Claude Code
+# reads them as project instructions (an AGENTS.md or .claude/AGENTS.md from v2.1.277, by default where no
+# CLAUDE.md is in or above the working directory), so each gets a "preflight: note:" line on stdout (at
+# most 20, then a count), and the run ends with "preflight: ok: ...".
 #
 # Exit: 0 clean · 64 refused, with one stderr line, "preflight: refused: <reason>", and nothing on stdout.
 # Needs bash >= 3.2, env, git, find, wc, head, tr, sort and sed, and jq when a .claude/settings*.json is present.
@@ -63,7 +64,7 @@ TESTS=(-iname .claude -type l
         -o -ipath '*/.claude/rules' \) \( -type d -o -type l \)
   -o -ipath '*/.claude/scheduled_tasks.json'
   -o -ipath '*/.claude/settings.json' -o -ipath '*/.claude/settings.local.json'
-  -o \( -iname claude.md -o -iname claude.local.md \) ! -type d)
+  -o \( -iname claude.md -o -iname claude.local.md -o -iname agents.md \) ! -type d)
 
 refuse() { confine_refuse "$*"; }   # refuse <words>...: one line, the words joined by spaces
 
@@ -87,7 +88,7 @@ settings_ok() {
 HIT='' NOTES='' NNOTES=0
 settle() {
   case "${2##*/}" in
-    [cC][lL][aA][uU][dD][eE].[mM][dD]|[cC][lL][aA][uU][dD][eE].[lL][oO][cC][aA][lL].[mM][dD]|[rR][uU][lL][eE][sS])
+    [cC][lL][aA][uU][dD][eE].[mM][dD]|[cC][lL][aA][uU][dD][eE].[lL][oO][cC][aA][lL].[mM][dD]|[aA][gG][eE][nN][tT][sS].[mM][dD]|[rR][uU][lL][eE][sS])
       NNOTES=$((NNOTES + 1))
       confine_shown "$1"
       NOTES="$NOTES$CONFINE_SHOWN"$'\n'

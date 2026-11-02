@@ -98,5 +98,6 @@
 0		d:.git/.claude/skills	j:.git/.mcp.json={}	d:sub/.git/.claude/agents	d:a/b/.git/hooks/x/.claude/commands
 0		d:.claude/rules
 0		f:CLAUDE.md	f:.claude/CLAUDE.md	f:docs/claude.md	f:CLAUDE.local.md
+0		f:AGENTS.md	f:.claude/AGENTS.md	f:sub/agents.md	d:x/AGENTS.md
 0		d:CLAUDE.md
 0		l:loop=.	l:a/up=..

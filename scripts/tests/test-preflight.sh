@@ -134,7 +134,7 @@ done < "$CASES"
 check "the case file has cases ($ncase)" test "$ncase" -gt 80
 
 # =================================================================================================
-# Notes: CLAUDE.md, CLAUDE.local.md and .claude/rules, sorted, at most 20, then a count.
+# Notes: CLAUDE.md, CLAUDE.local.md, AGENTS.md and .claude/rules, sorted, at most 20, then a count.
 # =================================================================================================
 N=$(newdir)
 build "$N" f:CLAUDE.md f:docs/claude.md d:pkg/.claude/rules f:.claude/CLAUDE.md f:CLAUDE.LOCAL.md \
@@ -146,6 +146,18 @@ $(note CLAUDE.LOCAL.md)
 $(note CLAUDE.md)
 $(note docs/claude.md)
 $(note pkg/.claude/rules)
+$OK_LINE"
+check "... and nothing on stderr" test ! -s "$T/err"
+# Claude Code reads every AGENTS.md and .claude/AGENTS.md as instructions where no CLAUDE.md is above it,
+# and a subdirectory's AGENTS.md once it reads a file there.
+N2=$(newdir)
+build "$N2" f:AGENTS.md f:.claude/AGENTS.md f:pkg/sub/agents.md l:docs/AGENTS.md=../AGENTS.md d:dir/AGENTS.md/x
+run "$N2"
+check "an AGENTS.md gets a note too: in .claude, at any depth, in any letter case and as a link, never as a directory" \
+  test "$(cat "$T/out")" = "$(note .claude/AGENTS.md)
+$(note AGENTS.md)
+$(note docs/AGENTS.md)
+$(note pkg/sub/agents.md)
 $OK_LINE"
 check "... and nothing on stderr" test ! -s "$T/err"
 # 400 notes of about 190 bytes each: over 64 KiB through sort, which head stops reading after 20.
@@ -238,6 +250,13 @@ run "$P/r5/x/y"
 check "a parent's allowed settings pass, its notes are listed, and a sibling's config is not a parent's" \
   test "$RC:$(cat "$T/out")" = "0:$(note ../../CLAUDE.md)
 $(note ../.claude/CLAUDE.md)
+$OK_LINE"
+build "$P" d:r9/x f:r9/AGENTS.md f:r9/.claude/AGENTS.md f:r9/docs/AGENTS.md
+git init -q "$P/r9"
+run "$P/r9/x"
+check "a parent's AGENTS.md and .claude/AGENTS.md get notes, a sibling's does not" \
+  test "$RC:$(cat "$T/out")" = "0:$(note ../.claude/AGENTS.md)
+$(note ../AGENTS.md)
 $OK_LINE"
 build "$P" d:r6/x d:r6/.claude/notes d:r6/docs/.claude/agents
 git init -q "$P/r6"
