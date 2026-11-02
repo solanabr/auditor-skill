@@ -139,7 +139,7 @@ expected() {
     K140-6) echo "35 36 37 38 39 42 43 44 45" ;;
     K140-7a) echo "80 81 82 83 84 85 93 95 96 97" ;;
     K140-7b) echo "80 82 83 84 85 93 95 96 97" ;;
-    K080-8a) echo "78 98" ;;
+    K080-8a) echo "78 98 100" ;;
     K080-8b) echo "86 87 88 89 90 94" ;;
   esac
 }
@@ -150,6 +150,7 @@ LINES="R9 76-pin-forms.yml 11 12 13 14 16 17 19
 R9 98-pin-and-runner-yaml-extension.yaml 11
 K080-8a 78-self-hosted-runners.yml 9 13 17 23 27 34
 K080-8a 98-pin-and-runner-yaml-extension.yaml 9
+K080-8a 100-arc-runner-labels.yml 9 13 17 21 25 29 33
 K080-8b infra/86-runner-group-public.tf 2 5
 K080-8b infra/87-arc-runner-deployment.yaml 11
 K080-8b infra/88-arc-scale-set-values.yml 4
@@ -225,10 +226,11 @@ same_files() {
     "$(printf '%s\n' "$second" | grep -oE -- "--include='[^']*'")" ]
 }
 
-# The two-digit fixture prefixes in a recipe's output, ascending, on one line. A recipe rooted at . prints its
-# paths after ./.
+# The fixture prefixes (two or three digits) in a recipe's output, in ascending order, on one line. A recipe
+# rooted at . prints its paths after ./.
 prefixes() {
-  sed -E 's#^\./##; s#^(\.github/(workflows|actions)|infra)/##; s#^([0-9][0-9])-.*#\1#' | sort -u | tr '\n' ' ' | sed 's/ $//'
+  sed -E 's#^\./##; s#^(\.github/(workflows|actions)|infra)/##; s#^([0-9][0-9][0-9]?)-.*#\1#' | sort -n -u | tr '\n' ' ' \
+    | sed 's/ $//'
 }
 
 fail=0; nrec=0
