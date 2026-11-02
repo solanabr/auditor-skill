@@ -420,6 +420,23 @@ if mkdir -p "$RW/wtnl/z"$'\n'"$RW/wtnl" "$RW/wtnl/.git"$'\n'"$RW/wtnl/z" 2>/dev/
 else
   skp "this filesystem refuses a newline in a directory name: the core.worktree line-end case"
 fi
+# A commondir file naming a repository outside: git takes objects, refs and config from the common
+# directory, which must lie inside as the git directory does.
+mkrepo "$RW/cdir"; put "$RW/cdir" f cdir; commit "$RW/cdir" -m cdir
+printf '%s/.git\n' "$O" > "$RW/cdir/.git/commondir"
+lib "$RW" 'confine_repo cdir R'
+check "a git directory whose commondir names a repository outside is refused" \
+  refused 'R keeps its git directory outside the working directory: cdir'
+# A linked worktree of a repository inside: a common directory apart from its git directory, checked too.
+mkrepo "$RW/main"; put "$RW/main" f main; commit "$RW/main" -m main
+git -C "$RW/main" worktree add -q -b linked "$RW/linkedwt" >/dev/null 2>&1
+lib "$RW" 'confine_repo linkedwt R; printf "%s|%s" "$CONFINE_GIT_DIR" "$CONFINE_COMMON_DIR"'
+check "a linked worktree of a repository inside is accepted, with its common directory apart" \
+  out_is "$RW/main/.git/worktrees/linkedwt|$RW/main/.git"
+ln -s "$O/.git/HEAD" "$RW/main/.git/refs/heads/elsewhere"
+lib "$RW" 'confine_repo linkedwt R'
+check "... and refused once that common directory holds a symbolic link" refused 'R has a symbolic link in its git directory: linkedwt'
+rm "$RW/main/.git/refs/heads/elsewhere"
 # Named pipes: git opens them with a blocking open and waits for good, so each is refused before git
 # starts. lib_bounded gives a run 10 s, then reads 142 and opens the pipe for writing, so a git still
 # waiting there (as before this check existed) goes on and ends.

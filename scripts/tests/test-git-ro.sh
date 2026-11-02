@@ -226,10 +226,11 @@ EOF
 mkdir -p "$WT/escape" "$WT/escape-link"
 printf 'gitdir: %s/.git\n' "$O" > "$WT/escape/.git"
 ln -s "$O/.git" "$WT/escape-link/.git"
-for d in inner-link alt worktree; do mkrepo "$WT/$d"; put "$WT/$d" f.txt "$d"; commit "$WT/$d" -m "$d"; done
+for d in inner-link alt worktree cdir; do mkrepo "$WT/$d"; put "$WT/$d" f.txt "$d"; commit "$WT/$d" -m "$d"; done
 ln -s "$O/.git/refs/heads/main" "$WT/inner-link/.git/refs/heads/outside"
 printf '%s/.git/objects\n' "$O" > "$WT/alt/.git/objects/info/alternates"
 git -C "$WT/worktree" config core.worktree "$O"
+printf '%s/.git\n' "$O" > "$WT/cdir/.git/commondir"
 ln -s inner-link "$WT/linkrepo"
 
 # Sanity: the fixture really is hostile for plain git (a git that does not run one of these is skipped).
