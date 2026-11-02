@@ -604,6 +604,15 @@ BOUND=50 bounded /dev/null script "$RW/links" rundir.sh new audit
 check "rundir.sh new audit in a repository whose git directory holds 2000 links ends within 5 s" sh -c "[ '$RC' = 0 ] && [ \"\$(cat '$T/out')\" = audit_1 ]"
 BOUND=50 bounded /dev/null lib "$RW" 'confine_repo links R'
 check "... and confine_repo refuses that git directory for its links within 5 s" refused 'R has a symbolic link in its git directory: links'
+# git makes no name with a line end, and the links are read one to a line: such a name is refused.
+mkrepo "$RW/nlname"; put "$RW/nlname" f x; commit "$RW/nlname" -m x
+if : > "$RW/nlname/.git/a"$'\n'"b" 2>/dev/null; then
+  lib "$RW" 'confine_repo nlname R'
+  check "a git directory holding a name with a line end is refused" \
+    refused "a name in the git directory holds a line end: $(shown "$RW/nlname/.git")"
+else
+  skp "this filesystem refuses a newline in a file name: the line-end name case"
+fi
 # A config that includes itself six times: each file is read once, so the check ends at once, and git's
 # own refusal (it stops at a depth of 10) follows. More than 64 included files, a file git cannot read as
 # config, and a file name holding a line end are refused before git starts.

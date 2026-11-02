@@ -264,19 +264,20 @@ confine_git_includes() {
 
 # confine_git_dir_files <git directory> <common directory>: status 1 (CONFINE_GIT_WHY says why) when
 # something in either, or a file their config includes, could stop git: a named pipe or device, a
-# symbolic link to one, or one an include names (confine_git_includes). One find lists the pipes,
-# devices and links of each; the shell tests where each link leads.
+# symbolic link to one, a name holding a line end (git makes none), or a file an include names
+# (confine_git_includes). find lists the pipes and devices of each, then its links, one to a line; the
+# shell tests where each leads, with no program per link.
 confine_git_dir_files() {
   local g=$1 c=$2 d odd
   for d in "$g" "$c"; do
     [ -d "$d" ] || continue
-    odd=$(find "$d" \( -type p -o -type b -o -type c -o -type l \) -print0 2>/dev/null |
-      while IFS= read -r -d '' f; do
-        if [ ! -L "$f" ]; then printf p; break; fi
-        if confine_special "$f"; then printf l; break; fi
-      done)
-    [ "$odd" != p ] || { confine_git_wait "is in the git directory" "$d"; return 1; }
-    [ "$odd" != l ] || { confine_git_wait "is named by a link in the git directory" "$d"; return 1; }
+    odd=$(find "$d" \( -type p -o -type b -o -type c \) -print 2>/dev/null)
+    [ -z "$odd" ] || { confine_git_wait "is in the git directory" "$d"; return 1; }
+    odd=$(find "$d" -name '*'$'\n''*' -print 2>/dev/null)
+    [ -z "$odd" ] || { CONFINE_GIT_WHY="a name in the git directory holds a line end: $(confine_text "$d")"; return 1; }
+    odd=$(find "$d" -type l -print 2>/dev/null)
+    [ -z "$odd" ] || odd=$(IFS=$'\n'; set -f; for f in $odd; do if confine_special "$f"; then printf l; break; fi; done)
+    [ -z "$odd" ] || { confine_git_wait "is named by a link in the git directory" "$d"; return 1; }
     [ ! "$c" -ef "$g" ] || break
   done
   confine_git_includes "$c/config" "$g/config.worktree"
