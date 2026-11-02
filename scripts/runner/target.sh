@@ -33,8 +33,9 @@
 # check that cannot finish, stops the run. In native mode the same check prints, as a warning, what the code
 # the run builds can read, by kind and count, never a path. An incident's code (--run incident_<n>) is built
 # only once incident_<n>/INCIDENTS.json (a regular file of at most 4 MiB) records the root_cause_class of the
-# incident --patch names (INC-<n>.<k>), or of every incident without one; supply_chain_or_ci is never built
-# natively (OUTPUT-RULES.md Rule 11a).
+# incident --patch names (INC-<n>.<k>), or of every incident without one. In native mode it needs every
+# incident's, whatever --patch names, and builds nothing while any incident is supply_chain_or_ci: a patch of
+# one incident builds the same tree as the others (OUTPUT-RULES.md Rule 11a).
 #
 # The copy, in a scratch directory outside the working directory. A --src that is the top level of a git
 # repository (its git directory inside the working directory, holding no symbolic link, borrowing no objects
@@ -307,6 +308,16 @@ if [ -n "$MODE_ARG" ] && [ "$MODE_ARG" != "$MODE" ]; then
 fi
 echo ">> execution mode: $MODE (the stricter of $SOURCES)"
 
+# incident_class [<INC-n.k>]: sets cls to the root_cause_class $json records for that incident, or, with no
+# id, to supply_chain_or_ci when any incident has it; a blocker when it cannot be read.
+incident_class() {
+  local rc=0
+  iso_incident_class "$WT/$json" "${1:-}" || rc=$?
+  cls=$ISO_CLASS
+  [ "$rc" = 0 ] && return 0
+  [ "$rc" = 3 ] && [ -n "$cls" ] || cls="cannot be read"
+  blocker "$json $cls: an incident's code is built only once $json records its root_cause_class (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built."
+}
 case "$R" in
   incident_*)
     inc=""
@@ -314,17 +325,22 @@ case "$R" in
     json=$R/INCIDENTS.json
     command -v python3 >/dev/null 2>&1 ||
       blocker "python3 is not on PATH, so target.sh cannot read the root_cause_class in $json (OUTPUT-RULES.md Rule 11a) — nothing was copied or built."
-    rc=0
-    iso_incident_class "$WT/$json" "$inc" || rc=$?
-    cls=$ISO_CLASS
-    if [ "$rc" != 0 ]; then
-      [ "$rc" = 3 ] && [ -n "$cls" ] || cls="cannot be read"
-      blocker "$json $cls: an incident's code is built only once $json records its root_cause_class (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built."
+    if [ -n "$inc" ]; then
+      incident_class "$inc"
+      echo ">> incident $inc: root_cause_class $cls ($json)"
+      if [ "$cls" = supply_chain_or_ci ] && [ "$MODE" = native ]; then
+        blocker "the root_cause_class of $inc is supply_chain_or_ci, and such an incident's code is never built natively (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built."
+      fi
     fi
-    if [ -n "$inc" ]; then echo ">> incident $inc: root_cause_class $cls ($json)"; fi
-    if [ "$cls" = supply_chain_or_ci ] && [ "$MODE" = native ]; then
-      if [ -n "$inc" ]; then what="the root_cause_class of $inc is supply_chain_or_ci"; else what="$json records an incident whose root_cause_class is supply_chain_or_ci"; fi
-      blocker "$what, and such an incident's code is never built natively (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built."
+    # Natively every incident of the run counts, whatever --patch names: a patch of one incident builds the
+    # same tree as the others, which a supply_chain_or_ci root cause makes suspect.
+    if [ -z "$inc" ] || [ "$MODE" = native ]; then
+      incident_class
+      if [ "$cls" = supply_chain_or_ci ] && [ "$MODE" = native ]; then
+        also=""
+        [ -z "$inc" ] || also=", nor is a patch of $inc, which builds the same tree"
+        blocker "$json records an incident whose root_cause_class is supply_chain_or_ci, and such an incident's code is never built natively (OUTPUT-RULES.md Rule 11a)$also; run it in isolated mode — nothing was copied or built."
+      fi
     fi ;;
 esac
 # python3 starts from /, so nothing in the working directory picks the interpreter.

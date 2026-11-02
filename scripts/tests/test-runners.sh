@@ -589,8 +589,8 @@ rm -rf "$WT/.bin"
 check "no target.sh run ran a program or hook the source repository's config names" test -z "$(ls -A "$T/marks")"
 
 # =================================================================================================
-# target.sh in an incident's run directory: INCIDENTS.json must give the root cause, and
-# supply_chain_or_ci is never built natively.
+# target.sh in an incident's run directory: INCIDENTS.json must give the root cause, and nothing of a run
+# that records a supply_chain_or_ci incident is built natively.
 # =================================================================================================
 IJ=$WT/incident_1/INCIDENTS.json
 printf 'native\n' > "$WT/incident_1/exec-mode"
@@ -614,12 +614,24 @@ check "native mode where an incident's root cause is supply_chain_or_ci: exit 3,
   sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: incident_1/INCIDENTS.json records an incident whose root_cause_class is supply_chain_or_ci, and such an incident.s code is never built natively' '$T/err' && [ ! -s '$T/calls' ]"
 run "$TARGET" "$WT" -- build-sbf --run incident_1 --src . --patch incident_1/patches/INC-1.1.patch
 check "--patch of that incident: exit 3 as well" sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: the root_cause_class of INC-1.1 is supply_chain_or_ci' '$T/err'"
+# A patch of another incident builds the same tree, so natively every incident of the run counts.
 run "$TARGET" "$WT" -- build-sbf --run incident_1 --src . --patch incident_1/patches/INC-1.2.patch
-check "--patch of another incident of the run, a code flaw: only its class counts, and it builds" \
+check "--patch of another incident of the run, a code flaw: natively the whole run counts, exit 3, nothing copied" \
+  sh -c "[ '$RC' = 3 ] && grep -qxF '>> incident INC-1.2: root_cause_class code_flaw (incident_1/INCIDENTS.json)' '$T/out' && grep -qxF \"target: blocker: incident_1/INCIDENTS.json records an incident whose root_cause_class is supply_chain_or_ci, and such an incident's code is never built natively (OUTPUT-RULES.md Rule 11a), nor is a patch of INC-1.2, which builds the same tree; run it in isolated mode — nothing was copied or built.\" '$T/err' && [ ! -s '$T/calls' ] && [ -z \"\$(ls -A '$NT')\" ]"
+printf '{"incidents": [{"id": "INC-1.1"}, {"id": "INC-1.2", "root_cause_class": "code_flaw"}]}\n' > "$IJ"
+run "$TARGET" "$WT" -- build-sbf --run incident_1 --src . --patch incident_1/patches/INC-1.2.patch
+check "... and natively another incident with no root cause recorded stops it as well: exit 3, nothing copied" \
+  sh -c "[ '$RC' = 3 ] && grep -qF 'target: blocker: incident_1/INCIDENTS.json gives an incident no root_cause_class from incidents-schema.md: ' '$T/err' && [ ! -s '$T/calls' ]"
+printf '{"incidents": [{"id": "INC-1.1", "root_cause_class": "unknown"}, {"id": "INC-1.2", "root_cause_class": "code_flaw"}]}\n' > "$IJ"
+run "$TARGET" "$WT" -- build-sbf --run incident_1 --src . --patch incident_1/patches/INC-1.2.patch
+check "--patch of a code flaw in a run with no supply_chain_or_ci incident builds natively" \
   sh -c "[ '$RC' = 0 ] && grep -qxF '>> incident INC-1.2: root_cause_class code_flaw (incident_1/INCIDENTS.json)' '$T/out'"
 if [ "$ISOLATED_OK" = 1 ]; then
+  printf '{"incidents": [{"id": "INC-1.1", "root_cause_class": "supply_chain_or_ci"}, {"id": "INC-1.2", "root_cause_class": "code_flaw"}]}\n' > "$IJ"
   run "$TARGET" "$WT" AUDITOR_EXEC_MODE=isolated -- build-sbf --run incident_1 --src .
   check "isolated mode builds a supply_chain_or_ci incident's code" test "$RC" = 0
+  run "$TARGET" "$WT" AUDITOR_EXEC_MODE=isolated -- build-sbf --run incident_1 --src . --patch incident_1/patches/INC-1.2.patch
+  check "... and a patch of another incident of that run" test "$RC" = 0
 fi
 rm -f "$IJ" "$WT/incident_1/exec-mode" "$WT/incident_1/patches/INC-1.1.patch" "$WT/incident_1/patches/INC-1.2.patch"
 
