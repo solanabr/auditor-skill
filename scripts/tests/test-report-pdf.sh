@@ -5,7 +5,7 @@
 # file fixtures/report-pdf/cases.txt, run under each bash on the machine (/bin/bash and the bash running
 # this suite, when they differ), which must print the same. Stand-ins take the place of pandoc and of the
 # TeX engines; where pandoc 2.15 or later is installed, the filter also runs in the real pandoc against
-# remote-image and raw-TeX fixtures (skipped, never failed, without it). Needs git; no network.
+# remote-image, raw-TeX and YAML fixtures (skipped, never failed, without it). Needs git; no network.
 # Usage (from the repo root): bash scripts/tests/test-report-pdf.sh
 set -uo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd -P)
@@ -13,6 +13,8 @@ PDF="$ROOT/scripts/report-to-pdf.sh"
 FILTER="$ROOT/scripts/pdf/no-remote.lua"
 RUNDIR="$ROOT/scripts/rundir.sh"
 CASES="$ROOT/scripts/tests/fixtures/report-pdf/cases.txt"
+# The reader report-to-pdf.sh gives pandoc: Markdown without raw TeX, raw attributes or YAML metadata.
+SPEC=markdown-raw_tex-raw_attribute-yaml_metadata_block
 T=$(mktemp -d "${TMPDIR:-/tmp}/report-pdf-test.XXXXXX") || exit 1
 T=$(cd -P "$T" && pwd -P) || exit 1
 trap 'chmod -R u+rwx "$T" 2>/dev/null; rm -rf "$T"' EXIT
@@ -185,8 +187,8 @@ SCRATCH=$(sed -n 's/^pwd //p' "$FAKE_LOG")
 check "render: pandoc runs in a scratch directory outside the working directory" \
   sh -c "case '$SCRATCH' in '$W'|'$W'/*|'') exit 1 ;; esac"
 check "render: ... which is removed afterwards" test ! -e "$SCRATCH"
-check "render: the call is pandoc --sandbox with raw TeX and raw attributes off, the filter and the first engine found" \
-  test "$PLINE" = "pandoc [--sandbox] [-f] [markdown-raw_tex-raw_attribute] [--lua-filter] [$FILTER] [--pdf-engine=xelatex] [--pdf-engine-opt=-no-shell-escape] [-o] [$SCRATCH/report.pdf] [report.md]"
+check "render: the call is pandoc --sandbox with raw TeX, raw attributes and YAML metadata off, the filter and the first engine found" \
+  test "$PLINE" = "pandoc [--sandbox] [-f] [$SPEC] [--lua-filter] [$FILTER] [--pdf-engine=xelatex] [--pdf-engine-opt=-no-shell-escape] [-o] [$SCRATCH/report.pdf] [report.md]"
 check "render: pandoc reads a copy of the report, in scratch" has "$FAKE_LOG" "input # Audit report"
 check "render: the engine's settings are paranoid, the caller's TEXMFOUTPUT dropped, TMPDIR the scratch directory" \
   has "$FAKE_LOG" "env openin_any=p openout_any=p shell_escape=f TEXMFOUTPUT=unset TMPDIR=$SCRATCH"
@@ -225,7 +227,8 @@ check "no argument and no report: skipped (exit 0)" sh -c "[ $RC = 0 ] && grep -
 # =================================================================================================
 # The filter, in the real pandoc: images become their alt text, raw blocks and inlines are dropped,
 # math shows as code, in the body and in the metadata alike, and every element keeps its identifier and
-# classes but no key=value attribute, so neither a remote image nor raw TeX reaches the engine.
+# classes but no key=value attribute, so neither a remote image nor raw TeX reaches the engine. A YAML
+# block anywhere in the report prints as text and sets no template variable.
 # =================================================================================================
 REALPANDOC=$(command -v pandoc 2>/dev/null)
 pv=""; [ -n "$REALPANDOC" ] && pv=$("$REALPANDOC" --version 2>/dev/null | sed -n '1s/^[^ ]* //p')
@@ -241,10 +244,8 @@ else
   echo "# real pandoc: $REALPANDOC $pv"
   F="$T/hostile.md"
   cat > "$F" <<'EOF'
----
-title: 'Report $\special{pdf:title}$ <b>bold</b>'
-header-includes: '$\input{/etc/passwd}$'
----
+% Report $\special{pdf:title}$ <b>bold</b>
+
 <!-- a template comment -->
 # Findings
 
@@ -276,7 +277,7 @@ div text
 
 ## A heading {#h2 data-x="v3"}
 EOF
-  "$REALPANDOC" --sandbox -f markdown-raw_tex-raw_attribute --lua-filter "$FILTER" -t native -s "$F" > "$T/native.txt" 2>"$T/native.err"
+  "$REALPANDOC" --sandbox -f "$SPEC" --lua-filter "$FILTER" -t native -s "$F" > "$T/native.txt" 2>"$T/native.err"
   check "real pandoc: the filtered document parses (exit 0)" test "$?" = 0
   check "real pandoc: no Image is left" hasnt "$T/native.txt" "Image"
   check "real pandoc: no raw block or inline is left" sh -c "! grep -q 'RawBlock\|RawInline' '$T/native.txt'"
@@ -290,13 +291,15 @@ EOF
     sh -c "! grep -q -e 'latex-placement' -e 'startFrom' -e '\"lang\"' -e '\"dir\"' -e '\"key\"' -e 'data-x' '$T/native.txt'"
   check "real pandoc: identifiers and classes stay" \
     sh -c "grep -q '\"fig:placed\"' '$T/native.txt' && grep -q '\"numberLines\"' '$T/native.txt' && grep -q '\"mark\"' '$T/native.txt' && grep -q '\"h2\"' '$T/native.txt'"
-  "$REALPANDOC" --sandbox -f markdown-raw_tex-raw_attribute --lua-filter "$FILTER" -t latex -s "$F" > "$T/out.tex" 2>/dev/null
+  "$REALPANDOC" --sandbox -f "$SPEC" --lua-filter "$FILTER" -t latex -s "$F" > "$T/out.tex" 2>/dev/null
   check "real pandoc: the LaTeX has no \\includegraphics" hasnt "$T/out.tex" '\includegraphics'
   check "real pandoc: a figure gets no placement option" sh -c "grep -q 'begin{figure}' '$T/out.tex' && ! grep -qF '\\begin{figure}[' '$T/out.tex'"
   check "real pandoc: ... and keeps its label" has "$T/out.tex" '\label{fig:placed}'
   check "real pandoc: no raw \\input, \\write18, \\special or \\openin reaches the LaTeX" \
     sh -c "! grep -qF -e '\\input{/etc' -e '\\write18' -e '\\special{' -e '\\openin1' '$T/out.tex'"
-  check "real pandoc: the text of the raw TeX prints as text" has "$T/out.tex" '\textbackslash{}input\{/etc/passwd\}'
+  # pandoc spells the backslash \textbackslash{} or "\textbackslash " depending on its version and what follows.
+  raw_as_text() { has "$1" '\textbackslash{}input\{/etc/passwd\}' || has "$1" '\textbackslash input\{/etc/passwd\}'; }
+  check "real pandoc: the text of the raw TeX prints as text" raw_as_text "$T/out.tex"
   # The whole run, with the real pandoc and the engine stand-in.
   mkdir -p "$T/realbin"; ln -s "$REALPANDOC" "$T/realbin/pandoc"
   cp "$F" "$W/$R/REPORT.md"; : > "$FAKE_LOG"; rm -f "$FAKE_TEX" "$W/$R/REPORT.pdf"
@@ -307,6 +310,43 @@ EOF
   check "real pandoc: the .tex the engine got has no image, raw TeX or math from the report" \
     sh -c "[ -s '$FAKE_TEX' ] && ! grep -qF -e '\\includegraphics' -e '\\write18' -e '\\special{' -e '\\input{/etc' '$FAKE_TEX'"
   check "real pandoc: nothing was written outside the run directory" sh -c "[ ! -e '$W/pwned' ] && [ ! -e '$W/pwned-block' ] && [ ! -e '$T/pwned' ]"
+  # YAML blocks quoted from the audited repo, in a blockquote and at the top level: as metadata they would
+  # replace the body, put Lua into \directlua through a font fallback, and set the document class and
+  # the PDF trailer.
+  cat > "$W/$R/REPORT.md" <<'EOF'
+# Audit report
+
+### C-01 Critical: missing signer check
+
+The commit that removed the check says:
+
+> Refactor withdraw
+>
+> ---
+> body: 'No findings.'
+> mainfont: 'Latin Modern Roman'
+> mainfontfallback: ['x\" , print(\"fixture\") , \"y']
+> ---
+
+A log line from the target's CI:
+
+---
+documentclass: standalone
+pdf-trailer-id: '(a) (b) ] /Root 1 0 R /X ['
+---
+
+### H-01 High: unchecked arithmetic
+EOF
+  : > "$FAKE_LOG"; rm -f "$FAKE_TEX" "$W/$R/REPORT.pdf"
+  run "$T/realbin:$T/xe:$T/tools" "$R/REPORT.md"
+  check "real pandoc, YAML in the report: it renders (exit 0)" sh -c "[ $RC = 0 ] && [ -s '$FAKE_TEX' ]"
+  check "real pandoc, YAML in the report: the findings stay the body" \
+    sh -c "grep -q 'C-01 Critical' '$FAKE_TEX' && grep -q 'H-01 High' '$FAKE_TEX'"
+  check "real pandoc, YAML in the report: no font fallback reaches \\directlua" hasnt "$FAKE_TEX" 'directlua'
+  sed '/^\\begin{document}/,$d' "$FAKE_TEX" > "$T/preamble.tex"
+  check "real pandoc, YAML in the report: the document class and the PDF trailer stay the template's" \
+    sh -c "[ -s '$T/preamble.tex' ] && ! grep -q -e '{standalone}' -e 'trailer' '$T/preamble.tex'"
+  check "real pandoc, YAML in the report: it prints as text" sh -c "grep -q 'body:' '$FAKE_TEX' && grep -q 'documentclass:' '$FAKE_TEX'"
 fi
 
 # =================================================================================================
