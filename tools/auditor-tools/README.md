@@ -153,18 +153,48 @@ not UTF-8, and every file past the 256 a directory's pass parses, is listed in
 `skipped` with the reason, as a `*.rs` file is.
 
 A hand-written parser reads the block and flow subset workflows are written in:
-block mappings and sequences, flow `[…]` and `{…}`, plain and quoted scalars, and
-`|`/`>` block scalars (a scalar's whitespace is collapsed and it is cut after 200
-characters, as a snippet is). It is not a general YAML library. Anything outside
-that subset — an anchor (`&`), an alias (`*`), a tag (`!…`), a merge key, an
-indentation tab, an unterminated flow — is listed in that workflow's `unknown`,
-with its line, rather than guessed; an alias is never expanded, so no input grows
-the output past the bytes it read. The parser is bounded by construction: a file
-nests at most 32 levels, holds at most 50,000 nodes, and is at most 4 MiB. A file
-it cannot parse whole (not a YAML mapping, a second YAML document, or more
-structure than the caps allow) is listed in `skipped`. Because it cannot recurse
-without bound or expand an alias, it runs in this process and needs no child,
-unlike the `syn` parse of a `*.rs` file.
+block mappings and sequences, flow `[…]` and `{…}` on one line or several, plain
+and quoted scalars, wrapped over lines or not, with every escape YAML 1.2 defines
+decoded, and `|`/`>` block scalars with their indentation and chomping indicators.
+It drops one leading byte order mark and reads `\r\n`, `\r` and `\n` as line
+breaks. A scalar or a key has its whitespace collapsed and is cut after 200
+characters, as a snippet is. It is not a general YAML library, and it fails
+closed: what it does not read is listed in that workflow's `unknown`, with its
+line, and never guessed.
+
+- An alias (`*`), a tag (`!…`), a merge key (`<<`) and an explicit key (`?`) are
+  listed with the lines they cover, which are not read; the read goes on after
+  them. An anchor (`&`) is listed too, though its node is read. An alias is never
+  expanded.
+- A line it cannot place ends the read, and `unknown` says the file is not read
+  from that line to the end: YAML that does not parse (a mismatched or unclosed
+  bracket, an escape YAML does not define, a plain scalar holding `: `, a block
+  scalar line indented less than its first, a tab in indentation), or a character
+  YAML parsers refuse or read differently (a control character; a NEL, LS or PS,
+  which YAML 1.1 parsers read as a line break; a byte order mark past the start).
+- A modeled key (`on`, `jobs`, `name`, `permissions`; a job's `if`, `uses`,
+  `permissions`, `steps`; a step's `if`, `uses`, `run`, `with`, `env`) written
+  twice is listed: a list (triggers, jobs, steps, …) keeps the entries of both,
+  a single value the first. So is a modeled key whose value is not the kind
+  GitHub reads there.
+- A node nested more than 32 levels deep is not read: a block node is listed
+  with its lines, and the read goes on after them; in a flow collection the read
+  ends there.
+
+So a workflow was read whole exactly when its `unknown` is empty. A file that is
+not a YAML mapping, holds a second YAML document, or holds more than 50,000 nodes
+is listed in `skipped`.
+
+Each file is parsed in a child, as a `*.rs` file is: audit-scan starts itself, by
+the path it runs from, with `--internal-parse-workflows` as its only argument, no
+environment and `/` as its directory, and hands it one file's bytes at a time on
+its stdin. A file the child does not finish (it aborts, dies on a signal or takes
+more than 10 seconds) is listed as `the parser could not finish`, and the next
+file goes to a new child. One file's facts take at most 32 MiB; a file with more
+is in `skipped` as `not listed: its facts take more than 32 MiB`. The workflows
+together take what the `*.rs` walk left of the report's 256 MiB: the file whose
+facts would take them past it, and each file after it, is in `skipped` as `not
+parsed: the report is full`.
 
 ### Where it reads and writes
 
@@ -324,8 +354,10 @@ Exit: 0 done · 1 the output cannot be written · 2 refused, with one stderr lin
               "env":  [ { "key": "string", "value": "string" } ] }
           ] }
       ],
-      // constructs outside the parser's subset (an anchor, alias, tag, merge
-      // key, indentation tab, unterminated flow), never expanded.
+      // what the parser did not read: a construct outside its subset (an
+      // alias, tag, merge key or explicit key, with the lines it covers; an
+      // anchor, whose node is read), or the rest of the file from a line it
+      // could not place. Empty only when the whole file was read.
       "unknown": [ { "line": 0, "what": "string" } ] }
   ],
 
