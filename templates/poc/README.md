@@ -72,7 +72,11 @@ wallet reaches this crate's code. The dependencies are downloaded first
 (`cargo fetch`, and `cargo update` for a pin), which run no build script, and every
 build and test after them runs offline, without the proxy variables.
 `cargo build-sbf` installs its platform tools once, building nothing, with the real
-`HOME`, where they live, and the proxy, then builds each arm in the throwaway one. Two
+`HOME`, where they live, and the proxy, then builds each arm in the throwaway one. A
+`cargo build-sbf` that lacks any of `--install-only`, `--skip-tools-install` and
+`--offline` (an older Agave release) cannot split the install from the build: with it,
+each arm builds with the real `HOME` and the proxy variables, and `run.sh` prints a
+line saying so; prebuilt bytes (below) need no `cargo build-sbf`. Two
 more forms help: `--init <R>/poc/<ID>` makes a new crate, the template's files byte
 for byte, and `--new-cache` makes a build cache (below) and prints its path.
 

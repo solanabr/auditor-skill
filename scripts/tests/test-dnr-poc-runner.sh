@@ -2027,6 +2027,10 @@ SHIM_EXTRA=()
   && in_blocks '^== cargo build-sbf --tools-version' "^HOME=$CLEANHOME\$" && in_blocks '^== cargo build-sbf --tools-version' '^HTTPS_PROXY=http://proxy.invalid:3128$' \
   && ! awk -F'\t' '$6 ~ /^build-sbf --install-only/ { f = 1 } END { exit !f }' "$T/calls" \
   && ok "a cargo build-sbf without --install-only and --skip-tools-install -> each arm builds as before, and run.sh says so" || { bad "an older cargo build-sbf: exit $code"; cat "$T/out" >&2; }
+# The README every PoC crate carries says so too, next to the cleaning it describes.
+python3 -I -c 'import re, sys; text = re.sub(r"\s+", " ", open(sys.argv[1], encoding="utf-8").read()); sys.exit(sys.argv[2] not in text)' "$ROOT/templates/poc/README.md" \
+  'A `cargo build-sbf` that lacks any of `--install-only`, `--skip-tools-install` and `--offline` (an older Agave release) cannot split the install from the build: with it, each arm builds with the real `HOME` and the proxy variables, and `run.sh` prints a line saying so' \
+  && ok "the template's README says an older cargo build-sbf builds each arm with the real HOME and the proxy variables" || bad "the template's README does not state the older cargo build-sbf fallback"
 for spec in 'install-only|cargo build-sbf --install-only could not install the platform tools v1.54' 'fetch|cargo fetch could not download the crate'"'"'s dependencies'; do
   SHIM_EXTRA=(SHIM_FAIL="${spec%%|*}")
   code="$(ngate -- --crate audit_1/poc/F-1)"
