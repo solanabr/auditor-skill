@@ -91,8 +91,8 @@ execution mode), first invoke this command again through the Skill tool as
 `auditor:hunt --resume <step> incident_<n>` followed by the arguments and the
 answers, `<step>` being the step you go on with (`1` once the human names the run
 directory to reuse, `2` after a yes to a collection, `6` after the mode), and do
-that step's work in the same turn. A resumed invocation adopts that run
-directory and never repeats a finished step. That invocation asks:
+that step's work in the same turn. A resumed invocation runs step 0 again, adopts
+that run directory and never repeats another finished step. That invocation asks:
 tell the human to answer "Yes", not "don't ask again", which saves a rule into the
 audited tree's `.claude/settings.local.json`, a file the next run's step 0 refuses.
 A `claude -p` run is one turn with no replies, and a call that would ask is denied

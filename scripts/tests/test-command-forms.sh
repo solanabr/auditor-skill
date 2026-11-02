@@ -27,7 +27,8 @@
 #   C4  Every command, and the root SKILL.md, runs preflight.sh as step 0: the first entry point its body names
 #       is "<root>/scripts/preflight.sh", with no arguments, in a paragraph that starts "0. **Preflight" (in the
 #       root SKILL.md, "**Step 0 — Preflight") and says that a refusal, and a call that is denied, stop the run;
-#       and the allowed-tools of every command, and of the root SKILL.md, pre-approve that call.
+#       its body says that a resumed invocation (--resume) runs step 0 again; and the allowed-tools of every
+#       command, and of the root SKILL.md, pre-approve that call.
 #   C5  Every rooted call in a command's body, and in the bodies of the agents it spawns, is one of that
 #       command's Bash rules: the same path, then the rule's fixed words (all of them, for a rule with no *). The
 #       command spawns an agent that a code span names after spawn, delegate or run in the sentence, or after
@@ -594,6 +595,8 @@ for f in files:
                 finding("C4", f, n, "preflight.sh first appears outside a paragraph that starts %s" % want.replace("\\", ""))
             elif not re.search(r'(?i)refus', ptext) or not re.search(r'(?i)denied', ptext):
                 finding("C4", f, n, "step 0 does not say that a refusal and a denied call both stop the run")
+        if not re.search(r'(?i)\bstep 0 again\b', "\n".join(body)):
+            finding("C4", f, 1, "the body does not say that a resumed invocation runs step 0 again")
 
     # every call in the body, and in the bodies of the agents it spawns (or, for a fork skill, the agent it runs
     # as), is one of its own rules: the path, then the rule's fixed words
@@ -635,7 +638,7 @@ chmod 644 "$fx/scripts/plain.sh"
 
 R='${CLAUDE_PLUGIN_ROOT}'
 B="$R/tools/auditor-tools/target/release"
-STEP0="0. **Preflight.** Run \`\"$R/scripts/preflight.sh\"\`, with no arguments. On a refusal, stop; a call that is denied stops the run too."
+STEP0="0. **Preflight.** Run \`\"$R/scripts/preflight.sh\"\`, with no arguments. On a refusal, stop; a call that is denied stops the run too. A resumed invocation runs step 0 again."
 # cmd <name> <rule>... -- <body line>...: a command whose allowed-tools pre-approve preflight.sh, ok.sh and the rules
 cmd() {
   local f="$fx/commands/$1.md"; shift
@@ -729,6 +732,7 @@ sed -e '/^0\. \*\*Preflight/d' "$fx/commands/c4-late.md" > "$fx/commands/c4-late
 sed -e 's#^0\. \*\*Preflight\.\*\*#Step zero:#' "$fx/commands/good.md" > "$fx/commands/c4-paragraph.md"
 sed -e 's#preflight\.sh"`, with#preflight.sh" --fast`, with#' "$fx/commands/good.md" > "$fx/commands/c4-args.md"
 sed -e 's#; a call that is denied stops the run too\.#.#' "$fx/commands/good.md" > "$fx/commands/c4-no-denial.md"
+sed -e 's# A resumed invocation runs step 0 again\.##' "$fx/commands/good.md" > "$fx/commands/c4-no-resume.md"
 # agents and skills have no step 0; the root SKILL.md has it, from ${CLAUDE_SKILL_DIR}
 printf -- '---\nname: fx-runner\ndescription: "An agent."\ntools: Read, Bash\n---\n\nRun `"%s/scripts/rec.py" x`.\n' "$R" \
   > "$fx/agents/fx-runner.md"
@@ -740,7 +744,7 @@ printf -- '---\nname: a\ndescription: "An agent."\ntools: Read, Bash\n---\n\nRun
 printf -- '---\nname: a\ndescription: "An agent."\ntools: Read, Bash\n---\n\nRun `bash "%s/scripts/ok.sh"`.\n' "$R" > "$fx/agents/c1.md"
 printf -- '---\nname: s\ndescription: "A skill."\nallowed-tools:\n  - '"'"'Bash("%s/scripts/rec.py" *)'"'"'\n---\n\nRun `"%s/scripts/rec.py" x` or `"%s/scripts/rec.py" x | wc -l`.\n' "$R" "$R" "$R" \
   > "$fx/skills/s/SKILL.md"
-printf -- '---\nname: x\ndescription: "A skill."\nallowed-tools:\n  - '"'"'Bash("${CLAUDE_SKILL_DIR}/scripts/preflight.sh" *)'"'"'\n  - '"'"'Bash("${CLAUDE_SKILL_DIR}/scripts/ok.sh" *)'"'"'\n---\n\n**Step 0 — Preflight.** Run `"${CLAUDE_SKILL_DIR}/scripts/preflight.sh"`; a refusal, or a denied call, stops the run.\nThen `"${CLAUDE_SKILL_DIR}/scripts/ok.sh" check x`.\n' \
+printf -- '---\nname: x\ndescription: "A skill."\nallowed-tools:\n  - '"'"'Bash("${CLAUDE_SKILL_DIR}/scripts/preflight.sh" *)'"'"'\n  - '"'"'Bash("${CLAUDE_SKILL_DIR}/scripts/ok.sh" *)'"'"'\n---\n\n**Step 0 — Preflight.** Run `"${CLAUDE_SKILL_DIR}/scripts/preflight.sh"`; a refusal, or a denied call, stops the run. A resumed invocation runs Step 0 again.\nThen `"${CLAUDE_SKILL_DIR}/scripts/ok.sh" check x`.\n' \
   > "$fx/SKILL.md"
 sed -e 's#CLAUDE_SKILL_DIR}/scripts/ok#CLAUDE_PLUGIN_ROOT}/scripts/ok#' "$fx/SKILL.md" > "$fx/skill-root.md"
 # over 64 KiB, the one bad line last
@@ -829,6 +833,7 @@ for c in asks-never asks-else prompts hand use task-tool; do expect "commands/c5
 expect commands/c5-skill-hand.md ""
 expect commands/c4-no-rule.md C4; expect commands/c4-no-step.md C4; expect commands/c4-late.md C4
 expect commands/c4-paragraph.md C4; expect commands/c4-args.md C4; expect commands/c4-no-denial.md C4
+expect commands/c4-no-resume.md C4
 expect agents/good.md ""; expect agents/c1.md C1; expect skills/s/SKILL.md C1; expect SKILL.md ""
 expect references/r/good.md ""
 for c in bash cd env env-word dollar unquoted half-quoted plugin-root backtick quoted-fence wrapped tool large; do
@@ -856,6 +861,10 @@ expect SKILL.md "C1 C2"
 { sed -e 's#CLAUDE_PLUGIN_ROOT}/scripts/ok#CLAUDE_SKILL_DIR}/scripts/ok#' "$fx/skill-root.md"
   printf 'Also `"${CLAUDE_SKILL_DIR}/scripts/rec.py" x`.\n'; } > "$fx/SKILL.md"
 expect SKILL.md C5
+# and a resumed invocation of it runs step 0 again, as each command's does
+sed -e 's#CLAUDE_PLUGIN_ROOT}/scripts/ok#CLAUDE_SKILL_DIR}/scripts/ok#' -e 's# A resumed invocation runs Step 0 again\.##' \
+  "$fx/skill-root.md" > "$fx/SKILL.md"
+expect SKILL.md C4
 
 # ---- 1-4. the tree ----------------------------------------------------------------------------------------------
 cd "$TREE" || exit 1
