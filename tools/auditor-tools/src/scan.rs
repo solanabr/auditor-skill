@@ -43,6 +43,7 @@ const SNIPPET_MAX: usize = 80;
 /// in, `sol_invoke_signed_c` and `sol_invoke_signed_rust`. Called as a method, as
 /// pinocchio-system's and pinocchio-token's instructions are
 /// (`Transfer { … }.invoke_signed(&signers)`), a site's kind is `method:<name>`.
+/// A name written as a raw identifier (`r#invoke`) is that name (`ident_name`).
 const CPI_CALLS: [&str; 12] = [
     "invoke",
     "invoke_signed",
@@ -1852,7 +1853,7 @@ impl<'ast> Visit<'ast> for FileVisitor<'_> {
     }
 
     fn visit_expr_method_call(&mut self, node: &'ast syn::ExprMethodCall) {
-        let method = node.method.to_string();
+        let method = ident_name(&node.method);
         let cpi = CPI_CALLS.contains(&method.as_str());
         if method == "unwrap" || method == "expect" || cpi {
             let first = attrs_first(&node.attrs).unwrap_or_else(|| self.first(&node.receiver));
@@ -1894,7 +1895,7 @@ impl<'ast> Visit<'ast> for FileVisitor<'_> {
 
     fn visit_macro(&mut self, node: &'ast syn::Macro) {
         if let Some(seg) = node.path.segments.last() {
-            let name = seg.ident.to_string();
+            let name = ident_name(&seg.ident);
             if matches!(name.as_str(), "panic" | "unreachable" | "unwrap") {
                 let first = path_first(&node.path);
                 let site = PanicSite {
@@ -1920,7 +1921,7 @@ impl<'ast> Visit<'ast> for FileVisitor<'_> {
 
     fn visit_expr_field(&mut self, node: &'ast syn::ExprField) {
         if let syn::Member::Named(ident) = &node.member {
-            if ident == "remaining_accounts" {
+            if ident == "remaining_accounts" || ident == "r#remaining_accounts" {
                 let first = attrs_first(&node.attrs).unwrap_or_else(|| self.first(&node.base));
                 let site = RemainingAccountsSite {
                     file: self.file.clone(),
@@ -1936,7 +1937,7 @@ impl<'ast> Visit<'ast> for FileVisitor<'_> {
     fn visit_expr_call(&mut self, node: &'ast syn::ExprCall) {
         if let syn::Expr::Path(path_expr) = node.func.as_ref() {
             if let Some(seg) = path_expr.path.segments.last() {
-                let name = seg.ident.to_string();
+                let name = ident_name(&seg.ident);
                 if CPI_CALLS.contains(&name.as_str()) {
                     let first = attrs_first(&node.attrs).unwrap_or_else(|| self.first(&node.func));
                     let site = CpiSite {
@@ -1960,7 +1961,10 @@ impl<'ast> Visit<'ast> for FileVisitor<'_> {
         // `CpiContext::new_with_signer(…)`, the path as its snippet. A call by name
         // (`invoke_signed(…)`, `Transfer { … }.invoke()`) is listed by
         // `visit_expr_call` and `visit_expr_method_call`.
-        let named = node.segments.iter().find(|seg| seg.ident == "CpiContext");
+        let named = node
+            .segments
+            .iter()
+            .find(|seg| seg.ident == "CpiContext" || seg.ident == "r#CpiContext");
         if let Some(seg) = named {
             let last = match path_tail(node) {
                 Tail::At(at) => at,
@@ -2028,21 +2032,38 @@ fn is_context_ty(ty: &syn::Type) -> bool {
     false
 }
 
-/// True if any attribute's path matches `ident` (single-segment).
+/// An identifier's name without the `r#` a raw identifier is written with: the
+/// compiler takes `r#invoke_signed` for `invoke_signed`, and so does the scan.
+fn ident_name(ident: &syn::Ident) -> String {
+    let mut name = ident.to_string();
+    if name.starts_with("r#") {
+        name.drain(..2);
+    }
+    name
+}
+
+/// True if `path` is the single name `name` (`r#name` too), as the compiler
+/// resolves an attribute's or a derive's path.
+fn is_name(path: &syn::Path, name: &str) -> bool {
+    path.get_ident()
+        .is_some_and(|ident| ident_name(ident) == name)
+}
+
+/// True if any attribute's path is the single name `ident`.
 fn has_attr_path(attrs: &[syn::Attribute], ident: &str) -> bool {
-    attrs.iter().any(|a| a.path().is_ident(ident))
+    attrs.iter().any(|a| is_name(a.path(), ident))
 }
 
 /// True if any `#[derive(...)]` attribute lists a trait named `trait_name`.
 fn derive_contains(attrs: &[syn::Attribute], trait_name: &str) -> bool {
     for attr in attrs {
-        if !attr.path().is_ident("derive") {
+        if !is_name(attr.path(), "derive") {
             continue;
         }
         let mut found = false;
         // parse_nested_meta walks each path inside the derive list.
         let _ = attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident(trait_name) {
+            if is_name(&meta.path, trait_name) {
                 found = true;
             }
             Ok(())
@@ -2074,6 +2095,8 @@ fn parse_account_attr(attrs: &[syn::Attribute]) -> (AccountConstraints, Vec<Stri
         raw: String::new(),
     };
 
+    // Written plain only: `derive(Accounts)` reads no `#[r#account(...)]`, so no
+    // constraint is in one.
     let account_attr = attrs.iter().find(|a| a.path().is_ident("account"));
     let attr = match account_attr {
         Some(a) => a,

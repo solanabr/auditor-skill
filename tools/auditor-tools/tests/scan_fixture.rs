@@ -468,3 +468,148 @@ fn scan_fixture_lists_each_cpi_context_of_an_anchor_program() {
         .collect();
     assert_eq!(instructions, ["set", "set_signed", "pay"]);
 }
+
+/// The names the scan lists, each written as a raw identifier: the program's
+/// attribute, the Accounts derive, the cross-program calls as functions and as
+/// methods, a `CpiContext`, a derivation, `remaining_accounts`, and the panics.
+const RAW: &str = r#"
+#[r#program]
+pub mod raw_program {
+    use super::*;
+
+    pub fn handle(ctx: Context<Handle>, amount: u64) -> Result<()> {
+        Ok(())
+    }
+}
+
+#[r#derive(r#Accounts)]
+pub struct Handle<'info> {
+    #[account(mut, seeds = [b"vault"], bump)]
+    pub vault: Account<'info, Vault>,
+}
+
+pub fn drain(ix: &Instruction, a: &[AccountInfo], s: &[&[u8]], v: Option<u8>, ctx: Ctx) -> ProgramResult {
+    r#invoke_signed(ix, a, &[s])?;
+    solana_program::program::r#invoke(ix, a)?;
+    unsafe { r#invoke_signed_unchecked(ix, a, &[s]) };
+    Transfer { from: a, to: b, lamports: 1 }.r#invoke_signed(&signers)?;
+    Transfer { from: a, to: b, lamports: 1 }.r#invoke()?;
+    let made = r#CpiContext::new(program, accounts);
+    let (pda, bump) = Pubkey::r#find_program_address(&[b"vault"], &crate::ID);
+    let rest = ctx.r#remaining_accounts;
+    let x = v.r#unwrap();
+    let y = v.r#expect("y");
+    if x == y { r#panic!("same") }
+    r#unreachable!()
+}
+"#;
+
+#[test]
+fn scan_fixture_takes_a_raw_identifier_for_its_name() {
+    let report = scan::scan_source("raw.rs", RAW).expect("the fixture parses");
+    let at = |text: &str| line_in(RAW, text);
+
+    let instructions: Vec<(&str, usize)> = report
+        .instructions
+        .iter()
+        .map(|i| (i.name.as_str(), i.args.len()))
+        .collect();
+    assert_eq!(instructions, [("handle", 1)]);
+    let structs: Vec<&str> = report
+        .accounts_structs
+        .iter()
+        .map(|s| s.name.as_str())
+        .collect();
+    assert_eq!(structs, ["Handle"]);
+
+    let calls: Vec<(&str, usize, &str)> = report
+        .cpi_sites
+        .iter()
+        .map(|c| (c.kind.as_str(), c.line, c.snippet.as_str()))
+        .collect();
+    assert_eq!(
+        calls,
+        [
+            (
+                "invoke_signed",
+                at("r#invoke_signed(ix"),
+                "r#invoke_signed (ix , a , & [s])"
+            ),
+            (
+                "invoke",
+                at("program::r#invoke(ix"),
+                "solana_program :: program :: r#invoke (ix , a)"
+            ),
+            (
+                "invoke_signed_unchecked",
+                at("r#invoke_signed_unchecked("),
+                "r#invoke_signed_unchecked (ix , a , & [s])"
+            ),
+            (
+                "method:invoke_signed",
+                at(".r#invoke_signed(&signers)"),
+                "Transfer { from : a , to : b , lamports : 1 } . r#invoke_signed (& signers)"
+            ),
+            (
+                "method:invoke",
+                at(".r#invoke()"),
+                "Transfer { from : a , to : b , lamports : 1 } . r#invoke ()"
+            ),
+            (
+                "CpiContext",
+                at("r#CpiContext::new("),
+                "r#CpiContext :: new"
+            ),
+        ]
+    );
+
+    let derivations: Vec<(&str, &str, &str, usize)> = report
+        .pdas
+        .iter()
+        .map(|p| {
+            (
+                p.struct_name.as_str(),
+                p.field.as_str(),
+                p.kind.as_str(),
+                p.line,
+            )
+        })
+        .collect();
+    assert_eq!(
+        derivations,
+        [
+            ("Handle", "vault", "seeds", at("pub vault:")),
+            (
+                "",
+                "",
+                "find_program_address",
+                at("r#find_program_address(")
+            ),
+        ]
+    );
+
+    let remaining: Vec<(usize, &str)> = report
+        .remaining_accounts_sites
+        .iter()
+        .map(|r| (r.line, r.snippet.as_str()))
+        .collect();
+    assert_eq!(
+        remaining,
+        [(at("ctx.r#remaining_accounts"), "ctx . r#remaining_accounts")]
+    );
+
+    let panics: Vec<(&str, usize)> = report
+        .panic_sites
+        .iter()
+        .map(|p| (p.kind.as_str(), p.line))
+        .collect();
+    assert_eq!(
+        panics,
+        [
+            ("unwrap", at("v.r#unwrap()")),
+            ("expect", at("v.r#expect(")),
+            ("panic", at("r#panic!(")),
+            ("panic", at("r#unreachable!()")),
+        ]
+    );
+}

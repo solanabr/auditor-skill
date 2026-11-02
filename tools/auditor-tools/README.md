@@ -340,6 +340,11 @@ kept, as the file is laid out, only as far as a snippet can show it, and only wh
 a snippet keeps is rendered, so a snippet costs no more for a long chain or a long
 literal than for a short one.
 
+A name is matched as the compiler resolves it: one written as a raw identifier
+(`r#invoke_signed(..)`, `x.r#unwrap()`, `r#panic!(..)`, `#[r#program]`) is that
+name, and its snippet shows it as written. The `#[account(...)]` of an Accounts
+field counts only written plain, as `derive(Accounts)` reads it.
+
 ### Example
 
 ```bash
