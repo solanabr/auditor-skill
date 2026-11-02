@@ -373,6 +373,23 @@ else
   skp "running as root: an unreadable index cannot be made"
 fi
 
+# =================================================================================================
+# Repositories git describes in a way that would pass the checks above: a value printed across lines, a
+# common directory apart from the git directory, and files git would wait on for good.
+# =================================================================================================
+# A core.worktree holding a line end: git prints the top level across two lines, and the old split read
+# the alternates and grafts of a directory the repository chose instead of its own.
+mkrepo "$RW/wtnl"; put "$RW/wtnl" f wtnl; commit "$RW/wtnl" -m wtnl
+printf '%s/.git/objects\n' "$O" > "$RW/wtnl/.git/objects/info/alternates"
+if mkdir -p "$RW/wtnl/z"$'\n'"$RW/wtnl" "$RW/wtnl/.git"$'\n'"$RW/wtnl/z" 2>/dev/null; then
+  printf '[core]\n\tworktree = %s\n' "$RW/wtnl/z\\n$RW/wtnl" >> "$RW/wtnl/.git/config"
+  lib "$RW" 'confine_repo wtnl R'
+  check "a core.worktree holding a line end is refused, not read past the alternates check" \
+    refused 'git describes the repository at R with a line end or control character inside a path: wtnl'
+else
+  skp "this filesystem refuses a newline in a directory name: the core.worktree line-end case"
+fi
+
 echo
 echo "confine tests: $pass passed, $fail failed, $skip skipped"
 [ "$fail" -eq 0 ]

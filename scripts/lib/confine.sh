@@ -174,26 +174,37 @@ confine_partial_clone() {
 # (info/grafts). Sets CONFINE_REPO (its physical path), CONFINE_GIT_DIR, CONFINE_COMMON_DIR and
 # CONFINE_BARE (true or false).
 confine_repo() {
-  local what=$2 shown abs info bare gitdir common top d links
+  local what=$2 shown abs info bare gitdir common top d links n lines
   confine_shown "$1"
   shown=$CONFINE_SHOWN
   confine_path "$1" "$what" dir
   if [ "$CONFINE_REL" = . ]; then abs=$CONFINE_WT; else abs=$CONFINE_WT/$CONFINE_REL; fi
   confine_phys "$abs" || confine_refuse "$what cannot be resolved: $shown"
   abs=$CONFINE_PHYS
-  # One call where there is a work tree; a bare repository has no top level, so it takes a second.
-  if info=$(hgit "$abs" rev-parse --is-bare-repository --absolute-git-dir --git-common-dir --show-toplevel 2>/dev/null); then
-    top=${info##*$'\n'}
-    info=${info%$'\n'*}
+  # One call where there is a work tree; a bare repository has no top level, so it takes a second. git
+  # prints each value on a line of its own, and a path can hold a line end (a core.worktree, a gitfile
+  # or a commondir file can name one), which would shift the values: the output must hold exactly one
+  # line per value, the x keeping a last empty line, and no other control character.
+  if info=$(hgit "$abs" rev-parse --is-bare-repository --absolute-git-dir --git-common-dir --show-toplevel 2>/dev/null && printf x); then
+    n=4
   else
-    info=$(hgit "$abs" rev-parse --is-bare-repository --absolute-git-dir --git-common-dir 2>/dev/null) ||
+    info=$(hgit "$abs" rev-parse --is-bare-repository --absolute-git-dir --git-common-dir 2>/dev/null && printf x) ||
       confine_refuse "$what is not a git repository that git can read (none there, or another user owns it: audit a copy): $shown"
-    top=""
+    n=3
   fi
+  info=${info%x}
+  lines=${info//[!$'\n']/}
+  case "${info//$'\n'/}" in *[[:cntrl:]]*) lines="" ;; esac
+  [ "${#lines}" -eq "$n" ] ||
+    confine_refuse "git describes the repository at $what with a line end or control character inside a path: $shown"
+  info=${info%$'\n'}
   bare=${info%%$'\n'*}
   info=${info#*$'\n'}
   gitdir=${info%%$'\n'*}
-  common=${info#*$'\n'}
+  info=${info#*$'\n'}
+  common=${info%%$'\n'*}
+  top=""
+  [ "$n" -eq 3 ] || top=${info#*$'\n'}
   case "$bare" in
     true) top=$gitdir ;;
     false) ;;
