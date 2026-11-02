@@ -26,9 +26,9 @@
 # -c pins switch off and when to re-check them; keep the two in step.
 # A tool that contacts an outside service records it in <R>/disclosures.tsv (OUTPUT-RULES.md Rule 11b;
 # the format is at confine_disclose).
-# Needs bash >= 3.2 and, on the cleaned PATH, env, git, find, wc, cat and sleep (grep, when there, saves a
-# git call); confine_scratch needs mktemp, confine_service sed, confine_disclose date, and
-# confine_b58_bytes python3.
+# Needs bash >= 3.2 and, on the cleaned PATH, env, git, find, wc and cat (grep, when there, saves a git
+# call); confine_scratch needs mktemp, confine_service sed, confine_disclose date, and confine_b58_bytes
+# python3.
 
 # confine_refuse <reason>: the refusal line, then exit 64 (or the status confine_init was given). A tool
 # may set CONFINE_HINT around a check; the line then ends with "; <hint>". confine_init clears one the
@@ -386,33 +386,33 @@ confine_git_limit() {
   case "$CONFINE_LIMIT" in *[!0-9]*) CONFINE_LIMIT=10 ;; esac
 }
 
-# confine_timed <seconds> <dir> <command>...: the command (hgit's git), with this shell's standard input;
-# when it has not ended after <seconds> (0: no limit) it is killed and the call refused, so a named pipe
-# or device the checks above do not see ends in a refusal, not a wait. A watcher sleeps out the limit in
-# the background, holding none of the caller's descriptors; it ends, with its sleep, once git does.
+# confine_timed <seconds> <dir> <command>...: the command (hgit's git), with this shell's standard input
+# and output; when it has not ended after <seconds> (0: no limit) it is killed and the call refused, so a
+# named pipe or device the checks above do not see ends in a refusal, not a wait. Built from the shell
+# alone: one side of a pipe starts git in the background, sends its process id, waits for it and sends
+# "done"; the other reads the id, then waits up to the limit for "done" (read -t), and kills git when it
+# does not come. bash's own note of a job ended by a signal is kept off stderr; the status says it.
 confine_timed() {
-  local t=$1 d=$2 pid w rc=0 late=0
+  local t=$1 d=$2
+  local -a st
   shift 2
   if [ "$t" -eq 0 ]; then "$@"; return; fi
-  "$@" 0<&0 &
-  pid=$!
-  (
-    s=""
-    trap '[ -z "$s" ] || kill "$s" 2>/dev/null; exit 0' TERM
-    sleep "$t" &
-    s=$!
-    wait "$s"
-    kill -KILL "$pid" 2>/dev/null || exit 0
-    exit 3
-  ) </dev/null >/dev/null 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
-  w=$!
-  # bash would note a job ended by a signal on stderr; the status says it.
-  wait "$pid" 2>/dev/null || rc=$?
-  kill "$w" 2>/dev/null
-  wait "$w" 2>/dev/null || late=$?
-  [ "$late" -ne 3 ] ||
+  {
+    ( "$@" 0<&7 7<&- 1>&8 8>&- &
+      printf '%s\n' "$!"
+      wait "$!" 2>/dev/null
+      s=$?
+      printf 'done\n'
+      exit "$s" ) 7<&0 |
+      ( read -r p
+        if read -r -t "$t" x; then exit 0; fi
+        kill -KILL "$p" 2>/dev/null
+        exit 3 ) 8>&- >/dev/null 2>&1
+    st=("${PIPESTATUS[@]}")
+  } 8>&1
+  [ "${st[1]}" != 3 ] ||
     confine_refuse "git has not answered within $t s in $(confine_text "$d"), so a file it opens there may be a named pipe or device that it would wait on for good"
-  return "$rc"
+  return "${st[0]}"
 }
 
 # hgit <dir> <git arguments>: git in <dir> with only the environment below, and the -c pins over the

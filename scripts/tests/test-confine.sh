@@ -385,6 +385,11 @@ lib "$R" 'printf "HEAD\n" | CONFINE_GIT_TIME=5 hgit "$CONFINE_WT" cat-file --bat
 check "under a limit git reads the caller's standard input and keeps its status" out_is "$(printf 'commit\n1')"
 BOUND=50 bounded /dev/null lib "$R" 'b=$(CONFINE_GIT_TIME=30 hgit "$CONFINE_WT" rev-parse --abbrev-ref HEAD); printf "%s" "$b"'
 check "... and a call that ends at once returns at once" out_is main
+# The limit and the checks need only the shell and the programs hgit needs: no sleep, sh or grep.
+mkdir -p "$T/minpath"
+for t in env git find wc cat; do ln -s "$(command -v "$t")" "$T/minpath/$t"; done
+LIB_PATH="$T/minpath" lib "$R" 'hgit "$CONFINE_WT" rev-parse --abbrev-ref HEAD'
+check "hgit answers a question on a PATH of env, git, find, wc and cat alone" out_is main
 
 # =================================================================================================
 # Repositories: the top level, git directories inside WT, partial clones, and what is tracked.
@@ -588,6 +593,9 @@ if mkfifo "$T/fifo-probe" 2>/dev/null; then
   BOUND=350 lib_bounded "$T/lr-out/heads/main" "$T/lr" 'hgit "$CONFINE_WT" rev-parse --verify HEAD'
   check "... after 10 s by default for a question such as rev-parse" \
     refused "git has not answered within 10 s in $(shown "$T/lr"), so a file it opens there may be a named pipe or device that it would wait on for good"
+  LIB_PATH="$T/minpath" lib_bounded "$T/lr-out/heads/main" "$T/lr" 'CONFINE_GIT_TIME=2 hgit "$CONFINE_WT" rev-parse --verify HEAD'
+  check "... also on a PATH of env, git, find, wc and cat alone" \
+    refused "git has not answered within 2 s in $(shown "$T/lr"), so a file it opens there may be a named pipe or device that it would wait on for good"
 else
   skp "mkfifo is not available: the named pipe cases"
 fi
