@@ -454,21 +454,37 @@ hgit_text() {
   hgit "$d" -c grep.lineNumber=false -c grep.column=false -c diff.interHunkContext=0 -c diff.context=3 "$@"
 }
 
+# confine_work_files <work tree>: status 1 (CONFINE_GIT_WHY says why) when a file git reads in the work
+# tree of a repository whose history it shows (.gitattributes and .gitignore in any directory, .mailmap,
+# .gitmodules) is a named pipe or device, or a symbolic link to one (git before 2.32 follows such a
+# link): git opens it with a blocking open, while it reads, and would wait on it for good. Nothing inside
+# a .git is looked at here (confine_git_check does that).
+confine_work_files() {
+  local odd
+  odd=$(find "$1" -name .git -prune -o \( -name .gitattributes -o -name .mailmap -o -name .gitignore -o -name .gitmodules \) \
+    \( -type p -o -type b -o -type c -o -type l \) -print 2>/dev/null)
+  [ -z "$odd" ] || odd=$(IFS=$'\n'; set -f; for f in $odd; do if [ ! -L "$f" ] || confine_special "$f"; then printf '%s' "$f"; break; fi; done)
+  [ -z "$odd" ] || confine_git_wait "is where git reads its own files in the work tree" "$odd"
+}
+
 # confine_repo_top <dir>: status 0 when <dir> (absolute) is the top level of its own repository, or a
 # bare repository itself, compared with symbolic links resolved on both sides and by identity. A
 # directory inside another repository fails, so that repository is never read in its place; so does one
-# whose repository holds a file git would wait on (confine_git_check).
+# whose repository holds a file git would wait on (confine_git_check), or whose work tree does
+# (confine_work_files).
 confine_repo_top() {
-  local top here
+  local top here bare
   confine_git_check "$1" || return 1
-  if [ "$(hgit "$1" rev-parse --is-bare-repository 2>/dev/null)" = true ]; then
+  bare=$(hgit "$1" rev-parse --is-bare-repository 2>/dev/null)
+  if [ "$bare" = true ]; then
     top=$(hgit "$1" rev-parse --absolute-git-dir 2>/dev/null) || return 1
   else
     top=$(hgit "$1" rev-parse --show-toplevel 2>/dev/null) || return 1
   fi
   [ -n "$top" ] && confine_phys "$1" || return 1
   here=$CONFINE_PHYS
-  confine_phys "$top" && [ "$CONFINE_PHYS" -ef "$here" ]
+  confine_phys "$top" && [ "$CONFINE_PHYS" -ef "$here" ] || return 1
+  [ "$bare" = true ] || confine_work_files "$here"
 }
 
 # confine_partial_clone <dir>: status 0 for a partial clone (extensions.partialClone, or a
@@ -489,8 +505,9 @@ confine_partial_clone() {
 # confine_repo <dir> <what>: refuse <dir> (. for WT, or a confined directory) unless it is the top level
 # of a repository, or a bare repository, whose git directory and common directory resolve inside WT,
 # hold no symbolic link, named pipe or device (confine_git_files runs first), borrow no objects
-# (objects/info/alternates) and rewrite no commit's parents (info/grafts). Sets CONFINE_REPO (its
-# physical path), CONFINE_GIT_DIR, CONFINE_COMMON_DIR and CONFINE_BARE (true or false).
+# (objects/info/alternates) and rewrite no commit's parents (info/grafts), and whose work tree holds no
+# file git would wait on (confine_work_files). Sets CONFINE_REPO (its physical path), CONFINE_GIT_DIR,
+# CONFINE_COMMON_DIR and CONFINE_BARE (true or false).
 confine_repo() {
   local what=$2 shown abs info bare gitdir common top d odd n lines
   confine_shown "$1"
@@ -552,6 +569,7 @@ confine_repo() {
   if [ -e "$common/info/grafts" ]; then
     confine_refuse "$what rewrites commit parents (info/grafts), so git would show another history; review that file: $shown"
   fi
+  [ "$bare" = true ] || confine_work_files "$abs" || confine_refuse "$CONFINE_GIT_WHY"
   CONFINE_REPO=$abs
   CONFINE_GIT_DIR=$gitdir
   CONFINE_COMMON_DIR=$common

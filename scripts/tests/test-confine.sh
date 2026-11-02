@@ -596,6 +596,34 @@ if mkfifo "$T/fifo-probe" 2>/dev/null; then
   LIB_PATH="$T/minpath" lib_bounded "$T/lr-out/heads/main" "$T/lr" 'CONFINE_GIT_TIME=2 hgit "$CONFINE_WT" rev-parse --verify HEAD'
   check "... also on a PATH of env, git, find, wc and cat alone" \
     refused "git has not answered within 2 s in $(shown "$T/lr"), so a file it opens there may be a named pipe or device that it would wait on for good"
+  # The files git reads in the work tree of a repository whose history it shows, which reads take no
+  # time limit: .mailmap, and .gitattributes and .gitignore in any directory. A named pipe there, or a
+  # link to one, is refused; a link to a regular file passes.
+  mkrepo "$RW/wtpipe"; put "$RW/wtpipe" src/f x; put "$RW/wtpipe" src/g y; commit "$RW/wtpipe" -m x
+  printf 'z\n' >> "$RW/wtpipe/src/f"; git -C "$RW/wtpipe" commit -q -am y
+  wtmsg='a named pipe or device is where git reads its own files in the work tree, and git would wait on it for good'
+  mkfifo "$RW/wtpipe/.mailmap"
+  lib_bounded "$RW/wtpipe/.mailmap" "$RW" 'confine_repo wtpipe R'
+  check "a named pipe as the work tree's .mailmap is refused" refused "$wtmsg: $(shown "$RW/wtpipe/.mailmap")"
+  bounded "$RW/wtpipe/.mailmap" script "$RW" git-ro.sh --repo wtpipe log -1
+  check "... so git-ro.sh log refuses at once" refused_by git-ro
+  bounded "$RW/wtpipe/.mailmap" script "$RW" git-ro.sh --repo wtpipe shortlog HEAD
+  check "... and so does git-ro.sh shortlog" refused_by git-ro
+  rm "$RW/wtpipe/.mailmap"
+  mkfifo "$RW/wtpipe/src/.gitattributes"
+  bounded "$RW/wtpipe/src/.gitattributes" script "$RW" git-ro.sh --repo wtpipe diff HEAD~1 HEAD
+  check "... and a named pipe as a .gitattributes below: git-ro.sh diff refuses at once" refused_by git-ro
+  lib_bounded "$RW/wtpipe/src/.gitattributes" "$RW" 'confine_repo_top "$CONFINE_WT/wtpipe" && printf top || printf not-top'
+  check "... and confine_repo_top fails there" out_is not-top
+  rm "$RW/wtpipe/src/.gitattributes"
+  mkfifo "$RW/wtpipe/pipe"
+  ln -s pipe "$RW/wtpipe/.gitignore"
+  lib_bounded "$RW/wtpipe/pipe" "$RW" 'confine_repo wtpipe R'
+  check "... and a .gitignore that is a link to a named pipe" refused "$wtmsg: $(shown "$RW/wtpipe/.gitignore")"
+  rm "$RW/wtpipe/.gitignore" "$RW/wtpipe/pipe"
+  ln -s src/g "$RW/wtpipe/.gitignore"
+  lib "$RW" 'confine_repo wtpipe R; printf "%s" "$CONFINE_BARE"'
+  check "... while a .gitignore that is a link to a regular file passes" out_is false
 else
   skp "mkfifo is not available: the named pipe cases"
 fi
