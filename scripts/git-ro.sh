@@ -308,9 +308,10 @@ run_copy() { # run_copy <dir> <R>
   scratch=$(mktemp -d "${TMPDIR:-/tmp}/auditor-git-ro.XXXXXX") && confine_phys "$scratch" ||
     { rmdir "$WT/$r/$dest"; refuse "cannot create a scratch directory"; }
   scratch=$CONFINE_PHYS
-  case "$scratch/" in
-    "${WT%/}/"*) rmdir "$scratch" "$WT/$r/$dest"; refuse "the scratch directory (TMPDIR) lies inside the working directory" ;;
-  esac
+  if confine_inside "$scratch" "$WT"; then
+    rmdir "$scratch" "$WT/$r/$dest"
+    refuse "the scratch directory (TMPDIR) lies inside the working directory"
+  fi
   CONFINE_ALLOW_PROTOCOL=file CONFINE_CEILING=${scratch%/*} hgit "$scratch" -c protocol.file.allow=always \
     clone --no-local --bare --no-recurse-submodules --template= -- "$src" "$WT/$r/$dest" </dev/null
   rc=$?

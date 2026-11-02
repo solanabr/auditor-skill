@@ -4,7 +4,8 @@
 # a refusal, printed as the one stderr line "<tool>: refused: <reason>", with exit 64, or with the status
 # the tool gave confine_init (the collectors and snapshot-program.sh keep their 2).
 #
-# WT is the physical working directory, taken once by confine_init.
+# WT is the physical working directory, taken once by confine_init, with the names the disk gives it
+# (getcwd's: on a case-insensitive or firmlinked volume bash keeps the letters as typed).
 #   - A confined path is relative, non-empty, at most 1024 bytes and free of control characters. It
 #     does not start with "-" or "~", has no empty, "." or ".." component once one leading "./" is
 #     dropped, passes through no symbolic link and resolves inside WT. An existing final object is a
@@ -17,7 +18,9 @@
 # confine_init also sets LC_ALL=C and umask 077 and unsets CDPATH, BASH_ENV and ENV. It refuses an
 # installation root that holds a quote, "$", a backtick, a backslash or a control character, since the
 # quoted call could not match as written, or that lies inside WT (Rule 11e). PATH keeps only absolute
-# entries that resolve outside WT.
+# entries that resolve outside WT and outside the repository WT lies in (the nearest of WT and the
+# directories above it, below HOME, that holds a .git). Whether a path lies inside a directory is decided
+# by identity (device and inode) along its ancestors, never by comparing spellings.
 # hgit is the hardened git call of OUTPUT-RULES.md Rule 11c. scripts/git-ro.sh's header lists what its
 # -c pins switch off and when to re-check them; keep the two in step.
 # A tool that contacts an outside service records it in <R>/disclosures.tsv (OUTPUT-RULES.md Rule 11b;
@@ -52,8 +55,20 @@ confine_phys() {
   return "$rc"
 }
 
+confine_inside() { # confine_inside <absolute path> <directory>: status 0 when the path is the directory or lies below it
+  # Compared by identity (device and inode) up the path's ancestors, not by spelling: on a case-insensitive
+  # or firmlinked volume one directory has several spellings.
+  local p=$1
+  while :; do
+    [ "$p" -ef "$2" ] && return 0
+    case "$p" in /|'') return 1 ;; esac
+    p=${p%/*}
+    [ -n "$p" ] || p=/
+  done
+}
+
 confine_init() { # confine_init <tool> <installation root, physical> [<refusal status, default 64>]
-  local root=$2 rest e clean=""
+  local root=$2 rest e p top="" clean=""
   CONFINE_TOOL=$1
   CONFINE_STATUS=${3:-64}
   CONFINE_HINT=""
@@ -68,15 +83,27 @@ confine_init() { # confine_init <tool> <installation root, physical> [<refusal s
       confine_refuse "the installation path holds a quote, \$, a backtick, a backslash or a control character, so its quoted call cannot match as written" ;;
   esac
   cd -P . 2>/dev/null || confine_refuse "the working directory cannot be resolved"
+  # bash keeps the letters of the path as typed; take the names on disk (getcwd's), as git reports them.
+  p=$(/bin/pwd -P 2>/dev/null) && [ -n "$p" ] && [ "$p" -ef . ] && cd -- "$p" 2>/dev/null
   CONFINE_WT=$PWD
   case "$CONFINE_WT" in
     /*) ;;
     *) confine_refuse "the working directory cannot be resolved" ;;
   esac
   case "$CONFINE_WT" in *[[:cntrl:]]*) confine_refuse "the working directory path holds a control character" ;; esac
-  case "$root/" in
-    "${CONFINE_WT%/}/"*) confine_refuse "the installation lies inside the working directory; install it outside the tree under audit, or run from a directory that does not contain it (Rule 11e)" ;;
-  esac
+  if confine_inside "$root" "$CONFINE_WT"; then
+    confine_refuse "the installation lies inside the working directory; install it outside the tree under audit, or run from a directory that does not contain it (Rule 11e)"
+  fi
+  # The repository WT lies in, as git finds it from WT: the nearest of WT and the directories above it,
+  # below HOME, that holds a .git. Its tree is under audit as well, so PATH entries inside it are dropped too.
+  p=$CONFINE_WT
+  while :; do
+    if [ -e "$p/.git" ] || [ -L "$p/.git" ]; then top=$p; break; fi
+    [ "$p" != / ] || break
+    p=${p%/*}
+    [ -n "$p" ] || p=/
+    if [ -n "${HOME-}" ] && [ "$p" -ef "$HOME" ]; then break; fi
+  done
   rest="${PATH-}:"
   while [ -n "$rest" ]; do
     e=${rest%%:*}
@@ -84,7 +111,8 @@ confine_init() { # confine_init <tool> <installation root, physical> [<refusal s
     case "$e" in /*) ;; *) continue ;; esac
     confine_phys "$e" || continue
     case "$CONFINE_PHYS" in *[[:cntrl:]]*) continue ;; esac
-    case "$CONFINE_PHYS/" in "${CONFINE_WT%/}/"*) continue ;; esac
+    confine_inside "$CONFINE_PHYS" "$CONFINE_WT" && continue
+    [ -z "$top" ] || ! confine_inside "$CONFINE_PHYS" "$top" || continue
     clean=${clean:+$clean:}$CONFINE_PHYS
   done
   [ -n "$clean" ] || confine_refuse "no PATH entry is left outside the working directory"
@@ -259,9 +287,9 @@ hgit_text() {
 }
 
 # confine_repo_top <dir>: status 0 when <dir> (absolute) is the top level of its own repository, or a
-# bare repository itself, compared with symbolic links resolved on both sides. A directory inside
-# another repository fails, so that repository is never read in its place; so does one whose
-# repository holds a file git would wait on (confine_git_check).
+# bare repository itself, compared with symbolic links resolved on both sides and by identity. A
+# directory inside another repository fails, so that repository is never read in its place; so does one
+# whose repository holds a file git would wait on (confine_git_check).
 confine_repo_top() {
   local top here
   confine_git_check "$1" || return 1
@@ -272,7 +300,7 @@ confine_repo_top() {
   fi
   [ -n "$top" ] && confine_phys "$1" || return 1
   here=$CONFINE_PHYS
-  confine_phys "$top" && [ "$CONFINE_PHYS" = "$here" ]
+  confine_phys "$top" && [ "$CONFINE_PHYS" -ef "$here" ]
 }
 
 # confine_partial_clone <dir>: status 0 for a partial clone (extensions.partialClone, or a
@@ -333,7 +361,7 @@ confine_repo() {
     false) ;;
     *) confine_refuse "git cannot describe the repository at $what: $shown" ;;
   esac
-  [ -n "$top" ] && confine_phys "$top" && [ "$CONFINE_PHYS" = "$abs" ] ||
+  [ -n "$top" ] && confine_phys "$top" && [ "$CONFINE_PHYS" -ef "$abs" ] ||
     confine_refuse "$what is not the top level of its repository: $shown"
   case "$common" in /*) ;; *) common=$abs/$common ;; esac
   confine_phys "$gitdir" || confine_refuse "$what has a git directory that cannot be resolved: $shown"
@@ -341,10 +369,7 @@ confine_repo() {
   confine_phys "$common" || confine_refuse "$what has a git directory that cannot be resolved: $shown"
   common=$CONFINE_PHYS
   for d in "$gitdir" "$common"; do
-    case "$d/" in
-      "${CONFINE_WT%/}/"*) ;;
-      *) confine_refuse "$what keeps its git directory outside the working directory: $shown" ;;
-    esac
+    confine_inside "$d" "$CONFINE_WT" || confine_refuse "$what keeps its git directory outside the working directory: $shown"
     odd=$(find "$d" ! -type f ! -type d ! -type s -print 2>/dev/null) || confine_refuse "$what has a git directory that find cannot fully read: $shown"
     if [ -n "$odd" ]; then
       [ -z "$(find "$d" -type l -print 2>/dev/null)" ] ||
@@ -495,7 +520,7 @@ confine_new_copy() {
 confine_scratch() {
   local d
   confine_phys "${TMPDIR:-/tmp}" || return 1
-  case "$CONFINE_PHYS/" in "${CONFINE_WT%/}/"*) return 2 ;; esac
+  ! confine_inside "$CONFINE_PHYS" "$CONFINE_WT" || return 2
   d=$(mktemp -d "$CONFINE_PHYS/$1.XXXXXX" 2>/dev/null) || return 1
   confine_phys "$d" || return 1
   CONFINE_SCRATCH=$CONFINE_PHYS

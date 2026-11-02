@@ -116,6 +116,34 @@ check "PATH keeps absolute entries outside the working directory, resolved" out_
 (cd "$WT" && PATH="$WT/bin:bin:." "$BASH" -c '. "$1" && confine_init test "$2"' lib "$LIB" "$ROOT") >"$T/out" 2>"$T/err" </dev/null
 RC=$?
 check "a PATH with nothing outside the working directory is refused" refused 'no PATH entry is left outside the working directory'
+# A working directory inside a repository (a program of a monorepo): that repository's tree is under
+# audit too, so its node_modules/.bin is dropped; a repository at HOME (the auditor's own) is not.
+mkrepo "$T/mono"
+mkdir -p "$T/mono/node_modules/.bin" "$T/mono/programs/v"
+LIB_PATH="$T/mono/node_modules/.bin:$T/ok:$T/link-out" lib "$T/mono/programs/v" 'printf "%s" "$PATH"'
+check "PATH drops an entry inside the repository the working directory lies in" out_is "$T/ok:$T/ok2"
+mkrepo "$T/mono/programs/own"
+LIB_PATH="$T/mono/node_modules/.bin:$T/ok" lib "$T/mono/programs/own" 'printf "%s" "$PATH"'
+check "... and a working directory with a repository of its own lies in that one, as git finds it" \
+  out_is "$T/mono/node_modules/.bin:$T/ok"
+mkdir -p "$HOME/bin" "$HOME/work/w"
+git init -q "$HOME"
+LIB_PATH="$HOME/bin:$T/ok" lib "$HOME/work/w" 'printf "%s" "$PATH"'
+check "... but keeps entries under HOME when HOME itself is a repository" out_is "$HOME/bin:$T/ok"
+rm -rf "$HOME/.git"
+# On a volume that ignores letter case one directory has several spellings: the checks compare
+# directories, not spellings.
+if [ -d "$T/WT" ] && [ "$T/WT" -ef "$WT" ]; then
+  LIB_PATH="$T/WT/bin:$T/ok" lib "$WT" 'printf "%s" "$PATH"'
+  check "PATH drops an entry inside the working directory spelled in other letters" out_is "$T/ok"
+  lib "$WT" 'printf ran' "$T/WT/inst"
+  check "an installation inside the working directory spelled in other letters is refused" \
+    refused 'the installation lies inside the working directory; install it outside the tree under audit, or run from a directory that does not contain it (Rule 11e)'
+  lib "$T/WT" 'printf "%s" "$CONFINE_WT"'
+  check "a working directory entered in other letters is taken with the names on disk" out_is "$WT"
+else
+  skp "this volume tells letter case apart: the spelling cases"
+fi
 lib "$WT" 'confine_need sh nosuch-tool-for-confine-test; printf ran'
 check "confine_need refuses a program that is not on PATH" refused 'nosuch-tool-for-confine-test is not on PATH'
 lib "$WT" 'confine_refuse "a reason"; printf ran'
