@@ -1,18 +1,26 @@
 //! The `--workflows` pass as a command: the facts it reads, the files it skips,
-//! and the workflows directory it refuses.
+//! the workflows directory it refuses, and the child each file is parsed in.
 
 mod common;
 
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::fs::{self, File};
+use std::io::Write;
 use std::os::unix::ffi::OsStrExt;
+use std::path::Path;
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
+use auditor_tools::confine::{Parser, PARSE_TIME};
+use auditor_tools::workflow::{scan_workflows_with, PARSE_WORKFLOWS};
 use common::{refused, refused_with, run, shown, stdout, Wt};
 use serde_json::Value;
 
 const BIN: &str = env!("CARGO_BIN_EXE_audit-scan");
+
+const USAGE: &str = "usage: audit-scan [--contract=1] <dir> [--workflows <dir>] \
+[--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty]";
 
 /// A pull_request_target job that checks out the PR head, for the tests that
 /// expect it to be read after what comes before it.
@@ -569,4 +577,173 @@ fn what_cannot_be_placed_ends_only_that_files_read_and_says_from_where() {
             .len(),
         2
     );
+}
+
+#[test]
+fn its_workflow_child_answers_each_file_in_a_frame_and_names_none() {
+    let frame = |bytes: &[u8]| [&(bytes.len() as u64).to_le_bytes()[..], bytes].concat();
+    let input = [
+        frame(b"on: push\njobs:\n  b:\n    steps:\n      - run: x\n"),
+        frame(&[0xff, 0xfe]),
+        frame(b"- a\n- b\n"),
+        frame(b"on: push\nx: {a]\n"),
+    ]
+    .concat();
+    let mut child = Command::new(BIN)
+        .arg(PARSE_WORKFLOWS)
+        .env_clear()
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start the child");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(&input)
+        .expect("write the frames");
+    let out = child.wait_with_output().expect("the child ends");
+    assert_eq!(out.status.code(), Some(0));
+    assert!(out.stderr.is_empty());
+    let mut rest = &out.stdout[..];
+    let mut answers = Vec::new();
+    while !rest.is_empty() {
+        let len = u64::from_le_bytes(rest[..8].try_into().expect("a length")) as usize;
+        answers.push(serde_json::from_slice::<Value>(&rest[8..8 + len]).expect("JSON"));
+        rest = &rest[8 + len..];
+    }
+    assert_eq!(answers.len(), 4);
+    assert_eq!(answers[0]["workflow"]["file"], "");
+    assert_eq!(answers[0]["workflow"]["triggers"][0], "push");
+    assert_eq!(answers[0]["workflow"]["jobs"][0]["steps"][0]["run"], "x");
+    assert_eq!(answers[1]["skipped"], "not UTF-8");
+    assert_eq!(answers[2]["skipped"], "not a YAML mapping");
+    assert_eq!(
+        answers[3]["workflow"]["unknown"][0]["what"],
+        "a flow mapping entry not followed by , or }: not read from line 2 to the end"
+    );
+
+    // A frame longer than a file may be ends it, with nothing said.
+    let mut child = Command::new(BIN)
+        .arg(PARSE_WORKFLOWS)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("start the child");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(&(5u64 << 20).to_le_bytes())
+        .expect("write the length");
+    let out = child.wait_with_output().expect("the child ends");
+    assert_eq!(out.status.code(), Some(1));
+    assert!(out.stdout.is_empty());
+}
+
+#[test]
+fn the_workflow_child_word_is_refused_anywhere_but_alone() {
+    let wt = repo_with(&[("ci.yml", &ci())]);
+    for args in [
+        &["--contract=1", PARSE_WORKFLOWS][..],
+        &[".", PARSE_WORKFLOWS],
+        &[PARSE_WORKFLOWS, "."],
+        &[
+            "--contract=1",
+            ".",
+            "--workflows",
+            ".github/workflows",
+            PARSE_WORKFLOWS,
+        ],
+    ] {
+        refused(
+            &run(BIN, &wt.dir, args),
+            "audit-scan",
+            &format!("unknown option {PARSE_WORKFLOWS} ({USAGE})"),
+        );
+    }
+}
+
+/// The pass with parsers that die and hang, and with a report that fills up: the
+/// file a parser does not finish is skipped, the next file goes to a new child,
+/// and the pass goes on. One test, since it enters the tree it reads.
+#[test]
+fn a_workflow_whose_parser_dies_or_hangs_is_skipped_and_the_report_cap_holds() {
+    let wt = Wt::repo();
+    wt.write(".github/workflows/a.yml", b"on: push\n");
+    wt.write(".github/workflows/b.yml", b"# dies\non: push\n");
+    wt.write(".github/workflows/c.yml", b"# hangs\non: push\n");
+    wt.write(".github/workflows/d.yml", b"on: pull_request\n");
+    wt.write(".github/workflows/e.yml", b"- not\n- a mapping\n");
+    std::env::set_current_dir(&wt.dir).expect("enter the tree");
+    let mut real = Parser::with(Path::new(BIN), &[OsStr::new(PARSE_WORKFLOWS)]);
+    let mut dies = Parser::with(
+        Path::new("/bin/sh"),
+        &[OsStr::new("-c"), OsStr::new("kill -s SEGV $$")],
+    );
+    let mut hangs = Parser::with(Path::new("/bin/sleep"), &[OsStr::new("30")]);
+    let started = Instant::now();
+    let (workflows, skipped) =
+        scan_workflows_with(Path::new(".github/workflows"), usize::MAX, &mut |bytes| {
+            if bytes.starts_with(b"# dies") {
+                dies.parse(bytes, PARSE_TIME)
+            } else if bytes.starts_with(b"# hangs") {
+                hangs.parse(bytes, Duration::from_secs(1))
+            } else {
+                real.parse(bytes, PARSE_TIME)
+            }
+        });
+    let took = started.elapsed();
+    assert!(
+        took >= Duration::from_secs(1) && took < Duration::from_secs(8),
+        "took {took:?}"
+    );
+    let files: Vec<(&str, &str)> = workflows
+        .iter()
+        .map(|w| (w.file.as_str(), w.triggers[0].as_str()))
+        .collect();
+    assert_eq!(
+        files,
+        [
+            (".github/workflows/a.yml", "push"),
+            (".github/workflows/d.yml", "pull_request")
+        ]
+    );
+    let skipped: Vec<(&str, &str)> = skipped
+        .iter()
+        .map(|s| (s.file.as_str(), s.reason.as_str()))
+        .collect();
+    let why = "the parser could not finish";
+    assert_eq!(
+        skipped,
+        [
+            (".github/workflows/b.yml", why),
+            (".github/workflows/c.yml", why),
+            (".github/workflows/e.yml", "not a YAML mapping")
+        ]
+    );
+
+    // The workflows have a cap: the file whose facts would take them past it, and
+    // each file after it, is not parsed.
+    let steps: String = (0..100)
+        .map(|i| format!("      - run: step {i}\n"))
+        .collect();
+    wt.write("cap/a.yml", b"on: push\n");
+    wt.write(
+        "cap/b.yml",
+        format!("on: push\njobs:\n  b:\n    steps:\n{steps}").as_bytes(),
+    );
+    wt.write("cap/c.yml", b"on: push\n");
+    let (workflows, skipped) = scan_workflows_with(Path::new("cap"), 1_000, &mut |bytes| {
+        real.parse(bytes, PARSE_TIME)
+    });
+    assert_eq!(workflows.len(), 1);
+    assert_eq!(workflows[0].file, "cap/a.yml");
+    let skipped: Vec<(&str, &str)> = skipped
+        .iter()
+        .map(|s| (s.file.as_str(), s.reason.as_str()))
+        .collect();
+    let full = "not parsed: the report is full";
+    assert_eq!(skipped, [("cap/b.yml", full), ("cap/c.yml", full)]);
 }

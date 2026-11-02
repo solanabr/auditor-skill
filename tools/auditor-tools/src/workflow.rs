@@ -15,13 +15,19 @@
 //! expands an alias. A file with a second YAML document, or more structure than
 //! the caps allow, is listed in `skipped`.
 //!
-//! It is bounded by construction — [`MAX_WF_DEPTH`] on nesting, [`MAX_WF_NODES`]
-//! on nodes a file, `confine::MAX_FILE` on bytes a file (the walk enforces it),
-//! [`MAX_WF_FILES`] on files a directory — so, unlike the recursive-descent Rust
-//! parser, it runs in this process and needs no child.
+//! Each file is parsed in a child of audit-scan (`parse_stdin`), as a `*.rs` file
+//! is, so a parse that does not finish costs only that file. The caps bound what
+//! is built: [`MAX_WF_DEPTH`] on nesting, [`MAX_WF_NODES`] on nodes a file,
+//! `confine::MAX_FILE` on bytes a file, `confine::MAX_ANSWER` on the facts of a
+//! file, [`MAX_WF_FILES`] on files a directory, and what the `*.rs` walk left of
+//! `scan::MAX_REPORT` on the facts of them all.
 
+use std::ffi::OsStr;
+use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
+use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -45,6 +51,19 @@ pub const MAX_WF_FILES: usize = 256;
 /// The longest a scalar or a key is kept: its whitespace collapsed to single
 /// spaces and cut after this many characters with `...`, as a report snippet is.
 const MAX_WF_SCALAR: usize = 200;
+
+/// The word audit-scan starts itself with, as its only argument, to parse
+/// workflow files in a child (`parse_stdin`). Anywhere else the grammar refuses
+/// it, as an option it does not know.
+pub const PARSE_WORKFLOWS: &str = "--internal-parse-workflows";
+
+const FULL: &str = "not parsed: the report is full";
+const UNFINISHED: &str = "the parser could not finish";
+const TOO_MANY_FACTS: &str = "not listed: its facts take more than 32 MiB";
+const _: () = assert!(
+    confine::MAX_ANSWER == 32 << 20,
+    "TOO_MANY_FACTS names MAX_ANSWER"
+);
 
 /// One parsed workflow file: the facts the pass reads, and what in it the parser
 /// did not read.
@@ -102,104 +121,199 @@ pub struct Unknown {
     pub what: String,
 }
 
+/// The child's answer for one file: its workflow, or why it is skipped.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Answer {
+    Workflow(Workflow),
+    Skipped(String),
+}
+
 /// Parse every `*.yml` and `*.yaml` file directly in the directory `dir` (a path
-/// relative to the working directory), in byte order of their names, returning
-/// the workflows parsed and the files skipped. GitHub reads workflows only from
-/// the directory itself, so the pass does not recurse; it follows no symbolic
-/// link, and reads only regular files with one name of at most 4 MiB, each opened
-/// from the directory's descriptor without following a link. A `*.y*ml` entry
-/// that is a link or not a regular file, one that is not UTF-8, one with a second
-/// YAML document or more structure than the caps allow, and every file past
-/// `MAX_WF_FILES`, is listed in `skipped` with the reason.
-pub fn scan_workflows(dir: &Path) -> (Vec<Workflow>, Vec<Skipped>) {
+/// relative to the working directory), each in a child of this binary started by
+/// the path it runs from (`confine::Parser`) and given `confine::PARSE_TIME`, as
+/// `scan_workflows_with` does with `cap` bytes of report left.
+pub fn scan_workflows(dir: &Path, cap: usize) -> io::Result<(Vec<Workflow>, Vec<Skipped>)> {
+    let mut parser = confine::Parser::with(&confine::own_exe()?, &[OsStr::new(PARSE_WORKFLOWS)]);
+    Ok(scan_workflows_with(dir, cap, &mut |bytes| {
+        parser.parse(bytes, confine::PARSE_TIME)
+    }))
+}
+
+/// Parse every `*.yml` and `*.yaml` file directly in the directory `dir`, in byte
+/// order of their names, each file's bytes handed to `parse`, which gives the
+/// answer `parse_stdin` gives for them, or `None` when the parser could not
+/// finish. Returns the workflows parsed and the files skipped. GitHub reads
+/// workflows only from the directory itself, so the pass does not recurse; it
+/// follows no symbolic link, and reads only regular files with one name of at
+/// most 4 MiB, each opened from the directory's descriptor without following a
+/// link. A `*.y*ml` entry that is a link or not a regular file, one that is not
+/// UTF-8, one with a second YAML document or more structure than the caps allow,
+/// one the parser could not finish, and every file past `MAX_WF_FILES`, is listed
+/// in `skipped` with the reason. The workflows hold about `cap` bytes at most:
+/// the file whose facts would take them past it, and each file after it, is in
+/// `skipped` as not parsed.
+pub fn scan_workflows_with(
+    dir: &Path,
+    cap: usize,
+    parse: &mut dyn FnMut(&[u8]) -> Option<Vec<u8>>,
+) -> (Vec<Workflow>, Vec<Skipped>) {
     let mut workflows = Vec::new();
     let mut skipped = Vec::new();
+    let unreadable = |e: &io::Error| Skipped {
+        file: dir.display().to_string(),
+        reason: format!("cannot be read: {}", os_message(e)),
+    };
     let fd = match crate::scan::open_root(dir) {
         Ok(fd) => fd,
         Err(e) => {
-            skipped.push(Skipped {
-                file: dir.display().to_string(),
-                reason: format!("cannot be read: {}", os_message(&e)),
-            });
+            skipped.push(unreadable(&e));
             return (workflows, skipped);
         }
     };
     let names = match confine::names(&fd) {
         Ok(names) => names,
         Err(e) => {
-            skipped.push(Skipped {
-                file: dir.display().to_string(),
-                reason: format!("cannot be read: {}", os_message(&e)),
-            });
+            skipped.push(unreadable(&e));
             return (workflows, skipped);
         }
     };
     let mut parsed = 0usize;
+    let mut size = 0usize;
+    let mut full = false;
     for name in names {
         if !(name.ends_with(b".yml") || name.ends_with(b".yaml")) {
             continue;
         }
-        let label = dir.join(std::ffi::OsStr::from_bytes(&name));
-        let label = label.display().to_string();
-        let kind = match confine::kind_at(fd.as_raw_fd(), &name) {
-            Ok(kind) => kind,
-            Err(e) => {
-                skipped.push(Skipped {
-                    file: label,
-                    reason: format!("cannot be read: {}", os_message(&e)),
-                });
-                continue;
-            }
+        let label = dir.join(OsStr::from_bytes(&name)).display().to_string();
+        let mut skip = |reason: String| {
+            skipped.push(Skipped {
+                file: label.clone(),
+                reason,
+            })
         };
-        match kind {
-            libc::S_IFLNK => {
-                skipped.push(Skipped {
-                    file: label,
-                    reason: "a symbolic link, not followed".to_string(),
-                });
+        match confine::kind_at(fd.as_raw_fd(), &name) {
+            Ok(libc::S_IFREG) => {}
+            Ok(libc::S_IFLNK) => {
+                skip("a symbolic link, not followed".to_string());
                 continue;
             }
-            libc::S_IFREG => {}
-            _ => {
-                skipped.push(Skipped {
-                    file: label,
-                    reason: "not a regular file".to_string(),
-                });
+            Ok(_) => {
+                skip("not a regular file".to_string());
+                continue;
+            }
+            Err(e) => {
+                skip(format!("cannot be read: {}", os_message(&e)));
                 continue;
             }
         }
         if parsed >= MAX_WF_FILES {
-            skipped.push(Skipped {
-                file: label,
-                reason: "not parsed: too many workflow files".to_string(),
-            });
+            skip("not parsed: too many workflow files".to_string());
             continue;
         }
         parsed += 1;
-        match crate::scan::read_bytes(fd.as_raw_fd(), &name) {
-            Ok(bytes) => match std::str::from_utf8(&bytes) {
-                Ok(text) => match parse_workflow(&label, text) {
-                    Ok(wf) => workflows.push(wf),
-                    Err(reason) => skipped.push(Skipped {
-                        file: label,
-                        reason,
-                    }),
-                },
-                Err(_) => skipped.push(Skipped {
-                    file: label,
-                    reason: "not UTF-8".to_string(),
-                }),
-            },
-            Err(reason) => skipped.push(Skipped {
-                file: label,
-                reason,
-            }),
+        if full {
+            skip(FULL.to_string());
+            continue;
+        }
+        let answer = crate::scan::read_bytes(fd.as_raw_fd(), &name).and_then(|bytes| {
+            parse(&bytes)
+                .and_then(|out| Some((out.len(), serde_json::from_slice::<Answer>(&out).ok()?)))
+                .ok_or_else(|| UNFINISHED.to_string())
+        });
+        match answer {
+            Ok((len, Answer::Workflow(mut wf))) => {
+                let cost = len.saturating_add(json_size(&label));
+                if size.saturating_add(cost) > cap {
+                    full = true;
+                    skip(FULL.to_string());
+                    continue;
+                }
+                size += cost;
+                wf.file = label;
+                workflows.push(wf);
+            }
+            Ok((_, Answer::Skipped(reason))) | Err(reason) => skip(reason),
         }
     }
     (workflows, skipped)
 }
 
-use std::os::unix::ffi::OsStrExt;
+/// The bytes `value` takes as JSON, as `serde_json` writes it: counted, not kept.
+pub fn json_size<T: Serialize + ?Sized>(value: &T) -> usize {
+    struct Count(usize);
+    impl Write for Count {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0 = self.0.saturating_add(buf.len());
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut count = Count(0);
+    match serde_json::to_writer(&mut count, value) {
+        Ok(()) => count.0,
+        Err(_) => usize::MAX,
+    }
+}
+
+/// audit-scan started as its own child to parse workflow files
+/// (`PARSE_WORKFLOWS`): each file's bytes, at most `MAX_FILE`, come on stdin as a
+/// frame (their length in 8 bytes, little-endian, then the bytes), and the answer
+/// for that one file goes to stdout the same way: its workflow, with the file
+/// named `""` for the parent to name, or why it is skipped. It reads and writes
+/// nothing else, and ends at the end of its stdin. Each file may use twice
+/// `confine::PARSE_TIME` of CPU (`parse_frames`).
+pub fn parse_stdin() -> io::Result<()> {
+    parse_frames(
+        &mut io::stdin().lock(),
+        &mut io::stdout().lock(),
+        confine::PARSE_TIME * 2,
+    )
+}
+
+/// `parse_stdin`, from `input` to `output`, each file given `cpu`: before each
+/// frame is read, this process's CPU limit is set to the CPU it has used so far and
+/// `cpu` more (`confine::limit_cpu`), so a child whose parent is gone, with no one
+/// left to kill it, dies once one file has used that.
+pub fn parse_frames(input: &mut dyn Read, output: &mut dyn Write, cpu: Duration) -> io::Result<()> {
+    loop {
+        confine::limit_cpu(cpu)?;
+        let mut head = [0u8; 8];
+        if input.read(&mut head[..1])? == 0 {
+            return Ok(());
+        }
+        input.read_exact(&mut head[1..])?;
+        let len = u64::from_le_bytes(head);
+        if len > confine::MAX_FILE {
+            return Err(io::Error::other("a file larger than 4 MiB"));
+        }
+        let mut bytes = vec![0u8; len as usize];
+        input.read_exact(&mut bytes)?;
+        let json = answer(&bytes, confine::MAX_ANSWER)?;
+        output.write_all(&(json.len() as u64).to_le_bytes())?;
+        output.write_all(&json)?;
+        output.flush()?;
+    }
+}
+
+/// The answer for one file's bytes, as JSON of at most `cap` bytes: a workflow
+/// whose facts take more is skipped instead.
+fn answer(bytes: &[u8], cap: usize) -> io::Result<Vec<u8>> {
+    let answer = match std::str::from_utf8(bytes) {
+        Err(_) => Answer::Skipped("not UTF-8".to_string()),
+        Ok(text) => match parse_workflow("", text) {
+            Ok(wf) => Answer::Workflow(wf),
+            Err(reason) => Answer::Skipped(reason),
+        },
+    };
+    let json = serde_json::to_vec(&answer).map_err(io::Error::other)?;
+    if json.len() <= cap {
+        return Ok(json);
+    }
+    serde_json::to_vec(&Answer::Skipped(TOO_MANY_FACTS.to_string())).map_err(io::Error::other)
+}
 
 /// Parse one workflow source into its facts, the file named `label`. `Err(reason)`
 /// means the file is skipped whole: it is not a single YAML mapping, it holds a
@@ -2377,5 +2491,20 @@ mod tests {
         for (i, _) in src.char_indices() {
             let _ = parse_workflow("w.yml", &src[..i]);
         }
+    }
+
+    #[test]
+    fn a_large_answer_is_skipped_rather_than_cut() {
+        let src = "on: push\njobs:\n  b:\n    steps:\n      - run: x\n";
+        let small: Answer =
+            serde_json::from_slice(&answer(src.as_bytes(), 1 << 20).unwrap()).unwrap();
+        assert!(matches!(small, Answer::Workflow(_)));
+        let tight: Answer = serde_json::from_slice(&answer(src.as_bytes(), 50).unwrap()).unwrap();
+        match tight {
+            Answer::Skipped(why) => assert_eq!(why, TOO_MANY_FACTS),
+            other => panic!("{other:?}"),
+        }
+        let bad: Answer = serde_json::from_slice(&answer(&[0xff], 1 << 20).unwrap()).unwrap();
+        assert!(matches!(bad, Answer::Skipped(why) if why == "not UTF-8"));
     }
 }

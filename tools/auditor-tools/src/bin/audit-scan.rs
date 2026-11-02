@@ -18,9 +18,11 @@
 //! `scripts/rundir.sh check`; it is made new, or replaces audit-scan's own earlier
 //! output there: a regular file with one name. Each option is given once.
 //! Each file is parsed in a child of this binary, started by the path it runs
-//! from with `confine::PARSE_STDIN` as its only argument: the file's bytes on its
-//! stdin, no environment, killed past `confine::PARSE_TIME`. A file whose child
-//! does not finish is skipped, and the scan goes on.
+//! from with `confine::PARSE_STDIN` as its only argument (`workflow::PARSE_WORKFLOWS`
+//! for a workflow file): the file's bytes on its stdin, no environment, killed
+//! past `confine::PARSE_TIME`. A file whose child does not finish is skipped, and
+//! the scan goes on. The workflows' facts take what the `*.rs` walk left of the
+//! report's cap, `scan::MAX_REPORT`.
 //! Exit: 0 done · 1 the output cannot be written · 2 refused.
 
 use std::ffi::{OsStr, OsString};
@@ -243,7 +245,9 @@ fn run(args: &[OsString]) -> Result<(), Stop> {
     let mut report = scan::scan_path(dir.path())
         .map_err(|e| Stop(1, format!("cannot start the scan: {}", os_message(&e))))?;
     if let Some(wdir) = &workflows {
-        let (parsed, skipped) = workflow::scan_workflows(wdir.path());
+        let left = scan::MAX_REPORT.saturating_sub(workflow::json_size(&report));
+        let (parsed, skipped) = workflow::scan_workflows(wdir.path(), left)
+            .map_err(|e| Stop(1, format!("cannot start the scan: {}", os_message(&e))))?;
         report.workflows = parsed;
         report.skipped.extend(skipped);
     }
@@ -276,8 +280,15 @@ fn run(args: &[OsString]) -> Result<(), Stop> {
 fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     if let [word] = args.as_slice() {
-        if word.as_bytes() == confine::PARSE_STDIN.as_bytes() {
-            return match scan::parse_stdin() {
+        let child = if word.as_bytes() == confine::PARSE_STDIN.as_bytes() {
+            Some(scan::parse_stdin as fn() -> io::Result<()>)
+        } else if word.as_bytes() == workflow::PARSE_WORKFLOWS.as_bytes() {
+            Some(workflow::parse_stdin as fn() -> io::Result<()>)
+        } else {
+            None
+        };
+        if let Some(parse) = child {
+            return match parse() {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(_) => ExitCode::from(1),
             };
