@@ -163,17 +163,41 @@ Three layers, cheapest first. Each is optional; the corpus's GitHub Actions chec
 
 ### zizmor — run it pinned and without the target's config
 
-Pin the tool **by version and by hash**, and ignore any configuration the audited repository ships.
+Pin the tool **by version and by hash**, and ignore any configuration and any ignore comment the audited repository ships.
 
 ```bash
-# the published container, by digest (optionally with a version tag before the @)
-docker run --rm -v "$PWD":/src:ro ghcr.io/zizmorcore/zizmor:v1.30.1@sha256:<digest> \
-  --offline --no-config --persona=auditor /src/.github/workflows
+# zizmor 1.30.1: the published container by the digest of its image index, with no network
+docker run --rm --network none -v "$PWD":/src:ro \
+  ghcr.io/zizmorcore/zizmor@sha256:a2eb396d886c053073405c7a980f2139ba2248ec172243cfa3841e57196e8101 \
+  --offline --no-config --no-ignores --persona=auditor /src/.github/workflows
+```
+
+Without Docker, install the same version from PyPI in pip's hash-checking mode, into a virtual environment outside the checkout. Save the requirement, with the sha256 of every 1.30.1 wheel, as `zizmor-1.30.1.txt`:
+
+```text
+zizmor==1.30.1 \
+    --hash=sha256:17fda74e15fe41a6aa354ea4cf71fc7ff3cd025cda6584bb6d7466b3f1d00fe6 \
+    --hash=sha256:f9eb092f089e35fa9fb3b70aeec0a19eca7dacf2ab161f1d50b18351895f085c \
+    --hash=sha256:92906f448365672ebb657fb50d36f997290a3aaba8cac723214741ea9054845d \
+    --hash=sha256:5e8a3d54c3d9d51307371f4d1d49f8f9e56de00205c6cc660c6846a95ad4e135 \
+    --hash=sha256:eee12266b793cb87ad4a7e3af2e72404f8a63e3de5eb099b80bf7b1cfd232a8e \
+    --hash=sha256:15679642e8c4f825ba3f22537c698b1bbbad19ead23640f62ec45ebbe7abc803 \
+    --hash=sha256:bf63099a27ef3bf1329dbab44bb9d1027124855c71bd0eca864d5c8e1c5c0db1 \
+    --hash=sha256:4a5ef2fa4fbd2984f794cfc2f95790bd03fa0bae801487ed550e044675874e60 \
+    --hash=sha256:42512bb4a1bce4c787d221d1572ff6b691fa52a3d129b2910be8afaf860c5871 \
+    --hash=sha256:06e039fae8e185e2a1a8b002f2d95a6f5c3b548048bdd79e004dcb501fcd0868
+```
+
+```bash
+python3 -m venv ~/.venvs/zizmor-1.30.1
+~/.venvs/zizmor-1.30.1/bin/pip install --require-hashes --only-binary :all: --no-deps -r zizmor-1.30.1.txt
+~/.venvs/zizmor-1.30.1/bin/zizmor --offline --no-config --no-ignores --persona=auditor .github/workflows
 ```
 
 - **Why `--no-config`.** zizmor discovers a config file at `.github/zizmor.yml`, `.github/zizmor.yaml`, `zizmor.yml` or `zizmor.yaml` from the repository root, and a discovered config can turn audits off (`rules.<id>.disable`) or ignore findings in named files (`rules.<id>.ignore`). Since the repository under audit is untrusted, do not let its config steer the scan: `--no-config` loads no configuration at all (per the docs, "If `--no-config` is passed, no configuration is ever loaded"); `--config <your own file>` or `ZIZMOR_CONFIG` replaces discovery with a file you control. ([docs.zizmor.sh/configuration](https://docs.zizmor.sh/configuration/))
-- **`--offline`** blocks network and remote-repository fetches; **`--persona=auditor`** reports every finding, "even ones that it's not sure about". ([docs.zizmor.sh/usage](https://docs.zizmor.sh/usage/))
-- **Pinning.** The published image is `ghcr.io/zizmorcore/zizmor` ([docs.zizmor.sh/installation](https://docs.zizmor.sh/installation/)). *Unverified:* zizmor's install docs show only the unpinned `:latest` pull and an unversioned `pip install zizmor` / `uvx zizmor`; pinning a container by `@sha256:` digest and installing a pinned PyPI version under pip's hash-checking mode (`pip install zizmor==<v> --require-hashes -r <reqs>`) are standard Docker/pip mechanisms, not forms those pages document. Confirm the digest against the release you intend to run.
+- **Why `--no-ignores`.** A workflow file can also silence a finding itself, with a `# zizmor: ignore[<rule>]` comment on the lines the finding covers, and `--no-config` leaves those comments in force. `--no-ignores`, in zizmor 1.25.0 and later, turns off every ignore, comment and configuration alike, so nothing in the audited repository hides a finding. ([docs.zizmor.sh/usage](https://docs.zizmor.sh/usage/), "Disabling ignores")
+- **`--offline`** blocks network and remote-repository fetches, and `--network none` gives the container no network at all; **`--persona=auditor`** reports every finding, "even ones that it's not sure about". ([docs.zizmor.sh/usage](https://docs.zizmor.sh/usage/))
+- **Pinning.** The published image is `ghcr.io/zizmorcore/zizmor` ([docs.zizmor.sh/installation](https://docs.zizmor.sh/installation/)); its version tags have no `v` (`1.30.1`), and zizmor's install docs show only the unpinned `:latest` pull and unversioned `pip install zizmor` / `uvx zizmor`. The values above were checked on 2026-11-02: the registry gives `sha256:a2eb396d…8101` as the digest of tag `1.30.1`, an image index for linux/amd64 and linux/arm64 whose revision label is `99a054e`, the commit of zizmor's `v1.30.1` release; GitHub's package page lists the same digest for that tag; and PyPI's JSON API lists the ten wheel hashes for 1.30.1. A digest always names the same image, so the command cannot change under you. To move to another release, take its digest and hashes from the same places. *Unverified:* neither command has been run with these pins, and the Docker form relies on the image's entrypoint being `zizmor`.
 - **What it misses.** `github-actions.md` §9 records, for **zizmor 1.30.1** over fixtures 01–17, the gates it did not flag (a mention-only gate, a cross-object OR, deny-lists, event text in an agent prompt input). A clean zizmor run does not close the class.
 
 ### CodeQL — the `actions` queries, and the licence
