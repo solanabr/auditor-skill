@@ -30,7 +30,7 @@ use syn::spanned::Spanned;
 use syn::visit::Visit;
 use syn::{Expr, Type};
 
-use crate::confine::{self, is_run_dir_name, os_message, MAX_FILE};
+use crate::confine::{self, is_run_dir_name, os_message, Git, MAX_FILE};
 
 const SNIPPET_MAX: usize = 80;
 
@@ -365,8 +365,9 @@ pub fn scan_path(root: &Path) -> io::Result<ScanReport> {
 /// UTF-8, nested or chained too deeply, not Rust that `syn` parses, one the parser
 /// could not finish, or one past the report's cap or the scan's time) is listed in
 /// `skipped`. Directories named `target`, `.git` and `node_modules` below `root`
-/// are pruned, and so are the run directories and `.audit-memory/` when `root` is
-/// the working directory. Entries are visited in byte order of their names.
+/// are pruned, and so are, when `root` is the working directory, the run
+/// directories and the store an audit made in it (`Scan::own_output`), each
+/// listed in `skipped` too. Entries are visited in byte order of their names.
 pub fn scan_path_with(
     root: &Path,
     cap: usize,
@@ -381,6 +382,7 @@ pub fn scan_path_with(
         cap,
         full: false,
         until: Instant::now().checked_add(time),
+        git: None,
     };
     match open_root(root) {
         Ok(dir) => scan.dir(&dir, root, 0),
@@ -403,8 +405,9 @@ pub(crate) fn open_root(root: &Path) -> io::Result<OwnedFd> {
 
 /// A scan under way: the report so far, whether the root is the working
 /// directory, what parses a file, the report's size, about as it prints, against
-/// its cap, and when it parses no more (never, when that is past what an
-/// `Instant` holds).
+/// its cap, when it parses no more (never, when that is past what an `Instant`
+/// holds), and git in the working directory, found on first use (`own_output`;
+/// `Some(None)` when the working directory cannot be resolved).
 struct Scan<'p> {
     report: ScanReport,
     top: bool,
@@ -413,9 +416,30 @@ struct Scan<'p> {
     cap: usize,
     full: bool,
     until: Option<Instant>,
+    git: Option<Option<Git>>,
 }
 
 impl Scan<'_> {
+    /// Whether `name`, a directory directly in the working directory (a run
+    /// directory's name, or `.audit-memory`), is an audit's own output: it holds
+    /// the mark `rundir.sh new` and `audit-mem init` write first, a `.gitignore` of
+    /// exactly `*`, and no repository tracks it in any letter case, as
+    /// confine.sh's `confine_tracked` asks. git is asked only about a directory
+    /// with the mark, and one git cannot answer for is not taken for an audit's
+    /// output.
+    fn own_output(&mut self, name: &[u8]) -> bool {
+        if !confine::ignores_all(&Path::new(OsStr::from_bytes(name)).join(".gitignore")) {
+            return false;
+        }
+        let found = self
+            .git
+            .get_or_insert_with(|| confine::working_tree().ok().map(|wt| Git::new(&wt)));
+        let Some(git) = found.as_mut() else {
+            return false;
+        };
+        git.need().is_ok() && git.tracked(name).is_some_and(|listed| listed.is_empty())
+    }
+
     fn skip(&mut self, path: &Path, reason: impl Into<String>) {
         self.report.skipped.push(Skipped {
             file: path.display().to_string(),
@@ -449,14 +473,25 @@ impl Scan<'_> {
         }
     }
 
-    /// A directory in `dir`: build output, git's own directory, installed
-    /// packages and, when the root is the working directory, its run directories
-    /// and `.audit-memory/` (an audit's own output) are not entered.
+    /// A directory in `dir`. Build output, git's own directory and installed
+    /// packages, by their names, are not entered; nor, when the root is the
+    /// working directory, are the run directories and the store an audit made in
+    /// it (`own_output`). Each is in `skipped`, with why.
     fn subdir(&mut self, dir: &OwnedFd, name: &[u8], path: &Path, depth: usize) {
-        if matches!(name, b"target" | b".git" | b"node_modules")
-            || (self.top && depth == 1 && (name == b".audit-memory" || is_run_dir_name(name)))
-        {
-            return;
+        let pruned = match name {
+            b"target" => Some("a target/ directory (build output), not scanned"),
+            b".git" => Some("a .git/ directory (git's own), not scanned"),
+            b"node_modules" => Some("a node_modules/ directory (installed packages), not scanned"),
+            b".audit-memory" if self.top && depth == 1 && self.own_output(name) => {
+                Some("the audit-mem store (a .gitignore of * and nothing tracked), not scanned")
+            }
+            _ if self.top && depth == 1 && is_run_dir_name(name) && self.own_output(name) => {
+                Some("a run directory (a .gitignore of * and nothing tracked), not scanned")
+            }
+            _ => None,
+        };
+        if let Some(why) = pruned {
+            return self.skip(path, why);
         }
         if depth > MAX_WALK {
             return self.skip(path, "nested too deeply to walk");

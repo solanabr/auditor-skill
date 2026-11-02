@@ -79,16 +79,20 @@ audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.jso
 
 Recursively walks the `*.rs` files under `<dir>`, parses each as `syn::parse_file`
 does, in a child of its own, and prints one JSON object to stdout (or writes it to
-`--out`). `--pretty` uses `serde_json::to_string_pretty`. The walk skips `target/`,
-`.git/` and `node_modules/` below `<dir>`, and, when `<dir>` is `.`, the run
-directories and `.audit-memory/`, which hold an audit's own output. It follows no
-symbolic link, goes no deeper than 128 directories below `<dir>`, and parses only
-regular files with one name, of at most 4 MiB, in byte order of their names; every
-link it meets, every directory it does not enter for its depth, and every `*.rs`
-file it does not parse (not a regular file, a second name, larger than 4 MiB,
-unreadable, not UTF-8, nested or chained too deeply, not Rust that `syn` parses,
-one the parser could not finish, or one past the report's size or the scan's
-time), is listed in `skipped` with the reason.
+`--out`). `--pretty` uses `serde_json::to_string_pretty`. The walk does not enter
+a directory named `target`, `.git` or `node_modules` below `<dir>`, nor, when
+`<dir>` is `.`, a run directory or `.audit-memory/` that holds an audit's own
+output: one that holds the `.gitignore` of exactly `*` that `rundir.sh new` and
+`audit-mem init` write first, and that no repository tracks in any letter case. A
+directory with such a name that is not one, such as one the target's repository
+tracks, is scanned like any other. The walk follows no symbolic link, goes no
+deeper than 128 directories below `<dir>`, and parses only regular files with one
+name, of at most 4 MiB, in byte order of their names; every directory it does not
+enter, for its name or its depth, every link it meets, and every `*.rs` file it
+does not parse (not a regular file, a second name, larger than 4 MiB, unreadable,
+not UTF-8, nested or chained too deeply, not Rust that `syn` parses, one the parser
+could not finish, or one past the report's size or the scan's time), is listed in
+`skipped` with the reason.
 
 The files are parsed in a child: audit-scan starts itself, by the path it runs
 from, with `--internal-parse-stdin` as its only argument, no environment and `/`
@@ -188,8 +192,10 @@ so it must be safe whatever arguments follow. Its rules are those of
   that passes the same checks as the one to scan, but not `.`.
 - It asks git whether a run directory is tracked as confine.sh's `hgit` asks it: git
   from a `PATH` with every entry inside the working directory removed, with an
-  environment of its own and the repository's config pinned off. When git cannot
-  answer, `--out` is refused; with no `--out`, git is not run.
+  environment of its own and the repository's config pinned off. It asks for
+  `--out`, and, in a scan of `.`, for a run directory or `.audit-memory/` that holds
+  a `.gitignore` of exactly `*`. When git cannot answer, `--out` is refused, and
+  such a directory is scanned; with neither, git is not run.
 - It refuses to run from an installation inside the working directory, or from a
   path, as it was invoked or with its links resolved, holding a quote, `$`, a
   backtick, a backslash or a control character, and in a working directory whose
@@ -315,9 +321,9 @@ Exit: 0 done · 1 the output cannot be written · 2 refused, with one stderr lin
       "unknown": [ { "line": 0, "what": "string" } ] }
   ],
 
-  // every symbolic link the walk did not follow, every directory it did not
-  // enter for its depth, every `*.rs` file it did not parse, and every workflow
-  // file `--workflows` could not read or parse whole, with why.
+  // every directory the walk did not enter, for its name or its depth, every
+  // symbolic link it did not follow, every `*.rs` file it did not parse, and
+  // every workflow file `--workflows` could not read or parse whole, with why.
   "skipped": [
     { "file": "string", "reason": "string" }
   ]

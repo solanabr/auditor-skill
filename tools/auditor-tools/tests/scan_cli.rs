@@ -540,22 +540,81 @@ fn skips_large_irregular_and_unparsable_files() {
     );
 }
 
+const RUN_DIR: &str = "a run directory (a .gitignore of * and nothing tracked), not scanned";
+const STORE: &str = "the audit-mem store (a .gitignore of * and nothing tracked), not scanned";
+const BUILD: &str = "a target/ directory (build output), not scanned";
+
 #[test]
-fn prunes_run_directories_and_the_store_at_the_top_only() {
-    let wt = Wt::new();
+fn prunes_the_run_directories_and_store_an_audit_made_at_the_top_only() {
+    let wt = Wt::repo();
     wt.write("src/lib.rs", b"fn a() {}\n");
     wt.run_dir("audit_1");
     wt.write("audit_1/poc/F-1/src/lib.rs", b"fn poc() {}\n");
+    wt.run_dir(".audit-memory");
     wt.write(".audit-memory/x.rs", b"fn mem() {}\n");
     wt.write("target/debug/build.rs", b"fn built() {}\n");
+    wt.write("src/target/mod.rs", b"fn module() {}\n");
+    wt.write("app/node_modules/m/lib.rs", b"fn installed() {}\n");
     wt.write("programs/p/audit_2/lib.rs", b"fn kept() {}\n");
+    // Target code under a run directory's name, tracked or without the
+    // .gitignore of * a run directory holds, is scanned.
+    wt.write("audit_7/src/lib.rs", b"fn tracked() {}\n");
+    wt.git(&["add", "audit_7"]);
+    wt.run_dir("audit_8");
+    wt.write("audit_8/src/lib.rs", b"fn marked_but_tracked() {}\n");
+    wt.git(&["add", "-f", "audit_8"]);
+    wt.write("incident_42/src/lib.rs", b"fn unmarked() {}\n");
     let report = json(&run(BIN, &wt.dir, &["."]));
     assert_eq!(
         files(&report, "functions"),
-        vec!["./programs/p/audit_2/lib.rs", "./src/lib.rs"]
+        vec![
+            "./audit_7/src/lib.rs",
+            "./audit_8/src/lib.rs",
+            "./incident_42/src/lib.rs",
+            "./programs/p/audit_2/lib.rs",
+            "./src/lib.rs",
+        ]
+    );
+    assert_eq!(
+        skipped(&report),
+        [
+            ("./.audit-memory".into(), STORE.into()),
+            (
+                "./.git".into(),
+                "a .git/ directory (git's own), not scanned".into()
+            ),
+            (
+                "./app/node_modules".into(),
+                "a node_modules/ directory (installed packages), not scanned".into()
+            ),
+            ("./audit_1".into(), RUN_DIR.into()),
+            ("./src/target".into(), BUILD.into()),
+            ("./target".into(), BUILD.into()),
+        ]
     );
     let poc = json(&run(BIN, &wt.dir, &["audit_1/poc"]));
     assert_eq!(files(&poc, "functions"), vec!["audit_1/poc/F-1/src/lib.rs"]);
+}
+
+#[test]
+fn scans_a_store_the_repository_tracks_and_a_tree_outside_git_by_its_marks() {
+    let wt = Wt::repo();
+    wt.run_dir(".audit-memory");
+    wt.write(".audit-memory/src/lib.rs", b"fn tracked_store() {}\n");
+    wt.git(&["add", "-f", ".audit-memory"]);
+    let report = json(&run(BIN, &wt.dir, &["."]));
+    assert_eq!(
+        files(&report, "functions"),
+        vec!["./.audit-memory/src/lib.rs"]
+    );
+    // Outside any repository, only the mark tells: audit_3 holds it, audit_7 not.
+    let copy = Wt::new();
+    copy.run_dir("audit_3");
+    copy.write("audit_3/poc/lib.rs", b"fn poc() {}\n");
+    copy.write("audit_7/src/lib.rs", b"fn delivered() {}\n");
+    let report = json(&run(BIN, &copy.dir, &["."]));
+    assert_eq!(files(&report, "functions"), vec!["./audit_7/src/lib.rs"]);
+    assert_eq!(skipped(&report), [("./audit_3".into(), RUN_DIR.into())]);
 }
 
 #[test]
@@ -872,8 +931,14 @@ fn refuses_an_out_when_git_cannot_answer() {
         "git cannot tell whether --out is tracked: audit_1",
     );
     assert!(!wt.exists("audit_1/prescan.json"));
-    // Printing to stdout asks git nothing.
-    assert_eq!(run(BIN, &wt.dir, &["."]).status.code(), Some(0));
+    // Printing to stdout needs no answer from git: a run directory git cannot
+    // answer for is scanned.
+    wt.write("audit_1/poc/F-1/src/lib.rs", b"fn poc() {}\n");
+    let report = json(&run(BIN, &wt.dir, &["."]));
+    assert_eq!(
+        files(&report, "functions"),
+        vec!["./audit_1/poc/F-1/src/lib.rs"]
+    );
 }
 
 /// A copy of the binary at `to`, written by `cp`. This process never holds the
