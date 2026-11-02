@@ -85,14 +85,18 @@ its completion starts.
 This command's pre-approvals last for the turn that invoked it: Claude Code clears
 them at the user's next message, and a turn that a background agent's or
 background command's completion notice starts has none, so spawn every agent in
-the foreground. When the hunt goes
+the foreground and wait for its result, never with `run_in_background`; while fork
+mode is on, as it is by default in interactive sessions, Claude Code cannot wait
+and runs the agent in the background. When the hunt goes
 on after the human replies (the run directory to reuse, a yes to a collection, the
-execution mode), first invoke this command again through the Skill tool as
+execution mode), or an agent's result arrives in a later turn, first invoke this
+command again through the Skill tool as
 `auditor:hunt --resume <step> incident_<n>` followed by the arguments and the
 answers, `<step>` being the step you go on with (`1` once the human names the run
-directory to reuse, `2` after a yes to a collection, `6` after the mode), and do
-that step's work in the same turn. A resumed invocation runs step 0 again, adopts
-that run directory and never repeats another finished step. That invocation asks:
+directory to reuse, `2` after a yes to a collection, `6` after the mode, the step
+after the agent's for its result), and do that step's work in the same turn. A
+resumed invocation runs step 0 again, adopts that run directory and never
+repeats another finished step. That invocation asks:
 tell the human to answer "Yes", not "don't ask again", which saves a rule into the
 audited tree's `.claude/settings.local.json`, a file the next run's step 0 refuses.
 A `claude -p` run is one turn with no replies, and a call that would ask is denied

@@ -48,8 +48,9 @@
 #       directory (scripts/rundir.sh new, ./scripts/..., bash scripts/...), where the tree under audit can put a
 #       file of its own; a span holding the path alone names the file.
 #   P   Wording the flows depend on stays in place (the PINS list): what keeps a long call, and the turn after
-#       it, inside a command's grant; and no body names the environment form of a PoC run (VULNERABLE_SO and the
-#       rest), which run.sh --crate does not read.
+#       it, inside a command's grant; every command that starts agents keeps them in the foreground and resumes
+#       in the turn an agent's result arrives in; and no body names the environment form of a PoC run
+#       (VULNERABLE_SO and the rest), which run.sh --crate does not read.
 # The entry points are the tracked files under scripts/ (but scripts/tests/) and templates/ of mode 100755 that
 # start with a direct-exec shebang (#!/bin/bash or #!/usr/bin/env -S python3 -I), the binaries the crates
 # under tools/auditor-tools declare, and every path scripts/entrypoints.txt lists. Each check first runs on
@@ -977,6 +978,15 @@ PINS
 for f in commands/*.md SKILL.md; do
   if grep -qF -- 'tell the human to answer "Yes", not "don'"'"'t ask again"' "$f"; then ok "$f: the resume text names the answer"
   else bad "P $f: the resume text does not tell the human to answer \"Yes\", not \"don't ask again\""; fi
+done
+# Each command that starts agents (Task in its allowed-tools), and the root SKILL.md, keeps them in the foreground,
+# and resumes in the turn that brings an agent's result when Claude Code ran it in the background anyway (it cannot
+# wait while fork mode is on, its default in interactive sessions): that turn has none of the command's grant.
+for f in commands/*.md SKILL.md; do
+  [ "$(sed -n '2,/^---$/p' "$f" | grep -cx '  - Task')" -gt 0 ] || continue
+  for want in 'the foreground and wait for its result, never with `run_in_background`' 'result arrives in a later turn'; do
+    if grep -qF -- "$want" "$f"; then ok "$f: $want"; else bad "P $f starts agents but does not say: $want"; fi
+  done
 done
 # run.sh --crate reads its inputs from arguments only, so no body names the environment form of a PoC run.
 for f in commands/*.md agents/*.md skills/*/SKILL.md SKILL.md; do
