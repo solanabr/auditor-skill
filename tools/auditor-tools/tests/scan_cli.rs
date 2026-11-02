@@ -4,6 +4,8 @@ mod common;
 
 use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::path::Path;
+use std::process::{Command, Stdio};
 
 use common::{refused, refused_with, run, shown, stdout, Wt};
 use serde_json::Value;
@@ -208,7 +210,6 @@ fn reads_an_item_after_any_number_of_doc_comments_and_attributes() {
 #[test]
 fn its_child_answers_each_file_in_a_frame_and_names_none() {
     use std::io::Write;
-    use std::process::{Command, Stdio};
     let frame = |bytes: &[u8]| [&(bytes.len() as u64).to_le_bytes()[..], bytes].concat();
     let input = [
         frame(b"fn a() { let x = 1 + 2; }\n"),
@@ -852,12 +853,26 @@ fn refuses_an_out_when_git_cannot_answer() {
     assert_eq!(run(BIN, &wt.dir, &["."]).status.code(), Some(0));
 }
 
+/// A copy of the binary at `to`, written by `cp`. This process never holds the
+/// copy open for writing, so no child another test starts meanwhile inherits such a
+/// descriptor, which on Linux makes running the copy fail with ETXTBSY (`Text file
+/// busy`) until that child execs.
+fn copy_binary(to: &Path) {
+    let status = Command::new("cp")
+        .arg(BIN)
+        .arg(to)
+        .stdin(Stdio::null())
+        .status()
+        .expect("run cp");
+    assert!(status.success(), "cp {BIN} {}", to.display());
+}
+
 #[test]
 fn refuses_to_run_from_inside_the_working_tree() {
     let wt = Wt::new();
     wt.mkdir("tools/auditor-tools/target/release");
     let inside = wt.path("tools/auditor-tools/target/release/audit-scan");
-    fs::copy(BIN, &inside).expect("copy the binary");
+    copy_binary(&inside);
     let o = run(inside.to_str().expect("UTF-8"), &wt.dir, &["."]);
     refused(
         &o,
@@ -866,7 +881,7 @@ fn refuses_to_run_from_inside_the_working_tree() {
     );
     let quoted = wt.outside().join("a$b");
     fs::create_dir(&quoted).expect("mkdir");
-    fs::copy(BIN, quoted.join("audit-scan")).expect("copy the binary");
+    copy_binary(&quoted.join("audit-scan"));
     let o = run(
         quoted.join("audit-scan").to_str().expect("UTF-8"),
         &wt.dir,
