@@ -5,7 +5,8 @@
 # file fixtures/report-pdf/cases.txt, run under each bash on the machine (/bin/bash and the bash running
 # this suite, when they differ), which must print the same. Stand-ins take the place of pandoc and of the
 # TeX engines; where pandoc 2.15 or later is installed, the filter also runs in the real pandoc against
-# remote-image, raw-TeX and YAML fixtures (skipped, never failed, without it). Needs git; no network.
+# remote-image, raw-TeX, YAML and unclosed-comment fixtures (skipped, never failed, without it). Needs git;
+# no network.
 # Usage (from the repo root): bash scripts/tests/test-report-pdf.sh
 set -uo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd -P)
@@ -300,6 +301,50 @@ EOF
   # pandoc spells the backslash \textbackslash{} or "\textbackslash " depending on its version and what follows.
   raw_as_text() { has "$1" '\textbackslash{}input\{/etc/passwd\}' || has "$1" '\textbackslash input\{/etc/passwd\}'; }
   check "real pandoc: the text of the raw TeX prints as text" raw_as_text "$T/out.tex"
+  # An unclosed "<!--" in quoted text runs to the next "-->": inline, at a line's start and in a table
+  # cell, closed by a template's comment or by a second quoted string. What it spans prints as text, so
+  # no finding drops out; a template's long comment, "<!--" and "-->" on lines of their own, still drops.
+  cat > "$T/swallow.md" <<'EOF'
+# R
+
+A commit subject: fix: escape <!-- in docs
+
+## C-01 Critical first
+
+Body one.
+
+<!-- a template note -->
+
+<!-- quoted at a line's start
+
+## C-02 High second
+
+Body two.
+
+and a second quoted string -->
+
+| commit | note |
+|--------|------|
+| a1     | x <!-- y |
+
+## C-03 Medium third
+
+<!-- t -->
+
+<!--
+A template's long comment.
+
+Its second paragraph.
+-->
+
+## C-04 Low fourth
+EOF
+  "$REALPANDOC" --sandbox -f "$SPEC" --lua-filter "$FILTER" -t plain --wrap=none "$T/swallow.md" > "$T/swallow.txt" 2>/dev/null
+  check "real pandoc: an unclosed <!-- hides no finding, inline, at a line's start or in a table cell" \
+    sh -c "for f in C-01 C-02 C-03 C-04 'Body one' 'Body two'; do grep -q \"\$f\" '$T/swallow.txt' || exit 1; done"
+  check "real pandoc: ... what it spans prints as text" sh -c "grep -q 'escape <!-- in docs' '$T/swallow.txt' && grep -q 'second quoted string -->' '$T/swallow.txt'"
+  check "real pandoc: a template's long comment, <!-- and --> on lines of their own, still drops" \
+    sh -c "! grep -q 'long comment\|second paragraph' '$T/swallow.txt'"
   # The whole run, with the real pandoc and the engine stand-in.
   mkdir -p "$T/realbin"; ln -s "$REALPANDOC" "$T/realbin/pandoc"
   cp "$F" "$W/$R/REPORT.md"; : > "$FAKE_LOG"; rm -f "$FAKE_TEX" "$W/$R/REPORT.pdf"
