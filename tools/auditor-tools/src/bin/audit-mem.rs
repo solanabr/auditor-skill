@@ -34,7 +34,7 @@ use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{self, Read, Write};
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{DirBuilderExt, MetadataExt};
+use std::os::unix::fs::{DirBuilderExt, FileExt, MetadataExt};
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -463,6 +463,10 @@ fn in_tree_store(wt: &Path, git: &mut Git) -> Result<Store, Stop> {
     Ok(store)
 }
 
+/// The number that starts a rollback journal's header, and ends the record of a
+/// super-journal at the end of a journal.
+const JOURNAL_MAGIC: [u8; 8] = [0xd9, 0xd5, 0x05, 0xf9, 0x20, 0xa1, 0x63, 0xd7];
+
 /// What the database file is: absent, empty, or a SQLite database in
 /// rollback-journal mode (the header's magic, and 1 in its bytes 18 and 19). A
 /// file that is not regular, has a second name, or holds anything else is
@@ -471,7 +475,7 @@ fn in_tree_store(wt: &Path, git: &mut Git) -> Result<Store, Stop> {
 /// are checked first: a `-wal` or `-shm` file, which audit-mem never makes and
 /// which SQLite would open (and a `-shm` write) even for a read, is refused, and
 /// a `-journal`, left by a write that stopped, must be a regular file with one
-/// name.
+/// name that names no super-journal (`names_super_journal`).
 fn database(wt: &Path, store: &Store, dir_md: &fs::Metadata) -> Result<Db, Stop> {
     let s = store.shown();
     let tail = if store.in_tree {
@@ -501,7 +505,19 @@ fn database(wt: &Path, store: &Store, dir_md: &fs::Metadata) -> Result<Db, Stop>
                     "{s}{suffix} is not a regular file with one name{tail}"
                 )))
             }
-            Ok(_) => {}
+            Ok(_) => {
+                let names = names_super_journal(store, dir_md).map_err(|e| {
+                    refuse(format!(
+                        "{s}{suffix} cannot be checked ({}){tail}",
+                        os_message(&e)
+                    ))
+                })?;
+                if names {
+                    return Err(refuse(format!(
+                        "{s}{suffix} names a super-journal (a file SQLite deletes when it rolls the journal back), which audit-mem never writes{tail}"
+                    )));
+                }
+            }
         }
     }
     match fs::symlink_metadata(wt.join(store.path())) {
@@ -541,6 +557,41 @@ fn database(wt: &Path, store: &Store, dir_md: &fs::Metadata) -> Result<Db, Stop>
         )));
     }
     Ok(Db::Sqlite)
+}
+
+/// Whether the store's `-journal` names a super-journal, as SQLite reads one at
+/// a journal's end (`readSuperJournal`): the name, its length (not zero) and a
+/// checksum in four bytes each, then `JOURNAL_MAGIC`. Rolling such a journal
+/// back opens the file it names and deletes it unless a journal names it back,
+/// wherever it is. audit-mem writes one database at a time, so no journal of its
+/// own names one. The journal is opened through the store's directory, without
+/// following a link or blocking on a FIFO; one gone by then, or going (no name
+/// left, or cut shorter while it is read), names nothing.
+fn names_super_journal(store: &Store, dir_md: &fs::Metadata) -> io::Result<bool> {
+    let name = [store.name, &b"-journal"[..]].concat();
+    let journal = match Dir::open(&store.dir, dir_md).and_then(|dir| dir.open_any(&name)) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+        opened => opened?,
+    };
+    let md = journal.metadata()?;
+    if md.file_type().is_file() && md.nlink() == 0 {
+        return Ok(false);
+    }
+    if !md.file_type().is_file() || md.nlink() != 1 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "it is not a regular file with one name",
+        ));
+    }
+    let Some(at) = md.len().checked_sub(16) else {
+        return Ok(false);
+    };
+    let mut end = [0u8; 16];
+    match journal.read_exact_at(&mut end, at) {
+        Ok(()) => Ok(end[8..] == JOURNAL_MAGIC && end[..4] != [0u8; 4]),
+        Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => Ok(false),
+        Err(e) => Err(e),
+    }
 }
 
 /// Makes what `init` needs of the store: for the in-tree store with no

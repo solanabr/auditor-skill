@@ -1301,6 +1301,122 @@ fn refuses_a_store_with_sqlite_files_beside_it() {
     }
 }
 
+/// A rollback journal SQLite reads as hot (its first byte is not zero) whose end
+/// names `name` as its super-journal, as SQLite reads one: the name, its length
+/// and the sum of its bytes in four bytes each, big-endian, then the journal's
+/// magic number.
+fn journal_naming(name: &[u8]) -> Vec<u8> {
+    const MAGIC: [u8; 8] = [0xd9, 0xd5, 0x05, 0xf9, 0x20, 0xa1, 0x63, 0xd7];
+    let len = u32::try_from(name.len()).expect("a short name");
+    let sum = name.iter().fold(0u32, |s, &b| s.wrapping_add(u32::from(b)));
+    let parts: [&[u8]; 5] = [
+        &[b'X'; 64],
+        name,
+        &len.to_be_bytes(),
+        &sum.to_be_bytes(),
+        &MAGIC,
+    ];
+    parts.concat()
+}
+
+#[test]
+fn refuses_a_journal_that_names_a_super_journal_and_deletes_nothing() {
+    let wt = store();
+    wt.run_dir("audit_1");
+    ok(&mem(&wt, &["init", "--db", "audit_1/audit-mem.db"]));
+    let canary = wt.outside().join("canary");
+    let absolute = canary.to_str().expect("a UTF-8 path").to_string();
+    for (db, tail) in [
+        (".audit-memory/audit.db", USE_R),
+        ("audit_1/audit-mem.db", ""),
+    ] {
+        let journal = format!("{db}-journal");
+        let why = format!(
+            "{journal} names a super-journal (a file SQLite deletes when it rolls the journal \
+             back), which audit-mem never writes{tail}"
+        );
+        let calls = [
+            vec!["init", "--db", db],
+            vec![
+                "put-finding",
+                "--db",
+                db,
+                "--program-id",
+                P,
+                "--signature",
+                SIG,
+                "--root-cause",
+                "r",
+                "--title",
+                "t",
+                "--severity",
+                "3",
+            ],
+            vec![
+                "set-status",
+                "--db",
+                db,
+                "--program-id",
+                P,
+                "--signature",
+                SIG,
+                "--root-cause",
+                "r",
+                "--status",
+                "FIXED",
+            ],
+            vec![
+                "rule",
+                "--db",
+                db,
+                "--program-id",
+                P,
+                "--signature",
+                SIG,
+                "--ruling",
+                "FALSE_POSITIVE",
+                "--rationale",
+                "r",
+                "--by",
+                "auditor",
+            ],
+            vec!["profile", "--db", db, "--program-id", P, "--notes", "n"],
+            vec![
+                "invariant",
+                "--db",
+                db,
+                "--program-id",
+                P,
+                "--statement",
+                "s",
+            ],
+            vec!["warm", "--db", db, "--program-id", P],
+            vec!["check", "--db", db, "--program-id", P, "--signature", SIG],
+            vec!["regressions", "--db", db, "--program-id", P],
+        ];
+        // A file outside the working tree, named from it and by its full path.
+        for name in ["../outside/canary", absolute.as_str()] {
+            fs::write(&canary, b"kept\n").expect("write the canary");
+            wt.write(&journal, &journal_naming(name.as_bytes()));
+            let before = wt.snapshot();
+            for args in &calls {
+                refused(&mem(&wt, args), "audit-mem", &why);
+                assert_eq!(
+                    fs::read(&canary).ok().as_deref(),
+                    Some(&b"kept\n"[..]),
+                    "{name}, {args:?}: the file the journal names is kept"
+                );
+            }
+            assert_eq!(wt.snapshot(), before, "{name}: nothing changed in the tree");
+            fs::remove_file(wt.path(&journal)).expect("rm");
+        }
+    }
+    // A journal of one name that names no super-journal is rolled back as before.
+    wt.write(".audit-memory/audit.db-journal", &[b'X'; 600]);
+    ok(&mem(&wt, &["profile", "--program-id", P, "--notes", "n"]));
+    assert!(canary.exists());
+}
+
 #[test]
 fn a_read_only_open_is_immutable_and_opens_nothing_beside_the_store() {
     let wt = store();

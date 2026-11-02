@@ -737,6 +737,12 @@ impl Dir {
         }
         Ok(file)
     }
+
+    /// A name in the directory, whatever it is, opened read-only without
+    /// following a link or blocking on a FIFO; the caller checks what it opened.
+    pub fn open_any(&self, name: &[u8]) -> io::Result<File> {
+        open_file(self.fd.as_raw_fd(), name)
+    }
 }
 
 /// A directory in the directory `dir` (a descriptor, or `libc::AT_FDCWD` for the
