@@ -885,6 +885,38 @@ for dep in '{"name":"evil","source":"git+https://evil.invalid/x","registry":null
   check "a dependency ${dep#*|}: exit 3, nothing resolved or disclosed" \
     sh -c "[ '$RC' = 3 ] && grep -q '${dep#*|}' '$T/err' && ! grep -q '^== cargo tree' '$T/calls' && [ \"\$(( \$(wc -l < '$DT') - 1 ))\" = '$r0' ]"
 done
+# A workspace member outside the workspace root's directory, which cargo takes when the member names the root
+# with package.workspace. The rebuild places each member at its path under the root, so such a member would
+# land outside the scratch directory: beside it (oor/canary/m, from a root three folders down, at $T/canary/m),
+# or, from a root deeper than the scratch directory, at the absolute path its folder spells under the working
+# directory (an existing manifest there, $T/victim/app). It is refused before anything is written or sent. The
+# stand-in's cargo metadata lists the packages from FAKE_META_UP folders above the root.
+VICTIM=$T/victim/app
+mkdir -p "$VICTIM"
+printf '[package]\nname = "victim"\n' > "$VICTIM/Cargo.toml"
+cp "$VICTIM/Cargo.toml" "$T/victim.saved"
+ups() { local s="" k=$1; while [ "$k" -gt 0 ]; do s=$s../; k=$((k - 1)); done; printf '%s' "$s"; }
+n=$(( $(printf '%s' "$NT" | tr -cd / | wc -c) + 4 ))
+deep=oor; i=1; while [ "$i" -lt "$n" ]; do deep=$deep/d; i=$((i + 1)); done
+for layout in "cargo-tree|beside the scratch directory|oor/a/b/c|oor/canary/m" "cargo-outdated|beside the scratch directory|oor/a/b/c|oor/canary/m" \
+  "cargo-tree|at the absolute path it spells|$deep|${VICTIM#/}"; do
+  IFS='|' read -r action where rootdir member <<< "$layout"
+  rn=$(( $(printf '%s' "$rootdir" | tr -cd / | wc -c) + 1 ))
+  mn=$(( $(printf '%s' "$member" | tr -cd / | wc -c) + 1 ))
+  mkdir -p "$WT/$rootdir" "$WT/$member"
+  printf '[workspace]\nmembers = ["%s%s"]\n\n[package]\nname = "root"\nversion = "0.1.0"\nedition = "2021"\n' "$(ups "$rn")" "$member" > "$WT/$rootdir/Cargo.toml"
+  printf '[package]\nname = "m"\nversion = "0.1.0"\nedition = "2021"\nworkspace = "%s%s"\n\n[dependencies]\nserde = "1"\n' "$(ups "$mn")" "$rootdir" > "$WT/$member/Cargo.toml"
+  settings FAKE_META_UP="$rn"
+  r0=$(rows)
+  run "$DEPS" "$WT" -- "$action" --run audit_1 --manifest "$rootdir/Cargo.toml" --manifest "$member/Cargo.toml"
+  check "$action with a workspace member outside the root, which the rebuild would place $where: exit 3, nothing written there, nothing run or disclosed" sh -c "
+    [ '$RC' = 3 ] && grep -q '^deps: blocker: the workspace member ' '$T/err' && grep -qF ' lies outside the workspace root, ' '$T/err' &&
+    grep -qF '; deps.sh rebuilds only members under the root; output audit_1/deps/$action-' '$T/err' &&
+    [ ! -e '$T/canary' ] && [ ! -e '$VICTIM/lib.rs' ] && cmp -s '$VICTIM/Cargo.toml' '$T/victim.saved' &&
+    ! grep -qE '^== cargo (tree|outdated)' '$T/calls' && [ \"\$(( \$(wc -l < '$DT') - 1 ))\" = '$r0' ]"
+done
+vtop=${VICTIM#/}
+rm -rf "$WT/oor" "$WT/${vtop%%/*}"
 settings SHIM_DUMP=1 FAKE_OUTDATED_RC=1
 run "$DEPS" "$WT" -- cargo-outdated --run audit_1 --manifest pkg/Cargo.toml --manifest pkg/Cargo.lock
 headers > "$T/hdrs"
@@ -1175,6 +1207,14 @@ if on_real_path cargo && on_real_path rustup; then
     { [ '$RC' = 0 ] || [ '$RC' = 3 ]; } && [ -n '$kept' ] && grep -q 'crates.io' '$RW/$kept' &&
     ! grep -q evil '$RW/$kept' '$T/out' '$T/err' &&
     grep -qxF '>> note: rp/Cargo.toml holds a [patch] or [replace] table, which this tree does not apply: anyhow, serde' '$T/err'"
+  # A workspace member outside the root's directory that names the root with package.workspace, which real
+  # cargo metadata takes: refused, and nothing lands beside the scratch directory ($T/canary-real/m).
+  mkdir -p "$RW/oor/a/b/c" "$RW/oor/canary-real/m"
+  printf '[workspace]\nmembers = ["../../../canary-real/m"]\nresolver = "2"\n\n[package]\nname = "oor-root"\nversion = "0.1.0"\nedition = "2021"\n' > "$RW/oor/a/b/c/Cargo.toml"
+  printf '[package]\nname = "oor-member"\nversion = "0.1.0"\nedition = "2021"\nworkspace = "../../a/b/c"\n' > "$RW/oor/canary-real/m/Cargo.toml"
+  run "$DEPS" "$RW" PATH="$REAL_PATH" "${TOOL_HOMES[@]}" -- cargo-tree --run audit_1 --manifest oor/a/b/c/Cargo.toml --manifest oor/canary-real/m/Cargo.toml
+  check "real cargo metadata with a workspace member outside the root: exit 3, refused before anything lands outside the scratch directory" sh -c "
+    [ '$RC' = 3 ] && grep -q '^deps: blocker: the workspace member oor/canary-real/m lies outside the workspace root, oor/a/b/c; ' '$T/err' && [ ! -e '$T/canary-real' ]"
   if on_real_path cargo-audit && [ -d "${CARGO_HOME:-$REAL_HOME/.cargo}/advisory-db" ]; then
     run "$DEPS" "$RW" PATH="$REAL_PATH" "${TOOL_HOMES[@]}" -- cargo-audit --run audit_1 --manifest Cargo.lock --no-fetch
     check "real cargo audit --no-fetch against the database in CARGO_HOME: exit 0" sh -c "[ '$RC' = 0 ] && grep -q '^>> cargo-audit: no vulnerability found (exit 0)' '$T/out'"

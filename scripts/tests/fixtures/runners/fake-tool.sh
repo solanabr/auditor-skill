@@ -9,7 +9,8 @@
 #   ulimit: <ulimit -t> <ulimit -f, in 1024-byte blocks as bash counts them; dash, ubuntu's /bin/sh, counts 512>
 #   env: <NAME=value>       one line per variable, sorted
 # followed by the lines each behaviour below adds. FAKE_* settings choose the behaviour: exit statuses, what a
-# build writes, files to show, a listing of the working directory, output to print, time to sleep.
+# build writes, files to show, a listing of the working directory, output to print, time to sleep, where cargo
+# metadata finds packages.
 T=@T@
 name=${0##*/}
 [ -f "$T/fake/settings" ] && . "$T/fake/settings"
@@ -129,8 +130,13 @@ case "$1" in
     mp=$(arg_after --manifest-path "$@")
     python3 -I -c 'import json, os, re, sys
 top = os.path.dirname(sys.argv[1])
+# FAKE_META_UP=<n> lists the packages from <n> folders above the manifest, as for members a root names with
+# ../ (cargo accepts one outside the root when it names the root with package.workspace); the root stays.
+walk = top
+for _ in range(int(os.environ.get("FAKE_META_UP") or 0)):
+    walk = os.path.dirname(walk)
 pkgs = []
-for d, dirs, files in os.walk(top):
+for d, dirs, files in os.walk(walk):
     dirs[:] = [x for x in dirs if x not in ("target", ".git")]
     if "Cargo.toml" in files:
         text = open(os.path.join(d, "Cargo.toml")).read()

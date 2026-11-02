@@ -45,7 +45,9 @@
 # run on the rebuilt workspace, never on the copy, so no [patch], [replace] or other table of the copy
 # reaches the resolving cargo, whatever its spelling, and the reported tree is the un-patched one. A
 # dependency from git or from a registry other than crates.io, and a path dependency on a non-member, stop
-# the run (cargo would fetch from a host the manifest chose); cargo is told to fetch git sources with the git
+# the run (cargo would fetch from a host the manifest chose); so does a workspace member outside the
+# workspace root's directory (cargo takes one that names the root with package.workspace), since the rebuild
+# keeps every file it writes under its scratch directory; cargo is told to fetch git sources with the git
 # CLI, and the git on its PATH refuses every fetch. A plainly spelled [patch.<registry>] or [replace] table
 # runs, with a note on stderr and in the output naming the crates it patches (the reported tree leaves them
 # unpatched). As a second line, a manifest spelled as no Cargo.toml needs stops the run: a [patch] or
@@ -414,8 +416,9 @@ copy_manifests() {
 # dependencies cargo metadata lists come from crates.io or are paths inside <top> (exit 3 with the first that
 # is not). "rebuild <metadata> <top> <dest>": write under <dest> a workspace of only the package names,
 # versions, editions, features and dependency entries cargo metadata reports (a path dependency on a
-# non-member is refused), so no [patch], [replace] or other table of the copy reaches the resolving cargo,
-# whatever its spelling; prints the rebuilt root manifest path.
+# non-member, and a member outside the workspace root's directory, are refused, so nothing is written
+# outside <dest>), so no [patch], [replace] or other table of the copy reaches the resolving cargo, whatever
+# its spelling; prints the rebuilt root manifest path.
 CARGO_PY='import json, os, re, sys
 
 SECTION = re.compile(r"^\s*\[\[?\s*([A-Za-z0-9_.\-]+)\s*\]\]?\s*(#.*)?$")
@@ -433,6 +436,7 @@ PLAIN_PATCH = re.compile(r"\s*\[\s*patch\s*\.\s*(" + SEG + r")\s*(?:\.\s*(" + SE
 PLAIN_REPLACE = re.compile(r"\s*\[\s*replace\s*(?:\.\s*(" + SEG + r")\s*)?\]\s*(?:#.*)?")
 ENTRY_KEY = re.compile(r"^\s*(" + SEG + r")\s*[.=]")
 NAMES_SHOWN = 20
+NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 
 
 def fail(text):
@@ -446,6 +450,17 @@ def shown(text):
 
 def relative(rel):
     return bool(rel) and not rel.startswith("/") and ".." not in rel.split("/")
+
+
+def inside(path, top):
+    return path == top or path.startswith(top.rstrip(os.sep) + os.sep)
+
+
+def create(path, text):
+    # A new file, never one that exists or a symbolic link, written through the descriptor its creation opened.
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)
 
 
 def read_lines(path, rel):
@@ -652,22 +667,36 @@ def member_dir(p):
 
 
 def rebuild(meta, top, dest):
+    # Every write lands under dest by construction: the workspace root lies among the copies, each member lies
+    # under the root (cargo also takes a member elsewhere that names the root with package.workspace; the
+    # rebuild refuses one), each directory is checked inside dest before and after it is made, and each file
+    # is a new one.
     data = json.load(open(meta, encoding="utf-8"))
+    top, dest = os.path.realpath(top), os.path.realpath(dest)
     root = os.path.realpath(data["workspace_root"])
+    if not inside(root, top):
+        fail("cargo metadata names a workspace root outside the copied manifests")
     ids = set(data.get("workspace_members") or [])
     pkgs = [p for p in data.get("packages", []) if p.get("id") in ids]
     if not pkgs:
         fail("cargo metadata lists no workspace member to rebuild")
     members = {}
     for p in pkgs:
-        members[member_dir(p)] = os.path.relpath(member_dir(p), root)
+        d = member_dir(p)
+        if not inside(d, root):
+            fail("the workspace member %s lies outside the workspace root, %s; deps.sh rebuilds only members under the root" % (shown(os.path.relpath(d, top)), shown(os.path.relpath(root, top))))
+        members[d] = os.path.relpath(d, root)
     rels = sorted(members.values())
     have_root_pkg = False
     for p in pkgs:
         rel = members[member_dir(p)]
-        d = os.path.join(dest, rel)
+        d = os.path.normpath(os.path.join(dest, rel))
+        if not inside(d, dest):
+            fail("the rebuilt manifest of %s would land outside the scratch directory" % shown(rel))
         os.makedirs(d, exist_ok=True)
-        os.close(os.open(os.path.join(d, "lib.rs"), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+        if not inside(os.path.realpath(d), dest):
+            fail("the rebuilt manifest of %s would land outside the scratch directory" % shown(rel))
+        create(os.path.join(d, "lib.rs"), "")
         head = []
         if rel == ".":
             have_root_pkg = True
@@ -686,11 +715,9 @@ def rebuild(meta, top, dest):
             for name in sorted(feats):
                 lines.append("%s = [%s]" % (toml_key(name), ", ".join(q(x) for x in feats[name])))
             lines.append("")
-        with open(os.path.join(d, "Cargo.toml"), "w", encoding="utf-8") as f:
-            f.write("\n".join(lines) + "\n")
+        create(os.path.join(d, "Cargo.toml"), "\n".join(lines) + "\n")
     if not have_root_pkg:
-        with open(os.path.join(dest, "Cargo.toml"), "w", encoding="utf-8") as f:
-            f.write("[workspace]\nmembers = [%s]\nresolver = %s\n" % (", ".join(q(r) for r in rels), q("2")))
+        create(os.path.join(dest, "Cargo.toml"), "[workspace]\nmembers = [%s]\nresolver = %s\n" % (", ".join(q(r) for r in rels), q("2")))
     print(os.path.join(dest, "Cargo.toml"))
 
 
