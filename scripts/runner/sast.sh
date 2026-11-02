@@ -1,6 +1,7 @@
 #!/bin/bash
-# sast.sh — static analysis of the code under audit with semgrep, which parses the code and never runs it, so
-# it needs no execution mode (OUTPUT-RULES.md Rules 11a and 11b).
+# sast.sh — static analysis of the code under audit with semgrep, which parses the code and runs none of it,
+# and whose git never reads the repository's config (below), so it needs no execution mode (OUTPUT-RULES.md
+# Rules 11a and 11b).
 #
 #   "${CLAUDE_PLUGIN_ROOT}/scripts/runner/sast.sh" semgrep --run <R> --path <path> --ruleset <id> [--ruleset <id>]...
 #
@@ -16,10 +17,14 @@
 # from a scratch directory outside the working directory, in the cleaned environment of
 # scripts/lib/isolation.sh with the real HOME kept (semgrep's own install may live there), its settings file
 # in the scratch directory, no version check and no metrics, and the proxy variables: semgrep downloads the
-# rulesets from semgrep.dev, and before that one row goes to <R>/disclosures.tsv. A .semgrepignore or
-# .gitignore under <path> narrows what semgrep reads; the last line names the .semgrepignore files it
-# found. AUDITOR_RUN_TIMEOUT (whole seconds, 1 to 86400, default 1800) bounds the scan, under the watchdog
-# of isolation.sh's iso_watch.
+# rulesets from semgrep.dev, and before that one row goes to <R>/disclosures.tsv. semgrep lists the files of a
+# folder in a git project with git, and the git it starts would read the repository's config, which can name
+# a program for git to run; so every git semgrep starts gets GIT_DIR, never the repository's own: a copy of
+# its index and info/exclude under a config of sast.sh's own, or, where sast.sh makes no copy, a path that
+# does not exist (git fails, and semgrep lists the files itself, ignored ones included). git's ignore rules
+# leave out untracked files only. A .semgrepignore under <path> narrows what semgrep reads; the last line
+# names the .semgrepignore files it found. AUDITOR_RUN_TIMEOUT (whole seconds, 1 to 86400, default 1800)
+# bounds the scan, under the watchdog of isolation.sh's iso_watch.
 #
 # Output: the SARIF in <R>/sast/semgrep-<n>.sarif and semgrep's own messages in <R>/sast/semgrep-<n>.log.
 # The last stdout line gives the number of results and where they are. The scratch directory is removed on
@@ -144,6 +149,56 @@ cd / || blocker "cannot leave the working directory for /"
 iso_env "$S" keep-home || blocker "cannot prepare the cleaned environment in $S — nothing was sent."
 ISO_ENV+=("SEMGREP_SETTINGS_FILE=$S/semgrep-settings.yml" "SEMGREP_LOG_FILE=$S/semgrep.log" SEMGREP_ENABLE_VERSION_CHECK=0
   SEMGREP_SEND_METRICS=off)
+
+# semgrep's project, found as semgrep finds it (Semgrepignore v2): the nearest folder at or above the scan root
+# (a file's folder, for a file) holding a .git, or a .hg, _darcs or .svn folder, else that folder itself.
+d=$TARGET
+[ -d "$d" ] || d=${d%/*}
+p=$d PROJ=$d VCS=none
+while :; do
+  if [ -e "$p/.git" ]; then PROJ=${p:-/} VCS=git; break; fi
+  if [ -d "$p/.hg" ] || [ -d "$p/_darcs" ] || [ -d "$p/.svn" ]; then PROJ=${p:-/} VCS=other; break; fi
+  [ -n "$p" ] || break
+  p=${p%/*}
+done
+
+# semgrep's git. For a folder in a git project semgrep lists the files with "git -C <scan root> ls-files", the
+# git on its PATH, whatever --no-git-ignore says (src/targeting/Find_targets.ml in its source), and that git
+# would read the repository's config, which can name a program for git to run (core.fsmonitor, hooks, a
+# filter). So every git semgrep starts gets GIT_DIR, which stops git looking for a repository: when the
+# project is the working directory or a folder in it, and its .git a directory, a repository in the scratch
+# directory holding a copy of the index (whose entries must all lie inside the project) and info/exclude under
+# a config of sast.sh's own, with GIT_WORK_TREE the project, so git lists the same tracked and untracked files;
+# otherwise a path that does not exist, so git fails and semgrep walks the folders itself. GIT_CONFIG_NOSYSTEM
+# and GIT_CONFIG_GLOBAL keep the machine's and the user's git config out too, so the only config such a git
+# reads is sast.sh's.
+copy_ok() { # copy_ok <file> <bytes>: <file> is absent, or a regular file, not a link, of at most <bytes>
+  if [ ! -e "$1" ] && [ ! -L "$1" ]; then return 0; fi
+  [ -f "$1" ] && [ ! -L "$1" ] && [ -z "$(find "$1" -prune -size +"$2"c -print 2>/dev/null)" ]
+}
+# index_inside: the copied index, read by git under sast.sh's config, names only paths inside the project (an
+# entry that is absolute or has an empty, . or .. component would have git list a file outside --path).
+index_inside() {
+  (cd / && exec env -i PATH="$PATH" HOME="$S" LC_ALL=C GIT_DIR="$S/git" GIT_WORK_TREE="$PROJ" GIT_CONFIG_NOSYSTEM=1 \
+    GIT_CONFIG_GLOBAL=/dev/null git ls-files -z --cached 2>/dev/null) | (cd / && exec python3 -I -c 'import sys
+for p in sys.stdin.buffer.read().split(b"\0"):
+    if p and (p.startswith(b"/") or set(p.split(b"/")) & {b"", b".", b".."}):
+        sys.exit(1)')
+}
+GITENV=("GIT_DIR=$S/no-repo")
+G=$PROJ/.git
+case "$PROJ/" in
+  "${WT%/}/"*)
+    if [ "$VCS" = git ] && [ -d "$G" ] && [ ! -L "$G" ] && [ ! -L "$G/info" ] && copy_ok "$G/index" 268435456 &&
+      copy_ok "$G/info/exclude" 1048576 && confine_mkdir "$S/git" && confine_mkdir "$S/git/objects" &&
+      confine_mkdir "$S/git/refs" && confine_mkdir "$S/git/info" && confine_new_file "$S/git/HEAD" $'ref: refs/heads/main\n' &&
+      confine_new_file "$S/git/config" $'[core]\n\trepositoryformatversion = 0\n\tbare = false\n\tfsmonitor = false\n\thooksPath = /dev/null\n\tuntrackedCache = false\n' &&
+      { [ ! -e "$G/index" ] || iso_copy_new "$G/index" "$S/git/index"; } &&
+      { [ ! -e "$G/info/exclude" ] || iso_copy_new "$G/info/exclude" "$S/git/info/exclude"; } && index_inside; then
+      GITENV=("GIT_DIR=$S/git" "GIT_WORK_TREE=$PROJ")
+    fi ;;
+esac
+ISO_ENV+=("${GITENV[@]}" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null)
 
 # The .semgrepignore files under the path, which narrow the scan; find's own failure only hides the note.
 ignores=""

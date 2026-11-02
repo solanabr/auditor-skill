@@ -1147,6 +1147,14 @@ check "... its settings in the scratch directory, no version check, no metrics, 
 check "... with the real HOME, where semgrep may be installed" grep -qxF "home: $CLEANHOME" "$T/calls"
 check "... and one disclosure row naming the rulesets" \
   sh -c "[ \$(( \$(wc -l < '$DT') - 1 - $r0 )) = 1 ] && sed -n '\$p' '$DT' | grep -q '	scripts/runner/sast.sh	semgrep.dev	ruleset ids (the semgrep registry, for the rules): p/rust p/trailofbits	2\$'"
+# semgrep lists the files of a folder in a git project with git (the stand-in does too), and that git gets a
+# repository in the scratch directory, never the working directory's: none of the programs and hooks the
+# working directory's config names runs, and git lists what the repository's index and ignore rules give.
+check "... semgrep's git ran none of the programs or hooks the repository's config names" test -z "$(ls -A "$T/marks")"
+check "... its git got GIT_DIR, a repository in the scratch directory, with the working directory as its work tree" \
+  sh -c "grep -qxF 'env: GIT_DIR=$S/git' '$T/calls' && grep -qxF 'env: GIT_WORK_TREE=$WT' '$T/calls' && grep -qxF 'env: GIT_CONFIG_GLOBAL=/dev/null' '$T/calls' && grep -qxF 'env: GIT_CONFIG_NOSYSTEM=1' '$T/calls'"
+check "... which lists the tracked files, and the untracked ones git does not ignore" \
+  sh -c "grep -qE '^git-cached: 0 (.* )?programs/demo/src/lib.rs ' '$T/calls' && grep -qE '^git-others: 0 (.* )?sub/Cargo.lock ' '$T/calls' && ! grep -q '^git-others: .*audit_1/' '$T/calls'"
 settings FAKE_RESULTS=0
 run "$SAST" "$WT" -- semgrep --run audit_1 --path a.rs --ruleset p/secrets
 check "sast on a file, no results: exit 0" sh -c "[ '$RC' = 0 ] && grep -q '^>> semgrep: 0 results (exit 0): audit_1/sast/semgrep-[0-9]*[.]sarif' '$T/out' && grep -q -- '-- $WT/a.rs\$' '$T/calls'"
@@ -1164,6 +1172,43 @@ printf 'programs/\n' > "$WT/src/.semgrepignore"
 run "$SAST" "$WT" -- semgrep --run audit_1 --path . --ruleset p/rust
 check "a .semgrepignore under the path is named in the last line" sh -c "[ '$RC' = 0 ] && grep -q '; note: .semgrepignore files narrow the scan: src/.semgrepignore\$' '$T/out'"
 rm -f "$WT/src/.semgrepignore"
+# The scan root's own project can be another repository. One with a .git directory gets its own copy of its
+# index; one with a .git file (a submodule's, or a separate git directory) gets none, so git finds no
+# repository; a folder shaped as a bare repository, which git takes for one from inside it, is never looked at,
+# since git looks for no repository at all. Each config names the programs and hooks that leave marks. An index
+# with an entry that climbs out of the project (no git command writes one; git lists it) gets no copy either.
+tgit init -q "$WT/nested" && printf 'fn n() {}\n' > "$WT/nested/n.rs" && tgit -C "$WT/nested" add n.rs &&
+  printf '[core]\n\tfsmonitor = %s/mark-fsmonitor\n\thooksPath = %s/hooks\n' "$T" "$T" >> "$WT/nested/.git/config"
+tgit init -q --separate-git-dir "$T/gf.git" "$WT/gf" && printf 'fn g() {}\n' > "$WT/gf/g.rs" &&
+  printf '[core]\n\tfsmonitor = %s/mark-fsmonitor\n\thooksPath = %s/hooks\n' "$T" "$T" >> "$T/gf.git/config"
+mkdir -p "$WT/bare/objects" "$WT/bare/refs" && printf 'ref: refs/heads/main\n' > "$WT/bare/HEAD" &&
+  printf '[core]\n\tbare = false\n\tworktree = %s\n\tfsmonitor = %s/mark-fsmonitor\n\thooksPath = %s/hooks\n' "$WT/bare" "$T" "$T" > "$WT/bare/config"
+tgit init -q "$WT/idx" && printf 'fn i() {}\n' > "$WT/idx/i.rs" && tgit -C "$WT/idx" add i.rs && python3 -I - "$WT/idx/.git/index" <<'PY'
+import hashlib, struct, sys
+# Insert the entry a/../../outside.rs (it sorts first) before the one i.rs entry, as a version 2 index holds it.
+p = sys.argv[1]
+data = open(p, "rb").read()
+sig, ver, n = struct.unpack(">4sII", data[:12])
+body = data[12:-20]
+fixed = bytearray(body[:62])
+name = b"a/../../outside.rs"
+struct.pack_into(">H", fixed, 60, len(name))
+entry = bytes(fixed) + name
+entry += b"\0" * ((62 + len(name) + 8) // 8 * 8 - len(entry))
+out = struct.pack(">4sII", sig, ver, n + 1) + entry + body
+open(p, "wb").write(out + hashlib.sha1(out).digest())
+PY
+while IFS='|' read -r path want; do
+  run "$SAST" "$WT" -- semgrep --run audit_1 --path "$path" --ruleset p/rust
+  check "sast --path $path: exit 0, and semgrep's git ran nothing a config names (calls: $want)" \
+    sh -c "[ '$RC' = 0 ] && [ -z \"\$(ls -A '$T/marks')\" ] && grep -q '$want' '$T/calls'"
+done <<CASES
+nested|^git-cached: 0 n.rs \$
+gf|^git-cached: 128 fatal: not a git repository
+bare|^env: GIT_WORK_TREE=$WT\$
+idx|^git-cached: 128 fatal: not a git repository
+CASES
+rm -rf "$WT/nested" "$WT/gf" "$WT/bare" "$WT/idx" "$T/gf.git"
 mkdir -p "$WT/src/inner"
 ln -s ../lib.rs "$WT/src/inner/near.rs"
 run "$SAST" "$WT" -- semgrep --run audit_1 --path src --ruleset p/rust

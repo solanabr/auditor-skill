@@ -10,7 +10,7 @@
 #   env: <NAME=value>       one line per variable, sorted
 # followed by the lines each behaviour below adds. FAKE_* settings choose the behaviour: exit statuses, what a
 # build writes, files to show, a listing of the working directory, output to print, time to sleep, where cargo
-# metadata finds packages.
+# metadata finds packages. The semgrep stand-in lists its targets with git, as semgrep does.
 T=@T@
 name=${0##*/}
 [ -f "$T/fake/settings" ] && . "$T/fake/settings"
@@ -53,6 +53,23 @@ case "$name" in
     out=$(arg_after --output "$@")
     say "settings-file: ${SEMGREP_SETTINGS_FILE:-}"
     [ -n "${FAKE_SLEEP:-}" ] && sleep "$FAKE_SLEEP"
+    # As semgrep picks its targets (src/targeting/Find_targets.ml and Git_wrapper.ml in its source): for a scan
+    # root that is a folder with a .git at or above it, it runs "git -C <root> ls-files -z --cached", then
+    # "--others" with --exclude-standard unless --no-git-ignore, through the git on PATH, in the environment it
+    # was given; a git that fails leaves it to walk the folders itself. Each listing is one line here.
+    root=""; dash=0
+    for a in "$@"; do [ "$dash" = 1 ] && root=$a; [ "$a" = -- ] && dash=1; done
+    p=$root
+    while [ -d "$root" ] && [ ! -e "$p/.git" ] && [ "$p" != / ]; do p=$(dirname "$p"); done
+    if [ -d "$root" ] && [ -e "$p/.git" ]; then
+      git -C "$root" ls-files -z --cached > "$T/git-out" 2> "$T/git-err"
+      say "git-cached: $? $(tr '\0' ' ' < "$T/git-out")$(sed -n 1p "$T/git-err")"
+      case " $* " in
+        *" --no-git-ignore "*) git -C "$root" ls-files -z --others ;;
+        *) git -C "$root" ls-files -z --others --exclude-standard ;;
+      esac > "$T/git-out" 2> "$T/git-err"
+      say "git-others: $? $(tr '\0' ' ' < "$T/git-out")$(sed -n 1p "$T/git-err")"
+    fi
     echo "semgrep: scanning"
     if [ "${FAKE_SARIF:-}" != none ] && [ -n "$out" ]; then
       python3 -I -c 'import json, sys
