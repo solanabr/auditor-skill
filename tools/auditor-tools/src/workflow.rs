@@ -487,6 +487,15 @@ fn is_seq_line(t: &str) -> bool {
     b.first() == Some(&b'-') && (b.len() == 1 || matches!(b[1], b' ' | b'\t'))
 }
 
+/// `line N`, or `lines N-M` for what runs from line `no` to line `last`.
+fn lines(no: usize, last: usize) -> String {
+    if last == no {
+        format!("line {no}")
+    } else {
+        format!("lines {no}-{last}")
+    }
+}
+
 /// A scalar as the report keeps it, built a piece at a time: its whitespace
 /// collapsed to single spaces, cut after `MAX_WF_SCALAR` characters with `...`.
 /// Only what is kept is stored.
@@ -848,12 +857,7 @@ impl<'s> P<'s> {
             }
             self.pos += 1;
         }
-        let lines = if last == no {
-            format!("line {no}")
-        } else {
-            format!("lines {no}-{last}")
-        };
-        self.mark(no, &format!("{what}: {lines} not read"));
+        self.mark(no, &format!("{what}: {} not read", lines(no, last)));
         Node::unknown(no)
     }
 
@@ -1179,12 +1183,10 @@ impl<'s> P<'s> {
             }
             self.pos += 1;
         }
-        let lines = if last == no {
-            format!("line {no}")
-        } else {
-            format!("lines {no}-{last}")
-        };
-        self.mark(no, &format!("an explicit key (?): {lines} not read"));
+        self.mark(
+            no,
+            &format!("an explicit key (?): {} not read", lines(no, last)),
+        );
     }
 
     /// A mapping entry's value: the text `rest` after its key's `:` on line `no`,
@@ -1481,6 +1483,18 @@ impl<'s> P<'s> {
         true
     }
 
+    /// Whether the flow mapping key at byte `at`, past any anchors, is the plain
+    /// scalar `<<`: a merge key, which YAML 1.1 parsers merge into the mapping. A
+    /// quoted `"<<"` is a key like any other.
+    fn merge_key(&self, mut at: usize) -> bool {
+        let t = self.src.text;
+        while t.as_bytes().get(at) == Some(&b'&') {
+            at += prop_word(&t[at..]).len();
+            self.ws(&mut at);
+        }
+        t[at..].starts_with("<<")
+    }
+
     /// Whether byte `at` ends a flow entry: `,`, a closing bracket, or the end.
     fn entry_ends(&self, at: usize, close: u8) -> bool {
         self.src
@@ -1588,6 +1602,7 @@ impl<'s> P<'s> {
             }
             let line = self.src.line_of(*at) + 1;
             let explicit = self.explicit_flow(at);
+            let key_at = *at;
             let first = self.src.text.as_bytes().get(*at).copied();
             let json = matches!(first, Some(b'"' | b'\'' | b'[' | b'{'));
             let key =
@@ -1625,6 +1640,13 @@ impl<'s> P<'s> {
                 }
             } else {
                 match key.kind {
+                    NodeKind::Scalar(k) if !explicit && k == "<<" && self.merge_key(key_at) => {
+                        let last = self.src.line_of(at.saturating_sub(1)) + 1;
+                        self.mark(
+                            line,
+                            &format!("a merge key (<<): {} not read", lines(line, last)),
+                        );
+                    }
                     NodeKind::Scalar(k) if !explicit => entries.push(Entry {
                         key: k,
                         line,
@@ -2456,6 +2478,35 @@ mod tests {
         let w = wf("on: push\njobs:\n  b:\n    <<: {runs-on: ubuntu-latest}\n    steps:\n      - run: echo hi\n");
         assert_eq!(unknown(&w), [(4, "a merge key (<<): line 4 not read")]);
         assert_eq!(w.jobs[0].steps.len(), 1);
+    }
+
+    #[test]
+    fn a_merge_key_in_a_flow_mapping_is_listed_as_in_a_block_mapping() {
+        // The steps a YAML 1.1 parser merges into job b are not read, and listed.
+        let w = wf("on: pull_request_target\njobs:\n  b: {<<: {steps: [{uses: actions/checkout@v4, with: {ref: \"${{ github.event.pull_request.head.sha }}\"}}]}}\n");
+        assert_eq!(job_ids(&w), ["b"]);
+        assert_eq!(unknown(&w), [(3, "a merge key (<<): line 3 not read")]);
+        let w = wf("on: {<<: {pull_request_target: null},\n  push: null}\n");
+        assert_eq!(w.triggers, ["push"]);
+        assert_eq!(unknown(&w), [(1, "a merge key (<<): line 1 not read")]);
+        // Over lines, and past an anchor.
+        let w = wf("on: push\nx: {<<: {a: 1,\n    b: 2}, c: 3}\ny: {&m <<: [z]}\n");
+        assert_eq!(
+            unknown(&w),
+            [
+                (2, "a merge key (<<): lines 2-3 not read"),
+                (
+                    4,
+                    "an anchor (&m): its node is read; an alias to it is not expanded"
+                ),
+                (4, "a merge key (<<): line 4 not read"),
+            ]
+        );
+        // A quoted "<<", and a plain key that only starts with <<, are keys like
+        // any other, as YAML 1.1 parsers read them.
+        let w = wf("on: {\"<<\": null, <<x: null}\n");
+        assert_eq!(w.triggers, ["<<", "<<x"]);
+        assert!(w.unknown.is_empty(), "{:?}", w.unknown);
     }
 
     #[test]
