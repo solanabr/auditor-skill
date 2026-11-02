@@ -57,6 +57,7 @@ confine_init() { # confine_init <tool> <installation root, physical> [<refusal s
   CONFINE_TOOL=$1
   CONFINE_STATUS=${3:-64}
   CONFINE_HINT=""
+  CONFINE_GIT_CHECKED=$'\n'
   IFS=$' \t\n'
   unset CDPATH BASH_ENV ENV
   LC_ALL=C
@@ -103,6 +104,123 @@ confine_need() { # confine_need <program>...: refuse unless each is on the clean
 }
 
 # ---- git (OUTPUT-RULES.md Rule 11c) --------------------------------------------------------------------
+# git opens the files of a repository with a blocking open, so a named pipe where it expects a file (a
+# FIFO as HEAD, or one its config includes) stops it for good; tar carries such files, and a config can
+# include a terminal device. These checks run without git, before git starts. A socket is let through:
+# opening one fails at once, and git's own fsmonitor daemon keeps one in .git.
+
+confine_special() { # confine_special <path>: status 0 for a named pipe or a device, a link followed
+  [ -p "$1" ] || [ -b "$1" ] || [ -c "$1" ]
+}
+
+confine_git_wait() { # confine_git_wait <where> <value>: CONFINE_GIT_WHY for a file git would wait on, then status 1
+  CONFINE_GIT_WHY="a named pipe or device $1, and git would wait on it for good: $(confine_text "$2")"
+  return 1
+}
+
+# confine_named_dir <file> <prefix>: sets CONFINE_NAMED to the directory a gitfile ("gitdir: <dir>") or a
+# commondir file names, as git reads it: the text after <prefix>, without its trailing line ends, relative
+# to the file's directory; status 1 when the file is not a regular file under 16 KiB with that prefix.
+confine_named_dir() {
+  local s
+  [ -f "$1" ] || return 1
+  s=$(wc -c < "$1" 2>/dev/null) || return 1
+  s=${s//[!0-9]/}
+  [ -n "$s" ] && [ "$s" -le 16384 ] || return 1
+  s=$(cat -- "$1" 2>/dev/null && printf x) || return 1
+  s=${s%x}
+  while :; do
+    case "$s" in *$'\n'|*$'\r') s=${s%?} ;; *) break ;; esac
+  done
+  case "$s" in "$2"*) s=${s#"$2"} ;; *) return 1 ;; esac
+  case "$s" in /*) ;; *) s=${1%/*}/$s ;; esac
+  CONFINE_NAMED=$s
+}
+
+# confine_git_includes <config file> <depth>: print the first include.path or includeIf.<condition>.path
+# value, in the file or in one it includes (to git's 10 levels), that names a named pipe or device; print
+# nothing when there is none. git lists the values, from / where it finds no repository, following none.
+confine_git_includes() {
+  local f=$1 v t
+  [ "$2" -le 10 ] && [ -f "$f" ] || return 0
+  v=$(cat -- "$f" 2>/dev/null) || return 0
+  case "$v" in *[iI][nN][cC][lL][uU][dD][eE]*) ;; *) return 0 ;; esac
+  hgit / config --file "$f" --no-includes -z --get-regexp '^include(if\..+)?\.path$' 2>/dev/null </dev/null |
+    while IFS= read -r -d '' v; do
+      case "$v" in *$'\n'*) v=${v#*$'\n'} ;; *) continue ;; esac
+      case "$v" in
+        '~/'*) t=${HOME-}/${v#'~/'} ;;
+        '~'*|'%(prefix)/'*) continue ;;
+        /*) t=$v ;;
+        *) t=${f%/*}/$v ;;
+      esac
+      if confine_special "$t"; then printf '%s' "$v"; break; fi
+      if [ -f "$t" ]; then
+        t=$(confine_git_includes "$t" $(($2 + 1)))
+        if [ -n "$t" ]; then printf '%s' "$t"; break; fi
+      fi
+    done
+}
+
+# confine_git_dir_files <git directory>: status 1 (CONFINE_GIT_WHY says why) when something in it, in its
+# common directory, or a file their config includes could stop git: a named pipe or device, a symbolic
+# link to one, or one an include names (confine_git_includes). A common directory without objects and
+# refs is no repository's, and git reads nothing there.
+confine_git_dir_files() {
+  local g=$1 c d f v odd
+  c=$g
+  if confine_named_dir "$g/commondir" '' && [ -d "$CONFINE_NAMED/objects" ] && [ -d "$CONFINE_NAMED/refs" ]; then
+    c=$CONFINE_NAMED
+  fi
+  for d in "$g" "$c"; do
+    [ -d "$d" ] || continue
+    odd=$(find "$d" \( -type p -o -type b -o -type c \) -print 2>/dev/null)
+    [ -z "$odd" ] || confine_git_wait "is in the git directory" "$d" || return 1
+    odd=$(find "$d" -type l \( -exec test -p {} \; -o -exec test -b {} \; -o -exec test -c {} \; \) -print 2>/dev/null)
+    [ -z "$odd" ] || confine_git_wait "is named by a link in the git directory" "$d" || return 1
+    [ "$c" != "$g" ] || break
+  done
+  for f in "$c/config" "$g/config.worktree"; do
+    v=$(confine_git_includes "$f" 0)
+    [ -z "$v" ] || confine_git_wait "is included by the repository's config" "$v" || return 1
+  done
+}
+
+# confine_git_check <dir>: status 1 (CONFINE_GIT_WHY says why) when git, run in <dir>, would wait on a
+# file for good. It looks as git's discovery does, from <dir> up to CONFINE_CEILING: at the HEAD and
+# commondir git opens in each .git (or the directory a .git file names) and in each directory it tries as
+# a bare repository, then at everything confine_git_dir_files checks in the first one that is a
+# repository. A directory that passed is not checked again for the same ceiling in the same shell.
+confine_git_check() {
+  local p=$1 key d
+  case "$p" in /*) ;; *) p=$CONFINE_WT/$p ;; esac
+  key=$p$'\t'${CONFINE_CEILING-}$'\n'
+  case "${CONFINE_GIT_CHECKED-}" in *$'\n'"$key"*) return 0 ;; esac
+  while :; do
+    for d in "$p/.git" "$p"; do
+      if [ "$d" = "$p/.git" ] && [ -f "$d" ]; then confine_named_dir "$d" 'gitdir: ' && d=$CONFINE_NAMED || continue; fi
+      [ -d "$d" ] || continue
+      if confine_special "$d/HEAD" || confine_special "$d/commondir"; then
+        confine_git_wait "is in the git directory" "$d" || return 1
+      fi
+      if [ -e "$d/HEAD" ] && { [ "$d" != "$p" ] || { [ -d "$d/objects" ] && [ -d "$d/refs" ]; }; }; then
+        confine_git_dir_files "$d" || return 1
+        CONFINE_GIT_CHECKED=${CONFINE_GIT_CHECKED-}$key
+        return 0
+      fi
+    done
+    case "$p" in /|'') break ;; esac
+    p=${p%/*}
+    [ -n "$p" ] || p=/
+    [ -z "${CONFINE_CEILING-}" ] || [ "$p" != "$CONFINE_CEILING" ] || break
+  done
+  CONFINE_GIT_CHECKED=${CONFINE_GIT_CHECKED-}$key
+}
+
+confine_git_files() { # confine_git_files <dir>: refuse where confine_git_check finds a file git would wait on
+  confine_git_check "$1" || confine_refuse "$CONFINE_GIT_WHY"
+}
+
 # hgit <dir> <git arguments>: git in <dir> with only the environment below, and the -c pins over the
 # repository's own config: what it runs, what it fetches, the files it reads, and how it reads history
 # and patterns (grep.patternType, log.showRoot, replace refs, the commit-graph cache).
@@ -110,10 +228,12 @@ confine_need() { # confine_need <program>...: refuse unless each is on the clean
 # call. GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS makes git refuse abbreviated long options where its option
 # parser checks it; git-ro.sh refuses them on its own as well. GIT_ALLOW_PROTOCOL carries the transport
 # allowlist in the environment, which the repository's config cannot widen; it is empty (no transport)
-# unless the caller sets CONFINE_ALLOW_PROTOCOL for one call.
+# unless the caller sets CONFINE_ALLOW_PROTOCOL for one call. confine_git_files runs first, so git never
+# starts on a repository that holds a file it would wait on.
 hgit() {
   local d=$1
   shift
+  confine_git_files "$d"
   env -i ${HOME+"HOME=$HOME"} PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" LC_ALL=C TZ="${TZ:-UTC}" \
     GIT_NO_LAZY_FETCH=1 GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
     GIT_OPTIONAL_LOCKS=0 GIT_ALLOW_PROTOCOL="${CONFINE_ALLOW_PROTOCOL-}" GIT_CEILING_DIRECTORIES="$CONFINE_CEILING" GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS=true \
@@ -140,9 +260,11 @@ hgit_text() {
 
 # confine_repo_top <dir>: status 0 when <dir> (absolute) is the top level of its own repository, or a
 # bare repository itself, compared with symbolic links resolved on both sides. A directory inside
-# another repository fails, so that repository is never read in its place.
+# another repository fails, so that repository is never read in its place; so does one whose
+# repository holds a file git would wait on (confine_git_check).
 confine_repo_top() {
   local top here
+  confine_git_check "$1" || return 1
   if [ "$(hgit "$1" rev-parse --is-bare-repository 2>/dev/null)" = true ]; then
     top=$(hgit "$1" rev-parse --absolute-git-dir 2>/dev/null) || return 1
   else
@@ -170,17 +292,18 @@ confine_partial_clone() {
 
 # confine_repo <dir> <what>: refuse <dir> (. for WT, or a confined directory) unless it is the top level
 # of a repository, or a bare repository, whose git directory and common directory resolve inside WT,
-# hold no symbolic link, borrow no objects (objects/info/alternates) and rewrite no commit's parents
-# (info/grafts). Sets CONFINE_REPO (its physical path), CONFINE_GIT_DIR, CONFINE_COMMON_DIR and
-# CONFINE_BARE (true or false).
+# hold no symbolic link, named pipe or device (confine_git_files runs first), borrow no objects
+# (objects/info/alternates) and rewrite no commit's parents (info/grafts). Sets CONFINE_REPO (its
+# physical path), CONFINE_GIT_DIR, CONFINE_COMMON_DIR and CONFINE_BARE (true or false).
 confine_repo() {
-  local what=$2 shown abs info bare gitdir common top d links n lines
+  local what=$2 shown abs info bare gitdir common top d odd n lines
   confine_shown "$1"
   shown=$CONFINE_SHOWN
   confine_path "$1" "$what" dir
   if [ "$CONFINE_REL" = . ]; then abs=$CONFINE_WT; else abs=$CONFINE_WT/$CONFINE_REL; fi
   confine_phys "$abs" || confine_refuse "$what cannot be resolved: $shown"
   abs=$CONFINE_PHYS
+  confine_git_files "$abs"
   # One call where there is a work tree; a bare repository has no top level, so it takes a second. git
   # prints each value on a line of its own, and a path can hold a line end (a core.worktree, a gitfile
   # or a commondir file can name one), which would shift the values: the output must hold exactly one
@@ -222,8 +345,12 @@ confine_repo() {
       "${CONFINE_WT%/}/"*) ;;
       *) confine_refuse "$what keeps its git directory outside the working directory: $shown" ;;
     esac
-    links=$(find "$d" -type l -print 2>/dev/null) || confine_refuse "$what has a git directory that find cannot fully read: $shown"
-    [ -z "$links" ] || confine_refuse "$what has a symbolic link in its git directory: $shown"
+    odd=$(find "$d" ! -type f ! -type d ! -type s -print 2>/dev/null) || confine_refuse "$what has a git directory that find cannot fully read: $shown"
+    if [ -n "$odd" ]; then
+      [ -z "$(find "$d" -type l -print 2>/dev/null)" ] ||
+        confine_refuse "$what has a symbolic link in its git directory: $shown"
+      confine_refuse "$what has a named pipe or device in its git directory, and git would wait on it for good: $shown"
+    fi
     [ "$common" != "$gitdir" ] || break
   done
   if [ -e "$common/objects/info/alternates" ]; then

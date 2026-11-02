@@ -2,9 +2,10 @@
 # test-confine.sh — self-test for scripts/lib/confine.sh, the checks the bundled entry points share: the
 # working directory and installation checks of confine_init, the cleaned PATH, confined paths (the case
 # file fixtures/confine/paths.txt), run-directory names and .gitignore files, noclobber writes, the
-# environment and order of the hardened git call, and the repository, tracked and partial-clone checks.
-# Every case runs under each bash on the machine (/bin/bash and the bash running this suite, when they
-# differ) and must print the same under each. Needs git; no network.
+# environment and order of the hardened git call, the repository, tracked and partial-clone checks, and
+# the named pipes git would wait on. Every case runs under each bash on the machine (/bin/bash and the
+# bash running this suite, when they differ) and must print the same under each. Needs git and mkfifo;
+# python3 for the socket case; no network.
 # Usage (from the repo root): bash scripts/tests/test-confine.sh
 set -uo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd -P)
@@ -377,6 +378,8 @@ fi
 # Repositories git describes in a way that would pass the checks above: a value printed across lines, a
 # common directory apart from the git directory, and files git would wait on for good.
 # =================================================================================================
+# shown <s>: <s> as a refusal line shows it, cut after 200 bytes
+shown() { if [ "${#1}" -gt 200 ]; then printf '%s...' "${1:0:200}"; else printf '%s' "$1"; fi; }
 # A core.worktree holding a line end: git prints the top level across two lines, and the old split read
 # the alternates and grafts of a directory the repository chose instead of its own.
 mkrepo "$RW/wtnl"; put "$RW/wtnl" f wtnl; commit "$RW/wtnl" -m wtnl
@@ -388,6 +391,74 @@ if mkdir -p "$RW/wtnl/z"$'\n'"$RW/wtnl" "$RW/wtnl/.git"$'\n'"$RW/wtnl/z" 2>/dev/
     refused 'git describes the repository at R with a line end or control character inside a path: wtnl'
 else
   skp "this filesystem refuses a newline in a directory name: the core.worktree line-end case"
+fi
+# Named pipes: git opens them with a blocking open and waits for good, so each is refused before git
+# starts. lib_bounded gives a run 10 s, then reads 142 and opens the pipe for writing, so a git still
+# waiting there (as before this check existed) goes on and ends.
+lib_bounded() { # lib_bounded <pipe> <lib arguments>...
+  local f=$1 pid n=0
+  shift
+  rm -f "$T/rc"
+  ( lib "$@"; printf '%s' "$RC" > "$T/rc" ) &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null && [ "$n" -lt 100 ]; do sleep 0.1; n=$((n + 1)); done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -KILL "$pid" 2>/dev/null
+    wait "$pid" 2>/dev/null
+    ( : > "$f" ) &
+    pid=$!
+    n=0
+    while kill -0 "$pid" 2>/dev/null && [ "$n" -lt 20 ]; do sleep 0.1; n=$((n + 1)); done
+    kill -KILL "$pid" 2>/dev/null
+    wait "$pid" 2>/dev/null
+    RC=142
+  else
+    wait "$pid"
+    RC=$(cat "$T/rc" 2>/dev/null)
+  fi
+}
+if mkfifo "$T/fifo-probe" 2>/dev/null; then
+  mkrepo "$RW/fifohead"; put "$RW/fifohead" f x; commit "$RW/fifohead" -m x
+  rm "$RW/fifohead/.git/HEAD"; mkfifo "$RW/fifohead/.git/HEAD"
+  lib_bounded "$RW/fifohead/.git/HEAD" "$RW" 'confine_repo fifohead R'
+  check "a named pipe as .git/HEAD is refused before git starts" \
+    refused "a named pipe or device is in the git directory, and git would wait on it for good: $(shown "$RW/fifohead/.git")"
+  mkrepo "$RW/fifoinc"; put "$RW/fifoinc" f x; commit "$RW/fifoinc" -m x
+  mkfifo "$RW/fifoinc/pipe"
+  printf '[include]\n\tpath = ../pipe\n' >> "$RW/fifoinc/.git/config"
+  lib_bounded "$RW/fifoinc/pipe" "$RW" 'confine_repo fifoinc R'
+  check "... and one the repository's config includes from the work tree" \
+    refused "a named pipe or device is included by the repository's config, and git would wait on it for good: ../pipe"
+  mkrepo "$RW/fifoinc2"; put "$RW/fifoinc2" f x; commit "$RW/fifoinc2" -m x
+  mkdir -p "$RW/fifoinc2/cfg"
+  mkfifo "$RW/fifoinc2/cfg/pipe"
+  printf '[include]\n\tpath = pipe\n' > "$RW/fifoinc2/cfg/more.cfg"
+  printf '[includeIf "gitdir:**"]\n\tpath = ../cfg/more.cfg\n' >> "$RW/fifoinc2/.git/config"
+  lib_bounded "$RW/fifoinc2/cfg/pipe" "$RW" 'confine_repo fifoinc2 R'
+  check "... and one a file the config includes includes in turn, named relative to that file" \
+    refused "a named pipe or device is included by the repository's config, and git would wait on it for good: pipe"
+  mkrepo "$T/above"; put "$T/above" f x; commit "$T/above" -m x
+  mkdir -p "$T/above/sub"
+  rm "$T/above/.git/HEAD"; mkfifo "$T/above/.git/HEAD"
+  lib_bounded "$T/above/.git/HEAD" "$T/above/sub" 'CONFINE_CEILING="" hgit "$CONFINE_WT" rev-parse --is-inside-work-tree'
+  check "hgit refuses to start git on a repository above the working directory whose HEAD is a named pipe" \
+    refused "a named pipe or device is in the git directory, and git would wait on it for good: $(shown "$T/above/.git")"
+  lib_bounded "$T/above/.git/HEAD" "$T/above/sub" 'confine_tracked x; printf "[%s]" "$?"'
+  check "... and confine_tracked fails closed (2) there" out_is '[2]'
+else
+  skp "mkfifo is not available: the named pipe cases"
+fi
+# A socket in the git directory (git's own fsmonitor daemon keeps one there) does not block an open, and
+# passes. Making one needs a machine that allows it: on CI one that does not fails, elsewhere a skip.
+mkrepo "$RW/sock"; put "$RW/sock" f x; commit "$RW/sock" -m x
+if python3 -I -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$RW/sock/.git/s" 2>/dev/null &&
+   [ -S "$RW/sock/.git/s" ]; then
+  lib "$RW" 'confine_repo sock R; printf "%s" "$CONFINE_BARE"'
+  check "a socket in the git directory is let through" out_is false
+elif [ "${CI:-}" = true ]; then
+  ko "a socket in the git directory: this machine does not let the suite make a Unix socket"
+else
+  skp "this machine does not let the suite make a Unix socket: the socket case (on CI this fails)"
 fi
 
 echo
