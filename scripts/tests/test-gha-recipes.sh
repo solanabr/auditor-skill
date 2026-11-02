@@ -17,8 +17,8 @@
 # are also checked line by line on their own fixtures, and those that search outside .github/ skip node_modules/
 # and .terraform/. Every pattern a recipe gives grep must stay inside what GNU grep's DFA runs in a UTF-8
 # locale, and hold no backslash inside a bracket. It runs R1 and K139-1 over trigger spellings built at run time
-# (CRLF line ends among them), R1 over file names that hold a space or a quote, and R1 over
-# large inputs: 2,000 workflows, and two of about 1 MiB. R9 and KV-080 Step 8's first
+# (CRLF line ends among them), R1 over file names that hold a space or a quote and over a decoy name that holds
+# a newline, and R1 over large inputs: 2,000 workflows, and two of about 1 MiB. R9 and KV-080 Step 8's first
 # command run over 2,000 workflows, and each KV-080 and KV-140 command that pipes into head over more than 64 KiB
 # of its own output. KV-080 Step 4's two commands run over pins saved with CRLF line ends and over references R9
 # does not read as pins: each uses: line lands in exactly one of them. Every command of every recipe must end
@@ -446,6 +446,27 @@ else
   fail=1
 fi
 
+# A name that holds a newline prints as two lines. A decoy directory named zz.yml, a newline and .github, holding
+# workflows/evil.yml that mentions author_association, puts .github/workflows/evil.yml into R1's second list, and the
+# real, ungated workflow of that path drops out of R1 with no other sign. That is why the R1 note runs
+# find .github -name '*[[:cntrl:]]*' every time: it names the decoy.
+forge="$work/forge"; mkdir -p "$forge/.github/workflows"
+printf 'on: issue_comment\njobs:\n  a:\n    runs-on: ubuntu-latest\n' > "$forge/.github/workflows/evil.yml"
+decoy="$forge/.github/zz.yml
+.github/workflows"
+if mkdir -p "$decoy" 2>/dev/null; then
+  printf 'x: github.event.comment.author_association\n' > "$decoy/evil.yml"
+  got=$(run_recipe "$forge" "$(recipe R1)" | tr '\n' '|')
+  found=$( (cd "$forge" && find .github -name '*[[:cntrl:]]*') | grep -c '^\.github/zz\.yml$')
+  if [ -z "$got" ] && [ "$found" = 1 ]; then
+    echo "ok   R1 loses an ungated workflow to a decoy name holding a newline, and the find the R1 note runs names the decoy"
+  else
+    echo "FAIL R1 newline-name decoy: R1 listed [$got] (want none: the decoy forges it), find named the decoy $found time(s)"
+    fail=1
+  fi
+else
+  echo "SKIP R1 newline-name decoy: this file system refuses a newline in a name"
+fi
 
 # Trigger spellings, one workflow each: a space before a colon, an event key holding null, ~, [], an anchor or an
 # alias, a flow list wrapped over lines, a byte-order mark before on:, a JSON document, an indented document, and
