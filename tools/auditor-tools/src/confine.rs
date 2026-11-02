@@ -14,8 +14,8 @@
 //! no repository in any letter case, whose `.gitignore` holds exactly `*`, as
 //! `scripts/rundir.sh check` checks it. git runs only as `hgit` runs it: found on
 //! a PATH with every entry inside WT removed, with an environment of its own that
-//! allows no transport, and with the repository's config pinned off.
-//! The only other program started is
+//! allows no transport, and with the repository's config pinned off; it is killed
+//! when it has not answered in time. The only other program started is
 //! audit-scan itself, by the path it runs from, to parse one file in a child: the
 //! file's bytes on its stdin, no environment, killed past a time limit. A file is
 //! made through its directory's descriptor, never through a link and never over a
@@ -29,7 +29,7 @@ use std::os::raw::c_int;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Child, Command, ExitStatus, Output, Stdio};
 use std::time::{Duration, Instant};
 
 #[cfg(any(target_os = "android", target_os = "netbsd", target_os = "openbsd"))]
@@ -526,6 +526,11 @@ pub const HGIT_PINS: &[&str] = &[
     "core.commitGraph=false",
 ];
 
+/// How long git may take to answer one question. git that has not answered by
+/// then, one blocked opening a named pipe in the repository, say, is killed, and
+/// cannot tell.
+pub const GIT_TIME: Duration = Duration::from_secs(10);
+
 /// git, run as confine.sh's `hgit` runs it. Found on first use: on a PATH that
 /// keeps only absolute entries resolving outside WT, as `confine_init` cleans it.
 pub struct Git {
@@ -596,8 +601,10 @@ impl Git {
 
     /// `hgit <WT> <args>` with GIT_CEILING_DIRECTORIES set to `ceiling`: no
     /// environment but its own, GIT_ALLOW_PROTOCOL empty (no transport, which no
-    /// config of the repository's can widen), the repository's config pinned off.
-    fn run(&self, ceiling: &OsStr, args: &[&OsStr]) -> io::Result<std::process::Output> {
+    /// config of the repository's can widen), the repository's config pinned off,
+    /// and its output read until it ends. Past `GIT_TIME` it is killed, and that is
+    /// an error.
+    fn run(&self, ceiling: &OsStr, args: &[&OsStr]) -> io::Result<Output> {
         let (exe, path) = self
             .found
             .as_ref()
@@ -638,13 +645,16 @@ impl Git {
         cmd.args(args)
             .current_dir(&self.wt)
             .stdin(Stdio::null())
-            .output()
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        collect(cmd.spawn()?, Instant::now() + GIT_TIME)
     }
 
     /// What git tracks at `path` (relative to WT), in any letter case, as
     /// `confine_tracked` asks it: outside every repository nothing is tracked, and
     /// discovery may go above WT for this one question, since a repository there
-    /// decides it. `None` when git cannot tell, or cannot be run.
+    /// decides it. `None` when git cannot tell, cannot be run, or has not answered
+    /// within `GIT_TIME`.
     pub fn tracked(&self, path: &[u8]) -> Option<Vec<u8>> {
         let none = OsStr::new("");
         let inside = self
@@ -1110,6 +1120,82 @@ fn exchange(child: &mut Child, frame: &[u8], deadline: Instant) -> Option<Vec<u8
     }
 }
 
+/// What a child given no input prints and how it ends: its stdout and its stderr,
+/// each read as it is ready, to their ends, then its exit status. Past
+/// `deadline` it is killed, and that is an error (`TimedOut`).
+fn collect(mut child: Child, deadline: Instant) -> io::Result<Output> {
+    let late = || io::Error::new(io::ErrorKind::TimedOut, "it did not end in time");
+    let mut pipes = [
+        child.stdout.take().map(|p| File::from(OwnedFd::from(p))),
+        child.stderr.take().map(|p| File::from(OwnedFd::from(p))),
+    ];
+    let ready = pipes
+        .iter()
+        .all(|p| p.as_ref().is_some_and(|f| nonblocking(f.as_raw_fd())));
+    if !ready {
+        stop(child);
+        return Err(invalid("its output cannot be read"));
+    }
+    let mut got = [Vec::new(), Vec::new()];
+    let mut buf = vec![0u8; 1 << 16];
+    while pipes.iter().any(Option::is_some) {
+        let Some(wait) = deadline.checked_duration_since(Instant::now()) else {
+            stop(child);
+            return Err(late());
+        };
+        let fd = |p: &Option<File>| p.as_ref().map_or(-1, |f| f.as_raw_fd());
+        let mut fds = [
+            libc::pollfd {
+                fd: fd(&pipes[0]),
+                events: libc::POLLIN,
+                revents: 0,
+            },
+            libc::pollfd {
+                fd: fd(&pipes[1]),
+                events: libc::POLLIN,
+                revents: 0,
+            },
+        ];
+        let ms = c_int::try_from(wait.as_millis())
+            .unwrap_or(c_int::MAX)
+            .max(1);
+        // SAFETY: `fds` holds two pollfd structs, and poll skips the one whose
+        // descriptor is negative.
+        if unsafe { libc::poll(fds.as_mut_ptr(), 2, ms) } < 0 {
+            let e = io::Error::last_os_error();
+            if e.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            stop(child);
+            return Err(e);
+        }
+        for (i, polled) in fds.iter().enumerate() {
+            let Some(pipe) = pipes[i].as_mut().filter(|_| polled.revents != 0) else {
+                continue;
+            };
+            match pipe.read(&mut buf) {
+                Ok(0) => pipes[i] = None,
+                Ok(n) => got[i].extend_from_slice(&buf[..n]),
+                Err(e) if blocked(&e) => {}
+                Err(e) => {
+                    stop(child);
+                    return Err(e);
+                }
+            }
+        }
+    }
+    let Some(status) = wait_until(&mut child, deadline) else {
+        stop(child);
+        return Err(late());
+    };
+    let [stdout, stderr] = got;
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
 /// Whether an error on a non-blocking pipe only means it is not ready.
 fn blocked(e: &io::Error) -> bool {
     matches!(
@@ -1255,6 +1341,49 @@ mod tests {
         );
         let _ = fs::remove_file(&mark);
         let _ = fs::remove_dir(&dir);
+    }
+
+    /// What `collect` reads of `/bin/sh -c <script>`, given no input.
+    fn collected(script: &str, limit: Duration) -> io::Result<Output> {
+        let child = Command::new("/bin/sh")
+            .args(["-c", script])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("start /bin/sh");
+        collect(child, Instant::now() + limit)
+    }
+
+    #[test]
+    fn a_child_is_read_to_the_end_of_both_outputs() {
+        // More than a pipe holds on each, stdout first, then a status of its own.
+        let out = collected(
+            "head -c 1048576 /dev/zero; head -c 1048576 /dev/zero >&2; exit 3",
+            Duration::from_secs(60),
+        )
+        .expect("its output");
+        assert_eq!(out.status.code(), Some(3));
+        assert_eq!((out.stdout.len(), out.stderr.len()), (1 << 20, 1 << 20));
+    }
+
+    #[test]
+    fn a_child_that_does_not_end_in_time_is_killed() {
+        // One that keeps its outputs open, and one that closes them first.
+        for script in ["exec /bin/sleep 30", "exec >&- 2>&-; exec /bin/sleep 30"] {
+            let start = Instant::now();
+            let out = collected(script, Duration::from_secs(1));
+            let took = start.elapsed();
+            assert_eq!(
+                out.map_err(|e| e.kind()).err(),
+                Some(io::ErrorKind::TimedOut),
+                "{script}"
+            );
+            assert!(
+                took >= Duration::from_secs(1) && took < Duration::from_secs(5),
+                "{script}: {took:?}"
+            );
+        }
     }
 
     fn ok(s: &str) -> bool {

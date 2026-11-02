@@ -6,7 +6,7 @@ mod common;
 use std::ffi::OsString;
 use std::fs;
 use std::os::unix::ffi::OsStringExt;
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
@@ -1918,4 +1918,95 @@ fn put_finding_keeps_the_severity_and_title_it_replaces_and_regressions_lists_th
         ]
     );
     assert_eq!(regs["truncated"], 0);
+}
+
+/// audit-mem run from `wt` with `args`, waited for at most `limit`. Past it the
+/// test fails: first `pipe` is opened for writing, so that a git blocked opening
+/// it goes on, and the call is killed.
+fn mem_within(wt: &Wt, args: &[&str], limit: std::time::Duration, pipe: &Path) -> Output {
+    let mut child = Command::new(BIN)
+        .args(args)
+        .current_dir(&wt.dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start audit-mem");
+    let start = std::time::Instant::now();
+    while child.try_wait().expect("poll audit-mem").is_none() {
+        if start.elapsed() > limit {
+            for _ in 0..20 {
+                let _ = fs::OpenOptions::new()
+                    .write(true)
+                    .custom_flags(libc::O_NONBLOCK)
+                    .open(pipe);
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("audit-mem {args:?} still runs after {limit:?}");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    child.wait_with_output().expect("read audit-mem's output")
+}
+
+#[test]
+fn refuses_when_git_does_not_answer_in_time() {
+    // A named pipe as .git/HEAD, or one the repository's config includes: git
+    // blocks opening it, and is killed.
+    for (planted, calls) in [
+        (
+            "HEAD",
+            vec![
+                (
+                    vec!["warm", "--program-id", P],
+                    "git cannot tell whether .audit-memory is tracked",
+                ),
+                (
+                    vec!["init", "--db", "audit_1/audit-mem.db"],
+                    "git cannot tell whether --db is tracked: audit_1",
+                ),
+            ],
+        ),
+        (
+            "pipe",
+            vec![(
+                vec!["warm", "--program-id", P],
+                "git cannot tell whether .audit-memory is tracked",
+            )],
+        ),
+    ] {
+        let wt = Wt::repo();
+        wt.run_dir("audit_1");
+        let pipe = wt.path(&format!(".git/{planted}"));
+        if planted == "HEAD" {
+            fs::remove_file(&pipe).expect("rm HEAD");
+        } else {
+            let config = fs::read(wt.path(".git/config")).expect("read the config");
+            wt.write(
+                ".git/config",
+                &[&config[..], &b"[include]\n\tpath = pipe\n"[..]].concat(),
+            );
+        }
+        let made = Command::new("mkfifo")
+            .arg(&pipe)
+            .status()
+            .expect("run mkfifo");
+        assert!(made.success(), "mkfifo");
+        for (args, why) in calls {
+            let start = std::time::Instant::now();
+            let o = mem_within(&wt, &args, std::time::Duration::from_secs(60), &pipe);
+            refused(&o, "audit-mem", why);
+            let took = start.elapsed();
+            assert!(
+                took < std::time::Duration::from_secs(40),
+                "{planted} {args:?}: {took:?}"
+            );
+        }
+        assert!(
+            !wt.exists("audit_1/audit-mem.db"),
+            "{planted}: nothing made"
+        );
+    }
 }
