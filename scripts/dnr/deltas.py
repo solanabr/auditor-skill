@@ -16,7 +16,8 @@ confine_init deltas.py "${here%/*/*}"
 # pyenv, asdf or mise shim reads) picks it. The lookup reads /dev/null, so only the recipe meets the
 # caller's stdin, which python3 refuses at start when it is a directory. The recipe then runs by the
 # absolute path that interpreter reports, which must lie outside the working directory, its links
-# resolved too.
+# resolved too, as confine_inside decides: by identity, so no other spelling of the working directory's
+# path passes where the filesystem folds names.
 py=$(cd / && exec python3 -I -c 'import os, sys
 print(sys.executable)
 print(os.path.realpath(sys.executable))' </dev/null 2>/dev/null) || py=''
@@ -29,9 +30,9 @@ case "$py" in
 esac
 for d in "${py%/*}" "${pyreal%/*}"; do
   confine_phys "${d:-/}" || confine_refuse "python3 cannot be resolved: $(confine_text "$py")"
-  case "$CONFINE_PHYS/" in
-    "${CONFINE_WT%/}/"*) confine_refuse "python3 lies inside the working directory: $(confine_text "$py")" ;;
-  esac
+  if confine_inside "$CONFINE_PHYS" "$CONFINE_WT"; then
+    confine_refuse "python3 lies inside the working directory: $(confine_text "$py")"
+  fi
 done
 # ---- end of interpreter
 exec "$py" -I -- "$0" "$@" || exit 126

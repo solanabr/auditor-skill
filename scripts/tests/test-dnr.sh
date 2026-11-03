@@ -2018,6 +2018,23 @@ for r in frames.py deltas.py profile.sh; do
     res="$res $c:$(tr '\n' ' ' < "$TT/x26.err")"
 done
 eq "interpreter: one that lies inside the working directory is refused (exit 2, one line, no output)" "${res# }" "2 2 2"
+# So is one that spells the working directory's path in capitals, where the filesystem opens them as it;
+# where it does not, that path cannot be resolved, and the recipe is refused all the same.
+EVU26=$(printf '%s' "$EV26" | tr 'a-z' 'A-Z')
+mkdir -p "$TT/liaru26"
+printf '#!/bin/sh\nprintf "%%s\\n%%s\\n" "%s/bin/python3" "%s/bin/python3"\n' "$EVU26" "$EVU26" > "$TT/liaru26/python3"
+chmod +x "$TT/liaru26/python3"
+if [[ -d "$EVU26/bin" ]]; then why26='python3 lies inside the working directory'; else why26='python3 cannot be resolved'; fi
+res=""
+for r in frames.py deltas.py profile.sh; do
+  if [[ "$r" == deltas.py ]]; then set -- lamports incident_1/clean-mixed.jsonl; else set -- incident_1/clean-mixed.jsonl; fi
+  ( cd "$EV26" && PATH="$TT/liaru26:$PATH" "$DNR/$r" "$@" ) > "$TT/x26.out" 2> "$TT/x26.err"
+  c=$?
+  [[ "$c" == 2 && ! -s "$TT/x26.out" && "$(grep -c . "$TT/x26.err")" == 1 ]] &&
+    grep -q "^$r: refused: $why26: " "$TT/x26.err" && res="$res $c" ||
+    res="$res $c:$(tr '\n' ' ' < "$TT/x26.err")"
+done
+eq "interpreter: ... and one it reports in capitals ($why26)" "${res# }" "2 2 2"
 # With no python3 on PATH, frames.py and deltas.py stop with a named blocker, as profile.sh does.
 mkdir -p "$TT/nopy26"
 res=""
