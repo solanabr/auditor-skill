@@ -46,9 +46,10 @@ socket reachable (`scripts/lib/isolation.sh`), and stops if one is or if the che
 cannot finish; in native mode it prints their kinds and counts as a `>> warning:`
 line, which the report records as it stands. Every cargo call and test binary then
 runs in a cleaned environment with a throwaway `HOME` and Solana keypair, and every
-build and test runs offline, after the downloads. With no recorded mode, the command
-asks once (a non-interactive run is native, and the report says so) and hands the
-mode on; `poc-engineer` and `patch-engineer` use the mode the command hands them and
+build and test runs offline, after the downloads. With no recorded mode, or in a run
+directory an earlier session made, the command asks once (a non-interactive run cannot
+ask: it uses the stricter of the recorded mode and native, and the report says so) and
+hands the mode on; `poc-engineer` and `patch-engineer` use the mode the command hands them and
 never ask. Build and test the crate only through `run.sh`. As a second layer, `run.sh`
 never builds inside the target tree: cargo reads `.cargo/config*` and rustup reads `rust-toolchain*` from every
 parent directory, so a crate built under `audit_<n>/poc/` or `incident_<n>/poc/`
@@ -102,10 +103,40 @@ back with the crate. `run.sh` prints a line when a crate has no `Cargo.lock`.
 
 **Runners you write.** `templates/poc/run.sh` is the runner for the template's crate. A
 Trident or cargo-fuzz target or a Surfpool scenario has no template, so `poc-engineer`
-writes its `run.sh`, and that runner keeps both rules above. It starts with `run.sh`'s
-mode gate, these lines verbatim, so it exits 3 before it copies or builds anything:
+writes its `run.sh` in its crate, `<R>/poc/<ID>/run.sh`, and that runner keeps both rules
+above. It starts with these lines verbatim (`agents/poc-engineer.md` gives them with the
+installation's path filled in). Like `run.sh --crate`, they find `<R>` from the runner's
+own path, wherever the runner is started from, and take the stricter of `<R>/exec-mode` and
+`AUDITOR_EXEC_MODE`. They stop the run when `exec-mode` is not a regular file holding one
+word, none, isolated or native; an `AUDITOR_EXEC_MODE` other than none, isolated or native
+is left as it is, and `run.sh`'s mode gate, which they apply next, stops on it. In isolated
+mode they then run the credential self-check through `probe.sh --only isolation`. Each stop
+is an exit 3 before the runner copies or builds anything:
 
 ```bash
+RUN_DIR=$(CDPATH= cd -P -- "$(dirname -- "$0")" && pwd -P) || exit 3
+RUN_DIR=${RUN_DIR%/poc/*}
+AUDITOR_ROOT='<auditor-skill root>'
+RECORDED=
+if [ -e "$RUN_DIR/exec-mode" ] || [ -L "$RUN_DIR/exec-mode" ]; then
+  if [ -f "$RUN_DIR/exec-mode" ] && [ ! -L "$RUN_DIR/exec-mode" ]; then RECORDED=$(head -c 10 "$RUN_DIR/exec-mode" 2>/dev/null || true); fi
+  case "$RECORDED" in
+    none|isolated|native) ;;
+    *)
+      echo "[PoC-ATTEMPTED] blocker: ${RUN_DIR##*/}/exec-mode is not a regular file holding one word, none, isolated or native — nothing was copied or built." >&2
+      exit 3
+      ;;
+  esac
+fi
+case "${AUDITOR_EXEC_MODE:-none}" in
+  none|isolated|native)
+    case " $RECORDED ${AUDITOR_EXEC_MODE:-} " in
+      *" none "*) AUDITOR_EXEC_MODE=none ;;
+      *" isolated "*) AUDITOR_EXEC_MODE=isolated ;;
+      *" native "*) AUDITOR_EXEC_MODE=native ;;
+    esac
+    ;;
+esac
 case "${AUDITOR_EXEC_MODE:-}" in
   isolated|native) ;;
   *)
@@ -114,6 +145,10 @@ case "${AUDITOR_EXEC_MODE:-}" in
     exit 3
     ;;
 esac
+if [ "$AUDITOR_EXEC_MODE" = isolated ] && [ "$("$AUDITOR_ROOT/scripts/runner/probe.sh" --only isolation 2>/dev/null)" != 'isolation: none of the credentials the self-check reads is readable' ]; then
+  echo "[PoC-ATTEMPTED] blocker: isolated mode, but this is not the isolated runner (scripts/runner/probe.sh --only isolation lists what is readable) — nothing was copied or built." >&2
+  exit 3
+fi
 ```
 
 Then it builds and runs from a scratch copy outside the target tree, as `run.sh` does:
