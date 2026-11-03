@@ -100,7 +100,7 @@ after the agent's for its result), and do that step's work in the same turn. A
 resumed invocation runs step 0 again, adopts that run directory and never
 repeats another finished step. That invocation asks:
 tell the human to answer "Yes", not "don't ask again", which saves a rule into the
-audited tree's `.claude/settings.local.json`, a file the next run's step 0 refuses.
+audited tree's `.claude/settings.local.json`, a file step 0 refuses, from that resumed invocation on.
 A `claude -p` run is one turn with no replies, and a call that would ask is denied
 there: pass each denied call, and the gap it leaves, to the agent for the ledger and
 the plan.

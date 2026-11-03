@@ -1034,10 +1034,13 @@ for fa in 'commands/poc.md|poc-engineer' 'commands/patch.md|patch-engineer'; do
   esac
 done
 
-# Each command's resume text, and the root SKILL.md's, says how to answer the prompt its re-invocation brings.
+# Each command's resume text, and the root SKILL.md's, says how to answer the prompt its re-invocation brings, and
+# that the file "don't ask again" writes stops that resumed invocation, whose step 0 runs again, not only the next run.
 for f in commands/*.md SKILL.md; do
   if grep -qF -- 'tell the human to answer "Yes", not "don'"'"'t ask again"' "$f"; then ok "$f: the resume text names the answer"
   else bad "P $f: the resume text does not tell the human to answer \"Yes\", not \"don't ask again\""; fi
+  if grep -qiF -- 'a file step 0 refuses, from that resumed invocation on' "$f"; then ok "$f: the saved rule stops the resumed invocation"
+  else bad "P $f: the resume text does not say that step 0 refuses the saved rule's file from that resumed invocation on"; fi
 done
 # Each command that starts agents (Task in its allowed-tools), and the root SKILL.md, keeps them in the foreground,
 # and resumes in the turn that brings an agent's result when Claude Code ran it in the background anyway (it cannot
