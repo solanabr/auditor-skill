@@ -50,7 +50,10 @@ pub fn working_tree() -> Result<PathBuf, Stop> {
 /// as written, or from an installation inside the working directory (Rule 11e),
 /// in the words of `scripts/lib/confine.sh`. The path is checked as it was invoked
 /// (argv[0], when it names a path), as the system names the executable, and with
-/// every link resolved, as the recipes check theirs.
+/// every link resolved, as the recipes check theirs; whether it lies inside the
+/// working directory is decided by identity (device and inode) along its
+/// ancestors, as `confine_inside` decides it, since one directory has several
+/// spellings (through `/System/Volumes/Data` on macOS).
 pub fn self_check(wt: &Path) -> Result<(), Stop> {
     let exe = std::env::current_exe()
         .map_err(|e| refuse(format!("cannot resolve its own path: {}", os_message(&e))))?;
@@ -76,7 +79,11 @@ pub fn self_check(wt: &Path) -> Result<(), Stop> {
             ));
         }
     }
-    if real.starts_with(wt) {
+    let inside = fs::metadata(wt).is_ok_and(|w| {
+        real.ancestors()
+            .any(|a| fs::metadata(a).is_ok_and(|m| m.dev() == w.dev() && m.ino() == w.ino()))
+    });
+    if real.starts_with(wt) || inside {
         return Err(refuse(
             "the installation lies inside the working directory; install it outside the tree \
              under audit, or run from a directory that does not contain it (Rule 11e)"

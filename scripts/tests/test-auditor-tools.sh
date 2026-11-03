@@ -605,6 +605,12 @@ for b in audit-scan audit-mem; do
   ( cd "$W" && "$W/tools/auditor-tools/target/release/$b" "$@" ) > /dev/null 2> "$T/c1.err"
   eq "$b: an installation inside the working directory is refused in the words of scripts/lib/confine.sh" "$(cat "$T/c1.err")" \
     "$b: refused: the installation lies inside the working directory; install it outside the tree under audit, or run from a directory that does not contain it (Rule 11e)"
+  # macOS gives the same directory a second spelling, through /System/Volumes/Data: the same refusal.
+  if [ -d "/System/Volumes/Data$W" ] && [ "/System/Volumes/Data$W" -ef "$W" ]; then
+    ( cd "$W" && "/System/Volumes/Data$W/tools/auditor-tools/target/release/$b" "$@" ) > /dev/null 2> "$T/c1.err"
+    eq "$b: ... also when it runs by a path through /System/Volumes/Data" "$(cat "$T/c1.err")" \
+      "$b: refused: the installation lies inside the working directory; install it outside the tree under audit, or run from a directory that does not contain it (Rule 11e)"
+  fi
 done
 
 # ---------------------------------------------------------------------------
