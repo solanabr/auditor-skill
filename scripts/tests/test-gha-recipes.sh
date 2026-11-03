@@ -32,7 +32,8 @@
 # files that hold one 1 MiB line of near misses. KV-020 Step 3 and KV-100 Step 4, which list documentation files
 # with one recursive grep as R1 does, run over file names that hold a space or a quote, and KV-100's over more than
 # 64 KiB of names. Known limits' git listing for the commands that search the whole tree runs over a repository
-# that tracks files Claude Code's grep skips.
+# that tracks files Claude Code's grep skips, and its count of YAML lines outside printable ASCII over files that
+# hold a lone CR or U+2028.
 #
 # Usage (from the repo root): bash scripts/tests/test-gha-recipes.sh
 # Needs bash >= 3.2, grep, awk, git. No network. The fixtures are copied into a temp dir as .github/workflows/, those
@@ -729,6 +730,32 @@ if [ -n "$klgrep" ] && [ -n "$klgit" ] && [ "$klok" -eq 1 ] && [ "$got" = "infra
 else
   echo "FAIL Known limits: its grep [${klgrep:-none}] and git listing [${klgit:-none}] (same files, and the same" \
     "listing in KV-140 Step 7 and KV-080 Step 8: $klok) named [$got], want [infra/ignored.tf infra/latin1.tf ]"
+  fail=1
+fi
+# A lone CR, and U+2028 for a YAML 1.1 parser, ends a YAML line but not grep's, so a comment before one hides what
+# follows it from the commands that skip a comment however it ends. Known limits counts, in a span of its own (a double
+# backtick, since its bracket holds one), the YAML lines that hold a character outside printable ASCII. Run as written,
+# it names a workflow with a lone CR in a comment line, one with U+2028 in a comment and an infrastructure YAML file with
+# a lone CR, and not a workflow of printable ASCII that holds backslashes and a backtick, a Terraform file, or YAML under
+# node_modules/ or .terraform/; its patterns stay in the one-pass subset.
+lcr=$(printf '%s\n' "$kl" | awk '{ s = $0
+  while ((i = index(s, "``grep -rcvE ")) > 0) { s = substr(s, i + 2); j = index(s, "``"); if (j == 0) break
+    print substr(s, 1, j - 1); s = substr(s, j + 2) } }')
+lt="$work/lone-cr"; mkdir -p "$lt/.github/workflows" "$lt/infra/.terraform" "$lt/node_modules/m"
+printf 'on: push\njobs:\n  a:\n    # n\r    runs-on: [self-hosted]\n' > "$lt/.github/workflows/cr.yml"
+printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest # n \342\200\250  b:\n' > "$lt/.github/workflows/ls.yml"
+printf 'on: push\njobs:\n  a:\n    steps:\n      - run: echo `date` \\\n          x # a \\ b\n' > "$lt/.github/workflows/plain.yml"
+for f in infra/values.yaml infra/main.tf infra/.terraform/v.yml node_modules/m/v.yml; do
+  printf '# n\rrunnerGroup: public\n' > "$lt/$f"
+done
+got=$(run_recipe "$lt" "$lcr" | sed 's#^\./##; s#:[0123456789]*$##' | LC_ALL=C sort | tr '\n' ' ')
+bad=$(patterns_of "$lcr" | outside_dfa)
+for g in "$work/inv"/g.*; do if [ -z "$bad" ] && [ -f "$g" ]; then bad=$(one_pass "$g"); fi; done
+if [ -n "$lcr" ] && [ -z "$bad" ] && [ "$got" = ".github/workflows/cr.yml .github/workflows/ls.yml infra/values.yaml " ]; then
+  echo "ok   Known limits counts the YAML lines that hold a character outside printable ASCII, a lone CR or U+2028 among them"
+else
+  echo "FAIL Known limits' count of lines outside printable ASCII [${lcr:-none}]: named [$got], want" \
+    "[.github/workflows/cr.yml .github/workflows/ls.yml infra/values.yaml ]${bad:+; $bad}"
   fail=1
 fi
 
