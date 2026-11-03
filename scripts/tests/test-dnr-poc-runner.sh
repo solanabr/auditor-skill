@@ -94,7 +94,7 @@
 #     manifests, and from the resolved Cargo.lock before anything compiles) and sources
 #     outside the crate, and a build that compiled code from outside it;
 #     while INCIDENTS.json records such an incident, no incident crate of that run
-#     directory runs natively;
+#     directory runs natively, as iso_incident_class's no-id form (pinned) reports it;
 #   * the isolation self-check (scripts/lib/isolation.sh): in isolated mode, a fake HOME
 #     holding any credential it reads stops the run before anything is copied, and so
 #     does a check that cannot finish; in native mode it is a warning. Through a driver,
@@ -2401,6 +2401,43 @@ if [ "$ISOLATED_OK" = 1 ]; then
   code="$(ngate AUDITOR_EXEC_MODE=isolated -- --crate incident_1/poc/INC-1.2 "${IVULN[@]}")"
   [ "$code" = 0 ] && grep -q "^$LEG3" "$T/out" && ok "a code_flaw incident's crate beside a supply_chain_or_ci incident runs in isolated mode" || { bad "a code_flaw incident's crate beside a supply_chain_or_ci one, isolated: exit $code"; cat "$T/out" >&2; }
 fi
+# That refusal reads iso_incident_class (scripts/lib/isolation.sh) with no incident id, which must print
+# supply_chain_or_ci when any incident has that class, wherever it sits in the list, and other when none does,
+# and return 3 with the reason when a class cannot be read. A change to that form would undo the refusal
+# without a word, so it is pinned here, on its own and through run.sh: a code_flaw incident's crate is refused
+# natively beside a supply_chain_or_ci incident listed after it, and runs beside every other class.
+cat > "$T/class-driver.sh" <<'SH'
+root=$1; shift
+. "$root/scripts/lib/confine.sh" && . "$root/scripts/lib/isolation.sh" || exit 9
+confine_init class-driver "$root"
+rc=0; iso_incident_class "$@" || rc=$?
+printf '%s %s\n' "$rc" "$ISO_CLASS"
+SH
+class_list() {  # class_list <class>...: an INCIDENTS.json whose incidents INC-1.1, INC-1.2, ... have those classes
+  local class list="" sep="" n=0
+  for class in "$@"; do n=$((n + 1)); list="$list$sep{\"id\": \"INC-1.$n\", \"root_cause_class\": \"$class\"}"; sep=", "; done
+  printf '{"incidents": [%s]}\n' "$list" > "$IJ"
+}
+while IFS='|' read -r pin_classes pin_says; do
+  [ -n "$pin_classes" ] || continue
+  class_list $pin_classes
+  pin_got="$(cd "$WT" && env -i HOME="$CLEANHOME" PATH="$PATH" bash "$T/class-driver.sh" "$ROOT" "$IJ" 2>&1)"
+  [ "$pin_got" = "$pin_says" ] && ok "iso_incident_class with no id, incidents of class $pin_classes -> '$pin_says'" || bad "iso_incident_class with no id, $pin_classes: '$pin_got', want '$pin_says'"
+done <<'CASES'
+code_flaw key_compromise oracle_or_dependency economic_design off_chain unknown|0 other
+code_flaw key_compromise supply_chain_or_ci|0 supply_chain_or_ci
+supply_chain_or_ci code_flaw|0 supply_chain_or_ci
+code_flaw bogus|3 gives an incident no root_cause_class from incidents-schema.md
+CASES
+class_list key_compromise code_flaw supply_chain_or_ci
+code="$(ngate AUDITOR_EXEC_MODE=native -- --crate incident_1/poc/INC-1.2 "${IVULN[@]}")"
+[ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: incident_1/INCIDENTS.json records an incident whose root_cause_class is supply_chain_or_ci, so no PoC of incident_1 is built natively: each builds from the same target tree, whose crates may be the payload (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built." "$T/out" \
+  && new_nothing_ran && one_blocker && ok "a code_flaw incident's crate in native mode, beside a supply_chain_or_ci incident listed after it -> exit 3, nothing copied" \
+  || { bad "a code_flaw incident's crate before a supply_chain_or_ci one, native: exit $code"; cat "$T/out" >&2; }
+class_list key_compromise code_flaw oracle_or_dependency economic_design off_chain unknown
+code="$(ngate AUDITOR_EXEC_MODE=native -- --crate incident_1/poc/INC-1.2 "${IVULN[@]}")"
+[ "$code" = 0 ] && grep -q "^$LEG3" "$T/out" && ok "a code_flaw incident's crate beside an incident of every other class runs in native mode" \
+  || { bad "a code_flaw incident's crate beside the other classes, native: exit $code"; cat "$T/out" >&2; }
 rm -rf "$WT/incident_1/poc/INC-1.2"; incidents supply_chain_or_ci
 # The crate check on its own, run from run.sh's harness code: under supply_chain_or_ci it refuses what
 # the target's crates could come through, and without the rule it accepts the same crate.
