@@ -50,8 +50,8 @@
 #     file from outside the crate that the dep-info of the crate's own units lists, of
 #     any kind, an arm's SBF build's included (a member that build alone compiles too,
 #     never an older dep-info of a crate of the same name in a build cache); a file of
-#     the crate the build read under a name not ending in .rs that holds inline
-#     assembly stops the run before its test;
+#     the crate the build read, under any name, that holds inline assembly stops the
+#     run before any test, and so does a build that read one of run.sh's own files;
 #   * the macros run the attack themselves; their old forms do not compile and say how
 #     to migrate; an effect present before the attack, a read that panics, and a
 #     positive control for another program or from another state are inconclusive;
@@ -864,6 +864,25 @@ code="$(gate "$T/di-inc" "$NATIVE" "$VULN" SHIM_DEPINFO="$T/di-inc.d")"
 code="$(gate "$T/di-inc" "$NATIVE" "$VULN" SHIM_DEPINFO="$T/di-data.d")"
 [ "$code" = 0 ] && grep -qxF '   non-registry code: none: every dependency comes from a registry' "$T/out" \
   && ok "data of the crate the build read (src/data.json), whose strings mention link and asm -> not refused" || { bad "a data file of the crate: exit $code"; cat "$T/out" >&2; }
+# Every file of the crate the build read is read again once the builds are done, a .rs one too: one that
+# appeared or changed during the build (here under target/, which the crate check never reads). A build that
+# read one of run.sh's own files in the scratch copy (markers/) is refused too. The harness code on its own.
+NR2="$T/nr2"; mkdir -p "$NR2/target/gen" "$NR2/markers/tmp" "$NR2/src"
+printf 'core::arch::global_asm!(".incbin \\"%s/blob.bin\\"");\n' "$DI" > "$NR2/target/gen/planted.rs"
+printf 'pub const NOTE: u8 = 1;\n' > "$NR2/markers/tmp/note.rs"; printf 'pub fn f() {}\n' > "$NR2/src/lib.rs"
+printf '[package]\n' > "$NR2/Cargo.toml"; printf 'version = 4\n' > "$NR2/Cargo.lock"
+printf '{"packages": [{"name": "poc_nr2", "version": "0.1.0", "manifest_path": "%s/Cargo.toml", "targets": [], "dependencies": []}], "workspace_root": "%s"}\n' "$NR2" "$NR2" > "$NR2-meta.json"
+while IFS='|' read -r nr2_file nr2_rc nr2_says; do
+  [ -n "$nr2_file" ] || continue
+  printf '/x/deps/poc_nr2.d: src/lib.rs %s\n\nsrc/lib.rs:\n%s:\n' "$nr2_file" "$nr2_file" > "$T/nr2.d"
+  out="$(env -i PATH="$PATH" python3 -I "$T/harness-nr.py" nonregistry "$NR2" "$NR2/Cargo.lock" "$NR2-meta.json" "$T/nr2.d")"; rc=$?
+  [ "$rc" = "$nr2_rc" ] && case "$out" in "$nr2_says"*) true ;; *) false ;; esac \
+    && ok "harness nonregistry, the build read the crate's $nr2_file -> exit $nr2_rc, '$nr2_says'" || bad "harness nonregistry, $nr2_file: $rc '$out'"
+done <<'CASES'
+src/lib.rs|0|none: every dependency comes from a registry
+target/gen/planted.rs|3|target/gen/planted.rs:1 names global_asm, inline assembly
+markers/tmp/note.rs|3|the build read markers/tmp/note.rs, one of run.sh's own files in the scratch copy (markers/)
+CASES
 
 # A hashlib.py planted in the crate, which the scratch copy holds too, and on PYTHONPATH
 # must not load when run.sh hashes the bytes; the control shows it would without -I.

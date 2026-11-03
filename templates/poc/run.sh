@@ -234,11 +234,13 @@
 #     outside the crate (a `[lib] path`), and each file from outside the crate that
 #     rustc's dep-info (.d) lists for a unit of that workspace, in the test build and
 #     in each arm's SBF build: a `#[path]` module, a file an include!, include_str!
-#     or include_bytes! read, by an absolute or a relative path. A file inside the
-#     crate that the build read under a name not ending in .rs (an include! or
-#     #[path] of it) is read after the build for inline assembly and the link
-#     attribute, refused as above. Not listed: what a dependency's proc macro reads
-#     on its own, and what a file the line names reads in turn.
+#     or include_bytes! read, by an absolute or a relative path. Every file inside
+#     the crate that the build read, under any name (an include! or #[path] of a
+#     .txt file too), is read again once the builds are done, before any test runs,
+#     for inline assembly and the link attribute (a .rs file for a crate-level
+#     feature as well), refused as above; so is a build that read one of run.sh's
+#     own files in the scratch copy (markers/). Not listed: what a dependency's
+#     proc macro reads on its own, and what a file the line names reads in turn.
 #
 # PREBUILT BYTES (incidents under references/detection-response/, or a re-run
 # against the target's own builds). Leg 3 of `confirmed_exploited` needs the exploit
@@ -1342,20 +1344,25 @@ def nonregistry(root, lock, meta_path, inputs):
             note("%s %s (%s)" % (key[0], key[1], source))
         elif source is not None and source not in CRATES_IO:
             note("%s %s (%s, not crates.io)" % (key[0], key[1], source))
-    # A file of the crate whose name does not end in .rs, which the crate check did not read, is read
-    # here: the build took it in as Rust code (an include! or a #[path] of it) or as data.
-    unread = set()
+    # Every file of the crate that the build read is read again here, once the builds are done and before any
+    # test runs: one the crate check did not read (a name not ending in .rs, which the build took in as Rust
+    # code or as data, or a file that appeared during the build) and one that changed since. run.sh own
+    # files (markers/) are no part of the crate.
+    marks, read = os.path.join(root, "markers"), set()
     for depfile in sorted(set(depfiles)):
         for entry in depinfo(depfile):
             path = outside(entry)
             if path:
                 note("%s (compiled in)" % path)
-            elif under(os.path.join(root, entry), root) and not entry.lower().endswith(".rs"):
-                unread.add(os.path.realpath(os.path.join(root, entry)))
-    for path in sorted(unread):
-        found = own_code(path, feature=False)
+            elif under(os.path.join(root, entry), root):
+                read.add(os.path.realpath(os.path.join(root, entry)))
+    for path in sorted(read):
+        rel, rs = os.path.relpath(path, root), path.lower().endswith(".rs")
+        if under(path, marks):
+            refuse("the build read %s, one of run.sh\x27s own files in the scratch copy (markers/): the crate\x27s code may not read them, and run.sh refuses it in either mode." % rel)
+        found = own_code(path, feature=rs)
         if found:
-            refuse("%s:%d %s; the build read that file of the crate, and run.sh refuses it in the crate\x27s own code, in either mode (read a data file that names it at run time instead)." % (os.path.relpath(path, root), found[1], own_why(found)))
+            refuse("%s:%d %s; the build read that file of the crate, and run.sh refuses it in the crate\x27s own code, in either mode%s." % (rel, found[1], own_why(found), "" if rs else " (read a data file that names it at run time instead)"))
     print(flat(", ".join(out)) if out else "none: every dependency comes from a registry")
 
 

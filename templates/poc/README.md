@@ -139,10 +139,12 @@ git dependencies in the resolved `Cargo.lock` and those from a registry other th
 crates.io, a target whose source lies outside the crate (a `[lib] path`), and each file
 from outside the crate that rustc's dep-info lists for the crate's own units, in the
 test build and in each arm's SBF build: a `#[path]` module, a file an `include!`,
-`include_str!` or `include_bytes!` read. A file of the crate that the build read under
-a name not ending in `.rs` is read after the build for inline assembly and the `link`
-attribute, refused as above. What a dependency's proc macro reads on its own is not
-listed, nor what a file the line names reads in turn.
+`include_str!` or `include_bytes!` read. Every file of the crate that the build read,
+under any name (an `include!` of a `.txt` file too), is read again once the builds are
+done, before any test runs, for inline assembly and the `link` attribute, refused as
+above, and so is a build that read one of `run.sh`'s own files in the scratch copy
+(`markers/`). What a dependency's proc macro reads on its own is not listed, nor what a
+file the line names reads in turn.
 
 `run.sh` and `shared-test-utils/` are the installation's copies; leave them as they
 are. Before a command trusts an `OK` line it compares them with the installation's
