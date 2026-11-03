@@ -72,12 +72,12 @@ build: the path and git dependencies in the resolved `Cargo.lock` and those from
 registry other than crates.io, and each file from outside the crate that rustc's
 dep-info lists for the crate's own units (a `#[path]` module, an `include!`,
 `include_str!` or `include_bytes!` file), in the test build and in each arm's SBF
-build; what a dependency's proc macro reads on its own is not listed. Building the target itself (for example `cargo build-sbf` /
+build; what a dependency's proc macro reads on its own is not listed. `run.sh` builds both arms and their test binaries before either test runs, so nothing a test writes in the scratch copy reaches a build. Since the vulnerable arm's builds run its dependencies' build scripts and proc macros there, it checks the crate again right before the fixed arm builds, and stops when the checks now refuse it or `cargo metadata` gives other packages, targets, features or dependencies than at first, or when a test build compiled a target of the crate that the first `cargo metadata` did not list; an arm's bytes or test binary that changed after its build stop it too. Building the target itself (for example `cargo build-sbf` /
 `anchor build` on the client tree to get its `.so`) runs target code in the same mode.
 An incident whose root cause is supply chain / CI is never built natively, and its PoC
 never builds or links the target's crates in any mode, since they may be the payload:
 it runs on the dumped program bytes alone (`run.sh` prebuilt mode), with the
-template's own crates. If the recorded mode cannot run the PoC, record
+template's own crates. In native mode no PoC runs while the `INCIDENTS.json` of any `incident_*` directory in the working directory records such an incident or cannot be read. If the recorded mode cannot run the PoC, record
 `[PoC-ATTEMPTED]` with the blocker "no isolated runner" and keep the prose PoC.
 
 **Build cache.** `run.sh` builds every run in a fresh scratch directory, so each run
@@ -93,8 +93,8 @@ cargo trusts the build outputs it finds there. The `.so` files stay in the scrat
 (`SBF_OUT_DIR`). PoC crates of one engagement often share a package name, so their
 artifacts land on the same cache paths: `run.sh` holds a lock inside the directory
 cargo builds into (cargo metadata's `target_directory`, which a `target-dir` in the
-user's own cargo config also sets) around each arm's build and test and re-stamps its
-scratch copy under it. A run waits up to `POC_LOCK_WAIT` seconds (default 900) for the
+user's own cargo config also sets) from its first build until its last test exits, and
+re-stamps its scratch copy under it. A run waits up to `POC_LOCK_WAIT` seconds (default 900) for the
 lock, then exits 3, and a run that finds one of its own units reported as already
 built, without having built it, exits 3.
 
