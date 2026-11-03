@@ -4,9 +4,10 @@
 # fails unless:
 #   - each line of the list is <path><TAB><case file>[<TAB><words>], every path relative, without . or ..
 #     components, and listed once;
-#   - each listed script is a tracked file of mode 100755 whose first line is exactly #!/bin/bash or
-#     #!/usr/bin/env -S python3 -I, and a bash one sources scripts/lib/confine.sh; each listed
-#     tools/auditor-tools/target/release/<name> is a binary that a crate under tools/auditor-tools declares;
+#   - each listed script is a tracked file of mode 100755 whose first line is exactly #!/bin/bash and that
+#     sources scripts/lib/confine.sh, a Python one too, through a bash front end as scripts/dnr/frames.py
+#     does, so its python3 comes from the cleaned PATH; each listed tools/auditor-tools/target/release/<name>
+#     is a binary that a crate under tools/auditor-tools declares;
 #   - each has a tracked case file holding at least one case, every case line with a tab in it;
 #   - every allowed-tools entry that names Bash, in a command (any .md under commands/), a skill (any SKILL.md
 #     under skills/) or the root SKILL.md, is Bash("${CLAUDE_PLUGIN_ROOT}/<a listed path>") or that path
@@ -83,8 +84,7 @@ while IFS=$'\t' read -r line ep cases words; do
             if ! grep -qE '^[[:space:]]*(\.|source)[[:space:]]+"[^"]*/lib/confine\.sh"' "$ep"; then
               err "$at: $ep does not source scripts/lib/confine.sh"
             fi ;;
-          '#!/usr/bin/env -S python3 -I') ;;
-          *) err "$at: $ep starts with '$first', not #!/bin/bash or #!/usr/bin/env -S python3 -I" ;;
+          *) err "$at: $ep starts with '$first', not #!/bin/bash" ;;
         esac
       fi ;;
     *) err "$at: $ep is not under scripts/, templates/ or tools/auditor-tools/target/release/" ;;

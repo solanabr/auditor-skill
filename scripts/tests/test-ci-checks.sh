@@ -998,7 +998,7 @@ eprepo() { # eprepo NAME  — a checkout whose entry points, case files and rule
   printf '# shared checks\n' > "$d/scripts/lib/confine.sh"
   printf '#!/bin/bash\nhere=${0%%/*}\n. "$here/lib/confine.sh" || exit 64\n' > "$d/scripts/ok.sh"
   printf '#!/bin/bash\n  . "${here%%/*}/lib/confine.sh" || exit 2\n' > "$d/scripts/tm.sh"
-  printf '#!/usr/bin/env -S python3 -I\nimport sys\n' > "$d/scripts/rec.py"
+  printf "#!/bin/bash\n''':'\n. \"\${0%%/*}/lib/confine.sh\" || exit 2\n'''\nimport sys\n" > "$d/scripts/rec.py"
   printf '#!/usr/bin/env bash\ncat\n' > "$d/scripts/filter.sh"   # executable, but no confined entry point
   chmod 755 "$d/scripts/ok.sh" "$d/scripts/tm.sh" "$d/scripts/rec.py" "$d/scripts/filter.sh"
   printf '# cases\n64\tok: refused: x\t--x\n' > "$d/scripts/tests/fixtures/ok/cases.txt"
@@ -1055,6 +1055,8 @@ ep script-link "scripts/ok.sh is mode 120000 in the index, not 100755" 'mv scrip
 ep script-env-bash "scripts/ok.sh starts with '#!/usr/bin/env bash', not #!/bin/bash" \
   'printf "#!/usr/bin/env bash\n. \"\$here/lib/confine.sh\"\n" > scripts/ok.sh'
 ep script-env-python "scripts/rec.py starts with '#!/usr/bin/env python3', not #!/bin/bash" 'printf "#!/usr/bin/env python3\n" > scripts/rec.py'
+ep script-env-python-isolated "scripts/rec.py starts with '#!/usr/bin/env -S python3 -I', not #!/bin/bash" \
+  'printf "#!/usr/bin/env -S python3 -I\nimport sys\n" > scripts/rec.py'
 ep script-crlf "scripts/ok.sh starts with" 'printf "#!/bin/bash\r\n. \"\$here/lib/confine.sh\"\n" > scripts/ok.sh'
 ep script-no-confine "scripts/ok.sh does not source scripts/lib/confine.sh" 'printf "#!/bin/bash\n# . \"\$here/lib/confine.sh\"\n" > scripts/ok.sh'
 ep script-elsewhere "bin/x.sh is not under scripts/, templates/ or tools/auditor-tools/target/release/" \
