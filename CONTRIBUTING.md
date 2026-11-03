@@ -189,9 +189,12 @@ A command's allow rule names a bundled entry point with any words after it, as i
 ([docs/permissions-and-isolation.md](docs/permissions-and-isolation.md#why-that-is-safe)). A new one, or a change to
 one:
 
-- runs directly by its quoted path: a `#!/bin/bash` or `#!/usr/bin/env -S python3 -I` first line and mode
-  `100755`. It refuses to run from an installation inside the working directory, or from a path that holds a
-  quote, `$`, a backtick, a backslash or a control character;
+- runs directly by its quoted path: a `#!/bin/bash` first line and mode `100755`. A Python one opens with the
+  bash front end `frames.py` and `deltas.py` use, which finds `python3` from `/` on the cleaned `PATH`: a
+  `#!/usr/bin/env -S python3 -I` line would run whichever `python3` the caller's `PATH` names, one in the
+  working directory included, and `scripts/check-entrypoints.sh` refuses it. It refuses to run from an
+  installation inside the working directory, or from a path that holds a quote, `$`, a backtick, a backslash or
+  a control character;
 - checks every argument against a closed grammar before any effect, and refuses anything else with one stderr
   line, `<tool>: refused: <reason>`;
 - takes only relative paths inside the working directory, of the shapes it names, with no `..` and no symbolic

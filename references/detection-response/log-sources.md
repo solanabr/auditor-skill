@@ -125,8 +125,9 @@ call count with the human first):
 Run them from the installation, never as a `scripts/…` path relative to the
 working directory: run the three analysis recipes directly by their quoted
 absolute path, from the working directory, with nothing in front, since their
-first lines run `profile.sh` under `/bin/bash` and the python ones as `python3 -I`
-(README rule 8). That is the form the `auditor:dnr-analyze` skill pre-approves;
+first lines run `profile.sh` under `/bin/bash` and the python ones, through a
+bash front end, as `python3 -I` (README rule 8). That is the form the
+`auditor:dnr-analyze` skill pre-approves;
 `bash` or `python3` in front, or a `$` anywhere in the line, makes Claude Code ask.
 `<auditor-skill root>` below is the absolute installation root the invoking command
 gave you (`OUTPUT-RULES.md` Rule 11e).

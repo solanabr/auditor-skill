@@ -757,12 +757,14 @@ or a failed write · 2 usage, or a refused path · 4 a stale build.
 - With stdin a directory, Python stops as it starts, so the three scripts exit 1
   even when their inputs are named; `audit-logs` reads stdin only when no corpus is
   named, and then exits 1 too.
-- `profile.sh` runs `jq` and `python3` and keeps its report in a private temp
+- The three scripts check the working directory and take `python3` from a `PATH`
+  cleaned of entries inside it, so each refuses to run (exit 2) when the working
+  directory's path holds a control character, when no `PATH` entry is left outside
+  it, or when the `python3` it finds lies inside it, and stops when no `python3`
+  runs (exit 3). `profile.sh` also runs `jq` and keeps its report in a private temp
   directory, so it alone refuses to run (exit 2) when `TMPDIR` lies inside the
-  working directory, when no `PATH` entry is left outside it, or when the working
-  directory's path holds a control character, and stops when `TMPDIR` does not
-  exist (exit 1) or `jq` or `python3` is missing (exit 3). `audit-logs` needs none
-  of these.
+  working directory, and stops when `TMPDIR` does not exist (exit 1) or `jq` is
+  missing (exit 3). `audit-logs` needs none of these.
 
 ## How the auditor agents consume this
 

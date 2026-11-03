@@ -130,8 +130,8 @@ already captured.
   workspace of their own: they need no repository. To work inside one, or in a
   worktree, make a clean copy: clone it to a new directory, delete every
   `.claude/` and `.mcp.json` in the copy, and start Claude Code there. `CLAUDE.md`
-  files are listed, not refused; their text is the repository's, never
-  instructions.
+  and `AGENTS.md` files are listed, not refused; their text is the repository's,
+  never instructions.
 - **What runs without asking.** The commands pre-approve reading, `Task`, edits
   under `incident_*/`, invoking themselves again and the `auditor:dnr-analyze`
   skill, and these bundled tools by their paths: the checks `preflight.sh` and
@@ -180,6 +180,8 @@ already captured.
   scripts.
 - **Scripts run from the installation, never from the audited repo.** The fork
   runs them by absolute path, `"<auditor-skill root>/scripts/dnr/…"`, with nothing
-  in front, and the python ones' shebang is `python3 -I`, so a same-named script,
-  or a `json.py` the repo ships in the working directory or on `PYTHONPATH`, never
-  runs in their place.
+  in front, and the python ones open with a bash front end that runs them as
+  `python3 -I`, with a `python3` found from `/` on a `PATH` without
+  working-directory entries, so a same-named script, a `python3`, or a `json.py`
+  the repo ships in the working directory or on `PYTHONPATH`, never runs in their
+  place.

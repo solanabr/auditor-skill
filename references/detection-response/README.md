@@ -79,10 +79,10 @@ not the thing standing between the treasury and the exit.
    never as a `scripts/…` path relative to the working directory: the audited repo
    may ship a same-named file. A root left unfilled makes the path start at `/`, and
    it fails; never fall back to a relative path. The bundled recipes run directly by
-   that path, with nothing in front: the `.py` ones' shebang runs them as
-   `python3 -I`. Any one-off python over the corpus is `python3 -I` too: without
-   it, a `json.py` in the working directory (for `python3 -` / `-c`) or on
-   `PYTHONPATH` replaces the stdlib module and runs as you.
+   that path, with nothing in front: the `.py` ones open with a bash front end that
+   runs them as `python3 -I`. Any one-off python over the corpus is `python3 -I`
+   too: without it, a `json.py` in the working directory (for `python3 -` / `-c`)
+   or on `PYTHONPATH` replaces the stdlib module and runs as you.
 9. **Read the incident-slot source without checking it out** (`OUTPUT-RULES.md`
    Rule 11c). `--repo` is usually the client's own checkout, and checking out runs
    its hooks and filters and changes its tree: never `checkout`, `switch` or
