@@ -21,12 +21,12 @@
 # folder in a git project with git, and the git it starts would read the repository's config, which can name
 # a program for git to run; so every git semgrep starts gets GIT_DIR, never the repository's own: a copy of
 # its index and info/exclude under a config of sast.sh's own, or, where sast.sh makes no copy, a path that
-# does not exist (git fails, and semgrep lists the files itself, ignored ones included). git's ignore rules
-# leave out untracked files only. semgrep (1.117.0 and later) also reads every .semgrepignore of its
-# project, the nearest folder at or above <path> holding a .git (or a .hg, _darcs or .svn folder), else
-# <path>: for a folder, the last line names each one from the project down to <path> and under it; a file
-# given as <path> is scanned whatever they say. AUDITOR_RUN_TIMEOUT (whole seconds, 1 to 86400, default
-# 1800) bounds the scan, under the watchdog of isolation.sh's iso_watch.
+# does not exist (git fails, and semgrep lists the files itself, ignored ones included, which the last line
+# then says). git's ignore rules leave out untracked files only. semgrep (1.117.0 and later) also reads
+# every .semgrepignore of its project, the nearest folder at or above <path> holding a .git (or a .hg,
+# _darcs or .svn folder), else <path>: for a folder, the last line names each one from the project down to
+# <path> and under it; a file given as <path> is scanned whatever they say. AUDITOR_RUN_TIMEOUT (whole
+# seconds, 1 to 86400, default 1800) bounds the scan, under the watchdog of isolation.sh's iso_watch.
 #
 # Output: the SARIF in <R>/sast/semgrep-<n>.sarif and semgrep's own messages in <R>/sast/semgrep-<n>.log.
 # The last stdout line gives the number of results and where they are. The scratch directory is removed on
@@ -207,6 +207,11 @@ case "$PROJ/" in
     fi ;;
 esac
 ISO_ENV+=("${GITENV[@]}" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null)
+# Where git lists nothing for a folder in a git project, the last line says that semgrep chose the files.
+walked=""
+if [ "$VCS" = git ] && [ -d "$TARGET" ] && [ "${GITENV[0]}" = "GIT_DIR=$S/no-repo" ]; then
+  walked="; note: semgrep listed the files itself, not with git (sast.sh had no .git directory to copy), so files a .gitignore leaves out can be in the scan"
+fi
 
 # The .semgrepignore files that narrow the scan of a folder: semgrep reads every one in its project, so each one
 # from the project down to the scan root, then each one under it; find's own failure only hides the note.
@@ -254,8 +259,8 @@ while :; do
   [ -e "$SAST/semgrep-$N.log" ] || blocker "cannot write $R/sast/semgrep-$N.log"
 done
 LOG=$R/sast/semgrep-$N.log
-note=""
-[ -z "$ignores" ] || note="; note: .semgrepignore files narrow the scan: $ignores"
+note=$walked
+[ -z "$ignores" ] || note="$note; note: .semgrepignore files narrow the scan: $ignores"
 case "$END" in
   'exit 0'|'exit 1') ;;
   timeout) blocker "semgrep passed the $LIMIT-second limit (AUDITOR_RUN_TIMEOUT) and was killed; log $LOG" ;;

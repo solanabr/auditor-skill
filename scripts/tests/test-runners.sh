@@ -1283,12 +1283,12 @@ run "$SAST" "$WT" -- semgrep --run audit_1 --path programs/demo/src/lib.rs --rul
 check "... and a file given as --path gets no note" sh -c "[ '$RC' = 0 ] && grep -q '^>> semgrep: ' '$T/out' && ! grep -q 'note:' '$T/out'"
 # The scan root's own project can be another repository. One with a .git directory gets its own copy of its
 # index; one with a .git file (a submodule's, or a separate git directory) gets none, so git finds no
-# repository. Each config names the programs and hooks that leave marks, and the marks of earlier runs are
-# set aside for each case (and put back after), so each check counts its own. A folder shaped as a bare
-# repository is part of the working directory's project: plain git, run from it, takes it for a bare
-# repository with no work tree and runs none of its programs either, so that case shows only that it is
-# never consulted. An index with an entry that climbs out of the project (no git command writes one; git
-# lists it) gets no copy either.
+# repository and semgrep lists the files itself, which the last line says. Each config names the programs and
+# hooks that leave marks, and the marks of earlier runs are set aside for each case (and put back after), so
+# each check counts its own. A folder shaped as a bare repository is part of the working directory's project:
+# plain git, run from it, takes it for a bare repository with no work tree and runs none of its programs
+# either, so that case shows only that it is never consulted. An index with an entry that climbs out of the
+# project (no git command writes one; git lists it) gets no copy either.
 tgit init -q "$WT/nested" && printf 'fn n() {}\n' > "$WT/nested/n.rs" && tgit -C "$WT/nested" add n.rs &&
   printf '[core]\n\tfsmonitor = %s/mark-fsmonitor\n\thooksPath = %s/hooks\n' "$T" "$T" >> "$WT/nested/.git/config"
 tgit init -q --separate-git-dir "$T/gf.git" "$WT/gf" && printf 'fn g() {}\n' > "$WT/gf/g.rs" &&
@@ -1310,19 +1310,21 @@ entry += b"\0" * ((62 + len(name) + 8) // 8 * 8 - len(entry))
 out = struct.pack(">4sII", sig, ver, n + 1) + entry + body
 open(p, "wb").write(out + hashlib.sha1(out).digest())
 PY
-shape_ok() { # shape_ok <calls line>: exit 0, no mark, and that line in the calls
-  [ "$RC" = 0 ] && [ -z "$(ls -A "$T/marks")" ] && grep -q "$1" "$T/calls"
+WALKED='; note: semgrep listed the files itself, not with git (sast.sh had no .git directory to copy), so files a .gitignore leaves out can be in the scan'
+shape_ok() { # shape_ok <calls line> <walked 0|1>: exit 0, no mark, that line in the calls, and the note when walked
+  [ "$RC" = 0 ] && [ -z "$(ls -A "$T/marks")" ] && grep -q "$1" "$T/calls" || return 1
+  if [ "$2" = 1 ]; then grep -qF "$WALKED" "$T/out"; else ! grep -qF "$WALKED" "$T/out"; fi
 }
 mkdir -p "$T/marks-earlier"
-while IFS='|' read -r path want label; do
+while IFS='|' read -r path want walked label; do
   mv "$T/marks/"* "$T/marks-earlier/" 2>/dev/null
   run "$SAST" "$WT" -- semgrep --run audit_1 --path "$path" --ruleset p/rust
-  check "sast --path $path, $label: exit 0, and semgrep's git ran nothing a config names (calls: $want)" shape_ok "$want"
+  check "sast --path $path, $label: exit 0, and semgrep's git ran nothing a config names (calls: $want)" shape_ok "$want" "$walked"
 done <<CASES
-nested|^git-cached: 0 n.rs \$|its own .git directory: a copy of its own index
-gf|^git-cached: 128 fatal: not a git repository|a .git file: no copy, git finds no repository
-bare|^env: GIT_WORK_TREE=$WT\$|a folder shaped as a bare repository: never consulted, the working directory's copy
-idx|^git-cached: 128 fatal: not a git repository|an index entry outside the project: no copy
+nested|^git-cached: 0 n.rs \$|0|its own .git directory: a copy of its own index
+gf|^git-cached: 128 fatal: not a git repository|1|a .git file: no copy, git finds no repository
+bare|^env: GIT_WORK_TREE=$WT\$|0|a folder shaped as a bare repository: never consulted, the working directory's copy
+idx|^git-cached: 128 fatal: not a git repository|1|an index entry outside the project: no copy
 CASES
 mv "$T/marks-earlier/"* "$T/marks/" 2>/dev/null
 rmdir "$T/marks-earlier"
