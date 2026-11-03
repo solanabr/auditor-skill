@@ -25,8 +25,9 @@
 # and KV-080 Step 7 give, the R8 note's and KV-116 Step 1's listing over a call neither reads, and R1 over large
 # inputs: 2,000 workflows, and two of about 1 MiB. R9 and KV-080 Step 8's first command run over 2,000 workflows,
 # and each KV-080 and KV-140 command that pipes into head over more than 64 KiB of its own output. KV-080 Step 4's
-# two commands run over pins saved with CRLF line ends, over references R9 does not read as pins and over uses:
-# lines whose trailing comment names a pin or a local action: each uses: line lands in exactly one of them. Every
+# two commands run over pins saved with CRLF line ends, over references R9 does not read as pins, over uses: lines
+# whose trailing comment names a pin or a local action, and over comment lines that hold a lone CR or U+2028, which
+# end a YAML line but not grep's: each uses: line lands in exactly one of them. Every
 # command of every recipe, K080-4a included, must end within 30 s, in a UTF-8 locale where one is installed, on
 # files that hold one 1 MiB line of near misses. KV-020 Step 3 and KV-100 Step 4, which list documentation files
 # with one recursive grep as R1 does, run over file names that hold a space or a quote, and KV-100's over more than
@@ -815,7 +816,8 @@ fi
 # to R9 on any grep. The first command lists all three. Both read the uses key that starts the line: a branch
 # reference whose trailing comment names a pin or a local action goes to the first list, and so do a branch reference
 # with a blank before the colon and a pin that follows another key of a { } mapping; a pin under a quoted key goes to
-# R9's.
+# R9's. A lone CR ends a YAML line but not grep's, and so does U+2028 for a YAML 1.1 parser, so a comment line that holds
+# one carries the step after it: the first command lists that line, a pin included, since R9 skips every comment line.
 step4="$work/step4"; mkdir -p "$step4/.github/workflows"
 sha=0123456789abcdef0123456789abcdef01234567
 printf 'on: push\r\njobs:\r\n  a:\r\n    runs-on: ubuntu-latest\r\n    steps:\r\n      - uses: example/bare@%s\r\n' "$sha" \
@@ -831,17 +833,22 @@ printf '      - uses: example/moving@main # uses: example/pinned@%s\n      - use
 printf '      - "uses": example/quoted-key@%s\n      - uses : example/spaced-key@main\n' "$sha" \
   >> "$step4/.github/workflows/lf.yml"
 printf '      - { with: { a: 1 }, uses: example/flow-second@%s }\n' "$sha" >> "$step4/.github/workflows/lf.yml"
+printf '      # note\r      - uses: example/after-cr@v1\n      # note\r      - uses: example/pin-after-cr@%s # v1.0.0\n' \
+  "$sha" >> "$step4/.github/workflows/lf.yml"
+printf '      # note \342\200\250      - uses: example/after-ls@v1\n' >> "$step4/.github/workflows/lf.yml"
 first4=$(kv_step "$KV080" 4 | sed -n 1p); second4=$(kv_step "$KV080" 4 | sed -n 2p)
 got1=$( (cd "$step4" && eval "$first4" </dev/null 2>/dev/null) | tr -d '\r' | sed 's#^\.github/workflows/##' \
   | awk -F: '{ print $1 ":" $2 }' | sort -t: -k1,1 -k2,2n | tr '\n' ' ')
 got2=$( (cd "$step4" && eval "$second4" </dev/null 2>/dev/null) | tr -d '\r' | sed 's#^\.github/workflows/##' \
   | awk -F: '{ print $1 ":" $2 }' | sort -t: -k1,1 -k2,2n | tr '\n' ' ')
+lf4="lf.yml:6 lf.yml:7 lf.yml:10 lf.yml:11 lf.yml:13 lf.yml:14 lf.yml:15 lf.yml:16 lf.yml:17 "
 case "$got1|$got2" in
-  "crlf.yml:6 crlf.yml:9 lf.yml:6 lf.yml:7 lf.yml:10 lf.yml:11 lf.yml:13 lf.yml:14 |crlf.yml:7 crlf.yml:8 lf.yml:12 " | \
-  "crlf.yml:9 lf.yml:6 lf.yml:7 lf.yml:10 lf.yml:11 lf.yml:13 lf.yml:14 |crlf.yml:6 crlf.yml:7 crlf.yml:8 lf.yml:12 ")
-    echo "ok   KV-080 Step 4: R9 lists the pins it reads, the first command every other uses: line, CRLF ends included" ;;
-  *) echo "FAIL KV-080 Step 4: first command listed [$got1], want [crlf.yml:6 crlf.yml:9 lf.yml:6 lf.yml:7 lf.yml:10" \
-       "lf.yml:11 lf.yml:13 lf.yml:14 ]; R9 listed [$got2], want [crlf.yml:7 crlf.yml:8 lf.yml:12 ]"
+  "crlf.yml:6 crlf.yml:9 $lf4|crlf.yml:7 crlf.yml:8 lf.yml:12 " | \
+  "crlf.yml:9 $lf4|crlf.yml:6 crlf.yml:7 crlf.yml:8 lf.yml:12 ")
+    echo "ok   KV-080 Step 4: R9 lists the pins it reads, the first command every other uses: line, CRLF ends and" \
+      "a step after a lone CR or U+2028 in a comment line included" ;;
+  *) echo "FAIL KV-080 Step 4: first command listed [$got1], want [crlf.yml:6 crlf.yml:9 $lf4]; R9 listed [$got2]," \
+       "want [crlf.yml:7 crlf.yml:8 lf.yml:12 ]"
      fail=1 ;;
 esac
 
