@@ -97,7 +97,8 @@ pub const MAX_REPORT: usize = 256 << 20;
 
 /// How long a scan may run before it parses no more: past it each further file is
 /// in `skipped` as not parsed. A file started before then still has its
-/// `confine::PARSE_TIME`, so a scan ends within about 100 seconds, inside the two
+/// `confine::PARSE_TIME`, and a git question asked just before then up to twice
+/// `confine::GIT_TIME`, so a scan ends within about 110 seconds, inside the two
 /// minutes Claude Code gives a foreground command by default.
 pub const SCAN_TIME: Duration = Duration::from_secs(90);
 

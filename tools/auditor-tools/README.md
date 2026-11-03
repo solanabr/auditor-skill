@@ -109,8 +109,10 @@ limit to the CPU it has used and 20 seconds more, twice the time it is given, an
 its core-file limit to none: a child whose parent is gone, with no one left to kill
 it, dies once a file has used that. A scan parses for 90 seconds at most: once it
 has run that long, each further `*.rs` file is in `skipped` as `not parsed: the
-scan's time is spent`, so a scan ends within about 100 seconds, inside the two
-minutes Claude Code gives a foreground command by default. Scan a smaller
+scan's time is spent`, so a scan ends within about 110 seconds (a file handed to
+its child before then still has its 10 seconds, and a git question asked just
+before then up to twice 10), inside the two minutes Claude Code gives a foreground
+command by default. Scan a smaller
 directory for the rest.
 
 A report has bounds. One file lists at most 20,000 items (sites, functions,
