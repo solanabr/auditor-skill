@@ -50,6 +50,15 @@ jobs:
           sudo systemctl stop docker.socket docker.service 2>/dev/null || true
           gpgconf --kill all 2>/dev/null || true
           rm -f "/run/user/$(id -u)/gnupg/"S.* "$HOME/.docker/config.json" "$HOME/.kube/config"
+          # The self-check as those suites run it, from an empty HOME outside the checkout: what it still finds is
+          # named here, and this step fails on it before the suites do.
+          root=$PWD home=$(mktemp -d)
+          out=$(cd "$home" && env -i HOME="$home" PATH="$PATH" "$root/scripts/runner/probe.sh" --only isolation 2>&1) || true
+          echo "$out"
+          if [ "$out" != "isolation: none of the credentials the self-check reads is readable" ]; then
+            echo "::error::this runner does not pass the isolation self-check: test-dnr-poc-runner and test-runners fail on it"
+            exit 1
+          fi
 
       - name: Script self-tests (every suite runs; the step fails at the end if any failed)
         if: ${{ !cancelled() }}
