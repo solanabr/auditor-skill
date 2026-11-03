@@ -535,30 +535,20 @@ incident_rule() {
 # native_rule: natively nothing from the working directory is built, whichever run directory the
 # crate is in, while the INCIDENTS.json of any incident_* directory there records a
 # supply_chain_or_ci incident or cannot be read: any PoC can build the target's crates, which may
-# then be the payload (OUTPUT-RULES.md Rule 11a). target.sh applies the same rule. Each file is read
-# with iso_incident_class's no-id form; a directory without INCIDENTS.json, or whose file records no
-# incident (a hunt that ruled everything out), counts for nothing, and a directory that cannot be
-# searched is read, so that its refusal stops the run.
+# then be the payload (OUTPUT-RULES.md Rule 11a). target.sh applies the same rule, through the same
+# iso_incident_runs of scripts/lib/isolation.sh: a directory without INCIDENTS.json, or whose file
+# records no incident (a hunt that ruled everything out), counts for nothing, and a directory that
+# cannot be searched is read, so that its refusal stops the run.
 native_rule() {
-  local dir json out rc
-  for dir in "${WT}"/incident_*; do
-    [[ -d "${dir}" ]] || continue
-    if [[ ! -e "${dir}/INCIDENTS.json" && ! -L "${dir}/INCIDENTS.json" && -x "${dir}" ]]; then continue; fi
-    json="$(confine_text "${dir##*/}")/INCIDENTS.json"
-    command -v python3 >/dev/null 2>&1 ||
-      blocker "python3 is not on PATH, so run.sh cannot read the root_cause_class in ${json} (OUTPUT-RULES.md Rule 11a) — nothing was copied or built."
-    rc=0
-    iso_incident_class "${dir}/INCIDENTS.json" || rc=$?
-    out="${ISO_CLASS}"
-    case "${rc}:${out}" in
-      0:supply_chain_or_ci)
-        blocker "${json} records an incident whose root_cause_class is supply_chain_or_ci, so nothing from this working directory is built natively, for an audit run or an incident run (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built." ;;
-      0:*|'3:records no incident') ;;
-      *)
-        [[ "${rc}" -eq 3 && -n "${out}" ]] || out="cannot be read"
-        blocker "${json} ${out}: nothing from this working directory is built natively until every incident_*/INCIDENTS.json in it records the root_cause_class of each of its incidents (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built." ;;
-    esac
-  done
+  local rc=0
+  iso_incident_runs "${WT}" || rc=$?
+  case "${rc}:${ISO_CLASS}" in
+    0:supply_chain_or_ci)
+      blocker "${ISO_INCIDENTS} records an incident whose root_cause_class is supply_chain_or_ci, so nothing from this working directory is built natively, for an audit run or an incident run (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built." ;;
+    0:*) ;;
+    2:*) blocker "python3 is not on PATH, so run.sh cannot read the root_cause_class in ${ISO_INCIDENTS} (OUTPUT-RULES.md Rule 11a) — nothing was copied or built." ;;
+    *) blocker "${ISO_INCIDENTS} ${ISO_CLASS}: nothing from this working directory is built natively until every incident_*/INCIDENTS.json in it records the root_cause_class of each of its incidents (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built." ;;
+  esac
   return 0
 }
 
