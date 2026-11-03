@@ -2190,13 +2190,203 @@ fn writers_that_meet_wait_for_each_other() {
     assert_eq!(rows, 6);
 }
 
-/// audit-mem run from `wt` with `args`, waited for at most `limit`. Past it the
+#[test]
+fn refuses_when_git_does_not_answer_in_time() {
+    // A git that never answers (here one first on PATH that sleeps), as one
+    // blocked opening a file would be: it is killed after 10 s, and the call
+    // refused.
+    let wt = Wt::repo();
+    wt.run_dir("audit_1");
+    let slow = wt.outside().join("slow");
+    fs::create_dir(&slow).expect("make the slow git's directory");
+    fs::write(slow.join("git"), b"#!/bin/sh\nexec /bin/sleep 60\n").expect("write the slow git");
+    fs::set_permissions(slow.join("git"), fs::Permissions::from_mode(0o755)).expect("chmod it");
+    let path = format!("{}:/usr/bin:/bin", slow.display());
+    for (args, why) in [
+        (
+            vec!["warm", "--program-id", P],
+            "git cannot tell whether .audit-memory is tracked",
+        ),
+        (
+            vec!["init", "--db", "audit_1/audit-mem.db"],
+            "git cannot tell whether --db is tracked: audit_1",
+        ),
+    ] {
+        let start = std::time::Instant::now();
+        let o = run_env(BIN, &wt.dir, &args, &[("PATH", &path)]);
+        let took = start.elapsed();
+        refused(&o, "audit-mem", why);
+        assert!(
+            took >= std::time::Duration::from_secs(10) && took < std::time::Duration::from_secs(40),
+            "{args:?}: {took:?}"
+        );
+    }
+    assert!(!wt.exists("audit_1/audit-mem.db"), "nothing made");
+}
+
+#[test]
+fn refuses_a_named_pipe_git_would_open_before_git_starts() {
+    // A named pipe git would open on its way to the repository, where none of its
+    // questions has started: as HEAD, included by the config (in turn, too), in a
+    // git directory that .git links to (as a file there, or as its config), as the
+    // HEAD of the repository above a .git that git walks past, named by a link in
+    // the git directory, or as the HEAD a .git file names. Each is refused at once,
+    // as confine.sh refuses it: with the reason for a run directory (rundir.sh
+    // check), and "git cannot tell" for the in-tree store (rundir.sh store).
+    let mkfifo = |p: &Path| {
+        let made = Command::new("mkfifo").arg(p).status().expect("run mkfifo");
+        assert!(made.success(), "mkfifo {}", p.display());
+    };
+    let wait = |place: &str, what: &str| {
+        format!(
+            "a named pipe or device {place}, and git would wait on it for good: {}",
+            shown(what)
+        )
+    };
+    for case in [
+        "HEAD",
+        "include",
+        "include in turn",
+        "linked git directory",
+        "linked config",
+        "above a decoy",
+        "link in the git directory",
+        "gitfile",
+    ] {
+        let wt = Wt::repo();
+        let mut from = wt.dir.clone();
+        let (pipe, why) = match case {
+            "HEAD" => {
+                fs::remove_file(wt.path(".git/HEAD")).expect("rm HEAD");
+                let pipe = wt.path(".git/HEAD");
+                (
+                    pipe,
+                    wait(
+                        "is in the git directory",
+                        &wt.path(".git").display().to_string(),
+                    ),
+                )
+            }
+            "include" | "include in turn" => {
+                let config = wt.read(".git/config");
+                let first = if case == "include" {
+                    "../pipe"
+                } else {
+                    "../cfg/more.cfg"
+                };
+                wt.write(
+                    ".git/config",
+                    &[
+                        &config[..],
+                        format!("[include]\n\tpath = {first}\n").as_bytes(),
+                    ]
+                    .concat(),
+                );
+                wt.write(
+                    "cfg/more.cfg",
+                    b"[includeIf \"gitdir:**\"]\n\tpath = ../pipe\n",
+                );
+                (
+                    wt.path("pipe"),
+                    wait("is included by the repository's config", "../pipe"),
+                )
+            }
+            "linked git directory" | "linked config" => {
+                fs::rename(wt.path(".git"), wt.path(".realgit")).expect("move .git");
+                wt.link(".realgit".as_ref(), ".git");
+                let pipe = if case == "linked config" {
+                    fs::rename(wt.path(".realgit/config"), wt.path("config.kept"))
+                        .expect("move config");
+                    wt.path(".realgit/config")
+                } else {
+                    wt.path(".realgit/info/attributes")
+                };
+                (
+                    pipe,
+                    wait(
+                        "is in the git directory",
+                        &wt.path(".realgit").display().to_string(),
+                    ),
+                )
+            }
+            "above a decoy" => {
+                fs::remove_file(wt.path(".git/HEAD")).expect("rm HEAD");
+                wt.write("sub/.git/HEAD", b"ref: refs/heads/main\n");
+                from = wt.path("sub");
+                (
+                    wt.path(".git/HEAD"),
+                    wait(
+                        "is in the git directory",
+                        &wt.path(".git").display().to_string(),
+                    ),
+                )
+            }
+            "link in the git directory" => {
+                wt.link("../../pipe".as_ref(), ".git/hooks/post-checkout");
+                (
+                    wt.path("pipe"),
+                    wait(
+                        "is named by a link in the git directory",
+                        &wt.path(".git").display().to_string(),
+                    ),
+                )
+            }
+            _ => {
+                fs::rename(wt.path(".git"), wt.outside().join("gd")).expect("move .git");
+                wt.write(
+                    ".git",
+                    format!("gitdir: {}\n", wt.outside().join("gd").display()).as_bytes(),
+                );
+                fs::remove_file(wt.outside().join("gd/HEAD")).expect("rm HEAD");
+                let pipe = wt.outside().join("gd/HEAD");
+                (
+                    pipe.clone(),
+                    wait(
+                        "is in the git directory",
+                        &wt.outside().join("gd").display().to_string(),
+                    ),
+                )
+            }
+        };
+        mkfifo(&pipe);
+        let run_dir = if from == wt.dir {
+            "audit_1".to_string()
+        } else {
+            "sub/audit_1".into()
+        };
+        wt.run_dir(&run_dir);
+        let at = |o: &Output| o.status.code();
+        for (args, want) in [
+            (vec!["init", "--db", "audit_1/audit-mem.db"], why.clone()),
+            (
+                vec!["warm", "--program-id", P],
+                "git cannot tell whether .audit-memory is tracked".to_string(),
+            ),
+        ] {
+            let start = std::time::Instant::now();
+            let o = mem_within_from(&from, &args, std::time::Duration::from_secs(60), &pipe);
+            let took = start.elapsed();
+            assert_eq!(at(&o), Some(2), "{case} {args:?}: {}", stderr(&o));
+            refused(&o, "audit-mem", &want);
+            assert!(
+                took < std::time::Duration::from_secs(9),
+                "{case} {args:?}: {took:?}, so git started"
+            );
+        }
+        assert!(
+            !wt.exists(&format!("{run_dir}/audit-mem.db")),
+            "{case}: nothing made"
+        );
+    }
+}
+
+/// audit-mem run from `dir` with `args`, waited for at most `limit`. Past it the
 /// test fails: first `pipe` is opened for writing, so that a git blocked opening
 /// it goes on, and the call is killed.
-fn mem_within(wt: &Wt, args: &[&str], limit: std::time::Duration, pipe: &Path) -> Output {
+fn mem_within_from(dir: &Path, args: &[&str], limit: std::time::Duration, pipe: &Path) -> Output {
     let mut child = Command::new(BIN)
         .args(args)
-        .current_dir(&wt.dir)
+        .current_dir(dir)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -2219,64 +2409,4 @@ fn mem_within(wt: &Wt, args: &[&str], limit: std::time::Duration, pipe: &Path) -
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
     child.wait_with_output().expect("read audit-mem's output")
-}
-
-#[test]
-fn refuses_when_git_does_not_answer_in_time() {
-    // A named pipe as .git/HEAD, or one the repository's config includes: git
-    // blocks opening it, and is killed.
-    for (planted, calls) in [
-        (
-            "HEAD",
-            vec![
-                (
-                    vec!["warm", "--program-id", P],
-                    "git cannot tell whether .audit-memory is tracked",
-                ),
-                (
-                    vec!["init", "--db", "audit_1/audit-mem.db"],
-                    "git cannot tell whether --db is tracked: audit_1",
-                ),
-            ],
-        ),
-        (
-            "pipe",
-            vec![(
-                vec!["warm", "--program-id", P],
-                "git cannot tell whether .audit-memory is tracked",
-            )],
-        ),
-    ] {
-        let wt = Wt::repo();
-        wt.run_dir("audit_1");
-        let pipe = wt.path(&format!(".git/{planted}"));
-        if planted == "HEAD" {
-            fs::remove_file(&pipe).expect("rm HEAD");
-        } else {
-            let config = fs::read(wt.path(".git/config")).expect("read the config");
-            wt.write(
-                ".git/config",
-                &[&config[..], &b"[include]\n\tpath = pipe\n"[..]].concat(),
-            );
-        }
-        let made = Command::new("mkfifo")
-            .arg(&pipe)
-            .status()
-            .expect("run mkfifo");
-        assert!(made.success(), "mkfifo");
-        for (args, why) in calls {
-            let start = std::time::Instant::now();
-            let o = mem_within(&wt, &args, std::time::Duration::from_secs(60), &pipe);
-            refused(&o, "audit-mem", why);
-            let took = start.elapsed();
-            assert!(
-                took < std::time::Duration::from_secs(40),
-                "{planted} {args:?}: {took:?}"
-            );
-        }
-        assert!(
-            !wt.exists("audit_1/audit-mem.db"),
-            "{planted}: nothing made"
-        );
-    }
 }

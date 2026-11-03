@@ -308,3 +308,222 @@ fn confine_rs_drops_the_path_entries_of_the_tree_as_confine_init_does() {
         "confine.rs cleans PATH of the tree's entries as confine_init does"
     );
 }
+
+#[test]
+fn confine_rs_lists_what_a_config_includes_as_hgit_does() {
+    // A config that includes a file: before its questions, each side asks git
+    // what the config includes, in the same words and the same environment.
+    let wt = Wt::repo();
+    let config = wt.read(".git/config");
+    wt.write(
+        ".git/config",
+        &[&config[..], &b"[include]\n\tpath = extra.cfg\n"[..]].concat(),
+    );
+    wt.write(".git/extra.cfg", b"[core]\n");
+    let rec = wt.outside().join("rec");
+    recording_git(&rec);
+    let path = format!("{}:/usr/bin:/bin", rec.display());
+    let shell = Command::new("bash")
+        .args([
+            "-c",
+            ". \"$1/scripts/lib/confine.sh\" && confine_init agree \"$1\" && \
+             confine_tracked .audit-memory",
+            "agree",
+        ])
+        .arg(root())
+        .current_dir(&wt.dir)
+        .env("PATH", &path)
+        .env_remove("CONFINE_ALLOW_PROTOCOL")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run bash");
+    assert!(
+        shell.status.success(),
+        "confine_tracked: {}",
+        String::from_utf8_lossy(&shell.stderr)
+    );
+    let sh = git_calls(&rec);
+    fs::rename(rec.join("log"), wt.outside().join("log-sh")).expect("move the shell's calls");
+    fs::create_dir(rec.join("log")).expect("make the log directory again");
+    let rust = Command::new(env!("CARGO_BIN_EXE_audit-mem"))
+        .args(["warm", "--program-id", "VaultProg1111"])
+        .current_dir(&wt.dir)
+        .env("PATH", &path)
+        .stdin(Stdio::null())
+        .output()
+        .expect("run audit-mem");
+    assert!(
+        rust.status.success(),
+        "audit-mem: {}",
+        String::from_utf8_lossy(&rust.stderr)
+    );
+    let rs = git_calls(&rec);
+    assert_eq!(
+        sh.len(),
+        3,
+        "the include listing, then two questions: {sh:#?}"
+    );
+    assert!(
+        sh.keys()
+            .any(|a| a.contains("--git-dir=/dev/null\nconfig\n--file\n")),
+        "{sh:#?}"
+    );
+    assert_eq!(rs, sh, "confine.rs lists the includes as confine.sh does");
+}
+
+/// The repository root, where scripts/lib/confine.sh is.
+fn root() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .expect("the repository root resolves")
+}
+
+#[test]
+fn confine_rs_refuses_what_git_would_wait_on_in_confine_sh_s_words() {
+    // Each tree holds a named pipe git would open on its way to the repository.
+    // confine_git_files, as confine_rundir runs it, and audit-mem init --db, as
+    // it checks the run directory, refuse it before git starts, for the same
+    // reason in the same words; a tree with none passes both.
+    let mkfifo = |p: &Path| {
+        let made = Command::new("mkfifo").arg(p).status().expect("run mkfifo");
+        assert!(made.success(), "mkfifo {}", p.display());
+    };
+    let cases = [
+        "none",
+        "HEAD",
+        "commondir",
+        "include",
+        "include in turn",
+        "linked git directory",
+        "linked config",
+        "above a decoy",
+        "link in the git directory",
+        "gitfile",
+        "gitfile with a NUL",
+        "unreadable directory",
+    ];
+    let mut differ = Vec::new();
+    for case in cases {
+        // SAFETY: geteuid only reads this process's effective user id.
+        if case == "unreadable directory" && unsafe { libc::geteuid() } == 0 {
+            continue;
+        }
+        let wt = Wt::repo();
+        let mut from = wt.dir.clone();
+        let mut pipes = Vec::new();
+        match case {
+            "HEAD" => {
+                fs::remove_file(wt.path(".git/HEAD")).expect("rm HEAD");
+                pipes.push(wt.path(".git/HEAD"));
+            }
+            "commondir" => pipes.push(wt.path(".git/commondir")),
+            "include" | "include in turn" => {
+                let config = wt.read(".git/config");
+                let first = if case == "include" {
+                    "../pipe"
+                } else {
+                    "../cfg/more.cfg"
+                };
+                wt.write(
+                    ".git/config",
+                    &[
+                        &config[..],
+                        format!("[include]\n\tpath = {first}\n").as_bytes(),
+                    ]
+                    .concat(),
+                );
+                wt.write(
+                    "cfg/more.cfg",
+                    b"[includeIf \"gitdir:**\"]\n\tpath = ../pipe\n",
+                );
+                pipes.push(wt.path("pipe"));
+            }
+            "linked git directory" | "linked config" => {
+                fs::rename(wt.path(".git"), wt.path(".realgit")).expect("move .git");
+                wt.link(".realgit".as_ref(), ".git");
+                if case == "linked config" {
+                    fs::rename(wt.path(".realgit/config"), wt.path("config.kept")).expect("mv");
+                    pipes.push(wt.path(".realgit/config"));
+                } else {
+                    pipes.push(wt.path(".realgit/info/attributes"));
+                }
+            }
+            "above a decoy" => {
+                fs::remove_file(wt.path(".git/HEAD")).expect("rm HEAD");
+                wt.write("sub/.git/HEAD", b"ref: refs/heads/main\n");
+                from = wt.path("sub");
+                pipes.push(wt.path(".git/HEAD"));
+            }
+            "link in the git directory" => {
+                wt.link("../../pipe".as_ref(), ".git/hooks/post-checkout");
+                pipes.push(wt.path("pipe"));
+            }
+            "gitfile" | "gitfile with a NUL" => {
+                let gd = wt.outside().join("gd");
+                fs::rename(wt.path(".git"), &gd).expect("move .git");
+                let nul = if case == "gitfile" { "" } else { "\0" };
+                wt.write(
+                    ".git",
+                    format!("gitdir: {}{nul}\n", gd.display()).as_bytes(),
+                );
+                if case == "gitfile" {
+                    fs::remove_file(gd.join("HEAD")).expect("rm HEAD");
+                    pipes.push(gd.join("HEAD"));
+                }
+            }
+            "unreadable directory" => {
+                wt.chmod(".git/info", 0o311);
+            }
+            _ => {}
+        }
+        for p in &pipes {
+            mkfifo(p);
+        }
+        let run_dir = if from == wt.dir {
+            "audit_1"
+        } else {
+            "sub/audit_1"
+        };
+        wt.run_dir(run_dir);
+        let shell = Command::new("bash")
+            .args([
+                "-c",
+                ". \"$1/scripts/lib/confine.sh\" && confine_init agree \"$1\" && \
+                 CONFINE_CEILING='' confine_git_files \"$CONFINE_WT\"",
+                "agree",
+            ])
+            .arg(root())
+            .current_dir(&from)
+            .stdin(Stdio::null())
+            .output()
+            .expect("run bash");
+        let rust = Command::new(env!("CARGO_BIN_EXE_audit-mem"))
+            .args(["init", "--db", "audit_1/audit-mem.db"])
+            .current_dir(&from)
+            .stdin(Stdio::null())
+            .output()
+            .expect("run audit-mem");
+        let said = |o: &std::process::Output, tool: &str| {
+            let err = String::from_utf8_lossy(&o.stderr).into_owned();
+            match o.status.code() {
+                Some(0) => "passes".to_string(),
+                _ => err
+                    .strip_prefix(&format!("{tool}: refused: "))
+                    .unwrap_or(&err)
+                    .trim_end()
+                    .to_string(),
+            }
+        };
+        let (sh, rs) = (said(&shell, "agree"), said(&rust, "audit-mem"));
+        if case == "none" {
+            assert_eq!((sh.as_str(), rs.as_str()), ("passes", "passes"), "{case}");
+        } else if sh != rs || sh == "passes" {
+            differ.push(format!("{case}: confine.sh {sh:?}, confine.rs {rs:?}"));
+        }
+        if case == "unreadable directory" {
+            wt.chmod(".git/info", 0o755);
+        }
+    }
+    assert!(differ.is_empty(), "{}", differ.join("\n"));
+}

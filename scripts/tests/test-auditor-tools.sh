@@ -15,7 +15,7 @@
 #      inside or outside the working directory, and no canary text printed.
 #   3b. scripts/rundir.sh and the binaries over the same run directories and stores: rundir.sh check and
 #      audit-scan --out, and rundir.sh store and audit-mem, accept the same ones and refuse the others in the same
-#      words.
+#      words, a repository holding a named pipe git would open included.
 #   3c. git as the binaries run it allows no transport: in a partial clone whose own config permits ext::, on a git
 #      that ignores GIT_NO_LAZY_FETCH (a shim), audit-scan --out, audit-mem --db and audit-mem's in-tree store run
 #      nothing outside the tree.
@@ -398,6 +398,27 @@ for c in absent ok no-gitignore nul-gitignore link holds-link not-a-directory tr
   ( cd "$S/wt" && "$RUNDIR" store ) > /dev/null 2> "$T/a.err" < /dev/null
   ( cd "$S/wt" && "$MEM" warm --contract=1 --program-id VaultProg1111 ) > /dev/null 2> "$T/b.err" < /dev/null
   eq "rundir.sh store and audit-mem agree on an in-tree store: $c" \
+    "$(said "$T/b.err" 'audit-mem: refused: ')" "$(said "$T/a.err" 'rundir: refused: ')"
+done
+
+# A repository holding a named pipe git would open on its way (as HEAD, or one its config includes): each
+# side refuses before git starts, in the same words.
+for c in head include; do
+  S="$T/fifo-$c"
+  mkdir -p "$S/wt"
+  fgit init -q "$S/wt"
+  run_dir "$S/wt/audit_1"
+  case $c in
+    head) rm "$S/wt/.git/HEAD" && mkfifo "$S/wt/.git/HEAD" ;;
+    include) printf '[include]\n\tpath = ../pipe\n' >> "$S/wt/.git/config" && mkfifo "$S/wt/pipe" ;;
+  esac
+  ( cd "$S/wt" && "$RUNDIR" check audit_1 ) > /dev/null 2> "$T/a.err" < /dev/null
+  ( cd "$S/wt" && "$SCAN" --contract=1 . --out audit_1/prescan.json ) > /dev/null 2> "$T/b.err" < /dev/null
+  eq "rundir.sh check and audit-scan --out refuse a named pipe git would open in the same words: $c" \
+    "$(sed -e 's/^audit-scan: refused: //' "$T/b.err")" "$(sed -e 's/^rundir: refused: //' "$T/a.err")"
+  ( cd "$S/wt" && "$RUNDIR" store ) > /dev/null 2> "$T/a.err" < /dev/null
+  ( cd "$S/wt" && "$MEM" warm --contract=1 --program-id VaultProg1111 ) > /dev/null 2> "$T/b.err" < /dev/null
+  eq "rundir.sh store and audit-mem agree on a named pipe git would open: $c" \
     "$(said "$T/b.err" 'audit-mem: refused: ')" "$(said "$T/a.err" 'rundir: refused: ')"
 done
 
