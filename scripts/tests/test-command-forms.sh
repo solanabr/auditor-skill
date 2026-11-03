@@ -48,11 +48,12 @@
 #       directory (scripts/rundir.sh new, ./scripts/..., bash scripts/...), where the tree under audit can put a
 #       file of its own; a span holding the path alone names the file.
 #   P   Wording the flows depend on stays in place (the PINS list): what keeps a long call, and the turn after
-#       it, inside a command's grant, and what asks Q46 again for a run directory an earlier session made; every
-#       command that starts agents keeps them in the foreground and resumes in the turn an agent's result
-#       arrives in; wording that copied an earlier run's mode forward, or passed the file's mode as run.sh
-#       --mode, stays gone (the GONE list); and no body names the environment form of a PoC run (VULNERABLE_SO
-#       and the rest), which run.sh --crate does not read.
+#       it, inside a command's grant, and what asks Q46 again, once a session, for a run directory an earlier
+#       session made, before the agent that builds starts, and keeps a non-interactive run there from loosening
+#       the recorded mode; every command that starts agents keeps them in the foreground and resumes in the turn
+#       an agent's result arrives in; wording that copied an earlier run's mode forward, or passed the file's mode
+#       as run.sh --mode, stays gone (the GONE list); and no body names the environment form of a PoC run
+#       (VULNERABLE_SO and the rest), which run.sh --crate does not read.
 #   G   The lines agents/poc-engineer.md gives a runner it writes, run as the first lines of such a runner in a
 #       crate, from the working directory and from the crate, find <R> from the runner's path and take the
 #       stricter of <R>/exec-mode and AUDITOR_EXEC_MODE as run.sh --crate does; they stop on none, on no mode, on
@@ -958,18 +959,22 @@ commands/threat-model.md	A reused directory's `exec-mode` and its `intake.md` §
 commands/hunt.md	directory's `exec-mode` is an earlier run's answer: ask for the mode again,
 commands/respond.md	run's answer: ask for the mode again, as step 5 does, before a runner uses it.
 commands/poc.md	A run directory this session did not make, an earlier session's or one that came with the tree, holds an earlier run's answers
-commands/poc.md	or `<R>` is a run directory this session did not make, ask `QUESTIONS.md` Q46 once, naming `<R>`
+commands/poc.md	or `<R>` is a run directory this session did not make and whose `exec-mode` it has not written, ask
+commands/poc.md	A non-interactive run cannot ask, so an earlier answer can only make it stricter: it uses the stricter of the recorded mode and `native`, writes `native` only when no mode is recorded
 commands/poc.md	a mode an earlier session recorded was that run's answer, so never hand it on unasked.
 commands/patch.md	A run directory this session did not make, an earlier session's or one that came with the tree, holds an earlier run's answers
-commands/patch.md	or `<R>` is a run directory this session did not make, ask `QUESTIONS.md` Q46 once, naming `<R>`
+commands/patch.md	or `<R>` is a run directory this session did not make and whose `exec-mode` it has not written, ask
+commands/patch.md	A non-interactive run cannot ask, so an earlier answer can only make it stricter: it uses the stricter of the recorded mode and `native`, writes `native` only when no mode is recorded
 commands/patch.md	a mode an earlier session recorded was that run's answer, so never hand it on unasked.
-commands/patch.md	are asked again in step 2, before `patch-engineer` starts.
+commands/patch.md	are asked again in step 2, once per session, before `patch-engineer` starts.
+commands/poc.md	are asked again in step 5, once per session, before a runner uses them.
 commands/patch.md	First settle the execution mode that the rebuild and every PoC re-run in step 3 use
 commands/patch.md	`patch-engineer` runs them itself, with the mode you hand it, and never asks.
 commands/re-audit.md	check it with `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" check audit_<n>`: unless it prints `ok audit_<n>`, nothing is written in it
-commands/re-audit.md	`audit_<n>/exec-mode` and its `intake.md` §8 are an earlier run's answers, never copied
+commands/re-audit.md	`audit_<n>/exec-mode` and its `intake.md` §8 are an earlier run's answers, never this run's consent
 commands/re-audit.md	have the human confirm that `audit_<n>` is a run directory they made, not one that came with the tree
 commands/re-audit.md	no crate of `audit_<n>` runs and nothing is written in it
+commands/re-audit.md	A non-interactive run cannot ask, so the earlier answer can only make it stricter: it writes the stricter of `native` and the mode `audit_<n>/exec-mode` records to `audit_<n+1>/exec-mode`
 QUESTIONS.md	and again before a later session uses a run directory an earlier one made
 agents/poc-engineer.md	When the command handed you `isolated`, pass `--mode isolated`, so a run whose recorded mode has since become less strict stops; with `native`, pass no `--mode`
 agents/patch-engineer.md	adding `--mode isolated` when the command handed you `isolated`, as `poc-engineer` does
@@ -1003,7 +1008,8 @@ PINS
 
 # Wording that must not come back, file <TAB> text: a flow never copies an earlier run's recorded mode forward,
 # an agent never hands run.sh the file's mode as --mode, which stops every run a stricter AUDITOR_EXEC_MODE
-# holds to isolated mode, and patch resumes after the mode answer in step 2, where it asks, not in step 3.
+# holds to isolated mode, patch resumes after the mode answer in step 2, where it asks, not in step 3, and a
+# non-interactive run on an earlier session's run directory never loosens its recorded mode to native.
 while IFS='	' read -r f gone; do
   [ -n "$f" ] || continue
   if [ -f "$f" ] && ! grep -qF -- "$gone" "$f"; then ok "gone from $f: $gone"; else bad "P $f says: $gone"; fi
@@ -1012,6 +1018,9 @@ commands/re-audit.md	write the mode recorded at intake into
 agents/poc-engineer.md	--mode <the mode the command handed you>
 agents/patch-engineer.md	--mode <the mode the command hands you>
 commands/patch.md	auditor:patch --resume 3
+commands/poc.md	naming `<R>` (a non-interactive run is native
+commands/patch.md	naming `<R>` (a non-interactive run is native
+commands/re-audit.md	Q46 again (a non-interactive run is native
 GONE
 
 # poc and patch ask Q46, when they ask it, in the step that spawns their engineer agent: the agent builds and runs
