@@ -1,0 +1,90 @@
+{
+  "name": "f106-runner-key-spellings",
+  "triggers": [
+    "pull_request"
+  ],
+  "permissions": [
+    "contents: read"
+  ],
+  "jobs": [
+    {
+      "id": "comment",
+      "line": 9,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 12,
+          "run": "make test",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "double-quoted-key",
+      "line": 13,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 16,
+          "run": "make test",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "single-quoted-key",
+      "line": 17,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 20,
+          "run": "make test",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "space-before-colon",
+      "line": 21,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 24,
+          "run": "make test",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "hosted-commented",
+      "line": 25,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 28,
+          "run": "make test",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "hosted-quoted-key",
+      "line": 29,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 32,
+          "run": "make test",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

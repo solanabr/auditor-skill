@@ -1,0 +1,103 @@
+{
+  "name": "f100-arc-runner-labels",
+  "triggers": [
+    "pull_request"
+  ],
+  "permissions": [
+    "contents: read"
+  ],
+  "jobs": [
+    {
+      "id": "scale-set",
+      "line": 8,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 11,
+          "run": "make test",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "quoted",
+      "line": 12,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 15,
+          "run": "make test",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "build-farm",
+      "line": 16,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 19,
+          "run": "make test",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "mac-pool",
+      "line": 20,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 23,
+          "run": "make test",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "gpu",
+      "line": 24,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 27,
+          "run": "make test",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "larger",
+      "line": 28,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 31,
+          "run": "make test",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "lookalike",
+      "line": 32,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 35,
+          "run": "make test",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

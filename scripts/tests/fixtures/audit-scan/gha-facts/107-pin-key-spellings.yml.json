@@ -1,0 +1,43 @@
+{
+  "name": "f107-pin-key-spellings",
+  "triggers": [
+    "push"
+  ],
+  "permissions": [
+    "contents: read"
+  ],
+  "jobs": [
+    {
+      "id": "build",
+      "line": 9,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 12,
+          "uses": "example/moving-action@main",
+          "with": [],
+          "env": []
+        },
+        {
+          "line": 13,
+          "uses": "example/moving-local@main",
+          "with": [],
+          "env": []
+        },
+        {
+          "line": 14,
+          "uses": "example/quoted-key-action@5555555555555555555555555555555555555555",
+          "with": [],
+          "env": []
+        },
+        {
+          "line": 15,
+          "uses": "example/spaced-key-action@6666666666666666666666666666666666666666",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}
