@@ -79,7 +79,8 @@
 #     holding any credential it reads stops the run before anything is copied, and so
 #     does a check that cannot finish; in native mode it is a warning. Through a driver,
 #     on the homes it is given: the Solana CLI's keypair, linked and deep directories,
-#     the entry budget, the places the environment names, the variable names that look
+#     the entry budget, the places the environment names (a Claude Code login under
+#     CLAUDE_CONFIG_DIR and Anthropic profiles too), the variable names that look
 #     like credentials, and agent sockets (serving one needs a machine that allows it:
 #     on CI a machine that does not fails the run, anywhere else one SKIP line says
 #     so). On CI the runner's own home must pass the check, so that the checks that
@@ -1479,7 +1480,17 @@ done <<'CREDS'
 .config/gh/hosts.yml|git or HTTP credentials
 .gnupg/private-keys-v1.d/0123456789ABCDEF.key|GnuPG private keys
 .claude/.credentials.json|Claude Code credentials
+.claude-work/.credentials.json|Claude Code credentials
+.config/anthropic/credentials/default.json|Claude Code credentials
+.config/anthropic/configs/default.json|Claude Code credentials
 CREDS
+# The same for a Claude Code login only where CLAUDE_CONFIG_DIR keeps it, outside HOME.
+mkdir -p "$T/cc-dir"; printf 'secret\n' > "$T/cc-dir/.credentials.json"
+code="$(ngate HOME="$CLEANHOME" CLAUDE_CONFIG_DIR="$T/cc-dir" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+line="$(grep '^\[PoC-ATTEMPTED\] blocker: isolated mode, but these are readable here: ' "$T/out")"
+[ "$code" = 3 ] && case "$line" in *"Claude Code credentials ("*) true ;; *) false ;; esac && new_nothing_ran && one_blocker \
+  && ok "isolated mode with a Claude Code login only under CLAUDE_CONFIG_DIR, outside HOME -> exit 3 naming Claude Code credentials, nothing copied" \
+  || { bad "isolated, a login under CLAUDE_CONFIG_DIR: exit $code"; cat "$T/out" >&2; }
 FH="$T/fh-many"; mkdir -p "$FH/.ssh" "$FH/.gnupg/private-keys-v1.d"; printf 'secret\n' > "$FH/.gnupg/private-keys-v1.d/ABC.key"
 i=0; while [ "$i" -le 5000 ]; do : > "$FH/.ssh/known_hosts.$i"; i=$((i + 1)); done
 code="$(ngate HOME="$FH" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
@@ -1542,6 +1553,14 @@ code="$(dcreds AWS_SHARED_CREDENTIALS_FILE="$E/aws/creds" KUBECONFIG="$E/kube/a:
   "$E/xdg/gh/hosts.yml" "$E/xdg/git/credentials" "$E/ghdir/hosts.yml" "$E/cargo/credentials.toml" "$E/npmrc-upper" "$E/npmrc-lower" \
   "$E/netrc" "$E/service-account.json" \
   && ok "the credential files the environment's variables name count (KUBECONFIG, CLOUDSDK_CONFIG, GNUPGHOME, CARGO_HOME and the rest)" || { bad "credentials the environment names: $code"; cat "$T/creds.out" >&2; }
+# Where the environment puts a Claude Code login (CLAUDE_CONFIG_DIR), the Anthropic profiles
+# (ANTHROPIC_CONFIG_DIR) and their federation token file.
+EC="$T/fe-claude"; mkdir -p "$EC/claude" "$EC/anthropic/credentials"
+for f in claude/.credentials.json anthropic/credentials/default.json id-token; do printf 'secret\n' > "$EC/$f"; done
+code="$(dcreds CLAUDE_CONFIG_DIR="$EC/claude" ANTHROPIC_CONFIG_DIR="$EC/anthropic" ANTHROPIC_IDENTITY_TOKEN_FILE="$EC/id-token" -- "$CLEANHOME")"
+[ "$code" = 1 ] && lines_are "Claude Code credentials (3)" "$EC/claude/.credentials.json" "$EC/anthropic/credentials/default.json" "$EC/id-token" \
+  && ok "a Claude Code login and Anthropic profiles where the environment puts them count (CLAUDE_CONFIG_DIR, ANTHROPIC_CONFIG_DIR, ANTHROPIC_IDENTITY_TOKEN_FILE)" \
+  || { bad "a Claude Code login the environment moves: $code"; cat "$T/creds.out" >&2; }
 # What does not count: the public parts of ~/.ssh, a file this user cannot read, an empty file, a FIFO
 # (which must not stall the check) and an SSH_AUTH_SOCK that names no socket.
 FH="$T/fh-clean"; mkdir -p "$FH/.ssh" "$FH/.aws" "$FH/.kube"

@@ -21,18 +21,21 @@
 #   ~/.git-credentials, ~/.config/git/credentials, ~/.netrc and ~/.config/gh/hosts.yml;
 #   the files in ~/.gnupg/private-keys-v1.d/, and the gpg-agent sockets ~/.gnupg/S.gpg-agent,
 #     S.gpg-agent.ssh, S.gpg-agent.extra and S.gpg-agent.browser;
-#   ~/.claude/.credentials.json;
+#   Claude Code's login: .credentials.json in ~/.claude and in every other ~/.claude* directory (where
+#     CLAUDE_CONFIG_DIR keeps a second account), and every file under ~/.config/anthropic (Anthropic
+#     profiles and their tokens, which Claude Code also signs in with);
 #   1Password's agent socket: ~/.1password/agent.sock, and on macOS
 #     ~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock.
 # It reads the places these variables name as well, when they are set: SSH_AUTH_SOCK; CARGO_HOME
 # (credentials and credentials.toml); XDG_CONFIG_HOME (gh/hosts.yml and git/credentials); GH_CONFIG_DIR
-# (hosts.yml); AWS_SHARED_CREDENTIALS_FILE, GOOGLE_APPLICATION_CREDENTIALS, NETRC and NPM_CONFIG_USERCONFIG
-# (in either case), each a file; KUBECONFIG, a list of files; DOCKER_CONFIG (config.json); CLOUDSDK_CONFIG
-# and AZURE_CONFIG_DIR (the gcloud and azure files above); GNUPGHOME (its private-keys-v1.d/ and gpg-agent
-# sockets); TMPDIR (ssh-*/agent.*) and XDG_RUNTIME_DIR (ssh-agent.socket, vscode-ssh-auth-*.sock and
-# everything in gnupg/, keyring/ and gcr/). And the agent sockets anyone on the machine can name:
-# /tmp/ssh-*/agent.*, /tmp/vscode-ssh-auth-*.sock, macOS's /private/tmp/com.apple.launchd.*/Listeners,
-# and /run/user/<uid> as for XDG_RUNTIME_DIR.
+# (hosts.yml); AWS_SHARED_CREDENTIALS_FILE, GOOGLE_APPLICATION_CREDENTIALS, NETRC, NPM_CONFIG_USERCONFIG
+# (in either case) and ANTHROPIC_IDENTITY_TOKEN_FILE, each a file; KUBECONFIG, a list of files;
+# DOCKER_CONFIG (config.json); CLAUDE_CONFIG_DIR (.credentials.json); ANTHROPIC_CONFIG_DIR (every file under
+# it); CLOUDSDK_CONFIG and AZURE_CONFIG_DIR (the gcloud and azure files above); GNUPGHOME (its
+# private-keys-v1.d/ and gpg-agent sockets); TMPDIR (ssh-*/agent.*) and XDG_RUNTIME_DIR (ssh-agent.socket,
+# vscode-ssh-auth-*.sock and everything in gnupg/, keyring/ and gcr/). And the agent sockets anyone on the
+# machine can name: /tmp/ssh-*/agent.*, /tmp/vscode-ssh-auth-*.sock, macOS's
+# /private/tmp/com.apple.launchd.*/Listeners, and /run/user/<uid> as for XDG_RUNTIME_DIR.
 # A path counts when it is a regular file, or a link to one, whose first byte can be read, or a socket that
 # accepts a connection: a sandbox that blocks Unix sockets leaves SSH_AUTH_SOCK and its socket in place, out
 # of reach. Past 5000 entries in the directories it lists, the check stops: it cannot tell (status 2). A
@@ -138,9 +141,9 @@ FILES = (((SOLANA, ".config/solana/id.json"), (CLOUD, ".aws/credentials"))
          + ((CLUSTER, ".kube/config"), (CLUSTER, ".docker/config.json"), (REGISTRY, ".npmrc"), (REGISTRY, ".yarnrc.yml"),
             (REGISTRY, ".gem/credentials"), (REGISTRY, ".pypirc"), (REGISTRY, ".cargo/credentials"),
             (REGISTRY, ".cargo/credentials.toml"), (GIT, ".git-credentials"), (GIT, ".config/git/credentials"), (GIT, ".netrc"),
-            (GIT, ".config/gh/hosts.yml"), (CLAUDE, ".claude/.credentials.json")))
+            (GIT, ".config/gh/hosts.yml")))
 DIRS = ((SOLANA, ".config/solana"), (CLOUD, ".aws/sso/cache"), (CLOUD, ".aws/cli/cache"),
-        (CLOUD, ".config/gcloud/legacy_credentials"), (GPG, ".gnupg/private-keys-v1.d"))
+        (CLOUD, ".config/gcloud/legacy_credentials"), (GPG, ".gnupg/private-keys-v1.d"), (CLAUDE, ".config/anthropic"))
 GPG_SOCKETS = ("S.gpg-agent", "S.gpg-agent.ssh", "S.gpg-agent.extra", "S.gpg-agent.browser")
 SOCKETS = tuple(".gnupg/" + s for s in GPG_SOCKETS) + (
     ".1password/agent.sock", "Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock")
@@ -279,17 +282,20 @@ def runtime(directory, dirs, socks):
 def named(env, files, dirs, socks):
     # The places the environment names.
     for kind, name in ((CLOUD, "AWS_SHARED_CREDENTIALS_FILE"), (CLOUD, "GOOGLE_APPLICATION_CREDENTIALS"), (GIT, "NETRC"),
-                       (REGISTRY, "NPM_CONFIG_USERCONFIG"), (REGISTRY, "npm_config_userconfig")):
+                       (REGISTRY, "NPM_CONFIG_USERCONFIG"), (REGISTRY, "npm_config_userconfig"),
+                       (CLAUDE, "ANTHROPIC_IDENTITY_TOKEN_FILE")):
         files.append((kind, env.get(name, "")))
     files.extend((CLUSTER, p) for p in env.get("KUBECONFIG", "").split(os.pathsep))
     for kind, name, under in ((REGISTRY, "CARGO_HOME", ("credentials", "credentials.toml")),
                               (GIT, "XDG_CONFIG_HOME", ("gh/hosts.yml", "git/credentials")), (GIT, "GH_CONFIG_DIR", ("hosts.yml",)),
                               (CLUSTER, "DOCKER_CONFIG", ("config.json",)), (CLOUD, "CLOUDSDK_CONFIG", GCLOUD),
-                              (CLOUD, "AZURE_CONFIG_DIR", AZURE)):
+                              (CLOUD, "AZURE_CONFIG_DIR", AZURE), (CLAUDE, "CLAUDE_CONFIG_DIR", (".credentials.json",))):
         if env.get(name):
             files.extend((kind, os.path.join(env[name], f)) for f in under)
     if env.get("CLOUDSDK_CONFIG"):
         dirs.append((CLOUD, os.path.join(env["CLOUDSDK_CONFIG"], "legacy_credentials")))
+    if env.get("ANTHROPIC_CONFIG_DIR"):
+        dirs.append((CLAUDE, env["ANTHROPIC_CONFIG_DIR"]))
     if env.get("GNUPGHOME"):
         dirs.append((GPG, os.path.join(env["GNUPGHOME"], "private-keys-v1.d")))
         socks.extend(os.path.join(env["GNUPGHOME"], s) for s in GPG_SOCKETS)
@@ -315,11 +321,13 @@ def creds(which, given):
     found, state, files, dirs, socks = [], {"left": BUDGET, "seen": set()}, [], [], []
     read = [h for h in (given if which == "given" else homes(env.get("HOME", ""))) if h]
     for home in read:
+        at = glob.escape(home)
         ssh = os.path.join(home, ".ssh")
         if not walk(ssh, SSH_KEEP, found, state, SSH):
             readable(found, SSH, (os.path.join(ssh, k) for k in SSH_KEYS))
         for kind, f in FILES:
             readable(found, kind, [os.path.join(home, f)])
+        readable(found, CLAUDE, glob.glob(os.path.join(at, ".claude*", ".credentials.json")))
         for kind, d in DIRS:
             walk(os.path.join(home, d), None, found, state, kind)
         sockets(found, (os.path.join(home, s) for s in SOCKETS))
