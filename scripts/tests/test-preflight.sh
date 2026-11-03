@@ -446,6 +446,10 @@ folds "an AGENTS.md so spelled gets a note" "note:AGENT${LS}.md" "f:AGENT${LS}.m
 folds "... and so does .claude/rules" "note:.claude/rule${LS}" "d:.claude/rule${LS}"
 folds "names that open as no name preflight looks for pass" ok "f:caf$(printf '\303\251').txt" "d:.claude/note${LS}" \
   "f:.claude/${LS}kill" "d:docs/${LS}kills"
+folds "many names that open as none, with one that opens as .claude/skills among them" "ships:.claude/${LS}kills" \
+  "f:.claude/n$(printf '\303\251')1" "f:.claude/n$(printf '\303\251')2" "d:.claude/${LS}kills/x" "f:.claude/n$(printf '\303\251')3"
+folds "... and in another .claude after one whose names open as none" "ships:b/.claude/${LS}kills" \
+  "f:a/.claude/n$(printf '\303\251')1" "d:b/.claude/${LS}kills/x" "f:c/.claude/n$(printf '\303\251')1"
 # A link into .git spelled in another letter case: where the filesystem folds case, .GIT/p opens as
 # .git/p, which the scan skips; where it does not, the link leads nowhere and passes.
 mkdir "$U/c"

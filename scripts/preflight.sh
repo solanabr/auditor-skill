@@ -152,16 +152,25 @@ settle() {
 # under an ASCII name: .claude/ſkills (U+017F) as .claude/skills, a Kelvin sign as k. Each name the
 # scans look for in the entry's directory is looked up there; when the lookup lands on this entry, the
 # entry is settled as that name would be, by the same tests, and shown as the tree spells it. A .claude
-# found that way is a hit unless it is a file: no scan reads a directory under that name.
+# found that way is a hit unless it is a file: no scan reads a directory under that name. Which of those
+# names the directory opens at all is looked up once per directory (FOLD_DIR, FOLD_NAMES), and usually
+# it opens none, so a directory of many such entries costs one test of each name.
+FOLD_DIR='' FOLD_NAMES=''
 folded() {
   local shown=$1 p=$2 d=${2%/*} n names fits
-  names='.claude .mcp.json CLAUDE.md CLAUDE.local.md AGENTS.md'
-  case "${d##*/}" in
-    .[cC][lL][aA][uU][dD][eE])
-      names="$names skills commands agents hooks output-styles workflows rules scheduled_tasks.json"
-      names="$names settings.json settings.local.json" ;;
-  esac
-  for n in $names; do
+  if [ "$d" != "$FOLD_DIR" ] || [ -z "$FOLD_DIR" ]; then
+    names='.claude .mcp.json CLAUDE.md CLAUDE.local.md AGENTS.md'
+    case "${d##*/}" in
+      .[cC][lL][aA][uU][dD][eE])
+        names="$names skills commands agents hooks output-styles workflows rules scheduled_tasks.json"
+        names="$names settings.json settings.local.json" ;;
+    esac
+    FOLD_DIR=$d FOLD_NAMES=''
+    for n in $names; do
+      if [ -e "$d/$n" ] || [ -L "$d/$n" ]; then FOLD_NAMES="$FOLD_NAMES $n"; fi
+    done
+  fi
+  for n in $FOLD_NAMES; do
     # the same file, or, for a link that leads nowhere, a lookup that lands on such a link
     if [ "$d/$n" -ef "$p" ] || { [ -L "$p" ] && [ ! -e "$p" ] && [ -L "$d/$n" ] && [ ! -e "$d/$n" ]; }; then
       if [ "$n" = .claude ]; then
