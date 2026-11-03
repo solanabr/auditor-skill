@@ -88,8 +88,8 @@ This command's pre-approvals last for the turn that invoked it: Claude Code clea
 them at the user's next message, and a turn that a background agent's or
 background command's completion notice starts has none, so spawn every agent in
 the foreground and wait for its result, never with `run_in_background`; while fork
-mode is on, as it is by default in interactive sessions, Claude Code cannot wait
-and runs the agent in the background. When the workup
+mode is on and background tasks are allowed, as by default in interactive sessions,
+Claude Code cannot wait and runs the agent in the background. When the workup
 goes on after the human replies (a yes to a collection, the execution mode, the
 reuse of a run directory), or an agent's result arrives in a later turn, first
 invoke this command again through the Skill tool

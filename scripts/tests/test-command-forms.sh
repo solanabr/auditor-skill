@@ -1132,7 +1132,8 @@ for f in commands/*.md SKILL.md; do
 done
 # Each command that starts agents (Task in its allowed-tools), and the root SKILL.md, keeps them in the foreground,
 # and resumes in the turn that brings an agent's result when Claude Code ran it in the background anyway (it cannot
-# wait while fork mode is on, its default in interactive sessions): that turn has none of the command's grant.
+# wait while fork mode is on and background tasks are allowed, the default in interactive sessions): that turn has
+# none of the command's grant.
 for f in commands/*.md SKILL.md; do
   [ "$(sed -n '2,/^---$/p' "$f" | grep -cx '  - Task')" -gt 0 ] || continue
   for want in 'the foreground and wait for its result, never with `run_in_background`' 'result arrives in a later turn'; do
