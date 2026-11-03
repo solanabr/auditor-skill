@@ -8,6 +8,8 @@ const PROG: &str = "Prog1111111111111111111111111111111111111111";
 const SIG: &str = "checked_sub@vault.balance";
 const GUARDED: &[u8] =
     b"fn withdraw() {\n    require!(vault.balance >= amount);\n    vault.balance -= amount;\n}\n";
+/// The candidate GUARDED's guard makes a false positive: the subtraction on line 3.
+const SITE: &str = "src/withdraw.rs:3";
 
 fn put(conn: &rusqlite::Connection, verdict: &str) -> mem::PutOutcome {
     mem::put_finding(
@@ -94,12 +96,13 @@ fn dedup_regression_and_suppression() {
             scope: None,
             commit: Some("c0ffee1"),
             guard: Some(&g),
+            site: Some(SITE),
         },
     )
     .unwrap();
 
     let unchanged = |_: &str| -> Result<Vec<u8>, String> { Ok(GUARDED.to_vec()) };
-    let check = mem::check(&conn, PROG, SIG, Some("c0ffee1"), &unchanged).unwrap();
+    let check = mem::check(&conn, PROG, SIG, Some("c0ffee1"), Some(SITE), &unchanged).unwrap();
     assert!(check.suppressed, "FALSE_POSITIVE ruling suppresses");
     assert!(check.stale.is_none());
     let ruling = check.ruling.expect("the ruling");
@@ -112,6 +115,7 @@ fn dedup_regression_and_suppression() {
         PROG,
         "some_other_signature",
         Some("c0ffee1"),
+        Some(SITE),
         &unchanged,
     )
     .unwrap();
@@ -140,6 +144,7 @@ fn rule_at(conn: &rusqlite::Connection, commit: Option<&str>, g: &mem::Guard) {
             scope: None,
             commit,
             guard: Some(g),
+            site: Some(SITE),
         },
     )
     .unwrap();
@@ -151,7 +156,7 @@ fn a_ruling_goes_stale_when_its_commit_or_guard_changes() {
     rule_at(&conn, Some(C1), &guard(GUARDED, 2, 3));
     let stale = |commit: Option<&str>, text: &'static [u8]| {
         let read = move |_: &str| -> Result<Vec<u8>, String> { Ok(text.to_vec()) };
-        let r = mem::check(&conn, PROG, SIG, commit, &read).unwrap();
+        let r = mem::check(&conn, PROG, SIG, commit, Some(SITE), &read).unwrap();
         assert_eq!(r.suppressed, r.stale.is_none());
         r.stale
     };
@@ -189,7 +194,7 @@ fn a_ruling_goes_stale_when_its_commit_or_guard_changes() {
         Some(format!("ruled at commit {C1}, checked at {C2}; the guard at src/withdraw.rs:2-3 cannot be read: names line 3, and the file has 1 line(s)"))
     );
     let gone = |_: &str| -> Result<Vec<u8>, String> { Err("it does not exist".to_string()) };
-    let r = mem::check(&conn, PROG, SIG, Some(C1), &gone).unwrap();
+    let r = mem::check(&conn, PROG, SIG, Some(C1), Some(SITE), &gone).unwrap();
     assert!(!r.suppressed);
     assert_eq!(
         r.stale.as_deref(),
@@ -198,12 +203,60 @@ fn a_ruling_goes_stale_when_its_commit_or_guard_changes() {
 }
 
 #[test]
+fn a_ruling_suppresses_only_the_candidate_it_was_made_for() {
+    // withdraw's subtraction is guarded and ruled a false positive; liquidate's,
+    // three lines below and with the same signature, is not guarded. Only the
+    // site the ruling names is suppressed: a sibling, a check that names no site,
+    // and a ruling that names none are stale.
+    let text: &[u8] = b"fn withdraw() {\n    require!(v.balance >= amount);\n    v.balance -= amount;\n}\nfn liquidate() {\n    v.balance -= amount;\n}\n";
+    let read = move |_: &str| -> Result<Vec<u8>, String> { Ok(text.to_vec()) };
+    let conn = mem::open_in_memory().expect("open in-memory db");
+    let g = guard(text, 2, 2);
+    rule_at(&conn, Some(C1), &g);
+    let check = |site: Option<&str>| mem::check(&conn, PROG, SIG, Some(C1), site, &read).unwrap();
+    let r = check(Some(SITE));
+    assert!(r.suppressed && r.stale.is_none(), "{r:?}");
+    assert_eq!(r.ruling.and_then(|r| r.site).as_deref(), Some(SITE));
+    let r = check(Some("src/withdraw.rs:6"));
+    assert!(!r.suppressed);
+    assert_eq!(
+        r.stale.as_deref(),
+        Some("ruled for the site src/withdraw.rs:3, checked for src/withdraw.rs:6")
+    );
+    let r = check(None);
+    assert!(!r.suppressed);
+    assert_eq!(
+        r.stale.as_deref(),
+        Some("ruled for the site src/withdraw.rs:3, and no --site was given to compare")
+    );
+    let conn = mem::open_in_memory().expect("open in-memory db");
+    mem::add_ruling(
+        &conn,
+        &mem::NewRuling {
+            program_id: PROG,
+            signature: SIG,
+            ruling: "FALSE_POSITIVE",
+            rationale: "guarded",
+            by: "auditor",
+            scope: None,
+            commit: Some(C1),
+            guard: Some(&g),
+            site: None,
+        },
+    )
+    .unwrap();
+    let r = mem::check(&conn, PROG, SIG, Some(C1), Some(SITE), &read).unwrap();
+    assert!(!r.suppressed);
+    assert_eq!(r.stale.as_deref(), Some("ruled with no site"));
+}
+
+#[test]
 fn a_ruling_without_a_commit_never_holds() {
     let read = |_: &str| -> Result<Vec<u8>, String> { Ok(GUARDED.to_vec()) };
     let conn = mem::open_in_memory().expect("open in-memory db");
     rule_at(&conn, None, &guard(GUARDED, 2, 2));
     for commit in [None, Some(C1)] {
-        let r = mem::check(&conn, PROG, SIG, commit, &read).unwrap();
+        let r = mem::check(&conn, PROG, SIG, commit, Some(SITE), &read).unwrap();
         assert!(!r.suppressed);
         assert_eq!(r.stale.as_deref(), Some("ruled with no commit"));
     }
@@ -212,7 +265,7 @@ fn a_ruling_without_a_commit_never_holds() {
     rule_at(&conn, Some(C1), &guard(GUARDED, 2, 2));
     conn.execute("UPDATE fp_rulings SET anchor_commit = ''", [])
         .unwrap();
-    let r = mem::check(&conn, PROG, SIG, Some(C1), &read).unwrap();
+    let r = mem::check(&conn, PROG, SIG, Some(C1), Some(SITE), &read).unwrap();
     assert!(!r.suppressed);
     assert_eq!(r.stale, Some(format!("ruled at commit , checked at {C1}")));
 }
@@ -381,6 +434,7 @@ fn warm_and_regressions_hold_the_newest_rows_and_count_the_rest() {
                 scope: None,
                 commit: None,
                 guard: None,
+                site: None,
             },
         )
         .unwrap();
@@ -679,6 +733,7 @@ fn a_writer_that_meets_another_waits_for_it() {
                     scope: None,
                     commit: Some(C1),
                     guard: None,
+                    site: None,
                 },
             )
             .map(drop)

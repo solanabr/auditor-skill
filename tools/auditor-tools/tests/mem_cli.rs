@@ -49,6 +49,10 @@ fn store() -> Wt {
     wt
 }
 
+/// The candidate `store`'s guard makes a false positive: the subtraction on line 3.
+const SITE: &str = "src/withdraw.rs:3";
+
+/// A FALSE_POSITIVE ruling for `SITE`, with `extra`.
 fn rule(wt: &Wt, extra: &[&str]) -> Output {
     let mut args = vec![
         "rule",
@@ -62,13 +66,24 @@ fn rule(wt: &Wt, extra: &[&str]) -> Output {
         "guarded by the require! above it",
         "--by",
         "auditor",
+        "--site",
+        SITE,
     ];
     args.extend_from_slice(extra);
     mem(wt, &args)
 }
 
+/// A check of the candidate at `SITE`, with `extra`.
 fn check(wt: &Wt, extra: &[&str]) -> (Option<i32>, Value) {
-    let mut args = vec!["check", "--program-id", P, "--signature", SIG];
+    let mut args = vec![
+        "check",
+        "--program-id",
+        P,
+        "--signature",
+        SIG,
+        "--site",
+        SITE,
+    ];
     args.extend_from_slice(extra);
     let o = mem(wt, &args);
     assert_eq!(stderr(&o), "");
@@ -192,6 +207,8 @@ fn takes_the_contract_marker_right_after_the_subcommand() {
         C1,
         "--guard",
         "src/withdraw.rs:2",
+        "--site",
+        SITE,
     ];
     assert_eq!(
         ok(&mem(&wt, &[&["rule", c][..], &ruling].concat())),
@@ -222,6 +239,8 @@ fn takes_the_contract_marker_right_after_the_subcommand() {
             SIG,
             "--commit",
             C1,
+            "--site",
+            SITE,
         ],
     );
     assert_eq!(marked.status.code(), Some(0), "{}", stderr(&marked));
@@ -230,7 +249,16 @@ fn takes_the_contract_marker_right_after_the_subcommand() {
         ("regressions", vec!["--program-id", P]),
         (
             "check",
-            vec!["--program-id", P, "--signature", SIG, "--commit", C1],
+            vec![
+                "--program-id",
+                P,
+                "--signature",
+                SIG,
+                "--commit",
+                C1,
+                "--site",
+                SITE,
+            ],
         ),
     ] {
         let with = mem(&wt, &[&[sub, c][..], &rest].concat());
@@ -1289,7 +1317,38 @@ fn refuses_a_table_that_is_not_the_one_audit_mem_makes() {
             .expect("fp_rulings")
     };
     assert_eq!(made("audit_21"), made("audit_20"));
-    assert!(made("audit_21").ends_with("\n        , anchor_commit TEXT, guard_file TEXT, guard_line INTEGER, guard_end INTEGER, guard_hash TEXT)"));
+    assert!(made("audit_21").ends_with("\n        , anchor_commit TEXT, guard_file TEXT, guard_line INTEGER, guard_end INTEGER, guard_hash TEXT, site TEXT)"));
+    // A store made before rulings named their site (its anchor without the site)
+    // reads, and gains the site when it is next written.
+    wt.run_dir("audit_22");
+    craft(
+        &wt.path("audit_22/audit-mem.db"),
+        &format!(
+            "{OLD_SCHEMA}\nALTER TABLE fp_rulings ADD COLUMN anchor_commit TEXT;\n\
+             ALTER TABLE fp_rulings ADD COLUMN guard_file TEXT;\n\
+             ALTER TABLE fp_rulings ADD COLUMN guard_line INTEGER;\n\
+             ALTER TABLE fp_rulings ADD COLUMN guard_end INTEGER;\n\
+             ALTER TABLE fp_rulings ADD COLUMN guard_hash TEXT;"
+        ),
+    );
+    ok(&mem(
+        &wt,
+        &["warm", "--db", "audit_22/audit-mem.db", "--program-id", P],
+    ));
+    assert!(made("audit_22").ends_with("guard_hash TEXT)"));
+    ok(&mem(
+        &wt,
+        &[
+            "profile",
+            "--db",
+            "audit_22/audit-mem.db",
+            "--program-id",
+            P,
+            "--notes",
+            "n",
+        ],
+    ));
+    assert_eq!(made("audit_22"), made("audit_21"));
 }
 
 #[test]
@@ -1986,6 +2045,127 @@ fn a_ruling_is_anchored_and_check_reports_it_stale_when_the_anchor_changes() {
 }
 
 #[test]
+fn a_ruling_suppresses_only_the_candidate_it_names() {
+    // withdraw's subtraction (line 3) is guarded and ruled a false positive;
+    // liquidate's (line 6), with the same signature, is not guarded. The ruling
+    // names its candidate, and check suppresses that one only: a sibling, or a
+    // check that names no site, finds the ruling stale.
+    let wt = Wt::repo();
+    wt.write(
+        "src/lib.rs",
+        b"fn withdraw() {\n    require!(v.balance >= amount);\n    v.balance -= amount;\n}\nfn liquidate() {\n    v.balance -= amount;\n}\n",
+    );
+    ok(&mem(&wt, &["init"]));
+    let base = [
+        "rule",
+        "--program-id",
+        P,
+        "--signature",
+        SIG,
+        "--ruling",
+        "FALSE_POSITIVE",
+        "--rationale",
+        "guarded",
+        "--by",
+        "auditor",
+        "--commit",
+        C1,
+        "--guard",
+        "src/lib.rs:2",
+    ];
+    refused(
+        &mem(&wt, &base),
+        "audit-mem",
+        "a FALSE_POSITIVE ruling needs --site, the <file>:<line> of the one candidate it rules on, \
+         so that check suppresses that candidate and none of its siblings",
+    );
+    let shape = |s: &str| format!("--site must be <file>:<line>, the candidate's: {s}");
+    for (site, why) in [
+        ("src/lib.rs", shape("src/lib.rs")),
+        ("src/lib.rs:", shape("src/lib.rs:")),
+        ("src/lib.rs:0", shape("src/lib.rs:0")),
+        ("src/lib.rs:03", shape("src/lib.rs:03")),
+        ("src/lib.rs:x", shape("src/lib.rs:x")),
+        ("src/lib.rs:1234567890", shape("src/lib.rs:1234567890")),
+        (
+            "/abs/lib.rs:3",
+            "--site's file must be relative to the working directory: /abs/lib.rs".into(),
+        ),
+        (
+            "../lib.rs:3",
+            "--site's file has an empty, . or .. component: ../lib.rs".into(),
+        ),
+    ] {
+        refused(
+            &mem(&wt, &[&base[..], &["--site", site]].concat()),
+            "audit-mem",
+            &why,
+        );
+    }
+    assert_eq!(
+        ok(&mem(
+            &wt,
+            &[&base[..], &["--site", "./src/lib.rs:3"]].concat()
+        )),
+        "ruling 1 recorded (FALSE_POSITIVE)\n"
+    );
+    let at = |site: Option<&str>| {
+        let mut args = vec![
+            "check",
+            "--program-id",
+            P,
+            "--signature",
+            SIG,
+            "--commit",
+            C1,
+        ];
+        if let Some(s) = site {
+            args.extend(["--site", s]);
+        }
+        let o = mem(&wt, &args);
+        assert_eq!(stderr(&o), "");
+        (o.status.code(), json(&o))
+    };
+    let (code, r) = at(Some("src/lib.rs:3"));
+    assert_eq!(code, Some(0), "{r}");
+    assert_eq!(r["suppressed"], true);
+    assert_eq!(r["ruling"]["site"], "src/lib.rs:3");
+    let (code, r) = at(Some("src/lib.rs:6"));
+    assert_eq!(
+        (code, r["suppressed"].clone()),
+        (Some(1), Value::Bool(false))
+    );
+    assert_eq!(
+        r["stale"],
+        "ruled for the site src/lib.rs:3, checked for src/lib.rs:6"
+    );
+    let (code, r) = at(None);
+    assert_eq!(code, Some(1));
+    assert_eq!(
+        r["stale"],
+        "ruled for the site src/lib.rs:3, and no --site was given to compare"
+    );
+    refused(
+        &mem(
+            &wt,
+            &[
+                "check",
+                "--program-id",
+                P,
+                "--signature",
+                SIG,
+                "--site",
+                "src/lib.rs",
+            ],
+        ),
+        "audit-mem",
+        &shape("src/lib.rs"),
+    );
+    let warm = json(&mem(&wt, &["warm", "--program-id", P]));
+    assert_eq!(warm["open_fp_rulings"][0]["site"], "src/lib.rs:3");
+}
+
+#[test]
 fn a_store_made_before_anchors_reports_its_rulings_stale_and_migrates() {
     let wt = Wt::repo();
     wt.write("src/withdraw.rs", b"fn w() {\n    require!(ok);\n}\n");
@@ -2028,6 +2208,7 @@ fn a_store_made_before_anchors_reports_its_rulings_stale_and_migrates() {
         "guard_line",
         "guard_end",
         "guard_hash",
+        "site",
     ] {
         assert!(columns.iter().any(|x| x == c), "{c} in {columns:?}");
     }
@@ -2058,6 +2239,8 @@ fn a_store_made_before_anchors_reports_its_rulings_stale_and_migrates() {
             C1,
             "--guard",
             "src/withdraw.rs:2",
+            "--site",
+            "src/withdraw.rs:3",
         ],
     );
     assert_eq!(ok(&o), "ruling 1 recorded (FALSE_POSITIVE)\n");
@@ -2073,6 +2256,8 @@ fn a_store_made_before_anchors_reports_its_rulings_stale_and_migrates() {
             SIG,
             "--commit",
             C1,
+            "--site",
+            "src/withdraw.rs:3",
         ],
     );
     assert_eq!(o.status.code(), Some(0), "{}", stdout(&o));

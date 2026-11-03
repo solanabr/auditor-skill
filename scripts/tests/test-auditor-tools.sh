@@ -285,7 +285,8 @@ printf 'fn withdraw() {\n    require!(vault.balance >= amount);\n    vault.balan
 ( cd "$W" && "$MEM" init && "$MEM" put-finding --program-id VaultProg1111 --signature unchecked_sub@vault.balance \
     --root-cause 'unchecked subtraction' --title 'Vault underflow' --severity 3 \
   && "$MEM" rule --program-id VaultProg1111 --signature unchecked_sub@vault.balance --ruling FALSE_POSITIVE \
-    --rationale guarded --by auditor --commit c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe --guard src/withdraw.rs:2 ) > "$T/mem.setup" 2>&1 \
+    --rationale guarded --by auditor --commit c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe --guard src/withdraw.rs:2 \
+    --site src/withdraw.rs:3 ) > "$T/mem.setup" 2>&1 \
   || { cat "$T/mem.setup" >&2; bad "audit-mem: the fixture store cannot be made"; finish; }
 for d in audit_1 audit_4 audit_5 audit_6 audit_7 audit_8 audit_10 audit_11 audit_12 audit_13 incident_1 incident_2; do run_dir "$W/$d"; done
 mkdir "$W/audit_2"
@@ -549,18 +550,22 @@ eq "audit-mem: profile records the protocol profile" \
 eq "audit-mem: invariant records an invariant" \
   "$(mem invariant --program-id "$P" --statement 'total_shares == shares_mint.supply' --status Unproven --cited-line src/vault.rs:88)" \
   "invariant 1 recorded"
-eq "audit-mem: rule records an anchored ruling" \
-  "$(mem rule --program-id "$P" --signature "$S" --ruling FALSE_POSITIVE --rationale 'guarded by the require! above it' --by auditor --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe --guard src/withdraw.rs:2)" \
+eq "audit-mem: rule records an anchored ruling for one candidate" \
+  "$(mem rule --program-id "$P" --signature "$S" --ruling FALSE_POSITIVE --rationale 'guarded by the require! above it' --by auditor --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe --guard src/withdraw.rs:2 --site src/withdraw.rs:3)" \
   "ruling 1 recorded (FALSE_POSITIVE)"
-( cd "$W" && "$MEM" check --contract=1 --program-id "$P" --signature "$S" --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe ) > "$T/check.out" 2>&1
-eq "audit-mem: check at the ruling's commit, the guard unchanged: suppressed (exit 0)" \
+( cd "$W" && "$MEM" check --contract=1 --program-id "$P" --signature "$S" --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe --site src/withdraw.rs:3 ) > "$T/check.out" 2>&1
+eq "audit-mem: check of that candidate at the ruling's commit, the guard unchanged: suppressed (exit 0)" \
   "$?:$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["suppressed"])' "$T/check.out")" "0:True"
-( cd "$W" && "$MEM" check --contract=1 --program-id "$P" --signature "$S" --commit c0ffee4c0ffee4c0ffee4c0ffee4c0ffee4c0ffe ) > "$T/check.out" 2>&1
+( cd "$W" && "$MEM" check --contract=1 --program-id "$P" --signature "$S" --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe --site src/liquidate.rs:9 ) > "$T/check.out" 2>&1
+eq "audit-mem: check of a sibling with the same signature: stale, not suppressed (exit 1)" \
+  "$?:$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["stale"])' "$T/check.out")" \
+  "1:ruled for the site src/withdraw.rs:3, checked for src/liquidate.rs:9"
+( cd "$W" && "$MEM" check --contract=1 --program-id "$P" --signature "$S" --commit c0ffee4c0ffee4c0ffee4c0ffee4c0ffee4c0ffe --site src/withdraw.rs:3 ) > "$T/check.out" 2>&1
 eq "audit-mem: check at another commit: stale, not suppressed (exit 1)" \
   "$?:$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["stale"])' "$T/check.out")" \
   "1:ruled at commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe, checked at c0ffee4c0ffee4c0ffee4c0ffee4c0ffee4c0ffe"
 printf 'fn withdraw() {\n    require!(vault.balance > amount);\n    vault.balance -= amount;\n}\n' > "$W/src/withdraw.rs"
-( cd "$W" && "$MEM" check --contract=1 --program-id "$P" --signature "$S" --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe ) > "$T/check.out" 2>&1
+( cd "$W" && "$MEM" check --contract=1 --program-id "$P" --signature "$S" --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe --site src/withdraw.rs:3 ) > "$T/check.out" 2>&1
 eq "audit-mem: check after the guard changed: stale, not suppressed (exit 1)" \
   "$?:$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["stale"])' "$T/check.out")" \
   "1:the guard at src/withdraw.rs:2 no longer holds the lines ruled on"

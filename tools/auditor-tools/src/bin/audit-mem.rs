@@ -106,9 +106,9 @@ impl Sub {
             Sub::SetStatus => (&["program-id", "signature", "root-cause", "status"], &[]),
             Sub::Rule => (
                 &["program-id", "signature", "ruling", "rationale", "by"],
-                &["scope", "commit", "guard"],
+                &["scope", "commit", "guard", "site"],
             ),
-            Sub::Check => (&["program-id", "signature"], &["commit"]),
+            Sub::Check => (&["program-id", "signature"], &["commit", "site"]),
             Sub::Regressions | Sub::Warm => (&["program-id"], &[]),
             Sub::Profile => (
                 &["program-id"],
@@ -708,6 +708,34 @@ fn guard(wt: &Path, call: &Call) -> Result<Option<mem::Guard>, Stop> {
     }))
 }
 
+/// `--site <file>:<line>`: the candidate a ruling is made for, or a check is
+/// made for, by its file (a relative path under the path grammar, one leading
+/// `./` dropped) and line; written `<file>:<line>` as it is stored. The file is
+/// not read: the site only tells one candidate from its siblings.
+fn site(call: &Call) -> Result<Option<String>, Stop> {
+    let Some(v) = call.text("site")? else {
+        return Ok(None);
+    };
+    let (file, line) = v.rsplit_once(':').ok_or_else(|| {
+        refuse(format!(
+            "--site must be <file>:<line>, the candidate's: {}",
+            shown(v.as_bytes())
+        ))
+    })?;
+    if line.is_empty()
+        || line.len() > 9
+        || line.starts_with('0')
+        || !line.bytes().all(|c| c.is_ascii_digit())
+    {
+        return Err(refuse(format!(
+            "--site must be <file>:<line>, the candidate's: {}",
+            shown(v.as_bytes())
+        )));
+    }
+    let r = confine::rel("--site's file", OsStr::new(file), false)?;
+    Ok(Some(format!("{}:{line}", String::from_utf8_lossy(&r.raw))))
+}
+
 /// A subcommand with every value it takes checked.
 enum Action {
     Init,
@@ -735,10 +763,12 @@ enum Action {
         scope: Option<String>,
         commit: Option<String>,
         guard: Option<mem::Guard>,
+        site: Option<String>,
     },
     Check {
         signature: String,
         commit: Option<String>,
+        site: Option<String>,
     },
     Regressions,
     Warm,
@@ -818,6 +848,15 @@ fn action(wt: &Path, call: &Call) -> Result<Action, Stop> {
                         .into(),
                 ));
             }
+            let site = site(call)?;
+            if ruling == "FALSE_POSITIVE" && site.is_none() {
+                return Err(refuse(
+                    "a FALSE_POSITIVE ruling needs --site, the <file>:<line> of the one \
+                     candidate it rules on, so that check suppresses that candidate and none of \
+                     its siblings"
+                        .into(),
+                ));
+            }
             Action::Rule {
                 signature,
                 ruling,
@@ -826,11 +865,13 @@ fn action(wt: &Path, call: &Call) -> Result<Action, Stop> {
                 scope,
                 commit,
                 guard,
+                site,
             }
         }
         Sub::Check => Action::Check {
             signature: call.need("signature")?,
             commit: call.commit()?,
+            site: site(call)?,
         },
         Sub::Regressions => Action::Regressions,
         Sub::Warm => Action::Warm,
@@ -920,10 +961,24 @@ fn read(wt: &Path, store: &Store, pid: &str, action: &Action) -> Result<ExitCode
             out(r#"{"suppressed":false,"store":"absent"}"#)?;
             return Ok(ExitCode::FAILURE);
         }
-        (Action::Check { signature, commit }, Some(c)) => {
+        (
+            Action::Check {
+                signature,
+                commit,
+                site,
+            },
+            Some(c),
+        ) => {
             let read = |file: &str| guard_text(wt, file);
-            let result =
-                mem::check(&c, pid, signature, commit.as_deref(), &read).map_err(&failed)?;
+            let result = mem::check(
+                &c,
+                pid,
+                signature,
+                commit.as_deref(),
+                site.as_deref(),
+                &read,
+            )
+            .map_err(&failed)?;
             print_json(&result)?;
             if !result.suppressed {
                 return Ok(ExitCode::FAILURE);
@@ -998,6 +1053,7 @@ fn write(wt: &Path, store: &Store, pid: &str, action: Action) -> Result<String, 
             scope,
             commit,
             guard,
+            site,
         } => {
             let id = mem::add_ruling(
                 &conn,
@@ -1010,6 +1066,7 @@ fn write(wt: &Path, store: &Store, pid: &str, action: Action) -> Result<String, 
                     scope: scope.as_deref(),
                     commit: commit.as_deref(),
                     guard: guard.as_ref(),
+                    site: site.as_deref(),
                 },
             )
             .map_err(&failed)?;
