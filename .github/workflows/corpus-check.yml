@@ -199,10 +199,10 @@ jobs:
         working-directory: tools/auditor-tools
         run: cargo build --release --locked
 
-      - name: Unit tests
+      - name: Unit tests (every test binary runs; the step fails at the end if any failed)
         if: ${{ !cancelled() }}
         working-directory: tools/auditor-tools
-        run: cargo test --release --locked
+        run: cargo test --release --locked --no-fail-fast
 
       - name: audit-logs against scripts/dnr
         if: ${{ !cancelled() }}

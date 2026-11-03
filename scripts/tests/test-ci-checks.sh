@@ -19,7 +19,7 @@
 #      other than as plain on: (quoted in either style, with escapes, a tag, an anchor or another letter case, in
 #      block or flow style), or writes an explicit ? key, an alias as a key or a merge key (<<); no run: script
 #      holds a ${{ }} expression; every job has timeout-minutes, every action is pinned by full SHA with its
-#      version, and no checkout keeps credentials;
+#      version, no checkout keeps credentials, and every cargo test runs with --no-fail-fast;
 #   5. scripts/check-hygiene.sh fails on each kind of file it names, and on a top-level directory named
 #      commands, agents, skills, hooks, bin, monitors or .claude-plugin in another letter case, also when it
 #      is the last of 3,000 tracked paths; on each load surface at the plugin root, and on a SKILL.md other
@@ -627,6 +627,8 @@ wfcheck() { # wfcheck FILE -> one line per problem, read byte by byte
     # the trigger, as written on the line and as its quoted scalars read decoded
     { t = $0; sub(/^[ \t]*#.*/, "", t) }
     t ~ trg || dec ~ trg { print f ": runs on pull_request_target or workflow_run" }
+    # cargo test stops at the first test binary that fails, and the binaries after it never run
+    t ~ /(^|[ \t;&|(])cargo[ \t]+test([ \t]|$)/ && t !~ /[ \t]--no-fail-fast([ \t]|$)/ { print f ": cargo test without --no-fail-fast: " $0 }
     # run: scripts, one-line or block: an expression there is pasted into the script before it runs
     inrun { match($0, /^[ \t]*/); if (RLENGTH > runind || $0 ~ /^[ \t]*$/) { if (index($0, "${{")) print f ": ${{ }} inside a run: script"; next } inrun = 0 }
     /^[ \t]*(- )?run:/ { match($0, /^[ \t]*(- )?/); runind = RLENGTH; inrun = 1; if (index($0, "${{")) print f ": ${{ }} inside a run: script"; next }
@@ -825,6 +827,21 @@ tagged flag binary-value 'on:' '  - !!binary d29ya2Zsb3dfcnVu'
 tagged flag directive-tag '%TAG !e! tag:yaml.org,2002:' '---' 'on: !e!binary d29ya2Zsb3dfcnVu'
 tagged flag bare-expression 'on: push' 'jobs:' '  a:' '    if: !cancelled()'
 tagged pass expression 'on: push' 'jobs:' '  a:' '    if: ${{ !cancelled() }}' "    env: {A: \"!x\", B: 'y !z'}" '    run: echo hi!'
+# every cargo test in a workflow runs each test binary, whatever fails before it
+cargo_t() { # cargo_t WANT NAME LINE...  — a workflow whose job runs LINE...; the checker must WANT (flag|pass) it
+  local want=$1 name=$2 got=pass; shift 2
+  { printf 'name: x\non: push\npermissions:\n  contents: read\njobs:\n  a:\n    runs-on: ubuntu-latest\n    timeout-minutes: 5\n    steps:\n'
+    printf '%s\n' "$@"; } > "$T/cargo-$name.yml"
+  case "$(wfcheck "$T/cargo-$name.yml")" in *"cargo test without --no-fail-fast"*) got=flag;; esac
+  if [ "$got" = "$want" ]; then pass=$((pass + 1)); echo "PASS workflows: the cargo test check gives $want on $name"
+  else failn=$((failn + 1)); echo "FAIL workflows: the cargo test check gives $got on $name, want $want"; fi
+}
+cargo_t flag one-line '      - run: cargo test --release --locked'
+cargo_t flag block '      - run: |' '          cargo build' '          cargo test'
+cargo_t flag after-and '      - run: cargo build && cargo test --locked'
+cargo_t pass no-fail-fast '      - run: cargo test --release --locked --no-fail-fast'
+cargo_t pass block-no-fail-fast '      - run: |' '          cargo test --no-fail-fast --locked'
+cargo_t pass other-command '      - run: cargo build --release --locked' '      - run: echo cargo testing'
 # The trigger key is plain on: only. A key YAML reads as on in any other spelling fails whatever its events,
 # and so does an explicit ? key or an alias as a key.
 onkey() { # onkey WANT NAME LINE...  — a workflow that starts with LINE...; the checker must WANT (flag|pass) its keys
