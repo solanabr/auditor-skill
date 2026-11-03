@@ -14,7 +14,9 @@
 #   - the case files fixtures/recipes/<tool>/cases.txt, under each bash on the machine (/bin/bash and the bash
 #     running this suite, when they differ), which must print the same: each case exits as written with its
 #     one stderr line, prints nothing on stdout, starts no program the fixture's config names and changes
-#     nothing in the working directory.
+#     nothing in the working directory;
+#   - the corpus: every --include, --exclude and --exclude-dir glob is quoted; the items #33 added each give a
+#     PASS and a FAIL clause; the locators of RS-022 and AI-037..AI-039 run as written under failglob.
 # Usage (from the repo root): bash scripts/tests/test-recipes.sh
 # Needs bash >= 3.2, git, awk, sed, grep, find, cmp. No network.
 set -uo pipefail
@@ -746,6 +748,35 @@ sys.exit(1 if bad else 0)
 PY
 if [ "$?" = 0 ]; then ok "every corpus call of a tool no command pre-approves sits in a step that says it asks for approval"
 else ko "a corpus call of a tool no command pre-approves sits in a step that does not say it asks for approval"; sed 's/^/#   /' "$T/asks.txt" | cut -c1-220; fi
+
+# Every --include, --exclude and --exclude-dir value in the corpus that holds a glob character is quoted: left
+# unquoted, zsh (the shell the Bash tool runs) stops the command with "no matches found" before grep starts.
+(cd "$ROOT" && grep -rnE --include='*.md' -e "--(include|exclude|exclude-dir)=[^'\" ]*[*?[]" FULL-AUDIT.md checklists \
+  known-vectors discovery references templates) > "$T/unquoted.txt" 2>&1
+if [ "$?" = 1 ]; then ok "every --include, --exclude and --exclude-dir glob in the corpus is quoted"
+else ko "a corpus --include, --exclude or --exclude-dir glob is left unquoted"; sed 's/^/#   /' "$T/unquoted.txt" | cut -c1-220; fi
+# The items #33 added each give a PASS and a FAIL clause, and the locators of RS-022 and AI-037..AI-039 run as
+# written under failglob (a glob left unquoted stops them, as zsh would) from a tree's root: each lists the line
+# planted for it, and the AI locators skip node_modules/.
+LOC="$T/locators"
+mkdir -p "$LOC/src" "$LOC/web" "$LOC/node_modules/x" && printf 'loop {\n    client.send_transaction(&tx)?;\n}\n' > "$LOC/src/keeper.rs" \
+  && printf 'const tools = await client.listTools();\n' > "$LOC/web/mcp.ts" && printf 'store.upsert(record)\n' > "$LOC/web/memory.py" \
+  && printf '<div dangerouslySetInnerHTML={{ __html: out }} />\n' > "$LOC/web/view.jsx" \
+  && printf 'listTools(); upsert(); dangerouslySetInnerHTML\n' > "$LOC/node_modules/x/index.ts" || ko "could not build the locator fixture"
+for citem in "09-backend-security BE-133" "11-supply-chain SC-063" "11-supply-chain SC-064" "11-supply-chain SC-065" \
+          "20-rust-offchain-services RS-022 src/keeper.rs:2:" "20-rust-offchain-services RS-023" \
+          "19-ai-agent-security AI-037 web/mcp.ts:1:" "19-ai-agent-security AI-038 web/memory.py:1:" \
+          "19-ai-agent-security AI-039 web/view.jsx:1:"; do
+  read -r ckl cid cwant <<< "$citem"
+  cline=$(awk -v id="- [ ] **$cid**:" 'index($0, id) == 1' "$ROOT/checklists/$ckl.md")
+  case "$cline" in *"(PASS: "*"; FAIL: "*) ok "$cid gives a PASS and a FAIL clause";; *) ko "$cid gives no PASS and FAIL clause";; esac
+  [ -n "$cwant" ] || continue
+  printf '%s\n' "$cline" | awk '{ n = split($0, a, "`"); for (i = 2; i <= n; i += 2) if (index(a[i], "grep -rnE ") == 1) print a[i] }' \
+    > "$T/loc.sh"
+  (cd "$LOC" && bash -O failglob "$T/loc.sh") > "$T/loc.out" 2>&1; RC=$?
+  check "$cid's locator runs under failglob and lists $cwant" \
+    sh -c "[ '$RC' = 0 ] && grep -q '^\(\./\)\{0,1\}$cwant' '$T/loc.out' && ! grep -q node_modules '$T/loc.out'"
+done
 
 # Above 64 KiB: each corpus call of git-ro.sh that pipes into head, run as written over a history of 400 commits
 # whose matching output passes 64 KiB, prints its head's lines and ends.
