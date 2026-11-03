@@ -244,7 +244,10 @@ so it must be safe whatever arguments follow. Its rules are those of
   to `/` when it is not under `HOME`, that holds a `.git` of any kind), removed,
   each compared by identity rather than spelling; with an environment of its own
   that allows no transport (`GIT_ALLOW_PROTOCOL` empty, which the repository's
-  config cannot widen); and with the repository's config pinned off. It asks for
+  config cannot widen); and with the repository's config pinned off. git does not
+  start on a repository holding a named pipe or device it would open on its way (as
+  HEAD, in its git directory, or included by its config), which confine.sh's
+  `confine_git_check` finds; `--out` is then refused for that reason. It asks for
   `--out`, and, in a scan of `.` that has time left, for a run directory or
   `.audit-memory/` that holds a `.gitignore` of exactly `*`. When git cannot
   answer, or has not answered within 10 s (it is then killed), `--out` is refused,
@@ -440,8 +443,8 @@ gives exact deduplication across audits.
 | `init` | Make the store: for `.audit-memory/audit.db` with no `.audit-memory/`, the directory, its `.gitignore` of `*` first, then the database; in a run directory, the database. On a store that exists, add the tables and columns it lacks. Prints `initialized <store>`. |
 | `put-finding` | Upsert a finding + append an occurrence. Prints `<STATUS> <finding_id>`, or `REGRESSED <finding_id>` on regression. A severity or title it replaces is kept (below). A store holding a status audit-mem never sets for the finding is refused, and left as it was. |
 | `set-status` | Set a finding's status (`FIXED` \| `OPEN` \| `ACKNOWLEDGED` \| `DISPUTED`). |
-| `rule` | Record a `FALSE_POSITIVE` \| `ACCEPTED_RISK` ruling with a timestamp and its anchor: the commit it is made at and the guard it cites (below). A `FALSE_POSITIVE` ruling needs `--commit` and `--guard`. |
-| `check` | Print `{"suppressed":bool,"ruling":..}`; exit 0 when the newest `FALSE_POSITIVE` ruling for the signature still holds, else exit 1. A ruling that no longer holds is printed with `"stale":"<why>"` and suppresses nothing. |
+| `rule` | Record a `FALSE_POSITIVE` \| `ACCEPTED_RISK` ruling with a timestamp and its anchor: the commit it is made at, the guard it cites and the candidate it rules on (below). A `FALSE_POSITIVE` ruling needs `--commit`, `--guard` and `--site`. |
+| `check` | Print `{"suppressed":bool,"ruling":..}`; exit 0 when the newest `FALSE_POSITIVE` ruling of the signature made for the candidate `--site` names still holds, else exit 1. A ruling that no longer holds is printed with `"stale":"<why>"` and suppresses nothing. |
 | `regressions` | JSON `{regressions[], truncated}`: of the findings with status `REGRESSED`, the 200 seen most recently (by their newest occurrence), the most severe first, each with the severities and titles `put-finding` replaced in it (`changed`, below); `truncated` counts the rest. |
 | `warm` | JSON `{profile, invariants[], open_fp_rulings[], truncated}` — the warm-start context block for a re-audit: what `profile` and `invariant` recorded, each with the values they replaced (`changed`, below), and the rulings with their anchors. Each list holds at most 200 rows, the newest; `truncated` counts the rows left out of all of them, and the values left out of `changed` (below). |
 | `profile` | Record the program's protocol profile. Fields not given keep what the profile holds; a recorded value a field given replaces is kept (below). Prints `profile <program_id> recorded`, then `, replacing <fields> (…)` when it replaced any. |
@@ -472,7 +475,8 @@ put-finding     --program-id <PID> --signature <SIG> --root-cause <RC> --title <
 set-status      --program-id <PID> --signature <SIG> --root-cause <RC> --status <STATUS>
 rule            --program-id <PID> --signature <SIG> --ruling <RULING> --rationale <R> --by <WHO>
                 [--scope <S>] [--commit <SHA>] [--guard <FILE>:<LINE> | <FILE>:<FIRST>-<LAST>]
-check           --program-id <PID> --signature <SIG> [--commit <SHA>]
+                [--site <FILE>:<LINE>]
+check           --program-id <PID> --signature <SIG> [--commit <SHA>] [--site <FILE>:<LINE>]
 regressions     --program-id <PID>
 warm            --program-id <PID>
 profile         --program-id <PID>, and at least one of [--protocol-class <C>]
@@ -501,16 +505,23 @@ A false-positive ruling holds for the code it was made on. `rule` records:
 - the guard, `--guard <file>:<line>` or `<file>:<first>-<last>` (at most 200 lines):
   a file of the working tree, read under the confined path rules (relative, no `.`
   or `..`, no symbolic link on the way, a regular file with one name, at most 4 MiB),
-  and the sha256 of those lines, each with the newline that ends it.
+  and the sha256 of those lines, each with the newline that ends it;
+- the site, `--site <file>:<line>`: the one candidate the ruling is for, a relative
+  path under the path grammar (one leading `./` dropped) and a line from 1, recorded
+  as `<file>:<line>` and not read. Candidates with the same signature at other sites
+  are siblings, which the ruling does not cover.
 
-`check` suppresses only while the newest `FALSE_POSITIVE` ruling for the signature
-holds: `--commit` is its commit, the same full id, and the guard's lines, read again
-under the same rules, hash as they did. Otherwise it prints the ruling with `stale`,
-the reasons joined by `; `, and exits 1: a stale ruling is a finding to check again.
-A check with no `--commit` never suppresses. A ruling recorded before rulings had
-anchors has none: it is `"stale":"no anchor"` and never suppresses. `warm` lists the
-rulings as they were recorded, anchors included; only `check` says whether one still
-holds. `init`, or any
+`check` takes the newest `FALSE_POSITIVE` ruling of the signature made for the site
+`--site` names (so each sibling with a ruling of its own is suppressed by it), or,
+with none made for that site, the newest of the signature. It suppresses only while
+that ruling holds: `--commit` is its commit, the same full id, `--site` is its site,
+and the guard's lines, read again under the same rules, hash as they did. Otherwise
+it prints the ruling with `stale`, the reasons joined by `; `, and exits 1: a stale
+ruling is a finding to check again. A check with no `--commit`, or no `--site`,
+never suppresses. A ruling recorded before rulings had anchors has none: it is
+`"stale":"no anchor"` and never suppresses; one recorded before rulings named their
+site is `"ruled with no site"`. `warm` lists the rulings as they were recorded,
+anchors included; only `check` says whether one still holds. `init`, or any
 subcommand that writes, adds the anchor columns to a store made before them (a new
 store is made the same way, so the two read alike), in the transaction it writes
 in: one that fails or refuses leaves the store as it was. `warm`, `check` and
@@ -545,8 +556,12 @@ rules are those of `scripts/lib/confine.sh` and `scripts/rundir.sh`, in
   is not under `HOME`, that holds a `.git` of any kind), removed, each compared by
   identity rather than spelling; with an environment of its own that allows no
   transport (`GIT_ALLOW_PROTOCOL` empty, which the repository's config cannot
-  widen); and with the repository's config pinned off. When git cannot answer, or
-  has not answered within 10 s (it is then killed), it refuses.
+  widen); and with the repository's config pinned off. git does not start on a
+  repository holding a named pipe or device it would open on its way, as
+  confine.sh's `confine_git_check` finds one: `--db <R>/audit-mem.db` is refused for
+  that reason, as `rundir.sh check` refuses it, and the in-tree store because git
+  cannot tell, as `rundir.sh store` refuses it. When git cannot answer, or has not
+  answered within 10 s (it is then killed), it refuses.
 - The database is a regular file with one name, in rollback-journal mode: a database
   in WAL mode is refused, since a read-only open of one makes a file beside it. No
   `-wal` or `-shm` file may sit beside it (audit-mem never makes one, and SQLite would
@@ -617,12 +632,15 @@ audit-mem invariant --contract=1 --program-id VaultProg... --statement 'total_sh
 # rule a known false positive at the audited commit, citing its guard, then gate on it
 audit-mem rule --contract=1 --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
   --ruling FALSE_POSITIVE --rationale 'guarded by the require! on line 40' --by auditor \
-  --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe --guard src/withdraw.rs:40
+  --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe --guard src/withdraw.rs:40 --site src/withdraw.rs:42
 audit-mem check --contract=1 --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
-  --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe
+  --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe --site src/withdraw.rs:42
 #   -> {"suppressed":true,"ruling":{...}}   (exit 0)
 audit-mem check --contract=1 --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
-  --commit c0ffee4c0ffee4c0ffee4c0ffee4c0ffee4c0ffe
+  --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe --site src/liquidate.rs:17
+#   -> {"suppressed":false,"stale":"ruled for the site src/withdraw.rs:42, checked for src/liquidate.rs:17","ruling":{...}}   (exit 1)
+audit-mem check --contract=1 --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
+  --commit c0ffee4c0ffee4c0ffee4c0ffee4c0ffee4c0ffe --site src/withdraw.rs:42
 #   -> {"suppressed":false,"stale":"ruled at commit c0ffee3…, checked at c0ffee4…","ruling":{...}}   (exit 1)
 
 # a store for one run
@@ -795,9 +813,9 @@ gracefully — it works without them; they just save context and add memory.
   `warm --program-id` returns the protocol profile and invariants that `profile`
   and `invariant` recorded, with the values they replaced, and the standing
   false-positive/accepted-risk rulings with their anchors, so prior context is not
-  re-derived. A ruling holds only at the commit it was made at: `check --commit`
-  suppresses a finding ruled `FALSE_POSITIVE` there while the guard's lines still
-  hold, which spares the same commit a second ruling (a triage run again, say), and
+  re-derived. A ruling holds only at the commit it was made at, and for the one
+  candidate it names: `check --commit --site` suppresses that candidate, ruled
+  `FALSE_POSITIVE` there, while the guard's lines still hold, which spares the same commit a second ruling (a triage run again, say), and
   at any other commit reports the ruling stale, a finding to confirm and rule again
   at that commit. `put-finding` + `regressions` surface anything that was fixed and
   has since regressed.
