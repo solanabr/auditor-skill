@@ -515,7 +515,7 @@ zlacks() { # zlacks CALL: the flags, and for a container call the digest, CALL l
   local s=" $1 " f miss=""
   for f in $ZALL; do case "$s" in *" $f "*) ;; *) miss="$miss $f" ;; esac; done
   case "$s" in *" docker "*|*" podman "*)
-    printf '%s\n' "$1" | tr ' \t' '\n\n' | grep -Eq '^"?ghcr\.io/zizmorcore/zizmor(:[^@]*)?@sha256:[0123456789abcdef]{64}"?$' \
+    [ -n "$(printf '%s\n' "$1" | tr ' \t' '\n\n' | grep -E '^"?ghcr\.io/zizmorcore/zizmor(:[^@]*)?@sha256:[0123456789abcdef]{64}"?$')" ] \
       || miss="$miss a sha256 digest" ;;
   esac
   printf '%s' "$miss"
