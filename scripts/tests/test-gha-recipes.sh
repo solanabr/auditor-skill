@@ -368,7 +368,10 @@ else echo "FAIL K080-3 in its echo lines: got lines [$got] want [6 7 8 9 10 11 1
 # KV-080 Step 6 lists each uses: in a workflow or a composite action that names neither actions/ nor github/ nor a
 # local action: an owner whose name starts with actions, a path below another owner's actions/, a docker:// image, a
 # reusable workflow, and a reference whose trailing comment names an official action. A uses: after another key of a
-# { } mapping is listed whatever it names, and a commented-out one is not.
+# { } mapping is listed whatever it names, and a commented-out one is not. A line of a flow sequence whose first uses:
+# names an official or a local action is left out only when nothing but }, ], commas, blanks or a comment follows it,
+# so a second entry on that line is listed. In a file saved with CRLF line ends a third-party uses: is listed on every
+# grep, and an official one too under GNU and BSD grep, where the CR is not the end of the line.
 k6="$work/k080-6"; mkdir -p "$k6/.github/workflows" "$k6/.github/actions/setup"
 printf '%s\n' 'on: push' 'jobs:' '  a:' '    runs-on: ubuntu-latest' '    steps:' \
   '      - uses: actions/checkout@v4' '      - uses: github/codeql-action/init@v3' \
@@ -377,16 +380,29 @@ printf '%s\n' 'on: push' 'jobs:' '  a:' '    runs-on: ubuntu-latest' '    steps:
   '      - uses: example/actions/sub@v1' '      - uses: docker://alpine:3.20' \
   '      - uses: example/act@main # uses: actions/checkout@v4' '      - { name: x, uses: actions/checkout@v4 }' \
   '      # - uses: example/retired@v1' '  b:' '    uses: example/repo/.github/workflows/w.yml@v1' '  c:' \
-  '    uses: ./.github/workflows/local.yml' > "$k6/.github/workflows/third-party.yml"
+  '    uses: ./.github/workflows/local.yml' '  d:' '    runs-on: ubuntu-latest' '    steps: [' \
+  '      {uses: actions/checkout@v4}, {uses: example/flow-after-official@v1},' \
+  '      {uses: ./.github/actions/setup}, {uses: example/flow-after-local@main},' \
+  '      {uses: actions/cache@v4},' '      { uses: "github/codeql-action/analyze@v3" },' \
+  '      {uses: actions/upload-artifact@v4}, # {uses: example/commented@v1}' '      {run: echo hi}' '    ]' \
+  '  e:' '    runs-on: ubuntu-latest' '    steps:' '      - uses: actions/checkout@v4 # example/named@v1' \
+  > "$k6/.github/workflows/third-party.yml"
+printf '%s\r\n' 'on: push' 'jobs:' '  a:' '    runs-on: ubuntu-latest' '    steps:' '      - uses: actions/checkout@v4' \
+  '      - uses: example/crlf@v1' > "$k6/.github/workflows/crlf.yml"
 printf '%s\n' 'runs:' '  using: composite' '  steps:' '    - uses: example/composite-dep@v2' \
   '    - uses: actions/cache@v4' > "$k6/.github/actions/setup/action.yml"
 nlines=$((nlines + 1))
 got=$(run_recipe "$k6" "$(recipe_lines K080-6)" | sed 's#^\.github/##' | awk -F: '{ print $1 ":" $2 }' \
   | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')
-want="actions/setup/action.yml:4"
-for n in 10 11 12 13 14 15 18; do want="$want workflows/third-party.yml:$n"; done
-if [ "$got" = "$want" ]; then echo "ok   K080-6 in its uses: lines: $got"
-else echo "FAIL K080-6 in its uses: lines: got [$got] want [$want]"; fail=1; fi
+want=""
+for n in 10 11 12 13 14 15 18 24 25; do want="$want workflows/third-party.yml:$n"; done
+case "$got" in
+  "actions/setup/action.yml:4 workflows/crlf.yml:6 workflows/crlf.yml:7$want" | \
+  "actions/setup/action.yml:4 workflows/crlf.yml:7$want") echo "ok   K080-6 in its uses: lines: $got" ;;
+  *) echo "FAIL K080-6 in its uses: lines: got [$got] want [actions/setup/action.yml:4 workflows/crlf.yml:6" \
+       "workflows/crlf.yml:7$want] (crlf.yml:6, an official action, is listed under GNU and BSD grep only)"
+     fail=1 ;;
+esac
 
 # Linear by construction. In a UTF-8 locale GNU grep decides a line in one pass of its DFA only when the pattern
 # holds nothing the DFA leaves undecided: a negated bracket such as [^#], a class such as [[:space:]], a range
@@ -832,12 +848,13 @@ if [ "$nhead" -eq 0 ]; then echo "FAIL no command of KV-080 or KV-140 pipes into
 # with a SHA one digit short, one that repeats a ref: expression whose step output R7 cannot read, one whose only
 # author_association follows a #, one that repeats a claude call whose -p follows an &, one that holds an event
 # name after a megabyte of blanks, one that repeats an echo of an expression and of a variable that name no secret,
-# and an infrastructure file that repeats lookalikes of the runner and OIDC settings. Each command of every recipe,
-# and KV-080 Step 4's first command, must end within 30 s and flag nothing, in a UTF-8 locale where one is
-# installed (C.UTF-8 on GitHub's ubuntu runners): there GNU grep needs minutes for such a line when a pattern holds
-# a construct its DFA leaves undecided (see "Linear by construction" above), and each line here passes the filter
-# GNU grep runs before that. KV-080 Step 4's first command and Step 6 list every line that holds a uses: key, so
-# they list the pin line, whose run: string holds them, and nothing else.
+# one whose official uses: is followed by a megabyte of the closing brackets, commas and blanks that KV-080 Step 6
+# skips and then one more character, and an infrastructure file that repeats lookalikes of the runner and OIDC
+# settings. Each command of every recipe, and KV-080 Step 4's first command, must end within 30 s and flag nothing,
+# in a UTF-8 locale where one is installed (C.UTF-8 on GitHub's ubuntu runners): there GNU grep needs minutes for
+# such a line when a pattern holds a construct its DFA leaves undecided (see "Linear by construction" above), and
+# each line here passes the filter GNU grep runs before that. KV-080 Step 4's first command and Step 6 list the pin
+# line, whose run: string holds uses: keys, and the uses: line, and nothing else.
 utf8=$(locale -a 2>/dev/null | grep -iE '^(C|en_US)[.]utf-?8$' | sed -n 1p)
 long="$work/long"; mkdir -p "$long/.github/workflows" "$long/infra"
 { printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo "'
@@ -865,10 +882,13 @@ long="$work/long"; mkdir -p "$long/.github/workflows" "$long/infra"
 { printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo "'
   awk 'BEGIN { for (i = 0; i < 36000; i++) printf "echo ${{ x }} secrets $a KEY " }'
   printf '"\n'; } > "$long/.github/workflows/long-echo.yml"
+{ printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4'
+  awk 'BEGIN { for (i = 0; i < 262500; i++) printf " }, " }'
+  printf 'x\n'; } > "$long/.github/workflows/long-uses.yml"
 sizes=""; small=0
 for f in .github/workflows/long.yml .github/workflows/long-pins.yml .github/workflows/long-refs.yml \
   .github/workflows/long-gate.yml .github/workflows/long-agent.yml \
-  .github/workflows/long-trigger.yml .github/workflows/long-echo.yml infra/long.tf; do
+  .github/workflows/long-trigger.yml .github/workflows/long-echo.yml .github/workflows/long-uses.yml infra/long.tf; do
   s=$(wc -c < "$long/$f" | tr -d ' '); sizes="$sizes $s"
   if [ "$s" -le 1000000 ]; then small=1; fi
 done
@@ -878,7 +898,8 @@ for id in $IDS K080-4a; do
     if ! within 30 "$long" "$c" "$utf8"; then slow="$slow $id"
     elif [ -s "$work/within.out" ]; then
       case "$id:$(cut -d: -f1 "$work/within.out" | sort -u | tr '\n' ' ')" in
-        K080-4a:".github/workflows/long-pins.yml "|K080-6:".github/workflows/long-pins.yml ") ;;
+        K080-4a:".github/workflows/long-pins.yml .github/workflows/long-uses.yml ") ;;
+        K080-6:".github/workflows/long-pins.yml .github/workflows/long-uses.yml ") ;;
         *) noisy="$noisy $id" ;;
       esac
     fi
@@ -886,7 +907,7 @@ for id in $IDS K080-4a; do
 done
 if [ -z "$slow$noisy" ] && [ "$small" -eq 0 ]; then
   echo "ok   every recipe on lines of$sizes bytes of near misses (LC_ALL=${utf8:-unset}): each command done within" \
-    "30 s, nothing flagged but the pin line's uses: keys, by KV-080 Steps 4 and 6"
+    "30 s, nothing flagged but the lines that hold a uses: key, by KV-080 Steps 4 and 6"
 else
   echo "FAIL lines of$sizes bytes of near misses (LC_ALL=${utf8:-unset}): still running after 30 s [$slow]," \
     "flagged [$noisy]"
