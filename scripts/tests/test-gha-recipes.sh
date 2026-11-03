@@ -382,7 +382,9 @@ else echo "FAIL K080-3 in its echo lines: got lines [$got] want [6 7 8 9 10 11 1
 # { } mapping is listed whatever it names, and a commented-out one is not. A line of a flow sequence whose first uses:
 # names an official or a local action is left out only when nothing but }, ], commas, blanks or a comment follows it,
 # so a second entry on that line is listed. In a file saved with CRLF line ends a third-party uses: is listed on every
-# grep, and an official one too under GNU and BSD grep, where the CR is not the end of the line.
+# grep, and an official one too under GNU and BSD grep, where the CR is not the end of the line. A lone CR ends a YAML
+# line but not grep's, and so does U+0085 for a YAML 1.1 parser, so a comment that holds one carries the step after it:
+# Step 6 lists the line, whether the comment follows an official or a local uses: or fills the line.
 k6="$work/k080-6"; mkdir -p "$k6/.github/workflows" "$k6/.github/actions/setup"
 printf '%s\n' 'on: push' 'jobs:' '  a:' '    runs-on: ubuntu-latest' '    steps:' \
   '      - uses: actions/checkout@v4' '      - uses: github/codeql-action/init@v3' \
@@ -398,6 +400,10 @@ printf '%s\n' 'on: push' 'jobs:' '  a:' '    runs-on: ubuntu-latest' '    steps:
   '      {uses: actions/upload-artifact@v4}, # {uses: example/commented@v1}' '      {run: echo hi}' '    ]' \
   '  e:' '    runs-on: ubuntu-latest' '    steps:' '      - uses: actions/checkout@v4 # example/named@v1' \
   > "$k6/.github/workflows/third-party.yml"
+tp="$k6/.github/workflows/third-party.yml"
+printf '  f:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4 #\r      - uses: example/cr@v1\n' >> "$tp"
+printf '      # note\r      - uses: example/cr-in-comment-line@v1\n' >> "$tp"
+printf '      - uses: ./.github/actions/setup # n\302\205      - uses: example/nel@v1\n' >> "$tp"
 printf '%s\r\n' 'on: push' 'jobs:' '  a:' '    runs-on: ubuntu-latest' '    steps:' '      - uses: actions/checkout@v4' \
   '      - uses: example/crlf@v1' > "$k6/.github/workflows/crlf.yml"
 printf '%s\n' 'runs:' '  using: composite' '  steps:' '    - uses: example/composite-dep@v2' \
@@ -406,7 +412,7 @@ nlines=$((nlines + 1))
 got=$(run_recipe "$k6" "$(recipe_lines K080-6)" | sed 's#^\.github/##' | awk -F: '{ print $1 ":" $2 }' \
   | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')
 want=""
-for n in 10 11 12 13 14 15 18 24 25; do want="$want workflows/third-party.yml:$n"; done
+for n in 10 11 12 13 14 15 18 24 25 38 39 40; do want="$want workflows/third-party.yml:$n"; done
 case "$got" in
   "actions/setup/action.yml:4 workflows/crlf.yml:6 workflows/crlf.yml:7$want" | \
   "actions/setup/action.yml:4 workflows/crlf.yml:7$want") echo "ok   K080-6 in its uses: lines: $got" ;;
