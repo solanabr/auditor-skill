@@ -81,10 +81,13 @@ Recursively walks the `*.rs` files under `<dir>`, parses each as `syn::parse_fil
 does, in a child of its own, and prints one JSON object to stdout (or writes it to
 `--out`). `--pretty` uses `serde_json::to_string_pretty`. The walk does not enter
 a directory named `.git` or `node_modules` below `<dir>`, nor one named `target`
-that holds the `CACHEDIR.TAG` cargo writes in each target directory it makes (a
-regular file that starts with the tag's signature; a `target` without it, such as
-a source module of that name, is scanned), nor, when `<dir>` is `.`, a run
-directory or `.audit-memory/` that holds an audit's own output: one that holds the
+that cargo has built in: one that holds the `CACHEDIR.TAG` cargo writes in each
+target directory it makes, or the `.rustc_info.json` it writes in each one it
+builds in, one made before cargo's first build too (as `anchor` can make
+`target/deploy`), each a regular file that starts as cargo writes it; a
+`target` with neither, such as a source module of that name, is scanned. Nor,
+when `<dir>` is `.`, does it enter a run directory or `.audit-memory/` that holds
+an audit's own output: one that holds the
 `.gitignore` of exactly `*` that `rundir.sh new` and `audit-mem init` write first,
 and that no repository tracks in any letter case. A directory with such a name
 that is not one, such as one the target's repository tracks, is scanned like any

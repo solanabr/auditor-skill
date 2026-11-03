@@ -542,12 +542,53 @@ fn skips_large_irregular_and_unparsable_files() {
 
 const RUN_DIR: &str = "a run directory (a .gitignore of * and nothing tracked), not scanned";
 const STORE: &str = "the audit-mem store (a .gitignore of * and nothing tracked), not scanned";
-const BUILD: &str = "a target/ directory cargo made (it holds CACHEDIR.TAG), not scanned";
+const BUILD: &str =
+    "a target/ directory cargo built in (it holds CACHEDIR.TAG or .rustc_info.json), not scanned";
 
-/// The `CACHEDIR.TAG` cargo writes in a target directory.
+/// The `CACHEDIR.TAG` cargo writes in a target directory it makes.
 const CARGO_TAG: &[u8] = b"Signature: 8a477f597d28d172789f06886806bc55\n\
 # This file is a cache directory tag created by cargo.\n\
 # For information about cache directory tags see https://bford.info/cachedir/\n";
+
+/// A `.rustc_info.json` as cargo writes it in each target directory it builds in,
+/// its start as cargo 1.85 and 1.99 write it.
+const RUSTC_INFO: &[u8] =
+    b"{\"rustc_fingerprint\":16663139784161297601,\"outputs\":{},\"successes\":{}}";
+
+#[test]
+fn prunes_a_target_directory_cargo_built_in_without_making_it() {
+    // A target/ made before cargo's first build, as `anchor` can make
+    // target/deploy, holds the .rustc_info.json cargo writes but no CACHEDIR.TAG.
+    let wt = Wt::new();
+    wt.write("src/lib.rs", b"fn a() {}\n");
+    wt.write("target/.rustc_info.json", RUSTC_INFO);
+    wt.mkdir("target/deploy");
+    wt.write(
+        "target/release/build/g-1/out/generated.rs",
+        b"fn generated() {}\n",
+    );
+    // One whose .rustc_info.json is not cargo's, and one where it is a FIFO,
+    // which the scan does not wait on, are scanned.
+    wt.write("programs/p/target/.rustc_info.json", b"{\"outputs\":{}}");
+    wt.write("programs/p/target/lib.rs", b"fn near_miss() {}\n");
+    wt.mkdir("programs/q/target");
+    let status = Command::new("mkfifo")
+        .arg(wt.path("programs/q/target/.rustc_info.json"))
+        .status()
+        .expect("mkfifo");
+    assert!(status.success());
+    wt.write("programs/q/target/lib.rs", b"fn fifo() {}\n");
+    let report = json(&run(BIN, &wt.dir, &["."]));
+    assert_eq!(
+        files(&report, "functions"),
+        vec![
+            "./programs/p/target/lib.rs",
+            "./programs/q/target/lib.rs",
+            "./src/lib.rs",
+        ]
+    );
+    assert_eq!(skipped(&report), [("./target".into(), BUILD.into())]);
+}
 
 #[test]
 fn prunes_the_run_directories_and_store_an_audit_made_at_the_top_only() {
