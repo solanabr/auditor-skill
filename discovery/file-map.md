@@ -319,9 +319,11 @@ GREP PATTERNS:
   "__import__"           → Dynamic import risk
 
 TERMINAL COMMANDS (third-party tools no bundled runner wraps, so each asks for approval; run the
-dependency audits from a scratch dir outside the target tree, on copies of the requirements files):
-  pip-audit                            # Known vulnerabilities
-  safety check                         # Dependency audit
+dependency audits from a scratch dir outside the target tree, on pins.txt, the name==version lines
+PY-050 copies out of the requirements files; never bare, which audits the auditor's own Python, and
+never on the files themselves, which pip-audit installs from the indexes they name):
+  pip-audit --no-deps --disable-pip -r pins.txt   # Known vulnerabilities, without pip or an install
+  safety check -r pins.txt             # Dependency audit
   bandit -r .                          # Static security analysis
 ```
 

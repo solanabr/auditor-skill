@@ -74,12 +74,12 @@ Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{seve
 ## 14.6 — Dependency & Import Safety
 
 - [ ] **PY-049**: `requirements.txt` or `pyproject.toml` pins exact versions (not `>=` or `~=` for critical deps)
-- [ ] **PY-050**: No packages with known CVEs — run `pip-audit` or `safety check` (both ask for approval; no bundled reader covers them)
+- [ ] **PY-050**: No pinned dependency has a known vulnerability. Audit the target's own pins, never the Python the tool runs in (`pip-audit` or `safety check` with no file audits that environment), and never through a resolver: `pip-audit -r <file>` without `--no-deps --disable-pip` installs the file as `pip install -r` would, so it follows the file's `--index-url`, `--extra-index-url` and `-e` lines and runs sdist build hooks on the auditor's host, outside the recorded execution mode (OUTPUT-RULES Rule 11a). From a scratch directory outside the tree, copy only the `name==version` part of each pinned line, indented or not, of the target's requirements files (a file that is a symbolic link is named as not audited, never read), then audit that copy without pip: `LC_ALL=C sed -nE -e 's/.*/& /' -e 's/^[[:space:]]*([A-Za-z0-9][A-Za-z0-9._-]*(\[[A-Za-z0-9._,-]*\])?[[:space:]]*==[[:space:]]*[A-Za-z0-9.!+_-]+)[^A-Za-z0-9.!+_*-].*/\1/p' <requirements files> > pins.txt` (the first expression ends each line with a space, so each version stops at a character no version holds), then `pip-audit --no-deps --disable-pip -r pins.txt` (or `safety check -r pins.txt`). No bundled reader covers either tool, so both ask for approval, and the advisory service each one queries (PyPI for pip-audit) is a Rule 11b entry. (PASS: every requirement is pinned, `pins.txt` holds each one, and none has an advisory; FAIL: an advisory against a pinned version; PARTIAL: a requirement line `pins.txt` lacks — a range such as `>=` or `~=`, an `-e`, VCS or URL requirement, an `-r` or `-c` include — or a `poetry.lock`, `uv.lock` or `Pipfile.lock` with no requirements file, each named as not audited)
 - [ ] **PY-051**: Virtual environment used — no system-wide `pip install`
 - [ ] **PY-052**: No `pip install` with `--trusted-host` or `--index-url` pointing to untrusted registries
 - [ ] **PY-053**: `__init__.py` files do not execute code with side effects on import
 - [ ] **PY-054**: No wildcard imports (`from module import *`) — pollutes namespace, hides dependencies
-- [ ] **PY-055**: Dependencies scanned with `pip-audit` — no known vulnerabilities (asks for approval)
+- [ ] **PY-055**: Dependencies scanned with `pip-audit` in PY-050's form, on the pinned copy with `--no-deps --disable-pip` — no known vulnerabilities (asks for approval); a bare `pip-audit` reports on the auditor's own Python, not on the target
 - [ ] **PY-056**: 14-day quarantine rule applied to new package versions (same as npm)
 
 ## 14.7 — Error Handling & Type Safety
