@@ -26,7 +26,11 @@
 #     fetches nothing and fires no canary, and an option-shaped deployed commit is refused, never read as an
 #     option; its log, above 64 KiB, is cut at 40 lines; SC-054 names the same fetch;
 #   - the manifest reads of KV-076 Step 4, KV-078 Step 10, KV-049 Step 4 and KV-089 Step 3, on a PATH with no
-#     npm or node: the locked packages with an install script, a declared hook tool, the declared runtime.
+#     npm or node: the locked packages with an install script, a declared hook tool, the declared runtime;
+#   - checklist 11 SC-063, SC-064 and SC-065 and checklist 14 PY-050, as written: SC-064's installer locator under
+#     failglob over a tree of installer forms and near misses, and its patterns; SC-063's grep over an artifact
+#     diff and its RS cross-references; SC-065's allowlist; PY-050's copy of the pins from a hostile
+#     requirements file, and the pip-audit call it and discovery/file-map.md give.
 # Usage (from the repo root): bash scripts/tests/test-lockfile-recipes.sh
 # Needs bash >= 3.2, git, grep, sed, awk, find, mkfifo. No network: the test's git config rewrites the
 # upstream's https URL to a local path.
@@ -557,6 +561,114 @@ sort "$T/mf.want" > "$T/mf.wsort"; sort "$T/mf.out" > "$T/mf.osort"   # the recu
 if cmp -s "$T/mf.wsort" "$T/mf.osort"; then
   ok "KV-089 Step 3 reads the declared runtime of the root and both apps, not the auditor's node, without node_modules"
 else bad "KV-089 Step 3 on the manifests fixture"; sed 's/^/  | /' "$T/mf.out"; fi
+
+# ---- 5. SC-063, SC-064, SC-065 and PY-050 as the corpus writes them -----------------------------------------
+# SC-064's installer locator, run from a tree's root under bash with failglob, so a glob left unquoted stops it as
+# it stops zsh, the shell the Bash tool runs: it lists Anza's sh -c "$(curl …)" install and bash -ec, curl or wget
+# piped into a shell by any path (/bin/bash, /usr/bin/env bash) and through sudo, process substitutions, the
+# rustup, Agave and avm installers, cargo install and binstall, in .yml and .yaml workflows, a Dockerfile RUN in
+# shell and exec form, scripts in subdirectories, a Makefile, a package.json and a devcontainer.json script, a TOML
+# script array, a CRLF line too; and nothing under node_modules/ or target/, nor a download, a checksum check, a
+# shell name inside another word, or a file of another kind.
+item() { awk -v id="- [ ] **$2**:" 'index($0, id) == 1' "$1"; }   # item FILE ID: the line of a checklist item
+span() { awk -v p="$1" '{ n = split($0, a, "`"); for (i = 2; i <= n; i += 2) if (index(a[i], p) == 1) print a[i] }'; }
+SC="$T/sc064"
+mkdir -p "$SC/.github/workflows" "$SC/docker" "$SC/scripts/ci" "$SC/node_modules/x" "$SC/target/debug" "$SC/src" \
+  "$SC/.devcontainer" "$SC/sub" || exit 1
+printf '%s\n' 'name: ci' 'on: push' 'jobs:' '  build:' '    steps:' \
+  '      - run: sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"' \
+  "      - run: curl --proto '=https' --tlsv1.2 -sSfL https://solana-install.solana.workers.dev | bash" \
+  "      - run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y" \
+  '      - run: wget -qO- https://get.example.invalid/install.sh | sudo -E bash' \
+  '      - run: bash <(curl -sSfL https://get.example.invalid/i)' '      - run: avm install latest && avm use latest' \
+  '      - run: curl -sSfLo tools.tgz https://example.invalid/tools.tgz' \
+  '      - run: curl -sSfL https://example.invalid/sums.txt | shasum -a 256 -c' '      - run: echo done | shellcheck -' \
+  "      - run: 'curl -fsSL https://get.example.invalid/q | sh'" \
+  '      - run: curl -fsSL https://get.example.invalid/e | /usr/bin/env bash' \
+  '      - run: curl -fsSL https://get.example.invalid/u | sudo -u root bash -s -- --yes' \
+  '      - run: bash -ec "$(curl -fsSL https://get.example.invalid/ec)"' \
+  '      - run: bash < <(curl -fsSL https://get.example.invalid/pp)' \
+  '      - run: curl -fsSL https://example.invalid/x.json | jq -r .sh' \
+  '      - run: rustup component add clippy && rustup target add wasm32-unknown-unknown' > "$SC/.github/workflows/ci.yml"
+printf 'on: push\njobs:\n  r:\n    steps:\n      - run: curl -fsSL https://get.example.invalid | zsh\r\n' > "$SC/.github/workflows/release.yaml"
+printf '%s\n' 'FROM debian' 'RUN curl -sSfL https://release.anza.xyz/v2.1.0/install | sh' \
+  'RUN cargo install --git https://github.com/coral-xyz/anchor avm --locked --force' \
+  'RUN curl -fsSL https://get.example.invalid/i.sh | /bin/bash' \
+  'RUN ["/bin/sh", "-c", "curl -fsSL https://get.example.invalid/j.sh | sh"]' \
+  'RUN cargo +nightly install cargo-fuzz && cargo binstall -y cargo-nextest' > "$SC/docker/Dockerfile.build"
+printf 'setup:\n\tcurl -sSf https://sh.rustup.rs | sh\n\tcurl -fsSL https://example.invalid/a | tee install.sh\n' > "$SC/Makefile"
+printf '%s\n' '#!/bin/sh' 'agave-install init 2.1.0' 'rustup toolchain install 1.79.0' 'rustup update stable' > "$SC/scripts/setup.sh"
+printf '%s\n' '#!/bin/sh' 'wget -qO- https://get.example.invalid/w.sh | sh' \
+  'curl -fsSL https://get.example.invalid/s.sh | sudo -E bash -' 'eval "$(curl -fsSL https://get.example.invalid/ev)"' \
+  > "$SC/scripts/ci/setup.sh"
+printf '%s\n' '{"scripts": {"setup": "sh -c \"$(curl -fsSL https://example.invalid/i)\"",' \
+  '  "postinstall": "curl -fsSL https://get.example.invalid/n.sh | sh",' '  "x": "echo"}}' > "$SC/package.json"
+printf '%s\n' '{' '  "postCreateCommand": "curl -fsSL https://get.example.invalid/d.sh | bash",' '  "name": "x"' '}' \
+  > "$SC/.devcontainer/devcontainer.json"
+printf '%s\n' '[tasks.setup]' 'script = ["curl -fsSL https://get.example.invalid/t.sh | sh", "echo"]' > "$SC/sub/Makefile.toml"
+printf 'curl x | sh\n' > "$SC/node_modules/x/install.sh"; printf '{"cmd": "curl x | sh"}\n' > "$SC/target/debug/x.json"
+printf '// curl x | sh\n' > "$SC/src/lib.rs"
+{ for n in 6 7 8 9 10 11 15 16 17 18 19; do echo ".github/workflows/ci.yml:$n"; done
+  echo .github/workflows/release.yaml:5; for n in 2 3 4 5 6; do echo "docker/Dockerfile.build:$n"; done; echo Makefile:2
+  for n in 2 3 4; do echo "scripts/setup.sh:$n"; echo "scripts/ci/setup.sh:$n"; done
+  printf '%s\n' package.json:1 package.json:2 .devcontainer/devcontainer.json:2 sub/Makefile.toml:2; } | LC_ALL=C sort > "$T/sc064.want"
+item "$CL" SC-064 | span 'grep -rnE ' > "$T/sc064.sh"
+(cd "$SC" && bash -O failglob "$T/sc064.sh") > "$T/sc064.raw" 2>&1
+sed 's#^\./##' "$T/sc064.raw" | cut -d: -f1,2 | LC_ALL=C sort > "$T/sc064.out"
+if [ "$(grep -c '' "$T/sc064.sh")" = 1 ] && cmp -s "$T/sc064.want" "$T/sc064.out"; then
+  ok "SC-064's locator lists the 28 installer lines across the tree and nothing else, with every glob quoted"
+else bad "SC-064's locator on the installer fixture (want the 28 lines of sc064.want)"; sed 's/^/  | /' "$T/sc064.raw"; fi
+# its 5 patterns each start at ^.*, so a grep tries each one once per line however long the line, and the command
+# holds no $ (Claude Code asks about any line with one, in quotes too) and no tab
+pats=$(tr ' ' '\n' < "$T/sc064.sh" | grep -c "^'^\.\*")
+if [ "$pats" = 5 ] && ! grep -q '[$]' "$T/sc064.sh" && ! grep -q "$(printf '\t')" "$T/sc064.sh"; then
+  ok "SC-064's 5 patterns each start at ^.*, and the command holds no \$ and no tab"
+else bad "SC-064's locator: $pats patterns start at ^.*, want 5, and no \$ or tab"; cat "$T/sc064.sh"; fi
+# SC-063: the RS cross-references #33 names, and its grep lists an added unwrap() and a removed panic boundary
+s63=$(item "$CL" SC-063)
+case "$s63" in *RS-005*RS-006*RS-012*RS-013*|*RS-005*RS-006*RS-013*) ok "SC-063 cross-references RS-005, RS-006 and RS-013";;
+  *) bad "SC-063 does not cross-reference RS-005, RS-006 and RS-013";; esac
+mkdir -p "$T/s63/old/src" "$T/s63/new/src" || exit 1
+printf '%s\n' 'fn handle(x: Option<u8>) -> u8 {' '    std::panic::catch_unwind(|| 0).unwrap_or(0)' '}' > "$T/s63/old/src/lib.rs"
+printf '%s\n' 'fn handle(x: Option<u8>) -> u8 {' '    x.unwrap()' '}' > "$T/s63/new/src/lib.rs"
+printf '%s\n' "$s63" | span 'diff -ruN old/ new/ | grep ' > "$T/s63.sh"
+(cd "$T/s63" && bash "$T/s63.sh") > "$T/s63.out" 2>&1
+if grep -q '^[0-9]*:+    x\.unwrap()$' "$T/s63.out" && grep -q '^[0-9]*:-    std::panic::catch_unwind' "$T/s63.out"; then
+  ok "SC-063's grep lists an added unwrap() and a removed catch_unwind"
+else bad "SC-063's grep on an artifact diff"; sed 's/^/  | /' "$T/s63.out"; fi
+# SC-065: files and include are the allowlist; an .npmignore is a denylist that replaces .gitignore
+s65=$(item "$CL" SC-065)
+case "$s65" in *'(or `.npmignore`)'*) bad "SC-065 still offers .npmignore as the allowlist";;
+  *'`package.json` `files`, a crate'"'"'s `include`'*'An `.npmignore` is no allowlist'*'only where that directory has no `.npmignore`'*)
+    ok "SC-065 takes files or include as the allowlist and reads .npmignore as a list of what to leave out";;
+  *) bad "SC-065 does not say that an .npmignore is no allowlist and replaces .gitignore";; esac
+# PY-050: the pins come out of a hostile requirements file as name==version lines only, indented ones too, under
+# failglob from a scratch directory, and pip-audit reads them without pip; file-map's Python rows give the same call
+PY14="$ROOT/checklists/14-python-safety.md"
+mkdir -p "$T/py/tree" "$T/py/scratch" || exit 1
+printf '%s\n' '# a comment' '--index-url https://pypi.example.invalid/simple' '--extra-index-url https://extra.example.invalid/simple' \
+  '--trusted-host pypi.example.invalid' '-f https://links.example.invalid/' '-r ../outside.txt' '-c constraints.txt' \
+  '-e git+https://git.example.invalid/x.git#egg=x' 'evil @ https://files.example.invalid/evil-1.0.tar.gz' \
+  'https://files.example.invalid/direct-1.0.tar.gz' 'ranged>=1.0' 'compat~=1.4' 'wild==1.0.*' 'star==1.0*' 'arb===1.0' \
+  'bar==2.0 \' '    --hash=sha256:0000000000000000000000000000000000000000000000000000000000000000' \
+  'baz==3.0 ; python_version < "3.11"' 'qux[extra,other]==4.0' 'spaced == 5.0' 'zed==6.0  # pinned' \
+  'opt[x --index-url=https://evil.example.invalid]==1.0' 'Mixed_Case.name==7.0rc1' 'epoch==1!2.0+local.1' \
+  '  indented==9.0' "$(printf '\tttab==9.1')" > "$T/py/tree/requirements.txt"
+printf 'crlf==8.0\r\n' >> "$T/py/tree/requirements.txt"
+printf '%s\n' 'bar==2.0' 'baz==3.0' 'qux[extra,other]==4.0' 'spaced == 5.0' 'zed==6.0' 'Mixed_Case.name==7.0rc1' \
+  'epoch==1!2.0+local.1' 'indented==9.0' 'ttab==9.1' 'crlf==8.0' > "$T/py/want"
+p50=$(item "$PY14" PY-050)
+printf '%s\n' "$p50" | span 'LC_ALL=C sed -nE ' | sed "s#<requirements files>#$T/py/tree/requirements.txt#" > "$T/py/sed.sh"
+(cd "$T/py/scratch" && bash -O failglob "$T/py/sed.sh") > "$T/py/sed.out" 2>&1
+if [ "$(grep -c '' "$T/py/sed.sh")" = 1 ] && ! grep -q '[$]' "$T/py/sed.sh" && [ ! -s "$T/py/sed.out" ] \
+   && cmp -s "$T/py/want" "$T/py/scratch/pins.txt"; then
+  ok "PY-050 copies only the name==version part of each pinned line, indented ones too, by a command with no \$"
+else bad "PY-050's copy of the pins"; sed 's/^/  | /' "$T/py/sed.out" "$T/py/scratch/pins.txt" 2>/dev/null; fi
+if [ "$(printf '%s\n' "$p50" | span 'pip-audit ' | grep -cx 'pip-audit --no-deps --disable-pip -r pins.txt')" -ge 1 ] \
+   && grep -qx '  pip-audit --no-deps --disable-pip -r pins.txt .*' "$ROOT/discovery/file-map.md" \
+   && ! grep -qxE '  (pip-audit|safety check) *(#.*)?' "$ROOT/discovery/file-map.md"; then
+  ok "PY-050 and file-map run pip-audit on the pins with --no-deps --disable-pip, never bare"
+else bad "PY-050 or file-map runs pip-audit or safety bare, or without --no-deps --disable-pip"; fi
 
 echo "---- $pass passed, $failn failed"
 [ "$failn" -eq 0 ]
