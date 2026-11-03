@@ -31,6 +31,14 @@
 #   Claude Code's login: .credentials.json in ~/.claude and in every other ~/.claude* directory (where
 #     CLAUDE_CONFIG_DIR keeps a second account), and every file under ~/.config/anthropic (Anthropic
 #     profiles and their tokens, which Claude Code also signs in with);
+#   Claude Code's settings and state when one holds a credential: settings.json, settings.local.json,
+#     remote-settings.json, .claude.json and backups/.claude.json* in each ~/.claude* directory, and
+#     ~/.claude.json and its backups (the state file, which keeps the personal MCP servers). One counts when it
+#     names a command that prints a credential (apiKeyHelper, awsCredentialExport, otelHeadersHelper), when an
+#     env block in it, its own or an MCP server's, gives a value to a variable whose name looks like a
+#     credential (as below) or a value with a URL that carries a login, or when a headers block sends an
+#     Authorization, Cookie or key header with a value. A value that refers to a variable (${NAME}) does not
+#     count, and neither does a file that is not JSON; one larger than 16 MiB stops the check (status 2);
 #   1Password's agent socket: ~/.1password/agent.sock, and on macOS
 #     ~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock;
 #   the sockets of a container daemon, which gives whoever reaches it the host: Docker Desktop's
@@ -44,8 +52,8 @@
 # AWS_SHARED_CREDENTIALS_FILE, GOOGLE_APPLICATION_CREDENTIALS, NETRC, NPM_CONFIG_USERCONFIG (in either case),
 # GIT_ASKPASS, SSH_ASKPASS and ANTHROPIC_IDENTITY_TOKEN_FILE, each a file; GIT_CONFIG_GLOBAL and
 # GIT_CONFIG_SYSTEM, read as ~/.gitconfig is; AWS_CONFIG_FILE, read as ~/.aws/config is; KUBECONFIG, a list
-# of files; DOCKER_CONFIG (config.json); CLAUDE_CONFIG_DIR (.credentials.json); ANTHROPIC_CONFIG_DIR (every
-# file under it); CLOUDSDK_CONFIG and AZURE_CONFIG_DIR (the gcloud and azure files above); GNUPGHOME (its
+# of files; DOCKER_CONFIG (config.json); CLAUDE_CONFIG_DIR (.credentials.json, and the settings and state
+# files above); ANTHROPIC_CONFIG_DIR (every file under it); CLOUDSDK_CONFIG and AZURE_CONFIG_DIR (the gcloud and azure files above); GNUPGHOME (its
 # private-keys-v1.d/ and gpg-agent sockets); DOCKER_HOST and CONTAINER_HOST (a unix:// socket);
 # VSCODE_GIT_IPC_HANDLE and REMOTE_CONTAINERS_IPC (the sockets through which VS Code and its Dev Containers
 # answer git's credential requests with the host's login); TMPDIR (ssh-*/agent.*, vscode-git-*.sock and
@@ -54,7 +62,9 @@
 # can name: the sockets /tmp/ssh-*/agent.*, /tmp/vscode-ssh-auth-*.sock, /tmp/vscode-git-*.sock,
 # /tmp/vscode-remote-containers-ipc-*.sock and macOS's /private/tmp/com.apple.launchd.*/Listeners; docker.sock,
 # podman/podman.sock and containerd/containerd.sock in /run and /var/run; /run/user/<uid> as for
-# XDG_RUNTIME_DIR; and /etc/gitconfig, read as ~/.gitconfig is.
+# XDG_RUNTIME_DIR; /etc/gitconfig, read as ~/.gitconfig is; and Claude Code's managed settings,
+# managed-settings.json, managed-settings.d/*.json and managed-mcp.json in /Library/Application
+# Support/ClaudeCode and /etc/claude-code, read as its settings are.
 # A path counts when it is a regular file, or a link to one, whose first byte can be read, or a socket that
 # accepts a connection: a sandbox that blocks Unix sockets leaves SSH_AUTH_SOCK and its socket in place, out
 # of reach. Past 5000 entries in the directories it lists, the check stops: it cannot tell (status 2). A
@@ -181,6 +191,15 @@ GIT_SECTION = re.compile(r"[ \t]*\[[ \t]*([A-Za-z0-9.-]+)[ \t]*(?:\"((?:[^\"\\]|
 GIT_ENTRY = re.compile(r"[ \t]*([A-Za-z][A-Za-z0-9-]*)[ \t]*(=?)(.*)")
 URL_LOGIN = re.compile(r"(?i)https?://[^/@]+@")
 AWS_SECRET = re.compile(r"(?im)^[ \t]*(credential_process|aws_secret_access_key|aws_session_token)[ \t]*=[ \t]*[^\s#;]")
+# Claude Code: the settings and state files of a ~/.claude* directory or CLAUDE_CONFIG_DIR, and the managed
+# settings in the system directories, as glob patterns; the settings that run a command printing a credential.
+CLAUDE_FILES = ("settings.json", "settings.local.json", "remote-settings.json", ".claude.json*", "backups/.claude.json*")
+MANAGED = ("/Library/Application Support/ClaudeCode", "/etc/claude-code")
+MANAGED_FILES = ("managed-settings.json", "managed-settings.d/*.json", "managed-mcp.json")
+CLAUDE_HELPERS = ("apiKeyHelper", "awsCredentialExport", "otelHeadersHelper")
+CLAUDE_LIMIT = 16 << 20
+REFERENCE = re.compile(r"\$(?:\{|[A-Za-z_])")
+VALUE_LOGIN = re.compile(r"(?i)\b(?:https?|socks[45]?h?)://[^/@\s]+@")
 
 
 class Unfinished(Exception):
@@ -359,6 +378,61 @@ def aws_config(path, home, found, state):
         found.append((CLOUD, path))
 
 
+def secretish(name):
+    # A name that looks like a credential: a part TOKEN, SECRET, PASSWORD, PASSWD or APIKEY, or API_KEY,
+    # ACCESS_KEY, PRIVATE_KEY or RPC_URL.
+    parts = name.upper().split("_")
+    return bool(set(parts) & {"TOKEN", "SECRET", "PASSWORD", "PASSWD", "APIKEY"}
+                or set(zip(parts, parts[1:])) & {("API", "KEY"), ("ACCESS", "KEY"), ("PRIVATE", "KEY"), ("RPC", "URL")})
+
+
+def set_here(value):
+    # A value a settings file sets itself, not one that refers to a variable (${NAME} or $NAME).
+    return (isinstance(value, (str, int, float)) and not isinstance(value, bool) and str(value).strip() != ""
+            and not REFERENCE.search(str(value)))
+
+
+def credential_header(name):
+    name = name.upper().replace("-", "_")
+    return name in ("AUTHORIZATION", "PROXY_AUTHORIZATION", "COOKIE") or secretish(name)
+
+
+def claude_files(directory, names=CLAUDE_FILES):
+    at = glob.escape(directory)
+    return [p for n in names for p in sorted(glob.glob(os.path.join(at, n)))]
+
+
+def claude_json(path, home, found, state):
+    # A Claude Code settings or state file counts when it names a command that prints a credential, when an
+    # env block in it (of the file or of an MCP server) gives a variable whose name looks like a credential a
+    # value, or gives any variable a value with a URL that carries a login, or when a headers block (of an MCP
+    # server or an HTTP hook) sends an Authorization, Cookie or key header with a value. Past 16 MiB the check
+    # cannot finish; a file that is not JSON counts for nothing, as Claude Code reads nothing from it.
+    data = start(path, CLAUDE_LIMIT + 1) if path else None
+    key = os.path.realpath(path) if data is not None else ""
+    if not key or key in state["configs"]:
+        return
+    state["configs"].add(key)
+    if len(data) > CLAUDE_LIMIT:
+        raise Unfinished("a Claude Code settings or state file larger than 16 MiB")
+    try:
+        stack = [json.loads(data.decode("utf-8", "replace"))]
+    except (ValueError, RecursionError):
+        return
+    while stack:
+        node = stack.pop()
+        items = node.items() if isinstance(node, dict) else enumerate(node) if isinstance(node, list) else ()
+        for name, value in items:
+            if (name in CLAUDE_HELPERS and isinstance(value, str) and value.strip()
+                    or name == "env" and isinstance(value, dict)
+                    and any(set_here(v) and (secretish(k) or VALUE_LOGIN.search(str(v))) for k, v in value.items())
+                    or name == "headers" and isinstance(value, dict)
+                    and any(set_here(v) and credential_header(k) for k, v in value.items())):
+                found.append((CLAUDE, path))
+                return
+            stack.append(value)
+
+
 def runtime(directory, dirs, socks):
     dirs.extend((AGENT, os.path.join(directory, d)) for d in ("gnupg", "keyring", "gcr"))
     at = glob.escape(directory)
@@ -385,6 +459,8 @@ def named(env, files, dirs, socks, configs):
         dirs.append((CLOUD, os.path.join(env["CLOUDSDK_CONFIG"], "legacy_credentials")))
     if env.get("ANTHROPIC_CONFIG_DIR"):
         dirs.append((CLAUDE, env["ANTHROPIC_CONFIG_DIR"]))
+    if env.get("CLAUDE_CONFIG_DIR"):
+        configs.extend((claude_json, p) for p in claude_files(env["CLAUDE_CONFIG_DIR"]))
     if env.get("GNUPGHOME"):
         dirs.append((GPG, os.path.join(env["GNUPGHOME"], "private-keys-v1.d")))
         socks.extend((AGENT, os.path.join(env["GNUPGHOME"], s)) for s in GPG_SOCKETS)
@@ -429,6 +505,12 @@ def creds(which, given):
         for kind, f in FILES:
             readable(found, kind, [os.path.join(home, f)])
         readable(found, CLAUDE, glob.glob(os.path.join(at, ".claude*", ".credentials.json")))
+        for p in sorted(glob.glob(os.path.join(at, ".claude*"))):
+            if os.path.isdir(p):
+                for f in claude_files(p):
+                    claude_json(f, home, found, state)
+            elif os.path.basename(p).startswith(".claude.json"):
+                claude_json(p, home, found, state)
         for kind, d in DIRS:
             walk(os.path.join(home, d), None, found, state, kind)
         sockets(found, ((kind, p) for kind, s in SOCKETS for p in glob.glob(os.path.join(at, s))))
@@ -438,8 +520,8 @@ def creds(which, given):
         aws_config(os.path.join(home, ".aws/config"), home, found, state)
     named(env, files, dirs, socks, configs)
     if which == "default":
-        # What anyone on the machine can name: agent, VS Code and container daemon sockets, and the git config
-        # of the system.
+        # What anyone on the machine can name: agent, VS Code and container daemon sockets, the git config of
+        # the system and the managed settings of Claude Code.
         socks.extend((AGENT, p) for p in glob.glob("/tmp/ssh-*/agent.*") + glob.glob("/tmp/vscode-ssh-auth-*.sock")
                      + glob.glob("/private/tmp/com.apple.launchd.*/Listeners"))
         socks.extend((GIT, p) for p in glob.glob("/tmp/vscode-git-*.sock") + glob.glob("/tmp/vscode-remote-containers-ipc-*.sock"))
@@ -447,6 +529,7 @@ def creds(which, given):
                      for s in ("docker.sock", "podman/podman.sock", "containerd/containerd.sock"))
         runtime("/run/user/%d" % os.getuid(), dirs, socks)
         configs.append((git_config, "/etc/gitconfig"))
+        configs.extend((claude_json, p) for d in MANAGED for p in claude_files(d, MANAGED_FILES))
     for kind, f in files:
         readable(found, kind, [f])
     for kind, d in dirs:
@@ -475,15 +558,8 @@ def creds(which, given):
 
 
 def names(env):
-    # The variables whose names look like credentials: a part TOKEN, SECRET, PASSWORD, PASSWD or APIKEY, or
-    # API_KEY, ACCESS_KEY, PRIVATE_KEY or RPC_URL.
-    out = []
-    for name in sorted(env):
-        parts = name.upper().split("_")
-        if (set(parts) & {"TOKEN", "SECRET", "PASSWORD", "PASSWD", "APIKEY"}
-                or set(zip(parts, parts[1:])) & {("API", "KEY"), ("ACCESS", "KEY"), ("PRIVATE", "KEY"), ("RPC", "URL")}):
-            out.append(shown(name))
-    print(", ".join(out))
+    # The variables whose names look like credentials.
+    print(", ".join(shown(name) for name in sorted(env) if secretish(name)))
     return 0
 
 

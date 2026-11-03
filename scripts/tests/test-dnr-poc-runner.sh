@@ -82,7 +82,9 @@
 #     the entry budget, the places the environment names (a Claude Code login under
 #     CLAUDE_CONFIG_DIR and Anthropic profiles too), git and AWS config files by what
 #     they hold (a credential helper, an askpass program, an HTTP header, a URL with a
-#     login, an include; a credential_process or a key), the variable names that look
+#     login, an include; a credential_process or a key), Claude Code's settings, state
+#     and managed settings by what they hold (a credential helper, a token in an env
+#     block, an MCP server's Authorization header), the variable names that look
 #     like credentials, and agent, container daemon and git credential sockets
 #     (serving one needs a machine that allows it: on CI a machine that does not fails
 #     the run, anywhere else one SKIP line says so). On CI the runner's own home must
@@ -1490,14 +1492,21 @@ done <<'CREDS'
 .config/anthropic/credentials/default.json|Claude Code credentials
 .config/anthropic/configs/default.json|Claude Code credentials
 CREDS
-# The same for a Claude Code login only where CLAUDE_CONFIG_DIR keeps it, outside HOME, and for a git credential
-# helper only, in ~/.gitconfig, in the form Dev Containers use to forward the host's git login.
+# The same for a Claude Code login only where CLAUDE_CONFIG_DIR keeps it, outside HOME, for an API key only in
+# the env block of ~/.claude/settings.json, and for a git credential helper only, in ~/.gitconfig, in the form
+# Dev Containers use to forward the host's git login.
 mkdir -p "$T/cc-dir"; printf 'secret\n' > "$T/cc-dir/.credentials.json"
 code="$(ngate HOME="$CLEANHOME" CLAUDE_CONFIG_DIR="$T/cc-dir" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
 line="$(grep '^\[PoC-ATTEMPTED\] blocker: isolated mode, but these are readable here: ' "$T/out")"
 [ "$code" = 3 ] && case "$line" in *"Claude Code credentials ("*) true ;; *) false ;; esac && new_nothing_ran && one_blocker \
   && ok "isolated mode with a Claude Code login only under CLAUDE_CONFIG_DIR, outside HOME -> exit 3 naming Claude Code credentials, nothing copied" \
   || { bad "isolated, a login under CLAUDE_CONFIG_DIR: exit $code"; cat "$T/out" >&2; }
+FH="$T/fh-ccsettings"; mkdir -p "$FH/.claude"; printf '{"env":{"ANTHROPIC_API_KEY":"x"}}\n' > "$FH/.claude/settings.json"
+code="$(ngate HOME="$FH" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+line="$(grep '^\[PoC-ATTEMPTED\] blocker: isolated mode, but these are readable here: ' "$T/out")"
+[ "$code" = 3 ] && case "$line" in *"Claude Code credentials ("*) true ;; *) false ;; esac && new_nothing_ran && one_blocker \
+  && ok "isolated mode with an API key only in the env block of ~/.claude/settings.json -> exit 3 naming Claude Code credentials, nothing copied" \
+  || { bad "isolated, an API key in Claude Code's settings: exit $code"; cat "$T/out" >&2; }
 FH="$T/fh-gitcred"; mkdir -p "$FH"
 printf '[credential]\n\thelper = "!f() { node /tmp/vscode-remote-containers-0.js git-credential-helper $*; }; f"\n' > "$FH/.gitconfig"
 code="$(ngate HOME="$FH" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
@@ -1567,14 +1576,30 @@ code="$(dcreds AWS_SHARED_CREDENTIALS_FILE="$E/aws/creds" KUBECONFIG="$E/kube/a:
   "$E/xdg/gh/hosts.yml" "$E/xdg/git/credentials" "$E/ghdir/hosts.yml" "$E/cargo/credentials.toml" "$E/npmrc-upper" "$E/npmrc-lower" \
   "$E/netrc" "$E/service-account.json" \
   && ok "the credential files the environment's variables name count (KUBECONFIG, CLOUDSDK_CONFIG, GNUPGHOME, CARGO_HOME and the rest)" || { bad "credentials the environment names: $code"; cat "$T/creds.out" >&2; }
-# Where the environment puts a Claude Code login (CLAUDE_CONFIG_DIR), the Anthropic profiles
-# (ANTHROPIC_CONFIG_DIR) and their federation token file.
+# Where the environment puts a Claude Code login (CLAUDE_CONFIG_DIR, with its settings and state files), the
+# Anthropic profiles (ANTHROPIC_CONFIG_DIR) and their federation token file.
 EC="$T/fe-claude"; mkdir -p "$EC/claude" "$EC/anthropic/credentials"
 for f in claude/.credentials.json anthropic/credentials/default.json id-token; do printf 'secret\n' > "$EC/$f"; done
+printf '{"apiKeyHelper":"/opt/k.sh"}\n' > "$EC/claude/settings.json"; printf '{"mcpServers":{"gh":{"env":{"GITHUB_TOKEN":"t"}}}}\n' > "$EC/claude/.claude.json"
 code="$(dcreds CLAUDE_CONFIG_DIR="$EC/claude" ANTHROPIC_CONFIG_DIR="$EC/anthropic" ANTHROPIC_IDENTITY_TOKEN_FILE="$EC/id-token" -- "$CLEANHOME")"
-[ "$code" = 1 ] && lines_are "Claude Code credentials (3)" "$EC/claude/.credentials.json" "$EC/anthropic/credentials/default.json" "$EC/id-token" \
-  && ok "a Claude Code login and Anthropic profiles where the environment puts them count (CLAUDE_CONFIG_DIR, ANTHROPIC_CONFIG_DIR, ANTHROPIC_IDENTITY_TOKEN_FILE)" \
+[ "$code" = 1 ] && lines_are "Claude Code credentials (5)" "$EC/claude/.credentials.json" "$EC/claude/settings.json" "$EC/claude/.claude.json" \
+  "$EC/anthropic/credentials/default.json" "$EC/id-token" \
+  && ok "a Claude Code login, settings and state, and Anthropic profiles where the environment puts them count (CLAUDE_CONFIG_DIR, ANTHROPIC_CONFIG_DIR, ANTHROPIC_IDENTITY_TOKEN_FILE)" \
   || { bad "a Claude Code login the environment moves: $code"; cat "$T/creds.out" >&2; }
+# Claude Code's managed settings count in default mode, read as its settings are. The check reads them in the
+# system directories, so a copy of isolation.sh reads them in the suite's own; it runs where this machine
+# passes the check, as on CI. A hidden file and one not ending in .json in managed-settings.d/ do not count.
+if [ "$ISOLATED_OK" = 1 ]; then
+  MS="$T/managed"; MR="$T/iso-managed"; mkdir -p "$MS/managed-settings.d" "$MR/scripts/lib"
+  cp "$ROOT/scripts/lib/confine.sh" "$MR/scripts/lib/"
+  sed "s#^MANAGED = .*#MANAGED = (\"$MS\",)#" "$ROOT/scripts/lib/isolation.sh" > "$MR/scripts/lib/isolation.sh"
+  printf '{"apiKeyHelper":"/opt/k.sh"}\n' > "$MS/managed-settings.json"; printf '{"mcpServers":{"gh":{"env":{"GITHUB_TOKEN":"t"}}}}\n' > "$MS/managed-mcp.json"
+  for f in 20-key.json .hidden.json notes.txt; do printf '{"env":{"ANTHROPIC_API_KEY":"x"}}\n' > "$MS/managed-settings.d/$f"; done
+  (cd "$WT" && env -i HOME="$CLEANHOME" "${TOOL_HOMES[@]}" PATH="$PATH" bash "$T/iso-driver.sh" "$MR" creds) >"$T/creds.out" 2>&1; code=$?
+  [ "$code" = 1 ] && lines_are "Claude Code credentials (3)" "$MS/managed-settings.json" "$MS/managed-settings.d/20-key.json" "$MS/managed-mcp.json" \
+    && ok "Claude Code's managed settings count in default mode (managed-settings.json, managed-settings.d/*.json, managed-mcp.json)" \
+    || { bad "Claude Code's managed settings: $code"; cat "$T/creds.out" >&2; }
+fi
 # The askpass programs the environment names, and the git and AWS config files it names, which count for what
 # they hold.
 EG="$T/fe-git"; mkdir -p "$EG/xdg/git"
@@ -1590,7 +1615,10 @@ code="$(dcreds GIT_ASKPASS="$EG/askpass" SSH_ASKPASS="$EG/ssh-askpass" GIT_CONFI
 # A git config or an AWS config in a home counts for what it holds. In a git config: a credential helper, an
 # askpass program, an HTTP header or an http(s) URL with a login, in any letter case and on a section's own
 # line too; in an AWS config: a credential_process or a key. A helper reset to nothing, a user name with an
-# ssh URL, and a region alone do not count.
+# ssh URL, and a region alone do not count. So do Claude Code's settings and state files (in ~/.claude*,
+# ~/.claude.json and its backups): a command that prints a credential, a token in an env block (of the file
+# or of an MCP server), a URL with a login there, or an MCP server's Authorization header. Settings that only
+# refer to a variable, and names that do not look like credentials, do not count.
 n=0
 while IFS='|' read -r file text kind; do
   [ -n "$file" ] || continue
@@ -1613,6 +1641,15 @@ done <<'CONFIGS'
 .aws/config|[profile ci]\ncredential_process = /usr/local/bin/creds\n|cloud credentials
 .aws/config|[default]\naws_secret_access_key = x\n|cloud credentials
 .aws/config|[default]\nregion = eu-west-1\n|
+.claude/settings.json|{"env":{"CLAUDE_CODE_OAUTH_TOKEN":"x"}}\n|Claude Code credentials
+.claude/settings.local.json|{"apiKeyHelper":"/opt/k.sh"}\n|Claude Code credentials
+.claude-work/remote-settings.json|{"awsCredentialExport":"/opt/aws-export.sh"}\n|Claude Code credentials
+.claude/settings.json|{"env":{"HTTPS_PROXY":"http://u:p@proxy.invalid:3128"}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"gh":{"command":"x","env":{"GITHUB_TOKEN":"t"}}}}\n|Claude Code credentials
+.claude.json|{"projects":{"/w":{"mcpServers":{"api":{"type":"http","headers":{"Authorization":"Bearer t"}}}}}}\n|Claude Code credentials
+.claude/backups/.claude.json.backup.1|{"mcpServers":{"gh":{"env":{"GITHUB_TOKEN":"t"}}}}\n|Claude Code credentials
+.claude/settings.json|{"env":{"AUDITOR_EXEC_MODE":"isolated","MAX_MCP_OUTPUT_TOKENS":"1","GITHUB_TOKEN":"${GITHUB_TOKEN}"},"apiKeyHelper":""}\n|
+.claude.json|{"oauthAccount":{"emailAddress":"a@b.invalid"},"mcpServers":{"api":{"headers":{"Authorization":"Bearer ${API_TOKEN}","X-Client":"c"}}}}\n|
 CONFIGS
 FH="$T/fc-include"; mkdir -p "$FH/.gitconfig.d"
 printf '[include]\n\tpath = .gitconfig\n\tpath = .gitconfig.d/more\n[includeIf "gitdir:/nowhere/"]\n\tpath = ~/.gitconfig.d/cond\n' > "$FH/.gitconfig"
