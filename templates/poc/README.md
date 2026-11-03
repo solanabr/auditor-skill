@@ -120,7 +120,10 @@ exports writes is not read);
 and a `tests/fixtures/{PROGRAM_NAME}.so`, which mollusk would load in place of
 the arm. These checks run again on the scratch copy right before the fixed arm builds,
 since the vulnerable arm's builds run its dependencies' build scripts and proc macros
-there: a crate they now refuse stops the run (exit `3`).
+there, and `cargo metadata` is read again: a crate they now refuse, or whose manifests
+now give other packages, targets, features or dependencies than before the first build,
+stops the run (exit `3`), and so does a test build that compiled a target of the crate
+that the first `cargo metadata` did not list.
 
 Exit `0` means the exploit reproduced on `vulnerable` **and**, when the fixed arm
 runs, was blocked on `fixed`; `1` / `2` mean a contract assertion of that arm ran and

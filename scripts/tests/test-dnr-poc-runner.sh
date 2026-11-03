@@ -194,8 +194,10 @@ PY
 # rust-toolchain.toml there when RUSTUP_TOOLCHAIN is not pinned. With SHIM_CALLS set it
 # also logs every call, tab-separated: working directory, CARGO_TARGET_DIR,
 # SBF_OUT_DIR, BPF_OUT_DIR, AUDITOR_POC_MARKERS, arguments. `metadata` lists every
-# Cargo.toml under the crate as a member, the root package named SHIM_CRATE (poc_shim),
-# with a dependency on the crate's own shared-test-utils/ (SHIM_STU=none drops it, and
+# Cargo.toml under the crate as a member, and one under markers/ or target/ that the
+# root manifest names on a `members = [...]` line, the root package named SHIM_CRATE
+# (poc_shim), with a test target for each tests/*.rs and the features of a [features]
+# table in its manifest, and a dependency on the crate's own shared-test-utils/ (SHIM_STU=none drops it, and
 # SHIM_STU=<name>,<rename>,<path> sets another, @copy standing for that directory);
 # SHIM_DEP=<name>,<path or git+ source> adds a dependency, SHIM_LIB_SRC sets the root lib's
 # source; SHIM_META=build-script gives the root a build script and SHIM_META=proc-macro makes
@@ -235,7 +237,9 @@ PY
 # name SHIM_RELOCK_PID; `relink` puts a symbolic link to SHIM_RELINK_TO at SHIM_RELINK;
 # `relocate` moves the directory SHIM_RELOCATE aside and puts a link to SHIM_RELOCATE_TO there.
 # SHIM_FAIL=<test> makes that test binary fail. SHIM_PLANT=<path>|<text> has the vulnerable arm's test
-# build append <text> (\n a newline) to <path> in the scratch copy, as a dependency's build script could.
+# build append <text> (\n a newline) to <path> in the scratch copy, as a dependency's build script could
+# (several, separated by ||). SHIM_UNIT=<arm>|<package dir>|<target>|<kinds>|<source> has that arm's test
+# build also report a compiled target of the package in <package dir> of the crate (kinds separated by commas).
 #
 # The installation's copy of run.sh hands the shim and the test binaries a cleaned
 # environment, with no SHIM_ variable in it. So each of them first records the
@@ -296,8 +300,20 @@ esac
 echo "[shim cargo $*]"; exit 0
 SH
 cat > "$T/shim/meta.py" <<'PY'
-import json, os, sys
+import json, os, re, sys
 root, crate, meta = sys.argv[1], os.environ.get("SHIM_CRATE", "poc_shim"), os.environ.get("SHIM_META", "")
+try:
+    manifest_text = open(os.path.join(root, "Cargo.toml")).read()
+except OSError:
+    manifest_text = ""
+features, in_features = {}, False
+for line in manifest_text.splitlines():
+    if line.strip().startswith("["):
+        in_features = line.strip() == "[features]"
+    elif in_features and re.match(r"\s*[A-Za-z0-9_-]+\s*=\s*\[.*\]\s*$", line):
+        key, value = line.split("=", 1)
+        features[key.strip()] = re.findall(r"\x22([^\x22]*)\x22", value)
+named = [rel for m in re.finditer(r"(?m)^\s*members\s*=\s*\[(.*)\]", manifest_text) for rel in re.findall(r"\x22([^\x22]*)\x22", m.group(1))]
 stu = os.environ.get("SHIM_STU", "shared-test-utils,,@copy")
 deps = []
 if stu != "none":
@@ -310,11 +326,13 @@ if os.environ.get("SHIM_DEP"):
     source = spec if spec.startswith(("git+", "registry+", "sparse+")) else None
     index = spec.split("+", 1)[1] if spec.startswith(("registry+", "sparse+")) and "crates.io" not in spec else None
     deps.append({"name": name, "rename": None, "path": None if source else spec, "kind": None, "source": source, "registry": index})
-packages = []
+packages, tops = [], []
 for top, dirs, files in os.walk(root):
     dirs[:] = sorted(d for d in dirs if not (top == root and d in ("target", "markers")))
-    if "Cargo.toml" not in files:
-        continue
+    if "Cargo.toml" in files:
+        tops.append(top)
+tops += [os.path.join(root, rel) for rel in named if rel.split("/")[0] in ("target", "markers") and os.path.isfile(os.path.join(root, rel, "Cargo.toml"))]
+for top in tops:
     name = crate if top == root else os.path.basename(top)
     kind = [os.environ.get("SHIM_MEMBER_KIND") or "lib"] if top != root else ["proc-macro"] if meta == "proc-macro" else ["cdylib", "lib"]
     src = os.environ.get("SHIM_LIB_SRC") if top == root and os.environ.get("SHIM_LIB_SRC") else os.path.join(top, "src", "lib.rs")
@@ -324,8 +342,11 @@ for top, dirs, files in os.walk(root):
         targets.append({"name": "poc_shim_extra", "kind": extra, "crate_types": extra, "src_path": os.path.join(top, "src", "extra.rs")})
     if top == root and meta == "build-script":
         targets.append({"name": "build-script-build", "kind": ["custom-build"], "crate_types": ["bin"], "src_path": os.path.join(top, "build.rs")})
+    if top == root and os.path.isdir(os.path.join(top, "tests")):
+        targets += [{"name": test[:-3], "kind": ["test"], "crate_types": ["bin"], "src_path": os.path.join(top, "tests", test)}
+                    for test in sorted(os.listdir(os.path.join(top, "tests"))) if test.endswith(".rs")]
     packages.append({"name": name, "version": "0.1.0", "id": "path+file://%s#%s@0.1.0" % (top, name), "manifest_path": os.path.join(top, "Cargo.toml"),
-                     "targets": targets, "dependencies": deps if top == root else []})
+                     "targets": targets, "features": features if top == root else {}, "dependencies": deps if top == root else []})
 # The directory cargo builds into: CARGO_TARGET_DIR, CARGO_BUILD_TARGET_DIR, then
 # SHIM_TARGET_DIR, which stands for a target-dir set in cargo's own config.
 target = os.environ.get("CARGO_TARGET_DIR") or os.environ.get("CARGO_BUILD_TARGET_DIR") or os.environ.get("SHIM_TARGET_DIR") or os.path.join(root, "target")
@@ -349,10 +370,11 @@ if fail == "no-run:" + test:
     print("[shim cargo: test build fails]", file=sys.stderr)
     sys.exit(101)
 if os.environ.get("SHIM_PLANT") and "vulnerable" in args:
-    rel, text = os.environ["SHIM_PLANT"].split("|", 1)
-    os.makedirs(os.path.dirname(os.path.join(root, rel)), exist_ok=True)
-    with open(os.path.join(root, rel), "a") as f:
-        f.write(text.replace("\\n", "\n"))
+    for plant in os.environ["SHIM_PLANT"].split("||"):
+        rel, text = plant.split("|", 1)
+        os.makedirs(os.path.dirname(os.path.join(root, rel)), exist_ok=True)
+        with open(os.path.join(root, rel), "a") as f:
+            f.write(text.replace("\\n", "\n"))
 for n in range(int(os.environ.get("SHIM_JSON_PAD", "0"))):
     print(json.dumps({"reason": "compiler-artifact", "package_id": "registry+https://github.com/rust-lang/crates.io-index#pad%d@1.0.0" % n,
                       "manifest_path": "/registry/pad%d/Cargo.toml" % n, "target": {"kind": ["lib"], "crate_types": ["lib"], "name": "pad%d" % n,
@@ -364,7 +386,7 @@ for n in range(int(os.environ.get("SHIM_JSON_PAD", "0"))):
 fresh = os.environ.get("SHIM_FRESH", "") == "1"
 if fresh:
     print(json.dumps({"reason": "compiler-artifact", "package_id": "path+file://%s#poc_shim@0.1.0" % root, "manifest_path": os.path.join(root, "Cargo.toml"),
-                      "target": {"kind": ["lib"], "crate_types": ["lib"], "name": "poc_shim", "src_path": os.path.join(root, "src", "lib.rs")},
+                      "target": {"kind": ["cdylib", "lib"], "crate_types": ["cdylib", "lib"], "name": "poc_shim", "src_path": os.path.join(root, "src", "lib.rs")},
                       "profile": {"test": False}, "features": [], "filenames": ["/cache/debug/deps/libpoc_shim-shared.rlib"], "executable": None, "fresh": True}))
 if os.environ.get("SHIM_DEPINFO"):
     deps = os.path.join(os.environ.get("CARGO_TARGET_DIR") or os.environ.get("CARGO_BUILD_TARGET_DIR") or os.environ.get("SHIM_TARGET_DIR")
@@ -382,6 +404,14 @@ if stu_build != "none":
     print(json.dumps({"reason": "compiler-artifact", "package_id": "path+file://%s#shared-test-utils@0.1.0" % stu_root, "manifest_path": os.path.join(stu_root, "Cargo.toml"),
                       "target": {"kind": ["lib"], "crate_types": ["lib"], "name": "shared_test_utils", "src_path": os.path.join(stu_root, "src", "lib.rs")},
                       "profile": {"test": False}, "features": [], "filenames": ["/target/debug/deps/libshared_test_utils-shim.rlib"], "executable": None, "fresh": False}))
+if os.environ.get("SHIM_UNIT"):
+    arm, package, name, kinds, src = os.environ["SHIM_UNIT"].split("|")
+    if arm in args:
+        top, kinds = os.path.normpath(os.path.join(root, package)), kinds.split(",")
+        print(json.dumps({"reason": "compiler-artifact", "package_id": "path+file://%s#%s@0.1.0" % (top, os.path.basename(top)), "manifest_path": os.path.join(top, "Cargo.toml"),
+                          "target": {"kind": kinds, "crate_types": kinds, "name": name, "src_path": os.path.join(root, src)},
+                          "profile": {"test": False}, "features": [], "filenames": [os.path.join(root, "target", "debug", "deps", "lib%s-shim.rlib" % name)],
+                          "executable": None, "fresh": False}))
 if fail != "no-exe:" + test:
     exe = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin", test)
     print(json.dumps({"reason": "compiler-artifact", "package_id": "path+file://%s#poc_shim@0.1.0" % root, "manifest_path": os.path.join(root, "Cargo.toml"),
@@ -750,22 +780,48 @@ cp -p "$T/fixed_blocked.kept" "$T/shim/bin/fixed_blocked"
   && ok "the fixed arm's test binary, rewritten by the vulnerable arm's test -> exit 3, it never runs" \
   || { bad "the fixed arm's test binary rewritten: exit $code"; cat "$T/out" >&2; }
 # The vulnerable arm's builds run its dependencies' build scripts and proc macros in the scratch copy, so the
-# checks of the crate run there again right before the fixed arm builds: what they refuse, written meanwhile,
-# stops the run before anything of the fixed arm is built or any test runs; any other change passes.
+# checks of the crate run there again right before the fixed arm builds, and cargo metadata must list what it
+# listed first: what the checks refuse, written meanwhile, and another package, target, feature or dependency
+# stop the run before anything of the fixed arm is built or any test runs; any other change passes. A member
+# under markers/ or target/ (which the checks of the crate do not walk) is one such package.
 CHANGED="the crate changed in the scratch copy while the vulnerable arm built (its dependencies' build scripts and proc macros run there), and run.sh builds the fixed arm only from the crate it checked:"
-while IFS='	' read -r plant_run plant want_plant; do
+while IFS='	' read -r plant_run plant want_plant plant_label; do
   [ -n "$plant_run" ] || continue
+  plant_label="${plant_label:-${plant%%|*}}"
   if [ "$plant_run" = model ]; then code="$(gate "$T/inc" "$NATIVE" "SHIM_PLANT=$plant")"; else code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" "SHIM_PLANT=$plant")"; fi
   [ "$code" = 3 ] && grep -qF "[PoC-ATTEMPTED] blocker: $CHANGED $want_plant" "$T/out" && one_blocker \
     && ! awk -F'\t' '$6 ~ /^testbin / || $6 ~ /^(build-sbf|test) .*--features fixed/ { f = 1 } END { exit !f }' "$T/calls" \
-    && ok "a $plant_run run whose vulnerable-arm build writes ${plant%%|*} into the scratch copy -> exit 3 before the fixed arm builds or a test runs" \
-    || { bad "a $plant_run run whose vulnerable-arm build writes ${plant%%|*}: exit $code"; cat "$T/out" >&2; }
+    && ok "a $plant_run run whose vulnerable-arm build writes $plant_label into the scratch copy -> exit 3 before the fixed arm builds or a test runs" \
+    || { bad "a $plant_run run whose vulnerable-arm build writes $plant_label: exit $code"; cat "$T/out" >&2; }
 done <<'CASES'
 model	Cargo.toml|\n[patch.crates-io]\nborsh = { path = "/elsewhere/borsh" }\n	Cargo.toml:6 holds a [patch] or [replace] table
 model	src/lib.rs|\ncore::arch::global_asm!("");\n	src/lib.rs:2 names global_asm, inline assembly
 prebuilt	.cargo/config.toml|[build]\nrustc-wrapper = "/elsewhere/wrapper"\n	it now holds .cargo, a symbolic link, a .cargo/ directory
 model	tests/fixtures/poc_shim.so|\177ELFother	it now holds tests/fixtures/poc_shim.so, which mollusk would load in place of the arm
 model	../.cargo/config.toml|[build]\nrustc-wrapper = "/elsewhere/wrapper"\n	it would now inherit /
+model	Cargo.toml|\nmembers = ["markers/evil"]\n||markers/evil/Cargo.toml|[package]\nname = "evil"\n||markers/evil/src/lib.rs|mod inner;\n||markers/evil/src/inner.rs|core::arch::global_asm!("");\n	its manifests now name the package evil (markers/evil/Cargo.toml), which they did not name when run.sh checked them — nothing of the fixed arm was built.	a workspace member under markers/ (named in Cargo.toml) whose module holds global_asm
+prebuilt	evil/Cargo.toml|[package]\nname = "evil"\n	its manifests now name the package evil (evil/Cargo.toml), which they did not name when run.sh checked them — nothing of the fixed arm was built.	a new workspace member, evil/Cargo.toml
+model	tests/extra.rs|#[test]\nfn extra() {}\n	its package poc_shim (Cargo.toml) differs from the one run.sh checked, in its targets — nothing of the fixed arm was built.	a new test target, tests/extra.rs
+model	Cargo.toml|\n[features]\nfixed = ["vulnerable"]\n	its package poc_shim (Cargo.toml) differs from the one run.sh checked, in its features — nothing of the fixed arm was built.	a [features] table whose fixed feature turns on vulnerable
+CASES
+# A test build that compiled a target of the crate that the first cargo metadata did not list (the crate
+# changed in the scratch copy during the builds, inside an arm too: a member under markers/ that the library
+# came to depend on, a bin cargo found in src/bin/, the library from another source) stops the run right
+# after that build, before anything else builds or any test runs: what reads the builds afterwards (the SBF
+# dep-info, the files the builds read) works from that first listing.
+UNLISTED="which cargo metadata did not list when run.sh checked the crate: the crate changed in the scratch copy during the builds (its dependencies' build scripts and proc macros run there), and run.sh builds only the crate it checked."
+while IFS='	' read -r unit_run unit want_unit; do
+  [ -n "$unit_run" ] || continue
+  if [ "$unit_run" = model ]; then code="$(gate "$T/inc" "$NATIVE" "SHIM_UNIT=$unit")"; else code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" "SHIM_UNIT=$unit")"; fi
+  after='$6 ~ /^testbin /'; [ "${unit%%|*}" = vulnerable ] && after='$6 ~ /^testbin / || $6 ~ /^(build-sbf|test) .*--features fixed/'
+  [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: the build compiled $want_unit, $UNLISTED" "$T/out" && one_blocker \
+    && ! awk -F'\t' "$after { f = 1 } END { exit !f }" "$T/calls" \
+    && ok "a $unit_run run whose ${unit%%|*} arm's test build compiled $want_unit, unlisted -> exit 3 right after that build, before any test" \
+    || { bad "a $unit_run run whose ${unit%%|*} arm's test build compiled $want_unit: exit $code"; cat "$T/out" >&2; }
+done <<'CASES'
+model	vulnerable|markers/evil|evil|lib|markers/evil/src/lib.rs	the lib target evil (markers/evil/src/lib.rs) of markers/evil/Cargo.toml
+prebuilt	fixed|.|poc_shim_bin|bin|src/bin/poc_shim_bin.rs	the bin target poc_shim_bin (src/bin/poc_shim_bin.rs) of Cargo.toml
+model	vulnerable|.|poc_shim|cdylib,lib|src/other.rs	the cdylib/lib target poc_shim (src/other.rs) of Cargo.toml
 CASES
 code="$(gate "$T/inc" "$NATIVE" "SHIM_PLANT=src/notes.txt|written by a build script\n")"
 [ "$code" = 0 ] && grep -q '^OK: exploit reproduces' "$T/out" && ok "a model run whose vulnerable-arm build writes a file the checks do not refuse runs" \
@@ -913,6 +969,28 @@ src/lib.rs|0|none: every dependency comes from a registry
 target/gen/planted.rs|3|target/gen/planted.rs:1 names global_asm, inline assembly
 markers/tmp/note.rs|3|the build read markers/tmp/note.rs, one of run.sh's own files in the scratch copy (markers/)
 CASES
+# The re-check's comparison of cargo metadata with its first reading, on its own: the same reading passes,
+# and a package gone or another value of a workspace field is named.
+python3 -I - "$NR2" <<'PY'
+import json, sys
+root = sys.argv[1]
+pkg = lambda name, at: {"name": name, "version": "0.1.0", "manifest_path": root + at, "targets": [], "features": {}, "dependencies": []}
+first = {"packages": [pkg("poc_nr2", "/Cargo.toml"), pkg("shared-test-utils", "/shared-test-utils/Cargo.toml")], "workspace_root": root, "target_directory": root + "/target"}
+json.dump(first, open(root + "-first.json", "w"))
+json.dump(first, open(root + "-same.json", "w"))
+json.dump(dict(first, packages=first["packages"][:1]), open(root + "-gone.json", "w"))
+json.dump(dict(first, target_directory="/elsewhere/target"), open(root + "-dir.json", "w"))
+PY
+while IFS='|' read -r sc_again sc_what sc_rc sc_says; do
+  [ -n "$sc_again" ] || continue
+  out="$(env -i PATH="$PATH" python3 -I "$T/harness-nr.py" samecrate "$NR2-first.json" "$NR2-$sc_again.json")"; rc=$?
+  [ "$rc" = "$sc_rc" ] && [ "$out" = "$sc_says" ] && ok "harness samecrate, a second reading $sc_what -> exit $sc_rc${sc_says:+, '$sc_says'}" \
+    || bad "harness samecrate, a second reading $sc_what: $rc '$out'"
+done <<'CASES'
+same|equal to the first|0|
+gone|without one of the packages|3|its manifests no longer name the package shared-test-utils (shared-test-utils/Cargo.toml), which they named when run.sh checked them
+dir|with another target directory|3|cargo metadata gives it another target_directory than when run.sh checked it
+CASES
 
 # A hashlib.py planted in the crate, which the scratch copy holds too, and on PYTHONPATH
 # must not load when run.sh hashes the bytes; the control shows it would without -I.
@@ -933,14 +1011,14 @@ fi
 # and the scratch copy holds the crate's files. A python3 stand-in first on PATH records where each of
 # those calls started.
 PYH="$T/pyh-bin"; mkdir -p "$PYH"
-printf '#!/bin/sh\ncase "$4" in hash|crate|targetdir|checkbuild|settle|nonregistry|sbfdeps|stucopy) printf "%%s %%s\\n" "$(pwd -P)" "$4" >> "%s" ;; esac\nexec "%s" "$@"\n' \
+printf '#!/bin/sh\ncase "$4" in hash|crate|samecrate|targetdir|checkbuild|settle|nonregistry|sbfdeps|stucopy) printf "%%s %%s\\n" "$(pwd -P)" "$4" >> "%s" ;; esac\nexec "%s" "$@"\n' \
   "$T/pyh.log" "$(command -v python3)" > "$PYH/python3"
 chmod +x "$PYH/python3"
 for how in "prebuilt bytes" "a model run"; do
   rm -f "$T/pyh.log"
-  want_calls="checkbuild crate hash nonregistry settle targetdir "
+  want_calls="checkbuild crate hash nonregistry samecrate settle targetdir "
   if [ "$how" = "a model run" ]; then
-    want_calls="checkbuild crate hash nonregistry sbfdeps settle targetdir "; code="$(gate "$T/inc" "$NATIVE" PATH="$PYH:$SP")"
+    want_calls="checkbuild crate hash nonregistry samecrate sbfdeps settle targetdir "; code="$(gate "$T/inc" "$NATIVE" PATH="$PYH:$SP")"
   else code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" PATH="$PYH:$SP")"; fi
   calls="$(awk '{ print $NF }' "$T/pyh.log" 2>/dev/null | LC_ALL=C sort -u | tr '\n' ' ')"
   [ "$code" = 0 ] && [ "$calls" = "$want_calls" ] && ! grep -qvE '^/ [a-z]+$' "$T/pyh.log" \
