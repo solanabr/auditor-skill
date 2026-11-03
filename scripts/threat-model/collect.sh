@@ -85,7 +85,7 @@ SCRIPTS=${here%/*}
 SKILL_ROOT=${SCRIPTS%/*}
 . "$SCRIPTS/lib/confine.sh" || { printf 'collect.sh: refused: scripts/lib/confine.sh cannot be read\n' >&2; exit 2; }
 confine_init collect.sh "$SKILL_ROOT" 2
-confine_need env git find wc cat sed awk sort uniq cut tr head tail grep mktemp rm mkdir date
+confine_need env git find wc cat sed awk sort uniq cut tr head tail grep mktemp rm mkdir rmdir date
 WT=$CONFINE_WT
 COLLECTOR_VERSION=1
 exec </dev/null
@@ -214,6 +214,12 @@ if [ -n "$AUDIT_MEM_DB" ]; then
   confine_path "$DB_REL" --audit-mem-db any
 fi
 
+# G reads with a private empty directory under TMPDIR as git's work tree, and the collector works from a
+# temporary directory there (below): a TMPDIR inside the working directory is refused before either.
+if confine_phys "${TMPDIR:-/tmp}" && confine_inside "$CONFINE_PHYS" "$WT"; then
+  die "TMPDIR lies inside the working directory; set it to a directory outside the tree"
+fi
+
 # ---- the target, and the local parent and inputs -------------------------------------------------
 # hgit_text is the hardened git call (scripts/lib/confine.sh): the target's .git/config, attributes and
 # hooks are attacker-controlled, so it runs git with no environment of the caller's and with the
@@ -225,8 +231,10 @@ fi
 # clean filter can run, and no remote the target configures is ever contacted (the one https clone of
 # a user-given --parent URL below allows https for that call only). Every diff runs with --text and
 # every git grep with -a, so neither an attribute (-diff, diff=<driver> with binary set) nor a size
-# threshold turns a change into "Binary files differ" or hides a file from a search.
-G() { hgit_text "$@"; }
+# threshold turns a change into "Binary files differ" or hides a file from a search. G reads with an
+# empty work tree (hgit_text_tree), so git opens no file of the target's work tree: a named pipe there
+# that confine_repo_top's scan does not see (behind a directory link, say) cannot stop a read.
+G() { hgit_text_tree "$@"; }
 DIFFSAFE=(--text --no-textconv --no-ext-diff --no-color --src-prefix=a/ --dst-prefix=b/)
 abspath() { case "$1" in /*) printf '%s' "$1" ;; *) printf '%s/%s' "$WT" "$1" ;; esac; }
 not_a_repo() {
