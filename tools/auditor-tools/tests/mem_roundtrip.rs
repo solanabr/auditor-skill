@@ -251,6 +251,44 @@ fn a_ruling_suppresses_only_the_candidate_it_was_made_for() {
 }
 
 #[test]
+fn each_sibling_s_own_ruling_suppresses_it() {
+    // Both subtractions are guarded, and each has a ruling of its own: a check of
+    // either finds the one made for it, whichever was made last. A site neither
+    // names finds the newest ruling of the signature, stale.
+    let text: &[u8] = b"fn withdraw() {\n    require!(v.balance >= amount);\n    v.balance -= amount;\n}\nfn liquidate() {\n    require!(v.balance >= amount);\n    v.balance -= amount;\n}\n";
+    let read = move |_: &str| -> Result<Vec<u8>, String> { Ok(text.to_vec()) };
+    let conn = mem::open_in_memory().expect("open in-memory db");
+    for (site, line) in [("src/withdraw.rs:3", 2), ("src/withdraw.rs:7", 6)] {
+        mem::add_ruling(
+            &conn,
+            &mem::NewRuling {
+                program_id: PROG,
+                signature: SIG,
+                ruling: "FALSE_POSITIVE",
+                rationale: "guarded",
+                by: "auditor",
+                scope: None,
+                commit: Some(C1),
+                guard: Some(&guard(text, line, line)),
+                site: Some(site),
+            },
+        )
+        .unwrap();
+    }
+    for (site, id) in [("src/withdraw.rs:3", 1), ("src/withdraw.rs:7", 2)] {
+        let r = mem::check(&conn, PROG, SIG, Some(C1), Some(site), &read).unwrap();
+        assert!(r.suppressed && r.stale.is_none(), "{site}: {r:?}");
+        assert_eq!(r.ruling.map(|r| r.ruling_id), Some(id), "{site}");
+    }
+    let r = mem::check(&conn, PROG, SIG, Some(C1), Some("src/withdraw.rs:9"), &read).unwrap();
+    assert!(!r.suppressed);
+    assert_eq!(
+        r.stale.as_deref(),
+        Some("ruled for the site src/withdraw.rs:7, checked for src/withdraw.rs:9")
+    );
+}
+
+#[test]
 fn a_ruling_without_a_commit_never_holds() {
     let read = |_: &str| -> Result<Vec<u8>, String> { Ok(GUARDED.to_vec()) };
     let conn = mem::open_in_memory().expect("open in-memory db");

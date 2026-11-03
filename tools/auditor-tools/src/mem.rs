@@ -683,15 +683,14 @@ pub struct RulingRow {
     anchor: Option<(String, i64, i64)>,
 }
 
-/// The rulings of `fp_rulings` matching `filter` (an SQL condition on
-/// `program_id = ?1`, and `code_signature = ?2` when `signature` is given),
-/// newest first. A store made before the anchor columns reads as rulings with no
-/// anchor, and one made before rulings named their site as rulings with none.
+/// The rulings of `fp_rulings` matching `filter` (an SQL condition, with `args`
+/// bound to its `?1`, `?2`, …), newest first. A store made before the anchor
+/// columns reads as rulings with no anchor, and one made before rulings named
+/// their site as rulings with none.
 fn rulings(
     conn: &Connection,
     filter: &str,
-    program_id: &str,
-    signature: Option<&str>,
+    args: &[&dyn rusqlite::ToSql],
     limit: Option<u32>,
 ) -> Result<Vec<RulingRow>> {
     let have = ruling_columns(conn)?;
@@ -736,11 +735,9 @@ fn rulings(
             anchor,
         })
     };
-    let rows = match signature {
-        Some(sig) => stmt.query_map(params![program_id, sig], map)?,
-        None => stmt.query_map(params![program_id], map)?,
-    }
-    .collect::<std::result::Result<Vec<_>, _>>()?;
+    let rows = stmt
+        .query_map(args, map)?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(rows)
 }
 
@@ -802,9 +799,12 @@ pub fn staleness(
 }
 
 /// Check whether a (program_id, signature) candidate at `site` is suppressed: by
-/// the most recent `FALSE_POSITIVE` ruling of that signature, when that ruling's
-/// anchor holds at `commit` for `site` (`staleness`, with `read` reading the
-/// guard's file). A stale ruling is returned with the reasons, unsuppressed.
+/// the most recent `FALSE_POSITIVE` ruling of that signature made for `site`, when
+/// that ruling's anchor holds at `commit` (`staleness`, with `read` reading the
+/// guard's file), so each sibling's own ruling suppresses it, whichever was made
+/// last. With none made for `site`, the most recent ruling of the signature is
+/// returned, stale (it names another site, or none). A stale ruling is returned
+/// with the reasons, unsuppressed.
 pub fn check(
     conn: &Connection,
     program_id: &str,
@@ -813,15 +813,31 @@ pub fn check(
     site: Option<&str>,
     read: &dyn Fn(&str) -> std::result::Result<Vec<u8>, String>,
 ) -> Result<CheckResult> {
-    let row = rulings(
-        conn,
-        "program_id = ?1 AND code_signature = ?2 AND ruling = 'FALSE_POSITIVE'",
-        program_id,
-        Some(signature),
-        Some(1),
-    )?
-    .into_iter()
-    .next();
+    const FALSE_POSITIVE: &str =
+        "program_id = ?1 AND code_signature = ?2 AND ruling = 'FALSE_POSITIVE'";
+    let mut row = None;
+    if let Some(at) = site {
+        if ruling_columns(conn)?.iter().any(|c| c == "site") {
+            row = rulings(
+                conn,
+                &format!("{FALSE_POSITIVE} AND site = ?3"),
+                params![program_id, signature, at],
+                Some(1),
+            )?
+            .into_iter()
+            .next();
+        }
+    }
+    if row.is_none() {
+        row = rulings(
+            conn,
+            FALSE_POSITIVE,
+            params![program_id, signature],
+            Some(1),
+        )?
+        .into_iter()
+        .next();
+    }
     let Some(row) = row else {
         return Ok(CheckResult {
             suppressed: false,
@@ -1316,7 +1332,7 @@ pub fn warm(conn: &Connection, program_id: &str) -> Result<WarmContext> {
         params![program_id],
         |r| r.get(0),
     )?;
-    let open_fp_rulings = rulings(conn, "program_id = ?1", program_id, None, Some(ROWS))?;
+    let open_fp_rulings = rulings(conn, "program_id = ?1", params![program_id], Some(ROWS))?;
     truncated += left(total, open_fp_rulings.len());
 
     Ok(WarmContext {
