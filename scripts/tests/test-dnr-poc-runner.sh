@@ -1849,13 +1849,13 @@ dcreds() {
   (cd "$WT" && env -i HOME="$CLEANHOME" PATH="$PATH" ${vars[@]+"${vars[@]}"} "$BASH" "$T/iso-driver.sh" "$ROOT" creds "$@") >"$T/creds.out" 2>&1
   echo $?
 }
-lines_are() {  # lines_are <kinds> <line>...: $T/creds.out holds those kinds, then exactly these lines, in any order
-  local line
+lines_are() {  # lines_are <kinds> <line>...: $T/creds.out holds those kinds, then exactly these lines, in any order,
+  local line   # each cut after 300 characters as the check prints a path, so that a long TMPDIR passes too
   [ "$(sed -n 1p "$T/creds.out")" = "kinds: $1" ] || return 1
   shift
   sed 1d "$T/creds.out" > "$T/creds.paths"
   [ "$(grep -c . "$T/creds.paths")" = "$#" ] || return 1
-  for line in "$@"; do grep -qxF -- "$line" "$T/creds.paths" || return 1; done
+  for line in "$@"; do grep -qxF -- "${line:0:300}" "$T/creds.paths" || return 1; done
 }
 X="$T/fx"; mkdir -p "$X/sol/.config/solana/cli" "$X/keys" "$X/sol2/.config/solana/cli" "$X/sol2/wallets"
 printf 'k\n' > "$X/keys/deploy.json"; printf 'k\n' > "$X/sol2/wallets/main.json"
