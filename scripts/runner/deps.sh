@@ -34,8 +34,9 @@
 #                   entry, and every name that is absolute, has a .. component or a control character, is
 #                   left out and listed, as an SC-060 hit. At most 50000 entries and 512 MiB unpacked; a
 #                   tar with more than 4 MiB of pax and GNU long-name headers, more than 128 bytes of
-#                   global pax headers, a sparse file or a size below zero, and a zip whose central
-#                   directory takes more than 16 MiB, are refused.
+#                   global pax headers, a sparse file or a size below zero, or compressed with anything
+#                   but gzip or bzip2 (xz, zstd), and a zip whose central directory takes more than 16 MiB
+#                   or with an entry compressed with anything but deflate, are refused.
 #
 # Manifests. Each --manifest is a confined regular file of at most 50 MB under the working directory, named
 # as its action takes it: Cargo.lock, Cargo.toml, package.json, package-lock.json or npm-shrinkwrap.json,
@@ -854,7 +855,9 @@ class Capped(tarfile.TarInfo):
     # no size below zero, at most EXTENDED bytes of pax and GNU long-name headers in all, at most GLOBAL bytes
     # of global pax headers (tarfile gives every later member its own copy of their keys, and of some of
     # their values), and no sparse file, whose map tarfile reads from the data that follows with no bound
-    # (in the methods below that refuse one).
+    # (in the methods below that refuse one). The size field of every other header counts toward BYTES as
+    # well: tarfile reads through the data that field gives before it applies a global pax size, which can
+    # report the entry as smaller.
     HOOKS = ("_proc_member", "_proc_sparse", "_proc_gnusparse_00", "_proc_gnusparse_01", "_proc_gnusparse_10")
     EXTENSIONS = (tarfile.GNUTYPE_LONGNAME, tarfile.GNUTYPE_LONGLINK, tarfile.XHDTYPE, tarfile.XGLTYPE,
                   tarfile.SOLARIS_XHDTYPE)
@@ -866,6 +869,10 @@ class Capped(tarfile.TarInfo):
             tf.extended_bytes = getattr(tf, "extended_bytes", 0) + self.size
             if tf.extended_bytes > EXTENDED:
                 fail("the pax and GNU long-name headers of the artifact hold more than 4 MiB")
+        else:
+            tf.data_bytes = getattr(tf, "data_bytes", 0) + self.size
+            if tf.data_bytes > BYTES:
+                fail("the artifact unpacks to more than 512 MiB")
         if self.type == tarfile.XGLTYPE:
             tf.global_bytes = getattr(tf, "global_bytes", 0) + self.size
             if tf.global_bytes > GLOBAL:
@@ -879,8 +886,8 @@ class Capped(tarfile.TarInfo):
 
 
 def bound_memory():
-    # A backstop for what the caps do not count, such as the window an xz stream asks its decompressor for:
-    # at most 2 GiB of address space, where the system enforces the limit (Linux; macOS refuses to set it).
+    # A backstop for what the caps do not count: at most 2 GiB of address space, where the system enforces
+    # the limit (Linux; macOS refuses to set it).
     try:
         import resource
         soft, hard = resource.getrlimit(resource.RLIMIT_AS)
@@ -903,7 +910,9 @@ def unpack(archive, filename, algo, expected, dest):
     # the read stops at the first entry past FILES, or the first that takes the declared sizes past BYTES (of
     # every entry: tarfile reads through the data of one it does not know as well), so the list never grows
     # past the cap; a zip central directory, which zipfile reads whole, is measured first. Nothing is unpacked
-    # until the whole list is within the caps.
+    # until the whole list is within the caps. Only decompressors whose memory has a fixed bound run: gzip
+    # and bzip2 for a tar (an xz or zstd stream chooses the window its decompressor keeps), deflate for a zip
+    # (zipfile hands bzip2 and LZMA a whole read of compressed bytes, with no bound on what comes out).
     if filename.endswith((".whl", ".zip")):
         with open(archive, "rb") as f:
             end = zipfile._EndRecData(f)
@@ -912,12 +921,19 @@ def unpack(archive, filename, algo, expected, dest):
         z = zipfile.ZipFile(archive)
         if len(z.filelist) > FILES:
             fail("the artifact holds more than %d entries" % FILES)
+        if any(i.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED) for i in z.filelist):
+            fail("an entry of the artifact is compressed with a method other than deflate, which deps.sh does not unpack")
         listing = ((i.filename, zip_kind(i), i.file_size, i) for i in z.infolist())
         opener = lambda e: z.open(e[3])
     else:
         if not all(hasattr(tarfile.TarInfo, h) for h in Capped.HOOKS):
             fail("the tarfile module of this python3 lacks a method deps.sh replaces to bound what it reads")
-        t = tarfile.open(archive, "r:*", tarinfo=Capped)
+        with open(archive, "rb") as f:
+            head = f.read(262)
+        if head.startswith((b"\xfd7zXZ\x00", b"\x28\xb5\x2f\xfd")):
+            fail("the artifact is compressed with xz or zstd, which deps.sh does not unpack (a tar is read plain, or through gzip or bzip2)")
+        mode = "r:" if head[257:] == b"ustar" else "r:gz" if head[:2] == b"\x1f\x8b" else "r:bz2" if head[:3] == b"BZh" else "r:"
+        t = tarfile.open(archive, mode, tarinfo=Capped)
         listing = ((m.name, tar_kind(m), m.size, m) for m in t)
         opener = lambda e: t.extractfile(e[3])
     for name, kind, declared_size, ref in listing:

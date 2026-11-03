@@ -1275,6 +1275,23 @@ crates["negraw"] = whole(patched(info, tarfile.GNU_FORMAT, [(124, b"\xff" * 10 +
 info = tarfile.TarInfo("odd-1.0.0/x")
 info.type, info.size = b"Z", 600 * 1024 * 1024
 crates["odd"] = whole(info.tobuf(tarfile.USTAR_FORMAT))
+# A global pax size of 0, then a file whose own header gives 600 MiB (tarfile reads through what that field gives,
+# then reports the global size), 2 MiB of its data, and bytes no deflate stream holds.
+info = tarfile.TarInfo("gsize-1.0.0/x")
+info.size = 600 * 1024 * 1024
+buf, t = writer(tarfile.PAX_FORMAT, {"size": "0"})
+crates["gsize"] = cut(buf.getvalue() + info.tobuf(tarfile.USTAR_FORMAT) + b"\0" * (2 << 20))
+# A tar compressed with xz, the magic of a zstd stream, and a plain tar and a bzip2 one, which unpack.
+def small(name, mode):
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode=mode, format=tarfile.USTAR_FORMAT) as t:
+        info = tarfile.TarInfo(name)
+        info.size = 14
+        t.addfile(info, io.BytesIO(b"pub fn f() {}\n"))
+    return buf.getvalue()
+crates["xz"] = small("xz-1.0.0/src/lib.rs", "w:xz")
+crates["zst"] = b"\x28\xb5\x2f\xfd" + b"\0" * 64
+crates["plain"] = small("plain-1.0.0/src/lib.rs", "w")
 for name, data in crates.items():
     put("https://static.crates.io/crates/%s/%s-1.0.0.crate" % (name, name), data)
     put("https://crates.io/api/v1/crates/%s/1.0.0" % name, json.dumps({"version": {"num": "1.0.0", "crate": name, "checksum": hashlib.sha256(data).hexdigest()}}))
@@ -1290,6 +1307,16 @@ bigcd_url = "https://files.pythonhosted.org/packages/ee/ff/bigcd-1.0-py3-none-an
 put(bigcd_url, bigcd)
 put("https://pypi.org/pypi/bigcd/1.0/json", json.dumps({"urls": [{"packagetype": "bdist_wheel", "filename": "bigcd-1.0-py3-none-any.whl",
     "url": bigcd_url, "digests": {"sha256": hashlib.sha256(bigcd).hexdigest()}}]}))
+# A wheel whose one entry is compressed with bzip2, and an sdist compressed with bzip2, which unpacks.
+buf = io.BytesIO()
+with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_BZIP2) as z:
+    z.writestr("bzwhl/x", b"\0" * (1 << 20))
+other = {"bzwhl-1.0-py3-none-any.whl": buf.getvalue(), "bzsd-1.0.tar.bz2": small("bzsd-1.0/bzsd.py", "w:bz2")}
+for name, data in other.items():
+    url = "https://files.pythonhosted.org/packages/11/22/" + name
+    put(url, data)
+    put("https://pypi.org/pypi/%s/1.0/json" % name.split("-")[0], json.dumps({"urls": [{"packagetype": "sdist" if name.endswith(".bz2") else "bdist_wheel",
+        "filename": name, "url": url, "digests": {"sha256": hashlib.sha256(data).hexdigest()}}]}))
 PY
 UA='auditor-skill deps.sh (https://github.com/solanabr/auditor-skill)'
 r0=$(rows)
@@ -1400,6 +1427,28 @@ check "an entry of a type tarfile does not know counts toward 512 MiB too, since
 run "$DEPS" "$WT" -- fetch-artifact --run audit_1 pypi bigcd 1.0
 check "a wheel whose central directory takes more than 16 MiB is refused before zipfile reads it: exit 3, nothing unpacked" \
   refused bigcd 'the central directory of the artifact takes more than 16 MiB'
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates gsize 1.0.0
+check "a file whose own header gives 600 MiB counts toward 512 MiB though a global pax size says 0, before tarfile reads through it: exit 3" \
+  refused gsize-1.0.0 'the artifact unpacks to more than 512 MiB'
+# Only decompressors whose memory has a fixed bound run: an xz or zstd stream chooses the window its decompressor
+# keeps, and zipfile hands bzip2 a whole read with no bound on what comes out.
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates xz 1.0.0
+check "a .crate compressed with xz is refused before it is decompressed: exit 3, nothing unpacked" \
+  refused xz-1.0.0 'the artifact is compressed with xz or zstd, which deps.sh does not unpack (a tar is read plain, or through gzip or bzip2)'
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates zst 1.0.0
+check "... and so is one that starts as a zstd stream" \
+  refused zst-1.0.0 'the artifact is compressed with xz or zstd, which deps.sh does not unpack (a tar is read plain, or through gzip or bzip2)'
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 pypi bzwhl 1.0
+check "a wheel with an entry compressed with bzip2 is refused before anything is unpacked: exit 3" \
+  refused bzwhl 'an entry of the artifact is compressed with a method other than deflate, which deps.sh does not unpack'
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates plain 1.0.0
+n=$(sed -n 's/.*fetch-artifact-\([0-9]*\)[.]txt$/\1/p' "$T/out")
+check "a .crate that is a plain tar is unpacked" \
+  sh -c "[ '$RC' = 0 ] && [ \"\$(cat '$WT/audit_1/deps/fetch-artifact-$n/files/plain-1.0.0/src/lib.rs')\" = 'pub fn f() {}' ]"
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 pypi bzsd 1.0
+n=$(sed -n 's/.*fetch-artifact-\([0-9]*\)[.]txt$/\1/p' "$T/out")
+check "an sdist compressed with bzip2 is unpacked" \
+  sh -c "[ '$RC' = 0 ] && [ \"\$(cat '$WT/audit_1/deps/fetch-artifact-$n/files/bzsd-1.0/bzsd.py')\" = 'pub fn f() {}' ]"
 run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates nope 1.0.0
 check "fetch-artifact of a version the registry does not have: exit 1" sh -c "[ '$RC' = 1 ] && grep -q '^>> fetch-artifact: crates.io has no nope 1.0.0 (HTTP 404)' '$T/out'"
 cp "$DT" "$T/dt.saved"
