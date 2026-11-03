@@ -647,20 +647,70 @@ printf '%s\n' '#!/bin/sh' 'curl -fsSL https://get.example.invalid/q.sh | "bash"'
     docker/alpine/Dockerfile:2 docker/Dockerfile.wrap:3 Makefile:4
   for n in 2 3 4 5 6 7; do echo "scripts/more.sh:$n"; done
   } | LC_ALL=C sort > "$T/sc064.want"
-item "$CL" SC-064 | span 'grep -rnEI ' > "$T/sc064.sh"
+item "$CL" SC-064 | span 'grep -rnEIx ' > "$T/sc064.sh"
 (cd "$SC" && bash -O failglob "$T/sc064.sh") > "$T/sc064.raw" 2>&1
 sed 's#^\./##' "$T/sc064.raw" | cut -d: -f1,2 | LC_ALL=C sort > "$T/sc064.out"
 if [ "$(grep -c '' "$T/sc064.sh")" = 1 ] && cmp -s "$T/sc064.want" "$T/sc064.out"; then
   ok "SC-064's locator lists the 49 installer lines in every text file of the tree and nothing else, under failglob"
 else bad "SC-064's locator on the installer fixture (want the 49 lines of sc064.want)"; sed 's/^/  | /' "$T/sc064.raw"; fi
-# its 6 patterns each start at ^, so a grep tries each one once per line however long the line; it reads every text
-# file, with no --include list; and the command holds no $ (Claude Code asks about any line with one, in quotes too)
-# and no tab
+# its 6 patterns each start at ^, so Claude Code's grep tries each one once per line; it reads every text file, with
+# no --include list; and the command holds no $ (Claude Code asks about any line with one, in quotes too) and no tab.
+# -x stands in for the $ a pattern would end with: each one matches a whole line.
 pats=$(tr ' ' '\n' < "$T/sc064.sh" | grep -c "^'^")
 if [ "$pats" = 6 ] && [ "$(tr ' ' '\n' < "$T/sc064.sh" | grep -cx -- -e)" = 6 ] && ! grep -q -- --include "$T/sc064.sh" \
    && ! grep -q '[$]' "$T/sc064.sh" && ! grep -q "$(printf '\t')" "$T/sc064.sh"; then
   ok "SC-064's 6 patterns each start at ^, it reads every text file, and the command holds no \$ and no tab"
 else bad "SC-064's locator: $pats of 6 patterns start at ^, or it has an --include list, a \$ or a tab"; cat "$T/sc064.sh"; fi
+# In a UTF-8 locale GNU grep decides a line in one pass of its DFA only when no pattern holds a construct the DFA
+# leaves undecided; with one, each line that may match goes to its regex matcher, and a 1 MiB line takes minutes
+# (test-gha-recipes.sh, "Linear by construction", holds the GHA recipes to the same subset). So no SC-064 pattern
+# holds a negated bracket, a class, a range, a back-reference, a word anchor such as \> or a backslash in a
+# bracket, which Claude Code's grep reads as an escape.
+odd=$( ( grep() { local a next=0; for a in "$@"; do if [ "$next" = 1 ]; then printf '%s\n' "$a"; next=0
+                                                    elif [ "$a" = -e ]; then next=1; fi; done; }
+         eval "$(cat "$T/sc064.sh")" ) |
+  LC_ALL=C awk -v esc="wWsSbB<>\`'" '
+    { p = $0; n = length(p); i = 1; why = ""
+      while (i <= n && why == "") {
+        c = substr(p, i, 1)
+        if (c == "\\") { d = substr(p, i + 1, 1); if (d ~ /[1-9]/ || (d != "" && index(esc, d))) why = "the escape \\" d; i += 2; continue }
+        if (c != "[") { i++; continue }
+        j = i + 1
+        if (substr(p, j, 1) == "^") { why = "a negated bracket"; break }
+        first = j
+        while (j <= n) {
+          d = substr(p, j, 1)
+          if (d == "]" && j > first) break
+          if (d == "[" && index(":.=", substr(p, j + 1, 1))) { why = "a class in a bracket"; break }
+          if (d == "\\") { why = "a backslash in a bracket"; break }
+          if (d == "-" && j > first && substr(p, j + 1, 1) != "]") { why = "a range in a bracket"; break }
+          j++
+        }
+        i = j + 1
+      }
+      if (why != "") print why ": " substr(p, 1, 80) }')
+if [ -z "$odd" ] && [ "$pats" = 6 ]; then ok "SC-064's patterns hold nothing GNU grep's DFA leaves undecided in a UTF-8 locale"
+else bad "SC-064's locator leaves the one-pass subset: $odd"; fi
+# ... and on a 1 MiB line of near misses (a minified bundle: a URL, || and push) it is done within 30 s in a UTF-8
+# locale and lists nothing. gnulib's regex, the matcher GNU grep falls back to, took about 46 s for that line with
+# the patterns SC-064 had before, which each hold such a construct.
+utf8=$(locale -a 2>/dev/null | grep -iE '^(C|en_US)[.]utf-?8$' | sed -n 1p)
+mkdir -p "$T/sc064-long/app/dist" || exit 1
+awk 'BEGIN { printf "var u=1;"; for (i = 0; i < 30000; i++) printf "a.push(b)||c.d=e;f=\"https://x.y/z\";"; printf "\n" }' \
+  > "$T/sc064-long/app/dist/bundle.js"
+( cd "$T/sc064-long" && if [ -n "$utf8" ]; then export LC_ALL="$utf8"; fi && eval "exec $(cat "$T/sc064.sh")" ) \
+  > "$T/sc064-long.out" 2>&1 </dev/null &
+lpid=$!; li=0
+while kill -0 "$lpid" 2>/dev/null && [ "$li" -lt 300 ]; do sleep 0.1; li=$((li + 1)); done
+if kill -0 "$lpid" 2>/dev/null; then
+  kill "$lpid" 2>/dev/null; wait "$lpid" 2>/dev/null
+  bad "SC-064's locator is still running after 30 s on a 1 MiB line (LC_ALL=${utf8:-unset})"
+else
+  wait "$lpid"; lrc=$?
+  if [ "$lrc" = 1 ] && [ ! -s "$T/sc064-long.out" ]; then
+    ok "SC-064's locator reads a 1 MiB line of near misses within 30 s (LC_ALL=${utf8:-unset}) and lists nothing"
+  else bad "SC-064's locator on a 1 MiB line: status $lrc"; head -c 300 "$T/sc064-long.out"; fi
+fi
 # SC-063: the RS cross-references #33 names, and its grep lists an added unwrap() and a removed panic boundary
 s63=$(item "$CL" SC-063)
 case "$s63" in *RS-005*RS-006*RS-012*RS-013*|*RS-005*RS-006*RS-013*) ok "SC-063 cross-references RS-005, RS-006 and RS-013";;
