@@ -316,10 +316,10 @@ producer; a crossing that has neither is the finding.
   not enough.
 - **OIDC subjects.** A job that names no environment and runs on a comment, issue, discussion or `workflow_run` event
   has the default branch as its ref, so it requests the same OIDC subject as a push to that branch
-  (`repo:<org>/<repo>:ref:refs/heads/<default>`). A cloud trust policy (a KMS signer holding a deploy key, say) must
-  also bind `environment`, `event_name` or `job_workflow_ref`. KV-140 Step 7 finds the policies in the infrastructure
-  code and grades them (§7.4); a policy kept outside the repository is hosted: grade it `[PARTIAL]` until it has been
-  seen.
+  (`repo:<org>/<repo>:ref:refs/heads/<default>`, or `repo:<org>@<org-id>/<repo>@<repo-id>:ref:refs/heads/<default>` in
+  the immutable format of §7.4). A cloud trust policy (a KMS signer holding a deploy key, say) must also bind
+  `environment`, `event_name` or `job_workflow_ref`. KV-140 Step 7 finds the policies in the infrastructure code and
+  grades them (§7.4); a policy kept outside the repository is hosted: grade it `[PARTIAL]` until it has been seen.
 
 ---
 
@@ -395,8 +395,9 @@ deploy keypair, an upgrade authority, a Squads member key, or an SDK's npm or cr
 `# vX.Y.Z` comment, and pins are kept current by a Dependabot or Renovate `github-actions` updater, because an old pin
 keeps fixed bugs (§1). A pin is only as good as the commit behind it: GitHub serves a commit that exists only in a fork
 through the parent's `owner/repo` slug, an "impostor commit" (Chainguard, 2023), so a pin can carry a real version
-comment and still run code the maintainers never merged. Recipe R9 lists every pin. For each repository it names, run
-one `git ls-remote --tags` in the form KV-080 Step 4 gives:
+comment and still run code the maintainers never merged. Recipe R9 lists every pin it can read, and KV-080 Step 4's
+first command every other `uses:` line. For each repository R9 names, run one `git ls-remote --tags` in the form
+KV-080 Step 4 gives:
 - only for an `owner/repo` slug, the first two segments of the `uses:` value, that matches
   `^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`;
 - in a new empty directory, stopping when that cannot be made, and reading the config of no repository that holds it,
@@ -437,7 +438,11 @@ self-hosted runner and reached release credentials.
 **7.4 OIDC trust policies (KV-140 Step 7, DEP-084, §5.6).** A cloud role that trusts GitHub's OIDC issuer is as narrow
 as the subject and claims it binds. Any job of any repository on GitHub can mint a token from that issuer, for any
 audience, so a policy that checks only the audience trusts all of them, and one that binds `repo:<org>/*` trusts every
-repository of the owner. A role that can deploy, sign or publish binds one repository plus an environment with required
+repository of the owner. Repositories created after 2026-07-15, and repositories renamed or transferred since, use
+GitHub's immutable subject format, which follows the owner and the repository with their numeric IDs
+(`repo:<org>@<org-id>/<repo>@<repo-id>:…`, so the owner-wide form is `repo:<org>@<org-id>/*`); older repositories keep
+`repo:<org>/<repo>:…` unless they opted in, and a policy must match the format its repository uses (KV-140 Step 7
+reads both). A role that can deploy, sign or publish binds one repository plus an environment with required
 reviewers, the event (`event_name`), or one reviewed workflow at a protected ref (`job_workflow_ref`);
 `repo:<org>/<repo>:ref:refs/heads/<default>` alone also admits the comment-, issue-, discussion- and
 `workflow_run`-triggered jobs of §5.6. A repository or organization can customize the subject claim
