@@ -275,8 +275,10 @@ dependency on a path outside the crate, on git or from a registry other than cra
 a target built from outside it, or a build that compiled code from outside it stops the
 run, the dependencies before anything compiles (the resolved `Cargo.lock` is read again
 after the downloads) and the build before any test runs.
-While `INCIDENTS.json` records a `supply_chain_or_ci` incident, the crates of its other
-incidents do not run natively either: they build from the same target tree.
+In native mode no crate runs, an audit's included, while the `INCIDENTS.json` of any
+`incident_*` directory in the working directory records a `supply_chain_or_ci` incident
+or cannot be read: any PoC can build the target's crates. A directory without that
+file, or whose file records no incident, counts for nothing.
 `./run.sh` does not read `INCIDENTS.json`.
 
 ## Evidence tier

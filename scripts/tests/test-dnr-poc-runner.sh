@@ -93,8 +93,11 @@
 #     run without --vulnerable-so, path, git and other-registry dependencies (from the
 #     manifests, and from the resolved Cargo.lock before anything compiles) and sources
 #     outside the crate, and a build that compiled code from outside it;
-#     while INCIDENTS.json records such an incident, no incident crate of that run
-#     directory runs natively, as iso_incident_class's no-id form (pinned) reports it;
+#     in native mode no crate runs, an audit's included, while the INCIDENTS.json of
+#     any incident_* directory in the working directory records such an incident or
+#     cannot be read, as iso_incident_class's no-id form (pinned) reports it: a
+#     directory without that file, or whose file records no incident, counts for
+#     nothing;
 #   * the isolation self-check (scripts/lib/isolation.sh): in isolated mode, a fake HOME
 #     holding any credential it reads stops the run before anything is copied, and so
 #     does a check that cannot finish; in native mode it is a warning. Through a driver,
@@ -2388,8 +2391,8 @@ code="$(ngate AUDITOR_EXEC_MODE=isolated -- --crate incident_1/poc/INC-1.1)"
 mk_crate "$WT/incident_1/poc/INC-1.2"
 for how in supply_chain_or_ci bogus; do
   printf '{"incidents": [{"id": "INC-1.1", "root_cause_class": "%s"}, {"id": "INC-1.2", "root_cause_class": "code_flaw"}]}\n' "$how" > "$IJ"
-  want_dc="incident_1/INCIDENTS.json records an incident whose root_cause_class is supply_chain_or_ci, so no PoC of incident_1 is built natively: each builds from the same target tree, whose crates may be the payload (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built."
-  [ "$how" = bogus ] && want_dc="incident_1/INCIDENTS.json gives an incident no root_cause_class from incidents-schema.md: a PoC there runs natively only once incident_1/INCIDENTS.json records the root_cause_class of every incident (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built."
+  want_dc="incident_1/INCIDENTS.json records an incident whose root_cause_class is supply_chain_or_ci, so nothing from this working directory is built natively, for an audit run or an incident run (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built."
+  [ "$how" = bogus ] && want_dc="incident_1/INCIDENTS.json gives an incident no root_cause_class from incidents-schema.md: nothing from this working directory is built natively until every incident_*/INCIDENTS.json in it records the root_cause_class of each of its incidents (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built."
   code="$(ngate AUDITOR_EXEC_MODE=native -- --crate incident_1/poc/INC-1.2 "${IVULN[@]}")"
   [ "$code" = 3 ] && grep -qxF '>> incident INC-1.2: root_cause_class code_flaw (incident_1/INCIDENTS.json)' "$T/out" \
     && grep -qxF "[PoC-ATTEMPTED] blocker: $want_dc" "$T/out" && new_nothing_ran && one_blocker \
@@ -2431,13 +2434,94 @@ code_flaw bogus|3 gives an incident no root_cause_class from incidents-schema.md
 CASES
 class_list key_compromise code_flaw supply_chain_or_ci
 code="$(ngate AUDITOR_EXEC_MODE=native -- --crate incident_1/poc/INC-1.2 "${IVULN[@]}")"
-[ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: incident_1/INCIDENTS.json records an incident whose root_cause_class is supply_chain_or_ci, so no PoC of incident_1 is built natively: each builds from the same target tree, whose crates may be the payload (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built." "$T/out" \
+[ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: incident_1/INCIDENTS.json records an incident whose root_cause_class is supply_chain_or_ci, so nothing from this working directory is built natively, for an audit run or an incident run (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built." "$T/out" \
   && new_nothing_ran && one_blocker && ok "a code_flaw incident's crate in native mode, beside a supply_chain_or_ci incident listed after it -> exit 3, nothing copied" \
   || { bad "a code_flaw incident's crate before a supply_chain_or_ci one, native: exit $code"; cat "$T/out" >&2; }
 class_list key_compromise code_flaw oracle_or_dependency economic_design off_chain unknown
 code="$(ngate AUDITOR_EXEC_MODE=native -- --crate incident_1/poc/INC-1.2 "${IVULN[@]}")"
 [ "$code" = 0 ] && grep -q "^$LEG3" "$T/out" && ok "a code_flaw incident's crate beside an incident of every other class runs in native mode" \
   || { bad "a code_flaw incident's crate beside the other classes, native: exit $code"; cat "$T/out" >&2; }
+# Native mode counts an INCIDENTS.json that records no incident (a hunt that ruled everything out) for nothing,
+# by the no-id form's 'records no incident'; any other reason stops the run.
+printf '{"incidents": []}\n' > "$T/ij-empty.json"
+pin_got="$(cd "$WT" && env -i HOME="$CLEANHOME" PATH="$PATH" bash "$T/class-driver.sh" "$ROOT" "$T/ij-empty.json" 2>&1)"
+rm -f "$T/ij-empty.json"
+[ "$pin_got" = "3 records no incident" ] && ok "iso_incident_class with no id, an empty incidents list -> '3 records no incident'" || bad "iso_incident_class with no id, an empty incidents list: '$pin_got', want '3 records no incident'"
+
+# Native mode reads the INCIDENTS.json of every incident_* directory in the working directory, whichever run
+# directory the crate is in: while one records a supply_chain_or_ci incident or cannot be read, nothing from
+# the working directory is built natively, an audit's crate included, since any PoC can build the target's
+# crates. A directory without that file, or whose file records no incident, counts for nothing; one that
+# cannot be searched is read, and a linked one is read through. Isolated mode reads none of them.
+( cd "$WT" && "$ROOT/scripts/rundir.sh" new incident ) >/dev/null || bad "rundir.sh could not make incident_2"
+IJ2="$WT/incident_2/INCIDENTS.json"
+want_sc="records an incident whose root_cause_class is supply_chain_or_ci, so nothing from this working directory is built natively, for an audit run or an incident run (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built."
+want_un="nothing from this working directory is built natively until every incident_*/INCIDENTS.json in it records the root_cause_class of each of its incidents (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built."
+printf '{"incidents": [{"id": "INC-2.1", "root_cause_class": "supply_chain_or_ci"}]}\n' > "$IJ2"
+code="$(ngate AUDITOR_EXEC_MODE=native -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+[ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: incident_2/INCIDENTS.json $want_sc" "$T/out" && new_nothing_ran && one_blocker \
+  && ok "an audit's crate in native mode while another run directory's INCIDENTS.json records a supply_chain_or_ci incident -> exit 3, nothing copied" \
+  || { bad "an audit's crate beside incident_2's supply_chain_or_ci incident, native: exit $code"; cat "$T/out" >&2; }
+code="$(ngate AUDITOR_EXEC_MODE=native -- --crate incident_1/poc/INC-1.2 "${IVULN[@]}")"
+[ "$code" = 3 ] && grep -qxF '>> incident INC-1.2: root_cause_class code_flaw (incident_1/INCIDENTS.json)' "$T/out" \
+  && grep -qxF "[PoC-ATTEMPTED] blocker: incident_2/INCIDENTS.json $want_sc" "$T/out" && new_nothing_ran && one_blocker \
+  && ok "an incident's crate in native mode while another incident run directory records a supply_chain_or_ci incident -> exit 3, nothing copied" \
+  || { bad "INC-1.2 beside incident_2's supply_chain_or_ci incident, native: exit $code"; cat "$T/out" >&2; }
+while IFS='|' read -r how reason; do
+  [ -n "$how" ] || continue
+  rm -rf "$IJ2"
+  case "$how" in
+    not-json) printf '{"incidents": [\n' > "$IJ2" ;;
+    bad-class) printf '{"incidents": [{"id": "INC-2.1", "root_cause_class": "code_flaw"}, {"id": "INC-2.2", "root_cause_class": "bogus"}]}\n' > "$IJ2" ;;
+    no-list) printf '{"incidents": {"id": "INC-2.1"}}\n' > "$IJ2" ;;
+    directory) mkdir "$IJ2" ;;
+    link) printf '{"incidents": [{"id": "INC-2.1", "root_cause_class": "code_flaw"}]}\n' > "$T/ij2-target.json"; ln -s "$T/ij2-target.json" "$IJ2" ;;
+  esac
+  code="$(ngate AUDITOR_EXEC_MODE=native -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+  [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: incident_2/INCIDENTS.json $reason: $want_un" "$T/out" \
+    && new_nothing_ran && one_blocker && ok "an audit's crate in native mode while incident_2/INCIDENTS.json $reason -> exit 3, nothing copied" \
+    || { bad "an audit's crate beside incident_2/INCIDENTS.json ($how), native: exit $code"; cat "$T/out" >&2; }
+done <<'CASES'
+not-json|cannot be read as JSON
+bad-class|gives an incident no root_cause_class from incidents-schema.md
+no-list|holds no incidents list
+directory|is not a regular file
+link|is not a regular file
+CASES
+rm -rf "$IJ2" "$T/ij2-target.json"
+if [ "$(id -u)" != 0 ]; then
+  printf '{"incidents": [{"id": "INC-2.1", "root_cause_class": "code_flaw"}]}\n' > "$IJ2"; chmod 000 "$WT/incident_2"
+  code="$(ngate AUDITOR_EXEC_MODE=native -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+  chmod 700 "$WT/incident_2"; rm -f "$IJ2"
+  [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: incident_2/INCIDENTS.json cannot be read: $want_un" "$T/out" \
+    && new_nothing_ran && one_blocker && ok "an audit's crate in native mode beside an incident_* directory that cannot be searched -> exit 3, nothing copied" \
+    || { bad "an audit's crate beside an unsearchable incident_2, native: exit $code"; cat "$T/out" >&2; }
+fi
+for how in absent empty; do
+  rm -f "$IJ2"; [ "$how" = empty ] && printf '{"schema": "auditor-incidents/1", "incidents": [], "ruled_out": []}\n' > "$IJ2"
+  code="$(ngate AUDITOR_EXEC_MODE=native -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+  [ "$code" = 0 ] && grep -q "^$LEG3" "$T/out" && ok "an audit's crate in native mode beside an incident_* directory whose INCIDENTS.json is $how runs" \
+    || { bad "an audit's crate beside incident_2 with an INCIDENTS.json that is $how, native: exit $code"; cat "$T/out" >&2; }
+done
+rm -f "$IJ2"
+mkdir -p "$T/elsewhere-run" "$WT/incident_old"
+printf '{"incidents": [{"id": "INC-3.1", "root_cause_class": "supply_chain_or_ci"}]}\n' > "$T/elsewhere-run/INCIDENTS.json"
+cp "$T/elsewhere-run/INCIDENTS.json" "$WT/incident_old/INCIDENTS.json"
+for odd in incident_old incident_3; do
+  [ "$odd" = incident_3 ] && { rm -rf "$WT/incident_old"; ln -s "$T/elsewhere-run" "$WT/incident_3"; }
+  code="$(ngate AUDITOR_EXEC_MODE=native -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+  [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: $odd/INCIDENTS.json $want_sc" "$T/out" && new_nothing_ran && one_blocker \
+    && ok "an audit's crate in native mode beside $odd/ ($([ "$odd" = incident_3 ] && echo a link to a directory outside || echo a directory)) whose INCIDENTS.json records a supply_chain_or_ci incident -> exit 3" \
+    || { bad "an audit's crate beside $odd/, native: exit $code"; cat "$T/out" >&2; }
+done
+rm -f "$WT/incident_3"
+if [ "$ISOLATED_OK" = 1 ]; then
+  printf '{"incidents": [{"id": "INC-2.1", "root_cause_class": "supply_chain_or_ci"}]}\n' > "$IJ2"
+  code="$(ngate AUDITOR_EXEC_MODE=isolated -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+  [ "$code" = 0 ] && grep -q "^$LEG3" "$T/out" && ok "an audit's crate beside another run directory's supply_chain_or_ci incident runs in isolated mode" \
+    || { bad "an audit's crate beside incident_2's supply_chain_or_ci incident, isolated: exit $code"; cat "$T/out" >&2; }
+fi
+rm -rf "$WT/incident_2" "$T/elsewhere-run"
 rm -rf "$WT/incident_1/poc/INC-1.2"; incidents supply_chain_or_ci
 # The crate check on its own, run from run.sh's harness code: under supply_chain_or_ci it refuses what
 # the target's crates could come through, and without the rule it accepts the same crate.

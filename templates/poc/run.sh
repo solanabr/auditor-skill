@@ -275,9 +275,11 @@
 #     crates.io, and a target whose source lies outside the crate; it reads the
 #     resolved Cargo.lock again after the downloads, before anything compiles; and it
 #     stops before a test runs when the build compiled code from outside the crate.
-#     While INCIDENTS.json records any supply_chain_or_ci incident, it refuses native
-#     mode for the crate of every other incident of that run directory too: they
-#     build from the same target tree.
+#     In native mode it builds no crate, an audit's included, while the INCIDENTS.json
+#     of any incident_* directory in the working directory records a
+#     supply_chain_or_ci incident or cannot be read: any PoC can build the target's
+#     crates. A directory without that file, or whose file records no incident,
+#     counts for nothing.
 #     ./run.sh does not read INCIDENTS.json.
 
 set -Eeuo pipefail
@@ -491,42 +493,64 @@ exec_mode() {
 # incident_rule: a crate at incident_<n>/poc/INC-<n>.<k> runs only once incident_<n>/INCIDENTS.json
 # records that incident's root_cause_class (OUTPUT-RULES.md Rule 11a). supply_chain_or_ci refuses
 # native mode and a run without --vulnerable-so, and sets SUPPLY_CHAIN for the checks of the
-# crate and of each build (see PREBUILT BYTES above). Native mode is refused for the crate of
-# another incident too while the file records any supply_chain_or_ci one: both build from the
-# same target tree.
+# crate and of each build (see PREBUILT BYTES above). In native mode native_rule then reads the
+# INCIDENTS.json of every incident_* directory in the working directory, whatever run directory the
+# crate is in.
 incident_rule() {
   local id="${CRATE_REL##*/}" json="${CRATE_RUN}/INCIDENTS.json" out rc=0
-  case "${CRATE_RUN}" in incident_*) ;; *) return 0 ;; esac
-  command -v python3 >/dev/null 2>&1 ||
-    blocker "python3 is not on PATH, so run.sh cannot read the root_cause_class of ${id} in ${json} (OUTPUT-RULES.md Rule 11a) — nothing was copied or built."
-  iso_incident_class "${WT}/${json}" "${id}" || rc=$?
-  out="${ISO_CLASS}"
-  if [[ "${rc}" -ne 0 ]]; then
-    [[ "${rc}" -eq 3 && -n "${out}" ]] || out="cannot be read"
-    blocker "${json} ${out}: an incident's PoC runs only once ${json} records its root_cause_class (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built."
-  fi
-  echo ">> incident ${id}: root_cause_class ${out} (${json})"
-  if [[ "${out}" != supply_chain_or_ci ]]; then
-    [[ "${MODE}" == native ]] || return 0
+  case "${CRATE_RUN}" in
+    incident_*)
+      command -v python3 >/dev/null 2>&1 ||
+        blocker "python3 is not on PATH, so run.sh cannot read the root_cause_class of ${id} in ${json} (OUTPUT-RULES.md Rule 11a) — nothing was copied or built."
+      iso_incident_class "${WT}/${json}" "${id}" || rc=$?
+      out="${ISO_CLASS}"
+      if [[ "${rc}" -ne 0 ]]; then
+        [[ "${rc}" -eq 3 && -n "${out}" ]] || out="cannot be read"
+        blocker "${json} ${out}: an incident's PoC runs only once ${json} records its root_cause_class (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built."
+      fi
+      echo ">> incident ${id}: root_cause_class ${out} (${json})"
+      if [[ "${out}" == supply_chain_or_ci ]]; then
+        if [[ "${MODE}" == native ]]; then
+          blocker "the root_cause_class of ${id} is supply_chain_or_ci, and such an incident is never built natively (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built."
+        fi
+        if [[ -z "${VULNERABLE_SO}" ]]; then
+          blocker "the root_cause_class of ${id} is supply_chain_or_ci, so its PoC runs only on the dumped program bytes (OUTPUT-RULES.md Rule 11a): give --vulnerable-so ${CRATE_RUN}/bin/<program>.so — nothing was copied or built."
+        fi
+        SUPPLY_CHAIN=1
+      fi ;;
+  esac
+  if [[ "${MODE}" == native ]]; then native_rule; fi
+  return 0
+}
+
+# native_rule: natively nothing from the working directory is built, whichever run directory the
+# crate is in, while the INCIDENTS.json of any incident_* directory there records a
+# supply_chain_or_ci incident or cannot be read: any PoC can build the target's crates, which may
+# then be the payload (OUTPUT-RULES.md Rule 11a). target.sh applies the same rule. Each file is read
+# with iso_incident_class's no-id form; a directory without INCIDENTS.json, or whose file records no
+# incident (a hunt that ruled everything out), counts for nothing, and a directory that cannot be
+# searched is read, so that its refusal stops the run.
+native_rule() {
+  local dir json out rc
+  for dir in "${WT}"/incident_*; do
+    [[ -d "${dir}" ]] || continue
+    if [[ ! -e "${dir}/INCIDENTS.json" && ! -L "${dir}/INCIDENTS.json" && -x "${dir}" ]]; then continue; fi
+    json="$(confine_text "${dir##*/}")/INCIDENTS.json"
+    command -v python3 >/dev/null 2>&1 ||
+      blocker "python3 is not on PATH, so run.sh cannot read the root_cause_class in ${json} (OUTPUT-RULES.md Rule 11a) — nothing was copied or built."
     rc=0
-    iso_incident_class "${WT}/${json}" || rc=$?
+    iso_incident_class "${dir}/INCIDENTS.json" || rc=$?
     out="${ISO_CLASS}"
-    if [[ "${rc}" -ne 0 ]]; then
-      [[ "${rc}" -eq 3 && -n "${out}" ]] || out="cannot be read"
-      blocker "${json} ${out}: a PoC there runs natively only once ${json} records the root_cause_class of every incident (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built."
-    fi
-    if [[ "${out}" != other ]]; then
-      blocker "${json} records an incident whose root_cause_class is supply_chain_or_ci, so no PoC of ${CRATE_RUN} is built natively: each builds from the same target tree, whose crates may be the payload (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built."
-    fi
-    return 0
-  fi
-  if [[ "${MODE}" == native ]]; then
-    blocker "the root_cause_class of ${id} is supply_chain_or_ci, and such an incident is never built natively (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built."
-  fi
-  if [[ -z "${VULNERABLE_SO}" ]]; then
-    blocker "the root_cause_class of ${id} is supply_chain_or_ci, so its PoC runs only on the dumped program bytes (OUTPUT-RULES.md Rule 11a): give --vulnerable-so ${CRATE_RUN}/bin/<program>.so — nothing was copied or built."
-  fi
-  SUPPLY_CHAIN=1
+    case "${rc}:${out}" in
+      0:supply_chain_or_ci)
+        blocker "${json} records an incident whose root_cause_class is supply_chain_or_ci, so nothing from this working directory is built natively, for an audit run or an incident run (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built." ;;
+      0:*|'3:records no incident') ;;
+      *)
+        [[ "${rc}" -eq 3 && -n "${out}" ]] || out="cannot be read"
+        blocker "${json} ${out}: nothing from this working directory is built natively until every incident_*/INCIDENTS.json in it records the root_cause_class of each of its incidents (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built." ;;
+    esac
+  done
+  return 0
 }
 
 # self_check: in isolated mode nothing the credential check reads may be readable, and
