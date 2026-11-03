@@ -56,16 +56,23 @@ parent directory, so a crate built under `audit_<n>/poc/` or `incident_<n>/poc/`
 would pick up the target's rustc wrapper, runner, linker, `[env]` and toolchain.
 `run.sh` copies the crate to a scratch directory outside the tree and builds it there
 with a pinned toolchain; it refuses a crate holding a symbolic link, a `.cargo/`
-directory or a `rust-toolchain*` file, and a `path` dependency on target crates must
-be absolute. It also refuses the crate's own build-time code, in either mode and
+directory, a `rust-toolchain*` file, a version manager's file (`.tool-versions`,
+`.python-version`, `.prototools`, mise's config) or a name that is not printable ASCII,
+and a `path` dependency on target crates must be absolute. It also refuses the crate's own build-time code, in either mode and
 before anything compiles: from `cargo metadata --no-deps` in the scratch copy, a build
-script (`build = false` turns one off), a proc-macro package, or a `Cargo.toml` inside
-the crate that is not a member of its workspace, and from the manifests, a `[patch]` or
-`[replace]` table. Code generated at build time is checked into the crate instead. A
+script (`build = false` turns one off), a proc-macro package, a `Cargo.toml` inside
+the crate that is not a member of its workspace, a workspace root other than the crate
+itself, or a target other than the library and the tests (a bin, an example, a bench, a
+`dylib` or `staticlib`); from the manifests, a `[patch]` or `[replace]` table or a
+`cargo-features` key; and from the crate's own Rust code, a crate-level
+`#![feature(...)]`, inline assembly or the `link` attribute. Code generated at build time is checked into the crate instead. A
 `path` dependency outside the crate is not refused: its build script runs in the
 recorded mode. Before its final line `run.sh` names the non-registry code in the
-build: the path and git dependencies in the resolved `Cargo.lock`, and any source
-compiled from outside the crate. Building the target itself (for example `cargo build-sbf` /
+build: the path and git dependencies in the resolved `Cargo.lock` and those from a
+registry other than crates.io, and each file from outside the crate that rustc's
+dep-info lists for the crate's own units (a `#[path]` module, an `include!`,
+`include_str!` or `include_bytes!` file), in the test build and in each arm's SBF
+build; what a dependency's proc macro reads on its own is not listed. Building the target itself (for example `cargo build-sbf` /
 `anchor build` on the client tree to get its `.so`) runs target code in the same mode.
 An incident whose root cause is supply chain / CI is never built natively, and its PoC
 never builds or links the target's crates in any mode, since they may be the payload:
@@ -312,8 +319,8 @@ itself binds the build to that copy: it exits 3 when the crate does not depend o
 `<crate>/shared-test-utils` under the import name `shared_test_utils`, when another
 dependency takes that import name (spelled with `-` or `_`), or when an arm's build
 compiles a `shared_test_utils` from anywhere else, or none. Read the run's
-non-registry line as well: it names any path or git dependency and any source compiled
-from outside the crate.
+non-registry line as well: it names any path, git or other-registry dependency and
+each file from outside the crate that the build's dep-info lists.
 
 **Leg 3 of an incident** (`references/detection-response/README.md`) is met only by a
 `run.sh` run on prebuilt bytes that ends with
