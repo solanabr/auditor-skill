@@ -388,7 +388,7 @@ def git_config(path, home, found, state, depth=0):
     state["configs"].add(key)
     section = ""
     content = data.decode("utf-8", "replace")
-    for line in (content[1:] if content.startswith("﻿") else content).splitlines():
+    for line in (content[1:] if content.startswith("\ufeff") else content).splitlines():
         m = GIT_SECTION.match(line)
         while m:
             section, _, legacy = m.group(1).lower().partition(".")

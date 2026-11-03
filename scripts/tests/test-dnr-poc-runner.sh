@@ -109,7 +109,7 @@
 #     pass the check, so that the checks that isolated mode passes run there. Its
 #     python3, and the watchdog's, starts from /: a .python-version in the working
 #     directory picks no interpreter, and a relative path in a variable it reads is
-#     taken from /;
+#     taken from /; the Python it runs holds only ASCII;
 #   * environment cleaning: canary variables in the caller's environment reach no cargo
 #     call, no build script and no test binary; HOME is a throwaway one with a fresh
 #     Solana keypair, but for cargo build-sbf --install-only; only cargo fetch, cargo
@@ -2409,6 +2409,12 @@ for sh in "${SHELLS[@]}"; do
   [ "$rc" = 64 ] && case "$out" in *"would inherit $T/cfgparent/.cargo/config.toml; point TMPDIR outside any repository") true ;; *) false ;; esac \
     && [ -z "$(ls -A "$T/cfgparent/tmp")" ] && ok "iso_scratch ($sh): a scratch directory under a .cargo/config.toml -> refused" || bad "iso_scratch ($sh) under a cargo config: $rc '$out'"
 done
+# The Python programs isolation.sh runs hold only ASCII, an escape standing for any other character, so that
+# python3 reads the same program whatever the locale decodes its arguments with.
+progs="$(. "$ROOT/scripts/lib/isolation.sh" && printf '%s' "$ISO_PY$ISO_WATCH_PY$ISO_INCIDENT_PY")"
+[ -n "$progs" ] && printf '%s' "$progs" | python3 -I -c 'import sys; sys.exit(any(b > 127 for b in sys.stdin.buffer.read()))' \
+  && ok "the Python programs isolation.sh runs hold only ASCII, so python3 reads them the same in any locale" \
+  || bad "a Python program isolation.sh runs holds a byte outside ASCII"
 
 # isolation.sh starts each python3 from /: a .python-version in the working directory, which a pyenv shim
 # reads to pick the interpreter, picks none, and a relative path in a variable the check reads (KUBECONFIG
