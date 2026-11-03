@@ -329,6 +329,16 @@ while read -r id fx want; do
   if [ "$got" = "$want" ]; then echo "ok   $id in $fx: lines $got"
   else echo "FAIL $id in $fx: got lines [$got] want [$want]"; fail=1; fi
 done <<< "$LINES"
+# R3 lists a string deny-list whatever its string holds before the association names, a backslash or a letter
+# outside ASCII included (a tree of its own, so the fixtures' expected lists stay as they are).
+r3t="$work/r3-strings"; mkdir -p "$r3t/.github/workflows"
+printf '%s\n' 'on: issue_comment' 'jobs:' '  a:' "    if: \${{ !contains('\\OWNER', github.event.comment.author_association) }}" \
+  '  b:' "    if: \${{ !contains('$(printf '\303\251') OWNER MEMBER', github.event.comment.author_association) }}" \
+  > "$r3t/.github/workflows/strings.yml"
+nlines=$((nlines + 1))
+got=$(run_recipe "$r3t" "$(recipe_lines R3)" | sed 's#^\./##' | awk -F: '{ print $2 }' | sort -n | tr '\n' ' ' | sed 's/ $//')
+if [ "$got" = "4 6" ]; then echo "ok   R3 in a string deny-list holding a backslash or a letter outside ASCII: lines $got"
+else echo "FAIL R3 in a string deny-list holding a backslash or a letter outside ASCII: got lines [$got] want [4 6]"; fail=1; fi
 
 # Linear by construction. In a UTF-8 locale GNU grep decides a line in one pass of its DFA only when the pattern
 # holds nothing the DFA leaves undecided: a negated bracket such as [^#], a class such as [[:space:]], a range
