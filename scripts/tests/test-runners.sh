@@ -756,7 +756,7 @@ check "no target.sh run ran a program or hook the source repository's config nam
 
 # =================================================================================================
 # target.sh in an incident's run directory: INCIDENTS.json must give the root cause, and nothing of a run
-# that records a supply_chain_or_ci incident is built natively.
+# that records a supply_chain_or_ci incident is built natively, nor anything else of the working directory.
 # =================================================================================================
 IJ=$WT/incident_1/INCIDENTS.json
 printf 'native\n' > "$WT/incident_1/exec-mode"
@@ -803,6 +803,85 @@ if [ "$ISOLATED_OK" = 1 ]; then
   run "$TARGET" "$WT" AUDITOR_EXEC_MODE=isolated -- build-sbf --run incident_1 --src . --patch incident_1/patches/INC-1.2.patch
   check "... and a patch of another incident of that run" test "$RC" = 0
 fi
+# Natively an incident recorded anywhere in the working directory counts, whatever --run names: every --src is
+# the working tree or a copy of it. audit_1 (exec-mode native) builds while incident_1 records the incidents;
+# incident_2, made beside it, holds an INCIDENTS.json of each kind below, or none; incident_1.old is a run moved
+# aside under another name, and incident_notes.md a file.
+XRUN='so nothing from this working directory is built natively, for an audit run or an incident run (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built.'
+XREAD='nothing from this working directory is built natively until every incident_*/INCIDENTS.json in it records the root_cause_class of each of its incidents (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built.'
+printf '{"incidents": [{"id": "INC-1.1", "root_cause_class": "supply_chain_or_ci"}, {"id": "INC-1.2", "root_cause_class": "code_flaw"}]}\n' > "$IJ"
+for src in . audit_1/src.git; do
+  run "$TARGET" "$WT" -- build-sbf --run audit_1 --src "$src" --patch audit_1/patches/F-1.patch
+  check "natively, audit_1's build (--src $src, its own patch) while incident_1 records a supply_chain_or_ci incident: exit 3, nothing copied" \
+    sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: incident_1/INCIDENTS.json records an incident whose root_cause_class is supply_chain_or_ci, $XRUN' '$T/err' && [ ! -s '$T/calls' ] && [ -z \"\$(ls -A '$NT')\" ]"
+done
+for act in cargo-test npm-ci; do
+  run "$TARGET" "$WT" -- "$act" --run audit_1 --src .
+  check "... and $act as well" sh -c "[ '$RC' = 3 ] && grep -qF 'incident_1/INCIDENTS.json records an incident whose root_cause_class is supply_chain_or_ci, so nothing' '$T/err' && [ ! -s '$T/calls' ]"
+done
+if [ "$ISOLATED_OK" = 1 ]; then
+  run "$TARGET" "$WT" AUDITOR_EXEC_MODE=isolated -- build-sbf --run audit_1 --src .
+  check "isolated mode builds audit_1 while incident_1 records a supply_chain_or_ci incident" test "$RC" = 0
+fi
+( cd "$WT" && "$ROOT/scripts/rundir.sh" new incident ) >/dev/null || ko "rundir.sh could not make incident_2"
+IJ2=$WT/incident_2/INCIDENTS.json
+printf '{"incidents": [{"id": "INC-1.2", "root_cause_class": "code_flaw"}]}\n' > "$IJ"
+run "$TARGET" "$WT" -- build-sbf --run incident_1 --src . --patch incident_1/patches/INC-1.2.patch
+check "natively, an incident run of a code flaw builds while incident_2 holds no INCIDENTS.json" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF '>> incident INC-1.2: root_cause_class code_flaw (incident_1/INCIDENTS.json)' '$T/out'"
+printf '{"incidents": [{"id": "INC-2.1", "root_cause_class": "supply_chain_or_ci"}]}\n' > "$IJ2"
+run "$TARGET" "$WT" -- build-sbf --run incident_1 --src . --patch incident_1/patches/INC-1.2.patch
+check "... and stops, exit 3 with nothing copied, once incident_2 records a supply_chain_or_ci incident" \
+  sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: incident_2/INCIDENTS.json records an incident whose root_cause_class is supply_chain_or_ci, $XRUN' '$T/err' && [ ! -s '$T/calls' ] && [ -z \"\$(ls -A '$NT')\" ]"
+while IFS='|' read -r body want; do
+  [ -n "$body" ] || continue
+  printf '%s\n' "$body" > "$IJ2"
+  run "$TARGET" "$WT" -- cargo-test --run audit_1 --src .
+  case "$want" in
+    builds) check "natively, audit_1 builds while incident_2's INCIDENTS.json holds $body" test "$RC" = 0 ;;
+    *) check "natively, incident_2's INCIDENTS.json that $want stops audit_1's build: exit 3, nothing copied" \
+         sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: incident_2/INCIDENTS.json $want: $XREAD' '$T/err' && [ ! -s '$T/calls' ]" ;;
+  esac
+done <<'CASES'
+{"schema": "auditor-incidents/1", "incidents": [], "ruled_out": [{"verdict": "benign", "subject": "x", "reason": "y"}]}|builds
+{"incidents": [{"id": "INC-2.1", "root_cause_class": "unknown"}, {"id": "INC-2.2", "root_cause_class": "off_chain"}]}|builds
+not json|cannot be read as JSON
+{"incidents": {}}|holds no incidents list
+{"incidents": [{"id": "INC-2.1"}]}|gives an incident no root_cause_class from incidents-schema.md
+{"incidents": [["INC-2.1", "supply_chain_or_ci"]]}|holds an incident that is not an object
+CASES
+printf '{"incidents": [{"id": "INC-2.1", "root_cause_class": "code_flaw"}]}\n' > "$T/incidents-elsewhere.json"
+rm -f "$IJ2"
+ln -s "$T/incidents-elsewhere.json" "$IJ2"
+run "$TARGET" "$WT" -- cargo-test --run audit_1 --src .
+check "natively, an INCIDENTS.json in incident_2 that is a symbolic link stops audit_1's build: exit 3" \
+  sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: incident_2/INCIDENTS.json is not a regular file: $XREAD' '$T/err' && [ ! -s '$T/calls' ]"
+rm -f "$IJ2"
+if [ "$(id -u)" != 0 ]; then
+  chmod 000 "$WT/incident_2"
+  run "$TARGET" "$WT" -- cargo-test --run audit_1 --src .
+  chmod 700 "$WT/incident_2"
+  check "natively, an incident_2 that cannot be searched stops audit_1's build: exit 3" \
+    sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: incident_2/INCIDENTS.json cannot be read: $XREAD' '$T/err' && [ ! -s '$T/calls' ]"
+fi
+mkdir "$WT/incident_1.old"
+printf '{"incidents": [{"id": "INC-1.1", "root_cause_class": "supply_chain_or_ci"}]}\n' > "$WT/incident_1.old/INCIDENTS.json"
+printf 'notes\n' > "$WT/incident_notes.md"
+run "$TARGET" "$WT" -- cargo-test --run audit_1 --src .
+check "natively, a run moved aside as incident_1.old still counts: exit 3" \
+  sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: incident_1.old/INCIDENTS.json records an incident whose root_cause_class is supply_chain_or_ci, $XRUN' '$T/err'"
+rm -rf "$WT/incident_1.old"
+run "$TARGET" "$WT" -- cargo-test --run audit_1 --src .
+check "... while a file named incident_notes.md, and incident_2 without INCIDENTS.json, count for nothing" test "$RC" = 0
+run "$TARGET" "$WT" PATH="$T/fake:$T/sys-nopy" -- cargo-test --run audit_1 --src .
+check "natively without python3, an INCIDENTS.json in the working directory: exit 3 before anything is copied" \
+  sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: python3 is not on PATH, so target.sh cannot read the root_cause_class in incident_1/INCIDENTS.json (OUTPUT-RULES.md Rule 11a) — nothing was copied or built.' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
+if [ "$ISOLATED_OK" = 1 ]; then
+  printf '{"incidents": [{"id": "INC-2.1", "root_cause_class": "supply_chain_or_ci"}]}\n' > "$IJ2"
+  run "$TARGET" "$WT" AUDITOR_EXEC_MODE=isolated -- cargo-test --run audit_1 --src .
+  check "isolated mode builds audit_1 while incident_2 records a supply_chain_or_ci incident" test "$RC" = 0
+fi
+rm -rf "$WT/incident_2" "$WT/incident_notes.md"
 rm -f "$IJ" "$WT/incident_1/exec-mode" "$WT/incident_1/patches/INC-1.1.patch" "$WT/incident_1/patches/INC-1.2.patch"
 
 # =================================================================================================

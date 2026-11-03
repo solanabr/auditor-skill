@@ -35,7 +35,10 @@
 # only once incident_<n>/INCIDENTS.json (a regular file of at most 4 MiB) records the root_cause_class of the
 # incident --patch names (INC-<n>.<k>), or of every incident without one. In native mode it needs every
 # incident's, whatever --patch names, and builds nothing while any incident is supply_chain_or_ci: a patch of
-# one incident builds the same tree as the others (OUTPUT-RULES.md Rule 11a).
+# one incident builds the same tree as the others. And natively nothing is built, whatever --run names, while
+# the INCIDENTS.json of any incident_* directory of the working directory records a supply_chain_or_ci
+# incident or cannot be read, since every --src is the working tree or a copy of it; a directory without
+# INCIDENTS.json, or whose file records no incident, counts for nothing (OUTPUT-RULES.md Rule 11a).
 #
 # The copy, in a scratch directory outside the working directory. A --src that is the top level of a git
 # repository (its git directory inside the working directory, holding no symbolic link, borrowing no objects
@@ -78,8 +81,8 @@
 #
 # Exit: 0 the action succeeded · 1 it ran and failed · 3 blocker (no mode or mode none, the self-check, a tool
 # missing, a revision or package not found, a patch that does not apply, submodules, a download that failed,
-# the watchdog, an incident whose root cause INCIDENTS.json does not give or that may not build natively) ·
-# 64 refused. Needs bash >= 3.2, git, python3, env, find, grep, mkdir, mktemp, rm, chmod, cp,
+# the watchdog, an incident whose root cause an INCIDENTS.json does not give or that keeps the build from
+# native mode) · 64 refused. Needs bash >= 3.2, git, python3, env, find, grep, mkdir, mktemp, rm, chmod, cp,
 # ln, cat, wc, tail and date; cargo, cargo-build-sbf, anchor or npm as the action needs.
 
 set -uo pipefail
@@ -350,6 +353,30 @@ case "$R" in
       fi
     fi ;;
 esac
+# Natively an incident recorded anywhere in the working directory counts too, whatever --run names: every --src
+# is the working tree or a copy of it. Each incident_* directory there is read with iso_incident_class, with no
+# id; one without INCIDENTS.json, or whose file records no incident (a hunt that ruled everything out), counts
+# for nothing, and a directory that cannot be searched is read, so that its refusal stops the build.
+if [ "$MODE" = native ]; then
+  for d in "$WT"/incident_*; do
+    [ -d "$d" ] || continue
+    if [ ! -e "$d/INCIDENTS.json" ] && [ ! -L "$d/INCIDENTS.json" ] && [ -x "$d" ]; then continue; fi
+    json=$(confine_text "${d##*/}")/INCIDENTS.json
+    command -v python3 >/dev/null 2>&1 ||
+      blocker "python3 is not on PATH, so target.sh cannot read the root_cause_class in $json (OUTPUT-RULES.md Rule 11a) — nothing was copied or built."
+    rc=0
+    iso_incident_class "$d/INCIDENTS.json" || rc=$?
+    cls=$ISO_CLASS
+    case "$rc:$cls" in
+      0:supply_chain_or_ci)
+        blocker "$json records an incident whose root_cause_class is supply_chain_or_ci, so nothing from this working directory is built natively, for an audit run or an incident run (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built." ;;
+      0:*|'3:records no incident') ;;
+      *)
+        [ "$rc" = 3 ] && [ -n "$cls" ] || cls="cannot be read"
+        blocker "$json $cls: nothing from this working directory is built natively until every incident_*/INCIDENTS.json in it records the root_cause_class of each of its incidents (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built." ;;
+    esac
+  done
+fi
 # python3 starts from /, so nothing in the working directory picks the interpreter.
 cd / || blocker "cannot leave the working directory for /"
 rc=0
