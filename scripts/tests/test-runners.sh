@@ -933,8 +933,9 @@ fi
 # a path past PATH_MAX (1024 bytes on macOS, 4096 on Linux) hides no run. In a working directory PATH_MAX-22 bytes
 # long incident_1/INCIDENTS.json lies past it; in one PATH_MAX-200 bytes long, a run moved aside under a long
 # name, whose INCIDENTS.json (a name of 190 bytes) or which itself (230) lies past it. Each file is written
-# through a relative path and records a supply_chain_or_ci incident. A working directory that cannot be listed
-# stops the build too.
+# through a relative path and records a supply_chain_or_ci incident. The incident_* directories are read in any
+# letter case, since a volume that ignores case finds incident_2 under INCIDENT_2, and a working directory that
+# cannot be listed stops the build too.
 PM=$(getconf PATH_MAX / 2>/dev/null)
 case "$PM" in ''|*[!0-9]*) PM=1024 ;; esac
 long() { printf '%*s' "$1" '' | tr ' ' "$2"; }
@@ -978,6 +979,13 @@ if DW=$(deep_wt $((PM - 200))) && [ "${#DW}" = $((PM - 200)) ]; then
   run "$TARGET" "$DW" PATH="$T/fake:$T/sys-nopy" -- cargo-test --run audit_1 --src .
   check "natively without python3 and with no incident_* directory, target.sh's own need of python3 stops it: exit 3, nothing copied" \
     sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: python3 is not on PATH, so cargo-test cannot run here — nothing was copied or built.' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
+  for spelled in INCIDENT_2 Incident_2; do
+    ( cd "$DW" && mkdir "$spelled" && printf '%s\n' "$SCJ" > "$spelled/INCIDENTS.json" )
+    run "$TARGET" "$DW" -- cargo-test --run audit_1 --src .
+    ( cd "$DW" && rm -rf "$spelled" )
+    check "natively, a run spelled $spelled whose INCIDENTS.json records a supply_chain_or_ci incident stops audit_1's build: exit 3, nothing copied" \
+      sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: $spelled/INCIDENTS.json records an incident whose root_cause_class is supply_chain_or_ci, $XRUN' '$T/err' && [ ! -s '$T/calls' ]"
+  done
   if [ "$(id -u)" != 0 ]; then
     ( cd "$DW" && mkdir incident_1 && printf '%s\n' "$SCJ" > incident_1/INCIDENTS.json )
     chmod 300 "$DW"

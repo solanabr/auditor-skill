@@ -175,12 +175,13 @@
 #                                python3 starts from /, as for the self-check.
 #   iso_incident_runs <working directory>
 #                                reads in turn, as iso_incident_class does with no id, the INCIDENTS.json of
-#                                each directory named incident_* at the top of <working directory> (an absolute
-#                                path): sets ISO_CLASS to supply_chain_or_ci at the first that records such an
-#                                incident, and to "other" when none does, and ISO_INCIDENTS to that file,
-#                                relative to <working directory> and cut as confine_shown cuts. A directory
-#                                whose INCIDENTS.json is missing, or whose file records no incident (a hunt that
-#                                ruled everything out), counts for nothing.
+#                                each directory at the top of <working directory> (an absolute path) named
+#                                incident_* in any letter case, since a volume that ignores case finds
+#                                incident_1 under the name INCIDENT_1: sets ISO_CLASS to supply_chain_or_ci at
+#                                the first that records such an incident, and to "other" when none does, and
+#                                ISO_INCIDENTS to that file, relative to <working directory> and cut as
+#                                confine_shown cuts. A directory whose INCIDENTS.json is missing, or whose file
+#                                records no incident (a hunt that ruled everything out), counts for nothing.
 #                                Status 3, with ISO_CLASS the reason, at the first file that cannot be read:
 #                                only python3 tells that a file is missing, so a stat that fails for another
 #                                reason (a directory that cannot be searched, a path past PATH_MAX) gives it,
@@ -1125,12 +1126,12 @@ iso_incident_runs() { # iso_incident_runs <working directory>
     return 3
   fi
   case $- in
-    *f*) set +f; dirs=("$1"/incident_*); set -f ;;
-    *) dirs=("$1"/incident_*) ;;
+    *f*) set +f; dirs=("$1"/[Ii][Nn][Cc][Ii][Dd][Ee][Nn][Tt]_*); set -f ;;
+    *) dirs=("$1"/[Ii][Nn][Cc][Ii][Dd][Ee][Nn][Tt]_*) ;;
   esac
   for d in ${dirs[@]+"${dirs[@]}"}; do
     # The pattern itself comes back when nothing matches.
-    [ "$d" != "$1/incident_*" ] || continue
+    [ "$d" != "$1/[Ii][Nn][Cc][Ii][Dd][Ee][Nn][Tt]_*" ] || continue
     # The shell's tests cannot tell a missing path from one a stat cannot reach, so only a name that is there
     # and is no directory is passed over here; python3 decides the rest.
     if [ ! -d "$d" ] && [ -e "$d" ]; then continue; fi

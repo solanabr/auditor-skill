@@ -94,9 +94,9 @@
 #     manifests, and from the resolved Cargo.lock before anything compiles) and sources
 #     outside the crate, and a build that compiled code from outside it;
 #     in native mode no crate runs, an audit's included, while the INCIDENTS.json of
-#     any incident_* directory in the working directory records such an incident or
-#     cannot be read (a path past PATH_MAX, a working directory that cannot be
-#     listed), as iso_incident_class's no-id form (pinned) reports it: a
+#     any incident_* directory in the working directory, in any letter case, records
+#     such an incident or cannot be read (a path past PATH_MAX, a working directory
+#     that cannot be listed), as iso_incident_class's no-id form (pinned) reports it: a
 #     directory without that file, or whose file records no incident, counts for
 #     nothing;
 #   * the isolation self-check (scripts/lib/isolation.sh): in isolated mode, a fake HOME
@@ -2645,7 +2645,9 @@ fi
 # PATH_MAX-22 bytes long incident_1/INCIDENTS.json lies past it (a model run there, since a --vulnerable-so
 # path would too); in one PATH_MAX-200 bytes long, a run moved aside under a long name, whose INCIDENTS.json (a
 # name of 190 bytes) or which itself (230) lies past it. Each file is written through a relative path and
-# records a supply_chain_or_ci incident. A working directory that cannot be listed stops the run too.
+# records a supply_chain_or_ci incident. The incident_* directories are read in any letter case, since a volume
+# that ignores case finds incident_2 under INCIDENT_2, and a working directory that cannot be listed stops the
+# run too.
 PM="$(getconf PATH_MAX / 2>/dev/null)"
 case "$PM" in ''|*[!0-9]*) PM=1024 ;; esac
 long() { printf '%*s' "$1" '' | tr ' ' "$2"; }
@@ -2694,6 +2696,14 @@ if DW="$(deep_dir $((PM - 200)))" && [ "${#DW}" = $((PM - 200)) ]; then
   code="$(dgate "$DW" AUDITOR_EXEC_MODE=native -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
   [ "$code" = 0 ] && grep -q "^$LEG3" "$T/out" && ok "... and with that run gone the same crate runs" \
     || { bad "an audit's crate in a working directory of $((PM - 200)) bytes, native: exit $code"; cat "$T/out" >&2; }
+  for spelled in INCIDENT_2 Incident_2; do
+    ( cd "$DW" && mkdir "$spelled" && printf '%s\n' "$SCJ" > "$spelled/INCIDENTS.json" )
+    code="$(dgate "$DW" AUDITOR_EXEC_MODE=native -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+    ( cd "$DW" && rm -rf "$spelled" )
+    [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: $spelled/INCIDENTS.json $want_sc" "$T/out" && new_nothing_ran && one_blocker \
+      && ok "an audit's crate in native mode beside a run spelled $spelled whose INCIDENTS.json records a supply_chain_or_ci incident -> exit 3, nothing copied" \
+      || { bad "an audit's crate beside $spelled/, native: exit $code"; cat "$T/out" >&2; }
+  done
   if [ "$(id -u)" != 0 ]; then
     ( cd "$DW" && mkdir incident_1 && printf '%s\n' "$SCJ" > incident_1/INCIDENTS.json )
     chmod 300 "$DW"
