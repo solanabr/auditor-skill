@@ -487,6 +487,8 @@ if cmp -s "$T/scan.stdout" "$T/scan.bare"; then ok "audit-scan: without --contra
 snapshot "$D" > "$T/child.before"
 ( cd "$W" && "$SCAN" --internal-parse-stdin ) < /dev/null > "$T/child.out" 2>&1
 eq "audit-scan: the child it parses with, given no file, ends at once and says nothing" "$?:$(wc -c < "$T/child.out" | tr -d ' ')" "0:0"
+( cd "$W" && "$SCAN" --internal-parse-workflows ) < /dev/null > "$T/wchild.out" 2>&1
+eq "audit-scan: the child it parses workflows with, given no file, ends at once and says nothing" "$?:$(wc -c < "$T/wchild.out" | tr -d ' ')" "0:0"
 snapshot "$D" > "$T/child.after"
 if cmp -s "$T/child.before" "$T/child.after"; then ok "audit-scan: ... and touches nothing"; else bad "audit-scan: its child changed files"; fi
 ( cd "$W" && "$SCAN" --contract=1 . --out audit_1/prescan.json --pretty ) > /dev/null 2>&1
