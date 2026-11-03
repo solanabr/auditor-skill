@@ -31,8 +31,9 @@ grep -rnE --include='*.yml' --include='*.yaml' '^(ref:[ 	]*(.?\$\{\{.*((env|need
 
 **Step 3: Check for secret exposure in logs**
 ```
-grep -rnE --include='*.yml' --include='*.yaml' 'echo.*(\$\{\{[^}]*secrets\.|\$[A-Z_]*(SECRET|TOKEN|KEY))' .github/
+grep -rnE --include='*.yml' --include='*.yaml' '^.*echo.*(\$\{\{.*secrets[ 	]*(\.|\[|\))|\$\{?[ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_]*(SECRET|TOKEN|KEY))' .github/
 ```
+- It lists each `echo` line that reads `secrets` inside a `${{ }}` expression (a field, an index, or the whole context, as `toJSON(secrets)` does), or that names a variable whose name holds `SECRET`, `TOKEN` or `KEY` (`$NPM_TOKEN`, `${NPM_TOKEN}`). A hit is a line to read: the expression may have closed before `secrets` (`echo "${{ github.sha }}" > secrets.txt`).
 - ✅ PASS: Secrets never echoed in CI logs
 - ❌ FAIL: Secrets printed to CI output (visible in logs)
 

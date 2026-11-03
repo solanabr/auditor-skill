@@ -8,14 +8,16 @@
 #   K140-6   KV-140 Step 6 (Actions cache writers and restorers);
 #   K140-7a  KV-140 Step 7, first command (places that trust GitHub's OIDC issuer);
 #   K140-7b  KV-140 Step 7, second command (the subjects and claims trust policies bind);
+#   K080-3   KV-080 Step 3 (echo lines that print a secret);
 #   K080-8a  KV-080 Step 8, first command (jobs on runners GitHub does not host);
 #   K080-8b  KV-080 Step 8, second command (runner registrations and runner-group settings).
 # A recipe of two commands (R1) flags what the first lists and the second does not; every other line of an R
 # recipe must be an echo of a quoted marker, which the suite does not run. The suite also checks that every
 # known-vector step that repeats an R recipe carries its lines byte for byte, as one block in the same order,
 # and that no recipe flags a fixture's comment lines. R3, R7, R8, R9 and the KV-080 Step 8 and KV-140 Step 7
-# commands are also checked line by line on their own fixtures, and those that search outside .github/ skip
-# node_modules/ and .terraform/. Every pattern a recipe gives grep must stay inside what GNU grep's DFA runs in a
+# commands are also checked line by line on their own fixtures, R3 and KV-080 Step 3 on trees of their own
+# as well, and those that search outside .github/ skip node_modules/ and .terraform/. Every pattern a recipe
+# (KV-080 Step 4's first command among them) gives grep must stay inside what GNU grep's DFA runs in a
 # UTF-8 locale and hold no backslash inside a bracket, and in a grep call that holds * or + every pattern must
 # start at ^. It runs R1 and K139-1 over trigger spellings built at run time (CRLF line ends among them), R1 over
 # file names that hold a space or a quote and over decoy names that hold a newline, with the find that the R1 note
@@ -141,6 +143,7 @@ K139-1 $KV139 1 1
 K140-6 $KV140 6 1
 K140-7a $KV140 7 1
 K140-7b $KV140 7 2
+K080-3 $KV080 3 1
 K080-8a $KV080 8 1
 K080-8b $KV080 8 2"
 
@@ -154,7 +157,7 @@ R7 $KV080 2
 R7 $KV140 2
 R9 $KV080 4"
 
-IDS="R1 R2 R3 R4 R5 R6 R7 R8 R9 K116-1 K139-1 K140-6 K140-7a K140-7b K080-8a K080-8b"
+IDS="R1 R2 R3 R4 R5 R6 R7 R8 R9 K116-1 K139-1 K140-6 K140-7a K140-7b K080-3 K080-8a K080-8b"
 
 # Fixtures each recipe must flag (their two- or three-digit prefixes, ascending). Anything else is a mismatch.
 expected() {
@@ -173,6 +176,7 @@ expected() {
     K140-6) echo "35 36 37 38 39 42 43 44 45" ;;
     K140-7a) echo "80 81 82 83 84 85 93 95 96 97 101" ;;
     K140-7b) echo "80 82 83 84 85 93 95 96 97 101" ;;
+    K080-3) echo "" ;;   # no fixture echoes a secret; the tree of its own below does
     K080-8a) echo "78 98 100 106" ;;
     K080-8b) echo "86 87 88 89 90 94" ;;
   esac
@@ -339,6 +343,19 @@ nlines=$((nlines + 1))
 got=$(run_recipe "$r3t" "$(recipe_lines R3)" | sed 's#^\./##' | awk -F: '{ print $2 }' | sort -n | tr '\n' ' ' | sed 's/ $//')
 if [ "$got" = "4 6" ]; then echo "ok   R3 in a string deny-list holding a backslash or a letter outside ASCII: lines $got"
 else echo "FAIL R3 in a string deny-list holding a backslash or a letter outside ASCII: got lines [$got] want [4 6]"; fail=1; fi
+# KV-080 Step 3 lists an echo line that reads secrets in an expression, as a field, an index or the whole context,
+# whatever the expression holds before it (a } of its own included), and one that names a variable whose name holds
+# SECRET, TOKEN or KEY, braced or not and digits included; not an echo of another context or variable.
+k3="$work/k080-3"; mkdir -p "$k3/.github/workflows"
+printf '%s\n' 'on: push' 'jobs:' '  a:' '    runs-on: ubuntu-latest' '    steps:' \
+  '      - run: echo "${{ secrets.NPM_TOKEN }}"' "      - run: echo \"\${{ format('{0}', secrets.DEPLOY_KEY) }}\"" \
+  "      - run: echo '\${{ toJSON(secrets) }}'" "      - run: echo \"\${{ secrets['NPM_TOKEN'] }}\"" \
+  '      - run: echo $DEPLOY_KEY' '      - run: echo "${API_TOKEN}"' '      - run: echo "$AWS_S3_SECRET"' \
+  '      - run: echo "${{ github.sha }}" "$HOME"' > "$k3/.github/workflows/echo.yml"
+nlines=$((nlines + 1))
+got=$(run_recipe "$k3" "$(recipe_lines K080-3)" | awk -F: '{ print $2 }' | sort -n | tr '\n' ' ' | sed 's/ $//')
+if [ "$got" = "6 7 8 9 10 11 12" ]; then echo "ok   K080-3 in its echo lines: lines $got"
+else echo "FAIL K080-3 in its echo lines: got lines [$got] want [6 7 8 9 10 11 12]"; fail=1; fi
 
 # Linear by construction. In a UTF-8 locale GNU grep decides a line in one pass of its DFA only when the pattern
 # holds nothing the DFA leaves undecided: a negated bracket such as [^#], a class such as [[:space:]], a range
@@ -751,11 +768,11 @@ if [ "$nhead" -eq 0 ]; then echo "FAIL no command of KV-080 or KV-140 pipes into
 # Files holding a 1 MiB line of near misses: one that nearly matches R6 again and again, one that repeats a pin
 # with a SHA one digit short, one that repeats a ref: expression whose step output R7 cannot read, one whose only
 # author_association follows a #, one that repeats a claude call whose -p follows an &, one that holds an event
-# name after a megabyte of blanks, and an infrastructure file that repeats lookalikes of the runner and OIDC
-# settings. Each command of every recipe must end within 30 s and flag nothing, in a UTF-8 locale where one is
-# installed (C.UTF-8 on GitHub's ubuntu runners): there GNU grep needs minutes for such a line when a pattern holds
-# a construct its DFA leaves undecided (see "Linear by construction" above), and each line here passes the filter
-# GNU grep runs before that.
+# name after a megabyte of blanks, one that repeats an echo of an expression and of a variable that name no secret,
+# and an infrastructure file that repeats lookalikes of the runner and OIDC settings. Each command of every recipe
+# must end within 30 s and flag nothing, in a UTF-8 locale where one is installed (C.UTF-8 on GitHub's ubuntu
+# runners): there GNU grep needs minutes for such a line when a pattern holds a construct its DFA leaves undecided
+# (see "Linear by construction" above), and each line here passes the filter GNU grep runs before that.
 utf8=$(locale -a 2>/dev/null | grep -iE '^(C|en_US)[.]utf-?8$' | sed -n 1p)
 long="$work/long"; mkdir -p "$long/.github/workflows" "$long/infra"
 { printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo "'
@@ -780,10 +797,13 @@ long="$work/long"; mkdir -p "$long/.github/workflows" "$long/infra"
 { printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n          echo hi\n'
   awk 'BEGIN { for (i = 0; i < 1050000; i++) printf " " }'
   printf 'issues xy\n'; } > "$long/.github/workflows/long-trigger.yml"
+{ printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo "'
+  awk 'BEGIN { for (i = 0; i < 36000; i++) printf "echo ${{ x }} secrets $a KEY " }'
+  printf '"\n'; } > "$long/.github/workflows/long-echo.yml"
 sizes=""; small=0
 for f in .github/workflows/long.yml .github/workflows/long-pins.yml .github/workflows/long-refs.yml \
   .github/workflows/long-gate.yml .github/workflows/long-agent.yml \
-  .github/workflows/long-trigger.yml infra/long.tf; do
+  .github/workflows/long-trigger.yml .github/workflows/long-echo.yml infra/long.tf; do
   s=$(wc -c < "$long/$f" | tr -d ' '); sizes="$sizes $s"
   if [ "$s" -le 1000000 ]; then small=1; fi
 done
