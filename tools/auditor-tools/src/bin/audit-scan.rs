@@ -21,10 +21,10 @@
 //! from with `confine::PARSE_STDIN` as its only argument (`workflow::PARSE_WORKFLOWS`
 //! for a workflow file): the file's bytes on its stdin, no environment, killed
 //! past `confine::PARSE_TIME`. A file whose child does not finish is skipped, and
-//! the scan goes on; once the scan has run `scan::SCAN_TIME` (90 seconds), each
-//! further `*.rs` or workflow file is skipped. The workflows' facts take what the
-//! `*.rs` walk left of the report's cap, `scan::MAX_REPORT`, both counted as the
-//! report prints.
+//! the scan goes on; once audit-scan has run `scan::SCAN_TIME` (90 seconds, the
+//! git questions about `--out` among them), each further `*.rs` or workflow file
+//! is skipped. The workflows' facts take what the `*.rs` walk left of the
+//! report's cap, `scan::MAX_REPORT`, both counted as the report prints.
 //! Exit: 0 done · 1 the output cannot be written · 2 refused.
 
 use std::ffi::{OsStr, OsString};
@@ -216,6 +216,8 @@ fn write_out(out: &Out, bytes: &[u8]) -> io::Result<()> {
 }
 
 fn run(args: &[OsString]) -> Result<(), Stop> {
+    // The scan's time runs from here, so what `check_out` asks git counts in it.
+    let until = Instant::now().checked_add(scan::SCAN_TIME);
     let wt = confine::working_tree()?;
     confine::plain_working_tree(&wt)?;
     confine::self_check(&wt)?;
@@ -245,8 +247,7 @@ fn run(args: &[OsString]) -> Result<(), Stop> {
         None => None,
     };
 
-    let until = Instant::now().checked_add(scan::SCAN_TIME);
-    let mut report = scan::scan_path(dir.path())
+    let mut report = scan::scan_path_until(dir.path(), until)
         .map_err(|e| Stop(1, format!("cannot start the scan: {}", os_message(&e))))?;
     if let Some(wdir) = &workflows {
         let left = scan::MAX_REPORT.saturating_sub(workflow::printed_size(&report, call.pretty, 0));
