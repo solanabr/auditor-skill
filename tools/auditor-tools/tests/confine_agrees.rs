@@ -536,3 +536,78 @@ fn confine_rs_refuses_what_git_would_wait_on_in_confine_sh_s_words() {
     }
     assert!(differ.is_empty(), "{}", differ.join("\n"));
 }
+
+/// A `git` in `dir` that answers every call as git does when it gives up:
+/// `message` on stderr, then exit `status`. Written by `/bin/sh`, as
+/// `recording_git` is; the message is read from a file beside it.
+fn failing_git(dir: &Path, message: &str, status: u8) {
+    fs::create_dir_all(dir).expect("make the failing git's directory");
+    fs::write(dir.join("msg"), format!("{message}\n")).expect("write the message");
+    let made = Command::new("/bin/sh")
+        .args([
+            "-c",
+            "printf '#!/bin/sh\\ncat \"%s\" >&2\\nexit %s\\n' \"$1\" \"$2\" > \"$3\" && chmod 755 \"$3\"",
+            "sh",
+        ])
+        .arg(dir.join("msg"))
+        .arg(status.to_string())
+        .arg(dir.join("git"))
+        .stdin(Stdio::null())
+        .status()
+        .expect("run sh");
+    assert!(made.success(), "write the failing git");
+}
+
+#[test]
+fn confine_rs_takes_only_git_s_own_answer_for_no_repository_as_confine_sh_does() {
+    // Asked whether WT is in a work tree, git fails. Only its own "not a git
+    // repository" first, with exit 128, means no repository and so nothing
+    // tracked; those words inside another of its messages (another user owns a
+    // repository named so), or with another status, leave both sides unable to
+    // tell, and audit-mem refuses its in-tree store.
+    let own = "fatal: not a git repository (or any of the parent directories): .git";
+    let quoted = "fatal: detected dubious ownership in repository at '/x/not a git repository'";
+    for (case, message, status, no_repo) in [
+        ("own", own, 128, true),
+        ("quoted", quoted, 128, false),
+        ("status", own, 1, false),
+    ] {
+        let wt = Wt::new();
+        let fake = wt.outside().join("fake");
+        failing_git(&fake, message, status);
+        let path = format!("{}:/usr/bin:/bin", fake.display());
+        let shell = Command::new("bash")
+            .args([
+                "-c",
+                ". \"$1/scripts/lib/confine.sh\" && confine_init agree \"$1\" && \
+                 confine_tracked .audit-memory",
+                "agree",
+            ])
+            .arg(root())
+            .current_dir(&wt.dir)
+            .env("PATH", &path)
+            .env_remove("CONFINE_ALLOW_PROTOCOL")
+            .stdin(Stdio::null())
+            .output()
+            .expect("run bash");
+        let rust = Command::new(env!("CARGO_BIN_EXE_audit-mem"))
+            .args(["warm", "--program-id", "VaultProg1111"])
+            .current_dir(&wt.dir)
+            .env("PATH", &path)
+            .stdin(Stdio::null())
+            .output()
+            .expect("run audit-mem");
+        let err = String::from_utf8_lossy(&rust.stderr);
+        if no_repo {
+            assert_eq!(shell.status.code(), Some(0), "{case}: confine_tracked");
+            assert!(rust.status.success(), "{case}: audit-mem: {err}");
+        } else {
+            assert_eq!(shell.status.code(), Some(2), "{case}: confine_tracked");
+            assert!(
+                !rust.status.success()
+                    && err.contains("git cannot tell whether .audit-memory is tracked"),
+                "{case}: audit-mem: {err}"
+            );
+        }
+    }
+}

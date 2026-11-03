@@ -733,8 +733,13 @@ impl Git {
             )
             .ok()?;
         if !inside.status.success() {
-            let err = String::from_utf8_lossy(&inside.stderr);
-            return err.contains("not a git repository").then(Vec::new);
+            // Outside every repository only on git's own answer, as `confine_no_repo`
+            // takes it: exit 128 and stderr starting with "fatal: not a git repository".
+            // No part of other text counts: git's messages can quote a name the
+            // repository chose.
+            let no_repo = inside.status.code() == Some(128)
+                && inside.stderr.starts_with(b"fatal: not a git repository");
+            return no_repo.then(Vec::new);
         }
         let spec = OsString::from_vec([&b":(literal,icase)"[..], path].concat());
         let listed = self
