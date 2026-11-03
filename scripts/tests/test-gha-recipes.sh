@@ -675,8 +675,10 @@ done
 
 # Claude Code's grep skips a file an ignore rule names and a file it reads as binary, so Known limits compares, for
 # KV-140 Step 7 and KV-080 Step 8's second command, what git tracks with what grep reads. Its grep searches the files
-# those commands search, its git listing takes the same globs, and run as written in a repository that tracks a file
-# holding a byte outside UTF-8 and one an ignore rule names, the git listing names both.
+# those commands search, its git listing takes the same globs and leaves out each directory the grep's --exclude-dir
+# options skip, at any depth, and the bullets of those two steps give the same git listing. Run as written in a
+# repository that tracks a file holding a byte outside UTF-8, one an ignore rule names, and files under node_modules/
+# and a nested .terraform/, the git listing names the first two and none of the others.
 kl=$(awk '/^## GitHub Actions \(CI trigger trust\)/ { sec = 1; next } sec && /^## / { exit }
   sec && /^\*\*Known limits\.\*\*/ { s = 1; next } s && /^\*\*/ { exit } s' "$doc")
 klgrep=$(printf '%s\n' "$kl" | spans 'grep -rl --exclude-dir=')
@@ -688,20 +690,28 @@ for id in K140-7a K140-7b K080-8b; do
   if [ "$(opts "$klgrep")" != "$(opts "$c")" ] || [ "${klgrep##* }" != "${c##* }" ]; then klok=0; fi
 done
 globs=$(opts "$klgrep" | tr ' ' '\n' | sed -n "s/^--include=//p" | tr '\n' ' ')
-if [ "$(printf '%s\n' "${klgit#*ls-files -- }" | tr ' ' '\n' | grep . | tr '\n' ' ')" != "$globs" ]; then klok=0; fi
+excls=$(opts "$klgrep" | tr ' ' '\n' | sed -n "s#^--exclude-dir=\(.*\)#':(exclude,glob)**/\1/**'#p" | tr '\n' ' ')
+if [ "$(printf '%s\n' "${klgit#*ls-files -- }" | tr ' ' '\n' | grep . | tr '\n' ' ')" != "$globs$excls" ]; then klok=0; fi
+for vs in "$KV140:7" "$KV080:8"; do
+  if [ "$(kv_text "${vs%:*}" "${vs#*:}" | spans "\"<auditor-skill root>/scripts/git-ro.sh\" ls-files -- '")" != "$klgit" ]
+  then klok=0; fi
+done
 klrun=${klgit#'"<auditor-skill root>/scripts/git-ro.sh"'}; klrun="\"$root/scripts/git-ro.sh\"$klrun"
-klrepo="$work/known-limits"; mkdir -p "$klrepo/infra" "$work/kl-home"
+klrepo="$work/known-limits"; mkdir -p "$klrepo/infra/.terraform/modules/oidc" "$klrepo/node_modules/runner" "$work/kl-home"
 got=$( (cd "$klrepo" && export HOME="$work/kl-home" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
     GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid \
   && git init -q . && printf 'infra/ignored.tf\n' > .gitignore \
   && printf 'condition = "repo:example/*"\n' > infra/ignored.tf \
-  && printf '# r\351gion\ncondition = "repo:example/*"\n' > infra/latin1.tf && git add .gitignore infra/latin1.tf \
+  && printf 'condition = "repo:example/*"\n' > infra/.terraform/modules/oidc/main.tf \
+  && printf 'allows_public_repositories = true\n' > node_modules/runner/main.tf \
+  && printf '# r\351gion\ncondition = "repo:example/*"\n' > infra/latin1.tf \
+  && git add .gitignore infra/latin1.tf infra/.terraform node_modules \
   && git add -f infra/ignored.tf && git commit -qm init && eval "$klrun") </dev/null 2>/dev/null | tr '\n' ' ')
 if [ -n "$klgrep" ] && [ -n "$klgit" ] && [ "$klok" -eq 1 ] && [ "$got" = "infra/ignored.tf infra/latin1.tf " ]; then
   echo "ok   Known limits compares, for the commands that search the whole tree, what git tracks with what grep reads"
 else
-  echo "FAIL Known limits: its grep [${klgrep:-none}] and git listing [${klgit:-none}] (same files: $klok) named [$got]," \
-    "want [infra/ignored.tf infra/latin1.tf ]"
+  echo "FAIL Known limits: its grep [${klgrep:-none}] and git listing [${klgit:-none}] (same files, and the same" \
+    "listing in KV-140 Step 7 and KV-080 Step 8: $klok) named [$got], want [infra/ignored.tf infra/latin1.tf ]"
   fail=1
 fi
 
