@@ -2435,8 +2435,21 @@ fn refuses_when_git_does_not_answer_in_time() {
     wt.run_dir("audit_1");
     let slow = wt.outside().join("slow");
     fs::create_dir(&slow).expect("make the slow git's directory");
-    fs::write(slow.join("git"), b"#!/bin/sh\nexec /bin/sleep 60\n").expect("write the slow git");
-    fs::set_permissions(slow.join("git"), fs::Permissions::from_mode(0o755)).expect("chmod it");
+    // Written by /bin/sh, not by this process: on Linux, a child another test
+    // starts while this process holds the file open for writing inherits that
+    // descriptor, and running the file then fails with ETXTBSY until it execs.
+    let status = Command::new("/bin/sh")
+        .args([
+            "-c",
+            "printf '%s' \"$1\" > \"$2\" && chmod 755 \"$2\"",
+            "sh",
+            "#!/bin/sh\nexec /bin/sleep 60\n",
+        ])
+        .arg(slow.join("git"))
+        .stdin(Stdio::null())
+        .status()
+        .expect("run sh");
+    assert!(status.success(), "write the slow git");
     let path = format!("{}:/usr/bin:/bin", slow.display());
     for (args, why) in [
         (
