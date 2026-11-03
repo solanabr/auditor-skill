@@ -84,8 +84,9 @@
 #     they hold (a credential helper, an askpass program, an HTTP header, a URL with a
 #     login, an include; a credential_process or a key), Claude Code's settings, state
 #     and managed settings by what they hold (a credential helper, a token in an env
-#     block, an MCP server's Authorization header), the variable names that look
-#     like credentials, and agent, container daemon and git credential sockets
+#     block, an MCP server's Authorization header), Docker's TLS client keys, the
+#     variable names that look like credentials, and agent, container daemon (a
+#     tcp:// one too) and git credential sockets
 #     (serving one needs a machine that allows it: on CI a machine that does not fails
 #     the run, anywhere else one SKIP line says so). On CI the runner's own home must
 #     pass the check, so that the checks that isolated mode passes run there. Its
@@ -1491,6 +1492,8 @@ done <<'CREDS'
 .claude-work/.credentials.json|Claude Code credentials
 .config/anthropic/credentials/default.json|Claude Code credentials
 .config/anthropic/configs/default.json|Claude Code credentials
+.docker/key.pem|Kubernetes or Docker config
+.docker/contexts/tls/0123abcd/docker/key.pem|Kubernetes or Docker config
 CREDS
 # The same for a Claude Code login only where CLAUDE_CONFIG_DIR keeps it, outside HOME, for an API key only in
 # the env block of ~/.claude/settings.json, and for a git credential helper only, in ~/.gitconfig, in the form
@@ -1612,6 +1615,15 @@ code="$(dcreds GIT_ASKPASS="$EG/askpass" SSH_ASKPASS="$EG/ssh-askpass" GIT_CONFI
   "$EG/gitconfig-global" "$EG/gitconfig-system" "$EG/xdg/git/config" "$EG/aws-config" \
   && ok "the askpass programs, git config and AWS config the environment names count (GIT_ASKPASS, GIT_CONFIG_GLOBAL, AWS_CONFIG_FILE and the rest)" \
   || { bad "the askpass and config places the environment names: $code"; cat "$T/creds.out" >&2; }
+# The Docker TLS client keys the environment names: key.pem in DOCKER_CERT_PATH, and the context keys under
+# DOCKER_CONFIG. The certificates beside them do not count.
+ED="$T/fe-docker"; mkdir -p "$ED/certs" "$ED/config/contexts/tls/0123abcd/docker"
+for f in certs/key.pem config/contexts/tls/0123abcd/docker/key.pem; do printf 'secret\n' > "$ED/$f"; done
+printf 'public\n' > "$ED/certs/cert.pem"; printf 'public\n' > "$ED/config/contexts/tls/0123abcd/docker/ca.pem"
+code="$(dcreds DOCKER_CERT_PATH="$ED/certs" DOCKER_CONFIG="$ED/config" -- "$CLEANHOME")"
+[ "$code" = 1 ] && lines_are "Kubernetes or Docker config (2)" "$ED/certs/key.pem" "$ED/config/contexts/tls/0123abcd/docker/key.pem" \
+  && ok "the Docker TLS client keys the environment names count (DOCKER_CERT_PATH, DOCKER_CONFIG's contexts)" \
+  || { bad "the Docker TLS client keys the environment names: $code"; cat "$T/creds.out" >&2; }
 # A git config or an AWS config in a home counts for what it holds. In a git config: a credential helper, an
 # askpass program, an HTTP header or an http(s) URL with a login, in any letter case and on a section's own
 # line too; in an AWS config: a credential_process or a key. A helper reset to nothing, a user name with an
@@ -1679,12 +1691,12 @@ out="$(cd "$WT" && env -i HOME="$CLEANHOME" PATH="$PATH" GITHUB_TOKEN=x AWS_SECR
   && ok "iso_cred_names names the variables that look like credentials, and no others" || bad "iso_cred_names: '$out'"
 # Agent sockets count when they accept a connection: SSH_AUTH_SOCK, sockets in ~/.ssh and ~/.gnupg, in
 # GNUPGHOME, ssh-*/agent.* under TMPDIR, and in the runtime directory's gnupg/. So do container daemon sockets
-# and the sockets that answer git's credential requests with a login. A socket nothing listens on does not.
-# Serving one needs a machine that allows it: on CI a machine that does not fails the run, and anywhere else
-# one SKIP line says the checks did not run. Each socket path stays under 104 bytes, the macOS limit, with
-# the runner's TMPDIR.
+# and the sockets that answer git's credential requests with a login, and a container daemon a tcp://
+# DOCKER_HOST or CONTAINER_HOST reaches. A socket nothing listens on does not. Serving one needs a machine that
+# allows it: on CI a machine that does not fails the run, and anywhere else one SKIP line says the checks did
+# not run. Each socket path stays under 104 bytes, the macOS limit, with the runner's TMPDIR.
 SK="$T/k"; mkdir -p "$SK/.ssh" "$SK/.gnupg" "$T/g" "$T/t/ssh-a" "$T/r/gnupg" "$T/q/.ssh"
-mkdir -p "$T/H/.docker/run" "$T/H/.colima/x" "$T/H/.rd" "$T/c/git/credential" "$T/t2/podman" "$T/r2/podman"
+mkdir -p "$T/H/.docker/run" "$T/H/.colima/x" "$T/H/.rd" "$T/H/.lima/x/sock" "$T/c/git/credential" "$T/t2/podman" "$T/r2/podman"
 python3 -I -c 'import socket, sys, time
 keep = []
 for path in sys.argv[1:]:
@@ -1692,11 +1704,18 @@ for path in sys.argv[1:]:
     s.bind(path)
     s.listen(5)
     keep.append(s)
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+s.listen(16)
+keep.append(s)
+with open(sys.argv[1] + "-port", "w") as f:
+    f.write("%d" % s.getsockname()[1])
 s = socket.socket(socket.AF_UNIX)
 s.bind(sys.argv[1] + "-stale")
 s.close()
 time.sleep(120)' "$T/a" "$SK/.ssh/agent" "$SK/.gnupg/S.gpg-agent" "$T/g/S.gpg-agent.ssh" "$T/t/ssh-a/agent.1" "$T/r/gnupg/S.gpg-agent" \
-  "$T/H/.docker/run/docker.sock" "$T/H/.colima/x/docker.sock" "$T/H/.rd/docker.sock" "$T/d.sock" "$T/p.sock" "$T/v.sock" "$T/rc.sock" \
+  "$T/H/.docker/run/docker.sock" "$T/H/.colima/x/docker.sock" "$T/H/.rd/docker.sock" "$T/H/.lima/x/sock/docker.sock" \
+  "$T/H/.lima/x/sock/podman.sock" "$T/d.sock" "$T/p.sock" "$T/v.sock" "$T/rc.sock" \
   "$T/c/git/credential/socket" "$T/t2/vscode-git-1.sock" "$T/t2/podman/m.sock" "$T/r2/docker.sock" "$T/r2/podman/podman.sock" \
   "$T/r2/vscode-git-2.sock" 2>/dev/null &
 agent=$!
@@ -1711,13 +1730,21 @@ if [ -S "$T/a-stale" ] && python3 -I -c 'import socket, sys; socket.socket(socke
     && ok "agent sockets in ~/.ssh, ~/.gnupg, GNUPGHOME, TMPDIR/ssh-*/ and the runtime directory count" || { bad "agent sockets: $code"; cat "$T/creds.out" >&2; }
   code="$(dcreds DOCKER_HOST="unix://$T/d.sock" CONTAINER_HOST="unix://$T/p.sock" VSCODE_GIT_IPC_HANDLE="$T/v.sock" \
     REMOTE_CONTAINERS_IPC="$T/rc.sock" XDG_CACHE_HOME="$T/c" TMPDIR="$T/t2" XDG_RUNTIME_DIR="$T/r2" -- "$T/H")"
-  [ "$code" = 1 ] && lines_are "container daemon sockets (8), git or HTTP credentials (5)" "~/.docker/run/docker.sock" \
-    "~/.colima/x/docker.sock" "~/.rd/docker.sock" "$T/d.sock" "$T/p.sock" "$T/t2/podman/m.sock" "$T/r2/docker.sock" \
-    "$T/r2/podman/podman.sock" "$T/v.sock" "$T/rc.sock" "$T/c/git/credential/socket" "$T/t2/vscode-git-1.sock" "$T/r2/vscode-git-2.sock" \
-    && ok "container daemon sockets (Docker Desktop, Colima, Rancher Desktop, DOCKER_HOST, CONTAINER_HOST, rootless, a Podman machine) and the sockets that answer git with a login (VS Code, Dev Containers, git's credential cache) count" \
+  [ "$code" = 1 ] && lines_are "container daemon sockets (10), git or HTTP credentials (5)" "~/.docker/run/docker.sock" \
+    "~/.colima/x/docker.sock" "~/.rd/docker.sock" "~/.lima/x/sock/docker.sock" "~/.lima/x/sock/podman.sock" "$T/d.sock" "$T/p.sock" \
+    "$T/t2/podman/m.sock" "$T/r2/docker.sock" "$T/r2/podman/podman.sock" "$T/v.sock" "$T/rc.sock" "$T/c/git/credential/socket" \
+    "$T/t2/vscode-git-1.sock" "$T/r2/vscode-git-2.sock" \
+    && ok "container daemon sockets (Docker Desktop, Colima, Rancher Desktop, Lima, DOCKER_HOST, CONTAINER_HOST, rootless, a Podman machine) and the sockets that answer git with a login (VS Code, Dev Containers, git's credential cache) count" \
     || { bad "container daemon and git credential sockets: $code"; cat "$T/creds.out" >&2; }
+  port="$(cat "$T/a-port" 2>/dev/null)"
+  code="$(dcreds DOCKER_HOST="tcp://127.0.0.1:$port" CONTAINER_HOST="tcp://localhost:$port" -- "$CLEANHOME")"
+  [ -n "$port" ] && [ "$code" = 1 ] && lines_are "container daemon sockets (2)" "tcp://127.0.0.1:$port" "tcp://localhost:$port" \
+    && ok "a tcp:// DOCKER_HOST or CONTAINER_HOST that accepts a TCP connection counts" || { bad "a tcp:// daemon address: $code, port '$port'"; cat "$T/creds.out" >&2; }
+  code="$(dcreds DOCKER_HOST="tcp://127.0.0.1:$port" DOCKER_TLS_VERIFY=1 -- "$CLEANHOME")"
+  [ "$code" = 0 ] && ok "a tcp:// DOCKER_HOST with DOCKER_TLS_VERIFY set does not count by itself: that daemon takes the TLS client key, which counts" \
+    || { bad "a tcp:// DOCKER_HOST with TLS: $code"; cat "$T/creds.out" >&2; }
   code="$(dcreds DOCKER_HOST="unix://$T/a-stale" CONTAINER_HOST="tcp://127.0.0.1:9" -- "$CLEANHOME")"
-  [ "$code" = 0 ] && ok "a DOCKER_HOST socket nothing listens on, and a tcp:// CONTAINER_HOST, do not count" || { bad "a stale DOCKER_HOST: $code"; cat "$T/creds.out" >&2; }
+  [ "$code" = 0 ] && ok "a DOCKER_HOST socket and a tcp:// CONTAINER_HOST nothing listens on do not count" || { bad "a stale DOCKER_HOST: $code"; cat "$T/creds.out" >&2; }
   printf 'isolated\n' > "$WT/audit_1/exec-mode"
   code="$(ngate HOME="$CLEANHOME" SSH_AUTH_SOCK="$T/a" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
   [ "$code" = 3 ] && grep -q '^\[PoC-ATTEMPTED\] blocker: isolated mode, but these are readable here: .*agent sockets (' "$T/out" && new_nothing_ran \

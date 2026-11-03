@@ -17,7 +17,8 @@
 #   ~/.azure/accessTokens.json, msal_token_cache.json, msal_token_cache.bin, service_principal_entries.json
 #     and service_principal_entries.bin;
 #   ~/.vault-token and ~/.terraform.d/credentials.tfrc.json;
-#   ~/.kube/config and ~/.docker/config.json;
+#   ~/.kube/config and ~/.docker/config.json; the Docker TLS client keys ~/.docker/key.pem and
+#     ~/.docker/contexts/tls/*/*/key.pem, which open a daemon that checks its clients;
 #   ~/.npmrc, ~/.yarnrc.yml, ~/.gem/credentials, ~/.pypirc, ~/.cargo/credentials and
 #     ~/.cargo/credentials.toml;
 #   ~/.git-credentials, ~/.config/git/credentials, ~/.netrc and ~/.config/gh/hosts.yml;
@@ -43,7 +44,8 @@
 #     ~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock;
 #   the sockets of a container daemon, which gives whoever reaches it the host: Docker Desktop's
 #     ~/.docker/run/docker.sock and ~/.docker/desktop/docker.sock, Colima's ~/.colima/*/docker.sock, Rancher
-#     Desktop's ~/.rd/docker.sock, OrbStack's ~/.orbstack/run/docker.sock and a Podman machine's
+#     Desktop's ~/.rd/docker.sock, OrbStack's ~/.orbstack/run/docker.sock, Lima's ~/.lima/*/sock/docker.sock
+#     and ~/.lima/*/sock/podman.sock, and a Podman machine's
 #     ~/.local/share/containers/podman/machine/*/podman.sock;
 #   git's credential cache sockets, ~/.cache/git/credential/socket and ~/.git-credential-cache/socket.
 # It reads the places these variables name as well, when they are set: SSH_AUTH_SOCK; CARGO_HOME
@@ -52,9 +54,12 @@
 # AWS_SHARED_CREDENTIALS_FILE, GOOGLE_APPLICATION_CREDENTIALS, NETRC, NPM_CONFIG_USERCONFIG (in either case),
 # GIT_ASKPASS, SSH_ASKPASS and ANTHROPIC_IDENTITY_TOKEN_FILE, each a file; GIT_CONFIG_GLOBAL and
 # GIT_CONFIG_SYSTEM, read as ~/.gitconfig is; AWS_CONFIG_FILE, read as ~/.aws/config is; KUBECONFIG, a list
-# of files; DOCKER_CONFIG (config.json); CLAUDE_CONFIG_DIR (.credentials.json, and the settings and state
-# files above); ANTHROPIC_CONFIG_DIR (every file under it); CLOUDSDK_CONFIG and AZURE_CONFIG_DIR (the gcloud and azure files above); GNUPGHOME (its
-# private-keys-v1.d/ and gpg-agent sockets); DOCKER_HOST and CONTAINER_HOST (a unix:// socket);
+# of files; DOCKER_CONFIG (config.json and contexts/tls/*/*/key.pem); DOCKER_CERT_PATH (key.pem);
+# CLAUDE_CONFIG_DIR (.credentials.json, and the settings and state files above); ANTHROPIC_CONFIG_DIR (every
+# file under it); CLOUDSDK_CONFIG and AZURE_CONFIG_DIR (the gcloud and azure files above); GNUPGHOME (its
+# private-keys-v1.d/ and gpg-agent sockets); DOCKER_HOST and CONTAINER_HOST (a unix:// socket, or a tcp://
+# address, port 2375 when it names none, that accepts a TCP connection: for DOCKER_HOST only when
+# DOCKER_TLS_VERIFY is not set, since a daemon that checks TLS clients takes the key read above);
 # VSCODE_GIT_IPC_HANDLE and REMOTE_CONTAINERS_IPC (the sockets through which VS Code and its Dev Containers
 # answer git's credential requests with the host's login); TMPDIR (ssh-*/agent.*, vscode-git-*.sock and
 # podman/*.sock) and XDG_RUNTIME_DIR (ssh-agent.socket, vscode-ssh-auth-*.sock, vscode-git-*.sock,
@@ -156,7 +161,7 @@
 # or why the check could not finish (exit 2); "names" prints the variable names that look like credentials;
 # "homes <home>" prints the homes; "wallet <path>" writes a fresh keypair, RFC 8032 key generation from 32
 # random bytes, as the 64-number array solana-keygen writes. Exit 2 on anything unexpected.
-ISO_PY='import glob, hashlib, json, os, pwd, re, socket, stat, sys
+ISO_PY='import glob, hashlib, json, os, pwd, re, socket, stat, sys, urllib.parse
 
 KINDS = ("SSH keys", "agent sockets", "container daemon sockets", "Solana keypairs or CLI config", "cloud credentials",
          "Kubernetes or Docker config", "package registry tokens", "git or HTTP credentials", "GnuPG private keys",
@@ -168,8 +173,9 @@ AZURE = ("accessTokens.json", "msal_token_cache.json", "msal_token_cache.bin", "
 FILES = (((SOLANA, ".config/solana/id.json"), (CLOUD, ".aws/credentials"))
          + tuple((CLOUD, ".config/gcloud/" + f) for f in GCLOUD) + tuple((CLOUD, ".azure/" + f) for f in AZURE)
          + ((CLOUD, ".vault-token"), (CLOUD, ".terraform.d/credentials.tfrc.json"), (CLUSTER, ".kube/config"),
-            (CLUSTER, ".docker/config.json"), (REGISTRY, ".npmrc"), (REGISTRY, ".yarnrc.yml"), (REGISTRY, ".gem/credentials"),
-            (REGISTRY, ".pypirc"), (REGISTRY, ".cargo/credentials"), (REGISTRY, ".cargo/credentials.toml"),
+            (CLUSTER, ".docker/config.json"), (CLUSTER, ".docker/key.pem"), (REGISTRY, ".npmrc"), (REGISTRY, ".yarnrc.yml"),
+            (REGISTRY, ".gem/credentials"), (REGISTRY, ".pypirc"), (REGISTRY, ".cargo/credentials"),
+            (REGISTRY, ".cargo/credentials.toml"),
             (GIT, ".git-credentials"), (GIT, ".config/git/credentials"), (GIT, ".netrc"), (GIT, ".config/gh/hosts.yml")))
 DIRS = ((SOLANA, ".config/solana"), (CLOUD, ".aws/sso/cache"), (CLOUD, ".aws/cli/cache"),
         (CLOUD, ".config/gcloud/legacy_credentials"), (GPG, ".gnupg/private-keys-v1.d"), (CLAUDE, ".config/anthropic"))
@@ -178,10 +184,13 @@ GPG_SOCKETS = ("S.gpg-agent", "S.gpg-agent.ssh", "S.gpg-agent.extra", "S.gpg-age
 SOCKETS = (tuple((AGENT, ".gnupg/" + s) for s in GPG_SOCKETS)
            + ((AGENT, ".1password/agent.sock"), (AGENT, "Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock"),
               (DAEMON, ".docker/run/docker.sock"), (DAEMON, ".docker/desktop/docker.sock"), (DAEMON, ".colima/*/docker.sock"),
-              (DAEMON, ".rd/docker.sock"), (DAEMON, ".orbstack/run/docker.sock"),
-              (DAEMON, ".local/share/containers/podman/machine/*/podman.sock"), (GIT, ".cache/git/credential/socket"),
+              (DAEMON, ".rd/docker.sock"), (DAEMON, ".orbstack/run/docker.sock"), (DAEMON, ".lima/*/sock/docker.sock"),
+              (DAEMON, ".lima/*/sock/podman.sock"), (DAEMON, ".local/share/containers/podman/machine/*/podman.sock"),
+              (GIT, ".cache/git/credential/socket"),
               (GIT, ".git-credential-cache/socket")))
 GIT_CONFIGS = (".gitconfig", ".config/git/config")
+# The TLS client keys of the Docker contexts, under a Docker config directory.
+DOCKER_KEYS = "contexts/tls/*/*/key.pem"
 SSH_KEEP = re.compile(r"^(known_hosts.*|config|.*\.pub|authorized_keys.*)$")
 SSH_KEYS = ("id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "id_ecdsa_sk", "id_ed25519_sk", "identity")
 BUDGET = 5000
@@ -248,12 +257,29 @@ def accepts(path):
         s.close()
 
 
+def reaches(address):
+    # A tcp:// address that accepts a TCP connection within two seconds, at port 2375 when it names none.
+    try:
+        url = urllib.parse.urlsplit(address)
+        if url.hostname:
+            socket.create_connection((url.hostname, url.port or 2375), timeout=2).close()
+            return True
+    except (OSError, UnicodeError, ValueError):
+        pass
+    return False
+
+
 def readable(found, kind, paths):
     found.extend((kind, p) for p in paths if p and first_byte(p))
 
 
 def sockets(found, socks):
+    # A Unix socket that accepts a connection, or a tcp:// address that does.
     for kind, path in socks:
+        if path.startswith("tcp://"):
+            if reaches(path):
+                found.append((kind, path))
+            continue
         try:
             if stat.S_ISSOCK(os.stat(path).st_mode) and accepts(path):
                 found.append((kind, path))
@@ -469,8 +495,16 @@ def named(env, files, dirs, socks, configs):
         configs.append((git_config, os.path.join(env["XDG_CONFIG_HOME"], "git/config")))
     configs.append((aws_config, env.get("AWS_CONFIG_FILE", "")))
     socks.extend((GIT, env.get(name, "")) for name in ("VSCODE_GIT_IPC_HANDLE", "REMOTE_CONTAINERS_IPC"))
-    socks.extend((DAEMON, env[name][len("unix://"):]) for name in ("DOCKER_HOST", "CONTAINER_HOST")
-                 if env.get(name, "").startswith("unix://"))
+    for name in ("DOCKER_HOST", "CONTAINER_HOST"):
+        value = env.get(name, "")
+        if value.startswith("unix://"):
+            socks.append((DAEMON, value[len("unix://"):]))
+        elif value.startswith("tcp://") and not (name == "DOCKER_HOST" and env.get("DOCKER_TLS_VERIFY")):
+            socks.append((DAEMON, value))
+    if env.get("DOCKER_CERT_PATH"):
+        files.append((CLUSTER, os.path.join(env["DOCKER_CERT_PATH"], "key.pem")))
+    if env.get("DOCKER_CONFIG"):
+        files.extend((CLUSTER, p) for p in glob.glob(os.path.join(glob.escape(env["DOCKER_CONFIG"]), DOCKER_KEYS)))
     if env.get("XDG_CACHE_HOME"):
         socks.append((GIT, os.path.join(env["XDG_CACHE_HOME"], "git/credential/socket")))
     if env.get("TMPDIR"):
@@ -504,6 +538,7 @@ def creds(which, given):
             readable(found, SSH, (os.path.join(ssh, k) for k in SSH_KEYS))
         for kind, f in FILES:
             readable(found, kind, [os.path.join(home, f)])
+        readable(found, CLUSTER, glob.glob(os.path.join(at, ".docker", DOCKER_KEYS)))
         readable(found, CLAUDE, glob.glob(os.path.join(at, ".claude*", ".credentials.json")))
         for p in sorted(glob.glob(os.path.join(at, ".claude*"))):
             if os.path.isdir(p):
