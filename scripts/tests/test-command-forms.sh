@@ -61,6 +61,9 @@
 #       an exec-mode that is not a regular file holding one word and on an AUDITOR_EXEC_MODE that names no mode,
 #       and in isolated mode unless probe.sh --only isolation finds nothing readable. poc-harness.md §1 shows the
 #       same lines.
+#   I   Every python3 call in the bodies and the corpus, in a code span or a code line that starts with python3
+#       (after a "(cd <dir> &&", "cd <dir> &&" or "env" in front) and passes two words more, runs isolated: -I
+#       comes before its first word that is not an option.
 # The entry points are the tracked files under scripts/ (but scripts/tests/) and templates/ of mode 100755 that
 # start with a direct-exec shebang (#!/bin/bash or #!/usr/bin/env -S python3 -I), the binaries the crates
 # under tools/auditor-tools declare, and every path scripts/entrypoints.txt lists. Each check first runs on
@@ -1093,6 +1096,61 @@ for f in commands/*.md agents/*.md skills/*/SKILL.md SKILL.md; do
     if grep -qF -- "$v" "$f"; then bad "P $f names $v, which run.sh --crate does not read"; else ok "no $v in $f"; fi
   done
 done
+
+
+# I: every python3 call a body or the corpus gives runs isolated. A code line, or a code span, that starts with
+# python3 (or python) and two words more is a call, read past a leading "(cd <dir> &&", "cd <dir> &&" or
+# "env [NAME=value...]", and -I, alone or in a group of flags, comes before its first word that is not an
+# option: run from the tree under audit, python3 -m and -c put the working directory first on sys.path, so a
+# module of the tree's own would load in place of Python's.
+PYI=
+IFS= read -r -d '' PYI <<'EOF' || true
+import re, sys
+for f in sys.argv[1:]:
+    fenced = False
+    with open(f, encoding="utf-8", errors="replace") as fh:
+        for n, line in enumerate(fh, 1):
+            text = re.sub(r"^[\s>]*", "", line.rstrip("\n"))
+            if text.startswith(("```", "~~~")):
+                fenced = not fenced
+                continue
+            for seg in ([text] if fenced else re.findall(r"`([^`]+)`", line)):
+                words = seg.split()
+                while words:
+                    if words[0].lstrip("(") == "cd" and len(words) > 2 and words[2] == "&&":
+                        words = words[3:]
+                    elif words[0] == "env":
+                        words = words[1:]
+                        while words and "=" in words[0] and not words[0].startswith("-"):
+                            words = words[1:]
+                    else:
+                        break
+                if len(words) < 3 or words[0] not in ("python", "python3"):
+                    continue
+                opts = []
+                for w in words[1:]:
+                    if not w.startswith("-"):
+                        break
+                    opts.append(w)
+                if not any(re.match(r"-[A-Za-z]*I", w) for w in opts):
+                    print("%s:%d\t%s" % (f, n, seg[:120]))
+EOF
+printf '%s\n' 'Run `python3 -I -m venv /x/env` or `python3 -I "/r/scripts/dnr/frames.py" a.jsonl`; `python3 -c` and `python3 -` are names.' \
+  'Not `python3 -m venv /x/env`, nor `python -c '"'"'import x'"'"' y`.' '```bash' 'python3 -Im venv ~/env' 'python3 -m venv ~/env' \
+  '# python3 -m venv ~/env, in a comment' '(cd ~ && python3 -I -m venv ~/env)' '(cd ~ && python3 -m venv ~/env)' \
+  'env PYTHONSAFEPATH=1 python3 -c pass' '```' > "$T/py-forms.md"
+got=$( (cd "$T" && python3 -I -c "$PYI" py-forms.md) | cut -f1 | tr '\n' ' ')
+if [ "$got" = "py-forms.md:2 py-forms.md:2 py-forms.md:5 py-forms.md:8 py-forms.md:9 " ]; then
+  ok "I flags a python3 call without -I, after a cd or env too, and passes the rest"
+else bad "I is broken: it flags [$got], not py-forms.md:2 twice, py-forms.md:5, :8 and :9"; fi
+if found=$(python3 -I -c "$PYI" "$@"); then
+  if [ -z "$found" ]; then ok "every python3 call in the bodies and the corpus passes -I"
+  else
+    while IFS='	' read -r at seg; do bad "I $at: python3 without -I, so it would import from the tree under audit: $seg"; done <<EOF
+$found
+EOF
+  fi
+else bad "the python3 -I check could not read the tree"; fi
 
 # ---- 6. the mode lines a runner poc-engineer writes starts with -------------------------------------------
 # Run as the first lines of a runner in a crate at audit_1/poc/F-1, started from the working directory and from
