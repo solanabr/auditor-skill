@@ -1072,3 +1072,33 @@ fn escapes_formatting_characters_in_its_output() {
     assert!(text.contains("src/a\\u202eb.rs"), "{text}");
     assert!(text.contains("\\u202ek"), "{text}");
 }
+
+#[test]
+fn waits_once_for_a_git_that_does_not_answer() {
+    use auditor_tools::confine::GIT_TIME;
+    let wt = Wt::repo();
+    for name in ["audit_1", "audit_2", "audit_3"] {
+        wt.run_dir(name);
+        wt.write(&format!("{name}/poc/lib.rs"), b"fn poc() {}\n");
+    }
+    // git opens HEAD with a blocking open, so a named pipe there leaves it
+    // waiting until it is killed.
+    fs::remove_file(wt.path(".git/HEAD")).expect("remove HEAD");
+    let status = Command::new("mkfifo")
+        .arg(wt.path(".git/HEAD"))
+        .status()
+        .expect("mkfifo");
+    assert!(status.success());
+    let started = std::time::Instant::now();
+    let report = json(&run(BIN, &wt.dir, &["."]));
+    let took = started.elapsed();
+    assert_eq!(
+        files(&report, "functions"),
+        vec![
+            "./audit_1/poc/lib.rs",
+            "./audit_2/poc/lib.rs",
+            "./audit_3/poc/lib.rs",
+        ]
+    );
+    assert!(took >= GIT_TIME && took < GIT_TIME * 2, "took {took:?}");
+}
