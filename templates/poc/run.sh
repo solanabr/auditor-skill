@@ -15,9 +15,10 @@
 # crate at <R>/poc/<ID>, <R>/exec-mode). Both read TOOLS_VERSION and POC_LOCK_WAIT from
 # the environment.
 #
-# Reproduces the finding from a clean checkout of THIS crate:
-#   1. builds the `vulnerable` arm to SBF, runs tests/exploit.rs      → exploit must SUCCEED
-#   2. builds the `fixed`      arm to SBF, runs tests/fixed_blocked.rs → same attack must be REJECTED
+# Reproduces the finding from a clean checkout of THIS crate. It builds both arms to SBF
+# and both test binaries first, then:
+#   1. runs tests/exploit.rs       on the `vulnerable` arm → exploit must SUCCEED
+#   2. runs tests/fixed_blocked.rs on the `fixed` arm      → same attack must be REJECTED
 # Exit 0: the exploit reproduces on `vulnerable` and, when the fixed arm runs, is
 # blocked on `fixed` — the evidence that earns [PoC-REPRODUCED]. Exit 1: the exploit
 # did not reproduce. Exit 2: the fixed arm did not block it; the final line says
