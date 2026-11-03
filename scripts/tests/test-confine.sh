@@ -624,6 +624,35 @@ if mkfifo "$T/fifo-probe" 2>/dev/null; then
   ln -s src/g "$RW/wtpipe/.gitignore"
   lib "$RW" 'confine_repo wtpipe R; printf "%s" "$CONFINE_BARE"'
   check "... while a .gitignore that is a link to a regular file passes" out_is false
+  # A git directory reached through a link is searched where the link leads, so a named pipe there is
+  # found before git starts; so is one as the config there. A directory in it that find cannot read
+  # is refused, since what it holds cannot be told. The caller's working directory stays as it was.
+  for d in gl gc gu; do mkrepo "$RW/$d"; put "$RW/$d" f x; commit "$RW/$d" -m x; done
+  for d in gl gc; do mv "$RW/$d/.git" "$RW/$d/.realgit"; ln -s .realgit "$RW/$d/.git"; done
+  mkfifo "$RW/gl/.realgit/info/attributes"
+  mv "$RW/gc/.realgit/config" "$RW/gc/config.kept"; mkfifo "$RW/gc/.realgit/config"
+  lib_bounded "$RW/gl/.realgit/info/attributes" "$RW" 'confine_repo_top "$CONFINE_WT/gl" || printf "%s" "$CONFINE_GIT_WHY"'
+  check "a named pipe in a git directory that .git links to is found before git starts" \
+    out_is "a named pipe or device is in the git directory, and git would wait on it for good: $(shown "$RW/gl/.realgit")"
+  BOUND=50 lib_bounded "$RW/gc/.realgit/config" "$RW/gc" 'CONFINE_CEILING="" hgit "$CONFINE_WT" rev-parse --is-inside-work-tree'
+  check "... and a named pipe as the config there is refused at once, not after git's time is up" \
+    refused "a named pipe or device is in the git directory, and git would wait on it for good: $(shown "$RW/gc/.realgit")"
+  mkdir -p "$RW/audit_1"; printf '*\n' > "$RW/audit_1/.gitignore"
+  bounded "$RW/gl/.realgit/info/attributes" script "$RW" threat-model/collect.sh --network --repo gl --out audit_1/bootstrap
+  check "... so collect.sh --network refuses that target at once" \
+    sh -c "[ '$RC' = 3 ] && [ \"\$(cat '$T/err')\" = 'collect.sh: a named pipe or device is in the git directory, and git would wait on it for good: $(shown "$RW/gl/.realgit")' ]"
+  lib "$RW" 'cd / && CONFINE_CEILING="" hgit "$CONFINE_WT/gu" rev-parse --git-dir >/dev/null && pwd'
+  check "... and git's checks leave the caller's working directory as it was (target.sh runs from /)" out_is /
+  if [ "$(id -u)" -ne 0 ]; then
+    mkfifo "$RW/gu/.git/info/attributes"
+    chmod 0311 "$RW/gu/.git/info"
+    lib_bounded "$RW/gu/.git/info/attributes" "$RW" 'confine_repo_top "$CONFINE_WT/gu" || printf "%s" "$CONFINE_GIT_WHY"'
+    check "a git directory holding a directory that find cannot read is refused before git starts" \
+      out_is "the git directory holds a directory that cannot be read, so a named pipe or device in it cannot be ruled out: $(shown "$RW/gu/.git")"
+    chmod 0755 "$RW/gu/.git/info"
+  else
+    skp "running as root: a directory find cannot read cannot be made"
+  fi
 else
   skp "mkfifo is not available: the named pipe cases"
 fi

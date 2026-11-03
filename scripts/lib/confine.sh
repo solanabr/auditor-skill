@@ -264,14 +264,23 @@ confine_git_includes() {
 
 # confine_git_dir_files <git directory> <common directory>: status 1 (CONFINE_GIT_WHY says why) when
 # something in either, or a file their config includes, could stop git: a named pipe or device, a
-# symbolic link to one, a name holding a line end (git makes none), or a file an include names
-# (confine_git_includes). find lists the pipes and devices of each, then its links, one to a line; the
-# shell tests where each leads, with no program per link.
+# symbolic link to one, a name holding a line end (git makes none), a directory find cannot read (what
+# it holds cannot be told), or a file an include names (confine_git_includes). Each is resolved first,
+# since git opens what a link to it names; then find lists the pipes and devices of each, then its
+# links, one to a line, and the shell tests where each leads, with no program per link.
 confine_git_dir_files() {
-  local g=$1 c=$2 d odd
+  local g c d odd
+  # Resolved in a subshell, so the caller's working directory stays as it is (target.sh runs from /).
+  g=$(cd -P -- "$1" 2>/dev/null && printf '%s/' "$PWD") ||
+    { CONFINE_GIT_WHY="the git directory cannot be resolved: $(confine_text "$1")"; return 1; }
+  c=$(cd -P -- "$2" 2>/dev/null && printf '%s/' "$PWD") ||
+    { CONFINE_GIT_WHY="the git directory cannot be resolved: $(confine_text "$2")"; return 1; }
+  g=${g%/} c=${c%/}
   for d in "$g" "$c"; do
-    [ -d "$d" ] || continue
-    odd=$(find "$d" \( -type p -o -type b -o -type c \) -print 2>/dev/null)
+    odd=$(find "$d" \( -type p -o -type b -o -type c \) -print 2>/dev/null) || {
+      CONFINE_GIT_WHY="the git directory holds a directory that cannot be read, so a named pipe or device in it cannot be ruled out: $(confine_text "$d")"
+      return 1
+    }
     [ -z "$odd" ] || { confine_git_wait "is in the git directory" "$d"; return 1; }
     odd=$(find "$d" -name '*'$'\n''*' -print 2>/dev/null)
     [ -z "$odd" ] || { CONFINE_GIT_WHY="a name in the git directory holds a line end: $(confine_text "$d")"; return 1; }
