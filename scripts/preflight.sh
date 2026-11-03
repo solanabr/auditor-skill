@@ -35,9 +35,10 @@
 #
 # It also refuses:
 #   - a symbolic link in the working directory, outside .git, to a directory outside it or inside a .git
-#     directory, as the filesystem opens names (where they fold, .GIT/x is in .git): the scan reads
-#     neither, and Claude Code may load project config there once it reads a file through the link. A
-#     .git that is a link is skipped. The refusal names the first such link in byte order;
+#     directory, as the filesystem opens names (where they fold, .GIT/x is in .git, and a target spelling
+#     the working directory's path in other letters lies in it): the scan reads neither, and Claude Code
+#     may load project config there once it reads a file through the link. A .git that is a link is
+#     skipped. The refusal names the first such link in byte order;
 #   - a working directory inside a .claude directory or a git directory;
 #   - a working directory in a linked git worktree: Claude Code also loads its main checkout's
 #     .claude/settings.local.json, and that checkout's project skills when the worktree has none;
@@ -101,11 +102,25 @@ uses() {
   [ "$g" -ef "$gd" ]
 }
 
-# in_git <physical directory inside the working directory>: status 0 when one of its directories below
-# the working directory is its parent's .git as the filesystem opens names (where they fold, .GIT is).
+# below <physical path>: sets BELOW to the part of <path> below the working directory ('' for the working
+# directory itself); status 1 when <path> lies outside it. Decided by identity (device and inode) up the
+# path's ancestors, as confine_inside decides, not by spelling: where names fold, a link can spell the
+# working directory's path in other letters and still lead inside it.
+below() {
+  local p=$1 rest=''
+  while :; do
+    if [ "$p" -ef "$WT" ]; then BELOW=$rest; return 0; fi
+    case "$p" in /|'') return 1 ;; esac
+    rest=${p##*/}${rest:+/$rest}
+    p=${p%/*}
+    [ -n "$p" ] || p=/
+  done
+}
+
+# in_git <path below the working directory, as below sets it>: status 0 when one of its directories is
+# its parent's .git as the filesystem opens names (where they fold, .GIT is).
 in_git() {
-  local q=${WT%/} rest=$1/ c
-  rest=${rest#"$q"/}
+  local q=${WT%/} rest=${1:+$1/} c
   while [ -n "$rest" ]; do
     c=${rest%%/*}
     rest=${rest#*/}
@@ -341,10 +356,8 @@ LINK='' st=''
 while IFS= read -r -d '' p; do
   case "$p" in status=*) st=${p#status=}; continue ;; esac
   [ -d "$p" ] || continue
-  if confine_phys "$p"; then
-    case "$CONFINE_PHYS/" in
-      "${WT%/}/"*) in_git "$CONFINE_PHYS" || continue ;;
-    esac
+  if confine_phys "$p" && below "$CONFINE_PHYS"; then
+    in_git "$BELOW" || continue
   fi
   p=${p#./}
   if [ -z "$LINK" ] || [[ "$p" < "$LINK" ]]; then LINK=$p; fi

@@ -464,6 +464,29 @@ for t in .GIT/p .Git/p /.GIT/p; do
   if [ "$ICASE" = yes ]; then check "a link to $what, inside .git where names fold case, is refused" linked programs
   else check "a link to $what passes where names do not fold case: it leads nowhere" just_ok; fi
 done
+# A link that spells the working directory's own path in other letters, or in another Unicode
+# normalization: where the filesystem opens that spelling, a link into the tree passes, as the scan reads
+# its target, and one into .git or beside the tree is refused; where it does not, the link leads nowhere
+# and passes. The working directory is <C>/<w>, beside <C>/beside; @W@ is <C>/<w> in capitals, @C@ is <C>.
+spelled() { # spelled <name> <pass or linked> <link target> [<w>, default w]
+  local name=$1 want=$2 v=$3 w=${4:-w} C
+  C=$(newdir) && build "$C" "d:$w/realdocs" "d:$w/.git/p/.claude/skills" d:beside/.claude/skills ||
+    { ko "$name: the fixture cannot be built"; return; }
+  v=${v//@W@/$(printf '%s' "$C/$w" | tr 'a-z' 'A-Z')}
+  v=${v//@C@/$C}
+  ln -s "$v" "$C/$w/docs" || { ko "$name: the link cannot be made"; return; }
+  run "$C/$w"
+  if [ ! -d "$C/$w/docs" ]; then check "$name passes where the filesystem does not open that spelling: it leads nowhere" just_ok
+  elif [ "$want" = pass ]; then check "$name passes" just_ok
+  else check "$name is refused" linked docs; fi
+}
+spelled "a link to the working directory's absolute path in capitals, then REALDOCS," pass @W@/REALDOCS
+spelled "a link to ../ and the working directory's own name in capitals, then realdocs," pass ../W/realdocs
+spelled "a link to the working directory's absolute path in capitals" pass @W@
+spelled "a link to the working directory's absolute path in capitals, then .GIT/p," linked @W@/.GIT/p
+spelled "a link to the working directory's absolute path in capitals, then ../BESIDE," linked @W@/../BESIDE
+spelled "a link to the working directory's absolute path with an NFD letter for its NFC one, then realdocs," pass \
+  "@C@/cafe$(printf '\314\201')/w/realdocs" "caf$(printf '\303\251')/w"
 Q2=$(newdir)
 build "$Q2" d:pkg/sub "d:.claude/${LS}kills/x" "f:AGENT${LS}.md"
 git init -q "$Q2"
