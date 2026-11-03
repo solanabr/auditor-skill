@@ -491,9 +491,9 @@ snapshot "$D" > "$T/child.after"
 if cmp -s "$T/child.before" "$T/child.after"; then ok "audit-scan: ... and touches nothing"; else bad "audit-scan: its child changed files"; fi
 ( cd "$W" && "$SCAN" --contract=1 . --out audit_1/prescan.json --pretty ) > /dev/null 2>&1
 eq "audit-scan: its own output is replaced" "$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["files_scanned"])' "$W/audit_1/prescan.json")" 1
-eq "audit-scan: a link in the tree is listed, not followed" \
+eq "audit-scan: a link in the tree is listed, not followed, and so is each directory the walk does not enter" \
   "$(python3 -I -c 'import json,sys; print(" ".join(s["file"] for s in json.load(open(sys.argv[1]))["skipped"]))' "$W/audit_1/prescan.json")" \
-  "./linkdir ./src/link.rs"
+  "./.git ./audit_1 ./linkdir ./src/link.rs"
 
 # --workflows reads the *.yml files of a directory into the report.
 mkdir -p "$W/.github/workflows"
