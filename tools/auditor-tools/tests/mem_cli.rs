@@ -7,7 +7,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::os::unix::ffi::OsStringExt;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
 use common::{refused, run, run_env, shown, stderr, stdout, Wt};
@@ -638,6 +638,45 @@ fn a_git_in_the_repository_the_working_directory_lies_in_is_never_run() {
         assert!(
             !marker.exists(),
             "the git inside, spelled another way, did not run"
+        );
+    }
+}
+
+#[test]
+fn a_git_inside_the_working_directory_spelled_in_other_letters_is_never_run() {
+    // On a volume that ignores letter case, one directory has several spellings:
+    // a PATH entry inside the working directory written in other letters is
+    // inside it all the same, and so is the working directory entered in other
+    // letters, as confine_init takes it.
+    let wt = Wt::repo();
+    let upper = PathBuf::from(wt.dir.to_string_lossy().to_uppercase());
+    let same = |a: &Path, b: &Path| match (fs::metadata(a), fs::metadata(b)) {
+        (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+        _ => false,
+    };
+    if upper == wt.dir || !same(&upper, &wt.dir) {
+        return; // a volume that tells letter case apart: nothing to check
+    }
+    let marker = wt.outside().join("ran");
+    wt.write(
+        "bin/git",
+        format!("#!/bin/sh\ntouch '{}'\necho x\n", marker.display()).as_bytes(),
+    );
+    wt.chmod("bin/git", 0o755);
+    let warm = ["warm", "--program-id", P];
+    let rest = std::env::var("PATH").unwrap_or_default();
+    for (entry, from) in [
+        (upper.join("bin"), wt.dir.clone()),
+        (wt.path("bin"), upper.clone()),
+        (upper.join("bin"), upper.clone()),
+    ] {
+        let path = format!("{}:{rest}", entry.display());
+        ok(&run_env(BIN, &from, &warm, &[("PATH", &path)]));
+        assert!(
+            !marker.exists(),
+            "{} from {}: the git inside did not run",
+            entry.display(),
+            from.display()
         );
     }
 }
