@@ -372,7 +372,7 @@ The bundled tools these rules name are the steps the commands run without a prom
 
 - `"<auditor-skill root>/scripts/runner/probe.sh"` prints the toolchain versions, from a scratch directory with no `.cargo/config*` or `rust-toolchain*` at or above it;
 - `"<auditor-skill root>/scripts/runner/deps.sh"` runs the dependency audits and registry queries on copies of the manifests and lockfiles it is given, outside the tree; it runs no code from the tree, so it needs no mode;
-- `"<auditor-skill root>/scripts/runner/sast.sh"` runs semgrep, which parses the code and never runs it;
+- `"<auditor-skill root>/scripts/runner/sast.sh"` runs semgrep, which parses the code and runs none of it, and gives the git semgrep starts to list the files a repository of its own (a copy of the index under sast.sh's config), never the tree's `.git`, so no program the tree's git config names runs;
 - `"<auditor-skill root>/scripts/runner/target.sh"` builds and tests the target, and `"<auditor-skill root>/templates/poc/run.sh" --crate` builds and runs each PoC, both from a scratch copy outside the tree, in the recorded mode.
 
 **The modes.** The mode is chosen once per audit, at intake (`QUESTIONS.md` Q46, recorded in `audit_<n>/intake.md` §8):
