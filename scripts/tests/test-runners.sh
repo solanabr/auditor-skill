@@ -1317,6 +1317,19 @@ gf|^git-cached: 128 fatal: not a git repository
 bare|^env: GIT_WORK_TREE=$WT\$
 idx|^git-cached: 128 fatal: not a git repository
 CASES
+# git init records whether letter case tells names apart and, on macOS, that names are precomposed; with the
+# same two keys in sast.sh's config, git lists what the project's own git lists: here a tracked A.rs renamed
+# on disk to a.rs, an untracked target/t.rs under a .gitignore of Target/, and a file named in decomposed
+# form. Where the filesystem tells such names apart, both lists hold them.
+tgit init -q "$WT/ci" && printf 'Target/\n' > "$WT/ci/.gitignore" && printf 'fn a() {}\n' > "$WT/ci/A.rs" &&
+  printf 'fn u() {}\n' > "$WT/ci/u$(printf '\314\210').rs" && tgit -C "$WT/ci" add -A && mv "$WT/ci/A.rs" "$WT/ci/a.rs" &&
+  mkdir "$WT/ci/target" && printf 'fn t() {}\n' > "$WT/ci/target/t.rs"
+cached=$(tgit -C "$WT/ci" ls-files -z --cached | tr '\0' ' ')
+others=$(tgit -C "$WT/ci" ls-files -z --others --exclude-standard | tr '\0' ' ')
+run "$SAST" "$WT" -- semgrep --run audit_1 --path ci --ruleset p/rust
+check "a project's own copy lists the tracked and untracked files its own git lists (others: ${others:-none})" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF 'git-cached: 0 $cached' '$T/calls' && grep -qxF 'git-others: 0 $others' '$T/calls'"
+rm -rf "$WT/ci"
 printf 'y/\n' > "$WT/nested/.semgrepignore"
 run "$SAST" "$WT" -- semgrep --run audit_1 --path nested --ruleset p/rust
 check "a scan root in a project of its own: the note names its .semgrepignore, not the working directory's" \

@@ -189,12 +189,18 @@ for p in sys.stdin.buffer.read().split(b"\0"):
 }
 GITENV=("GIT_DIR=$S/no-repo")
 G=$PROJ/.git
+# The two keys git init sets from the filesystem, which change what git lists: ignorecase where letter case
+# does not tell names apart (seen without writing in the tree: .GIT is then the same folder as .git), and
+# precomposeUnicode on macOS.
+GCONF=$'[core]\n\trepositoryformatversion = 0\n\tbare = false\n\tfsmonitor = false\n\thooksPath = /dev/null\n\tuntrackedCache = false\n'
+if [ "$PROJ/.GIT" -ef "$G" ] && [ ! -L "$PROJ/.GIT" ]; then GCONF+=$'\tignorecase = true\n'; fi
+case "${OSTYPE:-}" in darwin*) GCONF+=$'\tprecomposeUnicode = true\n' ;; esac
 case "$PROJ/" in
   "${WT%/}/"*)
     if [ "$VCS" = git ] && [ -d "$G" ] && [ ! -L "$G" ] && [ ! -L "$G/info" ] && copy_ok "$G/index" 268435456 &&
       copy_ok "$G/info/exclude" 1048576 && confine_mkdir "$S/git" && confine_mkdir "$S/git/objects" &&
       confine_mkdir "$S/git/refs" && confine_mkdir "$S/git/info" && confine_new_file "$S/git/HEAD" $'ref: refs/heads/main\n' &&
-      confine_new_file "$S/git/config" $'[core]\n\trepositoryformatversion = 0\n\tbare = false\n\tfsmonitor = false\n\thooksPath = /dev/null\n\tuntrackedCache = false\n' &&
+      confine_new_file "$S/git/config" "$GCONF" &&
       { [ ! -e "$G/index" ] || iso_copy_new "$G/index" "$S/git/index"; } &&
       { [ ! -e "$G/info/exclude" ] || iso_copy_new "$G/info/exclude" "$S/git/info/exclude"; } && index_inside; then
       GITENV=("GIT_DIR=$S/git" "GIT_WORK_TREE=$PROJ")
