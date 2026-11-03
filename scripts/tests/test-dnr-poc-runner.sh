@@ -2210,6 +2210,7 @@ while IFS='|' read -r how reason; do
     directory) mkdir "$IJ" ;;
     not-json) printf '{"incidents": [\n' > "$IJ" ;;
     no-list) printf '{"incidents": {"id": "INC-1.1"}}\n' > "$IJ" ;;
+    not-object) printf '{"incidents": ["INC-1.1", {"id": "INC-1.1", "root_cause_class": "code_flaw"}]}\n' > "$IJ" ;;
     other) incidents code_flaw INC-1.2 ;;
     twice) incidents code_flaw INC-1.1 INC-1.1 ;;
     bad-class) incidents bogus ;;
@@ -2225,6 +2226,7 @@ missing|is missing
 directory|is not a regular file
 not-json|cannot be read as JSON
 no-list|holds no incidents list
+not-object|holds an incident that is not an object
 other|records no incident INC-1.1
 twice|records INC-1.1 more than once
 bad-class|gives INC-1.1 no root_cause_class from incidents-schema.md

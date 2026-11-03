@@ -788,6 +788,10 @@ printf '{"incidents": [{"id": "INC-1.1"}, {"id": "INC-1.2", "root_cause_class": 
 run "$TARGET" "$WT" -- build-sbf --run incident_1 --src . --patch incident_1/patches/INC-1.2.patch
 check "... and natively another incident with no root cause recorded stops it as well: exit 3, nothing copied" \
   sh -c "[ '$RC' = 3 ] && grep -qF 'target: blocker: incident_1/INCIDENTS.json gives an incident no root_cause_class from incidents-schema.md: ' '$T/err' && [ ! -s '$T/calls' ]"
+printf '{"incidents": [["INC-1.1", "supply_chain_or_ci"], {"id": "INC-1.2", "root_cause_class": "code_flaw"}]}\n' > "$IJ"
+run "$TARGET" "$WT" -- build-sbf --run incident_1 --src . --patch incident_1/patches/INC-1.2.patch
+check "... and so does an incident that is not an object: exit 3, nothing copied" \
+  sh -c "[ '$RC' = 3 ] && grep -qF 'target: blocker: incident_1/INCIDENTS.json holds an incident that is not an object: ' '$T/err' && [ ! -s '$T/calls' ]"
 printf '{"incidents": [{"id": "INC-1.1", "root_cause_class": "unknown"}, {"id": "INC-1.2", "root_cause_class": "code_flaw"}]}\n' > "$IJ"
 run "$TARGET" "$WT" -- build-sbf --run incident_1 --src . --patch incident_1/patches/INC-1.2.patch
 check "--patch of a code flaw in a run with no supply_chain_or_ci incident builds natively" \

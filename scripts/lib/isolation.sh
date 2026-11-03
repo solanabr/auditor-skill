@@ -914,7 +914,8 @@ except (OSError, UnicodeDecodeError, ValueError, RecursionError):
 incidents = data.get("incidents") if isinstance(data, dict) else None
 if not isinstance(incidents, list):
     say("holds no incidents list", 3)
-incidents = [i for i in incidents if isinstance(i, dict)]
+if not all(isinstance(i, dict) for i in incidents):
+    say("holds an incident that is not an object", 3)
 if wanted:
     incidents = [i for i in incidents if i.get("id") == wanted]
     if not incidents:
