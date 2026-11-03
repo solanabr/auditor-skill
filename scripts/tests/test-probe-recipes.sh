@@ -24,9 +24,24 @@
 #     contact, the grammar, the owner-run fallback and "never [PASS]"; templates/intake.md has the slot and its
 #     default; /auditor:intake asks Q47 and --auto records no; both report templates list live probes; the docs
 #     count 47 questions.
-# Nothing reaches the network: the stand-ins answer for aws and curl, and the real curl stops at its URL parser.
+# It runs docs/power-tools.md's pinned zizmor recipe the same way, against stand-ins for docker, python3, pip and
+# zizmor that log where they run and what they get, and checks that:
+#   - the container form calls docker with exactly `run --rm --network none -v <checkout>:/src:ro
+#     ghcr.io/zizmorcore/zizmor@sha256:<the digest of tag 1.30.1's image index> --offline --no-config --no-ignores
+#     --collect=all --persona=auditor /src/.github/workflows`;
+#   - the requirement saved for pip is zizmor==1.30.1 with exactly the sha256 of the ten 1.30.1 wheels;
+#   - the PyPI lines, started from the checkout, make the environment (python3 -I -m venv) and install into it
+#     (pip --require-hashes --only-binary :all: --no-deps) from $HOME, then run zizmor with the container form's
+#     flags on .github/workflows from the checkout;
+#   - the line that makes the environment, run with the real python3 from a checkout that ships venv.py, runpy.py,
+#     ensurepip.py and pip.py, loads none of them;
+#   - every zizmor call the docs and the corpus give passes --offline, --no-config, --no-ignores and
+#     --persona=auditor, and every docker or podman call names zizmor's image by a sha256 digest.
+# Nothing reaches the network: the stand-ins answer for aws, curl, docker, pip and zizmor, the real curl stops at its
+# URL parser, and the real python3 sets pip up from the copy it ships with.
 # Usage (from the repo root): bash scripts/tests/test-probe-recipes.sh
-# Needs bash >= 3.2, grep, sed, awk, env, mkdir, mktemp; curl for the .curlrc check (skipped with a note without it).
+# Needs bash >= 3.2, grep, sed, awk, env, mkdir, mktemp; curl for the .curlrc check and python3 with venv and
+# ensurepip for the environment check (each skipped with a note without it).
 set -uo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 CL="$ROOT/checklists/13-deployment-infrastructure.md"
@@ -373,6 +388,165 @@ if grep -qF '(47 questions)' "$ROOT/docs/getting-started.md" && grep -qF 'the 47
 then ok "the docs count 47 questions and describe Q47"; else bad "a docs page still counts 46 questions or omits Q47"; fi
 n=$(grep -c '^### Q[0-9][0-9]*\. ' "$Q")
 if [ "$n" = 47 ]; then ok "QUESTIONS.md has 47 questions"; else bad "QUESTIONS.md has $n questions, not 47"; fi
+
+# ---- docs/power-tools.md: the pinned zizmor recipe, against stand-ins --------------------------------------------
+# The digest is the one the registry gives for tag 1.30.1 (an image index for linux/amd64 and linux/arm64), the
+# hashes the ones PyPI lists for the ten 1.30.1 wheels; another release changes them here too. The stand-ins for
+# docker, python3, pip and zizmor log the directory they run in and their arguments; PATH holds only them.
+PT="$ROOT/docs/power-tools.md"
+ZDIGEST=sha256:a2eb396d886c053073405c7a980f2139ba2248ec172243cfa3841e57196e8101
+ZHASHES='17fda74e15fe41a6aa354ea4cf71fc7ff3cd025cda6584bb6d7466b3f1d00fe6 f9eb092f089e35fa9fb3b70aeec0a19eca7dacf2ab161f1d50b18351895f085c
+92906f448365672ebb657fb50d36f997290a3aaba8cac723214741ea9054845d 5e8a3d54c3d9d51307371f4d1d49f8f9e56de00205c6cc660c6846a95ad4e135
+eee12266b793cb87ad4a7e3af2e72404f8a63e3de5eb099b80bf7b1cfd232a8e 15679642e8c4f825ba3f22537c698b1bbbad19ead23640f62ec45ebbe7abc803
+bf63099a27ef3bf1329dbab44bb9d1027124855c71bd0eca864d5c8e1c5c0db1 4a5ef2fa4fbd2984f794cfc2f95790bd03fa0bae801487ed550e044675874e60
+42512bb4a1bce4c787d221d1572ff6b691fa52a3d129b2910be8afaf860c5871 06e039fae8e185e2a1a8b002f2d95a6f5c3b548048bdd79e004dcb501fcd0868'
+ZFLAGS='--offline --no-config --no-ignores --collect=all --persona=auditor'
+zblock() { # zblock INFO N: the Nth block fenced with ```INFO in power-tools.md's zizmor section
+  awk -v info="$1" -v n="$2" '
+    index($0, "### zizmor ") == 1 { s = 1; next }
+    s && index($0, "### ") == 1 { exit }
+    s && !b && $0 == ("```" info) { if (++k == n) b = 1; next }
+    b && $0 == "```" { exit }
+    b { print }' "$PT"
+}
+zstand() { # zstand FILE NAME: a stand-in NAME that logs the directory it runs in and its arguments
+  cat > "$1" <<EOF
+#!/bin/sh
+{ printf 'call $2 %s\n' "\$(pwd -P)"; for a in "\$@"; do printf 'arg=%s\n' "\$a"; done; } >> "$T/zcalls.log"
+EOF
+  chmod +x "$1"
+}
+ZV="$T/zhome/.venvs/zizmor-1.30.1"
+mkdir -p "$T/zbin" "$ZV/bin" "$T/zrepo/.github/workflows" || exit 1
+zstand "$T/zbin/docker" docker && zstand "$T/zbin/python3" python3 && zstand "$ZV/bin/pip" pip \
+  && zstand "$ZV/bin/zizmor" zizmor || exit 1
+zrun() { # zrun FILE: run FILE from the checkout, HOME the fake home, PATH the stand-ins only
+  rm -f "$T/zcalls.log"
+  ( cd "$T/zrepo" && env HOME="$T/zhome" PATH="$T/zbin" "$BASH" "$1" ) > "$T/zout" 2>&1
+}
+zcheck() { # zcheck WHAT: the calls logged are the ones in $T/zwant
+  if [ -f "$T/zcalls.log" ] && cmp -s "$T/zwant" "$T/zcalls.log"; then ok "$1"
+  else bad "power-tools.md's zizmor recipe differs from the pinned form ($1):"; diff "$T/zwant" "$T/zcalls.log" 2>&1 | sed 's/^/    /'; fi
+}
+zblock bash 1 > "$T/zdocker.sh"
+zrun "$T/zdocker.sh"
+{ printf 'call docker %s\n' "$T/zrepo"
+  printf 'arg=%s\n' run --rm --network none -v "$T/zrepo:/src:ro" "ghcr.io/zizmorcore/zizmor@$ZDIGEST" $ZFLAGS /src/.github/workflows
+} > "$T/zwant"
+zcheck "the container form runs tag 1.30.1's image index by digest, with no network and the checkout read-only, and zizmor with $ZFLAGS"
+zreq=$(zblock text 1)
+zhs=$(printf '%s\n' "$zreq" | sed -n '2,$p' | sed -e 's/^    --hash=sha256://' -e 's/ \\$//' | sort)
+if [ "$(printf '%s\n' "$zreq" | sed -n 1p)" = 'zizmor==1.30.1 \' ] && [ "$(printf '%s\n' "$zreq" | grep -c '')" = 11 ] \
+   && [ "$zhs" = "$(printf '%s\n' $ZHASHES | sort)" ] \
+   && [ -z "$(printf '%s\n' "$zreq" | sed -n '2,10p' | grep -v '^    --hash=sha256:[0123456789abcdef]* \\$')" ] \
+   && [ -z "$(printf '%s\n' "$zreq" | sed -n '11p' | grep -v '^    --hash=sha256:[0123456789abcdef]*$')" ]; then
+  ok "the requirement saved for pip is zizmor==1.30.1 with the sha256 of each of the ten 1.30.1 wheels, and nothing else"
+else bad "the requirement saved for pip is not zizmor==1.30.1 with exactly the ten 1.30.1 wheel hashes: $zreq"; fi
+printf '%s\n' "$zreq" > "$ZV.txt"
+zblock bash 2 > "$T/zpypi.sh"
+zrun "$T/zpypi.sh"
+{ printf 'call python3 %s\n' "$T/zhome"; printf 'arg=%s\n' -I -m venv "$ZV"
+  printf 'call pip %s\n' "$T/zhome"; printf 'arg=%s\n' install --require-hashes --only-binary :all: --no-deps -r "$ZV.txt"
+  printf 'call zizmor %s\n' "$T/zrepo"; printf 'arg=%s\n' $ZFLAGS .github/workflows
+} > "$T/zwant"
+zcheck "the PyPI form makes the environment with python3 -I and installs the hash-checked wheel from \$HOME, whatever directory it starts in, then scans the checkout's .github/workflows with the same flags"
+
+# ---- the line that makes zizmor's environment, with the real python3 ------------------------------------------
+# Run as written from a checkout that ships modules named as Python's own, each of which leaves a mark and stops:
+# python3 -m without -I would load its venv.py, and Python 3.9 before 3.9.14 and 3.10 before 3.10.6 set pip up in a
+# child that is not isolated and starts in the working directory, which would load its runpy.py.
+vline=$(zblock bash 2 | grep -F -- '-m venv ')
+if [ -z "$vline" ]; then bad "power-tools.md's PyPI form has no line that runs python3 -m venv"
+elif ! (cd "$T" && python3 -I -m ensurepip --version) > /dev/null 2>&1; then
+  echo "note: no python3 with venv and ensurepip; the environment line ran against the stand-ins only"
+else
+  mkdir -p "$T/zrepo2" "$T/zhome2" || exit 1
+  for m in venv runpy ensurepip pip; do
+    printf 'import os\nopen(os.path.join(os.environ["ZMARK"], "zmark-%s"), "w").close()\nraise SystemExit(97)\n' "$m" > "$T/zrepo2/$m.py"
+  done
+  ( cd "$T/zrepo2" && env HOME="$T/zhome2" ZMARK="$T" "$BASH" -c "$vline" ) > "$T/zout" 2>&1
+  code=$?
+  marks=$(cd "$T" && ls zmark-* 2>/dev/null | tr '\n' ' ')
+  pyv=$(cd "$T" && python3 -I -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null)
+  if [ "$code" = 0 ] && [ -z "$marks" ] && [ -x "$T/zhome2/.venvs/zizmor-1.30.1/bin/pip" ]; then
+    ok "the environment line, run with Python $pyv from a checkout that ships venv.py, runpy.py, ensurepip.py and pip.py, loads none of them and makes the environment with pip"
+  else bad "the environment line, run with Python $pyv from a checkout with modules of Python's own names: exit $code, loaded from the checkout: ${marks:-none}; $(tail -n 3 "$T/zout")"; fi
+fi
+
+# ---- every zizmor call the docs and the corpus give ---------------------------------------------------------------
+# A code span, or a code line joined over a trailing \, is a call when its command, past a "(cd <dir> &&",
+# "cd <dir> &&" or "env [NAME=value...]" in front, is zizmor (by name or by a path ending in /zizmor), or docker or
+# podman with zizmorcore/zizmor in the line, and a word follows it; a name alone, such as the image's, is not.
+# Each call passes these flags, and a container call names the image by a sha256 digest.
+ZALL='--offline --no-config --no-ignores --persona=auditor'
+ZAWK='
+function seg(s, ln,   w, n, i, c) {
+  sub(/^[ \t]+/, "", s)
+  if (s == "" || substr(s, 1, 1) == "#") return
+  n = split(s, w, /[ \t]+/)
+  i = 1
+  while (i <= n) {
+    c = w[i]; sub(/^\(/, "", c)
+    if (c == "cd" && i + 2 <= n && w[i + 2] == "&&") { i += 3; continue }
+    if (c == "env") { i++; while (i <= n && index(w[i], "=") > 1 && substr(w[i], 1, 1) != "-") i++; continue }
+    break
+  }
+  if (i >= n) return
+  c = w[i]; sub(/^\(/, "", c)
+  if (c == "zizmor" || c ~ /\/zizmor$/ || ((c == "docker" || c == "podman") && index(s, "zizmorcore/zizmor") > 0))
+    printf "%s:%d\t%s\n", FILENAME, ln, s
+}
+FNR == 1 { fenced = 0; acc = "" }
+{
+  t = $0; sub(/^[ \t>]*/, "", t)
+  if (substr(t, 1, 3) == "```" || substr(t, 1, 3) == "~~~") { fenced = !fenced; acc = ""; next }
+  if (fenced) {
+    if (acc == "") at = FNR
+    if (t ~ /\\$/) { acc = acc substr(t, 1, length(t) - 1) " "; next }
+    seg(acc t, at); acc = ""
+  } else {
+    n = split($0, a, "`")
+    for (i = 2; i < n; i += 2) seg(a[i], FNR)
+  }
+}'
+zlacks() { # zlacks CALL: the flags, and for a container call the digest, CALL lacks
+  local s=" $1 " f miss=""
+  for f in $ZALL; do case "$s" in *" $f "*) ;; *) miss="$miss $f" ;; esac; done
+  case "$s" in *" docker "*|*" podman "*)
+    printf '%s\n' "$1" | tr ' \t' '\n\n' | grep -Eq '^"?ghcr\.io/zizmorcore/zizmor(:[^@]*)?@sha256:[0123456789abcdef]{64}"?$' \
+      || miss="$miss a sha256 digest" ;;
+  esac
+  printf '%s' "$miss"
+}
+zlist() { # zlist FINDINGS: the file:line of each call that lacks something, one per line
+  local at s
+  while IFS='	' read -r at s; do [ -n "$at" ] && [ -n "$(zlacks "$s")" ] && printf '%s\n' "$at"; done <<EOF
+$1
+EOF
+}
+printf '%s\n' 'Run `zizmor --offline --no-config --no-ignores --persona=auditor .` but not `~/v/bin/zizmor --offline .`.' \
+  'Nor `(cd ~ && zizmor --no-config .)`, nor `env A=1 zizmor .`; `# zizmor --offline`, `zizmor: ignore[x]`, `zizmor` and `ghcr.io/zizmorcore/zizmor` are names.' \
+  '```bash' 'docker run --rm \' '  ghcr.io/zizmorcore/zizmor:1.30.1 --offline --no-config --no-ignores --persona=auditor /src' \
+  'zizmor==1.30.1 \' '    --hash=sha256:00' '# zizmor --offline, in a comment' \
+  "podman run --rm ghcr.io/zizmorcore/zizmor@sha256:$(printf '%064d' 0) --offline --no-config --no-ignores --persona=auditor /s" \
+  '```' > "$T/zforms.md"
+got=$(zlist "$(cd "$T" && awk "$ZAWK" zforms.md)" | tr '\n' ' ')
+if [ "$got" = "zforms.md:1 zforms.md:2 zforms.md:2 zforms.md:4 " ]; then
+  ok "the zizmor call check flags a call without a flag or a container call without a digest, after cd or env too, and passes the rest"
+else bad "the zizmor call check is broken: it flags [$got], not zforms.md:1, :2 twice and :4"; fi
+zfound=$(cd "$ROOT" && find . -name '*.md' -type f ! -path './.git/*' ! -path './vendor/*' ! -path './scripts/tests/fixtures/*' \
+  -exec awk "$ZAWK" {} +)
+n=$(printf '%s\n' "$zfound" | grep -c '^\./docs/power-tools\.md:')
+if [ "$n" != 2 ]; then bad "the zizmor call check finds $n calls in power-tools.md, not its 2"
+elif [ -z "$(zlist "$zfound")" ]; then
+  ok "every zizmor call in the docs and the corpus passes $ZALL, and every container call names the image by digest"
+else
+  while IFS='	' read -r at s; do
+    [ -n "$at" ] && [ -n "$(zlacks "$s")" ] && bad "${at#./}: a zizmor call without$(zlacks "$s"): $s"
+  done <<EOF
+$zfound
+EOF
+fi
 
 echo "---- probe recipes: $pass passed, $failn failed"
 [ "$failn" -eq 0 ]
