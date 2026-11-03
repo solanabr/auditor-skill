@@ -718,9 +718,8 @@ iso_inherited() { # iso_inherited <dir>
 iso_tmp_outside() { # iso_tmp_outside
   local base=${TMPDIR:-/tmp}
   confine_phys "$base" || confine_refuse "TMPDIR cannot be resolved: $(confine_text "$base")"
-  case "$CONFINE_PHYS/" in
-    "${CONFINE_WT%/}/"*) confine_refuse "TMPDIR lies inside the working directory; point it outside the tree under audit" ;;
-  esac
+  ! confine_inside "$CONFINE_PHYS" "$CONFINE_WT" ||
+    confine_refuse "TMPDIR lies inside the working directory; point it outside the tree under audit"
 }
 
 iso_scratch() { # iso_scratch <tool>
@@ -730,9 +729,8 @@ iso_scratch() { # iso_scratch <tool>
     confine_refuse "cannot create a scratch directory under $(confine_text "$base")"
   confine_phys "$dir" || confine_refuse "the scratch directory $(confine_text "$dir") cannot be resolved"
   ISO_SCRATCH=$CONFINE_PHYS
-  case "$ISO_SCRATCH/" in
-    "${CONFINE_WT%/}/"*) confine_refuse "the scratch directory $(confine_text "$ISO_SCRATCH") lies inside the working directory; point TMPDIR outside it" ;;
-  esac
+  ! confine_inside "$ISO_SCRATCH" "$CONFINE_WT" ||
+    confine_refuse "the scratch directory $(confine_text "$ISO_SCRATCH") lies inside the working directory; point TMPDIR outside it"
   found=$(iso_inherited "$ISO_SCRATCH")
   [ -z "$found" ] ||
     confine_refuse "the scratch directory $(confine_text "$ISO_SCRATCH") would inherit $(confine_text "$found"); point TMPDIR outside any repository"

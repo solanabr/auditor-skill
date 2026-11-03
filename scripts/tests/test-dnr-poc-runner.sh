@@ -2392,6 +2392,16 @@ for sh in "${SHELLS[@]}"; do
   [ "$rc" = 64 ] && case "$out" in "iso-driver: refused: the scratch directory $WT/tmp-inside/auditor-driver."*" lies inside the working directory; point TMPDIR outside it") true ;; *) false ;; esac \
     && [ -z "$(ls -A "$WT/tmp-inside")" ] && ok "iso_scratch ($sh): a TMPDIR inside the working directory -> refused, and the scratch directory removed" || bad "iso_scratch ($sh) inside WT: $rc '$out'"
   rmdir "$WT/tmp-inside"
+  # Where the volume folds case, a TMPDIR spelled in other letters than the names on disk is still inside
+  # the working directory: the check compares directories, not spellings.
+  up="$(printf '%s' "$WT" | tr '[:lower:]' '[:upper:]')"
+  if [ "$up" != "$WT" ] && [ "$up" -ef "$WT" ]; then
+    mkdir -p "$WT/tmp-inside"
+    out="$(cd "$up" && env -i HOME="$CLEANHOME" PATH="$PATH" TMPDIR="$up/tmp-inside" "$sh" "$T/iso-driver.sh" "$ROOT" scratch 2>&1)"; rc=$?
+    [ "$rc" = 64 ] && case "$out" in "iso-driver: refused: the scratch directory "*" lies inside the working directory; point TMPDIR outside it") true ;; *) false ;; esac \
+      && [ -z "$(ls -A "$WT/tmp-inside")" ] && ok "iso_scratch ($sh): a TMPDIR inside the working directory, spelled in other letters -> refused" || bad "iso_scratch ($sh) inside WT, other letters: $rc '$out'"
+    rmdir "$WT/tmp-inside"
+  fi
   mkdir -p "$T/cfgparent/.cargo" "$T/cfgparent/tmp"; printf '[build]\n' > "$T/cfgparent/.cargo/config.toml"
   out="$(cd "$WT" && env -i HOME="$CLEANHOME" PATH="$PATH" TMPDIR="$T/cfgparent/tmp" "$sh" "$T/iso-driver.sh" "$ROOT" scratch 2>&1)"; rc=$?
   [ "$rc" = 64 ] && case "$out" in *"would inherit $T/cfgparent/.cargo/config.toml; point TMPDIR outside any repository") true ;; *) false ;; esac \
