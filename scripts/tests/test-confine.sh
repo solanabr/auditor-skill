@@ -681,6 +681,23 @@ if mkfifo "$T/fifo-probe" 2>/dev/null; then
     has "$T/out" 'sub/x' || ko "git-ro.sh --repo $1 grep -e b found nothing"
     shift 2
   done
+  # The other readers of a target's history read with an empty work tree too (hgit_tree, hgit_text_tree):
+  # lock-delta.sh past a lockfile's directory that links to one holding a .gitattributes pipe, and
+  # web3js-history.sh and collect.sh --offline past wm's .mailmap.
+  mkrepo "$RW/wlock"; put "$RW/wlock" sub/Cargo.lock "$(printf '[[package]]\nname = "a"\nversion = "1.0.0"')"
+  commit "$RW/wlock" -m one
+  printf '[[package]]\nname = "a"\nversion = "1.0.1"\n' > "$RW/wlock/sub/Cargo.lock"; git -C "$RW/wlock" commit -qam two
+  mkdir -p "$T/wlock-out"; mkfifo "$T/wlock-out/.gitattributes"; rm -r "$RW/wlock/sub"; ln -s "$T/wlock-out" "$RW/wlock/sub"
+  bounded "$T/wlock-out/.gitattributes" script "$RW" recipes/lock-delta.sh --repo wlock cargo HEAD~1..HEAD
+  check "lock-delta.sh --repo wlock answers at once, past a named pipe in the work tree, with the changed version" \
+    sh -c "[ '$RC' = 0 ] && grep -q '^\"a\" +version = \"1.0.1\"\$' '$T/out'"
+  if [ "$(id -u)" -ne 0 ]; then
+    bounded "$RW/wm/.mailmap" script "$RW" recipes/web3js-history.sh --repo wm
+    check "web3js-history.sh --repo wm answers at once, past a named pipe in the work tree" sh -c "[ '$RC' = 0 ]"
+    bounded "$RW/wm/.mailmap" script "$RW" threat-model/collect.sh --offline --repo wm --out audit_1/bootstrap
+    check "collect.sh --offline --repo wm answers at once, past a named pipe in the work tree" sh -c "[ '$RC' = 0 ]"
+    rm -rf "$RW/audit_1/bootstrap"
+  fi
   chmod 0755 "$RW/wu/sub" "$RW/wm" 2>/dev/null
   # hgit_tree itself: an empty directory under TMPDIR as the work tree, the git directory named, gone
   # afterwards; a bare repository read as hgit reads it; no TMPDIR inside the working directory; only a
