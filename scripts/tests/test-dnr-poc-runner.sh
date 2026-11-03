@@ -102,8 +102,9 @@
 #     an HTTP header, a URL or a proxy with a login, an include; a credential_process
 #     or a key; a credentials block), Claude Code's settings, state and managed
 #     settings by what they hold (a credential helper, a token, a passphrase or a list of
-#     headers in an env block, a credential or key header, a key in an MCP server's URL
-#     or its arguments), Docker's TLS client keys, the variable names that
+#     headers in an env block, a credential or key header, a key in a URL's login, query
+#     or path, or in an MCP server's arguments), Docker's TLS client keys, the
+#     variable names that
 #     look like credentials, and agent, container daemon (a tcp:// one too) and git
 #     credential sockets
 #     (serving one needs a machine that allows it: on CI a machine that does not fails
@@ -1943,13 +1944,14 @@ code="$(dcreds DOCKER_CERT_PATH="$ED/certs" DOCKER_CONFIG="$ED/config" -- "$CLEA
 # written with a variable counts even with an absolute path. So do Claude Code's settings and state files (in
 # ~/.claude*, ~/.claude.json and its backups): a command that prints a credential (an MCP server's
 # headersHelper too), a token or a passphrase in an env block (of the file or of an MCP server), a URL with a
-# login or a key-named query parameter there, a credential header in a list of headers there
-# (ANTHROPIC_CUSTOM_HEADERS lines, an MCP server's JSON object; any *-Authorization, and a name whose last part
-# is KEY or AUTH), any header in the OTLP exporter's lists, an MCP server's Authorization or key header, and a
-# key in an MCP server's URL (its login or its query) or arguments (an option, NAME=value, a header option, a
-# URL). Settings that only refer to a variable, and names that do not look like credentials, do not count; nor
-# do an ssh URL with a user name only, arguments that name no credential, a skip-auth switch, a public key and
-# a --no- option.
+# login, a key-named query parameter or a key in its path there, a credential header in a list of headers
+# there (ANTHROPIC_CUSTOM_HEADERS lines, an MCP server's JSON object; any *-Authorization, and a name whose last
+# part is KEY or AUTH), any header in the OTLP exporter's lists, an MCP server's Authorization or key header,
+# and a key in an MCP server's or a hook's URL (its login, its query or its path) or in an MCP server's
+# arguments (an option, NAME=value, a header option, a URL). Settings that only refer to a variable, and names
+# that do not look like credentials, do not count; nor do an ssh URL with a user name only, arguments that name
+# no credential, a public RPC URL, a skip-auth switch, a public key, a --no- option, and a version, a date or a
+# local file in a URL's path.
 n=0
 while IFS='|' read -r file text kind; do
   [ -n "$file" ] || continue
@@ -2031,6 +2033,12 @@ done <<'CONFIGS'
 .claude.json|{"mcpServers":{"remote":{"command":"npx","args":["mcp-remote","https://mcp.example.invalid/sse","--header","Ocp-Apim-Subscription-Key: x"]}}}\n|Claude Code credentials
 .claude/settings.json|{"env":{"ANTHROPIC_BEDROCK_BASE_URL":"https://llm-gateway.example.invalid/bedrock","CLAUDE_CODE_SKIP_BEDROCK_AUTH":"1","OTEL_EXPORTER_OTLP_HEADERS":"x-honeycomb-team=${HONEYCOMB_KEY}","OPENAPI_MCP_HEADERS":"{\\"Notion-Version\\": \\"2025-09-03\\"}"}}\n|
 .claude.json|{"mcpServers":{"sol":{"command":"npx","args":["solana-mcp","--public-key","9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin","--no-auth","server.js"]}}}\n|
+.claude/settings.json|{"env":{"ANTHROPIC_BASE_URL":"https://anthropic.helicone.ai/sk-helicone-0a1b2c3-d4e5f6a-b7c8d9e-f0a1b2c"}}\n|Claude Code credentials
+.claude/settings.json|{"env":{"SOLANA_RPC_URL":"https://example.solana-mainnet.quiknode.pro/0123456789abcdef0123456789abcdef01234567/"}}\n|Claude Code credentials
+.claude/settings.json|{"hooks":{"Stop":[{"hooks":[{"type":"http","url":"https://hooks.example.invalid/services/T0/B0/Xa1b2C3d4E5f6G7h8I9j0K1l"}]}]}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"rpc":{"command":"npx","args":["solana-mcp","--rpc-url","https://x.solana-mainnet.quiknode.pro/0123456789abcdef0123456789abcdef01234567/"]}}}\n|Claude Code credentials
+.claude/settings.json|{"env":{"SOLANA_RPC_URL":"https://api.devnet.solana.com","RPC_URL":"https://solana-mainnet.g.alchemy.com/v2/docs-demo"}}\n|
+.claude.json|{"mcpServers":{"sol":{"command":"npx","args":["solana-mcp","--rpc-url","https://api.devnet.solana.com"]},"docs":{"type":"http","url":"https://mcp.example.invalid/v1/claude-3-5-sonnet-20241022/sse"},"repo":{"command":"uvx","args":["--from","git+https://github.com/o/solana-mcp-server-2025","x","file:///w/notes-a1b2c3d4e5f6a7b8c9d0"]}}}\n|
 CONFIGS
 # git's store counts by the file its --file names, when that file is readable: the file counts, not the git
 # config, as the code here could read it without git. "~" as a word of its own is the home; the helper may be

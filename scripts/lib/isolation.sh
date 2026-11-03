@@ -43,19 +43,22 @@
 #     ~/.claude.json and its backups (the state file, which keeps the personal MCP servers). One counts when it
 #     names a command that prints a credential (apiKeyHelper, awsCredentialExport, otelHeadersHelper, an MCP
 #     server's headersHelper); when an env block in it, its own or an MCP server's, gives a value to a variable
-#     whose name looks like a credential (as below), a value with a URL that carries one, or, to a name that
-#     ends in HEADERS, a list of headers (Name: value lines, Name=value pairs or a JSON object) that sends a
-#     credential header, or for OTEL_EXPORTER_OTLP_HEADERS and its per-signal forms, which authenticate the
-#     exporter, any header; when a headers block sends a credential header with a value; or when a URL (an MCP
-#     server's or a hook's) or an MCP server's arguments carry one. A credential header is Authorization, any
-#     *-Authorization, Cookie, or a name a key goes by: one that looks like a credential, or whose last part is
-#     KEY or AUTH, a public key aside (x-api-key, Ocp-Apim-Subscription-Key, Helicone-Auth). A URL carries one
-#     in its login (any user name in an http, ws or socks URL, a user and a password in another) or in a query
-#     parameter named as a key goes by or sig or signature. Arguments carry one in an option named as a key goes
-#     by, with a value (--api-key <value>, --key=<value>; a --no- option takes none), in NAME=<value> for a name
-#     that looks like a credential, in a header option (-H, --header) or in a URL. A value that refers to a
-#     variable (${NAME}) does not count, and neither does a file that is not JSON; one larger than 16 MiB stops
-#     the check (status 2);
+#     whose name looks like a credential (as below; an RPC_URL counts only by what its URL carries), a value
+#     with a URL that carries one, or, to a name that ends in HEADERS, a list of headers (Name: value lines,
+#     Name=value pairs or a JSON object) that sends a credential header, or for OTEL_EXPORTER_OTLP_HEADERS and
+#     its per-signal forms, which authenticate the exporter, any header; when a headers block sends a
+#     credential header with a value; or when a URL (an MCP server's or a hook's) or an MCP server's arguments
+#     carry one. A credential header is Authorization, any *-Authorization, Cookie, or a name a key goes by: one
+#     that looks like a credential, or whose last part is KEY or AUTH, a public key aside (x-api-key,
+#     Ocp-Apim-Subscription-Key, Helicone-Auth). A URL carries one in its login (any user name in an http, ws or
+#     socks URL, a user and a password in another), in a query parameter named as a key goes by or sig or
+#     signature, or, when it has a host, in a path segment that can be a key: 20 or more letters, digits, - and
+#     _, with a run of seven or more letters and digits holding both (https://<name>.quiknode.pro/<token>/; a
+#     version or a date in a name holds none). Arguments carry one in an option named as a key goes by, with a
+#     value (--api-key <value>, --key=<value>; a --no- option takes none), in NAME=<value> for a name that
+#     looks like a credential, in a header option (-H, --header) or in a URL. A value that refers to a variable
+#     (${NAME}) does not count, and neither does a file that is not JSON; one larger than 16 MiB stops the
+#     check (status 2);
 #   1Password's agent socket: ~/.1password/agent.sock, and on macOS
 #     ~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock;
 #   the sockets of a container daemon, which gives whoever reaches it the host: Docker Desktop's
@@ -238,10 +241,13 @@ CLAUDE_HELPERS = ("apiKeyHelper", "awsCredentialExport", "otelHeadersHelper", "h
 CLAUDE_LIMIT = 16 << 20
 REFERENCE = re.compile(r"\$(?:\{|[A-Za-z_])")
 # A URL in a value; the schemes whose user name alone can be a token (https://<token>@host); the names a query
-# parameter holding a key takes beside those a key goes by (key_name).
+# parameter holding a key takes beside those a key goes by (key_name); a path segment that can be a key
+# (path_key), as a key in a path has no name (https://<name>.solana-mainnet.quiknode.pro/<token>/,
+# https://anthropic.helicone.ai/<key>).
 URL_IN = re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://[^\s\"\x27<>]+")
 TOKEN_USER = ("http", "https", "ws", "wss", "socks", "socks4", "socks4a", "socks5", "socks5h")
 QUERY_KEYS = ("SIG", "SIGNATURE")
+PATH_KEY = re.compile(r"[A-Za-z0-9_-]{20,}")
 # One header of a list, Name: value or Name=value, the headers apart by newlines or commas; the variables whose
 # headers all count, since the OTLP exporter sends them to authenticate (OTEL_EXPORTER_OTLP_HEADERS and its
 # per-signal forms).
@@ -497,12 +503,14 @@ def name_parts(name):
     return re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", name).upper().replace("-", "_").replace(".", "_").split("_")
 
 
-def secretish(name):
+def secretish(name, rpc=True):
     # A name that looks like a credential: a part TOKEN, SECRET, PASSWORD, PASSWD, PASSPHRASE or APIKEY, or
-    # API_KEY, ACCESS_KEY, PRIVATE_KEY or RPC_URL.
+    # API_KEY, ACCESS_KEY or PRIVATE_KEY, or, with <rpc>, RPC_URL. A settings file or an argument that gives an
+    # RPC URL counts only by what its URL carries (url_credential), as a public RPC URL carries nothing.
     parts = name_parts(name)
+    pairs = set(zip(parts, parts[1:]))
     return bool(set(parts) & {"TOKEN", "SECRET", "PASSWORD", "PASSWD", "PASSPHRASE", "APIKEY"}
-                or set(zip(parts, parts[1:])) & {("API", "KEY"), ("ACCESS", "KEY"), ("PRIVATE", "KEY"), ("RPC", "URL")})
+                or pairs & {("API", "KEY"), ("ACCESS", "KEY"), ("PRIVATE", "KEY")} or rpc and ("RPC", "URL") in pairs)
 
 
 def key_name(name):
@@ -510,7 +518,7 @@ def key_name(name):
     # or one whose last part is KEY or AUTH (x-api-key, Ocp-Apim-Subscription-Key, subscription-key, --key,
     # Helicone-Auth), a public key aside.
     parts = name_parts(name)
-    return (secretish(name)
+    return (secretish(name, rpc=False)
             or parts[-1] in ("KEY", "AUTH") and parts[-2:-1] not in (["PUBLIC"], ["PUBLISHABLE"], ["PUB"]))
 
 
@@ -538,10 +546,17 @@ def header_credential(text, every=False):
     return any(set_here(value) and (every or credential_header(str(name))) for name, value in pairs)
 
 
+def path_key(segment):
+    # A URL path segment that can be a key: 20 or more letters, digits, - and _, with a run of seven or more
+    # letters and digits that holds both (a version or a date in a name holds none).
+    return bool(PATH_KEY.fullmatch(segment)) and any(
+        len(run) >= 7 and not run.isdigit() and not run.isalpha() for run in re.split(r"[-_]", segment))
+
+
 def url_credential(text):
     # A URL in <text> that carries a key set here: in its login (any user name in an http, ws or socks URL, a
-    # user and a password in any other), or in a query parameter whose name a key goes by (key_name, sig or
-    # signature).
+    # user and a password in any other), in a query parameter whose name a key goes by (key_name, sig or
+    # signature), or, for a URL with a host, in a path segment that can be one (path_key).
     for match in URL_IN.finditer(text):
         try:
             url = urllib.parse.urlsplit(match.group(0))
@@ -554,17 +569,19 @@ def url_credential(text):
             name = urllib.parse.unquote_plus(name)
             if eq and set_here(urllib.parse.unquote_plus(value)) and (key_name(name) or name.upper() in QUERY_KEYS):
                 return True
+        if url.netloc and any(path_key(urllib.parse.unquote(segment)) for segment in url.path.split("/")):
+            return True
     return False
 
 
 def env_credential(name, value):
-    # An env entry that sets a credential: a value set here for a name that looks like one, a URL that carries
-    # one, or, for a name that ends in HEADERS, a list of headers that sends one, any header with a value
-    # counting for the OTLP exporter.
+    # An env entry that sets a credential: a value set here for a name that looks like one (an RPC URL counts by
+    # its URL alone), a URL that carries one, or, for a name that ends in HEADERS, a list of headers that sends
+    # one, any header with a value counting for the OTLP exporter.
     if isinstance(value, bool) or not isinstance(value, (str, int, float)):
         return False
     text, upper = str(value), name.upper()
-    return (set_here(value) and secretish(name) or url_credential(text)
+    return (set_here(value) and secretish(name, rpc=False) or url_credential(text)
             or upper.endswith("HEADERS") and header_credential(text, bool(OTLP_HEADERS.fullmatch(upper))))
 
 
@@ -581,7 +598,7 @@ def args_credential(args):
             value = ""
         elif not eq:
             value = words[i + 1] if option and i + 1 < len(words) and not words[i + 1].startswith("-") else ""
-        if (url_credential(word) or set_here(value) and (key_name(name) if option else secretish(name))
+        if (url_credential(word) or set_here(value) and (key_name(name) if option else secretish(name, rpc=False))
                 or option and name.lower() in ("h", "header", "headers") and header_credential(value)):
             return True
     return False
