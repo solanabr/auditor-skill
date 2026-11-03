@@ -35,9 +35,9 @@
 #
 # It also refuses:
 #   - a symbolic link in the working directory, outside .git, to a directory outside it or inside a .git
-#     directory: the scan reads neither, and Claude Code may load project config there once it reads a
-#     file through the link. A .git that is a link is skipped. The refusal names the first such link in
-#     byte order;
+#     directory, as the filesystem opens names (where they fold, .GIT/x is in .git): the scan reads
+#     neither, and Claude Code may load project config there once it reads a file through the link. A
+#     .git that is a link is skipped. The refusal names the first such link in byte order;
 #   - a working directory inside a .claude directory or a git directory;
 #   - a working directory in a linked git worktree: Claude Code also loads its main checkout's
 #     .claude/settings.local.json, and that checkout's project skills when the worktree has none;
@@ -99,6 +99,20 @@ uses() {
   g=${g%$'\r'}
   case "$g" in /*) ;; *) g=${1%/*}/$g ;; esac
   [ "$g" -ef "$gd" ]
+}
+
+# in_git <physical directory inside the working directory>: status 0 when one of its directories below
+# the working directory is its parent's .git as the filesystem opens names (where they fold, .GIT is).
+in_git() {
+  local q=${WT%/} rest=$1/ c
+  rest=${rest#"$q"/}
+  while [ -n "$rest" ]; do
+    c=${rest%%/*}
+    rest=${rest#*/}
+    [ -e "$q/.git" ] && [ "$q/$c" -ef "$q/.git" ] && return 0
+    q=$q/$c
+  done
+  return 1
 }
 
 # settings_ok <file>: status 0 when <file> is a regular file of at most SETTINGS_MAX bytes holding one JSON
@@ -311,15 +325,16 @@ done < <(matches .)
 [ "$st" = 0 ] || refuse "find cannot read the whole working tree, so it cannot be checked for Claude Code project config"
 
 # A link to a directory the scan above does not read, outside the working directory or in a .git
-# directory: Claude Code may find project config there once it reads a file through the link. A .git
-# that is itself a link (to a git directory kept elsewhere) is skipped, as a .git directory is.
+# directory, however the link spells it: Claude Code may find project config there once it reads a file
+# through the link. A .git that is itself a link (to a git directory kept elsewhere) is skipped, as a .git
+# directory is.
 LINK='' st=''
 while IFS= read -r -d '' p; do
   case "$p" in status=*) st=${p#status=}; continue ;; esac
   [ -d "$p" ] || continue
   if confine_phys "$p"; then
     case "$CONFINE_PHYS/" in
-      "${WT%/}/"*) case "/${CONFINE_PHYS#"$WT"}/" in */.git/*) ;; *) continue ;; esac ;;
+      "${WT%/}/"*) in_git "$CONFINE_PHYS" || continue ;;
     esac
   fi
   p=${p#./}

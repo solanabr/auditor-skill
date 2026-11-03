@@ -4,7 +4,7 @@
 # arguments and the entry limit, the notes, the parents up to the repository root (a core.worktree in the
 # repository's own config, a .git git passes over or cannot use, and a git directory kept elsewhere
 # included) and the user's own configuration directory, linked worktrees and submodule checkouts, names
-# the filesystem folds, a large tree, trees find cannot read,
+# the filesystem folds (link targets included), a large tree, trees find cannot read,
 # a missing jq, control characters in a path, and the installation or PATH entries inside the working
 # directory. Every run goes under each bash on the machine (/bin/bash and the bash running this suite,
 # when they differ) and must print the same under each. Needs git and jq; no network. Usage (from the
@@ -446,6 +446,20 @@ folds "an AGENTS.md so spelled gets a note" "note:AGENT${LS}.md" "f:AGENT${LS}.m
 folds "... and so does .claude/rules" "note:.claude/rule${LS}" "d:.claude/rule${LS}"
 folds "names that open as no name preflight looks for pass" ok "f:caf$(printf '\303\251').txt" "d:.claude/note${LS}" \
   "f:.claude/${LS}kill" "d:docs/${LS}kills"
+# A link into .git spelled in another letter case: where the filesystem folds case, .GIT/p opens as
+# .git/p, which the scan skips; where it does not, the link leads nowhere and passes.
+mkdir "$U/c"
+ICASE=no
+[ -d "$U/C" ] && ICASE=yes
+echo "# the filesystem under $T opens c as C: $ICASE"
+for t in .GIT/p .Git/p /.GIT/p; do
+  C=$(newdir) || { ko "a directory for the link to $t cannot be made"; continue; }
+  case "$t" in /*) v=$C$t what="the working directory's absolute path, then ${t#/}" ;; *) v=$t what=$t ;; esac
+  build "$C" d:.git/p/.claude/skills "l:programs=$v" || { ko "the fixture for the link to $what cannot be built"; continue; }
+  run "$C"
+  if [ "$ICASE" = yes ]; then check "a link to $what, inside .git where names fold case, is refused" linked programs
+  else check "a link to $what passes where names do not fold case: it leads nowhere" just_ok; fi
+done
 Q2=$(newdir)
 build "$Q2" d:pkg/sub "d:.claude/${LS}kills/x" "f:AGENT${LS}.md"
 git init -q "$Q2"
