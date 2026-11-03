@@ -115,10 +115,11 @@ above. It starts with these lines verbatim (`agents/poc-engineer.md` gives them 
 installation's path filled in). Like `run.sh --crate`, they find `<R>` from the runner's
 own path, wherever the runner is started from, and take the stricter of `<R>/exec-mode` and
 `AUDITOR_EXEC_MODE`. They stop the run when `exec-mode` is not a regular file holding one
-word, none, isolated or native; an `AUDITOR_EXEC_MODE` other than none, isolated or native
-is left as it is, and `run.sh`'s mode gate, which they apply next, stops on it. In isolated
-mode they then run the credential self-check through `probe.sh --only isolation`. Each stop
-is an exit 3 before the runner copies or builds anything:
+word, none, isolated or native, and at most one newline after it, as `run.sh` reads it; an
+`AUDITOR_EXEC_MODE` other than none, isolated or native is left as it is, and `run.sh`'s
+mode gate, which they apply next, stops on it. In isolated mode they then run the credential
+self-check through `probe.sh --only isolation`. Each stop is an exit 3 before the runner
+copies or builds anything:
 
 ```bash
 RUN_DIR=$(CDPATH= cd -P -- "$(dirname -- "$0")" && pwd -P) || exit 3
@@ -127,6 +128,7 @@ AUDITOR_ROOT='<auditor-skill root>'
 RECORDED=
 if [ -e "$RUN_DIR/exec-mode" ] || [ -L "$RUN_DIR/exec-mode" ]; then
   if [ -f "$RUN_DIR/exec-mode" ] && [ ! -L "$RUN_DIR/exec-mode" ]; then RECORDED=$(head -c 10 "$RUN_DIR/exec-mode" 2>/dev/null || true); fi
+  case "$RECORDED" in none|isolated|native) [ "$(wc -c < "$RUN_DIR/exec-mode")" -le $(( ${#RECORDED} + 1 )) ] || RECORDED= ;; esac
   case "$RECORDED" in
     none|isolated|native) ;;
     *)
