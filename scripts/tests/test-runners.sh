@@ -1519,7 +1519,8 @@ check "... and a file given as --path gets no note" sh -c "[ '$RC' = 0 ] && grep
 # each check counts its own. A folder shaped as a bare repository is part of the working directory's project:
 # plain git, run from it, takes it for a bare repository with no work tree and runs none of its programs
 # either, so that case shows only that it is never consulted. An index with an entry that climbs out of the
-# project (no git command writes one; git lists it) gets no copy either.
+# project (no git command writes one; git lists it) gets no copy either, nor does a split index (git cannot read
+# its copy without the shared index beside it) or a .git/info that is a link; the note says which.
 tgit init -q "$WT/nested" && printf 'fn n() {}\n' > "$WT/nested/n.rs" && tgit -C "$WT/nested" add n.rs &&
   printf '[core]\n\tfsmonitor = %s/mark-fsmonitor\n\thooksPath = %s/hooks\n' "$T" "$T" >> "$WT/nested/.git/config"
 tgit init -q --separate-git-dir "$T/gf.git" "$WT/gf" && printf 'fn g() {}\n' > "$WT/gf/g.rs" &&
@@ -1541,22 +1542,39 @@ entry += b"\0" * ((62 + len(name) + 8) // 8 * 8 - len(entry))
 out = struct.pack(">4sII", sig, ver, n + 1) + entry + body
 open(p, "wb").write(out + hashlib.sha1(out).digest())
 PY
-WALKED='; note: semgrep listed the files itself, not with git (sast.sh could not give it a copy of the repository index), so files a .gitignore leaves out can be in the scan'
-shape_ok() { # shape_ok <calls line> <walked 0|1>: exit 0, no mark, that line in the calls, and the note when walked
+for r in split info; do
+  tgit init -q "$WT/$r" && printf 'fn s() {}\n' > "$WT/$r/s.rs" && tgit -C "$WT/$r" add s.rs &&
+    printf '[core]\n\tfsmonitor = %s/mark-fsmonitor\n\thooksPath = %s/hooks\n' "$T" "$T" >> "$WT/$r/.git/config"
+done
+tgit -C "$WT/split" update-index --split-index
+mv "$WT/info/.git/info" "$T/info-real" && ln -s "$T/info-real" "$WT/info/.git/info"
+WALKED='; note: semgrep listed the files itself, not with git (no copy of the repository index: '
+shape_ok() { # shape_ok <calls line> <reason>: exit 0, no mark, that line in the calls, and the note with <reason> (none when empty)
   [ "$RC" = 0 ] && [ -z "$(ls -A "$T/marks")" ] && grep -q "$1" "$T/calls" || return 1
-  if [ "$2" = 1 ]; then grep -qF "$WALKED" "$T/out"; else ! grep -qF "$WALKED" "$T/out"; fi
+  if [ -n "$2" ]; then grep -qF "$WALKED$2), so files a .gitignore leaves out can be in the scan" "$T/out"; else ! grep -qF "$WALKED" "$T/out"; fi
 }
 mkdir -p "$T/marks-earlier"
-while IFS='|' read -r path want walked label; do
+while IFS='|' read -r path want why label; do
   mv "$T/marks/"* "$T/marks-earlier/" 2>/dev/null
   run "$SAST" "$WT" -- semgrep --run audit_1 --path "$path" --ruleset p/rust
-  check "sast --path $path, $label: exit 0, and semgrep's git ran nothing a config names (calls: $want)" shape_ok "$want" "$walked"
+  check "sast --path $path, $label: exit 0, and semgrep's git ran nothing a config names (calls: $want)" shape_ok "$want" "$why"
 done <<CASES
-nested|^git-cached: 0 n.rs \$|0|its own .git directory: a copy of its own index
-gf|^git-cached: 128 fatal: not a git repository|1|a .git file: no copy, git finds no repository
-bare|^env: GIT_WORK_TREE=$WT\$|0|a folder shaped as a bare repository: never consulted, the working directory's copy
-idx|^git-cached: 128 fatal: not a git repository|1|an index entry outside the project: no copy
+nested|^git-cached: 0 n.rs \$||its own .git directory: a copy of its own index
+gf|^git-cached: 128 fatal: not a git repository|its .git is a file or a link|a .git file: no copy, git finds no repository
+bare|^env: GIT_WORK_TREE=$WT\$||a folder shaped as a bare repository: never consulted, the working directory's copy
+idx|^git-cached: 128 fatal: not a git repository|its index names a path outside the repository|an index entry outside the project: no copy
+split|^git-cached: 128 fatal: not a git repository|git cannot read its index from a copy, as with a split index or a sha256 repository|a split index: no copy
+info|^git-cached: 128 fatal: not a git repository|its .git/info is a link|a .git/info that is a link: no copy
 CASES
+# A working directory inside a repository whose top lies above it: sast.sh copies nothing from outside the
+# working directory, so semgrep lists the files itself; the outer repository's programs never run.
+tgit init -q "$T/outer" && mkdir "$T/outer/w" && printf 'fn o() {}\n' > "$T/outer/w/o.rs" &&
+  printf '[core]\n\tfsmonitor = %s/mark-fsmonitor\n\thooksPath = %s/hooks\n' "$T" "$T" >> "$T/outer/.git/config" &&
+  ( cd "$T/outer/w" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null || ko "the outer repository's working directory could not be made"
+mv "$T/marks/"* "$T/marks-earlier/" 2>/dev/null
+run "$SAST" "$T/outer/w" -- semgrep --run audit_1 --path . --ruleset p/rust
+check "sast in a working directory below its repository's top: exit 0, no copy and the note says why, nothing a config names ran" \
+  shape_ok '^git-cached: 128 fatal: not a git repository' 'the repository lies above the working directory'
 mv "$T/marks-earlier/"* "$T/marks/" 2>/dev/null
 rmdir "$T/marks-earlier"
 # git init records whether letter case tells names apart and, on macOS, that names are precomposed; with the
@@ -1576,7 +1594,7 @@ printf 'y/\n' > "$WT/nested/.semgrepignore"
 run "$SAST" "$WT" -- semgrep --run audit_1 --path nested --ruleset p/rust
 check "a scan root in a project of its own: the note names its .semgrepignore, not the working directory's" \
   sh -c "[ '$RC' = 0 ] && grep -q '; note: .semgrepignore files narrow the scan: nested/.semgrepignore\$' '$T/out'"
-rm -rf "$WT/nested" "$WT/gf" "$WT/bare" "$WT/idx" "$T/gf.git" "$WT/.semgrepignore" "$WT/programs/.semgrepignore"
+rm -rf "$WT/nested" "$WT/gf" "$WT/bare" "$WT/idx" "$WT/split" "$WT/info" "$T/info-real" "$T/outer" "$T/gf.git" "$WT/.semgrepignore" "$WT/programs/.semgrepignore"
 mkdir -p "$WT/src/inner"
 ln -s ../lib.rs "$WT/src/inner/near.rs"
 run "$SAST" "$WT" -- semgrep --run audit_1 --path src --ruleset p/rust

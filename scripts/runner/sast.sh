@@ -22,7 +22,7 @@
 # a program for git to run; so every git semgrep starts gets GIT_DIR, never the repository's own: a copy of
 # its index and info/exclude under a config of sast.sh's own, or, where sast.sh makes no copy, a path that
 # does not exist (git fails, and semgrep lists the files itself, ignored ones included, which the last line
-# then says). git's ignore rules leave out untracked files only. semgrep (1.117.0 and later) also reads
+# then says, with the reason). git's ignore rules leave out untracked files only. semgrep (1.117.0 and later) also reads
 # every .semgrepignore of its project, the nearest folder at or above <path> holding a .git (or a .hg,
 # _darcs or .svn folder), else <path>: for a folder, the last line names each one from the project down to
 # <path> and under it; a file given as <path> is scanned whatever they say. AUDITOR_RUN_TIMEOUT (whole
@@ -179,7 +179,8 @@ copy_ok() { # copy_ok <file> <bytes>: <file> is absent, or a regular file, not a
   [ -f "$1" ] && [ ! -L "$1" ] && [ -z "$(find "$1" -prune -size +"$2"c -print 2>/dev/null)" ]
 }
 # index_inside: the copied index, read by git under sast.sh's config, names only paths inside the project (an
-# entry that is absolute or has an empty, . or .. component would have git list a file outside --path).
+# entry that is absolute or has an empty, . or .. component would have git list a file outside --path); exit 1
+# when one does not, and git's own status when it cannot read the copy.
 index_inside() {
   (cd / && exec env -i PATH="$PATH" HOME="$S" LC_ALL=C GIT_DIR="$S/git" GIT_WORK_TREE="$PROJ" GIT_CONFIG_NOSYSTEM=1 \
     GIT_CONFIG_GLOBAL=/dev/null git ls-files -z --cached 2>/dev/null) | (cd / && exec python3 -I -c 'import sys
@@ -187,7 +188,7 @@ for p in sys.stdin.buffer.read().split(b"\0"):
     if p and (p.startswith(b"/") or set(p.split(b"/")) & {b"", b".", b".."}):
         sys.exit(1)')
 }
-GITENV=("GIT_DIR=$S/no-repo")
+GITENV=("GIT_DIR=$S/no-repo") NOCOPY=""
 G=$PROJ/.git
 # The two keys git init sets from the filesystem, which change what git lists: ignorecase where letter case
 # does not tell names apart (seen without writing in the tree: .GIT is then the same folder as .git), and
@@ -195,22 +196,35 @@ G=$PROJ/.git
 GCONF=$'[core]\n\trepositoryformatversion = 0\n\tbare = false\n\tfsmonitor = false\n\thooksPath = /dev/null\n\tuntrackedCache = false\n'
 if [ "$PROJ/.GIT" -ef "$G" ] && [ ! -L "$PROJ/.GIT" ]; then GCONF+=$'\tignorecase = true\n'; fi
 case "${OSTYPE:-}" in darwin*) GCONF+=$'\tprecomposeUnicode = true\n' ;; esac
-case "$PROJ/" in
-  "${WT%/}/"*)
-    if [ "$VCS" = git ] && [ -d "$G" ] && [ ! -L "$G" ] && [ ! -L "$G/info" ] && copy_ok "$G/index" 268435456 &&
-      copy_ok "$G/info/exclude" 1048576 && confine_mkdir "$S/git" && confine_mkdir "$S/git/objects" &&
-      confine_mkdir "$S/git/refs" && confine_mkdir "$S/git/info" && confine_new_file "$S/git/HEAD" $'ref: refs/heads/main\n' &&
-      confine_new_file "$S/git/config" "$GCONF" &&
-      { [ ! -e "$G/index" ] || iso_copy_new "$G/index" "$S/git/index"; } &&
-      { [ ! -e "$G/info/exclude" ] || iso_copy_new "$G/info/exclude" "$S/git/info/exclude"; } && index_inside; then
-      GITENV=("GIT_DIR=$S/git" "GIT_WORK_TREE=$PROJ")
-    fi ;;
-esac
+# NOCOPY: for a git project, why semgrep's git gets no copy, for the last line.
+if [ "$VCS" = git ]; then
+  case "$PROJ/" in
+    "${WT%/}/"*)
+      if [ ! -d "$G" ] || [ -L "$G" ]; then NOCOPY="its .git is a file or a link"
+      elif [ -L "$G/info" ]; then NOCOPY="its .git/info is a link"
+      elif ! copy_ok "$G/index" 268435456; then NOCOPY="its index is a link, not a regular file, or over 256 MiB"
+      elif ! copy_ok "$G/info/exclude" 1048576; then NOCOPY="its info/exclude is a link, not a regular file, or over 1 MiB"
+      elif ! { confine_mkdir "$S/git" && confine_mkdir "$S/git/objects" && confine_mkdir "$S/git/refs" &&
+        confine_mkdir "$S/git/info" && confine_new_file "$S/git/HEAD" $'ref: refs/heads/main\n' &&
+        confine_new_file "$S/git/config" "$GCONF" && { [ ! -e "$G/index" ] || iso_copy_new "$G/index" "$S/git/index"; } &&
+        { [ ! -e "$G/info/exclude" ] || iso_copy_new "$G/info/exclude" "$S/git/info/exclude"; }; }; then
+        NOCOPY="the scratch directory could not hold the copy"
+      else
+        index_inside
+        case $? in
+          0) GITENV=("GIT_DIR=$S/git" "GIT_WORK_TREE=$PROJ") ;;
+          1) NOCOPY="its index names a path outside the repository" ;;
+          *) NOCOPY="git cannot read its index from a copy, as with a split index or a sha256 repository" ;;
+        esac
+      fi ;;
+    *) NOCOPY="the repository lies above the working directory" ;;
+  esac
+fi
 ISO_ENV+=("${GITENV[@]}" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null)
-# Where git lists nothing for a folder in a git project, the last line says that semgrep chose the files.
+# Where git lists nothing for a folder in a git project, the last line says that semgrep chose the files, and why.
 walked=""
-if [ "$VCS" = git ] && [ -d "$TARGET" ] && [ "${GITENV[0]}" = "GIT_DIR=$S/no-repo" ]; then
-  walked="; note: semgrep listed the files itself, not with git (sast.sh could not give it a copy of the repository index), so files a .gitignore leaves out can be in the scan"
+if [ -n "$NOCOPY" ] && [ -d "$TARGET" ]; then
+  walked="; note: semgrep listed the files itself, not with git (no copy of the repository index: $NOCOPY), so files a .gitignore leaves out can be in the scan"
 fi
 
 # The .semgrepignore files that narrow the scan of a folder: semgrep reads every one in its project, so each one
