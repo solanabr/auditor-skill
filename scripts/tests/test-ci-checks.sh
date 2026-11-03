@@ -13,11 +13,13 @@
 #   4. .github/workflows: the required job keeps its name; the directory holds only regular files named *.yml
 #      or *.yaml, GitHub runs both, and the checks read every one, as many as the directory holds; every workflow
 #      and job reads contents only; no workflow names pull_request_target or workflow_run outside a comment line,
-#      however its trigger is written, and none spells a key YAML reads as on other than as plain on: (quoted in
-#      either style, with escapes, a tag, an anchor or another letter case, in block or flow style), or writes an
-#      explicit ? key, an alias as a key or a merge key (<<); no run: script holds a ${{ }} expression; every job
-#      has timeout-minutes, every action is pinned by full SHA with its version, and no checkout keeps
-#      credentials;
+#      however its trigger is written (each quoted scalar is read with its escapes decoded, a | or > in a comment
+#      starts no block scalar, no quoted scalar in either style may run on past its line, no node has a tag, and
+#      no line may hold a carriage return or a NEL, LS or PS line break), and none spells a key YAML reads as on
+#      other than as plain on: (quoted in either style, with escapes, a tag, an anchor or another letter case, in
+#      block or flow style), or writes an explicit ? key, an alias as a key or a merge key (<<); no run: script
+#      holds a ${{ }} expression; every job has timeout-minutes, every action is pinned by full SHA with its
+#      version, and no checkout keeps credentials;
 #   5. scripts/check-hygiene.sh fails on each kind of file it names, and on a top-level directory named
 #      commands, agents, skills, hooks, bin, monitors or .claude-plugin in another letter case, also when it
 #      is the last of 3,000 tracked paths; on each load surface at the plugin root, and on a SKILL.md other
@@ -492,11 +494,11 @@ expect "pipefail: the CI check scripts and their suites are clean" 0 bash "$ROOT
 # ---- 4. workflows --------------------------------------------------------------------------------------
 wfcheck() { # wfcheck FILE -> one line per problem, read byte by byte
   LC_ALL=C awk -v f="$1" -v q="'" '
-    # the letter a two-digit hex code names, or \001 for any other code
+    # the letter, digit or _ a two-digit hex code names, or \001 for any other code
     function hexchr(h) { h = tolower(h); return (h in letter) ? letter[h] : "\001" }
     # quoted(s, i): the value of the quoted scalar that starts at s[i] (a quote mark), each \x, \u and \U escape
-    # of a letter decoded and any other escape read as \001. QEND is the index after its closing quote, or 0
-    # when it goes on past the line.
+    # of a letter, a digit or _ decoded and any other escape read as \001. QEND is the index after its closing
+    # quote, or 0 when it goes on past the line.
     function quoted(s, i,   c, e, v, j, n, h) {
       c = substr(s, i, 1); v = ""; j = i + 1; QEND = 0
       while (j <= length(s)) {
@@ -565,17 +567,56 @@ wfcheck() { # wfcheck FILE -> one line per problem, read byte by byte
         if (c == "{" || c == "[" || c == ",") { j = i + 1; while (substr(s, j, 1) ~ /[ \t]/) j++; keyat(s, j) }
       }
     }
+    # decode(s): the line s up to its comment, each quoted scalar replaced by its value where YAML can start a
+    # node (at the indentation, after "- ", "? " or ": ", after a tag or an anchor there, and after [, { and , in
+    # a flow collection, or a : right after a quoted key). A quote anywhere else is a character of a plain
+    # scalar, which YAML never decodes. STRIP is the same text with each of those quoted scalars written as Q, so
+    # a | or > inside a comment or a quoted scalar cannot pass for a block scalar header. FD carries the depth of
+    # flow collections over to the next line; RUNON is 1 when a quoted scalar, in either style, goes on past the
+    # line, where YAML reads the next line as part of it; TAG is 1 when a node has a tag, such as !!binary, which
+    # makes YAML read the text that follows as base64.
+    function decode(s,   i, n, c, d, out, st, lq) {
+      out = ""; STRIP = ""; st = 1; lq = 0; n = length(s); i = 1; RUNON = 0; TAG = 0
+      while (i <= n) {
+        c = substr(s, i, 1); d = substr(s, i + 1, 1)
+        if (c == "#" && (i == 1 || substr(s, i - 1, 1) ~ /[ \t]/)) break
+        if (st && (c == "\"" || c == q)) {
+          out = out quoted(s, i)
+          if (!QEND) { RUNON = 1; break }
+          STRIP = STRIP "Q"; i = QEND; st = 0; lq = 1; continue
+        }
+        out = out c; STRIP = STRIP c; i++
+        if (c == " " || c == "\t") continue
+        if (st && c == "!") TAG = 1
+        if (st && (c == "!" || c == "&")) { while (i <= n && substr(s, i, 1) !~ /[ \t]/) { c = substr(s, i, 1); out = out c; STRIP = STRIP c; i++ }; continue }
+        if (st && (c == "[" || c == "{")) { FD++; continue }
+        if (FD && (c == "]" || c == "}")) { FD--; st = 0; lq = 1; continue }
+        if ((FD && c == ",") || (c == ":" && (lq || FD)) ||
+            ((c == "-" || c == "?" || c == ":") && (d == "" || d == " " || d == "\t"))) { st = 1; lq = 0; continue }
+        st = 0; lq = 0
+      }
+      return out
+    }
     BEGIN { sha = "[0-9a-f]"; for (i = 1; i < 40; i++) sha = sha "[0-9a-f]"
-      for (i = 65; i <= 122; i++) if (i <= 90 || i >= 97) letter[sprintf("%02x", i)] = sprintf("%c", i) }
-    # the keys of every line outside a block scalar (| or >) and a comment line; the first line without a BOM
-    { line = $0; if (NR == 1) sub(/^\357\273\277/, "", line); inside = 0 }
+      trg = "(^|[^A-Za-z0-9_])(pull_request_target|workflow_run)([^A-Za-z0-9_]|$)"
+      for (i = 48; i <= 122; i++) if (i <= 57 || (i >= 65 && i <= 90) || i == 95 || i >= 97) letter[sprintf("%02x", i)] = sprintf("%c", i) }
+    # a carriage return ends a line for a YAML parser, and so do NEL, LS and PS for a YAML 1.1 one, inside what
+    # is one line here
+    !lb && (index($0, "\r") || $0 ~ /\302\205|\342\200\250|\342\200\251/) { lb = 1
+      print f ": line " NR " holds a carriage return or a Unicode line break (NEL, LS or PS); end each line with a newline only" }
+    # the keys of every line outside a block scalar (| or >) and a comment line, and the line with its quoted
+    # scalars decoded; the first line without a BOM. A block scalar starts only where a | or > is the last thing on
+    # the line outside a comment and a quoted scalar, and outside a flow collection.
+    { line = $0; if (NR == 1) sub(/^\357\273\277/, "", line); inside = 0; dec = "" }
     blk { match(line, /^[ \t]*/)
       if (line ~ /^[ \t]*$/) inside = 1
       else if (contind < 0 && RLENGTH > blkind) { contind = RLENGTH; inside = 1 }
       else if (contind >= 0 && RLENGTH >= contind) inside = 1
       else blk = 0 }
-    !inside && line !~ /^[ \t]*#/ { keys(line)
-      if (line ~ /(^|[ \t:])[|>][-+0-9]*[ \t]*(#.*)?$/) { match(line, /^[ \t]*(-[ \t]+)*/); blkind = RLENGTH; contind = -1; blk = 1 } }
+    !inside && line !~ /^[ \t]*#/ { keys(line); dec = decode(line)
+      if (TAG) print f ": a tag on a node; write each key and value plainly: " line
+      if (RUNON) print f ": a quoted scalar runs on past its line; keep each on one line: " line
+      else if (!FD && STRIP ~ /(^|[ \t:])[|>][-+0-9]*[ \t]*$/) { match(line, /^[ \t]*(-[ \t]+)*/); blkind = RLENGTH; contind = -1; blk = 1 } }
     /^permissions:/ { if ($0 !~ /^permissions:[ \t]*$/) print f ": permissions is not a block"; perm = 1; next }
     perm == 1 && /^  [^ ]/ { if ($0 !~ /^  contents: read[ \t]*$/) print f ": permissions grants more than contents: read"; next }
     perm == 1 { perm = 2 }
@@ -583,9 +624,9 @@ wfcheck() { # wfcheck FILE -> one line per problem, read byte by byte
     /^    permissions:/ { if ($0 !~ /^    permissions:[ \t]*$/) print f ": job " job " permissions is not a block"; jperm = 1; next }
     jperm && /^      [^ ]/ { if ($0 !~ /^      contents: read[ \t]*$/) print f ": job " job " permissions grants more than contents: read"; next }
     jperm { jperm = 0 }
+    # the trigger, as written on the line and as its quoted scalars read decoded
     { t = $0; sub(/^[ \t]*#.*/, "", t) }
-    t ~ /(^|[^A-Za-z0-9_])(pull_request_target|workflow_run)([^A-Za-z0-9_]|$)/ {
-      print f ": runs on pull_request_target or workflow_run" }
+    t ~ trg || dec ~ trg { print f ": runs on pull_request_target or workflow_run" }
     # run: scripts, one-line or block: an expression there is pasted into the script before it runs
     inrun { match($0, /^[ \t]*/); if (RLENGTH > runind || $0 ~ /^[ \t]*$/) { if (index($0, "${{")) print f ": ${{ }} inside a run: script"; next } inrun = 0 }
     /^[ \t]*(- )?run:/ { match($0, /^[ \t]*(- )?/); runind = RLENGTH; inrun = 1; if (index($0, "${{")) print f ": ${{ }} inside a run: script"; next }
@@ -709,6 +750,81 @@ trig flag explicit-key 'on:' '  ? pull_request_target' '  : {types: [opened]}'
 trig flag bom "$(printf '\357\273\277on: workflow_run')"
 trig pass comment-line '# no job here starts on pull_request_target or workflow_run' 'on: push'
 trig pass quoted-on-other-events '"on": [push, pull_request]'
+# an event named with escapes in a double-quoted scalar, which YAML decodes, as a value, an item or a key
+trig flag escaped-hex-value 'on: "pull_request_t\x61rget"'
+trig flag escaped-unicode-value 'on: "workflow_r\u0075n"'
+trig flag escaped-long-unicode-value 'on: "pull_request_targe\U00000074"'
+trig flag escaped-underscore 'on: "workflow\x5Frun"'
+trig flag escaped-flow-item 'on: [push, "workflow_r\x75n"]'
+trig flag escaped-flow-item-wrapped 'on: [push,' '  pull_request, "workflow_r\x75n"]'
+trig flag escaped-block-item 'on:' '  - push' '  - "pull_request_t\x61rget"'
+trig flag escaped-key 'on:' '  "workflow_r\x75n":' '    workflows: [build]'
+trig flag escaped-json-key '{"on": {"pull_request_t\u0061rget": {}}}'
+trig flag escaped-tagged-value 'on: !!str "workflow_r\x75n"'
+trig flag escaped-after-apostrophe "{name: it's, on: \"workflow_r\\x75n\"}"
+trig flag escaped-json-key-adjacent '"on":["pull_request_t\u0061rget"]'
+# a quote inside a plain scalar or a block scalar is a character, and YAML decodes nothing there
+trig pass escape-other-text 'on: push' 'env:' '  A: "caf\x65 \u00e9"'
+trig pass escape-in-plain-scalar 'on: push' 'x: echo "pull_request_t\x61rget"'
+trig pass escape-in-block-scalar 'on: push' 'x: |' '  echo "workflow_r\x75n"'
+trig pass escape-in-comment 'on: push   # "workflow_r\x75n"'
+# a | or > in a comment, or at the end of a plain scalar in a flow collection, starts no block scalar, so the
+# lines after it are still read and decoded
+trig flag comment-pipe-item 'on: # |' '  - "pull_request_t\x61rget"'
+trig flag flow-plain-pipe 'on: [a |' '  , "pull_request_t\x61rget"]'
+trig flag comment-gt-item 'on: # >' '  - "workflow_r\x75n"'
+trig flag comment-pipe-key 'on: # |' '  "pull_request_t\x61rget":' '    types: [opened]'
+trig flag comment-pipe-flow 'on: # see |' '  [push, "pull_request_t\x61rget"]'
+trig pass block-after-comment-text 'on: push' 'x: |   # a | in the comment too' '  echo "workflow_r\x75n"'
+# a quoted scalar that runs on past its line can join two halves with an escaped line break, or hold a line that
+# starts with # or a quote mark, after which the line goes on as YAML
+runon() { # runon WANT NAME LINE...  — a workflow of LINE...; the checker must WANT (flag|pass) a run-on scalar
+  local want=$1 name=$2 got=pass; shift 2
+  { echo 'name: x'; printf '%s\n' "$@"; printf 'permissions:\n  contents: read\n'; } > "$T/runon-$name.yml"
+  case "$(wfcheck "$T/runon-$name.yml")" in *"a quoted scalar runs on past its line"*) got=flag;; esac
+  if [ "$got" = "$want" ]; then pass=$((pass + 1)); echo "PASS workflows: the run-on check gives $want on $name"
+  else failn=$((failn + 1)); echo "FAIL workflows: the run-on check gives $got on $name, want $want"; fi
+}
+runon flag escaped-line-break 'on: "pull_request_\' '  target"'
+runon flag escaped-quote-at-end 'on: push' 'x: "a\"'
+runon flag in-flow 'on: [push, "work\' '  flow_run"]'
+runon flag single-quoted 'on: push' "x: 'a" "  b'"
+runon flag single-quoted-hash-line "on: {workflow_dispatch: {inputs: {a: {description: 'x" "  #', default: y}}}, pull_request_target: {}}"
+runon flag single-quoted-quote-line "on: {workflow_dispatch: {inputs: {a: {description: 'x" \
+  "  \"', default: y}}}, \"pull_request_t\\x61rget\": {}}"
+runon flag single-quoted-block-style 'on:' '  workflow_dispatch:' '    inputs:' '      a:' "        description: 'x" "          #'"
+runon pass one-line 'on: "push"' 'x: "a\\" # done' "y: 'it''s'"
+runon pass in-plain-scalar 'on: push' 'x: echo "a' "y: it's"
+runon pass in-block-scalar 'on: push' 'x: |' '  echo "a\' "  echo 'b" '  c"'
+# a carriage return, or a NEL, LS or PS, ends a line for a YAML parser, inside what the checker reads as one line
+lbreak() { # lbreak WANT NAME LINE...  — a workflow of LINE...; the checker must WANT (flag|pass) a line break in it
+  local want=$1 name=$2 got=pass; shift 2
+  { echo 'name: x'; printf '%s\n' "$@"; printf 'permissions:\n  contents: read\n'; } > "$T/lbreak-$name.yml"
+  case "$(wfcheck "$T/lbreak-$name.yml")" in *"holds a carriage return or a Unicode line break"*) got=flag;; esac
+  if [ "$got" = "$want" ]; then pass=$((pass + 1)); echo "PASS workflows: the line-break check gives $want on $name"
+  else failn=$((failn + 1)); echo "FAIL workflows: the line-break check gives $got on $name, want $want"; fi
+}
+lbreak flag cr-item "$(printf 'on:\r  - "pull_request_t\\x61rget"')"
+lbreak flag cr-key "$(printf 'on:\r  "pull_request_t\\x61rget":\r    types: [opened]')"
+lbreak flag cr-flow "$(printf 'on:\r  [push, "pull_request_t\\x61rget"]')"
+lbreak flag crlf "$(printf 'on: push\r')"
+lbreak flag nel "$(printf 'on:\302\205  "workflow_r\\x75n":\302\205    workflows: [build]')"
+lbreak flag ls "$(printf 'on:\342\200\250  "pull_request_t\\x61rget": {}')"
+lbreak flag ps "$(printf 'on:\342\200\251  - "pull_request_t\\x61rget"')"
+lbreak pass other-utf8 'on: push' "$(printf 'env:\n  A: "caf\303\251 \342\200\224 \342\200\242 \302\240 \342\202\254"')"
+# a tag can turn what follows into another value: !!binary reads base64, so the event's name never appears
+tagged() { # tagged WANT NAME LINE...  — a workflow of LINE...; the checker must WANT (flag|pass) a tag in it
+  local want=$1 name=$2 got=pass; shift 2
+  { echo 'name: x'; printf '%s\n' "$@"; printf 'permissions:\n  contents: read\n'; } > "$T/tagged-$name.yml"
+  case "$(wfcheck "$T/tagged-$name.yml")" in *"a tag on a node"*) got=flag;; esac
+  if [ "$got" = "$want" ]; then pass=$((pass + 1)); echo "PASS workflows: the tag check gives $want on $name"
+  else failn=$((failn + 1)); echo "FAIL workflows: the tag check gives $got on $name, want $want"; fi
+}
+tagged flag binary-item 'on: [push, !!binary cHVsbF9yZXF1ZXN0X3RhcmdldA==]'
+tagged flag binary-value 'on:' '  - !!binary d29ya2Zsb3dfcnVu'
+tagged flag directive-tag '%TAG !e! tag:yaml.org,2002:' '---' 'on: !e!binary d29ya2Zsb3dfcnVu'
+tagged flag bare-expression 'on: push' 'jobs:' '  a:' '    if: !cancelled()'
+tagged pass expression 'on: push' 'jobs:' '  a:' '    if: ${{ !cancelled() }}' "    env: {A: \"!x\", B: 'y !z'}" '    run: echo hi!'
 # The trigger key is plain on: only. A key YAML reads as on in any other spelling fails whatever its events,
 # and so does an explicit ? key or an alias as a key.
 onkey() { # onkey WANT NAME LINE...  — a workflow that starts with LINE...; the checker must WANT (flag|pass) its keys
