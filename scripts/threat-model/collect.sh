@@ -230,10 +230,22 @@ G() { hgit_text "$@"; }
 DIFFSAFE=(--text --no-textconv --no-ext-diff --no-color --src-prefix=a/ --dst-prefix=b/)
 abspath() { case "$1" in /*) printf '%s' "$1" ;; *) printf '%s/%s' "$WT" "$1" ;; esac; }
 not_a_repo() {
+  if [ -n "${CONFINE_GIT_WHY:-}" ]; then
+    echo "collect.sh: $CONFINE_GIT_WHY" >&2
+    exit 3
+  fi
   echo "collect.sh: not the top level of a git repository that git can read (none there, or another user owns it: collect from a copy you made), nor a bare repository: $(confine_text "$REPO")" >&2
   exit 3
 }
+# disk_name <physical directory>: its path with the names on disk (getcwd's), as WT holds them, so that on a
+# volume that folds case a path typed in other letters still compares with WT.
+disk_name() {
+  local p
+  p=$(cd -- "$1" 2>/dev/null && /bin/pwd -P 2>/dev/null) && [ -n "$p" ] && [ "$p" -ef "$1" ] && { printf '%s' "$p"; return; }
+  printf '%s' "$1"
+}
 # REPO_ABS is the target's physical path; REPO_REL its path inside the working directory ("" outside it).
+CONFINE_GIT_WHY=""
 if [ "$OFFLINE" -eq 1 ]; then
   CONFINE_HINT=$NET_HINT
   confine_path "$REPO" --repo dir
@@ -244,7 +256,7 @@ if [ "$OFFLINE" -eq 1 ]; then
   REPO_ABS=$CONFINE_PHYS
 else
   confine_phys "$(abspath "$REPO")" || not_a_repo
-  REPO_ABS=$CONFINE_PHYS
+  REPO_ABS=$(disk_name "$CONFINE_PHYS")
   REPO_REL=""
   case "$REPO_ABS" in
     "$WT") REPO_REL=. ;;
@@ -305,6 +317,7 @@ if [ -n "$PARENT" ] && [ "$(classify_source "$PARENT")" = path ]; then
     esac
   fi
   if [ "$OFFLINE" -eq 0 ]; then
+    PARENT=$(disk_name "$PARENT")
     case "$PARENT" in
       "$WT") PARENT_REL=. ;;
       "$WT"/*) PARENT_REL=${PARENT#"$WT"/} ;;
@@ -951,7 +964,7 @@ tree_link() { # tree_link <absolute path>: status 0 when the path is a symbolic 
     case "$rest" in */*) comp=${rest%%/*}; rest=${rest#*/} ;; *) return 1 ;; esac
     if [ -n "$comp" ] && [ -L "$cur/$comp" ]; then
       phys=$(cd "${cur:-/}" 2>/dev/null && pwd -P) || return 0
-      case "$phys/" in "$REPO_PHYS"/*) return 0 ;; esac
+      if confine_inside "$phys" "$REPO_PHYS"; then return 0; fi
     fi
     cur="$cur/$comp"
   done

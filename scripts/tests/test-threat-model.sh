@@ -1394,6 +1394,21 @@ check "T-x: a --vulns path through the caller's own directory link outside the t
   sh -c "grep -F 'vx-user-dir/review.md' '$OUTVX/inputs.tsv' | grep -q 'copied' && grep -rq 'VX-USER-LINKED-DIR' '$OUTVX/inputs/'"
 check "T-x: --offline refuses the same link in the tree (exit 2)" \
   test "$(rc --offline --repo vlinks --out "$(newrun)/bootstrap" --vulns vlinks/audits/prior.md)" = 2
+# Where the volume folds case, the same directory link reached through the tree spelled in other letters is
+# still inside it: tree_link compares directories, not spellings.
+VXU="$(printf '%s' "$VX" | tr '[:lower:]' '[:upper:]')"
+if [ "$VXU" != "$VX" ] && [ "$VXU" -ef "$VX" ]; then
+  collect --network --repo vlinks --vulns "$VXU/reports/report.md"
+  check "T-x: ... and so is that path spelled in other letters, where the volume folds case" \
+    sh -c "! grep -rq 'VX-SECRET-DIR' '$OUT/inputs/' && grep -F 'reports/report.md' '$OUT/inputs.tsv' | grep -q 'skipped: symbolic link'"
+fi
+# A --repo whose work tree holds a named pipe where git reads its own files is refused before git starts,
+# and the refusal names the pipe.
+FW="$W/fifo-wt"; mkrepo "$FW"; put "$FW" a.txt 'a'; commit "$FW" -m "initial"; mkfifo "$FW/.gitattributes"
+check "T-x: a --repo with a named pipe as its .gitattributes is refused (exit 3)" \
+  test "$(rc --network --repo fifo-wt --out "$(newrun)/bootstrap")" = 3
+check "T-x: ... naming the pipe" grep -qF "collect.sh: a named pipe or device is where git reads its own files in the work tree, and git would wait on it for good: " "$T/rc.err"
+rm -rf "$FW"
 
 # =================================================================================================
 # The case file: hostile argument vectors, each refused with one stderr line, nothing on stdout, and
