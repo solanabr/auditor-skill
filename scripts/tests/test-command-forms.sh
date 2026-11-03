@@ -20,10 +20,11 @@
 #       binary a crate under tools/auditor-tools declares, executable when it is built. What an allow rule may
 #       pre-approve at all (an entry point scripts/entrypoints.txt lists, with the words it names, or a read
 #       tool, Task, a run-directory edit or an auditor skill) is scripts/check-entrypoints.sh's check.
-#   C3  Every call of audit-scan carries --contract=1 as its first argument, and every call of audit-mem
-#       --contract=1 right after its subcommand: in the rules, in rooted calls, and in code spans and code
-#       lines that start with the bare name and pass arguments (a span naming only the tool, or the tool and a
-#       subcommand, is a mention), in the bodies and in the corpus C6 reads alike.
+#   C3  Every call of audit-scan carries --contract=1 as its first argument and names the directory it scans, and
+#       every call of audit-mem --contract=1 right after its subcommand: in the rules, in rooted calls, and in
+#       code spans and code lines that start with the bare name, after a shell prompt ($ ), env or the like, and
+#       pass arguments (a span naming only the tool, the tool and a subcommand, or audit-scan and its marker, is
+#       a mention), in the bodies and in the corpus C6 reads alike.
 #   C4  Every command, and the root SKILL.md, runs preflight.sh as step 0: the first entry point its body names
 #       is "<root>/scripts/preflight.sh", with no arguments, in a paragraph that starts "0. **Preflight" (in the
 #       root SKILL.md, "**Step 0 — Preflight") and says that a refusal, and a call that is denied, stop the run;
@@ -45,8 +46,8 @@
 #       sh, shell, zsh, console or none named) that is not a comment; a quoted block counts too, and a span
 #       that starts Bash( names a rule.
 #   C7  No file of the corpus, command, agent or skill runs an entry point by a path relative to the working
-#       directory (scripts/rundir.sh new, ./scripts/..., bash scripts/...), where the tree under audit can put a
-#       file of its own; a span holding the path alone names the file.
+#       directory (scripts/rundir.sh new, ./scripts/..., bash scripts/..., $ scripts/...), where the tree under
+#       audit can put a file of its own; a span holding the path alone names the file.
 #   P   Wording the flows depend on stays in place (the PINS list): what keeps a long call, and the turn after
 #       it, inside a command's grant, and what asks Q46 again, once a session, for a run directory an earlier
 #       session made, before the agent that builds starts, and keeps a non-interactive run there from loosening
@@ -107,7 +108,8 @@ CORPUS_ROOT = "<auditor-skill root>"
 ANY_ROOT = re.compile(r'("?)(<auditor-skill root>|\$\{CLAUDE_PLUGIN_ROOT\}|\$CLAUDE_PLUGIN_ROOT|\$\{CLAUDE_SKILL_DIR\}|'
                       r'\$CLAUDE_SKILL_DIR)("?)/([A-Za-z0-9_./-]+)("?)')
 SHELL_FENCES = ("", "bash", "sh", "shell", "zsh", "console")
-LEAD = re.compile(r'^(?:(?:bash|sh|zsh|dash|ksh|env|exec|command|sudo|nice|nohup|time|python3?|timeout\s+\S+|'
+# What a call can have in front of it: a shell prompt ($ ), then any interpreter, wrapper, cd or assignment.
+LEAD = re.compile(r'^(?:\$\s+)?(?:(?:bash|sh|zsh|dash|ksh|env|exec|command|sudo|nice|nohup|time|python3?|timeout\s+\S+|'
                   r'[A-Za-z_][A-Za-z0-9_]*=\S*)\s+|cd\s+\S+\s*(?:&&|;|\|\|)\s*)*')
 ASKS = re.compile(r'^\s*,?\s*which asks\b')
 # The placeholders the bodies write in their calls, each a word to the redirect scan (<R>/poc/<ID> is a path);
@@ -365,16 +367,38 @@ def segments(body, first, infos=None):
     for s in spans(para):
         yield s
 
+def scan_dir(rest):
+    """Whether the words after audit-scan's --contract=1 hold the one directory its grammar takes: --out and
+    --workflows take the next word, any other word that starts with - none, and the first other word is the
+    directory (a placeholder, an ellipsis or a rule's * stands for one). A pipe or a list operator ends the call,
+    and a redirect is no word of it."""
+    words = re.sub(r'<[^<>]*>', 'P', re.sub(r'\s#.*$', '', rest)).split()
+    i = 0
+    while i < len(words):
+        w = words[i]
+        if w in ("|", "||", "&&", ";") or w.startswith("|"):
+            break
+        if w in ("--out", "--workflows", ">", ">>", "<", "2>"):
+            i += 2
+        elif w.startswith("-") or re.match(r'^\d*[<>]', w):
+            i += 1
+        else:
+            return True
+    return False
+
 def marker(check_file, n, tool, rest, where):
     words = rest.split()
     if tool == "audit-scan" and words and words[0] != "--contract=1":
         finding("C3", check_file, n, "audit-scan %s without --contract=1 as its first argument: %s" % (where, rest[:120]))
+    elif tool == "audit-scan" and len(words) > 1 and not scan_dir(" ".join(words[1:])):
+        finding("C3", check_file, n, "audit-scan %s with no directory to scan after --contract=1: %s" % (where, rest[:120]))
     if tool == "audit-mem" and len(words) >= 1 and (len(words) < 2 or words[1] != "--contract=1"):
         finding("C3", check_file, n, "audit-mem %s without --contract=1 right after its subcommand: %s" % (where, rest[:120]))
 
 def bare(check_file, n, seg):
-    """C3 for a span or code line that starts with the tool's bare name and passes arguments."""
-    words = seg.split()
+    """C3 for a span or code line that starts with the tool's bare name and passes arguments, after anything LEAD
+    allows in front of it (a shell prompt, env and the like)."""
+    words = seg[len(LEAD.match(seg).group(0)):].split()
     if words and words[0] in ("audit-scan", "audit-mem") and "${" not in seg:
         if (words[0] == "audit-scan" and len(words) >= 2) or (words[0] == "audit-mem" and len(words) >= 3):
             marker(check_file, n, words[0], " ".join(words[1:]), "call")
@@ -712,6 +736,7 @@ cmd c3-scan-call "'Bash(\"$B/audit-scan\" --contract=1 *)'" -- "1. \`\"$B/audit-
 cmd c3-mem-call "'Bash(\"$B/audit-mem\" check --contract=1 *)'" -- "1. \`\"$B/audit-mem\" check --program-id <id> --contract=1\`"
 cmd c3-mem-bare -- "1. \`audit-mem warm --program-id <id>\`"
 cmd c3-scan-fenced "'Bash(\"$B/audit-scan\" --contract=1 *)'" -- '```bash' "\"$B/audit-scan\" --pretty ." '```'
+cmd c3-scan-no-dir "'Bash(\"$B/audit-scan\" --contract=1 *)'" -- "1. \`\"$B/audit-scan\" --contract=1 --workflows .github/workflows\`"
 # C5: each call is one of its command's rules, the agents it spawns too; a call its sentence says asks is not
 cmd c5-unlisted -- "1. Run \`\"$R/templates/poc/run.sh\" --crate audit_<n>/poc/F-1\`."
 cmd c5-agent -- "1. Spawn \`fx-runner\` on the crate."
@@ -776,7 +801,10 @@ corp references/r/good.md "# Good" \
   "Scan with \`\"$Q/tools/auditor-tools/target/release/audit-scan\" --contract=1 . --workflows .github/workflows --out audit_<n>/prescan.json\`," \
   "or \`audit-scan --contract=1 . --out audit_<n>/prescan.json\`; \`audit-mem warm --contract=1 --program-id <id>\`; \`audit-scan\` and \`audit-mem warm\` alone are names." \
   '```bash' "\"$Q/tools/auditor-tools/target/release/audit-mem\" regressions --contract=1 --program-id <id>" '# audit-scan --workflows .github/workflows, in a comment' '```' \
-  '```json' '{"command": "audit-scan --workflows .github/workflows"}' '```'
+  '```json' '{"command": "audit-scan --workflows .github/workflows"}' '```' \
+  "Its options go in any order (\`audit-scan --contract=1 --workflows .github/workflows .\`), a placeholder is one word" \
+  "(\`audit-scan --contract=1 <changed program directory> --pretty\`), and \`audit-scan --contract=1\` alone is a name." \
+  '```console' '$ audit-scan --contract=1 . --out audit_1/prescan.json' '$ env audit-mem warm --contract=1 --program-id <id>' '```'
 corp references/r/c6-bash.md "Run \`bash \"$Q/scripts/ok.sh\" new audit\`."
 corp references/r/c6-cd.md '```bash' "cd sub && \"$Q/scripts/ok.sh\" check x" '```'
 corp references/r/c6-env.md "Run \`FOO=1 \"$Q/scripts/ok.sh\" new\`."
@@ -796,6 +824,11 @@ corp references/r/c3-rooted.md "Run \`\"$Q/tools/auditor-tools/target/release/au
 corp references/r/c3-mem-fenced.md '```bash' "\"$Q/tools/auditor-tools/target/release/audit-mem\" warm --program-id <id>" '```'
 corp docs/c3-bare-fenced.md '```sh' 'audit-mem init --db audit_1/audit-mem.db' '```'
 corp templates/t/c3-mem-order.md "Run \`audit-mem --contract=1 regressions --program-id <id>\`."
+corp references/r/c3-prompt.md '```console' '$ audit-scan --workflows .github/workflows' '```'
+corp references/r/c3-env.md "Run \`env audit-scan --workflows .github/workflows\` first."
+corp references/r/c3-no-dir.md "Run \`audit-scan --contract=1 --workflows .github/workflows --out audit_<n>/prescan.json\`."
+corp references/r/c3-rooted-no-dir.md "Run \`\"$Q/tools/auditor-tools/target/release/audit-scan\" --contract=1 --pretty\`."
+corp references/r/c3-mem-prompt.md '```console' '$ audit-mem warm --program-id <id>' '```'
 corp docs/c6.md "Run \`sh \"$Q/scripts/ok.sh\" new\`."
 corp FULL-AUDIT.md '```bash' "X=1 \"$Q/scripts/ok.sh\" check x" '```'
 corp references/r/c7-span.md "Run \`scripts/ok.sh new audit\`."
@@ -803,6 +836,7 @@ corp references/r/c7-dot.md "Run \`./scripts/ok.sh new\`."
 corp references/r/c7-bash.md "Run \`bash scripts/ok.sh new\`."
 corp references/r/c7-quoted.md "Run \`\"scripts/ok.sh\" new\`."
 corp references/r/c7-fenced.md '```bash' 'scripts/ok.sh check x' '```'
+corp references/r/c7-prompt.md '```console' '$ scripts/ok.sh check x' '```'
 corp references/r/c7-template.md "Run \`templates/poc/run.sh --crate x\`."
 corp templates/t/c7-cd.md '```' 'cd sub; scripts/ok.sh check x' '```'
 cmd c7-relative -- "1. Run \`scripts/ok.sh new audit\`."
@@ -834,6 +868,7 @@ expect commands/c2-bin.md C2; expect commands/c2-bash-rule.md C2
 # a rooted call without the marker is also no call its marked rule pre-approves
 expect commands/c3-scan-rule.md C3; expect commands/c3-mem-rule.md C3; expect commands/c3-scan-call.md "C3 C5"
 expect commands/c3-mem-call.md "C3 C5"; expect commands/c3-mem-bare.md C3; expect commands/c3-scan-fenced.md "C3 C5"
+expect commands/c3-scan-no-dir.md C3
 expect commands/c5-unlisted.md C5; expect commands/c5-agent.md C5; expect commands/c5-agent-covered.md ""
 expect commands/c5-agent-mention.md ""; expect commands/c5-asks.md ""; expect commands/c5-fixed-word.md C5
 expect commands/c5-asks-later.md C5; expect commands/c5-asks-next.md C5
@@ -850,9 +885,9 @@ for c in bash cd env env-word dollar unquoted half-quoted plugin-root backtick q
   expect "references/r/c6-$c.md" C6
 done
 expect docs/c6.md C6; expect FULL-AUDIT.md C6
-for c in span late rooted mem-fenced; do expect "references/r/c3-$c.md" C3; done
+for c in span late rooted mem-fenced prompt env no-dir rooted-no-dir mem-prompt; do expect "references/r/c3-$c.md" C3; done
 expect docs/c3-bare-fenced.md C3; expect templates/t/c3-mem-order.md C3
-for c in span dot bash quoted fenced template; do expect "references/r/c7-$c.md" C7; done
+for c in span dot bash quoted fenced template prompt; do expect "references/r/c7-$c.md" C7; done
 expect templates/t/c7-cd.md C7; expect commands/c7-relative.md C7; expect agents/c7.md C7
 line=$(check "$fx" references/r/c6-large.md | cut -f2)
 total=$(wc -l < "$fx/references/r/c6-large.md"); total=${total//[!0-9]/}
