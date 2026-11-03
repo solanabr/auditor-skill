@@ -9,7 +9,6 @@ mod common;
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -149,17 +148,27 @@ fn confine_rs_reads_every_path_case_as_confine_sh_does() {
 
 /// A `git` in `dir` that runs nothing: each call keeps its environment and its
 /// arguments, one per line, in `dir/log/<pid>.env` and `.args`, and answers as
-/// git does when nothing asked about is tracked: nothing, exit 0.
+/// git does when nothing asked about is tracked: nothing, exit 0. The script is
+/// written by `/bin/sh`, not by this process: on Linux, a child another test
+/// starts while this process holds the file open for writing inherits that
+/// descriptor, and running the file then fails with ETXTBSY (`Text file busy`)
+/// until that child execs.
 fn recording_git(dir: &Path) {
     fs::create_dir_all(dir.join("log")).expect("make the log directory");
     let git = dir.join("git");
-    fs::write(
-        &git,
-        "#!/bin/sh\nlog=${0%/*}/log/$$\n/usr/bin/env > \"$log.env\"\n\
-         for a in \"$@\"; do printf '%s\\n' \"$a\"; done > \"$log.args\"\nexit 0\n",
-    )
-    .expect("write the recording git");
-    fs::set_permissions(&git, fs::Permissions::from_mode(0o755)).expect("chmod it");
+    let status = Command::new("/bin/sh")
+        .args([
+            "-c",
+            "printf '%s' \"$1\" > \"$2\" && chmod 755 \"$2\"",
+            "sh",
+            "#!/bin/sh\nlog=${0%/*}/log/$$\n/usr/bin/env > \"$log.env\"\n\
+             for a in \"$@\"; do printf '%s\\n' \"$a\"; done > \"$log.args\"\nexit 0\n",
+        ])
+        .arg(&git)
+        .stdin(Stdio::null())
+        .status()
+        .expect("run sh");
+    assert!(status.success(), "write the recording git");
 }
 
 /// Each call `recording_git` kept, by its arguments: its environment, sorted,
