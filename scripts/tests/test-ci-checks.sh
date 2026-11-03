@@ -10,12 +10,13 @@
 #      pipefail, and leaves quoted text, here-documents, waived lines and scripts without pipefail alone.
 #      The check scripts, and the suites that test them, must pass it here; CI runs it over every tracked
 #      *.sh file;
-#   4. .github/workflows: the required job keeps its name; every workflow and job reads contents only; no
-#      workflow names pull_request_target or workflow_run outside a comment line, however its trigger is
-#      written, and none spells a key YAML reads as on other than as plain on: (quoted in either style, with
-#      escapes, a tag, an anchor or another letter case, in block or flow style), or writes an explicit ? key,
-#      an alias as a key or a merge key (<<); no run: script holds a ${{ }} expression; every job has
-#      timeout-minutes, every action is pinned by full SHA with its version, and no checkout keeps
+#   4. .github/workflows: the required job keeps its name; the directory holds only regular files named *.yml
+#      or *.yaml, GitHub runs both, and the checks read every one, as many as the directory holds; every workflow
+#      and job reads contents only; no workflow names pull_request_target or workflow_run outside a comment line,
+#      however its trigger is written, and none spells a key YAML reads as on other than as plain on: (quoted in
+#      either style, with escapes, a tag, an anchor or another letter case, in block or flow style), or writes an
+#      explicit ? key, an alias as a key or a merge key (<<); no run: script holds a ${{ }} expression; every job
+#      has timeout-minutes, every action is pinned by full SHA with its version, and no checkout keeps
 #      credentials;
 #   5. scripts/check-hygiene.sh fails on each kind of file it names, and on a top-level directory named
 #      commands, agents, skills, hooks, bin, monitors or .claude-plugin in another letter case, also when it
@@ -603,11 +604,67 @@ wfcheck() { # wfcheck FILE -> one line per problem, read byte by byte
 n=$(grep -c '^    name: counts, index, version, hygiene$' "$ROOT/.github/workflows/corpus-check.yml")
 if [ "$n" = 1 ]; then pass=$((pass + 1)); echo "PASS workflows: the required job is still named 'counts, index, version, hygiene'"
 else failn=$((failn + 1)); echo "FAIL workflows: corpus-check.yml has $n jobs named 'counts, index, version, hygiene', want 1"; fi
-for wf in "$ROOT"/.github/workflows/*.yml; do
-  probs=$(wfcheck "$wf")
-  if [ -z "$probs" ]; then pass=$((pass + 1)); echo "PASS workflows: ${wf##*/} reads contents only, times out, pins actions, drops credentials"
-  else failn=$((failn + 1)); echo "FAIL workflows: ${wf##*/}"; echo "$probs"; fi
+wfentry() { # wfentry PATH -> one line per problem with an entry of a workflow directory: GitHub runs every .yml and
+  # .yaml file there, so each entry must be a regular file of either name, and each must pass wfcheck
+  if [ -L "$1" ] || [ ! -f "$1" ]; then echo "$1: not a regular file; the workflow directory holds workflow files only"
+  else case "${1##*/}" in
+      *.yml|*.yaml) wfcheck "$1" ;;
+      *) echo "$1: not named *.yml or *.yaml; the workflow directory holds workflow files only" ;;
+    esac; fi
+}
+wfdir() { # wfdir DIR -> for every entry of DIR, dotfiles included, a line "entry: NAME" and then its problems;
+  # last, a count line "entries: N"
+  local p n=0
+  while IFS= read -r -d '' p; do n=$((n + 1)); echo "entry: ${p##*/}"; wfentry "$p"; done < <(find "$1" -mindepth 1 -maxdepth 1 -print0)
+  echo "entries: $n"
+}
+# .github/workflows as wfdir reads it (the fixture below tests wfdir): one PASS or FAIL per entry, and as many
+# entries as the shell's own glob finds there
+wfout=$(wfdir "$ROOT/.github/workflows"); nwf=-1; cur=""; probs=""
+wfdone() { # the PASS or FAIL line of the entry read so far, with its problems
+  [ -n "$cur$probs" ] || return 0
+  if [ -z "$probs" ]; then pass=$((pass + 1)); echo "PASS workflows: $cur reads contents only, times out, pins actions, drops credentials"
+  else failn=$((failn + 1)); echo "FAIL workflows: ${cur:-before any entry}"; printf '%s' "$probs"; fi
+  cur=""; probs=""
+}
+while IFS= read -r l; do
+  case "$l" in
+    "entry: "*) wfdone; cur=${l#entry: } ;;
+    "entries: "*) wfdone; nwf=${l#entries: } ;;
+    *) probs="$probs$l"$'\n' ;;
+  esac
+done <<< "$wfout"
+wfdone
+nglob=0
+for wf in "$ROOT"/.github/workflows/* "$ROOT"/.github/workflows/.*; do
+  case "${wf##*/}" in .|..) continue ;; esac
+  if [ -e "$wf" ] || [ -L "$wf" ]; then nglob=$((nglob + 1)); fi
 done
+if [ "$nwf" -gt 0 ] && [ "$nwf" = "$nglob" ]; then pass=$((pass + 1)); echo "PASS workflows: every entry of .github/workflows was read ($nwf)"
+else failn=$((failn + 1)); echo "FAIL workflows: $nwf entries of .github/workflows were read, and the directory holds $nglob"; fi
+# the directory check itself: a .yaml workflow is read like a .yml one, and a dotfile too; a file of another
+# name, a link and a directory are each a problem
+mkdir -p "$T/wfdir/sub" && printf 'x\n' > "$T/wfdir/notes.txt" && printf 'x\n' > "$T/wfdir/UPPER.YML" \
+  && ln -s notes.txt "$T/wfdir/link.yml" \
+  && { printf 'name: clean\non: push\npermissions:\n  contents: read\njobs:\n  a:\n    runs-on: ubuntu-latest\n'
+       printf '    timeout-minutes: 5\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n'
+       printf '        with:\n          persist-credentials: false\n      - run: echo ok\n'; } > "$T/wfdir/clean.yaml" \
+  && { printf 'name: release\non: pull_request_target\npermissions: write-all\njobs:\n  a:\n    runs-on: ubuntu-latest\n'
+       printf '    steps:\n      - uses: actions/checkout@v4\n        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n'
+       printf '      - run: echo ${{ github.event.pull_request.title }}\n'; } > "$T/wfdir/release.yaml" \
+  && sed 's/^name: release$/name: hidden/' "$T/wfdir/release.yaml" > "$T/wfdir/.hidden.yml" \
+  || { failn=$((failn + 1)); echo "FAIL workflows: could not build the directory fixture"; }
+probs=$(wfdir "$T/wfdir")
+for want in "release.yaml: runs on pull_request_target or workflow_run" "release.yaml: permissions is not a block" \
+            "release.yaml: \${{ }} inside a run: script" "release.yaml: 1 checkout(s) but 0 persist-credentials: false" \
+            ".hidden.yml: runs on pull_request_target or workflow_run" "notes.txt: not named *.yml or *.yaml" \
+            "UPPER.YML: not named *.yml or *.yaml" "link.yml: not a regular file" "sub: not a regular file" \
+            "entry: release.yaml" "entry: .hidden.yml" "entry: clean.yaml" "entries: 7"; do
+  case "$probs" in *"$want"*) pass=$((pass + 1)); echo "PASS workflows: the directory check reports ... $want";;
+    *) failn=$((failn + 1)); echo "FAIL workflows: the directory check does not report: $want"; echo "$probs";; esac
+done
+case "$probs" in *"/clean.yaml: "*) failn=$((failn + 1)); echo "FAIL workflows: the directory check flags a clean .yaml workflow"; echo "$probs";;
+  *) pass=$((pass + 1)); echo "PASS workflows: the directory check passes a clean .yaml workflow";; esac
 # the checker itself: a job with no timeout, an action pinned by tag, and a checkout that keeps credentials;
 # then a workflow on pull_request_target whose job writes contents and pastes the PR title into a script
 printf 'name: x\non: push\npermissions:\n  contents: write\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n' \
