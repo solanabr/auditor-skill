@@ -75,7 +75,8 @@
 # has not been answered within 10 s; any other read runs as long as it takes. Every subcommand but
 # rev-parse, ls-files, config and remote reads with a private empty directory under TMPDIR as git's work
 # tree, beside the repository's git directory (hgit_tree), so git opens no file of the work tree: it
-# takes .gitattributes and .gitmodules from the index, and reads no .mailmap there. git runs with
+# takes .gitattributes and .gitmodules from the index, and reads no .mailmap there. Such a read is refused
+# when TMPDIR lies inside the working directory or cannot hold that directory. git runs with
 # --no-pager, and -c pins override the repository's config. They switch off:
 #   - programs config can name: core.fsmonitor, core.pager, core.hooksPath (hooks), diff.external,
 #     gpg.program, gpg.ssh.program and gpg.x509.program, log.showSignature and format.pretty, and
