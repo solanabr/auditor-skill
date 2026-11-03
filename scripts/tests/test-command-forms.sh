@@ -963,6 +963,9 @@ commands/poc.md	a mode an earlier session recorded was that run's answer, so nev
 commands/patch.md	A run directory this session did not make, an earlier session's or one that came with the tree, holds an earlier run's answers
 commands/patch.md	or `<R>` is a run directory this session did not make, ask `QUESTIONS.md` Q46 once, naming `<R>`
 commands/patch.md	a mode an earlier session recorded was that run's answer, so never hand it on unasked.
+commands/patch.md	are asked again in step 2, before `patch-engineer` starts.
+commands/patch.md	First settle the execution mode that the rebuild and every PoC re-run in step 3 use
+commands/patch.md	`patch-engineer` runs them itself, with the mode you hand it, and never asks.
 commands/re-audit.md	check it with `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" check audit_<n>`: unless it prints `ok audit_<n>`, nothing is written in it
 commands/re-audit.md	`audit_<n>/exec-mode` and its `intake.md` §8 are an earlier run's answers, never copied
 commands/re-audit.md	have the human confirm that `audit_<n>` is a run directory they made, not one that came with the tree
@@ -999,8 +1002,8 @@ agents/peer-reviewer.md	only into `grep`, `head`, `tail` or `wc`
 PINS
 
 # Wording that must not come back, file <TAB> text: a flow never copies an earlier run's recorded mode forward,
-# and an agent never hands run.sh the file's mode as --mode, which stops every run a stricter AUDITOR_EXEC_MODE
-# holds to isolated mode.
+# an agent never hands run.sh the file's mode as --mode, which stops every run a stricter AUDITOR_EXEC_MODE
+# holds to isolated mode, and patch resumes after the mode answer in step 2, where it asks, not in step 3.
 while IFS='	' read -r f gone; do
   [ -n "$f" ] || continue
   if [ -f "$f" ] && ! grep -qF -- "$gone" "$f"; then ok "gone from $f: $gone"; else bad "P $f says: $gone"; fi
@@ -1008,7 +1011,19 @@ done <<'GONE'
 commands/re-audit.md	write the mode recorded at intake into
 agents/poc-engineer.md	--mode <the mode the command handed you>
 agents/patch-engineer.md	--mode <the mode the command hands you>
+commands/patch.md	auditor:patch --resume 3
 GONE
+
+# poc and patch ask Q46, when they ask it, in the step that spawns their engineer agent: the agent builds and runs
+# the PoC itself, with the mode it is handed, so the mode is settled before it starts.
+for fa in 'commands/poc.md|poc-engineer' 'commands/patch.md|patch-engineer'; do
+  f=${fa%%|*}; a=${fa#*|}
+  step=$(grep -E "^[0-9]+\\. \\*\\*Spawn \`$a\`" "$f")
+  case "$step" in
+    *'ask `QUESTIONS.md` Q46 once'*) ok "$f asks Q46 in the step that spawns $a" ;;
+    *) bad "P $f does not ask Q46 in the step that spawns $a, before the agent starts" ;;
+  esac
+done
 
 # Each command's resume text, and the root SKILL.md's, says how to answer the prompt its re-invocation brings.
 for f in commands/*.md SKILL.md; do
