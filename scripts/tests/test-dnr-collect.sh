@@ -295,6 +295,15 @@ mkdir -p "$TT/pycwd"; printf '#!/bin/sh\npwd -P >> "%s"\nexec "%s" "$@"\n' "$TT/
 : > "$TT/pycwd.log"
 ( PATH="$TT/pycwd:$TT/jq16:$TT/bin:$PATH" run_collect "$TT/big-pycwd" -- "$A_ADDR" ) > "$TT/big-pycwd.out" 2>&1
 eq "exact: the python3 that writes the corpus runs from /" "$?|$(sort -u "$TT/pycwd.log" | tr '\n' ' ')" "0|/ "
+# A curl and a jq that log where they run: every call runs from /, so nothing in the working directory
+# (a .tool-versions an asdf or mise shim reads) picks the binary.
+mkdir -p "$TT/toolcwd"
+for t in curl jq; do
+  printf '#!/bin/sh\npwd -P >> "%s"\nexec "%s" "$@"\n' "$TT/toolcwd.log" "$(PATH="$TT/bin:$PATH" command -v "$t")" > "$TT/toolcwd/$t"
+done
+chmod +x "$TT/toolcwd/curl" "$TT/toolcwd/jq"; : > "$TT/toolcwd.log"
+( PATH="$TT/toolcwd:$TT/bin:$PATH" run_collect "$TT/big-toolcwd" -- "$A_ADDR" ) > "$TT/big-toolcwd.out" 2>&1
+eq "exact: curl and jq run from /" "$?|$(sort -u "$TT/toolcwd.log" | tr '\n' ' ')" "0|/ "
 before="$(calls getSignaturesForAddress)"
 corpus_at "$TT/big-nopy"
 ( cd "$WT" && PATH="$TT/jq16:$TT/bin:$TT/nopy" "$DNR/collect.sh" --out "$(run_of "$TT/big-nopy")" --confirmed -- "$A_ADDR" ) > "$TT/big-nopy.out" 2>&1
@@ -1282,6 +1291,12 @@ snap_pycwd() { rm -f "$FAKE_SOL_READS"; ( export FAKE_SOL_SLOTS=100; cd "$WT" &&
 : > "$TT/pycwd.log"
 eq "snapshot: a first snapshot and a second, which hashes the kept one, exit 0" "$(snap_pycwd)|$(snap_pycwd)" "0|0"
 eq "snapshot: every python3 call (the id check and the hashes) runs from /" "$(sort -u "$TT/pycwd.log" | tr '\n' ' ')" "/ "
+# A solana that logs where it runs: every call runs from /, so nothing in the working directory (a
+# .tool-versions an asdf or mise shim reads) picks the binary.
+mkdir -p "$TT/solcwd"; printf '#!/bin/sh\npwd -P >> "%s"\nexec "%s" "$@"\n' "$TT/solcwd.log" "$TT/sol/solana" > "$TT/solcwd/solana"; chmod +x "$TT/solcwd/solana"
+G10="$(cd "$WT" && "$RUNDIR" new incident)"; : > "$TT/solcwd.log"; rm -f "$FAKE_SOL_READS"
+( export FAKE_SOL_SLOTS=100; cd "$WT" && PATH="$TT/solcwd:$TT/sol:$TT/bin:$PATH" "$DNR/snapshot-program.sh" "$PID" "$G10" ) >/dev/null 2>&1
+eq "snapshot: every solana call runs from /" "$?|$(sort -u "$TT/solcwd.log" | tr '\n' ' ')" "0|/ "
 mkdir -p "$WT/tmpin"
 eq "snapshot: a TMPDIR inside the working directory is a blocker (exit 3), with nothing made there" \
   "$(TMPDIR="$WT/tmpin" rc_snap "$PID" "$G7")|$(ls -A "$WT/tmpin")" "3|"

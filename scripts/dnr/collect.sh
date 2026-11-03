@@ -273,6 +273,10 @@ for tool in curl jq; do
     exit 3
   fi
 done
+# curl and jq run from /, so nothing in the working directory (a .tool-versions an asdf
+# or mise shim reads) picks the binary; neither is given a path, both read stdin.
+curl() { (cd / && exec curl "$@"); }
+jq() { (cd / && exec jq "$@"); }
 # result_line: the JSON-RPC response on stdin -> its .result object as one compact
 # line, every integer exact (EXACT INTEGERS above).
 probe='{"result":{"n":[18446744073709551615,-9007199254740993]}}'
