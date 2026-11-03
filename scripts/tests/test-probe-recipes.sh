@@ -35,8 +35,8 @@
 #     flags on .github/workflows from the checkout;
 #   - the line that makes the environment, run with the real python3 from a checkout that ships venv.py, runpy.py,
 #     ensurepip.py and pip.py, loads none of them;
-#   - every zizmor call the docs and the corpus give passes --offline, --no-config, --no-ignores and
-#     --persona=auditor, and every docker or podman call names zizmor's image by a sha256 digest.
+#   - every zizmor call the docs and the corpus give passes --offline, --no-config, --no-ignores, --collect=all
+#     and --persona=auditor, and every docker or podman call names zizmor's image by a sha256 digest.
 # Nothing reaches the network: the stand-ins answer for aws, curl, docker, pip and zizmor, the real curl stops at its
 # URL parser, and the real python3 sets pip up from the copy it ships with.
 # Usage (from the repo root): bash scripts/tests/test-probe-recipes.sh
@@ -480,7 +480,7 @@ fi
 # podman with zizmorcore/zizmor in the line, and a word follows it; a name alone, such as the image's, is not.
 # Each call passes these flags, and a container call names the image by a sha256 digest. The self-test's calls are
 # made from the same list, so a flag added here is required of them too.
-ZALL='--offline --no-config --no-ignores --persona=auditor'
+ZALL='--offline --no-config --no-ignores --collect=all --persona=auditor'
 ZAWK='
 function seg(s, ln,   w, n, i, c) {
   sub(/^[ \t]+/, "", s)
