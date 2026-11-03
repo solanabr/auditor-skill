@@ -13,7 +13,7 @@
 //! 6 digits) directly in WT: a real directory, holding no symbolic link, tracked by
 //! no repository in any letter case, whose `.gitignore` holds exactly `*`, as
 //! `scripts/rundir.sh check` checks it. git runs only as `hgit` runs it: found on
-//! a PATH with every entry inside WT, or inside the repository WT lies in, removed
+//! a PATH with every entry inside WT, or inside the tree WT lies in, removed
 //! (by identity, not spelling), with an environment of its own that allows no
 //! transport, and with the repository's config pinned off; it is killed when it
 //! has not answered in time. The only other program started is
@@ -549,32 +549,37 @@ fn inside(path: &Path, dir: &Path) -> bool {
         .any(|a| fs::metadata(a).is_ok_and(|md| same(&md, &want)))
 }
 
-/// The top level of the repository WT lies in, as `confine_init` finds it and git
-/// does from WT: the nearest of WT and the directories above it, below HOME, that
-/// holds a `.git` of any kind. Its tree is under audit too.
+/// The tree WT lies in, as `confine_init` takes it: the outermost of WT and the
+/// directories above it, below HOME (up to `/` when WT is not under HOME), that
+/// holds a `.git` of any kind. Its tree is under audit too, and a `.git` the tree
+/// puts nearer (an empty one, which git walks past) does not shrink it.
 fn repository_top(wt: &Path) -> Option<&Path> {
     let home = std::env::var_os("HOME")
         .filter(|h| !h.is_empty())
         .and_then(|h| fs::metadata(h).ok());
+    let mut top = None;
     let mut dir = wt;
     loop {
         if fs::symlink_metadata(dir.join(".git")).is_ok() {
-            return Some(dir);
+            top = Some(dir);
         }
-        dir = dir.parent()?;
+        let Some(up) = dir.parent() else {
+            return top;
+        };
+        dir = up;
         if home
             .as_ref()
             .is_some_and(|h| fs::metadata(dir).is_ok_and(|md| same(&md, h)))
         {
-            return None;
+            return top;
         }
     }
 }
 
 /// git, run as confine.sh's `hgit` runs it. Found on first use: on a PATH that
-/// keeps only absolute entries resolving outside WT and outside the repository WT
-/// lies in (`repository_top`), each compared by identity (`inside`), as
-/// `confine_init` cleans it.
+/// keeps only absolute entries resolving outside WT and outside the tree WT lies in
+/// (`repository_top`), each compared by identity (`inside`), as `confine_init`
+/// cleans it.
 pub struct Git {
     wt: PathBuf,
     found: Option<(PathBuf, OsString)>,
@@ -1438,7 +1443,7 @@ mod tests {
     }
 
     #[test]
-    fn a_path_lies_inside_a_directory_by_identity_and_the_repository_is_the_nearest() {
+    fn a_path_lies_inside_a_directory_by_identity_and_the_tree_is_the_outermost() {
         let dir = std::env::temp_dir()
             .canonicalize()
             .expect("the temporary directory resolves")
@@ -1456,11 +1461,20 @@ mod tests {
         assert!(!inside(&dir.join("missing"), &v));
         assert!(!inside(&v, &dir.join("missing")));
         assert_eq!(repository_top(&v), Some(dir.join("repo").as_path()));
-        // A .git of any kind: a file, as a linked worktree has, or a dangling link.
+        // A .git of any kind nearer to WT (a file, as a linked worktree has, or a
+        // dangling link) counts, and the outermost one is the tree.
         fs::write(v.join(".git"), b"gitdir: /nowhere\n").expect("a .git file");
-        assert_eq!(repository_top(&v.join("src")), Some(v.as_path()));
+        assert_eq!(
+            repository_top(&v.join("src")),
+            Some(dir.join("repo").as_path())
+        );
         fs::remove_file(v.join(".git")).expect("rm");
         std::os::unix::fs::symlink("/nowhere", v.join("src/.git")).expect("a dangling link");
+        assert_eq!(
+            repository_top(&v.join("src")),
+            Some(dir.join("repo").as_path())
+        );
+        fs::remove_dir_all(dir.join("repo/.git")).expect("rm");
         assert_eq!(
             repository_top(&v.join("src")),
             Some(v.join("src").as_path())

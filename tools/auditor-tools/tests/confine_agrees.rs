@@ -244,3 +244,67 @@ fn confine_rs_runs_git_as_hgit_does() {
         );
     }
 }
+
+#[test]
+fn confine_rs_drops_the_path_entries_of_the_tree_as_confine_init_does() {
+    // The working directory is one program of a tree, and holds an empty .git,
+    // which git walks past. The tree's node_modules/.bin, above it, holds a
+    // recording git that must never run: both sides take the outermost directory
+    // holding a .git as the tree, drop that entry, and run the git after it.
+    let wt = Wt::repo();
+    wt.mkdir("programs/v/.git");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .expect("the repository root resolves");
+    let inner = wt.path("node_modules/.bin");
+    recording_git(&inner);
+    let rec = wt.outside().join("rec");
+    recording_git(&rec);
+    let path = format!("{}:{}:/usr/bin:/bin", inner.display(), rec.display());
+    let v = wt.path("programs/v");
+    let shell = Command::new("bash")
+        .args([
+            "-c",
+            ". \"$1/scripts/lib/confine.sh\" && confine_init agree \"$1\" && \
+             confine_tracked .audit-memory",
+            "agree",
+        ])
+        .arg(&root)
+        .current_dir(&v)
+        .env("PATH", &path)
+        .env_remove("CONFINE_ALLOW_PROTOCOL")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run bash");
+    assert!(
+        shell.status.success(),
+        "confine_tracked: {}",
+        String::from_utf8_lossy(&shell.stderr)
+    );
+    let sh = git_calls(&rec);
+    fs::rename(rec.join("log"), wt.outside().join("log-sh")).expect("move the shell's calls");
+    fs::create_dir(rec.join("log")).expect("make the log directory again");
+    let rust = Command::new(env!("CARGO_BIN_EXE_audit-mem"))
+        .args(["warm", "--program-id", "VaultProg1111"])
+        .current_dir(&v)
+        .env("PATH", &path)
+        .stdin(Stdio::null())
+        .output()
+        .expect("run audit-mem");
+    assert!(
+        rust.status.success(),
+        "audit-mem: {}",
+        String::from_utf8_lossy(&rust.stderr)
+    );
+    let rs = git_calls(&rec);
+    assert!(
+        git_calls(&inner).is_empty(),
+        "the git inside the tree never runs"
+    );
+    assert_eq!(sh.len(), 2, "hgit runs git twice: {sh:#?}");
+    assert_eq!(
+        rs, sh,
+        "confine.rs cleans PATH of the tree's entries as confine_init does"
+    );
+}

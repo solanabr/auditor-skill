@@ -573,8 +573,7 @@ fn a_git_in_the_repository_the_working_directory_lies_in_is_never_run() {
         "the git above the working directory did not run"
     );
     // A repository at HOME is not one the working directory lies in, so the entry
-    // stays, as confine_init keeps it; nor is one above a working directory that
-    // has a repository of its own.
+    // stays, as confine_init keeps it.
     let home = repo.dir.to_str().expect("a UTF-8 path");
     let listed = format!("the repository tracks .audit-memory (in some letter case){USE_R}");
     refused(
@@ -584,14 +583,12 @@ fn a_git_in_the_repository_the_working_directory_lies_in_is_never_run() {
     );
     assert!(marker.exists(), "HOME: the entry stays");
     fs::remove_file(&marker).expect("rm");
+    // A repository of the working directory's own, nested in the tree, does not
+    // shrink the tree: the outermost directory holding a .git is the tree, so the
+    // entry is dropped all the same.
     repo.git(&["init", "-q", "programs/v"]);
-    refused(
-        &run_env(BIN, &v, &warm, &[("PATH", &path)]),
-        "audit-mem",
-        &listed,
-    );
-    assert!(marker.exists(), "its own repository: the entry stays");
-    fs::remove_file(&marker).expect("rm");
+    ok(&run_env(BIN, &v, &warm, &[("PATH", &path)]));
+    assert!(!marker.exists(), "its own repository: the entry is dropped");
     // An entry inside the working directory reached by another spelling, through
     // macOS's /System/Volumes/Data firmlink, is inside it all the same.
     let data = Path::new("/System/Volumes/Data").join(
@@ -614,6 +611,45 @@ fn a_git_in_the_repository_the_working_directory_lies_in_is_never_run() {
             !marker.exists(),
             "the git inside, spelled another way, did not run"
         );
+    }
+}
+
+#[test]
+fn a_nearer_git_the_tree_holds_does_not_put_the_tree_s_git_on_path() {
+    // A .git nearer to the working directory than the tree's own (an empty
+    // directory, which git walks past; an empty file between the working directory
+    // and the tree's top; a directory holding HEAD alone) does not shrink the tree,
+    // so a git in the tree's node_modules/.bin never runs, whatever git then says.
+    for case in [
+        "an empty .git directory",
+        "an empty .git file",
+        "a .git holding HEAD alone",
+    ] {
+        let repo = Wt::repo();
+        repo.mkdir("programs/v");
+        match case {
+            "an empty .git directory" => repo.mkdir("programs/v/.git"),
+            "an empty .git file" => repo.write("programs/.git", b""),
+            _ => repo.write("programs/v/.git/HEAD", b"ref: refs/heads/main\n"),
+        }
+        let marker = repo.outside().join("ran");
+        repo.write(
+            "node_modules/.bin/git",
+            format!("#!/bin/sh\ntouch '{}'\necho x\n", marker.display()).as_bytes(),
+        );
+        repo.chmod("node_modules/.bin/git", 0o755);
+        let path = format!(
+            "{}:{}",
+            repo.path("node_modules/.bin").display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        let _ = run_env(
+            BIN,
+            &repo.path("programs/v"),
+            &["warm", "--program-id", P],
+            &[("PATH", &path)],
+        );
+        assert!(!marker.exists(), "{case}: the git in the tree did not run");
     }
 }
 
