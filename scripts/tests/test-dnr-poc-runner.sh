@@ -1992,6 +1992,7 @@ done <<'CONFIGS'
 .claude.json|{"mcpServers":{"rpc":{"type":"http","url":"https://mcp.example.invalid/mcp?api-key=x"}}}\n|Claude Code credentials
 .claude.json|{"mcpServers":{"rpc":{"type":"sse","url":"https://u:p@mcp.example.invalid/sse"}}}\n|Claude Code credentials
 .claude.json|{"mcpServers":{"rpc":{"command":"npx","args":["-y","x-mcp","--api-key","x"]}}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"rpc":{"command":"x-mcp","args":["--authToken","x"]}}}\n|Claude Code credentials
 .claude.json|{"projects":{"/w":{"mcpServers":{"gh":{"command":"docker","args":["run","-i","-e","GITHUB_PERSONAL_ACCESS_TOKEN=x","img"]}}}}}\n|Claude Code credentials
 .claude.json|{"mcpServers":{"remote":{"command":"npx","args":["mcp-remote","https://mcp.example.invalid/sse","--header","Authorization: Bearer x"]}}}\n|Claude Code credentials
 .claude.json|{"mcpServers":{"api":{"type":"http","url":"https://mcp.example.invalid/mcp","headersHelper":"/opt/h.sh"}}}\n|Claude Code credentials
@@ -2021,9 +2022,9 @@ FH="$T/fh-link"; mkdir -p "$FH"; printf 'secret\n' > "$T/npmrc-elsewhere"; ln -s
 code="$(dcreds -- "$FH")"
 [ "$code" = 1 ] && lines_are "package registry tokens (1)" "~/.npmrc" && ok "a symbolic link to a readable file counts" || { bad "a linked credential: $code"; cat "$T/creds.out" >&2; }
 out="$(cd "$WT" && env -i HOME="$CLEANHOME" PATH="$PATH" GITHUB_TOKEN=x AWS_SECRET_ACCESS_KEY=x HELIUS_API_KEY=x SOLANA_RPC_URL=x \
-  DB_PASSWORD=x MAX_MCP_OUTPUT_TOKENS=1 TOKENIZER_PATH=x SSH_AUTH_SOCK=x "$BASH" "$T/iso-driver.sh" "$ROOT" names)"
-[ "$out" = "AWS_SECRET_ACCESS_KEY, DB_PASSWORD, GITHUB_TOKEN, HELIUS_API_KEY, SOLANA_RPC_URL" ] \
-  && ok "iso_cred_names names the variables that look like credentials, and no others" || bad "iso_cred_names: '$out'"
+  DB_PASSWORD=x MAX_MCP_OUTPUT_TOKENS=1 TOKENIZER_PATH=x SSH_AUTH_SOCK=x npm_config__authToken=x "$BASH" "$T/iso-driver.sh" "$ROOT" names)"
+[ "$out" = "AWS_SECRET_ACCESS_KEY, DB_PASSWORD, GITHUB_TOKEN, HELIUS_API_KEY, SOLANA_RPC_URL, npm_config__authToken" ] \
+  && ok "iso_cred_names names the variables that look like credentials (a name in mixed case too), and no others" || bad "iso_cred_names: '$out'"
 # Agent sockets count when they accept a connection: SSH_AUTH_SOCK, sockets in ~/.ssh and ~/.gnupg, in
 # GNUPGHOME, ssh-*/agent.* under TMPDIR, and in the runtime directory's gnupg/. So do container daemon sockets
 # and the sockets that answer git's credential requests with a login, and a container daemon a tcp://
