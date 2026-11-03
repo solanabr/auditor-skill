@@ -364,10 +364,31 @@ check "--package builds that member, and TOOLS_VERSION goes to the install and t
 run "$TARGET" "$WT" -- build-sbf --run audit_1 --src . --package nope
 check "a --package the workspace does not have: exit 3, nothing built" \
   sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: the workspace at the top of the copy has no member package nope' '$T/err' && ! grep -q '^== cargo build-sbf --skip' '$T/calls'"
+# A cargo build-sbf without --install-only, --skip-tools-install and --offline: natively the run stops, since
+# the build would get the real HOME and the network; in isolated mode the build runs with the real HOME and the
+# proxy variables, as templates/poc/run.sh builds each arm then, and a note says so.
 settings FAKE_SBF_HELP=old
 run "$TARGET" "$WT" -- build-sbf --run audit_1 --src .
-check "a cargo build-sbf without --install-only and --skip-tools-install: exit 3, nothing installed or built" \
-  sh -c "[ '$RC' = 3 ] && grep -q 'has no --install-only, --skip-tools-install or --offline' '$T/err' && ! grep -q '^== cargo build-sbf --install' '$T/calls' && ! grep -q '^== cargo build-sbf --skip' '$T/calls'"
+check "natively, a cargo build-sbf without --install-only and --skip-tools-install: exit 3, nothing installed or built" \
+  sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: this cargo build-sbf has no --install-only, --skip-tools-install or --offline, which target.sh needs in native mode to keep the real HOME and the proxy variables away from the build; isolated mode builds with them; log ' '$T/err' && ! grep -q '^== cargo build-sbf --install' '$T/calls' && ! grep -q '^== cargo build-sbf --s' '$T/calls'"
+run "$TARGET" "$WT" -- anchor-build --run audit_1 --src .
+check "... and natively anchor-build stops there too: exit 3, anchor never runs" \
+  sh -c "[ '$RC' = 3 ] && grep -q 'has no --install-only, --skip-tools-install or --offline, which target.sh needs in native mode' '$T/err' && ! grep -q '^== anchor' '$T/calls' && ! grep -q '^== cargo build-sbf --install' '$T/calls'"
+if [ "$ISOLATED_OK" = 1 ]; then
+  OLDSBF='>> note: this cargo build-sbf has no --install-only, --skip-tools-install or --offline: in isolated mode the build runs with the real HOME and the proxy variables'
+  run "$TARGET" "$WT" AUDITOR_EXEC_MODE=isolated HTTPS_PROXY="$PROXY" -- build-sbf --run audit_1 --src .
+  check "isolated mode, the same cargo build-sbf: exit 0, the .so kept, and a note says how it built" \
+    sh -c "[ '$RC' = 0 ] && grep -qxF '$OLDSBF' '$T/out' && sed -n '\$p' '$T/out' | grep -q '^>> build-sbf: ok (exit 0); log audit_1/exec/build-sbf-[0-9]*[.]log; 1 .so in audit_1/exec/build-sbf-[0-9]*/: demo.so\$'"
+  check "... no install, and the build without --skip-tools-install and --offline" calls_are \
+    "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|cargo build-sbf --help|cargo build-sbf --sbf-out-dir $S/out|"
+  check "... in the copy, with the real HOME and the proxy, cargo not held offline" \
+    sh -c "awk '/^== cargo build-sbf --sbf-out-dir/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'cwd: $S/src' '$T/blk' && grep -qxF 'home: $CLEANHOME' '$T/blk' && grep -qxF 'env: HTTPS_PROXY=$PROXY' '$T/blk' && ! grep -q '^env: CARGO_NET_OFFLINE=' '$T/blk'"
+  run "$TARGET" "$WT" AUDITOR_EXEC_MODE=isolated TOOLS_VERSION=v1.54 HTTPS_PROXY="$PROXY" -- anchor-build --run audit_1 --src . --program demo
+  check "isolated mode, anchor-build with that cargo build-sbf: anchor build without those options, TOOLS_VERSION after --" calls_are \
+    "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|cargo build-sbf --help|anchor build --ignore-keys -p demo -- --tools-version v1.54|"
+  check "... with the real HOME and the proxy, and the note" \
+    sh -c "[ '$RC' = 0 ] && grep -qxF '$OLDSBF' '$T/out' && awk '/^== anchor build/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'home: $CLEANHOME' '$T/blk' && grep -qxF 'env: HTTPS_PROXY=$PROXY' '$T/blk'"
+fi
 settings FAKE_INSTALL_RC=1
 run "$TARGET" "$WT" -- build-sbf --run audit_1 --src .
 check "an install of the platform tools that fails: exit 3" \
@@ -419,7 +440,7 @@ settings
 run "$TARGET" "$WT" -- anchor-build --run audit_1 --src . --program demo
 check "anchor-build: the downloads, then anchor build --ignore-keys -p <program> -- --skip-tools-install --offline" \
   calls_are "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|cargo build-sbf --help|cargo build-sbf --install-only|anchor build --ignore-keys -p demo -- --skip-tools-install --offline|"
-check "... and the program's .so is kept from target/deploy" sh -c "grep -q '1 .so in audit_1/exec/anchor-build-1/: demo.so' '$T/out'"
+check "... and the program's .so is kept from target/deploy" sh -c "grep -q '1 .so in audit_1/exec/anchor-build-[0-9]*/: demo.so' '$T/out'"
 check "... the build in the throwaway HOME, with its keypair" in_blocks '^== anchor build' '^keypair: yes$'
 run "$TARGET" "$WT" HTTPS_PROXY="$PROXY" -- anchor-test --run audit_1 --src .
 check "anchor-test: npm ci --ignore-scripts first, then the build, then anchor test against no validator and no deploy" \

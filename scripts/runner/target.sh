@@ -67,7 +67,10 @@
 # Every build and test after them runs offline (CARGO_NET_OFFLINE=true), without the proxy variables, in
 # the throwaway HOME, whose .cache/solana links to the real one. Anchor.toml's [toolchain] can still make
 # anchor fetch another Solana or Anchor release; that would land in the throwaway HOME, and offline it
-# fails.
+# fails. A cargo build-sbf that lacks any of --install-only, --skip-tools-install and --offline stops the run
+# in native mode (exit 3), where its build would get the real HOME and the network; in isolated mode the
+# build (cargo build-sbf, or anchor build) runs without those options, with the real HOME and the proxy
+# variables and cargo not held offline, as templates/poc/run.sh builds each arm then, and a note says so.
 #
 # The watchdog. AUDITOR_RUN_TIMEOUT (whole seconds, 1 to 86400, default 1800) bounds the whole run, and a
 # --timeout no higher than it lowers the bound. Each step runs in a session of its own, under ulimit -t of
@@ -80,10 +83,11 @@
 # stdout line says how the action ended and where these are. The scratch directory is removed on exit.
 #
 # Exit: 0 the action succeeded · 1 it ran and failed · 3 blocker (no mode or mode none, the self-check, a tool
-# missing, a revision or package not found, a patch that does not apply, submodules, a download that failed,
-# the watchdog, an incident whose root cause an INCIDENTS.json does not give or that keeps the build from
-# native mode) · 64 refused. Needs bash >= 3.2, git, python3, env, find, grep, mkdir, mktemp, rm, chmod, cp,
-# ln, cat, wc, tail and date; cargo, cargo-build-sbf, anchor or npm as the action needs.
+# missing or, in native mode, a cargo build-sbf without --install-only, a revision or package not found, a
+# patch that does not apply, submodules, a download that failed, the watchdog, an incident whose root cause
+# an INCIDENTS.json does not give or that keeps the build from native mode) · 64 refused. Needs bash >= 3.2,
+# git, python3, env, find, grep, mkdir, mktemp, rm, chmod, cp, ln, cat, wc, tail and date; cargo,
+# cargo-build-sbf, anchor or npm as the action needs.
 
 set -uo pipefail
 unset CDPATH
@@ -711,16 +715,27 @@ case "$ACTION" in
 esac
 TV=()
 [ -z "${TOOLS_VERSION:-}" ] || TV=(--tools-version "$TOOLS_VERSION")
+# SBF_SPLIT=1: cargo build-sbf --install-only puts the platform tools in the real HOME, and the build runs
+# offline in the throwaway HOME. A cargo build-sbf without those options builds with the real HOME and the
+# proxy variables, as templates/poc/run.sh builds each arm then (SBF_SPLIT=0): in isolated mode only, since
+# natively the build's code would get the real home folder and the network.
+SBF_SPLIT=1
 case "$ACTION" in
   anchor-*|build-sbf)
     sbf_help=$(cd "$S" && iso_run cargo build-sbf --help 2>/dev/null </dev/null) || sbf_help=""
-    [[ "$sbf_help" == *--install-only* && "$sbf_help" == *--skip-tools-install* && "$sbf_help" == *--offline* ]] ||
-      finish 3 "this cargo build-sbf has no --install-only, --skip-tools-install or --offline, which target.sh needs to keep the real HOME and the proxy variables away from the build"
+    [[ "$sbf_help" == *--install-only* && "$sbf_help" == *--skip-tools-install* && "$sbf_help" == *--offline* ]] || SBF_SPLIT=0
+    [ "$SBF_SPLIT" = 1 ] || [ "$MODE" = isolated ] ||
+      finish 3 "this cargo build-sbf has no --install-only, --skip-tools-install or --offline, which target.sh needs in native mode to keep the real HOME and the proxy variables away from the build; isolated mode builds with them"
     [ -n "$ISO_REAL_HOME" ] || finish 3 "HOME is not set, and cargo build-sbf keeps its platform tools there"
-    step "$S" ${NET[@]+"${NET[@]}"} "HOME=$ISO_REAL_HOME" cargo build-sbf --install-only ${TV[@]+"${TV[@]}"}
-    fetched "cargo build-sbf --install-only, the install of the platform tools,"
-    { confine_mkdir "$ISO_HOME/.cache" && ln -s "$ISO_REAL_HOME/.cache/solana" "$ISO_HOME/.cache/solana"; } ||
-      finish 3 "cannot link the platform tools into the throwaway HOME $ISO_HOME" ;;
+    if [ "$SBF_SPLIT" = 1 ]; then
+      step "$S" ${NET[@]+"${NET[@]}"} "HOME=$ISO_REAL_HOME" cargo build-sbf --install-only ${TV[@]+"${TV[@]}"}
+      fetched "cargo build-sbf --install-only, the install of the platform tools,"
+      { confine_mkdir "$ISO_HOME/.cache" && ln -s "$ISO_REAL_HOME/.cache/solana" "$ISO_HOME/.cache/solana"; } ||
+        finish 3 "cannot link the platform tools into the throwaway HOME $ISO_HOME"
+    else
+      echo ">> note: this cargo build-sbf has no --install-only, --skip-tools-install or --offline: in isolated mode the build runs with the real HOME and the proxy variables"
+      printf '>> no --install-only: the build runs with the real HOME and the proxy variables\n' >&9
+    fi ;;
 esac
 if [ "$ACTION" = anchor-test ]; then
   if real_file "$AD/package-lock.json" || real_file "$AD/npm-shrinkwrap.json"; then
@@ -760,7 +775,11 @@ print(path)' "$S/metadata.json" "$PACKAGE" "$S/src") 2>/dev/null) && [ -n "$mp" 
     fi
     mkdir "$S/out" || finish 3 "cannot create the build output directory in $S"
     SO_FROM=$S/out
-    step "$AD" "${OFF[@]}" cargo build-sbf --skip-tools-install --offline --sbf-out-dir "$S/out" ${TV[@]+"${TV[@]}"} ${MP[@]+"${MP[@]}"}
+    if [ "$SBF_SPLIT" = 1 ]; then
+      step "$AD" "${OFF[@]}" cargo build-sbf --skip-tools-install --offline --sbf-out-dir "$S/out" ${TV[@]+"${TV[@]}"} ${MP[@]+"${MP[@]}"}
+    else
+      step "$AD" ${NET[@]+"${NET[@]}"} "HOME=$ISO_REAL_HOME" cargo build-sbf --sbf-out-dir "$S/out" ${TV[@]+"${TV[@]}"} ${MP[@]+"${MP[@]}"}
+    fi
     outcome "cargo build-sbf"
     finish 0 "ok (exit 0)" ;;
   cargo-test|clippy)
@@ -779,7 +798,13 @@ print(path)' "$S/metadata.json" "$PACKAGE" "$S/src") 2>/dev/null) && [ -n "$mp" 
   anchor-build|anchor-test)
     [ -z "$PROGRAM" ] || PKG=(-p "$PROGRAM")
     SO_FROM=$AD/target/deploy
-    step "$AD" "${OFF[@]}" anchor build --ignore-keys ${PKG[@]+"${PKG[@]}"} -- --skip-tools-install --offline ${TV[@]+"${TV[@]}"}
+    if [ "$SBF_SPLIT" = 1 ]; then
+      step "$AD" "${OFF[@]}" anchor build --ignore-keys ${PKG[@]+"${PKG[@]}"} -- --skip-tools-install --offline ${TV[@]+"${TV[@]}"}
+    else
+      SBF_ARGS=()
+      [ -z "${TV[*]-}" ] || SBF_ARGS=(-- "${TV[@]}")
+      step "$AD" ${NET[@]+"${NET[@]}"} "HOME=$ISO_REAL_HOME" anchor build --ignore-keys ${PKG[@]+"${PKG[@]}"} ${SBF_ARGS[@]+"${SBF_ARGS[@]}"}
+    fi
     outcome "anchor build"
     [ "$ACTION" = anchor-test ] || finish 0 "ok (exit 0)"
     step "$AD" "${OFF[@]}" anchor test --skip-build --skip-deploy --skip-local-validator --provider.cluster localnet \
