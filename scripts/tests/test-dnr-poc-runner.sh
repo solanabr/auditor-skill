@@ -1939,14 +1939,15 @@ code="$(dcreds DOCKER_CERT_PATH="$ED/certs" DOCKER_CONFIG="$ED/config" -- "$CLEA
 # an AWS config: a credential_process or a key, after = or :; in ~/.terraformrc, a credentials or
 # credentials_helper block. A helper reset to nothing, git's store and cache with their default file and
 # socket (which count on their own) or with a --file or --socket that holds nothing, a user name with an ssh
-# URL, a proxy without a login, a region alone and a Terraform plugin cache do not count. So do Claude Code's
-# settings and state files (in ~/.claude*, ~/.claude.json and its backups): a command that prints a credential
-# (an MCP server's headersHelper too), a token in an env block (of the file or of an MCP server), a URL with a
-# login there, a credential header in a list of headers there (ANTHROPIC_CUSTOM_HEADERS,
-# OTEL_EXPORTER_OTLP_HEADERS), an MCP server's Authorization header, and a key in an MCP server's URL (its
-# query or its login) or arguments (an option, NAME=value, a header option). Settings that only refer to a
-# variable, and names that do not look like credentials, do not count; nor do an ssh URL with a user name only
-# and arguments that name no credential.
+# URL, a proxy without a login, a region alone and a Terraform plugin cache do not count. A store or cache
+# written with a variable counts even with an absolute path. So do Claude Code's settings and state files (in
+# ~/.claude*, ~/.claude.json and its backups): a command that prints a credential (an MCP server's
+# headersHelper too), a token in an env block (of the file or of an MCP server), a URL with a login there, a
+# credential header in a list of headers there (ANTHROPIC_CUSTOM_HEADERS, OTEL_EXPORTER_OTLP_HEADERS; any
+# *-Authorization too), an MCP server's Authorization header, and a key in an MCP server's URL (its query, key
+# or sig too, or its login) or arguments (an option, NAME=value, a header option, -H too, a URL). Settings that
+# only refer to a variable, and names that do not look like credentials, do not count; nor do an ssh URL with a
+# user name only and arguments that name no credential.
 n=0
 while IFS='|' read -r file text kind; do
   [ -n "$file" ] || continue
@@ -2009,6 +2010,12 @@ done <<'CONFIGS'
 .claude.json|{"mcpServers":{"api":{"type":"http","url":"https://mcp.example.invalid/mcp","headersHelper":"/opt/h.sh"}}}\n|Claude Code credentials
 .claude/settings.json|{"env":{"ANTHROPIC_CUSTOM_HEADERS":"X-Org-Route: prod\\nX-Tenant: t","OTEL_EXPORTER_OTLP_HEADERS":"Authorization=Bearer ${OTEL_TOKEN}","GIT_URL":"ssh://git@github.com/o/r.git"}}\n|
 .claude.json|{"mcpServers":{"api":{"type":"http","url":"https://mcp.example.invalid/mcp?api-key=${API_KEY}&page=2"},"fs":{"command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","/w","--header","X-Client: c"]},"gh":{"command":"docker","args":["run","-e","GITHUB_PERSONAL_ACCESS_TOKEN","img"]}}}\n|
+.gitconfig|[credential]\n\thelper = store --file /nonexistent.invalid/$USER\n|git or HTTP credentials
+.claude/settings.json|{"env":{"ANTHROPIC_CUSTOM_HEADERS":"cf-aig-authorization: Bearer x"}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"maps":{"type":"http","url":"https://maps.example.invalid/mcp?key=x"}}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"blob":{"type":"http","url":"https://acct.blob.example.invalid/mcp?sv=2024-11-04&sig=x"}}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"remote":{"command":"npx","args":["mcp-remote","https://mcp.example.invalid/sse","-H","Authorization: Bearer x"]}}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"db":{"command":"npx","args":["-y","@bytebase/dbhub","--dsn","postgresql://readonly:p@db.invalid:5432/x"]}}}\n|Claude Code credentials
 CONFIGS
 # git's store counts by the file its --file names, when that file is readable: the file counts, not the git
 # config, as the code here could read it without git. "~" as a word of its own is the home; the helper may be
