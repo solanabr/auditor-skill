@@ -234,7 +234,8 @@ PY
 # `relock` makes the build lock in CARGO_TARGET_DIR
 # name SHIM_RELOCK_PID; `relink` puts a symbolic link to SHIM_RELINK_TO at SHIM_RELINK;
 # `relocate` moves the directory SHIM_RELOCATE aside and puts a link to SHIM_RELOCATE_TO there.
-# SHIM_FAIL=<test> makes that test binary fail.
+# SHIM_FAIL=<test> makes that test binary fail. SHIM_PLANT=<path>|<text> has the vulnerable arm's test
+# build append <text> (\n a newline) to <path> in the scratch copy, as a dependency's build script could.
 #
 # The installation's copy of run.sh hands the shim and the test binaries a cleaned
 # environment, with no SHIM_ variable in it. So each of them first records the
@@ -347,6 +348,11 @@ test, fail = args[args.index("--test") + 1], os.environ.get("SHIM_FAIL", "")
 if fail == "no-run:" + test:
     print("[shim cargo: test build fails]", file=sys.stderr)
     sys.exit(101)
+if os.environ.get("SHIM_PLANT") and "vulnerable" in args:
+    rel, text = os.environ["SHIM_PLANT"].split("|", 1)
+    os.makedirs(os.path.dirname(os.path.join(root, rel)), exist_ok=True)
+    with open(os.path.join(root, rel), "a") as f:
+        f.write(text.replace("\\n", "\n"))
 for n in range(int(os.environ.get("SHIM_JSON_PAD", "0"))):
     print(json.dumps({"reason": "compiler-artifact", "package_id": "registry+https://github.com/rust-lang/crates.io-index#pad%d@1.0.0" % n,
                       "manifest_path": "/registry/pad%d/Cargo.toml" % n, "target": {"kind": ["lib"], "crate_types": ["lib"], "name": "pad%d" % n,
@@ -743,6 +749,27 @@ cp -p "$T/fixed_blocked.kept" "$T/shim/bin/fixed_blocked"
   && ! awk -F'\t' '$6 ~ /^testbin fixed_blocked/ { f = 1 } END { exit !f }' "$T/calls" && ! grep -q "^$LEG3" "$T/out" \
   && ok "the fixed arm's test binary, rewritten by the vulnerable arm's test -> exit 3, it never runs" \
   || { bad "the fixed arm's test binary rewritten: exit $code"; cat "$T/out" >&2; }
+# The vulnerable arm's builds run its dependencies' build scripts and proc macros in the scratch copy, so the
+# checks of the crate run there again right before the fixed arm builds: what they refuse, written meanwhile,
+# stops the run before anything of the fixed arm is built or any test runs; any other change passes.
+CHANGED="the crate changed in the scratch copy while the vulnerable arm built (its dependencies' build scripts and proc macros run there), and run.sh builds the fixed arm only from the crate it checked:"
+while IFS='	' read -r plant_run plant want_plant; do
+  [ -n "$plant_run" ] || continue
+  if [ "$plant_run" = model ]; then code="$(gate "$T/inc" "$NATIVE" "SHIM_PLANT=$plant")"; else code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" "SHIM_PLANT=$plant")"; fi
+  [ "$code" = 3 ] && grep -qF "[PoC-ATTEMPTED] blocker: $CHANGED $want_plant" "$T/out" && one_blocker \
+    && ! awk -F'\t' '$6 ~ /^testbin / || $6 ~ /^(build-sbf|test) .*--features fixed/ { f = 1 } END { exit !f }' "$T/calls" \
+    && ok "a $plant_run run whose vulnerable-arm build writes ${plant%%|*} into the scratch copy -> exit 3 before the fixed arm builds or a test runs" \
+    || { bad "a $plant_run run whose vulnerable-arm build writes ${plant%%|*}: exit $code"; cat "$T/out" >&2; }
+done <<'CASES'
+model	Cargo.toml|\n[patch.crates-io]\nborsh = { path = "/elsewhere/borsh" }\n	Cargo.toml:6 holds a [patch] or [replace] table
+model	src/lib.rs|\ncore::arch::global_asm!("");\n	src/lib.rs:2 names global_asm, inline assembly
+prebuilt	.cargo/config.toml|[build]\nrustc-wrapper = "/elsewhere/wrapper"\n	it now holds .cargo, a symbolic link, a .cargo/ directory
+model	tests/fixtures/poc_shim.so|\177ELFother	it now holds tests/fixtures/poc_shim.so, which mollusk would load in place of the arm
+model	../.cargo/config.toml|[build]\nrustc-wrapper = "/elsewhere/wrapper"\n	it would now inherit /
+CASES
+code="$(gate "$T/inc" "$NATIVE" "SHIM_PLANT=src/notes.txt|written by a build script\n")"
+[ "$code" = 0 ] && grep -q '^OK: exploit reproduces' "$T/out" && ok "a model run whose vulnerable-arm build writes a file the checks do not refuse runs" \
+  || { bad "a model run whose vulnerable-arm build writes src/notes.txt: exit $code"; cat "$T/out" >&2; }
 
 code="$(gate "$T/inc" "$NATIVE" "$VULN" BPF_OUT_DIR="$T")"
 [ "$code" = 0 ] && awk -F'\t' '$4 != "" { bad = 1 } END { exit bad }' "$T/calls" && ok "a caller's BPF_OUT_DIR never reaches cargo (mollusk would look there before SBF_OUT_DIR)" || bad "BPF_OUT_DIR: exit $code"
@@ -1730,6 +1757,19 @@ module|that holds another source file|shared-test-utils/ holds src/other.rs, whi
 no-manifest|without its Cargo.toml|shared-test-utils/ has no Cargo.toml
 CASES
 cp "$T/stu-cargo.keep" "$STU/Cargo.toml"
+# Right before the fixed arm builds, the re-check compares the scratch copy's harness copy with the
+# installation's again: a vulnerable-arm build that changes it stops the run before the fixed arm builds.
+for plant in "shared-test-utils/src/lib.rs|// changed by a build script\n" "shared-test-utils/build.rs|fn main() {}\n"; do
+  SHIM_EXTRA=("SHIM_PLANT=$plant")
+  code="$(ngate AUDITOR_EXEC_MODE=native -- --crate audit_1/poc/F-1)"
+  SHIM_EXTRA=()
+  want_plant="its shared-test-utils/src/lib.rs is no longer the installation's"
+  [ "${plant%%|*}" = shared-test-utils/build.rs ] && want_plant="its shared-test-utils/ holds build.rs, which the installation copy does not"
+  [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: $CHANGED $want_plant — nothing of the fixed arm was built." "$T/out" && one_blocker \
+    && ! awk -F'\t' '$6 ~ /^testbin / || $6 ~ /^(build-sbf|test) .*--features fixed/ { f = 1 } END { exit !f }' "$T/calls" \
+    && ok "--crate, a model run whose vulnerable-arm build writes ${plant%%|*} into the scratch copy -> exit 3 before the fixed arm builds" \
+    || { bad "--crate, a vulnerable-arm build that writes ${plant%%|*}: exit $code"; cat "$T/out" >&2; }
+done
 
 # Every run directory an argument names counts: here --vulnerable-so and --fixed-so under audit_2/exec/.
 ( cd "$WT" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null || bad "rundir.sh could not make audit_2"

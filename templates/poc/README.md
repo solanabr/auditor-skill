@@ -118,7 +118,9 @@ platform-tools rustc lets the source pick linker arguments, inline assembly, who
 either, named directly or as a macro's argument (what a macro that a dependency
 exports writes is not read);
 and a `tests/fixtures/{PROGRAM_NAME}.so`, which mollusk would load in place of
-the arm.
+the arm. These checks run again on the scratch copy right before the fixed arm builds,
+since the vulnerable arm's builds run its dependencies' build scripts and proc macros
+there: a crate they now refuse stops the run (exit `3`).
 
 Exit `0` means the exploit reproduced on `vulnerable` **and**, when the fixed arm
 runs, was blocked on `fixed`; `1` / `2` mean a contract assertion of that arm ran and

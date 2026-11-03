@@ -46,7 +46,10 @@
 # check of what they compiled, and only then the tests, each arm's bytes placed in
 # SBF_OUT_DIR right before its own. A test runs the PoC's code with the scratch copy
 # as CARGO_MANIFEST_DIR, so nothing it writes there is ever compiled; an arm's bytes
-# or test binary that changed after its build stop the run (exit 3).
+# or test binary that changed after its build stop the run (exit 3). The vulnerable
+# arm's builds run its dependencies' build scripts and proc macros in the scratch
+# copy, so the checks of the crate (WHERE IT BUILDS below) run there again right
+# before the fixed arm builds: a crate they now refuse stops the run (exit 3).
 #
 # Toolchain: cargo-build-sbf's default bundle is platform-tools v1.51 / cargo 1.84,
 # which cannot parse the edition2024 manifests in the mollusk-svm dep tree. We pin
@@ -1505,10 +1508,13 @@ VERSION_FILES=(-iname .tool-versions -o -iname .python-version -o -iname mise.to
 # folds case reads such a name as another); prints nothing when there is none, and each
 # byte outside printable ASCII as ?, a newline in a name too. copy_crate takes none of
 # them, so a crate holding one is refused rather than built in a shape it was not
-# written in.
+# written in. crate_extra <scratch copy> reads the scratch copy instead, run.sh's own
+# files there (markers/) aside.
 crate_extra() {
-  local found
-  found="$(cd "${HERE}" && LC_ALL=C find . \( -iname target -type d \) -prune -o \( -type l -o -iname .cargo -o -iname 'rust-toolchain*' -o "${VERSION_FILES[@]}" -o -name '*[! -~]*' \) -print0 \
+  local found dir="${HERE}"
+  local -a own=()
+  if [[ $# -gt 0 ]]; then dir="$1"; own=(-path ./markers -prune -o); fi
+  found="$(cd "${dir}" && LC_ALL=C find . \( -iname target -type d \) -prune -o ${own[@]+"${own[@]}"} \( -type l -o -iname .cargo -o -iname 'rust-toolchain*' -o "${VERSION_FILES[@]}" -o -name '*[! -~]*' \) -print0 \
     | LC_ALL=C tr -c '\000 -~' '?' | LC_ALL=C tr '\000' '\n')"
   if [[ -n "${found}" ]]; then echo "${found%%$'\n'*}"; fi
   return 0
@@ -1960,15 +1966,64 @@ nonregistry() {  # the dependencies from outside the crate and crates.io, and th
   echo "   non-registry code: ${NONREG:-unknown — no build was read}"
 }
 
+# recheck: the vulnerable arm's builds ran its dependencies' build scripts and proc macros in the scratch
+# copy, so right before the fixed arm builds, every check of WHERE IT BUILDS above runs there again (the
+# harness copy against the installation's, for its copy), and for supply_chain_or_ci the lock check: the
+# fixed arm builds only the crate run.sh checked.
+recheck() {
+  local what="" extra stu name lock rc=0
+  extra="$(crate_extra "${BUILD_DIR}")"
+  [[ -z "${extra}" ]] || what="it now holds ${extra#./}, a symbolic link, a .cargo/ directory, a rust-toolchain* file, a version manager's file or a name that is not printable ASCII"
+  if [[ -z "${what}" ]]; then
+    extra="$(inherited_config "${BUILD_DIR}")"
+    [[ -z "${extra}" ]] || what="it would now inherit ${extra}"
+  fi
+  if [[ -z "${what}" && -e "${BUILD_DIR}/tests/fixtures/${CRATE}.so" ]]; then
+    what="it now holds tests/fixtures/${CRATE}.so, which mollusk would load in place of the arm"
+  fi
+  if [[ -z "${what}" && -n "${STU}" ]]; then
+    stu="$(harness stucopy "${BUILD_DIR}/shared-test-utils" "${SELF}/shared-test-utils")" || true
+    case "${stu}" in
+      same) ;;
+      differs) what="its shared-test-utils/src/lib.rs is no longer the installation's" ;;
+      missing) what="its shared-test-utils/src/lib.rs is gone" ;;
+      *) what="its ${stu:-shared-test-utils/ cannot be read}" ;;
+    esac
+  fi
+  if [[ -z "${what}" ]]; then
+    if ! child cargo metadata --no-deps --format-version 1 --manifest-path "${BUILD_DIR}/Cargo.toml" > "${RUN_DIR}/metadata-fixed.json"; then
+      what="cargo could not read its manifests again (see the cargo output above)"
+    else
+      name="$(harness crate "${RUN_DIR}/metadata-fixed.json" "${BUILD_DIR}" "${crate_rule}")" || rc=$?
+      if [[ "${rc}" -eq 3 ]]; then
+        what="${name}"
+      elif [[ "${rc}" -ne 0 ]]; then
+        what="run.sh could not read cargo metadata for it again"
+      elif [[ "${name}" != "${CRATE}" ]]; then
+        what="its library is now ${name}, not ${CRATE}"
+      elif [[ "${SUPPLY_CHAIN}" == 1 ]]; then
+        lock="$(harness nonregistry "${BUILD_DIR}" "${BUILD_DIR}/Cargo.lock" "${RUN_DIR}/metadata-fixed.json" 2>/dev/null)" ||
+          lock="unknown — ${BUILD_DIR}/Cargo.lock could not be read"
+        [[ "${lock}" == "none: every dependency comes from a registry" ]] || what="the resolved Cargo.lock now names code from outside the crate (${lock})"
+      fi
+    fi
+  fi
+  if [[ -n "${what}" ]]; then
+    echo "[PoC-ATTEMPTED] blocker: the crate changed in the scratch copy while the vulnerable arm built (its dependencies' build scripts and proc macros run there), and run.sh builds the fixed arm only from the crate it checked: ${what} — nothing of the fixed arm was built." >&2
+    exit 3
+  fi
+}
+
 HELD_KIND=""
 HELD_LINE=""
 FAILED_HOW=""
 
 # Every build comes first: each arm's bytes (its SBF build, or its prebuilt file) kept aside with their
-# hash, and each arm's test binary with its own; then the check of what the builds compiled; and only then
-# the tests. A test runs the PoC's code with the scratch copy as CARGO_MANIFEST_DIR, so nothing it writes
-# there is ever compiled, and an arm's bytes or test binary that changed after the build stop the run
-# (exit 3). The lock spans every build and test.
+# hash, and each arm's test binary with its own, the fixed arm's once the checks of the crate pass again on
+# the scratch copy (recheck); then the check of what the builds compiled; and only then the tests. A test
+# runs the PoC's code with the scratch copy as CARGO_MANIFEST_DIR, so nothing it writes there is ever
+# compiled, and an arm's bytes or test binary that changed after the build stop the run (exit 3). The lock
+# spans every build and test.
 ARMS="vulnerable"
 if [[ "${PREBUILT}" -eq 0 || -n "${FIXED_SO}" ]]; then ARMS="vulnerable fixed"; fi
 acquire_lock || { echo "[PoC-ATTEMPTED] blocker: could not take the build lock in ${EFFECTIVE_TARGET} (another PoC run may hold it, or the directory is not writable)." >&2; exit 3; }
@@ -1977,6 +2032,7 @@ KEPT_VULNERABLE="${KEPT_HASH}"
 build_tests vulnerable exploit
 EXE_VULNERABLE="${EXE}"; DIGEST_VULNERABLE="${EXE_DIGEST}"
 if [[ "${ARMS}" == "vulnerable fixed" ]]; then
+  recheck
   keep_so fixed
   KEPT_FIXED="${KEPT_HASH}"
   build_tests fixed fixed_blocked
