@@ -2059,13 +2059,15 @@ done
 # isolation.sh starts each python3 from /: a .python-version in the working directory, which a pyenv shim
 # reads to pick the interpreter, picks none, and a relative path in a variable the check reads (KUBECONFIG
 # here) is taken from /, never from the tree under audit. A python3 stand-in first on PATH records the
-# directory of each run that finds a .python-version there; the watchdog's run is checked by its report.
+# directory of each run that finds a .python-version there; the watchdog's run is checked by its report, and
+# the directory it runs its program in, which in use is the copy of the tree, holds a .python-version too.
 PV="$T/pv-wt"; PVBIN="$T/pv-bin"; mkdir -p "$PV" "$PVBIN" "$T/pv-home"
 printf 'from-the-tree\n' > "$PV/.python-version"; printf 'apiVersion: v1\n' > "$PV/kube.cfg"
 printf '#!/bin/sh\n[ -e .python-version ] && pwd >> "%s"\nexec "%s" "$@"\n' "$T/pv-picked" "$(command -v python3)" > "$PVBIN/python3"
 chmod +x "$PVBIN/python3"
 for sh in "${SHELLS[@]}"; do
-  rm -f "$T/pv-picked"; rm -rf "$T/pv-env" "$T/pv-watch"; mkdir -p "$T/pv-env"
+  rm -f "$T/pv-picked"; rm -rf "$T/pv-env" "$T/pv-watch"; mkdir -p "$T/pv-env" "$T/pv-watch"
+  printf 'from-the-tree\n' > "$T/pv-watch/.python-version"
   for what in homes names creds "env $T/pv-env" "watch $T/pv-watch"; do
     (cd "$PV" && env -i HOME="$CLEANHOME" PATH="$PVBIN:$PATH" "$sh" "$T/iso-driver.sh" "$ROOT" $what) >/dev/null 2>&1
   done
