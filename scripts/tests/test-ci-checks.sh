@@ -18,8 +18,8 @@
 #      node has a tag, and no line may hold a carriage return or a NEL, LS or PS line break); the top-level mapping
 #      holds plain keys at the left margin, so the trigger is the value of on: alone, and that value fails on what
 #      the check cannot read with certainty (an anchor, an alias, a tag, an escape it does not decode, an explicit
-#      key, a quote mark, ? or : inside a plain scalar in a flow collection, a plain scalar there that may go on
-#      to the next line); none spells a key YAML reads as on other than as plain on: (quoted in either style, with
+#      key, a quote mark, ? or : inside a plain scalar in a flow collection, a plain scalar there that goes on
+#      over two lines); none spells a key YAML reads as on other than as plain on: (quoted in either style, with
 #      escapes, a tag, an anchor or another letter case, in block or flow style), or writes an explicit ? key, an
 #      alias as a key or a merge key (<<); no run: script holds a ${{ }} expression; every job has
 #      timeout-minutes, every action is pinned by full SHA with its version, no checkout keeps credentials, and
@@ -577,7 +577,7 @@ wfcheck() { # wfcheck FILE -> one line per problem, read byte by byte
     # flow collection, and after a : right after a quoted scalar, an alias or a closed collection. Anywhere else a
     # quote mark is a character of a plain scalar, which YAML never decodes. FD carries the depth of flow
     # collections over to the next line, and PC whether the line ended in a plain scalar inside one, which the next
-    # line goes on with. RUNON is 1 when a quoted scalar, in either style, goes on past the line, where YAML reads
+    # line goes on with unless it starts with , ] or }. RUNON is 1 when a quoted scalar, in either style, goes on past the line, where YAML reads
     # the next line as part of it; TAG is 1 when a node has a tag, such as !!binary, which makes YAML read the text
     # that follows as base64; HDR is 1 when the line ends in a block scalar header (| or >).
     # In the value of on: (STRICT), WHY names the first thing on the line this check cannot read with certainty,
@@ -588,6 +588,7 @@ wfcheck() { # wfcheck FILE -> one line per problem, read byte by byte
       out = ""; RUNON = 0; TAG = 0; HDR = 0; WHY = ""; n = length(s); st = !(FD && PC); pl = !st; lq = 0
       for (i = 1; i <= n && substr(s, i, 1) ~ /[ \t]/; i++) out = out substr(s, i, 1)
       if (i > n) return out
+      if (pl && !index(",]}", substr(s, i, 1))) why("a plain scalar in a flow collection that goes on from the line before")
       while (i <= n) {
         c = substr(s, i, 1); d = substr(s, i + 1, 1)
         if (c == "#" && (i == 1 || substr(s, i - 1, 1) ~ /[ \t]/)) break
@@ -638,7 +639,6 @@ wfcheck() { # wfcheck FILE -> one line per problem, read byte by byte
         else if (index("[{:?", c)) why("a " c " inside a plain scalar in a flow collection")
       }
       PC = FD && pl
-      if (PC) why("a plain scalar in a flow collection that may go on to the next line")
       return out
     }
     BEGIN { sha = "[0-9a-f]"; for (i = 1; i < 40; i++) sha = sha "[0-9a-f]"
@@ -835,36 +835,46 @@ trig flag comment-gt-item 'on: # >' '  - "workflow_r\x75n"'
 trig flag comment-pipe-key 'on: # |' '  "pull_request_t\x61rget":' '    types: [opened]'
 trig flag comment-pipe-flow 'on: # see |' '  [push, "pull_request_t\x61rget"]'
 trig pass block-after-comment-text 'on: push' 'x: |   # a | in the comment too' '  echo "workflow_r\x75n"'
-# a " - " or " ? " inside a plain scalar starts no node, so a quote mark after it is a character; libyaml or js-yaml
-# reads each of these as the event, so each must fail
-trig flag dash-in-plain-scalar 'on: {push: {branches: [a - "b]}, "pull_request_t\x61rget": {}}'
-trig flag dash-in-plain-scalar-squote "on: {push: {branches: [a - 'b]}, \"pull_request_t\\x61rget\": {}, c: d'e}"
-trig flag qmark-in-plain-scalar 'on: {push: {branches: [a ? "b]}, "pull_request_t\x61rget": {}}'
-trig flag colon-in-flow-plain-scalar 'on: {push: {branches: [x:"b]}, "pull_request_t\x61rget": {}}'
+# a " - " or " ? " inside a plain scalar starts no node, so a quote mark after it is a character; an anchor's name
+# ends at a flow indicator; a plain scalar in a flow collection can go on to the next line. Each of these is read as
+# the event by libyaml 0.2.1 or js-yaml 4.1.1, or by neither (explicit-key-split-escape, block-ctx-anchor) while
+# showing how a line-by-line reading loses its place, so each must fail
+trig flag dash-dq-desync 'on: {push: {branches: [a - "b]}, "pull_request_t\x61rget": {}}'
+trig flag dash-sq-desync "on: {push: {branches: [a - 'b]}, \"pull_request_t\\x61rget\": {branches: [c']}}"
+trig flag qmark-dq-desync 'on: {push: {branches: [a ? "b]}, "pull_request_t\x61rget": {}}'
+trig flag colon-dq-desync 'on: {push: {branches: [x:"y]}, "pull_request_t\x61rget": {}}'
 trig flag qmark-adjacent-key 'on: {push: {}, ?"pull_request_t\x61rget": {}}'
-trig flag anchor-before-comma 'on: {push: &a,"pull_request_t\x61rget":{}}'
-trig flag anchor-before-comma-wr 'on: {push: &a,"workflow_r\x75n":{}}'
-trig flag flow-plain-next-line 'on: {push: {branches: [a' '  "b]}, "pull_request_t\x61rget": {}}'
-trig flag split-by-false-quote 'on: {push: {branches: [a - "b]}, ? "pull_request_\' '  target" : {}}'
-trig flag false-quote-hides-tag 'on: {push: {branches: [a - "b]}, !!binary cHVsbF9yZXF1ZXN0X3RhcmdldA==: {}, c: "d"}'
+trig flag anchor-comma 'on: {push: &a,"pull_request_t\x61rget":{}}'
+trig flag anchor-comma-wfrun 'on: {push: &a,"workflow_r\x75n":{workflows: [build]}}'
+trig flag anchor-comma-seq 'on: [push, &a,"workflow_r\x75n"]'
+trig flag anchor-split-seq 'on: [push, &a,"pull_request_\' '  target"]'
+trig flag block-ctx-anchor 'on:' '  push: {branches: [main]}' '  workflow_dispatch: &a,"pull_request_t\x61rget":{}'
+trig flag flow-plain-continuation 'on: {push: {branches: [a' '  "b]}, "pull_request_t\x61rget": {}}'
+trig flag explicit-key-split 'on: {push: {branches: [a - "b]}, ? "pull_request_\' '  target" : {}}'
+trig flag explicit-key-split-escape 'on: {push: {branches: [a - "b]}, "pull_request_\' '  t\x61rget": {}}'
+trig flag binary-in-desync 'on: {push: {branches: [a - "b]}, !!binary cHVsbF9yZXF1ZXN0X3RhcmdldA==: {branches: [c"]}}'
 # the value of on: fails, whatever its events, on what this check cannot read with certainty: an anchor, an alias,
-# a tag, an escape it does not decode, a plain scalar in a flow collection that may go on to the next line, a ? or
-# a : with no space after it in one, an explicit key, a block scalar header with an indentation indicator
+# a tag, an escape it does not decode, a plain scalar in a flow collection that goes on over two lines, a ? or a
+# : with no space after it in one, an explicit key, a block scalar header with an indentation indicator
 trig flag fail-closed-anchor 'on:' '  push: &p' '    branches: [main]'
 trig flag fail-closed-alias 'on:' '  push: *p'
 trig flag fail-closed-tag 'on: !!str push'
 trig flag fail-closed-escape 'on: "push\t"'
-trig flag fail-closed-flow-plain-at-end 'on: [push' '  ]'
+trig flag fail-closed-flow-plain-two-lines 'on: [push' '  pull_request]'
 trig flag fail-closed-flow-colon 'on: {push:{}}'
 trig flag fail-closed-explicit-key 'on:' '  ? push' '  : {}'
 trig flag fail-closed-indentation-indicator 'on:' '  workflow_dispatch:' '    inputs:' '      a:' '        description: |2' '          text'
 # and passes what a trigger is written with: plain and quoted events, a quote mark, ? or : inside a plain scalar
-# outside a flow collection, a flow list wrapped after a comma, a block scalar, an escape of a letter
+# outside a flow collection, a flow list wrapped after a comma or before its ], a flow mapping of inputs, a block
+# scalar, an escape of a letter
 trig pass plain-trigger 'on:' '  push:' "    branches: [main, 'releases/**']" '    paths-ignore:' "      - '**.md'" \
   '  schedule:' "    - cron: '0 3 * * 1'" '  workflow_dispatch:' '    inputs:' '      level:' \
   "        description: Run the job's tests? See https://example.invalid/a:b" '        default: "warning"' \
   '        options: [info, warning]' '      notes:' '        description: |' '          more "text": here'
 trig pass flow-wrapped-after-comma 'on: [push,' '  pull_request]'
+trig pass flow-wrapped-before-bracket 'on:' '  push:' '    branches: [' '      "main",' '      release' '    ]'
+trig pass inputs-flow 'on:' '  workflow_dispatch:' \
+  "    inputs: {level: {description: 'Log level', default: \"warning\", type: choice, options: [info, \"warning\", 'debug']}}"
 trig pass escaped-other-event 'on: "pu\x73h"'
 # a quoted scalar that runs on past its line can join two halves with an escaped line break, or hold a line that
 # starts with # or a quote mark, after which the line goes on as YAML
