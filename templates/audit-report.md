@@ -11,7 +11,7 @@ report the client reads.
 
 HOW TO USE:
   1. Copy this file to audit_<n>/REPORT.md (see OUTPUT-RULES.md Rule 9).
-  2. Fill every {placeholder}. Delete guidance comments (<!-- ... -->) as you go.
+  2. Fill every {placeholder}. Delete the guidance comments (HTML comments) as you go.
   3. Keep the internal per-item verdicts in the internal report; surface only
      confirmed findings here (each must have survived the Rule 5b validation gate).
   4. Order findings by severity descending (Critical -> Informational). Zellic's
