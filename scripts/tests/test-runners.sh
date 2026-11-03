@@ -955,9 +955,9 @@ def put(url, data, status=None):
     open(os.path.join(fix, key), "wb").write(data if isinstance(data, bytes) else data.encode())
     if status:
         open(os.path.join(fix, key + ".status"), "w").write(str(status))
-def tgz(entries):
+def tgz(entries, pax_global=None):
     buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w:gz") as t:
+    with tarfile.open(fileobj=buf, mode="w:gz", format=tarfile.PAX_FORMAT, pax_headers=pax_global) as t:
         for name, kind, data in entries:
             ti = tarfile.TarInfo(name)
             ti.mode = 0o4755
@@ -986,7 +986,8 @@ put("https://crates.io/api/v1/crates/demo/2.0.0", json.dumps({"version": {"num":
 put("https://crates.io/api/v1/crates/serde", json.dumps({"crate": {"name": "serde"}}))
 put("https://crates.io/api/v1/crates/serde/1.0.0", json.dumps({"version": {"num": "1.0.0"}}))
 put("https://crates.io/api/v1/crates/broken/1.0.0", "oops", 500)
-npm = tgz([("package/package.json", "file", b"{\"name\": \"left-pad\"}\n"), ("package/index.js", "file", b"module.exports = 1\n")])
+npm = tgz([("package/package.json", "file", b"{\"name\": \"left-pad\"}\n"), ("package/index.js", "file", b"module.exports = 1\n")],
+          {"comment": "0123456789abcdef0123456789abcdef01234567"})
 integrity = "sha512-" + base64.b64encode(hashlib.sha512(npm).digest()).decode()
 put("https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz", npm)
 put("https://registry.npmjs.org/left-pad/1.3.0", json.dumps({"name": "left-pad", "version": "1.3.0", "dist": {
@@ -1035,9 +1036,78 @@ info = tarfile.TarInfo("bigdecl-1.0.0/x")
 info.size = 600 * 1024 * 1024
 c = zlib.compressobj(9, zlib.DEFLATED, 31)
 bigdecl = c.compress(info.tobuf(tarfile.USTAR_FORMAT) + b"\0" * 1024) + c.flush()
-for name, data in (("bomb", bomb), ("bigdecl", bigdecl)):
+crates = {"bomb": bomb, "bigdecl": bigdecl}
+# Headers whose content tarfile would keep for every later member or read with no bound, each refused before
+# tarfile reads that content. cut(): the headers so far, then bytes no deflate stream holds (reading on fails);
+# each such case holds 1 MiB or more after the header it is refused at, past what gzip reads ahead.
+def cut(raw):
+    c = zlib.compressobj(9, zlib.DEFLATED, 31)
+    return c.compress(raw) + c.flush(zlib.Z_SYNC_FLUSH) + b"\xff" * 64
+def whole(raw):
+    c = zlib.compressobj(9, zlib.DEFLATED, 31)
+    return c.compress(raw + b"\0" * 1024) + c.flush()
+def writer(fmt, pax_global=None):
+    buf = io.BytesIO()
+    return buf, tarfile.open(fileobj=buf, mode="w", format=fmt, pax_headers=pax_global)
+def patched(info, fmt, patch):
+    b = bytearray(info.tobuf(fmt))
+    for off, data in patch:
+        b[off:off + len(data)] = data
+    b[148:156] = b" " * 8
+    b[148:156] = b"%06o\0 " % sum(b[:512])
+    return bytes(b)
+# A global pax header of 16000 keys, then 2048 empty files.
+buf, t = writer(tarfile.PAX_FORMAT, {"k%05d" % i: "v" for i in range(16000)})
+for i in range(2048):
+    t.addfile(tarfile.TarInfo("gkeys-1.0.0/f%d" % i))
+crates["gkeys"] = cut(buf.getvalue())
+# 40 GNU long names and then 40 pax paths of 60000 bytes each: 2.4 MB of each kind, 4.8 MB in all.
+buf, t = writer(tarfile.GNU_FORMAT)
+for i in range(80):
+    t.format = tarfile.GNU_FORMAT if i < 40 else tarfile.PAX_FORMAT
+    t.addfile(tarfile.TarInfo("longhdr-1.0.0/%02d%s" % (i, "n" * 60000)))
+crates["longhdr"] = cut(buf.getvalue())
+# A GNU sparse file whose header says an extension block of its map follows, then 2048 such blocks, each of 21
+# entries and saying another follows.
+info = tarfile.TarInfo("sparse-1.0.0/s")
+info.type = tarfile.GNUTYPE_SPARSE
+block = bytearray((b"00000001000\0" * 2) * 21 + b"\0" * 8)
+block[504] = 1
+crates["sparse"] = cut(patched(info, tarfile.GNU_FORMAT, [(482, b"\1")]) + bytes(block) * 2048)
+# A pax (GNU 1.0) sparse file whose map, at the start of its data, announces 10**9 fields, then 1 MiB of them.
+buf, t = writer(tarfile.PAX_FORMAT)
+info = tarfile.TarInfo("paxsparse-1.0.0/GNUSparseFile.0/s")
+info.pax_headers = {"GNU.sparse.major": "1", "GNU.sparse.minor": "0", "GNU.sparse.name": "paxsparse-1.0.0/s", "GNU.sparse.realsize": "0"}
+data = b"1000000000\n" + b"0\n" * 524288
+info.size = len(data)
+t.addfile(info, io.BytesIO(data))
+crates["paxsparse"] = cut(buf.getvalue())
+# A global pax size of -1 for the one file after it; an extended header whose own size field is -1024; and an
+# entry of a type tarfile does not know (it reads through the data of one) that declares 600 MiB.
+buf, t = writer(tarfile.PAX_FORMAT, {"size": "-1"})
+t.addfile(tarfile.TarInfo("negsize-1.0.0/f"))
+crates["negsize"] = whole(buf.getvalue())
+info = tarfile.TarInfo("././@PaxHeader")
+info.type = tarfile.XHDTYPE
+crates["negraw"] = whole(patched(info, tarfile.GNU_FORMAT, [(124, b"\xff" * 10 + b"\xfc\0")]) + tarfile.TarInfo("negraw-1.0.0/f").tobuf())
+info = tarfile.TarInfo("odd-1.0.0/x")
+info.type, info.size = b"Z", 600 * 1024 * 1024
+crates["odd"] = whole(info.tobuf(tarfile.USTAR_FORMAT))
+for name, data in crates.items():
     put("https://static.crates.io/crates/%s/%s-1.0.0.crate" % (name, name), data)
     put("https://crates.io/api/v1/crates/%s/1.0.0" % name, json.dumps({"version": {"num": "1.0.0", "crate": name, "checksum": hashlib.sha256(data).hexdigest()}}))
+# A wheel whose central directory takes 18 MB: 300 entries, each with a comment of 60000 bytes.
+buf = io.BytesIO()
+with zipfile.ZipFile(buf, "w") as z:
+    for i in range(300):
+        info = zipfile.ZipInfo("bigcd/f%d" % i)
+        info.comment = b"c" * 60000
+        z.writestr(info, "")
+bigcd = buf.getvalue()
+bigcd_url = "https://files.pythonhosted.org/packages/ee/ff/bigcd-1.0-py3-none-any.whl"
+put(bigcd_url, bigcd)
+put("https://pypi.org/pypi/bigcd/1.0/json", json.dumps({"urls": [{"packagetype": "bdist_wheel", "filename": "bigcd-1.0-py3-none-any.whl",
+    "url": bigcd_url, "digests": {"sha256": hashlib.sha256(bigcd).hexdigest()}}]}))
 PY
 UA='auditor-skill deps.sh (https://github.com/solanabr/auditor-skill)'
 r0=$(rows)
@@ -1088,7 +1158,7 @@ check "a digest that does not match: exit 3, the artifact neither kept nor unpac
   sh -c "[ '$RC' = 3 ] && grep -q '^deps: blocker: the digest does not match: the registry gives sha256 0000' '$T/err' && [ -n '$n' ] && [ ! -e '$WT/audit_1/deps/fetch-artifact-$n' ]"
 run "$DEPS" "$WT" -- fetch-artifact --run audit_1 npm left-pad 1.3.0
 n=$(sed -n 's/.*fetch-artifact-\([0-9]*\)[.]txt$/\1/p' "$T/out")
-check "fetch-artifact npm: the tarball at the URL the registry's name gives, its sha512 integrity checked" \
+check "fetch-artifact npm: the tarball at the URL the registry's name gives, its sha512 integrity checked (its global pax header, of 52 bytes as git archive writes one, let through)" \
   sh -c "[ '$RC' = 0 ] && grep -qxF 'url: https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz' '$T/calls' && [ -f '$WT/audit_1/deps/fetch-artifact-$n/files/package/index.js' ] && grep -q '^digest: sha512 ' '$WT/audit_1/deps/fetch-artifact-$n.txt'"
 run "$DEPS" "$WT" -- fetch-artifact --run audit_1 npm left-pad 1.4.0
 check "an npm record whose tarball is elsewhere: exit 3, nothing downloaded" \
@@ -1119,6 +1189,35 @@ check "a .crate of more than 50000 entries is refused at entry 50001, before the
 run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates bigdecl 1.0.0
 check "a .crate entry that declares more than 512 MiB is refused when it is read: exit 3, nothing unpacked" \
   sh -c "[ '$RC' = 3 ] && grep -q '^deps: blocker: the artifact unpacks to more than 512 MiB; output ' '$T/err' && [ -z \"\$(find '$WT/audit_1/deps' -path '*/files/bigdecl-1.0.0' -print)\" ]"
+# What tarfile would keep for every later member, or read with no bound, is refused at the header that announces
+# it, before tarfile reads it; after the first four cases come bytes no deflate stream holds, so reading on fails.
+refused() { # refused <top directory> <blocker>: the last fetch-artifact stopped with it and unpacked nothing
+  [ "$RC" = 3 ] && grep -q "^deps: blocker: $2; output " "$T/err" && [ -z "$(find "$WT/audit_1/deps" -path "*/files/$1" -print)" ]
+}
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates gkeys 1.0.0
+check "a global pax header of 16000 keys is refused at that header, before the file after it: exit 3, nothing unpacked" \
+  refused gkeys-1.0.0 'the global pax headers of the artifact hold more than 128 bytes'
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates longhdr 1.0.0
+check "pax and GNU long-name headers are counted together (2.4 MB of each) and refused past 4 MiB: exit 3, nothing unpacked" \
+  refused longhdr-1.0.0 'the pax and GNU long-name headers of the artifact hold more than 4 MiB'
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates sparse 1.0.0
+check "a GNU sparse file is refused before its map is read: exit 3, nothing unpacked" \
+  refused sparse-1.0.0 'the artifact holds a sparse file'
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates paxsparse 1.0.0
+check "a pax (GNU 1.0) sparse file is refused before its map is read from its data: exit 3, nothing unpacked" \
+  refused paxsparse-1.0.0 'the artifact holds a sparse file'
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates negsize 1.0.0
+check "an entry a global pax header gives a size below zero is refused: exit 3, nothing unpacked" \
+  refused negsize-1.0.0 'the artifact gives an entry a size below zero'
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates negraw 1.0.0
+check "an extended header whose own size field is below zero is refused before it is read: exit 3, nothing unpacked" \
+  refused negraw-1.0.0 'the artifact gives an entry a size below zero'
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates odd 1.0.0
+check "an entry of a type tarfile does not know counts toward 512 MiB too, since tarfile reads through its data: exit 3" \
+  refused odd-1.0.0 'the artifact unpacks to more than 512 MiB'
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 pypi bigcd 1.0
+check "a wheel whose central directory takes more than 16 MiB is refused before zipfile reads it: exit 3, nothing unpacked" \
+  refused bigcd 'the central directory of the artifact takes more than 16 MiB'
 run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates nope 1.0.0
 check "fetch-artifact of a version the registry does not have: exit 1" sh -c "[ '$RC' = 1 ] && grep -q '^>> fetch-artifact: crates.io has no nope 1.0.0 (HTTP 404)' '$T/out'"
 cp "$DT" "$T/dt.saved"

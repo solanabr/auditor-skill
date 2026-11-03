@@ -32,7 +32,10 @@
 #                   into <R>/deps/fetch-artifact-<n>/files/ next to the artifact itself (checklist 11 §11.11).
 #                   Only regular files and directories are unpacked, with modes 0600 and 0700; every other
 #                   entry, and every name that is absolute, has a .. component or a control character, is
-#                   left out and listed, as an SC-060 hit. At most 50000 entries and 512 MiB unpacked.
+#                   left out and listed, as an SC-060 hit. At most 50000 entries and 512 MiB unpacked; a
+#                   tar with more than 4 MiB of pax and GNU long-name headers, more than 128 bytes of
+#                   global pax headers, a sparse file or a size below zero, and a zip whose central
+#                   directory takes more than 16 MiB, are refused.
 #
 # Manifests. Each --manifest is a confined regular file of at most 50 MB under the working directory, named
 # as its action takes it: Cargo.lock, Cargo.toml, package.json, package-lock.json or npm-shrinkwrap.json,
@@ -750,6 +753,9 @@ cargo_py() { (cd / && exec python3 -I -c "$CARGO_PY" "$@"); }
 REGISTRY_PY='import base64, hashlib, json, os, re, stat, sys, tarfile, zipfile
 
 FILES, BYTES = 50000, 512 * 1024 * 1024
+# What a tar may hold in pax and GNU long-name headers in all, and in global pax headers; what a zip
+# central directory may take.
+EXTENDED, GLOBAL, CENTRAL = 4 * 1024 * 1024, 128, 16 * 1024 * 1024
 NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 
 
@@ -842,10 +848,39 @@ def tar_kind(m):
         "hard link" if m.islnk() else "special file"
 
 
+class Capped(tarfile.TarInfo):
+    # tarfile reads each header of the tar through this class, which checks it before tarfile reads what it
+    # announces, so what tarfile keeps for the members already read stays bounded while the caps count them:
+    # no size below zero, at most EXTENDED bytes of pax and GNU long-name headers in all, at most GLOBAL bytes
+    # of global pax headers (tarfile gives every later member its own copy of their keys, and of some of
+    # their values), and no sparse file, whose map tarfile reads from the data that follows with no bound
+    # (in the methods below that refuse one).
+    HOOKS = ("_proc_member", "_proc_sparse", "_proc_gnusparse_00", "_proc_gnusparse_01", "_proc_gnusparse_10")
+    EXTENSIONS = (tarfile.GNUTYPE_LONGNAME, tarfile.GNUTYPE_LONGLINK, tarfile.XHDTYPE, tarfile.XGLTYPE,
+                  tarfile.SOLARIS_XHDTYPE)
+
+    def _proc_member(self, tf):
+        if self.size < 0:
+            fail("the artifact gives an entry a size below zero")
+        if self.type in self.EXTENSIONS:
+            tf.extended_bytes = getattr(tf, "extended_bytes", 0) + self.size
+            if tf.extended_bytes > EXTENDED:
+                fail("the pax and GNU long-name headers of the artifact hold more than 4 MiB")
+        if self.type == tarfile.XGLTYPE:
+            tf.global_bytes = getattr(tf, "global_bytes", 0) + self.size
+            if tf.global_bytes > GLOBAL:
+                fail("the global pax headers of the artifact hold more than 128 bytes")
+        return super()._proc_member(tf)
+
+    def _proc_sparse(self, *args):
+        fail("the artifact holds a sparse file")
+
+    _proc_gnusparse_00 = _proc_gnusparse_01 = _proc_gnusparse_10 = _proc_sparse
+
+
 def bound_memory():
-    # A backstop for what a parser holds before the caps can count it (one long pax or GNU name header, the
-    # central directory of a zip, the window of a decompressor): at most 2 GiB of address space, where the
-    # system enforces the limit (Linux; macOS refuses to set it).
+    # A backstop for what the caps do not count, such as the window an xz stream asks its decompressor for:
+    # at most 2 GiB of address space, where the system enforces the limit (Linux; macOS refuses to set it).
     try:
         import resource
         soft, hard = resource.getrlimit(resource.RLIMIT_AS)
@@ -864,26 +899,35 @@ def unpack(archive, filename, algo, expected, dest):
     print("digest: %s %s, as the registry gives it%s" % (algo, got, weak))
     bound_memory()
     entries, skipped, declared = [], [], 0
-    # The caps hold while the archive is read: the headers of a tar are read one at a time, and the read stops
-    # at the first entry past FILES, or the first file past BYTES of declared sizes, so the list never grows
-    # past the cap; nothing is unpacked until the whole list is within both.
+    # The caps hold while the archive is read: the headers of a tar are read one at a time, through Capped, and
+    # the read stops at the first entry past FILES, or the first that takes the declared sizes past BYTES (of
+    # every entry: tarfile reads through the data of one it does not know as well), so the list never grows
+    # past the cap; a zip central directory, which zipfile reads whole, is measured first. Nothing is unpacked
+    # until the whole list is within the caps.
     if filename.endswith((".whl", ".zip")):
+        with open(archive, "rb") as f:
+            end = zipfile._EndRecData(f)
+        if end and end[zipfile._ECD_SIZE] > CENTRAL:
+            fail("the central directory of the artifact takes more than 16 MiB")
         z = zipfile.ZipFile(archive)
         if len(z.filelist) > FILES:
             fail("the artifact holds more than %d entries" % FILES)
         listing = ((i.filename, zip_kind(i), i.file_size, i) for i in z.infolist())
         opener = lambda e: z.open(e[3])
     else:
-        t = tarfile.open(archive, "r:*")
+        if not all(hasattr(tarfile.TarInfo, h) for h in Capped.HOOKS):
+            fail("the tarfile module of this python3 lacks a method deps.sh replaces to bound what it reads")
+        t = tarfile.open(archive, "r:*", tarinfo=Capped)
         listing = ((m.name, tar_kind(m), m.size, m) for m in t)
         opener = lambda e: t.extractfile(e[3])
     for name, kind, declared_size, ref in listing:
         if len(entries) == FILES:
             fail("the artifact holds more than %d entries" % FILES)
-        if kind == "file":
-            declared += declared_size
-            if declared > BYTES:
-                fail("the artifact unpacks to more than 512 MiB")
+        if declared_size < 0:
+            fail("the artifact gives an entry a size below zero")
+        declared += declared_size
+        if declared > BYTES:
+            fail("the artifact unpacks to more than 512 MiB")
         entries.append((name, kind, declared_size if kind == "file" else 0, ref))
     files = dirs = size = 0
     for e in entries:
