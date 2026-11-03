@@ -188,10 +188,10 @@ zizmor==1.30.1 \
     --hash=sha256:06e039fae8e185e2a1a8b002f2d95a6f5c3b548048bdd79e004dcb501fcd0868
 ```
 
-Then run these lines from the checkout. `python3 -I` runs Python in isolated mode: `python3 -m` alone puts the working directory first on `sys.path`, so a `venv.py` the repository ships would run in place of Python's own `venv`.
+Then run these lines from the checkout. The first makes the environment from your home directory, with Python in isolated mode (`python3 -I`): `python3 -m` alone puts the working directory first on `sys.path`, so a `venv.py` the repository ships would run in place of Python's own `venv`, and some Python releases set pip up, while they make the environment, in a child that is not isolated and starts in the working directory.
 
 ```bash
-python3 -I -m venv ~/.venvs/zizmor-1.30.1
+(cd ~ && python3 -I -m venv ~/.venvs/zizmor-1.30.1)
 ~/.venvs/zizmor-1.30.1/bin/pip install --require-hashes --only-binary :all: --no-deps -r ~/.venvs/zizmor-1.30.1.txt
 ~/.venvs/zizmor-1.30.1/bin/zizmor --offline --no-config --no-ignores --persona=auditor .github/workflows
 ```
