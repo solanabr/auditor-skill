@@ -183,7 +183,7 @@ expected() {
     K140-7b) echo "80 82 83 84 85 93 95 96 97 101" ;;
     K080-3) echo "" ;;   # no fixture echoes a secret; the tree of its own below does
     K080-6) echo "01 08 14 33 35 37 39 42 43 44 60 76 77 98 107" ;;
-    K080-8a) echo "78 98 100 106" ;;
+    K080-8a) echo "78 98 100 106 109" ;;
     K080-8b) echo "86 87 88 89 90 94" ;;
   esac
 }
@@ -205,6 +205,7 @@ K080-8a 78-self-hosted-runners.yml 9 13 17 23 27 34
 K080-8a 98-pin-and-runner-yaml-extension.yaml 9
 K080-8a 100-arc-runner-labels.yml 9 13 17 21 25 29 33
 K080-8a 106-runner-key-spellings.yml 10 14 18 22
+K080-8a 109-retired-runner-label.yml 9 13 17
 K080-8b infra/86-runner-group-public.tf 2 5
 K080-8b infra/87-arc-runner-deployment.yaml 11
 K080-8b infra/88-arc-scale-set-values.yml 4
