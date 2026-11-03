@@ -299,8 +299,8 @@ run "$TARGET" "$WT" PATH="$T/fake:$T/sys-nopy" AUDITOR_EXEC_MODE=isolated -- car
 check "isolated mode where the self-check cannot run (no python3): exit 3, nothing copied" \
   sh -c "[ '$RC' = 3 ] && grep -qF 'target: blocker: isolated mode, but the credential self-check could not finish (python3 is not on PATH)' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
 run "$TARGET" "$WT" PATH="$T/fake:$T/sys-nopy" -- cargo-test --run audit_1 --src .
-check "native mode without python3: a blocker before anything is copied" \
-  sh -c "[ '$RC' = 3 ] && grep -qF 'target: blocker: python3 is not on PATH, so cargo-test cannot run here — nothing was copied or built.' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
+check "native mode without python3: a blocker before anything is copied, since only python3 tells that incident_1 holds no INCIDENTS.json" \
+  sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: python3 is not on PATH, so target.sh cannot read the root_cause_class in incident_1/INCIDENTS.json (OUTPUT-RULES.md Rule 11a) — nothing was copied or built.' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
 if [ "$ISOLATED_OK" = 1 ]; then
   run "$TARGET" "$WT" AUDITOR_EXEC_MODE=isolated GITHUB_TOKEN=x -- cargo-test --run audit_1 --src .
   check "isolated mode names target.sh's own variables that look like credentials, and goes on" \
@@ -929,7 +929,67 @@ if [ "$ISOLATED_OK" = 1 ]; then
   run "$TARGET" "$WT" AUDITOR_EXEC_MODE=isolated -- cargo-test --run audit_1 --src .
   check "isolated mode builds audit_1 while incident_2 records a supply_chain_or_ci incident" test "$RC" = 0
 fi
-rm -rf "$WT/incident_2" "$WT/incident_notes.md"
+# Only python3 tells that an INCIDENTS.json is missing, so a stat that fails for another reason stops the build:
+# a path past PATH_MAX (1024 bytes on macOS, 4096 on Linux) hides no run. In a working directory PATH_MAX-22 bytes
+# long incident_1/INCIDENTS.json lies past it; in one PATH_MAX-200 bytes long, a run moved aside under a long
+# name, whose INCIDENTS.json (a name of 190 bytes) or which itself (230) lies past it. Each file is written
+# through a relative path and records a supply_chain_or_ci incident. A working directory that cannot be listed
+# stops the build too.
+PM=$(getconf PATH_MAX / 2>/dev/null)
+case "$PM" in ''|*[!0-9]*) PM=1024 ;; esac
+long() { printf '%*s' "$1" '' | tr ' ' "$2"; }
+# deep_wt <length>: prints a new directory below $T whose physical path is <length> bytes, holding a cargo
+# package and audit_1 (exec-mode native).
+deep_wt() {
+  local cur c
+  mkdir "$T/deep-$1" && cd "$T/deep-$1" || return 1
+  cur=$(pwd -P)
+  while [ $(( ${#cur} + 201 )) -lt "$1" ]; do
+    c=d$(long 199 0); mkdir "$c" && cd "$c" || return 1; cur=$(pwd -P)
+  done
+  c=e$(long $(( $1 - ${#cur} - 2 )) 0); mkdir "$c" && cd "$c" || return 1
+  printf '[package]\nname = "demo"\nversion = "0.1.0"\nedition = "2021"\n' > Cargo.toml
+  mkdir src audit_1 && printf '// v1\n' > src/lib.rs && printf '*\n' > audit_1/.gitignore && printf 'native\n' > audit_1/exec-mode
+  pwd -P
+}
+SCJ='{"incidents": [{"id": "INC-1.1", "root_cause_class": "supply_chain_or_ci"}]}'
+if DW=$(deep_wt $((PM - 22))) && [ "${#DW}" = $((PM - 22)) ]; then
+  ( cd "$DW" && mkdir incident_1 && printf '*\n' > incident_1/.gitignore && printf '%s\n' "$SCJ" > incident_1/INCIDENTS.json )
+  run "$TARGET" "$DW" -- cargo-test --run audit_1 --src .
+  check "natively, in a working directory of $((PM - 22)) bytes, an incident_1/INCIDENTS.json past PATH_MAX ($PM) stops audit_1's build: exit 3, nothing copied" \
+    sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: incident_1/INCIDENTS.json cannot be read: $XREAD' '$T/err' && [ ! -s '$T/calls' ] && [ -z \"\$(ls -A '$NT')\" ]"
+else
+  ko "no working directory of $((PM - 22)) bytes could be made below $T"
+fi
+if DW=$(deep_wt $((PM - 200))) && [ "${#DW}" = $((PM - 200)) ]; then
+  n2=incident_1.$(long 179 x)
+  n3=incident_1.$(long 219 y)
+  ( cd "$DW" && mkdir "$n2" && printf '%s\n' "$SCJ" > "$n2/INCIDENTS.json" )
+  run "$TARGET" "$DW" -- cargo-test --run audit_1 --src .
+  check "natively, a run moved aside under a name of 190 bytes, its INCIDENTS.json past PATH_MAX, stops audit_1's build: exit 3, nothing copied" \
+    sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: $n2/INCIDENTS.json cannot be read: $XREAD' '$T/err' && [ ! -s '$T/calls' ] && [ -z \"\$(ls -A '$NT')\" ]"
+  ( cd "$DW" && mv "$n2" "$n3" )
+  run "$TARGET" "$DW" -- cargo-test --run audit_1 --src .
+  check "... and under a name of 230 bytes, the run itself past PATH_MAX: exit 3, the name cut after 200 bytes" \
+    sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: ${n3:0:200}.../INCIDENTS.json cannot be read: $XREAD' '$T/err' && [ ! -s '$T/calls' ]"
+  ( cd "$DW" && rm -rf "$n3" )
+  run "$TARGET" "$DW" -- cargo-test --run audit_1 --src .
+  check "... and with that run gone the same build runs: exit 0" test "$RC" = 0
+  run "$TARGET" "$DW" PATH="$T/fake:$T/sys-nopy" -- cargo-test --run audit_1 --src .
+  check "natively without python3 and with no incident_* directory, target.sh's own need of python3 stops it: exit 3, nothing copied" \
+    sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: python3 is not on PATH, so cargo-test cannot run here — nothing was copied or built.' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
+  if [ "$(id -u)" != 0 ]; then
+    ( cd "$DW" && mkdir incident_1 && printf '%s\n' "$SCJ" > incident_1/INCIDENTS.json )
+    chmod 300 "$DW"
+    run "$TARGET" "$DW" -- cargo-test --run audit_1 --src src
+    chmod 700 "$DW"
+    check "natively, a working directory that cannot be listed stops audit_1's build of --src src: exit 3, nothing copied" \
+      sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: the working directory cannot be listed: $XREAD' '$T/err' && [ ! -s '$T/calls' ]"
+  fi
+else
+  ko "no working directory of $((PM - 200)) bytes could be made below $T"
+fi
+rm -rf "$WT/incident_2" "$WT/incident_notes.md" "$T/deep-$((PM - 22))" "$T/deep-$((PM - 200))"
 rm -f "$IJ" "$WT/incident_1/exec-mode" "$WT/incident_1/patches/INC-1.1.patch" "$WT/incident_1/patches/INC-1.2.patch"
 
 # =================================================================================================

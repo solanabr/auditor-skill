@@ -95,7 +95,8 @@
 #     outside the crate, and a build that compiled code from outside it;
 #     in native mode no crate runs, an audit's included, while the INCIDENTS.json of
 #     any incident_* directory in the working directory records such an incident or
-#     cannot be read, as iso_incident_class's no-id form (pinned) reports it: a
+#     cannot be read (a path past PATH_MAX, a working directory that cannot be
+#     listed), as iso_incident_class's no-id form (pinned) reports it: a
 #     directory without that file, or whose file records no incident, counts for
 #     nothing;
 #   * the isolation self-check (scripts/lib/isolation.sh): in isolated mode, a fake HOME
@@ -2639,7 +2640,73 @@ if [ "$ISOLATED_OK" = 1 ]; then
   [ "$code" = 0 ] && grep -q "^$LEG3" "$T/out" && ok "an audit's crate beside another run directory's supply_chain_or_ci incident runs in isolated mode" \
     || { bad "an audit's crate beside incident_2's supply_chain_or_ci incident, isolated: exit $code"; cat "$T/out" >&2; }
 fi
-rm -rf "$WT/incident_2" "$T/elsewhere-run"
+# Only python3 tells that an INCIDENTS.json is missing, so a stat that fails for another reason stops the run:
+# a path past PATH_MAX (1024 bytes on macOS, 4096 on Linux) hides no run directory. In a working directory
+# PATH_MAX-22 bytes long incident_1/INCIDENTS.json lies past it (a model run there, since a --vulnerable-so
+# path would too); in one PATH_MAX-200 bytes long, a run moved aside under a long name, whose INCIDENTS.json (a
+# name of 190 bytes) or which itself (230) lies past it. Each file is written through a relative path and
+# records a supply_chain_or_ci incident. A working directory that cannot be listed stops the run too.
+PM="$(getconf PATH_MAX / 2>/dev/null)"
+case "$PM" in ''|*[!0-9]*) PM=1024 ;; esac
+long() { printf '%*s' "$1" '' | tr ' ' "$2"; }
+deep_dir() {  # deep_dir <length>: prints a new directory below $T whose physical path is <length> bytes, holding audit_1 (exec-mode native)
+  local cur c
+  mkdir "$T/deep-$1" && cd "$T/deep-$1" || return 1
+  cur="$(pwd -P)"
+  while [ $(( ${#cur} + 201 )) -lt "$1" ]; do
+    c="d$(long 199 0)"; mkdir "$c" && cd "$c" || return 1; cur="$(pwd -P)"
+  done
+  c="e$(long $(( $1 - ${#cur} - 2 )) 0)"; mkdir "$c" && cd "$c" || return 1
+  mkdir -p audit_1/poc/F-1 && printf '*\n' > audit_1/.gitignore && printf 'native\n' > audit_1/exec-mode
+  pwd -P
+}
+dgate() {  # dgate <dir> [VAR=val ...] -- <argument>...: ngate, from <dir> in place of $WT
+  local dir="$1"; shift
+  rm -rf "$T/calls" "$T/calls.env" "$T/envdump" "$NT"; mkdir -p "$NT"
+  shim_settings SHIM_CALLS="$T/calls" SHIM_ENV_DUMP="$T/envdump" ${SHIM_EXTRA[@]+"${SHIM_EXTRA[@]}"}
+  nrun "$dir" "$@"
+}
+SCJ='{"incidents": [{"id": "INC-1.1", "root_cause_class": "supply_chain_or_ci"}]}'
+if DW="$(deep_dir $((PM - 22)))" && [ "${#DW}" = $((PM - 22)) ]; then
+  ( cd "$DW" && mkdir incident_1 && printf '*\n' > incident_1/.gitignore && printf '%s\n' "$SCJ" > incident_1/INCIDENTS.json )
+  code="$(dgate "$DW" AUDITOR_EXEC_MODE=native -- --crate audit_1/poc/F-1)"
+  [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: incident_1/INCIDENTS.json cannot be read: $want_un" "$T/out" && new_nothing_ran && one_blocker \
+    && ok "an audit's crate in native mode, in a working directory of $((PM - 22)) bytes whose incident_1/INCIDENTS.json lies past PATH_MAX ($PM) -> exit 3, nothing copied" \
+    || { bad "an audit's crate beside an incident_1/INCIDENTS.json past PATH_MAX, native: exit $code"; cat "$T/out" >&2; }
+else
+  bad "no working directory of $((PM - 22)) bytes could be made below $T"
+fi
+if DW="$(deep_dir $((PM - 200)))" && [ "${#DW}" = $((PM - 200)) ]; then
+  mk_crate "$DW/audit_1/poc/F-1"
+  mkdir -p "$DW/audit_1/exec/build-sbf-1" && cp "$T/vuln.so" "$T/fixed.so" "$DW/audit_1/exec/build-sbf-1/"
+  n2="incident_1.$(long 179 x)"; n3="incident_1.$(long 219 y)"
+  ( cd "$DW" && mkdir "$n2" && printf '%s\n' "$SCJ" > "$n2/INCIDENTS.json" )
+  code="$(dgate "$DW" AUDITOR_EXEC_MODE=native -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+  [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: $n2/INCIDENTS.json cannot be read: $want_un" "$T/out" && new_nothing_ran && one_blocker \
+    && ok "an audit's crate in native mode beside a run moved aside under a name of 190 bytes, its INCIDENTS.json past PATH_MAX -> exit 3, nothing copied" \
+    || { bad "an audit's crate beside a long-named run whose INCIDENTS.json lies past PATH_MAX, native: exit $code"; cat "$T/out" >&2; }
+  ( cd "$DW" && mv "$n2" "$n3" )
+  code="$(dgate "$DW" AUDITOR_EXEC_MODE=native -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+  [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: ${n3:0:200}.../INCIDENTS.json cannot be read: $want_un" "$T/out" && new_nothing_ran && one_blocker \
+    && ok "... and under a name of 230 bytes, the run itself past PATH_MAX -> exit 3, the name cut after 200 bytes" \
+    || { bad "an audit's crate beside a run whose own path lies past PATH_MAX, native: exit $code"; cat "$T/out" >&2; }
+  ( cd "$DW" && rm -rf "$n3" )
+  code="$(dgate "$DW" AUDITOR_EXEC_MODE=native -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+  [ "$code" = 0 ] && grep -q "^$LEG3" "$T/out" && ok "... and with that run gone the same crate runs" \
+    || { bad "an audit's crate in a working directory of $((PM - 200)) bytes, native: exit $code"; cat "$T/out" >&2; }
+  if [ "$(id -u)" != 0 ]; then
+    ( cd "$DW" && mkdir incident_1 && printf '%s\n' "$SCJ" > incident_1/INCIDENTS.json )
+    chmod 300 "$DW"
+    code="$(dgate "$DW" AUDITOR_EXEC_MODE=native -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+    chmod 700 "$DW"
+    [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: the working directory cannot be listed: $want_un" "$T/out" && new_nothing_ran && one_blocker \
+      && ok "an audit's crate in native mode in a working directory that cannot be listed -> exit 3, nothing copied" \
+      || { bad "an audit's crate in a working directory that cannot be listed, native: exit $code"; cat "$T/out" >&2; }
+  fi
+else
+  bad "no working directory of $((PM - 200)) bytes could be made below $T"
+fi
+rm -rf "$WT/incident_2" "$T/elsewhere-run" "$T/deep-$((PM - 22))" "$T/deep-$((PM - 200))"
 rm -rf "$WT/incident_1/poc/INC-1.2"; incidents supply_chain_or_ci
 # The crate check on its own, run from run.sh's harness code: under supply_chain_or_ci it refuses what
 # the target's crates could come through, and without the rule it accepts the same crate.

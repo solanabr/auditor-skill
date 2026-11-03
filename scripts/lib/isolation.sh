@@ -171,18 +171,22 @@
 #                                for that incident, or, with no id, to supply_chain_or_ci when any incident has
 #                                it and to "other" otherwise; status 3 with ISO_CLASS the reason when the file,
 #                                an incident or a class cannot be read (references/detection-response/
-#                                incidents-schema.md). python3 starts from /, as for the self-check.
+#                                incidents-schema.md); the reason is "is missing" only when no file is there.
+#                                python3 starts from /, as for the self-check.
 #   iso_incident_runs <working directory>
 #                                reads in turn, as iso_incident_class does with no id, the INCIDENTS.json of
 #                                each directory named incident_* at the top of <working directory> (an absolute
 #                                path): sets ISO_CLASS to supply_chain_or_ci at the first that records such an
 #                                incident, and to "other" when none does, and ISO_INCIDENTS to that file,
 #                                relative to <working directory> and cut as confine_shown cuts. A directory
-#                                without INCIDENTS.json, or whose file records no incident (a hunt that ruled
-#                                everything out), counts for nothing; one that cannot be searched is read.
-#                                Status 3, with ISO_CLASS the reason, at the first file that cannot be read;
-#                                status 2 when a file needs reading and python3 is not on PATH. The list does
-#                                not depend on the caller's set -f.
+#                                whose INCIDENTS.json is missing, or whose file records no incident (a hunt that
+#                                ruled everything out), counts for nothing.
+#                                Status 3, with ISO_CLASS the reason, at the first file that cannot be read:
+#                                only python3 tells that a file is missing, so a stat that fails for another
+#                                reason (a directory that cannot be searched, a path past PATH_MAX) gives it,
+#                                and so does a working directory that cannot be listed (ISO_INCIDENTS is then
+#                                "the working directory"). Status 2 when such a directory is there and python3
+#                                is not on PATH. The list does not depend on the caller's set -f.
 # Needs bash >= 3.2, python3 (the self-check, the keypair and the watchdog), env, mkdir, mktemp and cat.
 
 # What iso_credentials, iso_cred_names, iso_homes and iso_env run, with python3 -I so that no module comes
@@ -1112,15 +1116,24 @@ iso_incident_class() { # iso_incident_class <INCIDENTS.json> [<INC-n.k>]
 iso_incident_runs() { # iso_incident_runs <working directory>
   local d rc
   local -a dirs
+  ISO_CLASS=other
+  ISO_INCIDENTS=""
+  # A directory that cannot be listed globs to nothing, so that is told first, whatever the glob options.
+  if [ ! -r "$1" ]; then
+    ISO_INCIDENTS="the working directory"
+    ISO_CLASS="cannot be listed"
+    return 3
+  fi
   case $- in
     *f*) set +f; dirs=("$1"/incident_*); set -f ;;
     *) dirs=("$1"/incident_*) ;;
   esac
-  ISO_CLASS=other
-  ISO_INCIDENTS=""
   for d in ${dirs[@]+"${dirs[@]}"}; do
-    [ -d "$d" ] || continue
-    if [ ! -e "$d/INCIDENTS.json" ] && [ ! -L "$d/INCIDENTS.json" ] && [ -x "$d" ]; then continue; fi
+    # The pattern itself comes back when nothing matches.
+    [ "$d" != "$1/incident_*" ] || continue
+    # The shell's tests cannot tell a missing path from one a stat cannot reach, so only a name that is there
+    # and is no directory is passed over here; python3 decides the rest.
+    if [ ! -d "$d" ] && [ -e "$d" ]; then continue; fi
     confine_shown "${d##*/}"
     ISO_INCIDENTS=$CONFINE_SHOWN/INCIDENTS.json
     command -v python3 >/dev/null 2>&1 || { ISO_CLASS=""; return 2; }
@@ -1128,7 +1141,7 @@ iso_incident_runs() { # iso_incident_runs <working directory>
     iso_incident_class "$d/INCIDENTS.json" || rc=$?
     case "$rc:$ISO_CLASS" in
       0:supply_chain_or_ci) return 0 ;;
-      0:*|'3:records no incident') ;;
+      0:*|'3:is missing'|'3:records no incident') ;;
       3:?*) return 3 ;;
       *) ISO_CLASS="cannot be read"; return 3 ;;
     esac
