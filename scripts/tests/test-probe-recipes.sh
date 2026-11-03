@@ -454,11 +454,12 @@ zcheck "the PyPI form makes the environment with python3 -I and installs the has
 # ---- the line that makes zizmor's environment, with the real python3 ------------------------------------------
 # Run as written from a checkout that ships modules named as Python's own, each of which leaves a mark and stops:
 # python3 -m without -I would load its venv.py, and Python 3.9 before 3.9.14 and 3.10 before 3.10.6 set pip up in a
-# child that is not isolated and starts in the working directory, which would load its runpy.py.
+# child that is not isolated and starts in the working directory, which would load its runpy.py. A python3 that
+# cannot make an environment with pip from an empty directory either (no venv or ensurepip) skips this with a note.
 vline=$(zblock bash 2 | grep -F -- '-m venv ')
 if [ -z "$vline" ]; then bad "power-tools.md's PyPI form has no line that runs python3 -m venv"
-elif ! (cd "$T" && python3 -I -m ensurepip --version) > /dev/null 2>&1; then
-  echo "note: no python3 with venv and ensurepip; the environment line ran against the stand-ins only"
+elif ! (cd "$T" && python3 -I -m venv "$T/zctl" && [ -x "$T/zctl/bin/pip" ]) > /dev/null 2>&1; then
+  echo "note: this python3 cannot make a virtual environment with pip in an empty directory; the environment line ran against the stand-ins only"
 else
   mkdir -p "$T/zrepo2" "$T/zhome2" || exit 1
   for m in venv runpy ensurepip pip; do
@@ -477,7 +478,8 @@ fi
 # A code span, or a code line joined over a trailing \, is a call when its command, past a "(cd <dir> &&",
 # "cd <dir> &&" or "env [NAME=value...]" in front, is zizmor (by name or by a path ending in /zizmor), or docker or
 # podman with zizmorcore/zizmor in the line, and a word follows it; a name alone, such as the image's, is not.
-# Each call passes these flags, and a container call names the image by a sha256 digest.
+# Each call passes these flags, and a container call names the image by a sha256 digest. The self-test's calls are
+# made from the same list, so a flag added here is required of them too.
 ZALL='--offline --no-config --no-ignores --persona=auditor'
 ZAWK='
 function seg(s, ln,   w, n, i, c) {
@@ -524,11 +526,11 @@ zlist() { # zlist FINDINGS: the file:line of each call that lacks something, one
 $1
 EOF
 }
-printf '%s\n' 'Run `zizmor --offline --no-config --no-ignores --persona=auditor .` but not `~/v/bin/zizmor --offline .`.' \
+printf '%s\n' "Run \`zizmor $ZALL .\` but not \`~/v/bin/zizmor --offline .\`." \
   'Nor `(cd ~ && zizmor --no-config .)`, nor `env A=1 zizmor .`; `# zizmor --offline`, `zizmor: ignore[x]`, `zizmor` and `ghcr.io/zizmorcore/zizmor` are names.' \
-  '```bash' 'docker run --rm \' '  ghcr.io/zizmorcore/zizmor:1.30.1 --offline --no-config --no-ignores --persona=auditor /src' \
+  '```bash' 'docker run --rm \' "  ghcr.io/zizmorcore/zizmor:1.30.1 $ZALL /src" \
   'zizmor==1.30.1 \' '    --hash=sha256:00' '# zizmor --offline, in a comment' \
-  "podman run --rm ghcr.io/zizmorcore/zizmor@sha256:$(printf '%064d' 0) --offline --no-config --no-ignores --persona=auditor /s" \
+  "podman run --rm ghcr.io/zizmorcore/zizmor@sha256:$(printf '%064d' 0) $ZALL /s" \
   '```' > "$T/zforms.md"
 got=$(zlist "$(cd "$T" && awk "$ZAWK" zforms.md)" | tr '\n' ' ')
 if [ "$got" = "zforms.md:1 zforms.md:2 zforms.md:2 zforms.md:4 " ]; then
