@@ -28,7 +28,11 @@
 #     (credential.helper), an askpass program (core.askPass) or a cookie file (http.cookieFile), sends an HTTP
 #     header (http.extraHeader), rewrites to an http(s) URL that carries a login (url.<base>), or goes through
 #     a proxy with a login (http.proxy, remote.<name>.proxy): through each, git gives a login to any code here
-#     that runs it. Dev Containers and Codespaces forward the host's git login through such a helper;
+#     that runs it. Dev Containers and Codespaces forward the host's git login through such a helper. git's
+#     own store and cache helpers count by what they hand out: with no --file or --socket, through their
+#     default file and socket, which count on their own; with one, when that file is readable or that socket
+#     accepts a connection, the file or the socket counting. Written with shell syntax (quotes, an escape, a
+#     variable, a glob) or with a relative path, either counts as any other helper does;
 #   the files in ~/.gnupg/private-keys-v1.d/, and the gpg-agent sockets ~/.gnupg/S.gpg-agent,
 #     S.gpg-agent.ssh, S.gpg-agent.extra and S.gpg-agent.browser;
 #   Claude Code's login: .credentials.json in ~/.claude and in every other ~/.claude* directory (where
@@ -212,6 +216,11 @@ GIT_ENTRY = re.compile(r"[ \t]*([A-Za-z][A-Za-z0-9-]*)[ \t]*(=?)(.*)")
 URL_LOGIN = re.compile(r"(?i)https?://[^/@]+@")
 # A proxy as git takes it, [protocol://][user[:password]@]host[:port], with a login.
 PROXY_LOGIN = re.compile(r"(?i)^(?:[a-z][a-z0-9+.-]*://)?[^/@\s]+@")
+# What a shell, which runs a credential helper, reads as more than plain words: quotes, an escape, a variable,
+# a substitution, a glob, an operator or a comment.
+SHELL_SYNTAX = re.compile(r"[\"\x27\\$`;&|<>(){}*?\[\]#\n]")
+# The helpers git ships that hand out only what a file or a socket holds, and the option that names it.
+GIT_HELPERS = {"git-credential-store": "file", "git-credential-cache": "socket"}
 # Botocore reads an AWS config with either = or : between a name and its value.
 AWS_SECRET = re.compile(r"(?im)^[ \t]*(credential_process|aws_secret_access_key|aws_session_token)[ \t]*[=:][ \t]*[^\s#;]")
 # A credentials block (an API token for a host) or a credentials_helper block in a Terraform CLI config.
@@ -388,12 +397,47 @@ def git_value(text):
     return "".join(out).strip()
 
 
+def git_helper(text, path, home, found):
+    # A credential helper <path> names counts, but the store and cache helpers git ships hand out only what
+    # their file or socket holds (git runs a helper not named by an absolute path as git credential-<name>,
+    # through the shell). With no --file or --socket (or an abbreviation of it), that is their default file or
+    # socket, which counts on its own; with one, that file counts when it is readable and that socket when it
+    # accepts a connection, "~" as a word of its own standing for <home>. One written with shell syntax or a
+    # relative path counts as any other helper does.
+    words = text.split()
+    command = os.path.basename(words[0]) if words[0].startswith("/") else "git-credential-" + words[0]
+    option = GIT_HELPERS.get(command)
+    if not option or SHELL_SYNTAX.search(text):
+        found.append((GIT, path))
+        return
+    where, i = "", 1
+    while i < len(words):
+        name, eq, value = words[i].partition("=")
+        if len(name) > 2 and name.startswith("--") and option.startswith(name[2:]):
+            if not eq:
+                i += 1
+                value = words[i] if i < len(words) else ""
+                if value == "~" or value.startswith("~/"):
+                    value = home + value[1:]
+            where = value
+        i += 1
+    if not where:
+        return
+    if not where.startswith("/"):
+        found.append((GIT, path))
+    elif option == "file":
+        readable(found, GIT, [where])
+    else:
+        sockets(found, [(GIT, where)])
+
+
 def git_config(path, home, found, state, depth=0):
-    # A git config file counts when it names a credential helper, an askpass program or a cookie file, sends
-    # an HTTP header, rewrites to an http(s) URL that carries a login, or goes through a proxy with a login
-    # (http.proxy, remote.<name>.proxy). The files it includes count the same way, whatever the includeIf
-    # condition, ten deep at most; "~" in an include path stands for <home>. As git does, it skips a byte
-    # order mark at the start, and reads the headers a line starts with, then the entry after them.
+    # A git config file counts when it names a credential helper (the store and cache git ships count by their
+    # file and socket, git_helper), an askpass program or a cookie file, sends an HTTP header, rewrites to an
+    # http(s) URL that carries a login, or goes through a proxy with a login (http.proxy, remote.<name>.proxy).
+    # The files it includes count the same way, whatever the includeIf condition, ten deep at most; "~" in an
+    # include path stands for <home>. As git does, it skips a byte order mark at the start, and reads the
+    # headers a line starts with, then the entry after them.
     data = start(path, 1 << 20) if path and depth <= 10 else None
     key = os.path.realpath(path) if data is not None else ""
     if not key or key in state["configs"]:
@@ -415,7 +459,9 @@ def git_config(path, home, found, state, depth=0):
         name, text = m.group(1).lower(), git_value(m.group(3)) if m.group(2) else "true"
         if not text:
             continue
-        if ((section, name) in (("credential", "helper"), ("core", "askpass"), ("http", "extraheader"), ("http", "cookiefile"))
+        if (section, name) == ("credential", "helper"):
+            git_helper(text, path, home, found)
+        elif ((section, name) in (("core", "askpass"), ("http", "extraheader"), ("http", "cookiefile"))
                 or name == "proxy" and section in ("http", "remote") and PROXY_LOGIN.match(text)):
             found.append((GIT, path))
         elif section in ("include", "includeif") and name == "path":

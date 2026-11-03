@@ -97,7 +97,8 @@
 #     on the homes it is given: the Solana CLI's keypair, linked and deep directories,
 #     the entry budget, the places the environment names (a Claude Code login under
 #     CLAUDE_CONFIG_DIR and Anthropic profiles too), git, AWS and Terraform config
-#     files by what they hold (a credential helper, an askpass program, a cookie file,
+#     files by what they hold (a credential helper, git's store and cache by their file
+#     and socket, an askpass program, a cookie file,
 #     an HTTP header, a URL or a proxy with a login, an include; a credential_process
 #     or a key; a credentials block), Claude Code's settings, state and managed
 #     settings by what they hold (a credential helper, a token or a list of headers in an
@@ -1913,7 +1914,7 @@ fi
 # they hold.
 EG="$T/fe-git"; mkdir -p "$EG/xdg/git"
 for f in askpass ssh-askpass; do printf 'secret\n' > "$EG/$f"; done
-printf '[credential]\n\thelper = cache\n' > "$EG/gitconfig-global"; printf '[core]\n\taskpass = /x\n' > "$EG/gitconfig-system"
+printf '[credential]\n\thelper = manager\n' > "$EG/gitconfig-global"; printf '[core]\n\taskpass = /x\n' > "$EG/gitconfig-system"
 printf '[http]\n\textraheader = AUTHORIZATION: basic eA==\n' > "$EG/xdg/git/config"; printf '[default]\naws_session_token = x\n' > "$EG/aws-config"
 printf 'credentials "app.terraform.io" {\n  token = "x"\n}\n' > "$EG/cli.tfrc"
 code="$(dcreds GIT_ASKPASS="$EG/askpass" SSH_ASKPASS="$EG/ssh-askpass" GIT_CONFIG_GLOBAL="$EG/gitconfig-global" \
@@ -1931,18 +1932,21 @@ code="$(dcreds DOCKER_CERT_PATH="$ED/certs" DOCKER_CONFIG="$ED/config" -- "$CLEA
 [ "$code" = 1 ] && lines_are "Kubernetes or Docker config (2)" "$ED/certs/key.pem" "$ED/config/contexts/tls/0123abcd/docker/key.pem" \
   && ok "the Docker TLS client keys the environment names count (DOCKER_CERT_PATH, DOCKER_CONFIG's contexts)" \
   || { bad "the Docker TLS client keys the environment names: $code"; cat "$T/creds.out" >&2; }
-# A git config or an AWS config in a home counts for what it holds. In a git config: a credential helper, an
-# askpass program, a cookie file, an HTTP header, an http(s) URL or a proxy with a login, in any letter case,
-# on a section's own line or after several headers on one, and after a byte order mark too; in an AWS config:
-# a credential_process or a key, after = or :; in ~/.terraformrc, a credentials or credentials_helper block.
-# A helper reset to nothing, a user name with an ssh URL, a proxy without a login, a region alone and a
-# Terraform plugin cache do not count. So do Claude Code's settings and state files (in ~/.claude*,
-# ~/.claude.json and its backups): a command that prints a credential (an MCP server's headersHelper too), a
-# token in an env block (of the file or of an MCP server), a URL with a login there, a credential header in a
-# list of headers there (ANTHROPIC_CUSTOM_HEADERS, OTEL_EXPORTER_OTLP_HEADERS), an MCP server's Authorization
-# header, and a key in an MCP server's URL (its query or its login) or arguments (an option, NAME=value, a
-# header option). Settings that only refer to a variable, and names that do not look like credentials, do not
-# count; nor do an ssh URL with a user name only and arguments that name no credential.
+# A git config or an AWS config in a home counts for what it holds. In a git config: a credential helper
+# (osxkeychain, manager, the one gh auth setup-git writes, and git's store or cache written with shell
+# syntax), an askpass program, a cookie file, an HTTP header, an http(s) URL or a proxy with a login, in any
+# letter case, on a section's own line or after several headers on one, and after a byte order mark too; in
+# an AWS config: a credential_process or a key, after = or :; in ~/.terraformrc, a credentials or
+# credentials_helper block. A helper reset to nothing, git's store and cache with their default file and
+# socket (which count on their own) or with a --file or --socket that holds nothing, a user name with an ssh
+# URL, a proxy without a login, a region alone and a Terraform plugin cache do not count. So do Claude Code's
+# settings and state files (in ~/.claude*, ~/.claude.json and its backups): a command that prints a credential
+# (an MCP server's headersHelper too), a token in an env block (of the file or of an MCP server), a URL with a
+# login there, a credential header in a list of headers there (ANTHROPIC_CUSTOM_HEADERS,
+# OTEL_EXPORTER_OTLP_HEADERS), an MCP server's Authorization header, and a key in an MCP server's URL (its
+# query or its login) or arguments (an option, NAME=value, a header option). Settings that only refer to a
+# variable, and names that do not look like credentials, do not count; nor do an ssh URL with a user name only
+# and arguments that name no credential.
 n=0
 while IFS='|' read -r file text kind; do
   [ -n "$file" ] || continue
@@ -1954,7 +1958,14 @@ while IFS='|' read -r file text kind; do
     [ "$code" = 0 ] && [ ! -s "$T/creds.out" ] && ok "~/$file holding $text does not count" || { bad "~/$file holding $text: $code"; cat "$T/creds.out" >&2; }
   fi
 done <<'CONFIGS'
-.gitconfig|[credential]\n\thelper = store\n|git or HTTP credentials
+.gitconfig|[credential]\n\thelper = store\n|
+.gitconfig|[credential]\n\thelper = cache --timeout=3600\n|
+.gitconfig|[credential]\n\thelper = store --file ~/.no-such-store\n|
+.gitconfig|[credential]\n\thelper = /usr/libexec/git-core/git-credential-cache --socket /nonexistent.invalid/socket\n|
+.gitconfig|[credential]\n\thelper = store --file=$HOME/.git-store\n|git or HTTP credentials
+.gitconfig|[credential]\n\thelper = store --file /nonexistent.invalid/s && /opt/other-helper\n|git or HTTP credentials
+.gitconfig|[credential]\n\thelper = store --file .git-store\n|git or HTTP credentials
+.gitconfig|[credential "https://github.com"]\n\thelper =\n\thelper = !/opt/homebrew/bin/gh auth git-credential\n|git or HTTP credentials
 .gitconfig|[credential "https://github.com"]\n\thelper = "!f() { node /tmp/vscode-remote-containers-0.js git-credential-helper $*; }; f"\n|git or HTTP credentials
 .gitconfig|[Credential] Helper = osxkeychain\n|git or HTTP credentials
 .config/git/config|[core]\n\taskPass = /usr/libexec/askpass\n|git or HTTP credentials
@@ -1965,8 +1976,8 @@ done <<'CONFIGS'
 .aws/config|[profile ci]\ncredential_process = /usr/local/bin/creds\n|cloud credentials
 .aws/config|[default]\naws_secret_access_key = x\n|cloud credentials
 .aws/config|[default]\nregion = eu-west-1\n|
-.gitconfig|\xef\xbb\xbf[credential]\n\thelper = store\n|git or HTTP credentials
-.gitconfig|[core] [credential] helper = store\n|git or HTTP credentials
+.gitconfig|\xef\xbb\xbf[credential]\n\thelper = osxkeychain\n|git or HTTP credentials
+.gitconfig|[core] [credential] helper = manager\n|git or HTTP credentials
 .gitconfig|[http]\n\tproxy = http://u:p@proxy.invalid:3128\n|git or HTTP credentials
 .gitconfig|[remote "origin"]\n\tproxy = u:p@proxy.invalid\n|git or HTTP credentials
 .gitconfig|[http "https://review.example.invalid/"]\n\tcookieFile = ~/.gitcookies\n|git or HTTP credentials
@@ -1999,6 +2010,14 @@ done <<'CONFIGS'
 .claude/settings.json|{"env":{"ANTHROPIC_CUSTOM_HEADERS":"X-Org-Route: prod\\nX-Tenant: t","OTEL_EXPORTER_OTLP_HEADERS":"Authorization=Bearer ${OTEL_TOKEN}","GIT_URL":"ssh://git@github.com/o/r.git"}}\n|
 .claude.json|{"mcpServers":{"api":{"type":"http","url":"https://mcp.example.invalid/mcp?api-key=${API_KEY}&page=2"},"fs":{"command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","/w","--header","X-Client: c"]},"gh":{"command":"docker","args":["run","-e","GITHUB_PERSONAL_ACCESS_TOKEN","img"]}}}\n|
 CONFIGS
+# git's store counts by the file its --file names, when that file is readable: the file counts, not the git
+# config, as the code here could read it without git. "~" as a word of its own is the home; the helper may be
+# named by an absolute path, and the option by an abbreviation, as git takes it (--fi).
+FH="$T/fc-store"; mkdir -p "$FH"; printf 'https://u:t@example.invalid\n' > "$FH/.store-x"; printf 'https://u:t@example.invalid\n' > "$T/store-abs"
+printf '[credential]\n\thelper = store --file ~/.store-x\n\thelper = /usr/libexec/git-core/git-credential-store --fi=%s\n' "$T/store-abs" > "$FH/.gitconfig"
+code="$(dcreds -- "$FH")"
+[ "$code" = 1 ] && lines_are "git or HTTP credentials (2)" "~/.store-x" "$T/store-abs" \
+  && ok "git's store counts by the file its --file names when that file is readable" || { bad "git's store with a readable --file: $code"; cat "$T/creds.out" >&2; }
 FH="$T/fc-include"; mkdir -p "$FH/.gitconfig.d"
 printf '[include]\n\tpath = .gitconfig\n\tpath = .gitconfig.d/more\n[includeIf "gitdir:/nowhere/"]\n\tpath = ~/.gitconfig.d/cond\n' > "$FH/.gitconfig"
 printf '[credential]\n\thelper = osxkeychain\n' > "$FH/.gitconfig.d/more"; printf '[core]\n\taskPass = /x\n' > "$FH/.gitconfig.d/cond"
@@ -2027,8 +2046,9 @@ out="$(cd "$WT" && env -i HOME="$CLEANHOME" PATH="$PATH" GITHUB_TOKEN=x AWS_SECR
   && ok "iso_cred_names names the variables that look like credentials (a name in mixed case too), and no others" || bad "iso_cred_names: '$out'"
 # Agent sockets count when they accept a connection: SSH_AUTH_SOCK, sockets in ~/.ssh and ~/.gnupg, in
 # GNUPGHOME, ssh-*/agent.* under TMPDIR, and in the runtime directory's gnupg/. So do container daemon sockets
-# and the sockets that answer git's credential requests with a login, and a container daemon a tcp://
-# DOCKER_HOST or CONTAINER_HOST reaches. A socket nothing listens on does not. Serving one needs a machine that
+# and the sockets that answer git's credential requests with a login (the one a git cache helper's --socket
+# names too), and a container daemon a tcp:// DOCKER_HOST or CONTAINER_HOST reaches. A socket nothing listens
+# on does not. Serving one needs a machine that
 # allows it: on CI a machine that does not fails the run, and anywhere else one SKIP line says the checks did
 # not run. Each socket path stays under 104 bytes, the macOS limit, with the runner's TMPDIR.
 SK="$T/k"; mkdir -p "$SK/.ssh" "$SK/.gnupg" "$T/g" "$T/t/ssh-a" "$T/r/gnupg" "$T/q/.ssh"
@@ -2072,6 +2092,11 @@ if [ -S "$T/a-stale" ] && python3 -I -c 'import socket, sys; socket.socket(socke
     "$T/t2/vscode-git-1.sock" "$T/r2/vscode-git-2.sock" \
     && ok "container daemon sockets (Docker Desktop, Colima, Rancher Desktop, Lima, DOCKER_HOST, CONTAINER_HOST, rootless, a Podman machine) and the sockets that answer git with a login (VS Code, Dev Containers, git's credential cache) count" \
     || { bad "container daemon and git credential sockets: $code"; cat "$T/creds.out" >&2; }
+  printf '[credential]\n\thelper = cache --socket %s\n\thelper = cache --timeout=60 --socket=%s\n' "$T/a" "$T/a-stale" > "$T/q/.gitconfig"
+  code="$(dcreds -- "$T/q")"
+  [ "$code" = 1 ] && lines_are "git or HTTP credentials (1)" "$T/a" \
+    && ok "git's cache counts by the socket its --socket names when that socket accepts a connection, not when nothing listens there" \
+    || { bad "git's cache with a --socket: $code"; cat "$T/creds.out" >&2; }
   port="$(cat "$T/a-port" 2>/dev/null)"
   code="$(dcreds DOCKER_HOST="tcp://127.0.0.1:$port" CONTAINER_HOST="tcp://localhost:$port" -- "$CLEANHOME")"
   [ -n "$port" ] && [ "$code" = 1 ] && lines_are "container daemon sockets (2)" "tcp://127.0.0.1:$port" "tcp://localhost:$port" \
