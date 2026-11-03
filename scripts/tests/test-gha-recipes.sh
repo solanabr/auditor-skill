@@ -30,10 +30,11 @@
 # command of every recipe, K080-4a included, must end within 30 s, in a UTF-8 locale where one is installed, on
 # files that hold one 1 MiB line of near misses. KV-020 Step 3 and KV-100 Step 4, which list documentation files
 # with one recursive grep as R1 does, run over file names that hold a space or a quote, and KV-100's over more than
-# 64 KiB of names.
+# 64 KiB of names. Known limits' git listing for the commands that search the whole tree runs over a repository
+# that tracks files Claude Code's grep skips.
 #
 # Usage (from the repo root): bash scripts/tests/test-gha-recipes.sh
-# Needs bash >= 3.2, grep, awk. No network. The fixtures are copied into a temp dir as .github/workflows/, those
+# Needs bash >= 3.2, grep, awk, git. No network. The fixtures are copied into a temp dir as .github/workflows/, those
 # under actions/ as .github/actions/<name>/action.yml, and those under infra/ as infra/, for the run; nothing is
 # written under the repository's own .github/.
 set -uo pipefail
@@ -655,6 +656,38 @@ for src in $LISTINGS; do
     fail=1
   fi
 done
+
+# Claude Code's grep skips a file an ignore rule names and a file it reads as binary, so Known limits compares, for
+# KV-140 Step 7 and KV-080 Step 8's second command, what git tracks with what grep reads. Its grep searches the files
+# those commands search, its git listing takes the same globs, and run as written in a repository that tracks a file
+# holding a byte outside UTF-8 and one an ignore rule names, the git listing names both.
+kl=$(awk '/^## GitHub Actions \(CI trigger trust\)/ { sec = 1; next } sec && /^## / { exit }
+  sec && /^\*\*Known limits\.\*\*/ { s = 1; next } s && /^\*\*/ { exit } s' "$doc")
+klgrep=$(printf '%s\n' "$kl" | spans 'grep -rl --exclude-dir=')
+klgit=$(printf '%s\n' "$kl" | spans "\"<auditor-skill root>/scripts/git-ro.sh\" ls-files -- '")
+opts() { printf '%s\n' "$1" | grep -oE -- "--(include|exclude-dir)=[^ ]*" | tr '\n' ' '; }
+klok=1
+for id in K140-7a K140-7b K080-8b; do
+  c=$(recipe_lines "$id"); c=${c%% | *}
+  if [ "$(opts "$klgrep")" != "$(opts "$c")" ] || [ "${klgrep##* }" != "${c##* }" ]; then klok=0; fi
+done
+globs=$(opts "$klgrep" | tr ' ' '\n' | sed -n "s/^--include=//p" | tr '\n' ' ')
+if [ "$(printf '%s\n' "${klgit#*ls-files -- }" | tr ' ' '\n' | grep . | tr '\n' ' ')" != "$globs" ]; then klok=0; fi
+klrun=${klgit#'"<auditor-skill root>/scripts/git-ro.sh"'}; klrun="\"$root/scripts/git-ro.sh\"$klrun"
+klrepo="$work/known-limits"; mkdir -p "$klrepo/infra" "$work/kl-home"
+got=$( (cd "$klrepo" && export HOME="$work/kl-home" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+    GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid \
+  && git init -q . && printf 'infra/ignored.tf\n' > .gitignore \
+  && printf 'condition = "repo:example/*"\n' > infra/ignored.tf \
+  && printf '# r\351gion\ncondition = "repo:example/*"\n' > infra/latin1.tf && git add .gitignore infra/latin1.tf \
+  && git add -f infra/ignored.tf && git commit -qm init && eval "$klrun") </dev/null 2>/dev/null | tr '\n' ' ')
+if [ -n "$klgrep" ] && [ -n "$klgit" ] && [ "$klok" -eq 1 ] && [ "$got" = "infra/ignored.tf infra/latin1.tf " ]; then
+  echo "ok   Known limits compares, for the commands that search the whole tree, what git tracks with what grep reads"
+else
+  echo "FAIL Known limits: its grep [${klgrep:-none}] and git listing [${klgit:-none}] (same files: $klok) named [$got]," \
+    "want [infra/ignored.tf infra/latin1.tf ]"
+  fail=1
+fi
 
 # Trigger spellings, one workflow each: a space before a colon, an event key holding null, ~, [], an anchor or an
 # alias, a flow list wrapped over lines, a byte-order mark before on:, a JSON document, an indented document, and
