@@ -2026,6 +2026,17 @@ for r in frames.py deltas.py; do
     res="$res $c" || res="$res $c:$(tr '\n' ' ' < "$TT/x26.err")"
 done
 eq "interpreter: with no python3 on PATH, frames.py and deltas.py stop with a named blocker (exit 3, no output)" "${res# }" "3 3"
+# The lookup reads /dev/null: a directory for stdin, which python3 refuses at start, fails the recipe
+# itself (exit 1, README.md), never the lookup with the blocker.
+res=""
+for r in frames.py deltas.py profile.sh; do
+  if [[ "$r" == deltas.py ]]; then set -- lamports incident_1/clean-mixed.jsonl; else set -- incident_1/clean-mixed.jsonl; fi
+  ( cd "$EV26" && "$DNR/$r" "$@" ) < "$EV26" > "$TT/x26.out" 2> "$TT/x26.err"
+  c=$?
+  [[ "$c" == 1 && ! -s "$TT/x26.out" ]] && ! grep -q 'blocker' "$TT/x26.err" && res="$res $c" ||
+    res="$res $c:$(head -n 1 "$TT/x26.err")"
+done
+eq "interpreter: with a directory for stdin, each recipe fails as python3 does (exit 1), not with the blocker" "${res# }" "1 1 1"
 
 if [[ "$fails" -ne 0 ]]; then
   echo "test-dnr: $fails assertion(s) FAILED" >&2

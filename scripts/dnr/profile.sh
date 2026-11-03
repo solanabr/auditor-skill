@@ -70,11 +70,13 @@ done
 # ---- interpreter (the same block is in profile.sh, frames.py and deltas.py)
 # python3 is looked up from / on the PATH confine_init cleaned of empty, relative and working-directory
 # entries, so no version file in the working directory (a .python-version or .tool-versions that a
-# pyenv, asdf or mise shim reads) picks it. The recipe then runs by the absolute path that interpreter
-# reports, which must lie outside the working directory, its links resolved too.
+# pyenv, asdf or mise shim reads) picks it. The lookup reads /dev/null, so only the recipe meets the
+# caller's stdin, which python3 refuses at start when it is a directory. The recipe then runs by the
+# absolute path that interpreter reports, which must lie outside the working directory, its links
+# resolved too.
 py=$(cd / && exec python3 -I -c 'import os, sys
 print(sys.executable)
-print(os.path.realpath(sys.executable))' 2>/dev/null) || py=''
+print(os.path.realpath(sys.executable))' </dev/null 2>/dev/null) || py=''
 pyreal=${py#*$'\n'}
 py=${py%%$'\n'*}
 case "$py$pyreal" in *[[:cntrl:]]*) py='' ;; esac
