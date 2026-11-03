@@ -1122,16 +1122,14 @@ fn waits_once_for_a_git_that_does_not_answer() {
         wt.run_dir(name);
         wt.write(&format!("{name}/poc/lib.rs"), b"fn poc() {}\n");
     }
-    // git opens HEAD with a blocking open, so a named pipe there leaves it
-    // waiting until it is killed.
-    fs::remove_file(wt.path(".git/HEAD")).expect("remove HEAD");
-    let status = Command::new("mkfifo")
-        .arg(wt.path(".git/HEAD"))
-        .status()
-        .expect("mkfifo");
-    assert!(status.success());
+    // A git that never answers (here one first on PATH that sleeps), as one
+    // blocked opening a file would be: it is killed when its time is up.
+    let slow = wt.outside().join("slow");
+    fs::create_dir(&slow).expect("make the slow git's directory");
+    write_script(&slow.join("git"), "#!/bin/sh\nexec /bin/sleep 60\n");
+    let path = format!("{}:/usr/bin:/bin", slow.display());
     let started = std::time::Instant::now();
-    let report = json(&run(BIN, &wt.dir, &["."]));
+    let report = json(&common::run_env(BIN, &wt.dir, &["."], &[("PATH", &path)]));
     let took = started.elapsed();
     assert_eq!(
         files(&report, "functions"),
