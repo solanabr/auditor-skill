@@ -80,13 +80,14 @@
 #     does a check that cannot finish; in native mode it is a warning. Through a driver,
 #     on the homes it is given: the Solana CLI's keypair, linked and deep directories,
 #     the entry budget, the places the environment names (a Claude Code login under
-#     CLAUDE_CONFIG_DIR and Anthropic profiles too), git and AWS config files by what
-#     they hold (a credential helper, an askpass program, an HTTP header, a URL with a
-#     login, an include; a credential_process or a key), Claude Code's settings, state
-#     and managed settings by what they hold (a credential helper, a token in an env
-#     block, an MCP server's Authorization header), Docker's TLS client keys, the
-#     variable names that look like credentials, and agent, container daemon (a
-#     tcp:// one too) and git credential sockets
+#     CLAUDE_CONFIG_DIR and Anthropic profiles too), git, AWS and Terraform config
+#     files by what they hold (a credential helper, an askpass program, a cookie file,
+#     an HTTP header, a URL or a proxy with a login, an include; a credential_process
+#     or a key; a credentials block), Claude Code's settings, state and managed
+#     settings by what they hold (a credential helper, a token in an env block, an MCP
+#     server's Authorization header), Docker's TLS client keys, the variable names that
+#     look like credentials, and agent, container daemon (a tcp:// one too) and git
+#     credential sockets
 #     (serving one needs a machine that allows it: on CI a machine that does not fails
 #     the run, anywhere else one SKIP line says so). On CI the runner's own home must
 #     pass the check, so that the checks that isolated mode passes run there. Its
@@ -1494,6 +1495,7 @@ done <<'CREDS'
 .config/anthropic/configs/default.json|Claude Code credentials
 .docker/key.pem|Kubernetes or Docker config
 .docker/contexts/tls/0123abcd/docker/key.pem|Kubernetes or Docker config
+.gitcookies|git or HTTP credentials
 CREDS
 # The same for a Claude Code login only where CLAUDE_CONFIG_DIR keeps it, outside HOME, for an API key only in
 # the env block of ~/.claude/settings.json, and for a git credential helper only, in ~/.gitconfig, in the form
@@ -1609,11 +1611,12 @@ EG="$T/fe-git"; mkdir -p "$EG/xdg/git"
 for f in askpass ssh-askpass; do printf 'secret\n' > "$EG/$f"; done
 printf '[credential]\n\thelper = cache\n' > "$EG/gitconfig-global"; printf '[core]\n\taskpass = /x\n' > "$EG/gitconfig-system"
 printf '[http]\n\textraheader = AUTHORIZATION: basic eA==\n' > "$EG/xdg/git/config"; printf '[default]\naws_session_token = x\n' > "$EG/aws-config"
+printf 'credentials "app.terraform.io" {\n  token = "x"\n}\n' > "$EG/cli.tfrc"
 code="$(dcreds GIT_ASKPASS="$EG/askpass" SSH_ASKPASS="$EG/ssh-askpass" GIT_CONFIG_GLOBAL="$EG/gitconfig-global" \
-  GIT_CONFIG_SYSTEM="$EG/gitconfig-system" XDG_CONFIG_HOME="$EG/xdg" AWS_CONFIG_FILE="$EG/aws-config" -- "$CLEANHOME")"
-[ "$code" = 1 ] && lines_are "cloud credentials (1), git or HTTP credentials (5)" "$EG/askpass" "$EG/ssh-askpass" \
-  "$EG/gitconfig-global" "$EG/gitconfig-system" "$EG/xdg/git/config" "$EG/aws-config" \
-  && ok "the askpass programs, git config and AWS config the environment names count (GIT_ASKPASS, GIT_CONFIG_GLOBAL, AWS_CONFIG_FILE and the rest)" \
+  GIT_CONFIG_SYSTEM="$EG/gitconfig-system" XDG_CONFIG_HOME="$EG/xdg" AWS_CONFIG_FILE="$EG/aws-config" TF_CLI_CONFIG_FILE="$EG/cli.tfrc" -- "$CLEANHOME")"
+[ "$code" = 1 ] && lines_are "cloud credentials (2), git or HTTP credentials (5)" "$EG/askpass" "$EG/ssh-askpass" \
+  "$EG/gitconfig-global" "$EG/gitconfig-system" "$EG/xdg/git/config" "$EG/aws-config" "$EG/cli.tfrc" \
+  && ok "the askpass programs, git config, AWS config and Terraform CLI config the environment names count (GIT_ASKPASS, GIT_CONFIG_GLOBAL, AWS_CONFIG_FILE, TF_CLI_CONFIG_FILE and the rest)" \
   || { bad "the askpass and config places the environment names: $code"; cat "$T/creds.out" >&2; }
 # The Docker TLS client keys the environment names: key.pem in DOCKER_CERT_PATH, and the context keys under
 # DOCKER_CONFIG. The certificates beside them do not count.
@@ -1625,9 +1628,11 @@ code="$(dcreds DOCKER_CERT_PATH="$ED/certs" DOCKER_CONFIG="$ED/config" -- "$CLEA
   && ok "the Docker TLS client keys the environment names count (DOCKER_CERT_PATH, DOCKER_CONFIG's contexts)" \
   || { bad "the Docker TLS client keys the environment names: $code"; cat "$T/creds.out" >&2; }
 # A git config or an AWS config in a home counts for what it holds. In a git config: a credential helper, an
-# askpass program, an HTTP header or an http(s) URL with a login, in any letter case and on a section's own
-# line too; in an AWS config: a credential_process or a key. A helper reset to nothing, a user name with an
-# ssh URL, and a region alone do not count. So do Claude Code's settings and state files (in ~/.claude*,
+# askpass program, a cookie file, an HTTP header, an http(s) URL or a proxy with a login, in any letter case,
+# on a section's own line or after several headers on one, and after a byte order mark too; in an AWS config:
+# a credential_process or a key, after = or :; in ~/.terraformrc, a credentials or credentials_helper block.
+# A helper reset to nothing, a user name with an ssh URL, a proxy without a login, a region alone and a
+# Terraform plugin cache do not count. So do Claude Code's settings and state files (in ~/.claude*,
 # ~/.claude.json and its backups): a command that prints a credential, a token in an env block (of the file
 # or of an MCP server), a URL with a login there, or an MCP server's Authorization header. Settings that only
 # refer to a variable, and names that do not look like credentials, do not count.
@@ -1653,6 +1658,16 @@ done <<'CONFIGS'
 .aws/config|[profile ci]\ncredential_process = /usr/local/bin/creds\n|cloud credentials
 .aws/config|[default]\naws_secret_access_key = x\n|cloud credentials
 .aws/config|[default]\nregion = eu-west-1\n|
+.gitconfig|\xef\xbb\xbf[credential]\n\thelper = store\n|git or HTTP credentials
+.gitconfig|[core] [credential] helper = store\n|git or HTTP credentials
+.gitconfig|[http]\n\tproxy = http://u:p@proxy.invalid:3128\n|git or HTTP credentials
+.gitconfig|[remote "origin"]\n\tproxy = u:p@proxy.invalid\n|git or HTTP credentials
+.gitconfig|[http "https://review.example.invalid/"]\n\tcookieFile = ~/.gitcookies\n|git or HTTP credentials
+.gitconfig|[http]\n\tproxy = http://proxy.invalid:3128\n|
+.aws/config|[default]\naws_secret_access_key: x\n|cloud credentials
+.terraformrc|credentials "app.terraform.io" {\n  token = "x"\n}\n|cloud credentials
+.terraformrc|credentials_helper "example" {\n  args = []\n}\n|cloud credentials
+.terraformrc|plugin_cache_dir = "/tmp/plugins"\n|
 .claude/settings.json|{"env":{"CLAUDE_CODE_OAUTH_TOKEN":"x"}}\n|Claude Code credentials
 .claude/settings.local.json|{"apiKeyHelper":"/opt/k.sh"}\n|Claude Code credentials
 .claude-work/remote-settings.json|{"awsCredentialExport":"/opt/aws-export.sh"}\n|Claude Code credentials

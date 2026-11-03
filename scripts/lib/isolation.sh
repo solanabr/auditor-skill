@@ -16,17 +16,19 @@
 #     files in ~/.config/gcloud/legacy_credentials/;
 #   ~/.azure/accessTokens.json, msal_token_cache.json, msal_token_cache.bin, service_principal_entries.json
 #     and service_principal_entries.bin;
-#   ~/.vault-token and ~/.terraform.d/credentials.tfrc.json;
+#   ~/.vault-token and ~/.terraform.d/credentials.tfrc.json; ~/.terraformrc when it holds a credentials block
+#     or names a credentials_helper;
 #   ~/.kube/config and ~/.docker/config.json; the Docker TLS client keys ~/.docker/key.pem and
 #     ~/.docker/contexts/tls/*/*/key.pem, which open a daemon that checks its clients;
 #   ~/.npmrc, ~/.yarnrc.yml, ~/.gem/credentials, ~/.pypirc, ~/.cargo/credentials and
 #     ~/.cargo/credentials.toml;
-#   ~/.git-credentials, ~/.config/git/credentials, ~/.netrc and ~/.config/gh/hosts.yml;
+#   ~/.git-credentials, ~/.config/git/credentials, ~/.netrc, ~/.config/gh/hosts.yml and ~/.gitcookies;
 #   ~/.gitconfig and ~/.config/git/config, with the files they include (include.path and
 #     includeIf.<condition>.path, whatever the condition), when one names a credential helper
-#     (credential.helper) or an askpass program (core.askPass), sends an HTTP header (http.extraHeader) or
-#     rewrites to an http(s) URL that carries a login (url.<base>): through each, git gives a login to any
-#     code here that runs it. Dev Containers and Codespaces forward the host's git login through such a helper;
+#     (credential.helper), an askpass program (core.askPass) or a cookie file (http.cookieFile), sends an HTTP
+#     header (http.extraHeader), rewrites to an http(s) URL that carries a login (url.<base>), or goes through
+#     a proxy with a login (http.proxy, remote.<name>.proxy): through each, git gives a login to any code here
+#     that runs it. Dev Containers and Codespaces forward the host's git login through such a helper;
 #   the files in ~/.gnupg/private-keys-v1.d/, and the gpg-agent sockets ~/.gnupg/S.gpg-agent,
 #     S.gpg-agent.ssh, S.gpg-agent.extra and S.gpg-agent.browser;
 #   Claude Code's login: .credentials.json in ~/.claude and in every other ~/.claude* directory (where
@@ -53,13 +55,14 @@
 # ~/.gitconfig is read); XDG_CACHE_HOME (git/credential/socket); GH_CONFIG_DIR (hosts.yml);
 # AWS_SHARED_CREDENTIALS_FILE, GOOGLE_APPLICATION_CREDENTIALS, NETRC, NPM_CONFIG_USERCONFIG (in either case),
 # GIT_ASKPASS, SSH_ASKPASS and ANTHROPIC_IDENTITY_TOKEN_FILE, each a file; GIT_CONFIG_GLOBAL and
-# GIT_CONFIG_SYSTEM, read as ~/.gitconfig is; AWS_CONFIG_FILE, read as ~/.aws/config is; KUBECONFIG, a list
-# of files; DOCKER_CONFIG (config.json and contexts/tls/*/*/key.pem); DOCKER_CERT_PATH (key.pem);
-# CLAUDE_CONFIG_DIR (.credentials.json, and the settings and state files above); ANTHROPIC_CONFIG_DIR (every
-# file under it); CLOUDSDK_CONFIG and AZURE_CONFIG_DIR (the gcloud and azure files above); GNUPGHOME (its
-# private-keys-v1.d/ and gpg-agent sockets); DOCKER_HOST and CONTAINER_HOST (a unix:// socket, or a tcp://
-# address, port 2375 when it names none, that accepts a TCP connection: for DOCKER_HOST only when
-# DOCKER_TLS_VERIFY is not set, since a daemon that checks TLS clients takes the key read above);
+# GIT_CONFIG_SYSTEM, read as ~/.gitconfig is; AWS_CONFIG_FILE, read as ~/.aws/config is; TF_CLI_CONFIG_FILE,
+# read as ~/.terraformrc is; KUBECONFIG, a list of files; DOCKER_CONFIG (config.json and
+# contexts/tls/*/*/key.pem); DOCKER_CERT_PATH (key.pem); CLAUDE_CONFIG_DIR (.credentials.json, and the
+# settings and state files above); ANTHROPIC_CONFIG_DIR (every file under it); CLOUDSDK_CONFIG and
+# AZURE_CONFIG_DIR (the gcloud and azure files above); GNUPGHOME (its private-keys-v1.d/ and gpg-agent
+# sockets); DOCKER_HOST and CONTAINER_HOST (a unix:// socket, or a tcp:// address, port 2375 when it names
+# none, that accepts a TCP connection: for DOCKER_HOST only when DOCKER_TLS_VERIFY is not set, since a daemon
+# that checks TLS clients takes the key read above);
 # VSCODE_GIT_IPC_HANDLE and REMOTE_CONTAINERS_IPC (the sockets through which VS Code and its Dev Containers
 # answer git's credential requests with the host's login); TMPDIR (ssh-*/agent.*, vscode-git-*.sock and
 # podman/*.sock) and XDG_RUNTIME_DIR (ssh-agent.socket, vscode-ssh-auth-*.sock, vscode-git-*.sock,
@@ -176,7 +179,8 @@ FILES = (((SOLANA, ".config/solana/id.json"), (CLOUD, ".aws/credentials"))
             (CLUSTER, ".docker/config.json"), (CLUSTER, ".docker/key.pem"), (REGISTRY, ".npmrc"), (REGISTRY, ".yarnrc.yml"),
             (REGISTRY, ".gem/credentials"), (REGISTRY, ".pypirc"), (REGISTRY, ".cargo/credentials"),
             (REGISTRY, ".cargo/credentials.toml"),
-            (GIT, ".git-credentials"), (GIT, ".config/git/credentials"), (GIT, ".netrc"), (GIT, ".config/gh/hosts.yml")))
+            (GIT, ".git-credentials"), (GIT, ".config/git/credentials"), (GIT, ".netrc"), (GIT, ".config/gh/hosts.yml"),
+            (GIT, ".gitcookies")))
 DIRS = ((SOLANA, ".config/solana"), (CLOUD, ".aws/sso/cache"), (CLOUD, ".aws/cli/cache"),
         (CLOUD, ".config/gcloud/legacy_credentials"), (GPG, ".gnupg/private-keys-v1.d"), (CLAUDE, ".config/anthropic"))
 GPG_SOCKETS = ("S.gpg-agent", "S.gpg-agent.ssh", "S.gpg-agent.extra", "S.gpg-agent.browser")
@@ -199,7 +203,12 @@ KEYPAIR = re.compile(r"^keypair_path:[ \t]*(?:\"([^\"]*)\"|\x27([^\x27]*)\x27|(.
 GIT_SECTION = re.compile(r"[ \t]*\[[ \t]*([A-Za-z0-9.-]+)[ \t]*(?:\"((?:[^\"\\]|\\.)*)\"[ \t]*)?\]")
 GIT_ENTRY = re.compile(r"[ \t]*([A-Za-z][A-Za-z0-9-]*)[ \t]*(=?)(.*)")
 URL_LOGIN = re.compile(r"(?i)https?://[^/@]+@")
-AWS_SECRET = re.compile(r"(?im)^[ \t]*(credential_process|aws_secret_access_key|aws_session_token)[ \t]*=[ \t]*[^\s#;]")
+# A proxy as git takes it, [protocol://][user[:password]@]host[:port], with a login.
+PROXY_LOGIN = re.compile(r"(?i)^(?:[a-z][a-z0-9+.-]*://)?[^/@\s]+@")
+# Botocore reads an AWS config with either = or : between a name and its value.
+AWS_SECRET = re.compile(r"(?im)^[ \t]*(credential_process|aws_secret_access_key|aws_session_token)[ \t]*[=:][ \t]*[^\s#;]")
+# A credentials block (an API token for a host) or a credentials_helper block in a Terraform CLI config.
+TF_CREDENTIALS = re.compile(r"(?m)^[ \t]*credentials(?:_helper)?[ \t]+\"")
 # Claude Code: the settings and state files of a ~/.claude* directory or CLAUDE_CONFIG_DIR, and the managed
 # settings in the system directories, as glob patterns; the settings that run a command printing a credential.
 CLAUDE_FILES = ("settings.json", "settings.local.json", "remote-settings.json", ".claude.json*", "backups/.claude.json*")
@@ -367,29 +376,34 @@ def git_value(text):
 
 
 def git_config(path, home, found, state, depth=0):
-    # A git config file counts when it names a credential helper or an askpass program, sends an HTTP header,
-    # or rewrites to an http(s) URL that carries a login. The files it includes count the same way, whatever
-    # the includeIf condition, ten deep at most; "~" in an include path stands for <home>.
+    # A git config file counts when it names a credential helper, an askpass program or a cookie file, sends
+    # an HTTP header, rewrites to an http(s) URL that carries a login, or goes through a proxy with a login
+    # (http.proxy, remote.<name>.proxy). The files it includes count the same way, whatever the includeIf
+    # condition, ten deep at most; "~" in an include path stands for <home>. As git does, it skips a byte
+    # order mark at the start, and reads the headers a line starts with, then the entry after them.
     data = start(path, 1 << 20) if path and depth <= 10 else None
     key = os.path.realpath(path) if data is not None else ""
     if not key or key in state["configs"]:
         return
     state["configs"].add(key)
     section = ""
-    for line in data.decode("utf-8", "replace").splitlines():
+    content = data.decode("utf-8", "replace")
+    for line in (content[1:] if content.startswith("﻿") else content).splitlines():
         m = GIT_SECTION.match(line)
-        if m:
+        while m:
             section, _, legacy = m.group(1).lower().partition(".")
             if section == "url" and URL_LOGIN.match(legacy if m.group(2) is None else m.group(2)):
                 found.append((GIT, path))
             line = line[m.end():]
+            m = GIT_SECTION.match(line)
         m = GIT_ENTRY.match(line)
         if not m:
             continue
         name, text = m.group(1).lower(), git_value(m.group(3)) if m.group(2) else "true"
         if not text:
             continue
-        if (section, name) in (("credential", "helper"), ("core", "askpass"), ("http", "extraheader")):
+        if ((section, name) in (("credential", "helper"), ("core", "askpass"), ("http", "extraheader"), ("http", "cookiefile"))
+                or name == "proxy" and section in ("http", "remote") and PROXY_LOGIN.match(text)):
             found.append((GIT, path))
         elif section in ("include", "includeif") and name == "path":
             if text == "~" or text.startswith("~/"):
@@ -401,6 +415,13 @@ def aws_config(path, home, found, state):
     # An AWS config file counts when it names a credential_process or holds a secret key or a session token.
     data = start(path, 1 << 20) if path else None
     if data and AWS_SECRET.search(data.decode("utf-8", "replace")):
+        found.append((CLOUD, path))
+
+
+def tf_config(path, home, found, state):
+    # A Terraform CLI config counts when it holds a credentials block or names a credentials helper.
+    data = start(path, 1 << 20) if path else None
+    if data and TF_CREDENTIALS.search(data.decode("utf-8", "replace")):
         found.append((CLOUD, path))
 
 
@@ -494,6 +515,7 @@ def named(env, files, dirs, socks, configs):
     if env.get("XDG_CONFIG_HOME"):
         configs.append((git_config, os.path.join(env["XDG_CONFIG_HOME"], "git/config")))
     configs.append((aws_config, env.get("AWS_CONFIG_FILE", "")))
+    configs.append((tf_config, env.get("TF_CLI_CONFIG_FILE", "")))
     socks.extend((GIT, env.get(name, "")) for name in ("VSCODE_GIT_IPC_HANDLE", "REMOTE_CONTAINERS_IPC"))
     for name in ("DOCKER_HOST", "CONTAINER_HOST"):
         value = env.get(name, "")
@@ -553,6 +575,7 @@ def creds(which, given):
         for f in GIT_CONFIGS:
             git_config(os.path.join(home, f), home, found, state)
         aws_config(os.path.join(home, ".aws/config"), home, found, state)
+        tf_config(os.path.join(home, ".terraformrc"), home, found, state)
     named(env, files, dirs, socks, configs)
     if which == "default":
         # What anyone on the machine can name: agent, VS Code and container daemon sockets, the git config of
