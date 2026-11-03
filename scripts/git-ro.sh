@@ -72,8 +72,11 @@
 # allowlist, empty here), GIT_CEILING_DIRECTORIES at the working directory's parent,
 # and system and global config dropped. It refuses before git starts when the repository holds a named
 # pipe or device git would open, and kills git, refusing, when a question (rev-parse, config, ls-files)
-# has not been answered within 10 s; any other read runs as long as it takes. git runs with --no-pager,
-# and -c pins override the repository's config. They switch off:
+# has not been answered within 10 s; any other read runs as long as it takes. Every subcommand but
+# rev-parse, ls-files, config and remote reads with a private empty directory under TMPDIR as git's work
+# tree, beside the repository's git directory (hgit_tree), so git opens no file of the work tree: it
+# takes .gitattributes and .gitmodules from the index, and reads no .mailmap there. git runs with
+# --no-pager, and -c pins override the repository's config. They switch off:
 #   - programs config can name: core.fsmonitor, core.pager, core.hooksPath (hooks), diff.external,
 #     gpg.program, gpg.ssh.program and gpg.x509.program, log.showSignature and format.pretty, and
 #     log.diffMerges (a remerge diff runs merge.<driver>.driver);
@@ -94,9 +97,10 @@
 # shows, reopens what they close. The fixtures in scripts/tests/test-git-ro.sh only prove the keys they set.
 # Not pinned, because they shape output but still show every change, or come from content the
 # repository carries: diff.renames, diff.renameLimit, diff.context, diff.algorithm and the other diff
-# layout keys; .mailmap (it renames authors in the default formats; %an and %ae print the commit's own);
-# gitattributes binary or -diff and diff.<driver>.binary ("Binary files differ"; add --text or -a);
-# .gitignore and info/exclude for ls-files -o --exclude-standard. log -p prints no patch for a merge
+# layout keys; a mailmap in the history (a bare copy's HEAD:.mailmap, or the blob mailmap.blob names: it
+# renames authors in the default formats; %an and %ae print the commit's own); the index's gitattributes
+# binary or -diff and diff.<driver>.binary ("Binary files differ"; add --text or -a); .gitignore and
+# info/exclude for ls-files -o --exclude-standard. log -p prints no patch for a merge
 # unless asked (--cc, -m, --diff-merges). Reads trust the repository's object store; copy runs every
 # object through index-pack, which checks each one's hash.
 #
@@ -530,7 +534,7 @@ run_diff() {
     case "$a" in --cached|--staged) cached=1 ;; *) opts+=("$a") ;; esac
   done
   if [ "$cached" -eq 1 ]; then
-    hgit "$REPO" diff --no-textconv --no-ext-diff --ignore-submodules=none --cached ${opts[@]+"${opts[@]}"} -- ${post[@]+"${post[@]}"} </dev/null
+    hgit_tree "$REPO" diff --no-textconv --no-ext-diff --ignore-submodules=none --cached ${opts[@]+"${opts[@]}"} -- ${post[@]+"${post[@]}"} </dev/null
     exit $?
   fi
   for a in ${opts[@]+"${opts[@]}"}; do
@@ -594,7 +598,7 @@ run_diff() {
     [ "$i" -eq "$last" ] || [ "$i" -eq "$prev" ] || rest+=("${opts[$i]}")
     i=$((i + 1))
   done
-  hgit "$REPO" diff --no-textconv --no-ext-diff --ignore-submodules=none ${rest[@]+"${rest[@]}"} --end-of-options "$tl" "$tr" \
+  hgit_tree "$REPO" diff --no-textconv --no-ext-diff --ignore-submodules=none ${rest[@]+"${rest[@]}"} --end-of-options "$tl" "$tr" \
     -- ${post[@]+"${post[@]}"} </dev/null
   exit $?
 }
@@ -674,7 +678,7 @@ run_blame() {
     0) refuse "blame does not run where the repository's config sets blame.ignoreRevsFile; blame a copy (git-ro.sh copy, then --git-dir)" ;;
     *) refuse "git cannot read the repository's config" ;;
   esac
-  hgit "$REPO" blame --no-textconv --no-ext-diff "$spec" ${opts[@]+"${opts[@]}"} -- "$path" </dev/null
+  hgit_tree "$REPO" blame --no-textconv --no-ext-diff "$spec" ${opts[@]+"${opts[@]}"} -- "$path" </dev/null
   exit $?
 }
 
@@ -752,11 +756,11 @@ run_grep() {
   [ "$havepat" -ne 2 ] || optw+=(-e "$pat")
   if [ "${#trees[@]}" -eq 0 ]; then
     [ "$i" -ge "$n" ] || tail=("${args[@]:$i}")
-    hgit "$REPO" grep --no-textconv --cached ${optw[@]+"${optw[@]}"} --end-of-options ${tail[@]+"${tail[@]}"} </dev/null
+    hgit_tree "$REPO" grep --no-textconv --cached ${optw[@]+"${optw[@]}"} --end-of-options ${tail[@]+"${tail[@]}"} </dev/null
     exit $?
   fi
   [ "$dd" -lt 0 ] || [ $((dd + 1)) -ge "$n" ] || paths=("${args[@]:$((dd + 1))}")
-  hgit "$REPO" grep --no-textconv ${optw[@]+"${optw[@]}"} --end-of-options "${trees[@]}" -- ${paths[@]+"${paths[@]}"} </dev/null
+  hgit_tree "$REPO" grep --no-textconv ${optw[@]+"${optw[@]}"} --end-of-options "${trees[@]}" -- ${paths[@]+"${paths[@]}"} </dev/null
   exit $?
 }
 
@@ -810,20 +814,23 @@ main() {
       [ "${1-}" = show ] || refuse "reflog only reads: reflog show [<options>] [<ref>]"
       shift
       check_options reflog "$@"
-      hgit "$REPO" reflog show --no-textconv --no-ext-diff --ignore-submodules=none "$@" </dev/null ;;
+      hgit_tree "$REPO" reflog show --no-textconv --no-ext-diff --ignore-submodules=none "$@" </dev/null ;;
     log|show|diff-tree)
       check_options "$sub" "$@"
-      hgit "$REPO" "$sub" --no-textconv --no-ext-diff --ignore-submodules=none "$@" </dev/null ;;
+      hgit_tree "$REPO" "$sub" --no-textconv --no-ext-diff --ignore-submodules=none "$@" </dev/null ;;
     cat-file)
       check_options cat-file "$@"
       for a in "$@"; do
         [ "$a" != -- ] || break
         case "$a" in --batch|--batch=*|--batch-check|--batch-check=*) batch=1 ;; esac
       done
-      if [ "$batch" -eq 1 ]; then hgit "$REPO" cat-file "$@"; else hgit "$REPO" cat-file "$@" </dev/null; fi ;;
-    *)
+      if [ "$batch" -eq 1 ]; then hgit_tree "$REPO" cat-file "$@"; else hgit_tree "$REPO" cat-file "$@" </dev/null; fi ;;
+    rev-parse|ls-files)
       check_options "$sub" "$@"
       hgit "$REPO" "$sub" "$@" </dev/null ;;
+    *)
+      check_options "$sub" "$@"
+      hgit_tree "$REPO" "$sub" "$@" </dev/null ;;
   esac
   exit $?
 }

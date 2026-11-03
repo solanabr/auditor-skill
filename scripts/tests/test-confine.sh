@@ -653,6 +653,58 @@ if mkfifo "$T/fifo-probe" 2>/dev/null; then
   else
     skp "running as root: a directory find cannot read cannot be made"
   fi
+  # git-ro's reads take no file of the work tree (hgit_tree), so a named pipe the work-tree scan does
+  # not see changes nothing: behind a link to a directory, in a directory that cannot be listed, under a
+  # directory named .git, or at the top of a repository that cannot be listed (.mailmap).
+  for d in wl wu wd wm; do
+    mkrepo "$RW/$d"; put "$RW/$d" sub/x a; commit "$RW/$d" -m one
+    printf 'b\n' >> "$RW/$d/sub/x"; git -C "$RW/$d" commit -qam two
+  done
+  mkdir -p "$T/wl-out"; mkfifo "$T/wl-out/.gitattributes"; rm -r "$RW/wl/sub"; ln -s "$T/wl-out" "$RW/wl/sub"
+  mkdir -p "$RW/wd/deco/.git"; mkfifo "$RW/wd/deco/.git/.gitattributes"; rm -r "$RW/wd/sub"; ln -s deco/.git "$RW/wd/sub"
+  set -- wl "$T/wl-out/.gitattributes" wd "$RW/wd/deco/.git/.gitattributes"
+  if [ "$(id -u)" -ne 0 ]; then
+    mkfifo "$RW/wu/sub/.gitattributes"; chmod 0311 "$RW/wu/sub"
+    mkfifo "$RW/wm/.mailmap"; chmod 0311 "$RW/wm"
+    set -- "$@" wu "$RW/wu/sub/.gitattributes" wm "$RW/wm/.mailmap"
+  else
+    skp "running as root: a directory that cannot be listed cannot be made (wu, wm)"
+  fi
+  while [ $# -gt 0 ]; do
+    for a in 'diff HEAD~1 HEAD' 'show HEAD' 'log -p -1' 'log -1' 'shortlog HEAD' 'grep -e b HEAD' 'blame HEAD -- sub/x' \
+             'diff --cached' 'grep -e b'; do
+      # shellcheck disable=SC2086
+      bounded "$2" script "$RW" git-ro.sh --repo "$1" $a
+      check "git-ro.sh --repo $1 $a answers at once, past a named pipe in the work tree" \
+        sh -c "[ '$RC' = 0 ] && [ ! -s '$T/err' ]"
+    done
+    has "$T/out" 'sub/x' || ko "git-ro.sh --repo $1 grep -e b found nothing"
+    shift 2
+  done
+  chmod 0755 "$RW/wu/sub" "$RW/wm" 2>/dev/null
+  # hgit_tree itself: an empty directory under TMPDIR as the work tree, the git directory named, gone
+  # afterwards; a bare repository read as hgit reads it; no TMPDIR inside the working directory; only a
+  # top level or a bare repository.
+  mkdir -p "$T/tmpd" "$RW/tmpd"
+  : > "$T/rec.log"
+  TMPDIR="$T/tmpd" PATH="$T/rec:$PATH" lib "$RW" 'confine_repo wl R && hgit_tree "$CONFINE_REPO" log --format=%s -1'
+  check "hgit_tree reads the history of the repository confine_repo accepted" out_is two
+  check "... with git started in an empty directory under TMPDIR, given as the work tree beside the git directory" \
+    awk -F '\037' -v t="$T/tmpd/auditor-git." -v g="--git-dir=$RW/wl/.git" '$1 == "ARGV" && $3 == "-C" && index($4, t) == 1 {
+      for (i = 5; i <= NF; i++) { if ($i == g) gd = 1; if ($i == "--work-tree=" $4) w = 1 } } END { exit !(gd && w) }' "$T/rec.log"
+  check "... which is gone afterwards" test -z "$(ls -A "$T/tmpd")"
+  TMPDIR="$T/tmpd" lib "$RW" 'confine_repo copy.git R && hgit_tree "$CONFINE_REPO" rev-list --count HEAD && ls -A "$TMPDIR"'
+  check "... and a bare repository read as hgit reads it, with no directory made" out_is 1
+  TMPDIR="$RW/tmpd" lib "$RW" 'confine_repo wl R && hgit_tree "$CONFINE_REPO" log -1'
+  check "... and TMPDIR inside the working directory refused" \
+    refused 'TMPDIR lies inside the working directory, so git has no empty work tree to read in; point it outside the tree under audit'
+  TMPDIR="$T/tmpd" lib "$RW" 'hgit_tree "$CONFINE_WT/programs" log -1'
+  check "... and a directory that is not a top level refused" \
+    refused "git does not describe $(shown "$RW/programs") as the top level of a work tree or a bare repository"
+  TMPDIR="$T/tmpd" lib "$RW" 'hgit_text_tree "$CONFINE_WT/wl" log --format=%s -1'
+  check "... while a top level confine_repo did not see is described by git and read" out_is two
+  TMPDIR="$T/tmpd" lib "$RW" 'confine_repo wl R && cd / && hgit_tree "$CONFINE_REPO" log --format=%s -1 && pwd'
+  check "... and the caller's working directory stays as it was" out_is "$(printf 'two\n/')"
 else
   skp "mkfifo is not available: the named pipe cases"
 fi
