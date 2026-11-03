@@ -316,6 +316,11 @@ while IFS= read -r line; do
   else ko "case: git-ro.sh ${args[*]} -> status $RC, stderr: $(cat "$T/err")"; fi
 done < "$CASES"
 check "the case file has cases ($ncase)" test "$ncase" -gt 200
+# cdir, whose commondir names a repository outside, is this suite's alone: the case file is shared with
+# test-preapproved-entrypoints.sh, whose fixture has no cdir.
+run "$WT" --repo cdir log
+check "--repo cdir (a commondir file naming a repository outside) is refused" \
+  sh -c "[ '$RC' = 64 ] && [ ! -s '$T/out' ] && [ \"\$(cat '$T/err')\" = 'git-ro: refused: --repo keeps its git directory outside the working directory: cdir' ]"
 check "no case ran a configured program, hook or helper" nomarks
 run "$WT"
 check "no arguments: usage, exit 64" \
