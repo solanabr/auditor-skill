@@ -426,8 +426,8 @@ check "anchor-test: npm ci --ignore-scripts first, then the build, then anchor t
   calls_are "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|cargo build-sbf --help|cargo build-sbf --install-only|npm ci --ignore-scripts --no-audit --no-fund|anchor build --ignore-keys -- --skip-tools-install --offline|anchor test --skip-build --skip-deploy --skip-local-validator --provider.cluster localnet --provider.wallet $S/home/.config/solana/id.json|"
 check "... npm ci gets the proxy, its own empty config files and the git on PATH" \
   sh -c "awk '/^== npm ci/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'env: HTTPS_PROXY=$PROXY' '$T/blk' && grep -qxF 'env: npm_config_userconfig=$S/npm/userconfig' '$T/blk' && grep -qxF 'env: npm_config_globalconfig=$S/npm/globalconfig' '$T/blk' && grep -qxF 'env: npm_config_git=$T/sys/git' '$T/blk' && grep -qxF 'env: npm_config_ignore_scripts=true' '$T/blk' && grep -qxF 'userconfig-bytes: 0' '$T/blk'"
-check "... and NODE_OPTIONS and npm's node-options preload the module that ends the npm install npm runs in a git dependency's checkout" \
-  sh -c "awk '/^== npm ci/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'env: NODE_OPTIONS=--require=\"$S/npm/nested.js\"' '$T/blk' && grep -qxF 'env: npm_config_node_options=--require=\"$S/npm/nested.js\"' '$T/blk'"
+check "... and NODE_OPTIONS and npm's node-options preload target.sh's module into npm" \
+  sh -c "awk '/^== npm ci/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'env: NODE_OPTIONS=--require=\"$S/npm/preload.js\"' '$T/blk' && grep -qxF 'env: npm_config_node_options=--require=\"$S/npm/preload.js\"' '$T/blk'"
 check "... anchor test runs without the proxy" none_in_blocks '^== anchor test' '^env: [A-Za-z_]*[Pp][Rr][Oo][Xx][Yy]='
 check "... and without that preload" none_in_blocks '^== anchor (build|test)' '^env: (NODE_OPTIONS|npm_config_[a-z_]*)='
 run "$TARGET" "$WT" -- anchor-test --run audit_1 --src . --dir app
@@ -467,12 +467,35 @@ NOTE='>> note: npm ci takes no settings from the code under audit: target.sh rem
 run "$TARGET" "$NW" PATH="$T/npmfake:$FPATH" HTTPS_PROXY="$PROXY" -- npm-ci --run audit_1 --src .
 check "npm-ci where the copy's top holds a .npmrc naming \${HTTPS_PROXY}: npm ci finds no .npmrc" in_blocks '^== npm ci' '^npmrc: none$'
 check "... the run goes on, and a note names the .npmrc removed" sh -c "[ '$RC' = 0 ] && grep -qxF '$NOTE .npmrc' '$T/out'"
+check "... and npm's script-shell is false" sh -c "grep -q '^env: npm_config_script_shell=/[^ ]*/false\$' '$T/calls'"
+# The module itself, with the real node where it is installed: fixtures/target/fake-npm.sh copied it to
+# $T/preload.js. In the npm install npm runs in a git dependency's checkout (pacote marks it with
+# _PACOTE_NO_PREPARE_) it ends node at once; elsewhere child_process starts git and node and nothing else.
+if PATH=$REAL_PATH command -v node >/dev/null 2>&1; then
+  out=$(cd "$T" && env -i PATH="$REAL_PATH" _PACOTE_NO_PREPARE_='git+file:///dep#0' node -r "$T/preload.js" -e 'console.log("ran")' 2>&1 </dev/null; echo "rc=$?")
+  check "preload: a node process pacote marks with _PACOTE_NO_PREPARE_ ends at once with exit 0" test "$out" = rc=0
+  out=$(cd "$T" && env -i PATH="$REAL_PATH" npm_config_git="$T/sys/git" node -r "$T/preload.js" -e '
+const cp = require("child_process")
+const one = (what, start) => { try { start(); return what + " starts" } catch (e) { return what + " refused" } }
+console.log([one("sh", () => cp.spawn("sh", ["-c", "true"])), one("shell", () => cp.spawn("true", { shell: true })),
+  one("exec", () => cp.exec("true")), one("execFile", () => cp.execFile("/bin/echo", ["x"])),
+  one("git", () => cp.spawn(process.env.npm_config_git, ["--version"], { stdio: "ignore" })),
+  one("node", () => cp.spawn(process.execPath, ["-e", "0"], { stdio: "ignore" }))].join(", "))' 2>&1 </dev/null)
+  check "preload: otherwise child_process starts git and node, and refuses sh, a shell command and any other program" \
+    test "$out" = "sh refused, shell refused, exec refused, execFile refused, git starts, node starts"
+else
+  skp "node is not on PATH: the preload's own cases are skipped"
+fi
 run "$TARGET" "$NW" PATH="$T/npmfake:$FPATH" HTTPS_PROXY="$PROXY" -- npm-ci --run audit_1 --src . --dir app
 check "npm-ci --dir app, a workspace of the top: npm ci runs in app and finds no .npmrc up to the top" \
   sh -c "[ '$RC' = 0 ] && grep -qxF 'cwd: $S/src/app' '$T/calls' && grep -qxF 'npmrc: none' '$T/calls' && ! grep -q '^npmrc: [^n]' '$T/calls' && grep -qxF '$NOTE .npmrc, app/.npmrc' '$T/out'"
 run "$TARGET" "$NW" PATH="$T/npmfake:$FPATH" HTTPS_PROXY="$PROXY" -- anchor-test --run audit_1 --src .
 check "anchor-test's npm ci finds no .npmrc of the copy either" \
   sh -c "[ '$RC' = 0 ] && grep -q '^== npm ci ' '$T/calls' && ! grep -q '^npmrc: [^n]' '$T/calls' && grep -qxF '$NOTE .npmrc' '$T/out'"
+mkdir -p "$T/tmp-q\"uote"
+run "$TARGET" "$NW" PATH="$T/npmfake:$FPATH" TMPDIR="$T/tmp-q\"uote" -- npm-ci --run audit_1 --src .
+check "a scratch directory whose path holds a double quote, which NODE_OPTIONS cannot quote: exit 3, npm does not run" \
+  sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: the scratch directory.s path holds a double quote or a backslash' '$T/err' && ! grep -q '^== npm' '$T/calls'"
 # The real npm, where it is installed. The copy's .npmrc sets loglevel=info and a log heading made of
 # ${https_proxy}: npm run in that tree takes both, so its log lines start with the proxy URL; the npm ci of
 # target.sh takes neither, so no info line and no part of the proxy URL reaches its log.
@@ -536,6 +559,54 @@ if PATH=$REAL_PATH command -v npm >/dev/null 2>&1 && PATH=$REAL_PATH command -v 
   done
 else
   skp "npm or node is not on PATH: target.sh's real npm ci cases with a git dependency are skipped"
+fi
+# npm 10 runs the prepare script of a git dependency, after the npm install in its checkout, and of a package
+# the lockfile resolves to a directory, despite --ignore-scripts, with the sh it finds first on a PATH that
+# starts with that package's node_modules/.bin. $T/npmprep-git's lockfile names a git+file:// dependency with a
+# prepare script that leaves a mark and no dependency; in $T/npmprep-git-sh that dependency also holds
+# node_modules/.bin/sh, a link to bash; $T/npmprep-dir asks for loc 1.0.0, and its lockfile resolves that to
+# its directory loc/, not as a link, whose prepare script leaves the mark.
+if PATH=$REAL_PATH command -v npm >/dev/null 2>&1 && PATH=$REAL_PATH command -v node >/dev/null 2>&1; then
+  for shape in git git-sh dir; do
+    NP=$T/npmprep-$shape
+    rm -rf "$T/npm-own" "$T/prepare-mark"
+    mkdir -p "$NP" "$T/npm-own/home"
+    : > "$T/npm-own/userconfig"
+    : > "$T/npm-own/globalconfig"
+    if [ "$shape" != dir ]; then
+      GD=$T/gitdep-prepare-$shape
+      mkdir -p "$GD"
+      tgit init -q "$GD"
+      printf '{\n  "name": "dep",\n  "version": "1.0.0",\n  "scripts": {"prepare": "touch %s/prepare-mark"}\n}\n' "$T" > "$GD/package.json"
+      [ "$shape" = git ] || { mkdir -p "$GD/node_modules/.bin" && ln -s /bin/bash "$GD/node_modules/.bin/sh"; }
+      tgit -C "$GD" add -A -f && tgit -C "$GD" commit -qm dep
+      spec=git+file://$GD#$(tgit -C "$GD" rev-parse HEAD)
+      printf '{\n  "name": "npmprep",\n  "version": "1.0.0",\n  "dependencies": {"dep": "%s"}\n}\n' "$spec" > "$NP/package.json"
+      printf '{\n  "name": "npmprep",\n  "version": "1.0.0",\n  "lockfileVersion": 3,\n  "requires": true,\n  "packages": {\n    "": {"name": "npmprep", "version": "1.0.0", "dependencies": {"dep": "%s"}},\n    "node_modules/dep": {"version": "1.0.0", "resolved": "%s"}\n  }\n}\n' "$spec" "$spec" > "$NP/package-lock.json"
+    else
+      mkdir -p "$NP/loc"
+      printf '{\n  "name": "loc",\n  "version": "1.0.0",\n  "scripts": {"prepare": "touch %s/prepare-mark"}\n}\n' "$T" > "$NP/loc/package.json"
+      printf '{\n  "name": "npmprep",\n  "version": "1.0.0",\n  "dependencies": {"loc": "1.0.0"}\n}\n' > "$NP/package.json"
+      printf '{\n  "name": "npmprep",\n  "version": "1.0.0",\n  "lockfileVersion": 3,\n  "requires": true,\n  "packages": {\n    "": {"name": "npmprep", "version": "1.0.0", "dependencies": {"loc": "1.0.0"}},\n    "node_modules/loc": {"version": "1.0.0", "resolved": "file:loc"}\n  }\n}\n' > "$NP/package-lock.json"
+    fi
+    cp -R "$NP" "$T/npm-own/tree"
+    ( cd "$NP" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null && printf 'native\n' > "$NP/audit_1/exec-mode"
+    (cd "$T/npm-own/tree" && env -i HOME="$T/npm-own/home" PATH="$REAL_PATH" \
+      npm_config_userconfig="$T/npm-own/userconfig" npm_config_globalconfig="$T/npm-own/globalconfig" \
+      npm_config_cache="$T/npm-own/cache" npm_config_logs_dir="$T/npm-own/logs" npm_config_update_notifier=false \
+      npm_config_ignore_scripts=true npm ci --ignore-scripts --no-audit --no-fund) >/dev/null 2>&1 </dev/null
+    if [ -e "$T/prepare-mark" ]; then
+      ok "real npm ci --ignore-scripts of a tree with a $shape dependency runs that dependency's prepare script"
+    else
+      skp "this npm runs no prepare script of a $shape dependency under --ignore-scripts"
+    fi
+    rm -f "$T/prepare-mark"
+    run "$TARGET" "$NP" PATH="$REAL_PATH" -- npm-ci --run audit_1 --src .
+    check "... while target.sh's npm ci runs none: no mark, and if npm stopped at the script, a note says so" \
+      sh -c "[ ! -e '$T/prepare-mark' ] && { [ '$RC' = 0 ] || { [ '$RC' = 1 ] && grep -q '^>> note: npm tried to run a dependency.s script' '$T/out'; }; }"
+  done
+else
+  skp "npm or node is not on PATH: target.sh's real npm ci cases with a prepare script are skipped"
 fi
 
 # =================================================================================================

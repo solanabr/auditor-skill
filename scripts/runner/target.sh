@@ -56,13 +56,15 @@
 # npm ci --ignore-scripts, with npm's user and global config files empty, its cache and logs in the scratch
 # directory and its git the one on PATH, and no .npmrc of the target: npm takes a project's settings from the
 # package root it finds from --dir up and expands ${VAR} in them from its environment, so target.sh removes
-# each .npmrc from the top of the copy down to --dir first, and says which; and npm prepares a git dependency
-# with an npm install in its checkout, which would read that checkout's .npmrc, so a module NODE_OPTIONS
-# preloads ends that npm at once (with scripts ignored it has nothing to prepare, and a git dependency's
-# bundleDependencies stay out). Only these get the proxy variables. Every build and test after them runs
-# offline (CARGO_NET_OFFLINE=true), without the proxy variables, in the throwaway HOME, whose .cache/solana
-# links to the real one. Anchor.toml's [toolchain] can still make anchor fetch another Solana or Anchor
-# release; that would land in the throwaway HOME, and offline it fails.
+# each .npmrc from the top of the copy down to --dir first, and says which; and a module NODE_OPTIONS
+# preloads lets npm start no program but git and node, since npm 10 runs the prepare script of a git or
+# directory dependency despite --ignore-scripts, and ends at once the npm install npm runs in a git
+# dependency's checkout, which would read that checkout's .npmrc (with scripts ignored it has nothing to
+# prepare, and a git dependency's bundleDependencies stay out). Only these get the proxy variables.
+# Every build and test after them runs offline (CARGO_NET_OFFLINE=true), without the proxy variables, in
+# the throwaway HOME, whose .cache/solana links to the real one. Anchor.toml's [toolchain] can still make
+# anchor fetch another Solana or Anchor release; that would land in the throwaway HOME, and offline it
+# fails.
 #
 # The watchdog. AUDITOR_RUN_TIMEOUT (whole seconds, 1 to 86400, default 1800) bounds the whole run, and a
 # --timeout no higher than it lowers the bound. Each step runs in a session of its own, under ulimit -t of
@@ -544,19 +546,32 @@ outcome() {
 
 NET=(${ISO_NET[@]+"${ISO_NET[@]}"})
 OFF=(CARGO_NET_OFFLINE=true)
-# npm prepares a git dependency that has workspaces or an install, build or prepare script with an npm install
-# in the dependency's checkout, and that npm reads the checkout's .npmrc, ${VAR} expansion included. With
-# scripts ignored it has nothing to prepare, so the module NODE_OPTIONS preloads ends it (pacote marks it with
-# _PACOTE_NO_PREPARE_) before it reads a setting. npm's node-options names the same module: set anywhere, it
-# would replace NODE_OPTIONS for npm's children.
+# The module NODE_OPTIONS preloads into each node process of the npm step (npm's node-options names it too:
+# set anywhere, it would replace NODE_OPTIONS for npm's children) does two things. npm prepares a git
+# dependency that has workspaces or an install, build or prepare script with an npm install in the
+# dependency's checkout, and that npm reads the checkout's .npmrc, ${VAR} expansion included; with scripts
+# ignored it has nothing to prepare, so the module ends it (pacote marks it with _PACOTE_NO_PREPARE_) before
+# it reads a setting. And npm 10 runs the prepare script of a git dependency, or of a package the lockfile
+# resolves to a directory, despite --ignore-scripts, through a shell it may find in that package's own
+# node_modules/.bin: the module lets child_process start only git and node, so no script runs. npm's
+# script-shell is false as well.
+FALSE=$(type -P false) || FALSE=/usr/bin/false
+[ -x "$FALSE" ] || FALSE=/bin/false
 mkdir "$S/npm" && : > "$S/npm/userconfig" && : > "$S/npm/globalconfig" &&
-  printf 'if (process.env._PACOTE_NO_PREPARE_ !== undefined) process.exit(0)\n' > "$S/npm/nested.js" ||
-  finish 3 "cannot prepare npm's config files in $S"
-PRELOAD="--require=\"$S/npm/nested.js\""
+  printf '%s\n' 'if (process.env._PACOTE_NO_PREPARE_ !== undefined) process.exit(0)' \
+    'const { ChildProcess } = require("child_process")' \
+    'const start = ChildProcess.prototype.spawn' \
+    'const allowed = [process.execPath, process.env.npm_config_git].filter(Boolean)' \
+    'ChildProcess.prototype.spawn = function (options) {' \
+    '  const file = options && options.file' \
+    '  if (!allowed.includes(file)) throw new Error("target.sh: npm starts no program here but git and node, not " + file)' \
+    '  return start.call(this, options)' \
+    '}' > "$S/npm/preload.js" || finish 3 "cannot prepare npm's config files and preload in $S"
+PRELOAD="--require=\"$S/npm/preload.js\""
 NPM=(npm_config_userconfig="$S/npm/userconfig" npm_config_globalconfig="$S/npm/globalconfig"
   npm_config_cache="$S/npm/cache" npm_config_logs_dir="$S/npm/logs" npm_config_update_notifier=false
   npm_config_fund=false npm_config_audit=false npm_config_ignore_scripts=true npm_config_git="$GIT"
-  "NODE_OPTIONS=$PRELOAD" "npm_config_node_options=$PRELOAD")
+  "NODE_OPTIONS=$PRELOAD" "npm_config_node_options=$PRELOAD" "npm_config_script_shell=$FALSE")
 ISO_ENV+=(RUSTUP_AUTO_INSTALL=0 CARGO_TERM_COLOR=never)
 case "$ACTION" in
   npm-ci) ;;
@@ -644,12 +659,16 @@ no_npmrc() {
   echo ">> note: npm ci takes no settings from the code under audit: target.sh removed these from the copy, and the registry and other settings they name do not apply: $gone"
   printf '>> removed from the copy before npm ci: %s\n' "$gone" >&9
 }
-# npm_ci: npm ci --ignore-scripts in AD, a download, after no_npmrc. NODE_OPTIONS quotes the path of the
-# preload, and it cannot quote a double quote or a backslash.
+# npm_ci: npm ci --ignore-scripts in AD, a download, after no_npmrc; a note when it stopped at a script npm
+# tried to run. NODE_OPTIONS quotes the path of the preload, and it cannot quote a double quote or a backslash.
 npm_ci() {
   case "$S" in *[\"\\]*) finish 3 "the scratch directory's path holds a double quote or a backslash, which NODE_OPTIONS cannot carry to npm; point TMPDIR elsewhere" ;; esac
   no_npmrc
   step "$AD" ${NET[@]+"${NET[@]}"} ${NPM[@]+"${NPM[@]}"} npm ci --ignore-scripts --no-audit --no-fund
+  [ "$STEP_END" != "exit 0" ] || return 0
+  if grep -qF -e "target.sh: npm starts no program here" -e "command $FALSE -c " "$S/log" 2>/dev/null; then
+    echo ">> note: npm tried to run a dependency's script (npm 10 runs the prepare script of a git or directory dependency despite --ignore-scripts), and no script runs in target.sh's npm step, so npm ci stopped there"
+  fi
 }
 
 # ---- the downloads -------------------------------------------------------------------------------------

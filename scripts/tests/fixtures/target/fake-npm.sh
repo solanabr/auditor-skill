@@ -5,7 +5,8 @@
 # fixtures/runners/fake-tool.sh writes (== npm <arguments>, cwd and env lines), then one line for each
 # directory from its working directory up to the top of target.sh's copy that holds a .npmrc of any kind,
 #   npmrc: <its path in the copy>: <its text, lines joined with |>
-# or "npmrc: none" when none does; for npm ci, "lock: yes" or "lock: no" after it. It exits 0.
+# or "npmrc: none" when none does; for npm ci, "lock: yes" or "lock: no" after it. When NODE_OPTIONS is
+# --require="<file>", it copies that file to @T@/preload.js. It exits 0.
 T=@T@
 top=$PWD
 while [ -n "$top" ]; do
@@ -30,4 +31,7 @@ done
   [ "$n" -gt 0 ] || echo 'npmrc: none'
   [ "${1:-}" != ci ] || printf 'lock: %s\n' "$([ -f package-lock.json ] && echo yes || echo no)"
 } >> "$T/calls"
+case "${NODE_OPTIONS:-}" in
+  --require=\"*\") p=${NODE_OPTIONS#--require=\"}; cp "${p%\"}" "$T/preload.js" ;;
+esac
 exit 0
