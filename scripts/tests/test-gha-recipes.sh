@@ -19,7 +19,7 @@
 # UTF-8 locale and hold no backslash inside a bracket, and in a grep call that holds * or + every pattern must
 # start at ^. It runs R1 and K139-1 over trigger spellings built at run time (CRLF line ends among them), R1 over
 # file names that hold a space or a quote and over decoy names that hold a newline, with the find that the R1 note
-# and KV-080 Step 7 give, the listing that the R8 note gives over an agent call R8 cannot read, and R1 over large
+# and KV-080 Step 7 give, the R8 note's and KV-116 Step 1's listing over a call neither reads, and R1 over large
 # inputs: 2,000 workflows, and two of about 1 MiB. R9 and KV-080 Step 8's first command run over 2,000 workflows,
 # and each KV-080 and KV-140 command that pipes into head over more than 64 KiB of its own output. KV-080 Step 4's
 # two commands run over pins saved with CRLF line ends, over references R9 does not read as pins and over uses:
@@ -339,9 +339,7 @@ done <<< "$LINES"
 # of its own: it tries a pattern that holds * or + and does not start at ^ again from every position of a line, and
 # so every pattern of a grep call in which one pattern does not start at ^ (R3 took 60 s on the 1 MiB line below
 # with one such pattern beside ten that start at ^, 0.2 s without it). So in a grep call where a pattern holds * or
-# +, every pattern starts at ^ and keeps each | inside a group (^.*(a|b), not ^a|b). The KV-116 and KV-139 locators
-# are not converted yet.
-LINEAR_PENDING="K116-1 K139-1"
+# +, every pattern starts at ^ and keeps each | inside a group (^.*(a|b), not ^a|b).
 patterns_of() { # patterns_of <command line>: "<1 under -i, else 0> <pattern>" for each pattern of each grep it runs,
   # on standard output and, one file per grep call, in $work/inv/
   : > "$work/patterns"; rm -rf "$work/inv"; mkdir -p "$work/inv"
@@ -436,7 +434,6 @@ outside_dfa() { # each "<ic> <pattern>" line on stdin that holds a construct out
 }
 nlinear=0; nonlinear=""
 for id in $IDS K080-4a; do
-  case " $LINEAR_PENDING " in *" $id "*) continue ;; esac
   if [ "$id" = K080-4a ]; then cmds=$(kv_step "$KV080" 4 | sed -n 1p); else cmds=$(recipe_lines "$id"); fi
   while IFS= read -r c; do
     [ -n "$c" ] || continue
@@ -457,7 +454,6 @@ if [ -z "$nonlinear" ]; then
   echo "ok   $nlinear recipes, KV-080 Step 4's first command among them, use only patterns GNU grep's DFA runs" \
     "in a UTF-8 locale, and each grep call that holds * or + starts every pattern at ^"
 fi
-echo "SKIP linear-pattern check for $LINEAR_PENDING: not converted yet"
 
 # The commands that search the whole tree skip node_modules/ and .terraform/, which hold dependencies and
 # downloaded modules rather than the repository's own settings.
@@ -475,13 +471,10 @@ done
 # A copy is the recipe's code lines as one run of whole lines, in order. The step may hold other commands
 # around a recipe of one command; a recipe of two is the whole code of its step, so "the first" and "the second"
 # name the same lines in both files.
-# KV-139 Step 4 still holds R3 as it was before R3 read a line in one pass; that copy moves with the KV-139 locator.
-COPY_PENDING="R3"
 nl='
 '
 ncopy=0
 while read -r id file step; do
-  case " $COPY_PENDING " in *" $id "*) echo "SKIP copy of $id in $file step $step: not converted yet"; continue ;; esac
   ncopy=$((ncopy + 1))
   want=$(recipe_block "$id")
   have=$(kv_block "$file" "$step")
@@ -585,9 +578,9 @@ else
 fi
 
 # An option value that holds a character outside ASCII before -p hides an agent call from R8 (a bracket that held one
-# would leave GNU grep's DFA), so its note gives a plain listing of every claude and gemini call. That listing, read
-# from the note, must list such a call.
-LISTINGS="R8"
+# would leave GNU grep's DFA), and from KV-116 Step 1, so R8's note and that step give a plain listing of every
+# claude and gemini call. That listing, read from each, must list such a call.
+LISTINGS="R8 K116-1"
 agent="$work/agent"; mkdir -p "$agent/.github/workflows"
 printf 'on: issue_comment\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n' > "$agent/.github/workflows/agent.yml"
 printf '      - run: claude --append-system-prompt "r\303\251ponds en fran\303\247ais" -p "fix it"\n' \
@@ -599,9 +592,9 @@ for src in $LISTINGS; do
   esac
   got=$( (cd "$agent" && eval "$c" </dev/null 2>/dev/null) | cut -d: -f1,2)
   if [ -n "$c" ] && [ "$(printf '%s\n' "$c" | wc -l | tr -d ' ')" = 1 ] && [ "$got" = .github/workflows/agent.yml:6 ]; then
-    echo "ok   the listing $src's note gives lists an agent call whose option value holds a character outside ASCII"
+    echo "ok   the listing that goes with $src lists an agent call whose option value holds a character outside ASCII"
   else
-    echo "FAIL $src: the listing its note gives [${c:-none}] listed [$got], want [.github/workflows/agent.yml:6]"
+    echo "FAIL $src: the listing that goes with it [${c:-none}] listed [$got], want [.github/workflows/agent.yml:6]"
     fail=1
   fi
 done
@@ -747,7 +740,8 @@ if [ "$nhead" -eq 0 ]; then echo "FAIL no command of KV-080 or KV-140 pipes into
 
 # Files holding a 1 MiB line of near misses: one that nearly matches R6 again and again, one that repeats a pin
 # with a SHA one digit short, one that repeats a ref: expression whose step output R7 cannot read, one whose only
-# author_association follows a #, and an infrastructure file that repeats lookalikes of the runner and OIDC
+# author_association follows a #, one that repeats a claude call whose -p follows an &, one that holds an event
+# name after a megabyte of blanks, and an infrastructure file that repeats lookalikes of the runner and OIDC
 # settings. Each command of every recipe must end within 30 s and flag nothing, in a UTF-8 locale where one is
 # installed (C.UTF-8 on GitHub's ubuntu runners): there GNU grep needs minutes for such a line when a pattern holds
 # a construct its DFA leaves undecided (see "Linear by construction" above), and each line here passes the filter
@@ -770,9 +764,16 @@ long="$work/long"; mkdir -p "$long/.github/workflows" "$long/infra"
 { printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo "'
   awk 'BEGIN { for (i = 0; i < 33000; i++) printf "the comment author association x " }'
   printf '" # github.event.comment.author_association\n'; } > "$long/.github/workflows/long-gate.yml"
+{ printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo "'
+  awk 'BEGIN { for (i = 0; i < 120000; i++) printf "claude x " }'
+  printf '& -p"\n'; } > "$long/.github/workflows/long-agent.yml"
+{ printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n          echo hi\n'
+  awk 'BEGIN { for (i = 0; i < 1050000; i++) printf " " }'
+  printf 'issues xy\n'; } > "$long/.github/workflows/long-trigger.yml"
 sizes=""; small=0
 for f in .github/workflows/long.yml .github/workflows/long-pins.yml .github/workflows/long-refs.yml \
-  .github/workflows/long-gate.yml infra/long.tf; do
+  .github/workflows/long-gate.yml .github/workflows/long-agent.yml \
+  .github/workflows/long-trigger.yml infra/long.tf; do
   s=$(wc -c < "$long/$f" | tr -d ' '); sizes="$sizes $s"
   if [ "$s" -le 1000000 ]; then small=1; fi
 done
