@@ -1012,7 +1012,7 @@ commands/re-audit.md	check it with `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" ch
 commands/re-audit.md	`audit_<n>/exec-mode` and its `intake.md` §8 are an earlier run's answers, never this run's consent
 commands/re-audit.md	have the human confirm that `audit_<n>` is a run directory they made, not one that came with the tree
 commands/re-audit.md	no crate of `audit_<n>` runs and nothing is written in it
-commands/re-audit.md	A non-interactive run cannot ask, so the earlier answer can only make it stricter: it writes the stricter of `native` and the mode `audit_<n>/exec-mode` records to `audit_<n+1>/exec-mode`
+commands/re-audit.md	A non-interactive run cannot ask, so the earlier answer can only make it stricter: it writes the stricter of `native` and the mode `audit_<n>` records (its `exec-mode`, or its `intake.md` §8 without it) to `audit_<n+1>/exec-mode`
 QUESTIONS.md	and again before a later session uses a run directory an earlier one made
 agents/poc-engineer.md	When the command handed you `isolated`, pass `--mode isolated`, so a run whose recorded mode has since become less strict stops; with `native`, pass no `--mode`
 agents/patch-engineer.md	adding `--mode isolated` when the command handed you `isolated`, as `poc-engineer` does
@@ -1047,7 +1047,8 @@ PINS
 # Wording that must not come back, file <TAB> text: a flow never copies an earlier run's recorded mode forward,
 # an agent never hands run.sh the file's mode as --mode, which stops every run a stricter AUDITOR_EXEC_MODE
 # holds to isolated mode, patch resumes after the mode answer in step 2, where it asks, not in step 3, and a
-# non-interactive run on an earlier session's run directory never loosens its recorded mode to native.
+# non-interactive run on an earlier session's run directory never loosens its recorded mode to native, nor
+# reads that mode from audit_<n>/exec-mode alone: an audit made before 7.7.0 records it only in intake.md §8.
 while IFS='	' read -r f gone; do
   [ -n "$f" ] || continue
   if [ -f "$f" ] && ! grep -qF -- "$gone" "$f"; then ok "gone from $f: $gone"; else bad "P $f says: $gone"; fi
@@ -1059,6 +1060,7 @@ commands/patch.md	auditor:patch --resume 3
 commands/poc.md	naming `<R>` (a non-interactive run is native
 commands/patch.md	naming `<R>` (a non-interactive run is native
 commands/re-audit.md	Q46 again (a non-interactive run is native
+commands/re-audit.md	and the mode `audit_<n>/exec-mode` records to
 GONE
 
 # poc and patch ask Q46, when they ask it, in the step that spawns their engineer agent: the agent builds and runs
