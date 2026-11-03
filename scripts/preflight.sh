@@ -4,8 +4,8 @@
 #   "${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh"
 #
 # Run it directly by its quoted absolute path, with no bash in front, from the working directory, before
-# anything reads the working tree or an input. It takes no arguments and refuses any. It reads names and
-# small settings files, writes nothing, and runs nothing from the tree.
+# anything reads the working tree or an input. It takes no arguments and refuses any. It reads names,
+# small settings files and .git files, writes nothing, and runs nothing from the tree.
 #
 # Claude Code loads project config from the directory it starts in, from directories below it, and from
 # each parent up to the repository root. Config a repository ships can put a skill or agent of its own
@@ -20,10 +20,13 @@
 #       64 KiB that jq reads as one JSON object whose top-level keys are all on SETTINGS_KEYS below; a
 #       link, or a file jq cannot parse, is refused;
 #     - a .mcp.json, of any type;
-#   - in each parent of the working directory up to the top level of the git repository that holds it,
-#     or up to the directory that holds its .git when that lies higher (a core.worktree in the
-#     repository's own config can set a lower top level), the same entries in that parent's own .claude
-#     and .mcp.json. Outside a repository no parent is read.
+#   - in each parent of the working directory up to the repository root, the same entries in that
+#     parent's own .claude and .mcp.json. The root is the highest of these that holds the working
+#     directory: the top level of the git repository that holds it, the directory holding its git
+#     directory, and the directory holding the .git git uses, past any .git git passes over (a
+#     core.worktree in the repository's own config can set a lower top level). Outside a repository it
+#     is the highest directory holding a .git, which git cannot use, and where there is none, no parent
+#     is read.
 #     The user's own ~/.claude (or $CLAUDE_CONFIG_DIR) is user configuration and is skipped there.
 # The refusal names the first such path in byte order, parents first. A name counts as the filesystem
 # opens it: where names are folded (APFS and HFS+ fold case and normalize Unicode), a name holding a byte
@@ -83,6 +86,20 @@ refuse() { confine_refuse "$*"; }   # refuse <words>...: one line, the words joi
 lower() { printf '%s' "$1" | tr 'A-Z' 'a-z'; }
 
 raise() { case "${top%/}/" in "${1%/}/"*) top=$1 ;; esac; }   # raise <dir>: top becomes <dir> when <dir> holds it
+
+# uses <a .git>: status 0 when it is the git directory git uses ($gd), a link to it, or a .git file
+# naming it ("gitdir: <path>", the path relative to the directory holding the file).
+uses() {
+  local g
+  [ "$1" -ef "$gd" ] && return 0
+  [ -f "$1" ] || return 1
+  g=$(head -c 4096 -- "$1" 2>/dev/null) || return 1
+  case "$g" in "gitdir: "?*) g=${g#gitdir: } ;; *) return 1 ;; esac
+  g=${g%%$'\n'*}
+  g=${g%$'\r'}
+  case "$g" in /*) ;; *) g=${1%/*}/$g ;; esac
+  [ "$g" -ef "$gd" ]
+}
 
 # settings_ok <file>: status 0 when <file> is a regular file of at most SETTINGS_MAX bytes holding one JSON
 # object whose top-level keys are all on SETTINGS_KEYS. jq runs from / with an empty environment, so no
@@ -197,23 +214,36 @@ if err=$(CONFINE_CEILING='' hgit "$WT" rev-parse --is-inside-work-tree 2>&1); th
       "main checkout; run from a clone or a workspace of its own (Rule 11e)"
   # A core.worktree in the repository's own config can set a top level below the directory that holds
   # the repository, and Claude Code may take that directory for the repository root. So the parents are
-  # read up to the highest of the top level, the directory holding the git directory when it is a .git,
-  # and the nearest directory at or above the working directory that holds a .git.
-  case "$gd" in
-    */.git)
-      d=${gd%/.git}
-      [ -n "$d" ] || d=/
-      case "$WT/" in "${d%/}/"*) raise "$d" ;; esac ;;
-  esac
+  # read up to the highest of the top level, the directory holding the git directory, and each directory
+  # at or above the working directory that holds a .git, up to the one whose .git git uses: git passes
+  # over a .git it cannot use, such as an empty directory, and so does this walk.
+  d=${gd%/*}
+  case "$WT/" in "${d%/}/"*) raise "${d:-/}" ;; esac
   d=$WT
-  while [ ! -e "$d/.git" ] && [ ! -L "$d/.git" ] && [ "$d" != / ]; do
+  while :; do
+    if [ -e "${d%/}/.git" ] || [ -L "${d%/}/.git" ]; then
+      raise "$d"
+      uses "${d%/}/.git" && break
+    fi
+    [ "$d" != / ] || break
     d=${d%/*}
     [ -n "$d" ] || d=/
   done
-  if [ -e "$d/.git" ] || [ -L "$d/.git" ]; then raise "$d"; fi
 else
   case "$err" in
-    *'not a git repository'*) top=$WT ;;
+    *'not a git repository'*)
+      # No repository git can use, but Claude Code may still take a directory holding a .git git cannot
+      # use (an empty directory, a .git file naming nothing) for the repository root, so the parents are
+      # read up to the highest one: git stops at the first .git file it cannot use, a reader of its own
+      # need not.
+      top=$WT
+      d=$WT
+      while :; do
+        if [ -e "${d%/}/.git" ] || [ -L "${d%/}/.git" ]; then raise "$d"; fi
+        [ "$d" != / ] || break
+        d=${d%/*}
+        [ -n "$d" ] || d=/
+      done ;;
     *) refuse "git cannot tell which repository holds the working directory, so its parents cannot be checked" ;;
   esac
 fi

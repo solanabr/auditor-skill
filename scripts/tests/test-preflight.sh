@@ -2,8 +2,9 @@
 # test-preflight.sh — self-test for scripts/preflight.sh: the case file fixtures/preflight/cases.txt (every
 # refused shape, links, letter cases, depths, the settings allowlist, the .git directories it skips), its
 # arguments and the entry limit, the notes, the parents up to the repository root (a core.worktree in the
-# repository's own config included) and the user's own configuration directory, linked worktrees and
-# submodule checkouts, names the filesystem folds, a large tree, trees find cannot read,
+# repository's own config, a .git git passes over or cannot use, and a git directory kept elsewhere
+# included) and the user's own configuration directory, linked worktrees and submodule checkouts, names
+# the filesystem folds, a large tree, trees find cannot read,
 # a missing jq, control characters in a path, and the installation or PATH entries inside the working
 # directory. Every run goes under each bash on the machine (/bin/bash and the bash running this suite,
 # when they differ) and must print the same under each. Needs git and jq; no network. Usage (from the
@@ -284,6 +285,48 @@ git -C "$P/r13" config core.fsmonitor "$P/r13/.git/mark" && git -C "$P/r13" conf
 run "$P/r13/sub"
 check "with a hostile git config, the parents are still read" above ../.claude/commands
 check "... and no program the repository's config names ran" nomarks
+# Archive layouts whose nearest .git is not the one git uses: an empty programs/vault/.git, which git
+# passes over, below a .git that is a link to the git directory (B), a .git file naming it (D), or one
+# naming a git directory inside the working tree (E). Or no repository git can use: a .git file naming
+# nothing (F), an empty .git directory (G), or a .git file naming nothing in the working directory, where
+# git stops, below a repository. Each holds config two parents up from programs/vault.
+build "$P" d:rb/programs/vault/.git d:rb/.claude/skills
+git init -q "$P/rb" && mv "$P/rb/.git" "$P/rb/store" && ln -s store "$P/rb/.git" &&
+  git -C "$P/rb" config core.worktree ../programs/vault
+run "$P/rb/programs/vault"
+check "a .git that is a link to the git directory, past an empty .git, still ends the parents there" \
+  above ../../.claude/skills
+build "$P" d:rd/programs/vault/.git d:rd/.claude/skills
+git init -q --separate-git-dir="$P/rd/store" "$P/rd" && git -C "$P/rd" config core.worktree ../programs/vault
+run "$P/rd/programs/vault"
+check "... and so does a .git file naming it" above ../../.claude/skills
+build "$P" d:re/programs/vault/x d:re/programs/vault/.git d:re/.claude/skills
+git init -q --separate-git-dir="$P/re/programs/vault/x/store" "$P/re" &&
+  printf 'gitdir: programs/vault/x/store\n' > "$P/re/.git" && git -C "$P/re" config core.worktree ../..
+run "$P/re/programs/vault"
+check "... and one naming a git directory inside the working tree, by a relative path" above ../../.claude/skills
+build "$P" d:rf/programs/vault d:rf/.claude/skills 'j:rf/.git=gitdir: nowhere'
+run "$P/rf/programs/vault"
+check "outside a repository git can use, a .git file naming nothing ends the parents there" above ../../.claude/skills
+build "$P" d:rg/programs/vault d:rg/.git d:rg/.claude/skills
+run "$P/rg/programs/vault"
+check "... and so does an empty .git directory" above ../../.claude/skills
+build "$P" d:rn/programs/vault d:rn/.claude/skills 'j:rn/programs/vault/.git=gitdir: nowhere'
+git init -q "$P/rn"
+run "$P/rn/programs/vault"
+check "... and a .git file naming nothing in the working directory, where git stops, does not hide the repository above" \
+  above ../../.claude/skills
+build "$P" d:ro/inner/sub d:ro/.claude/skills
+git init -q "$P/ro" && git init -q "$P/ro/inner"
+run "$P/ro/inner/sub"
+check "the walk ends at the .git git uses: a repository inside another reads no parent above its own" just_ok
+# A git directory kept beside the working tree: Claude Code may take the directory holding it for the
+# repository root (a main checkout's), so the parents are read up to it.
+build "$P" d:rs/x/src d:rs/.claude/agents
+git init -q --separate-git-dir="$P/rs/x.git" "$P/rs/x" && printf 'gitdir: ../x.git\n' > "$P/rs/x/.git"
+run "$P/rs/x/src"
+check "a git directory beside the working tree: the parents are read up to the directory holding it" \
+  above ../../.claude/agents
 # Config in a sibling of the working directory is no parent's, but a link in the tree can lead to it.
 build "$P" d:r11/sub/src d:r11/sibling/.claude/skills l:r11/sub/programs=../sibling
 git init -q "$P/r11"
