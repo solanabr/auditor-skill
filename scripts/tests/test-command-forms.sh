@@ -127,8 +127,8 @@ ASKS = re.compile(r'^\s*,?\s*which asks\b')
 # any other <...> is read as written, so `<x>/tmp/evil` is a redirect. A body that writes a new one adds it here.
 PLACEHOLDERS = ("ID", "R", "address", "audited commit", "base", "changed program directory", "commit", "file",
                 "filter", "fromUnix", "head", "id", "in-scope directory", "in-scope program dir", "json", "k",
-                "n+1", "n", "name", "package", "path", "program directory", "program-path", "program_id", "repo",
-                "rev", "sha from intake", "sha", "sig", "signature", "store intake recorded", "target",
+                "line", "n+1", "n", "name", "package", "path", "program directory", "program-path", "program_id",
+                "repo", "rev", "sha from intake", "sha", "sig", "signature", "store intake recorded", "target",
                 "the file's directory", "the full commit id intake pinned", "the full id of head", "toUnix",
                 "value", "version")
 PLACEHOLDER = re.compile(r'<(?:' + "|".join(re.escape(p) for p in sorted(PLACEHOLDERS, key=len, reverse=True)) +
