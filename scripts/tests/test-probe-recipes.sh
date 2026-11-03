@@ -456,16 +456,17 @@ zcheck "the PyPI form makes the environment with python3 -I and installs the has
 # python3 -m without -I would load its venv.py, and Python 3.9 before 3.9.14 and 3.10 before 3.10.6 set pip up in a
 # child that is not isolated and starts in the working directory, which would load its runpy.py. A python3 that
 # cannot make an environment with pip from an empty directory either (no venv or ensurepip) skips this with a note.
+# Both runs keep TMPDIR in $T: Python 3.9's ensurepip leaves its CA bundle there.
 vline=$(zblock bash 2 | grep -F -- '-m venv ')
 if [ -z "$vline" ]; then bad "power-tools.md's PyPI form has no line that runs python3 -m venv"
-elif ! (cd "$T" && python3 -I -m venv "$T/zctl" && [ -x "$T/zctl/bin/pip" ]) > /dev/null 2>&1; then
+elif ! (cd "$T" && TMPDIR="$T" python3 -I -m venv "$T/zctl" && [ -x "$T/zctl/bin/pip" ]) > /dev/null 2>&1; then
   echo "note: this python3 cannot make a virtual environment with pip in an empty directory; the environment line ran against the stand-ins only"
 else
   mkdir -p "$T/zrepo2" "$T/zhome2" || exit 1
   for m in venv runpy ensurepip pip; do
     printf 'import os\nopen(os.path.join(os.environ["ZMARK"], "zmark-%s"), "w").close()\nraise SystemExit(97)\n' "$m" > "$T/zrepo2/$m.py"
   done
-  ( cd "$T/zrepo2" && env HOME="$T/zhome2" ZMARK="$T" "$BASH" -c "$vline" ) > "$T/zout" 2>&1
+  ( cd "$T/zrepo2" && env HOME="$T/zhome2" ZMARK="$T" TMPDIR="$T" "$BASH" -c "$vline" ) > "$T/zout" 2>&1
   code=$?
   marks=$(cd "$T" && ls zmark-* 2>/dev/null | tr '\n' ' ')
   pyv=$(cd "$T" && python3 -I -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null)
