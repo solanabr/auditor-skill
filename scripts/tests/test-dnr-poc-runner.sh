@@ -22,6 +22,10 @@
 #     cargo's JSON output (a large one too) and run directly, from the package root
 #     with CARGO_MANIFEST_DIR and the dynamic library path set; only that run gets
 #     AUDITOR_POC_MARKERS, and an inherited value never reaches cargo;
+#   * every build of both arms (SBF builds or prebuilt bytes, and test binaries) comes
+#     before either test runs, so what a test writes in the scratch copy (src/lib.rs,
+#     with real cargo) reaches no build and prebuilt bytes rewritten meanwhile do not
+#     run; an arm's bytes or test binary that changed after its build stop the run;
 #   * the bytes that ran: an arm counts only when every program the runner helpers
 #     loaded is the .so run.sh placed, unchanged after the test, and the Leg 3 line
 #     names it;
@@ -222,7 +226,9 @@ PY
 # end in +<outcome>, what the program did), and each line starts with the test name
 # (<test>_case unless @ gives one). Marker `loaded` records the zero-trimmed hash
 # of the .so in SBF_OUT_DIR, as mollusk_for does; `loaded-other` records other bytes;
-# `tamper` changes the placed .so; `relock` makes the build lock in CARGO_TARGET_DIR
+# `tamper` changes the placed .so; `spoil` appends a line to each file SHIM_SPOIL names (an
+# absolute path, or one in run.sh's own files, the marker directory's parent);
+# `relock` makes the build lock in CARGO_TARGET_DIR
 # name SHIM_RELOCK_PID; `relink` puts a symbolic link to SHIM_RELINK_TO at SHIM_RELINK;
 # `relocate` moves the directory SHIM_RELOCATE aside and puts a link to SHIM_RELOCATE_TO there.
 # SHIM_FAIL=<test> makes that test binary fail.
@@ -405,6 +411,7 @@ for m in ${SHIM_MARKERS-exploit:attempted exploit:held exploit:effect exploit:lo
       done ;;
     loaded-other) printf '%s\t%064d %s\n' "$tag" 0 /elsewhere/other.so >> "$AUDITOR_POC_MARKERS/loaded" ;;
     tamper) for so in "${SBF_OUT_DIR:-/nonexistent}"/*.so; do [ -f "$so" ] && printf 'x' >> "$so"; done ;;
+    spoil) for f in ${SHIM_SPOIL:-}; do case "$f" in /*) ;; *) f="$AUDITOR_POC_MARKERS/../$f" ;; esac; printf '\n# spoiled\n' >> "$f"; done ;;
     relock) printf '%s\n' "${SHIM_RELOCK_PID:-}" > "${CARGO_TARGET_DIR:-/nonexistent}/.auditor-poc-build.lock/pid" ;;
     relink) rm -f "$SHIM_RELINK" && ln -s "$SHIM_RELINK_TO" "$SHIM_RELINK" ;;
     relocate) mv "$SHIM_RELOCATE" "$SHIM_RELOCATE.moved" && ln -s "$SHIM_RELOCATE_TO" "$SHIM_RELOCATE" ;;
@@ -704,6 +711,35 @@ code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=fixed_blocked SHIM_MARK
 code="$(gate "$T/inc" "$NATIVE" "$VULN" SHIM_MARKERS="$EV exploit:tamper")"
 [ "$code" = 3 ] && grep -q 'the placed .so changed while the test ran' "$T/out" && ! grep -q "^$LEG3" "$T/out" \
   && ok "a placed .so that changes while the test runs -> exit 3, no Leg 3 line" || bad "placed .so changed: exit $code"
+# Every build comes before any test: both arms' bytes (SBF builds or prebuilt files) and test binaries, then
+# the check of what the builds compiled. A test runs the PoC's code with the scratch copy as
+# CARGO_MANIFEST_DIR, so nothing it writes there is compiled; prebuilt bytes are read before it runs; and an
+# arm's bytes kept for its test, or its test binary, that changed after the build stop the run before that
+# arm's test runs.
+for order_run in model prebuilt; do
+  if [ "$order_run" = model ]; then code="$(gate "$T/inc" "$NATIVE")"; else code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX")"; fi
+  [ "$code" = 0 ] && [ "$(awk -F'\t' '$6 ~ /^testbin /' "$T/calls" | wc -l | tr -d ' ')" = 2 ] \
+    && awk -F'\t' '$6 ~ /^testbin / { t = 1 } t && $6 ~ /^(build-sbf|test) / { late = 1 } END { exit late }' "$T/calls" \
+    && ok "every build of both arms comes before either test runs ($order_run run)" || { bad "build order, $order_run run: exit $code"; cat "$T/calls" >&2; }
+done
+cp "$T/fixed.so" "$T/fixed-rewritten.so"
+code="$(gate "$T/inc" "$NATIVE" "$VULN" FIXED_SO="$T/fixed-rewritten.so" SHIM_MARKERS="$EV exploit:spoil $FR" SHIM_SPOIL="$T/fixed-rewritten.so")"
+[ "$code" = 0 ] && grep -qx "${LEG3}${want} fixed sha256=${wantf} (rejected with the pinned error) → \[PoC-REPRODUCED\]" "$T/out" \
+  && [ "$(zhash "$T/fixed-rewritten.so")" != "$wantf" ] \
+  && ok "FIXED_SO rewritten while the vulnerable arm's test runs -> the fixed arm runs on the bytes read before it, which the Leg 3 line names" \
+  || { bad "FIXED_SO rewritten during the vulnerable arm's test: exit $code"; cat "$T/out" >&2; }
+code="$(gate "$T/inc" "$NATIVE" SHIM_MARKERS="$EV exploit:spoil $FR" SHIM_SPOIL=fixed.so)"
+[ "$code" = 3 ] && grep -q "^\[PoC-ATTEMPTED\] blocker: the fixed arm's .so changed between its build and its test" "$T/out" && one_blocker \
+  && ! awk -F'\t' '$6 ~ /^testbin fixed_blocked/ { f = 1 } END { exit !f }' "$T/calls" && ! grep -q '^OK' "$T/out" \
+  && ok "the fixed arm's built bytes, rewritten in the scratch copy by the vulnerable arm's test -> exit 3, the fixed test never runs" \
+  || { bad "the fixed arm's kept bytes rewritten: exit $code"; cat "$T/out" >&2; }
+cp -p "$T/shim/bin/fixed_blocked" "$T/fixed_blocked.kept"
+code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" SHIM_MARKERS="$EV exploit:spoil $FR" SHIM_SPOIL="$T/shim/bin/fixed_blocked")"
+cp -p "$T/fixed_blocked.kept" "$T/shim/bin/fixed_blocked"
+[ "$code" = 3 ] && grep -q "^\[PoC-ATTEMPTED\] blocker: the fixed arm's test binary .* changed between its build and its run" "$T/out" && one_blocker \
+  && ! awk -F'\t' '$6 ~ /^testbin fixed_blocked/ { f = 1 } END { exit !f }' "$T/calls" && ! grep -q "^$LEG3" "$T/out" \
+  && ok "the fixed arm's test binary, rewritten by the vulnerable arm's test -> exit 3, it never runs" \
+  || { bad "the fixed arm's test binary rewritten: exit $code"; cat "$T/out" >&2; }
 
 code="$(gate "$T/inc" "$NATIVE" "$VULN" BPF_OUT_DIR="$T")"
 [ "$code" = 0 ] && awk -F'\t' '$4 != "" { bad = 1 } END { exit bad }' "$T/calls" && ok "a caller's BPF_OUT_DIR never reaches cargo (mollusk would look there before SBF_OUT_DIR)" || bad "BPF_OUT_DIR: exit $code"
@@ -1196,8 +1232,8 @@ else
   bad "CARGO_TARGET_DIR: exit $code, build dir '$bd'"; cat "$T/calls" >&2
 fi
 
-# A shared build cache. run.sh holds a lock inside the cache around each arm's build
-# and test, and `harness checkbuild` refuses an arm when cargo reports one of the
+# A shared build cache. run.sh holds a lock inside the cache from its first build until
+# its last test, and `harness checkbuild` refuses an arm when cargo reports one of the
 # crate's own units already built without this run compiling it (the stand-in reports
 # that with SHIM_FRESH=1). The lock dir lands in the cache and is gone afterwards.
 code="$(gate "$T/inc" "$NATIVE" "$VULN" CARGO_TARGET_DIR="$T/cache" SHIM_FRESH=1)"
@@ -3736,6 +3772,19 @@ helper = { path = "helper" }'
     && ! grep -q "^$LEG3" "$T/out" && ! grep -q '^>> running exploit' "$T/out" \
     && ok "real cargo: inline assembly in an include!d src/payload.txt -> exit 3 after the build, before the test" \
     || { bad "real cargo, inline assembly in an include!d .txt: exit $code"; cat "$T/out" >&2; }
+  # The vulnerable arm's test runs the PoC's code with the scratch copy as CARGO_MANIFEST_DIR. Both arms are
+  # built before it runs, so what it writes there reaches no build: here it turns the crate's src/lib.rs into
+  # a compile_error!, which a build of the fixed arm after it would stop on.
+  mk_e2e "$T/e-rewrite"
+  subst "$T/e-rewrite/tests/exploit.rs" '    assert_exploit_effect!(' '    std::fs::write(std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("src/lib.rs"), "compile_error!(\"rewritten by the vulnerable arm test\");\n").unwrap();
+    assert_exploit_effect!('
+  code="$(e2e_model "$T/e-rewrite" KEEP_POC_BUILD=1)"
+  bd="$(build_dir)"
+  [ "$code" = 0 ] && grep -q "^$MODEL" "$T/out" && [ -n "$bd" ] && grep -q 'rewritten by the vulnerable arm test' "$bd/src/lib.rs" \
+    && ! grep -q 'failed to build for the fixed arm' "$T/out" \
+    && ok "real cargo, model run: a vulnerable-arm test that rewrites the crate's source in the scratch copy changes nothing the fixed arm builds" \
+    || { bad "real cargo, a test that rewrites the scratch copy: exit $code"; cat "$T/out" >&2; }
+  [ -n "$bd" ] && rm -rf "$bd"
 
   # The installation's copy with real cargo. The crate sits in a run directory, its prebuilt bytes under
   # exec/, and it depends on a path crate outside it whose build script records the environment it is

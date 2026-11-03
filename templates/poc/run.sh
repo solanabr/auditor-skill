@@ -38,10 +38,14 @@
 # with the installation's byte for byte before an OK line is trusted, and
 # refreshed from it before a re-run.
 #
-# Why two build+test passes and not one: both arms compile to the SAME `.so`
-# filename (<crate>.so), so they cannot coexist in SBF_OUT_DIR. Build an arm, test
-# it, then overwrite with the other arm. Mollusk loads the `.so`, never the host
-# test binary — so the SBF build MUST precede each test run.
+# Why each arm's bytes are kept aside: both arms compile to the SAME `.so` filename
+# (<crate>.so), so they cannot coexist in SBF_OUT_DIR, and Mollusk loads the `.so`,
+# never the host test binary. Every build comes first, each arm's SBF build (or its
+# prebuilt bytes) kept aside with its hash and each arm's test binary built, then the
+# check of what they compiled, and only then the tests, each arm's bytes placed in
+# SBF_OUT_DIR right before its own. A test runs the PoC's code with the scratch copy
+# as CARGO_MANIFEST_DIR, so nothing it writes there is ever compiled; an arm's bytes
+# or test binary that changed after its build stop the run (exit 3).
 #
 # Toolchain: cargo-build-sbf's default bundle is platform-tools v1.51 / cargo 1.84,
 # which cannot parse the edition2024 manifests in the mollusk-svm dep tree. We pin
@@ -185,9 +189,9 @@
 #     create: cargo trusts the build outputs it finds there. Two crates of the same
 #     name resolve to the same cached artifact path, so run.sh holds a lock inside
 #     the directory cargo builds into (cargo metadata's target_directory, which a
-#     target-dir in cargo's own config sets too) around each arm's build and test
-#     and re-stamps the scratch copy under the lock; cargo then rebuilds this
-#     crate's own code and the cache serves only its dependencies. A run waits up
+#     target-dir in cargo's own config sets too) from its first build until its last
+#     test exits, and re-stamps the scratch copy under the lock; cargo then rebuilds
+#     this crate's own code and the cache serves only its dependencies. A run waits up
 #     to POC_LOCK_WAIT seconds (default 900) for the lock, then stops with exit 3.
 #     If a stale artifact is handed over anyway, the fresh check in `harness
 #     checkbuild` makes the run a blocker, not a verdict. SBF_OUT_DIR stays in the
@@ -208,9 +212,9 @@
 # tree it would read the target's .cargo/config*.
 #
 # HOW AN ARM IS DECIDED, in either mode:
-#   * each arm's test binary is built with `cargo test --no-run` and then run
-#     directly, from the package root with CARGO_MANIFEST_DIR and the dynamic
-#     library path set as `cargo test` sets them. Only that run gets
+#   * each arm's test binary is built with `cargo test --no-run`, before either test
+#     runs, and then run directly, from the package root with CARGO_MANIFEST_DIR and
+#     the dynamic library path set as `cargo test` sets them. Only that run gets
 #     AUDITOR_POC_MARKERS, a fresh directory per arm; an inherited value is cleared.
 #   * every contract assertion leaves markers tagged with the test that ran it. An
 #     arm counts only on a contract assertion of that arm that RAN AND HELD, and only
@@ -809,7 +813,8 @@ fi
 # the program name, from cargo metadata, after the build-time-code and manifest
 # checks (exit 3 and the reason otherwise). `harness targetdir`: the directory cargo
 # builds into, from cargo metadata. `harness checkbuild`: the test binary in cargo's
-# JSON output. `harness settle`: an arm's verdict from its markers.
+# JSON output. `harness digest`: the sha256 of a file, a test binary's after its build and
+# again before it runs. `harness settle`: an arm's verdict from its markers.
 # `harness nonregistry`: the code from outside the crate and crates.io, from Cargo.lock
 # and from the dep-info of the crate's own units, after the check of the files of the
 # crate they list (exit 3 and the reason). `harness sbfdeps`: copies the dep-info an
@@ -826,6 +831,14 @@ HARNESS_PY='import hashlib, json, os, re, shutil, sys, unicodedata
 def zhash(path):
     with open(path, "rb") as f:
         return hashlib.sha256(f.read().rstrip(b"\0")).hexdigest()
+
+
+def digest(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
 
 
 def flat(text):
@@ -1422,6 +1435,8 @@ def stucopy(crate, inst):
 command, args = sys.argv[1], sys.argv[2:]
 if command == "hash":
     print(zhash(args[0]))
+elif command == "digest":
+    print(digest(args[0]))
 elif command == "crate":
     crate(*args)
 elif command == "targetdir":
@@ -1503,7 +1518,7 @@ copy_crate() {
 
 # The build lock. When the target directory is shared between runs (a build cache),
 # two crates of the same name resolve to the same cached artifact path, so this run
-# holds a lock inside that directory from just before each arm's build until its
+# holds a lock inside that directory from just before its first build until its last
 # test binary exits, and re-stamps the scratch copy under the lock so cargo rebuilds
 # this crate's own code rather than reuse another run's. With a private target
 # directory the lock is uncontended. The fresh check in `harness checkbuild` is a
@@ -1741,14 +1756,16 @@ SYSROOT_LIB="$(child "${RUSTC:-rustc}" --print target-libdir 2>/dev/null || true
 # library as out-of-tree code.
 export AUDITOR_SYSROOT="$(child "${RUSTC:-rustc}" --print sysroot 2>/dev/null || echo /nonexistent)"
 
-place_arm() {  # place_arm <arm> : put <crate>.so in SBF_OUT_DIR for this arm; PLACED_HASH names its bytes
-  local arm="$1" so="${SBF_OUT_DIR}/${CRATE}.so"
+# keep_so <arm>: the arm's bytes, its prebuilt file or its SBF build, kept aside as ${RUN_DIR}/<arm>.so
+# before any test runs; KEPT_HASH names them (zero-trimmed sha256).
+keep_so() {
+  local arm="$1" so="${SBF_OUT_DIR}/${CRATE}.so" kept="${RUN_DIR}/$1.so"
   # Drop the other arm's bytes first, so a build that writes nothing cannot leave them.
-  rm -f "${so}" 2>/dev/null || true
+  rm -f "${so}" "${kept}" 2>/dev/null || true
   if [[ "${PREBUILT}" -eq 1 ]]; then
     local src; [[ "${arm}" == "vulnerable" ]] && src="${VULNERABLE_SO}" || src="${FIXED_SO}"
-    if ! cp -f "${src}" "${so}"; then
-      echo "[PoC-ATTEMPTED] blocker: could not place the ${arm} .so from ${src}." >&2
+    if ! cp -f "${src}" "${kept}"; then
+      echo "[PoC-ATTEMPTED] blocker: could not copy the ${arm} .so from ${src}." >&2
       exit 3
     fi
     echo ">> ${arm} arm: prebuilt ${src}"
@@ -1776,17 +1793,41 @@ place_arm() {  # place_arm <arm> : put <crate>.so in SBF_OUT_DIR for this arm; P
       echo "[PoC-ATTEMPTED] blocker: could not read the dep-info the ${arm} arm's SBF build wrote under ${EFFECTIVE_TARGET}." >&2
       exit 3
     fi
+    if ! mv -f "${so}" "${kept}"; then
+      echo "[PoC-ATTEMPTED] blocker: the ${arm} arm's SBF build left no ${so} to keep for its test." >&2
+      exit 3
+    fi
+  fi
+  KEPT_HASH="$(harness hash "${kept}")" || KEPT_HASH=""
+  if [[ ! "${KEPT_HASH}" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "[PoC-ATTEMPTED] blocker: could not hash the ${arm} .so ${kept}." >&2
+    exit 3
+  fi
+}
+
+# place_arm <arm> <hash>: put the arm's kept bytes in SBF_OUT_DIR as <crate>.so, right before its test,
+# and only while they still have the hash keep_so took; PLACED_HASH names them.
+place_arm() {
+  local arm="$1" so="${SBF_OUT_DIR}/${CRATE}.so"
+  rm -f "${so}" 2>/dev/null || true
+  if ! cp -f "${RUN_DIR}/${arm}.so" "${so}"; then
+    echo "[PoC-ATTEMPTED] blocker: could not place the ${arm} .so from ${RUN_DIR}/${arm}.so." >&2
+    exit 3
   fi
   PLACED_HASH="$(harness hash "${so}")" || PLACED_HASH=""
   if [[ ! "${PLACED_HASH}" =~ ^[0-9a-f]{64}$ ]]; then
     echo "[PoC-ATTEMPTED] blocker: could not hash the placed ${arm} .so ${so}." >&2
     exit 3
   fi
+  if [[ "${PLACED_HASH}" != "$2" ]]; then
+    echo "[PoC-ATTEMPTED] blocker: the ${arm} arm's .so changed between its build and its test (zero-trimmed sha256 $2, then ${PLACED_HASH}): run.sh runs an arm only on the bytes it built or was given for it, so this run decides nothing." >&2
+    exit 3
+  fi
   echo "   ${arm} .so: ${so}"
   echo "   ${arm} sha256 (zero-trimmed): ${PLACED_HASH}"
 }
 
-build_tests() {  # build_tests <arm> <test>: the arm's test binary, EXE; one that does not compile is a blocker, not a verdict
+build_tests() {  # build_tests <arm> <test>: the arm's test binary, EXE, and its sha256, EXE_DIGEST; one that does not compile is a blocker, not a verdict
   local json="${RUN_DIR}/build-$1.json" rc=0
   local -a cmd=(child_net cargo test)
   if [[ "${CLEAN}" == 1 ]]; then cmd=(child cargo test --offline); fi
@@ -1810,18 +1851,30 @@ build_tests() {  # build_tests <arm> <test>: the arm's test binary, EXE; one tha
     echo "[PoC-ATTEMPTED] blocker: the test binary cargo named for tests/$2.rs is not executable (${EXE})." >&2
     exit 3
   fi
+  EXE_DIGEST="$(harness digest "${EXE}")" || EXE_DIGEST=""
+  if [[ ! "${EXE_DIGEST}" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "[PoC-ATTEMPTED] blocker: could not hash the test binary cargo named for tests/$2.rs (${EXE})." >&2
+    exit 3
+  fi
 }
 
-run_tests() {  # run_tests <arm>: the arm's test binary, run as `cargo test` runs it, with an empty marker directory of its own
-  local dir="${RUN_DIR}/$1" deps
+# run_tests <arm> <test binary> <its sha256 after its build>: the arm's test binary, run as `cargo test`
+# runs it, with an empty marker directory of its own, and only while it is still the binary the build made.
+run_tests() {
+  local dir="${RUN_DIR}/$1" deps now
+  now="$(harness digest "$2")" || now=""
+  if [[ "${now}" != "$3" ]]; then
+    echo "[PoC-ATTEMPTED] blocker: the $1 arm's test binary $2 changed between its build and its run (sha256 $3, then ${now:-unreadable}): run.sh runs only the test binary the arm's build made, so this run decides nothing." >&2
+    exit 3
+  fi
   if ! { rm -rf "${dir}" && mkdir -p "${dir}"; }; then
     echo "[PoC-ATTEMPTED] blocker: cannot prepare the marker directory ${dir}." >&2
     exit 3
   fi
-  deps="$(dirname "${EXE}")"
+  deps="$(dirname "$2")"
   child "AUDITOR_POC_MARKERS=${dir}" "CARGO_MANIFEST_DIR=${BUILD_DIR}" \
     "${LIBPATH_VAR}=${deps}:$(dirname "${deps}")${SYSROOT_LIB:+:${SYSROOT_LIB}}${LIBPATH_REST:+:${LIBPATH_REST}}" \
-    "${EXE}" --nocapture
+    "$2" --nocapture
 }
 
 inconclusive() {  # inconclusive <arm> <reason>: the arm decided nothing — a blocker, never a verdict
@@ -1853,7 +1906,7 @@ settle() {
 }
 
 NONREG=""
-capture_nonreg() {  # the non-registry code, read right after a build (before a test can rewrite the lock)
+capture_nonreg() {  # the non-registry code, read once every build is done and before any test runs (a test can rewrite the lock)
   local d rc=0
   local -a inputs=("${RUN_DIR}"/build-*.json)
   for d in "${RUN_DIR}"/sbf-*.d; do
@@ -1879,16 +1932,33 @@ HELD_KIND=""
 HELD_LINE=""
 FAILED_HOW=""
 
-# 1. vulnerable arm — the exploit must land. The lock spans the build and the test.
+# Every build comes first: each arm's bytes (its SBF build, or its prebuilt file) kept aside with their
+# hash, and each arm's test binary with its own; then the check of what the builds compiled; and only then
+# the tests. A test runs the PoC's code with the scratch copy as CARGO_MANIFEST_DIR, so nothing it writes
+# there is ever compiled, and an arm's bytes or test binary that changed after the build stop the run
+# (exit 3). The lock spans every build and test.
+ARMS="vulnerable"
+if [[ "${PREBUILT}" -eq 0 || -n "${FIXED_SO}" ]]; then ARMS="vulnerable fixed"; fi
 acquire_lock || { echo "[PoC-ATTEMPTED] blocker: could not take the build lock in ${EFFECTIVE_TARGET} (another PoC run may hold it, or the directory is not writable)." >&2; exit 3; }
-place_arm vulnerable
-VULNERABLE_HASH="${PLACED_HASH}"
+keep_so vulnerable
+KEPT_VULNERABLE="${KEPT_HASH}"
 build_tests vulnerable exploit
+EXE_VULNERABLE="${EXE}"; DIGEST_VULNERABLE="${EXE_DIGEST}"
+if [[ "${ARMS}" == "vulnerable fixed" ]]; then
+  keep_so fixed
+  KEPT_FIXED="${KEPT_HASH}"
+  build_tests fixed fixed_blocked
+  EXE_FIXED="${EXE}"; DIGEST_FIXED="${EXE_DIGEST}"
+fi
 capture_nonreg
+
+# 1. vulnerable arm — the exploit must land.
+place_arm vulnerable "${KEPT_VULNERABLE}"
+VULNERABLE_HASH="${PLACED_HASH}"
 echo ">> running exploit against 'vulnerable' (expect: SUCCEEDS)"
 status=0
-run_tests vulnerable || status=$?
-release_lock
+run_tests vulnerable "${EXE_VULNERABLE}" "${DIGEST_VULNERABLE}" || status=$?
+if [[ "${ARMS}" == vulnerable ]]; then release_lock; fi
 if ! settle vulnerable "${status}"; then
   nonregistry
   echo "FAIL: exploit did not reproduce on the vulnerable arm — PoC is not valid." >&2
@@ -1904,13 +1974,10 @@ if [[ "${PREBUILT}" -eq 1 ]]; then
 fi
 
 # 2. fixed arm — the same attack must be turned away.
-acquire_lock || { echo "[PoC-ATTEMPTED] blocker: could not take the build lock in ${EFFECTIVE_TARGET} (another PoC run may hold it, or the directory is not writable)." >&2; exit 3; }
-place_arm fixed
-build_tests fixed fixed_blocked
-capture_nonreg
+place_arm fixed "${KEPT_FIXED}"
 echo ">> running same attack against 'fixed' (expect: REJECTED)"
 status=0
-run_tests fixed || status=$?
+run_tests fixed "${EXE_FIXED}" "${DIGEST_FIXED}" || status=$?
 release_lock
 if ! settle fixed "${status}"; then
   nonregistry

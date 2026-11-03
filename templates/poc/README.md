@@ -84,8 +84,11 @@ for byte, and `--new-cache` makes a build cache (below) and prints its path.
 toolchains these runs need and whether this machine passes the self-check.
 
 Build and test only through `run.sh`. It builds both arms with `cargo build-sbf`
-(platform-tools >= v1.54), builds each arm's test binary and runs it with
-`SBF_OUT_DIR` wired — never inside the audited repo. The crate is copied to a scratch
+(platform-tools >= v1.54) and both arms' test binaries before either test runs, then
+runs each with that arm's bytes in `SBF_OUT_DIR` — never inside the audited repo. A
+test runs this crate's code with the scratch copy as `CARGO_MANIFEST_DIR`, so nothing
+it writes there is compiled, and an arm's bytes or test binary that changed after its
+build stop the run (exit `3`). The crate is copied to a scratch
 directory under `$TMPDIR` (printed; `--keep`, or `KEEP_POC_BUILD=1` for `./run.sh`,
 keeps it) and built there with the toolchain pinned, so the target's `.cargo/config*`
 and `rust-toolchain*` never apply. Refused before anything compiles, in either mode:
@@ -181,12 +184,12 @@ holding its marker file. Never point `CARGO_TARGET_DIR` or `CARGO_BUILD_TARGET_D
 inside the target tree or at a directory you did not create: cargo trusts the build
 outputs it finds there. PoC crates of one engagement often share a package name, so
 their artifacts land on the same paths in the cache: `run.sh` holds a lock inside the
-directory cargo builds into (a `target-dir` in your own cargo config counts too) around
-each arm's build and test, and re-stamps its scratch copy under the lock so cargo
-rebuilds the crate's own code. A run waits up to `POC_LOCK_WAIT` seconds (default 900)
-for the lock, then stops with exit 3. A run that still finds one of its own units
-reported as already built, without having built it, stops with exit 3 instead of
-running it.
+directory cargo builds into (a `target-dir` in your own cargo config counts too) from
+its first build until its last test exits, and re-stamps its scratch copy under the
+lock so cargo rebuilds the crate's own code. A run waits up to `POC_LOCK_WAIT` seconds
+(default 900) for the lock, then stops with exit 3. A run that still finds one of its
+own units reported as already built, without having built it, stops with exit 3
+instead of running it.
 
 ## Contract
 
@@ -269,7 +272,7 @@ reads the incident's `root_cause_class` from `incident_<n>/INCIDENTS.json`, and 
 dependency on a path outside the crate, on git or from a registry other than crates.io,
 a target built from outside it, or a build that compiled code from outside it stops the
 run, the dependencies before anything compiles (the resolved `Cargo.lock` is read again
-after the downloads) and the build before its test runs.
+after the downloads) and the build before any test runs.
 While `INCIDENTS.json` records a `supply_chain_or_ci` incident, the crates of its other
 incidents do not run natively either: they build from the same target tree.
 `./run.sh` does not read `INCIDENTS.json`.
