@@ -312,7 +312,8 @@ fx_audit_mem() { # fixtures/audit-mem/cases.txt, as test-auditor-tools.sh lays i
   ( cd "$W" && "$M" init && "$M" put-finding --program-id VaultProg1111 --signature unchecked_sub@vault.balance \
       --root-cause 'unchecked subtraction' --title 'Vault underflow' --severity 3 \
     && "$M" rule --program-id VaultProg1111 --signature unchecked_sub@vault.balance --ruling FALSE_POSITIVE \
-      --rationale guarded --by auditor --commit c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe --guard src/withdraw.rs:2 ) >/dev/null || return 1
+      --rationale guarded --by auditor --commit c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe --guard src/withdraw.rs:2 \
+      --site src/withdraw.rs:3 ) >/dev/null || return 1
   for d in audit_1 audit_4 audit_5 audit_6 audit_7 audit_8 audit_10 audit_11 audit_12 audit_13 incident_1 incident_2; do
     rundir_by_hand "$W/$d" || return 1
   done
