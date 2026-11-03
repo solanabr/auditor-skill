@@ -577,9 +577,10 @@ wfcheck() { # wfcheck FILE -> one line per problem, read byte by byte
     # flow collection, and after a : right after a quoted scalar, an alias or a closed collection. Anywhere else a
     # quote mark is a character of a plain scalar, which YAML never decodes. FD carries the depth of flow
     # collections over to the next line, and PC whether the line ended in a plain scalar inside one, which the next
-    # line goes on with unless it starts with , ] or }. RUNON is 1 when a quoted scalar, in either style, goes on past the line, where YAML reads
-    # the next line as part of it; TAG is 1 when a node has a tag, such as !!binary, which makes YAML read the text
-    # that follows as base64; HDR is 1 when the line ends in a block scalar header (| or >).
+    # line goes on with unless it starts with , ] or }. RUNON is 1 when a quoted scalar, in either style, goes on
+    # past the line, where YAML reads the next line as part of it; TAG is 1 when a node has a tag, such as !!binary,
+    # which makes YAML read the text that follows as base64; HDR is 1 when the line ends in a block scalar header
+    # (| or >).
     # In the value of on: (STRICT), WHY names the first thing on the line this check cannot read with certainty,
     # or that YAML parsers read in different ways (libyaml takes any ? or : inside a flow collection as an
     # indicator, YAML 1.2 only one before a space), so the check fails it whatever its events.
