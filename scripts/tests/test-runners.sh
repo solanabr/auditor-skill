@@ -1283,9 +1283,12 @@ run "$SAST" "$WT" -- semgrep --run audit_1 --path programs/demo/src/lib.rs --rul
 check "... and a file given as --path gets no note" sh -c "[ '$RC' = 0 ] && grep -q '^>> semgrep: ' '$T/out' && ! grep -q 'note:' '$T/out'"
 # The scan root's own project can be another repository. One with a .git directory gets its own copy of its
 # index; one with a .git file (a submodule's, or a separate git directory) gets none, so git finds no
-# repository; a folder shaped as a bare repository, which git takes for one from inside it, is never looked at,
-# since git looks for no repository at all. Each config names the programs and hooks that leave marks. An index
-# with an entry that climbs out of the project (no git command writes one; git lists it) gets no copy either.
+# repository. Each config names the programs and hooks that leave marks, and the marks of earlier runs are
+# set aside for each case (and put back after), so each check counts its own. A folder shaped as a bare
+# repository is part of the working directory's project: plain git, run from it, takes it for a bare
+# repository with no work tree and runs none of its programs either, so that case shows only that it is
+# never consulted. An index with an entry that climbs out of the project (no git command writes one; git
+# lists it) gets no copy either.
 tgit init -q "$WT/nested" && printf 'fn n() {}\n' > "$WT/nested/n.rs" && tgit -C "$WT/nested" add n.rs &&
   printf '[core]\n\tfsmonitor = %s/mark-fsmonitor\n\thooksPath = %s/hooks\n' "$T" "$T" >> "$WT/nested/.git/config"
 tgit init -q --separate-git-dir "$T/gf.git" "$WT/gf" && printf 'fn g() {}\n' > "$WT/gf/g.rs" &&
@@ -1307,16 +1310,22 @@ entry += b"\0" * ((62 + len(name) + 8) // 8 * 8 - len(entry))
 out = struct.pack(">4sII", sig, ver, n + 1) + entry + body
 open(p, "wb").write(out + hashlib.sha1(out).digest())
 PY
-while IFS='|' read -r path want; do
+shape_ok() { # shape_ok <calls line>: exit 0, no mark, and that line in the calls
+  [ "$RC" = 0 ] && [ -z "$(ls -A "$T/marks")" ] && grep -q "$1" "$T/calls"
+}
+mkdir -p "$T/marks-earlier"
+while IFS='|' read -r path want label; do
+  mv "$T/marks/"* "$T/marks-earlier/" 2>/dev/null
   run "$SAST" "$WT" -- semgrep --run audit_1 --path "$path" --ruleset p/rust
-  check "sast --path $path: exit 0, and semgrep's git ran nothing a config names (calls: $want)" \
-    sh -c "[ '$RC' = 0 ] && [ -z \"\$(ls -A '$T/marks')\" ] && grep -q '$want' '$T/calls'"
+  check "sast --path $path, $label: exit 0, and semgrep's git ran nothing a config names (calls: $want)" shape_ok "$want"
 done <<CASES
-nested|^git-cached: 0 n.rs \$
-gf|^git-cached: 128 fatal: not a git repository
-bare|^env: GIT_WORK_TREE=$WT\$
-idx|^git-cached: 128 fatal: not a git repository
+nested|^git-cached: 0 n.rs \$|its own .git directory: a copy of its own index
+gf|^git-cached: 128 fatal: not a git repository|a .git file: no copy, git finds no repository
+bare|^env: GIT_WORK_TREE=$WT\$|a folder shaped as a bare repository: never consulted, the working directory's copy
+idx|^git-cached: 128 fatal: not a git repository|an index entry outside the project: no copy
 CASES
+mv "$T/marks-earlier/"* "$T/marks/" 2>/dev/null
+rmdir "$T/marks-earlier"
 # git init records whether letter case tells names apart and, on macOS, that names are precomposed; with the
 # same two keys in sast.sh's config, git lists what the project's own git lists: here a tracked A.rs renamed
 # on disk to a.rs, an untracked target/t.rs under a .gitignore of Target/, and a file named in decomposed
