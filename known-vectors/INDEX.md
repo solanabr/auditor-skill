@@ -230,6 +230,12 @@ Every row carries a **Load when (markers)** cell: the grep/prescan markers that 
 | 139 | [Comment / Issue-Triggered Privileged Workflow Without Per-Event Author Gating](139-comment-triggered-workflow-author-gating.md) | 9 | `issue_comment` · `pull_request_review_comment` · `pull_request_review` · `discussion_comment` · `issues` (as a trigger) · `gollum` · `anthropics/claude-code-action` · `run-gemini-cli` · `openai/codex-action` · `actions/ai-inference` · `claude -p` · `codex exec` |
 | 140 | [workflow_run / pull_request_target Pwn Request — Privileged Job Trusts Fork Code, Artifacts or Cache](140-workflow-run-pwn-request-artifact-cache-poisoning.md) | 9 | `pull_request_target` · `workflow_run` · `allow-unsafe-pr-checkout` · `issue_comment` job that fetches PR code |
 
+### Host Kernel & Network Attack Surface (141)
+
+| # | Vector | Severity | Load when (markers) |
+|---|--------|----------|---------------------|
+| 141 | [Host Kernel & Network Attack Surface — Unpatched Kernel CVEs and Unused Network Features on Internet-Facing Nodes](141-host-kernel-network-attack-surface.md) | 9 | always (devops) when the team operates a Linux host or ships its infra-as-code: `ansible` · `cloud-init` · `terraform` · `packer` · `sysctl` · `modprobe.d` · `nftables` / `iptables` / `ufw` · `linux-image` · `net.mptcp.enabled` · `tcp_migrate_req` · `tailscale` / `wireguard` · `sshd_config` · `GODEBUG` |
+
 ---
 
 ## Known Duplicates & Consolidation Map
@@ -248,11 +254,11 @@ double-count them as independent coverage. Severities are aligned to the higher 
 | 039 | 083 | Rate limiting (bypass / missing) | 7 |
 | 047 | 099 | WebSocket security | 7 |
 
-**Distinct concepts:** 134 (140 files − 6 duplicate pairs).
+**Distinct concepts:** 135 (141 files − 6 duplicate pairs).
 
 ---
 
-**Total vector files:** 140 (100 original + 9 in v4.4 + 8 in v5.0 + 3 in v5.1 + 6 in v6.0 + 3 in v6.1 + 2 in v6.2 + 3 in v7.2 + 2 in v7.3 + 1 in v7.4 + 1 in v7.5 + 2 in v7.6)
-**Distinct concepts:** 134 (after consolidating 6 duplicate pairs)
+**Total vector files:** 141 (100 original + 9 in v4.4 + 8 in v5.0 + 3 in v5.1 + 6 in v6.0 + 3 in v6.1 + 2 in v6.2 + 3 in v7.2 + 2 in v7.3 + 1 in v7.4 + 1 in v7.5 + 2 in v7.6 + 1 in v7.7)
+**Distinct concepts:** 135 (after consolidating 6 duplicate pairs)
 **Categories:** 6 (crypto, backend, frontend, devops, ai-agent, off-chain-rust)
 **Severity range:** 3-10
