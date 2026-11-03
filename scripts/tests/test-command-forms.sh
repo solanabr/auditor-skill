@@ -58,9 +58,9 @@
 #   G   The lines agents/poc-engineer.md gives a runner it writes, run as the first lines of such a runner in a
 #       crate, from the working directory and from the crate, find <R> from the runner's path and take the
 #       stricter of <R>/exec-mode and AUDITOR_EXEC_MODE as run.sh --crate does; they stop on none, on no mode, on
-#       an exec-mode that is not a regular file holding one word and on an AUDITOR_EXEC_MODE that names no mode,
-#       and in isolated mode unless probe.sh --only isolation finds nothing readable. poc-harness.md §1 shows the
-#       same lines.
+#       an exec-mode that is not a regular file holding one word and at most one newline, and on an
+#       AUDITOR_EXEC_MODE that names no mode, and in isolated mode unless probe.sh --only isolation finds nothing
+#       readable. poc-harness.md §1 shows the same lines.
 #   I   Every python3 call in the bodies and the corpus, in a code span or a code line that starts with python3
 #       (after a "(cd <dir> &&", "cd <dir> &&" or "env" in front) and passes two words more, runs isolated: -I
 #       comes before its first word that is not an option.
@@ -1156,9 +1156,9 @@ else bad "the python3 -I check could not read the tree"; fi
 # Run as the first lines of a runner in a crate at audit_1/poc/F-1, started from the working directory and from
 # the crate itself, with a stand-in installation whose probe.sh prints the isolation line FAKE_ISOLATION holds:
 # like run.sh --crate, they take the stricter of <R>/exec-mode and AUDITOR_EXEC_MODE; they stop on none, on no
-# mode, on an exec-mode that is not a regular file holding one word and on an AUDITOR_EXEC_MODE that names no
-# mode, and in isolated mode unless the self-check finds nothing readable. poc-harness.md §1 shows the same lines,
-# with the corpus's name for the root.
+# mode, on an exec-mode that is not a regular file holding one word and at most one newline (run.sh's mode_file
+# reads it so), and on an AUDITOR_EXEC_MODE that names no mode, and in isolated mode unless the self-check finds
+# nothing readable. poc-harness.md §1 shows the same lines, with the corpus's name for the root.
 G="$T/gate"
 mkdir -p "$G/inst/scripts/runner" "$G/ws/audit_1/poc/F-1" "$G/home"
 printf '#!/bin/bash\nprintf "%%s\\n" "${FAKE_ISOLATION:-isolation: readable: SSH keys (1); ~/.ssh/id_ed25519}"\n' \
@@ -1183,8 +1183,9 @@ fi
   awk -v root="$G/inst" '$0 == "AUDITOR_ROOT=\047${CLAUDE_PLUGIN_ROOT}\047" { print "AUDITOR_ROOT=\047" root "\047"; next } { print }' "$G/lines"
   printf 'echo "past the gate: $AUDITOR_EXEC_MODE"\n'; } > "$G/ws/audit_1/poc/F-1/run.sh"
 CLEAN='isolation: none of the credentials the self-check reads is readable'
-# <exec-mode>|<AUDITOR_EXEC_MODE>|<self-check>|<want>: an empty exec-mode is none at all, @dir a directory, and
-# @link:<word> a symbolic link to a file that holds <word>.
+# <exec-mode>|<AUDITOR_EXEC_MODE>|<self-check>|<want>: an empty exec-mode is none at all, @dir a directory,
+# @link:<word> a symbolic link to a file that holds <word>, @bytes:<format> the bytes printf writes from <format>
+# (\n a newline), and any other a file that holds the word and one newline.
 while IFS='|' read -r file env iso want; do
   [ -n "$want" ] || continue
   rm -rf "$G/ws/audit_1/exec-mode" "$G/ws/audit_1/linked"
@@ -1192,6 +1193,7 @@ while IFS='|' read -r file env iso want; do
     '') ;;
     @dir) mkdir "$G/ws/audit_1/exec-mode" ;;
     @link:*) printf '%s\n' "${file#@link:}" > "$G/ws/audit_1/linked"; ln -s linked "$G/ws/audit_1/exec-mode" ;;
+    @bytes:*) printf -- "${file#@bytes:}" > "$G/ws/audit_1/exec-mode" ;;
     *) printf '%s\n' "$file" > "$G/ws/audit_1/exec-mode" ;;
   esac
   set -- FAKE_ISOLATION="$CLEAN"
@@ -1232,6 +1234,11 @@ isolated native|native|clean|stop
 @dir|native|clean|stop
 @link:native|native|clean|stop
 @link:isolated||clean|stop
+@bytes:native||clean|native
+@bytes:native\n\n||clean|stop
+@bytes:native\n\n\n\nnone||clean|stop
+@bytes:native\n\n\n\nisolated||clean|stop
+@bytes:isolated\n\n|native|clean|stop
 CASES
 
 echo "---- command forms: $pass passed, $failn failed"
