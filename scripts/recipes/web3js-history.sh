@@ -39,7 +39,7 @@
 # Output: every control character other than TAB and LF, NUL included, prints as ?, on stdout and stderr; a CR
 # that ends a lockfile line is dropped first. Standard input is never read.
 # Exit: 0 both searches ran, whether or not a line printed · 64 refused · git's own status when git fails (the
-# other search still runs). Needs bash >= 3.2 and git; env, find, wc, od, tr and awk.
+# other search still runs). Needs bash >= 3.2 and git; env, find, wc, od, tr, awk, mktemp and rmdir.
 
 set -uo pipefail
 unset CDPATH
@@ -51,7 +51,7 @@ case "$here" in
 esac
 . "$root/scripts/lib/confine.sh" || { printf 'web3js-history: refused: scripts/lib/confine.sh cannot be read\n' >&2; exit 64; }
 confine_init web3js-history "$root"
-confine_need env git find wc od tr awk
+confine_need env git find wc od tr awk mktemp rmdir
 exec </dev/null
 WT=$CONFINE_WT
 REPO=""
@@ -129,12 +129,12 @@ main() {
   REPO=$CONFINE_REPO
   note_history
   printf '%s\n' '== single-line form: <commit> <subject> of each commit that adds or removes a known-bad release'
-  hgit "$REPO" log --no-textconv --no-ext-diff --ignore-submodules=none --all --full-history --root \
+  hgit_tree "$REPO" log --no-textconv --no-ext-diff --ignore-submodules=none --all --full-history --root \
     --diff-merges=first-parent --no-patch --oneline --no-decorate --text -G"$AX|$W3" \
     -- '*lock*' '*package.json' '*npm-shrinkwrap.json' </dev/null
   st1=$?
   printf '%s\n' '== key-line form: <commit> <file> <line> of each version line under a known-bad entry'
-  hgit_text "$REPO" -c diff.noprefix=false -c diff.mnemonicPrefix=false -c diff.srcPrefix=a/ -c diff.dstPrefix=b/ \
+  hgit_text_tree "$REPO" -c diff.noprefix=false -c diff.mnemonicPrefix=false -c diff.srcPrefix=a/ -c diff.dstPrefix=b/ \
     log --no-textconv --no-ext-diff --ignore-submodules=none --all --full-history --root \
     --diff-merges=first-parent -p -U3 --no-color --format='commit %h' --text -G"$KL" \
     -- '*package-lock.json' '*npm-shrinkwrap.json' </dev/null | awk "$KL_AWK"

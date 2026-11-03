@@ -34,7 +34,7 @@
 # Output: every control character other than TAB and LF, NUL included, prints as ?, on stdout and stderr; a CR
 # that ends a lockfile line is dropped first for npm. Standard input is never read.
 # Exit: 0 done, whether or not a line printed · 64 refused · git's own status when git fails (128: a revision it
-# cannot find). Needs bash >= 3.2 and git; env, find, wc, od, tr, awk and sed.
+# cannot find). Needs bash >= 3.2 and git; env, find, wc, od, tr, awk, sed, mktemp and rmdir.
 
 set -uo pipefail
 unset CDPATH
@@ -46,7 +46,7 @@ case "$here" in
 esac
 . "$root/scripts/lib/confine.sh" || { printf 'lock-delta: refused: scripts/lib/confine.sh cannot be read\n' >&2; exit 64; }
 confine_init lock-delta "$root"
-confine_need env git find wc od tr awk sed
+confine_need env git find wc od tr awk sed mktemp rmdir
 exec </dev/null
 WT=$CONFINE_WT
 REPO=""
@@ -110,7 +110,7 @@ note_history() { # the notes for a partial or a shallow clone
 delta() { # delta <range> <pathspec>...: the diff the lines are read from
   local range=$1
   shift
-  hgit_text "$REPO" -c diff.noprefix=false -c diff.mnemonicPrefix=false -c diff.srcPrefix=a/ -c diff.dstPrefix=b/ \
+  hgit_text_tree "$REPO" -c diff.noprefix=false -c diff.mnemonicPrefix=false -c diff.srcPrefix=a/ -c diff.dstPrefix=b/ \
     diff --no-textconv --no-ext-diff --ignore-submodules=none --text --no-color -U3 --end-of-options "$range" \
     -- "$@" </dev/null
 }
