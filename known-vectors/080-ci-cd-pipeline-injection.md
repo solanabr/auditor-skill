@@ -73,8 +73,9 @@ grep -rn "GITHUB_TOKEN" .github/workflows/
 
 **Step 6: Check for third-party CI tools**
 ```
-grep -rn --include="*.yml" --include="*.yaml" "uses.*/" .github/workflows/ | grep -v "actions/" | grep -v "github/"
+grep -rnv --include='*.yml' --include='*.yaml' '^[ 	]*#' .github/ | grep -aE '^.*uses["'\'']?[ 	]*:' | grep -avE '^[][	 !"#$%&'\''()*+,./0123456789;<=>?@^_`abcdefghijklmnopqrstuvwxyz{|}~ABCDEFGHIJKLMNOPQRSTUVWXYZ-]*:[0123456789]+:[ 	]*(-[ 	]*)?(\{[ 	]*)?["'\'']?uses["'\'']?[ 	]*:[ 	]*["'\'']?(actions/|github/|\./)'
 ```
+- It lists every `uses:` under `.github/`, in workflows and composite actions alike, that names neither an action of GitHub's `actions/` or `github/` organization nor a local action (`./`): third-party actions and reusable workflows, and `docker://` images. Like Step 4, it reads the value of the `uses` key that starts the line, quoted or not, so a trailing comment that names an official action hides nothing, and a `uses:` anywhere else on a line (after another key of a `{ … }` mapping, say) is listed whatever it names.
 - ✅ PASS: Only official GitHub Actions or well-known, audited third-party actions
 - ⚠️ PARTIAL: Some third-party actions from less-known orgs
 - ❌ FAIL: Third-party actions from unknown sources without version pinning
