@@ -101,9 +101,9 @@
 #     and socket, an askpass program, a cookie file,
 #     an HTTP header, a URL or a proxy with a login, an include; a credential_process
 #     or a key; a credentials block), Claude Code's settings, state and managed
-#     settings by what they hold (a credential helper, a token or a list of headers in an
-#     env block, an MCP server's Authorization header, a key in its URL or its
-#     arguments), Docker's TLS client keys, the variable names that
+#     settings by what they hold (a credential helper, a token, a passphrase or a list of
+#     headers in an env block, a credential or key header, a key in an MCP server's URL
+#     or its arguments), Docker's TLS client keys, the variable names that
 #     look like credentials, and agent, container daemon (a tcp:// one too) and git
 #     credential sockets
 #     (serving one needs a machine that allows it: on CI a machine that does not fails
@@ -1942,12 +1942,14 @@ code="$(dcreds DOCKER_CERT_PATH="$ED/certs" DOCKER_CONFIG="$ED/config" -- "$CLEA
 # URL, a proxy without a login, a region alone and a Terraform plugin cache do not count. A store or cache
 # written with a variable counts even with an absolute path. So do Claude Code's settings and state files (in
 # ~/.claude*, ~/.claude.json and its backups): a command that prints a credential (an MCP server's
-# headersHelper too), a token in an env block (of the file or of an MCP server), a URL with a login there, a
-# credential header in a list of headers there (ANTHROPIC_CUSTOM_HEADERS, OTEL_EXPORTER_OTLP_HEADERS; any
-# *-Authorization too), an MCP server's Authorization header, and a key in an MCP server's URL (its query, key
-# or sig too, or its login) or arguments (an option, NAME=value, a header option, -H too, a URL). Settings that
-# only refer to a variable, and names that do not look like credentials, do not count; nor do an ssh URL with a
-# user name only and arguments that name no credential.
+# headersHelper too), a token or a passphrase in an env block (of the file or of an MCP server), a URL with a
+# login or a key-named query parameter there, a credential header in a list of headers there
+# (ANTHROPIC_CUSTOM_HEADERS lines, an MCP server's JSON object; any *-Authorization, and a name whose last part
+# is KEY or AUTH), any header in the OTLP exporter's lists, an MCP server's Authorization or key header, and a
+# key in an MCP server's URL (its login or its query) or arguments (an option, NAME=value, a header option, a
+# URL). Settings that only refer to a variable, and names that do not look like credentials, do not count; nor
+# do an ssh URL with a user name only, arguments that name no credential, a skip-auth switch, a public key and
+# a --no- option.
 n=0
 while IFS='|' read -r file text kind; do
   [ -n "$file" ] || continue
@@ -2016,6 +2018,19 @@ done <<'CONFIGS'
 .claude.json|{"mcpServers":{"blob":{"type":"http","url":"https://acct.blob.example.invalid/mcp?sv=2024-11-04&sig=x"}}}\n|Claude Code credentials
 .claude.json|{"mcpServers":{"remote":{"command":"npx","args":["mcp-remote","https://mcp.example.invalid/sse","-H","Authorization: Bearer x"]}}}\n|Claude Code credentials
 .claude.json|{"mcpServers":{"db":{"command":"npx","args":["-y","@bytebase/dbhub","--dsn","postgresql://readonly:p@db.invalid:5432/x"]}}}\n|Claude Code credentials
+.claude/settings.json|{"env":{"ANTHROPIC_CUSTOM_HEADERS":"X-Org-Route: prod\\nOcp-Apim-Subscription-Key: x"}}\n|Claude Code credentials
+.claude/settings.json|{"env":{"ANTHROPIC_CUSTOM_HEADERS":"Helicone-Auth: Bearer x"}}\n|Claude Code credentials
+.claude/settings.json|{"env":{"OTEL_EXPORTER_OTLP_HEADERS":"x-honeycomb-team=x"}}\n|Claude Code credentials
+.claude/settings.json|{"env":{"OTEL_EXPORTER_OTLP_LOGS_HEADERS":"x-honeycomb-team=x"}}\n|Claude Code credentials
+.claude/settings.json|{"env":{"CLAUDE_CODE_CLIENT_KEY_PASSPHRASE":"x"}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"notion":{"command":"npx","args":["-y","@notionhq/notion-mcp-server"],"env":{"OPENAPI_MCP_HEADERS":"{\\"Authorization\\": \\"Bearer x\\", \\"Notion-Version\\": \\"2025-09-03\\"}"}}}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"apim":{"type":"http","url":"https://contoso.azure-api.net/weather/mcp","headers":{"Ocp-Apim-Subscription-Key":"x"}}}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"apim":{"type":"http","url":"https://contoso.azure-api.net/weather/mcp?subscription-key=x"}}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"w":{"command":"w-mcp","args":["--key","x"]}}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"w":{"command":"w-mcp","args":["--auth=x"]}}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"remote":{"command":"npx","args":["mcp-remote","https://mcp.example.invalid/sse","--header","Ocp-Apim-Subscription-Key: x"]}}}\n|Claude Code credentials
+.claude/settings.json|{"env":{"ANTHROPIC_BEDROCK_BASE_URL":"https://llm-gateway.example.invalid/bedrock","CLAUDE_CODE_SKIP_BEDROCK_AUTH":"1","OTEL_EXPORTER_OTLP_HEADERS":"x-honeycomb-team=${HONEYCOMB_KEY}","OPENAPI_MCP_HEADERS":"{\\"Notion-Version\\": \\"2025-09-03\\"}"}}\n|
+.claude.json|{"mcpServers":{"sol":{"command":"npx","args":["solana-mcp","--public-key","9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin","--no-auth","server.js"]}}}\n|
 CONFIGS
 # git's store counts by the file its --file names, when that file is readable: the file counts, not the git
 # config, as the code here could read it without git. "~" as a word of its own is the home; the helper may be
