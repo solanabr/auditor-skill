@@ -1022,9 +1022,10 @@ fn git_head(g: &Path) -> Head {
     }
     let text = text.split(|&b| b == 0).next().unwrap_or_default();
     if let Some(rest) = text.strip_prefix(b"ref:") {
+        // The blanks git's own isspace() knows: never a vertical tab or form feed.
         let at = rest
             .iter()
-            .position(|&b| !matches!(b, b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r'))
+            .position(|&b| !matches!(b, b' ' | b'\t' | b'\n' | b'\r'))
             .unwrap_or(rest.len());
         return if rest[at..].starts_with(b"refs/") {
             Head::Valid

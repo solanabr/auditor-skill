@@ -572,10 +572,16 @@ if mkfifo "$T/fifo-probe" 2>/dev/null; then
   check "... and confine_tracked fails closed (2) there" out_is '[2]'
   # A .git that git walks past on its way up (a HEAD alone; a HEAD it does not take, beside objects and
   # refs) does not end the check either: it goes on, as git does, to the repository above.
+  # A vertical tab or form feed after "ref:" is no blank to git, so it walks past such a HEAD too.
   mkdir -p "$T/above/sub/dec/.git" "$T/above/sub/bad/.git/objects" "$T/above/sub/bad/.git/refs" "$T/above/sub/gf/gd"
   printf 'ref: refs/heads/main\n' > "$T/above/sub/dec/.git/HEAD"
   : > "$T/above/sub/bad/.git/HEAD"
-  for d in dec bad; do
+  for d in vt ff; do
+    mkdir -p "$T/above/sub/$d/.git/objects" "$T/above/sub/$d/.git/refs"
+  done
+  printf 'ref:\vrefs/heads/main\n' > "$T/above/sub/vt/.git/HEAD"
+  printf 'ref:\frefs/heads/main\n' > "$T/above/sub/ff/.git/HEAD"
+  for d in dec bad vt ff; do
     lib_bounded "$T/above/.git/HEAD" "$T/above/sub/$d" 'CONFINE_CEILING="" hgit "$CONFINE_WT" rev-parse --is-inside-work-tree'
     check "... and from below a .git that git walks past ($d)" \
       refused "a named pipe or device is in the git directory, and git would wait on it for good: $(shown "$T/above/.git")"

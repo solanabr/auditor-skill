@@ -181,16 +181,17 @@ confine_named_dir() {
 # confine_git_head <dir>: how git's discovery takes <dir>/HEAD (validate_headref in git's setup.c):
 # status 0 for a regular file whose text, to its first NUL within its first 255 bytes, is "ref:", blanks,
 # then refs/..., or starts with 40 hex digits; 2 for a symbolic link, which git takes when it points into
-# refs/ (where it points is not read here); 1 for anything else, which git does not take for a HEAD.
+# refs/ (where it points is not read here); 1 for anything else, which git does not take for a HEAD. The
+# blanks are those git's own isspace() knows: space, tab, CR and LF, never a vertical tab or form feed.
 confine_git_head() {
-  local h=""
+  local h="" b=$' \t\r\n'
   [ ! -L "$1/HEAD" ] || return 2
   [ -f "$1/HEAD" ] && [ -r "$1/HEAD" ] || return 1
   IFS= read -r -d '' -n 255 h 2>/dev/null < "$1/HEAD"
   case "$h" in
     ref:*)
       h=${h#ref:}
-      h=${h#"${h%%[![:space:]]*}"}
+      h=${h#"${h%%[!$b]*}"}
       case "$h" in refs/*) return 0 ;; esac
       return 1 ;;
   esac

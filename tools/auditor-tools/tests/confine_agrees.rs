@@ -407,6 +407,7 @@ fn confine_rs_refuses_what_git_would_wait_on_in_confine_sh_s_words() {
         "linked git directory",
         "linked config",
         "above a decoy",
+        "above a decoy git does not take",
         "link in the git directory",
         "gitfile",
         "gitfile with a NUL",
@@ -458,9 +459,17 @@ fn confine_rs_refuses_what_git_would_wait_on_in_confine_sh_s_words() {
                     pipes.push(wt.path(".realgit/info/attributes"));
                 }
             }
-            "above a decoy" => {
+            "above a decoy" | "above a decoy git does not take" => {
                 fs::remove_file(wt.path(".git/HEAD")).expect("rm HEAD");
-                wt.write("sub/.git/HEAD", b"ref: refs/heads/main\n");
+                if case == "above a decoy" {
+                    wt.write("sub/.git/HEAD", b"ref: refs/heads/main\n");
+                } else {
+                    // objects and refs, and a vertical tab after "ref:", which git's
+                    // isspace() does not take for a blank: git walks past it.
+                    wt.mkdir("sub/.git/objects");
+                    wt.mkdir("sub/.git/refs");
+                    wt.write("sub/.git/HEAD", b"ref:\x0brefs/heads/main\n");
+                }
                 from = wt.path("sub");
                 pipes.push(wt.path(".git/HEAD"));
             }
