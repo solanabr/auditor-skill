@@ -95,10 +95,12 @@ const _: () = assert!(
 pub const MAX_REPORT: usize = 256 << 20;
 
 /// How long a scan may run before it parses no more: past it each further file is
-/// in `skipped` as not parsed. A file started before then still has its
-/// `confine::PARSE_TIME`, and a git question asked just before then up to twice
-/// `confine::GIT_TIME`, so a scan ends within about 110 seconds, inside the two
-/// minutes Claude Code gives a foreground command by default.
+/// in `skipped` as not parsed. audit-scan counts it from its own start
+/// (`scan_path_until`), so the git questions `--out` asks before the scan are
+/// inside it. A file started before then still has its `confine::PARSE_TIME`, and
+/// a git question asked just before then up to twice `confine::GIT_TIME`, so
+/// audit-scan ends within about 110 seconds, inside the two minutes Claude Code
+/// gives a foreground command by default.
 pub const SCAN_TIME: Duration = Duration::from_secs(90);
 
 /// Group nesting (`(`, `[` and `{`) past which a file is not parsed.
@@ -355,8 +357,15 @@ fn relabel<T>(into: &mut Vec<T>, from: Vec<T>, label: &str, file: fn(&mut T) -> 
 /// this binary started by the path it runs from (`confine::Parser`), each given
 /// `confine::PARSE_TIME`, for `SCAN_TIME` in all.
 pub fn scan_path(root: &Path) -> io::Result<ScanReport> {
+    scan_path_until(root, Instant::now().checked_add(SCAN_TIME))
+}
+
+/// `scan_path`, handing no file to the child once `until` has passed (never, for
+/// `None`). audit-scan passes `SCAN_TIME` from its own start, so what it asks git
+/// about `--out` before the scan counts in that time.
+pub fn scan_path_until(root: &Path, until: Option<Instant>) -> io::Result<ScanReport> {
     let mut parser = confine::Parser::new(&confine::own_exe()?);
-    Ok(scan_path_with(root, MAX_REPORT, SCAN_TIME, &mut |bytes| {
+    Ok(scan_until(root, MAX_REPORT, until, &mut |bytes| {
         parser.parse(bytes, confine::PARSE_TIME)
     }))
 }
@@ -386,6 +395,17 @@ pub fn scan_path_with(
     time: Duration,
     parse: &mut dyn FnMut(&[u8]) -> Option<Vec<u8>>,
 ) -> ScanReport {
+    scan_until(root, cap, Instant::now().checked_add(time), parse)
+}
+
+/// `scan_path_with`, handing no file to `parse` once `until` has passed (never,
+/// for `None`).
+fn scan_until(
+    root: &Path,
+    cap: usize,
+    until: Option<Instant>,
+    parse: &mut dyn FnMut(&[u8]) -> Option<Vec<u8>>,
+) -> ScanReport {
     let mut scan = Scan {
         report: ScanReport::new(root.display().to_string(), 0),
         top: root == Path::new("."),
@@ -393,7 +413,7 @@ pub fn scan_path_with(
         size: 0,
         cap,
         full: false,
-        until: Instant::now().checked_add(time),
+        until,
         git: None,
     };
     match open_root(root) {

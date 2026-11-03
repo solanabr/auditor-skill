@@ -110,13 +110,14 @@ finish`; that child is killed, the next file goes to a new one, and the scan goe
 on. The child reads and writes nothing else. Before each file it sets its own CPU
 limit to the CPU it has used and 20 seconds more, twice the time it is given, and
 its core-file limit to none: a child whose parent is gone, with no one left to kill
-it, dies once a file has used that. A scan parses for 90 seconds at most: once it
-has run that long, each further `*.rs` file is in `skipped` as `not parsed: the
-scan's time is spent`, so a scan ends within about 110 seconds (a file handed to
-its child before then still has its 10 seconds, and a git question asked just
-before then up to twice 10), inside the two minutes Claude Code gives a foreground
-command by default. Scan a smaller
-directory for the rest.
+it, dies once a file has used that. A scan parses for 90 seconds at most, counted
+from the start of audit-scan, so the git questions `--out` asks before the scan are
+inside them: once audit-scan has run that long, each further `*.rs` file is in
+`skipped` as `not parsed: the scan's time is spent`, so audit-scan ends within
+about 110 seconds (a file handed to its child before then still has its 10
+seconds, and a git question asked just before then up to twice 10), inside the two
+minutes Claude Code gives a foreground command by default. Scan a smaller directory
+for the rest.
 
 A report has bounds. One file lists at most 20,000 items (sites, functions,
 instructions with their arguments, accounts structs with their fields, PDAs), and
@@ -196,9 +197,10 @@ the path it runs from, with `--internal-parse-workflows` as its only argument, n
 environment and `/` as its directory, and hands it one file's bytes at a time on
 its stdin. A file the child does not finish (it aborts, dies on a signal or takes
 more than 10 seconds) is listed as `the parser could not finish`, and the next
-file goes to a new child. Once the scan has run for 90 seconds no further
-workflow file is parsed: each is in `skipped` as `not parsed: the scan's time is
-spent`, while one handed to the child before then still has its 10 seconds.
+file goes to a new child. Once audit-scan has run for 90 seconds, as for the
+`*.rs` files, no further workflow file is parsed: each is in `skipped` as `not
+parsed: the scan's time is spent`, while one handed to the child before then still
+has its 10 seconds.
 
 One file's facts take at most 32 MiB; a file with more is in `skipped` as `not
 listed: its facts take more than 32 MiB`. The workflows together take what the

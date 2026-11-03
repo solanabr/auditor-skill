@@ -10,7 +10,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use auditor_tools::confine::{Parser, PARSE_TIME};
-use auditor_tools::scan::{scan_path_with, ScanReport, MAX_REPORT, SCAN_TIME};
+use auditor_tools::scan::{scan_path_until, scan_path_with, ScanReport, MAX_REPORT, SCAN_TIME};
 use common::Wt;
 
 const BIN: &str = env!("CARGO_BIN_EXE_audit-scan");
@@ -162,4 +162,13 @@ fn a_file_whose_parser_dies_or_hangs_is_skipped_and_the_scan_goes_on() {
         [("./audit_1/poc/lib.rs".to_string(), spent.to_string())]
     );
     assert_eq!(late.files_scanned, 0);
+
+    // audit-scan's time runs from its own start (`scan_path_until`): a scan given
+    // a time already past hands its child no file and asks git nothing.
+    let past = scan_path_until(Path::new("."), Some(Instant::now())).expect("the scan starts");
+    assert_eq!(
+        about(&past),
+        [("./audit_1/poc/lib.rs".to_string(), spent.to_string())]
+    );
+    assert_eq!(past.files_scanned, 0);
 }
