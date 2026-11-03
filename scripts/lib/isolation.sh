@@ -37,11 +37,13 @@
 #   Claude Code's settings and state when one holds a credential: settings.json, settings.local.json,
 #     remote-settings.json, .claude.json and backups/.claude.json* in each ~/.claude* directory, and
 #     ~/.claude.json and its backups (the state file, which keeps the personal MCP servers). One counts when it
-#     names a command that prints a credential (apiKeyHelper, awsCredentialExport, otelHeadersHelper), when an
+#     names a command that prints a credential (apiKeyHelper, awsCredentialExport, otelHeadersHelper); when an
 #     env block in it, its own or an MCP server's, gives a value to a variable whose name looks like a
-#     credential (as below) or a value with a URL that carries a login, or when a headers block sends an
-#     Authorization, Cookie or key header with a value. A value that refers to a variable (${NAME}) does not
-#     count, and neither does a file that is not JSON; one larger than 16 MiB stops the check (status 2);
+#     credential (as below), a value with a URL that carries a login, or, to a name that ends in HEADERS
+#     (ANTHROPIC_CUSTOM_HEADERS, OTEL_EXPORTER_OTLP_HEADERS), a list of headers that sends one; or when a
+#     headers block sends an Authorization, Cookie or key header with a value. A value that refers to a
+#     variable (${NAME}) does not count, and neither does a file that is not JSON; one larger than 16 MiB stops
+#     the check (status 2);
 #   1Password's agent socket: ~/.1password/agent.sock, and on macOS
 #     ~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock;
 #   the sockets of a container daemon, which gives whoever reaches it the host: Docker Desktop's
@@ -218,6 +220,8 @@ CLAUDE_HELPERS = ("apiKeyHelper", "awsCredentialExport", "otelHeadersHelper")
 CLAUDE_LIMIT = 16 << 20
 REFERENCE = re.compile(r"\$(?:\{|[A-Za-z_])")
 VALUE_LOGIN = re.compile(r"(?i)\b(?:https?|socks[45]?h?)://[^/@\s]+@")
+# One header of a list, Name: value or Name=value, the headers apart by newlines or commas.
+HEADER = re.compile(r"(?:^|[\n,])[ \t]*([A-Za-z0-9_.-]+)[ \t]*[:=]([^\n,]*)")
 
 
 class Unfinished(Exception):
@@ -440,8 +444,25 @@ def set_here(value):
 
 
 def credential_header(name):
-    name = name.upper().replace("-", "_")
-    return name in ("AUTHORIZATION", "PROXY_AUTHORIZATION", "COOKIE") or secretish(name)
+    # Authorization (Proxy-Authorization and any *-Authorization too), Cookie, or a name that looks like a credential.
+    upper = name.upper().replace("-", "_")
+    return upper in ("AUTHORIZATION", "COOKIE") or upper.endswith("_AUTHORIZATION") or secretish(upper)
+
+
+def header_credential(text):
+    # A list of headers (ANTHROPIC_CUSTOM_HEADERS takes Name: value lines, the OTLP exporter Name=value pairs
+    # apart by commas) that sends a credential header with a value set here.
+    return any(credential_header(name) and set_here(value) for name, value in HEADER.findall(text))
+
+
+def env_credential(name, value):
+    # An env entry that sets a credential: a value set here for a name that looks like one or with a URL that
+    # carries a login, or, for a name that ends in HEADERS, a list of headers that sends one.
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        return False
+    text = str(value)
+    return (set_here(value) and (secretish(name) or VALUE_LOGIN.search(text))
+            or name.upper().endswith("HEADERS") and header_credential(text))
 
 
 def claude_files(directory, names=CLAUDE_FILES):
@@ -451,10 +472,10 @@ def claude_files(directory, names=CLAUDE_FILES):
 
 def claude_json(path, home, found, state):
     # A Claude Code settings or state file counts when it names a command that prints a credential, when an
-    # env block in it (of the file or of an MCP server) gives a variable whose name looks like a credential a
-    # value, or gives any variable a value with a URL that carries a login, or when a headers block (of an MCP
-    # server or an HTTP hook) sends an Authorization, Cookie or key header with a value. Past 16 MiB the check
-    # cannot finish; a file that is not JSON counts for nothing, as Claude Code reads nothing from it.
+    # env block in it (of the file or of an MCP server) sets a credential (env_credential), or when a headers
+    # block (of an MCP server or an HTTP hook) sends an Authorization, Cookie or key header with a value. Past
+    # 16 MiB the check cannot finish; a file that is not JSON counts for nothing, as Claude Code reads nothing
+    # from it.
     data = start(path, CLAUDE_LIMIT + 1) if path else None
     key = os.path.realpath(path) if data is not None else ""
     if not key or key in state["configs"]:
@@ -471,8 +492,7 @@ def claude_json(path, home, found, state):
         items = node.items() if isinstance(node, dict) else enumerate(node) if isinstance(node, list) else ()
         for name, value in items:
             if (name in CLAUDE_HELPERS and isinstance(value, str) and value.strip()
-                    or name == "env" and isinstance(value, dict)
-                    and any(set_here(v) and (secretish(k) or VALUE_LOGIN.search(str(v))) for k, v in value.items())
+                    or name == "env" and isinstance(value, dict) and any(env_credential(k, v) for k, v in value.items())
                     or name == "headers" and isinstance(value, dict)
                     and any(set_here(v) and credential_header(k) for k, v in value.items())):
                 found.append((CLAUDE, path))

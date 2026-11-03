@@ -100,8 +100,9 @@
 #     files by what they hold (a credential helper, an askpass program, a cookie file,
 #     an HTTP header, a URL or a proxy with a login, an include; a credential_process
 #     or a key; a credentials block), Claude Code's settings, state and managed
-#     settings by what they hold (a credential helper, a token in an env block, an MCP
-#     server's Authorization header), Docker's TLS client keys, the variable names that
+#     settings by what they hold (a credential helper, a token or a list of headers in an
+#     env block, an MCP server's Authorization header), Docker's TLS client keys, the
+#     variable names that
 #     look like credentials, and agent, container daemon (a tcp:// one too) and git
 #     credential sockets
 #     (serving one needs a machine that allows it: on CI a machine that does not fails
@@ -1809,6 +1810,12 @@ line="$(grep '^\[PoC-ATTEMPTED\] blocker: isolated mode, but these are readable 
 [ "$code" = 3 ] && case "$line" in *"Claude Code credentials ("*) true ;; *) false ;; esac && new_nothing_ran && one_blocker \
   && ok "isolated mode with an API key only in the env block of ~/.claude/settings.json -> exit 3 naming Claude Code credentials, nothing copied" \
   || { bad "isolated, an API key in Claude Code's settings: exit $code"; cat "$T/out" >&2; }
+FH="$T/fh-cchead"; mkdir -p "$FH/.claude"; printf '{"env":{"ANTHROPIC_CUSTOM_HEADERS":"X-Org-Route: prod\\nX-Api-Key: x"}}\n' > "$FH/.claude/settings.json"
+code="$(ngate HOME="$FH" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+line="$(grep '^\[PoC-ATTEMPTED\] blocker: isolated mode, but these are readable here: ' "$T/out")"
+[ "$code" = 3 ] && case "$line" in *"Claude Code credentials ("*) true ;; *) false ;; esac && new_nothing_ran && one_blocker \
+  && ok "isolated mode with a gateway key only in ANTHROPIC_CUSTOM_HEADERS, in the env block of ~/.claude/settings.json -> exit 3 naming Claude Code credentials, nothing copied" \
+  || { bad "isolated, a gateway key in ANTHROPIC_CUSTOM_HEADERS: exit $code"; cat "$T/out" >&2; }
 FH="$T/fh-gitcred"; mkdir -p "$FH"
 printf '[credential]\n\thelper = "!f() { node /tmp/vscode-remote-containers-0.js git-credential-helper $*; }; f"\n' > "$FH/.gitconfig"
 code="$(ngate HOME="$FH" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
@@ -1931,8 +1938,9 @@ code="$(dcreds DOCKER_CERT_PATH="$ED/certs" DOCKER_CONFIG="$ED/config" -- "$CLEA
 # A helper reset to nothing, a user name with an ssh URL, a proxy without a login, a region alone and a
 # Terraform plugin cache do not count. So do Claude Code's settings and state files (in ~/.claude*,
 # ~/.claude.json and its backups): a command that prints a credential, a token in an env block (of the file
-# or of an MCP server), a URL with a login there, or an MCP server's Authorization header. Settings that only
-# refer to a variable, and names that do not look like credentials, do not count.
+# or of an MCP server), a URL with a login there, a credential header in a list of headers there
+# (ANTHROPIC_CUSTOM_HEADERS, OTEL_EXPORTER_OTLP_HEADERS), or an MCP server's Authorization header. Settings
+# that only refer to a variable, and names that do not look like credentials, do not count.
 n=0
 while IFS='|' read -r file text kind; do
   [ -n "$file" ] || continue
@@ -1974,6 +1982,9 @@ done <<'CONFIGS'
 .claude/backups/.claude.json.backup.1|{"mcpServers":{"gh":{"env":{"GITHUB_TOKEN":"t"}}}}\n|Claude Code credentials
 .claude/settings.json|{"env":{"AUDITOR_EXEC_MODE":"isolated","MAX_MCP_OUTPUT_TOKENS":"1","GITHUB_TOKEN":"${GITHUB_TOKEN}"},"apiKeyHelper":""}\n|
 .claude.json|{"oauthAccount":{"emailAddress":"a@b.invalid"},"mcpServers":{"api":{"headers":{"Authorization":"Bearer ${API_TOKEN}","X-Client":"c"}}}}\n|
+.claude/settings.json|{"env":{"ANTHROPIC_CUSTOM_HEADERS":"X-Org-Route: prod\\nx-api-key: x"}}\n|Claude Code credentials
+.claude/settings.json|{"env":{"OTEL_EXPORTER_OTLP_HEADERS":"Authorization=Bearer x"}}\n|Claude Code credentials
+.claude/settings.json|{"env":{"ANTHROPIC_CUSTOM_HEADERS":"X-Org-Route: prod\\nX-Tenant: t","OTEL_EXPORTER_OTLP_HEADERS":"Authorization=Bearer ${OTEL_TOKEN}","GIT_URL":"ssh://git@github.com/o/r.git"}}\n|
 CONFIGS
 FH="$T/fc-include"; mkdir -p "$FH/.gitconfig.d"
 printf '[include]\n\tpath = .gitconfig\n\tpath = .gitconfig.d/more\n[includeIf "gitdir:/nowhere/"]\n\tpath = ~/.gitconfig.d/cond\n' > "$FH/.gitconfig"
