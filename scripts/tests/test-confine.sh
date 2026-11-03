@@ -461,6 +461,25 @@ check "... and lists what it tracks under the working directory" out_is "$(print
 mkdir -p "$T/norepo/d"
 lib "$T/norepo/d" 'confine_tracked x; printf "[%s]" "$?"'
 check "outside every repository nothing is tracked" out_is '[0]'
+# Outside every repository only on git's own answer (confine_no_repo): exit 128, its "fatal: not a git
+# repository" first. The same words further on, as when another user owns a repository named so, or with
+# another status, leave confine_tracked unable to tell (2). Each git here prints its line and exits.
+for c in own:128 quoted:128 status:1; do
+  n=${c%%:*}
+  mkdir -p "$T/fg-$n"
+  case "$n" in
+    quoted) printf "fatal: detected dubious ownership in repository at '%s/not a git repository'\n" "$T" ;;
+    *) printf 'fatal: not a git repository (or any of the parent directories): .git\n' ;;
+  esac > "$T/fg-$n/msg"
+  printf '#!/bin/sh\ncat "%s/fg-%s/msg" >&2\nexit %s\n' "$T" "$n" "${c#*:}" > "$T/fg-$n/git"
+  chmod +x "$T/fg-$n/git"
+done
+LIB_PATH="$T/fg-own:$PATH" lib "$T/norepo/d" 'confine_tracked x; printf "[%s]" "$?"'
+check "confine_tracked takes git's own no-repository answer, exit 128, for nothing tracked" out_is '[0]'
+LIB_PATH="$T/fg-quoted:$PATH" lib "$T/norepo/d" 'confine_tracked x; printf "[%s]" "$?"'
+check "... but those words inside another message of git's for not telling (2)" out_is '[2]'
+LIB_PATH="$T/fg-status:$PATH" lib "$T/norepo/d" 'confine_tracked x; printf "[%s]" "$?"'
+check "... and git's own words with another exit status for not telling (2)" out_is '[2]'
 if [ "$(id -u)" -ne 0 ]; then
   chmod 000 "$RW/.git/index"
   lib "$RW" 'confine_tracked audit_9; printf "[%s]" "$?"'

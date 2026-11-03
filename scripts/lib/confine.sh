@@ -667,16 +667,29 @@ confine_repo() {
   CONFINE_TREES=${CONFINE_TREES-}$abs$'\t'$bare$'\t'$gitdir$'\n'
 }
 
+# confine_no_repo <status> <output>: status 0 when git, asked about a directory, answered that no
+# repository there is one it can use: it exited 128 and its output starts with its own "fatal: not a git
+# repository". Nothing else counts, and no part of the output alone: a refusal of the checks above or of
+# hgit's time limit exits 64, and git's own messages can quote a name the repository chose.
+confine_no_repo() {
+  [ "$1" = 128 ] || return 1
+  case "$2" in 'fatal: not a git repository'*) return 0 ;; esac
+  return 1
+}
+
 # confine_tracked <path>: print what git tracks at <path> (relative to WT, in any letter case) and
-# return 0, or return 2 when git cannot tell. Outside every repository nothing is tracked. Discovery
-# may go above WT for this one question, since a repository there decides it; only paths at <path>
-# are printed.
+# return 0, or return 2 when git cannot tell. Outside every repository (confine_no_repo) nothing is
+# tracked. Discovery may go above WT for this one question, since a repository there decides it; only
+# paths at <path> are printed.
 confine_tracked() {
   local err
   # Checked here first, so the two calls below find it done.
   CONFINE_CEILING='' confine_git_check "$CONFINE_WT" || return 2
-  if ! err=$(CONFINE_CEILING='' hgit "$CONFINE_WT" rev-parse --is-inside-work-tree 2>&1 >/dev/null); then
-    case "$err" in *'not a git repository'*) return 0 ;; esac
+  if err=$(CONFINE_CEILING='' hgit "$CONFINE_WT" rev-parse --is-inside-work-tree 2>&1 >/dev/null); then
+    :
+  elif confine_no_repo "$?" "$err"; then
+    return 0
+  else
     return 2
   fi
   CONFINE_CEILING='' hgit "$CONFINE_WT" --icase-pathspecs ls-files -- ":(literal,icase)$1" 2>/dev/null || return 2

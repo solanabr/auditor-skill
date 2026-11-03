@@ -192,6 +192,8 @@ src_arg() {
   if [ "$CONFINE_REL" = . ]; then abs=$WT; else abs=$WT/$CONFINE_REL; fi
   confine_phys "$abs" || refuse "--src cannot be resolved: $SRC_SHOWN"
   phys=$CONFINE_PHYS
+  # In this shell, so a file git would wait on is refused for what it is, and the call below finds it checked.
+  confine_git_files "$phys"
   if out=$(hgit "$phys" rev-parse --is-bare-repository 2>&1); then
     case "$out" in
       true) ;;
@@ -208,11 +210,12 @@ src_arg() {
     SRC_KIND=repo
     SRC_ABS=$CONFINE_REPO
     return 0
+  elif confine_no_repo "$?" "$out"; then
+    SRC_KIND=tree
+    SRC_ABS=$phys
+  else
+    refuse "git cannot tell whether --src is a repository (none there, or another user owns it: audit a copy): $SRC_SHOWN"
   fi
-  case "$out" in
-    *'not a git repository'*) SRC_KIND=tree; SRC_ABS=$phys ;;
-    *) refuse "git cannot tell whether --src is a repository (none there, or another user owns it: audit a copy): $SRC_SHOWN" ;;
-  esac
 }
 src_arg "$SRC_ARG"
 

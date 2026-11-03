@@ -390,6 +390,22 @@ if git init -q "$G/main" && git -C "$G/main" add a.txt && gitc -C "$G/main" comm
   check "the main checkout of a linked worktree passes" just_ok
   run "$G/main/sub/inc"
   check "... and a directory in it" just_ok
+  # Only git's own answer says there is no repository: a worktree whose admin directory bears git's words
+  # for that, with a commondir git still reads past 16 KiB of line ends, is refused for that file.
+  A="$G/main/.git/worktrees/not a git repository"
+  if git -C "$G/main" worktree add -q "$G/odd" 2>/dev/null && mv "$G/main/.git/worktrees/odd" "$A" &&
+    printf 'gitdir: %s\n' "$A" > "$G/odd/.git"; then
+    run "$G/odd"
+    check "a linked worktree whose admin directory is named for git's message is refused as one" refused "$WTREE"
+    { printf '../..\n'; awk 'BEGIN { for (i = 0; i < 17000; i++) printf "\n" }'; } > "$A/commondir"
+    s="$A/commondir"
+    [ "${#s}" -le 200 ] || s="${s:0:200}..."
+    run "$G/odd"
+    check "... and refused for its commondir when that holds more than 16 KiB, which git still reads" \
+      refused "a .git file or commondir file holds a NUL byte or more than 16 KiB, so where git would look cannot be told: $s"
+  else
+    skp "a second linked worktree cannot be made"
+  fi
 else
   skp "git worktree add is not available"
 fi

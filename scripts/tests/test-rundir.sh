@@ -252,6 +252,24 @@ R="$T/r-outer"; mkrepo "$R"; put "$R" inner/audit_3/x 'x'; commit "$R" -m nested
 run "$R/inner" new audit
 check "new asks the repository above the working directory" \
   refused 'the repository tracks audit_3/x, so writes into a run directory could reach tracked files; audit a copy'
+# Only git's own answer says there is no repository: a worktree whose admin directory bears git's words for
+# that, with a commondir git still reads past 16 KiB of line ends, is refused for that file.
+R="$T/r-main"; mkrepo "$R"; put "$R" f 'x'; commit "$R" -m x
+A="$R/.git/worktrees/not a git repository"
+if tgit -C "$R" worktree add -q "$T/r-wt" 2>/dev/null && mv "$R/.git/worktrees/r-wt" "$A" &&
+  printf 'gitdir: %s\n' "$A" > "$T/r-wt/.git"; then
+  { printf '../..\n'; awk 'BEGIN { for (i = 0; i < 17000; i++) printf "\n" }'; } > "$A/commondir"
+  s="$A/commondir"
+  [ "${#s}" -le 200 ] || s="${s:0:200}..."
+  tree "$T/r-wt" > "$T/tree.before"
+  run "$T/r-wt" new audit
+  check "new refuses a worktree whose commondir holds more than 16 KiB, whatever its admin directory is named" \
+    refused "a .git file or commondir file holds a NUL byte or more than 16 KiB, so where git would look cannot be told: $s"
+  tree "$T/r-wt" > "$T/tree.after"
+  check "... and creates nothing" cmp -s "$T/tree.before" "$T/tree.after"
+else
+  skp "git worktree add is not available"
+fi
 
 # =================================================================================================
 # store

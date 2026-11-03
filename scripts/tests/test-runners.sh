@@ -358,6 +358,21 @@ check "a patch that does not apply: exit 3, nothing built" \
   sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: audit_1/patches/F-3.patch does not apply to $V2; log ' '$T/err' && ! grep -q '^== cargo' '$T/calls'"
 run "$TARGET" "$WT" -- build-sbf --run audit_1 --src audit_1/src.git
 check "--src may be the copy git-ro.sh copy made in the run directory" in_blocks '^== cargo build-sbf --skip' '^show: // v2$'
+# Only git's own answer says --src is in no repository: a .git file naming a directory that bears git's words for
+# that, with a commondir past 16 KiB, is refused for that file, never copied as a plain tree.
+A="$T/odd-admin/not a git repository"
+mkdir -p "$A" "$WT/nested"
+printf 'ref: refs/heads/main\n' > "$A/HEAD"
+{ printf '../..\n'; awk 'BEGIN { for (i = 0; i < 17000; i++) printf "\n" }'; } > "$A/commondir"
+printf 'gitdir: %s\n' "$A" > "$WT/nested/.git"
+s="$A/commondir"
+[ "${#s}" -le 200 ] || s="${s:0:200}..."
+printf 'target: refused: a .git file or commondir file holds a NUL byte or more than 16 KiB, so where git would look cannot be told: %s\n' \
+  "$s" > "$T/want-err"
+run "$TARGET" "$WT" -- build-sbf --run audit_1 --src nested
+check "a --src whose .git file names a commondir past 16 KiB is refused for it, whatever its directory is named" \
+  sh -c "[ '$RC' = 64 ] && cmp -s '$T/err' '$T/want-err' && ! grep -q '^== cargo' '$T/calls'"
+rm -rf "$WT/nested"
 run "$TARGET" "$WT" TOOLS_VERSION=v1.54 -- build-sbf --run audit_1 --src . --package demo
 check "--package builds that member, and TOOLS_VERSION goes to the install and the build" calls_are \
   "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|cargo build-sbf --help|cargo build-sbf --install-only --tools-version v1.54|cargo metadata --no-deps --format-version 1 --offline --manifest-path $S/src/Cargo.toml|cargo build-sbf --skip-tools-install --offline --sbf-out-dir $S/out --tools-version v1.54 --manifest-path $S/src/programs/demo/Cargo.toml|"

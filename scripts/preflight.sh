@@ -232,7 +232,10 @@ n=${n//[!0-9]/}
   refuse "the working tree holds more than $max entries outside .git, too many to check; run from a smaller directory," \
     "such as a workspace of its own for this incident (AUDITOR_PREFLIGHT_MAX_ENTRIES raises the limit)"
 
-# The parents up to the repository's top level, nearest first.
+# The parents up to the repository's top level, nearest first. A file git would wait on, or a .git or
+# commondir file the check cannot read, is refused here in this shell, for what it is; then the calls
+# below find it done, and only git's own answer (confine_no_repo) says there is no repository.
+CONFINE_CEILING='' confine_git_files "$WT"
 if err=$(CONFINE_CEILING='' hgit "$WT" rev-parse --is-inside-work-tree 2>&1); then
   [ "$err" = true ] || refuse "the working directory lies inside a git directory"
   top=$(CONFINE_CEILING='' hgit "$WT" rev-parse --show-toplevel 2>/dev/null) && [ -n "$top" ] && confine_phys "$top" ||
@@ -275,23 +278,21 @@ if err=$(CONFINE_CEILING='' hgit "$WT" rev-parse --is-inside-work-tree 2>&1); th
     d=${d%/*}
     [ -n "$d" ] || d=/
   done
+elif confine_no_repo "$?" "$err"; then
+  # No repository git can use, but Claude Code may still take a directory holding a .git git cannot
+  # use (an empty directory, a .git file naming nothing) for the repository root, so the parents are
+  # read up to the highest one: git stops at the first .git file it cannot use, a reader of its own
+  # need not.
+  top=$WT
+  d=$WT
+  while :; do
+    if [ -e "${d%/}/.git" ] || [ -L "${d%/}/.git" ]; then raise "$d"; fi
+    [ "$d" != / ] || break
+    d=${d%/*}
+    [ -n "$d" ] || d=/
+  done
 else
-  case "$err" in
-    *'not a git repository'*)
-      # No repository git can use, but Claude Code may still take a directory holding a .git git cannot
-      # use (an empty directory, a .git file naming nothing) for the repository root, so the parents are
-      # read up to the highest one: git stops at the first .git file it cannot use, a reader of its own
-      # need not.
-      top=$WT
-      d=$WT
-      while :; do
-        if [ -e "${d%/}/.git" ] || [ -L "${d%/}/.git" ]; then raise "$d"; fi
-        [ "$d" != / ] || break
-        d=${d%/*}
-        [ -n "$d" ] || d=/
-      done ;;
-    *) refuse "git cannot tell which repository holds the working directory, so its parents cannot be checked" ;;
-  esac
+  refuse "git cannot tell which repository holds the working directory, so its parents cannot be checked"
 fi
 own=" "
 for d in "${HOME:+$HOME/.claude}" "${CLAUDE_CONFIG_DIR-}"; do
