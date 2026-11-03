@@ -327,6 +327,16 @@ git init -q --separate-git-dir="$P/rs/x.git" "$P/rs/x" && printf 'gitdir: ../x.g
 run "$P/rs/x/src"
 check "a git directory beside the working tree: the parents are read up to the directory holding it" \
   above ../../.claude/agents
+# git reports the git directory as the .git file spells it; where the filesystem opens the capitals as
+# rt, that is still the directory holding it, and where it does not, the .git file names nothing.
+build "$P" d:rt/x/src d:rt/.claude/agents
+git init -q --separate-git-dir="$P/rt/x.git" "$P/rt/x" && printf 'gitdir: ../../RT/x.git\n' > "$P/rt/x/.git"
+run "$P/rt/x/src"
+if [ -d "$P/RT/x.git" ]; then
+  check "... and so when its .git file spells the directory holding it in capitals" above ../../.claude/agents
+else
+  check "... a .git file naming it in capitals names nothing where names do not fold case, and no parent above it is read" just_ok
+fi
 # Config in a sibling of the working directory is no parent's, but a link in the tree can lead to it.
 build "$P" d:r11/sub/src d:r11/sibling/.claude/skills l:r11/sub/programs=../sibling
 git init -q "$P/r11"

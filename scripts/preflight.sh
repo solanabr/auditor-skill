@@ -23,10 +23,10 @@
 #   - in each parent of the working directory up to the repository root, the same entries in that
 #     parent's own .claude and .mcp.json. The root is the highest of these that holds the working
 #     directory: the top level of the git repository that holds it, the directory holding its git
-#     directory, and the directory holding the .git git uses, past any .git git passes over (a
-#     core.worktree in the repository's own config can set a lower top level). Outside a repository it
-#     is the highest directory holding a .git, which git cannot use, and where there is none, no parent
-#     is read.
+#     directory (however a .git file spells it), and the directory holding the .git git uses, past any
+#     .git git passes over (a core.worktree in the repository's own config can set a lower top level).
+#     Outside a repository it is the highest directory holding a .git, which git cannot use, and where
+#     there is none, no parent is read.
 #     The user's own ~/.claude (or $CLAUDE_CONFIG_DIR) is user configuration and is skipped there.
 # The refusal names the first such path in byte order, parents first. A name counts as the filesystem
 # opens it: where names are folded (APFS and HFS+ fold case and normalize Unicode), a name holding a byte
@@ -255,8 +255,16 @@ if err=$(CONFINE_CEILING='' hgit "$WT" rev-parse --is-inside-work-tree 2>&1); th
   # read up to the highest of the top level, the directory holding the git directory, and each directory
   # at or above the working directory that holds a .git, up to the one whose .git git uses: git passes
   # over a .git it cannot use, such as an empty directory, and so does this walk.
-  d=${gd%/*}
-  case "$WT/" in "${d%/}/"*) raise "${d:-/}" ;; esac
+  # The directory holding the git directory counts when it is the working directory or one above it, by
+  # identity: git keeps the spelling a .git file gives (../../PROJ/x.git, where the disk says proj).
+  h=${gd%/*}
+  d=$WT
+  while :; do
+    if [ "$d" -ef "${h:-/}" ]; then raise "$d"; break; fi
+    [ "$d" != / ] || break
+    d=${d%/*}
+    [ -n "$d" ] || d=/
+  done
   d=$WT
   while :; do
     if [ -e "${d%/}/.git" ] || [ -L "${d%/}/.git" ]; then
