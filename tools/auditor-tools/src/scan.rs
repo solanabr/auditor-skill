@@ -100,7 +100,10 @@ pub const MAX_REPORT: usize = 256 << 20;
 /// inside it. A file started before then still has its `confine::PARSE_TIME`, and
 /// a git question asked just before then up to twice `confine::GIT_TIME`, so
 /// audit-scan ends within about 110 seconds, inside the two minutes Claude Code
-/// gives a foreground command by default.
+/// gives a foreground command by default. A repository whose config includes
+/// other files adds, before git's first answer, one listing of up to
+/// `confine::GIT_TIME` for each config file that mentions an include, so a git
+/// slow to list them can take audit-scan past that bound.
 pub const SCAN_TIME: Duration = Duration::from_secs(90);
 
 /// Group nesting (`(`, `[` and `{`) past which a file is not parsed.
