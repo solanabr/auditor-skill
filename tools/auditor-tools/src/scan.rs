@@ -34,30 +34,27 @@ use crate::confine::{self, is_run_dir_name, os_message, Git, MAX_FILE};
 
 const SNIPPET_MAX: usize = 80;
 
-/// The functions that make a cross-program call, by the last name of the path
-/// they are called by: solana-program's and solana-cpi's `invoke`,
-/// `invoke_signed`, `invoke_unchecked` and `invoke_signed_unchecked`; pinocchio's
-/// `cpi` module's, which adds `invoke_with_bounds` and `invoke_signed_with_bounds`,
-/// 0.9's `slice_invoke` and `slice_invoke_signed`, and later versions'
-/// `invoke_with_slice` and `invoke_signed_with_slice`; and the syscalls those end
-/// in, `sol_invoke_signed_c` and `sol_invoke_signed_rust`. Called as a method, as
-/// pinocchio-system's and pinocchio-token's instructions are
-/// (`Transfer { … }.invoke_signed(&signers)`), a site's kind is `method:<name>`.
-/// A name written as a raw identifier (`r#invoke`) is that name (`ident_name`).
-const CPI_CALLS: [&str; 12] = [
-    "invoke",
-    "invoke_signed",
-    "invoke_unchecked",
-    "invoke_signed_unchecked",
-    "invoke_with_bounds",
-    "invoke_signed_with_bounds",
-    "slice_invoke",
-    "slice_invoke_signed",
-    "invoke_with_slice",
-    "invoke_signed_with_slice",
-    "sol_invoke_signed_c",
-    "sol_invoke_signed_rust",
-];
+/// Whether a function or method makes a cross-program call, as far as the last
+/// name of the path it is called by tells: the name holds `invoke`. A fixed list
+/// of names misses each one a crate adds; such names are solana-program's and
+/// solana-cpi's `invoke`, `invoke_signed`, `invoke_unchecked` and
+/// `invoke_signed_unchecked`; pinocchio's `cpi` module's, which adds
+/// `invoke_with_bounds` and `invoke_signed_with_bounds`, 0.9's `slice_invoke` and
+/// `slice_invoke_signed`, and later versions' `invoke_with_slice` and
+/// `invoke_signed_with_slice`; the syscalls those end in, `sol_invoke_signed_c` and
+/// `sol_invoke_signed_rust`; the helpers that build an instruction and make the
+/// call, such as spl-token-2022's `invoke_transfer_checked` and
+/// `invoke_transfer_checked_with_fee` and spl-transfer-hook-interface's
+/// `invoke_execute`; and the methods of the instructions pinocchio-system and
+/// pinocchio-token define (`Transfer { … }.invoke_signed(&signers)`) and of a
+/// Codama-generated client's `…Cpi`, which adds `invoke_with_remaining_accounts` and
+/// `invoke_signed_with_remaining_accounts`. Called as a method, a site's kind is
+/// `method:<name>`. A name written as a raw identifier (`r#invoke`) is that name
+/// (`ident_name`). A function whose name only holds the word (`invoked`) is listed
+/// too, and a helper of another name is not.
+fn is_cpi_name(name: &str) -> bool {
+    name.contains("invoke")
+}
 
 /// The functions that derive a program address from seeds, by the last name of
 /// the path they are called by: `find_program_address`, `try_find_program_address`
@@ -1896,7 +1893,7 @@ impl<'ast> Visit<'ast> for FileVisitor<'_> {
 
     fn visit_expr_method_call(&mut self, node: &'ast syn::ExprMethodCall) {
         let method = ident_name(&node.method);
-        let cpi = CPI_CALLS.contains(&method.as_str());
+        let cpi = is_cpi_name(&method);
         if method == "unwrap" || method == "expect" || cpi {
             let first = attrs_first(&node.attrs).unwrap_or_else(|| self.first(&node.receiver));
             let (file, line) = (self.file.clone(), node.method.span().start().line);
@@ -1980,7 +1977,7 @@ impl<'ast> Visit<'ast> for FileVisitor<'_> {
         if let syn::Expr::Path(path_expr) = node.func.as_ref() {
             if let Some(seg) = path_expr.path.segments.last() {
                 let name = ident_name(&seg.ident);
-                if CPI_CALLS.contains(&name.as_str()) {
+                if is_cpi_name(&name) {
                     let first = attrs_first(&node.attrs).unwrap_or_else(|| self.first(&node.func));
                     let site = CpiSite {
                         file: self.file.clone(),

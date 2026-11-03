@@ -324,18 +324,23 @@ Exit: 0 done · 1 the output cannot be written · 2 refused, with one stderr lin
 
   "unsafe_blocks": [ { "file": "string", "line": 0 } ],
 
-  // calls, by the last name of their path, to the cross-program call functions
-  // of solana-program, solana-cpi and pinocchio (invoke, invoke_signed,
-  // invoke_unchecked, invoke_signed_unchecked, invoke_with_bounds,
-  // invoke_signed_with_bounds, slice_invoke, slice_invoke_signed,
-  // invoke_with_slice, invoke_signed_with_slice) and to the syscalls they end in
-  // (sol_invoke_signed_c, sol_invoke_signed_rust), kind the name; the same names
-  // called as methods, as pinocchio-system's and pinocchio-token's instructions
-  // are, kind `method:<name>`; and every path that names `CpiContext`, as a type
-  // or in the calls that make one (`CpiContext::new(..)`,
-  // `CpiContext::new_with_signer(..)`), kind `CpiContext`, the path as its
-  // snippet. A call through an import under another name, a trait or a macro is
-  // not seen.
+  // every call whose name, the last of its path, holds `invoke`, kind the name:
+  // the cross-program call functions of solana-program, solana-cpi and pinocchio
+  // (invoke, invoke_signed, invoke_unchecked, invoke_signed_unchecked,
+  // invoke_with_bounds, invoke_signed_with_bounds, slice_invoke,
+  // slice_invoke_signed, invoke_with_slice, invoke_signed_with_slice), the
+  // syscalls they end in (sol_invoke_signed_c, sol_invoke_signed_rust) and the
+  // helpers that make one (spl-token-2022's invoke_transfer_checked and
+  // invoke_transfer_checked_with_fee, spl-transfer-hook-interface's
+  // invoke_execute); every method call whose name holds it, as pinocchio-system's
+  // and pinocchio-token's instructions and a Codama-generated client's `…Cpi`
+  // make one (invoke_with_remaining_accounts,
+  // invoke_signed_with_remaining_accounts), kind `method:<name>`; and every path
+  // that names `CpiContext`, as a type or in the calls that make one
+  // (`CpiContext::new(..)`, `CpiContext::new_with_signer(..)`), kind
+  // `CpiContext`, the path as its snippet. A call through an import under
+  // another name, a trait, a macro or a helper of another name is not seen; a
+  // function whose name only holds the word (`invoked`) is listed too.
   "cpi_sites": [
     { "file": "string", "line": 0,
       "kind": "invoke|invoke_signed|…|method:invoke_signed|…|CpiContext",

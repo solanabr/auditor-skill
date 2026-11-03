@@ -613,3 +613,71 @@ fn scan_fixture_takes_a_raw_identifier_for_its_name() {
         ]
     );
 }
+
+/// Cross-program calls made through helpers named for the call: a Codama-generated
+/// client's `…Cpi` with remaining accounts, signed and not, and its builder;
+/// spl-token-2022's and spl-transfer-hook-interface's on-chain helpers, which
+/// build the instruction and make the call; and a program's own wrapper. Building
+/// an instruction without making the call is no site.
+const HELPERS: &str = r#"
+use spl_token_2022::onchain;
+
+pub fn mint(cpi: CreateV2Cpi, extra: &[(&AccountInfo, bool, bool)], seeds: &[&[&[u8]]]) -> ProgramResult {
+    CreateV2Cpi::new(program, accounts, args).invoke_with_remaining_accounts(extra)?;
+    cpi.invoke_signed_with_remaining_accounts(seeds, extra)?;
+    CreateV2CpiBuilder::new(program).payer(payer).invoke_signed(seeds)?;
+    let ix = spl_token_2022::instruction::transfer_checked(&id, &from, &mint, &to, &owner, &[], 1, 6)?;
+    spl_token_2022::onchain::invoke_transfer_checked(token, from, mint, to, owner, extra, 1, 6, seeds)?;
+    onchain::invoke_transfer_checked_with_fee(token, from, mint, to, owner, extra, 1, 6, 0, seeds)?;
+    spl_transfer_hook_interface::onchain::invoke_execute(hook, from, mint, to, owner, extra, 1)?;
+    checked_invoke(&ix, extra)?;
+    Ok(())
+}
+"#;
+
+#[test]
+fn scan_fixture_lists_each_call_whose_name_holds_invoke() {
+    let report = scan::scan_source("helpers.rs", HELPERS).expect("the fixture parses");
+    let at = |text: &str| line_in(HELPERS, text);
+    let calls: Vec<(&str, usize)> = report
+        .cpi_sites
+        .iter()
+        .map(|c| (c.kind.as_str(), c.line))
+        .collect();
+    assert_eq!(
+        calls,
+        [
+            (
+                "method:invoke_with_remaining_accounts",
+                at(".invoke_with_remaining_accounts(")
+            ),
+            (
+                "method:invoke_signed_with_remaining_accounts",
+                at(".invoke_signed_with_remaining_accounts(")
+            ),
+            ("method:invoke_signed", at(".invoke_signed(seeds)")),
+            ("invoke_transfer_checked", at("invoke_transfer_checked(")),
+            (
+                "invoke_transfer_checked_with_fee",
+                at("invoke_transfer_checked_with_fee(")
+            ),
+            ("invoke_execute", at("invoke_execute(")),
+            ("checked_invoke", at("checked_invoke(")),
+        ]
+    );
+    let snippets: Vec<&str> = report
+        .cpi_sites
+        .iter()
+        .filter(|c| {
+            c.kind == "method:invoke_signed_with_remaining_accounts" || c.kind == "checked_invoke"
+        })
+        .map(|c| c.snippet.as_str())
+        .collect();
+    assert_eq!(
+        snippets,
+        [
+            "cpi . invoke_signed_with_remaining_accounts (seeds , extra)",
+            "checked_invoke (& ix , extra)",
+        ]
+    );
+}
