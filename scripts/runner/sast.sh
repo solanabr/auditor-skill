@@ -22,11 +22,12 @@
 # a program for git to run; so every git semgrep starts gets GIT_DIR, never the repository's own: a copy of
 # its index and info/exclude under a config of sast.sh's own, or, where sast.sh makes no copy, a path that
 # does not exist (git fails, and semgrep lists the files itself, ignored ones included, which the last line
-# then says, with the reason). git's ignore rules leave out untracked files only. semgrep (1.117.0 and later) also reads
-# every .semgrepignore of its project, the nearest folder at or above <path> holding a .git (or a .hg,
-# _darcs or .svn folder), else <path>: for a folder, the last line names each one from the project down to
-# <path> and under it; a file given as <path> is scanned whatever they say. AUDITOR_RUN_TIMEOUT (whole
-# seconds, 1 to 86400, default 1800) bounds the scan, under the watchdog of isolation.sh's iso_watch.
+# then says, with the reason). git's ignore rules leave out untracked files only. semgrep (1.117.0 and
+# later) also reads every .semgrepignore of its project, the nearest folder at or above <path> holding a
+# .git (or a .hg, _darcs or .svn folder), else <path>: for a folder, the last line names each one from the
+# project down to <path> and under it; a file given as <path> is scanned whatever they say.
+# AUDITOR_RUN_TIMEOUT (whole seconds, 1 to 86400, default 1800) bounds the scan, under the watchdog of
+# isolation.sh's iso_watch.
 #
 # Output: the SARIF in <R>/sast/semgrep-<n>.sarif and semgrep's own messages in <R>/sast/semgrep-<n>.log.
 # The last stdout line gives the number of results and where they are. The scratch directory is removed on
@@ -178,6 +179,11 @@ copy_ok() { # copy_ok <file> <bytes>: <file> is absent, or a regular file, not a
   if [ ! -e "$1" ] && [ ! -L "$1" ]; then return 0; fi
   [ -f "$1" ] && [ ! -L "$1" ] && [ -z "$(find "$1" -prune -size +"$2"c -print 2>/dev/null)" ]
 }
+# can_read <file>: <file> can be read, or is absent and its folder is missing or can be searched (in a folder
+# that cannot be searched, a file only looks absent).
+can_read() {
+  if [ -e "$1" ]; then [ -r "$1" ]; else [ ! -d "${1%/*}" ] || [ -x "${1%/*}" ]; fi
+}
 # index_inside: the copied index, read by git under sast.sh's config, names only paths inside the project (an
 # entry that is absolute or has an empty, . or .. component would have git list a file outside --path); exit 1
 # when one does not, and git's own status when it cannot read the copy.
@@ -203,12 +209,16 @@ if [ "$VCS" = git ]; then
       if [ ! -d "$G" ] || [ -L "$G" ]; then NOCOPY="its .git is a file or a link"
       elif [ -L "$G/info" ]; then NOCOPY="its .git/info is a link"
       elif ! copy_ok "$G/index" 268435456; then NOCOPY="its index is a link, not a regular file, or over 256 MiB"
+      elif ! can_read "$G/index"; then NOCOPY="its index cannot be read"
       elif ! copy_ok "$G/info/exclude" 1048576; then NOCOPY="its info/exclude is a link, not a regular file, or over 1 MiB"
+      elif ! can_read "$G/info/exclude"; then NOCOPY="its info/exclude cannot be read"
       elif ! { confine_mkdir "$S/git" && confine_mkdir "$S/git/objects" && confine_mkdir "$S/git/refs" &&
         confine_mkdir "$S/git/info" && confine_new_file "$S/git/HEAD" $'ref: refs/heads/main\n' &&
-        confine_new_file "$S/git/config" "$GCONF" && { [ ! -e "$G/index" ] || iso_copy_new "$G/index" "$S/git/index"; } &&
-        { [ ! -e "$G/info/exclude" ] || iso_copy_new "$G/info/exclude" "$S/git/info/exclude"; }; }; then
+        confine_new_file "$S/git/config" "$GCONF"; }; then
         NOCOPY="the scratch directory could not hold the copy"
+      elif ! { { [ ! -e "$G/index" ] || iso_copy_new "$G/index" "$S/git/index"; } &&
+        { [ ! -e "$G/info/exclude" ] || iso_copy_new "$G/info/exclude" "$S/git/info/exclude"; }; }; then
+        NOCOPY="its index or info/exclude could not be copied into the scratch directory"
       else
         index_inside
         case $? in

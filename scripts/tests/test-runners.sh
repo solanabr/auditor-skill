@@ -1542,7 +1542,7 @@ entry += b"\0" * ((62 + len(name) + 8) // 8 * 8 - len(entry))
 out = struct.pack(">4sII", sig, ver, n + 1) + entry + body
 open(p, "wb").write(out + hashlib.sha1(out).digest())
 PY
-for r in split info; do
+for r in split info unread exunread gitnox infonox; do
   tgit init -q "$WT/$r" && printf 'fn s() {}\n' > "$WT/$r/s.rs" && tgit -C "$WT/$r" add s.rs &&
     printf '[core]\n\tfsmonitor = %s/mark-fsmonitor\n\thooksPath = %s/hooks\n' "$T" "$T" >> "$WT/$r/.git/config"
 done
@@ -1566,6 +1566,25 @@ idx|^git-cached: 128 fatal: not a git repository|its index names a path outside 
 split|^git-cached: 128 fatal: not a git repository|git cannot read its index from a copy, as with a split index or a sha256 repository|a split index: no copy
 info|^git-cached: 128 fatal: not a git repository|its .git/info is a link|a .git/info that is a link: no copy
 CASES
+# An index or info/exclude that cannot be read gets no copy either, and neither does one in a .git or .git/info
+# that cannot be searched: there it only looks absent, and a copy made without it would hold no tracked file, or
+# no rule of info/exclude. Where the modes stop nothing, as for root, the case is skipped.
+for r in exunread infonox; do mkdir -p "$WT/$r/.git/info" && printf 'skip/\n' > "$WT/$r/.git/info/exclude"; done
+chmod 000 "$WT/unread/.git/index" "$WT/exunread/.git/info/exclude"
+chmod 600 "$WT/gitnox/.git" "$WT/infonox/.git/info"
+while IFS='|' read -r path probe why label; do
+  if [ -r "$WT/$probe" ]; then skp "sast --path $path, $label: this user reads $probe whatever its mode"; continue; fi
+  mv "$T/marks/"* "$T/marks-earlier/" 2>/dev/null
+  run "$SAST" "$WT" -- semgrep --run audit_1 --path "$path" --ruleset p/rust
+  check "sast --path $path, $label: exit 0, no copy and the note says why, nothing a config names ran" \
+    shape_ok '^git-cached: 128 fatal: not a git repository' "$why"
+done <<CASES
+unread|unread/.git/index|its index cannot be read|an index that cannot be read
+exunread|exunread/.git/info/exclude|its info/exclude cannot be read|an info/exclude that cannot be read
+gitnox|gitnox/.git/index|its index cannot be read|a .git that cannot be searched
+infonox|infonox/.git/info/exclude|its info/exclude cannot be read|a .git/info that cannot be searched
+CASES
+chmod 700 "$WT/gitnox/.git" "$WT/infonox/.git/info"
 # A working directory inside a repository whose top lies above it: sast.sh copies nothing from outside the
 # working directory, so semgrep lists the files itself; the outer repository's programs never run.
 tgit init -q "$T/outer" && mkdir "$T/outer/w" && printf 'fn o() {}\n' > "$T/outer/w/o.rs" &&
@@ -1594,7 +1613,8 @@ printf 'y/\n' > "$WT/nested/.semgrepignore"
 run "$SAST" "$WT" -- semgrep --run audit_1 --path nested --ruleset p/rust
 check "a scan root in a project of its own: the note names its .semgrepignore, not the working directory's" \
   sh -c "[ '$RC' = 0 ] && grep -q '; note: .semgrepignore files narrow the scan: nested/.semgrepignore\$' '$T/out'"
-rm -rf "$WT/nested" "$WT/gf" "$WT/bare" "$WT/idx" "$WT/split" "$WT/info" "$T/info-real" "$T/outer" "$T/gf.git" "$WT/.semgrepignore" "$WT/programs/.semgrepignore"
+rm -rf "$WT/nested" "$WT/gf" "$WT/bare" "$WT/idx" "$WT/split" "$WT/info" "$WT/unread" "$WT/exunread" "$WT/gitnox" "$WT/infonox" \
+  "$T/info-real" "$T/outer" "$T/gf.git" "$WT/.semgrepignore" "$WT/programs/.semgrepignore"
 mkdir -p "$WT/src/inner"
 ln -s ../lib.rs "$WT/src/inner/near.rs"
 run "$SAST" "$WT" -- semgrep --run audit_1 --path src --ruleset p/rust
