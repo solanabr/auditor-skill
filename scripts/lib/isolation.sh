@@ -10,32 +10,51 @@
 #     listed, id_rsa, id_dsa, id_ecdsa, id_ed25519, id_ecdsa_sk, id_ed25519_sk and identity;
 #   ~/.config/solana: every entry (cli/config.yml can hold an RPC URL with a key), and the keypair the
 #     keypair_path line of cli/config.yml names, wherever it is;
-#   ~/.aws/credentials, and the files in ~/.aws/sso/cache/ and ~/.aws/cli/cache/;
+#   ~/.aws/credentials, and the files in ~/.aws/sso/cache/ and ~/.aws/cli/cache/; ~/.aws/config when it
+#     sets credential_process, aws_secret_access_key or aws_session_token;
 #   ~/.config/gcloud/credentials.db, access_tokens.db and application_default_credentials.json, and the
 #     files in ~/.config/gcloud/legacy_credentials/;
 #   ~/.azure/accessTokens.json, msal_token_cache.json, msal_token_cache.bin, service_principal_entries.json
 #     and service_principal_entries.bin;
+#   ~/.vault-token and ~/.terraform.d/credentials.tfrc.json;
 #   ~/.kube/config and ~/.docker/config.json;
 #   ~/.npmrc, ~/.yarnrc.yml, ~/.gem/credentials, ~/.pypirc, ~/.cargo/credentials and
 #     ~/.cargo/credentials.toml;
 #   ~/.git-credentials, ~/.config/git/credentials, ~/.netrc and ~/.config/gh/hosts.yml;
+#   ~/.gitconfig and ~/.config/git/config, with the files they include (include.path and
+#     includeIf.<condition>.path, whatever the condition), when one names a credential helper
+#     (credential.helper) or an askpass program (core.askPass), sends an HTTP header (http.extraHeader) or
+#     rewrites to an http(s) URL that carries a login (url.<base>): through each, git gives a login to any
+#     code here that runs it. Dev Containers and Codespaces forward the host's git login through such a helper;
 #   the files in ~/.gnupg/private-keys-v1.d/, and the gpg-agent sockets ~/.gnupg/S.gpg-agent,
 #     S.gpg-agent.ssh, S.gpg-agent.extra and S.gpg-agent.browser;
 #   Claude Code's login: .credentials.json in ~/.claude and in every other ~/.claude* directory (where
 #     CLAUDE_CONFIG_DIR keeps a second account), and every file under ~/.config/anthropic (Anthropic
 #     profiles and their tokens, which Claude Code also signs in with);
 #   1Password's agent socket: ~/.1password/agent.sock, and on macOS
-#     ~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock.
+#     ~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock;
+#   the sockets of a container daemon, which gives whoever reaches it the host: Docker Desktop's
+#     ~/.docker/run/docker.sock and ~/.docker/desktop/docker.sock, Colima's ~/.colima/*/docker.sock, Rancher
+#     Desktop's ~/.rd/docker.sock, OrbStack's ~/.orbstack/run/docker.sock and a Podman machine's
+#     ~/.local/share/containers/podman/machine/*/podman.sock;
+#   git's credential cache sockets, ~/.cache/git/credential/socket and ~/.git-credential-cache/socket.
 # It reads the places these variables name as well, when they are set: SSH_AUTH_SOCK; CARGO_HOME
-# (credentials and credentials.toml); XDG_CONFIG_HOME (gh/hosts.yml and git/credentials); GH_CONFIG_DIR
-# (hosts.yml); AWS_SHARED_CREDENTIALS_FILE, GOOGLE_APPLICATION_CREDENTIALS, NETRC, NPM_CONFIG_USERCONFIG
-# (in either case) and ANTHROPIC_IDENTITY_TOKEN_FILE, each a file; KUBECONFIG, a list of files;
-# DOCKER_CONFIG (config.json); CLAUDE_CONFIG_DIR (.credentials.json); ANTHROPIC_CONFIG_DIR (every file under
-# it); CLOUDSDK_CONFIG and AZURE_CONFIG_DIR (the gcloud and azure files above); GNUPGHOME (its
-# private-keys-v1.d/ and gpg-agent sockets); TMPDIR (ssh-*/agent.*) and XDG_RUNTIME_DIR (ssh-agent.socket,
-# vscode-ssh-auth-*.sock and everything in gnupg/, keyring/ and gcr/). And the agent sockets anyone on the
-# machine can name: /tmp/ssh-*/agent.*, /tmp/vscode-ssh-auth-*.sock, macOS's
-# /private/tmp/com.apple.launchd.*/Listeners, and /run/user/<uid> as for XDG_RUNTIME_DIR.
+# (credentials and credentials.toml); XDG_CONFIG_HOME (gh/hosts.yml, git/credentials, and git/config as
+# ~/.gitconfig is read); XDG_CACHE_HOME (git/credential/socket); GH_CONFIG_DIR (hosts.yml);
+# AWS_SHARED_CREDENTIALS_FILE, GOOGLE_APPLICATION_CREDENTIALS, NETRC, NPM_CONFIG_USERCONFIG (in either case),
+# GIT_ASKPASS, SSH_ASKPASS and ANTHROPIC_IDENTITY_TOKEN_FILE, each a file; GIT_CONFIG_GLOBAL and
+# GIT_CONFIG_SYSTEM, read as ~/.gitconfig is; AWS_CONFIG_FILE, read as ~/.aws/config is; KUBECONFIG, a list
+# of files; DOCKER_CONFIG (config.json); CLAUDE_CONFIG_DIR (.credentials.json); ANTHROPIC_CONFIG_DIR (every
+# file under it); CLOUDSDK_CONFIG and AZURE_CONFIG_DIR (the gcloud and azure files above); GNUPGHOME (its
+# private-keys-v1.d/ and gpg-agent sockets); DOCKER_HOST and CONTAINER_HOST (a unix:// socket);
+# VSCODE_GIT_IPC_HANDLE and REMOTE_CONTAINERS_IPC (the sockets through which VS Code and its Dev Containers
+# answer git's credential requests with the host's login); TMPDIR (ssh-*/agent.*, vscode-git-*.sock and
+# podman/*.sock) and XDG_RUNTIME_DIR (ssh-agent.socket, vscode-ssh-auth-*.sock, vscode-git-*.sock,
+# docker.sock, podman/podman.sock and everything in gnupg/, keyring/ and gcr/). And what anyone on the machine
+# can name: the sockets /tmp/ssh-*/agent.*, /tmp/vscode-ssh-auth-*.sock, /tmp/vscode-git-*.sock,
+# /tmp/vscode-remote-containers-ipc-*.sock and macOS's /private/tmp/com.apple.launchd.*/Listeners; docker.sock,
+# podman/podman.sock and containerd/containerd.sock in /run and /var/run; /run/user/<uid> as for
+# XDG_RUNTIME_DIR; and /etc/gitconfig, read as ~/.gitconfig is.
 # A path counts when it is a regular file, or a link to one, whose first byte can be read, or a socket that
 # accepts a connection: a sandbox that blocks Unix sockets leaves SSH_AUTH_SOCK and its socket in place, out
 # of reach. Past 5000 entries in the directories it lists, the check stops: it cannot tell (status 2). A
@@ -67,7 +86,7 @@
 #                                Status 0 when none is readable, 1 when some are, 2 when the check cannot
 #                                run or finish, with ISO_WHY saying why. With no <home>, it reads the homes
 #                                iso_homes prints, the places the environment names and the machine-wide
-#                                sockets; with <home>s, those homes and the places the environment names
+#                                places; with <home>s, those homes and the places the environment names
 #                                only. A caller in isolated mode stops on status 1 or 2; in native mode it
 #                                prints what is readable and goes on. What a report may carry is
 #                                ISO_KINDS, never the paths.
@@ -129,28 +148,39 @@
 # random bytes, as the 64-number array solana-keygen writes. Exit 2 on anything unexpected.
 ISO_PY='import glob, hashlib, json, os, pwd, re, socket, stat, sys
 
-KINDS = ("SSH keys", "agent sockets", "Solana keypairs or CLI config", "cloud credentials",
+KINDS = ("SSH keys", "agent sockets", "container daemon sockets", "Solana keypairs or CLI config", "cloud credentials",
          "Kubernetes or Docker config", "package registry tokens", "git or HTTP credentials", "GnuPG private keys",
          "Claude Code credentials")
-SSH, AGENT, SOLANA, CLOUD, CLUSTER, REGISTRY, GIT, GPG, CLAUDE = KINDS
+SSH, AGENT, DAEMON, SOLANA, CLOUD, CLUSTER, REGISTRY, GIT, GPG, CLAUDE = KINDS
 GCLOUD = ("credentials.db", "access_tokens.db", "application_default_credentials.json")
 AZURE = ("accessTokens.json", "msal_token_cache.json", "msal_token_cache.bin", "service_principal_entries.json",
          "service_principal_entries.bin")
 FILES = (((SOLANA, ".config/solana/id.json"), (CLOUD, ".aws/credentials"))
          + tuple((CLOUD, ".config/gcloud/" + f) for f in GCLOUD) + tuple((CLOUD, ".azure/" + f) for f in AZURE)
-         + ((CLUSTER, ".kube/config"), (CLUSTER, ".docker/config.json"), (REGISTRY, ".npmrc"), (REGISTRY, ".yarnrc.yml"),
-            (REGISTRY, ".gem/credentials"), (REGISTRY, ".pypirc"), (REGISTRY, ".cargo/credentials"),
-            (REGISTRY, ".cargo/credentials.toml"), (GIT, ".git-credentials"), (GIT, ".config/git/credentials"), (GIT, ".netrc"),
-            (GIT, ".config/gh/hosts.yml")))
+         + ((CLOUD, ".vault-token"), (CLOUD, ".terraform.d/credentials.tfrc.json"), (CLUSTER, ".kube/config"),
+            (CLUSTER, ".docker/config.json"), (REGISTRY, ".npmrc"), (REGISTRY, ".yarnrc.yml"), (REGISTRY, ".gem/credentials"),
+            (REGISTRY, ".pypirc"), (REGISTRY, ".cargo/credentials"), (REGISTRY, ".cargo/credentials.toml"),
+            (GIT, ".git-credentials"), (GIT, ".config/git/credentials"), (GIT, ".netrc"), (GIT, ".config/gh/hosts.yml")))
 DIRS = ((SOLANA, ".config/solana"), (CLOUD, ".aws/sso/cache"), (CLOUD, ".aws/cli/cache"),
         (CLOUD, ".config/gcloud/legacy_credentials"), (GPG, ".gnupg/private-keys-v1.d"), (CLAUDE, ".config/anthropic"))
 GPG_SOCKETS = ("S.gpg-agent", "S.gpg-agent.ssh", "S.gpg-agent.extra", "S.gpg-agent.browser")
-SOCKETS = tuple(".gnupg/" + s for s in GPG_SOCKETS) + (
-    ".1password/agent.sock", "Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock")
+# Under a home, as glob patterns.
+SOCKETS = (tuple((AGENT, ".gnupg/" + s) for s in GPG_SOCKETS)
+           + ((AGENT, ".1password/agent.sock"), (AGENT, "Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock"),
+              (DAEMON, ".docker/run/docker.sock"), (DAEMON, ".docker/desktop/docker.sock"), (DAEMON, ".colima/*/docker.sock"),
+              (DAEMON, ".rd/docker.sock"), (DAEMON, ".orbstack/run/docker.sock"),
+              (DAEMON, ".local/share/containers/podman/machine/*/podman.sock"), (GIT, ".cache/git/credential/socket"),
+              (GIT, ".git-credential-cache/socket")))
+GIT_CONFIGS = (".gitconfig", ".config/git/config")
 SSH_KEEP = re.compile(r"^(known_hosts.*|config|.*\.pub|authorized_keys.*)$")
 SSH_KEYS = ("id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "id_ecdsa_sk", "id_ed25519_sk", "identity")
 BUDGET = 5000
 KEYPAIR = re.compile(r"^keypair_path:[ \t]*(?:\"([^\"]*)\"|\x27([^\x27]*)\x27|(.*?))(?:[ \t]+#.*)?[ \t]*$")
+# A git config section header (the name, a quoted subsection) and an entry (a name, then = and a value or nothing).
+GIT_SECTION = re.compile(r"[ \t]*\[[ \t]*([A-Za-z0-9.-]+)[ \t]*(?:\"((?:[^\"\\]|\\.)*)\"[ \t]*)?\]")
+GIT_ENTRY = re.compile(r"[ \t]*([A-Za-z][A-Za-z0-9-]*)[ \t]*(=?)(.*)")
+URL_LOGIN = re.compile(r"(?i)https?://[^/@]+@")
+AWS_SECRET = re.compile(r"(?im)^[ \t]*(credential_process|aws_secret_access_key|aws_session_token)[ \t]*=[ \t]*[^\s#;]")
 
 
 class Unfinished(Exception):
@@ -203,11 +233,11 @@ def readable(found, kind, paths):
     found.extend((kind, p) for p in paths if p and first_byte(p))
 
 
-def sockets(found, paths):
-    for path in paths:
+def sockets(found, socks):
+    for kind, path in socks:
         try:
             if stat.S_ISSOCK(os.stat(path).st_mode) and accepts(path):
-                found.append((AGENT, path))
+                found.append((kind, path))
         except OSError:
             pass
 
@@ -273,17 +303,76 @@ def keypair(home):
     return ""
 
 
+def git_value(text):
+    # A git config value without its quotes, its escapes and a comment after it.
+    out, quoted, i = [], False, 0
+    while i < len(text):
+        c = text[i]
+        if c == "\"":
+            quoted = not quoted
+        elif c == "\\" and i + 1 < len(text):
+            i += 1
+            out.append(text[i])
+        elif c in "#;" and not quoted:
+            break
+        else:
+            out.append(c)
+        i += 1
+    return "".join(out).strip()
+
+
+def git_config(path, home, found, state, depth=0):
+    # A git config file counts when it names a credential helper or an askpass program, sends an HTTP header,
+    # or rewrites to an http(s) URL that carries a login. The files it includes count the same way, whatever
+    # the includeIf condition, ten deep at most; "~" in an include path stands for <home>.
+    data = start(path, 1 << 20) if path and depth <= 10 else None
+    key = os.path.realpath(path) if data is not None else ""
+    if not key or key in state["configs"]:
+        return
+    state["configs"].add(key)
+    section = ""
+    for line in data.decode("utf-8", "replace").splitlines():
+        m = GIT_SECTION.match(line)
+        if m:
+            section, _, legacy = m.group(1).lower().partition(".")
+            if section == "url" and URL_LOGIN.match(legacy if m.group(2) is None else m.group(2)):
+                found.append((GIT, path))
+            line = line[m.end():]
+        m = GIT_ENTRY.match(line)
+        if not m:
+            continue
+        name, text = m.group(1).lower(), git_value(m.group(3)) if m.group(2) else "true"
+        if not text:
+            continue
+        if (section, name) in (("credential", "helper"), ("core", "askpass"), ("http", "extraheader")):
+            found.append((GIT, path))
+        elif section in ("include", "includeif") and name == "path":
+            if text == "~" or text.startswith("~/"):
+                text = home + text[1:]
+            git_config(os.path.join(os.path.dirname(path), text), home, found, state, depth + 1)
+
+
+def aws_config(path, home, found, state):
+    # An AWS config file counts when it names a credential_process or holds a secret key or a session token.
+    data = start(path, 1 << 20) if path else None
+    if data and AWS_SECRET.search(data.decode("utf-8", "replace")):
+        found.append((CLOUD, path))
+
+
 def runtime(directory, dirs, socks):
     dirs.extend((AGENT, os.path.join(directory, d)) for d in ("gnupg", "keyring", "gcr"))
-    socks.append(os.path.join(directory, "ssh-agent.socket"))
-    socks.extend(glob.glob(os.path.join(glob.escape(directory), "vscode-ssh-auth-*.sock")))
+    at = glob.escape(directory)
+    socks.append((AGENT, os.path.join(directory, "ssh-agent.socket")))
+    socks.extend((AGENT, p) for p in glob.glob(os.path.join(at, "vscode-ssh-auth-*.sock")))
+    socks.extend((GIT, p) for p in glob.glob(os.path.join(at, "vscode-git-*.sock")))
+    socks.extend((DAEMON, os.path.join(directory, s)) for s in ("docker.sock", "podman/podman.sock"))
 
 
-def named(env, files, dirs, socks):
+def named(env, files, dirs, socks, configs):
     # The places the environment names.
     for kind, name in ((CLOUD, "AWS_SHARED_CREDENTIALS_FILE"), (CLOUD, "GOOGLE_APPLICATION_CREDENTIALS"), (GIT, "NETRC"),
-                       (REGISTRY, "NPM_CONFIG_USERCONFIG"), (REGISTRY, "npm_config_userconfig"),
-                       (CLAUDE, "ANTHROPIC_IDENTITY_TOKEN_FILE")):
+                       (REGISTRY, "NPM_CONFIG_USERCONFIG"), (REGISTRY, "npm_config_userconfig"), (GIT, "GIT_ASKPASS"),
+                       (GIT, "SSH_ASKPASS"), (CLAUDE, "ANTHROPIC_IDENTITY_TOKEN_FILE")):
         files.append((kind, env.get(name, "")))
     files.extend((CLUSTER, p) for p in env.get("KUBECONFIG", "").split(os.pathsep))
     for kind, name, under in ((REGISTRY, "CARGO_HOME", ("credentials", "credentials.toml")),
@@ -298,9 +387,21 @@ def named(env, files, dirs, socks):
         dirs.append((CLAUDE, env["ANTHROPIC_CONFIG_DIR"]))
     if env.get("GNUPGHOME"):
         dirs.append((GPG, os.path.join(env["GNUPGHOME"], "private-keys-v1.d")))
-        socks.extend(os.path.join(env["GNUPGHOME"], s) for s in GPG_SOCKETS)
+        socks.extend((AGENT, os.path.join(env["GNUPGHOME"], s)) for s in GPG_SOCKETS)
+    configs.extend((git_config, env.get(name, "")) for name in ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"))
+    if env.get("XDG_CONFIG_HOME"):
+        configs.append((git_config, os.path.join(env["XDG_CONFIG_HOME"], "git/config")))
+    configs.append((aws_config, env.get("AWS_CONFIG_FILE", "")))
+    socks.extend((GIT, env.get(name, "")) for name in ("VSCODE_GIT_IPC_HANDLE", "REMOTE_CONTAINERS_IPC"))
+    socks.extend((DAEMON, env[name][len("unix://"):]) for name in ("DOCKER_HOST", "CONTAINER_HOST")
+                 if env.get(name, "").startswith("unix://"))
+    if env.get("XDG_CACHE_HOME"):
+        socks.append((GIT, os.path.join(env["XDG_CACHE_HOME"], "git/credential/socket")))
     if env.get("TMPDIR"):
-        socks.extend(glob.glob(os.path.join(glob.escape(env["TMPDIR"]), "ssh-*", "agent.*")))
+        at = glob.escape(env["TMPDIR"])
+        socks.extend((AGENT, p) for p in glob.glob(os.path.join(at, "ssh-*", "agent.*")))
+        socks.extend((GIT, p) for p in glob.glob(os.path.join(at, "vscode-git-*.sock")))
+        socks.extend((DAEMON, p) for p in glob.glob(os.path.join(at, "podman", "*.sock")))
     if env.get("XDG_RUNTIME_DIR"):
         runtime(env["XDG_RUNTIME_DIR"], dirs, socks)
 
@@ -318,7 +419,7 @@ def homes(home):
 
 def creds(which, given):
     env = os.environ
-    found, state, files, dirs, socks = [], {"left": BUDGET, "seen": set()}, [], [], []
+    found, state, files, dirs, socks, configs = [], {"left": BUDGET, "seen": set(), "configs": set()}, [], [], [], []
     read = [h for h in (given if which == "given" else homes(env.get("HOME", ""))) if h]
     for home in read:
         at = glob.escape(home)
@@ -330,23 +431,33 @@ def creds(which, given):
         readable(found, CLAUDE, glob.glob(os.path.join(at, ".claude*", ".credentials.json")))
         for kind, d in DIRS:
             walk(os.path.join(home, d), None, found, state, kind)
-        sockets(found, (os.path.join(home, s) for s in SOCKETS))
+        sockets(found, ((kind, p) for kind, s in SOCKETS for p in glob.glob(os.path.join(at, s))))
         readable(found, SOLANA, [keypair(home)])
-    named(env, files, dirs, socks)
+        for f in GIT_CONFIGS:
+            git_config(os.path.join(home, f), home, found, state)
+        aws_config(os.path.join(home, ".aws/config"), home, found, state)
+    named(env, files, dirs, socks, configs)
     if which == "default":
-        # The agent sockets anyone on the machine can name.
-        socks.extend(glob.glob("/tmp/ssh-*/agent.*") + glob.glob("/tmp/vscode-ssh-auth-*.sock")
+        # What anyone on the machine can name: agent, VS Code and container daemon sockets, and the git config
+        # of the system.
+        socks.extend((AGENT, p) for p in glob.glob("/tmp/ssh-*/agent.*") + glob.glob("/tmp/vscode-ssh-auth-*.sock")
                      + glob.glob("/private/tmp/com.apple.launchd.*/Listeners"))
+        socks.extend((GIT, p) for p in glob.glob("/tmp/vscode-git-*.sock") + glob.glob("/tmp/vscode-remote-containers-ipc-*.sock"))
+        socks.extend((DAEMON, os.path.join(d, s)) for d in ("/run", "/var/run")
+                     for s in ("docker.sock", "podman/podman.sock", "containerd/containerd.sock"))
         runtime("/run/user/%d" % os.getuid(), dirs, socks)
+        configs.append((git_config, "/etc/gitconfig"))
     for kind, f in files:
         readable(found, kind, [f])
     for kind, d in dirs:
         walk(d, None, found, state, kind)
+    for config, f in configs:
+        config(f, env.get("HOME", ""), found, state)
     sockets(found, socks)
     sock = env.get("SSH_AUTH_SOCK", "")
     if sock:
         mark = []
-        sockets(mark, [sock])
+        sockets(mark, [(AGENT, sock)])
         found.extend((kind, p + " (SSH_AUTH_SOCK)") for kind, p in mark)
     seen, out, count = set(), [], dict.fromkeys(KINDS, 0)
     for kind, path in found:

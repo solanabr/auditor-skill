@@ -80,13 +80,15 @@
 #     does a check that cannot finish; in native mode it is a warning. Through a driver,
 #     on the homes it is given: the Solana CLI's keypair, linked and deep directories,
 #     the entry budget, the places the environment names (a Claude Code login under
-#     CLAUDE_CONFIG_DIR and Anthropic profiles too), the variable names that look
-#     like credentials, and agent sockets (serving one needs a machine that allows it:
-#     on CI a machine that does not fails the run, anywhere else one SKIP line says
-#     so). On CI the runner's own home must pass the check, so that the checks that
-#     isolated mode passes run there. Its python3 starts from /: a .python-version in
-#     the working directory picks no interpreter, and a relative path in a variable it
-#     reads is taken from /;
+#     CLAUDE_CONFIG_DIR and Anthropic profiles too), git and AWS config files by what
+#     they hold (a credential helper, an askpass program, an HTTP header, a URL with a
+#     login, an include; a credential_process or a key), the variable names that look
+#     like credentials, and agent, container daemon and git credential sockets
+#     (serving one needs a machine that allows it: on CI a machine that does not fails
+#     the run, anywhere else one SKIP line says so). On CI the runner's own home must
+#     pass the check, so that the checks that isolated mode passes run there. Its
+#     python3 starts from /: a .python-version in the working directory picks no
+#     interpreter, and a relative path in a variable it reads is taken from /;
 #   * environment cleaning: canary variables in the caller's environment reach no cargo
 #     call, no build script and no test binary; HOME is a throwaway one with a fresh
 #     Solana keypair, but for cargo build-sbf --install-only; only cargo fetch, cargo
@@ -1480,17 +1482,27 @@ done <<'CREDS'
 .config/gh/hosts.yml|git or HTTP credentials
 .gnupg/private-keys-v1.d/0123456789ABCDEF.key|GnuPG private keys
 .claude/.credentials.json|Claude Code credentials
+.vault-token|cloud credentials
+.terraform.d/credentials.tfrc.json|cloud credentials
 .claude-work/.credentials.json|Claude Code credentials
 .config/anthropic/credentials/default.json|Claude Code credentials
 .config/anthropic/configs/default.json|Claude Code credentials
 CREDS
-# The same for a Claude Code login only where CLAUDE_CONFIG_DIR keeps it, outside HOME.
+# The same for a Claude Code login only where CLAUDE_CONFIG_DIR keeps it, outside HOME, and for a git credential
+# helper only, in ~/.gitconfig, in the form Dev Containers use to forward the host's git login.
 mkdir -p "$T/cc-dir"; printf 'secret\n' > "$T/cc-dir/.credentials.json"
 code="$(ngate HOME="$CLEANHOME" CLAUDE_CONFIG_DIR="$T/cc-dir" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
 line="$(grep '^\[PoC-ATTEMPTED\] blocker: isolated mode, but these are readable here: ' "$T/out")"
 [ "$code" = 3 ] && case "$line" in *"Claude Code credentials ("*) true ;; *) false ;; esac && new_nothing_ran && one_blocker \
   && ok "isolated mode with a Claude Code login only under CLAUDE_CONFIG_DIR, outside HOME -> exit 3 naming Claude Code credentials, nothing copied" \
   || { bad "isolated, a login under CLAUDE_CONFIG_DIR: exit $code"; cat "$T/out" >&2; }
+FH="$T/fh-gitcred"; mkdir -p "$FH"
+printf '[credential]\n\thelper = "!f() { node /tmp/vscode-remote-containers-0.js git-credential-helper $*; }; f"\n' > "$FH/.gitconfig"
+code="$(ngate HOME="$FH" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+line="$(grep '^\[PoC-ATTEMPTED\] blocker: isolated mode, but these are readable here: ' "$T/out")"
+[ "$code" = 3 ] && case "$line" in *"git or HTTP credentials ("*) true ;; *) false ;; esac && new_nothing_ran && one_blocker \
+  && ok "isolated mode with only a git credential helper in ~/.gitconfig, as Dev Containers set one -> exit 3 naming git or HTTP credentials, nothing copied" \
+  || { bad "isolated, a git credential helper: exit $code"; cat "$T/out" >&2; }
 FH="$T/fh-many"; mkdir -p "$FH/.ssh" "$FH/.gnupg/private-keys-v1.d"; printf 'secret\n' > "$FH/.gnupg/private-keys-v1.d/ABC.key"
 i=0; while [ "$i" -le 5000 ]; do : > "$FH/.ssh/known_hosts.$i"; i=$((i + 1)); done
 code="$(ngate HOME="$FH" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
@@ -1561,6 +1573,52 @@ code="$(dcreds CLAUDE_CONFIG_DIR="$EC/claude" ANTHROPIC_CONFIG_DIR="$EC/anthropi
 [ "$code" = 1 ] && lines_are "Claude Code credentials (3)" "$EC/claude/.credentials.json" "$EC/anthropic/credentials/default.json" "$EC/id-token" \
   && ok "a Claude Code login and Anthropic profiles where the environment puts them count (CLAUDE_CONFIG_DIR, ANTHROPIC_CONFIG_DIR, ANTHROPIC_IDENTITY_TOKEN_FILE)" \
   || { bad "a Claude Code login the environment moves: $code"; cat "$T/creds.out" >&2; }
+# The askpass programs the environment names, and the git and AWS config files it names, which count for what
+# they hold.
+EG="$T/fe-git"; mkdir -p "$EG/xdg/git"
+for f in askpass ssh-askpass; do printf 'secret\n' > "$EG/$f"; done
+printf '[credential]\n\thelper = cache\n' > "$EG/gitconfig-global"; printf '[core]\n\taskpass = /x\n' > "$EG/gitconfig-system"
+printf '[http]\n\textraheader = AUTHORIZATION: basic eA==\n' > "$EG/xdg/git/config"; printf '[default]\naws_session_token = x\n' > "$EG/aws-config"
+code="$(dcreds GIT_ASKPASS="$EG/askpass" SSH_ASKPASS="$EG/ssh-askpass" GIT_CONFIG_GLOBAL="$EG/gitconfig-global" \
+  GIT_CONFIG_SYSTEM="$EG/gitconfig-system" XDG_CONFIG_HOME="$EG/xdg" AWS_CONFIG_FILE="$EG/aws-config" -- "$CLEANHOME")"
+[ "$code" = 1 ] && lines_are "cloud credentials (1), git or HTTP credentials (5)" "$EG/askpass" "$EG/ssh-askpass" \
+  "$EG/gitconfig-global" "$EG/gitconfig-system" "$EG/xdg/git/config" "$EG/aws-config" \
+  && ok "the askpass programs, git config and AWS config the environment names count (GIT_ASKPASS, GIT_CONFIG_GLOBAL, AWS_CONFIG_FILE and the rest)" \
+  || { bad "the askpass and config places the environment names: $code"; cat "$T/creds.out" >&2; }
+# A git config or an AWS config in a home counts for what it holds. In a git config: a credential helper, an
+# askpass program, an HTTP header or an http(s) URL with a login, in any letter case and on a section's own
+# line too; in an AWS config: a credential_process or a key. A helper reset to nothing, a user name with an
+# ssh URL, and a region alone do not count.
+n=0
+while IFS='|' read -r file text kind; do
+  [ -n "$file" ] || continue
+  n=$((n + 1)); FH="$T/fc-$n"; mkdir -p "$(dirname "$FH/$file")"; printf "$text" > "$FH/$file"
+  code="$(dcreds -- "$FH")"
+  if [ -n "$kind" ]; then
+    [ "$code" = 1 ] && lines_are "$kind (1)" "~/$file" && ok "~/$file holding $text counts as $kind" || { bad "~/$file holding $text: $code"; cat "$T/creds.out" >&2; }
+  else
+    [ "$code" = 0 ] && [ ! -s "$T/creds.out" ] && ok "~/$file holding $text does not count" || { bad "~/$file holding $text: $code"; cat "$T/creds.out" >&2; }
+  fi
+done <<'CONFIGS'
+.gitconfig|[credential]\n\thelper = store\n|git or HTTP credentials
+.gitconfig|[credential "https://github.com"]\n\thelper = "!f() { node /tmp/vscode-remote-containers-0.js git-credential-helper $*; }; f"\n|git or HTTP credentials
+.gitconfig|[Credential] Helper = osxkeychain\n|git or HTTP credentials
+.config/git/config|[core]\n\taskPass = /usr/libexec/askpass\n|git or HTTP credentials
+.gitconfig|[http "https://github.com/"]\n\textraHeader = AUTHORIZATION: basic eA==\n|git or HTTP credentials
+.gitconfig|[url "https://x-access-token:t@github.com/"]\n\tinsteadOf = https://github.com/\n|git or HTTP credentials
+.gitconfig|[credential]\n\thelper =\n\thelper = "" # reset\n|
+.gitconfig|[user]\n\tname = n\n[url "ssh://git@github.com/"]\n\tinsteadOf = https://github.com/\n|
+.aws/config|[profile ci]\ncredential_process = /usr/local/bin/creds\n|cloud credentials
+.aws/config|[default]\naws_secret_access_key = x\n|cloud credentials
+.aws/config|[default]\nregion = eu-west-1\n|
+CONFIGS
+FH="$T/fc-include"; mkdir -p "$FH/.gitconfig.d"
+printf '[include]\n\tpath = .gitconfig\n\tpath = .gitconfig.d/more\n[includeIf "gitdir:/nowhere/"]\n\tpath = ~/.gitconfig.d/cond\n' > "$FH/.gitconfig"
+printf '[credential]\n\thelper = osxkeychain\n' > "$FH/.gitconfig.d/more"; printf '[core]\n\taskPass = /x\n' > "$FH/.gitconfig.d/cond"
+code="$(dcreds -- "$FH")"
+[ "$code" = 1 ] && lines_are "git or HTTP credentials (2)" "~/.gitconfig.d/more" "~/.gitconfig.d/cond" \
+  && ok "a helper or askpass program in a file a git config includes counts, whatever the includeIf condition, and an include of itself ends" \
+  || { bad "git config includes: $code"; cat "$T/creds.out" >&2; }
 # What does not count: the public parts of ~/.ssh, a file this user cannot read, an empty file, a FIFO
 # (which must not stall the check) and an SSH_AUTH_SOCK that names no socket.
 FH="$T/fh-clean"; mkdir -p "$FH/.ssh" "$FH/.aws" "$FH/.kube"
@@ -1581,10 +1639,13 @@ out="$(cd "$WT" && env -i HOME="$CLEANHOME" PATH="$PATH" GITHUB_TOKEN=x AWS_SECR
 [ "$out" = "AWS_SECRET_ACCESS_KEY, DB_PASSWORD, GITHUB_TOKEN, HELIUS_API_KEY, SOLANA_RPC_URL" ] \
   && ok "iso_cred_names names the variables that look like credentials, and no others" || bad "iso_cred_names: '$out'"
 # Agent sockets count when they accept a connection: SSH_AUTH_SOCK, sockets in ~/.ssh and ~/.gnupg, in
-# GNUPGHOME, ssh-*/agent.* under TMPDIR, and in the runtime directory's gnupg/. A socket nothing listens on
-# does not. Serving one needs a machine that allows it: on CI a machine that does not fails the run, and
-# anywhere else one SKIP line says the checks did not run.
+# GNUPGHOME, ssh-*/agent.* under TMPDIR, and in the runtime directory's gnupg/. So do container daemon sockets
+# and the sockets that answer git's credential requests with a login. A socket nothing listens on does not.
+# Serving one needs a machine that allows it: on CI a machine that does not fails the run, and anywhere else
+# one SKIP line says the checks did not run. Each socket path stays under 104 bytes, the macOS limit, with
+# the runner's TMPDIR.
 SK="$T/k"; mkdir -p "$SK/.ssh" "$SK/.gnupg" "$T/g" "$T/t/ssh-a" "$T/r/gnupg" "$T/q/.ssh"
+mkdir -p "$T/H/.docker/run" "$T/H/.colima/x" "$T/H/.rd" "$T/c/git/credential" "$T/t2/podman" "$T/r2/podman"
 python3 -I -c 'import socket, sys, time
 keep = []
 for path in sys.argv[1:]:
@@ -1595,7 +1656,10 @@ for path in sys.argv[1:]:
 s = socket.socket(socket.AF_UNIX)
 s.bind(sys.argv[1] + "-stale")
 s.close()
-time.sleep(120)' "$T/a" "$SK/.ssh/agent" "$SK/.gnupg/S.gpg-agent" "$T/g/S.gpg-agent.ssh" "$T/t/ssh-a/agent.1" "$T/r/gnupg/S.gpg-agent" 2>/dev/null &
+time.sleep(120)' "$T/a" "$SK/.ssh/agent" "$SK/.gnupg/S.gpg-agent" "$T/g/S.gpg-agent.ssh" "$T/t/ssh-a/agent.1" "$T/r/gnupg/S.gpg-agent" \
+  "$T/H/.docker/run/docker.sock" "$T/H/.colima/x/docker.sock" "$T/H/.rd/docker.sock" "$T/d.sock" "$T/p.sock" "$T/v.sock" "$T/rc.sock" \
+  "$T/c/git/credential/socket" "$T/t2/vscode-git-1.sock" "$T/t2/podman/m.sock" "$T/r2/docker.sock" "$T/r2/podman/podman.sock" \
+  "$T/r2/vscode-git-2.sock" 2>/dev/null &
 agent=$!
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -S "$T/a-stale" ] && break; kill -0 "$agent" 2>/dev/null || break; sleep 1; done
 if [ -S "$T/a-stale" ] && python3 -I -c 'import socket, sys; socket.socket(socket.AF_UNIX).connect(sys.argv[1])' "$T/a" 2>/dev/null; then
@@ -1606,10 +1670,22 @@ if [ -S "$T/a-stale" ] && python3 -I -c 'import socket, sys; socket.socket(socke
   code="$(dcreds GNUPGHOME="$T/g" TMPDIR="$T/t" XDG_RUNTIME_DIR="$T/r" -- "$SK")"
   [ "$code" = 1 ] && lines_are "agent sockets (5)" "~/.ssh/agent" "~/.gnupg/S.gpg-agent" "$T/g/S.gpg-agent.ssh" "$T/t/ssh-a/agent.1" "$T/r/gnupg/S.gpg-agent" \
     && ok "agent sockets in ~/.ssh, ~/.gnupg, GNUPGHOME, TMPDIR/ssh-*/ and the runtime directory count" || { bad "agent sockets: $code"; cat "$T/creds.out" >&2; }
+  code="$(dcreds DOCKER_HOST="unix://$T/d.sock" CONTAINER_HOST="unix://$T/p.sock" VSCODE_GIT_IPC_HANDLE="$T/v.sock" \
+    REMOTE_CONTAINERS_IPC="$T/rc.sock" XDG_CACHE_HOME="$T/c" TMPDIR="$T/t2" XDG_RUNTIME_DIR="$T/r2" -- "$T/H")"
+  [ "$code" = 1 ] && lines_are "container daemon sockets (8), git or HTTP credentials (5)" "~/.docker/run/docker.sock" \
+    "~/.colima/x/docker.sock" "~/.rd/docker.sock" "$T/d.sock" "$T/p.sock" "$T/t2/podman/m.sock" "$T/r2/docker.sock" \
+    "$T/r2/podman/podman.sock" "$T/v.sock" "$T/rc.sock" "$T/c/git/credential/socket" "$T/t2/vscode-git-1.sock" "$T/r2/vscode-git-2.sock" \
+    && ok "container daemon sockets (Docker Desktop, Colima, Rancher Desktop, DOCKER_HOST, CONTAINER_HOST, rootless, a Podman machine) and the sockets that answer git with a login (VS Code, Dev Containers, git's credential cache) count" \
+    || { bad "container daemon and git credential sockets: $code"; cat "$T/creds.out" >&2; }
+  code="$(dcreds DOCKER_HOST="unix://$T/a-stale" CONTAINER_HOST="tcp://127.0.0.1:9" -- "$CLEANHOME")"
+  [ "$code" = 0 ] && ok "a DOCKER_HOST socket nothing listens on, and a tcp:// CONTAINER_HOST, do not count" || { bad "a stale DOCKER_HOST: $code"; cat "$T/creds.out" >&2; }
   printf 'isolated\n' > "$WT/audit_1/exec-mode"
   code="$(ngate HOME="$CLEANHOME" SSH_AUTH_SOCK="$T/a" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
   [ "$code" = 3 ] && grep -q '^\[PoC-ATTEMPTED\] blocker: isolated mode, but these are readable here: .*agent sockets (' "$T/out" && new_nothing_ran \
     && ok "isolated mode with an SSH agent that accepts a connection -> exit 3 naming agent sockets" || { bad "isolated, SSH agent: exit $code"; cat "$T/out" >&2; }
+  code="$(ngate HOME="$CLEANHOME" DOCKER_HOST="unix://$T/d.sock" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+  [ "$code" = 3 ] && grep -q '^\[PoC-ATTEMPTED\] blocker: isolated mode, but these are readable here: .*container daemon sockets (' "$T/out" && new_nothing_ran \
+    && ok "isolated mode with a container daemon socket that accepts a connection -> exit 3 naming container daemon sockets" || { bad "isolated, a container daemon socket: exit $code"; cat "$T/out" >&2; }
   printf 'native\n' > "$WT/audit_1/exec-mode"
   ok "the agent socket checks ran, on Unix sockets this machine serves"
 elif [ "${CI:-}" = true ]; then
