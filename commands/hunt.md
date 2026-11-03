@@ -313,8 +313,12 @@ Code asks about a shell read outside the working directory.
    [PoC-REPRODUCED]`. If it can't run on real bytes, the ceiling is `suspected` —
    stated, not hidden. Every PoC run and any build of target code (the incident
    commit, through `"${CLAUDE_PLUGIN_ROOT}/scripts/runner/target.sh"`) needs the
-   Rule 11a mode: ask once (a non-interactive run is native, and the report says
-   so), pass it to the agent for the ledger header, and write it as one word to
+   Rule 11a mode: ask Q46 once. A non-interactive run cannot ask, so an earlier
+   answer can only make it stricter: it uses the stricter of the recorded mode
+   (`incident_<n>/exec-mode`, or the mode in its ledger header without it) and
+   `native`, writes `native` only when no mode is recorded, and the report says
+   which mode ran and that Q46 was not asked again. Pass the mode to the agent
+   for the ledger header, and write the answer as one word to
    `incident_<n>/exec-mode` with the Write tool, where
    `"${CLAUDE_PLUGIN_ROOT}/templates/poc/run.sh" --crate` reads it. The answer is
    the human's reply, so first invoke `auditor:hunt --resume 6 incident_<n>` with

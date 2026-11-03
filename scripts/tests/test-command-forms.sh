@@ -51,7 +51,8 @@
 #   P   Wording the flows depend on stays in place (the PINS list): what keeps a long call, and the turn after
 #       it, inside a command's grant, and what asks Q46 again, once a session, for a run directory an earlier
 #       session made, before the agent that builds starts, and keeps a non-interactive run there from loosening
-#       the recorded mode; every command that starts agents keeps them in the foreground and resumes in the turn
+#       the recorded mode (in respond's and hunt's wrapped steps too, each read as one line); every command that
+#       starts agents keeps them in the foreground and resumes in the turn
 #       an agent's result arrives in; wording that copied an earlier run's mode forward, or passed the file's mode
 #       as run.sh --mode, stays gone (the GONE list); and no body names the environment form of a PoC run
 #       (VULNERABLE_SO and the rest), which run.sh --crate does not read.
@@ -1014,6 +1015,7 @@ commands/re-audit.md	have the human confirm that `audit_<n>` is a run directory 
 commands/re-audit.md	no crate of `audit_<n>` runs and nothing is written in it
 commands/re-audit.md	A non-interactive run cannot ask, so the earlier answer can only make it stricter: it writes the stricter of `native` and the mode `audit_<n>` records (its `exec-mode`, or its `intake.md` §8 without it) to `audit_<n+1>/exec-mode`
 QUESTIONS.md	and again before a later session uses a run directory an earlier one made
+QUESTIONS.md	(a non-interactive run cannot ask again, so it takes the stricter of that answer and native)
 agents/poc-engineer.md	When the command handed you `isolated`, pass `--mode isolated`, so a run whose recorded mode has since become less strict stops; with `native`, pass no `--mode`
 agents/patch-engineer.md	adding `--mode isolated` when the command handed you `isolated`, as `poc-engineer` does
 commands/intake.md	so the report states the mode their `>> execution mode:` line shows
@@ -1071,6 +1073,24 @@ for fa in 'commands/poc.md|poc-engineer' 'commands/patch.md|patch-engineer'; do
   case "$step" in
     *'ask `QUESTIONS.md` Q46 once'*) ok "$f asks Q46 in the step that spawns $a" ;;
     *) bad "P $f does not ask Q46 in the step that spawns $a, before the agent starts" ;;
+  esac
+done
+
+# respond's step 5 and hunt's step 6 settle the mode as poc's step 5 does, each step read as one line so wording
+# that wraps still matches: a non-interactive run never loosens the mode the incident directory records, in its
+# exec-mode or, in a directory older than that file, its ledger header, and never falls back to native over it.
+INC_MODE='A non-interactive run cannot ask, so an earlier answer can only make it stricter: it uses the stricter of the recorded mode (`incident_<n>/exec-mode`, or the mode in its ledger header without it) and `native`, writes `native` only when no mode is recorded, and the report says which mode ran and that Q46 was not asked again.'
+for fs in 'commands/respond.md|5' 'commands/hunt.md|6'; do
+  f=${fs%|*}; s=${fs#*|}
+  step=$(awk -v s="$s. **" 'index($0, s) == 1 { on = 1 } on && /^[0-9]+[a-z]?\. \*\*/ && index($0, s) != 1 { exit } on' "$f" |
+    tr '\n' ' ' | tr -s ' ')
+  case "$step" in
+    *"$INC_MODE"*) ok "$f step $s: a non-interactive run never loosens the incident directory's recorded mode" ;;
+    *) bad "P $f step $s lost: $INC_MODE" ;;
+  esac
+  case "$(tr '\n' ' ' < "$f" | tr -s ' ')" in
+    *'ask once (a non-interactive run is native'*) bad "P $f says: ask once (a non-interactive run is native" ;;
+    *) ok "gone from $f: ask once (a non-interactive run is native" ;;
   esac
 done
 
