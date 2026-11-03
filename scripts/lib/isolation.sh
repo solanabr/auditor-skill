@@ -37,13 +37,17 @@
 #   Claude Code's settings and state when one holds a credential: settings.json, settings.local.json,
 #     remote-settings.json, .claude.json and backups/.claude.json* in each ~/.claude* directory, and
 #     ~/.claude.json and its backups (the state file, which keeps the personal MCP servers). One counts when it
-#     names a command that prints a credential (apiKeyHelper, awsCredentialExport, otelHeadersHelper); when an
-#     env block in it, its own or an MCP server's, gives a value to a variable whose name looks like a
-#     credential (as below), a value with a URL that carries a login, or, to a name that ends in HEADERS
-#     (ANTHROPIC_CUSTOM_HEADERS, OTEL_EXPORTER_OTLP_HEADERS), a list of headers that sends one; or when a
-#     headers block sends an Authorization, Cookie or key header with a value. A value that refers to a
-#     variable (${NAME}) does not count, and neither does a file that is not JSON; one larger than 16 MiB stops
-#     the check (status 2);
+#     names a command that prints a credential (apiKeyHelper, awsCredentialExport, otelHeadersHelper, an MCP
+#     server's headersHelper); when an env block in it, its own or an MCP server's, gives a value to a variable
+#     whose name looks like a credential (as below), a value with a URL that carries one, or, to a name that
+#     ends in HEADERS (ANTHROPIC_CUSTOM_HEADERS, OTEL_EXPORTER_OTLP_HEADERS), a list of headers that sends
+#     one; when a headers block sends an Authorization, Cookie or key header with a value; or when a URL (an MCP
+#     server's or a hook's) or an MCP server's arguments carry one. A URL carries one in its login (any user
+#     name in an http, ws or socks URL, a user and a password in another) or in a query parameter whose name
+#     looks like a credential or is key, sig, signature or auth; arguments carry one in an option whose name
+#     looks like a credential, with a value (--api-key <value>, NAME=<value>), in a header option (-H,
+#     --header) or in a URL. A value that refers to a variable (${NAME}) does not count, and neither does a
+#     file that is not JSON; one larger than 16 MiB stops the check (status 2);
 #   1Password's agent socket: ~/.1password/agent.sock, and on macOS
 #     ~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock;
 #   the sockets of a container daemon, which gives whoever reaches it the host: Docker Desktop's
@@ -81,8 +85,9 @@
 # sandbox that denies reads of these paths passes, so its credentials block must list them all; an
 # unsandboxed retry, a sandbox without those deny rules and a host session that recorded "isolated" do not
 # pass. The check also names the variables of its own environment whose names look like credentials (a
-# part TOKEN, SECRET, PASSWORD, PASSWD or APIKEY, or API_KEY, ACCESS_KEY, PRIVATE_KEY or RPC_URL): no child
-# gets them, but code running as the same user can read another process's environment (on Linux, in
+# part TOKEN, SECRET, PASSWORD, PASSWD or APIKEY, or API_KEY, ACCESS_KEY, PRIVATE_KEY or RPC_URL, the parts
+# apart at _, - and . and where a lower-case letter or a digit meets an upper-case one): no child gets
+# them, but code running as the same user can read another process's environment (on Linux, in
 # /proc/<pid>/environ).
 #
 # Environment cleaning, in every mode. A child runs under env -i with only these variables: PATH as
@@ -216,10 +221,14 @@ TF_CREDENTIALS = re.compile(r"(?m)^[ \t]*credentials(?:_helper)?[ \t]+\"")
 CLAUDE_FILES = ("settings.json", "settings.local.json", "remote-settings.json", ".claude.json*", "backups/.claude.json*")
 MANAGED = ("/Library/Application Support/ClaudeCode", "/etc/claude-code")
 MANAGED_FILES = ("managed-settings.json", "managed-settings.d/*.json", "managed-mcp.json")
-CLAUDE_HELPERS = ("apiKeyHelper", "awsCredentialExport", "otelHeadersHelper")
+CLAUDE_HELPERS = ("apiKeyHelper", "awsCredentialExport", "otelHeadersHelper", "headersHelper")
 CLAUDE_LIMIT = 16 << 20
 REFERENCE = re.compile(r"\$(?:\{|[A-Za-z_])")
-VALUE_LOGIN = re.compile(r"(?i)\b(?:https?|socks[45]?h?)://[^/@\s]+@")
+# A URL in a value; the schemes whose user name alone can be a token (https://<token>@host); the names a query
+# parameter holding a key takes beside those that look like credentials.
+URL_IN = re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://[^\s\"\x27<>]+")
+TOKEN_USER = ("http", "https", "ws", "wss", "socks", "socks4", "socks4a", "socks5", "socks5h")
+QUERY_KEYS = ("KEY", "SIG", "SIGNATURE", "AUTH")
 # One header of a list, Name: value or Name=value, the headers apart by newlines or commas.
 HEADER = re.compile(r"(?:^|[\n,])[ \t]*([A-Za-z0-9_.-]+)[ \t]*[:=]([^\n,]*)")
 
@@ -431,8 +440,9 @@ def tf_config(path, home, found, state):
 
 def secretish(name):
     # A name that looks like a credential: a part TOKEN, SECRET, PASSWORD, PASSWD or APIKEY, or API_KEY,
-    # ACCESS_KEY, PRIVATE_KEY or RPC_URL.
-    parts = name.upper().split("_")
+    # ACCESS_KEY, PRIVATE_KEY or RPC_URL. Parts end at _, - and . and where a lower-case letter or a digit meets
+    # an upper-case one (api-key, accessToken).
+    parts = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", name).upper().replace("-", "_").replace(".", "_").split("_")
     return bool(set(parts) & {"TOKEN", "SECRET", "PASSWORD", "PASSWD", "APIKEY"}
                 or set(zip(parts, parts[1:])) & {("API", "KEY"), ("ACCESS", "KEY"), ("PRIVATE", "KEY"), ("RPC", "URL")})
 
@@ -446,7 +456,7 @@ def set_here(value):
 def credential_header(name):
     # Authorization (Proxy-Authorization and any *-Authorization too), Cookie, or a name that looks like a credential.
     upper = name.upper().replace("-", "_")
-    return upper in ("AUTHORIZATION", "COOKIE") or upper.endswith("_AUTHORIZATION") or secretish(upper)
+    return upper in ("AUTHORIZATION", "COOKIE") or upper.endswith("_AUTHORIZATION") or secretish(name)
 
 
 def header_credential(text):
@@ -455,14 +465,50 @@ def header_credential(text):
     return any(credential_header(name) and set_here(value) for name, value in HEADER.findall(text))
 
 
+def url_credential(text):
+    # A URL in <text> that carries a login set here (any user name in an http, ws or socks URL, a user and a
+    # password in any other), or a query parameter set here whose name looks like a credential or is one a key
+    # goes by (key, sig, signature, auth).
+    for match in URL_IN.finditer(text):
+        try:
+            url = urllib.parse.urlsplit(match.group(0))
+        except ValueError:
+            continue
+        login = url.netloc.rpartition("@")[0]
+        if set_here(login) and (url.scheme.lower() in TOKEN_USER or login.partition(":")[2]):
+            return True
+        for name, eq, value in (part.partition("=") for part in url.query.split("&")):
+            name = urllib.parse.unquote_plus(name)
+            if (eq and set_here(urllib.parse.unquote_plus(value))
+                    and (secretish(name) or name.upper().replace("-", "_") in QUERY_KEYS)):
+                return True
+    return False
+
+
 def env_credential(name, value):
-    # An env entry that sets a credential: a value set here for a name that looks like one or with a URL that
-    # carries a login, or, for a name that ends in HEADERS, a list of headers that sends one.
+    # An env entry that sets a credential: a value set here for a name that looks like one, a URL that carries
+    # one, or, for a name that ends in HEADERS, a list of headers that sends one.
     if isinstance(value, bool) or not isinstance(value, (str, int, float)):
         return False
     text = str(value)
-    return (set_here(value) and (secretish(name) or VALUE_LOGIN.search(text))
+    return (set_here(value) and secretish(name) or url_credential(text)
             or name.upper().endswith("HEADERS") and header_credential(text))
+
+
+def args_credential(args):
+    # Arguments of a command that pass a credential: an option whose name looks like one, with a value set here
+    # (--api-key <value>, --api-key=<value>, NAME=<value> as docker run -e takes it), a header option (-H,
+    # --header) that sends one, or an argument with a URL that carries one.
+    words = [w for w in args if isinstance(w, str)]
+    for i, word in enumerate(words):
+        name, eq, value = word.lstrip("-").partition("=")
+        if not eq:
+            option = word.startswith("-") and i + 1 < len(words) and not words[i + 1].startswith("-")
+            value = words[i + 1] if option else ""
+        if (url_credential(word) or set_here(value) and secretish(name)
+                or word.startswith("-") and name.lower() in ("h", "header", "headers") and header_credential(value)):
+            return True
+    return False
 
 
 def claude_files(directory, names=CLAUDE_FILES):
@@ -471,11 +517,12 @@ def claude_files(directory, names=CLAUDE_FILES):
 
 
 def claude_json(path, home, found, state):
-    # A Claude Code settings or state file counts when it names a command that prints a credential, when an
-    # env block in it (of the file or of an MCP server) sets a credential (env_credential), or when a headers
-    # block (of an MCP server or an HTTP hook) sends an Authorization, Cookie or key header with a value. Past
-    # 16 MiB the check cannot finish; a file that is not JSON counts for nothing, as Claude Code reads nothing
-    # from it.
+    # A Claude Code settings or state file counts when it names a command that prints a credential (the
+    # headersHelper of an MCP server too), when an env block in it (of the file or of an MCP server) sets a
+    # credential (env_credential), when a headers block (of an MCP server or an HTTP hook) sends an
+    # Authorization, Cookie or key header with a value, or when a URL (of an MCP server or a hook) or the
+    # arguments of an MCP server carry one. Past 16 MiB the check cannot finish; a file that is not JSON counts
+    # for nothing, as Claude Code reads nothing from it.
     data = start(path, CLAUDE_LIMIT + 1) if path else None
     key = os.path.realpath(path) if data is not None else ""
     if not key or key in state["configs"]:
@@ -494,7 +541,9 @@ def claude_json(path, home, found, state):
             if (name in CLAUDE_HELPERS and isinstance(value, str) and value.strip()
                     or name == "env" and isinstance(value, dict) and any(env_credential(k, v) for k, v in value.items())
                     or name == "headers" and isinstance(value, dict)
-                    and any(set_here(v) and credential_header(k) for k, v in value.items())):
+                    and any(set_here(v) and credential_header(k) for k, v in value.items())
+                    or name == "url" and isinstance(value, str) and url_credential(value)
+                    or name == "args" and isinstance(value, list) and args_credential(value)):
                 found.append((CLAUDE, path))
                 return
             stack.append(value)

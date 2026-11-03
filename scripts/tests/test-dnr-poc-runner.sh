@@ -101,8 +101,8 @@
 #     an HTTP header, a URL or a proxy with a login, an include; a credential_process
 #     or a key; a credentials block), Claude Code's settings, state and managed
 #     settings by what they hold (a credential helper, a token or a list of headers in an
-#     env block, an MCP server's Authorization header), Docker's TLS client keys, the
-#     variable names that
+#     env block, an MCP server's Authorization header, a key in its URL or its
+#     arguments), Docker's TLS client keys, the variable names that
 #     look like credentials, and agent, container daemon (a tcp:// one too) and git
 #     credential sockets
 #     (serving one needs a machine that allows it: on CI a machine that does not fails
@@ -1937,10 +1937,12 @@ code="$(dcreds DOCKER_CERT_PATH="$ED/certs" DOCKER_CONFIG="$ED/config" -- "$CLEA
 # a credential_process or a key, after = or :; in ~/.terraformrc, a credentials or credentials_helper block.
 # A helper reset to nothing, a user name with an ssh URL, a proxy without a login, a region alone and a
 # Terraform plugin cache do not count. So do Claude Code's settings and state files (in ~/.claude*,
-# ~/.claude.json and its backups): a command that prints a credential, a token in an env block (of the file
-# or of an MCP server), a URL with a login there, a credential header in a list of headers there
-# (ANTHROPIC_CUSTOM_HEADERS, OTEL_EXPORTER_OTLP_HEADERS), or an MCP server's Authorization header. Settings
-# that only refer to a variable, and names that do not look like credentials, do not count.
+# ~/.claude.json and its backups): a command that prints a credential (an MCP server's headersHelper too), a
+# token in an env block (of the file or of an MCP server), a URL with a login there, a credential header in a
+# list of headers there (ANTHROPIC_CUSTOM_HEADERS, OTEL_EXPORTER_OTLP_HEADERS), an MCP server's Authorization
+# header, and a key in an MCP server's URL (its query or its login) or arguments (an option, NAME=value, a
+# header option). Settings that only refer to a variable, and names that do not look like credentials, do not
+# count; nor do an ssh URL with a user name only and arguments that name no credential.
 n=0
 while IFS='|' read -r file text kind; do
   [ -n "$file" ] || continue
@@ -1984,7 +1986,17 @@ done <<'CONFIGS'
 .claude.json|{"oauthAccount":{"emailAddress":"a@b.invalid"},"mcpServers":{"api":{"headers":{"Authorization":"Bearer ${API_TOKEN}","X-Client":"c"}}}}\n|
 .claude/settings.json|{"env":{"ANTHROPIC_CUSTOM_HEADERS":"X-Org-Route: prod\\nx-api-key: x"}}\n|Claude Code credentials
 .claude/settings.json|{"env":{"OTEL_EXPORTER_OTLP_HEADERS":"Authorization=Bearer x"}}\n|Claude Code credentials
+.claude/settings.json|{"env":{"DATABASE_URL":"postgres://u:p@db.invalid/x"}}\n|Claude Code credentials
+.claude/settings.json|{"env":{"RPC_ENDPOINT":"https://rpc.example.invalid/?api-key=x"}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"rpc":{"type":"ws","url":"wss://t@mcp.example.invalid/ws"}}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"rpc":{"type":"http","url":"https://mcp.example.invalid/mcp?api-key=x"}}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"rpc":{"type":"sse","url":"https://u:p@mcp.example.invalid/sse"}}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"rpc":{"command":"npx","args":["-y","x-mcp","--api-key","x"]}}}\n|Claude Code credentials
+.claude.json|{"projects":{"/w":{"mcpServers":{"gh":{"command":"docker","args":["run","-i","-e","GITHUB_PERSONAL_ACCESS_TOKEN=x","img"]}}}}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"remote":{"command":"npx","args":["mcp-remote","https://mcp.example.invalid/sse","--header","Authorization: Bearer x"]}}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"api":{"type":"http","url":"https://mcp.example.invalid/mcp","headersHelper":"/opt/h.sh"}}}\n|Claude Code credentials
 .claude/settings.json|{"env":{"ANTHROPIC_CUSTOM_HEADERS":"X-Org-Route: prod\\nX-Tenant: t","OTEL_EXPORTER_OTLP_HEADERS":"Authorization=Bearer ${OTEL_TOKEN}","GIT_URL":"ssh://git@github.com/o/r.git"}}\n|
+.claude.json|{"mcpServers":{"api":{"type":"http","url":"https://mcp.example.invalid/mcp?api-key=${API_KEY}&page=2"},"fs":{"command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","/w","--header","X-Client: c"]},"gh":{"command":"docker","args":["run","-e","GITHUB_PERSONAL_ACCESS_TOKEN","img"]}}}\n|
 CONFIGS
 FH="$T/fc-include"; mkdir -p "$FH/.gitconfig.d"
 printf '[include]\n\tpath = .gitconfig\n\tpath = .gitconfig.d/more\n[includeIf "gitdir:/nowhere/"]\n\tpath = ~/.gitconfig.d/cond\n' > "$FH/.gitconfig"
