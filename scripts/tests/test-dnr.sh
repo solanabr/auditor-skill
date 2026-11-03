@@ -129,6 +129,9 @@ eq "redact: curl HTTP/2 :path header loses its path" "$(red '* [HTTP/2] [1] [:pa
 eq "redact: curl error naming a bare host keeps the last two labels" \
   "$(red 'curl: (6) Could not resolve host: TOKSUB42.rpc.example.test')" "curl: (6) Could not resolve host: REDACTED.example.test"
 eq "redact: dotted names in other text are left alone" "$(red 'curl 8.7.1 calls os.path.join')" "curl 8.7.1 calls os.path.join"
+eq "redact: url::Url's Debug fields (solana CLI 2.2.x errors) keep no key" \
+  "$(red 'url: Url { scheme: "https", cannot_be_a_base: false, username: "", password: None, host: Some(Domain("TOKSUB42.rpc.example.test")), port: None, path: "/v2/LEAKME42", query: Some("api-key=LEAKME42"), fragment: None }')" \
+  'url: Url { scheme: "https", cannot_be_a_base: false, username: "", password: None, host: Some(Domain("REDACTED.example.test")), port: None, path: "/REDACTED", query: Some("REDACTED"), fragment: None }'
 # The documented recipe keeps the filtered command's failure: `set -o pipefail;`
 # starts the line. Without it the filter's own 0 is the status (the control).
 for sh in bash zsh; do
