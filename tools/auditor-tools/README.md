@@ -232,13 +232,18 @@ so it must be safe whatever arguments follow. Its rules are those of
   other word that starts with `-` is refused. `--workflows` takes a directory
   that passes the same checks as the one to scan, but not `.`.
 - It asks git whether a run directory is tracked as confine.sh's `hgit` asks it: git
-  from a `PATH` with every entry inside the working directory removed, with an
-  environment of its own and the repository's config pinned off. It asks for
+  from a `PATH` with every entry inside the working directory, or inside the tree
+  it lies in (the outermost of it and the directories above it, below `HOME`, or up
+  to `/` when it is not under `HOME`, that holds a `.git` of any kind), removed,
+  each compared by identity rather than spelling; with an environment of its own
+  that allows no transport (`GIT_ALLOW_PROTOCOL` empty, which the repository's
+  config cannot widen); and with the repository's config pinned off. It asks for
   `--out`, and, in a scan of `.` that has time left, for a run directory or
   `.audit-memory/` that holds a `.gitignore` of exactly `*`. When git cannot
-  answer, `--out` is refused, and such a directory is scanned, as is each one
-  after it in that scan, for which git is not asked again; once the scan's time is
-  spent, such a directory is scanned without asking. With neither, git is not run.
+  answer, or has not answered within 10 s (it is then killed), `--out` is refused,
+  and such a directory is scanned, as is each one after it in that scan, for which
+  git is not asked again; once the scan's time is spent, such a directory is
+  scanned without asking. With neither, git is not run.
 - It refuses to run from an installation inside the working directory, or from a
   path, as it was invoked or with its links resolved, holding a quote, `$`, a
   backtick, a backslash or a control character, and in a working directory whose
@@ -522,13 +527,21 @@ rules are those of `scripts/lib/confine.sh` and `scripts/rundir.sh`, in
   holding `*` (`printf '*\n' > .audit-memory/.gitignore`), and audit-mem uses it
   again.
 - It asks git what is tracked as confine.sh's `hgit` asks it: git from a `PATH` with
-  every entry inside the working directory removed, with an environment of its own
-  and the repository's config pinned off. When git cannot answer, it refuses.
+  every entry inside the working directory, or inside the tree it lies in (the
+  outermost of it and the directories above it, below `HOME`, or up to `/` when it
+  is not under `HOME`, that holds a `.git` of any kind), removed, each compared by
+  identity rather than spelling; with an environment of its own that allows no
+  transport (`GIT_ALLOW_PROTOCOL` empty, which the repository's config cannot
+  widen); and with the repository's config pinned off. When git cannot answer, or
+  has not answered within 10 s (it is then killed), it refuses.
 - The database is a regular file with one name, in rollback-journal mode: a database
   in WAL mode is refused, since a read-only open of one makes a file beside it. No
   `-wal` or `-shm` file may sit beside it (audit-mem never makes one, and SQLite would
   open them even to read), and a `-journal`, left by a write that stopped, must be a
-  regular file with one name. It holds only audit-mem's tables, each `CREATE TABLE`
+  regular file with one name that names no super-journal (SQLite deletes the file a
+  journal names as its super-journal when it rolls the journal back, wherever that
+  is; audit-mem writes one database at a time and never writes one). It holds only
+  audit-mem's tables, each `CREATE TABLE`
   exactly as audit-mem writes it (a column, constraint, default or table option of
   another's is refused), the indexes SQLite makes for their primary keys, and
   `sqlite_sequence` as SQLite makes it; a view, a trigger, a virtual table or any
@@ -548,6 +561,9 @@ rules are those of `scripts/lib/confine.sh` and `scripts/rundir.sh`, in
   (`O_CREAT|O_EXCL|O_NOFOLLOW`, mode 0600) through the directory, opened once
   without following a link. A `.audit-memory/` that already exists must pass the
   check above. The other subcommands that write refuse when there is no store.
+- Each subcommand that writes does so in one transaction that takes the store's write
+  lock before it reads (`BEGIN IMMEDIATE`), so calls that meet wait for each other, up
+  to 5 s, instead of failing with "database is locked".
 - It refuses to run from an installation inside the working directory, or from a
   path, as it was invoked or with its links resolved, holding a quote, `$`, a
   backtick, a backslash or a control character, and in a working directory whose
