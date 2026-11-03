@@ -210,7 +210,7 @@ ISO_ENV+=("${GITENV[@]}" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null)
 # Where git lists nothing for a folder in a git project, the last line says that semgrep chose the files.
 walked=""
 if [ "$VCS" = git ] && [ -d "$TARGET" ] && [ "${GITENV[0]}" = "GIT_DIR=$S/no-repo" ]; then
-  walked="; note: semgrep listed the files itself, not with git (sast.sh had no .git directory to copy), so files a .gitignore leaves out can be in the scan"
+  walked="; note: semgrep listed the files itself, not with git (sast.sh could not give it a copy of the repository index), so files a .gitignore leaves out can be in the scan"
 fi
 
 # The .semgrepignore files that narrow the scan of a folder: semgrep reads every one in its project, so each one

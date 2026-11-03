@@ -1492,7 +1492,7 @@ entry += b"\0" * ((62 + len(name) + 8) // 8 * 8 - len(entry))
 out = struct.pack(">4sII", sig, ver, n + 1) + entry + body
 open(p, "wb").write(out + hashlib.sha1(out).digest())
 PY
-WALKED='; note: semgrep listed the files itself, not with git (sast.sh had no .git directory to copy), so files a .gitignore leaves out can be in the scan'
+WALKED='; note: semgrep listed the files itself, not with git (sast.sh could not give it a copy of the repository index), so files a .gitignore leaves out can be in the scan'
 shape_ok() { # shape_ok <calls line> <walked 0|1>: exit 0, no mark, that line in the calls, and the note when walked
   [ "$RC" = 0 ] && [ -z "$(ls -A "$T/marks")" ] && grep -q "$1" "$T/calls" || return 1
   if [ "$2" = 1 ]; then grep -qF "$WALKED" "$T/out"; else ! grep -qF "$WALKED" "$T/out"; fi
