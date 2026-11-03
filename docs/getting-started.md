@@ -91,7 +91,7 @@ The report lands at `audit_<n>/REPORT.md`. `<n>` is the highest existing `audit_
 
 | Scope | Covers | Checklists |
 |-------|--------|-----------|
-| `full` | everything | all 20 + 140 vectors |
+| `full` | everything | all 20 + 141 vectors |
 | `program` | Solana program only | 01-07 |
 | `backend` | backend API | 08-09 |
 | `frontend` | frontend | 08, 10 |

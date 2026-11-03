@@ -469,6 +469,44 @@ grep -rnE --include='*.yml' --include='*.yaml' 'anthropics/claude-code-(base-)?a
 
 ---
 
+## Host kernel & network attack surface
+
+> Locators for `references/vuln-classes/kernel-attack-surface.md`, KV-141 and DEP-097..102. These run over the repository (infra-as-code, runbooks, unit files, Dockerfiles), never against a host. A hit is a place to read: open the file and map it onto the §6 worksheet of the playbook. The read-only host inventory at the end runs only by the operator, or with the operator's explicit go-ahead, and writes nothing (playbook §0).
+
+```bash
+# K1 — which hosts, which distribution and kernel line, which images
+grep -rniE --include='*.yml' --include='*.yaml' --include='*.tf' --include='*.hcl' --include='*.json' --include='*.md' --include='Dockerfile*' --include='*.pkr.*' 'ubuntu|debian|rhel|rocky|amazon.?linux|ami-[0-9a-f]+|linux-image|source_image|image_id|kernel' . 2>/dev/null
+```
+> DEP-097: the distribution named here is the one whose advisory feed and patch SLA the runbooks must name.
+
+```bash
+# K2 — inbound exposure: open-to-the-world rules, management ports, exporters on every address
+grep -rnE --include='*.tf' --include='*.hcl' --include='*.yml' --include='*.yaml' --include='*.conf' --include='*.nft' --include='*.rules' '0\.0\.0\.0/0|::/0|from_port|to_port|ingress|ufw allow|nft |iptables|tcp dport|ListenAddress|listen-address|:9100|:22\b|port 22' . 2>/dev/null
+```
+> DEP-101: anything but the role's service ports open to `0.0.0.0/0` is management plane on the public interface.
+
+```bash
+# K3 — kernel feature switches: sysctl.d, modprobe.d, module autoload, and the strong form (kernel config)
+grep -rnE --include='*.conf' --include='*.yml' --include='*.yaml' --include='*.tf' --include='*.sh' --include='*.nix' 'net\.mptcp\.enabled|tcp_migrate_req|accept_source_route|accept_redirects|unprivileged_bpf_disabled|install (dccp|sctp|rds|tipc) /bin/(false|true)|blacklist (dccp|sctp|rds|tipc)|modules-load\.d|CONFIG_(MPTCP|IP_SCTP|IP_DCCP|RDS|TIPC)=' . 2>/dev/null
+```
+> DEP-098 / DEP-099: no hit on an Internet-facing host's provisioning means the kernel runs the distribution's defaults.
+
+```bash
+# K4 — CVE-named compensating controls and hand-typed mitigations
+grep -rniE --include='*.conf' --include='*.nft' --include='*.yml' --include='*.yaml' --include='*.sh' --include='*.md' 'cve[_-][0-9]{4}[_-][0-9]+|ip hdrlength > 5|hdrlength|sysctl -w|nft (add|delete) table' . 2>/dev/null
+```
+> DEP-100: a CVE-named table in configuration management with a removal condition passes; `sysctl -w` in a runbook or a chat export is the hand-applied form that is gone at the next reboot.
+
+```bash
+# K5 — runtimes that open kernel features by themselves, and the VPN that should carry the management plane
+grep -rnE --include='*.service' --include='*.yml' --include='*.yaml' --include='Dockerfile*' --include='*.env' --include='*.tf' 'GODEBUG|multipathtcp|tailscale|wireguard|wg0|AllowUsers|PasswordAuthentication|PermitRootLogin' . 2>/dev/null
+```
+> DEP-102 (Go 1.24+ listens with MPTCP unless `GODEBUG=multipathtcp=0`) and DEP-101 (VPN interface for SSH, metrics and admin).
+
+**Read-only host inventory (operator-run, or with the operator's go-ahead; writes nothing).** `uname -r`; `dpkg -l 'linux-image*' | grep ^ii` or `rpm -q kernel`; `grep -E '^CONFIG_(MPTCP|IP_SCTP|IP_DCCP|RDS|TIPC|USER_NS|BPF_UNPRIV_DEFAULT_OFF)=' /boot/config-"$(uname -r)"`; `lsmod`; `sysctl net.mptcp.enabled net.ipv4.tcp_migrate_req net.ipv4.conf.all.accept_source_route kernel.unprivileged_bpf_disabled`; `ss -lntup`; `nft list ruleset`. Capture into the infrastructure repository as the DEP-098 inventory; the reading guide is playbook §3.
+
+---
+
 ## Infrastructure
 
 ### Program upgrade authority

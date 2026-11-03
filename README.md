@@ -5,7 +5,7 @@
 # auditor-skill — Open-Source AI Security Audit Skill
 
 > Production-grade security audit for any codebase, powered by AI agents.
-> 20 checklists · 1,446 verification items · 140 known attack vectors · executable PoCs + fix patches
+> 20 checklists · 1,452 verification items · 141 known attack vectors · executable PoCs + fix patches
 > A full audit-firm lifecycle (automated + interactive) · Benchmarked against CertiK, SOC 2, OWASP Top 10:2025
 > Verify COSTS.md as a referecence - Running this audit can burn a lot of credits.
 
@@ -13,7 +13,7 @@
 
 ## What Is This?
 
-auditor-skill is a **skill file** (a structured prompt + checklists) that turns any LLM agent (Copilot, Cursor, Windsurf, Claude Code, Codex, etc.) into a professional-grade security auditor. It reads your code file by file, checks 1,446 items across 20 security domains, tests against 140 real-world attack vectors, and produces a structured report with severity scores.
+auditor-skill is a **skill file** (a structured prompt + checklists) that turns any LLM agent (Copilot, Cursor, Windsurf, Claude Code, Codex, etc.) into a professional-grade security auditor. It reads your code file by file, checks 1,452 items across 20 security domains, tests against 141 real-world attack vectors, and produces a structured report with severity scores.
 
 **It is not a SaaS product.** It's a folder of markdown files you install for your AI agent — outside any repository you audit — or send to an LLM API.
 
@@ -66,8 +66,8 @@ auditor-skill is a **skill file** (a structured prompt + checklists) that turns 
 | Python | 14 | 82 |
 | Go / Java / Ruby / PHP | 15 | 88 |
 | AI / agent components | 19 | 35 |
-| **Always applied** (any repo) | 11-13, 16-18 | 409 |
-| **Total** | **20** | **1,446** |
+| **Always applied** (any repo) | 11-13, 16-18 | 415 |
+| **Total** | **20** | **1,452** |
 
 ---
 
@@ -152,7 +152,7 @@ The audit is complete when every **in-scope** item has an explicit verdict; out-
 
 | Scope | What It Covers | Estimated Time (50K lines) |
 |-------|---------------|---------------------------|
-| FULL | Everything — all 20 checklists + 140 vectors | 60-90 min |
+| FULL | Everything — all 20 checklists + 141 vectors | 60-90 min |
 | PROGRAM | Smart contract only (checklists 01-07) | 20-35 min |
 | BACKEND | Backend API (checklists 08-09) | 15-25 min |
 | FRONTEND | Frontend (checklists 08, 10) | 15-25 min |
@@ -194,7 +194,7 @@ auditor-skill/
 │   ├── 10-frontend-security.md             (84 items)
 │   ├── 11-supply-chain.md                  (62 items)
 │   ├── 12-secrets-opsec.md                 (53 items)
-│   ├── 13-deployment-infrastructure.md     (96 items)
+│   ├── 13-deployment-infrastructure.md     (102 items)
 │   ├── 14-python-safety.md                 (82 items)
 │   ├── 15-general-language-safety.md       (88 items)
 │   ├── 16-formal-verification-testing.md   (73 items)
@@ -213,7 +213,7 @@ auditor-skill/
 │   │                          wallets-multisig-custody, token-2022, nft-marketplaces, launchpads,
 │   │                          token-registry-risk)
 │   ├── framework-idioms/    ← Anchor / Native / Pinocchio validation-order footguns
-│   ├── vuln-classes/        ← zk-and-compression · transaction-v1 (SIMD-0385 migration) · github-actions (CI trigger trust)
+│   ├── vuln-classes/        ← zk-and-compression · transaction-v1 (SIMD-0385 migration) · github-actions (CI trigger trust) · kernel-attack-surface (host kernel & network surface)
 │   ├── invariant-catalog.md ← Reusable harness-ready invariant menus per protocol class
 │   ├── false-positives.md   ← Over-reporting triage rules
 │   ├── audit-lifecycle/     ← methodology + firm-coverage (how firms work) + threat-model-bootstrap
@@ -280,8 +280,8 @@ The audit produces a structured markdown report with:
 1. **Executive Summary** — risk score (1-10), deploy/no-deploy verdict, severity distribution
 2. **Instruction Matrix** — every smart contract instruction mapped
 3. **State Model** — account structs, PDA seeds, relationships
-4. **Per-Item Verdicts** — every in-scope checklist item (up to 1,446) with `[PASS]`, `[FAIL-N]`, `[PARTIAL]`, or `[N/A]`
-5. **Known Vectors Results** — each in-scope attack vector (up to 140) with explicit verdict and evidence
+4. **Per-Item Verdicts** — every in-scope checklist item (up to 1,452) with `[PASS]`, `[FAIL-N]`, `[PARTIAL]`, or `[N/A]`
+5. **Known Vectors Results** — each in-scope attack vector (up to 141) with explicit verdict and evidence
 6. **Findings** — deduplicated, severity-sorted
 7. **Attack Scenarios** — narrative exploitable paths
 8. **Aggregate Score** — PASS/PARTIAL/FAIL percentages
@@ -398,7 +398,7 @@ MIT — use it, fork it, improve it, sell services built on it. Attribution appr
 ## FAQ
 
 **Q: Does this replace a professional audit?**
-A: It covers more items than most paid audits (1,446 plus 140 known-vector checks vs typical 50-200), but an AI auditor cannot do everything a human can (social engineering assessment, business logic review requiring domain expertise, legal compliance opinions). Use this as a first pass, then hire humans for what it flags.
+A: It covers more items than most paid audits (1,452 plus 141 known-vector checks vs typical 50-200), but an AI auditor cannot do everything a human can (social engineering assessment, business logic review requiring domain expertise, legal compliance opinions). Use this as a first pass, then hire humans for what it flags.
 
 **Q: Which AI model should I use?**
 A: See [COSTS.md](COSTS.md). For maximum depth, use Opus 4 or o3. For best value, use Sonnet 4 or GPT-4.1. For CI/CD integration (fast, cheap), use Haiku or o4-mini.
