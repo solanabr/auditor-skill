@@ -647,7 +647,10 @@ fn a_git_inside_the_working_directory_spelled_in_other_letters_is_never_run() {
     // On a volume that ignores letter case, one directory has several spellings:
     // a PATH entry inside the working directory written in other letters is
     // inside it all the same, and so is the working directory entered in other
-    // letters, as confine_init takes it.
+    // letters, as confine_init takes it. getcwd and realpath often give the
+    // letters on disk for both, so the entry is also written through macOS's
+    // /System/Volumes/Data firmlink, a spelling realpath keeps and getcwd never
+    // gives: only a comparison by identity finds it inside.
     let wt = Wt::repo();
     let upper = PathBuf::from(wt.dir.to_string_lossy().to_uppercase());
     let same = |a: &Path, b: &Path| match (fs::metadata(a), fs::metadata(b)) {
@@ -665,11 +668,20 @@ fn a_git_inside_the_working_directory_spelled_in_other_letters_is_never_run() {
     wt.chmod("bin/git", 0o755);
     let warm = ["warm", "--program-id", P];
     let rest = std::env::var("PATH").unwrap_or_default();
-    for (entry, from) in [
+    let mut spellings = vec![
         (upper.join("bin"), wt.dir.clone()),
         (wt.path("bin"), upper.clone()),
         (upper.join("bin"), upper.clone()),
-    ] {
+    ];
+    let data = Path::new("/System/Volumes/Data").join(
+        upper
+            .strip_prefix("/")
+            .expect("the working tree is absolute"),
+    );
+    if same(&data, &wt.dir) {
+        spellings.push((data.join("bin"), wt.dir.clone()));
+    }
+    for (entry, from) in spellings {
         let path = format!("{}:{rest}", entry.display());
         ok(&run_env(BIN, &from, &warm, &[("PATH", &path)]));
         assert!(
