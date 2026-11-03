@@ -20,11 +20,12 @@
 #       binary a crate under tools/auditor-tools declares, executable when it is built. What an allow rule may
 #       pre-approve at all (an entry point scripts/entrypoints.txt lists, with the words it names, or a read
 #       tool, Task, a run-directory edit or an auditor skill) is scripts/check-entrypoints.sh's check.
-#   C3  Every call of audit-scan carries --contract=1 as its first argument and names the directory it scans, and
-#       every call of audit-mem --contract=1 right after its subcommand: in the rules, in rooted calls, and in
-#       code spans and code lines that start with the bare name, after a shell prompt ($ ), env or the like, and
-#       pass arguments (a span naming only the tool, the tool and a subcommand, or audit-scan and its marker, is
-#       a mention), in the bodies and in the corpus C6 reads alike.
+#   C3  Every call of audit-scan carries --contract=1 as its first argument, names the directory it scans and
+#       passes no option audit-scan refuses, and every call of audit-mem --contract=1 right after its subcommand:
+#       in the rules, in rooted calls, and in code spans and code lines that start with the bare name, after a
+#       shell prompt ($ or %), a wrapper with its options (env, sudo, nice, timeout, xargs and the like) or an
+#       assignment, and pass arguments (a span naming only the tool, the tool and a subcommand, or audit-scan and
+#       its marker, is a mention), in the bodies and in the corpus C6 reads alike.
 #   C4  Every command, and the root SKILL.md, runs preflight.sh as step 0: the first entry point its body names
 #       is "<root>/scripts/preflight.sh", with no arguments, in a paragraph that starts "0. **Preflight" (in the
 #       root SKILL.md, "**Step 0 — Preflight") and says that a refusal, and a call that is denied, stop the run;
@@ -112,9 +113,15 @@ CORPUS_ROOT = "<auditor-skill root>"
 ANY_ROOT = re.compile(r'("?)(<auditor-skill root>|\$\{CLAUDE_PLUGIN_ROOT\}|\$CLAUDE_PLUGIN_ROOT|\$\{CLAUDE_SKILL_DIR\}|'
                       r'\$CLAUDE_SKILL_DIR)("?)/([A-Za-z0-9_./-]+)("?)')
 SHELL_FENCES = ("", "bash", "sh", "shell", "zsh", "console")
-# What a call can have in front of it: a shell prompt ($ ), then any interpreter, wrapper, cd or assignment.
-LEAD = re.compile(r'^(?:\$\s+)?(?:(?:bash|sh|zsh|dash|ksh|env|exec|command|sudo|nice|nohup|time|python3?|timeout\s+\S+|'
-                  r'[A-Za-z_][A-Za-z0-9_]*=\S*)\s+|cd\s+\S+\s*(?:&&|;|\|\|)\s*)*')
+# What a call can have in front of it: a shell prompt ($ or %), then any interpreter or wrapper with its options,
+# cd or assignment. Each wrapper lists the letters of its options that take a value (sudo -u <user>, nice -n <n>),
+# and timeout takes its duration as well.
+WRAPPERS = (("bash", ""), ("sh", ""), ("zsh", ""), ("dash", ""), ("ksh", ""), ("python3?", ""), ("env", "uCPS"),
+            ("exec", "a"), ("command", ""), ("nohup", ""), ("time", "fo"), ("sudo", "gpCDrRtTuU"), ("nice", "n"),
+            ("xargs", "adEIJLnPRs"), ("timeout", "ks"))
+LEAD = re.compile(r'^(?:[$%]\s+)?(?:(?:' + "|".join(
+    r'%s(?:\s+(?:%s-\S+))*%s' % (w, r'-[%s]\s*[^\s-]\S*|' % v if v else "", r'\s+\S+' if w == "timeout" else "")
+    for w, v in WRAPPERS) + r'|[A-Za-z_][A-Za-z0-9_]*=\S*)\s+|cd\s+\S+\s*(?:&&|;|\|\|)\s*)*')
 ASKS = re.compile(r'^\s*,?\s*which asks\b')
 # The placeholders the bodies write in their calls, each a word to the redirect scan (<R>/poc/<ID> is a path);
 # any other <...> is read as written, so `<x>/tmp/evil` is a redirect. A body that writes a new one adds it here.
@@ -371,31 +378,35 @@ def segments(body, first, infos=None):
     for s in spans(para):
         yield s
 
-def scan_dir(rest):
-    """Whether the words after audit-scan's --contract=1 hold the one directory its grammar takes: --out and
-    --workflows take the next word, any other word that starts with - none, and the first other word is the
-    directory (a placeholder, an ellipsis or a rule's * stands for one). A pipe or a list operator ends the call,
-    and a redirect is no word of it."""
+def scan_refused(rest):
+    """Why audit-scan's grammar refuses the words after its --contract=1, or None: they name the directory, and
+    no option but --out and --workflows, which take the next word or a value after =, and --pretty; audit-scan
+    refuses any other word that starts with -, -- too. The first other word is the directory (a placeholder, an
+    ellipsis or a rule's * stands for one). A pipe or a list operator ends the call, and a redirect is no word of
+    it."""
     words = re.sub(r'<[^<>]*>', 'P', re.sub(r'\s#.*$', '', rest)).split()
-    i = 0
+    i, found = 0, False
     while i < len(words):
         w = words[i]
         if w in ("|", "||", "&&", ";") or w.startswith("|"):
             break
-        if w in ("--out", "--workflows", ">", ">>", "<", "2>"):
+        if w in ("--out", "--workflows", ">", ">>", "<", "2>", "&>"):
             i += 2
-        elif w.startswith("-") or re.match(r'^\d*[<>]', w):
+        elif w == "--pretty" or w.startswith(("--out=", "--workflows=")) or re.match(r'^(\d*|&)[<>]', w):
             i += 1
+        elif w.startswith("-"):
+            return "with an option it refuses (%s)" % w
         else:
-            return True
-    return False
+            found, i = True, i + 1
+    return None if found else "with no directory to scan"
 
 def marker(check_file, n, tool, rest, where):
     words = rest.split()
+    why = tool == "audit-scan" and len(words) > 1 and scan_refused(" ".join(words[1:]))
     if tool == "audit-scan" and words and words[0] != "--contract=1":
         finding("C3", check_file, n, "audit-scan %s without --contract=1 as its first argument: %s" % (where, rest[:120]))
-    elif tool == "audit-scan" and len(words) > 1 and not scan_dir(" ".join(words[1:])):
-        finding("C3", check_file, n, "audit-scan %s with no directory to scan after --contract=1: %s" % (where, rest[:120]))
+    elif why:
+        finding("C3", check_file, n, "audit-scan %s %s after --contract=1: %s" % (where, why, rest[:120]))
     if tool == "audit-mem" and len(words) >= 1 and (len(words) < 2 or words[1] != "--contract=1"):
         finding("C3", check_file, n, "audit-mem %s without --contract=1 right after its subcommand: %s" % (where, rest[:120]))
 
@@ -741,6 +752,7 @@ cmd c3-mem-call "'Bash(\"$B/audit-mem\" check --contract=1 *)'" -- "1. \`\"$B/au
 cmd c3-mem-bare -- "1. \`audit-mem warm --program-id <id>\`"
 cmd c3-scan-fenced "'Bash(\"$B/audit-scan\" --contract=1 *)'" -- '```bash' "\"$B/audit-scan\" --pretty ." '```'
 cmd c3-scan-no-dir "'Bash(\"$B/audit-scan\" --contract=1 *)'" -- "1. \`\"$B/audit-scan\" --contract=1 --workflows .github/workflows\`"
+cmd c3-scan-unknown "'Bash(\"$B/audit-scan\" --contract=1 *)'" -- "1. \`\"$B/audit-scan\" --contract=1 . -v\`"
 # C5: each call is one of its command's rules, the agents it spawns too; a call its sentence says asks is not
 cmd c5-unlisted -- "1. Run \`\"$R/templates/poc/run.sh\" --crate audit_<n>/poc/F-1\`."
 cmd c5-agent -- "1. Spawn \`fx-runner\` on the crate."
@@ -808,7 +820,11 @@ corp references/r/good.md "# Good" \
   '```json' '{"command": "audit-scan --workflows .github/workflows"}' '```' \
   "Its options go in any order (\`audit-scan --contract=1 --workflows .github/workflows .\`), a placeholder is one word" \
   "(\`audit-scan --contract=1 <changed program directory> --pretty\`), and \`audit-scan --contract=1\` alone is a name." \
-  '```console' '$ audit-scan --contract=1 . --out audit_1/prescan.json' '$ env audit-mem warm --contract=1 --program-id <id>' '```'
+  "Wrappers pass with their options: \`timeout -s KILL 60 audit-mem warm --contract=1 --program-id <id>\`, \`sudo -E audit-scan --contract=1 .\`," \
+  "\`xargs -n 1 audit-mem warm --contract=1 --program-id\`, \`env -u HOME audit-scan --contract=1 . --out=audit_1/prescan.json 2>&1 | head\`;" \
+  "\`command -v audit-scan\` and \`cargo build --release --bin audit-scan --bin audit-mem\` are no calls." \
+  '```console' '$ audit-scan --contract=1 . --out audit_1/prescan.json' '$ env audit-mem warm --contract=1 --program-id <id>' \
+  '% audit-scan --contract=1 --pretty .' '$ sudo -u me nice -n 5 audit-mem warm --contract=1 --program-id <id>' '```'
 corp references/r/c6-bash.md "Run \`bash \"$Q/scripts/ok.sh\" new audit\`."
 corp references/r/c6-cd.md '```bash' "cd sub && \"$Q/scripts/ok.sh\" check x" '```'
 corp references/r/c6-env.md "Run \`FOO=1 \"$Q/scripts/ok.sh\" new\`."
@@ -833,6 +849,13 @@ corp references/r/c3-env.md "Run \`env audit-scan --workflows .github/workflows\
 corp references/r/c3-no-dir.md "Run \`audit-scan --contract=1 --workflows .github/workflows --out audit_<n>/prescan.json\`."
 corp references/r/c3-rooted-no-dir.md "Run \`\"$Q/tools/auditor-tools/target/release/audit-scan\" --contract=1 --pretty\`."
 corp references/r/c3-mem-prompt.md '```console' '$ audit-mem warm --program-id <id>' '```'
+corp references/r/c3-sudo.md "Run \`sudo -u me audit-scan --workflows .github/workflows\` first."
+corp references/r/c3-sudo-flag.md "Run \`sudo -E audit-mem warm --program-id <id>\` first."
+corp references/r/c3-nice.md '```bash' 'nice -n 5 audit-scan . --out audit_1/prescan.json' '```'
+corp references/r/c3-xargs.md "Run \`xargs audit-scan --workflows .github/workflows\`."
+corp references/r/c3-zsh-prompt.md '```console' '% audit-mem warm --program-id <id>' '```'
+corp references/r/c3-dashdash.md "Run \`audit-scan --contract=1 --out audit_<n>/prescan.json -- .\`."
+corp references/r/c3-unknown.md "Run \`audit-scan --contract=1 . --workflow .github/workflows\`."
 corp docs/c6.md "Run \`sh \"$Q/scripts/ok.sh\" new\`."
 corp FULL-AUDIT.md '```bash' "X=1 \"$Q/scripts/ok.sh\" check x" '```'
 corp references/r/c7-span.md "Run \`scripts/ok.sh new audit\`."
@@ -841,6 +864,8 @@ corp references/r/c7-bash.md "Run \`bash scripts/ok.sh new\`."
 corp references/r/c7-quoted.md "Run \`\"scripts/ok.sh\" new\`."
 corp references/r/c7-fenced.md '```bash' 'scripts/ok.sh check x' '```'
 corp references/r/c7-prompt.md '```console' '$ scripts/ok.sh check x' '```'
+corp references/r/c7-zsh-prompt.md '```console' '% scripts/ok.sh check x' '```'
+corp references/r/c7-nice.md "Run \`nice -n 5 scripts/ok.sh check x\`."
 corp references/r/c7-template.md "Run \`templates/poc/run.sh --crate x\`."
 corp templates/t/c7-cd.md '```' 'cd sub; scripts/ok.sh check x' '```'
 cmd c7-relative -- "1. Run \`scripts/ok.sh new audit\`."
@@ -872,7 +897,7 @@ expect commands/c2-bin.md C2; expect commands/c2-bash-rule.md C2
 # a rooted call without the marker is also no call its marked rule pre-approves
 expect commands/c3-scan-rule.md C3; expect commands/c3-mem-rule.md C3; expect commands/c3-scan-call.md "C3 C5"
 expect commands/c3-mem-call.md "C3 C5"; expect commands/c3-mem-bare.md C3; expect commands/c3-scan-fenced.md "C3 C5"
-expect commands/c3-scan-no-dir.md C3
+expect commands/c3-scan-no-dir.md C3; expect commands/c3-scan-unknown.md C3
 expect commands/c5-unlisted.md C5; expect commands/c5-agent.md C5; expect commands/c5-agent-covered.md ""
 expect commands/c5-agent-mention.md ""; expect commands/c5-asks.md ""; expect commands/c5-fixed-word.md C5
 expect commands/c5-asks-later.md C5; expect commands/c5-asks-next.md C5
@@ -889,9 +914,12 @@ for c in bash cd env env-word dollar unquoted half-quoted plugin-root backtick q
   expect "references/r/c6-$c.md" C6
 done
 expect docs/c6.md C6; expect FULL-AUDIT.md C6
-for c in span late rooted mem-fenced prompt env no-dir rooted-no-dir mem-prompt; do expect "references/r/c3-$c.md" C3; done
+for c in span late rooted mem-fenced prompt env no-dir rooted-no-dir mem-prompt sudo sudo-flag nice xargs zsh-prompt \
+    dashdash unknown; do
+  expect "references/r/c3-$c.md" C3
+done
 expect docs/c3-bare-fenced.md C3; expect templates/t/c3-mem-order.md C3
-for c in span dot bash quoted fenced template prompt; do expect "references/r/c7-$c.md" C7; done
+for c in span dot bash quoted fenced template prompt zsh-prompt nice; do expect "references/r/c7-$c.md" C7; done
 expect templates/t/c7-cd.md C7; expect commands/c7-relative.md C7; expect agents/c7.md C7
 line=$(check "$fx" references/r/c6-large.md | cut -f2)
 total=$(wc -l < "$fx/references/r/c6-large.md"); total=${total//[!0-9]/}
