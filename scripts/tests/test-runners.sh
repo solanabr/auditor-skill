@@ -1130,7 +1130,7 @@ settings
 # deps.sh: registry queries and artifact fetches, through a curl stand-in that answers from $T/fix.
 # =================================================================================================
 python3 -I - "$T/fix" <<'PY'
-import base64, hashlib, io, json, os, sys, tarfile, zipfile, zlib
+import base64, hashlib, io, json, lzma, os, sys, tarfile, zipfile, zlib
 fix = sys.argv[1]
 def put(url, data, status=None):
     key = url.replace("/", "_").replace(":", "_").replace("%", "_").replace("@", "_")
@@ -1281,7 +1281,8 @@ info = tarfile.TarInfo("gsize-1.0.0/x")
 info.size = 600 * 1024 * 1024
 buf, t = writer(tarfile.PAX_FORMAT, {"size": "0"})
 crates["gsize"] = cut(buf.getvalue() + info.tobuf(tarfile.USTAR_FORMAT) + b"\0" * (2 << 20))
-# A tar compressed with xz, the magic of a zstd stream, and a plain tar and a bzip2 one, which unpack.
+# A tar compressed with xz, the magic of a zstd stream, a tar in the legacy lzma format (no magic names it), and
+# a plain tar and a bzip2 one, which unpack.
 def small(name, mode):
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode=mode, format=tarfile.USTAR_FORMAT) as t:
@@ -1291,6 +1292,7 @@ def small(name, mode):
     return buf.getvalue()
 crates["xz"] = small("xz-1.0.0/src/lib.rs", "w:xz")
 crates["zst"] = b"\x28\xb5\x2f\xfd" + b"\0" * 64
+crates["alone"] = lzma.compress(small("alone-1.0.0/src/lib.rs", "w"), format=lzma.FORMAT_ALONE)
 crates["plain"] = small("plain-1.0.0/src/lib.rs", "w")
 for name, data in crates.items():
     put("https://static.crates.io/crates/%s/%s-1.0.0.crate" % (name, name), data)
@@ -1431,13 +1433,17 @@ run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates gsize 1.0.0
 check "a file whose own header gives 600 MiB counts toward 512 MiB though a global pax size says 0, before tarfile reads through it: exit 3" \
   refused gsize-1.0.0 'the artifact unpacks to more than 512 MiB'
 # Only decompressors whose memory has a fixed bound run: an xz or zstd stream chooses the window its decompressor
-# keeps, and zipfile hands bzip2 a whole read with no bound on what comes out.
+# keeps, and zipfile hands bzip2 a whole read with no bound on what comes out. A stream that no magic names, as
+# one in the legacy lzma format (whose header chooses the window too), is read as a plain tar.
 run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates xz 1.0.0
 check "a .crate compressed with xz is refused before it is decompressed: exit 3, nothing unpacked" \
   refused xz-1.0.0 'the artifact is compressed with xz or zstd, which deps.sh does not unpack (a tar is read plain, or through gzip or bzip2)'
 run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates zst 1.0.0
 check "... and so is one that starts as a zstd stream" \
   refused zst-1.0.0 'the artifact is compressed with xz or zstd, which deps.sh does not unpack (a tar is read plain, or through gzip or bzip2)'
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates alone 1.0.0
+check "a .crate in the legacy lzma format, which no magic names, is read as a plain tar and never decompressed: exit 3, nothing unpacked" \
+  refused alone-1.0.0 'cannot read the answer or the artifact: truncated header'
 run "$DEPS" "$WT" -- fetch-artifact --run audit_1 pypi bzwhl 1.0
 check "a wheel with an entry compressed with bzip2 is refused before anything is unpacked: exit 3" \
   refused bzwhl 'an entry of the artifact is compressed with a method other than deflate, which deps.sh does not unpack'
