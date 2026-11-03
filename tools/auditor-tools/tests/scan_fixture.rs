@@ -681,3 +681,59 @@ fn scan_fixture_lists_each_call_whose_name_holds_invoke() {
         ]
     );
 }
+
+/// Calls through a path in parentheses, which the compiler makes as calls to the
+/// path.
+const PARENS: &str = r#"
+pub fn relay(ix: &Instruction, infos: &[AccountInfo], seeds: &[&[&[u8]]]) -> ProgramResult {
+    (invoke_signed)(ix, infos, seeds)?;
+    ((solana_program::program::invoke))(ix, infos)?;
+    let (pda, bump) = (Pubkey::find_program_address)(&[b"vault"], &ID);
+    Ok(())
+}
+"#;
+
+#[test]
+fn scan_fixture_lists_a_call_through_a_path_in_parentheses() {
+    let report = scan::scan_source("parens.rs", PARENS).expect("the fixture parses");
+    let at = |text: &str| line_in(PARENS, text);
+    let calls: Vec<(&str, usize, &str)> = report
+        .cpi_sites
+        .iter()
+        .map(|c| (c.kind.as_str(), c.line, c.snippet.as_str()))
+        .collect();
+    assert_eq!(
+        calls,
+        [
+            (
+                "invoke_signed",
+                at("(invoke_signed)("),
+                "(invoke_signed) (ix , infos , seeds)"
+            ),
+            (
+                "invoke",
+                at("program::invoke))("),
+                "((solana_program :: program :: invoke)) (ix , infos)"
+            ),
+        ]
+    );
+    let derivations: Vec<(&str, Vec<&str>, usize)> = report
+        .pdas
+        .iter()
+        .map(|p| {
+            (
+                p.kind.as_str(),
+                p.seeds.iter().map(String::as_str).collect(),
+                p.line,
+            )
+        })
+        .collect();
+    assert_eq!(
+        derivations,
+        [(
+            "find_program_address",
+            vec!["b\"vault\""],
+            at("(Pubkey::find_program_address)(")
+        )]
+    );
+}

@@ -342,8 +342,9 @@ Exit: 0 done · 1 the output cannot be written · 2 refused, with one stderr lin
   // that names `CpiContext`, as a type or in the calls that make one
   // (`CpiContext::new(..)`, `CpiContext::new_with_signer(..)`), kind
   // `CpiContext`, the path as its snippet. A call through an import under
-  // another name, a trait, a macro or a helper of another name is not seen; a
-  // function whose name only holds the word (`invoked`) is listed too.
+  // another name, a trait, a macro, a helper of another name or a function value
+  // (`let cpi = invoke_signed; cpi(..)`) is not seen; a function whose name only
+  // holds the word (`invoked`) is listed too.
   "cpi_sites": [
     { "file": "string", "line": 0,
       "kind": "invoke|invoke_signed|…|method:invoke_signed|…|CpiContext",

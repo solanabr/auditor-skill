@@ -50,8 +50,10 @@ const SNIPPET_MAX: usize = 80;
 /// Codama-generated client's `…Cpi`, which adds `invoke_with_remaining_accounts` and
 /// `invoke_signed_with_remaining_accounts`. Called as a method, a site's kind is
 /// `method:<name>`. A name written as a raw identifier (`r#invoke`) is that name
-/// (`ident_name`). A function whose name only holds the word (`invoked`) is listed
-/// too, and a helper of another name is not.
+/// (`ident_name`), and a path in parentheses (`(invoke_signed)(…)`) is that path
+/// (`callee`). A function whose name only holds the word (`invoked`) is listed
+/// too; a helper of another name is not, nor a call through a function value
+/// (`let cpi = invoke_signed; cpi(…)`), which is called by another name.
 fn is_cpi_name(name: &str) -> bool {
     name.contains("invoke")
 }
@@ -1984,7 +1986,7 @@ impl<'ast> Visit<'ast> for FileVisitor<'_> {
     }
 
     fn visit_expr_call(&mut self, node: &'ast syn::ExprCall) {
-        if let syn::Expr::Path(path_expr) = node.func.as_ref() {
+        if let syn::Expr::Path(path_expr) = callee(&node.func) {
             if let Some(seg) = path_expr.path.segments.last() {
                 let name = ident_name(&seg.ident);
                 if is_cpi_name(&name) {
@@ -2028,6 +2030,19 @@ impl<'ast> Visit<'ast> for FileVisitor<'_> {
             self.list(1, site, |v| &mut v.cpi_sites);
         }
         syn::visit::visit_path(self, node);
+    }
+}
+
+/// What a call calls, through the parentheses around it (`(invoke_signed)(…)`) and
+/// the invisible groups a macro's output can put there: the compiler calls the
+/// same function.
+fn callee(mut func: &Expr) -> &Expr {
+    loop {
+        match func {
+            Expr::Paren(p) => func = &p.expr,
+            Expr::Group(g) => func = &g.expr,
+            _ => return func,
+        }
     }
 }
 
