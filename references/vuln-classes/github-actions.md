@@ -485,7 +485,8 @@ fixtures 01–17 in `scripts/tests/fixtures/gha/`, which hold no ignore comment,
 - `allow-unsafe-pr-checkout: true` with a `pull/<n>/head` fetch on `issue_comment` (11).
 
 It rated string-form `contains()` Informational (03) and did flag `bot-conditions` (12), `template-injection` in `run:`
-(07, 16), `github-env` (06, 07, 15) and `dangerous-triggers` (05–07, 12, 15). A clean tool run does not close §3 or §6.
+(07, 16), `github-env` (06, 07, 15) and `dangerous-triggers` (05–07, 12, 15). CodeQL's `actions` queries were not run on
+these fixtures, so what they miss there is not measured. A clean run of either tool does not close §3 or §6.
 
 ---
 
