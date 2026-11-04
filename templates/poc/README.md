@@ -289,9 +289,9 @@ a target built from outside it, or a build that compiled code from outside it st
 run, the dependencies before anything compiles (the resolved `Cargo.lock` is read again
 after the downloads) and the build before any test runs.
 In native mode no crate runs, an audit's included, while the `INCIDENTS.json` of any
-`incident_*` directory in the working directory records a `supply_chain_or_ci` incident
-or cannot be read: any PoC can build the target's crates. A directory without that
-file, or whose file records no incident, counts for nothing.
+`incident_*` directory in the working directory (its name in any letter case) records a
+`supply_chain_or_ci` incident or cannot be read: any PoC can build the target's crates.
+A directory without that file, or whose file records no incident, counts for nothing.
 `./run.sh` does not read `INCIDENTS.json`.
 
 ## Evidence tier

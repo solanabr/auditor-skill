@@ -77,7 +77,7 @@ build; what a dependency's proc macro reads on its own is not listed. `run.sh` b
 An incident whose root cause is supply chain / CI is never built natively, and its PoC
 never builds or links the target's crates in any mode, since they may be the payload:
 it runs on the dumped program bytes alone (`run.sh` prebuilt mode), with the
-template's own crates. In native mode no PoC runs while the `INCIDENTS.json` of any `incident_*` directory in the working directory records such an incident or cannot be read. If the recorded mode cannot run the PoC, record
+template's own crates. In native mode no PoC runs while the `INCIDENTS.json` of any `incident_*` directory in the working directory (its name in any letter case) records such an incident or cannot be read. If the recorded mode cannot run the PoC, record
 `[PoC-ATTEMPTED]` with the blocker "no isolated runner" and keep the prose PoC.
 
 **Build cache.** `run.sh` builds every run in a fresh scratch directory, so each run

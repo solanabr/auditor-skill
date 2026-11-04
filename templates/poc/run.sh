@@ -294,10 +294,10 @@
 #     resolved Cargo.lock again after the downloads, before anything compiles; and it
 #     stops before a test runs when the build compiled code from outside the crate.
 #     In native mode it builds no crate, an audit's included, while the INCIDENTS.json
-#     of any incident_* directory in the working directory records a
-#     supply_chain_or_ci incident or cannot be read: any PoC can build the target's
-#     crates. A directory without that file, or whose file records no incident,
-#     counts for nothing.
+#     of any incident_* directory in the working directory (its name in any letter
+#     case) records a supply_chain_or_ci incident or cannot be read, or the working
+#     directory cannot be listed: any PoC can build the target's crates. A directory
+#     without that file, or whose file records no incident, counts for nothing.
 #     ./run.sh does not read INCIDENTS.json.
 
 set -Eeuo pipefail

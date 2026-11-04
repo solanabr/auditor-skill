@@ -36,9 +36,10 @@
 # incident --patch names (INC-<n>.<k>), or of every incident without one. In native mode it needs every
 # incident's, whatever --patch names, and builds nothing while any incident is supply_chain_or_ci: a patch of
 # one incident builds the same tree as the others. And natively nothing is built, whatever --run names, while
-# the INCIDENTS.json of any incident_* directory of the working directory records a supply_chain_or_ci
-# incident or cannot be read, since every --src is the working tree or a copy of it; a directory without
-# INCIDENTS.json, or whose file records no incident, counts for nothing (OUTPUT-RULES.md Rule 11a).
+# the INCIDENTS.json of any incident_* directory of the working directory (its name in any letter case)
+# records a supply_chain_or_ci incident or cannot be read, or the working directory cannot be listed, since
+# every --src is the working tree or a copy of it; a directory without INCIDENTS.json, or whose file records
+# no incident, counts for nothing (OUTPUT-RULES.md Rule 11a).
 #
 # The copy, in a scratch directory outside the working directory. A --src that is the top level of a git
 # repository (its git directory inside the working directory, holding no symbolic link, borrowing no objects
