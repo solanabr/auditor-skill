@@ -4,7 +4,8 @@
 # arguments and the entry limit, the notes, the parents up to the repository root (a core.worktree in the
 # repository's own config, a .git git passes over or cannot use, and a git directory kept elsewhere
 # included) and the user's own configuration directory, linked worktrees and submodule checkouts, names
-# the filesystem folds (link targets included), a large tree, trees find cannot read,
+# the filesystem folds (link targets included), a large tree, the entry count where SIGPIPE is ignored,
+# trees find cannot read,
 # a missing jq, control characters in a path, and the installation or PATH entries inside the working
 # directory. Every run goes under each bash on the machine (/bin/bash and the bash running this suite,
 # when they differ) and must print the same under each. Needs git and jq; no network. Usage (from the
@@ -15,7 +16,7 @@ PF="$ROOT/scripts/preflight.sh"
 CASES="$ROOT/scripts/tests/fixtures/preflight/cases.txt"
 T=$(mktemp -d "${TMPDIR:-/tmp}/preflight-test.XXXXXX") || exit 1
 T=$(cd -P "$T" && pwd -P) || exit 1
-trap 'chmod -R u+rwx "$T" 2>/dev/null; rm -rf "$T"' EXIT
+trap 'kill -KILL "$(cat "$T/endless.pid" 2>/dev/null)" 2>/dev/null; chmod -R u+rwx "$T" 2>/dev/null; rm -rf "$T"' EXIT
 
 export HOME="$T/home" GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0
 unset CLAUDE_CONFIG_DIR AUDITOR_PREFLIGHT_MAX_ENTRIES
@@ -219,6 +220,36 @@ nb=$(cd "$B" && find . -name .git -type d -prune -o -print | wc -l | tr -d ' ')
 run "$B" "AUDITOR_PREFLIGHT_MAX_ENTRIES=$((nb - 1))"
 check "... and the limit is checked first" \
   refused "the working tree holds more than $((nb - 1)) entries outside .git, too many to check; run from a smaller directory, such as a workspace of its own for this incident (AUDITOR_PREFLIGHT_MAX_ENTRIES raises the limit)"
+# Where SIGPIPE is ignored, as on GitHub's runners, a closed pipe does not stop find. A find whose walk for
+# the entry count never ends, and which goes on past its failed writes as find does, stands in for one
+# walking an enormous tree; every other call is the real find's. preflight still refuses at once and stops
+# that walk. A run still going after 30 s is stopped, and fails.
+mkdir -p "$T/endless"
+cat > "$T/endless/find" <<EOF
+#!/bin/sh
+if [ "\$1" = . ] && [ "\$#" -eq 10 ] && [ "\${10}" = -print ]; then
+  printf '%s\n' "\$\$" > '$T/endless.pid'
+  while :; do printf './entry\n'; done 2>/dev/null
+fi
+exec '$(command -v find)' "\$@"
+EOF
+chmod +x "$T/endless/find"
+for sh in "${SHELLS[@]}"; do
+  rm -f "$T/endless.pid"
+  (trap '' PIPE; cd "$B" && exec env "PATH=$T/endless:$PATH" AUDITOR_PREFLIGHT_MAX_ENTRIES=10 "$sh" "$PF") \
+    >"$T/out" 2>"$T/err" </dev/null &
+  pid=$! i=0
+  while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 600 ]; do sleep 0.05; i=$((i + 1)); done
+  kill -KILL "$pid" 2>/dev/null
+  wait "$pid"; RC=$?
+  check "with SIGPIPE ignored and an entry count whose walk never ends, the limit still refuses at once ($sh)" \
+    refused "the working tree holds more than 10 entries outside .git, too many to check; run from a smaller directory, such as a workspace of its own for this incident (AUDITOR_PREFLIGHT_MAX_ENTRIES raises the limit)"
+  w=$(cat "$T/endless.pid" 2>/dev/null) i=0
+  while [ -n "$w" ] && kill -0 "$w" 2>/dev/null && [ "$i" -lt 100 ]; do sleep 0.05; i=$((i + 1)); done
+  if [ -z "$w" ]; then ko "... the stand-in walk ran ($sh)"
+  elif kill -0 "$w" 2>/dev/null; then kill -KILL "$w"; ko "... and the walk is stopped ($sh)"
+  else ok "... and the walk is stopped ($sh)"; fi
+done
 
 # =================================================================================================
 # The parents up to the repository root, and the user's own configuration directory.

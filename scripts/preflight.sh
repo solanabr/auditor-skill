@@ -223,10 +223,15 @@ case "$(lower "$WT")/" in
       "run from a directory outside it (Rule 11e)" ;;
 esac
 
-# The size first: head stops reading at one entry over the limit, and find stops on the closed pipe.
-n=$(find . \( -name .git -type d -prune \) -o -print 2>/dev/null |
-  head -n "$((max + 1))" | wc -l) # pipefail-ok: only the count is read; stopping find early is the point
+# The size first: head stops reading at one entry over the limit. A closed pipe stops find only where
+# SIGPIPE keeps its default action; where it is ignored, as on GitHub's runners, find would walk on to the
+# end of the tree, so over the limit it is stopped by its process ID.
+exec 3< <(exec find . \( -name .git -type d -prune \) -o -print 2>/dev/null)
+walk=$!
+n=$(head -n "$((max + 1))" <&3 | wc -l)
 n=${n//[!0-9]/}
+[ -n "$n" ] && [ "$n" -le "$max" ] || kill "$walk" 2>/dev/null
+exec 3<&-
 [ -n "$n" ] || refuse "the working tree cannot be listed"
 [ "$n" -le "$max" ] ||
   refuse "the working tree holds more than $max entries outside .git, too many to check; run from a smaller directory," \
