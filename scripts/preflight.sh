@@ -313,10 +313,17 @@ elif confine_no_repo "$?" "$err"; then
 else
   refuse "git cannot tell which repository holds the working directory, so its parents cannot be checked"
 fi
-own=" "
+# The user's own configuration directories. A parent's .claude is one of them when it is the same
+# directory (device and inode), however HOME or CLAUDE_CONFIG_DIR spells it.
+own=()
 for d in "${HOME:+$HOME/.claude}" "${CLAUDE_CONFIG_DIR-}"; do
-  [ -n "$d" ] && confine_phys "$d" && own="$own$CONFINE_PHYS "
+  [ -n "$d" ] && [ -d "$d" ] && own+=("$d")
 done
+mine() { # mine <dir>: status 0 when <dir> is one of the user's own configuration directories
+  local o
+  for o in ${own[@]+"${own[@]}"}; do [ "$1" -ef "$o" ] && return 0; done
+  return 1
+}
 
 # parent <dir> <shown prefix>: the matches among <dir>'s own entries and inside each .claude directory
 # there; the user's own configuration directory is skipped.
@@ -327,9 +334,7 @@ parent() {
     name=${p##*/}
     case "$name" in *[![:print:]]*) folded "$up$name" "$p"; continue ;; esac
     if case "$name" in .[cC][lL][aA][uU][dD][eE]) true ;; *) false ;; esac; then
-      if confine_phys "$p"; then
-        case "$own" in *" $CONFINE_PHYS "*) continue ;; esac
-      fi
+      mine "$p" && continue
       if [ -d "$p" ] && [ ! -L "$p" ]; then
         st2=''
         while IFS= read -r -d '' q; do

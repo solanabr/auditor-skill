@@ -432,6 +432,21 @@ run "$H/w/inc" "HOME=$T/home"
 check "... and the same directory is refused for another HOME" above ../../.claude/agents
 run "$H/w/inc" "HOME=$T/home" "CLAUDE_CONFIG_DIR=$H/.claude"
 check "... and skipped when CLAUDE_CONFIG_DIR names it" just_ok
+# HOME and CLAUDE_CONFIG_DIR name it by identity, however they spell it: in capitals where the filesystem
+# opens them as it (elsewhere they name another directory), and through /System/Volumes/Data on macOS.
+HU=$(printf '%s' "$H" | tr 'a-z' 'A-Z')
+run "$H/w/inc" "HOME=$HU"
+if [ -d "$HU/.claude" ]; then check "... and when HOME spells it in capitals, where names fold case" just_ok
+else check "... a HOME in capitals is another directory where names do not fold case, so it is refused" above ../../.claude/agents; fi
+run "$H/w/inc" "HOME=$T/home" "CLAUDE_CONFIG_DIR=$HU/.claude"
+if [ -d "$HU/.claude" ]; then check "... and when CLAUDE_CONFIG_DIR does" just_ok
+else check "... and so is a CLAUDE_CONFIG_DIR in capitals" above ../../.claude/agents; fi
+if [ "/System/Volumes/Data$H" -ef "$H" ]; then
+  run "$H/w/inc" "HOME=/System/Volumes/Data$H"
+  check "... and when HOME spells it through /System/Volumes/Data" just_ok
+else
+  skp "no /System/Volumes/Data spelling of the test directory here"
+fi
 build "$H" d:cfg l:w/.claude=../.claude
 run "$H/w/inc" "HOME=$H"
 check "a link to the user's own ~/.claude is skipped as well" just_ok
