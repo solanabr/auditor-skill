@@ -130,3 +130,43 @@ jobs:
         run: |
           export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin"
           bash scripts/check-hygiene.sh
+
+  auditor-tools:
+    # Builds the Rust tools as a user does (release, --locked) with warnings denied, runs
+    # their unit tests, and checks audit-logs against the dnr scripts it mirrors.
+    name: auditor-tools build and audit-logs parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      RUSTFLAGS: -D warnings
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: false
+          persist-credentials: false
+
+      - name: Toolchain
+        run: |
+          for t in cargo rustc jq python3; do
+            command -v "$t" >/dev/null || { echo "::error::$t is not on PATH"; exit 1; }
+          done
+          cargo --version; rustc --version; jq --version; python3 --version
+
+      - name: Build tools/auditor-tools (release, locked)
+        working-directory: tools/auditor-tools
+        run: cargo build --release --locked
+
+      - name: Unit tests
+        if: ${{ !cancelled() }}
+        working-directory: tools/auditor-tools
+        run: cargo test --release --locked
+
+      - name: audit-logs against scripts/dnr
+        if: ${{ !cancelled() }}
+        env:
+          REQUIRE_TOOLCHAIN: "1"
+          AUDIT_LOGS: tools/auditor-tools/target/release/audit-logs
+        run: bash scripts/tests/test-audit-logs.sh

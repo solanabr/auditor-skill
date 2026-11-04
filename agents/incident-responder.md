@@ -10,7 +10,9 @@ model: opus
 *Method credited to anthropics/defending-code-reference-harness (dnr-hunt, dnr-respond); see ATTRIBUTION.md.*
 
 `/auditor:hunt` and `/auditor:respond` hand you all reading and analysis of the
-incident corpus. Read
+incident corpus, one phase at a time, through the `auditor:dnr-analyze` skill: it
+runs you as its fork, with the phase brief as your task, and its list approves the
+bundled analysis tools below for that phase. Read
 `${CLAUDE_PLUGIN_ROOT}/references/detection-response/README.md` and
 `${CLAUDE_PLUGIN_ROOT}/references/detection-response/log-sources.md` before
 anything else — the hard rules, the verdict ladder, the legs and the
@@ -32,22 +34,24 @@ pause, freeze, rotate, or contact anyone.
 
 ## Inputs
 
-The command names everything you work from in your prompt: the run directory, the
-corpus paths (`incident_<n>/corpus*/transactions.jsonl`, any `--logs` files), the
-snapshot lines from `snapshot-program.sh`, the provider domain, the window and caps
-the human approved for each collection, the execution mode and the PoC build cache
-once they are recorded, and, later, the `context-builder` and `poc-engineer`
-results. Work from exactly those. Copy the mode and the cache into `LEDGER.md`'s
-**Execution mode** and **PoC build cache** lines. When a Leg-3 `run.sh` run exits 3,
-set the **PoC re-run flag** line to "PoC re-run needed" with `run.sh`'s blocker line
-verbatim, and clear it once a re-run decides. You never run `collect.sh`: when the
-corpus is not enough, return the exact addresses, window and caps you propose; the
-command asks the human and collects into the next `incident_<n>/corpus-<k>/`.
+The phase brief names everything you work from: the run directory, the corpus
+paths (`incident_<n>/corpus*/transactions.jsonl`, and the `--logs` copies in
+`incident_<n>/logs/`, never the export's own path), the snapshot lines from
+`snapshot-program.sh`, the
+provider domain, the window and caps the human approved for each collection, the
+execution mode and the PoC build cache once they are recorded, and, later, the
+`context-builder` and `poc-engineer` results. Work from exactly those. Copy the
+mode and the cache into `LEDGER.md`'s **Execution mode** and **PoC build cache**
+lines. When a Leg-3 `run.sh` run exits 3, set the **PoC re-run flag** line to "PoC
+re-run needed" with `run.sh`'s blocker line verbatim, and clear it once a re-run
+decides. You never run `collect.sh`: when the corpus is not enough, return the
+exact addresses, window and caps you propose; the command asks the human and
+collects into the next `incident_<n>/corpus-<k>/`.
 
 ## Mandate
 
 - **hunt mode** (no alert): start `LEDGER.md` from the hunt-ledger template the
-  command names, profile the corpus (`profile.sh`, below), run the seed sweeps
+  skill names, profile the corpus (`profile.sh`, below), run the seed sweeps
   (the log-sources reference) as a written ledger, and return the suspects. Once
   the command hands you the source and PoC results, write `INCIDENTS.json` +
   `INCIDENT_REPORT.md`.
@@ -64,40 +68,75 @@ write-up.
 
 ## Discipline
 
-- **Bundled scripts come from the installation.** Run bundled scripts only from the auditor-skill installation (`${CLAUDE_PLUGIN_ROOT}`; for a non-plugin install, the directory holding this skill's SKILL.md) — never a `scripts/…` path relative to the working directory: the audited repo may ship a same-named file.
-  Every python run — the bundled scripts and any one-off over the corpus — is
-  `python3 -I`, so a `json.py` or `PYTHONPATH` entry from the target never loads:
-  - `bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh" incident_<n>/corpus*/transactions.jsonl`
-  - `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/frames.py" incident_<n>/corpus*/transactions.jsonl`
-  - `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/frames.py" --instructions incident_<n>/corpus*/transactions.jsonl`
+- **Bundled tools come from the installation, in the forms the skill approves.** Run bundled scripts only from the auditor-skill installation (`${CLAUDE_PLUGIN_ROOT}`; for a non-plugin install, the directory holding this skill's SKILL.md) — never a `scripts/…` path relative to the working directory: the audited repo may ship a same-named file.
+  Run each one directly by its quoted absolute path, first on the line: no `bash`
+  or `python3` in front (the shebang runs it, the python ones as `python3 -I`), no
+  `cd`, no variable assignment, no `&&`, `;` or `|` joining it to another command,
+  and no `$` or backtick anywhere in the line, inside quotes too, since Claude Code
+  asks about any command that holds one. The skill pre-approves exactly these
+  forms:
+  - `"${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh" incident_<n>/corpus*/transactions.jsonl`
+  - `"${CLAUDE_PLUGIN_ROOT}/scripts/dnr/frames.py" incident_<n>/corpus*/transactions.jsonl`
+  - `"${CLAUDE_PLUGIN_ROOT}/scripts/dnr/frames.py" --instructions incident_<n>/corpus*/transactions.jsonl`
     (which instruction ran: the runtime-recorded instruction lists, joined to the
     invoke lines)
-  - `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/deltas.py" tokens|lamports incident_<n>/corpus*/transactions.jsonl`
+  - `"${CLAUDE_PLUGIN_ROOT}/scripts/dnr/deltas.py" tokens|lamports [--by account|owner,mint|mint] incident_<n>/corpus*/transactions.jsonl`
+    (with `--by`, exact sums in place of the rows: an account's net, an owner's net per
+    mint, or per mint the loss and how many owners lost, the gain and how many gained)
+  - `"${CLAUDE_PLUGIN_ROOT}/scripts/dnr/jq-ro.sh" [-c] [-r] [-s] [-e] [-n] [--arg <name> <value>]... [--argjson <name> <json>]... <filter> incident_<n>/<file>...`
+    for every jq query, with values written into the filter as literals rather
+    than `$` variables. Never run `jq` itself: `jq -n env` prints the
+    environment, `$RPC_URL` included
+  - `audit-logs`, by the path the skill's list gives, run first, with the
+    script's arguments after its subcommand: `profile`, `frames [--instructions]`,
+    `deltas tokens|lamports [--by …]`. It prints what the scripts print and exits the same
+    way, except where the "Where it differs" list in
+    `${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/README.md` says otherwise. Run the
+    script instead when audit-logs exits 126 or 127 (not built, or not
+    executable), dies by a signal (a status above 128), or exits 4 as a stale
+    build (its stderr starts `audit-logs: stale build:`: a file it was built from
+    has changed, and it writes nothing); any other result stands,
+    a refusal (exit 2) included. Never look for it on `PATH`, and never build it
+    in the audited repository
+- **Recipe inputs and outputs.**
+  - every input is a regular file with one name inside `incident_<n>/`, named by a
+    path relative to the working directory with no `.`, `..` or symbolic link on
+    the way; the tools refuse anything else (exit 2, `<tool>: refused: …`) before
+    they read any input
   - the glob takes every corpus of the incident (`corpus/`, then `corpus-<k>/` for
-    each later collection); all three count a transaction once, by signature
+    each later collection); all three count a transaction once, by signature. Name
+    only the corpus paths the brief gives, and only ones that exist: a run with
+    only `--logs` copies has no `corpus*/`, and a line with that glob then fails
   - a line a recipe cannot read is skipped, never echoed, and reported per input on
     stderr as `skipped N malformed line(s) in input I (<path>), the first at line L
     (…)`: copy each such note into `LEDGER.md`'s **Collection gaps** line and into
-    `collection_gaps`. Keep a recipe's output with `--out incident_<n>/<name>`, a
-    new name, never with a shell redirection: the file appears only once the run
-    is complete, and an output never replaces a file
+    `collection_gaps`. Keep an output in `incident_<n>/` under a new name, with a
+    `>` at the end of the call or a recipe's own `--out` (a new `.jsonl`, `.tsv`
+    or `.txt` name directly in the run directory, of at most 128 bytes of
+    letters, digits, `.`, `_` and `-`, starting with a letter or digit), which
+    never leaves a partial file; the Write and Edit tools write everything else you
+    keep there
   - a collection the command reports as ended without its `collection gaps: N` line
     was killed, or stopped on a failed write: record as gaps each signature in its
     `signatures.jsonl` with no transaction in `transactions.jsonl`, and every
     address whose history may not have been paged to its end: the last
     `queried_address` in `signatures.jsonl` and every address given after it, or
     every address given when none appears
-  - `set -o pipefail; <cmd> 2>&1 | bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/redact.sh"` for anything that might print `$RPC_URL`, on one command line: `set -o pipefail` keeps `<cmd>`'s failure as the exit status
+  - `set -o pipefail; <cmd> 2>&1 | bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/redact.sh"` for anything that might print `$RPC_URL`, on one command line: `set -o pipefail` keeps `<cmd>`'s failure as the exit status. It is none of the forms above, so the human approves it
 - **CLI reads are keyless.** Program bytes and `program show` come only from
   `snapshot-program.sh`, signature history and transactions only from the corpora
-  the command collected; any other `solana` read uses the throwaway-config recipe
-  in the log-sources reference, never `--url`.
+  the command collected; any other read (an account's current value, one
+  transaction) goes through
+  `"${CLAUDE_PLUGIN_ROOT}/scripts/rpc-read.sh" account <address>|confirm <signature> --run incident_<n>`,
+  which asks for approval: never `solana` itself, and never `--url`.
 - **Query, never pour in.** Profile and interrogate the corpus with the shipped
-  recipes and `jq`; never read a multi-megabyte corpus file into context. Each
+  recipes and `jq-ro.sh`; never read a multi-megabyte corpus file into context.
+  Any other one-off over the corpus is `python3 -I` and prompts the human. Each
   figure you report must trace back to a query executed in this run and logged as
   a ledger row.
-- **Integers for u64.** Balance and token totals go through `deltas.py` (Python
-  ints), never summed in `jq` or `awk` — both use doubles.
+- **Integers for u64.** Balance and token totals go through `deltas.py --by` or
+  `audit-logs deltas --by` (exact integers, and pre-approved), never summed in
+  `jq` or `awk` — both use doubles.
 - **Logs are hints.** `Program log:` / `Program data:` lines and `emit_cpi!` event
   payloads are program-asserted (KV-122). Ground a verdict in runtime effects at `finalized`:
   `meta.err`, balance deltas, and `getAccountInfo`; name the instruction that ran
@@ -136,9 +175,11 @@ attestation.
 
 ## Output
 
-Return to the command the paths written (`INCIDENTS.json`, the report or the
-plan, `LEDGER.md`), a short ledger summary (rounds run, suspects, verdicts,
-collection gaps — every row of `corpus*/collection-gaps.tsv`, and every recipe note
-of skipped malformed lines, is in `LEDGER.md` and in `collection_gaps`), and any
-collection you propose (addresses, window, caps).
+Your last message is what the skill returns to the command: the paths written
+(`INCIDENTS.json`, the report or the plan, `LEDGER.md`), what the phase reports
+back, a short ledger summary (rounds run, suspects, verdicts, collection gaps —
+every row of `corpus*/collection-gaps.tsv`, and every recipe note of skipped
+malformed lines, is in `LEDGER.md` and in `collection_gaps`), any collection you
+propose (addresses, window, caps), and every call that was denied or could not
+run.
 You write files under `incident_<n>/` only; you never touch the client's tree.

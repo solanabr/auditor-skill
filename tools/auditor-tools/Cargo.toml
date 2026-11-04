@@ -31,3 +31,10 @@ anyhow = "1"
 
 [profile.release]
 opt-level = 2
+
+# audit-logs is its own package. Its one dependency, libc, is in the lockfile already,
+# and it takes it without default features, as cpufeatures does, so building it
+# changes no feature of the libc that audit-scan and audit-mem build with.
+[workspace]
+members = [".", "audit-logs"]
+default-members = [".", "audit-logs"]

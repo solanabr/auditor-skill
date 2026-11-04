@@ -29,7 +29,7 @@ durable. Stop after two rounds that surface no new entity.
 
 | # | Round | Hypothesis | Source | Query (recipe + args) | Result (a number from the query) | Verdict | Next pivot |
 |---|-------|-----------|--------|-----------------------|----------------------------------|---------|------------|
-| 1 |   1   | {e.g. one signer drained a vault mint} | transactions.jsonl | `deltas.py tokens … \| group by mint` | {net raw units out, per mint} | supported / refuted / needs-pivot | → H{n} |
+| 1 |   1   | {e.g. one signer drained a vault mint} | transactions.jsonl | `deltas.py tokens --by mint …` | {net raw units out, per mint} | supported / refuted / needs-pivot | → H{n} |
 | … |       |           |        |                       |                                  |         |            |
 | — | stop  | **two rounds, no new entity** | | | | | |
 

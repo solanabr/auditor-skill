@@ -51,8 +51,8 @@ Ported as method and re-expressed in our own words — no upstream text is copie
 
 | Upstream | auditor-skill implementation |
 |----------|------------------------------|
-| `dnr-hunt` (baseline → hypothesis ledger → source confirmation → local PoC) | `commands/hunt.md`, `agents/incident-responder.md`, `templates/hunt-ledger.md`, `templates/incident-report.md` |
-| `dnr-respond` (scope → verdict → blast radius → proposed plan) | `commands/respond.md`, `templates/response-plan.md`, `references/detection-response/containment-playbook.md` |
+| `dnr-hunt` (baseline → hypothesis ledger → source confirmation → local PoC) | `commands/hunt.md`, `agents/incident-responder.md`, `skills/dnr-analyze/SKILL.md`, `templates/hunt-ledger.md`, `templates/incident-report.md` |
+| `dnr-respond` (scope → verdict → blast radius → proposed plan) | `commands/respond.md`, `skills/dnr-analyze/SKILL.md`, `templates/response-plan.md`, `references/detection-response/containment-playbook.md` |
 | verdict ladder + `INCIDENTS.json` field names | `references/detection-response/README.md`, `references/detection-response/incidents-schema.md` |
 | `threat-model` skill (bootstrap and bootstrap-then-interview modes, the team-availability routing step, prior-vulnerability inputs, evidence that ranks goals without becoming them, seeded interview) | `commands/threat-model.md` `--bootstrap`, `references/audit-lifecycle/threat-model-bootstrap.md`, `scripts/threat-model/collect.sh`, `templates/threat-model.md` §4–§6 |
 

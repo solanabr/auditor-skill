@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S python3 -I
 """deltas.py — compute balance movements from a getTransaction JSONL corpus, with
 every total done in Python integers.
 
@@ -10,13 +10,15 @@ line, an amount or balance that is not an exact integer among them, is skipped a
 counted, never echoed. A transaction is counted once however many inputs hold it:
 the first occurrence of each signature wins. Both counts are reported on stderr,
 the malformed lines per input, as collection gaps. The corpus is streamed one
-transaction at a time, and every named file (and the --out path) is checked
-before the first row is written: one that cannot be read or written exits 1, and
-one that is a symbolic link, or reached through one inside the working directory,
-or an --out that already exists, exits 2, with no output either way.
+transaction at a time. A named file must be a regular file with one name in a run
+directory incident_<n>/ of the working directory, named relative to it and reached
+through no symbolic link, and --out a new .jsonl, .tsv or .txt name directly in
+such a directory. Each is checked before the first row is written: one that breaks
+a rule exits 2, and one that cannot be read or written 1, with no output either
+way.
 
 Two modes:
-  deltas.py lamports [--out <file>] [files...]
+  deltas.py lamports [--by account] [--out <file>] [files...]
                                   per (signature, account) non-zero lamport delta;
                                   the fee is added back for the fee payer (index 0),
                                   so the row reflects movement, not the fee. A balance
@@ -30,16 +32,33 @@ Two modes:
                                   key is printed as #<index>, and one with no
                                   accountIndex as #?, each counted in a note.
 
-Output: TSV on stdout, or with `--out <file>` (a new name) in a temporary file
-beside it that becomes <file> only once the run is complete, both made through
-the directory of <file>, opened once; UTF-8 whatever the locale.
+--by sums those rows, in Python integers, and prints the sums in place of the rows
+once the corpus is read (it keeps one sum per name, never the rows): one TSV row per
+sum, the most negative first, then by name in byte order; a sum of 0 prints no row:
+  lamports --by account           per account: account, net delta.
+  tokens --by owner,mint          per (owner, mint): owner, mint, net delta, and a
+                                  fourth column that is empty, or, for a balance the
+                                  RPC gave no owner (`?`), names its token account,
+                                  since such balances are summed per token account.
+  tokens --by mint                per mint, over those owner nets: mint, the sum of
+                                  the negative nets (0 or less) and how many owners
+                                  had one, then the sum of the positive nets and how
+                                  many had one.
+A row named #<index> or #? stands for an account only within its own transaction, so
+no sum holds a lamport row so named, nor a token row that also has no owner; a note
+on stderr counts them.
+
+Output: TSV on stdout, or with `--out <file>` (a new name directly in the run
+directory) in a temporary file beside it that becomes <file> only once the run is
+complete, both made through the run directory, opened once; UTF-8 whatever the
+locale.
 Signatures, owners and mints are base58 in real RPC data and deltas are decimal
 integers; any tab, newline, carriage return or backslash in a string field is
 escaped (`\\t`, `\\n`, `\\r`, `\\\\`), so a crafted corpus cannot forge a row, and so
 is every other character of the input contract's fixed list (control characters,
-line and paragraph separators, bidirectional controls, zero-width characters:
-`\\x00`, `\\x85`, `\\u2028`, `\\u202e`, `\\u200b`, …); any other character is
-printed as itself, whichever Python runs it.
+line and paragraph separators, bidirectional controls, default-ignorable code
+points: `\\x00`, `\\x85`, `\\u2028`, `\\u202e`, `\\u200b`, `\\U000e0041`, …); any
+other character is printed as itself, whichever Python runs it.
 Token deltas are per token account (its `accountIndex` resolved through the
 transaction's account keys) and mint, so two accounts never share a bucket, even
 when the RPC gives no owner or the index has no account key (`#<index>`); a
@@ -68,10 +87,11 @@ lookup-table-loaded addresses, so it lines up 1:1 with pre/postBalances. With
 `encoding: json`, append `meta.loadedAddresses.writable` then `.readonly` to the
 static keys before indexing; this script handles both.
 
-Run it as `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/deltas.py" tokens|lamports
-<corpus.jsonl>`. Isolated mode keeps the working directory (usually the audited
-repo) and PYTHONPATH off sys.path, so it imports nothing beyond the stdlib — keep
-it that way: no sibling modules.
+Run it directly by its quoted absolute path, from the working directory under
+audit: `"${CLAUDE_PLUGIN_ROOT}/scripts/dnr/deltas.py" tokens|lamports
+<corpus.jsonl>`; its first line runs it as `python3 -I`. Isolated mode keeps the
+working directory (usually the audited repo) and PYTHONPATH off sys.path, so it
+imports nothing beyond the stdlib — keep it that way: no sibling modules.
 
 No network. python3 stdlib only.
 """
@@ -112,21 +132,24 @@ _TSV = {"\t": "\\t", "\n": "\\n", "\r": "\\r"}
 
 def _escape(m) -> str:
     c = m.group()
-    return _TSV.get(c) or ("\\x%02x" % ord(c) if ord(c) < 0x100 else "\\u%04x" % ord(c))
+    o = ord(c)
+    return _TSV.get(c) or ("\\x%02x" % o if o < 0x100 else "\\u%04x" % o if o < 0x10000 else "\\U%08x" % o)
 
 
 def _clean(s) -> str:
     """Escape what could break a TSV row, or hide in one. Real RPC data carries
     base58 here, but a corpus can come from an untrusted export: a backslash is
     doubled, and each character of the contract's fixed _UNSAFE list is written as
-    an escape (\\t, \\n, \\r; else \\xNN below U+0100 and \\uNNNN above), so a key or
-    mint cannot forge an extra row or column, or hide a control character in one."""
+    an escape (\\t, \\n, \\r; else \\xNN below U+0100, \\uNNNN below U+10000 and
+    \\UNNNNNNNN above), so a key or mint cannot forge an extra row or column, or
+    hide a control character in one."""
     return _UNSAFE.sub(_escape, str(s).replace("\\", "\\\\"))
 
 
-def _lamports(txs, out):
-    """Write the rows; return how many name a balance index that has no account key."""
-    keyless = 0
+def _lamport_rows(txs, counts):
+    """Yield (signature, account, delta, keyed) for each non-zero lamport movement. A
+    balance whose index has no account key is a movement too, named #<index>: keyed is
+    then False, and counts["keyless"] counts it."""
     for tx in txs:
         if not _ok(tx):
             continue
@@ -142,18 +165,16 @@ def _lamports(txs, out):
             d = post[i] - pre[i] + (fee if i == 0 else 0)
             if d != 0:
                 if i < len(keys):
-                    account = keys[i]
+                    yield sig, keys[i], d, True
                 else:
-                    account = "#%d" % i
-                    keyless += 1
-                out.write(f"{_clean(sig)}\t{_clean(account)}\t{d}\n".encode("utf-8"))
-    return keyless
+                    counts["keyless"] += 1
+                    yield sig, "#%d" % i, d, False
 
 
-def _tokens(txs, out):
-    """Write the rows; return how many name a balance index that has no account key,
-    and how many a balance that has no accountIndex."""
-    keyless = indexless = 0
+def _token_rows(txs, counts):
+    """Yield (signature, owner, mint, delta, token account, keyed) for each non-zero
+    token movement; counts["keyless"] and counts["indexless"] count the rows named
+    #<index> and #?, whose keyed is False."""
     for tx in txs:
         if not _ok(tx):
             continue
@@ -196,12 +217,61 @@ def _tokens(txs, out):
             if d != 0:
                 owner, mint, account = labels[key]
                 if key[0] == "index":
-                    keyless += 1
+                    counts["keyless"] += 1
                 elif key[0] == "entry":
-                    indexless += 1
-                out.write(f"{_clean(sig)}\t{_clean(owner)}\t{_clean(mint)}\t{d}\t{_clean(account)}\n"
-                          .encode("utf-8"))
-    return keyless, indexless
+                    counts["indexless"] += 1
+                yield sig, owner, mint, d, account, key[0] == "key"
+
+
+def _write_rows(rows, mode, out):
+    for r in rows:
+        if mode == "lamports":
+            sig, account, d, _keyed = r
+            out.write(f"{_clean(sig)}\t{_clean(account)}\t{d}\n".encode("utf-8"))
+        else:
+            sig, owner, mint, d, account, _keyed = r
+            out.write(f"{_clean(sig)}\t{_clean(owner)}\t{_clean(mint)}\t{d}\t{_clean(account)}\n"
+                      .encode("utf-8"))
+
+
+def _write_sums(rows, by, out):
+    """Write the sums --by names (the module docstring); return how many rows no sum
+    holds. Names are compared and printed as _clean() writes them."""
+    nets, left = {}, 0
+    for r in rows:
+        if by == "account":
+            _sig, account, d, keyed = r
+            key = (_clean(account), "", "") if keyed else None
+        else:
+            _sig, owner, mint, d, account, keyed = r
+            if owner != "?":
+                key = (_clean(owner), _clean(mint), "")
+            else:
+                key = ("?", _clean(mint), _clean(account)) if keyed else None
+        if key is None:
+            left += 1
+        else:
+            nets[key] = nets.get(key, 0) + d
+    if by == "mint":
+        mints = {}
+        for (_owner, mint, _account), net in nets.items():
+            m = mints.setdefault(mint, [0, 0, 0, 0])
+            if net < 0:
+                m[0] += net
+                m[1] += 1
+            elif net > 0:
+                m[2] += net
+                m[3] += 1
+        for mint, (loss, losers, gain, gainers) in sorted(mints.items(), key=lambda kv: (kv[1][0], kv[0])):
+            if losers or gainers:
+                out.write(f"{mint}\t{loss}\t{losers}\t{gain}\t{gainers}\n".encode("utf-8"))
+    else:
+        for (name, mint, account), net in sorted(nets.items(), key=lambda kv: (kv[1], kv[0])):
+            if net and by == "account":
+                out.write(f"{name}\t{net}\n".encode("utf-8"))
+            elif net:
+                out.write(f"{name}\t{mint}\t{net}\t{account}\n".encode("utf-8"))
+    return left
 
 
 # ---- input contract (scripts/dnr/README.md); the same block is in profile.sh, frames.py, deltas.py
@@ -221,10 +291,13 @@ _TOKEN = re.compile(r"\"[^\"\\]*(?:\\.[^\"\\]*)*\"?|[\[\]{}]", re.S)
 # The characters no key, program id or string version may hold, and that no recipe
 # prints raw: the C0 controls, DEL, the C1 controls, the line and paragraph
 # separators, the bidirectional controls (U+061C, U+200E-200F, U+202A-202E,
-# U+2066-2069) and the zero-width characters (U+200B-200D, U+FEFF). The list is
-# fixed, so the same lines are malformed under every Python, whatever Unicode
-# version it knows; every other character, assigned or not, prints as itself.
-_UNSAFE = re.compile(r"[\x00-\x1f\x7f-\x9f\u061c\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]")
+# U+2066-2069), and the code points Unicode marks default-ignorable, which text
+# shows as nothing: U+00AD, U+034F, U+061C, U+115F-1160, U+17B4-17B5, U+180B-180F,
+# U+200B-200F, U+202A-202E, U+2060-206F, U+3164, U+FE00-FE0F, U+FEFF, U+FFA0,
+# U+FFF0-FFF8, U+1BCA0-1BCA3, U+1D173-1D17A and U+E0000-E0FFF. The list is fixed,
+# so the same lines are malformed under every Python, whatever Unicode version it
+# knows; every other character, assigned or not, prints as itself.
+_UNSAFE = re.compile(r"[\x00-\x1f\x7f-\x9f\xad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f\u2028-\u202e\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0\ufff0-\ufff8\U0001bca0-\U0001bca3\U0001d173-\U0001d17a\U000e0000-\U000e0fff]")
 # Lamport balances, the fee and token amounts are u64 values in RPC data; bounding
 # them keeps every computed delta and sum far inside what Python prints.
 _U64 = 2 ** 64 - 1
@@ -259,119 +332,218 @@ def shown(text, cap=120):
     return s if len(s) <= cap else s[:cap] + "..."
 
 
-def linked(path):
-    """True when path is a symbolic link, or reaches its file through a directory that
-    is a symbolic link inside the working directory. Links above it are followed."""
-    if os.path.islink(path):
-        return True
-    here = os.getcwd()
-    cur = os.sep if os.path.isabs(path) else here
-    for part in path.split(os.sep)[:-1]:
-        if not part:
-            continue
-        step = os.path.join(cur, part)
-        if os.path.islink(step):
-            parent = os.path.realpath(cur)
-            if parent == here or parent.startswith(here.rstrip(os.sep) + os.sep):
-                return True
-        cur = step
-    return False
+def installed(path):
+    """None when the recipe at path may run, else (2, message): its path holds a quote,
+    $, a backtick, a backslash or a control character, so its quoted call cannot match
+    as written, or it lies inside the working directory (OUTPUT-RULES.md Rule 11e)."""
+    try:
+        here, real, given = os.getcwd(), os.path.realpath(path), os.path.abspath(path)
+    except OSError as e:
+        return 2, "refused: cannot resolve the working directory: %s" % shown(e.strerror or e)
+    for p in (given, real):
+        if any(c in "\"$`\\" or ord(c) < 0x20 or ord(c) == 0x7f for c in p):
+            return 2, ("refused: the installation path holds a quote, $, a backtick, a backslash or a"
+                       " control character, so its quoted call cannot match as written")
+    if real.startswith(here.rstrip(os.sep) + os.sep):
+        return 2, ("refused: the installation lies inside the working directory; install it outside the"
+                   " tree under audit, or run from a directory that does not contain it (Rule 11e)")
+    return None
+
+
+def refusal(why, usage):
+    """(2, message) for arguments outside a recipe grammar."""
+    return 2, "refused: %s (usage: %s)" % (why, usage)
+
+
+# Where a recipe reads and writes: a path names a file in a run directory incident_<n>/
+# of the working directory, relative to it, with no empty, . or .. component and no
+# symbolic link on the way. An --out file is a new name directly in the run directory,
+# of the kinds a recipe writes.
+_RUN_DIR = re.compile(rb"incident_[0-9]{1,6}")
+_OUT_NAME = re.compile(rb"[A-Za-z0-9][A-Za-z0-9._-]*[.](?:jsonl|tsv|txt)")
+# The run directory of each --out path that unwritable() passed, as lstat found it.
+_CHECKED = {}
+# The device and inode of each input _confined() passed, as lstat found it: opened()
+# reads only that file.
+_INPUTS = {}
+
+
+def _parts(path, label):
+    """(the components of path as bytes, None) when it has the shape of a path in a run
+    directory, else (None, (2, the refusal))."""
+    raw = os.fsencode(path)
+    parts = (raw[2:] if raw.startswith(b"./") else raw).split(b"/")
+    if not raw or len(raw) > 1024:
+        why = "is empty or longer than 1024 bytes"
+    elif any(c < 0x20 or c == 0x7f for c in raw):
+        why = "holds a control character"
+    elif raw[:1] in (b"/", b"-", b"~"):
+        why = "is not a relative path inside the working directory"
+    elif any(p in (b"", b".", b"..") for p in parts):
+        why = "has an empty, . or .. component"
+    elif len(parts) < 2 or not _RUN_DIR.fullmatch(parts[0]):
+        why = "is not a file inside an incident_<n>/ run directory"
+    else:
+        return parts, None
+    return None, (2, "refused: %s %s" % (label, why))
+
+
+def _inside(path):
+    """True when path (bytes, relative) resolves inside the working directory."""
+    return os.path.realpath(path).startswith(os.fsencode(os.getcwd()).rstrip(b"/") + b"/")
+
+
+def _run_dir(name, label):
+    """(its lstat, None) when the run directory name (bytes) is a real directory whose
+    .gitignore holds * (OUTPUT-RULES.md Rule 11d), else (None, (2, the refusal))."""
+    where = "refused: %s is in %s, which" % (label, shown(os.fsdecode(name)))
+    try:
+        st = os.lstat(name)
+    except FileNotFoundError:
+        return None, (2, where + " does not exist")
+    except OSError as e:
+        return None, (2, "%s cannot be checked: %s" % (where, shown(e.strerror or e)))
+    if not stat.S_ISDIR(st.st_mode):
+        return None, (2, where + " is not a real directory (a symbolic link is not one)")
+    text = None
+    try:
+        if stat.S_ISREG(os.lstat(name + b"/.gitignore").st_mode):
+            fd = os.open(name + b"/.gitignore", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            try:
+                if stat.S_ISREG(os.fstat(fd).st_mode):
+                    text = os.read(fd, 16)
+            finally:
+                os.close(fd)
+    except OSError:
+        pass
+    if text not in (b"*", b"*\n"):
+        return None, (2, "refused: %s is in %s, whose .gitignore does not hold * (OUTPUT-RULES.md Rule 11d)"
+                      % (label, shown(os.fsdecode(name))))
+    return st, None
+
+
+def _confined(path, label):
+    """None when path names a regular file with one name in a run directory, reached
+    through no symbolic link and resolving inside the working directory, else (2, the
+    refusal). Each name on the way is checked with lstat, so a link is refused before
+    anything is read through it."""
+    parts, problem = _parts(path, label)
+    if problem is None:
+        problem = _run_dir(parts[0], label)[1]
+    if problem is not None:
+        return problem
+    cur = parts[0]
+    for part in parts[1:]:
+        cur += b"/" + part
+        try:
+            st = os.lstat(cur)
+        except (FileNotFoundError, NotADirectoryError):
+            return 2, "refused: %s does not exist" % label
+        except OSError as e:
+            return 2, "refused: %s cannot be checked: %s" % (label, shown(e.strerror or e))
+        if stat.S_ISLNK(st.st_mode):
+            return 2, "refused: %s is a symbolic link, or is reached through one inside the working directory" % label
+    if not stat.S_ISREG(st.st_mode):
+        return 2, "refused: %s is not a regular file" % label
+    if st.st_nlink != 1:
+        return 2, "refused: %s has more than one name (a hard link)" % label
+    if not _inside(cur):
+        return 2, "refused: %s resolves outside the working directory" % label
+    _INPUTS[path] = (st.st_dev, st.st_ino)
+    return None
 
 
 def opened(path):
-    """One named input, opened for reading: never through a final symbolic link, and
-    only a regular file (a FIFO or a device is not opened for a blocking read)."""
-    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    """One named input, opened for reading through each directory on its way from the
+    working directory, none of them followed if it is a symbolic link, and only the
+    regular file with one name that _confined() checked (a FIFO or a device is not
+    opened for a blocking read)."""
+    raw = os.fsencode(path)
+    parts = (raw[2:] if raw.startswith(b"./") else raw).split(b"/")
+    fd = os.open(".", os.O_RDONLY | os.O_DIRECTORY)
     try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
-            raise OSError(errno.EINVAL, "not a regular file")
-        return os.fdopen(fd, "rb")
-    except BaseException:
+        for part in parts[:-1]:
+            step = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = step
+        f = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+    finally:
         os.close(fd)
+    try:
+        st = os.fstat(f)
+        if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
+            raise OSError(errno.EINVAL, "not a regular file with one name")
+        if _INPUTS.get(path) != (st.st_dev, st.st_ino):
+            raise OSError(errno.EINVAL, "it changed after it was checked")
+        return os.fdopen(f, "rb")
+    except BaseException:
+        os.close(f)
         raise
 
 
 def unusable(paths):
     """None when every named input can be read, else (exit status, message) for the
-    first one that cannot: 2 for a symbolic link, 1 for anything else."""
+    first one that cannot: 2 for a path the contract refuses, 1 for a file that cannot
+    be opened."""
     for n, path in enumerate(paths, 1):
-        if path == "-":
-            continue
+        label = "input %d (%s)" % (n, shown(path))
+        problem = _confined(path, label)
+        if problem is not None:
+            return problem
         try:
-            if linked(path):
-                return 2, ("input %d (%s) is a symbolic link, or is reached through one inside the"
-                           " working directory; refusing it" % (n, shown(path)))
             opened(path).close()
         except OSError as e:
-            return 1, "cannot read input %d (%s): %s" % (n, shown(path), shown(e.strerror or e))
+            return 1, "cannot read %s: %s" % (label, shown(e.strerror or e))
     return None
 
 
 def unwritable(path):
     """None when --out path can take a new output file, else (exit status, message): 2
-    for a symbolic link, a path reached through one inside the working directory, or
-    a path that exists (an output never replaces a file, an input corpus least of
-    all), 1 for a path whose directory does not exist."""
+    for a path that is not a new .jsonl, .tsv or .txt name directly in a run directory
+    (an output never replaces a file, an input corpus least of all), 1 for one that
+    cannot be checked."""
+    label = "--out " + shown(path)
+    parts, problem = _parts(path, label)
+    if problem is not None:
+        return problem
+    if len(parts) != 2 or len(parts[1]) > 128 or not _OUT_NAME.fullmatch(parts[1]):
+        return 2, "refused: %s is not a .jsonl, .tsv or .txt file directly in the run directory" % label
+    st, problem = _run_dir(parts[0], label)
+    if problem is not None:
+        return problem
     try:
-        if linked(path):
-            return 2, ("--out %s is a symbolic link, or is reached through one inside the working"
-                       " directory; refusing it" % shown(path))
-        if os.path.lexists(path):
-            return 2, "--out %s already exists, and an output never replaces a file: name a new one" % shown(path)
-        if not os.path.isdir(os.path.dirname(path) or "."):
-            return 1, "cannot write --out %s: its directory does not exist" % shown(path)
+        found = os.lstat(parts[0] + b"/" + parts[1])
+    except FileNotFoundError:
+        found = None
     except OSError as e:
-        return 1, "cannot write --out %s: %s" % (shown(path), shown(e.strerror or e))
+        return 1, "cannot write %s: %s" % (label, shown(e.strerror or e))
+    if found is not None and stat.S_ISLNK(found.st_mode):
+        return 2, "refused: %s is a symbolic link" % label
+    if found is not None:
+        return 2, "refused: %s already exists, and an output never replaces a file: name a new one" % label
+    if not _inside(parts[0]):
+        return 2, "refused: %s resolves outside the working directory" % label
+    _CHECKED[path] = st
     return None
 
 
-def _within(fd, here):
-    """True when the directory open on fd is the working directory (here, its stat) or
-    below it, found by walking up through its parents."""
-    cur = os.dup(fd)
-    try:
-        while True:
-            st = os.fstat(cur)
-            if os.path.samestat(st, here):
-                return True
-            up = os.open("..", os.O_RDONLY | os.O_DIRECTORY, dir_fd=cur)
-            os.close(cur)
-            cur = up
-            if os.path.samestat(os.fstat(cur), st):
-                return False
-    finally:
-        os.close(cur)
-
-
 def pinned(path):
-    """The directory of --out path, opened one name at a time from the working directory
-    (or the root): a name that is a symbolic link is followed only outside the working
-    directory, as linked() allows, so the directory is the one that check passed. The
-    output is made, named and removed through this descriptor, so a name on its way
-    that is later moved or replaced by a link never moves the output elsewhere."""
-    here = os.stat(".")
-    flags = os.O_RDONLY | os.O_DIRECTORY
-    fd = os.open(os.sep if os.path.isabs(path) else ".", flags)
+    """The run directory of --out path, opened from the working directory without
+    following a symbolic link, and the directory unwritable() checked. The output is
+    made, named and removed through this descriptor, so a name on its way that is later
+    moved or replaced by a link never moves the output elsewhere."""
+    raw = os.fsencode(path)
+    name = (raw[2:] if raw.startswith(b"./") else raw).split(b"/")[0]
+    here = os.open(".", os.O_RDONLY | os.O_DIRECTORY)
     try:
-        for part in os.path.dirname(path).split(os.sep):
-            if part in ("", "."):
-                continue
-            try:
-                step = os.open(part, flags | os.O_NOFOLLOW, dir_fd=fd)
-            except OSError as e:
-                if e.errno not in (errno.ELOOP, errno.ENOTDIR):
-                    raise
-                if not stat.S_ISLNK(os.stat(part, dir_fd=fd, follow_symlinks=False).st_mode):
-                    raise
-                if _within(fd, here):
-                    raise OSError(errno.ELOOP, "a symbolic link inside the working directory is on the way to --out")
-                step = os.open(part, flags, dir_fd=fd)
-            os.close(fd)
-            fd = step
-        return fd
-    except BaseException:
+        fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=here)
+    finally:
+        os.close(here)
+    st, want = os.fstat(fd), _CHECKED.get(path)
+    if want is None or (st.st_dev, st.st_ino) != (want.st_dev, want.st_ino):
         os.close(fd)
-        raise
+        raise OSError(errno.EINVAL, "the run directory changed after it was checked")
+    return fd
 
 
 class Output:
@@ -380,15 +552,18 @@ class Output:
     holds a partial output, and never replaces a file that appeared in the meantime.
     That directory is opened once (pinned()), and the temporary file is made, linked
     and removed through it. close() removes a temporary file done() did not link;
-    SIGTERM exits through it, and is held off while the temporary file is made, so its
-    name is always known."""
+    SIGTERM, SIGINT and SIGHUP exit through it, unless the caller ignores them, and are
+    held off while the temporary file is made, so its name is always known."""
 
     def __init__(self, path):
         self.path, self.dir, self.temp, self.fh = path, None, None, sys.stdout.buffer
         if path is None:
             return
-        signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
-        held = signal.pthread_sigmask(signal.SIG_BLOCK, [signal.SIGTERM])
+        stops = [signal.SIGTERM, signal.SIGINT, signal.SIGHUP]
+        held = signal.pthread_sigmask(signal.SIG_BLOCK, stops)
+        for s in stops:
+            if signal.getsignal(s) != signal.SIG_IGN:
+                signal.signal(s, lambda signum, frame: sys.exit(128 + signum))
         try:
             self.dir = pinned(path)
             while self.temp is None:
@@ -435,20 +610,18 @@ class Output:
             self.dir = None
 
 
-def _lone_surrogate(obj):
-    stack = [obj]
-    while stack:
-        v = stack.pop()
-        if isinstance(v, str):
-            if _LONE_SURROGATE.search(v):
-                return True
-        elif isinstance(v, dict):
-            for k, x in v.items():
-                if _LONE_SURROGATE.search(k):
+def _lone_surrogate(text):
+    """True when a string of the line, a key or a value (one a later duplicate key
+    replaces too), holds a \\u escape that leaves a lone surrogate: jq refuses a lone
+    high one wherever it is."""
+    for m in _TOKEN.finditer(text):
+        s = m.group()
+        if s[:1] == "\"" and _SURROGATE_ESCAPE.search(s):
+            try:
+                if _LONE_SURROGATE.search(_DECODER.decode(s)):
                     return True
-                stack.append(x)
-        elif isinstance(v, list):
-            stack.extend(v)
+            except ValueError:
+                return True
     return False
 
 
@@ -570,27 +743,55 @@ def parsed(line):
         tx = _DECODER.decode(text)
     except (ValueError, RecursionError):
         return None
-    if _SURROGATE_ESCAPE.search(text) and _lone_surrogate(tx):
+    if _SURROGATE_ESCAPE.search(text) and _lone_surrogate(text):
         return None
     return tx if shaped(tx) else None
 
 
+# The longest line read as a transaction, in bytes, its LF left out. A longer one is
+# malformed, and is read past to its LF without being kept.
+_LINE = 64 << 20
+
+
+def _lines(fh):
+    """Each line of fh without its LF, or None for a line longer than _LINE bytes."""
+    while True:
+        raw = fh.readline(_LINE + 1)
+        if raw.endswith(b"\n"):
+            yield raw[:-1]
+        elif len(raw) <= _LINE:
+            if raw:
+                yield raw
+            return
+        else:
+            while raw and not raw.endswith(b"\n"):
+                raw = fh.readline(1 << 20)
+            yield None
+
+
 def records(paths, stats):
-    """Yield (line, tx) for each well-formed line of the named inputs (stdin when none
-    is named, or for "-"), once per signature. stats["dupes"] counts the later copies
-    skipped, and stats["bad"] gets [input, count, first line] for each input that had
-    malformed lines."""
+    """Yield (line, tx) for each well-formed line of the named inputs, which unusable()
+    has checked (stdin when none is named; a closed stdin reads as empty), once per
+    signature. stats["dupes"] counts the later copies skipped, and stats["bad"] gets
+    [input, count, first line] for each input that had malformed lines. An input that
+    cannot be opened again raises an OSError whose strerror names it."""
     seen = set()
     for n, path in enumerate(paths or ["-"], 1):
         label = "stdin" if path == "-" else "input %d (%s)" % (n, shown(path))
-        fh = sys.stdin.buffer if path == "-" else opened(path)
+        if path == "-":
+            fh = sys.stdin.buffer if sys.stdin is not None else None
+        else:
+            try:
+                fh = opened(path)
+            except OSError as e:
+                raise OSError(e.errno, "cannot read %s: %s" % (label, shown(e.strerror or e))) from None
         bad = None
         try:
-            for i, raw in enumerate(fh, 1):
-                line = raw.strip()
-                if not line:
+            for i, raw in enumerate(_lines(fh) if fh is not None else (), 1):
+                line = raw.strip() if raw is not None else None
+                if line == b"":
                     continue
-                tx = parsed(line)
+                tx = parsed(line) if line is not None else None
                 if tx is None:
                     if bad is None:
                         bad = [label, 0, i]
@@ -623,48 +824,68 @@ def skipped(stats):
 
 
 def main(argv: list[str]) -> int:
-    usage = "usage: deltas.py lamports|tokens [--out <file>] [<corpus.jsonl> ...]"
-    if not argv or argv[0] not in ("lamports", "tokens"):
-        print(usage, file=sys.stderr)
-        return 2
-    mode, files, out_path = argv[0], argv[1:], None
-    if files[:1] == ["--out"]:
-        if len(files) < 2:
-            print(usage, file=sys.stderr)
-            return 2
-        out_path, files = files[1], files[2:]
-    problem = unusable(files)
+    usage = "deltas.py lamports|tokens [--by account|owner,mint|mint] [--out <file>] [<corpus.jsonl> ...]"
+    problem = installed(__file__)
+    mode, files, out_path, by = (argv[:1] or [""])[0], argv[1:], None, None
+    if problem is None and mode not in ("lamports", "tokens"):
+        problem = refusal("deltas takes lamports or tokens", usage)
+    while problem is None and files[:1] and files[0].startswith("-"):
+        if files[0] == "--out" and out_path is None:
+            if len(files) < 2:
+                problem = refusal("--out needs a file", usage)
+                break
+            out_path, files = files[1], files[2:]
+        elif files[0] == "--by" and by is None:
+            if len(files) < 2:
+                problem = refusal("--by needs a grouping", usage)
+                break
+            by, files = files[1], files[2:]
+            if (mode, by) not in (("lamports", "account"), ("tokens", "owner,mint"), ("tokens", "mint")):
+                problem = refusal("--by takes account for lamports, and owner,mint or mint for tokens", usage)
+        else:
+            problem = refusal("option %s is unknown here or given twice" % shown(files[0]), usage)
+    if problem is None:
+        problem = unusable(files)
     if problem is None and out_path is not None:
         problem = unwritable(out_path)
     if problem:
         print("deltas.py: " + problem[1], file=sys.stderr)
         return problem[0]
     stats = {"dupes": 0, "bad": []}
-    out, keyless, indexless = None, 0, 0
+    out, counts, left = None, {"keyless": 0, "indexless": 0}, 0
     try:
-        out = Output(out_path)
+        try:
+            out = Output(out_path)
+        except OSError as e:
+            print("deltas.py: cannot write --out: " + (e.strerror or shown(e)), file=sys.stderr)
+            return 1
         txs = (tx for _line, tx in records(files, stats))
-        if mode == "lamports":
-            keyless = _lamports(txs, out)
+        rows = _lamport_rows(txs, counts) if mode == "lamports" else _token_rows(txs, counts)
+        if by is None:
+            _write_rows(rows, mode, out)
         else:
-            keyless, indexless = _tokens(txs, out)
+            left = _write_sums(rows, by, out)
         out.done()
     except OSError as e:
-        print("deltas.py: " + shown(e), file=sys.stderr)
+        print("deltas.py: " + (e.strerror or shown(e)), file=sys.stderr)
         return 1
     finally:
         if out is not None:
             out.close()
     for note in skipped(stats):
         print("deltas.py: skipped " + note, file=sys.stderr)
-    if keyless:
+    if counts["keyless"]:
         print("deltas.py: %d row(s) name a balance index that has no account key, as #<index>: the "
               "transaction lists fewer keys than balances (an encoding json export without "
-              "meta.loadedAddresses, say)" % keyless, file=sys.stderr)
-    if indexless:
+              "meta.loadedAddresses, say)" % counts["keyless"], file=sys.stderr)
+    if counts["indexless"]:
         print("deltas.py: %d row(s) name a token balance that has no accountIndex, as #?: nothing "
               "pairs it with its other side, so a pre balance is a row of its own with a negative "
-              "delta, and a post balance one with a positive delta" % indexless, file=sys.stderr)
+              "delta, and a post balance one with a positive delta" % counts["indexless"], file=sys.stderr)
+    if left:
+        print("deltas.py: %d row(s) name %s, so no sum holds them; run without --by to see them"
+              % (left, "no account key" if mode == "lamports" else "neither an owner nor an account key"),
+              file=sys.stderr)
     return 0
 
 
