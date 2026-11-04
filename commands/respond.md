@@ -265,7 +265,8 @@ Code asks about a shell read outside the working directory.
    mode: ask Q46 once. A non-interactive run cannot ask, so an earlier answer
    can only make it stricter: it uses the stricter of the recorded mode
    (`incident_<n>/exec-mode`, or the mode in its ledger header without it) and
-   `native`, writes `native` only when no mode is recorded, and the report says
+   `native`, writes that mode to `incident_<n>/exec-mode` when the file is
+   missing, `native` when no mode is recorded at all, and the report says
    which mode ran and that Q46 was not asked again. Pass the mode to the agent
    for the ledger header, and write the answer as one word to
    `incident_<n>/exec-mode` with the Write tool, where
