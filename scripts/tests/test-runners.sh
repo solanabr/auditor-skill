@@ -476,6 +476,8 @@ check "... npm ci gets the proxy, its own empty config files and the git on PATH
   sh -c "awk '/^== npm ci/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'env: HTTPS_PROXY=$PROXY' '$T/blk' && grep -qxF 'env: npm_config_userconfig=$S/npm/userconfig' '$T/blk' && grep -qxF 'env: npm_config_globalconfig=$S/npm/globalconfig' '$T/blk' && grep -qxF 'env: npm_config_git=$T/sys/git' '$T/blk' && grep -qxF 'env: npm_config_ignore_scripts=true' '$T/blk' && grep -qxF 'userconfig-bytes: 0' '$T/blk'"
 check "... and NODE_OPTIONS and npm's node-options preload target.sh's module into npm" \
   sh -c "awk '/^== npm ci/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'env: NODE_OPTIONS=--require=\"$S/npm/preload.js\"' '$T/blk' && grep -qxF 'env: npm_config_node_options=--require=\"$S/npm/preload.js\"' '$T/blk'"
+check "... and COREPACK_ENABLE_PROJECT_SPEC=0, so a Corepack npm shim takes no npm release from the copy's packageManager field" \
+  in_blocks '^== npm ci' '^env: COREPACK_ENABLE_PROJECT_SPEC=0$'
 check "... anchor test runs without the proxy" none_in_blocks '^== anchor test' '^env: [A-Za-z_]*[Pp][Rr][Oo][Xx][Yy]='
 check "... and without that preload" none_in_blocks '^== anchor (build|test)' '^env: (NODE_OPTIONS|npm_config_[a-z_]*)='
 run "$TARGET" "$WT" -- anchor-test --run audit_1 --src . --dir app
@@ -1329,6 +1331,8 @@ check "npm-audit: npm audit in the copy, exit 0" sh -c "[ '$RC' = 0 ] && grep -q
 check "... with its own .npmrc, an empty user config, and only the two files copied" \
   sh -c "awk '/^== npm audit/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'npmrc: registry=https://registry.npmjs.org/|ignore-scripts=true|fund=false|update-notifier=false|' '$T/blk' && grep -qxF 'userconfig-bytes: 0' '$T/blk' && grep -qxF 'files: .npmrc package-lock.json package.json ' '$T/blk' && grep -qxF 'env: npm_config_registry=https://registry.npmjs.org/' '$T/blk'"
 check "... the target's .npmrc token reaches nothing, nor does any canary" sh -c "grep -q '^== npm audit' '$T/calls' && ! grep -q 'canary' '$T/calls'"
+check "... and COREPACK_ENABLE_PROJECT_SPEC=0, so a Corepack npm shim takes no npm release from the copied package.json" \
+  in_blocks '^== npm audit' '^env: COREPACK_ENABLE_PROJECT_SPEC=0$'
 check "... and one disclosure row" sh -c "[ \$(( \$(wc -l < '$DT') - 1 - $r0 )) = 1 ] && sed -n '\$p' '$DT' | grep -q '	npmjs.org	every package name and version in this lockfile (npm audit.s bulk advisory request): package-lock.json	1\$'"
 settings FAKE_NPM_AUDIT_OUT="$T/npm-vuln.txt" FAKE_NPM_AUDIT_RC=1
 run "$DEPS" "$WT" -- npm-audit --run audit_1 --manifest package.json --manifest package-lock.json

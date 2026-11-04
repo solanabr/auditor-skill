@@ -61,7 +61,9 @@
 # [[patch.unused]] entries do not stop the run: cargo resolves the rebuilt workspace from crates.io and
 # fetches none of them. The first Cargo.toml is the one cargo runs on. npm-audit runs npm with its own .npmrc in the
 # copy (registry https://registry.npmjs.org/, ignore-scripts, no fund or update notices), empty user and
-# global config files, and its cache and logs in the scratch directory: no auth reaches it.
+# global config files, and its cache and logs in the scratch directory: no auth reaches it. Where npm is
+# Corepack's shim, COREPACK_ENABLE_PROJECT_SPEC=0 keeps the copied package.json's packageManager field from
+# choosing which npm release runs.
 #
 # Names. npm: [@<scope>/]<name>, of letters, digits and -._~, not starting with . or _, at most 214
 # bytes; crates: a letter, then letters, digits, - and _, at most 64; PyPI: letters, digits and -._,
@@ -1099,7 +1101,7 @@ case "$ACTION" in
     disclose npmjs.org "every package name and version in this lockfile (npm audit's bulk advisory request)" "$LOCK"
     step "$W" ${NET[@]+"${NET[@]}"} npm_config_userconfig="$S/npm/userconfig" npm_config_globalconfig="$S/npm/globalconfig" \
       npm_config_registry=https://registry.npmjs.org/ npm_config_cache="$S/npm/cache" npm_config_logs_dir="$S/npm/logs" \
-      npm_config_update_notifier=false npm_config_fund=false npm_config_ignore_scripts=true npm audit
+      npm_config_update_notifier=false npm_config_fund=false npm_config_ignore_scripts=true COREPACK_ENABLE_PROJECT_SPEC=0 npm audit
     why=$(stopped)
     [ -z "$why" ] || done_with 3 "npm audit stopped: $why"
     [ "$STEP_END" != "exit 0" ] || done_with 0 "no vulnerability found (exit 0)"

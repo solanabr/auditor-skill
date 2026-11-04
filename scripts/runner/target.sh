@@ -65,7 +65,8 @@
 # preloads lets npm start no program but git and node, since npm 10 runs the prepare script of a git or
 # directory dependency despite --ignore-scripts, and ends at once the npm install npm runs in a git
 # dependency's checkout, which would read that checkout's .npmrc (with scripts ignored it has nothing to
-# prepare, and a git dependency's bundleDependencies stay out). Only these get the proxy variables.
+# prepare, and a git dependency's bundleDependencies stay out). A Corepack npm shim takes no npm release from
+# the copy's packageManager field. Only these get the proxy variables.
 # Every build and test after them runs offline (CARGO_NET_OFFLINE=true), without the proxy variables, in
 # the throwaway HOME, whose .cache/solana links to the real one. Anchor.toml's [toolchain] can still make
 # anchor fetch another Solana or Anchor release; that would land in the throwaway HOME, and offline it
@@ -588,7 +589,9 @@ OFF=(CARGO_NET_OFFLINE=true)
 # it reads a setting. And npm 10 runs the prepare script of a git dependency, or of a package the lockfile
 # resolves to a directory, despite --ignore-scripts, through a shell it may find in that package's own
 # node_modules/.bin: the module lets child_process start only git and node, so no script runs. npm's
-# script-shell is false as well.
+# script-shell is false as well. Where npm is Corepack's shim
+# (corepack enable npm), COREPACK_ENABLE_PROJECT_SPEC=0 keeps the packageManager field of the copy's package.json
+# from choosing which npm release Corepack fetches and runs.
 FALSE=$(type -P false) || FALSE=/usr/bin/false
 [ -x "$FALSE" ] || FALSE=/bin/false
 mkdir "$S/npm" && : > "$S/npm/userconfig" && : > "$S/npm/globalconfig" &&
@@ -605,7 +608,7 @@ PRELOAD="--require=\"$S/npm/preload.js\""
 NPM=(npm_config_userconfig="$S/npm/userconfig" npm_config_globalconfig="$S/npm/globalconfig"
   npm_config_cache="$S/npm/cache" npm_config_logs_dir="$S/npm/logs" npm_config_update_notifier=false
   npm_config_fund=false npm_config_audit=false npm_config_ignore_scripts=true npm_config_git="$GIT"
-  "NODE_OPTIONS=$PRELOAD" "npm_config_node_options=$PRELOAD" "npm_config_script_shell=$FALSE")
+  "NODE_OPTIONS=$PRELOAD" "npm_config_node_options=$PRELOAD" "npm_config_script_shell=$FALSE" COREPACK_ENABLE_PROJECT_SPEC=0)
 ISO_ENV+=(RUSTUP_AUTO_INSTALL=0 CARGO_TERM_COLOR=never)
 case "$ACTION" in
   npm-ci) ;;
