@@ -763,3 +763,44 @@ fn scan_fixture_lists_a_call_through_a_path_in_parentheses() {
         )]
     );
 }
+
+/// Cross-program call functions taken as values: called by another name, or
+/// passed on.
+const VALUES: &str = r#"
+pub fn relay(ix: &Instruction, infos: &[AccountInfo], seeds: &[&[&[u8]]]) -> ProgramResult {
+    let cpi = invoke_signed;
+    cpi(ix, infos, seeds)?;
+    let plain: fn(&Instruction, &[AccountInfo]) -> ProgramResult = solana_program::program::invoke;
+    call_with(pinocchio::cpi::invoke_with_bounds::<8>, ix)?;
+    invoke(ix, infos)?;
+    Ok(())
+}
+"#;
+
+#[test]
+fn scan_fixture_lists_a_function_taken_as_a_value_where_it_is_named() {
+    let report = scan::scan_source("values.rs", VALUES).expect("the fixture parses");
+    let at = |text: &str| line_in(VALUES, text);
+    let calls: Vec<(&str, usize, &str)> = report
+        .cpi_sites
+        .iter()
+        .map(|c| (c.kind.as_str(), c.line, c.snippet.as_str()))
+        .collect();
+    assert_eq!(
+        calls,
+        [
+            ("ref:invoke_signed", at("= invoke_signed;"), "invoke_signed"),
+            (
+                "ref:invoke",
+                at("program::invoke;"),
+                "solana_program :: program :: invoke"
+            ),
+            (
+                "ref:invoke_with_bounds",
+                at("call_with("),
+                "pinocchio :: cpi :: invoke_with_bounds ::< 8 >"
+            ),
+            ("invoke", at("invoke(ix, infos)"), "invoke (ix , infos)"),
+        ]
+    );
+}

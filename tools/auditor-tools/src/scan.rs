@@ -12,7 +12,7 @@
 //! characters, each token's text kept only as far as a snippet can show it, so a
 //! snippet costs no more for a long literal or a long chain than for a short one.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
@@ -52,8 +52,10 @@ const SNIPPET_MAX: usize = 80;
 /// `method:<name>`. A name written as a raw identifier (`r#invoke`) is that name
 /// (`ident_name`), and a path in parentheses (`(invoke_signed)(…)`) is that path
 /// (`callee`). A function whose name only holds the word (`invoked`) is listed
-/// too; a helper of another name is not, nor a call through a function value
-/// (`let cpi = invoke_signed; cpi(…)`), which is called by another name.
+/// too; a helper of another name is not. A function taken as a value is listed
+/// where it is named, kind `ref:<name>` (`let cpi = invoke_signed;`), not where it
+/// is called by another name (`cpi(…)`); so is any other path named so that is not
+/// called there, a local such as `invoke_accounts` too.
 fn is_cpi_name(name: &str) -> bool {
     name.contains("invoke")
 }
@@ -1606,6 +1608,9 @@ struct FileVisitor<'t> {
     /// a chain's are found once for all its links.
     firsts: HashMap<usize, Span>,
     lasts: HashMap<usize, Span>,
+    /// The path each call calls, by its address: the call's, which
+    /// `visit_expr_call` lists, not a value `visit_expr_path` lists.
+    callees: HashSet<usize>,
     /// The items listed so far, the bytes the answer would take with them, and,
     /// once more are left out, why (`room`).
     listed: usize,
@@ -1641,6 +1646,7 @@ impl<'t> FileVisitor<'t> {
             tokens,
             firsts: HashMap::new(),
             lasts: HashMap::new(),
+            callees: HashSet::new(),
             listed: 0,
             size: around,
             full: None,
@@ -2022,6 +2028,8 @@ impl<'ast> Visit<'ast> for FileVisitor<'_> {
 
     fn visit_expr_call(&mut self, node: &'ast syn::ExprCall) {
         if let syn::Expr::Path(path_expr) = callee(&node.func) {
+            self.callees
+                .insert(path_expr as *const syn::ExprPath as usize);
             if let Some(seg) = path_expr.path.segments.last() {
                 let name = ident_name(&seg.ident);
                 if is_cpi_name(&name) {
@@ -2042,6 +2050,35 @@ impl<'ast> Visit<'ast> for FileVisitor<'_> {
             }
         }
         syn::visit::visit_expr_call(self, node);
+    }
+
+    fn visit_expr_path(&mut self, node: &'ast syn::ExprPath) {
+        // A function taken as a value, not called where it is named (`let cpi =
+        // invoke_signed;`, or passed on), whose name holds `invoke`: kind
+        // `ref:<name>`, the path as its snippet. A call by such a value under
+        // another name (`cpi(…)`) is not listed.
+        let called = self
+            .callees
+            .contains(&(node as *const syn::ExprPath as usize));
+        if let Some(seg) = node.path.segments.last().filter(|_| !called) {
+            let name = ident_name(&seg.ident);
+            if is_cpi_name(&name) {
+                let first = attrs_first(&node.attrs)
+                    .unwrap_or_else(|| qpath_first(&node.qself, &node.path));
+                let last = match path_tail(&node.path) {
+                    Tail::At(at) => at,
+                    Tail::Ty(ty) => type_last(ty),
+                };
+                let site = CpiSite {
+                    file: self.file.clone(),
+                    line: seg.ident.span().start().line,
+                    kind: format!("ref:{name}"),
+                    snippet: self.snippet(node, first, last),
+                };
+                self.list(1, site, |v| &mut v.cpi_sites);
+            }
+        }
+        syn::visit::visit_expr_path(self, node);
     }
 
     fn visit_path(&mut self, node: &'ast syn::Path) {
