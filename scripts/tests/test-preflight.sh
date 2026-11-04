@@ -407,6 +407,26 @@ if [ -d "$P/RT/x.git" ]; then
 else
   check "... a .git file naming it in capitals names nothing where names do not fold case, and no parent above it is read" just_ok
 fi
+# Spellings only identity decides: NFD for a directory the disk names in NFC (the same directory where the
+# filesystem normalizes Unicode, none where it does not), and on macOS the path through /System/Volumes/Data.
+NFC=$(printf 'r\303\274') NFD=$(printf 'ru\314\210')
+build "$P" "d:$NFC/x/src" "d:$NFC/.claude/agents"
+git init -q --separate-git-dir="$P/$NFC/x.git" "$P/$NFC/x" && printf 'gitdir: ../../%s/x.git\n' "$NFD" > "$P/$NFC/x/.git"
+run "$P/$NFC/x/src"
+if [ -d "$P/$NFD/x.git" ]; then
+  check "... and so when its .git file spells the directory holding it in NFD for the NFC name on disk" above ../../.claude/agents
+else
+  check "... a .git file naming it in NFD names nothing where names are not normalized, and no parent above it is read" just_ok
+fi
+if [ "/System/Volumes/Data$P" -ef "$P" ]; then
+  build "$P" d:rv/x/src d:rv/.claude/agents
+  git init -q --separate-git-dir="$P/rv/x.git" "$P/rv/x" &&
+    printf 'gitdir: /System/Volumes/Data%s/rv/x.git\n' "$P" > "$P/rv/x/.git"
+  run "$P/rv/x/src"
+  check "... and so when it spells that directory through /System/Volumes/Data" above ../../.claude/agents
+else
+  skp "no /System/Volumes/Data spelling of the test directory here"
+fi
 # Config in a sibling of the working directory is no parent's, but a link in the tree can lead to it.
 build "$P" d:r11/sub/src d:r11/sibling/.claude/skills l:r11/sub/programs=../sibling
 git init -q "$P/r11"
