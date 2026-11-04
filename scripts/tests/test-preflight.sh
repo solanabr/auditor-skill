@@ -5,7 +5,7 @@
 # repository's own config, a .git git passes over or cannot use, and a git directory kept elsewhere
 # included) and the user's own configuration directory, linked worktrees and submodule checkouts, names
 # the filesystem folds (link targets included), a large tree, the entry count where SIGPIPE is ignored,
-# trees find cannot read,
+# what the link check costs (path lookups counted, not timed), trees find cannot read,
 # a missing jq, control characters in a path, and the installation or PATH entries inside the working
 # directory. Every run goes under each bash on the machine (/bin/bash and the bash running this suite,
 # when they differ) and must print the same under each. Needs git and jq; no network. Usage (from the
@@ -631,6 +631,39 @@ $OK_LINE"
 else
   check "a parent's names so spelled are other names here, and pass" just_ok
 fi
+
+# =================================================================================================
+# What the checks cost, counted rather than timed: preflight, unchanged, is sourced by a bash whose DEBUG
+# trap counts the path lookups ([ -e ... ] and [ ... -ef ... ]) made inside the functions named.
+# =================================================================================================
+lookups() { # lookups <dir> <function>...: COST is that count for a run from <dir>; output in $T/out, $T/err and $RC
+  local dir=$1
+  shift
+  rm -f "$T/cost"
+  (cd "$dir" && COST_FN=" $* " COST_OUT=$T/cost "${SHELLS[0]}" -c '
+    COST=0
+    trap '\''printf "%s\n" "$COST" > "$COST_OUT"'\'' EXIT
+    set -T
+    trap '\''case "$COST_FN" in *" ${FUNCNAME[0]-} "*) case $BASH_COMMAND in *" -e "*|*" -ef "*) COST=$((COST + 1)) ;; esac ;; esac'\'' DEBUG
+    . "$0"' "$PF") >"$T/out" 2>"$T/err" </dev/null
+  RC=$?
+  COST=$(cat "$T/cost" 2>/dev/null)
+}
+# The link check: a target spelled below the working directory is placed by its spelling, and only a name
+# that could open as .git is looked up, so a deep target costs no more than a shallow one.
+X=$(newdir)
+p=deep i=0
+while [ "$i" -lt 60 ]; do p=$p/d; i=$((i + 1)); done
+mkdir -p "$X/near/$p" "$X/far/$p" "$X/gitty/pkg/git-tools/x" && ln -s deep/d "$X/near/l" && ln -s "$p" "$X/far/l" &&
+  ln -s pkg/git-tools/x "$X/gitty/l"
+lookups "$X/near" below in_git
+near=$COST
+check "the probe runs preflight as it runs alone" clean
+lookups "$X/far" below in_git
+check "a link to a directory 61 levels down costs the link check no more lookups than one 2 levels down ($near, then $COST)" \
+  test "$COST" = "$near"
+lookups "$X/gitty" below in_git
+check "... while a directory whose name holds git is looked up ($COST)" test "${COST:-0}" -ge 1
 
 # =================================================================================================
 # Where it will not run.

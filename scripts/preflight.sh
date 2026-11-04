@@ -103,11 +103,16 @@ uses() {
 }
 
 # below <physical path>: sets BELOW to the part of <path> below the working directory ('' for the working
-# directory itself); status 1 when <path> lies outside it. Decided by identity (device and inode) up the
-# path's ancestors, as confine_inside decides, not by spelling: where names fold, a link can spell the
-# working directory's path in other letters and still lead inside it.
+# directory itself); status 1 when <path> lies outside it. A path that starts with the working directory's
+# own spelling lies in it. Any other is decided by identity (device and inode) up its ancestors, as
+# confine_inside decides: where names fold, a link can spell the working directory's path in other letters
+# and still lead inside it.
 below() {
   local p=$1 rest=''
+  case "$p" in
+    "$WT") BELOW=''; return 0 ;;
+    "${WT%/}"/*) BELOW=${p#"${WT%/}"/}; return 0 ;;
+  esac
   while :; do
     if [ "$p" -ef "$WT" ]; then BELOW=$rest; return 0; fi
     case "$p" in /|'') return 1 ;; esac
@@ -118,13 +123,16 @@ below() {
 }
 
 # in_git <path below the working directory, as below sets it>: status 0 when one of its directories is
-# its parent's .git as the filesystem opens names (where they fold, .GIT is).
+# its parent's .git as the filesystem opens names (where they fold, .GIT is). Only a name holding git in
+# any letter case, or a byte outside printable ASCII, can open as .git, so only such a name is looked up.
 in_git() {
   local q=${WT%/} rest=${1:+$1/} c
   while [ -n "$rest" ]; do
     c=${rest%%/*}
     rest=${rest#*/}
-    [ -e "$q/.git" ] && [ "$q/$c" -ef "$q/.git" ] && return 0
+    case "$c" in
+      *[gG][iI][tT]*|*[![:print:]]*) [ -e "$q/.git" ] && [ "$q/$c" -ef "$q/.git" ] && return 0 ;;
+    esac
     q=$q/$c
   done
   return 1
@@ -388,12 +396,13 @@ done < <(matches .)
 LINK='' st=''
 while IFS= read -r -d '' p; do
   case "$p" in status=*) st=${p#status=}; continue ;; esac
+  # Only a link that sorts before the one already found can change the refusal.
+  [ -z "$LINK" ] || [[ "${p#./}" < "$LINK" ]] || continue
   [ -d "$p" ] || continue
   if confine_phys "$p" && below "$CONFINE_PHYS"; then
     in_git "$BELOW" || continue
   fi
-  p=${p#./}
-  if [ -z "$LINK" ] || [[ "$p" < "$LINK" ]]; then LINK=$p; fi
+  LINK=${p#./}
 done < <(find . \( -name .git -prune \) -o -type l -print0 2>/dev/null
          printf 'status=%s\0' "$?")
 [ "$st" = 0 ] || refuse "find cannot read the whole working tree, so it cannot be checked for Claude Code project config"
