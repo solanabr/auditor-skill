@@ -56,6 +56,15 @@
 # list: the reading of what the builds compiled (HOW AN ARM IS DECIDED) works from
 # that list.
 #
+# What the vulnerable arm's test leaves behind can still reach the fixed arm's test,
+# though no build, since every build is done by then: a process it leaves running
+# can still act while the fixed test runs, and on Linux a shared library it writes
+# into the test binaries' deps directory or the one above it (libgcc_s.so.1, say)
+# loads into the fixed arm's test binary in place of the system's copy, since the
+# library path run_tests sets as cargo test does (LD_LIBRARY_PATH) lists those
+# directories first, and the binary's digest covers the binary alone. macOS reads
+# DYLD_FALLBACK_LIBRARY_PATH only for a library missing from its install path.
+#
 # Toolchain: cargo-build-sbf's default bundle is platform-tools v1.51 / cargo 1.84,
 # which cannot parse the edition2024 manifests in the mollusk-svm dep tree. We pin
 # --tools-version v1.54 (cargo >= 1.85) to build the graph with no dependency edits.
