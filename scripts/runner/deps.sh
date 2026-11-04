@@ -491,7 +491,7 @@ def spec_name(spec):
         spec = spec.rsplit("#", 1)[1]
     elif "/" in spec:
         return None
-    return re.split(r"[:@]", spec, 1)[0]
+    return re.split(r"[:@]", spec, maxsplit=1)[0]
 
 
 def backstop(crate_spec, top, manifests):
