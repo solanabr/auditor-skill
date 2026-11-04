@@ -1428,8 +1428,9 @@ buf = io.BytesIO()
 with tarfile.open(fileobj=buf, mode="w", format=tarfile.USTAR_FORMAT) as t:
     for i in range(52001):
         t.addfile(tarfile.TarInfo("bomb-1.0.0/f%d" % i))
+bombraw = buf.getvalue()[:512 * 52001]
 c = zlib.compressobj(9, zlib.DEFLATED, 31)
-bomb = c.compress(buf.getvalue()[:512 * 52001]) + c.flush(zlib.Z_SYNC_FLUSH) + b"\xff" * 64
+bomb = c.compress(bombraw) + c.flush(zlib.Z_SYNC_FLUSH) + b"\xff" * 64
 info = tarfile.TarInfo("bigdecl-1.0.0/x")
 info.size = 600 * 1024 * 1024
 c = zlib.compressobj(9, zlib.DEFLATED, 31)
@@ -1510,7 +1511,20 @@ crates["xz"] = small("xz-1.0.0/src/lib.rs", "w:xz")
 crates["zst"] = b"\x28\xb5\x2f\xfd" + b"\0" * 64
 crates["alone"] = lzma.compress(small("alone-1.0.0/src/lib.rs", "w"), format=lzma.FORMAT_ALONE)
 crates["plain"] = small("plain-1.0.0/src/lib.rs", "w")
-# A member after 8 empty pax headers in a row, and one after 9.
+# The 52001 headers of bomb compressed with xz, then bytes no xz stream holds (the read stops at entry 50001 here
+# too); a stream whose block header gives its decompressor a 1 GiB window, more than deps.sh lets it take; two
+# streams one after the other, zero padding between them, which unpack; and a member after 8 empty pax headers
+# in a row, and one after 9.
+crates["xzbomb"] = lzma.compress(bombraw) + b"\xff" * 64
+data = bytearray(lzma.compress(small("xzbig-1.0.0/src/lib.rs", "w"), format=lzma.FORMAT_XZ,
+                               filters=[{"id": lzma.FILTER_LZMA2, "dict_size": 1 << 20}]))
+hs = (data[12] + 1) * 4
+assert data[14:16] == b"\x21\x01"
+data[16] = 36
+data[12 + hs - 4:12 + hs] = struct.pack("<I", zlib.crc32(bytes(data[12:12 + hs - 4])))
+crates["xzbig"] = bytes(data)
+raw = small("xztwo-1.0.0/src/lib.rs", "w")
+crates["xztwo"] = lzma.compress(raw[:512]) + b"\0" * 8 + lzma.compress(raw[512:])
 def chained(name, k):
     info = tarfile.TarInfo("././@PaxHeader")
     info.type = tarfile.XHDTYPE
@@ -1534,13 +1548,14 @@ bigcd_url = "https://files.pythonhosted.org/packages/ee/ff/bigcd-1.0-py3-none-an
 put(bigcd_url, bigcd)
 put("https://pypi.org/pypi/bigcd/1.0/json", json.dumps({"urls": [{"packagetype": "bdist_wheel", "filename": "bigcd-1.0-py3-none-any.whl",
     "url": bigcd_url, "digests": {"sha256": hashlib.sha256(bigcd).hexdigest()}}]}))
-# A wheel whose one entry is compressed with bzip2, and an sdist compressed with bzip2, which unpacks; and a
-# wheel of 50002 entries whose last central directory record is damaged, which zipfile never reaches: it stops
-# at record 50001.
+# A wheel whose one entry is compressed with bzip2; an sdist compressed with bzip2 and one with xz, as PyPI took
+# them before 2017, which unpack; and a wheel of 50002 entries whose last central directory record is damaged,
+# which zipfile never reaches: it stops at record 50001.
 buf = io.BytesIO()
 with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_BZIP2) as z:
     z.writestr("bzwhl/x", b"\0" * (1 << 20))
-other = {"bzwhl-1.0-py3-none-any.whl": buf.getvalue(), "bzsd-1.0.tar.bz2": small("bzsd-1.0/bzsd.py", "w:bz2")}
+other = {"bzwhl-1.0-py3-none-any.whl": buf.getvalue(), "bzsd-1.0.tar.bz2": small("bzsd-1.0/bzsd.py", "w:bz2"),
+         "xzsd-1.0.tar.xz": small("xzsd-1.0/xzsd.py", "w:xz")}
 buf = io.BytesIO()
 with zipfile.ZipFile(buf, "w") as z:
     for i in range(50002):
@@ -1553,7 +1568,7 @@ other["manybad-1.0-py3-none-any.whl"] = bytes(data)
 for name, data in other.items():
     url = "https://files.pythonhosted.org/packages/11/22/" + name
     put(url, data)
-    put("https://pypi.org/pypi/%s/1.0/json" % name.split("-")[0], json.dumps({"urls": [{"packagetype": "sdist" if name.endswith(".bz2") else "bdist_wheel",
+    put("https://pypi.org/pypi/%s/1.0/json" % name.split("-")[0], json.dumps({"urls": [{"packagetype": "sdist" if ".tar." in name else "bdist_wheel",
         "filename": name, "url": url, "digests": {"sha256": hashlib.sha256(data).hexdigest()}}]}))
 PY
 UA='auditor-skill deps.sh (https://github.com/solanabr/auditor-skill)'
@@ -1679,15 +1694,27 @@ check "... and 9 in a row are refused: exit 3, nothing unpacked" \
 run "$DEPS" "$WT" -- fetch-artifact --run audit_1 pypi manybad 1.0
 check "a wheel of more than 50000 entries is refused at central directory record 50001, before zipfile reads the damaged one after it: exit 3" \
   refused manybad 'the artifact holds more than 50000 entries'
-# Only decompressors whose memory has a fixed bound run: an xz or zstd stream chooses the window its decompressor
-# keeps, and zipfile hands bzip2 a whole read with no bound on what comes out. A stream that no magic names, as
-# one in the legacy lzma format (whose header chooses the window too), is read as a plain tar.
+# Only decompressors whose memory has a fixed bound run: an xz stream chooses the window its decompressor keeps,
+# so deps.sh holds that decompressor to 128 MiB (every xz preset needs at most 65 MiB); a zstd stream is not read,
+# and zipfile hands bzip2 a whole read with no bound on what comes out. A stream that no magic names, as one in
+# the legacy lzma format (whose header chooses the window too), is read as a plain tar.
 run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates xz 1.0.0
-check "a .crate compressed with xz is refused before it is decompressed: exit 3, nothing unpacked" \
-  refused xz-1.0.0 'the artifact is compressed with xz or zstd, which deps.sh does not unpack (a tar is read plain, or through gzip or bzip2)'
+n=$(sed -n 's/.*fetch-artifact-\([0-9]*\)[.]txt$/\1/p' "$T/out")
+check "a .crate compressed with xz is unpacked, its decompressor held to 128 MiB" \
+  sh -c "[ '$RC' = 0 ] && [ \"\$(cat '$WT/audit_1/deps/fetch-artifact-$n/files/xz-1.0.0/src/lib.rs')\" = 'pub fn f() {}' ]"
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates xztwo 1.0.0
+n=$(sed -n 's/.*fetch-artifact-\([0-9]*\)[.]txt$/\1/p' "$T/out")
+check "... and so is one in two xz streams, zero padding between them" \
+  sh -c "[ '$RC' = 0 ] && [ \"\$(cat '$WT/audit_1/deps/fetch-artifact-$n/files/xztwo-1.0.0/src/lib.rs')\" = 'pub fn f() {}' ]"
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates xzbig 1.0.0
+check "an xz stream whose decompressor would keep a 1 GiB window is refused before it is decompressed: exit 3, nothing unpacked" \
+  refused xzbig-1.0.0 'the xz stream of the artifact needs more than 128 MiB to decompress'
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates xzbomb 1.0.0
+check "the caps hold while an xz stream is read: more than 50000 entries are refused at entry 50001, before the bytes after it: exit 3" \
+  refused bomb-1.0.0 'the artifact holds more than 50000 entries'
 run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates zst 1.0.0
-check "... and so is one that starts as a zstd stream" \
-  refused zst-1.0.0 'the artifact is compressed with xz or zstd, which deps.sh does not unpack (a tar is read plain, or through gzip or bzip2)'
+check "a .crate that starts as a zstd stream is refused: exit 3, nothing unpacked" \
+  refused zst-1.0.0 'the artifact is compressed with zstd, which deps.sh does not unpack (a tar is read plain, or through gzip, bzip2 or xz)'
 run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates alone 1.0.0
 check "a .crate in the legacy lzma format, which no magic names, is read as a plain tar and never decompressed: exit 3, nothing unpacked" \
   refused alone-1.0.0 'cannot read the answer or the artifact: truncated header'
@@ -1702,6 +1729,10 @@ run "$DEPS" "$WT" -- fetch-artifact --run audit_1 pypi bzsd 1.0
 n=$(sed -n 's/.*fetch-artifact-\([0-9]*\)[.]txt$/\1/p' "$T/out")
 check "an sdist compressed with bzip2 is unpacked" \
   sh -c "[ '$RC' = 0 ] && [ \"\$(cat '$WT/audit_1/deps/fetch-artifact-$n/files/bzsd-1.0/bzsd.py')\" = 'pub fn f() {}' ]"
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 pypi xzsd 1.0
+n=$(sed -n 's/.*fetch-artifact-\([0-9]*\)[.]txt$/\1/p' "$T/out")
+check "... and so is one compressed with xz, as PyPI took them before 2017" \
+  sh -c "[ '$RC' = 0 ] && [ \"\$(cat '$WT/audit_1/deps/fetch-artifact-$n/files/xzsd-1.0/xzsd.py')\" = 'pub fn f() {}' ]"
 run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates nope 1.0.0
 check "fetch-artifact of a version the registry does not have: exit 1" sh -c "[ '$RC' = 1 ] && grep -q '^>> fetch-artifact: crates.io has no nope 1.0.0 (HTTP 404)' '$T/out'"
 cp "$DT" "$T/dt.saved"

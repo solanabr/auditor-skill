@@ -35,9 +35,9 @@
 #                   left out and listed, as an SC-060 hit. At most 50000 entries and 512 MiB unpacked; a
 #                   tar with more than 4 MiB of pax and GNU long-name headers, more than 8 of them in a
 #                   row, more than 128 bytes of global pax headers, a sparse file or a size below zero,
-#                   or compressed with anything but gzip or bzip2 (xz, zstd), and a zip whose central
-#                   directory takes more than 16 MiB or with an entry compressed with anything but
-#                   deflate, are refused.
+#                   compressed with anything but gzip, bzip2 or xz (zstd), or in an xz stream whose
+#                   decompressor would need more than 128 MiB, and a zip whose central directory takes
+#                   more than 16 MiB or with an entry compressed with anything but deflate, are refused.
 #
 # Manifests. Each --manifest is a confined regular file of at most 50 MB under the working directory, named
 # as its action takes it: Cargo.lock, Cargo.toml, package.json, package-lock.json or npm-shrinkwrap.json,
@@ -754,15 +754,21 @@ cargo_py() { (cd / && exec python3 -I -c "$CARGO_PY" "$@"); }
 # <file name> <algo> <digest> <dir>": verify, then unpack the regular files and directories into <dir>, as
 # a zip for a .whl or .zip name and as a tar otherwise (exit 3 with the reason); prints what it did and
 # what it left out.
-REGISTRY_PY='import base64, hashlib, json, os, re, stat, sys, tarfile, zipfile
+REGISTRY_PY='import base64, hashlib, io, json, os, re, stat, sys, tarfile, zipfile
+
+try:
+    import lzma
+except ImportError:
+    lzma = None
 
 FILES, BYTES = 50000, 512 * 1024 * 1024
 # What a tar may hold in pax and GNU long-name headers in all, and in global pax headers; what a zip
 # central directory may take.
 EXTENDED, GLOBAL, CENTRAL = 4 * 1024 * 1024, 128, 16 * 1024 * 1024
 # How many pax, GNU long-name and global headers may come in a row, before the member they describe (an
-# archive needs two or three).
-CHAIN = 8
+# archive needs two or three), and what the decompressor of an xz stream may take (every xz preset needs at
+# most 65 MiB).
+CHAIN, XZ_MEMORY = 8, 128 * 1024 * 1024
 NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 
 
@@ -910,6 +916,76 @@ def bound_memory():
         pass
 
 
+class Unxz(io.RawIOBase):
+    # An xz stream, read for tarfile as gzip.GzipFile reads a gzip one: forward through the stream, and from its
+    # start again for a seek back. Its decompressor may take XZ_MEMORY, and each call hands back at most what
+    # the read asks for. Another stream may follow, after zero padding, as in files xz concatenates.
+    def __init__(self, path):
+        super().__init__()
+        self.src = open(path, "rb")
+        self.restart()
+
+    def restart(self):
+        self.src.seek(0)
+        self.dec = lzma.LZMADecompressor(format=lzma.FORMAT_XZ, memlimit=XZ_MEMORY)
+        self.pos = 0
+
+    def close(self):
+        if not self.closed:
+            self.src.close()
+        super().close()
+
+    def readable(self):
+        return True
+
+    def seekable(self):
+        return True
+
+    def tell(self):
+        return self.pos
+
+    def readinto(self, buf):
+        if not len(buf):
+            return 0
+        data = b""
+        try:
+            while not data:
+                if self.dec.eof:
+                    rest = self.dec.unused_data.lstrip(b"\0")
+                    while not rest:
+                        more = self.src.read(1 << 16)
+                        if not more:
+                            return 0
+                        rest = more.lstrip(b"\0")
+                    self.dec = lzma.LZMADecompressor(format=lzma.FORMAT_XZ, memlimit=XZ_MEMORY)
+                elif self.dec.needs_input:
+                    rest = self.src.read(1 << 16)
+                    if not rest:
+                        fail("the xz stream of the artifact is cut short")
+                else:
+                    rest = b""
+                data = self.dec.decompress(rest, max_length=len(buf))
+        except lzma.LZMAError as why:
+            if "Memory usage limit" in str(why):
+                fail("the xz stream of the artifact needs more than %d MiB to decompress" % (XZ_MEMORY >> 20))
+            fail("the xz stream of the artifact cannot be read: %s" % why)
+        buf[:len(data)] = data
+        self.pos += len(data)
+        return len(data)
+
+    def seek(self, offset, whence=io.SEEK_SET):
+        if whence == io.SEEK_CUR:
+            offset += self.pos
+        elif whence != io.SEEK_SET:
+            raise io.UnsupportedOperation("an xz stream is read from its start")
+        if offset < self.pos:
+            self.restart()
+        skip = memoryview(bytearray(1 << 20))
+        while self.pos < offset and self.readinto(skip[:min(offset - self.pos, len(skip))]):
+            pass
+        return self.pos
+
+
 class Counted(zipfile.ZipInfo):
     # What zipfile builds for each record of a central directory as it reads them: past FILES the read stops,
     # before the rest are built.
@@ -934,9 +1010,10 @@ def unpack(archive, filename, algo, expected, dest):
     # every entry: tarfile reads through the data of one it does not know as well), so the list never grows
     # past the cap; a zip central directory, which zipfile reads whole, is measured first, and zipfile stops at
     # its record FILES + 1, through Counted. Nothing is unpacked until the whole list is within the caps. Only
-    # decompressors whose memory has a fixed bound run: gzip and bzip2 for a tar (an xz or zstd stream chooses
-    # the window its decompressor keeps), deflate for a zip (zipfile hands bzip2 and LZMA a whole read of
-    # compressed bytes, with no bound on what comes out).
+    # decompressors whose memory has a fixed bound run: gzip and bzip2 for a tar, and xz with its decompressor
+    # held to XZ_MEMORY (an xz stream chooses the window its decompressor keeps; a zstd one is not read),
+    # deflate for a zip (zipfile hands bzip2 and LZMA a whole read of compressed bytes, with no bound on what
+    # comes out).
     if filename.endswith((".whl", ".zip")):
         with open(archive, "rb") as f:
             end = zipfile._EndRecData(f)
@@ -958,10 +1035,15 @@ def unpack(archive, filename, algo, expected, dest):
             fail("the tarfile module of this python3 lacks a method deps.sh replaces to bound what it reads")
         with open(archive, "rb") as f:
             head = f.read(262)
-        if head.startswith((b"\xfd7zXZ\x00", b"\x28\xb5\x2f\xfd")):
-            fail("the artifact is compressed with xz or zstd, which deps.sh does not unpack (a tar is read plain, or through gzip or bzip2)")
-        mode = "r:" if head[257:] == b"ustar" else "r:gz" if head[:2] == b"\x1f\x8b" else "r:bz2" if head[:3] == b"BZh" else "r:"
-        t = tarfile.open(archive, mode, tarinfo=Capped)
+        if head.startswith(b"\x28\xb5\x2f\xfd"):
+            fail("the artifact is compressed with zstd, which deps.sh does not unpack (a tar is read plain, or through gzip, bzip2 or xz)")
+        if head.startswith(b"\xfd7zXZ\x00"):
+            if lzma is None:
+                fail("the artifact is compressed with xz, and this python3 has no lzma module to read it")
+            t = tarfile.open(fileobj=io.BufferedReader(Unxz(archive)), mode="r:", tarinfo=Capped)
+        else:
+            mode = "r:" if head[257:] == b"ustar" else "r:gz" if head[:2] == b"\x1f\x8b" else "r:bz2" if head[:3] == b"BZh" else "r:"
+            t = tarfile.open(archive, mode, tarinfo=Capped)
         listing = ((m.name, tar_kind(m), m.size, m) for m in t)
         opener = lambda e: t.extractfile(e[3])
     for name, kind, declared_size, ref in listing:
