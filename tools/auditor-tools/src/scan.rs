@@ -2335,7 +2335,6 @@ fn is_name(path: &syn::Path, name: &str) -> bool {
         .is_some_and(|ident| ident_name(ident) == name)
 }
 
-/// True if any attribute's path is the single name `ident`.
 /// The files a module's `path` attributes name, in their order: each `#[path =
 /// "…"]`, and each `path = "…"` a `#[cfg_attr(…)]` holds, nested ones too.
 fn path_values(attrs: &[syn::Attribute]) -> Vec<String> {
@@ -2367,6 +2366,7 @@ fn path_values(attrs: &[syn::Attribute]) -> Vec<String> {
     values
 }
 
+/// True if any attribute's path is the single name `ident`.
 fn has_attr_path(attrs: &[syn::Attribute], ident: &str) -> bool {
     attrs.iter().any(|a| is_name(a.path(), ident))
 }
