@@ -23,7 +23,8 @@
 #      escapes, a tag, an anchor or another letter case, in block or flow style), or writes an explicit ? key, an
 #      alias as a key or a merge key (<<); no run: script holds a ${{ }} expression; every job has
 #      timeout-minutes, every action is pinned by full SHA with its version, no checkout keeps credentials, and
-#      every cargo test runs with --no-fail-fast;
+#      every cargo test runs with --no-fail-fast; every step of the advisory macOS job runs under the stock PATH:
+#      each run: script exports it plus ~/.cargo/bin first, and each action but checkout gets it in its env;
 #   5. scripts/check-hygiene.sh fails on each kind of file it names, and on a top-level directory named
 #      commands, agents, skills, hooks, bin, monitors or .claude-plugin in another letter case, also when it
 #      is the last of 3,000 tracked paths; on each load surface at the plugin root, and on a SKILL.md other
@@ -1009,6 +1010,79 @@ toplvl flag node-on-marker '--- {on: push}'
 toplvl flag quoted-key '"name": x' 'on: push'
 toplvl pass plain 'name: x' 'run-name: y' 'on: push'
 toplvl pass markers-and-comments '# a comment' '---  # the workflow' 'name: x' 'on:   # the trigger' '  push:'
+# The advisory macOS job runs every step under the stock PATH, /usr/bin:/bin:/usr/sbin:/sbin, so no tool from the
+# runner image's Homebrew stands in for the system one: a run: script exports it plus ~/.cargo/bin first, and an
+# action other than checkout gets it in its env. An action looks its tools up on the image's PATH otherwise: the
+# rustup action found Homebrew's rustup there and put neither cargo nor rustup into ~/.cargo/bin.
+macpath() { # macpath FILE -> one line per step of its corpus-macos job that does not run under the stock PATH
+  LC_ALL=C awk -v f="$1" -v q="'" '
+    function flush() {
+      if (st != "" && uses != "" && uses !~ /^actions\/checkout@/ && !envpath)
+        print f ": macOS step " st ": " uses " runs without PATH: " sp " in its env"
+      if (st != "" && run && first != want) print f ": macOS step " st ": its run: script does not start with " want
+      st = ""; uses = ""; envpath = 0; run = 0; first = ""; blk = ""
+    }
+    BEGIN { sp = "/usr/bin:/bin:/usr/sbin:/sbin"; want = "export PATH=\"" sp ":$HOME/.cargo/bin\"" }
+    { line = $0; match(line, /^ */); ind = RLENGTH; text = (line !~ /^[ \t]*(#.*)?$/) }
+    text && ind <= 2 { flush(); job = (line ~ /^  corpus-macos:[ \t]*$/); if (job) seen = 1; next }
+    !job { next }
+    text && ind < 6 { flush(); next }
+    line ~ /^      - / { flush(); nst++; st = "#" nst; sub(/^      - /, "        ", line); ind = 8 }
+    st == "" { next }
+    # inside an env:, with: or run: block of the step; a comment line in a script is not its first line
+    blk != "" && (ind >= 10 || !text) {
+      if (blk == "env" && line ~ /^          PATH:/) {
+        v = line; sub(/^          PATH:[ \t]*/, "", v); sub(/[ \t]+#.*$/, "", v)
+        if (v ~ /^".*"$/ || v ~ ("^" q ".*" q "$")) v = substr(v, 2, length(v) - 2)
+        envpath = (v == sp) }
+      if (blk == "run" && first == "" && text) { first = line; sub(/^[ \t]+/, "", first); sub(/[ \t]+$/, "", first) }
+      next }
+    ind == 8 && line ~ /^        [A-Za-z0-9_-]+:/ {
+      blk = ""; k = line; sub(/^ +/, "", k); v = k; sub(/:.*$/, "", k); sub(/^[^:]*:[ \t]*/, "", v)
+      if (k == "name") st = v
+      else if (k == "uses") { uses = v; sub(/[ \t]+#.*$/, "", uses) }
+      else if (k == "env" || k == "with") blk = k
+      else if (k == "run") { run = 1; if (v ~ /^[|>]/) blk = "run"; else first = v } }
+    END { flush(); if (!seen) print f ": no corpus-macos job" }' "$1"
+}
+probs=$(macpath "$ROOT/.github/workflows/corpus-check.yml")
+if [ -z "$probs" ]; then pass=$((pass + 1)); echo "PASS workflows: every step of the macOS job runs under the stock PATH"
+else failn=$((failn + 1)); echo "FAIL workflows: steps of the macOS job run off the stock PATH"; echo "$probs"; fi
+# the check itself: an action on the image's PATH or with Homebrew's rustup on the PATH its env gives, and a run:
+# script, in a block or on one line, that does not export the stock PATH first, each fail; checkout, a run: script
+# that does, an action given the stock PATH, and a step of another job pass
+{ printf 'name: x\non: push\npermissions:\n  contents: read\njobs:\n  corpus-macos:\n    runs-on: macos-26\n'
+  printf '    timeout-minutes: 5\n    defaults:\n      run:\n        shell: /bin/bash --noprofile --norc -e {0}\n'
+  printf '    steps:\n      - name: checkout\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n'
+  printf '        with:\n          persist-credentials: false\n'
+  printf '      - name: stock run\n        run: |\n          # cargo needs ~/.cargo/bin\n'
+  printf '          export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin"\n          cargo --version\n'
+  printf '      - name: image path\n        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n'
+  printf '        with:\n          toolchain: stable\n'
+  printf '      - name: homebrew path\n        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n'
+  printf '        env:\n          PATH: /opt/homebrew/opt/rustup/bin:/usr/bin:/bin:/usr/sbin:/sbin\n'
+  printf '      - name: stock path\n        if: ${{ !cancelled() }}\n'
+  printf '        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n'
+  printf '        env:\n          CARGO_TERM_COLOR: never\n          # no Homebrew\n          PATH: "/usr/bin:/bin:/usr/sbin:/sbin"\n'
+  printf '        with:\n          toolchain: stable\n'
+  printf '      - name: image run\n        run: |\n          cargo --version\n'
+  printf '      - name: one-line run\n        run: bash scripts/check-hygiene.sh\n'
+  printf '  elsewhere:\n    runs-on: macos-26\n    timeout-minutes: 5\n    steps:\n'
+  printf '      - name: other job\n        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1\n'
+} > "$T/macos-path.yml" || { failn=$((failn + 1)); echo "FAIL workflows: could not build the macOS PATH fixture"; }
+probs=$(macpath "$T/macos-path.yml")
+for want in "step image path: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 runs without PATH:" \
+            "step homebrew path: dtolnay/rust-toolchain@" "step image run: its run: script does not start with export PATH=" \
+            "step one-line run: its run: script does not start with"; do
+  case "$probs" in *"$want"*) pass=$((pass + 1)); echo "PASS workflows: the macOS PATH check reports ... $want";;
+    *) failn=$((failn + 1)); echo "FAIL workflows: the macOS PATH check does not report: $want"; echo "$probs";; esac
+done
+case "$probs" in *"step checkout:"*|*"step stock run:"*|*"step stock path:"*|*"step other job:"*)
+    failn=$((failn + 1)); echo "FAIL workflows: the macOS PATH check flags a step that runs under the stock PATH"; echo "$probs";;
+  *) pass=$((pass + 1)); echo "PASS workflows: the macOS PATH check passes checkout, the stock PATH and other jobs";; esac
+case "$(macpath "$T/bad-workflow.yml")" in *": no corpus-macos job"*)
+    pass=$((pass + 1)); echo "PASS workflows: the macOS PATH check fails a workflow without the macOS job";;
+  *) failn=$((failn + 1)); echo "FAIL workflows: the macOS PATH check passes a workflow without the macOS job";; esac
 
 # ---- 5. check-hygiene.sh ------------------------------------------------------------------------------
 HYG="$ROOT/scripts/check-hygiene.sh"

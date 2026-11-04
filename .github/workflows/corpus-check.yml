@@ -85,10 +85,10 @@ jobs:
 
   corpus-macos:
     # Advisory: do not add this job to the required checks. It runs the same checks, except the pull-request
-    # attribution check, under macOS /bin/bash 3.2 with BSD sed, grep and awk. Every step sets a stock macOS PATH
-    # plus ~/.cargo/bin, which the stock-toolchain step asserts, so no tool from the runner image's Homebrew
-    # stands in for the system one. The image ships without cargo and rustup at times; the two steps before that
-    # one then install them into ~/.cargo with rustup.
+    # attribution check, under macOS /bin/bash 3.2 with BSD sed, grep and awk. Every step after checkout runs under
+    # a stock macOS PATH, its scripts with ~/.cargo/bin added, which the stock-toolchain step asserts, so no tool
+    # from the runner image's Homebrew stands in for the system one. When ~/.cargo/bin lacks cargo or rustup, as
+    # on an image that ships Homebrew's rustup, the two steps before that one install both there with rustup.
     name: macOS, bash 3.2 and BSD tools (advisory)
     runs-on: macos-26
     timeout-minutes: 30
@@ -122,6 +122,10 @@ jobs:
       - name: Install cargo and rustup (stable) when the image lacks them
         if: ${{ !cancelled() && steps.rust.outputs.missing == 'true' }}
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        env:
+          # The image's PATH holds Homebrew's rustup, with its cargo beside it, outside ~/.cargo/bin. The action
+          # installs rustup into ~/.cargo only when command -v rustup finds none, so it gets the stock PATH alone.
+          PATH: /usr/bin:/bin:/usr/sbin:/sbin
         with:
           toolchain: stable
 
