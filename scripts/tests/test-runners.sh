@@ -1804,7 +1804,7 @@ check "... and a file given as --path gets no note" sh -c "[ '$RC' = 0 ] && grep
 # plain git, run from it, takes it for a bare repository with no work tree and runs none of its programs
 # either, so that case shows only that it is never consulted. An index with an entry that climbs out of the
 # project (no git command writes one; git lists it) gets no copy either, nor does a split index (git cannot read
-# its copy without the shared index beside it) or a .git/info that is a link; the note says which.
+# its copy without the shared index beside it); the note says which.
 tgit init -q "$WT/nested" && printf 'fn n() {}\n' > "$WT/nested/n.rs" && tgit -C "$WT/nested" add n.rs &&
   printf '[core]\n\tfsmonitor = %s/mark-fsmonitor\n\thooksPath = %s/hooks\n' "$T" "$T" >> "$WT/nested/.git/config"
 tgit init -q --separate-git-dir "$T/gf.git" "$WT/gf" && printf 'fn g() {}\n' > "$WT/gf/g.rs" &&
@@ -1848,25 +1848,39 @@ gf|^git-cached: 128 fatal: not a git repository|its .git is a file or a link|a .
 bare|^env: GIT_WORK_TREE=$WT\$||a folder shaped as a bare repository: never consulted, the working directory's copy
 idx|^git-cached: 128 fatal: not a git repository|its index names a path outside the repository|an index entry outside the project: no copy
 split|^git-cached: 128 fatal: not a git repository|git cannot read its index from a copy, as with a split index or a sha256 repository|a split index: no copy
-info|^git-cached: 128 fatal: not a git repository|its .git/info is a link|a .git/info that is a link: no copy
 CASES
-# An index or info/exclude that cannot be read gets no copy either, and neither does one in a .git or .git/info
-# that cannot be searched: there it only looks absent, and a copy made without it would hold no tracked file, or
-# no rule of info/exclude. Where the modes stop nothing, as for root, the case is skipped.
-for r in exunread infonox; do mkdir -p "$WT/$r/.git/info" && printf 'skip/\n' > "$WT/$r/.git/info/exclude"; done
+# An index that cannot be read gets no copy either, and neither does one in a .git that cannot be searched: there
+# it only looks absent, and a copy made without it would hold no tracked file. An info/exclude sast.sh does not
+# copy (in a .git/info that is a link, or that cannot be searched, or one that cannot be read) leaves the copy
+# without it: git then lists what the project's own git lists when it cannot read that file, the untracked
+# skip/x.rs its rule names included, and the note says so. Where the modes stop nothing, as for root, the case is
+# skipped.
+EXCLUDED="; note: semgrep's git read the repository index without its info/exclude ("
+excl_ok() { # excl_ok <calls line> <reason>: exit 0, no mark, that line in the calls, and the note with <reason>, not the walk's
+  [ "$RC" = 0 ] && [ -z "$(ls -A "$T/marks")" ] && grep -q "$1" "$T/calls" && ! grep -qF "$WALKED" "$T/out" &&
+    grep -qF "$EXCLUDED$2), so files only that file leaves out can be in the scan" "$T/out"
+}
+for r in exunread infonox; do
+  mkdir -p "$WT/$r/.git/info" "$WT/$r/skip" && printf 'skip/\n' > "$WT/$r/.git/info/exclude" && printf 'fn x() {}\n' > "$WT/$r/skip/x.rs"
+done
 chmod 000 "$WT/unread/.git/index" "$WT/exunread/.git/info/exclude"
 chmod 600 "$WT/gitnox/.git" "$WT/infonox/.git/info"
-while IFS='|' read -r path probe why label; do
-  if [ -r "$WT/$probe" ]; then skp "sast --path $path, $label: this user reads $probe whatever its mode"; continue; fi
+while IFS='|' read -r path probe want why label; do
+  if [ -n "$probe" ] && [ -r "$WT/$probe" ]; then skp "sast --path $path, $label: this user reads $probe whatever its mode"; continue; fi
   mv "$T/marks/"* "$T/marks-earlier/" 2>/dev/null
   run "$SAST" "$WT" -- semgrep --run audit_1 --path "$path" --ruleset p/rust
-  check "sast --path $path, $label: exit 0, no copy and the note says why, nothing a config names ran" \
-    shape_ok '^git-cached: 128 fatal: not a git repository' "$why"
+  case "$want" in
+    walk) check "sast --path $path, $label: exit 0, no copy and the note says why, nothing a config names ran" \
+      shape_ok '^git-cached: 128 fatal: not a git repository' "$why" ;;
+    *) check "sast --path $path, $label: exit 0, the index copied without it and the note says why, nothing a config names ran" \
+      excl_ok "$want" "$why" ;;
+  esac
 done <<CASES
-unread|unread/.git/index|its index cannot be read|an index that cannot be read
-exunread|exunread/.git/info/exclude|its info/exclude cannot be read|an info/exclude that cannot be read
-gitnox|gitnox/.git/index|its index cannot be read|a .git that cannot be searched
-infonox|infonox/.git/info/exclude|its info/exclude cannot be read|a .git/info that cannot be searched
+unread|unread/.git/index|walk|its index cannot be read|an index that cannot be read
+gitnox|gitnox/.git/index|walk|its index cannot be read|a .git that cannot be searched
+exunread|exunread/.git/info/exclude|^git-others: 0 skip/x.rs \$|its info/exclude cannot be read|an info/exclude that cannot be read
+infonox|infonox/.git/info/exclude|^git-others: 0 skip/x.rs \$|its info/exclude cannot be read|a .git/info that cannot be searched
+info||^git-cached: 0 s.rs \$|its .git/info is a link|a .git/info that is a link
 CASES
 chmod 700 "$WT/gitnox/.git" "$WT/infonox/.git/info"
 # A working directory inside a repository whose top lies above it: sast.sh copies nothing from outside the
