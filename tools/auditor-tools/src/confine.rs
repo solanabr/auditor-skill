@@ -172,12 +172,17 @@ fn searchable(dir: &Path) -> bool {
     unsafe { libc::access(name.as_ptr(), libc::X_OK) == 0 }
 }
 
-/// `realpath(WT/p)` must stay under WT.
+/// `realpath(WT/p)` must stay under WT, and not be WT itself. Whether it lies
+/// there is decided by identity (device and inode) along its ancestors, as
+/// `self_check` decides it, since one directory has several spellings (through
+/// `/System/Volumes/Data` on macOS, or in other letters on a volume that ignores
+/// letter case).
 pub fn stays_inside(wt: &Path, path: &Path) -> bool {
-    match path.canonicalize() {
-        Ok(real) => real.starts_with(wt) && real != wt,
-        Err(_) => false,
-    }
+    let (Ok(real), Ok(w)) = (path.canonicalize(), fs::metadata(wt)) else {
+        return false;
+    };
+    let is_wt = |a: &Path| fs::metadata(a).is_ok_and(|m| m.dev() == w.dev() && m.ino() == w.ino());
+    !is_wt(&real) && real.ancestors().any(is_wt)
 }
 
 /// An OS error's text without Rust's " (os error N)" suffix, as Python's
