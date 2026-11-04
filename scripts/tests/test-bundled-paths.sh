@@ -234,9 +234,10 @@ bins=$(awk '/^\[\[bin\]\]/ { b = 1; next } b && /^name *=/ { gsub(/.*= *"|".*/, 
   tools/auditor-tools/Cargo.toml tools/auditor-tools/*/Cargo.toml)
 [ -n "$bins" ] && ok "crate binaries: $(echo $bins)" || bad "no [[bin]] names in tools/auditor-tools/Cargo.toml"
 # A rooted path starts at a root, or at a variable its own file sets to one: VERIFICATION.md's blocks set
-# ROOT="<auditor-skill root>" and run "$ROOT/scripts/runner/probe.sh".
+# ROOT="<auditor-skill root>" and run "$ROOT/scripts/runner/probe.sh", and poc-engineer.md's runner lines set
+# AUDITOR_ROOT='${CLAUDE_PLUGIN_ROOT}' and run "$AUDITOR_ROOT/scripts/runner/probe.sh".
 ROOTS='([$][{]CLAUDE_(PLUGIN_ROOT|SKILL_DIR)[}]|<auditor-skill root>)'
-SETS_ROOT="^[[:space:]]*(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*=\"?${ROOTS}\"?([[:space:];].*)?\$"
+SETS_ROOT="^[[:space:]]*(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*=[\"']?${ROOTS}[\"']?([[:space:];].*)?\$"
 rooted_paths() { # rooted_paths FILE...  (-> each rooted path the files name, the root left off, one per line)
   local line v
   { grep -ohE "${ROOTS}/[A-Za-z0-9_./-]*" "$@"
@@ -253,13 +254,15 @@ printf '%s\n' 'ROOT="<auditor-skill root>"' \
   'elif [ "$("$ROOT/scripts/runner/probe.sh" --only isolation)" ]; then' \
   '  export PR=${CLAUDE_PLUGIN_ROOT}   # the plugin root' \
   '"${PR}/scripts/git-ro.sh" copy . audit_1' \
+  "AUDITOR_ROOT='<auditor-skill root>'" \
+  '"$AUDITOR_ROOT/scripts/runner/target.sh" --run audit_1' \
   'OTHER="$HOME/x"' \
   '"$OTHER/scripts/other.sh", "$ROOTS/scripts/roots.sh" and "$PPV_ROOT/scripts/ppv.sh"' \
   'Run `"<auditor-skill root>/scripts/rundir.sh" check audit_1`.' > "$RT/sets.md"
 printf '%s\n' '"$ROOT/scripts/elsewhere.sh": this file sets no ROOT' > "$RT/unset.md"
 got=$(rooted_paths "$RT/sets.md" "$RT/unset.md" | sort -u | tr '\n' ' ')
-want='scripts/git-ro.sh scripts/rundir.sh scripts/runner/probe.sh vendor/trailofbits/plugins/v/run.py '
-if [ "$got" = "$want" ]; then ok "rooted-path reader: from a root, and from a variable its own file sets to one"
+want='scripts/git-ro.sh scripts/rundir.sh scripts/runner/probe.sh scripts/runner/target.sh vendor/trailofbits/plugins/v/run.py '
+if [ "$got" = "$want" ]; then ok "rooted-path reader: from a root, and from a variable its own file sets to one, in double or single quotes"
 else bad "rooted-path reader lists [$got], want [$want]"; fi
 for p in $(rooted_paths $STRICT_FILES $RUN_FILES | sort -u); do
   case "$p" in
