@@ -4,8 +4,9 @@
 # scripts/runner/probe.sh, for git-lfs and, logging every clone, for git; the real scripts/git-ro.sh and
 # scripts/lib/confine.sh make the copy. It checks:
 #   - the gate: the stricter of {R}/exec-mode and AUDITOR_EXEC_MODE must be isolated (none stops it), probe.sh
-#     --only isolation must print its "none of the credentials" line, the vendored runner and uv must be there,
-#     and git-ro.sh copy must take the checkout (a checkout that borrows objects is refused). Each refusal
+#     --only isolation must print the line the real probe.sh prints when nothing is readable (read from it, and
+#     both gates compare with it), the vendored runner and uv must be there, and git-ro.sh copy must take the
+#     checkout (a checkout that borrows objects is refused). Each refusal
 #     prints its not-run line and runs nothing: no copy, no scratch directory, no clone, no runner call;
 #   - the copy and the clone, run from the client checkout's top level (also with TMPDIR ending in /): exactly
 #     two clones, git-ro.sh's bare copy into {R} and then
@@ -54,7 +55,16 @@ REALGIT=$(command -v git) || { echo "git is not on PATH" >&2; exit 1; }
 # ---- an installation with stand-ins ---------------------------------------------------------------------------
 # $T/root: the real git-ro.sh and confine.sh, a stand-in probe.sh that prints $PROBE_LINE, and a runner file the
 # stand-in uv never runs. $T/root-nr is the same without the runner.
-OKLINE='isolation: none of the credentials the self-check reads is readable'
+# The line scripts/runner/probe.sh --only isolation prints when the self-check finds nothing readable, read from
+# probe.sh itself: the stand-in prints it, and both of §4's gates must compare with it, so a new wording there
+# that the gates do not follow fails here instead of keeping post-patch validation from ever running.
+OKLINE=$(awk -v q="'" '$1 == "isolation)" { on = 1; next }
+  on && $1 == "0)" && $2 == "printf" { s = substr($0, index($0, q) + 1); print substr(s, 1, index(s, "\\n" q) - 1); exit }' \
+  "$ROOT/scripts/runner/probe.sh")
+case "$OKLINE" in
+  'isolation: '?*) ;;
+  *) echo "cannot read the line probe.sh --only isolation prints when nothing is readable" >&2; exit 1 ;;
+esac
 SKILL=vendor/trailofbits/plugins/post-patch-validation/skills/post-patch-validation
 for r in "$T/root" "$T/root-nr"; do
   mkdir -p "$r/scripts/lib" "$r/scripts/runner" || exit 1
@@ -404,6 +414,10 @@ if ! has "$sec4" '{ROOT_CAUSE}' && has "$sec4" 'PPV_SUMMARY="$(cat "{R}/patches/
    && grep -qF 'to `<R>/patches/<ID>.summary` with the Write tool first, since §4'"'"'s first block hands the runner that file'"'"'s text' "$ROOT/agents/patch-engineer.md"
 then ok "VERIFICATION.md §4 and patch-engineer write the root-cause sentence to {R}/patches/{FINDING_ID}.summary, and §4 pastes none of it into the shell"
 else bad "VERIFICATION.md §4 pastes the root-cause sentence into the shell, or §4 or patch-engineer does not say where it is written"; fi
+# Both gates compare probe.sh's output with the very line probe.sh prints when nothing is readable.
+gates=$(grep -cF -e "--only isolation 2>/dev/null)\" != \"$OKLINE\" ]; then" "$VER")
+if [ "$gates" = 2 ]; then ok "VERIFICATION.md §4: both gates compare with the line probe.sh prints when nothing is readable"
+else bad "VERIFICATION.md §4: $gates gates, not 2, compare with probe.sh's line for nothing readable: $OKLINE"; fi
 # The second block opens with the first block's setup and gate, word for word, before any cd or runner call.
 if python3 -I - "$VER" <<'PY'
 import re, sys
