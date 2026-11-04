@@ -55,10 +55,12 @@ GitHub changed several defaults in 2025–2026; older write-ups and some tools' 
 | 2026-03-18 / 2026-04-05 | `anthropics/claude-code-action` v1.0.74 (#1066) restores `.claude/`, `.mcp.json`, `.claude.json`, `.gitmodules` and `.ripgreprc` from the PR base before the CLI starts; v1.0.89 (#1174) adds `CLAUDE.md`, `CLAUDE.local.md` and `.husky` | A PR-modified agent configuration is neutralised only at or above those versions (§6.4) |
 | 2026-06-18 / 2026-07-20 | `actions/checkout` v7.0.0 refuses to check out fork-PR code on `pull_request_target`, and on `workflow_run` when the upstream run was a `pull_request*` event, unless the step sets `allow-unsafe-pr-checkout: true`. Backported to v2.8.0, v3.7.0, v4.4.0, v5.1.0 and v6.1.0 (not v1). Floating major tags such as `@v4` picked it up; refs pinned to a SHA, a minor or a patch version did not | The guard does not see `git fetch` / `gh pr checkout`, checkouts of other repositories, or `issue_comment` and other events (§5.1) |
 
-Verify instead of trusting a date: `git ls-remote https://github.com/actions/checkout refs/tags/<tag>` gives the SHA
-a tag points to, and the release notes of the pinned version say whether it carries the guard or the restore. Run
-`git ls-remote` from a scratch dir outside the checkout, so its repo config does not apply; the `owner/repo` slug must
-match `^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`.
+Verify instead of trusting a date: the `git ls-remote --tags` lookup of KV-080 Step 4, run for `actions/checkout` or
+`anthropics/claude-code-action` in the form that step gives, lists the SHA each tag points to, and the release notes of
+the pinned version say whether it carries the guard or the restore. That form runs git in a new empty directory that no
+repository's config reaches, leaves no credential helper, askpass program, `~/.netrc` entry or terminal prompt to answer
+a login request, and takes only an `owner/repo` slug that matches `^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`; it reaches
+github.com, so it asks for approval (§7.1).
 
 ---
 
