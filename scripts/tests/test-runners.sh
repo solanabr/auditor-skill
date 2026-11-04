@@ -987,12 +987,15 @@ if DW=$(deep_wt $((PM - 200))) && [ "${#DW}" = $((PM - 200)) ]; then
       sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: $spelled/INCIDENTS.json records an incident whose root_cause_class is supply_chain_or_ci, $XRUN' '$T/err' && [ ! -s '$T/calls' ]"
   done
   if [ "$(id -u)" != 0 ]; then
-    ( cd "$DW" && mkdir incident_1 && printf '%s\n' "$SCJ" > incident_1/INCIDENTS.json )
+    ( cd "$DW" && cp Cargo.toml src/ && mkdir incident_1 && printf '%s\n' "$SCJ" > incident_1/INCIDENTS.json )
     chmod 300 "$DW"
     run "$TARGET" "$DW" -- cargo-test --run audit_1 --src src
     chmod 700 "$DW"
     check "natively, a working directory that cannot be listed stops audit_1's build of --src src: exit 3, nothing copied" \
       sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: the working directory cannot be listed: $XREAD' '$T/err' && [ ! -s '$T/calls' ]"
+    ( cd "$DW" && rm -rf incident_1 )
+    run "$TARGET" "$DW" -- cargo-test --run audit_1 --src src
+    check "... and with it listed and incident_1 gone, the same build of --src src runs: exit 0" test "$RC" = 0
   fi
 else
   ko "no working directory of $((PM - 200)) bytes could be made below $T"
