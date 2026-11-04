@@ -39,6 +39,9 @@ confine_refuse() {
   exit "${CONFINE_STATUS:-64}"
 }
 
+# Under LC_ALL=C the control characters are the C0 controls and DEL, and every other byte prints as it is;
+# confine.rs's shown masks more (bytes that are not UTF-8, the characters its unsafe_char lists), so the
+# two print the same for ASCII text, and for other UTF-8 text that holds none of those characters.
 confine_shown() { # confine_shown <s>: sets CONFINE_SHOWN to <s> for a message: control characters as ?, cut after 200 bytes
   CONFINE_SHOWN=${1//[[:cntrl:]]/?}
   if [ "${#CONFINE_SHOWN}" -gt 200 ]; then CONFINE_SHOWN="${CONFINE_SHOWN:0:200}..."; fi

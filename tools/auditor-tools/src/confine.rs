@@ -244,8 +244,11 @@ pub fn unsafe_char(c: char) -> bool {
 }
 
 /// Text for a message, as confine.sh's `confine_shown` prints it: each control
-/// character (and each byte that is not UTF-8, and each character `unsafe_char`
-/// lists) as `?`, cut after 200 bytes.
+/// character as `?`, cut after 200 bytes. It masks more than `confine_shown`,
+/// which under LC_ALL=C takes the C0 controls and DEL alone: each byte that is
+/// not UTF-8 and each character `unsafe_char` lists is a `?` here as well, and
+/// the cut falls between characters. The two print the same for ASCII text, and
+/// for other UTF-8 text that holds no character `unsafe_char` lists, up to the cut.
 pub fn shown(raw: &[u8]) -> String {
     let mut s = String::new();
     for c in String::from_utf8_lossy(raw).chars() {
@@ -287,9 +290,11 @@ pub fn json_text(json: String) -> String {
     out
 }
 
-/// A path argument that passed the grammar: as given, less one leading `./`, and
-/// its components (none for `.`, the working directory itself).
+/// A path argument that passed the grammar: as given (`arg`), as given less one
+/// leading `./` (`raw`), and its components (none for `.`, the working directory
+/// itself).
 pub struct Rel {
+    pub arg: Vec<u8>,
     pub raw: Vec<u8>,
     pub parts: Vec<Vec<u8>>,
 }
@@ -300,8 +305,10 @@ impl Rel {
         Path::new(OsStr::from_bytes(&self.raw))
     }
 
+    /// The argument as given, `./` and all, as `confine_path` names a path in
+    /// its messages.
     pub fn shown(&self) -> String {
-        shown(&self.raw)
+        shown(&self.arg)
     }
 
     pub fn full(&self, wt: &Path) -> PathBuf {
@@ -324,6 +331,7 @@ pub fn rel(what: &str, arg: &OsStr, dot: bool) -> Result<Rel, Stop> {
     let raw = arg.as_bytes();
     if dot && raw == b"." {
         return Ok(Rel {
+            arg: raw.to_vec(),
             raw: raw.to_vec(),
             parts: Vec::new(),
         });
@@ -357,6 +365,7 @@ pub fn rel(what: &str, arg: &OsStr, dot: bool) -> Result<Rel, Stop> {
         )));
     }
     Ok(Rel {
+        arg: raw.to_vec(),
         raw: p.to_vec(),
         parts,
     })
