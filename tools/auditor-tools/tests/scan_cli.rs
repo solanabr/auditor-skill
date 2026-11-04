@@ -1173,3 +1173,78 @@ fn scans_the_run_directories_at_once_when_head_is_a_named_pipe() {
     );
     assert!(took < GIT_TIME / 2, "took {took:?}");
 }
+
+#[test]
+fn lists_each_file_a_parsed_file_brings_in_that_it_does_not_parse() {
+    let wt = Wt::repo();
+    wt.write(
+        "src/lib.rs",
+        b"#[path = \"cpi.inc\"]\nmod cpi;\n#[path = \"real.rs\"]\nmod real;\n\
+          #[path = \"../../outside/x.rs\"]\nmod out;\n\
+          #[cfg_attr(unix, path = \"unix.inc\")]\n#[cfg_attr(windows, path = \"win.rs\")]\nmod os;\n\
+          #[path = \"thread_files\"]\nmod thread {\n    #[path = \"tls.in\"]\n    mod local_data;\n}\n\
+          include!(\"more.in\");\n\
+          pub fn f() -> u8 {\n    include!(concat!(env!(\"OUT_DIR\"), \"/gen.rs\"))\n}\n",
+    );
+    wt.write(
+        "src/a/b.rs",
+        b"mod inline {\n    #[path = \"deep.in\"]\n    mod d;\n}\n#[path = \"../c.inc\"]\nmod c;\n",
+    );
+    wt.write("src/real.rs", b"fn r() {}\n");
+    for (root, at) in [("src", "src"), (".", "./src")] {
+        let report = json(&run(BIN, &wt.dir, &[root]));
+        assert_eq!(report.get("brought_in"), None, "{root}: never printed");
+        assert_eq!(report["files_scanned"], 3, "{root}");
+        let by = |file: &str, how: &str, line: u32| {
+            format!("{at}/{file} brings it in ({how}, line {line})")
+        };
+        let mut want =
+            vec![
+            (
+                format!("{at}/a/b/inline/deep.in"),
+                format!("not parsed: not named *.rs; {}", by("a/b.rs", "#[path]", 3)),
+            ),
+            (
+                format!("{at}/c.inc"),
+                format!("not parsed: not named *.rs; {}", by("a/b.rs", "#[path]", 6)),
+            ),
+            (
+                format!("{at}/cpi.inc"),
+                format!("not parsed: not named *.rs; {}", by("lib.rs", "#[path]", 2)),
+            ),
+            (
+                "../outside/x.rs".to_string(),
+                format!(
+                    "not parsed: outside the directory scanned; {}",
+                    by("lib.rs", "#[path]", 6)
+                ),
+            ),
+            (
+                format!("{at}/unix.inc"),
+                format!("not parsed: not named *.rs; {}", by("lib.rs", "#[path]", 9)),
+            ),
+            (
+                format!("{at}/thread_files/tls.in"),
+                format!("not parsed: not named *.rs; {}", by("lib.rs", "#[path]", 13)),
+            ),
+            (
+                format!("{at}/more.in"),
+                format!("not parsed: not named *.rs; {}", by("lib.rs", "include!", 15)),
+            ),
+            (
+                format!("{at}/lib.rs"),
+                "brings in a file it names with no string literal (include!, line 17), which is \
+                 not parsed"
+                    .to_string(),
+            ),
+        ];
+        if root == "." {
+            want.push((
+                "./.git".to_string(),
+                "a .git/ directory (git's own), not scanned".to_string(),
+            ));
+        }
+        want.sort();
+        assert_eq!(skipped(&report), want, "{root}");
+    }
+}

@@ -18,7 +18,7 @@ use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -172,14 +172,37 @@ pub struct ScanReport {
     /// `.github/workflows/*.yml` as trigger → job → step facts.
     pub workflows: Vec<crate::workflow::Workflow>,
     /// Every symbolic link the walk did not follow, every directory it did not
-    /// enter, and every `*.rs` file it did not parse, with the reason.
+    /// enter, every `*.rs` file it did not parse, and every file a parsed one
+    /// brings in that it does not parse, with the reason.
     pub skipped: Vec<Skipped>,
+    /// The files a parsed file brings in, as the child reports them for the walk
+    /// to place (`Scan::file`); never printed, as the walk empties it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub brought_in: Vec<BroughtIn>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Skipped {
     pub file: String,
     pub reason: String,
+}
+
+/// A file a parsed file brings in, which rustc compiles as part of it: the one a
+/// `#[path = "…"]` attribute names for a module declared without a body (`#[path
+/// = "cpi.inc"] mod cpi;`, a `path = "…"` in a `#[cfg_attr(…)]` too), or the one
+/// `include!` names (`include!("more.in")`). The walk lists it in `skipped`
+/// unless it parses it (`unparsed`).
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BroughtIn {
+    pub line: usize,
+    /// `#[path]` or `include!`.
+    pub by: String,
+    /// The path written; none for an `include!` of something other than a string
+    /// literal, such as `concat!(env!("OUT_DIR"), "/gen.rs")`.
+    pub name: Option<String>,
+    /// For `#[path]`, the inline modules around it, outermost first, each as the
+    /// directory it adds: the value of its own `#[path]`, or else its name.
+    pub within: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -304,6 +327,7 @@ impl ScanReport {
             + self.remaining_accounts_sites.len()
             + self.functions.len()
             + self.skipped.len()
+            + self.brought_in.len()
     }
 
     /// Adds the report of one file, made with the file named `""`, under `label`.
@@ -357,6 +381,7 @@ impl ScanReport {
             functions: Vec::new(),
             workflows: Vec::new(),
             skipped: Vec::new(),
+            brought_in: Vec::new(),
         }
     }
 }
@@ -401,7 +426,9 @@ pub fn scan_path_until(root: &Path, until: Option<Instant>) -> io::Result<ScanRe
 /// every `*.rs` file it does not parse (not regular, too large, unreadable, not
 /// UTF-8, nested or chained too deeply, not Rust that `syn` parses, one the parser
 /// could not finish, or one past the report's cap or the scan's time) is listed in
-/// `skipped`. Directories named `.git` and `node_modules` below `root` are pruned,
+/// `skipped`, and so is every file a parsed one brings in by `#[path]` or
+/// `include!` that the walk does not parse (`unparsed`). Directories named `.git`
+/// and `node_modules` below `root` are pruned,
 /// and so is one named `target` that cargo has built in (`cargo_built`), and,
 /// when `root` is the working directory, the run directories and the store an
 /// audit made in it (`Scan::own_output`), each listed in `skipped` too. Entries
@@ -425,6 +452,7 @@ fn scan_until(
 ) -> ScanReport {
     let mut scan = Scan {
         report: ScanReport::new(root.display().to_string(), 0),
+        root: root.to_path_buf(),
         top: root == Path::new("."),
         parse,
         size: 0,
@@ -460,6 +488,7 @@ pub(crate) fn open_root(root: &Path) -> io::Result<OwnedFd> {
 /// not answered).
 struct Scan<'p> {
     report: ScanReport,
+    root: PathBuf,
     top: bool,
     parse: &'p mut dyn FnMut(&[u8]) -> Option<Vec<u8>>,
     size: usize,
@@ -591,7 +620,7 @@ impl Scan<'_> {
                 .ok_or_else(|| "the parser could not finish".to_string())
         });
         match one {
-            Ok((len, one)) => {
+            Ok((len, mut one)) => {
                 let label = path.display().to_string();
                 let shown = serde_json::to_string(&label)
                     .map_or(label.len(), |j| confine::json_text(j).len());
@@ -601,11 +630,92 @@ impl Scan<'_> {
                     return self.skip(path, FULL);
                 }
                 self.size += size;
+                let brought = std::mem::take(&mut one.brought_in);
                 self.report.absorb(one, &label);
+                let root = &self.root;
+                let more = brought.iter().filter_map(|b| unparsed(root, path, b));
+                self.report.skipped.extend(more);
             }
             Err(reason) => self.skip(path, reason),
         }
     }
+}
+
+/// A file that `path`, a file the walk parsed under `root`, brings in (`b`), as
+/// `skipped` lists it when the walk does not parse it, or none when it does: a
+/// name written ending in `.rs` that lies inside `root`, which the walk reaches
+/// like any other (or lists, when it does not parse it). It lies where rustc
+/// finds it: from the directory of `path`, and for a `#[path]` inside inline
+/// modules from there, below a directory named for `path` unless it is a `mod.rs`
+/// (or a `lib.rs` or `main.rs`, as a crate's root usually is), through the
+/// modules' directories; `.` and `..` are taken as written, no link is followed,
+/// and nothing is opened. An `include!` of a name that is not a string literal
+/// names no file to place, so `path` is listed for it.
+fn unparsed(root: &Path, path: &Path, b: &BroughtIn) -> Option<Skipped> {
+    let by = format!(
+        "{} brings it in ({}, line {})",
+        path.display(),
+        b.by,
+        b.line
+    );
+    let Some(name) = &b.name else {
+        return Some(Skipped {
+            file: path.display().to_string(),
+            reason: format!(
+                "brings in a file it names with no string literal ({}, line {}), which is not parsed",
+                b.by, b.line
+            ),
+        });
+    };
+    let mut dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
+    if !b.within.is_empty() {
+        let mod_rs = path
+            .file_name()
+            .is_some_and(|n| [&b"mod.rs"[..], b"lib.rs", b"main.rs"].contains(&n.as_bytes()));
+        if !mod_rs {
+            dir.extend(path.file_stem());
+        }
+        dir.extend(&b.within);
+    }
+    let named = lexical(&dir.join(name));
+    let top = lexical(root);
+    let inside = named.is_relative() && !named.starts_with("..") && named.starts_with(&top);
+    let shown = match named.strip_prefix(&top) {
+        Ok(rest) if inside => root.join(rest),
+        _ => named.clone(),
+    };
+    let why = if !named
+        .file_name()
+        .is_some_and(|n| n.as_bytes().ends_with(b".rs"))
+    {
+        "not named *.rs"
+    } else if !inside {
+        "outside the directory scanned"
+    } else {
+        return None;
+    };
+    Some(Skipped {
+        file: shown.display().to_string(),
+        reason: format!("not parsed: {why}; {by}"),
+    })
+}
+
+/// `path` with each `.` left out and each `..` taking off the name before it,
+/// while there is one; a `..` past the start is kept.
+fn lexical(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir
+                if matches!(out.components().next_back(), Some(Component::Normal(_))) =>
+            {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
 }
 
 /// Whether cargo has built in the directory `dir`: it holds the `CACHEDIR.TAG`
@@ -1627,6 +1737,10 @@ struct FileVisitor<'t> {
     cpi_sites: Vec<CpiSite>,
     remaining_accounts_sites: Vec<RemainingAccountsSite>,
     functions: Vec<FunctionDef>,
+    brought_in: Vec<BroughtIn>,
+    /// The inline modules the visit is in, outermost first, each as the
+    /// directory it adds to a `#[path]` inside it (`BroughtIn::within`).
+    mods: Vec<String>,
 }
 
 impl<'t> FileVisitor<'t> {
@@ -1660,6 +1774,8 @@ impl<'t> FileVisitor<'t> {
             cpi_sites: Vec::new(),
             remaining_accounts_sites: Vec::new(),
             functions: Vec::new(),
+            brought_in: Vec::new(),
+            mods: Vec::new(),
         }
     }
 
@@ -1708,6 +1824,7 @@ impl<'t> FileVisitor<'t> {
             .remaining_accounts_sites
             .extend(self.remaining_accounts_sites);
         report.functions.extend(self.functions);
+        report.brought_in.extend(self.brought_in);
     }
 
     /// The first token of `e`, found down its left operands; every expression on
@@ -1869,6 +1986,25 @@ impl<'ast> Visit<'ast> for FileVisitor<'_> {
     }
 
     fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {
+        // A module declared without a body, from the file each of its `path`
+        // attributes names; one with a body adds a directory to those inside it.
+        let paths = path_values(&node.attrs);
+        let inline = node.content.is_some();
+        if inline {
+            let dir = paths.into_iter().next();
+            self.mods
+                .push(dir.unwrap_or_else(|| ident_name(&node.ident)));
+        } else {
+            for name in paths {
+                let brought = BroughtIn {
+                    line: node.mod_token.span.start().line,
+                    by: "#[path]".to_string(),
+                    name: Some(name),
+                    within: self.mods.clone(),
+                };
+                self.list(1, brought, |v| &mut v.brought_in);
+            }
+        }
         let is_program = has_attr_path(&node.attrs, "program");
         if is_program {
             self.program_depth += 1;
@@ -1884,6 +2020,9 @@ impl<'ast> Visit<'ast> for FileVisitor<'_> {
         syn::visit::visit_item_mod(self, node);
         if is_program {
             self.program_depth -= 1;
+        }
+        if inline {
+            self.mods.pop();
         }
     }
 
@@ -1997,6 +2136,14 @@ impl<'ast> Visit<'ast> for FileVisitor<'_> {
                     snippet: self.snippet(node, first, delimiter_close(&node.delimiter)),
                 };
                 self.list(1, site, |v| &mut v.panic_sites);
+            } else if name == "include" {
+                let brought = BroughtIn {
+                    line: path_first(&node.path).start().line,
+                    by: "include!".to_string(),
+                    name: node.parse_body::<syn::LitStr>().ok().map(|l| l.value()),
+                    within: Vec::new(),
+                };
+                self.list(1, brought, |v| &mut v.brought_in);
             }
         }
         syn::visit::visit_macro(self, node);
@@ -2189,6 +2336,37 @@ fn is_name(path: &syn::Path, name: &str) -> bool {
 }
 
 /// True if any attribute's path is the single name `ident`.
+/// The files a module's `path` attributes name, in their order: each `#[path =
+/// "…"]`, and each `path = "…"` a `#[cfg_attr(…)]` holds, nested ones too.
+fn path_values(attrs: &[syn::Attribute]) -> Vec<String> {
+    fn of(meta: &syn::Meta, values: &mut Vec<String>) {
+        match meta {
+            syn::Meta::NameValue(nv) if nv.path.is_ident("path") => {
+                if let Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(s),
+                    ..
+                }) = &nv.value
+                {
+                    values.push(s.value());
+                }
+            }
+            syn::Meta::List(list) if list.path.is_ident("cfg_attr") => {
+                let parsed =
+                    list.parse_args_with(Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated);
+                for meta in parsed.iter().flatten().skip(1) {
+                    of(meta, values);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut values = Vec::new();
+    for attr in attrs {
+        of(&attr.meta, &mut values);
+    }
+    values
+}
+
 fn has_attr_path(attrs: &[syn::Attribute], ident: &str) -> bool {
     attrs.iter().any(|a| is_name(a.path(), ident))
 }
