@@ -98,7 +98,15 @@ nested too deeply, every link it meets, and every `*.rs` file it does not parse
 (not a regular file, a second name, larger than 4 MiB, unreadable, not UTF-8,
 nested or chained too deeply, not Rust that `syn` parses, one the parser could not
 finish, or one past the report's size or the scan's time), is listed in `skipped`
-with the reason.
+with the reason. So is every file a parsed file brings in, by a module's `#[path =
+"…"]` (one in a `cfg_attr` too) or by `include!`, that the walk does not parse,
+named where rustc finds it (from the naming file's directory, inside inline
+modules through their directories), `.` and `..` taken as written and nothing
+opened, with the file and line that bring it in: one not named `*.rs`, one outside
+`<dir>`, and, once the walk is done, a `*.rs` inside `<dir>` it did not parse, in
+a directory it did not enter (one of those above, or a link) or not found; for an
+`include!` of a name that is not a string literal, such as
+`concat!(env!("OUT_DIR"), …)`, the file that has it.
 
 The files are parsed in a child: audit-scan starts itself, by the path it runs
 from, with `--internal-parse-stdin` as its only argument, no environment and `/`
@@ -312,7 +320,12 @@ Exit: 0 done · 1 the output cannot be written · 2 refused, with one stderr lin
   // checked_create_program_address, derive_address, derive_address_const,
   // try_derive_address, derive_program_address; `struct` and `field` empty),
   // whose seeds are the elements of the array it is given first, or else that
-  // argument, each as a snippet.
+  // argument, each as a snippet; and one per call that derives an associated
+  // token account (kind: the function, any whose name starts with
+  // get_associated_token_address, as spl-associated-token-account's and its
+  // _with_program_id and _and_bump_seed forms do), whose seeds are its
+  // arguments. A program's own helper of another name is listed where it calls
+  // one of these, not where it is called.
   "pdas": [
     { "struct": "string", "field": "string", "kind": "string",
       "seeds": ["string"], "file": "string", "line": 0 }
@@ -348,13 +361,16 @@ Exit: 0 done · 1 the output cannot be written · 2 refused, with one stderr lin
   // invoke_signed_with_remaining_accounts), kind `method:<name>`; and every path
   // that names `CpiContext`, as a type or in the calls that make one
   // (`CpiContext::new(..)`, `CpiContext::new_with_signer(..)`), kind
-  // `CpiContext`, the path as its snippet. A call through an import under
-  // another name, a trait, a macro, a helper of another name or a function value
-  // (`let cpi = invoke_signed; cpi(..)`) is not seen; a function whose name only
-  // holds the word (`invoked`) is listed too.
+  // `CpiContext`, the path as its snippet; and every other path whose name
+  // holds `invoke` that is named but not called there, as a function taken as a
+  // value is (`let cpi = invoke_signed;`), kind `ref:<name>`, the path as its
+  // snippet. A call through an import under another name, a trait, a macro, a
+  // helper of another name, or by a function value (the `cpi(..)` after it) is
+  // not seen; a function whose name only holds the word (`invoked`) is listed
+  // too, and so is a `ref:` path that names a value, a local `invoke_accounts`.
   "cpi_sites": [
     { "file": "string", "line": 0,
-      "kind": "invoke|invoke_signed|…|method:invoke_signed|…|CpiContext",
+      "kind": "invoke|invoke_signed|…|method:invoke_signed|…|ref:invoke_signed|…|CpiContext",
       "snippet": "string" }
   ],
 
@@ -394,8 +410,9 @@ Exit: 0 done · 1 the output cannot be written · 2 refused, with one stderr lin
 
   // every directory the walk did not enter (one it does not enter, above, or one
   // nested too deeply), every symbolic link it did not follow, every `*.rs` file
-  // it did not parse, and every workflow file `--workflows` could not read or
-  // parse whole, with why.
+  // it did not parse, every file a parsed one brings in by `#[path]` or
+  // `include!` that it did not parse, and every workflow file `--workflows` could
+  // not read or parse whole, with why.
   "skipped": [
     { "file": "string", "reason": "string" }
   ]
@@ -580,9 +597,18 @@ rules are those of `scripts/lib/confine.sh` and `scripts/rundir.sh`, in
   off, `trusted_schema` off, temporary tables in memory and no value read or written
   past 1 MiB (`SQLITE_LIMIT_LENGTH`; the writers store at most 4096 bytes a field).
 - `warm`, `check` and `regressions` open the store read-only (`SQLITE_OPEN_READ_ONLY`,
-  `PRAGMA query_only=ON`) and immutable (`file:<store>?mode=ro&immutable=1`: SQLite
-  takes no lock and opens no file beside it), and never make the file or write the
-  schema. With no store they print an empty answer: `warm`
+  `PRAGMA query_only=ON`) and with no lock (`file:<store>?mode=ro&nolock=1`: SQLite
+  takes none and makes no file beside the store, and cannot read a WAL without a
+  lock, so it refuses one beside the store too), and never make the file or write
+  the schema. Beside a `-journal` SQLite reads as hot, a write that stopped before
+  it finished, they read nothing: after asking twice more, 100 ms apart (a write
+  ending just then looks the same for a moment), each prints `audit-mem: error:
+  <store>: a write to it did not finish (its -journal holds what that write
+  replaced), so it is not read; audit-mem init --contract=1 rolls the write back`
+  (with `--db <store>` for a store in a run directory) and exits 2; `init`'s
+  read-write open rolls the write back (on a store it cannot write, `init` and each
+  other writer print what SQLite says instead). With no store they print an empty
+  answer: `warm`
   `{"profile":null,"invariants":[],"open_fp_rulings":[],"truncated":0}`, `check`
   `{"suppressed":false,"store":"absent"}` with exit 1, and `regressions`
   `{"regressions":[],"truncated":0}`.
