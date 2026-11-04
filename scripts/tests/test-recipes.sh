@@ -16,7 +16,7 @@
 #     one stderr line, prints nothing on stdout, starts no program the fixture's config names and changes
 #     nothing in the working directory;
 #   - the corpus: every --include, --exclude and --exclude-dir glob is quoted; the items #33 added each give a
-#     PASS and a FAIL clause; the locators of RS-022 and AI-037..AI-039 run as written under failglob.
+#     PASS and a FAIL clause; the locators of RS-022 and AI-036..AI-039 run as written under failglob.
 # Usage (from the repo root): bash scripts/tests/test-recipes.sh
 # Needs bash >= 3.2, git, awk, sed, grep, find, cmp. No network.
 set -uo pipefail
@@ -755,18 +755,27 @@ else ko "a corpus call of a tool no command pre-approves sits in a step that doe
   known-vectors discovery references templates) > "$T/unquoted.txt" 2>&1
 if [ "$?" = 1 ]; then ok "every --include, --exclude and --exclude-dir glob in the corpus is quoted"
 else ko "a corpus --include, --exclude or --exclude-dir glob is left unquoted"; sed 's/^/#   /' "$T/unquoted.txt" | cut -c1-220; fi
-# The items #33 added each give a PASS and a FAIL clause, and the locators of RS-022 and AI-037..AI-039 run as
+# The items #33 added each give a PASS and a FAIL clause, and the locators of RS-022 and AI-036..AI-039 run as
 # written under failglob (a glob left unquoted stops them, as zsh would) from a tree's root: each lists the line
-# planted for it, and the AI locators skip node_modules/.
+# planted for it, and the AI locators skip node_modules/. AI-036's lists each way a key-holding signer signs that
+# web/agent.cjs, web/send.jsx and src/sign.rs plant, one per line.
 LOC="$T/locators"
 mkdir -p "$LOC/src" "$LOC/web" "$LOC/node_modules/x" && printf 'loop {\n    client.send_transaction(&tx)?;\n}\n' > "$LOC/src/keeper.rs" \
   && printf 'const tools = await client.listTools();\n' > "$LOC/web/mcp.ts" && printf 'store.upsert(record)\n' > "$LOC/web/memory.py" \
   && printf '<div dangerouslySetInnerHTML={{ __html: out }} />\n' > "$LOC/web/view.jsx" \
-  && printf 'listTools(); upsert(); dangerouslySetInnerHTML\n' > "$LOC/node_modules/x/index.ts" || ko "could not build the locator fixture"
+  && printf 'const signed = await wallet.signTransaction(tx);\n' > "$LOC/web/sign.ts" \
+  && printf 'await sendAndConfirmTransaction(connection, tx, [payer]);\n' > "$LOC/web/send.jsx" \
+  && printf 'await provider.signAndSendTransaction(tx);\nawait wallet.sendTransaction(tx, connection);\nvtx.sign([payer]);\n' > "$LOC/web/agent.cjs" \
+  && printf 'let tx = Transaction::new_signed_with_payer(&[ix], Some(&payer.pubkey()), &[&payer], blockhash);\n' > "$LOC/src/sign.rs" \
+  && printf 'listTools(); upsert(); dangerouslySetInnerHTML; signTransaction(tx); sendAndConfirmTransaction(c, tx, [p])\n' > "$LOC/node_modules/x/index.ts" \
+  || ko "could not build the locator fixture"
 for citem in "09-backend-security BE-133" "11-supply-chain SC-063" "11-supply-chain SC-064" "11-supply-chain SC-065" \
           "20-rust-offchain-services RS-022 src/keeper.rs:2:" "20-rust-offchain-services RS-023" \
-          "19-ai-agent-security AI-037 web/mcp.ts:1:" "19-ai-agent-security AI-038 web/memory.py:1:" \
-          "19-ai-agent-security AI-039 web/view.jsx:1:"; do
+          "19-ai-agent-security AI-036 web/sign.ts:1:" "19-ai-agent-security AI-036 web/send.jsx:1:" \
+          "19-ai-agent-security AI-036 web/agent.cjs:1:" "19-ai-agent-security AI-036 web/agent.cjs:2:" \
+          "19-ai-agent-security AI-036 web/agent.cjs:3:" "19-ai-agent-security AI-036 src/sign.rs:1:" \
+          "19-ai-agent-security AI-037 web/mcp.ts:1:" \
+          "19-ai-agent-security AI-038 web/memory.py:1:" "19-ai-agent-security AI-039 web/view.jsx:1:"; do
   read -r ckl cid cwant <<< "$citem"
   cline=$(awk -v id="- [ ] **$cid**:" 'index($0, id) == 1' "$ROOT/checklists/$ckl.md")
   case "$cline" in *"(PASS: "*"; FAIL: "*) ok "$cid gives a PASS and a FAIL clause";; *) ko "$cid gives no PASS and FAIL clause";; esac
