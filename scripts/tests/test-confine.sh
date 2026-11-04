@@ -801,9 +801,16 @@ EOF
   chmod +x "$T/slow/git"
   slow_read() { # slow_read <signal> caller|group: a read with TMPDIR $T/tmp-<signal>, which <signal> ends once git sleeps
     local pid n=0 d="$T/tmp-$1"
+    local -a start=("${SHELLS[0]}")
+    # For the group, python3 starts the shell with SIGINT at its default, as in a run from a terminal (a
+    # background job inherits it ignored, and so may the suite), in a process group of its own.
+    [ "$2" != group ] || start=(python3 -I -c 'import os, signal, sys
+signal.signal(signal.SIGINT, signal.SIG_DFL)
+os.setpgid(0, 0)
+os.execvp(sys.argv[1], sys.argv[1:])' "${SHELLS[0]}")
     mkdir -p "$d"
     rm -f "$T/slow.started"
-    (cd "$RW" && TMPDIR="$d" PATH="$T/slow:$PATH" exec "${SHELLS[0]}" -c \
+    (cd "$RW" && TMPDIR="$d" PATH="$T/slow:$PATH" exec "${start[@]}" -c \
       '. "$1" && confine_init test "$2" && confine_repo wl R && hgit_tree "$CONFINE_REPO" log --format=%s -1; printf "went on\n"' \
       lib "$LIB" "$ROOT") >"$T/out" 2>"$T/err" </dev/null &
     pid=$!
@@ -826,10 +833,9 @@ EOF
   slow_read ALRM caller
   check "... a caller an alarm ends while git reads leaves no directory under TMPDIR once git is done" \
     test "$SLOW_LEFT:$SLOW_NOW" = "${SLOW_LEFT:-none}:"
-  set -m
-  slow_read INT group
-  set +m
-  if [ "$SLOW_KILLED" = 0 ]; then
+  if ! command -v python3 >/dev/null 2>&1; then
+    skp "... Ctrl-C: needs python3"
+  elif slow_read INT group; [ "$SLOW_KILLED" = 0 ]; then
     skp "... Ctrl-C: the read got no process group of its own here"
   else
     check "... nor does Ctrl-C, which still stops the caller" \
