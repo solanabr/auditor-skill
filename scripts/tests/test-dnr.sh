@@ -132,6 +132,12 @@ eq "redact: dotted names in other text are left alone" "$(red 'curl 8.7.1 calls 
 eq "redact: url::Url's Debug fields (solana CLI 2.2.x errors) keep no key" \
   "$(red 'url: Url { scheme: "https", cannot_be_a_base: false, username: "", password: None, host: Some(Domain("TOKSUB42.rpc.example.test")), port: None, path: "/v2/LEAKME42", query: Some("api-key=LEAKME42"), fragment: None }')" \
   'url: Url { scheme: "https", cannot_be_a_base: false, username: "", password: None, host: Some(Domain("REDACTED.example.test")), port: None, path: "/REDACTED", query: Some("REDACTED"), fragment: None }'
+eq "redact: ... and its pretty form (dbg!, {:#?}), each value on a line of its own, keeps none either" \
+  "$(red $'Url {\n    username: "USER42",\n    password: Some(\n        "PASS42",\n    ),\n    host: Some(\n        Domain(\n            "TOKSUB42.rpc.example.test",\n        ),\n    ),\n    path: "/v2/LEAKME42",\n    query: Some(\n        "x-thing=LEAKME42&b=\\"q\\"",\n    ),\n    fragment: Some(\n        "FRAG42",\n    ),\n}' | tr '\n' '|')" \
+  'Url {|    username: "REDACTED",|    password: Some(|        "REDACTED",|    ),|    host: Some(|        Domain(|            "REDACTED.example.test",|        ),|    ),|    path: "/REDACTED",|    query: Some(|        "REDACTED",|    ),|    fragment: Some(|        "REDACTED",|    ),|}|'
+eq "redact: ... only on the line after such a field: other quoted lines, an IP host and a two-label host stay" \
+  "$(red $'    "a plain quoted line",\n    port: Some(\n        "8899",\n    ),\n    password: Some(\n    ),\n        "next but one",\n    host: Some(\n        Ipv4(\n            10.0.0.1,\n        ),\n    ),\n    host: Some(\n        Domain(\n            "example.test",\n        ),\n    ),' | tr '\n' '|')" \
+  '    "a plain quoted line",|    port: Some(|        "8899",|    ),|    password: Some(|    ),|        "next but one",|    host: Some(|        Ipv4(|            10.0.0.1,|        ),|    ),|    host: Some(|        Domain(|            "example.test",|        ),|    ),|'
 # The documented recipe keeps the filtered command's failure: `set -o pipefail;`
 # starts the line. Without it the filter's own 0 is the status (the control).
 for sh in bash zsh; do

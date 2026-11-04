@@ -42,7 +42,12 @@
 # Some(Domain("<token>.provider.example")), port: None, path: "/v2/<key>", query:
 # Some("api-key=<key>"), fragment: None }`) has no scheme://, so its fields are
 # redacted one by one: a username, password, query or fragment becomes "REDACTED",
-# the path "/REDACTED", and a Domain host keeps its last two labels, as above.
+# the path "/REDACTED", and a Domain host keeps its last two labels, as above. The
+# pretty form ({:#?}, as dbg! prints it) puts each Some's value on a line of its own:
+# the string on the line after "password: Some(", "query: Some(" or "fragment:
+# Some(" becomes "REDACTED", and the one after "host: Some(" and "Domain(" keeps its
+# last two labels. Only the line before is carried, in sed's hold space, so output
+# still streams a line at a time.
 #
 # It is a convenience, not a guarantee (a novel key format can slip through), so the
 # rule still holds: never put an RPC URL in INCIDENTS.json, LEDGER.md, or any
@@ -50,9 +55,11 @@
 # string "$RPC_URL".
 #
 # Portability: POSIX ERE via `sed -E` only — bracket classes, `?`/`+`/`*`, groups and
-# `\1` backreferences, the `g` flag. No GNU-only extensions and no case-insensitive
-# flag (letter case is spelled out in bracket classes instead), so BSD and GNU sed
-# read these expressions the same way. bash >= 3.2.
+# `\1` backreferences, the `g` flag, and the hold space (`G`, `h`, `x`, with `\n`
+# matching the newline `G` adds; a replacement puts a newline back only through a
+# group that matched one, since BSD sed reads `\n` there as `n`). No GNU-only
+# extensions and no case-insensitive flag (letter case is spelled out in bracket
+# classes instead), so BSD and GNU sed read these expressions the same way. bash >= 3.2.
 
 set -uo pipefail
 # Bytes, not characters: under a UTF-8 locale BSD sed stops at an invalid byte.
@@ -88,4 +95,12 @@ sed -E \
   -e "s#^(> [A-Z]+ )[^ ]+( HTTP/[0-9.]+)#\\1/REDACTED\\2#" \
   -e "s#(\\[:path: )[^]]*#\\1/REDACTED#g" \
   -e "/^(curl: |[*<>] )/s#${host}#\\1REDACTED.\\3#g" \
-  -e "s/((${key})=)[^&${end}]+/\\1REDACTED/g"
+  -e "s/((${key})=)[^&${end}]+/\\1REDACTED/g" \
+  -e 'G' \
+  -e "s#^([[:space:]]*)${dstr}(,?)(\\n)S\$#\\1\"REDACTED\"\\3\\4S#" \
+  -e "s#^([[:space:]]*\")[^\"]*\\.([^\".]+\\.[A-Za-z][^\".]*\",?)(\\n)D\$#\\1REDACTED.\\2\\3D#" \
+  -e 's#^(.*(password|query|fragment): Some[(])(\n)[SHD]?$#\1\3s#' \
+  -e 's#^(.*host: Some[(])(\n)[SHD]?$#\1\2h#' \
+  -e 's#^([[:space:]]*Domain[(])(\n)H$#\1\2d#' \
+  -e 's#(\n)[SHD]$#\1#' -e 's#(\n)s$#\1S#' -e 's#(\n)h$#\1H#' -e 's#(\n)d$#\1D#' \
+  -e 'h' -e 'x' -e 's#^.*\n##' -e 'x' -e 's#\n.*$##'
