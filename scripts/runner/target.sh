@@ -372,7 +372,8 @@ if [ "$MODE" = native ]; then
     0:supply_chain_or_ci)
       blocker "$json records an incident whose root_cause_class is supply_chain_or_ci, so nothing from this working directory is built natively, for an audit run or an incident run (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built." ;;
     0:*) ;;
-    2:*) blocker "python3 is not on PATH, so target.sh cannot read the root_cause_class in $json (OUTPUT-RULES.md Rule 11a) — nothing was copied or built." ;;
+    2:*) blocker "python3 is not on PATH, so target.sh cannot tell whether ${json%/INCIDENTS.json} holds an INCIDENTS.json, or read the root_cause_class one records (OUTPUT-RULES.md Rule 11a) — nothing was copied or built." ;;
+    '3:cannot be listed') blocker "the working directory cannot be listed, so target.sh cannot tell whether an incident_* directory in it records a supply_chain_or_ci incident, and nothing from it is built natively until it can be listed (OUTPUT-RULES.md Rule 11a) — nothing was copied or built." ;;
     *) blocker "$json $ISO_CLASS: nothing from this working directory is built natively until every incident_*/INCIDENTS.json in it records the root_cause_class of each of its incidents (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built." ;;
   esac
 fi

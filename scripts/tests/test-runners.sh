@@ -300,7 +300,7 @@ check "isolated mode where the self-check cannot run (no python3): exit 3, nothi
   sh -c "[ '$RC' = 3 ] && grep -qF 'target: blocker: isolated mode, but the credential self-check could not finish (python3 is not on PATH)' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
 run "$TARGET" "$WT" PATH="$T/fake:$T/sys-nopy" -- cargo-test --run audit_1 --src .
 check "native mode without python3: a blocker before anything is copied, since only python3 tells that incident_1 holds no INCIDENTS.json" \
-  sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: python3 is not on PATH, so target.sh cannot read the root_cause_class in incident_1/INCIDENTS.json (OUTPUT-RULES.md Rule 11a) — nothing was copied or built.' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
+  sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: python3 is not on PATH, so target.sh cannot tell whether incident_1 holds an INCIDENTS.json, or read the root_cause_class one records (OUTPUT-RULES.md Rule 11a) — nothing was copied or built.' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
 if [ "$ISOLATED_OK" = 1 ]; then
   run "$TARGET" "$WT" AUDITOR_EXEC_MODE=isolated GITHUB_TOKEN=x -- cargo-test --run audit_1 --src .
   check "isolated mode names target.sh's own variables that look like credentials, and goes on" \
@@ -857,6 +857,7 @@ fi
 # aside under another name, and incident_notes.md a file.
 XRUN='so nothing from this working directory is built natively, for an audit run or an incident run (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built.'
 XREAD='nothing from this working directory is built natively until every incident_*/INCIDENTS.json in it records the root_cause_class of each of its incidents (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built.'
+XLIST='the working directory cannot be listed, so target.sh cannot tell whether an incident_* directory in it records a supply_chain_or_ci incident, and nothing from it is built natively until it can be listed (OUTPUT-RULES.md Rule 11a) — nothing was copied or built.'
 printf '{"incidents": [{"id": "INC-1.1", "root_cause_class": "supply_chain_or_ci"}, {"id": "INC-1.2", "root_cause_class": "code_flaw"}]}\n' > "$IJ"
 for src in . audit_1/src.git; do
   run "$TARGET" "$WT" -- build-sbf --run audit_1 --src "$src" --patch audit_1/patches/F-1.patch
@@ -923,7 +924,7 @@ run "$TARGET" "$WT" -- cargo-test --run audit_1 --src .
 check "... while a file named incident_notes.md, and incident_2 without INCIDENTS.json, count for nothing" test "$RC" = 0
 run "$TARGET" "$WT" PATH="$T/fake:$T/sys-nopy" -- cargo-test --run audit_1 --src .
 check "natively without python3, an INCIDENTS.json in the working directory: exit 3 before anything is copied" \
-  sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: python3 is not on PATH, so target.sh cannot read the root_cause_class in incident_1/INCIDENTS.json (OUTPUT-RULES.md Rule 11a) — nothing was copied or built.' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
+  sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: python3 is not on PATH, so target.sh cannot tell whether incident_1 holds an INCIDENTS.json, or read the root_cause_class one records (OUTPUT-RULES.md Rule 11a) — nothing was copied or built.' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
 if [ "$ISOLATED_OK" = 1 ]; then
   printf '{"incidents": [{"id": "INC-2.1", "root_cause_class": "supply_chain_or_ci"}]}\n' > "$IJ2"
   run "$TARGET" "$WT" AUDITOR_EXEC_MODE=isolated -- cargo-test --run audit_1 --src .
@@ -1002,7 +1003,7 @@ if DW=$(deep_wt $((PM - 200))) && [ "${#DW}" = $((PM - 200)) ]; then
     run "$TARGET" "$DW" -- cargo-test --run audit_1 --src src
     chmod 700 "$DW"
     check "natively, a working directory that cannot be listed stops audit_1's build of --src src: exit 3, nothing copied" \
-      sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: the working directory cannot be listed: $XREAD' '$T/err' && [ ! -s '$T/calls' ]"
+      sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: $XLIST' '$T/err' && [ ! -s '$T/calls' ]"
     ( cd "$DW" && rm -rf incident_1 )
     run "$TARGET" "$DW" -- cargo-test --run audit_1 --src src
     check "... and with it listed and incident_1 gone, the same build of --src src runs: exit 0" test "$RC" = 0
