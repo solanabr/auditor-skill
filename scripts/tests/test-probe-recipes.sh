@@ -38,7 +38,9 @@
 #   - every zizmor call the docs and the corpus give passes --offline, --no-config, --no-ignores, --collect=all
 #     and --persona=auditor, and every docker or podman call names zizmor's image by a sha256 digest;
 #   - the check finds power-tools.md's 2 calls, and the 1 call each of discovery/grep-commands.md and
-#     references/vuln-classes/github-actions.md.
+#     references/vuln-classes/github-actions.md;
+#   - it reads a call after a $ prompt, a wrapper (sudo, nice, time, command, exec, env), a NAME=value word, or a
+#     ;, && or |, and one made through uvx, pipx run or python3 -m.
 # Nothing reaches the network: the stand-ins answer for aws, curl, docker, pip and zizmor, the real curl stops at its
 # URL parser, and the real python3 sets pip up from the copy it ships with.
 # Usage (from the repo root): bash scripts/tests/test-probe-recipes.sh
@@ -478,28 +480,56 @@ else
 fi
 
 # ---- every zizmor call the docs and the corpus give ---------------------------------------------------------------
-# A code span, or a code line joined over a trailing \, is a call when its command, past a "(cd <dir> &&",
-# "cd <dir> &&" or "env [NAME=value...]" in front, is zizmor (by name or by a path ending in /zizmor), or docker or
-# podman with zizmorcore/zizmor in the line, and a word follows it; a name alone, such as the image's, is not.
-# Each call passes these flags, and a container call names the image by a sha256 digest. The self-test's calls are
-# made from the same list, so a flag added here is required of them too.
+# A code span, or a code line joined over a trailing \, without its comment, is cut into commands at &&, ||, ; and |.
+# A command is a call when, past a "$ " prompt, NAME=value words and the wrappers sudo, nice, time, command, exec and
+# env (with their options), it is zizmor (by name or by a path ending in /zizmor), uvx or pipx run with zizmor (or
+# zizmor@<version>, zizmor==<version>) as the tool, python or python3 -m zizmor, or docker or podman with
+# zizmorcore/zizmor in it, and a word follows zizmor or the container command; a name alone, such as the image's, is
+# not, and neither is the requirement line zizmor==<version>. Each call passes these flags, and a container call names
+# the image by a sha256 digest. The self-test's calls are made from the same list, so a flag added here is required of
+# them too.
 ZALL='--offline --no-config --no-ignores --collect=all --persona=auditor'
 ZAWK='
-function seg(s, ln,   w, n, i, c) {
-  sub(/^[ \t]+/, "", s)
-  if (s == "" || substr(s, 1, 1) == "#") return
+function zcall(s, ln,   w, n, i, c, o) {
+  sub(/^[ \t(]+/, "", s); sub(/[ \t)]+$/, "", s)
+  if (s == "") return
   n = split(s, w, /[ \t]+/)
   i = 1
   while (i <= n) {
-    c = w[i]; sub(/^\(/, "", c)
-    if (c == "cd" && i + 2 <= n && w[i + 2] == "&&") { i += 3; continue }
-    if (c == "env") { i++; while (i <= n && index(w[i], "=") > 1 && substr(w[i], 1, 1) != "-") i++; continue }
+    c = w[i]
+    if (c == "$" || c ~ /^[A-Za-z_][A-Za-z0-9_]*=/) { i++; continue }
+    if (c == "sudo" || c == "nice" || c == "time" || c == "command" || c == "exec" || c == "env") {
+      i++
+      while (i <= n && substr(w[i], 1, 1) == "-") { o = w[i]; i++; if (o == "-n" || o == "-u" || o == "-g") i++ }
+      continue
+    }
     break
   }
+  if (i > n) return
+  c = w[i]
+  if (c == "uvx" || (c == "pipx" && w[i + 1] == "run")) {
+    i += (c == "pipx") ? 2 : 1
+    while (i <= n && substr(w[i], 1, 1) == "-") {
+      o = w[i]; i++
+      if (o ~ /^(--from|--with|--with-requirements|--python|-p|--spec|--index|--index-url|--default-index|--extra-index-url|-c|--constraints)$/) i++
+    }
+    if (i > n || w[i] !~ /^zizmor([@=].*)?$/) return
+  } else if (c ~ /^python[0-9.]*$/) {
+    i++
+    while (i <= n && w[i] != "-m" && substr(w[i], 1, 1) == "-") { o = w[i]; i++; if (o == "-W" || o == "-X") i++ }
+    if (i >= n || w[i] != "-m" || w[i + 1] != "zizmor") return
+    i++
+  } else if (!(c == "zizmor" || c ~ /\/zizmor$/ || ((c == "docker" || c == "podman") && index(s, "zizmorcore/zizmor") > 0)))
+    return
   if (i >= n) return
-  c = w[i]; sub(/^\(/, "", c)
-  if (c == "zizmor" || c ~ /\/zizmor$/ || ((c == "docker" || c == "podman") && index(s, "zizmorcore/zizmor") > 0))
-    printf "%s:%d\t%s\n", FILENAME, ln, s
+  printf "%s:%d\t%s\n", FILENAME, ln, s
+}
+function seg(s, ln,   p, np, k) {
+  sub(/^[ \t]+/, "", s)
+  if (s == "" || substr(s, 1, 1) == "#") return
+  sub(/[ \t]#.*$/, "", s)
+  np = split(s, p, /\|\||&&|;|\|/)
+  for (k = 1; k <= np; k++) zcall(p[k], ln)
 }
 FNR == 1 { fenced = 0; acc = "" }
 {
@@ -534,11 +564,19 @@ printf '%s\n' "Run \`zizmor $ZALL .\` but not \`~/v/bin/zizmor --offline .\`." \
   '```bash' 'docker run --rm \' "  ghcr.io/zizmorcore/zizmor:1.30.1 $ZALL /src" \
   'zizmor==1.30.1 \' '    --hash=sha256:00' '# zizmor --offline, in a comment' \
   "podman run --rm ghcr.io/zizmorcore/zizmor@sha256:$(printf '%064d' 0) $ZALL /s" \
-  '```' > "$T/zforms.md"
+  '```' 'Wrapped or prefixed, one per line: `uvx zizmor .`' '`uvx zizmor@1.30.1 .github/workflows`' '`pipx run zizmor .`' \
+  '`python3 -m zizmor .`' '`sudo zizmor .`' '`nice -n 10 zizmor .`' '`time zizmor .`' '`ZIZMOR_X=1 zizmor .`' \
+  '`make lint; zizmor .`' '`true && zizmor .`' '`cat list | zizmor .`' '`$ zizmor .`' '`command zizmor .` and `exec zizmor .`' \
+  "Whole: \`uvx --from zizmor==1.30.1 zizmor $ZALL .\`, \`python3 -I -m zizmor $ZALL .\`, \`sudo -E env A=1 zizmor $ZALL .\`." \
+  'Names: `uvx zizmor`, `pipx run zizmor`, `python3 -m pip install zizmor`, `pip install zizmor`, `/usr/bin/zizmor`.' \
+  '`zizmor --offline --no-ignores . # --no-config --collect=all --persona=auditor` (a flag in the comment does not count)' \
+  > "$T/zforms.md"
+want="zforms.md:1 zforms.md:2 zforms.md:2 zforms.md:4"
+for n in 11 12 13 14 15 16 17 18 19 20 21 22 23 23 26; do want="$want zforms.md:$n"; done
 got=$(zlist "$(cd "$T" && awk "$ZAWK" zforms.md)" | tr '\n' ' ')
-if [ "$got" = "zforms.md:1 zforms.md:2 zforms.md:2 zforms.md:4 " ]; then
-  ok "the zizmor call check flags a call without a flag or a container call without a digest, after cd or env too, and passes the rest"
-else bad "the zizmor call check is broken: it flags [$got], not zforms.md:1, :2 twice and :4"; fi
+if [ "$got" = "$want " ]; then
+  ok "the zizmor call check flags a call without a flag or a container call without a digest, after cd, env, a prompt, a wrapper, an assignment, ;, && or |, through uvx, pipx run or python3 -m too, and passes the rest"
+else bad "the zizmor call check is broken: it flags [$got], not [$want ]"; fi
 zfound=$(cd "$ROOT" && find . -name '*.md' -type f ! -path './.git/*' ! -path './vendor/*' ! -path './scripts/tests/fixtures/*' \
   -exec awk "$ZAWK" {} +)
 zcount=""
