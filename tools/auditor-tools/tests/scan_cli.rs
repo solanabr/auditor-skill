@@ -471,10 +471,14 @@ fn enters_no_directory_swapped_for_a_link_while_it_walks() {
             }
         })
     };
+    // At least 30 scans, however long a loaded host takes for them (up to two
+    // minutes), and more, up to 300, while the first 6 seconds last.
     let started = std::time::Instant::now();
     let mut scans = 0;
     let mut leaked = 0;
-    while scans < 300 && started.elapsed().as_secs() < 6 {
+    while scans < 300
+        && (started.elapsed().as_secs() < 6 || (scans < 30 && started.elapsed().as_secs() < 120))
+    {
         let out = run(BIN, &wt.dir, &["src"]);
         assert_eq!(out.status.code(), Some(0), "{}", common::stderr(&out));
         if stdout(&out).contains("outside_marker_fn") {
