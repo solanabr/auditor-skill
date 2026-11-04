@@ -100,13 +100,23 @@ nested or chained too deeply, not Rust that `syn` parses, one the parser could n
 finish, or one past the report's size or the scan's time), is listed in `skipped`
 with the reason. So is every file a parsed file brings in, by a module's `#[path =
 "…"]` (one in a `cfg_attr` too) or by `include!`, that the walk does not parse,
-named where rustc finds it (from the naming file's directory, inside inline
-modules through their directories), `.` and `..` taken as written and nothing
-opened, with the file and line that bring it in: one not named `*.rs`, one outside
-`<dir>`, and, once the walk is done, a `*.rs` inside `<dir>` it did not parse, in
-a directory it did not enter (one of those above, or a link) or not found; for an
-`include!` of a name that is not a string literal, such as
-`concat!(env!("OUT_DIR"), …)`, the file that has it.
+once the walk is done, with the file and line that bring it in. It is named where
+rustc finds it: from the naming file's directory, and for a `#[path]` inside
+inline modules through their directories, below one named for the naming file
+unless rustc takes that file for a `mod.rs`, as it takes a `mod.rs`, a crate root
+of any name and a file a `#[path]` brings in. audit-scan cannot tell those two
+from a module's file, so it tries both places: it lists each that may hold a file
+it did not parse, and when none does and it parsed the file at neither, the first,
+as not found. `.` and `..` are taken as written and nothing is opened: one not
+named `*.rs`, one outside `<dir>`, and a `*.rs` inside `<dir>` it did not parse,
+in a directory it did not enter (one of those above, or a link) or not found, are
+listed; so is one whose path leaves, by `..`, a directory the walk did not enter (a
+link, one it prunes, one outside `<dir>`, or one with a byte outside ASCII in its
+name, which another spelling may open), with that directory, as rustc may find
+the file elsewhere. A directory spelled in other letters counts as the one the
+walk entered, as a filesystem that ignores case opens it. For an `include!` of a
+name that is not a string literal, such as `concat!(env!("OUT_DIR"), …)`, the file
+that has it is listed.
 
 The files are parsed in a child: audit-scan starts itself, by the path it runs
 from, with `--internal-parse-stdin` as its only argument, no environment and `/`
