@@ -99,10 +99,10 @@ exploit earns `[FIX-VERIFIED]`. If there is no executable PoC to run, stop at
   ```
   Interface as documented by the vendored `mutation-testing` skill (mewt 4.x); `mewt --help`
   is authoritative. A mutation run executes the target's tests, so it follows Rule 11a too.
-  No bundled runner wraps mewt (DESIGN §5.1: `target.sh mutate`, 7.9), so each call asks for approval. It needs
-  a tree with the patch applied, which §1 no longer leaves: make one by hand outside the working directory, in
-  the recorded mode, or record the mutation step as not run. Never run it in the client checkout: `mewt init`
-  writes `mewt.toml` and `mewt.sqlite` where it runs.
+  No bundled runner wraps mewt, so each call asks for approval. It needs a tree with the patch applied, which §1
+  no longer leaves: make one by hand outside the working directory, in the recorded mode, or record the mutation
+  step as not run. Never run it in the client checkout: `mewt init` writes `mewt.toml` and `mewt.sqlite` where it
+  runs.
   - [ ] No surviving mutant on the patched line(s) — or the survivor is recorded and
         the verdict is not overstated.
 
