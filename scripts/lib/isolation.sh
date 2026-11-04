@@ -59,8 +59,9 @@
 #     holding both (https://<name>.quiknode.pro/<token>/; an id such as a UUID counts too, while a version or a
 #     date in a name holds none). Arguments carry one in an option named as a key goes by, with a value
 #     (--api-key <value>, --key=<value>; a --no- option takes none), in NAME=<value> for a name that looks like
-#     a credential, in a header option (-H, --header) or in a URL. A value that refers to a variable (${NAME})
-#     does not count, nor does a word that switches a setting or names an authentication method (true, false,
+#     a credential, in a header option (-H, --header) or in a URL. A value with $NAME or ${NAME} anywhere in
+#     it, taken for a reference to a variable (so also a password with a $ before a letter, _ or {), does not
+#     count, nor does a word that switches a setting or names an authentication method (true, false,
 #     yes, no, on, off, 0, 1, none, null, enabled, disabled, anonymous, oauth, oauth2, oidc, basic, bearer,
 #     digest, token, apikey, api-key, api_key, jwt, mtls), and neither does a file that is not JSON; one larger
 #     than 16 MiB stops the check (status 2);

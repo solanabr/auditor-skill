@@ -2125,13 +2125,13 @@ code="$(dcreds DOCKER_CERT_PATH="$ED/certs" DOCKER_CONFIG="$ED/config" -- "$CLEA
 # there (ANTHROPIC_CUSTOM_HEADERS lines, an MCP server's JSON object; any *-Authorization, and a name whose last
 # part is KEY or AUTH), any header in the OTLP exporter's lists, an MCP server's Authorization or key header,
 # and a key in an MCP server's or a hook's URL (its login, its query or its path) or in an MCP server's
-# arguments (an option, NAME=value, a header option, a URL). Settings that only refer to a variable, and names
-# that do not look like credentials, do not count; nor do an ssh URL with a user name only, arguments that name
-# no credential, a public RPC URL, a skip-auth switch, a word that switches a setting or names an
-# authentication method (--auth none, --auth api-key), a public key or a table's key, a --no- option, a
-# version, a date or a local file in a URL's path, and a commit in a code host's path. A path with a NUL byte
-# in it (a git include, a cache helper's socket), which no file has, counts for nothing and does not stop the
-# check.
+# arguments (an option, NAME=value, a header option, a URL). Settings that refer to a variable ($NAME or ${NAME}
+# anywhere in a value, so a password with a $ before a letter, _ or { as well), and names that do not look like
+# credentials, do not count; nor do an ssh URL with a user name only, arguments that name no credential, a
+# public RPC URL, a skip-auth switch, a word that switches a setting or names an authentication method (--auth
+# none, --auth api-key), a public key or a table's key, a --no- option, a version, a date or a local file in a
+# URL's path, and a commit in a code host's path. A path with a NUL byte in it (a git include, a cache helper's
+# socket), which no file has, counts for nothing and does not stop the check.
 n=0
 while IFS='|' read -r file text kind; do
   [ -n "$file" ] || continue
@@ -2180,6 +2180,7 @@ done <<'CONFIGS'
 .claude/backups/.claude.json.backup.1|{"mcpServers":{"gh":{"env":{"GITHUB_TOKEN":"t"}}}}\n|Claude Code credentials
 .claude/settings.json|{"env":{"AUDITOR_EXEC_MODE":"isolated","MAX_MCP_OUTPUT_TOKENS":"1","GITHUB_TOKEN":"${GITHUB_TOKEN}"},"apiKeyHelper":""}\n|
 .claude.json|{"oauthAccount":{"emailAddress":"a@b.invalid"},"mcpServers":{"api":{"headers":{"Authorization":"Bearer ${API_TOKEN}","X-Client":"c"}}}}\n|
+.claude/settings.json|{"env":{"DB_PASSWORD":"Xy7$kLm9pQ2w","REDIS_PASSWORD":"q$_8vT2"}}\n|
 .claude/settings.json|{"env":{"ANTHROPIC_CUSTOM_HEADERS":"X-Org-Route: prod\\nx-api-key: x"}}\n|Claude Code credentials
 .claude/settings.json|{"env":{"OTEL_EXPORTER_OTLP_HEADERS":"Authorization=Bearer x"}}\n|Claude Code credentials
 .claude/settings.json|{"env":{"DATABASE_URL":"postgres://u:p@db.invalid/x"}}\n|Claude Code credentials
@@ -2227,6 +2228,12 @@ done <<'CONFIGS'
 .gitconfig|[include]\n\tpath = /nonexistent.invalid/a\000b\n|
 .gitconfig|[credential]\n\thelper = cache --socket /nonexistent.invalid/s\000k\n|
 CONFIGS
+# The permissions page says so of the passwords with a $ in them that the row above shows: the check takes
+# them for a reference to a variable.
+PI="$ROOT/docs/permissions-and-isolation.md"
+grep -qF 'a value with `$NAME` or `${NAME}` anywhere in it' "$PI" && grep -qF 'so also a password with a `$` before a letter, `_` or `{`' "$PI" \
+  && ok "docs/permissions-and-isolation.md says a value with \$NAME or \${NAME} anywhere in it does not count, a password with a \$ before a letter too" \
+  || bad "docs/permissions-and-isolation.md does not say that a value with \$NAME or \${NAME} anywhere in it does not count"
 # git's store counts by the file its --file names, when that file is readable: the file counts, not the git
 # config, as the code here could read it without git. "~" as a word of its own is the home; the helper may be
 # named by an absolute path, and the option by an abbreviation, as git takes it (--fi).
