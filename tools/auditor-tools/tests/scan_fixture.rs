@@ -194,8 +194,10 @@ fn scan_fixture_extracts_expected_surface() {
 }
 
 /// Every cross-program call form of solana-program, solana-cpi, pinocchio and
-/// pinocchio-system, and every program address derivation of solana-program,
-/// solana-address, pinocchio and pinocchio-pubkey, in a program without Anchor.
+/// pinocchio-system, every program address derivation of solana-program,
+/// solana-address, pinocchio and pinocchio-pubkey, and the associated token
+/// account derivations of spl-associated-token-account, in a program without
+/// Anchor.
 const NATIVE: &str = r#"
 use pinocchio::{cpi, pubkey};
 use pinocchio_system::instructions::{CreateAccount, Transfer};
@@ -227,6 +229,9 @@ pub fn derivations(user: &AccountInfo, bump: u8, seeds: &[&[u8]]) -> ProgramResu
     let constant = pinocchio_pubkey::derive_address_const(&[b"vault"], None, &crate::ID);
     let tried = Address::try_derive_address(&[b"vault"], Some(bump), &crate::ID)?;
     let program = Address::derive_program_address(&[b"vault"], &crate::ID);
+    let ata = get_associated_token_address(user.key(), &mint);
+    let ata_of = spl_associated_token_account::get_associated_token_address_with_program_id(user.key(), &mint, &token_program);
+    let (ata_bumped, ata_bump) = get_associated_token_address_and_bump_seed(user.key(), &mint, &ATA_ID, &token_program);
     Ok(())
 }
 "#;
@@ -352,6 +357,27 @@ fn scan_fixture_lists_the_cross_program_calls_and_derivations_of_a_program_witho
                 "derive_program_address",
                 vec![vault],
                 native_line("derive_program_address(")
+            ),
+            (
+                "",
+                "",
+                "get_associated_token_address",
+                vec!["user . key ()", "& mint"],
+                native_line("= get_associated_token_address(")
+            ),
+            (
+                "",
+                "",
+                "get_associated_token_address_with_program_id",
+                vec!["user . key ()", "& mint", "& token_program"],
+                native_line("get_associated_token_address_with_program_id(")
+            ),
+            (
+                "",
+                "",
+                "get_associated_token_address_and_bump_seed",
+                vec!["user . key ()", "& mint", "& ATA_ID", "& token_program"],
+                native_line("get_associated_token_address_and_bump_seed(")
             ),
         ]
     );

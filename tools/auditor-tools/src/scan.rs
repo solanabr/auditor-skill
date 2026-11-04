@@ -76,6 +76,18 @@ const PDA_CALLS: [&str; 8] = [
     "derive_program_address",
 ];
 
+/// How the functions start that derive an associated token account, the program
+/// address the associated-token-account program gives a wallet and a mint, by the
+/// last name of the path they are called by: spl-associated-token-account's and
+/// its client crate's `get_associated_token_address`,
+/// `get_associated_token_address_with_program_id` and
+/// `get_associated_token_address_and_bump_seed` (anchor-spl's
+/// `associated_token` re-exports them), and any other named so. They take the
+/// wallet, the mint and program ids, not seeds, so each argument is listed. A
+/// program's own wrapper of another name is seen only where it calls one of these
+/// or of `PDA_CALLS`, not where it is called.
+const ATA_CALLS: &str = "get_associated_token_address";
+
 /// The most items one file may list (sites, functions, instructions with their
 /// arguments, accounts structs with their fields, PDAs); past them the file is in
 /// `skipped` as listing only the first ones. Nor does it list more than its answer
@@ -218,8 +230,8 @@ pub struct AccountConstraints {
 }
 
 /// A program address derived from seeds: an Accounts field's `seeds = [...]`
-/// constraint (kind `seeds`), or a call to one of `PDA_CALLS` (kind: the function's
-/// name; `struct` and `field` are then empty).
+/// constraint (kind `seeds`), or a call to one of `PDA_CALLS` or `ATA_CALLS`
+/// (kind: the function's name; `struct` and `field` are then empty).
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Pda {
     #[serde(rename = "struct")]
@@ -1803,15 +1815,15 @@ impl<'t> FileVisitor<'t> {
         self.accounts_structs.push(accounts);
     }
 
-    /// A call that derives a program address (`PDA_CALLS`, called by `name`), with
-    /// the seeds its first argument gives: each element of an array, `[a, b]` or
-    /// `&[a, b]`, or else the argument itself, each as its snippet. The seeds are
-    /// rendered only while the file's answer has room for them.
-    fn record_derivation(&mut self, node: &syn::ExprCall, name: &syn::Ident, kind: String) {
+    /// A call that derives a program address, called by `name`, with `seeds`, each
+    /// as its snippet: for `PDA_CALLS` what its first argument gives, each element
+    /// of an array, `[a, b]` or `&[a, b]`, or else the argument itself; for
+    /// `ATA_CALLS` each argument. The seeds are rendered only while the file's
+    /// answer has room for them.
+    fn record_derivation(&mut self, name: &syn::Ident, seeds: Vec<&Expr>, kind: String) {
         if self.full.is_some() {
             return;
         }
-        let seeds = node.args.first().map_or_else(Vec::new, elements);
         let mut pda = Pda {
             struct_name: String::new(),
             field: String::new(),
@@ -2022,7 +2034,10 @@ impl<'ast> Visit<'ast> for FileVisitor<'_> {
                     };
                     self.list(1, site, |v| &mut v.cpi_sites);
                 } else if PDA_CALLS.contains(&name.as_str()) {
-                    self.record_derivation(node, &seg.ident, name);
+                    let seeds = node.args.first().map_or_else(Vec::new, elements);
+                    self.record_derivation(&seg.ident, seeds, name);
+                } else if name.starts_with(ATA_CALLS) {
+                    self.record_derivation(&seg.ident, node.args.iter().collect(), name);
                 }
             }
         }
