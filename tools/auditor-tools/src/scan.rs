@@ -327,7 +327,6 @@ impl ScanReport {
             + self.remaining_accounts_sites.len()
             + self.functions.len()
             + self.skipped.len()
-            + self.brought_in.len()
     }
 
     /// Adds the report of one file, made with the file named `""`, under `label`.
@@ -624,16 +623,22 @@ impl Scan<'_> {
                 let label = path.display().to_string();
                 let shown = serde_json::to_string(&label)
                     .map_or(label.len(), |j| confine::json_text(j).len());
-                let size = len.saturating_add(one.items().saturating_mul(shown));
+                // Each file it brings in that is not parsed prints as an entry of its
+                // own, not as the child gives it, so it counts as it prints.
+                let more: Vec<Skipped> = std::mem::take(&mut one.brought_in)
+                    .iter()
+                    .filter_map(|b| unparsed(&self.root, path, b))
+                    .collect();
+                let size = more.iter().fold(
+                    len.saturating_add(one.items().saturating_mul(shown)),
+                    |size, s| size.saturating_add(crate::workflow::printed_size(s, false, 0)),
+                );
                 if self.size.saturating_add(size) > self.cap {
                     self.full = true;
                     return self.skip(path, FULL);
                 }
                 self.size += size;
-                let brought = std::mem::take(&mut one.brought_in);
                 self.report.absorb(one, &label);
-                let root = &self.root;
-                let more = brought.iter().filter_map(|b| unparsed(root, path, b));
                 self.report.skipped.extend(more);
             }
             Err(reason) => self.skip(path, reason),

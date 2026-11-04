@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use auditor_tools::confine::{Parser, PARSE_TIME};
 use auditor_tools::scan::{scan_path_until, scan_path_with, ScanReport, MAX_REPORT, SCAN_TIME};
+use auditor_tools::workflow::printed_size;
 use common::Wt;
 
 const BIN: &str = env!("CARGO_BIN_EXE_audit-scan");
@@ -93,6 +94,41 @@ fn a_file_whose_parser_dies_or_hangs_is_skipped_and_the_scan_goes_on() {
         .collect();
     let full = "not parsed: the report is full";
     assert_eq!(skipped, [("cap/b.rs", full), ("cap/c.rs", full)]);
+
+    // Each file a parsed one brings in and that is not parsed is an entry of
+    // `skipped`, which names the file and the one that brings it in, and counts in
+    // the cap as it prints, about twice what the child's answer gives for it here.
+    // The report prints within its cap whether the file fits or not.
+    let dir = format!("brings/{}", "d".repeat(150));
+    let file = format!("{dir}/a.rs");
+    wt.write(&file, "include!(\"x\");\n".repeat(200).as_bytes());
+    for (cap, fits) in [(60_000, false), (200_000, true)] {
+        let report = scan_path_with(Path::new("brings"), cap, SCAN_TIME, &mut |bytes| {
+            real.parse(bytes, PARSE_TIME)
+        });
+        let printed = printed_size(&report, false, 0);
+        assert!(printed <= cap, "{cap}: the report prints {printed} bytes");
+        let skipped: Vec<(&str, &str)> = report
+            .skipped
+            .iter()
+            .map(|s| (s.file.as_str(), s.reason.as_str()))
+            .collect();
+        if fits {
+            assert_eq!(report.files_scanned, 1);
+            assert_eq!(skipped.len(), 200);
+            assert_eq!(
+                skipped[199],
+                (
+                    format!("{dir}/x").as_str(),
+                    format!("not parsed: not named *.rs; {file} brings it in (include!, line 200)")
+                        .as_str()
+                )
+            );
+        } else {
+            assert_eq!(report.files_scanned, 0);
+            assert_eq!(skipped, [(file.as_str(), full)]);
+        }
+    }
 
     // A scan has a time: once it has run that long, no further file is parsed. The
     // file it started before then still has the time a file is given.
