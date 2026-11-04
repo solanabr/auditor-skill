@@ -577,7 +577,8 @@ ACTIONS:
        b. Else check its feature markers against evidence:
             - the audit-scan prescan array (references/orchestration/pre-scan.md), and
             - a grep over the in-scope tree.
-          If EVERY marker is PROVABLY ABSENT (empty prescan array OR zero grep hits) →
+          If EVERY marker is PROVABLY ABSENT (zero grep hits AND, for a marker a prescan array
+          covers, that array empty; an empty array alone is not proof: pre-scan.md, property (a)) →
             record  [N/A — feature absent: <marker>]  from the gate (an evidence-backed verdict).
           Otherwise → OPEN the vector file and evaluate it.
   3. For each opened vector, record one verdict:
