@@ -249,6 +249,8 @@ for sh in "${SHELLS[@]}"; do
   if [ -z "$w" ]; then ko "... the stand-in walk ran ($sh)"
   elif kill -0 "$w" 2>/dev/null; then kill -KILL "$w"; ko "... and the walk is stopped ($sh)"
   else ok "... and the walk is stopped ($sh)"; fi
+  # The walk has ended by now, so its process ID may go to another process: the EXIT trap must not find it.
+  rm -f "$T/endless.pid"
 done
 
 # =================================================================================================
