@@ -107,16 +107,16 @@ unless rustc takes that file for a `mod.rs`, as it takes a `mod.rs`, a crate roo
 of any name and a file a `#[path]` brings in. audit-scan cannot tell those two
 from a module's file, so it tries both places: it lists each that may hold a file
 it did not parse, and when none does and it parsed the file at neither, the first,
-as not found. `.` and `..` are taken as written and nothing is opened: one not
-named `*.rs`, one outside `<dir>`, and a `*.rs` inside `<dir>` it did not parse,
-in a directory it did not enter (one of those above, or a link) or not found, are
-listed; so is one whose path leaves, by `..`, a directory the walk did not enter (a
-link, one it prunes, one outside `<dir>`, or one with a byte outside ASCII in its
-name, which another spelling may open), with that directory, as rustc may find
-the file elsewhere. A directory spelled in other letters counts as the one the
-walk entered, as a filesystem that ignores case opens it. For an `include!` of a
-name that is not a string literal, such as `concat!(env!("OUT_DIR"), …)`, the file
-that has it is listed.
+with why rustc finds none there. `.` and `..` are taken as written and nothing is
+opened: one not named `*.rs`, one outside `<dir>`, and a `*.rs` inside `<dir>` it
+did not parse, in a directory it did not enter (one of those above, or a link) or
+not found, are listed; so is one whose path leaves, by `..`, a directory the walk
+did not enter (a link, one it prunes, one outside `<dir>`, or one whose path holds
+a byte outside ASCII, which another spelling may open), with that directory, as
+rustc may find the file elsewhere. A directory spelled in other letters counts as
+the one the walk entered, as a filesystem that ignores case opens it. For an
+`include!` of a name that is not a string literal, such as
+`concat!(env!("OUT_DIR"), …)`, the file that has it is listed.
 
 The files are parsed in a child: audit-scan starts itself, by the path it runs
 from, with `--internal-parse-stdin` as its only argument, no environment and `/`
