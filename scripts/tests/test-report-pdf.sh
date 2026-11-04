@@ -2,7 +2,7 @@
 # test-report-pdf.sh — self-test for scripts/report-to-pdf.sh and scripts/pdf/no-remote.lua: the reports
 # it takes (run-directory paths only) and the PDFs it may replace, the skips that keep it best-effort, the
 # sandboxed pandoc call with the filter and the paranoid TeX settings and none of the caller's environment,
-# rendering in scratch, and the case
+# rendering in scratch, a HOME left as it was by name and content, and the case
 # file fixtures/report-pdf/cases.txt, run under each bash on the machine (/bin/bash and the bash running
 # this suite, when they differ), which must print the same. Stand-ins take the place of pandoc and of the
 # TeX engines; where pandoc 2.15 or later is installed, the filter also runs in the real pandoc against
@@ -25,6 +25,10 @@ export HOME="$T/home" GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0
 export GIT_AUTHOR_NAME=fixture GIT_AUTHOR_EMAIL=fixture@example.invalid
 export GIT_COMMITTER_NAME=fixture GIT_COMMITTER_EMAIL=fixture@example.invalid
 mkdir -p "$HOME"
+# snap <dir>: its names, then a line per regular file with its CRC, size and path (cksum's), in byte
+# order. HOME's is taken now, before anything runs, and compared after the real-pandoc render and at the end.
+snap() { (cd "$1" && find . -print | LC_ALL=C sort && find . -type f -exec cksum {} + | LC_ALL=C sort); }
+snap "$HOME" > "$T/home.start"
 
 pass=0 fail=0 skip=0
 ok()   { pass=$((pass + 1)); echo "ok   - $1"; }
@@ -100,6 +104,10 @@ run() {
 }
 refused() { [ "$RC" = 2 ] && [ "$(cat "$T/err")" = "report-to-pdf: refused: $1" ] && [ ! -s "$T/out" ]; }
 tree() { (cd "$1" && find . -print | LC_ALL=C sort); }
+# sums <dir>: a line per regular file below <dir>, as snap gives them; others <sums file> <path>: its
+# lines but the one for <path>
+sums() { (cd "$1" && find . -type f -exec cksum {} + | LC_ALL=C sort); }
+others() { awk -v f="$2" '{ p = $0; sub(/^[0-9]+ [0-9]+ /, "", p); if (p != f) print }' "$1"; }
 
 # =================================================================================================
 # The entry point, and the reports it takes.
@@ -364,7 +372,7 @@ EOF
   # The whole run, with the real pandoc and the engine stand-in.
   mkdir -p "$T/realbin"; ln -s "$REALPANDOC" "$T/realbin/pandoc"
   cp "$F" "$W/$R/REPORT.md"; : > "$FAKE_LOG"; rm -f "$FAKE_TEX" "$W/$R/REPORT.pdf"
-  tree "$W" > "$T/w.before"; tree "$HOME" > "$T/home.before"
+  tree "$W" > "$T/w.before"; sums "$W" > "$T/wsum.before"
   run "$T/realbin:$T/xe:$T/tools" "$R/REPORT.md"
   check "real pandoc: the report renders (exit 0) with the engine stand-in" sh -c "[ $RC = 0 ] && grep -q '^%PDF-1.4 engine stand-in' '$W/$R/REPORT.pdf'"
   check "real pandoc: the engine got -no-shell-escape" sh -c "grep '^xelatex ' '$FAKE_LOG' | grep -qF '[-no-shell-escape]'"
@@ -374,19 +382,26 @@ EOF
   check "real pandoc: the .tex the engine got has no image, raw TeX or math from the report" \
     sh -c "[ -s '$FAKE_TEX' ] && ! grep -qF -e '\\includegraphics' -e '\\write18' -e '\\special{' -e '\\input{/etc' '$FAKE_TEX'"
   # What the run left outside its scratch directory, which it removes: the PDF beside the report, and
-  # nothing else. The comparison must see a file the engine writes in the working directory, as the
-  # stand-in does given $T/fake.touch.
+  # nothing else, by name or content. The comparison must see a file the engine writes in the working
+  # directory, and one it changes there, as the stand-in does given $T/fake.touch.
   changed() { diff "$1" "$2" | sed -n 's/^[<>] //p' | LC_ALL=C sort | tr '\n' ' '; }
-  tree "$W" > "$T/w.after"; tree "$HOME" > "$T/home.after"
+  tree "$W" > "$T/w.after"; sums "$W" > "$T/wsum.after"; snap "$HOME" > "$T/home.after"
   check "real pandoc: the run adds REPORT.pdf and nothing else to the working directory" \
     test "$(changed "$T/w.before" "$T/w.after")" = "./$R/REPORT.pdf "
-  check "real pandoc: ... and nothing to HOME" cmp -s "$T/home.before" "$T/home.after"
+  check "real pandoc: ... changes no file there" test "$(others "$T/wsum.after" "./$R/REPORT.pdf")" = "$(cat "$T/wsum.before")"
+  check "real pandoc: ... and leaves HOME as it was before the suite ran, by name and content" \
+    cmp -s "$T/home.start" "$T/home.after"
   rm -f "$W/$R/REPORT.pdf"; tree "$W" > "$T/w.before"
   printf '%s' "$W/planted" > "$T/fake.touch"; run "$T/realbin:$T/xe:$T/tools" "$R/REPORT.md"; rm -f "$T/fake.touch"
   tree "$W" > "$T/w.after"
   check "real pandoc: ... a comparison that sees a file the engine writes there" \
     test "$(changed "$T/w.before" "$T/w.after")" = "./$R/REPORT.pdf ./planted "
-  rm -f "$W/planted"
+  rm -f "$W/planted" "$W/$R/REPORT.pdf"; sums "$W" > "$T/wsum.before"
+  printf '%s' "$W/$R/notes.md" > "$T/fake.touch"; run "$T/realbin:$T/xe:$T/tools" "$R/REPORT.md"; rm -f "$T/fake.touch"
+  sums "$W" > "$T/wsum.after"
+  check "real pandoc: ... and one that sees a file the engine changes there, under the same name" \
+    test "$(others "$T/wsum.after" "./$R/REPORT.pdf")" != "$(cat "$T/wsum.before")"
+  printf '# o\n' > "$W/$R/notes.md"
   # YAML blocks quoted from the audited repo, in a blockquote and at the top level: as metadata they would
   # replace the body, put Lua into \directlua through a font fallback, and set the document class and
   # the PDF trailer.
@@ -441,9 +456,10 @@ if [ -z "$ENG" ]; then
 elif case "$T" in *[!A-Za-z0-9_./-]*) true ;; *) false ;; esac; then
   skp "the engine's own guard: the temp path holds a character TeX would read as markup: $T"
 else
-  # probe <dir> <shell_escape> <openout_any> <shell-escape flag>: compile probe.tex in <dir>.
+  # probe <dir> <shell_escape> <openout_any> <shell-escape flag>: compile probe.tex in <dir>, with a HOME of
+  # its own for the caches an engine keeps there (the suite's HOME is compared at the end).
   probe() {
-    rm -rf "$T/outside" && mkdir -p "$1" "$T/outside" || return 1
+    rm -rf "$T/outside" && mkdir -p "$1" "$T/outside" "$T/probe-home" || return 1
     cat > "$1/probe.tex" <<EOF
 \documentclass{article}
 \begin{document}
@@ -455,7 +471,7 @@ else
 probe
 \end{document}
 EOF
-    (cd "$1" && unset TEXMFOUTPUT && export openin_any=p openout_any="$3" shell_escape="$2" TMPDIR="$1" &&
+    (cd "$1" && unset TEXMFOUTPUT && export HOME="$T/probe-home" openin_any=p openout_any="$3" shell_escape="$2" TMPDIR="$1" &&
       exec "$ENG" "$4" -interaction=nonstopmode -halt-on-error probe.tex) >/dev/null 2>&1 </dev/null
   }
   probe "$T/probe-open" t a -shell-escape
@@ -510,6 +526,9 @@ check "the case file has cases ($ncase)" test "$ncase" -gt 20
 tree "$CW" > "$T/ctree.after"
 check "no case changed anything in the working directory" cmp -s "$T/ctree.before" "$T/ctree.after"
 check "no case ran pandoc" test ! -s "$FAKE_LOG"
+
+snap "$HOME" > "$T/home.end"
+check "nothing the suite ran wrote to HOME, by name or content" cmp -s "$T/home.start" "$T/home.end"
 
 echo
 echo "report-to-pdf tests: $pass passed, $fail failed, $skip skipped"
