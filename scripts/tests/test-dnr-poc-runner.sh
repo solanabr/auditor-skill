@@ -2127,10 +2127,11 @@ code="$(dcreds DOCKER_CERT_PATH="$ED/certs" DOCKER_CONFIG="$ED/config" -- "$CLEA
 # and a key in an MCP server's or a hook's URL (its login, its query or its path) or in an MCP server's
 # arguments (an option, NAME=value, a header option, a URL). Settings that only refer to a variable, and names
 # that do not look like credentials, do not count; nor do an ssh URL with a user name only, arguments that name
-# no credential, a public RPC URL, a skip-auth switch, a word that switches a setting (--auth none), a public
-# key or a table's key, a --no- option, a version, a date or a local file in a URL's path, and a commit in a
-# code host's path. A path with a NUL byte in it (a git include, a cache helper's socket), which no file has,
-# counts for nothing and does not stop the check.
+# no credential, a public RPC URL, a skip-auth switch, a word that switches a setting or names an
+# authentication method (--auth none, --auth api-key), a public key or a table's key, a --no- option, a
+# version, a date or a local file in a URL's path, and a commit in a code host's path. A path with a NUL byte
+# in it (a git include, a cache helper's socket), which no file has, counts for nothing and does not stop the
+# check.
 n=0
 while IFS='|' read -r file text kind; do
   [ -n "$file" ] || continue
@@ -2220,6 +2221,7 @@ done <<'CONFIGS'
 .claude.json|{"mcpServers":{"sol":{"command":"npx","args":["solana-mcp","--rpc-url","https://api.devnet.solana.com"]},"docs":{"type":"http","url":"https://mcp.example.invalid/v1/claude-3-5-sonnet-20241022/sse"},"repo":{"command":"uvx","args":["--from","git+https://github.com/o/solana-mcp-server-2025","x","file:///w/notes-a1b2c3d4e5f6a7b8c9d0"]}}}\n|
 .claude.json|{"mcpServers":{"o":{"command":"npx","args":["-y","openapi-mcp","--spec","https://raw.githubusercontent.com/o/r/main/openapi.json?token=x"]}}}\n|Claude Code credentials
 .claude.json|{"mcpServers":{"s":{"command":"s-mcp","args":["--auth","none","--key","oauth","--api-key=true","--partition-key","pk","--sort-key","createdAt","--range-key=sk"]}}}\n|
+.claude.json|{"mcpServers":{"m":{"command":"m-mcp","args":["--auth","anonymous","--auth=disabled","--key","enabled","--auth","api-key","--auth","API_KEY"]}}}\n|
 .claude.json|{"mcpServers":{"o":{"command":"npx","args":["-y","openapi-mcp","--spec","https://raw.githubusercontent.com/o/r/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json","--extra","https://gitlab.com/o/r/-/raw/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json"]}}}\n|
 .gitconfig|[include]\n\tpath = /nonexistent.invalid/a\000b\n|
 .gitconfig|[credential]\n\thelper = cache --socket /nonexistent.invalid/s\000k\n|
