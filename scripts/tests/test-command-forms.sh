@@ -1126,7 +1126,6 @@ while IFS= read -r f; do set -- "$@" "$f"; done < "$T/corpus-files"
 # be deleted here.
 KNOWN='
 C6	docs/output-and-rigor.md	not quoted as "<auditor-skill root>/scripts/rundir.sh": <auditor-skill root>/scripts/rundir.sh new
-C8	SKILL.md	names the agent
 '
 found=$(check "$TREE" "$@"); rc=$?
 if [ "$rc" -ne 0 ]; then bad "the checker failed on $TREE (status $rc)"
