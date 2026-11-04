@@ -1,0 +1,144 @@
+{
+  "name": "f111-prt-quoted-ref-keys",
+  "triggers": [
+    "pull_request_target"
+  ],
+  "permissions": [
+    "contents: read"
+  ],
+  "jobs": [
+    {
+      "id": "double-quoted",
+      "line": 9,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 12,
+          "uses": "actions/checkout@v4",
+          "with": [
+            {
+              "key": "ref",
+              "value": "${{ github.event.pull_request.head.sha }}"
+            }
+          ],
+          "env": []
+        },
+        {
+          "line": 15,
+          "run": "make",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "single-quoted",
+      "line": 16,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 19,
+          "uses": "actions/checkout@v4",
+          "with": [
+            {
+              "key": "ref",
+              "value": "${{ steps.pr.outputs.head_sha }}"
+            }
+          ],
+          "env": []
+        },
+        {
+          "line": 22,
+          "run": "make",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "blank-before-colon",
+      "line": 23,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 26,
+          "uses": "actions/checkout@v4",
+          "with": [
+            {
+              "key": "repository",
+              "value": "${{ github.event.pull_request.head.repo.full_name }}"
+            },
+            {
+              "key": "ref",
+              "value": "${{ env.HEAD }}"
+            }
+          ],
+          "env": []
+        },
+        {
+          "line": 30,
+          "run": "make",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "flow-mapping",
+      "line": 31,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 34,
+          "uses": "actions/checkout@v4",
+          "with": [
+            {
+              "key": "repository",
+              "value": "${{ github.event.pull_request.head.repo.full_name }}"
+            },
+            {
+              "key": "ref",
+              "value": "${{ inputs.sha }}"
+            }
+          ],
+          "env": []
+        },
+        {
+          "line": 36,
+          "run": "make",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "base-only",
+      "line": 37,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 40,
+          "uses": "actions/checkout@v4",
+          "with": [
+            {
+              "key": "ref",
+              "value": "${{ github.sha }}"
+            },
+            {
+              "key": "repository",
+              "value": "${{ github.repository }}"
+            }
+          ],
+          "env": []
+        },
+        {
+          "line": 44,
+          "run": "make",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}
