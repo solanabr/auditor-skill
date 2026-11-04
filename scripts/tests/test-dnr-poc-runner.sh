@@ -2132,8 +2132,9 @@ code="$(dcreds DOCKER_CERT_PATH="$ED/certs" DOCKER_CONFIG="$ED/config" -- "$CLEA
 # own as mcp-proxy takes them, a Bearer or Basic value, a URL), and a client key path the check cannot place.
 # Settings that only refer to a variable, and names that do not look like credentials, do not count; nor do an
 # ssh URL with a user name only, arguments that name no credential, prose that starts with Bearer or Basic, PWD
-# and OLDPWD, a public RPC URL, a skip-auth switch, a public key, a --no- option, and a version, a date or a
-# local file in a URL's path.
+# and OLDPWD, a public RPC URL, a skip-auth switch, a word that switches a setting (--auth none), a public key
+# or a table's key, a --no- option, a version, a date or a local file in a URL's path, and a commit in a code
+# host's path.
 n=0
 while IFS='|' read -r file text kind; do
   [ -n "$file" ] || continue
@@ -2241,8 +2242,11 @@ done <<'CONFIGS'
 .claude/settings.json|{"hooks":{"Stop":[{"hooks":[{"type":"http","url":"https://hooks.example.invalid/x","headers":{"X-Relay":"Bearer x0123456789"}}]}]}}\n|Claude Code credentials
 .claude.json|{"mcpServers":{"r":{"command":"r-mcp","env":{"MCP_HEADER":"Authorization: Bearer x"}}}}\n|Claude Code credentials
 .claude.json|{"mcpServers":{"r":{"type":"http","url":"https://mcp.example.invalid/mcp#access_token=x"}}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"o":{"command":"npx","args":["-y","openapi-mcp","--spec","https://raw.githubusercontent.com/o/r/main/openapi.json?token=x"]}}}\n|Claude Code credentials
 .claude/settings.json|{"env":{"CLAUDE_CODE_CLIENT_KEY":"certs/client.key"}}\n|Claude Code credentials
 .claude.json|{"mcpServers":{"p":{"command":"p-mcp","args":["--prompt","Bearer of bad news","--title","Basic authentication","--note","Bearer token","-H","Authorization","Bearer ${T}","--header","Authorization: Bearer ${T}","--pwd","/w"],"env":{"AUTH_HEADER":"Bearer ${T}","AUTH_MODE":"Basic tutorial","PWD":"/w","OLDPWD":"/"}}}}\n|
+.claude.json|{"mcpServers":{"s":{"command":"s-mcp","args":["--auth","none","--key","oauth","--credentials=true","--partition-key","pk","--sort-key","createdAt","--range-key=sk"],"env":{"TABLE_PARTITION_KEY":"customer_id"}}}}\n|
+.claude.json|{"mcpServers":{"o":{"command":"npx","args":["-y","openapi-mcp","--spec","https://raw.githubusercontent.com/o/r/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json","--extra","https://gitlab.com/o/r/-/raw/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json"]}}}\n|
 .claude/settings.json|{"env":{"CLAUDE_CODE_CLIENT_CERT":"/nonexistent.invalid/client.pem","CLAUDE_CODE_CLIENT_KEY":"/nonexistent.invalid/client.key","OTEL_EXPORTER_OTLP_CLIENT_KEY":"~/no-such/client.key"}}\n|
 CONFIGS
 # The mTLS client keys Claude Code takes (CLAUDE_CODE_CLIENT_KEY; OTEL_EXPORTER_OTLP_CLIENT_KEY and its
@@ -2293,10 +2297,10 @@ code="$(dcreds -- "$FH")"
 [ "$code" = 1 ] && lines_are "package registry tokens (1)" "~/.npmrc" && ok "a symbolic link to a readable file counts" || { bad "a linked credential: $code"; cat "$T/creds.out" >&2; }
 out="$(cd "$WT" && env -i HOME="$CLEANHOME" PATH="$PATH" GITHUB_TOKEN=x AWS_SECRET_ACCESS_KEY=x HELIUS_API_KEY=x SOLANA_RPC_URL=x \
   DB_PASSWORD=x MAX_MCP_OUTPUT_TOKENS=1 TOKENIZER_PATH=x SSH_AUTH_SOCK=x npm_config__authToken=x REDIS_PWD=x PGPASSWORD=x \
-  AZURE_DEVOPS_PAT=x DD_APP_KEY=x OLDPWD=/ SOLANA_PUBLIC_KEY=x CLAUDE_CODE_CLIENT_KEY=x \
+  AZURE_DEVOPS_PAT=x DD_APP_KEY=x OLDPWD=/ SOLANA_PUBLIC_KEY=x TABLE_SORT_KEY=x CLAUDE_CODE_CLIENT_KEY=x \
   "$BASH" "$T/iso-driver.sh" "$ROOT" names)"
 [ "$out" = "AWS_SECRET_ACCESS_KEY, AZURE_DEVOPS_PAT, DB_PASSWORD, DD_APP_KEY, GITHUB_TOKEN, HELIUS_API_KEY, PGPASSWORD, REDIS_PWD, SOLANA_RPC_URL, npm_config__authToken" ] \
-  && ok "iso_cred_names names the variables that look like credentials (a name in mixed case too), and no others: not PWD, OLDPWD, a public key or a client key path" \
+  && ok "iso_cred_names names the variables that look like credentials (a name in mixed case too), and no others: not PWD, OLDPWD, a public or table key, or a client key path" \
   || bad "iso_cred_names: '$out'"
 # Agent sockets count when they accept a connection: SSH_AUTH_SOCK, sockets in ~/.ssh and ~/.gnupg, in
 # GNUPGHOME, ssh-*/agent.* under TMPDIR, and in the runtime directory's gnupg/. So do container daemon sockets

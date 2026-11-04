@@ -55,19 +55,24 @@
 #     credential header is Authorization, any *-Authorization, Cookie, a name a key goes by, or any name with a
 #     value an authentication scheme sends. The name a key goes by, of a header, an option or a query
 #     parameter, looks like a credential or has a last part KEY, AUTH, BEARER, AUTHORIZATION, CREDENTIAL or
-#     CREDENTIALS, a public key aside (x-api-key, Ocp-Apim-Subscription-Key, Helicone-Auth, --oauth2Bearer; not
-#     --public-key). An authentication scheme sends Bearer and a token of eight or more characters, or Basic
+#     CREDENTIALS, but for a key that is no secret: a public key, and a table's partition, sort or range key
+#     (x-api-key, Ocp-Apim-Subscription-Key, Helicone-Auth, --oauth2Bearer; not --public-key or
+#     --partition-key). An authentication scheme sends Bearer and a token of eight or more characters, or Basic
 #     and the base64 of a user and a password. A URL carries one in its login (any user name in an http, ws or
 #     socks URL, a user and a password in another), in a query or fragment parameter named as a key goes by or
-#     sig or signature, or, when it has a host, in a path segment that can be a key: 20 or more letters,
-#     digits, - and _, with a run of seven or more letters and digits holding both
-#     (https://<name>.quiknode.pro/<token>/; a version or a date in a name holds none). Arguments carry one in
-#     an option named as a key goes by, with a value (--api-key <value>, --key=<value>; a --no- option takes
-#     none, and a word that starts with - is the next option), in NAME=<value> as an env block would set it, in
-#     a header option (-H, --header, --headers) as Name: value, as a JSON object or as a name and a value of
-#     their own (mcp-proxy --headers Authorization <value>), in a value an authentication scheme sends, or in a
-#     URL. A value that refers to a variable (${NAME}) does not count, and neither does a file that is not
-#     JSON; one larger than 16 MiB stops the check (status 2);
+#     sig or signature, or, when it has a host other than a code host (github.com, githubusercontent.com,
+#     gitlab.com, bitbucket.org, codeberg.org and their subdomains, whose paths hold names and commits), in a
+#     path segment that can be a key: 20 or more letters, digits, - and _, with a run of seven or more letters
+#     and digits holding both (https://<name>.quiknode.pro/<token>/; an id such as a UUID counts too, while a
+#     version or a date in a name holds none). Arguments carry one in an option named as a key goes by, with a
+#     value (--api-key <value>, --key=<value>; a --no- option takes none, and a word that starts with - is the
+#     next option), in NAME=<value> as an env block would set it, in a header option (-H, --header, --headers)
+#     as Name: value, as a JSON object or as a name and a value of their own (mcp-proxy --headers Authorization
+#     <value>), in a value an authentication scheme sends, or in a URL. A value that refers to a variable
+#     (${NAME}) does not count, nor does a word that switches a setting or names an authentication method
+#     (true, false, yes, no, on, off, 0, 1, none, null, oauth, oauth2, oidc, basic, bearer, digest, token,
+#     apikey, jwt, mtls), and neither does a file that is not JSON; one larger than 16 MiB stops the check
+#     (status 2);
 #   1Password's agent socket: ~/.1password/agent.sock, and on macOS
 #     ~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock;
 #   the sockets of a container daemon, which gives whoever reaches it the host: Docker Desktop's
@@ -267,10 +272,15 @@ MANAGED_FILES = ("managed-settings.json", "managed-settings.d/*.json", "managed-
 CLAUDE_HELPERS = ("apiKeyHelper", "awsCredentialExport", "otelHeadersHelper", "headersHelper")
 CLAUDE_LIMIT = 16 << 20
 REFERENCE = re.compile(r"\$(?:\{|[A-Za-z_])")
+# The values that switch a setting or name an authentication method (--auth none, --credentials=true), which no
+# credential is.
+SWITCHES = ("true", "false", "yes", "no", "on", "off", "0", "1", "none", "null", "oauth", "oauth2", "oidc", "basic",
+            "bearer", "digest", "token", "apikey", "jwt", "mtls")
 # The last parts of a name a key goes by when the rest of it does not look like a credential (--key, --auth,
-# --oauth2Bearer, --credentials), and the parts before the last that make a key no secret (a public key).
+# --oauth2Bearer, --credentials), and the parts before the last that make a key no secret (a public key; a
+# table key, --partition-key pk).
 KEY_PARTS = ("KEY", "AUTH", "BEARER", "AUTHORIZATION", "CREDENTIAL", "CREDENTIALS")
-NOT_SECRET = ("PUBLIC", "PUBLISHABLE", "PUB")
+NOT_SECRET = ("PUBLIC", "PUBLISHABLE", "PUB", "PARTITION", "SORT", "RANGE")
 # A value an HTTP authentication scheme sends, with nothing else: Bearer and a token of eight or more characters
 # (RFC 6750), or Basic and the base64 of a user and a password (RFC 7617), which auth_value decodes.
 BEARER = re.compile(r"(?i)[ \t]*bearer[ \t]+[A-Za-z0-9._~+/-]{8,}=*[ \t]*")
@@ -281,11 +291,13 @@ CLIENT_KEY = re.compile(r"CLAUDE_CODE_CLIENT_KEY|OTEL_EXPORTER_OTLP_(?:[A-Z]+_)?
 # A URL in a value; the schemes whose user name alone can be a token (https://<token>@host); the names a query
 # parameter holding a key takes beside those a key goes by (key_name); a path segment that can be a key
 # (path_key), as a key in a path has no name (https://<name>.solana-mainnet.quiknode.pro/<token>/,
-# https://anthropic.helicone.ai/<key>).
+# https://anthropic.helicone.ai/<key>); the hosts that serve code by its commit, whose paths hold commits and
+# names, never a key (https://raw.githubusercontent.com/<owner>/<repo>/<commit>/<file>).
 URL_IN = re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://[^\s\"\x27<>]+")
 TOKEN_USER = ("http", "https", "ws", "wss", "socks", "socks4", "socks4a", "socks5", "socks5h")
 QUERY_KEYS = ("SIG", "SIGNATURE")
 PATH_KEY = re.compile(r"[A-Za-z0-9_-]{20,}")
+CODE_HOSTS = ("github.com", "githubusercontent.com", "gitlab.com", "bitbucket.org", "codeberg.org")
 # One header of a list, Name: value or Name=value, the headers apart by newlines or commas; a header name on its
 # own, as the argument after a header option that takes the name and the value apart (mcp-proxy --headers
 # <name> <value>); the variables whose headers all count, since the OTLP exporter sends them to authenticate
@@ -580,9 +592,10 @@ def key_name(name):
 
 
 def set_here(value):
-    # A value a settings file sets itself, not one that refers to a variable (${NAME} or $NAME).
-    return (isinstance(value, (str, int, float)) and not isinstance(value, bool) and str(value).strip() != ""
-            and not REFERENCE.search(str(value)))
+    # A value a settings file sets itself that can be a credential: not one that refers to a variable (${NAME} or
+    # $NAME), nor a word that switches a setting or names an authentication method (SWITCHES).
+    text = str(value).strip() if isinstance(value, (str, int, float)) and not isinstance(value, bool) else ""
+    return text != "" and not REFERENCE.search(text) and text.lower() not in SWITCHES
 
 
 def auth_value(text):
@@ -626,10 +639,12 @@ def path_key(segment):
 def url_credential(text):
     # A URL in <text> that carries a key set here: in its login (any user name in an http, ws or socks URL, a
     # user and a password in any other), in a query or fragment parameter whose name a key goes by (key_name, sig
-    # or signature), or, for a URL with a host, in a path segment that can be one (path_key).
+    # or signature), or, for a URL with a host that does not serve code by its commit (CODE_HOSTS), in a path
+    # segment that can be one (path_key).
     for match in URL_IN.finditer(text):
         try:
             url = urllib.parse.urlsplit(match.group(0))
+            host = url.hostname or ""
         except ValueError:
             continue
         login = url.netloc.rpartition("@")[0]
@@ -639,7 +654,8 @@ def url_credential(text):
             name = urllib.parse.unquote_plus(name)
             if eq and set_here(urllib.parse.unquote_plus(value)) and (key_name(name) or name.upper() in QUERY_KEYS):
                 return True
-        if url.netloc and any(path_key(urllib.parse.unquote(segment)) for segment in url.path.split("/")):
+        if (url.netloc and not any(host == h or host.endswith("." + h) for h in CODE_HOSTS)
+                and any(path_key(urllib.parse.unquote(segment)) for segment in url.path.split("/"))):
             return True
     return False
 
