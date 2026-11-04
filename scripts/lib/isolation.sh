@@ -324,10 +324,11 @@ def shown(path, bases=()):
 
 def start(path, size):
     # The first <size> bytes of a regular file, or of a link to one, opened without blocking so that a FIFO in
-    # its place cannot stall the check; None when it cannot be read.
+    # its place cannot stall the check; None when it cannot be read, as for a path with a NUL byte in it, which
+    # a file read (a git include, a keypair_path, a client key in a settings file) can name but no file has.
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOCTTY", 0))
-    except OSError:
+    except (OSError, ValueError):
         return None
     try:
         return os.read(fd, size) if stat.S_ISREG(os.fstat(fd).st_mode) else None
@@ -370,7 +371,8 @@ def readable(found, kind, paths):
 
 
 def sockets(found, socks):
-    # A Unix socket that accepts a connection, or a tcp:// address that does.
+    # A Unix socket that accepts a connection, or a tcp:// address that does; a path with a NUL byte in it (the
+    # --socket of a cache helper in a git config) names none.
     for kind, path in socks:
         if path.startswith("tcp://"):
             if reaches(path):
@@ -379,7 +381,7 @@ def sockets(found, socks):
         try:
             if stat.S_ISSOCK(os.stat(path).st_mode) and accepts(path):
                 found.append((kind, path))
-        except OSError:
+        except (OSError, ValueError):
             pass
 
 

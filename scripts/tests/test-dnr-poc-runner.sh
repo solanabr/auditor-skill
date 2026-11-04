@@ -2134,7 +2134,8 @@ code="$(dcreds DOCKER_CERT_PATH="$ED/certs" DOCKER_CONFIG="$ED/config" -- "$CLEA
 # ssh URL with a user name only, arguments that name no credential, prose that starts with Bearer or Basic, PWD
 # and OLDPWD, a public RPC URL, a skip-auth switch, a word that switches a setting (--auth none), a public key
 # or a table's key, a --no- option, a version, a date or a local file in a URL's path, and a commit in a code
-# host's path.
+# host's path. A path with a NUL byte in it (a git include, a cache helper's socket, a client key), which no file
+# has, counts for nothing and does not stop the check.
 n=0
 while IFS='|' read -r file text kind; do
   [ -n "$file" ] || continue
@@ -2248,6 +2249,9 @@ done <<'CONFIGS'
 .claude.json|{"mcpServers":{"s":{"command":"s-mcp","args":["--auth","none","--key","oauth","--credentials=true","--partition-key","pk","--sort-key","createdAt","--range-key=sk"],"env":{"TABLE_PARTITION_KEY":"customer_id"}}}}\n|
 .claude.json|{"mcpServers":{"o":{"command":"npx","args":["-y","openapi-mcp","--spec","https://raw.githubusercontent.com/o/r/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json","--extra","https://gitlab.com/o/r/-/raw/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json"]}}}\n|
 .claude/settings.json|{"env":{"CLAUDE_CODE_CLIENT_CERT":"/nonexistent.invalid/client.pem","CLAUDE_CODE_CLIENT_KEY":"/nonexistent.invalid/client.key","OTEL_EXPORTER_OTLP_CLIENT_KEY":"~/no-such/client.key"}}\n|
+.claude/settings.json|{"env":{"CLAUDE_CODE_CLIENT_KEY":"/nonexistent.invalid/a\\u0000b"}}\n|
+.gitconfig|[include]\n\tpath = /nonexistent.invalid/a\000b\n|
+.gitconfig|[credential]\n\thelper = cache --socket /nonexistent.invalid/s\000k\n|
 CONFIGS
 # The mTLS client keys Claude Code takes (CLAUDE_CODE_CLIENT_KEY; OTEL_EXPORTER_OTLP_CLIENT_KEY and its
 # per-signal forms for its OTLP exporter over gRPC) count by the file they name when it is readable, named by
