@@ -2681,6 +2681,7 @@ rm -f "$T/ij-empty.json"
 IJ2="$WT/incident_2/INCIDENTS.json"
 want_sc="records an incident whose root_cause_class is supply_chain_or_ci, so nothing from this working directory is built natively, for an audit run or an incident run (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built."
 want_un="nothing from this working directory is built natively until every incident_*/INCIDENTS.json in it records the root_cause_class of each of its incidents (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built."
+want_ul="the working directory cannot be listed, so run.sh cannot tell whether an incident_* directory in it records a supply_chain_or_ci incident, and nothing from it is built natively until it can be listed (OUTPUT-RULES.md Rule 11a) — nothing was copied or built."
 printf '{"incidents": [{"id": "INC-2.1", "root_cause_class": "supply_chain_or_ci"}]}\n' > "$IJ2"
 code="$(ngate AUDITOR_EXEC_MODE=native -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
 [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: incident_2/INCIDENTS.json $want_sc" "$T/out" && new_nothing_ran && one_blocker \
@@ -2728,6 +2729,18 @@ for how in absent empty; do
     || { bad "an audit's crate beside incident_2 with an INCIDENTS.json that is $how, native: exit $code"; cat "$T/out" >&2; }
 done
 rm -f "$IJ2"
+# Without python3 nothing tells whether an incident_* directory holds an INCIDENTS.json (incident_2 holds none
+# here), so the blocker says that, and names no file as unreadable. $T/nopy holds the programs run.sh's checks
+# before the native rule use, git among them, and no python3.
+mkdir -p "$T/nopy"
+for tool in bash sh env git find grep sed awk sort tr head tail cat wc mkdir mktemp rm rmdir chmod cp ln mv date \
+  sleep kill dd ls touch dirname basename id uname od cmp mkfifo pwd stat readlink perl getconf; do
+  p="$(command -v "$tool" 2>/dev/null)" && ln -sf "$p" "$T/nopy/$tool"
+done
+code="$(ngate AUDITOR_EXEC_MODE=native PATH="$T/shim:$T/nopy" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+[ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: python3 is not on PATH, so run.sh cannot tell whether incident_1 holds an INCIDENTS.json, or read the root_cause_class one records (OUTPUT-RULES.md Rule 11a) — nothing was copied or built." "$T/out" \
+  && new_nothing_ran && one_blocker && ok "an audit's crate in native mode without python3, beside incident_* directories -> exit 3, the blocker says what cannot be told" \
+  || { bad "an audit's crate in native mode without python3, beside incident_* directories: exit $code"; cat "$T/out" >&2; }
 mkdir -p "$T/elsewhere-run" "$WT/incident_old"
 printf '{"incidents": [{"id": "INC-3.1", "root_cause_class": "supply_chain_or_ci"}]}\n' > "$T/elsewhere-run/INCIDENTS.json"
 cp "$T/elsewhere-run/INCIDENTS.json" "$WT/incident_old/INCIDENTS.json"
@@ -2825,7 +2838,7 @@ if DW="$(deep_dir $((PM - 200)))" && [ "${#DW}" = $((PM - 200)) ]; then
     chmod 300 "$DW"
     code="$(dgate "$DW" AUDITOR_EXEC_MODE=native -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
     chmod 700 "$DW"
-    [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: the working directory cannot be listed: $want_un" "$T/out" && new_nothing_ran && one_blocker \
+    [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: $want_ul" "$T/out" && new_nothing_ran && one_blocker \
       && ok "an audit's crate in native mode in a working directory that cannot be listed -> exit 3, nothing copied" \
       || { bad "an audit's crate in a working directory that cannot be listed, native: exit $code"; cat "$T/out" >&2; }
   fi
