@@ -36,7 +36,9 @@
 #   - the line that makes the environment, run with the real python3 from a checkout that ships venv.py, runpy.py,
 #     ensurepip.py and pip.py, loads none of them;
 #   - every zizmor call the docs and the corpus give passes --offline, --no-config, --no-ignores, --collect=all
-#     and --persona=auditor, and every docker or podman call names zizmor's image by a sha256 digest.
+#     and --persona=auditor, and every docker or podman call names zizmor's image by a sha256 digest;
+#   - the check finds power-tools.md's 2 calls, and the 1 call each of discovery/grep-commands.md and
+#     references/vuln-classes/github-actions.md.
 # Nothing reaches the network: the stand-ins answer for aws, curl, docker, pip and zizmor, the real curl stops at its
 # URL parser, and the real python3 sets pip up from the copy it ships with.
 # Usage (from the repo root): bash scripts/tests/test-probe-recipes.sh
@@ -539,8 +541,12 @@ if [ "$got" = "zforms.md:1 zforms.md:2 zforms.md:2 zforms.md:4 " ]; then
 else bad "the zizmor call check is broken: it flags [$got], not zforms.md:1, :2 twice and :4"; fi
 zfound=$(cd "$ROOT" && find . -name '*.md' -type f ! -path './.git/*' ! -path './vendor/*' ! -path './scripts/tests/fixtures/*' \
   -exec awk "$ZAWK" {} +)
-n=$(printf '%s\n' "$zfound" | grep -c '^\./docs/power-tools\.md:')
-if [ "$n" != 2 ]; then bad "the zizmor call check finds $n calls in power-tools.md, not its 2"
+zcount=""
+for zf in docs/power-tools.md:2 discovery/grep-commands.md:1 references/vuln-classes/github-actions.md:1; do
+  n=$(printf '%s\n' "$zfound" | grep -c "^\./${zf%:*}:")
+  if [ "$n" != "${zf##*:}" ]; then zcount="$zcount ${zf%:*} ($n, not ${zf##*:})"; fi
+done
+if [ -n "$zcount" ]; then bad "the zizmor call check finds another number of calls in:$zcount"
 elif [ -z "$(zlist "$zfound")" ]; then
   ok "every zizmor call in the docs and the corpus passes $ZALL, and every container call names the image by digest"
 else
