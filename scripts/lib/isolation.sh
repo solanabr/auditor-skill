@@ -50,18 +50,20 @@
 #     credential header with a value; or when a URL (an MCP server's or a hook's) or an MCP server's arguments
 #     carry one. A credential header is Authorization, any *-Authorization, Cookie, or a name a key goes by: one
 #     that looks like a credential, or whose last part is KEY or AUTH, but for a key that is no secret: a public
-#     key, and a table's partition, sort or range key (x-api-key, Ocp-Apim-Subscription-Key, Helicone-Auth; not
-#     --public-key or --partition-key). A URL carries one in its login (any user name in an http, ws or socks
-#     URL, a user and a password in another), in a query parameter named as a key goes by or sig or signature,
-#     or, when it has a host other than a code host (github.com, githubusercontent.com, gitlab.com,
-#     bitbucket.org, codeberg.org and their subdomains, whose paths hold names and commits), in a path segment
-#     that can be a key: 20 or more letters, digits, - and _, with a run of seven or more letters and digits
-#     holding both (https://<name>.quiknode.pro/<token>/; an id such as a UUID counts too, while a version or a
-#     date in a name holds none). Arguments carry one in an option named as a key goes by, with a value
-#     (--api-key <value>, --key=<value>; a --no- option takes none), in NAME=<value> for a name that looks like
-#     a credential, in a header option (-H, --header) or in a URL. A value with $NAME or ${NAME} anywhere in
-#     it, taken for a reference to a variable (so also a password with a $ before a letter, _ or {), does not
-#     count, nor does a word that switches a setting or names an authentication method (true, false,
+#     key, a table's partition, sort, range, hash or primary key, and a message's routing key (x-api-key,
+#     Ocp-Apim-Subscription-Key, Helicone-Auth; not --public-key, --partition-key, --hash-key or --routing-key).
+#     A URL carries one in its login (any user name in an http, ws or socks URL, a user and a password in
+#     another), in a query parameter named as a key goes by or sig or signature, or, when its host is not one
+#     whose paths hold names, commits and ids (github.com, githubusercontent.com, gitlab.com, bitbucket.org,
+#     codeberg.org, huggingface.co, git.sr.ht, gateway.ai.cloudflare.com and their subdomains) and its path has
+#     no segment - (where a GitLab project's own paths start: /<group>/<project>/-/raw/<commit>/<file>), in a
+#     path segment that can be a key: 20 or more letters, digits, - and _, with a run of seven or more letters
+#     and digits holding both, a UUID aside (https://<name>.quiknode.pro/<token>/; another id counts too, while
+#     a version or a date in a name holds none). Arguments carry one in an option named as a key goes by, with
+#     a value (--api-key <value>, --key=<value>; a --no- option takes none), in NAME=<value> for a name that
+#     looks like a credential, in a header option (-H, --header) or in a URL. A value with $NAME or ${NAME}
+#     anywhere in it, taken for a reference to a variable (so also a password with a $ before a letter, _ or {),
+#     does not count, nor does a word that switches a setting or names an authentication method (true, false,
 #     yes, no, on, off, 0, 1, none, null, enabled, disabled, anonymous, oauth, oauth2, oidc, basic, bearer,
 #     digest, token, apikey, api-key, api_key, jwt, mtls, sso, iam, sigv4, guest, public, auto, required), and
 #     neither does a file that is not JSON; one larger than 16 MiB stops the check (status 2);
@@ -264,21 +266,26 @@ CLAUDE_LIMIT = 16 << 20
 REFERENCE = re.compile(r"\$(?:\{|[A-Za-z_])")
 # The values that switch a setting or name an authentication method (--auth none, --api-key=true, --auth sso),
 # which no credential is; the parts before a last part KEY or AUTH that make a key no secret (a public key; a
-# table key, --partition-key pk).
+# table key, --partition-key pk, --hash-key pk, --primary-key id; a message route, --routing-key logs).
 SWITCHES = ("true", "false", "yes", "no", "on", "off", "0", "1", "none", "null", "enabled", "disabled", "anonymous",
             "oauth", "oauth2", "oidc", "basic", "bearer", "digest", "token", "apikey", "api-key", "api_key", "jwt",
             "mtls", "sso", "iam", "sigv4", "guest", "public", "auto", "required")
-NOT_SECRET = ("PUBLIC", "PUBLISHABLE", "PUB", "PARTITION", "SORT", "RANGE")
+NOT_SECRET = ("PUBLIC", "PUBLISHABLE", "PUB", "PARTITION", "SORT", "RANGE", "HASH", "PRIMARY", "ROUTING")
 # A URL in a value; the schemes whose user name alone can be a token (https://<token>@host); the names a query
 # parameter holding a key takes beside those a key goes by (key_name); a path segment that can be a key
 # (path_key), as a key in a path has no name (https://<name>.solana-mainnet.quiknode.pro/<token>/,
-# https://anthropic.helicone.ai/<key>); the hosts that serve code by its commit, whose paths hold commits and
-# names, never a key (https://raw.githubusercontent.com/<owner>/<repo>/<commit>/<file>).
+# https://anthropic.helicone.ai/<key>), and a UUID, an id such a segment can be; the hosts whose paths hold
+# names, commits and ids, never a key: those that serve code by its commit
+# (https://raw.githubusercontent.com/<owner>/<repo>/<commit>/<file>,
+# https://huggingface.co/<repo>/resolve/<commit>/<file>, https://git.sr.ht/~<owner>/<repo>/blob/<commit>/<file>)
+# and Cloudflare AI Gateway (https://gateway.ai.cloudflare.com/v1/<account id>/<gateway>/<provider>).
 URL_IN = re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://[^\s\"\x27<>]+")
 TOKEN_USER = ("http", "https", "ws", "wss", "socks", "socks4", "socks4a", "socks5", "socks5h")
 QUERY_KEYS = ("SIG", "SIGNATURE")
 PATH_KEY = re.compile(r"[A-Za-z0-9_-]{20,}")
-CODE_HOSTS = ("github.com", "githubusercontent.com", "gitlab.com", "bitbucket.org", "codeberg.org")
+UUID = re.compile(r"[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}")
+ID_HOSTS = ("github.com", "githubusercontent.com", "gitlab.com", "bitbucket.org", "codeberg.org", "huggingface.co",
+            "git.sr.ht", "gateway.ai.cloudflare.com")
 # One header of a list, Name: value or Name=value, the headers apart by newlines or commas; the variables whose
 # headers all count, since the OTLP exporter sends them to authenticate (OTEL_EXPORTER_OTLP_HEADERS and its
 # per-signal forms).
@@ -582,16 +589,17 @@ def header_credential(text, every=False):
 
 def path_key(segment):
     # A URL path segment that can be a key: 20 or more letters, digits, - and _, with a run of seven or more
-    # letters and digits that holds both (a version or a date in a name holds none).
-    return bool(PATH_KEY.fullmatch(segment)) and any(
+    # letters and digits that holds both (a version or a date in a name holds none), and not a UUID.
+    return bool(PATH_KEY.fullmatch(segment)) and not UUID.fullmatch(segment) and any(
         len(run) >= 7 and not run.isdigit() and not run.isalpha() for run in re.split(r"[-_]", segment))
 
 
 def url_credential(text):
     # A URL in <text> that carries a key set here: in its login (any user name in an http, ws or socks URL, a
     # user and a password in any other), in a query parameter whose name a key goes by (key_name, sig or
-    # signature), or, for a URL with a host that does not serve code by its commit (CODE_HOSTS), in a path
-    # segment that can be one (path_key).
+    # signature), or, for a URL with a host whose paths can hold a key (not one of ID_HOSTS) and a path with no
+    # segment - (where the paths of a GitLab project, self-hosted too, put its commits), in a path segment that
+    # can be one (path_key).
     for match in URL_IN.finditer(text):
         try:
             url = urllib.parse.urlsplit(match.group(0))
@@ -605,8 +613,9 @@ def url_credential(text):
             name = urllib.parse.unquote_plus(name)
             if eq and set_here(urllib.parse.unquote_plus(value)) and (key_name(name) or name.upper() in QUERY_KEYS):
                 return True
-        if (url.netloc and not any(host == h or host.endswith("." + h) for h in CODE_HOSTS)
-                and any(path_key(urllib.parse.unquote(segment)) for segment in url.path.split("/"))):
+        segments = url.path.split("/")
+        if (url.netloc and not any(host == h or host.endswith("." + h) for h in ID_HOSTS) and "-" not in segments
+                and any(path_key(urllib.parse.unquote(segment)) for segment in segments)):
             return True
     return False
 

@@ -2129,9 +2129,12 @@ code="$(dcreds DOCKER_CERT_PATH="$ED/certs" DOCKER_CONFIG="$ED/config" -- "$CLEA
 # anywhere in a value, so a password with a $ before a letter, _ or { as well), and names that do not look like
 # credentials, do not count; nor do an ssh URL with a user name only, arguments that name no credential, a
 # public RPC URL, a skip-auth switch, a word that switches a setting or names an authentication method (--auth
-# none, --auth api-key, --auth sso), a public key or a table's key, a --no- option, a version, a date or a local
-# file in a URL's path, and a commit in a code host's path. A path with a NUL byte in it (a git include, a cache
-# helper's socket), which no file has, counts for nothing and does not stop the check.
+# none, --auth api-key, --auth sso), a public key, a table's key or a message route (--hash-key, --primary-key,
+# --routing-key), a --no- option, a version, a date, a local file or a UUID in a URL's path, a commit in a code
+# host's path (huggingface.co and git.sr.ht too) or after a GitLab project's - segment on another host, and a
+# Cloudflare AI Gateway account id; a key in such a URL's query and an id under another name a key goes by
+# (--cache-key) still count. A path with a NUL byte in it (a git include, a cache helper's socket), which no
+# file has, counts for nothing and does not stop the check.
 n=0
 while IFS='|' read -r file text kind; do
   [ -n "$file" ] || continue
@@ -2232,6 +2235,18 @@ done <<'CONFIGS'
 .claude.json|{"mcpServers":{"m":{"command":"m-mcp","args":["--auth","auto"]}}}\n|
 .claude.json|{"mcpServers":{"m":{"command":"m-mcp","args":["--auth","required"]}}}\n|
 .claude.json|{"mcpServers":{"m":{"command":"m-mcp","args":["--auth","Xa1b2C3d4E5f6G7h8I9j"]}}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"w":{"type":"http","url":"https://mcp.example.invalid/workspaces/3f2c1a9e-8b7d-4c6e-9f1a-2b3c4d5e6f7a/sse"}}}\n|
+.claude/settings.json|{"env":{"ANTHROPIC_BASE_URL":"https://gateway.ai.cloudflare.com/v1/0a1b2c3d4e5f60718293a4b5c6d7e8f9/my-gateway/anthropic"}}\n|
+.claude.json|{"mcpServers":{"o":{"command":"npx","args":["openapi-mcp","--spec","https://gitlab.example.invalid/o/r/-/raw/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json"]}}}\n|
+.claude.json|{"mcpServers":{"o":{"command":"m","args":["--config","https://huggingface.co/o/m/resolve/9fceb02d0ae598e95dc970b74767f19372d61af8/config.json"]}}}\n|
+.claude.json|{"mcpServers":{"o":{"command":"m","args":["--spec","https://git.sr.ht/~o/r/blob/9fceb02d0ae598e95dc970b74767f19372d61af8/x.json"]}}}\n|
+.claude.json|{"mcpServers":{"s":{"command":"s","args":["--hash-key","pk"]}}}\n|
+.claude.json|{"mcpServers":{"s":{"command":"s","args":["--primary-key","id"]}}}\n|
+.claude.json|{"mcpServers":{"s":{"command":"s","args":["--routing-key","logs"]}}}\n|
+.claude/settings.json|{"env":{"RPC_ENDPOINT":"https://rpc.example.invalid/3f2c1a9e-8b7d-4c6e-9f1a-2b3c4d5e6f7a/0123456789abcdef0123456789abcdef01234567"}}\n|Claude Code credentials
+.claude/settings.json|{"env":{"ANTHROPIC_BASE_URL":"https://gateway.ai.cloudflare.com/v1/0a1b2c3d4e5f60718293a4b5c6d7e8f9/my-gateway/google-ai-studio?key=x"}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"o":{"command":"npx","args":["openapi-mcp","--spec","https://gitlab.example.invalid/o/r/-/raw/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json?private_token=x"]}}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"s":{"command":"s","args":["--cache-key","logs"]}}}\n|Claude Code credentials
 .claude.json|{"mcpServers":{"o":{"command":"npx","args":["-y","openapi-mcp","--spec","https://raw.githubusercontent.com/o/r/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json","--extra","https://gitlab.com/o/r/-/raw/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json","--extra","https://github.com/o/r/blob/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json","--extra","https://bitbucket.org/o/r/raw/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json","--extra","https://codeberg.org/o/r/raw/commit/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json"]}}}\n|
 .gitconfig|[include]\n\tpath = /nonexistent.invalid/a\000b\n|
 .gitconfig|[credential]\n\thelper = cache --socket /nonexistent.invalid/s\000k\n|
