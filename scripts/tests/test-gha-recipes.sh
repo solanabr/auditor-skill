@@ -38,6 +38,8 @@
 # JSON.
 # KV-080 Step 4's first command also runs over uses: lines that follow a local action on the same grep line, in a
 # flow sequence or after a lone CR or U+0085, which it must list.
+# The find that the R1 and R9 notes and KV-080 Steps 4, 6, 7 and 8 give runs over names that hold a :, which forge
+# grep's path:line: prefix, and must name each.
 #
 # Usage (from the repo root): bash scripts/tests/test-gha-recipes.sh
 # Needs bash >= 3.2, grep, awk, git. No network. The fixtures are copied into a temp dir as .github/workflows/, those
@@ -698,6 +700,48 @@ zz.yml"
   done
 else
   echo "SKIP R1 newline-name decoys: this file system refuses a newline in a name"
+fi
+
+# A file or directory name that holds a : prints a path:line: prefix of its own, which R9 and KV-080 Steps 4, 6 and 8
+# take for grep's. A directory named "a:1:uses: actions" hides the third-party action of the workflow " #x.yml" in it
+# from Step 6; one named "b:1:uses: ." hides that of "x #y.yml" from both lists of Step 4 and from Step 6; and a
+# workflow named "d:1:runs-on: ubuntu-latest #w.yml" hides its self-hosted job from Step 8. So the R1 and R9 notes and
+# KV-080 Steps 4, 6, 7 and 8 give the same find, for names that hold a control character or a :, and run as written it
+# names each of those three.
+fn="$work/forged-names"; mkdir -p "$fn/.github/workflows"
+if mkdir -p "$fn/.github/a:1:uses: actions" "$fn/.github/b:1:uses: ." 2>/dev/null \
+   && printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: example/third@v1\n' \
+     > "$fn/.github/a:1:uses: actions/ #x.yml" 2>/dev/null \
+   && printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: example/third@v1\n' \
+     > "$fn/.github/b:1:uses: ./x #y.yml" 2>/dev/null \
+   && printf 'on: push\njobs:\n  a:\n    runs-on: [self-hosted]\n' > "$fn/.github/d:1:runs-on: ubuntu-latest #w.yml" 2>/dev/null
+then
+  n6=$(run_recipe "$fn" "$(recipe_lines K080-6)" | grep -c 'example/third')
+  n4=$( (cd "$fn" && { eval "$(kv_step "$KV080" 4 | sed -n 1p)"; eval "$(kv_step "$KV080" 4 | sed -n 2p)"; }) </dev/null \
+    2>/dev/null | grep -c '^\.github/b:')
+  n8=$(run_recipe "$fn" "$(recipe_lines K080-8a)" | grep -c 'self-hosted')
+  finds=""; nf=0; ok6=1
+  for src in R1 R9 KV-080-4 KV-080-6 KV-080-7 KV-080-8; do
+    case "$src" in
+      R*) f=$(recipe_note "$src" | spans 'find ') ;;
+      *) f=$(kv_text "$KV080" "${src#KV-080-}" | spans 'find ') ;;
+    esac
+    nf=$((nf + 1)); finds="$finds$f$nl"
+    if [ -z "$f" ] || [ "$(printf '%s\n' "$f" | wc -l | tr -d ' ')" != 1 ]; then ok6=0; fi
+  done
+  f=$(printf '%s' "$finds" | sort -u)
+  named=$( (cd "$fn" && eval "$f" </dev/null 2>/dev/null) | LC_ALL=C sort | tr '\n' '|')
+  if [ "$n6$n4$n8" = 000 ] && [ "$ok6" -eq 1 ] && [ "$(printf '%s\n' "$f" | wc -l | tr -d ' ')" = 1 ] \
+     && [ "$named" = ".github/a:1:uses: actions|.github/b:1:uses: .|.github/d:1:runs-on: ubuntu-latest #w.yml|" ]; then
+    echo "ok   names that hold a : forge the path:line: prefix of Steps 4, 6 and 8, and the find all $nf places give names them"
+  else
+    echo "FAIL names that hold a :: Steps 6, 4 and 8 listed the forged lines $n6, $n4 and $n8 time(s) (want 0, the" \
+      "limit the docs name); the R1 and R9 notes and KV-080 Steps 4, 6, 7 and 8 gave [$(printf '%s' "$finds" | tr '\n' '|')]" \
+      "(want one find, the same in all six), which named [$named]"
+    fail=1
+  fi
+else
+  echo "SKIP names that hold a :: this file system refuses a : in a name"
 fi
 
 # An option value that holds a character outside ASCII before -p hides an agent call from R8 (a bracket that held one
