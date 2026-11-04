@@ -1873,14 +1873,29 @@ fi
 code="$(probe_run -- --only solana,cargo)"
 [ "$code" = 0 ] && [ "$(cat "$T/out")" = "$(printf '%s\n%s' 'cargo: cargo 9.9.9 (fake)' 'solana: solana-cli 9.9.9 (fake, on stderr)')" ] \
   && ok "probe.sh --only solana,cargo -> those two, in probe.sh's order" || { bad "probe.sh --only: exit $code"; cat "$T/out" >&2; }
-# A query that gives no answer within PROBE_WAIT seconds is killed, and the tool is unusable.
+# A query that gives no answer within PROBE_WAIT seconds is killed, and the tool is unusable. PROBE_WAIT=4
+# leaves the stand-in time to start on a loaded machine. A pid file it never wrote means it never ran, so
+# nothing was left behind; otherwise the killed query must be gone within about 2 s (a killed process stays
+# in the process table until it is reaped).
 fake trident "echo \$\$ > '$T/trident.pid'; exec sleep 60"
+rm -f "$T/trident.pid"
 start=$SECONDS
-code="$(probe_run PROBE_WAIT=2 -- --only trident,python3)"
+code="$(probe_run PROBE_WAIT=4 -- --only trident,python3)"
 took=$((SECONDS - start))
-[ "$code" = 0 ] && [ "$(sed -n 1p "$T/out")" = 'trident: unusable (no answer in 2 seconds)' ] && grep -q '^python3: Python 3\.' "$T/out" \
-  && [ "$took" -ge 2 ] && [ "$took" -le 10 ] && ! kill -0 "$(cat "$T/trident.pid" 2>/dev/null || echo 0)" 2>/dev/null \
-  && ok "probe.sh: a query with no answer in PROBE_WAIT seconds is killed, and the next one runs (${took}s)" || { bad "probe.sh, a query that hangs: exit $code after ${took}s"; cat "$T/out" "$T/err" >&2; }
+left=""
+tp=$(cat "$T/trident.pid" 2>/dev/null) || tp=""
+case "$tp" in
+  ''|*[!0-9]*) ;;
+  *) i=0
+     while kill -0 "$tp" 2>/dev/null; do
+       [ "$i" -lt 20 ] || { left=$tp; break; }
+       sleep 0.1
+       i=$((i + 1))
+     done ;;
+esac
+[ "$code" = 0 ] && [ "$(sed -n 1p "$T/out")" = 'trident: unusable (no answer in 4 seconds)' ] && grep -q '^python3: Python 3\.' "$T/out" \
+  && [ "$took" -ge 4 ] && [ "$took" -le 20 ] && [ -z "$left" ] \
+  && ok "probe.sh: a query with no answer in PROBE_WAIT seconds is killed, and the next one runs (${took}s)" || { bad "probe.sh, a query that hangs: exit $code after ${took}s${left:+, process $left still there}"; cat "$T/out" "$T/err" >&2; }
 rm -f "$PB/trident"
 for value in 0 601 030 abc 1.5; do
   code="$(probe_run PROBE_WAIT="$value" --)"

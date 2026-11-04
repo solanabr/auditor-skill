@@ -1,0 +1,75 @@
+# Hostile argument vectors for scripts/runner/deps.sh. test-runners.sh runs each one under each bash on the
+# machine, from the working directory of fixtures/target/cases.txt, which also holds Cargo.lock,
+# sub/Cargo.lock, .cargo/Cargo.lock, big/Cargo.lock of 50 MB and one byte, .npmrc, .yarnrc.yml,
+# package.json, package-lock.json, sub/package-lock.json and npm-shrinkwrap.json. AUDITOR_RUN_TIMEOUT is
+# not set.
+# One case per line: <exit status><TAB><the one stderr line><TAB><argument>[<TAB><argument>...]. Each
+# case prints nothing on stdout, makes no scratch directory and changes nothing in the working directory.
+64	deps: refused: usage: deps.sh <action> --run <R> [--manifest <path>]... [--no-fetch] [<word>...], with the actions cargo-audit, cargo-outdated, cargo-tree, npm-audit, npm-view, npm-time, crate-info, pypi-info and fetch-artifact	nope
+64	deps: refused: usage: deps.sh <action> --run <R> [--manifest <path>]... [--no-fetch] [<word>...], with the actions cargo-audit, cargo-outdated, cargo-tree, npm-audit, npm-view, npm-time, crate-info, pypi-info and fetch-artifact	--help
+64	deps: refused: usage: deps.sh <action> --run <R> [--manifest <path>]... [--no-fetch] [<word>...], with the actions cargo-audit, cargo-outdated, cargo-tree, npm-audit, npm-view, npm-time, crate-info, pypi-info and fetch-artifact	CARGO-AUDIT
+64	deps: refused: give --run <R>, the run directory (usage: deps.sh <action> --run <R> [--manifest <path>]... [--no-fetch] [<word>...], with the actions cargo-audit, cargo-outdated, cargo-tree, npm-audit, npm-view, npm-time, crate-info, pypi-info and fetch-artifact)	cargo-audit
+64	deps: refused: --run needs a value	cargo-audit	--run
+64	deps: refused: give --run once	cargo-audit	--run	audit_1	--run	audit_1
+64	deps: refused: --run must be a run directory named audit_<n> or incident_<n> in the working directory: linkdir	cargo-audit	--run	linkdir
+64	deps: refused: cargo-audit takes one --manifest, a Cargo.lock	cargo-audit	--run	audit_1
+64	deps: refused: --manifest needs a value	cargo-audit	--run	audit_1	--manifest
+64	deps: refused: --manifest for cargo-audit takes a file named Cargo.lock, not Cargo.toml	cargo-audit	--run	audit_1	--manifest	Cargo.toml
+64	deps: refused: --manifest for cargo-audit takes a file named Cargo.lock, not .npmrc	cargo-audit	--run	audit_1	--manifest	.npmrc
+64	deps: refused: --manifest for cargo-audit takes a file named Cargo.lock, not rust-toolchain.toml	cargo-audit	--run	audit_1	--manifest	rust-toolchain.toml
+64	deps: refused: --manifest names Cargo.lock twice	cargo-audit	--run	audit_1	--manifest	Cargo.lock	--manifest	Cargo.lock
+64	deps: refused: --manifest must be relative to the working directory: /tmp/Cargo.lock	cargo-audit	--run	audit_1	--manifest	/tmp/Cargo.lock
+64	deps: refused: --manifest has an empty, . or .. component: ../Cargo.lock	cargo-audit	--run	audit_1	--manifest	../Cargo.lock
+64	deps: refused: --manifest passes through a symbolic link: linkdir/Cargo.lock	cargo-audit	--run	audit_1	--manifest	linkdir/Cargo.lock
+64	deps: refused: --manifest is under a .cargo directory: .cargo/Cargo.lock	cargo-audit	--run	audit_1	--manifest	.cargo/Cargo.lock
+64	deps: refused: --manifest is not an existing regular file: missing/Cargo.lock	cargo-audit	--run	audit_1	--manifest	missing/Cargo.lock
+64	deps: refused: --manifest is larger than 50 MB: big/Cargo.lock	cargo-audit	--run	audit_1	--manifest	big/Cargo.lock
+64	deps: refused: cargo-audit takes no package name: extra	cargo-audit	--run	audit_1	--manifest	Cargo.lock	extra
+64	deps: refused: give --no-fetch once	cargo-audit	--run	audit_1	--manifest	Cargo.lock	--no-fetch	--no-fetch
+64	deps: refused: --offline is not an argument deps.sh takes (usage: deps.sh <action> --run <R> [--manifest <path>]... [--no-fetch] [<word>...], with the actions cargo-audit, cargo-outdated, cargo-tree, npm-audit, npm-view, npm-time, crate-info, pypi-info and fetch-artifact)	cargo-audit	--run	audit_1	--manifest	Cargo.lock	--offline
+64	deps: refused: cargo-audit takes one --manifest, a Cargo.lock	cargo-audit	--run	audit_1	--manifest	Cargo.lock	--manifest	sub/Cargo.lock
+64	deps: refused: cargo-tree takes --manifest <dir>/Cargo.toml, the one cargo runs on, first	cargo-tree	--run	audit_1	--manifest	Cargo.lock
+64	deps: refused: the Cargo.lock goes beside the first Cargo.toml, Cargo.toml	cargo-tree	--run	audit_1	--manifest	Cargo.toml	--manifest	sub/Cargo.lock
+64	deps: refused: cargo-tree takes at most one Cargo.lock	cargo-tree	--run	audit_1	--manifest	Cargo.toml	--manifest	Cargo.lock	--manifest	sub/Cargo.lock
+64	deps: refused: --manifest for cargo-outdated takes a file named Cargo.toml or Cargo.lock, not package.json	cargo-outdated	--run	audit_1	--manifest	package.json
+64	deps: refused: npm-audit takes two --manifest files: package.json and package-lock.json (or npm-shrinkwrap.json)	npm-audit	--run	audit_1	--manifest	package.json
+64	deps: refused: package.json and its lockfile must sit in one directory	npm-audit	--run	audit_1	--manifest	package.json	--manifest	sub/package-lock.json
+64	deps: refused: npm-audit takes package.json and package-lock.json (or npm-shrinkwrap.json)	npm-audit	--run	audit_1	--manifest	package-lock.json	--manifest	npm-shrinkwrap.json
+64	deps: refused: --manifest for npm-audit takes a file named package.json, package-lock.json or npm-shrinkwrap.json, not .yarnrc.yml	npm-audit	--run	audit_1	--manifest	package.json	--manifest	.yarnrc.yml
+64	deps: refused: --no-fetch is for cargo-audit	npm-view	--run	audit_1	--no-fetch	left-pad
+64	deps: refused: npm-view takes no --manifest	npm-view	--run	audit_1	--manifest	package.json	left-pad
+64	deps: refused: npm-view takes <package> [<version>]	npm-view	--run	audit_1
+64	deps: refused: npm-view takes <package> [<version>]	npm-view	--run	audit_1	a	b	c
+64	deps: refused: npm-view takes no more words: d	npm-view	--run	audit_1	a	b	c	d
+64	deps: refused: an npm package name is [@<scope>/]<name>, of letters, digits and -._~, at most 214 bytes, not ../x	npm-view	--run	audit_1	../x
+64	deps: refused: an npm package name is [@<scope>/]<name>, of letters, digits and -._~, at most 214 bytes, not .hidden	npm-view	--run	audit_1	.hidden
+64	deps: refused: an npm package name is [@<scope>/]<name>, of letters, digits and -._~, at most 214 bytes, not _x	npm-view	--run	audit_1	_x
+64	deps: refused: an npm package name is [@<scope>/]<name>, of letters, digits and -._~, at most 214 bytes, not a b	npm-view	--run	audit_1	a b
+64	deps: refused: an npm package name is [@<scope>/]<name>, of letters, digits and -._~, at most 214 bytes, not @scope	npm-view	--run	audit_1	@scope
+64	deps: refused: an npm package name is [@<scope>/]<name>, of letters, digits and -._~, at most 214 bytes, not @/x	npm-view	--run	audit_1	@/x
+64	deps: refused: an npm package name is [@<scope>/]<name>, of letters, digits and -._~, at most 214 bytes, not x/y	npm-view	--run	audit_1	x/y
+64	deps: refused: an npm package name is [@<scope>/]<name>, of letters, digits and -._~, at most 214 bytes, not %2e%2e	npm-view	--run	audit_1	%2e%2e
+64	deps: refused: a version is <n>.<n>.<n>, with an optional -<pre-release> and +<build>, not 1.0	npm-view	--run	audit_1	left-pad	1.0
+64	deps: refused: a version is <n>.<n>.<n>, with an optional -<pre-release> and +<build>, not ^1.0.0	npm-view	--run	audit_1	left-pad	^1.0.0
+64	deps: refused: a version is <n>.<n>.<n>, with an optional -<pre-release> and +<build>, not latest	npm-view	--run	audit_1	left-pad	latest
+64	deps: refused: a version is <n>.<n>.<n>, with an optional -<pre-release> and +<build>, not 01.0.0	npm-view	--run	audit_1	left-pad	01.0.0
+64	deps: refused: a version is <n>.<n>.<n>, with an optional -<pre-release> and +<build>, not 1.0.0/../x	npm-view	--run	audit_1	left-pad	1.0.0/../x
+64	deps: refused: npm-time takes one package name	npm-time	--run	audit_1	left-pad	1.3.0
+64	deps: refused: a crate name is a letter, then letters, digits, - and _, at most 64, not 9serde	crate-info	--run	audit_1	9serde
+64	deps: refused: a crate name is a letter, then letters, digits, - and _, at most 64, not ser.de	crate-info	--run	audit_1	ser.de
+64	deps: refused: a version is <n>.<n>.<n>, with an optional -<pre-release> and +<build>, not 1.0	crate-info	--run	audit_1	serde	1.0
+64	deps: refused: -x is not an argument deps.sh takes (usage: deps.sh <action> --run <R> [--manifest <path>]... [--no-fetch] [<word>...], with the actions cargo-audit, cargo-outdated, cargo-tree, npm-audit, npm-view, npm-time, crate-info, pypi-info and fetch-artifact)	pypi-info	--run	audit_1	-x
+64	deps: refused: a PyPI project name is letters, digits and -._, starting and ending with a letter or digit, at most 100, not _x	pypi-info	--run	audit_1	_x
+64	deps: refused: a PyPI project name is letters, digits and -._, starting and ending with a letter or digit, at most 100, not x_	pypi-info	--run	audit_1	x_
+64	deps: refused: a PyPI project name is letters, digits and -._, starting and ending with a letter or digit, at most 100, not a/b	pypi-info	--run	audit_1	a/b
+64	deps: refused: a PyPI version is a digit, then digits, letters and .!+_-, at most 64, not x1	pypi-info	--run	audit_1	requests	x1
+64	deps: refused: a PyPI version is a digit, then digits, letters and .!+_-, at most 64, not 1.0/..	pypi-info	--run	audit_1	requests	1.0/..
+64	deps: refused: fetch-artifact takes crates|npm|pypi, a package name and a version	fetch-artifact	--run	audit_1	crates	serde
+64	deps: refused: fetch-artifact takes crates, npm or pypi, not git	fetch-artifact	--run	audit_1	git	x	1.0.0
+64	deps: refused: a version is <n>.<n>.<n>, with an optional -<pre-release> and +<build>, not 1.3	fetch-artifact	--run	audit_1	npm	left-pad	1.3
+64	deps: refused: a PyPI version is a digit, then digits, letters and .!+_-, at most 64, not 2.0/x	fetch-artifact	--run	audit_1	pypi	requests	2.0/x
+64	deps: refused: --manifest is longer than 1024 bytes	cargo-audit	--run	audit_1	--manifest	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Cargo.lock
+64	deps: refused: --manifest holds a control character: sub?/Cargo.lock	cargo-audit	--run	audit_1	--manifest	sub/Cargo.lock
+64	deps: refused: an npm package name is [@<scope>/]<name>, of letters, digits and -._~, at most 214 bytes, not nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn...	npm-view	--run	audit_1	nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn
+64	deps: refused: a crate name is a letter, then letters, digits, - and _, at most 64, not ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc	crate-info	--run	audit_1	ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+64	deps: refused: an npm package name is [@<scope>/]<name>, of letters, digits and -._~, at most 214 bytes, not left-pad?	npm-view	--run	audit_1	left-pad
