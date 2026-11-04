@@ -5,7 +5,7 @@
 # repository's own config, a .git git passes over or cannot use, and a git directory kept elsewhere
 # included) and the user's own configuration directory, linked worktrees and submodule checkouts, names
 # the filesystem folds (link targets included), a large tree, the entry count where SIGPIPE is ignored,
-# what the link check costs (path lookups counted, not timed), trees find cannot read,
+# what the link check and folded() cost (path lookups counted, not timed), trees find cannot read,
 # a missing jq, control characters in a path, and the installation or PATH entries inside the working
 # directory. Every run goes under each bash on the machine (/bin/bash and the bash running this suite,
 # when they differ) and must print the same under each. Needs git and jq; no network. Usage (from the
@@ -664,6 +664,22 @@ check "a link to a directory 61 levels down costs the link check no more lookups
   test "$COST" = "$near"
 lookups "$X/gitty" below in_git
 check "... while a directory whose name holds git is looked up ($COST)" test "${COST:-0}" -ge 1
+# folded(): the names of each directory holding names outside printable ASCII are looked up once, even
+# where its entries come between those of its subdirectories (find lists d/s1, d/s1/f, d/s2, d/s2/f, ...).
+EA=$(printf '\303\251')
+O=$(newdir)
+: > "$O/a$EA"
+lookups "$O" folded
+one=$COST
+check "... the names of one directory are looked up ($one)" test "${one:-0}" -ge 1
+I=$(newdir)
+mkdir "$I/d$EA"
+i=0
+while [ "$i" -lt 20 ]; do mkdir "$I/d$EA/s$i$EA" && : > "$I/d$EA/s$i$EA/f$EA"; i=$((i + 1)); done
+lookups "$I" folded
+check "folded() looks up each of 22 directories once, the one between its 20 subdirectories too ($COST, $one each)" \
+  test "$COST" = "$((22 * ${one:-0}))"
+check "... and the run is clean" clean
 
 # =================================================================================================
 # Where it will not run.
