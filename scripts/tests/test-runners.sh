@@ -422,6 +422,18 @@ run "$TARGET" "$WT" -- build-sbf --run audit_1 --src .
 n=$(sed -n 's/.*audit_1\/exec\/build-sbf-\([0-9]*\)\/:.*/\1/p' "$T/out")
 check "only regular .so files of at most 100 MiB are kept: not a link, not an oversized one" \
   sh -c "[ '$RC' = 0 ] && grep -q '2 .so in audit_1/exec/build-sbf-$n/: demo.so, other.so; 2 other .so not kept (symbolic links, larger than 100 MiB' '$T/out' && [ \"\$(ls '$WT/audit_1/exec/build-sbf-$n' | tr '\n' ' ')\" = 'demo.so other.so ' ]"
+# In name order, whatever order the build directory lists them in (ext4 hashes names; APFS lists zeta.so
+# before beta.so), and past the 64th by that order: s64.so is the one left out of 65.
+settings FAKE_SO_NAMES='zeta demo beta other'
+run "$TARGET" "$WT" -- build-sbf --run audit_1 --src .
+n=$(sed -n 's/.*audit_1\/exec\/build-sbf-\([0-9]*\)\/:.*/\1/p' "$T/out")
+check "... named and kept in name order, whatever order the directory lists them in" \
+  sh -c "[ '$RC' = 0 ] && sed -n '\$p' '$T/out' | grep -q '; 4 .so in audit_1/exec/build-sbf-$n/: beta.so, demo.so, other.so, zeta.so\$'"
+settings FAKE_SO_NAMES="$(i=64; while [ "$i" -ge 0 ]; do printf 's%02d ' "$i"; i=$((i - 1)); done)"
+run "$TARGET" "$WT" -- build-sbf --run audit_1 --src .
+n=$(sed -n 's/.*audit_1\/exec\/build-sbf-\([0-9]*\)\/:.*/\1/p' "$T/out")
+check "... and the first 64 by that order are kept when the build makes more" \
+  sh -c "[ '$RC' = 0 ] && grep -q '; 1 other .so not kept (a symbolic link, larger than 100 MiB, past 64, or an odd name)\$' '$T/out' && [ \"\$(ls '$WT/audit_1/exec/build-sbf-$n' | wc -l | tr -d ' ')\" = 64 ] && [ -f '$WT/audit_1/exec/build-sbf-$n/s63.so' ] && [ ! -e '$WT/audit_1/exec/build-sbf-$n/s64.so' ]"
 settings
 
 # =================================================================================================

@@ -483,8 +483,13 @@ finish() {
   done
   where="log $R/exec/$ACTION-$n.log"
   if [ "$status" -le 1 ] && [ -n "$SO_FROM" ] && [ -d "$SO_FROM" ]; then
-    find "$SO_FROM" -maxdepth 1 -name '*.so' \( -type f -o -type l \) -print > "$S/so-list" 2>/dev/null || : > "$S/so-list"
-    while IFS= read -r f; do
+    # The glob gives the names in byte order (LC_ALL=C), whatever order the directory lists them in (ext4
+    # hashes them), so the line below and the first $SO_MAX kept are the same on every filesystem. dotglob
+    # lists the names that start with a dot as well, which are not kept, and a glob keeps a name that
+    # holds a line end whole.
+    shopt -s dotglob
+    for f in "$SO_FROM"/*.so; do
+      [ -L "$f" ] || [ -f "$f" ] || continue
       name=${f##*/}
       case "$name" in *[[:cntrl:]]*|.*|'') skipped=$((skipped + 1)); continue ;; esac
       if [ ! -f "$f" ] || [ -L "$f" ] || [ "$count" -ge "$SO_MAX" ] ||
@@ -499,7 +504,8 @@ finish() {
       else
         skipped=$((skipped + 1))
       fi
-    done < "$S/so-list"
+    done
+    shopt -u dotglob
     if [ "$count" -gt 0 ]; then where="$where; $count .so in $R/exec/$ACTION-$n/: $kept"; else where="$where; no .so to keep"; fi
     case "$skipped" in
       0) ;;
