@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # test-report-pdf.sh — self-test for scripts/report-to-pdf.sh and scripts/pdf/no-remote.lua: the reports
 # it takes (run-directory paths only) and the PDFs it may replace, the skips that keep it best-effort, the
-# sandboxed pandoc call with the filter and the paranoid TeX settings, rendering in scratch, and the case
+# sandboxed pandoc call with the filter and the paranoid TeX settings and none of the caller's environment,
+# rendering in scratch, and the case
 # file fixtures/report-pdf/cases.txt, run under each bash on the machine (/bin/bash and the bash running
 # this suite, when they differ), which must print the same. Stand-ins take the place of pandoc and of the
 # TeX engines; where pandoc 2.15 or later is installed, the filter also runs in the real pandoc against
@@ -41,36 +42,39 @@ mkdir -p "$T/tools"
 for t in bash sh env git find wc cat sed mktemp rm mv cp date tr awk sort grep ls basename dirname pwd mkdir chmod head od; do
   p=$(command -v "$t" 2>/dev/null) && case "$p" in /*) ln -s "$p" "$T/tools/$t" ;; esac
 done
-# The pandoc stand-in: --version prints $FAKE_PANDOC_VERSION (default 3.1.9); a render records its
-# arguments, its working directory and the TeX settings of its environment in $FAKE_LOG, then writes a
-# PDF to its -o file unless FAKE_PANDOC_FAIL is set.
+# The stand-ins read what each scenario sets from files in $T, since the render runs with none of the
+# caller's environment: $FAKE_LOG, the log; $T/fake.fail, present to make a render fail; $T/fake.touch,
+# the name of a file the engine stand-in writes to. Each records the caller's RPC_URL as it sees it.
+# The pandoc stand-in: --version prints $FAKE_PANDOC_VERSION (default 3.1.9), which report-to-pdf.sh
+# reads before the render; a render records its arguments, its working directory and the TeX settings of
+# its environment in $FAKE_LOG, then writes a PDF to its -o file unless $T/fake.fail is there.
 mkdir -p "$T/pandoc-fake"
-cat > "$T/pandoc-fake/pandoc" <<'EOF'
-#!/bin/sh
+{ printf "#!/bin/sh\nFAKE='%s'\n" "$T"; cat <<'EOF'; } > "$T/pandoc-fake/pandoc"
 if [ "$1" = --version ]; then printf 'pandoc %s\nFeatures: +server +lua\n' "${FAKE_PANDOC_VERSION:-3.1.9}"; exit 0; fi
 { printf 'pandoc'; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\n'
   printf 'pwd %s\n' "$(pwd -P)"
   printf 'env openin_any=%s openout_any=%s shell_escape=%s TEXMFOUTPUT=%s TMPDIR=%s\n' \
     "${openin_any-unset}" "${openout_any-unset}" "${shell_escape-unset}" "${TEXMFOUTPUT-unset}" "${TMPDIR-unset}"
-  [ -f report.md ] && printf 'input %s\n' "$(cat report.md)"; } >> "$FAKE_LOG"
+  printf 'caller pandoc RPC_URL=%s HOME=%s\n' "${RPC_URL-unset}" "${HOME-unset}"
+  [ -f report.md ] && printf 'input %s\n' "$(cat report.md)"; } >> "$FAKE/fake.log"
 out=""; prev=""
 for a in "$@"; do [ "$prev" = -o ] && out=$a; prev=$a; done
-[ -z "${FAKE_PANDOC_FAIL:-}" ] || exit 1
+[ ! -e "$FAKE/fake.fail" ] || exit 1
 printf '%%PDF-1.4 stand-in for %s\n' "$out" > "$out"
 EOF
 # The engine stand-in, as xelatex, lualatex or pdflatex: it records its arguments and the TeX settings
 # of its environment, keeps the .tex it was given in $FAKE_TEX, and writes <outdir>/<name>.pdf. Given
-# FAKE_ENGINE_TOUCH, it also creates that file, as an engine that wrote outside its directory would.
-cat > "$T/engine" <<'EOF'
-#!/bin/sh
+# $T/fake.touch, it also writes the file named there, as an engine that wrote outside its directory would.
+{ printf "#!/bin/sh\nFAKE='%s'\n" "$T"; cat <<'EOF'; } > "$T/engine"
 { printf '%s' "${0##*/}"; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\n'
-  printf 'env openin_any=%s openout_any=%s shell_escape=%s\n' "${openin_any-unset}" "${openout_any-unset}" "${shell_escape-unset}"; } >> "$FAKE_LOG"
-[ -z "${FAKE_ENGINE_TOUCH:-}" ] || : > "$FAKE_ENGINE_TOUCH"
+  printf 'env openin_any=%s openout_any=%s shell_escape=%s\n' "${openin_any-unset}" "${openout_any-unset}" "${shell_escape-unset}"
+  printf 'caller engine RPC_URL=%s\n' "${RPC_URL-unset}"; } >> "$FAKE/fake.log"
+[ ! -s "$FAKE/fake.touch" ] || : > "$(cat "$FAKE/fake.touch")"
 outdir=.; last=""
 while [ $# -gt 0 ]; do
   case "$1" in -output-directory) outdir=$2; shift 2 ;; *) last=$1; shift ;; esac
 done
-cp "$last" "$FAKE_TEX" 2>/dev/null
+cp "$last" "$FAKE/engine-input.tex" 2>/dev/null
 base=${last##*/}; base=${base%.tex}
 printf '%%PDF-1.4 engine stand-in\n' > "$outdir/$base.pdf"
 printf 'engine stand-in log\n' > "$outdir/$base.log"
@@ -78,15 +82,22 @@ EOF
 chmod +x "$T/pandoc-fake/pandoc" "$T/engine"
 mkdir -p "$T/xe" "$T/lua" "$T/pdftex" "$T/oldpandoc"
 ln -s "$T/engine" "$T/xe/xelatex"; ln -s "$T/engine" "$T/lua/lualatex"; ln -s "$T/engine" "$T/pdftex/pdflatex"
-export FAKE_LOG="$T/fake.log" FAKE_TEX="$T/engine-input.tex"
+FAKE_LOG="$T/fake.log" FAKE_TEX="$T/engine-input.tex"
 FAKE_PATH="$T/pandoc-fake:$T/xe:$T/lua:$T/pdftex:$T/tools"
 
 W="$T/wt"; mkdir -p "$W"
 R=$(cd "$W" && "$RUNDIR" new audit) || { ko "rundir.sh new audit failed"; exit 1; }
 I=$(cd "$W" && "$RUNDIR" new incident) || { ko "rundir.sh new incident failed"; exit 1; }
 printf '# Audit report\n\nFindings.\n' > "$W/$R/REPORT.md"
-# run <PATH> <args...>: report-to-pdf.sh run directly from $W; output in $T/out, $T/err and $RC.
-run() { local p=$1; shift; (cd "$W" && PATH=$p TEXMFOUTPUT=/tmp/caller-texmfoutput "$PDF" "$@") >"$T/out" 2>"$T/err" </dev/null; RC=$?; }
+# run <PATH> <args...>: report-to-pdf.sh run directly from $W, by a caller whose environment holds a
+# TEXMFOUTPUT and an RPC_URL with a key; output in $T/out, $T/err and $RC.
+CALLER_RPC=https://callerkey42.rpc.example.invalid/v2/CALLERKEY42
+run() {
+  local p=$1
+  shift
+  (cd "$W" && PATH=$p TEXMFOUTPUT=/tmp/caller-texmfoutput RPC_URL=$CALLER_RPC "$PDF" "$@") >"$T/out" 2>"$T/err" </dev/null
+  RC=$?
+}
 refused() { [ "$RC" = 2 ] && [ "$(cat "$T/err")" = "report-to-pdf: refused: $1" ] && [ ! -s "$T/out" ]; }
 tree() { (cd "$1" && find . -print | LC_ALL=C sort); }
 
@@ -166,7 +177,7 @@ done
 run "$T/pandoc-fake:$T/tools" "$R/REPORT.md"
 check "no engine: skipped (exit 0), naming the three engines" \
   sh -c "[ $RC = 0 ] && grep -q 'no PDF engine (xelatex, lualatex or pdflatex) found' '$T/out' && [ ! -e '$W/$R/REPORT.pdf' ]"
-(cd "$W" && PATH=$FAKE_PATH FAKE_PANDOC_FAIL=1 "$PDF" "$R/REPORT.md") >"$T/out" 2>"$T/err"; RC=$?
+: > "$T/fake.fail"; run "$FAKE_PATH" "$R/REPORT.md"; rm -f "$T/fake.fail"
 check "a render that fails: exit 0, the failure named" sh -c "[ $RC = 0 ] && grep -q 'pandoc failed to render PDF (non-fatal)' '$T/err'"
 check "... no PDF and no partial file beside the report" sh -c "[ -z \"\$(ls '$W/$R' | grep -i pdf)\" ]"
 mkdir -p "$W/tmpin"
@@ -196,6 +207,8 @@ check "render: the call is pandoc --sandbox with raw TeX, raw attributes and YAM
 check "render: pandoc reads a copy of the report, in scratch" has "$FAKE_LOG" "input # Audit report"
 check "render: the engine's settings are paranoid, the caller's TEXMFOUTPUT dropped, TMPDIR the scratch directory" \
   has "$FAKE_LOG" "env openin_any=p openout_any=p shell_escape=f TEXMFOUTPUT=unset TMPDIR=$SCRATCH"
+check "render: pandoc sees none of the caller's environment but PATH and HOME, so not its RPC_URL" \
+  sh -c "grep -qxF 'caller pandoc RPC_URL=unset HOME=$HOME' '$FAKE_LOG' && ! grep -q CALLERKEY42 '$FAKE_LOG'"
 check "render: the filter ships beside the script" test -s "$FILTER"
 run "$FAKE_PATH" "$R/REPORT.md"
 check "render again: the PDF of the run before, a regular file with one link, is replaced" \
@@ -356,18 +369,20 @@ EOF
   check "real pandoc: the report renders (exit 0) with the engine stand-in" sh -c "[ $RC = 0 ] && grep -q '^%PDF-1.4 engine stand-in' '$W/$R/REPORT.pdf'"
   check "real pandoc: the engine got -no-shell-escape" sh -c "grep '^xelatex ' '$FAKE_LOG' | grep -qF '[-no-shell-escape]'"
   check "real pandoc: ... and the paranoid settings" has "$FAKE_LOG" "env openin_any=p openout_any=p shell_escape=f"
+  check "real pandoc: ... and none of the caller's RPC_URL" \
+    sh -c "grep -qxF 'caller engine RPC_URL=unset' '$FAKE_LOG' && ! grep -q CALLERKEY42 '$FAKE_LOG'"
   check "real pandoc: the .tex the engine got has no image, raw TeX or math from the report" \
     sh -c "[ -s '$FAKE_TEX' ] && ! grep -qF -e '\\includegraphics' -e '\\write18' -e '\\special{' -e '\\input{/etc' '$FAKE_TEX'"
   # What the run left outside its scratch directory, which it removes: the PDF beside the report, and
   # nothing else. The comparison must see a file the engine writes in the working directory, as the
-  # stand-in does given FAKE_ENGINE_TOUCH.
+  # stand-in does given $T/fake.touch.
   changed() { diff "$1" "$2" | sed -n 's/^[<>] //p' | LC_ALL=C sort | tr '\n' ' '; }
   tree "$W" > "$T/w.after"; tree "$HOME" > "$T/home.after"
   check "real pandoc: the run adds REPORT.pdf and nothing else to the working directory" \
     test "$(changed "$T/w.before" "$T/w.after")" = "./$R/REPORT.pdf "
   check "real pandoc: ... and nothing to HOME" cmp -s "$T/home.before" "$T/home.after"
   rm -f "$W/$R/REPORT.pdf"; tree "$W" > "$T/w.before"
-  FAKE_ENGINE_TOUCH="$W/planted" run "$T/realbin:$T/xe:$T/tools" "$R/REPORT.md"
+  printf '%s' "$W/planted" > "$T/fake.touch"; run "$T/realbin:$T/xe:$T/tools" "$R/REPORT.md"; rm -f "$T/fake.touch"
   tree "$W" > "$T/w.after"
   check "real pandoc: ... a comparison that sees a file the engine writes there" \
     test "$(changed "$T/w.before" "$T/w.after")" = "./$R/REPORT.pdf ./planted "

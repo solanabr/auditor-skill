@@ -40,9 +40,11 @@
 # whose "<!--" and "-->" stand on lines of their own, as the templates' long comments
 # do, still drops). The engine gets kpathsea's paranoid settings (openin_any=p,
 # openout_any=p: no absolute path outside pandoc's own temp directory, no "..", no
-# dotfile) and shell_escape=f; the caller's TEXMFOUTPUT is dropped, and pandoc sets
-# its own temp directory. The PDF is copied into a new file beside the report and
-# renamed into place.
+# dotfile) and shell_escape=f, and pandoc sets its own temp directory. pandoc, and
+# the engine through it, see none of the caller's environment but PATH and HOME (so
+# no RPC_URL or other key, and no TEXMFOUTPUT): their environment is those two,
+# TMPDIR (the temp directory), LC_ALL=C and the three settings. The PDF is copied
+# into a new file beside the report and renamed into place.
 #
 # Exit: 0 rendered or skipped (no report, no pandoc, a pandoc older than 2.15, no
 # engine, or a render that failed) · 2 refused.
@@ -161,8 +163,9 @@ trap 'rm -rf "$TMPD"' EXIT
 cat -- "$WT/$IN" > "$TMPD/report.md" || refuse "the report cannot be read: $IN"
 
 echo "report-to-pdf: rendering $IN -> $OUTPUT"
-if ( cd "$TMPD" && unset TEXMFOUTPUT && export openin_any=p openout_any=p shell_escape=f TMPDIR="$TMPD" &&
-     exec pandoc --sandbox -f markdown-raw_tex-raw_attribute-yaml_metadata_block --lua-filter "$FILTER" \
+if ( cd "$TMPD" &&
+     exec env -i PATH="$PATH" ${HOME+"HOME=$HOME"} TMPDIR="$TMPD" LC_ALL=C openin_any=p openout_any=p shell_escape=f \
+       pandoc --sandbox -f markdown-raw_tex-raw_attribute-yaml_metadata_block --lua-filter "$FILTER" \
        --pdf-engine="$ENGINE" --pdf-engine-opt=-no-shell-escape -o "$TMPD/report.pdf" report.md ) &&
    [ -s "$TMPD/report.pdf" ]; then
   # The run directory and the PDF's name are checked again, then the PDF goes into a new file beside
