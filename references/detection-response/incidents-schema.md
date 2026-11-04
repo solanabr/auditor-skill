@@ -84,7 +84,8 @@ bumps the `schema` string to `auditor-incidents/2`.
   `supply_chain_or_ci` incident or cannot be read: every `target.sh --src` is that tree
   or a copy of it, and any PoC crate can build its crates. A run without the file, or
   whose file records no incident, counts for nothing; only the `incident_*` directories
-  at the top of the working directory the runner starts in count (Rule 11a).
+  at the top of the working directory the runner starts in count, in any letter case
+  (Rule 11a).
 - **Where entries go.** Only `confirmed_exploited` and `suspected` belong in
   `incidents[]`; `attempted_not_vulnerable` and `benign` are filed in
   `ruled_out[]`. The one subtlety:
