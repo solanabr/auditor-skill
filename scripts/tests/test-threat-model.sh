@@ -934,7 +934,7 @@ check "T-m: ... no audit-mem-warm.json is saved" test ! -e "$MOUT/audit-mem-warm
 check "T-m: ... and R8 says no store was given" has "$MOUT/history.md" "NOT FOUND (no --audit-mem-db given"
 fake_collect --audit-mem-db .audit-memory/audit.db
 check "T-m: --audit-mem-db reads the store it names, through audit-mem warm" \
-  grep -qxF -- "warm --db .audit-memory/audit.db --program-id=Demo1111" "$T/marks/audit-mem"
+  grep -qxF -- "warm --contract=1 --db .audit-memory/audit.db --program-id=Demo1111" "$T/marks/audit-mem"
 check "T-m: ... and saves audit-mem-warm.json" test -s "$MOUT/audit-mem-warm.json"
 fake_collect --audit-mem-db ./.audit-memory/audit.db
 check "T-m: ... written with a leading ./ too" grep -qF -- "--db .audit-memory/audit.db" "$T/marks/audit-mem"

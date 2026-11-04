@@ -15,8 +15,8 @@ binaries:
 `audit-scan` and `audit-mem` are built from one library; `audit-logs` is its own
 package, `audit-logs/`, with one dependency, `libc`. These are plain synchronous
 CLIs — no async runtime, no network. Parsing uses `syn` with `proc-macro2`'s
-`span-locations` feature, so every finding carries a real line number
-(`node.span().start().line`).
+`span-locations` feature, so every finding carries a real line number (the line of
+its first token).
 
 ## Build
 
@@ -46,16 +46,128 @@ so build it again after any update: the old binary refuses to run (exit 4, below
 only when the update changed a file it was built from, that is one of the three
 recipes, `scripts/lib/confine.sh`, or its own `Cargo.toml` or `src/`.
 
+### The contract marker
+
+`audit-scan` and `audit-mem` keep a contract, the confinement described below, and
+mark it with `--contract=1`. Every rule that pre-approves them names the marker,
+right after the binary's path for `audit-scan` (`audit-scan --contract=1 <dir> …`)
+and right after the subcommand for `audit-mem` (`audit-mem warm --contract=1 …`), and
+so does every call the corpus makes. The marker changes nothing: given once in its
+place, the call runs as it does without it. Any other word that starts with
+`--contract` is refused.
+
+A build made before the contract, which writes wherever `--db` and `--out` say,
+refuses the marker with a usage error and exit 2 before it does anything (`error:
+unexpected argument '--contract' found`, or `error: unrecognized subcommand` for
+`profile` and `invariant`, which it lacks), so a rule that names the marker never
+runs it. An installation updated in place, such as a `git pull` of a clone, keeps its
+old binaries in `target/release/` until they are built again, and the calls fail
+until then. Rebuild:
+
+```bash
+cd "<auditor-skill root>/tools/auditor-tools" && cargo build --release --locked
+```
+
+A later contract would take `--contract=2`, which this build refuses with a line that
+says to rebuild it.
+
 ## `audit-scan`
 
 ```
-audit-scan <path> [--out FILE] [--pretty]
+audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty]
 ```
 
-Recursively walks `*.rs` files under `<path>` (skipping `target/`, `.git/`,
-`node_modules/`), parses each with `syn::parse_file`, and prints one JSON object
-to stdout (or to `--out FILE`). `--pretty` uses `serde_json::to_string_pretty`.
-Files that fail to parse are skipped (best-effort).
+Recursively walks the `*.rs` files under `<dir>`, parses each as `syn::parse_file`
+does, in a child of its own, and prints one JSON object to stdout (or writes it to
+`--out`). `--pretty` uses `serde_json::to_string_pretty`. The walk skips `target/`,
+`.git/` and `node_modules/` below `<dir>`, and, when `<dir>` is `.`, the run
+directories and `.audit-memory/`, which hold an audit's own output. It follows no
+symbolic link, goes no deeper than 128 directories below `<dir>`, and parses only
+regular files with one name, of at most 4 MiB, in byte order of their names; every
+link it meets, every directory it does not enter for its depth, and every `*.rs`
+file it does not parse (not a regular file, a second name, larger than 4 MiB,
+unreadable, not UTF-8, nested or chained too deeply, not Rust that `syn` parses, or
+one the parser could not finish), is listed in `skipped` with the reason.
+
+The files are parsed in a child: audit-scan starts itself, by the path it runs
+from, with `--internal-parse-stdin` as its only argument, no environment and `/`
+as its directory, and hands it one file's bytes at a time on its stdin, each with
+its length before it; the report of that one file comes back on the child's
+stdout the same way. A file the child does not finish, because it aborts, dies on
+a signal or takes more than 10 seconds, is listed as `the parser could not
+finish`; that child is killed, the next file goes to a new one, and the scan goes
+on. The child reads and writes nothing else. Before each file it sets its own CPU
+limit to the CPU it has used and 20 seconds more, twice the time it is given, and
+its core-file limit to none: a child whose parent is gone, with no one left to kill
+it, dies once a file has used that.
+
+A report has bounds. One file lists at most 20,000 items (sites, functions,
+instructions with their arguments, accounts structs with their fields, PDAs), and
+no more than fits in its answer of 32 MiB: a file with more is in `skipped` as
+`lists only the first 20,000 sites` or `lists only the sites that fit in 32 MiB`,
+after the ones listed, and the child builds nothing past them. A longer answer is
+refused, and the file skipped as the parser could not finish. The whole report
+holds about 256 MiB: the file that would take it past that, and each file after
+it, is in `skipped` as `not parsed: the report is full`.
+
+syn's parser, and the walk of its tree, recurse once for each level the tree
+nests, so the child lexes a file first (`proc-macro2`'s lexer does not recurse) and
+does not parse it, but answers `nested or chained too deeply to parse`, when its
+groups (`(`, `[`, `{`) nest more than 256 deep or it holds a chain of more than
+20,000 tokens: the tokens since the last `;`, the last `,` outside an unclosed `<`
+and outside a closure's parameters (`|a, b| |a, b| …` nests each closure in the one
+before), an inner attribute or an outer one that starts an item, a statement or a
+field (a doc comment is one), or the start of an item or statement after a block,
+counted on through every group they are nested in. These limits are the fast path:
+a tree they let through that is still too deep for the child's stack (512 MiB, or
+64 MiB where the system grants no more) ends only that child. Real code stays far
+below them: in 16,000 files of published crates and the Rust standard library, the
+longest chain is 1,434 tokens and the deepest nesting 44 groups. Parsed in the
+child, those files give the report a scan in one process gave, in 22 s against
+21.
+
+### Where it reads and writes
+
+It is built to be pre-approved as one `Bash(…)` rule on its absolute path and the
+contract marker (`"<root>/tools/auditor-tools/target/release/audit-scan" --contract=1 *`),
+so it must be safe whatever arguments follow. Its rules are those of
+`scripts/lib/confine.sh`, in `src/confine.rs`, and
+`scripts/tests/test-auditor-tools.sh` runs every case of
+`scripts/tests/fixtures/audit-scan/cases.txt`:
+
+- `<dir>` is `.` or a relative path inside the working directory: at most 1024
+  bytes, no control character, no leading `-` or `~`, no empty, `.` or `..`
+  component once one leading `./` is dropped, no symbolic link on the way (each name
+  is checked with `lstat`), resolving inside the working directory to a directory
+  it may search.
+- `--out` is `prescan.json`, or `prescan-<slug>.json` with a slug of 1 to 32 of
+  `a-z`, `0-9` and `-`, directly in a run directory, `audit_<n>/` or `incident_<n>/`,
+  that passes `scripts/rundir.sh check`: a real directory in the working directory,
+  holding no symbolic link, tracked by no repository in any letter case, with a
+  `.gitignore` of exactly `*`. The file is made new (`O_CREAT|O_EXCL|O_NOFOLLOW`, mode
+  0600) through the run directory, opened once without following a link; a file
+  already there is replaced only when it is a regular file with one name, as
+  audit-scan's own earlier output is.
+- `--contract=1` comes first, or not at all. Each option is given once, `--out
+  <file>` or `--out=<file>`; the word after `--out` is its value whatever it looks
+  like. Any other word that starts with `-` is refused.
+- It asks git whether a run directory is tracked as confine.sh's `hgit` asks it: git
+  from a `PATH` with every entry inside the working directory removed, with an
+  environment of its own and the repository's config pinned off. When git cannot
+  answer, `--out` is refused; with no `--out`, git is not run.
+- It refuses to run from an installation inside the working directory, or from a
+  path, as it was invoked or with its links resolved, holding a quote, `$`, a
+  backtick, a backslash or a control character, and in a working directory whose
+  path holds a control character.
+- The walk opens each directory from its parent's descriptor, and each file from
+  its directory's, never following a link (`openat` with `O_NOFOLLOW`), so a
+  directory swapped for a link while the walk runs is not entered.
+- It opens no network connection, and runs no program but git and, to parse,
+  itself (above). A control, bidirectional or invisible character in a name or
+  snippet is written as a `\u` escape.
+
+Exit: 0 done · 1 the output cannot be written · 2 refused, with one stderr line,
+`audit-scan: refused: <reason>`.
 
 ### JSON schema
 
@@ -129,27 +241,38 @@ Files that fail to parse are skipped (best-effort).
   // every `ItemFn` and `ImplItemFn`.
   "functions": [
     { "name": "string", "file": "string", "line": 0, "pub": false }
+  ],
+
+  // every symbolic link the walk did not follow, every directory it did not
+  // enter for its depth, and every `*.rs` file it did not parse, with why.
+  "skipped": [
+    { "file": "string", "reason": "string" }
   ]
 }
 ```
 
-Snippets are the pretty-printed token stream of the node, whitespace-collapsed and
-truncated to ~80 characters.
+A snippet is the node's tokens as `proc-macro2` prints the file's own (a space
+between two tokens unless the source joins punctuation, as in `::<` or `?;`),
+whitespace collapsed and cut after 80 characters with `...`; only what is kept is
+rendered, so a long chain costs no more than a short one.
 
 ### Example
 
 ```bash
-audit-scan ./programs/my-program/src --pretty --out surface.json
+audit-scan --contract=1 ./programs/my-program/src --pretty --out audit_1/prescan.json
 ```
 
 ## `audit-mem`
 
 ```
-audit-mem [--db PATH] <subcommand>
+audit-mem <subcommand> [--contract=1] [--db <store>] [options]
 ```
 
-`--db` defaults to `.audit-memory/audit.db` (parent directory auto-created). The
-schema is created lazily on any command, so `init` is optional but explicit.
+The subcommand comes first, then the contract marker (above), then its options. A store is `.audit-memory/audit.db`
+in the working directory (the default) or `<R>/audit-mem.db`, a store for one run in
+a run directory, `audit_<n>/` or `incident_<n>/`; nothing else. `init` makes it. The
+other subcommands use only a store `init` made, and `warm`, `check` and
+`regressions` read it without writing to it.
 
 A finding's identity is
 `finding_id = sha256(program_id "\n" code_signature "\n" root_cause)` (hex), which
@@ -159,51 +282,186 @@ gives exact deduplication across audits.
 
 | Subcommand | Purpose |
 |---|---|
-| `init` | Create the schema. |
-| `put-finding` | Upsert a finding + append an occurrence. Prints `<STATUS> <finding_id>`, or `REGRESSED <finding_id>` on regression. |
+| `init` | Make the store: for `.audit-memory/audit.db` with no `.audit-memory/`, the directory, its `.gitignore` of `*` first, then the database; in a run directory, the database. On a store that exists, add the tables and columns it lacks. Prints `initialized <store>`. |
+| `put-finding` | Upsert a finding + append an occurrence. Prints `<STATUS> <finding_id>`, or `REGRESSED <finding_id>` on regression. A severity or title it replaces is kept (below). A store holding a status audit-mem never sets for the finding is refused, and left as it was. |
 | `set-status` | Set a finding's status (`FIXED` \| `OPEN` \| `ACKNOWLEDGED` \| `DISPUTED`). |
-| `rule` | Record a `FALSE_POSITIVE` \| `ACCEPTED_RISK` ruling with a timestamp. |
-| `check` | Print `{"suppressed":bool,"ruling":..}`; exit 0 if suppressed by a `FALSE_POSITIVE` ruling, else exit 1. |
-| `regressions` | JSON list of findings with status `REGRESSED`. |
-| `warm` | JSON `{profile, invariants[], open_fp_rulings[]}` — the warm-start context block for a re-audit. |
+| `rule` | Record a `FALSE_POSITIVE` \| `ACCEPTED_RISK` ruling with a timestamp and its anchor: the commit it is made at and the guard it cites (below). A `FALSE_POSITIVE` ruling needs `--commit` and `--guard`. |
+| `check` | Print `{"suppressed":bool,"ruling":..}`; exit 0 when the newest `FALSE_POSITIVE` ruling for the signature still holds, else exit 1. A ruling that no longer holds is printed with `"stale":"<why>"` and suppresses nothing. |
+| `regressions` | JSON `{regressions[], truncated}`: of the findings with status `REGRESSED`, the 200 seen most recently (by their newest occurrence), the most severe first, each with the severities and titles `put-finding` replaced in it (`changed`, below); `truncated` counts the rest. |
+| `warm` | JSON `{profile, invariants[], open_fp_rulings[], truncated}` — the warm-start context block for a re-audit: what `profile` and `invariant` recorded, each with the values they replaced (`changed`, below), and the rulings with their anchors. Each list holds at most 200 rows, the newest; `truncated` counts the rows left out of all of them, and the values left out of `changed` (below). |
+| `profile` | Record the program's protocol profile. Fields not given keep what the profile holds; a recorded value a field given replaces is kept (below). Prints `profile <program_id> recorded`, then `, replacing <fields> (…)` when it replaced any. |
+| `invariant` | Record an invariant of the program, one per statement: the same statement again updates the fields given, and keeps each value it replaces, a status included. Prints `invariant <id> recorded` or `invariant <id> updated`, then `, replacing <fields> (…)` when it replaced any. |
 
 **Regression rule:** when `put-finding` re-observes a finding whose stored status
 was `FIXED`, the status transitions to `REGRESSED` and the command prints
 `REGRESSED <finding_id>`. Brand-new findings start `OPEN`.
 
-### `put-finding` flags
+**No value is erased silently.** When `profile` or `invariant` gives a field, or
+`put-finding` a severity or a title, whose recorded value is not empty and not the
+one given, the value it held is kept in the `history` table, an erased one
+(`--notes ''`) too. `warm` lists it under that profile's or invariant's `changed`,
+and `regressions` under that finding's, newest first, as
+`{"field", "previous", "recorded_at"}`: the field (`notes`, `status`, `severity`,
+…), what it held, and when it was replaced, in unix seconds as `ruled_at`. Each
+`changed` holds the newest 10, and one answer 200 in all, with `truncated` counting
+the rest, which the store keeps. A field set for the first time replaces nothing. A
+later audit sees what a trust assumption, an invariant's status or a finding's
+severity was before, and that it changed.
+
+### Options
 
 ```
---program-id <PID>   --signature <SIG>   --root-cause <RC>   --title <T>   --severity <N>
-[--commit <SHA>] [--audit-n <N>] [--file <PATH>] [--line <N>] [--verdict <V>]
+any subcommand  [--contract=1, right after it] [--db .audit-memory/audit.db | <R>/audit-mem.db]
+put-finding     --program-id <PID> --signature <SIG> --root-cause <RC> --title <T> --severity <1-10>
+                [--commit <SHA>] [--audit-n <N>] [--file <PATH>] [--line <N>] [--verdict <V>]
+set-status      --program-id <PID> --signature <SIG> --root-cause <RC> --status <STATUS>
+rule            --program-id <PID> --signature <SIG> --ruling <RULING> --rationale <R> --by <WHO>
+                [--scope <S>] [--commit <SHA>] [--guard <FILE>:<LINE> | <FILE>:<FIRST>-<LAST>]
+check           --program-id <PID> --signature <SIG> [--commit <SHA>]
+regressions     --program-id <PID>
+warm            --program-id <PID>
+profile         --program-id <PID>, and at least one of [--protocol-class <C>]
+                [--trust-assumptions-json <JSON>] [--oracle-set <S>] [--admin-set <S>] [--notes <N>]
+invariant       --program-id <PID> --statement <S> [--protocol-class <C>] [--source-fn <F>]
+                [--cited-line <FILE:LINE>] [--status <S>]
 ```
+
+Each option is given once, as `--name <value>` or `--name=<value>`; the word after
+`--name` is its value, whatever it looks like. A text value is UTF-8, at most 4096
+bytes, and holds no control or formatting character: the C0 and C1 controls, DEL,
+the line and paragraph separators, the bidirectional controls, and the code points
+Unicode marks default-ignorable (audit-logs' list). `--severity` is a whole number
+from 1 to 10 and `--line` one from 1. The `--commit` of `rule` and `check` is a full
+commit id, 40 or 64 hexadecimal digits, kept in lowercase: an abbreviation could name
+another commit. `put-finding`'s is free text. `--trust-assumptions-json` must be JSON,
+and each of its keys and strings, its escapes read, is held to the same rule: a
+`\u001b` that the rule reads as six characters is the escape character to whoever
+reads the JSON.
+
+### Anchored rulings
+
+A false-positive ruling holds for the code it was made on. `rule` records:
+
+- the commit, `--commit`, a full id;
+- the guard, `--guard <file>:<line>` or `<file>:<first>-<last>` (at most 200 lines):
+  a file of the working tree, read under the confined path rules (relative, no `.`
+  or `..`, no symbolic link on the way, a regular file with one name, at most 4 MiB),
+  and the sha256 of those lines, each with the newline that ends it.
+
+`check` suppresses only while the newest `FALSE_POSITIVE` ruling for the signature
+holds: `--commit` is its commit, the same full id, and the guard's lines, read again
+under the same rules, hash as they did. Otherwise it prints the ruling with `stale`,
+the reasons joined by `; `, and exits 1: a stale ruling is a finding to check again.
+A check with no `--commit` never suppresses. A ruling recorded before rulings had
+anchors has none: it is `"stale":"no anchor"` and never suppresses. `warm` lists the
+rulings as they were recorded, anchors included; only `check` says whether one still
+holds. `init`, or any
+subcommand that writes, adds the anchor columns to a store made before them (a new
+store is made the same way, so the two read alike), in the transaction it writes
+in: one that fails or refuses leaves the store as it was. `warm`, `check` and
+`regressions` read such a store as it is.
+
+### Where it reads and writes
+
+It is built so that `warm`, `check`, `regressions`, `init` and `put-finding` can
+each be pre-approved as one `Bash(…)` rule on its absolute path, subcommand and the
+contract marker (`"<root>/tools/auditor-tools/target/release/audit-mem" warm --contract=1 *`),
+safe whatever arguments follow; `profile` and `invariant` follow the same rules. `rule` and
+`set-status` decide what later audits suppress, and are never pre-approved. Its
+rules are those of `scripts/lib/confine.sh` and `scripts/rundir.sh`, in
+`src/confine.rs`, and `scripts/tests/test-auditor-tools.sh` runs every case of
+`scripts/tests/fixtures/audit-mem/cases.txt`:
+
+- `--db` is `.audit-memory/audit.db` or `<R>/audit-mem.db`, relative to the working
+  directory (one leading `./` allowed), where `<R>` passes `scripts/rundir.sh check`:
+  a real directory in the working directory, holding no symbolic link, tracked by no
+  repository in any letter case, with a `.gitignore` of exactly `*`.
+- Before it uses `.audit-memory/`, it checks it as `scripts/rundir.sh store` does:
+  the repository tracks no `.audit-memory` in any letter case, and `.audit-memory/`
+  is a real directory holding no symbolic link, with a `.gitignore` of exactly `*`.
+  Whether you made the store yourself stays your judgement (OUTPUT-RULES.md
+  Rule 11d). A store an earlier `init` made, before it wrote the `.gitignore`, has
+  none and is refused: if the store is yours, write `.audit-memory/.gitignore`
+  holding `*` (`printf '*\n' > .audit-memory/.gitignore`), and audit-mem uses it
+  again.
+- It asks git what is tracked as confine.sh's `hgit` asks it: git from a `PATH` with
+  every entry inside the working directory removed, with an environment of its own
+  and the repository's config pinned off. When git cannot answer, it refuses.
+- The database is a regular file with one name, in rollback-journal mode: a database
+  in WAL mode is refused, since a read-only open of one makes a file beside it. No
+  `-wal` or `-shm` file may sit beside it (audit-mem never makes one, and SQLite would
+  open them even to read), and a `-journal`, left by a write that stopped, must be a
+  regular file with one name. It holds only audit-mem's tables, each `CREATE TABLE`
+  exactly as audit-mem writes it (a column, constraint, default or table option of
+  another's is refused), the indexes SQLite makes for their primary keys, and
+  `sqlite_sequence` as SQLite makes it; a view, a trigger, a virtual table or any
+  other object is refused. SQLite never follows a link (`SQLITE_OPEN_NOFOLLOW`)
+  and runs in its defensive mode (`SQLITE_DBCONFIG_DEFENSIVE`), with triggers and views
+  off, `trusted_schema` off, temporary tables in memory and no value read or written
+  past 1 MiB (`SQLITE_LIMIT_LENGTH`; the writers store at most 4096 bytes a field).
+- `warm`, `check` and `regressions` open the store read-only (`SQLITE_OPEN_READ_ONLY`,
+  `PRAGMA query_only=ON`) and immutable (`file:<store>?mode=ro&immutable=1`: SQLite
+  takes no lock and opens no file beside it), and never make the file or write the
+  schema. With no store they print an empty answer: `warm`
+  `{"profile":null,"invariants":[],"open_fp_rulings":[],"truncated":0}`, `check`
+  `{"suppressed":false,"store":"absent"}` with exit 1, and `regressions`
+  `{"regressions":[],"truncated":0}`.
+- `init` makes `.audit-memory/` with a plain `mkdir` (mode 0700), its `.gitignore`
+  first, then an empty database, each file made exclusively
+  (`O_CREAT|O_EXCL|O_NOFOLLOW`, mode 0600) through the directory, opened once
+  without following a link. A `.audit-memory/` that already exists must pass the
+  check above. The other subcommands that write refuse when there is no store.
+- It refuses to run from an installation inside the working directory, or from a
+  path, as it was invoked or with its links resolved, holding a quote, `$`, a
+  backtick, a backslash or a control character, and in a working directory whose
+  path holds a control character. It opens no network connection and runs no
+  program but git. Its JSON writes a control, bidirectional or invisible
+  character as a `\u` escape.
+
+Exit: 0 done (`check`: suppressed) · 1 `check`: not suppressed · 2 refused, with
+one stderr line, `audit-mem: refused: <reason>`, or a store SQLite cannot read or
+write (`audit-mem: error: …`).
 
 ### Example lifecycle
 
 ```bash
-audit-mem --db .audit-memory/audit.db init
+audit-mem init --contract=1     # .audit-memory/, its .gitignore of *, then audit.db
 
 # first observation -> "OPEN <id>"
-audit-mem --db .audit-memory/audit.db put-finding \
-  --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
+audit-mem put-finding --contract=1 --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
   --root-cause 'unchecked subtraction can underflow vault balance' \
   --title 'Vault balance underflow' --severity 3 \
   --commit c0ffee1 --audit-n audit-1 --file src/withdraw.rs --line 42 --verdict TRUE_POSITIVE
 
 # after the dev fixes it
-audit-mem set-status --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
+audit-mem set-status --contract=1 --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
   --root-cause 'unchecked subtraction can underflow vault balance' --status FIXED
 
 # next audit re-observes it -> "REGRESSED <id>"
-audit-mem put-finding --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
+audit-mem put-finding --contract=1 --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
   --root-cause 'unchecked subtraction can underflow vault balance' \
   --title 'Vault balance underflow' --severity 3 --commit c0ffee3 --audit-n audit-3
 
-# suppress a known false positive, then gate on it
-audit-mem rule --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
-  --ruling FALSE_POSITIVE --rationale 'guarded by prior require!' --by auditor
-audit-mem check --program-id VaultProg... --signature 'unchecked_sub@vault.balance'
+# the protocol profile and an invariant, which warm returns
+audit-mem profile --contract=1 --program-id VaultProg... --protocol-class vault \
+  --trust-assumptions-json '{"admin":"3-of-5 multisig"}' --oracle-set 'pyth SOL/USD'
+audit-mem invariant --contract=1 --program-id VaultProg... --statement 'total_shares == shares_mint.supply' \
+  --status 'Manually verified' --cited-line src/vault.rs:88
+
+# rule a known false positive at the audited commit, citing its guard, then gate on it
+audit-mem rule --contract=1 --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
+  --ruling FALSE_POSITIVE --rationale 'guarded by the require! on line 40' --by auditor \
+  --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe --guard src/withdraw.rs:40
+audit-mem check --contract=1 --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
+  --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe
 #   -> {"suppressed":true,"ruling":{...}}   (exit 0)
+audit-mem check --contract=1 --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
+  --commit c0ffee4c0ffee4c0ffee4c0ffee4c0ffee4c0ffe
+#   -> {"suppressed":false,"stale":"ruled at commit c0ffee3…, checked at c0ffee4…","ruling":{...}}   (exit 1)
+
+# a store for one run
+audit-mem init --contract=1 --db audit_1/audit-mem.db
+audit-mem warm --contract=1 --db audit_1/audit-mem.db --program-id VaultProg...
 ```
 
 ### Schema
@@ -214,12 +472,19 @@ findings(finding_id PK, program_id, first_seen_commit, last_seen_commit,
          first_audit_n, last_audit_n)
 occurrences(finding_id, audit_n, commit_sha, file, line, verdict, rule5b_json)
 fp_rulings(ruling_id PK, program_id, code_signature, ruling, rationale,
-           ruled_by, ruled_at, scope)
+           ruled_by, ruled_at, scope,
+           anchor_commit, guard_file, guard_line, guard_end, guard_hash)
 invariants(inv_id PK, program_id, protocol_class, statement, source_fn,
            cited_line, status)
 protocol_profile(program_id PK, protocol_class, trust_assumptions_json,
                  oracle_set, admin_set, notes)
+history(history_id PK, program_id, inv_id, finding_id, field, previous,
+        recorded_at)
 ```
+
+`history` holds each value `profile` (`inv_id` and `finding_id` null), `invariant`
+(`inv_id`) and `put-finding` (`finding_id`) replaced; a store made before it gains it
+when it is next written, and reads as having replaced none.
 
 ## `audit-logs`
 
@@ -359,8 +624,12 @@ gracefully — it works without them; they just save context and add memory.
   in its place when it is not built or reports a stale build; both give the same
   figures.
 - **`audit-mem` warm-starts re-audits.** On a repeat audit of the same program,
-  `warm --program-id` returns the protocol profile, recorded invariants, and any
-  standing false-positive/accepted-risk rulings so prior context is not
-  re-derived. `check` auto-suppresses findings previously ruled `FALSE_POSITIVE`,
-  and `put-finding` + `regressions` surface anything that was fixed and has since
-  regressed.
+  `warm --program-id` returns the protocol profile and invariants that `profile`
+  and `invariant` recorded, with the values they replaced, and the standing
+  false-positive/accepted-risk rulings with their anchors, so prior context is not
+  re-derived. A ruling holds only at the commit it was made at: `check --commit`
+  suppresses a finding ruled `FALSE_POSITIVE` there while the guard's lines still
+  hold, which spares the same commit a second ruling (a triage run again, say), and
+  at any other commit reports the ruling stale, a finding to confirm and rule again
+  at that commit. `put-finding` + `regressions` surface anything that was fixed and
+  has since regressed.

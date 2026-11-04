@@ -1,0 +1,124 @@
+# Hostile argument vectors for tools/auditor-tools' audit-scan. test-auditor-tools.sh runs each one in a working
+# directory that is a git repository holding:
+#   a.rs and src/lib.rs (files), src/linked.rs (a link to a file outside), linkdir (a link to the directory outside),
+#   fifo (a FIFO);
+#   audit_1 and incident_1 (run directories), audit_2 (no .gitignore), audit_3 (a link to audit_1), audit_4 (its
+#   .gitignore tracked), audit_5 (holding a link), audit_6 (prescan.json a link to a file outside), audit_7
+#   (prescan.json a second name of a file outside), audit_8 (prescan.json a directory).
+# The directory outside holds a canary no case may print.
+# One case per line: <exit status><TAB><the one stderr line><TAB><argument>[<TAB><argument>...]. Each case prints
+# nothing on stdout and changes nothing in the working directory or outside it. In a field:
+#   @WT@ the working directory's absolute path   @OUT@ the directory outside it   @LONG:N@ N repetitions of "a"
+#   @NL@ a newline   @ESC@ an escape character (0x1b)   @TAB@ a tab   @EMPTY@ (a whole field) an empty argument
+#   @SHOWN(x)@ x as the binary shows a value in a message: cut after 200 bytes, then ...
+# the contract marker: --contract=1 alone, in its place, and once, changes nothing; any other --contract word is refused
+2	audit-scan: refused: --contract=2 names a contract this build does not keep (it keeps --contract=1); rebuild it with cargo build --release --locked in tools/auditor-tools (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--contract=2	.
+2	audit-scan: refused: --contract=1 comes first, once (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	--contract=1
+2	audit-scan: refused: --contract=1 comes first, once (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--contract=1	--contract=1	.
+2	audit-scan: refused: --contract=1 comes first, once (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--contract=1	.	--out	audit_1/prescan.json	--contract=1
+2	audit-scan: refused: --contract names a contract this build does not keep (it keeps --contract=1); rebuild it with cargo build --release --locked in tools/auditor-tools (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--contract	.
+2	audit-scan: refused: --contract= names a contract this build does not keep (it keeps --contract=1); rebuild it with cargo build --release --locked in tools/auditor-tools (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--contract=	.
+2	audit-scan: refused: --contract=01 names a contract this build does not keep (it keeps --contract=1); rebuild it with cargo build --release --locked in tools/auditor-tools (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--contract=01	.
+2	audit-scan: refused: --contract=1x names a contract this build does not keep (it keeps --contract=1); rebuild it with cargo build --release --locked in tools/auditor-tools (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--contract=1x	.
+2	audit-scan: refused: --contracts names a contract this build does not keep (it keeps --contract=1); rebuild it with cargo build --release --locked in tools/auditor-tools (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--contracts	.
+2	audit-scan: refused: --contract=? names a contract this build does not keep (it keeps --contract=1); rebuild it with cargo build --release --locked in tools/auditor-tools (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--contract=@ESC@	.
+2	audit-scan: refused: no directory to scan (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--contract=1
+2	audit-scan: refused: --out may not start with - or ~: --contract=1	src	--out	--contract=1
+2	audit-scan: refused: the directory to scan must be relative to the working directory: @SHOWN(@WT@)@	--contract=1	@WT@
+2	audit-scan: refused: the directory to scan passes through a symbolic link: linkdir	--contract=1	linkdir
+2	audit-scan: refused: --out must be relative to the working directory: @SHOWN(@OUT@/sentinel.txt)@	--contract=1	.	--out	@OUT@/sentinel.txt
+2	audit-scan: refused: --out has more than one name (a hard link): audit_7/prescan.json	--contract=1	.	--out	audit_7/prescan.json
+# the word audit-scan starts itself with to parse, as its only argument; anywhere else an option it does not know
+2	audit-scan: refused: unknown option --internal-parse-stdin (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--internal-parse-stdin	.
+2	audit-scan: refused: unknown option --internal-parse-stdin (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	--internal-parse-stdin
+2	audit-scan: refused: unknown option --internal-parse-stdin (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--contract=1	--internal-parse-stdin
+2	audit-scan: refused: unknown option --internal-parse-stdin (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--internal-parse-stdin	--internal-parse-stdin
+2	audit-scan: refused: unknown option --internal-parse-stdin (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	src	--out	audit_1/prescan.json	--internal-parse-stdin
+# grammar
+2	audit-scan: refused: no directory to scan (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])
+2	audit-scan: refused: it takes one directory (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	src
+2	audit-scan: refused: unknown option --help (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--help
+2	audit-scan: refused: unknown option -h (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	-h
+2	audit-scan: refused: unknown option --version (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--version
+2	audit-scan: refused: unknown option -- (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--	.
+2	audit-scan: refused: unknown option - (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	-
+2	audit-scan: refused: unknown option --pretty=yes (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	--pretty=yes
+2	audit-scan: refused: unknown option --outfile (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	--outfile	audit_1/prescan.json
+2	audit-scan: refused: unknown option --ou (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	--ou	audit_1/prescan.json
+2	audit-scan: refused: unknown option -o (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	-o	audit_1/prescan.json
+2	audit-scan: refused: --pretty is given more than once (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	--pretty	--pretty
+2	audit-scan: refused: --out is given more than once (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	--out	audit_1/prescan.json	--out=audit_1/prescan-2.json
+2	audit-scan: refused: --out needs a file (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	.	--out
+2	audit-scan: refused: --out is empty	.	--out=
+2	audit-scan: refused: --out may not start with - or ~: --pretty	.	--out	--pretty
+2	audit-scan: refused: --out may not start with - or ~: --out	.	--out	--out
+2	audit-scan: refused: it takes one directory (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	src	audit_1
+2	audit-scan: refused: --out is given more than once (usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty])	--out=audit_1/prescan.json	.	--out	audit_1/prescan.json
+2	audit-scan: refused: --out may not start with - or ~: --pretty	--out=--pretty	.
+# the directory to scan
+2	audit-scan: refused: the directory to scan must be relative to the working directory: @SHOWN(@WT@)@	@WT@
+2	audit-scan: refused: the directory to scan must be relative to the working directory: @SHOWN(@WT@/src)@	@WT@/src
+2	audit-scan: refused: the directory to scan must be relative to the working directory: @SHOWN(@OUT@)@	@OUT@
+2	audit-scan: refused: the directory to scan must be relative to the working directory: /	/
+2	audit-scan: refused: the directory to scan has an empty, . or .. component: ..	..
+2	audit-scan: refused: the directory to scan has an empty, . or .. component: ../outside	../outside
+2	audit-scan: refused: the directory to scan has an empty, . or .. component: ./..	./..
+2	audit-scan: refused: the directory to scan has an empty, . or .. component: src/..	src/..
+2	audit-scan: refused: the directory to scan has an empty, . or .. component: src/../..	src/../..
+2	audit-scan: refused: the directory to scan has an empty, . or .. component: src/./x	src/./x
+2	audit-scan: refused: the directory to scan has an empty, . or .. component: src//x	src//x
+2	audit-scan: refused: the directory to scan has an empty, . or .. component: src/	src/
+2	audit-scan: refused: the directory to scan has an empty, . or .. component: ./	./
+2	audit-scan: refused: the directory to scan has an empty, . or .. component: ././src	././src
+2	audit-scan: refused: the directory to scan may not start with - or ~: ~	~
+2	audit-scan: refused: the directory to scan may not start with - or ~: ~/src	~/src
+2	audit-scan: refused: the directory to scan is empty	@EMPTY@
+2	audit-scan: refused: the directory to scan passes through a symbolic link: linkdir	linkdir
+2	audit-scan: refused: the directory to scan passes through a symbolic link: linkdir/x	linkdir/x
+2	audit-scan: refused: the directory to scan passes through a symbolic link: src/linked.rs	src/linked.rs
+2	audit-scan: refused: the directory to scan passes through a symbolic link: audit_3	audit_3
+2	audit-scan: refused: the directory to scan has a component that is not a directory: a.rs/x	a.rs/x
+2	audit-scan: refused: the directory to scan is not an existing directory: a.rs	a.rs
+2	audit-scan: refused: the directory to scan is not an existing directory: src/lib.rs	src/lib.rs
+2	audit-scan: refused: the directory to scan is not an existing directory: missing	missing
+2	audit-scan: refused: the directory to scan is not a regular file or a directory: fifo	fifo
+2	audit-scan: refused: the directory to scan holds a control character: src?x	src@NL@x
+2	audit-scan: refused: the directory to scan holds a control character: ?[31msrc	@ESC@[31msrc
+2	audit-scan: refused: the directory to scan holds a control character: src?	src@TAB@
+2	audit-scan: refused: the directory to scan is longer than 1024 bytes	@LONG:1025@
+2	audit-scan: refused: the directory to scan must be relative to the working directory: @SHOWN(@WT@/../outside)@	@WT@/../outside
+2	audit-scan: refused: the directory to scan passes through a symbolic link: src/linked.rs/x	src/linked.rs/x
+# --out
+2	audit-scan: refused: --out must be relative to the working directory: @SHOWN(@WT@/audit_1/prescan.json)@	src	--out	@WT@/audit_1/prescan.json
+2	audit-scan: refused: --out must be relative to the working directory: @SHOWN(@OUT@/prescan.json)@	src	--out	@OUT@/prescan.json
+2	audit-scan: refused: --out has an empty, . or .. component: ../outside/prescan.json	src	--out	../outside/prescan.json
+2	audit-scan: refused: --out has an empty, . or .. component: audit_1/../audit_1/prescan.json	src	--out	audit_1/../audit_1/prescan.json
+2	audit-scan: refused: --out has an empty, . or .. component: audit_1//prescan.json	src	--out	audit_1//prescan.json
+2	audit-scan: refused: --out may not start with - or ~: ~/prescan.json	src	--out	~/prescan.json
+2	audit-scan: refused: --out holds a control character: audit_1/prescan?.json	src	--out	audit_1/prescan@NL@.json
+2	audit-scan: refused: --out must be audit_<n>/prescan.json or audit_<n>/prescan-<slug>.json, or the same in incident_<n>/, with a slug of 1 to 32 of a-z, 0-9 and -: prescan.json	src	--out	prescan.json
+2	audit-scan: refused: --out must be audit_<n>/prescan.json or audit_<n>/prescan-<slug>.json, or the same in incident_<n>/, with a slug of 1 to 32 of a-z, 0-9 and -: surface.json	src	--out	surface.json
+2	audit-scan: refused: --out must be audit_<n>/prescan.json or audit_<n>/prescan-<slug>.json, or the same in incident_<n>/, with a slug of 1 to 32 of a-z, 0-9 and -: src/prescan.json	src	--out	src/prescan.json
+2	audit-scan: refused: --out must be audit_<n>/prescan.json or audit_<n>/prescan-<slug>.json, or the same in incident_<n>/, with a slug of 1 to 32 of a-z, 0-9 and -: audit_1	src	--out	audit_1
+2	audit-scan: refused: --out must be audit_<n>/prescan.json or audit_<n>/prescan-<slug>.json, or the same in incident_<n>/, with a slug of 1 to 32 of a-z, 0-9 and -: audit_1/report.json	src	--out	audit_1/report.json
+2	audit-scan: refused: --out must be audit_<n>/prescan.json or audit_<n>/prescan-<slug>.json, or the same in incident_<n>/, with a slug of 1 to 32 of a-z, 0-9 and -: audit_1/.gitignore	src	--out	audit_1/.gitignore
+2	audit-scan: refused: --out must be audit_<n>/prescan.json or audit_<n>/prescan-<slug>.json, or the same in incident_<n>/, with a slug of 1 to 32 of a-z, 0-9 and -: audit_1/prescan.JSON	src	--out	audit_1/prescan.JSON
+2	audit-scan: refused: --out must be audit_<n>/prescan.json or audit_<n>/prescan-<slug>.json, or the same in incident_<n>/, with a slug of 1 to 32 of a-z, 0-9 and -: audit_1/prescan-.json	src	--out	audit_1/prescan-.json
+2	audit-scan: refused: --out must be audit_<n>/prescan.json or audit_<n>/prescan-<slug>.json, or the same in incident_<n>/, with a slug of 1 to 32 of a-z, 0-9 and -: audit_1/prescan-Lib.json	src	--out	audit_1/prescan-Lib.json
+2	audit-scan: refused: --out must be audit_<n>/prescan.json or audit_<n>/prescan-<slug>.json, or the same in incident_<n>/, with a slug of 1 to 32 of a-z, 0-9 and -: audit_1/prescan-a_b.json	src	--out	audit_1/prescan-a_b.json
+2	audit-scan: refused: --out must be audit_<n>/prescan.json or audit_<n>/prescan-<slug>.json, or the same in incident_<n>/, with a slug of 1 to 32 of a-z, 0-9 and -: audit_1/prescan-@LONG:33@.json	src	--out	audit_1/prescan-@LONG:33@.json
+2	audit-scan: refused: --out must be audit_<n>/prescan.json or audit_<n>/prescan-<slug>.json, or the same in incident_<n>/, with a slug of 1 to 32 of a-z, 0-9 and -: audit_1/poc/prescan.json	src	--out	audit_1/poc/prescan.json
+2	audit-scan: refused: --out must be audit_<n>/prescan.json or audit_<n>/prescan-<slug>.json, or the same in incident_<n>/, with a slug of 1 to 32 of a-z, 0-9 and -: AUDIT_1/prescan.json	src	--out	AUDIT_1/prescan.json
+2	audit-scan: refused: --out must be audit_<n>/prescan.json or audit_<n>/prescan-<slug>.json, or the same in incident_<n>/, with a slug of 1 to 32 of a-z, 0-9 and -: audit_1234567/prescan.json	src	--out	audit_1234567/prescan.json
+2	audit-scan: refused: --out must be audit_<n>/prescan.json or audit_<n>/prescan-<slug>.json, or the same in incident_<n>/, with a slug of 1 to 32 of a-z, 0-9 and -: report_1/prescan.json	src	--out	report_1/prescan.json
+2	audit-scan: refused: --out is not an existing directory: audit_9	src	--out	audit_9/prescan.json
+2	audit-scan: refused: --out has no .gitignore holding exactly *: audit_2	src	--out	audit_2/prescan.json
+2	audit-scan: refused: --out is a symbolic link: audit_3	src	--out	audit_3/prescan.json
+2	audit-scan: refused: --out is tracked by git: audit_4	src	--out	audit_4/prescan.json
+2	audit-scan: refused: --out holds a symbolic link: audit_5	src	--out	audit_5/prescan.json
+2	audit-scan: refused: --out holds a symbolic link: audit_6	src	--out	audit_6/prescan.json
+2	audit-scan: refused: --out has more than one name (a hard link): audit_7/prescan.json	src	--out	audit_7/prescan.json
+2	audit-scan: refused: --out is not a regular file: audit_8/prescan.json	src	--out	audit_8/prescan.json
+2	audit-scan: refused: --out has more than one name (a hard link): audit_7/prescan.json	.	--pretty	--out=./audit_7/prescan.json
+2	audit-scan: refused: --out is not an existing directory: incident_9	src	--out	incident_9/prescan.json
+2	audit-scan: refused: --out is not an existing directory: audit_01	src	--out	audit_01/prescan.json

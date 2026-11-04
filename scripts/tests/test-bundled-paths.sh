@@ -173,19 +173,19 @@ while IFS='	' read -r f want; do
 done <<'PINS'
 SKILL.md	"${CLAUDE_SKILL_DIR}/scripts/report-to-pdf.sh"
 FULL-AUDIT.md	`test -x "<auditor-skill root>/tools/auditor-tools/target/release/audit-scan"`
-FULL-AUDIT.md	`"<auditor-skill root>/tools/auditor-tools/target/release/audit-scan" <program-path>
-FULL-AUDIT.md	`"<auditor-skill root>/tools/auditor-tools/target/release/audit-mem" warm
+FULL-AUDIT.md	`"<auditor-skill root>/tools/auditor-tools/target/release/audit-scan" --contract=1 <program-path>
+FULL-AUDIT.md	`"<auditor-skill root>/tools/auditor-tools/target/release/audit-mem" warm --contract=1
 commands/audit.md	`test -d "${CLAUDE_PLUGIN_ROOT}/vendor/trailofbits/plugins"`
 commands/quick-scan.md	`test -d "${CLAUDE_PLUGIN_ROOT}/vendor/trailofbits/plugins"`
 commands/audit-assist.md	`test -d "${CLAUDE_PLUGIN_ROOT}/vendor/trailofbits/plugins"`
 commands/audit-cycle.md	`test -d "${CLAUDE_PLUGIN_ROOT}/vendor/trailofbits/plugins"`
 commands/audit-cycle.md	`"${CLAUDE_PLUGIN_ROOT}/scripts/report-to-pdf.sh" audit_<n>/REPORT.md`
 commands/triage.md	`test -x "${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release/audit-mem"`
-commands/triage.md	`"${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release/audit-mem" check
-commands/triage.md	`"${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release/audit-mem" regressions
-commands/triage.md	`"${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release/audit-mem" put-finding
-commands/intake.md	`"${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release/audit-mem" warm
-commands/threat-model.md	`"${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release/audit-mem" warm
+commands/triage.md	`"${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release/audit-mem" check --contract=1
+commands/triage.md	`"${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release/audit-mem" regressions --contract=1
+commands/triage.md	`"${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release/audit-mem" put-finding --contract=1
+commands/intake.md	`"${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release/audit-mem" warm --contract=1
+commands/threat-model.md	`"${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release/audit-mem" warm --contract=1
 commands/threat-model.md	"${CLAUDE_PLUGIN_ROOT}/scripts/threat-model/collect.sh" --offline --repo <target> --out audit_<n>/bootstrap --pin <sha from intake>
 commands/poc.md	`"${CLAUDE_PLUGIN_ROOT}/templates/poc/"`
 agents/poc-engineer.md	`"${CLAUDE_PLUGIN_ROOT}/templates/poc/"`
@@ -201,7 +201,7 @@ references/audit-lifecycle/methodology.md	`<auditor-skill root>/vendor/trailofbi
 docs/getting-started.md	cd "<auditor-skill root>/tools/auditor-tools" && cargo build --release
 docs/getting-started.md	git clone https://github.com/solanabr/auditor-skill.git ~/.claude/skills/auditor-skill
 docs/power-tools.md	cd "<auditor-skill root>/tools/auditor-tools" && cargo build --release
-docs/power-tools.md	"<auditor-skill root>/tools/auditor-tools/target/release/audit-scan" ./programs/
+docs/power-tools.md	"<auditor-skill root>/tools/auditor-tools/target/release/audit-scan" --contract=1 ./programs/
 docs/power-tools.md	test -d "<auditor-skill root>/vendor/trailofbits/plugins" && echo present
 docs/poc-and-patches.md	`<auditor-skill root>/templates/poc/`
 README.md	cd "<auditor-skill root>/tools/auditor-tools" && cargo build --release

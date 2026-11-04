@@ -153,12 +153,14 @@ config.
   incident (many protocols keep an `audits/` folder) is read from the pinned commit and converted or copied the same
   way, up to 20, newest-named first; the rest stay listed in R6.
 - **Other inputs** need no collector: `--seed` (a prior `threat-model.md`) and `--design-doc` are read directly.
-- **Prior rulings.** `--program-id <id> --audit-mem-db <store>` saves `audit-mem warm --program-id <id>` for that
+- **Prior rulings.** `--program-id <id> --audit-mem-db <store>` saves `audit-mem warm --contract=1 --program-id <id>` for that
   store to `audit-mem-warm.json` when `tools/auditor-tools` is built and the database exists. The store is
   `.audit-memory/audit.db` or `audit_<n>/audit-mem.db`, whose `audit_<n>` passes the run-directory checks above; the
   collector reads no other store and never looks for one in the target tree; without `--audit-mem-db`, R8 prints NOT
-  FOUND. Pass `.audit-memory/audit.db` only when it passes the `OUTPUT-RULES.md` Rule 11d check: the repository does
-  not track `.audit-memory`, and you created the store (intake records its path).
+  FOUND. Pass `.audit-memory/audit.db` only for a store you created (intake records its path); `audit-mem warm`
+  itself refuses one that fails the `OUTPUT-RULES.md` Rule 11d check, and R8 then prints NOT FOUND (audit-mem warm
+  failed), as it does for a build older than the contract. warm returns the protocol profile, the invariants
+  (with the values replaced) and the rulings with their anchors.
 
 ## 3. Read the output
 

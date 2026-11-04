@@ -43,7 +43,7 @@
 #                             or INCIDENTS.json (schema auditor-incidents/1; allowlisted fields only); in
 #                             --network, a local path that is a symbolic link, or passes through a
 #                             directory link in the target tree, is skipped
-#   --program-id <id>         save `audit-mem warm --program-id <id>` from the --audit-mem-db store
+#   --program-id <id>         save `audit-mem warm --contract=1 --program-id <id>` from the --audit-mem-db store
 #                             (needs the built tool); at most 200 characters
 #   --audit-mem-db <path>     the store --program-id reads: .audit-memory/audit.db or
 #                             audit_<n>/audit-mem.db, in a run directory (below); nothing is read
@@ -1020,7 +1020,7 @@ done < "$TMPD/r6f.newest"
   elif [ -z "$DB_REL" ]; then echo "NOT FOUND (no --audit-mem-db given; the collector never looks for a store on its own)"
   elif [ ! -x "$BIN" ]; then echo "NOT FOUND (tools/auditor-tools is not built)"
   elif [ -L "$WT/$DB_REL" ] || [ ! -f "$WT/$DB_REL" ]; then echo "NOT FOUND (no database at $(clean "$DB_REL"))"
-  elif (cd "$WT" && "$BIN" warm --db "$DB_REL" --program-id="$PROGRAM_ID") > "$STAGE/audit-mem-warm.json" 2>/dev/null; then
+  elif (cd "$WT" && "$BIN" warm --contract=1 --db "$DB_REL" --program-id="$PROGRAM_ID") > "$STAGE/audit-mem-warm.json" 2>/dev/null; then
     echo "saved: audit-mem-warm.json"
   else
     rm -f "$STAGE/audit-mem-warm.json"; echo "NOT FOUND (audit-mem warm failed)"

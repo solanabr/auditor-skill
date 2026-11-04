@@ -10,7 +10,9 @@
 //!   regression detection, false-positive suppression, and warm re-audits.
 //!
 //! This is a plain synchronous CLI library — no async runtime, no network.
+//! [`confine`] holds where both binaries may read and write.
 
+pub mod confine;
 pub mod mem;
 pub mod scan;
 

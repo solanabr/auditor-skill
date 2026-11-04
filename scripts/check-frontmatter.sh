@@ -26,6 +26,12 @@
 #       - allowed-tools, read as a command's;
 #   - tools and allowed-tools list 'Name' or 'Name(pattern)' entries (agents: names only, no pattern),
 #     separated by ', ' or one per item, none empty; allowed-tools lists nothing in FORBIDDEN_ALLOWED_TOOLS;
+#   - an allowed-tools entry that can run the bundled audit-scan or audit-mem (a Bash entry naming either as a
+#     word, in any letter case, or whose program word holds a *, a final :* aside) takes a form the confined
+#     builds pin, with the contract marker --contract=1 where they take it, which a build made before them refuses:
+#     Bash("${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release/audit-scan" --contract=1 ...),
+#     Bash(".../audit-mem" <subcommand> --contract=1 ...) for init, put-finding, check, regressions, warm,
+#     profile or invariant (never rule or set-status), or Bash(test -x "<either path>");
 #   - the block is at most 65,536 bytes and holds at most 256 of '[', '{' and ' - ';
 #   - a file named with .md in another letter case (.MD) fails: name it .md;
 #   - two agents, two commands or two skills with the same name, in any letter case, fail.
@@ -84,6 +90,21 @@ function entries(s, key,   i, c, depth, cur, n) {
   entry(cur, key)
   return n + 1
 }
+# A Bash entry that can run the bundled audit-scan or audit-mem: one naming either as a word, in any letter case
+# (not audit-mem.db, say), or whose program word holds a * (a final :*, which only ends a prefix, aside).
+function runs_tools(e,   l) {
+  l = tolower(e)
+  sub(/:\*\)$/, ")", l)
+  return substr(l, 1, 5) == "bash(" && (l ~ /audit-(scan|mem)([^a-z0-9_.-]|$)/ || l ~ /^bash\([^ ]*[*]/)
+}
+# Such an entry in a form a rule may take: the quoted path from ${CLAUDE_PLUGIN_ROOT}, then the contract marker
+# where the confined builds take it, or a test -x of the path.
+function tools_form(e,   root) {
+  root = "^Bash\\(\"[$][{]CLAUDE_PLUGIN_ROOT[}]/tools/auditor-tools/target/release/audit-"
+  return e ~ (root "scan\" --contract=1( |\\)$)") \
+    || e ~ (root "mem\" (init|put-finding|check|regressions|warm|profile|invariant) --contract=1( |\\)$)") \
+    || e ~ ("^Bash\\(test -x \"[$][{]CLAUDE_PLUGIN_ROOT[}]/tools/auditor-tools/target/release/audit-(scan|mem)\"\\)$")
+}
 function entry(e, key,   i, f, p, all) {
   if (e == "") { bad(key " has an empty entry"); return }
   # a forbidden entry, or its name with a pattern that is empty once spaces, * and : are removed: Bash(*)
@@ -93,6 +114,10 @@ function entry(e, key,   i, f, p, all) {
       p = substr(e, length(f) + 2, length(e) - length(f) - 2); gsub(/[ *:]/, "", p); all = (p == "") }
     if (e == f || all) { bad(key " may not list " q e q); return }
   }
+  if (key == "allowed-tools" && runs_tools(e) && !tools_form(e)) {
+    bad(key " entry " q e q " can run audit-scan or audit-mem in a form the confined builds do not pin: write " \
+        "Bash(\"${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release/audit-scan\" --contract=1 *), or audit-mem\" " \
+        "<subcommand> --contract=1 * for init, put-finding, check, regressions, warm, profile or invariant"); return }
   if (kind == "agent" && e !~ /^[A-Z][A-Za-z]*$/) { bad(key " entry " q e q " is not a tool name"); return }
   if (e !~ /^[A-Z][A-Za-z]*(\([^()]+\))?$/)
     bad(key " entry " q e q " is not Name or Name(pattern), with no parentheses inside the pattern")

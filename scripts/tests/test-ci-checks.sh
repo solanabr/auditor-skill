@@ -208,6 +208,26 @@ fm commands/c03-pattern-dots.md fail "$C" "allowed-tools: Read, Bash(ls ... *)"
 fm commands/c04-pattern-dots-end.md fail "$C" "allowed-tools: Read, Bash(ls *)..."
 fm commands/plugin-root-items.md pass "$C" "allowed-tools:" "  - Read" "  - Grep" \
   "  - 'Bash(\"\${CLAUDE_PLUGIN_ROOT}/scripts/dnr/profile.sh\" *)'" "  - 'Bash(bash \"\${CLAUDE_PLUGIN_ROOT}/scripts/dnr/redact.sh\" *)'"
+# the bundled audit-scan and audit-mem only in the forms the confined builds pin, the contract marker in place
+TB='${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/target/release'
+fm commands/tools-marked.md pass "$C" "allowed-tools:" "  - 'Bash(\"$TB/audit-scan\" --contract=1 *)'" \
+  "  - 'Bash(\"$TB/audit-mem\" warm --contract=1 *)'" "  - 'Bash(\"$TB/audit-mem\" invariant --contract=1 *)'" \
+  "  - 'Bash(test -x \"$TB/audit-mem\")'" "  - 'Bash(\"$TB/audit-logs\" *)'" "  - 'Read(audit_*/audit-mem.db)'"
+fm commands/tools-scan-bare.md fail "$C" "allowed-tools:" "  - 'Bash(\"$TB/audit-scan\" *)'"
+fm commands/tools-scan-late.md fail "$C" "allowed-tools:" "  - 'Bash(\"$TB/audit-scan\" . --contract=1 *)'"
+fm commands/tools-scan-unquoted.md fail "$C" "allowed-tools:" "  - 'Bash($TB/audit-scan:*)'"
+fm commands/tools-scan-glob.md fail "$C" "allowed-tools:" "  - 'Bash(\"$TB/audit-\"*)'"
+fm commands/tools-scan-triple.md fail "$C" "allowed-tools:" "  - 'Bash(\"${TB%/release}/x86_64-unknown-linux-gnu/release/audit-scan\" --contract=1 *)'"
+fm commands/tools-mem-bare.md fail "$C" "allowed-tools:" "  - 'Bash(\"$TB/audit-mem\" warm *)'"
+fm commands/tools-mem-late.md fail "$C" "allowed-tools:" "  - 'Bash(\"$TB/audit-mem\" warm --db x --contract=1 *)'"
+fm commands/tools-mem-rule.md fail "$C" "allowed-tools:" "  - 'Bash(\"$TB/audit-mem\" rule --contract=1 *)'"
+fm commands/tools-mem-any.md fail "$C" "allowed-tools:" "  - 'Bash(\"$TB/audit-mem\" *)'"
+fm commands/tools-mem-root-quoted.md fail "$C" "allowed-tools:" "  - 'Bash(\"\${CLAUDE_PLUGIN_ROOT}\"/tools/auditor-tools/target/release/audit-mem warm --contract=1 *)'"
+fm commands/tools-root-glob.md fail "$C" "allowed-tools:" "  - 'Bash(\"\${CLAUDE_PLUGIN_ROOT}/*\" *)'"
+fm commands/tools-tools-glob.md fail "$C" "allowed-tools:" "  - 'Bash(\"\${CLAUDE_PLUGIN_ROOT}/tools/auditor-tools/*\" *)'"
+fm commands/tools-any-glob.md fail "$C" "allowed-tools:" "  - 'Bash(\"*/release/audit-*\" *)'"
+fm commands/tools-mem-case.md fail "$C" "allowed-tools:" "  - 'Bash(\"$TB/AUDIT-MEM\" warm --contract=1 *)'"
+fm commands/tools-prefix.md pass "$C" "allowed-tools:" "  - 'Bash(git log:*)'" "  - 'Bash(ls:*)'"
 fm skill/SKILL.md pass "name: s" 'description: "A skill."'
 fm skill-no-name/SKILL.md fail 'description: "A skill."'
 fm skills/agents/SKILL.md pass "name: a" 'description: "A skill in a directory named agents."'
