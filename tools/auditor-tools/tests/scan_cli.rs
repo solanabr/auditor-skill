@@ -268,16 +268,14 @@ fn its_child_answers_each_file_in_a_frame_and_names_none() {
 }
 
 #[test]
-#[cfg_attr(
-    debug_assertions,
-    ignore = "a debug build takes about the 10 s a file is given to parse this one"
-)]
 fn lists_at_most_twenty_thousand_items_a_file() {
     let wt = Wt::repo();
-    // 69 statements of 19,990 indexes each: 4,138,988 bytes, 1,379,310 index sites.
+    // 2 statements of 19,990 indexes each: 119,993 bytes, 39,980 index sites. The
+    // 4 MiB file of 69 such statements is scan_sites.rs's, which gives its child
+    // more time than audit-scan does.
     let statement = format!("    let x = a{};\n", "[0]".repeat(19_990));
-    let amp = format!("pub fn f(a: &[u8]) {{\n{}}}\n", statement.repeat(69));
-    assert_eq!(amp.len(), 4_138_988);
+    let amp = format!("pub fn f(a: &[u8]) {{\n{}}}\n", statement.repeat(2));
+    assert_eq!(amp.len(), 119_993);
     wt.write("src/amp.rs", amp.as_bytes());
     wt.write("src/lib.rs", b"fn ok() { let y = v[1]; }\n");
     let out = run(BIN, &wt.dir, &["src"]);
