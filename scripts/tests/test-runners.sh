@@ -1286,7 +1286,9 @@ done
 # land outside the scratch directory: beside it (oor/canary/m, from a root three folders down, at $T/canary/m),
 # or, from a root deeper than the scratch directory, at the absolute path its folder spells under the working
 # directory (an existing manifest there, $T/victim/app). It is refused before anything is written or sent. The
-# stand-in's cargo metadata lists the packages from FAKE_META_UP folders above the root.
+# stand-in's cargo metadata lists the packages from FAKE_META_UP folders above the root and names them in the
+# calls, so a member it misses (it once passed over one below a TMPDIR folder named target) fails a check of its
+# own, not the refusal's.
 VICTIM=$T/victim/app
 mkdir -p "$VICTIM"
 printf '[package]\nname = "victim"\n' > "$VICTIM/Cargo.toml"
@@ -1305,11 +1307,13 @@ for layout in "cargo-tree|beside the scratch directory|oor/a/b/c|oor/canary/m" "
   settings FAKE_META_UP="$rn"
   r0=$(rows)
   run "$DEPS" "$WT" -- "$action" --run audit_1 --manifest "$rootdir/Cargo.toml" --manifest "$member/Cargo.toml"
-  check "$action with a workspace member outside the root, which the rebuild would place $where: exit 3, nothing written there, nothing run or disclosed" sh -c "
+  check "$action with a workspace member outside the root, which the rebuild would place $where: the stand-in's cargo metadata lists the member and the root" \
+    grep -qxF 'metadata-packages: m root' "$T/calls"
+  check "... exit 3, the blocker naming the member outside the root" sh -c "
     [ '$RC' = 3 ] && grep -q '^deps: blocker: the workspace member ' '$T/err' && grep -qF ' lies outside the workspace root, ' '$T/err' &&
-    grep -qF '; deps.sh rebuilds only members under the root; output audit_1/deps/$action-' '$T/err' &&
-    [ ! -e '$T/canary' ] && [ ! -e '$VICTIM/lib.rs' ] && cmp -s '$VICTIM/Cargo.toml' '$T/victim.saved' &&
-    ! grep -qE '^== cargo (tree|outdated)' '$T/calls' && [ \"\$(( \$(wc -l < '$DT') - 1 ))\" = '$r0' ]"
+    grep -qF '; deps.sh rebuilds only members under the root; output audit_1/deps/$action-' '$T/err'"
+  check "... nothing written $where" sh -c "[ ! -e '$T/canary' ] && [ ! -e '$VICTIM/lib.rs' ] && cmp -s '$VICTIM/Cargo.toml' '$T/victim.saved'"
+  check "... and nothing run or disclosed" sh -c "! grep -qE '^== cargo (tree|outdated)' '$T/calls' && [ \"\$(( \$(wc -l < '$DT') - 1 ))\" = '$r0' ]"
 done
 vtop=${VICTIM#/}
 rm -rf "$WT/oor" "$WT/${vtop%%/*}"

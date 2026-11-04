@@ -154,8 +154,10 @@ for _ in range(int(os.environ.get("FAKE_META_UP") or 0)):
     walk = os.path.dirname(walk)
 pkgs = []
 for d, dirs, files in os.walk(walk):
-    dirs[:] = [x for x in dirs if x not in ("target", ".git")]
+    # A package keeps its build output and repository beside its Cargo.toml, and those are passed over; a
+    # folder of either name elsewhere, such as one on the path down to a member, is walked.
     if "Cargo.toml" in files:
+        dirs[:] = [x for x in dirs if x not in ("target", ".git")]
         text = open(os.path.join(d, "Cargo.toml")).read()
         m = re.search(r"(?ms)^\[package\].*?^name\s*=\s*\"([^\"]+)\"", text)
         if m:
@@ -168,7 +170,9 @@ extra = os.environ.get("FAKE_META_DEP", "")
 if extra and pkgs:
     val = json.loads(extra)
     pkgs[0]["dependencies"].extend(val if isinstance(val, list) else [val])
-print(json.dumps({"packages": pkgs, "workspace_members": [p["id"] for p in pkgs], "workspace_root": top}))' "$mp"
+with open(sys.argv[2], "a") as calls:
+    calls.write("metadata-packages: %s\n" % " ".join(sorted(p["name"] for p in pkgs)))
+print(json.dumps({"packages": pkgs, "workspace_members": [p["id"] for p in pkgs], "workspace_root": top}))' "$mp" "$T/calls"
     exit 0 ;;
   audit)
     say "files: $(ls -A | tr '\n' ' ')"
