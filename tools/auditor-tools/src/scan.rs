@@ -426,12 +426,13 @@ pub fn scan_path_until(root: &Path, until: Option<Instant>) -> io::Result<ScanRe
 /// UTF-8, nested or chained too deeply, not Rust that `syn` parses, one the parser
 /// could not finish, or one past the report's cap or the scan's time) is listed in
 /// `skipped`, and so is every file a parsed one brings in by `#[path]` or
-/// `include!` that the walk does not parse (`unparsed`). Directories named `.git`
-/// and `node_modules` below `root` are pruned,
-/// and so is one named `target` that cargo has built in (`cargo_built`), and,
-/// when `root` is the working directory, the run directories and the store an
-/// audit made in it (`Scan::own_output`), each listed in `skipped` too. Entries
-/// are visited in byte order of their names.
+/// `include!` that the walk does not parse (`unparsed`; one that lies where the
+/// walk would parse it, once the walk is done, `Scan::unreached`). Directories
+/// named `.git` and `node_modules` below `root` are pruned, and so is one named
+/// `target` that cargo has built in (`cargo_built`), and, when `root` is the
+/// working directory, the run directories and the store an audit made in it
+/// (`Scan::own_output`), each listed in `skipped` too. Entries are visited in byte
+/// order of their names.
 pub fn scan_path_with(
     root: &Path,
     cap: usize,
@@ -459,11 +460,15 @@ fn scan_until(
         full: false,
         until,
         git: None,
+        parsed: HashSet::new(),
+        listed: HashSet::new(),
+        reachable: Vec::new(),
     };
     match open_root(root) {
         Ok(dir) => scan.dir(&dir, root, 0),
         Err(e) => scan.skip(root, format!("cannot be read: {}", os_message(&e))),
     }
+    scan.unreached();
     scan.report
 }
 
@@ -482,9 +487,11 @@ pub(crate) fn open_root(root: &Path) -> io::Result<OwnedFd> {
 /// A scan under way: the report so far, whether the root is the working
 /// directory, what parses a file, the report's size, about as it prints, against
 /// its cap, when it parses no more (never, when that is past what an `Instant`
-/// holds), and git in the working directory, found on first use (`own_output`;
+/// holds), git in the working directory, found on first use (`own_output`;
 /// `Some(None)` when the working directory cannot be resolved, and once git has
-/// not answered).
+/// not answered), each file parsed and each path listed in `skipped` so far, as
+/// `lexical` gives them, and the files parsed ones bring in that the walk parses
+/// if it finds them where they lie (`unreached`).
 struct Scan<'p> {
     report: ScanReport,
     root: PathBuf,
@@ -495,6 +502,9 @@ struct Scan<'p> {
     full: bool,
     until: Option<Instant>,
     git: Option<Option<Git>>,
+    parsed: HashSet<PathBuf>,
+    listed: HashSet<PathBuf>,
+    reachable: Vec<Reachable>,
 }
 
 impl Scan<'_> {
@@ -534,10 +544,28 @@ impl Scan<'_> {
     }
 
     fn skip(&mut self, path: &Path, reason: impl Into<String>) {
+        self.listed.insert(lexical(path));
         self.report.skipped.push(Skipped {
             file: path.display().to_string(),
             reason: reason.into(),
         });
+    }
+
+    /// Each file a parsed one brings in that the walk would parse where it lies
+    /// and did not: in `skipped`, with why (`Reachable::entry`), unless the walk
+    /// listed it there itself.
+    fn unreached(&mut self) {
+        for r in std::mem::take(&mut self.reachable) {
+            if self.parsed.contains(&r.at) || self.listed.contains(&r.at) {
+                continue;
+            }
+            let why = if r.at.ancestors().skip(1).any(|d| self.listed.contains(d)) {
+                UNENTERED
+            } else {
+                NOT_FOUND
+            };
+            self.report.skipped.push(r.entry(why));
+        }
     }
 
     /// The entries of the directory `dir`, named `path`, `depth` levels below the
@@ -624,39 +652,88 @@ impl Scan<'_> {
                 let shown = serde_json::to_string(&label)
                     .map_or(label.len(), |j| confine::json_text(j).len());
                 // Each file it brings in that is not parsed prints as an entry of its
-                // own, not as the child gives it, so it counts as it prints.
-                let more: Vec<Skipped> = std::mem::take(&mut one.brought_in)
+                // own, not as the child gives it, so it counts as it prints; one the
+                // walk may yet parse counts as it would print.
+                let more: Vec<Brought> = std::mem::take(&mut one.brought_in)
                     .iter()
-                    .filter_map(|b| unparsed(&self.root, path, b))
+                    .map(|b| unparsed(&self.root, path, b))
                     .collect();
                 let size = more.iter().fold(
                     len.saturating_add(one.items().saturating_mul(shown)),
-                    |size, s| size.saturating_add(crate::workflow::printed_size(s, false, 0)),
+                    |size, b| size.saturating_add(b.size()),
                 );
                 if self.size.saturating_add(size) > self.cap {
                     self.full = true;
                     return self.skip(path, FULL);
                 }
                 self.size += size;
+                self.parsed.insert(lexical(path));
                 self.report.absorb(one, &label);
-                self.report.skipped.extend(more);
+                for b in more {
+                    match b {
+                        Brought::Listed(s) => self.report.skipped.push(s),
+                        Brought::Reachable(r) => self.reachable.push(r),
+                    }
+                }
             }
             Err(reason) => self.skip(path, reason),
         }
     }
 }
 
+/// A file a parsed one brings in, as the walk lists it (`unparsed`).
+enum Brought {
+    /// In `skipped` as it is, whatever the walk finds.
+    Listed(Skipped),
+    /// One the walk parses if it finds it where it lies.
+    Reachable(Reachable),
+}
+
+/// A name written ending in `.rs` that lies inside the root, `at` as `lexical`
+/// gives it: the walk parses it if it finds it there, and else, once the walk is
+/// done, lists it in `skipped` as `file`, brought in `by` (`Scan::unreached`).
+struct Reachable {
+    at: PathBuf,
+    file: String,
+    by: String,
+}
+
+/// Why the walk did not parse a `Reachable` file: a directory on its way is in
+/// `skipped` (one the walk prunes, a link, one it could not read or nested too
+/// deeply), or else no such file was there.
+const UNENTERED: &str = "in a directory the walk did not enter";
+const NOT_FOUND: &str = "the walk found no such file";
+
+impl Reachable {
+    fn entry(&self, why: &str) -> Skipped {
+        Skipped {
+            file: self.file.clone(),
+            reason: format!("not parsed: {why}; {}", self.by),
+        }
+    }
+}
+
+impl Brought {
+    /// The most its entry in `skipped` takes as it prints.
+    fn size(&self) -> usize {
+        let printed = |s: &Skipped| crate::workflow::printed_size(s, false, 0);
+        match self {
+            Brought::Listed(s) => printed(s),
+            Brought::Reachable(r) => printed(&r.entry(UNENTERED)).max(printed(&r.entry(NOT_FOUND))),
+        }
+    }
+}
+
 /// A file that `path`, a file the walk parsed under `root`, brings in (`b`), as
-/// `skipped` lists it when the walk does not parse it, or none when it does: a
-/// name written ending in `.rs` that lies inside `root`, which the walk reaches
-/// like any other (or lists, when it does not parse it). It lies where rustc
-/// finds it: from the directory of `path`, and for a `#[path]` inside inline
+/// the walk lists it: in `skipped` with why the walk does not parse it, or, for a
+/// name written ending in `.rs` that lies inside `root`, `Reachable`. It lies where
+/// rustc finds it: from the directory of `path`, and for a `#[path]` inside inline
 /// modules from there, below a directory named for `path` unless it is a `mod.rs`
 /// (or a `lib.rs` or `main.rs`, as a crate's root usually is), through the
 /// modules' directories; `.` and `..` are taken as written, no link is followed,
 /// and nothing is opened. An `include!` of a name that is not a string literal
 /// names no file to place, so `path` is listed for it.
-fn unparsed(root: &Path, path: &Path, b: &BroughtIn) -> Option<Skipped> {
+fn unparsed(root: &Path, path: &Path, b: &BroughtIn) -> Brought {
     let by = format!(
         "{} brings it in ({}, line {})",
         path.display(),
@@ -664,7 +741,7 @@ fn unparsed(root: &Path, path: &Path, b: &BroughtIn) -> Option<Skipped> {
         b.line
     );
     let Some(name) = &b.name else {
-        return Some(Skipped {
+        return Brought::Listed(Skipped {
             file: path.display().to_string(),
             reason: format!(
                 "brings in a file it names with no string literal ({}, line {}), which is not parsed",
@@ -689,6 +766,7 @@ fn unparsed(root: &Path, path: &Path, b: &BroughtIn) -> Option<Skipped> {
         Ok(rest) if inside => root.join(rest),
         _ => named.clone(),
     };
+    let file = shown.display().to_string();
     let why = if !named
         .file_name()
         .is_some_and(|n| n.as_bytes().ends_with(b".rs"))
@@ -697,10 +775,14 @@ fn unparsed(root: &Path, path: &Path, b: &BroughtIn) -> Option<Skipped> {
     } else if !inside {
         "outside the directory scanned"
     } else {
-        return None;
+        return Brought::Reachable(Reachable {
+            at: named,
+            file,
+            by,
+        });
     };
-    Some(Skipped {
-        file: shown.display().to_string(),
+    Brought::Listed(Skipped {
+        file,
         reason: format!("not parsed: {why}; {by}"),
     })
 }

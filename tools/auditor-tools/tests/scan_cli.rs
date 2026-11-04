@@ -1174,6 +1174,8 @@ fn scans_the_run_directories_at_once_when_head_is_a_named_pipe() {
     assert!(took < GIT_TIME / 2, "took {took:?}");
 }
 
+const NODE_MODULES: &str = "a node_modules/ directory (installed packages), not scanned";
+
 #[test]
 fn lists_each_file_a_parsed_file_brings_in_that_it_does_not_parse() {
     let wt = Wt::repo();
@@ -1184,19 +1186,46 @@ fn lists_each_file_a_parsed_file_brings_in_that_it_does_not_parse() {
           #[cfg_attr(unix, path = \"unix.inc\")]\n#[cfg_attr(windows, path = \"win.rs\")]\nmod os;\n\
           #[path = \"thread_files\"]\nmod thread {\n    #[path = \"tls.in\"]\n    mod local_data;\n}\n\
           include!(\"more.in\");\n\
-          pub fn f() -> u8 {\n    include!(concat!(env!(\"OUT_DIR\"), \"/gen.rs\"))\n}\n",
+          pub fn f() -> u8 {\n    include!(concat!(env!(\"OUT_DIR\"), \"/gen.rs\"))\n}\n\
+          #[path = \"node_modules/hide.rs\"]\nmod hide;\n#[path = \"target/gen.rs\"]\nmod gen;\n\
+          #[path = \"linked/l.rs\"]\nmod linked;\n#[path = \"../audit_1/poc.rs\"]\nmod poc;\n\
+          #[path = \"a/early.rs\"]\nmod early;\n",
     );
     wt.write(
         "src/a/b.rs",
         b"mod inline {\n    #[path = \"deep.in\"]\n    mod d;\n}\n#[path = \"../c.inc\"]\nmod c;\n",
     );
     wt.write("src/real.rs", b"fn r() {}\n");
+    // Files the walk parses before the file that brings them in (a/early.rs) or
+    // after it (real.rs) get no entry; those in a directory it does not enter (one
+    // it prunes, a link, a run directory) and one it does not find (win.rs) do.
+    wt.write("src/a/early.rs", b"fn e() {}\n");
+    wt.write(
+        "src/node_modules/hide.rs",
+        b"fn h() { invoke_signed(&ix, &a, &[]); }\n",
+    );
+    wt.write("src/target/CACHEDIR.TAG", CARGO_TAG);
+    wt.write("src/target/gen.rs", b"fn g() { invoke(&ix, &a); }\n");
+    wt.write("../outside/linked/l.rs", b"fn l() {}\n");
+    wt.link(&wt.outside().join("linked"), "src/linked");
+    wt.run_dir("audit_1");
+    wt.write("audit_1/poc.rs", b"fn p() {}\n");
     for (root, at) in [("src", "src"), (".", "./src")] {
         let report = json(&run(BIN, &wt.dir, &[root]));
         assert_eq!(report.get("brought_in"), None, "{root}: never printed");
-        assert_eq!(report["files_scanned"], 3, "{root}");
+        assert_eq!(report["files_scanned"], 4, "{root}");
+        assert_eq!(report["cpi_sites"], serde_json::json!([]), "{root}");
         let by = |file: &str, how: &str, line: u32| {
             format!("{at}/{file} brings it in ({how}, line {line})")
+        };
+        let unentered = |file: &str, line: u32| {
+            (
+                format!("{at}/{file}"),
+                format!(
+                    "not parsed: in a directory the walk did not enter; {}",
+                    by("lib.rs", "#[path]", line)
+                ),
+            )
         };
         let mut want =
             vec![
@@ -1237,6 +1266,85 @@ fn lists_each_file_a_parsed_file_brings_in_that_it_does_not_parse() {
                  not parsed"
                     .to_string(),
             ),
+            (
+                format!("{at}/win.rs"),
+                format!(
+                    "not parsed: the walk found no such file; {}",
+                    by("lib.rs", "#[path]", 9)
+                ),
+            ),
+            unentered("node_modules/hide.rs", 20),
+            (format!("{at}/node_modules"), NODE_MODULES.to_string()),
+            unentered("target/gen.rs", 22),
+            (format!("{at}/target"), BUILD.to_string()),
+            unentered("linked/l.rs", 24),
+            (
+                format!("{at}/linked"),
+                "a symbolic link, not followed".to_string(),
+            ),
+        ];
+        if root == "." {
+            want.push((
+                "./.git".to_string(),
+                "a .git/ directory (git's own), not scanned".to_string(),
+            ));
+            want.push(("./audit_1".to_string(), RUN_DIR.to_string()));
+            want.push((
+                "./audit_1/poc.rs".to_string(),
+                format!(
+                    "not parsed: in a directory the walk did not enter; {}",
+                    by("lib.rs", "#[path]", 26)
+                ),
+            ));
+        } else {
+            want.push((
+                "audit_1/poc.rs".to_string(),
+                format!(
+                    "not parsed: outside the directory scanned; {}",
+                    by("lib.rs", "#[path]", 26)
+                ),
+            ));
+        }
+        want.sort();
+        assert_eq!(skipped(&report), want, "{root}");
+    }
+
+    // A program that brings code in from its node_modules/ and from a target/
+    // cargo built in, both beside its src/: each file is listed, beside the
+    // directory the walk prunes.
+    let wt = Wt::repo();
+    wt.write(
+        "programs/foo/src/lib.rs",
+        b"#[path = \"../node_modules/hide.rs\"]\nmod hide;\n\
+          #[path = \"../target/gen.rs\"]\nmod gen;\n",
+    );
+    wt.write(
+        "programs/foo/node_modules/hide.rs",
+        b"fn h() { invoke_signed(&ix, &a, &[]); }\n",
+    );
+    wt.write("programs/foo/target/CACHEDIR.TAG", CARGO_TAG);
+    wt.write(
+        "programs/foo/target/gen.rs",
+        b"fn g() { invoke(&ix, &a); }\n",
+    );
+    for (root, at) in [("programs/foo", "programs/foo"), (".", "./programs/foo")] {
+        let report = json(&run(BIN, &wt.dir, &[root]));
+        assert_eq!(report["files_scanned"], 1, "{root}");
+        assert_eq!(report["cpi_sites"], serde_json::json!([]), "{root}");
+        let unentered = |file: &str, line: u32| {
+            (
+                format!("{at}/{file}"),
+                format!(
+                    "not parsed: in a directory the walk did not enter; {at}/src/lib.rs brings \
+                     it in (#[path], line {line})"
+                ),
+            )
+        };
+        let mut want = vec![
+            (format!("{at}/node_modules"), NODE_MODULES.to_string()),
+            unentered("node_modules/hide.rs", 2),
+            (format!("{at}/target"), BUILD.to_string()),
+            unentered("target/gen.rs", 4),
         ];
         if root == "." {
             want.push((
