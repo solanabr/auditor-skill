@@ -1791,6 +1791,44 @@ fn reads_no_store_a_write_left_unfinished_and_init_rolls_the_write_back() {
 }
 
 #[test]
+fn a_writer_that_cannot_write_the_store_beside_an_unfinished_write_says_what_sqlite_says() {
+    let wt = store();
+    let db = ".audit-memory/audit.db";
+    stop_a_write(&wt, db);
+    wt.chmod(db, 0o444);
+    let before = wt.snapshot();
+    // init cannot roll the write back either, so no writer names it.
+    for args in [
+        vec!["init"],
+        vec!["profile", "--program-id", P, "--notes", "n"],
+    ] {
+        let o = mem(&wt, &args);
+        assert_eq!(o.status.code(), Some(2), "{args:?}: {}", stdout(&o));
+        assert_eq!(stdout(&o), "", "{args:?}");
+        let err = stderr(&o);
+        assert!(
+            err.starts_with(&format!("audit-mem: error: {db}: "))
+                && err.contains("requires write access")
+                && !err.contains("init")
+                && err.lines().count() == 1,
+            "{args:?}: {err}"
+        );
+    }
+    assert_eq!(wt.snapshot(), before, "nothing changed");
+    // A reader still names init, which rolls the write back once it can write.
+    let o = mem(&wt, &["warm", "--program-id", P]);
+    assert_eq!(o.status.code(), Some(2));
+    assert!(
+        stderr(&o).ends_with("; audit-mem init --contract=1 rolls the write back\n"),
+        "{}",
+        stderr(&o)
+    );
+    wt.chmod(db, 0o600);
+    ok(&mem(&wt, &["init"]));
+    assert!(!wt.exists(&format!("{db}-journal")), "rolled back");
+}
+
+#[test]
 fn profile_and_invariant_record_what_warm_returns() {
     let wt = store();
     assert_eq!(

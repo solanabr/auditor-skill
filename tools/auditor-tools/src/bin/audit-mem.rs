@@ -630,28 +630,10 @@ fn make_store(wt: &Path, store: &Store) -> Result<(), Stop> {
 }
 
 /// A store error as one line: a store audit-mem refuses (`mem::Refusal`) as a
-/// refusal, naming the store; a write to it that did not finish
-/// (`mem::unfinished_write`) as an error that names the call that rolls it back,
-/// so the store is not given up; anything else SQLite says as an error.
+/// refusal, naming the store; anything SQLite says as an error.
 fn store_error(store: &Store) -> impl Fn(anyhow::Error) -> Stop + '_ {
     move |e: anyhow::Error| match e.downcast_ref::<mem::Refusal>() {
         Some(r) => refuse(format!("{}: {r}", store.shown())),
-        None if mem::unfinished_write(&e) => {
-            let db = if store.in_tree {
-                String::new()
-            } else {
-                format!(" --db {}", store.shown())
-            };
-            Stop(
-                2,
-                format!(
-                    "error: {}: a write to it did not finish (its -journal holds what that write \
-                     replaced), so it is not read; audit-mem init --contract=1{db} rolls the \
-                     write back",
-                    store.shown()
-                ),
-            )
-        }
         None => Stop(
             2,
             format!(
@@ -664,16 +646,35 @@ fn store_error(store: &Store) -> impl Fn(anyhow::Error) -> Stop + '_ {
 }
 
 /// What `read` gives, the store opened and read anew each time: asked up to three
-/// times, 100 ms apart, while SQLite finds a write to the store unfinished, since a
-/// write that ends just as a reader looks can show so for a moment. A store error
-/// as `store_error` gives it.
+/// times, 100 ms apart, while SQLite finds a write to the store unfinished
+/// (`mem::unfinished_write`), since a write that ends just as a reader looks can
+/// show so for a moment. A write still unfinished then is an error that names the
+/// call that rolls it back, so the store is not given up; any other store error as
+/// `store_error` gives it. A writer that meets such a write and cannot roll it
+/// back cannot write the store, and says what SQLite says (`write`).
 fn reading<T>(store: &Store, read: impl Fn() -> anyhow::Result<T>) -> Result<T, Stop> {
     let mut asked = 1;
     loop {
         match read() {
-            Err(e) if asked < 3 && mem::unfinished_write(&e) => {
+            Err(e) if mem::unfinished_write(&e) && asked < 3 => {
                 asked += 1;
                 std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Err(e) if mem::unfinished_write(&e) => {
+                let db = if store.in_tree {
+                    String::new()
+                } else {
+                    format!(" --db {}", store.shown())
+                };
+                return Err(Stop(
+                    2,
+                    format!(
+                        "error: {}: a write to it did not finish (its -journal holds what that \
+                         write replaced), so it is not read; audit-mem init --contract=1{db} rolls \
+                         the write back",
+                        store.shown()
+                    ),
+                ));
             }
             answer => return answer.map_err(store_error(store)),
         }
