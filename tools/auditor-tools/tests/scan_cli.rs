@@ -1189,7 +1189,7 @@ fn lists_each_file_a_parsed_file_brings_in_that_it_does_not_parse() {
           pub fn f() -> u8 {\n    include!(concat!(env!(\"OUT_DIR\"), \"/gen.rs\"))\n}\n\
           #[path = \"node_modules/hide.rs\"]\nmod hide;\n#[path = \"target/gen.rs\"]\nmod gen;\n\
           #[path = \"linked/l.rs\"]\nmod linked;\n#[path = \"../audit_1/poc.rs\"]\nmod poc;\n\
-          #[path = \"a/early.rs\"]\nmod early;\n",
+          #[path = \"a/early.rs\"]\nmod early;\n#[path = \"ln.rs\"]\nmod ln;\n",
     );
     wt.write(
         "src/a/b.rs",
@@ -1197,9 +1197,12 @@ fn lists_each_file_a_parsed_file_brings_in_that_it_does_not_parse() {
     );
     wt.write("src/real.rs", b"fn r() {}\n");
     // Files the walk parses before the file that brings them in (a/early.rs) or
-    // after it (real.rs) get no entry; those in a directory it does not enter (one
-    // it prunes, a link, a run directory) and one it does not find (win.rs) do.
+    // after it (real.rs) get no entry, nor one it lists for itself (ln.rs, a link);
+    // those in a directory it does not enter (one it prunes, a link, a run
+    // directory) and one it does not find (win.rs) do.
     wt.write("src/a/early.rs", b"fn e() {}\n");
+    wt.write("../outside/ln.rs", b"fn ln() {}\n");
+    wt.link(&wt.outside().join("ln.rs"), "src/ln.rs");
     wt.write(
         "src/node_modules/hide.rs",
         b"fn h() { invoke_signed(&ix, &a, &[]); }\n",
@@ -1280,6 +1283,10 @@ fn lists_each_file_a_parsed_file_brings_in_that_it_does_not_parse() {
             unentered("linked/l.rs", 24),
             (
                 format!("{at}/linked"),
+                "a symbolic link, not followed".to_string(),
+            ),
+            (
+                format!("{at}/ln.rs"),
                 "a symbolic link, not followed".to_string(),
             ),
         ];
