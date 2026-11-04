@@ -179,7 +179,9 @@
 #     directives read files that rustc's dep-info never lists, and the link
 #     attribute, which links a native library that it does not list either, each stop
 #     the run in either mode, a macro argument that names one included. What a macro
-#     that a dependency exports writes is not read.
+#     that a dependency exports writes is not read, so a name such a macro pastes
+#     together from pieces passes: the paste crate turns [<glo bal_as m>] into
+#     global_asm.
 #     The crate must be its own workspace root, as the template's [workspace] makes
 #     it: a `workspace` key under [package] that joins an outside workspace stops the
 #     run too, since these checks never read that workspace's manifest (its [patch]
@@ -259,7 +261,10 @@
 #     for inline assembly and the link attribute (a .rs file for a crate-level
 #     feature as well), refused as above; so is a build that read one of run.sh's
 #     own files in the scratch copy (markers/). Not listed: what a dependency's
-#     proc macro reads on its own, and what a file the line names reads in turn.
+#     proc macro reads on its own, what a file the line names reads in turn, and
+#     what inline assembly that a dependency's macro writes reads (a pasted name,
+#     WHERE IT BUILDS): against a crate written to hide such code, the line proves
+#     nothing.
 #
 # PREBUILT BYTES (incidents under references/detection-response/, or a re-run
 # against the target's own builds). Leg 3 of `confirmed_exploited` needs the exploit

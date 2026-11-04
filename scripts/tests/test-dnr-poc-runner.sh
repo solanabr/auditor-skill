@@ -37,7 +37,9 @@
 #     so are a target other than the library and the tests (a bin, an example, a bench,
 #     a dylib, a staticlib, another member's cdylib), and in the crate's own Rust code a
 #     crate-level #![feature], inline assembly and the link attribute, a macro argument
-#     that names one included, while a comment or a string that mentions them passes;
+#     that names one included, while a comment or a string that mentions them passes,
+#     and so does a name a dependency's macro pastes together, as the README and
+#     run.sh's header say;
 #   * the harness binding: the crate depends on its own shared-test-utils/ under the
 #     import name shared_test_utils, no other dependency takes that name in either
 #     spelling, and each arm's build compiles that copy and no other;
@@ -1202,6 +1204,22 @@ RS
 code="$(gate "$T/oc-mention" "$NATIVE" "$VULN")"
 [ "$code" = 0 ] && grep -q "^$LEG3" "$T/out" && ok "comments, strings, a character and names that only mention a feature, inline assembly or link -> not refused" \
   || { bad "mentions in the crate's own code: exit $code"; cat "$T/out" >&2; }
+# What a dependency's macro writes is not read: a name it pastes together from pieces passes the check of the
+# crate's own code, and the README and run.sh's header say so, with that example.
+mk_crate "$T/oc-paste"; mkdir -p "$T/oc-paste/src"
+printf 'paste::paste! {\n    core::arch::[<glo bal_as m>]!(".globl x");\n}\n' > "$T/oc-paste/src/lib.rs"
+code="$(gate "$T/oc-paste" "$NATIVE" "$VULN")"
+says='a name such a macro pastes together from pieces passes: the paste crate turns [<glo bal_as m>] into global_asm'
+if [ "$code" = 0 ] && grep -q "^$LEG3" "$T/out" && python3 -I -c 'import re, sys
+for path in sys.argv[2:]:
+    with open(path, encoding="utf-8") as f:
+        text = re.sub(r"\s+", " ", re.sub(r"\n#", "\n", f.read()).replace("`", ""))
+    if sys.argv[1] not in text:
+        sys.exit(1)' "$says" "$TEMPLATE/README.md" "$TEMPLATE/run.sh"; then
+  ok "a name a dependency's macro pastes together passes the crate's own-code check, and the README and run.sh's header say so"
+else
+  bad "a pasted name: exit $code, or the README or run.sh's header does not say that what a dependency's macro writes is not read"; cat "$T/out" >&2
+fi
 
 # ---------------------------------------------------------------------------
 # Where the crate builds. A hostile target tree: its .cargo/config.toml names a

@@ -125,7 +125,8 @@ platform-tools rustc lets the source pick linker arguments, inline assembly, who
 `.incbin` and `.include` directives read files rustc's dep-info never lists, and the
 `link` attribute, which links a native library that the dep-info does not list
 either, named directly or as a macro's argument (what a macro that a dependency
-exports writes is not read);
+exports writes is not read, so a name such a macro pastes together from pieces
+passes: the `paste` crate turns `[<glo bal_as m>]` into `global_asm`);
 and a `tests/fixtures/{PROGRAM_NAME}.so`, which mollusk would load in place of
 the arm. These checks run again on the scratch copy right before the fixed arm builds,
 since the vulnerable arm's builds run its dependencies' build scripts and proc macros
@@ -158,7 +159,9 @@ under any name (an `include!` of a `.txt` file too), is read again once the buil
 done, before any test runs, for inline assembly and the `link` attribute, refused as
 above, and so is a build that read one of `run.sh`'s own files in the scratch copy
 (`markers/`). What a dependency's proc macro reads on its own is not listed, nor what a
-file the line names reads in turn.
+file the line names reads in turn, nor what inline assembly that a dependency's macro
+writes reads (a pasted name, above): against a crate written to hide such code, this
+line and the checks above prove nothing.
 
 `run.sh` and `shared-test-utils/` are the installation's copies; leave them as they
 are. Before a command trusts an `OK` line it compares them with the installation's
