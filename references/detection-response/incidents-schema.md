@@ -75,8 +75,9 @@ bumps the `schema` string to `auditor-incidents/2`.
 - **`id`** is run-qualified `INC-<n>.<k>` (README). `/auditor:poc` and
   `/auditor:patch` resolve this exact string against this run's file.
 - **`root_cause_class`** is recorded before the incident's first PoC run, `unknown`
-  until it is known: `templates/poc/run.sh --crate incident_<n>/poc/INC-<n>.<k>` reads
-  it, stops (exit 3) when this file, the incident or its class cannot be read, and
+  until it is known:
+  `"<auditor-skill root>/templates/poc/run.sh" --crate incident_<n>/poc/INC-<n>.<k>`
+  reads it, stops (exit 3) when this file, the incident or its class cannot be read, and
   holds a `supply_chain_or_ci` incident to isolated mode on its dumped bytes
   (`OUTPUT-RULES.md` Rule 11a). And natively neither `run.sh --crate` nor `target.sh`
   builds anything, whatever run directory it is given, an audit's included, while the
