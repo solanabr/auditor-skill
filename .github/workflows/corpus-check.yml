@@ -33,6 +33,17 @@ jobs:
         if: ${{ !cancelled() }}
         run: bash scripts/check-pipefail.sh
 
+      - name: Clear the agent sockets and container config the runner image ships
+        if: ${{ !cancelled() }}
+        run: |
+          # The image starts gpg-agent, dirmngr and keyboxd on sockets under /run/user/<uid>/gnupg and ships a
+          # Docker config. No key sits behind them here, but scripts/lib/isolation.sh counts both, and
+          # test-dnr-poc-runner needs a runner that passes its self-check so that the isolated-mode checks run.
+          systemctl --user stop dirmngr.socket gpg-agent.socket gpg-agent-browser.socket gpg-agent-extra.socket \
+            gpg-agent-ssh.socket keyboxd.socket 2>/dev/null || true
+          gpgconf --kill all 2>/dev/null || true
+          rm -f "/run/user/$(id -u)/gnupg/"S.* "$HOME/.docker/config.json" "$HOME/.kube/config"
+
       - name: Script self-tests (every suite runs; the step fails at the end if any failed)
         if: ${{ !cancelled() }}
         env:

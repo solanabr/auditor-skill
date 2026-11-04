@@ -1,5 +1,19 @@
-#!/usr/bin/env bash
-# One-command proof-of-concept runner for the crate in this directory.
+#!/bin/bash
+# One-command proof-of-concept runner for a PoC crate.
+#
+#   "<auditor-skill root>/templates/poc/run.sh" --crate <R>/poc/<ID> [--vulnerable-so <file>]
+#       [--fixed-so <file>] [--update-pins "<pin> ..."] [--cache <dir>] [--keep] [--mode <mode>]
+#   "<auditor-skill root>/templates/poc/run.sh" --init <R>/poc/<ID>   a new crate from this template
+#   "<auditor-skill root>/templates/poc/run.sh" --new-cache           a new build cache; prints its path
+#   ./run.sh                                                          the crate this copy sits in
+#
+# The installation's copy, run directly by its quoted absolute path from the working
+# directory under audit, takes the crate and its inputs as arguments (ARGUMENTS below):
+# that is the form a command pre-approves. A copy inside a crate, run as ./run.sh, builds
+# the crate it sits in and reads its inputs from the environment: AUDITOR_EXEC_MODE,
+# VULNERABLE_SO, FIXED_SO, UPDATE_PINS, CARGO_TARGET_DIR and KEEP_POC_BUILD (and, for a
+# crate at <R>/poc/<ID>, <R>/exec-mode). Both read TOOLS_VERSION and POC_LOCK_WAIT from
+# the environment.
 #
 # Reproduces the finding from a clean checkout of THIS crate:
 #   1. builds the `vulnerable` arm to SBF, runs tests/exploit.rs      → exploit must SUCCEED
@@ -34,12 +48,69 @@
 # --tools-version v1.54 (cargo >= 1.85) to build the graph with no dependency edits.
 # Override via TOOLS_VERSION=... if the target repo standardizes on a newer one.
 #
+# ARGUMENTS. The installation's copy checks every argument before anything is copied or
+# built. Refused input is a blocker (exit 3) on one line, "[PoC-ATTEMPTED] blocker:
+# run.sh refused: <reason> — nothing was copied or built.", flagged "PoC re-run needed"
+# like every exit 3:
+#   * <R> is a run directory as scripts/rundir.sh makes it: audit_<n> or incident_<n>
+#     in the working directory, holding no symbolic link, tracked by no repository,
+#     with a .gitignore of *. <ID> is F-<1-4 digits> or INC-<1-6 digits>.<1-4 digits>.
+#     --crate names an existing crate there. --init makes one: the template's files,
+#     byte for byte, in a new or empty <R>/poc/<ID>, to fill in with the Write and Edit
+#     tools; it prints the crate's path and exits 0.
+#   * --vulnerable-so and --fixed-so stand for VULNERABLE_SO and FIXED_SO (PREBUILT
+#     BYTES below). Each names a regular file under a run directory's bin/ or exec/ (a
+#     snapshot, or a build a runner made), by a relative path with no symbolic link.
+#   * --update-pins stands for UPDATE_PINS (DEPENDENCY PINS below): one argument, the
+#     pins separated by spaces, at most 32 of them in 1024 bytes. --keep stands for
+#     KEEP_POC_BUILD=1.
+#   * --cache stands for CARGO_TARGET_DIR (the build cache below) and takes only a
+#     directory --new-cache made: $TMPDIR/auditor-poc-target.XXXXXX, outside the
+#     working directory, yours, mode 0700, holding the marker file .auditor-poc-cache.
+#     --new-cache prints its path and exits 0; record it next to the execution mode.
+#   * the execution mode is the stricter of AUDITOR_EXEC_MODE and the exec-mode of
+#     each run directory an argument names (one word, none, isolated or native,
+#     written when the human answers Q46): the crate's <R>, and that of --vulnerable-so
+#     and --fixed-so. none is the strictest and native the least. With no mode
+#     recorded, with none, or with a --mode that names another mode than that, run.sh
+#     exits 3 before it copies anything; --mode catches a mode that changed without
+#     the human.
+#   * in isolated mode the credential self-check of scripts/lib/isolation.sh runs
+#     first: a readable key, cloud or registry credential, or a reachable agent socket
+#     means this is not the isolated runner, and the run stops with exit 3, as it does
+#     when the check cannot finish. Variables of run.sh's own environment whose names
+#     look like credentials get a warning line. In native mode the same check prints,
+#     as a warning, what the code this run builds can read, by kind and count; neither
+#     line names a path.
+#   * every cargo call and test binary runs under env -i with only what
+#     scripts/lib/isolation.sh passes: a throwaway HOME holding a fresh Solana keypair,
+#     TMPDIR in the scratch copy, the cleaned PATH and the user's CARGO_HOME and
+#     RUSTUP_HOME. No token, RPC_URL, SSH agent or default wallet reaches the crate's
+#     code. The dependencies are downloaded first, by cargo update and cargo fetch,
+#     which run no build script, and every build and test after them runs offline,
+#     without the proxy variables. cargo build-sbf installs its platform tools once,
+#     with --install-only, which builds nothing: that call alone gets the real HOME
+#     (where they live), and the proxy as well. Each arm then builds with
+#     --skip-tools-install --offline in the throwaway HOME, whose .cache/solana links
+#     to the real one. A cargo build-sbf without those options builds each arm with
+#     the real HOME and the proxy variables, as before, and run.sh prints a line
+#     saying so.
+#     VULNERABLE_SO, FIXED_SO, UPDATE_PINS, KEEP_POC_BUILD, CARGO_TARGET_DIR,
+#     CARGO_BUILD_TARGET_DIR and RUSTC are not read from the environment, and
+#     TOOLS_VERSION must be v<n>.<n> or v<n>.<n>.<n>.
+# ./run.sh in the installation's own template refuses to run: it is not a PoC crate.
+#
 # EXECUTION MODE. Building this crate runs code on the machine that builds it: the
 # build scripts and proc-macros of every dependency, then the tests. So every run
 # needs the execution mode recorded for the audit or incident (OUTPUT-RULES.md Rule
 # 11a, QUESTIONS.md Q46): AUDITOR_EXEC_MODE=isolated inside the isolated runner, or
 # AUDITOR_EXEC_MODE=native (the report then states that the PoC build ran on this
-# host). Without it, run.sh exits 3 before it copies or compiles anything.
+# host). The installation's copy takes the stricter of it and <R>/exec-mode
+# (ARGUMENTS), and so does ./run.sh in a crate at <R>/poc/<ID>; none stops either.
+# Without a mode, run.sh exits 3 before it copies or compiles anything. The agent
+# writes <R>/exec-mode and could write another word there, so a human who chose
+# isolated also sets AUDITOR_EXEC_MODE=isolated where Claude Code runs: the stricter
+# mode then holds whatever the file says.
 #
 # WHERE IT BUILDS. This crate normally sits inside the audited repo
 # (audit_<n>/poc/…, incident_<n>/poc/…). Built there, cargo would read the target's
@@ -54,8 +125,9 @@
 #     fresh scratch directory,
 #     `mktemp -d "${TMPDIR:-/tmp}/auditor-poc.XXXXXX"`, and built and tested there
 #     with RUSTUP_TOOLCHAIN pinned to the caller's value, else rustup's default. The
-#     directory is printed, and removed on exit unless KEEP_POC_BUILD=1; the resolved
-#     Cargo.lock is copied back next to this file. A `path` dependency that leaves
+#     directory is printed, and removed on exit unless KEEP_POC_BUILD=1 (--keep); the
+#     resolved Cargo.lock is copied back next to the crate's manifest, in place of a
+#     regular file only, never through a link. A `path` dependency that leaves
 #     the crate must therefore be absolute.
 #   * the crate's own build-time code is refused (exit 3) before anything compiles:
 #     `cargo metadata --no-deps`, run in the scratch copy, lists the crate's packages
@@ -71,10 +143,10 @@
 #     imported as shared_test_utils (with - or _), and a build that compiles a
 #     shared_test_utils from anywhere else, or none, stop it too.
 #   * the build cache: to reuse compiled dependencies between runs of one
-#     engagement, create a directory once per engagement with
-#     `mktemp -d "${TMPDIR:-/tmp}/auditor-poc-target.XXXXXX"` (inside the isolated
-#     runner in isolated mode), record it next to the execution mode, and pass it to
-#     every run as CARGO_TARGET_DIR. Never point CARGO_TARGET_DIR or
+#     engagement, create a directory once per engagement with run.sh --new-cache, or
+#     for ./run.sh with `mktemp -d "${TMPDIR:-/tmp}/auditor-poc-target.XXXXXX"` (inside
+#     the isolated runner in isolated mode), record it next to the execution mode, and
+#     pass it to every run as --cache or CARGO_TARGET_DIR. Never point CARGO_TARGET_DIR or
 #     CARGO_BUILD_TARGET_DIR inside the target tree or at a directory you did not
 #     create: cargo trusts the build outputs it finds there. Two crates of the same
 #     name resolve to the same cached artifact path, so run.sh holds a lock inside
@@ -96,8 +168,9 @@
 # not need to move. When cargo reports a conflict with a pinned release, name that
 # pin and run.sh moves it alone, in the scratch copy, before it builds:
 #     AUDITOR_EXEC_MODE=<mode> UPDATE_PINS="solana-program@3.0.0" ./run.sh   # cargo update -p solana-program@3.0.0
-# (several pins: separate them with spaces). The moved lock comes back next to this
-# file with the rest. Never run cargo update in the crate itself: inside the target
+# or --update-pins "solana-program@3.0.0" for the installation's copy (several pins:
+# separate them with spaces). The moved lock comes back next to the crate's manifest
+# with the rest. Never run cargo update in the crate itself: inside the target
 # tree it would read the target's .cargo/config*.
 #
 # HOW AN ARM IS DECIDED, in either mode:
@@ -128,7 +201,7 @@
 # runs the exploit arm alone on those bytes, and adding
 #     FIXED_SO=/path/to/patched-or-current.so
 # also runs the fixed arm, on the FIXED_SO bytes. FIXED_SO without VULNERABLE_SO
-# exits 3.
+# exits 3. The installation's copy takes them as --vulnerable-so and --fixed-so.
 #   * a bad path, a file without the ELF magic, or a missing `cargo` or `python3`
 #     exits 3 (a named precondition failure, never a bare `cp` error).
 #   * the vulnerable arm counts only on assert_exploit_effect!, and the fixed arm
@@ -145,7 +218,14 @@
 #   * an incident whose root cause is supply chain / CI is never built natively, and
 #     its PoC never builds or links the target's crates in any mode (they may be the
 #     payload): it runs on the dumped ELF here, with the template's own crates
-#     (OUTPUT-RULES.md Rule 11a).
+#     (OUTPUT-RULES.md Rule 11a). The installation's copy holds a crate at
+#     incident_<n>/poc/INC-<n>.<k> to it: it reads that incident's root_cause_class
+#     from incident_<n>/INCIDENTS.json (a regular file of at most 4 MiB) and stops
+#     (exit 3) when the file, the incident or its class cannot be read. For
+#     supply_chain_or_ci it refuses native mode, a run without --vulnerable-so, a
+#     dependency on a path outside the crate or on git, and a target whose source lies
+#     outside the crate, and it stops before a test runs when the build compiled code
+#     from outside the crate. ./run.sh does not read INCIDENTS.json.
 
 set -Eeuo pipefail
 # Only an assertion that ran and did not hold gives a verdict (exit 1 or 2). Any
@@ -163,13 +243,24 @@ trap 'rc=$?; [ "${BASH_SUBSHELL:-0}" -gt 0 ] && exit "${rc}"; echo "[PoC-ATTEMPT
 VERDICT=""
 BUILD_DIR=""
 LOCK_HELD=0
+# keep_lock: the resolved Cargo.lock goes back next to the crate's manifest, written to a
+# new file and renamed over the old one, and only in place of a regular file: a link or
+# a directory there is left as it is, and so is a crate directory that no longer
+# resolves to where it was.
+keep_lock() {
+  local dst="${HERE}/Cargo.lock" tmp="${HERE}/.Cargo.lock.$$"
+  [[ "$(cd "${HERE}" 2>/dev/null && pwd -P)" == "${HERE}" ]] || return 0
+  if [[ -L "${dst}" ]] || { [[ -e "${dst}" ]] && [[ ! -f "${dst}" ]]; }; then return 0; fi
+  if ( set -C; cat "${BUILD_DIR}/Cargo.lock" > "${tmp}" ) 2>/dev/null; then
+    mv -f "${tmp}" "${dst}" 2>/dev/null || rm -f "${tmp}" 2>/dev/null || true
+  fi
+  return 0
+}
 on_exit() {
   local rc="$1"
   if [[ "${LOCK_HELD}" == 1 ]]; then release_lock; fi
   if [[ -n "${BUILD_DIR}" ]]; then
-    if [[ -f "${BUILD_DIR}/Cargo.lock" ]]; then
-      cp -p "${BUILD_DIR}/Cargo.lock" "${HERE}/Cargo.lock" 2>/dev/null || true
-    fi
+    if [[ -f "${BUILD_DIR}/Cargo.lock" ]]; then keep_lock; fi
     case "${BUILD_DIR}" in
       */auditor-poc.*) if [[ "${KEEP_POC_BUILD:-0}" != 1 ]]; then rm -rf "${BUILD_DIR}" || true; fi ;;
     esac
@@ -182,8 +273,435 @@ on_exit() {
 }
 trap 'on_exit "$?"' EXIT
 
+# ── How run.sh was called (see ARGUMENTS above) ─────────────────────────────────
+SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+# 1 for the installation's copy: every child runs in the cleaned environment.
+CLEAN=0
+# 1 for an incident whose root_cause_class is supply_chain_or_ci (incident_rule).
+SUPPLY_CHAIN=0
+PINS_FROM=UPDATE_PINS
+CACHE_MARK=.auditor-poc-cache
+# The template's files, the ones --init copies.
+TEMPLATE_FILES="Cargo.toml Cargo.lock README.md run.sh shared-test-utils/Cargo.toml shared-test-utils/src/lib.rs src/lib.rs src/vulnerable.rs src/fixed.rs tests/exploit.rs tests/fixed_blocked.rs"
+USAGE="--crate <R>/poc/<ID> [--vulnerable-so <file>] [--fixed-so <file>] [--update-pins <pins>] [--cache <dir>] [--keep] [--mode <mode>], --init <R>/poc/<ID>, or --new-cache"
+# The pins to move (see DEPENDENCY PINS above): each a crate name, optionally
+# @<the version Cargo.lock pins>, and nothing else.
+PIN_SPEC='^[A-Za-z][A-Za-z0-9_-]*(@[0-9][0-9A-Za-z.+-]*)?$'
+TOOLS_SPEC='^v[0-9]{1,3}\.[0-9]{1,3}(\.[0-9]{1,3})?$'
+
+blocker() {  # blocker <text>: a named blocker, exit 3
+  echo "[PoC-ATTEMPTED] blocker: $1" >&2
+  exit 3
+}
+refuse() {  # refuse <reason>: refused input, a blocker named before anything is copied or built
+  blocker "run.sh refused: $1 — nothing was copied or built."
+}
+digits() {  # digits <s> <n>: status 0 when <s> is 1 to <n> digits
+  case "$1" in ''|*[!0-9]*) return 1 ;; esac
+  [[ "${#1}" -le "$2" ]]
+}
+
+# crate_arg <option> <path> dir|new: <path> is <R>/poc/<ID> in a run directory, and an
+# existing crate (dir) or a place for a new one (new: nothing there, or an empty
+# directory). Sets CRATE_REL and CRATE_RUN.
+crate_arg() {
+  local opt="$1" want="$3" shown rel kind id n entries
+  confine_shown "$2"; shown="${CONFINE_SHOWN}"
+  confine_path "$2" "${opt}" any
+  rel="${CONFINE_REL}"; kind="${CONFINE_TYPE}"
+  id="${rel#*/poc/}"
+  case "${id}" in
+    F-*) digits "${id#F-}" 4 || id="" ;;
+    INC-*.*) n="${id#INC-}"; { digits "${n%%.*}" 6 && digits "${n#*.}" 4; } || id="" ;;
+    *) id="" ;;
+  esac
+  if [[ -z "${id}" || "${rel}" != "${rel%%/*}/poc/${id}" ]]; then
+    refuse "${opt} takes <R>/poc/<ID>, with <ID> F-<n> or INC-<n>.<k>, not ${shown}"
+  fi
+  confine_rundir "${rel%%/*}" "the run directory of ${opt}"
+  case "${want}:${kind}" in
+    dir:dir|new:none) ;;
+    new:dir)
+      entries="$(find "${WT}/${rel}" -mindepth 1 -maxdepth 1 -print 2>/dev/null)" || refuse "${shown} cannot be listed"
+      [[ -z "${entries}" ]] || refuse "${opt} makes a crate in a new or empty directory, and ${shown} holds files" ;;
+    dir:*) refuse "${opt} is not an existing crate directory: ${shown}" ;;
+    *) refuse "${opt} makes a crate in a new or empty directory, and ${shown} is a file" ;;
+  esac
+  CRATE_REL="${rel}"; CRATE_RUN="${CONFINE_RUN}"
+}
+
+# so_arg <option> <path>: a regular file under a run directory's bin/ or exec/. Sets
+# SO_PATH to its physical path and SO_RUN to that run directory.
+so_arg() {
+  local opt="$1" shown rel kind
+  confine_shown "$2"; shown="${CONFINE_SHOWN}"
+  confine_path "$2" "${opt}" any
+  rel="${CONFINE_REL}"; kind="${CONFINE_TYPE}"
+  case "${rel#*/}" in
+    bin/?*|exec/?*) ;;
+    *) refuse "${opt} takes a file under a run directory's bin/ or exec/, not ${shown}" ;;
+  esac
+  confine_rundir "${rel%%/*}" "the run directory of ${opt}"
+  [[ "${kind}" == file ]] || refuse "${opt} is not an existing regular file: ${shown}"
+  SO_PATH="${WT}/${rel}"; SO_RUN="${CONFINE_RUN}"
+}
+
+tmp_base() {  # tmp_base: TMP_BASE is TMPDIR (else /tmp), physical, and outside the working directory
+  local t="${TMPDIR:-/tmp}"
+  while [[ "${t}" == */ && "${t}" != / ]]; do t="${t%/}"; done
+  confine_phys "${t}" || refuse "TMPDIR cannot be resolved: $(confine_text "${t}")"
+  TMP_BASE="${CONFINE_PHYS}"
+  case "${TMP_BASE}/" in
+    "${WT%/}/"*) refuse "TMPDIR lies inside the working directory; point it outside the tree under audit" ;;
+  esac
+}
+
+# cache_arg <dir>: a build cache --new-cache made, in TMPDIR, yours, mode 0700, holding
+# the marker. Sets CACHE_DIR.
+cache_arg() {
+  local v="$1" shown name parent size
+  confine_shown "${v}"; shown="${CONFINE_SHOWN}"
+  [[ "${#v}" -le 1024 ]] || refuse "--cache takes a directory --new-cache made, \$TMPDIR/auditor-poc-target.XXXXXX, not ${shown}"
+  name="${v##*/}"; parent="${v%/*}"
+  case "${v}:${name}" in
+    *[[:cntrl:]]*) refuse "--cache holds a control character: ${shown}" ;;
+    /*:auditor-poc-target.??????) ;;
+    *) refuse "--cache takes a directory --new-cache made, \$TMPDIR/auditor-poc-target.XXXXXX, not ${shown}" ;;
+  esac
+  case "${name#auditor-poc-target.}" in
+    *[!A-Za-z0-9]*) refuse "--cache takes a directory --new-cache made, \$TMPDIR/auditor-poc-target.XXXXXX, not ${shown}" ;;
+  esac
+  tmp_base
+  { confine_phys "${parent:-/}" && [[ "${CONFINE_PHYS}" == "${TMP_BASE}" ]]; } ||
+    refuse "--cache is not in TMPDIR, where --new-cache makes it: ${shown}"
+  [[ -d "${v}" && ! -L "${v}" ]] || refuse "--cache is not a directory --new-cache made: ${shown}"
+  [[ -O "${v}" ]] || refuse "--cache is not yours: ${shown}"
+  [[ -n "$(find "${v}" -prune -perm 0700 -print 2>/dev/null)" ]] || refuse "--cache is not mode 0700: ${shown}"
+  { [[ -f "${v}/${CACHE_MARK}" && ! -L "${v}/${CACHE_MARK}" ]] && size="$(wc -c < "${v}/${CACHE_MARK}")" &&
+    [[ "${size//[!0-9]/}" == 19 && "$(cat -- "${v}/${CACHE_MARK}")" == "auditor-poc-target" ]]; } ||
+    refuse "--cache holds no ${CACHE_MARK} marker, so --new-cache did not make it: ${shown}"
+  CACHE_DIR="${TMP_BASE%/}/${name}"
+}
+
+# mode_file <run directory> <its name>: MODE_TEXT is the one word its exec-mode holds
+# (none, isolated or native), or empty when it has none; anything else is refused.
+mode_file() {
+  local file="$1/exec-mode" size text=""
+  MODE_TEXT=""
+  [[ -e "${file}" || -L "${file}" ]] || return 0
+  [[ -f "${file}" && ! -L "${file}" ]] || refuse "$2/exec-mode is not a regular file"
+  size="$(wc -c < "${file}")" || refuse "$2/exec-mode cannot be read"
+  size="${size//[!0-9]/}"
+  if [[ "${size}" -le 9 ]]; then text="$(cat -- "${file}")" || refuse "$2/exec-mode cannot be read"; fi
+  case "${text}" in
+    none|isolated|native) [[ "${size}" -le $(( ${#text} + 1 )) ]] || text="" ;;
+    *) text="" ;;
+  esac
+  [[ -n "${text}" ]] || refuse "$2/exec-mode holds something other than one word, none, isolated or native"
+  MODE_TEXT="${text}"
+}
+
+# exec_mode <--mode value or nothing>: MODE becomes the stricter of AUDITOR_EXEC_MODE and
+# the exec-mode of every run directory an argument names (none, then isolated, then
+# native), and must be --mode when that is given.
+exec_mode() {
+  local want="$1" run seen=" " words=""
+  ENV_MODE="${AUDITOR_EXEC_MODE:-}"; MODE_SOURCES=""
+  case "${ENV_MODE}" in
+    ''|none|isolated|native) ;;
+    *) refuse "AUDITOR_EXEC_MODE is '$(confine_text "${ENV_MODE}")', not none, isolated or native" ;;
+  esac
+  for run in "${CRATE_RUN}" "${VSO_RUN}" "${FSO_RUN}"; do
+    [[ -n "${run}" && "${seen}" != *" ${run} "* ]] || continue
+    seen="${seen}${run} "
+    mode_file "${WT}/${run}" "${run}"
+    words="${words} ${MODE_TEXT}"
+    MODE_SOURCES="${MODE_SOURCES}${run}/exec-mode: ${MODE_TEXT:-absent}; "
+  done
+  MODE_SOURCES="${MODE_SOURCES}AUDITOR_EXEC_MODE: ${ENV_MODE:-unset}"
+  if [[ -z "${words// /}${ENV_MODE}" ]]; then
+    blocker "no recorded mode: ${CRATE_RUN}/exec-mode is missing and AUDITOR_EXEC_MODE is not set (OUTPUT-RULES.md Rule 11a, QUESTIONS.md Q46). Record the human's answer in ${CRATE_RUN}/exec-mode and run this again — nothing was copied or built."
+  fi
+  case " ${words} ${ENV_MODE} " in
+    *" none "*) MODE=none ;;
+    *" isolated "*) MODE=isolated ;;
+    *) MODE=native ;;
+  esac
+  if [[ "${MODE}" == none ]]; then
+    blocker "the recorded execution mode is none (${MODE_SOURCES}): no target code is built or run for this engagement (OUTPUT-RULES.md Rule 11a) — nothing was copied or built."
+  fi
+  if [[ -n "${want}" && "${want}" != "${MODE}" ]]; then
+    blocker "--mode is ${want}, but the recorded execution mode is ${MODE} (${MODE_SOURCES}); the mode changes only when the human answers again — nothing was copied or built."
+  fi
+}
+
+# What incident_rule runs, with python3 -I: the root_cause_class incident_<n>/INCIDENTS.json
+# records for one incident (references/detection-response/incidents-schema.md), or, with
+# exit 3, why it cannot say.
+INCIDENT_PY='import json, os, stat, sys
+
+CLASSES = ("code_flaw", "key_compromise", "oracle_or_dependency", "economic_design", "off_chain",
+           "supply_chain_or_ci", "unknown")
+LIMIT = 4 * 1024 * 1024
+
+
+def say(text, status):
+    print(text)
+    sys.exit(status)
+
+
+path, wanted = sys.argv[1], sys.argv[2]
+try:
+    st = os.lstat(path)
+except FileNotFoundError:
+    say("is missing", 3)
+except OSError:
+    say("cannot be read", 3)
+if not stat.S_ISREG(st.st_mode):
+    say("is not a regular file", 3)
+if st.st_size > LIMIT:
+    say("is larger than 4 MiB", 3)
+try:
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NOCTTY", 0))
+    with os.fdopen(fd, "rb") as f:
+        data = json.loads(f.read(LIMIT + 1).decode("utf-8"))
+except (OSError, UnicodeDecodeError, ValueError, RecursionError):
+    say("cannot be read as JSON", 3)
+incidents = data.get("incidents") if isinstance(data, dict) else None
+if not isinstance(incidents, list):
+    say("holds no incidents list", 3)
+found = [i for i in incidents if isinstance(i, dict) and i.get("id") == wanted]
+if not found:
+    say("records no incident %s" % wanted, 3)
+if len(found) > 1:
+    say("records %s more than once" % wanted, 3)
+if found[0].get("root_cause_class") not in CLASSES:
+    say("gives %s no root_cause_class from incidents-schema.md" % wanted, 3)
+say(found[0]["root_cause_class"], 0)
+'
+
+# incident_rule: a crate at incident_<n>/poc/INC-<n>.<k> runs only once incident_<n>/INCIDENTS.json
+# records that incident's root_cause_class (OUTPUT-RULES.md Rule 11a). supply_chain_or_ci refuses
+# native mode and a run without --vulnerable-so, and sets SUPPLY_CHAIN for the checks of the
+# crate and of each build (see PREBUILT BYTES above).
+incident_rule() {
+  local id="${CRATE_REL##*/}" json="${CRATE_RUN}/INCIDENTS.json" out rc=0
+  case "${CRATE_RUN}" in incident_*) ;; *) return 0 ;; esac
+  command -v python3 >/dev/null 2>&1 ||
+    blocker "python3 is not on PATH, so run.sh cannot read the root_cause_class of ${id} in ${json} (OUTPUT-RULES.md Rule 11a) — nothing was copied or built."
+  out="$(python3 -I -c "${INCIDENT_PY}" "${WT}/${json}" "${id}")" || rc=$?
+  if [[ "${rc}" -ne 0 ]]; then
+    [[ "${rc}" -eq 3 && -n "${out}" ]] || out="cannot be read"
+    blocker "${json} ${out}: an incident's PoC runs only once ${json} records its root_cause_class (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built."
+  fi
+  echo ">> incident ${id}: root_cause_class ${out} (${json})"
+  [[ "${out}" == supply_chain_or_ci ]] || return 0
+  if [[ "${MODE}" == native ]]; then
+    blocker "the root_cause_class of ${id} is supply_chain_or_ci, and such an incident is never built natively (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built."
+  fi
+  if [[ -z "${VULNERABLE_SO}" ]]; then
+    blocker "the root_cause_class of ${id} is supply_chain_or_ci, so its PoC runs only on the dumped program bytes (OUTPUT-RULES.md Rule 11a): give --vulnerable-so ${CRATE_RUN}/bin/<program>.so — nothing was copied or built."
+  fi
+  SUPPLY_CHAIN=1
+}
+
+# self_check: in isolated mode nothing the credential check reads may be readable, and
+# variables of run.sh's own environment that look like credentials are named; in native
+# mode what is readable is printed as a warning.
+self_check() {
+  local rc=0
+  iso_credentials || rc=$?
+  case "${MODE}:${rc}" in
+    *:0) ;;
+    isolated:1) blocker "isolated mode, but these are readable here: ${ISO_KINDS}; this is not the isolated runner (Rule 11a), and scripts/runner/probe.sh --only isolation lists them — nothing was copied or built." ;;
+    isolated:*) blocker "isolated mode, but the credential self-check could not finish (${ISO_WHY}), so run.sh cannot tell that this is the isolated runner (Rule 11a) — nothing was copied or built." ;;
+    *:1) echo ">> warning: native mode, and these are readable here, to the code this run builds and runs too: ${ISO_KINDS} (Rule 11a)" ;;
+    *) echo ">> warning: native mode, and the credential check could not finish (${ISO_WHY}), so what the code this run builds can read here is not known (Rule 11a)" ;;
+  esac
+  [[ "${MODE}" == isolated ]] || return 0
+  iso_cred_names
+  if [[ -n "${ISO_NAMES}" ]]; then
+    echo ">> warning: isolated mode, and these variables of run.sh's own environment look like credentials: ${ISO_NAMES}. No child of run.sh gets them, but code running as this user can read another process's environment (on Linux, in /proc/<pid>/environ) (Rule 11a)"
+  fi
+}
+
+new_cache() {  # new_cache: a build cache in TMPDIR, with its marker; prints its path
+  local dir
+  tmp_base
+  dir="$(mktemp -d "${TMP_BASE%/}/auditor-poc-target.XXXXXX" 2>/dev/null)" ||
+    blocker "cannot create a build cache in $(confine_text "${TMP_BASE}"); nothing was made."
+  confine_phys "${dir}" || blocker "cannot resolve the new build cache $(confine_text "${dir}")."
+  dir="${CONFINE_PHYS}"
+  confine_new_file "${dir}/${CACHE_MARK}" "auditor-poc-target"$'\n' || blocker "could not write ${CACHE_MARK} in ${dir}."
+  echo "${dir}"
+  VERDICT=0; exit 0
+}
+
+init_crate() {  # init_crate <R>/poc/<ID>: the template's files, byte for byte, in a new run subpath
+  local f d
+  crate_arg --init "$1" new
+  set -f
+  for f in ${TEMPLATE_FILES}; do
+    [[ -f "${SELF}/${f}" && ! -L "${SELF}/${f}" ]] || blocker "the installation's template has no regular file ${f}; nothing was copied."
+  done
+  if [[ ! -d "${WT}/${CRATE_RUN}/poc" ]]; then confine_mkdir "${WT}/${CRATE_RUN}/poc" || refuse "cannot create ${CRATE_RUN}/poc"; fi
+  if [[ ! -d "${WT}/${CRATE_REL}" ]]; then confine_mkdir "${WT}/${CRATE_REL}" || refuse "cannot create ${CRATE_REL}"; fi
+  for d in src tests shared-test-utils shared-test-utils/src; do
+    confine_mkdir "${WT}/${CRATE_REL}/${d}" || blocker "could not create ${CRATE_REL}/${d}; remove ${CRATE_REL} and run --init again."
+  done
+  for f in ${TEMPLATE_FILES}; do
+    ( set -C; exec 9>"${WT}/${CRATE_REL}/${f}" && cat -- "${SELF}/${f}" >&9 ) 2>/dev/null ||
+      blocker "could not copy ${f} into ${CRATE_REL}; remove ${CRATE_REL} and run --init again."
+  done
+  set +f
+  chmod 700 "${WT}/${CRATE_REL}/run.sh" 2>/dev/null || true
+  echo "${CRATE_REL}"
+  VERDICT=0; exit 0
+}
+
+# take_args <argument>...: the installation's copy. Every argument is checked before
+# anything is copied or built, then the inputs the steps below read are set from the
+# arguments and <R>/exec-mode, never from the environment's VULNERABLE_SO and the rest.
+take_args() {
+  local root opt seen=" " crate="" vso="" fso="" pins="" cache="" mode="" init="" keep=0 spec n=0
+  case "${SELF}" in
+    */templates/poc) root="${SELF%/templates/poc}" ;;
+    *) refuse "only the installation's copy, <auditor-skill root>/templates/poc/run.sh, takes arguments; in a crate, run ./run.sh" ;;
+  esac
+  [[ -f "${root}/scripts/lib/confine.sh" && -f "${root}/scripts/lib/isolation.sh" ]] ||
+    refuse "only the installation's copy, <auditor-skill root>/templates/poc/run.sh, takes arguments: scripts/lib/ is not beside this one"
+  . "${root}/scripts/lib/confine.sh" || refuse "scripts/lib/confine.sh cannot be read"
+  . "${root}/scripts/lib/isolation.sh" || refuse "scripts/lib/isolation.sh cannot be read"
+  confine_refuse() { refuse "$1"; }
+  confine_init run.sh "${root}"
+  WT="${CONFINE_WT}"
+  while [[ $# -gt 0 ]]; do
+    opt="$1"; shift
+    case "${opt}" in
+      --crate|--vulnerable-so|--fixed-so|--update-pins|--cache|--mode|--init)
+        [[ $# -gt 0 ]] || refuse "${opt} needs a value" ;;
+      --keep|--new-cache) ;;
+      *) refuse "$(confine_text "${opt}") is not an argument run.sh takes (${USAGE})" ;;
+    esac
+    case "${seen}" in *" ${opt} "*) refuse "give ${opt} once" ;; esac
+    seen="${seen}${opt} "
+    case "${opt}" in
+      --crate) crate="$1"; shift ;;
+      --vulnerable-so) vso="$1"; shift ;;
+      --fixed-so) fso="$1"; shift ;;
+      --update-pins) pins="$1"; shift ;;
+      --cache) cache="$1"; shift ;;
+      --mode) mode="$1"; shift ;;
+      --init) init="$1"; shift ;;
+      --keep) keep=1 ;;
+    esac
+  done
+  case "${seen}" in
+    " --new-cache ") new_cache ;;
+    *" --new-cache "*) refuse "--new-cache takes no other argument" ;;
+    " --init ") init_crate "${init}" ;;
+    *" --init "*) refuse "--init takes no other argument" ;;
+    *" --crate "*) ;;
+    *) refuse "give --crate, --init or --new-cache (${USAGE})" ;;
+  esac
+  crate_arg --crate "${crate}" dir
+  VULNERABLE_SO=""; FIXED_SO=""; VSO_RUN=""; FSO_RUN=""
+  case "${seen}" in
+    *" --fixed-so "*) case "${seen}" in *" --vulnerable-so "*) ;; *) refuse "--fixed-so needs --vulnerable-so: the fixed bytes are checked against the exploit on the vulnerable ones" ;; esac ;;
+  esac
+  case "${seen}" in *" --vulnerable-so "*) so_arg --vulnerable-so "${vso}"; VULNERABLE_SO="${SO_PATH}"; VSO_RUN="${SO_RUN}" ;; esac
+  case "${seen}" in *" --fixed-so "*) so_arg --fixed-so "${fso}"; FIXED_SO="${SO_PATH}"; FSO_RUN="${SO_RUN}" ;; esac
+  case "${seen}" in
+    *" --update-pins "*)
+      [[ "${#pins}" -le 1024 ]] || refuse "--update-pins holds more than 1024 bytes"
+      case "${pins}" in *[[:cntrl:]]*) refuse "--update-pins holds a control character" ;; esac
+      set -f
+      for spec in ${pins}; do
+        [[ "${spec}" =~ ${PIN_SPEC} ]] || refuse "--update-pins entry '$(confine_text "${spec}")' is not <crate> or <crate>@<pinned version>"
+        n=$((n + 1))
+        [[ "${n}" -le 32 ]] || refuse "--update-pins names more than 32 pins"
+      done
+      set +f
+      [[ "${n}" -gt 0 ]] || refuse "--update-pins names no pin" ;;
+  esac
+  CACHE_DIR=""
+  case "${seen}" in *" --cache "*) cache_arg "${cache}" ;; esac
+  case "${seen}" in
+    *" --mode "*)
+      case "${mode}" in
+        none|isolated|native) ;;
+        *) refuse "--mode takes none, isolated or native, not '$(confine_text "${mode}")'" ;;
+      esac ;;
+  esac
+  if [[ -n "${TOOLS_VERSION:-}" && ! "${TOOLS_VERSION}" =~ ${TOOLS_SPEC} ]]; then
+    refuse "TOOLS_VERSION is '$(confine_text "${TOOLS_VERSION}")', not v<n>.<n> or v<n>.<n>.<n>"
+  fi
+  exec_mode "${mode}"
+  echo ">> execution mode: ${MODE} (the stricter of ${MODE_SOURCES})"
+  incident_rule
+  self_check
+  HERE="${WT}/${CRATE_REL}"
+  AUDITOR_EXEC_MODE="${MODE}"
+  UPDATE_PINS="${pins}"
+  PINS_FROM=--update-pins
+  KEEP_POC_BUILD="${keep}"
+  unset CARGO_TARGET_DIR CARGO_BUILD_TARGET_DIR RUSTC BPF_OUT_DIR SBF_OUT_DIR
+  CLEAN=1
+}
+
+# crate_mode: ./run.sh in a crate at <R>/poc/<ID>, with <R> and <ID> as --crate takes
+# them, reads <R>/exec-mode as well and takes the stricter of it and AUDITOR_EXEC_MODE
+# (see EXECUTION MODE above). Without that file, or with an AUDITOR_EXEC_MODE that is not
+# none, isolated or native, the mode gate below decides from the environment alone.
+crate_mode() {
+  local run="${HERE%/poc/*}" id="${HERE##*/}" name env="${AUDITOR_EXEC_MODE:-}" n
+  name="${run##*/}"
+  [[ "${HERE}" == "${run}/poc/${id}" ]] || return 0
+  case "${name}" in
+    audit_*|incident_*) digits "${name#*_}" 6 || return 0 ;;
+    *) return 0 ;;
+  esac
+  case "${id}" in
+    F-*) digits "${id#F-}" 4 || return 0 ;;
+    INC-*.*) n="${id#INC-}"; { digits "${n%%.*}" 6 && digits "${n#*.}" 4; } || return 0 ;;
+    *) return 0 ;;
+  esac
+  mode_file "${run}" "${name}"
+  [[ -n "${MODE_TEXT}" ]] || return 0
+  case "${env}" in ''|none|isolated|native) ;; *) return 0 ;; esac
+  case " ${MODE_TEXT} ${env} " in
+    *" none "*) MODE=none ;;
+    *" isolated "*) MODE=isolated ;;
+    *) MODE=native ;;
+  esac
+  MODE_SOURCES="${name}/exec-mode: ${MODE_TEXT}; AUDITOR_EXEC_MODE: ${env:-unset}"
+  if [[ "${MODE}" == none ]]; then
+    blocker "the recorded execution mode is none (${MODE_SOURCES}): no target code is built or run for this engagement (OUTPUT-RULES.md Rule 11a) — nothing was copied or built."
+  fi
+  echo ">> execution mode: ${MODE} (the stricter of ${MODE_SOURCES})"
+  AUDITOR_EXEC_MODE="${MODE}"
+}
+
+# child / child_net / child_sbf [NAME=value...] <program> [<arg>...]: how run.sh starts a
+# cargo call or a test binary. ./run.sh hands it its own environment. The installation's
+# copy runs it under env -i with only what scripts/lib/isolation.sh passes; child_net adds
+# the proxy variables, for the cargo calls that only download, and child_sbf the real HOME
+# as well, where cargo build-sbf installs its platform tools and points the SDK's
+# toolchain link.
+child() { if [[ "${CLEAN}" == 1 ]]; then iso_run "$@"; else env "$@"; fi; }
+child_net() { if [[ "${CLEAN}" == 1 ]]; then iso_net "$@"; else env "$@"; fi; }
+child_sbf() { if [[ "${CLEAN}" == 1 ]]; then iso_net "HOME=${ISO_REAL_HOME}" "$@"; else env "$@"; fi; }
+
+if [[ $# -gt 0 ]]; then
+  take_args "$@"
+elif [[ "${SELF}" == */templates/poc && -f "${SELF%/templates/poc}/scripts/lib/confine.sh" ]]; then
+  blocker "this run.sh is the installation's template, not a PoC crate: run it with --crate <R>/poc/<ID> (--init <R>/poc/<ID> makes one) — nothing was copied or built."
+else
+  HERE="${SELF}"
+  crate_mode
+fi
+
 TOOLS_VERSION="${TOOLS_VERSION:-v1.54}"
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # Only the test binary runs below get a marker directory, one run.sh makes.
 unset AUDITOR_POC_MARKERS
 
@@ -248,13 +766,11 @@ if [[ "${PREBUILT}" -eq 0 ]] && ! command -v cargo-build-sbf >/dev/null 2>&1; th
   exit 3
 fi
 
-# The pins to move (see DEPENDENCY PINS above): each a crate name, optionally
-# @<the version Cargo.lock pins>, and nothing else.
-PIN_SPEC='^[A-Za-z][A-Za-z0-9_-]*(@[0-9][0-9A-Za-z.+-]*)?$'
+# The pins to move: PIN_SPEC above.
 set -f
 for spec in ${UPDATE_PINS:-}; do
   if [[ ! "${spec}" =~ ${PIN_SPEC} ]]; then
-    echo "[PoC-ATTEMPTED] blocker: UPDATE_PINS entry '${spec}' is not <crate> or <crate>@<pinned version> — nothing was copied or built." >&2
+    echo "[PoC-ATTEMPTED] blocker: ${PINS_FROM} entry '${spec}' is not <crate> or <crate>@<pinned version> — nothing was copied or built." >&2
     exit 3
   fi
 done
@@ -339,10 +855,23 @@ def under(path, root):
     return path == root or path.startswith(root + os.sep)
 
 
-def crate(meta_path, root):
+def crate(meta_path, root, rule=""):
     root = os.path.realpath(root)
     with open(meta_path, encoding="utf-8") as f:
         meta = json.load(f)
+    if rule == "supply-chain":
+        # The target crates may be the payload: no dependency on a path outside the crate or
+        # on git, and no target built from a source outside it.
+        for pkg in meta.get("packages", []):
+            for dep in pkg.get("dependencies", []):
+                path, source = dep.get("path"), dep.get("source") or ""
+                if path and not under(path, root):
+                    refuse("%s depends on %s at %s, outside the crate: the PoC of an incident whose root_cause_class is supply_chain_or_ci builds none of the target crates (OUTPUT-RULES.md Rule 11a)." % (pkg["name"], dep.get("name"), path))
+                if source.startswith("git+"):
+                    refuse("%s depends on %s from %s: the PoC of an incident whose root_cause_class is supply_chain_or_ci builds no git dependency (OUTPUT-RULES.md Rule 11a)." % (pkg["name"], dep.get("name"), source))
+            for target in pkg.get("targets", []):
+                if not under(target.get("src_path", root), root):
+                    refuse("%s builds %s from %s, outside the crate: the PoC of an incident whose root_cause_class is supply_chain_or_ci builds none of the target crates (OUTPUT-RULES.md Rule 11a)." % (pkg["name"], target.get("name", "?"), target.get("src_path")))
     members, lib, root_pkg = {}, None, None
     for pkg in meta.get("packages", []):
         manifest = os.path.realpath(pkg["manifest_path"])
@@ -756,6 +1285,12 @@ if ! BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/auditor-poc.XXXXXX")"; then
   exit 3
 fi
 BUILD_DIR="$(cd "${BUILD_DIR}" && pwd -P)"
+if [[ "${CLEAN}" == 1 ]]; then
+  case "${BUILD_DIR}/" in
+    "${WT%/}/"*) echo "[PoC-ATTEMPTED] blocker: the scratch build directory ${BUILD_DIR} lies inside the working directory; point TMPDIR outside it." >&2
+                 exit 3 ;;
+  esac
+fi
 inherited="$(inherited_config "${BUILD_DIR}")"
 if [[ -n "${inherited}" ]]; then
   echo "[PoC-ATTEMPTED] blocker: the scratch build directory ${BUILD_DIR} would inherit ${inherited}; point TMPDIR outside any repository." >&2
@@ -771,9 +1306,19 @@ if ! { rm -rf "${RUN_DIR}" && mkdir -p "${RUN_DIR}"; }; then
   echo "[PoC-ATTEMPTED] blocker: cannot prepare ${RUN_DIR}." >&2
   exit 3
 fi
+# The installation's copy: a throwaway HOME and TMPDIR in run.sh's own files, and the
+# cleaned environment every child gets (scripts/lib/isolation.sh).
+if [[ "${CLEAN}" == 1 ]]; then
+  if ! iso_env "${RUN_DIR}"; then
+    echo "[PoC-ATTEMPTED] blocker: cannot prepare the cleaned environment (a throwaway HOME and TMPDIR) in ${RUN_DIR}." >&2
+    exit 3
+  fi
+  if [[ -n "${CACHE_DIR}" ]]; then ISO_ENV+=("CARGO_TARGET_DIR=${CACHE_DIR}"); fi
+  echo ">> environment: env -i; HOME ${ISO_HOME} (throwaway, with a fresh Solana keypair); TMPDIR ${ISO_TMP}"
+fi
 # Pin the toolchain instead of letting rustup look for a rust-toolchain file.
 if [[ -z "${RUSTUP_TOOLCHAIN:-}" ]] && command -v rustup >/dev/null 2>&1; then
-  default_tc="$(cd "${BUILD_DIR}" && rustup default 2>/dev/null || true)"
+  default_tc="$(cd "${BUILD_DIR}" && child rustup default 2>/dev/null || true)"
   case "${default_tc}" in
     *"(default)"*) export RUSTUP_TOOLCHAIN="${default_tc%% *}" ;;
     *) echo "[PoC-ATTEMPTED] blocker: no Rust toolchain to pin — set RUSTUP_TOOLCHAIN or a rustup default." >&2
@@ -783,6 +1328,10 @@ fi
 # mollusk reads BPF_OUT_DIR before SBF_OUT_DIR; only the arm placed below may load.
 unset BPF_OUT_DIR
 export SBF_OUT_DIR="${BUILD_DIR}/target/deploy"
+if [[ "${CLEAN}" == 1 ]]; then
+  ISO_ENV+=("SBF_OUT_DIR=${SBF_OUT_DIR}")
+  if [[ -n "${RUSTUP_TOOLCHAIN:-}" ]]; then ISO_ENV+=("RUSTUP_TOOLCHAIN=${RUSTUP_TOOLCHAIN}"); fi
+fi
 if ! { cd "${BUILD_DIR}" && mkdir -p "${SBF_OUT_DIR}"; }; then
   echo "[PoC-ATTEMPTED] blocker: cannot prepare ${SBF_OUT_DIR}." >&2
   exit 3
@@ -793,12 +1342,14 @@ fi
 echo ">> build dir: ${BUILD_DIR} (scratch copy outside the target tree; AUDITOR_EXEC_MODE=${AUDITOR_EXEC_MODE}; toolchain ${RUSTUP_TOOLCHAIN:-unpinned: no rustup}; $([[ "${KEEP_POC_BUILD:-0}" == 1 ]] && echo kept || echo removed on exit))"
 
 # What the crate builds, from its manifests: nothing compiles in these steps.
-if ! cargo metadata --no-deps --format-version 1 --manifest-path "${BUILD_DIR}/Cargo.toml" > "${RUN_DIR}/metadata.json"; then
+if ! child cargo metadata --no-deps --format-version 1 --manifest-path "${BUILD_DIR}/Cargo.toml" > "${RUN_DIR}/metadata.json"; then
   echo "[PoC-ATTEMPTED] blocker: cargo could not read the crate's manifests — see the cargo output above." >&2
   exit 3
 fi
 rc=0
-CRATE="$(harness crate "${RUN_DIR}/metadata.json" "${BUILD_DIR}")" || rc=$?
+crate_rule=""
+if [[ "${SUPPLY_CHAIN}" == 1 ]]; then crate_rule=supply-chain; fi
+CRATE="$(harness crate "${RUN_DIR}/metadata.json" "${BUILD_DIR}" "${crate_rule}")" || rc=$?
 if [[ "${rc}" -ne 0 ]]; then
   if [[ "${rc}" -ne 3 ]]; then CRATE="could not read cargo metadata for the crate."; fi
   echo "[PoC-ATTEMPTED] blocker: ${CRATE}" >&2
@@ -821,28 +1372,60 @@ echo ">> target dir: ${EFFECTIVE_TARGET} (the build lock goes here)"
 
 # Dependency pins (see DEPENDENCY PINS above).
 if [[ ! -f "${HERE}/Cargo.lock" ]]; then
-  echo ">> no Cargo.lock in the crate: cargo resolves every dependency to its newest compatible release now; the resolved lock is kept next to run.sh"
+  echo ">> no Cargo.lock in the crate: cargo resolves every dependency to its newest compatible release now; the resolved lock is kept with the crate"
 fi
 set -f
 for spec in ${UPDATE_PINS:-}; do
   echo ">> moving the ${spec} pin: cargo update -p ${spec}, in the scratch copy"
-  if ! cargo update --manifest-path "${BUILD_DIR}/Cargo.toml" --package "${spec}"; then
+  if ! child_net cargo update --manifest-path "${BUILD_DIR}/Cargo.toml" --package "${spec}"; then
     echo "[PoC-ATTEMPTED] blocker: cargo update -p ${spec} failed — see the cargo output above." >&2
     exit 3
   fi
 done
 set +f
+# The downloads, before anything compiles (see ARGUMENTS above). In the installation's
+# copy cargo fetch, which runs no build script, gets the proxy variables; every build and
+# test after it runs offline without them.
+if [[ "${CLEAN}" == 1 ]] && ! child_net cargo fetch --manifest-path "${BUILD_DIR}/Cargo.toml"; then
+  echo "[PoC-ATTEMPTED] blocker: cargo fetch could not download the crate's dependencies — see the cargo output above." >&2
+  exit 3
+fi
+# cargo build-sbf in the installation's copy: its platform tools are installed once, with
+# the real HOME (where they live) and the proxy variables, building nothing; each arm then
+# builds offline in the throwaway HOME, whose .cache/solana links to the real one, where
+# cargo build-sbf finds them. A cargo build-sbf without these options builds as before.
+SBF_SPLIT=0
+if [[ "${CLEAN}" == 1 && "${PREBUILT}" -eq 0 ]]; then
+  sbf_help="$(child cargo build-sbf --help 2>/dev/null || true)"
+  if [[ "${sbf_help}" == *--install-only* && "${sbf_help}" == *--skip-tools-install* && "${sbf_help}" == *--offline* ]]; then
+    echo ">> installing the platform tools ${TOOLS_VERSION}: cargo build-sbf --install-only, with the real HOME"
+    if ! child_sbf cargo build-sbf --install-only --tools-version "${TOOLS_VERSION}"; then
+      echo "[PoC-ATTEMPTED] blocker: cargo build-sbf --install-only could not install the platform tools ${TOOLS_VERSION} — see the cargo output above." >&2
+      exit 3
+    fi
+    if ! { mkdir "${ISO_HOME}/.cache" && ln -s "${ISO_REAL_HOME}/.cache/solana" "${ISO_HOME}/.cache/solana"; }; then
+      echo "[PoC-ATTEMPTED] blocker: cannot link the platform tools into the throwaway HOME ${ISO_HOME}." >&2
+      exit 3
+    fi
+    SBF_SPLIT=1
+  else
+    echo ">> this cargo build-sbf has no --install-only, --skip-tools-install or --offline: each arm builds with the real HOME and the proxy variables"
+  fi
+fi
 
 # The dynamic library path `cargo test` gives a test binary: its deps directory, the
 # directory above, the toolchain's target libdir, then what the caller had.
+# In the cleaned environment there is nothing the caller had: cargo's own default.
 case "$(uname -s 2>/dev/null || true)" in
-  Darwin) LIBPATH_VAR=DYLD_FALLBACK_LIBRARY_PATH; LIBPATH_REST="${DYLD_FALLBACK_LIBRARY_PATH:-${HOME:-/nonexistent}/lib:/usr/local/lib:/usr/lib}" ;;
-  *) LIBPATH_VAR=LD_LIBRARY_PATH; LIBPATH_REST="${LD_LIBRARY_PATH:-}" ;;
+  Darwin) LIBPATH_VAR=DYLD_FALLBACK_LIBRARY_PATH; LIBPATH_REST="${DYLD_FALLBACK_LIBRARY_PATH:-${HOME:-/nonexistent}/lib:/usr/local/lib:/usr/lib}"
+          if [[ "${CLEAN}" == 1 ]]; then LIBPATH_REST="${ISO_HOME}/lib:/usr/local/lib:/usr/lib"; fi ;;
+  *) LIBPATH_VAR=LD_LIBRARY_PATH; LIBPATH_REST="${LD_LIBRARY_PATH:-}"
+     if [[ "${CLEAN}" == 1 ]]; then LIBPATH_REST=""; fi ;;
 esac
-SYSROOT_LIB="$("${RUSTC:-rustc}" --print target-libdir 2>/dev/null || true)"
+SYSROOT_LIB="$(child "${RUSTC:-rustc}" --print target-libdir 2>/dev/null || true)"
 # The toolchain's own source, so `harness nonregistry` does not read the standard
 # library as out-of-tree code.
-export AUDITOR_SYSROOT="$("${RUSTC:-rustc}" --print sysroot 2>/dev/null || echo /nonexistent)"
+export AUDITOR_SYSROOT="$(child "${RUSTC:-rustc}" --print sysroot 2>/dev/null || echo /nonexistent)"
 
 place_arm() {  # place_arm <arm> : put <crate>.so in SBF_OUT_DIR for this arm; PLACED_HASH names its bytes
   local arm="$1" so="${SBF_OUT_DIR}/${CRATE}.so"
@@ -857,7 +1440,9 @@ place_arm() {  # place_arm <arm> : put <crate>.so in SBF_OUT_DIR for this arm; P
     echo ">> ${arm} arm: prebuilt ${src}"
   else
     echo ">> building '${arm}' arm to SBF (${CRATE}.so)"
-    if ! cargo build-sbf \
+    local -a build=(child_sbf cargo build-sbf)
+    if [[ "${SBF_SPLIT}" == 1 ]]; then build=(child CARGO_NET_OFFLINE=true cargo build-sbf --skip-tools-install --offline); fi
+    if ! "${build[@]}" \
       --tools-version "${TOOLS_VERSION}" \
       --manifest-path "${BUILD_DIR}/Cargo.toml" \
       --no-default-features --features "${arm}" \
@@ -877,7 +1462,9 @@ place_arm() {  # place_arm <arm> : put <crate>.so in SBF_OUT_DIR for this arm; P
 
 build_tests() {  # build_tests <arm> <test>: the arm's test binary, EXE; one that does not compile is a blocker, not a verdict
   local json="${RUN_DIR}/build-$1.json" rc=0
-  if ! cargo test --manifest-path "${BUILD_DIR}/Cargo.toml" \
+  local -a cmd=(child_net cargo test)
+  if [[ "${CLEAN}" == 1 ]]; then cmd=(child cargo test --offline); fi
+  if ! "${cmd[@]}" --manifest-path "${BUILD_DIR}/Cargo.toml" \
         --no-default-features --features "$1" --test "$2" --no-run \
         --message-format=json-render-diagnostics > "${json}"; then
     echo "[PoC-ATTEMPTED] blocker: tests/$2.rs failed to build for the $1 arm — see the cargo output above." >&2
@@ -906,7 +1493,7 @@ run_tests() {  # run_tests <arm>: the arm's test binary, run as `cargo test` run
     exit 3
   fi
   deps="$(dirname "${EXE}")"
-  env "AUDITOR_POC_MARKERS=${dir}" "CARGO_MANIFEST_DIR=${BUILD_DIR}" \
+  child "AUDITOR_POC_MARKERS=${dir}" "CARGO_MANIFEST_DIR=${BUILD_DIR}" \
     "${LIBPATH_VAR}=${deps}:$(dirname "${deps}")${SYSROOT_LIB:+:${SYSROOT_LIB}}${LIBPATH_REST:+:${LIBPATH_REST}}" \
     "${EXE}" --nocapture
 }
@@ -943,6 +1530,10 @@ NONREG=""
 capture_nonreg() {  # the non-registry code, read right after a build (before a test can rewrite the lock)
   NONREG="$(harness nonregistry "${BUILD_DIR}" "${BUILD_DIR}/Cargo.lock" "${RUN_DIR}/metadata.json" "${RUN_DIR}"/build-*.json 2>/dev/null)" \
     || NONREG="unknown — ${BUILD_DIR}/Cargo.lock could not be read"
+  if [[ "${SUPPLY_CHAIN}" == 1 && "${NONREG}" != "none: every dependency comes from a registry" ]]; then
+    echo "[PoC-ATTEMPTED] blocker: the build compiled code from outside the crate (${NONREG}), and the PoC of an incident whose root_cause_class is supply_chain_or_ci builds none of the target crates (OUTPUT-RULES.md Rule 11a); its test does not run." >&2
+    exit 3
+  fi
 }
 nonregistry() {  # the path and git dependencies and out-of-tree sources the build pulled in
   echo "   non-registry code: ${NONREG:-unknown — no build was read}"
