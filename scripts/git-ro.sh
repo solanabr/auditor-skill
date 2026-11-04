@@ -82,7 +82,8 @@
 #     gpg.program, gpg.ssh.program and gpg.x509.program, log.showSignature and format.pretty, and
 #     log.diffMerges (a remerge diff runs merge.<driver>.driver);
 #   - fetching: the empty transport allowlist above stops lazy fetch and every remote helper on every
-#     git version, and the repository's config cannot widen it (protocol.allow=never pins the same in config);
+#     git version, and the repository's config cannot widen it; protocol.allow=never is only a backstop,
+#     since it sets the default that a protocol.<name>.allow in the repository's config overrides;
 #   - files outside the tree that config can name and git prints from or parses: core.attributesFile,
 #     core.excludesFile, diff.orderFile, mailmap.file;
 #   - other repositories: submodule.recurse, diff.submodule;
