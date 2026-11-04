@@ -2247,6 +2247,10 @@ done <<'CONFIGS'
 .claude/settings.json|{"env":{"ANTHROPIC_BASE_URL":"https://gateway.ai.cloudflare.com/v1/0a1b2c3d4e5f60718293a4b5c6d7e8f9/my-gateway/google-ai-studio?key=x"}}\n|Claude Code credentials
 .claude.json|{"mcpServers":{"o":{"command":"npx","args":["openapi-mcp","--spec","https://gitlab.example.invalid/o/r/-/raw/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json?private_token=x"]}}}\n|Claude Code credentials
 .claude.json|{"mcpServers":{"s":{"command":"s","args":["--cache-key","logs"]}}}\n|Claude Code credentials
+.claude/settings.json|{"env":{"CLAUDE_CODE_API_KEY_HELPER_TTL_MS":"900000"}}\n|
+.claude/settings.json|{"env":{"OAUTH_TOKEN_TTL":"3600"}}\n|
+.claude/settings.json|{"env":{"MS_GRAPH_TOKEN":"x"}}\n|Claude Code credentials
+.claude/settings.json|{"env":{"CLAUDE_CODE_API_KEY_HELPER_TTL_MS":"900000"},"apiKeyHelper":"/opt/k.sh"}\n|Claude Code credentials
 .claude.json|{"mcpServers":{"o":{"command":"npx","args":["-y","openapi-mcp","--spec","https://raw.githubusercontent.com/o/r/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json","--extra","https://gitlab.com/o/r/-/raw/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json","--extra","https://github.com/o/r/blob/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json","--extra","https://bitbucket.org/o/r/raw/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json","--extra","https://codeberg.org/o/r/raw/commit/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json"]}}}\n|
 .gitconfig|[include]\n\tpath = /nonexistent.invalid/a\000b\n|
 .gitconfig|[credential]\n\thelper = cache --socket /nonexistent.invalid/s\000k\n|
@@ -2288,9 +2292,10 @@ FH="$T/fh-link"; mkdir -p "$FH"; printf 'secret\n' > "$T/npmrc-elsewhere"; ln -s
 code="$(dcreds -- "$FH")"
 [ "$code" = 1 ] && lines_are "package registry tokens (1)" "~/.npmrc" && ok "a symbolic link to a readable file counts" || { bad "a linked credential: $code"; cat "$T/creds.out" >&2; }
 out="$(cd "$WT" && env -i HOME="$CLEANHOME" PATH="$PATH" GITHUB_TOKEN=x AWS_SECRET_ACCESS_KEY=x HELIUS_API_KEY=x SOLANA_RPC_URL=x \
-  DB_PASSWORD=x MAX_MCP_OUTPUT_TOKENS=1 TOKENIZER_PATH=x SSH_AUTH_SOCK=x npm_config__authToken=x "$BASH" "$T/iso-driver.sh" "$ROOT" names)"
+  DB_PASSWORD=x MAX_MCP_OUTPUT_TOKENS=1 TOKENIZER_PATH=x SSH_AUTH_SOCK=x npm_config__authToken=x CLAUDE_CODE_API_KEY_HELPER_TTL_MS=900000 \
+  "$BASH" "$T/iso-driver.sh" "$ROOT" names)"
 [ "$out" = "AWS_SECRET_ACCESS_KEY, DB_PASSWORD, GITHUB_TOKEN, HELIUS_API_KEY, SOLANA_RPC_URL, npm_config__authToken" ] \
-  && ok "iso_cred_names names the variables that look like credentials (a name in mixed case too), and no others" || bad "iso_cred_names: '$out'"
+  && ok "iso_cred_names names the variables that look like credentials (a name in mixed case too), and no others (not a duration, CLAUDE_CODE_API_KEY_HELPER_TTL_MS)" || bad "iso_cred_names: '$out'"
 # Agent sockets count when they accept a connection: SSH_AUTH_SOCK, sockets in ~/.ssh and ~/.gnupg, in
 # GNUPGHOME, ssh-*/agent.* under TMPDIR, and in the runtime directory's gnupg/. So do container daemon sockets
 # and the sockets that answer git's credential requests with a login (the one a git cache helper's --socket

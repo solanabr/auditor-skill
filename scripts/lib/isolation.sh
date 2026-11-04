@@ -105,7 +105,8 @@
 # unsandboxed retry, a sandbox without those deny rules and a host session that recorded "isolated" do not
 # pass. The check also names the variables of its own environment whose names look like credentials (a
 # part TOKEN, SECRET, PASSWORD, PASSWD, PASSPHRASE or APIKEY, or API_KEY, ACCESS_KEY, PRIVATE_KEY or RPC_URL,
-# the parts apart at _, - and . and where a lower-case letter or a digit meets an upper-case one): no child gets
+# the parts apart at _, - and . and where a lower-case letter or a digit meets an upper-case one, but not a
+# name whose last part is TTL or MS, which holds a duration: CLAUDE_CODE_API_KEY_HELPER_TTL_MS): no child gets
 # them, but code running as the same user can read another process's environment (on Linux, in
 # /proc/<pid>/environ).
 #
@@ -271,6 +272,8 @@ SWITCHES = ("true", "false", "yes", "no", "on", "off", "0", "1", "none", "null",
             "oauth", "oauth2", "oidc", "basic", "bearer", "digest", "token", "apikey", "api-key", "api_key", "jwt",
             "mtls", "sso", "iam", "sigv4", "guest", "public", "auto", "required")
 NOT_SECRET = ("PUBLIC", "PUBLISHABLE", "PUB", "PARTITION", "SORT", "RANGE", "HASH", "PRIMARY", "ROUTING")
+# The last parts of a name that holds a duration, not a credential (CLAUDE_CODE_API_KEY_HELPER_TTL_MS).
+DURATION = ("TTL", "MS")
 # A URL in a value; the schemes whose user name alone can be a token (https://<token>@host); the names a query
 # parameter holding a key takes beside those a key goes by (key_name); a path segment that can be a key
 # (path_key), as a key in a path has no name (https://<name>.solana-mainnet.quiknode.pro/<token>/,
@@ -545,12 +548,14 @@ def name_parts(name):
 
 def secretish(name, rpc=True):
     # A name that looks like a credential: a part TOKEN, SECRET, PASSWORD, PASSWD, PASSPHRASE or APIKEY, or
-    # API_KEY, ACCESS_KEY or PRIVATE_KEY, or, with <rpc>, RPC_URL. A settings file or an argument that gives an
-    # RPC URL counts only by what its URL carries (url_credential), as a public RPC URL carries nothing.
+    # API_KEY, ACCESS_KEY or PRIVATE_KEY, or, with <rpc>, RPC_URL, but for one whose last part names a duration
+    # (DURATION). A settings file or an argument that gives an RPC URL counts only by what its URL carries
+    # (url_credential), as a public RPC URL carries nothing.
     parts = name_parts(name)
     pairs = set(zip(parts, parts[1:]))
-    return bool(set(parts) & {"TOKEN", "SECRET", "PASSWORD", "PASSWD", "PASSPHRASE", "APIKEY"}
-                or pairs & {("API", "KEY"), ("ACCESS", "KEY"), ("PRIVATE", "KEY")} or rpc and ("RPC", "URL") in pairs)
+    return parts[-1] not in DURATION and bool(
+        set(parts) & {"TOKEN", "SECRET", "PASSWORD", "PASSWD", "PASSPHRASE", "APIKEY"}
+        or pairs & {("API", "KEY"), ("ACCESS", "KEY"), ("PRIVATE", "KEY")} or rpc and ("RPC", "URL") in pairs)
 
 
 def key_name(name):
