@@ -570,14 +570,17 @@ fn failing_git(dir: &Path, message: &str, status: u8) {
 #[test]
 fn confine_rs_takes_only_git_s_own_answer_for_no_repository_as_confine_sh_does() {
     // Asked whether WT is in a work tree, git fails. Only its own "not a git
-    // repository" first, with exit 128, means no repository and so nothing
-    // tracked; those words inside another of its messages (another user owns a
-    // repository named so), or with another status, leave both sides unable to
-    // tell, and audit-mem refuses its in-tree store.
+    // repository" first, or git 2.56's "gitfile does not point to a valid
+    // repository" for a .git file naming none, with exit 128, means no repository
+    // and so nothing tracked; those words inside another of its messages (another
+    // user owns a repository named so), or with another status, leave both sides
+    // unable to tell, and audit-mem refuses its in-tree store.
     let own = "fatal: not a git repository (or any of the parent directories): .git";
+    let gitfile = "fatal: gitfile does not point to a valid repository: /x/.git";
     let quoted = "fatal: detected dubious ownership in repository at '/x/not a git repository'";
     for (case, message, status, no_repo) in [
         ("own", own, 128, true),
+        ("gitfile", gitfile, 128, true),
         ("quoted", quoted, 128, false),
         ("status", own, 1, false),
     ] {
