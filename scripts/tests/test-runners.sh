@@ -720,20 +720,23 @@ settings
 # =================================================================================================
 # target.sh: a source that is not a repository, submodules, and what must be in place.
 # =================================================================================================
-# $T/plain is not a repository: a package with target/, sub/TARGET/, node_modules/ and sub/node_modules/
-# directories, a run directory, the store, a top-level audit_notes.md, a link and a FIFO.
+# $T/plain is not a repository: a package with target/, sub/TARGET/, node_modules/ and sub/Node_Modules/
+# directories, a run directory, two more spelled AUDIT_7 and Incident_9 (a volume that ignores case finds audit_7
+# under the name AUDIT_7), the store as .Audit-Memory, a top-level audit_notes.md, a link and a FIFO.
 P=$T/plain
-mkdir -p "$P/src" "$P/target" "$P/sub/TARGET" "$P/node_modules/x" "$P/sub/node_modules" "$P/sub/keep" "$P/.audit-memory"
+mkdir -p "$P/src" "$P/target" "$P/sub/TARGET" "$P/node_modules/x" "$P/sub/Node_Modules" "$P/sub/keep" "$P/.Audit-Memory" \
+  "$P/AUDIT_7" "$P/Incident_9"
 printf '[package]\nname = "plainpkg"\nversion = "0.1.0"\n' > "$P/Cargo.toml"
 printf 'fn p() {}\n' > "$P/src/lib.rs"
-printf 'built\n' > "$P/target/out"; printf 'built\n' > "$P/sub/TARGET/out"; printf 'js\n' > "$P/sub/node_modules/y"
-printf 'kept\n' > "$P/sub/keep/file"; printf 'db\n' > "$P/.audit-memory/audit.db"; printf 'notes\n' > "$P/audit_notes.md"
+printf 'built\n' > "$P/target/out"; printf 'built\n' > "$P/sub/TARGET/out"; printf 'js\n' > "$P/sub/Node_Modules/y"
+printf 'kept\n' > "$P/sub/keep/file"; printf 'db\n' > "$P/.Audit-Memory/audit.db"; printf 'notes\n' > "$P/audit_notes.md"
+printf 'run\n' > "$P/AUDIT_7/notes.md"; printf 'hunt\n' > "$P/Incident_9/notes.md"
 ln -s /etc/hosts "$P/lnk"
 mkfifo "$P/pipe" 2>/dev/null || true
 ( cd "$P" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null && printf 'native\n' > "$P/audit_1/exec-mode"
 settings FAKE_LIST=1
 run "$TARGET" "$P" -- cargo-test --run audit_1 --src .
-check "a source that is not a repository is copied file by file" \
+check "a source that is not a repository is copied file by file, without run directories, the store, target/ and node_modules/ in any letter case" \
   sh -c "[ '$RC' = 0 ] && grep -qxF 'listing: . ./Cargo.toml ./lnk ./src ./src/lib.rs ./sub ./sub/keep ./sub/keep/file ' '$T/calls'"
 check "... its links kept as links, never followed" grep -qxF 'link: ./lnk -> /etc/hosts' "$T/calls"
 run "$TARGET" "$P" -- cargo-test --run audit_1 --src . --rev HEAD

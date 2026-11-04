@@ -48,8 +48,9 @@
 # must name a commit, which is checked out; --patch, a file in <R>/patches/ of at most 16 MiB, is applied
 # with git apply --index. A revision that has submodules stops the run: target.sh never fetches them. Any
 # other directory --src names is copied file by file, symbolic links kept as links, without audit_*,
-# incident_* and .audit-memory at its top, and without target/ or node_modules/ directories; --rev and
-# --patch need a repository. --dir is a path inside the copy with no symbolic link on the way.
+# incident_* and .audit-memory at its top, and without target/ or node_modules/ directories, each name in any
+# letter case; --rev and --patch need a repository. --dir is a path inside the copy with no symbolic link on
+# the way.
 #
 # The environment of every step is the cleaned one of scripts/lib/isolation.sh: env -i, a throwaway HOME
 # holding a fresh Solana keypair, TMPDIR in the scratch directory, the cleaned PATH, the user's CARGO_HOME and
@@ -648,8 +649,10 @@ if [ "$SRC_KIND" = repo ]; then
   printf '>> the copy: %s at %s\n' "$SRC_SHOWN" "$SHA" >&9
 else
   printf '>> the copy: the files of %s, links as links, without run directories, the store, target/ and node_modules/\n' "$SRC_SHOWN" >&9
-  (cd "$SRC_ABS" && find . \( -path './audit_*' -o -path './incident_*' -o -path './.audit-memory' -o \
-    \( -type d \( -iname target -o -name node_modules \) \) \) -prune -o \( -type d -o -type f -o -type l \) -print0) \
+  # Each name in any letter case: a volume that ignores case finds audit_1 under the name AUDIT_1.
+  (cd "$SRC_ABS" && find . \( -path './[Aa][Uu][Dd][Ii][Tt]_*' -o -path './[Ii][Nn][Cc][Ii][Dd][Ee][Nn][Tt]_*' -o \
+    -path './.[Aa][Uu][Dd][Ii][Tt]-[Mm][Ee][Mm][Oo][Rr][Yy]' -o \( -type d \( -iname target -o -iname node_modules \) \) \) -prune -o \
+    \( -type d -o -type f -o -type l \) -print0) \
     > "$S/list" 2>&9 || finish 3 "find cannot list all of $SRC_SHOWN"
   mkdir "$S/src" || finish 3 "cannot create the copy in $S"
   while IFS= read -r -d '' rel; do
