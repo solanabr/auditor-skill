@@ -15,7 +15,8 @@
 #     exactly "*".
 #   - A new file is created with noclobber and written through the descriptor opened at creation; a
 #     new directory is created with plain mkdir, never -p.
-# confine_init also sets LC_ALL=C and umask 077 and unsets CDPATH, BASH_ENV and ENV. It refuses an
+# confine_init also sets LC_ALL=C and umask 077 and unsets CDPATH, BASH_ENV and ENV, and the two variables
+# a caller sets for one hgit call only (CONFINE_ALLOW_PROTOCOL, CONFINE_GIT_TIME). It refuses an
 # installation root that holds a quote, "$", a backtick, a backslash or a control character, since the
 # quoted call could not match as written, or that lies inside WT (Rule 11e). PATH keeps only absolute
 # entries that resolve outside WT and outside the tree WT lies in: the outermost of WT and the directories
@@ -78,7 +79,7 @@ confine_init() { # confine_init <tool> <installation root, physical> [<refusal s
   CONFINE_GIT_CHECKING=$'\n'
   CONFINE_TREES=''
   IFS=$' \t\n'
-  unset CDPATH BASH_ENV ENV CONFINE_GIT_TIME
+  unset CDPATH BASH_ENV ENV CONFINE_GIT_TIME CONFINE_ALLOW_PROTOCOL
   LC_ALL=C
   export LC_ALL
   umask 077

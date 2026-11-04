@@ -370,6 +370,13 @@ for pin in core.pager=cat core.hooksPath=/dev/null protocol.allow=never core.att
   check "hgit pins $pin before the subcommand" \
     awk -F '\037' -v pin="$pin" '$1 == "ARGV" { for (i = 2; i <= NF && $i != "rev-parse"; i++) if ($i == pin && $(i - 1) == "-c") found = 1; exit } END { exit !found }' "$T/rec.log"
 done
+# The transport allowlist is empty unless the caller sets CONFINE_ALLOW_PROTOCOL for one call: a value the
+# environment passes in widens no call.
+: > "$T/rec.log"
+CONFINE_ALLOW_PROTOCOL=ext PATH="$T/rec:$PATH" \
+  lib "$R" 'hgit "$CONFINE_WT" rev-parse --abbrev-ref HEAD; CONFINE_ALLOW_PROTOCOL=file hgit "$CONFINE_WT" rev-parse --abbrev-ref HEAD'
+check "hgit gives git an empty GIT_ALLOW_PROTOCOL whatever CONFINE_ALLOW_PROTOCOL the environment holds, and one call its own" \
+  test "$RC:$(sed -n 's/^ENV GIT_ALLOW_PROTOCOL=/=/p' "$T/rec.log" | sort -u | tr '\n' ' ')" = '0:= =file '
 # The time git gets: 10 s for the questions rev-parse, config and ls-files answer, no limit for a read or a
 # copy, CONFINE_GIT_TIME for one call (a value that is no whole number counting as 10), never the
 # environment's.
