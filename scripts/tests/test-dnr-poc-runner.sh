@@ -2261,6 +2261,41 @@ PI="$ROOT/docs/permissions-and-isolation.md"
 grep -qF 'a value with `$NAME` or `${NAME}` anywhere in it' "$PI" && grep -qF 'so also a password with a `$` before a letter, `_` or `{`' "$PI" \
   && ok "docs/permissions-and-isolation.md says a value with \$NAME or \${NAME} anywhere in it does not count, a password with a \$ before a letter too" \
   || bad "docs/permissions-and-isolation.md does not say that a value with \$NAME or \${NAME} anywhere in it does not count"
+# A settings or state file larger than 16 MiB, as ~/.claude.json can grow, is read 16 MiB at a time instead of
+# stopping the check: a value that fits in that is decoded whole, a larger object or array entry by entry (an
+# env block and an MCP server's arguments too), a longer string counts for nothing, the last value of a name
+# wins as json.loads keeps it, and a file that is not JSON counts for nothing.
+big() { # big <file> <text> <bytes of x> <text>...: the texts with that many x between each two
+  mkdir -p "$(dirname "$1")"
+  local f=$1; shift
+  { printf '%s' "$1"; shift; while [ $# -gt 1 ]; do head -c "$1" /dev/zero | tr '\0' x; printf '%s' "$2"; shift 2; done; echo; } > "$f"
+}
+M17=$((17 << 20)) M9=$((9 << 20))
+big "$T/fb-1/.claude.json" '{"projects":{"/w":{"history":[{"display":"' "$M17" '"}]}},"mcpServers":{"gh":{"env":{"GITHUB_TOKEN":"t"}}}}'
+code="$(dcreds -- "$T/fb-1")"
+[ "$code" = 1 ] && lines_are "Claude Code credentials (1)" "~/.claude.json" \
+  && ok "a ~/.claude.json of 17 MiB with a token past its first 16 MiB counts, after a string of 17 MiB" || { bad "a ~/.claude.json of 17 MiB with a token: $code"; cat "$T/creds.out" >&2; }
+big "$T/fb-2/.claude.json" '{"projects":{"/w":{"history":[{"display":"' "$M17" '"}]}},"mcpServers":{"gh":{"env":{"GITHUB_TOKEN":"${GITHUB_TOKEN}"}}}}'
+code="$(dcreds -- "$T/fb-2")"
+[ "$code" = 0 ] && [ ! -s "$T/creds.out" ] && ok "a ~/.claude.json of 17 MiB that only refers to a token does not count, and the check finishes" || { bad "a ~/.claude.json of 17 MiB, a reference: $code"; cat "$T/creds.out" >&2; }
+big "$T/fb-3/.claude.json" '{"projects":{"/w":{"history":[{"display":"' "$M17" '"}]}},"mcpServers":{"gh":{"env":{"GITHUB_TOKEN":"t"}}}} x'
+code="$(dcreds -- "$T/fb-3")"
+[ "$code" = 0 ] && [ ! -s "$T/creds.out" ] && ok "a ~/.claude.json of 17 MiB that is not JSON counts for nothing" || { bad "a ~/.claude.json of 17 MiB, not JSON: $code"; cat "$T/creds.out" >&2; }
+big "$T/fb-4/.claude.json" '{"mcpServers":{"gh":{"env":{"GITHUB_TOKEN":"t"}}},"history":"' "$M17" '","mcpServers":{}}'
+code="$(dcreds -- "$T/fb-4")"
+[ "$code" = 0 ] && [ ! -s "$T/creds.out" ] && ok "in a ~/.claude.json of 17 MiB the last mcpServers wins, as json.loads keeps it" || { bad "a ~/.claude.json of 17 MiB, a later mcpServers: $code"; cat "$T/creds.out" >&2; }
+big "$T/fb-5/.claude/settings.json" '{"env":{"PAD":"' "$M17" '","GITHUB_TOKEN":"t"}}'
+code="$(dcreds -- "$T/fb-5")"
+[ "$code" = 1 ] && lines_are "Claude Code credentials (1)" "~/.claude/settings.json" \
+  && ok "an env block of 17 MiB, read entry by entry, counts for the token in it" || { bad "an env block of 17 MiB: $code"; cat "$T/creds.out" >&2; }
+big "$T/fb-6/.claude.json" '{"mcpServers":{"x":{"command":"x","args":["' "$M17" '","--api-key","k"]}}}'
+code="$(dcreds -- "$T/fb-6")"
+[ "$code" = 1 ] && lines_are "Claude Code credentials (1)" "~/.claude.json" \
+  && ok "an MCP server's arguments of 17 MiB, read one by one, count for --api-key and its value" || { bad "arguments of 17 MiB: $code"; cat "$T/creds.out" >&2; }
+big "$T/fb-7/.claude.json" '{"projects":{"/w":{"history":[{"display":"' "$M9" '"},{"display":"' "$M9" '","mcpServers":{"gh":{"env":{"GITHUB_TOKEN":"t"}}}}]}}}'
+code="$(dcreds -- "$T/fb-7")"
+[ "$code" = 1 ] && lines_are "Claude Code credentials (1)" "~/.claude.json" \
+  && ok "a history of 18 MiB, its entries of 9 MiB each decoded whole, counts for a token in one" || { bad "a history of 18 MiB: $code"; cat "$T/creds.out" >&2; }
 # git's store counts by the file its --file names, when that file is readable: the file counts, not the git
 # config, as the code here could read it without git. "~" as a word of its own is the home; the helper may be
 # named by an absolute path, and the option by an abbreviation, as git takes it (--fi).

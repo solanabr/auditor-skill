@@ -66,7 +66,9 @@
 #     does not count, nor does a word that switches a setting or names an authentication method (true, false,
 #     yes, no, on, off, 0, 1, none, null, enabled, disabled, anonymous, oauth, oauth2, oidc, basic, bearer,
 #     digest, token, apikey, api-key, api_key, jwt, mtls, sso, iam, sigv4, guest, public, auto, required), and
-#     neither does a file that is not JSON; one larger than 16 MiB stops the check (status 2);
+#     neither does a file that is not JSON; one larger than 16 MiB is read 16 MiB at a time, a value that fits
+#     in that whole and a larger object or array entry by entry, and a string longer than that in it counts
+#     for nothing;
 #   1Password's agent socket: ~/.1password/agent.sock, and on macOS
 #     ~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock;
 #   the sockets of a container daemon, which gives whoever reaches it the host: Docker Desktop's
@@ -209,7 +211,7 @@
 # (exit 0), or why the check could not finish (exit 2); "names" prints the variable names that look like
 # credentials; "homes <home>" prints the homes; "wallet <path>" writes a fresh keypair, RFC 8032 key
 # generation from 32 random bytes, as the 64-number array solana-keygen writes. Exit 2 on anything unexpected.
-ISO_PY='import glob, hashlib, json, os, pwd, re, socket, stat, sys, urllib.parse
+ISO_PY='import codecs, glob, hashlib, json, os, pwd, re, socket, stat, sys, urllib.parse
 
 KINDS = ("SSH keys", "agent sockets", "container daemon sockets", "Solana keypairs or CLI config", "cloud credentials",
          "Kubernetes or Docker config", "package registry tokens", "git or HTTP credentials", "GnuPG private keys",
@@ -266,6 +268,20 @@ MANAGED = ("/Library/Application Support/ClaudeCode", "/etc/claude-code")
 MANAGED_FILES = ("managed-settings.json", "managed-settings.d/*.json", "managed-mcp.json")
 CLAUDE_HELPERS = ("apiKeyHelper", "awsCredentialExport", "otelHeadersHelper", "headersHelper")
 CLAUDE_LIMIT = 16 << 20
+# What json.loads skips between tokens; the characters of a string as json.loads takes them, plain ones and
+# escapes; what can follow a number where the text read so far ends and still be part of it; a run of strings,
+# numbers and literals in an array, each with the comma after it, as json.loads takes them (an integer with no
+# more digits than int() takes), the string unrolled so that a run that ends otherwise backtracks in linear time,
+# and at most 1000 of them, as the regular expression keeps what it would need to go back on for each.
+JSON_SPACE = re.compile(r"[ \t\n\r]*")
+JSON_STRING = re.compile(r"(?:[^\"\\\x00-\x1f]+|\\[\"\\/bfnrt]|\\u[0-9a-fA-F]{4})*")
+NUMBER_TAIL = re.compile(r"[0-9.eE+-]*")
+INT_DIGITS = getattr(sys, "get_int_max_str_digits", lambda: 0)()
+JSON_SCALARS = re.compile(
+    r"(?:[ \t\n\r]*(?:\"[^\"\\\x00-\x1f]*(?:\\(?:[\"\\/bfnrt]|u[0-9a-fA-F]{4})[^\"\\\x00-\x1f]*)*\""
+    r"|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+(?:[eE][-+]?[0-9]+)?|[eE][-+]?[0-9]+)"
+    r"|-?(?:0|[1-9][0-9]" + ("{0,%d}" % (INT_DIGITS - 1) if INT_DIGITS else "*") + r")|true|false|null|NaN|-?Infinity)"
+    r"[ \t\n\r]*,){1,1000}")
 REFERENCE = re.compile(r"\$(?:\{|[A-Za-z_])")
 # The values that switch a setting or name an authentication method (--auth none, --api-key=true, --auth sso),
 # which no credential is; the parts before a last part KEY or AUTH that make a key no secret (a public key; a
@@ -313,16 +329,30 @@ def shown(path, bases=()):
     return re.sub(r"[\x00-\x1f\x7f]", "?", path)[:300]
 
 
-def start(path, size):
-    # The first <size> bytes of a regular file, or of a link to one, opened without blocking so that a FIFO in
-    # its place cannot stall the check; None when it cannot be read, as for a path with a NUL byte in it, which
-    # a file read (a git include, a keypair_path) can name but no file has.
+def opened(path):
+    # A descriptor open on a regular file, or on a link to one, opened without blocking so that a FIFO in its
+    # place cannot stall the check; None when there is none, as for a path with a NUL byte in it, which a file
+    # read (a git include, a keypair_path) can name but no file has.
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOCTTY", 0))
     except (OSError, ValueError):
         return None
     try:
-        return os.read(fd, size) if stat.S_ISREG(os.fstat(fd).st_mode) else None
+        if stat.S_ISREG(os.fstat(fd).st_mode):
+            return fd
+    except OSError:
+        pass
+    os.close(fd)
+    return None
+
+
+def start(path, size):
+    # The first <size> bytes of a regular file, or of a link to one (opened); None when it cannot be read.
+    fd = opened(path)
+    if fd is None:
+        return None
+    try:
+        return os.read(fd, size)
     except OSError:
         return None
     finally:
@@ -638,23 +668,26 @@ def env_credential(name, value):
             or upper.endswith("HEADERS") and header_credential(text, bool(OTLP_HEADERS.fullmatch(upper))))
 
 
+def arg_credential(word, after):
+    # One argument of a command that passes a credential (args_credential), <after> the argument that follows
+    # it, None for the last.
+    option = word.startswith("-")
+    name, eq, value = word.lstrip("-").partition("=")
+    if word.startswith("--no-"):
+        value = ""
+    elif not eq:
+        value = after if option and after is not None and not after.startswith("-") else ""
+    return bool(url_credential(word) or set_here(value) and (key_name(name) if option else secretish(name, rpc=False))
+                or option and name.lower() in ("h", "header", "headers") and header_credential(value))
+
+
 def args_credential(args):
     # Arguments of a command that pass a credential: an option a key goes by (key_name) with a value set here
     # (--api-key <value>, --key=<value>; a --no- option takes none), NAME=<value> for a name that looks like a
     # credential, as docker run -e takes it, a header option (-H, --header) that sends one, or an argument with
     # a URL that carries one.
     words = [w for w in args if isinstance(w, str)]
-    for i, word in enumerate(words):
-        option = word.startswith("-")
-        name, eq, value = word.lstrip("-").partition("=")
-        if word.startswith("--no-"):
-            value = ""
-        elif not eq:
-            value = words[i + 1] if option and i + 1 < len(words) and not words[i + 1].startswith("-") else ""
-        if (url_credential(word) or set_here(value) and (key_name(name) if option else secretish(name, rpc=False))
-                or option and name.lower() in ("h", "header", "headers") and header_credential(value)):
-            return True
-    return False
+    return any(arg_credential(word, words[i + 1] if i + 1 < len(words) else None) for i, word in enumerate(words))
 
 
 def claude_files(directory, names=CLAUDE_FILES):
@@ -662,37 +695,229 @@ def claude_files(directory, names=CLAUDE_FILES):
     return [p for n in names for p in sorted(glob.glob(os.path.join(at, n)))]
 
 
-def claude_json(path, home, found, state):
-    # A Claude Code settings or state file counts when it names a command that prints a credential (the
-    # headersHelper of an MCP server too), when an env block in it (of the file or of an MCP server) sets a
-    # credential (env_credential), when a headers block (of an MCP server or an HTTP hook) sends an
-    # Authorization, Cookie or key header with a value, or when a URL (of an MCP server or a hook) or the
-    # arguments of an MCP server carry one. Past 16 MiB the check cannot finish; a file that is not JSON counts
-    # for nothing, as Claude Code reads nothing from it.
-    data = start(path, CLAUDE_LIMIT + 1) if path else None
-    key = os.path.realpath(path) if data is not None else ""
-    if not key or key in state["configs"]:
-        return
-    state["configs"].add(key)
-    if len(data) > CLAUDE_LIMIT:
-        raise Unfinished("a Claude Code settings or state file larger than 16 MiB")
-    try:
-        stack = [json.loads(data.decode("utf-8", "replace"))]
-    except (ValueError, RecursionError):
-        return
+def claude_entry(name, value):
+    # An entry of a Claude Code settings or state file that counts: a command that prints a credential (the
+    # headersHelper of an MCP server too), an env block (of the file or of an MCP server) that sets a credential
+    # (env_credential), a headers block (of an MCP server or an HTTP hook) that sends an Authorization, Cookie or
+    # key header with a value, or a URL (of an MCP server or a hook) or the arguments of an MCP server that
+    # carry one.
+    return bool(name in CLAUDE_HELPERS and isinstance(value, str) and value.strip()
+                or name == "env" and isinstance(value, dict) and any(env_credential(k, v) for k, v in value.items())
+                or name == "headers" and isinstance(value, dict)
+                and any(set_here(v) and credential_header(k) for k, v in value.items())
+                or name == "url" and isinstance(value, str) and url_credential(value)
+                or name == "args" and isinstance(value, list) and args_credential(value))
+
+
+def claude_node(node):
+    # Whether an entry in <node>, at any depth, counts (claude_entry).
+    stack = [node]
     while stack:
         node = stack.pop()
         items = node.items() if isinstance(node, dict) else enumerate(node) if isinstance(node, list) else ()
         for name, value in items:
-            if (name in CLAUDE_HELPERS and isinstance(value, str) and value.strip()
-                    or name == "env" and isinstance(value, dict) and any(env_credential(k, v) for k, v in value.items())
-                    or name == "headers" and isinstance(value, dict)
-                    and any(set_here(v) and credential_header(k) for k, v in value.items())
-                    or name == "url" and isinstance(value, str) and url_credential(value)
-                    or name == "args" and isinstance(value, list) and args_credential(value)):
-                found.append((CLAUDE, path))
-                return
+            if claude_entry(name, value):
+                return True
             stack.append(value)
+    return False
+
+
+class NotJSON(Exception):
+    pass
+
+
+# What claude_stream takes for what it does not decode whole: a string longer than CLAUDE_LIMIT, a value or a
+# name; an object or an array it reads entry by entry; and what its whole gives for a value it cannot decode.
+LONG, OPEN, FAIL = object(), object(), object()
+
+
+def claude_stream(data, fd):
+    # json.loads and claude_node on a settings or state file larger than CLAUDE_LIMIT, <data> its first bytes and
+    # <fd> open on the rest, holding at most about twice CLAUDE_LIMIT characters of it at a time: a value that
+    # fits in CLAUDE_LIMIT characters is decoded whole (raw_decode) and walked as claude_node walks one; an
+    # object or an array larger than that is read entry by entry, the last value of a name winning as json.loads
+    # keeps it, and counts as claude_node and claude_entry tell; a string larger than that counts for nothing.
+    # True when an entry counts; False when none does, or when the file is not JSON as json.loads reads it (a
+    # byte order mark at its start too) or cannot be read to its end.
+    decode = codecs.getincrementaldecoder("utf-8")("replace").decode
+    parse = json.JSONDecoder().raw_decode
+    text, at, end = decode(data), 0, False
+
+    def more():
+        # Reads on until CLAUDE_LIMIT characters follow <at> or the file ends; False when it can add nothing.
+        nonlocal text, at, end
+        if end or len(text) - at >= CLAUDE_LIMIT:
+            return False
+        parts, have = [text[at:]], len(text) - at
+        while have < CLAUDE_LIMIT and not end:
+            block = os.read(fd, CLAUDE_LIMIT)
+            end = not block
+            parts.append(decode(block, end))
+            have += len(parts[-1])
+        text, at = "".join(parts), 0
+        return True
+
+    def peek():
+        # The next character past whitespace, "" at the end of the file.
+        nonlocal at
+        while True:
+            at = JSON_SPACE.match(text, at).end()
+            if at < len(text) or not more():
+                return text[at:at + 1]
+
+    def take(c):
+        nonlocal at
+        if peek() != c:
+            raise NotJSON
+        at += 1
+
+    def whole():
+        # The value at <at>, decoded whole, <at> then past it; FAIL when it is not JSON or more than CLAUDE_LIMIT
+        # characters long, however much of it has been read.
+        nonlocal at
+        while True:
+            try:
+                value, after = parse(text, at)
+            except RecursionError:
+                raise NotJSON
+            except ValueError:
+                if more():
+                    continue
+                return FAIL
+            if after - at > CLAUDE_LIMIT:
+                return FAIL
+            if (isinstance(value, (int, float)) and not isinstance(value, bool) and not end
+                    and NUMBER_TAIL.match(text, after).end() == len(text)):
+                # A number may go on past the text read so far.
+                if more():
+                    continue
+                raise NotJSON
+            at = after
+            return value
+
+    def skip():
+        # Past a string longer than CLAUDE_LIMIT characters, checked as json.loads checks one.
+        nonlocal at
+        at += 1
+        while True:
+            at = JSON_STRING.match(text, at).end()
+            # An escape may be cut where the text read so far ends.
+            if len(text) - at < 6 and more():
+                continue
+            if text[at:at + 1] != "\"":
+                raise NotJSON
+            at += 1
+            return
+
+    def value(name):
+        # The value at <at>, of the name <name> in an object (None in an array and at the top), and whether it
+        # counts as claude_node tells; OPEN for an object or an array read entry by entry, LONG for a string
+        # longer than CLAUDE_LIMIT.
+        c = peek()
+        got = whole()
+        if got is not FAIL:
+            return got, claude_node(got)
+        if c == "{":
+            take("{")
+            return OPEN, entries(name if name in ("env", "headers") else None)
+        if c == "[":
+            take("[")
+            return OPEN, elements(name == "args")
+        if c == "\"":
+            skip()
+            return LONG, False
+        raise NotJSON
+
+    def entries(role):
+        # The entries of an object after its {: whether it counts. For the value of an env or a headers name
+        # (<role>), whether an entry counts as claude_entry reads such a block too.
+        hits, sets = set(), set()
+        if peek() == "}":
+            take("}")
+            return False
+        while True:
+            if peek() != "\"":
+                raise NotJSON
+            name = whole()
+            if name is FAIL:
+                # A name longer than CLAUDE_LIMIT, which any later one may equal: the value of the last counts.
+                skip()
+                name = LONG
+            take(":")
+            got, counts = value(name)
+            (hits.add if counts or claude_entry(name, got) else hits.discard)(name)
+            if role:
+                entry = isinstance(name, str) and (env_credential(name, got) if role == "env"
+                                                   else set_here(got) and credential_header(name))
+                (sets.add if entry else sets.discard)(name)
+            if peek() == "}":
+                take("}")
+                return bool(hits or sets)
+            take(",")
+
+    def elements(args):
+        # The elements of an array after its [: whether it counts. For the value of an args name (<args>),
+        # whether its strings pass a credential as args_credential reads them too.
+        nonlocal at
+        hit, word = False, None
+        if peek() == "]":
+            take("]")
+            return False
+        while True:
+            while not args:
+                # Strings, numbers and literals in such an array count for nothing; runs of them are passed at once.
+                run = JSON_SCALARS.match(text, at)
+                if not run:
+                    break
+                at = run.end()
+            got, counts = value(None)
+            hit = hit or counts
+            if args and (isinstance(got, str) or got is LONG):
+                if isinstance(word, str):
+                    hit = hit or arg_credential(word, got if isinstance(got, str) else "")
+                word = got
+            if peek() == "]":
+                take("]")
+                break
+            take(",")
+        return hit or isinstance(word, str) and arg_credential(word, None)
+
+    try:
+        if text.startswith("\ufeff"):
+            return False
+        got, counts = value(None)
+        return counts and peek() == ""
+    except (NotJSON, RecursionError, OSError):
+        return False
+
+
+def claude_json(path, home, found, state):
+    # A Claude Code settings or state file counts when an entry in it counts (claude_entry). A file that is not
+    # JSON counts for nothing, as Claude Code reads nothing from it; one larger than CLAUDE_LIMIT is read a block
+    # at a time (claude_stream).
+    fd = opened(path) if path else None
+    if fd is None:
+        return
+    try:
+        data = os.read(fd, CLAUDE_LIMIT + 1)
+        key = os.path.realpath(path)
+        if key in state["configs"]:
+            return
+        state["configs"].add(key)
+        if len(data) > CLAUDE_LIMIT:
+            counts = claude_stream(data, fd)
+        else:
+            try:
+                tree = json.loads(data.decode("utf-8", "replace"))
+            except (ValueError, RecursionError):
+                return
+            counts = claude_node(tree)
+    except OSError:
+        return
+    finally:
+        os.close(fd)
+    if counts:
+        found.append((CLAUDE, path))
 
 
 def runtime(directory, dirs, socks):
