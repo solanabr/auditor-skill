@@ -91,11 +91,12 @@ it writes there is compiled, and an arm's bytes or test binary that changed afte
 build stop the run (exit `3`). What the vulnerable arm's test leaves behind can still
 reach the fixed arm's test, though no build, since every build is done by then: a
 process it leaves running can still act while the fixed test runs, and on Linux a shared
-library it writes into the test binaries' `deps/` directory or the one above it (such
-as `libgcc_s.so.1`) loads into the fixed arm's test binary in place of the system's
-copy, since the library path `run.sh` sets as `cargo test` does (`LD_LIBRARY_PATH`)
-lists those directories first, and the binary's hash covers the binary alone. macOS
-reads its fallback library path only for a library missing from its install path.
+library it writes into the test binaries' `deps/` directory, the one above it or the
+toolchain's target library directory (such as `libgcc_s.so.1`) loads into the fixed
+arm's test binary in place of the system's copy, since the library path `run.sh` sets
+as `cargo test` does (`LD_LIBRARY_PATH`) lists those directories first, and the
+binary's hash covers the binary alone. macOS reads its fallback library path only for
+a library missing from its install path.
 The crate is copied to a scratch
 directory under `$TMPDIR` (printed; `--keep`, or `KEEP_POC_BUILD=1` for `./run.sh`,
 keeps it) and built there with the toolchain pinned, so the target's `.cargo/config*`
