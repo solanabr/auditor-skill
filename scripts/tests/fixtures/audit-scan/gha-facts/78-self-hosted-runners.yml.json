@@ -1,0 +1,90 @@
+{
+  "name": "f78-self-hosted-runners",
+  "triggers": [
+    "pull_request"
+  ],
+  "permissions": [
+    "contents: read"
+  ],
+  "jobs": [
+    {
+      "id": "label",
+      "line": 8,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 11,
+          "run": "make test",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "labels",
+      "line": 12,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 15,
+          "run": "make test",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "group",
+      "line": 16,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 21,
+          "run": "make test",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "flow-group",
+      "line": 22,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 25,
+          "run": "make test",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "scale-set",
+      "line": 26,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 29,
+          "run": "make test",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "matrix",
+      "line": 30,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 36,
+          "run": "make test",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

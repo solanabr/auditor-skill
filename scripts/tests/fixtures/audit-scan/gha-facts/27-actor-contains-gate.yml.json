@@ -1,0 +1,36 @@
+{
+  "name": "f27-actor-contains-gate",
+  "triggers": [
+    "pull_request_target"
+  ],
+  "permissions": [
+    "contents: write",
+    "pull-requests: write"
+  ],
+  "jobs": [
+    {
+      "id": "automerge",
+      "line": 10,
+      "if": "contains(github.actor, 'dependabot')",
+      "permissions": [],
+      "steps": [
+        {
+          "line": 14,
+          "run": "gh pr merge --auto --squash \"$PR_URL\"",
+          "with": [],
+          "env": [
+            {
+              "key": "PR_URL",
+              "value": "${{ github.event.pull_request.html_url }}"
+            },
+            {
+              "key": "GH_TOKEN",
+              "value": "${{ secrets.GITHUB_TOKEN }}"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

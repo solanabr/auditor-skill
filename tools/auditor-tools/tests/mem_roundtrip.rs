@@ -1,11 +1,15 @@
 //! Round-trip test for the findings memory: dedup, regression, suppression.
 
+mod common;
+
 use auditor_tools::mem;
 
 const PROG: &str = "Prog1111111111111111111111111111111111111111";
 const SIG: &str = "checked_sub@vault.balance";
 const GUARDED: &[u8] =
     b"fn withdraw() {\n    require!(vault.balance >= amount);\n    vault.balance -= amount;\n}\n";
+/// The candidate GUARDED's guard makes a false positive: the subtraction on line 3.
+const SITE: &str = "src/withdraw.rs:3";
 
 fn put(conn: &rusqlite::Connection, verdict: &str) -> mem::PutOutcome {
     mem::put_finding(
@@ -92,12 +96,13 @@ fn dedup_regression_and_suppression() {
             scope: None,
             commit: Some("c0ffee1"),
             guard: Some(&g),
+            site: Some(SITE),
         },
     )
     .unwrap();
 
     let unchanged = |_: &str| -> Result<Vec<u8>, String> { Ok(GUARDED.to_vec()) };
-    let check = mem::check(&conn, PROG, SIG, Some("c0ffee1"), &unchanged).unwrap();
+    let check = mem::check(&conn, PROG, SIG, Some("c0ffee1"), Some(SITE), &unchanged).unwrap();
     assert!(check.suppressed, "FALSE_POSITIVE ruling suppresses");
     assert!(check.stale.is_none());
     let ruling = check.ruling.expect("the ruling");
@@ -110,6 +115,7 @@ fn dedup_regression_and_suppression() {
         PROG,
         "some_other_signature",
         Some("c0ffee1"),
+        Some(SITE),
         &unchanged,
     )
     .unwrap();
@@ -138,6 +144,7 @@ fn rule_at(conn: &rusqlite::Connection, commit: Option<&str>, g: &mem::Guard) {
             scope: None,
             commit,
             guard: Some(g),
+            site: Some(SITE),
         },
     )
     .unwrap();
@@ -149,7 +156,7 @@ fn a_ruling_goes_stale_when_its_commit_or_guard_changes() {
     rule_at(&conn, Some(C1), &guard(GUARDED, 2, 3));
     let stale = |commit: Option<&str>, text: &'static [u8]| {
         let read = move |_: &str| -> Result<Vec<u8>, String> { Ok(text.to_vec()) };
-        let r = mem::check(&conn, PROG, SIG, commit, &read).unwrap();
+        let r = mem::check(&conn, PROG, SIG, commit, Some(SITE), &read).unwrap();
         assert_eq!(r.suppressed, r.stale.is_none());
         r.stale
     };
@@ -187,11 +194,97 @@ fn a_ruling_goes_stale_when_its_commit_or_guard_changes() {
         Some(format!("ruled at commit {C1}, checked at {C2}; the guard at src/withdraw.rs:2-3 cannot be read: names line 3, and the file has 1 line(s)"))
     );
     let gone = |_: &str| -> Result<Vec<u8>, String> { Err("it does not exist".to_string()) };
-    let r = mem::check(&conn, PROG, SIG, Some(C1), &gone).unwrap();
+    let r = mem::check(&conn, PROG, SIG, Some(C1), Some(SITE), &gone).unwrap();
     assert!(!r.suppressed);
     assert_eq!(
         r.stale.as_deref(),
         Some("the guard at src/withdraw.rs:2-3 cannot be read: it does not exist")
+    );
+}
+
+#[test]
+fn a_ruling_suppresses_only_the_candidate_it_was_made_for() {
+    // withdraw's subtraction is guarded and ruled a false positive; liquidate's,
+    // three lines below and with the same signature, is not guarded. Only the
+    // site the ruling names is suppressed: a sibling, a check that names no site,
+    // and a ruling that names none are stale.
+    let text: &[u8] = b"fn withdraw() {\n    require!(v.balance >= amount);\n    v.balance -= amount;\n}\nfn liquidate() {\n    v.balance -= amount;\n}\n";
+    let read = move |_: &str| -> Result<Vec<u8>, String> { Ok(text.to_vec()) };
+    let conn = mem::open_in_memory().expect("open in-memory db");
+    let g = guard(text, 2, 2);
+    rule_at(&conn, Some(C1), &g);
+    let check = |site: Option<&str>| mem::check(&conn, PROG, SIG, Some(C1), site, &read).unwrap();
+    let r = check(Some(SITE));
+    assert!(r.suppressed && r.stale.is_none(), "{r:?}");
+    assert_eq!(r.ruling.and_then(|r| r.site).as_deref(), Some(SITE));
+    let r = check(Some("src/withdraw.rs:6"));
+    assert!(!r.suppressed);
+    assert_eq!(
+        r.stale.as_deref(),
+        Some("ruled for the site src/withdraw.rs:3, checked for src/withdraw.rs:6")
+    );
+    let r = check(None);
+    assert!(!r.suppressed);
+    assert_eq!(
+        r.stale.as_deref(),
+        Some("ruled for the site src/withdraw.rs:3, and no --site was given to compare")
+    );
+    let conn = mem::open_in_memory().expect("open in-memory db");
+    mem::add_ruling(
+        &conn,
+        &mem::NewRuling {
+            program_id: PROG,
+            signature: SIG,
+            ruling: "FALSE_POSITIVE",
+            rationale: "guarded",
+            by: "auditor",
+            scope: None,
+            commit: Some(C1),
+            guard: Some(&g),
+            site: None,
+        },
+    )
+    .unwrap();
+    let r = mem::check(&conn, PROG, SIG, Some(C1), Some(SITE), &read).unwrap();
+    assert!(!r.suppressed);
+    assert_eq!(r.stale.as_deref(), Some("ruled with no site"));
+}
+
+#[test]
+fn each_sibling_s_own_ruling_suppresses_it() {
+    // Both subtractions are guarded, and each has a ruling of its own: a check of
+    // either finds the one made for it, whichever was made last. A site neither
+    // names finds the newest ruling of the signature, stale.
+    let text: &[u8] = b"fn withdraw() {\n    require!(v.balance >= amount);\n    v.balance -= amount;\n}\nfn liquidate() {\n    require!(v.balance >= amount);\n    v.balance -= amount;\n}\n";
+    let read = move |_: &str| -> Result<Vec<u8>, String> { Ok(text.to_vec()) };
+    let conn = mem::open_in_memory().expect("open in-memory db");
+    for (site, line) in [("src/withdraw.rs:3", 2), ("src/withdraw.rs:7", 6)] {
+        mem::add_ruling(
+            &conn,
+            &mem::NewRuling {
+                program_id: PROG,
+                signature: SIG,
+                ruling: "FALSE_POSITIVE",
+                rationale: "guarded",
+                by: "auditor",
+                scope: None,
+                commit: Some(C1),
+                guard: Some(&guard(text, line, line)),
+                site: Some(site),
+            },
+        )
+        .unwrap();
+    }
+    for (site, id) in [("src/withdraw.rs:3", 1), ("src/withdraw.rs:7", 2)] {
+        let r = mem::check(&conn, PROG, SIG, Some(C1), Some(site), &read).unwrap();
+        assert!(r.suppressed && r.stale.is_none(), "{site}: {r:?}");
+        assert_eq!(r.ruling.map(|r| r.ruling_id), Some(id), "{site}");
+    }
+    let r = mem::check(&conn, PROG, SIG, Some(C1), Some("src/withdraw.rs:9"), &read).unwrap();
+    assert!(!r.suppressed);
+    assert_eq!(
+        r.stale.as_deref(),
+        Some("ruled for the site src/withdraw.rs:7, checked for src/withdraw.rs:9")
     );
 }
 
@@ -201,7 +294,7 @@ fn a_ruling_without_a_commit_never_holds() {
     let conn = mem::open_in_memory().expect("open in-memory db");
     rule_at(&conn, None, &guard(GUARDED, 2, 2));
     for commit in [None, Some(C1)] {
-        let r = mem::check(&conn, PROG, SIG, commit, &read).unwrap();
+        let r = mem::check(&conn, PROG, SIG, commit, Some(SITE), &read).unwrap();
         assert!(!r.suppressed);
         assert_eq!(r.stale.as_deref(), Some("ruled with no commit"));
     }
@@ -210,7 +303,7 @@ fn a_ruling_without_a_commit_never_holds() {
     rule_at(&conn, Some(C1), &guard(GUARDED, 2, 2));
     conn.execute("UPDATE fp_rulings SET anchor_commit = ''", [])
         .unwrap();
-    let r = mem::check(&conn, PROG, SIG, Some(C1), &read).unwrap();
+    let r = mem::check(&conn, PROG, SIG, Some(C1), Some(SITE), &read).unwrap();
     assert!(!r.suppressed);
     assert_eq!(r.stale, Some(format!("ruled at commit , checked at {C1}")));
 }
@@ -379,6 +472,7 @@ fn warm_and_regressions_hold_the_newest_rows_and_count_the_rest() {
                 scope: None,
                 commit: None,
                 guard: None,
+                site: None,
             },
         )
         .unwrap();
@@ -604,36 +698,27 @@ fn warm_and_regressions_read_a_long_history_in_time() {
     }
     tx.commit().unwrap();
 
-    // What one read of the whole history takes here: an answer may take a few,
-    // not one an item (200 items, 400,000 rows).
-    let one_read = (0..3)
-        .map(|_| {
-            let started = std::time::Instant::now();
-            let n: i64 = conn
-                .query_row(
-                    "SELECT count(*) FROM history WHERE program_id = ?1",
-                    [PROG],
-                    |r| r.get(0),
-                )
-                .unwrap();
-            assert_eq!(n, 400_000);
-            started.elapsed()
-        })
-        .min()
-        .unwrap();
-    let started = std::time::Instant::now();
-    let warm = mem::warm(&conn, PROG).unwrap();
-    let warm_took = started.elapsed();
-    let started = std::time::Instant::now();
-    let regs = mem::regressions(&conn, PROG).unwrap();
-    let regs_took = started.elapsed();
+    // What one read of the whole history takes: an answer may take a few, not
+    // one an item (200 items, 400,000 rows). The work is counted in the steps
+    // SQLite runs, not timed, so the host's load changes none of it.
+    let (n, one_read) = vm_steps(&conn, || {
+        conn.query_row(
+            "SELECT count(*) FROM history WHERE program_id = ?1",
+            [PROG],
+            |r| r.get::<_, i64>(0),
+        )
+        .unwrap()
+    });
+    assert_eq!(n, 400_000);
+    let (warm, warm_steps) = vm_steps(&conn, || mem::warm(&conn, PROG).unwrap());
+    let (regs, regs_steps) = vm_steps(&conn, || mem::regressions(&conn, PROG).unwrap());
     assert!(
-        warm_took < one_read * 25,
-        "warm took {warm_took:?}, one read of the history {one_read:?}"
+        warm_steps < one_read * 25,
+        "warm ran {warm_steps} steps, one read of the history {one_read}"
     );
     assert!(
-        regs_took < one_read * 25,
-        "regressions took {regs_took:?}, one read of the history {one_read:?}"
+        regs_steps < one_read * 25,
+        "regressions ran {regs_steps} steps, one read of the history {one_read}"
     );
 
     let counts: Vec<usize> = warm.invariants.iter().map(|i| i.changed.len()).collect();
@@ -643,4 +728,134 @@ fn warm_and_regressions_read_a_long_history_in_time() {
     let counts: Vec<usize> = regs.regressions.iter().map(|r| r.changed.len()).collect();
     assert_eq!(counts, [[10; 20].as_slice(), &[0; 80]].concat());
     assert_eq!(regs.truncated, 100 * 2_000 - 200);
+}
+
+/// What `f` gives, and how many steps SQLite's virtual machine runs on `conn`
+/// meanwhile, as a progress handler called at each step counts them: the work its
+/// queries do, the same on any host under any load.
+fn vm_steps<T>(conn: &rusqlite::Connection, f: impl FnOnce() -> T) -> (T, u64) {
+    use std::os::raw::{c_int, c_void};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    unsafe extern "C" fn count(steps: *mut c_void) -> c_int {
+        // SAFETY: `steps` is the counter below, alive while the handler is set.
+        unsafe { &*(steps as *const AtomicU64) }.fetch_add(1, Ordering::Relaxed);
+        0
+    }
+    let steps = AtomicU64::new(0);
+    // SAFETY: the handle is `conn`'s own, open for the whole call, and the handler
+    // is removed before `steps` goes out of scope.
+    unsafe {
+        rusqlite::ffi::sqlite3_progress_handler(
+            conn.handle(),
+            1,
+            Some(count),
+            &steps as *const AtomicU64 as *mut c_void,
+        );
+    }
+    let out = f();
+    // SAFETY: as above; no handler is set after this.
+    unsafe {
+        rusqlite::ffi::sqlite3_progress_handler(conn.handle(), 0, None, std::ptr::null_mut());
+    }
+    (out, steps.into_inner())
+}
+
+/// A store on disk, made as `audit-mem init` makes it, in a new directory.
+fn store_on_disk() -> (common::Wt, std::path::PathBuf) {
+    let wt = common::Wt::new();
+    let db = wt.path("audit.db");
+    std::fs::File::create(&db).expect("make the store's file");
+    let conn = mem::open_read_write(&db).expect("open the store");
+    mem::ensure_schema(&conn).expect("make the tables");
+    (wt, db)
+}
+
+#[test]
+fn a_writer_that_meets_another_waits_for_it() {
+    type Write = fn(&rusqlite::Connection) -> anyhow::Result<()>;
+    let (_wt, db) = store_on_disk();
+    let writes: [(&str, Write); 6] = [
+        ("ensure_schema", mem::ensure_schema),
+        ("put_finding", |c| put_finding_once(c).map(drop)),
+        ("set_status", |c| {
+            mem::set_status(c, PROG, SIG, "rc", "FIXED").map(drop)
+        }),
+        ("add_ruling", |c| {
+            mem::add_ruling(
+                c,
+                &mem::NewRuling {
+                    program_id: PROG,
+                    signature: SIG,
+                    ruling: "FALSE_POSITIVE",
+                    rationale: "guarded",
+                    by: "auditor",
+                    scope: None,
+                    commit: Some(C1),
+                    guard: None,
+                    site: None,
+                },
+            )
+            .map(drop)
+        }),
+        ("put_profile", |c| {
+            mem::put_profile(
+                c,
+                PROG,
+                &mem::ProfileFields {
+                    protocol_class: Some("vault"),
+                    ..Default::default()
+                },
+            )
+            .map(drop)
+        }),
+        ("put_invariant", |c| {
+            mem::put_invariant(c, PROG, "shares == supply", &Default::default()).map(drop)
+        }),
+    ];
+    // Another writer holds the store's write lock while they start.
+    let holder = rusqlite::Connection::open(&db).expect("open the store");
+    holder
+        .execute_batch("BEGIN IMMEDIATE")
+        .expect("take the write lock");
+    let writers: Vec<_> = writes
+        .into_iter()
+        .map(|(name, write)| {
+            let db = db.clone();
+            let writer =
+                std::thread::spawn(move || mem::open_read_write(&db).and_then(|c| write(&c)));
+            (name, writer)
+        })
+        .collect();
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    holder.execute_batch("COMMIT").expect("let the lock go");
+    for (name, writer) in writers {
+        let done = writer.join().expect("the writer's thread");
+        assert!(done.is_ok(), "{name}: {:?}", done.err());
+    }
+    let count = |table: &str| -> i64 {
+        holder
+            .query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))
+            .expect("count")
+    };
+    for table in ["findings", "fp_rulings", "protocol_profile", "invariants"] {
+        assert_eq!(count(table), 1, "{table}");
+    }
+}
+
+fn put_finding_once(conn: &rusqlite::Connection) -> anyhow::Result<mem::PutOutcome> {
+    mem::put_finding(
+        conn,
+        &mem::PutFinding {
+            program_id: PROG,
+            signature: SIG,
+            root_cause: "rc",
+            title: "t",
+            severity: 3,
+            commit: None,
+            audit_n: None,
+            file: None,
+            line: None,
+            verdict: None,
+        },
+    )
 }

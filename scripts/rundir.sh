@@ -46,11 +46,15 @@ WT=$CONFINE_WT
 refuse() { confine_refuse "$1"; }
 
 # tracked_run_dirs: the repository's entries named audit_* or incident_* at the top level, and the
-# paths under such directories, in any letter case; status 2 when git cannot tell.
+# paths under such directories, in any letter case; status 2 when git cannot tell. Outside every
+# repository (confine_no_repo) nothing is tracked.
 tracked_run_dirs() {
   local err
-  if ! err=$(CONFINE_CEILING='' hgit "$WT" rev-parse --is-inside-work-tree 2>&1 >/dev/null); then
-    case "$err" in *'not a git repository'*) return 0 ;; esac
+  if err=$(CONFINE_CEILING='' hgit "$WT" rev-parse --is-inside-work-tree 2>&1 >/dev/null); then
+    :
+  elif confine_no_repo "$?" "$err"; then
+    return 0
+  else
     return 2
   fi
   CONFINE_CEILING='' hgit "$WT" ls-files --stage -- ':(glob,icase)audit_*' ':(glob,icase)audit_*/**' \
@@ -62,6 +66,8 @@ cmd_new() { # cmd_new audit|incident
   [ $# -eq 1 ] || refuse "new takes one word: audit or incident"
   kind=$1
   case "$kind" in audit|incident) ;; *) refuse "new takes audit or incident, not $(confine_text "$kind")" ;; esac
+  # In this shell, so a file git would wait on is refused for what it is, and tracked_run_dirs finds it checked.
+  CONFINE_CEILING='' confine_git_files "$WT"
   listed=$(tracked_run_dirs) || refuse "git cannot tell whether the repository tracks a run directory"
   while IFS= read -r line; do
     [ -n "$line" ] || continue

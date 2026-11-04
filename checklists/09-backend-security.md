@@ -54,6 +54,7 @@ Every item below is a single verification step. Mark each `[PASS]`, `[FAIL-{seve
 - [ ] **BE-033**: Rate limit headers returned (`X-RateLimit-Remaining`, `Retry-After`)
 - [ ] **BE-034**: Rate limiting cannot be bypassed via proxy/spoofed headers (X-Forwarded-For)
 - [ ] **BE-035**: Rate limit store: in-memory works for single instance, Redis for multi-instance
+- [ ] **BE-133**: Every endpoint that triggers a metered upstream call — a paid RPC provider, a paid data/API provider, or an LLM/model API — sits behind authentication, the per-caller rate limit (BE-029..BE-035) and a request size/complexity bound BEFORE the paid call is made, so an unauthenticated or abusive caller cannot amplify cost; batch or multi-item requests are metered by item, not by request (PASS: the paid call is unreachable until the auth, rate and size gates pass; FAIL: a paid provider or model call reachable before those gates, or billed per request while accepting unbounded batches — trace each outbound call to a paid host or model endpoint back to its handler and confirm the gates precede it)
 
 ## 9.5 — Error Handling
 

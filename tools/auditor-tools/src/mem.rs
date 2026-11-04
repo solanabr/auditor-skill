@@ -10,15 +10,18 @@
 //! ([`open_read_write`]). Either way it must hold only the tables audit-mem makes,
 //! and SQLite runs in its defensive mode, with triggers and views off and
 //! `trusted_schema` off, so a crafted store cannot run anything through its
-//! schema.
+//! schema. Each writer writes in one transaction that takes the write lock before
+//! it reads, so writers that meet wait for each other.
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use rusqlite::config::DbConfig;
-use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
+use rusqlite::{
+    params, Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior,
+};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
@@ -135,14 +138,20 @@ const AUTO_INDEXES: [(&str, &str); 2] = [
 ];
 
 /// The columns that anchor a ruling, added to `fp_rulings` by `ensure_schema`
-/// when a store made before them is next written.
-const ANCHOR_COLUMNS: [(&str, &str); 5] = [
+/// when a store made before them is next written: its commit, its guard, and
+/// the site (the candidate's `file:line`) it rules on.
+const ANCHOR_COLUMNS: [(&str, &str); 6] = [
     ("anchor_commit", "TEXT"),
     ("guard_file", "TEXT"),
     ("guard_line", "INTEGER"),
     ("guard_end", "INTEGER"),
     ("guard_hash", "TEXT"),
+    ("site", "TEXT"),
 ];
+
+/// How many of `ANCHOR_COLUMNS`, in their order, a store of audit-mem's has
+/// held: none, the five a store held before rulings named their site, or all.
+const ANCHORED: [usize; 3] = [0, 5, 6];
 
 /// A store audit-mem refuses to use: not one it wrote, or one its schema check
 /// refuses. The CLI prints it as a refusal.
@@ -215,19 +224,28 @@ fn harden(conn: &Connection) -> Result<()> {
 /// The `sql` SQLite keeps for a table of audit-mem's: the text `ensure_schema`
 /// makes it with, and for `fp_rulings` that text with the anchor columns it adds
 /// as `ALTER TABLE … ADD COLUMN` (SQLite writes each one before the closing
-/// parenthesis), the form a store made since takes too. None for another table.
+/// parenthesis), as many as a store has held (`ANCHORED`), the form a store made
+/// since takes too. None for another table.
 fn table_sql(name: &str) -> Option<Vec<String>> {
     let (_, text) = SCHEMA.iter().find(|(table, _)| *table == name)?;
     let made = format!("CREATE TABLE {text}");
     if name != "fp_rulings" {
         return Some(vec![made]);
     }
+    let open = made.strip_suffix(')')?;
     let added: Vec<String> = ANCHOR_COLUMNS
         .iter()
         .map(|(column, kind)| format!("{column} {kind}"))
         .collect();
-    let anchored = format!("{}, {})", made.strip_suffix(')')?, added.join(", "));
-    Some(vec![made, anchored])
+    Some(
+        ANCHORED
+            .iter()
+            .map(|&n| match n {
+                0 => made.clone(),
+                n => format!("{open}, {})", added[..n].join(", ")),
+            })
+            .collect(),
+    )
 }
 
 /// Refuses a store holding anything but audit-mem's tables as `ensure_schema`
@@ -285,10 +303,13 @@ fn verify_schema(conn: &Connection) -> Result<Vec<String>> {
 
 /// Opens a store that exists for reading only: read-only, through no symbolic
 /// link, never made or written (`query_only`), hardened as `harden` does. It is
-/// opened as immutable (`file:<path>?mode=ro&immutable=1`), so SQLite takes no
-/// lock and opens no `-wal`, `-shm` or `-journal` file beside it. It must hold
-/// every table of audit-mem's and nothing else. `path` is relative, of the
-/// letters, digits and `._/-` that a store's path holds.
+/// opened with no lock (`file:<path>?mode=ro&nolock=1`): SQLite takes none and
+/// makes no file beside the store; it cannot read a WAL without one, so a store
+/// in WAL mode or with a `-wal` beside it is refused; and a `-journal` that a
+/// write left unfinished, one SQLite reads as hot (`unfinished_write`), is
+/// refused, since only a writer can roll it back. It must hold every table of
+/// audit-mem's and nothing else. `path` is relative, of the letters, digits and
+/// `._/-` that a store's path holds.
 pub fn open_read_only(path: &Path) -> Result<Connection> {
     let name = path
         .to_str()
@@ -299,7 +320,7 @@ pub fn open_read_only(path: &Path) -> Result<Connection> {
         })
         .ok_or_else(|| refusal("its path cannot be written as a SQLite URI".to_string()))?;
     let conn = Connection::open_with_flags(
-        format!("file:{name}?mode=ro&immutable=1"),
+        format!("file:{name}?mode=ro&nolock=1"),
         OpenFlags::SQLITE_OPEN_READ_ONLY
             | OpenFlags::SQLITE_OPEN_URI
             | OpenFlags::SQLITE_OPEN_NOFOLLOW
@@ -318,11 +339,30 @@ pub fn open_read_only(path: &Path) -> Result<Connection> {
     Ok(conn)
 }
 
+/// Whether `e` is SQLite's refusal to read a store beside a `-journal` it reads
+/// as hot (`SQLITE_READONLY_ROLLBACK`): one that a write left, unfinished, with no
+/// writer left holding the store, and that only a writer's open rolls back. A
+/// write that ends just as a reader looks can show the same for a moment (SQLite's
+/// own race, its ticket 3883), so a reader asks again before it gives up.
+pub fn unfinished_write(e: &anyhow::Error) -> bool {
+    e.chain().any(|cause| {
+        matches!(
+            cause.downcast_ref::<rusqlite::Error>(),
+            Some(rusqlite::Error::SqliteFailure(f, _))
+                if f.extended_code == rusqlite::ffi::SQLITE_READONLY_ROLLBACK
+        )
+    })
+}
+
+/// How long a writer waits for the store while another writer holds it.
+const BUSY: Duration = Duration::from_secs(5);
+
 /// Opens a store that exists for reading and writing, through no symbolic link
 /// and never making the file, hardened as `harden` does; it must hold nothing but
 /// audit-mem's tables. Each writer adds the tables and columns it lacks
-/// (`migrate`) in the transaction it writes in, so a writer that fails or refuses
-/// leaves the store as it was.
+/// (`migrate`) in the transaction it writes in (`write_transaction`), so a writer
+/// that fails or refuses leaves the store as it was, and one that meets another
+/// waits for it, up to `BUSY`.
 pub fn open_read_write(path: &Path) -> Result<Connection> {
     let conn = Connection::open_with_flags(
         path,
@@ -330,9 +370,22 @@ pub fn open_read_write(path: &Path) -> Result<Connection> {
             | OpenFlags::SQLITE_OPEN_NOFOLLOW
             | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
+    conn.busy_timeout(BUSY)?;
     harden(&conn)?;
     verify_schema(&conn)?;
     Ok(conn)
+}
+
+/// The transaction a writer writes in, begun with the write lock taken (BEGIN
+/// IMMEDIATE): a writer that meets another waits for it, up to the busy timeout.
+/// One begun deferred reads first and then asks for the write lock, which SQLite
+/// refuses at once ("database is locked") while another writer holds it, since it
+/// waits only for a connection that holds no lock yet.
+fn write_transaction(conn: &Connection) -> Result<Transaction<'_>> {
+    Ok(Transaction::new_unchecked(
+        conn,
+        TransactionBehavior::Immediate,
+    )?)
 }
 
 /// Open an in-memory database with the schema applied (used by tests).
@@ -357,7 +410,7 @@ fn ruling_columns(conn: &Connection) -> Result<Vec<String>> {
 /// anchor, and a new one is made the same way, so both read alike. Safe to call
 /// repeatedly; one transaction.
 pub fn ensure_schema(conn: &Connection) -> Result<()> {
-    let tx = conn.unchecked_transaction()?;
+    let tx = write_transaction(conn)?;
     migrate(&tx)?;
     tx.commit()?;
     Ok(())
@@ -416,7 +469,7 @@ pub fn put_finding(conn: &Connection, f: &PutFinding) -> Result<PutOutcome> {
     let commit = f.commit.unwrap_or("");
     let audit_n = f.audit_n.unwrap_or("");
 
-    let tx = conn.unchecked_transaction()?;
+    let tx = write_transaction(conn)?;
     migrate(&tx)?;
     let existing: Option<(String, Option<i64>, Option<String>)> = tx
         .query_row(
@@ -511,7 +564,7 @@ pub fn set_status(
     status: &str,
 ) -> Result<usize> {
     let id = finding_id(program_id, signature, root_cause);
-    let tx = conn.unchecked_transaction()?;
+    let tx = write_transaction(conn)?;
     migrate(&tx)?;
     let changed = tx.execute(
         "UPDATE findings SET status = ?2 WHERE finding_id = ?1",
@@ -578,17 +631,21 @@ pub struct NewRuling<'a> {
     pub commit: Option<&'a str>,
     /// The guard it cites, hashed as `guard_hash` hashes it.
     pub guard: Option<&'a Guard>,
+    /// The site it rules on, the candidate's `file:line`: a sibling with the same
+    /// signature elsewhere is another candidate, which the ruling does not cover.
+    pub site: Option<&'a str>,
 }
 
 /// Insert a false-positive / accepted-risk ruling with a timestamp and its
-/// anchor: the commit, and the guard's file, lines and hash. One transaction.
+/// anchor: the commit, the guard's file, lines and hash, and the site it rules
+/// on. One transaction.
 pub fn add_ruling(conn: &Connection, r: &NewRuling) -> Result<i64> {
-    let tx = conn.unchecked_transaction()?;
+    let tx = write_transaction(conn)?;
     migrate(&tx)?;
     tx.execute(
         "INSERT INTO fp_rulings (program_id, code_signature, ruling, rationale, ruled_by, ruled_at, scope, \
-         anchor_commit, guard_file, guard_line, guard_end, guard_hash) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+         anchor_commit, guard_file, guard_line, guard_end, guard_hash, site) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         params![
             r.program_id,
             r.signature,
@@ -602,6 +659,7 @@ pub fn add_ruling(conn: &Connection, r: &NewRuling) -> Result<i64> {
             r.guard.map(|g| g.first),
             r.guard.map(|g| g.last),
             r.guard.map(|g| g.hash.as_str()),
+            r.site,
         ],
     )?;
     let id = tx.last_insert_rowid();
@@ -610,8 +668,9 @@ pub fn add_ruling(conn: &Connection, r: &NewRuling) -> Result<i64> {
 }
 
 /// Result of a suppression [`check`]: suppressed only by a `FALSE_POSITIVE`
-/// ruling whose anchor still holds. A ruling whose anchor changed, or that has
-/// none, is `stale`, with the reasons, and suppresses nothing.
+/// ruling whose anchor still holds, for the site checked. A ruling whose anchor
+/// changed, that has none, or that was made for another site, is `stale`, with
+/// the reasons, and suppresses nothing.
 #[derive(Debug, Serialize)]
 pub struct CheckResult {
     pub suppressed: bool,
@@ -636,32 +695,34 @@ pub struct RulingRow {
     pub guard: Option<String>,
     /// The sha256 of the guard's lines when it was made.
     pub guard_hash: Option<String>,
+    /// The site it rules on, the candidate's `file:line`.
+    pub site: Option<String>,
     #[serde(skip)]
     anchor: Option<(String, i64, i64)>,
 }
 
-/// The rulings of `fp_rulings` matching `filter` (an SQL condition on
-/// `program_id = ?1`, and `code_signature = ?2` when `signature` is given),
-/// newest first. A store made before the anchor columns reads as rulings with no
-/// anchor.
+/// The rulings of `fp_rulings` matching `filter` (an SQL condition, with `args`
+/// bound to its `?1`, `?2`, …), newest first. A store made before the anchor
+/// columns reads as rulings with no anchor, and one made before rulings named
+/// their site as rulings with none.
 fn rulings(
     conn: &Connection,
     filter: &str,
-    program_id: &str,
-    signature: Option<&str>,
+    args: &[&dyn rusqlite::ToSql],
     limit: Option<u32>,
 ) -> Result<Vec<RulingRow>> {
-    let anchored = {
-        let have = ruling_columns(conn)?;
-        ANCHOR_COLUMNS
-            .iter()
-            .all(|(column, _)| have.iter().any(|c| c == column))
-    };
-    let anchor = if anchored {
-        "anchor_commit, guard_file, guard_line, guard_end, guard_hash"
-    } else {
-        "NULL, NULL, NULL, NULL, NULL"
-    };
+    let have = ruling_columns(conn)?;
+    let anchor = ANCHOR_COLUMNS
+        .iter()
+        .map(|(column, _)| {
+            if have.iter().any(|c| c == column) {
+                *column
+            } else {
+                "NULL"
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
     let sql = format!(
         "SELECT ruling_id, program_id, code_signature, ruling, rationale, ruled_by, ruled_at, scope, {anchor} \
          FROM fp_rulings WHERE {filter} ORDER BY ruling_id DESC{}",
@@ -688,24 +749,27 @@ fn rulings(
             commit: r.get(8)?,
             guard: anchor.as_ref().map(|(f, a, b)| guard_label(f, *a, *b)),
             guard_hash: r.get(12)?,
+            site: r.get(13)?,
             anchor,
         })
     };
-    let rows = match signature {
-        Some(sig) => stmt.query_map(params![program_id, sig], map)?,
-        None => stmt.query_map(params![program_id], map)?,
-    }
-    .collect::<std::result::Result<Vec<_>, _>>()?;
+    let rows = stmt
+        .query_map(args, map)?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(rows)
 }
 
-/// Why a ruling's anchor no longer holds, given the commit the check is made at
-/// and a reader of a guard file's current text; empty when it holds. A ruling
-/// with no guard has no anchor; one with no commit, or checked with none, or at
-/// another commit (the full ids compared, as the CLI takes them), is stale.
+/// Why a ruling's anchor no longer holds, given the commit the check is made at,
+/// the site it is made for and a reader of a guard file's current text; empty
+/// when it holds. A ruling with no guard has no anchor; one with no commit, or
+/// checked with none, or at another commit (the full ids compared, as the CLI
+/// takes them), is stale; so is one with no site, or checked with none, or for
+/// another site (a sibling with the same signature, which the ruling does not
+/// cover).
 pub fn staleness(
     r: &RulingRow,
     commit: Option<&str>,
+    site: Option<&str>,
     read: &dyn Fn(&str) -> std::result::Result<Vec<u8>, String>,
 ) -> Vec<String> {
     let (Some((file, first, last)), Some(hash)) = (&r.anchor, &r.guard_hash) else {
@@ -724,6 +788,19 @@ pub fn staleness(
         )),
         (None, _) => why.push("ruled with no commit".to_string()),
     }
+    match (r.site.as_deref(), site) {
+        (Some(was), Some(now)) if was == now => {}
+        (Some(was), Some(now)) => why.push(format!(
+            "ruled for the site {}, checked for {}",
+            shown(was.as_bytes()),
+            shown(now.as_bytes())
+        )),
+        (Some(was), None) => why.push(format!(
+            "ruled for the site {}, and no --site was given to compare",
+            shown(was.as_bytes())
+        )),
+        (None, _) => why.push("ruled with no site".to_string()),
+    }
     let label = shown(guard_label(file, *first, *last).as_bytes());
     let (Ok(first), Ok(last)) = (u32::try_from(*first), u32::try_from(*last)) else {
         why.push(format!("the guard at {label} is not a range of lines"));
@@ -739,26 +816,46 @@ pub fn staleness(
     why
 }
 
-/// Check whether a (program_id, signature) pair is suppressed: by its most
-/// recent `FALSE_POSITIVE` ruling, when that ruling's anchor holds at `commit`
-/// (`staleness`, with `read` reading the guard's file). A stale ruling is
-/// returned with the reasons, unsuppressed.
+/// Check whether a (program_id, signature) candidate at `site` is suppressed: by
+/// the most recent `FALSE_POSITIVE` ruling of that signature made for `site`, when
+/// that ruling's anchor holds at `commit` (`staleness`, with `read` reading the
+/// guard's file), so each sibling's own ruling suppresses it, whichever was made
+/// last. With none made for `site`, the most recent ruling of the signature is
+/// returned, stale (it names another site, or none). A stale ruling is returned
+/// with the reasons, unsuppressed.
 pub fn check(
     conn: &Connection,
     program_id: &str,
     signature: &str,
     commit: Option<&str>,
+    site: Option<&str>,
     read: &dyn Fn(&str) -> std::result::Result<Vec<u8>, String>,
 ) -> Result<CheckResult> {
-    let row = rulings(
-        conn,
-        "program_id = ?1 AND code_signature = ?2 AND ruling = 'FALSE_POSITIVE'",
-        program_id,
-        Some(signature),
-        Some(1),
-    )?
-    .into_iter()
-    .next();
+    const FALSE_POSITIVE: &str =
+        "program_id = ?1 AND code_signature = ?2 AND ruling = 'FALSE_POSITIVE'";
+    let mut row = None;
+    if let Some(at) = site {
+        if ruling_columns(conn)?.iter().any(|c| c == "site") {
+            row = rulings(
+                conn,
+                &format!("{FALSE_POSITIVE} AND site = ?3"),
+                params![program_id, signature, at],
+                Some(1),
+            )?
+            .into_iter()
+            .next();
+        }
+    }
+    if row.is_none() {
+        row = rulings(
+            conn,
+            FALSE_POSITIVE,
+            params![program_id, signature],
+            Some(1),
+        )?
+        .into_iter()
+        .next();
+    }
     let Some(row) = row else {
         return Ok(CheckResult {
             suppressed: false,
@@ -766,7 +863,7 @@ pub fn check(
             ruling: None,
         });
     };
-    let why = staleness(&row, commit, read);
+    let why = staleness(&row, commit, site, read);
     Ok(CheckResult {
         suppressed: why.is_empty(),
         stale: (!why.is_empty()).then(|| why.join("; ")),
@@ -1025,7 +1122,7 @@ pub fn put_profile(
     program_id: &str,
     f: &ProfileFields,
 ) -> Result<Vec<&'static str>> {
-    let tx = conn.unchecked_transaction()?;
+    let tx = write_transaction(conn)?;
     migrate(&tx)?;
     let old: Option<[String; 5]> = tx
         .query_row(
@@ -1113,7 +1210,7 @@ pub fn put_invariant(
     statement: &str,
     f: &InvariantFields,
 ) -> Result<(i64, bool, Vec<&'static str>)> {
-    let tx = conn.unchecked_transaction()?;
+    let tx = write_transaction(conn)?;
     migrate(&tx)?;
     let existing: Option<(i64, [String; 4])> = tx
         .query_row(
@@ -1253,7 +1350,7 @@ pub fn warm(conn: &Connection, program_id: &str) -> Result<WarmContext> {
         params![program_id],
         |r| r.get(0),
     )?;
-    let open_fp_rulings = rulings(conn, "program_id = ?1", program_id, None, Some(ROWS))?;
+    let open_fp_rulings = rulings(conn, "program_id = ?1", params![program_id], Some(ROWS))?;
     truncated += left(total, open_fp_rulings.len());
 
     Ok(WarmContext {

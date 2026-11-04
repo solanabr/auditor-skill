@@ -32,7 +32,12 @@
 #                   into <R>/deps/fetch-artifact-<n>/files/ next to the artifact itself (checklist 11 §11.11).
 #                   Only regular files and directories are unpacked, with modes 0600 and 0700; every other
 #                   entry, and every name that is absolute, has a .. component or a control character, is
-#                   left out and listed, as an SC-060 hit. At most 50000 entries and 512 MiB unpacked.
+#                   left out and listed, as an SC-060 hit. At most 50000 entries and 512 MiB unpacked; a
+#                   tar with more than 4 MiB of pax and GNU long-name headers, more than 8 of them in a
+#                   row, more than 128 bytes of global pax headers, a sparse file or a size below zero,
+#                   compressed with anything but gzip, bzip2 or xz (zstd), or in an xz stream whose
+#                   decompressor would need more than 128 MiB, and a zip whose central directory takes
+#                   more than 16 MiB or with an entry compressed with anything but deflate, are refused.
 #
 # Manifests. Each --manifest is a confined regular file of at most 50 MB under the working directory, named
 # as its action takes it: Cargo.lock, Cargo.toml, package.json, package-lock.json or npm-shrinkwrap.json,
@@ -45,7 +50,9 @@
 # run on the rebuilt workspace, never on the copy, so no [patch], [replace] or other table of the copy
 # reaches the resolving cargo, whatever its spelling, and the reported tree is the un-patched one. A
 # dependency from git or from a registry other than crates.io, and a path dependency on a non-member, stop
-# the run (cargo would fetch from a host the manifest chose); cargo is told to fetch git sources with the git
+# the run (cargo would fetch from a host the manifest chose); so does a workspace member outside the
+# workspace root's directory (cargo takes one that names the root with package.workspace), since the rebuild
+# keeps every file it writes under its scratch directory; cargo is told to fetch git sources with the git
 # CLI, and the git on its PATH refuses every fetch. A plainly spelled [patch.<registry>] or [replace] table
 # runs, with a note on stderr and in the output naming the crates it patches (the reported tree leaves them
 # unpatched). As a second line, a manifest spelled as no Cargo.toml needs stops the run: a [patch] or
@@ -55,7 +62,9 @@
 # [[patch.unused]] entries do not stop the run: cargo resolves the rebuilt workspace from crates.io and
 # fetches none of them. The first Cargo.toml is the one cargo runs on. npm-audit runs npm with its own .npmrc in the
 # copy (registry https://registry.npmjs.org/, ignore-scripts, no fund or update notices), empty user and
-# global config files, and its cache and logs in the scratch directory: no auth reaches it.
+# global config files, and its cache and logs in the scratch directory: no auth reaches it. Where npm is
+# Corepack's shim, COREPACK_ENABLE_PROJECT_SPEC=0 keeps the copied package.json's packageManager field from
+# choosing which npm release runs.
 #
 # Names. npm: [@<scope>/]<name>, of letters, digits and -._~, not starting with . or _, at most 214
 # bytes; crates: a letter, then letters, digits, - and _, at most 64; PyPI: letters, digits and -._,
@@ -253,7 +262,7 @@ CAP=${AUDITOR_RUN_TIMEOUT:-1800}
   refuse "AUDITOR_RUN_TIMEOUT is '$(confine_text "$CAP")', not a whole number of seconds from 1 to 86400"
 LIMIT=$((10#$CAP))
 iso_tmp_outside
-iso_disclosures_ok "$R" || refuse "$R/disclosures.tsv is not a regular file with one link whose first line is the header, so no row can be added to it"
+confine_disclosures_ok "$R" || refuse "$R/disclosures.tsv is not a regular file with one link whose first line is the header, so no row can be added to it"
 
 # ---- the tools -----------------------------------------------------------------------------------------
 need() { command -v "$1" >/dev/null 2>&1 || blocker "$1 is not on PATH, so $ACTION cannot run here — nothing was copied or sent."; }
@@ -357,7 +366,7 @@ stopped() { # stopped: a reason when the last step did not just exit with a stat
   esac
 }
 disclose() { # disclose <service> <kind> <value>...: the row before the first request to <service>
-  iso_disclose "$R" "$TOOL" "$@" || blocker "cannot add a row to $R/disclosures.tsv, so nothing was sent"
+  confine_disclose "$R" "$TOOL" "$@" || blocker "cannot add a row to $R/disclosures.tsv, so nothing was sent"
 }
 # get <url> <file> [json]: one https GET into <file> (no redirects, at most 100 MiB); sets HTTP, the status
 # code. A transfer that does not finish is a blocker.
@@ -414,8 +423,9 @@ copy_manifests() {
 # dependencies cargo metadata lists come from crates.io or are paths inside <top> (exit 3 with the first that
 # is not). "rebuild <metadata> <top> <dest>": write under <dest> a workspace of only the package names,
 # versions, editions, features and dependency entries cargo metadata reports (a path dependency on a
-# non-member is refused), so no [patch], [replace] or other table of the copy reaches the resolving cargo,
-# whatever its spelling; prints the rebuilt root manifest path.
+# non-member, and a member outside the workspace root's directory, are refused, so nothing is written
+# outside <dest>), so no [patch], [replace] or other table of the copy reaches the resolving cargo, whatever
+# its spelling; prints the rebuilt root manifest path.
 CARGO_PY='import json, os, re, sys
 
 SECTION = re.compile(r"^\s*\[\[?\s*([A-Za-z0-9_.\-]+)\s*\]\]?\s*(#.*)?$")
@@ -433,6 +443,7 @@ PLAIN_PATCH = re.compile(r"\s*\[\s*patch\s*\.\s*(" + SEG + r")\s*(?:\.\s*(" + SE
 PLAIN_REPLACE = re.compile(r"\s*\[\s*replace\s*(?:\.\s*(" + SEG + r")\s*)?\]\s*(?:#.*)?")
 ENTRY_KEY = re.compile(r"^\s*(" + SEG + r")\s*[.=]")
 NAMES_SHOWN = 20
+NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 
 
 def fail(text):
@@ -446,6 +457,17 @@ def shown(text):
 
 def relative(rel):
     return bool(rel) and not rel.startswith("/") and ".." not in rel.split("/")
+
+
+def inside(path, top):
+    return path == top or path.startswith(top.rstrip(os.sep) + os.sep)
+
+
+def create(path, text):
+    # A new file, never one that exists or a symbolic link, written through the descriptor its creation opened.
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)
 
 
 def read_lines(path, rel):
@@ -472,7 +494,7 @@ def spec_name(spec):
         spec = spec.rsplit("#", 1)[1]
     elif "/" in spec:
         return None
-    return re.split(r"[:@]", spec, 1)[0]
+    return re.split(r"[:@]", spec, maxsplit=1)[0]
 
 
 def backstop(crate_spec, top, manifests):
@@ -652,22 +674,36 @@ def member_dir(p):
 
 
 def rebuild(meta, top, dest):
+    # Every write lands under dest by construction: the workspace root lies among the copies, each member lies
+    # under the root (cargo also takes a member elsewhere that names the root with package.workspace; the
+    # rebuild refuses one), each directory is checked inside dest before and after it is made, and each file
+    # is a new one.
     data = json.load(open(meta, encoding="utf-8"))
+    top, dest = os.path.realpath(top), os.path.realpath(dest)
     root = os.path.realpath(data["workspace_root"])
+    if not inside(root, top):
+        fail("cargo metadata names a workspace root outside the copied manifests")
     ids = set(data.get("workspace_members") or [])
     pkgs = [p for p in data.get("packages", []) if p.get("id") in ids]
     if not pkgs:
         fail("cargo metadata lists no workspace member to rebuild")
     members = {}
     for p in pkgs:
-        members[member_dir(p)] = os.path.relpath(member_dir(p), root)
+        d = member_dir(p)
+        if not inside(d, root):
+            fail("the workspace member %s lies outside the workspace root, %s; deps.sh rebuilds only members under the root" % (shown(os.path.relpath(d, top)), shown(os.path.relpath(root, top))))
+        members[d] = os.path.relpath(d, root)
     rels = sorted(members.values())
     have_root_pkg = False
     for p in pkgs:
         rel = members[member_dir(p)]
-        d = os.path.join(dest, rel)
+        d = os.path.normpath(os.path.join(dest, rel))
+        if not inside(d, dest):
+            fail("the rebuilt manifest of %s would land outside the scratch directory" % shown(rel))
         os.makedirs(d, exist_ok=True)
-        os.close(os.open(os.path.join(d, "lib.rs"), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+        if not inside(os.path.realpath(d), dest):
+            fail("the rebuilt manifest of %s would land outside the scratch directory" % shown(rel))
+        create(os.path.join(d, "lib.rs"), "")
         head = []
         if rel == ".":
             have_root_pkg = True
@@ -686,11 +722,9 @@ def rebuild(meta, top, dest):
             for name in sorted(feats):
                 lines.append("%s = [%s]" % (toml_key(name), ", ".join(q(x) for x in feats[name])))
             lines.append("")
-        with open(os.path.join(d, "Cargo.toml"), "w", encoding="utf-8") as f:
-            f.write("\n".join(lines) + "\n")
+        create(os.path.join(d, "Cargo.toml"), "\n".join(lines) + "\n")
     if not have_root_pkg:
-        with open(os.path.join(dest, "Cargo.toml"), "w", encoding="utf-8") as f:
-            f.write("[workspace]\nmembers = [%s]\nresolver = %s\n" % (", ".join(q(r) for r in rels), q("2")))
+        create(os.path.join(dest, "Cargo.toml"), "[workspace]\nmembers = [%s]\nresolver = %s\n" % (", ".join(q(r) for r in rels), q("2")))
     print(os.path.join(dest, "Cargo.toml"))
 
 
@@ -720,9 +754,21 @@ cargo_py() { (cd / && exec python3 -I -c "$CARGO_PY" "$@"); }
 # <file name> <algo> <digest> <dir>": verify, then unpack the regular files and directories into <dir>, as
 # a zip for a .whl or .zip name and as a tar otherwise (exit 3 with the reason); prints what it did and
 # what it left out.
-REGISTRY_PY='import base64, hashlib, json, os, re, stat, sys, tarfile, zipfile
+REGISTRY_PY='import base64, hashlib, io, json, os, re, stat, sys, tarfile, zipfile
+
+try:
+    import lzma
+except ImportError:
+    lzma = None
 
 FILES, BYTES = 50000, 512 * 1024 * 1024
+# What a tar may hold in pax and GNU long-name headers in all, and in global pax headers; what a zip
+# central directory may take.
+EXTENDED, GLOBAL, CENTRAL = 4 * 1024 * 1024, 128, 16 * 1024 * 1024
+# How many pax, GNU long-name and global headers may come in a row, before the member they describe (an
+# archive needs two or three), and what the decompressor of an xz stream may take (every xz preset needs at
+# most 65 MiB).
+CHAIN, XZ_MEMORY = 8, 128 * 1024 * 1024
 NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 
 
@@ -801,34 +847,214 @@ def verify(archive, algo, expected):
     return got
 
 
+def zip_kind(info):
+    mode = (info.external_attr >> 16) & 0o170000
+    if info.filename.endswith("/"):
+        return "dir"
+    if mode in (0, stat.S_IFREG):
+        return "file"
+    return "symbolic link" if mode == stat.S_IFLNK else "special file"
+
+
+def tar_kind(m):
+    return "file" if m.isfile() else "dir" if m.isdir() else "symbolic link" if m.issym() else \
+        "hard link" if m.islnk() else "special file"
+
+
+class Capped(tarfile.TarInfo):
+    # tarfile reads each header of the tar through this class, which checks it before tarfile reads what it
+    # announces, so what tarfile keeps for the members already read stays bounded while the caps count them:
+    # no size below zero, at most EXTENDED bytes of pax and GNU long-name headers in all and CHAIN of them in a
+    # row (an empty one adds no bytes, and each still costs a parse), at most GLOBAL bytes of global pax
+    # headers (tarfile gives every later member its own copy of their keys, and of some of their values), and
+    # no sparse file, whose map tarfile reads from the data that follows with no bound (in the methods below
+    # that refuse one). The size field of every other header counts toward BYTES as well: tarfile reads through
+    # the data that field gives before it applies a global pax size, which can report the entry as smaller.
+    HOOKS = ("_proc_member", "_proc_sparse", "_proc_gnusparse_00", "_proc_gnusparse_01", "_proc_gnusparse_10")
+    EXTENSIONS = (tarfile.GNUTYPE_LONGNAME, tarfile.GNUTYPE_LONGLINK, tarfile.XHDTYPE, tarfile.XGLTYPE,
+                  tarfile.SOLARIS_XHDTYPE)
+
+    def _proc_member(self, tf):
+        if self.size < 0:
+            fail("the artifact gives an entry a size below zero")
+        if self.type in self.EXTENSIONS:
+            tf.chain = getattr(tf, "chain", 0) + 1
+            if tf.chain > CHAIN:
+                fail("the artifact holds more than %d pax and GNU long-name headers in a row" % CHAIN)
+            tf.extended_bytes = getattr(tf, "extended_bytes", 0) + self.size
+            if tf.extended_bytes > EXTENDED:
+                fail("the pax and GNU long-name headers of the artifact hold more than 4 MiB")
+        else:
+            tf.chain = 0
+            tf.data_bytes = getattr(tf, "data_bytes", 0) + self.size
+            if tf.data_bytes > BYTES:
+                fail("the artifact unpacks to more than 512 MiB")
+        if self.type == tarfile.XGLTYPE:
+            tf.global_bytes = getattr(tf, "global_bytes", 0) + self.size
+            if tf.global_bytes > GLOBAL:
+                fail("the global pax headers of the artifact hold more than 128 bytes")
+        return super()._proc_member(tf)
+
+    def _proc_sparse(self, *args):
+        fail("the artifact holds a sparse file")
+
+    _proc_gnusparse_00 = _proc_gnusparse_01 = _proc_gnusparse_10 = _proc_sparse
+
+
+def bound_memory():
+    # A backstop for what the caps do not count: at most 2 GiB of address space, where the system enforces
+    # the limit (Linux; macOS refuses to set it).
+    try:
+        import resource
+        soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+        want = 2 << 30
+        if hard != resource.RLIM_INFINITY and hard < want:
+            want = hard
+        if soft == resource.RLIM_INFINITY or soft > want:
+            resource.setrlimit(resource.RLIMIT_AS, (want, hard))
+    except (ImportError, AttributeError, ValueError, OSError):
+        pass
+
+
+class Unxz(io.RawIOBase):
+    # An xz stream, read for tarfile as gzip.GzipFile reads a gzip one: forward through the stream, and from its
+    # start again for a seek back. Its decompressor may take XZ_MEMORY, and each call hands back at most what
+    # the read asks for. Another stream may follow, after zero padding, as in files xz concatenates.
+    def __init__(self, path):
+        super().__init__()
+        self.src = open(path, "rb")
+        self.restart()
+
+    def restart(self):
+        self.src.seek(0)
+        self.dec = lzma.LZMADecompressor(format=lzma.FORMAT_XZ, memlimit=XZ_MEMORY)
+        self.pos = 0
+
+    def close(self):
+        if not self.closed:
+            self.src.close()
+        super().close()
+
+    def readable(self):
+        return True
+
+    def seekable(self):
+        return True
+
+    def tell(self):
+        return self.pos
+
+    def readinto(self, buf):
+        if not len(buf):
+            return 0
+        data = b""
+        try:
+            while not data:
+                if self.dec.eof:
+                    rest = self.dec.unused_data.lstrip(b"\0")
+                    while not rest:
+                        more = self.src.read(1 << 16)
+                        if not more:
+                            return 0
+                        rest = more.lstrip(b"\0")
+                    self.dec = lzma.LZMADecompressor(format=lzma.FORMAT_XZ, memlimit=XZ_MEMORY)
+                elif self.dec.needs_input:
+                    rest = self.src.read(1 << 16)
+                    if not rest:
+                        fail("the xz stream of the artifact is cut short")
+                else:
+                    rest = b""
+                data = self.dec.decompress(rest, max_length=len(buf))
+        except lzma.LZMAError as why:
+            if "Memory usage limit" in str(why):
+                fail("the xz stream of the artifact needs more than %d MiB to decompress" % (XZ_MEMORY >> 20))
+            fail("the xz stream of the artifact cannot be read: %s" % why)
+        buf[:len(data)] = data
+        self.pos += len(data)
+        return len(data)
+
+    def seek(self, offset, whence=io.SEEK_SET):
+        if whence == io.SEEK_CUR:
+            offset += self.pos
+        elif whence != io.SEEK_SET:
+            raise io.UnsupportedOperation("an xz stream is read from its start")
+        if offset < self.pos:
+            self.restart()
+        skip = memoryview(bytearray(1 << 20))
+        while self.pos < offset and self.readinto(skip[:min(offset - self.pos, len(skip))]):
+            pass
+        return self.pos
+
+
+class Counted(zipfile.ZipInfo):
+    # What zipfile builds for each record of a central directory as it reads them: past FILES the read stops,
+    # before the rest are built.
+    __slots__ = ()
+    made = 0
+
+    def __init__(self, *args, **kwargs):
+        Counted.made += 1
+        if Counted.made > FILES:
+            fail("the artifact holds more than %d entries" % FILES)
+        super().__init__(*args, **kwargs)
+
+
 def unpack(archive, filename, algo, expected, dest):
     got = verify(archive, algo, expected)
     weak = "" if algo != "sha1" else " (weak: the npm registry offered no sha512 integrity for this version, only a sha1 shasum; sha1 is collision-weak, so this is not a strong content check)"
     print("digest: %s %s, as the registry gives it%s" % (algo, got, weak))
-    entries, skipped = [], []
+    bound_memory()
+    entries, skipped, declared = [], [], 0
+    # The caps hold while the archive is read: the headers of a tar are read one at a time, through Capped, and
+    # the read stops at the first entry past FILES, or the first that takes the declared sizes past BYTES (of
+    # every entry: tarfile reads through the data of one it does not know as well), so the list never grows
+    # past the cap; a zip central directory, which zipfile reads whole, is measured first, and zipfile stops at
+    # its record FILES + 1, through Counted. Nothing is unpacked until the whole list is within the caps. Only
+    # decompressors whose memory has a fixed bound run: gzip and bzip2 for a tar, and xz with its decompressor
+    # held to XZ_MEMORY (an xz stream chooses the window its decompressor keeps; a zstd one is not read),
+    # deflate for a zip (zipfile hands bzip2 and LZMA a whole read of compressed bytes, with no bound on what
+    # comes out).
     if filename.endswith((".whl", ".zip")):
-        z = zipfile.ZipFile(archive)
-        for info in z.infolist():
-            mode = (info.external_attr >> 16) & 0o170000
-            if info.filename.endswith("/"):
-                kind = "dir"
-            elif mode in (0, stat.S_IFREG):
-                kind = "file"
-            else:
-                kind = "symbolic link" if mode == stat.S_IFLNK else "special file"
-            entries.append((info.filename, kind, info.file_size, info))
+        with open(archive, "rb") as f:
+            end = zipfile._EndRecData(f)
+        if end and end[zipfile._ECD_SIZE] > CENTRAL:
+            fail("the central directory of the artifact takes more than 16 MiB")
+        real, zipfile.ZipInfo = zipfile.ZipInfo, Counted
+        try:
+            z = zipfile.ZipFile(archive)
+        finally:
+            zipfile.ZipInfo = real
+        if len(z.filelist) > FILES:
+            fail("the artifact holds more than %d entries" % FILES)
+        if any(i.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED) for i in z.filelist):
+            fail("an entry of the artifact is compressed with a method other than deflate, which deps.sh does not unpack")
+        listing = ((i.filename, zip_kind(i), i.file_size, i) for i in z.infolist())
         opener = lambda e: z.open(e[3])
     else:
-        t = tarfile.open(archive, "r:*")
-        for m in t.getmembers():
-            kind = "file" if m.isfile() else "dir" if m.isdir() else "symbolic link" if m.issym() else \
-                "hard link" if m.islnk() else "special file"
-            entries.append((m.name, kind, m.size if m.isfile() else 0, m))
+        if not all(hasattr(tarfile.TarInfo, h) for h in Capped.HOOKS):
+            fail("the tarfile module of this python3 lacks a method deps.sh replaces to bound what it reads")
+        with open(archive, "rb") as f:
+            head = f.read(262)
+        if head.startswith(b"\x28\xb5\x2f\xfd"):
+            fail("the artifact is compressed with zstd, which deps.sh does not unpack (a tar is read plain, or through gzip, bzip2 or xz)")
+        if head.startswith(b"\xfd7zXZ\x00"):
+            if lzma is None:
+                fail("the artifact is compressed with xz, and this python3 has no lzma module to read it")
+            t = tarfile.open(fileobj=io.BufferedReader(Unxz(archive)), mode="r:", tarinfo=Capped)
+        else:
+            mode = "r:" if head[257:] == b"ustar" else "r:gz" if head[:2] == b"\x1f\x8b" else "r:bz2" if head[:3] == b"BZh" else "r:"
+            t = tarfile.open(archive, mode, tarinfo=Capped)
+        listing = ((m.name, tar_kind(m), m.size, m) for m in t)
         opener = lambda e: t.extractfile(e[3])
-    if len(entries) > FILES:
-        fail("the artifact holds %d entries, more than %d" % (len(entries), FILES))
-    if sum(e[2] for e in entries if e[1] == "file") > BYTES:
-        fail("the artifact unpacks to more than 512 MiB")
+    for name, kind, declared_size, ref in listing:
+        if len(entries) == FILES:
+            fail("the artifact holds more than %d entries" % FILES)
+        if declared_size < 0:
+            fail("the artifact gives an entry a size below zero")
+        declared += declared_size
+        if declared > BYTES:
+            fail("the artifact unpacks to more than 512 MiB")
+        entries.append((name, kind, declared_size if kind == "file" else 0, ref))
     files = dirs = size = 0
     for e in entries:
         name, kind = e[0], e[1]
@@ -892,7 +1118,7 @@ try:
 except SystemExit:
     raise
 except BaseException as why:
-    fail("cannot read the answer or the artifact: %s" % why)
+    fail("cannot read the answer or the artifact: %s" % (str(why) or type(why).__name__))
 '
 registry_py() { (cd / && exec python3 -I -c "$REGISTRY_PY" "$@"); }
 # registry_watched <out> <argument>...: registry_py under the watchdog, for the steps that read an artifact
@@ -983,7 +1209,7 @@ case "$ACTION" in
     disclose npmjs.org "every package name and version in this lockfile (npm audit's bulk advisory request)" "$LOCK"
     step "$W" ${NET[@]+"${NET[@]}"} npm_config_userconfig="$S/npm/userconfig" npm_config_globalconfig="$S/npm/globalconfig" \
       npm_config_registry=https://registry.npmjs.org/ npm_config_cache="$S/npm/cache" npm_config_logs_dir="$S/npm/logs" \
-      npm_config_update_notifier=false npm_config_fund=false npm_config_ignore_scripts=true npm audit
+      npm_config_update_notifier=false npm_config_fund=false npm_config_ignore_scripts=true COREPACK_ENABLE_PROJECT_SPEC=0 npm audit
     why=$(stopped)
     [ -z "$why" ] || done_with 3 "npm audit stopped: $why"
     [ "$STEP_END" != "exit 0" ] || done_with 0 "no vulnerability found (exit 0)"

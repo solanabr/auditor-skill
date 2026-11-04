@@ -1,0 +1,49 @@
+{
+  "name": "f37-docker-gha-cache",
+  "triggers": [
+    "push"
+  ],
+  "permissions": [
+    "contents: read",
+    "packages: write"
+  ],
+  "jobs": [
+    {
+      "id": "image",
+      "line": 10,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 13,
+          "uses": "docker/setup-buildx-action@v3",
+          "with": [],
+          "env": []
+        },
+        {
+          "line": 14,
+          "uses": "docker/build-push-action@v6",
+          "with": [
+            {
+              "key": "push",
+              "value": "true"
+            },
+            {
+              "key": "tags",
+              "value": "ghcr.io/example/indexer:latest"
+            },
+            {
+              "key": "cache-from",
+              "value": "type=gha"
+            },
+            {
+              "key": "cache-to",
+              "value": "type=gha,mode=max"
+            }
+          ],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

@@ -10,37 +10,106 @@
 #     listed, id_rsa, id_dsa, id_ecdsa, id_ed25519, id_ecdsa_sk, id_ed25519_sk and identity;
 #   ~/.config/solana: every entry (cli/config.yml can hold an RPC URL with a key), and the keypair the
 #     keypair_path line of cli/config.yml names, wherever it is;
-#   ~/.aws/credentials, and the files in ~/.aws/sso/cache/ and ~/.aws/cli/cache/;
+#   ~/.aws/credentials, and the files in ~/.aws/sso/cache/ and ~/.aws/cli/cache/; ~/.aws/config when it
+#     sets credential_process, aws_secret_access_key or aws_session_token;
 #   ~/.config/gcloud/credentials.db, access_tokens.db and application_default_credentials.json, and the
 #     files in ~/.config/gcloud/legacy_credentials/;
 #   ~/.azure/accessTokens.json, msal_token_cache.json, msal_token_cache.bin, service_principal_entries.json
 #     and service_principal_entries.bin;
-#   ~/.kube/config and ~/.docker/config.json;
+#   ~/.vault-token and ~/.terraform.d/credentials.tfrc.json; ~/.terraformrc when it holds a credentials block
+#     or names a credentials_helper;
+#   ~/.kube/config and ~/.docker/config.json; the Docker TLS client keys ~/.docker/key.pem and
+#     ~/.docker/contexts/tls/*/*/key.pem, which open a daemon that checks its clients;
 #   ~/.npmrc, ~/.yarnrc.yml, ~/.gem/credentials, ~/.pypirc, ~/.cargo/credentials and
 #     ~/.cargo/credentials.toml;
-#   ~/.git-credentials, ~/.config/git/credentials, ~/.netrc and ~/.config/gh/hosts.yml;
+#   ~/.git-credentials, ~/.config/git/credentials, ~/.netrc, ~/.config/gh/hosts.yml and ~/.gitcookies;
+#   ~/.gitconfig and ~/.config/git/config, with the files they include (include.path and
+#     includeIf.<condition>.path, whatever the condition), when one names a credential helper
+#     (credential.helper), an askpass program (core.askPass) or a cookie file (http.cookieFile), sends an HTTP
+#     header (http.extraHeader), rewrites to an http(s) URL that carries a login (url.<base>), or goes through
+#     a proxy with a login (http.proxy, remote.<name>.proxy): through each, git gives a login to any code here
+#     that runs it. Dev Containers and Codespaces forward the host's git login through such a helper. git's
+#     own store and cache helpers count by what they hand out: with no --file or --socket, through their
+#     default file and socket, which count on their own; with one, when that file is readable or that socket
+#     accepts a connection, the file or the socket counting. Written with shell syntax (quotes, an escape, a
+#     variable, a glob) or with a relative path, either counts as any other helper does;
 #   the files in ~/.gnupg/private-keys-v1.d/, and the gpg-agent sockets ~/.gnupg/S.gpg-agent,
 #     S.gpg-agent.ssh, S.gpg-agent.extra and S.gpg-agent.browser;
-#   ~/.claude/.credentials.json;
+#   Claude Code's login: .credentials.json in ~/.claude and in every other ~/.claude* directory (where
+#     CLAUDE_CONFIG_DIR keeps a second account), and every file under ~/.config/anthropic (Anthropic
+#     profiles and their tokens, which Claude Code also signs in with);
+#   Claude Code's settings and state when one holds a credential: settings.json, settings.local.json,
+#     remote-settings.json, .claude.json and backups/.claude.json* in each ~/.claude* directory, and
+#     ~/.claude.json and its backups (the state file, which keeps the personal MCP servers). One counts when it
+#     names a command that prints a credential (apiKeyHelper, awsCredentialExport, otelHeadersHelper, an MCP
+#     server's headersHelper); when an env block in it, its own or an MCP server's, gives a value to a variable
+#     whose name looks like a credential (as below; an RPC_URL counts only by what its URL carries), a value
+#     with a URL that carries one, or, to a name that ends in HEADERS, a list of headers (Name: value lines,
+#     Name=value pairs or a JSON object) that sends a credential header, or for OTEL_EXPORTER_OTLP_HEADERS and
+#     its per-signal forms, which authenticate the exporter, any header; when a headers block sends a
+#     credential header with a value; or when a URL (an MCP server's or a hook's) or an MCP server's arguments
+#     carry one. A credential header is Authorization, any *-Authorization, Cookie, or a name a key goes by: one
+#     that looks like a credential, or whose last part is KEY or AUTH, but for a key that is no secret: a public
+#     key, a table's partition, sort, range, hash or primary key, and a message's routing key (x-api-key,
+#     Ocp-Apim-Subscription-Key, Helicone-Auth; not --public-key, --partition-key, --hash-key or --routing-key).
+#     A URL carries one in its login (any user name in an http, ws or socks URL, a user and a password in
+#     another), in a query parameter named as a key goes by or sig or signature, or, when its host is not one
+#     whose paths hold names, commits and ids (github.com, githubusercontent.com, gitlab.com, bitbucket.org,
+#     codeberg.org, huggingface.co, git.sr.ht, gateway.ai.cloudflare.com and their subdomains) and its path has
+#     no segment - (where a GitLab project's own paths start: /<group>/<project>/-/raw/<commit>/<file>), in a
+#     path segment that can be a key: 20 or more letters, digits, - and _, with a run of seven or more letters
+#     and digits holding both, a UUID aside (https://<name>.quiknode.pro/<token>/; another id counts too, while
+#     a version or a date in a name holds none). Arguments carry one in an option named as a key goes by, with
+#     a value (--api-key <value>, --key=<value>; a --no- option takes none), in NAME=<value> for a name that
+#     looks like a credential, in a header option (-H, --header) or in a URL. A value with $NAME or ${NAME}
+#     anywhere in it, taken for a reference to a variable (so also a password with a $ before a letter, _ or {),
+#     does not count, nor does a word that switches a setting or names an authentication method (true, false,
+#     yes, no, on, off, 0, 1, none, null, enabled, disabled, anonymous, oauth, oauth2, oidc, basic, bearer,
+#     digest, token, apikey, api-key, api_key, jwt, mtls, sso, iam, sigv4, guest, public, auto, required), and
+#     neither does a file that is not JSON; one larger than 16 MiB is read 16 MiB at a time, a value that fits
+#     in that whole and a larger object or array entry by entry, and a string longer than that in it counts
+#     for nothing;
 #   1Password's agent socket: ~/.1password/agent.sock, and on macOS
-#     ~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock.
+#     ~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock;
+#   the sockets of a container daemon, which gives whoever reaches it the host: Docker Desktop's
+#     ~/.docker/run/docker.sock and ~/.docker/desktop/docker.sock, Colima's ~/.colima/*/docker.sock, Rancher
+#     Desktop's ~/.rd/docker.sock, OrbStack's ~/.orbstack/run/docker.sock, Lima's ~/.lima/*/sock/docker.sock
+#     and ~/.lima/*/sock/podman.sock, and a Podman machine's
+#     ~/.local/share/containers/podman/machine/*/podman.sock;
+#   git's credential cache sockets, ~/.cache/git/credential/socket and ~/.git-credential-cache/socket.
 # It reads the places these variables name as well, when they are set: SSH_AUTH_SOCK; CARGO_HOME
-# (credentials and credentials.toml); XDG_CONFIG_HOME (gh/hosts.yml and git/credentials); GH_CONFIG_DIR
-# (hosts.yml); AWS_SHARED_CREDENTIALS_FILE, GOOGLE_APPLICATION_CREDENTIALS, NETRC and NPM_CONFIG_USERCONFIG
-# (in either case), each a file; KUBECONFIG, a list of files; DOCKER_CONFIG (config.json); CLOUDSDK_CONFIG
-# and AZURE_CONFIG_DIR (the gcloud and azure files above); GNUPGHOME (its private-keys-v1.d/ and gpg-agent
-# sockets); TMPDIR (ssh-*/agent.*) and XDG_RUNTIME_DIR (ssh-agent.socket, vscode-ssh-auth-*.sock and
-# everything in gnupg/, keyring/ and gcr/). And the agent sockets anyone on the machine can name:
-# /tmp/ssh-*/agent.*, /tmp/vscode-ssh-auth-*.sock, macOS's /private/tmp/com.apple.launchd.*/Listeners,
-# and /run/user/<uid> as for XDG_RUNTIME_DIR.
+# (credentials and credentials.toml); XDG_CONFIG_HOME (gh/hosts.yml, git/credentials, and git/config as
+# ~/.gitconfig is read); XDG_CACHE_HOME (git/credential/socket); GH_CONFIG_DIR (hosts.yml);
+# AWS_SHARED_CREDENTIALS_FILE, GOOGLE_APPLICATION_CREDENTIALS, NETRC, NPM_CONFIG_USERCONFIG (in either case),
+# GIT_ASKPASS, SSH_ASKPASS and ANTHROPIC_IDENTITY_TOKEN_FILE, each a file; GIT_CONFIG_GLOBAL and
+# GIT_CONFIG_SYSTEM, read as ~/.gitconfig is; AWS_CONFIG_FILE, read as ~/.aws/config is; TF_CLI_CONFIG_FILE,
+# read as ~/.terraformrc is; KUBECONFIG, a list of files; DOCKER_CONFIG (config.json and
+# contexts/tls/*/*/key.pem); DOCKER_CERT_PATH (key.pem); CLAUDE_CONFIG_DIR (.credentials.json, and the
+# settings and state files above); ANTHROPIC_CONFIG_DIR (every file under it); CLOUDSDK_CONFIG and
+# AZURE_CONFIG_DIR (the gcloud and azure files above); GNUPGHOME (its private-keys-v1.d/ and gpg-agent
+# sockets); DOCKER_HOST and CONTAINER_HOST (a unix:// socket, or a tcp:// address, port 2375 when it names
+# none, that accepts a TCP connection: for DOCKER_HOST only when DOCKER_TLS_VERIFY is not set, since a daemon
+# that checks TLS clients takes the key read above);
+# VSCODE_GIT_IPC_HANDLE and REMOTE_CONTAINERS_IPC (the sockets through which VS Code and its Dev Containers
+# answer git's credential requests with the host's login); TMPDIR (ssh-*/agent.*, vscode-git-*.sock and
+# podman/*.sock) and XDG_RUNTIME_DIR (ssh-agent.socket, vscode-ssh-auth-*.sock, vscode-git-*.sock,
+# docker.sock, podman/podman.sock and everything in gnupg/, keyring/ and gcr/). And what anyone on the machine
+# can name: the sockets /tmp/ssh-*/agent.*, /tmp/vscode-ssh-auth-*.sock, /tmp/vscode-git-*.sock,
+# /tmp/vscode-remote-containers-ipc-*.sock and macOS's /private/tmp/com.apple.launchd.*/Listeners; docker.sock,
+# podman/podman.sock and containerd/containerd.sock in /run and /var/run; /run/user/<uid> as for
+# XDG_RUNTIME_DIR; /etc/gitconfig, read as ~/.gitconfig is; and Claude Code's managed settings,
+# managed-settings.json, managed-settings.d/*.json and managed-mcp.json in /Library/Application
+# Support/ClaudeCode and /etc/claude-code, read as its settings are.
 # A path counts when it is a regular file, or a link to one, whose first byte can be read, or a socket that
 # accepts a connection: a sandbox that blocks Unix sockets leaves SSH_AUTH_SOCK and its socket in place, out
 # of reach. Past 5000 entries in the directories it lists, the check stops: it cannot tell (status 2). A
 # sandbox that denies reads of these paths passes, so its credentials block must list them all; an
 # unsandboxed retry, a sandbox without those deny rules and a host session that recorded "isolated" do not
 # pass. The check also names the variables of its own environment whose names look like credentials (a
-# part TOKEN, SECRET, PASSWORD, PASSWD or APIKEY, or API_KEY, ACCESS_KEY, PRIVATE_KEY or RPC_URL): no child
-# gets them, but code running as the same user can read another process's environment (on Linux, in
+# part TOKEN, SECRET, PASSWORD, PASSWD, PASSPHRASE or APIKEY, or API_KEY, ACCESS_KEY, PRIVATE_KEY or RPC_URL,
+# the parts apart at _, - and . and where a lower-case letter or a digit meets an upper-case one, but not a
+# name whose last part is TTL or MS, which holds a duration: CLAUDE_CODE_API_KEY_HELPER_TTL_MS): no child gets
+# them, but code running as the same user can read another process's environment (on Linux, in
 # /proc/<pid>/environ).
 #
 # Environment cleaning, in every mode. A child runs under env -i with only these variables: PATH as
@@ -62,10 +131,11 @@
 #                                line: a path under a home it reads starts with ~, the gcloud account in
 #                                legacy_credentials/ is <account>, and control characters are printed as ?.
 #                                Status 0 when none is readable, 1 when some are, 2 when the check cannot
-#                                run or finish, with ISO_WHY saying why. With no <home>, it reads the homes
-#                                iso_homes prints, the places the environment names and the machine-wide
-#                                sockets; with <home>s, those homes and the places the environment names
-#                                only. A caller in isolated mode stops on status 1 or 2; in native mode it
+#                                run or finish (python3 failing by itself too), with ISO_WHY saying why.
+#                                With no <home>, it reads the homes iso_homes prints, the places the
+#                                environment names and the machine-wide places; with <home>s, those homes
+#                                and the places the environment names only. A caller in isolated mode
+#                                stops on status 1 or 2; in native mode it
 #                                prints what is readable and goes on. What a report may carry is
 #                                ISO_KINDS, never the paths.
 #   iso_cred_names               sets ISO_NAMES to the variables of this environment whose names look like
@@ -108,50 +178,140 @@
 #   iso_copy_new <file> <path>   copies the regular file <file>, never a symbolic link, into <path>, which
 #                                must not exist (a link counts), through the descriptor opened at its
 #                                creation; status 1 when it cannot.
-#   iso_disclosures_ok <R>       status 0 when <R>/disclosures.tsv is absent, or a regular file with one link
-#                                whose first line is the header.
-#   iso_disclose <R> <tool> <service> <kind> <value>...
-#                                adds one row to <R>/disclosures.tsv (OUTPUT-RULES.md Rule 11b), creating it,
-#                                header first, with noclobber when it is absent; status 1 when it cannot.
-#                                The row is time (UTC, YYYY-MM-DDTHH:MM:SSZ), tool (the script, relative to
-#                                the installation root), service (the domain that received the requests),
-#                                sent ("<kind>: <value> <value> ...") and count (how many values), separated
-#                                by tabs, each control character in a cell printed as ?. This is the row
-#                                confine_disclose writes in the collectors' branch of scripts/lib/confine.sh;
-#                                once both are in one tree, the runners call that one and this goes.
-# Needs bash >= 3.2, python3 (the self-check, the keypair and the watchdog), env, mkdir, mktemp, find, cat and
-# date.
+#   iso_incident_class <INCIDENTS.json> [<INC-n.k>]
+#                                sets ISO_CLASS to the root_cause_class that file (an absolute path) records
+#                                for that incident, or, with no id, to supply_chain_or_ci when any incident has
+#                                it and to "other" otherwise; status 3 with ISO_CLASS the reason when the file,
+#                                an incident or a class cannot be read (references/detection-response/
+#                                incidents-schema.md); the reason is "is missing" only when no file is there.
+#                                python3 starts from /, as for the self-check.
+#   iso_incident_runs <working directory>
+#                                reads in turn, as iso_incident_class does with no id, the INCIDENTS.json of
+#                                each directory at the top of <working directory> (an absolute path) named
+#                                incident_* in any letter case, since a volume that ignores case finds
+#                                incident_1 under the name INCIDENT_1: sets ISO_CLASS to supply_chain_or_ci at
+#                                the first that records such an incident, and to "other" when none does, and
+#                                ISO_INCIDENTS to that file, relative to <working directory> and cut as
+#                                confine_shown cuts. A directory whose INCIDENTS.json is missing, or whose file
+#                                records no incident (a hunt that ruled everything out), counts for nothing.
+#                                Status 3, with ISO_CLASS the reason, at the first file that cannot be read:
+#                                only python3 tells that a file is missing, so a stat that fails for another
+#                                reason (a directory that cannot be searched, a path past PATH_MAX) gives it,
+#                                and so does a working directory that cannot be listed (ISO_INCIDENTS is then
+#                                "the working directory"). Status 2 when such a directory is there and python3
+#                                is not on PATH. The list does not depend on the caller's set -f.
+# Needs bash >= 3.2, python3 (the self-check, the keypair and the watchdog), env, mkdir, mktemp and cat.
 
 # What iso_credentials, iso_cred_names, iso_homes and iso_env run, with python3 -I so that no module comes
-# from the working directory or PYTHONPATH. "creds given|default [<home>...]" prints what is readable by
-# kind and count on its first line and the readable paths after it (exit 1), nothing (exit 0), or why the
-# check could not finish (exit 2); "names" prints the variable names that look like credentials; "homes
-# <home>" prints the homes; "wallet <path>" writes a fresh keypair, RFC 8032 key generation from 32 random
-# bytes, as the 64-number array solana-keygen writes. Exit 2 on anything unexpected.
-ISO_PY='import glob, hashlib, json, os, pwd, re, socket, stat, sys
+# from the working directory or PYTHONPATH. python3 starts from /, so nothing in the working directory picks
+# the interpreter (a .python-version a pyenv shim reads), and a relative path in a variable the check reads
+# is taken from /, never from the tree under audit. "creds given|default [<home>...]" prints what is
+# readable by kind and count on its first line and the readable paths after it (exit 3, a status python3
+# never gives by itself, so that an error before the program runs, exit 1, does not read as that), nothing
+# (exit 0), or why the check could not finish (exit 2); "names" prints the variable names that look like
+# credentials; "homes <home>" prints the homes; "wallet <path>" writes a fresh keypair, RFC 8032 key
+# generation from 32 random bytes, as the 64-number array solana-keygen writes. Exit 2 on anything unexpected.
+ISO_PY='import codecs, glob, hashlib, json, os, pwd, re, socket, stat, sys, urllib.parse
 
-KINDS = ("SSH keys", "agent sockets", "Solana keypairs or CLI config", "cloud credentials",
+KINDS = ("SSH keys", "agent sockets", "container daemon sockets", "Solana keypairs or CLI config", "cloud credentials",
          "Kubernetes or Docker config", "package registry tokens", "git or HTTP credentials", "GnuPG private keys",
          "Claude Code credentials")
-SSH, AGENT, SOLANA, CLOUD, CLUSTER, REGISTRY, GIT, GPG, CLAUDE = KINDS
+SSH, AGENT, DAEMON, SOLANA, CLOUD, CLUSTER, REGISTRY, GIT, GPG, CLAUDE = KINDS
 GCLOUD = ("credentials.db", "access_tokens.db", "application_default_credentials.json")
 AZURE = ("accessTokens.json", "msal_token_cache.json", "msal_token_cache.bin", "service_principal_entries.json",
          "service_principal_entries.bin")
 FILES = (((SOLANA, ".config/solana/id.json"), (CLOUD, ".aws/credentials"))
          + tuple((CLOUD, ".config/gcloud/" + f) for f in GCLOUD) + tuple((CLOUD, ".azure/" + f) for f in AZURE)
-         + ((CLUSTER, ".kube/config"), (CLUSTER, ".docker/config.json"), (REGISTRY, ".npmrc"), (REGISTRY, ".yarnrc.yml"),
+         + ((CLOUD, ".vault-token"), (CLOUD, ".terraform.d/credentials.tfrc.json"), (CLUSTER, ".kube/config"),
+            (CLUSTER, ".docker/config.json"), (CLUSTER, ".docker/key.pem"), (REGISTRY, ".npmrc"), (REGISTRY, ".yarnrc.yml"),
             (REGISTRY, ".gem/credentials"), (REGISTRY, ".pypirc"), (REGISTRY, ".cargo/credentials"),
-            (REGISTRY, ".cargo/credentials.toml"), (GIT, ".git-credentials"), (GIT, ".config/git/credentials"), (GIT, ".netrc"),
-            (GIT, ".config/gh/hosts.yml"), (CLAUDE, ".claude/.credentials.json")))
+            (REGISTRY, ".cargo/credentials.toml"),
+            (GIT, ".git-credentials"), (GIT, ".config/git/credentials"), (GIT, ".netrc"), (GIT, ".config/gh/hosts.yml"),
+            (GIT, ".gitcookies")))
 DIRS = ((SOLANA, ".config/solana"), (CLOUD, ".aws/sso/cache"), (CLOUD, ".aws/cli/cache"),
-        (CLOUD, ".config/gcloud/legacy_credentials"), (GPG, ".gnupg/private-keys-v1.d"))
+        (CLOUD, ".config/gcloud/legacy_credentials"), (GPG, ".gnupg/private-keys-v1.d"), (CLAUDE, ".config/anthropic"))
 GPG_SOCKETS = ("S.gpg-agent", "S.gpg-agent.ssh", "S.gpg-agent.extra", "S.gpg-agent.browser")
-SOCKETS = tuple(".gnupg/" + s for s in GPG_SOCKETS) + (
-    ".1password/agent.sock", "Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock")
+# Under a home, as glob patterns.
+SOCKETS = (tuple((AGENT, ".gnupg/" + s) for s in GPG_SOCKETS)
+           + ((AGENT, ".1password/agent.sock"), (AGENT, "Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock"),
+              (DAEMON, ".docker/run/docker.sock"), (DAEMON, ".docker/desktop/docker.sock"), (DAEMON, ".colima/*/docker.sock"),
+              (DAEMON, ".rd/docker.sock"), (DAEMON, ".orbstack/run/docker.sock"), (DAEMON, ".lima/*/sock/docker.sock"),
+              (DAEMON, ".lima/*/sock/podman.sock"), (DAEMON, ".local/share/containers/podman/machine/*/podman.sock"),
+              (GIT, ".cache/git/credential/socket"),
+              (GIT, ".git-credential-cache/socket")))
+GIT_CONFIGS = (".gitconfig", ".config/git/config")
+# The TLS client keys of the Docker contexts, under a Docker config directory.
+DOCKER_KEYS = "contexts/tls/*/*/key.pem"
 SSH_KEEP = re.compile(r"^(known_hosts.*|config|.*\.pub|authorized_keys.*)$")
 SSH_KEYS = ("id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "id_ecdsa_sk", "id_ed25519_sk", "identity")
 BUDGET = 5000
 KEYPAIR = re.compile(r"^keypair_path:[ \t]*(?:\"([^\"]*)\"|\x27([^\x27]*)\x27|(.*?))(?:[ \t]+#.*)?[ \t]*$")
+# A git config section header (the name, a quoted subsection) and an entry (a name, then = and a value or nothing).
+GIT_SECTION = re.compile(r"[ \t]*\[[ \t]*([A-Za-z0-9.-]+)[ \t]*(?:\"((?:[^\"\\]|\\.)*)\"[ \t]*)?\]")
+GIT_ENTRY = re.compile(r"[ \t]*([A-Za-z][A-Za-z0-9-]*)[ \t]*(=?)(.*)")
+URL_LOGIN = re.compile(r"(?i)https?://[^/@]+@")
+# A proxy as git takes it, [protocol://][user[:password]@]host[:port], with a login.
+PROXY_LOGIN = re.compile(r"(?i)^(?:[a-z][a-z0-9+.-]*://)?[^/@\s]+@")
+# What a shell, which runs a credential helper, reads as more than plain words: quotes, an escape, a variable,
+# a substitution, a glob, an operator or a comment.
+SHELL_SYNTAX = re.compile(r"[\"\x27\\$`;&|<>(){}*?\[\]#\n]")
+# The helpers git ships that hand out only what a file or a socket holds, and the option that names it.
+GIT_HELPERS = {"git-credential-store": "file", "git-credential-cache": "socket"}
+# Botocore reads an AWS config with either = or : between a name and its value.
+AWS_SECRET = re.compile(r"(?im)^[ \t]*(credential_process|aws_secret_access_key|aws_session_token)[ \t]*[=:][ \t]*[^\s#;]")
+# A credentials block (an API token for a host) or a credentials_helper block in a Terraform CLI config.
+TF_CREDENTIALS = re.compile(r"(?m)^[ \t]*credentials(?:_helper)?[ \t]+\"")
+# Claude Code: the settings and state files of a ~/.claude* directory or CLAUDE_CONFIG_DIR, and the managed
+# settings in the system directories, as glob patterns; the settings that run a command printing a credential.
+CLAUDE_FILES = ("settings.json", "settings.local.json", "remote-settings.json", ".claude.json*", "backups/.claude.json*")
+MANAGED = ("/Library/Application Support/ClaudeCode", "/etc/claude-code")
+MANAGED_FILES = ("managed-settings.json", "managed-settings.d/*.json", "managed-mcp.json")
+CLAUDE_HELPERS = ("apiKeyHelper", "awsCredentialExport", "otelHeadersHelper", "headersHelper")
+CLAUDE_LIMIT = 16 << 20
+# What json.loads skips between tokens; the characters of a string as json.loads takes them, plain ones and
+# escapes; what can follow a number where the text read so far ends and still be part of it; a run of strings,
+# numbers and literals in an array, each with the comma after it, as json.loads takes them (an integer with no
+# more digits than int() takes), the string unrolled so that a run that ends otherwise backtracks in linear time,
+# and at most 1000 of them, as the regular expression keeps what it would need to go back on for each.
+JSON_SPACE = re.compile(r"[ \t\n\r]*")
+JSON_STRING = re.compile(r"(?:[^\"\\\x00-\x1f]+|\\[\"\\/bfnrt]|\\u[0-9a-fA-F]{4})*")
+NUMBER_TAIL = re.compile(r"[0-9.eE+-]*")
+INT_DIGITS = getattr(sys, "get_int_max_str_digits", lambda: 0)()
+JSON_SCALARS = re.compile(
+    r"(?:[ \t\n\r]*(?:\"[^\"\\\x00-\x1f]*(?:\\(?:[\"\\/bfnrt]|u[0-9a-fA-F]{4})[^\"\\\x00-\x1f]*)*\""
+    r"|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+(?:[eE][-+]?[0-9]+)?|[eE][-+]?[0-9]+)"
+    r"|-?(?:0|[1-9][0-9]" + ("{0,%d}" % (INT_DIGITS - 1) if INT_DIGITS else "*") + r")|true|false|null|NaN|-?Infinity)"
+    r"[ \t\n\r]*,){1,1000}")
+REFERENCE = re.compile(r"\$(?:\{|[A-Za-z_])")
+# The values that switch a setting or name an authentication method (--auth none, --api-key=true, --auth sso),
+# which no credential is; the parts before a last part KEY or AUTH that make a key no secret (a public key; a
+# table key, --partition-key pk, --hash-key pk, --primary-key id; a message route, --routing-key logs).
+SWITCHES = ("true", "false", "yes", "no", "on", "off", "0", "1", "none", "null", "enabled", "disabled", "anonymous",
+            "oauth", "oauth2", "oidc", "basic", "bearer", "digest", "token", "apikey", "api-key", "api_key", "jwt",
+            "mtls", "sso", "iam", "sigv4", "guest", "public", "auto", "required")
+NOT_SECRET = ("PUBLIC", "PUBLISHABLE", "PUB", "PARTITION", "SORT", "RANGE", "HASH", "PRIMARY", "ROUTING")
+# The last parts of a name that holds a duration, not a credential (CLAUDE_CODE_API_KEY_HELPER_TTL_MS).
+DURATION = ("TTL", "MS")
+# A URL in a value; the schemes whose user name alone can be a token (https://<token>@host); the names a query
+# parameter holding a key takes beside those a key goes by (key_name); a path segment that can be a key
+# (path_key), as a key in a path has no name (https://<name>.solana-mainnet.quiknode.pro/<token>/,
+# https://anthropic.helicone.ai/<key>), and a UUID, an id such a segment can be; the hosts whose paths hold
+# names, commits and ids, never a key: those that serve code by its commit
+# (https://raw.githubusercontent.com/<owner>/<repo>/<commit>/<file>,
+# https://huggingface.co/<repo>/resolve/<commit>/<file>, https://git.sr.ht/~<owner>/<repo>/blob/<commit>/<file>)
+# and Cloudflare AI Gateway (https://gateway.ai.cloudflare.com/v1/<account id>/<gateway>/<provider>).
+URL_IN = re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://[^\s\"\x27<>]+")
+TOKEN_USER = ("http", "https", "ws", "wss", "socks", "socks4", "socks4a", "socks5", "socks5h")
+QUERY_KEYS = ("SIG", "SIGNATURE")
+PATH_KEY = re.compile(r"[A-Za-z0-9_-]{20,}")
+UUID = re.compile(r"[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}")
+ID_HOSTS = ("github.com", "githubusercontent.com", "gitlab.com", "bitbucket.org", "codeberg.org", "huggingface.co",
+            "git.sr.ht", "gateway.ai.cloudflare.com")
+# One header of a list, Name: value or Name=value, the headers apart by newlines or commas; the variables whose
+# headers all count, since the OTLP exporter sends them to authenticate (OTEL_EXPORTER_OTLP_HEADERS and its
+# per-signal forms).
+HEADER = re.compile(r"(?:^|[\n,])[ \t]*([A-Za-z0-9_.-]+)[ \t]*[:=]([^\n,]*)")
+OTLP_HEADERS = re.compile(r"OTEL_EXPORTER_OTLP_(?:[A-Z]+_)?HEADERS")
 
 
 class Unfinished(Exception):
@@ -169,15 +329,30 @@ def shown(path, bases=()):
     return re.sub(r"[\x00-\x1f\x7f]", "?", path)[:300]
 
 
-def start(path, size):
-    # The first <size> bytes of a regular file, or of a link to one, opened without blocking so that a FIFO in
-    # its place cannot stall the check; None when it cannot be read.
+def opened(path):
+    # A descriptor open on a regular file, or on a link to one, opened without blocking so that a FIFO in its
+    # place cannot stall the check; None when there is none, as for a path with a NUL byte in it, which a file
+    # read (a git include, a keypair_path) can name but no file has.
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOCTTY", 0))
-    except OSError:
+    except (OSError, ValueError):
         return None
     try:
-        return os.read(fd, size) if stat.S_ISREG(os.fstat(fd).st_mode) else None
+        if stat.S_ISREG(os.fstat(fd).st_mode):
+            return fd
+    except OSError:
+        pass
+    os.close(fd)
+    return None
+
+
+def start(path, size):
+    # The first <size> bytes of a regular file, or of a link to one (opened); None when it cannot be read.
+    fd = opened(path)
+    if fd is None:
+        return None
+    try:
+        return os.read(fd, size)
     except OSError:
         return None
     finally:
@@ -200,16 +375,34 @@ def accepts(path):
         s.close()
 
 
+def reaches(address):
+    # A tcp:// address that accepts a TCP connection within two seconds, at port 2375 when it names none.
+    try:
+        url = urllib.parse.urlsplit(address)
+        if url.hostname:
+            socket.create_connection((url.hostname, url.port or 2375), timeout=2).close()
+            return True
+    except (OSError, UnicodeError, ValueError):
+        pass
+    return False
+
+
 def readable(found, kind, paths):
     found.extend((kind, p) for p in paths if p and first_byte(p))
 
 
-def sockets(found, paths):
-    for path in paths:
+def sockets(found, socks):
+    # A Unix socket that accepts a connection, or a tcp:// address that does; a path with a NUL byte in it (the
+    # --socket of a cache helper in a git config) names none.
+    for kind, path in socks:
+        if path.startswith("tcp://"):
+            if reaches(path):
+                found.append((kind, path))
+            continue
         try:
             if stat.S_ISSOCK(os.stat(path).st_mode) and accepts(path):
-                found.append((AGENT, path))
-        except OSError:
+                found.append((kind, path))
+        except (OSError, ValueError):
             pass
 
 
@@ -274,31 +467,513 @@ def keypair(home):
     return ""
 
 
+def git_value(text):
+    # A git config value without its quotes, its escapes and a comment after it.
+    out, quoted, i = [], False, 0
+    while i < len(text):
+        c = text[i]
+        if c == "\"":
+            quoted = not quoted
+        elif c == "\\" and i + 1 < len(text):
+            i += 1
+            out.append(text[i])
+        elif c in "#;" and not quoted:
+            break
+        else:
+            out.append(c)
+        i += 1
+    return "".join(out).strip()
+
+
+def git_helper(text, path, home, found):
+    # A credential helper <path> names counts, but the store and cache helpers git ships hand out only what
+    # their file or socket holds (git runs a helper not named by an absolute path as git credential-<name>,
+    # through the shell). With no --file or --socket (or an abbreviation of it), that is their default file or
+    # socket, which counts on its own; with one, that file counts when it is readable and that socket when it
+    # accepts a connection, "~" as a word of its own standing for <home>. One written with shell syntax or a
+    # relative path counts as any other helper does.
+    words = text.split()
+    command = os.path.basename(words[0]) if words[0].startswith("/") else "git-credential-" + words[0]
+    option = GIT_HELPERS.get(command)
+    if not option or SHELL_SYNTAX.search(text):
+        found.append((GIT, path))
+        return
+    where, i = "", 1
+    while i < len(words):
+        name, eq, value = words[i].partition("=")
+        if len(name) > 2 and name.startswith("--") and option.startswith(name[2:]):
+            if not eq:
+                i += 1
+                value = words[i] if i < len(words) else ""
+                if value == "~" or value.startswith("~/"):
+                    value = home + value[1:]
+            where = value
+        i += 1
+    if not where:
+        return
+    if not where.startswith("/"):
+        found.append((GIT, path))
+    elif option == "file":
+        readable(found, GIT, [where])
+    else:
+        sockets(found, [(GIT, where)])
+
+
+def git_config(path, home, found, state, depth=0):
+    # A git config file counts when it names a credential helper (the store and cache git ships count by their
+    # file and socket, git_helper), an askpass program or a cookie file, sends an HTTP header, rewrites to an
+    # http(s) URL that carries a login, or goes through a proxy with a login (http.proxy, remote.<name>.proxy).
+    # The files it includes count the same way, whatever the includeIf condition, ten deep at most; "~" in an
+    # include path stands for <home>. As git does, it skips a byte order mark at the start, and reads the
+    # headers a line starts with, then the entry after them.
+    data = start(path, 1 << 20) if path and depth <= 10 else None
+    key = os.path.realpath(path) if data is not None else ""
+    if not key or key in state["configs"]:
+        return
+    state["configs"].add(key)
+    section = ""
+    content = data.decode("utf-8", "replace")
+    for line in (content[1:] if content.startswith("\ufeff") else content).splitlines():
+        m = GIT_SECTION.match(line)
+        while m:
+            section, _, legacy = m.group(1).lower().partition(".")
+            if section == "url" and URL_LOGIN.match(legacy if m.group(2) is None else m.group(2)):
+                found.append((GIT, path))
+            line = line[m.end():]
+            m = GIT_SECTION.match(line)
+        m = GIT_ENTRY.match(line)
+        if not m:
+            continue
+        name, text = m.group(1).lower(), git_value(m.group(3)) if m.group(2) else "true"
+        if not text:
+            continue
+        if (section, name) == ("credential", "helper"):
+            git_helper(text, path, home, found)
+        elif ((section, name) in (("core", "askpass"), ("http", "extraheader"), ("http", "cookiefile"))
+                or name == "proxy" and section in ("http", "remote") and PROXY_LOGIN.match(text)):
+            found.append((GIT, path))
+        elif section in ("include", "includeif") and name == "path":
+            if text == "~" or text.startswith("~/"):
+                text = home + text[1:]
+            git_config(os.path.join(os.path.dirname(path), text), home, found, state, depth + 1)
+
+
+def aws_config(path, home, found, state):
+    # An AWS config file counts when it names a credential_process or holds a secret key or a session token.
+    data = start(path, 1 << 20) if path else None
+    if data and AWS_SECRET.search(data.decode("utf-8", "replace")):
+        found.append((CLOUD, path))
+
+
+def tf_config(path, home, found, state):
+    # A Terraform CLI config counts when it holds a credentials block or names a credentials helper.
+    data = start(path, 1 << 20) if path else None
+    if data and TF_CREDENTIALS.search(data.decode("utf-8", "replace")):
+        found.append((CLOUD, path))
+
+
+def name_parts(name):
+    # The parts of a name, in upper case: they end at _, - and . and where a lower-case letter or a digit meets
+    # an upper-case one (api-key, accessToken).
+    return re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", name).upper().replace("-", "_").replace(".", "_").split("_")
+
+
+def secretish(name, rpc=True):
+    # A name that looks like a credential: a part TOKEN, SECRET, PASSWORD, PASSWD, PASSPHRASE or APIKEY, or
+    # API_KEY, ACCESS_KEY or PRIVATE_KEY, or, with <rpc>, RPC_URL, but for one whose last part names a duration
+    # (DURATION). A settings file or an argument that gives an RPC URL counts only by what its URL carries
+    # (url_credential), as a public RPC URL carries nothing.
+    parts = name_parts(name)
+    pairs = set(zip(parts, parts[1:]))
+    return parts[-1] not in DURATION and bool(
+        set(parts) & {"TOKEN", "SECRET", "PASSWORD", "PASSWD", "PASSPHRASE", "APIKEY"}
+        or pairs & {("API", "KEY"), ("ACCESS", "KEY"), ("PRIVATE", "KEY")} or rpc and ("RPC", "URL") in pairs)
+
+
+def key_name(name):
+    # The name a header, an option or a query parameter carrying a key goes by: one that looks like a credential,
+    # or one whose last part is KEY or AUTH (x-api-key, Ocp-Apim-Subscription-Key, subscription-key, --key,
+    # Helicone-Auth), a key that is no secret aside (NOT_SECRET: a public key, a table key).
+    parts = name_parts(name)
+    return (secretish(name, rpc=False)
+            or parts[-1] in ("KEY", "AUTH") and not (len(parts) > 1 and parts[-2] in NOT_SECRET))
+
+
+def set_here(value):
+    # A value a settings file sets itself that can be a credential: not one that refers to a variable (${NAME} or
+    # $NAME), nor a word that switches a setting or names an authentication method (SWITCHES).
+    text = str(value).strip() if isinstance(value, (str, int, float)) and not isinstance(value, bool) else ""
+    return text != "" and not REFERENCE.search(text) and text.lower() not in SWITCHES
+
+
+def credential_header(name):
+    # Authorization (Proxy-Authorization and any *-Authorization too), Cookie, or a name a key goes by (key_name).
+    upper = name.upper().replace("-", "_")
+    return upper in ("AUTHORIZATION", "COOKIE") or upper.endswith("_AUTHORIZATION") or key_name(name)
+
+
+def header_credential(text, every=False):
+    # A list of headers that sends a credential header with a value set here, or with <every> any header with
+    # one: Name: value lines (ANTHROPIC_CUSTOM_HEADERS), Name=value pairs apart by commas (the OTLP exporter),
+    # or a JSON object (OPENAPI_MCP_HEADERS, as an MCP server takes it).
+    try:
+        headers = json.loads(text)
+    except (ValueError, RecursionError):
+        headers = None
+    pairs = headers.items() if isinstance(headers, dict) else HEADER.findall(text)
+    return any(set_here(value) and (every or credential_header(str(name))) for name, value in pairs)
+
+
+def path_key(segment):
+    # A URL path segment that can be a key: 20 or more letters, digits, - and _, with a run of seven or more
+    # letters and digits that holds both (a version or a date in a name holds none), and not a UUID.
+    return bool(PATH_KEY.fullmatch(segment)) and not UUID.fullmatch(segment) and any(
+        len(run) >= 7 and not run.isdigit() and not run.isalpha() for run in re.split(r"[-_]", segment))
+
+
+def url_credential(text):
+    # A URL in <text> that carries a key set here: in its login (any user name in an http, ws or socks URL, a
+    # user and a password in any other), in a query parameter whose name a key goes by (key_name, sig or
+    # signature), or, for a URL with a host whose paths can hold a key (not one of ID_HOSTS) and a path with no
+    # segment - (where the paths of a GitLab project, self-hosted too, put its commits), in a path segment that
+    # can be one (path_key).
+    for match in URL_IN.finditer(text):
+        try:
+            url = urllib.parse.urlsplit(match.group(0))
+            host = url.hostname or ""
+        except ValueError:
+            continue
+        login = url.netloc.rpartition("@")[0]
+        if set_here(login) and (url.scheme.lower() in TOKEN_USER or login.partition(":")[2]):
+            return True
+        for name, eq, value in (part.partition("=") for part in url.query.split("&")):
+            name = urllib.parse.unquote_plus(name)
+            if eq and set_here(urllib.parse.unquote_plus(value)) and (key_name(name) or name.upper() in QUERY_KEYS):
+                return True
+        segments = url.path.split("/")
+        if (url.netloc and not any(host == h or host.endswith("." + h) for h in ID_HOSTS) and "-" not in segments
+                and any(path_key(urllib.parse.unquote(segment)) for segment in segments)):
+            return True
+    return False
+
+
+def env_credential(name, value):
+    # An env entry that sets a credential: a value set here for a name that looks like one (an RPC URL counts by
+    # its URL alone), a URL that carries one, or, for a name that ends in HEADERS, a list of headers that sends
+    # one, any header with a value counting for the OTLP exporter.
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        return False
+    text, upper = str(value), name.upper()
+    return (set_here(value) and secretish(name, rpc=False) or url_credential(text)
+            or upper.endswith("HEADERS") and header_credential(text, bool(OTLP_HEADERS.fullmatch(upper))))
+
+
+def arg_credential(word, after):
+    # One argument of a command that passes a credential (args_credential), <after> the argument that follows
+    # it, None for the last.
+    option = word.startswith("-")
+    name, eq, value = word.lstrip("-").partition("=")
+    if word.startswith("--no-"):
+        value = ""
+    elif not eq:
+        value = after if option and after is not None and not after.startswith("-") else ""
+    return bool(url_credential(word) or set_here(value) and (key_name(name) if option else secretish(name, rpc=False))
+                or option and name.lower() in ("h", "header", "headers") and header_credential(value))
+
+
+def args_credential(args):
+    # Arguments of a command that pass a credential: an option a key goes by (key_name) with a value set here
+    # (--api-key <value>, --key=<value>; a --no- option takes none), NAME=<value> for a name that looks like a
+    # credential, as docker run -e takes it, a header option (-H, --header) that sends one, or an argument with
+    # a URL that carries one.
+    words = [w for w in args if isinstance(w, str)]
+    return any(arg_credential(word, words[i + 1] if i + 1 < len(words) else None) for i, word in enumerate(words))
+
+
+def claude_files(directory, names=CLAUDE_FILES):
+    at = glob.escape(directory)
+    return [p for n in names for p in sorted(glob.glob(os.path.join(at, n)))]
+
+
+def claude_entry(name, value):
+    # An entry of a Claude Code settings or state file that counts: a command that prints a credential (the
+    # headersHelper of an MCP server too), an env block (of the file or of an MCP server) that sets a credential
+    # (env_credential), a headers block (of an MCP server or an HTTP hook) that sends an Authorization, Cookie or
+    # key header with a value, or a URL (of an MCP server or a hook) or the arguments of an MCP server that
+    # carry one.
+    return bool(name in CLAUDE_HELPERS and isinstance(value, str) and value.strip()
+                or name == "env" and isinstance(value, dict) and any(env_credential(k, v) for k, v in value.items())
+                or name == "headers" and isinstance(value, dict)
+                and any(set_here(v) and credential_header(k) for k, v in value.items())
+                or name == "url" and isinstance(value, str) and url_credential(value)
+                or name == "args" and isinstance(value, list) and args_credential(value))
+
+
+def claude_node(node):
+    # Whether an entry in <node>, at any depth, counts (claude_entry).
+    stack = [node]
+    while stack:
+        node = stack.pop()
+        items = node.items() if isinstance(node, dict) else enumerate(node) if isinstance(node, list) else ()
+        for name, value in items:
+            if claude_entry(name, value):
+                return True
+            stack.append(value)
+    return False
+
+
+class NotJSON(Exception):
+    pass
+
+
+# What claude_stream takes for what it does not decode whole: a string longer than CLAUDE_LIMIT, a value or a
+# name; an object or an array it reads entry by entry; and what its whole gives for a value it cannot decode.
+LONG, OPEN, FAIL = object(), object(), object()
+
+
+def claude_stream(data, fd):
+    # json.loads and claude_node on a settings or state file larger than CLAUDE_LIMIT, <data> its first bytes and
+    # <fd> open on the rest, holding at most about twice CLAUDE_LIMIT characters of it at a time: a value that
+    # fits in CLAUDE_LIMIT characters is decoded whole (raw_decode) and walked as claude_node walks one; an
+    # object or an array larger than that is read entry by entry, the last value of a name winning as json.loads
+    # keeps it, and counts as claude_node and claude_entry tell; a string larger than that counts for nothing.
+    # True when an entry counts; False when none does, or when the file is not JSON as json.loads reads it (a
+    # byte order mark at its start too) or cannot be read to its end.
+    decode = codecs.getincrementaldecoder("utf-8")("replace").decode
+    parse = json.JSONDecoder().raw_decode
+    text, at, end = decode(data), 0, False
+
+    def more():
+        # Reads on until CLAUDE_LIMIT characters follow <at> or the file ends; False when it can add nothing.
+        nonlocal text, at, end
+        if end or len(text) - at >= CLAUDE_LIMIT:
+            return False
+        parts, have = [text[at:]], len(text) - at
+        while have < CLAUDE_LIMIT and not end:
+            block = os.read(fd, CLAUDE_LIMIT)
+            end = not block
+            parts.append(decode(block, end))
+            have += len(parts[-1])
+        text, at = "".join(parts), 0
+        return True
+
+    def peek():
+        # The next character past whitespace, "" at the end of the file.
+        nonlocal at
+        while True:
+            at = JSON_SPACE.match(text, at).end()
+            if at < len(text) or not more():
+                return text[at:at + 1]
+
+    def take(c):
+        nonlocal at
+        if peek() != c:
+            raise NotJSON
+        at += 1
+
+    def whole():
+        # The value at <at>, decoded whole, <at> then past it; FAIL when it is not JSON or more than CLAUDE_LIMIT
+        # characters long, however much of it has been read.
+        nonlocal at
+        while True:
+            try:
+                value, after = parse(text, at)
+            except RecursionError:
+                raise NotJSON
+            except ValueError:
+                if more():
+                    continue
+                return FAIL
+            if after - at > CLAUDE_LIMIT:
+                return FAIL
+            if (isinstance(value, (int, float)) and not isinstance(value, bool) and not end
+                    and NUMBER_TAIL.match(text, after).end() == len(text)):
+                # A number may go on past the text read so far.
+                if more():
+                    continue
+                raise NotJSON
+            at = after
+            return value
+
+    def skip():
+        # Past a string longer than CLAUDE_LIMIT characters, checked as json.loads checks one.
+        nonlocal at
+        at += 1
+        while True:
+            at = JSON_STRING.match(text, at).end()
+            # An escape may be cut where the text read so far ends.
+            if len(text) - at < 6 and more():
+                continue
+            if text[at:at + 1] != "\"":
+                raise NotJSON
+            at += 1
+            return
+
+    def value(name):
+        # The value at <at>, of the name <name> in an object (None in an array and at the top), and whether it
+        # counts as claude_node tells; OPEN for an object or an array read entry by entry, LONG for a string
+        # longer than CLAUDE_LIMIT.
+        c = peek()
+        got = whole()
+        if got is not FAIL:
+            return got, claude_node(got)
+        if c == "{":
+            take("{")
+            return OPEN, entries(name if name in ("env", "headers") else None)
+        if c == "[":
+            take("[")
+            return OPEN, elements(name == "args")
+        if c == "\"":
+            skip()
+            return LONG, False
+        raise NotJSON
+
+    def entries(role):
+        # The entries of an object after its {: whether it counts. For the value of an env or a headers name
+        # (<role>), whether an entry counts as claude_entry reads such a block too.
+        hits, sets = set(), set()
+        if peek() == "}":
+            take("}")
+            return False
+        while True:
+            if peek() != "\"":
+                raise NotJSON
+            name = whole()
+            if name is FAIL:
+                # A name longer than CLAUDE_LIMIT, which any later one may equal: the value of the last counts.
+                skip()
+                name = LONG
+            take(":")
+            got, counts = value(name)
+            (hits.add if counts or claude_entry(name, got) else hits.discard)(name)
+            if role:
+                entry = isinstance(name, str) and (env_credential(name, got) if role == "env"
+                                                   else set_here(got) and credential_header(name))
+                (sets.add if entry else sets.discard)(name)
+            if peek() == "}":
+                take("}")
+                return bool(hits or sets)
+            take(",")
+
+    def elements(args):
+        # The elements of an array after its [: whether it counts. For the value of an args name (<args>),
+        # whether its strings pass a credential as args_credential reads them too.
+        nonlocal at
+        hit, word = False, None
+        if peek() == "]":
+            take("]")
+            return False
+        while True:
+            while not args:
+                # Strings, numbers and literals in such an array count for nothing; runs of them are passed at once.
+                run = JSON_SCALARS.match(text, at)
+                if not run:
+                    break
+                at = run.end()
+            got, counts = value(None)
+            hit = hit or counts
+            if args and (isinstance(got, str) or got is LONG):
+                if isinstance(word, str):
+                    hit = hit or arg_credential(word, got if isinstance(got, str) else "")
+                word = got
+            if peek() == "]":
+                take("]")
+                break
+            take(",")
+        return hit or isinstance(word, str) and arg_credential(word, None)
+
+    try:
+        if text.startswith("\ufeff"):
+            return False
+        got, counts = value(None)
+        return counts and peek() == ""
+    except (NotJSON, RecursionError, OSError):
+        return False
+
+
+def claude_json(path, home, found, state):
+    # A Claude Code settings or state file counts when an entry in it counts (claude_entry). A file that is not
+    # JSON counts for nothing, as Claude Code reads nothing from it; one larger than CLAUDE_LIMIT is read a block
+    # at a time (claude_stream).
+    fd = opened(path) if path else None
+    if fd is None:
+        return
+    try:
+        data = os.read(fd, CLAUDE_LIMIT + 1)
+        key = os.path.realpath(path)
+        if key in state["configs"]:
+            return
+        state["configs"].add(key)
+        if len(data) > CLAUDE_LIMIT:
+            counts = claude_stream(data, fd)
+        else:
+            try:
+                tree = json.loads(data.decode("utf-8", "replace"))
+            except (ValueError, RecursionError):
+                return
+            counts = claude_node(tree)
+    except OSError:
+        return
+    finally:
+        os.close(fd)
+    if counts:
+        found.append((CLAUDE, path))
+
+
 def runtime(directory, dirs, socks):
     dirs.extend((AGENT, os.path.join(directory, d)) for d in ("gnupg", "keyring", "gcr"))
-    socks.append(os.path.join(directory, "ssh-agent.socket"))
-    socks.extend(glob.glob(os.path.join(glob.escape(directory), "vscode-ssh-auth-*.sock")))
+    at = glob.escape(directory)
+    socks.append((AGENT, os.path.join(directory, "ssh-agent.socket")))
+    socks.extend((AGENT, p) for p in glob.glob(os.path.join(at, "vscode-ssh-auth-*.sock")))
+    socks.extend((GIT, p) for p in glob.glob(os.path.join(at, "vscode-git-*.sock")))
+    socks.extend((DAEMON, os.path.join(directory, s)) for s in ("docker.sock", "podman/podman.sock"))
 
 
-def named(env, files, dirs, socks):
+def named(env, files, dirs, socks, configs):
     # The places the environment names.
     for kind, name in ((CLOUD, "AWS_SHARED_CREDENTIALS_FILE"), (CLOUD, "GOOGLE_APPLICATION_CREDENTIALS"), (GIT, "NETRC"),
-                       (REGISTRY, "NPM_CONFIG_USERCONFIG"), (REGISTRY, "npm_config_userconfig")):
+                       (REGISTRY, "NPM_CONFIG_USERCONFIG"), (REGISTRY, "npm_config_userconfig"), (GIT, "GIT_ASKPASS"),
+                       (GIT, "SSH_ASKPASS"), (CLAUDE, "ANTHROPIC_IDENTITY_TOKEN_FILE")):
         files.append((kind, env.get(name, "")))
     files.extend((CLUSTER, p) for p in env.get("KUBECONFIG", "").split(os.pathsep))
     for kind, name, under in ((REGISTRY, "CARGO_HOME", ("credentials", "credentials.toml")),
                               (GIT, "XDG_CONFIG_HOME", ("gh/hosts.yml", "git/credentials")), (GIT, "GH_CONFIG_DIR", ("hosts.yml",)),
                               (CLUSTER, "DOCKER_CONFIG", ("config.json",)), (CLOUD, "CLOUDSDK_CONFIG", GCLOUD),
-                              (CLOUD, "AZURE_CONFIG_DIR", AZURE)):
+                              (CLOUD, "AZURE_CONFIG_DIR", AZURE), (CLAUDE, "CLAUDE_CONFIG_DIR", (".credentials.json",))):
         if env.get(name):
             files.extend((kind, os.path.join(env[name], f)) for f in under)
     if env.get("CLOUDSDK_CONFIG"):
         dirs.append((CLOUD, os.path.join(env["CLOUDSDK_CONFIG"], "legacy_credentials")))
+    if env.get("ANTHROPIC_CONFIG_DIR"):
+        dirs.append((CLAUDE, env["ANTHROPIC_CONFIG_DIR"]))
+    if env.get("CLAUDE_CONFIG_DIR"):
+        configs.extend((claude_json, p) for p in claude_files(env["CLAUDE_CONFIG_DIR"]))
     if env.get("GNUPGHOME"):
         dirs.append((GPG, os.path.join(env["GNUPGHOME"], "private-keys-v1.d")))
-        socks.extend(os.path.join(env["GNUPGHOME"], s) for s in GPG_SOCKETS)
+        socks.extend((AGENT, os.path.join(env["GNUPGHOME"], s)) for s in GPG_SOCKETS)
+    configs.extend((git_config, env.get(name, "")) for name in ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"))
+    if env.get("XDG_CONFIG_HOME"):
+        configs.append((git_config, os.path.join(env["XDG_CONFIG_HOME"], "git/config")))
+    configs.append((aws_config, env.get("AWS_CONFIG_FILE", "")))
+    configs.append((tf_config, env.get("TF_CLI_CONFIG_FILE", "")))
+    socks.extend((GIT, env.get(name, "")) for name in ("VSCODE_GIT_IPC_HANDLE", "REMOTE_CONTAINERS_IPC"))
+    for name in ("DOCKER_HOST", "CONTAINER_HOST"):
+        value = env.get(name, "")
+        if value.startswith("unix://"):
+            socks.append((DAEMON, value[len("unix://"):]))
+        elif value.startswith("tcp://") and not (name == "DOCKER_HOST" and env.get("DOCKER_TLS_VERIFY")):
+            socks.append((DAEMON, value))
+    if env.get("DOCKER_CERT_PATH"):
+        files.append((CLUSTER, os.path.join(env["DOCKER_CERT_PATH"], "key.pem")))
+    if env.get("DOCKER_CONFIG"):
+        files.extend((CLUSTER, p) for p in glob.glob(os.path.join(glob.escape(env["DOCKER_CONFIG"]), DOCKER_KEYS)))
+    if env.get("XDG_CACHE_HOME"):
+        socks.append((GIT, os.path.join(env["XDG_CACHE_HOME"], "git/credential/socket")))
     if env.get("TMPDIR"):
-        socks.extend(glob.glob(os.path.join(glob.escape(env["TMPDIR"]), "ssh-*", "agent.*")))
+        at = glob.escape(env["TMPDIR"])
+        socks.extend((AGENT, p) for p in glob.glob(os.path.join(at, "ssh-*", "agent.*")))
+        socks.extend((GIT, p) for p in glob.glob(os.path.join(at, "vscode-git-*.sock")))
+        socks.extend((DAEMON, p) for p in glob.glob(os.path.join(at, "podman", "*.sock")))
     if env.get("XDG_RUNTIME_DIR"):
         runtime(env["XDG_RUNTIME_DIR"], dirs, socks)
 
@@ -316,33 +991,54 @@ def homes(home):
 
 def creds(which, given):
     env = os.environ
-    found, state, files, dirs, socks = [], {"left": BUDGET, "seen": set()}, [], [], []
+    found, state, files, dirs, socks, configs = [], {"left": BUDGET, "seen": set(), "configs": set()}, [], [], [], []
     read = [h for h in (given if which == "given" else homes(env.get("HOME", ""))) if h]
     for home in read:
+        at = glob.escape(home)
         ssh = os.path.join(home, ".ssh")
         if not walk(ssh, SSH_KEEP, found, state, SSH):
             readable(found, SSH, (os.path.join(ssh, k) for k in SSH_KEYS))
         for kind, f in FILES:
             readable(found, kind, [os.path.join(home, f)])
+        readable(found, CLUSTER, glob.glob(os.path.join(at, ".docker", DOCKER_KEYS)))
+        readable(found, CLAUDE, glob.glob(os.path.join(at, ".claude*", ".credentials.json")))
+        for p in sorted(glob.glob(os.path.join(at, ".claude*"))):
+            if os.path.isdir(p):
+                for f in claude_files(p):
+                    claude_json(f, home, found, state)
+            elif os.path.basename(p).startswith(".claude.json"):
+                claude_json(p, home, found, state)
         for kind, d in DIRS:
             walk(os.path.join(home, d), None, found, state, kind)
-        sockets(found, (os.path.join(home, s) for s in SOCKETS))
+        sockets(found, ((kind, p) for kind, s in SOCKETS for p in glob.glob(os.path.join(at, s))))
         readable(found, SOLANA, [keypair(home)])
-    named(env, files, dirs, socks)
+        for f in GIT_CONFIGS:
+            git_config(os.path.join(home, f), home, found, state)
+        aws_config(os.path.join(home, ".aws/config"), home, found, state)
+        tf_config(os.path.join(home, ".terraformrc"), home, found, state)
+    named(env, files, dirs, socks, configs)
     if which == "default":
-        # The agent sockets anyone on the machine can name.
-        socks.extend(glob.glob("/tmp/ssh-*/agent.*") + glob.glob("/tmp/vscode-ssh-auth-*.sock")
+        # What anyone on the machine can name: agent, VS Code and container daemon sockets, the git config of
+        # the system and the managed settings of Claude Code.
+        socks.extend((AGENT, p) for p in glob.glob("/tmp/ssh-*/agent.*") + glob.glob("/tmp/vscode-ssh-auth-*.sock")
                      + glob.glob("/private/tmp/com.apple.launchd.*/Listeners"))
+        socks.extend((GIT, p) for p in glob.glob("/tmp/vscode-git-*.sock") + glob.glob("/tmp/vscode-remote-containers-ipc-*.sock"))
+        socks.extend((DAEMON, os.path.join(d, s)) for d in ("/run", "/var/run")
+                     for s in ("docker.sock", "podman/podman.sock", "containerd/containerd.sock"))
         runtime("/run/user/%d" % os.getuid(), dirs, socks)
+        configs.append((git_config, "/etc/gitconfig"))
+        configs.extend((claude_json, p) for d in MANAGED for p in claude_files(d, MANAGED_FILES))
     for kind, f in files:
         readable(found, kind, [f])
     for kind, d in dirs:
         walk(d, None, found, state, kind)
+    for config, f in configs:
+        config(f, env.get("HOME", ""), found, state)
     sockets(found, socks)
     sock = env.get("SSH_AUTH_SOCK", "")
     if sock:
         mark = []
-        sockets(mark, [sock])
+        sockets(mark, [(AGENT, sock)])
         found.extend((kind, p + " (SSH_AUTH_SOCK)") for kind, p in mark)
     seen, out, count = set(), [], dict.fromkeys(KINDS, 0)
     for kind, path in found:
@@ -356,19 +1052,12 @@ def creds(which, given):
     print(", ".join("%s (%d)" % (kind, count[kind]) for kind in KINDS if count[kind]))
     for path in out:
         print(path)
-    return 1
+    return 3
 
 
 def names(env):
-    # The variables whose names look like credentials: a part TOKEN, SECRET, PASSWORD, PASSWD or APIKEY, or
-    # API_KEY, ACCESS_KEY, PRIVATE_KEY or RPC_URL.
-    out = []
-    for name in sorted(env):
-        parts = name.upper().split("_")
-        if (set(parts) & {"TOKEN", "SECRET", "PASSWORD", "PASSWD", "APIKEY"}
-                or set(zip(parts, parts[1:])) & {("API", "KEY"), ("ACCESS", "KEY"), ("PRIVATE", "KEY"), ("RPC", "URL")}):
-            out.append(shown(name))
-    print(", ".join(out))
+    # The variables whose names look like credentials.
+    print(", ".join(shown(name) for name in sorted(env) if secretish(name)))
     return 0
 
 
@@ -427,7 +1116,7 @@ sys.exit(2)
 '
 
 iso_homes() {
-  python3 -I -c "$ISO_PY" homes "${HOME:-}"
+  (cd / && exec python3 -I -c "$ISO_PY" homes "${HOME:-}")
 }
 
 iso_credentials() { # iso_credentials [<home>...]
@@ -435,12 +1124,13 @@ iso_credentials() { # iso_credentials [<home>...]
   ISO_KINDS="" ISO_READABLE="" ISO_WHY=""
   command -v python3 >/dev/null 2>&1 || { ISO_WHY="python3 is not on PATH"; return 2; }
   [ $# -gt 0 ] || which=default
-  out=$(python3 -I -c "$ISO_PY" creds "$which" "$@") || rc=$?
+  out=$(cd / && exec python3 -I -c "$ISO_PY" creds "$which" "$@") || rc=$?
   case "$rc" in
     0) return 0 ;;
-    1) ISO_KINDS=${out%%$'\n'*}; ISO_READABLE=${out#*$'\n'}; return 1 ;;
+    3) ISO_KINDS=${out%%$'\n'*}; ISO_READABLE=${out#*$'\n'}; return 1 ;;
+    2) ISO_WHY=${out%%$'\n'*} ;;
+    *) ISO_WHY="python3 stopped with status $rc" ;;
   esac
-  ISO_WHY=${out%%$'\n'*}
   [ -n "$ISO_WHY" ] || ISO_WHY="the check stopped on an error"
   return 2
 }
@@ -448,7 +1138,7 @@ iso_credentials() { # iso_credentials [<home>...]
 iso_cred_names() { # iso_cred_names
   ISO_NAMES=""
   command -v python3 >/dev/null 2>&1 || return 0
-  ISO_NAMES=$(python3 -I -c "$ISO_PY" names 2>/dev/null) || ISO_NAMES=""
+  ISO_NAMES=$(cd / && exec python3 -I -c "$ISO_PY" names 2>/dev/null) || ISO_NAMES=""
 }
 
 iso_inherited() { # iso_inherited <dir>
@@ -469,9 +1159,8 @@ iso_inherited() { # iso_inherited <dir>
 iso_tmp_outside() { # iso_tmp_outside
   local base=${TMPDIR:-/tmp}
   confine_phys "$base" || confine_refuse "TMPDIR cannot be resolved: $(confine_text "$base")"
-  case "$CONFINE_PHYS/" in
-    "${CONFINE_WT%/}/"*) confine_refuse "TMPDIR lies inside the working directory; point it outside the tree under audit" ;;
-  esac
+  ! confine_inside "$CONFINE_PHYS" "$CONFINE_WT" ||
+    confine_refuse "TMPDIR lies inside the working directory; point it outside the tree under audit"
 }
 
 iso_scratch() { # iso_scratch <tool>
@@ -481,9 +1170,8 @@ iso_scratch() { # iso_scratch <tool>
     confine_refuse "cannot create a scratch directory under $(confine_text "$base")"
   confine_phys "$dir" || confine_refuse "the scratch directory $(confine_text "$dir") cannot be resolved"
   ISO_SCRATCH=$CONFINE_PHYS
-  case "$ISO_SCRATCH/" in
-    "${CONFINE_WT%/}/"*) confine_refuse "the scratch directory $(confine_text "$ISO_SCRATCH") lies inside the working directory; point TMPDIR outside it" ;;
-  esac
+  ! confine_inside "$ISO_SCRATCH" "$CONFINE_WT" ||
+    confine_refuse "the scratch directory $(confine_text "$ISO_SCRATCH") lies inside the working directory; point TMPDIR outside it"
   found=$(iso_inherited "$ISO_SCRATCH")
   [ -z "$found" ] ||
     confine_refuse "the scratch directory $(confine_text "$ISO_SCRATCH") would inherit $(confine_text "$found"); point TMPDIR outside any repository"
@@ -499,7 +1187,7 @@ iso_env() { # iso_env <dir> [keep-home]
   else
     ISO_HOME=$1/home
     confine_mkdir "$ISO_HOME" && confine_mkdir "$ISO_HOME/.config" && confine_mkdir "$ISO_HOME/.config/solana" || return 1
-    python3 -I -c "$ISO_PY" wallet "$ISO_HOME/.config/solana/id.json" || return 1
+    (cd / && exec python3 -I -c "$ISO_PY" wallet "$ISO_HOME/.config/solana/id.json") || return 1
   fi
   ISO_ENV=("PATH=$PATH" "HOME=$ISO_HOME" "TMPDIR=$ISO_TMP" "LC_ALL=C"
     "CARGO_HOME=${CARGO_HOME:-${real:-/nonexistent}/.cargo}" "RUSTUP_HOME=${RUSTUP_HOME:-${real:-/nonexistent}/.rustup}")
@@ -632,32 +1320,96 @@ iso_copy_new() { # iso_copy_new <file> <path>
   ( set -C; exec 9>"$2" && cat -- "$1" >&9 ) 2>/dev/null
 }
 
-ISO_DISCLOSURES_HEADER=$'time\ttool\tservice\tsent\tcount'
+# What iso_incident_class runs, with python3 -I: "<INCIDENTS.json> [<INC-n.k>]" prints that incident's
+# root_cause_class, or with no id supply_chain_or_ci when any incident has it and "other" otherwise; exit 3
+# with the reason when the file, an incident or a class cannot be read.
+ISO_INCIDENT_PY='import json, os, stat, sys
 
-iso_disclosures_ok() { # iso_disclosures_ok <R>
-  local f=$CONFINE_WT/$1/disclosures.tsv listed first
-  if [ ! -e "$f" ] && [ ! -L "$f" ]; then return 0; fi
-  [ -f "$f" ] && [ ! -L "$f" ] || return 1
-  listed=$(find "$f" -prune -type f -links 1 -print 2>/dev/null) && [ "$listed" = "$f" ] || return 1
-  IFS= read -r first < "$f" || return 1
-  [ "$first" = "$ISO_DISCLOSURES_HEADER" ]
+CLASSES = ("code_flaw", "key_compromise", "oracle_or_dependency", "economic_design", "off_chain",
+           "supply_chain_or_ci", "unknown")
+LIMIT = 4 * 1024 * 1024
+
+
+def say(text, status):
+    print(text)
+    sys.exit(status)
+
+
+path, wanted = sys.argv[1], sys.argv[2]
+try:
+    st = os.lstat(path)
+except FileNotFoundError:
+    say("is missing", 3)
+except OSError:
+    say("cannot be read", 3)
+if not stat.S_ISREG(st.st_mode):
+    say("is not a regular file", 3)
+if st.st_size > LIMIT:
+    say("is larger than 4 MiB", 3)
+try:
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NOCTTY", 0))
+    with os.fdopen(fd, "rb") as f:
+        data = json.loads(f.read(LIMIT + 1).decode("utf-8"))
+except (OSError, UnicodeDecodeError, ValueError, RecursionError):
+    say("cannot be read as JSON", 3)
+incidents = data.get("incidents") if isinstance(data, dict) else None
+if not isinstance(incidents, list):
+    say("holds no incidents list", 3)
+if not all(isinstance(i, dict) for i in incidents):
+    say("holds an incident that is not an object", 3)
+if wanted:
+    incidents = [i for i in incidents if i.get("id") == wanted]
+    if not incidents:
+        say("records no incident %s" % wanted, 3)
+    if len(incidents) > 1:
+        say("records %s more than once" % wanted, 3)
+if not incidents:
+    say("records no incident", 3)
+for i in incidents:
+    if i.get("root_cause_class") not in CLASSES:
+        say("gives %s no root_cause_class from incidents-schema.md" % (wanted or "an incident"), 3)
+if wanted:
+    say(incidents[0]["root_cause_class"], 0)
+say("supply_chain_or_ci" if any(i["root_cause_class"] == "supply_chain_or_ci" for i in incidents) else "other", 0)
+'
+
+iso_incident_class() { # iso_incident_class <INCIDENTS.json> [<INC-n.k>]
+  ISO_CLASS=$(cd / && exec python3 -I -c "$ISO_INCIDENT_PY" "$1" "${2:-}")
 }
 
-iso_disclose() { # iso_disclose <R> <tool> <service> <kind> <value>...
-  local r=$1 tool=$2 service=$3 kind=$4 f now row v sent="" n=0
-  shift 4
-  for v in "$@"; do
-    sent=${sent:+$sent }$v
-    n=$((n + 1))
-  done
-  now=$(date -u +%Y-%m-%dT%H:%M:%SZ) || return 1
-  sent="$kind: $sent"
-  row=${now//[[:cntrl:]]/?}$'\t'${tool//[[:cntrl:]]/?}$'\t'${service//[[:cntrl:]]/?}$'\t'${sent//[[:cntrl:]]/?}$'\t'$n
-  f=$CONFINE_WT/$r/disclosures.tsv
-  iso_disclosures_ok "$r" || return 1
-  if [ ! -e "$f" ] && [ ! -L "$f" ]; then
-    confine_new_file "$f" "$ISO_DISCLOSURES_HEADER"$'\n'"$row"$'\n' && return 0
-    iso_disclosures_ok "$r" || return 1
+iso_incident_runs() { # iso_incident_runs <working directory>
+  local d rc
+  local -a dirs
+  ISO_CLASS=other
+  ISO_INCIDENTS=""
+  # A directory that cannot be listed globs to nothing, so that is told first, whatever the glob options.
+  if [ ! -r "$1" ]; then
+    ISO_INCIDENTS="the working directory"
+    ISO_CLASS="cannot be listed"
+    return 3
   fi
-  printf '%s\n' "$row" 2>/dev/null >> "$f"
+  case $- in
+    *f*) set +f; dirs=("$1"/[Ii][Nn][Cc][Ii][Dd][Ee][Nn][Tt]_*); set -f ;;
+    *) dirs=("$1"/[Ii][Nn][Cc][Ii][Dd][Ee][Nn][Tt]_*) ;;
+  esac
+  for d in ${dirs[@]+"${dirs[@]}"}; do
+    # The pattern itself comes back when nothing matches.
+    [ "$d" != "$1/[Ii][Nn][Cc][Ii][Dd][Ee][Nn][Tt]_*" ] || continue
+    # The shell's tests cannot tell a missing path from one a stat cannot reach, so only a name that is there
+    # and is no directory is passed over here; python3 decides the rest.
+    if [ ! -d "$d" ] && [ -e "$d" ]; then continue; fi
+    confine_shown "${d##*/}"
+    ISO_INCIDENTS=$CONFINE_SHOWN/INCIDENTS.json
+    command -v python3 >/dev/null 2>&1 || { ISO_CLASS=""; return 2; }
+    rc=0
+    iso_incident_class "$d/INCIDENTS.json" || rc=$?
+    case "$rc:$ISO_CLASS" in
+      0:supply_chain_or_ci) return 0 ;;
+      0:*|'3:is missing'|'3:records no incident') ;;
+      3:?*) return 3 ;;
+      *) ISO_CLASS="cannot be read"; return 3 ;;
+    esac
+  done
+  ISO_CLASS=other
+  ISO_INCIDENTS=""
 }

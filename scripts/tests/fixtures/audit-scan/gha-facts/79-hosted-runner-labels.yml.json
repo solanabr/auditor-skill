@@ -1,0 +1,90 @@
+{
+  "name": "f79-hosted-runner-labels",
+  "triggers": [
+    "push"
+  ],
+  "permissions": [
+    "contents: read"
+  ],
+  "jobs": [
+    {
+      "id": "plain",
+      "line": 7,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 10,
+          "run": "make test",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "double-quoted",
+      "line": 11,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 14,
+          "run": "make test",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "single-quoted",
+      "line": 15,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 18,
+          "run": "make test",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "flow-list",
+      "line": 19,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 22,
+          "run": "make test",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "commented",
+      "line": 23,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 26,
+          "run": "make test",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "larger",
+      "line": 27,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 31,
+          "run": "make test",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

@@ -1,0 +1,36 @@
+# Fixture: pull-request jobs on self-hosted runners, one per spelling runs-on allows; KV-080 Step 8 lists each
+# runs-on line.
+name: f78-self-hosted-runners
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  label:
+    runs-on: self-hosted
+    steps:
+      - run: make test
+  labels:
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - run: make test
+  group:
+    runs-on:
+      group: build-runners
+      labels: [linux]
+    steps:
+      - run: make test
+  flow-group:
+    runs-on: { group: build-runners }
+    steps:
+      - run: make test
+  scale-set:
+    runs-on: arc-runner-set
+    steps:
+      - run: make test
+  matrix:
+    strategy:
+      matrix:
+        runner: [ubuntu-latest, gpu-box]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - run: make test

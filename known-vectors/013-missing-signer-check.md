@@ -14,20 +14,14 @@ Instruction accepts accounts but doesn't verify the expected signer actually sig
 
 **Step 1: List all instructions and count signers**
 ```
-for f in programs/*/src/instructions/*.rs; do
-  echo "=== $f ==="
-  grep -c "Signer<'info>" "$f"
-  grep "pub fn " "$f"
-done
+grep -rc --include='*.rs' "Signer<'info>" programs/
+grep -rn --include='*.rs' "pub fn " programs/
 ```
 - Record: Each instruction and its signer count
 
 **Step 2: Verify every mutation instruction has at least one signer**
 ```
-grep -rn --include="*.rs" "pub fn " programs/*/src/instructions/ | while read line; do
-  file=$(echo "$line" | cut -d: -f1)
-  grep -c "Signer<'info>" "$file"
-done
+grep -rL --include='*.rs' "Signer<'info>" programs/
 ```
 - ✅ PASS: Every instruction that modifies state has ≥1 Signer
 - ❌ FAIL: Any mutation instruction with 0 Signers

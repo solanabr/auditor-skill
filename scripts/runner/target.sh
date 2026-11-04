@@ -33,8 +33,13 @@
 # check that cannot finish, stops the run. In native mode the same check prints, as a warning, what the code
 # the run builds can read, by kind and count, never a path. An incident's code (--run incident_<n>) is built
 # only once incident_<n>/INCIDENTS.json (a regular file of at most 4 MiB) records the root_cause_class of the
-# incident --patch names (INC-<n>.<k>), or of every incident without one; supply_chain_or_ci is never built
-# natively (OUTPUT-RULES.md Rule 11a).
+# incident --patch names (INC-<n>.<k>), or of every incident without one. In native mode it needs every
+# incident's, whatever --patch names, and builds nothing while any incident is supply_chain_or_ci: a patch of
+# one incident builds the same tree as the others. And natively nothing is built, whatever --run names, while
+# the INCIDENTS.json of any incident_* directory of the working directory (its name in any letter case)
+# records a supply_chain_or_ci incident or cannot be read, or the working directory cannot be listed, since
+# every --src is the working tree or a copy of it; a directory without INCIDENTS.json, or whose file records
+# no incident, counts for nothing (OUTPUT-RULES.md Rule 11a).
 #
 # The copy, in a scratch directory outside the working directory. A --src that is the top level of a git
 # repository (its git directory inside the working directory, holding no symbolic link, borrowing no objects
@@ -43,8 +48,9 @@
 # must name a commit, which is checked out; --patch, a file in <R>/patches/ of at most 16 MiB, is applied
 # with git apply --index. A revision that has submodules stops the run: target.sh never fetches them. Any
 # other directory --src names is copied file by file, symbolic links kept as links, without audit_*,
-# incident_* and .audit-memory at its top, and without target/ or node_modules/ directories; --rev and
-# --patch need a repository. --dir is a path inside the copy with no symbolic link on the way.
+# incident_* and .audit-memory at its top, and without target/ or node_modules/ directories, each name in any
+# letter case; --rev and --patch need a repository. --dir is a path inside the copy with no symbolic link on
+# the way.
 #
 # The environment of every step is the cleaned one of scripts/lib/isolation.sh: env -i, a throwaway HOME
 # holding a fresh Solana keypair, TMPDIR in the scratch directory, the cleaned PATH, the user's CARGO_HOME and
@@ -53,10 +59,22 @@
 # them runs code from the copy: cargo fetch, started outside the copy so that the copy's .cargo/config is
 # not read either; cargo build-sbf --install-only, with the real HOME, where the platform tools live; and
 # npm ci --ignore-scripts, with npm's user and global config files empty, its cache and logs in the scratch
-# directory and its git the one on PATH. Only these get the proxy variables. Every build and test after them
-# runs offline (CARGO_NET_OFFLINE=true), without the proxy variables, in the throwaway HOME, whose
-# .cache/solana links to the real one. Anchor.toml's [toolchain] can still make anchor fetch another Solana
-# or Anchor release; that would land in the throwaway HOME, and offline it fails.
+# directory and its git the one on PATH, and no .npmrc of the target: npm takes a project's settings from the
+# package root it finds from --dir up and expands ${VAR} in them from its environment, so target.sh removes
+# each .npmrc from the top of the copy down to --dir first, and says which; and a module NODE_OPTIONS
+# preloads lets npm start no program but git and node, since npm 10 runs the prepare script of a git or
+# directory dependency despite --ignore-scripts (so npm ci stops at such a dependency, and a note says so),
+# and ends at once the npm install npm runs in a git dependency's checkout, which would read that checkout's
+# .npmrc (with scripts ignored it has nothing to prepare, and a git dependency's bundleDependencies stay out).
+# A Corepack npm shim takes no npm release from the copy's packageManager field. Only these get the proxy
+# variables.
+# Every build and test after them runs offline (CARGO_NET_OFFLINE=true), without the proxy variables, in
+# the throwaway HOME, whose .cache/solana links to the real one. Anchor.toml's [toolchain] can still make
+# anchor fetch another Solana or Anchor release; that would land in the throwaway HOME, and offline it
+# fails. A cargo build-sbf that lacks any of --install-only, --skip-tools-install and --offline stops the run
+# in native mode (exit 3), where its build would get the real HOME and the network; in isolated mode the
+# build (cargo build-sbf, or anchor build) runs without those options, with the real HOME and the proxy
+# variables and cargo not held offline, as templates/poc/run.sh builds each arm then, and a note says so.
 #
 # The watchdog. AUDITOR_RUN_TIMEOUT (whole seconds, 1 to 86400, default 1800) bounds the whole run, and a
 # --timeout no higher than it lowers the bound. Each step runs in a session of its own, under ulimit -t of
@@ -69,10 +87,11 @@
 # stdout line says how the action ended and where these are. The scratch directory is removed on exit.
 #
 # Exit: 0 the action succeeded · 1 it ran and failed · 3 blocker (no mode or mode none, the self-check, a tool
-# missing, a revision or package not found, a patch that does not apply, submodules, a download that failed,
-# the watchdog, an incident whose root cause INCIDENTS.json does not give or that may not build natively) ·
-# 64 refused. Needs bash >= 3.2, git, python3, env, find, grep, mkdir, mktemp, rm, chmod, cp,
-# ln, cat, wc, tail and date; cargo, cargo-build-sbf, anchor or npm as the action needs.
+# missing or, in native mode, a cargo build-sbf without --install-only, a revision or package not found, a
+# patch that does not apply, submodules, a download that failed, the watchdog, an incident whose root cause
+# an INCIDENTS.json does not give or that keeps the build from native mode) · 64 refused. Needs bash >= 3.2,
+# git, python3, env, find, grep, mkdir, mktemp, rm, chmod, cp, ln, cat, wc, tail and date; cargo,
+# cargo-build-sbf, anchor or npm as the action needs.
 
 set -uo pipefail
 unset CDPATH
@@ -177,6 +196,8 @@ src_arg() {
   if [ "$CONFINE_REL" = . ]; then abs=$WT; else abs=$WT/$CONFINE_REL; fi
   confine_phys "$abs" || refuse "--src cannot be resolved: $SRC_SHOWN"
   phys=$CONFINE_PHYS
+  # In this shell, so a file git would wait on is refused for what it is, and the call below finds it checked.
+  confine_git_files "$phys"
   if out=$(hgit "$phys" rev-parse --is-bare-repository 2>&1); then
     case "$out" in
       true) ;;
@@ -193,11 +214,12 @@ src_arg() {
     SRC_KIND=repo
     SRC_ABS=$CONFINE_REPO
     return 0
+  elif confine_no_repo "$?" "$out"; then
+    SRC_KIND=tree
+    SRC_ABS=$phys
+  else
+    refuse "git cannot tell whether --src is a repository (none there, or another user owns it: audit a copy): $SRC_SHOWN"
   fi
-  case "$out" in
-    *'not a git repository'*) SRC_KIND=tree; SRC_ABS=$phys ;;
-    *) refuse "git cannot tell whether --src is a repository (none there, or another user owns it: audit a copy): $SRC_SHOWN" ;;
-  esac
 }
 src_arg "$SRC_ARG"
 
@@ -307,57 +329,16 @@ if [ -n "$MODE_ARG" ] && [ "$MODE_ARG" != "$MODE" ]; then
 fi
 echo ">> execution mode: $MODE (the stricter of $SOURCES)"
 
-# What the incident check runs with python3 -I: "<INCIDENTS.json> [<INC-n.k>]" prints that incident's
-# root_cause_class, or with no id supply_chain_or_ci when any incident has it and "other" otherwise; exit 3
-# with the reason when the file, an incident or a class cannot be read.
-INCIDENT_PY='import json, os, stat, sys
-
-CLASSES = ("code_flaw", "key_compromise", "oracle_or_dependency", "economic_design", "off_chain",
-           "supply_chain_or_ci", "unknown")
-LIMIT = 4 * 1024 * 1024
-
-
-def say(text, status):
-    print(text)
-    sys.exit(status)
-
-
-path, wanted = sys.argv[1], sys.argv[2]
-try:
-    st = os.lstat(path)
-except FileNotFoundError:
-    say("is missing", 3)
-except OSError:
-    say("cannot be read", 3)
-if not stat.S_ISREG(st.st_mode):
-    say("is not a regular file", 3)
-if st.st_size > LIMIT:
-    say("is larger than 4 MiB", 3)
-try:
-    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NOCTTY", 0))
-    with os.fdopen(fd, "rb") as f:
-        data = json.loads(f.read(LIMIT + 1).decode("utf-8"))
-except (OSError, UnicodeDecodeError, ValueError, RecursionError):
-    say("cannot be read as JSON", 3)
-incidents = data.get("incidents") if isinstance(data, dict) else None
-if not isinstance(incidents, list):
-    say("holds no incidents list", 3)
-incidents = [i for i in incidents if isinstance(i, dict)]
-if wanted:
-    incidents = [i for i in incidents if i.get("id") == wanted]
-    if not incidents:
-        say("records no incident %s" % wanted, 3)
-    if len(incidents) > 1:
-        say("records %s more than once" % wanted, 3)
-if not incidents:
-    say("records no incident", 3)
-for i in incidents:
-    if i.get("root_cause_class") not in CLASSES:
-        say("gives %s no root_cause_class from incidents-schema.md" % (wanted or "an incident"), 3)
-if wanted:
-    say(incidents[0]["root_cause_class"], 0)
-say("supply_chain_or_ci" if any(i["root_cause_class"] == "supply_chain_or_ci" for i in incidents) else "other", 0)
-'
+# incident_class [<INC-n.k>]: sets cls to the root_cause_class $json records for that incident, or, with no
+# id, to supply_chain_or_ci when any incident has it; a blocker when it cannot be read.
+incident_class() {
+  local rc=0
+  iso_incident_class "$WT/$json" "${1:-}" || rc=$?
+  cls=$ISO_CLASS
+  [ "$rc" = 0 ] && return 0
+  [ "$rc" = 3 ] && [ -n "$cls" ] || cls="cannot be read"
+  blocker "$json $cls: an incident's code is built only once $json records its root_cause_class (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built."
+}
 case "$R" in
   incident_*)
     inc=""
@@ -365,18 +346,40 @@ case "$R" in
     json=$R/INCIDENTS.json
     command -v python3 >/dev/null 2>&1 ||
       blocker "python3 is not on PATH, so target.sh cannot read the root_cause_class in $json (OUTPUT-RULES.md Rule 11a) — nothing was copied or built."
-    rc=0
-    cls=$( (cd / && exec python3 -I -c "$INCIDENT_PY" "$WT/$json" "$inc") ) || rc=$?
-    if [ "$rc" != 0 ]; then
-      [ "$rc" = 3 ] && [ -n "$cls" ] || cls="cannot be read"
-      blocker "$json $cls: an incident's code is built only once $json records its root_cause_class (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built."
+    if [ -n "$inc" ]; then
+      incident_class "$inc"
+      echo ">> incident $inc: root_cause_class $cls ($json)"
+      if [ "$cls" = supply_chain_or_ci ] && [ "$MODE" = native ]; then
+        blocker "the root_cause_class of $inc is supply_chain_or_ci, and such an incident's code is never built natively (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built."
+      fi
     fi
-    if [ -n "$inc" ]; then echo ">> incident $inc: root_cause_class $cls ($json)"; fi
-    if [ "$cls" = supply_chain_or_ci ] && [ "$MODE" = native ]; then
-      if [ -n "$inc" ]; then what="the root_cause_class of $inc is supply_chain_or_ci"; else what="$json records an incident whose root_cause_class is supply_chain_or_ci"; fi
-      blocker "$what, and such an incident's code is never built natively (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built."
+    # Natively every incident of the run counts, whatever --patch names: a patch of one incident builds the
+    # same tree as the others, which a supply_chain_or_ci root cause makes suspect.
+    if [ -z "$inc" ] || [ "$MODE" = native ]; then
+      incident_class
+      if [ "$cls" = supply_chain_or_ci ] && [ "$MODE" = native ]; then
+        also=""
+        [ -z "$inc" ] || also=", nor is a patch of $inc, which builds the same tree"
+        blocker "$json records an incident whose root_cause_class is supply_chain_or_ci, and such an incident's code is never built natively (OUTPUT-RULES.md Rule 11a)$also; run it in isolated mode — nothing was copied or built."
+      fi
     fi ;;
 esac
+# Natively an incident recorded anywhere in the working directory counts too, whatever --run names: every --src
+# is the working tree or a copy of it. iso_incident_runs reads each incident_*/INCIDENTS.json there; a run
+# without one, or whose file records no incident (a hunt that ruled everything out), counts for nothing.
+if [ "$MODE" = native ]; then
+  rc=0
+  iso_incident_runs "$WT" || rc=$?
+  json=$ISO_INCIDENTS
+  case "$rc:$ISO_CLASS" in
+    0:supply_chain_or_ci)
+      blocker "$json records an incident whose root_cause_class is supply_chain_or_ci, so nothing from this working directory is built natively, for an audit run or an incident run (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built." ;;
+    0:*) ;;
+    2:*) blocker "python3 is not on PATH, so target.sh cannot tell whether ${json%/INCIDENTS.json} holds an INCIDENTS.json, or read the root_cause_class one records (OUTPUT-RULES.md Rule 11a) — nothing was copied or built." ;;
+    '3:cannot be listed') blocker "the working directory cannot be listed, so target.sh cannot tell whether an incident_* directory in it records a supply_chain_or_ci incident, and nothing from it is built natively until it can be listed (OUTPUT-RULES.md Rule 11a) — nothing was copied or built." ;;
+    *) blocker "$json $ISO_CLASS: nothing from this working directory is built natively until every incident_*/INCIDENTS.json in it records the root_cause_class of each of its incidents (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built." ;;
+  esac
+fi
 # python3 starts from /, so nothing in the working directory picks the interpreter.
 cd / || blocker "cannot leave the working directory for /"
 rc=0
@@ -485,8 +488,13 @@ finish() {
   done
   where="log $R/exec/$ACTION-$n.log"
   if [ "$status" -le 1 ] && [ -n "$SO_FROM" ] && [ -d "$SO_FROM" ]; then
-    find "$SO_FROM" -maxdepth 1 -name '*.so' \( -type f -o -type l \) -print > "$S/so-list" 2>/dev/null || : > "$S/so-list"
-    while IFS= read -r f; do
+    # The glob gives the names in byte order (LC_ALL=C), whatever order the directory lists them in (ext4
+    # hashes them), so the line below and the first $SO_MAX kept are the same on every filesystem. dotglob
+    # lists the names that start with a dot as well, which are not kept, and a glob keeps a name that
+    # holds a line end whole.
+    shopt -s dotglob
+    for f in "$SO_FROM"/*.so; do
+      [ -L "$f" ] || [ -f "$f" ] || continue
       name=${f##*/}
       case "$name" in *[[:cntrl:]]*|.*|'') skipped=$((skipped + 1)); continue ;; esac
       if [ ! -f "$f" ] || [ -L "$f" ] || [ "$count" -ge "$SO_MAX" ] ||
@@ -501,7 +509,8 @@ finish() {
       else
         skipped=$((skipped + 1))
       fi
-    done < "$S/so-list"
+    done
+    shopt -u dotglob
     if [ "$count" -gt 0 ]; then where="$where; $count .so in $R/exec/$ACTION-$n/: $kept"; else where="$where; no .so to keep"; fi
     case "$skipped" in
       0) ;;
@@ -573,11 +582,34 @@ outcome() {
 
 NET=(${ISO_NET[@]+"${ISO_NET[@]}"})
 OFF=(CARGO_NET_OFFLINE=true)
-mkdir "$S/npm" && : > "$S/npm/userconfig" && : > "$S/npm/globalconfig" ||
-  finish 3 "cannot prepare npm's empty config files in $S"
+# The module NODE_OPTIONS preloads into each node process of the npm step (npm's node-options names it too:
+# set anywhere, it would replace NODE_OPTIONS for npm's children) does two things. npm prepares a git
+# dependency that has workspaces or an install, build or prepare script with an npm install in the
+# dependency's checkout, and that npm reads the checkout's .npmrc, ${VAR} expansion included; with scripts
+# ignored it has nothing to prepare, so the module ends it (pacote marks it with _PACOTE_NO_PREPARE_) before
+# it reads a setting. And npm 10 runs the prepare script of a git dependency, or of a package the lockfile
+# resolves to a directory, despite --ignore-scripts, through a shell it may find in that package's own
+# node_modules/.bin: the module lets child_process start only git and node, so no script runs, and npm ci
+# stops at such a dependency. npm's script-shell is false as well. Where npm is Corepack's shim (corepack enable
+# npm), COREPACK_ENABLE_PROJECT_SPEC=0 keeps the packageManager field of the copy's package.json from choosing
+# which npm release Corepack fetches and runs.
+FALSE=$(type -P false) || FALSE=/usr/bin/false
+[ -x "$FALSE" ] || FALSE=/bin/false
+mkdir "$S/npm" && : > "$S/npm/userconfig" && : > "$S/npm/globalconfig" &&
+  printf '%s\n' 'if (process.env._PACOTE_NO_PREPARE_ !== undefined) process.exit(0)' \
+    'const { ChildProcess } = require("child_process")' \
+    'const start = ChildProcess.prototype.spawn' \
+    'const allowed = [process.execPath, process.env.npm_config_git].filter(Boolean)' \
+    'ChildProcess.prototype.spawn = function (options) {' \
+    '  const file = options && options.file' \
+    '  if (!allowed.includes(file)) throw new Error("target.sh: npm starts no program here but git and node, not " + file)' \
+    '  return start.call(this, options)' \
+    '}' > "$S/npm/preload.js" || finish 3 "cannot prepare npm's config files and preload in $S"
+PRELOAD="--require=\"$S/npm/preload.js\""
 NPM=(npm_config_userconfig="$S/npm/userconfig" npm_config_globalconfig="$S/npm/globalconfig"
   npm_config_cache="$S/npm/cache" npm_config_logs_dir="$S/npm/logs" npm_config_update_notifier=false
-  npm_config_fund=false npm_config_audit=false npm_config_ignore_scripts=true npm_config_git="$GIT")
+  npm_config_fund=false npm_config_audit=false npm_config_ignore_scripts=true npm_config_git="$GIT"
+  "NODE_OPTIONS=$PRELOAD" "npm_config_node_options=$PRELOAD" "npm_config_script_shell=$FALSE" COREPACK_ENABLE_PROJECT_SPEC=0)
 ISO_ENV+=(RUSTUP_AUTO_INSTALL=0 CARGO_TERM_COLOR=never)
 case "$ACTION" in
   npm-ci) ;;
@@ -596,7 +628,7 @@ printf '>> target.sh %s, execution mode %s; HOME %s (throwaway, with a fresh Sol
 # ---- the copy ------------------------------------------------------------------------------------------
 if [ "$SRC_KIND" = repo ]; then
   printf '>> git clone --no-local --no-checkout --no-recurse-submodules --template= %s\n' "$SRC_SHOWN" >&9
-  CONFINE_CEILING=${S%/*} hgit "$S" -c protocol.file.allow=always \
+  CONFINE_ALLOW_PROTOCOL=file CONFINE_CEILING=${S%/*} hgit "$S" -c protocol.file.allow=always \
     clone --no-local --no-checkout --no-recurse-submodules --template= -- "$SRC_ABS" "$S/src" </dev/null >&9 2>&9 ||
     finish 3 "git could not clone $SRC_SHOWN"
   SHA=$(hgit "$S/src" rev-parse --verify --quiet --end-of-options "${REV:-HEAD}^{commit}" 2>&9) && [ -n "$SHA" ] ||
@@ -621,8 +653,10 @@ if [ "$SRC_KIND" = repo ]; then
   printf '>> the copy: %s at %s\n' "$SRC_SHOWN" "$SHA" >&9
 else
   printf '>> the copy: the files of %s, links as links, without run directories, the store, target/ and node_modules/\n' "$SRC_SHOWN" >&9
-  (cd "$SRC_ABS" && find . \( -path './audit_*' -o -path './incident_*' -o -path './.audit-memory' -o \
-    \( -type d \( -iname target -o -name node_modules \) \) \) -prune -o \( -type d -o -type f -o -type l \) -print0) \
+  # Each name in any letter case: a volume that ignores case finds audit_1 under the name AUDIT_1.
+  (cd "$SRC_ABS" && find . \( -path './[Aa][Uu][Dd][Ii][Tt]_*' -o -path './[Ii][Nn][Cc][Ii][Dd][Ee][Nn][Tt]_*' -o \
+    -path './.[Aa][Uu][Dd][Ii][Tt]-[Mm][Ee][Mm][Oo][Rr][Yy]' -o \( -type d \( -iname target -o -iname node_modules \) \) \) -prune -o \
+    \( -type d -o -type f -o -type l \) -print0) \
     > "$S/list" 2>&9 || finish 3 "find cannot list all of $SRC_SHOWN"
   mkdir "$S/src" || finish 3 "cannot create the copy in $S"
   while IFS= read -r -d '' rel; do
@@ -645,6 +679,37 @@ if [ -n "$DIR_ARG" ]; then
 fi
 at=${DIR_ARG:-the top of the copy}
 real_file() { [ -f "$1" ] && [ ! -L "$1" ]; }
+# no_npmrc: npm takes a project's settings from the .npmrc of the package root it finds from its working
+# directory up (a workspace's root above it among them), and expands ${VAR} in them from its environment, the
+# proxy variables included. Before npm ci, every .npmrc from the top of the copy down to AD goes, of any kind.
+no_npmrc() {
+  local d=$S/src rel="" rest=$DIR_ARG gone=""
+  while :; do
+    if [ -e "$d/.npmrc" ] || [ -L "$d/.npmrc" ]; then
+      rm -rf -- "$d/.npmrc" 2>&9
+      { [ ! -e "$d/.npmrc" ] && [ ! -L "$d/.npmrc" ]; } || finish 3 "cannot remove ${rel}.npmrc from the copy before npm ci"
+      gone=${gone:+$gone, }${rel}.npmrc
+    fi
+    [ -n "$rest" ] || break
+    d=$d/${rest%%/*}
+    rel=$rel${rest%%/*}/
+    case "$rest" in */*) rest=${rest#*/} ;; *) rest="" ;; esac
+  done
+  [ -n "$gone" ] || return 0
+  echo ">> note: npm ci takes no settings from the code under audit: target.sh removed these from the copy, and the registry and other settings they name do not apply: $gone"
+  printf '>> removed from the copy before npm ci: %s\n' "$gone" >&9
+}
+# npm_ci: npm ci --ignore-scripts in AD, a download, after no_npmrc; a note when it stopped at a script npm
+# tried to run. NODE_OPTIONS quotes the path of the preload, and it cannot quote a double quote or a backslash.
+npm_ci() {
+  case "$S" in *[\"\\]*) finish 3 "the scratch directory's path holds a double quote or a backslash, which NODE_OPTIONS cannot carry to npm; point TMPDIR elsewhere" ;; esac
+  no_npmrc
+  step "$AD" ${NET[@]+"${NET[@]}"} ${NPM[@]+"${NPM[@]}"} npm ci --ignore-scripts --no-audit --no-fund
+  [ "$STEP_END" != "exit 0" ] || return 0
+  if grep -qF -e "target.sh: npm starts no program here" -e "command $FALSE -c " "$S/log" 2>/dev/null; then
+    echo ">> note: npm tried to run a dependency's script (npm 10 runs the prepare script of a git or directory dependency despite --ignore-scripts), and no script runs in target.sh's npm step, so npm ci stopped there"
+  fi
+}
 
 # ---- the downloads -------------------------------------------------------------------------------------
 case "$ACTION" in
@@ -659,21 +724,32 @@ case "$ACTION" in
 esac
 TV=()
 [ -z "${TOOLS_VERSION:-}" ] || TV=(--tools-version "$TOOLS_VERSION")
+# SBF_SPLIT=1: cargo build-sbf --install-only puts the platform tools in the real HOME, and the build runs
+# offline in the throwaway HOME. A cargo build-sbf without those options builds with the real HOME and the
+# proxy variables, as templates/poc/run.sh builds each arm then (SBF_SPLIT=0): in isolated mode only, since
+# natively the build's code would get the real home folder and the network.
+SBF_SPLIT=1
 case "$ACTION" in
   anchor-*|build-sbf)
     sbf_help=$(cd "$S" && iso_run cargo build-sbf --help 2>/dev/null </dev/null) || sbf_help=""
-    [[ "$sbf_help" == *--install-only* && "$sbf_help" == *--skip-tools-install* && "$sbf_help" == *--offline* ]] ||
-      finish 3 "this cargo build-sbf has no --install-only, --skip-tools-install or --offline, which target.sh needs to keep the real HOME and the proxy variables away from the build"
+    [[ "$sbf_help" == *--install-only* && "$sbf_help" == *--skip-tools-install* && "$sbf_help" == *--offline* ]] || SBF_SPLIT=0
+    [ "$SBF_SPLIT" = 1 ] || [ "$MODE" = isolated ] ||
+      finish 3 "this cargo build-sbf has no --install-only, --skip-tools-install or --offline, which target.sh needs in native mode to keep the real HOME and the proxy variables away from the build; isolated mode builds with them"
     [ -n "$ISO_REAL_HOME" ] || finish 3 "HOME is not set, and cargo build-sbf keeps its platform tools there"
-    step "$S" ${NET[@]+"${NET[@]}"} "HOME=$ISO_REAL_HOME" cargo build-sbf --install-only ${TV[@]+"${TV[@]}"}
-    fetched "cargo build-sbf --install-only, the install of the platform tools,"
-    { confine_mkdir "$ISO_HOME/.cache" && ln -s "$ISO_REAL_HOME/.cache/solana" "$ISO_HOME/.cache/solana"; } ||
-      finish 3 "cannot link the platform tools into the throwaway HOME $ISO_HOME" ;;
+    if [ "$SBF_SPLIT" = 1 ]; then
+      step "$S" ${NET[@]+"${NET[@]}"} "HOME=$ISO_REAL_HOME" cargo build-sbf --install-only ${TV[@]+"${TV[@]}"}
+      fetched "cargo build-sbf --install-only, the install of the platform tools,"
+      { confine_mkdir "$ISO_HOME/.cache" && ln -s "$ISO_REAL_HOME/.cache/solana" "$ISO_HOME/.cache/solana"; } ||
+        finish 3 "cannot link the platform tools into the throwaway HOME $ISO_HOME"
+    else
+      echo ">> note: this cargo build-sbf has no --install-only, --skip-tools-install or --offline: in isolated mode the build runs with the real HOME and the proxy variables"
+      printf '>> no --install-only: the build runs with the real HOME and the proxy variables\n' >&9
+    fi ;;
 esac
 if [ "$ACTION" = anchor-test ]; then
   if real_file "$AD/package-lock.json" || real_file "$AD/npm-shrinkwrap.json"; then
     command -v npm >/dev/null 2>&1 && command -v node >/dev/null 2>&1 || finish 3 "$at holds a package lock, and npm or node is not on PATH"
-    step "$AD" ${NET[@]+"${NET[@]}"} ${NPM[@]+"${NPM[@]}"} npm ci --ignore-scripts --no-audit --no-fund
+    npm_ci
     fetched "npm ci --ignore-scripts, the install of the JavaScript dependencies,"
   elif real_file "$AD/yarn.lock" || real_file "$AD/pnpm-lock.yaml" || real_file "$AD/bun.lock"; then
     echo ">> note: $at holds a yarn, pnpm or bun lockfile; target.sh installs JavaScript dependencies only from package-lock.json, so a test script that needs node_modules fails"
@@ -708,7 +784,11 @@ print(path)' "$S/metadata.json" "$PACKAGE" "$S/src") 2>/dev/null) && [ -n "$mp" 
     fi
     mkdir "$S/out" || finish 3 "cannot create the build output directory in $S"
     SO_FROM=$S/out
-    step "$AD" "${OFF[@]}" cargo build-sbf --skip-tools-install --offline --sbf-out-dir "$S/out" ${TV[@]+"${TV[@]}"} ${MP[@]+"${MP[@]}"}
+    if [ "$SBF_SPLIT" = 1 ]; then
+      step "$AD" "${OFF[@]}" cargo build-sbf --skip-tools-install --offline --sbf-out-dir "$S/out" ${TV[@]+"${TV[@]}"} ${MP[@]+"${MP[@]}"}
+    else
+      step "$AD" ${NET[@]+"${NET[@]}"} "HOME=$ISO_REAL_HOME" cargo build-sbf --sbf-out-dir "$S/out" ${TV[@]+"${TV[@]}"} ${MP[@]+"${MP[@]}"}
+    fi
     outcome "cargo build-sbf"
     finish 0 "ok (exit 0)" ;;
   cargo-test|clippy)
@@ -727,7 +807,13 @@ print(path)' "$S/metadata.json" "$PACKAGE" "$S/src") 2>/dev/null) && [ -n "$mp" 
   anchor-build|anchor-test)
     [ -z "$PROGRAM" ] || PKG=(-p "$PROGRAM")
     SO_FROM=$AD/target/deploy
-    step "$AD" "${OFF[@]}" anchor build --ignore-keys ${PKG[@]+"${PKG[@]}"} -- --skip-tools-install --offline ${TV[@]+"${TV[@]}"}
+    if [ "$SBF_SPLIT" = 1 ]; then
+      step "$AD" "${OFF[@]}" anchor build --ignore-keys ${PKG[@]+"${PKG[@]}"} -- --skip-tools-install --offline ${TV[@]+"${TV[@]}"}
+    else
+      SBF_ARGS=()
+      [ -z "${TV[*]-}" ] || SBF_ARGS=(-- "${TV[@]}")
+      step "$AD" ${NET[@]+"${NET[@]}"} "HOME=$ISO_REAL_HOME" anchor build --ignore-keys ${PKG[@]+"${PKG[@]}"} ${SBF_ARGS[@]+"${SBF_ARGS[@]}"}
+    fi
     outcome "anchor build"
     [ "$ACTION" = anchor-test ] || finish 0 "ok (exit 0)"
     step "$AD" "${OFF[@]}" anchor test --skip-build --skip-deploy --skip-local-validator --provider.cluster localnet \
@@ -735,7 +821,7 @@ print(path)' "$S/metadata.json" "$PACKAGE" "$S/src") 2>/dev/null) && [ -n "$mp" 
     outcome "anchor test"
     finish 0 "ok (exit 0)" ;;
   npm-ci)
-    step "$AD" ${NET[@]+"${NET[@]}"} ${NPM[@]+"${NPM[@]}"} npm ci --ignore-scripts --no-audit --no-fund
+    npm_ci
     outcome "npm ci --ignore-scripts"
     finish 0 "ok (exit 0)" ;;
 esac

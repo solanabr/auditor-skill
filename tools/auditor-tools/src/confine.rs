@@ -13,22 +13,27 @@
 //! 6 digits) directly in WT: a real directory, holding no symbolic link, tracked by
 //! no repository in any letter case, whose `.gitignore` holds exactly `*`, as
 //! `scripts/rundir.sh check` checks it. git runs only as `hgit` runs it: found on
-//! a PATH with every entry inside WT removed, with an environment of its own, and
-//! with the repository's config pinned off. The only other program started is
+//! a PATH with every entry inside WT, or inside the tree WT lies in, removed
+//! (by identity, not spelling), with an environment of its own that allows no
+//! transport, and with the repository's config pinned off; it never starts on a
+//! repository holding a file it would wait on for good (a named pipe or device,
+//! as confine.sh's `confine_git_check` finds one), and it is killed when it has
+//! not answered in time. The only other program started is
 //! audit-scan itself, by the path it runs from, to parse one file in a child: the
 //! file's bytes on its stdin, no environment, killed past a time limit. A file is
 //! made through its directory's descriptor, never through a link and never over a
 //! name that exists.
 
+use std::cell::OnceCell;
 use std::ffi::{CString, OsStr, OsString};
 use std::fs::{self, File, Metadata};
 use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::os::raw::c_int;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Child, Command, ExitStatus, Output, Stdio};
 use std::time::{Duration, Instant};
 
 #[cfg(any(target_os = "android", target_os = "netbsd", target_os = "openbsd"))]
@@ -115,7 +120,10 @@ pub fn plain_working_tree(wt: &Path) -> Result<(), Stop> {
 /// as written, or from an installation inside the working directory (Rule 11e),
 /// in the words of `scripts/lib/confine.sh`. The path is checked as it was invoked
 /// (argv[0], when it names a path), as the system names the executable, and with
-/// every link resolved, as the recipes check theirs.
+/// every link resolved, as the recipes check theirs; whether it lies inside the
+/// working directory is decided by identity (device and inode) along its
+/// ancestors, as `confine_inside` decides it, since one directory has several
+/// spellings (through `/System/Volumes/Data` on macOS).
 pub fn self_check(wt: &Path) -> Result<(), Stop> {
     let exe = std::env::current_exe()
         .map_err(|e| refuse(format!("cannot resolve its own path: {}", os_message(&e))))?;
@@ -141,7 +149,11 @@ pub fn self_check(wt: &Path) -> Result<(), Stop> {
             ));
         }
     }
-    if real.starts_with(wt) {
+    let inside = fs::metadata(wt).is_ok_and(|w| {
+        real.ancestors()
+            .any(|a| fs::metadata(a).is_ok_and(|m| m.dev() == w.dev() && m.ino() == w.ino()))
+    });
+    if real.starts_with(wt) || inside {
         return Err(refuse(
             "the installation lies inside the working directory; install it outside the tree \
              under audit, or run from a directory that does not contain it (Rule 11e)"
@@ -160,12 +172,17 @@ fn searchable(dir: &Path) -> bool {
     unsafe { libc::access(name.as_ptr(), libc::X_OK) == 0 }
 }
 
-/// `realpath(WT/p)` must stay under WT.
+/// `realpath(WT/p)` must stay under WT, and not be WT itself. Whether it lies
+/// there is decided by identity (device and inode) along its ancestors, as
+/// `self_check` decides it, since one directory has several spellings (through
+/// `/System/Volumes/Data` on macOS, or in other letters on a volume that ignores
+/// letter case).
 pub fn stays_inside(wt: &Path, path: &Path) -> bool {
-    match path.canonicalize() {
-        Ok(real) => real.starts_with(wt) && real != wt,
-        Err(_) => false,
-    }
+    let (Ok(real), Ok(w)) = (path.canonicalize(), fs::metadata(wt)) else {
+        return false;
+    };
+    let is_wt = |a: &Path| fs::metadata(a).is_ok_and(|m| m.dev() == w.dev() && m.ino() == w.ino());
+    !is_wt(&real) && real.ancestors().any(is_wt)
 }
 
 /// An OS error's text without Rust's " (os error N)" suffix, as Python's
@@ -227,8 +244,11 @@ pub fn unsafe_char(c: char) -> bool {
 }
 
 /// Text for a message, as confine.sh's `confine_shown` prints it: each control
-/// character (and each byte that is not UTF-8, and each character `unsafe_char`
-/// lists) as `?`, cut after 200 bytes.
+/// character as `?`, cut after 200 bytes. It masks more than `confine_shown`,
+/// which under LC_ALL=C takes the C0 controls and DEL alone: each byte that is
+/// not UTF-8 and each character `unsafe_char` lists is a `?` here as well, and
+/// the cut falls between characters. The two print the same for ASCII text, and
+/// for other UTF-8 text that holds no character `unsafe_char` lists, up to the cut.
 pub fn shown(raw: &[u8]) -> String {
     let mut s = String::new();
     for c in String::from_utf8_lossy(raw).chars() {
@@ -270,9 +290,12 @@ pub fn json_text(json: String) -> String {
     out
 }
 
-/// A path argument that passed the grammar: as given, less one leading `./`, and
-/// its components (none for `.`, the working directory itself).
+/// A path argument that passed the grammar: as given (`arg`), as given less one
+/// leading `./` (`raw`), and its components (none for `.`, the working directory
+/// itself). `check` names it as given in a refusal, as `confine_path` does; a
+/// tool's own messages name the path it reads, `raw`.
 pub struct Rel {
+    pub arg: Vec<u8>,
     pub raw: Vec<u8>,
     pub parts: Vec<Vec<u8>>,
 }
@@ -285,6 +308,12 @@ impl Rel {
 
     pub fn shown(&self) -> String {
         shown(&self.raw)
+    }
+
+    /// The argument as given, `./` and all, as `confine_path` names a path in
+    /// its refusals.
+    pub fn given(&self) -> String {
+        shown(&self.arg)
     }
 
     pub fn full(&self, wt: &Path) -> PathBuf {
@@ -307,6 +336,7 @@ pub fn rel(what: &str, arg: &OsStr, dot: bool) -> Result<Rel, Stop> {
     let raw = arg.as_bytes();
     if dot && raw == b"." {
         return Ok(Rel {
+            arg: raw.to_vec(),
             raw: raw.to_vec(),
             parts: Vec::new(),
         });
@@ -340,6 +370,7 @@ pub fn rel(what: &str, arg: &OsStr, dot: bool) -> Result<Rel, Stop> {
         )));
     }
     Ok(Rel {
+        arg: raw.to_vec(),
         raw: p.to_vec(),
         parts,
     })
@@ -361,7 +392,7 @@ pub enum Kind {
 /// search, as `cd -P` needs. A name lstat cannot find or cannot name (one longer
 /// than a name may be, say) is absent, as `[ -e ]` reads it.
 pub fn check(wt: &Path, r: &Rel, what: &str) -> Result<Kind, Stop> {
-    let s = r.shown();
+    let s = r.given();
     let mut kind = Kind::Dir;
     let mut resolve = wt.to_path_buf();
     for n in 1..=r.parts.len() {
@@ -451,8 +482,9 @@ pub fn holds_link(dir: &Path) -> io::Result<bool> {
 
 /// Checks a run directory as `confine_rundir` does, in its words, with `what`
 /// naming the argument it came from: the name, then a real directory, holding no
-/// symbolic link, tracked by no repository in any letter case, with a
-/// `.gitignore` of exactly `*`. Returns its lstat.
+/// symbolic link, in a repository holding no file git would wait on (`Git::files`),
+/// tracked by no repository in any letter case, with a `.gitignore` of exactly
+/// `*`. Returns its lstat.
 pub fn run_dir(wt: &Path, git: &mut Git, name: &[u8], what: &str) -> Result<Metadata, Stop> {
     git.need()?;
     let s = shown(name);
@@ -474,6 +506,7 @@ pub fn run_dir(wt: &Path, git: &mut Git, name: &[u8], what: &str) -> Result<Meta
         Ok(true) => return Err(refuse(format!("{what} holds a symbolic link: {s}"))),
         Err(_) => return Err(refuse(format!("{what} cannot be fully read: {s}"))),
     }
+    git.files()?;
     match git.tracked(name) {
         Some(listed) if listed.is_empty() => {}
         Some(_) => return Err(refuse(format!("{what} is tracked by git: {s}"))),
@@ -525,11 +558,82 @@ pub const HGIT_PINS: &[&str] = &[
     "core.commitGraph=false",
 ];
 
+/// How long git may take to answer one question. git that has not answered by
+/// then, one blocked opening a named pipe in the repository, say, is killed, and
+/// cannot tell.
+pub const GIT_TIME: Duration = Duration::from_secs(10);
+
+/// Whether git, asked about a directory, answered that no repository there is one
+/// it can use, as `confine_no_repo` takes it: exit 128 and stderr starting with
+/// "fatal: not a git repository", or with "fatal: gitfile does not point to a valid
+/// repository", the words git 2.56 and later use where a `.git` file names none
+/// (earlier versions say "not a git repository: <dir>" there). No part of other
+/// text counts: git's messages can quote a name the repository chose. Nor do the
+/// words git 2.54 and later stop with at a `.git` that is neither a regular file
+/// nor a directory, or that stat cannot read ("not a regular file", "error
+/// reading"): git looks no further, but a repository above may still hold the
+/// directory in its work tree.
+fn no_repository(code: Option<i32>, stderr: &[u8]) -> bool {
+    const WORDS: [&[u8]; 2] = [
+        b"fatal: not a git repository",
+        b"fatal: gitfile does not point to a valid repository",
+    ];
+    code == Some(128) && WORDS.iter().any(|w| stderr.starts_with(w))
+}
+
+/// Whether two stats name the same file: its device and inode.
+fn same(a: &Metadata, b: &Metadata) -> bool {
+    a.dev() == b.dev() && a.ino() == b.ino()
+}
+
+/// Whether `path` (absolute) is `dir` or lies below it, as `confine_inside`
+/// decides it: by identity along `path`'s ancestors, never by spelling, since one
+/// directory has several spellings (through `/System/Volumes/Data` on macOS, or in
+/// other letters on a volume that ignores letter case).
+fn inside(path: &Path, dir: &Path) -> bool {
+    let Ok(want) = fs::metadata(dir) else {
+        return false;
+    };
+    path.ancestors()
+        .any(|a| fs::metadata(a).is_ok_and(|md| same(&md, &want)))
+}
+
+/// The tree WT lies in, as `confine_init` takes it: the outermost of WT and the
+/// directories above it, below HOME (up to `/` when WT is not under HOME), that
+/// holds a `.git` of any kind. Its tree is under audit too, and a `.git` the tree
+/// puts nearer (an empty one, which git walks past) does not shrink it.
+fn repository_top(wt: &Path) -> Option<&Path> {
+    let home = std::env::var_os("HOME")
+        .filter(|h| !h.is_empty())
+        .and_then(|h| fs::metadata(h).ok());
+    let mut top = None;
+    let mut dir = wt;
+    loop {
+        if fs::symlink_metadata(dir.join(".git")).is_ok() {
+            top = Some(dir);
+        }
+        let Some(up) = dir.parent() else {
+            return top;
+        };
+        dir = up;
+        if home
+            .as_ref()
+            .is_some_and(|h| fs::metadata(dir).is_ok_and(|md| same(&md, h)))
+        {
+            return top;
+        }
+    }
+}
+
 /// git, run as confine.sh's `hgit` runs it. Found on first use: on a PATH that
-/// keeps only absolute entries resolving outside WT, as `confine_init` cleans it.
+/// keeps only absolute entries resolving outside WT and outside the tree WT lies in
+/// (`repository_top`), each compared by identity (`inside`), as `confine_init`
+/// cleans it.
 pub struct Git {
     wt: PathBuf,
     found: Option<(PathBuf, OsString)>,
+    /// Why git, asked from WT, would wait for good on a file it opens; found once.
+    waits: OnceCell<Option<String>>,
 }
 
 impl Git {
@@ -537,6 +641,7 @@ impl Git {
         Git {
             wt: wt.to_path_buf(),
             found: None,
+            waits: OnceCell::new(),
         }
     }
 
@@ -551,6 +656,7 @@ impl Git {
 
     fn find(&self) -> Result<(PathBuf, OsString), Stop> {
         let path = std::env::var_os("PATH").unwrap_or_default();
+        let top = repository_top(&self.wt);
         let mut clean: Vec<PathBuf> = Vec::new();
         for entry in path.as_bytes().split(|&c| c == b':') {
             if entry.first() != Some(&b'/') {
@@ -566,6 +672,8 @@ impl Git {
                     .iter()
                     .any(|&c| c < 0x20 || c == 0x7F)
                 || real.starts_with(&self.wt)
+                || inside(&real, &self.wt)
+                || top.is_some_and(|t| inside(&real, t))
             {
                 continue;
             }
@@ -593,9 +701,12 @@ impl Git {
         Ok((exe, joined))
     }
 
-    /// `hgit <WT> <args>` with GIT_CEILING_DIRECTORIES set to `ceiling`: no
-    /// environment but its own, the repository's config pinned off.
-    fn run(&self, ceiling: &OsStr, args: &[&OsStr]) -> io::Result<std::process::Output> {
+    /// `hgit <dir> <args>` with GIT_CEILING_DIRECTORIES set to `ceiling`: no
+    /// environment but its own, GIT_ALLOW_PROTOCOL empty (no transport, which no
+    /// config of the repository's can widen), the repository's config pinned off,
+    /// and its output read until it ends. Past `GIT_TIME` it is killed, and that is
+    /// an error.
+    fn run(&self, ceiling: &OsStr, dir: &Path, args: &[&OsStr]) -> io::Result<Output> {
         let (exe, path) = self
             .found
             .as_ref()
@@ -624,40 +735,49 @@ impl Git {
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("GIT_OPTIONAL_LOCKS", "0")
+            .env("GIT_ALLOW_PROTOCOL", "")
             .env("GIT_CEILING_DIRECTORIES", ceiling)
             .env("GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS", "true")
             .arg("--no-pager")
             .arg("-C")
-            .arg(&self.wt);
+            .arg(dir);
         for pin in HGIT_PINS {
             cmd.arg("-c").arg(pin);
         }
         cmd.args(args)
-            .current_dir(&self.wt)
+            .current_dir(dir)
             .stdin(Stdio::null())
-            .output()
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        collect(cmd.spawn()?, Instant::now() + GIT_TIME)
     }
 
     /// What git tracks at `path` (relative to WT), in any letter case, as
     /// `confine_tracked` asks it: outside every repository nothing is tracked, and
     /// discovery may go above WT for this one question, since a repository there
-    /// decides it. `None` when git cannot tell, or cannot be run.
+    /// decides it. `None` when git cannot tell, cannot be run, has not answered
+    /// within `GIT_TIME`, or would wait for good on a file it opens (`files`).
     pub fn tracked(&self, path: &[u8]) -> Option<Vec<u8>> {
+        if self.waits().is_some() {
+            return None;
+        }
         let none = OsStr::new("");
         let inside = self
             .run(
                 none,
+                &self.wt,
                 &[OsStr::new("rev-parse"), OsStr::new("--is-inside-work-tree")],
             )
             .ok()?;
         if !inside.status.success() {
-            let err = String::from_utf8_lossy(&inside.stderr);
-            return err.contains("not a git repository").then(Vec::new);
+            // Outside every repository only on git's own answer.
+            return no_repository(inside.status.code(), &inside.stderr).then(Vec::new);
         }
         let spec = OsString::from_vec([&b":(literal,icase)"[..], path].concat());
         let listed = self
             .run(
                 none,
+                &self.wt,
                 &[
                     OsStr::new("--icase-pathspecs"),
                     OsStr::new("ls-files"),
@@ -667,6 +787,451 @@ impl Git {
             )
             .ok()?;
         listed.status.success().then_some(listed.stdout)
+    }
+
+    /// Refuses, in confine.sh's words, when git, asked from WT whether a path is
+    /// tracked, would wait for good on a file it opens (`confine_git_files`, as
+    /// `confine_rundir` runs it before it asks). Call `need` first: the check asks
+    /// git what a config file includes.
+    pub fn files(&self) -> Result<(), Stop> {
+        match self.waits() {
+            Some(why) => Err(refuse(why.to_string())),
+            None => Ok(()),
+        }
+    }
+
+    /// Why git, asked from WT with no ceiling, would wait for good on a file it
+    /// opens, as `confine_git_check` finds it; found once.
+    fn waits(&self) -> Option<&str> {
+        self.waits
+            .get_or_init(|| self.walk(&self.wt).err())
+            .as_deref()
+    }
+
+    /// `confine_git_walk` from `start` up to `/`: in each directory `.git`, then
+    /// the directory itself as a bare repository, up to the first git takes. A
+    /// `.git` file names the directory to look at instead, and git goes no
+    /// further whatever it finds there; a `.git` that is neither a file nor a
+    /// directory is passed over.
+    fn walk(&self, start: &Path) -> Result<(), String> {
+        let mut p = start.to_path_buf();
+        loop {
+            let dotgit = p.join(".git");
+            if fs::metadata(&dotgit).is_ok_and(|md| md.is_file()) {
+                match named_dir(&dotgit, b"gitdir: ") {
+                    Named::Dir(d) => {
+                        self.candidate(&d)?;
+                    }
+                    Named::Unread => return Err(unread(&dotgit)),
+                    Named::None => {}
+                }
+                return Ok(());
+            }
+            for g in [dotgit, p.clone()] {
+                if !fs::metadata(&g).is_ok_and(|md| md.is_dir()) {
+                    continue;
+                }
+                match self.candidate(&g)? {
+                    Candidate::Repository | Candidate::Stops => return Ok(()),
+                    Candidate::PassedOver => {}
+                }
+            }
+            if !p.pop() {
+                return Ok(());
+            }
+        }
+    }
+
+    /// `confine_git_candidate`: what git's discovery makes of `g` as a git
+    /// directory. git opens HEAD first, and commondir only past a HEAD it takes;
+    /// a repository has objects and refs in its common directory, and each one
+    /// that may be a repository is checked as `dir_files` checks it.
+    fn candidate(&self, g: &Path) -> Result<Candidate, String> {
+        if special(&g.join("HEAD")) {
+            return Err(waits_on(
+                "is in the git directory",
+                g.as_os_str().as_bytes(),
+            ));
+        }
+        let head = git_head(g);
+        if head == Head::Invalid {
+            return Ok(Candidate::PassedOver);
+        }
+        let named = g.join("commondir");
+        if special(&named) {
+            return Err(waits_on(
+                "is in the git directory",
+                g.as_os_str().as_bytes(),
+            ));
+        }
+        let mut common = g.to_path_buf();
+        if fs::metadata(&named).is_ok() {
+            match named_dir(&named, b"") {
+                Named::Dir(d) => common = d,
+                Named::None => return Ok(Candidate::Stops),
+                Named::Unread => return Err(unread(&named)),
+            }
+        }
+        if !(searchable(&common.join("objects")) && searchable(&common.join("refs"))) {
+            return Ok(Candidate::PassedOver);
+        }
+        self.dir_files(g, &common)?;
+        Ok(if head == Head::Valid {
+            Candidate::Repository
+        } else {
+            Candidate::PassedOver
+        })
+    }
+
+    /// `confine_git_dir_files`: the git directory `g` and the common directory
+    /// `c`, each resolved, then searched (`scan_git_dir`), then the files their
+    /// config includes (`includes`).
+    fn dir_files(&self, g: &Path, c: &Path) -> Result<(), String> {
+        let resolve = |d: &Path| {
+            d.canonicalize().map_err(|_| {
+                format!(
+                    "the git directory cannot be resolved: {}",
+                    shown(d.as_os_str().as_bytes())
+                )
+            })
+        };
+        let g = resolve(g)?;
+        let c = resolve(c)?;
+        for d in [&g, &c] {
+            scan_git_dir(d)?;
+            if same_file(&c, &g) {
+                break;
+            }
+        }
+        self.includes(vec![c.join("config"), g.join("config.worktree")])
+    }
+
+    /// `confine_git_includes`: each `include.path` and `includeIf.<condition>.path`
+    /// value in `first`, and in each file they include in turn, read once, nearest
+    /// first, to git's 10 levels. git lists each file's values with no repository
+    /// (`--git-dir=/dev/null`), following none. A value written `~user/` or
+    /// `%(prefix)/` names a place outside the tree and is not followed.
+    fn includes(&self, first: Vec<PathBuf>) -> Result<(), String> {
+        let mut seen = first.clone();
+        let mut cur = first;
+        let mut files = 0;
+        let mut level = 0;
+        while !cur.is_empty() && level <= INCLUDE_LEVELS {
+            let mut next = Vec::new();
+            for f in &cur {
+                if !fs::metadata(f).is_ok_and(|md| md.is_file())
+                    || mentions_include(f) == Some(false)
+                {
+                    continue;
+                }
+                let at = shown(f.as_os_str().as_bytes());
+                let cannot = || format!("git cannot list what this config file includes: {at}");
+                let listed = self
+                    .run(
+                        OsStr::new(""),
+                        Path::new("/"),
+                        &[
+                            OsStr::new("--git-dir=/dev/null"),
+                            OsStr::new("config"),
+                            OsStr::new("--file"),
+                            f.as_os_str(),
+                            OsStr::new("--no-includes"),
+                            OsStr::new("-z"),
+                            OsStr::new("--get-regexp"),
+                            OsStr::new(r"^include(if\..+)?\.path$"),
+                        ],
+                    )
+                    .map_err(|_| cannot())?;
+                let base = f.parent().unwrap_or(Path::new("/"));
+                let home = std::env::var_os("HOME").unwrap_or_default();
+                let mut values = 0;
+                for record in listed.stdout.split(|&b| b == 0) {
+                    let Some(nl) = record.iter().position(|&b| b == b'\n') else {
+                        continue;
+                    };
+                    let value = &record[nl + 1..];
+                    values += 1;
+                    if values > INCLUDES {
+                        return Err(format!(
+                            "a config file of the repository lists more than 64 includes, more than \
+                             these checks follow: {at}"
+                        ));
+                    }
+                    let target = if let Some(rest) = value.strip_prefix(b"~/") {
+                        PathBuf::from(OsString::from_vec([home.as_bytes(), b"/", rest].concat()))
+                    } else if value.starts_with(b"~") || value.starts_with(b"%(prefix)/") {
+                        continue;
+                    } else if value.starts_with(b"/") {
+                        PathBuf::from(OsStr::from_bytes(value))
+                    } else {
+                        base.join(OsStr::from_bytes(value))
+                    };
+                    if target.as_os_str().as_bytes().contains(&b'\n') {
+                        return Err(
+                            "the repository's config includes a file whose name holds a line end"
+                                .into(),
+                        );
+                    }
+                    if special(&target) {
+                        return Err(waits_on("is included by the repository's config", value));
+                    }
+                    if !fs::metadata(&target).is_ok_and(|md| md.is_file())
+                        || seen.iter().any(|s| same_file(&target, s))
+                    {
+                        continue;
+                    }
+                    files += 1;
+                    if files > INCLUDES {
+                        return Err(
+                            "the repository's config includes more than 64 files, more than \
+                                    these checks follow"
+                                .into(),
+                        );
+                    }
+                    seen.push(target.clone());
+                    next.push(target);
+                }
+                if !matches!(listed.status.code(), Some(0 | 1)) {
+                    return Err(cannot());
+                }
+            }
+            cur = next;
+            level += 1;
+        }
+        Ok(())
+    }
+}
+
+/// The deepest include `includes` follows, as git does, and the most include
+/// values of one file, and files in all, it reads.
+const INCLUDE_LEVELS: usize = 10;
+const INCLUDES: usize = 64;
+
+/// The most bytes of a `.git` file or a `commondir` file read as git reads it.
+const NAMED_MAX: u64 = 16 << 10;
+
+/// What git's discovery makes of a directory as a git directory.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Candidate {
+    /// git takes it for a repository, and stops there.
+    Repository,
+    /// git passes it over (or may: a HEAD that is a link), and goes on up.
+    PassedOver,
+    /// git stops there, unable to read its commondir.
+    Stops,
+}
+
+/// How git's discovery takes `<dir>/HEAD` (`validate_headref`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Head {
+    /// A regular file whose text, to its first NUL within its first 255 bytes, is
+    /// `ref:`, blanks, then `refs/…`, or starts with 40 hexadecimal digits.
+    Valid,
+    /// A symbolic link, which git takes when it points into `refs/` (where it
+    /// points is not read here).
+    Link,
+    /// Anything else, which git does not take for a HEAD.
+    Invalid,
+}
+
+fn git_head(g: &Path) -> Head {
+    let head = g.join("HEAD");
+    if fs::symlink_metadata(&head).is_ok_and(|md| md.file_type().is_symlink()) {
+        return Head::Link;
+    }
+    if !fs::metadata(&head).is_ok_and(|md| md.is_file()) || !readable(&head) {
+        return Head::Invalid;
+    }
+    let mut text = Vec::new();
+    if fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(&head)
+        .and_then(|f| f.take(255).read_to_end(&mut text))
+        .is_err()
+    {
+        return Head::Invalid;
+    }
+    let text = text.split(|&b| b == 0).next().unwrap_or_default();
+    if let Some(rest) = text.strip_prefix(b"ref:") {
+        // The blanks git's own isspace() knows: never a vertical tab or form feed.
+        let at = rest
+            .iter()
+            .position(|&b| !matches!(b, b' ' | b'\t' | b'\n' | b'\r'))
+            .unwrap_or(rest.len());
+        return if rest[at..].starts_with(b"refs/") {
+            Head::Valid
+        } else {
+            Head::Invalid
+        };
+    }
+    if text.len() >= 40 && text[..40].iter().all(u8::is_ascii_hexdigit) {
+        Head::Valid
+    } else {
+        Head::Invalid
+    }
+}
+
+/// What a `.git` file (`gitdir: <dir>`) or a `commondir` file names, as git
+/// reads it (`confine_named_dir`).
+enum Named {
+    /// The directory: the text after the prefix, without its trailing line ends,
+    /// relative to the file's directory (a commondir of line ends alone names
+    /// that directory).
+    Dir(PathBuf),
+    /// No directory git takes: not a regular file it can read, no prefix, or
+    /// nothing after a `.git` file's.
+    None,
+    /// A NUL byte or more than 16 KiB, which these checks do not read as git does.
+    Unread,
+}
+
+fn named_dir(file: &Path, prefix: &[u8]) -> Named {
+    if !fs::metadata(file).is_ok_and(|md| md.is_file()) || !readable(file) {
+        return Named::None;
+    }
+    let mut text = Vec::new();
+    let read = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(file)
+        .and_then(|f| f.take(NAMED_MAX + 1).read_to_end(&mut text));
+    if read.is_err() {
+        return Named::None;
+    }
+    if text.len() as u64 > NAMED_MAX || text.contains(&0) {
+        return Named::Unread;
+    }
+    while matches!(text.last(), Some(b'\n' | b'\r')) {
+        text.pop();
+    }
+    let Some(rest) = text.strip_prefix(prefix) else {
+        return Named::None;
+    };
+    if rest.is_empty() && !prefix.is_empty() {
+        return Named::None;
+    }
+    let rest = OsStr::from_bytes(rest);
+    Named::Dir(if rest.as_bytes().starts_with(b"/") {
+        PathBuf::from(rest)
+    } else {
+        file.parent().unwrap_or(Path::new("/")).join(rest)
+    })
+}
+
+/// What `confine_git_dir_files` finds in one directory, already resolved, in its
+/// order: a directory that cannot be read, a named pipe or device, a name holding
+/// a line end (git makes none), then a symbolic link to a named pipe or device.
+fn scan_git_dir(d: &Path) -> Result<(), String> {
+    let at = shown(d.as_os_str().as_bytes());
+    let (mut odd, mut line_end, mut links) = (false, false, Vec::new());
+    for entry in WalkDir::new(d).follow_links(false) {
+        let entry = entry.map_err(|_| {
+            format!(
+                "the git directory holds a directory that cannot be read, so a named pipe or \
+                 device in it cannot be ruled out: {at}"
+            )
+        })?;
+        let t = entry.file_type();
+        odd |= t.is_fifo() || t.is_block_device() || t.is_char_device();
+        line_end |= entry.file_name().as_bytes().contains(&b'\n');
+        if t.is_symlink() {
+            links.push(entry.into_path());
+        }
+    }
+    if odd {
+        return Err(waits_on(
+            "is in the git directory",
+            d.as_os_str().as_bytes(),
+        ));
+    }
+    if line_end {
+        return Err(format!(
+            "a name in the git directory holds a line end: {at}"
+        ));
+    }
+    if links.iter().any(|l| special(l)) {
+        return Err(waits_on(
+            "is named by a link in the git directory",
+            d.as_os_str().as_bytes(),
+        ));
+    }
+    Ok(())
+}
+
+/// Whether `path`, a link followed, is a named pipe or a device
+/// (`confine_special`): git opens such a file with a blocking open and waits on
+/// it for good. A socket fails to open at once, and passes.
+fn special(path: &Path) -> bool {
+    fs::metadata(path).is_ok_and(|md| {
+        let t = md.file_type();
+        t.is_fifo() || t.is_block_device() || t.is_char_device()
+    })
+}
+
+/// `confine_git_wait`: the reason for a file git would wait on.
+fn waits_on(place: &str, what: &[u8]) -> String {
+    format!(
+        "a named pipe or device {place}, and git would wait on it for good: {}",
+        shown(what)
+    )
+}
+
+/// `confine_git_unread`: the reason for a `.git` or `commondir` file these
+/// checks cannot read as git does.
+fn unread(file: &Path) -> String {
+    format!(
+        "a .git file or commondir file holds a NUL byte or more than 16 KiB, so where git would \
+         look cannot be told: {}",
+        shown(file.as_os_str().as_bytes())
+    )
+}
+
+/// Whether two paths, links followed, name one file (`[ a -ef b ]`).
+fn same_file(a: &Path, b: &Path) -> bool {
+    match (fs::metadata(a), fs::metadata(b)) {
+        (Ok(a), Ok(b)) => same(&a, &b),
+        _ => false,
+    }
+}
+
+/// Whether this process may read `path`: `access(path, R_OK)`.
+fn readable(path: &Path) -> bool {
+    let Ok(name) = CString::new(path.as_os_str().as_bytes()) else {
+        return false;
+    };
+    // SAFETY: `name` is NUL-terminated; access only reads it.
+    unsafe { libc::access(name.as_ptr(), libc::R_OK) == 0 }
+}
+
+/// Whether a config file holds `include` in any letter case, as `grep -i -q -e
+/// include` tells: only such a file can include another, so git is not asked
+/// about the rest. `None` when it cannot be read (git is asked then).
+fn mentions_include(f: &Path) -> Option<bool> {
+    let mut file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(f)
+        .ok()?;
+    let word = b"include";
+    let mut buf = vec![0u8; 1 << 16];
+    let mut carry: Vec<u8> = Vec::new();
+    loop {
+        let n = match file.read(&mut buf) {
+            Ok(0) => return Some(false),
+            Ok(n) => n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(_) => return None,
+        };
+        carry.extend_from_slice(&buf[..n]);
+        if carry
+            .windows(word.len())
+            .any(|w| w.eq_ignore_ascii_case(word))
+        {
+            return Some(true);
+        }
+        let keep = carry.len().saturating_sub(word.len() - 1);
+        carry.drain(..keep);
     }
 }
 
@@ -723,6 +1288,12 @@ impl Dir {
             return Err(invalid("it has more than one name (a hard link)"));
         }
         Ok(file)
+    }
+
+    /// A name in the directory, whatever it is, opened read-only without
+    /// following a link or blocking on a FIFO; the caller checks what it opened.
+    pub fn open_any(&self, name: &[u8]) -> io::Result<File> {
+        open_file(self.fd.as_raw_fd(), name)
     }
 }
 
@@ -1107,6 +1678,82 @@ fn exchange(child: &mut Child, frame: &[u8], deadline: Instant) -> Option<Vec<u8
     }
 }
 
+/// What a child given no input prints and how it ends: its stdout and its stderr,
+/// each read as it is ready, to their ends, then its exit status. Past
+/// `deadline` it is killed, and that is an error (`TimedOut`).
+fn collect(mut child: Child, deadline: Instant) -> io::Result<Output> {
+    let late = || io::Error::new(io::ErrorKind::TimedOut, "it did not end in time");
+    let mut pipes = [
+        child.stdout.take().map(|p| File::from(OwnedFd::from(p))),
+        child.stderr.take().map(|p| File::from(OwnedFd::from(p))),
+    ];
+    let ready = pipes
+        .iter()
+        .all(|p| p.as_ref().is_some_and(|f| nonblocking(f.as_raw_fd())));
+    if !ready {
+        stop(child);
+        return Err(invalid("its output cannot be read"));
+    }
+    let mut got = [Vec::new(), Vec::new()];
+    let mut buf = vec![0u8; 1 << 16];
+    while pipes.iter().any(Option::is_some) {
+        let Some(wait) = deadline.checked_duration_since(Instant::now()) else {
+            stop(child);
+            return Err(late());
+        };
+        let fd = |p: &Option<File>| p.as_ref().map_or(-1, |f| f.as_raw_fd());
+        let mut fds = [
+            libc::pollfd {
+                fd: fd(&pipes[0]),
+                events: libc::POLLIN,
+                revents: 0,
+            },
+            libc::pollfd {
+                fd: fd(&pipes[1]),
+                events: libc::POLLIN,
+                revents: 0,
+            },
+        ];
+        let ms = c_int::try_from(wait.as_millis())
+            .unwrap_or(c_int::MAX)
+            .max(1);
+        // SAFETY: `fds` holds two pollfd structs, and poll skips the one whose
+        // descriptor is negative.
+        if unsafe { libc::poll(fds.as_mut_ptr(), 2, ms) } < 0 {
+            let e = io::Error::last_os_error();
+            if e.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            stop(child);
+            return Err(e);
+        }
+        for (i, polled) in fds.iter().enumerate() {
+            let Some(pipe) = pipes[i].as_mut().filter(|_| polled.revents != 0) else {
+                continue;
+            };
+            match pipe.read(&mut buf) {
+                Ok(0) => pipes[i] = None,
+                Ok(n) => got[i].extend_from_slice(&buf[..n]),
+                Err(e) if blocked(&e) => {}
+                Err(e) => {
+                    stop(child);
+                    return Err(e);
+                }
+            }
+        }
+    }
+    let Some(status) = wait_until(&mut child, deadline) else {
+        stop(child);
+        return Err(late());
+    };
+    let [stdout, stderr] = got;
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
 /// Whether an error on a non-blocking pipe only means it is not ready.
 fn blocked(e: &io::Error) -> bool {
     matches!(
@@ -1149,6 +1796,30 @@ mod tests {
 
     /// The frame `printf` writes for a two-byte answer, "ok".
     const OK: &str = r"printf '\002\000\000\000\000\000\000\000ok'";
+
+    #[test]
+    fn only_git_s_own_words_with_exit_128_say_there_is_no_repository() {
+        let own = "fatal: not a git repository (or any of the parent directories): .git";
+        let gitfile = "fatal: gitfile does not point to a valid repository: /x/.git";
+        let quoted = "fatal: detected dubious ownership in repository at '/x/not a git repository'";
+        for (code, stderr, no_repo) in [
+            (Some(128), own, true),
+            (Some(128), "fatal: not a git repository: /x/nowhere", true),
+            (Some(128), gitfile, true),
+            (Some(128), quoted, false),
+            (Some(128), "fatal: not a regular file: '/x/.git'", false),
+            (Some(128), "fatal: error reading '/x/.git'", false),
+            (Some(1), own, false),
+            (Some(1), gitfile, false),
+            (None, gitfile, false),
+        ] {
+            assert_eq!(
+                no_repository(code, stderr.as_bytes()),
+                no_repo,
+                "{code:?} {stderr}"
+            );
+        }
+    }
 
     #[test]
     fn a_child_is_fed_one_file_and_read_to_the_end_of_its_answer() {
@@ -1252,6 +1923,89 @@ mod tests {
         );
         let _ = fs::remove_file(&mark);
         let _ = fs::remove_dir(&dir);
+    }
+
+    /// What `collect` reads of `/bin/sh -c <script>`, given no input.
+    fn collected(script: &str, limit: Duration) -> io::Result<Output> {
+        let child = Command::new("/bin/sh")
+            .args(["-c", script])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("start /bin/sh");
+        collect(child, Instant::now() + limit)
+    }
+
+    #[test]
+    fn a_child_is_read_to_the_end_of_both_outputs() {
+        // More than a pipe holds on each, stdout first, then a status of its own.
+        let out = collected(
+            "head -c 1048576 /dev/zero; head -c 1048576 /dev/zero >&2; exit 3",
+            Duration::from_secs(60),
+        )
+        .expect("its output");
+        assert_eq!(out.status.code(), Some(3));
+        assert_eq!((out.stdout.len(), out.stderr.len()), (1 << 20, 1 << 20));
+    }
+
+    #[test]
+    fn a_child_that_does_not_end_in_time_is_killed() {
+        // One that keeps its outputs open, and one that closes them first.
+        for script in ["exec /bin/sleep 30", "exec >&- 2>&-; exec /bin/sleep 30"] {
+            let start = Instant::now();
+            let out = collected(script, Duration::from_secs(1));
+            let took = start.elapsed();
+            assert_eq!(
+                out.map_err(|e| e.kind()).err(),
+                Some(io::ErrorKind::TimedOut),
+                "{script}"
+            );
+            assert!(
+                took >= Duration::from_secs(1) && took < Duration::from_secs(5),
+                "{script}: {took:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_path_lies_inside_a_directory_by_identity_and_the_tree_is_the_outermost() {
+        let dir = std::env::temp_dir()
+            .canonicalize()
+            .expect("the temporary directory resolves")
+            .join(format!("confine-inside-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("repo/.git")).expect("a scratch repository");
+        fs::create_dir_all(dir.join("repo/programs/v/src")).expect("a program in it");
+        std::os::unix::fs::symlink(dir.join("repo/programs"), dir.join("other"))
+            .expect("another spelling");
+        let v = dir.join("repo/programs/v");
+        assert!(inside(&v, &v));
+        assert!(inside(&v.join("src"), &v));
+        assert!(inside(&dir.join("other/v/src"), &v));
+        assert!(!inside(&dir.join("repo"), &v));
+        assert!(!inside(&dir.join("missing"), &v));
+        assert!(!inside(&v, &dir.join("missing")));
+        assert_eq!(repository_top(&v), Some(dir.join("repo").as_path()));
+        // A .git of any kind nearer to WT (a file, as a linked worktree has, or a
+        // dangling link) counts, and the outermost one is the tree.
+        fs::write(v.join(".git"), b"gitdir: /nowhere\n").expect("a .git file");
+        assert_eq!(
+            repository_top(&v.join("src")),
+            Some(dir.join("repo").as_path())
+        );
+        fs::remove_file(v.join(".git")).expect("rm");
+        std::os::unix::fs::symlink("/nowhere", v.join("src/.git")).expect("a dangling link");
+        assert_eq!(
+            repository_top(&v.join("src")),
+            Some(dir.join("repo").as_path())
+        );
+        fs::remove_dir_all(dir.join("repo/.git")).expect("rm");
+        assert_eq!(
+            repository_top(&v.join("src")),
+            Some(v.join("src").as_path())
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 
     fn ok(s: &str) -> bool {

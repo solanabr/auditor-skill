@@ -1,0 +1,26 @@
+{
+  "name": "f28-actor-array-allowlist",
+  "triggers": [
+    "pull_request_target"
+  ],
+  "permissions": [
+    "contents: write"
+  ],
+  "jobs": [
+    {
+      "id": "build",
+      "line": 9,
+      "if": "contains(fromJSON('[\"renovate[bot]\",\"release-bot\"]'), github.actor)",
+      "permissions": [],
+      "steps": [
+        {
+          "line": 13,
+          "run": "echo \"privileged build\"",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

@@ -1,7 +1,11 @@
-//! `audit-scan [--contract=1] <dir> [--out <R>/prescan.json | <R>/prescan-<slug>.json] [--pretty]`
+//! `audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <R>/prescan.json | <R>/prescan-<slug>.json] [--pretty]`
 //!
 //! Recursively parses `*.rs` files under `<dir>` and prints one JSON object
-//! describing the risky audit surface to stdout (or `--out`).
+//! describing the risky audit surface to stdout (or `--out`). With `--workflows
+//! <dir>` it also reads the `*.yml`/`*.yaml` files directly in `<dir>` (usually
+//! `.github/workflows`) into the report's `workflows` key, each as trigger → job
+//! → step facts; `<dir>` is a confined directory like the one to scan, and the
+//! files are read with the same walk (no link, a regular file of at most 4 MiB).
 //!
 //! It is built to be pre-approved as one rule on its absolute path followed by
 //! `--contract=1`, the marker of its contract, which a build made before it
@@ -14,9 +18,13 @@
 //! `scripts/rundir.sh check`; it is made new, or replaces audit-scan's own earlier
 //! output there: a regular file with one name. Each option is given once.
 //! Each file is parsed in a child of this binary, started by the path it runs
-//! from with `confine::PARSE_STDIN` as its only argument: the file's bytes on its
-//! stdin, no environment, killed past `confine::PARSE_TIME`. A file whose child
-//! does not finish is skipped, and the scan goes on.
+//! from with `confine::PARSE_STDIN` as its only argument (`workflow::PARSE_WORKFLOWS`
+//! for a workflow file): the file's bytes on its stdin, no environment, killed
+//! past `confine::PARSE_TIME`. A file whose child does not finish is skipped, and
+//! the scan goes on; once audit-scan has run `scan::SCAN_TIME` (90 seconds, the
+//! git questions about `--out` among them), each further `*.rs` or workflow file
+//! is skipped. The workflows' facts take what the `*.rs` walk left of the
+//! report's cap, `scan::MAX_REPORT`, both counted as the report prints.
 //! Exit: 0 done · 1 the output cannot be written · 2 refused.
 
 use std::ffi::{OsStr, OsString};
@@ -24,15 +32,17 @@ use std::io::{self, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::process::ExitCode;
+use std::time::Instant;
 
 use auditor_tools::confine::{self, os_message, refuse, Dir, Git, Kind, Rel, Stop};
-use auditor_tools::scan;
+use auditor_tools::{scan, workflow};
 
-const USAGE: &str = "usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | \
-<run dir>/prescan-<slug>.json] [--pretty]";
+const USAGE: &str = "usage: audit-scan [--contract=1] <dir> [--workflows <dir>] \
+[--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty]";
 
 struct Call {
     dir: OsString,
+    workflows: Option<OsString>,
     out: Option<OsString>,
     pretty: bool,
 }
@@ -42,11 +52,13 @@ fn usage(why: &str) -> Stop {
 }
 
 /// The closed grammar: `--contract=1` first, or not at all, then one directory,
-/// `--out <file>` or `--out=<file>` and `--pretty`, each at most once, in any
-/// order. The word after `--out` is its value whatever it looks like; any other
-/// word that starts with `-` is refused, another `--contract…` word with it.
+/// `--workflows <dir>`, `--out <file>` (either as `--opt value` or `--opt=value`)
+/// and `--pretty`, each at most once, in any order. The word after `--workflows`
+/// or `--out` is its value whatever it looks like; any other word that starts
+/// with `-` is refused, another `--contract…` word with it.
 fn parse(args: &[OsString]) -> Result<Call, Stop> {
     let mut dir = None;
+    let mut workflows = None;
     let mut out = None;
     let mut pretty = false;
     let mut rest = args;
@@ -56,39 +68,64 @@ fn parse(args: &[OsString]) -> Result<Call, Stop> {
     {
         rest = &rest[1..];
     }
-    while let Some(word) = rest.first() {
+    while !rest.is_empty() {
+        let word = rest[0].clone();
         let w = word.as_bytes();
         if w.starts_with(b"--contract") {
             return Err(usage(&confine::contract_word(w, "first")));
         }
-        let value = if w == b"--out" {
-            let v = rest.get(1).ok_or_else(|| usage("--out needs a file"))?;
+        if w == b"--out" {
+            let v = rest
+                .get(1)
+                .ok_or_else(|| usage("--out needs a file"))?
+                .clone();
             rest = &rest[2..];
-            Some(v.clone())
-        } else if let Some(v) = w.strip_prefix(b"--out=") {
-            rest = &rest[1..];
-            Some(OsStr::from_bytes(v).to_os_string())
-        } else {
-            rest = &rest[1..];
-            None
-        };
-        if let Some(v) = value {
             if out.replace(v).is_some() {
                 return Err(usage("--out is given more than once"));
             }
+        } else if let Some(v) = w.strip_prefix(b"--out=") {
+            let v = OsStr::from_bytes(v).to_os_string();
+            rest = &rest[1..];
+            if out.replace(v).is_some() {
+                return Err(usage("--out is given more than once"));
+            }
+        } else if w == b"--workflows" {
+            let v = rest
+                .get(1)
+                .ok_or_else(|| usage("--workflows needs a directory"))?
+                .clone();
+            rest = &rest[2..];
+            if workflows.replace(v).is_some() {
+                return Err(usage("--workflows is given more than once"));
+            }
+        } else if let Some(v) = w.strip_prefix(b"--workflows=") {
+            let v = OsStr::from_bytes(v).to_os_string();
+            rest = &rest[1..];
+            if workflows.replace(v).is_some() {
+                return Err(usage("--workflows is given more than once"));
+            }
         } else if w == b"--pretty" {
+            rest = &rest[1..];
             if pretty {
                 return Err(usage("--pretty is given more than once"));
             }
             pretty = true;
         } else if w.starts_with(b"-") {
             return Err(usage(&format!("unknown option {}", confine::shown(w))));
-        } else if dir.replace(word.clone()).is_some() {
-            return Err(usage("it takes one directory"));
+        } else {
+            rest = &rest[1..];
+            if dir.replace(word).is_some() {
+                return Err(usage("it takes one directory"));
+            }
         }
     }
     let dir = dir.ok_or_else(|| usage("no directory to scan"))?;
-    Ok(Call { dir, out, pretty })
+    Ok(Call {
+        dir,
+        workflows,
+        out,
+        pretty,
+    })
 }
 
 /// `--out`'s name in its run directory: `prescan.json`, or `prescan-<slug>.json`.
@@ -179,6 +216,8 @@ fn write_out(out: &Out, bytes: &[u8]) -> io::Result<()> {
 }
 
 fn run(args: &[OsString]) -> Result<(), Stop> {
+    // The scan's time runs from here, so what `check_out` asks git counts in it.
+    let until = Instant::now().checked_add(scan::SCAN_TIME);
     let wt = confine::working_tree()?;
     confine::plain_working_tree(&wt)?;
     confine::self_check(&wt)?;
@@ -190,13 +229,33 @@ fn run(args: &[OsString]) -> Result<(), Stop> {
             dir.shown()
         )));
     }
+    let workflows = match &call.workflows {
+        Some(arg) => {
+            let wdir = confine::rel("--workflows", arg, false)?;
+            if confine::check(&wt, &wdir, "--workflows")? != Kind::Dir {
+                return Err(refuse(format!(
+                    "--workflows is not an existing directory: {}",
+                    wdir.shown()
+                )));
+            }
+            Some(wdir)
+        }
+        None => None,
+    };
     let out = match &call.out {
         Some(arg) => Some(check_out(&wt, arg)?),
         None => None,
     };
 
-    let report = scan::scan_path(dir.path())
+    let mut report = scan::scan_path_until(dir.path(), until)
         .map_err(|e| Stop(1, format!("cannot start the scan: {}", os_message(&e))))?;
+    if let Some(wdir) = &workflows {
+        let left = scan::MAX_REPORT.saturating_sub(workflow::printed_size(&report, call.pretty, 0));
+        let (parsed, skipped) = workflow::scan_workflows(wdir.path(), left, call.pretty, until)
+            .map_err(|e| Stop(1, format!("cannot start the scan: {}", os_message(&e))))?;
+        report.workflows = parsed;
+        report.skipped.extend(skipped);
+    }
     let json = if call.pretty {
         serde_json::to_string_pretty(&report)
     } else {
@@ -226,8 +285,15 @@ fn run(args: &[OsString]) -> Result<(), Stop> {
 fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     if let [word] = args.as_slice() {
-        if word.as_bytes() == confine::PARSE_STDIN.as_bytes() {
-            return match scan::parse_stdin() {
+        let child = if word.as_bytes() == confine::PARSE_STDIN.as_bytes() {
+            Some(scan::parse_stdin as fn() -> io::Result<()>)
+        } else if word.as_bytes() == workflow::PARSE_WORKFLOWS.as_bytes() {
+            Some(workflow::parse_stdin as fn() -> io::Result<()>)
+        } else {
+            None
+        };
+        if let Some(parse) = child {
+            return match parse() {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(_) => ExitCode::from(1),
             };

@@ -1,0 +1,35 @@
+# Fixture: pull-request jobs whose runs-on label starts like a GitHub-hosted image but is none of GitHub's standard
+# labels (self-hosted pools, Actions Runner Controller scale sets, a larger runner); KV-080 Step 8 lists each line.
+name: f100-arc-runner-labels
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  scale-set:
+    runs-on: ubuntu-arc-runners
+    steps:
+      - run: make test
+  quoted:
+    runs-on: "ubuntu-arc-runners"
+    steps:
+      - run: make test
+  build-farm:
+    runs-on: windows-build-farm
+    steps:
+      - run: make test
+  mac-pool:
+    runs-on: 'macos-m2-selfhosted'
+    steps:
+      - run: make test
+  gpu:
+    runs-on: [ubuntu-gpu]
+    steps:
+      - run: make test
+  larger:
+    runs-on: ubuntu-24.04-16core
+    steps:
+      - run: make test
+  lookalike:
+    runs-on: ubuntu-latest-arm   # not a label GitHub hosts
+    steps:
+      - run: make test

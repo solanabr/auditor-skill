@@ -4,23 +4,32 @@
 # scripts/runner/probe.sh, for git-lfs and, logging every clone, for git; the real scripts/git-ro.sh and
 # scripts/lib/confine.sh make the copy. It checks:
 #   - the gate: the stricter of {R}/exec-mode and AUDITOR_EXEC_MODE must be isolated (none stops it), probe.sh
-#     --only isolation must print its "none of the credentials" line, the vendored runner and uv must be there,
-#     and git-ro.sh copy must take the checkout (a checkout that borrows objects is refused). Each refusal
+#     --only isolation must print the line the real probe.sh prints when nothing is readable (read from it, and
+#     both gates compare with it), the vendored runner and uv must be there, and git-ro.sh copy must take the
+#     checkout (a checkout that borrows objects is refused). Each refusal
 #     prints its not-run line and runs nothing: no copy, no scratch directory, no clone, no runner call;
 #   - the copy and the clone, run from the client checkout's top level (also with TMPDIR ending in /): exactly
 #     two clones, git-ro.sh's bare copy into {R} and then
 #     `GIT_NO_LAZY_FETCH=1 git clone -q --no-local --no-checkout --template= <copy> <scratch>/repo`; the clone
 #     has no work tree checked out and `* !filter` in info/attributes; the runner gets `uv run --no-config`,
-#     the clone as --repo and the patch's absolute path. The worktree the stand-in runner adds, locks, unlocks,
+#     the clone as --repo, the patch's absolute path and, as --finding-summary, the text of
+#     {R}/patches/{FINDING_ID}.summary word for word, though it holds an apostrophe, quotes, $( ) and backticks
+#     or a sentence that would close the block's if and run a command, none of which runs. The worktree the
+#     stand-in runner adds, locks, unlocks,
 #     removes and prunes, and the lock file it keeps, are in the clone only; no git-lfs filter of the caller's
 #     config runs there; the client checkout gets no worktree, lock or owner file, runs no hook and stays clean;
 #   - the plan guard: a plan.json that names another repository, or no plan, stops the second block before the
 #     runner;
+#   - the second block's own gate: it runs the plan in a shell call of its own, so it makes the first block's
+#     mode and isolation checks again, word for word, before anything else, and each refusal prints the first
+#     block's not-run line with no runner call, on a scratch directory whose plan names ../repo;
 #   - the controls: the stand-in runner handed a client checkout leaves its lock there and runs its hook, and a
 #     worktree of a clone without the attributes line runs the caller's git-lfs filter;
 #   - the rule text: one sentence on the tier effect, word for word in the five files that describe the fix
 #     tiers; the --post-patch-validation hint; the gate and the copy as /auditor:patch, patch-engineer and both
-#     rows name them, with the 11a and 11b notes; one phrase for a finding on any other tier;
+#     rows name them, with the 11a and 11b notes; one phrase for a finding on any other tier; §4 and
+#     patch-engineer have the root-cause sentence written to {R}/patches/{FINDING_ID}.summary, and §4 pastes
+#     no {ROOT_CAUSE} into the shell;
 #   - the gate's input: /auditor:intake writes the Q46 answer as one word to audit_<n>/exec-mode.
 # Without the May-2024 git fixes the copy cases are skipped with a note, and fail on CI (CI=true).
 # The real runner is never run, and nothing reaches the network.
@@ -46,7 +55,16 @@ REALGIT=$(command -v git) || { echo "git is not on PATH" >&2; exit 1; }
 # ---- an installation with stand-ins ---------------------------------------------------------------------------
 # $T/root: the real git-ro.sh and confine.sh, a stand-in probe.sh that prints $PROBE_LINE, and a runner file the
 # stand-in uv never runs. $T/root-nr is the same without the runner.
-OKLINE='isolation: none of the credentials the self-check reads is readable'
+# The line scripts/runner/probe.sh --only isolation prints when the self-check finds nothing readable, read from
+# probe.sh itself: the stand-in prints it, and both of §4's gates must compare with it, so a new wording there
+# that the gates do not follow fails here instead of keeping post-patch validation from ever running.
+OKLINE=$(awk -v q="'" '$1 == "isolation)" { on = 1; next }
+  on && $1 == "0)" && $2 == "printf" { s = substr($0, index($0, q) + 1); print substr(s, 1, index(s, "\\n" q) - 1); exit }' \
+  "$ROOT/scripts/runner/probe.sh")
+case "$OKLINE" in
+  'isolation: '?*) ;;
+  *) echo "cannot read the line probe.sh --only isolation prints when nothing is readable" >&2; exit 1 ;;
+esac
 SKILL=vendor/trailofbits/plugins/post-patch-validation/skills/post-patch-validation
 for r in "$T/root" "$T/root-nr"; do
   mkdir -p "$r/scripts/lib" "$r/scripts/runner" || exit 1
@@ -138,9 +156,11 @@ commit=$(git -C "$C" rev-parse HEAD)
 
 # ---- the recipe, as written --------------------------------------------------------------------------------------
 # block N MODE ROOT PPV OUT: VERIFICATION.md §4's Nth bash block with its placeholders filled, written to OUT.
+# {ROOT_CAUSE}, which a template that pasted the root-cause sentence into single quotes had, gets the sentence
+# isolated() writes to the summary file ($SUMMARY), so such a template fails the summary checks below.
 block() {
-  python3 -I - "$VER" "$1" "$2" "$3" "$4" "$commit" "$5" <<'PY'
-import re, sys
+  SUMMARY="${SUMMARY-a signer check the withdraw path skips}" python3 -I - "$VER" "$1" "$2" "$3" "$4" "$commit" "$5" <<'PY'
+import os, re, sys
 doc, n, mode, root, ppv, commit, out = sys.argv[1:]
 text = open(doc, encoding="utf-8").read()
 if "\n## 4. Post-patch validation" not in text:
@@ -151,7 +171,7 @@ if len(blocks) != 2:
     sys.exit("section 4 has %d bash blocks, not 2" % len(blocks))
 b = blocks[int(n) - 1]
 for k, v in (("<auditor-skill root>", root), ("{MODE}", mode), ("{R}", "audit_1"), ("{FINDING_ID}", "F-1"),
-             ("{COMMIT}", commit), ("{ROOT_CAUSE}", "a signer check the withdraw path skips"),
+             ("{COMMIT}", commit), ("{ROOT_CAUSE}", os.environ["SUMMARY"]),
              ("{LEVEL}", "runtime"), ("{PPV}", ppv)):
     b = b.replace(k, v)
 if "{" in b.replace("${", ""):
@@ -208,11 +228,16 @@ else bad "cannot make the checkout with alternates"; fi
 
 # ---- isolated: the clone of git-ro.sh's copy is the only repository the runner touches ---------------------------
 runs=0
-isolated() { # isolated LABEL MODE ENVMODE TMPDIR
-  local label=$1 tmp=$4 plan ppv dest repo want2 first
+isolated() { # isolated LABEL MODE ENVMODE TMPDIR SUMMARY: SUMMARY is the root-cause sentence in audit_1/patches/F-1.summary
+  local label=$1 tmp=$4 plan ppv dest repo want2 first got SUMMARY=$5
   rm -f "$T/uv.log" "$T/git-lfs.log"; : > "$T/clone.log"
+  printf '%s\n' "$SUMMARY" > "$C/audit_1/patches/F-1.summary" || { bad "$label: cannot write the summary file"; return; }
   block 1 "$2" "$T/root" x "$T/a.sh" || { bad "$label: first block unreadable"; return; }
   run_block "$T/a.sh" "$tmp" "$3" "$OKLINE"
+  got=$(sed -n '/^arg=--finding-summary$/{n;s/^arg=//;p;}' "$T/uv.log" 2>/dev/null)
+  if [ "$got" = "$SUMMARY" ] && ! grep -q INJECTED-OUTSIDE-THE-GATE "$T/out"; then
+    ok "$label: the runner gets the summary file's text as --finding-summary, word for word, and none of it runs"
+  else bad "$label: --finding-summary is [$got], not the summary file's text, or a command in it ran: $(cat "$T/out")"; fi
   plan=$(sed -n 's/^post-patch validation: plan at //p' "$T/out")
   ppv=${plan%/plan/plan.json}
   case "$(cd "$ppv" 2>/dev/null && pwd -P)" in
@@ -261,8 +286,12 @@ isolated() { # isolated LABEL MODE ENVMODE TMPDIR
   fi
 }
 if [ "$copy_ok" = 1 ]; then
-  isolated "exec-mode isolated" isolated "" "$T/tmp"
-  isolated "exec-mode native, AUDITOR_EXEC_MODE isolated, TMPDIR ending in /" native isolated "$T/tmp/"
+  # The sentence comes from the target's code: an apostrophe, quotes, $( ) and backticks, then one written to end
+  # the quotes it was once pasted into, close the block's if and run a command of its own.
+  isolated "exec-mode isolated" isolated "" "$T/tmp" \
+    "the vault's withdraw path skips its \"signer\" check, so \$(echo INJECTED-OUTSIDE-THE-GATE) or \`echo INJECTED-OUTSIDE-THE-GATE\` drains it"
+  isolated "exec-mode native, AUDITOR_EXEC_MODE isolated, TMPDIR ending in /" native isolated "$T/tmp/" \
+    "x' ; fi ; echo INJECTED-OUTSIDE-THE-GATE ; if false ; then : '"
   extra=$(ls -A "$C/audit_1" | grep -v -x -e .gitignore -e exec-mode -e patches -e src.git -e src-2.git || true)
   if [ -z "$extra" ] && [ -d "$C/audit_1/src.git" ] && [ -d "$C/audit_1/src-2.git" ]; then
     ok "audit_1 holds only its own files and git-ro.sh's two copies"
@@ -298,6 +327,41 @@ if [ "$copy_ok" = 1 ]; then
   runs=$((runs + 1)); guard "plan.json naming the client checkout by its absolute path" absolute
   runs=$((runs + 1)); guard "no plan.json" none
 fi
+
+# ---- the second block's own gate ------------------------------------------------------------------------------
+# The second block runs the plan, the target's code, in a shell call of its own, where the first block's verdict
+# does not reach: a retry outside the sandbox, or another session. $G is a scratch directory as the first block
+# leaves it, its plan naming ../repo. Under each refusal of the first block, the second must print the same line
+# and call the runner not at all; the control shows the same directory reaches the runner when the gate passes.
+G="$T/ppv-gate"
+mkdir -p "$G/plan" && git -c init.defaultBranch=main init -q "$G/repo" && printf 'v1\n' > "$G/repo/lib.rs" \
+  && printf 'v1\n' > "$G/repo/blob.bin" && git -C "$G/repo" add lib.rs blob.bin && git -C "$G/repo" commit -qm v1 \
+  && printf '{"repository": "../repo"}\n' > "$G/plan/plan.json" \
+  || { echo "cannot make the scratch directory for the second block's gate" >&2; exit 1; }
+notrun2() { # notrun2 LABEL MODE ENVMODE PROBE WANT
+  rm -f "$T/uv.log"
+  if ! block 2 "$2" "$T/root" "$G" "$T/b.sh"; then bad "second block, $1: VERIFICATION.md §4's second block cannot be read"; return; fi
+  run_block "$T/b.sh" "$T/tmp" "$3" "$4"
+  if [ "$code" = 0 ] && [ "$(cat "$T/out")" = "post-patch validation: not run: $5" ] && [ ! -e "$T/uv.log" ] && [ ! -e "$G/results" ]; then
+    ok "second block, $1: \"not run: $5\", and the runner never ran"
+  else bad "second block, $1: exit $code, runner called: $([ -e "$T/uv.log" ] && echo yes || echo no); output: $(cat "$T/out")"; fi
+}
+notrun2 "exec-mode native, AUDITOR_EXEC_MODE unset" native "" "$OKLINE" "needs isolated mode"
+notrun2 "exec-mode empty, AUDITOR_EXEC_MODE unset" "" "" "$OKLINE" "needs isolated mode"
+notrun2 "exec-mode isolated, AUDITOR_EXEC_MODE none" isolated none "$OKLINE" "needs isolated mode"
+notrun2 "exec-mode none, AUDITOR_EXEC_MODE isolated" none isolated "$OKLINE" "needs isolated mode"
+notrun2 "isolated, but probe.sh finds a credential (a retry outside the sandbox)" isolated "" \
+  "isolation: readable: SSH keys (1); ~/.ssh/id_ed25519" "this is not the isolated runner (scripts/runner/probe.sh --only isolation)"
+notrun2 "isolated, but probe.sh could not check" isolated "" "isolation: not checked (python3 is not on PATH)" \
+  "this is not the isolated runner (scripts/runner/probe.sh --only isolation)"
+rm -f "$T/uv.log"
+if block 2 isolated "$T/root" "$G" "$T/b.sh"; then
+  run_block "$T/b.sh" "$T/tmp" "" "$OKLINE"
+  if [ "$code" = 0 ] && grep -qx 'arg=validate-plan' "$T/uv.log" 2>/dev/null && grep -qx 'arg=run' "$T/uv.log" \
+     && [ -f "$G/results/result.json" ]; then
+    ok "control: with the gate passed, the second block runs the plan of that scratch directory"
+  else bad "control: the second block did not run the plan with the gate passed, so the checks above prove nothing: exit $code; $(cat "$T/out")"; fi
+else bad "control: VERIFICATION.md §4's second block cannot be read"; fi
 
 # ---- controls -------------------------------------------------------------------------------------------------
 C2="$T/client2"
@@ -343,6 +407,37 @@ if has "$sec4" 'lowered from `[FIX-VERIFIED]` to `[FIX-INSUFFICIENT]` by `check_
    && grep -qF '**Residual (if any):** {what is still open, for INSUFFICIENT or a post-patch-validation finding — else "none".}' "$VER"
 then ok "VERIFICATION.md §4: the gate with its intake.md fallback, its own placeholders, the effect record, the plan rule, the submodule and error lines; §5's Residual"
 else bad "VERIFICATION.md §4 or §5 lacks part of its wording"; fi
+# The root-cause sentence is written from the target's code, so it reaches the runner from a file, as one argument.
+if ! has "$sec4" '{ROOT_CAUSE}' && has "$sec4" 'PPV_SUMMARY="$(cat "{R}/patches/{FINDING_ID}.summary")" &&' \
+   && has "$sec4" '--finding-summary "$PPV_SUMMARY"' \
+   && has "$sec4" 'write the finding'"'"'s root cause and impact, in one sentence, to `{R}/patches/{FINDING_ID}.summary` with the Write tool' \
+   && grep -qF 'to `<R>/patches/<ID>.summary` with the Write tool first, since §4'"'"'s first block hands the runner that file'"'"'s text' "$ROOT/agents/patch-engineer.md"
+then ok "VERIFICATION.md §4 and patch-engineer write the root-cause sentence to {R}/patches/{FINDING_ID}.summary, and §4 pastes none of it into the shell"
+else bad "VERIFICATION.md §4 pastes the root-cause sentence into the shell, or §4 or patch-engineer does not say where it is written"; fi
+# Both gates compare probe.sh's output with the very line probe.sh prints when nothing is readable.
+gates=$(grep -cF -e "--only isolation 2>/dev/null)\" != \"$OKLINE\" ]; then" "$VER")
+if [ "$gates" = 2 ]; then ok "VERIFICATION.md §4: both gates compare with the line probe.sh prints when nothing is readable"
+else bad "VERIFICATION.md §4: $gates gates, not 2, compare with probe.sh's line for nothing readable: $OKLINE"; fi
+# The second block opens with the first block's setup and gate, word for word, before any cd or runner call.
+if python3 -I - "$VER" <<'PY'
+import re, sys
+sec = open(sys.argv[1], encoding="utf-8").read().split("\n## 4. Post-patch validation", 1)[1].split("\n## 5. ", 1)[0]
+b1, b2 = re.findall(r"```bash\n(.*?)```", sec, re.S)
+end = 'echo "post-patch validation: not run: this is not the isolated runner (scripts/runner/probe.sh --only isolation)"\n'
+if not b1.startswith('ROOT="<auditor-skill root>"\n') or end not in b1:
+    sys.exit("the first block does not open with ROOT= and end its isolation check as expected")
+gate = b1[:b1.index(end) + len(end)]
+if not b2.startswith(gate):
+    sys.exit("the second block does not open with the first block's gate")
+rest = b2[len(gate):]
+if not rest.startswith("elif ") or "uv run" in gate or 'cd "' in gate:
+    sys.exit("the second block's gate is not followed by its own branch")
+PY
+then
+  if has "$sec4" 'so the second block makes the same mode and isolation checks, word for word, before it runs anything'
+  then ok "VERIFICATION.md §4: the second block opens with the first block's mode and isolation checks, word for word, and says why"
+  else bad "VERIFICATION.md §4 does not say that the second block makes the same mode and isolation checks"; fi
+else bad "VERIFICATION.md §4's second block does not open with the first block's mode and isolation checks"; fi
 if grep -qxF 'argument-hint: "<finding-id | INC-n.k> [--verify-with-mutation] [--post-patch-validation]"' "$ROOT/commands/patch.md"
 then ok "/auditor:patch offers --post-patch-validation"; else bad "/auditor:patch's argument-hint lacks --post-patch-validation"; fi
 for f in references/orchestration/boundary-map.md docs/power-tools.md; do

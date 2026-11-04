@@ -4,6 +4,8 @@ mod common;
 
 use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::path::Path;
+use std::process::{Command, Stdio};
 
 use common::{refused, refused_with, run, shown, stdout, Wt};
 use serde_json::Value;
@@ -208,7 +210,6 @@ fn reads_an_item_after_any_number_of_doc_comments_and_attributes() {
 #[test]
 fn its_child_answers_each_file_in_a_frame_and_names_none() {
     use std::io::Write;
-    use std::process::{Command, Stdio};
     let frame = |bytes: &[u8]| [&(bytes.len() as u64).to_le_bytes()[..], bytes].concat();
     let input = [
         frame(b"fn a() { let x = 1 + 2; }\n"),
@@ -267,16 +268,14 @@ fn its_child_answers_each_file_in_a_frame_and_names_none() {
 }
 
 #[test]
-#[cfg_attr(
-    debug_assertions,
-    ignore = "a debug build takes about the 10 s a file is given to parse this one"
-)]
 fn lists_at_most_twenty_thousand_items_a_file() {
     let wt = Wt::repo();
-    // 69 statements of 19,990 indexes each: 4,138,988 bytes, 1,379,310 index sites.
+    // 2 statements of 19,990 indexes each: 119,993 bytes, 39,980 index sites. The
+    // 4 MiB file of 69 such statements is scan_sites.rs's, which gives its child
+    // more time than audit-scan does.
     let statement = format!("    let x = a{};\n", "[0]".repeat(19_990));
-    let amp = format!("pub fn f(a: &[u8]) {{\n{}}}\n", statement.repeat(69));
-    assert_eq!(amp.len(), 4_138_988);
+    let amp = format!("pub fn f(a: &[u8]) {{\n{}}}\n", statement.repeat(2));
+    assert_eq!(amp.len(), 119_993);
     wt.write("src/amp.rs", amp.as_bytes());
     wt.write("src/lib.rs", b"fn ok() { let y = v[1]; }\n");
     let out = run(BIN, &wt.dir, &["src"]);
@@ -402,6 +401,29 @@ fn renders_the_snippets_of_a_long_chain_in_time() {
 }
 
 #[test]
+fn renders_the_snippets_that_start_at_a_long_literal_in_time() {
+    let wt = Wt::repo();
+    // A literal of a million spaces that each of 9,990 sites' snippets starts at.
+    let sum = format!(
+        "fn f() {{ let x = \"{}\"{}; }}\n",
+        " ".repeat(1_000_000),
+        " + a".repeat(9_990)
+    );
+    wt.write("src/sum.rs", sum.as_bytes());
+    let started = std::time::Instant::now();
+    let report = json(&run(BIN, &wt.dir, &["src"]));
+    let took = started.elapsed();
+    assert_eq!(skipped(&report), []);
+    let sites = report["arithmetic_sites"].as_array().expect("sites");
+    assert_eq!(sites.len(), 9_990);
+    // 80 characters, then the cut.
+    let first = format!("\" \"{} ...", " + a".repeat(19));
+    assert_eq!(sites[0]["snippet"], first);
+    assert_eq!(sites[9_989]["snippet"], "\" \" + a");
+    assert!(took.as_secs_f64() < 5.0, "took {took:?}");
+}
+
+#[test]
 fn does_not_walk_below_its_depth_limit() {
     let wt = Wt::repo();
     let mut deep = String::from("src");
@@ -449,10 +471,14 @@ fn enters_no_directory_swapped_for_a_link_while_it_walks() {
             }
         })
     };
+    // At least 30 scans, however long a loaded host takes for them (up to two
+    // minutes), and more, up to 300, while the first 6 seconds last.
     let started = std::time::Instant::now();
     let mut scans = 0;
     let mut leaked = 0;
-    while scans < 300 && started.elapsed().as_secs() < 6 {
+    while scans < 300
+        && (started.elapsed().as_secs() < 6 || (scans < 30 && started.elapsed().as_secs() < 120))
+    {
         let out = run(BIN, &wt.dir, &["src"]);
         assert_eq!(out.status.code(), Some(0), "{}", common::stderr(&out));
         if stdout(&out).contains("outside_marker_fn") {
@@ -516,22 +542,136 @@ fn skips_large_irregular_and_unparsable_files() {
     );
 }
 
+const RUN_DIR: &str = "a run directory (a .gitignore of * and nothing tracked), not scanned";
+const STORE: &str = "the audit-mem store (a .gitignore of * and nothing tracked), not scanned";
+const BUILD: &str =
+    "a target/ directory cargo built in (it holds CACHEDIR.TAG or .rustc_info.json), not scanned";
+
+/// The `CACHEDIR.TAG` cargo writes in a target directory it makes.
+const CARGO_TAG: &[u8] = b"Signature: 8a477f597d28d172789f06886806bc55\n\
+# This file is a cache directory tag created by cargo.\n\
+# For information about cache directory tags see https://bford.info/cachedir/\n";
+
+/// A `.rustc_info.json` as cargo writes it in each target directory it builds in,
+/// its start as cargo 1.85 and 1.99 write it.
+const RUSTC_INFO: &[u8] =
+    b"{\"rustc_fingerprint\":16663139784161297601,\"outputs\":{},\"successes\":{}}";
+
 #[test]
-fn prunes_run_directories_and_the_store_at_the_top_only() {
+fn prunes_a_target_directory_cargo_built_in_without_making_it() {
+    // A target/ made before cargo's first build, as `anchor` can make
+    // target/deploy, holds the .rustc_info.json cargo writes but no CACHEDIR.TAG.
     let wt = Wt::new();
     wt.write("src/lib.rs", b"fn a() {}\n");
-    wt.run_dir("audit_1");
-    wt.write("audit_1/poc/F-1/src/lib.rs", b"fn poc() {}\n");
-    wt.write(".audit-memory/x.rs", b"fn mem() {}\n");
-    wt.write("target/debug/build.rs", b"fn built() {}\n");
-    wt.write("programs/p/audit_2/lib.rs", b"fn kept() {}\n");
+    wt.write("target/.rustc_info.json", RUSTC_INFO);
+    wt.mkdir("target/deploy");
+    wt.write(
+        "target/release/build/g-1/out/generated.rs",
+        b"fn generated() {}\n",
+    );
+    // One whose .rustc_info.json is not cargo's, and one where it is a FIFO,
+    // which the scan does not wait on, are scanned.
+    wt.write("programs/p/target/.rustc_info.json", b"{\"outputs\":{}}");
+    wt.write("programs/p/target/lib.rs", b"fn near_miss() {}\n");
+    wt.mkdir("programs/q/target");
+    let status = Command::new("mkfifo")
+        .arg(wt.path("programs/q/target/.rustc_info.json"))
+        .status()
+        .expect("mkfifo");
+    assert!(status.success());
+    wt.write("programs/q/target/lib.rs", b"fn fifo() {}\n");
     let report = json(&run(BIN, &wt.dir, &["."]));
     assert_eq!(
         files(&report, "functions"),
-        vec!["./programs/p/audit_2/lib.rs", "./src/lib.rs"]
+        vec![
+            "./programs/p/target/lib.rs",
+            "./programs/q/target/lib.rs",
+            "./src/lib.rs",
+        ]
+    );
+    assert_eq!(skipped(&report), [("./target".into(), BUILD.into())]);
+}
+
+#[test]
+fn prunes_the_run_directories_and_store_an_audit_made_at_the_top_only() {
+    let wt = Wt::repo();
+    wt.write("src/lib.rs", b"fn a() {}\n");
+    wt.run_dir("audit_1");
+    wt.write("audit_1/poc/F-1/src/lib.rs", b"fn poc() {}\n");
+    wt.run_dir(".audit-memory");
+    wt.write(".audit-memory/x.rs", b"fn mem() {}\n");
+    wt.write("target/CACHEDIR.TAG", CARGO_TAG);
+    wt.write("target/debug/build.rs", b"fn built() {}\n");
+    // A directory named target without cargo's tag, such as a source module, and
+    // one whose tag is not cargo's, are scanned.
+    wt.write("src/target/mod.rs", b"fn module() {}\n");
+    wt.write(
+        "programs/p/target/CACHEDIR.TAG",
+        b"Signature: 8a477f597d28d172789f06886806bc5\n",
+    );
+    wt.write("programs/p/target/lib.rs", b"fn near_miss() {}\n");
+    wt.write("app/node_modules/m/lib.rs", b"fn installed() {}\n");
+    wt.write("programs/p/audit_2/lib.rs", b"fn kept() {}\n");
+    // Target code under a run directory's name, tracked or without the
+    // .gitignore of * a run directory holds, is scanned.
+    wt.write("audit_7/src/lib.rs", b"fn tracked() {}\n");
+    wt.git(&["add", "audit_7"]);
+    wt.run_dir("audit_8");
+    wt.write("audit_8/src/lib.rs", b"fn marked_but_tracked() {}\n");
+    wt.git(&["add", "-f", "audit_8"]);
+    wt.write("incident_42/src/lib.rs", b"fn unmarked() {}\n");
+    let report = json(&run(BIN, &wt.dir, &["."]));
+    assert_eq!(
+        files(&report, "functions"),
+        vec![
+            "./audit_7/src/lib.rs",
+            "./audit_8/src/lib.rs",
+            "./incident_42/src/lib.rs",
+            "./programs/p/audit_2/lib.rs",
+            "./programs/p/target/lib.rs",
+            "./src/lib.rs",
+            "./src/target/mod.rs",
+        ]
+    );
+    assert_eq!(
+        skipped(&report),
+        [
+            ("./.audit-memory".into(), STORE.into()),
+            (
+                "./.git".into(),
+                "a .git/ directory (git's own), not scanned".into()
+            ),
+            (
+                "./app/node_modules".into(),
+                "a node_modules/ directory (installed packages), not scanned".into()
+            ),
+            ("./audit_1".into(), RUN_DIR.into()),
+            ("./target".into(), BUILD.into()),
+        ]
     );
     let poc = json(&run(BIN, &wt.dir, &["audit_1/poc"]));
     assert_eq!(files(&poc, "functions"), vec!["audit_1/poc/F-1/src/lib.rs"]);
+}
+
+#[test]
+fn scans_a_store_the_repository_tracks_and_a_tree_outside_git_by_its_marks() {
+    let wt = Wt::repo();
+    wt.run_dir(".audit-memory");
+    wt.write(".audit-memory/src/lib.rs", b"fn tracked_store() {}\n");
+    wt.git(&["add", "-f", ".audit-memory"]);
+    let report = json(&run(BIN, &wt.dir, &["."]));
+    assert_eq!(
+        files(&report, "functions"),
+        vec!["./.audit-memory/src/lib.rs"]
+    );
+    // Outside any repository, only the mark tells: audit_3 holds it, audit_7 not.
+    let copy = Wt::new();
+    copy.run_dir("audit_3");
+    copy.write("audit_3/poc/lib.rs", b"fn poc() {}\n");
+    copy.write("audit_7/src/lib.rs", b"fn delivered() {}\n");
+    let report = json(&run(BIN, &copy.dir, &["."]));
+    assert_eq!(files(&report, "functions"), vec!["./audit_7/src/lib.rs"]);
+    assert_eq!(skipped(&report), [("./audit_3".into(), RUN_DIR.into())]);
 }
 
 #[test]
@@ -615,7 +755,7 @@ fn refuses_paths_outside_the_working_tree() {
 fn refuses_a_grammar_it_does_not_have() {
     let wt = Wt::new();
     wt.run_dir("audit_1");
-    let usage = "usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty]";
+    let usage = "usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty]";
     for (args, why) in [
         (vec![], "no directory to scan"),
         (vec![".", "."], "it takes one directory"),
@@ -633,6 +773,11 @@ fn refuses_a_grammar_it_does_not_have() {
             "--out is given more than once",
         ),
         (vec![".", "--out"], "--out needs a file"),
+        (vec![".", "--workflows"], "--workflows needs a directory"),
+        (
+            vec![".", "--workflows", "src", "--workflows=src"],
+            "--workflows is given more than once",
+        ),
         (vec![".", "--help"], "unknown option --help"),
         (vec!["-h"], "unknown option -h"),
         (vec![".", "--"], "unknown option --"),
@@ -666,7 +811,7 @@ fn takes_the_contract_marker_first_and_refuses_any_other() {
     );
     assert_eq!(out.status.code(), Some(0), "{}", common::stderr(&out));
     assert_eq!(wt.read("audit_1/prescan.json"), plain.as_bytes());
-    let usage = "usage: audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty]";
+    let usage = "usage: audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty]";
     let other =
         "names a contract this build does not keep (it keeps --contract=1); rebuild it with \
                  cargo build --release --locked in tools/auditor-tools";
@@ -843,8 +988,76 @@ fn refuses_an_out_when_git_cannot_answer() {
         "git cannot tell whether --out is tracked: audit_1",
     );
     assert!(!wt.exists("audit_1/prescan.json"));
-    // Printing to stdout asks git nothing.
-    assert_eq!(run(BIN, &wt.dir, &["."]).status.code(), Some(0));
+    // Printing to stdout needs no answer from git: a run directory git cannot
+    // answer for is scanned.
+    wt.write("audit_1/poc/F-1/src/lib.rs", b"fn poc() {}\n");
+    let report = json(&run(BIN, &wt.dir, &["."]));
+    assert_eq!(
+        files(&report, "functions"),
+        vec!["./audit_1/poc/F-1/src/lib.rs"]
+    );
+}
+
+#[test]
+fn asks_git_no_more_once_it_has_not_answered() {
+    let wt = Wt::new();
+    for name in ["audit_1", "audit_2", "audit_3"] {
+        wt.run_dir(name);
+        wt.write(&format!("{name}/poc/lib.rs"), b"fn poc() {}\n");
+    }
+    // A git first on PATH, outside the working tree, that notes each call and
+    // answers none.
+    let bin = wt.outside().join("bin");
+    fs::create_dir(&bin).expect("mkdir");
+    let calls = wt.outside().join("calls");
+    write_script(
+        &bin.join("git"),
+        &format!("#!/bin/sh\necho \"$1\" >> '{}'\nexit 1\n", calls.display()),
+    );
+    let path = format!("{}:/usr/bin:/bin", bin.display());
+    let report = json(&common::run_env(BIN, &wt.dir, &["."], &[("PATH", &path)]));
+    assert_eq!(
+        files(&report, "functions"),
+        vec![
+            "./audit_1/poc/lib.rs",
+            "./audit_2/poc/lib.rs",
+            "./audit_3/poc/lib.rs",
+        ]
+    );
+    assert_eq!(skipped(&report), []);
+    let asked = fs::read_to_string(&calls).expect("git was asked");
+    assert_eq!(asked.lines().count(), 1, "{asked}");
+}
+
+/// An executable script at `to`, written by `/bin/sh`, not by this process, for
+/// the reason `copy_binary` gives.
+fn write_script(to: &Path, text: &str) {
+    let status = Command::new("/bin/sh")
+        .args([
+            "-c",
+            "printf '%s' \"$1\" > \"$2\" && chmod 755 \"$2\"",
+            "sh",
+        ])
+        .arg(text)
+        .arg(to)
+        .stdin(Stdio::null())
+        .status()
+        .expect("run sh");
+    assert!(status.success(), "write {}", to.display());
+}
+
+/// A copy of the binary at `to`, written by `cp`. This process never holds the
+/// copy open for writing, so no child another test starts meanwhile inherits such a
+/// descriptor, which on Linux makes running the copy fail with ETXTBSY (`Text file
+/// busy`) until that child execs.
+fn copy_binary(to: &Path) {
+    let status = Command::new("cp")
+        .arg(BIN)
+        .arg(to)
+        .stdin(Stdio::null())
+        .status()
+        .expect("run cp");
+    assert!(status.success(), "cp {BIN} {}", to.display());
 }
 
 #[test]
@@ -852,7 +1065,7 @@ fn refuses_to_run_from_inside_the_working_tree() {
     let wt = Wt::new();
     wt.mkdir("tools/auditor-tools/target/release");
     let inside = wt.path("tools/auditor-tools/target/release/audit-scan");
-    fs::copy(BIN, &inside).expect("copy the binary");
+    copy_binary(&inside);
     let o = run(inside.to_str().expect("UTF-8"), &wt.dir, &["."]);
     refused(
         &o,
@@ -861,7 +1074,7 @@ fn refuses_to_run_from_inside_the_working_tree() {
     );
     let quoted = wt.outside().join("a$b");
     fs::create_dir(&quoted).expect("mkdir");
-    fs::copy(BIN, quoted.join("audit-scan")).expect("copy the binary");
+    copy_binary(&quoted.join("audit-scan"));
     let o = run(
         quoted.join("audit-scan").to_str().expect("UTF-8"),
         &wt.dir,
@@ -901,4 +1114,507 @@ fn escapes_formatting_characters_in_its_output() {
     assert_eq!(report["functions"][0]["file"], "src/a\u{202e}b.rs");
     assert!(text.contains("src/a\\u202eb.rs"), "{text}");
     assert!(text.contains("\\u202ek"), "{text}");
+}
+
+#[test]
+fn waits_once_for_a_git_that_does_not_answer() {
+    use auditor_tools::confine::GIT_TIME;
+    let wt = Wt::repo();
+    for name in ["audit_1", "audit_2", "audit_3"] {
+        wt.run_dir(name);
+        wt.write(&format!("{name}/poc/lib.rs"), b"fn poc() {}\n");
+    }
+    // A git that never answers (here one first on PATH that sleeps), as one
+    // blocked opening a file would be: it is killed when its time is up.
+    let slow = wt.outside().join("slow");
+    fs::create_dir(&slow).expect("make the slow git's directory");
+    write_script(&slow.join("git"), "#!/bin/sh\nexec /bin/sleep 60\n");
+    let path = format!("{}:/usr/bin:/bin", slow.display());
+    let started = std::time::Instant::now();
+    let report = json(&common::run_env(BIN, &wt.dir, &["."], &[("PATH", &path)]));
+    let took = started.elapsed();
+    assert_eq!(
+        files(&report, "functions"),
+        vec![
+            "./audit_1/poc/lib.rs",
+            "./audit_2/poc/lib.rs",
+            "./audit_3/poc/lib.rs",
+        ]
+    );
+    assert!(took >= GIT_TIME && took < GIT_TIME * 2, "took {took:?}");
+}
+
+#[test]
+fn scans_the_run_directories_at_once_when_head_is_a_named_pipe() {
+    use auditor_tools::confine::GIT_TIME;
+    let wt = Wt::repo();
+    for name in ["audit_1", "audit_2", "audit_3"] {
+        wt.run_dir(name);
+        wt.write(&format!("{name}/poc/lib.rs"), b"fn poc() {}\n");
+    }
+    // A named pipe as HEAD, which git would wait on for good when it opens it:
+    // no git is started, so nothing waits, and each run directory is scanned.
+    fs::remove_file(wt.path(".git/HEAD")).expect("remove HEAD");
+    let status = Command::new("mkfifo")
+        .arg(wt.path(".git/HEAD"))
+        .status()
+        .expect("mkfifo");
+    assert!(status.success());
+    let started = std::time::Instant::now();
+    let report = json(&run(BIN, &wt.dir, &["."]));
+    let took = started.elapsed();
+    assert_eq!(
+        files(&report, "functions"),
+        vec![
+            "./audit_1/poc/lib.rs",
+            "./audit_2/poc/lib.rs",
+            "./audit_3/poc/lib.rs",
+        ]
+    );
+    assert!(took < GIT_TIME / 2, "took {took:?}");
+}
+
+const NODE_MODULES: &str = "a node_modules/ directory (installed packages), not scanned";
+
+#[test]
+fn lists_each_file_a_parsed_file_brings_in_that_it_does_not_parse() {
+    let wt = Wt::repo();
+    wt.write(
+        "src/lib.rs",
+        b"#[path = \"cpi.inc\"]\nmod cpi;\n#[path = \"real.rs\"]\nmod real;\n\
+          #[path = \"../../outside/x.rs\"]\nmod out;\n\
+          #[cfg_attr(unix, path = \"unix.inc\")]\n#[cfg_attr(windows, path = \"win.rs\")]\nmod os;\n\
+          #[path = \"thread_files\"]\nmod thread {\n    #[path = \"tls.in\"]\n    mod local_data;\n}\n\
+          include!(\"more.in\");\n\
+          pub fn f() -> u8 {\n    include!(concat!(env!(\"OUT_DIR\"), \"/gen.rs\"))\n}\n\
+          #[path = \"node_modules/hide.rs\"]\nmod hide;\n#[path = \"target/gen.rs\"]\nmod gen;\n\
+          #[path = \"linked/l.rs\"]\nmod linked;\n#[path = \"../audit_1/poc.rs\"]\nmod poc;\n\
+          #[path = \"a/early.rs\"]\nmod early;\n#[path = \"ln.rs\"]\nmod ln;\n",
+    );
+    wt.write(
+        "src/a/b.rs",
+        b"mod inline {\n    #[path = \"deep.in\"]\n    mod d;\n}\n#[path = \"../c.inc\"]\nmod c;\n",
+    );
+    wt.write("src/real.rs", b"fn r() {}\n");
+    // Files the walk parses before the file that brings them in (a/early.rs) or
+    // after it (real.rs) get no entry, nor one it lists for itself (ln.rs, a link);
+    // those in a directory it does not enter (one it prunes, a link, a run
+    // directory) and one it does not find (win.rs) do.
+    wt.write("src/a/early.rs", b"fn e() {}\n");
+    wt.write("../outside/ln.rs", b"fn ln() {}\n");
+    wt.link(&wt.outside().join("ln.rs"), "src/ln.rs");
+    wt.write(
+        "src/node_modules/hide.rs",
+        b"fn h() { invoke_signed(&ix, &a, &[]); }\n",
+    );
+    wt.write("src/target/CACHEDIR.TAG", CARGO_TAG);
+    wt.write("src/target/gen.rs", b"fn g() { invoke(&ix, &a); }\n");
+    wt.write("../outside/linked/l.rs", b"fn l() {}\n");
+    wt.link(&wt.outside().join("linked"), "src/linked");
+    wt.run_dir("audit_1");
+    wt.write("audit_1/poc.rs", b"fn p() {}\n");
+    for (root, at) in [("src", "src"), (".", "./src")] {
+        let report = json(&run(BIN, &wt.dir, &[root]));
+        assert_eq!(report.get("brought_in"), None, "{root}: never printed");
+        assert_eq!(report["files_scanned"], 4, "{root}");
+        assert_eq!(report["cpi_sites"], serde_json::json!([]), "{root}");
+        let by = |file: &str, how: &str, line: u32| {
+            format!("{at}/{file} brings it in ({how}, line {line})")
+        };
+        let unentered = |file: &str, line: u32| {
+            (
+                format!("{at}/{file}"),
+                format!(
+                    "not parsed: in a directory the walk did not enter; {}",
+                    by("lib.rs", "#[path]", line)
+                ),
+            )
+        };
+        let mut want =
+            vec![
+            (
+                format!("{at}/a/b/inline/deep.in"),
+                format!("not parsed: not named *.rs; {}", by("a/b.rs", "#[path]", 3)),
+            ),
+            (
+                format!("{at}/c.inc"),
+                format!("not parsed: not named *.rs; {}", by("a/b.rs", "#[path]", 6)),
+            ),
+            (
+                format!("{at}/cpi.inc"),
+                format!("not parsed: not named *.rs; {}", by("lib.rs", "#[path]", 2)),
+            ),
+            (
+                "../outside/x.rs".to_string(),
+                format!(
+                    "not parsed: outside the directory scanned; {}",
+                    by("lib.rs", "#[path]", 6)
+                ),
+            ),
+            (
+                format!("{at}/unix.inc"),
+                format!("not parsed: not named *.rs; {}", by("lib.rs", "#[path]", 9)),
+            ),
+            (
+                format!("{at}/thread_files/tls.in"),
+                format!("not parsed: not named *.rs; {}", by("lib.rs", "#[path]", 13)),
+            ),
+            (
+                format!("{at}/more.in"),
+                format!("not parsed: not named *.rs; {}", by("lib.rs", "include!", 15)),
+            ),
+            (
+                format!("{at}/lib.rs"),
+                "brings in a file it names with no string literal (include!, line 17), which is \
+                 not parsed"
+                    .to_string(),
+            ),
+            (
+                format!("{at}/win.rs"),
+                format!(
+                    "not parsed: the walk found no such file; {}",
+                    by("lib.rs", "#[path]", 9)
+                ),
+            ),
+            unentered("node_modules/hide.rs", 20),
+            (format!("{at}/node_modules"), NODE_MODULES.to_string()),
+            unentered("target/gen.rs", 22),
+            (format!("{at}/target"), BUILD.to_string()),
+            unentered("linked/l.rs", 24),
+            (
+                format!("{at}/linked"),
+                "a symbolic link, not followed".to_string(),
+            ),
+            (
+                format!("{at}/ln.rs"),
+                "a symbolic link, not followed".to_string(),
+            ),
+        ];
+        if root == "." {
+            want.push((
+                "./.git".to_string(),
+                "a .git/ directory (git's own), not scanned".to_string(),
+            ));
+            want.push(("./audit_1".to_string(), RUN_DIR.to_string()));
+            want.push((
+                "./audit_1/poc.rs".to_string(),
+                format!(
+                    "not parsed: in a directory the walk did not enter; {}",
+                    by("lib.rs", "#[path]", 26)
+                ),
+            ));
+        } else {
+            want.push((
+                "audit_1/poc.rs".to_string(),
+                format!(
+                    "not parsed: outside the directory scanned; {}",
+                    by("lib.rs", "#[path]", 26)
+                ),
+            ));
+        }
+        want.sort();
+        assert_eq!(skipped(&report), want, "{root}");
+    }
+
+    // A program that brings code in from its node_modules/ and from a target/
+    // cargo built in, both beside its src/, by #[path] and by include!: each file
+    // is listed, beside the directory the walk prunes.
+    let wt = Wt::repo();
+    wt.write(
+        "programs/foo/src/lib.rs",
+        b"#[path = \"../node_modules/hide.rs\"]\nmod hide;\n\
+          #[path = \"../target/gen.rs\"]\nmod gen;\ninclude!(\"../target/inc.rs\");\n",
+    );
+    wt.write(
+        "programs/foo/node_modules/hide.rs",
+        b"fn h() { invoke_signed(&ix, &a, &[]); }\n",
+    );
+    wt.write("programs/foo/target/CACHEDIR.TAG", CARGO_TAG);
+    wt.write(
+        "programs/foo/target/gen.rs",
+        b"fn g() { invoke(&ix, &a); }\n",
+    );
+    wt.write(
+        "programs/foo/target/inc.rs",
+        b"fn i() { invoke(&ix, &a); }\n",
+    );
+    for (root, at) in [("programs/foo", "programs/foo"), (".", "./programs/foo")] {
+        let report = json(&run(BIN, &wt.dir, &[root]));
+        assert_eq!(report["files_scanned"], 1, "{root}");
+        assert_eq!(report["cpi_sites"], serde_json::json!([]), "{root}");
+        let unentered = |file: &str, how: &str, line: u32| {
+            (
+                format!("{at}/{file}"),
+                format!(
+                    "not parsed: in a directory the walk did not enter; {at}/src/lib.rs brings \
+                     it in ({how}, line {line})"
+                ),
+            )
+        };
+        let mut want = vec![
+            (format!("{at}/node_modules"), NODE_MODULES.to_string()),
+            unentered("node_modules/hide.rs", "#[path]", 2),
+            (format!("{at}/target"), BUILD.to_string()),
+            unentered("target/gen.rs", "#[path]", 4),
+            unentered("target/inc.rs", "include!", 5),
+        ];
+        if root == "." {
+            want.push((
+                "./.git".to_string(),
+                "a .git/ directory (git's own), not scanned".to_string(),
+            ));
+        }
+        want.sort();
+        assert_eq!(skipped(&report), want, "{root}");
+    }
+}
+
+/// Code with a CPI that rustc compiles where a name written leads, and a decoy
+/// with none where `.` and `..` taken as written lead.
+const HIDDEN: &[u8] = b"pub fn hidden_marker() { invoke_signed(&ix, &a, &[]); }\n";
+const DECOY: &[u8] = b"pub fn decoy_marker() {}\n";
+
+/// `pairs` as `skipped` gives them, sorted.
+fn sorted(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+    let mut v: Vec<(String, String)> = pairs
+        .iter()
+        .map(|(file, why)| (file.to_string(), why.to_string()))
+        .collect();
+    v.sort();
+    v
+}
+
+#[test]
+fn lists_a_file_brought_in_wherever_rustc_may_find_it() {
+    const GIT_DIR: &str = "a .git/ directory (git's own), not scanned";
+    let unentered = |by: &str| format!("not parsed: in a directory the walk did not enter; {by}");
+    let leaves = |dir: &str, by: &str| {
+        format!(
+            "not parsed: its path leaves {dir} by .., a directory the walk did not enter, so \
+             rustc may find the file elsewhere; {by}"
+        )
+    };
+
+    // A crate root that is not named lib.rs or main.rs (here the one [lib] path
+    // names) is a mod.rs to rustc: a #[path] in an inline module of it lies below
+    // the module's directory, with none named for the file. The file it brings in
+    // from a target/ cargo built in is listed, not the decoy where a module file
+    // of that name would bring it in from.
+    let wt = Wt::repo();
+    wt.write(
+        "Cargo.toml",
+        b"[package]\nname = \"p\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+          [lib]\npath = \"src/program.rs\"\n",
+    );
+    wt.write(
+        "src/program.rs",
+        b"mod processor {\n    #[path = \"../../target/withdraw.rs\"]\n    pub mod withdraw;\n}\n",
+    );
+    wt.mkdir("src/processor");
+    wt.write("src/target/withdraw.rs", DECOY);
+    wt.write("target/CACHEDIR.TAG", CARGO_TAG);
+    wt.write("target/withdraw.rs", HIDDEN);
+    let report = json(&run(BIN, &wt.dir, &["."]));
+    assert_eq!(report["cpi_sites"], serde_json::json!([]));
+    let by = "./src/program.rs brings it in (#[path], line 3)";
+    assert_eq!(
+        skipped(&report),
+        sorted(&[
+            ("./.git", GIT_DIR),
+            ("./target", BUILD),
+            ("./target/withdraw.rs", &unentered(by)),
+        ])
+    );
+    let report = json(&run(BIN, &wt.dir, &["src"]));
+    assert_eq!(
+        skipped(&report),
+        sorted(&[(
+            "target/withdraw.rs",
+            "not parsed: outside the directory scanned; src/program.rs brings it in (#[path], \
+             line 3)"
+        )])
+    );
+
+    // The same for a crate root at the top of its crate, an inline module named
+    // target in it: rustc's file lies in the target/ beside it, and the decoy
+    // below a directory named for the file is parsed.
+    let wt = Wt::repo();
+    wt.write(
+        "programs/foo/program.rs",
+        b"pub mod target {\n    #[path = \"h.rs\"]\n    pub mod h;\n}\n",
+    );
+    wt.write("programs/foo/program/target/h.rs", DECOY);
+    wt.write("programs/foo/target/CACHEDIR.TAG", CARGO_TAG);
+    wt.write("programs/foo/target/h.rs", HIDDEN);
+    let report = json(&run(BIN, &wt.dir, &["."]));
+    assert_eq!(report["cpi_sites"], serde_json::json!([]));
+    let by = "./programs/foo/program.rs brings it in (#[path], line 3)";
+    assert_eq!(
+        skipped(&report),
+        sorted(&[
+            ("./.git", GIT_DIR),
+            ("./programs/foo/target", BUILD),
+            ("./programs/foo/target/h.rs", &unentered(by)),
+        ])
+    );
+
+    // And for a file a #[path] brings in, which rustc takes as a mod.rs too.
+    let wt = Wt::repo();
+    wt.write(
+        "programs/foo/src/lib.rs",
+        b"#[path = \"x/y.rs\"]\npub mod y;\n",
+    );
+    wt.write(
+        "programs/foo/src/x/y.rs",
+        b"pub mod a {\n    #[path = \"../../../target/h.rs\"]\n    pub mod h;\n}\n",
+    );
+    wt.mkdir("programs/foo/src/x/a");
+    wt.write("programs/foo/src/target/h.rs", DECOY);
+    wt.write("programs/foo/target/CACHEDIR.TAG", CARGO_TAG);
+    wt.write("programs/foo/target/h.rs", HIDDEN);
+    let report = json(&run(BIN, &wt.dir, &["."]));
+    assert_eq!(report["cpi_sites"], serde_json::json!([]));
+    let by = "./programs/foo/src/x/y.rs brings it in (#[path], line 3)";
+    assert_eq!(
+        skipped(&report),
+        sorted(&[
+            ("./.git", GIT_DIR),
+            ("./programs/foo/target", BUILD),
+            ("./programs/foo/target/h.rs", &unentered(by)),
+        ])
+    );
+
+    // A .. that leaves a link, here one in node_modules/, goes wherever the link
+    // leads: the file is listed where . and .. taken as written lead, with the
+    // directory it leaves, though the walk parsed a file there.
+    let wt = Wt::repo();
+    wt.write(
+        "programs/foo/src/lib.rs",
+        b"#[path = \"../node_modules/l/../../src/decoy.rs\"]\npub mod hide;\n\
+          include!(\"../node_modules/l/../../src/inc.rs\");\n",
+    );
+    wt.write("programs/foo/src/decoy.rs", DECOY);
+    wt.write("programs/foo/src/inc.rs", b"fn inc_decoy() {}\n");
+    wt.write("programs/foo/node_modules/src/decoy.rs", HIDDEN);
+    wt.write(
+        "programs/foo/node_modules/src/inc.rs",
+        b"fn inc_hidden() { invoke(&ix, &a); }\n",
+    );
+    wt.mkdir("programs/foo/node_modules/x/y");
+    wt.link(Path::new("x/y"), "programs/foo/node_modules/l");
+    for (root, at) in [(".", "./programs/foo"), ("programs/foo", "programs/foo")] {
+        let report = json(&run(BIN, &wt.dir, &[root]));
+        assert_eq!(report["cpi_sites"], serde_json::json!([]), "{root}");
+        let by =
+            |how: &str, line: u32| format!("{at}/src/lib.rs brings it in ({how}, line {line})");
+        let link = format!("{at}/node_modules/l");
+        let mut want = sorted(&[
+            (&format!("{at}/node_modules"), NODE_MODULES),
+            (
+                &format!("{at}/src/decoy.rs"),
+                &leaves(&link, &by("#[path]", 2)),
+            ),
+            (
+                &format!("{at}/src/inc.rs"),
+                &leaves(&link, &by("include!", 3)),
+            ),
+        ]);
+        if root == "." {
+            want.push(("./.git".to_string(), GIT_DIR.to_string()));
+            want.sort();
+        }
+        assert_eq!(skipped(&report), want, "{root}");
+    }
+
+    // One that leaves the directory scanned for a link outside it, and comes back.
+    let wt = Wt::repo();
+    wt.write(
+        "programs/foo/src/lib.rs",
+        b"#[path = \"../../bar/l/../../foo/src/decoy.rs\"]\npub mod hide;\n",
+    );
+    wt.write("programs/foo/src/decoy.rs", DECOY);
+    wt.write("programs/bar/foo/src/decoy.rs", HIDDEN);
+    wt.mkdir("programs/bar/x/y");
+    wt.link(Path::new("x/y"), "programs/bar/l");
+    let report = json(&run(BIN, &wt.dir, &["programs/foo"]));
+    assert_eq!(report["cpi_sites"], serde_json::json!([]));
+    assert_eq!(
+        skipped(&report),
+        sorted(&[(
+            "programs/foo/src/decoy.rs",
+            &leaves(
+                "programs/bar/l",
+                "programs/foo/src/lib.rs brings it in (#[path], line 2)"
+            )
+        )])
+    );
+
+    // A module's directory spelled in other letters, which a filesystem that
+    // ignores case opens: its .. leads where . and .. taken as written lead.
+    let wt = Wt::repo();
+    wt.write(
+        "src/program.rs",
+        b"mod A {\n    #[path = \"../../target/h.rs\"]\n    pub mod h;\n}\n",
+    );
+    wt.mkdir("src/a");
+    wt.write("target/CACHEDIR.TAG", CARGO_TAG);
+    wt.write("target/h.rs", HIDDEN);
+    let report = json(&run(BIN, &wt.dir, &["."]));
+    let by = "./src/program.rs brings it in (#[path], line 3)";
+    assert_eq!(
+        skipped(&report),
+        sorted(&[
+            ("./.git", GIT_DIR),
+            ("./target", BUILD),
+            ("./target/h.rs", &unentered(by)),
+        ])
+    );
+
+    // One spelled with a byte outside ASCII, which another spelling may open
+    // (here é as e and U+0301, where the directory's name has U+00E9): the walk
+    // cannot tell where its .. leads.
+    let wt = Wt::repo();
+    wt.write(
+        "src/program.rs",
+        "mod a {\n    #[path = \"../cafe\u{301}/../../target/h.rs\"]\n    pub mod h;\n}\n"
+            .as_bytes(),
+    );
+    wt.mkdir("src/a");
+    wt.mkdir("src/caf\u{e9}");
+    wt.write("target/CACHEDIR.TAG", CARGO_TAG);
+    wt.write("target/h.rs", HIDDEN);
+    let report = json(&run(BIN, &wt.dir, &["."]));
+    assert_eq!(
+        skipped(&report),
+        sorted(&[
+            ("./.git", GIT_DIR),
+            ("./target", BUILD),
+            ("./target/h.rs", &leaves("./src/cafe\u{301}", by)),
+        ])
+    );
+
+    // A crate's own lib.rs, a module file it declares and a binary's root bring
+    // in only what rustc compiles: the place rustc does not use for each is not
+    // listed.
+    let wt = Wt::repo();
+    wt.write(
+        "src/lib.rs",
+        b"mod a {\n    #[path = \"../b.rs\"]\n    mod b;\n}\nmod m;\n",
+    );
+    wt.write("src/a/c.rs", b"fn c() {}\n");
+    wt.write("src/b.rs", b"fn b() {}\n");
+    wt.write(
+        "src/m.rs",
+        b"mod inner {\n    #[path = \"x.rs\"]\n    mod x;\n    #[path = \"../../y.rs\"]\n    mod y;\n}\n",
+    );
+    wt.write("src/m/inner/x.rs", b"fn x() {}\n");
+    wt.write("src/y.rs", b"fn y() {}\n");
+    wt.write(
+        "src/bin/cli.rs",
+        b"mod m {\n    #[path = \"k.rs\"]\n    mod k;\n}\nfn main() {}\n",
+    );
+    wt.write("src/bin/m/k.rs", b"fn k() {}\n");
+    let report = json(&run(BIN, &wt.dir, &["."]));
+    assert_eq!(report["files_scanned"], 8);
+    assert_eq!(skipped(&report), sorted(&[("./.git", GIT_DIR)]));
 }

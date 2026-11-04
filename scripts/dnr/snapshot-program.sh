@@ -164,6 +164,9 @@ if ! command -v solana >/dev/null 2>&1; then
   echo "[blocker] solana CLI not on PATH — install it, or dump the program another way and record its zero-trimmed sha256 and last-deployed slot in LEDGER.md by hand." >&2
   exit 3
 fi
+# solana runs from /, so nothing in the working directory (a .tool-versions an asdf or
+# mise shim reads) picks the binary; every path it is given is absolute.
+solana() { (cd / && exec solana "$@"); }
 if ! command -v python3 >/dev/null 2>&1; then
   echo "[blocker] python3 not on PATH — it checks the id and hashes the dump; install it, or snapshot $pid by hand and record its zero-trimmed sha256 and last-deployed slot in LEDGER.md." >&2
   exit 3

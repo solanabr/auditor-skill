@@ -18,6 +18,7 @@ Attacker compromises domain registrar or DNS provider — redirects users to phi
 # - Strong unique password
 # - 2FA (preferably hardware key, not SMS)
 # - Domain lock enabled
+# (whois asks for approval: it queries a name chosen at run time)
 whois yourdomain.com 2>/dev/null | grep -iE "lock|registrar"
 ```
 - ✅ PASS: Domain locked, registrar has 2FA, auto-renew enabled
@@ -27,7 +28,7 @@ whois yourdomain.com 2>/dev/null | grep -iE "lock|registrar"
 ```
 # If using separate DNS (Cloudflare, Route53, etc.):
 # Verify 2FA on DNS provider account
-# Check for DNSSEC
+# Check for DNSSEC (dig asks for approval: it queries a name chosen at run time)
 dig +dnssec yourdomain.com 2>/dev/null | grep -i "rrsig"
 ```
 - ✅ PASS: DNSSEC enabled, DNS provider account has 2FA

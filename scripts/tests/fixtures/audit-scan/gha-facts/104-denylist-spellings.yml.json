@@ -1,0 +1,110 @@
+{
+  "name": "f104-denylist-spellings",
+  "triggers": [
+    "issue_comment"
+  ],
+  "permissions": [
+    "contents: write"
+  ],
+  "jobs": [
+    {
+      "id": "string-none",
+      "line": 10,
+      "if": "${{ !contains('NONE', github.event.comment.author_association) }}",
+      "permissions": [],
+      "steps": [
+        {
+          "line": 14,
+          "run": "echo \"privileged command\"",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "string-list",
+      "line": 15,
+      "if": "${{ !contains('NONE,FIRST_TIMER', github.event.comment.author_association) }}",
+      "permissions": [],
+      "steps": [
+        {
+          "line": 19,
+          "run": "echo \"privileged command\"",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "negated-equality",
+      "line": 20,
+      "if": "${{ !(github.event.comment.author_association == 'NONE') }}",
+      "permissions": [],
+      "steps": [
+        {
+          "line": 24,
+          "run": "echo \"privileged command\"",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "negated-value-first",
+      "line": 25,
+      "if": "${{ !('NONE' == github.event.comment.author_association) }}",
+      "permissions": [],
+      "steps": [
+        {
+          "line": 29,
+          "run": "echo \"privileged command\"",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "negated-contains",
+      "line": 30,
+      "if": "${{ !(contains(fromJSON('[\"NONE\"]'), github.event.comment.author_association)) }}",
+      "permissions": [],
+      "steps": [
+        {
+          "line": 34,
+          "run": "echo \"privileged command\"",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "equals-false",
+      "line": 35,
+      "if": "${{ contains(fromJSON('[\"NONE\",\"FIRST_TIMER\"]'), github.event.comment.author_association) == false }}",
+      "permissions": [],
+      "steps": [
+        {
+          "line": 39,
+          "run": "echo \"privileged command\"",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "false-first",
+      "line": 40,
+      "if": "${{ false == contains(fromJSON('[\"NONE\"]'), github.event.comment.author_association) }}",
+      "permissions": [],
+      "steps": [
+        {
+          "line": 44,
+          "run": "echo \"privileged command\"",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

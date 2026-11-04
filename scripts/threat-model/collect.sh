@@ -25,7 +25,10 @@
 # directory, with no "." or ".." component, and reach nothing through a symbolic link; --repo, and a
 # --parent, is the top level of a repository whose git directory lies inside the working directory,
 # holds no symbolic link and borrows no objects (alternates) or parents (info/grafts). A local path that
-# fails this is refused (exit 2), naming --network.
+# fails this is refused (exit 2), naming --network. --network reads such a repository: its git directory
+# is searched for named pipes and devices git would open, but not where a link to a directory there leads,
+# nor the object directories objects/info/alternates names, so a read that meets one there waits until
+# the caller stops the run.
 #
 # Options (each at most once, except the repeatable --paths, --parent-paths and --vulns; a value is
 # at most 1024 bytes, with no control character):
@@ -85,7 +88,7 @@ SCRIPTS=${here%/*}
 SKILL_ROOT=${SCRIPTS%/*}
 . "$SCRIPTS/lib/confine.sh" || { printf 'collect.sh: refused: scripts/lib/confine.sh cannot be read\n' >&2; exit 2; }
 confine_init collect.sh "$SKILL_ROOT" 2
-confine_need env git find wc cat sed awk sort uniq cut tr head tail grep mktemp rm mkdir date
+confine_need env git find wc cat sed awk sort uniq cut tr head tail grep mktemp rm mkdir rmdir date
 WT=$CONFINE_WT
 COLLECTOR_VERSION=1
 exec </dev/null
@@ -214,6 +217,12 @@ if [ -n "$AUDIT_MEM_DB" ]; then
   confine_path "$DB_REL" --audit-mem-db any
 fi
 
+# G reads with a private empty directory under TMPDIR as git's work tree, and the collector works from a
+# temporary directory there (below): a TMPDIR inside the working directory is refused before either.
+if confine_phys "${TMPDIR:-/tmp}" && confine_inside "$CONFINE_PHYS" "$WT"; then
+  die "TMPDIR lies inside the working directory; set it to a directory outside the tree"
+fi
+
 # ---- the target, and the local parent and inputs -------------------------------------------------
 # hgit_text is the hardened git call (scripts/lib/confine.sh): the target's .git/config, attributes and
 # hooks are attacker-controlled, so it runs git with no environment of the caller's and with the
@@ -225,15 +234,29 @@ fi
 # clean filter can run, and no remote the target configures is ever contacted (the one https clone of
 # a user-given --parent URL below allows https for that call only). Every diff runs with --text and
 # every git grep with -a, so neither an attribute (-diff, diff=<driver> with binary set) nor a size
-# threshold turns a change into "Binary files differ" or hides a file from a search.
-G() { hgit_text "$@"; }
+# threshold turns a change into "Binary files differ" or hides a file from a search. G reads with an
+# empty work tree (hgit_text_tree), so git opens no file of the target's work tree: a named pipe there
+# that confine_repo_top's scan does not see (behind a directory link, say) cannot stop a read.
+G() { hgit_text_tree "$@"; }
 DIFFSAFE=(--text --no-textconv --no-ext-diff --no-color --src-prefix=a/ --dst-prefix=b/)
 abspath() { case "$1" in /*) printf '%s' "$1" ;; *) printf '%s/%s' "$WT" "$1" ;; esac; }
 not_a_repo() {
+  if [ -n "${CONFINE_GIT_WHY:-}" ]; then
+    echo "collect.sh: $CONFINE_GIT_WHY" >&2
+    exit 3
+  fi
   echo "collect.sh: not the top level of a git repository that git can read (none there, or another user owns it: collect from a copy you made), nor a bare repository: $(confine_text "$REPO")" >&2
   exit 3
 }
+# disk_name <physical directory>: its path with the names on disk (getcwd's), as WT holds them, so that on a
+# volume that folds case a path typed in other letters still compares with WT.
+disk_name() {
+  local p
+  p=$(cd -- "$1" 2>/dev/null && /bin/pwd -P 2>/dev/null) && [ -n "$p" ] && [ "$p" -ef "$1" ] && { printf '%s' "$p"; return; }
+  printf '%s' "$1"
+}
 # REPO_ABS is the target's physical path; REPO_REL its path inside the working directory ("" outside it).
+CONFINE_GIT_WHY=""
 if [ "$OFFLINE" -eq 1 ]; then
   CONFINE_HINT=$NET_HINT
   confine_path "$REPO" --repo dir
@@ -244,7 +267,7 @@ if [ "$OFFLINE" -eq 1 ]; then
   REPO_ABS=$CONFINE_PHYS
 else
   confine_phys "$(abspath "$REPO")" || not_a_repo
-  REPO_ABS=$CONFINE_PHYS
+  REPO_ABS=$(disk_name "$CONFINE_PHYS")
   REPO_REL=""
   case "$REPO_ABS" in
     "$WT") REPO_REL=. ;;
@@ -305,6 +328,7 @@ if [ -n "$PARENT" ] && [ "$(classify_source "$PARENT")" = path ]; then
     esac
   fi
   if [ "$OFFLINE" -eq 0 ]; then
+    PARENT=$(disk_name "$PARENT")
     case "$PARENT" in
       "$WT") PARENT_REL=. ;;
       "$WT"/*) PARENT_REL=${PARENT#"$WT"/} ;;
@@ -573,7 +597,7 @@ eval_triggers() {
   done
   n=$(G "$REPO" ls-tree -r --name-only "$PIN_SHA" 2>/dev/null | grep -iE '\.(pdf|md)$' | grep -ciE "$REPORT_RE")
   if [ "${n:-0}" -gt 0 ]; then t4="${t4:+$t4,}in-tree-report"; fi
-  for d in "$REPO_ABS"/incident_*; do
+  for d in "$REPO_ABS"/[Ii][Nn][Cc][Ii][Dd][Ee][Nn][Tt]_*; do
     [ ! -L "$d" ] && [ ! -L "$d/INCIDENTS.json" ] && [ -f "$d/INCIDENTS.json" ] || continue
     t4="${t4:+$t4,}incidents-json"; break
   done
@@ -810,7 +834,7 @@ R4_OTHER=$(sed -E 's/^ *[0-9]+ //' "$TMPD/r4a" | grep -E '\.rs"?$' |
   emit_capped "$TMPD/r6f" "no audit, post-mortem or incident file"
   echo "--- auditor-skill outputs next to the target ---"
   # A symbolic link is listed as one and never followed, so what it points at is never tested.
-  for d in "$REPO_ABS"/audit_* "$REPO_ABS"/incident_*; do
+  for d in "$REPO_ABS"/audit_* "$REPO_ABS"/[Ii][Nn][Cc][Ii][Dd][Ee][Nn][Tt]_*; do
     [ "$d" != "$CUR_RUN" ] || continue
     if [ -L "$d" ]; then
       clean "$d"; echo " (symbolic link, not followed)"
@@ -951,7 +975,7 @@ tree_link() { # tree_link <absolute path>: status 0 when the path is a symbolic 
     case "$rest" in */*) comp=${rest%%/*}; rest=${rest#*/} ;; *) return 1 ;; esac
     if [ -n "$comp" ] && [ -L "$cur/$comp" ]; then
       phys=$(cd "${cur:-/}" 2>/dev/null && pwd -P) || return 0
-      case "$phys/" in "$REPO_PHYS"/*) return 0 ;; esac
+      if confine_inside "$phys" "$REPO_PHYS"; then return 0; fi
     fi
     cur="$cur/$comp"
   done
@@ -980,9 +1004,11 @@ while IFS= read -r v; do
 done <<< "$VULNS_NL"
 # An incident file counts only where an auditor run wrote it: not a symbolic link, not inside a linked
 # directory, and not in an incident_* directory the target tracks. A link is recorded as one and never
-# followed, so what it points at is never tested.
+# followed, so what it points at is never tested. incident_* is read in any letter case, as
+# iso_incident_runs reads it, since a volume that ignores case finds incident_1 under the name INCIDENT_1
+# (here, in T4 and in R6).
 ii=0
-for d in "$REPO_ABS"/incident_*; do
+for d in "$REPO_ABS"/[Ii][Nn][Cc][Ii][Dd][Ee][Nn][Tt]_*; do
   f=$d/INCIDENTS.json
   if [ -L "$d" ]; then record "$d" "-" "-" "-" "skipped: symbolic link (directory), not followed"; continue; fi
   [ -d "$d" ] || continue

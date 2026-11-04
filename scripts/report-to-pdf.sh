@@ -22,18 +22,28 @@
 #
 # Rendering: the report is copied into a private temp directory outside the working
 # directory and rendered there, with
-#   pandoc --sandbox -f markdown-raw_tex-raw_attribute --lua-filter scripts/pdf/no-remote.lua \
+#   pandoc --sandbox -f markdown-raw_tex-raw_attribute-yaml_metadata_block \
+#          --lua-filter scripts/pdf/no-remote.lua \
 #          --pdf-engine=<xelatex|lualatex|pdflatex, the first found> --pdf-engine-opt=-no-shell-escape
 # --sandbox keeps pandoc from reading any file but its input and from fetching
-# anything. The filter turns every image into its alt text, drops every raw block and
-# raw inline, shows math as code, and leaves every element its identifier and classes
-# but no key=value attribute (the LaTeX writer passes some, such as a figure's
-# latex-placement, to the engine as written), so no text of the report reaches the
-# TeX engine as TeX. Raw HTML is still parsed, so the HTML comments of the report
-# templates drop out with it rather than printing as text. The engine gets kpathsea's
-# paranoid settings (openin_any=p, openout_any=p: no absolute path outside pandoc's
-# own temp directory, no "..", no dotfile) and shell_escape=f; the caller's
-# TEXMFOUTPUT is dropped, and pandoc sets its own temp directory. The PDF is copied
+# anything. No YAML block in the report is read as metadata, so one quoted from the
+# audited repo prints as text: as metadata it would fill the template's variables,
+# which the filter never sees (the whole body, and font and option slots that reach
+# the engine as TeX, or as Lua under lualatex). The filter turns every image into its
+# alt text, drops every raw block and raw inline, shows math as code, and leaves every
+# element its identifier and classes but no key=value attribute (the LaTeX writer
+# passes some, such as a figure's latex-placement, to the engine as written), so no
+# text of the report reaches the TeX engine as TeX. Raw HTML is still parsed, so the
+# HTML comments of the report templates drop out with it rather than printing as
+# text; raw HTML that runs across a blank line prints as text instead, since an
+# unclosed "<!--" in quoted text runs to the next "-->", findings and all (one comment
+# whose "<!--" and "-->" stand on lines of their own, as the templates' long comments
+# do, still drops). The engine gets kpathsea's paranoid settings (openin_any=p,
+# openout_any=p: no absolute path outside pandoc's own temp directory, no "..", no
+# dotfile) and shell_escape=f, and pandoc sets its own temp directory. pandoc, and
+# the engine through it, see none of the caller's environment but PATH and HOME (so
+# no RPC_URL or other key, and no TEXMFOUTPUT): their environment is those two,
+# TMPDIR (the temp directory), LC_ALL=C and the three settings. The PDF is copied
 # into a new file beside the report and renamed into place.
 #
 # Exit: 0 rendered or skipped (no report, no pandoc, a pandoc older than 2.15, no
@@ -153,8 +163,9 @@ trap 'rm -rf "$TMPD"' EXIT
 cat -- "$WT/$IN" > "$TMPD/report.md" || refuse "the report cannot be read: $IN"
 
 echo "report-to-pdf: rendering $IN -> $OUTPUT"
-if ( cd "$TMPD" && unset TEXMFOUTPUT && export openin_any=p openout_any=p shell_escape=f TMPDIR="$TMPD" &&
-     exec pandoc --sandbox -f markdown-raw_tex-raw_attribute --lua-filter "$FILTER" \
+if ( cd "$TMPD" &&
+     exec env -i PATH="$PATH" ${HOME+"HOME=$HOME"} TMPDIR="$TMPD" LC_ALL=C openin_any=p openout_any=p shell_escape=f \
+       pandoc --sandbox -f markdown-raw_tex-raw_attribute-yaml_metadata_block --lua-filter "$FILTER" \
        --pdf-engine="$ENGINE" --pdf-engine-opt=-no-shell-escape -o "$TMPD/report.pdf" report.md ) &&
    [ -s "$TMPD/report.pdf" ]; then
   # The run directory and the PDF's name are checked again, then the PDF goes into a new file beside

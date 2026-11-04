@@ -29,7 +29,8 @@ mistaken — and then it stops. Carrying it out is never the track's job.
   `getSignaturesForAddress` / `getTransaction` only from `collect.sh`. Any other
   read — an account's current value (`getAccountInfo`) or one transaction — goes
   through
-  `"<auditor-skill root>/scripts/rpc-read.sh" account <address>|confirm <signature> --run incident_<n>`,
+  `"<auditor-skill root>/scripts/rpc-read.sh" account <address> --run incident_<n>` or
+  `"<auditor-skill root>/scripts/rpc-read.sh" confirm <signature> --run incident_<n>`,
   never `solana` itself and never `--url`: it keeps the key out of argv, has no
   keypair to sign with, and passes the CLI's output and errors through
   `redact.sh`, so a key in an error never reaches the transcript and a failed

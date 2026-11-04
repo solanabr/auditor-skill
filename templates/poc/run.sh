@@ -15,9 +15,10 @@
 # crate at <R>/poc/<ID>, <R>/exec-mode). Both read TOOLS_VERSION and POC_LOCK_WAIT from
 # the environment.
 #
-# Reproduces the finding from a clean checkout of THIS crate:
-#   1. builds the `vulnerable` arm to SBF, runs tests/exploit.rs      → exploit must SUCCEED
-#   2. builds the `fixed`      arm to SBF, runs tests/fixed_blocked.rs → same attack must be REJECTED
+# Reproduces the finding from a clean checkout of THIS crate. It builds both arms to SBF
+# and both test binaries first, then:
+#   1. runs tests/exploit.rs       on the `vulnerable` arm → exploit must SUCCEED
+#   2. runs tests/fixed_blocked.rs on the `fixed` arm      → same attack must be REJECTED
 # Exit 0: the exploit reproduces on `vulnerable` and, when the fixed arm runs, is
 # blocked on `fixed` — the evidence that earns [PoC-REPRODUCED]. Exit 1: the exploit
 # did not reproduce. Exit 2: the fixed arm did not block it; the final line says
@@ -38,10 +39,32 @@
 # with the installation's byte for byte before an OK line is trusted, and
 # refreshed from it before a re-run.
 #
-# Why two build+test passes and not one: both arms compile to the SAME `.so`
-# filename (<crate>.so), so they cannot coexist in SBF_OUT_DIR. Build an arm, test
-# it, then overwrite with the other arm. Mollusk loads the `.so`, never the host
-# test binary — so the SBF build MUST precede each test run.
+# Why each arm's bytes are kept aside: both arms compile to the SAME `.so` filename
+# (<crate>.so), so they cannot coexist in SBF_OUT_DIR, and Mollusk loads the `.so`,
+# never the host test binary. Every build comes first, each arm's SBF build (or its
+# prebuilt bytes) kept aside with its hash and each arm's test binary built, then the
+# check of what they compiled, and only then the tests, each arm's bytes placed in
+# SBF_OUT_DIR right before its own. A test runs the PoC's code with the scratch copy
+# as CARGO_MANIFEST_DIR, so nothing it writes there is ever compiled; an arm's bytes
+# or test binary that changed after its build stop the run (exit 3). The vulnerable
+# arm's builds run its dependencies' build scripts and proc macros in the scratch
+# copy, so the checks of the crate (WHERE IT BUILDS below) run there again right
+# before the fixed arm builds, and cargo metadata is read again: a crate they now
+# refuse, or whose manifests now give other packages, targets, features or
+# dependencies than before the first build, stops the run (exit 3). So does a test
+# build that compiled a target of the crate that the first cargo metadata did not
+# list: the reading of what the builds compiled (HOW AN ARM IS DECIDED) works from
+# that list.
+#
+# What the vulnerable arm's test leaves behind can still reach the fixed arm's test,
+# though no build, since every build is done by then: a process it leaves running
+# can still act while the fixed test runs, and on Linux a shared library it writes
+# into the test binaries' deps directory, the one above it or the toolchain's target
+# library directory (SYSROOT_LIB; libgcc_s.so.1, say) loads into the fixed arm's test
+# binary in place of the system's copy, since the library path run_tests sets as
+# cargo test does (LD_LIBRARY_PATH) lists those directories first, and the binary's
+# digest covers the binary alone. macOS reads DYLD_FALLBACK_LIBRARY_PATH only for a
+# library missing from its install path.
 #
 # Toolchain: cargo-build-sbf's default bundle is platform-tools v1.51 / cargo 1.84,
 # which cannot parse the edition2024 manifests in the mollusk-svm dep tree. We pin
@@ -117,10 +140,18 @@
 # .cargo/config* from every parent directory (rustc-wrapper, runner, linker,
 # rustflags, an alias that shadows `build-sbf`), and rustup its rust-toolchain*
 # (which can name a `path` toolchain, i.e. any binaries). So, in either mode:
-#   * a crate that holds a symbolic link, a .cargo/ directory or a rust-toolchain*
-#     file, in any letter case (a filesystem that ignores case lets cargo and
-#     rustup read .CARGO/ as .cargo/), is refused (exit 3): the copy below never
-#     takes them.
+#   * a crate that holds a symbolic link, a .cargo/ directory, a rust-toolchain*
+#     file or a version manager's file, in any letter case (a filesystem that
+#     ignores case lets cargo and rustup read .CARGO/ as .cargo/), is refused (exit
+#     3): the copy below never takes them. The version managers' files are those a
+#     shim of asdf, mise, pyenv or proto reads in the directory it starts in, to pick
+#     the cargo, rustc or python3 it runs (asdf's `path:` version names any program):
+#     .tool-versions, .python-version, mise.toml, .mise.toml and their .local and
+#     environment forms (mise.<name>.toml), .miserc*, a mise/, .mise/ or .config/
+#     directory, and .prototools*. So is any file or directory whose name is not
+#     printable ASCII: a filesystem that folds case reads such a name as another, as
+#     macOS reads .tool-versions with a long s (U+017F) in place of an s as
+#     .tool-versions.
 #   * the crate is copied, without a target/ directory in any letter case, into a
 #     fresh scratch directory,
 #     `mktemp -d "${TMPDIR:-/tmp}/auditor-poc.XXXXXX"`, and built and tested there
@@ -133,8 +164,29 @@
 #     `cargo metadata --no-deps`, run in the scratch copy, lists the crate's packages
 #     (the crate, shared-test-utils, any other member), and a build script (`build =
 #     false` turns one off), a proc-macro package, a Cargo.toml inside the crate that
-#     is not a member, or a [patch] or [replace] table in a manifest stops the run. A
-#     path dependency outside the crate is not refused: its build script runs in the
+#     is not a member, or a [patch] or [replace] table in a manifest stops the run.
+#     So does a cargo-features key: on a nightly cargo it lets the manifest choose a
+#     linker, rustflags or a codegen backend.
+#     The crate's packages build a library and tests only (the crate's own library
+#     also as a cdylib): a bin, example or bench target, a dylib or a staticlib, and a
+#     cdylib of another member stop the run, in either mode, since cargo builds a bin
+#     with every integration test, and places a bin, a dylib or a staticlib outside the
+#     deps directory whose dep-info run.sh reads (below).
+#     The crate's own Rust code is read as well, every .rs file in it and each
+#     target's source, comments and literals aside: a crate-level #![feature(...)],
+#     with which a nightly or platform-tools rustc lets the source pick linker
+#     arguments, inline assembly (the asm macros), whose .incbin and .include
+#     directives read files that rustc's dep-info never lists, and the link
+#     attribute, which links a native library that it does not list either, each stop
+#     the run in either mode, a macro argument that names one included. What a macro
+#     that a dependency exports writes is not read, so a name such a macro pastes
+#     together from pieces passes: the paste crate turns [<glo bal_as m>] into
+#     global_asm.
+#     The crate must be its own workspace root, as the template's [workspace] makes
+#     it: a `workspace` key under [package] that joins an outside workspace stops the
+#     run too, since these checks never read that workspace's manifest (its [patch]
+#     included) and cargo would build into its target directory.
+#     A path dependency outside the crate is not refused: its build script runs in the
 #     recorded mode, and the non-registry line names it. Check code that is
 #     generated at build time into the crate instead. The contract macros must come
 #     from the harness copy that was checked, so the crate depends on its own
@@ -142,6 +194,13 @@
 #     that dependency, one that imports it under another name, another dependency
 #     imported as shared_test_utils (with - or _), and a build that compiles a
 #     shared_test_utils from anywhere else, or none, stop it too.
+#   * the harness copy: the installation's copy checks the crate's shared-test-utils/
+#     before anything is copied. It must hold only Cargo.toml and src/lib.rs (target/
+#     and .git/ aside), and its Cargo.toml may differ from the installation's only in
+#     the version requirements of its dependencies; otherwise the run stops (exit 3).
+#     The build then compiles the installation's src/lib.rs whatever the crate holds,
+#     and a `>> harness:` line says whether the crate's copy matched. ./run.sh checks
+#     none of this.
 #   * the build cache: to reuse compiled dependencies between runs of one
 #     engagement, create a directory once per engagement with run.sh --new-cache, or
 #     for ./run.sh with `mktemp -d "${TMPDIR:-/tmp}/auditor-poc-target.XXXXXX"` (inside
@@ -151,9 +210,9 @@
 #     create: cargo trusts the build outputs it finds there. Two crates of the same
 #     name resolve to the same cached artifact path, so run.sh holds a lock inside
 #     the directory cargo builds into (cargo metadata's target_directory, which a
-#     target-dir in cargo's own config sets too) around each arm's build and test
-#     and re-stamps the scratch copy under the lock; cargo then rebuilds this
-#     crate's own code and the cache serves only its dependencies. A run waits up
+#     target-dir in cargo's own config sets too) from its first build until its last
+#     test exits, and re-stamps the scratch copy under the lock; cargo then rebuilds
+#     this crate's own code and the cache serves only its dependencies. A run waits up
 #     to POC_LOCK_WAIT seconds (default 900) for the lock, then stops with exit 3.
 #     If a stale artifact is handed over anyway, the fresh check in `harness
 #     checkbuild` makes the run a blocker, not a verdict. SBF_OUT_DIR stays in the
@@ -174,9 +233,9 @@
 # tree it would read the target's .cargo/config*.
 #
 # HOW AN ARM IS DECIDED, in either mode:
-#   * each arm's test binary is built with `cargo test --no-run` and then run
-#     directly, from the package root with CARGO_MANIFEST_DIR and the dynamic
-#     library path set as `cargo test` sets them. Only that run gets
+#   * each arm's test binary is built with `cargo test --no-run`, before either test
+#     runs, and then run directly, from the package root with CARGO_MANIFEST_DIR and
+#     the dynamic library path set as `cargo test` sets them. Only that run gets
 #     AUDITOR_POC_MARKERS, a fresh directory per arm; an inherited value is cleared.
 #   * every contract assertion leaves markers tagged with the test that ran it. An
 #     arm counts only on a contract assertion of that arm that RAN AND HELD, and only
@@ -191,8 +250,21 @@
 #     (a harness error, on either arm), exit 3. The markers are a floor, not proof:
 #     read the assertion all the same.
 #   * before the final line, run.sh prints the non-registry code in the build: the
-#     path and git dependencies in the resolved Cargo.lock, a `[lib] path` or
-#     `#[path]` source compiled from outside the crate, and the like.
+#     path and git dependencies in the resolved Cargo.lock and those from a registry
+#     other than crates.io, a target of the crate's own workspace whose source lies
+#     outside the crate (a `[lib] path`), and each file from outside the crate that
+#     rustc's dep-info (.d) lists for a unit of that workspace, in the test build and
+#     in each arm's SBF build: a `#[path]` module, a file an include!, include_str!
+#     or include_bytes! read, by an absolute or a relative path. Every file inside
+#     the crate that the build read, under any name (an include! or #[path] of a
+#     .txt file too), is read again once the builds are done, before any test runs,
+#     for inline assembly and the link attribute (a .rs file for a crate-level
+#     feature as well), refused as above; so is a build that read one of run.sh's
+#     own files in the scratch copy (markers/). Not listed: what a dependency's
+#     proc macro reads on its own, what a file the line names reads in turn, and
+#     what inline assembly that a dependency's macro writes reads (a pasted name,
+#     WHERE IT BUILDS): against a crate written to hide such code, the line proves
+#     nothing.
 #
 # PREBUILT BYTES (incidents under references/detection-response/, or a re-run
 # against the target's own builds). Leg 3 of `confirmed_exploited` needs the exploit
@@ -223,9 +295,16 @@
 #     from incident_<n>/INCIDENTS.json (a regular file of at most 4 MiB) and stops
 #     (exit 3) when the file, the incident or its class cannot be read. For
 #     supply_chain_or_ci it refuses native mode, a run without --vulnerable-so, a
-#     dependency on a path outside the crate or on git, and a target whose source lies
-#     outside the crate, and it stops before a test runs when the build compiled code
-#     from outside the crate. ./run.sh does not read INCIDENTS.json.
+#     dependency on a path outside the crate, on git or from a registry other than
+#     crates.io, and a target whose source lies outside the crate; it reads the
+#     resolved Cargo.lock again after the downloads, before anything compiles; and it
+#     stops before a test runs when the build compiled code from outside the crate.
+#     In native mode it builds no crate, an audit's included, while the INCIDENTS.json
+#     of any incident_* directory in the working directory (its name in any letter
+#     case) records a supply_chain_or_ci incident or cannot be read, or the working
+#     directory cannot be listed: any PoC can build the target's crates. A directory
+#     without that file, or whose file records no incident, counts for nothing.
+#     ./run.sh does not read INCIDENTS.json.
 
 set -Eeuo pipefail
 # Only an assertion that ran and did not hold gives a verdict (exit 1 or 2). Any
@@ -435,74 +514,58 @@ exec_mode() {
   fi
 }
 
-# What incident_rule runs, with python3 -I: the root_cause_class incident_<n>/INCIDENTS.json
-# records for one incident (references/detection-response/incidents-schema.md), or, with
-# exit 3, why it cannot say.
-INCIDENT_PY='import json, os, stat, sys
-
-CLASSES = ("code_flaw", "key_compromise", "oracle_or_dependency", "economic_design", "off_chain",
-           "supply_chain_or_ci", "unknown")
-LIMIT = 4 * 1024 * 1024
-
-
-def say(text, status):
-    print(text)
-    sys.exit(status)
-
-
-path, wanted = sys.argv[1], sys.argv[2]
-try:
-    st = os.lstat(path)
-except FileNotFoundError:
-    say("is missing", 3)
-except OSError:
-    say("cannot be read", 3)
-if not stat.S_ISREG(st.st_mode):
-    say("is not a regular file", 3)
-if st.st_size > LIMIT:
-    say("is larger than 4 MiB", 3)
-try:
-    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NOCTTY", 0))
-    with os.fdopen(fd, "rb") as f:
-        data = json.loads(f.read(LIMIT + 1).decode("utf-8"))
-except (OSError, UnicodeDecodeError, ValueError, RecursionError):
-    say("cannot be read as JSON", 3)
-incidents = data.get("incidents") if isinstance(data, dict) else None
-if not isinstance(incidents, list):
-    say("holds no incidents list", 3)
-found = [i for i in incidents if isinstance(i, dict) and i.get("id") == wanted]
-if not found:
-    say("records no incident %s" % wanted, 3)
-if len(found) > 1:
-    say("records %s more than once" % wanted, 3)
-if found[0].get("root_cause_class") not in CLASSES:
-    say("gives %s no root_cause_class from incidents-schema.md" % wanted, 3)
-say(found[0]["root_cause_class"], 0)
-'
-
 # incident_rule: a crate at incident_<n>/poc/INC-<n>.<k> runs only once incident_<n>/INCIDENTS.json
 # records that incident's root_cause_class (OUTPUT-RULES.md Rule 11a). supply_chain_or_ci refuses
 # native mode and a run without --vulnerable-so, and sets SUPPLY_CHAIN for the checks of the
-# crate and of each build (see PREBUILT BYTES above).
+# crate and of each build (see PREBUILT BYTES above). In native mode native_rule then reads the
+# INCIDENTS.json of every incident_* directory in the working directory, whatever run directory the
+# crate is in.
 incident_rule() {
   local id="${CRATE_REL##*/}" json="${CRATE_RUN}/INCIDENTS.json" out rc=0
-  case "${CRATE_RUN}" in incident_*) ;; *) return 0 ;; esac
-  command -v python3 >/dev/null 2>&1 ||
-    blocker "python3 is not on PATH, so run.sh cannot read the root_cause_class of ${id} in ${json} (OUTPUT-RULES.md Rule 11a) — nothing was copied or built."
-  out="$(python3 -I -c "${INCIDENT_PY}" "${WT}/${json}" "${id}")" || rc=$?
-  if [[ "${rc}" -ne 0 ]]; then
-    [[ "${rc}" -eq 3 && -n "${out}" ]] || out="cannot be read"
-    blocker "${json} ${out}: an incident's PoC runs only once ${json} records its root_cause_class (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built."
-  fi
-  echo ">> incident ${id}: root_cause_class ${out} (${json})"
-  [[ "${out}" == supply_chain_or_ci ]] || return 0
-  if [[ "${MODE}" == native ]]; then
-    blocker "the root_cause_class of ${id} is supply_chain_or_ci, and such an incident is never built natively (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built."
-  fi
-  if [[ -z "${VULNERABLE_SO}" ]]; then
-    blocker "the root_cause_class of ${id} is supply_chain_or_ci, so its PoC runs only on the dumped program bytes (OUTPUT-RULES.md Rule 11a): give --vulnerable-so ${CRATE_RUN}/bin/<program>.so — nothing was copied or built."
-  fi
-  SUPPLY_CHAIN=1
+  case "${CRATE_RUN}" in
+    incident_*)
+      command -v python3 >/dev/null 2>&1 ||
+        blocker "python3 is not on PATH, so run.sh cannot read the root_cause_class of ${id} in ${json} (OUTPUT-RULES.md Rule 11a) — nothing was copied or built."
+      iso_incident_class "${WT}/${json}" "${id}" || rc=$?
+      out="${ISO_CLASS}"
+      if [[ "${rc}" -ne 0 ]]; then
+        [[ "${rc}" -eq 3 && -n "${out}" ]] || out="cannot be read"
+        blocker "${json} ${out}: an incident's PoC runs only once ${json} records its root_cause_class (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built."
+      fi
+      echo ">> incident ${id}: root_cause_class ${out} (${json})"
+      if [[ "${out}" == supply_chain_or_ci ]]; then
+        if [[ "${MODE}" == native ]]; then
+          blocker "the root_cause_class of ${id} is supply_chain_or_ci, and such an incident is never built natively (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built."
+        fi
+        if [[ -z "${VULNERABLE_SO}" ]]; then
+          blocker "the root_cause_class of ${id} is supply_chain_or_ci, so its PoC runs only on the dumped program bytes (OUTPUT-RULES.md Rule 11a): give --vulnerable-so ${CRATE_RUN}/bin/<program>.so — nothing was copied or built."
+        fi
+        SUPPLY_CHAIN=1
+      fi ;;
+  esac
+  if [[ "${MODE}" == native ]]; then native_rule; fi
+  return 0
+}
+
+# native_rule: natively nothing from the working directory is built, whichever run directory the
+# crate is in, while the INCIDENTS.json of any incident_* directory there records a
+# supply_chain_or_ci incident or cannot be read: any PoC can build the target's crates, which may
+# then be the payload (OUTPUT-RULES.md Rule 11a). target.sh applies the same rule, through the same
+# iso_incident_runs of scripts/lib/isolation.sh: a directory without INCIDENTS.json, or whose file
+# records no incident (a hunt that ruled everything out), counts for nothing, and a directory that
+# cannot be searched is read, so that its refusal stops the run.
+native_rule() {
+  local rc=0
+  iso_incident_runs "${WT}" || rc=$?
+  case "${rc}:${ISO_CLASS}" in
+    0:supply_chain_or_ci)
+      blocker "${ISO_INCIDENTS} records an incident whose root_cause_class is supply_chain_or_ci, so nothing from this working directory is built natively, for an audit run or an incident run (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built." ;;
+    0:*) ;;
+    2:*) blocker "python3 is not on PATH, so run.sh cannot tell whether ${ISO_INCIDENTS%/INCIDENTS.json} holds an INCIDENTS.json, or read the root_cause_class one records (OUTPUT-RULES.md Rule 11a) — nothing was copied or built." ;;
+    '3:cannot be listed') blocker "the working directory cannot be listed, so run.sh cannot tell whether an incident_* directory in it records a supply_chain_or_ci incident, and nothing from it is built natively until it can be listed (OUTPUT-RULES.md Rule 11a) — nothing was copied or built." ;;
+    *) blocker "${ISO_INCIDENTS} ${ISO_CLASS}: nothing from this working directory is built natively until every incident_*/INCIDENTS.json in it records the root_cause_class of each of its incidents (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built." ;;
+  esac
+  return 0
 }
 
 # self_check: in isolated mode nothing the credential check reads may be readable, and
@@ -789,18 +852,37 @@ fi
 # well past the ELF — a live JUP6 dump carried ~892 KB of it — so trailing zeros are
 # trimmed before hashing, and the digest matches `solana-verify`). `harness crate`:
 # the program name, from cargo metadata, after the build-time-code and manifest
-# checks (exit 3 and the reason otherwise). `harness targetdir`: the directory cargo
-# builds into, from cargo metadata. `harness checkbuild`: the test binary in cargo's
-# JSON output. `harness settle`: an arm's verdict from its markers.
-# `harness nonregistry`: the path and git dependencies in Cargo.lock. python3 runs
+# checks (exit 3 and the reason otherwise). `harness samecrate`: cargo metadata read
+# again against its first reading (exit 3 and the first difference). `harness
+# targetdir`: the directory cargo builds into, from cargo metadata. `harness
+# checkbuild`: the test binary in cargo's JSON output, once every target of the crate
+# the build compiled is one the first cargo metadata lists (exit 3 and the reason
+# otherwise). `harness digest`: the sha256 of a file, a test binary's after its build and
+# again before it runs. `harness settle`: an arm's verdict from its markers.
+# `harness nonregistry`: the code from outside the crate and crates.io, from Cargo.lock
+# and from the dep-info of the crate's own units, after the check of the files of the
+# crate they list (exit 3 and the reason). `harness sbfdeps`: copies the dep-info an
+# arm's SBF build wrote for those units. `harness stucopy`:
+# whether the crate's shared-test-utils/src/lib.rs is the installation's (same, differs or
+# missing), after the checks of the harness copy (exit 3 and the reason). python3 runs
 # isolated (-I): `python3 -c` would otherwise import modules such as hashlib.py from
-# the working directory, or from PYTHONPATH, in place of the stdlib.
-HARNESS_PY='import hashlib, json, os, re, sys
+# the working directory, or from PYTHONPATH, in place of the stdlib. It starts from /,
+# with every path it is given absolute: a version manager's shim picks the interpreter
+# from the directory it starts in, and the scratch copy holds the crate's files.
+HARNESS_PY='import hashlib, json, os, re, shutil, sys, unicodedata
 
 
 def zhash(path):
     with open(path, "rb") as f:
         return hashlib.sha256(f.read().rstrip(b"\0")).hexdigest()
+
+
+def digest(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
 
 
 def flat(text):
@@ -855,13 +937,104 @@ def under(path, root):
     return path == root or path.startswith(root + os.sep)
 
 
+# crates.io as Cargo.lock and cargo metadata name it, and the directories cargo unpacks its
+# crates into, under CARGO_HOME/registry/src/ (any other name there is another registry).
+CRATES_IO = ("registry+https://github.com/rust-lang/crates.io-index", "sparse+https://index.crates.io/")
+CRATES_IO_SRC = re.compile(r"^(?:index\.crates\.io-[0-9a-f]{16}|github\.com-1ecc6299db9ec823)$")
+
+# The kinds of target a package of the crate own workspace may have: a library and tests, and for the
+# crate itself a cdylib too (its .so). cargo builds a bin with every integration test of its package, and
+# places a bin, a dylib or a staticlib outside the deps directory whose dep-info nonregistry reads.
+TARGET_KINDS = ("lib", "rlib", "test")
+
+# Rust source as tokens, for the check of the crate own code: comments, strings (byte, C and raw ones
+# too) and character literals left out, an identifier without its r# prefix and in NFC, as rustc reads
+# it, and anything else as one character, each with its line. Before the 2021 edition c and cr are no
+# string prefixes (cr"\"" is the identifier cr and an ordinary string there), so a file is read both
+# ways, and what either way finds counts.
+LEX = (r"(?P<nl>\n)|(?P<ws>[^\S\n]+)|(?P<lc>//[^\n]*)|(?P<bc>/\*)"
+       r"|(?P<raw>%sr(?P<hashes>#*)\x22)"
+       r"|(?P<str>%s\x22(?:[^\x22\\]|\\.)*\x22)"
+       r"|(?P<chr>b?\x27(?:\\(?:u\{[0-9A-Fa-f_]*\}|x[0-9A-Fa-f]{2}|.)|[^\\\n\r\t\x27])\x27)"
+       r"|(?P<id>(?:r#)?[^\W\d]\w*)|(?P<other>.)")
+LEXERS = (re.compile(LEX % ("[bc]?", "[bc]?"), re.S), re.compile(LEX % ("b?", "b?"), re.S))
+
+
+def rust_tokens(text, lexer):
+    out, i, line, end = [], 0, 1, len(text)
+    while i < end:
+        m = lexer.match(text, i)
+        j = m.end()
+        if m.group("bc") is not None:
+            depth = 1
+            while j < end and depth:
+                if text.startswith("/*", j):
+                    depth, j = depth + 1, j + 2
+                elif text.startswith("*/", j):
+                    depth, j = depth - 1, j + 2
+                else:
+                    j += 1
+        elif m.group("raw") is not None:
+            close = "\x22" + m.group("hashes")
+            j = text.find(close, j)
+            j = end if j < 0 else j + len(close)
+        elif m.group("id") is not None:
+            name = m.group("id")
+            out.append((unicodedata.normalize("NFC", name[2:] if name.startswith("r#") else name), line))
+        elif m.group("other") is not None:
+            out.append((m.group("other"), line))
+        line += text.count("\n", i, j)
+        i = j
+    return out
+
+
+# What the crate own Rust code may not hold, as an identifier anywhere (a macro argument can name it):
+# inline assembly, whose .incbin and .include directives read files that the rustc dep-info never lists,
+# and the link attribute, which links a native library that it does not list either. And, read before the
+# build, a crate-level feature: a nightly or platform-tools rustc then lets the source turn on a link kind
+# that hands the linker its arguments.
+OWN_CODE = ("asm", "global_asm", "naked_asm", "link")
+OWN_WHY = {
+    "feature": "turns on unstable rustc features (#![feature]), with which a nightly or platform-tools rustc lets the source choose linker arguments, code that runs at build time",
+    "link": "names link, the attribute that links a native library, which the rustc dep-info never lists",
+}
+
+
+def own_code(path, feature=True):
+    # The first thing in the Rust file <path> that the crate own code may not hold: (its name, its line),
+    # or None, also for a file that is not UTF-8 text, which rustc compiles as no source.
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except (OSError, UnicodeDecodeError):
+        return None
+    for lexer in LEXERS:
+        tokens = rust_tokens(text, lexer)
+        for k, (token, line) in enumerate(tokens):
+            if feature and token == "feature" and k + 1 < len(tokens) and tokens[k + 1][0] == "(":
+                return ("feature", line)
+            if token in OWN_CODE:
+                return (token, line)
+    return None
+
+
+def own_why(found):
+    return OWN_WHY.get(found[0], "names %s, inline assembly, whose .incbin and .include directives read files that the rustc dep-info never lists" % found[0])
+
+
 def crate(meta_path, root, rule=""):
     root = os.path.realpath(root)
     with open(meta_path, encoding="utf-8") as f:
         meta = json.load(f)
+    # The crate is its own workspace root, as the template [workspace] makes it. A workspace
+    # key under [package] joins an outside workspace instead: the checks below would not read
+    # its root manifest ([patch] included), and cargo would build into its target directory.
+    workspace = meta.get("workspace_root") or ""
+    if not workspace or os.path.realpath(workspace) != root:
+        refuse("the crate belongs to the workspace at %s, not to its own: run.sh builds a crate that is its own workspace root ([workspace] in its Cargo.toml, as in the template), so that no manifest outside it adds members, a [patch] table or the directory cargo builds into." % (workspace or "an unnamed place"))
     if rule == "supply-chain":
-        # The target crates may be the payload: no dependency on a path outside the crate or
-        # on git, and no target built from a source outside it.
+        # The target crates may be the payload: no dependency on a path outside the crate, on
+        # git or from a registry other than crates.io, and no target built from a source outside it.
         for pkg in meta.get("packages", []):
             for dep in pkg.get("dependencies", []):
                 path, source = dep.get("path"), dep.get("source") or ""
@@ -869,6 +1042,8 @@ def crate(meta_path, root, rule=""):
                     refuse("%s depends on %s at %s, outside the crate: the PoC of an incident whose root_cause_class is supply_chain_or_ci builds none of the target crates (OUTPUT-RULES.md Rule 11a)." % (pkg["name"], dep.get("name"), path))
                 if source.startswith("git+"):
                     refuse("%s depends on %s from %s: the PoC of an incident whose root_cause_class is supply_chain_or_ci builds no git dependency (OUTPUT-RULES.md Rule 11a)." % (pkg["name"], dep.get("name"), source))
+                if (source and source not in CRATES_IO) or dep.get("registry"):
+                    refuse("%s depends on %s from %s, a registry other than crates.io: the PoC of an incident whose root_cause_class is supply_chain_or_ci builds none of the target crates, and a registry the target names can serve them (OUTPUT-RULES.md Rule 11a)." % (pkg["name"], dep.get("name"), dep.get("registry") or source))
             for target in pkg.get("targets", []):
                 if not under(target.get("src_path", root), root):
                     refuse("%s builds %s from %s, outside the crate: the PoC of an incident whose root_cause_class is supply_chain_or_ci builds none of the target crates (OUTPUT-RULES.md Rule 11a)." % (pkg["name"], target.get("name", "?"), target.get("src_path")))
@@ -882,6 +1057,9 @@ def crate(meta_path, root, rule=""):
                 refuse("%s is a build script of %s: run.sh refuses build-time code in the crate, in either mode. Check what it generates into the crate instead." % (src, pkg["name"]))
             if "proc-macro" in kinds:
                 refuse("%s (%s) is a proc-macro package: run.sh refuses build-time code in the crate, in either mode." % (pkg["name"], src))
+            other = [k for k in kinds if k not in TARGET_KINDS and not (k == "cdylib" and manifest == os.path.join(root, "Cargo.toml"))]
+            if other:
+                refuse("the %s target %s (%s) of %s: a PoC crate builds its library (the crate itself also as a cdylib) and its tests, and run.sh refuses any other target in either mode, as cargo builds a bin with every integration test and places a bin, a dylib or a staticlib outside the deps directory whose dep-info it reads." % ("/".join(other), target.get("name", "?"), src, pkg["name"]))
             if manifest == os.path.join(root, "Cargo.toml") and ("lib" in kinds or "cdylib" in kinds):
                 lib = target.get("name", "")
         if manifest == os.path.join(root, "Cargo.toml"):
@@ -922,25 +1100,71 @@ def crate(meta_path, root, rule=""):
             refuse("cannot read %s." % os.path.relpath(manifest, root))
         for number, line in enumerate(text.lstrip("﻿").splitlines(), 1):
             m = HEAD.match(line) or PAIR.match(line)
-            if m and unquote(m.group(1)) in ("patch", "replace"):
+            key = unquote(m.group(1)) if m else ""
+            if key in ("patch", "replace"):
                 refuse("%s:%d holds a [patch] or [replace] table, which builds other code in place of a dependency: run.sh refuses it in either mode. Depend on the crate itself, at the version you need." % (os.path.relpath(manifest, root), number))
+            if key == "cargo-features":
+                refuse("%s:%d holds a cargo-features key, with which a nightly cargo lets the manifest choose code that runs at build time (a linker, rustflags, a codegen backend): run.sh refuses it in either mode." % (os.path.relpath(manifest, root), number))
+    # The crate own Rust code: every .rs file in the crate, and the source of each target wherever it lies
+    # (a crate-level attribute sits there).
+    sources = set(os.path.realpath(t["src_path"]) for p in meta.get("packages", []) for t in p.get("targets", []) if t.get("src_path"))
+    for top, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if not (top == root and d in ("target", "markers"))]
+        sources.update(os.path.join(top, name) for name in files if name.lower().endswith(".rs"))
+    for path in sorted(sources):
+        found = own_code(path)
+        if found:
+            refuse("%s:%d %s: run.sh refuses it in the crate\x27s own code, in either mode." % (os.path.relpath(path, root) if under(path, root) else path, found[1], own_why(found)))
     if not lib or not re.match(r"^[A-Za-z0-9_]+$", lib):
         refuse("Cargo.toml has no [lib] target with a plain name, so run.sh cannot name the program it places.")
     print(lib)
 
 
+def samecrate(first, again):
+    # cargo metadata of the crate read again (<again>) against its first reading (<first>), which every check
+    # of the crate read and which sbfdeps and nonregistry read after the builds: exit 3 naming the first
+    # difference, a package added or gone, any field of a package (its targets, features, dependencies), or
+    # any other field of the workspace.
+    with open(first, encoding="utf-8") as f:
+        a = json.load(f)
+    with open(again, encoding="utf-8") as f:
+        b = json.load(f)
+    root = os.path.realpath(a.get("workspace_root") or "/")
+
+    def shown(manifest):
+        return os.path.relpath(os.path.realpath(manifest), root) if under(manifest, root) else manifest
+
+    pa = dict((p.get("manifest_path", ""), p) for p in a.get("packages", []))
+    pb = dict((p.get("manifest_path", ""), p) for p in b.get("packages", []))
+    for manifest in sorted(set(pb) - set(pa)):
+        refuse("its manifests now name the package %s (%s), which they did not name when run.sh checked them" % (pb[manifest].get("name", "?"), shown(manifest)))
+    for manifest in sorted(set(pa) - set(pb)):
+        refuse("its manifests no longer name the package %s (%s), which they named when run.sh checked them" % (pa[manifest].get("name", "?"), shown(manifest)))
+    for manifest in sorted(pa):
+        for key in sorted(set(pa[manifest]) | set(pb[manifest])):
+            if pa[manifest].get(key) != pb[manifest].get(key):
+                refuse("its package %s (%s) differs from the one run.sh checked, in its %s" % (pa[manifest].get("name", "?"), shown(manifest), key))
+    for key in sorted(set(a) | set(b)):
+        if key != "packages" and a.get(key) != b.get(key):
+            refuse("cargo metadata gives it another %s than when run.sh checked it" % key)
+
+
 LIBS = ("lib", "rlib", "dylib", "cdylib", "staticlib", "proc-macro")
 
 
-def checkbuild(root, build_json, built_file, test):
-    # The cargo-test --no-run output for one arm: refuse (exit 3) when a unit of the
-    # crate own workspace is reported fresh without this run having built it (a
-    # shared build cache handing over another same-named crate artifact), or when
-    # this build compiled a shared_test_utils from anywhere but the copied harness,
-    # or none at all; then print the arm own test binary. built_file carries, across
-    # arms, the artifacts this run built fresh, so a dependency reused between arms
-    # (shared-test-utils) stays allowed.
+def checkbuild(root, build_json, built_file, test, meta_path):
+    # The cargo-test --no-run output for one arm: refuse (exit 3) when it compiled a target of a package in the
+    # crate that the first cargo metadata (<meta_path>) does not list, by its manifest, name, kind and source
+    # (the crate changed during the builds, and what reads the builds afterwards works from that list), when a
+    # unit of the crate own workspace is reported fresh without this run having built it (a shared build cache
+    # handing over another same-named crate artifact), or when this build compiled a shared_test_utils from
+    # anywhere but the copied harness, or none at all; then print the arm own test binary. built_file carries,
+    # across arms, the artifacts this run built fresh, so a dependency reused between arms (shared-test-utils)
+    # stays allowed.
     root = os.path.realpath(root)
+    with open(meta_path, encoding="utf-8") as f:
+        listed = set((os.path.realpath(p["manifest_path"]), t.get("name"), tuple(sorted(t.get("kind", []))), os.path.realpath(t.get("src_path", "")))
+                     for p in json.load(f).get("packages", []) for t in p.get("targets", []))
     try:
         with open(built_file, encoding="utf-8") as f:
             built = set(line.rstrip("\n") for line in f)
@@ -954,6 +1178,9 @@ def checkbuild(root, build_json, built_file, test):
         manifest = msg.get("manifest_path", "")
         names = msg.get("filenames") or []
         if under(manifest, root):
+            kinds, src = target.get("kind", []), target.get("src_path", "")
+            if (os.path.realpath(manifest), target.get("name"), tuple(sorted(kinds)), os.path.realpath(src)) not in listed:
+                refuse("the build compiled the %s target %s (%s) of %s, which cargo metadata did not list when run.sh checked the crate: the crate changed in the scratch copy during the builds (its dependencies\x27 build scripts and proc macros run there), and run.sh builds only the crate it checked." % ("/".join(kinds) or "?", target.get("name", "?"), os.path.relpath(os.path.realpath(src), root) if src and under(src, root) else src or "?", os.path.relpath(os.path.realpath(manifest), root)))
             if msg.get("fresh") and not any(n in built for n in names):
                 fresh_reused.append(target.get("name", "?"))
             if not msg.get("fresh"):
@@ -1083,13 +1310,50 @@ def settle(directory, arm, status, prebuilt, placed_so, placed):
     say("pass", *shown[0])
 
 
-def nonregistry(root, lock, meta_path, builds):
-    # The code the run compiled or linked that did not come from a registry: path and
-    # git dependencies from Cargo.lock, a target whose source sits outside the crate
-    # (a `[lib] path` or a `#[path]` module that a lockfile entry never names), and
-    # any such source listed in a compiled binary dep-info (.d) file.
+# An output in a deps directory and the dep-info (.d) file rustc writes beside it: deps/lib<crate><extra>
+# with .rlib, .rmeta, .so, .dylib or .a, and the executable deps/<crate><extra>, have deps/<crate><extra>.d.
+LIB_OUTPUT = re.compile(r"^lib(.+)\.(?:rlib|rmeta|so|dylib|a)$")
+
+
+def depfile_of(name):
+    folder, base = os.path.split(name)
+    if os.path.basename(folder) != "deps":
+        return ""
+    m = LIB_OUTPUT.match(base)
+    if m:
+        return os.path.join(folder, m.group(1) + ".d")
+    return os.path.join(folder, base + ".d") if base and "." not in base else ""
+
+
+def depinfo(path):
+    # Every file a dep-info file lists: the prerequisites of each rule (whose target is an output of the
+    # build) and the empty rule rustc writes for each of them. rustc escapes only a space.
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return []
+    files = []
+    for line in text.split("\n"):
+        if not line or line.startswith("#"):
+            continue
+        if ": " in line:
+            line = line.split(": ", 1)[1]
+        elif line.endswith(":"):
+            line = line[:-1]
+        files.extend(token.replace("\\ ", " ") for token in re.split(r"(?<!\\) +", line) if token)
+    return files
+
+
+def nonregistry(root, lock, meta_path, inputs):
+    # The code the run compiled or linked that comes neither from the crate nor from crates.io: path and
+    # git dependencies and those from another registry, from Cargo.lock; a target of the crate own
+    # workspace whose source sits outside the crate (a `[lib] path`); and every file from outside the
+    # crate that a unit of that workspace compiled or read, of any kind (a #[path] module, an include!,
+    # include_str! or include_bytes!), from the dep-info files of those units. <inputs> are the JSON
+    # outputs of the test builds and the dep-info files of the SBF builds.
     root = os.path.realpath(root)
-    members, paths, found, package = set(), {}, [], None
+    members, manifests, paths, found, package = set(), set(), {}, [], None
     out, seen = [], set()
 
     def note(text):
@@ -1097,17 +1361,31 @@ def nonregistry(root, lock, meta_path, builds):
             seen.add(text)
             out.append(text)
 
-    registry = os.path.realpath(os.environ.get("CARGO_HOME", os.path.expanduser("~/.cargo")))
+    sources = os.path.realpath(os.path.join(os.environ.get("CARGO_HOME", os.path.expanduser("~/.cargo")), "registry", "src"))
     sysroot = os.path.realpath(os.environ.get("AUDITOR_SYSROOT", "/nonexistent"))
 
     def outside(path):
-        return path and not under(path, root) and not under(path, registry) and not under(path, sysroot)
+        # The path a file resolves to when it lies outside the crate, the toolchain and the sources of
+        # crates.io, else "". cargo runs rustc in the workspace root for its members, so a relative
+        # entry is taken from there.
+        path = os.path.realpath(os.path.join(root, path))
+        if under(path, root) or under(path, sysroot):
+            return ""
+        if under(path, sources) and CRATES_IO_SRC.match(os.path.relpath(path, sources).split(os.sep, 1)[0]):
+            return ""
+        return path
 
     with open(meta_path, encoding="utf-8") as f:
         for pkg in json.load(f).get("packages", []):
             members.add((pkg["name"], pkg["version"]))
-    depfiles = []
-    for build in builds:
+            manifests.add(os.path.realpath(pkg["manifest_path"]))
+            for target in pkg.get("targets", []):
+                if target.get("src_path") and outside(target["src_path"]):
+                    note("%s (path %s)" % (target.get("name", "?"), target["src_path"]))
+    depfiles = [item for item in inputs if item.endswith(".d")]
+    for build in inputs:
+        if build.endswith(".d"):
+            continue
         for msg in json_lines(build):
             if msg.get("reason") != "compiler-artifact":
                 continue
@@ -1116,15 +1394,15 @@ def nonregistry(root, lock, meta_path, builds):
                 fragment = pid.rsplit("#", 1)[-1]
                 name, at, version = fragment.rpartition("@")
                 paths[(name if at else os.path.basename(os.path.dirname(manifest)), version)] = os.path.dirname(manifest)
+            if not manifest or os.path.realpath(manifest) not in manifests:
+                continue
             target = msg.get("target") or {}
             src = target.get("src_path")
-            if manifest == os.path.join(root, "Cargo.toml") and src and outside(src):
+            if src and outside(src):
                 note("%s (path %s)" % (target.get("name", "?"), src))
-            for name in msg.get("filenames") or []:
-                if name and not name.endswith((".rlib", ".rmeta", ".so", ".dylib", ".dll")):
-                    depfiles.append(name + ".d")
-            if msg.get("executable"):
-                depfiles.append(msg["executable"] + ".d")
+            for name in (msg.get("filenames") or []) + [msg.get("executable") or ""]:
+                if depfile_of(name):
+                    depfiles.append(depfile_of(name))
     with open(lock, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -1142,24 +1420,112 @@ def nonregistry(root, lock, meta_path, builds):
             note("%s %s (path%s)" % (key[0], key[1], " " + paths[key] if key in paths else ""))
         elif source is not None and source.startswith("git+"):
             note("%s %s (%s)" % (key[0], key[1], source))
-    for depfile in set(depfiles):
-        try:
-            with open(depfile, encoding="utf-8", errors="replace") as f:
-                text = f.read()
-        except OSError:
-            continue
-        for token in re.split(r"(?<!\\)[ \n]+", text.split(":", 1)[-1]):
-            token = token.replace("\\ ", " ").strip()
-            if token.startswith("/") and os.path.splitext(token)[1] == ".rs" and outside(token):
-                note("%s (compiled in)" % token)
+        elif source is not None and source not in CRATES_IO:
+            note("%s %s (%s, not crates.io)" % (key[0], key[1], source))
+    # Every file of the crate that the build read is read again here, once the builds are done and before any
+    # test runs: one the crate check did not read (a name not ending in .rs, which the build took in as Rust
+    # code or as data, or a file that appeared during the build) and one that changed since. run.sh own
+    # files (markers/) are no part of the crate.
+    marks, read = os.path.join(root, "markers"), set()
+    for depfile in sorted(set(depfiles)):
+        for entry in depinfo(depfile):
+            path = outside(entry)
+            if path:
+                note("%s (compiled in)" % path)
+            elif under(os.path.join(root, entry), root):
+                read.add(os.path.realpath(os.path.join(root, entry)))
+    for path in sorted(read):
+        rel, rs = os.path.relpath(path, root), path.lower().endswith(".rs")
+        if under(path, marks):
+            refuse("the build read %s, one of run.sh\x27s own files in the scratch copy (markers/): the crate\x27s code may not read them, and run.sh refuses it in either mode." % rel)
+        found = own_code(path, feature=rs)
+        if found:
+            refuse("%s:%d %s; the build read that file of the crate, and run.sh refuses it in the crate\x27s own code, in either mode%s." % (rel, found[1], own_why(found), "" if rs else " (read a data file that names it at run time instead)"))
     print(flat(", ".join(out)) if out else "none: every dependency comes from a registry")
+
+
+def sbfdeps(meta_path, stamp, dest, prefix, target):
+    # The dep-info (.d) files an arm SBF build wrote for the units of the crate own workspace, copied to
+    # <dest>/<prefix>-<n>.d for nonregistry: those in <target>/<triple>/release/deps/ named after a target
+    # of a member (its crate name, alone or with - and a hash) and written since <stamp> was, in whole
+    # seconds. A build cache can hold older ones of another crate of the same name.
+    with open(meta_path, encoding="utf-8") as f:
+        names = set(t.get("name", "").replace("-", "_") for p in json.load(f).get("packages", []) for t in p.get("targets", []))
+    since, n = int(os.stat(stamp).st_mtime), 0
+    for triple in sorted(os.listdir(target)):
+        deps = os.path.join(target, triple, "release", "deps")
+        if not os.path.isdir(deps):
+            continue
+        for name in sorted(os.listdir(deps)):
+            stem, dash, tail = name[:-2].rpartition("-")
+            if not name.endswith(".d") or not (name[:-2] in names or (stem in names and re.match(r"^[0-9a-f]+$", tail))):
+                continue
+            path = os.path.join(deps, name)
+            if int(os.stat(path).st_mtime) >= since:
+                n += 1
+                shutil.copyfile(path, os.path.join(dest, "%s-%d.d" % (prefix, n)))
+    print(n)
+
+
+# A dependency table of a manifest, and a TOML string, basic or literal (chr 39 quotes).
+DEP_TABLE = re.compile(r"^\s*\[\s*(?:target\..+\.)?(?:dependencies|dev-dependencies|build-dependencies)\s*\]\s*(?:#.*)?$")
+STR = "(?:\"(?:[^\"\\\\]|\\\\.)*\"|\x27[^\x27]*\x27)"
+
+
+def requirements_blank(path):
+    """The manifest, line by line, with each version requirement in a dependency table blanked: the string
+    of a <name> = <string> line, and of a version key in an inline table."""
+    out, deps = [], False
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f.read().split("\n"):
+            if re.match(r"^\s*\[", line):
+                deps = bool(DEP_TABLE.match(line))
+            elif deps:
+                line = re.sub(r"^(\s*" + KEY + r"\s*=\s*)" + STR, lambda m: m.group(1) + chr(34) * 2, line)
+                line = re.sub(r"(\bversion\s*=\s*)" + STR, lambda m: m.group(1) + chr(34) * 2, line)
+            out.append(line)
+    return out
+
+
+def stucopy(crate, inst):
+    """The crate shared-test-utils/ against the installation copy: exit 3 with the reason when it is no
+    directory, holds a file the installation copy does not (target/ and .git/ aside, as the build copy leaves
+    them out), has no Cargo.toml, or has a Cargo.toml that differs beyond the version requirements of its
+    dependencies; else print whether its src/lib.rs is the installation copy: same, differs or missing."""
+    if os.path.islink(crate) or not os.path.isdir(crate):
+        refuse("shared-test-utils/ is not a directory")
+    files = []
+    for top, dirs, names in os.walk(crate):
+        dirs[:] = sorted(d for d in dirs if d.lower() not in ("target", ".git"))
+        files.extend(os.path.relpath(os.path.join(top, n), crate) for n in sorted(names))
+    extra = [f for f in files if f not in ("Cargo.toml", os.path.join("src", "lib.rs"))]
+    if extra:
+        refuse("shared-test-utils/ holds %s, which the installation copy does not" % extra[0])
+    if "Cargo.toml" not in files:
+        refuse("shared-test-utils/ has no Cargo.toml")
+    mine = requirements_blank(os.path.join(crate, "Cargo.toml"))
+    theirs = requirements_blank(os.path.join(inst, "Cargo.toml"))
+    if mine != theirs:
+        n = next(i for i in range(max(len(mine), len(theirs)) + 1)
+                 if i >= len(mine) or i >= len(theirs) or mine[i] != theirs[i])
+        refuse("shared-test-utils/Cargo.toml differs from the installation copy beyond the version requirements of its dependencies, from line %d" % (n + 1))
+    lib = os.path.join(crate, "src", "lib.rs")
+    if not os.path.isfile(lib):
+        print("missing")
+        return
+    with open(lib, "rb") as a, open(os.path.join(inst, "src", "lib.rs"), "rb") as b:
+        print("same" if a.read() == b.read() else "differs")
 
 
 command, args = sys.argv[1], sys.argv[2:]
 if command == "hash":
     print(zhash(args[0]))
+elif command == "digest":
+    print(digest(args[0]))
 elif command == "crate":
     crate(*args)
+elif command == "samecrate":
+    samecrate(*args)
 elif command == "targetdir":
     with open(args[0], encoding="utf-8") as f:
         print(json.load(f).get("target_directory") or "")
@@ -1169,22 +1535,39 @@ elif command == "settle":
     settle(*args)
 elif command == "nonregistry":
     nonregistry(args[0], args[1], args[2], args[3:])
+elif command == "sbfdeps":
+    sbfdeps(*args)
+elif command == "stucopy":
+    stucopy(*args)
 else:
     sys.exit(2)
 '
-harness() { python3 -I -c "${HARNESS_PY}" "$@"; }
+harness() { (cd / && exec python3 -I -c "${HARNESS_PY}" "$@"); }
 
 # ── Where to build (see WHERE IT BUILDS above) ──────────────────────────────────
 # No here-documents or here-strings below: bash 3.2 may put their temp files in the
 # working directory (it does under a sandbox that denies /tmp), where a listing of
 # the crate would pick them up.
 
-# The first symbolic link, .cargo/ or rust-toolchain* inside the crate, in any letter
-# case; prints nothing when there is none. copy_crate takes none of them, so a crate
-# holding one is refused rather than built in a shape it was not written in.
+# A version manager's files and directories (see WHERE IT BUILDS above), as find tests
+# them: a shim of asdf, mise, pyenv or proto picks the program it runs from them.
+VERSION_FILES=(-iname .tool-versions -o -iname .python-version -o -iname mise.toml -o -iname .mise.toml
+  -o -iname 'mise.*.toml' -o -iname '.mise.*.toml' -o -iname '.miserc*' -o -iname mise -o -iname .mise
+  -o -iname .config -o -iname '.prototools*')
+
+# The first symbolic link, .cargo/, rust-toolchain* or version manager's file inside
+# the crate, in any letter case, or name that is not printable ASCII (a filesystem that
+# folds case reads such a name as another); prints nothing when there is none, and each
+# byte outside printable ASCII as ?, a newline in a name too. copy_crate takes none of
+# them, so a crate holding one is refused rather than built in a shape it was not
+# written in. crate_extra <scratch copy> reads the scratch copy instead, run.sh's own
+# files there (markers/) aside.
 crate_extra() {
-  local found
-  found="$(cd "${HERE}" && find . \( -iname target -type d \) -prune -o \( -type l -o -iname .cargo -o -iname 'rust-toolchain*' \) -print)"
+  local found dir="${HERE}"
+  local -a own=()
+  if [[ $# -gt 0 ]]; then dir="$1"; own=(-path ./markers -prune -o); fi
+  found="$(cd "${dir}" && LC_ALL=C find . \( -iname target -type d \) -prune -o ${own[@]+"${own[@]}"} \( -type l -o -iname .cargo -o -iname 'rust-toolchain*' -o "${VERSION_FILES[@]}" -o -name '*[! -~]*' \) -print0 \
+    | LC_ALL=C tr -c '\000 -~' '?' | LC_ALL=C tr '\000' '\n')"
   if [[ -n "${found}" ]]; then echo "${found%%$'\n'*}"; fi
   return 0
 }
@@ -1204,14 +1587,15 @@ inherited_config() {
   done
 }
 
-# copy_crate <dest> : the crate's files, never target/, .cargo/ or rust-toolchain* in any
-# letter case (cargo would take build outputs in a TARGET/ copy for its own). The
-# copies are stamped with the time of the copy, never the originals': with a shared
-# CARGO_TARGET_DIR, cargo would otherwise count a build of another crate of the same
-# name, made after these files were last changed, as this crate's own.
+# copy_crate <dest> : the crate's files, never target/, .cargo/, rust-toolchain* or a
+# version manager's file, in any letter case (cargo would take build outputs in a TARGET/
+# copy for its own). The copies are stamped with the time of the copy, never the
+# originals': with a shared CARGO_TARGET_DIR, cargo would otherwise count a build of
+# another crate of the same name, made after these files were last changed, as this
+# crate's own.
 copy_crate() {
   local list rel IFS=$'\n'
-  list="$(cd "${HERE}" && find . \( \( -iname target -type d \) -o -iname .cargo -o -iname 'rust-toolchain*' -o -iname .git \) -prune -o -type f -print)" || return 1
+  list="$(cd "${HERE}" && find . \( \( -iname target -type d \) -o -iname .cargo -o -iname 'rust-toolchain*' -o -iname .git -o "${VERSION_FILES[@]}" \) -prune -o -type f -print)" || return 1
   set -f
   for rel in ${list}; do
     if ! { mkdir -p "$1/$(dirname "${rel}")" && cp "${HERE}/${rel}" "$1/${rel}"; }; then
@@ -1224,7 +1608,7 @@ copy_crate() {
 
 # The build lock. When the target directory is shared between runs (a build cache),
 # two crates of the same name resolve to the same cached artifact path, so this run
-# holds a lock inside that directory from just before each arm's build until its
+# holds a lock inside that directory from just before its first build until its last
 # test binary exits, and re-stamps the scratch copy under the lock so cargo rebuilds
 # this crate's own code rather than reuse another run's. With a private target
 # directory the lock is uncontended. The fresh check in `harness checkbuild` is a
@@ -1277,8 +1661,21 @@ release_lock() {
 
 extra="$(crate_extra)"
 if [[ -n "${extra}" ]]; then
-  echo "[PoC-ATTEMPTED] blocker: ${extra#./} inside the crate is a symbolic link, a .cargo/ directory or a rust-toolchain* file. run.sh builds a copy of the crate outside the target tree and never copies these; remove it (for a link, copy in the file itself)." >&2
+  echo "[PoC-ATTEMPTED] blocker: ${extra#./} inside the crate is a symbolic link, a .cargo/ directory, a rust-toolchain* file or a version manager's file (.tool-versions, .python-version, mise's config), or has a name that is not printable ASCII (shown with ? for each other byte), which a filesystem that folds case can read as one of those. run.sh builds a copy of the crate outside the target tree and never copies these; remove it or rename it (for a link, copy in the file itself)." >&2
   exit 3
+fi
+# The harness copy: the installation's run.sh checks the crate's shared-test-utils/ against its own
+# before anything is copied, and builds with its own src/lib.rs whatever the crate holds (WHERE IT BUILDS
+# above). Like every harness call, it runs python3 from /.
+STU=""
+if [[ "${HERE}" != "${SELF}" ]]; then
+  rc=0
+  STU="$(harness stucopy "${HERE}/shared-test-utils" "${SELF}/shared-test-utils")" || rc=$?
+  if [[ "${rc}" -ne 0 ]]; then
+    [[ "${rc}" -eq 3 && -n "${STU}" ]] || STU="shared-test-utils/ cannot be read"
+    echo "[PoC-ATTEMPTED] blocker: the crate's ${STU}; put back the installation's templates/poc/shared-test-utils/ (or --init a new crate) — nothing was copied or built." >&2
+    exit 3
+  fi
 fi
 if ! BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/auditor-poc.XXXXXX")"; then
   echo "[PoC-ATTEMPTED] blocker: cannot create a scratch build directory under ${TMPDIR:-/tmp}." >&2
@@ -1299,6 +1696,17 @@ fi
 if ! copy_crate "${BUILD_DIR}"; then
   echo "[PoC-ATTEMPTED] blocker: could not copy the crate into ${BUILD_DIR}." >&2
   exit 3
+fi
+if [[ -n "${STU}" ]]; then
+  if ! { mkdir -p "${BUILD_DIR}/shared-test-utils/src" && cp "${SELF}/shared-test-utils/src/lib.rs" "${BUILD_DIR}/shared-test-utils/src/lib.rs"; }; then
+    echo "[PoC-ATTEMPTED] blocker: could not put the installation's shared-test-utils/src/lib.rs into ${BUILD_DIR}." >&2
+    exit 3
+  fi
+  case "${STU}" in
+    same) echo ">> harness: the crate's shared-test-utils/ is the installation's (its dependency version requirements aside)" ;;
+    differs) echo ">> harness: the crate's shared-test-utils/src/lib.rs differs from the installation's; this build used the installation's, so record the difference" ;;
+    *) echo ">> harness: the crate has no shared-test-utils/src/lib.rs; this build used the installation's" ;;
+  esac
 fi
 # run.sh's own files: cargo's metadata and JSON output, and one marker directory per arm.
 RUN_DIR="${BUILD_DIR}/markers"
@@ -1390,6 +1798,17 @@ if [[ "${CLEAN}" == 1 ]] && ! child_net cargo fetch --manifest-path "${BUILD_DIR
   echo "[PoC-ATTEMPTED] blocker: cargo fetch could not download the crate's dependencies — see the cargo output above." >&2
   exit 3
 fi
+# For supply_chain_or_ci the resolved Cargo.lock is read again before anything compiles:
+# a dependency on a path outside the crate, on git or from another registry than
+# crates.io, wherever cargo resolved it from, stops the run here (PREBUILT BYTES above).
+if [[ "${SUPPLY_CHAIN}" == 1 ]]; then
+  NONREG="$(harness nonregistry "${BUILD_DIR}" "${BUILD_DIR}/Cargo.lock" "${RUN_DIR}/metadata.json" 2>/dev/null)" ||
+    NONREG="unknown — ${BUILD_DIR}/Cargo.lock could not be read"
+  if [[ "${NONREG}" != "none: every dependency comes from a registry" ]]; then
+    echo "[PoC-ATTEMPTED] blocker: the resolved Cargo.lock names code from outside the crate (${NONREG}), and the PoC of an incident whose root_cause_class is supply_chain_or_ci builds none of the target crates (OUTPUT-RULES.md Rule 11a); nothing was built." >&2
+    exit 3
+  fi
+fi
 # cargo build-sbf in the installation's copy: its platform tools are installed once, with
 # the real HOME (where they live) and the proxy variables, building nothing; each arm then
 # builds offline in the throwaway HOME, whose .cache/solana links to the real one, where
@@ -1427,19 +1846,25 @@ SYSROOT_LIB="$(child "${RUSTC:-rustc}" --print target-libdir 2>/dev/null || true
 # library as out-of-tree code.
 export AUDITOR_SYSROOT="$(child "${RUSTC:-rustc}" --print sysroot 2>/dev/null || echo /nonexistent)"
 
-place_arm() {  # place_arm <arm> : put <crate>.so in SBF_OUT_DIR for this arm; PLACED_HASH names its bytes
-  local arm="$1" so="${SBF_OUT_DIR}/${CRATE}.so"
+# keep_so <arm>: the arm's bytes, its prebuilt file or its SBF build, kept aside as ${RUN_DIR}/<arm>.so
+# before any test runs; KEPT_HASH names them (zero-trimmed sha256).
+keep_so() {
+  local arm="$1" so="${SBF_OUT_DIR}/${CRATE}.so" kept="${RUN_DIR}/$1.so"
   # Drop the other arm's bytes first, so a build that writes nothing cannot leave them.
-  rm -f "${so}" 2>/dev/null || true
+  rm -f "${so}" "${kept}" 2>/dev/null || true
   if [[ "${PREBUILT}" -eq 1 ]]; then
     local src; [[ "${arm}" == "vulnerable" ]] && src="${VULNERABLE_SO}" || src="${FIXED_SO}"
-    if ! cp -f "${src}" "${so}"; then
-      echo "[PoC-ATTEMPTED] blocker: could not place the ${arm} .so from ${src}." >&2
+    if ! cp -f "${src}" "${kept}"; then
+      echo "[PoC-ATTEMPTED] blocker: could not copy the ${arm} .so from ${src}." >&2
       exit 3
     fi
     echo ">> ${arm} arm: prebuilt ${src}"
   else
     echo ">> building '${arm}' arm to SBF (${CRATE}.so)"
+    if ! : > "${RUN_DIR}/sbf-${arm}.stamp"; then
+      echo "[PoC-ATTEMPTED] blocker: cannot prepare ${RUN_DIR}/sbf-${arm}.stamp." >&2
+      exit 3
+    fi
     local -a build=(child_sbf cargo build-sbf)
     if [[ "${SBF_SPLIT}" == 1 ]]; then build=(child CARGO_NET_OFFLINE=true cargo build-sbf --skip-tools-install --offline); fi
     if ! "${build[@]}" \
@@ -1450,17 +1875,49 @@ place_arm() {  # place_arm <arm> : put <crate>.so in SBF_OUT_DIR for this arm; P
       echo "[PoC-ATTEMPTED] blocker: SBF build failed for the ${arm} arm — see the cargo output above." >&2
       exit 3
     fi
+    # The SBF build's dep-info, for harness nonregistry: a module the test build leaves
+    # out (#[cfg(target_os = "solana")]), or a member the crate's library depends on for
+    # that target alone, is compiled here only. harness sbfdeps copies what this build
+    # wrote for the crate's own units, while the lock still keeps other runs out.
+    if ! harness sbfdeps "${RUN_DIR}/metadata.json" "${RUN_DIR}/sbf-${arm}.stamp" "${RUN_DIR}" "sbf-${arm}" "${EFFECTIVE_TARGET}" >/dev/null 2>&1; then
+      echo "[PoC-ATTEMPTED] blocker: could not read the dep-info the ${arm} arm's SBF build wrote under ${EFFECTIVE_TARGET}." >&2
+      exit 3
+    fi
+    if ! mv -f "${so}" "${kept}"; then
+      echo "[PoC-ATTEMPTED] blocker: the ${arm} arm's SBF build left no ${so} to keep for its test." >&2
+      exit 3
+    fi
+  fi
+  KEPT_HASH="$(harness hash "${kept}")" || KEPT_HASH=""
+  if [[ ! "${KEPT_HASH}" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "[PoC-ATTEMPTED] blocker: could not hash the ${arm} .so ${kept}." >&2
+    exit 3
+  fi
+}
+
+# place_arm <arm> <hash>: put the arm's kept bytes in SBF_OUT_DIR as <crate>.so, right before its test,
+# and only while they still have the hash keep_so took; PLACED_HASH names them.
+place_arm() {
+  local arm="$1" so="${SBF_OUT_DIR}/${CRATE}.so"
+  rm -f "${so}" 2>/dev/null || true
+  if ! cp -f "${RUN_DIR}/${arm}.so" "${so}"; then
+    echo "[PoC-ATTEMPTED] blocker: could not place the ${arm} .so from ${RUN_DIR}/${arm}.so." >&2
+    exit 3
   fi
   PLACED_HASH="$(harness hash "${so}")" || PLACED_HASH=""
   if [[ ! "${PLACED_HASH}" =~ ^[0-9a-f]{64}$ ]]; then
     echo "[PoC-ATTEMPTED] blocker: could not hash the placed ${arm} .so ${so}." >&2
     exit 3
   fi
+  if [[ "${PLACED_HASH}" != "$2" ]]; then
+    echo "[PoC-ATTEMPTED] blocker: the ${arm} arm's .so changed between its build and its test (zero-trimmed sha256 $2, then ${PLACED_HASH}): run.sh runs an arm only on the bytes it built or was given for it, so this run decides nothing." >&2
+    exit 3
+  fi
   echo "   ${arm} .so: ${so}"
   echo "   ${arm} sha256 (zero-trimmed): ${PLACED_HASH}"
 }
 
-build_tests() {  # build_tests <arm> <test>: the arm's test binary, EXE; one that does not compile is a blocker, not a verdict
+build_tests() {  # build_tests <arm> <test>: the arm's test binary, EXE, and its sha256, EXE_DIGEST; one that does not compile is a blocker, not a verdict
   local json="${RUN_DIR}/build-$1.json" rc=0
   local -a cmd=(child_net cargo test)
   if [[ "${CLEAN}" == 1 ]]; then cmd=(child cargo test --offline); fi
@@ -1470,11 +1927,12 @@ build_tests() {  # build_tests <arm> <test>: the arm's test binary, EXE; one tha
     echo "[PoC-ATTEMPTED] blocker: tests/$2.rs failed to build for the $1 arm — see the cargo output above." >&2
     exit 3
   fi
-  # checkbuild prints the arm's own test binary, or refuses (exit 3): a crate unit
-  # reported fresh that this run never built (a shared cache handed it over), a
-  # shared_test_utils compiled from outside the copied harness or none at all, or no
-  # single test.
-  EXE="$(harness checkbuild "${BUILD_DIR}" "${json}" "${RUN_DIR}/built" "$2")" || rc=$?
+  # checkbuild prints the arm's own test binary, or refuses (exit 3): a target of the
+  # crate that the first cargo metadata does not list (the crate changed during the
+  # builds), a crate unit reported fresh that this run never built (a shared cache
+  # handed it over), a shared_test_utils compiled from outside the copied harness or
+  # none at all, or no single test.
+  EXE="$(harness checkbuild "${BUILD_DIR}" "${json}" "${RUN_DIR}/built" "$2" "${RUN_DIR}/metadata.json")" || rc=$?
   if [[ "${rc}" -ne 0 ]]; then
     if [[ "${rc}" -eq 3 ]]; then echo "[PoC-ATTEMPTED] blocker: ${EXE}" >&2
     else echo "[PoC-ATTEMPTED] blocker: could not read the $1 build output for tests/$2.rs." >&2; fi
@@ -1484,18 +1942,30 @@ build_tests() {  # build_tests <arm> <test>: the arm's test binary, EXE; one tha
     echo "[PoC-ATTEMPTED] blocker: the test binary cargo named for tests/$2.rs is not executable (${EXE})." >&2
     exit 3
   fi
+  EXE_DIGEST="$(harness digest "${EXE}")" || EXE_DIGEST=""
+  if [[ ! "${EXE_DIGEST}" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "[PoC-ATTEMPTED] blocker: could not hash the test binary cargo named for tests/$2.rs (${EXE})." >&2
+    exit 3
+  fi
 }
 
-run_tests() {  # run_tests <arm>: the arm's test binary, run as `cargo test` runs it, with an empty marker directory of its own
-  local dir="${RUN_DIR}/$1" deps
+# run_tests <arm> <test binary> <its sha256 after its build>: the arm's test binary, run as `cargo test`
+# runs it, with an empty marker directory of its own, and only while it is still the binary the build made.
+run_tests() {
+  local dir="${RUN_DIR}/$1" deps now
+  now="$(harness digest "$2")" || now=""
+  if [[ "${now}" != "$3" ]]; then
+    echo "[PoC-ATTEMPTED] blocker: the $1 arm's test binary $2 changed between its build and its run (sha256 $3, then ${now:-unreadable}): run.sh runs only the test binary the arm's build made, so this run decides nothing." >&2
+    exit 3
+  fi
   if ! { rm -rf "${dir}" && mkdir -p "${dir}"; }; then
     echo "[PoC-ATTEMPTED] blocker: cannot prepare the marker directory ${dir}." >&2
     exit 3
   fi
-  deps="$(dirname "${EXE}")"
+  deps="$(dirname "$2")"
   child "AUDITOR_POC_MARKERS=${dir}" "CARGO_MANIFEST_DIR=${BUILD_DIR}" \
     "${LIBPATH_VAR}=${deps}:$(dirname "${deps}")${SYSROOT_LIB:+:${SYSROOT_LIB}}${LIBPATH_REST:+:${LIBPATH_REST}}" \
-    "${EXE}" --nocapture
+    "$2" --nocapture
 }
 
 inconclusive() {  # inconclusive <arm> <reason>: the arm decided nothing — a blocker, never a verdict
@@ -1527,32 +1997,111 @@ settle() {
 }
 
 NONREG=""
-capture_nonreg() {  # the non-registry code, read right after a build (before a test can rewrite the lock)
-  NONREG="$(harness nonregistry "${BUILD_DIR}" "${BUILD_DIR}/Cargo.lock" "${RUN_DIR}/metadata.json" "${RUN_DIR}"/build-*.json 2>/dev/null)" \
-    || NONREG="unknown — ${BUILD_DIR}/Cargo.lock could not be read"
+capture_nonreg() {  # the non-registry code, read once every build is done and before any test runs (a test can rewrite the lock)
+  local d rc=0
+  local -a inputs=("${RUN_DIR}"/build-*.json)
+  for d in "${RUN_DIR}"/sbf-*.d; do
+    if [[ -f "${d}" ]]; then inputs+=("${d}"); fi
+  done
+  NONREG="$(harness nonregistry "${BUILD_DIR}" "${BUILD_DIR}/Cargo.lock" "${RUN_DIR}/metadata.json" "${inputs[@]}" 2>/dev/null)" || rc=$?
+  # A file of the crate the build read that holds what the crate check refuses: a blocker in either mode.
+  if [[ "${rc}" -eq 3 && -n "${NONREG}" ]]; then
+    echo "[PoC-ATTEMPTED] blocker: ${NONREG}" >&2
+    exit 3
+  fi
+  if [[ "${rc}" -ne 0 ]]; then NONREG="unknown — ${BUILD_DIR}/Cargo.lock could not be read"; fi
   if [[ "${SUPPLY_CHAIN}" == 1 && "${NONREG}" != "none: every dependency comes from a registry" ]]; then
     echo "[PoC-ATTEMPTED] blocker: the build compiled code from outside the crate (${NONREG}), and the PoC of an incident whose root_cause_class is supply_chain_or_ci builds none of the target crates (OUTPUT-RULES.md Rule 11a); its test does not run." >&2
     exit 3
   fi
 }
-nonregistry() {  # the path and git dependencies and out-of-tree sources the build pulled in
+nonregistry() {  # the dependencies from outside the crate and crates.io, and the out-of-tree files the build pulled in
   echo "   non-registry code: ${NONREG:-unknown — no build was read}"
+}
+
+# recheck: the vulnerable arm's builds ran its dependencies' build scripts and proc macros in the scratch
+# copy, so right before the fixed arm builds, every check of WHERE IT BUILDS above runs there again (the
+# harness copy against the installation's, for its copy), cargo metadata is read again and must list what
+# it listed first (packages, targets, features, dependencies: sbfdeps and nonregistry read the builds from
+# that first listing), and for supply_chain_or_ci the lock check: the fixed arm builds only the crate
+# run.sh checked.
+recheck() {
+  local what="" extra stu said lock rc=0
+  extra="$(crate_extra "${BUILD_DIR}")"
+  [[ -z "${extra}" ]] || what="it now holds ${extra#./}, a symbolic link, a .cargo/ directory, a rust-toolchain* file, a version manager's file or a name that is not printable ASCII"
+  if [[ -z "${what}" ]]; then
+    extra="$(inherited_config "${BUILD_DIR}")"
+    [[ -z "${extra}" ]] || what="it would now inherit ${extra}"
+  fi
+  if [[ -z "${what}" && -e "${BUILD_DIR}/tests/fixtures/${CRATE}.so" ]]; then
+    what="it now holds tests/fixtures/${CRATE}.so, which mollusk would load in place of the arm"
+  fi
+  if [[ -z "${what}" && -n "${STU}" ]]; then
+    stu="$(harness stucopy "${BUILD_DIR}/shared-test-utils" "${SELF}/shared-test-utils")" || true
+    case "${stu}" in
+      same) ;;
+      differs) what="its shared-test-utils/src/lib.rs is no longer the installation's" ;;
+      missing) what="its shared-test-utils/src/lib.rs is gone" ;;
+      *) what="its ${stu:-shared-test-utils/ cannot be read}" ;;
+    esac
+  fi
+  if [[ -z "${what}" ]] && ! child cargo metadata --no-deps --format-version 1 --manifest-path "${BUILD_DIR}/Cargo.toml" > "${RUN_DIR}/metadata-fixed.json"; then
+    what="cargo could not read its manifests again (see the cargo output above)"
+  fi
+  if [[ -z "${what}" ]]; then
+    said="$(harness samecrate "${RUN_DIR}/metadata.json" "${RUN_DIR}/metadata-fixed.json")" || rc=$?
+    if [[ "${rc}" -eq 3 ]]; then what="${said}"; elif [[ "${rc}" -ne 0 ]]; then what="run.sh could not compare cargo metadata for it with the first reading"; fi
+  fi
+  if [[ -z "${what}" ]]; then
+    said="$(harness crate "${RUN_DIR}/metadata-fixed.json" "${BUILD_DIR}" "${crate_rule}")" || rc=$?
+    if [[ "${rc}" -eq 3 ]]; then what="${said}"; elif [[ "${rc}" -ne 0 ]]; then what="run.sh could not read cargo metadata for it again"; fi
+  fi
+  if [[ -z "${what}" && "${SUPPLY_CHAIN}" == 1 ]]; then
+    lock="$(harness nonregistry "${BUILD_DIR}" "${BUILD_DIR}/Cargo.lock" "${RUN_DIR}/metadata-fixed.json" 2>/dev/null)" ||
+      lock="unknown — ${BUILD_DIR}/Cargo.lock could not be read"
+    [[ "${lock}" == "none: every dependency comes from a registry" ]] || what="the resolved Cargo.lock now names code from outside the crate (${lock})"
+  fi
+  if [[ -n "${what}" ]]; then
+    echo "[PoC-ATTEMPTED] blocker: the crate changed in the scratch copy while the vulnerable arm built (its dependencies' build scripts and proc macros run there), and run.sh builds the fixed arm only from the crate it checked: ${what} — nothing of the fixed arm was built." >&2
+    exit 3
+  fi
 }
 
 HELD_KIND=""
 HELD_LINE=""
 FAILED_HOW=""
 
-# 1. vulnerable arm — the exploit must land. The lock spans the build and the test.
+# Every build comes first: each arm's bytes (its SBF build, or its prebuilt file) kept aside with their
+# hash, and each arm's test binary with its own, the fixed arm's once the checks of the crate pass again on
+# the scratch copy and cargo metadata lists what it listed first (recheck), each test build compiling only
+# targets of the crate that first listing names (checkbuild); then the check of what the builds compiled;
+# and only then the tests. A test
+# runs the PoC's code with the scratch copy as CARGO_MANIFEST_DIR, so nothing it writes there is ever
+# compiled, and an arm's bytes or test binary that changed after the build stop the run (exit 3). The lock
+# spans every build and test.
+ARMS="vulnerable"
+if [[ "${PREBUILT}" -eq 0 || -n "${FIXED_SO}" ]]; then ARMS="vulnerable fixed"; fi
 acquire_lock || { echo "[PoC-ATTEMPTED] blocker: could not take the build lock in ${EFFECTIVE_TARGET} (another PoC run may hold it, or the directory is not writable)." >&2; exit 3; }
-place_arm vulnerable
-VULNERABLE_HASH="${PLACED_HASH}"
+keep_so vulnerable
+KEPT_VULNERABLE="${KEPT_HASH}"
 build_tests vulnerable exploit
+EXE_VULNERABLE="${EXE}"; DIGEST_VULNERABLE="${EXE_DIGEST}"
+if [[ "${ARMS}" == "vulnerable fixed" ]]; then
+  recheck
+  keep_so fixed
+  KEPT_FIXED="${KEPT_HASH}"
+  build_tests fixed fixed_blocked
+  EXE_FIXED="${EXE}"; DIGEST_FIXED="${EXE_DIGEST}"
+fi
 capture_nonreg
+
+# 1. vulnerable arm — the exploit must land.
+place_arm vulnerable "${KEPT_VULNERABLE}"
+VULNERABLE_HASH="${PLACED_HASH}"
 echo ">> running exploit against 'vulnerable' (expect: SUCCEEDS)"
 status=0
-run_tests vulnerable || status=$?
-release_lock
+run_tests vulnerable "${EXE_VULNERABLE}" "${DIGEST_VULNERABLE}" || status=$?
+if [[ "${ARMS}" == vulnerable ]]; then release_lock; fi
 if ! settle vulnerable "${status}"; then
   nonregistry
   echo "FAIL: exploit did not reproduce on the vulnerable arm — PoC is not valid." >&2
@@ -1568,13 +2117,10 @@ if [[ "${PREBUILT}" -eq 1 ]]; then
 fi
 
 # 2. fixed arm — the same attack must be turned away.
-acquire_lock || { echo "[PoC-ATTEMPTED] blocker: could not take the build lock in ${EFFECTIVE_TARGET} (another PoC run may hold it, or the directory is not writable)." >&2; exit 3; }
-place_arm fixed
-build_tests fixed fixed_blocked
-capture_nonreg
+place_arm fixed "${KEPT_FIXED}"
 echo ">> running same attack against 'fixed' (expect: REJECTED)"
 status=0
-run_tests fixed || status=$?
+run_tests fixed "${EXE_FIXED}" "${DIGEST_FIXED}" || status=$?
 release_lock
 if ! settle fixed "${status}"; then
   nonregistry

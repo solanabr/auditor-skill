@@ -1,0 +1,51 @@
+{
+  "name": "f109-retired-runner-label",
+  "triggers": [
+    "pull_request"
+  ],
+  "permissions": [
+    "contents: read"
+  ],
+  "jobs": [
+    {
+      "id": "retired",
+      "line": 8,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 11,
+          "run": "make test",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "retired-large",
+      "line": 12,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 15,
+          "run": "make test",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "retired-xlarge",
+      "line": 16,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 19,
+          "run": "make test",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

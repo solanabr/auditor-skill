@@ -98,6 +98,10 @@ Audit-method principles and CI attack classes, re-expressed natively in our own 
 | Code the audited repository controls runs only inside a sandbox that holds no credentials — otherwise it does not run | `OUTPUT-RULES.md` Rule 11a (our isolated mode; native allowed with a caveat) |
 | Keep audit output out of version control and public CI | `OUTPUT-RULES.md` Rule 11d — Output hygiene |
 | CI and automation classes, universal moves (`skills/security-audit/SUPPLY-CHAIN-AND-RELEASE.md`) | `references/vuln-classes/github-actions.md` §0 (hosted settings graded PARTIAL), §3.5 (resource-selecting inputs), §4.2 (matrix values and artifact names as taint), §5.5 (persisted-channel map) — paraphrased |
+| A dependency update is judged on its availability effect, not only on whether it ships malicious code; the build toolchain and a project's own published package are pinned to intended inputs | `checklists/11` SC-063 (availability lens on the update delta), SC-064 (toolchain bootstrap pinning), SC-065 (published file-set allowlist) |
+| Endpoints that make metered or paid upstream calls are gated so an unauthenticated or abusive caller cannot amplify cost | `checklists/09` BE-133 |
+| A long-running off-chain consumer degrades one record rather than the whole pipeline, and keeper retry and priority-fee escalation are bounded | `checklists/20` RS-022 (retry and fee budgets), RS-023 (poison-record quarantine) |
+| Agent and LLM trust gaps beyond prompt text: approval bound to the exact signed bytes, MCP tool-name shadowing, poisoning of recalled agent memory, and model output rendered as markup | `checklists/19` AI-036..AI-039 |
 
 ## Assessed, not vendored
 

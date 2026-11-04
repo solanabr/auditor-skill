@@ -1,5 +1,43 @@
-#!/usr/bin/env -S python3 -I
-"""frames.py — attribute each program-emitted log line to the program frame that
+#!/bin/bash
+''':'
+# A bash front end, which python3 reads as the start of this docstring. It runs this file as python3 -I,
+# from the working directory, with the interpreter the block below finds.
+set -uo pipefail
+unset CDPATH
+case "$0" in */*) here=${0%/*} ;; *) here=. ;; esac
+here=$(cd -P -- "$here" 2>/dev/null && pwd -P) || { echo "frames.py: refused: the installation cannot be resolved" >&2; exit 2; }
+. "${here%/*}/lib/confine.sh" || { echo "frames.py: refused: scripts/lib/confine.sh cannot be read" >&2; exit 2; }
+# Every recipe refuses with exit 2 (README.md, Input contract), confine.sh with 64.
+confine_refuse() { printf '%s: refused: %s\n' "$CONFINE_TOOL" "$1" >&2; exit 2; }
+confine_init frames.py "${here%/*/*}"
+# ---- interpreter (the same block is in profile.sh, frames.py and deltas.py)
+# python3 is looked up from / on the PATH confine_init cleaned of empty, relative and working-directory
+# entries, so no version file in the working directory (a .python-version or .tool-versions that a
+# pyenv, asdf or mise shim reads) picks it. The lookup reads /dev/null, so only the recipe meets the
+# caller's stdin, which python3 refuses at start when it is a directory. The recipe then runs by the
+# absolute path that interpreter reports, which must lie outside the working directory, its links
+# resolved too, as confine_inside decides: by identity, so no other spelling of the working directory's
+# path passes where the filesystem folds names.
+py=$(cd / && exec python3 -I -c 'import os, sys
+print(sys.executable)
+print(os.path.realpath(sys.executable))' </dev/null 2>/dev/null) || py=''
+pyreal=${py#*$'\n'}
+py=${py%%$'\n'*}
+case "$py$pyreal" in *[[:cntrl:]]*) py='' ;; esac
+case "$py" in
+  /*) ;;
+  *) echo "[blocker] python3 is not on PATH, or does not run; $CONFINE_TOOL needs python3." >&2; exit 3 ;;
+esac
+for d in "${py%/*}" "${pyreal%/*}"; do
+  confine_phys "${d:-/}" || confine_refuse "python3 cannot be resolved: $(confine_text "$py")"
+  if confine_inside "$CONFINE_PHYS" "$CONFINE_WT"; then
+    confine_refuse "python3 lies inside the working directory: $(confine_text "$py")"
+  fi
+done
+# ---- end of interpreter
+exec "$py" -I -- "$0" "$@" || exit 126
+
+frames.py — attribute each program-emitted log line to the program frame that
 emitted it, reading a getTransaction JSONL corpus.
 
 Input: one getTransaction result object per line (the `result` field of an RPC
@@ -65,7 +103,9 @@ Design rules, each forced by a real failure mode:
 
 Run it directly by its quoted absolute path, from the working directory under
 audit: `"${CLAUDE_PLUGIN_ROOT}/scripts/dnr/frames.py" [--instructions] [--out <file>]
-<corpus.jsonl>...`; its first line runs it as `python3 -I`.
+<corpus.jsonl>...`; its first lines, the bash front end above, run it as
+`python3 -I` with the python3 a PATH without empty, relative or working-directory
+entries gives from /, by that interpreter's absolute path.
 Isolated mode keeps the working directory (usually the audited repo) and
 PYTHONPATH off sys.path, so it imports nothing beyond the stdlib — keep it that
 way: no sibling modules. That is why the input-contract block below is a copy,
@@ -75,11 +115,12 @@ Exit: 0 done · 1 a named input that cannot be read, an --out that cannot be
 written, or a write that failed · 2 usage, or a path the input contract refuses (a
 missing or non-regular file, one with a second name, one outside a run directory
 or reached through a symbolic link, an --out that is not a new name directly in a
-run directory). Every input and the --out path are checked before the first
-record is written.
+run directory), or a python3 inside the working directory · 3 no python3 that
+runs (a named blocker). Every input and the --out path are checked before the
+first record is written.
 
 No network. stdlib only.
-"""
+'''
 
 from __future__ import annotations
 

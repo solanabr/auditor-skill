@@ -6,7 +6,9 @@
 # In a field: @EMPTY@ (a whole field) the empty path, @LONG:N@ N repetitions of "a", and @SOH@, @TAB@, @NL@,
 # @ESC@ and @DEL@ the control characters 0x01, 0x09, 0x0a, 0x1b and 0x7f; both test-confine.sh and
 # tools/auditor-tools/tests/confine_agrees.rs fill them in. A <want> written noroot:<want> is a case for a run
-# that is not root's, skipped as root, who may search any directory.
+# that is not root's, skipped as root, who may search any directory. A message names the path as given, ./
+# and all. Paths are ASCII, or UTF-8 with no character confine.rs's unsafe_char lists: that one masks those
+# (and bytes that are not UTF-8) as ?, where confine_shown prints them as they are.
 dir	.	0	. dir
 dir	src	0	src dir
 dir	./src	0	src dir
@@ -43,6 +45,14 @@ any	dangling/x	64	test: refused: the path passes through a symbolic link: dangli
 any	out/x	64	test: refused: the path passes through a symbolic link: out/x
 any	src/inner	64	test: refused: the path passes through a symbolic link: src/inner
 any	fifo	64	test: refused: the path is not a regular file or a directory: fifo
+any	./link	64	test: refused: the path passes through a symbolic link: ./link
+any	./src/inner	64	test: refused: the path passes through a symbolic link: ./src/inner
+any	./fifo	64	test: refused: the path is not a regular file or a directory: ./fifo
+any	./a.rs/x	64	test: refused: the path has a component that is not a directory: ./a.rs/x
+dir	./a.rs	64	test: refused: the path is not an existing directory: ./a.rs
+new	./a.rs	64	test: refused: the path already exists: ./a.rs
+any	src/café.rs	0	src/café.rs none
+any	/café	64	test: refused: the path must be relative to the working directory: /café
 any	a.rs/x	64	test: refused: the path has a component that is not a directory: a.rs/x
 dir	a.rs	64	test: refused: the path is not an existing directory: a.rs
 dir	absent	64	test: refused: the path is not an existing directory: absent

@@ -5,7 +5,8 @@
 #      and confine.rs alone reads the environment (PATH, HOME, TMPDIR and TZ, for git); the items confine.rs copies
 #      from audit-logs (Stop, refuse, working_tree, self_check, stays_inside, os_message, invalid, c_name and
 #      open_at) are unchanged copies, doc comments and attributes included, and unsafe_char's list of characters is
-#      its contract.rs's; and hgit's -c pins are those of scripts/lib/confine.sh's hgit, in its order.
+#      its contract.rs's; and hgit's -c pins are those of scripts/lib/confine.sh's hgit, in its order, and the
+#      environment variables it gives git are the ones hgit gives it.
 #   2. The binaries: the ones in AUDITOR_TOOLS_BIN=<dir> (CI's release build), else both built from
 #      tools/auditor-tools (cargo build --release --locked, into a temporary target directory) with no warning.
 #      Without cargo the suite is skipped, loudly; with REQUIRE_TOOLCHAIN=1 (CI) that is a failure.
@@ -14,7 +15,10 @@
 #      inside or outside the working directory, and no canary text printed.
 #   3b. scripts/rundir.sh and the binaries over the same run directories and stores: rundir.sh check and
 #      audit-scan --out, and rundir.sh store and audit-mem, accept the same ones and refuse the others in the same
-#      words.
+#      words, a repository holding a named pipe git would open included.
+#   3c. git as the binaries run it allows no transport: in a partial clone whose own config permits ext::, on a git
+#      that ignores GIT_NO_LAZY_FETCH (a shim), audit-scan --out, audit-mem --db and audit-mem's in-tree store run
+#      nothing outside the tree.
 #   4. The documented forms work, each with the contract marker --contract=1 where a rule names it: audit-scan to
 #      stdout and into a run directory (an output of more than 64 KiB, the same both ways), and audit-mem's lifecycle
 #      from init to warm, with the profile, an invariant and an anchored ruling, a ruling going stale, and init's
@@ -97,9 +101,21 @@ pins_sh = [words[i + 1] for i, w in enumerate(words) if w == "-c"]
 start = ours.index("pub const HGIT_PINS")
 pins_rs = re.findall(r'^    "([^"]*)",$', ours[start:ours.index("];", start)], re.M)
 print("pins:" + ("same" if pins_sh == pins_rs and pins_sh else "sh=%s rs=%s" % (pins_sh, pins_rs)))
+# The variables hgit gives git (env -i NAME=... git) and the ones Git::run gives it (.env("NAME", ...)).
+names_sh = []
+for w in words[words.index("-i", words.index("env")) + 1:]:
+    m = re.match(r"^(?:\$\{[A-Za-z_][A-Za-z0-9_]*\+)?([A-Za-z_][A-Za-z0-9_]*)=", w)
+    if not m:
+        break
+    names_sh.append(m.group(1))
+start = ours.index("fn run(&self, ceiling")
+names_rs = re.findall(r'\.env\(\s*"([A-Za-z_][A-Za-z0-9_]*)"', ours[start:ours.index("\n    }\n", start)])
+print("env:" + ("same" if sorted(names_sh) == sorted(names_rs) and names_sh else
+                "sh=%s rs=%s" % (sorted(names_sh), sorted(names_rs))))
 PY
 eq "source: confine.rs's copies of audit-logs' items are unchanged" "$(sed -n 's/^differ://p' "$T/agree")" ""
 eq "source: hgit's pins are confine.sh's, in its order" "$(sed -n 's/^pins://p' "$T/agree")" "same"
+eq "source: Git::run gives git the environment variables hgit gives it" "$(sed -n 's/^env://p' "$T/agree")" "same"
 
 # ---------------------------------------------------------------------------
 # 2. The binaries: AUDITOR_TOOLS_BIN when given, else a release build of the
@@ -269,7 +285,8 @@ printf 'fn withdraw() {\n    require!(vault.balance >= amount);\n    vault.balan
 ( cd "$W" && "$MEM" init && "$MEM" put-finding --program-id VaultProg1111 --signature unchecked_sub@vault.balance \
     --root-cause 'unchecked subtraction' --title 'Vault underflow' --severity 3 \
   && "$MEM" rule --program-id VaultProg1111 --signature unchecked_sub@vault.balance --ruling FALSE_POSITIVE \
-    --rationale guarded --by auditor --commit c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe --guard src/withdraw.rs:2 ) > "$T/mem.setup" 2>&1 \
+    --rationale guarded --by auditor --commit c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe --guard src/withdraw.rs:2 \
+    --site src/withdraw.rs:3 ) > "$T/mem.setup" 2>&1 \
   || { cat "$T/mem.setup" >&2; bad "audit-mem: the fixture store cannot be made"; finish; }
 for d in audit_1 audit_4 audit_5 audit_6 audit_7 audit_8 audit_10 audit_11 audit_12 audit_13 incident_1 incident_2; do run_dir "$W/$d"; done
 mkdir "$W/audit_2"
@@ -385,6 +402,85 @@ for c in absent ok no-gitignore nul-gitignore link holds-link not-a-directory tr
     "$(said "$T/b.err" 'audit-mem: refused: ')" "$(said "$T/a.err" 'rundir: refused: ')"
 done
 
+# A repository holding a named pipe git would open on its way (as HEAD, or one its config includes): each
+# side refuses before git starts, in the same words.
+for c in head include; do
+  S="$T/fifo-$c"
+  mkdir -p "$S/wt"
+  fgit init -q "$S/wt"
+  run_dir "$S/wt/audit_1"
+  case $c in
+    head) rm "$S/wt/.git/HEAD" && mkfifo "$S/wt/.git/HEAD" ;;
+    include) printf '[include]\n\tpath = ../pipe\n' >> "$S/wt/.git/config" && mkfifo "$S/wt/pipe" ;;
+  esac
+  ( cd "$S/wt" && "$RUNDIR" check audit_1 ) > /dev/null 2> "$T/a.err" < /dev/null
+  ( cd "$S/wt" && "$SCAN" --contract=1 . --out audit_1/prescan.json ) > /dev/null 2> "$T/b.err" < /dev/null
+  eq "rundir.sh check and audit-scan --out refuse a named pipe git would open in the same words: $c" \
+    "$(sed -e 's/^audit-scan: refused: //' "$T/b.err")" "$(sed -e 's/^rundir: refused: //' "$T/a.err")"
+  ( cd "$S/wt" && "$RUNDIR" store ) > /dev/null 2> "$T/a.err" < /dev/null
+  ( cd "$S/wt" && "$MEM" warm --contract=1 --program-id VaultProg1111 ) > /dev/null 2> "$T/b.err" < /dev/null
+  eq "rundir.sh store and audit-mem agree on a named pipe git would open: $c" \
+    "$(said "$T/b.err" 'audit-mem: refused: ')" "$(said "$T/a.err" 'rundir: refused: ')"
+done
+
+# ---------------------------------------------------------------------------
+# 3c. git as the binaries run it carries the transport allowlist in its
+#     environment, empty, which a checkout's own config cannot widen. The tree: a
+#     partial clone with a sparse index and a tree missing, whose promisor remote
+#     is ext::sh -c "touch <mark>" and whose config permits the ext transport. On a
+#     git that ignores GIT_NO_LAZY_FETCH (git before 2.44.0, here a shim first on
+#     PATH), asking whether a run directory or the store is tracked fetches nothing
+#     and runs nothing outside the tree. The tree cannot be made, or plain git
+#     does not reach the transport: a FAIL on CI, else one SKIP line.
+# ---------------------------------------------------------------------------
+X="$T/xtransport"
+mkdir -p "$X/up/keep" "$X/up/far" "$X/oldgit"
+printf '#!/bin/sh\nunset GIT_NO_LAZY_FETCH\nexec "%s" "$@"\n' "$(command -v git)" > "$X/oldgit/git" && chmod +x "$X/oldgit/git"
+xtree() {
+  local p far
+  fgit init -q "$X/up" || return 1
+  printf 'k\n' > "$X/up/keep/a.txt" && printf 'f\n' > "$X/up/far/b.txt" && printf 'audit_*/\n' > "$X/up/.gitignore" || return 1
+  fgit -C "$X/up" add -A && fgit -C "$X/up" commit -qm one && fgit -C "$X/up" config uploadpack.allowFilter true || return 1
+  fgit -c protocol.file.allow=always clone -q --sparse --filter=tree:0 -c index.sparse=true "file://$X/up" "$X/wt" || return 1
+  fgit -C "$X/wt" status --porcelain > /dev/null || return 1
+  mkdir "$X/packs" && mv "$X"/wt/.git/objects/pack/* "$X/packs/" || return 1
+  for p in "$X"/packs/*.pack; do fgit -C "$X/wt" unpack-objects -q < "$p" || return 1; done
+  far=$(fgit -C "$X/up" rev-parse HEAD:far) || return 1
+  rm -f "$X/wt/.git/objects/${far:0:2}/${far:2}"
+  # The remote names nothing while the tree is checked missing: a git that ignores GIT_NO_LAZY_FETCH would fetch it back.
+  fgit -C "$X/wt" config remote.origin.url "file://$X/gone" || return 1
+  ! GIT_NO_LAZY_FETCH=1 fgit -C "$X/wt" cat-file -e "$far" || return 1
+  fgit -C "$X/wt" config remote.origin.url "ext::sh -c touch% $X/ext-ran" || return 1
+  fgit -C "$X/wt" config protocol.ext.allow always || return 1
+  run_dir "$X/wt/audit_1"
+}
+# xskip <why>: the check cannot run here.
+xskip() {
+  if [ "${CI:-}" = true ]; then bad "transport allowlist: $1"; else echo "SKIP transport allowlist: $1, so it is NOT checked"; fi
+}
+if ! xtree > "$X/setup.log" 2>&1; then
+  xskip "this git cannot make a partial clone with a sparse index and a missing tree ($(tail -n 1 "$X/setup.log"))"
+else
+  ( cd "$X/wt" && PATH="$X/oldgit:$PATH" && export PATH && hash -r && fgit -c protocol.allow=never ls-files ) > /dev/null 2>&1
+  if [ ! -e "$X/ext-ran" ]; then
+    xskip "plain git, GIT_NO_LAZY_FETCH ignored, did not reach the ext:: transport of the tree's config"
+  else
+    ok "transport allowlist: plain git, GIT_NO_LAZY_FETCH ignored, reaches the ext:: transport of the tree's config"
+    for c in "audit-scan --contract=1 . --out audit_1/prescan.json" "audit-mem init --contract=1 --db audit_1/audit-mem.db" \
+             "audit-mem warm --contract=1 --program-id VaultProg1111"; do
+      rm -f "$X/ext-ran"
+      read -r -a words <<< "$c"
+      ( cd "$X/wt" && PATH="$X/oldgit:$PATH" && export PATH && exec "$BIN/${words[0]}" "${words[@]:1}" ) < /dev/null > "$T/x.out" 2> "$T/x.err"
+      rc=$?
+      if [ ! -e "$X/ext-ran" ] && { [ "$rc" = 0 ] || [ "$rc" = 2 ]; }; then
+        ok "transport allowlist: $c fetches nothing and runs nothing outside the tree (exit $rc)"
+      else
+        bad "transport allowlist: $c -> exit $rc, $([ -e "$X/ext-ran" ] && printf 'the ext:: command ran' || printf 'nothing ran'): $(shown "$(cat "$T/x.err")")"
+      fi
+    done
+  fi
+fi
+
 # ---------------------------------------------------------------------------
 # 4. The documented forms.
 # ---------------------------------------------------------------------------
@@ -413,13 +509,24 @@ if cmp -s "$T/scan.stdout" "$T/scan.bare"; then ok "audit-scan: without --contra
 snapshot "$D" > "$T/child.before"
 ( cd "$W" && "$SCAN" --internal-parse-stdin ) < /dev/null > "$T/child.out" 2>&1
 eq "audit-scan: the child it parses with, given no file, ends at once and says nothing" "$?:$(wc -c < "$T/child.out" | tr -d ' ')" "0:0"
+( cd "$W" && "$SCAN" --internal-parse-workflows ) < /dev/null > "$T/wchild.out" 2>&1
+eq "audit-scan: the child it parses workflows with, given no file, ends at once and says nothing" "$?:$(wc -c < "$T/wchild.out" | tr -d ' ')" "0:0"
 snapshot "$D" > "$T/child.after"
 if cmp -s "$T/child.before" "$T/child.after"; then ok "audit-scan: ... and touches nothing"; else bad "audit-scan: its child changed files"; fi
 ( cd "$W" && "$SCAN" --contract=1 . --out audit_1/prescan.json --pretty ) > /dev/null 2>&1
 eq "audit-scan: its own output is replaced" "$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["files_scanned"])' "$W/audit_1/prescan.json")" 1
-eq "audit-scan: a link in the tree is listed, not followed" \
+eq "audit-scan: a link in the tree is listed, not followed, and so is each directory the walk does not enter" \
   "$(python3 -I -c 'import json,sys; print(" ".join(s["file"] for s in json.load(open(sys.argv[1]))["skipped"]))' "$W/audit_1/prescan.json")" \
-  "./linkdir ./src/link.rs"
+  "./.git ./audit_1 ./linkdir ./src/link.rs"
+
+# --workflows reads the *.yml files of a directory into the report.
+mkdir -p "$W/.github/workflows"
+printf 'name: ci\non:\n  pull_request_target:\n    types: [opened]\npermissions:\n  contents: write\njobs:\n  build:\n    steps:\n      - uses: actions/checkout@v5\n        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n      - run: echo hi\n' > "$W/.github/workflows/ci.yml"
+( cd "$W" && "$SCAN" --contract=1 ./src --workflows .github/workflows ) > "$T/wf.out" 2> "$T/wf.err"
+eq "audit-scan: --workflows parses a workflow, exit 0, nothing on stderr" "$?:$(cat "$T/wf.err")" "0:"
+eq "audit-scan: --workflows reads the trigger, job and step facts" \
+  "$(python3 -I -c 'import json,sys; w=json.load(open(sys.argv[1]))["workflows"]; print(len(w), w[0]["triggers"][0], w[0]["jobs"][0]["steps"][0]["uses"])' "$T/wf.out")" \
+  "1 pull_request_target actions/checkout@v5"
 
 P=VaultProg1111
 S=unchecked_sub@vault.balance
@@ -443,18 +550,22 @@ eq "audit-mem: profile records the protocol profile" \
 eq "audit-mem: invariant records an invariant" \
   "$(mem invariant --program-id "$P" --statement 'total_shares == shares_mint.supply' --status Unproven --cited-line src/vault.rs:88)" \
   "invariant 1 recorded"
-eq "audit-mem: rule records an anchored ruling" \
-  "$(mem rule --program-id "$P" --signature "$S" --ruling FALSE_POSITIVE --rationale 'guarded by the require! above it' --by auditor --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe --guard src/withdraw.rs:2)" \
+eq "audit-mem: rule records an anchored ruling for one candidate" \
+  "$(mem rule --program-id "$P" --signature "$S" --ruling FALSE_POSITIVE --rationale 'guarded by the require! above it' --by auditor --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe --guard src/withdraw.rs:2 --site src/withdraw.rs:3)" \
   "ruling 1 recorded (FALSE_POSITIVE)"
-( cd "$W" && "$MEM" check --contract=1 --program-id "$P" --signature "$S" --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe ) > "$T/check.out" 2>&1
-eq "audit-mem: check at the ruling's commit, the guard unchanged: suppressed (exit 0)" \
+( cd "$W" && "$MEM" check --contract=1 --program-id "$P" --signature "$S" --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe --site src/withdraw.rs:3 ) > "$T/check.out" 2>&1
+eq "audit-mem: check of that candidate at the ruling's commit, the guard unchanged: suppressed (exit 0)" \
   "$?:$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["suppressed"])' "$T/check.out")" "0:True"
-( cd "$W" && "$MEM" check --contract=1 --program-id "$P" --signature "$S" --commit c0ffee4c0ffee4c0ffee4c0ffee4c0ffee4c0ffe ) > "$T/check.out" 2>&1
+( cd "$W" && "$MEM" check --contract=1 --program-id "$P" --signature "$S" --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe --site src/liquidate.rs:9 ) > "$T/check.out" 2>&1
+eq "audit-mem: check of a sibling with the same signature: stale, not suppressed (exit 1)" \
+  "$?:$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["stale"])' "$T/check.out")" \
+  "1:ruled for the site src/withdraw.rs:3, checked for src/liquidate.rs:9"
+( cd "$W" && "$MEM" check --contract=1 --program-id "$P" --signature "$S" --commit c0ffee4c0ffee4c0ffee4c0ffee4c0ffee4c0ffe --site src/withdraw.rs:3 ) > "$T/check.out" 2>&1
 eq "audit-mem: check at another commit: stale, not suppressed (exit 1)" \
   "$?:$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["stale"])' "$T/check.out")" \
   "1:ruled at commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe, checked at c0ffee4c0ffee4c0ffee4c0ffee4c0ffee4c0ffe"
 printf 'fn withdraw() {\n    require!(vault.balance > amount);\n    vault.balance -= amount;\n}\n' > "$W/src/withdraw.rs"
-( cd "$W" && "$MEM" check --contract=1 --program-id "$P" --signature "$S" --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe ) > "$T/check.out" 2>&1
+( cd "$W" && "$MEM" check --contract=1 --program-id "$P" --signature "$S" --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe --site src/withdraw.rs:3 ) > "$T/check.out" 2>&1
 eq "audit-mem: check after the guard changed: stale, not suppressed (exit 1)" \
   "$?:$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["stale"])' "$T/check.out")" \
   "1:the guard at src/withdraw.rs:2 no longer holds the lines ruled on"
@@ -494,6 +605,12 @@ for b in audit-scan audit-mem; do
   ( cd "$W" && "$W/tools/auditor-tools/target/release/$b" "$@" ) > /dev/null 2> "$T/c1.err"
   eq "$b: an installation inside the working directory is refused in the words of scripts/lib/confine.sh" "$(cat "$T/c1.err")" \
     "$b: refused: the installation lies inside the working directory; install it outside the tree under audit, or run from a directory that does not contain it (Rule 11e)"
+  # macOS gives the same directory a second spelling, through /System/Volumes/Data: the same refusal.
+  if [ -d "/System/Volumes/Data$W" ] && [ "/System/Volumes/Data$W" -ef "$W" ]; then
+    ( cd "$W" && "/System/Volumes/Data$W/tools/auditor-tools/target/release/$b" "$@" ) > /dev/null 2> "$T/c1.err"
+    eq "$b: ... also when it runs by a path through /System/Volumes/Data" "$(cat "$T/c1.err")" \
+      "$b: refused: the installation lies inside the working directory; install it outside the tree under audit, or run from a directory that does not contain it (Rule 11e)"
+  fi
 done
 
 # ---------------------------------------------------------------------------

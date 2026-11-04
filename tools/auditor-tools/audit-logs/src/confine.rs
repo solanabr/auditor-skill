@@ -50,7 +50,10 @@ pub fn working_tree() -> Result<PathBuf, Stop> {
 /// as written, or from an installation inside the working directory (Rule 11e),
 /// in the words of `scripts/lib/confine.sh`. The path is checked as it was invoked
 /// (argv[0], when it names a path), as the system names the executable, and with
-/// every link resolved, as the recipes check theirs.
+/// every link resolved, as the recipes check theirs; whether it lies inside the
+/// working directory is decided by identity (device and inode) along its
+/// ancestors, as `confine_inside` decides it, since one directory has several
+/// spellings (through `/System/Volumes/Data` on macOS).
 pub fn self_check(wt: &Path) -> Result<(), Stop> {
     let exe = std::env::current_exe()
         .map_err(|e| refuse(format!("cannot resolve its own path: {}", os_message(&e))))?;
@@ -76,7 +79,11 @@ pub fn self_check(wt: &Path) -> Result<(), Stop> {
             ));
         }
     }
-    if real.starts_with(wt) {
+    let inside = fs::metadata(wt).is_ok_and(|w| {
+        real.ancestors()
+            .any(|a| fs::metadata(a).is_ok_and(|m| m.dev() == w.dev() && m.ino() == w.ino()))
+    });
+    if real.starts_with(wt) || inside {
         return Err(refuse(
             "the installation lies inside the working directory; install it outside the tree \
              under audit, or run from a directory that does not contain it (Rule 11e)"
@@ -361,12 +368,17 @@ pub fn output(wt: &Path, c: &Confined) -> Result<Output, Stop> {
     })
 }
 
-/// `realpath(WT/p)` must stay under WT.
+/// `realpath(WT/p)` must stay under WT, and not be WT itself. Whether it lies
+/// there is decided by identity (device and inode) along its ancestors, as
+/// `self_check` decides it, since one directory has several spellings (through
+/// `/System/Volumes/Data` on macOS, or in other letters on a volume that ignores
+/// letter case).
 pub fn stays_inside(wt: &Path, path: &Path) -> bool {
-    match path.canonicalize() {
-        Ok(real) => real.starts_with(wt) && real != wt,
-        Err(_) => false,
-    }
+    let (Ok(real), Ok(w)) = (path.canonicalize(), fs::metadata(wt)) else {
+        return false;
+    };
+    let is_wt = |a: &Path| fs::metadata(a).is_ok_and(|m| m.dev() == w.dev() && m.ino() == w.ino());
+    !is_wt(&real) && real.ancestors().any(is_wt)
 }
 
 /// An OS error's text without Rust's " (os error N)" suffix, as Python's
@@ -658,5 +670,38 @@ mod tests {
         ] {
             assert!(!path(bad).is_some_and(|c| c.is_output()), "{bad}");
         }
+    }
+
+    #[test]
+    fn a_path_stays_inside_the_working_directory_in_each_of_its_spellings() {
+        let base = std::env::temp_dir().join(format!("stays-inside-{}", std::process::id()));
+        fs::create_dir_all(base.join("wt/incident_1")).expect("mkdir");
+        fs::create_dir_all(base.join("outside")).expect("mkdir");
+        let base = base.canonicalize().expect("resolve");
+        let wt = base.join("wt");
+        let same = |a: &Path, b: &Path| match (fs::metadata(a), fs::metadata(b)) {
+            (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+            _ => false,
+        };
+        assert!(stays_inside(&wt, &wt.join("incident_1")));
+        assert!(!stays_inside(&wt, &wt));
+        assert!(!stays_inside(&wt, &base.join("outside")));
+        assert!(!stays_inside(&wt, &wt.join("missing")));
+        // macOS gives the directory another spelling through the
+        // /System/Volumes/Data firmlink, which canonicalize keeps, and a volume
+        // that ignores letter case takes it in other letters: inside all the
+        // same, whichever side is spelled so.
+        let data = Path::new("/System/Volumes/Data").join(wt.strip_prefix("/").expect("absolute"));
+        let upper = PathBuf::from(wt.to_string_lossy().to_uppercase());
+        for other in [data, upper] {
+            if other == wt || !same(&other, &wt) {
+                continue;
+            }
+            let o = other.display();
+            assert!(stays_inside(&other, &wt.join("incident_1")), "{o}");
+            assert!(stays_inside(&wt, &other.join("incident_1")), "{o}");
+            assert!(!stays_inside(&other, &wt), "{o}");
+        }
+        fs::remove_dir_all(&base).expect("clean up");
     }
 }

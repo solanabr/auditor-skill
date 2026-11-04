@@ -6,8 +6,8 @@ mod common;
 use std::ffi::OsString;
 use std::fs;
 use std::os::unix::ffi::OsStringExt;
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
-use std::path::Path;
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
 use common::{refused, run, run_env, shown, stderr, stdout, Wt};
@@ -49,6 +49,10 @@ fn store() -> Wt {
     wt
 }
 
+/// The candidate `store`'s guard makes a false positive: the subtraction on line 3.
+const SITE: &str = "src/withdraw.rs:3";
+
+/// A FALSE_POSITIVE ruling for `SITE`, with `extra`.
 fn rule(wt: &Wt, extra: &[&str]) -> Output {
     let mut args = vec![
         "rule",
@@ -62,13 +66,24 @@ fn rule(wt: &Wt, extra: &[&str]) -> Output {
         "guarded by the require! above it",
         "--by",
         "auditor",
+        "--site",
+        SITE,
     ];
     args.extend_from_slice(extra);
     mem(wt, &args)
 }
 
+/// A check of the candidate at `SITE`, with `extra`.
 fn check(wt: &Wt, extra: &[&str]) -> (Option<i32>, Value) {
-    let mut args = vec!["check", "--program-id", P, "--signature", SIG];
+    let mut args = vec![
+        "check",
+        "--program-id",
+        P,
+        "--signature",
+        SIG,
+        "--site",
+        SITE,
+    ];
     args.extend_from_slice(extra);
     let o = mem(wt, &args);
     assert_eq!(stderr(&o), "");
@@ -192,6 +207,8 @@ fn takes_the_contract_marker_right_after_the_subcommand() {
         C1,
         "--guard",
         "src/withdraw.rs:2",
+        "--site",
+        SITE,
     ];
     assert_eq!(
         ok(&mem(&wt, &[&["rule", c][..], &ruling].concat())),
@@ -222,6 +239,8 @@ fn takes_the_contract_marker_right_after_the_subcommand() {
             SIG,
             "--commit",
             C1,
+            "--site",
+            SITE,
         ],
     );
     assert_eq!(marked.status.code(), Some(0), "{}", stderr(&marked));
@@ -230,7 +249,16 @@ fn takes_the_contract_marker_right_after_the_subcommand() {
         ("regressions", vec!["--program-id", P]),
         (
             "check",
-            vec!["--program-id", P, "--signature", SIG, "--commit", C1],
+            vec![
+                "--program-id",
+                P,
+                "--signature",
+                SIG,
+                "--commit",
+                C1,
+                "--site",
+                SITE,
+            ],
         ),
     ] {
         let with = mem(&wt, &[&[sub, c][..], &rest].concat());
@@ -545,6 +573,163 @@ fn checks_the_in_tree_store_with_git() {
         !marker.exists(),
         "the git inside the working tree did not run"
     );
+}
+
+#[test]
+fn a_git_in_the_repository_the_working_directory_lies_in_is_never_run() {
+    // The working directory is one program of a repository, and a PATH entry inside
+    // the repository, above it, holds a git that marks that it ran and lists a file.
+    let repo = Wt::repo();
+    repo.mkdir("programs/v");
+    let marker = repo.outside().join("ran");
+    repo.write(
+        "node_modules/.bin/git",
+        format!("#!/bin/sh\ntouch '{}'\necho x\n", marker.display()).as_bytes(),
+    );
+    repo.chmod("node_modules/.bin/git", 0o755);
+    let entry = repo.path("node_modules/.bin");
+    let path = format!(
+        "{}:{}",
+        entry.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let v = repo.path("programs/v");
+    let warm = ["warm", "--program-id", P];
+    ok(&run_env(BIN, &v, &warm, &[("PATH", &path)]));
+    assert!(
+        !marker.exists(),
+        "the git above the working directory did not run"
+    );
+    // A repository at HOME is not one the working directory lies in, so the entry
+    // stays, as confine_init keeps it.
+    let home = repo.dir.to_str().expect("a UTF-8 path");
+    let listed = format!("the repository tracks .audit-memory (in some letter case){USE_R}");
+    refused(
+        &run_env(BIN, &v, &warm, &[("PATH", &path), ("HOME", home)]),
+        "audit-mem",
+        &listed,
+    );
+    assert!(marker.exists(), "HOME: the entry stays");
+    fs::remove_file(&marker).expect("rm");
+    // A repository of the working directory's own, nested in the tree, does not
+    // shrink the tree: the outermost directory holding a .git is the tree, so the
+    // entry is dropped all the same.
+    repo.git(&["init", "-q", "programs/v"]);
+    ok(&run_env(BIN, &v, &warm, &[("PATH", &path)]));
+    assert!(!marker.exists(), "its own repository: the entry is dropped");
+    // An entry inside the working directory reached by another spelling, through
+    // macOS's /System/Volumes/Data firmlink, is inside it all the same.
+    let data = Path::new("/System/Volumes/Data").join(
+        repo.dir
+            .strip_prefix("/")
+            .expect("the working tree is absolute"),
+    );
+    let same = |a: &Path, b: &Path| match (fs::metadata(a), fs::metadata(b)) {
+        (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+        _ => false,
+    };
+    if same(&data, &repo.dir) {
+        let path = format!(
+            "{}:{}",
+            data.join("node_modules/.bin").display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        ok(&run_env(BIN, &repo.dir, &warm, &[("PATH", &path)]));
+        assert!(
+            !marker.exists(),
+            "the git inside, spelled another way, did not run"
+        );
+    }
+}
+
+#[test]
+fn a_git_inside_the_working_directory_spelled_in_other_letters_is_never_run() {
+    // On a volume that ignores letter case, one directory has several spellings:
+    // a PATH entry inside the working directory written in other letters is
+    // inside it all the same, and so is the working directory entered in other
+    // letters, as confine_init takes it. getcwd and realpath often give the
+    // letters on disk for both, so the entry is also written through macOS's
+    // /System/Volumes/Data firmlink, a spelling realpath keeps and getcwd never
+    // gives: only a comparison by identity finds it inside.
+    let wt = Wt::repo();
+    let upper = PathBuf::from(wt.dir.to_string_lossy().to_uppercase());
+    let same = |a: &Path, b: &Path| match (fs::metadata(a), fs::metadata(b)) {
+        (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+        _ => false,
+    };
+    if upper == wt.dir || !same(&upper, &wt.dir) {
+        return; // a volume that tells letter case apart: nothing to check
+    }
+    let marker = wt.outside().join("ran");
+    wt.write(
+        "bin/git",
+        format!("#!/bin/sh\ntouch '{}'\necho x\n", marker.display()).as_bytes(),
+    );
+    wt.chmod("bin/git", 0o755);
+    let warm = ["warm", "--program-id", P];
+    let rest = std::env::var("PATH").unwrap_or_default();
+    let mut spellings = vec![
+        (upper.join("bin"), wt.dir.clone()),
+        (wt.path("bin"), upper.clone()),
+        (upper.join("bin"), upper.clone()),
+    ];
+    let data = Path::new("/System/Volumes/Data").join(
+        upper
+            .strip_prefix("/")
+            .expect("the working tree is absolute"),
+    );
+    if same(&data, &wt.dir) {
+        spellings.push((data.join("bin"), wt.dir.clone()));
+    }
+    for (entry, from) in spellings {
+        let path = format!("{}:{rest}", entry.display());
+        ok(&run_env(BIN, &from, &warm, &[("PATH", &path)]));
+        assert!(
+            !marker.exists(),
+            "{} from {}: the git inside did not run",
+            entry.display(),
+            from.display()
+        );
+    }
+}
+
+#[test]
+fn a_nearer_git_the_tree_holds_does_not_put_the_tree_s_git_on_path() {
+    // A .git nearer to the working directory than the tree's own (an empty
+    // directory, which git walks past; an empty file between the working directory
+    // and the tree's top; a directory holding HEAD alone) does not shrink the tree,
+    // so a git in the tree's node_modules/.bin never runs, whatever git then says.
+    for case in [
+        "an empty .git directory",
+        "an empty .git file",
+        "a .git holding HEAD alone",
+    ] {
+        let repo = Wt::repo();
+        repo.mkdir("programs/v");
+        match case {
+            "an empty .git directory" => repo.mkdir("programs/v/.git"),
+            "an empty .git file" => repo.write("programs/.git", b""),
+            _ => repo.write("programs/v/.git/HEAD", b"ref: refs/heads/main\n"),
+        }
+        let marker = repo.outside().join("ran");
+        repo.write(
+            "node_modules/.bin/git",
+            format!("#!/bin/sh\ntouch '{}'\necho x\n", marker.display()).as_bytes(),
+        );
+        repo.chmod("node_modules/.bin/git", 0o755);
+        let path = format!(
+            "{}:{}",
+            repo.path("node_modules/.bin").display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        let _ = run_env(
+            BIN,
+            &repo.path("programs/v"),
+            &["warm", "--program-id", P],
+            &[("PATH", &path)],
+        );
+        assert!(!marker.exists(), "{case}: the git in the tree did not run");
+    }
 }
 
 #[test]
@@ -1183,7 +1368,38 @@ fn refuses_a_table_that_is_not_the_one_audit_mem_makes() {
             .expect("fp_rulings")
     };
     assert_eq!(made("audit_21"), made("audit_20"));
-    assert!(made("audit_21").ends_with("\n        , anchor_commit TEXT, guard_file TEXT, guard_line INTEGER, guard_end INTEGER, guard_hash TEXT)"));
+    assert!(made("audit_21").ends_with("\n        , anchor_commit TEXT, guard_file TEXT, guard_line INTEGER, guard_end INTEGER, guard_hash TEXT, site TEXT)"));
+    // A store made before rulings named their site (its anchor without the site)
+    // reads, and gains the site when it is next written.
+    wt.run_dir("audit_22");
+    craft(
+        &wt.path("audit_22/audit-mem.db"),
+        &format!(
+            "{OLD_SCHEMA}\nALTER TABLE fp_rulings ADD COLUMN anchor_commit TEXT;\n\
+             ALTER TABLE fp_rulings ADD COLUMN guard_file TEXT;\n\
+             ALTER TABLE fp_rulings ADD COLUMN guard_line INTEGER;\n\
+             ALTER TABLE fp_rulings ADD COLUMN guard_end INTEGER;\n\
+             ALTER TABLE fp_rulings ADD COLUMN guard_hash TEXT;"
+        ),
+    );
+    ok(&mem(
+        &wt,
+        &["warm", "--db", "audit_22/audit-mem.db", "--program-id", P],
+    ));
+    assert!(made("audit_22").ends_with("guard_hash TEXT)"));
+    ok(&mem(
+        &wt,
+        &[
+            "profile",
+            "--db",
+            "audit_22/audit-mem.db",
+            "--program-id",
+            P,
+            "--notes",
+            "n",
+        ],
+    ));
+    assert_eq!(made("audit_22"), made("audit_21"));
 }
 
 #[test]
@@ -1301,11 +1517,127 @@ fn refuses_a_store_with_sqlite_files_beside_it() {
     }
 }
 
+/// A rollback journal SQLite reads as hot (its first byte is not zero) whose end
+/// names `name` as its super-journal, as SQLite reads one: the name, its length
+/// and the sum of its bytes in four bytes each, big-endian, then the journal's
+/// magic number.
+fn journal_naming(name: &[u8]) -> Vec<u8> {
+    const MAGIC: [u8; 8] = [0xd9, 0xd5, 0x05, 0xf9, 0x20, 0xa1, 0x63, 0xd7];
+    let len = u32::try_from(name.len()).expect("a short name");
+    let sum = name.iter().fold(0u32, |s, &b| s.wrapping_add(u32::from(b)));
+    let parts: [&[u8]; 5] = [
+        &[b'X'; 64],
+        name,
+        &len.to_be_bytes(),
+        &sum.to_be_bytes(),
+        &MAGIC,
+    ];
+    parts.concat()
+}
+
 #[test]
-fn a_read_only_open_is_immutable_and_opens_nothing_beside_the_store() {
+fn refuses_a_journal_that_names_a_super_journal_and_deletes_nothing() {
     let wt = store();
-    // A WAL file another database wrote, planted beside the store: a plain
-    // read-only open would apply it and make a -shm file.
+    wt.run_dir("audit_1");
+    ok(&mem(&wt, &["init", "--db", "audit_1/audit-mem.db"]));
+    let canary = wt.outside().join("canary");
+    let absolute = canary.to_str().expect("a UTF-8 path").to_string();
+    for (db, tail) in [
+        (".audit-memory/audit.db", USE_R),
+        ("audit_1/audit-mem.db", ""),
+    ] {
+        let journal = format!("{db}-journal");
+        let why = format!(
+            "{journal} names a super-journal (a file SQLite deletes when it rolls the journal \
+             back), which audit-mem never writes{tail}"
+        );
+        let calls = [
+            vec!["init", "--db", db],
+            vec![
+                "put-finding",
+                "--db",
+                db,
+                "--program-id",
+                P,
+                "--signature",
+                SIG,
+                "--root-cause",
+                "r",
+                "--title",
+                "t",
+                "--severity",
+                "3",
+            ],
+            vec![
+                "set-status",
+                "--db",
+                db,
+                "--program-id",
+                P,
+                "--signature",
+                SIG,
+                "--root-cause",
+                "r",
+                "--status",
+                "FIXED",
+            ],
+            vec![
+                "rule",
+                "--db",
+                db,
+                "--program-id",
+                P,
+                "--signature",
+                SIG,
+                "--ruling",
+                "ACCEPTED_RISK",
+                "--rationale",
+                "r",
+                "--by",
+                "auditor",
+            ],
+            vec!["profile", "--db", db, "--program-id", P, "--notes", "n"],
+            vec![
+                "invariant",
+                "--db",
+                db,
+                "--program-id",
+                P,
+                "--statement",
+                "s",
+            ],
+            vec!["warm", "--db", db, "--program-id", P],
+            vec!["check", "--db", db, "--program-id", P, "--signature", SIG],
+            vec!["regressions", "--db", db, "--program-id", P],
+        ];
+        // A file outside the working tree, named from it and by its full path.
+        for name in ["../outside/canary", absolute.as_str()] {
+            fs::write(&canary, b"kept\n").expect("write the canary");
+            wt.write(&journal, &journal_naming(name.as_bytes()));
+            let before = wt.snapshot();
+            for args in &calls {
+                refused(&mem(&wt, args), "audit-mem", &why);
+                assert_eq!(
+                    fs::read(&canary).ok().as_deref(),
+                    Some(&b"kept\n"[..]),
+                    "{name}, {args:?}: the file the journal names is kept"
+                );
+            }
+            assert_eq!(wt.snapshot(), before, "{name}: nothing changed in the tree");
+            fs::remove_file(wt.path(&journal)).expect("rm");
+        }
+    }
+    // A journal of one name that names no super-journal is rolled back as before.
+    wt.write(".audit-memory/audit.db-journal", &[b'X'; 600]);
+    ok(&mem(&wt, &["profile", "--program-id", P, "--notes", "n"]));
+    assert!(canary.exists());
+}
+
+#[test]
+fn a_read_only_open_reads_no_wal_and_makes_nothing_beside_the_store() {
+    let wt = store();
+    // A WAL file another database wrote, planted beside the store: a read-only
+    // open that takes locks would apply it and make a -shm file.
     let other = wt.outside().join("other.db");
     let conn = rusqlite::Connection::open(&other).expect("open");
     conn.execute_batch(
@@ -1327,14 +1659,173 @@ fn a_read_only_open_is_immutable_and_opens_nothing_beside_the_store() {
             ".audit-memory/audit.db has a -wal file beside it, which audit-mem never makes{USE_R}"
         ),
     );
-    // The open itself, with that check left out, reads the store as it is.
+    // The open itself, with that check left out, takes no lock, so SQLite cannot
+    // read a WAL: it refuses the store and makes nothing beside it.
     let db = wt.path(".audit-memory/audit.db");
-    let conn = auditor_tools::mem::open_read_only(&db).expect("open read-only");
-    let warm = auditor_tools::mem::warm(&conn, P).expect("read");
-    assert!(warm.profile.is_none());
-    drop(conn);
+    let read =
+        auditor_tools::mem::open_read_only(&db).and_then(|conn| auditor_tools::mem::warm(&conn, P));
+    let err = read.expect_err("a store with a WAL beside it is not read");
+    assert!(
+        format!("{err:#}").contains("unable to open database file"),
+        "{err:#}"
+    );
     assert!(!wt.exists(".audit-memory/audit.db-shm"), "no -shm is made");
     assert_eq!(wt.snapshot(), before, "nothing changed beside the store");
+}
+
+/// Leaves the store `db` as a write killed after its pages reached the database
+/// file leaves it: the database and its hot journal. The write, made on a copy of
+/// the store outside the tree through a cache of 4 pages, so that SQLite writes
+/// pages to the file before it commits, adds a FALSE_POSITIVE ruling for the
+/// candidate at `SITE`, anchored at C1, and 400 invariants. The copy's files are
+/// written over the store's while the write is under way; the write is then
+/// dropped.
+fn stop_a_write(wt: &Wt, db: &str) {
+    let copy = wt.outside().join("copy.db");
+    fs::copy(wt.path(db), &copy).expect("copy the store");
+    let conn = rusqlite::Connection::open(&copy).expect("open the copy");
+    conn.execute_batch("PRAGMA cache_size = 4; PRAGMA cache_spill = 1; BEGIN IMMEDIATE;")
+        .expect("begin the write");
+    let text = wt.read("src/withdraw.rs");
+    let hash = auditor_tools::mem::guard_hash(&text, 2, 2).expect("the guard's line");
+    conn.execute(
+        "INSERT INTO fp_rulings (program_id, code_signature, ruling, rationale, ruled_by, \
+         ruled_at, scope, anchor_commit, guard_file, guard_line, guard_end, guard_hash, site) \
+         VALUES (?1, ?2, 'FALSE_POSITIVE', 'uncommitted', 'auditor', '1', 'program', ?3, \
+         'src/withdraw.rs', 2, 2, ?4, ?5)",
+        rusqlite::params![P, SIG, C1, hash, SITE],
+    )
+    .expect("add the ruling");
+    for i in 0..400 {
+        conn.execute(
+            "INSERT INTO invariants (program_id, statement) VALUES (?1, ?2)",
+            rusqlite::params![P, format!("{i} {}", "x".repeat(200))],
+        )
+        .expect("add an invariant");
+    }
+    let journal = fs::read(wt.outside().join("copy.db-journal")).expect("the write's journal");
+    assert!(
+        journal.first().is_some_and(|&b| b != 0),
+        "SQLite reads the journal as hot"
+    );
+    fs::write(wt.path(db), fs::read(&copy).expect("the copy")).expect("write the store");
+    fs::write(wt.path(&format!("{db}-journal")), journal).expect("write the journal");
+    drop(conn);
+    fs::remove_file(&copy).expect("remove the copy");
+}
+
+#[test]
+fn reads_no_store_a_write_left_unfinished_and_init_rolls_the_write_back() {
+    let wt = store();
+    wt.run_dir("audit_1");
+    ok(&mem(&wt, &["init", "--db", "audit_1/audit-mem.db"]));
+    for (db, init) in [
+        (".audit-memory/audit.db", "audit-mem init --contract=1"),
+        (
+            "audit_1/audit-mem.db",
+            "audit-mem init --contract=1 --db audit_1/audit-mem.db",
+        ),
+    ] {
+        stop_a_write(&wt, db);
+        let before = wt.snapshot();
+        let why = format!(
+            "audit-mem: error: {db}: a write to it did not finish (its -journal holds what that \
+             write replaced), so it is not read; {init} rolls the write back\n"
+        );
+        for args in [
+            vec!["warm", "--db", db, "--program-id", P],
+            vec![
+                "check",
+                "--db",
+                db,
+                "--program-id",
+                P,
+                "--signature",
+                SIG,
+                "--commit",
+                C1,
+                "--site",
+                SITE,
+            ],
+            vec!["regressions", "--db", db, "--program-id", P],
+        ] {
+            let o = mem(&wt, &args);
+            assert_eq!(o.status.code(), Some(2), "{args:?}: {}", stdout(&o));
+            assert_eq!(stdout(&o), "", "{args:?}");
+            assert_eq!(stderr(&o), why, "{args:?}");
+        }
+        assert_eq!(wt.snapshot(), before, "{db}: a read changes nothing");
+        assert_eq!(
+            ok(&mem(&wt, &["init", "--db", db])),
+            format!("initialized {db}\n")
+        );
+        assert!(!wt.exists(&format!("{db}-journal")), "{db}: rolled back");
+        let o = mem(
+            &wt,
+            &[
+                "check",
+                "--db",
+                db,
+                "--program-id",
+                P,
+                "--signature",
+                SIG,
+                "--commit",
+                C1,
+                "--site",
+                SITE,
+            ],
+        );
+        assert_eq!(o.status.code(), Some(1), "{db}: {}", stderr(&o));
+        assert_eq!(
+            json(&o)["ruling"],
+            Value::Null,
+            "{db}: the ruling was never made"
+        );
+        assert_eq!(
+            json(&mem(&wt, &["warm", "--db", db, "--program-id", P]))["invariants"],
+            serde_json::json!([]),
+            "{db}"
+        );
+    }
+}
+
+#[test]
+fn a_writer_that_cannot_write_the_store_beside_an_unfinished_write_says_what_sqlite_says() {
+    let wt = store();
+    let db = ".audit-memory/audit.db";
+    stop_a_write(&wt, db);
+    wt.chmod(db, 0o444);
+    let before = wt.snapshot();
+    // init cannot roll the write back either, so no writer names it.
+    for args in [
+        vec!["init"],
+        vec!["profile", "--program-id", P, "--notes", "n"],
+    ] {
+        let o = mem(&wt, &args);
+        assert_eq!(o.status.code(), Some(2), "{args:?}: {}", stdout(&o));
+        assert_eq!(stdout(&o), "", "{args:?}");
+        let err = stderr(&o);
+        assert!(
+            err.starts_with(&format!("audit-mem: error: {db}: "))
+                && err.contains("requires write access")
+                && !err.contains("init")
+                && err.lines().count() == 1,
+            "{args:?}: {err}"
+        );
+    }
+    assert_eq!(wt.snapshot(), before, "nothing changed");
+    // A reader still names init, which rolls the write back once it can write.
+    let o = mem(&wt, &["warm", "--program-id", P]);
+    assert_eq!(o.status.code(), Some(2));
+    assert!(
+        stderr(&o).ends_with("; audit-mem init --contract=1 rolls the write back\n"),
+        "{}",
+        stderr(&o)
+    );
+    wt.chmod(db, 0o600);
+    ok(&mem(&wt, &["init"]));
+    assert!(!wt.exists(&format!("{db}-journal")), "rolled back");
 }
 
 #[test]
@@ -1764,6 +2255,127 @@ fn a_ruling_is_anchored_and_check_reports_it_stale_when_the_anchor_changes() {
 }
 
 #[test]
+fn a_ruling_suppresses_only_the_candidate_it_names() {
+    // withdraw's subtraction (line 3) is guarded and ruled a false positive;
+    // liquidate's (line 6), with the same signature, is not guarded. The ruling
+    // names its candidate, and check suppresses that one only: a sibling, or a
+    // check that names no site, finds the ruling stale.
+    let wt = Wt::repo();
+    wt.write(
+        "src/lib.rs",
+        b"fn withdraw() {\n    require!(v.balance >= amount);\n    v.balance -= amount;\n}\nfn liquidate() {\n    v.balance -= amount;\n}\n",
+    );
+    ok(&mem(&wt, &["init"]));
+    let base = [
+        "rule",
+        "--program-id",
+        P,
+        "--signature",
+        SIG,
+        "--ruling",
+        "FALSE_POSITIVE",
+        "--rationale",
+        "guarded",
+        "--by",
+        "auditor",
+        "--commit",
+        C1,
+        "--guard",
+        "src/lib.rs:2",
+    ];
+    refused(
+        &mem(&wt, &base),
+        "audit-mem",
+        "a FALSE_POSITIVE ruling needs --site, the <file>:<line> of the one candidate it rules on, \
+         so that check suppresses that candidate and none of its siblings",
+    );
+    let shape = |s: &str| format!("--site must be <file>:<line>, the candidate's: {s}");
+    for (site, why) in [
+        ("src/lib.rs", shape("src/lib.rs")),
+        ("src/lib.rs:", shape("src/lib.rs:")),
+        ("src/lib.rs:0", shape("src/lib.rs:0")),
+        ("src/lib.rs:03", shape("src/lib.rs:03")),
+        ("src/lib.rs:x", shape("src/lib.rs:x")),
+        ("src/lib.rs:1234567890", shape("src/lib.rs:1234567890")),
+        (
+            "/abs/lib.rs:3",
+            "--site's file must be relative to the working directory: /abs/lib.rs".into(),
+        ),
+        (
+            "../lib.rs:3",
+            "--site's file has an empty, . or .. component: ../lib.rs".into(),
+        ),
+    ] {
+        refused(
+            &mem(&wt, &[&base[..], &["--site", site]].concat()),
+            "audit-mem",
+            &why,
+        );
+    }
+    assert_eq!(
+        ok(&mem(
+            &wt,
+            &[&base[..], &["--site", "./src/lib.rs:3"]].concat()
+        )),
+        "ruling 1 recorded (FALSE_POSITIVE)\n"
+    );
+    let at = |site: Option<&str>| {
+        let mut args = vec![
+            "check",
+            "--program-id",
+            P,
+            "--signature",
+            SIG,
+            "--commit",
+            C1,
+        ];
+        if let Some(s) = site {
+            args.extend(["--site", s]);
+        }
+        let o = mem(&wt, &args);
+        assert_eq!(stderr(&o), "");
+        (o.status.code(), json(&o))
+    };
+    let (code, r) = at(Some("src/lib.rs:3"));
+    assert_eq!(code, Some(0), "{r}");
+    assert_eq!(r["suppressed"], true);
+    assert_eq!(r["ruling"]["site"], "src/lib.rs:3");
+    let (code, r) = at(Some("src/lib.rs:6"));
+    assert_eq!(
+        (code, r["suppressed"].clone()),
+        (Some(1), Value::Bool(false))
+    );
+    assert_eq!(
+        r["stale"],
+        "ruled for the site src/lib.rs:3, checked for src/lib.rs:6"
+    );
+    let (code, r) = at(None);
+    assert_eq!(code, Some(1));
+    assert_eq!(
+        r["stale"],
+        "ruled for the site src/lib.rs:3, and no --site was given to compare"
+    );
+    refused(
+        &mem(
+            &wt,
+            &[
+                "check",
+                "--program-id",
+                P,
+                "--signature",
+                SIG,
+                "--site",
+                "src/lib.rs",
+            ],
+        ),
+        "audit-mem",
+        &shape("src/lib.rs"),
+    );
+    let warm = json(&mem(&wt, &["warm", "--program-id", P]));
+    assert_eq!(warm["open_fp_rulings"][0]["site"], "src/lib.rs:3");
+}
+
+#[test]
 fn a_store_made_before_anchors_reports_its_rulings_stale_and_migrates() {
     let wt = Wt::repo();
     wt.write("src/withdraw.rs", b"fn w() {\n    require!(ok);\n}\n");
@@ -1806,6 +2418,7 @@ fn a_store_made_before_anchors_reports_its_rulings_stale_and_migrates() {
         "guard_line",
         "guard_end",
         "guard_hash",
+        "site",
     ] {
         assert!(columns.iter().any(|x| x == c), "{c} in {columns:?}");
     }
@@ -1836,6 +2449,8 @@ fn a_store_made_before_anchors_reports_its_rulings_stale_and_migrates() {
             C1,
             "--guard",
             "src/withdraw.rs:2",
+            "--site",
+            "src/withdraw.rs:3",
         ],
     );
     assert_eq!(ok(&o), "ruling 1 recorded (FALSE_POSITIVE)\n");
@@ -1851,6 +2466,8 @@ fn a_store_made_before_anchors_reports_its_rulings_stale_and_migrates() {
             SIG,
             "--commit",
             C1,
+            "--site",
+            "src/withdraw.rs:3",
         ],
     );
     assert_eq!(o.status.code(), Some(0), "{}", stdout(&o));
@@ -1918,4 +2535,286 @@ fn put_finding_keeps_the_severity_and_title_it_replaces_and_regressions_lists_th
         ]
     );
     assert_eq!(regs["truncated"], 0);
+}
+
+#[test]
+fn writers_that_meet_wait_for_each_other() {
+    let wt = store();
+    // Another writer holds the store's write lock while the calls start.
+    let holder =
+        rusqlite::Connection::open(wt.path(".audit-memory/audit.db")).expect("open the store");
+    holder
+        .execute_batch("BEGIN IMMEDIATE")
+        .expect("take the write lock");
+    let calls: Vec<_> = (0..6)
+        .map(|i| {
+            let sig = format!("sig{i}");
+            let args = [
+                "put-finding",
+                "--contract=1",
+                "--program-id",
+                P,
+                "--signature",
+                sig.as_str(),
+                "--root-cause",
+                "r",
+                "--title",
+                "t",
+                "--severity",
+                "3",
+            ];
+            Command::new(BIN)
+                .args(args)
+                .current_dir(&wt.dir)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("start audit-mem")
+        })
+        .collect();
+    std::thread::sleep(std::time::Duration::from_millis(2000));
+    holder.execute_batch("COMMIT").expect("let the lock go");
+    for call in calls {
+        let o = call.wait_with_output().expect("wait for audit-mem");
+        assert!(ok(&o).starts_with("OPEN "), "{}", stdout(&o));
+    }
+    let rows: i64 = holder
+        .query_row("SELECT count(*) FROM findings", [], |r| r.get(0))
+        .expect("count the findings");
+    assert_eq!(rows, 6);
+}
+
+#[test]
+fn refuses_when_git_does_not_answer_in_time() {
+    // A git that never answers (here one first on PATH that sleeps), as one
+    // blocked opening a file would be: it is killed after 10 s, and the call
+    // refused.
+    let wt = Wt::repo();
+    wt.run_dir("audit_1");
+    let slow = wt.outside().join("slow");
+    fs::create_dir(&slow).expect("make the slow git's directory");
+    // Written by /bin/sh, not by this process: on Linux, a child another test
+    // starts while this process holds the file open for writing inherits that
+    // descriptor, and running the file then fails with ETXTBSY until it execs.
+    let status = Command::new("/bin/sh")
+        .args([
+            "-c",
+            "printf '%s' \"$1\" > \"$2\" && chmod 755 \"$2\"",
+            "sh",
+            "#!/bin/sh\nexec /bin/sleep 60\n",
+        ])
+        .arg(slow.join("git"))
+        .stdin(Stdio::null())
+        .status()
+        .expect("run sh");
+    assert!(status.success(), "write the slow git");
+    let path = format!("{}:/usr/bin:/bin", slow.display());
+    for (args, why) in [
+        (
+            vec!["warm", "--program-id", P],
+            "git cannot tell whether .audit-memory is tracked",
+        ),
+        (
+            vec!["init", "--db", "audit_1/audit-mem.db"],
+            "git cannot tell whether --db is tracked: audit_1",
+        ),
+    ] {
+        let start = std::time::Instant::now();
+        let o = run_env(BIN, &wt.dir, &args, &[("PATH", &path)]);
+        let took = start.elapsed();
+        refused(&o, "audit-mem", why);
+        assert!(
+            took >= std::time::Duration::from_secs(10) && took < std::time::Duration::from_secs(40),
+            "{args:?}: {took:?}"
+        );
+    }
+    assert!(!wt.exists("audit_1/audit-mem.db"), "nothing made");
+}
+
+#[test]
+fn refuses_a_named_pipe_git_would_open_before_git_starts() {
+    // A named pipe git would open on its way to the repository, where none of its
+    // questions has started: as HEAD, included by the config (in turn, too), in a
+    // git directory that .git links to (as a file there, or as its config), as the
+    // HEAD of the repository above a .git that git walks past, named by a link in
+    // the git directory, or as the HEAD a .git file names. Each is refused at once,
+    // as confine.sh refuses it: with the reason for a run directory (rundir.sh
+    // check), and "git cannot tell" for the in-tree store (rundir.sh store).
+    let mkfifo = |p: &Path| {
+        let made = Command::new("mkfifo").arg(p).status().expect("run mkfifo");
+        assert!(made.success(), "mkfifo {}", p.display());
+    };
+    let wait = |place: &str, what: &str| {
+        format!(
+            "a named pipe or device {place}, and git would wait on it for good: {}",
+            shown(what)
+        )
+    };
+    for case in [
+        "HEAD",
+        "include",
+        "include in turn",
+        "linked git directory",
+        "linked config",
+        "above a decoy",
+        "link in the git directory",
+        "gitfile",
+    ] {
+        let wt = Wt::repo();
+        let mut from = wt.dir.clone();
+        let (pipe, why) = match case {
+            "HEAD" => {
+                fs::remove_file(wt.path(".git/HEAD")).expect("rm HEAD");
+                let pipe = wt.path(".git/HEAD");
+                (
+                    pipe,
+                    wait(
+                        "is in the git directory",
+                        &wt.path(".git").display().to_string(),
+                    ),
+                )
+            }
+            "include" | "include in turn" => {
+                let config = wt.read(".git/config");
+                let first = if case == "include" {
+                    "../pipe"
+                } else {
+                    "../cfg/more.cfg"
+                };
+                wt.write(
+                    ".git/config",
+                    &[
+                        &config[..],
+                        format!("[include]\n\tpath = {first}\n").as_bytes(),
+                    ]
+                    .concat(),
+                );
+                wt.write(
+                    "cfg/more.cfg",
+                    b"[includeIf \"gitdir:**\"]\n\tpath = ../pipe\n",
+                );
+                (
+                    wt.path("pipe"),
+                    wait("is included by the repository's config", "../pipe"),
+                )
+            }
+            "linked git directory" | "linked config" => {
+                fs::rename(wt.path(".git"), wt.path(".realgit")).expect("move .git");
+                wt.link(".realgit".as_ref(), ".git");
+                let pipe = if case == "linked config" {
+                    fs::rename(wt.path(".realgit/config"), wt.path("config.kept"))
+                        .expect("move config");
+                    wt.path(".realgit/config")
+                } else {
+                    wt.path(".realgit/info/attributes")
+                };
+                (
+                    pipe,
+                    wait(
+                        "is in the git directory",
+                        &wt.path(".realgit").display().to_string(),
+                    ),
+                )
+            }
+            "above a decoy" => {
+                fs::remove_file(wt.path(".git/HEAD")).expect("rm HEAD");
+                wt.write("sub/.git/HEAD", b"ref: refs/heads/main\n");
+                from = wt.path("sub");
+                (
+                    wt.path(".git/HEAD"),
+                    wait(
+                        "is in the git directory",
+                        &wt.path(".git").display().to_string(),
+                    ),
+                )
+            }
+            "link in the git directory" => {
+                wt.link("../../pipe".as_ref(), ".git/hooks/post-checkout");
+                (
+                    wt.path("pipe"),
+                    wait(
+                        "is named by a link in the git directory",
+                        &wt.path(".git").display().to_string(),
+                    ),
+                )
+            }
+            _ => {
+                fs::rename(wt.path(".git"), wt.outside().join("gd")).expect("move .git");
+                wt.write(
+                    ".git",
+                    format!("gitdir: {}\n", wt.outside().join("gd").display()).as_bytes(),
+                );
+                fs::remove_file(wt.outside().join("gd/HEAD")).expect("rm HEAD");
+                let pipe = wt.outside().join("gd/HEAD");
+                (
+                    pipe.clone(),
+                    wait(
+                        "is in the git directory",
+                        &wt.outside().join("gd").display().to_string(),
+                    ),
+                )
+            }
+        };
+        mkfifo(&pipe);
+        let run_dir = if from == wt.dir {
+            "audit_1".to_string()
+        } else {
+            "sub/audit_1".into()
+        };
+        wt.run_dir(&run_dir);
+        let at = |o: &Output| o.status.code();
+        for (args, want) in [
+            (vec!["init", "--db", "audit_1/audit-mem.db"], why.clone()),
+            (
+                vec!["warm", "--program-id", P],
+                "git cannot tell whether .audit-memory is tracked".to_string(),
+            ),
+        ] {
+            let start = std::time::Instant::now();
+            let o = mem_within_from(&from, &args, std::time::Duration::from_secs(60), &pipe);
+            let took = start.elapsed();
+            assert_eq!(at(&o), Some(2), "{case} {args:?}: {}", stderr(&o));
+            refused(&o, "audit-mem", &want);
+            assert!(
+                took < std::time::Duration::from_secs(9),
+                "{case} {args:?}: {took:?}, so git started"
+            );
+        }
+        assert!(
+            !wt.exists(&format!("{run_dir}/audit-mem.db")),
+            "{case}: nothing made"
+        );
+    }
+}
+
+/// audit-mem run from `dir` with `args`, waited for at most `limit`. Past it the
+/// test fails: first `pipe` is opened for writing, so that a git blocked opening
+/// it goes on, and the call is killed.
+fn mem_within_from(dir: &Path, args: &[&str], limit: std::time::Duration, pipe: &Path) -> Output {
+    let mut child = Command::new(BIN)
+        .args(args)
+        .current_dir(dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start audit-mem");
+    let start = std::time::Instant::now();
+    while child.try_wait().expect("poll audit-mem").is_none() {
+        if start.elapsed() > limit {
+            for _ in 0..20 {
+                let _ = fs::OpenOptions::new()
+                    .write(true)
+                    .custom_flags(libc::O_NONBLOCK)
+                    .open(pipe);
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("audit-mem {args:?} still runs after {limit:?}");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    child.wait_with_output().expect("read audit-mem's output")
 }

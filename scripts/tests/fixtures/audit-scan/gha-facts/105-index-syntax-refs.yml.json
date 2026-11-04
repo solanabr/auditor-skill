@@ -1,0 +1,89 @@
+{
+  "name": "f105-index-syntax-refs",
+  "triggers": [
+    "workflow_call",
+    "pull_request_target"
+  ],
+  "permissions": [
+    "contents: read"
+  ],
+  "jobs": [
+    {
+      "id": "build",
+      "line": 15,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 18,
+          "uses": "actions/checkout@v4",
+          "with": [
+            {
+              "key": "ref",
+              "value": "${{ inputs['sha'] }}"
+            }
+          ],
+          "env": []
+        },
+        {
+          "line": 21,
+          "run": "make",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "matrix",
+      "line": 22,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 28,
+          "uses": "actions/checkout@v4",
+          "with": [
+            {
+              "key": "ref",
+              "value": "${{ matrix['head'] }}"
+            }
+          ],
+          "env": []
+        },
+        {
+          "line": 31,
+          "run": "make",
+          "with": [],
+          "env": []
+        }
+      ]
+    },
+    {
+      "id": "fork",
+      "line": 32,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 35,
+          "uses": "actions/checkout@v4",
+          "with": [
+            {
+              "key": "repository",
+              "value": "${{ github['event']['pull_request']['head']['repo']['full_name'] }}"
+            },
+            {
+              "key": "ref",
+              "value": "${{ github.event['pull_request']['head']['sha'] }}"
+            }
+          ],
+          "env": []
+        },
+        {
+          "line": 39,
+          "run": "echo \"${{ github.event.pull_request['title'] }}\"",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

@@ -1,0 +1,15 @@
+# Fixture: a Pulumi YAML role that trusts GitHub's OIDC tokens from every repository of one owner.
+resources:
+  deployRole:
+    type: aws:iam:Role
+    properties:
+      assumeRolePolicy:
+        fn::toJSON:
+          Statement:
+            - Effect: Allow
+              Action: sts:AssumeRoleWithWebIdentity
+              Principal:
+                Federated: arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com
+              Condition:
+                StringLike:
+                  token.actions.githubusercontent.com:sub: repo:example/*

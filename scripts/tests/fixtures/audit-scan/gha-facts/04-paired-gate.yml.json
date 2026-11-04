@@ -1,0 +1,29 @@
+{
+  "name": "f04-paired-gate",
+  "triggers": [
+    "issue_comment",
+    "pull_request_review_comment",
+    "pull_request_review",
+    "issues"
+  ],
+  "permissions": [
+    "contents: read"
+  ],
+  "jobs": [
+    {
+      "id": "agent",
+      "line": 15,
+      "if": "(github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude') && contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.comment.author_association)) || (github....",
+      "permissions": [],
+      "steps": [
+        {
+          "line": 23,
+          "run": "echo \"agent would run\"",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

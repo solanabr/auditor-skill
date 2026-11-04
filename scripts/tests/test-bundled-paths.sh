@@ -10,7 +10,8 @@
 #      markdown link) is allowed there;
 #   3. every site fixed so far keeps its rooted form, and the corpus-read and .audit-memory rules stay
 #      stated (the PINS list);
-#   4. every rooted path those files name exists in this checkout (binaries: declared in the crate);
+#   4. every rooted path those files name exists in this checkout (binaries: declared in the crate), one
+#      written from a variable its file sets to the root included (ROOT="<auditor-skill root>", then "$ROOT/…");
 #   5. Rule 11e and its pointers in SKILL.md / AGENTS.md / FULL-AUDIT.md are in place; 11a–11e keep their
 #      headings;
 #   6. the .audit-memory store check runs case-insensitively everywhere: no line pairs `ls-files` with
@@ -23,7 +24,7 @@
 # Each detector is first run against known-good and known-bad lines and a file of 1 MiB, so a broken pattern
 # fails the test.
 # Usage (from the repo root): bash scripts/tests/test-bundled-paths.sh   (VERBOSE=1 lists every check)
-# Needs bash >= 3.2, grep, sed, awk, find. No network.
+# Needs bash >= 3.2, grep, sed, awk, find, mktemp. No network.
 set -uo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$ROOT" || exit 1
@@ -33,7 +34,7 @@ ok()  { pass=$((pass + 1)); if [ -n "${VERBOSE:-}" ]; then echo "ok   $*"; fi; }
 bad() { failn=$((failn + 1)); echo "FAIL $*"; }
 
 STRICT_FILES=$(ls commands/*.md agents/*.md skills/*/SKILL.md 2>/dev/null)
-RUN_FILES=$(ls SKILL.md FULL-AUDIT.md AGENTS.md OUTPUT-RULES.md README.md; find references discovery docs templates -name '*.md' | sort)
+RUN_FILES=$(ls SKILL.md FULL-AUDIT.md AGENTS.md OUTPUT-RULES.md README.md; find references discovery docs templates checklists known-vectors -name '*.md' | sort)
 
 # A bundled path preceded by start of line or a non-path character, after any ./ or ../ prefix.
 PRE='(^|[^A-Za-z0-9_./}>-])(\.\.?/)*'
@@ -232,8 +233,38 @@ PINS
 bins=$(awk '/^\[\[bin\]\]/ { b = 1; next } b && /^name *=/ { gsub(/.*= *"|".*/, ""); print; b = 0 }' \
   tools/auditor-tools/Cargo.toml tools/auditor-tools/*/Cargo.toml)
 [ -n "$bins" ] && ok "crate binaries: $(echo $bins)" || bad "no [[bin]] names in tools/auditor-tools/Cargo.toml"
-for p in $(grep -ohE '([$][{]CLAUDE_(PLUGIN_ROOT|SKILL_DIR)[}]|<auditor-skill root>)/[A-Za-z0-9_./-]*' \
-    $STRICT_FILES $RUN_FILES | sed -E 's#^[^/]*/##; s#\.+$##' | sort -u); do
+# A rooted path starts at a root, or at a variable its own file sets to one: VERIFICATION.md's blocks set
+# ROOT="<auditor-skill root>" and run "$ROOT/scripts/runner/probe.sh", and poc-engineer.md's runner lines set
+# AUDITOR_ROOT='${CLAUDE_PLUGIN_ROOT}' and run "$AUDITOR_ROOT/scripts/runner/probe.sh".
+ROOTS='([$][{]CLAUDE_(PLUGIN_ROOT|SKILL_DIR)[}]|<auditor-skill root>)'
+SETS_ROOT="^[[:space:]]*(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*=[\"']?${ROOTS}[\"']?([[:space:];].*)?\$"
+rooted_paths() { # rooted_paths FILE...  (-> each rooted path the files name, the root left off, one per line)
+  local line v
+  { grep -ohE "${ROOTS}/[A-Za-z0-9_./-]*" "$@"
+    grep -HE "$SETS_ROOT" "$@" | while IFS= read -r line; do
+      v=${line#*:}; v=${v%%=*}; v=${v##*[[:space:]]}
+      grep -ohE "[$]([{]${v}[}]|${v})/[A-Za-z0-9_./-]*" "${line%%:*}"
+    done
+  } | sed -E 's#^[^/]*/##; s#\.+$##'
+}
+RT=$(mktemp -d "${TMPDIR:-/tmp}/bundled-paths.XXXXXX") || { echo "FAIL cannot make a scratch directory"; exit 1; }
+trap 'rm -rf "$RT"' EXIT
+printf '%s\n' 'ROOT="<auditor-skill root>"' \
+  'PPV_RUNNER="$ROOT/vendor/trailofbits/plugins/v/run.py"' \
+  'elif [ "$("$ROOT/scripts/runner/probe.sh" --only isolation)" ]; then' \
+  '  export PR=${CLAUDE_PLUGIN_ROOT}   # the plugin root' \
+  '"${PR}/scripts/git-ro.sh" copy . audit_1' \
+  "AUDITOR_ROOT='<auditor-skill root>'" \
+  '"$AUDITOR_ROOT/scripts/runner/target.sh" --run audit_1' \
+  'OTHER="$HOME/x"' \
+  '"$OTHER/scripts/other.sh", "$ROOTS/scripts/roots.sh" and "$PPV_ROOT/scripts/ppv.sh"' \
+  'Run `"<auditor-skill root>/scripts/rundir.sh" check audit_1`.' > "$RT/sets.md"
+printf '%s\n' '"$ROOT/scripts/elsewhere.sh": this file sets no ROOT' > "$RT/unset.md"
+got=$(rooted_paths "$RT/sets.md" "$RT/unset.md" | sort -u | tr '\n' ' ')
+want='scripts/git-ro.sh scripts/rundir.sh scripts/runner/probe.sh scripts/runner/target.sh vendor/trailofbits/plugins/v/run.py '
+if [ "$got" = "$want" ]; then ok "rooted-path reader: from a root, and from a variable its own file sets to one, in double or single quotes"
+else bad "rooted-path reader lists [$got], want [$want]"; fi
+for p in $(rooted_paths $STRICT_FILES $RUN_FILES | sort -u); do
   case "$p" in
     tools/auditor-tools/target/release/?*)
       b=${p#tools/auditor-tools/target/release/}; b=${b%%/*}

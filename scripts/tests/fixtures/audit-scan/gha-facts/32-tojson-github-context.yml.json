@@ -1,0 +1,25 @@
+{
+  "name": "f32-tojson-github-context",
+  "triggers": [
+    "pull_request_target"
+  ],
+  "permissions": [
+    "contents: read"
+  ],
+  "jobs": [
+    {
+      "id": "log",
+      "line": 9,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 12,
+          "run": "echo '${{ toJSON(github) }}'",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

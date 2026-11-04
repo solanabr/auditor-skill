@@ -9,17 +9,18 @@
 //! would otherwise have to find by hand. The limits are the fast path; a file the
 //! parser still cannot finish ends only its child, and the scan goes on. A snippet
 //! is rendered from the file's tokens, a token at a time, up to `SNIPPET_MAX`
-//! characters.
+//! characters, each token's text kept only as far as a snippet can show it, so a
+//! snippet costs no more for a long literal or a long chain than for a short one.
 
-use std::collections::HashMap;
-use std::ffi::OsStr;
+use std::collections::{HashMap, HashSet};
+use std::ffi::{OsStr, OsString};
 use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
-use std::os::unix::ffi::OsStrExt;
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::MetadataExt;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use proc_macro2::{Delimiter, LineColumn, Spacing, Span, TokenStream, TokenTree};
 use quote::ToTokens;
@@ -29,9 +30,65 @@ use syn::spanned::Spanned;
 use syn::visit::Visit;
 use syn::{Expr, Type};
 
-use crate::confine::{self, is_run_dir_name, os_message, MAX_FILE};
+use crate::confine::{self, is_run_dir_name, os_message, Git, MAX_FILE};
 
 const SNIPPET_MAX: usize = 80;
+
+/// Whether a function or method makes a cross-program call, as far as the last
+/// name of the path it is called by tells: the name holds `invoke`. A fixed list
+/// of names misses each one a crate adds; such names are solana-program's and
+/// solana-cpi's `invoke`, `invoke_signed`, `invoke_unchecked` and
+/// `invoke_signed_unchecked`; pinocchio's `cpi` module's, which adds
+/// `invoke_with_bounds` and `invoke_signed_with_bounds`, 0.9's `slice_invoke` and
+/// `slice_invoke_signed`, and later versions' `invoke_with_slice` and
+/// `invoke_signed_with_slice`; the syscalls those end in, `sol_invoke_signed_c` and
+/// `sol_invoke_signed_rust`; the helpers that build an instruction and make the
+/// call, such as spl-token-2022's `invoke_transfer_checked` and
+/// `invoke_transfer_checked_with_fee` and spl-transfer-hook-interface's
+/// `invoke_execute`; and the methods of the instructions pinocchio-system and
+/// pinocchio-token define (`Transfer { … }.invoke_signed(&signers)`) and of a
+/// Codama-generated client's `…Cpi`, which adds `invoke_with_remaining_accounts` and
+/// `invoke_signed_with_remaining_accounts`. Called as a method, a site's kind is
+/// `method:<name>`. A name written as a raw identifier (`r#invoke`) is that name
+/// (`ident_name`), and a path in parentheses (`(invoke_signed)(…)`) is that path
+/// (`callee`). A function whose name only holds the word (`invoked`) is listed
+/// too; a helper of another name is not. A function taken as a value is listed
+/// where it is named, kind `ref:<name>` (`let cpi = invoke_signed;`), not where it
+/// is called by another name (`cpi(…)`); so is any other path named so that is not
+/// called there, a local such as `invoke_accounts` too.
+fn is_cpi_name(name: &str) -> bool {
+    name.contains("invoke")
+}
+
+/// The functions that derive a program address from seeds, by the last name of
+/// the path they are called by: `find_program_address`, `try_find_program_address`
+/// and `create_program_address` (solana-program's and solana-pubkey's `Pubkey`,
+/// solana-address's `Address`, pinocchio's `pubkey` module), pinocchio's
+/// `checked_create_program_address`, and solana-address's `derive_address`,
+/// `derive_address_const`, `try_derive_address` and `derive_program_address` (the
+/// first two in pinocchio-pubkey too). Each takes the seeds first.
+const PDA_CALLS: [&str; 8] = [
+    "find_program_address",
+    "try_find_program_address",
+    "create_program_address",
+    "checked_create_program_address",
+    "derive_address",
+    "derive_address_const",
+    "try_derive_address",
+    "derive_program_address",
+];
+
+/// How the functions start that derive an associated token account, the program
+/// address the associated-token-account program gives a wallet and a mint, by the
+/// last name of the path they are called by: spl-associated-token-account's and
+/// its client crate's `get_associated_token_address`,
+/// `get_associated_token_address_with_program_id` and
+/// `get_associated_token_address_and_bump_seed` (anchor-spl's
+/// `associated_token` re-exports them), and any other named so. They take the
+/// wallet, the mint and program ids, not seeds, so each argument is listed. A
+/// program's own wrapper of another name is seen only where it calls one of these
+/// or of `PDA_CALLS`, not where it is called.
+const ATA_CALLS: &str = "get_associated_token_address";
 
 /// The most items one file may list (sites, functions, instructions with their
 /// arguments, accounts structs with their fields, PDAs); past them the file is in
@@ -51,6 +108,18 @@ const _: () = assert!(
 /// file is in `skipped` as not parsed.
 pub const MAX_REPORT: usize = 256 << 20;
 
+/// How long a scan may run before it parses no more: past it each further file is
+/// in `skipped` as not parsed. audit-scan counts it from its own start
+/// (`scan_path_until`), so the git questions `--out` asks before the scan are
+/// inside it. A file started before then still has its `confine::PARSE_TIME`, and
+/// a git question asked just before then up to twice `confine::GIT_TIME`, so
+/// audit-scan ends within about 110 seconds, inside the two minutes Claude Code
+/// gives a foreground command by default. A repository whose config includes
+/// other files adds, before git's first answer, one listing of up to
+/// `confine::GIT_TIME` for each config file that mentions an include, so a git
+/// slow to list them can take audit-scan past that bound.
+pub const SCAN_TIME: Duration = Duration::from_secs(90);
+
 /// Group nesting (`(`, `[` and `{`) past which a file is not parsed.
 pub const MAX_DEPTH: usize = 256;
 
@@ -65,6 +134,16 @@ pub const MAX_CHAIN: usize = 20_000;
 /// Directory nesting below the scanned directory past which the walk does not go:
 /// it holds a descriptor open for each level.
 pub const MAX_WALK: usize = 128;
+
+/// How the `CACHEDIR.TAG` file cargo writes in each target directory it makes
+/// starts: the signature that the Cache Directory Tagging Specification gives
+/// every such tag.
+const CACHEDIR_TAG: &[u8] = b"Signature: 8a477f597d28d172789f06886806bc55";
+
+/// How the `.rustc_info.json` file cargo writes in each target directory it builds
+/// in starts: in one made before cargo's first build too (as `anchor` can make
+/// `target/deploy`), where it writes no `CACHEDIR.TAG`.
+const RUSTC_INFO: &[u8] = b"{\"rustc_fingerprint\":";
 
 /// The stacks the child that parses a file runs on, the first the system grants:
 /// syn's parser, the visit and the drop of a tree recurse on it, one level for
@@ -89,15 +168,41 @@ pub struct ScanReport {
     pub cpi_sites: Vec<CpiSite>,
     pub remaining_accounts_sites: Vec<RemainingAccountsSite>,
     pub functions: Vec<FunctionDef>,
+    /// Workflows read by the `--workflows` pass (empty without it): each
+    /// `.github/workflows/*.yml` as trigger → job → step facts.
+    pub workflows: Vec<crate::workflow::Workflow>,
     /// Every symbolic link the walk did not follow, every directory it did not
-    /// enter, and every `*.rs` file it did not parse, with the reason.
+    /// enter, every `*.rs` file it did not parse, and every file a parsed one
+    /// brings in that it does not parse, with the reason.
     pub skipped: Vec<Skipped>,
+    /// The files a parsed file brings in, as the child reports them for the walk
+    /// to place (`Scan::file`); never printed, as the walk empties it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub brought_in: Vec<BroughtIn>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Skipped {
     pub file: String,
     pub reason: String,
+}
+
+/// A file a parsed file brings in, which rustc compiles as part of it: the one a
+/// `#[path = "…"]` attribute names for a module declared without a body (`#[path
+/// = "cpi.inc"] mod cpi;`, a `path = "…"` in a `#[cfg_attr(…)]` too), or the one
+/// `include!` names (`include!("more.in")`). The walk lists it in `skipped`
+/// unless it parses it (`unparsed`).
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BroughtIn {
+    pub line: usize,
+    /// `#[path]` or `include!`.
+    pub by: String,
+    /// The path written; none for an `include!` of something other than a string
+    /// literal, such as `concat!(env!("OUT_DIR"), "/gen.rs")`.
+    pub name: Option<String>,
+    /// For `#[path]`, the inline modules around it, outermost first, each as the
+    /// directory it adds: the value of its own `#[path]`, or else its name.
+    pub within: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -149,11 +254,15 @@ pub struct AccountConstraints {
     pub raw: String,
 }
 
+/// A program address derived from seeds: an Accounts field's `seeds = [...]`
+/// constraint (kind `seeds`), or a call to one of `PDA_CALLS` or `ATA_CALLS`
+/// (kind: the function's name; `struct` and `field` are then empty).
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Pda {
     #[serde(rename = "struct")]
     pub struct_name: String,
     pub field: String,
+    pub kind: String,
     pub seeds: Vec<String>,
     pub file: String,
     pub line: usize,
@@ -269,7 +378,9 @@ impl ScanReport {
             cpi_sites: Vec::new(),
             remaining_accounts_sites: Vec::new(),
             functions: Vec::new(),
+            workflows: Vec::new(),
             skipped: Vec::new(),
+            brought_in: Vec::new(),
         }
     }
 }
@@ -285,10 +396,17 @@ fn relabel<T>(into: &mut Vec<T>, from: Vec<T>, label: &str, file: fn(&mut T) -> 
 /// Scan every `*.rs` file under the directory `root`, a path relative to the
 /// working directory, returning one merged report, the files parsed in a child of
 /// this binary started by the path it runs from (`confine::Parser`), each given
-/// `confine::PARSE_TIME`.
+/// `confine::PARSE_TIME`, for `SCAN_TIME` in all.
 pub fn scan_path(root: &Path) -> io::Result<ScanReport> {
+    scan_path_until(root, Instant::now().checked_add(SCAN_TIME))
+}
+
+/// `scan_path`, handing no file to the child once `until` has passed (never, for
+/// `None`). audit-scan passes `SCAN_TIME` from its own start, so what it asks git
+/// about `--out` before the scan counts in that time.
+pub fn scan_path_until(root: &Path, until: Option<Instant>) -> io::Result<ScanReport> {
     let mut parser = confine::Parser::new(&confine::own_exe()?);
-    Ok(scan_path_with(root, MAX_REPORT, &mut |bytes| {
+    Ok(scan_until(root, MAX_REPORT, until, &mut |bytes| {
         parser.parse(bytes, confine::PARSE_TIME)
     }))
 }
@@ -297,7 +415,8 @@ pub fn scan_path(root: &Path) -> io::Result<ScanReport> {
 /// `parse`, which gives the report of that one file as `parse_stdin` answers it,
 /// or `None` when the parser could not finish. The report holds about `cap` bytes
 /// at most: the file that would take it past them, and each file after it, is in
-/// `skipped` as not parsed.
+/// `skipped` as not parsed. No file is handed to `parse` once the scan has run for
+/// `time`: each is in `skipped` as not parsed.
 ///
 /// The walk opens each directory from its parent's descriptor without following a
 /// link, so a name swapped for a link while it runs is not entered, and reads only
@@ -305,33 +424,58 @@ pub fn scan_path(root: &Path) -> io::Result<ScanReport> {
 /// link it meets, every directory nested more than `MAX_WALK` levels down, and
 /// every `*.rs` file it does not parse (not regular, too large, unreadable, not
 /// UTF-8, nested or chained too deeply, not Rust that `syn` parses, one the parser
-/// could not finish, or one past the report's cap) is listed in `skipped`.
-/// Directories named `target`, `.git` and `node_modules` below `root` are pruned,
-/// and so are the run directories and `.audit-memory/` when `root` is the working
-/// directory. Entries are visited in byte order of their names.
+/// could not finish, or one past the report's cap or the scan's time) is listed in
+/// `skipped`, and so is every file a parsed one brings in by `#[path]` or
+/// `include!` that the walk does not parse (`unparsed`; one that lies where the
+/// walk would parse it, once the walk is done, `Scan::unreached`). Directories
+/// named `.git` and `node_modules` below `root` are pruned, and so is one named
+/// `target` that cargo has built in (`cargo_built`), and, when `root` is the
+/// working directory, the run directories and the store an audit made in it
+/// (`Scan::own_output`), each listed in `skipped` too. Entries are visited in byte
+/// order of their names.
 pub fn scan_path_with(
     root: &Path,
     cap: usize,
+    time: Duration,
+    parse: &mut dyn FnMut(&[u8]) -> Option<Vec<u8>>,
+) -> ScanReport {
+    scan_until(root, cap, Instant::now().checked_add(time), parse)
+}
+
+/// `scan_path_with`, handing no file to `parse` once `until` has passed (never,
+/// for `None`).
+fn scan_until(
+    root: &Path,
+    cap: usize,
+    until: Option<Instant>,
     parse: &mut dyn FnMut(&[u8]) -> Option<Vec<u8>>,
 ) -> ScanReport {
     let mut scan = Scan {
         report: ScanReport::new(root.display().to_string(), 0),
+        root: root.to_path_buf(),
         top: root == Path::new("."),
         parse,
         size: 0,
         cap,
         full: false,
+        until,
+        git: None,
+        parsed: HashSet::new(),
+        listed: HashSet::new(),
+        entered: HashSet::new(),
+        reachable: Vec::new(),
     };
     match open_root(root) {
         Ok(dir) => scan.dir(&dir, root, 0),
         Err(e) => scan.skip(root, format!("cannot be read: {}", os_message(&e))),
     }
+    scan.unreached();
     scan.report
 }
 
 /// The directory to scan, each name on its way opened from the one before
 /// without following a link.
-fn open_root(root: &Path) -> io::Result<OwnedFd> {
+pub(crate) fn open_root(root: &Path) -> io::Result<OwnedFd> {
     let mut dir = confine::open_dir(libc::AT_FDCWD, b".")?;
     if root != Path::new(".") {
         for part in root.as_os_str().as_bytes().split(|&c| c == b'/') {
@@ -342,23 +486,162 @@ fn open_root(root: &Path) -> io::Result<OwnedFd> {
 }
 
 /// A scan under way: the report so far, whether the root is the working
-/// directory, what parses a file, and the report's size, about as it prints,
-/// against its cap.
+/// directory, what parses a file, the report's size, about as it prints, against
+/// its cap, when it parses no more (never, when that is past what an `Instant`
+/// holds), git in the working directory, found on first use (`own_output`;
+/// `Some(None)` when the working directory cannot be resolved, and once git has
+/// not answered), each file parsed, each path listed in `skipped` and each
+/// directory entered so far, as `folded` gives them, and the files parsed ones
+/// bring in, listed once the walk is done (`unreached`).
 struct Scan<'p> {
     report: ScanReport,
+    root: PathBuf,
     top: bool,
     parse: &'p mut dyn FnMut(&[u8]) -> Option<Vec<u8>>,
     size: usize,
     cap: usize,
     full: bool,
+    until: Option<Instant>,
+    git: Option<Option<Git>>,
+    parsed: HashSet<PathBuf>,
+    listed: HashSet<PathBuf>,
+    entered: HashSet<PathBuf>,
+    reachable: Vec<Reachable>,
 }
 
 impl Scan<'_> {
+    /// Whether `name`, a directory directly in the working directory (a run
+    /// directory's name, or `.audit-memory`), is an audit's own output: it holds
+    /// the mark `rundir.sh new` and `audit-mem init` write first, a `.gitignore` of
+    /// exactly `*`, and no repository tracks it in any letter case, as
+    /// confine.sh's `confine_tracked` asks. git is asked only about a directory
+    /// with the mark, and only while the scan has time; one git does not answer
+    /// for is not taken for an audit's output, and once git has not answered, it
+    /// is asked no more, so each such directory after it is scanned too.
+    fn own_output(&mut self, name: &[u8]) -> bool {
+        if !confine::ignores_all(&Path::new(OsStr::from_bytes(name)).join(".gitignore"))
+            || self.spent()
+        {
+            return false;
+        }
+        let found = self
+            .git
+            .get_or_insert_with(|| confine::working_tree().ok().map(|wt| Git::new(&wt)));
+        let Some(git) = found.as_mut() else {
+            return false;
+        };
+        let listed = match git.need() {
+            Ok(()) => git.tracked(name),
+            Err(_) => None,
+        };
+        if listed.is_none() {
+            self.git = Some(None);
+        }
+        listed.is_some_and(|listed| listed.is_empty())
+    }
+
+    /// Whether the scan has run for its time.
+    fn spent(&self) -> bool {
+        self.until.is_some_and(|until| Instant::now() >= until)
+    }
+
     fn skip(&mut self, path: &Path, reason: impl Into<String>) {
+        self.listed.insert(folded(path));
         self.report.skipped.push(Skipped {
             file: path.display().to_string(),
             reason: reason.into(),
         });
+    }
+
+    /// Each file a parsed one brings in, once the walk is done: in `skipped`, with
+    /// why (`Reachable::entry`), at each place rustc may find it that the walk did
+    /// not parse there (`placed`). When there is none, and the walk parsed the file
+    /// at no place, the first place where rustc finds no file is listed.
+    fn unreached(&mut self) {
+        let base = lexical(&self.root);
+        for r in std::mem::take(&mut self.reachable) {
+            let mut parsed = false;
+            let mut absent = None;
+            let mut entries = Vec::new();
+            for p in &r.places {
+                match self.placed(&base, p) {
+                    Placed::Parsed => parsed = true,
+                    Placed::Unparsed(why) => entries.push(r.entry(p, &why)),
+                    Placed::Absent(why) => {
+                        absent.get_or_insert_with(|| r.entry(p, &why));
+                    }
+                }
+            }
+            if entries.is_empty() && !parsed {
+                entries.extend(absent);
+            }
+            self.report.skipped.append(&mut entries);
+        }
+    }
+
+    /// What the walk tells of `p`, a place rustc may find a brought-in file in,
+    /// under the root `base` (as `lexical` gives it): that it parsed the file there
+    /// or listed it itself (`Parsed`); that rustc may compile a file there that it
+    /// did not parse (`Unparsed`), with why; or that rustc finds no file there
+    /// (`Absent`), with why. A `..` out of a directory the walk entered leads where
+    /// `lexical` says; one out of a directory the walk cannot tell of (`unknown`),
+    /// such as a link, may lead anywhere, and one out of a directory it did not
+    /// find leads nowhere.
+    fn placed(&self, base: &Path, p: &Place) -> Placed {
+        if let Err(d) = lexical_until(&p.written, |d| !self.walked(base, d)) {
+            let shown = shown_at(&self.root, base, &d);
+            return if self.unknown(base, &d) {
+                Placed::Unparsed(leaves(&shown, true))
+            } else {
+                Placed::Absent(leaves(&shown, false))
+            };
+        }
+        match p.kind {
+            PlaceKind::Outside => Placed::Unparsed(OUTSIDE.to_string()),
+            PlaceKind::NotRs => match p.at.parent() {
+                Some(dir) if !self.walked(base, dir) && !self.unknown(base, dir) => {
+                    Placed::Absent(NOT_RS.to_string())
+                }
+                _ => Placed::Unparsed(NOT_RS.to_string()),
+            },
+            PlaceKind::Rs => {
+                let at = folded(&p.at);
+                if self.parsed.contains(&at) || self.listed.contains(&at) {
+                    Placed::Parsed
+                } else if p
+                    .at
+                    .ancestors()
+                    .skip(1)
+                    .any(|d| self.listed.contains(&folded(d)))
+                {
+                    Placed::Unparsed(UNENTERED.to_string())
+                } else if p.at.as_os_str().is_ascii() {
+                    Placed::Absent(NOT_FOUND.to_string())
+                } else {
+                    Placed::Unparsed(NOT_FOUND.to_string())
+                }
+            }
+        }
+    }
+
+    /// Whether the walk entered the directory `d` (as `lexical` gives it), or
+    /// opened it on its way to the root `base`: a directory, not a link, so a `..`
+    /// out of it leads where `lexical` says. Its letters may be in any case, as a
+    /// filesystem that ignores case opens it.
+    fn walked(&self, base: &Path, d: &Path) -> bool {
+        let d = folded(d);
+        self.entered.contains(&d) || folded(base).starts_with(&d)
+    }
+
+    /// Whether the walk cannot tell what `d` (as `lexical` gives it), a directory
+    /// it did not enter, is: one outside the root `base`, one in or below a path it
+    /// lists in `skipped` (a link, or a directory it prunes or could not read), or
+    /// one with a byte outside ASCII in its name, which another spelling of a
+    /// directory the walk did enter may open.
+    fn unknown(&self, base: &Path, d: &Path) -> bool {
+        !inside(base, d)
+            || !d.as_os_str().is_ascii()
+            || d.ancestors().any(|a| self.listed.contains(&folded(a)))
     }
 
     /// The entries of the directory `dir`, named `path`, `depth` levels below the
@@ -368,6 +651,7 @@ impl Scan<'_> {
             Ok(names) => names,
             Err(e) => return self.skip(path, format!("cannot be read: {}", os_message(&e))),
         };
+        self.entered.insert(folded(path));
         for name in names {
             let child = path.join(OsStr::from_bytes(&name));
             let kind = match confine::kind_at(dir.as_raw_fd(), &name) {
@@ -387,19 +671,34 @@ impl Scan<'_> {
         }
     }
 
-    /// A directory in `dir`: build output, git's own directory, installed
-    /// packages and, when the root is the working directory, its run directories
-    /// and `.audit-memory/` (an audit's own output) are not entered.
+    /// A directory in `dir`. git's own directory and installed packages, by their
+    /// names, are not entered, nor is cargo's build output, a `target` directory
+    /// cargo has built in (`cargo_built`); nor, when the root is the working
+    /// directory, are the run directories and the store an audit made in it
+    /// (`own_output`). Each is in `skipped`, with why.
     fn subdir(&mut self, dir: &OwnedFd, name: &[u8], path: &Path, depth: usize) {
-        if matches!(name, b"target" | b".git" | b"node_modules")
-            || (self.top && depth == 1 && (name == b".audit-memory" || is_run_dir_name(name)))
-        {
-            return;
+        let pruned = match name {
+            b".git" => Some("a .git/ directory (git's own), not scanned"),
+            b"node_modules" => Some("a node_modules/ directory (installed packages), not scanned"),
+            b".audit-memory" if self.top && depth == 1 && self.own_output(name) => {
+                Some("the audit-mem store (a .gitignore of * and nothing tracked), not scanned")
+            }
+            _ if self.top && depth == 1 && is_run_dir_name(name) && self.own_output(name) => {
+                Some("a run directory (a .gitignore of * and nothing tracked), not scanned")
+            }
+            _ => None,
+        };
+        if let Some(why) = pruned {
+            return self.skip(path, why);
         }
         if depth > MAX_WALK {
             return self.skip(path, "nested too deeply to walk");
         }
         match confine::open_dir(dir.as_raw_fd(), name) {
+            Ok(sub) if name == b"target" && cargo_built(&sub) => self.skip(
+                path,
+                "a target/ directory cargo built in (it holds CACHEDIR.TAG or .rustc_info.json), not scanned",
+            ),
             Ok(sub) => self.dir(&sub, path, depth),
             Err(e) => match confine::kind_at(dir.as_raw_fd(), name) {
                 Ok(libc::S_IFLNK) => self.skip(path, "a symbolic link, not followed"),
@@ -409,11 +708,15 @@ impl Scan<'_> {
     }
 
     /// A `*.rs` file, its bytes parsed by `parse`, its report added under its path
-    /// while the report has room for it.
+    /// while the report has room for it and the scan has time.
     fn file(&mut self, dir: &OwnedFd, name: &[u8], path: &Path) {
         const FULL: &str = "not parsed: the report is full";
+        const SPENT: &str = "not parsed: the scan's time is spent";
         if self.full {
             return self.skip(path, FULL);
+        }
+        if self.spent() {
+            return self.skip(path, SPENT);
         }
         let one = read_bytes(dir.as_raw_fd(), name).and_then(|bytes| {
             (self.parse)(&bytes)
@@ -421,27 +724,297 @@ impl Scan<'_> {
                 .ok_or_else(|| "the parser could not finish".to_string())
         });
         match one {
-            Ok((len, one)) => {
+            Ok((len, mut one)) => {
                 let label = path.display().to_string();
                 let shown = serde_json::to_string(&label)
                     .map_or(label.len(), |j| confine::json_text(j).len());
-                let size = len.saturating_add(one.items().saturating_mul(shown));
+                // Each file it brings in that is not parsed prints as an entry of its
+                // own, not as the child gives it, so it counts as it prints; one
+                // listed once the walk is done counts as the most it may print.
+                let more: Vec<Brought> = std::mem::take(&mut one.brought_in)
+                    .iter()
+                    .map(|b| unparsed(&self.root, path, b))
+                    .collect();
+                let size = more.iter().fold(
+                    len.saturating_add(one.items().saturating_mul(shown)),
+                    |size, b| size.saturating_add(b.size()),
+                );
                 if self.size.saturating_add(size) > self.cap {
                     self.full = true;
                     return self.skip(path, FULL);
                 }
                 self.size += size;
+                self.parsed.insert(folded(path));
                 self.report.absorb(one, &label);
+                for b in more {
+                    match b {
+                        Brought::Listed(s) => self.report.skipped.push(s),
+                        Brought::Reachable(r) => self.reachable.push(r),
+                    }
+                }
             }
             Err(reason) => self.skip(path, reason),
         }
     }
 }
 
-/// A `*.rs` file's bytes: a regular file with one name (a second name could be a
+/// A file a parsed one brings in, as the walk lists it (`unparsed`).
+enum Brought {
+    /// In `skipped` as it is, whatever the walk finds.
+    Listed(Skipped),
+    /// One listed once the walk is done, by what it found (`Scan::unreached`).
+    Reachable(Reachable),
+}
+
+/// A file a parsed one brings in by a name written, brought in `by`, at each of
+/// the `places` rustc may find it (`unparsed`).
+struct Reachable {
+    places: Vec<Place>,
+    by: String,
+}
+
+/// A place rustc may find a brought-in file in: `at` as `lexical` gives it,
+/// shown as `file`, the path as written (`written`, read again once the walk is
+/// done for the directories its `..`s leave), the longest any of those may show,
+/// when a `..` leaves one (`climbs`), and what `at` is to the walk.
+struct Place {
+    at: PathBuf,
+    file: String,
+    written: PathBuf,
+    climbs: Option<String>,
+    kind: PlaceKind,
+}
+
+/// What a place is to the walk: a `*.rs` inside the root, which it parses where
+/// it finds it, a file not named `*.rs`, or a `*.rs` outside the root.
+enum PlaceKind {
+    Rs,
+    NotRs,
+    Outside,
+}
+
+/// What the walk tells of a place (`Scan::placed`).
+enum Placed {
+    Parsed,
+    Unparsed(String),
+    Absent(String),
+}
+
+/// Why the walk did not parse a brought-in file: a directory on its way is in
+/// `skipped` (one the walk prunes, a link, one it could not read or nested too
+/// deeply), no such file was there, it is not named `*.rs`, or it lies outside
+/// the root.
+const UNENTERED: &str = "in a directory the walk did not enter";
+const NOT_FOUND: &str = "the walk found no such file";
+const NOT_RS: &str = "not named *.rs";
+const OUTSIDE: &str = "outside the directory scanned";
+
+/// Why the walk did not parse a brought-in file whose path leaves `dir` by `..`:
+/// the walk did not enter `dir`, which may be a link, so the file may lie
+/// elsewhere (`unknown`), or it found no such directory.
+fn leaves(dir: &str, unknown: bool) -> String {
+    if unknown {
+        format!(
+            "its path leaves {dir} by .., a directory the walk did not enter, so rustc may find \
+             the file elsewhere"
+        )
+    } else {
+        format!("its path leaves {dir} by .., a directory the walk did not find")
+    }
+}
+
+impl Reachable {
+    fn entry(&self, p: &Place, why: &str) -> Skipped {
+        Skipped {
+            file: p.file.clone(),
+            reason: format!("not parsed: {why}; {}", self.by),
+        }
+    }
+}
+
+impl Brought {
+    /// The most its entries in `skipped` take as they print: for each place, the
+    /// longest entry it may get.
+    fn size(&self) -> usize {
+        let printed = |s: &Skipped| crate::workflow::printed_size(s, false, 0);
+        match self {
+            Brought::Listed(s) => printed(s),
+            Brought::Reachable(r) => r.places.iter().fold(0, |size, p| {
+                let whys = match p.kind {
+                    PlaceKind::Rs => vec![UNENTERED.to_string(), NOT_FOUND.to_string()],
+                    PlaceKind::NotRs => vec![NOT_RS.to_string()],
+                    PlaceKind::Outside => vec![OUTSIDE.to_string()],
+                };
+                let most = whys
+                    .into_iter()
+                    .chain(
+                        p.climbs
+                            .iter()
+                            .flat_map(|dir| [leaves(dir, true), leaves(dir, false)]),
+                    )
+                    .map(|why| printed(&r.entry(p, &why)))
+                    .max()
+                    .unwrap_or(0);
+                size.saturating_add(most)
+            }),
+        }
+    }
+}
+
+/// A file that `path`, a file the walk parsed under `root`, brings in (`b`), as
+/// the walk lists it: for an `include!` of a name that is not a string literal,
+/// which names no file to place, `path` itself; else by each place rustc may find
+/// it (`Reachable`). That is from the directory of `path`, and for a `#[path]`
+/// inside inline modules from there through the modules' directories, below one
+/// named for `path` unless rustc takes `path` for a mod.rs, as it takes a
+/// `mod.rs`, a crate's root of any name and a file a `#[path]` brings in. The walk
+/// cannot tell the last two, so for a file not named `mod.rs` it tries both
+/// places: first a crate root's for a `lib.rs` or `main.rs`, and a module file's
+/// for any other. `.` and `..` are taken as written (`lexical_until`), no link is
+/// followed, and nothing is opened.
+fn unparsed(root: &Path, path: &Path, b: &BroughtIn) -> Brought {
+    let by = format!(
+        "{} brings it in ({}, line {})",
+        path.display(),
+        b.by,
+        b.line
+    );
+    let Some(name) = &b.name else {
+        return Brought::Listed(Skipped {
+            file: path.display().to_string(),
+            reason: format!(
+                "brings in a file it names with no string literal ({}, line {}), which is not parsed",
+                b.by, b.line
+            ),
+        });
+    };
+    let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
+    let dirs = if b.within.is_empty() {
+        vec![dir]
+    } else {
+        let mut stem = dir.clone();
+        stem.extend(path.file_stem());
+        stem.extend(&b.within);
+        let mut plain = dir;
+        plain.extend(&b.within);
+        match path.file_name().map(OsStr::as_bytes) {
+            Some(b"mod.rs") => vec![plain],
+            Some(b"lib.rs" | b"main.rs") => vec![plain, stem],
+            _ => vec![stem, plain],
+        }
+    };
+    let base = lexical(root);
+    let places = dirs
+        .iter()
+        .map(|d| place_of(root, &base, &d.join(name)))
+        .collect();
+    Brought::Reachable(Reachable { places, by })
+}
+
+/// The place `written` names, for the root `root` (`base` as `lexical` gives it).
+fn place_of(root: &Path, base: &Path, written: &Path) -> Place {
+    let mut climbs = None;
+    let (Ok(at) | Err(at)) = lexical_until(written, |_| {
+        // A directory a `..` leaves shows as part of `root` and `written` at most.
+        climbs.get_or_insert_with(|| format!("{}/{}", root.display(), written.display()));
+        false
+    });
+    let kind = if !at
+        .file_name()
+        .is_some_and(|n| n.as_bytes().ends_with(b".rs"))
+    {
+        PlaceKind::NotRs
+    } else if !inside(base, &at) {
+        PlaceKind::Outside
+    } else {
+        PlaceKind::Rs
+    };
+    Place {
+        file: shown_at(root, base, &at),
+        at,
+        written: written.to_path_buf(),
+        climbs,
+        kind,
+    }
+}
+
+/// Whether `at`, as `lexical` gives it, lies inside the root `base`.
+fn inside(base: &Path, at: &Path) -> bool {
+    at.is_relative() && !at.starts_with("..") && at.starts_with(base)
+}
+
+/// `at`, as `lexical` gives it, as the walk names it: below the root as given,
+/// `root`, when it lies inside it (`base`), else as it is.
+fn shown_at(root: &Path, base: &Path, at: &Path) -> String {
+    match at.strip_prefix(base) {
+        Ok(rest) if inside(base, at) => root.join(rest),
+        _ => at.to_path_buf(),
+    }
+    .display()
+    .to_string()
+}
+
+/// `path` as `lexical` gives it, `Ok`; or, at the first directory a `..` in it
+/// leaves for which `stop` is true, that directory as it is then, `Err`. Each is
+/// handed to `stop` in turn and none is kept.
+fn lexical_until(path: &Path, mut stop: impl FnMut(&Path) -> bool) -> Result<PathBuf, PathBuf> {
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir
+                if matches!(out.components().next_back(), Some(Component::Normal(_))) =>
+            {
+                if stop(&out) {
+                    return Err(out);
+                }
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    Ok(out)
+}
+
+/// `path` with each `.` left out and each `..` taking off the name before it,
+/// while there is one; a `..` past the start is kept.
+fn lexical(path: &Path) -> PathBuf {
+    let (Ok(out) | Err(out)) = lexical_until(path, |_| false);
+    out
+}
+
+/// `path` as `lexical` gives it, each ASCII letter in lower case: the walk keeps
+/// and compares paths so, as a filesystem that ignores case opens them.
+fn folded(path: &Path) -> PathBuf {
+    let mut bytes = lexical(path).into_os_string().into_vec();
+    bytes.make_ascii_lowercase();
+    PathBuf::from(OsString::from_vec(bytes))
+}
+
+/// Whether cargo has built in the directory `dir`: it holds the `CACHEDIR.TAG`
+/// cargo writes in a target directory it makes, or the `.rustc_info.json` it
+/// writes in each one it builds in.
+fn cargo_built(dir: &OwnedFd) -> bool {
+    file_starts_with(dir, b"CACHEDIR.TAG", CACHEDIR_TAG)
+        || file_starts_with(dir, b".rustc_info.json", RUSTC_INFO)
+}
+
+/// Whether `name` in the directory `dir` is a regular file, opened without
+/// following a link or blocking on a FIFO, that starts with `start`.
+fn file_starts_with(dir: &OwnedFd, name: &[u8], start: &[u8]) -> bool {
+    let Ok(file) = confine::open_file(dir.as_raw_fd(), name) else {
+        return false;
+    };
+    let mut head = Vec::new();
+    file.metadata().is_ok_and(|md| md.file_type().is_file())
+        && file.take(start.len() as u64).read_to_end(&mut head).is_ok()
+        && head == start
+}
+
+/// A file's bytes: a regular file with one name (a second name could be a
 /// file outside the tree) of at most 4 MiB, opened from its directory without
 /// following a link or blocking on a FIFO.
-fn read_bytes(dir: RawFd, name: &[u8]) -> Result<Vec<u8>, String> {
+pub(crate) fn read_bytes(dir: RawFd, name: &[u8]) -> Result<Vec<u8>, String> {
     let unreadable = |e: io::Error| format!("cannot be read: {}", os_message(&e));
     let file = confine::open_file(dir, name).map_err(unreadable)?;
     let md = file.metadata().map_err(unreadable)?;
@@ -680,8 +1253,11 @@ fn tokens_string<T: ToTokens>(node: &T) -> String {
 /// tokens and its closing, each where it starts: what snippets are rendered from.
 struct Tokens {
     atoms: Vec<Atom>,
-    /// The text of every token, one after another.
+    /// The text of every token, one after another, each as far as a snippet can
+    /// show it (`Tokens::push_token`).
     text: String,
+    /// The token being added, as proc-macro2 prints it.
+    printed: String,
 }
 
 #[derive(Clone, Copy)]
@@ -799,6 +1375,7 @@ impl Tokens {
         let mut tokens = Tokens {
             atoms: Vec::new(),
             text: String::new(),
+            printed: String::new(),
         };
         let mut around: Vec<Level> = Vec::new();
         let mut level = Level::new(stream.into_iter(), None, 0);
@@ -899,10 +1476,31 @@ impl Tokens {
         });
     }
 
+    /// A token, its text kept as a snippet holds it (`Snippet`): each run of
+    /// whitespace one space, cut once more than `SNIPPET_MAX` characters are in,
+    /// after a character that is not whitespace. A render then reads at most that
+    /// much of any token, however long a literal or its whitespace runs.
     fn push_token(&mut self, tt: &TokenTree) {
         use std::fmt::Write;
+        self.printed.clear();
+        let _ = write!(self.printed, "{tt}");
         let start = self.text.len();
-        let _ = write!(self.text, "{tt}");
+        let (mut chars, mut space) = (0usize, false);
+        for c in self.printed.chars() {
+            if chars > SNIPPET_MAX {
+                break;
+            }
+            if c.is_whitespace() {
+                space = chars > 0;
+                continue;
+            }
+            if std::mem::take(&mut space) {
+                self.text.push(' ');
+                chars += 1;
+            }
+            self.text.push(c);
+            chars += 1;
+        }
         let joint = matches!(tt, TokenTree::Punct(p) if p.spacing() == Spacing::Joint);
         let at = u32::try_from(start).unwrap_or(u32::MAX);
         let len = u32::try_from(self.text.len() - start).unwrap_or(0);
@@ -1393,6 +1991,9 @@ struct FileVisitor<'t> {
     /// a chain's are found once for all its links.
     firsts: HashMap<usize, Span>,
     lasts: HashMap<usize, Span>,
+    /// The path each call calls, by its address, until the visit reaches it: the
+    /// call's, which `visit_expr_call` lists, not a value `visit_expr_path` lists.
+    callees: HashSet<usize>,
     /// The items listed so far, the bytes the answer would take with them, and,
     /// once more are left out, why (`room`).
     listed: usize,
@@ -1409,6 +2010,10 @@ struct FileVisitor<'t> {
     cpi_sites: Vec<CpiSite>,
     remaining_accounts_sites: Vec<RemainingAccountsSite>,
     functions: Vec<FunctionDef>,
+    brought_in: Vec<BroughtIn>,
+    /// The inline modules the visit is in, outermost first, each as the
+    /// directory it adds to a `#[path]` inside it (`BroughtIn::within`).
+    mods: Vec<String>,
 }
 
 impl<'t> FileVisitor<'t> {
@@ -1428,6 +2033,7 @@ impl<'t> FileVisitor<'t> {
             tokens,
             firsts: HashMap::new(),
             lasts: HashMap::new(),
+            callees: HashSet::new(),
             listed: 0,
             size: around,
             full: None,
@@ -1441,6 +2047,8 @@ impl<'t> FileVisitor<'t> {
             cpi_sites: Vec::new(),
             remaining_accounts_sites: Vec::new(),
             functions: Vec::new(),
+            brought_in: Vec::new(),
+            mods: Vec::new(),
         }
     }
 
@@ -1489,6 +2097,7 @@ impl<'t> FileVisitor<'t> {
             .remaining_accounts_sites
             .extend(self.remaining_accounts_sites);
         report.functions.extend(self.functions);
+        report.brought_in.extend(self.brought_in);
     }
 
     /// The first token of `e`, found down its left operands; every expression on
@@ -1564,6 +2173,7 @@ impl<'t> FileVisitor<'t> {
                     pdas.push(Pda {
                         struct_name: String::new(),
                         field: field_name.clone(),
+                        kind: "seeds".to_string(),
                         seeds: seeds.clone(),
                         file: self.file.clone(),
                         line: field.ident.span().start().line,
@@ -1600,6 +2210,38 @@ impl<'t> FileVisitor<'t> {
         }
         self.accounts_structs.push(accounts);
     }
+
+    /// A call that derives a program address, called by `name`, with `seeds`, each
+    /// as its snippet: for `PDA_CALLS` what its first argument gives, each element
+    /// of an array, `[a, b]` or `&[a, b]`, or else the argument itself; for
+    /// `ATA_CALLS` each argument. The seeds are rendered only while the file's
+    /// answer has room for them.
+    fn record_derivation(&mut self, name: &syn::Ident, seeds: Vec<&Expr>, kind: String) {
+        if self.full.is_some() {
+            return;
+        }
+        let mut pda = Pda {
+            struct_name: String::new(),
+            field: String::new(),
+            kind,
+            seeds: Vec::new(),
+            file: self.file.clone(),
+            line: name.span().start().line,
+        };
+        let mut bytes = json_size(&pda);
+        for seed in seeds {
+            let (first, last) = (self.first(seed), self.last(seed));
+            let text = self.snippet(seed, first, last);
+            // The seed and the comma before the next.
+            bytes = bytes.saturating_add(json_size(&text)).saturating_add(1);
+            if self.size.saturating_add(bytes) > confine::MAX_ANSWER {
+                self.full = Some(LISTS_WHAT_FITS);
+                return;
+            }
+            pda.seeds.push(text);
+        }
+        self.list(1, pda, |v| &mut v.pdas);
+    }
 }
 
 impl<'ast> Visit<'ast> for FileVisitor<'_> {
@@ -1617,6 +2259,25 @@ impl<'ast> Visit<'ast> for FileVisitor<'_> {
     }
 
     fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {
+        // A module declared without a body, from the file each of its `path`
+        // attributes names; one with a body adds a directory to those inside it.
+        let paths = path_values(&node.attrs);
+        let inline = node.content.is_some();
+        if inline {
+            let dir = paths.into_iter().next();
+            self.mods
+                .push(dir.unwrap_or_else(|| ident_name(&node.ident)));
+        } else {
+            for name in paths {
+                let brought = BroughtIn {
+                    line: node.mod_token.span.start().line,
+                    by: "#[path]".to_string(),
+                    name: Some(name),
+                    within: self.mods.clone(),
+                };
+                self.list(1, brought, |v| &mut v.brought_in);
+            }
+        }
         let is_program = has_attr_path(&node.attrs, "program");
         if is_program {
             self.program_depth += 1;
@@ -1632,6 +2293,9 @@ impl<'ast> Visit<'ast> for FileVisitor<'_> {
         syn::visit::visit_item_mod(self, node);
         if is_program {
             self.program_depth -= 1;
+        }
+        if inline {
+            self.mods.pop();
         }
     }
 
@@ -1693,16 +2357,30 @@ impl<'ast> Visit<'ast> for FileVisitor<'_> {
     }
 
     fn visit_expr_method_call(&mut self, node: &'ast syn::ExprMethodCall) {
-        let method = node.method.to_string();
-        if method == "unwrap" || method == "expect" {
+        let method = ident_name(&node.method);
+        let cpi = is_cpi_name(&method);
+        if method == "unwrap" || method == "expect" || cpi {
             let first = attrs_first(&node.attrs).unwrap_or_else(|| self.first(&node.receiver));
-            let site = PanicSite {
-                file: self.file.clone(),
-                line: node.method.span().start().line,
-                kind: method,
-                snippet: self.snippet(node, first, node.paren_token.span.close()),
-            };
-            self.list(1, site, |v| &mut v.panic_sites);
+            let (file, line) = (self.file.clone(), node.method.span().start().line);
+            let snippet = self.snippet(node, first, node.paren_token.span.close());
+            if cpi {
+                let kind = format!("method:{method}");
+                let site = CpiSite {
+                    file,
+                    line,
+                    kind,
+                    snippet,
+                };
+                self.list(1, site, |v| &mut v.cpi_sites);
+            } else {
+                let site = PanicSite {
+                    file,
+                    line,
+                    kind: method,
+                    snippet,
+                };
+                self.list(1, site, |v| &mut v.panic_sites);
+            }
         }
         syn::visit::visit_expr_method_call(self, node);
     }
@@ -1721,7 +2399,7 @@ impl<'ast> Visit<'ast> for FileVisitor<'_> {
 
     fn visit_macro(&mut self, node: &'ast syn::Macro) {
         if let Some(seg) = node.path.segments.last() {
-            let name = seg.ident.to_string();
+            let name = ident_name(&seg.ident);
             if matches!(name.as_str(), "panic" | "unreachable" | "unwrap") {
                 let first = path_first(&node.path);
                 let site = PanicSite {
@@ -1731,6 +2409,14 @@ impl<'ast> Visit<'ast> for FileVisitor<'_> {
                     snippet: self.snippet(node, first, delimiter_close(&node.delimiter)),
                 };
                 self.list(1, site, |v| &mut v.panic_sites);
+            } else if name == "include" {
+                let brought = BroughtIn {
+                    line: path_first(&node.path).start().line,
+                    by: "include!".to_string(),
+                    name: node.parse_body::<syn::LitStr>().ok().map(|l| l.value()),
+                    within: Vec::new(),
+                };
+                self.list(1, brought, |v| &mut v.brought_in);
             }
         }
         syn::visit::visit_macro(self, node);
@@ -1747,7 +2433,7 @@ impl<'ast> Visit<'ast> for FileVisitor<'_> {
 
     fn visit_expr_field(&mut self, node: &'ast syn::ExprField) {
         if let syn::Member::Named(ident) = &node.member {
-            if ident == "remaining_accounts" {
+            if ident == "remaining_accounts" || ident == "r#remaining_accounts" {
                 let first = attrs_first(&node.attrs).unwrap_or_else(|| self.first(&node.base));
                 let site = RemainingAccountsSite {
                     file: self.file.clone(),
@@ -1761,45 +2447,109 @@ impl<'ast> Visit<'ast> for FileVisitor<'_> {
     }
 
     fn visit_expr_call(&mut self, node: &'ast syn::ExprCall) {
-        if let syn::Expr::Path(path_expr) = node.func.as_ref() {
+        if let syn::Expr::Path(path_expr) = callee(&node.func) {
+            self.callees
+                .insert(path_expr as *const syn::ExprPath as usize);
             if let Some(seg) = path_expr.path.segments.last() {
-                let name = seg.ident.to_string();
-                let kind = match name.as_str() {
-                    "invoke" => Some("invoke"),
-                    "invoke_signed" => Some("invoke_signed"),
-                    _ => None,
-                };
-                if let Some(kind) = kind {
+                let name = ident_name(&seg.ident);
+                if is_cpi_name(&name) {
                     let first = attrs_first(&node.attrs).unwrap_or_else(|| self.first(&node.func));
                     let site = CpiSite {
                         file: self.file.clone(),
                         line: seg.ident.span().start().line,
-                        kind: kind.to_string(),
+                        kind: name,
                         snippet: self.snippet(node, first, node.paren_token.span.close()),
                     };
                     self.list(1, site, |v| &mut v.cpi_sites);
+                } else if PDA_CALLS.contains(&name.as_str()) {
+                    let seeds = node.args.first().map_or_else(Vec::new, elements);
+                    self.record_derivation(&seg.ident, seeds, name);
+                } else if name.starts_with(ATA_CALLS) {
+                    self.record_derivation(&seg.ident, node.args.iter().collect(), name);
                 }
             }
         }
         syn::visit::visit_expr_call(self, node);
     }
 
-    fn visit_path(&mut self, node: &'ast syn::Path) {
-        // Detect `.invoke()` / `.invoke_signed()` method-style CPIs and any
-        // reference to `CpiContext`.
-        if let Some(seg) = node.segments.last() {
-            let name = seg.ident.to_string();
-            if name == "CpiContext" {
+    fn visit_expr_path(&mut self, node: &'ast syn::ExprPath) {
+        // A function taken as a value, not called where it is named (`let cpi =
+        // invoke_signed;`, or passed on), whose name holds `invoke`: kind
+        // `ref:<name>`, the path as its snippet. A call by such a value under
+        // another name (`cpi(…)`) is not listed.
+        let called = self
+            .callees
+            .remove(&(node as *const syn::ExprPath as usize));
+        if let Some(seg) = node.path.segments.last().filter(|_| !called) {
+            let name = ident_name(&seg.ident);
+            if is_cpi_name(&name) {
+                let first = attrs_first(&node.attrs)
+                    .unwrap_or_else(|| qpath_first(&node.qself, &node.path));
+                let last = match path_tail(&node.path) {
+                    Tail::At(at) => at,
+                    Tail::Ty(ty) => type_last(ty),
+                };
                 let site = CpiSite {
                     file: self.file.clone(),
                     line: seg.ident.span().start().line,
-                    kind: "CpiContext".to_string(),
-                    snippet: "CpiContext".to_string(),
+                    kind: format!("ref:{name}"),
+                    snippet: self.snippet(node, first, last),
                 };
                 self.list(1, site, |v| &mut v.cpi_sites);
             }
         }
+        syn::visit::visit_expr_path(self, node);
+    }
+
+    fn visit_path(&mut self, node: &'ast syn::Path) {
+        // Any path with `CpiContext`, Anchor's context for a cross-program call, in
+        // it: the type, and the calls that make one, `CpiContext::new(…)` and
+        // `CpiContext::new_with_signer(…)`, the path as its snippet. A call by name
+        // (`invoke_signed(…)`, `Transfer { … }.invoke()`) is listed by
+        // `visit_expr_call` and `visit_expr_method_call`.
+        let named = node
+            .segments
+            .iter()
+            .find(|seg| seg.ident == "CpiContext" || seg.ident == "r#CpiContext");
+        if let Some(seg) = named {
+            let last = match path_tail(node) {
+                Tail::At(at) => at,
+                Tail::Ty(ty) => type_last(ty),
+            };
+            let site = CpiSite {
+                file: self.file.clone(),
+                line: seg.ident.span().start().line,
+                kind: "CpiContext".to_string(),
+                snippet: self.snippet(node, path_first(node), last),
+            };
+            self.list(1, site, |v| &mut v.cpi_sites);
+        }
         syn::visit::visit_path(self, node);
+    }
+}
+
+/// What a call calls, through the parentheses around it (`(invoke_signed)(…)`) and
+/// the invisible groups a macro's output can put there: the compiler calls the
+/// same function.
+fn callee(mut func: &Expr) -> &Expr {
+    loop {
+        match func {
+            Expr::Paren(p) => func = &p.expr,
+            Expr::Group(g) => func = &g.expr,
+            _ => return func,
+        }
+    }
+}
+
+/// The elements of an array, `[a, b]` or `&[a, b]`; any other expression alone.
+fn elements(e: &Expr) -> Vec<&Expr> {
+    match e {
+        Expr::Array(array) => array.elems.iter().collect(),
+        Expr::Reference(r) => match r.expr.as_ref() {
+            Expr::Array(array) => array.elems.iter().collect(),
+            _ => vec![e],
+        },
+        _ => vec![e],
     }
 }
 
@@ -1841,21 +2591,69 @@ fn is_context_ty(ty: &syn::Type) -> bool {
     false
 }
 
-/// True if any attribute's path matches `ident` (single-segment).
+/// An identifier's name without the `r#` a raw identifier is written with: the
+/// compiler takes `r#invoke_signed` for `invoke_signed`, and so does the scan.
+fn ident_name(ident: &syn::Ident) -> String {
+    let mut name = ident.to_string();
+    if name.starts_with("r#") {
+        name.drain(..2);
+    }
+    name
+}
+
+/// True if `path` is the single name `name` (`r#name` too), as the compiler
+/// resolves an attribute's or a derive's path.
+fn is_name(path: &syn::Path, name: &str) -> bool {
+    path.get_ident()
+        .is_some_and(|ident| ident_name(ident) == name)
+}
+
+/// The files a module's `path` attributes name, in their order: each `#[path =
+/// "…"]`, and each `path = "…"` a `#[cfg_attr(…)]` holds, nested ones too.
+fn path_values(attrs: &[syn::Attribute]) -> Vec<String> {
+    fn of(meta: &syn::Meta, values: &mut Vec<String>) {
+        match meta {
+            syn::Meta::NameValue(nv) if nv.path.is_ident("path") => {
+                if let Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(s),
+                    ..
+                }) = &nv.value
+                {
+                    values.push(s.value());
+                }
+            }
+            syn::Meta::List(list) if list.path.is_ident("cfg_attr") => {
+                let parsed =
+                    list.parse_args_with(Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated);
+                for meta in parsed.iter().flatten().skip(1) {
+                    of(meta, values);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut values = Vec::new();
+    for attr in attrs {
+        of(&attr.meta, &mut values);
+    }
+    values
+}
+
+/// True if any attribute's path is the single name `ident`.
 fn has_attr_path(attrs: &[syn::Attribute], ident: &str) -> bool {
-    attrs.iter().any(|a| a.path().is_ident(ident))
+    attrs.iter().any(|a| is_name(a.path(), ident))
 }
 
 /// True if any `#[derive(...)]` attribute lists a trait named `trait_name`.
 fn derive_contains(attrs: &[syn::Attribute], trait_name: &str) -> bool {
     for attr in attrs {
-        if !attr.path().is_ident("derive") {
+        if !is_name(attr.path(), "derive") {
             continue;
         }
         let mut found = false;
         // parse_nested_meta walks each path inside the derive list.
         let _ = attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident(trait_name) {
+            if is_name(&meta.path, trait_name) {
                 found = true;
             }
             Ok(())
@@ -1887,6 +2685,8 @@ fn parse_account_attr(attrs: &[syn::Attribute]) -> (AccountConstraints, Vec<Stri
         raw: String::new(),
     };
 
+    // Written plain only: `derive(Accounts)` reads no `#[r#account(...)]`, so no
+    // constraint is in one.
     let account_attr = attrs.iter().find(|a| a.path().is_ident("account"));
     let attr = match account_attr {
         Some(a) => a,
@@ -2125,6 +2925,8 @@ fn f(v: &[u8], ctx: Ctx) -> u8 {
     let r = ctx.remaining_accounts;
     invoke(&ix, &accounts)?;
     let c: CpiContext<T> = todo();
+    Transfer { from: a, to: b, lamports: 1 }.invoke_signed(&["CTRL"])?;
+    let (k, bump) = Pubkey::find_program_address(&[b"v", "CTRL".as_ref()], &ID);
     x
 }
 impl S { fn m(&self) {} }
@@ -2139,7 +2941,7 @@ impl S { fn m(&self) {} }
         let mut report = ScanReport::new(label.to_string(), 1);
         visitor.drain_into(&mut report);
         assert!(
-            report.cpi_sites.len() >= 2 && report.pdas.len() == 1,
+            report.cpi_sites.len() >= 3 && report.pdas.len() == 2,
             "{report:?}"
         );
         let took = serde_json::to_vec(&report).expect("JSON").len();
@@ -2384,5 +3186,58 @@ impl S { fn m(&self) {} }
         );
         assert_eq!(report.panic_sites[0].line, 3);
         assert_eq!(report.arithmetic_sites[0].line, 4);
+    }
+
+    /// The snippet of each `a + b` in the file, as `truncate_snippet` makes it from
+    /// the whole expression: what a render from the file's tokens must give.
+    struct Sums(Vec<String>);
+
+    impl<'ast> Visit<'ast> for Sums {
+        fn visit_expr_binary(&mut self, node: &'ast syn::ExprBinary) {
+            self.0.push(truncate_snippet(&tokens_string(node)));
+            syn::visit::visit_expr_binary(self, node);
+        }
+    }
+
+    #[test]
+    fn a_token_is_kept_only_as_far_as_a_snippet_shows_it() {
+        // A literal of a million spaces that both sites' snippets start at.
+        let spaces = " ".repeat(1_000_000);
+        let source = format!("fn f() {{ let x = \"a{spaces}b\" + c + d; }}\n");
+        let (_, tokens) = parse(&source).expect("parses");
+        assert!(tokens.text.len() < 200, "{} bytes kept", tokens.text.len());
+        let report = scan_source("f.rs", &source).expect("parses");
+        let sums: Vec<&str> = report
+            .arithmetic_sites
+            .iter()
+            .map(|a| a.snippet.as_str())
+            .collect();
+        assert_eq!(sums, ["\"a b\" + c + d", "\"a b\" + c"]);
+        // A token cut near 80 characters, with and without whitespace at the cut,
+        // where the snippet starts and further in, renders as the whole one does.
+        let x = |n: usize| "x".repeat(n);
+        let literals = [
+            format!("\"{}\"", x(79)),
+            format!("\"{}y\"", x(79)),
+            format!("\"{}\t\n  yy\"", x(79)),
+            format!("\"{}\u{3000}\"", x(79)),
+            format!("\"{}{spaces}\"", x(79)),
+            format!("\"{}  z  \"", x(78)),
+            format!("r#\"  {}  \"#", x(90)),
+        ];
+        for prefix in [String::new(), "c + ".to_string(), format!("{} + ", x(70))] {
+            for literal in &literals {
+                let source = format!("fn f() {{ let v = {prefix}{literal} + d; }}\n");
+                let mut whole = Sums(Vec::new());
+                whole.visit_file(&syn::parse_file(&source).expect("parses"));
+                let report = scan_source("f.rs", &source).expect("parses");
+                let rendered: Vec<&str> = report
+                    .arithmetic_sites
+                    .iter()
+                    .map(|a| a.snippet.as_str())
+                    .collect();
+                assert_eq!(rendered, whole.0, "{prefix:.20} {literal:.90}");
+            }
+        }
     }
 }

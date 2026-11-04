@@ -74,20 +74,49 @@ says to rebuild it.
 ## `audit-scan`
 
 ```
-audit-scan [--contract=1] <dir> [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty]
+audit-scan [--contract=1] <dir> [--workflows <dir>] [--out <run dir>/prescan.json | <run dir>/prescan-<slug>.json] [--pretty]
 ```
 
 Recursively walks the `*.rs` files under `<dir>`, parses each as `syn::parse_file`
 does, in a child of its own, and prints one JSON object to stdout (or writes it to
-`--out`). `--pretty` uses `serde_json::to_string_pretty`. The walk skips `target/`,
-`.git/` and `node_modules/` below `<dir>`, and, when `<dir>` is `.`, the run
-directories and `.audit-memory/`, which hold an audit's own output. It follows no
-symbolic link, goes no deeper than 128 directories below `<dir>`, and parses only
-regular files with one name, of at most 4 MiB, in byte order of their names; every
-link it meets, every directory it does not enter for its depth, and every `*.rs`
-file it does not parse (not a regular file, a second name, larger than 4 MiB,
-unreadable, not UTF-8, nested or chained too deeply, not Rust that `syn` parses, or
-one the parser could not finish), is listed in `skipped` with the reason.
+`--out`). `--pretty` uses `serde_json::to_string_pretty`. The walk does not enter
+a directory named `.git` or `node_modules` below `<dir>`, nor one named `target`
+that cargo has built in: one that holds the `CACHEDIR.TAG` cargo writes in each
+target directory it makes, or the `.rustc_info.json` it writes in each one it
+builds in, one made before cargo's first build too (as `anchor` can make
+`target/deploy`), each a regular file that starts as cargo writes it; a
+`target` with neither, such as a source module of that name, is scanned. Nor,
+when `<dir>` is `.`, does it enter a run directory or `.audit-memory/` that holds
+an audit's own output: one that holds the
+`.gitignore` of exactly `*` that `rundir.sh new` and `audit-mem init` write first,
+and that no repository tracks in any letter case. A directory with such a name
+that is not one, such as one the target's repository tracks, is scanned like any
+other. The walk follows no symbolic link, goes no deeper than 128 directories below
+`<dir>`, and parses only regular files with one name, of at most 4 MiB, in byte
+order of their names; every directory it does not enter, those above and those
+nested too deeply, every link it meets, and every `*.rs` file it does not parse
+(not a regular file, a second name, larger than 4 MiB, unreadable, not UTF-8,
+nested or chained too deeply, not Rust that `syn` parses, one the parser could not
+finish, or one past the report's size or the scan's time), is listed in `skipped`
+with the reason. So is every file a parsed file brings in, by a module's `#[path =
+"…"]` (one in a `cfg_attr` too) or by `include!`, that the walk does not parse,
+once the walk is done, with the file and line that bring it in. It is named where
+rustc finds it: from the naming file's directory, and for a `#[path]` inside
+inline modules through their directories, below one named for the naming file
+unless rustc takes that file for a `mod.rs`, as it takes a `mod.rs`, a crate root
+of any name and a file a `#[path]` brings in. audit-scan cannot tell those two
+from a module's file, so it tries both places: it lists each that may hold a file
+it did not parse, and when none does and it parsed the file at neither, the first,
+with why rustc finds none there. `.` and `..` are taken as written and nothing is
+opened: one not named `*.rs`, one outside `<dir>`, and a `*.rs` inside `<dir>` it
+did not parse, in a directory it did not enter (one of those above, or a link) or
+not found, are listed; so is one whose path leaves, by `..`, a directory the walk
+did not enter (a link, one it prunes, one outside `<dir>`, or one whose path holds
+a byte outside ASCII, which another spelling may open), with that directory, as
+rustc may find the file elsewhere. A directory spelled in other letters counts as
+the one the walk entered, as a filesystem that ignores case opens it. For an
+`include!` of a name that is not a string literal, such as
+`concat!(env!("OUT_DIR"), …)`, the file that has it is listed.
 
 The files are parsed in a child: audit-scan starts itself, by the path it runs
 from, with `--internal-parse-stdin` as its only argument, no environment and `/`
@@ -99,7 +128,16 @@ finish`; that child is killed, the next file goes to a new one, and the scan goe
 on. The child reads and writes nothing else. Before each file it sets its own CPU
 limit to the CPU it has used and 20 seconds more, twice the time it is given, and
 its core-file limit to none: a child whose parent is gone, with no one left to kill
-it, dies once a file has used that.
+it, dies once a file has used that. A scan parses for 90 seconds at most, counted
+from the start of audit-scan, so the git questions `--out` asks before the scan are
+inside them: once audit-scan has run that long, each further `*.rs` file is in
+`skipped` as `not parsed: the scan's time is spent`, so audit-scan ends within
+about 110 seconds (a file handed to its child before then still has its 10
+seconds, and a git question asked just before then up to twice 10), inside the two
+minutes Claude Code gives a foreground command by default. Scan a smaller directory
+for the rest. A repository whose config includes other files adds, before git's
+first answer, one listing of up to 10 seconds for each config file that mentions an
+include, so a git slow to list them can take audit-scan past that bound.
 
 A report has bounds. One file lists at most 20,000 items (sites, functions,
 instructions with their arguments, accounts structs with their fields, PDAs), and
@@ -126,6 +164,73 @@ longest chain is 1,434 tokens and the deepest nesting 44 groups. Parsed in the
 child, those files give the report a scan in one process gave, in 22 s against
 21.
 
+### The workflow pass
+
+With `--workflows <dir>` the scan also reads the `*.yml` and `*.yaml` files
+directly in `<dir>` — usually `.github/workflows` — into the report's `workflows`
+key, each as trigger → job → step facts. `<dir>` is a confined directory like the
+one to scan (relative, inside the working directory, reached through no symbolic
+link, an existing directory), given once; it is not `.`, since GitHub reads
+workflows only from a `.github/workflows` directory. The pass does not recurse,
+follows no symbolic link, and reads only regular files with one name of at most 4
+MiB, each opened from the directory's descriptor without following a link; a
+`*.y*ml` entry that is a link, a FIFO or another non-regular file, one that is
+not UTF-8, and every file past the 256 a directory's pass parses, is listed in
+`skipped` with the reason, as a `*.rs` file is.
+
+A hand-written parser reads the block and flow subset workflows are written in:
+block mappings and sequences, flow `[…]` and `{…}` on one line or several, plain
+and quoted scalars, wrapped over lines or not, with every escape YAML 1.2 defines
+decoded, and `|`/`>` block scalars with their indentation and chomping indicators.
+It drops one leading byte order mark and reads `\r\n`, `\r` and `\n` as line
+breaks. A scalar or a key has its whitespace collapsed and is cut after 200
+characters, as a snippet is. It is not a general YAML library, and it fails
+closed: what it does not read is listed in that workflow's `unknown`, with its
+line, and never guessed.
+
+- An alias (`*`), a tag (`!…`), a merge key (`<<`) and an explicit key (`?`) are
+  listed with the lines they cover, which are not read; the read goes on after
+  them. An anchor (`&`) is listed too, though its node is read. An alias is never
+  expanded.
+- A line it cannot place ends the read, and `unknown` says the file is not read
+  from that line to the end: YAML that does not parse (a mismatched or unclosed
+  bracket, an escape YAML does not define, a plain scalar holding `: `, a block
+  scalar line indented less than its first, or a blank line before its first
+  indented more, a tab in indentation), or a character YAML parsers refuse or
+  read differently (a control character; a NEL, LS or PS, which YAML 1.1 parsers
+  read as a line break; a byte order mark past the start).
+- A modeled key (`on`, `jobs`, `name`, `permissions`; a job's `if`, `uses`,
+  `permissions`, `steps`; a step's `if`, `uses`, `run`, `with`, `env`) written
+  twice is listed: a list (triggers, jobs, steps, …) keeps the entries of both,
+  a single value the first. So is a modeled key whose value is not the kind
+  GitHub reads there.
+- A node nested more than 32 levels deep is not read: a block node is listed
+  with its lines, and the read goes on after them; in a flow collection the read
+  ends there.
+
+So a workflow was read whole exactly when its `unknown` is empty. A file that is
+not a YAML mapping, holds a second YAML document, or holds more than 50,000 nodes
+is listed in `skipped`.
+
+Each file is parsed in a child, as a `*.rs` file is: audit-scan starts itself, by
+the path it runs from, with `--internal-parse-workflows` as its only argument, no
+environment and `/` as its directory, and hands it one file's bytes at a time on
+its stdin. A file the child does not finish (it aborts, dies on a signal or takes
+more than 10 seconds) is listed as `the parser could not finish`, and the next
+file goes to a new child. Once audit-scan has run for 90 seconds, as for the
+`*.rs` files, no further workflow file is parsed: each is in `skipped` as `not
+parsed: the scan's time is spent`, while one handed to the child before then still
+has its 10 seconds.
+
+One file's facts take at most 32 MiB; a file with more is in `skipped` as `not
+listed: its facts take more than 32 MiB`. The workflows together take what the
+`*.rs` walk left of the report's 256 MiB: the file whose facts would take them
+past it, and each file after it, is in `skipped` as `not parsed: the report is
+full`. Both are counted as audit-scan prints them: a character it writes as a
+`\u` escape (DEL, a C1 control, a bidirectional or an invisible one, which a YAML
+escape can name) counts as its escape, and in the workflows' total the layout
+`--pretty` gives counts too.
+
 ### Where it reads and writes
 
 It is built to be pre-approved as one `Bash(…)` rule on its absolute path and the
@@ -149,12 +254,26 @@ so it must be safe whatever arguments follow. Its rules are those of
   already there is replaced only when it is a regular file with one name, as
   audit-scan's own earlier output is.
 - `--contract=1` comes first, or not at all. Each option is given once, `--out
-  <file>` or `--out=<file>`; the word after `--out` is its value whatever it looks
-  like. Any other word that starts with `-` is refused.
+  <file>` or `--out=<file>` and `--workflows <dir>` or `--workflows=<dir>`; the
+  word after `--out` or `--workflows` is its value whatever it looks like. Any
+  other word that starts with `-` is refused. `--workflows` takes a directory
+  that passes the same checks as the one to scan, but not `.`.
 - It asks git whether a run directory is tracked as confine.sh's `hgit` asks it: git
-  from a `PATH` with every entry inside the working directory removed, with an
-  environment of its own and the repository's config pinned off. When git cannot
-  answer, `--out` is refused; with no `--out`, git is not run.
+  from a `PATH` with every entry inside the working directory, or inside the tree
+  it lies in (the outermost of it and the directories above it, below `HOME`, or up
+  to `/` when it is not under `HOME`, that holds a `.git` of any kind), removed,
+  each compared by identity rather than spelling; with an environment of its own
+  that allows no transport (`GIT_ALLOW_PROTOCOL` empty, which the repository's
+  config cannot widen); and with the repository's config pinned off. git does not
+  start on a repository holding a named pipe or device it would open on its way (as
+  HEAD, in its git directory, or included by its config), which confine.sh's
+  `confine_git_check` finds; `--out` is then refused for that reason. It asks for
+  `--out`, and, in a scan of `.` that has time left, for a run directory or
+  `.audit-memory/` that holds a `.gitignore` of exactly `*`. When git cannot
+  answer, or has not answered within 10 s (it is then killed), `--out` is refused,
+  and such a directory is scanned, as is each one after it in that scan, for which
+  git is not asked again; once the scan's time is spent, such a directory is
+  scanned without asking. With neither, git is not run.
 - It refuses to run from an installation inside the working directory, or from a
   path, as it was invoked or with its links resolved, holding a quote, `$`, a
   backtick, a backslash or a control character, and in a working directory whose
@@ -205,10 +324,21 @@ Exit: 0 done · 1 the output cannot be written · 2 refused, with one stderr lin
       ] }
   ],
 
-  // one entry per field carrying `seeds = [ ... ]`
+  // one entry per field carrying `seeds = [ ... ]` (kind `seeds`), and one per
+  // call that derives a program address from seeds (kind: the function, one of
+  // find_program_address, try_find_program_address, create_program_address,
+  // checked_create_program_address, derive_address, derive_address_const,
+  // try_derive_address, derive_program_address; `struct` and `field` empty),
+  // whose seeds are the elements of the array it is given first, or else that
+  // argument, each as a snippet; and one per call that derives an associated
+  // token account (kind: the function, any whose name starts with
+  // get_associated_token_address, as spl-associated-token-account's and its
+  // _with_program_id and _and_bump_seed forms do), whose seeds are its
+  // arguments. A program's own helper of another name is listed where it calls
+  // one of these, not where it is called.
   "pdas": [
-    { "struct": "string", "field": "string", "seeds": ["string"],
-      "file": "string", "line": 0 }
+    { "struct": "string", "field": "string", "kind": "string",
+      "seeds": ["string"], "file": "string", "line": 0 }
   ],
 
   // RAW binary/compound-assign arithmetic (NOT `.checked_*`). Every site is
@@ -227,9 +357,30 @@ Exit: 0 done · 1 the output cannot be written · 2 refused, with one stderr lin
 
   "unsafe_blocks": [ { "file": "string", "line": 0 } ],
 
-  // calls to `invoke` / `invoke_signed`, and any use of `CpiContext`.
+  // every call whose name, the last of its path, holds `invoke`, kind the name:
+  // the cross-program call functions of solana-program, solana-cpi and pinocchio
+  // (invoke, invoke_signed, invoke_unchecked, invoke_signed_unchecked,
+  // invoke_with_bounds, invoke_signed_with_bounds, slice_invoke,
+  // slice_invoke_signed, invoke_with_slice, invoke_signed_with_slice), the
+  // syscalls they end in (sol_invoke_signed_c, sol_invoke_signed_rust) and the
+  // helpers that make one (spl-token-2022's invoke_transfer_checked and
+  // invoke_transfer_checked_with_fee, spl-transfer-hook-interface's
+  // invoke_execute); every method call whose name holds it, as pinocchio-system's
+  // and pinocchio-token's instructions and a Codama-generated client's `…Cpi`
+  // make one (invoke_with_remaining_accounts,
+  // invoke_signed_with_remaining_accounts), kind `method:<name>`; and every path
+  // that names `CpiContext`, as a type or in the calls that make one
+  // (`CpiContext::new(..)`, `CpiContext::new_with_signer(..)`), kind
+  // `CpiContext`, the path as its snippet; and every other path whose name
+  // holds `invoke` that is named but not called there, as a function taken as a
+  // value is (`let cpi = invoke_signed;`), kind `ref:<name>`, the path as its
+  // snippet. A call through an import under another name, a trait, a macro, a
+  // helper of another name, or by a function value (the `cpi(..)` after it) is
+  // not seen; a function whose name only holds the word (`invoked`) is listed
+  // too, and so is a `ref:` path that names a value, a local `invoke_accounts`.
   "cpi_sites": [
-    { "file": "string", "line": 0, "kind": "invoke|invoke_signed|CpiContext",
+    { "file": "string", "line": 0,
+      "kind": "invoke|invoke_signed|…|method:invoke_signed|…|ref:invoke_signed|…|CpiContext",
       "snippet": "string" }
   ],
 
@@ -243,8 +394,35 @@ Exit: 0 done · 1 the output cannot be written · 2 refused, with one stderr lin
     { "name": "string", "file": "string", "line": 0, "pub": false }
   ],
 
-  // every symbolic link the walk did not follow, every directory it did not
-  // enter for its depth, and every `*.rs` file it did not parse, with why.
+  // workflows read by `--workflows` (empty without it): each
+  // `.github/workflows/*.yml` as trigger -> job -> step facts. Absent optional
+  // scalars (name/if/uses/run) are left out.
+  "workflows": [
+    { "file": "string", "name": "string",
+      "triggers": ["string"],        // event names under `on:`
+      "permissions": ["string"],     // each `scope: level`, or a token like `write-all`
+      "jobs": [
+        { "id": "string", "line": 0, "if": "string",
+          "permissions": ["string"],
+          "uses": "string",          // a reusable workflow called at the job level
+          "steps": [
+            { "line": 0, "if": "string", "uses": "string", "run": "string",
+              "with": [ { "key": "string", "value": "string" } ],
+              "env":  [ { "key": "string", "value": "string" } ] }
+          ] }
+      ],
+      // what the parser did not read: a construct outside its subset (an
+      // alias, tag, merge key or explicit key, with the lines it covers; an
+      // anchor, whose node is read), or the rest of the file from a line it
+      // could not place. Empty only when the whole file was read.
+      "unknown": [ { "line": 0, "what": "string" } ] }
+  ],
+
+  // every directory the walk did not enter (one it does not enter, above, or one
+  // nested too deeply), every symbolic link it did not follow, every `*.rs` file
+  // it did not parse, every file a parsed one brings in by `#[path]` or
+  // `include!` that it did not parse, and every workflow file `--workflows` could
+  // not read or parse whole, with why.
   "skipped": [
     { "file": "string", "reason": "string" }
   ]
@@ -253,13 +431,22 @@ Exit: 0 done · 1 the output cannot be written · 2 refused, with one stderr lin
 
 A snippet is the node's tokens as `proc-macro2` prints the file's own (a space
 between two tokens unless the source joins punctuation, as in `::<` or `?;`),
-whitespace collapsed and cut after 80 characters with `...`; only what is kept is
-rendered, so a long chain costs no more than a short one.
+whitespace collapsed and cut after 80 characters with `...`. Each token's text is
+kept, as the file is laid out, only as far as a snippet can show it, and only what
+a snippet keeps is rendered, so a snippet costs no more for a long chain or a long
+literal than for a short one.
+
+A name is matched as the compiler resolves it: one written as a raw identifier
+(`r#invoke_signed(..)`, `x.r#unwrap()`, `r#panic!(..)`, `#[r#program]`) is that
+name, and its snippet shows it as written. The `#[account(...)]` of an Accounts
+field counts only written plain, as `derive(Accounts)` reads it.
 
 ### Example
 
 ```bash
 audit-scan --contract=1 ./programs/my-program/src --pretty --out audit_1/prescan.json
+# also read the repository's workflows into the report's `workflows` key
+audit-scan --contract=1 ./programs/my-program/src --workflows .github/workflows --out audit_1/prescan.json
 ```
 
 ## `audit-mem`
@@ -285,8 +472,8 @@ gives exact deduplication across audits.
 | `init` | Make the store: for `.audit-memory/audit.db` with no `.audit-memory/`, the directory, its `.gitignore` of `*` first, then the database; in a run directory, the database. On a store that exists, add the tables and columns it lacks. Prints `initialized <store>`. |
 | `put-finding` | Upsert a finding + append an occurrence. Prints `<STATUS> <finding_id>`, or `REGRESSED <finding_id>` on regression. A severity or title it replaces is kept (below). A store holding a status audit-mem never sets for the finding is refused, and left as it was. |
 | `set-status` | Set a finding's status (`FIXED` \| `OPEN` \| `ACKNOWLEDGED` \| `DISPUTED`). |
-| `rule` | Record a `FALSE_POSITIVE` \| `ACCEPTED_RISK` ruling with a timestamp and its anchor: the commit it is made at and the guard it cites (below). A `FALSE_POSITIVE` ruling needs `--commit` and `--guard`. |
-| `check` | Print `{"suppressed":bool,"ruling":..}`; exit 0 when the newest `FALSE_POSITIVE` ruling for the signature still holds, else exit 1. A ruling that no longer holds is printed with `"stale":"<why>"` and suppresses nothing. |
+| `rule` | Record a `FALSE_POSITIVE` \| `ACCEPTED_RISK` ruling with a timestamp and its anchor: the commit it is made at, the guard it cites and the candidate it rules on (below). A `FALSE_POSITIVE` ruling needs `--commit`, `--guard` and `--site`. |
+| `check` | Print `{"suppressed":bool,"ruling":..}`; exit 0 when the newest `FALSE_POSITIVE` ruling of the signature made for the candidate `--site` names still holds, else exit 1. A ruling that no longer holds is printed with `"stale":"<why>"` and suppresses nothing. |
 | `regressions` | JSON `{regressions[], truncated}`: of the findings with status `REGRESSED`, the 200 seen most recently (by their newest occurrence), the most severe first, each with the severities and titles `put-finding` replaced in it (`changed`, below); `truncated` counts the rest. |
 | `warm` | JSON `{profile, invariants[], open_fp_rulings[], truncated}` — the warm-start context block for a re-audit: what `profile` and `invariant` recorded, each with the values they replaced (`changed`, below), and the rulings with their anchors. Each list holds at most 200 rows, the newest; `truncated` counts the rows left out of all of them, and the values left out of `changed` (below). |
 | `profile` | Record the program's protocol profile. Fields not given keep what the profile holds; a recorded value a field given replaces is kept (below). Prints `profile <program_id> recorded`, then `, replacing <fields> (…)` when it replaced any. |
@@ -317,7 +504,8 @@ put-finding     --program-id <PID> --signature <SIG> --root-cause <RC> --title <
 set-status      --program-id <PID> --signature <SIG> --root-cause <RC> --status <STATUS>
 rule            --program-id <PID> --signature <SIG> --ruling <RULING> --rationale <R> --by <WHO>
                 [--scope <S>] [--commit <SHA>] [--guard <FILE>:<LINE> | <FILE>:<FIRST>-<LAST>]
-check           --program-id <PID> --signature <SIG> [--commit <SHA>]
+                [--site <FILE>:<LINE>]
+check           --program-id <PID> --signature <SIG> [--commit <SHA>] [--site <FILE>:<LINE>]
 regressions     --program-id <PID>
 warm            --program-id <PID>
 profile         --program-id <PID>, and at least one of [--protocol-class <C>]
@@ -346,16 +534,23 @@ A false-positive ruling holds for the code it was made on. `rule` records:
 - the guard, `--guard <file>:<line>` or `<file>:<first>-<last>` (at most 200 lines):
   a file of the working tree, read under the confined path rules (relative, no `.`
   or `..`, no symbolic link on the way, a regular file with one name, at most 4 MiB),
-  and the sha256 of those lines, each with the newline that ends it.
+  and the sha256 of those lines, each with the newline that ends it;
+- the site, `--site <file>:<line>`: the one candidate the ruling is for, a relative
+  path under the path grammar (one leading `./` dropped) and a line from 1, recorded
+  as `<file>:<line>` and not read. Candidates with the same signature at other sites
+  are siblings, which the ruling does not cover.
 
-`check` suppresses only while the newest `FALSE_POSITIVE` ruling for the signature
-holds: `--commit` is its commit, the same full id, and the guard's lines, read again
-under the same rules, hash as they did. Otherwise it prints the ruling with `stale`,
-the reasons joined by `; `, and exits 1: a stale ruling is a finding to check again.
-A check with no `--commit` never suppresses. A ruling recorded before rulings had
-anchors has none: it is `"stale":"no anchor"` and never suppresses. `warm` lists the
-rulings as they were recorded, anchors included; only `check` says whether one still
-holds. `init`, or any
+`check` takes the newest `FALSE_POSITIVE` ruling of the signature made for the site
+`--site` names (so each sibling with a ruling of its own is suppressed by it), or,
+with none made for that site, the newest of the signature. It suppresses only while
+that ruling holds: `--commit` is its commit, the same full id, `--site` is its site,
+and the guard's lines, read again under the same rules, hash as they did. Otherwise
+it prints the ruling with `stale`, the reasons joined by `; `, and exits 1: a stale
+ruling is a finding to check again. A check with no `--commit`, or no `--site`,
+never suppresses. A ruling recorded before rulings had anchors has none: it is
+`"stale":"no anchor"` and never suppresses; one recorded before rulings named their
+site is `"ruled with no site"`. `warm` lists the rulings as they were recorded,
+anchors included; only `check` says whether one still holds. `init`, or any
 subcommand that writes, adds the anchor columns to a store made before them (a new
 store is made the same way, so the two read alike), in the transaction it writes
 in: one that fails or refuses leaves the store as it was. `warm`, `check` and
@@ -385,13 +580,25 @@ rules are those of `scripts/lib/confine.sh` and `scripts/rundir.sh`, in
   holding `*` (`printf '*\n' > .audit-memory/.gitignore`), and audit-mem uses it
   again.
 - It asks git what is tracked as confine.sh's `hgit` asks it: git from a `PATH` with
-  every entry inside the working directory removed, with an environment of its own
-  and the repository's config pinned off. When git cannot answer, it refuses.
+  every entry inside the working directory, or inside the tree it lies in (the
+  outermost of it and the directories above it, below `HOME`, or up to `/` when it
+  is not under `HOME`, that holds a `.git` of any kind), removed, each compared by
+  identity rather than spelling; with an environment of its own that allows no
+  transport (`GIT_ALLOW_PROTOCOL` empty, which the repository's config cannot
+  widen); and with the repository's config pinned off. git does not start on a
+  repository holding a named pipe or device it would open on its way, as
+  confine.sh's `confine_git_check` finds one: `--db <R>/audit-mem.db` is refused for
+  that reason, as `rundir.sh check` refuses it, and the in-tree store because git
+  cannot tell, as `rundir.sh store` refuses it. When git cannot answer, or has not
+  answered within 10 s (it is then killed), it refuses.
 - The database is a regular file with one name, in rollback-journal mode: a database
   in WAL mode is refused, since a read-only open of one makes a file beside it. No
   `-wal` or `-shm` file may sit beside it (audit-mem never makes one, and SQLite would
   open them even to read), and a `-journal`, left by a write that stopped, must be a
-  regular file with one name. It holds only audit-mem's tables, each `CREATE TABLE`
+  regular file with one name that names no super-journal (SQLite deletes the file a
+  journal names as its super-journal when it rolls the journal back, wherever that
+  is; audit-mem writes one database at a time and never writes one). It holds only
+  audit-mem's tables, each `CREATE TABLE`
   exactly as audit-mem writes it (a column, constraint, default or table option of
   another's is refused), the indexes SQLite makes for their primary keys, and
   `sqlite_sequence` as SQLite makes it; a view, a trigger, a virtual table or any
@@ -400,9 +607,18 @@ rules are those of `scripts/lib/confine.sh` and `scripts/rundir.sh`, in
   off, `trusted_schema` off, temporary tables in memory and no value read or written
   past 1 MiB (`SQLITE_LIMIT_LENGTH`; the writers store at most 4096 bytes a field).
 - `warm`, `check` and `regressions` open the store read-only (`SQLITE_OPEN_READ_ONLY`,
-  `PRAGMA query_only=ON`) and immutable (`file:<store>?mode=ro&immutable=1`: SQLite
-  takes no lock and opens no file beside it), and never make the file or write the
-  schema. With no store they print an empty answer: `warm`
+  `PRAGMA query_only=ON`) and with no lock (`file:<store>?mode=ro&nolock=1`: SQLite
+  takes none and makes no file beside the store, and cannot read a WAL without a
+  lock, so it refuses one beside the store too), and never make the file or write
+  the schema. Beside a `-journal` SQLite reads as hot, a write that stopped before
+  it finished, they read nothing: after asking twice more, 100 ms apart (a write
+  ending just then looks the same for a moment), each prints `audit-mem: error:
+  <store>: a write to it did not finish (its -journal holds what that write
+  replaced), so it is not read; audit-mem init --contract=1 rolls the write back`
+  (with `--db <store>` for a store in a run directory) and exits 2; `init`'s
+  read-write open rolls the write back (on a store it cannot write, `init` and each
+  other writer print what SQLite says instead). With no store they print an empty
+  answer: `warm`
   `{"profile":null,"invariants":[],"open_fp_rulings":[],"truncated":0}`, `check`
   `{"suppressed":false,"store":"absent"}` with exit 1, and `regressions`
   `{"regressions":[],"truncated":0}`.
@@ -411,6 +627,9 @@ rules are those of `scripts/lib/confine.sh` and `scripts/rundir.sh`, in
   (`O_CREAT|O_EXCL|O_NOFOLLOW`, mode 0600) through the directory, opened once
   without following a link. A `.audit-memory/` that already exists must pass the
   check above. The other subcommands that write refuse when there is no store.
+- Each subcommand that writes does so in one transaction that takes the store's write
+  lock before it reads (`BEGIN IMMEDIATE`), so calls that meet wait for each other, up
+  to 5 s, instead of failing with "database is locked".
 - It refuses to run from an installation inside the working directory, or from a
   path, as it was invoked or with its links resolved, holding a quote, `$`, a
   backtick, a backslash or a control character, and in a working directory whose
@@ -451,12 +670,15 @@ audit-mem invariant --contract=1 --program-id VaultProg... --statement 'total_sh
 # rule a known false positive at the audited commit, citing its guard, then gate on it
 audit-mem rule --contract=1 --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
   --ruling FALSE_POSITIVE --rationale 'guarded by the require! on line 40' --by auditor \
-  --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe --guard src/withdraw.rs:40
+  --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe --guard src/withdraw.rs:40 --site src/withdraw.rs:42
 audit-mem check --contract=1 --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
-  --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe
+  --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe --site src/withdraw.rs:42
 #   -> {"suppressed":true,"ruling":{...}}   (exit 0)
 audit-mem check --contract=1 --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
-  --commit c0ffee4c0ffee4c0ffee4c0ffee4c0ffee4c0ffe
+  --commit c0ffee3c0ffee3c0ffee3c0ffee3c0ffee3c0ffe --site src/liquidate.rs:17
+#   -> {"suppressed":false,"stale":"ruled for the site src/withdraw.rs:42, checked for src/liquidate.rs:17","ruling":{...}}   (exit 1)
+audit-mem check --contract=1 --program-id VaultProg... --signature 'unchecked_sub@vault.balance' \
+  --commit c0ffee4c0ffee4c0ffee4c0ffee4c0ffee4c0ffe --site src/withdraw.rs:42
 #   -> {"suppressed":false,"stale":"ruled at commit c0ffee3…, checked at c0ffee4…","ruling":{...}}   (exit 1)
 
 # a store for one run
@@ -602,12 +824,14 @@ or a failed write · 2 usage, or a refused path · 4 a stale build.
 - With stdin a directory, Python stops as it starts, so the three scripts exit 1
   even when their inputs are named; `audit-logs` reads stdin only when no corpus is
   named, and then exits 1 too.
-- `profile.sh` runs `jq` and `python3` and keeps its report in a private temp
+- The three scripts check the working directory and take `python3` from a `PATH`
+  cleaned of entries inside it, so each refuses to run (exit 2) when the working
+  directory's path holds a control character, when no `PATH` entry is left outside
+  it, or when the `python3` it finds lies inside it, and stops when no `python3`
+  runs (exit 3). `profile.sh` also runs `jq` and keeps its report in a private temp
   directory, so it alone refuses to run (exit 2) when `TMPDIR` lies inside the
-  working directory, when no `PATH` entry is left outside it, or when the working
-  directory's path holds a control character, and stops when `TMPDIR` does not
-  exist (exit 1) or `jq` or `python3` is missing (exit 3). `audit-logs` needs none
-  of these.
+  working directory, and stops when `TMPDIR` does not exist (exit 1) or `jq` is
+  missing (exit 3). `audit-logs` needs none of these.
 
 ## How the auditor agents consume this
 
@@ -627,9 +851,9 @@ gracefully — it works without them; they just save context and add memory.
   `warm --program-id` returns the protocol profile and invariants that `profile`
   and `invariant` recorded, with the values they replaced, and the standing
   false-positive/accepted-risk rulings with their anchors, so prior context is not
-  re-derived. A ruling holds only at the commit it was made at: `check --commit`
-  suppresses a finding ruled `FALSE_POSITIVE` there while the guard's lines still
-  hold, which spares the same commit a second ruling (a triage run again, say), and
+  re-derived. A ruling holds only at the commit it was made at, and for the one
+  candidate it names: `check --commit --site` suppresses that candidate, ruled
+  `FALSE_POSITIVE` there, while the guard's lines still hold, which spares the same commit a second ruling (a triage run again, say), and
   at any other commit reports the ruling stale, a finding to confirm and rule again
   at that commit. `put-finding` + `regressions` surface anything that was fixed and
   has since regressed.

@@ -299,8 +299,8 @@ run "$TARGET" "$WT" PATH="$T/fake:$T/sys-nopy" AUDITOR_EXEC_MODE=isolated -- car
 check "isolated mode where the self-check cannot run (no python3): exit 3, nothing copied" \
   sh -c "[ '$RC' = 3 ] && grep -qF 'target: blocker: isolated mode, but the credential self-check could not finish (python3 is not on PATH)' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
 run "$TARGET" "$WT" PATH="$T/fake:$T/sys-nopy" -- cargo-test --run audit_1 --src .
-check "native mode without python3: a blocker before anything is copied" \
-  sh -c "[ '$RC' = 3 ] && grep -qF 'target: blocker: python3 is not on PATH, so cargo-test cannot run here — nothing was copied or built.' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
+check "native mode without python3: a blocker before anything is copied, since only python3 tells that incident_1 holds no INCIDENTS.json" \
+  sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: python3 is not on PATH, so target.sh cannot tell whether incident_1 holds an INCIDENTS.json, or read the root_cause_class one records (OUTPUT-RULES.md Rule 11a) — nothing was copied or built.' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
 if [ "$ISOLATED_OK" = 1 ]; then
   run "$TARGET" "$WT" AUDITOR_EXEC_MODE=isolated GITHUB_TOKEN=x -- cargo-test --run audit_1 --src .
   check "isolated mode names target.sh's own variables that look like credentials, and goes on" \
@@ -358,16 +358,52 @@ check "a patch that does not apply: exit 3, nothing built" \
   sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: audit_1/patches/F-3.patch does not apply to $V2; log ' '$T/err' && ! grep -q '^== cargo' '$T/calls'"
 run "$TARGET" "$WT" -- build-sbf --run audit_1 --src audit_1/src.git
 check "--src may be the copy git-ro.sh copy made in the run directory" in_blocks '^== cargo build-sbf --skip' '^show: // v2$'
+# Only git's own answer says --src is in no repository: a .git file naming a directory that bears git's words for
+# that, with a commondir past 16 KiB, is refused for that file, never copied as a plain tree.
+A="$T/odd-admin/not a git repository"
+mkdir -p "$A" "$WT/nested"
+printf 'ref: refs/heads/main\n' > "$A/HEAD"
+{ printf '../..\n'; awk 'BEGIN { for (i = 0; i < 17000; i++) printf "\n" }'; } > "$A/commondir"
+printf 'gitdir: %s\n' "$A" > "$WT/nested/.git"
+s="$A/commondir"
+[ "${#s}" -le 200 ] || s="${s:0:200}..."
+printf 'target: refused: a .git file or commondir file holds a NUL byte or more than 16 KiB, so where git would look cannot be told: %s\n' \
+  "$s" > "$T/want-err"
+run "$TARGET" "$WT" -- build-sbf --run audit_1 --src nested
+check "a --src whose .git file names a commondir past 16 KiB is refused for it, whatever its directory is named" \
+  sh -c "[ '$RC' = 64 ] && cmp -s '$T/err' '$T/want-err' && ! grep -q '^== cargo' '$T/calls'"
+rm -rf "$WT/nested"
 run "$TARGET" "$WT" TOOLS_VERSION=v1.54 -- build-sbf --run audit_1 --src . --package demo
 check "--package builds that member, and TOOLS_VERSION goes to the install and the build" calls_are \
   "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|cargo build-sbf --help|cargo build-sbf --install-only --tools-version v1.54|cargo metadata --no-deps --format-version 1 --offline --manifest-path $S/src/Cargo.toml|cargo build-sbf --skip-tools-install --offline --sbf-out-dir $S/out --tools-version v1.54 --manifest-path $S/src/programs/demo/Cargo.toml|"
 run "$TARGET" "$WT" -- build-sbf --run audit_1 --src . --package nope
 check "a --package the workspace does not have: exit 3, nothing built" \
   sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: the workspace at the top of the copy has no member package nope' '$T/err' && ! grep -q '^== cargo build-sbf --skip' '$T/calls'"
+# A cargo build-sbf without --install-only, --skip-tools-install and --offline: natively the run stops, since
+# the build would get the real HOME and the network; in isolated mode the build runs with the real HOME and the
+# proxy variables, as templates/poc/run.sh builds each arm then, and a note says so.
 settings FAKE_SBF_HELP=old
 run "$TARGET" "$WT" -- build-sbf --run audit_1 --src .
-check "a cargo build-sbf without --install-only and --skip-tools-install: exit 3, nothing installed or built" \
-  sh -c "[ '$RC' = 3 ] && grep -q 'has no --install-only, --skip-tools-install or --offline' '$T/err' && ! grep -q '^== cargo build-sbf --install' '$T/calls' && ! grep -q '^== cargo build-sbf --skip' '$T/calls'"
+check "natively, a cargo build-sbf without --install-only and --skip-tools-install: exit 3, nothing installed or built" \
+  sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: this cargo build-sbf has no --install-only, --skip-tools-install or --offline, which target.sh needs in native mode to keep the real HOME and the proxy variables away from the build; isolated mode builds with them; log ' '$T/err' && ! grep -q '^== cargo build-sbf --install' '$T/calls' && ! grep -q '^== cargo build-sbf --s' '$T/calls'"
+run "$TARGET" "$WT" -- anchor-build --run audit_1 --src .
+check "... and natively anchor-build stops there too: exit 3, anchor never runs" \
+  sh -c "[ '$RC' = 3 ] && grep -q 'has no --install-only, --skip-tools-install or --offline, which target.sh needs in native mode' '$T/err' && ! grep -q '^== anchor' '$T/calls' && ! grep -q '^== cargo build-sbf --install' '$T/calls'"
+if [ "$ISOLATED_OK" = 1 ]; then
+  OLDSBF='>> note: this cargo build-sbf has no --install-only, --skip-tools-install or --offline: in isolated mode the build runs with the real HOME and the proxy variables'
+  run "$TARGET" "$WT" AUDITOR_EXEC_MODE=isolated HTTPS_PROXY="$PROXY" -- build-sbf --run audit_1 --src .
+  check "isolated mode, the same cargo build-sbf: exit 0, the .so kept, and a note says how it built" \
+    sh -c "[ '$RC' = 0 ] && grep -qxF '$OLDSBF' '$T/out' && sed -n '\$p' '$T/out' | grep -q '^>> build-sbf: ok (exit 0); log audit_1/exec/build-sbf-[0-9]*[.]log; 1 .so in audit_1/exec/build-sbf-[0-9]*/: demo.so\$'"
+  check "... no install, and the build without --skip-tools-install and --offline" calls_are \
+    "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|cargo build-sbf --help|cargo build-sbf --sbf-out-dir $S/out|"
+  check "... in the copy, with the real HOME and the proxy, cargo not held offline" \
+    sh -c "awk '/^== cargo build-sbf --sbf-out-dir/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'cwd: $S/src' '$T/blk' && grep -qxF 'home: $CLEANHOME' '$T/blk' && grep -qxF 'env: HTTPS_PROXY=$PROXY' '$T/blk' && ! grep -q '^env: CARGO_NET_OFFLINE=' '$T/blk'"
+  run "$TARGET" "$WT" AUDITOR_EXEC_MODE=isolated TOOLS_VERSION=v1.54 HTTPS_PROXY="$PROXY" -- anchor-build --run audit_1 --src . --program demo
+  check "isolated mode, anchor-build with that cargo build-sbf: anchor build without those options, TOOLS_VERSION after --" calls_are \
+    "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|cargo build-sbf --help|anchor build --ignore-keys -p demo -- --tools-version v1.54|"
+  check "... with the real HOME and the proxy, and the note" \
+    sh -c "[ '$RC' = 0 ] && grep -qxF '$OLDSBF' '$T/out' && awk '/^== anchor build/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'home: $CLEANHOME' '$T/blk' && grep -qxF 'env: HTTPS_PROXY=$PROXY' '$T/blk'"
+fi
 settings FAKE_INSTALL_RC=1
 run "$TARGET" "$WT" -- build-sbf --run audit_1 --src .
 check "an install of the platform tools that fails: exit 3" \
@@ -386,6 +422,18 @@ run "$TARGET" "$WT" -- build-sbf --run audit_1 --src .
 n=$(sed -n 's/.*audit_1\/exec\/build-sbf-\([0-9]*\)\/:.*/\1/p' "$T/out")
 check "only regular .so files of at most 100 MiB are kept: not a link, not an oversized one" \
   sh -c "[ '$RC' = 0 ] && grep -q '2 .so in audit_1/exec/build-sbf-$n/: demo.so, other.so; 2 other .so not kept (symbolic links, larger than 100 MiB' '$T/out' && [ \"\$(ls '$WT/audit_1/exec/build-sbf-$n' | tr '\n' ' ')\" = 'demo.so other.so ' ]"
+# In name order, whatever order the build directory lists them in (ext4 hashes names; APFS lists zeta.so
+# before beta.so), and past the 64th by that order: s64.so is the one left out of 65.
+settings FAKE_SO_NAMES='zeta demo beta other'
+run "$TARGET" "$WT" -- build-sbf --run audit_1 --src .
+n=$(sed -n 's/.*audit_1\/exec\/build-sbf-\([0-9]*\)\/:.*/\1/p' "$T/out")
+check "... named and kept in name order, whatever order the directory lists them in" \
+  sh -c "[ '$RC' = 0 ] && sed -n '\$p' '$T/out' | grep -q '; 4 .so in audit_1/exec/build-sbf-$n/: beta.so, demo.so, other.so, zeta.so\$'"
+settings FAKE_SO_NAMES="$(i=64; while [ "$i" -ge 0 ]; do printf 's%02d ' "$i"; i=$((i - 1)); done)"
+run "$TARGET" "$WT" -- build-sbf --run audit_1 --src .
+n=$(sed -n 's/.*audit_1\/exec\/build-sbf-\([0-9]*\)\/:.*/\1/p' "$T/out")
+check "... and the first 64 by that order are kept when the build makes more" \
+  sh -c "[ '$RC' = 0 ] && grep -q '; 1 other .so not kept (a symbolic link, larger than 100 MiB, past 64, or an odd name)\$' '$T/out' && [ \"\$(ls '$WT/audit_1/exec/build-sbf-$n' | wc -l | tr -d ' ')\" = 64 ] && [ -f '$WT/audit_1/exec/build-sbf-$n/s63.so' ] && [ ! -e '$WT/audit_1/exec/build-sbf-$n/s64.so' ]"
 settings
 
 # =================================================================================================
@@ -419,14 +467,19 @@ settings
 run "$TARGET" "$WT" -- anchor-build --run audit_1 --src . --program demo
 check "anchor-build: the downloads, then anchor build --ignore-keys -p <program> -- --skip-tools-install --offline" \
   calls_are "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|cargo build-sbf --help|cargo build-sbf --install-only|anchor build --ignore-keys -p demo -- --skip-tools-install --offline|"
-check "... and the program's .so is kept from target/deploy" sh -c "grep -q '1 .so in audit_1/exec/anchor-build-1/: demo.so' '$T/out'"
+check "... and the program's .so is kept from target/deploy" sh -c "grep -q '1 .so in audit_1/exec/anchor-build-[0-9]*/: demo.so' '$T/out'"
 check "... the build in the throwaway HOME, with its keypair" in_blocks '^== anchor build' '^keypair: yes$'
 run "$TARGET" "$WT" HTTPS_PROXY="$PROXY" -- anchor-test --run audit_1 --src .
 check "anchor-test: npm ci --ignore-scripts first, then the build, then anchor test against no validator and no deploy" \
   calls_are "rustup default|cargo fetch --manifest-path $S/src/Cargo.toml|cargo build-sbf --help|cargo build-sbf --install-only|npm ci --ignore-scripts --no-audit --no-fund|anchor build --ignore-keys -- --skip-tools-install --offline|anchor test --skip-build --skip-deploy --skip-local-validator --provider.cluster localnet --provider.wallet $S/home/.config/solana/id.json|"
 check "... npm ci gets the proxy, its own empty config files and the git on PATH" \
   sh -c "awk '/^== npm ci/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'env: HTTPS_PROXY=$PROXY' '$T/blk' && grep -qxF 'env: npm_config_userconfig=$S/npm/userconfig' '$T/blk' && grep -qxF 'env: npm_config_globalconfig=$S/npm/globalconfig' '$T/blk' && grep -qxF 'env: npm_config_git=$T/sys/git' '$T/blk' && grep -qxF 'env: npm_config_ignore_scripts=true' '$T/blk' && grep -qxF 'userconfig-bytes: 0' '$T/blk'"
+check "... and NODE_OPTIONS and npm's node-options preload target.sh's module into npm" \
+  sh -c "awk '/^== npm ci/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'env: NODE_OPTIONS=--require=\"$S/npm/preload.js\"' '$T/blk' && grep -qxF 'env: npm_config_node_options=--require=\"$S/npm/preload.js\"' '$T/blk'"
+check "... and COREPACK_ENABLE_PROJECT_SPEC=0, so a Corepack npm shim takes no npm release from the copy's packageManager field" \
+  in_blocks '^== npm ci' '^env: COREPACK_ENABLE_PROJECT_SPEC=0$'
 check "... anchor test runs without the proxy" none_in_blocks '^== anchor test' '^env: [A-Za-z_]*[Pp][Rr][Oo][Xx][Yy]='
+check "... and without that preload" none_in_blocks '^== anchor (build|test)' '^env: (NODE_OPTIONS|npm_config_[a-z_]*)='
 run "$TARGET" "$WT" -- anchor-test --run audit_1 --src . --dir app
 check "anchor-test where the lockfile is yarn's: no install, and a note says so" \
   sh -c "[ '$RC' = 0 ] && grep -q '^>> note: app holds a yarn, pnpm or bun lockfile' '$T/out' && ! grep -q '^== npm' '$T/calls'"
@@ -442,6 +495,169 @@ settings FAKE_NPM_CI_RC=1
 run "$TARGET" "$WT" -- npm-ci --run audit_1 --src .
 check "npm ci that fails (a lockfile out of step with package.json): exit 1" sh -c "[ '$RC' = 1 ] && grep -q '^>> npm-ci: npm ci --ignore-scripts failed (exit 1)' '$T/out'"
 settings
+# npm takes a project's settings from the .npmrc of the package root it finds from its working directory up,
+# a workspace's root among them, and expands ${VAR} in them from its environment, the proxy variables
+# included. fixtures/target/fake-npm.sh, first on PATH, reports each .npmrc from where it runs up to the top
+# of the copy. $T/npmwt is not a repository: a workspace whose top and app/ each hold a package.json, a lock
+# and a .npmrc naming ${HTTPS_PROXY}, with app/deep/.npmrc below them, and Cargo.toml and Anchor.toml.
+NW=$T/npmwt
+mkdir -p "$T/npmfake" "$NW/app/deep"
+sed "s#@T@#$T#g" "$FIXT/target/fake-npm.sh" > "$T/npmfake/npm" && chmod 700 "$T/npmfake/npm"
+printf '[package]\nname = "npmwt"\nversion = "0.1.0"\n' > "$NW/Cargo.toml"
+printf '[provider]\ncluster = "localnet"\n' > "$NW/Anchor.toml"
+printf '{\n  "name": "npmwt",\n  "version": "1.0.0",\n  "workspaces": ["app"]\n}\n' > "$NW/package.json"
+printf '{\n  "name": "app",\n  "version": "1.0.0"\n}\n' > "$NW/app/package.json"
+cp "$WT/package-lock.json" "$NW/package-lock.json"
+cp "$WT/package-lock.json" "$NW/app/package-lock.json"
+printf 'registry=https://npm.invalid/${HTTPS_PROXY}/\n' > "$NW/.npmrc"
+printf '//npm.invalid/:_authToken=${HTTPS_PROXY}\n' > "$NW/app/.npmrc"
+printf 'fund=false\n' > "$NW/app/deep/.npmrc"
+( cd "$NW" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null && printf 'native\n' > "$NW/audit_1/exec-mode"
+NOTE='>> note: npm ci takes no settings from the code under audit: target.sh removed these from the copy, and the registry and other settings they name do not apply:'
+run "$TARGET" "$NW" PATH="$T/npmfake:$FPATH" HTTPS_PROXY="$PROXY" -- npm-ci --run audit_1 --src .
+check "npm-ci where the copy's top holds a .npmrc naming \${HTTPS_PROXY}: npm ci finds no .npmrc" in_blocks '^== npm ci' '^npmrc: none$'
+check "... the run goes on, and a note names the .npmrc removed" sh -c "[ '$RC' = 0 ] && grep -qxF '$NOTE .npmrc' '$T/out'"
+check "... and npm's script-shell is false" sh -c "grep -q '^env: npm_config_script_shell=/[^ ]*/false\$' '$T/calls'"
+# The module itself, with the real node where it is installed: fixtures/target/fake-npm.sh copied it to
+# $T/preload.js. In the npm install npm runs in a git dependency's checkout (pacote marks it with
+# _PACOTE_NO_PREPARE_) it ends node at once; elsewhere child_process starts git and node and nothing else.
+if PATH=$REAL_PATH command -v node >/dev/null 2>&1; then
+  out=$(cd "$T" && env -i PATH="$REAL_PATH" _PACOTE_NO_PREPARE_='git+file:///dep#0' node -r "$T/preload.js" -e 'console.log("ran")' 2>&1 </dev/null; echo "rc=$?")
+  check "preload: a node process pacote marks with _PACOTE_NO_PREPARE_ ends at once with exit 0" test "$out" = rc=0
+  out=$(cd "$T" && env -i PATH="$REAL_PATH" npm_config_git="$T/sys/git" node -r "$T/preload.js" -e '
+const cp = require("child_process")
+const one = (what, start) => { try { start(); return what + " starts" } catch (e) { return what + " refused" } }
+console.log([one("sh", () => cp.spawn("sh", ["-c", "true"])), one("shell", () => cp.spawn("true", { shell: true })),
+  one("exec", () => cp.exec("true")), one("execFile", () => cp.execFile("/bin/echo", ["x"])),
+  one("git", () => cp.spawn(process.env.npm_config_git, ["--version"], { stdio: "ignore" })),
+  one("node", () => cp.spawn(process.execPath, ["-e", "0"], { stdio: "ignore" }))].join(", "))' 2>&1 </dev/null)
+  check "preload: otherwise child_process starts git and node, and refuses sh, a shell command and any other program" \
+    test "$out" = "sh refused, shell refused, exec refused, execFile refused, git starts, node starts"
+else
+  skp "node is not on PATH: the preload's own cases are skipped"
+fi
+run "$TARGET" "$NW" PATH="$T/npmfake:$FPATH" HTTPS_PROXY="$PROXY" -- npm-ci --run audit_1 --src . --dir app
+check "npm-ci --dir app, a workspace of the top: npm ci runs in app and finds no .npmrc up to the top" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF 'cwd: $S/src/app' '$T/calls' && grep -qxF 'npmrc: none' '$T/calls' && ! grep -q '^npmrc: [^n]' '$T/calls' && grep -qxF '$NOTE .npmrc, app/.npmrc' '$T/out'"
+run "$TARGET" "$NW" PATH="$T/npmfake:$FPATH" HTTPS_PROXY="$PROXY" -- anchor-test --run audit_1 --src .
+check "anchor-test's npm ci finds no .npmrc of the copy either" \
+  sh -c "[ '$RC' = 0 ] && grep -q '^== npm ci ' '$T/calls' && ! grep -q '^npmrc: [^n]' '$T/calls' && grep -qxF '$NOTE .npmrc' '$T/out'"
+mkdir -p "$T/tmp-q\"uote"
+run "$TARGET" "$NW" PATH="$T/npmfake:$FPATH" TMPDIR="$T/tmp-q\"uote" -- npm-ci --run audit_1 --src .
+check "a scratch directory whose path holds a double quote, which NODE_OPTIONS cannot quote: exit 3, npm does not run" \
+  sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: the scratch directory.s path holds a double quote or a backslash' '$T/err' && ! grep -q '^== npm' '$T/calls'"
+# The real npm, where it is installed. The copy's .npmrc sets loglevel=info and a log heading made of
+# ${https_proxy}: npm run in that tree takes both, so its log lines start with the proxy URL; the npm ci of
+# target.sh takes neither, so no info line and no part of the proxy URL reaches its log.
+if PATH=$REAL_PATH command -v npm >/dev/null 2>&1 && PATH=$REAL_PATH command -v node >/dev/null 2>&1; then
+  NR=$T/npmreal
+  mkdir -p "$NR" "$T/npm-own/home"
+  : > "$T/npm-own/userconfig"
+  : > "$T/npm-own/globalconfig"
+  printf '{\n  "name": "npmreal",\n  "version": "1.0.0"\n}\n' > "$NR/package.json"
+  printf '{\n  "name": "npmreal",\n  "version": "1.0.0",\n  "lockfileVersion": 3,\n  "requires": true,\n  "packages": {\n    "": {\n      "name": "npmreal",\n      "version": "1.0.0"\n    }\n  }\n}\n' > "$NR/package-lock.json"
+  printf 'loglevel=info\nheading=npm-${https_proxy}\n' > "$NR/.npmrc"
+  ( cd "$NR" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null && printf 'native\n' > "$NR/audit_1/exec-mode"
+  own=$(cd "$NR" && env -i HOME="$T/npm-own/home" PATH="$REAL_PATH" https_proxy="$PROXY" \
+    npm_config_userconfig="$T/npm-own/userconfig" npm_config_globalconfig="$T/npm-own/globalconfig" \
+    npm_config_cache="$T/npm-own/cache" npm_config_logs_dir="$T/npm-own/logs" npm_config_update_notifier=false \
+    npm config get loglevel 2>&1 </dev/null)
+  case "$own" in *"npm-$PROXY info "*) took=yes ;; *) took=no ;; esac
+  check "real npm, run in a tree whose .npmrc sets loglevel=info and heading=npm-\${https_proxy}, prints the proxy URL" test "$took" = yes
+  run "$TARGET" "$NR" PATH="$REAL_PATH" https_proxy="$PROXY" -- npm-ci --run audit_1 --src .
+  log=$(sed -n 's/.*; log \(audit_1\/exec\/npm-ci-[0-9]*[.]log\).*/\1/p' "$T/out")
+  check "... while target.sh's real npm ci of that tree takes nothing from it: exit 0, no info line, no proxy URL in its log" \
+    sh -c "[ '$RC' = 0 ] && [ -n '$log' ] && [ -f '$NR/$log' ] && ! grep -q ' info using ' '$NR/$log' && ! grep -q 'CANARY-proxy' '$NR/$log' '$T/out' '$T/err'"
+else
+  skp "npm or node is not on PATH: target.sh's real npm ci case is skipped"
+fi
+# npm prepares a git dependency that has workspaces or an install, build or prepare script with an npm install in
+# that dependency's checkout, and that npm takes the checkout's .npmrc. $T/npmgit-<shape>'s lockfile names such a
+# dependency by git+file:// (a git host in practice): a repository whose .npmrc names a registry made of
+# ${https_proxy}, whose package.json depends on left-pad and has an install script that would leave a mark, or,
+# for the shape workspaces, workspaces and no script. npm ci of that tree on its own sends the proxy URL to that
+# registry; target.sh's npm ci installs the dependency and takes nothing from it.
+if PATH=$REAL_PATH command -v npm >/dev/null 2>&1 && PATH=$REAL_PATH command -v node >/dev/null 2>&1; then
+  for shape in install workspaces; do
+    GD=$T/gitdep-$shape NG=$T/npmgit-$shape
+    rm -rf "$T/npm-own" "$T/install-mark"
+    mkdir -p "$GD" "$NG" "$T/npm-own/home"
+    : > "$T/npm-own/userconfig"
+    : > "$T/npm-own/globalconfig"
+    tgit init -q "$GD"
+    case "$shape" in
+      install) printf '{\n  "name": "dep",\n  "version": "1.0.0",\n  "scripts": {"install": "touch %s/install-mark"},\n  "dependencies": {"left-pad": "1.3.0"}\n}\n' "$T" > "$GD/package.json" ;;
+      *) printf '{\n  "name": "dep",\n  "version": "1.0.0",\n  "workspaces": [],\n  "dependencies": {"left-pad": "1.3.0"}\n}\n' > "$GD/package.json" ;;
+    esac
+    printf 'registry=https://npm.invalid/${https_proxy}/\nfetch-retries=0\n' > "$GD/.npmrc"
+    tgit -C "$GD" add -A && tgit -C "$GD" commit -qm dep
+    spec=git+file://$GD#$(tgit -C "$GD" rev-parse HEAD)
+    printf '{\n  "name": "npmgit",\n  "version": "1.0.0",\n  "dependencies": {"dep": "%s"}\n}\n' "$spec" > "$NG/package.json"
+    printf '{\n  "name": "npmgit",\n  "version": "1.0.0",\n  "lockfileVersion": 3,\n  "requires": true,\n  "packages": {\n    "": {"name": "npmgit", "version": "1.0.0", "dependencies": {"dep": "%s"}},\n    "node_modules/dep": {"version": "1.0.0", "resolved": "%s"}\n  }\n}\n' "$spec" "$spec" > "$NG/package-lock.json"
+    cp -R "$NG" "$T/npm-own/tree"
+    ( cd "$NG" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null && printf 'native\n' > "$NG/audit_1/exec-mode"
+    own=$(cd "$T/npm-own/tree" && env -i HOME="$T/npm-own/home" PATH="$REAL_PATH" https_proxy="$PROXY" \
+      npm_config_userconfig="$T/npm-own/userconfig" npm_config_globalconfig="$T/npm-own/globalconfig" \
+      npm_config_cache="$T/npm-own/cache" npm_config_logs_dir="$T/npm-own/logs" npm_config_update_notifier=false \
+      npm_config_ignore_scripts=true npm ci --ignore-scripts --no-audit --no-fund 2>&1 </dev/null)
+    case "$own" in *CANARY-proxy*) took=yes ;; *) took=no ;; esac
+    check "real npm ci of a tree whose git dependency ($shape) holds a .npmrc naming \${https_proxy}: the npm install in the dependency's checkout sends the proxy URL" test "$took" = yes
+    run "$TARGET" "$NG" PATH="$REAL_PATH" https_proxy="$PROXY" -- npm-ci --run audit_1 --src .
+    log=$(sed -n 's/.*; log \(audit_1\/exec\/npm-ci-[0-9]*[.]log\).*/\1/p' "$T/out")
+    check "... while target.sh's npm ci installs it and takes nothing from it: exit 0, no proxy URL in its log, no script run" \
+      sh -c "[ '$RC' = 0 ] && [ -n '$log' ] && [ -f '$NG/$log' ] && grep -q '^added 1 package' '$NG/$log' && ! grep -q 'CANARY-proxy' '$NG/$log' '$T/out' '$T/err' && [ ! -e '$T/install-mark' ]"
+  done
+else
+  skp "npm or node is not on PATH: target.sh's real npm ci cases with a git dependency are skipped"
+fi
+# npm 10 runs the prepare script of a git dependency, after the npm install in its checkout, and of a package
+# the lockfile resolves to a directory, despite --ignore-scripts, with the sh it finds first on a PATH that
+# starts with that package's node_modules/.bin. $T/npmprep-git's lockfile names a git+file:// dependency with a
+# prepare script that leaves a mark and no dependency; in $T/npmprep-git-sh that dependency also holds
+# node_modules/.bin/sh, a link to bash; $T/npmprep-dir asks for loc 1.0.0, and its lockfile resolves that to
+# its directory loc/, not as a link, whose prepare script leaves the mark.
+if PATH=$REAL_PATH command -v npm >/dev/null 2>&1 && PATH=$REAL_PATH command -v node >/dev/null 2>&1; then
+  for shape in git git-sh dir; do
+    NP=$T/npmprep-$shape
+    rm -rf "$T/npm-own" "$T/prepare-mark"
+    mkdir -p "$NP" "$T/npm-own/home"
+    : > "$T/npm-own/userconfig"
+    : > "$T/npm-own/globalconfig"
+    if [ "$shape" != dir ]; then
+      GD=$T/gitdep-prepare-$shape
+      mkdir -p "$GD"
+      tgit init -q "$GD"
+      printf '{\n  "name": "dep",\n  "version": "1.0.0",\n  "scripts": {"prepare": "touch %s/prepare-mark"}\n}\n' "$T" > "$GD/package.json"
+      [ "$shape" = git ] || { mkdir -p "$GD/node_modules/.bin" && ln -s /bin/bash "$GD/node_modules/.bin/sh"; }
+      tgit -C "$GD" add -A -f && tgit -C "$GD" commit -qm dep
+      spec=git+file://$GD#$(tgit -C "$GD" rev-parse HEAD)
+      printf '{\n  "name": "npmprep",\n  "version": "1.0.0",\n  "dependencies": {"dep": "%s"}\n}\n' "$spec" > "$NP/package.json"
+      printf '{\n  "name": "npmprep",\n  "version": "1.0.0",\n  "lockfileVersion": 3,\n  "requires": true,\n  "packages": {\n    "": {"name": "npmprep", "version": "1.0.0", "dependencies": {"dep": "%s"}},\n    "node_modules/dep": {"version": "1.0.0", "resolved": "%s"}\n  }\n}\n' "$spec" "$spec" > "$NP/package-lock.json"
+    else
+      mkdir -p "$NP/loc"
+      printf '{\n  "name": "loc",\n  "version": "1.0.0",\n  "scripts": {"prepare": "touch %s/prepare-mark"}\n}\n' "$T" > "$NP/loc/package.json"
+      printf '{\n  "name": "npmprep",\n  "version": "1.0.0",\n  "dependencies": {"loc": "1.0.0"}\n}\n' > "$NP/package.json"
+      printf '{\n  "name": "npmprep",\n  "version": "1.0.0",\n  "lockfileVersion": 3,\n  "requires": true,\n  "packages": {\n    "": {"name": "npmprep", "version": "1.0.0", "dependencies": {"loc": "1.0.0"}},\n    "node_modules/loc": {"version": "1.0.0", "resolved": "file:loc"}\n  }\n}\n' > "$NP/package-lock.json"
+    fi
+    cp -R "$NP" "$T/npm-own/tree"
+    ( cd "$NP" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null && printf 'native\n' > "$NP/audit_1/exec-mode"
+    (cd "$T/npm-own/tree" && env -i HOME="$T/npm-own/home" PATH="$REAL_PATH" \
+      npm_config_userconfig="$T/npm-own/userconfig" npm_config_globalconfig="$T/npm-own/globalconfig" \
+      npm_config_cache="$T/npm-own/cache" npm_config_logs_dir="$T/npm-own/logs" npm_config_update_notifier=false \
+      npm_config_ignore_scripts=true npm ci --ignore-scripts --no-audit --no-fund) >/dev/null 2>&1 </dev/null
+    if [ -e "$T/prepare-mark" ]; then
+      ok "real npm ci --ignore-scripts of a tree with a $shape dependency runs that dependency's prepare script"
+    else
+      skp "this npm runs no prepare script of a $shape dependency under --ignore-scripts"
+    fi
+    rm -f "$T/prepare-mark"
+    run "$TARGET" "$NP" PATH="$REAL_PATH" -- npm-ci --run audit_1 --src .
+    check "... while target.sh's npm ci runs none: no mark, and if npm stopped at the script, a note says so" \
+      sh -c "[ ! -e '$T/prepare-mark' ] && { [ '$RC' = 0 ] || { [ '$RC' = 1 ] && grep -q '^>> note: npm tried to run a dependency.s script' '$T/out'; }; }"
+  done
+else
+  skp "npm or node is not on PATH: target.sh's real npm ci cases with a prepare script are skipped"
+fi
 
 # =================================================================================================
 # target.sh: the watchdog, signals and large output.
@@ -506,20 +722,23 @@ settings
 # =================================================================================================
 # target.sh: a source that is not a repository, submodules, and what must be in place.
 # =================================================================================================
-# $T/plain is not a repository: a package with target/, sub/TARGET/, node_modules/ and sub/node_modules/
-# directories, a run directory, the store, a top-level audit_notes.md, a link and a FIFO.
+# $T/plain is not a repository: a package with target/, sub/TARGET/, node_modules/ and sub/Node_Modules/
+# directories, a run directory, two more spelled AUDIT_7 and Incident_9 (a volume that ignores case finds audit_7
+# under the name AUDIT_7), the store as .Audit-Memory, a top-level audit_notes.md, a link and a FIFO.
 P=$T/plain
-mkdir -p "$P/src" "$P/target" "$P/sub/TARGET" "$P/node_modules/x" "$P/sub/node_modules" "$P/sub/keep" "$P/.audit-memory"
+mkdir -p "$P/src" "$P/target" "$P/sub/TARGET" "$P/node_modules/x" "$P/sub/Node_Modules" "$P/sub/keep" "$P/.Audit-Memory" \
+  "$P/AUDIT_7" "$P/Incident_9"
 printf '[package]\nname = "plainpkg"\nversion = "0.1.0"\n' > "$P/Cargo.toml"
 printf 'fn p() {}\n' > "$P/src/lib.rs"
-printf 'built\n' > "$P/target/out"; printf 'built\n' > "$P/sub/TARGET/out"; printf 'js\n' > "$P/sub/node_modules/y"
-printf 'kept\n' > "$P/sub/keep/file"; printf 'db\n' > "$P/.audit-memory/audit.db"; printf 'notes\n' > "$P/audit_notes.md"
+printf 'built\n' > "$P/target/out"; printf 'built\n' > "$P/sub/TARGET/out"; printf 'js\n' > "$P/sub/Node_Modules/y"
+printf 'kept\n' > "$P/sub/keep/file"; printf 'db\n' > "$P/.Audit-Memory/audit.db"; printf 'notes\n' > "$P/audit_notes.md"
+printf 'run\n' > "$P/AUDIT_7/notes.md"; printf 'hunt\n' > "$P/Incident_9/notes.md"
 ln -s /etc/hosts "$P/lnk"
 mkfifo "$P/pipe" 2>/dev/null || true
 ( cd "$P" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null && printf 'native\n' > "$P/audit_1/exec-mode"
 settings FAKE_LIST=1
 run "$TARGET" "$P" -- cargo-test --run audit_1 --src .
-check "a source that is not a repository is copied file by file" \
+check "a source that is not a repository is copied file by file, without run directories, the store, target/ and node_modules/ in any letter case" \
   sh -c "[ '$RC' = 0 ] && grep -qxF 'listing: . ./Cargo.toml ./lnk ./src ./src/lib.rs ./sub ./sub/keep ./sub/keep/file ' '$T/calls'"
 check "... its links kept as links, never followed" grep -qxF 'link: ./lnk -> /etc/hosts' "$T/calls"
 run "$TARGET" "$P" -- cargo-test --run audit_1 --src . --rev HEAD
@@ -589,8 +808,8 @@ rm -rf "$WT/.bin"
 check "no target.sh run ran a program or hook the source repository's config names" test -z "$(ls -A "$T/marks")"
 
 # =================================================================================================
-# target.sh in an incident's run directory: INCIDENTS.json must give the root cause, and
-# supply_chain_or_ci is never built natively.
+# target.sh in an incident's run directory: INCIDENTS.json must give the root cause, and nothing of a run
+# that records a supply_chain_or_ci incident is built natively, nor anything else of the working directory.
 # =================================================================================================
 IJ=$WT/incident_1/INCIDENTS.json
 printf 'native\n' > "$WT/incident_1/exec-mode"
@@ -614,13 +833,190 @@ check "native mode where an incident's root cause is supply_chain_or_ci: exit 3,
   sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: incident_1/INCIDENTS.json records an incident whose root_cause_class is supply_chain_or_ci, and such an incident.s code is never built natively' '$T/err' && [ ! -s '$T/calls' ]"
 run "$TARGET" "$WT" -- build-sbf --run incident_1 --src . --patch incident_1/patches/INC-1.1.patch
 check "--patch of that incident: exit 3 as well" sh -c "[ '$RC' = 3 ] && grep -q '^target: blocker: the root_cause_class of INC-1.1 is supply_chain_or_ci' '$T/err'"
+# A patch of another incident builds the same tree, so natively every incident of the run counts.
 run "$TARGET" "$WT" -- build-sbf --run incident_1 --src . --patch incident_1/patches/INC-1.2.patch
-check "--patch of another incident of the run, a code flaw: only its class counts, and it builds" \
+check "--patch of another incident of the run, a code flaw: natively the whole run counts, exit 3, nothing copied" \
+  sh -c "[ '$RC' = 3 ] && grep -qxF '>> incident INC-1.2: root_cause_class code_flaw (incident_1/INCIDENTS.json)' '$T/out' && grep -qxF \"target: blocker: incident_1/INCIDENTS.json records an incident whose root_cause_class is supply_chain_or_ci, and such an incident's code is never built natively (OUTPUT-RULES.md Rule 11a), nor is a patch of INC-1.2, which builds the same tree; run it in isolated mode — nothing was copied or built.\" '$T/err' && [ ! -s '$T/calls' ] && [ -z \"\$(ls -A '$NT')\" ]"
+printf '{"incidents": [{"id": "INC-1.1"}, {"id": "INC-1.2", "root_cause_class": "code_flaw"}]}\n' > "$IJ"
+run "$TARGET" "$WT" -- build-sbf --run incident_1 --src . --patch incident_1/patches/INC-1.2.patch
+check "... and natively another incident with no root cause recorded stops it as well: exit 3, nothing copied" \
+  sh -c "[ '$RC' = 3 ] && grep -qF 'target: blocker: incident_1/INCIDENTS.json gives an incident no root_cause_class from incidents-schema.md: ' '$T/err' && [ ! -s '$T/calls' ]"
+printf '{"incidents": [["INC-1.1", "supply_chain_or_ci"], {"id": "INC-1.2", "root_cause_class": "code_flaw"}]}\n' > "$IJ"
+run "$TARGET" "$WT" -- build-sbf --run incident_1 --src . --patch incident_1/patches/INC-1.2.patch
+check "... and so does an incident that is not an object: exit 3, nothing copied" \
+  sh -c "[ '$RC' = 3 ] && grep -qF 'target: blocker: incident_1/INCIDENTS.json holds an incident that is not an object: ' '$T/err' && [ ! -s '$T/calls' ]"
+printf '{"incidents": [{"id": "INC-1.1", "root_cause_class": "unknown"}, {"id": "INC-1.2", "root_cause_class": "code_flaw"}]}\n' > "$IJ"
+run "$TARGET" "$WT" -- build-sbf --run incident_1 --src . --patch incident_1/patches/INC-1.2.patch
+check "--patch of a code flaw in a run with no supply_chain_or_ci incident builds natively" \
   sh -c "[ '$RC' = 0 ] && grep -qxF '>> incident INC-1.2: root_cause_class code_flaw (incident_1/INCIDENTS.json)' '$T/out'"
 if [ "$ISOLATED_OK" = 1 ]; then
+  printf '{"incidents": [{"id": "INC-1.1", "root_cause_class": "supply_chain_or_ci"}, {"id": "INC-1.2", "root_cause_class": "code_flaw"}]}\n' > "$IJ"
   run "$TARGET" "$WT" AUDITOR_EXEC_MODE=isolated -- build-sbf --run incident_1 --src .
   check "isolated mode builds a supply_chain_or_ci incident's code" test "$RC" = 0
+  run "$TARGET" "$WT" AUDITOR_EXEC_MODE=isolated -- build-sbf --run incident_1 --src . --patch incident_1/patches/INC-1.2.patch
+  check "... and a patch of another incident of that run" test "$RC" = 0
 fi
+# Natively an incident recorded anywhere in the working directory counts, whatever --run names: every --src is
+# the working tree or a copy of it. audit_1 (exec-mode native) builds while incident_1 records the incidents;
+# incident_2, made beside it, holds an INCIDENTS.json of each kind below, or none; incident_1.old is a run moved
+# aside under another name, and incident_notes.md a file.
+XRUN='so nothing from this working directory is built natively, for an audit run or an incident run (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built.'
+XREAD='nothing from this working directory is built natively until every incident_*/INCIDENTS.json in it records the root_cause_class of each of its incidents (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built.'
+XLIST='the working directory cannot be listed, so target.sh cannot tell whether an incident_* directory in it records a supply_chain_or_ci incident, and nothing from it is built natively until it can be listed (OUTPUT-RULES.md Rule 11a) — nothing was copied or built.'
+printf '{"incidents": [{"id": "INC-1.1", "root_cause_class": "supply_chain_or_ci"}, {"id": "INC-1.2", "root_cause_class": "code_flaw"}]}\n' > "$IJ"
+for src in . audit_1/src.git; do
+  run "$TARGET" "$WT" -- build-sbf --run audit_1 --src "$src" --patch audit_1/patches/F-1.patch
+  check "natively, audit_1's build (--src $src, its own patch) while incident_1 records a supply_chain_or_ci incident: exit 3, nothing copied" \
+    sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: incident_1/INCIDENTS.json records an incident whose root_cause_class is supply_chain_or_ci, $XRUN' '$T/err' && [ ! -s '$T/calls' ] && [ -z \"\$(ls -A '$NT')\" ]"
+done
+for act in cargo-test npm-ci; do
+  run "$TARGET" "$WT" -- "$act" --run audit_1 --src .
+  check "... and $act as well" sh -c "[ '$RC' = 3 ] && grep -qF 'incident_1/INCIDENTS.json records an incident whose root_cause_class is supply_chain_or_ci, so nothing' '$T/err' && [ ! -s '$T/calls' ]"
+done
+if [ "$ISOLATED_OK" = 1 ]; then
+  run "$TARGET" "$WT" AUDITOR_EXEC_MODE=isolated -- build-sbf --run audit_1 --src .
+  check "isolated mode builds audit_1 while incident_1 records a supply_chain_or_ci incident" test "$RC" = 0
+fi
+( cd "$WT" && "$ROOT/scripts/rundir.sh" new incident ) >/dev/null || ko "rundir.sh could not make incident_2"
+IJ2=$WT/incident_2/INCIDENTS.json
+printf '{"incidents": [{"id": "INC-1.2", "root_cause_class": "code_flaw"}]}\n' > "$IJ"
+run "$TARGET" "$WT" -- build-sbf --run incident_1 --src . --patch incident_1/patches/INC-1.2.patch
+check "natively, an incident run of a code flaw builds while incident_2 holds no INCIDENTS.json" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF '>> incident INC-1.2: root_cause_class code_flaw (incident_1/INCIDENTS.json)' '$T/out'"
+printf '{"incidents": [{"id": "INC-2.1", "root_cause_class": "supply_chain_or_ci"}]}\n' > "$IJ2"
+run "$TARGET" "$WT" -- build-sbf --run incident_1 --src . --patch incident_1/patches/INC-1.2.patch
+check "... and stops, exit 3 with nothing copied, once incident_2 records a supply_chain_or_ci incident" \
+  sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: incident_2/INCIDENTS.json records an incident whose root_cause_class is supply_chain_or_ci, $XRUN' '$T/err' && [ ! -s '$T/calls' ] && [ -z \"\$(ls -A '$NT')\" ]"
+while IFS='|' read -r body want; do
+  [ -n "$body" ] || continue
+  printf '%s\n' "$body" > "$IJ2"
+  run "$TARGET" "$WT" -- cargo-test --run audit_1 --src .
+  case "$want" in
+    builds) check "natively, audit_1 builds while incident_2's INCIDENTS.json holds $body" test "$RC" = 0 ;;
+    *) check "natively, incident_2's INCIDENTS.json that $want stops audit_1's build: exit 3, nothing copied" \
+         sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: incident_2/INCIDENTS.json $want: $XREAD' '$T/err' && [ ! -s '$T/calls' ]" ;;
+  esac
+done <<'CASES'
+{"schema": "auditor-incidents/1", "incidents": [], "ruled_out": [{"verdict": "benign", "subject": "x", "reason": "y"}]}|builds
+{"incidents": [{"id": "INC-2.1", "root_cause_class": "unknown"}, {"id": "INC-2.2", "root_cause_class": "off_chain"}]}|builds
+not json|cannot be read as JSON
+{"incidents": {}}|holds no incidents list
+{"incidents": [{"id": "INC-2.1"}]}|gives an incident no root_cause_class from incidents-schema.md
+{"incidents": [["INC-2.1", "supply_chain_or_ci"]]}|holds an incident that is not an object
+CASES
+printf '{"incidents": [{"id": "INC-2.1", "root_cause_class": "code_flaw"}]}\n' > "$T/incidents-elsewhere.json"
+rm -f "$IJ2"
+ln -s "$T/incidents-elsewhere.json" "$IJ2"
+run "$TARGET" "$WT" -- cargo-test --run audit_1 --src .
+check "natively, an INCIDENTS.json in incident_2 that is a symbolic link stops audit_1's build: exit 3" \
+  sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: incident_2/INCIDENTS.json is not a regular file: $XREAD' '$T/err' && [ ! -s '$T/calls' ]"
+rm -f "$IJ2"
+if [ "$(id -u)" != 0 ]; then
+  chmod 000 "$WT/incident_2"
+  run "$TARGET" "$WT" -- cargo-test --run audit_1 --src .
+  chmod 700 "$WT/incident_2"
+  check "natively, an incident_2 that cannot be searched stops audit_1's build: exit 3" \
+    sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: incident_2/INCIDENTS.json cannot be read: $XREAD' '$T/err' && [ ! -s '$T/calls' ]"
+fi
+mkdir "$WT/incident_1.old"
+printf '{"incidents": [{"id": "INC-1.1", "root_cause_class": "supply_chain_or_ci"}]}\n' > "$WT/incident_1.old/INCIDENTS.json"
+printf 'notes\n' > "$WT/incident_notes.md"
+run "$TARGET" "$WT" -- cargo-test --run audit_1 --src .
+check "natively, a run moved aside as incident_1.old still counts: exit 3" \
+  sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: incident_1.old/INCIDENTS.json records an incident whose root_cause_class is supply_chain_or_ci, $XRUN' '$T/err'"
+rm -rf "$WT/incident_1.old"
+run "$TARGET" "$WT" -- cargo-test --run audit_1 --src .
+check "... while a file named incident_notes.md, and incident_2 without INCIDENTS.json, count for nothing" test "$RC" = 0
+run "$TARGET" "$WT" PATH="$T/fake:$T/sys-nopy" -- cargo-test --run audit_1 --src .
+check "natively without python3, an INCIDENTS.json in the working directory: exit 3 before anything is copied" \
+  sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: python3 is not on PATH, so target.sh cannot tell whether incident_1 holds an INCIDENTS.json, or read the root_cause_class one records (OUTPUT-RULES.md Rule 11a) — nothing was copied or built.' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
+if [ "$ISOLATED_OK" = 1 ]; then
+  printf '{"incidents": [{"id": "INC-2.1", "root_cause_class": "supply_chain_or_ci"}]}\n' > "$IJ2"
+  run "$TARGET" "$WT" AUDITOR_EXEC_MODE=isolated -- cargo-test --run audit_1 --src .
+  check "isolated mode builds audit_1 while incident_2 records a supply_chain_or_ci incident" test "$RC" = 0
+fi
+# Only python3 tells that an INCIDENTS.json is missing, so a stat that fails for another reason stops the build:
+# a path past PATH_MAX (1024 bytes on macOS, 4096 on Linux) hides no run. In a working directory PATH_MAX-22 bytes
+# long incident_1/INCIDENTS.json lies past it; in one PATH_MAX-200 bytes long, a run moved aside under a long
+# name, whose INCIDENTS.json (a name of 190 bytes) or which itself (230) lies past it. Each file is written
+# through a relative path and records a supply_chain_or_ci incident. The incident_* directories are read in any
+# letter case, since a volume that ignores case finds incident_2 under INCIDENT_2, and a working directory that
+# cannot be listed stops the build too.
+PM=$(getconf PATH_MAX / 2>/dev/null)
+case "$PM" in ''|*[!0-9]*) PM=1024 ;; esac
+long() { printf '%*s' "$1" '' | tr ' ' "$2"; }
+# deep_wt <length>: prints a new directory below $T whose physical path is <length> bytes, holding a cargo
+# package and audit_1 (exec-mode native). Its components of 200 bytes stop while 2 to 202 bytes are left, so
+# the last one, of 1 to 201 bytes, makes up the rest whatever the length of $T; it fails when $T leaves less.
+deep_wt() {
+  local cur c
+  mkdir "$T/deep-$1" && cd "$T/deep-$1" || return 1
+  cur=$(pwd -P)
+  while [ $(( ${#cur} + 202 )) -lt "$1" ]; do
+    c=d$(long 199 0); mkdir "$c" && cd "$c" || return 1; cur=$(pwd -P)
+  done
+  [ $(( $1 - ${#cur} )) -ge 2 ] || return 1
+  c=e$(long $(( $1 - ${#cur} - 2 )) 0); mkdir "$c" && cd "$c" || return 1
+  printf '[package]\nname = "demo"\nversion = "0.1.0"\nedition = "2021"\n' > Cargo.toml
+  mkdir src audit_1 && printf '// v1\n' > src/lib.rs && printf '*\n' > audit_1/.gitignore && printf 'native\n' > audit_1/exec-mode
+  pwd -P
+}
+# 202 lengths in a row give the last component each of the sizes a length of $T can leave it.
+dlen=$(( ${#T} + 220 )) dbad=
+while [ "$dlen" -lt $(( ${#T} + 422 )) ]; do
+  DW=$(deep_wt "$dlen") && [ "${#DW}" = "$dlen" ] || dbad="$dlen bytes asked, ${#DW} made"
+  rm -rf "$T/deep-$dlen"; [ -z "$dbad" ] || break; dlen=$((dlen + 1))
+done
+if [ -z "$dbad" ]; then ok "deep_wt makes a working directory of each of 202 lengths in a row"
+else ko "deep_wt makes a working directory of each of 202 lengths in a row: $dbad below $T"; fi
+SCJ='{"incidents": [{"id": "INC-1.1", "root_cause_class": "supply_chain_or_ci"}]}'
+if DW=$(deep_wt $((PM - 22))) && [ "${#DW}" = $((PM - 22)) ]; then
+  ( cd "$DW" && mkdir incident_1 && printf '*\n' > incident_1/.gitignore && printf '%s\n' "$SCJ" > incident_1/INCIDENTS.json )
+  run "$TARGET" "$DW" -- cargo-test --run audit_1 --src .
+  check "natively, in a working directory of $((PM - 22)) bytes, an incident_1/INCIDENTS.json past PATH_MAX ($PM) stops audit_1's build: exit 3, nothing copied" \
+    sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: incident_1/INCIDENTS.json cannot be read: $XREAD' '$T/err' && [ ! -s '$T/calls' ] && [ -z \"\$(ls -A '$NT')\" ]"
+else
+  ko "no working directory of $((PM - 22)) bytes could be made below $T"
+fi
+if DW=$(deep_wt $((PM - 200))) && [ "${#DW}" = $((PM - 200)) ]; then
+  n2=incident_1.$(long 179 x)
+  n3=incident_1.$(long 219 y)
+  ( cd "$DW" && mkdir "$n2" && printf '%s\n' "$SCJ" > "$n2/INCIDENTS.json" )
+  run "$TARGET" "$DW" -- cargo-test --run audit_1 --src .
+  check "natively, a run moved aside under a name of 190 bytes, its INCIDENTS.json past PATH_MAX, stops audit_1's build: exit 3, nothing copied" \
+    sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: $n2/INCIDENTS.json cannot be read: $XREAD' '$T/err' && [ ! -s '$T/calls' ] && [ -z \"\$(ls -A '$NT')\" ]"
+  ( cd "$DW" && mv "$n2" "$n3" )
+  run "$TARGET" "$DW" -- cargo-test --run audit_1 --src .
+  check "... and under a name of 230 bytes, the run itself past PATH_MAX: exit 3, the name cut after 200 bytes" \
+    sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: ${n3:0:200}.../INCIDENTS.json cannot be read: $XREAD' '$T/err' && [ ! -s '$T/calls' ]"
+  ( cd "$DW" && rm -rf "$n3" )
+  run "$TARGET" "$DW" -- cargo-test --run audit_1 --src .
+  check "... and with that run gone the same build runs: exit 0" test "$RC" = 0
+  run "$TARGET" "$DW" PATH="$T/fake:$T/sys-nopy" -- cargo-test --run audit_1 --src .
+  check "natively without python3 and with no incident_* directory, target.sh's own need of python3 stops it: exit 3, nothing copied" \
+    sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: python3 is not on PATH, so cargo-test cannot run here — nothing was copied or built.' '$T/err' && [ -z \"\$(ls -A '$NT')\" ]"
+  for spelled in INCIDENT_2 Incident_2; do
+    ( cd "$DW" && mkdir "$spelled" && printf '%s\n' "$SCJ" > "$spelled/INCIDENTS.json" )
+    run "$TARGET" "$DW" -- cargo-test --run audit_1 --src .
+    ( cd "$DW" && rm -rf "$spelled" )
+    check "natively, a run spelled $spelled whose INCIDENTS.json records a supply_chain_or_ci incident stops audit_1's build: exit 3, nothing copied" \
+      sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: $spelled/INCIDENTS.json records an incident whose root_cause_class is supply_chain_or_ci, $XRUN' '$T/err' && [ ! -s '$T/calls' ]"
+  done
+  if [ "$(id -u)" != 0 ]; then
+    ( cd "$DW" && cp Cargo.toml src/ && mkdir incident_1 && printf '%s\n' "$SCJ" > incident_1/INCIDENTS.json )
+    chmod 300 "$DW"
+    run "$TARGET" "$DW" -- cargo-test --run audit_1 --src src
+    chmod 700 "$DW"
+    check "natively, a working directory that cannot be listed stops audit_1's build of --src src: exit 3, nothing copied" \
+      sh -c "[ '$RC' = 3 ] && grep -qxF 'target: blocker: $XLIST' '$T/err' && [ ! -s '$T/calls' ]"
+    ( cd "$DW" && rm -rf incident_1 )
+    run "$TARGET" "$DW" -- cargo-test --run audit_1 --src src
+    check "... and with it listed and incident_1 gone, the same build of --src src runs: exit 0" test "$RC" = 0
+  fi
+else
+  ko "no working directory of $((PM - 200)) bytes could be made below $T"
+fi
+rm -rf "$WT/incident_2" "$WT/incident_notes.md" "$T/deep-$((PM - 22))" "$T/deep-$((PM - 200))"
 rm -f "$IJ" "$WT/incident_1/exec-mode" "$WT/incident_1/patches/INC-1.1.patch" "$WT/incident_1/patches/INC-1.2.patch"
 
 # =================================================================================================
@@ -885,6 +1281,42 @@ for dep in '{"name":"evil","source":"git+https://evil.invalid/x","registry":null
   check "a dependency ${dep#*|}: exit 3, nothing resolved or disclosed" \
     sh -c "[ '$RC' = 3 ] && grep -q '${dep#*|}' '$T/err' && ! grep -q '^== cargo tree' '$T/calls' && [ \"\$(( \$(wc -l < '$DT') - 1 ))\" = '$r0' ]"
 done
+# A workspace member outside the workspace root's directory, which cargo takes when the member names the root
+# with package.workspace. The rebuild places each member at its path under the root, so such a member would
+# land outside the scratch directory: beside it (oor/canary/m, from a root three folders down, at $T/canary/m),
+# or, from a root deeper than the scratch directory, at the absolute path its folder spells under the working
+# directory (an existing manifest there, $T/victim/app). It is refused before anything is written or sent. The
+# stand-in's cargo metadata lists the packages from FAKE_META_UP folders above the root and names them in the
+# calls, so a member it misses (it once passed over one below a TMPDIR folder named target) fails a check of its
+# own, not the refusal's.
+VICTIM=$T/victim/app
+mkdir -p "$VICTIM"
+printf '[package]\nname = "victim"\n' > "$VICTIM/Cargo.toml"
+cp "$VICTIM/Cargo.toml" "$T/victim.saved"
+ups() { local s="" k=$1; while [ "$k" -gt 0 ]; do s=$s../; k=$((k - 1)); done; printf '%s' "$s"; }
+n=$(( $(printf '%s' "$NT" | tr -cd / | wc -c) + 4 ))
+deep=oor; i=1; while [ "$i" -lt "$n" ]; do deep=$deep/d; i=$((i + 1)); done
+for layout in "cargo-tree|beside the scratch directory|oor/a/b/c|oor/canary/m" "cargo-outdated|beside the scratch directory|oor/a/b/c|oor/canary/m" \
+  "cargo-tree|at the absolute path it spells|$deep|${VICTIM#/}"; do
+  IFS='|' read -r action where rootdir member <<< "$layout"
+  rn=$(( $(printf '%s' "$rootdir" | tr -cd / | wc -c) + 1 ))
+  mn=$(( $(printf '%s' "$member" | tr -cd / | wc -c) + 1 ))
+  mkdir -p "$WT/$rootdir" "$WT/$member"
+  printf '[workspace]\nmembers = ["%s%s"]\n\n[package]\nname = "root"\nversion = "0.1.0"\nedition = "2021"\n' "$(ups "$rn")" "$member" > "$WT/$rootdir/Cargo.toml"
+  printf '[package]\nname = "m"\nversion = "0.1.0"\nedition = "2021"\nworkspace = "%s%s"\n\n[dependencies]\nserde = "1"\n' "$(ups "$mn")" "$rootdir" > "$WT/$member/Cargo.toml"
+  settings FAKE_META_UP="$rn"
+  r0=$(rows)
+  run "$DEPS" "$WT" -- "$action" --run audit_1 --manifest "$rootdir/Cargo.toml" --manifest "$member/Cargo.toml"
+  check "$action with a workspace member outside the root, which the rebuild would place $where: the stand-in's cargo metadata lists the member and the root" \
+    grep -qxF 'metadata-packages: m root' "$T/calls"
+  check "... exit 3, the blocker naming the member outside the root" sh -c "
+    [ '$RC' = 3 ] && grep -q '^deps: blocker: the workspace member ' '$T/err' && grep -qF ' lies outside the workspace root, ' '$T/err' &&
+    grep -qF '; deps.sh rebuilds only members under the root; output audit_1/deps/$action-' '$T/err'"
+  check "... nothing written $where" sh -c "[ ! -e '$T/canary' ] && [ ! -e '$VICTIM/lib.rs' ] && cmp -s '$VICTIM/Cargo.toml' '$T/victim.saved'"
+  check "... and nothing run or disclosed" sh -c "! grep -qE '^== cargo (tree|outdated)' '$T/calls' && [ \"\$(( \$(wc -l < '$DT') - 1 ))\" = '$r0' ]"
+done
+vtop=${VICTIM#/}
+rm -rf "$WT/oor" "$WT/${vtop%%/*}"
 settings SHIM_DUMP=1 FAKE_OUTDATED_RC=1
 run "$DEPS" "$WT" -- cargo-outdated --run audit_1 --manifest pkg/Cargo.toml --manifest pkg/Cargo.lock
 headers > "$T/hdrs"
@@ -903,6 +1335,8 @@ check "npm-audit: npm audit in the copy, exit 0" sh -c "[ '$RC' = 0 ] && grep -q
 check "... with its own .npmrc, an empty user config, and only the two files copied" \
   sh -c "awk '/^== npm audit/{on=1;next} /^== /{on=0} on' '$T/calls' > '$T/blk' && grep -qxF 'npmrc: registry=https://registry.npmjs.org/|ignore-scripts=true|fund=false|update-notifier=false|' '$T/blk' && grep -qxF 'userconfig-bytes: 0' '$T/blk' && grep -qxF 'files: .npmrc package-lock.json package.json ' '$T/blk' && grep -qxF 'env: npm_config_registry=https://registry.npmjs.org/' '$T/blk'"
 check "... the target's .npmrc token reaches nothing, nor does any canary" sh -c "grep -q '^== npm audit' '$T/calls' && ! grep -q 'canary' '$T/calls'"
+check "... and COREPACK_ENABLE_PROJECT_SPEC=0, so a Corepack npm shim takes no npm release from the copied package.json" \
+  in_blocks '^== npm audit' '^env: COREPACK_ENABLE_PROJECT_SPEC=0$'
 check "... and one disclosure row" sh -c "[ \$(( \$(wc -l < '$DT') - 1 - $r0 )) = 1 ] && sed -n '\$p' '$DT' | grep -q '	npmjs.org	every package name and version in this lockfile (npm audit.s bulk advisory request): package-lock.json	1\$'"
 settings FAKE_NPM_AUDIT_OUT="$T/npm-vuln.txt" FAKE_NPM_AUDIT_RC=1
 run "$DEPS" "$WT" -- npm-audit --run audit_1 --manifest package.json --manifest package-lock.json
@@ -916,16 +1350,16 @@ settings
 # deps.sh: registry queries and artifact fetches, through a curl stand-in that answers from $T/fix.
 # =================================================================================================
 python3 -I - "$T/fix" <<'PY'
-import base64, hashlib, io, json, os, sys, tarfile, zipfile
+import base64, hashlib, io, json, lzma, os, struct, sys, tarfile, zipfile, zlib
 fix = sys.argv[1]
 def put(url, data, status=None):
     key = url.replace("/", "_").replace(":", "_").replace("%", "_").replace("@", "_")
     open(os.path.join(fix, key), "wb").write(data if isinstance(data, bytes) else data.encode())
     if status:
         open(os.path.join(fix, key + ".status"), "w").write(str(status))
-def tgz(entries):
+def tgz(entries, pax_global=None):
     buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w:gz") as t:
+    with tarfile.open(fileobj=buf, mode="w:gz", format=tarfile.PAX_FORMAT, pax_headers=pax_global) as t:
         for name, kind, data in entries:
             ti = tarfile.TarInfo(name)
             ti.mode = 0o4755
@@ -954,7 +1388,8 @@ put("https://crates.io/api/v1/crates/demo/2.0.0", json.dumps({"version": {"num":
 put("https://crates.io/api/v1/crates/serde", json.dumps({"crate": {"name": "serde"}}))
 put("https://crates.io/api/v1/crates/serde/1.0.0", json.dumps({"version": {"num": "1.0.0"}}))
 put("https://crates.io/api/v1/crates/broken/1.0.0", "oops", 500)
-npm = tgz([("package/package.json", "file", b"{\"name\": \"left-pad\"}\n"), ("package/index.js", "file", b"module.exports = 1\n")])
+npm = tgz([("package/package.json", "file", b"{\"name\": \"left-pad\"}\n"), ("package/index.js", "file", b"module.exports = 1\n")],
+          {"comment": "0123456789abcdef0123456789abcdef01234567"})
 integrity = "sha512-" + base64.b64encode(hashlib.sha512(npm).digest()).decode()
 put("https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz", npm)
 put("https://registry.npmjs.org/left-pad/1.3.0", json.dumps({"name": "left-pad", "version": "1.3.0", "dist": {
@@ -991,6 +1426,154 @@ many_url = "https://files.pythonhosted.org/packages/cc/dd/many-1.0-py3-none-any.
 put(many_url, many)
 put("https://pypi.org/pypi/many/1.0/json", json.dumps({"urls": [{"packagetype": "bdist_wheel", "filename": "many-1.0-py3-none-any.whl",
     "url": many_url, "digests": {"sha256": hashlib.sha256(many).hexdigest()}}]}))
+# Two .crate files whose caps must hold while they are read: 52001 headers of empty files and then bytes that are
+# no deflate stream (reading on from entry 50001 fails), and one entry that declares 600 MiB with no data after it.
+buf = io.BytesIO()
+with tarfile.open(fileobj=buf, mode="w", format=tarfile.USTAR_FORMAT) as t:
+    for i in range(52001):
+        t.addfile(tarfile.TarInfo("bomb-1.0.0/f%d" % i))
+bombraw = buf.getvalue()[:512 * 52001]
+c = zlib.compressobj(9, zlib.DEFLATED, 31)
+bomb = c.compress(bombraw) + c.flush(zlib.Z_SYNC_FLUSH) + b"\xff" * 64
+info = tarfile.TarInfo("bigdecl-1.0.0/x")
+info.size = 600 * 1024 * 1024
+c = zlib.compressobj(9, zlib.DEFLATED, 31)
+bigdecl = c.compress(info.tobuf(tarfile.USTAR_FORMAT) + b"\0" * 1024) + c.flush()
+crates = {"bomb": bomb, "bigdecl": bigdecl}
+# Headers whose content tarfile would keep for every later member or read with no bound, each refused before
+# tarfile reads that content. cut(): the headers so far, then bytes no deflate stream holds (reading on fails);
+# each such case holds 1 MiB or more after the header it is refused at, past what gzip reads ahead.
+def cut(raw):
+    c = zlib.compressobj(9, zlib.DEFLATED, 31)
+    return c.compress(raw) + c.flush(zlib.Z_SYNC_FLUSH) + b"\xff" * 64
+def whole(raw):
+    c = zlib.compressobj(9, zlib.DEFLATED, 31)
+    return c.compress(raw + b"\0" * 1024) + c.flush()
+def writer(fmt, pax_global=None):
+    buf = io.BytesIO()
+    return buf, tarfile.open(fileobj=buf, mode="w", format=fmt, pax_headers=pax_global)
+def patched(info, fmt, patch):
+    b = bytearray(info.tobuf(fmt))
+    for off, data in patch:
+        b[off:off + len(data)] = data
+    b[148:156] = b" " * 8
+    b[148:156] = b"%06o\0 " % sum(b[:512])
+    return bytes(b)
+# A global pax header of 16000 keys, then 2048 empty files.
+buf, t = writer(tarfile.PAX_FORMAT, {"k%05d" % i: "v" for i in range(16000)})
+for i in range(2048):
+    t.addfile(tarfile.TarInfo("gkeys-1.0.0/f%d" % i))
+crates["gkeys"] = cut(buf.getvalue())
+# 40 GNU long names and then 40 pax paths of 60000 bytes each: 2.4 MB of each kind, 4.8 MB in all.
+buf, t = writer(tarfile.GNU_FORMAT)
+for i in range(80):
+    t.format = tarfile.GNU_FORMAT if i < 40 else tarfile.PAX_FORMAT
+    t.addfile(tarfile.TarInfo("longhdr-1.0.0/%02d%s" % (i, "n" * 60000)))
+crates["longhdr"] = cut(buf.getvalue())
+# A GNU sparse file whose header says an extension block of its map follows, then 2048 such blocks, each of 21
+# entries and saying another follows.
+info = tarfile.TarInfo("sparse-1.0.0/s")
+info.type = tarfile.GNUTYPE_SPARSE
+block = bytearray((b"00000001000\0" * 2) * 21 + b"\0" * 8)
+block[504] = 1
+crates["sparse"] = cut(patched(info, tarfile.GNU_FORMAT, [(482, b"\1")]) + bytes(block) * 2048)
+# A pax (GNU 1.0) sparse file whose map, at the start of its data, announces 10**9 fields, then 1 MiB of them.
+buf, t = writer(tarfile.PAX_FORMAT)
+info = tarfile.TarInfo("paxsparse-1.0.0/GNUSparseFile.0/s")
+info.pax_headers = {"GNU.sparse.major": "1", "GNU.sparse.minor": "0", "GNU.sparse.name": "paxsparse-1.0.0/s", "GNU.sparse.realsize": "0"}
+data = b"1000000000\n" + b"0\n" * 524288
+info.size = len(data)
+t.addfile(info, io.BytesIO(data))
+crates["paxsparse"] = cut(buf.getvalue())
+# A global pax size of -1 for the one file after it; an extended header whose own size field is -1024; and an
+# entry of a type tarfile does not know (it reads through the data of one) that declares 600 MiB.
+buf, t = writer(tarfile.PAX_FORMAT, {"size": "-1"})
+t.addfile(tarfile.TarInfo("negsize-1.0.0/f"))
+crates["negsize"] = whole(buf.getvalue())
+info = tarfile.TarInfo("././@PaxHeader")
+info.type = tarfile.XHDTYPE
+crates["negraw"] = whole(patched(info, tarfile.GNU_FORMAT, [(124, b"\xff" * 10 + b"\xfc\0")]) + tarfile.TarInfo("negraw-1.0.0/f").tobuf())
+info = tarfile.TarInfo("odd-1.0.0/x")
+info.type, info.size = b"Z", 600 * 1024 * 1024
+crates["odd"] = whole(info.tobuf(tarfile.USTAR_FORMAT))
+# A global pax size of 0, then a file whose own header gives 600 MiB (tarfile reads through what that field gives,
+# then reports the global size), 2 MiB of its data, and bytes no deflate stream holds.
+info = tarfile.TarInfo("gsize-1.0.0/x")
+info.size = 600 * 1024 * 1024
+buf, t = writer(tarfile.PAX_FORMAT, {"size": "0"})
+crates["gsize"] = cut(buf.getvalue() + info.tobuf(tarfile.USTAR_FORMAT) + b"\0" * (2 << 20))
+# A tar compressed with xz, the magic of a zstd stream, a tar in the legacy lzma format (no magic names it), and
+# a plain tar and a bzip2 one, which unpack.
+def small(name, mode):
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode=mode, format=tarfile.USTAR_FORMAT) as t:
+        info = tarfile.TarInfo(name)
+        info.size = 14
+        t.addfile(info, io.BytesIO(b"pub fn f() {}\n"))
+    return buf.getvalue()
+crates["xz"] = small("xz-1.0.0/src/lib.rs", "w:xz")
+crates["zst"] = b"\x28\xb5\x2f\xfd" + b"\0" * 64
+crates["alone"] = lzma.compress(small("alone-1.0.0/src/lib.rs", "w"), format=lzma.FORMAT_ALONE)
+crates["plain"] = small("plain-1.0.0/src/lib.rs", "w")
+# The 52001 headers of bomb compressed with xz, then bytes no xz stream holds (the read stops at entry 50001 here
+# too); a stream whose block header gives its decompressor a 1 GiB window, more than deps.sh lets it take; two
+# streams one after the other, zero padding between them, which unpack; and a member after 8 empty pax headers
+# in a row, and one after 9.
+crates["xzbomb"] = lzma.compress(bombraw) + b"\xff" * 64
+data = bytearray(lzma.compress(small("xzbig-1.0.0/src/lib.rs", "w"), format=lzma.FORMAT_XZ,
+                               filters=[{"id": lzma.FILTER_LZMA2, "dict_size": 1 << 20}]))
+hs = (data[12] + 1) * 4
+assert data[14:16] == b"\x21\x01"
+data[16] = 36
+data[12 + hs - 4:12 + hs] = struct.pack("<I", zlib.crc32(bytes(data[12:12 + hs - 4])))
+crates["xzbig"] = bytes(data)
+raw = small("xztwo-1.0.0/src/lib.rs", "w")
+crates["xztwo"] = lzma.compress(raw[:512]) + b"\0" * 8 + lzma.compress(raw[512:])
+def chained(name, k):
+    info = tarfile.TarInfo("././@PaxHeader")
+    info.type = tarfile.XHDTYPE
+    member = tarfile.TarInfo(name)
+    member.size = 3
+    return whole(info.tobuf(tarfile.USTAR_FORMAT) * k + member.tobuf(tarfile.USTAR_FORMAT) + b"abc" + b"\0" * 509)
+crates["chain8"] = chained("chain8-1.0.0/f", 8)
+crates["chain9"] = chained("chain9-1.0.0/f", 9)
+for name, data in crates.items():
+    put("https://static.crates.io/crates/%s/%s-1.0.0.crate" % (name, name), data)
+    put("https://crates.io/api/v1/crates/%s/1.0.0" % name, json.dumps({"version": {"num": "1.0.0", "crate": name, "checksum": hashlib.sha256(data).hexdigest()}}))
+# A wheel whose central directory takes 18 MB: 300 entries, each with a comment of 60000 bytes.
+buf = io.BytesIO()
+with zipfile.ZipFile(buf, "w") as z:
+    for i in range(300):
+        info = zipfile.ZipInfo("bigcd/f%d" % i)
+        info.comment = b"c" * 60000
+        z.writestr(info, "")
+bigcd = buf.getvalue()
+bigcd_url = "https://files.pythonhosted.org/packages/ee/ff/bigcd-1.0-py3-none-any.whl"
+put(bigcd_url, bigcd)
+put("https://pypi.org/pypi/bigcd/1.0/json", json.dumps({"urls": [{"packagetype": "bdist_wheel", "filename": "bigcd-1.0-py3-none-any.whl",
+    "url": bigcd_url, "digests": {"sha256": hashlib.sha256(bigcd).hexdigest()}}]}))
+# A wheel whose one entry is compressed with bzip2; an sdist compressed with bzip2 and one with xz, as PyPI took
+# them before 2017, which unpack; and a wheel of 50002 entries whose last central directory record is damaged,
+# which zipfile never reaches: it stops at record 50001.
+buf = io.BytesIO()
+with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_BZIP2) as z:
+    z.writestr("bzwhl/x", b"\0" * (1 << 20))
+other = {"bzwhl-1.0-py3-none-any.whl": buf.getvalue(), "bzsd-1.0.tar.bz2": small("bzsd-1.0/bzsd.py", "w:bz2"),
+         "xzsd-1.0.tar.xz": small("xzsd-1.0/xzsd.py", "w:xz")}
+buf = io.BytesIO()
+with zipfile.ZipFile(buf, "w") as z:
+    for i in range(50002):
+        z.writestr("manybad/f%d" % i, "")
+data = bytearray(buf.getvalue())
+size, offset = struct.unpack_from("<II", data, data.rfind(b"PK\x05\x06") + 12)
+last = data.rfind(b"PK\x01\x02", offset, offset + size)
+data[last:last + 2] = b"XX"
+other["manybad-1.0-py3-none-any.whl"] = bytes(data)
+for name, data in other.items():
+    url = "https://files.pythonhosted.org/packages/11/22/" + name
+    put(url, data)
+    put("https://pypi.org/pypi/%s/1.0/json" % name.split("-")[0], json.dumps({"urls": [{"packagetype": "sdist" if ".tar." in name else "bdist_wheel",
+        "filename": name, "url": url, "digests": {"sha256": hashlib.sha256(data).hexdigest()}}]}))
 PY
 UA='auditor-skill deps.sh (https://github.com/solanabr/auditor-skill)'
 r0=$(rows)
@@ -1041,7 +1624,7 @@ check "a digest that does not match: exit 3, the artifact neither kept nor unpac
   sh -c "[ '$RC' = 3 ] && grep -q '^deps: blocker: the digest does not match: the registry gives sha256 0000' '$T/err' && [ -n '$n' ] && [ ! -e '$WT/audit_1/deps/fetch-artifact-$n' ]"
 run "$DEPS" "$WT" -- fetch-artifact --run audit_1 npm left-pad 1.3.0
 n=$(sed -n 's/.*fetch-artifact-\([0-9]*\)[.]txt$/\1/p' "$T/out")
-check "fetch-artifact npm: the tarball at the URL the registry's name gives, its sha512 integrity checked" \
+check "fetch-artifact npm: the tarball at the URL the registry's name gives, its sha512 integrity checked (its global pax header, of 52 bytes as git archive writes one, let through)" \
   sh -c "[ '$RC' = 0 ] && grep -qxF 'url: https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz' '$T/calls' && [ -f '$WT/audit_1/deps/fetch-artifact-$n/files/package/index.js' ] && grep -q '^digest: sha512 ' '$WT/audit_1/deps/fetch-artifact-$n.txt'"
 run "$DEPS" "$WT" -- fetch-artifact --run audit_1 npm left-pad 1.4.0
 check "an npm record whose tarball is elsewhere: exit 3, nothing downloaded" \
@@ -1062,7 +1645,98 @@ check "a PyPI file outside files.pythonhosted.org: exit 3, nothing downloaded" \
   sh -c "[ '$RC' = 3 ] && grep -q 'not under https://files.pythonhosted.org/packages/' '$T/err' && ! grep -q 'url: https://evil' '$T/calls'"
 run "$DEPS" "$WT" -- fetch-artifact --run audit_1 pypi many 1.0
 check "an artifact of more than 50000 entries: exit 3, nothing unpacked" \
-  sh -c "[ '$RC' = 3 ] && grep -q 'holds 50001 entries, more than 50000' '$T/err' && [ -z \"\$(find '$WT/audit_1/deps' -path '*/files/many' -print)\" ]"
+  sh -c "[ '$RC' = 3 ] && grep -q 'the artifact holds more than 50000 entries' '$T/err' && [ -z \"\$(find '$WT/audit_1/deps' -path '*/files/many' -print)\" ]"
+# The caps hold while a tar is read, one header at a time: the read stops at entry 50001, so the bytes after it,
+# which no deflate stream holds, are never read; and at an entry that declares more than 512 MiB, before the
+# read looks for the next one.
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates bomb 1.0.0
+check "a .crate of more than 50000 entries is refused at entry 50001, before the rest is read: exit 3, nothing unpacked" \
+  sh -c "[ '$RC' = 3 ] && grep -q '^deps: blocker: the artifact holds more than 50000 entries; output ' '$T/err' && [ -z \"\$(find '$WT/audit_1/deps' -path '*/files/bomb-1.0.0' -print)\" ]"
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates bigdecl 1.0.0
+check "a .crate entry that declares more than 512 MiB is refused when it is read: exit 3, nothing unpacked" \
+  sh -c "[ '$RC' = 3 ] && grep -q '^deps: blocker: the artifact unpacks to more than 512 MiB; output ' '$T/err' && [ -z \"\$(find '$WT/audit_1/deps' -path '*/files/bigdecl-1.0.0' -print)\" ]"
+# What tarfile would keep for every later member, or read with no bound, is refused at the header that announces
+# it, before tarfile reads it; after the first four cases come bytes no deflate stream holds, so reading on fails.
+refused() { # refused <top directory> <blocker>: the last fetch-artifact stopped with it and unpacked nothing
+  [ "$RC" = 3 ] && grep -q "^deps: blocker: $2; output " "$T/err" && [ -z "$(find "$WT/audit_1/deps" -path "*/files/$1" -print)" ]
+}
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates gkeys 1.0.0
+check "a global pax header of 16000 keys is refused at that header, before the file after it: exit 3, nothing unpacked" \
+  refused gkeys-1.0.0 'the global pax headers of the artifact hold more than 128 bytes'
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates longhdr 1.0.0
+check "pax and GNU long-name headers are counted together (2.4 MB of each) and refused past 4 MiB: exit 3, nothing unpacked" \
+  refused longhdr-1.0.0 'the pax and GNU long-name headers of the artifact hold more than 4 MiB'
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates sparse 1.0.0
+check "a GNU sparse file is refused before its map is read: exit 3, nothing unpacked" \
+  refused sparse-1.0.0 'the artifact holds a sparse file'
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates paxsparse 1.0.0
+check "a pax (GNU 1.0) sparse file is refused before its map is read from its data: exit 3, nothing unpacked" \
+  refused paxsparse-1.0.0 'the artifact holds a sparse file'
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates negsize 1.0.0
+check "an entry a global pax header gives a size below zero is refused: exit 3, nothing unpacked" \
+  refused negsize-1.0.0 'the artifact gives an entry a size below zero'
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates negraw 1.0.0
+check "an extended header whose own size field is below zero is refused before it is read: exit 3, nothing unpacked" \
+  refused negraw-1.0.0 'the artifact gives an entry a size below zero'
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates odd 1.0.0
+check "an entry of a type tarfile does not know counts toward 512 MiB too, since tarfile reads through its data: exit 3" \
+  refused odd-1.0.0 'the artifact unpacks to more than 512 MiB'
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 pypi bigcd 1.0
+check "a wheel whose central directory takes more than 16 MiB is refused before zipfile reads it: exit 3, nothing unpacked" \
+  refused bigcd 'the central directory of the artifact takes more than 16 MiB'
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates gsize 1.0.0
+check "a file whose own header gives 600 MiB counts toward 512 MiB though a global pax size says 0, before tarfile reads through it: exit 3" \
+  refused gsize-1.0.0 'the artifact unpacks to more than 512 MiB'
+# An empty pax header adds nothing to the 4 MiB, and tarfile still parses each one: at most 8 come in a row.
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates chain8 1.0.0
+n=$(sed -n 's/.*fetch-artifact-\([0-9]*\)[.]txt$/\1/p' "$T/out")
+check "a member after 8 empty pax headers in a row is unpacked" \
+  sh -c "[ '$RC' = 0 ] && [ \"\$(cat '$WT/audit_1/deps/fetch-artifact-$n/files/chain8-1.0.0/f')\" = 'abc' ]"
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates chain9 1.0.0
+check "... and 9 in a row are refused: exit 3, nothing unpacked" \
+  refused chain9-1.0.0 'the artifact holds more than 8 pax and GNU long-name headers in a row'
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 pypi manybad 1.0
+check "a wheel of more than 50000 entries is refused at central directory record 50001, before zipfile reads the damaged one after it: exit 3" \
+  refused manybad 'the artifact holds more than 50000 entries'
+# Only decompressors whose memory has a fixed bound run: an xz stream chooses the window its decompressor keeps,
+# so deps.sh holds that decompressor to 128 MiB (every xz preset needs at most 65 MiB); a zstd stream is not read,
+# and zipfile hands bzip2 a whole read with no bound on what comes out. A stream that no magic names, as one in
+# the legacy lzma format (whose header chooses the window too), is read as a plain tar.
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates xz 1.0.0
+n=$(sed -n 's/.*fetch-artifact-\([0-9]*\)[.]txt$/\1/p' "$T/out")
+check "a .crate compressed with xz is unpacked, its decompressor held to 128 MiB" \
+  sh -c "[ '$RC' = 0 ] && [ \"\$(cat '$WT/audit_1/deps/fetch-artifact-$n/files/xz-1.0.0/src/lib.rs')\" = 'pub fn f() {}' ]"
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates xztwo 1.0.0
+n=$(sed -n 's/.*fetch-artifact-\([0-9]*\)[.]txt$/\1/p' "$T/out")
+check "... and so is one in two xz streams, zero padding between them" \
+  sh -c "[ '$RC' = 0 ] && [ \"\$(cat '$WT/audit_1/deps/fetch-artifact-$n/files/xztwo-1.0.0/src/lib.rs')\" = 'pub fn f() {}' ]"
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates xzbig 1.0.0
+check "an xz stream whose decompressor would keep a 1 GiB window is refused before it is decompressed: exit 3, nothing unpacked" \
+  refused xzbig-1.0.0 'the xz stream of the artifact needs more than 128 MiB to decompress'
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates xzbomb 1.0.0
+check "the caps hold while an xz stream is read: more than 50000 entries are refused at entry 50001, before the bytes after it: exit 3" \
+  refused bomb-1.0.0 'the artifact holds more than 50000 entries'
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates zst 1.0.0
+check "a .crate that starts as a zstd stream is refused: exit 3, nothing unpacked" \
+  refused zst-1.0.0 'the artifact is compressed with zstd, which deps.sh does not unpack (a tar is read plain, or through gzip, bzip2 or xz)'
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates alone 1.0.0
+check "a .crate in the legacy lzma format, which no magic names, is read as a plain tar and never decompressed: exit 3, nothing unpacked" \
+  refused alone-1.0.0 'cannot read the answer or the artifact: truncated header'
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 pypi bzwhl 1.0
+check "a wheel with an entry compressed with bzip2 is refused before anything is unpacked: exit 3" \
+  refused bzwhl 'an entry of the artifact is compressed with a method other than deflate, which deps.sh does not unpack'
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates plain 1.0.0
+n=$(sed -n 's/.*fetch-artifact-\([0-9]*\)[.]txt$/\1/p' "$T/out")
+check "a .crate that is a plain tar is unpacked" \
+  sh -c "[ '$RC' = 0 ] && [ \"\$(cat '$WT/audit_1/deps/fetch-artifact-$n/files/plain-1.0.0/src/lib.rs')\" = 'pub fn f() {}' ]"
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 pypi bzsd 1.0
+n=$(sed -n 's/.*fetch-artifact-\([0-9]*\)[.]txt$/\1/p' "$T/out")
+check "an sdist compressed with bzip2 is unpacked" \
+  sh -c "[ '$RC' = 0 ] && [ \"\$(cat '$WT/audit_1/deps/fetch-artifact-$n/files/bzsd-1.0/bzsd.py')\" = 'pub fn f() {}' ]"
+run "$DEPS" "$WT" -- fetch-artifact --run audit_1 pypi xzsd 1.0
+n=$(sed -n 's/.*fetch-artifact-\([0-9]*\)[.]txt$/\1/p' "$T/out")
+check "... and so is one compressed with xz, as PyPI took them before 2017" \
+  sh -c "[ '$RC' = 0 ] && [ \"\$(cat '$WT/audit_1/deps/fetch-artifact-$n/files/xzsd-1.0/xzsd.py')\" = 'pub fn f() {}' ]"
 run "$DEPS" "$WT" -- fetch-artifact --run audit_1 crates nope 1.0.0
 check "fetch-artifact of a version the registry does not have: exit 1" sh -c "[ '$RC' = 1 ] && grep -q '^>> fetch-artifact: crates.io has no nope 1.0.0 (HTTP 404)' '$T/out'"
 cp "$DT" "$T/dt.saved"
@@ -1091,6 +1765,14 @@ check "... its settings in the scratch directory, no version check, no metrics, 
 check "... with the real HOME, where semgrep may be installed" grep -qxF "home: $CLEANHOME" "$T/calls"
 check "... and one disclosure row naming the rulesets" \
   sh -c "[ \$(( \$(wc -l < '$DT') - 1 - $r0 )) = 1 ] && sed -n '\$p' '$DT' | grep -q '	scripts/runner/sast.sh	semgrep.dev	ruleset ids (the semgrep registry, for the rules): p/rust p/trailofbits	2\$'"
+# semgrep lists the files of a folder in a git project with git (the stand-in does too), and that git gets a
+# repository in the scratch directory, never the working directory's: none of the programs and hooks the
+# working directory's config names runs, and git lists what the repository's index and ignore rules give.
+check "... semgrep's git ran none of the programs or hooks the repository's config names" test -z "$(ls -A "$T/marks")"
+check "... its git got GIT_DIR, a repository in the scratch directory, with the working directory as its work tree" \
+  sh -c "grep -qxF 'env: GIT_DIR=$S/git' '$T/calls' && grep -qxF 'env: GIT_WORK_TREE=$WT' '$T/calls' && grep -qxF 'env: GIT_CONFIG_GLOBAL=/dev/null' '$T/calls' && grep -qxF 'env: GIT_CONFIG_NOSYSTEM=1' '$T/calls'"
+check "... which lists the tracked files, and the untracked ones git does not ignore" \
+  sh -c "grep -qE '^git-cached: 0 (.* )?programs/demo/src/lib.rs ' '$T/calls' && grep -qE '^git-others: 0 (.* )?sub/Cargo.lock ' '$T/calls' && ! grep -q '^git-others: .*audit_1/' '$T/calls'"
 settings FAKE_RESULTS=0
 run "$SAST" "$WT" -- semgrep --run audit_1 --path a.rs --ruleset p/secrets
 check "sast on a file, no results: exit 0" sh -c "[ '$RC' = 0 ] && grep -q '^>> semgrep: 0 results (exit 0): audit_1/sast/semgrep-[0-9]*[.]sarif' '$T/out' && grep -q -- '-- $WT/a.rs\$' '$T/calls'"
@@ -1108,6 +1790,133 @@ printf 'programs/\n' > "$WT/src/.semgrepignore"
 run "$SAST" "$WT" -- semgrep --run audit_1 --path . --ruleset p/rust
 check "a .semgrepignore under the path is named in the last line" sh -c "[ '$RC' = 0 ] && grep -q '; note: .semgrepignore files narrow the scan: src/.semgrepignore\$' '$T/out'"
 rm -f "$WT/src/.semgrepignore"
+# semgrep reads every .semgrepignore of its project, so one at the repository's top, or in a folder between it
+# and the scan root, narrows the scan of a folder below them: the note names each, from the top down. A file
+# given as --path is scanned whatever they say.
+printf 'programs/\n' > "$WT/.semgrepignore"
+printf 'demo/\n' > "$WT/programs/.semgrepignore"
+run "$SAST" "$WT" -- semgrep --run audit_1 --path programs/demo --ruleset p/rust
+check "a .semgrepignore at the repository's top and one between it and --path are named, from the top down" \
+  sh -c "[ '$RC' = 0 ] && grep -q '; note: .semgrepignore files narrow the scan: .semgrepignore, programs/.semgrepignore\$' '$T/out'"
+run "$SAST" "$WT" -- semgrep --run audit_1 --path programs/demo/src/lib.rs --ruleset p/rust
+check "... and a file given as --path gets no note" sh -c "[ '$RC' = 0 ] && grep -q '^>> semgrep: ' '$T/out' && ! grep -q 'note:' '$T/out'"
+# The scan root's own project can be another repository. One with a .git directory gets its own copy of its
+# index; one with a .git file (a submodule's, or a separate git directory) gets none, so git finds no
+# repository and semgrep lists the files itself, which the last line says. Each config names the programs and
+# hooks that leave marks, and the marks of earlier runs are set aside for each case (and put back after), so
+# each check counts its own. A folder shaped as a bare repository is part of the working directory's project:
+# plain git, run from it, takes it for a bare repository with no work tree and runs none of its programs
+# either, so that case shows only that it is never consulted. An index with an entry that climbs out of the
+# project (no git command writes one; git lists it) gets no copy either, nor does a split index (git cannot read
+# its copy without the shared index beside it); the note says which.
+tgit init -q "$WT/nested" && printf 'fn n() {}\n' > "$WT/nested/n.rs" && tgit -C "$WT/nested" add n.rs &&
+  printf '[core]\n\tfsmonitor = %s/mark-fsmonitor\n\thooksPath = %s/hooks\n' "$T" "$T" >> "$WT/nested/.git/config"
+tgit init -q --separate-git-dir "$T/gf.git" "$WT/gf" && printf 'fn g() {}\n' > "$WT/gf/g.rs" &&
+  printf '[core]\n\tfsmonitor = %s/mark-fsmonitor\n\thooksPath = %s/hooks\n' "$T" "$T" >> "$T/gf.git/config"
+mkdir -p "$WT/bare/objects" "$WT/bare/refs" && printf 'ref: refs/heads/main\n' > "$WT/bare/HEAD" &&
+  printf '[core]\n\tbare = false\n\tworktree = %s\n\tfsmonitor = %s/mark-fsmonitor\n\thooksPath = %s/hooks\n' "$WT/bare" "$T" "$T" > "$WT/bare/config"
+tgit init -q "$WT/idx" && printf 'fn i() {}\n' > "$WT/idx/i.rs" && tgit -C "$WT/idx" add i.rs && python3 -I - "$WT/idx/.git/index" <<'PY'
+import hashlib, struct, sys
+# Insert the entry a/../../outside.rs (it sorts first) before the one i.rs entry, as a version 2 index holds it.
+p = sys.argv[1]
+data = open(p, "rb").read()
+sig, ver, n = struct.unpack(">4sII", data[:12])
+body = data[12:-20]
+fixed = bytearray(body[:62])
+name = b"a/../../outside.rs"
+struct.pack_into(">H", fixed, 60, len(name))
+entry = bytes(fixed) + name
+entry += b"\0" * ((62 + len(name) + 8) // 8 * 8 - len(entry))
+out = struct.pack(">4sII", sig, ver, n + 1) + entry + body
+open(p, "wb").write(out + hashlib.sha1(out).digest())
+PY
+for r in split info unread exunread gitnox infonox; do
+  tgit init -q "$WT/$r" && printf 'fn s() {}\n' > "$WT/$r/s.rs" && tgit -C "$WT/$r" add s.rs &&
+    printf '[core]\n\tfsmonitor = %s/mark-fsmonitor\n\thooksPath = %s/hooks\n' "$T" "$T" >> "$WT/$r/.git/config"
+done
+tgit -C "$WT/split" update-index --split-index
+mv "$WT/info/.git/info" "$T/info-real" && ln -s "$T/info-real" "$WT/info/.git/info"
+WALKED='; note: semgrep listed the files itself, not with git (no copy of the repository index: '
+shape_ok() { # shape_ok <calls line> <reason>: exit 0, no mark, that line in the calls, and the note with <reason> (none when empty)
+  [ "$RC" = 0 ] && [ -z "$(ls -A "$T/marks")" ] && grep -q "$1" "$T/calls" || return 1
+  if [ -n "$2" ]; then grep -qF "$WALKED$2), so files a .gitignore leaves out can be in the scan" "$T/out"; else ! grep -qF "$WALKED" "$T/out"; fi
+}
+mkdir -p "$T/marks-earlier"
+while IFS='|' read -r path want why label; do
+  mv "$T/marks/"* "$T/marks-earlier/" 2>/dev/null
+  run "$SAST" "$WT" -- semgrep --run audit_1 --path "$path" --ruleset p/rust
+  check "sast --path $path, $label: exit 0, and semgrep's git ran nothing a config names (calls: $want)" shape_ok "$want" "$why"
+done <<CASES
+nested|^git-cached: 0 n.rs \$||its own .git directory: a copy of its own index
+gf|^git-cached: 128 fatal: not a git repository|its .git is a file or a link|a .git file: no copy, git finds no repository
+bare|^env: GIT_WORK_TREE=$WT\$||a folder shaped as a bare repository: never consulted, the working directory's copy
+idx|^git-cached: 128 fatal: not a git repository|its index names a path outside the repository|an index entry outside the project: no copy
+split|^git-cached: 128 fatal: not a git repository|git cannot read its index from a copy, as with a split index or a sha256 repository|a split index: no copy
+CASES
+# An index that cannot be read gets no copy either, and neither does one in a .git that cannot be searched: there
+# it only looks absent, and a copy made without it would hold no tracked file. An info/exclude sast.sh does not
+# copy (in a .git/info that is a link, or that cannot be searched, or one that cannot be read) leaves the copy
+# without it: git then lists what the project's own git lists when it cannot read that file, the untracked
+# skip/x.rs its rule names included, and the note says so. Where the modes stop nothing, as for root, the case is
+# skipped.
+EXCLUDED="; note: semgrep's git read the repository index without its info/exclude ("
+excl_ok() { # excl_ok <calls line> <reason>: exit 0, no mark, that line in the calls, and the note with <reason>, not the walk's
+  [ "$RC" = 0 ] && [ -z "$(ls -A "$T/marks")" ] && grep -q "$1" "$T/calls" && ! grep -qF "$WALKED" "$T/out" &&
+    grep -qF "$EXCLUDED$2), so files only that file leaves out can be in the scan" "$T/out"
+}
+for r in exunread infonox; do
+  mkdir -p "$WT/$r/.git/info" "$WT/$r/skip" && printf 'skip/\n' > "$WT/$r/.git/info/exclude" && printf 'fn x() {}\n' > "$WT/$r/skip/x.rs"
+done
+chmod 000 "$WT/unread/.git/index" "$WT/exunread/.git/info/exclude"
+chmod 600 "$WT/gitnox/.git" "$WT/infonox/.git/info"
+while IFS='|' read -r path probe want why label; do
+  if [ -n "$probe" ] && [ -r "$WT/$probe" ]; then skp "sast --path $path, $label: this user reads $probe whatever its mode"; continue; fi
+  mv "$T/marks/"* "$T/marks-earlier/" 2>/dev/null
+  run "$SAST" "$WT" -- semgrep --run audit_1 --path "$path" --ruleset p/rust
+  case "$want" in
+    walk) check "sast --path $path, $label: exit 0, no copy and the note says why, nothing a config names ran" \
+      shape_ok '^git-cached: 128 fatal: not a git repository' "$why" ;;
+    *) check "sast --path $path, $label: exit 0, the index copied without it and the note says why, nothing a config names ran" \
+      excl_ok "$want" "$why" ;;
+  esac
+done <<CASES
+unread|unread/.git/index|walk|its index cannot be read|an index that cannot be read
+gitnox|gitnox/.git/index|walk|its index cannot be read|a .git that cannot be searched
+exunread|exunread/.git/info/exclude|^git-others: 0 skip/x.rs \$|its info/exclude cannot be read|an info/exclude that cannot be read
+infonox|infonox/.git/info/exclude|^git-others: 0 skip/x.rs \$|its info/exclude cannot be read|a .git/info that cannot be searched
+info||^git-cached: 0 s.rs \$|its .git/info is a link|a .git/info that is a link
+CASES
+chmod 700 "$WT/gitnox/.git" "$WT/infonox/.git/info"
+# A working directory inside a repository whose top lies above it: sast.sh copies nothing from outside the
+# working directory, so semgrep lists the files itself; the outer repository's programs never run.
+tgit init -q "$T/outer" && mkdir "$T/outer/w" && printf 'fn o() {}\n' > "$T/outer/w/o.rs" &&
+  printf '[core]\n\tfsmonitor = %s/mark-fsmonitor\n\thooksPath = %s/hooks\n' "$T" "$T" >> "$T/outer/.git/config" &&
+  ( cd "$T/outer/w" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null || ko "the outer repository's working directory could not be made"
+mv "$T/marks/"* "$T/marks-earlier/" 2>/dev/null
+run "$SAST" "$T/outer/w" -- semgrep --run audit_1 --path . --ruleset p/rust
+check "sast in a working directory below its repository's top: exit 0, no copy and the note says why, nothing a config names ran" \
+  shape_ok '^git-cached: 128 fatal: not a git repository' 'the repository lies above the working directory'
+mv "$T/marks-earlier/"* "$T/marks/" 2>/dev/null
+rmdir "$T/marks-earlier"
+# git init records whether letter case tells names apart and, on macOS, that names are precomposed; with the
+# same two keys in sast.sh's config, git lists what the project's own git lists: here a tracked A.rs renamed
+# on disk to a.rs, an untracked target/t.rs under a .gitignore of Target/, and a file named in decomposed
+# form. Where the filesystem tells such names apart, both lists hold them.
+tgit init -q "$WT/ci" && printf 'Target/\n' > "$WT/ci/.gitignore" && printf 'fn a() {}\n' > "$WT/ci/A.rs" &&
+  printf 'fn u() {}\n' > "$WT/ci/u$(printf '\314\210').rs" && tgit -C "$WT/ci" add -A && mv "$WT/ci/A.rs" "$WT/ci/a.rs" &&
+  mkdir "$WT/ci/target" && printf 'fn t() {}\n' > "$WT/ci/target/t.rs"
+cached=$(tgit -C "$WT/ci" ls-files -z --cached | tr '\0' ' ')
+others=$(tgit -C "$WT/ci" ls-files -z --others --exclude-standard | tr '\0' ' ')
+run "$SAST" "$WT" -- semgrep --run audit_1 --path ci --ruleset p/rust
+check "a project's own copy lists the tracked and untracked files its own git lists (others: ${others:-none})" \
+  sh -c "[ '$RC' = 0 ] && grep -qxF 'git-cached: 0 $cached' '$T/calls' && grep -qxF 'git-others: 0 $others' '$T/calls'"
+rm -rf "$WT/ci"
+printf 'y/\n' > "$WT/nested/.semgrepignore"
+run "$SAST" "$WT" -- semgrep --run audit_1 --path nested --ruleset p/rust
+check "a scan root in a project of its own: the note names its .semgrepignore, not the working directory's" \
+  sh -c "[ '$RC' = 0 ] && grep -q '; note: .semgrepignore files narrow the scan: nested/.semgrepignore\$' '$T/out'"
+rm -rf "$WT/nested" "$WT/gf" "$WT/bare" "$WT/idx" "$WT/split" "$WT/info" "$WT/unread" "$WT/exunread" "$WT/gitnox" "$WT/infonox" \
+  "$T/info-real" "$T/outer" "$T/gf.git" "$WT/.semgrepignore" "$WT/programs/.semgrepignore"
 mkdir -p "$WT/src/inner"
 ln -s ../lib.rs "$WT/src/inner/near.rs"
 run "$SAST" "$WT" -- semgrep --run audit_1 --path src --ruleset p/rust
@@ -1175,6 +1984,14 @@ if on_real_path cargo && on_real_path rustup; then
     { [ '$RC' = 0 ] || [ '$RC' = 3 ]; } && [ -n '$kept' ] && grep -q 'crates.io' '$RW/$kept' &&
     ! grep -q evil '$RW/$kept' '$T/out' '$T/err' &&
     grep -qxF '>> note: rp/Cargo.toml holds a [patch] or [replace] table, which this tree does not apply: anyhow, serde' '$T/err'"
+  # A workspace member outside the root's directory that names the root with package.workspace, which real
+  # cargo metadata takes: refused, and nothing lands beside the scratch directory ($T/canary-real/m).
+  mkdir -p "$RW/oor/a/b/c" "$RW/oor/canary-real/m"
+  printf '[workspace]\nmembers = ["../../../canary-real/m"]\nresolver = "2"\n\n[package]\nname = "oor-root"\nversion = "0.1.0"\nedition = "2021"\n' > "$RW/oor/a/b/c/Cargo.toml"
+  printf '[package]\nname = "oor-member"\nversion = "0.1.0"\nedition = "2021"\nworkspace = "../../a/b/c"\n' > "$RW/oor/canary-real/m/Cargo.toml"
+  run "$DEPS" "$RW" PATH="$REAL_PATH" "${TOOL_HOMES[@]}" -- cargo-tree --run audit_1 --manifest oor/a/b/c/Cargo.toml --manifest oor/canary-real/m/Cargo.toml
+  check "real cargo metadata with a workspace member outside the root: exit 3, refused before anything lands outside the scratch directory" sh -c "
+    [ '$RC' = 3 ] && grep -q '^deps: blocker: the workspace member oor/canary-real/m lies outside the workspace root, oor/a/b/c; ' '$T/err' && [ ! -e '$T/canary-real' ]"
   if on_real_path cargo-audit && [ -d "${CARGO_HOME:-$REAL_HOME/.cargo}/advisory-db" ]; then
     run "$DEPS" "$RW" PATH="$REAL_PATH" "${TOOL_HOMES[@]}" -- cargo-audit --run audit_1 --manifest Cargo.lock --no-fetch
     check "real cargo audit --no-fetch against the database in CARGO_HOME: exit 0" sh -c "[ '$RC' = 0 ] && grep -q '^>> cargo-audit: no vulnerability found (exit 0)' '$T/out'"

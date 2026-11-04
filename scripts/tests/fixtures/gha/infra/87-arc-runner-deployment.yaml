@@ -1,0 +1,11 @@
+# Fixture: a legacy Actions Runner Controller deployment whose runners stay registered between jobs.
+apiVersion: actions.summerwind.dev/v1alpha1
+kind: RunnerDeployment
+metadata:
+  name: build-runners
+spec:
+  replicas: 2
+  template:
+    spec:
+      organization: example
+      ephemeral: false

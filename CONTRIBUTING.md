@@ -182,6 +182,40 @@ version in a trailing comment.
   meant to stop early carries the comment `# pipefail-ok: <reason>` on its line.
 - A change to a pipeline gets a test with an input larger than a pipe holds (over 64 KiB; 1 MiB is usual).
 
+### Pre-approved entry points
+
+A command's allow rule names a bundled entry point with any words after it, as in
+`Bash("${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" *)`, so such a tool must be safe whatever arguments follow
+([docs/permissions-and-isolation.md](docs/permissions-and-isolation.md#why-that-is-safe)). A new one, or a change to
+one:
+
+- runs directly by its quoted path: a `#!/bin/bash` first line and mode `100755`. A Python one opens with the
+  bash front end `frames.py` and `deltas.py` use, which finds `python3` from `/` on the cleaned `PATH`: a
+  `#!/usr/bin/env -S python3 -I` line would run whichever `python3` the caller's `PATH` names, one in the
+  working directory included, and `scripts/check-entrypoints.sh` refuses it. It refuses to run from an
+  installation inside the working directory, or from a path that holds a quote, `$`, a backtick, a backslash or
+  a control character;
+- checks every argument against a closed grammar before any effect, and refuses anything else with one stderr
+  line, `<tool>: refused: <reason>`;
+- takes only relative paths inside the working directory, of the shapes it names, with no `..` and no symbolic
+  link on the way;
+- writes only into run directories that pass `rundir.sh check`, into the `audit-mem` store, or into its own
+  scratch directory outside the working directory, creating each file with no-follow, exclusive creation;
+- runs no program that its arguments or the repository name. It runs git only through `hgit` in
+  `scripts/lib/confine.sh`, and the project's code only in the recorded mode, in the cleaned environment of
+  `scripts/lib/isolation.sh`;
+- contacts only a destination fixed in its code or set in the user's environment, within caps set there, and
+  adds a row to `<R>/disclosures.tsv` before the first request; a build in the recorded mode, whose downloads
+  go where the project's manifests point, is the one exception;
+- reads stdin only where its grammar says so, and treats a check that cannot run as a refusal.
+
+A bash entry point sources `scripts/lib/confine.sh` rather than repeating its checks. Each ships a case file of
+hostile arguments, `scripts/tests/fixtures/<tool>/cases.txt` (one case per line: the exit status, the one stderr
+line, then the arguments, separated by tabs), with a suite that runs under macOS `/bin/bash` 3.2 and under bash 5
+with GNU tools. A command pre-approves only such an entry point, in the form its header documents;
+`scripts/check-frontmatter.sh` holds rules for `audit-scan` and `audit-mem` to the forms that carry
+`--contract=1`.
+
 ### Frontmatter of commands, agents and `SKILL.md`
 
 `scripts/check-frontmatter.sh` fails when Claude Code would read a field differently from what is written.
@@ -232,8 +266,11 @@ under the lowercase name.
   It sets `REQUIRE_TOOLCHAIN=1`, so the PoC runner's suite fails when cargo or rustup is missing instead of
   skipping its real-toolchain checks.
 - **`corpus-check`, job "macOS, bash 3.2 and BSD tools (advisory)"**: the same checks, except the
-  pull-request attribution check, on `macos-26`, with a stock PATH plus `~/.cargo/bin` that its first step
-  asserts. It is not a required check. A newer push to the same ref cancels its older run.
+  pull-request attribution check, on `macos-26`, with a stock PATH plus `~/.cargo/bin` that its
+  stock-toolchain step asserts. When `~/.cargo/bin` lacks cargo or rustup, the job installs both there with
+  rustup first. Its last step runs the unit tests of `tools/auditor-tools`, whose cases for a path macOS
+  spells through `/System/Volumes/Data` or in other letters test nothing on ubuntu. It is not a required
+  check. A newer push to the same ref cancels its older run.
 - **`corpus-check`, job "auditor-tools build and audit-logs parity"**: builds `tools/auditor-tools` as a
   user does (`cargo build --release --locked`) with warnings denied, runs the unit tests, and runs
   `scripts/tests/test-audit-logs.sh` against that release binary. It is not a required check.
@@ -244,6 +281,14 @@ under the lowercase name.
   only copies it over a placeholder. To move to a new version, after reading its release notes, set it in
   `package.json` and, in that directory, run
   `NPM_CONFIG_USERCONFIG=<empty file> npm install --package-lock-only --ignore-scripts`.
+- **`vendor-delta`**: on every PR, advisory. When the PR moves the `vendor/trailofbits` gitlink,
+  `scripts/tob-delta-pr.sh` writes the upstream delta to the job summary. It fetches
+  `https://github.com/trailofbits/skills`, the entry of `SUBMODULE_URLS` in `scripts/check-corpus.sh` (never
+  the URL in `.gitmodules`), by the names of its default branch, branches and tags only, so a commit that no
+  branch or tag of it reaches fails the job, and runs `scripts/tob-delta-review.sh` on that clone. The summary
+  is two lines of its own, then the PR's other files and the review in one fenced code block, then a note when
+  lines are left out or cut; 300,000 bytes at most. The job needs no secret, keeps no credential, and never
+  approves or merges. "Bumping `vendor/trailofbits`" below says when the summary counts.
 
 ### Bumping `vendor/trailofbits`
 
@@ -252,9 +297,19 @@ The Trail of Bits pin ships to every user: Claude Code clones the plugin with it
 one `gitsubmodule` PR a month (`.github/dependabot.yml`, 7-day cooldown) and `scripts/check-corpus.sh`
 fails that PR until the README pin is updated on the same branch. Never auto-merge it.
 
-1. In a full clone of `https://github.com/trailofbits/skills`, run
-   `bash scripts/tob-delta-review.sh <clone> <old-sha> <new-sha>` (read-only; `--fetch` updates the clone
-   first). Read every section: plugins added or removed; load surfaces (nested `.claude/`, `.claude-plugin/`
+On the PR, the `vendor-delta` job writes the review of step 1 to the job summary. A `pull_request` run takes
+the workflow and its scripts from the PR, so that summary counts only for a PR that changes nothing but the
+gitlink and the README pin line, as the PR's file list shows; the summary's first line says so, and its second
+says when the PR changes other files. The pin line may change only in its commit hashes and date, as step 3
+updates them, and stay where it is: the summary checks that nothing else on it changed, and
+`scripts/check-corpus.sh` checks the hashes. Any other change in the PR, the workflow or the scripts included,
+means the reviewer runs the delta review locally instead. So does a summary that is missing or ends with a
+note that it is cut.
+
+1. Read the delta review: the job summary, when it counts, or the output of
+   `bash scripts/tob-delta-review.sh <clone> <old-sha> <new-sha>` in a full clone of
+   `https://github.com/trailofbits/skills` (read-only; `--fetch` updates the clone first). Read every
+   section: plugins added or removed; load surfaces (nested `.claude/`, `.claude-plugin/`
    manifests and any hooks / monitors / MCP / LSP servers they declare, `hooks/`, `monitors/`, `bin/`,
    `.mcp.json` / `.lsp.json`, settings, `CLAUDE.md` / `AGENTS.md`, `workflows/*.js`); new executables;
    symlinks (`120000`) and gitlinks (`160000`); paths git still quotes, to read by hand; renamed files,

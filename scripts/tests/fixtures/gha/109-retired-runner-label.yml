@@ -1,0 +1,19 @@
+# Fixture: pull-request jobs on macos-14 and its larger-runner forms, labels docs.github.com no longer listed on
+# 2026-11-03, so only a runner registered under that label takes them; KV-080 Step 8 lists each runs-on line.
+name: f109-retired-runner-label
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  retired:
+    runs-on: macos-14
+    steps:
+      - run: make test
+  retired-large:
+    runs-on: macos-14-large
+    steps:
+      - run: make test
+  retired-xlarge:
+    runs-on: "macos-14-xlarge"
+    steps:
+      - run: make test

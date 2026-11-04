@@ -226,10 +226,11 @@ EOF
 mkdir -p "$WT/escape" "$WT/escape-link"
 printf 'gitdir: %s/.git\n' "$O" > "$WT/escape/.git"
 ln -s "$O/.git" "$WT/escape-link/.git"
-for d in inner-link alt worktree; do mkrepo "$WT/$d"; put "$WT/$d" f.txt "$d"; commit "$WT/$d" -m "$d"; done
+for d in inner-link alt worktree cdir; do mkrepo "$WT/$d"; put "$WT/$d" f.txt "$d"; commit "$WT/$d" -m "$d"; done
 ln -s "$O/.git/refs/heads/main" "$WT/inner-link/.git/refs/heads/outside"
 printf '%s/.git/objects\n' "$O" > "$WT/alt/.git/objects/info/alternates"
 git -C "$WT/worktree" config core.worktree "$O"
+printf '%s/.git\n' "$O" > "$WT/cdir/.git/commondir"
 ln -s inner-link "$WT/linkrepo"
 
 # Sanity: the fixture really is hostile for plain git (a git that does not run one of these is skipped).
@@ -315,6 +316,11 @@ while IFS= read -r line; do
   else ko "case: git-ro.sh ${args[*]} -> status $RC, stderr: $(cat "$T/err")"; fi
 done < "$CASES"
 check "the case file has cases ($ncase)" test "$ncase" -gt 200
+# cdir, whose commondir names a repository outside, is this suite's alone: the case file is shared with
+# test-preapproved-entrypoints.sh, whose fixture has no cdir.
+run "$WT" --repo cdir log
+check "--repo cdir (a commondir file naming a repository outside) is refused" \
+  sh -c "[ '$RC' = 64 ] && [ ! -s '$T/out' ] && [ \"\$(cat '$T/err')\" = 'git-ro: refused: --repo keeps its git directory outside the working directory: cdir' ]"
 check "no case ran a configured program, hook or helper" nomarks
 run "$WT"
 check "no arguments: usage, exit 64" \
@@ -542,7 +548,7 @@ check "... and runs no program they name" nomarks
 check "... and git writes no trace" test ! -e "$T/trace.log" -a ! -e "$T/trace2.log"
 awk '/^ENV / { sub(/^ENV /, ""); sub(/=.*/, ""); print }' "$T/rec.log" | sort -u > "$T/env.names"
 check "git receives only the hardened environment" \
-  test -z "$(grep -vxE 'HOME|PATH|TMPDIR|LC_ALL|TZ|GIT_NO_LAZY_FETCH|GIT_CONFIG_NOSYSTEM|GIT_CONFIG_GLOBAL|GIT_TERMINAL_PROMPT|GIT_OPTIONAL_LOCKS|GIT_CEILING_DIRECTORIES|GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS|PWD|OLDPWD|SHLVL|_' "$T/env.names")"
+  test -z "$(grep -vxE 'HOME|PATH|TMPDIR|LC_ALL|TZ|GIT_NO_LAZY_FETCH|GIT_CONFIG_NOSYSTEM|GIT_CONFIG_GLOBAL|GIT_TERMINAL_PROMPT|GIT_OPTIONAL_LOCKS|GIT_ALLOW_PROTOCOL|GIT_CEILING_DIRECTORIES|GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS|PWD|OLDPWD|SHLVL|_' "$T/env.names")"
 check "... with GIT_CONFIG_GLOBAL=/dev/null and GIT_CONFIG_NOSYSTEM=1" \
   sh -c "grep -qx 'ENV GIT_CONFIG_GLOBAL=/dev/null' '$T/rec.log' && grep -qx 'ENV GIT_CONFIG_NOSYSTEM=1' '$T/rec.log'"
 check "... and GIT_CEILING_DIRECTORIES at the working directory's parent" grep -qx "ENV GIT_CEILING_DIRECTORIES=$T" "$T/rec.log"
@@ -561,7 +567,9 @@ check "... with --no-local --bare --no-recurse-submodules --template=" \
   awk -F '\037' '$1 == "ARGV" { for (i = 2; i <= NF; i++) if ($i == "clone") { ok = ($(i + 1) == "--no-local" && $(i + 2) == "--bare" && $(i + 3) == "--no-recurse-submodules" && $(i + 4) == "--template=") } } END { exit !ok }' "$T/rec.log"
 awk '/^ENV / { sub(/^ENV /, ""); sub(/=.*/, ""); print }' "$T/rec.log" | sort -u > "$T/env.names"
 check "... and only the hardened environment" \
-  test -z "$(grep -vxE 'HOME|PATH|TMPDIR|LC_ALL|TZ|GIT_NO_LAZY_FETCH|GIT_CONFIG_NOSYSTEM|GIT_CONFIG_GLOBAL|GIT_TERMINAL_PROMPT|GIT_OPTIONAL_LOCKS|GIT_CEILING_DIRECTORIES|GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS|PWD|OLDPWD|SHLVL|_' "$T/env.names")"
+  test -z "$(grep -vxE 'HOME|PATH|TMPDIR|LC_ALL|TZ|GIT_NO_LAZY_FETCH|GIT_CONFIG_NOSYSTEM|GIT_CONFIG_GLOBAL|GIT_TERMINAL_PROMPT|GIT_OPTIONAL_LOCKS|GIT_ALLOW_PROTOCOL|GIT_CEILING_DIRECTORIES|GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS|PWD|OLDPWD|SHLVL|_' "$T/env.names")"
+check "... with GIT_ALLOW_PROTOCOL=file, so the copy's clone permits only the local-file transport" \
+  grep -qx "ENV GIT_ALLOW_PROTOCOL=file" "$T/rec.log"
 check "... and runs no hook" nomarks
 
 # PATH: entries inside the working directory, relative ones and "." are dropped before anything runs.
@@ -620,6 +628,38 @@ else
   check "copy of a partial clone: exit 3" test "$RC" = 3
   check "... with its one line" err_is "git-ro: . is a partial clone: a copy would lack the objects it never fetched, and nothing is fetched; make a full copy from a source you trust (Rule 11c)"
   check "... and nothing copied or fetched" sh -c "[ ! -e '$PC/audit_1/src.git' ] && [ -z \"\$(ls -A '$T/marks')\" ]"
+fi
+
+# =================================================================================================
+# The transport allowlist is carried in the environment, so a checkout whose own config permits a
+# non-local transport cannot widen it. On a git that ignores GIT_NO_LAZY_FETCH (git before 2.44.0, here
+# a shim) a read of a missing object fetches nothing and runs nothing outside the tree.
+# =================================================================================================
+mkdir -p "$T/oldgit-nlf"
+printf '#!/bin/sh\nunset GIT_NO_LAZY_FETCH\nexec "%s" "$@"\n' "$REAL_GIT" > "$T/oldgit-nlf/git"
+chmod +x "$T/oldgit-nlf/git"
+APC="$T/allow-partial"
+if ! git clone -q --filter=blob:none --no-local "file://$SRV" "$APC" >/dev/null 2>&1; then
+  skp "transport allowlist: this git could not make a blobless clone"
+else
+  git -C "$APC" config remote.origin.url "ext::sh -c touch% $T/marks/ext-reenabled"
+  git -C "$APC" config protocol.ext.allow always
+  clearmarks
+  # Control: on a git that ignores GIT_NO_LAZY_FETCH, plain git reaches the ext:: transport this
+  # checkout's config permits. Assert the allowlist stops it only when the control confirms the fixture
+  # reaches it, so the assertion is never vacuous.
+  ( cd "$APC" && PATH="$T/oldgit-nlf:$PATH" git -c protocol.allow=never show "HEAD~1:f.txt" ) >/dev/null 2>&1
+  if [ -e "$T/marks/ext-reenabled" ]; then
+    ok "control: this git reaches the ext:: transport once GIT_NO_LAZY_FETCH is ignored"
+    clearmarks
+    PATH="$T/oldgit-nlf:$PATH" run "$APC" show "HEAD~1:f.txt"
+    check "a missing object is not fetched through a config-permitted ext:: transport" test "$RC" != 0
+    check "... and nothing outside the tree runs" nomarks
+    clearmarks
+  else
+    clearmarks
+    skp "control: this git did not reach the ext:: transport; the transport-allowlist check is skipped"
+  fi
 fi
 
 # =================================================================================================
@@ -716,6 +756,109 @@ run "$G" grep -e OUTSIDE-KEY-MATERIAL
 check "git-ro grep searches the index, not the linked directory" test "$RC:$(cat "$T/out")" = 1:
 run "$G" grep -n -e committed
 check "... and finds the committed text" test "$(cat "$T/out")" = 'keys/id.txt:1:committed text'
+
+# =================================================================================================
+# Revisions git-ro resolves itself. diff, blame and grep start from commits and trees whatever revision
+# syntax they get: a root or shallow commit's A^!, A^@ (no parent at all), a negation, a range of one
+# commit, ref options that mark the commit uninteresting. git would otherwise compare with or annotate
+# the work tree, running its clean filter and reading files through linked directories.
+# =================================================================================================
+RT="$T/root-filter"; mkrepo "$RT"
+printf '* filter=evil\n' > "$RT/.gitattributes"
+git -C "$RT" add .gitattributes
+put "$RT" a.rs 'fn a() {}'
+commit "$RT" -m 'root import'
+git -C "$RT" config filter.evil.clean "$T/bin/mark-clean"
+touch -t 202001010000 "$RT/a.rs"
+clearmarks
+git -C "$RT" diff 'HEAD^!' >/dev/null 2>&1
+if nomarks; then skp "sanity: this git does not run the clean filter for diff A^! of a root commit"
+else ok "sanity: plain git diff A^! of a root commit runs the clean filter on the work tree"; fi
+clearmarks
+git -C "$RT" blame '^HEAD' -- a.rs >/dev/null 2>&1
+if nomarks; then skp "sanity: this git does not run the clean filter for blame ^HEAD"
+else ok "sanity: plain git blame ^HEAD annotates the work tree, running the clean filter"; fi
+clearmarks
+touch -t 202101010000 "$RT/a.rs"
+snapshot "$RT" "$T/snap.base"
+run "$RT" diff 'HEAD^!'
+check "diff A^! of a root commit compares it with the empty tree" \
+  sh -c "[ '$RC' = 0 ] && grep -q '^new file mode' '$T/out' && grep -qx '+fn a() {}' '$T/out'"
+check "... runs no clean filter" nomarks
+snapshot "$RT" "$T/snap.now"
+check "... and leaves the index and the work tree as they were" cmp -s "$T/snap.base" "$T/snap.now"
+run "$RT" diff 'HEAD^@' 'HEAD^@'
+check "diff A^@ (a root commit has no parent) is refused" \
+  err_is 'git-ro: refused: diff compares committed revisions (A..B, A...B, A^!, A B or --cached [A]), and this names no single tree: HEAD^@'
+run "$RT" diff 'HEAD^@' HEAD:a.rs -- a.rs
+check "... and so is a blob against nothing, which git compares with the file in the work tree" \
+  err_is 'git-ro: refused: diff compares committed revisions (A..B, A...B, A^!, A B or --cached [A]), and this names no single tree: HEAD^@'
+# --merge-base takes commits, and git-ro hands git trees (git 2.50 crashes on them): A...B says the same.
+run "$RT" diff --merge-base HEAD HEAD
+check "diff --merge-base A B is refused, pointing to A...B" \
+  sh -c "[ '$RC' = 64 ] && [ ! -s '$T/out' ] && [ \"\$(cat '$T/err')\" = 'git-ro: refused: diff --merge-base A B is written A...B here: git-ro gives git trees, which have no merge base' ]"
+run "$RT" diff --cached --merge-base HEAD
+check "... while diff --cached --merge-base A runs" test "$RC" = 0
+for b in "^HEAD -- a.rs" "HEAD..HEAD -- a.rs" "--not --all HEAD -- a.rs" "^HEAD HEAD -- a.rs" "HEAD^@ -- a.rs"; do
+  # shellcheck disable=SC2086
+  run "$RT" blame $b
+  check "blame $b is refused before git runs" sh -c "[ '$RC' = 64 ] && [ ! -s '$T/out' ]"
+done
+check "... none ran the clean filter" nomarks
+run "$RT" blame HEAD -- a.rs
+check "blame of a commit still runs" sh -c "[ '$RC' = 0 ] && grep -q 'fn a() {}' '$T/out'"
+git -C "$RT" config --unset filter.evil.clean
+put "$RT" a.rs 'fn a() { second(); }'
+commit "$RT" -m second
+git -C "$RT" config filter.evil.clean "$T/bin/mark-clean"
+git -C "$RT" rev-parse HEAD > "$RT/.git/shallow"
+touch -t 202001010000 "$RT/a.rs"
+clearmarks
+run "$RT" diff 'HEAD^!'
+check "diff A^! of a commit the shallow file cuts off compares it with the empty tree" \
+  sh -c "[ '$RC' = 0 ] && grep -qx '+fn a() { second(); }' '$T/out' && ! grep -qx -- '-fn a() {}' '$T/out'"
+check "... runs no clean filter" nomarks
+rm "$RT/.git/shallow"
+run "$RT" diff 'HEAD^!'
+check "diff A^! of a commit with a parent compares it with that parent" \
+  sh -c "grep -qx -- '-fn a() {}' '$T/out' && grep -qx '+fn a() { second(); }' '$T/out'"
+run "$RT" blame --reverse HEAD~1..HEAD -- a.rs
+check "blame --reverse A..B still runs" test "$RC" = 0
+run "$G" blame '^HEAD' -- keys/id.txt
+check "blame ^HEAD never reads a file through a linked directory" sh -c "[ '$RC' = 64 ] && ! grep -q OUTSIDE-KEY-MATERIAL '$T/out'"
+check "no case of this section ran a configured program" nomarks
+# grep decides from its words. A git directory named after git's own message and a corrupt blob made git
+# grep --cached fail with that text, which the old fallback took for "trees are given".
+GM="$T/grep-message"; MSG='gd both --cached and trees are given'
+mkdir -p "$GM"
+git init -q --separate-git-dir="$GM/$MSG" "$GM"
+git -C "$GM" symbolic-ref HEAD refs/heads/main
+put "$GM" a.txt 'hello'
+put "$GM" keys/id.txt 'committed text'
+commit "$GM" -m keys
+oid=$(git -C "$GM" rev-parse HEAD:a.txt)
+chmod u+w "$GM/$MSG/objects/${oid:0:2}/${oid:2}"
+printf 'garbage' > "$GM/$MSG/objects/${oid:0:2}/${oid:2}"
+rm -r "$GM/keys"
+ln -s "$T/outside-keys" "$GM/keys"
+git -C "$GM" grep --cached -e OUTSIDE-KEY-MATERIAL > "$T/plain.out" 2>&1
+if grep -qF 'both --cached and trees are given' "$T/plain.out"; then ok "sanity: git's error on the corrupt blob holds the text, in the git directory's name"
+else skp "sanity: this git's error does not name the git directory"; fi
+run "$GM" grep -n -e OUTSIDE-KEY-MATERIAL
+check "grep of an index with a corrupt blob fails, and never falls back to the work tree" \
+  sh -c "[ '$RC' != 0 ] && [ '$RC' != 64 ] && ! grep -q OUTSIDE-KEY-MATERIAL '$T/out'"
+# A revision named like an option (refs/heads/-n) stays a revision: git gets it behind --end-of-options.
+git -C "$G" update-ref refs/heads/-n HEAD
+run "$G" grep committed -n
+check "grep searches a revision named -n as a revision" test "$(cat "$T/out")" = '-n:keys/id.txt:committed text'
+run "$G" grep OUTSIDE-KEY-MATERIAL -n
+check "... and finds nothing of the linked directory there" test "$RC:$(cat "$T/out")" = 1:
+git -C "$G" update-ref -d refs/heads/-n
+run "$G" grep -n -e committed HEAD keys
+check "grep with revisions and then a path without -- is refused" \
+  err_is 'git-ro: refused: grep searches these revisions, so give paths after --: keys'
+run "$G" grep -n -e committed HEAD -- keys
+check "... and with -- searches that path of the revision" test "$(cat "$T/out")" = 'HEAD:keys/id.txt:1:committed text'
 
 # =================================================================================================
 # What the repository could set to change what a read shows: how grep and log --grep read a pattern,

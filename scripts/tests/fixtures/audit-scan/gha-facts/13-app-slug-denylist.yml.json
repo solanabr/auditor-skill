@@ -1,0 +1,27 @@
+{
+  "name": "f13-app-slug-denylist",
+  "triggers": [
+    "pull_request"
+  ],
+  "permissions": [
+    "contents: read",
+    "pull-requests: write"
+  ],
+  "jobs": [
+    {
+      "id": "audit",
+      "line": 10,
+      "if": "github.actor != 'dependabot[bot]' && github.actor != 'app/github-actions' && github.actor != 'app/mergify'",
+      "permissions": [],
+      "steps": [
+        {
+          "line": 14,
+          "run": "echo \"human PR audit\"",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

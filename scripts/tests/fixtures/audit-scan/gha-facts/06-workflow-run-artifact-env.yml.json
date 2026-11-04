@@ -1,0 +1,56 @@
+{
+  "name": "f06-workflow-run-artifact-env",
+  "triggers": [
+    "workflow_run"
+  ],
+  "permissions": [
+    "contents: read",
+    "deployments: write"
+  ],
+  "jobs": [
+    {
+      "id": "deploy",
+      "line": 11,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 14,
+          "uses": "actions/download-artifact@v4",
+          "with": [
+            {
+              "key": "name",
+              "value": "pr-meta"
+            },
+            {
+              "key": "run-id",
+              "value": "${{ github.event.workflow_run.id }}"
+            },
+            {
+              "key": "github-token",
+              "value": "${{ secrets.GITHUB_TOKEN }}"
+            }
+          ],
+          "env": []
+        },
+        {
+          "line": 19,
+          "run": "echo \"PR_NUMBER=$(cat pr_number.txt)\" >> \"$GITHUB_ENV\"",
+          "with": [],
+          "env": []
+        },
+        {
+          "line": 20,
+          "run": "bash ./dist/deploy.sh",
+          "with": [],
+          "env": [
+            {
+              "key": "DEPLOY_KEY",
+              "value": "${{ secrets.DEPLOY_KEY }}"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

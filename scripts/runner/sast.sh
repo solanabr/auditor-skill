@@ -1,6 +1,7 @@
 #!/bin/bash
-# sast.sh — static analysis of the code under audit with semgrep, which parses the code and never runs it, so
-# it needs no execution mode (OUTPUT-RULES.md Rules 11a and 11b).
+# sast.sh — static analysis of the code under audit with semgrep, which parses the code and runs none of it,
+# and whose git never reads the repository's config (below), so it needs no execution mode (OUTPUT-RULES.md
+# Rules 11a and 11b).
 #
 #   "${CLAUDE_PLUGIN_ROOT}/scripts/runner/sast.sh" semgrep --run <R> --path <path> --ruleset <id> [--ruleset <id>]...
 #
@@ -16,10 +17,18 @@
 # from a scratch directory outside the working directory, in the cleaned environment of
 # scripts/lib/isolation.sh with the real HOME kept (semgrep's own install may live there), its settings file
 # in the scratch directory, no version check and no metrics, and the proxy variables: semgrep downloads the
-# rulesets from semgrep.dev, and before that one row goes to <R>/disclosures.tsv. A .semgrepignore or
-# .gitignore under <path> narrows what semgrep reads; the last line names the .semgrepignore files it
-# found. AUDITOR_RUN_TIMEOUT (whole seconds, 1 to 86400, default 1800) bounds the scan, under the watchdog
-# of isolation.sh's iso_watch.
+# rulesets from semgrep.dev, and before that one row goes to <R>/disclosures.tsv. semgrep lists the files of a
+# folder in a git project with git, and the git it starts would read the repository's config, which can name
+# a program for git to run; so every git semgrep starts gets GIT_DIR, never the repository's own: a copy of
+# its index and info/exclude under a config of sast.sh's own (the index alone when info/exclude cannot be
+# copied, which the last line then says), or, where sast.sh makes no copy, a path that does not exist (git
+# fails, and semgrep lists the files itself, ignored ones included, which the last line then says, with the
+# reason). git's ignore rules leave out untracked files only. semgrep (1.117.0 and later) also reads every
+# .semgrepignore of its project, the nearest folder at or above <path> holding a .git (or a .hg, _darcs or
+# .svn folder), else <path>: for a folder, the last line names each one from the project down to <path> and
+# under it; a file given as <path> is scanned whatever they say.
+# AUDITOR_RUN_TIMEOUT (whole seconds, 1 to 86400, default 1800) bounds the scan, under the watchdog of
+# isolation.sh's iso_watch.
 #
 # Output: the SARIF in <R>/sast/semgrep-<n>.sarif and semgrep's own messages in <R>/sast/semgrep-<n>.log.
 # The last stdout line gives the number of results and where they are. The scratch directory is removed on
@@ -118,7 +127,7 @@ CAP=${AUDITOR_RUN_TIMEOUT:-1800}
   refuse "AUDITOR_RUN_TIMEOUT is '$(confine_text "$CAP")', not a whole number of seconds from 1 to 86400"
 LIMIT=$((10#$CAP))
 iso_tmp_outside
-iso_disclosures_ok "$R" || refuse "$R/disclosures.tsv is not a regular file with one link whose first line is the header, so no row can be added to it"
+confine_disclosures_ok "$R" || refuse "$R/disclosures.tsv is not a regular file with one link whose first line is the header, so no row can be added to it"
 
 # ---- the tools, scratch and the watchdog -------------------------------------------------------------
 command -v semgrep >/dev/null 2>&1 || blocker "semgrep is not on PATH, so the scan cannot run here — nothing was sent."
@@ -145,10 +154,111 @@ iso_env "$S" keep-home || blocker "cannot prepare the cleaned environment in $S 
 ISO_ENV+=("SEMGREP_SETTINGS_FILE=$S/semgrep-settings.yml" "SEMGREP_LOG_FILE=$S/semgrep.log" SEMGREP_ENABLE_VERSION_CHECK=0
   SEMGREP_SEND_METRICS=off)
 
-# The .semgrepignore files under the path, which narrow the scan; find's own failure only hides the note.
+# semgrep's project, found as semgrep finds it (Semgrepignore v2): the nearest folder at or above the scan root
+# (a file's folder, for a file) holding a .git, or a .hg, _darcs or .svn folder, else that folder itself.
+d=$TARGET
+[ -d "$d" ] || d=${d%/*}
+p=$d PROJ=$d VCS=none
+while :; do
+  if [ -e "$p/.git" ]; then PROJ=${p:-/} VCS=git; break; fi
+  if [ -d "$p/.hg" ] || [ -d "$p/_darcs" ] || [ -d "$p/.svn" ]; then PROJ=${p:-/} VCS=other; break; fi
+  [ -n "$p" ] || break
+  p=${p%/*}
+done
+
+# semgrep's git. For a folder in a git project semgrep lists the files with "git -C <scan root> ls-files", the
+# git on its PATH, whatever --no-git-ignore says (src/targeting/Find_targets.ml in its source), and that git
+# would read the repository's config, which can name a program for git to run (core.fsmonitor, hooks, a
+# filter). So every git semgrep starts gets GIT_DIR, which stops git looking for a repository: when the
+# project is the working directory or a folder in it, and its .git a directory, a repository in the scratch
+# directory holding a copy of the index (whose entries must all lie inside the project) and info/exclude under
+# a config of sast.sh's own, with GIT_WORK_TREE the project, so git lists the same tracked and untracked files
+# (an info/exclude that cannot be copied stays out, and git lists as the project's own git does when it
+# cannot read one); otherwise a path that does not exist, so git fails and semgrep walks the folders itself.
+# GIT_CONFIG_NOSYSTEM and GIT_CONFIG_GLOBAL keep the machine's and the user's git config out too, so the only
+# config such a git reads is sast.sh's.
+copy_ok() { # copy_ok <file> <bytes>: <file> is absent, or a regular file, not a link, of at most <bytes>
+  if [ ! -e "$1" ] && [ ! -L "$1" ]; then return 0; fi
+  [ -f "$1" ] && [ ! -L "$1" ] && [ -z "$(find "$1" -prune -size +"$2"c -print 2>/dev/null)" ]
+}
+# can_read <file>: <file> can be read, or is absent and its folder is missing or can be searched (in a folder
+# that cannot be searched, a file only looks absent).
+can_read() {
+  if [ -e "$1" ]; then [ -r "$1" ]; else [ ! -d "${1%/*}" ] || [ -x "${1%/*}" ]; fi
+}
+# index_inside: the copied index, read by git under sast.sh's config, names only paths inside the project (an
+# entry that is absolute or has an empty, . or .. component would have git list a file outside --path); exit 1
+# when one does not, and git's own status when it cannot read the copy.
+index_inside() {
+  (cd / && exec env -i PATH="$PATH" HOME="$S" LC_ALL=C GIT_DIR="$S/git" GIT_WORK_TREE="$PROJ" GIT_CONFIG_NOSYSTEM=1 \
+    GIT_CONFIG_GLOBAL=/dev/null git ls-files -z --cached 2>/dev/null) | (cd / && exec python3 -I -c 'import sys
+for p in sys.stdin.buffer.read().split(b"\0"):
+    if p and (p.startswith(b"/") or set(p.split(b"/")) & {b"", b".", b".."}):
+        sys.exit(1)')
+}
+GITENV=("GIT_DIR=$S/no-repo") NOCOPY="" NOEXCL=""
+G=$PROJ/.git
+# The two keys git init sets from the filesystem, which change what git lists: ignorecase where letter case
+# does not tell names apart (seen without writing in the tree: .GIT is then the same folder as .git), and
+# precomposeUnicode on macOS.
+GCONF=$'[core]\n\trepositoryformatversion = 0\n\tbare = false\n\tfsmonitor = false\n\thooksPath = /dev/null\n\tuntrackedCache = false\n'
+if [ "$PROJ/.GIT" -ef "$G" ] && [ ! -L "$PROJ/.GIT" ]; then GCONF+=$'\tignorecase = true\n'; fi
+case "${OSTYPE:-}" in darwin*) GCONF+=$'\tprecomposeUnicode = true\n' ;; esac
+# NOCOPY: for a git project, why semgrep's git gets no copy, for the last line. NOEXCL: why the copy holds the
+# index without info/exclude, which git then lists without, as the project's own git does when it cannot read
+# that file.
+if [ "$VCS" = git ]; then
+  case "$PROJ/" in
+    "${WT%/}/"*)
+      if [ ! -d "$G" ] || [ -L "$G" ]; then NOCOPY="its .git is a file or a link"
+      elif ! copy_ok "$G/index" 268435456; then NOCOPY="its index is a link, not a regular file, or over 256 MiB"
+      elif ! can_read "$G/index"; then NOCOPY="its index cannot be read"
+      elif ! { confine_mkdir "$S/git" && confine_mkdir "$S/git/objects" && confine_mkdir "$S/git/refs" &&
+        confine_mkdir "$S/git/info" && confine_new_file "$S/git/HEAD" $'ref: refs/heads/main\n' &&
+        confine_new_file "$S/git/config" "$GCONF"; }; then
+        NOCOPY="the scratch directory could not hold the copy"
+      else
+        if [ -L "$G/info" ]; then NOEXCL="its .git/info is a link"
+        elif ! copy_ok "$G/info/exclude" 1048576; then NOEXCL="its info/exclude is a link, not a regular file, or over 1 MiB"
+        elif ! can_read "$G/info/exclude"; then NOEXCL="its info/exclude cannot be read"
+        fi
+        if ! { { [ ! -e "$G/index" ] || iso_copy_new "$G/index" "$S/git/index"; } &&
+          { [ -n "$NOEXCL" ] || [ ! -e "$G/info/exclude" ] || iso_copy_new "$G/info/exclude" "$S/git/info/exclude"; }; }; then
+          NOCOPY="its index or info/exclude could not be copied into the scratch directory"
+        else
+          index_inside
+          case $? in
+            0) GITENV=("GIT_DIR=$S/git" "GIT_WORK_TREE=$PROJ") ;;
+            1) NOCOPY="its index names a path outside the repository" ;;
+            *) NOCOPY="git cannot read its index from a copy, as with a split index or a sha256 repository" ;;
+          esac
+        fi
+      fi ;;
+    *) NOCOPY="the repository lies above the working directory" ;;
+  esac
+fi
+ISO_ENV+=("${GITENV[@]}" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null)
+# Where git lists nothing for a folder in a git project, the last line says that semgrep chose the files, and why.
+walked=""
+if [ -n "$NOCOPY" ] && [ -d "$TARGET" ]; then
+  walked="; note: semgrep listed the files itself, not with git (no copy of the repository index: $NOCOPY), so files a .gitignore leaves out can be in the scan"
+elif [ -n "$NOEXCL" ] && [ -d "$TARGET" ]; then
+  walked="; note: semgrep's git read the repository index without its info/exclude ($NOEXCL), so files only that file leaves out can be in the scan"
+fi
+
+# The .semgrepignore files that narrow the scan of a folder: semgrep reads every one in its project, so each one
+# from the project down to the scan root, then each one under it; find's own failure only hides the note.
 ignores=""
 if [ -d "$TARGET" ]; then
-  find "$TARGET" \( -name .git -o -name node_modules \) -prune -o -name .semgrepignore -type f -print > "$S/ignores" 2>/dev/null || : > "$S/ignores"
+  : > "$S/ignores"
+  rest=${TARGET#"${PROJ%/}"} cur=${PROJ%/}
+  while [ -n "$rest" ]; do
+    [ ! -f "$cur/.semgrepignore" ] || printf '%s\n' "$cur/.semgrepignore" >> "$S/ignores"
+    rest=${rest#/}
+    cur=$cur/${rest%%/*}
+    case "$rest" in */*) rest=/${rest#*/} ;; *) rest="" ;; esac
+  done
+  find "$TARGET" \( -name .git -o -name node_modules \) -prune -o -name .semgrepignore \( -type f -o -type l \) -print >> "$S/ignores" 2>/dev/null || : > "$S/ignores"
   while IFS= read -r f; do
     f=${f#"$WT"/}
     ignores=${ignores:+$ignores, }$(confine_text "$f")
@@ -157,7 +267,7 @@ fi
 
 CONFIGS=()
 for s in "${SETS[@]}"; do CONFIGS+=(--config "$s"); done
-iso_disclose "$R" "$TOOL" semgrep.dev "ruleset ids (the semgrep registry, for the rules)" "${SETS[@]}" ||
+confine_disclose "$R" "$TOOL" semgrep.dev "ruleset ids (the semgrep registry, for the rules)" "${SETS[@]}" ||
   blocker "cannot add a row to $R/disclosures.tsv, so nothing was sent"
 : > "$S/out.log" || blocker "cannot write in $S"
 printf '>> semgrep scan %s --metrics=off --disable-version-check --sarif --output <scratch> --error -- %s\n' \
@@ -182,8 +292,8 @@ while :; do
   [ -e "$SAST/semgrep-$N.log" ] || blocker "cannot write $R/sast/semgrep-$N.log"
 done
 LOG=$R/sast/semgrep-$N.log
-note=""
-[ -z "$ignores" ] || note="; note: .semgrepignore files narrow the scan: $ignores"
+note=$walked
+[ -z "$ignores" ] || note="$note; note: .semgrepignore files narrow the scan: $ignores"
 case "$END" in
   'exit 0'|'exit 1') ;;
   timeout) blocker "semgrep passed the $LIMIT-second limit (AUDITOR_RUN_TIMEOUT) and was killed; log $LOG" ;;

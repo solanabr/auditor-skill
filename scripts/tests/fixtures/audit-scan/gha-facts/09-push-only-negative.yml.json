@@ -1,0 +1,25 @@
+{
+  "name": "f09-push-only-negative",
+  "triggers": [
+    "push"
+  ],
+  "permissions": [
+    "issues: write"
+  ],
+  "jobs": [
+    {
+      "id": "notify",
+      "line": 9,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 12,
+          "run": "echo ok",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

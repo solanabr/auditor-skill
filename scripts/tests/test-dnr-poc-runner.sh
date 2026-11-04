@@ -22,17 +22,38 @@
 #     cargo's JSON output (a large one too) and run directly, from the package root
 #     with CARGO_MANIFEST_DIR and the dynamic library path set; only that run gets
 #     AUDITOR_POC_MARKERS, and an inherited value never reaches cargo;
+#   * every build of both arms (SBF builds or prebuilt bytes, and test binaries) comes
+#     before either test runs, so what a test writes in the scratch copy (src/lib.rs,
+#     with real cargo) reaches no build and prebuilt bytes rewritten meanwhile do not
+#     run; an arm's bytes or test binary that changed after its build stop the run;
 #   * the bytes that ran: an arm counts only when every program the runner helpers
 #     loaded is the .so run.sh placed, unchanged after the test, and the Leg 3 line
 #     names it;
 #   * the crate's own build-time code (a build script, a proc-macro package, a
 #     Cargo.toml that is not a member, a [patch] or [replace] table) is refused before
 #     anything compiles; `build = false` is honoured;
+#     so is a crate that is not its own workspace root;
+#     so is a cargo-features key;
+#     so are a target other than the library and the tests (a bin, an example, a bench,
+#     a dylib, a staticlib, another member's cdylib), and in the crate's own Rust code a
+#     crate-level #![feature], inline assembly and the link attribute, a macro argument
+#     that names one included, while a comment or a string that mentions them passes,
+#     and so does a name a dependency's macro pastes together, as the README and
+#     run.sh's header say;
 #   * the harness binding: the crate depends on its own shared-test-utils/ under the
 #     import name shared_test_utils, no other dependency takes that name in either
 #     spelling, and each arm's build compiles that copy and no other;
+#   * the harness copy: --crate stops before anything is copied when shared-test-utils/
+#     holds a file other than Cargo.toml and src/lib.rs, or a Cargo.toml changed beyond
+#     its dependency version requirements; every build compiles the installation's
+#     src/lib.rs, a missing or changed one too, and the >> harness: line says which;
 #   * the non-registry line before the final line: the path and git dependencies in
-#     the resolved Cargo.lock;
+#     the resolved Cargo.lock and those from a registry other than crates.io, and each
+#     file from outside the crate that the dep-info of the crate's own units lists, of
+#     any kind, an arm's SBF build's included (a member that build alone compiles too,
+#     never an older dep-info of a crate of the same name in a build cache); a file of
+#     the crate the build read, under any name, that holds inline assembly stops the
+#     run before any test, and so does a build that read one of run.sh's own files;
 #   * the macros run the attack themselves; their old forms do not compile and say how
 #     to migrate; an effect present before the attack, a read that panics, and a
 #     positive control for another program or from another state are inconclusive;
@@ -42,8 +63,10 @@
 #   * the deployed-hotfix check holds only with its positive control: a legitimate
 #     call that goes through on the same bytes and changes the account;
 #   * where the crate builds (always a scratch copy outside the target tree with a
-#     pinned toolchain; a crate holding a symbolic link, .cargo/, rust-toolchain* or
-#     tests/fixtures/<crate>.so is refused; BPF_OUT_DIR is cleared; an inherited
+#     pinned toolchain; a crate holding a symbolic link, .cargo/, rust-toolchain*, a
+#     version manager's file, a name that is not printable ASCII or
+#     tests/fixtures/<crate>.so is refused; run.sh starts
+#     every python3 of its own from /; BPF_OUT_DIR is cleared; an inherited
 #     CARGO_TARGET_DIR is honoured), and the exit codes (a failed build is 3, a failed
 #     verdict 1/2; a refusal prints one blocker line; a run that stops anywhere else,
 #     an unset variable included, exits 3);
@@ -66,18 +89,40 @@
 #     installation's template never builds itself;
 #   * an incident's crate runs only once incident_<n>/INCIDENTS.json records its
 #     root_cause_class (a file, an incident or a class that cannot be read stops it,
-#     a nested or large file included); supply_chain_or_ci refuses native mode, a run
-#     without --vulnerable-so, path and git dependencies and sources outside the crate,
-#     and a build that compiled code from outside it;
+#     a nested or large file included), read by scripts/lib/isolation.sh's
+#     iso_incident_class, whose python3 starts from /, as each one run.sh starts before
+#     it leaves the working directory does; supply_chain_or_ci refuses native mode, a
+#     run without --vulnerable-so, path, git and other-registry dependencies (from the
+#     manifests, and from the resolved Cargo.lock before anything compiles) and sources
+#     outside the crate, and a build that compiled code from outside it;
+#     in native mode no crate runs, an audit's included, while the INCIDENTS.json of
+#     any incident_* directory in the working directory, in any letter case, records
+#     such an incident or cannot be read (a path past PATH_MAX, a working directory
+#     that cannot be listed), as iso_incident_class's no-id form (pinned) reports it: a
+#     directory without that file, or whose file records no incident, counts for
+#     nothing;
 #   * the isolation self-check (scripts/lib/isolation.sh): in isolated mode, a fake HOME
 #     holding any credential it reads stops the run before anything is copied, and so
 #     does a check that cannot finish; in native mode it is a warning. Through a driver,
 #     on the homes it is given: the Solana CLI's keypair, linked and deep directories,
-#     the entry budget, the places the environment names, the variable names that look
-#     like credentials, and agent sockets (serving one needs a machine that allows it:
-#     on CI a machine that does not fails the run, anywhere else one SKIP line says
-#     so). On CI the runner's own home must pass the check, so that the checks that
-#     isolated mode passes run there;
+#     the entry budget, the places the environment names (a Claude Code login under
+#     CLAUDE_CONFIG_DIR and Anthropic profiles too), git, AWS and Terraform config
+#     files by what they hold (a credential helper, git's store and cache by their file
+#     and socket, an askpass program, a cookie file,
+#     an HTTP header, a URL or a proxy with a login, an include; a credential_process
+#     or a key; a credentials block), Claude Code's settings, state and managed
+#     settings by what they hold (a credential helper, a token, a passphrase or a list of
+#     headers in an env block, a credential or key header, a key in a URL's login, query
+#     or path, or in an MCP server's arguments), Docker's TLS client keys, the
+#     variable names that
+#     look like credentials, and agent, container daemon (a tcp:// one too) and git
+#     credential sockets
+#     (serving one needs a machine that allows it: on CI a machine that does not fails
+#     the run, anywhere else one SKIP line says so). On CI the runner's own home must
+#     pass the check, so that the checks that isolated mode passes run there. Its
+#     python3, and the watchdog's, starts from /: a .python-version in the working
+#     directory picks no interpreter, and a relative path in a variable it reads is
+#     taken from /; the Python it runs holds only ASCII;
 #   * environment cleaning: canary variables in the caller's environment reach no cargo
 #     call, no build script and no test binary; HOME is a throwaway one with a fresh
 #     Solana keypair, but for cargo build-sbf --install-only; only cargo fetch, cargo
@@ -88,8 +133,8 @@
 #     cleaned environment, each killed when it gives no answer in PROBE_WAIT seconds,
 #     the isolation line (kinds, then at most 20 paths), --only and its case file
 #     fixtures/probe/cases.txt;
-#   * the patch verification recipe (templates/patch/VERIFICATION.md §1): its worktree
-#     is made in a Rule 11c copy, and no git runs in the client checkout.
+#   * the patch verification recipe (templates/patch/VERIFICATION.md §1): exactly the two
+#     target.sh build-sbf lines, the quoted installation path first, with no cd and no $.
 #
 # No Solana toolchain and no network needed. A temp copy of run.sh runs with a `cargo`
 # shim, whose `--no-run` build reports a stand-in test binary, or with a PATH that has
@@ -117,11 +162,12 @@ trap 'rm -rf "$T"' EXIT
 # run.sh reports physical paths (pwd -P); compare against the same.
 T="$(cd "$T" && pwd -P)" || exit 1
 
-mk_crate() {  # mk_crate <dir>: run.sh, a manifest, its own shared-test-utils/ and the template's tests (the shim never compiles them)
-  mkdir -p "$1/tests" "$1/shared-test-utils"
+mk_crate() {  # mk_crate <dir>: run.sh, a manifest, the installation's shared-test-utils/ and the template's tests (the shim never compiles them)
+  mkdir -p "$1/tests" "$1/shared-test-utils/src"
   cp "$TEMPLATE/run.sh" "$1/run.sh"
   printf '[package]\nname = "poc_shim"\nversion = "0.1.0"\nedition = "2021"\n' > "$1/Cargo.toml"
-  printf '[package]\nname = "shared-test-utils"\nversion = "0.1.0"\n' > "$1/shared-test-utils/Cargo.toml"
+  cp "$TEMPLATE/shared-test-utils/Cargo.toml" "$1/shared-test-utils/Cargo.toml"
+  cp "$TEMPLATE/shared-test-utils/src/lib.rs" "$1/shared-test-utils/src/lib.rs"
   cp "$TEMPLATE/tests/exploit.rs" "$TEMPLATE/tests/fixed_blocked.rs" "$1/tests/"
 }
 mk_crate "$T/inc"
@@ -151,8 +197,10 @@ PY
 # rust-toolchain.toml there when RUSTUP_TOOLCHAIN is not pinned. With SHIM_CALLS set it
 # also logs every call, tab-separated: working directory, CARGO_TARGET_DIR,
 # SBF_OUT_DIR, BPF_OUT_DIR, AUDITOR_POC_MARKERS, arguments. `metadata` lists every
-# Cargo.toml under the crate as a member, the root package named SHIM_CRATE (poc_shim),
-# with a dependency on the crate's own shared-test-utils/ (SHIM_STU=none drops it, and
+# Cargo.toml under the crate as a member, and one under markers/ or target/ that the
+# root manifest names on a `members = [...]` line, the root package named SHIM_CRATE
+# (poc_shim), with a test target for each tests/*.rs and the features of a [features]
+# table in its manifest, and a dependency on the crate's own shared-test-utils/ (SHIM_STU=none drops it, and
 # SHIM_STU=<name>,<rename>,<path> sets another, @copy standing for that directory);
 # SHIM_DEP=<name>,<path or git+ source> adds a dependency, SHIM_LIB_SRC sets the root lib's
 # source; SHIM_META=build-script gives the root a build script and SHIM_META=proc-macro makes
@@ -165,6 +213,16 @@ PY
 # such lib), then the stand-in test binary $T/shim/bin/<test> (none for
 # SHIM_FAIL=no-exe:<test>). SHIM_FAIL makes one step fail (build-sbf, update, metadata,
 # fetch, install-only) with cargo's own exit code, 101.
+# SHIM_WS_ROOT sets the workspace root `metadata` reports.
+# `fetch` writes that Cargo.lock too, as cargo resolves one before anything builds; a
+# SHIM_DEP or SHIM_LOCK source may also be registry+ or sparse+. With SHIM_DEPINFO=<file>,
+# `test --no-run` also reports the root's own lib, whose dep-info in <target
+# dir>/debug/deps/ is that file with @ROOT@ standing for the crate; with
+# SHIM_SBF_DEPINFO=<file>, `build-sbf` puts that file in <target
+# dir>/sbpf-solana-solana/release/deps/ as the arm's dep-info (named SHIM_SBF_DEPINFO_AS,
+# <crate>.d by default). SHIM_TARGET=<kind> gives the root package another target, of
+# that kind, named poc_shim_extra (src/extra.rs); SHIM_MEMBER_KIND=<kind> makes
+# shared-test-utils' library that kind.
 #
 # The stand-in test binary logs its run to SHIM_CALLS as well (arguments "testbin
 # <test> ..."; SHIM_CALLS.env gets CARGO_MANIFEST_DIR and the dynamic library path) and
@@ -176,10 +234,15 @@ PY
 # end in +<outcome>, what the program did), and each line starts with the test name
 # (<test>_case unless @ gives one). Marker `loaded` records the zero-trimmed hash
 # of the .so in SBF_OUT_DIR, as mollusk_for does; `loaded-other` records other bytes;
-# `tamper` changes the placed .so; `relock` makes the build lock in CARGO_TARGET_DIR
+# `tamper` changes the placed .so; `spoil` appends a line to each file SHIM_SPOIL names (an
+# absolute path, or one in run.sh's own files, the marker directory's parent);
+# `relock` makes the build lock in CARGO_TARGET_DIR
 # name SHIM_RELOCK_PID; `relink` puts a symbolic link to SHIM_RELINK_TO at SHIM_RELINK;
 # `relocate` moves the directory SHIM_RELOCATE aside and puts a link to SHIM_RELOCATE_TO there.
-# SHIM_FAIL=<test> makes that test binary fail.
+# SHIM_FAIL=<test> makes that test binary fail. SHIM_PLANT=<path>|<text> has the vulnerable arm's test
+# build append <text> (\n a newline) to <path> in the scratch copy, as a dependency's build script could
+# (several, separated by ||). SHIM_UNIT=<arm>|<package dir>|<target>|<kinds>|<source> has that arm's test
+# build also report a compiled target of the package in <package dir> of the crate (kinds separated by commas).
 #
 # The installation's copy of run.sh hands the shim and the test binaries a cleaned
 # environment, with no SHIM_ variable in it. So each of them first records the
@@ -227,14 +290,33 @@ case "${1:-} $*" in
 esac
 case "${1:-}" in
   metadata) exec python3 -I "$here/meta.py" "$(dirname "$manifest")" ;;
-  build-sbf) printf '\177ELFmodel-%s' "$features" > "$out/${SHIM_CRATE:-poc_shim}.so"; echo "[shim cargo build-sbf $features]"; exit 0 ;;
+  fetch) python3 -I "$here/build.py" "$(dirname "$manifest")" --lock-only || exit 101; echo "[shim cargo $*]"; exit 0 ;;
+  build-sbf)
+    printf '\177ELFmodel-%s' "$features" > "$out/${SHIM_CRATE:-poc_shim}.so"
+    if [ -n "${SHIM_SBF_DEPINFO:-}" ]; then
+      d="${CARGO_TARGET_DIR:-${CARGO_BUILD_TARGET_DIR:-${SHIM_TARGET_DIR:-$(dirname "$manifest")/target}}}/sbpf-solana-solana/release/deps"
+      mkdir -p "$d" && cp "$SHIM_SBF_DEPINFO" "$d/${SHIM_SBF_DEPINFO_AS:-${SHIM_CRATE:-poc_shim}.d}"
+    fi
+    echo "[shim cargo build-sbf $features]"; exit 0 ;;
   test) case " $* " in *" --no-run "*) exec python3 -I "$here/build.py" "$(dirname "$manifest")" "$@" ;; esac ;;
 esac
 echo "[shim cargo $*]"; exit 0
 SH
 cat > "$T/shim/meta.py" <<'PY'
-import json, os, sys
+import json, os, re, sys
 root, crate, meta = sys.argv[1], os.environ.get("SHIM_CRATE", "poc_shim"), os.environ.get("SHIM_META", "")
+try:
+    manifest_text = open(os.path.join(root, "Cargo.toml")).read()
+except OSError:
+    manifest_text = ""
+features, in_features = {}, False
+for line in manifest_text.splitlines():
+    if line.strip().startswith("["):
+        in_features = line.strip() == "[features]"
+    elif in_features and re.match(r"\s*[A-Za-z0-9_-]+\s*=\s*\[.*\]\s*$", line):
+        key, value = line.split("=", 1)
+        features[key.strip()] = re.findall(r"\x22([^\x22]*)\x22", value)
+named = [rel for m in re.finditer(r"(?m)^\s*members\s*=\s*\[(.*)\]", manifest_text) for rel in re.findall(r"\x22([^\x22]*)\x22", m.group(1))]
 stu = os.environ.get("SHIM_STU", "shared-test-utils,,@copy")
 deps = []
 if stu != "none":
@@ -244,33 +326,39 @@ if stu != "none":
                  "source": None if path else "registry+https://github.com/rust-lang/crates.io-index"})
 if os.environ.get("SHIM_DEP"):
     name, spec = os.environ["SHIM_DEP"].split(",", 1)
-    git = spec.startswith("git+")
-    deps.append({"name": name, "rename": None, "path": None if git else spec, "kind": None, "source": spec if git else None})
-packages = []
+    source = spec if spec.startswith(("git+", "registry+", "sparse+")) else None
+    index = spec.split("+", 1)[1] if spec.startswith(("registry+", "sparse+")) and "crates.io" not in spec else None
+    deps.append({"name": name, "rename": None, "path": None if source else spec, "kind": None, "source": source, "registry": index})
+packages, tops = [], []
 for top, dirs, files in os.walk(root):
     dirs[:] = sorted(d for d in dirs if not (top == root and d in ("target", "markers")))
-    if "Cargo.toml" not in files:
-        continue
+    if "Cargo.toml" in files:
+        tops.append(top)
+tops += [os.path.join(root, rel) for rel in named if rel.split("/")[0] in ("target", "markers") and os.path.isfile(os.path.join(root, rel, "Cargo.toml"))]
+for top in tops:
     name = crate if top == root else os.path.basename(top)
-    kind = ["lib"] if top != root else ["proc-macro"] if meta == "proc-macro" else ["cdylib", "lib"]
+    kind = [os.environ.get("SHIM_MEMBER_KIND") or "lib"] if top != root else ["proc-macro"] if meta == "proc-macro" else ["cdylib", "lib"]
     src = os.environ.get("SHIM_LIB_SRC") if top == root and os.environ.get("SHIM_LIB_SRC") else os.path.join(top, "src", "lib.rs")
     targets = [{"name": name.replace("-", "_"), "kind": kind, "crate_types": kind, "src_path": src}]
+    if top == root and os.environ.get("SHIM_TARGET"):
+        extra = [os.environ["SHIM_TARGET"]]
+        targets.append({"name": "poc_shim_extra", "kind": extra, "crate_types": extra, "src_path": os.path.join(top, "src", "extra.rs")})
     if top == root and meta == "build-script":
         targets.append({"name": "build-script-build", "kind": ["custom-build"], "crate_types": ["bin"], "src_path": os.path.join(top, "build.rs")})
+    if top == root and os.path.isdir(os.path.join(top, "tests")):
+        targets += [{"name": test[:-3], "kind": ["test"], "crate_types": ["bin"], "src_path": os.path.join(top, "tests", test)}
+                    for test in sorted(os.listdir(os.path.join(top, "tests"))) if test.endswith(".rs")]
     packages.append({"name": name, "version": "0.1.0", "id": "path+file://%s#%s@0.1.0" % (top, name), "manifest_path": os.path.join(top, "Cargo.toml"),
-                     "targets": targets, "dependencies": deps if top == root else []})
+                     "targets": targets, "features": features if top == root else {}, "dependencies": deps if top == root else []})
 # The directory cargo builds into: CARGO_TARGET_DIR, CARGO_BUILD_TARGET_DIR, then
 # SHIM_TARGET_DIR, which stands for a target-dir set in cargo's own config.
 target = os.environ.get("CARGO_TARGET_DIR") or os.environ.get("CARGO_BUILD_TARGET_DIR") or os.environ.get("SHIM_TARGET_DIR") or os.path.join(root, "target")
-print(json.dumps({"packages": packages, "workspace_members": [p["id"] for p in packages], "workspace_root": root, "target_directory": target, "version": 1}))
+print(json.dumps({"packages": packages, "workspace_members": [p["id"] for p in packages], "workspace_root": os.environ.get("SHIM_WS_ROOT") or root,
+                  "target_directory": target, "version": 1}))
 PY
 cat > "$T/shim/build.py" <<'PY'
 import json, os, sys
 root, args = sys.argv[1], sys.argv[2:]
-test, fail = args[args.index("--test") + 1], os.environ.get("SHIM_FAIL", "")
-if fail == "no-run:" + test:
-    print("[shim cargo: test build fails]", file=sys.stderr)
-    sys.exit(101)
 lock = os.path.join(root, "Cargo.lock")
 if not os.path.exists(lock):
     entries = ['[[package]]\nname = "%s"\nversion = "0.1.0"\n' % os.environ.get("SHIM_CRATE", "poc_shim")]
@@ -278,6 +366,18 @@ if not os.path.exists(lock):
         name, version, source = spec.split("@", 2)
         entries.append('[[package]]\nname = "%s"\nversion = "%s"\n%s' % (name, version, "" if source == "path" else 'source = "%s"\n' % source))
     open(lock, "w").write("# shim lock\nversion = 4\n\n" + "\n".join(entries))
+if args == ["--lock-only"]:
+    sys.exit(0)
+test, fail = args[args.index("--test") + 1], os.environ.get("SHIM_FAIL", "")
+if fail == "no-run:" + test:
+    print("[shim cargo: test build fails]", file=sys.stderr)
+    sys.exit(101)
+if os.environ.get("SHIM_PLANT") and "vulnerable" in args:
+    for plant in os.environ["SHIM_PLANT"].split("||"):
+        rel, text = plant.split("|", 1)
+        os.makedirs(os.path.dirname(os.path.join(root, rel)), exist_ok=True)
+        with open(os.path.join(root, rel), "a") as f:
+            f.write(text.replace("\\n", "\n"))
 for n in range(int(os.environ.get("SHIM_JSON_PAD", "0"))):
     print(json.dumps({"reason": "compiler-artifact", "package_id": "registry+https://github.com/rust-lang/crates.io-index#pad%d@1.0.0" % n,
                       "manifest_path": "/registry/pad%d/Cargo.toml" % n, "target": {"kind": ["lib"], "crate_types": ["lib"], "name": "pad%d" % n,
@@ -289,14 +389,32 @@ for n in range(int(os.environ.get("SHIM_JSON_PAD", "0"))):
 fresh = os.environ.get("SHIM_FRESH", "") == "1"
 if fresh:
     print(json.dumps({"reason": "compiler-artifact", "package_id": "path+file://%s#poc_shim@0.1.0" % root, "manifest_path": os.path.join(root, "Cargo.toml"),
-                      "target": {"kind": ["lib"], "crate_types": ["lib"], "name": "poc_shim", "src_path": os.path.join(root, "src", "lib.rs")},
+                      "target": {"kind": ["cdylib", "lib"], "crate_types": ["cdylib", "lib"], "name": "poc_shim", "src_path": os.path.join(root, "src", "lib.rs")},
                       "profile": {"test": False}, "features": [], "filenames": ["/cache/debug/deps/libpoc_shim-shared.rlib"], "executable": None, "fresh": True}))
+if os.environ.get("SHIM_DEPINFO"):
+    deps = os.path.join(os.environ.get("CARGO_TARGET_DIR") or os.environ.get("CARGO_BUILD_TARGET_DIR") or os.environ.get("SHIM_TARGET_DIR")
+                        or os.path.join(root, "target"), "debug", "deps")
+    os.makedirs(deps, exist_ok=True)
+    name = os.environ.get("SHIM_CRATE", "poc_shim")
+    with open(os.environ["SHIM_DEPINFO"]) as f:
+        open(os.path.join(deps, name + ".d"), "w").write(f.read().replace("@ROOT@", root))
+    print(json.dumps({"reason": "compiler-artifact", "package_id": "path+file://%s#%s@0.1.0" % (root, name), "manifest_path": os.path.join(root, "Cargo.toml"),
+                      "target": {"kind": ["cdylib", "lib"], "crate_types": ["cdylib", "lib"], "name": name, "src_path": os.path.join(root, "src", "lib.rs")},
+                      "profile": {"test": False}, "features": [], "filenames": [os.path.join(deps, "lib%s.rlib" % name)], "executable": None, "fresh": False}))
 stu_build = os.environ.get("SHIM_STU_BUILD", "copy")
 if stu_build != "none":
     stu_root = os.path.join(root, "shared-test-utils") if stu_build == "copy" else "/elsewhere/shared-test-utils"
     print(json.dumps({"reason": "compiler-artifact", "package_id": "path+file://%s#shared-test-utils@0.1.0" % stu_root, "manifest_path": os.path.join(stu_root, "Cargo.toml"),
                       "target": {"kind": ["lib"], "crate_types": ["lib"], "name": "shared_test_utils", "src_path": os.path.join(stu_root, "src", "lib.rs")},
                       "profile": {"test": False}, "features": [], "filenames": ["/target/debug/deps/libshared_test_utils-shim.rlib"], "executable": None, "fresh": False}))
+if os.environ.get("SHIM_UNIT"):
+    arm, package, name, kinds, src = os.environ["SHIM_UNIT"].split("|")
+    if arm in args:
+        top, kinds = os.path.normpath(os.path.join(root, package)), kinds.split(",")
+        print(json.dumps({"reason": "compiler-artifact", "package_id": "path+file://%s#%s@0.1.0" % (top, os.path.basename(top)), "manifest_path": os.path.join(top, "Cargo.toml"),
+                          "target": {"kind": kinds, "crate_types": kinds, "name": name, "src_path": os.path.join(root, src)},
+                          "profile": {"test": False}, "features": [], "filenames": [os.path.join(root, "target", "debug", "deps", "lib%s-shim.rlib" % name)],
+                          "executable": None, "fresh": False}))
 if fail != "no-exe:" + test:
     exe = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin", test)
     print(json.dumps({"reason": "compiler-artifact", "package_id": "path+file://%s#poc_shim@0.1.0" % root, "manifest_path": os.path.join(root, "Cargo.toml"),
@@ -335,6 +453,7 @@ for m in ${SHIM_MARKERS-exploit:attempted exploit:held exploit:effect exploit:lo
       done ;;
     loaded-other) printf '%s\t%064d %s\n' "$tag" 0 /elsewhere/other.so >> "$AUDITOR_POC_MARKERS/loaded" ;;
     tamper) for so in "${SBF_OUT_DIR:-/nonexistent}"/*.so; do [ -f "$so" ] && printf 'x' >> "$so"; done ;;
+    spoil) for f in ${SHIM_SPOIL:-}; do case "$f" in /*) ;; *) f="$AUDITOR_POC_MARKERS/../$f" ;; esac; printf '\n# spoiled\n' >> "$f"; done ;;
     relock) printf '%s\n' "${SHIM_RELOCK_PID:-}" > "${CARGO_TARGET_DIR:-/nonexistent}/.auditor-poc-build.lock/pid" ;;
     relink) rm -f "$SHIM_RELINK" && ln -s "$SHIM_RELINK_TO" "$SHIM_RELINK" ;;
     relocate) mv "$SHIM_RELOCATE" "$SHIM_RELOCATE.moved" && ln -s "$SHIM_RELOCATE_TO" "$SHIM_RELOCATE" ;;
@@ -634,6 +753,82 @@ code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" SHIM_FAIL=fixed_blocked SHIM_MARK
 code="$(gate "$T/inc" "$NATIVE" "$VULN" SHIM_MARKERS="$EV exploit:tamper")"
 [ "$code" = 3 ] && grep -q 'the placed .so changed while the test ran' "$T/out" && ! grep -q "^$LEG3" "$T/out" \
   && ok "a placed .so that changes while the test runs -> exit 3, no Leg 3 line" || bad "placed .so changed: exit $code"
+# Every build comes before any test: both arms' bytes (SBF builds or prebuilt files) and test binaries, then
+# the check of what the builds compiled. A test runs the PoC's code with the scratch copy as
+# CARGO_MANIFEST_DIR, so nothing it writes there is compiled; prebuilt bytes are read before it runs; and an
+# arm's bytes kept for its test, or its test binary, that changed after the build stop the run before that
+# arm's test runs.
+for order_run in model prebuilt; do
+  if [ "$order_run" = model ]; then code="$(gate "$T/inc" "$NATIVE")"; else code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX")"; fi
+  [ "$code" = 0 ] && [ "$(awk -F'\t' '$6 ~ /^testbin /' "$T/calls" | wc -l | tr -d ' ')" = 2 ] \
+    && awk -F'\t' '$6 ~ /^testbin / { t = 1 } t && $6 ~ /^(build-sbf|test) / { late = 1 } END { exit late }' "$T/calls" \
+    && ok "every build of both arms comes before either test runs ($order_run run)" || { bad "build order, $order_run run: exit $code"; cat "$T/calls" >&2; }
+done
+cp "$T/fixed.so" "$T/fixed-rewritten.so"
+code="$(gate "$T/inc" "$NATIVE" "$VULN" FIXED_SO="$T/fixed-rewritten.so" SHIM_MARKERS="$EV exploit:spoil $FR" SHIM_SPOIL="$T/fixed-rewritten.so")"
+[ "$code" = 0 ] && grep -qx "${LEG3}${want} fixed sha256=${wantf} (rejected with the pinned error) → \[PoC-REPRODUCED\]" "$T/out" \
+  && [ "$(zhash "$T/fixed-rewritten.so")" != "$wantf" ] \
+  && ok "FIXED_SO rewritten while the vulnerable arm's test runs -> the fixed arm runs on the bytes read before it, which the Leg 3 line names" \
+  || { bad "FIXED_SO rewritten during the vulnerable arm's test: exit $code"; cat "$T/out" >&2; }
+code="$(gate "$T/inc" "$NATIVE" SHIM_MARKERS="$EV exploit:spoil $FR" SHIM_SPOIL=fixed.so)"
+[ "$code" = 3 ] && grep -q "^\[PoC-ATTEMPTED\] blocker: the fixed arm's .so changed between its build and its test" "$T/out" && one_blocker \
+  && ! awk -F'\t' '$6 ~ /^testbin fixed_blocked/ { f = 1 } END { exit !f }' "$T/calls" && ! grep -q '^OK' "$T/out" \
+  && ok "the fixed arm's built bytes, rewritten in the scratch copy by the vulnerable arm's test -> exit 3, the fixed test never runs" \
+  || { bad "the fixed arm's kept bytes rewritten: exit $code"; cat "$T/out" >&2; }
+cp -p "$T/shim/bin/fixed_blocked" "$T/fixed_blocked.kept"
+code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" SHIM_MARKERS="$EV exploit:spoil $FR" SHIM_SPOIL="$T/shim/bin/fixed_blocked")"
+cp -p "$T/fixed_blocked.kept" "$T/shim/bin/fixed_blocked"
+[ "$code" = 3 ] && grep -q "^\[PoC-ATTEMPTED\] blocker: the fixed arm's test binary .* changed between its build and its run" "$T/out" && one_blocker \
+  && ! awk -F'\t' '$6 ~ /^testbin fixed_blocked/ { f = 1 } END { exit !f }' "$T/calls" && ! grep -q "^$LEG3" "$T/out" \
+  && ok "the fixed arm's test binary, rewritten by the vulnerable arm's test -> exit 3, it never runs" \
+  || { bad "the fixed arm's test binary rewritten: exit $code"; cat "$T/out" >&2; }
+# The vulnerable arm's builds run its dependencies' build scripts and proc macros in the scratch copy, so the
+# checks of the crate run there again right before the fixed arm builds, and cargo metadata must list what it
+# listed first: what the checks refuse, written meanwhile, and another package, target, feature or dependency
+# stop the run before anything of the fixed arm is built or any test runs; any other change passes. A member
+# under markers/ or target/ (which the checks of the crate do not walk) is one such package.
+CHANGED="the crate changed in the scratch copy while the vulnerable arm built (its dependencies' build scripts and proc macros run there), and run.sh builds the fixed arm only from the crate it checked:"
+while IFS='	' read -r plant_run plant want_plant plant_label; do
+  [ -n "$plant_run" ] || continue
+  plant_label="${plant_label:-${plant%%|*}}"
+  if [ "$plant_run" = model ]; then code="$(gate "$T/inc" "$NATIVE" "SHIM_PLANT=$plant")"; else code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" "SHIM_PLANT=$plant")"; fi
+  [ "$code" = 3 ] && grep -qF "[PoC-ATTEMPTED] blocker: $CHANGED $want_plant" "$T/out" && one_blocker \
+    && ! awk -F'\t' '$6 ~ /^testbin / || $6 ~ /^(build-sbf|test) .*--features fixed/ { f = 1 } END { exit !f }' "$T/calls" \
+    && ok "a $plant_run run whose vulnerable-arm build writes $plant_label into the scratch copy -> exit 3 before the fixed arm builds or a test runs" \
+    || { bad "a $plant_run run whose vulnerable-arm build writes $plant_label: exit $code"; cat "$T/out" >&2; }
+done <<'CASES'
+model	Cargo.toml|\n[patch.crates-io]\nborsh = { path = "/elsewhere/borsh" }\n	Cargo.toml:6 holds a [patch] or [replace] table
+model	src/lib.rs|\ncore::arch::global_asm!("");\n	src/lib.rs:2 names global_asm, inline assembly
+prebuilt	.cargo/config.toml|[build]\nrustc-wrapper = "/elsewhere/wrapper"\n	it now holds .cargo, a symbolic link, a .cargo/ directory
+model	tests/fixtures/poc_shim.so|\177ELFother	it now holds tests/fixtures/poc_shim.so, which mollusk would load in place of the arm
+model	../.cargo/config.toml|[build]\nrustc-wrapper = "/elsewhere/wrapper"\n	it would now inherit /
+model	Cargo.toml|\nmembers = ["markers/evil"]\n||markers/evil/Cargo.toml|[package]\nname = "evil"\n||markers/evil/src/lib.rs|mod inner;\n||markers/evil/src/inner.rs|core::arch::global_asm!("");\n	its manifests now name the package evil (markers/evil/Cargo.toml), which they did not name when run.sh checked them — nothing of the fixed arm was built.	a workspace member under markers/ (named in Cargo.toml) whose module holds global_asm
+prebuilt	evil/Cargo.toml|[package]\nname = "evil"\n	its manifests now name the package evil (evil/Cargo.toml), which they did not name when run.sh checked them — nothing of the fixed arm was built.	a new workspace member, evil/Cargo.toml
+model	tests/extra.rs|#[test]\nfn extra() {}\n	its package poc_shim (Cargo.toml) differs from the one run.sh checked, in its targets — nothing of the fixed arm was built.	a new test target, tests/extra.rs
+model	Cargo.toml|\n[features]\nfixed = ["vulnerable"]\n	its package poc_shim (Cargo.toml) differs from the one run.sh checked, in its features — nothing of the fixed arm was built.	a [features] table whose fixed feature turns on vulnerable
+CASES
+# A test build that compiled a target of the crate that the first cargo metadata did not list (the crate
+# changed in the scratch copy during the builds, inside an arm too: a member under markers/ that the library
+# came to depend on, a bin cargo found in src/bin/, the library from another source) stops the run right
+# after that build, before anything else builds or any test runs: what reads the builds afterwards (the SBF
+# dep-info, the files the builds read) works from that first listing.
+UNLISTED="which cargo metadata did not list when run.sh checked the crate: the crate changed in the scratch copy during the builds (its dependencies' build scripts and proc macros run there), and run.sh builds only the crate it checked."
+while IFS='	' read -r unit_run unit want_unit; do
+  [ -n "$unit_run" ] || continue
+  if [ "$unit_run" = model ]; then code="$(gate "$T/inc" "$NATIVE" "SHIM_UNIT=$unit")"; else code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" "SHIM_UNIT=$unit")"; fi
+  after='$6 ~ /^testbin /'; [ "${unit%%|*}" = vulnerable ] && after='$6 ~ /^testbin / || $6 ~ /^(build-sbf|test) .*--features fixed/'
+  [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: the build compiled $want_unit, $UNLISTED" "$T/out" && one_blocker \
+    && ! awk -F'\t' "$after { f = 1 } END { exit !f }" "$T/calls" \
+    && ok "a $unit_run run whose ${unit%%|*} arm's test build compiled $want_unit, unlisted -> exit 3 right after that build, before any test" \
+    || { bad "a $unit_run run whose ${unit%%|*} arm's test build compiled $want_unit: exit $code"; cat "$T/out" >&2; }
+done <<'CASES'
+model	vulnerable|markers/evil|evil|lib|markers/evil/src/lib.rs	the lib target evil (markers/evil/src/lib.rs) of markers/evil/Cargo.toml
+prebuilt	fixed|.|poc_shim_bin|bin|src/bin/poc_shim_bin.rs	the bin target poc_shim_bin (src/bin/poc_shim_bin.rs) of Cargo.toml
+model	vulnerable|.|poc_shim|cdylib,lib|src/other.rs	the cdylib/lib target poc_shim (src/other.rs) of Cargo.toml
+CASES
+code="$(gate "$T/inc" "$NATIVE" "SHIM_PLANT=src/notes.txt|written by a build script\n")"
+[ "$code" = 0 ] && grep -q '^OK: exploit reproduces' "$T/out" && ok "a model run whose vulnerable-arm build writes a file the checks do not refuse runs" \
+  || { bad "a model run whose vulnerable-arm build writes src/notes.txt: exit $code"; cat "$T/out" >&2; }
 
 code="$(gate "$T/inc" "$NATIVE" "$VULN" BPF_OUT_DIR="$T")"
 [ "$code" = 0 ] && awk -F'\t' '$4 != "" { bad = 1 } END { exit bad }' "$T/calls" && ok "a caller's BPF_OUT_DIR never reaches cargo (mollusk would look there before SBF_OUT_DIR)" || bad "BPF_OUT_DIR: exit $code"
@@ -663,9 +858,145 @@ line="$(grep -n -m 1 '^   non-registry code: ' "$T/out")"; okline="$(grep -n -m 
   && ok "the path and git dependencies in Cargo.lock are named before the OK line" || { bad "non-registry line: exit $code, '$line'"; cat "$T/out" >&2; }
 code="$(gate "$T/inc" "$NATIVE" "$VULN" SHIM_FAIL=exploit SHIM_MARKERS="exploit:attempted exploit:failed exploit:loaded")"
 [ "$code" = 1 ] && grep -q '^   non-registry code: none' "$T/out" && ok "a verdict line also comes after the non-registry line" || bad "non-registry line on a verdict: exit $code"
+# The non-registry line from the dep-info (.d) files of the crate's own units, read by run.sh's harness
+# code on its own: every file from outside the crate that the library, a test or the harness copy compiled
+# or read, of any kind, by an absolute path or a relative one (taken from the workspace root, where cargo
+# runs rustc for them), and an SBF build's dep-info; a dependency from a registry other than crates.io;
+# but no build output named as a rule's target (in a build cache outside the crate here), no file of
+# crates.io's sources, and no dependency's own dep-info.
+python3 -I -c 'import sys; src = open(sys.argv[1], encoding="utf-8").read(); sys.stdout.write(src.split("\nHARNESS_PY=\x27", 1)[1].split("\n\x27\n", 1)[0])' "$TEMPLATE/run.sh" > "$T/harness-nr.py"
+NR="$T/nr"; NO="$T/nr-outside"; NCH="$T/nr-cargo-home"; ND="$T/nr-cache/debug/deps"
+mkdir -p "$NR/src" "$NR/tests" "$NR/shared-test-utils/src" "$NO" "$ND" "$NCH/registry/src"
+python3 -I - "$NR" "$NO" "$NCH" "$ND" "$T/nr-sbf.d" <<'PY'
+import json, os, sys
+nr, no, ch, nd, sbf = sys.argv[1:]
+crates_io = ch + "/registry/src/index.crates.io-0123456789abcdef"
+def depinfo(path, outputs, files):
+    files = [f.replace(" ", "\\ ") for f in files]
+    with open(path, "w") as f:
+        for out in outputs:
+            f.write("%s: %s\n\n" % (out, " ".join(files)))
+        for name in files:
+            f.write("%s:\n" % name)
+        f.write("\n# env-dep:CARGO_PKG_NAME=x\n")
+def artifact(manifest, name, kind, filenames, exe=None):
+    return json.dumps({"reason": "compiler-artifact", "package_id": "path+file://%s#%s@0.1.0" % (os.path.dirname(manifest), name),
+                       "manifest_path": manifest, "target": {"kind": kind, "crate_types": kind, "name": name,
+                       "src_path": os.path.join(os.path.dirname(manifest), "src", "lib.rs")}, "profile": {"test": False},
+                       "features": [], "filenames": filenames, "executable": exe, "fresh": False})
+for m in (nr, nr + "/shared-test-utils"):
+    open(m + "/Cargo.toml", "w").write("[package]\n")
+json.dump({"packages": [{"name": "poc_nr", "version": "0.1.0", "manifest_path": nr + "/Cargo.toml", "targets": [], "dependencies": []},
+                        {"name": "shared-test-utils", "version": "0.1.0", "manifest_path": nr + "/shared-test-utils/Cargo.toml",
+                         "targets": [], "dependencies": []}], "workspace_root": nr}, open(nr + "-meta.json", "w"))
+lock = [("poc_nr", "0.1.0", None), ("shared-test-utils", "0.1.0", None), ("vault", "0.2.0", None),
+        ("helper", "1.0.0", "git+https://example.invalid/helper.git#abc"), ("borsh", "1.8.1", "registry+https://github.com/rust-lang/crates.io-index"),
+        ("sbor", "1.0.0", "sparse+https://index.crates.io/"), ("evil", "0.1.0", "registry+file:///nr/index")]
+with open(nr + "/Cargo.lock", "w") as f:
+    f.write("version = 4\n")
+    for name, version, source in lock:
+        f.write('\n[[package]]\nname = "%s"\nversion = "%s"\n%s' % (name, version, 'source = "%s"\n' % source if source else ""))
+with open(nr + "-build.json", "w") as f:
+    f.write(artifact(nr + "/Cargo.toml", "poc_nr", ["cdylib", "lib"], [nd + "/libpoc_nr.dylib", nd + "/libpoc_nr.rlib"]) + "\n")
+    f.write(artifact(nr + "/Cargo.toml", "exploit", ["test"], [nd + "/exploit-0a1b"], nd + "/exploit-0a1b") + "\n")
+    f.write(artifact(nr + "/shared-test-utils/Cargo.toml", "shared_test_utils", ["lib"], [nd + "/libshared_test_utils-5e6f.rlib"]) + "\n")
+    f.write(artifact(crates_io + "/borsh-1.8.1/Cargo.toml", "borsh", ["lib"], [nd + "/libborsh-7a8b.rlib"]) + "\n")
+depinfo(nd + "/poc_nr.d", [nd + "/poc_nr.d", nd + "/libpoc_nr.dylib", nd + "/libpoc_nr.rlib"],
+        ["src/lib.rs", no + "/state.rs", no + "/payload.inc", no + "/with space.txt", crates_io + "/serde-1.0.0/src/data.json",
+         ch + "/registry/src/evil.example-0123456789abcdef/x-1.0.0/src/lib.rs", ch + "/git/checkouts/x-0123/abc/src/lib.rs"])
+depinfo(nd + "/exploit-0a1b.d", [nd + "/exploit-0a1b.d", nd + "/exploit-0a1b"], ["tests/exploit.rs", "tests/../../nr-outside/helper.rs", no + "/key.json"])
+depinfo(nd + "/shared_test_utils-5e6f.d", [nd + "/shared_test_utils-5e6f.d"], ["shared-test-utils/src/lib.rs"])
+depinfo(nd + "/borsh-7a8b.d", [nd + "/borsh-7a8b.d"], [no + "/not-ours.rs"])
+depinfo(sbf, ["/target/sbpf-solana-solana/release/deps/poc_nr.d"], ["src/lib.rs", no + "/sbf-only.rs"])
+PY
+out="$(env -i PATH="$PATH" CARGO_HOME="$NCH" python3 -I "$T/harness-nr.py" nonregistry "$NR" "$NR/Cargo.lock" "$NR-meta.json" "$NR-build.json" "$T/nr-sbf.d")"; rc=$?
+want_nr="vault 0.2.0 (path), helper 1.0.0 (git+https://example.invalid/helper.git#abc), evil 0.1.0 (registry+file:///nr/index, not crates.io), $NO/helper.rs (compiled in), $NO/key.json (compiled in), $NO/state.rs (compiled in), $NO/payload.inc (compiled in), $NO/with space.txt (compiled in), $NCH/registry/src/evil.example-0123456789abcdef/x-1.0.0/src/lib.rs (compiled in), $NCH/git/checkouts/x-0123/abc/src/lib.rs (compiled in), $NO/sbf-only.rs (compiled in)"
+[ "$rc" = 0 ] && [ "$out" = "$want_nr" ] \
+  && ok "the non-registry line names every outside file the crate's own units read (any kind, absolute or relative, the SBF build's too) and another registry's crates" \
+  || { bad "harness nonregistry on the crate's own dep-info: $rc"; printf 'got:  %s\nwant: %s\n' "$out" "$want_nr" >&2; }
+# The same through run.sh, before the final line: the library's dep-info in a build (prebuilt bytes), and an
+# arm's SBF build in a model run.
+DI="$T/di-outside"; mkdir -p "$DI"
+printf '@ROOT@/target/debug/deps/poc_shim.d: src/lib.rs %s/state.rs %s/payload.inc\n\nsrc/lib.rs:\n%s/state.rs:\n%s/payload.inc:\n' "$DI" "$DI" "$DI" "$DI" > "$T/di-lib.d"
+printf '/target/sbpf-solana-solana/release/deps/poc_shim.d: src/lib.rs %s/sbf-only.rs\n\nsrc/lib.rs:\n%s/sbf-only.rs:\n' "$DI" "$DI" > "$T/di-sbf.d"
+mk_crate "$T/di"
+code="$(gate "$T/di" "$NATIVE" "$VULN" SHIM_DEPINFO="$T/di-lib.d")"
+line="$(grep -n -m 1 '^   non-registry code: ' "$T/out")"; okline="$(grep -n -m 1 "^$LEG3" "$T/out")"
+[ "$code" = 0 ] && [ "${line#*:}" = "   non-registry code: $DI/state.rs (compiled in), $DI/payload.inc (compiled in)" ] && [ "${line%%:*}" -lt "${okline%%:*}" ] \
+  && ok "a #[path] module and an include! of a non-.rs file in the library are named before the OK line" || { bad "the library's dep-info: exit $code, '$line'"; cat "$T/out" >&2; }
+code="$(gate "$T/di" "$NATIVE" SHIM_SBF_DEPINFO="$T/di-sbf.d")"
+[ "$code" = 0 ] && grep -qxF "   non-registry code: $DI/sbf-only.rs (compiled in)" "$T/out" && grep -q '^OK: exploit reproduces' "$T/out" \
+  && ok "a module only the SBF build compiles is named on the non-registry line of a model run" || { bad "the SBF build's dep-info: exit $code"; cat "$T/out" >&2; }
+# A member the crate's library depends on for the SBF target alone is compiled by that build only: the
+# dep-info this run's build wrote for it there is read, and an older one of a crate of the same name, left in
+# a shared build cache, is not.
+DC="$T/di-cache"; DCD="$DC/sbpf-solana-solana/release/deps"; mkdir -p "$DCD"
+printf '%s/libshared_test_utils-0123456789abcdef.rlib: shared-test-utils/src/lib.rs %s/stale.rs\n\nshared-test-utils/src/lib.rs:\n%s/stale.rs:\n' "$DCD" "$DI" "$DI" > "$DCD/shared_test_utils-0123456789abcdef.d"
+touch -t 202001010000 "$DCD/shared_test_utils-0123456789abcdef.d"
+printf '/target/sbpf-solana-solana/release/deps/shared_test_utils-0a1b2c3d4e5f6071.d: shared-test-utils/src/lib.rs %s/sbf-member.rs\n\nshared-test-utils/src/lib.rs:\n%s/sbf-member.rs:\n' "$DI" "$DI" > "$T/di-sbf-member.d"
+code="$(gate "$T/di" "$NATIVE" CARGO_TARGET_DIR="$DC" SHIM_SBF_DEPINFO="$T/di-sbf-member.d" SHIM_SBF_DEPINFO_AS=shared_test_utils-0a1b2c3d4e5f6071.d)"
+[ "$code" = 0 ] && grep -qxF "   non-registry code: $DI/sbf-member.rs (compiled in)" "$T/out" && grep -q '^OK: exploit reproduces' "$T/out" \
+  && ok "a member only the SBF build compiles is named; an older dep-info of that name in the build cache is not" || { bad "an SBF-only member's dep-info: exit $code"; cat "$T/out" >&2; }
+# A file of the crate that the build read under a name not ending in .rs is read as the crate's .rs files
+# are: inline assembly in it (an include! takes it in as Rust code) stops the run after the build, before
+# the test runs; data whose strings only mention such words passes.
+mk_crate "$T/di-inc"; mkdir -p "$T/di-inc/src"
+printf 'core::arch::global_asm!(".incbin \\"%s/blob.bin\\"");\n' "$DI" > "$T/di-inc/src/payload.txt"
+printf '{"note": "a link to the asm notes", "keys": [1, 2]}\n' > "$T/di-inc/src/data.json"
+printf '@ROOT@/target/debug/deps/poc_shim.d: src/lib.rs src/data.json src/payload.txt\n\nsrc/lib.rs:\nsrc/data.json:\nsrc/payload.txt:\n' > "$T/di-inc.d"
+printf '@ROOT@/target/debug/deps/poc_shim.d: src/lib.rs src/data.json\n\nsrc/lib.rs:\nsrc/data.json:\n' > "$T/di-data.d"
+code="$(gate "$T/di-inc" "$NATIVE" "$VULN" SHIM_DEPINFO="$T/di-inc.d")"
+[ "$code" = 3 ] && grep -qF '[PoC-ATTEMPTED] blocker: src/payload.txt:1 names global_asm, inline assembly' "$T/out" && one_blocker \
+  && ! awk -F'\t' '$6 ~ /^testbin / { f = 1 } END { exit !f }' "$T/calls" \
+  && ok "inline assembly in a file of the crate the build read as src/payload.txt -> exit 3 after the build, the test never runs" \
+  || { bad "a file of the crate with inline assembly, read under another name than .rs: exit $code"; cat "$T/out" >&2; }
+code="$(gate "$T/di-inc" "$NATIVE" "$VULN" SHIM_DEPINFO="$T/di-data.d")"
+[ "$code" = 0 ] && grep -qxF '   non-registry code: none: every dependency comes from a registry' "$T/out" \
+  && ok "data of the crate the build read (src/data.json), whose strings mention link and asm -> not refused" || { bad "a data file of the crate: exit $code"; cat "$T/out" >&2; }
+# Every file of the crate the build read is read again once the builds are done, a .rs one too: one that
+# appeared or changed during the build (here under target/, which the crate check never reads). A build that
+# read one of run.sh's own files in the scratch copy (markers/) is refused too. The harness code on its own.
+NR2="$T/nr2"; mkdir -p "$NR2/target/gen" "$NR2/markers/tmp" "$NR2/src"
+printf 'core::arch::global_asm!(".incbin \\"%s/blob.bin\\"");\n' "$DI" > "$NR2/target/gen/planted.rs"
+printf 'pub const NOTE: u8 = 1;\n' > "$NR2/markers/tmp/note.rs"; printf 'pub fn f() {}\n' > "$NR2/src/lib.rs"
+printf '[package]\n' > "$NR2/Cargo.toml"; printf 'version = 4\n' > "$NR2/Cargo.lock"
+printf '{"packages": [{"name": "poc_nr2", "version": "0.1.0", "manifest_path": "%s/Cargo.toml", "targets": [], "dependencies": []}], "workspace_root": "%s"}\n' "$NR2" "$NR2" > "$NR2-meta.json"
+while IFS='|' read -r nr2_file nr2_rc nr2_says; do
+  [ -n "$nr2_file" ] || continue
+  printf '/x/deps/poc_nr2.d: src/lib.rs %s\n\nsrc/lib.rs:\n%s:\n' "$nr2_file" "$nr2_file" > "$T/nr2.d"
+  out="$(env -i PATH="$PATH" python3 -I "$T/harness-nr.py" nonregistry "$NR2" "$NR2/Cargo.lock" "$NR2-meta.json" "$T/nr2.d")"; rc=$?
+  [ "$rc" = "$nr2_rc" ] && case "$out" in "$nr2_says"*) true ;; *) false ;; esac \
+    && ok "harness nonregistry, the build read the crate's $nr2_file -> exit $nr2_rc, '$nr2_says'" || bad "harness nonregistry, $nr2_file: $rc '$out'"
+done <<'CASES'
+src/lib.rs|0|none: every dependency comes from a registry
+target/gen/planted.rs|3|target/gen/planted.rs:1 names global_asm, inline assembly
+markers/tmp/note.rs|3|the build read markers/tmp/note.rs, one of run.sh's own files in the scratch copy (markers/)
+CASES
+# The re-check's comparison of cargo metadata with its first reading, on its own: the same reading passes,
+# and a package gone or another value of a workspace field is named.
+python3 -I - "$NR2" <<'PY'
+import json, sys
+root = sys.argv[1]
+pkg = lambda name, at: {"name": name, "version": "0.1.0", "manifest_path": root + at, "targets": [], "features": {}, "dependencies": []}
+first = {"packages": [pkg("poc_nr2", "/Cargo.toml"), pkg("shared-test-utils", "/shared-test-utils/Cargo.toml")], "workspace_root": root, "target_directory": root + "/target"}
+json.dump(first, open(root + "-first.json", "w"))
+json.dump(first, open(root + "-same.json", "w"))
+json.dump(dict(first, packages=first["packages"][:1]), open(root + "-gone.json", "w"))
+json.dump(dict(first, target_directory="/elsewhere/target"), open(root + "-dir.json", "w"))
+PY
+while IFS='|' read -r sc_again sc_what sc_rc sc_says; do
+  [ -n "$sc_again" ] || continue
+  out="$(env -i PATH="$PATH" python3 -I "$T/harness-nr.py" samecrate "$NR2-first.json" "$NR2-$sc_again.json")"; rc=$?
+  [ "$rc" = "$sc_rc" ] && [ "$out" = "$sc_says" ] && ok "harness samecrate, a second reading $sc_what -> exit $sc_rc${sc_says:+, '$sc_says'}" \
+    || bad "harness samecrate, a second reading $sc_what: $rc '$out'"
+done <<'CASES'
+same|equal to the first|0|
+gone|without one of the packages|3|its manifests no longer name the package shared-test-utils (shared-test-utils/Cargo.toml), which they named when run.sh checked them
+dir|with another target directory|3|cargo metadata gives it another target_directory than when run.sh checked it
+CASES
 
-# The hash runs with the crate dir as its working directory. A hashlib.py planted
-# there (and on PYTHONPATH) must not load; the control shows it would without -I.
+# A hashlib.py planted in the crate, which the scratch copy holds too, and on PYTHONPATH
+# must not load when run.sh hashes the bytes; the control shows it would without -I.
 mk_crate "$T/hostile"
 MARK="$T/shadow.marker"
 printf 'open(%s, "a").write("hashlib\\n")\n' "'$MARK'" > "$T/hostile/hashlib.py"
@@ -678,6 +1009,25 @@ if [ "$code" = 0 ] && grep -q "vulnerable sha256 (zero-trimmed): $want" "$T/out"
 else
   bad "planted hashlib.py: exit $code, marker $( [ -e "$MARK" ] && echo present || echo absent )"; cat "$T/out" >&2
 fi
+# Every python3 run.sh starts to read cargo's output, the manifests, the markers and the bytes starts from
+# /, with absolute paths: a version manager's shim picks the interpreter from the directory it starts in,
+# and the scratch copy holds the crate's files. A python3 stand-in first on PATH records where each of
+# those calls started.
+PYH="$T/pyh-bin"; mkdir -p "$PYH"
+printf '#!/bin/sh\ncase "$4" in hash|crate|samecrate|targetdir|checkbuild|settle|nonregistry|sbfdeps|stucopy) printf "%%s %%s\\n" "$(pwd -P)" "$4" >> "%s" ;; esac\nexec "%s" "$@"\n' \
+  "$T/pyh.log" "$(command -v python3)" > "$PYH/python3"
+chmod +x "$PYH/python3"
+for how in "prebuilt bytes" "a model run"; do
+  rm -f "$T/pyh.log"
+  want_calls="checkbuild crate hash nonregistry samecrate settle targetdir "
+  if [ "$how" = "a model run" ]; then
+    want_calls="checkbuild crate hash nonregistry samecrate sbfdeps settle targetdir "; code="$(gate "$T/inc" "$NATIVE" PATH="$PYH:$SP")"
+  else code="$(gate "$T/inc" "$NATIVE" "$VULN" "$FIX" PATH="$PYH:$SP")"; fi
+  calls="$(awk '{ print $NF }' "$T/pyh.log" 2>/dev/null | LC_ALL=C sort -u | tr '\n' ' ')"
+  [ "$code" = 0 ] && [ "$calls" = "$want_calls" ] && ! grep -qvE '^/ [a-z]+$' "$T/pyh.log" \
+    && ok "run.sh's own python3 calls ($calls) all start from /, $how" \
+    || { bad "run.sh's python3 calls, $how: exit $code, started in: $(sed 's/ [a-z]*$//' "$T/pyh.log" 2>/dev/null | LC_ALL=C sort -u | tr '\n' ' ')"; cat "$T/out" >&2; }
+done
 
 # ---------------------------------------------------------------------------
 # The crate's own build-time code, refused in either mode from the manifests alone:
@@ -761,6 +1111,115 @@ done
 mk_patched "$T/patch-mention" Cargo.toml "$(printf '# [patch.crates-io]\n[package.metadata.notes]\ntext = "see [patch.crates-io]"\npatch-level = 1')"
 code="$(gate "$T/patch-mention" "$NATIVE" "$VULN")"
 [ "$code" = 0 ] && ok "a comment, a string and a patch-level key that only mention [patch] -> not refused" || { bad "mentions of [patch]: exit $code"; cat "$T/out" >&2; }
+# A cargo-features key, with which a nightly cargo lets the manifest choose code that runs at build time (a
+# linker in [profile] rustflags, a codegen backend), in any TOML spelling, in the root manifest or a
+# member's, is refused before anything compiles; a comment, a string or another key that only mentions it
+# passes.
+n=0
+while IFS='|' read -r where text; do
+  [ -n "$where" ] || continue
+  n=$((n + 1)); mk_patched "$T/cf-$n" Cargo.toml ""
+  printf '%s\n%s\n' "$text" "$(cat "$T/cf-$n/$where")" > "$T/cf-$n/$where.new" && mv "$T/cf-$n/$where.new" "$T/cf-$n/$where"
+  code="$(gate "$T/cf-$n" "$NATIVE" "$VULN")"
+  [ "$code" = 3 ] && grep -qF "$where:1 holds a cargo-features key" "$T/out" && nothing_built && one_blocker \
+    && ok "refused before anything compiles: $where starts with $text" || { bad "$where with $text: exit $code"; cat "$T/out" >&2; }
+done <<'CASES'
+Cargo.toml|cargo-features = ["profile-rustflags"]
+Cargo.toml|"cargo-features" = ["codegen-backend"]
+Cargo.toml|'cargo-features' = ["profile-rustflags"]
+Cargo.toml|"cargo-features" = ["profile-rustflags"]
+shared-test-utils/Cargo.toml|cargo-features = ["profile-rustflags"]
+CASES
+mk_patched "$T/cf-mention" Cargo.toml "$(printf '# cargo-features = ["profile-rustflags"]\n[package.metadata.notes]\ntext = "cargo-features"\ncargo-features-note = 1')"
+code="$(gate "$T/cf-mention" "$NATIVE" "$VULN")"
+[ "$code" = 0 ] && ok "a comment, a string and a key that only mention cargo-features -> not refused" || { bad "mentions of cargo-features: exit $code"; cat "$T/out" >&2; }
+# The crate is its own workspace root: one that belongs to an outside workspace (a workspace key under
+# [package]) would build into that workspace's target directory under its [patch], which these checks
+# never read. cargo metadata names the root; any other than the scratch copy is refused before anything
+# compiles.
+code="$(gate "$T/inc" "$NATIVE" "$VULN" SHIM_WS_ROOT=/elsewhere/ws)"
+[ "$code" = 3 ] && grep -qF 'the crate belongs to the workspace at /elsewhere/ws, not to its own' "$T/out" && nothing_built && one_blocker \
+  && ok "a crate whose workspace root is outside it -> refused before anything compiles" || { bad "outside workspace root: exit $code"; cat "$T/out" >&2; }
+# A PoC crate builds its library and its tests. Any other target of a member is refused before anything
+# compiles: a bin, which cargo builds with every integration test; an example or a bench; a dylib or a
+# staticlib, which cargo places outside the deps directory whose dep-info run.sh reads; and a cdylib of a
+# member other than the crate.
+while IFS='|' read -r var named; do
+  [ -n "$var" ] || continue
+  code="$(gate "$T/inc" "$NATIVE" "$VULN" "$var")"
+  [ "$code" = 3 ] && grep -qF "blocker: the $named: a PoC crate builds its library" "$T/out" && nothing_built && one_blocker \
+    && ok "refused before anything compiles: the $named" || { bad "$var: exit $code"; cat "$T/out" >&2; }
+done <<'CASES'
+SHIM_TARGET=bin|bin target poc_shim_extra (src/extra.rs) of poc_shim
+SHIM_TARGET=example|example target poc_shim_extra (src/extra.rs) of poc_shim
+SHIM_TARGET=bench|bench target poc_shim_extra (src/extra.rs) of poc_shim
+SHIM_TARGET=dylib|dylib target poc_shim_extra (src/extra.rs) of poc_shim
+SHIM_TARGET=staticlib|staticlib target poc_shim_extra (src/extra.rs) of poc_shim
+SHIM_MEMBER_KIND=dylib|dylib target shared_test_utils (shared-test-utils/src/lib.rs) of shared-test-utils
+SHIM_MEMBER_KIND=cdylib|cdylib target shared_test_utils (shared-test-utils/src/lib.rs) of shared-test-utils
+CASES
+# The crate's own Rust code, read before anything compiles, in either mode: a crate-level feature (with it a
+# nightly or platform-tools rustc lets the source pick linker arguments), inline assembly (its .incbin and
+# .include read files that rustc's dep-info never lists) and the link attribute (a native library that the
+# dep-info does not list either), in any .rs file of the crate, named directly or through a macro argument,
+# are refused, also where an edition before 2021 reads cr"..." as the identifier cr and an ordinary string;
+# so is a feature in a target's source outside the crate. A comment, a string, a character and a name that
+# only mention them pass.
+n=0
+while IFS='|' read -r where text named; do
+  [ -n "$where" ] || continue
+  n=$((n + 1)); mk_crate "$T/oc-$n"; mkdir -p "$(dirname "$T/oc-$n/$where")"
+  printf '%b\n' "$text" > "$T/oc-$n/$where"
+  code="$(gate "$T/oc-$n" "$NATIVE" "$VULN")"
+  [ "$code" = 3 ] && grep -qF "blocker: $named" "$T/out" && grep -qF "run.sh refuses it in the crate's own code, in either mode." "$T/out" \
+    && nothing_built && one_blocker && ok "refused before anything compiles: $named" || { bad "$where holding $text: exit $code"; cat "$T/out" >&2; }
+done <<'CASES'
+src/lib.rs|#![feature(link_arg_attribute)]\npub fn f() {}|src/lib.rs:1 turns on unstable rustc features
+src/lib.rs|#![cfg_attr(all(), feature (link_arg_attribute))]|src/lib.rs:1 turns on unstable rustc features
+src/lib.rs|// the library\ncore::arch::global_asm!(".globl x");|src/lib.rs:2 names global_asm, inline assembly
+tests/helper.rs|use std::arch::asm;|tests/helper.rs:1 names asm, inline assembly
+src/deep/mod.rs|pub use core::arch::naked_asm as n;|src/deep/mod.rs:1 names naked_asm, inline assembly
+src/lib.rs|macro_rules! g { ($a:ident) => { core::arch::$a!(".globl x"); } }\ng!(global_asm);|src/lib.rs:2 names global_asm, inline assembly
+src/lib.rs|#[link(name = "c")]\nextern "C" {}|src/lib.rs:1 names link, the attribute that links a native library
+src/lib.rs|macro_rules! m { ($a:ident) => { #[$a(name = "c")] extern "C" {} } }\nm!(r#link);|src/lib.rs:2 names link, the attribute that links a native library
+src/lib.rs|macro_rules! m { ($a:ident $b:literal) => {}; }\nm!(cr"\\""); core::arch::global_asm!(".globl x");|src/lib.rs:2 names global_asm, inline assembly
+CASES
+mk_crate "$T/oc-out"; printf '#![feature(link_arg_attribute)]\n' > "$T/oc-outside-lib.rs"
+code="$(gate "$T/oc-out" "$NATIVE" "$VULN" SHIM_LIB_SRC="$T/oc-outside-lib.rs")"
+[ "$code" = 3 ] && grep -qF "blocker: $T/oc-outside-lib.rs:1 turns on unstable rustc features" "$T/out" && nothing_built && one_blocker \
+  && ok "refused before anything compiles: a feature in the library's source outside the crate" || { bad "a feature in an outside target source: exit $code"; cat "$T/out" >&2; }
+mk_crate "$T/oc-mention"; mkdir -p "$T/oc-mention/src"
+cat > "$T/oc-mention/src/lib.rs" <<'RS'
+//! Mentions only: global_asm!, asm!, naked_asm!, #[link(name = "c")] and #![feature(x)].
+/* core::arch::global_asm!(".incbin"); /* nested */ #[link(name = "c")] feature(x) */
+#![cfg_attr(feature = "fixed", allow(dead_code))]
+pub const NOTE: &str = "global_asm! link #![feature(x)] \" asm";
+pub const RAW: &str = r##"asm "# link"##;
+pub const QUOTE: char = '"';
+pub const BYTES: &[u8] = b"naked_asm";
+#[link_section = ".data"]
+pub static LINKED: u8 = 0;
+pub fn wasm<'a>(feature_set: &'a str) -> &'a str { let symlink = feature_set; symlink }
+RS
+code="$(gate "$T/oc-mention" "$NATIVE" "$VULN")"
+[ "$code" = 0 ] && grep -q "^$LEG3" "$T/out" && ok "comments, strings, a character and names that only mention a feature, inline assembly or link -> not refused" \
+  || { bad "mentions in the crate's own code: exit $code"; cat "$T/out" >&2; }
+# What a dependency's macro writes is not read: a name it pastes together from pieces passes the check of the
+# crate's own code, and the README and run.sh's header say so, with that example.
+mk_crate "$T/oc-paste"; mkdir -p "$T/oc-paste/src"
+printf 'paste::paste! {\n    core::arch::[<glo bal_as m>]!(".globl x");\n}\n' > "$T/oc-paste/src/lib.rs"
+code="$(gate "$T/oc-paste" "$NATIVE" "$VULN")"
+says='a name such a macro pastes together from pieces passes: the paste crate turns [<glo bal_as m>] into global_asm'
+if [ "$code" = 0 ] && grep -q "^$LEG3" "$T/out" && python3 -I -c 'import re, sys
+for path in sys.argv[2:]:
+    with open(path, encoding="utf-8") as f:
+        text = re.sub(r"\s+", " ", re.sub(r"\n#", "\n", f.read()).replace("`", ""))
+    if sys.argv[1] not in text:
+        sys.exit(1)' "$says" "$TEMPLATE/README.md" "$TEMPLATE/run.sh"; then
+  ok "a name a dependency's macro pastes together passes the crate's own-code check, and the README and run.sh's header say so"
+else
+  bad "a pasted name: exit $code, or the README or run.sh's header does not say that what a dependency's macro writes is not read"; cat "$T/out" >&2
+fi
 
 # ---------------------------------------------------------------------------
 # Where the crate builds. A hostile target tree: its .cargo/config.toml names a
@@ -857,6 +1316,46 @@ refused "$T/d-cargo-uc" .CARGO "a .CARGO/ directory inside the crate"
 mk_crate "$T/d-tc-uc"
 printf '[toolchain]\npath = "%s"\n' "$T/faketc" > "$T/d-tc-uc/Rust-Toolchain.toml"
 refused "$T/d-tc-uc" Rust-Toolchain.toml "a Rust-Toolchain.toml inside the crate"
+# A version manager's file is refused the same way, at any depth and in any letter case: a shim of asdf,
+# mise, pyenv or proto picks the cargo, rustc or python3 it runs from the directory it starts in, and
+# asdf's `path:` version names any program. The message names the first entry found, a directory before
+# its files.
+while IFS='|' read -r entry named; do
+  [ -n "$entry" ] || continue
+  mk_crate "$T/d-vm"; mkdir -p "$T/d-vm/$(dirname "$entry")"
+  printf 'rust path:%s\npython path:%s\n' "$T/vm-tool" "$T/vm-tool" > "$T/d-vm/$entry"
+  refused "$T/d-vm" "$named" "a version manager's $entry inside the crate"
+  rm -rf "$T/d-vm"
+done <<'CASES'
+.tool-versions|.tool-versions
+.python-version|.python-version
+mise.toml|mise.toml
+.mise.toml|.mise.toml
+mise.local.toml|mise.local.toml
+.mise.ci.toml|.mise.ci.toml
+.miserc.toml|.miserc.toml
+.config/mise.toml|.config
+mise/config.toml|mise
+.mise/conf.d/a.toml|.mise
+.prototools|.prototools
+tests/.Tool-Versions|tests/.Tool-Versions
+CASES
+# A name that is not printable ASCII is refused the same way, at any depth and on any filesystem: macOS,
+# which folds case, reads .tool-versions with a long s (U+017F) in place of an s as .tool-versions, which
+# the copy would take. The message shows each byte outside printable ASCII, a newline in a name too, as ?.
+while IFS='|' read -r entry named; do
+  [ -n "$entry" ] || continue
+  e="$(printf "$entry")"; mk_crate "$T/d-na"; mkdir -p "$T/d-na/$(dirname "$e")"
+  printf 'rust path:%s\npython path:%s\n' "$T/vm-tool" "$T/vm-tool" > "$T/d-na/$e"
+  refused "$T/d-na" "$named" "an entry named $named (not printable ASCII) inside the crate"
+  rm -rf "$T/d-na"
+done <<'CASES'
+.tool-ver\305\277ions|.tool-ver??ions
+mi\305\277e.toml|mi??e.toml
+.python-ver\305\277ion|.python-ver??ion
+tests/donn\303\251es/a.txt|tests/donn??es
+a\nb.txt|a?b.txt
+CASES
 # A target directory, in any letter case, is never copied: cargo would take the build
 # outputs in it for its own.
 mk_crate "$T/d-target"; mkdir -p "$T/d-target/TARGET/debug"; printf 'shipped\n' > "$T/d-target/TARGET/debug/shipped.txt"
@@ -879,8 +1378,8 @@ else
   bad "CARGO_TARGET_DIR: exit $code, build dir '$bd'"; cat "$T/calls" >&2
 fi
 
-# A shared build cache. run.sh holds a lock inside the cache around each arm's build
-# and test, and `harness checkbuild` refuses an arm when cargo reports one of the
+# A shared build cache. run.sh holds a lock inside the cache from its first build until
+# its last test, and `harness checkbuild` refuses an arm when cargo reports one of the
 # crate's own units already built without this run compiling it (the stand-in reports
 # that with SHIM_FRESH=1). The lock dir lands in the cache and is gone afterwards.
 code="$(gate "$T/inc" "$NATIVE" "$VULN" CARGO_TARGET_DIR="$T/cache" SHIM_FRESH=1)"
@@ -1120,6 +1619,7 @@ case "$1" in
        printf 'home %s\n' "$ISO_HOME" ;;
   keep) iso_env "$2" keep-home || exit 9; printf 'home %s\n' "$ISO_HOME" ;;
   scratch) trap 'case "${ISO_SCRATCH:-}" in */auditor-driver.*) rm -rf "$ISO_SCRATCH" ;; esac' EXIT; iso_scratch driver; printf '%s\n' "$ISO_SCRATCH" ;;
+  watch) mkdir -p "$2"; iso_env "$2" keep-home || exit 9; iso_watch 5 "$2/report" "$2" /bin/sh -c 'exit 0'; echo "rc=$?" ;;
 esac
 SH
 
@@ -1304,6 +1804,70 @@ code="$(ngate AUDITOR_EXEC_MODE=yes -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
 [ "$code" = 3 ] && grep -qF "run.sh refused: AUDITOR_EXEC_MODE is 'yes', not none, isolated or native" "$T/out" && new_nothing_ran \
   && ok "AUDITOR_EXEC_MODE=yes -> refused, even with a recorded mode" || { bad "AUDITOR_EXEC_MODE=yes: exit $code"; cat "$T/out" >&2; }
 
+# The harness copy: run.sh --crate checks the crate's shared-test-utils/ before anything is copied, and every
+# build compiles the installation's src/lib.rs whatever the crate holds; its >> harness: line says whether the
+# crate's copy matched. A copy that holds another file, or a Cargo.toml changed beyond the version
+# requirements of its dependencies, stops the run.
+STU="$WT/audit_1/poc/F-1/shared-test-utils"
+cp "$STU/Cargo.toml" "$T/stu-cargo.keep"
+code="$(ngate -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+[ "$code" = 0 ] && grep -qxF ">> harness: the crate's shared-test-utils/ is the installation's (its dependency version requirements aside)" "$T/out" \
+  && ok "--crate with the installation's harness copy -> the build runs, and the harness line says the copy matched" || { bad "harness copy, unchanged: exit $code"; cat "$T/out" >&2; }
+printf '// changed in the crate\n' >> "$STU/src/lib.rs"
+code="$(ngate -- --crate audit_1/poc/F-1 "${NVULN[@]}" --keep)"; bd="$(new_build_dir)"
+[ "$code" = 0 ] && grep -qxF ">> harness: the crate's shared-test-utils/src/lib.rs differs from the installation's; this build used the installation's, so record the difference" "$T/out" \
+  && [ -n "$bd" ] && cmp -s "$bd/shared-test-utils/src/lib.rs" "$TEMPLATE/shared-test-utils/src/lib.rs" \
+  && ok "--crate with a changed shared-test-utils/src/lib.rs -> the build compiles the installation's, and the harness line says the copy differed" \
+  || { bad "harness copy, src/lib.rs changed: exit $code, build dir '$bd'"; cat "$T/out" >&2; }
+[ -z "$bd" ] || rm -rf "$bd"
+rm "$STU/src/lib.rs"
+code="$(ngate -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+[ "$code" = 0 ] && grep -qxF ">> harness: the crate has no shared-test-utils/src/lib.rs; this build used the installation's" "$T/out" \
+  && ok "--crate with no shared-test-utils/src/lib.rs -> the build compiles the installation's, and says so" || { bad "harness copy, no src/lib.rs: exit $code"; cat "$T/out" >&2; }
+cp "$TEMPLATE/shared-test-utils/src/lib.rs" "$STU/src/lib.rs"
+sed 's/^mollusk-svm = "[^"]*"/mollusk-svm = "0.99"/' "$T/stu-cargo.keep" > "$STU/Cargo.toml"
+code="$(ngate -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+[ "$code" = 0 ] && ! cmp -s "$STU/Cargo.toml" "$T/stu-cargo.keep" \
+  && grep -qxF ">> harness: the crate's shared-test-utils/ is the installation's (its dependency version requirements aside)" "$T/out" \
+  && ok "--crate with a dependency version requirement changed in shared-test-utils/Cargo.toml -> the build runs" || { bad "harness copy, a version requirement: exit $code"; cat "$T/out" >&2; }
+while IFS='|' read -r how what text; do
+  [ -n "$how" ] || continue
+  cp "$T/stu-cargo.keep" "$STU/Cargo.toml"
+  case "$how" in
+    dependency) printf 'evil = { path = "/tmp/evil" }\n' >> "$STU/Cargo.toml" ;;
+    feature) sed 's/^sha2 = "0.10"/sha2 = { version = "0.10", features = ["asm"] }/' "$T/stu-cargo.keep" > "$STU/Cargo.toml" ;;
+    package) sed 's/^edition = "2021"/edition = "2024"/' "$T/stu-cargo.keep" > "$STU/Cargo.toml" ;;
+    build-script) printf 'fn main() {}\n' > "$STU/build.rs" ;;
+    module) printf 'pub fn x() {}\n' > "$STU/src/other.rs" ;;
+    no-manifest) rm "$STU/Cargo.toml" ;;
+  esac
+  code="$(ngate -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+  [ "$code" = 3 ] && grep -qF "[PoC-ATTEMPTED] blocker: the crate's $text" "$T/out" && new_nothing_ran && one_blocker \
+    && ok "--crate with a harness copy $what -> exit 3 before anything is copied: $text" || { bad "harness copy $what: exit $code"; cat "$T/out" >&2; }
+  rm -f "$STU/build.rs" "$STU/src/other.rs"
+done <<CASES
+dependency|that adds a dependency|shared-test-utils/Cargo.toml differs from the installation copy beyond the version requirements of its dependencies, from line
+feature|that turns on a feature|shared-test-utils/Cargo.toml differs from the installation copy beyond the version requirements of its dependencies, from line
+package|that changes the package's edition|shared-test-utils/Cargo.toml differs from the installation copy beyond the version requirements of its dependencies, from line
+build-script|that holds a build script|shared-test-utils/ holds build.rs, which the installation copy does not
+module|that holds another source file|shared-test-utils/ holds src/other.rs, which the installation copy does not
+no-manifest|without its Cargo.toml|shared-test-utils/ has no Cargo.toml
+CASES
+cp "$T/stu-cargo.keep" "$STU/Cargo.toml"
+# Right before the fixed arm builds, the re-check compares the scratch copy's harness copy with the
+# installation's again: a vulnerable-arm build that changes it stops the run before the fixed arm builds.
+for plant in "shared-test-utils/src/lib.rs|// changed by a build script\n" "shared-test-utils/build.rs|fn main() {}\n"; do
+  SHIM_EXTRA=("SHIM_PLANT=$plant")
+  code="$(ngate AUDITOR_EXEC_MODE=native -- --crate audit_1/poc/F-1)"
+  SHIM_EXTRA=()
+  want_plant="its shared-test-utils/src/lib.rs is no longer the installation's"
+  [ "${plant%%|*}" = shared-test-utils/build.rs ] && want_plant="its shared-test-utils/ holds build.rs, which the installation copy does not"
+  [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: $CHANGED $want_plant — nothing of the fixed arm was built." "$T/out" && one_blocker \
+    && ! awk -F'\t' '$6 ~ /^testbin / || $6 ~ /^(build-sbf|test) .*--features fixed/ { f = 1 } END { exit !f }' "$T/calls" \
+    && ok "--crate, a model run whose vulnerable-arm build writes ${plant%%|*} into the scratch copy -> exit 3 before the fixed arm builds" \
+    || { bad "--crate, a vulnerable-arm build that writes ${plant%%|*}: exit $code"; cat "$T/out" >&2; }
+done
+
 # Every run directory an argument names counts: here --vulnerable-so and --fixed-so under audit_2/exec/.
 ( cd "$WT" && "$ROOT/scripts/rundir.sh" new audit ) >/dev/null || bad "rundir.sh could not make audit_2"
 mkdir -p "$WT/audit_2/exec/b"; cp "$T/vuln.so" "$T/fixed.so" "$WT/audit_2/exec/b/"
@@ -1419,7 +1983,43 @@ done <<'CREDS'
 .config/gh/hosts.yml|git or HTTP credentials
 .gnupg/private-keys-v1.d/0123456789ABCDEF.key|GnuPG private keys
 .claude/.credentials.json|Claude Code credentials
+.vault-token|cloud credentials
+.terraform.d/credentials.tfrc.json|cloud credentials
+.claude-work/.credentials.json|Claude Code credentials
+.config/anthropic/credentials/default.json|Claude Code credentials
+.config/anthropic/configs/default.json|Claude Code credentials
+.docker/key.pem|Kubernetes or Docker config
+.docker/contexts/tls/0123abcd/docker/key.pem|Kubernetes or Docker config
+.gitcookies|git or HTTP credentials
 CREDS
+# The same for a Claude Code login only where CLAUDE_CONFIG_DIR keeps it, outside HOME, for an API key only in
+# the env block of ~/.claude/settings.json, and for a git credential helper only, in ~/.gitconfig, in the form
+# Dev Containers use to forward the host's git login.
+mkdir -p "$T/cc-dir"; printf 'secret\n' > "$T/cc-dir/.credentials.json"
+code="$(ngate HOME="$CLEANHOME" CLAUDE_CONFIG_DIR="$T/cc-dir" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+line="$(grep '^\[PoC-ATTEMPTED\] blocker: isolated mode, but these are readable here: ' "$T/out")"
+[ "$code" = 3 ] && case "$line" in *"Claude Code credentials ("*) true ;; *) false ;; esac && new_nothing_ran && one_blocker \
+  && ok "isolated mode with a Claude Code login only under CLAUDE_CONFIG_DIR, outside HOME -> exit 3 naming Claude Code credentials, nothing copied" \
+  || { bad "isolated, a login under CLAUDE_CONFIG_DIR: exit $code"; cat "$T/out" >&2; }
+FH="$T/fh-ccsettings"; mkdir -p "$FH/.claude"; printf '{"env":{"ANTHROPIC_API_KEY":"x"}}\n' > "$FH/.claude/settings.json"
+code="$(ngate HOME="$FH" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+line="$(grep '^\[PoC-ATTEMPTED\] blocker: isolated mode, but these are readable here: ' "$T/out")"
+[ "$code" = 3 ] && case "$line" in *"Claude Code credentials ("*) true ;; *) false ;; esac && new_nothing_ran && one_blocker \
+  && ok "isolated mode with an API key only in the env block of ~/.claude/settings.json -> exit 3 naming Claude Code credentials, nothing copied" \
+  || { bad "isolated, an API key in Claude Code's settings: exit $code"; cat "$T/out" >&2; }
+FH="$T/fh-cchead"; mkdir -p "$FH/.claude"; printf '{"env":{"ANTHROPIC_CUSTOM_HEADERS":"X-Org-Route: prod\\nX-Api-Key: x"}}\n' > "$FH/.claude/settings.json"
+code="$(ngate HOME="$FH" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+line="$(grep '^\[PoC-ATTEMPTED\] blocker: isolated mode, but these are readable here: ' "$T/out")"
+[ "$code" = 3 ] && case "$line" in *"Claude Code credentials ("*) true ;; *) false ;; esac && new_nothing_ran && one_blocker \
+  && ok "isolated mode with a gateway key only in ANTHROPIC_CUSTOM_HEADERS, in the env block of ~/.claude/settings.json -> exit 3 naming Claude Code credentials, nothing copied" \
+  || { bad "isolated, a gateway key in ANTHROPIC_CUSTOM_HEADERS: exit $code"; cat "$T/out" >&2; }
+FH="$T/fh-gitcred"; mkdir -p "$FH"
+printf '[credential]\n\thelper = "!f() { node /tmp/vscode-remote-containers-0.js git-credential-helper $*; }; f"\n' > "$FH/.gitconfig"
+code="$(ngate HOME="$FH" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+line="$(grep '^\[PoC-ATTEMPTED\] blocker: isolated mode, but these are readable here: ' "$T/out")"
+[ "$code" = 3 ] && case "$line" in *"git or HTTP credentials ("*) true ;; *) false ;; esac && new_nothing_ran && one_blocker \
+  && ok "isolated mode with only a git credential helper in ~/.gitconfig, as Dev Containers set one -> exit 3 naming git or HTTP credentials, nothing copied" \
+  || { bad "isolated, a git credential helper: exit $code"; cat "$T/out" >&2; }
 FH="$T/fh-many"; mkdir -p "$FH/.ssh" "$FH/.gnupg/private-keys-v1.d"; printf 'secret\n' > "$FH/.gnupg/private-keys-v1.d/ABC.key"
 i=0; while [ "$i" -le 5000 ]; do : > "$FH/.ssh/known_hosts.$i"; i=$((i + 1)); done
 code="$(ngate HOME="$FH" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
@@ -1444,13 +2044,13 @@ dcreds() {
   (cd "$WT" && env -i HOME="$CLEANHOME" PATH="$PATH" ${vars[@]+"${vars[@]}"} "$BASH" "$T/iso-driver.sh" "$ROOT" creds "$@") >"$T/creds.out" 2>&1
   echo $?
 }
-lines_are() {  # lines_are <kinds> <line>...: $T/creds.out holds those kinds, then exactly these lines, in any order
-  local line
+lines_are() {  # lines_are <kinds> <line>...: $T/creds.out holds those kinds, then exactly these lines, in any order,
+  local line   # each cut after 300 characters as the check prints a path, so that a long TMPDIR passes too
   [ "$(sed -n 1p "$T/creds.out")" = "kinds: $1" ] || return 1
   shift
   sed 1d "$T/creds.out" > "$T/creds.paths"
   [ "$(grep -c . "$T/creds.paths")" = "$#" ] || return 1
-  for line in "$@"; do grep -qxF -- "$line" "$T/creds.paths" || return 1; done
+  for line in "$@"; do grep -qxF -- "${line:0:300}" "$T/creds.paths" || return 1; done
 }
 X="$T/fx"; mkdir -p "$X/sol/.config/solana/cli" "$X/keys" "$X/sol2/.config/solana/cli" "$X/sol2/wallets"
 printf 'k\n' > "$X/keys/deploy.json"; printf 'k\n' > "$X/sol2/wallets/main.json"
@@ -1482,6 +2082,253 @@ code="$(dcreds AWS_SHARED_CREDENTIALS_FILE="$E/aws/creds" KUBECONFIG="$E/kube/a:
   "$E/xdg/gh/hosts.yml" "$E/xdg/git/credentials" "$E/ghdir/hosts.yml" "$E/cargo/credentials.toml" "$E/npmrc-upper" "$E/npmrc-lower" \
   "$E/netrc" "$E/service-account.json" \
   && ok "the credential files the environment's variables name count (KUBECONFIG, CLOUDSDK_CONFIG, GNUPGHOME, CARGO_HOME and the rest)" || { bad "credentials the environment names: $code"; cat "$T/creds.out" >&2; }
+# Where the environment puts a Claude Code login (CLAUDE_CONFIG_DIR, with its settings and state files), the
+# Anthropic profiles (ANTHROPIC_CONFIG_DIR) and their federation token file.
+EC="$T/fe-claude"; mkdir -p "$EC/claude" "$EC/anthropic/credentials"
+for f in claude/.credentials.json anthropic/credentials/default.json id-token; do printf 'secret\n' > "$EC/$f"; done
+printf '{"apiKeyHelper":"/opt/k.sh"}\n' > "$EC/claude/settings.json"; printf '{"mcpServers":{"gh":{"env":{"GITHUB_TOKEN":"t"}}}}\n' > "$EC/claude/.claude.json"
+code="$(dcreds CLAUDE_CONFIG_DIR="$EC/claude" ANTHROPIC_CONFIG_DIR="$EC/anthropic" ANTHROPIC_IDENTITY_TOKEN_FILE="$EC/id-token" -- "$CLEANHOME")"
+[ "$code" = 1 ] && lines_are "Claude Code credentials (5)" "$EC/claude/.credentials.json" "$EC/claude/settings.json" "$EC/claude/.claude.json" \
+  "$EC/anthropic/credentials/default.json" "$EC/id-token" \
+  && ok "a Claude Code login, settings and state, and Anthropic profiles where the environment puts them count (CLAUDE_CONFIG_DIR, ANTHROPIC_CONFIG_DIR, ANTHROPIC_IDENTITY_TOKEN_FILE)" \
+  || { bad "a Claude Code login the environment moves: $code"; cat "$T/creds.out" >&2; }
+# Claude Code's managed settings count in default mode, read as its settings are. The check reads them in the
+# system directories, so a copy of isolation.sh reads them in the suite's own; it runs where this machine
+# passes the check, as on CI. A hidden file and one not ending in .json in managed-settings.d/ do not count.
+if [ "$ISOLATED_OK" = 1 ]; then
+  MS="$T/managed"; MR="$T/iso-managed"; mkdir -p "$MS/managed-settings.d" "$MR/scripts/lib"
+  cp "$ROOT/scripts/lib/confine.sh" "$MR/scripts/lib/"
+  sed "s#^MANAGED = .*#MANAGED = (\"$MS\",)#" "$ROOT/scripts/lib/isolation.sh" > "$MR/scripts/lib/isolation.sh"
+  printf '{"apiKeyHelper":"/opt/k.sh"}\n' > "$MS/managed-settings.json"; printf '{"mcpServers":{"gh":{"env":{"GITHUB_TOKEN":"t"}}}}\n' > "$MS/managed-mcp.json"
+  for f in 20-key.json .hidden.json notes.txt; do printf '{"env":{"ANTHROPIC_API_KEY":"x"}}\n' > "$MS/managed-settings.d/$f"; done
+  (cd "$WT" && env -i HOME="$CLEANHOME" "${TOOL_HOMES[@]}" PATH="$PATH" bash "$T/iso-driver.sh" "$MR" creds) >"$T/creds.out" 2>&1; code=$?
+  [ "$code" = 1 ] && lines_are "Claude Code credentials (3)" "$MS/managed-settings.json" "$MS/managed-settings.d/20-key.json" "$MS/managed-mcp.json" \
+    && ok "Claude Code's managed settings count in default mode (managed-settings.json, managed-settings.d/*.json, managed-mcp.json)" \
+    || { bad "Claude Code's managed settings: $code"; cat "$T/creds.out" >&2; }
+fi
+# The askpass programs the environment names, and the git and AWS config files it names, which count for what
+# they hold.
+EG="$T/fe-git"; mkdir -p "$EG/xdg/git"
+for f in askpass ssh-askpass; do printf 'secret\n' > "$EG/$f"; done
+printf '[credential]\n\thelper = manager\n' > "$EG/gitconfig-global"; printf '[core]\n\taskpass = /x\n' > "$EG/gitconfig-system"
+printf '[http]\n\textraheader = AUTHORIZATION: basic eA==\n' > "$EG/xdg/git/config"; printf '[default]\naws_session_token = x\n' > "$EG/aws-config"
+printf 'credentials "app.terraform.io" {\n  token = "x"\n}\n' > "$EG/cli.tfrc"
+code="$(dcreds GIT_ASKPASS="$EG/askpass" SSH_ASKPASS="$EG/ssh-askpass" GIT_CONFIG_GLOBAL="$EG/gitconfig-global" \
+  GIT_CONFIG_SYSTEM="$EG/gitconfig-system" XDG_CONFIG_HOME="$EG/xdg" AWS_CONFIG_FILE="$EG/aws-config" TF_CLI_CONFIG_FILE="$EG/cli.tfrc" -- "$CLEANHOME")"
+[ "$code" = 1 ] && lines_are "cloud credentials (2), git or HTTP credentials (5)" "$EG/askpass" "$EG/ssh-askpass" \
+  "$EG/gitconfig-global" "$EG/gitconfig-system" "$EG/xdg/git/config" "$EG/aws-config" "$EG/cli.tfrc" \
+  && ok "the askpass programs, git config, AWS config and Terraform CLI config the environment names count (GIT_ASKPASS, GIT_CONFIG_GLOBAL, AWS_CONFIG_FILE, TF_CLI_CONFIG_FILE and the rest)" \
+  || { bad "the askpass and config places the environment names: $code"; cat "$T/creds.out" >&2; }
+# The Docker TLS client keys the environment names: key.pem in DOCKER_CERT_PATH, and the context keys under
+# DOCKER_CONFIG. The certificates beside them do not count.
+ED="$T/fe-docker"; mkdir -p "$ED/certs" "$ED/config/contexts/tls/0123abcd/docker"
+for f in certs/key.pem config/contexts/tls/0123abcd/docker/key.pem; do printf 'secret\n' > "$ED/$f"; done
+printf 'public\n' > "$ED/certs/cert.pem"; printf 'public\n' > "$ED/config/contexts/tls/0123abcd/docker/ca.pem"
+code="$(dcreds DOCKER_CERT_PATH="$ED/certs" DOCKER_CONFIG="$ED/config" -- "$CLEANHOME")"
+[ "$code" = 1 ] && lines_are "Kubernetes or Docker config (2)" "$ED/certs/key.pem" "$ED/config/contexts/tls/0123abcd/docker/key.pem" \
+  && ok "the Docker TLS client keys the environment names count (DOCKER_CERT_PATH, DOCKER_CONFIG's contexts)" \
+  || { bad "the Docker TLS client keys the environment names: $code"; cat "$T/creds.out" >&2; }
+# A git config or an AWS config in a home counts for what it holds. In a git config: a credential helper
+# (osxkeychain, manager, the one gh auth setup-git writes, and git's store or cache written with shell
+# syntax), an askpass program, a cookie file, an HTTP header, an http(s) URL or a proxy with a login, in any
+# letter case, on a section's own line or after several headers on one, and after a byte order mark too; in
+# an AWS config: a credential_process or a key, after = or :; in ~/.terraformrc, a credentials or
+# credentials_helper block. A helper reset to nothing, git's store and cache with their default file and
+# socket (which count on their own) or with a --file or --socket that holds nothing, a user name with an ssh
+# URL, a proxy without a login, a region alone and a Terraform plugin cache do not count. A store or cache
+# written with a variable counts even with an absolute path. So do Claude Code's settings and state files (in
+# ~/.claude*, ~/.claude.json and its backups): a command that prints a credential (an MCP server's
+# headersHelper too), a token or a passphrase in an env block (of the file or of an MCP server), a URL with a
+# login, a key-named query parameter or a key in its path there, a credential header in a list of headers
+# there (ANTHROPIC_CUSTOM_HEADERS lines, an MCP server's JSON object; any *-Authorization, and a name whose last
+# part is KEY or AUTH), any header in the OTLP exporter's lists, an MCP server's Authorization or key header,
+# and a key in an MCP server's or a hook's URL (its login, its query or its path) or in an MCP server's
+# arguments (an option, NAME=value, a header option, a URL). Settings that refer to a variable ($NAME or ${NAME}
+# anywhere in a value, so a password with a $ before a letter, _ or { as well), and names that do not look like
+# credentials, do not count; nor do an ssh URL with a user name only, arguments that name no credential, a
+# public RPC URL, a skip-auth switch, a word that switches a setting or names an authentication method (--auth
+# none, --auth api-key, --auth sso), a public key, a table's key or a message route (--hash-key, --primary-key,
+# --routing-key), a --no- option, a version, a date, a local file or a UUID in a URL's path, a commit in a code
+# host's path (huggingface.co and git.sr.ht too) or after a GitLab project's - segment on another host, and a
+# Cloudflare AI Gateway account id; a key in such a URL's query and an id under another name a key goes by
+# (--cache-key) still count. A path with a NUL byte in it (a git include, a cache helper's socket), which no
+# file has, counts for nothing and does not stop the check.
+n=0
+while IFS='|' read -r file text kind; do
+  [ -n "$file" ] || continue
+  n=$((n + 1)); FH="$T/fc-$n"; mkdir -p "$(dirname "$FH/$file")"; printf "$text" > "$FH/$file"
+  code="$(dcreds -- "$FH")"
+  if [ -n "$kind" ]; then
+    [ "$code" = 1 ] && lines_are "$kind (1)" "~/$file" && ok "~/$file holding $text counts as $kind" || { bad "~/$file holding $text: $code"; cat "$T/creds.out" >&2; }
+  else
+    [ "$code" = 0 ] && [ ! -s "$T/creds.out" ] && ok "~/$file holding $text does not count" || { bad "~/$file holding $text: $code"; cat "$T/creds.out" >&2; }
+  fi
+done <<'CONFIGS'
+.gitconfig|[credential]\n\thelper = store\n|
+.gitconfig|[credential]\n\thelper = cache --timeout=3600\n|
+.gitconfig|[credential]\n\thelper = store --file ~/.no-such-store\n|
+.gitconfig|[credential]\n\thelper = /usr/libexec/git-core/git-credential-cache --socket /nonexistent.invalid/socket\n|
+.gitconfig|[credential]\n\thelper = store --file=$HOME/.git-store\n|git or HTTP credentials
+.gitconfig|[credential]\n\thelper = store --file /nonexistent.invalid/s && /opt/other-helper\n|git or HTTP credentials
+.gitconfig|[credential]\n\thelper = store --file .git-store\n|git or HTTP credentials
+.gitconfig|[credential "https://github.com"]\n\thelper =\n\thelper = !/opt/homebrew/bin/gh auth git-credential\n|git or HTTP credentials
+.gitconfig|[credential "https://github.com"]\n\thelper = "!f() { node /tmp/vscode-remote-containers-0.js git-credential-helper $*; }; f"\n|git or HTTP credentials
+.gitconfig|[Credential] Helper = osxkeychain\n|git or HTTP credentials
+.config/git/config|[core]\n\taskPass = /usr/libexec/askpass\n|git or HTTP credentials
+.gitconfig|[http "https://github.com/"]\n\textraHeader = AUTHORIZATION: basic eA==\n|git or HTTP credentials
+.gitconfig|[url "https://x-access-token:t@github.com/"]\n\tinsteadOf = https://github.com/\n|git or HTTP credentials
+.gitconfig|[credential]\n\thelper =\n\thelper = "" # reset\n|
+.gitconfig|[user]\n\tname = n\n[url "ssh://git@github.com/"]\n\tinsteadOf = https://github.com/\n|
+.aws/config|[profile ci]\ncredential_process = /usr/local/bin/creds\n|cloud credentials
+.aws/config|[default]\naws_secret_access_key = x\n|cloud credentials
+.aws/config|[default]\nregion = eu-west-1\n|
+.gitconfig|\xef\xbb\xbf[credential]\n\thelper = osxkeychain\n|git or HTTP credentials
+.gitconfig|[core] [credential] helper = manager\n|git or HTTP credentials
+.gitconfig|[http]\n\tproxy = http://u:p@proxy.invalid:3128\n|git or HTTP credentials
+.gitconfig|[remote "origin"]\n\tproxy = u:p@proxy.invalid\n|git or HTTP credentials
+.gitconfig|[http "https://review.example.invalid/"]\n\tcookieFile = ~/.gitcookies\n|git or HTTP credentials
+.gitconfig|[http]\n\tproxy = http://proxy.invalid:3128\n|
+.aws/config|[default]\naws_secret_access_key: x\n|cloud credentials
+.terraformrc|credentials "app.terraform.io" {\n  token = "x"\n}\n|cloud credentials
+.terraformrc|credentials_helper "example" {\n  args = []\n}\n|cloud credentials
+.terraformrc|plugin_cache_dir = "/tmp/plugins"\n|
+.claude/settings.json|{"env":{"CLAUDE_CODE_OAUTH_TOKEN":"x"}}\n|Claude Code credentials
+.claude/settings.local.json|{"apiKeyHelper":"/opt/k.sh"}\n|Claude Code credentials
+.claude-work/remote-settings.json|{"awsCredentialExport":"/opt/aws-export.sh"}\n|Claude Code credentials
+.claude/settings.json|{"env":{"HTTPS_PROXY":"http://u:p@proxy.invalid:3128"}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"gh":{"command":"x","env":{"GITHUB_TOKEN":"t"}}}}\n|Claude Code credentials
+.claude.json|{"projects":{"/w":{"mcpServers":{"api":{"type":"http","headers":{"Authorization":"Bearer t"}}}}}}\n|Claude Code credentials
+.claude/backups/.claude.json.backup.1|{"mcpServers":{"gh":{"env":{"GITHUB_TOKEN":"t"}}}}\n|Claude Code credentials
+.claude/settings.json|{"env":{"AUDITOR_EXEC_MODE":"isolated","MAX_MCP_OUTPUT_TOKENS":"1","GITHUB_TOKEN":"${GITHUB_TOKEN}"},"apiKeyHelper":""}\n|
+.claude.json|{"oauthAccount":{"emailAddress":"a@b.invalid"},"mcpServers":{"api":{"headers":{"Authorization":"Bearer ${API_TOKEN}","X-Client":"c"}}}}\n|
+.claude/settings.json|{"env":{"DB_PASSWORD":"Xy7$kLm9pQ2w","REDIS_PASSWORD":"q$_8vT2"}}\n|
+.claude/settings.json|{"env":{"ANTHROPIC_CUSTOM_HEADERS":"X-Org-Route: prod\\nx-api-key: x"}}\n|Claude Code credentials
+.claude/settings.json|{"env":{"OTEL_EXPORTER_OTLP_HEADERS":"Authorization=Bearer x"}}\n|Claude Code credentials
+.claude/settings.json|{"env":{"DATABASE_URL":"postgres://u:p@db.invalid/x"}}\n|Claude Code credentials
+.claude/settings.json|{"env":{"RPC_ENDPOINT":"https://rpc.example.invalid/?api-key=x"}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"rpc":{"type":"ws","url":"wss://t@mcp.example.invalid/ws"}}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"rpc":{"type":"http","url":"https://mcp.example.invalid/mcp?api-key=x"}}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"rpc":{"type":"sse","url":"https://u:p@mcp.example.invalid/sse"}}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"rpc":{"command":"npx","args":["-y","x-mcp","--api-key","x"]}}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"rpc":{"command":"x-mcp","args":["--authToken","x"]}}}\n|Claude Code credentials
+.claude.json|{"projects":{"/w":{"mcpServers":{"gh":{"command":"docker","args":["run","-i","-e","GITHUB_PERSONAL_ACCESS_TOKEN=x","img"]}}}}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"remote":{"command":"npx","args":["mcp-remote","https://mcp.example.invalid/sse","--header","Authorization: Bearer x"]}}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"api":{"type":"http","url":"https://mcp.example.invalid/mcp","headersHelper":"/opt/h.sh"}}}\n|Claude Code credentials
+.claude/settings.json|{"env":{"ANTHROPIC_CUSTOM_HEADERS":"X-Org-Route: prod\\nX-Tenant: t","OTEL_EXPORTER_OTLP_HEADERS":"Authorization=Bearer ${OTEL_TOKEN}","GIT_URL":"ssh://git@github.com/o/r.git"}}\n|
+.claude.json|{"mcpServers":{"api":{"type":"http","url":"https://mcp.example.invalid/mcp?api-key=${API_KEY}&page=2"},"fs":{"command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","/w","--header","X-Client: c"]},"gh":{"command":"docker","args":["run","-e","GITHUB_PERSONAL_ACCESS_TOKEN","img"]}}}\n|
+.gitconfig|[credential]\n\thelper = store --file /nonexistent.invalid/$USER\n|git or HTTP credentials
+.claude/settings.json|{"env":{"ANTHROPIC_CUSTOM_HEADERS":"cf-aig-authorization: Bearer x"}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"maps":{"type":"http","url":"https://maps.example.invalid/mcp?key=x"}}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"blob":{"type":"http","url":"https://acct.blob.example.invalid/mcp?sv=2024-11-04&sig=x"}}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"remote":{"command":"npx","args":["mcp-remote","https://mcp.example.invalid/sse","-H","Authorization: Bearer x"]}}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"db":{"command":"npx","args":["-y","@bytebase/dbhub","--dsn","postgresql://readonly:p@db.invalid:5432/x"]}}}\n|Claude Code credentials
+.claude/settings.json|{"env":{"ANTHROPIC_CUSTOM_HEADERS":"X-Org-Route: prod\\nOcp-Apim-Subscription-Key: x"}}\n|Claude Code credentials
+.claude/settings.json|{"env":{"ANTHROPIC_CUSTOM_HEADERS":"Helicone-Auth: Bearer x"}}\n|Claude Code credentials
+.claude/settings.json|{"env":{"OTEL_EXPORTER_OTLP_HEADERS":"x-honeycomb-team=x"}}\n|Claude Code credentials
+.claude/settings.json|{"env":{"OTEL_EXPORTER_OTLP_LOGS_HEADERS":"x-honeycomb-team=x"}}\n|Claude Code credentials
+.claude/settings.json|{"env":{"CLAUDE_CODE_CLIENT_KEY_PASSPHRASE":"x"}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"notion":{"command":"npx","args":["-y","@notionhq/notion-mcp-server"],"env":{"OPENAPI_MCP_HEADERS":"{\\"Authorization\\": \\"Bearer x\\", \\"Notion-Version\\": \\"2025-09-03\\"}"}}}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"apim":{"type":"http","url":"https://contoso.azure-api.net/weather/mcp","headers":{"Ocp-Apim-Subscription-Key":"x"}}}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"apim":{"type":"http","url":"https://contoso.azure-api.net/weather/mcp?subscription-key=x"}}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"w":{"command":"w-mcp","args":["--key","x"]}}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"w":{"command":"w-mcp","args":["--auth=x"]}}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"remote":{"command":"npx","args":["mcp-remote","https://mcp.example.invalid/sse","--header","Ocp-Apim-Subscription-Key: x"]}}}\n|Claude Code credentials
+.claude/settings.json|{"env":{"ANTHROPIC_BEDROCK_BASE_URL":"https://llm-gateway.example.invalid/bedrock","CLAUDE_CODE_SKIP_BEDROCK_AUTH":"1","OTEL_EXPORTER_OTLP_HEADERS":"x-honeycomb-team=${HONEYCOMB_KEY}","OPENAPI_MCP_HEADERS":"{\\"Notion-Version\\": \\"2025-09-03\\"}"}}\n|
+.claude.json|{"mcpServers":{"sol":{"command":"npx","args":["solana-mcp","--public-key","9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin","--no-auth","server.js"]}}}\n|
+.claude/settings.json|{"env":{"ANTHROPIC_BASE_URL":"https://anthropic.helicone.ai/sk-helicone-0a1b2c3-d4e5f6a-b7c8d9e-f0a1b2c"}}\n|Claude Code credentials
+.claude/settings.json|{"env":{"SOLANA_RPC_URL":"https://example.solana-mainnet.quiknode.pro/0123456789abcdef0123456789abcdef01234567/"}}\n|Claude Code credentials
+.claude/settings.json|{"hooks":{"Stop":[{"hooks":[{"type":"http","url":"https://hooks.example.invalid/services/T0/B0/Xa1b2C3d4E5f6G7h8I9j0K1l"}]}]}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"rpc":{"command":"npx","args":["solana-mcp","--rpc-url","https://x.solana-mainnet.quiknode.pro/0123456789abcdef0123456789abcdef01234567/"]}}}\n|Claude Code credentials
+.claude/settings.json|{"env":{"SOLANA_RPC_URL":"https://api.devnet.solana.com","RPC_URL":"https://solana-mainnet.g.alchemy.com/v2/docs-demo"}}\n|
+.claude.json|{"mcpServers":{"sol":{"command":"npx","args":["solana-mcp","--rpc-url","https://api.devnet.solana.com"]},"docs":{"type":"http","url":"https://mcp.example.invalid/v1/claude-3-5-sonnet-20241022/sse"},"repo":{"command":"uvx","args":["--from","git+https://github.com/o/solana-mcp-server-2025","x","file:///w/notes-a1b2c3d4e5f6a7b8c9d0"]}}}\n|
+.claude.json|{"mcpServers":{"o":{"command":"npx","args":["-y","openapi-mcp","--spec","https://raw.githubusercontent.com/o/r/main/openapi.json?token=x"]}}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"g":{"command":"g-mcp","args":["--repo","https://x@github.com/o/r.git","--mirror","https://u:x@gitlab.com/o/r.git"]}}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"s":{"command":"s-mcp","args":["--auth","none","--key","oauth","--api-key=true","--partition-key","pk","--sort-key","createdAt","--range-key=sk"]}}}\n|
+.claude.json|{"mcpServers":{"m":{"command":"m-mcp","args":["--auth","anonymous","--auth=disabled","--key","enabled","--auth","api-key","--auth","API_KEY"]}}}\n|
+.claude.json|{"mcpServers":{"m":{"command":"m-mcp","args":["--auth","sso"]}}}\n|
+.claude.json|{"mcpServers":{"m":{"command":"m-mcp","args":["--auth","iam"]}}}\n|
+.claude.json|{"mcpServers":{"m":{"command":"m-mcp","args":["--auth=SigV4"]}}}\n|
+.claude.json|{"mcpServers":{"m":{"command":"m-mcp","args":["--auth","guest"]}}}\n|
+.claude.json|{"mcpServers":{"m":{"command":"m-mcp","args":["--auth","public"]}}}\n|
+.claude.json|{"mcpServers":{"m":{"command":"m-mcp","args":["--auth","auto"]}}}\n|
+.claude.json|{"mcpServers":{"m":{"command":"m-mcp","args":["--auth","required"]}}}\n|
+.claude.json|{"mcpServers":{"m":{"command":"m-mcp","args":["--auth","Xa1b2C3d4E5f6G7h8I9j"]}}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"w":{"type":"http","url":"https://mcp.example.invalid/workspaces/3f2c1a9e-8b7d-4c6e-9f1a-2b3c4d5e6f7a/sse"}}}\n|
+.claude/settings.json|{"env":{"ANTHROPIC_BASE_URL":"https://gateway.ai.cloudflare.com/v1/0a1b2c3d4e5f60718293a4b5c6d7e8f9/my-gateway/anthropic"}}\n|
+.claude.json|{"mcpServers":{"o":{"command":"npx","args":["openapi-mcp","--spec","https://gitlab.example.invalid/o/r/-/raw/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json"]}}}\n|
+.claude.json|{"mcpServers":{"o":{"command":"m","args":["--config","https://huggingface.co/o/m/resolve/9fceb02d0ae598e95dc970b74767f19372d61af8/config.json"]}}}\n|
+.claude.json|{"mcpServers":{"o":{"command":"m","args":["--spec","https://git.sr.ht/~o/r/blob/9fceb02d0ae598e95dc970b74767f19372d61af8/x.json"]}}}\n|
+.claude.json|{"mcpServers":{"s":{"command":"s","args":["--hash-key","pk"]}}}\n|
+.claude.json|{"mcpServers":{"s":{"command":"s","args":["--primary-key","id"]}}}\n|
+.claude.json|{"mcpServers":{"s":{"command":"s","args":["--routing-key","logs"]}}}\n|
+.claude/settings.json|{"env":{"RPC_ENDPOINT":"https://rpc.example.invalid/3f2c1a9e-8b7d-4c6e-9f1a-2b3c4d5e6f7a/0123456789abcdef0123456789abcdef01234567"}}\n|Claude Code credentials
+.claude/settings.json|{"env":{"ANTHROPIC_BASE_URL":"https://gateway.ai.cloudflare.com/v1/0a1b2c3d4e5f60718293a4b5c6d7e8f9/my-gateway/google-ai-studio?key=x"}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"o":{"command":"npx","args":["openapi-mcp","--spec","https://gitlab.example.invalid/o/r/-/raw/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json?private_token=x"]}}}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"s":{"command":"s","args":["--cache-key","logs"]}}}\n|Claude Code credentials
+.claude/settings.json|{"env":{"CLAUDE_CODE_API_KEY_HELPER_TTL_MS":"900000"}}\n|
+.claude/settings.json|{"env":{"OAUTH_TOKEN_TTL":"3600"}}\n|
+.claude/settings.json|{"env":{"MS_GRAPH_TOKEN":"x"}}\n|Claude Code credentials
+.claude/settings.json|{"env":{"CLAUDE_CODE_API_KEY_HELPER_TTL_MS":"900000"},"apiKeyHelper":"/opt/k.sh"}\n|Claude Code credentials
+.claude.json|{"mcpServers":{"o":{"command":"npx","args":["-y","openapi-mcp","--spec","https://raw.githubusercontent.com/o/r/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json","--extra","https://gitlab.com/o/r/-/raw/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json","--extra","https://github.com/o/r/blob/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json","--extra","https://bitbucket.org/o/r/raw/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json","--extra","https://codeberg.org/o/r/raw/commit/9fceb02d0ae598e95dc970b74767f19372d61af8/openapi.json"]}}}\n|
+.gitconfig|[include]\n\tpath = /nonexistent.invalid/a\000b\n|
+.gitconfig|[credential]\n\thelper = cache --socket /nonexistent.invalid/s\000k\n|
+CONFIGS
+# The permissions page says so of the passwords with a $ in them that the row above shows: the check takes
+# them for a reference to a variable.
+PI="$ROOT/docs/permissions-and-isolation.md"
+grep -qF 'a value with `$NAME` or `${NAME}` anywhere in it' "$PI" && grep -qF 'so also a password with a `$` before a letter, `_` or `{`' "$PI" \
+  && ok "docs/permissions-and-isolation.md says a value with \$NAME or \${NAME} anywhere in it does not count, a password with a \$ before a letter too" \
+  || bad "docs/permissions-and-isolation.md does not say that a value with \$NAME or \${NAME} anywhere in it does not count"
+# A settings or state file larger than 16 MiB, as ~/.claude.json can grow, is read 16 MiB at a time instead of
+# stopping the check: a value that fits in that is decoded whole, a larger object or array entry by entry (an
+# env block and an MCP server's arguments too), a longer string counts for nothing, the last value of a name
+# wins as json.loads keeps it, and a file that is not JSON counts for nothing.
+big() { # big <file> <text> <bytes of x> <text>...: the texts with that many x between each two
+  mkdir -p "$(dirname "$1")"
+  local f=$1; shift
+  { printf '%s' "$1"; shift; while [ $# -gt 1 ]; do head -c "$1" /dev/zero | tr '\0' x; printf '%s' "$2"; shift 2; done; echo; } > "$f"
+}
+M17=$((17 << 20)) M9=$((9 << 20))
+big "$T/fb-1/.claude.json" '{"projects":{"/w":{"history":[{"display":"' "$M17" '"}]}},"mcpServers":{"gh":{"env":{"GITHUB_TOKEN":"t"}}}}'
+code="$(dcreds -- "$T/fb-1")"
+[ "$code" = 1 ] && lines_are "Claude Code credentials (1)" "~/.claude.json" \
+  && ok "a ~/.claude.json of 17 MiB with a token past its first 16 MiB counts, after a string of 17 MiB" || { bad "a ~/.claude.json of 17 MiB with a token: $code"; cat "$T/creds.out" >&2; }
+big "$T/fb-2/.claude.json" '{"projects":{"/w":{"history":[{"display":"' "$M17" '"}]}},"mcpServers":{"gh":{"env":{"GITHUB_TOKEN":"${GITHUB_TOKEN}"}}}}'
+code="$(dcreds -- "$T/fb-2")"
+[ "$code" = 0 ] && [ ! -s "$T/creds.out" ] && ok "a ~/.claude.json of 17 MiB that only refers to a token does not count, and the check finishes" || { bad "a ~/.claude.json of 17 MiB, a reference: $code"; cat "$T/creds.out" >&2; }
+big "$T/fb-3/.claude.json" '{"projects":{"/w":{"history":[{"display":"' "$M17" '"}]}},"mcpServers":{"gh":{"env":{"GITHUB_TOKEN":"t"}}}} x'
+code="$(dcreds -- "$T/fb-3")"
+[ "$code" = 0 ] && [ ! -s "$T/creds.out" ] && ok "a ~/.claude.json of 17 MiB that is not JSON counts for nothing" || { bad "a ~/.claude.json of 17 MiB, not JSON: $code"; cat "$T/creds.out" >&2; }
+big "$T/fb-4/.claude.json" '{"mcpServers":{"gh":{"env":{"GITHUB_TOKEN":"t"}}},"history":"' "$M17" '","mcpServers":{}}'
+code="$(dcreds -- "$T/fb-4")"
+[ "$code" = 0 ] && [ ! -s "$T/creds.out" ] && ok "in a ~/.claude.json of 17 MiB the last mcpServers wins, as json.loads keeps it" || { bad "a ~/.claude.json of 17 MiB, a later mcpServers: $code"; cat "$T/creds.out" >&2; }
+big "$T/fb-5/.claude/settings.json" '{"env":{"PAD":"' "$M17" '","GITHUB_TOKEN":"t"}}'
+code="$(dcreds -- "$T/fb-5")"
+[ "$code" = 1 ] && lines_are "Claude Code credentials (1)" "~/.claude/settings.json" \
+  && ok "an env block of 17 MiB, read entry by entry, counts for the token in it" || { bad "an env block of 17 MiB: $code"; cat "$T/creds.out" >&2; }
+big "$T/fb-6/.claude.json" '{"mcpServers":{"x":{"command":"x","args":["' "$M17" '","--api-key","k"]}}}'
+code="$(dcreds -- "$T/fb-6")"
+[ "$code" = 1 ] && lines_are "Claude Code credentials (1)" "~/.claude.json" \
+  && ok "an MCP server's arguments of 17 MiB, read one by one, count for --api-key and its value" || { bad "arguments of 17 MiB: $code"; cat "$T/creds.out" >&2; }
+big "$T/fb-7/.claude.json" '{"projects":{"/w":{"history":[{"display":"' "$M9" '"},{"display":"' "$M9" '","mcpServers":{"gh":{"env":{"GITHUB_TOKEN":"t"}}}}]}}}'
+code="$(dcreds -- "$T/fb-7")"
+[ "$code" = 1 ] && lines_are "Claude Code credentials (1)" "~/.claude.json" \
+  && ok "a history of 18 MiB, its entries of 9 MiB each decoded whole, counts for a token in one" || { bad "a history of 18 MiB: $code"; cat "$T/creds.out" >&2; }
+# git's store counts by the file its --file names, when that file is readable: the file counts, not the git
+# config, as the code here could read it without git. "~" as a word of its own is the home; the helper may be
+# named by an absolute path, and the option by an abbreviation, as git takes it (--fi).
+FH="$T/fc-store"; mkdir -p "$FH"; printf 'https://u:t@example.invalid\n' > "$FH/.store-x"; printf 'https://u:t@example.invalid\n' > "$T/store-abs"
+printf '[credential]\n\thelper = store --file ~/.store-x\n\thelper = /usr/libexec/git-core/git-credential-store --fi=%s\n' "$T/store-abs" > "$FH/.gitconfig"
+code="$(dcreds -- "$FH")"
+[ "$code" = 1 ] && lines_are "git or HTTP credentials (2)" "~/.store-x" "$T/store-abs" \
+  && ok "git's store counts by the file its --file names when that file is readable" || { bad "git's store with a readable --file: $code"; cat "$T/creds.out" >&2; }
+FH="$T/fc-include"; mkdir -p "$FH/.gitconfig.d"
+printf '[include]\n\tpath = .gitconfig\n\tpath = .gitconfig.d/more\n[includeIf "gitdir:/nowhere/"]\n\tpath = ~/.gitconfig.d/cond\n' > "$FH/.gitconfig"
+printf '[credential]\n\thelper = osxkeychain\n' > "$FH/.gitconfig.d/more"; printf '[core]\n\taskPass = /x\n' > "$FH/.gitconfig.d/cond"
+code="$(dcreds -- "$FH")"
+[ "$code" = 1 ] && lines_are "git or HTTP credentials (2)" "~/.gitconfig.d/more" "~/.gitconfig.d/cond" \
+  && ok "a helper or askpass program in a file a git config includes counts, whatever the includeIf condition, and an include of itself ends" \
+  || { bad "git config includes: $code"; cat "$T/creds.out" >&2; }
 # What does not count: the public parts of ~/.ssh, a file this user cannot read, an empty file, a FIFO
 # (which must not stall the check) and an SSH_AUTH_SOCK that names no socket.
 FH="$T/fh-clean"; mkdir -p "$FH/.ssh" "$FH/.aws" "$FH/.kube"
@@ -1498,14 +2345,26 @@ FH="$T/fh-link"; mkdir -p "$FH"; printf 'secret\n' > "$T/npmrc-elsewhere"; ln -s
 code="$(dcreds -- "$FH")"
 [ "$code" = 1 ] && lines_are "package registry tokens (1)" "~/.npmrc" && ok "a symbolic link to a readable file counts" || { bad "a linked credential: $code"; cat "$T/creds.out" >&2; }
 out="$(cd "$WT" && env -i HOME="$CLEANHOME" PATH="$PATH" GITHUB_TOKEN=x AWS_SECRET_ACCESS_KEY=x HELIUS_API_KEY=x SOLANA_RPC_URL=x \
-  DB_PASSWORD=x MAX_MCP_OUTPUT_TOKENS=1 TOKENIZER_PATH=x SSH_AUTH_SOCK=x "$BASH" "$T/iso-driver.sh" "$ROOT" names)"
-[ "$out" = "AWS_SECRET_ACCESS_KEY, DB_PASSWORD, GITHUB_TOKEN, HELIUS_API_KEY, SOLANA_RPC_URL" ] \
-  && ok "iso_cred_names names the variables that look like credentials, and no others" || bad "iso_cred_names: '$out'"
+  DB_PASSWORD=x MAX_MCP_OUTPUT_TOKENS=1 TOKENIZER_PATH=x SSH_AUTH_SOCK=x npm_config__authToken=x CLAUDE_CODE_API_KEY_HELPER_TTL_MS=900000 \
+  "$BASH" "$T/iso-driver.sh" "$ROOT" names)"
+[ "$out" = "AWS_SECRET_ACCESS_KEY, DB_PASSWORD, GITHUB_TOKEN, HELIUS_API_KEY, SOLANA_RPC_URL, npm_config__authToken" ] \
+  && ok "iso_cred_names names the variables that look like credentials (a name in mixed case too), and no others (not a duration, CLAUDE_CODE_API_KEY_HELPER_TTL_MS)" || bad "iso_cred_names: '$out'"
+# A python3 that fails by itself, before the check's own program runs (exit 1, as on a SyntaxError), makes the
+# check say it could not finish, not that something with no kind is readable.
+mkdir -p "$T/py-fail"; printf '#!/bin/sh\nprintf "Traceback (most recent call last):\\nSyntaxError: invalid syntax\\n" >&2\nexit 1\n' > "$T/py-fail/python3"
+chmod +x "$T/py-fail/python3"
+code="$(dcreds PATH="$T/py-fail:$PATH" -- "$T/fh-link")"
+[ "$code" = 2 ] && grep -qx 'why: python3 stopped with status 1' "$T/creds.out" && ! grep -q '^kinds:' "$T/creds.out" \
+  && ok "a python3 that fails by itself (exit 1) -> the check could not finish (status 2), not readable with no kind" || { bad "a python3 failing by itself: $code"; cat "$T/creds.out" >&2; }
 # Agent sockets count when they accept a connection: SSH_AUTH_SOCK, sockets in ~/.ssh and ~/.gnupg, in
-# GNUPGHOME, ssh-*/agent.* under TMPDIR, and in the runtime directory's gnupg/. A socket nothing listens on
-# does not. Serving one needs a machine that allows it: on CI a machine that does not fails the run, and
-# anywhere else one SKIP line says the checks did not run.
+# GNUPGHOME, ssh-*/agent.* under TMPDIR, and in the runtime directory's gnupg/. So do container daemon sockets
+# and the sockets that answer git's credential requests with a login (the one a git cache helper's --socket
+# names too), and a container daemon a tcp:// DOCKER_HOST or CONTAINER_HOST reaches. A socket nothing listens
+# on does not. Serving one needs a machine that
+# allows it: on CI a machine that does not fails the run, and anywhere else one SKIP line says the checks did
+# not run. Each socket path stays under 104 bytes, the macOS limit, with the runner's TMPDIR.
 SK="$T/k"; mkdir -p "$SK/.ssh" "$SK/.gnupg" "$T/g" "$T/t/ssh-a" "$T/r/gnupg" "$T/q/.ssh"
+mkdir -p "$T/H/.docker/run" "$T/H/.colima/x" "$T/H/.rd" "$T/H/.lima/x/sock" "$T/c/git/credential" "$T/t2/podman" "$T/r2/podman"
 python3 -I -c 'import socket, sys, time
 keep = []
 for path in sys.argv[1:]:
@@ -1513,10 +2372,20 @@ for path in sys.argv[1:]:
     s.bind(path)
     s.listen(5)
     keep.append(s)
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+s.listen(16)
+keep.append(s)
+with open(sys.argv[1] + "-port", "w") as f:
+    f.write("%d" % s.getsockname()[1])
 s = socket.socket(socket.AF_UNIX)
 s.bind(sys.argv[1] + "-stale")
 s.close()
-time.sleep(120)' "$T/a" "$SK/.ssh/agent" "$SK/.gnupg/S.gpg-agent" "$T/g/S.gpg-agent.ssh" "$T/t/ssh-a/agent.1" "$T/r/gnupg/S.gpg-agent" 2>/dev/null &
+time.sleep(120)' "$T/a" "$SK/.ssh/agent" "$SK/.gnupg/S.gpg-agent" "$T/g/S.gpg-agent.ssh" "$T/t/ssh-a/agent.1" "$T/r/gnupg/S.gpg-agent" \
+  "$T/H/.docker/run/docker.sock" "$T/H/.colima/x/docker.sock" "$T/H/.rd/docker.sock" "$T/H/.lima/x/sock/docker.sock" \
+  "$T/H/.lima/x/sock/podman.sock" "$T/d.sock" "$T/p.sock" "$T/v.sock" "$T/rc.sock" \
+  "$T/c/git/credential/socket" "$T/t2/vscode-git-1.sock" "$T/t2/podman/m.sock" "$T/r2/docker.sock" "$T/r2/podman/podman.sock" \
+  "$T/r2/vscode-git-2.sock" 2>/dev/null &
 agent=$!
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -S "$T/a-stale" ] && break; kill -0 "$agent" 2>/dev/null || break; sleep 1; done
 if [ -S "$T/a-stale" ] && python3 -I -c 'import socket, sys; socket.socket(socket.AF_UNIX).connect(sys.argv[1])' "$T/a" 2>/dev/null; then
@@ -1527,10 +2396,35 @@ if [ -S "$T/a-stale" ] && python3 -I -c 'import socket, sys; socket.socket(socke
   code="$(dcreds GNUPGHOME="$T/g" TMPDIR="$T/t" XDG_RUNTIME_DIR="$T/r" -- "$SK")"
   [ "$code" = 1 ] && lines_are "agent sockets (5)" "~/.ssh/agent" "~/.gnupg/S.gpg-agent" "$T/g/S.gpg-agent.ssh" "$T/t/ssh-a/agent.1" "$T/r/gnupg/S.gpg-agent" \
     && ok "agent sockets in ~/.ssh, ~/.gnupg, GNUPGHOME, TMPDIR/ssh-*/ and the runtime directory count" || { bad "agent sockets: $code"; cat "$T/creds.out" >&2; }
+  code="$(dcreds DOCKER_HOST="unix://$T/d.sock" CONTAINER_HOST="unix://$T/p.sock" VSCODE_GIT_IPC_HANDLE="$T/v.sock" \
+    REMOTE_CONTAINERS_IPC="$T/rc.sock" XDG_CACHE_HOME="$T/c" TMPDIR="$T/t2" XDG_RUNTIME_DIR="$T/r2" -- "$T/H")"
+  [ "$code" = 1 ] && lines_are "container daemon sockets (10), git or HTTP credentials (5)" "~/.docker/run/docker.sock" \
+    "~/.colima/x/docker.sock" "~/.rd/docker.sock" "~/.lima/x/sock/docker.sock" "~/.lima/x/sock/podman.sock" "$T/d.sock" "$T/p.sock" \
+    "$T/t2/podman/m.sock" "$T/r2/docker.sock" "$T/r2/podman/podman.sock" "$T/v.sock" "$T/rc.sock" "$T/c/git/credential/socket" \
+    "$T/t2/vscode-git-1.sock" "$T/r2/vscode-git-2.sock" \
+    && ok "container daemon sockets (Docker Desktop, Colima, Rancher Desktop, Lima, DOCKER_HOST, CONTAINER_HOST, rootless, a Podman machine) and the sockets that answer git with a login (VS Code, Dev Containers, git's credential cache) count" \
+    || { bad "container daemon and git credential sockets: $code"; cat "$T/creds.out" >&2; }
+  printf '[credential]\n\thelper = cache --socket %s\n\thelper = cache --timeout=60 --socket=%s\n' "$T/a" "$T/a-stale" > "$T/q/.gitconfig"
+  code="$(dcreds -- "$T/q")"
+  [ "$code" = 1 ] && lines_are "git or HTTP credentials (1)" "$T/a" \
+    && ok "git's cache counts by the socket its --socket names when that socket accepts a connection, not when nothing listens there" \
+    || { bad "git's cache with a --socket: $code"; cat "$T/creds.out" >&2; }
+  port="$(cat "$T/a-port" 2>/dev/null)"
+  code="$(dcreds DOCKER_HOST="tcp://127.0.0.1:$port" CONTAINER_HOST="tcp://localhost:$port" -- "$CLEANHOME")"
+  [ -n "$port" ] && [ "$code" = 1 ] && lines_are "container daemon sockets (2)" "tcp://127.0.0.1:$port" "tcp://localhost:$port" \
+    && ok "a tcp:// DOCKER_HOST or CONTAINER_HOST that accepts a TCP connection counts" || { bad "a tcp:// daemon address: $code, port '$port'"; cat "$T/creds.out" >&2; }
+  code="$(dcreds DOCKER_HOST="tcp://127.0.0.1:$port" DOCKER_TLS_VERIFY=1 -- "$CLEANHOME")"
+  [ "$code" = 0 ] && ok "a tcp:// DOCKER_HOST with DOCKER_TLS_VERIFY set does not count by itself: that daemon takes the TLS client key, which counts" \
+    || { bad "a tcp:// DOCKER_HOST with TLS: $code"; cat "$T/creds.out" >&2; }
+  code="$(dcreds DOCKER_HOST="unix://$T/a-stale" CONTAINER_HOST="tcp://127.0.0.1:9" -- "$CLEANHOME")"
+  [ "$code" = 0 ] && ok "a DOCKER_HOST socket and a tcp:// CONTAINER_HOST nothing listens on do not count" || { bad "a stale DOCKER_HOST: $code"; cat "$T/creds.out" >&2; }
   printf 'isolated\n' > "$WT/audit_1/exec-mode"
   code="$(ngate HOME="$CLEANHOME" SSH_AUTH_SOCK="$T/a" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
   [ "$code" = 3 ] && grep -q '^\[PoC-ATTEMPTED\] blocker: isolated mode, but these are readable here: .*agent sockets (' "$T/out" && new_nothing_ran \
     && ok "isolated mode with an SSH agent that accepts a connection -> exit 3 naming agent sockets" || { bad "isolated, SSH agent: exit $code"; cat "$T/out" >&2; }
+  code="$(ngate HOME="$CLEANHOME" DOCKER_HOST="unix://$T/d.sock" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+  [ "$code" = 3 ] && grep -q '^\[PoC-ATTEMPTED\] blocker: isolated mode, but these are readable here: .*container daemon sockets (' "$T/out" && new_nothing_ran \
+    && ok "isolated mode with a container daemon socket that accepts a connection -> exit 3 naming container daemon sockets" || { bad "isolated, a container daemon socket: exit $code"; cat "$T/out" >&2; }
   printf 'native\n' > "$WT/audit_1/exec-mode"
   ok "the agent socket checks ran, on Unix sockets this machine serves"
 elif [ "${CI:-}" = true ]; then
@@ -1617,6 +2511,10 @@ SHIM_EXTRA=()
   && in_blocks '^== cargo build-sbf --tools-version' "^HOME=$CLEANHOME\$" && in_blocks '^== cargo build-sbf --tools-version' '^HTTPS_PROXY=http://proxy.invalid:3128$' \
   && ! awk -F'\t' '$6 ~ /^build-sbf --install-only/ { f = 1 } END { exit !f }' "$T/calls" \
   && ok "a cargo build-sbf without --install-only and --skip-tools-install -> each arm builds as before, and run.sh says so" || { bad "an older cargo build-sbf: exit $code"; cat "$T/out" >&2; }
+# The README every PoC crate carries says so too, next to the cleaning it describes.
+python3 -I -c 'import re, sys; text = re.sub(r"\s+", " ", open(sys.argv[1], encoding="utf-8").read()); sys.exit(sys.argv[2] not in text)' "$ROOT/templates/poc/README.md" \
+  'A `cargo build-sbf` that lacks any of `--install-only`, `--skip-tools-install` and `--offline` (an older Agave release) cannot split the install from the build: with it, each arm builds with the real `HOME` and the proxy variables, and `run.sh` prints a line saying so' \
+  && ok "the template's README says an older cargo build-sbf builds each arm with the real HOME and the proxy variables" || bad "the template's README does not state the older cargo build-sbf fallback"
 for spec in 'install-only|cargo build-sbf --install-only could not install the platform tools v1.54' 'fetch|cargo fetch could not download the crate'"'"'s dependencies'; do
   SHIM_EXTRA=(SHIM_FAIL="${spec%%|*}")
   code="$(ngate -- --crate audit_1/poc/F-1)"
@@ -1673,6 +2571,7 @@ while IFS='|' read -r how reason; do
     directory) mkdir "$IJ" ;;
     not-json) printf '{"incidents": [\n' > "$IJ" ;;
     no-list) printf '{"incidents": {"id": "INC-1.1"}}\n' > "$IJ" ;;
+    not-object) printf '{"incidents": ["INC-1.1", {"id": "INC-1.1", "root_cause_class": "code_flaw"}]}\n' > "$IJ" ;;
     other) incidents code_flaw INC-1.2 ;;
     twice) incidents code_flaw INC-1.1 INC-1.1 ;;
     bad-class) incidents bogus ;;
@@ -1688,6 +2587,7 @@ missing|is missing
 directory|is not a regular file
 not-json|cannot be read as JSON
 no-list|holds no incidents list
+not-object|holds an incident that is not an object
 other|records no incident INC-1.1
 twice|records INC-1.1 more than once
 bad-class|gives INC-1.1 no root_cause_class from incidents-schema.md
@@ -1708,6 +2608,245 @@ code="$(ngate AUDITOR_EXEC_MODE=native -- --crate incident_1/poc/INC-1.1 "${IVUL
 code="$(ngate AUDITOR_EXEC_MODE=isolated -- --crate incident_1/poc/INC-1.1)"
 [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: the root_cause_class of INC-1.1 is supply_chain_or_ci, so its PoC runs only on the dumped program bytes (OUTPUT-RULES.md Rule 11a): give --vulnerable-so incident_1/bin/<program>.so — nothing was copied or built." "$T/out" \
   && new_nothing_ran && one_blocker && ok "supply_chain_or_ci without --vulnerable-so -> exit 3, nothing copied" || { bad "supply_chain_or_ci, a model run: exit $code"; cat "$T/out" >&2; }
+# A run directory whose INCIDENTS.json records a supply_chain_or_ci incident builds none of its incident
+# crates natively, another incident's included: each builds from the same target tree. Native mode stops
+# before anything is copied, and so it does when another incident's class cannot be read; isolated mode
+# runs.
+mk_crate "$WT/incident_1/poc/INC-1.2"
+for how in supply_chain_or_ci bogus; do
+  printf '{"incidents": [{"id": "INC-1.1", "root_cause_class": "%s"}, {"id": "INC-1.2", "root_cause_class": "code_flaw"}]}\n' "$how" > "$IJ"
+  want_dc="incident_1/INCIDENTS.json records an incident whose root_cause_class is supply_chain_or_ci, so nothing from this working directory is built natively, for an audit run or an incident run (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built."
+  [ "$how" = bogus ] && want_dc="incident_1/INCIDENTS.json gives an incident no root_cause_class from incidents-schema.md: nothing from this working directory is built natively until every incident_*/INCIDENTS.json in it records the root_cause_class of each of its incidents (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built."
+  code="$(ngate AUDITOR_EXEC_MODE=native -- --crate incident_1/poc/INC-1.2 "${IVULN[@]}")"
+  [ "$code" = 3 ] && grep -qxF '>> incident INC-1.2: root_cause_class code_flaw (incident_1/INCIDENTS.json)' "$T/out" \
+    && grep -qxF "[PoC-ATTEMPTED] blocker: $want_dc" "$T/out" && new_nothing_ran && one_blocker \
+    && ok "a code_flaw incident's crate in native mode, beside an incident whose class is $how -> exit 3, nothing copied" \
+    || { bad "a code_flaw incident's crate beside one whose class is $how, native: exit $code"; cat "$T/out" >&2; }
+done
+if [ "$ISOLATED_OK" = 1 ]; then
+  printf '{"incidents": [{"id": "INC-1.1", "root_cause_class": "supply_chain_or_ci"}, {"id": "INC-1.2", "root_cause_class": "code_flaw"}]}\n' > "$IJ"
+  code="$(ngate AUDITOR_EXEC_MODE=isolated -- --crate incident_1/poc/INC-1.2 "${IVULN[@]}")"
+  [ "$code" = 0 ] && grep -q "^$LEG3" "$T/out" && ok "a code_flaw incident's crate beside a supply_chain_or_ci incident runs in isolated mode" || { bad "a code_flaw incident's crate beside a supply_chain_or_ci one, isolated: exit $code"; cat "$T/out" >&2; }
+fi
+# That refusal reads iso_incident_class (scripts/lib/isolation.sh) with no incident id, which must print
+# supply_chain_or_ci when any incident has that class, wherever it sits in the list, and other when none does,
+# and return 3 with the reason when a class cannot be read. A change to that form would undo the refusal
+# without a word, so it is pinned here, on its own and through run.sh: a code_flaw incident's crate is refused
+# natively beside a supply_chain_or_ci incident listed after it, and runs beside every other class.
+cat > "$T/class-driver.sh" <<'SH'
+root=$1; shift
+. "$root/scripts/lib/confine.sh" && . "$root/scripts/lib/isolation.sh" || exit 9
+confine_init class-driver "$root"
+rc=0; iso_incident_class "$@" || rc=$?
+printf '%s %s\n' "$rc" "$ISO_CLASS"
+SH
+class_list() {  # class_list <class>...: an INCIDENTS.json whose incidents INC-1.1, INC-1.2, ... have those classes
+  local class list="" sep="" n=0
+  for class in "$@"; do n=$((n + 1)); list="$list$sep{\"id\": \"INC-1.$n\", \"root_cause_class\": \"$class\"}"; sep=", "; done
+  printf '{"incidents": [%s]}\n' "$list" > "$IJ"
+}
+while IFS='|' read -r pin_classes pin_says; do
+  [ -n "$pin_classes" ] || continue
+  class_list $pin_classes
+  pin_got="$(cd "$WT" && env -i HOME="$CLEANHOME" PATH="$PATH" bash "$T/class-driver.sh" "$ROOT" "$IJ" 2>&1)"
+  [ "$pin_got" = "$pin_says" ] && ok "iso_incident_class with no id, incidents of class $pin_classes -> '$pin_says'" || bad "iso_incident_class with no id, $pin_classes: '$pin_got', want '$pin_says'"
+done <<'CASES'
+code_flaw key_compromise oracle_or_dependency economic_design off_chain unknown|0 other
+code_flaw key_compromise supply_chain_or_ci|0 supply_chain_or_ci
+supply_chain_or_ci code_flaw|0 supply_chain_or_ci
+code_flaw bogus|3 gives an incident no root_cause_class from incidents-schema.md
+CASES
+class_list key_compromise code_flaw supply_chain_or_ci
+code="$(ngate AUDITOR_EXEC_MODE=native -- --crate incident_1/poc/INC-1.2 "${IVULN[@]}")"
+[ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: incident_1/INCIDENTS.json records an incident whose root_cause_class is supply_chain_or_ci, so nothing from this working directory is built natively, for an audit run or an incident run (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built." "$T/out" \
+  && new_nothing_ran && one_blocker && ok "a code_flaw incident's crate in native mode, beside a supply_chain_or_ci incident listed after it -> exit 3, nothing copied" \
+  || { bad "a code_flaw incident's crate before a supply_chain_or_ci one, native: exit $code"; cat "$T/out" >&2; }
+class_list key_compromise code_flaw oracle_or_dependency economic_design off_chain unknown
+code="$(ngate AUDITOR_EXEC_MODE=native -- --crate incident_1/poc/INC-1.2 "${IVULN[@]}")"
+[ "$code" = 0 ] && grep -q "^$LEG3" "$T/out" && ok "a code_flaw incident's crate beside an incident of every other class runs in native mode" \
+  || { bad "a code_flaw incident's crate beside the other classes, native: exit $code"; cat "$T/out" >&2; }
+# Native mode counts an INCIDENTS.json that records no incident (a hunt that ruled everything out) for nothing,
+# by the no-id form's 'records no incident'; any other reason stops the run.
+printf '{"incidents": []}\n' > "$T/ij-empty.json"
+pin_got="$(cd "$WT" && env -i HOME="$CLEANHOME" PATH="$PATH" bash "$T/class-driver.sh" "$ROOT" "$T/ij-empty.json" 2>&1)"
+rm -f "$T/ij-empty.json"
+[ "$pin_got" = "3 records no incident" ] && ok "iso_incident_class with no id, an empty incidents list -> '3 records no incident'" || bad "iso_incident_class with no id, an empty incidents list: '$pin_got', want '3 records no incident'"
+
+# Native mode reads the INCIDENTS.json of every incident_* directory in the working directory, whichever run
+# directory the crate is in: while one records a supply_chain_or_ci incident or cannot be read, nothing from
+# the working directory is built natively, an audit's crate included, since any PoC can build the target's
+# crates. A directory without that file, or whose file records no incident, counts for nothing; one that
+# cannot be searched is read, and a linked one is read through. Isolated mode reads none of them.
+( cd "$WT" && "$ROOT/scripts/rundir.sh" new incident ) >/dev/null || bad "rundir.sh could not make incident_2"
+IJ2="$WT/incident_2/INCIDENTS.json"
+want_sc="records an incident whose root_cause_class is supply_chain_or_ci, so nothing from this working directory is built natively, for an audit run or an incident run (OUTPUT-RULES.md Rule 11a); run it in isolated mode — nothing was copied or built."
+want_un="nothing from this working directory is built natively until every incident_*/INCIDENTS.json in it records the root_cause_class of each of its incidents (OUTPUT-RULES.md Rule 11a, references/detection-response/incidents-schema.md) — nothing was copied or built."
+want_ul="the working directory cannot be listed, so run.sh cannot tell whether an incident_* directory in it records a supply_chain_or_ci incident, and nothing from it is built natively until it can be listed (OUTPUT-RULES.md Rule 11a) — nothing was copied or built."
+printf '{"incidents": [{"id": "INC-2.1", "root_cause_class": "supply_chain_or_ci"}]}\n' > "$IJ2"
+code="$(ngate AUDITOR_EXEC_MODE=native -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+[ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: incident_2/INCIDENTS.json $want_sc" "$T/out" && new_nothing_ran && one_blocker \
+  && ok "an audit's crate in native mode while another run directory's INCIDENTS.json records a supply_chain_or_ci incident -> exit 3, nothing copied" \
+  || { bad "an audit's crate beside incident_2's supply_chain_or_ci incident, native: exit $code"; cat "$T/out" >&2; }
+code="$(ngate AUDITOR_EXEC_MODE=native -- --crate incident_1/poc/INC-1.2 "${IVULN[@]}")"
+[ "$code" = 3 ] && grep -qxF '>> incident INC-1.2: root_cause_class code_flaw (incident_1/INCIDENTS.json)' "$T/out" \
+  && grep -qxF "[PoC-ATTEMPTED] blocker: incident_2/INCIDENTS.json $want_sc" "$T/out" && new_nothing_ran && one_blocker \
+  && ok "an incident's crate in native mode while another incident run directory records a supply_chain_or_ci incident -> exit 3, nothing copied" \
+  || { bad "INC-1.2 beside incident_2's supply_chain_or_ci incident, native: exit $code"; cat "$T/out" >&2; }
+while IFS='|' read -r how reason; do
+  [ -n "$how" ] || continue
+  rm -rf "$IJ2"
+  case "$how" in
+    not-json) printf '{"incidents": [\n' > "$IJ2" ;;
+    bad-class) printf '{"incidents": [{"id": "INC-2.1", "root_cause_class": "code_flaw"}, {"id": "INC-2.2", "root_cause_class": "bogus"}]}\n' > "$IJ2" ;;
+    no-list) printf '{"incidents": {"id": "INC-2.1"}}\n' > "$IJ2" ;;
+    directory) mkdir "$IJ2" ;;
+    link) printf '{"incidents": [{"id": "INC-2.1", "root_cause_class": "code_flaw"}]}\n' > "$T/ij2-target.json"; ln -s "$T/ij2-target.json" "$IJ2" ;;
+  esac
+  code="$(ngate AUDITOR_EXEC_MODE=native -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+  [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: incident_2/INCIDENTS.json $reason: $want_un" "$T/out" \
+    && new_nothing_ran && one_blocker && ok "an audit's crate in native mode while incident_2/INCIDENTS.json $reason -> exit 3, nothing copied" \
+    || { bad "an audit's crate beside incident_2/INCIDENTS.json ($how), native: exit $code"; cat "$T/out" >&2; }
+done <<'CASES'
+not-json|cannot be read as JSON
+bad-class|gives an incident no root_cause_class from incidents-schema.md
+no-list|holds no incidents list
+directory|is not a regular file
+link|is not a regular file
+CASES
+rm -rf "$IJ2" "$T/ij2-target.json"
+if [ "$(id -u)" != 0 ]; then
+  printf '{"incidents": [{"id": "INC-2.1", "root_cause_class": "code_flaw"}]}\n' > "$IJ2"; chmod 000 "$WT/incident_2"
+  code="$(ngate AUDITOR_EXEC_MODE=native -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+  chmod 700 "$WT/incident_2"; rm -f "$IJ2"
+  [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: incident_2/INCIDENTS.json cannot be read: $want_un" "$T/out" \
+    && new_nothing_ran && one_blocker && ok "an audit's crate in native mode beside an incident_* directory that cannot be searched -> exit 3, nothing copied" \
+    || { bad "an audit's crate beside an unsearchable incident_2, native: exit $code"; cat "$T/out" >&2; }
+fi
+for how in absent empty; do
+  rm -f "$IJ2"; [ "$how" = empty ] && printf '{"schema": "auditor-incidents/1", "incidents": [], "ruled_out": []}\n' > "$IJ2"
+  code="$(ngate AUDITOR_EXEC_MODE=native -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+  [ "$code" = 0 ] && grep -q "^$LEG3" "$T/out" && ok "an audit's crate in native mode beside an incident_* directory whose INCIDENTS.json is $how runs" \
+    || { bad "an audit's crate beside incident_2 with an INCIDENTS.json that is $how, native: exit $code"; cat "$T/out" >&2; }
+done
+rm -f "$IJ2"
+# Without python3 nothing tells whether an incident_* directory holds an INCIDENTS.json (incident_2 holds none
+# here), so the blocker says that, and names no file as unreadable. $T/nopy holds the programs run.sh's checks
+# before the native rule use, git among them, and no python3.
+mkdir -p "$T/nopy"
+for tool in bash sh env git find grep sed awk sort tr head tail cat wc mkdir mktemp rm rmdir chmod cp ln mv date \
+  sleep kill dd ls touch dirname basename id uname od cmp mkfifo pwd stat readlink perl getconf; do
+  p="$(command -v "$tool" 2>/dev/null)" && ln -sf "$p" "$T/nopy/$tool"
+done
+code="$(ngate AUDITOR_EXEC_MODE=native PATH="$T/shim:$T/nopy" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+[ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: python3 is not on PATH, so run.sh cannot tell whether incident_1 holds an INCIDENTS.json, or read the root_cause_class one records (OUTPUT-RULES.md Rule 11a) — nothing was copied or built." "$T/out" \
+  && new_nothing_ran && one_blocker && ok "an audit's crate in native mode without python3, beside incident_* directories -> exit 3, the blocker says what cannot be told" \
+  || { bad "an audit's crate in native mode without python3, beside incident_* directories: exit $code"; cat "$T/out" >&2; }
+mkdir -p "$T/elsewhere-run" "$WT/incident_old"
+printf '{"incidents": [{"id": "INC-3.1", "root_cause_class": "supply_chain_or_ci"}]}\n' > "$T/elsewhere-run/INCIDENTS.json"
+cp "$T/elsewhere-run/INCIDENTS.json" "$WT/incident_old/INCIDENTS.json"
+for odd in incident_old incident_3; do
+  [ "$odd" = incident_3 ] && { rm -rf "$WT/incident_old"; ln -s "$T/elsewhere-run" "$WT/incident_3"; }
+  code="$(ngate AUDITOR_EXEC_MODE=native -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+  [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: $odd/INCIDENTS.json $want_sc" "$T/out" && new_nothing_ran && one_blocker \
+    && ok "an audit's crate in native mode beside $odd/ ($([ "$odd" = incident_3 ] && echo a link to a directory outside || echo a directory)) whose INCIDENTS.json records a supply_chain_or_ci incident -> exit 3" \
+    || { bad "an audit's crate beside $odd/, native: exit $code"; cat "$T/out" >&2; }
+done
+rm -f "$WT/incident_3"
+if [ "$ISOLATED_OK" = 1 ]; then
+  printf '{"incidents": [{"id": "INC-2.1", "root_cause_class": "supply_chain_or_ci"}]}\n' > "$IJ2"
+  code="$(ngate AUDITOR_EXEC_MODE=isolated -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+  [ "$code" = 0 ] && grep -q "^$LEG3" "$T/out" && ok "an audit's crate beside another run directory's supply_chain_or_ci incident runs in isolated mode" \
+    || { bad "an audit's crate beside incident_2's supply_chain_or_ci incident, isolated: exit $code"; cat "$T/out" >&2; }
+fi
+# Only python3 tells that an INCIDENTS.json is missing, so a stat that fails for another reason stops the run:
+# a path past PATH_MAX (1024 bytes on macOS, 4096 on Linux) hides no run directory. In a working directory
+# PATH_MAX-22 bytes long incident_1/INCIDENTS.json lies past it (a model run there, since a --vulnerable-so
+# path would too); in one PATH_MAX-200 bytes long, a run moved aside under a long name, whose INCIDENTS.json (a
+# name of 190 bytes) or which itself (230) lies past it. Each file is written through a relative path and
+# records a supply_chain_or_ci incident. The incident_* directories are read in any letter case, since a volume
+# that ignores case finds incident_2 under INCIDENT_2, and a working directory that cannot be listed stops the
+# run too.
+PM="$(getconf PATH_MAX / 2>/dev/null)"
+case "$PM" in ''|*[!0-9]*) PM=1024 ;; esac
+long() { printf '%*s' "$1" '' | tr ' ' "$2"; }
+deep_dir() {  # deep_dir <length>: prints a new directory below $T whose physical path is <length> bytes, holding audit_1 (exec-mode native)
+  # Its components of 200 bytes stop while 2 to 202 bytes are left, so the last one, of 1 to 201 bytes, makes
+  # up the rest whatever the length of $T; it fails when $T leaves less.
+  local cur c
+  mkdir "$T/deep-$1" && cd "$T/deep-$1" || return 1
+  cur="$(pwd -P)"
+  while [ $(( ${#cur} + 202 )) -lt "$1" ]; do
+    c="d$(long 199 0)"; mkdir "$c" && cd "$c" || return 1; cur="$(pwd -P)"
+  done
+  [ $(( $1 - ${#cur} )) -ge 2 ] || return 1
+  c="e$(long $(( $1 - ${#cur} - 2 )) 0)"; mkdir "$c" && cd "$c" || return 1
+  mkdir -p audit_1/poc/F-1 && printf '*\n' > audit_1/.gitignore && printf 'native\n' > audit_1/exec-mode
+  pwd -P
+}
+# 202 lengths in a row give the last component each of the sizes a length of $T can leave it.
+dlen=$(( ${#T} + 220 )) dbad=
+while [ "$dlen" -lt $(( ${#T} + 422 )) ]; do
+  DW="$(deep_dir "$dlen")" && [ "${#DW}" = "$dlen" ] || dbad="$dlen bytes asked, ${#DW} made"
+  rm -rf "$T/deep-$dlen"; [ -z "$dbad" ] || break; dlen=$((dlen + 1))
+done
+[ -z "$dbad" ] && ok "deep_dir makes a working directory of each of 202 lengths in a row" \
+  || bad "deep_dir makes a working directory of each of 202 lengths in a row: $dbad below $T"
+dgate() {  # dgate <dir> [VAR=val ...] -- <argument>...: ngate, from <dir> in place of $WT
+  local dir="$1"; shift
+  rm -rf "$T/calls" "$T/calls.env" "$T/envdump" "$NT"; mkdir -p "$NT"
+  shim_settings SHIM_CALLS="$T/calls" SHIM_ENV_DUMP="$T/envdump" ${SHIM_EXTRA[@]+"${SHIM_EXTRA[@]}"}
+  nrun "$dir" "$@"
+}
+SCJ='{"incidents": [{"id": "INC-1.1", "root_cause_class": "supply_chain_or_ci"}]}'
+if DW="$(deep_dir $((PM - 22)))" && [ "${#DW}" = $((PM - 22)) ]; then
+  ( cd "$DW" && mkdir incident_1 && printf '*\n' > incident_1/.gitignore && printf '%s\n' "$SCJ" > incident_1/INCIDENTS.json )
+  code="$(dgate "$DW" AUDITOR_EXEC_MODE=native -- --crate audit_1/poc/F-1)"
+  [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: incident_1/INCIDENTS.json cannot be read: $want_un" "$T/out" && new_nothing_ran && one_blocker \
+    && ok "an audit's crate in native mode, in a working directory of $((PM - 22)) bytes whose incident_1/INCIDENTS.json lies past PATH_MAX ($PM) -> exit 3, nothing copied" \
+    || { bad "an audit's crate beside an incident_1/INCIDENTS.json past PATH_MAX, native: exit $code"; cat "$T/out" >&2; }
+else
+  bad "no working directory of $((PM - 22)) bytes could be made below $T"
+fi
+if DW="$(deep_dir $((PM - 200)))" && [ "${#DW}" = $((PM - 200)) ]; then
+  mk_crate "$DW/audit_1/poc/F-1"
+  mkdir -p "$DW/audit_1/exec/build-sbf-1" && cp "$T/vuln.so" "$T/fixed.so" "$DW/audit_1/exec/build-sbf-1/"
+  n2="incident_1.$(long 179 x)"; n3="incident_1.$(long 219 y)"
+  ( cd "$DW" && mkdir "$n2" && printf '%s\n' "$SCJ" > "$n2/INCIDENTS.json" )
+  code="$(dgate "$DW" AUDITOR_EXEC_MODE=native -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+  [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: $n2/INCIDENTS.json cannot be read: $want_un" "$T/out" && new_nothing_ran && one_blocker \
+    && ok "an audit's crate in native mode beside a run moved aside under a name of 190 bytes, its INCIDENTS.json past PATH_MAX -> exit 3, nothing copied" \
+    || { bad "an audit's crate beside a long-named run whose INCIDENTS.json lies past PATH_MAX, native: exit $code"; cat "$T/out" >&2; }
+  ( cd "$DW" && mv "$n2" "$n3" )
+  code="$(dgate "$DW" AUDITOR_EXEC_MODE=native -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+  [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: ${n3:0:200}.../INCIDENTS.json cannot be read: $want_un" "$T/out" && new_nothing_ran && one_blocker \
+    && ok "... and under a name of 230 bytes, the run itself past PATH_MAX -> exit 3, the name cut after 200 bytes" \
+    || { bad "an audit's crate beside a run whose own path lies past PATH_MAX, native: exit $code"; cat "$T/out" >&2; }
+  ( cd "$DW" && rm -rf "$n3" )
+  code="$(dgate "$DW" AUDITOR_EXEC_MODE=native -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+  [ "$code" = 0 ] && grep -q "^$LEG3" "$T/out" && ok "... and with that run gone the same crate runs" \
+    || { bad "an audit's crate in a working directory of $((PM - 200)) bytes, native: exit $code"; cat "$T/out" >&2; }
+  for spelled in INCIDENT_2 Incident_2; do
+    ( cd "$DW" && mkdir "$spelled" && printf '%s\n' "$SCJ" > "$spelled/INCIDENTS.json" )
+    code="$(dgate "$DW" AUDITOR_EXEC_MODE=native -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+    ( cd "$DW" && rm -rf "$spelled" )
+    [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: $spelled/INCIDENTS.json $want_sc" "$T/out" && new_nothing_ran && one_blocker \
+      && ok "an audit's crate in native mode beside a run spelled $spelled whose INCIDENTS.json records a supply_chain_or_ci incident -> exit 3, nothing copied" \
+      || { bad "an audit's crate beside $spelled/, native: exit $code"; cat "$T/out" >&2; }
+  done
+  if [ "$(id -u)" != 0 ]; then
+    ( cd "$DW" && mkdir incident_1 && printf '%s\n' "$SCJ" > incident_1/INCIDENTS.json )
+    chmod 300 "$DW"
+    code="$(dgate "$DW" AUDITOR_EXEC_MODE=native -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+    chmod 700 "$DW"
+    [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: $want_ul" "$T/out" && new_nothing_ran && one_blocker \
+      && ok "an audit's crate in native mode in a working directory that cannot be listed -> exit 3, nothing copied" \
+      || { bad "an audit's crate in a working directory that cannot be listed, native: exit $code"; cat "$T/out" >&2; }
+  fi
+else
+  bad "no working directory of $((PM - 200)) bytes could be made below $T"
+fi
+rm -rf "$WT/incident_2" "$T/elsewhere-run" "$T/deep-$((PM - 22))" "$T/deep-$((PM - 200))"
+rm -rf "$WT/incident_1/poc/INC-1.2"; incidents supply_chain_or_ci
 # The crate check on its own, run from run.sh's harness code: under supply_chain_or_ci it refuses what
 # the target's crates could come through, and without the rule it accepts the same crate.
 python3 -I -c 'import sys; src = open(sys.argv[1], encoding="utf-8").read(); sys.stdout.write(src.split("\nHARNESS_PY=\x27", 1)[1].split("\n\x27\n", 1)[0])' "$RUNSH" > "$T/harness.py"
@@ -1723,7 +2862,14 @@ done <<CASES
 SHIM_DEP=vault,$T/target-crates/vault|poc_shim depends on vault at $T/target-crates/vault, outside the crate
 SHIM_DEP=vault,git+https://example.invalid/vault|poc_shim depends on vault from git+https://example.invalid/vault
 SHIM_LIB_SRC=$T/target-crates/lib.rs|poc_shim builds poc_shim from $T/target-crates/lib.rs, outside the crate
+SHIM_DEP=evil,registry+file:///target/index|poc_shim depends on evil from file:///target/index, a registry other than crates.io
+SHIM_DEP=evil,sparse+https://registry.example.invalid/index/|poc_shim depends on evil from https://registry.example.invalid/index/, a registry other than crates.io
 CASES
+for spec in registry+https://github.com/rust-lang/crates.io-index sparse+https://index.crates.io/; do
+  ( cd "$SC" && env -i PATH="$PATH" "SHIM_DEP=borsh,$spec" python3 -I "$T/shim/meta.py" "$SC" ) > "$T/sc-meta.json"
+  out="$(python3 -I "$T/harness.py" crate "$T/sc-meta.json" "$SC" supply-chain)"; rc=$?
+  [ "$rc" = 0 ] && [ "$out" = poc_shim ] && ok "under supply_chain_or_ci the crate check accepts a dependency from crates.io ($spec)" || bad "the crate check, crates.io as $spec: $rc '$out'"
+done
 if [ "$ISOLATED_OK" = 1 ]; then
   code="$(ngate AUDITOR_EXEC_MODE=isolated -- --crate incident_1/poc/INC-1.1 "${IVULN[@]}")"
   [ "$code" = 0 ] && grep -q "^$LEG3" "$T/out" && ok "supply_chain_or_ci in isolated mode on the dumped bytes runs" || { bad "supply_chain_or_ci, isolated: exit $code"; cat "$T/out" >&2; }
@@ -1733,13 +2879,26 @@ if [ "$ISOLATED_OK" = 1 ]; then
   [ "$code" = 3 ] && grep -qF "poc_shim depends on vault at $T/target-crates/vault, outside the crate" "$T/out" && [ -z "$(ls -A "$NT")" ] \
     && awk -F'\t' '$6 !~ /^metadata / { b = 1 } END { exit b }' "$T/calls" \
     && ok "supply_chain_or_ci with a path dependency outside the crate -> exit 3 before anything compiles" || { bad "supply_chain_or_ci, a path dependency: exit $code"; cat "$T/out" >&2; }
+  # The resolved Cargo.lock is read again after the downloads: a path dependency, or one from another
+  # registry than crates.io, that cargo resolved stops the run before anything compiles.
+  for spec in 'vault@0.1.0@path|vault 0.1.0 (path)' 'evil@0.1.0@registry+file:///target/index|evil 0.1.0 (registry+file:///target/index, not crates.io)'; do
+    rm -f "$WT/incident_1/poc/INC-1.1/Cargo.lock"
+    SHIM_EXTRA=("SHIM_LOCK=${spec%%|*}")
+    code="$(ngate AUDITOR_EXEC_MODE=isolated -- --crate incident_1/poc/INC-1.1 "${IVULN[@]}")"
+    SHIM_EXTRA=()
+    [ "$code" = 3 ] && grep -qxF "[PoC-ATTEMPTED] blocker: the resolved Cargo.lock names code from outside the crate (${spec#*|}), and the PoC of an incident whose root_cause_class is supply_chain_or_ci builds none of the target crates (OUTPUT-RULES.md Rule 11a); nothing was built." "$T/out" \
+      && ! awk -F'\t' '$6 ~ /^(test |testbin )/ { f = 1 } END { exit !f }' "$T/calls" \
+      && ok "supply_chain_or_ci with ${spec#*|} in the resolved Cargo.lock -> exit 3 before anything compiles" || { bad "supply_chain_or_ci, ${spec#*|} in the lock: exit $code"; cat "$T/out" >&2; }
+  done
+  # And a build that compiled a file from outside the crate, which only its dep-info names, stops before
+  # its test runs.
   rm -f "$WT/incident_1/poc/INC-1.1/Cargo.lock"
-  SHIM_EXTRA=("SHIM_LOCK=vault@0.1.0@path")
+  SHIM_EXTRA=(SHIM_DEPINFO="$T/di-lib.d")
   code="$(ngate AUDITOR_EXEC_MODE=isolated -- --crate incident_1/poc/INC-1.1 "${IVULN[@]}")"
   SHIM_EXTRA=()
-  [ "$code" = 3 ] && grep -q '^\[PoC-ATTEMPTED\] blocker: the build compiled code from outside the crate (vault 0.1.0 (path))' "$T/out" \
+  [ "$code" = 3 ] && grep -qF "[PoC-ATTEMPTED] blocker: the build compiled code from outside the crate ($DI/state.rs (compiled in), $DI/payload.inc (compiled in))" "$T/out" \
     && ! awk -F'\t' '$6 ~ /^testbin / { f = 1 } END { exit !f }' "$T/calls" \
-    && ok "supply_chain_or_ci with code from outside the crate in the build -> exit 3, the test never runs" || { bad "supply_chain_or_ci, a build with outside code: exit $code"; cat "$T/out" >&2; }
+    && ok "supply_chain_or_ci with a #[path] module and an include! from outside the crate in the build -> exit 3, the test never runs" || { bad "supply_chain_or_ci, a build with outside code: exit $code"; cat "$T/out" >&2; }
 fi
 rm -rf "$IJ" "$WT/incident_1/poc/INC-1.1"
 
@@ -1779,7 +2938,23 @@ case_file "$HERE/fixtures/poc-run/cases.txt" "$RUNSH" "$WT"
 rm -f "$T/shim/settings.env"
 
 # scripts/lib/isolation.sh on its own: the homes it reads, iso_run's refusal of a program path holding
-# "=", the throwaway HOME (a keypair of mode 0600) and keep-home, and the scratch directory rules.
+# "=", the throwaway HOME (a keypair of mode 0600) and keep-home, and the scratch directory rules. A refusal
+# shows a path as confine_shown does, cut after 200 bytes with ... after it, so that a long TMPDIR passes too:
+# shown200 <path> prints that; shown_as <shown> <prefix> <n>: <shown> is so a path of <prefix> and <n> bytes more.
+shown200() {
+  local LC_ALL=C
+  if [ "${#1}" -gt 200 ]; then printf '%s...' "${1:0:200}"; else printf '%s' "$1"; fi
+}
+shown_as() {
+  local LC_ALL=C whole=$((${#2} + $3))
+  if [ "$whole" -le 200 ]; then
+    [ "${#1}" = "$whole" ] && [ "${1:0:${#2}}" = "$2" ]
+  elif [ "${#2}" -ge 200 ]; then
+    [ "$1" = "${2:0:200}..." ]
+  else
+    [ "${#1}" = 203 ] && [ "${1:0:${#2}}" = "$2" ] && [ "${1:200}" = "..." ]
+  fi
+}
 for sh in "${SHELLS[@]}"; do
   out="$(cd "$WT" && env -i HOME="$T/fake-home" PATH="$PATH" "$sh" "$T/iso-driver.sh" "$ROOT" homes)"
   account="$(python3 -I -c 'import os, pwd; print(pwd.getpwuid(os.getuid()).pw_dir)')"
@@ -1811,14 +2986,70 @@ for sh in "${SHELLS[@]}"; do
   [ "$out" = "home $CLEANHOME" ] && [ ! -e "$T/iso-env/home" ] && ok "iso_env keep-home ($sh): the real HOME, no throwaway one made" || bad "iso_env keep-home ($sh): '$out'"
   mkdir -p "$WT/tmp-inside"
   out="$(cd "$WT" && env -i HOME="$CLEANHOME" PATH="$PATH" TMPDIR="$WT/tmp-inside" "$sh" "$T/iso-driver.sh" "$ROOT" scratch 2>&1)"; rc=$?
-  [ "$rc" = 64 ] && case "$out" in "iso-driver: refused: the scratch directory $WT/tmp-inside/auditor-driver."*" lies inside the working directory; point TMPDIR outside it") true ;; *) false ;; esac \
+  shown=${out#"iso-driver: refused: the scratch directory "}; shown=${shown%" lies inside the working directory; point TMPDIR outside it"}
+  [ "$rc" = 64 ] && [ "$shown" != "$out" ] && shown_as "$shown" "$WT/tmp-inside/auditor-driver." 6 \
     && [ -z "$(ls -A "$WT/tmp-inside")" ] && ok "iso_scratch ($sh): a TMPDIR inside the working directory -> refused, and the scratch directory removed" || bad "iso_scratch ($sh) inside WT: $rc '$out'"
   rmdir "$WT/tmp-inside"
+  # Where the volume folds case, a TMPDIR spelled in other letters than the names on disk is still inside
+  # the working directory: the check compares directories, not spellings.
+  up="$(printf '%s' "$WT" | tr '[:lower:]' '[:upper:]')"
+  if [ "$up" != "$WT" ] && [ "$up" -ef "$WT" ]; then
+    mkdir -p "$WT/tmp-inside"
+    out="$(cd "$up" && env -i HOME="$CLEANHOME" PATH="$PATH" TMPDIR="$up/tmp-inside" "$sh" "$T/iso-driver.sh" "$ROOT" scratch 2>&1)"; rc=$?
+    [ "$rc" = 64 ] && case "$out" in "iso-driver: refused: the scratch directory "*" lies inside the working directory; point TMPDIR outside it") true ;; *) false ;; esac \
+      && [ -z "$(ls -A "$WT/tmp-inside")" ] && ok "iso_scratch ($sh): a TMPDIR inside the working directory, spelled in other letters -> refused" || bad "iso_scratch ($sh) inside WT, other letters: $rc '$out'"
+    rmdir "$WT/tmp-inside"
+  fi
   mkdir -p "$T/cfgparent/.cargo" "$T/cfgparent/tmp"; printf '[build]\n' > "$T/cfgparent/.cargo/config.toml"
   out="$(cd "$WT" && env -i HOME="$CLEANHOME" PATH="$PATH" TMPDIR="$T/cfgparent/tmp" "$sh" "$T/iso-driver.sh" "$ROOT" scratch 2>&1)"; rc=$?
-  [ "$rc" = 64 ] && case "$out" in *"would inherit $T/cfgparent/.cargo/config.toml; point TMPDIR outside any repository") true ;; *) false ;; esac \
+  [ "$rc" = 64 ] && case "$out" in *"would inherit $(shown200 "$T/cfgparent/.cargo/config.toml"); point TMPDIR outside any repository") true ;; *) false ;; esac \
     && [ -z "$(ls -A "$T/cfgparent/tmp")" ] && ok "iso_scratch ($sh): a scratch directory under a .cargo/config.toml -> refused" || bad "iso_scratch ($sh) under a cargo config: $rc '$out'"
 done
+# The Python programs isolation.sh runs hold only ASCII, an escape standing for any other character, so that
+# python3 reads the same program whatever the locale decodes its arguments with.
+progs="$(. "$ROOT/scripts/lib/isolation.sh" && printf '%s' "$ISO_PY$ISO_WATCH_PY$ISO_INCIDENT_PY")"
+[ -n "$progs" ] && printf '%s' "$progs" | python3 -I -c 'import sys; sys.exit(any(b > 127 for b in sys.stdin.buffer.read()))' \
+  && ok "the Python programs isolation.sh runs hold only ASCII, so python3 reads them the same in any locale" \
+  || bad "a Python program isolation.sh runs holds a byte outside ASCII"
+
+# isolation.sh starts each python3 from /: a .python-version in the working directory, which a pyenv shim
+# reads to pick the interpreter, picks none, and a relative path in a variable the check reads (KUBECONFIG
+# here) is taken from /, never from the tree under audit. A python3 stand-in first on PATH records the
+# directory of each run that finds a .python-version there; the watchdog's run is checked by its report, and
+# the directory it runs its program in, which in use is the copy of the tree, holds a .python-version too.
+PV="$T/pv-wt"; PVBIN="$T/pv-bin"; mkdir -p "$PV" "$PVBIN" "$T/pv-home"
+printf 'from-the-tree\n' > "$PV/.python-version"; printf 'apiVersion: v1\n' > "$PV/kube.cfg"
+printf '#!/bin/sh\n[ -e .python-version ] && pwd >> "%s"\nexec "%s" "$@"\n' "$T/pv-picked" "$(command -v python3)" > "$PVBIN/python3"
+chmod +x "$PVBIN/python3"
+for sh in "${SHELLS[@]}"; do
+  rm -f "$T/pv-picked"; rm -rf "$T/pv-env" "$T/pv-watch"; mkdir -p "$T/pv-env" "$T/pv-watch"
+  printf 'from-the-tree\n' > "$T/pv-watch/.python-version"
+  for what in homes names creds "env $T/pv-env" "watch $T/pv-watch"; do
+    (cd "$PV" && env -i HOME="$CLEANHOME" PATH="$PVBIN:$PATH" "$sh" "$T/iso-driver.sh" "$ROOT" $what) >/dev/null 2>&1
+  done
+  [ ! -e "$T/pv-picked" ] && [ -f "$T/pv-env/home/.config/solana/id.json" ] && [ "$(cat "$T/pv-watch/report" 2>/dev/null)" = "exit 0" ] \
+    && ok "isolation.sh ($sh): homes, names, creds, the keypair and the watchdog run python3 from /, so the working directory's .python-version picks no interpreter" \
+    || bad "isolation.sh ($sh): python3 ran where the working directory's .python-version picks it: $(cat "$T/pv-picked" 2>/dev/null)"
+  out="$(cd "$PV" && env -i HOME="$CLEANHOME" KUBECONFIG=kube.cfg PATH="$PATH" "$sh" "$T/iso-driver.sh" "$ROOT" creds "$T/pv-home")"; rc=$?
+  [ "$rc" = 0 ] && [ -z "$out" ] && ok "iso_credentials ($sh): a relative KUBECONFIG is taken from /, so the tree's kube.cfg does not count" \
+    || bad "iso_credentials ($sh), a relative KUBECONFIG: $rc '$out'"
+done
+# run.sh --crate for an incident reads INCIDENTS.json with the same python3 from / (iso_incident_class), and
+# every other python3 it starts before it leaves the working directory starts from / too.
+mk_crate "$WT/incident_1/poc/INC-1.1"; incidents code_flaw; printf 'from-the-tree\n' > "$WT/.python-version"; rm -f "$T/pv-picked"
+code="$(ngate AUDITOR_EXEC_MODE=native PATH="$PVBIN:$SP" -- --crate incident_1/poc/INC-1.1 "${IVULN[@]}")"
+[ "$code" = 0 ] && grep -qF '>> incident INC-1.1: root_cause_class code_flaw (incident_1/INCIDENTS.json)' "$T/out" && [ ! -e "$T/pv-picked" ] \
+  && ok "run.sh --crate for an incident: the incident check and the self-check run python3 from /, so the working directory's .python-version picks no interpreter" \
+  || { bad "run.sh --crate for an incident with a .python-version: exit $code, python3 ran in: $(cat "$T/pv-picked" 2>/dev/null)"; cat "$T/out" >&2; }
+rm -rf "$IJ" "$WT/incident_1/poc/INC-1.1" "$WT/.python-version"
+# And every python3 run.sh --crate starts for its own reading, the check of the harness copy included,
+# starts from / (the python3 stand-in from the shim runs above records where).
+rm -f "$T/pyh.log"
+code="$(ngate PATH="$PYH:$SP" -- --crate audit_1/poc/F-1 "${NVULN[@]}")"
+calls="$(awk '{ print $NF }' "$T/pyh.log" 2>/dev/null | LC_ALL=C sort -u | tr '\n' ' ')"
+[ "$code" = 0 ] && [ "$calls" = "checkbuild crate hash nonregistry settle stucopy targetdir " ] && ! grep -qvE '^/ [a-z]+$' "$T/pyh.log" \
+  && ok "run.sh --crate: its own python3 calls ($calls) all start from /" \
+  || { bad "run.sh --crate, its python3 calls: exit $code, started in: $(sed 's/ [a-z]*$//' "$T/pyh.log" 2>/dev/null | LC_ALL=C sort -u | tr '\n' ' ')"; cat "$T/out" >&2; }
 
 # scripts/runner/probe.sh: fixed version queries from a scratch directory, in the cleaned environment
 # with the real HOME, the proxy at a closed port, standard input closed; absent and unusable tools; the
@@ -1920,11 +3151,13 @@ code="$(probe_run -- --only python3,isolation)"
 ln -sf "$(python3 -I -c 'import sys; print(sys.executable)')" "$PS/python3"
 mkdir -p "$WT/tmp-inside"
 code="$(probe_run TMPDIR="$WT/tmp-inside" --)"
-[ "$code" = 64 ] && grep -q "^probe: refused: the scratch directory $WT/tmp-inside/auditor-probe\..* lies inside the working directory; point TMPDIR outside it\$" "$T/err" \
+err="$(cat "$T/err")"; shown=${err#"probe: refused: the scratch directory "}; shown=${shown%" lies inside the working directory; point TMPDIR outside it"}
+[ "$code" = 64 ] && [ "$shown" != "$err" ] && shown_as "$shown" "$WT/tmp-inside/auditor-probe." 6 \
   && [ ! -s "$T/out" ] && [ -z "$(ls -A "$WT/tmp-inside")" ] && ok "probe.sh with TMPDIR inside the working directory -> 64, nothing left" || { bad "probe.sh TMPDIR inside WT: exit $code"; cat "$T/err" >&2; }
 rmdir "$WT/tmp-inside"
 code="$(probe_run TMPDIR="$T/cfgparent/tmp" --)"
-[ "$code" = 64 ] && grep -q "would inherit $T/cfgparent/.cargo/config.toml" "$T/err" && [ -z "$(ls -A "$T/cfgparent/tmp")" ] \
+[ "$code" = 64 ] && grep -qF "would inherit $(shown200 "$T/cfgparent/.cargo/config.toml"); point TMPDIR outside any repository" "$T/err" \
+  && [ -z "$(ls -A "$T/cfgparent/tmp")" ] \
   && ok "probe.sh with a scratch directory under a .cargo/config.toml -> 64" || { bad "probe.sh under a cargo config: exit $code"; cat "$T/err" >&2; }
 mkdir -p "$T/probe-copy"; cp "$PROBE" "$T/probe-copy/probe.sh"
 code="$( (cd "$WT" && env -i HOME="$PH" PATH="$PB:$PS" TMPDIR="$PT" /bin/bash "$T/probe-copy/probe.sh") >"$T/out" 2>"$T/err"; echo $?)"
@@ -2937,6 +4170,104 @@ path = \"$T/e-oot-outside/lib.rs\"
   else
     bad "real cargo, out-of-tree sources: exit $code"; grep 'non-registry' "$T/out" >&2
   fi
+  # The template's shape, a cdylib and lib, pulling in outside files of every kind: an absolute #[path]
+  # module and an include! of a non-.rs file in the library, and in the test an include_str! of a non-.rs
+  # file and a relative #[path] that climbs out of the scratch copy. rustc's dep-info for the library and
+  # the test lists each one, and the non-registry line names it.
+  mk_e2e "$T/e-inc"; O2="$T/e-inc-outside"; ET="$T/e-inc-tmp"; mkdir -p "$O2" "$ET/rel-outside"
+  printf 'pub fn state() -> u8 { 7 }\n' > "$O2/state.rs"; printf 'pub fn from_payload() -> u8 { 41 }\n' > "$O2/payload.inc"
+  printf 'outside bytes\n' > "$O2/key.txt"; printf 'pub fn helper() -> u8 { 5 }\n' > "$ET/rel-outside/helper.rs"
+  subst "$T/e-inc/Cargo.toml" '[workspace]' '[lib]
+crate-type = ["cdylib", "lib"]
+
+[workspace]'
+  printf '#[path = "%s/state.rs"]\npub mod outside_state;\ninclude!("%s/payload.inc");\n' "$O2" "$O2" >> "$T/e-inc/src/lib.rs"
+  subst "$T/e-inc/tests/exploit.rs" '#![cfg(feature = "vulnerable")]' "#![cfg(feature = \"vulnerable\")]
+#[path = \"../../rel-outside/helper.rs\"]
+mod rel_helper;
+const OUTSIDE_BYTES: &str = include_str!(\"$O2/key.txt\");"
+  subst "$T/e-inc/tests/exploit.rs" '    assert_exploit_effect!(' '    let _ = (rel_helper::helper(), OUTSIDE_BYTES.len(), poc_e2e::outside_state::state(), poc_e2e::from_payload());
+    assert_exploit_effect!('
+  code="$(e2e "$T/e-inc" VULNERABLE_SO="$SB-takeover.so" TMPDIR="$ET")"
+  line="$(grep -m 1 '^   non-registry code: ' "$T/out")"; named=1
+  for f in "$O2/state.rs" "$O2/payload.inc" "$O2/key.txt" "$ET/rel-outside/helper.rs"; do
+    case "$line" in *"$f (compiled in)"*) ;; *) named=0 ;; esac
+  done
+  [ "$code" = 0 ] && [ "$named" = 1 ] && grep -q "^$LEG3" "$T/out" \
+    && ok "real cargo: an outside #[path] module, include! and include_str! of any file, and a relative path out of the scratch copy are named on the non-registry line" \
+    || { bad "real cargo, outside includes: exit $code, '$line'"; cat "$T/out" >&2; }
+  # A crate that joins an outside workspace (a workspace key under [package]) whose root lists the scratch
+  # copies by a glob, and patches a dependency there: cargo metadata names that root, and the run stops
+  # before anything compiles, with nothing built into that workspace or locked there.
+  WSR="$T/e-ws-root"; WST="$T/e-ws-tmp"; mkdir -p "$WSR/vendor/xdep/src" "$WST"
+  printf '[workspace]\nresolver = "2"\nmembers = ["%s/auditor-poc.*"]\n\n[patch.crates-io]\nxdep = { path = "vendor/xdep" }\n' "$WST" > "$WSR/Cargo.toml"
+  printf '[package]\nname = "xdep"\nversion = "0.1.5"\nedition = "2021"\n' > "$WSR/vendor/xdep/Cargo.toml"; printf 'pub fn x() {}\n' > "$WSR/vendor/xdep/src/lib.rs"
+  mk_e2e "$T/e-ws"
+  subst "$T/e-ws/Cargo.toml" '[workspace]
+' ''
+  subst "$T/e-ws/Cargo.toml" 'publish = false
+' "publish = false
+workspace = \"$WSR\"
+"
+  code="$(run "$T/e-ws" "$PATH" "$NATIVE" CARGO_NET_OFFLINE=true TMPDIR="$WST" VULNERABLE_SO="$SB-takeover.so")"
+  [ "$code" = 3 ] && grep -qF "the crate belongs to the workspace at $WSR, not to its own" "$T/out" && one_blocker \
+    && [ ! -e "$WSR/target" ] && [ ! -e "$WSR/Cargo.lock" ] && ! grep -q 'Compiling' "$T/out" \
+    && ok "real cargo: a crate that joins an outside workspace -> exit 3 before anything compiles, nothing built or locked there" \
+    || { bad "real cargo, an outside workspace: exit $code"; cat "$T/out" >&2; }
+  # On a nightly cargo a manifest's cargo-features can choose a linker or rustflags: the crate check refuses
+  # the key before anything compiles. (A stable cargo refuses the manifest itself.)
+  if [ "$(rustup toolchain list 2>/dev/null | grep -c '^nightly')" -gt 0 ]; then
+    mk_e2e "$T/e-cf"
+    printf 'cargo-features = ["profile-rustflags"]\n\n%s\n\n[profile.dev]\nrustflags = ["--cfg", "poc_canary"]\n' "$(cat "$T/e-cf/Cargo.toml")" > "$T/e-cf/Cargo.toml.new" \
+      && mv "$T/e-cf/Cargo.toml.new" "$T/e-cf/Cargo.toml"
+    code="$(e2e "$T/e-cf" VULNERABLE_SO="$SB-takeover.so" RUSTUP_TOOLCHAIN=nightly)"
+    [ "$code" = 3 ] && grep -qF 'Cargo.toml:1 holds a cargo-features key' "$T/out" && one_blocker && ! grep -q 'Compiling' "$T/out" \
+      && ok "real cargo, nightly: a manifest with cargo-features -> exit 3 before anything compiles" || { bad "real cargo, nightly cargo-features: exit $code"; cat "$T/out" >&2; }
+  else
+    echo "note: no nightly toolchain; the real-cargo cargo-features check is skipped (the shim checks above still ran)"
+  fi
+  # A bin target with an outside #[path] module, a dylib member whose module is outside, and inline assembly
+  # whose .incbin reads an outside file: built, each compiles the outside file in while the dep-info run.sh
+  # reads names none of them. cargo metadata names the first two, the crate's own source the third, and
+  # each run stops before anything compiles.
+  O3="$T/e-own-outside"; mkdir -p "$O3"; printf 'pub fn run() -> u8 { 9 }\n' > "$O3/evil.rs"; printf 'outside bytes\n' > "$O3/blob.bin"
+  mk_e2e "$T/e-bin"; printf '#[path = "%s/evil.rs"]\nmod evil;\nfn main() { std::process::exit(evil::run() as i32); }\n' "$O3" > "$T/e-bin/src/main.rs"
+  mk_e2e "$T/e-dylib"; mkdir -p "$T/e-dylib/helper/src"
+  printf '[package]\nname = "helper"\nversion = "0.1.0"\nedition = "2021"\npublish = false\n\n[lib]\ncrate-type = ["dylib"]\n' > "$T/e-dylib/helper/Cargo.toml"
+  printf '#[path = "%s/evil.rs"]\npub mod evil;\n' "$O3" > "$T/e-dylib/helper/src/lib.rs"
+  subst "$T/e-dylib/Cargo.toml" 'shared-test-utils = { path = "shared-test-utils" }' 'shared-test-utils = { path = "shared-test-utils" }
+helper = { path = "helper" }'
+  mk_e2e "$T/e-asm"; printf 'core::arch::global_asm!(".globl poc_blob\\npoc_blob:\\n.incbin \\"%s/blob.bin\\"");\n' "$O3" >> "$T/e-asm/src/lib.rs"
+  for c in 'e-bin|the bin target poc_e2e (src/main.rs) of poc_e2e' 'e-dylib|the dylib target helper (helper/src/lib.rs) of helper' \
+           'e-asm|names global_asm, inline assembly'; do
+    code="$(e2e "$T/${c%%|*}" VULNERABLE_SO="$SB-takeover.so")"
+    [ "$code" = 3 ] && grep -qF "${c#*|}" "$T/out" && one_blocker && ! grep -q 'Compiling' "$T/out" \
+      && ok "real cargo: ${c#*|} -> exit 3 before anything compiles" || { bad "real cargo, ${c%%|*}: exit $code"; cat "$T/out" >&2; }
+  done
+  # The same inline assembly in a file of the crate named other than .rs, which the library include!s: it
+  # compiles, and rustc's dep-info lists the file but not what its .incbin reads. run.sh reads the file after
+  # the build and stops before the test runs.
+  mk_e2e "$T/e-inctxt"
+  printf 'core::arch::global_asm!(".globl poc_blob\\npoc_blob:\\n.incbin \\"%s/blob.bin\\"");\n' "$O3" > "$T/e-inctxt/src/payload.txt"
+  printf 'include!("payload.txt");\n' >> "$T/e-inctxt/src/lib.rs"
+  code="$(e2e "$T/e-inctxt" VULNERABLE_SO="$SB-takeover.so")"
+  [ "$code" = 3 ] && grep -qF 'blocker: src/payload.txt:1 names global_asm, inline assembly' "$T/out" && one_blocker && grep -q 'Compiling poc_e2e' "$T/out" \
+    && ! grep -q "^$LEG3" "$T/out" && ! grep -q '^>> running exploit' "$T/out" \
+    && ok "real cargo: inline assembly in an include!d src/payload.txt -> exit 3 after the build, before the test" \
+    || { bad "real cargo, inline assembly in an include!d .txt: exit $code"; cat "$T/out" >&2; }
+  # The vulnerable arm's test runs the PoC's code with the scratch copy as CARGO_MANIFEST_DIR. Both arms are
+  # built before it runs, so what it writes there reaches no build: here it turns the crate's src/lib.rs into
+  # a compile_error!, which a build of the fixed arm after it would stop on.
+  mk_e2e "$T/e-rewrite"
+  subst "$T/e-rewrite/tests/exploit.rs" '    assert_exploit_effect!(' '    std::fs::write(std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("src/lib.rs"), "compile_error!(\"rewritten by the vulnerable arm test\");\n").unwrap();
+    assert_exploit_effect!('
+  code="$(e2e_model "$T/e-rewrite" KEEP_POC_BUILD=1)"
+  bd="$(build_dir)"
+  [ "$code" = 0 ] && grep -q "^$MODEL" "$T/out" && [ -n "$bd" ] && grep -q 'rewritten by the vulnerable arm test' "$bd/src/lib.rs" \
+    && ! grep -q 'failed to build for the fixed arm' "$T/out" \
+    && ok "real cargo, model run: a vulnerable-arm test that rewrites the crate's source in the scratch copy changes nothing the fixed arm builds" \
+    || { bad "real cargo, a test that rewrites the scratch copy: exit $code"; cat "$T/out" >&2; }
+  [ -n "$bd" ] && rm -rf "$bd"
 
   # The installation's copy with real cargo. The crate sits in a run directory, its prebuilt bytes under
   # exec/, and it depends on a path crate outside it whose build script records the environment it is
@@ -2953,12 +4284,18 @@ path = \"$T/e-oot-outside/lib.rs\"
   printf 'fn main() {\n    let mut text = String::new();\n    for (k, v) in std::env::vars() {\n        text.push_str(&format!("{k}={v}\\n"));\n    }\n    std::fs::write("%s", text).expect("record the environment");\n}\n' "$T/envdep.env" > "$T/envdep/build.rs"
   printf 'envdep = { path = "%s" }\n' "$T/envdep" >> "$RW/audit_1/poc/F-1/Cargo.toml"
   REAL=(HOME="$CLEANHOME" "${TOOL_HOMES[@]}" PATH="$PATH" TMPDIR="$NT" CARGO_NET_OFFLINE=true)
-  rr() {  # rr [VAR=val ...] -- <argument>...: the installation's run.sh with real cargo, from $RW -> exit code
+  # --crate builds only a harness copy whose Cargo.toml is the installation's but for its dependency version
+  # requirements, and this crate's names the stand-in crates by path: these runs use a copy of the
+  # installation (its scripts/lib/ and templates/) whose harness Cargo.toml is the crate's.
+  IR="$T/inst-real"; mkdir -p "$IR/scripts" && cp -R "$ROOT/scripts/lib" "$IR/scripts/" && cp -R "$ROOT/templates" "$IR/" \
+    && cp "$RW/audit_1/poc/F-1/shared-test-utils/Cargo.toml" "$IR/templates/poc/shared-test-utils/Cargo.toml" \
+    || bad "cannot copy the installation for the real-cargo runs"
+  rr() {  # rr [VAR=val ...] -- <argument>...: that copy's run.sh with real cargo, from $RW -> exit code
     local -a vars=()
     while [ $# -gt 0 ] && [ "$1" != -- ]; do vars+=("$1"); shift; done
     [ $# -gt 0 ] && shift
     rm -rf "$NT"; mkdir -p "$NT"
-    ( cd "$RW" && env -i "${REAL[@]}" ${vars[@]+"${vars[@]}"} "$RUNSH" "$@" ) >"$T/out" 2>&1 </dev/null
+    ( cd "$RW" && env -i "${REAL[@]}" ${vars[@]+"${vars[@]}"} "$IR/templates/poc/run.sh" "$@" ) >"$T/out" 2>&1 </dev/null
     echo $?
   }
   RSO=(--vulnerable-so audit_1/exec/sb/sb-takeover.so --fixed-so audit_1/exec/sb/sb-reject-MissingRequiredSignature.so)
@@ -3030,49 +4367,27 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# The patch verification recipe (templates/patch/VERIFICATION.md §1), run from inside
-# a client checkout whose post-checkout hook leaves a marker: it makes its worktree in
-# a Rule 11c copy under its own scratch directory and runs no git in the checkout, so
-# the hook stays silent. The control shows the hook runs for a worktree made there.
+# The patch verification recipe (templates/patch/VERIFICATION.md §1) builds through
+# the bundled target.sh, which makes its own scratch clone outside the target tree:
+# the block is the unpatched build and the patched one, exactly two target.sh
+# build-sbf lines, each a plain call with the quoted installation path first and no
+# cd or $. test-runners.sh runs target.sh build-sbf (the scratch clone, --rev,
+# --patch, no hook of the source repository), and test-recipes.sh runs both lines as
+# written.
 # ---------------------------------------------------------------------------
-if command -v git >/dev/null 2>&1; then
-  # git with no global or system config, so no hooksPath or signing setting of this
-  # machine changes what runs.
-  C="$T/client"; HK="$T/hook.marker"; GE=( env -i HOME="$T/home" PATH="$PATH" GIT_CONFIG_NOSYSTEM=1 )
-  G=( "${GE[@]}" git -c user.email=t@example.invalid -c user.name=t )
-  mkdir -p "$C" "$T/tmp-recipe" "$T/home"
-  "${G[@]}" -C "$C" init -q && printf 'v1\n' > "$C/lib.rs" && "${G[@]}" -C "$C" add lib.rs && "${G[@]}" -C "$C" commit -qm v1
-  commit="$("${G[@]}" -C "$C" rev-parse HEAD)"
-  printf '#!/bin/sh\necho hook >> "%s"\n' "$HK" > "$C/.git/hooks/post-checkout"; chmod +x "$C/.git/hooks/post-checkout"
-  printf -- '--- a/lib.rs\n+++ b/lib.rs\n@@ -1 +1 @@\n-v1\n+v2\n' > "$T/F-1.patch"
-  # The §1 block with its placeholders filled and the SBF build replaced by a check of
-  # the patched file in the worktree.
-  python3 -I - "$TEMPLATE/../patch/VERIFICATION.md" "$T/recipe.sh" "$C" "$commit" "$T" <<'PY2'
-import sys
-doc, out, checkout, commit, t = sys.argv[1:]
-block = open(doc, encoding="utf-8").read().split("## 1. Apply", 1)[1].split("```bash\n", 1)[1].split("```", 1)[0]
-build = "cargo build-sbf --tools-version v1.54"
-assert block.count(build) == 1, "the recipe's build step moved"
-block = (block.replace("{FINDING_ID}", "F-1").replace("{CHECKOUT}", checkout).replace("{COMMIT}", commit)
-         .replace("{PATH_TO}", t).replace(build, f'grep -qx v2 lib.rs && pwd -P > "{t}/recipe.pwd"'))
-assert "{" not in block.replace("${", ""), "a placeholder is left"
-open(out, "w", encoding="utf-8").write(block)
+if python3 -I - "$TEMPLATE/../patch/VERIFICATION.md" >"$T/out" 2>&1 <<'PY2'
+import re, sys
+doc = open(sys.argv[1], encoding="utf-8").read()
+block = doc.split("## 1. Apply", 1)[1].split("```bash\n", 1)[1].split("```", 1)[0]
+calls = [l for l in block.splitlines() if l.strip() and not l.lstrip().startswith("#")]
+held = [l for l in calls if "$" in l or re.search(r"(^|[;&|(])\s*cd\s", l)]
+assert not held, "a line holds a $ or a cd: %r" % held
+ts = '"<auditor-skill root>/scripts/runner/target.sh" build-sbf --run {PATH_TO} --src . --rev {COMMIT}'
+want = [ts, ts + " --patch {PATH_TO}/patches/{FINDING_ID}.patch"]
+assert calls == want, "the block is not the two target.sh build-sbf lines: %r" % calls
 PY2
-  rm -f "$HK" "$T/recipe.pwd"
-  ( cd "$C" && "${GE[@]}" TMPDIR="$T/tmp-recipe" bash "$T/recipe.sh" ) >"$T/out" 2>&1; code=$?
-  wt="$(cat "$T/recipe.pwd" 2>/dev/null)"
-  case "$wt" in "$T/tmp-recipe"/fix-F-1.*/fix) where=scratch ;; *) where="'$wt'" ;; esac
-  if [ "$code" = 0 ] && [ "$where" = scratch ] && [ ! -e "$HK" ] && [ "$("${G[@]}" -C "$C" worktree list | wc -l | tr -d ' ')" = 1 ] \
-     && [ "$(cat "$C/lib.rs")" = v1 ]; then
-    ok "VERIFICATION.md §1, run from inside the client checkout: the patched worktree is in a scratch copy, and no git ran in the checkout (its hook stayed silent)"
-  else
-    bad "VERIFICATION.md §1 recipe: exit $code, worktree $where, hook marker $( [ -e "$HK" ] && echo present || echo absent )"; cat "$T/out" >&2
-  fi
-  ( cd "$C" && "${G[@]}" worktree add -q "$T/ctl-wt" "$commit" ) >/dev/null 2>&1
-  [ -s "$HK" ] && ok "control: a worktree made in the client checkout runs its post-checkout hook" || bad "control: the client checkout's hook did not run, so the recipe check proves nothing"
-else
-  echo "note: git not on PATH; the patch verification recipe check is skipped"
-fi
+then ok "VERIFICATION.md §1: exactly the two target.sh build-sbf lines, the quoted installation path first, no cd and no \$"
+else bad "VERIFICATION.md §1 is not the two target.sh build-sbf lines"; cat "$T/out" >&2; fi
 
 if [ "$fails" -ne 0 ]; then
   echo "test-dnr-poc-runner: $fails assertion(s) FAILED" >&2

@@ -36,16 +36,20 @@ export RPC_URL="https://key9.rpc.example.test/v2/SECRETKEY?api-key=QKEY"
 # ---------------------------------------------------------------------------------------------------
 # A solana CLI stand-in that answers like solana-cli 3.1.10: a config without websocket_url is ignored
 # (defaults: mainnet-beta and id.json); `account` prints a hex dump of the data unless --output-file names a
-# file for it; `confirm -v` starts with the endpoint, key included, and the keypair path; `program show`
-# rejects a loader-v4 program; errors name the endpoint, key included, as the real CLI's do.
-# FAKE_ACCOUNT=missing, FAKE_CONFIRM=missing|url-in-text, FAKE_LOADER=v4|none, FAKE_SHOW=url-in-text and
-# FAKE_SHOWN_ID=<id> shape the answers (url-in-text: the endpoint in the text of an answer that succeeds);
+# file for it; `confirm -v --output json` prints the status and the transaction as JSON, its log message
+# holding raw control characters; `program show` rejects a loader-v4 program; errors name the endpoint,
+# key included, as the real CLI's do. `confirm -v` without --output answers in the text form of solana-cli
+# 2.2.x and older: the endpoint, key included, and the keypair path first, and for a getTransaction that
+# failed after the status was read, its error with the endpoint as url::Url's Debug fields.
+# FAKE_ACCOUNT=missing|debug-error (an error with url::Url's Debug fields), FAKE_CONFIRM=missing|url-in-text|
+# no-details|not-json, FAKE_LOADER=v4|none, FAKE_SHOW=url-in-text and FAKE_SHOWN_ID=<id> shape the answers
+# (url-in-text: the endpoint in the text of an answer that succeeds; no-details: getTransaction failed);
 # FAKE_IGNORE_CONFIG=1 makes it ignore every config. Every call is appended to $FAKE_ARGV as JSON: the
 # arguments and the endpoint and keypair path it used.
 # ---------------------------------------------------------------------------------------------------
 printf '#!/bin/sh\nexec "%s" -I "$0.py" "$@"\n' "$PY" > "$T/sol/solana"
 cat > "$T/sol/solana.py" <<'PY'
-import json, os, re, sys
+import json, os, re, sys, urllib.parse
 a = sys.argv[1:]
 cfg = {}
 if "-C" in a:
@@ -64,11 +68,18 @@ def fail(msg):
     sys.stderr.write(f"Error: {msg} (endpoint {url})\n"); sys.exit(1)
 def opt(name):
     return a[a.index(name) + 1] if name in a else None
+def debug_url():
+    u = urllib.parse.urlsplit(url)
+    return (f'Url {{ scheme: "{u.scheme}", cannot_be_a_base: false, username: "", password: None, '
+            f'host: Some(Domain("{u.hostname}")), port: None, path: "{u.path}", query: Some("{u.query}"), fragment: None }}')
 if a[:3] == ["config", "get", "keypair"]:
     print(f"Key Path: {kp}"); sys.exit(0)
 if a[0] == "account":
     if os.environ.get("FAKE_ACCOUNT") == "missing":
         fail(f"AccountNotFound: pubkey={a[1]}")
+    if os.environ.get("FAKE_ACCOUNT") == "debug-error":
+        sys.stderr.write(f"Error: Error {{ request: Some(GetAccountInfo), kind: Reqwest(reqwest::Error {{ kind: Status(503), url: {debug_url()} }}) }}\n")
+        sys.exit(1)
     data = b"\x01\x02ACCOUNT-DATA-\xff" + bytes(range(32))
     bal = "2039280 lamports" if "--lamports" in a else "0.00203928 SOL"
     print(f"\nPublic Key: {a[1]}\nBalance: {bal}\nOwner: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\nExecutable: false\nRent Epoch: 18446744073709551615")
@@ -79,15 +90,30 @@ if a[0] == "account":
         print(f"Length: {len(data)} ({len(data):#x}) bytes\n0000:   " + " ".join(f"{b:02x}" for b in data[:16]))
     sys.exit(0)
 if a[0] == "confirm":
-    if os.environ.get("FAKE_CONFIRM") == "missing":
+    mode = os.environ.get("FAKE_CONFIRM", "")
+    if mode == "missing":
         fail("Signature not found")
+    sig = a[-1]
+    logs = ["Program log: hi\x1b[31m red\x07 bell\ttab\r carriage"]
+    if mode == "url-in-text":
+        logs.append(f"Status: unavailable (error sending request for url ({url}))")
+    if opt("--output") == "json":
+        if mode == "not-json":
+            print("Finalized")
+        elif mode == "no-details":
+            print('{\n  "confirmationStatus": "finalized"\n}')
+        else:
+            print('{\n  "confirmationStatus": "finalized",\n  "transaction": {\n    "signatures": [\n      "%s"\n    ]\n  },\n'
+                  '  "meta": {\n    "logMessages": [\n%s\n    ]\n  },\n  "blockTime": 1761213600,\n  "slot": 123\n}'
+                  % (sig, ",\n".join('      "%s"' % m for m in logs)))
+        sys.exit(0)
     if "-v" in a:
         print(f"RPC URL: {url}\nDefault Signer Path: {kp}\nCommitment: confirmed")
-    sig = a[a.index("-v") + 1] if "-v" in a else a[1]
-    print(f"Transaction executed in slot 123:\n  Block Time: 2026-10-23T10:00:00Z\n  Recent Blockhash: 11111111111111111111111111111111\n"
-          f"  Signature 0: {sig}\n  Log Messages:\n    Program log: hi\x1b[31m red\x07 bell\ttab\r carriage")
-    if os.environ.get("FAKE_CONFIRM") == "url-in-text":
-        print(f"  Status: unavailable (error sending request for url ({url}))")
+    if mode == "no-details":
+        print(f"\nUnable to get finalized transaction details: Error {{ request: Some(GetTransaction), kind: Reqwest(reqwest::Error {{ kind: Status(503), url: {debug_url()} }}) }}\n")
+    else:
+        print(f"Transaction executed in slot 123:\n  Block Time: 2026-10-23T10:00:00Z\n  Recent Blockhash: 11111111111111111111111111111111\n"
+              f"  Signature 0: {sig}\n  Log Messages:\n" + "\n".join("    " + m for m in logs))
     print("Finalized")
     sys.exit(0)
 loader = os.environ.get("FAKE_LOADER", "v3")
@@ -232,6 +258,15 @@ mkdir -p "$T/pycwd"; printf '#!/bin/sh\npwd -P >> "%s"\nexec "%s" "$@"\n' "$T/py
 (cd "$W" && PATH="$T/pycwd:$T/sol:$PATH" "$READ" account "$ADDR") >"$T/out" 2>"$T/err"; RC=$?
 check "account: both python3 calls (the id check and the hash) run from /" \
   sh -c "[ $RC = 0 ] && [ \"\$(grep -c . '$T/pycwd.log')\" = 2 ] && [ \"\$(sort -u '$T/pycwd.log')\" = / ]"
+# A solana that logs where it runs: every call runs from / too, so nothing in the working directory (a
+# .tool-versions an asdf or mise shim reads) picks the binary.
+mkdir -p "$T/solcwd"; printf '#!/bin/sh\npwd -P >> "%s"\nexec "%s" "$@"\n' "$T/solcwd.log" "$T/sol/solana" > "$T/solcwd/solana"; chmod +x "$T/solcwd/solana"
+: > "$T/solcwd.log"; rcs=""
+for read_id in "account $ADDR" "confirm $SIG" "program-show $PID"; do
+  (cd "$W" && PATH="$T/solcwd:$T/sol:$PATH" "$READ" "${read_id% *}" "${read_id#* }") >"$T/out" 2>"$T/err"; rcs="$rcs$?"
+done
+check "every solana call (the config check, then account, confirm and program-show) runs from /" \
+  sh -c "[ $rcs = 000 ] && [ \"\$(grep -c . '$T/solcwd.log')\" = 6 ] && [ \"\$(sort -u '$T/solcwd.log')\" = / ]"
 run account "$ADDR" --run "$R"
 check "account --run: exit 0" test "$RC" = 0
 check "account --run: the data is kept in R/rpc/, byte for byte" cmp -s "$T/want.data" "$W/$R/rpc/account-$ADDR.data"
@@ -275,14 +310,17 @@ check "... and makes no read" sh -c "! tail -n 1 '$FAKE_ARGV' | grep -q '\"accou
 # =================================================================================================
 run confirm "$SIG" --run "$R"
 check "confirm: exit 0" test "$RC" = 0
+check "confirm: the CLI is asked for JSON, which never holds its error text" \
+  sh -c "tail -n 1 '$FAKE_ARGV' | grep -qF '\"argv\": [\"confirm\", \"-v\", \"--output\", \"json\", \"$SIG\"]'"
+check "confirm: the answer is the CLI's JSON, the status and the transaction" \
+  sh -c "grep -qx '  \"confirmationStatus\": \"finalized\",' '$T/out' && grep -qx '  \"slot\": 123' '$T/out'"
 check "confirm: the transaction's text, ESC, BEL and CR shown as ?, TAB kept" \
-  has "$T/out" "    Program log: hi?[31m red? bell$(printf '\t')tab? carriage"
+  has "$T/out" "\"Program log: hi?[31m red? bell$(printf '\t')tab? carriage\""
 check "confirm: no raw control character reaches stdout" \
   sh -c "! LC_ALL=C grep -q \"\$(printf '[\\001-\\010\\013-\\037\\177]')\" '$T/out'"
 check "confirm: kept as R/rpc/confirm-<signature>.txt" cmp -s "$T/out" "$W/$R/rpc/confirm-$SIG.txt"
-check "confirm: the CLI's lines naming the endpoint and the keypair path are dropped" \
+check "confirm: nothing names the endpoint or the keypair path" \
   sh -c "[ -s '$T/out' ] && ! grep -q '^RPC URL:\|^Default Signer Path:\|no-keypair' '$T/out'"
-check "confirm: the rest of its header stays" has "$T/out" "Commitment: confirmed"
 check "confirm: no part of the endpoint but its domain reaches stdout or the kept file" \
   sh -c "[ -s '$W/$R/rpc/confirm-$SIG.txt' ] && ! grep -q 'SECRETKEY\|QKEY\|key9' '$T/out' '$W/$R/rpc/confirm-$SIG.txt'"
 FAKE_CONFIRM=url-in-text run confirm "$SIG" --run "$R"
@@ -293,6 +331,22 @@ check "confirm: the row names the signature" \
 FAKE_CONFIRM=missing run confirm "$SIG"
 check "confirm: a signature the CLI cannot read exits 1, the error redacted" \
   sh -c "[ $RC = 1 ] && grep -q 'Signature not found' '$T/err' && ! grep -q 'SECRETKEY' '$T/err'"
+# getTransaction failing after the status was read: solana-cli 2.2.x and older print its error, the
+# endpoint spelled as url::Url's Debug fields, in the text form; the JSON answer only lacks the details.
+FAKE_CONFIRM=no-details run confirm "$SIG" --run "$R"
+check "confirm: a finalized transaction without its details exits 1, saying so" \
+  sh -c "[ $RC = 1 ] && [ ! -s '$T/out' ] && grep -qx 'rpc-read: the solana CLI read the transaction $SIG as finalized but not its details (its getTransaction call failed); read it again later.' '$T/err'"
+check "... with no part of the endpoint but its domain anywhere, and nothing kept" \
+  sh -c "! grep -q 'SECRETKEY\|QKEY\|key9' '$T/out' '$T/err' && [ ! -e '$W/$R/rpc/confirm-$SIG-3.txt' ]"
+FAKE_CONFIRM=not-json run confirm "$SIG"
+check "confirm: an answer that is not a JSON object is a blocker (exit 3)" \
+  sh -c "[ $RC = 3 ] && [ ! -s '$T/out' ] && grep -q 'is not a JSON object' '$T/err'"
+FAKE_ACCOUNT=debug-error run account "$ADDR"
+check "an error naming the endpoint as url::Url's Debug fields is redacted" \
+  sh -c "[ $RC = 1 ] && grep -q 'host: Some(Domain(\"REDACTED.example.test\"))' '$T/err' && ! grep -q 'SECRETKEY\|QKEY\|key9' '$T/err'"
+printf '%s\n' 'url: Url { scheme: "https", cannot_be_a_base: false, username: "us\"er", password: Some("PW\\1"), host: Some(Domain("tok.a.example.test")), port: Some(8899), path: "/v2/K\"EY", query: Some("api-key=QK"), fragment: Some("FR") }' > "$T/debug.txt"
+check "redact.sh: url::Url's Debug fields lose the user, password, path, query, fragment and all but the host's last two labels" \
+  test "$("$ROOT/scripts/dnr/redact.sh" < "$T/debug.txt")" = 'url: Url { scheme: "https", cannot_be_a_base: false, username: "REDACTED", password: Some("REDACTED"), host: Some(Domain("REDACTED.example.test")), port: Some(8899), path: "/REDACTED", query: Some("REDACTED"), fragment: Some("REDACTED") }'
 rm -f "$FAKE_ARGV"
 run program-show "$PID" --run "$R"
 check "program-show: exit 0, the show output" sh -c "[ $RC = 0 ] && grep -qx 'Program Id: $PID' '$T/out' && grep -qx 'Authority: p2Yicb86aZig616Eav2VWG9vuXR5mEqhtzshZYBxzsV' '$T/out'"

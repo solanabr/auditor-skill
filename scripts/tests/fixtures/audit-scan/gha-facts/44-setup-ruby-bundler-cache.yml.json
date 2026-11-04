@@ -1,0 +1,46 @@
+{
+  "name": "f44-setup-ruby-gems",
+  "triggers": [
+    "push"
+  ],
+  "permissions": [
+    "contents: write"
+  ],
+  "jobs": [
+    {
+      "id": "release",
+      "line": 9,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 12,
+          "uses": "actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8",
+          "with": [],
+          "env": []
+        },
+        {
+          "line": 13,
+          "uses": "ruby/setup-ruby@v1",
+          "with": [
+            {
+              "key": "ruby-version",
+              "value": "3.3"
+            },
+            {
+              "key": "bundler-cache",
+              "value": "true"
+            }
+          ],
+          "env": []
+        },
+        {
+          "line": 17,
+          "run": "bundle exec rake release",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

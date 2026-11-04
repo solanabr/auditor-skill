@@ -24,13 +24,24 @@
 #   log, shortlog, rev-list, show, ls-tree, cat-file, rev-parse, merge-base, name-rev, for-each-ref,
 #   show-ref, count-objects, cherry, reflog show: allowed, subject to the denylist below.
 #   diff: committed revisions only, A..B, A...B, A^!, A B or --cached [A]; paths go after --. The
-#     revisions are the last one or two words before -- that are not options. git-ro puts them behind
-#     --end-of-options and ends them with --, so no option can take one as its value.
+#     revisions are the last one or two words before -- that are not options. git-ro resolves each side
+#     to one tree itself (A...B through the merge base, A^! through A's first parent, the empty tree for
+#     a commit without one) and gives git just the two tree ids, behind --end-of-options and ended with
+#     --: git then compares two trees and reads neither the index nor the work tree. A word that names
+#     no single commit or tree (^A, A^@, A^-, two revisions in one) is refused, and so is --merge-base
+#     beside two revisions (write A...B; --cached --merge-base [A] runs).
 #   diff-tree: as git always runs it, on trees.
-#   blame: needs <rev> -- <path>; git-ro puts the revision right after the subcommand. It refuses a
-#     repository whose config sets blame.ignoreRevsFile: git reads that file, prints a line it cannot
-#     parse, and no command-line value resets the setting. Blame a copy instead.
-#   grep: committed content only. With no revision it searches the index, as with --cached.
+#   blame: needs <rev> -- <path>, with only blame's own options before <rev>, written out in full (-L,
+#     --date, --ignore-rev, --since, --after, --until and --before may take the next word as their
+#     value). git-ro resolves <rev> to a commit (A..B, for --reverse, to two different commits) and passes
+#     the ids, so blame starts from a commit and never annotates the work tree. It refuses a repository
+#     whose config sets blame.ignoreRevsFile: git reads that file, prints a line it cannot parse, and no
+#     command-line value resets the setting. Blame a copy instead.
+#   grep: committed content only. git-ro reads the words as git grep does (options, then a pattern
+#     unless -e, --and, --not, ( or ) came first, then revisions, -- and paths) and resolves each
+#     revision. With none it searches the index, as with --cached; with some it gives git exactly those
+#     revisions, behind --end-of-options and ended with --. Without --, every word after the pattern must
+#     be a revision once one is: give paths after --.
 #   ls-files: no -m/--modified (it runs clean filters), --eol, or --format reading the work tree.
 #   cat-file: no --filters or --batch-command; standard input reaches --batch and --batch-check only.
 #   describe: no --dirty or --broken.
@@ -56,14 +67,23 @@
 # signature program, so both are refused.
 #
 # The hardened call (hgit in scripts/lib/confine.sh) runs every git command with env -i and only HOME,
-# PATH (absolute entries outside the working directory), TMPDIR, LC_ALL=C and TZ, plus GIT_NO_LAZY_FETCH,
-# GIT_TERMINAL_PROMPT=0, GIT_OPTIONAL_LOCKS=0, GIT_CEILING_DIRECTORIES at the working directory's parent,
-# and system and global config dropped. git runs with --no-pager, and -c pins override the repository's
-# config. They switch off:
+# PATH (absolute entries outside the working directory and the tree it lies in), TMPDIR, LC_ALL=C and TZ,
+# plus GIT_NO_LAZY_FETCH, GIT_TERMINAL_PROMPT=0, GIT_OPTIONAL_LOCKS=0, GIT_ALLOW_PROTOCOL (the transport
+# allowlist, empty here), GIT_CEILING_DIRECTORIES at the working directory's parent,
+# and system and global config dropped. It refuses before git starts when the repository holds a named
+# pipe or device git would open, and kills git, refusing, when a question (rev-parse, config, ls-files)
+# has not been answered within 10 s; any other read runs as long as it takes. Every subcommand but
+# rev-parse, ls-files, config and remote reads with a private empty directory under TMPDIR as git's work
+# tree, beside the repository's git directory (hgit_tree), so git opens no file of the work tree: it
+# takes .gitattributes and .gitmodules from the index, and reads no .mailmap there. Such a read is refused
+# when TMPDIR lies inside the working directory or cannot hold that directory. git runs with
+# --no-pager, and -c pins override the repository's config. They switch off:
 #   - programs config can name: core.fsmonitor, core.pager, core.hooksPath (hooks), diff.external,
 #     gpg.program, gpg.ssh.program and gpg.x509.program, log.showSignature and format.pretty, and
 #     log.diffMerges (a remerge diff runs merge.<driver>.driver);
-#   - fetching: protocol.allow=never stops lazy fetch and every remote helper on every git version;
+#   - fetching: the empty transport allowlist above stops lazy fetch and every remote helper on every
+#     git version, and the repository's config cannot widen it; protocol.allow=never is only a backstop,
+#     since it sets the default that a protocol.<name>.allow in the repository's config overrides;
 #   - files outside the tree that config can name and git prints from or parses: core.attributesFile,
 #     core.excludesFile, diff.orderFile, mailmap.file;
 #   - other repositories: submodule.recurse, diff.submodule;
@@ -79,9 +99,10 @@
 # shows, reopens what they close. The fixtures in scripts/tests/test-git-ro.sh only prove the keys they set.
 # Not pinned, because they shape output but still show every change, or come from content the
 # repository carries: diff.renames, diff.renameLimit, diff.context, diff.algorithm and the other diff
-# layout keys; .mailmap (it renames authors in the default formats; %an and %ae print the commit's own);
-# gitattributes binary or -diff and diff.<driver>.binary ("Binary files differ"; add --text or -a);
-# .gitignore and info/exclude for ls-files -o --exclude-standard. log -p prints no patch for a merge
+# layout keys; a mailmap in the history (a bare copy's HEAD:.mailmap, or the blob mailmap.blob names: it
+# renames authors in the default formats; %an and %ae print the commit's own); the index's gitattributes
+# binary or -diff and diff.<driver>.binary ("Binary files differ"; add --text or -a); .gitignore and
+# info/exclude for ls-files -o --exclude-standard. log -p prints no patch for a merge
 # unless asked (--cc, -m, --diff-merges). Reads trust the repository's object store; copy runs every
 # object through index-pack, which checks each one's hash.
 #
@@ -296,10 +317,11 @@ run_copy() { # run_copy <dir> <R>
   scratch=$(mktemp -d "${TMPDIR:-/tmp}/auditor-git-ro.XXXXXX") && confine_phys "$scratch" ||
     { rmdir "$WT/$r/$dest"; refuse "cannot create a scratch directory"; }
   scratch=$CONFINE_PHYS
-  case "$scratch/" in
-    "${WT%/}/"*) rmdir "$scratch" "$WT/$r/$dest"; refuse "the scratch directory (TMPDIR) lies inside the working directory" ;;
-  esac
-  CONFINE_CEILING=${scratch%/*} hgit "$scratch" -c protocol.file.allow=always \
+  if confine_inside "$scratch" "$WT"; then
+    rmdir "$scratch" "$WT/$r/$dest"
+    refuse "the scratch directory (TMPDIR) lies inside the working directory"
+  fi
+  CONFINE_ALLOW_PROTOCOL=file CONFINE_CEILING=${scratch%/*} hgit "$scratch" -c protocol.file.allow=always \
     clone --no-local --bare --no-recurse-submodules --template= -- "$src" "$WT/$r/$dest" </dev/null
   rc=$?
   rmdir "$scratch"
@@ -476,12 +498,35 @@ run_remote() { # run_remote <arg>...: remote, remote -v, remote get-url [--all] 
   exit "${st[1]}"
 }
 
+# one_object <word> <type>: sets OID to the full id of the one object <word> names, peeled to <type>
+# (commit, tree, or object for any); status 1 when it names none, more than one (A..B, A^@, A^-) or a
+# negation (^A, which rev-parse prints as ^<id>). git resolves the word; only its plain answer counts.
+one_object() {
+  local o
+  o=$(hgit "$REPO" rev-parse --verify --quiet --end-of-options "$1" 2>/dev/null </dev/null) && is_oid "$o" &&
+    o=$(hgit "$REPO" rev-parse --verify --quiet "$o^{$2}" 2>/dev/null </dev/null) && is_oid "$o" || return 1
+  OID=$o
+}
+
+is_oid() { # is_oid <s>: status 0 for a full object id, 40 or 64 lowercase hex digits
+  case "$1" in ''|*[!0-9a-f]*) return 1 ;; esac
+  [ "${#1}" -eq 40 ] || [ "${#1}" -eq 64 ]
+}
+
+diff_side() { # diff_side <word> <commit|tree>: one_object, or refuse
+  one_object "$1" "$2" ||
+    refuse "diff compares committed revisions (A..B, A...B, A^!, A B or --cached [A]), and this names no single $2: $(confine_text "$1")"
+}
+
 # run_diff <arg>...: the revisions are the last one or two words before -- that are not options (one
-# when it is a range, A..B, A...B or A^!). They move behind --end-of-options and end with --, so git
-# reads them as revisions whatever option precedes them, and two revisions never reach the work tree.
+# when it is A..B, A...B or A^!). git-ro resolves the two sides to trees and hands git only their ids,
+# behind --end-of-options and ended with --. Given two trees, git diff compares them, whatever else the
+# words say: other words can add trees or blobs (git then refuses or shows a combined diff), never take
+# one away, so the index and the work tree stay unread. --cached [A] compares the index with A (HEAD by
+# default); with --cached git reads no file of the work tree either.
 run_diff() {
-  local a seen=0 cached=0 i last=-1 prev=-1
-  local -a pre=() post=() opts=() revs=() rest=()
+  local a seen=0 cached=0 i last=-1 prev=-1 w l r ca cb tl tr bases parents
+  local -a pre=() post=() opts=() rest=()
   for a in "$@"; do
     if [ "$seen" -eq 0 ] && [ "$a" = -- ]; then seen=1; continue; fi
     if [ "$seen" -eq 0 ]; then pre+=("$a"); else post+=("$a"); fi
@@ -491,32 +536,116 @@ run_diff() {
     case "$a" in --cached|--staged) cached=1 ;; *) opts+=("$a") ;; esac
   done
   if [ "$cached" -eq 1 ]; then
-    hgit "$REPO" diff --no-textconv --no-ext-diff --ignore-submodules=none --cached ${opts[@]+"${opts[@]}"} -- ${post[@]+"${post[@]}"} </dev/null
+    hgit_tree "$REPO" diff --no-textconv --no-ext-diff --ignore-submodules=none --cached ${opts[@]+"${opts[@]}"} -- ${post[@]+"${post[@]}"} </dev/null
     exit $?
   fi
+  for a in ${opts[@]+"${opts[@]}"}; do
+    [ "$a" != --merge-base ] || refuse "diff --merge-base A B is written A...B here: git-ro gives git trees, which have no merge base"
+  done
   i=0
   while [ "$i" -lt "${#opts[@]}" ]; do
     case "${opts[$i]}" in -*) ;; *) prev=$last; last=$i ;; esac
     i=$((i + 1))
   done
   [ "$last" -ge 0 ] || refuse "$DIFF_USAGE"
-  case "${opts[$last]}" in
-    *..*|*'^!') revs=("${opts[$last]}"); prev=-1 ;;
-    *) [ "$prev" -ge 0 ] || refuse "$DIFF_USAGE"
-       revs=("${opts[$prev]}" "${opts[$last]}") ;;
+  w=${opts[$last]}
+  case "$w" in
+    *..*)
+      prev=-1
+      l=${w%%..*}
+      r=${w#*..}
+      [ -n "$l" ] || l=HEAD
+      case "$r" in
+        .*) # A...B: from the merge base of A and B (the first, as git diff takes it) to B
+          r=${r#.}
+          [ -n "$r" ] || r=HEAD
+          diff_side "$l" commit; ca=$OID
+          diff_side "$r" commit; cb=$OID
+          bases=$(hgit "$REPO" merge-base --all "$ca" "$cb" </dev/null)
+          case $? in
+            0) ;;
+            1) printf 'fatal: %s...%s: no merge base\n' "$l" "$r" >&2; exit 128 ;;
+            *) exit 128 ;;
+          esac
+          case "$bases" in
+            *$'\n'*) printf 'warning: %s...%s: multiple merge bases, using %s\n' "$l" "$r" "${bases%%$'\n'*}" >&2 ;;
+          esac
+          diff_side "${bases%%$'\n'*}" tree; tl=$OID
+          diff_side "$cb" tree; tr=$OID ;;
+        *) # A..B
+          [ -n "$r" ] || r=HEAD
+          diff_side "$l" tree; tl=$OID
+          diff_side "$r" tree; tr=$OID ;;
+      esac ;;
+    *'^!') # A^!: from A's first parent to A; a commit without one (a root, or cut off by .git/shallow)
+      # starts from the empty tree
+      prev=-1
+      diff_side "${w%'^!'}" commit; ca=$OID
+      parents=$(hgit "$REPO" rev-parse "$ca^@" </dev/null) || exit 128
+      if [ -n "$parents" ]; then
+        diff_side "${parents%%$'\n'*}" tree
+      else
+        a=$(hgit "$REPO" hash-object -t tree /dev/null </dev/null) && is_oid "$a" || exit 128
+        OID=$a
+      fi
+      tl=$OID
+      diff_side "$ca" tree; tr=$OID ;;
+    *)
+      [ "$prev" -ge 0 ] || refuse "$DIFF_USAGE"
+      diff_side "${opts[$prev]}" tree; tl=$OID
+      diff_side "$w" tree; tr=$OID ;;
   esac
   i=0
   while [ "$i" -lt "${#opts[@]}" ]; do
     [ "$i" -eq "$last" ] || [ "$i" -eq "$prev" ] || rest+=("${opts[$i]}")
     i=$((i + 1))
   done
-  hgit "$REPO" diff --no-textconv --no-ext-diff --ignore-submodules=none ${rest[@]+"${rest[@]}"} --end-of-options "${revs[@]}" \
+  hgit_tree "$REPO" diff --no-textconv --no-ext-diff --ignore-submodules=none ${rest[@]+"${rest[@]}"} --end-of-options "$tl" "$tr" \
     -- ${post[@]+"${post[@]}"} </dev/null
   exit $?
 }
 
-run_blame() { # run_blame [<options>] <rev> -- <path>
-  local a i=0 dd=-1 rev path
+blame_short() { # blame_short <word>: status 0 for a cluster of blame's short flags (b c e f l n p s t w, M and C with an optional number)
+  local r=${1#-} c
+  [ -n "$r" ] || return 1
+  while [ -n "$r" ]; do
+    c=${r%"${r#?}"}
+    r=${r#?}
+    case "$c" in
+      [bceflnpstw]) ;;
+      M|C) while :; do case "$r" in [0-9]*) r=${r#?} ;; *) break ;; esac; done ;;
+      *) return 1 ;;
+    esac
+  done
+}
+
+# blame_options <word>...: refuse any word but blame's own options and the value that follows -L, --date,
+# --ignore-rev, --since, --after, --until or --before. None of them names or negates a revision, so the
+# one commit git-ro resolved stays the commit blame starts from. A revision word (^A, A..B) or a ref
+# option (--not --all) could mark that commit uninteresting, and blame with no commit left to start
+# from annotates the work tree.
+blame_options() {
+  local a
+  while [ $# -gt 0 ]; do
+    a=$1
+    case "$a" in
+      -L|--date|--ignore-rev|--since|--after|--until|--before)
+        [ $# -ge 2 ] || refuse "blame's $a needs a value"
+        shift ;;
+      -L?*|--date=*|--ignore-rev=*|--since=*|--after=*|--until=*|--before=*|--encoding=*|--abbrev=*) ;;
+      --root|--show-stats|--reverse|--first-parent|--porcelain|--line-porcelain|--incremental|--progress|--no-progress|\
+      --score-debug|--show-name|--show-number|--show-email|--minimal|--color-lines|--color-by-age|--abbrev) ;;
+      -?*) blame_short "$a" || refuse_option "$a" ;;
+      *) refuse "$BLAME_USAGE; only options may come before the revision, not $(confine_text "$a")" ;;
+    esac
+    shift
+  done
+}
+
+# run_blame [<options>] <rev> -- <path>: <rev>, or A..B, resolved to commits first. With A..B the two
+# must differ: one commit as both ends is uninteresting, and blame would fall back to the work tree.
+run_blame() {
+  local a i=0 dd=-1 rev path l r spec
   local -a args=("$@") opts=()
   for a in "$@"; do
     if [ "$a" = -- ]; then dd=$i; break; fi
@@ -528,29 +657,113 @@ run_blame() { # run_blame [<options>] <rev> -- <path>
   case "$rev" in -*) refuse "$BLAME_USAGE" ;; esac
   [ "$dd" -lt 2 ] || opts=("${args[@]:0:$((dd - 1))}")
   check_options blame ${opts[@]+"${opts[@]}"}
+  blame_options ${opts[@]+"${opts[@]}"}
+  case "$rev" in
+    *...*) refuse "blame takes one revision, or A..B with --reverse, not $(confine_text "$rev")" ;;
+    *..*)
+      l=${rev%%..*}
+      r=${rev#*..}
+      [ -n "$l" ] || l=HEAD
+      [ -n "$r" ] || r=HEAD
+      one_object "$l" commit || refuse "blame needs commits, and this names no single commit: $(confine_text "$l")"
+      spec=$OID
+      one_object "$r" commit || refuse "blame needs commits, and this names no single commit: $(confine_text "$r")"
+      [ "$OID" != "$spec" ] || refuse "blame's A..B needs two different commits: $(confine_text "$rev")"
+      spec=$spec..$OID ;;
+    *)
+      one_object "$rev" commit || refuse "blame needs a commit, and this names no single commit: $(confine_text "$rev")"
+      spec=$OID ;;
+  esac
   hgit "$REPO" config --get-all blame.ignorerevsfile >/dev/null 2>&1
   case $? in
     1) ;;
     0) refuse "blame does not run where the repository's config sets blame.ignoreRevsFile; blame a copy (git-ro.sh copy, then --git-dir)" ;;
     *) refuse "git cannot read the repository's config" ;;
   esac
-  hgit "$REPO" blame --no-textconv --no-ext-diff "$rev" ${opts[@]+"${opts[@]}"} -- "$path" </dev/null
+  hgit_tree "$REPO" blame --no-textconv --no-ext-diff "$spec" ${opts[@]+"${opts[@]}"} -- "$path" </dev/null
   exit $?
 }
 
-run_grep() { # run_grep <arg>...: the index first; the same words again only when git says they name trees
-  local err rc
+# run_grep <arg>...: the words read the way git grep reads them. Options come first, up to the first word
+# that is not one, or --, or --end-of-options; -e, -f, -A, -B, -C and -m (and --max-depth, --threads,
+# --context, --after-context, --before-context and --max-count) take the rest of the word or the next
+# one. When no -e, --and, --not, ( or ) came, the next word (after one --) is the pattern. What follows
+# are revisions up to --, then paths; without --, revisions until the first word that is not one.
+# git-ro resolves the revisions itself. With none, git searches the index (--cached) and the remaining
+# words go to it as given. With some, git gets the options, the pattern as -e, and exactly those
+# revisions behind --end-of-options and ended with --, so it searches them and nothing else; a path
+# without -- after them is refused, since only a -- keeps git from reading a revision as a path. Neither
+# form reads the work tree, and nothing depends on what git prints.
+run_grep() {
+  local a c rest n i=0 j dd=-1 havepat=0 pat=""
+  local -a args=("$@") optw=() trees=() paths=() tail=()
   check_options grep "$@"
-  { err=$(hgit "$REPO" grep --no-textconv --cached "$@" 2>&1 1>&3 3>&- </dev/null); rc=$?; } 3>&1
-  if [ "$rc" -eq 128 ]; then
-    case "$err" in
-      *'both --cached and trees are given'*)
-        hgit "$REPO" grep --no-textconv "$@" </dev/null
-        exit $? ;;
+  n=$#
+  while [ "$i" -lt "$n" ]; do
+    a=${args[$i]}
+    case "$a" in
+      --) break ;;
+      --end-of-options) i=$((i + 1)); break ;;
+      '('|')'|--and|--not) havepat=1; optw+=("$a") ;;
+      --max-depth|--threads|--context|--after-context|--before-context|--max-count)
+        optw+=("$a")
+        i=$((i + 1))
+        [ "$i" -ge "$n" ] || optw+=("${args[$i]}") ;;
+      --?*) optw+=("$a") ;;
+      -?*)
+        optw+=("$a")
+        rest=${a#-}
+        while [ -n "$rest" ]; do
+          c=${rest%"${rest#?}"}
+          rest=${rest#?}
+          case "$c" in
+            e|f|A|B|C|m)
+              case "$c" in e|f) havepat=1 ;; esac
+              if [ -z "$rest" ]; then
+                i=$((i + 1))
+                [ "$i" -ge "$n" ] || optw+=("${args[$i]}")
+              fi
+              break ;;
+            O) break ;;
+          esac
+        done ;;
+      *) break ;;
     esac
+    i=$((i + 1))
+  done
+  if [ "$havepat" -eq 0 ]; then
+    if [ "$i" -lt "$n" ] && [ "${args[$i]}" = -- ]; then i=$((i + 1)); fi
+    if [ "$i" -lt "$n" ]; then pat=${args[$i]}; havepat=2; i=$((i + 1)); fi
   fi
-  [ -z "$err" ] || printf '%s\n' "$err" >&2
-  exit "$rc"
+  j=$i
+  while [ "$j" -lt "$n" ]; do
+    [ "${args[$j]}" != -- ] || { dd=$j; break; }
+    j=$((j + 1))
+  done
+  j=$i
+  while [ "$j" -lt "$n" ]; do
+    a=${args[$j]}
+    [ "$a" != -- ] || break
+    if one_object "$a" object; then
+      trees+=("$a")
+    elif [ "$dd" -ge 0 ] || [ "${#trees[@]}" -gt 0 ]; then
+      if [ "$dd" -lt 0 ]; then refuse "grep searches these revisions, so give paths after --: $(confine_text "$a")"; fi
+      trees=()
+      break
+    else
+      break
+    fi
+    j=$((j + 1))
+  done
+  [ "$havepat" -ne 2 ] || optw+=(-e "$pat")
+  if [ "${#trees[@]}" -eq 0 ]; then
+    [ "$i" -ge "$n" ] || tail=("${args[@]:$i}")
+    hgit_tree "$REPO" grep --no-textconv --cached ${optw[@]+"${optw[@]}"} --end-of-options ${tail[@]+"${tail[@]}"} </dev/null
+    exit $?
+  fi
+  [ "$dd" -lt 0 ] || [ $((dd + 1)) -ge "$n" ] || paths=("${args[@]:$((dd + 1))}")
+  hgit_tree "$REPO" grep --no-textconv ${optw[@]+"${optw[@]}"} --end-of-options "${trees[@]}" -- ${paths[@]+"${paths[@]}"} </dev/null
+  exit $?
 }
 
 main() {
@@ -603,20 +816,23 @@ main() {
       [ "${1-}" = show ] || refuse "reflog only reads: reflog show [<options>] [<ref>]"
       shift
       check_options reflog "$@"
-      hgit "$REPO" reflog show --no-textconv --no-ext-diff --ignore-submodules=none "$@" </dev/null ;;
+      hgit_tree "$REPO" reflog show --no-textconv --no-ext-diff --ignore-submodules=none "$@" </dev/null ;;
     log|show|diff-tree)
       check_options "$sub" "$@"
-      hgit "$REPO" "$sub" --no-textconv --no-ext-diff --ignore-submodules=none "$@" </dev/null ;;
+      hgit_tree "$REPO" "$sub" --no-textconv --no-ext-diff --ignore-submodules=none "$@" </dev/null ;;
     cat-file)
       check_options cat-file "$@"
       for a in "$@"; do
         [ "$a" != -- ] || break
         case "$a" in --batch|--batch=*|--batch-check|--batch-check=*) batch=1 ;; esac
       done
-      if [ "$batch" -eq 1 ]; then hgit "$REPO" cat-file "$@"; else hgit "$REPO" cat-file "$@" </dev/null; fi ;;
-    *)
+      if [ "$batch" -eq 1 ]; then hgit_tree "$REPO" cat-file "$@"; else hgit_tree "$REPO" cat-file "$@" </dev/null; fi ;;
+    rev-parse|ls-files)
       check_options "$sub" "$@"
       hgit "$REPO" "$sub" "$@" </dev/null ;;
+    *)
+      check_options "$sub" "$@"
+      hgit_tree "$REPO" "$sub" "$@" </dev/null ;;
   esac
   exit $?
 }

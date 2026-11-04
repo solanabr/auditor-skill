@@ -1,0 +1,28 @@
+{
+  "name": "f03-string-contains",
+  "triggers": [
+    "issue_comment",
+    "issues"
+  ],
+  "permissions": [
+    "contents: read",
+    "issues: write"
+  ],
+  "jobs": [
+    {
+      "id": "agent",
+      "line": 12,
+      "if": "contains('OWNER,MEMBER,COLLABORATOR', github.event.comment.author_association)",
+      "permissions": [],
+      "steps": [
+        {
+          "line": 16,
+          "run": "echo \"agent would run\"",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

@@ -1,0 +1,31 @@
+{
+  "name": "f67-agent-gemini-model-flag",
+  "triggers": [
+    "pull_request_target"
+  ],
+  "permissions": [
+    "contents: read",
+    "pull-requests: write"
+  ],
+  "jobs": [
+    {
+      "id": "summarize",
+      "line": 10,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 13,
+          "run": "gemini -m gemini-2.5-pro -p \"Summarize the change in this pull request\"",
+          "with": [],
+          "env": [
+            {
+              "key": "GEMINI_API_KEY",
+              "value": "${{ secrets.GEMINI_API_KEY }}"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

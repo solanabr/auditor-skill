@@ -27,7 +27,7 @@ A slot is an ordering counter, not a clock. For six years 400 ms per slot was st
 ```
 grep -rn --include="*.rs" -E "clock\.slot|Clock::get\(\)\?\.slot|\.slot\b|_slot\b|slots?_(per|until|since|remaining|elapsed)|epochs?_(per|until|since)|SLOTS_PER|DEFAULT_TICKS|DEFAULT_MS_PER_SLOT|\b(216_?000|432_?000|63_?072_?000|78_?840_?000)\b" programs/
 ```
-- Classify each hit: **(a)** a duration, deadline, rate or window (this vector); **(b)** a freshness tag compared against a bound (`publish_slot`, `last_update_slot`: see Step 4); **(c)** a sequence, nonce or ordering value (fine). Record the live slot rate from `getRecentPerformanceSamples` (`numSlots / samplePeriodSecs`) or `solana -u m epoch-info` (epoch wall-clock ≈ 24 h at 200 ms); never assume it from a date.
+- Classify each hit: **(a)** a duration, deadline, rate or window (this vector); **(b)** a freshness tag compared against a bound (`publish_slot`, `last_update_slot`: see Step 4); **(c)** a sequence, nonce or ordering value (fine). Record the live slot rate from `getRecentPerformanceSamples` (`numSlots / samplePeriodSecs`) or `solana -u m epoch-info` (asks for approval: no bundled reader covers it; epoch wall-clock ≈ 24 h at 200 ms); never assume it from a date.
 - If there are no (a) or (b) hits and no epoch-denominated lockups, this vector is N/A (record this explicitly).
 
 **Step 2: Compiled slot-rate constants in interest, funding and emission math**

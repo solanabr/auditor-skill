@@ -9,7 +9,8 @@
 #   ulimit: <ulimit -t> <ulimit -f, in 1024-byte blocks as bash counts them; dash, ubuntu's /bin/sh, counts 512>
 #   env: <NAME=value>       one line per variable, sorted
 # followed by the lines each behaviour below adds. FAKE_* settings choose the behaviour: exit statuses, what a
-# build writes, files to show, a listing of the working directory, output to print, time to sleep.
+# build writes, files to show, a listing of the working directory, output to print, time to sleep, where cargo
+# metadata finds packages. The semgrep stand-in lists its targets with git, as semgrep does.
 T=@T@
 name=${0##*/}
 [ -f "$T/fake/settings" ] && . "$T/fake/settings"
@@ -52,6 +53,23 @@ case "$name" in
     out=$(arg_after --output "$@")
     say "settings-file: ${SEMGREP_SETTINGS_FILE:-}"
     [ -n "${FAKE_SLEEP:-}" ] && sleep "$FAKE_SLEEP"
+    # As semgrep picks its targets (src/targeting/Find_targets.ml and Git_wrapper.ml in its source): for a scan
+    # root that is a folder with a .git at or above it, it runs "git -C <root> ls-files -z --cached", then
+    # "--others" with --exclude-standard unless --no-git-ignore, through the git on PATH, in the environment it
+    # was given; a git that fails leaves it to walk the folders itself. Each listing is one line here.
+    root=""; dash=0
+    for a in "$@"; do [ "$dash" = 1 ] && root=$a; [ "$a" = -- ] && dash=1; done
+    p=$root
+    while [ -d "$root" ] && [ ! -e "$p/.git" ] && [ "$p" != / ]; do p=$(dirname "$p"); done
+    if [ -d "$root" ] && [ -e "$p/.git" ]; then
+      git -C "$root" ls-files -z --cached > "$T/git-out" 2> "$T/git-err"
+      say "git-cached: $? $(tr '\0' ' ' < "$T/git-out")$(sed -n 1p "$T/git-err")"
+      case " $* " in
+        *" --no-git-ignore "*) git -C "$root" ls-files -z --others ;;
+        *) git -C "$root" ls-files -z --others --exclude-standard ;;
+      esac > "$T/git-out" 2> "$T/git-err"
+      say "git-others: $? $(tr '\0' ' ' < "$T/git-out")$(sed -n 1p "$T/git-err")"
+    fi
     echo "semgrep: scanning"
     if [ "${FAKE_SARIF:-}" != none ] && [ -n "$out" ]; then
       python3 -I -c 'import json, sys
@@ -129,10 +147,17 @@ case "$1" in
     mp=$(arg_after --manifest-path "$@")
     python3 -I -c 'import json, os, re, sys
 top = os.path.dirname(sys.argv[1])
+# FAKE_META_UP=<n> lists the packages from <n> folders above the manifest, as for members a root names with
+# ../ (cargo accepts one outside the root when it names the root with package.workspace); the root stays.
+walk = top
+for _ in range(int(os.environ.get("FAKE_META_UP") or 0)):
+    walk = os.path.dirname(walk)
 pkgs = []
-for d, dirs, files in os.walk(top):
-    dirs[:] = [x for x in dirs if x not in ("target", ".git")]
+for d, dirs, files in os.walk(walk):
+    # A package keeps its build output and repository beside its Cargo.toml, and those are passed over; a
+    # folder of either name elsewhere, such as one on the path down to a member, is walked.
     if "Cargo.toml" in files:
+        dirs[:] = [x for x in dirs if x not in ("target", ".git")]
         text = open(os.path.join(d, "Cargo.toml")).read()
         m = re.search(r"(?ms)^\[package\].*?^name\s*=\s*\"([^\"]+)\"", text)
         if m:
@@ -145,7 +170,9 @@ extra = os.environ.get("FAKE_META_DEP", "")
 if extra and pkgs:
     val = json.loads(extra)
     pkgs[0]["dependencies"].extend(val if isinstance(val, list) else [val])
-print(json.dumps({"packages": pkgs, "workspace_members": [p["id"] for p in pkgs], "workspace_root": top}))' "$mp"
+with open(sys.argv[2], "a") as calls:
+    calls.write("metadata-packages: %s\n" % " ".join(sorted(p["name"] for p in pkgs)))
+print(json.dumps({"packages": pkgs, "workspace_members": [p["id"] for p in pkgs], "workspace_root": top}))' "$mp" "$T/calls"
     exit 0 ;;
   audit)
     say "files: $(ls -A | tr '\n' ' ')"

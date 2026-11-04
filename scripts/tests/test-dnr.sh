@@ -129,6 +129,15 @@ eq "redact: curl HTTP/2 :path header loses its path" "$(red '* [HTTP/2] [1] [:pa
 eq "redact: curl error naming a bare host keeps the last two labels" \
   "$(red 'curl: (6) Could not resolve host: TOKSUB42.rpc.example.test')" "curl: (6) Could not resolve host: REDACTED.example.test"
 eq "redact: dotted names in other text are left alone" "$(red 'curl 8.7.1 calls os.path.join')" "curl 8.7.1 calls os.path.join"
+eq "redact: url::Url's Debug fields (solana CLI 2.2.x errors) keep no key" \
+  "$(red 'url: Url { scheme: "https", cannot_be_a_base: false, username: "", password: None, host: Some(Domain("TOKSUB42.rpc.example.test")), port: None, path: "/v2/LEAKME42", query: Some("api-key=LEAKME42"), fragment: None }')" \
+  'url: Url { scheme: "https", cannot_be_a_base: false, username: "", password: None, host: Some(Domain("REDACTED.example.test")), port: None, path: "/REDACTED", query: Some("REDACTED"), fragment: None }'
+eq "redact: ... and its pretty form (dbg!, {:#?}), each value on a line of its own, keeps none either" \
+  "$(red $'Url {\n    username: "USER42",\n    password: Some(\n        "PASS42",\n    ),\n    host: Some(\n        Domain(\n            "TOKSUB42.rpc.example.test",\n        ),\n    ),\n    path: "/v2/LEAKME42",\n    query: Some(\n        "x-thing=LEAKME42&b=\\"q\\"",\n    ),\n    fragment: Some(\n        "FRAG42",\n    ),\n}' | tr '\n' '|')" \
+  'Url {|    username: "REDACTED",|    password: Some(|        "REDACTED",|    ),|    host: Some(|        Domain(|            "REDACTED.example.test",|        ),|    ),|    path: "/REDACTED",|    query: Some(|        "REDACTED",|    ),|    fragment: Some(|        "REDACTED",|    ),|}|'
+eq "redact: ... only on the line after such a field: other quoted lines, an IP host and a two-label host stay" \
+  "$(red $'    "a plain quoted line",\n    port: Some(\n        "8899",\n    ),\n    password: Some(\n    ),\n        "next but one",\n    host: Some(\n        Ipv4(\n            10.0.0.1,\n        ),\n    ),\n    host: Some(\n        Domain(\n            "example.test",\n        ),\n    ),' | tr '\n' '|')" \
+  '    "a plain quoted line",|    port: Some(|        "8899",|    ),|    password: Some(|    ),|        "next but one",|    host: Some(|        Ipv4(|            10.0.0.1,|        ),|    ),|    host: Some(|        Domain(|            "example.test",|        ),|    ),|'
 # The documented recipe keeps the filtered command's failure: `set -o pipefail;`
 # starts the line. Without it the filter's own 0 is the status (the control).
 for sh in bash zsh; do
@@ -1686,7 +1695,8 @@ eq "--out: 120 runs under a directory swap -> no file outside, no temporary file
 
 # ---------------------------------------------------------------------------
 # 24. The recipes as pre-approved entry points: each runs directly by its quoted
-#     absolute path (#!/bin/bash; #!/usr/bin/env -S python3 -I), mode 100755. Each
+#     absolute path (#!/bin/bash; frames.py and deltas.py through their bash front
+#     end, which runs them as python3 -I), mode 100755. Each
 #     hostile case of fixtures/audit-logs/hostile-args.txt that names profile,
 #     frames or deltas exits non-zero with one "refused" line, prints nothing on
 #     stdout, changes no file, leaves no temporary file and shows no canary text.
@@ -1694,9 +1704,9 @@ eq "--out: 120 runs under a directory swap -> no file outside, no temporary file
 #     quote or $, refuses to run (exit 2), and so does one reached through a link
 #     whose name holds a $. profile.sh's jq reads no ~/.jq.
 # ---------------------------------------------------------------------------
-eq "entry points: the #! lines" \
-  "$(head -n 1 "$DNR/profile.sh")|$(head -n 1 "$DNR/frames.py")|$(head -n 1 "$DNR/deltas.py")" \
-  "#!/bin/bash|#!/usr/bin/env -S python3 -I|#!/usr/bin/env -S python3 -I"
+eq "entry points: the #! lines (frames.py and deltas.py open with a bash front end, which python3 reads as their docstring)" \
+  "$(head -n 1 "$DNR/profile.sh")|$(head -n 2 "$DNR/frames.py" | tr '\n' ' ')|$(head -n 2 "$DNR/deltas.py" | tr '\n' ' ')" \
+  "#!/bin/bash|#!/bin/bash ''':' |#!/bin/bash ''':' "
 if git -C "$HERE/../.." rev-parse --is-inside-work-tree > /dev/null 2>&1; then
   eq "entry points: committed as executables (mode 100755)" \
     "$(git -C "$HERE/../.." ls-files -s -- scripts/dnr/profile.sh scripts/dnr/frames.py scripts/dnr/deltas.py | awk '{ printf "%s ", $1 }')" \
@@ -1953,6 +1963,137 @@ for a in "tokens --by account incident_1/sums25.jsonl" "tokens --by owner incide
     res="$res $c" || res="$res $c:$(tr '\n' ' ' < "$TT/s25.err")"
 done
 eq "sums: a grouping the mode does not take, none, or two are refused (exit 2, one line, no output)" "${res# }" "2 2 2 2 2 2"
+
+# ---------------------------------------------------------------------------
+# 26. Which python3 and jq run. frames.py and deltas.py open with a bash front end;
+#     it and profile.sh take python3 from a PATH with no empty, relative or
+#     working-directory entry (scripts/lib/confine.sh), look it up from /, and run
+#     the recipe by the absolute path it reports, outside the working directory. So a
+#     python3 the audited tree ships never runs, and no version file there (a
+#     .python-version a pyenv shim reads) picks the interpreter; profile.sh's queries
+#     run from / as well. The three copies of the interpreter block are the same.
+# ---------------------------------------------------------------------------
+iblock() { sed -n '/^# ---- interpreter/,/^# ---- end of interpreter/p' "$1"; }
+if [[ -n "$(iblock "$DNR/profile.sh")" && "$(iblock "$DNR/profile.sh")" == "$(iblock "$DNR/frames.py")" \
+      && "$(iblock "$DNR/profile.sh")" == "$(iblock "$DNR/deltas.py")" ]]; then
+  ok "interpreter: profile.sh, frames.py and deltas.py hold the same interpreter block"
+else
+  bad "interpreter: the interpreter blocks of profile.sh, frames.py and deltas.py differ"
+fi
+EV26="$TT/ev26"
+mkdir -p "$EV26/incident_1" "$EV26/node_modules/.bin" "$EV26/bin" "$EV26/.venv/bin"
+printf '*\n' > "$EV26/incident_1/.gitignore"
+cp "$FIX/log-newline-injection.jsonl" "$FIX/same-owner-drain.jsonl" "$FIX/clean-mixed.jsonl" "$EV26/incident_1/"
+# A python3 the tree ships, at the places a PATH can name: one that prints its arguments when it runs.
+for p in python3 node_modules/.bin/python3 bin/python3 .venv/bin/python3; do ln -s /bin/echo "$EV26/$p"; done
+want26="$(cd "$EV26" && python3 -I "$DNR/frames.py" incident_1/log-newline-injection.jsonl 2>&1)|$(cd "$EV26" &&
+  python3 -I "$DNR/deltas.py" tokens incident_1/same-owner-drain.jsonl 2>&1)"
+res=""
+for p in ":$PATH" "$TT/no-such-dir26::$PATH" "./node_modules/.bin:$PATH" "bin:$PATH" "$EV26/.venv/bin:$PATH"; do
+  got="$(cd "$EV26" && PATH="$p" "$DNR/frames.py" incident_1/log-newline-injection.jsonl 2>&1)|$(cd "$EV26" &&
+    PATH="$p" "$DNR/deltas.py" tokens incident_1/same-owner-drain.jsonl 2>&1)"
+  if [[ "$got" == "$want26" ]]; then res="$res ok"; else res="$res differs:${got:0:60}"; fi
+done
+eq "interpreter: frames.py and deltas.py never run a python3 the tree ships, wherever PATH names it (empty, relative, in the tree)" \
+  "${res# }" "ok ok ok ok ok"
+# A python3 and a jq that log where they run, as a version manager's shim would read its version file there.
+PY26="$(command -v python3)" JQ26="$(command -v jq)"
+mkdir -p "$TT/shim26"
+printf '#!/bin/sh\npwd -P >> "%s"\nexec "%s" "$@"\n' "$TT/python26.log" "$PY26" > "$TT/shim26/python3"
+printf '#!/bin/sh\npwd -P >> "%s"\nexec "%s" "$@"\n' "$TT/jq26.log" "$JQ26" > "$TT/shim26/jq"
+chmod +x "$TT/shim26/python3" "$TT/shim26/jq"
+: > "$TT/python26.log"; : > "$TT/jq26.log"
+want26p="$(profile "$F/clean-mixed.jsonl" 2>&1)"
+got="$(cd "$EV26" && PATH="$TT/shim26:$PATH" "$DNR/frames.py" incident_1/log-newline-injection.jsonl 2>&1)|$(cd "$EV26" &&
+  PATH="$TT/shim26:$PATH" "$DNR/deltas.py" tokens incident_1/same-owner-drain.jsonl 2>&1)"
+gotp="$(cd "$RW" && PATH="$TT/shim26:$PATH" "$DNR/profile.sh" "$F/clean-mixed.jsonl" 2>&1)"
+eq "interpreter: the three recipes start python3 through PATH only from /, once each, and profile.sh's jq only from /" \
+  "$([[ "$got" == "$want26" && "$gotp" == "$want26p" ]] && echo same)|$(sort -u "$TT/python26.log" | tr '\n' ' ')$(grep -c . "$TT/python26.log")|$(sort -u "$TT/jq26.log" | tr '\n' ' ')" \
+  "same|/ 3|/ "
+# A python3 that reports an interpreter inside the working directory is refused before anything runs.
+mkdir -p "$TT/liar26"
+printf '#!/bin/sh\nprintf "%%s\\n%%s\\n" "%s/bin/python3" "%s/bin/python3"\n' "$EV26" "$EV26" > "$TT/liar26/python3"
+chmod +x "$TT/liar26/python3"
+res=""
+for r in frames.py deltas.py profile.sh; do
+  if [[ "$r" == deltas.py ]]; then set -- lamports incident_1/clean-mixed.jsonl; else set -- incident_1/clean-mixed.jsonl; fi
+  ( cd "$EV26" && PATH="$TT/liar26:$PATH" "$DNR/$r" "$@" ) > "$TT/x26.out" 2> "$TT/x26.err"
+  c=$?
+  [[ "$c" == 2 && ! -s "$TT/x26.out" && "$(grep -c . "$TT/x26.err")" == 1 ]] &&
+    grep -q "^$r: refused: python3 lies inside the working directory: " "$TT/x26.err" && res="$res $c" ||
+    res="$res $c:$(tr '\n' ' ' < "$TT/x26.err")"
+done
+eq "interpreter: one that lies inside the working directory is refused (exit 2, one line, no output)" "${res# }" "2 2 2"
+# So is one that spells the working directory's path in capitals, where the filesystem opens them as it;
+# where it does not, that path cannot be resolved, and the recipe is refused all the same.
+EVU26=$(printf '%s' "$EV26" | tr 'a-z' 'A-Z')
+mkdir -p "$TT/liaru26"
+printf '#!/bin/sh\nprintf "%%s\\n%%s\\n" "%s/bin/python3" "%s/bin/python3"\n' "$EVU26" "$EVU26" > "$TT/liaru26/python3"
+chmod +x "$TT/liaru26/python3"
+if [[ -d "$EVU26/bin" ]]; then why26='python3 lies inside the working directory'; else why26='python3 cannot be resolved'; fi
+res=""
+for r in frames.py deltas.py profile.sh; do
+  if [[ "$r" == deltas.py ]]; then set -- lamports incident_1/clean-mixed.jsonl; else set -- incident_1/clean-mixed.jsonl; fi
+  ( cd "$EV26" && PATH="$TT/liaru26:$PATH" "$DNR/$r" "$@" ) > "$TT/x26.out" 2> "$TT/x26.err"
+  c=$?
+  [[ "$c" == 2 && ! -s "$TT/x26.out" && "$(grep -c . "$TT/x26.err")" == 1 ]] &&
+    grep -q "^$r: refused: $why26: " "$TT/x26.err" && res="$res $c" ||
+    res="$res $c:$(tr '\n' ' ' < "$TT/x26.err")"
+done
+eq "interpreter: ... and one it reports in capitals ($why26)" "${res# }" "2 2 2"
+# Spellings only identity decides: a working directory the disk names in NFC, reported in NFD (the same
+# directory where the filesystem normalizes Unicode, no directory where it does not), and on macOS the
+# working directory's path through /System/Volumes/Data.
+liar26() { # liar26 <reported directory> <working directory> <reason>: each recipe from <working directory>
+  local r c res=""
+  rm -rf "$TT/liarx26"; mkdir -p "$TT/liarx26"
+  printf '#!/bin/sh\nprintf "%%s\\n%%s\\n" "%s/bin/python3" "%s/bin/python3"\n' "$1" "$1" > "$TT/liarx26/python3"
+  chmod +x "$TT/liarx26/python3"
+  for r in frames.py deltas.py profile.sh; do
+    if [[ "$r" == deltas.py ]]; then set -- "$1" "$2" "$3" lamports incident_1/clean-mixed.jsonl; else set -- "$1" "$2" "$3" incident_1/clean-mixed.jsonl; fi
+    ( cd "$2" && PATH="$TT/liarx26:$PATH" "$DNR/$r" "${@:4}" ) > "$TT/x26.out" 2> "$TT/x26.err"
+    c=$?
+    [[ "$c" == 2 && ! -s "$TT/x26.out" && "$(grep -c . "$TT/x26.err")" == 1 ]] &&
+      grep -q "^$r: refused: $3: " "$TT/x26.err" && res="$res $c" ||
+      res="$res $c:$(tr '\n' ' ' < "$TT/x26.err")"
+  done
+  printf '%s' "${res# }"
+}
+EVC26="$TT/caf$(printf '\303\251')26" EVD26="$TT/cafe$(printf '\314\201')26"
+mkdir -p "$EVC26/incident_1" "$EVC26/bin"
+printf '*\n' > "$EVC26/incident_1/.gitignore"
+cp "$FIX/clean-mixed.jsonl" "$EVC26/incident_1/"
+ln -s /bin/echo "$EVC26/bin/python3"
+if [[ -d "$EVD26/bin" ]]; then why26='python3 lies inside the working directory'; else why26='python3 cannot be resolved'; fi
+eq "interpreter: ... and one it reports in NFD for the NFC name on disk ($why26)" "$(liar26 "$EVD26" "$EVC26" "$why26")" "2 2 2"
+if [[ -d "/System/Volumes/Data$EV26" && "/System/Volumes/Data$EV26" -ef "$EV26" ]]; then
+  eq "interpreter: ... and one it reports through /System/Volumes/Data" \
+    "$(liar26 "/System/Volumes/Data$EV26" "$EV26" 'python3 lies inside the working directory')" "2 2 2"
+else
+  ok "interpreter: ... through /System/Volumes/Data: skipped, no such spelling of the test directory here"
+fi
+# With no python3 on PATH, frames.py and deltas.py stop with a named blocker, as profile.sh does.
+mkdir -p "$TT/nopy26"
+res=""
+for r in frames.py deltas.py; do
+  if [[ "$r" == deltas.py ]]; then set -- lamports incident_1/clean-mixed.jsonl; else set -- incident_1/clean-mixed.jsonl; fi
+  ( cd "$EV26" && PATH="$TT/nopy26" "$DNR/$r" "$@" ) > "$TT/x26.out" 2> "$TT/x26.err"
+  c=$?
+  [[ "$c" == 3 && ! -s "$TT/x26.out" ]] && grep -q "^\[blocker\] python3 is not on PATH, or does not run; $r needs python3\.$" "$TT/x26.err" &&
+    res="$res $c" || res="$res $c:$(tr '\n' ' ' < "$TT/x26.err")"
+done
+eq "interpreter: with no python3 on PATH, frames.py and deltas.py stop with a named blocker (exit 3, no output)" "${res# }" "3 3"
+# The lookup reads /dev/null: a directory for stdin, which python3 refuses at start, fails the recipe
+# itself (exit 1, README.md), never the lookup with the blocker.
+res=""
+for r in frames.py deltas.py profile.sh; do
+  if [[ "$r" == deltas.py ]]; then set -- lamports incident_1/clean-mixed.jsonl; else set -- incident_1/clean-mixed.jsonl; fi
+  ( cd "$EV26" && "$DNR/$r" "$@" ) < "$EV26" > "$TT/x26.out" 2> "$TT/x26.err"
+  c=$?
+  [[ "$c" == 1 && ! -s "$TT/x26.out" ]] && ! grep -q 'blocker' "$TT/x26.err" && res="$res $c" ||
+    res="$res $c:$(head -n 1 "$TT/x26.err")"
+done
+eq "interpreter: with a directory for stdin, each recipe fails as python3 does (exit 1), not with the blocker" "${res# }" "1 1 1"
 
 if [[ "$fails" -ne 0 ]]; then
   echo "test-dnr: $fails assertion(s) FAILED" >&2

@@ -4,6 +4,7 @@
 # link to one), inner-link (a symbolic link inside .git), alt (objects/info/alternates) and worktree
 # (core.worktree outside), plus linkrepo, a symbolic link to inner-link. Its config sets
 # blame.ignoreRevsFile and a merge driver, and the branch merged ends in a merge commit.
+# test-preapproved-entrypoints.sh runs the same cases over a fixture of its own, built the same way.
 # One case per line: <exit status><TAB><the one stderr line><TAB><argument>[<TAB><argument>...]. Each
 # case prints nothing on stdout, starts no program the repository's config names, and fetches nothing.
 # git options before the subcommand
@@ -251,6 +252,23 @@
 64	git-ro: refused: blame needs <rev> -- <path>: a revision, then --, then one path	blame	--reverse	--	a.rs
 64	git-ro: refused: blame does not run where the repository's config sets blame.ignoreRevsFile; blame a copy (git-ro.sh copy, then --git-dir)	blame	HEAD	--	a.rs
 64	git-ro: refused: blame does not run where the repository's config sets blame.ignoreRevsFile; blame a copy (git-ro.sh copy, then --git-dir)	blame	-L	1,1	HEAD	--	a.rs
+# revisions git-ro resolves itself: a word naming no single commit or tree never reaches git
+64	git-ro: refused: diff compares committed revisions (A..B, A...B, A^!, A B or --cached [A]), and this names no single tree: HEAD^@	diff	HEAD^@	HEAD
+64	git-ro: refused: diff compares committed revisions (A..B, A...B, A^!, A B or --cached [A]), and this names no single tree: ^HEAD~1	diff	^HEAD~1	HEAD
+64	git-ro: refused: diff compares committed revisions (A..B, A...B, A^!, A B or --cached [A]), and this names no single tree: HEAD^-	diff	HEAD^-	HEAD
+64	git-ro: refused: diff compares committed revisions (A..B, A...B, A^!, A B or --cached [A]), and this names no single tree: HEAD~1..HEAD	diff	HEAD~1..HEAD	HEAD
+64	git-ro: refused: diff compares committed revisions (A..B, A...B, A^!, A B or --cached [A]), and this names no single tree: HEAD~1:a.rs	diff	HEAD~1:a.rs	HEAD:a.rs
+64	git-ro: refused: diff compares committed revisions (A..B, A...B, A^!, A B or --cached [A]), and this names no single commit: HEAD:a.rs	diff	HEAD:a.rs^!
+64	git-ro: refused: diff compares committed revisions (A..B, A...B, A^!, A B or --cached [A]), and this names no single tree: nosuch	diff	nosuch..HEAD
+64	git-ro: refused: blame needs a commit, and this names no single commit: ^HEAD	blame	^HEAD	--	a.rs
+64	git-ro: refused: blame needs a commit, and this names no single commit: HEAD^@	blame	HEAD^@	--	a.rs
+64	git-ro: refused: blame's A..B needs two different commits: HEAD..HEAD	blame	HEAD..HEAD	--	a.rs
+64	git-ro: refused: blame takes one revision, or A..B with --reverse, not HEAD...side	blame	HEAD...side	--	a.rs
+64	git-ro: refused: blame does not allow --not	blame	--not	--all	HEAD	--	a.rs
+64	git-ro: refused: blame does not allow --branches	blame	--branches	HEAD	--	a.rs
+64	git-ro: refused: blame does not allow -x	blame	-x	HEAD	--	a.rs
+64	git-ro: refused: blame needs <rev> -- <path>: a revision, then --, then one path; only options may come before the revision, not ^HEAD	blame	^HEAD	HEAD	--	a.rs
+64	git-ro: refused: grep searches these revisions, so give paths after --: a.rs	grep	-n	require	HEAD	a.rs
 64	git-ro: refused: reflog only reads: reflog show [<options>] [<ref>]	reflog
 64	git-ro: refused: reflog only reads: reflog show [<options>] [<ref>]	reflog	expire	--all
 64	git-ro: refused: reflog only reads: reflog show [<options>] [<ref>]	reflog	delete	HEAD@{0}

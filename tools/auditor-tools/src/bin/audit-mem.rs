@@ -22,10 +22,11 @@
 //!   link, with a `.gitignore` of exactly `*`; git that cannot answer is a
 //!   refusal. The database is a regular file with one name.
 //! - `warm`, `check` and `regressions` open the store read-only and never make
-//!   it; with no store they print an empty answer. `init` makes the store: the
-//!   `.audit-memory/` directory with a plain mkdir, its `.gitignore` first, then
-//!   the database, each made exclusively and never through a link. The other
-//!   subcommands write only a store that `init` made.
+//!   it; with no store they print an empty answer, and beside a write to it that
+//!   did not finish they read nothing (`init` rolls that write back). `init` makes
+//!   the store: the `.audit-memory/` directory with a plain mkdir, its
+//!   `.gitignore` first, then the database, each made exclusively and never
+//!   through a link. The other subcommands write only a store that `init` made.
 //!
 //! Exit: 0 done (`check`: suppressed) · 1 `check`: not suppressed · 2 refused, or
 //! the store cannot be read or written.
@@ -34,7 +35,7 @@ use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{self, Read, Write};
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{DirBuilderExt, MetadataExt};
+use std::os::unix::fs::{DirBuilderExt, FileExt, MetadataExt};
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -106,9 +107,9 @@ impl Sub {
             Sub::SetStatus => (&["program-id", "signature", "root-cause", "status"], &[]),
             Sub::Rule => (
                 &["program-id", "signature", "ruling", "rationale", "by"],
-                &["scope", "commit", "guard"],
+                &["scope", "commit", "guard", "site"],
             ),
-            Sub::Check => (&["program-id", "signature"], &["commit"]),
+            Sub::Check => (&["program-id", "signature"], &["commit", "site"]),
             Sub::Regressions | Sub::Warm => (&["program-id"], &[]),
             Sub::Profile => (
                 &["program-id"],
@@ -463,6 +464,10 @@ fn in_tree_store(wt: &Path, git: &mut Git) -> Result<Store, Stop> {
     Ok(store)
 }
 
+/// The number that starts a rollback journal's header, and ends the record of a
+/// super-journal at the end of a journal.
+const JOURNAL_MAGIC: [u8; 8] = [0xd9, 0xd5, 0x05, 0xf9, 0x20, 0xa1, 0x63, 0xd7];
+
 /// What the database file is: absent, empty, or a SQLite database in
 /// rollback-journal mode (the header's magic, and 1 in its bytes 18 and 19). A
 /// file that is not regular, has a second name, or holds anything else is
@@ -471,7 +476,8 @@ fn in_tree_store(wt: &Path, git: &mut Git) -> Result<Store, Stop> {
 /// are checked first: a `-wal` or `-shm` file, which audit-mem never makes and
 /// which SQLite would open (and a `-shm` write) even for a read, is refused, and
 /// a `-journal`, left by a write that stopped, must be a regular file with one
-/// name.
+/// name that names no super-journal (`names_super_journal`). A journal another
+/// writer is deleting, with no name left, is not checked.
 fn database(wt: &Path, store: &Store, dir_md: &fs::Metadata) -> Result<Db, Stop> {
     let s = store.shown();
     let tail = if store.in_tree {
@@ -496,12 +502,25 @@ fn database(wt: &Path, store: &Store, dir_md: &fs::Metadata) -> Result<Db, Stop>
                     "{s} has a {suffix} file beside it, which audit-mem never makes{tail}"
                 )))
             }
+            Ok(md) if md.file_type().is_file() && md.nlink() == 0 => {}
             Ok(md) if !md.file_type().is_file() || md.nlink() != 1 => {
                 return Err(refuse(format!(
                     "{s}{suffix} is not a regular file with one name{tail}"
                 )))
             }
-            Ok(_) => {}
+            Ok(_) => {
+                let names = names_super_journal(store, dir_md).map_err(|e| {
+                    refuse(format!(
+                        "{s}{suffix} cannot be checked ({}){tail}",
+                        os_message(&e)
+                    ))
+                })?;
+                if names {
+                    return Err(refuse(format!(
+                        "{s}{suffix} names a super-journal (a file SQLite deletes when it rolls the journal back), which audit-mem never writes{tail}"
+                    )));
+                }
+            }
         }
     }
     match fs::symlink_metadata(wt.join(store.path())) {
@@ -541,6 +560,41 @@ fn database(wt: &Path, store: &Store, dir_md: &fs::Metadata) -> Result<Db, Stop>
         )));
     }
     Ok(Db::Sqlite)
+}
+
+/// Whether the store's `-journal` names a super-journal, as SQLite reads one at
+/// a journal's end (`readSuperJournal`): the name, its length (not zero) and a
+/// checksum in four bytes each, then `JOURNAL_MAGIC`. Rolling such a journal
+/// back opens the file it names and deletes it unless a journal names it back,
+/// wherever it is. audit-mem writes one database at a time, so no journal of its
+/// own names one. The journal is opened through the store's directory, without
+/// following a link or blocking on a FIFO; one gone by then, or going (no name
+/// left, or cut shorter while it is read), names nothing.
+fn names_super_journal(store: &Store, dir_md: &fs::Metadata) -> io::Result<bool> {
+    let name = [store.name, &b"-journal"[..]].concat();
+    let journal = match Dir::open(&store.dir, dir_md).and_then(|dir| dir.open_any(&name)) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+        opened => opened?,
+    };
+    let md = journal.metadata()?;
+    if md.file_type().is_file() && md.nlink() == 0 {
+        return Ok(false);
+    }
+    if !md.file_type().is_file() || md.nlink() != 1 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "it is not a regular file with one name",
+        ));
+    }
+    let Some(at) = md.len().checked_sub(16) else {
+        return Ok(false);
+    };
+    let mut end = [0u8; 16];
+    match journal.read_exact_at(&mut end, at) {
+        Ok(()) => Ok(end[8..] == JOURNAL_MAGIC && end[..4] != [0u8; 4]),
+        Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => Ok(false),
+        Err(e) => Err(e),
+    }
 }
 
 /// Makes what `init` needs of the store: for the in-tree store with no
@@ -588,6 +642,42 @@ fn store_error(store: &Store) -> impl Fn(anyhow::Error) -> Stop + '_ {
                 shown(format!("{e:#}").as_bytes())
             ),
         ),
+    }
+}
+
+/// What `read` gives, the store opened and read anew each time: asked up to three
+/// times, 100 ms apart, while SQLite finds a write to the store unfinished
+/// (`mem::unfinished_write`), since a write that ends just as a reader looks can
+/// show so for a moment. A write still unfinished then is an error that names the
+/// call that rolls it back, so the store is not given up; any other store error as
+/// `store_error` gives it. A writer that meets such a write and cannot roll it
+/// back cannot write the store, and says what SQLite says (`write`).
+fn reading<T>(store: &Store, read: impl Fn() -> anyhow::Result<T>) -> Result<T, Stop> {
+    let mut asked = 1;
+    loop {
+        match read() {
+            Err(e) if mem::unfinished_write(&e) && asked < 3 => {
+                asked += 1;
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Err(e) if mem::unfinished_write(&e) => {
+                let db = if store.in_tree {
+                    String::new()
+                } else {
+                    format!(" --db {}", store.shown())
+                };
+                return Err(Stop(
+                    2,
+                    format!(
+                        "error: {}: a write to it did not finish (its -journal holds what that \
+                         write replaced), so it is not read; audit-mem init --contract=1{db} rolls \
+                         the write back",
+                        store.shown()
+                    ),
+                ));
+            }
+            answer => return answer.map_err(store_error(store)),
+        }
     }
 }
 
@@ -655,6 +745,34 @@ fn guard(wt: &Path, call: &Call) -> Result<Option<mem::Guard>, Stop> {
     }))
 }
 
+/// `--site <file>:<line>`: the candidate a ruling is made for, or a check is
+/// made for, by its file (a relative path under the path grammar, one leading
+/// `./` dropped) and line; written `<file>:<line>` as it is stored. The file is
+/// not read: the site only tells one candidate from its siblings.
+fn site(call: &Call) -> Result<Option<String>, Stop> {
+    let Some(v) = call.text("site")? else {
+        return Ok(None);
+    };
+    let (file, line) = v.rsplit_once(':').ok_or_else(|| {
+        refuse(format!(
+            "--site must be <file>:<line>, the candidate's: {}",
+            shown(v.as_bytes())
+        ))
+    })?;
+    if line.is_empty()
+        || line.len() > 9
+        || line.starts_with('0')
+        || !line.bytes().all(|c| c.is_ascii_digit())
+    {
+        return Err(refuse(format!(
+            "--site must be <file>:<line>, the candidate's: {}",
+            shown(v.as_bytes())
+        )));
+    }
+    let r = confine::rel("--site's file", OsStr::new(file), false)?;
+    Ok(Some(format!("{}:{line}", String::from_utf8_lossy(&r.raw))))
+}
+
 /// A subcommand with every value it takes checked.
 enum Action {
     Init,
@@ -682,10 +800,12 @@ enum Action {
         scope: Option<String>,
         commit: Option<String>,
         guard: Option<mem::Guard>,
+        site: Option<String>,
     },
     Check {
         signature: String,
         commit: Option<String>,
+        site: Option<String>,
     },
     Regressions,
     Warm,
@@ -765,6 +885,15 @@ fn action(wt: &Path, call: &Call) -> Result<Action, Stop> {
                         .into(),
                 ));
             }
+            let site = site(call)?;
+            if ruling == "FALSE_POSITIVE" && site.is_none() {
+                return Err(refuse(
+                    "a FALSE_POSITIVE ruling needs --site, the <file>:<line> of the one \
+                     candidate it rules on, so that check suppresses that candidate and none of \
+                     its siblings"
+                        .into(),
+                ));
+            }
             Action::Rule {
                 signature,
                 ruling,
@@ -773,11 +902,13 @@ fn action(wt: &Path, call: &Call) -> Result<Action, Stop> {
                 scope,
                 commit,
                 guard,
+                site,
             }
         }
         Sub::Check => Action::Check {
             signature: call.need("signature")?,
             commit: call.commit()?,
+            site: site(call)?,
         },
         Sub::Regressions => Action::Regressions,
         Sub::Warm => Action::Warm,
@@ -853,24 +984,38 @@ fn read(wt: &Path, store: &Store, pid: &str, action: &Action) -> Result<ExitCode
             store.shown()
         )));
     }
-    let failed = store_error(store);
-    let conn = match store.db {
-        Db::Sqlite => Some(mem::open_read_only(store.path()).map_err(&failed)?),
-        _ => None,
-    };
-    match (action, conn) {
-        (Action::Warm, None) => print_json(&mem::WarmContext::default())?,
-        (Action::Warm, Some(c)) => print_json(&mem::warm(&c, pid).map_err(&failed)?)?,
-        (Action::Regressions, None) => print_json(&mem::Regressions::default())?,
-        (Action::Regressions, Some(c)) => print_json(&mem::regressions(&c, pid).map_err(&failed)?)?,
-        (Action::Check { .. }, None) => {
+    let open = || mem::open_read_only(store.path());
+    let present = store.db == Db::Sqlite;
+    match (action, present) {
+        (Action::Warm, false) => print_json(&mem::WarmContext::default())?,
+        (Action::Warm, true) => print_json(&reading(store, || mem::warm(&open()?, pid))?)?,
+        (Action::Regressions, false) => print_json(&mem::Regressions::default())?,
+        (Action::Regressions, true) => {
+            print_json(&reading(store, || mem::regressions(&open()?, pid))?)?
+        }
+        (Action::Check { .. }, false) => {
             out(r#"{"suppressed":false,"store":"absent"}"#)?;
             return Ok(ExitCode::FAILURE);
         }
-        (Action::Check { signature, commit }, Some(c)) => {
+        (
+            Action::Check {
+                signature,
+                commit,
+                site,
+            },
+            true,
+        ) => {
             let read = |file: &str| guard_text(wt, file);
-            let result =
-                mem::check(&c, pid, signature, commit.as_deref(), &read).map_err(&failed)?;
+            let result = reading(store, || {
+                mem::check(
+                    &open()?,
+                    pid,
+                    signature,
+                    commit.as_deref(),
+                    site.as_deref(),
+                    &read,
+                )
+            })?;
             print_json(&result)?;
             if !result.suppressed {
                 return Ok(ExitCode::FAILURE);
@@ -945,6 +1090,7 @@ fn write(wt: &Path, store: &Store, pid: &str, action: Action) -> Result<String, 
             scope,
             commit,
             guard,
+            site,
         } => {
             let id = mem::add_ruling(
                 &conn,
@@ -957,6 +1103,7 @@ fn write(wt: &Path, store: &Store, pid: &str, action: Action) -> Result<String, 
                     scope: scope.as_deref(),
                     commit: commit.as_deref(),
                     guard: guard.as_ref(),
+                    site: site.as_deref(),
                 },
             )
             .map_err(&failed)?;

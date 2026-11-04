@@ -1,0 +1,15 @@
+# Fixture: a composite action that checks out the ref its caller passes as an input; R7 lists the ref line.
+name: f103-input-ref-composite-action
+description: Check out the commit the caller names and build it
+inputs:
+  head:
+    description: the commit to build
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.head }}
+    - run: make
+      shell: bash

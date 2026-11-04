@@ -239,24 +239,20 @@ grep_search: "NEXT_PUBLIC_"   includePattern: "apps/web/**/*.tsx"
 
 ### Committed env/key files
 ```bash
-# Terminal (OUTPUT-RULES Rule 11c flags):
-GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-  ls-files | grep -iE "\.env|keypair|delegate\.json|\.pem|\.key"
+# Terminal (read-only git, OUTPUT-RULES Rule 11c):
+"<auditor-skill root>/scripts/git-ro.sh" ls-files | grep -iE "\.env|keypair|delegate\.json|\.pem|\.key"
 find . -name "*.env*" -not -path "./node_modules/*" -not -path "./.git/*"
 find . -name "*keypair*" -not -path "./node_modules/*" -not -path "./.git/*"
 ```
 
 ### Git history secrets
 ```bash
-# Terminal (OUTPUT-RULES Rule 11c flags; a pickaxe search runs the repo's textconv drivers unless
-# --no-textconv is given). -S also matches files a committed .gitattributes marks -diff or binary;
-# -G and patch output (-p) skip their content unless --text is given:
-GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-  log --all --no-textconv --no-ext-diff -S "private" --oneline | head -20
-GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-  log --all --no-textconv --no-ext-diff -S "secret" --oneline | head -20
-GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-  log --all --no-textconv --no-ext-diff -S "BEGIN RSA" --oneline | head -20
+# Terminal (read-only git, OUTPUT-RULES Rule 11c, which runs no textconv driver of the repository). -S also
+# matches files a committed .gitattributes marks -diff or binary; -G and patch output (-p) skip their content
+# unless --text is given:
+"<auditor-skill root>/scripts/git-ro.sh" log --all -S "private" --oneline | head -20
+"<auditor-skill root>/scripts/git-ro.sh" log --all -S "secret" --oneline | head -20
+"<auditor-skill root>/scripts/git-ro.sh" log --all -S "BEGIN RSA" --oneline | head -20
 ```
 
 ---
@@ -336,9 +332,8 @@ grep_search: "load_instruction_at|get_instruction_relative"   isRegexp: true   i
 
 ### Terraform / IaC hygiene (DEP-080..DEP-086)
 ```
-# Terminal (OUTPUT-RULES Rule 11c flags on git):
-GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false \
-  ls-files | grep -E "\.tfstate|tfplan|\.terraform/"
+# Terminal (read-only git, OUTPUT-RULES Rule 11c):
+"<auditor-skill root>/scripts/git-ro.sh" ls-files | grep -E "\.tfstate|tfplan|\.terraform/"
 grep -rn -E "allUsers|allAuthenticatedUsers|0\.0\.0\.0/0|roles/(editor|owner)|ingress.*all" terraform/
 ```
 
@@ -371,43 +366,43 @@ grep_search: "target=\"_blank\""   includePattern: "apps/web/**/*.tsx"
 
 ## Supply Chain
 
-> Every package-manager or cargo command in this section reads the target's `.npmrc`, `.cargo/config*` and `rust-toolchain*` when started inside its tree. Run them from a scratch dir OUTSIDE the target tree, on copies of the manifest + lockfile with the toolchain pinned (OUTPUT-RULES Rule 11a; FULL-AUDIT Step 3.2).
+> Every package-manager or cargo command in this section reads the target's `.npmrc`, `.cargo/config*` and `rust-toolchain*` when started inside its tree. The bundled `deps.sh` runs the audits and registry queries on copies of the manifests and lockfiles in a scratch dir OUTSIDE the target tree, with the toolchain pinned (OUTPUT-RULES Rule 11a; FULL-AUDIT Step 3.2): run it from the working directory by its quoted path. `npm outdated` and `npx` have no bundled runner, so they ask for approval: run them from such a scratch dir, on copies of the manifest + lockfile.
 
 ### Check for compromised packages
 ```bash
 # Terminal: known-bad releases in manifests and lockfiles, as in KV-077 Step 2 (which also searches history)
-AX='(^|[^A-Za-z0-9_.-])axios[@/](npm:)?(1\.14\.1|0\.30\.4)([^0-9]|$)|/axios/-/axios-(1\.14\.1|0\.30\.4)\.tgz|"axios"[[:space:]]*:[[:space:]]*"=?(1\.14\.1|0\.30\.4)"'
-W3='web3\.js[@/](npm:)?1\.95\.(6|7)([^0-9]|$)|/web3\.js/-/web3\.js-1\.95\.(6|7)\.tgz|"@solana/web3\.js"[[:space:]]*:[[:space:]]*"=?1\.95\.(6|7)"'
-grep -rnE -e "$AX" -e "$W3" --exclude-dir=node_modules --include='package.json' --include='package-lock.json' \
-  --include='npm-shrinkwrap.json' --include='pnpm-lock.yaml' --include='yarn.lock' --include='bun.lock' .
+grep -rnE --exclude-dir=node_modules --include='package.json' --include='package-lock.json' --include='npm-shrinkwrap.json' --include='pnpm-lock.yaml' --include='yarn.lock' --include='bun.lock' -e '(^|[^A-Za-z0-9_.-])axios[@/](npm:)?(1\.14\.1|0\.30\.4)([^0-9]|$)|/axios/-/axios-(1\.14\.1|0\.30\.4)\.tgz|"axios"[[:space:]]*:[[:space:]]*"=?(1\.14\.1|0\.30\.4)"' -e 'web3\.js[@/](npm:)?1\.95\.(6|7)([^0-9]|$)|/web3\.js/-/web3\.js-1\.95\.(6|7)\.tgz|"@solana/web3\.js"[[:space:]]*:[[:space:]]*"=?1\.95\.(6|7)"' .
 # package-lock.json / npm-shrinkwrap.json without "resolved" fields: the name on the entry's key (or "name")
 # line, the version on a line below it
-grep -rnE -A2 --exclude-dir=node_modules --include='package-lock.json' --include='npm-shrinkwrap.json' \
-  '"(([^"]*/)?node_modules/)?axios": [{]|"name": "axios"' . | grep -E '"version": "(1\.14\.1|0\.30\.4)"'
-grep -rnE -A2 --exclude-dir=node_modules --include='package-lock.json' --include='npm-shrinkwrap.json' \
-  '"([^"]*/)?@solana/web3\.js": [{]|"name": "@solana/web3\.js"' . | grep -E '"version": "1\.95\.(6|7)"'
-# from a scratch dir OUTSIDE the target tree holding copies of package.json + the lockfile (OUTPUT-RULES Rule 11a)
-npm audit
+grep -rnE -A2 --exclude-dir=node_modules --include='package-lock.json' --include='npm-shrinkwrap.json' '"(([^"]*/)?node_modules/)?axios": [{]|"name": "axios"' . | grep -E '"version": "(1\.14\.1|0\.30\.4)"'
+grep -rnE -A2 --exclude-dir=node_modules --include='package-lock.json' --include='npm-shrinkwrap.json' '"([^"]*/)?@solana/web3\.js": [{]|"name": "@solana/web3\.js"' . | grep -E '"version": "1\.95\.(6|7)"'
+# npm audit on copies of package.json and its lockfile, outside the target tree (OUTPUT-RULES Rule 11a)
+"<auditor-skill root>/scripts/runner/deps.sh" npm-audit --run audit_<n> --manifest package.json --manifest package-lock.json
 ```
 
 ### Package publish dates (14-day quarantine)
 ```bash
-# Terminal: Check publish date for critical packages
-npm info @anchor-lang/core time --json | tail -5
-npm info express time --json | tail -5
-npm info next time --json | tail -5
+# Terminal: the publish time of each version of a critical package (the registry's answer is in the file the
+# last line names)
+"<auditor-skill root>/scripts/runner/deps.sh" npm-time --run audit_<n> @anchor-lang/core
+"<auditor-skill root>/scripts/runner/deps.sh" npm-time --run audit_<n> express
+"<auditor-skill root>/scripts/runner/deps.sh" npm-time --run audit_<n> next
 ```
 
 ### Outdated packages
 ```bash
-# Terminal:
+# Terminal: npm outdated has no bundled runner, so it asks for approval; run it from a scratch dir OUTSIDE the
+# target tree, on copies of package.json + the lockfile
 npm outdated
-cargo outdated  # if cargo-outdated installed
+# cargo outdated on copies of the manifests (exit 3 when cargo-outdated is not installed); add each workspace
+# member's Cargo.toml and the Cargo.lock as more --manifest files
+"<auditor-skill root>/scripts/runner/deps.sh" cargo-outdated --run audit_<n> --manifest Cargo.toml
 ```
 
 ### License check
 ```bash
-# Terminal:
+# Terminal: npx downloads and runs a package, so it asks for approval; run it from a scratch dir OUTSIDE the
+# target tree, on copies of package.json + the lockfile
 npx license-checker --summary
 ```
 
@@ -415,15 +410,15 @@ npx license-checker --summary
 
 ## GitHub Actions (CI trigger trust)
 
-> Locators for `references/vuln-classes/github-actions.md`, KV-080, KV-116, KV-139, KV-140, DEP-067..071 / DEP-090..096 and AI-021..035. A hit is a place to read, not a finding: open the whole workflow, then trace trigger → actor → payload → sink → privilege. Every recipe is recursive with `--include` and fully single-quoted where it contains `$` or `!`, so it runs unchanged in bash and zsh and never trips on an unmatched glob. Point the same commands at any `action.yml` / `action.yaml` outside `.github/` (composite actions at the repo root). `scripts/tests/test-gha-recipes.sh` runs R1–R8 exactly as written here, plus the KV-116 Step 1, KV-139 Step 1 and KV-140 Step 6 locators, against `scripts/tests/fixtures/gha/`, and fails if a known vector's copy of R1–R5 or R7 differs from this file by a byte.
+> Locators for `references/vuln-classes/github-actions.md`, KV-080, KV-116, KV-139, KV-140, DEP-067..071 / DEP-090..096 and AI-021..035. A hit is a place to read, not a finding: open the whole workflow, then trace trigger → actor → payload → sink → privilege. Every recipe is recursive with `--include` and fully single-quoted where it contains `$` or `!`, so it runs unchanged in bash and zsh and never trips on an unmatched glob. Each one reads a line in one pass whatever the line holds, under GNU grep in a UTF-8 locale, BSD grep and the grep Claude Code runs: no pattern holds a negated bracket such as `[^#]`, a class such as `[[:space:]]`, a range such as `A-Z`, a back-reference or `-i` (letters and digits are listed in full, and a bracket that holds a space holds a tab too), and in a grep call where one pattern holds `*` or `+`, every pattern starts at `^` and keeps its `|` inside a group, so Claude Code's grep tries each one once per line. A recipe that skips comment lines first lists the lines that do not start with `#` (blanks aside) and searches them through a pipe, so a `#` later on a line hides nothing; the greps after the pipe take `-a`, so a NUL byte in one file cannot turn the rest of the listing into a binary-file message. Point the same commands at any `action.yml` / `action.yaml` outside `.github/` (composite actions at the repo root). `scripts/tests/test-gha-recipes.sh` runs R1–R9 exactly as written here, plus the KV-116 Step 1, KV-139 Step 1, KV-140 Steps 6 and 7 and KV-080 Steps 3, 4, 6 and 8 locators, against `scripts/tests/fixtures/gha/`, and fails if a known vector's copy of R1–R5, R7 or R9 differs from this file by a byte, if a pattern leaves the one-pass subset above, or if a command needs more than 30 s for a 1 MiB line of near misses.
 
 ```bash
 # R1 — files with a comment / review / issue / discussion trigger and no author_association outside a comment (the first list minus the second)
-grep -rlE --include='*.yml' --include='*.yaml' -e '^[[:space:]]*-?[[:space:]]*(issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues)[[:space:]]*(:[[:space:]]*([{[&*~]|null|(#.*)?$)|[],]|(#.*)?$)' -e "^[^[:alnum:]_#-]{0,3}[\"']?on[\"']?[[:space:]]*:.*(issue_comment|pull_request_review|discussion|issues)" -e "^[[:space:]]*-?[[:space:]]*[\"'](issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues)[\"']" .github/
+grep -rlE --include='*.yml' --include='*.yaml' -e '^[ 	]*-?[ 	]*(issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues)[ 	]*(:[ 	]*([{[&*~]|null|(#.*)?.?$)|[],]|(#.*)?.?$)' -e "^.{0,3}[\"']?on[\"']?[ 	]*:.*(issue_comment|pull_request_review|discussion|issues)" -e "^[ 	]*-?[ 	]*[\"'](issue_comment|pull_request_review_comment|pull_request_review|discussion_comment|discussion|issues)[\"']" .github/
 echo 'second list: files under .github/ that mention author_association'
-grep -rl --include='*.yml' --include='*.yaml' '^[^#]*author_association' .github/
+grep -rl --include='*.yml' --include='*.yaml' '^[][	 !"$%&'\''()*+,./0123456789:;<=>?@^_`abcdefghijklmnopqrstuvwxyz{|}~ABCDEFGHIJKLMNOPQRSTUVWXYZ-]*author_association' .github/
 ```
-> R1 is every file in the first list and not in the second; the `echo` line marks where the second starts, so the block can run as one command. Both lists come from plain `grep` calls, so a file name with a space or a quote is listed like any other. The two calls take the same `--include` options and root, so a file leaves R1 only by mentioning `author_association` before any `#` on a line; a gate that is commented out does not count. A second marker line, or a listed line that starts with neither `.github/` nor the marker, comes from a name with a newline; find such names with `find .github -name '*[[:cntrl:]]*'`. Works per file: a file that gates one job and leaves another open is not listed, so read every job's `if:` (DEP-090, KV-139). A job id named like an event can show up as noise.
+> R1 is every file in the first list and not in the second; the `echo` line marks where the second starts, so the block can run as one command. Both lists come from plain `grep` calls, so a file name with a space or a quote is listed like any other. The two calls take the same `--include` options and root, so a file leaves R1 only through a line that mentions `author_association` after nothing but printable ASCII other than `#` and `\`: a gate that is commented out, or that follows a backslash or a character outside ASCII on its line, does not count, and the file stays in R1. Run `find .github -name '*[[:cntrl:]:]*'` with R1 every time: a name that holds a newline prints as two lines, so a decoy such as a directory named `zz.yml`, a newline and `.github` can put the path of an ungated workflow into the second list, or print a line that copies the marker, with no other sign, and any output from `find` means reading every workflow. Works per file: a file that gates one job and leaves another open is not listed, so read every job's `if:` (DEP-090, KV-139). A job id named like an event can show up as noise, and so can a trigger commented out at the start of a line (`# on: issues`), a key that ends in `on` (`json: [issues]`), or a list item that holds an event name and one more character (`- discussions`).
 
 ```bash
 # R2 — association read from the opener object (correct only on that object's own event branch)
@@ -433,9 +428,9 @@ grep -rnE --include='*.yml' --include='*.yaml' 'github\.event\.(issue|pull_reque
 
 ```bash
 # R3 — unsound gate comparisons: string contains(), deny-lists, untrusted association values, app/<slug> strings, actor gates
-grep -rnE --include='*.yml' --include='*.yaml' -e "contains\([[:space:]]*'[^']*(OWNER|MEMBER|COLLABORATOR)" -e 'author_association[[:space:]]*!=' -e '!=[[:space:]]*github\.event\.[a-z_]+\.author_association' -e '![[:space:]]*contains\([[:space:]]*[Ff][Rr][Oo][Mm][Jj][Ss][Oo][Nn]' -e 'github\.(actor|triggering_actor|event\.sender\.login)[[:space:]]*[!=]=' -e '[!=]=[[:space:]]*github\.(actor|triggering_actor|event\.sender\.login)' -e 'contains\(.*github\.(actor|triggering_actor|event\.sender\.login)' -e "[\"'](CONTRIBUTOR|FIRST_TIMER|FIRST_TIME_CONTRIBUTOR|MANNEQUIN)[\"']" -e "app/[A-Za-z0-9_-]+'" .github/
+grep -rnE --include='*.yml' --include='*.yaml' -e '^.*[Cc][Oo][Nn][Tt][Aa][Ii][Nn][Ss]\([ 	]*'\''.*(OWNER|MEMBER|COLLABORATOR|CONTRIBUTOR|FIRST_TIME|MANNEQUIN|NONE)' -e '^.*author_association[ 	]*!=' -e '^.*!=[ 	]*github\.event\.[abcdefghijklmnopqrstuvwxyz_]+\.author_association' -e '^.*![ 	]*[Cc][Oo][Nn][Tt][Aa][Ii][Nn][Ss]\([ 	]*[Ff][Rr][Oo][Mm][Jj][Ss][Oo][Nn]' -e '^.*![ 	]*\(.*author_association' -e '^.*(author_association.*[!=]=[ 	]*(false|true)|(false|true)[ 	]*[!=]=.*author_association)' -e '^.*github\.(actor|triggering_actor|event\.sender\.login)[ 	]*[!=]=' -e '^.*[!=]=[ 	]*github\.(actor|triggering_actor|event\.sender\.login)' -e '^.*[Cc][Oo][Nn][Tt][Aa][Ii][Nn][Ss]\(.*github\.(actor|triggering_actor|event\.sender\.login)' -e "^.*[\"'](CONTRIBUTOR|FIRST_TIMER|FIRST_TIME_CONTRIBUTOR|MANNEQUIN)[\"']" -e "^.*app/[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-]+'" .github/
 ```
-> An actor comparison is a sound allowlist on `issue_comment` (the actor is the commenter) and unsound on PR-family and `workflow_run` events (DEP-091). `github.event.sender.login`, the account that triggered the event, is judged like `github.actor`, and a comparison counts with either operand first (`'x' == github.actor`, `'NONE' != …author_association`). `contains(github.actor, …)` is a substring test and unsound on every event. Function names are case-insensitive, and R3 matches `fromJSON` in any letter case.
+> An actor comparison is a sound allowlist on `issue_comment` (the actor is the commenter) and unsound on PR-family and `workflow_run` events (DEP-091). `github.event.sender.login`, the account that triggered the event, is judged like `github.actor`, and a comparison counts with either operand first (`'x' == github.actor`, `'NONE' != …author_association`). `contains(github.actor, …)` is a substring test and unsound on every event. A deny-list is listed in each spelling R3 knows: `!= 'NONE'`, `!contains(fromJSON(…), …)`, a string `contains('NONE,FIRST_TIMER', …)` (a substring test as well), a negated comparison `!(… == 'NONE')`, and a `contains(…)` compared with `false` or `true`; each lets `CONTRIBUTOR` and `FIRST_TIME_CONTRIBUTOR` through. Function names are case-insensitive, and R3 matches `contains` and `fromJSON` in any letter case. A string `contains('…'` is listed whatever its string holds before an association name, a backslash or a letter outside ASCII included, so a line where the name only follows the string shows up too.
 
 ```bash
 # R4 — workflow_run consumers: head fields and artifact downloads
@@ -445,29 +440,40 @@ grep -rnE --include='*.yml' --include='*.yaml' 'workflow_run\.(head_branch|head_
 
 ```bash
 # R5 — env-file and PATH writes, including tee -a and the github-script core helpers
-grep -rnE --include='*.yml' --include='*.yaml' '(>>|tee[[:space:]]+(-a|--append))[[:space:]]*"?\$\{?GITHUB_(ENV|PATH|OUTPUT)|core\.(exportVariable|addPath)' .github/
+grep -rnE --include='*.yml' --include='*.yaml' '^.*((>>|tee[ 	]+(-a|--append))[ 	]*"?\$\{?GITHUB_(ENV|PATH|OUTPUT)|core\.(exportVariable|addPath))' .github/
 ```
 > DEP-095. For each hit, find where the written value comes from.
 
 ```bash
 # R6 — attacker-controlled expressions (confirm the sink: run:, script:, an agent prompt field, an env file)
-grep -rnE --include='*.yml' --include='*.yaml' '\$\{\{.*(github\.event\.[abcdefghijklmnopqrstuvwxyz_.]*(body|default_branch|email|head_ref|label|message|name|page_name|ref|title|head_branch|display_title)|github\.head_ref|github\.event\.(commits|pages)\[|[Tt][Oo][Jj][Ss][Oo][Nn]\(github(\)|\.event[).]))' .github/
+grep -rnE --include='*.yml' --include='*.yaml' '^.*\$\{\{.*(github\.event\.[abcdefghijklmnopqrstuvwxyz_.]*(body|default_branch|email|head_ref|label|message|name|page_name|ref|title|head_branch|display_title)|github\.head_ref|github(\.event[abcdefghijklmnopqrstuvwxyz_.]*)?\[|[Tt][Oo][Jj][Ss][Oo][Nn]\(github(\)|\.event[).]))' .github/
 ```
-> Matches inside `env:` are the safe shell pattern but still taint agent prompts and env files (DEP-069, AI-023/024). Whole-context dumps count: `toJSON(github)` and `toJson(github.event…)` carry every attacker-controlled field. R6 matches `toJSON` in any letter case.
+> Matches inside `env:` are the safe shell pattern but still taint agent prompts and env files (DEP-069, AI-023/024). Whole-context dumps count: `toJSON(github)` and `toJson(github.event…)` carry every attacker-controlled field. R6 matches `toJSON` in any letter case. An expression that indexes `github` or `github.event` (`github.event['comment']['body']`, `github.event.commits[0].message`) can name any field, so R6 lists it too.
 
 ```bash
 # R7 — checkouts and fetches of PR or run heads, and the checkout-guard opt-out
-grep -rnE --include='*.yml' --include='*.yaml' 'ref:[[:space:]]*.?\$\{\{.*(github\.event\.(pull_request\.(head\.(sha|ref)|merge_commit_sha)|workflow_run\.head_(sha|branch))|github\.head_ref|steps\.[A-Za-z0-9_-]+\.outputs\.head_(sha|ref)|from(JSON|Json|json)\(steps\.[A-Za-z0-9_-]+\.outputs\.[A-Za-z0-9_]+\)\.head\.(sha|ref))|(^|[[:space:]{,])ref:[[:space:]]*(.?\$\{\{.*(env|needs|steps)\.|[|>])|repository:[[:space:]]*.?\$\{\{[[:space:]]*github\.event\.pull_request\.head\.repo\.full_name|refs/pull/|gh pr checkout|git (fetch|pull|checkout)[^#]*(pull/|[Hh][Ee][Aa][Dd][._]([Ss][Hh][Aa]|[Rr][Ee][Ff]))|allow-unsafe-pr-checkout' .github/
+grep -rnE --include='*.yml' --include='*.yaml' '^(["'\'']?ref["'\'']?[ 	]*:[ 	]*(.?\$\{\{.*((env|needs|steps|inputs|matrix)\.|\[)|[|>])|.*([ 	{,]["'\'']?ref["'\'']?[ 	]*:[ 	]*(.?\$\{\{.*((env|needs|steps|inputs|matrix)\.|\[)|[|>])|ref["'\'']?[ 	]*:[ 	]*.?\$\{\{.*(github\.event\.(pull_request\.(head\.(sha|ref)|merge_commit_sha)|workflow_run\.head_(sha|branch))|github\.head_ref|steps\.[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-]+\.outputs\.head_(sha|ref)|from(JSON|Json|json)\(steps\.[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-]+\.outputs\.[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_]+\)\.head\.(sha|ref))|repository["'\'']?[ 	]*:[ 	]*.?\$\{\{.*(github\.event\.pull_request\.head\.repo\.full_name|\[)|refs/pull/|gh pr checkout|git (fetch|pull|checkout).*(pull/|[Hh][Ee][Aa][Dd][._]([Ss][Hh][Aa]|[Rr][Ee][Ff]))|allow-unsafe-pr-checkout))' .github/
 ```
-> DEP-092 (the commit that was approved) and DEP-093 (privileged triggers). Quoted expressions match too, and so does `fromJSON(steps.<id>.outputs.result).head.sha`, also spelled `fromJson` or `fromjson`. A `ref:` that reads `env.`, a step output (`steps.<id>.outputs.*`) or a job output (`needs.<job>.outputs.*`), or one written as a block scalar (`ref: >-`, `ref: |`), is listed whatever it holds: find where the value is set (an `env:` block, a `$GITHUB_ENV` write that R5 lists, the step, or the job's `outputs:`), or read the lines below it. So is a `git fetch`, `pull` or `checkout` of a variable named for the head, such as `$HEAD_SHA` or `$GITHUB_HEAD_REF`.
+> DEP-092 (the commit that was approved) and DEP-093 (privileged triggers). Quoted expressions match too, under a `ref` or `repository` key quoted or not and with or without blanks before its colon, in a `{ … }` mapping and in a workflow written as JSON as well, and so does `fromJSON(steps.<id>.outputs.result).head.sha`, also spelled `fromJson` or `fromjson`. A `ref:` that reads `env.`, a step output (`steps.<id>.outputs.*`), a job output (`needs.<job>.outputs.*`), an input (`inputs.*`, in a reusable workflow or a composite action) or a matrix value (`matrix.*`), one whose expression uses index syntax (`inputs['sha']`, `github.event['pull_request']['head']['sha']`, which read what the dotted forms read), or one written as a block scalar (`ref: >-`, `ref: |`), is listed whatever it holds: find where the value is set (an `env:` block, a `$GITHUB_ENV` write that R5 lists, the step, the job's `outputs:`, the caller's `with:` or the `matrix:`), or read the lines below it. A `repository:` whose expression names the PR head's repository anywhere, or uses index syntax, is listed too. So is a `git fetch`, `pull` or `checkout` of a variable named for the head, such as `$HEAD_SHA` or `$GITHUB_HEAD_REF`, even when only a comment on that line names it.
 
 ```bash
 # R8 — AI agents in CI, their gates, and pre-v1 claude-code-action input names
-grep -rnE --include='*.yml' --include='*.yaml' 'anthropics/claude-code-(base-)?action|run-gemini-cli|gemini-cli-action|openai/codex-action|actions/ai-inference|claude ([^|;&#]* )?(-p|--print|\\[[:space:]]*$)|@anthropic-ai/claude-code|codex exec|gemini ([^|;&#]* )?(-p|--prompt|\\[[:space:]]*$)|allowed_non_write_users|allowed_bots|allow-users|allow-bots|include_comments_by_actor|direct_prompt|override_prompt|custom_instructions|allowed_tools|disallowed_tools|allowedTools|show_full_output|additional_permissions' .github/
+grep -rnE --include='*.yml' --include='*.yaml' '^.*(anthropics/claude-code-(base-)?action|run-gemini-cli|gemini-cli-action|openai/codex-action|actions/ai-inference|claude (([][	 !"$%'\''()*+,./0123456789:<=>?@^_`abcdefghijklmnopqrstuvwxyz{}~ABCDEFGHIJKLMNOPQRSTUVWXYZ-]|\\)* )?(-p|--print|\\[ 	]*.?$)|@anthropic-ai/claude-code|codex exec|gemini (([][	 !"$%'\''()*+,./0123456789:<=>?@^_`abcdefghijklmnopqrstuvwxyz{}~ABCDEFGHIJKLMNOPQRSTUVWXYZ-]|\\)* )?(-p|--prompt|\\[ 	]*.?$)|allowed_non_write_users|allowed_bots|allow-users|allow-bots|include_comments_by_actor|direct_prompt|override_prompt|custom_instructions|allowed_tools|disallowed_tools|allowedTools|show_full_output|additional_permissions)' .github/
 ```
-> AI-023..031, AI-034..035, KV-116. `claude --model x -p` and `gemini -m x -p` count: options may come before `-p`, claude's `--print` or gemini's `--prompt`, as long as no `|`, `;`, `&` or `#` comes between them, or the line ends in a `\` that continues the command. Pre-v1 names (`direct_prompt`, `override_prompt`, `custom_instructions`, `allowed_tools`, `disallowed_tools`) can remain after a workflow's `uses:` line moves to `@v1` or a SHA, so judge each step by the keys it sets.
+> AI-023..031, AI-034..035, KV-116. `claude --model x -p` and `gemini -m x -p` count: options may come before `-p`, claude's `--print` or gemini's `--prompt`, as long as everything between them is printable ASCII other than `|`, `;`, `&` and `#` (an escaped quote such as `--model "x\"y"` counts), or the line ends in a `\` that continues the command. An option value with a character outside ASCII before `-p` hides the call, so also read each line `grep -rnE --include='*.yml' --include='*.yaml' '(claude|gemini) ' .github/` lists. Pre-v1 names (`direct_prompt`, `override_prompt`, `custom_instructions`, `allowed_tools`, `disallowed_tools`) can remain after a workflow's `uses:` line moves to `@v1` or a SHA, so judge each step by the keys it sets.
 
-**Tool cross-check (optional, static).** `zizmor --offline --persona=auditor .github/workflows/` and CodeQL's `actions` language cover template injection, env-file writes, dangerous triggers and bot conditions. Neither replaces R1–R3, R7 or R8: on fixtures 01–17 in `scripts/tests/fixtures/gha/`, zizmor 1.30.1 did not flag a mention-only gate, the cross-object OR, a deny-list, event text in an agent prompt input, `allowed_non_write_users: "*"` or `allow-unsafe-pr-checkout: true` (details in `references/vuln-classes/github-actions.md` §9).
+```bash
+# R9 — actions and reusable workflows pinned to a full commit SHA, with their version comments
+grep -rnv --include='*.yml' --include='*.yaml' '^[ 	]*#' .github/ | grep -aE '^[][	 !"#$%&'\''()*+,./0123456789;<=>?@^_`abcdefghijklmnopqrstuvwxyz{|}~ABCDEFGHIJKLMNOPQRSTUVWXYZ-]*:[0123456789]+:[ 	]*(-[ 	]*)?(\{[ 	]*)?["'\'']?uses["'\'']?[ 	]*:[ 	]*.?[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-]+/[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-]+(/[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._/-]*)?@[0123456789abcdef]{40}([] 	"'\'',}]|$)'
+```
+> DEP-067, KV-080 Step 4. GitHub serves a commit that exists only in a fork through the parent's `owner/repo`, so a pin is only as good as the commit behind it: check each repository R9 names once, with the `git ls-remote` command and the grading in KV-080 Step 4. R9 lists pins quoted or not, with or without a version comment, and the job-level `uses:` of reusable workflows. It reads the value of the `uses` key that starts the line (after blanks, a `-` or a `{`; the key quoted or not, with or without blanks before its colon), so a pin that only a trailing comment names is not listed, and it takes 40 hex digits for a pin only when whitespace, a quote, `,`, `}`, `]` or the end of the line follows them. The first command of that step lists every other `uses:` line, but a local action that nothing but blanks, closing brackets, a comma or a comment follows: tags, branches, short SHAs and `docker://` images, and a pin R9 cannot read, such as one in a `{ … }` mapping after another key, one whose path holds a character other than a letter, a digit, `.`, `_`, `-` or `/`, or, under GNU or BSD grep, one that ends a line of a file saved with CRLF line ends (a CR follows the SHA there). A file or directory name that holds a `:` prints a `path:line:` prefix of its own, which R9 and KV-080 Steps 4, 6 and 8 take for grep's, so a line under such a name can land in the wrong list or drop out: run `find .github -name '*[[:cntrl:]:]*'` with them every time, and read whole every file under a name it prints.
+
+**Known limits.**
+- Claude Code's Bash tool runs `grep` as its embedded ugrep with `--ignore-files` and `-I`, so it skips every file that a `.gitignore` names, one under `.github/` included, and every file it reads as binary, such as one holding bytes that are not UTF-8. Git still tracks such a workflow and GitHub still runs it, but no recipe here sees it. Until that is fixed, list what git tracks with `"<auditor-skill root>/scripts/git-ro.sh" ls-files -- .github/` and compare it with what the session's grep reads, `grep -rl --include='*.yml' --include='*.yaml' -e '' .github/`; `"<auditor-skill root>/scripts/git-ro.sh" ls-files -c -i --exclude-standard -- .github/` names the tracked files an ignore rule hides. Read every workflow and action in the first list and not in the second whole. KV-140 Step 7 and the second command of KV-080 Step 8 search the whole tree, so an ignore rule anywhere (a root `.gitignore` that names `infra/`, say), or a byte that is not UTF-8, hides an infrastructure file from them the same way: compare `"<auditor-skill root>/scripts/git-ro.sh" ls-files -- '*.tf' '*.hcl' '*.json' '*.yml' '*.yaml' '*.sh' ':(exclude,glob)**/node_modules/**' ':(exclude,glob)**/.terraform/**'` with `grep -rl --exclude-dir=node_modules --exclude-dir=.terraform --include='*.tf' --include='*.hcl' --include='*.json' --include='*.yml' --include='*.yaml' --include='*.sh' -e '' .` (both leave out every `node_modules/` and `.terraform/` directory, as those commands do), and read whole every file in the first list and not in the second (`"<auditor-skill root>/scripts/git-ro.sh" ls-files -c -i --exclude-standard` names those an ignore rule hides).
+- GNU grep, the `grep` of most Linux systems outside Claude Code, does the same to lines in a UTF-8 locale: it prints no line that holds a byte that is not valid UTF-8, only a note on standard error that a binary file matches, so a recipe loses that line, while `grep -rl` still lists its file and the comparison above shows no difference. Read whole every file such a note names, or run the recipe on it again with `-a` added to its first grep.
+- A lone CR ends a YAML line, and so do U+0085, U+2028 and U+2029 for a YAML 1.1 parser, but none of them ends a grep line, so a comment before one hides what follows it on that grep line from R9 and its copy in KV-080 Step 4, both commands of KV-080 Step 8 and both of KV-140 Step 7, which skip a comment however it ends, and a trigger after one, comment or not, from R1's first list, its copy in KV-080 Step 7 and KV-139 Step 1, which read a trigger at the start of a line: read whole each workflow, action and infrastructure file that ``grep -rcvE --exclude-dir=node_modules --exclude-dir=.terraform --include='*.yml' --include='*.yaml' '^([][	 !"#$%&'\''()*+,./0123456789:;<=>?@^_`abcdefghijklmnopqrstuvwxyz{|}~ABCDEFGHIJKLMNOPQRSTUVWXYZ-]|\\)*$' . | grep -v ':0$'`` names, since each line it counts holds a character outside printable ASCII (under GNU or BSD grep, the CR of a CRLF line end counts too).
+
+**Tool cross-check (optional, static).** `"<auditor-skill root>/tools/auditor-tools/target/release/audit-scan" --contract=1 . --workflows .github/workflows --out audit_<n>/prescan-workflows.json` (the optional pre-pass of FULL-AUDIT.md 0.3, run on `.` into a file of its own, so the `prescan.json` Phase 0 reads stays as that pass wrote it; skip it when that pass already ran with `--workflows`) parses the workflows into trigger → job → step facts first, and lists under `skipped`/`unknown` what it did not read (only a workflow with an empty `unknown` was read whole). `zizmor --offline --no-config --no-ignores --collect=all --persona=auditor .github/workflows/` (`--no-config` so the audited repo's own `zizmor.yml` cannot turn audits off, `--no-ignores` so its `# zizmor: ignore[...]` comments cannot hide a finding, `--collect=all` so its `.gitignore` cannot keep a workflow out of the scan) and CodeQL's `actions` language cover template injection, env-file writes, dangerous triggers and bot conditions. Neither replaces R1–R3, R7 or R8: on fixtures 01–17 in `scripts/tests/fixtures/gha/`, zizmor 1.30.1 did not flag a mention-only gate, the cross-object OR, a deny-list, event text in an agent prompt input, `allowed_non_write_users: "*"` or `allow-unsafe-pr-checkout: true` (details in `references/vuln-classes/github-actions.md` §9). CodeQL's queries were not run on those fixtures, so what they miss there is not measured.
 
 ---
 
@@ -475,25 +481,28 @@ grep -rnE --include='*.yml' --include='*.yaml' 'anthropics/claude-code-(base-)?a
 
 ### Program upgrade authority
 ```bash
-# Terminal:
-solana program show <PROGRAM_ID> --url mainnet-beta
+# Terminal: read-only, through the bundled RPC reader (--cluster devnet for a devnet program)
+"<auditor-skill root>/scripts/rpc-read.sh" program-show <PROGRAM_ID> --run audit_<n> --cluster mainnet-beta
 ```
 
 ### Anchor build verification
 ```bash
-# Terminal — builds the target (build.rs, proc-macros): only in the OUTPUT-RULES Rule 11a mode recorded at intake
-anchor build 2>&1 | tail -20
+# Terminal — builds the target (build.rs, proc-macros) through the bundled target.sh, in the OUTPUT-RULES
+# Rule 11a mode recorded at intake (exit 3 with none recorded); its last line names the log
+"<auditor-skill root>/scripts/runner/target.sh" anchor-build --run audit_<n> --src .
 ```
 
 ### Test suite
 ```bash
-# Terminal — runs the target's tests and Anchor.toml [scripts]: only in the OUTPUT-RULES Rule 11a mode recorded at intake
-anchor test --validator legacy 2>&1 | tail -30
+# Terminal — runs the target's tests and Anchor.toml [scripts] through the bundled target.sh, in the OUTPUT-RULES
+# Rule 11a mode recorded at intake, against no validator: tests that need one fail, and nothing is deployed
+"<auditor-skill root>/scripts/runner/target.sh" anchor-test --run audit_<n> --src .
 ```
 
 ### Binary hash verification
 ```bash
-# Terminal — rebuilds the target from source: only in the OUTPUT-RULES Rule 11a mode recorded at intake
+# Terminal — rebuilds the target from source: only in the OUTPUT-RULES Rule 11a mode recorded at intake. No
+# bundled runner wraps it (it builds in docker and reads the deployed program), so it asks for approval
 anchor verify <PROGRAM_ID> --provider-url mainnet-beta
 ```
 
@@ -627,15 +636,15 @@ grep_search: "openai|anthropic|llm|gpt|completion|embedding|prompt"   isRegexp: 
 
 ### Change management controls
 ```bash
-# Terminal: Check branch protection (OUTPUT-RULES Rule 11c flags)
-GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false remote -v
+# Terminal: Check branch protection (read-only git, OUTPUT-RULES Rule 11c)
+"<auditor-skill root>/scripts/git-ro.sh" remote -v
 # Terminal: Check for PR templates
 find .github -name "*pull_request*" -o -name "CODEOWNERS" 2>/dev/null
 ```
 
 ### Deployment approval gates
 ```
-grep_search: "approval|deploy.*gate|manual.*trigger"   isRegexp: true   includePattern: ".github/workflows/*.yml"
+grep_search: "approval|deploy.*gate|manual.*trigger"   isRegexp: true   includePattern: ".github/workflows/*.{yml,yaml}"
 ```
 
 ---

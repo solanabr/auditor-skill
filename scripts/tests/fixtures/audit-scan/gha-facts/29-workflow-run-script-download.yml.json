@@ -1,0 +1,37 @@
+{
+  "name": "f29-workflow-run-script-download",
+  "triggers": [
+    "workflow_run"
+  ],
+  "permissions": [
+    "contents: read",
+    "pull-requests: write"
+  ],
+  "jobs": [
+    {
+      "id": "comment",
+      "line": 11,
+      "permissions": [],
+      "steps": [
+        {
+          "line": 14,
+          "uses": "actions/github-script@v7",
+          "with": [
+            {
+              "key": "script",
+              "value": "const { data } = await github.rest.actions.listWorkflowRunArtifacts({ ...context.repo, run_id: context.payload.workflow_run.id }) const zip = await github.rest.actions.downloadArtifact({ ...context.re..."
+            }
+          ],
+          "env": []
+        },
+        {
+          "line": 20,
+          "run": "unzip pr.zip && bash ./comment.sh",
+          "with": [],
+          "env": []
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}
