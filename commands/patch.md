@@ -47,6 +47,7 @@ This command's pre-approvals last for the turn that invoked it: Claude Code clea
 6. **Emit outputs** under `audit_<n>/patches/` (or `incident_<n>/patches/` for an `INC-<n>.<k>`):
    - `F-xxx.patch` — the minimal unified diff (deliverable),
    - `VERIFICATION.md` — per-patch: the tier below, the executed revert result (pre-fix exploit succeeded → post-fix reverted) including its *Re-detonated against* field, any mutation/blast-radius evidence, the post-patch-validation result or the reason it did not run (with `--post-patch-validation`), and what a maintainer must do to apply it,
+   - `F-xxx.summary` — with `--post-patch-validation`, the finding's root cause and impact in one sentence, which `VERIFICATION.md` §4 hands the runner as one argument,
    - update the report's **Auditor Verification** line for the finding to reflect the tier.
 
 ## Evidence tiers (emit exactly one)
