@@ -11,8 +11,10 @@
 #     the stand-in curl with exactly the GCS and Azure listings, the GCS and Azure object reads (headers only),
 #     and the .git/HEAD and made-up-path requests the block writes, each with -q first and --max-time 30;
 #   - DEP-073 keeps the first 64 KiB of a 1 MiB body that the stand-in curl sends past --max-filesize, as curl
-#     before 8.4.0 does with a body whose size the server does not give, in a new file: a link left at the path it
-#     saves to is removed, and the file the link names is untouched;
+#     before 8.4.0 does with a body whose size the server does not give, in a new file, and the response's headers
+#     in another: a link left at either path is removed, and the file the link names is untouched;
+#   - with a curl before 7.63.0, which knows no %{stderr} in a -w format, DEP-073 still shows the status, the last
+#     HTTP/ line of the headers (after a proxy's CONNECT answer), and saves the body alone;
 #   - the S3 probes print a key count and an object size: the stand-in aws prints what the AWS CLI v2 prints with
 #     --output text, None for a --query outside Contents and CommonPrefixes on a paginated call;
 #   - a host, bucket, Azure account or container, or object key, outside the grammar (a user, a port, a path,
@@ -128,7 +130,7 @@ EOF
 want_spans DEP-072 'env -u ' 2
 want_spans DEP-072 'curl ' 4
 want_spans DEP-073 'curl ' 1
-want_spans DEP-073 'LC_ALL=C grep ' 1
+want_spans DEP-073 'LC_ALL=C grep ' 2
 if [ -n "$B" ] && [ -z "$(printf '%s\n' "$B" | grep -E '(^|[^A-Za-z0-9_-])/[^ ]*/(curl|aws|grep|env)( |$)')" ]; then
   ok "the block calls no tool by an absolute path, so the stand-ins below see every call"
 else bad "the block calls a tool by an absolute path"; fi
@@ -162,23 +164,30 @@ case "\$op:\$paged:\$query" in
   *) printf 'None\n' ;;
 esac
 EOF
-# The stand-in curl writes the body to the -o file, or to stdout for -o -, and the status to stderr when the -w
-# format starts with %{stderr}. Like curl before 8.4.0 with a body whose size the server does not give in advance,
-# it ignores --max-filesize: given STANDIN_BODY_FILE, it sends that whole file.
+# The stand-in curl writes the body to the -o file, or to stdout for -o -, the headers a proxy's CONNECT answer
+# and the server send to the -D file, and the status for a -w format: to stderr when the format starts with
+# %{stderr}, and to stdout when it does not, or when STANDIN_OLD_CURL is set, as curl before 7.63.0 does. Like curl
+# before 8.4.0 with a body whose size the server does not give in advance, it ignores --max-filesize: given
+# STANDIN_BODY_FILE, it sends that whole file.
 CAT=$(command -v cat) || exit 1
 cat > "$T/bin/curl" <<EOF
 #!/bin/sh
 { printf 'call curl\n'; for a in "\$@"; do printf 'arg=%s\n' "\$a"; done
   printf 'env CURL_HOME=%s\n' "\${CURL_HOME-unset}"; } >> "$T/calls.log"
-out=""; fmt=""; prev=""
-for a in "\$@"; do [ "\$prev" = -o ] && out=\$a; [ "\$prev" = -w ] && fmt=\$a; prev=\$a; done
+out=""; fmt=""; hdr=""; prev=""
+for a in "\$@"; do [ "\$prev" = -o ] && out=\$a; [ "\$prev" = -w ] && fmt=\$a; [ "\$prev" = -D ] && hdr=\$a; prev=\$a; done
+[ -z "\$hdr" ] || printf 'HTTP/1.1 200 Connection established\r\n\r\nHTTP/2 200\r\ncontent-type: text/plain\r\n\r\n' > "\$hdr"
 body() { if [ -n "\${STANDIN_BODY_FILE-}" ]; then "$CAT" "\$STANDIN_BODY_FILE"; else printf '%s\n' "\${STANDIN_BODY-}"; fi; }
 case "\$out" in
   ''|/dev/null) ;;
   -) body ;;
   *) body > "\$out" ;;
 esac
-case "\$fmt" in '%{stderr}'*) printf '200 \n' >&2 ;; *) printf '200 \n' ;; esac
+case "\$fmt:\${STANDIN_OLD_CURL-}" in
+  :*) ;;
+  '%{stderr}'*:) printf '200 \n' >&2 ;;
+  *) printf '200 \n' ;;
+esac
 EOF
 chmod +x "$T/bin/aws" "$T/bin/curl" || exit 1
 fill() { # fill BUCKET HOST ACCOUNT CONTAINER KEY > the block with its placeholders filled
@@ -222,7 +231,7 @@ canary "$T/good.sh"
   printf 'arg=%s\n' -q -sS --max-time 30 -I -o /dev/null -w '%{http_code}' 'https://examplestore.blob.core.windows.net/assets/static/logo-v2.png'
   printf 'env CURL_HOME=%s\n' "$T/home"
   printf 'call curl\n'
-  printf 'arg=%s\n' -q -sS --max-time 30 --max-filesize 65536 -o - -w '%{stderr}%{http_code} %{redirect_url}\n' \
+  printf 'arg=%s\n' -q -sS --max-time 30 --max-filesize 65536 -D "$T/r/probes/dep-073-app.example.invalid.head" -o - \
     https://app.example.invalid/.git/HEAD
   printf 'env CURL_HOME=%s\n' "$T/home"
   printf 'call curl\n'
@@ -241,18 +250,27 @@ else bad "good values: the verdict line did not print 1, or a value was refused:
 if grep -qx 3 "$T/out" && grep -qx 17 "$T/out" && ! grep -qx None "$T/out"; then
   ok "the S3 probes print the key count and the object size, as the CLI prints them with these flags, and no None"
 else bad "the S3 probes do not print a key count and an object size: $(cat "$T/out")"; fi
-# DEP-073 keeps at most 64 KiB of the body whatever the curl version, and never writes through a link left at the
-# path it saves to: the stand-in sends 1 MiB past --max-filesize, and that path is a link to a file outside.
+# DEP-073 keeps at most 64 KiB of the body whatever the curl version, and never writes through a link left at a
+# path it saves to: the stand-in sends 1 MiB past --max-filesize, and both paths are links to a file outside.
 awk 'BEGIN { for (i = 0; i < 16384; i++) printf "%063d\n", i }' > "$T/long-body"
 printf 'outside\n' > "$T/outside"
 saved="$T/r/probes/dep-073-app.example.invalid.txt"
-rm -f "$saved" && ln -s "$T/outside" "$saved" || exit 1
+savedh="$T/r/probes/dep-073-app.example.invalid.head"
+rm -f "$saved" "$savedh" && ln -s "$T/outside" "$saved" && ln -s "$T/outside" "$savedh" || exit 1
 ( export STANDIN_BODY_FILE="$T/long-body"; canary "$T/good.sh" )
 size=$(wc -c < "$saved" 2>/dev/null); size=${size//[!0-9]/}
 if [ "$(wc -c < "$T/long-body" | tr -d ' ')" = 1048576 ] && [ "$(cat "$T/outside")" = outside ] && [ -f "$saved" ] \
-   && [ ! -L "$saved" ] && [ "${size:-0}" = 65536 ]; then
-  ok "DEP-073 keeps the first 64 KiB of a 1 MiB body sent past --max-filesize, in a new file, not through a link at its path"
-else bad "DEP-073 on a 1 MiB body with a link at its path: ${size:-no} bytes saved, the link $([ -L "$saved" ] && echo kept || echo removed), outside: $(head -c 40 "$T/outside")"; fi
+   && [ ! -L "$saved" ] && [ "${size:-0}" = 65536 ] && [ -f "$savedh" ] && [ ! -L "$savedh" ]; then
+  ok "DEP-073 keeps the first 64 KiB of a 1 MiB body sent past --max-filesize, and the headers, in new files, not through a link at either path"
+else bad "DEP-073 on a 1 MiB body with links at its paths: ${size:-no} bytes saved, the links $([ -L "$saved" ] || [ -L "$savedh" ] && echo kept || echo removed), outside: $(head -c 40 "$T/outside")"; fi
+# A curl before 7.63.0 knows no %{stderr}: the status comes from the headers file, the last HTTP/ line there (a
+# proxy's CONNECT answer comes first), and the saved file holds the body alone.
+rm -f "$saved" "$savedh"
+( export STANDIN_OLD_CURL=1; canary "$T/good.sh" )
+status=$(tr -d '\r' < "$T/out" | grep '^HTTP/' | tail -n 1)
+if [ "$status" = 'HTTP/2 200' ] && [ "$(cat "$saved" 2>/dev/null)" = 'ref: refs/heads/main' ]; then
+  ok "DEP-073 with a curl that knows no %{stderr} shows the status, the last HTTP/ line, and saves the body alone"
+else bad "DEP-073 with a curl before 7.63.0: status '${status:-none}', saved: $(head -c 80 "$saved" 2>/dev/null | tr '\n' '|')"; fi
 
 # ---- values outside the grammar are refused, and their probe never runs ------------------------------------------
 # Each value goes in single quotes, so a semicolon or $( ) in it starts nothing. A single quote would end those
