@@ -548,7 +548,7 @@ ACTIONS:
 
   # Change management / CI-CD
   ls .github/workflows/ 2>/dev/null
-  cat .github/workflows/*.yml 2>/dev/null | grep -E "test|review|approve|deploy"
+  grep -rnE --include='*.yml' --include='*.yaml' -e 'test|review|approve|deploy' .github/workflows/ 2>/dev/null
 
   # Code review enforcement
   cat .github/CODEOWNERS 2>/dev/null

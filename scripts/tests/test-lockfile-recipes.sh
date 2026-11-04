@@ -26,7 +26,8 @@
 #     fetches nothing and fires no canary, and an option-shaped deployed commit is refused, never read as an
 #     option; its log, above 64 KiB, is cut at 40 lines; SC-054 names the same fetch;
 #   - the manifest reads of KV-076 Step 4, KV-078 Step 10, KV-049 Step 4 and KV-089 Step 3, on a PATH with no
-#     npm or node: the locked packages with an install script, a declared hook tool, the declared runtime;
+#     npm or node: the locked packages with an install script, a declared hook tool, the declared runtime; and
+#     KV-078 Step 12's workflow search, under failglob, over a tree whose only workflow is a .yaml file;
 #   - checklist 11 SC-063, SC-064 and SC-065 and checklist 14 PY-050, as written: SC-064's installer locator under
 #     failglob over every text file of a tree of installer forms and near misses, and its patterns; SC-063's grep
 #     over an artifact diff and its RS cross-references; SC-065's allowlist; PY-050's check, which numbers the
@@ -550,6 +551,15 @@ mf_step "$ROOT/known-vectors/078-secrets-in-git-history.md" 10
 if [ "$(cat "$T/mf.out")" = '    "husky": "^9.0.0",' ]; then
   ok "KV-078 Step 10 finds husky among the declared dependencies, with no npm"
 else bad "KV-078 Step 10 on the manifests fixture"; sed 's/^/  | /' "$T/mf.out"; fi
+# KV-078 Step 12 reads .yml and .yaml workflows alike, and runs under failglob, as zsh, the Bash tool's shell, stops a
+# command whose glob matches nothing: a tree whose only workflow is .yaml has its secret-scanning step listed.
+mkdir -p "$T/kv078/.github/workflows" || exit 1
+printf 'jobs:\n  scan:\n    steps:\n      - uses: gitleaks/gitleaks-action@v2\n' > "$T/kv078/.github/workflows/scan.yaml"
+kv_step "$ROOT/known-vectors/078-secrets-in-git-history.md" 12 > "$T/kv078-12.sh"
+(cd "$T/kv078" && env -i PATH="$MF/mpath" HOME="$T" LC_ALL=C bash -O failglob "$T/kv078-12.sh") > "$T/kv078-12.out" 2>&1 </dev/null
+if grep -q 'gitleaks/gitleaks-action@v2' "$T/kv078-12.out"; then
+  ok "KV-078 Step 12 lists the secret-scanning step of a .yaml workflow, under failglob too"
+else bad "KV-078 Step 12 on a tree whose only workflow is .yaml"; sed 's/^/  | /' "$T/kv078-12.out"; fi
 mf_step "$ROOT/known-vectors/049-http-response-splitting.md" 4
 printf '%s\n' '4:    "node": ">=18"' './.nvmrc:20.11.1' './apps/backend/.nvmrc:18' './srv/Dockerfile:1:FROM node:18-alpine' > "$T/mf.want"
 sort "$T/mf.want" > "$T/mf.wsort"; sort "$T/mf.out" > "$T/mf.osort"   # the recursive grep's order varies by platform
