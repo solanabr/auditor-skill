@@ -242,11 +242,25 @@ exec 3<&-
 # below find it done, and only git's own answer (confine_no_repo) says there is no repository.
 CONFINE_CEILING='' confine_git_files "$WT"
 if err=$(CONFINE_CEILING='' hgit "$WT" rev-parse --is-inside-work-tree 2>&1); then
-  [ "$err" = true ] || refuse "the working directory lies inside a git directory"
-  top=$(CONFINE_CEILING='' hgit "$WT" rev-parse --show-toplevel 2>/dev/null) && [ -n "$top" ] && confine_phys "$top" ||
+  # git answers false inside a git directory, and outside the work tree a core.worktree in the repository's
+  # own config sets, which git places by spelling (one through /System/Volumes/Data is elsewhere to git).
+  if [ "$err" != true ]; then
+    [ "$(CONFINE_CEILING='' hgit "$WT" rev-parse --is-inside-git-dir 2>/dev/null)" = false ] ||
+      refuse "the working directory lies inside a git directory"
+    refuse "git places the working directory outside its repository's top level"
+  fi
+  top=$(CONFINE_CEILING='' hgit "$WT" rev-parse --show-toplevel 2>/dev/null) && [ -n "$top" ] ||
     refuse "git cannot tell which repository holds the working directory, so its parents cannot be checked"
-  top=$CONFINE_PHYS
-  case "$WT/" in "${top%/}/"*) ;; *) refuse "git places the working directory outside its repository's top level" ;; esac
+  # The top level is the working directory or the directory above it that is the same directory (device
+  # and inode), spelled as the working directory's path spells it: a core.worktree can spell it in other
+  # letters, where the filesystem folds them.
+  d=$WT
+  until [ "$d" -ef "$top" ]; do
+    [ "$d" != / ] || refuse "git places the working directory outside its repository's top level"
+    d=${d%/*}
+    [ -n "$d" ] || d=/
+  done
+  top=$d
   # A linked worktree: Claude Code also reads its main checkout's .claude/settings.local.json, and that
   # checkout's project skills when the worktree has no .claude/skills at its top level.
   gd=$(CONFINE_CEILING='' hgit "$WT" rev-parse --absolute-git-dir 2>/dev/null) &&

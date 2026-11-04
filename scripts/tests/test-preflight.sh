@@ -305,6 +305,35 @@ build "$P" d:r10/sub d:r10/.claude/agents
 git init -q --separate-git-dir="$P/r10.git" "$P/r10" && git -C "$P/r10" config core.worktree "$P/r10/sub"
 run "$P/r10/sub"
 check "... nor one in a repository whose .git is a file naming its git directory" above ../.claude/agents
+# A core.worktree spelling the top level in other letters names the working directory where the filesystem
+# opens them as it, and the parents are read as for one the disk spells; where it does not, it names no
+# directory and is refused. A working directory outside the work tree a core.worktree sets, or one spelled
+# through /System/Volumes/Data (the same directory on macOS, elsewhere to git), is refused for what it is.
+PU=$(printf '%s' "$P" | tr 'a-z' 'A-Z')
+build "$P" d:r16/sub d:r16/.claude/skills
+git init -q "$P/r16" && git -C "$P/r16" config core.worktree "$PU/R16/SUB"
+run "$P/r16/sub"
+if [ -d "$PU/R16/SUB" ]; then
+  check "a core.worktree spelling the top level in capitals does not stop the parents where names fold case" \
+    above ../.claude/skills
+else
+  check "a core.worktree spelling the top level in capitals names nothing where names do not fold case, and is refused" \
+    sh -c '[ "$1" = 64 ] && [ ! -s "$2" ]' _ "$RC" "$T/out"
+fi
+build "$P" d:r17/sub d:r17-elsewhere
+git init -q "$P/r17" && git -C "$P/r17" config core.worktree "$P/r17-elsewhere"
+run "$P/r17/sub"
+check "a working directory outside the work tree a core.worktree sets is refused for that, not as one in a git directory" \
+  refused "git places the working directory outside its repository's top level"
+if [ "/System/Volumes/Data$P" -ef "$P" ]; then
+  build "$P" d:r14/sub d:r14/.claude/skills
+  git init -q "$P/r14" && git -C "$P/r14" config core.worktree "/System/Volumes/Data$P/r14/sub"
+  run "$P/r14/sub"
+  check "... and so is one whose core.worktree spells it through /System/Volumes/Data" \
+    refused "git places the working directory outside its repository's top level"
+else
+  skp "no /System/Volumes/Data spelling of the test directory here"
+fi
 # No program the repository's own config names runs: hooks, fsmonitor, a pager.
 build "$P" d:r13/sub d:r13/.claude/commands
 git init -q "$P/r13"
