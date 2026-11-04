@@ -3,13 +3,16 @@
 # after DEP-077) exactly as written, against stand-ins, and check the intake rule of engagement that gates them:
 #   - every command an item quotes is one plain command (quoted &, $ and the like allowed), starts with its
 #     tool's bare name, and appears word for word in the block;
-#   - the block, run with PATH holding only the stand-ins and env, mkdir and grep, calls the stand-in aws with
+#   - the block, run with PATH holding only the stand-ins and env, mkdir, grep, head and rm, calls the stand-in aws with
 #     exactly `s3api list-objects-v2 --bucket <bucket> --no-paginate --query KeyCount --output text
 #     --no-sign-request --region us-east-1` and `s3api head-object --bucket <bucket> --key <key> --query
 #     ContentLength --output text --no-sign-request --region us-east-1`, the AWS profile, endpoint and CA
 #     variables cleared and the config and credentials files /dev/null (canary values are set beforehand), and
 #     the stand-in curl with exactly the GCS and Azure listings, the GCS and Azure object reads (headers only),
 #     and the .git/HEAD and made-up-path requests the block writes, each with -q first and --max-time 30;
+#   - DEP-073 keeps the first 64 KiB of a 1 MiB body that the stand-in curl sends past --max-filesize, as curl
+#     before 8.4.0 does with a body whose size the server does not give, in a new file: a link left at the path it
+#     saves to is removed, and the file the link names is untouched;
 #   - the S3 probes print a key count and an object size: the stand-in aws prints what the AWS CLI v2 prints with
 #     --output text, None for a --query outside Contents and CommonPrefixes on a paginated call;
 #   - a host, bucket, Azure account or container, or object key, outside the grammar (a user, a port, a path,
@@ -137,7 +140,7 @@ else bad "the block calls a tool by an absolute path"; fi
 # --no-paginate is given, and on a paginated call --query reads each page after the CLI kept only Contents and
 # CommonPrefixes, so a query for any other key, KeyCount among them, prints None; head-object is one call.
 mkdir -p "$T/bin" "$T/home" "$T/r" || exit 1
-for tool in env mkdir grep; do
+for tool in env mkdir grep head rm; do
   p=$(command -v "$tool") && ln -s "$p" "$T/bin/$tool" || { echo "no $tool on PATH" >&2; exit 1; }
 done
 cat > "$T/bin/aws" <<EOF
@@ -159,14 +162,23 @@ case "\$op:\$paged:\$query" in
   *) printf 'None\n' ;;
 esac
 EOF
+# The stand-in curl writes the body to the -o file, or to stdout for -o -, and the status to stderr when the -w
+# format starts with %{stderr}. Like curl before 8.4.0 with a body whose size the server does not give in advance,
+# it ignores --max-filesize: given STANDIN_BODY_FILE, it sends that whole file.
+CAT=$(command -v cat) || exit 1
 cat > "$T/bin/curl" <<EOF
 #!/bin/sh
 { printf 'call curl\n'; for a in "\$@"; do printf 'arg=%s\n' "\$a"; done
   printf 'env CURL_HOME=%s\n' "\${CURL_HOME-unset}"; } >> "$T/calls.log"
-out=""; prev=""
-for a in "\$@"; do [ "\$prev" = -o ] && out=\$a; prev=\$a; done
-[ -n "\$out" ] && [ "\$out" != /dev/null ] && printf '%s\n' "\${STANDIN_BODY-}" > "\$out"
-printf '200 \n'
+out=""; fmt=""; prev=""
+for a in "\$@"; do [ "\$prev" = -o ] && out=\$a; [ "\$prev" = -w ] && fmt=\$a; prev=\$a; done
+body() { if [ -n "\${STANDIN_BODY_FILE-}" ]; then "$CAT" "\$STANDIN_BODY_FILE"; else printf '%s\n' "\${STANDIN_BODY-}"; fi; }
+case "\$out" in
+  ''|/dev/null) ;;
+  -) body ;;
+  *) body > "\$out" ;;
+esac
+case "\$fmt" in '%{stderr}'*) printf '200 \n' >&2 ;; *) printf '200 \n' ;; esac
 EOF
 chmod +x "$T/bin/aws" "$T/bin/curl" || exit 1
 fill() { # fill BUCKET HOST ACCOUNT CONTAINER KEY > the block with its placeholders filled
@@ -210,8 +222,8 @@ canary "$T/good.sh"
   printf 'arg=%s\n' -q -sS --max-time 30 -I -o /dev/null -w '%{http_code}' 'https://examplestore.blob.core.windows.net/assets/static/logo-v2.png'
   printf 'env CURL_HOME=%s\n' "$T/home"
   printf 'call curl\n'
-  printf 'arg=%s\n' -q -sS --max-time 30 --max-filesize 65536 -o "$T/r/probes/dep-073-app.example.invalid.txt" \
-    -w '%{http_code} %{redirect_url}\n' https://app.example.invalid/.git/HEAD
+  printf 'arg=%s\n' -q -sS --max-time 30 --max-filesize 65536 -o - -w '%{stderr}%{http_code} %{redirect_url}\n' \
+    https://app.example.invalid/.git/HEAD
   printf 'env CURL_HOME=%s\n' "$T/home"
   printf 'call curl\n'
   printf 'arg=%s\n' -q -sS --max-time 30 --max-filesize 65536 -o /dev/null -w '%{http_code}\n' \
@@ -229,6 +241,18 @@ else bad "good values: the verdict line did not print 1, or a value was refused:
 if grep -qx 3 "$T/out" && grep -qx 17 "$T/out" && ! grep -qx None "$T/out"; then
   ok "the S3 probes print the key count and the object size, as the CLI prints them with these flags, and no None"
 else bad "the S3 probes do not print a key count and an object size: $(cat "$T/out")"; fi
+# DEP-073 keeps at most 64 KiB of the body whatever the curl version, and never writes through a link left at the
+# path it saves to: the stand-in sends 1 MiB past --max-filesize, and that path is a link to a file outside.
+awk 'BEGIN { for (i = 0; i < 16384; i++) printf "%063d\n", i }' > "$T/long-body"
+printf 'outside\n' > "$T/outside"
+saved="$T/r/probes/dep-073-app.example.invalid.txt"
+rm -f "$saved" && ln -s "$T/outside" "$saved" || exit 1
+( export STANDIN_BODY_FILE="$T/long-body"; canary "$T/good.sh" )
+size=$(wc -c < "$saved" 2>/dev/null); size=${size//[!0-9]/}
+if [ "$(wc -c < "$T/long-body" | tr -d ' ')" = 1048576 ] && [ "$(cat "$T/outside")" = outside ] && [ -f "$saved" ] \
+   && [ ! -L "$saved" ] && [ "${size:-0}" = 65536 ]; then
+  ok "DEP-073 keeps the first 64 KiB of a 1 MiB body sent past --max-filesize, in a new file, not through a link at its path"
+else bad "DEP-073 on a 1 MiB body with a link at its path: ${size:-no} bytes saved, the link $([ -L "$saved" ] && echo kept || echo removed), outside: $(head -c 40 "$T/outside")"; fi
 
 # ---- values outside the grammar are refused, and their probe never runs ------------------------------------------
 # Each value goes in single quotes, so a semicolon or $( ) in it starts nothing. A single quote would end those
