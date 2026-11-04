@@ -594,7 +594,7 @@ eval_triggers() {
   done
   n=$(G "$REPO" ls-tree -r --name-only "$PIN_SHA" 2>/dev/null | grep -iE '\.(pdf|md)$' | grep -ciE "$REPORT_RE")
   if [ "${n:-0}" -gt 0 ]; then t4="${t4:+$t4,}in-tree-report"; fi
-  for d in "$REPO_ABS"/incident_*; do
+  for d in "$REPO_ABS"/[Ii][Nn][Cc][Ii][Dd][Ee][Nn][Tt]_*; do
     [ ! -L "$d" ] && [ ! -L "$d/INCIDENTS.json" ] && [ -f "$d/INCIDENTS.json" ] || continue
     t4="${t4:+$t4,}incidents-json"; break
   done
@@ -831,7 +831,7 @@ R4_OTHER=$(sed -E 's/^ *[0-9]+ //' "$TMPD/r4a" | grep -E '\.rs"?$' |
   emit_capped "$TMPD/r6f" "no audit, post-mortem or incident file"
   echo "--- auditor-skill outputs next to the target ---"
   # A symbolic link is listed as one and never followed, so what it points at is never tested.
-  for d in "$REPO_ABS"/audit_* "$REPO_ABS"/incident_*; do
+  for d in "$REPO_ABS"/audit_* "$REPO_ABS"/[Ii][Nn][Cc][Ii][Dd][Ee][Nn][Tt]_*; do
     [ "$d" != "$CUR_RUN" ] || continue
     if [ -L "$d" ]; then
       clean "$d"; echo " (symbolic link, not followed)"
@@ -1001,9 +1001,11 @@ while IFS= read -r v; do
 done <<< "$VULNS_NL"
 # An incident file counts only where an auditor run wrote it: not a symbolic link, not inside a linked
 # directory, and not in an incident_* directory the target tracks. A link is recorded as one and never
-# followed, so what it points at is never tested.
+# followed, so what it points at is never tested. incident_* is read in any letter case, as
+# iso_incident_runs reads it, since a volume that ignores case finds incident_1 under the name INCIDENT_1
+# (here, in T4 and in R6).
 ii=0
-for d in "$REPO_ABS"/incident_*; do
+for d in "$REPO_ABS"/[Ii][Nn][Cc][Ii][Dd][Ee][Nn][Tt]_*; do
   f=$d/INCIDENTS.json
   if [ -L "$d" ]; then record "$d" "-" "-" "-" "skipped: symbolic link (directory), not followed"; continue; fi
   [ -d "$d" ] || continue

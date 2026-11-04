@@ -764,6 +764,20 @@ else
   skp "incident-named JSON: needs jq or python3"
 fi
 rm -rf "$TGT/incident_1"
+# An incident run directory is read in any letter case: a volume that ignores case finds incident_1 under
+# the name INCIDENT_1, as iso_incident_runs reads it.
+if command -v jq >/dev/null 2>&1 || command -v python3 >/dev/null 2>&1; then
+  mkdir -p "$TGT/INCIDENT_3"
+  printf '{"schema": "auditor-incidents/1", "incidents": [{"id": "INC-UPPER.1", "verdict": "suspected"}]}\n' > "$TGT/INCIDENT_3/INCIDENTS.json"
+  collect --offline --repo tgt
+  check "an INCIDENTS.json in a run directory named INCIDENT_3 is extracted (R7)" has "$OUT/inputs/incident1-INCIDENTS.json" "INC-UPPER.1"
+  check "... listed next to the target (R6)" sh -c "grep -qF '$TGT/INCIDENT_3/INCIDENTS.json' '$OUT/history.md'"
+  check "... and counts as trigger T4" grep -qE '^T4 yes .*incidents-json' "$OUT/history.md"
+  check "... in --detect too" sh -c "cd '$W' && '$COLLECT' --detect --repo tgt --out audit_900/bootstrap 2>/dev/null | grep -qE '^T4 yes .*incidents-json'"
+  rm -rf "$TGT/INCIDENT_3"
+else
+  skp "an incident run directory in other letters: needs jq or python3"
+fi
 # jq and python3 agree on a malformed file: an incidents value that is not an array yields an empty
 # extract and a note, whichever tool runs.
 for tool in jq python3; do
