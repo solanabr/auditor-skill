@@ -816,7 +816,7 @@ rm "$SH/.git/shallow"
 # =================================================================================================
 run "$ROOT" rev-parse HEAD
 check "an installation inside the working directory is refused" \
-  err_is 'git-ro: refused: the installation lies inside the working directory; install it outside the tree under audit (Rule 11e)'
+  err_is 'git-ro: refused: the installation lies inside the working directory; install it outside the tree under audit, or run from a directory that does not contain it (Rule 11e)'
 n=0
 for c in '"' '$' '`' '\' "$(printf 'a\nb')"; do
   n=$((n + 1))

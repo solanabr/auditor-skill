@@ -1,11 +1,12 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # snapshot-program.sh — preserve the deployed program bytes BEFORE anything else.
 #
-#   bash "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/snapshot-program.sh" <program_id> <incident_dir>
+#   "${CLAUDE_PLUGIN_ROOT}/scripts/dnr/snapshot-program.sh" <program_id> incident_<n>
 #
-# $RPC_URL must already be exported (never typed on the command line). Run it from
-# the installation, never as a relative scripts/ path: the audited repo may ship a
-# same-named file.
+# $RPC_URL must already be exported (never typed on the command line). Run it
+# directly by its quoted path in the installation, from the working directory, never
+# as a relative scripts/ path: the audited repo may ship a same-named file. It takes
+# exactly these two arguments.
 #
 # Why first: a hotfix upgrade overwrites the on-chain ELF. If the team ships a fix
 # while the hunt is running, the incident binary is gone, and Leg 3 of
@@ -14,6 +15,9 @@
 # any collection or analysis.
 #
 # What it does (read-only — no signing, and no keypair the CLI could sign with):
+#   0. records the read in incident_<n>/disclosures.tsv (OUTPUT-RULES.md Rule 11b; the
+#      format is in scripts/lib/confine.sh): the provider domain and the program id,
+#      before the CLI reads anything from the endpoint;
 #   1. writes a throwaway CLI config in a private temp dir (mode 0700, removed on
 #      exit): `json_rpc_url` is $RPC_URL, so the URL never appears in argv, and
 #      `keypair_path` names a file that does not exist. `solana config get keypair`
@@ -38,7 +42,7 @@
 #      stops the script with a blocker.
 #   4. checks the ELF magic, hashes the dump the way solana-verify does (trailing
 #      zero padding trimmed, then sha256), keeps the dump and the show output in
-#      <incident_dir>/bin/, and prints ONE ledger-ready line:
+#      incident_<n>/bin/, and prints ONE ledger-ready line:
 #        program=<id> owner=<loader> last_deployed_slot=<N> authority=<A>
 #        sha256_zero_trimmed=<hex> elf_bytes=<n> padding_bytes=<n> file=bin/<id>.so
 #      A program under an immutable loader (BPFLoader2, or the older BPFLoader) has
@@ -72,28 +76,31 @@
 # replaced it (dumped-after-hotfix; the incident bytes need an archived binary or a
 # solana-verify hash-matched build).
 #
-# RUN DIRECTORY: <incident_dir> is a plain path, with no . or .. component, and no
-# directory on its way may be a symbolic link inside the working directory (a link
-# above it, such as /tmp on macOS, is the operator's). <incident_dir>, and the nearest
-# incident_* directory above it, must not be a symbolic link, hold one, or be tracked
-# by git, and git and find must be able to check it; any other directory is refused
-# with exit 2 before anything is written or the CLI runs. The check runs again just
-# before the first write, when bin/ must also be a directory of its own, not a link.
+# RUN DIRECTORY: the second argument is incident_<n>, relative to the working directory
+# (a leading ./ and trailing slashes are dropped). It (OUTPUT-RULES.md Rule 11d) sits
+# directly in the working directory, is a real directory holding no symbolic link, is
+# tracked by no repository in any letter case, and has a .gitignore holding exactly
+# "*" ("${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" new incident makes one); git and find
+# must be able to check it. Any other directory, an absolute path included, is refused
+# with exit 2 before anything is written or the CLI runs, and so is one whose
+# disclosures.tsv cannot take a row. The check runs again just before the first
+# write, when bin/ (made when missing) must also be a directory of its own, not a link.
 #
 # SECRETS: the CLI reads "$RPC_URL" from the temp config, never from argv; an
 # $RPC_URL holding a quote, a backslash, whitespace or a control character is refused.
 # The CLI's stderr is captured to a temp file and passed through redact.sh (the CLI
 # echoes the full URL, key included, in its errors). Nothing written to
-# <incident_dir> contains the URL.
+# incident_<n> contains the URL.
 #
-# Exit: 0 ok · 2 usage / not a base58 32-byte public key / no or unusable $RPC_URL /
-# a refused run directory · 3 named blocker (no solana CLI or python3, config not
-# taken, CLI error, no program under any loader (the blocker names the account's
-# owner), show output naming another Program Id, dump without ELF magic, the
-# last-deployed slot moving during two dumps, hash not computed, a snapshot name
-# already taken, a kept snapshot that is not a regular ELF file beside a regular
-# .show.txt, later snapshots without the first one, or a snapshot the chain's bytes
-# disagree with at its slot or a later one).
+# Exit: 0 ok · 2 refused, one stderr line "snapshot-program.sh: refused: <reason>":
+# usage / not a base58 32-byte public key / no or unusable $RPC_URL / a refused run
+# directory or disclosures.tsv · 3 named blocker (no solana CLI or python3, config not
+# taken, a disclosure row that could not be added, CLI error, no program under any
+# loader (the blocker names the account's owner), show output naming another
+# Program Id, dump without ELF magic, the last-deployed slot moving during two dumps,
+# hash not computed, a snapshot name already taken, a kept snapshot that is not a
+# regular ELF file beside a regular .show.txt, later snapshots without the first one,
+# or a snapshot the chain's bytes disagree with at its slot or a later one).
 # bash >= 3.2, and python3 for the id check and the hash: checked before the CLI
 # runs, and run as `python3 -I` because the working directory is usually the audited
 # repo: without -I, a hashlib.py there would be imported in place of the stdlib.
@@ -106,107 +113,52 @@ export LC_ALL=C
 # environment instead of the directory it is pointed at.
 unset CDPATH GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+case "$0" in */*) HERE=${0%/*} ;; *) HERE=. ;; esac
+HERE=$(cd -P -- "$HERE" 2>/dev/null && pwd -P) || { printf 'snapshot-program.sh: refused: the installation cannot be resolved\n' >&2; exit 2; }
+SCRIPTS=${HERE%/*}
+. "$SCRIPTS/lib/confine.sh" || { printf 'snapshot-program.sh: refused: scripts/lib/confine.sh cannot be read\n' >&2; exit 2; }
+# The checks of the working directory, the installation and PATH, and every refusal: exit 2.
+confine_init snapshot-program.sh "${SCRIPTS%/*}" 2
+confine_need env git find wc cat sed awk head od tr mktemp rm mkdir date
 REDACT="$HERE/redact.sh"
+exec </dev/null
 
-pid="${1:-}"; dir="${2:-}"
-if [ -z "$pid" ] || [ -z "$dir" ]; then
-  echo "usage: snapshot-program.sh <program_id> <incident_dir>" >&2
-  exit 2
+if [ $# -ne 2 ] || [ -z "$1" ] || [ -z "$2" ]; then
+  confine_refuse "usage: snapshot-program.sh <program_id> incident_<n>"
 fi
-# The id becomes part of file names under <incident_dir>/bin/: accept only a base58
+pid=$1; dir=$2
+# The id becomes part of file names under incident_<n>/bin/: accept only a base58
 # public key (32-44 characters of the Bitcoin alphabet), so it cannot carry a path;
 # that it decodes to 32 bytes is checked once python3 is known to be there.
 if ! [[ "$pid" =~ ^[1-9A-HJ-NP-Za-km-z]{32,44}$ ]]; then
-  echo "snapshot-program.sh: '$pid' is not a base58 program id (32-44 characters of [1-9A-HJ-NP-Za-km-z])." >&2
-  exit 2
+  confine_refuse "'$(confine_text "$pid")' is not a base58 program id (32-44 characters of [1-9A-HJ-NP-Za-km-z])"
 fi
 if [ -z "${RPC_URL:-}" ]; then
-  echo "snapshot-program.sh: set \$RPC_URL in the environment." >&2
-  exit 2
+  confine_refuse "set \$RPC_URL in the environment"
 fi
 # The URL goes into a quoted YAML value: refuse what could end or escape it.
 case "$RPC_URL" in
   *[[:space:][:cntrl:]\"\\]*)
-    echo "snapshot-program.sh: \$RPC_URL holds a quote, a backslash, whitespace or a control character; refusing it." >&2
-    exit 2 ;;
+    confine_refuse "\$RPC_URL holds a quote, a backslash, whitespace or a control character" ;;
 esac
-case "$dir" in */) dir="${dir%"${dir##*[!/]}"}"; [ -n "$dir" ] || dir=/ ;; esac
-# The run directory is checked by name and component by component below, so it is a
-# plain path: no "." or ".." component (a leading "./" aside).
-dir="${dir#./}"
-case "/$dir/" in
-  */./*|*/../*) echo "snapshot-program.sh: <incident_dir> takes a plain path without . or .. components: $dir" >&2; exit 2 ;;
+dir=${dir#./}
+while [ "${dir%/}" != "$dir" ]; do dir=${dir%/}; done
+case "$dir" in
+  incident_*) confine_rundir_name "$dir" || dir="" ;;
+  *) dir="" ;;
 esac
-
-# The working directory is usually the audited repository: a symbolic link below it
-# belongs to that tree.
-if ! here="$(pwd -P)"; then
-  echo "snapshot-program.sh: cannot resolve the working directory." >&2; exit 2
-fi
-# linked_on_way <path>: status 0 when a directory on the way to <path> is a symbolic
-# link inside the working directory, or one whose place cannot be resolved. A link
-# above the working directory (/tmp on macOS, say) is the operator's, and is followed.
-linked_on_way() {
-  local rest="$1" cur comp phys
-  case "$rest" in /*) cur=""; rest="${rest#/}" ;; *) cur="$here" ;; esac
-  while :; do
-    case "$rest" in */*) comp="${rest%%/*}"; rest="${rest#*/}" ;; *) return 1 ;; esac
-    [ -n "$comp" ] || continue
-    if [ -L "$cur/$comp" ]; then
-      phys="$(cd "${cur:-/}" 2>/dev/null && pwd -P)" || return 0
-      case "$phys/" in "${here%/}"/*) return 0 ;; esac
-    fi
-    cur="$cur/$comp"
-  done
-}
-
-# refuse_planted <dir>: exit 2 unless <dir> is safe to write into — not a symbolic
-# link, holding none, and not tracked by git. The git calls carry the Rule 11c flags,
-# because the tree is usually the audited one. Outside a work tree nothing is tracked;
-# inside one, a path git cannot classify is refused, and so is a directory find
-# cannot read: a check that cannot run never counts as a pass.
-refuse_planted() {
-  local listed top
-  if [ -L "$1" ]; then
-    echo "${0##*/}: refusing $1: it is a symbolic link — use a new run directory." >&2; exit 2
-  fi
-  if [ -d "$1" ] && { listed="$(find "$1" -type l -print -quit 2>/dev/null)"; [ $? -ne 0 ] || [ -n "$listed" ]; }; then
-    echo "${0##*/}: refusing $1: it contains a symbolic link, or a directory find cannot read — use a new run directory." >&2; exit 2
-  fi
-  [ -d "$(dirname "$1")" ] || return 0
-  # A .git at or above the directory means git must answer; with none, nothing is tracked.
-  if ! top="$(cd "$(dirname "$1")" && pwd -P)"; then
-    echo "${0##*/}: refusing $1: its parent directory cannot be resolved." >&2; exit 2
-  fi
-  while [ ! -e "$top/.git" ]; do [ "$top" = / ] && return 0; top="$(dirname "$top")"; done
-  if ! listed="$(GIT_NO_LAZY_FETCH=1 git --no-pager -c core.fsmonitor=false -c log.showSignature=false -C "$(dirname "$1")" --icase-pathspecs \
-        ls-files -- ":(literal,icase)$(basename "$1")" 2>/dev/null)"; then
-    echo "${0##*/}: refusing $1: it is inside a git work tree and git cannot tell whether it is tracked (git missing, or it does not trust this repository)." >&2; exit 2
-  fi
-  if [ -n "$listed" ]; then
-    echo "${0##*/}: refusing $1: git tracks it, so it is not a run directory to write into." >&2; exit 2
-  fi
-  return 0
-}
-# check_run_dir: every directory on the way to <incident_dir>; then <incident_dir>, and
-# the nearest incident_* directory above it, each checked as a whole. It runs before the
-# CLI, and again just before the first write.
+[ -n "$dir" ] || confine_refuse "the incident directory must be incident_<n>, relative to the working directory: $(confine_text "$2")"
+# check_run_dir: the run directory as a whole (scripts/lib/confine.sh: no link in it,
+# untracked in any letter case, a .gitignore of "*"), and its bin/ when it exists. It
+# runs before the CLI, and again just before the first write.
 check_run_dir() {
-  local run_dir
-  if linked_on_way "$dir"; then
-    echo "snapshot-program.sh: refusing $dir: a directory on its way is a symbolic link inside the working directory — use a run directory reached without one." >&2
-    exit 2
-  fi
-  refuse_planted "$dir"
-  run_dir="$dir"
-  while :; do
-    case "$(basename "$run_dir")" in incident_*) [ "$run_dir" = "$dir" ] || refuse_planted "$run_dir"; break ;; esac
-    case "$run_dir" in .|/) break ;; esac
-    run_dir="$(dirname "$run_dir")"
-  done
+  confine_rundir "$dir" "the run directory"
+  confine_path "$dir/bin" "$dir/bin" any
+  case "$CONFINE_TYPE" in file) confine_refuse "$dir/bin is not a directory of its own; use a new run directory" ;; esac
 }
 check_run_dir
+confine_disclosures_ok "$dir" ||
+  confine_refuse "$dir/disclosures.tsv is not a regular file of its own with the disclosure header, so the read could not be recorded"
 
 if ! command -v solana >/dev/null 2>&1; then
   echo "[blocker] solana CLI not on PATH — install it, or dump the program another way and record its zero-trimmed sha256 and last-deployed slot in LEDGER.md by hand." >&2
@@ -218,20 +170,20 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 # The CLI takes an id that is not 32 bytes as no id at all: `program-v4 show` then
 # lists every loader-v4 program of the authority instead of failing.
-case "$(python3 -I -c 'import sys
-a = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
-n = 0
-for c in sys.argv[1]:
-    n = n * 58 + a.index(c)
-print(len(sys.argv[1]) - len(sys.argv[1].lstrip("1")) + (n.bit_length() + 7) // 8)' "$pid" 2>/dev/null)" in
+case "$(confine_b58_bytes "$pid")" in
   32) ;;
-  [0-9]*) echo "snapshot-program.sh: '$pid' does not decode to a 32-byte public key." >&2; exit 2 ;;
+  [0-9]*) confine_refuse "'$pid' does not decode to a 32-byte public key" ;;
   *) echo "[blocker] python3 -I did not run; snapshot $pid by hand and record its zero-trimmed sha256 and last-deployed slot in LEDGER.md." >&2; exit 3 ;;
 esac
 
-# mktemp -d creates the directory with mode 0700.
-tmp="$(mktemp -d "${TMPDIR:-/tmp}/dnr_snap.XXXXXX")" || {
-  echo "[blocker] cannot create a private temp directory for the CLI config." >&2; exit 3; }
+# mktemp -d creates the directory with mode 0700, outside the working directory.
+if confine_scratch dnr_snap; then
+  tmp=$CONFINE_SCRATCH
+elif [ $? -eq 2 ]; then
+  echo "[blocker] cannot create a private temp directory for the CLI config: TMPDIR lies inside the working directory; set it to a directory outside the tree." >&2; exit 3
+else
+  echo "[blocker] cannot create a private temp directory for the CLI config." >&2; exit 3
+fi
 trap 'rm -rf "$tmp"' EXIT
 err="$tmp/stderr"; cfg="$tmp/cli.yml"; nokey="$tmp/no-keypair.json"
 printf 'json_rpc_url: "%s"\nwebsocket_url: ""\nkeypair_path: "%s"\n' "$RPC_URL" "$nokey" > "$cfg"
@@ -282,6 +234,15 @@ named_pid() {
     exit 3
   fi
 }
+
+# Rule 11b: the row goes into incident_<n>/disclosures.tsv before the CLI reads
+# anything from the endpoint.
+confine_service "$RPC_URL"
+if ! confine_disclose "$dir" scripts/dnr/snapshot-program.sh "$CONFINE_SERVICE" \
+     "program id (solana program show and dump, or program-v4 show and download)" "$pid"; then
+  echo "[blocker] cannot add the snapshot's row to $dir/disclosures.tsv, so nothing was read; snapshot $pid once the file is fixed." >&2
+  exit 3
+fi
 
 # `program show` reads upgradeable and immutable-loader programs and rejects a
 # loader-v4 one, which `program-v4 show` reads.
@@ -353,12 +314,16 @@ if [ "$magic" != "7f454c46" ]; then
   exit 3
 fi
 
-# hash_of <file>: "<sha256 of the bytes without trailing zeros> <their length> <padding length>"
+# hash_of <file>: "<sha256 of the bytes without trailing zeros> <their length> <padding length>". python3
+# runs from /, so nothing in the working directory (a .python-version a pyenv shim reads) picks the
+# interpreter; a relative <file> is named from the working directory.
 hash_of() {
-  python3 -I -c 'import hashlib, sys
+  local f=$1
+  case "$f" in /*) ;; *) f=$CONFINE_WT/$f ;; esac
+  (cd / && exec python3 -I -c 'import hashlib, sys
 raw = open(sys.argv[1], "rb").read()
 trimmed = raw.rstrip(b"\0")
-print(hashlib.sha256(trimmed).hexdigest(), len(trimmed), len(raw) - len(trimmed))' "$1" 2>/dev/null
+print(hashlib.sha256(trimmed).hexdigest(), len(trimmed), len(raw) - len(trimmed))' "$f") 2>/dev/null
 }
 re='^[0-9a-f]{64} [0-9]+ [0-9]+$'
 hashed() {  # hashed <file>: hash_of, or a blocker
@@ -405,16 +370,12 @@ keep() {
 # Just before the first write: the run directory again (the CLI reads take time), and a
 # bin/ that is a directory of its own, not a symbolic link.
 check_run_dir
-mkdir -p "$dir/bin" || exit 2
-if [ -L "$dir/bin" ] || [ ! -d "$dir/bin" ]; then
-  echo "snapshot-program.sh: refusing $dir/bin: it is not a directory of its own — use a new run directory." >&2
-  exit 2
+if [ "$CONFINE_TYPE" = none ]; then
+  confine_mkdir "$dir/bin" || confine_refuse "cannot create $dir/bin"
 fi
-# Rule 11d: an incident_<n>/ directory ignores itself when it has no .gitignore of
-# its own, so the dumped program never shows in git status.
-case "$(basename "$dir")" in
-  incident_*) [ -e "$dir/.gitignore" ] || printf '*\n' > "$dir/.gitignore" ;;
-esac
+if [ -L "$dir/bin" ] || [ ! -d "$dir/bin" ]; then
+  confine_refuse "$dir/bin is not a directory of its own; use a new run directory"
+fi
 first="$dir/bin/$pid.so"; first_show="$dir/bin/$pid.show.txt"
 # Every snapshot kept in bin/, the first one and each later one, named by its path
 # without .so or .show.txt: a lone .show.txt counts too.

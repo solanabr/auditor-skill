@@ -81,13 +81,13 @@ L="$T/wt-link" lib "$WT" 'printf "%s" "$PWD"; confine_phys "$L"; printf "|%s|%s"
 check "confine_phys resolves links and leaves the working directory as it was" out_is "$WT|$WT|$WT"
 lib "$ROOT" 'printf ran'
 check "an installation that is the working directory is refused" \
-  refused 'the installation lies inside the working directory; install it outside the tree under audit (Rule 11e)'
+  refused 'the installation lies inside the working directory; install it outside the tree under audit, or run from a directory that does not contain it (Rule 11e)'
 lib "$WT" 'printf ran' "$WT/inst"
 check "an installation inside the working directory is refused" \
-  refused 'the installation lies inside the working directory; install it outside the tree under audit (Rule 11e)'
+  refused 'the installation lies inside the working directory; install it outside the tree under audit, or run from a directory that does not contain it (Rule 11e)'
 lib / 'printf ran'
 check "a working directory of / holds every installation, so it is refused" \
-  refused 'the installation lies inside the working directory; install it outside the tree under audit (Rule 11e)'
+  refused 'the installation lies inside the working directory; install it outside the tree under audit, or run from a directory that does not contain it (Rule 11e)'
 lib "$WT" 'printf ran' "$T/wt2"
 check "an installation beside the working directory is accepted" out_is ran
 for c in '"' '$' '`' '\' $'\n' $'\t' $'\177'; do
