@@ -1368,3 +1368,253 @@ fn lists_each_file_a_parsed_file_brings_in_that_it_does_not_parse() {
         assert_eq!(skipped(&report), want, "{root}");
     }
 }
+
+/// Code with a CPI that rustc compiles where a name written leads, and a decoy
+/// with none where `.` and `..` taken as written lead.
+const HIDDEN: &[u8] = b"pub fn hidden_marker() { invoke_signed(&ix, &a, &[]); }\n";
+const DECOY: &[u8] = b"pub fn decoy_marker() {}\n";
+
+/// `pairs` as `skipped` gives them, sorted.
+fn sorted(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+    let mut v: Vec<(String, String)> = pairs
+        .iter()
+        .map(|(file, why)| (file.to_string(), why.to_string()))
+        .collect();
+    v.sort();
+    v
+}
+
+#[test]
+fn lists_a_file_brought_in_wherever_rustc_may_find_it() {
+    const GIT_DIR: &str = "a .git/ directory (git's own), not scanned";
+    let unentered = |by: &str| format!("not parsed: in a directory the walk did not enter; {by}");
+    let leaves = |dir: &str, by: &str| {
+        format!(
+            "not parsed: its path leaves {dir} by .., a directory the walk did not enter, so \
+             rustc may find the file elsewhere; {by}"
+        )
+    };
+
+    // A crate root that is not named lib.rs or main.rs (here the one [lib] path
+    // names) is a mod.rs to rustc: a #[path] in an inline module of it lies below
+    // the module's directory, with none named for the file. The file it brings in
+    // from a target/ cargo built in is listed, not the decoy where a module file
+    // of that name would bring it in from.
+    let wt = Wt::repo();
+    wt.write(
+        "Cargo.toml",
+        b"[package]\nname = \"p\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+          [lib]\npath = \"src/program.rs\"\n",
+    );
+    wt.write(
+        "src/program.rs",
+        b"mod processor {\n    #[path = \"../../target/withdraw.rs\"]\n    pub mod withdraw;\n}\n",
+    );
+    wt.mkdir("src/processor");
+    wt.write("src/target/withdraw.rs", DECOY);
+    wt.write("target/CACHEDIR.TAG", CARGO_TAG);
+    wt.write("target/withdraw.rs", HIDDEN);
+    let report = json(&run(BIN, &wt.dir, &["."]));
+    assert_eq!(report["cpi_sites"], serde_json::json!([]));
+    let by = "./src/program.rs brings it in (#[path], line 3)";
+    assert_eq!(
+        skipped(&report),
+        sorted(&[
+            ("./.git", GIT_DIR),
+            ("./target", BUILD),
+            ("./target/withdraw.rs", &unentered(by)),
+        ])
+    );
+    let report = json(&run(BIN, &wt.dir, &["src"]));
+    assert_eq!(
+        skipped(&report),
+        sorted(&[(
+            "target/withdraw.rs",
+            "not parsed: outside the directory scanned; src/program.rs brings it in (#[path], \
+             line 3)"
+        )])
+    );
+
+    // The same for a crate root at the top of its crate, an inline module named
+    // target in it: rustc's file lies in the target/ beside it, and the decoy
+    // below a directory named for the file is parsed.
+    let wt = Wt::repo();
+    wt.write(
+        "programs/foo/program.rs",
+        b"pub mod target {\n    #[path = \"h.rs\"]\n    pub mod h;\n}\n",
+    );
+    wt.write("programs/foo/program/target/h.rs", DECOY);
+    wt.write("programs/foo/target/CACHEDIR.TAG", CARGO_TAG);
+    wt.write("programs/foo/target/h.rs", HIDDEN);
+    let report = json(&run(BIN, &wt.dir, &["."]));
+    assert_eq!(report["cpi_sites"], serde_json::json!([]));
+    let by = "./programs/foo/program.rs brings it in (#[path], line 3)";
+    assert_eq!(
+        skipped(&report),
+        sorted(&[
+            ("./.git", GIT_DIR),
+            ("./programs/foo/target", BUILD),
+            ("./programs/foo/target/h.rs", &unentered(by)),
+        ])
+    );
+
+    // And for a file a #[path] brings in, which rustc takes as a mod.rs too.
+    let wt = Wt::repo();
+    wt.write(
+        "programs/foo/src/lib.rs",
+        b"#[path = \"x/y.rs\"]\npub mod y;\n",
+    );
+    wt.write(
+        "programs/foo/src/x/y.rs",
+        b"pub mod a {\n    #[path = \"../../../target/h.rs\"]\n    pub mod h;\n}\n",
+    );
+    wt.mkdir("programs/foo/src/x/a");
+    wt.write("programs/foo/src/target/h.rs", DECOY);
+    wt.write("programs/foo/target/CACHEDIR.TAG", CARGO_TAG);
+    wt.write("programs/foo/target/h.rs", HIDDEN);
+    let report = json(&run(BIN, &wt.dir, &["."]));
+    assert_eq!(report["cpi_sites"], serde_json::json!([]));
+    let by = "./programs/foo/src/x/y.rs brings it in (#[path], line 3)";
+    assert_eq!(
+        skipped(&report),
+        sorted(&[
+            ("./.git", GIT_DIR),
+            ("./programs/foo/target", BUILD),
+            ("./programs/foo/target/h.rs", &unentered(by)),
+        ])
+    );
+
+    // A .. that leaves a link, here one in node_modules/, goes wherever the link
+    // leads: the file is listed where . and .. taken as written lead, with the
+    // directory it leaves, though the walk parsed a file there.
+    let wt = Wt::repo();
+    wt.write(
+        "programs/foo/src/lib.rs",
+        b"#[path = \"../node_modules/l/../../src/decoy.rs\"]\npub mod hide;\n\
+          include!(\"../node_modules/l/../../src/inc.rs\");\n",
+    );
+    wt.write("programs/foo/src/decoy.rs", DECOY);
+    wt.write("programs/foo/src/inc.rs", b"fn inc_decoy() {}\n");
+    wt.write("programs/foo/node_modules/src/decoy.rs", HIDDEN);
+    wt.write(
+        "programs/foo/node_modules/src/inc.rs",
+        b"fn inc_hidden() { invoke(&ix, &a); }\n",
+    );
+    wt.mkdir("programs/foo/node_modules/x/y");
+    wt.link(Path::new("x/y"), "programs/foo/node_modules/l");
+    for (root, at) in [(".", "./programs/foo"), ("programs/foo", "programs/foo")] {
+        let report = json(&run(BIN, &wt.dir, &[root]));
+        assert_eq!(report["cpi_sites"], serde_json::json!([]), "{root}");
+        let by =
+            |how: &str, line: u32| format!("{at}/src/lib.rs brings it in ({how}, line {line})");
+        let link = format!("{at}/node_modules/l");
+        let mut want = sorted(&[
+            (&format!("{at}/node_modules"), NODE_MODULES),
+            (
+                &format!("{at}/src/decoy.rs"),
+                &leaves(&link, &by("#[path]", 2)),
+            ),
+            (
+                &format!("{at}/src/inc.rs"),
+                &leaves(&link, &by("include!", 3)),
+            ),
+        ]);
+        if root == "." {
+            want.push(("./.git".to_string(), GIT_DIR.to_string()));
+            want.sort();
+        }
+        assert_eq!(skipped(&report), want, "{root}");
+    }
+
+    // One that leaves the directory scanned for a link outside it, and comes back.
+    let wt = Wt::repo();
+    wt.write(
+        "programs/foo/src/lib.rs",
+        b"#[path = \"../../bar/l/../../foo/src/decoy.rs\"]\npub mod hide;\n",
+    );
+    wt.write("programs/foo/src/decoy.rs", DECOY);
+    wt.write("programs/bar/foo/src/decoy.rs", HIDDEN);
+    wt.mkdir("programs/bar/x/y");
+    wt.link(Path::new("x/y"), "programs/bar/l");
+    let report = json(&run(BIN, &wt.dir, &["programs/foo"]));
+    assert_eq!(report["cpi_sites"], serde_json::json!([]));
+    assert_eq!(
+        skipped(&report),
+        sorted(&[(
+            "programs/foo/src/decoy.rs",
+            &leaves(
+                "programs/bar/l",
+                "programs/foo/src/lib.rs brings it in (#[path], line 2)"
+            )
+        )])
+    );
+
+    // A module's directory spelled in other letters, which a filesystem that
+    // ignores case opens: its .. leads where . and .. taken as written lead.
+    let wt = Wt::repo();
+    wt.write(
+        "src/program.rs",
+        b"mod A {\n    #[path = \"../../target/h.rs\"]\n    pub mod h;\n}\n",
+    );
+    wt.mkdir("src/a");
+    wt.write("target/CACHEDIR.TAG", CARGO_TAG);
+    wt.write("target/h.rs", HIDDEN);
+    let report = json(&run(BIN, &wt.dir, &["."]));
+    let by = "./src/program.rs brings it in (#[path], line 3)";
+    assert_eq!(
+        skipped(&report),
+        sorted(&[
+            ("./.git", GIT_DIR),
+            ("./target", BUILD),
+            ("./target/h.rs", &unentered(by)),
+        ])
+    );
+
+    // One spelled with a byte outside ASCII, which another spelling may open
+    // (here é as e and U+0301, where the directory's name has U+00E9): the walk
+    // cannot tell where its .. leads.
+    let wt = Wt::repo();
+    wt.write(
+        "src/program.rs",
+        "mod a {\n    #[path = \"../cafe\u{301}/../../target/h.rs\"]\n    pub mod h;\n}\n"
+            .as_bytes(),
+    );
+    wt.mkdir("src/a");
+    wt.mkdir("src/caf\u{e9}");
+    wt.write("target/CACHEDIR.TAG", CARGO_TAG);
+    wt.write("target/h.rs", HIDDEN);
+    let report = json(&run(BIN, &wt.dir, &["."]));
+    assert_eq!(
+        skipped(&report),
+        sorted(&[
+            ("./.git", GIT_DIR),
+            ("./target", BUILD),
+            ("./target/h.rs", &leaves("./src/cafe\u{301}", by)),
+        ])
+    );
+
+    // A crate's own lib.rs, a module file it declares and a binary's root bring
+    // in only what rustc compiles: the place rustc does not use for each is not
+    // listed.
+    let wt = Wt::repo();
+    wt.write(
+        "src/lib.rs",
+        b"mod a {\n    #[path = \"../b.rs\"]\n    mod b;\n}\nmod m;\n",
+    );
+    wt.write("src/a/c.rs", b"fn c() {}\n");
+    wt.write("src/b.rs", b"fn b() {}\n");
+    wt.write(
+        "src/m.rs",
+        b"mod inner {\n    #[path = \"x.rs\"]\n    mod x;\n    #[path = \"../../y.rs\"]\n    mod y;\n}\n",
+    );
+    wt.write("src/m/inner/x.rs", b"fn x() {}\n");
+    wt.write("src/y.rs", b"fn y() {}\n");
+    wt.write(
+        "src/bin/cli.rs",
+        b"mod m {\n    #[path = \"k.rs\"]\n    mod k;\n}\nfn main() {}\n",
+    );
+    wt.write("src/bin/m/k.rs", b"fn k() {}\n");
+    let report = json(&run(BIN, &wt.dir, &["."]));
+    assert_eq!(report["files_scanned"], 8);
+    assert_eq!(skipped(&report), sorted(&[("./.git", GIT_DIR)]));
+}

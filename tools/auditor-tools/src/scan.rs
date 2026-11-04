@@ -13,10 +13,10 @@
 //! snippet costs no more for a long literal or a long chain than for a short one.
 
 use std::collections::{HashMap, HashSet};
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
-use std::os::unix::ffi::OsStrExt;
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -462,6 +462,7 @@ fn scan_until(
         git: None,
         parsed: HashSet::new(),
         listed: HashSet::new(),
+        entered: HashSet::new(),
         reachable: Vec::new(),
     };
     match open_root(root) {
@@ -489,9 +490,9 @@ pub(crate) fn open_root(root: &Path) -> io::Result<OwnedFd> {
 /// its cap, when it parses no more (never, when that is past what an `Instant`
 /// holds), git in the working directory, found on first use (`own_output`;
 /// `Some(None)` when the working directory cannot be resolved, and once git has
-/// not answered), each file parsed and each path listed in `skipped` so far, as
-/// `lexical` gives them, and the files parsed ones bring in that the walk parses
-/// if it finds them where they lie (`unreached`).
+/// not answered), each file parsed, each path listed in `skipped` and each
+/// directory entered so far, as `folded` gives them, and the files parsed ones
+/// bring in, listed once the walk is done (`unreached`).
 struct Scan<'p> {
     report: ScanReport,
     root: PathBuf,
@@ -504,6 +505,7 @@ struct Scan<'p> {
     git: Option<Option<Git>>,
     parsed: HashSet<PathBuf>,
     listed: HashSet<PathBuf>,
+    entered: HashSet<PathBuf>,
     reachable: Vec<Reachable>,
 }
 
@@ -544,28 +546,101 @@ impl Scan<'_> {
     }
 
     fn skip(&mut self, path: &Path, reason: impl Into<String>) {
-        self.listed.insert(lexical(path));
+        self.listed.insert(folded(path));
         self.report.skipped.push(Skipped {
             file: path.display().to_string(),
             reason: reason.into(),
         });
     }
 
-    /// Each file a parsed one brings in that the walk would parse where it lies
-    /// and did not: in `skipped`, with why (`Reachable::entry`), unless the walk
-    /// listed it there itself.
+    /// Each file a parsed one brings in, once the walk is done: in `skipped`, with
+    /// why (`Reachable::entry`), at each place rustc may find it that the walk did
+    /// not parse there (`placed`). When there is none, and the walk parsed the file
+    /// at no place, the first place where rustc finds no file is listed.
     fn unreached(&mut self) {
+        let base = lexical(&self.root);
         for r in std::mem::take(&mut self.reachable) {
-            if self.parsed.contains(&r.at) || self.listed.contains(&r.at) {
-                continue;
+            let mut parsed = false;
+            let mut absent = None;
+            let mut entries = Vec::new();
+            for p in &r.places {
+                match self.placed(&base, p) {
+                    Placed::Parsed => parsed = true,
+                    Placed::Unparsed(why) => entries.push(r.entry(p, &why)),
+                    Placed::Absent(why) => {
+                        absent.get_or_insert_with(|| r.entry(p, &why));
+                    }
+                }
             }
-            let why = if r.at.ancestors().skip(1).any(|d| self.listed.contains(d)) {
-                UNENTERED
-            } else {
-                NOT_FOUND
-            };
-            self.report.skipped.push(r.entry(why));
+            if entries.is_empty() && !parsed {
+                entries.extend(absent);
+            }
+            self.report.skipped.append(&mut entries);
         }
+    }
+
+    /// What the walk tells of `p`, a place rustc may find a brought-in file in,
+    /// under the root `base` (as `lexical` gives it): that it parsed the file there
+    /// or listed it itself (`Parsed`); that rustc may compile a file there that it
+    /// did not parse (`Unparsed`), with why; or that rustc finds no file there
+    /// (`Absent`), with why. A `..` out of a directory the walk entered leads where
+    /// `lexical` says; one out of a directory the walk cannot tell of (`unknown`),
+    /// such as a link, may lead anywhere, and one out of a directory it did not
+    /// find leads nowhere.
+    fn placed(&self, base: &Path, p: &Place) -> Placed {
+        if let Some((d, shown)) = p.left.iter().find(|(d, _)| !self.walked(base, d)) {
+            return if self.unknown(base, d) {
+                Placed::Unparsed(leaves(shown, true))
+            } else {
+                Placed::Absent(leaves(shown, false))
+            };
+        }
+        match p.kind {
+            PlaceKind::Outside => Placed::Unparsed(OUTSIDE.to_string()),
+            PlaceKind::NotRs => match p.at.parent() {
+                Some(dir) if !self.walked(base, dir) && !self.unknown(base, dir) => {
+                    Placed::Absent(NOT_RS.to_string())
+                }
+                _ => Placed::Unparsed(NOT_RS.to_string()),
+            },
+            PlaceKind::Rs => {
+                let at = folded(&p.at);
+                if self.parsed.contains(&at) || self.listed.contains(&at) {
+                    Placed::Parsed
+                } else if p
+                    .at
+                    .ancestors()
+                    .skip(1)
+                    .any(|d| self.listed.contains(&folded(d)))
+                {
+                    Placed::Unparsed(UNENTERED.to_string())
+                } else if p.at.as_os_str().is_ascii() {
+                    Placed::Absent(NOT_FOUND.to_string())
+                } else {
+                    Placed::Unparsed(NOT_FOUND.to_string())
+                }
+            }
+        }
+    }
+
+    /// Whether the walk entered the directory `d` (as `lexical` gives it), or
+    /// opened it on its way to the root `base`: a directory, not a link, so a `..`
+    /// out of it leads where `lexical` says. Its letters may be in any case, as a
+    /// filesystem that ignores case opens it.
+    fn walked(&self, base: &Path, d: &Path) -> bool {
+        let d = folded(d);
+        self.entered.contains(&d) || folded(base).starts_with(&d)
+    }
+
+    /// Whether the walk cannot tell what `d` (as `lexical` gives it), a directory
+    /// it did not enter, is: one outside the root `base`, one in or below a path it
+    /// lists in `skipped` (a link, or a directory it prunes or could not read), or
+    /// one with a byte outside ASCII in its name, which another spelling of a
+    /// directory the walk did enter may open.
+    fn unknown(&self, base: &Path, d: &Path) -> bool {
+        !inside(base, d)
+            || !d.as_os_str().is_ascii()
+            || d.ancestors().any(|a| self.listed.contains(&folded(a)))
     }
 
     /// The entries of the directory `dir`, named `path`, `depth` levels below the
@@ -575,6 +650,7 @@ impl Scan<'_> {
             Ok(names) => names,
             Err(e) => return self.skip(path, format!("cannot be read: {}", os_message(&e))),
         };
+        self.entered.insert(folded(path));
         for name in names {
             let child = path.join(OsStr::from_bytes(&name));
             let kind = match confine::kind_at(dir.as_raw_fd(), &name) {
@@ -652,8 +728,8 @@ impl Scan<'_> {
                 let shown = serde_json::to_string(&label)
                     .map_or(label.len(), |j| confine::json_text(j).len());
                 // Each file it brings in that is not parsed prints as an entry of its
-                // own, not as the child gives it, so it counts as it prints; one the
-                // walk may yet parse counts as it would print.
+                // own, not as the child gives it, so it counts as it prints; one
+                // listed once the walk is done counts as the most it may print.
                 let more: Vec<Brought> = std::mem::take(&mut one.brought_in)
                     .iter()
                     .map(|b| unparsed(&self.root, path, b))
@@ -667,7 +743,7 @@ impl Scan<'_> {
                     return self.skip(path, FULL);
                 }
                 self.size += size;
-                self.parsed.insert(lexical(path));
+                self.parsed.insert(folded(path));
                 self.report.absorb(one, &label);
                 for b in more {
                     match b {
@@ -685,54 +761,114 @@ impl Scan<'_> {
 enum Brought {
     /// In `skipped` as it is, whatever the walk finds.
     Listed(Skipped),
-    /// One the walk parses if it finds it where it lies.
+    /// One listed once the walk is done, by what it found (`Scan::unreached`).
     Reachable(Reachable),
 }
 
-/// A name written ending in `.rs` that lies inside the root, `at` as `lexical`
-/// gives it: the walk parses it if it finds it there, and else, once the walk is
-/// done, lists it in `skipped` as `file`, brought in `by` (`Scan::unreached`).
+/// A file a parsed one brings in by a name written, brought in `by`, at each of
+/// the `places` rustc may find it (`unparsed`).
 struct Reachable {
-    at: PathBuf,
-    file: String,
+    places: Vec<Place>,
     by: String,
 }
 
-/// Why the walk did not parse a `Reachable` file: a directory on its way is in
+/// A place rustc may find a brought-in file in: `at` as `lexical` gives it,
+/// shown as `file`, each directory a `..` on its way leaves, as `lexical` gives it
+/// and as it is shown (`left`), and what `at` is to the walk.
+struct Place {
+    at: PathBuf,
+    file: String,
+    left: Vec<(PathBuf, String)>,
+    kind: PlaceKind,
+}
+
+/// What a place is to the walk: a `*.rs` inside the root, which it parses where
+/// it finds it, a file not named `*.rs`, or a `*.rs` outside the root.
+enum PlaceKind {
+    Rs,
+    NotRs,
+    Outside,
+}
+
+/// What the walk tells of a place (`Scan::placed`).
+enum Placed {
+    Parsed,
+    Unparsed(String),
+    Absent(String),
+}
+
+/// Why the walk did not parse a brought-in file: a directory on its way is in
 /// `skipped` (one the walk prunes, a link, one it could not read or nested too
-/// deeply), or else no such file was there.
+/// deeply), no such file was there, it is not named `*.rs`, or it lies outside
+/// the root.
 const UNENTERED: &str = "in a directory the walk did not enter";
 const NOT_FOUND: &str = "the walk found no such file";
+const NOT_RS: &str = "not named *.rs";
+const OUTSIDE: &str = "outside the directory scanned";
+
+/// Why the walk did not parse a brought-in file whose path leaves `dir` by `..`:
+/// the walk did not enter `dir`, which may be a link, so the file may lie
+/// elsewhere (`unknown`), or it found no such directory.
+fn leaves(dir: &str, unknown: bool) -> String {
+    if unknown {
+        format!(
+            "its path leaves {dir} by .., a directory the walk did not enter, so rustc may find \
+             the file elsewhere"
+        )
+    } else {
+        format!("its path leaves {dir} by .., a directory the walk did not find")
+    }
+}
 
 impl Reachable {
-    fn entry(&self, why: &str) -> Skipped {
+    fn entry(&self, p: &Place, why: &str) -> Skipped {
         Skipped {
-            file: self.file.clone(),
+            file: p.file.clone(),
             reason: format!("not parsed: {why}; {}", self.by),
         }
     }
 }
 
 impl Brought {
-    /// The most its entry in `skipped` takes as it prints.
+    /// The most its entries in `skipped` take as they print: for each place, the
+    /// longest entry it may get.
     fn size(&self) -> usize {
         let printed = |s: &Skipped| crate::workflow::printed_size(s, false, 0);
         match self {
             Brought::Listed(s) => printed(s),
-            Brought::Reachable(r) => printed(&r.entry(UNENTERED)).max(printed(&r.entry(NOT_FOUND))),
+            Brought::Reachable(r) => r.places.iter().fold(0, |size, p| {
+                let whys = match p.kind {
+                    PlaceKind::Rs => vec![UNENTERED.to_string(), NOT_FOUND.to_string()],
+                    PlaceKind::NotRs => vec![NOT_RS.to_string()],
+                    PlaceKind::Outside => vec![OUTSIDE.to_string()],
+                };
+                let most = whys
+                    .into_iter()
+                    .chain(
+                        p.left
+                            .iter()
+                            .flat_map(|(_, shown)| [leaves(shown, true), leaves(shown, false)]),
+                    )
+                    .map(|why| printed(&r.entry(p, &why)))
+                    .max()
+                    .unwrap_or(0);
+                size.saturating_add(most)
+            }),
         }
     }
 }
 
 /// A file that `path`, a file the walk parsed under `root`, brings in (`b`), as
-/// the walk lists it: in `skipped` with why the walk does not parse it, or, for a
-/// name written ending in `.rs` that lies inside `root`, `Reachable`. It lies where
-/// rustc finds it: from the directory of `path`, and for a `#[path]` inside inline
-/// modules from there, below a directory named for `path` unless it is a `mod.rs`
-/// (or a `lib.rs` or `main.rs`, as a crate's root usually is), through the
-/// modules' directories; `.` and `..` are taken as written, no link is followed,
-/// and nothing is opened. An `include!` of a name that is not a string literal
-/// names no file to place, so `path` is listed for it.
+/// the walk lists it: for an `include!` of a name that is not a string literal,
+/// which names no file to place, `path` itself; else by each place rustc may find
+/// it (`Reachable`). That is from the directory of `path`, and for a `#[path]`
+/// inside inline modules from there through the modules' directories, below one
+/// named for `path` unless rustc takes `path` for a mod.rs, as it takes a
+/// `mod.rs`, a crate's root of any name and a file a `#[path]` brings in. The walk
+/// cannot tell the last two, so for a file not named `mod.rs` it tries both
+/// places: first a crate root's for a `lib.rs` or `main.rs`, and a module file's
+/// for any other. `.` and `..` are taken as written (`lexical_left`), no link is
+/// followed, and nothing is opened.
 fn unparsed(root: &Path, path: &Path, b: &BroughtIn) -> Brought {
     let by = format!(
         "{} brings it in ({}, line {})",
@@ -749,60 +885,106 @@ fn unparsed(root: &Path, path: &Path, b: &BroughtIn) -> Brought {
             ),
         });
     };
-    let mut dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
-    if !b.within.is_empty() {
-        let mod_rs = path
-            .file_name()
-            .is_some_and(|n| [&b"mod.rs"[..], b"lib.rs", b"main.rs"].contains(&n.as_bytes()));
-        if !mod_rs {
-            dir.extend(path.file_stem());
+    let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
+    let dirs = if b.within.is_empty() {
+        vec![dir]
+    } else {
+        let mut stem = dir.clone();
+        stem.extend(path.file_stem());
+        stem.extend(&b.within);
+        let mut plain = dir;
+        plain.extend(&b.within);
+        match path.file_name().map(OsStr::as_bytes) {
+            Some(b"mod.rs") => vec![plain],
+            Some(b"lib.rs" | b"main.rs") => vec![plain, stem],
+            _ => vec![stem, plain],
         }
-        dir.extend(&b.within);
-    }
-    let named = lexical(&dir.join(name));
-    let top = lexical(root);
-    let inside = named.is_relative() && !named.starts_with("..") && named.starts_with(&top);
-    let shown = match named.strip_prefix(&top) {
-        Ok(rest) if inside => root.join(rest),
-        _ => named.clone(),
     };
-    let file = shown.display().to_string();
-    let why = if !named
+    let base = lexical(root);
+    let places = dirs
+        .iter()
+        .map(|d| place_of(root, &base, &d.join(name)))
+        .collect();
+    Brought::Reachable(Reachable { places, by })
+}
+
+/// The place `written` names, for the root `root` (`base` as `lexical` gives it).
+fn place_of(root: &Path, base: &Path, written: &Path) -> Place {
+    let (at, left) = lexical_left(written);
+    let kind = if !at
         .file_name()
         .is_some_and(|n| n.as_bytes().ends_with(b".rs"))
     {
-        "not named *.rs"
-    } else if !inside {
-        "outside the directory scanned"
+        PlaceKind::NotRs
+    } else if !inside(base, &at) {
+        PlaceKind::Outside
     } else {
-        return Brought::Reachable(Reachable {
-            at: named,
-            file,
-            by,
-        });
+        PlaceKind::Rs
     };
-    Brought::Listed(Skipped {
-        file,
-        reason: format!("not parsed: {why}; {by}"),
-    })
+    let left = left
+        .into_iter()
+        .map(|d| {
+            let shown = shown_at(root, base, &d);
+            (d, shown)
+        })
+        .collect();
+    Place {
+        file: shown_at(root, base, &at),
+        at,
+        left,
+        kind,
+    }
+}
+
+/// Whether `at`, as `lexical` gives it, lies inside the root `base`.
+fn inside(base: &Path, at: &Path) -> bool {
+    at.is_relative() && !at.starts_with("..") && at.starts_with(base)
+}
+
+/// `at`, as `lexical` gives it, as the walk names it: below the root as given,
+/// `root`, when it lies inside it (`base`), else as it is.
+fn shown_at(root: &Path, base: &Path, at: &Path) -> String {
+    match at.strip_prefix(base) {
+        Ok(rest) if inside(base, at) => root.join(rest),
+        _ => at.to_path_buf(),
+    }
+    .display()
+    .to_string()
 }
 
 /// `path` with each `.` left out and each `..` taking off the name before it,
-/// while there is one; a `..` past the start is kept.
-fn lexical(path: &Path) -> PathBuf {
+/// while there is one, and each directory such a `..` leaves, as it is then; a
+/// `..` past the start is kept.
+fn lexical_left(path: &Path) -> (PathBuf, Vec<PathBuf>) {
     let mut out = PathBuf::new();
+    let mut left = Vec::new();
     for part in path.components() {
         match part {
             Component::CurDir => {}
             Component::ParentDir
                 if matches!(out.components().next_back(), Some(Component::Normal(_))) =>
             {
+                left.push(out.clone());
                 out.pop();
             }
             other => out.push(other.as_os_str()),
         }
     }
-    out
+    (out, left)
+}
+
+/// `path` with each `.` left out and each `..` taking off the name before it,
+/// while there is one; a `..` past the start is kept.
+fn lexical(path: &Path) -> PathBuf {
+    lexical_left(path).0
+}
+
+/// `path` as `lexical` gives it, each ASCII letter in lower case: the walk keeps
+/// and compares paths so, as a filesystem that ignores case opens them.
+fn folded(path: &Path) -> PathBuf {
+    let mut bytes = lexical(path).into_os_string().into_vec();
+    bytes.make_ascii_lowercase();
+    PathBuf::from(OsString::from_vec(bytes))
 }
 
 /// Whether cargo has built in the directory `dir`: it holds the `CACHEDIR.TAG`
