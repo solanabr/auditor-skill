@@ -2035,6 +2035,37 @@ for r in frames.py deltas.py profile.sh; do
     res="$res $c:$(tr '\n' ' ' < "$TT/x26.err")"
 done
 eq "interpreter: ... and one it reports in capitals ($why26)" "${res# }" "2 2 2"
+# Spellings only identity decides: a working directory the disk names in NFC, reported in NFD (the same
+# directory where the filesystem normalizes Unicode, no directory where it does not), and on macOS the
+# working directory's path through /System/Volumes/Data.
+liar26() { # liar26 <reported directory> <working directory> <reason>: each recipe from <working directory>
+  local r c res=""
+  rm -rf "$TT/liarx26"; mkdir -p "$TT/liarx26"
+  printf '#!/bin/sh\nprintf "%%s\\n%%s\\n" "%s/bin/python3" "%s/bin/python3"\n' "$1" "$1" > "$TT/liarx26/python3"
+  chmod +x "$TT/liarx26/python3"
+  for r in frames.py deltas.py profile.sh; do
+    if [[ "$r" == deltas.py ]]; then set -- "$1" "$2" "$3" lamports incident_1/clean-mixed.jsonl; else set -- "$1" "$2" "$3" incident_1/clean-mixed.jsonl; fi
+    ( cd "$2" && PATH="$TT/liarx26:$PATH" "$DNR/$r" "${@:4}" ) > "$TT/x26.out" 2> "$TT/x26.err"
+    c=$?
+    [[ "$c" == 2 && ! -s "$TT/x26.out" && "$(grep -c . "$TT/x26.err")" == 1 ]] &&
+      grep -q "^$r: refused: $3: " "$TT/x26.err" && res="$res $c" ||
+      res="$res $c:$(tr '\n' ' ' < "$TT/x26.err")"
+  done
+  printf '%s' "${res# }"
+}
+EVC26="$TT/caf$(printf '\303\251')26" EVD26="$TT/cafe$(printf '\314\201')26"
+mkdir -p "$EVC26/incident_1" "$EVC26/bin"
+printf '*\n' > "$EVC26/incident_1/.gitignore"
+cp "$FIX/clean-mixed.jsonl" "$EVC26/incident_1/"
+ln -s /bin/echo "$EVC26/bin/python3"
+if [[ -d "$EVD26/bin" ]]; then why26='python3 lies inside the working directory'; else why26='python3 cannot be resolved'; fi
+eq "interpreter: ... and one it reports in NFD for the NFC name on disk ($why26)" "$(liar26 "$EVD26" "$EVC26" "$why26")" "2 2 2"
+if [[ -d "/System/Volumes/Data$EV26" && "/System/Volumes/Data$EV26" -ef "$EV26" ]]; then
+  eq "interpreter: ... and one it reports through /System/Volumes/Data" \
+    "$(liar26 "/System/Volumes/Data$EV26" "$EV26" 'python3 lies inside the working directory')" "2 2 2"
+else
+  ok "interpreter: ... through /System/Volumes/Data: skipped, no such spelling of the test directory here"
+fi
 # With no python3 on PATH, frames.py and deltas.py stop with a named blocker, as profile.sh does.
 mkdir -p "$TT/nopy26"
 res=""
