@@ -544,6 +544,20 @@ pub const HGIT_PINS: &[&str] = &[
 /// cannot tell.
 pub const GIT_TIME: Duration = Duration::from_secs(10);
 
+/// Whether git, asked about a directory, answered that no repository there is one
+/// it can use, as `confine_no_repo` takes it: exit 128 and stderr starting with
+/// "fatal: not a git repository", or with "fatal: gitfile does not point to a valid
+/// repository", the words git 2.56 and later use where a `.git` file names none
+/// (earlier versions say "not a git repository: <dir>" there). No part of other
+/// text counts: git's messages can quote a name the repository chose.
+fn no_repository(code: Option<i32>, stderr: &[u8]) -> bool {
+    const WORDS: [&[u8]; 2] = [
+        b"fatal: not a git repository",
+        b"fatal: gitfile does not point to a valid repository",
+    ];
+    code == Some(128) && WORDS.iter().any(|w| stderr.starts_with(w))
+}
+
 /// Whether two stats name the same file: its device and inode.
 fn same(a: &Metadata, b: &Metadata) -> bool {
     a.dev() == b.dev() && a.ino() == b.ino()
@@ -733,13 +747,8 @@ impl Git {
             )
             .ok()?;
         if !inside.status.success() {
-            // Outside every repository only on git's own answer, as `confine_no_repo`
-            // takes it: exit 128 and stderr starting with "fatal: not a git repository".
-            // No part of other text counts: git's messages can quote a name the
-            // repository chose.
-            let no_repo = inside.status.code() == Some(128)
-                && inside.stderr.starts_with(b"fatal: not a git repository");
-            return no_repo.then(Vec::new);
+            // Outside every repository only on git's own answer.
+            return no_repository(inside.status.code(), &inside.stderr).then(Vec::new);
         }
         let spec = OsString::from_vec([&b":(literal,icase)"[..], path].concat());
         let listed = self
@@ -1764,6 +1773,28 @@ mod tests {
 
     /// The frame `printf` writes for a two-byte answer, "ok".
     const OK: &str = r"printf '\002\000\000\000\000\000\000\000ok'";
+
+    #[test]
+    fn only_git_s_own_words_with_exit_128_say_there_is_no_repository() {
+        let own = "fatal: not a git repository (or any of the parent directories): .git";
+        let gitfile = "fatal: gitfile does not point to a valid repository: /x/.git";
+        let quoted = "fatal: detected dubious ownership in repository at '/x/not a git repository'";
+        for (code, stderr, no_repo) in [
+            (Some(128), own, true),
+            (Some(128), "fatal: not a git repository: /x/nowhere", true),
+            (Some(128), gitfile, true),
+            (Some(128), quoted, false),
+            (Some(1), own, false),
+            (Some(1), gitfile, false),
+            (None, gitfile, false),
+        ] {
+            assert_eq!(
+                no_repository(code, stderr.as_bytes()),
+                no_repo,
+                "{code:?} {stderr}"
+            );
+        }
+    }
 
     #[test]
     fn a_child_is_fed_one_file_and_read_to_the_end_of_its_answer() {
