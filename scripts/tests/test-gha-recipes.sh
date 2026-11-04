@@ -40,6 +40,7 @@
 # flow sequence or after a lone CR or U+0085, which it must list.
 # The find that the R1 and R9 notes and KV-080 Steps 4, 6, 7 and 8 give runs over names that hold a :, which forge
 # grep's path:line: prefix, and must name each.
+# R1 and KV-139 Step 1 run over a trigger after a lone CR, which Known limits says they miss and its count names.
 #
 # Usage (from the repo root): bash scripts/tests/test-gha-recipes.sh
 # Needs bash >= 3.2, grep, awk, git. No network. The fixtures are copied into a temp dir as .github/workflows/, those
@@ -831,6 +832,25 @@ if [ -n "$lcr" ] && [ -z "$bad" ] && [ "$got" = ".github/workflows/cr.yml .githu
 else
   echo "FAIL Known limits' count of lines outside printable ASCII [${lcr:-none}]: named [$got], want" \
     "[.github/workflows/cr.yml .github/workflows/ls.yml infra/values.yaml ]${bad:+; $bad}"
+  fail=1
+fi
+# R1's first list (and so KV-080 Step 7's) and KV-139 Step 1 read a trigger at the start of a grep line, so an
+# issue_comment trigger after a lone CR, with or without a comment before it, is not listed, as Known limits says, and
+# Known limits' count names both files: R1 and K139-1 list only the workflow that holds no CR, and the count names the
+# other two.
+ltt="$work/lone-cr-trigger"; mkdir -p "$ltt/.github/workflows"
+printf 'on:\n  push:\r  issue_comment:\njobs:\n  a:\n    runs-on: ubuntu-latest\n' > "$ltt/.github/workflows/bare.yml"
+printf 'on:\n  push: # n\r  issue_comment:\njobs:\n  a:\n    runs-on: ubuntu-latest\n' > "$ltt/.github/workflows/comment.yml"
+printf 'on:\n  push:\n  issue_comment:\njobs:\n  a:\n    runs-on: ubuntu-latest\n' > "$ltt/.github/workflows/plain.yml"
+gotr=$(run_recipe "$ltt" "$(recipe R1)" | sed 's#^\.github/workflows/##' | LC_ALL=C sort | tr '\n' ' ')
+gotk=$(run_recipe "$ltt" "$(recipe_lines K139-1)" | sed 's#^\.github/workflows/##' | LC_ALL=C sort | tr '\n' ' ')
+gotc=$(run_recipe "$ltt" "$lcr" | sed 's#^\./##; s#:[0123456789]*$##' | LC_ALL=C sort | tr '\n' ' ')
+if [ "$gotr" = "plain.yml " ] && [ "$gotk" = "plain.yml " ] \
+   && [ "$gotc" = ".github/workflows/bare.yml .github/workflows/comment.yml " ]; then
+  echo "ok   R1 and K139-1 miss a trigger after a lone CR, and Known limits' count names those files"
+else
+  echo "FAIL a trigger after a lone CR: R1 listed [$gotr] and K139-1 [$gotk], want [plain.yml ] (Known limits says they" \
+    "miss it); Known limits' count named [$gotc], want [.github/workflows/bare.yml .github/workflows/comment.yml ]"
   fail=1
 fi
 
