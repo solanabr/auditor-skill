@@ -11,9 +11,11 @@ permissions:
 jobs:
   corpus:
     # Branch protection requires this job by its name; keep "counts, index, version, hygiene" as it is.
+    # Its self-test step takes about 18 minutes on ubuntu-latest; the limit leaves a slower runner room and still
+    # stops a step that hangs.
     name: counts, index, version, hygiene
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Checkout (full history for the commit-message check)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
