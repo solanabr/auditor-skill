@@ -22,10 +22,13 @@
 #       tool, Task, a run-directory edit or an auditor skill) is scripts/check-entrypoints.sh's check.
 #   C3  Every call of audit-scan carries --contract=1 as its first argument, names the directory it scans and
 #       passes no option audit-scan refuses, and every call of audit-mem --contract=1 right after its subcommand:
-#       in the rules, in rooted calls, and in code spans and code lines that start with the bare name, after a
-#       shell prompt ($ or %), a wrapper with its options (env, sudo, nice, timeout, xargs and the like) or an
-#       assignment, and pass arguments (a span naming only the tool, the tool and a subcommand, or audit-scan and
-#       its marker, is a mention), in the bodies and in the corpus C6 reads alike.
+#       in the rules, in rooted calls, and in code spans and code lines whose simple commands (each after a list
+#       operator or a pipe too) run the bare name behind a shell prompt ($ or %), assignments and wrappers (env,
+#       sudo, doas, nice, timeout, xargs, stdbuf, taskset, chroot and the like, named alone or by their path,
+#       with their short options, a value at the end of a cluster, their long options and the words they take),
+#       and pass arguments (a span naming only the tool, the tool and a subcommand, or audit-scan and its marker,
+#       is a mention, and so is a lookup or a listing, such as command -v or sudo -l), in the bodies and in the
+#       corpus C6 reads alike.
 #   C4  Every command, and the root SKILL.md, runs preflight.sh as step 0: the first entry point its body names
 #       is "<root>/scripts/preflight.sh", with no arguments, in a paragraph that starts "0. **Preflight" (in the
 #       root SKILL.md, "**Step 0 — Preflight") and says that a refusal, and a call that is denied, stop the run;
@@ -47,8 +50,9 @@
 #       sh, shell, zsh, console or none named) that is not a comment; a quoted block counts too, and a span
 #       that starts Bash( names a rule.
 #   C7  No file of the corpus, command, agent or skill runs an entry point by a path relative to the working
-#       directory (scripts/rundir.sh new, ./scripts/..., bash scripts/..., $ scripts/...), where the tree under
-#       audit can put a file of its own; a span holding the path alone names the file.
+#       directory (scripts/rundir.sh new, ./scripts/..., bash scripts/..., $ scripts/..., in any of a line's
+#       simple commands, behind the wrappers C3 reads past), where the tree under audit can put a file of its
+#       own; a span holding the path alone names the file.
 #   P   Wording the flows depend on stays in place (the PINS list): what keeps a long call, and the turn after
 #       it, inside a command's grant, and what asks Q46 again, once a session, for a run directory an earlier
 #       session made, before the agent that builds starts, keeps a non-interactive run there from loosening the
@@ -114,15 +118,89 @@ CORPUS_ROOT = "<auditor-skill root>"
 ANY_ROOT = re.compile(r'("?)(<auditor-skill root>|\$\{CLAUDE_PLUGIN_ROOT\}|\$CLAUDE_PLUGIN_ROOT|\$\{CLAUDE_SKILL_DIR\}|'
                       r'\$CLAUDE_SKILL_DIR)("?)/([A-Za-z0-9_./-]+)("?)')
 SHELL_FENCES = ("", "bash", "sh", "shell", "zsh", "console")
-# What a call can have in front of it: a shell prompt ($ or %), then any interpreter or wrapper with its options,
-# cd or assignment. Each wrapper lists the letters of its options that take a value (sudo -u <user>, nice -n <n>),
-# and timeout takes its duration as well.
-WRAPPERS = (("bash", ""), ("sh", ""), ("zsh", ""), ("dash", ""), ("ksh", ""), ("python3?", ""), ("env", "uCPS"),
-            ("exec", "a"), ("command", ""), ("nohup", ""), ("time", "fo"), ("sudo", "gpCDrRtTuU"), ("nice", "n"),
-            ("xargs", "adEIJLnPRs"), ("timeout", "ks"))
-LEAD = re.compile(r'^(?:[$%]\s+)?(?:(?:' + "|".join(
-    r'%s(?:\s+(?:%s-\S+))*%s' % (w, r'-[%s]\s*[^\s-]\S*|' % v if v else "", r'\s+\S+' if w == "timeout" else "")
-    for w, v in WRAPPERS) + r'|[A-Za-z_][A-Za-z0-9_]*=\S*)\s+|cd\s+\S+\s*(?:&&|;|\|\|)\s*)*')
+# What a call can have in front of it in its simple command: a shell prompt ($ or %), a ( or { that opens a
+# subshell or a group, assignments, and any interpreter or wrapper, named alone or by its path, with its options
+# and the words it takes. Each wrapper gives the letters of its short options that take a value (sudo -u <user>,
+# and sudo -Eu <user> too), its long options that take the next word (sudo --user <user>), how many words it takes
+# before the command (timeout's duration, chroot's directory, taskset's mask), and the letters and the long
+# options with which it runs nothing but only looks the command up or lists it (command -v, sudo -l).
+WRAPPERS = {
+    "bash": ("", (), 0, "", ()), "sh": ("", (), 0, "", ()), "zsh": ("", (), 0, "", ()), "dash": ("", (), 0, "", ()),
+    "ksh": ("", (), 0, "", ()), "python": ("", (), 0, "", ()), "python3": ("", (), 0, "", ()),
+    "env": ("uCPS", ("unset", "chdir", "split-string"), 0, "", ()),
+    "exec": ("a", (), 0, "", ()), "command": ("", (), 0, "vV", ()), "nohup": ("", (), 0, "", ()),
+    "time": ("fo", ("format", "output"), 0, "", ()),
+    "sudo": ("gpCDrRtTuU", ("group", "prompt", "close-from", "chdir", "role", "type", "user", "other-user",
+                            "command-timeout", "chroot", "host"), 0,
+             "lveVK", ("list", "validate", "edit", "version", "remove-timestamp")),
+    "doas": ("aCu", (), 0, "C", ()), "nice": ("n", ("adjustment",), 0, "", ()),
+    "xargs": ("adEIJLnPRs", ("arg-file", "delimiter", "max-args", "max-procs", "max-chars", "process-slot-var"), 0,
+              "", ()),
+    "timeout": ("ks", ("kill-after", "signal"), 1, "", ()), "chroot": ("", ("userspec", "groups"), 1, "", ()),
+    "stdbuf": ("ioe", ("input", "output", "error"), 0, "", ()), "taskset": ("", (), 1, "p", ("pid",)),
+}
+
+def pieces(seg):
+    """(start, end) of each simple command of a code span or line: it ends at a list operator, a pipe or a & that
+    runs it in the background, outside quotes; the & of a redirect, 2>&1 or &>, ends nothing."""
+    out, start, q, i = [], 0, None, 0
+    while i < len(seg):
+        c = seg[i]
+        if q:
+            if c == q:
+                q = None
+            elif c == "\\" and q == '"':
+                i += 1
+        elif c in "'\"":
+            q = c
+        elif seg.startswith(("&&", "||", "|&"), i):
+            out.append((start, i))
+            start = i = i + 2
+            continue
+        elif c in ";|" or (c == "&" and seg[i - 1:i] not in ("<", ">") and seg[i + 1:i + 2] != ">"):
+            out.append((start, i))
+            start = i + 1
+        i += 1
+    out.append((start, len(seg)))
+    return out
+
+def call_at(seg, start, end):
+    """Where the command that seg[start:end] runs starts, past what WRAPPERS describes in front of it; None when it
+    runs none, or a wrapper there only looks the command up or lists it."""
+    s = start + re.match(r'\s*(?:[({]\s*)*', seg[start:end]).end()
+    toks = [(s + m.start(), m.group(0)) for m in re.finditer(r'\S+', seg[s:end])]
+    i = 1 if toks and toks[0][1] in ("$", "%") else 0
+    while i < len(toks):
+        word = toks[i][1]
+        if re.match(r'^[A-Za-z_][A-Za-z0-9_]*=', word):
+            i += 1
+            continue
+        spec = WRAPPERS.get(word.rsplit("/", 1)[-1])
+        if spec is None:
+            return toks[i][0]
+        values, long_values, takes, lookups, long_lookups = spec
+        i += 1
+        while i < len(toks) and toks[i][1].startswith("-") and toks[i][1] != "-":
+            opt = toks[i][1]
+            i += 1
+            if opt == "--":
+                break
+            if opt.startswith("--"):
+                name = opt[2:].split("=", 1)[0]
+                if name in long_lookups:
+                    return None
+                if "=" not in opt and name in long_values:
+                    i += 1
+                continue
+            for k, c in enumerate(opt[1:]):
+                if c in lookups:
+                    return None
+                if c in values:
+                    if k == len(opt) - 2:
+                        i += 1          # its value is the next word; otherwise it is the rest of this one
+                    break
+        i += takes
+    return None
 ASKS = re.compile(r'^\s*,?\s*which asks\b')
 # The placeholders the bodies write in their calls, each a word to the redirect scan (<R>/poc/<ID> is a path);
 # any other <...> is read as written, so `<x>/tmp/evil` is a redirect. A body that writes a new one adds it here.
@@ -412,12 +490,16 @@ def marker(check_file, n, tool, rest, where):
         finding("C3", check_file, n, "audit-mem %s without --contract=1 right after its subcommand: %s" % (where, rest[:120]))
 
 def bare(check_file, n, seg):
-    """C3 for a span or code line that starts with the tool's bare name and passes arguments, after anything LEAD
-    allows in front of it (a shell prompt, env and the like)."""
-    words = seg[len(LEAD.match(seg).group(0)):].split()
-    if words and words[0] in ("audit-scan", "audit-mem") and "${" not in seg:
-        if (words[0] == "audit-scan" and len(words) >= 2) or (words[0] == "audit-mem" and len(words) >= 3):
-            marker(check_file, n, words[0], " ".join(words[1:]), "call")
+    """C3 for each simple command of a span or code line that runs the tool by its bare name and passes it
+    arguments, past anything call_at() reads in front of it (a shell prompt, an assignment, a wrapper)."""
+    if "${" in seg:
+        return
+    for start, end in pieces(seg):
+        at = call_at(seg, start, end)
+        words = seg[at:end].split() if at is not None else []
+        if words and words[0] in ("audit-scan", "audit-mem"):
+            if (words[0] == "audit-scan" and len(words) >= 2) or (words[0] == "audit-mem" and len(words) >= 3):
+                marker(check_file, n, words[0], " ".join(words[1:]), "call")
 
 # The plugin's agents, by the name their frontmatter gives, and the fork skills, by the agent they run as.
 agents, forks = {}, {}
@@ -498,12 +580,17 @@ def check_calls(owner, rules, sources):
                 finding("C5", src, n, "%s does not pre-approve this call: %s" % (owner, seg[:160]))
 
 def relative(f, n, seg, fenced, root):
-    """C7: a call of an entry point by a path relative to the working directory."""
-    rest = seg[len(LEAD.match(seg).group(0)):]
-    m = REL.match(rest)
-    if m and (fenced or rest[m.end():].strip(' "')):
-        finding("C7", f, n, 'runs %s by a path relative to the working directory, where the tree under audit can put '
-                'a file of its own; name it as "%s/%s": %s' % (m.group(1), root, m.group(1), seg[:160]))
+    """C7: a call of an entry point by a path relative to the working directory, in any simple command of seg."""
+    for start, end in pieces(seg):
+        at = call_at(seg, start, end)
+        if at is None:
+            continue
+        rest = seg[at:]
+        m = REL.match(rest)
+        if m and (fenced or rest[m.end():].strip(' "')):
+            finding("C7", f, n, 'runs %s by a path relative to the working directory, where the tree under audit can '
+                    'put a file of its own; name it as "%s/%s": %s' % (m.group(1), root, m.group(1), seg[:160]))
+            return
 
 def corpus(f, body, first):
     """C6 and C7 for a corpus file: every call, in a code span with words after the path or on a line of a shell
@@ -823,7 +910,12 @@ corp references/r/good.md "# Good" \
   "(\`audit-scan --contract=1 <changed program directory> --pretty\`), and \`audit-scan --contract=1\` alone is a name." \
   "Wrappers pass with their options: \`timeout -s KILL 60 audit-mem warm --contract=1 --program-id <id>\`, \`sudo -E audit-scan --contract=1 .\`," \
   "\`xargs -n 1 audit-mem warm --contract=1 --program-id\`, \`env -u HOME audit-scan --contract=1 . --out=audit_1/prescan.json 2>&1 | head\`;" \
-  "\`command -v audit-scan\` and \`cargo build --release --bin audit-scan --bin audit-mem\` are no calls." \
+  "\`command -v audit-scan\` and \`cargo build --release --bin audit-scan --bin audit-mem\` are no calls; nor are a lookup or a listing," \
+  "\`command -v audit-scan audit-mem\`, \`command -V audit-mem warm x\`, \`sudo -l audit-scan --pretty .\`, \`sudo --list audit-mem warm x\`." \
+  "Wrappers by path, long options and clusters pass with the marker: \`/usr/bin/env FOO=1 audit-scan --contract=1 .\`," \
+  "\`/usr/bin/sudo -Eu me audit-scan --contract=1 .\`, \`sudo --user me audit-scan --contract=1 .\`, \`doas -u me audit-scan --contract=1 .\`," \
+  "\`timeout --signal KILL 30 audit-mem warm --contract=1 --program-id <id>\`, \`chroot /srv audit-scan --contract=1 .\`," \
+  "\`stdbuf -oL audit-scan --contract=1 .\`, \`taskset -c 0 audit-scan --contract=1 .\`, \`true && audit-scan --contract=1 . | head\`." \
   '```console' '$ audit-scan --contract=1 . --out audit_1/prescan.json' '$ env audit-mem warm --contract=1 --program-id <id>' \
   '% audit-scan --contract=1 --pretty .' '$ sudo -u me nice -n 5 audit-mem warm --contract=1 --program-id <id>' '```'
 corp references/r/c6-bash.md "Run \`bash \"$Q/scripts/ok.sh\" new audit\`."
@@ -857,6 +949,17 @@ corp references/r/c3-xargs.md "Run \`xargs audit-scan --workflows .github/workfl
 corp references/r/c3-zsh-prompt.md '```console' '% audit-mem warm --program-id <id>' '```'
 corp references/r/c3-dashdash.md "Run \`audit-scan --contract=1 --out audit_<n>/prescan.json -- .\`."
 corp references/r/c3-unknown.md "Run \`audit-scan --contract=1 . --workflow .github/workflows\`."
+# ... behind the wrappers the table above lacked, a long option, a cluster, a path, or another command
+corp references/r/c3-doas.md "Run \`doas -u me audit-scan --workflows .github/workflows\` first."
+corp references/r/c3-chroot.md "Run \`chroot /srv audit-scan . --out audit_<n>/prescan.json\`."
+corp references/r/c3-stdbuf.md "Run \`stdbuf -oL audit-mem warm --program-id <id>\`."
+corp references/r/c3-taskset.md "Run \`taskset -c 0 audit-scan . --pretty\`."
+corp references/r/c3-sudo-long.md "Run \`sudo --user me audit-scan . --pretty\`."
+corp references/r/c3-timeout-long.md "Run \`timeout --signal KILL 30 audit-mem warm --program-id <id>\`."
+corp references/r/c3-sudo-cluster.md "Run \`sudo -Eu me audit-scan . --pretty\`."
+corp references/r/c3-env-path.md "Run \`/usr/bin/env FOO=1 audit-scan . --pretty\`."
+corp references/r/c3-after-and.md "Run \`true && audit-scan . --pretty\`."
+corp references/r/c3-after-pipe.md '```bash' 'printf x | audit-mem warm --program-id <id>' '```'
 corp docs/c6.md "Run \`sh \"$Q/scripts/ok.sh\" new\`."
 corp FULL-AUDIT.md '```bash' "X=1 \"$Q/scripts/ok.sh\" check x" '```'
 corp references/r/c7-span.md "Run \`scripts/ok.sh new audit\`."
@@ -868,6 +971,9 @@ corp references/r/c7-prompt.md '```console' '$ scripts/ok.sh check x' '```'
 corp references/r/c7-zsh-prompt.md '```console' '% scripts/ok.sh check x' '```'
 corp references/r/c7-nice.md "Run \`nice -n 5 scripts/ok.sh check x\`."
 corp references/r/c7-template.md "Run \`templates/poc/run.sh --crate x\`."
+corp references/r/c7-after-and.md "Run \`true && scripts/ok.sh check x\`."
+corp references/r/c7-env-path.md "Run \`/usr/bin/env scripts/ok.sh check x\`."
+corp references/r/c7-doas.md "Run \`doas scripts/ok.sh check x\`."
 corp templates/t/c7-cd.md '```' 'cd sub; scripts/ok.sh check x' '```'
 cmd c7-relative -- "1. Run \`scripts/ok.sh new audit\`."
 printf -- '---\nname: a\ndescription: "An agent."\ntools: Read, Bash\n---\n\nRun `bash ./scripts/ok.sh check x`.\n' > "$fx/agents/c7.md"
@@ -916,11 +1022,13 @@ for c in bash cd env env-word dollar unquoted half-quoted plugin-root backtick q
 done
 expect docs/c6.md C6; expect FULL-AUDIT.md C6
 for c in span late rooted mem-fenced prompt env no-dir rooted-no-dir mem-prompt sudo sudo-flag nice xargs zsh-prompt \
-    dashdash unknown; do
+    dashdash unknown doas chroot stdbuf taskset sudo-long timeout-long sudo-cluster env-path after-and after-pipe; do
   expect "references/r/c3-$c.md" C3
 done
 expect docs/c3-bare-fenced.md C3; expect templates/t/c3-mem-order.md C3
-for c in span dot bash quoted fenced template prompt zsh-prompt nice; do expect "references/r/c7-$c.md" C7; done
+for c in span dot bash quoted fenced template prompt zsh-prompt nice after-and env-path doas; do
+  expect "references/r/c7-$c.md" C7
+done
 expect templates/t/c7-cd.md C7; expect commands/c7-relative.md C7; expect agents/c7.md C7
 line=$(check "$fx" references/r/c6-large.md | cut -f2)
 total=$(wc -l < "$fx/references/r/c6-large.md"); total=${total//[!0-9]/}
