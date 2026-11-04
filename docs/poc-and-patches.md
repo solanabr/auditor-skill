@@ -30,6 +30,7 @@ audit_<n>/
 │       └── run.sh                the installation's copy, for ./run.sh; run.sh --crate runs the installation's own
 └── patches/
     ├── F-003.patch               minimal idiomatic unified diff vs the pinned commit
+    ├── F-003.summary             the root cause and impact in one sentence, read by --post-patch-validation
     └── VERIFICATION.md           the executed-revert record + fix tier
 ```
 
