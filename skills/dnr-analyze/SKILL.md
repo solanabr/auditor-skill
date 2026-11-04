@@ -1,6 +1,6 @@
 ---
 name: dnr-analyze
-description: "One analysis phase of /auditor:hunt or /auditor:respond, run in the incident-responder agent over incident_<n>/ only: profiles and queries the incident corpus with the bundled offline tools, keeps LEDGER.md, and writes the incident files there. Invoke it only where those commands say to, with the phase brief they describe as its arguments."
+description: "One analysis phase of /auditor:hunt or /auditor:respond, run in the auditor:incident-responder agent over incident_<n>/ only: profiles and queries the incident corpus with the bundled offline tools, keeps LEDGER.md, and writes the incident files there. Invoke it only where those commands say to, with the phase brief they describe as its arguments."
 context: fork
 agent: auditor:incident-responder
 background: false
@@ -24,14 +24,14 @@ allowed-tools:
 **Phase brief:** $ARGUMENTS
 
 `/auditor:hunt` or `/auditor:respond` started you for one analysis phase. You run
-as `incident-responder`, in a context of your own: you see this brief, not the
+as `auditor:incident-responder`, in a context of your own: you see this brief, not the
 conversation, and you cannot ask the human anything. The brief starts with the
 mode, the phase and the run directory (`hunt baseline incident_<n>`), then names
 everything you work from: the corpus paths, the snapshot lines, the provider
 domain, the window and caps of each collection and whether it ended with its
 `collection gaps: N` line, the execution mode and PoC build cache once recorded,
-and the results the command brings back from `context-builder` and
-`poc-engineer`. Work from exactly those. A value the brief leaves out is a gap to
+and the results the command brings back from `auditor:context-builder` and
+`auditor:poc-engineer`. Work from exactly those. A value the brief leaves out is a gap to
 report, never one to guess.
 
 Read `${CLAUDE_PLUGIN_ROOT}/references/detection-response/README.md` and

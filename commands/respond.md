@@ -40,7 +40,7 @@ carries out none of that plan.
 working tree, parses the lead, mints or adopts the run directory, snapshots the
 programs, gets the human's yes and runs the collector with exactly the approved
 values, asks the questions, and presents the results. It hands all reading and
-analysis of the incident corpus to the `incident-responder` agent, one phase at a
+analysis of the incident corpus to the `auditor:incident-responder` agent, one phase at a
 time, through the `auditor:dnr-analyze` skill (the Skill tool), which runs the
 agent as a fork. The agent's tool list has no MCP tools, so it cannot call a
 signing or transfer tool.
@@ -244,7 +244,7 @@ Code asks about a shell read outside the working directory.
    It returns the verdict so far, the figures with the ledger rows behind them, and
    the implicated handler.
 
-5. **Root cause & PoC (Phase 3)** (this command). Spawn `context-builder` on the
+5. **Root cause & PoC (Phase 3)** (this command). Spawn `auditor:context-builder` on the
    implicated handler in the source deployed at the incident slot. Read that
    revision without checking it out (Rule 11c), as `/auditor:hunt` step 5 does:
    `"${CLAUDE_PLUGIN_ROOT}/scripts/git-ro.sh" copy <repo> incident_<n>` makes a
@@ -254,7 +254,7 @@ Code asks about a shell read outside the working directory.
    when you run in the checkout); a `--repo` outside it is copied and read with raw
    git, which asks each time, in the form hunt step 5 gives. Never `checkout`,
    `switch` or `worktree add` in `--repo`. Then spawn
-   `poc-engineer` in incident mode to reproduce on the bytes from step 1 (Leg 3)
+   `auditor:poc-engineer` in incident mode to reproduce on the bytes from step 1 (Leg 3)
    with `run.sh --vulnerable-so incident_<n>/bin/<program>.so` alone — in-process
    SVM or a local surfnet, harness keys only, asserting the observed effect with
    `assert_exploit_effect!`. Leg 3 is
@@ -272,7 +272,7 @@ Code asks about a shell read outside the working directory.
    `incident_<n>/exec-mode` with the Write tool, where
    `"${CLAUDE_PLUGIN_ROOT}/templates/poc/run.sh" --crate` reads it; the answer is
    the human's reply, so first invoke `auditor:respond --resume 5 incident_<n>`
-   with it. Before `poc-engineer` runs, `INCIDENTS.json` must record the incident
+   with it. Before `auditor:poc-engineer` runs, `INCIDENTS.json` must record the incident
    with its `id` and `root_cause_class` (`unknown` until it is known):
    `run.sh --crate` reads it, stops when it cannot, and holds a
    `supply_chain_or_ci` incident to isolated mode on its dumped bytes (Rule 11a).
@@ -286,15 +286,15 @@ Code asks about a shell read outside the working directory.
    the `INCIDENTS.json` of any `incident_*` directory in the working directory (its
    name in any letter case) records a `supply_chain_or_ci` incident or cannot be
    read (Rule 11a).
-   Hand `poc-engineer` the PoC build cache from the ledger header, if any, and pass
+   Hand `auditor:poc-engineer` the PoC build cache from the ledger header, if any, and pass
    one it creates to the agent for that header. Before the Leg 3 line counts, check the
    crate's harness copy and its `non-registry code:` line as `/auditor:poc` step 6
    does. `key_compromise` stays at `suspected` unless a person records a custodian
    attestation word for word (README).
 
 6. **The plan (Phase 4), in the `auditor:dnr-analyze` skill.** Invoke it with
-   arguments that start `respond plan incident_<n>` and carry the `context-builder`
-   and `poc-engineer` results (as in hunt step 7, the re-run flag and the build
+   arguments that start `respond plan incident_<n>` and carry the `auditor:context-builder`
+   and `auditor:poc-engineer` results (as in hunt step 7, the re-run flag and the build
    cache included). It writes
    `incident_<n>/RESPONSE-INC-<n>.<k>.md` from
    `${CLAUDE_PLUGIN_ROOT}/templates/response-plan.md`; a plan written for another

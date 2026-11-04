@@ -36,12 +36,13 @@
 #       command, and of the root SKILL.md, pre-approve that call.
 #   C5  Every rooted call in a command's body, and in the bodies of the agents it spawns, is one of that
 #       command's Bash rules: the same path, then the rule's fixed words (all of them, for a rule with no *). The
-#       command spawns an agent that a code span names after spawn, delegate or run in the sentence, or after
-#       hand, start, launch, use, invoke or "the Task tool" in a sentence that names no auditor: skill (work
-#       handed on through a skill is the skill's), or that starts a list item under such a paragraph, but not
-#       in a list item about another command. A fork skill's calls, and its agent's, are its own rules', and so
-#       are the root SKILL.md's. A call is an entry point first in a code span with words after it, or first on
-#       a fenced code line; one whose span ", which asks" follows straight away is a documented prompt.
+#       command spawns an agent that a code span names, as auditor:<agent> or bare, after spawn, delegate or run
+#       in the sentence, or after hand, start, launch, use, invoke or "the Task tool" in a sentence that names no
+#       auditor: skill (work handed on through a skill is the skill's), or that starts a list item under such a
+#       paragraph, but not in a list item about another command. A fork skill's calls, and its agent's, are its
+#       own rules', and so are the root SKILL.md's. A call is an entry point first in a code span with words
+#       after it, or first on a fenced code line; one whose span ", which asks" follows straight away is a
+#       documented prompt.
 #   C6  In the corpus (FULL-AUDIT.md, checklists/, known-vectors/, discovery/, and every .md under references/,
 #       templates/ and docs/), every call of an entry point names it as "<auditor-skill root>/<path>", quoted,
 #       first in the command or as the file a test -x, -f or -e reads, with no other $ or backtick in it: no
@@ -53,6 +54,10 @@
 #       directory (scripts/rundir.sh new, ./scripts/..., bash scripts/..., $ scripts/..., in any of a line's
 #       simple commands, behind the wrappers C3 reads past), where the tree under audit can put a file of its
 #       own; a span holding the path alone names the file.
+#   C8  Every command, skill and the root SKILL.md names each of the plugin's agents by its plugin-scoped name,
+#       auditor:<agent>, in every code span that names one: a project agent cannot hold a : in its name, so a
+#       bare name is one a repository's .claude/agents/<agent>.md answers to, ahead of the plugin's agent. An
+#       agent's own body, which starts no agent, may name one bare.
 #   P   Wording the flows depend on stays in place (the PINS list): what keeps a long call, and the turn after
 #       it, inside a command's grant, and what asks Q46 again, once a session, for a run directory an earlier
 #       session made, before the agent that builds starts, keeps a non-interactive run there from loosening the
@@ -521,14 +526,17 @@ for d, pattern in (("agents", None), ("skills", None)):
         elif value(fm, "agent").startswith("auditor:"):
             forks[path] = value(fm, "agent")[len("auditor:"):]
 
+# A code span that names one of the plugin's agents, by its plugin-scoped name or bare.
+AGENT_SPAN = r'`(?:auditor:)?([a-z][a-z0-9-]*)`'
+
 def spawned(body):
-    """The agents a command spawns: each code span naming an agent after spawn, delegate or run in its
-    sentence, or after another word that hands it work (SPAWN_OTHER) in a sentence that names no auditor:
+    """The agents a command spawns: each code span naming an agent (AGENT_SPAN) after spawn, delegate or run in
+    its sentence, or after another word that hands it work (SPAWN_OTHER) in a sentence that names no auditor:
     skill, and the agent each list item under such a paragraph starts with. A list item that starts with
     another command's name describes that command."""
     names, spawns = set(), False
     for para in re.split(r'\n\s*\n|\n(?=\s*(?:\d+[a-z]?[.)]|[-*+])\s)', "\n".join(body)):
-        item = re.match(r'^\s+[-*+]\s+`([a-z][a-z0-9-]*)`', para)
+        item = re.match(r'^\s+[-*+]\s+' + AGENT_SPAN, para)
         if spawns and item and item.group(1) in agents:
             names.add(item.group(1))
             continue
@@ -537,11 +545,11 @@ def spawned(body):
             continue
         for sentence in re.split(r'(?<=[.!?])\s+', para):
             m = SPAWN.search(sentence)
-            if not m and "`auditor:" not in sentence:
+            if not m and all(s in agents for s in re.findall(r'`auditor:([a-z][a-z0-9-]*)', sentence)):
                 m = SPAWN_OTHER.search(sentence)
             if m:
                 spawns = True
-                names.update(a for a in re.findall(r'`([a-z][a-z0-9-]*)`', sentence[m.end():]) if a in agents)
+                names.update(a for a in re.findall(AGENT_SPAN, sentence[m.end():]) if a in agents)
     return names
 
 def asks(rest):
@@ -743,6 +751,13 @@ for f in files:
         sources.extend(agents[a] for a in sorted(names) if a in agents)
         check_calls(f, rules, sources)
 
+    # C8: a command, a skill and the root SKILL.md name each of the plugin's agents as auditor:<agent>
+    if command or root_skill or f.startswith("skills/"):
+        for n, seg, para, ptext, end, fenced in segments(body, first):
+            if not fenced and seg.strip() in agents:
+                finding("C8", f, n, "names the agent %s bare: a project's .claude/agents/%s.md answers to that name "
+                        "ahead of the plugin's agent; write auditor:%s" % (seg.strip(), seg.strip(), seg.strip()))
+
 for line in out:
     print(line)
 EOF
@@ -795,7 +810,7 @@ cmd good "'Bash(\"$R/scripts/rec.py\" *)'" "'Bash(\"$B/audit-scan\" --contract=1
   "3. Check \`test -f \"$R/templates/poc/run.sh\"\`; mention \`\"$B/audit-mem\"\` alone; read \`$R/references/x.md\`." \
   "4. Prose names \`run.sh --crate\` and \`\"$R/scripts/filter.sh\"\` behind \`x 2>&1 | bash \"$R/scripts/filter.sh\"\`." \
   "5. Keep \`\"$R/scripts/ok.sh\" check x > audit_<n>/out.txt 2>/dev/null\` and \`\"$R/scripts/ok.sh\" check x 2>&1\`, \`\"$R/scripts/ok.sh\" check <in-scope directory> &> incident_<n>/log.txt\`." \
-  "6. Spawn \`fx-runner\` on it; \`\"$R/templates/poc/run.sh\" --crate <R>/poc/<ID>\` runs it, and \`\"$R/scripts/rec.py\" --crate x\`, which asks, does not." \
+  "6. Spawn \`auditor:fx-runner\` on it; \`\"$R/templates/poc/run.sh\" --crate <R>/poc/<ID>\` runs it, and \`\"$R/scripts/rec.py\" --crate x\`, which asks, does not." \
   "" '```bash' "\"$R/scripts/ok.sh\" check audit_<n> --cluster mainnet-beta" '```'
 cmd c1-bash -- "1. \`bash \"$R/scripts/ok.sh\" new audit\`"
 cmd c1-cd -- "1. \`cd sub && \"$R/scripts/ok.sh\"\`"
@@ -843,22 +858,29 @@ cmd c3-scan-no-dir "'Bash(\"$B/audit-scan\" --contract=1 *)'" -- "1. \`\"$B/audi
 cmd c3-scan-unknown "'Bash(\"$B/audit-scan\" --contract=1 *)'" -- "1. \`\"$B/audit-scan\" --contract=1 . -v\`"
 # C5: each call is one of its command's rules, the agents it spawns too; a call its sentence says asks is not
 cmd c5-unlisted -- "1. Run \`\"$R/templates/poc/run.sh\" --crate audit_<n>/poc/F-1\`."
-cmd c5-agent -- "1. Spawn \`fx-runner\` on the crate."
-cmd c5-agent-covered "'Bash(\"$R/scripts/rec.py\" *)'" -- "1. Delegate the walk to \`fx-runner\`."
-cmd c5-agent-mention -- "1. Read what \`fx-runner\` wrote into the run directory."
-cmd c5-agent-list -- "1. Run the reviewers in parallel:" "   - \`fx-other\` over the program." "   - \`fx-runner\` over the value flow."
-cmd c5-agent-and -- "1. Run \`fx-other\` (checklists) and \`fx-runner\` (vectors) over their surfaces."
-cmd c5-other-command -- "- **\`/auditor:other\`** runs \`fx-runner\` over the tree."
+cmd c5-agent -- "1. Spawn \`auditor:fx-runner\` on the crate."
+cmd c5-agent-covered "'Bash(\"$R/scripts/rec.py\" *)'" -- "1. Delegate the walk to \`auditor:fx-runner\`."
+cmd c5-agent-mention -- "1. Read what \`auditor:fx-runner\` wrote into the run directory."
+cmd c5-agent-list -- "1. Run the reviewers in parallel:" "   - \`auditor:fx-other\` over the program." "   - \`auditor:fx-runner\` over the value flow."
+cmd c5-agent-and -- "1. Run \`auditor:fx-other\` (checklists) and \`auditor:fx-runner\` (vectors) over their surfaces."
+cmd c5-other-command -- "- **\`/auditor:other\`** runs \`auditor:fx-runner\` over the tree."
 cmd c5-asks -- "1. Run \`\"$R/templates/poc/run.sh\" --crate x\`, which asks."
 cmd c5-asks-later -- "1. Run \`\"$R/templates/poc/run.sh\" --crate x\`; a copy from outside it asks."
 cmd c5-asks-next -- "1. Run \`\"$R/templates/poc/run.sh\" --crate x\`, then \`\"$R/scripts/rec.py\" y\`, which asks."
 cmd c5-asks-never -- "1. Run \`\"$R/templates/poc/run.sh\" --crate audit_<n>/poc/F-1\`, which never asks."
 cmd c5-asks-else -- "1. Run \`\"$R/templates/poc/run.sh\" --crate audit_<n>/poc/F-1\` as given, and anything else asks."
 cmd c5-prompts -- "1. Run \`\"$R/templates/poc/run.sh\" --crate audit_<n>/poc/F-1\`: it prompts for nothing."
-cmd c5-hand -- "1. Hand each finding to \`fx-runner\`."
-cmd c5-use -- "1. Use the \`fx-runner\` agent on the crate."
-cmd c5-task-tool -- "1. Start \`fx-runner\` with the Task tool."
-cmd c5-skill-hand -- "1. Hand the crate to \`fx-runner\` through \`auditor:poc\`."
+cmd c5-hand -- "1. Hand each finding to \`auditor:fx-runner\`."
+cmd c5-use -- "1. Use the \`auditor:fx-runner\` agent on the crate."
+cmd c5-task-tool -- "1. Start \`auditor:fx-runner\` with the Task tool."
+cmd c5-skill-hand -- "1. Hand the crate to \`auditor:fx-runner\` through \`auditor:poc\`."
+# C8: a command, a skill and the root SKILL.md name an agent as auditor:<agent> in every span, a mention too; an
+# agent's own body may name one bare
+cmd c8-bare -- "1. Spawn \`fx-other\` over the program."
+cmd c8-bold -- "1. Spawn the **\`fx-other\`** agent over the program."
+cmd c8-mention -- "1. Read what \`fx-other\` wrote into the run directory."
+mkdir -p "$fx/skills/s8" && printf -- '---\nname: s8\ndescription: "A skill."\n---\n\nHand the tree to `fx-other`.\n' > "$fx/skills/s8/SKILL.md"
+printf -- '---\nname: c8\ndescription: "An agent."\ntools: Read\n---\n\nRead what `fx-other` wrote.\n' > "$fx/agents/c8.md"
 printf -- '---\ndescription: "A command."\nallowed-tools:\n  - '"'"'Bash("%s/scripts/preflight.sh" *)'"'"'\n  - '"'"'Bash("%s/scripts/ok.sh" new *)'"'"'\n  - '"'"'Bash("%s/scripts/rec.py" x)'"'"'\n---\n\n%s\n1. `"%s/scripts/ok.sh" new audit`, `"%s/scripts/rec.py" x`, then `"%s/scripts/ok.sh" check audit_1`.\n' \
   "$R" "$R" "$R" "$STEP0" "$R" "$R" "$R" > "$fx/commands/c5-fixed-word.md"
 sed -e 's#`"${CLAUDE_PLUGIN_ROOT}/scripts/ok.sh" check audit_1`#`"${CLAUDE_PLUGIN_ROOT}/scripts/rec.py" x y`#' \
@@ -1012,6 +1034,8 @@ expect commands/c5-agent-list.md C5; expect commands/c5-agent-and.md C5; expect 
 expect commands/c5-exact.md C5; expect skills/fork/SKILL.md C5
 for c in asks-never asks-else prompts hand use task-tool; do expect "commands/c5-$c.md" C5; done
 expect commands/c5-skill-hand.md ""
+expect commands/c8-bare.md C8; expect commands/c8-bold.md C8; expect commands/c8-mention.md C8; expect skills/s8/SKILL.md C8
+expect agents/c8.md ""
 expect commands/c4-no-rule.md C4; expect commands/c4-no-step.md C4; expect commands/c4-late.md C4
 expect commands/c4-paragraph.md C4; expect commands/c4-args.md C4; expect commands/c4-no-denial.md C4
 expect commands/c4-no-resume.md C4
@@ -1068,6 +1092,7 @@ while IFS= read -r f; do set -- "$@" "$f"; done < "$T/corpus-files"
 KNOWN='
 C6	docs/output-and-rigor.md	not quoted as "<auditor-skill root>/scripts/rundir.sh": <auditor-skill root>/scripts/rundir.sh new
 C7	references/detection-response/incidents-schema.md	runs templates/poc/run.sh by a path relative to the working directory
+C8	SKILL.md	names the agent
 '
 found=$(check "$TREE" "$@"); rc=$?
 if [ "$rc" -ne 0 ]; then bad "the checker failed on $TREE (status $rc)"
@@ -1142,10 +1167,10 @@ commands/patch.md	A run directory this session did not make, an earlier session'
 commands/patch.md	or `<R>` is a run directory this session did not make and whose `exec-mode` it has not written, ask
 commands/patch.md	A non-interactive run cannot ask, so an earlier answer can only make it stricter: it uses the stricter of the recorded mode (`<R>/exec-mode`, or without it `intake.md` §8 or the ledger header) and `native`, writes that mode to `<R>/exec-mode` when the file is missing, `native` when no mode is recorded at all
 commands/patch.md	a mode an earlier session recorded was that run's answer, so never hand it on unasked.
-commands/patch.md	are asked again in step 2, once per session, before `patch-engineer` starts.
+commands/patch.md	are asked again in step 2, once per session, before `auditor:patch-engineer` starts.
 commands/poc.md	are asked again in step 5, once per session, before a runner uses them.
 commands/patch.md	First settle the execution mode that the rebuild and every PoC re-run in step 3 use
-commands/patch.md	`patch-engineer` runs them itself, with the mode you hand it, and never asks.
+commands/patch.md	`auditor:patch-engineer` runs them itself, with the mode you hand it, and never asks.
 commands/re-audit.md	check it with `"${CLAUDE_PLUGIN_ROOT}/scripts/rundir.sh" check audit_<n>`: unless it prints `ok audit_<n>`, nothing is written in it
 commands/re-audit.md	`audit_<n>/exec-mode` and its `intake.md` §8 are an earlier run's answers, never this run's consent
 commands/re-audit.md	have the human confirm that `audit_<n>` is a run directory they made, not one that came with the tree
@@ -1209,7 +1234,7 @@ GONE
 # the PoC itself, with the mode it is handed, so the mode is settled before it starts.
 for fa in 'commands/poc.md|poc-engineer' 'commands/patch.md|patch-engineer'; do
   f=${fa%%|*}; a=${fa#*|}
-  step=$(grep -E "^[0-9]+\\. \\*\\*Spawn \`$a\`" "$f")
+  step=$(grep -E "^[0-9]+\\. \\*\\*Spawn \`auditor:$a\`" "$f")
   case "$step" in
     *'ask `QUESTIONS.md` Q46 once'*) ok "$f asks Q46 in the step that spawns $a" ;;
     *) bad "P $f does not ask Q46 in the step that spawns $a, before the agent starts" ;;

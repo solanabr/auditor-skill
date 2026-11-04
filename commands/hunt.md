@@ -38,7 +38,7 @@ pauses, freezes, or contacts anyone.
 working tree, parses the arguments, mints the run directory, snapshots the
 programs, gets the human's yes and runs the collector with exactly the approved
 values, asks the questions, and presents the results. It hands all reading and
-analysis of the incident corpus to the `incident-responder` agent, one phase at a
+analysis of the incident corpus to the `auditor:incident-responder` agent, one phase at a
 time, through the `auditor:dnr-analyze` skill (the Skill tool), which runs the
 agent as a fork. The agent's tool list has no MCP tools, so it cannot call a
 signing or transfer tool.
@@ -285,14 +285,14 @@ Code asks about a shell read outside the working directory.
    gave it, with `--run incident_<n>`, and name the file it wrote in the next brief.
 
 5. **Source confirmation (Phase 3).** For each suspect the agent returned, spawn
-   `context-builder` on the implicated handler in the source **deployed at the
+   `auditor:context-builder` on the implicated handler in the source **deployed at the
    incident slot** (`--repo`; compare the deploy slot from step 1 with the incident
    slot). Read that revision without checking it out (Rule 11c), through the
    bundled read-only git:
    `"${CLAUDE_PLUGIN_ROOT}/scripts/git-ro.sh" copy <repo> incident_<n>` makes a
    bare copy and prints its path (`incident_<n>/src.git`, then `src-2.git`, …), and
    `"${CLAUDE_PLUGIN_ROOT}/scripts/git-ro.sh" --git-dir incident_<n>/src.git show <rev>:<path>`
-   reads from it; hand `context-builder` the copy's path and that form. `<repo>` is
+   reads from it; hand `auditor:context-builder` the copy's path and that form. `<repo>` is
    `--repo` as a path inside the working directory (`.` when you run in the
    checkout); git-ro takes nothing outside it. For a `--repo` outside the working
    directory, copy and read with raw git, which asks each time:
@@ -302,7 +302,7 @@ Code asks about a shell read outside the working directory.
    guard that stopped it — to `file:function`. A guard that held turns the suspect
    into `attempted_not_vulnerable`, recorded with that location.
 
-6. **Reproduce (Phase 4).** For a source-confirmed flaw, spawn `poc-engineer` in
+6. **Reproduce (Phase 4).** For a source-confirmed flaw, spawn `auditor:poc-engineer` in
    **incident mode**: reproduce on the program's **real bytes** (the step-1 dump, or
    a hash-matched build) with
    `run.sh --vulnerable-so incident_<n>/bin/<program>.so` alone — no fix needs to
@@ -337,14 +337,14 @@ Code asks about a shell read outside the working directory.
    anything, whatever run directory it is given, an audit's included, while the
    `INCIDENTS.json` of any `incident_*` directory in the working directory (its
    name in any letter case) records a `supply_chain_or_ci` incident or cannot be
-   read (Rule 11a). Hand `poc-engineer` the PoC build cache from the ledger header,
+   read (Rule 11a). Hand `auditor:poc-engineer` the PoC build cache from the ledger header,
    if any, and pass one it creates to the agent for that header.
    Before the Leg 3 line counts, check the crate's harness copy and its
    `non-registry code:` line as `/auditor:poc` step 6 does.
 
 7. **Emit, in the `auditor:dnr-analyze` skill.** Invoke it again, with arguments
-   that start `hunt emit incident_<n>` and carry the `context-builder` and
-   `poc-engineer` results (`file:function`, guards that held, the PoC tier,
+   that start `hunt emit incident_<n>` and carry the `auditor:context-builder` and
+   `auditor:poc-engineer` results (`file:function`, guards that held, the PoC tier,
    `run.sh`'s final line — for an exit 3, its blocker line with "PoC re-run
    needed" — the execution mode and the PoC build cache). It
    writes `incident_<n>/INCIDENTS.json`
